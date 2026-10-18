@@ -627,82 +627,206 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 // work, and two rows for it put every standing fire on the live pill and the
 // Monitor twice, the dispatch row as a root because nothing tied it to the
 // fire. The caller keeps ownership, so it is the caller that completes it.
+// The run's state is syncDispatch and each phase is a method on it. A phase
+// that ends the run early returns false, and what that return handed back is
+// parked by exit for this method to return. The defers stay here, registered
+// in the order they always were.
 func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, runtimeUser, agentKey, message string, confirm func(string, string) bool, appTools []AgentToolDef, liveRun *Run, via ...string) (syncRunResult, error) {
+	sd := &syncDispatch{T: T, ctx: ctx, agentOwner: agentOwner, runtimeUser: runtimeUser, agentKey: agentKey, message: message,
+		confirm: confirm, appTools: appTools, liveRun: liveRun, via: via}
+	if !sd.admit() {
+		return sd.ret, sd.retErr
+	}
+	sd.buildSession()
+	defer clearAuthoringInProgress(sd.runtimeDB, sd.subSessID)
+	defer DeleteSessionTempTools(sd.runtimeDB, sd.subSessID)
+	sd.startLiveRun()
+	if sd.ownRun {
+		defer sd.liveRun.Complete(RunStatusFailed)
+	}
+	sd.tagRun()
+	defer sd.reportUsage()
+	defer bankScopedSpend(sd.ctx, spendOwner(sd.target, sd.agentOwner), sd.target) // the same tracker, banked per agent (agent_spend.go)
+	sd.buildToolkit()
+	sd.buildTurn()
+	sd.buildPrompt()
+	sd.enterMachine()
+	sd.prepareInput()
+	sd.configureLoop()
+	sd.runLoop()
+	if !sd.report() {
+		return sd.ret, sd.retErr
+	}
+	return syncRunResult{
+		Text:        strings.TrimSpace(sd.resp.Content),
+		HitRoundCap: sd.resp.HitRoundCap,
+		Trace:       sd.toolTrace,
+		Detections:  sd.subTurn.scanDetectionCount(),
+		TaintBlocks: sd.subTurn.taintBlockCount(),
+		Usage:       sd.spent(),
+	}, nil
+}
+
+// syncDispatch is one turn-free run, from the request's checks to the report
+// its caller records. Each field is a local or parameter of the method it was
+// cut from; the method is now the order of the phases and the defers between
+// them.
+type syncDispatch struct {
+	T                 *OrchestrateApp
+	ctx               context.Context
+	agentOwner        string
+	runtimeUser       string
+	agentKey          string
+	message           string
+	confirm           func(string, string) bool
+	appTools          []AgentToolDef
+	liveRun           *Run
+	via               []string
+	ownerDB           Database
+	target            AgentRecord
+	ok                bool
+	err               error
+	runtimeDB         Database
+	chain             []string
+	origin            *dispatchAuthority
+	lerr              error
+	subSessID         string
+	subSess           *ToolSession
+	ownRun            bool
+	reportUsage       func()
+	tools             []AgentToolDef
+	mayAuthor         bool
+	authoringWithheld string
+	isPhantomDispatch bool
+	extraTools        []AgentToolDef
+	availableBlock    string
+	customToolPrompt  string
+	subTurn           *chatTurn
+	// Facts read from the RUNTIME user's DB, so dispatches from
+	// different phantom chats see isolated state for the same agent
+	// record. First call against a fresh runtimeUser starts clean —
+	// no leakage from the owner's interactive Explicit Memory.
+	// Skipped for phantom runs (no facts in prompt at all).
+	// The turn's own read (chatTurn.facts), as a web turn's: it honours the
+	// agent's Explicit Memory switch and a stranger's sharing gates, which a
+	// raw list did not, so an agent with saved notes turned off still had
+	// them in every dispatched prompt.
+	subFacts         []MemoryFact
+	sysPrompt        string
+	deliveredMessage string
+	think            bool
+	telem            *turnTelemetry
+	dispatchMsgs     []Message
+	gDecline         string
+	dispatchPin      LLMTier
+	dispatchRoute    string
+	dispatchFallback func(name string) (ToolHandlerFunc, bool)
+	dispatchDynamic  func() []AgentToolDef
+	buildCheck       *dispatchBuildCheck
+	syncCfg          AgentLoopConfig
+	resp             *Response
+	syncTranscript   []Message
+	runErr           error
+	toolTrace        []PersistedToolCall
+	// ret and retErr are what an early return hands back, parked by exit.
+	ret    syncRunResult
+	retErr error
+}
+
+// exit records what an early return hands back and tells the driver to take
+// it.
+func (sd *syncDispatch) exit(res syncRunResult, err error) bool {
+	sd.ret, sd.retErr = res, err
+	return false
+}
+
+func (sd *syncDispatch) admit() bool {
+	T := sd.T
+	agentKey := sd.agentKey
+	message := sd.message
+	via := sd.via
 	if T == nil || T.LLM == nil {
-		return syncRunResult{}, errors.New("orchestrate runtime not initialized")
+		return sd.exit(syncRunResult{}, errors.New("orchestrate runtime not initialized"))
 	}
-	if agentOwner == "" {
-		return syncRunResult{}, errors.New("agentOwner is required")
+	if sd.agentOwner == "" {
+		return sd.exit(syncRunResult{}, errors.New("agentOwner is required"))
 	}
-	if runtimeUser == "" {
-		runtimeUser = agentOwner
+	if sd.runtimeUser == "" {
+		sd.runtimeUser = sd.agentOwner
 	}
 	if strings.TrimSpace(message) == "" {
-		return syncRunResult{}, errors.New("message is required")
+		return sd.exit(syncRunResult{}, errors.New("message is required"))
 	}
-	ownerDB := UserDB(T.DB, agentOwner)
-	if ownerDB == nil {
-		return syncRunResult{}, fmt.Errorf("no per-user db for agentOwner %q", agentOwner)
+	sd.ownerDB = UserDB(T.DB, sd.agentOwner)
+	if sd.ownerDB == nil {
+		return sd.exit(syncRunResult{}, fmt.Errorf("no per-user db for agentOwner %q", sd.agentOwner))
 	}
 	// Schedules, monitors and pipeline stages name their agent, often by
 	// name. Two agents answering to it is refused with their ids rather than
 	// run on whichever sorted first.
-	target, ok, err := resolveAgentRef(ownerDB, agentOwner, agentKey)
-	if err != nil {
-		return syncRunResult{}, err
+	sd.target, sd.ok, sd.err = resolveAgentRef(sd.ownerDB, sd.agentOwner, agentKey)
+	if sd.err != nil {
+		return sd.exit(syncRunResult{}, sd.err)
 	}
-	if !ok {
-		return syncRunResult{}, fmt.Errorf("agent %q not found in agentOwner %q store", agentKey, agentOwner)
+	if !sd.ok {
+		return sd.exit(syncRunResult{}, fmt.Errorf("agent %q not found in agentOwner %q store", agentKey, sd.agentOwner))
 	}
 	// Standing fire / monitor wake / external dispatch to a retiring archetype
 	// seed → materialize the owner's own copy and run that.
-	target = materializeIfRetiringSeed(ownerDB, agentOwner, target)
-	runtimeDB := ownerDB
-	if runtimeUser != agentOwner {
-		runtimeDB = UserDB(T.DB, runtimeUser)
-		if runtimeDB == nil {
-			return syncRunResult{}, fmt.Errorf("no per-user db for runtimeUser %q", runtimeUser)
+	sd.target = materializeIfRetiringSeed(sd.ownerDB, sd.agentOwner, sd.target)
+	sd.runtimeDB = sd.ownerDB
+	if sd.runtimeUser != sd.agentOwner {
+		sd.runtimeDB = UserDB(T.DB, sd.runtimeUser)
+		if sd.runtimeDB == nil {
+			return sd.exit(syncRunResult{}, fmt.Errorf("no per-user db for runtimeUser %q", sd.runtimeUser))
 		}
 		// Layered rules (enabler #2): a scoped INSTANCE adds its own rules over the
 		// template's base. Modifying the local target copy means the standard prompt
 		// assembler (prependAgentContext) renders base+overlay with no changes.
-		target.Rules = mergeScopeRules(target.Rules, listScopeRules(runtimeDB, target.ID))
+		sd.target.Rules = mergeScopeRules(sd.target.Rules, listScopeRules(sd.runtimeDB, sd.target.ID))
 	}
 	// Who handed this over, checked against the limits an agents(run) chain
 	// is held to, and the run stamped with it so a hand-off from inside it
 	// carries on counting (dispatch_lineage.go). Every agent above binds it
 	// with its guardrails, as the inline path's accumulate.
-	chain, origin, lerr := handOffLineage(ctx, ownerDB, target, via...)
-	if lerr != nil {
-		return syncRunResult{}, lerr
+	sd.chain, sd.origin, sd.lerr = handOffLineage(sd.ctx, sd.ownerDB, sd.target, via...)
+	if sd.lerr != nil {
+		return sd.exit(syncRunResult{}, sd.lerr)
 	}
-	target = inheritChainGuardrails(ownerDB, chain, target)
-	ctx = withDispatchLineage(ctx, append(append([]string(nil), chain...), target.ID), origin)
-	subSessID := "external-dispatch:" + runtimeUser + ":" + target.ID
-	subSess := &ToolSession{
+	sd.target = inheritChainGuardrails(sd.ownerDB, sd.chain, sd.target)
+	sd.ctx = withDispatchLineage(sd.ctx, append(append([]string(nil), sd.chain...), sd.target.ID), sd.origin)
+	return true
+}
+
+func (sd *syncDispatch) buildSession() {
+	T := sd.T
+	message := sd.message
+	via := sd.via
+	sd.subSessID = "external-dispatch:" + sd.runtimeUser + ":" + sd.target.ID
+	sd.subSess = &ToolSession{
 		LLM:           T.LLM,
 		LeadLLM:       T.LeadLLM,
-		Username:      runtimeUser,
-		DB:            runtimeDB,
-		ChatSessionID: subSessID,
-		AgentID:       target.ID,
+		Username:      sd.runtimeUser,
+		DB:            sd.runtimeDB,
+		ChatSessionID: sd.subSessID,
+		AgentID:       sd.target.ID,
 		IntentText:    message, // Tier-1 tool elevation matches against the brief
 		// Credential scope travels with the agent — a dispatched run can
 		// fetch_url too, so enforce the same deny-set here.
-		DeniedCredentials: credentialDenySet(target, runtimeUser),
+		DeniedCredentials: credentialDenySet(sd.target, sd.runtimeUser),
 	}
-	subSess.DirectCredentialRefusal = directCredentialRefusal(target, subSess)
-	subSess.ToolFailureAdvice = toolFailureAdvice(target, false, func() bool { return nonOwnerRequester(ctx) })
+	sd.subSess.DirectCredentialRefusal = directCredentialRefusal(sd.target, sd.subSess)
+	sd.subSess.ToolFailureAdvice = toolFailureAdvice(sd.target, false, func() bool { return nonOwnerRequester(sd.ctx) })
 	// Inherit the delegator's workspace when there is one — the sub-agent is
 	// producing something its parent will read — and otherwise run in this
 	// agent's own directory rather than the shared user root.
-	if inherited := InheritedWorkspaceDir(ctx); inherited != "" {
-		subSess.WorkspaceDir = inherited
-	} else if ws, werr := EnsureAgentWorkspaceDir(runtimeUser, subSess.AgentID); werr == nil {
-		subSess.WorkspaceDir = ws
+	if inherited := InheritedWorkspaceDir(sd.ctx); inherited != "" {
+		sd.subSess.WorkspaceDir = inherited
+	} else if ws, werr := EnsureAgentWorkspaceDir(sd.runtimeUser, sd.subSess.AgentID); werr == nil {
+		sd.subSess.WorkspaceDir = ws
 	}
-	if root, rerr := EnsureWorkspaceDir(runtimeUser); rerr == nil && root != subSess.WorkspaceDir {
-		subSess.WorkspaceFallback = root
+	if root, rerr := EnsureWorkspaceDir(sd.runtimeUser); rerr == nil && root != sd.subSess.WorkspaceDir {
+		sd.subSess.WorkspaceFallback = root
 	}
 	// A Builder run dispatched ON SOMEONE'S BEHALF — the async twin of a live
 	// Fleet dispatch — must stamp its creations OwnedBy the requester, or an
@@ -710,18 +834,21 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 	// of a sub-agent of the agent that asked. The requester rides the dispatch
 	// chain (via); its origin is the parent. Non-Builder delegations are
 	// unaffected (this only sets the field for Builder).
-	if isBuilderAgent(target.ID) && len(via) > 0 {
+	if isBuilderAgent(sd.target.ID) && len(via) > 0 {
 		if p := strings.TrimSpace(via[len(via)-1]); p != "" {
-			subSess.DispatchParentAgentID = p
+			sd.subSess.DispatchParentAgentID = p
 		}
 	}
 	// And it works within that agent's limits (builder_delegation.go).
-	applyBuilderDelegation(subSess, ownerDB)
+	applyBuilderDelegation(sd.subSess, sd.ownerDB)
 	// Nobody to ask here: a change to what already exists queues
 	// (change_approval.go).
-	subSess.ApproveChange = changeApprover(subSess, runtimeUser, target.ID, target.Name, nil)
-	defer clearAuthoringInProgress(runtimeDB, subSessID)
-	defer DeleteSessionTempTools(runtimeDB, subSessID)
+	sd.subSess.ApproveChange = changeApprover(sd.subSess, sd.runtimeUser, sd.target.ID, sd.target.Name, nil)
+}
+
+func (sd *syncDispatch) startLiveRun() {
+	T := sd.T
+	message := sd.message
 	// Register this dispatch in the runs ledger so a delegated sub-agent shows
 	// in the live ribbon / "Active now" like any other run, nested under the run
 	// that spawned it (parentRunFromCtx). Created HERE — before the sub-agent's
@@ -740,29 +867,28 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 	// fanning six branches at one agent would have each branch kill the last.
 	// Nothing looks a dispatch up by that id (BySession serves the chat panel's
 	// reconnect), so it is not registered under one.
-	ownRun := liveRun == nil
-	if ownRun {
-		ctx, liveRun = T.runsRegistry().CreateCancellable(ctx, runtimeUser, target.ID, "")
-		liveRun.Describe("dispatch", target.Name, truncateObs(message, 100)).
-			Parent(parentRunFromCtx(ctx))
-		defer liveRun.Complete(RunStatusFailed)
+	sd.ownRun = sd.liveRun == nil
+	if sd.ownRun {
+		sd.ctx, sd.liveRun = T.runsRegistry().CreateCancellable(sd.ctx, sd.runtimeUser, sd.target.ID, "")
+		sd.liveRun.Describe("dispatch", sd.target.Name, truncateObs(message, 100)).
+			Parent(parentRunFromCtx(sd.ctx))
 	}
-	ctx = withParentRun(ctx, liveRun.ID)
+}
+
+func (sd *syncDispatch) tagRun() {
+	sd.ctx = withParentRun(sd.ctx, sd.liveRun.ID)
 	// A delegated run bills to ITSELF. Its spend used to ride the
 	// delegator's context tracker, so a turn that dispatched three
 	// sub-agents printed one line carrying all four runs' tokens, with no
 	// way to see which of them was the expensive one. Scoping it out gives
 	// it its own line — nested dispatch chains included, since each level
 	// shadows the tracker above it.
-	ctx, reportUsage := WithSubUsage(ctx, "dispatch "+target.Name+" "+liveRun.ID)
-	defer reportUsage()
-	spent := func() UsageDiff {
-		if t := RequestUsage(ctx); t != nil {
-			return t.Diff(UsageSnapshot{})
-		}
-		return UsageDiff{}
-	}
-	defer bankScopedSpend(ctx, spendOwner(target, agentOwner), target) // the same tracker, banked per agent (agent_spend.go)
+	sd.ctx, sd.reportUsage = WithSubUsage(sd.ctx, "dispatch "+sd.target.Name+" "+sd.liveRun.ID)
+}
+
+func (sd *syncDispatch) buildToolkit() {
+	T := sd.T
+	via := sd.via
 	// Hand the turn's context to the session. Two things depend on it and both
 	// were silently off: a tool can only DETACH when it can find the run that
 	// owns it, which it reads off this context (the log said "image stayed
@@ -770,9 +896,9 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 	// made, so a fifteen-minute render held the turn open instead of running in
 	// the background), and cancellation only reaches a tool that is watching
 	// the turn's context rather than a background one.
-	subSess.Ctx = ctx
+	sd.subSess.Ctx = sd.ctx
 	// Clone so the force-adds below never mutate the stored agent's AllowedTools.
-	toolNames := append([]string(nil), target.AllowedTools...)
+	toolNames := append([]string(nil), sd.target.AllowedTools...)
 	if len(toolNames) == 0 {
 		// The SAME default pool the interactive turn uses.
 		//
@@ -809,12 +935,12 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 			}
 		}
 	}
-	tools, err := GetAgentToolsWithSession(subSess, toolNames...)
-	if err != nil {
-		tools = nil
+	sd.tools, sd.err = GetAgentToolsWithSession(sd.subSess, toolNames...)
+	if sd.err != nil {
+		sd.tools = nil
 		for _, n := range toolNames {
-			if td, terr := GetAgentToolsWithSession(subSess, n); terr == nil && len(td) > 0 {
-				tools = append(tools, td[0])
+			if td, terr := GetAgentToolsWithSession(sd.subSess, n); terr == nil && len(td) > 0 {
+				sd.tools = append(sd.tools, td[0])
 			}
 		}
 	}
@@ -822,10 +948,10 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 	// gets its unregistered authoring tools appended here on the sync-dispatch
 	// path, so a dispatched/woken author behaves the same as on its own surface,
 	// and like its own surface, only for its owner (authoring_requester.go).
-	mayAuthor, authoringWithheld := dispatchAuthoring(ctx, target, agentOwner, runtimeUser)
-	if mayAuthor {
-		tools = append(tools, builderAuthoringTools(subSess, nil)...)
-		tools = mergeToolsDedup(tools, T.authoringPrimitivesFor(ctx, target, runtimeUser, runtimeDB, subSess))
+	sd.mayAuthor, sd.authoringWithheld = dispatchAuthoring(sd.ctx, sd.target, sd.agentOwner, sd.runtimeUser)
+	if sd.mayAuthor {
+		sd.tools = append(sd.tools, builderAuthoringTools(sd.subSess, nil)...)
+		sd.tools = mergeToolsDedup(sd.tools, T.authoringPrimitivesFor(sd.ctx, sd.target, sd.runtimeUser, sd.runtimeDB, sd.subSess))
 	}
 	// Fleet targets get their exclusive fleet-management + delegation +
 	// event-monitor catalog here too, so a dispatched/woken fleet agent
@@ -833,195 +959,211 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 	// catalog hook. Drop the generic interval scheduler (it schedules
 	// through the fleet instead). Authors also get these so a delegated
 	// build can wire its tool into a schedule/monitor (schedule).
-	if target.Fleet || mayAuthor {
-		tools = append(tools, operatorManagementTools(subSess, target.ID)...)
+	if sd.target.Fleet || sd.mayAuthor {
+		sd.tools = append(sd.tools, operatorManagementTools(sd.subSess, sd.target.ID)...)
 	}
 	// Channel-scoped chat tools — any agent that has channels gets list_chats /
 	// read_chat over ITS channels (independent of Fleet). Mirrors runner.go.
 	// via carries the dispatch chain on a DELEGATED run, so a delegate can also
 	// address the channels its delegator reaches (empty for a schedule / wake,
 	// which have no dispatching parent).
-	if chTools := channelChatTools(subSess, agentOwner, target.ID, inheritedChannelChain(target, via)...); len(chTools) > 0 {
-		tools = append(tools, chTools...)
+	if chTools := channelChatTools(sd.subSess, sd.agentOwner, sd.target.ID, inheritedChannelChain(sd.target, via)...); len(chTools) > 0 {
+		sd.tools = append(sd.tools, chTools...)
 	}
 	// App-contributed tools, for bindings the runtime does not own — see
 	// core/agent_tool_providers.go. Empty for an agent no app has bound
 	// anything to, which is most of them.
-	tools = append(tools, AgentProvidedTools(subSess, agentOwner, target.ID)...)
+	sd.tools = append(sd.tools, AgentProvidedTools(sd.subSess, sd.agentOwner, sd.target.ID)...)
 	// Its Sources, which a chat turn gets in runPlan and this path never did.
-	tools = withSourceTools(tools, subSess, agentOwner, target)
+	sd.tools = withSourceTools(sd.tools, sd.subSess, sd.agentOwner, sd.target)
 	// Parent-tool inheritance on the sync-dispatch path (standing-agent fires,
 	// delegations, event-monitor wakes). An owned sub-agent that opted in pulls
 	// its parent's non-consequential catalog (read_phantom_chat etc.) at runtime
 	// — without this a Builder-authored summarizer scheduled to run on a clock
 	// would lack the very tool it was built to use. Parent record lives in the
 	// owner's store; guarded to top-level parents; deduped.
-	if target.InheritParentTools && target.OwnedBy != "" {
-		if parent, ok := loadAgent(ownerDB, target.OwnedBy); ok && parent.OwnedBy == "" {
-			pseudo := &chatTurn{app: T, agent: target, user: runtimeUser, udb: runtimeDB, ctx: ctx, network: subSess.Network}
-			tools = mergeToolsDedup(tools, pseudo.inheritableParentTools(parent, subSess))
+	if sd.target.InheritParentTools && sd.target.OwnedBy != "" {
+		if parent, ok := loadAgent(sd.ownerDB, sd.target.OwnedBy); ok && parent.OwnedBy == "" {
+			pseudo := &chatTurn{app: T, agent: sd.target, user: sd.runtimeUser, udb: sd.runtimeDB, ctx: sd.ctx, network: sd.subSess.Network}
+			sd.tools = mergeToolsDedup(sd.tools, pseudo.inheritableParentTools(parent, sd.subSess))
 		}
 	}
 	// Phantom dispatches: pin the local target's posture flags AND
 	// skip the facts-load so prependAgentContext can't inject any
 	// pre-existing phantom-side facts into the prompt. See the
 	// matching block in RunAgentSyncContinuing for the full rationale.
-	isPhantomDispatch := strings.HasPrefix(runtimeUser, "phantom:")
-	if isPhantomDispatch {
-		target.DisableInferred = true
-		target.DisableExplicit = true
+	sd.isPhantomDispatch = strings.HasPrefix(sd.runtimeUser, "phantom:")
+	if sd.isPhantomDispatch {
+		sd.target.DisableInferred = true
+		sd.target.DisableExplicit = true
 	}
+}
+
+func (sd *syncDispatch) buildTurn() {
+	T := sd.T
+	appTools := sd.appTools
+	via := sd.via
 	// Per-turn closure tools (knowledge_search, memory_*, agents,
 	// activate_skill) + Available agents block. Without these, the
 	// dispatched agent couldn't reach its own knowledge / memory /
 	// peer fleet — the exact gap that hid sub-agents from phantom-
 	// dispatched runs even though they were reachable from the
 	// Agency chat UI.
-	extraTools, availableBlock, customToolPrompt, subTurn := T.buildDispatchTurnExtrasWithOwner(ctx, target, runtimeUser, runtimeDB, subSess, agentOwner, ownerDB)
+	sd.extraTools, sd.availableBlock, sd.customToolPrompt, sd.subTurn = T.buildDispatchTurnExtrasWithOwner(sd.ctx, sd.target, sd.runtimeUser, sd.runtimeDB, sd.subSess, sd.agentOwner, sd.ownerDB)
 	// The agents that handed this run over: their ask marks bind it too
 	// (ask_first.go).
-	subTurn.askChain = append([]string{}, via...)
+	sd.subTurn.askChain = append([]string{}, via...)
 	// And its own hand-offs are counted and bounded from here.
-	subTurn.dispatchChain, subTurn.dispatchOrigin = chain, origin
+	sd.subTurn.dispatchChain, sd.subTurn.dispatchOrigin = sd.chain, sd.origin
 	// Same reason as the continuing-dispatch path below: no *session on a
 	// dispatched turn means no trail, and a guard that leaves no breadcrumb is
 	// a guard nobody can account for after the fact.
-	subTurn.beginDispatchDiag(target.ID, subSessID)
-	subTurn.noteAuthoringWithheld(authoringWithheld)
-	tools = append(tools, extraTools...)
+	sd.subTurn.beginDispatchDiag(sd.target.ID, sd.subSessID)
+	sd.subTurn.noteAuthoringWithheld(sd.authoringWithheld)
+	sd.tools = append(sd.tools, sd.extraTools...)
 	// delegate runs without asking only where agents(run) would.
-	tools = subTurn.gateDelegate(tools)
+	sd.tools = sd.subTurn.gateDelegate(sd.tools)
 	// Caller-injected per-run tools, the positional twin of AgentSyncRun.AppTools
 	// on the continuing path. After the whole catalog so the caller's name wins a
 	// collision with the agent's own, and mirrored onto subTurn so custom-tool
 	// resolution (lazyToolFallback) sees them. Still passes through the privacy
 	// filter below, like everything else.
 	if len(appTools) > 0 {
-		tools = append(tools, appTools...)
-		subTurn.appTools = append(subTurn.appTools, appTools...)
+		sd.tools = append(sd.tools, appTools...)
+		sd.subTurn.appTools = append(sd.subTurn.appTools, appTools...)
 	}
 	// ForcePrivate enforcement — drop network tools + attach blocked
 	// connector. Done AFTER tools are fully assembled (allowlist +
 	// dispatch extras) so the filter sees everything that would have
 	// reached the LLM and removes the network-capable subset in one
 	// pass. No-op when ForcePrivate is false.
-	ctx, tools = applyForcePrivateToDispatch(ctx, subSess, tools, target)
-	// Facts read from the RUNTIME user's DB, so dispatches from
-	// different phantom chats see isolated state for the same agent
-	// record. First call against a fresh runtimeUser starts clean —
-	// no leakage from the owner's interactive Explicit Memory.
-	// Skipped for phantom runs (no facts in prompt at all).
-	// The turn's own read (chatTurn.facts), as a web turn's: it honours the
-	// agent's Explicit Memory switch and a stranger's sharing gates, which a
-	// raw list did not, so an agent with saved notes turned off still had
-	// them in every dispatched prompt.
-	var subFacts []MemoryFact
-	if !isPhantomDispatch {
-		subFacts = subTurn.facts()
+	sd.ctx, sd.tools = applyForcePrivateToDispatch(sd.ctx, sd.subSess, sd.tools, sd.target)
+}
+
+func (sd *syncDispatch) buildPrompt() {
+	message := sd.message
+	if !sd.isPhantomDispatch {
+		sd.subFacts = sd.subTurn.facts()
 	}
-	sysPrompt := dispatchSystemPrompt(ctx, target, subFacts, availableBlock, customToolPrompt, subSessID, runtimeDB, runtimeUser)
+	sd.sysPrompt = dispatchSystemPrompt(sd.ctx, sd.target, sd.subFacts, sd.availableBlock, sd.customToolPrompt, sd.subSessID, sd.runtimeDB, sd.runtimeUser)
 	// Only Builder reads the delegated marker (to skip its intake/confirm
 	// workflow); other agents ignore it. ask_user / approvals are already
 	// framework-gated off the dispatch path, so we don't add the marker for
 	// agents that don't act on it.
-	deliveredMessage := message
-	if isBuilderAgent(target.ID) {
-		deliveredMessage = markAsDelegated(message)
+	sd.deliveredMessage = message
+	if isBuilderAgent(sd.target.ID) {
+		sd.deliveredMessage = markAsDelegated(message)
 	}
+}
+
+func (sd *syncDispatch) enterMachine() {
+	message := sd.message
 	// The target's machine. Handed over by an agent, it resumes where that
 	// agent's last delegation to it left off, as an agents(run) thread does: a
 	// thread per delegator and target that holds only the machine's place.
 	// Started fresh every time, a machine of several steps never got past its
 	// first across delegations. A run nobody handed over (a scheduled fire)
 	// has no one to keep a place for, and starts at the first step.
-	machThread, ephemeral := &ChatSession{ID: subSessID, AgentID: target.ID}, true
-	if len(chain) > 0 {
-		id := "dispatch:delegated:" + chain[len(chain)-1] + ":" + target.ID
-		if prior, ok := loadChatSession(runtimeDB, target.ID, id); ok {
+	machThread, ephemeral := &ChatSession{ID: sd.subSessID, AgentID: sd.target.ID}, true
+	if len(sd.chain) > 0 {
+		id := "dispatch:delegated:" + sd.chain[len(sd.chain)-1] + ":" + sd.target.ID
+		if prior, ok := loadChatSession(sd.runtimeDB, sd.target.ID, id); ok {
 			machThread = &prior
 		} else {
-			machThread = &ChatSession{ID: id, AgentID: target.ID, Created: time.Now()}
+			machThread = &ChatSession{ID: id, AgentID: sd.target.ID, Created: time.Now()}
 		}
 		ephemeral = false
 	}
 	// The passes a web turn's catalog gets over all of it (dispatch_catalog.go).
-	tools = subTurn.finalizeDispatchCatalog(subSess, tools)
-	subTurn.machineToolList = machineToolNotes(subSess)
-	subTurn.noteAgentAttachments(subSess)
-	subTurn.enterDispatchMachine(machThread, ephemeral, message, &sysPrompt, &tools, "delegation")
-	think := subTurn.machine.Think(resolveDispatchThink(target))
+	sd.tools = sd.subTurn.finalizeDispatchCatalog(sd.subSess, sd.tools)
+	sd.subTurn.machineToolList = machineToolNotes(sd.subSess)
+	sd.subTurn.noteAgentAttachments(sd.subSess)
+	sd.subTurn.enterDispatchMachine(machThread, ephemeral, message, &sd.sysPrompt, &sd.tools, "delegation")
+	sd.think = sd.subTurn.machine.Think(resolveDispatchThink(sd.target))
+}
+
+func (sd *syncDispatch) prepareInput() {
+	message := sd.message
+	confirm := sd.confirm
 	// Telemetry — each RunAgentSync invocation gets its own per-turn
 	// accumulator so pipeline agent stages, external dispatches, and
 	// any other sync sub-agent run leaves a grep-able forensic record
 	// in the log. Without this, pipeline-internal tool calls are a
 	// black box from the parent's perspective.
-	telem := newTurnTelemetry()
-	dispatchMsgs, gDecline := subTurn.applyInputGuardrail([]Message{{Role: "user", Content: deliveredMessage}})
-	if gDecline == "" {
-		gDecline = subTurn.machineRelay() // a relaying step's reply, sent without a model
+	sd.telem = newTurnTelemetry()
+	sd.dispatchMsgs, sd.gDecline = sd.subTurn.applyInputGuardrail([]Message{{Role: "user", Content: sd.deliveredMessage}})
+	if sd.gDecline == "" {
+		sd.gDecline = sd.subTurn.machineRelay() // a relaying step's reply, sent without a model
 	}
 	// The skills and hints a web turn puts beside the message, after the
 	// input guardrail read the message alone (dispatch_catalog.go).
-	if n := len(dispatchMsgs); n > 0 && dispatchMsgs[n-1].Role == "user" {
-		dispatchMsgs[n-1].Content = withTurnContext(dispatchMsgs[n-1].Content, subTurn.dispatchTurnContext(message))
+	if n := len(sd.dispatchMsgs); n > 0 && sd.dispatchMsgs[n-1].Role == "user" {
+		sd.dispatchMsgs[n-1].Content = withTurnContext(sd.dispatchMsgs[n-1].Content, sd.subTurn.dispatchTurnContext(message))
 	}
-	subTurn.noteMountedTools(tools)
-	dispatchPin, dispatchRoute := dispatchRouting(ctx, subTurn)
+	sd.subTurn.noteMountedTools(sd.tools)
+	sd.dispatchPin, sd.dispatchRoute = dispatchRouting(sd.ctx, sd.subTurn)
 	// An agent that plans on the lead hands its work to work_step here
 	// (runner_lead_plans_dispatch.go), and the lead loses the routes back to
 	// the work tools it gave up.
-	dispatchFallback, dispatchDynamic := subTurn.lazyToolFallback, subTurn.dynamicNewTempTools(subSess)
-	if subTurn.applyDispatchLeadPlans(subSess, dispatchPin, message, &sysPrompt, &tools, confirm) {
-		dispatchFallback, dispatchDynamic = nil, nil
+	sd.dispatchFallback, sd.dispatchDynamic = sd.subTurn.lazyToolFallback, sd.subTurn.dynamicNewTempTools(sd.subSess)
+	if sd.subTurn.applyDispatchLeadPlans(sd.subSess, sd.dispatchPin, message, &sd.sysPrompt, &sd.tools, confirm) {
+		sd.dispatchFallback, sd.dispatchDynamic = nil, nil
 	}
-	buildCheck := newDispatchBuildCheck(target, subSess)
+	sd.buildCheck = newDispatchBuildCheck(sd.target, sd.subSess)
+}
+
+func (sd *syncDispatch) configureLoop() {
+	T := sd.T
+	confirm := sd.confirm
 	// Started from a chat turn's tool call (delegate, a pipeline's agent
 	// stage): its round, the tool it just ran and its thinking show on that
 	// call's card (dispatch_progress.go). nil from anywhere else.
-	prog := dispatchProgressFrom(ctx, target.Name)
+	prog := dispatchProgressFrom(sd.ctx, sd.target.Name)
 	progRoundStart, progReasoning := prog.hooks()
-	syncCfg := AgentLoopConfig{
+	sd.syncCfg = AgentLoopConfig{
 		OnRoundStart:    progRoundStart,
 		ReasoningStream: progReasoning,
-		TierOverride:    dispatchPin,
+		TierOverride:    sd.dispatchPin,
 		// A terminal-rule pre_input block refused this request outright, or a
 		// machine step relays an earlier step's answer: the loop delivers this
 		// text and never calls a model. Empty on every other turn.
-		PreEmptedReply:  gDecline,
-		RoundToolFilter: subTurn.machineToolFilter(),
+		PreEmptedReply:  sd.gDecline,
+		RoundToolFilter: sd.subTurn.machineToolFilter(),
 		SendGuardKey:    sendGuardKey,
-		SystemPrompt:    sysPrompt,
-		Tools:           tools,
-		MaxRounds:       resolveMaxWorkerRounds(target),
-		StampLocation:   UserLocation(runtimeUser), // stamp the turn in the acting user's zone
-		ThinkBudget:     target.ThinkBudget,        // per-agent override; 0 = inherit route/global
-		Effort:          target.Effort,             // per-agent level; a budget above wins
-		ActionQuotas:    target.ActionQuotas,       // per-agent 24h caps; empty = uncapped
-		BudgetKey:       target.ID,
-		DailySpendUSD:   target.DailySpendUSD,
-		SharedBudgets:   familyBudgets(target), // a sub-agent counts against its parents' caps
+		SystemPrompt:    sd.sysPrompt,
+		Tools:           sd.tools,
+		MaxRounds:       resolveMaxWorkerRounds(sd.target),
+		StampLocation:   UserLocation(sd.runtimeUser), // stamp the turn in the acting user's zone
+		ThinkBudget:     sd.target.ThinkBudget,        // per-agent override; 0 = inherit route/global
+		Effort:          sd.target.Effort,             // per-agent level; a budget above wins
+		ActionQuotas:    sd.target.ActionQuotas,       // per-agent 24h caps; empty = uncapped
+		BudgetKey:       sd.target.ID,
+		DailySpendUSD:   sd.target.DailySpendUSD,
+		SharedBudgets:   familyBudgets(sd.target), // a sub-agent counts against its parents' caps
 		// Standing fires and Fleet dispatches both land here, and neither
 		// carries tool results into the next run's history — so without this
 		// each one re-learns yesterday's dead endpoint from scratch. One
 		// attempt per run is what the memory buys back (see loadFailureMemory).
-		FailureMemoryKey: failureMemoryKey(target.ID, ""),
+		FailureMemoryKey: failureMemoryKey(sd.target.ID, ""),
 		OnStep: func(info StepInfo) {
-			telem.record(info)
-			liveRun.SetProgress(info.Round, info.ToolCalls)
+			sd.telem.record(info)
+			sd.liveRun.SetProgress(info.Round, info.ToolCalls)
 			prog.step(info)
-			noteRunWork(ctx, target.Name, info)
+			noteRunWork(sd.ctx, sd.target.Name, info)
 		},
-		TurnNotes:      func(user string) string { return subTurn.withBulletins(turnNotes(subSess, runtimeDB, subSessID, user)) },
-		CapturePrompt:  target.CapturePrompt,
-		TurnClaimJudge: subTurn.claimJudge(ctx),
+		TurnNotes: func(user string) string {
+			return sd.subTurn.withBulletins(turnNotes(sd.subSess, sd.runtimeDB, sd.subSessID, user))
+		},
+		CapturePrompt:  sd.target.CapturePrompt,
+		TurnClaimJudge: sd.subTurn.claimJudge(sd.ctx),
 		// What the machine's steps did before the loop ran, as on the web turn.
-		PriorWork: subTurn.priorWorkForJudge,
+		PriorWork: sd.subTurn.priorWorkForJudge,
 		// The lead's review of a turn that did work, when this agent asks for one
 		// (lead_review.go).
-		TurnReview:   subTurn.leadReviewer(ctx),
-		PriorReports: func() []string { return dispatchPriorReports(target, subSessID, runtimeDB) },
-		FinishCheck:  buildCheck.finishCheck(),
-		FinishUnmet:  buildCheck.finishUnmet(),
+		TurnReview:   sd.subTurn.leadReviewer(sd.ctx),
+		PriorReports: func() []string { return dispatchPriorReports(sd.target, sd.subSessID, sd.runtimeDB) },
+		FinishCheck:  sd.buildCheck.finishCheck(),
+		FinishUnmet:  sd.buildCheck.finishUnmet(),
 		// And whether the reply KNOWS what it asserts. This site had the claim
 		// judge and not this one — an inconsistency rather than a decision, and
 		// the kind that is invisible because the path still works: a reply here
@@ -1030,27 +1172,27 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 		//
 		// No LiveClaimSpeaker: this path has no third party writing to it, so
 		// there is no live claim and nothing to be cautious about.
-		TurnGroundingJudge:  T.turnGroundingJudge(ctx),
-		UncheckedClaims:     UncheckedFactNotes(subFacts),
-		DeliveredCount:      func() int { return len(subSess.Images) + len(subSess.Videos) + len(subSess.Files) },
-		Backgrounded:        func() bool { return subSess.Detach.Any() },
-		BackgroundEstimate:  func() string { return subSess.Detach.EstimateText() },
+		TurnGroundingJudge:  T.turnGroundingJudge(sd.ctx),
+		UncheckedClaims:     UncheckedFactNotes(sd.subFacts),
+		DeliveredCount:      func() int { return len(sd.subSess.Images) + len(sd.subSess.Videos) + len(sd.subSess.Files) },
+		Backgrounded:        func() bool { return sd.subSess.Detach.Any() },
+		BackgroundEstimate:  func() string { return sd.subSess.Detach.EstimateText() },
 		Confirm:             confirm,
-		AskFirst:            subTurn.asksFirst, // its marks and its delegators' (ask_first.go)
-		GuardrailCheck:      subTurn.guardrailEnforcer().Check,
-		GuardrailActionGate: subTurn.guardrailEnforcer().ActionGate,
-		GuardrailHalted:     subTurn.guardrailEnforcer().Halted,
-		GuardrailReject:     subTurn.guardrailEnforcer().Reject,
-		GuardrailDeclines:   subTurn.agent.GuardrailDeclines,
+		AskFirst:            sd.subTurn.asksFirst, // its marks and its delegators' (ask_first.go)
+		GuardrailCheck:      sd.subTurn.guardrailEnforcer().Check,
+		GuardrailActionGate: sd.subTurn.guardrailEnforcer().ActionGate,
+		GuardrailHalted:     sd.subTurn.guardrailEnforcer().Halted,
+		GuardrailReject:     sd.subTurn.guardrailEnforcer().Reject,
+		GuardrailDeclines:   sd.subTurn.agent.GuardrailDeclines,
 		// Custom-tool resolution, same as the web runPlan: lazyToolFallback
 		// resolves a direct call to a has-args custom tool; dynamicNewTempTools
 		// surfaces tools the LLM loaded via load_tool this turn.
-		ToolFallbackResolver: dispatchFallback,
-		DynamicTools:         dispatchDynamic,
+		ToolFallbackResolver: sd.dispatchFallback,
+		DynamicTools:         sd.dispatchDynamic,
 		// Feed view_video's sampled frames to the model on the next round so a
 		// channel agent (phantom) actually sees a reel it was asked to watch.
-		DrainViewImages: subSess.DrainViewImages,
-		BeforeToolRound: func() { SnapshotImageRefs(subSess) },
+		DrainViewImages: sd.subSess.DrainViewImages,
+		BeforeToolRound: func() { SnapshotImageRefs(sd.subSess) },
 		// Nothing here surfaces a non-final round's prose: only resp.Content is
 		// returned, no stream is wired, no round is settled into a transcript, and
 		// the telemetry above keeps len(info.Content) rather than the text. So the
@@ -1058,69 +1200,77 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 		// call is pure latency — pre_output judges the reply that is handed back.
 		InterimContentHidden: true,
 		ChatOptions: []ChatOption{
-			WithRouteKey(dispatchRoute),
-			WithThink(think),
+			WithRouteKey(sd.dispatchRoute),
+			WithThink(sd.think),
 		},
 	}
-	resp, syncTranscript, runErr := T.RunAgentLoop(ctx, dispatchMsgs, syncCfg)
+}
+
+func (sd *syncDispatch) runLoop() {
+	T := sd.T
+	message := sd.message
+	sd.resp, sd.syncTranscript, sd.runErr = T.RunAgentLoop(sd.ctx, sd.dispatchMsgs, sd.syncCfg)
 	// The agent's gap check, as one more pass when it finds gaps (GapCheck).
 	// Not on a reply that was a refusal or a machine step's relay.
-	if runErr == nil && resp != nil && gDecline == "" {
-		if follow := subTurn.dispatchGapFollowUp(message, resp.Content); follow != "" {
-			again := append(append([]Message(nil), dispatchMsgs...), Message{Role: "assistant", Content: resp.Content}, Message{Role: "user", Content: follow})
-			if r2, t2, err2 := T.RunAgentLoop(ctx, again, syncCfg); err2 == nil && r2 != nil && strings.TrimSpace(r2.Content) != "" {
-				resp, syncTranscript = r2, append(syncTranscript, t2...)
+	if sd.runErr == nil && sd.resp != nil && sd.gDecline == "" {
+		if follow := sd.subTurn.dispatchGapFollowUp(message, sd.resp.Content); follow != "" {
+			again := append(append([]Message(nil), sd.dispatchMsgs...), Message{Role: "assistant", Content: sd.resp.Content}, Message{Role: "user", Content: follow})
+			if r2, t2, err2 := T.RunAgentLoop(sd.ctx, again, sd.syncCfg); err2 == nil && r2 != nil && strings.TrimSpace(r2.Content) != "" {
+				sd.resp, sd.syncTranscript = r2, append(sd.syncTranscript, t2...)
 			}
 		}
 	}
 	Log("[orchestrate.RunAgentSync] owner=%s runtime=%s target=%s msg_chars=%d err=%v",
-		agentOwner, runtimeUser, target.ID, len(message), runErr)
-	buildCheck.annotate(resp)
+		sd.agentOwner, sd.runtimeUser, sd.target.ID, len(message), sd.runErr)
+	sd.buildCheck.annotate(sd.resp)
 	// The waiting step hands off now it has had its turn, as on every surface;
 	// kept on the delegator's thread, so the next delegation starts there.
-	if runErr == nil && resp != nil {
-		subTurn.completeMachine(subTurn.machine)
+	if sd.runErr == nil && sd.resp != nil {
+		sd.subTurn.completeMachine(sd.subTurn.machine)
 	}
 	// The turn's tool trace, read once: the commitment ledger asks whether the
 	// turn did anything, and the caller recording the run wants the trace itself.
-	toolTrace := persistedToolCallsFromTranscript(syncTranscript)
+	sd.toolTrace = persistedToolCallsFromTranscript(sd.syncTranscript)
 	// Close the books on what this turn said it would do. See commitment_ledger.go.
-	if runErr == nil && resp != nil {
-		recordTurnCommitment(runtimeDB, subSessID, resp.Content, len(toolTrace) > 0)
+	if sd.runErr == nil && sd.resp != nil {
+		recordTurnCommitment(sd.runtimeDB, sd.subSessID, sd.resp.Content, len(sd.toolTrace) > 0)
 	}
+}
+
+func (sd *syncDispatch) report() bool {
 	// Per-sub-agent telemetry summary — same shape as the orchestrator
 	// and worker step summaries so the same greps work uniformly.
-	softCap := resolveMaxWorkerRounds(target)
+	softCap := resolveMaxWorkerRounds(sd.target)
 	outLen := 0
-	if resp != nil {
-		outLen = len(resp.Content)
+	if sd.resp != nil {
+		outLen = len(sd.resp.Content)
 	}
-	exitReason := classifyWorkerExit(runErr, telem.rounds, softCap, outLen)
-	label := fmt.Sprintf("orchestrate.sub-agent agent=%s", target.Name)
-	Log("%s", telem.summary(label, softCap, softCap, exitReason))
-	if line := telem.toolCallSummary(label); line != "" {
+	exitReason := classifyWorkerExit(sd.runErr, sd.telem.rounds, softCap, outLen)
+	label := fmt.Sprintf("orchestrate.sub-agent agent=%s", sd.target.Name)
+	Log("%s", sd.telem.summary(label, softCap, softCap, exitReason))
+	if line := sd.telem.toolCallSummary(label); line != "" {
 		Log("%s", line)
 	}
 	// Status reflects the real outcome: a superseded/cancelled turn is CANCELED,
 	// not FAILED (the deferred RunStatusFailed only stands if we returned before
 	// reaching here — a genuine setup failure).
-	if ownRun {
-		liveRun.Complete(runOutcomeStatus(runErr, resp != nil))
+	if sd.ownRun {
+		sd.liveRun.Complete(runOutcomeStatus(sd.runErr, sd.resp != nil))
 	}
-	if runErr != nil {
-		return syncRunResult{Trace: toolTrace, Usage: spent()}, runErr
+	if sd.runErr != nil {
+		return sd.exit(syncRunResult{Trace: sd.toolTrace, Usage: sd.spent()}, sd.runErr)
 	}
-	if resp == nil {
-		return syncRunResult{Trace: toolTrace, Usage: spent()}, errors.New("agent returned no response")
+	if sd.resp == nil {
+		return sd.exit(syncRunResult{Trace: sd.toolTrace, Usage: sd.spent()}, errors.New("agent returned no response"))
 	}
-	return syncRunResult{
-		Text:        strings.TrimSpace(resp.Content),
-		HitRoundCap: resp.HitRoundCap,
-		Trace:       toolTrace,
-		Detections:  subTurn.scanDetectionCount(),
-		TaintBlocks: subTurn.taintBlockCount(),
-		Usage:       spent(),
-	}, nil
+	return true
+}
+
+func (sd *syncDispatch) spent() UsageDiff {
+	if t := RequestUsage(sd.ctx); t != nil {
+		return t.Diff(UsageSnapshot{})
+	}
+	return UsageDiff{}
 }
 
 // RunAgentSyncContinuing is RunAgentSync's continuation variant —
