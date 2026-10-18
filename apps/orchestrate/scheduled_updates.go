@@ -697,6 +697,8 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// `recurring` group for the same reason the pacing lever is: the turn that
 	// can use it is this one, and a Fleet agent never gets that group.
 	tools = append(tools, tnotes.tool()...)
+	// The passes a web turn's catalog gets over all of it (dispatch_catalog.go).
+	tools = subTurn.finalizeDispatchCatalog(subSess, tools)
 	// Marks the run as belonging to a task, which is what keeps the agent's own
 	// Working-notes block out of a prompt that already carries the task's.
 	ctx = withTaskNotes(ctx, tnotes)
@@ -704,7 +706,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// Full dispatch persona: gated prompt + facts + available blocks +
 	// customToolPrompt (so the LLM SEES the names of its lazily-loaded custom
 	// tools) + per-agent capability guidance.
-	facts := ListMemoryFacts(udb, factsNamespace(agent.ID))
+	facts := subTurn.facts() // honours the Explicit Memory switch, as a web turn's read does
 	sysPrompt := dispatchSystemPrompt(ctx, agent, facts, availableBlock, customToolPrompt, schedSessID, udb, p.Username)
 
 	started := time.Now()

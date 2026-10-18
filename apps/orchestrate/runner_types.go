@@ -193,6 +193,10 @@ type chatTurn struct {
 	// picker. Subtracting one because it was not on a list it was never
 	// offered on is a decision nobody made. See narrowCatalog.
 	attachedToolNames map[string]bool
+	// activityWrapped names the tools wrapToolsForActivity has wrapped this
+	// turn, so a later pass over the whole catalog (finalizeDispatchCatalog)
+	// wraps only the rest instead of scanning a result twice.
+	activityWrapped map[string]bool
 	// priorWork is what ran for this turn BEFORE its loop began — machine
 	// steps, and whatever a step delegated. Guarded by toolMu.
 	priorWork []string

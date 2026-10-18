@@ -755,6 +755,10 @@ func (t *chatTurn) wrapToolsForActivity(sess *ToolSession, tools []AgentToolDef,
 		if orig == nil {
 			continue
 		}
+		if t.activityWrapped == nil {
+			t.activityWrapped = map[string]bool{}
+		}
+		t.activityWrapped[name] = true
 		// Fence network-tool results as untrusted external content. Wrap the RAW
 		// handler so the fence rides through the cache + activity emission below
 		// (cache stores fenced; the model always sees the marker). TrustedOutput

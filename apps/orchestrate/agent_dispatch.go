@@ -911,9 +911,13 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 	// record. First call against a fresh runtimeUser starts clean —
 	// no leakage from the owner's interactive Explicit Memory.
 	// Skipped for phantom runs (no facts in prompt at all).
+	// The turn's own read (chatTurn.facts), as a web turn's: it honours the
+	// agent's Explicit Memory switch and a stranger's sharing gates, which a
+	// raw list did not, so an agent with saved notes turned off still had
+	// them in every dispatched prompt.
 	var subFacts []MemoryFact
 	if !isPhantomDispatch {
-		subFacts = ListMemoryFacts(runtimeDB, factsNamespace(target.ID))
+		subFacts = subTurn.facts()
 	}
 	sysPrompt := dispatchSystemPrompt(ctx, target, subFacts, availableBlock, customToolPrompt, subSessID, runtimeDB, runtimeUser)
 	// Only Builder reads the delegated marker (to skip its intake/confirm
@@ -940,6 +944,8 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 		}
 		ephemeral = false
 	}
+	// The passes a web turn's catalog gets over all of it (dispatch_catalog.go).
+	tools = subTurn.finalizeDispatchCatalog(subSess, tools)
 	subTurn.machineToolList = machineToolNotes(subSess)
 	subTurn.noteAgentAttachments(subSess)
 	subTurn.enterDispatchMachine(machThread, ephemeral, message, &sysPrompt, &tools, "delegation")
@@ -1876,9 +1882,13 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// ForcePrivate enforcement — see applyForcePrivateToDispatch.
 	// No-op when target.ForcePrivate is false.
 	ctx, tools = applyForcePrivateToDispatch(ctx, subSess, tools, target)
+	// The turn's own read (chatTurn.facts), as a web turn's: it honours the
+	// agent's Explicit Memory switch and a stranger's sharing gates, which a
+	// raw list did not, so an agent with saved notes turned off still had
+	// them in every dispatched prompt.
 	var subFacts []MemoryFact
 	if !isPhantomDispatch {
-		subFacts = ListMemoryFacts(runtimeDB, factsNamespace(target.ID))
+		subFacts = subTurn.facts()
 	}
 	sysPrompt := dispatchSystemPrompt(ctx, target, subFacts, availableBlock, customToolPrompt, subSessionID, runtimeDB, runtimeUser)
 	// The third-party doctrine goes in the SYSTEM prompt, not on every message.
@@ -1933,6 +1943,8 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// Only for a MESSAGE, from a person or an agent. A wake whose input is a
 	// report card (a monitor firing) is the framework telling the agent
 	// something happened, which is not what a machine is there to route.
+	// The passes a web turn's catalog gets over all of it (dispatch_catalog.go).
+	tools = subTurn.finalizeDispatchCatalog(subSess, tools)
 	subTurn.machineToolList = machineToolNotes(subSess)
 	subTurn.noteAgentAttachments(subSess)
 	if strings.TrimSpace(run.SystemPromptOverride) == "" && strings.TrimSpace(run.InputReportFrom) == "" {

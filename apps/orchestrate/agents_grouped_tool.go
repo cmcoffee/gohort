@@ -1317,7 +1317,7 @@ func (t *chatTurn) agentsRunActionFor(card toolCard, args map[string]any) (strin
 	// It also gated the persona against the CALLER's AllowedTools rather than
 	// the target's, which is the wrong agent's tool list to be stripping a
 	// target's persona sections against; gatedPersonaFor reads the target.
-	subFacts := ListMemoryFacts(t.udb, factsNamespace(target.ID))
+	subFacts := subTurn.facts() // honours the Explicit Memory switch, as a web turn's read does
 	sysPrompt := dispatchSystemPrompt(t.ctx, target, subFacts, subTurn.dispatchContextBlocks(), customToolPrompt, subSessID, t.udb, t.user)
 
 	// Ephemeral dispatch continuity: a follow-up to the SAME agent in the
@@ -1403,6 +1403,8 @@ func (t *chatTurn) agentsRunActionFor(card toolCard, args map[string]any) (strin
 	if prior.ID == "" {
 		prior.ID, prior.AgentID, prior.Created = subSessID, target.ID, time.Now()
 	}
+	// The passes a web turn's catalog gets over all of it (dispatch_catalog.go).
+	tools = subTurn.finalizeDispatchCatalog(subSess, tools)
 	subTurn.machineToolList = machineToolNotes(subSess)
 	subTurn.noteAgentAttachments(subSess)
 	subTurn.enterDispatchMachine(&prior, false, msg, &sysPrompt, &tools, "agents-run")
