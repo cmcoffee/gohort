@@ -466,6 +466,9 @@ type consoleAgentRow struct {
 	// new target, and offering it a picker of live agents describes a problem
 	// it does not have.
 	Relinkable bool `json:"_relinkable,omitempty"`
+	// Agent is whose schedule this is (the agent that runs it, else the one
+	// that set it up), which the fleet Scheduler names on the row.
+	Agent string `json:"_agent,omitempty"`
 }
 
 // handleConsoleAgents lists the owner's standing (scheduled) agents, each
@@ -501,7 +504,7 @@ func consoleAgentRows(user string, udb Database, agentID string) []consoleAgentR
 		// A long mission without a summary of its current text gets one
 		// written now, for schedules set up on a path that did not ask.
 		summarizeMissionLater(sa)
-		row := consoleAgentRow{Name: sa.Name, Mission: missionForList(sa), State: state, Schedule: StandingScheduleLabel(sa), Runs: standingRunsLabel(user, sa), ID: sa.Name, Paused: sa.Paused}
+		row := consoleAgentRow{Name: sa.Name, Mission: missionForList(sa), State: state, Schedule: StandingScheduleLabel(sa), Runs: standingRunsLabel(user, sa), ID: sa.Name, Paused: sa.Paused, Agent: firstNonEmptyStr(sa.AgentID, sa.ReportAgentID)}
 		if sa.Broken {
 			row.Broken = true
 			row.State = parkedStateLabel(StandingParkCause(sa), sa.BrokenReason)

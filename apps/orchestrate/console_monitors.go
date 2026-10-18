@@ -496,7 +496,8 @@ type consoleMonitorRow struct {
 	// Relinkable gates Relink: a monitor whose dependency is GONE can be
 	// re-pointed. One whose checks keep failing cannot be repaired that way —
 	// no choice of agent fixes a hostname that does not resolve.
-	Relinkable bool `json:"_relinkable,omitempty"`
+	Relinkable bool   `json:"_relinkable,omitempty"`
+	Agent      string `json:"_agent,omitempty"` // hidden; the agent it wakes, named on the fleet Scheduler
 }
 
 // handleConsoleMonitors lists the owner's event monitors (webhook / poll /
@@ -633,7 +634,7 @@ func consoleMonitorRows(user, agentID string) []consoleMonitorRow {
 		// Full script — the UI table renders long/multi-line cells with a
 		// click-to-expand toggle, so send it whole rather than truncating here.
 		script := strings.TrimSpace(m.FormatScript)
-		rows = append(rows, consoleMonitorRow{Name: m.Name, Kind: m.Kind, State: state, Runs: subAgentRunsLabel(m.WakeBrief), Detail: detail, Script: script, Checked: checked, Seen: seen, Last: last, ID: m.Name, Paused: m.Paused, Schedulable: IsScheduledEventKind(m.Kind), Broken: m.Broken,
+		rows = append(rows, consoleMonitorRow{Name: m.Name, Kind: m.Kind, State: state, Runs: subAgentRunsLabel(m.WakeBrief), Detail: detail, Script: script, Checked: checked, Seen: seen, Last: last, ID: m.Name, Agent: wake, Paused: m.Paused, Schedulable: IsScheduledEventKind(m.Kind), Broken: m.Broken,
 			// Where its stopping condition stands, in the checker's own words.
 			Objective: objectiveStateLabel(monitorObjective(m)),
 			// A monitor does not back off, it PARKS: the streak counts towards

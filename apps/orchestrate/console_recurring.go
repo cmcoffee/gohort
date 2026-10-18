@@ -33,7 +33,8 @@ type consoleRecurringRow struct {
 	Broken    bool   `json:"_broken,omitempty"` // hidden gate (Delete-only on a broken row)
 	// Relinkable gates the Relink row action: only a schedule whose target is
 	// GONE has anything to relink. A stalled objective gets Resume instead.
-	Relinkable bool `json:"_relinkable,omitempty"`
+	Relinkable bool   `json:"_relinkable,omitempty"`
+	Agent      string `json:"_agent,omitempty"` // hidden; whose task it is, named on the fleet Scheduler
 }
 
 // subAgentRunsLabel is a schedule's "runs" line when its parent hands the
@@ -84,6 +85,7 @@ func consoleRecurringRows(user, agentID string) []consoleRecurringRow {
 			NextRun: rt.RunAt,
 			ID:      rt.TaskID,
 			UID:     recurringTaskUID(rt.Payload),
+			Agent:   rt.Payload.AgentID,
 		}
 		// Where an objective stands, for the rows that have a goal.
 		row.Objective = objectiveStateLabel(rt.Payload.objective())

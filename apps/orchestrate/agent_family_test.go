@@ -102,6 +102,38 @@ func TestTheSchedulerListsTheWholeFamily(t *testing.T) {
 	}
 }
 
+// The fleet Scheduler is every agent's schedules in one list, so each row says
+// whose it is. An agent's own Scheduler does not repeat its name on every row.
+func TestTheFleetSchedulerSaysWhoseEachScheduleIs(t *testing.T) {
+	app, udb := familyFixture(t)
+	if _, err := saveAgent(udb, AgentRecord{ID: "a-scout", Name: "Scout", Owner: "alice", OrchestratorPrompt: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, sa := range []StandingAgent{
+		{Owner: "alice", Name: "Weekly review", AgentID: "a-writer", Mission: "m", IntervalSeconds: 3600},
+		{Owner: "alice", Name: "Hourly sweep", AgentID: "a-scout", Mission: "m", IntervalSeconds: 3600},
+	} {
+		SaveStandingAgent(RootDB, sa)
+	}
+	SaveEventMonitor(RootDB, EventMonitor{Owner: "alice", Name: "Site up", Kind: EventKindHTTP, URL: "http://example.invalid", WakeAgent: "a-scout", IntervalSeconds: 300})
+	get := func(q string) string {
+		r := httptest.NewRequest(http.MethodGet, "/api/console/scheduler"+q, nil)
+		w := httptest.NewRecorder()
+		app.handleConsoleScheduler(w, asUser(r, "alice"))
+		return w.Body.String()
+	}
+	fleet := get("")
+	for _, want := range []string{`"name":"(Writer) Weekly review"`, `"name":"(Scout) Hourly sweep"`, `"name":"(Scout) Site up"`} {
+		if !strings.Contains(fleet, want) {
+			t.Errorf("the fleet Scheduler should have %s:\n%s", want, fleet)
+		}
+	}
+	own := get("?agent=a-scout")
+	if !strings.Contains(own, `"name":"Hourly sweep"`) || strings.Contains(own, "(Scout)") {
+		t.Errorf("an agent's own Scheduler does not name it on each row:\n%s", own)
+	}
+}
+
 // Moving an agent under a parent hands its schedules and channels to the
 // parent at once, the schedules saying whose work they are; moving it back out
 // leaves them with the parent and says so.

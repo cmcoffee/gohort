@@ -717,8 +717,8 @@ func linkGroupTitle(owner string, g linkGroup, names map[string]string) string {
 // In one agent's view a group shows when any member is that agent's, and the
 // card lists only that agent's members: the header says how many run from
 // other agents, and each member's step number is its place in the whole order.
-// The all-agents view lists every member, labelled "(Agent) name" when the
-// group spans agents.
+// The all-agents view lists every member, labelled "(Agent) name" as every
+// row there is (agentRowLabel).
 func appendLinkGroupRows(out []map[string]any, user string, udb Database, agentID string) ([]map[string]any, map[string]bool) {
 	placed := map[string]bool{}
 	linkMu.Lock()
@@ -744,14 +744,13 @@ func appendLinkGroupRows(out []map[string]any, user string, udb Database, agentI
 	loc := UserLocation(user)
 	for _, g := range groups {
 		var targets []linkTarget
-		mine, agents := agentID == "", map[string]bool{}
+		mine := agentID == ""
 		for _, m := range g.Members {
 			t, ok := resolveLinkMember(user, m)
 			if !ok {
 				continue
 			}
 			targets = append(targets, t)
-			agents[t.agent] = true
 			if t.agent == agentID {
 				mine = true
 			}
@@ -813,11 +812,8 @@ func appendLinkGroupRows(out []map[string]any, user string, udb Database, agentI
 				continue
 			}
 			placed[t.m.ref()] = true
-			if agentID == "" && len(agents) > 1 {
-				label := "(" + firstNonEmptyStr(names[t.agent], t.agent, "no agent") + ") " + t.name
-				if _, ok := m["name"]; ok {
-					m["name"] = label
-				}
+			if _, ok := m["name"]; ok && agentID == "" {
+				m["name"] = agentRowLabel(names, t.agent, t.name)
 			}
 			m["schedule"] = fmt.Sprintf("step %d of %d", i+1, len(targets))
 			m["next_run"] = ""

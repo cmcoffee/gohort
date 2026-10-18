@@ -65,6 +65,18 @@ func (T *OrchestrateApp) handleConsoleScheduler(w http.ResponseWriter, r *http.R
 	}
 	out = uniqueSchedulerRows(out)
 	sortSchedulerRows(out)
+	// The fleet view is every agent's schedules in one list, so each row says
+	// whose it is. An agent's own Scheduler does not need it: its family's rows
+	// already say "for sub-agent X" where the work is handed on.
+	if agentID == "" {
+		names := agentNames(udb, user)
+		for _, m := range out {
+			if title, ok := m["name"].(string); ok {
+				id, _ := m["_agent"].(string)
+				m["name"] = agentRowLabel(names, id, title)
+			}
+		}
+	}
 	// Link groups lead, each drawn as one box, and their members are not
 	// listed a second time in their own sections. Added after the sort, which
 	// orders rows by their own next fire and would split a group apart.
@@ -88,6 +100,13 @@ func (T *OrchestrateApp) handleConsoleScheduler(w http.ResponseWriter, r *http.R
 		out = append(groups, rest...)
 	}
 	writeJSON(w, out)
+}
+
+// agentRowLabel is a fleet Scheduler row's title, led by the name of the agent
+// it belongs to. The list held every agent's schedules under titles like
+// "Daily digest", with nothing to say which agent would run one.
+func agentRowLabel(names map[string]string, agentID, title string) string {
+	return "(" + firstNonEmptyStr(names[agentID], agentID, "no agent") + ") " + title
 }
 
 // sortSchedulerRows puts each section in the order it will happen.
