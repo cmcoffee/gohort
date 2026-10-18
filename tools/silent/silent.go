@@ -1,6 +1,10 @@
 package silent
 
-import . "github.com/cmcoffee/gohort/core"
+import (
+	"strings"
+
+	. "github.com/cmcoffee/gohort/core"
+)
 
 func init() { RegisterChatTool(new(StaySilentTool)) }
 
@@ -15,9 +19,17 @@ func (t *StaySilentTool) Name() string          { return "stay_silent" }
 func (t *StaySilentTool) IsFrameworkTool() bool { return true } // always-wired round-shape essential
 func (t *StaySilentTool) Caps() []Capability    { return nil }  // control-flow signal — no side effects
 func (t *StaySilentTool) Desc() string {
-	return "Suppress your text reply this turn: user receives NO text. Use only when (a) attachments you produced are the message, or (b) you decided to take no action. Do NOT use after completing requested work: user wants confirmation. Calling this closes the turn."
+	return "Suppress your text reply this turn: user receives NO text. Use only when (a) attachments you produced are the message, or (b) you decided to take no action. Do NOT use after completing requested work: user wants confirmation. Calling this closes the turn. Say why in reason."
 }
-func (t *StaySilentTool) Params() map[string]ToolParam { return map[string]ToolParam{} }
+
+// The reason is the one thing the owner learns about a turn that said
+// nothing: their chat shows the turn as having stayed quiet, and with no
+// reason that reads the same as a turn that failed.
+func (t *StaySilentTool) Params() map[string]ToolParam {
+	return map[string]ToolParam{
+		"reason": {Type: "string", Description: "One short line saying why you are staying quiet, for the owner's view of this turn; it is never sent. For example: \"the picture is the reply\", \"they were talking to someone else\", \"nothing new since the last report\"."},
+	}
+}
 
 // silenceConfirmation is what the LLM sees as the tool result. It is phrased
 // as a hard stop signal so the model halts immediately rather than calling
@@ -32,5 +44,8 @@ func (t *StaySilentTool) Run(args map[string]any) (string, error) {
 // RunWithSession sets the silenced flag on the session.
 func (t *StaySilentTool) RunWithSession(args map[string]any, sess *ToolSession) (string, error) {
 	sess.Silenced = true
+	if r, _ := args["reason"].(string); strings.TrimSpace(r) != "" {
+		sess.SilencedReason = strings.TrimSpace(r)
+	}
 	return silenceConfirmation, nil
 }

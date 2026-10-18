@@ -1963,6 +1963,7 @@ func (pr *planRun) runLoop() {
 	// tool's own result makes to the model.
 	if pr.sess != nil && pr.sess.Silenced {
 		t.turnClosed = true
+		t.silenceReason = pr.sess.SilencedReason
 	}
 	// Off-hot-path graph population: after a clean turn, best-effort extract the
 	// entity relationships THIS TURN stated into the graph — both halves of it.
@@ -2211,11 +2212,17 @@ func (pr *planRun) finish() (steps []PlanStep, question, directReply string, err
 		t.turnDiag("llm-unreachable", "The model could not be reached for this turn: "+pr.loopErr.Error())
 		return nil, "", "", pr.loopErr
 	}
-	// No error, no content, no cancel. stay_silent returns from inside the loop
-	// and never lands here, so this is a turn that produced nothing for a reason
-	// nobody recorded. Say so rather than rendering a blank: the round-cap
-	// branch above already sets that precedent, and a silent turn reads as the
-	// assistant ignoring the request.
+	// A turn the model closed with stay_silent produced nothing on purpose,
+	// and the caller saves it as that (persistQuietTurn). This branch used to
+	// say stay_silent "never lands here"; it does, and a deliberate silence was
+	// reported as a turn that failed to produce a reply.
+	if t.turnClosed {
+		return nil, "", "", nil
+	}
+	// No error, no content, no cancel, no silence: a turn that produced nothing
+	// for a reason nobody recorded. Say so rather than rendering a blank: the
+	// round-cap branch above already sets that precedent, and a silent turn
+	// reads as the assistant ignoring the request.
 	if t.ctx.Err() == nil {
 		t.turnDiag("empty-turn", "This turn produced no reply and reported no error.")
 		return nil, "", "", fmt.Errorf("the turn finished without producing a reply")

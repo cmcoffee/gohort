@@ -710,6 +710,15 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 		cancelled()
 		return
 	}
+	// The model chose to say nothing (stay_silent). The turn ended as it asked,
+	// so it is saved as a turn that stayed quiet, with why, rather than going
+	// on to a stand-in step or reading as one that failed.
+	if turn.turnClosed && directReply == "" && question == "" {
+		persistQuietTurn(&sess, udb, turn)
+		turn.noteSessionMarker()
+		sse.Send(map[string]any{"kind": "done"})
+		return
+	}
 	if directReply != "" {
 		// runPlan already emitted the bubble live — either streamed inline during
 		// the agent loop, or promoted post-loop via emitCapturedAsBubble (which

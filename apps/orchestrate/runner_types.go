@@ -229,6 +229,9 @@ type chatTurn struct {
 	// Set from ToolSession.Silenced after a loop returns — that flag was
 	// written by the tool and read by nobody.
 	turnClosed bool
+	// silenceReason is why stay_silent closed the turn, in the model's words,
+	// for the card a quiet turn is saved as (persistQuietTurn).
+	silenceReason string
 
 	// blockMarked records that this turn already carries the stopped mark, so
 	// a rule caught at two hooks leaves one glyph rather than two. Guarded by

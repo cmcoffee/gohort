@@ -250,6 +250,12 @@ func (t *chatTurn) emitToolCall(msgID, name string, args map[string]any, suffix 
 // dispatched agent's call under the dispatch: parentCallID draws it there.
 func (t *chatTurn) emitToolCallUnder(parentCallID, msgID, name string, args map[string]any, suffix string, namePrefix ...string) string {
 	displayName := name
+	// A turn that chose to say nothing shows as having stayed quiet and why
+	// (its reason argument rides in the chip's args), not as a tool named
+	// stay_silent.
+	if name == "stay_silent" {
+		displayName = "Stayed quiet"
+	}
 	if len(namePrefix) > 0 && namePrefix[0] != "" {
 		displayName = namePrefix[0] + name
 	}

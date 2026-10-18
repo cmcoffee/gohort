@@ -289,6 +289,43 @@ func persistIncompleteTurnTrace(sess *ChatSession, udb Database, turn *chatTurn,
 	_, _ = saveChatSession(udb, *sess)
 }
 
+// persistQuietTurn saves a turn the model closed with stay_silent: no reply,
+// the turn's tool runs, and the silence itself labelled with why, which is how
+// the card reads the same on a reload as it did live. It had been saved as
+// "This reply didn't finish, the turn finished without producing a reply",
+// which says the opposite of what happened.
+func persistQuietTurn(sess *ChatSession, udb Database, turn *chatTurn) {
+	orphanCalls := appendMidTurnBubbles(sess, turn.drainMidTurnBubbles(), "")
+	calls := turn.withMachineTrace(append(orphanCalls, turn.persistedToolCalls()...))
+	for i := range calls {
+		if calls[i].Name == "stay_silent" {
+			calls[i].Label = quietLabel(turn.silenceReason)
+		}
+	}
+	label := quietLabel(turn.silenceReason)
+	// The bubble the silence was drawn in says so live, as the saved one does
+	// on a reload (Label is display-only: the model's history never sees it).
+	if id := turn.getCurrentMsgID(); id != "" && turn.sse != nil {
+		turn.sse.Send(map[string]any{"kind": "message_label", "id": id, "label": label})
+	}
+	sess.Messages = append(sess.Messages, turn.withDelivered(ChatMessage{
+		Role:      "assistant",
+		Created:   time.Now(),
+		Usage:     turn.drainLastUsage(),
+		Label:     label,
+		ToolCalls: calls,
+	}))
+	_, _ = saveChatSession(udb, *sess)
+}
+
+// quietLabel is what a turn that stayed quiet is shown as.
+func quietLabel(reason string) string {
+	if reason = strings.TrimSpace(reason); reason != "" {
+		return "Stayed quiet: " + reason
+	}
+	return "Stayed quiet (no reason given)"
+}
+
 // isNearDuplicate returns true when two strings share substantial
 // LEADING content even if they diverge at the end. Used to dedup mid-
 // turn bubbles against the final reply when the orchestrator emitted
