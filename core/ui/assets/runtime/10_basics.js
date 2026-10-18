@@ -2077,6 +2077,22 @@
       debounceTimers[field] = setTimeout(function(){ save(field, value); }, 600);
     }
 
+    // fieldLinkButtons is a field's Links as buttons styled like Suggest and
+    // Edit: a value with another place it is edited, or set, says so where it
+    // is read. Only a link to a path or an http(s) address is kept.
+    function fieldLinkButtons(f) {
+      return (f.links || []).filter(function(l) {
+        var href = l && l.field ? current[l.field] : (l && l.url);
+        return href && (String(href).charAt(0) === '/' || /^https?:/.test(String(href)));
+      }).map(function(l) {
+        var href = String(l.field ? current[l.field] : l.url);
+        var a = el('a', {class: 'ui-form-suggest-btn', href: href}, [l.label || 'Open']);
+        a.style.textDecoration = 'none';
+        if (l.target) a.setAttribute('target', l.target);
+        return a;
+      });
+    }
+
     function renderField(f) {
       var fieldWrap = el('div', {class: 'ui-form-field'});
       // Tag the wrap with the field name so app-side JS can find a
@@ -2098,6 +2114,14 @@
         }
         if (f.help) {
           fieldWrap.appendChild(el('div', {class: 'ui-form-section-help'}, [f.help]));
+        }
+        // A heading that stands for something set elsewhere links there, so
+        // the help line under it is not the only way to find the place.
+        var headLinks = fieldLinkButtons(f);
+        if (headLinks.length) {
+          var headLinkRow = el('div', {class: 'ui-form-suggest-row'});
+          headLinks.forEach(function(a) { headLinkRow.appendChild(a); });
+          fieldWrap.appendChild(headLinkRow);
         }
         return fieldWrap;
       }
@@ -3560,10 +3584,7 @@
       // is precisely the destructive move per-section drafting exists to
       // avoid, and offering both invites the wrong one.
       var fieldSuggestable = f.suggest_url && fieldSetters[f.field] && t !== 'sections';
-      var fieldLinks = (f.links || []).filter(function(l) {
-        var href = l && l.field ? current[l.field] : (l && l.url);
-        return href && (String(href).charAt(0) === '/' || /^https?:/.test(String(href)));
-      });
+      var fieldLinks = fieldLinkButtons(f);
       if (fieldSuggestable || expandEditBtn || fieldLinks.length) {
         var suggestRow = el('div', {class: 'ui-form-suggest-row'});
         if (fieldSuggestable) {
@@ -3597,13 +3618,7 @@
         // Links sit in the same row as Edit, styled as its siblings: a value
         // with another place it can be edited says so next to the button that
         // edits it here, rather than in a sentence underneath.
-        fieldLinks.forEach(function(l) {
-          var href = String(l.field ? current[l.field] : l.url);
-          var a = el('a', {class: 'ui-form-suggest-btn', href: href}, [l.label || 'Open']);
-          a.style.textDecoration = 'none';
-          if (l.target) a.setAttribute('target', l.target);
-          suggestRow.appendChild(a);
-        });
+        fieldLinks.forEach(function(a) { suggestRow.appendChild(a); });
         fieldWrap.appendChild(suggestRow);
       }
 

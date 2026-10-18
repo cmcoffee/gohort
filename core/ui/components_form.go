@@ -513,7 +513,9 @@ type FormField struct {
 	// Links renders extra buttons in the same row as a textarea's ✎ Edit
 	// button, styled as its siblings. For a value that has another place it
 	// can be edited: the button that edits it here, and the one that goes
-	// there, side by side rather than a sentence underneath.
+	// there, side by side rather than a sentence underneath. On a header they
+	// sit under its help line, for a heading that stands for something set
+	// elsewhere.
 	Links []FormFieldLink `json:"links,omitempty"`
 	// TextField, on a Type=="link" field, names another field on the loaded
 	// record holding what the link SAYS, so the button can report as well as

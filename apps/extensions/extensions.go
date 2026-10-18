@@ -1605,13 +1605,19 @@ func credentialEditFields() []ui.FormField {
 	for _, f := range credentialFormFields() {
 		if f.Field == "secret" {
 			out = append(out, ui.FormField{Type: "header", Label: "Key", ShowWhen: f.ShowWhen,
-				Help: "Change or remove this API's key under Connected accounts."})
+				Help:  "Set this API's key under Connected accounts, beside every other key you hold. That is also where you replace or remove it.",
+				Links: []ui.FormFieldLink{{Label: "Set the key in Connected accounts", URL: connectedAccountsURL}}})
 			continue
 		}
 		out = append(out, f)
 	}
 	return out
 }
+
+// connectedAccountsURL opens the Connected accounts section of this page,
+// where a credential's key is set. The section is addressed by its title, so
+// renaming the section means changing this (extensions_test pins the two).
+const connectedAccountsURL = "/extensions#connected-accounts"
 
 func credentialFormFields() []ui.FormField {
 	return []ui.FormField{
