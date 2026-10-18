@@ -13,21 +13,24 @@ import (
 func TestRecallSourceHints(t *testing.T) {
 	kn := knowledgeHints([]SearchHit{
 		{ReportID: "doc-q3", Title: "Q3 pricing policy", Score: 0.88},
-		{Title: "Loose note", Score: 0.80},               // no ReportID → knowledge_search fallback
+		{Title: "Loose note", Score: 0.80},               // no ReportID → a search of the layer
 		{ReportID: "doc-x", Title: "Below", Score: 0.40}, // sub-threshold → stops scan
 	}, 0.70, nil)
 	if len(kn) != 2 {
 		t.Fatalf("knowledgeHints: want 2, got %d", len(kn))
 	}
-	if kn[0].source != "knowledge" || !strings.Contains(kn[0].pull, `fetch_knowledge_doc(doc_id="doc-q3")`) {
+	// The pointers name recall, the verb the agent carries, with the id it
+	// fetches: they named fetch_knowledge_doc and memory(action="search")
+	// after both had left every catalog.
+	if kn[0].source != "knowledge" || kn[0].pull != `recall(id="doc:doc-q3")` || kn[0].id != "doc:doc-q3" {
 		t.Fatalf("knowledge hit 0 wrong: %+v", kn[0])
 	}
-	if kn[1].pull != "knowledge_search" { // no doc_id → search fallback
-		t.Fatalf("no-doc_id hit should fall back to knowledge_search: %+v", kn[1])
+	if kn[1].pull != `recall(query=..., layer="knowledge")` || kn[1].id != "" { // no doc_id → search fallback
+		t.Fatalf("no-doc_id hit should fall back to a knowledge search: %+v", kn[1])
 	}
 
 	mem := memoryHints([]SearchHit{{ReportID: "m1", Title: "Acme API pagination", Score: 0.79}}, 0.70)
-	if len(mem) != 1 || mem[0].source != "memory" || mem[0].pull != `memory(action="search")` {
+	if len(mem) != 1 || mem[0].source != "memory" || mem[0].pull != `recall(id="mem:m1")` {
 		t.Fatalf("memory hint wrong: %+v", mem)
 	}
 }
@@ -56,16 +59,16 @@ func TestMergeScoredHints(t *testing.T) {
 // and the pull pointers — and stays empty when there's nothing.
 func TestFormatRecallHints(t *testing.T) {
 	scored := []recallHint{
-		{source: "knowledge", label: `"Q3 pricing policy"`, score: 0.88, scored: true, pull: `fetch_knowledge_doc(doc_id="doc-q3")`},
-		{source: "memory", label: `"Acme API pagination"`, score: 0.79, scored: true, pull: `memory(action="search")`},
+		{source: "knowledge", label: `"Q3 pricing policy"`, score: 0.88, scored: true, pull: `recall(id="doc:doc-q3")`},
+		{source: "memory", label: `"Acme API pagination"`, score: 0.79, scored: true, pull: `recall(id="mem:m1")`},
 	}
 	graph := []recallHint{
 		{source: "graph", label: `"Acme" links to "Project Zeus" (sponsors), 3 total`, pull: `recall_about("Acme")`},
 	}
 	block := formatRecallHints(nil, scored, graph)
 	for _, want := range []string{
-		"knowledge - \"Q3 pricing policy\" (0.88) → fetch_knowledge_doc(doc_id=\"doc-q3\")",
-		"memory - \"Acme API pagination\" (0.79) → memory(action=\"search\")",
+		"knowledge - \"Q3 pricing policy\" (0.88) → recall(id=\"doc:doc-q3\")",
+		"memory - \"Acme API pagination\" (0.79) → recall(id=\"mem:m1\")",
 		`graph - "Acme" links to "Project Zeus" (sponsors), 3 total → recall_about("Acme")`,
 	} {
 		if !strings.Contains(block, want) {
@@ -120,7 +123,7 @@ func TestAutoPromote(t *testing.T) {
 	if !strings.Contains(block, "Exact match") || !strings.Contains(block, "(0.95)") {
 		t.Fatalf("promoted header missing:\n%s", block)
 	}
-	if !strings.Contains(block, "fetch_knowledge_doc(doc_id=\"doc-mid\")") {
+	if !strings.Contains(block, "recall(id=\"doc:doc-mid\")") {
 		t.Fatalf("mid pointer missing:\n%s", block)
 	}
 }
@@ -235,6 +238,46 @@ func TestOnlyCorpusToolDefsMintsTheKnowledgePair(t *testing.T) {
 				t.Errorf("%s builds the knowledge pair directly (%s). Call corpusToolDefs instead, "+
 					"or the empty-corpus gate and the memory-mode split drift again.", name, ctor)
 			}
+		}
+	}
+}
+
+// An id a hint names is one the turn was given, so recall fetches it instead
+// of refusing it as invented: the hint block rides on the user turn, which the
+// saved conversation recall checks against does not hold. Its pull counts as
+// acting on the hint, for a finding as for a document.
+func TestAHintedIDIsOneRecallWillFetch(t *testing.T) {
+	turn := &chatTurn{agent: AgentRecord{ID: "a1"}}
+	mem := memoryHints([]SearchHit{{ReportID: "m1", Title: "Acme API pagination", Score: 0.79}}, 0.70)
+	turn.recordRecallHints(nil, mem)
+	if !turn.recallIDWasIssued("mem:m1") {
+		t.Error("a hinted finding's id should count as given to the turn")
+	}
+	if turn.recallIDWasIssued("mem:m2") {
+		t.Error("an id no hint named must still read as invented")
+	}
+	turn.hintedDocIDsMu.Lock()
+	hinted := turn.hintedDocIDs["m1"]
+	turn.hintedDocIDsMu.Unlock()
+	if !hinted {
+		t.Error("a pull of the hinted finding should count as acting on the hint")
+	}
+}
+
+// The memory verbs reach the catalog once. corpusToolDefs returns them for an
+// agent with any memory layer, and the same condition appended them again.
+func TestTheMemoryToolsAreInTheCatalogOnce(t *testing.T) {
+	turn, _ := machineTurnFixture(t, residentMachine())
+	if !turn.hasAnyMemoryLayer() {
+		t.Fatal("fixture should have a memory layer")
+	}
+	counts := map[string]int{}
+	for _, td := range turn.frameworkConversationalTools(&ToolSession{}) {
+		counts[td.Tool.Name]++
+	}
+	for _, name := range []string{"remember", "recall", "forget"} {
+		if counts[name] != 1 {
+			t.Errorf("%s is in the catalog %d times", name, counts[name])
 		}
 	}
 }

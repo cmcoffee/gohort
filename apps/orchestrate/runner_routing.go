@@ -269,14 +269,12 @@ func (t *chatTurn) frameworkConversationalTools(sess *ToolSession) []AgentToolDe
 	}
 	out = append(out, t.loadToolToolDef(sess)) // gateway for the agent's lazy custom tools
 	out = append(out, t.skillToolDefs()...)    // read_skill / skill_knowledge_*; nil when skills off
-	// remember / recall / forget replace the six memory + knowledge tools
-	// (knowledge_search + fetch were skipped near the top of this function).
-	// The GRAPH tools are not part of the collapse — a relationship between
-	// named entities is a different question from a passage about a topic —
-	// so they stay their own trio, gated by explicitOff.
-	if t.hasAnyMemoryLayer() {
-		out = append(out, t.unifiedMemoryTools()...)
-	}
+	// remember / recall / forget came in with corpusToolDefs above, which
+	// returns them for any agent with a memory layer. They were appended here a
+	// second time on the same condition, so every such agent's catalog carried
+	// each of them twice. The GRAPH tools are not part of the collapse (a
+	// relationship between named entities is a different question from a
+	// passage about a topic), so they stay their own trio, gated by explicitOff.
 	if !t.explicitOff() {
 		out = append(out, t.linkEntitiesToolDef(), t.recallAboutToolDef(), t.forgetGraphToolDef())
 	}

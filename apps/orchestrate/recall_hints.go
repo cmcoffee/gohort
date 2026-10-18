@@ -22,9 +22,9 @@ import (
 //
 // Sources (each hint is tagged so the model knows which tool to reach for):
 //   - knowledge : the curated corpus (uploaded docs / attached collections),
-//                 pulled with fetch_knowledge_doc(doc_id) or knowledge_search.
+//                 pulled with recall(id="doc:…").
 //   - memory    : the agent's own saved findings (Reference Memory), pulled
-//                 with memory(action="search").
+//                 with recall(id="mem:…").
 //   - graph     : entities the message names that the agent has relationships
 //                 recorded for, pulled with recall_about (structural, unscored).
 //
@@ -52,6 +52,23 @@ type recallHint struct {
 	scored bool    // graph-bridge hints are structural, not scored
 	pull   string  // the tool-call pointer shown to the model
 	key    string  // dedupe key within the scored merge
+	id     string  // the recall id the pointer names, "" when it names a search
+}
+
+// Recall hints name recall, the one memory verb an agent carries. They named
+// the tools it replaced, memory(action="search") and fetch_knowledge_doc, long
+// after those left the catalog: a week of live logs had 126 turns told of a
+// relevant saved finding with a way to read it that did not exist, and no
+// turn followed one.
+
+// recallIDPull is the pointer for a hit recall can fetch by id, or a search of
+// its layer when the hit has none.
+func recallIDPull(prefix, ref, layer string) (pull, id string) {
+	if ref = strings.TrimSpace(ref); ref == "" {
+		return fmt.Sprintf(`recall(query=..., layer=%q)`, layer), ""
+	}
+	id = prefix + ":" + ref
+	return fmt.Sprintf("recall(id=%q)", id), id
 }
 
 // renderRecallHints builds the per-turn recall-hint block, appended next to the
@@ -184,20 +201,17 @@ func knowledgeHints(hits []SearchHit, threshold float64, exclude map[string]bool
 		if exclude[key] {
 			continue // already injected as a promoted body
 		}
-		pull := "knowledge_search"
-		if id := strings.TrimSpace(h.ReportID); id != "" {
-			pull = fmt.Sprintf("fetch_knowledge_doc(doc_id=%q)", id)
-		}
+		pull, id := recallIDPull("doc", h.ReportID, "knowledge")
 		out = append(out, recallHint{
 			source: "knowledge", label: fmt.Sprintf("%q", truncate(name, 80)),
-			score: h.Score, scored: true, pull: pull, key: key,
+			score: h.Score, scored: true, pull: pull, key: key, id: id,
 		})
 	}
 	return out
 }
 
-// memoryHints converts derived Reference-Memory hits into recall pointers.
-// Reference memory has no direct fetch, so they point at memory(action="search").
+// memoryHints converts derived Reference-Memory hits into recall pointers,
+// each read whole with recall(id="mem:…").
 func memoryHints(hits []SearchHit, threshold float64) []recallHint {
 	var out []recallHint
 	now := time.Now()
@@ -221,9 +235,10 @@ func memoryHints(hits []SearchHit, threshold float64) []recallHint {
 		} else {
 			key += strings.ToLower(name)
 		}
+		pull, id := recallIDPull("mem", h.ReportID, "finding")
 		out = append(out, recallHint{
 			source: "memory", label: fmt.Sprintf("%q", truncate(name, 80)),
-			score: h.Score, scored: true, pull: `memory(action="search")`, key: key,
+			score: h.Score, scored: true, pull: pull, key: key, id: id,
 		})
 	}
 	return out
@@ -360,6 +375,7 @@ func (t *chatTurn) recordRecallHints(promoted []SearchHit, scored []recallHint) 
 	}
 	var topScore float32
 	knCount, memCount := 0, 0
+	var issued []string
 	for _, h := range scored {
 		if h.score > topScore {
 			topScore = h.score
@@ -373,6 +389,27 @@ func (t *chatTurn) recordRecallHints(promoted []SearchHit, scored []recallHint) 
 		case "memory":
 			memCount++
 		}
+		// A pull of a finding goes through the same document read as a
+		// knowledge doc (recallFetch), so its ref counts as hinted the same way.
+		if h.id != "" {
+			issued = append(issued, h.id)
+			if _, ref, ok := splitRecallID(h.id); ok {
+				ids[ref] = true
+			}
+		}
+	}
+	// The ids a hint names are ids this turn was given: recall checks that an
+	// id was handed out before it fetches, and the hint block rides on the
+	// user turn, which the saved conversation it searches does not hold.
+	if len(issued) > 0 {
+		t.forgetOfferedMu.Lock()
+		if t.forgetOffered == nil {
+			t.forgetOffered = map[string]bool{}
+		}
+		for _, id := range issued {
+			t.forgetOffered[id] = true
+		}
+		t.forgetOfferedMu.Unlock()
 	}
 	t.hintedDocIDsMu.Lock()
 	if len(ids) > 0 {
@@ -406,8 +443,10 @@ func (t *chatTurn) knowledgeHitsThisTurn() int {
 }
 
 // noteRecallHintPull is the follow-through half of the telemetry loop: called
-// from fetch_knowledge_doc, it logs when a pull acted on a doc_id the recall
-// nudge surfaced this turn — the "did the agent follow the hint?" signal.
+// from the document read behind recall(id=...) for a doc or a finding, it logs
+// when a pull acted on one the recall nudge surfaced this turn, the "did the
+// agent follow the hint?" signal. Set against the shown= lines, the ratio says
+// whether the threshold is right.
 func (t *chatTurn) noteRecallHintPull(docID string) {
 	docID = strings.TrimSpace(docID)
 	if t == nil || docID == "" {
@@ -417,7 +456,7 @@ func (t *chatTurn) noteRecallHintPull(docID string) {
 	hinted := t.hintedDocIDs[docID]
 	t.hintedDocIDsMu.Unlock()
 	if hinted {
-		Log("[recall.hints] acted: fetch_knowledge_doc on hinted doc_id=%s agent=%s", docID, t.agent.ID)
+		Log("[recall.hints] acted: pulled hinted id=%s agent=%s", docID, t.agent.ID)
 	}
 }
 
