@@ -42,7 +42,7 @@ func TestTheKeyHeadingLinksToConnectedAccounts(t *testing.T) {
 		t.Fatal(err)
 	}
 	found := false
-	for _, m := range regexp.MustCompile(`(?m)^\t\t\tTitle: +"([^"]+)",`).FindAllStringSubmatch(string(b), -1) {
+	for _, m := range regexp.MustCompile(`(?m)^\treturn ui\.Section\{\n\t\tTitle: +"([^"]+)",`).FindAllStringSubmatch(string(b), -1) {
 		slug := strings.Trim(regexp.MustCompile(`[^a-z0-9]+`).ReplaceAllString(strings.ToLower(m[1]), "-"), "-")
 		if slug == frag {
 			found = true

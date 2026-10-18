@@ -18,7 +18,7 @@ func TestExtensionsRailHoldsFourPlaces(t *testing.T) {
 		t.Fatal(err)
 	}
 	src := string(b)
-	top := regexp.MustCompile(`(?m)^\t\t\tTitle: +"([^"]+)",`).FindAllStringSubmatch(src, -1)
+	top := regexp.MustCompile(`(?m)^\treturn ui\.Section\{\n\t\tTitle: +"([^"]+)",`).FindAllStringSubmatch(src, -1)
 	var got []string
 	for _, m := range top {
 		got = append(got, m[1])
