@@ -67,6 +67,15 @@ type toolResultPolicy struct {
 	// per-call check is a slice walk rather than a record read.
 	trusted []string
 
+	// actionCaps, ownModel and fetchesExternal are what one CALL reaches, for
+	// a tool that declares it per action (see callStaysInside).
+	actionCaps      map[string][]Capability
+	ownModel        map[string]bool
+	fetchesExternal bool
+	// scanListed is a scan the owner asked for by name, which holds for every
+	// call, where the default scan follows what the call reaches.
+	scanListed bool
+
 	// agentID is the RECEIVING agent — the one whose context these results land
 	// in, which is not always the turn's own agent (a dispatched sub-agent's
 	// tools are wrapped by the caller's turn). A detection is filed against it,
@@ -91,7 +100,39 @@ func toolResultPolicyFor(agent AgentRecord, tl Tool) toolResultPolicy {
 		appealable: scan && agent.ScanAppealable,
 		trusted:    agent.ScanTrustedSources,
 		agentID:    agent.ID,
+
+		actionCaps:      tl.ActionCaps,
+		ownModel:        tl.OwnModelReach,
+		fetchesExternal: tl.FetchesExternal,
+		scanListed:      scan && nameListed(agent.ScanToolsAdd, tl.Name) && !nameListed(agent.ScanToolsSkip, tl.Name),
 	}
+}
+
+// callStaysInside reports a call that reaches nothing outside: the tool
+// declares what each action does, and this action reaches no network, or only
+// the deployment's own model. A grouped tool's capabilities are the union of
+// its actions, so collections, whose add_url fetches a page, fenced its own
+// "Removed document" as content from outside, and machine fenced its help. A
+// tool that declares it fetches external content keeps its fence on every
+// call; so does an action it does not describe.
+func (p toolResultPolicy) callStaysInside(args map[string]any) bool {
+	if p.fetchesExternal || len(p.actionCaps) == 0 {
+		return false
+	}
+	action := strings.ToLower(strings.TrimSpace(stringArg(args, "action")))
+	caps, ok := p.actionCaps[action]
+	if !ok {
+		return false
+	}
+	if p.ownModel[action] {
+		return true
+	}
+	for _, c := range caps {
+		if c == CapNetwork {
+			return false
+		}
+	}
+	return true
 }
 
 // resolveScanScope reports whether this agent scans this tool's output.
@@ -172,6 +213,10 @@ func (t *chatTurn) applyToolResultPolicyBody(name string, p toolResultPolicy, ar
 	out, byFramework := TakeFrameworkResultMark(out)
 	if err != nil || byFramework || strings.TrimSpace(out) == "" {
 		return out, err
+	}
+	if p.callStaysInside(args) {
+		p.fence = false
+		p.scan = p.scanListed
 	}
 	// The bypass is resolved BEFORE the scan and by the framework, not by a
 	// model — the same shape as the guardrail "@" marker, where an exempted

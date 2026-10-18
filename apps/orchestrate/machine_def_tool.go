@@ -98,6 +98,16 @@ func (t *chatTurn) machineGroupedToolDef() AgentToolDef {
 			// delegates and pipelines can reach the network. Tagged so private
 			// mode filters it, as the pipeline tool is for the same reason.
 			Caps: []Capability{CapRead, CapNetwork},
+			// Only run reaches past the store. Declared per action so what one
+			// call does decides how its result is treated: a help or a get is
+			// the framework's own text, and fencing it as outside content
+			// taught the model to distrust the tool's instructions.
+			ActionCaps: map[string][]Capability{
+				"run": {CapRead, CapNetwork}, "try": {CapRead, CapNetwork},
+				"create": {CapWrite}, "update": {CapWrite}, "update_phase": {CapWrite},
+				"repair": {CapWrite}, "delete": {CapWrite},
+				"list": {CapRead}, "get": {CapRead}, "validate": {CapRead}, "check": {CapRead}, "help": {CapRead},
+			},
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			action := strings.ToLower(strings.TrimSpace(stringArg(args, "action")))
