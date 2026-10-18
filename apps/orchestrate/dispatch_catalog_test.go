@@ -60,3 +60,43 @@ func TestDispatchPromptsReadNotesThroughTheTurn(t *testing.T) {
 		t.Error("an agent with Explicit Memory off still has notes")
 	}
 }
+
+// A dispatched run of an agent that checks for gaps gets one more pass to
+// fill what the check found, and an agent that does not check gets none.
+func TestADispatchedRunFillsTheGapsItsAgentChecksFor(t *testing.T) {
+	app, _, _ := newTestOrchestrate(t)
+	app.LLM = &FakeLLM{Turns: []FakeTurn{{Content: "- Which named programs did this?\n- What year did it start?", Repeat: true}}}
+	turn := &chatTurn{app: app, user: "u", ctx: context.Background(), agent: AgentRecord{ID: "a1", Name: "Researcher", GapCheck: true}}
+	follow := turn.dispatchGapFollowUp("how did cities fund transit?", "Cities used several methods.")
+	if !strings.Contains(follow, "Which named programs did this?") || !strings.Contains(follow, "give the whole answer again") {
+		t.Errorf("the follow-up should list the gaps and ask for the whole answer: %q", follow)
+	}
+	turn.agent.GapCheck = false
+	if follow := turn.dispatchGapFollowUp("q", "a"); follow != "" {
+		t.Errorf("an agent that does not check for gaps got a follow-up: %q", follow)
+	}
+	if got := withTurnContext("the message", "  "); got != "the message" {
+		t.Errorf("an empty context changed the message: %q", got)
+	}
+	if got := withTurnContext("the message", "skill: x"); got != "the message\n\nskill: x" {
+		t.Errorf("the context should follow the message: %q", got)
+	}
+}
+
+// Every dispatch path gives the run the web turn's per-message context and
+// its agent's gap check.
+func TestEveryDispatchPathGetsSkillsAndTheGapCheck(t *testing.T) {
+	for file, want := range map[string]int{"agent_dispatch.go": 2, "agents_grouped_tool.go": 1} {
+		src, err := os.ReadFile(file)
+		if err != nil {
+			t.Skip("source unavailable")
+		}
+		body := string(src)
+		if n := strings.Count(body, ".dispatchTurnContext("); n != want {
+			t.Errorf("%s adds the turn context %d time(s), want %d", file, n, want)
+		}
+		if n := strings.Count(body, ".dispatchGapFollowUp("); n != want {
+			t.Errorf("%s runs the gap check %d time(s), want %d", file, n, want)
+		}
+	}
+}

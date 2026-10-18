@@ -1419,6 +1419,11 @@ func (t *chatTurn) agentsRunActionFor(card toolCard, args map[string]any) (strin
 	if gDecline == "" {
 		gDecline = subTurn.machineRelay() // a relaying step's reply, sent without a model
 	}
+	// The skills and hints a web turn puts beside the message, after the
+	// input guardrail read the message alone (dispatch_catalog.go).
+	if n := len(llmMessages); gDecline == "" && n > 0 && llmMessages[n-1].Role == "user" {
+		llmMessages[n-1].Content = withTurnContext(llmMessages[n-1].Content, subTurn.dispatchTurnContext(msg))
+	}
 	// The target's own "Use Lead model", as over a channel or a delegation;
 	// ctx carries the parent's privacy, so a Private parent stays off the lead.
 	runPin, runRoute := dispatchRouting(ctx, subTurn)
@@ -1438,7 +1443,7 @@ func (t *chatTurn) agentsRunActionFor(card toolCard, args map[string]any) (strin
 	// The target's own standing on the model, if it has one; else the
 	// caller's lane rides down (run_lane.go).
 	ctx = agentRunLane(ctx, target, false)
-	resp, _, runErr := t.app.RunAgentLoop(ctx, llmMessages, AgentLoopConfig{
+	runCfg := AgentLoopConfig{
 		TierOverride:    runPin,
 		RoundAbortTools: abortTools,
 		RoundToolFilter: subTurn.machineToolFilter(),
@@ -1490,7 +1495,17 @@ func (t *chatTurn) agentsRunActionFor(card toolCard, args map[string]any) (strin
 			WithRouteKey(runRoute),
 			WithThink(think),
 		},
-	})
+	}
+	resp, _, runErr := t.app.RunAgentLoop(ctx, llmMessages, runCfg)
+	// The agent's gap check, as one more pass when it finds gaps (GapCheck).
+	if runErr == nil && resp != nil && gDecline == "" {
+		if follow := subTurn.dispatchGapFollowUp(msg, resp.Content); follow != "" {
+			again := append(append([]Message(nil), llmMessages...), Message{Role: "assistant", Content: resp.Content}, Message{Role: "user", Content: follow})
+			if r2, _, err2 := t.app.RunAgentLoop(ctx, again, runCfg); err2 == nil && r2 != nil && strings.TrimSpace(r2.Content) != "" {
+				resp = r2
+			}
+		}
+	}
 	Log("[orchestrate.agents.run] depth=%d caller=%s → target=%s msg_chars=%d err=%v",
 		t.dispatchHops(), t.agent.ID, target.ID, len(msg), runErr)
 	if runErr != nil {

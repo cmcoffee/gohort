@@ -960,6 +960,11 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 	if gDecline == "" {
 		gDecline = subTurn.machineRelay() // a relaying step's reply, sent without a model
 	}
+	// The skills and hints a web turn puts beside the message, after the
+	// input guardrail read the message alone (dispatch_catalog.go).
+	if n := len(dispatchMsgs); n > 0 && dispatchMsgs[n-1].Role == "user" {
+		dispatchMsgs[n-1].Content = withTurnContext(dispatchMsgs[n-1].Content, subTurn.dispatchTurnContext(message))
+	}
 	subTurn.noteMountedTools(tools)
 	dispatchPin, dispatchRoute := dispatchRouting(ctx, subTurn)
 	// An agent that plans on the lead hands its work to work_step here
@@ -975,7 +980,7 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 	// call's card (dispatch_progress.go). nil from anywhere else.
 	prog := dispatchProgressFrom(ctx, target.Name)
 	progRoundStart, progReasoning := prog.hooks()
-	resp, syncTranscript, runErr := T.RunAgentLoop(ctx, dispatchMsgs, AgentLoopConfig{
+	syncCfg := AgentLoopConfig{
 		OnRoundStart:    progRoundStart,
 		ReasoningStream: progReasoning,
 		TierOverride:    dispatchPin,
@@ -1055,7 +1060,18 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 			WithRouteKey(dispatchRoute),
 			WithThink(think),
 		},
-	})
+	}
+	resp, syncTranscript, runErr := T.RunAgentLoop(ctx, dispatchMsgs, syncCfg)
+	// The agent's gap check, as one more pass when it finds gaps (GapCheck).
+	// Not on a reply that was a refusal or a machine step's relay.
+	if runErr == nil && resp != nil && gDecline == "" {
+		if follow := subTurn.dispatchGapFollowUp(message, resp.Content); follow != "" {
+			again := append(append([]Message(nil), dispatchMsgs...), Message{Role: "assistant", Content: resp.Content}, Message{Role: "user", Content: follow})
+			if r2, t2, err2 := T.RunAgentLoop(ctx, again, syncCfg); err2 == nil && r2 != nil && strings.TrimSpace(r2.Content) != "" {
+				resp, syncTranscript = r2, append(syncTranscript, t2...)
+			}
+		}
+	}
 	Log("[orchestrate.RunAgentSync] owner=%s runtime=%s target=%s msg_chars=%d err=%v",
 		agentOwner, runtimeUser, target.ID, len(message), runErr)
 	buildCheck.annotate(resp)
@@ -2245,6 +2261,13 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	if gDecline == "" {
 		loopCfg.PreEmptedReply = subTurn.machineRelay()
 	}
+	// The skills and hints a web turn puts beside a message, after the input
+	// guardrail read the message alone (dispatch_catalog.go). A wake's report
+	// card and an app's own prompt are not messages to match skills against.
+	isMessage := strings.TrimSpace(run.InputReportFrom) == "" && strings.TrimSpace(run.SystemPromptOverride) == ""
+	if n := len(llmMessages); isMessage && loopCfg.PreEmptedReply == "" && n > 0 && llmMessages[n-1].Role == "user" {
+		llmMessages[n-1].Content = withTurnContext(llmMessages[n-1].Content, subTurn.dispatchTurnContext(message))
+	}
 	if ask != nil {
 		loopCfg.Tools = append(loopCfg.Tools, delegatedAskUserTool(ask))
 		loopCfg.RoundAbortTools = append(loopCfg.RoundAbortTools, "ask_user")
@@ -2260,6 +2283,15 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		loopCfg.ToolFallbackResolver, loopCfg.DynamicTools = nil, nil
 	}
 	resp, transcript, runErr := T.RunAgentLoop(ctx, llmMessages, loopCfg)
+	// The agent's gap check, as one more pass when it finds gaps (GapCheck).
+	if isMessage && runErr == nil && resp != nil && loopCfg.PreEmptedReply == "" {
+		if follow := subTurn.dispatchGapFollowUp(message, resp.Content); follow != "" {
+			again := append(append([]Message(nil), llmMessages...), Message{Role: "assistant", Content: resp.Content}, Message{Role: "user", Content: follow})
+			if r2, t2, err2 := T.RunAgentLoop(ctx, again, loopCfg); err2 == nil && r2 != nil && strings.TrimSpace(r2.Content) != "" {
+				resp, transcript = r2, append(transcript, t2...)
+			}
+		}
+	}
 	buildCheck.annotate(resp)
 	// The waiting step hands off now that it has had its turn (its next), as the
 	// web turn does on the way out; change_phase may have moved it mid-turn.
