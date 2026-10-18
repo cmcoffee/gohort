@@ -717,3 +717,67 @@ func parseFunctionTagToolCall(body string) (string, map[string]any) {
 	}
 	return name, args
 }
+
+// A model asked for an array or an object sometimes sends it as a JSON string
+// instead: "phases":"[{...}]" where the schema says array. Every handler that
+// type-asserts the value then refuses it ("phases must be an array of phase
+// objects") with a message that cannot say why, and the model, unable to see
+// the difference, retried the same call fourteen times and invented a cause
+// for each failure. The string IS the value, encoded once too often, so it is
+// decoded here, once, before any guard or handler reads the call.
+//
+// Only when the schema asks for that type and the string decodes to exactly
+// it: a string parameter is never touched, and text that merely starts with
+// a bracket stays text.
+
+// coerceJSONStringArgs decodes, in place, each argument the schema types as
+// an array or object that arrived as a JSON string of that type. It returns
+// the names it decoded.
+func coerceJSONStringArgs(params map[string]ToolParam, args map[string]any) []string {
+	var fixed []string
+	for name, p := range params {
+		s, ok := args[name].(string)
+		if !ok {
+			continue
+		}
+		s = strings.TrimSpace(s)
+		switch p.Type {
+		case "array":
+			if !strings.HasPrefix(s, "[") {
+				continue
+			}
+			var v []any
+			if json.Unmarshal([]byte(s), &v) == nil {
+				args[name] = v
+				fixed = append(fixed, name)
+			}
+		case "object":
+			if !strings.HasPrefix(s, "{") {
+				continue
+			}
+			var v map[string]any
+			if json.Unmarshal([]byte(s), &v) == nil {
+				args[name] = v
+				fixed = append(fixed, name)
+			}
+		}
+	}
+	return fixed
+}
+
+// coerceCallArgs applies coerceJSONStringArgs to one call, by the schema of
+// the tool it names, and notes what it decoded.
+func (lr *loopRun) coerceCallArgs(tc ToolCall) {
+	if len(tc.Args) == 0 {
+		return
+	}
+	for _, t := range lr.toolDefs {
+		if t.Name != tc.Name {
+			continue
+		}
+		if fixed := coerceJSONStringArgs(t.Parameters, tc.Args); len(fixed) > 0 {
+			Debug("[agent_loop] %s: decoded %v, sent as JSON strings where the schema asks for structure", tc.Name, fixed)
+		}
+		return
+	}
+}

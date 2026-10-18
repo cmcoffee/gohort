@@ -3534,6 +3534,10 @@ func (lr *loopRun) toolRoundSetup() loopAction {
 
 func (lr *loopRun) toolRoundPlanCalls() loopAction {
 	for i, tc := range lr.rs.resp.ToolCalls {
+		// An array or object sent as a JSON string is decoded before anything
+		// reads the call (agent_loop_argcoerce.go). Args is a map, so this
+		// reaches the call the round records too.
+		lr.coerceCallArgs(tc)
 		if i >= maxToolCallsPerRound {
 			lr.rs.results[i] = ToolResult{ID: tc.ID, Content: fmt.Sprintf("Error: round batch cap, a single round may fire at most %d tool calls; this call (#%d) was dropped. Use the results you already have, or continue next round with a SMALLER, deliberate batch.", maxToolCallsPerRound, i+1), IsError: true}
 			lr.rs.toolErrors++

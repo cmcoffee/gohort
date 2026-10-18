@@ -1303,9 +1303,19 @@ func parseMachinePhases(raw any) ([]MachinePhase, error) {
 	if raw == nil {
 		return nil, nil
 	}
+	// Sent as a JSON string, it is still the array (the agent loop decodes
+	// this for a tool whose schema it holds; a deferred tool called directly
+	// reaches here with the string).
+	if s, isStr := raw.(string); isStr {
+		var decoded []any
+		if err := json.Unmarshal([]byte(strings.TrimSpace(s)), &decoded); err != nil {
+			return nil, fmt.Errorf("phases must be an array of phase objects; it arrived as a string that is not a JSON array (%v). Pass the array itself", err)
+		}
+		raw = decoded
+	}
 	arr, ok := raw.([]any)
 	if !ok {
-		return nil, errors.New("phases must be an array of phase objects")
+		return nil, fmt.Errorf("phases must be an array of phase objects; it arrived as %T", raw)
 	}
 	out := make([]MachinePhase, 0, len(arr))
 	for i, item := range arr {
