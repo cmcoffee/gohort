@@ -75,8 +75,41 @@ func (T *CustomApps) reconcileAppSchedules(spec AppSpec) {
 	}
 	// Upsert the wanted ones.
 	for name, a := range want {
-		upsertAppTrigger(spec.Owner, spec.Slug, name, a)
+		secs, cron := T.scheduleCadence(spec, a)
+		upsertAppTrigger(spec.Owner, spec.Slug, name, a.Name, secs, cron)
 	}
+}
+
+// scheduleCadence is when a scheduled action runs: the value of the setting
+// its schedule names when that reads (ScheduleFromSetting), else the
+// schedule's own interval or cron. A setting is the owner's, as the fire is.
+func (T *CustomApps) scheduleCadence(spec AppSpec, a AppAction) (secs int, cron string) {
+	secs, cron = a.Schedule.IntervalSeconds, a.Schedule.Cron
+	name := strings.TrimSpace(a.Schedule.Setting)
+	if name == "" {
+		return secs, cron
+	}
+	v := T.settingsFor(spec, spec.Owner)[name]
+	s, c, err := ScheduleFromSetting(v)
+	if err != nil {
+		Log("[customapps] %s/%s: setting %q does not say when to run (%v): using the schedule's own", spec.Slug, a.Name, name, err)
+		return secs, cron
+	}
+	return s, c
+}
+
+// scheduleSettings names the settings that say when one of spec's actions
+// runs.
+func scheduleSettings(spec AppSpec) map[string]bool {
+	out := map[string]bool{}
+	for _, a := range spec.Actions {
+		if a.Schedule != nil {
+			if n := strings.TrimSpace(a.Schedule.Setting); n != "" {
+				out[n] = true
+			}
+		}
+	}
+	return out
 }
 
 // removeAppTriggers deletes every scheduled-action trigger for one app (used when
@@ -92,8 +125,16 @@ func removeAppTriggers(owner, slug string) {
 // upsertAppTrigger creates or updates one action's trigger, preserving its live
 // scheduling state (SchedulerID/Created/Paused) across edits and only
 // (re)scheduling when the cadence changed or nothing is scheduled yet.
-func upsertAppTrigger(owner, slug, name string, a AppAction) {
-	secs := a.Schedule.IntervalSeconds
+func upsertAppTrigger(owner, slug, name, action string, secs int, cron string) {
+	if cron != "" {
+		secs = 0
+	}
+	if secs <= 0 && cron == "" {
+		// A schedule run by a setting that says nothing usable and has no
+		// cadence of its own: there is nothing to fire on.
+		DeleteScheduledTrigger(RootDB, owner, name)
+		return
+	}
 	if secs > 0 && secs < MinAppScheduleSeconds {
 		secs = MinAppScheduleSeconds
 	}
@@ -103,10 +144,10 @@ func upsertAppTrigger(owner, slug, name string, a AppAction) {
 		Gate:            GateAlways,
 		Action:          ActionNotify, // unused by our dispatcher; a sane default for the ledger
 		IntervalSeconds: secs,
-		Cron:            a.Schedule.Cron,
+		Cron:            cron,
 		TargetKind:      targetKindCustomAppAction,
 		TargetID:        slug,
-		TargetMeta:      a.Name,
+		TargetMeta:      action,
 		Created:         time.Now(),
 	}
 	prev, ok := GetScheduledTrigger(RootDB, owner, name)

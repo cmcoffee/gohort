@@ -346,7 +346,7 @@ func appSchedule(raw any, action string) (*AppSchedule, []string) {
 		return nil, nil
 	}
 	var notes []string
-	sch := &AppSchedule{Cron: strings.TrimSpace(mapStr(m, "cron"))}
+	sch := &AppSchedule{Cron: strings.TrimSpace(mapStr(m, "cron")), Setting: strings.TrimSpace(mapStr(m, "setting"))}
 	if f, ok := floatVal(m["interval_seconds"]); ok && f > 0 {
 		sch.IntervalSeconds = int(f)
 	}
@@ -364,10 +364,43 @@ func appSchedule(raw any, action string) (*AppSchedule, []string) {
 		sch.IntervalSeconds = MinAppScheduleSeconds
 	}
 	if !sch.Scheduled() {
-		notes = append(notes, fmt.Sprintf("action %q has a schedule object with no cron or interval_seconds: it will NOT self-update (add interval_seconds or cron)", action))
+		notes = append(notes, fmt.Sprintf("action %q has a schedule object with no cron, interval_seconds or setting: it will NOT self-update (add one)", action))
 		return nil, notes
 	}
 	return sch, notes
+}
+
+// appScheduleSettingNotes checks each schedule that names a setting against
+// the app's settings: it must be one, the owner's (only the owner's copy
+// fires), and its default should say when to run, or the action runs on the
+// schedule's own cadence (or not at all) until the owner sets it.
+func appScheduleSettingNotes(spec AppSpec) []string {
+	byName := map[string]AppSetting{}
+	for _, s := range spec.Settings {
+		byName[s.Name] = s
+	}
+	var notes []string
+	for _, a := range spec.Actions {
+		if a.Schedule == nil || a.Schedule.Setting == "" {
+			continue
+		}
+		s, ok := byName[a.Schedule.Setting]
+		switch {
+		case !ok:
+			notes = append(notes, fmt.Sprintf("action %q schedule names setting %q, which the app does not declare: add it to settings (scope owner, default like \"06:00\")", a.Name, a.Schedule.Setting))
+		case s.PerUser():
+			notes = append(notes, fmt.Sprintf("action %q schedule names setting %q, which is per user: only the owner's copy self-updates, so make it scope owner", a.Name, s.Name))
+		default:
+			if _, _, err := ScheduleFromSetting(s.Default); err != nil {
+				fallback := "it will not run until the owner sets it"
+				if a.Schedule.IntervalSeconds > 0 || a.Schedule.Cron != "" {
+					fallback = "it runs on the schedule's own cron or interval until the owner sets it"
+				}
+				notes = append(notes, fmt.Sprintf("action %q schedule setting %q has a default that does not say when to run (%v): %s", a.Name, s.Name, err, fallback))
+			}
+		}
+	}
+	return notes
 }
 
 // appStringList coerces a declarative value to []string: a JSON array of

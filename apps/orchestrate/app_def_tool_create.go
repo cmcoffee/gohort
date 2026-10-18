@@ -209,6 +209,7 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 			parseNotes = append(parseNotes, note)
 		}
 	}
+	parseNotes = append(parseNotes, appScheduleSettingNotes(spec)...)
 
 	// Build the Page from the declarative sections. On update with no sections
 	// passed, keep the existing page.

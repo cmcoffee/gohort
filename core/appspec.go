@@ -408,6 +408,41 @@ type AppSchedule struct {
 	// nobody looks at stops burning the sandbox. 0 = never pause. A page load
 	// touches the app's last-viewed stamp and re-arms a paused schedule.
 	MaxIdleDays int `json:"max_idle_days,omitempty"`
+	// Setting names one of the app's owner settings that says when the action
+	// runs, so moving a morning refresh from 6:00 to 7:00 is a change on the
+	// Settings page rather than a Builder turn. Its value is read by
+	// ScheduleFromSetting and, when it reads, replaces IntervalSeconds/Cron;
+	// one that does not read falls back to them.
+	Setting string `json:"setting,omitempty"`
+}
+
+// ScheduleFromSetting reads a setting's value as when a scheduled action runs:
+// a time of day ("06:00", daily), a schedule in NextCronOccurrence's form
+// ("MON,FRI 09:00", "weekdays 07:30"), or a whole number of minutes ("30",
+// floored to MinAppScheduleSeconds). Exactly one of secs and cron is set when
+// err is nil.
+func ScheduleFromSetting(v string) (secs int, cron string, err error) {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0, "", fmt.Errorf("no time is set")
+	}
+	if n, nerr := strconv.Atoi(v); nerr == nil {
+		if n <= 0 {
+			return 0, "", fmt.Errorf("%q minutes is not a cadence", v)
+		}
+		secs = n * 60
+		if secs < MinAppScheduleSeconds {
+			secs = MinAppScheduleSeconds
+		}
+		return secs, "", nil
+	}
+	if !strings.Contains(v, " ") {
+		v = "daily " + v
+	}
+	if _, cerr := NextCronOccurrence(v, time.Now()); cerr != nil {
+		return 0, "", fmt.Errorf("%q is not a time like 06:00, a schedule like MON,FRI 09:00, or a number of minutes", strings.TrimPrefix(v, "daily "))
+	}
+	return 0, v, nil
 }
 
 // MinAppScheduleSeconds floors a background action's cadence. Unattended network
@@ -418,7 +453,7 @@ const MinAppScheduleSeconds = 300
 // Scheduled reports whether this schedule actually fires (nil-safe: an action
 // with no Schedule returns false).
 func (s *AppSchedule) Scheduled() bool {
-	return s != nil && (s.IntervalSeconds > 0 || s.Cron != "")
+	return s != nil && (s.IntervalSeconds > 0 || s.Cron != "" || strings.TrimSpace(s.Setting) != "")
 }
 
 // OpenCustomAppDB returns the dedicated private database for one custom app,

@@ -171,6 +171,14 @@ func coerceSetting(s AppSetting, v any) (string, error) {
 	return strings.TrimSpace(fmt.Sprint(v)), nil
 }
 
+// settingLabel is what the Settings page calls s.
+func settingLabel(s AppSetting) string {
+	if l := strings.TrimSpace(s.Label); l != "" {
+		return l
+	}
+	return s.Name
+}
+
 // settingsBase is where one person's set values for an app live — their own
 // record base, which for a private-DB app is the app's file.
 func (T *CustomApps) settingsBase(spec AppSpec, uid string) Database {
@@ -258,6 +266,8 @@ func (T *CustomApps) handleSettingsValues(w http.ResponseWriter, r *http.Request
 			return
 		}
 		stored := loadSettingValues(db, spec.Slug)
+		timing := scheduleSettings(spec)
+		retime := false
 		for _, s := range visible {
 			v, ok := in[s.Name]
 			if !ok {
@@ -268,9 +278,21 @@ func (T *CustomApps) handleSettingsValues(w http.ResponseWriter, r *http.Request
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
+			// A setting that says when the app refreshes is refused when it
+			// does not read as a time, rather than saved and quietly ignored.
+			if timing[s.Name] {
+				if _, _, err := ScheduleFromSetting(val); err != nil {
+					http.Error(w, settingLabel(s)+": "+err.Error(), http.StatusBadRequest)
+					return
+				}
+				retime = retime || stored[s.Name] != val
+			}
 			stored[s.Name] = val
 		}
 		db.Set(settingsTable, spec.Slug, stored)
+		if retime && owner {
+			T.reconcileAppSchedules(spec)
+		}
 		writeJSON(w, map[string]bool{"ok": true})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -293,6 +315,9 @@ func (T *CustomApps) handleSettingsReset(w http.ResponseWriter, r *http.Request,
 		db.Unset(settingsTable, spec.Slug)
 	} else {
 		db.Set(settingsTable, spec.Slug, stored)
+	}
+	if owner && len(scheduleSettings(spec)) > 0 {
+		T.reconcileAppSchedules(spec)
 	}
 	writeJSON(w, map[string]bool{"ok": true})
 }
