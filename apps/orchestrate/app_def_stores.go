@@ -20,6 +20,17 @@ import (
 	"github.com/cmcoffee/gohort/core/promotion"
 )
 
+// noStoresHandback is what Builder is told when there is no file store to
+// build on. It used to be one line ("An admin registers one under Admin,
+// Files."), which left the person to work out the rest: which folder, which
+// command, what to grant. Registering a store and mapping its commands are the
+// admin's, so this says what to build meanwhile and what to hand back.
+const noStoresHandback = "There are no file stores you can reach, so nothing that downloads, unpacks or reads files can be granted to an app yet. Registering one is not yours to do: it is an admin's, and the steps are fixed. Build the rest now (the app and its agent, with the store left to grant), then end your reply with these steps for the person, filled in for this build:\n" +
+	"1. Admin, Files, Add file store: name it, and give the folder the files should land in (say whether it should be temporary, which removes each folder after a set time).\n" +
+	"2. If the files arrive by a command (a download or export tool), add it with Add command on the store's row, run it once there, then open Map with Builder on that row to map the lines agents may run, and turn Agents on.\n" +
+	"3. Tell me the store is ready. I then ask for this app's access on it (request_store: read, and write, commands or pull as the scripts need) and test the app end to end.\n" +
+	"Name the folder and the command this build needs in steps 1 and 2 rather than leaving them generic."
+
 func (t *chatTurn) appDefStores(args map[string]any) (string, error) {
 	cat, ok := appstores.Provider.(appstores.Catalog)
 	if appstores.Provider == nil || !ok {
@@ -33,7 +44,7 @@ func (t *chatTurn) appDefStores(args map[string]any) (string, error) {
 	}
 	stores := cat.Stores(t.user, slug)
 	if len(stores) == 0 {
-		return "There are no file stores you can reach. An admin registers one under Admin, Files.", nil
+		return noStoresHandback, nil
 	}
 	var b strings.Builder
 	b.WriteString("File stores on this deployment. Build on these rather than writing your own download, extraction or copying code: an app reaches a store only when an admin grants it one, on the store's page (Admin, Files, the store's row, Apps that may use it), choosing write, run commands and pull separately.\n")

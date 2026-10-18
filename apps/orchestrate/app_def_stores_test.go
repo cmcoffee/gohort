@@ -119,3 +119,25 @@ func TestAnAdminApprovesAStoreRequestOnTheCard(t *testing.T) {
 		t.Errorf("a card not approved: applied %q, %q", applied, out)
 	}
 }
+
+type emptyStoreCatalog struct{ fakeStoreCatalog }
+
+func (emptyStoreCatalog) Stores(owner, slug string) []appstores.StoreInfo { return nil }
+
+// With no store to build on, Builder is told what to build meanwhile and the
+// steps to hand back, by the names the admin page uses. It was told only that
+// an admin registers one, and passed that on as all there was to do.
+func TestNoStoreHandsBackTheSteps(t *testing.T) {
+	prev := appstores.Provider
+	appstores.Provider = emptyStoreCatalog{}
+	t.Cleanup(func() { appstores.Provider = prev })
+	out, err := (&chatTurn{user: "alice"}).appDefStores(map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Build the rest now", "Admin, Files, Add file store", "Add command", "Map with Builder", "turn Agents on", "request_store", "Name the folder and the command"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("handback lacks %q:\n%s", want, out)
+		}
+	}
+}
