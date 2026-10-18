@@ -353,7 +353,15 @@ func registerStandingRunner(app *OrchestrateApp) {
 			reportAgent = sa.AgentID // legacy records: fall back to the target agent's channel
 		}
 		surface, home := sa.Surface, sa.ReportSessionID
-		reportFrom := sa.Name
+		reportFrom, reportKind := sa.Name, cortexKindScheduled
+		// A delegation is a request from another agent, not a schedule, and
+		// the record it runs on is named after its TARGET, by id since grants
+		// are keyed that way: its card read as a scheduled report from the
+		// agent's own uuid. It says who asked instead.
+		if by := delegatingAgentName(udb, sa.DispatchedBy); by != "" {
+			reportFrom, reportKind = by, cortexKindRequest
+		}
+		label := reportFrom
 		// A sub-agent has no thread anybody reads: a schedule it runs reports
 		// to its top-level parent's home thread (agent_family.go), saying
 		// which sub-agent ran it, as its recurring tasks and monitors do.
@@ -380,7 +388,7 @@ func registerStandingRunner(app *OrchestrateApp) {
 			if !record {
 				where = "ran in the background"
 			}
-			appendCortexObs(udb, sa.AgentID, sa.Name, cortexKindScheduled, cortexPointer(body, where))
+			appendCortexObs(udb, sa.AgentID, label, reportKind, cortexPointer(body, where))
 		}
 		if !record {
 			return
@@ -401,7 +409,7 @@ func registerStandingRunner(app *OrchestrateApp) {
 				Content:    body,
 				Created:    time.Now(),
 				ReportFrom: reportFrom,
-				ReportKind: cortexKindScheduled,
+				ReportKind: reportKind,
 				// What it actually DID, not just what it concluded. The card is
 				// the only account of a run nobody watched, and the recurring
 				// fire's card has carried its trace all along — two surfaces
@@ -662,4 +670,19 @@ func resolvedAgentID(udb Database, owner, ref string) string {
 		return a.ID
 	}
 	return ref
+}
+
+// delegatingAgentName is the name of the agent that delegated a run, the
+// first of its dispatch chain, or "" for a run nobody delegated.
+func delegatingAgentName(udb Database, chain []string) string {
+	for _, id := range chain {
+		if id = strings.TrimSpace(id); id == "" {
+			continue
+		}
+		if a, ok := loadAgent(udb, id); ok {
+			return chFirst(strings.TrimSpace(a.Name), id)
+		}
+		return id
+	}
+	return ""
 }
