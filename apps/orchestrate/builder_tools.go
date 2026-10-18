@@ -1336,6 +1336,21 @@ var onDemandTools = map[string]bool{
 const onDemandToolIndexHeader = "\n\n## More tools (load before use)\n" +
 	"These tools exist but their parameters aren't loaded yet. When a request calls for one, first call `load_tool(names=[\"<name>\"])`, then use it normally.\n\n"
 
+// deferredHas reports whether a tool of this name is already in the
+// load-before-use index.
+func (t *chatTurn) deferredHas(name string) bool {
+	_, ok := t.deferredAuthoringDefs[name]
+	return ok
+}
+
+// noteDuplicateDeferral records a second tool offered under a name the index
+// already holds. The first is kept: one name loads one tool, and a later
+// one quietly replacing it is how Builder's schedule became a different
+// tool with the same name.
+func (t *chatTurn) noteDuplicateDeferral(name string) {
+	Log("[orchestrate.tools] agent=%s: a second %q was offered for the load-before-use index; the first is kept", t.agent.ID, name)
+}
+
 // deferOnDemandTools moves the onDemandTools out of the direct catalog and into
 // the deferred index, on every agent including Builder: unlike authoring, none
 // of them is anyone's core rhythm.
@@ -1346,6 +1361,10 @@ func (t *chatTurn) deferOnDemandTools(tools []AgentToolDef) []AgentToolDef {
 	for _, td := range tools {
 		if !onDemandTools[td.Tool.Name] {
 			kept = append(kept, td)
+			continue
+		}
+		if t.deferredHas(td.Tool.Name) {
+			t.noteDuplicateDeferral(td.Tool.Name)
 			continue
 		}
 		if t.deferredAuthoringDefs == nil {
@@ -1401,6 +1420,11 @@ func (t *chatTurn) deferBuilderOnDemandTools(tools []AgentToolDef, names []strin
 		n := td.Tool.Name
 		if !builderOnDemandTools[n] && !onDemandTools[n] {
 			kept = append(kept, td)
+			continue
+		}
+		if t.deferredHas(n) {
+			t.noteDuplicateDeferral(n)
+			moved[n] = true
 			continue
 		}
 		if t.deferredAuthoringDefs == nil {

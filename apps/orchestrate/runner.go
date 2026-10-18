@@ -924,7 +924,12 @@ func (pr *planRun) catalogKnowTools() error {
 	// the fleet and stays invisible to the console, so we keep it off them.
 	// (The earlier dropToolsByName in resolveWorkerTools was dead — recurring
 	// is added HERE, after that assembly, so it was never in that list.)
-	if !t.agent.Fleet && !toolsHaveName(pr.cat.workerTools, "schedule") {
+	//
+	// The fleet `schedule` may already be waiting behind load_tool (Builder's
+	// is deferred above), and it counts: adding this one beside it put two
+	// tools of one name in the deferred index, the second won, and Builder,
+	// told to name the agent to run, was refused for naming one 34 times.
+	if !t.agent.Fleet && !toolsHaveName(pr.cat.workerTools, "schedule") && !t.deferredHas("schedule") {
 		pr.cat.knowTools = append(pr.cat.knowTools, t.recurringToolDef())
 	}
 	// Session spin-off — web chat only (this assembly path is never used by
