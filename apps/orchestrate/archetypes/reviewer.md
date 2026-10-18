@@ -24,7 +24,8 @@
   "asks": [
     "What does it review: drafts, plans, messages before they go out, changes?",
     "Against what: rules you give it, a style guide or document, a policy?",
-    "Should it only report what is wrong, or may it hand back a corrected version?"
+    "Should it only report what is wrong, or may it hand back a corrected version?",
+    "Should it judge on the lead model (stronger, costs more per review) or on the worker like its parent?"
   ]
 }
 ---
@@ -53,9 +54,10 @@ for honesty about a turn; use a Reviewer for conformance to a standard.
 
 - **Independence.** The agent that wrote something reads it charitably: it
   knows what it meant. A separate agent reads what is there.
-- **A different model.** Set `lead_model: true` on the Reviewer and its
+- **A different model.** With `lead_model: true` on the Reviewer its
   judgement runs on the lead while the parent writes on the worker: the
-  stronger model spent where judgement matters, not on every turn. (Off when a
+  stronger model spent where judgement matters, not on every turn. That is the
+  fourth ask, because the lead's cost is the person's to choose. (Off when a
   Private conversation or `force_private` keeps it on the worker.)
 - **Its memory is about failures.** Which rules drafts usually break, which
   phrasings the style guide forbids: lessons that make the next review sharper
