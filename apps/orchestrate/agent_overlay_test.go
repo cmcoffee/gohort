@@ -295,26 +295,26 @@ func TestLoadingASeedShadowTwiceDoesNotKeepWriting(t *testing.T) {
 // --- instances -------------------------------------------------------------
 
 // Cloning a shape produces an agent that TRACKS it. Until this, the wizard and
-// materializeArchetypeAgent handed out snapshots, so a fix to the research
-// prompt reached nobody who already had a research agent.
+// materializeArchetypeAgent handed out snapshots, so a fix to a shape's
+// prompt reached nobody who already had an agent made from it.
 func TestACloneOfAShapeTracksIt(t *testing.T) {
 	db := overlayTestDB(t)
-	clone, err := cloneAgent(db, "seed-research", "craig@example.com", "My Researcher", true)
+	clone, err := cloneAgent(db, "seed-chat", "craig@example.com", "My Assistant", true)
 	if err != nil {
 		t.Fatalf("clone: %v", err)
 	}
-	if clone.ShapeID != "research" {
-		t.Fatalf("the clone tracks %q, want the research shape", clone.ShapeID)
+	if clone.ShapeID != "conversational" {
+		t.Fatalf("the clone tracks %q, want the conversational shape", clone.ShapeID)
 	}
 	// The name is the owner's, always: renaming somebody's agent because the
 	// framework renamed a shape is jarring and has no upside.
 	if !hasField(clone.OverriddenFields, "name") {
 		t.Errorf("the clone's name is not its own: %v", clone.OverriddenFields)
 	}
-	if clone.Name != "My Researcher" {
+	if clone.Name != "My Assistant" {
 		t.Errorf("name = %q", clone.Name)
 	}
-	if clone.Owner != "craig@example.com" || clone.ID == "seed-research" {
+	if clone.Owner != "craig@example.com" || clone.ID == "seed-chat" {
 		t.Errorf("the clone is not the user's own record: owner=%q id=%q", clone.Owner, clone.ID)
 	}
 }
@@ -323,7 +323,7 @@ func TestACloneOfAShapeTracksIt(t *testing.T) {
 // owner never claimed.
 func TestAShapeImprovementReachesAnExistingInstance(t *testing.T) {
 	db := overlayTestDB(t)
-	clone, err := cloneAgent(db, "seed-research", "craig@example.com", "My Researcher", true)
+	clone, err := cloneAgent(db, "seed-chat", "craig@example.com", "My Assistant", true)
 	if err != nil {
 		t.Fatalf("clone: %v", err)
 	}
@@ -339,9 +339,9 @@ func TestAShapeImprovementReachesAnExistingInstance(t *testing.T) {
 	}
 	// Simulate the framework moving the shape by resolving against a changed
 	// base: the same thing a new release does.
-	base, ok := shapeBaseRecord("research")
+	base, ok := shapeBaseRecord("conversational")
 	if !ok {
-		t.Fatal("the research shape does not resolve")
+		t.Fatal("the conversational shape does not resolve")
 	}
 	next := base
 	next.PlanGuidance = "Decompose differently."
@@ -361,7 +361,7 @@ func TestAShapeImprovementReachesAnExistingInstance(t *testing.T) {
 // rewrite what it is, while an instance is already the user's own.
 func TestAnInstanceMayRewriteItsPersona(t *testing.T) {
 	db := overlayTestDB(t)
-	clone, err := cloneAgent(db, "seed-research", "craig@example.com", "My Researcher", true)
+	clone, err := cloneAgent(db, "seed-chat", "craig@example.com", "My Assistant", true)
 	if err != nil {
 		t.Fatalf("clone: %v", err)
 	}
@@ -387,7 +387,7 @@ func TestAnInstanceMayRewriteItsPersona(t *testing.T) {
 // this record's own.
 func TestCloningAPlainAgentTracksNothing(t *testing.T) {
 	db := overlayTestDB(t)
-	first, err := cloneAgent(db, "seed-research", "craig@example.com", "First", true)
+	first, err := cloneAgent(db, "seed-chat", "craig@example.com", "First", true)
 	if err != nil {
 		t.Fatalf("clone: %v", err)
 	}
@@ -404,7 +404,7 @@ func TestCloningAPlainAgentTracksNothing(t *testing.T) {
 // agent, so losing the link costs nothing but future updates.
 func TestAnInstanceSurvivesAMissingShape(t *testing.T) {
 	db := overlayTestDB(t)
-	clone, err := cloneAgent(db, "seed-research", "craig@example.com", "My Researcher", true)
+	clone, err := cloneAgent(db, "seed-chat", "craig@example.com", "My Assistant", true)
 	if err != nil {
 		t.Fatalf("clone: %v", err)
 	}
@@ -414,7 +414,7 @@ func TestAnInstanceSurvivesAMissingShape(t *testing.T) {
 	}
 	stored.ShapeID = "a_shape_that_was_removed"
 	got := resolveShapeInstance(stored)
-	if got.Name != "My Researcher" || strings.TrimSpace(got.OrchestratorPrompt) == "" {
+	if got.Name != "My Assistant" || strings.TrimSpace(got.OrchestratorPrompt) == "" {
 		t.Errorf("an instance with a missing shape lost its content: name=%q prompt=%d bytes",
 			got.Name, len(got.OrchestratorPrompt))
 	}
@@ -423,8 +423,8 @@ func TestAnInstanceSurvivesAMissingShape(t *testing.T) {
 // Only shapes that ship a record can be instantiated, and a shape that is
 // gone (an agent built from one keeps its ShapeID) instantiates nothing.
 func TestOnlyShapesWithARecordInstantiate(t *testing.T) {
-	if _, ok := shapeBaseRecord("research"); !ok {
-		t.Error("research does not instantiate")
+	if _, ok := shapeBaseRecord("conversational"); !ok {
+		t.Error("conversational does not instantiate")
 	}
 	if _, ok := shapeBaseRecord("scheduled_watcher"); ok {
 		t.Error("a retired shape still instantiates")
@@ -437,7 +437,7 @@ func TestOnlyShapesWithARecordInstantiate(t *testing.T) {
 // version of itself at the moment its owner asked to freeze it.
 func TestDetachingFreezesWhatTheAgentReadsNow(t *testing.T) {
 	db := overlayTestDB(t)
-	clone, err := cloneAgent(db, "seed-research", "craig@example.com", "My Researcher", true)
+	clone, err := cloneAgent(db, "seed-chat", "craig@example.com", "My Assistant", true)
 	if err != nil {
 		t.Fatalf("clone: %v", err)
 	}
@@ -454,7 +454,7 @@ func TestDetachingFreezesWhatTheAgentReadsNow(t *testing.T) {
 		t.Errorf("still tracking after detach: shape=%q fields=%v rev=%d",
 			detached.ShapeID, detached.OverriddenFields, detached.OverlayRev)
 	}
-	if detached.Name != "My Researcher" {
+	if detached.Name != "My Assistant" {
 		t.Errorf("name = %q", detached.Name)
 	}
 	if detached.OrchestratorPrompt != live.OrchestratorPrompt {
@@ -470,7 +470,7 @@ func TestDetachingFreezesWhatTheAgentReadsNow(t *testing.T) {
 	if !db.Get(agentsTable, clone.ID, &stored) {
 		t.Fatal("no stored record")
 	}
-	base, _ := shapeBaseRecord("research")
+	base, _ := shapeBaseRecord("conversational")
 	next := base
 	next.PlanGuidance = "Decompose differently."
 	if got := resolveShapeInstance(stored); got.PlanGuidance == next.PlanGuidance {
@@ -571,11 +571,11 @@ func TestAWizardAssistantKeepsItsPersonaAndTracksTheRest(t *testing.T) {
 // template arrived with a posture nobody had chosen.
 func TestCloningAShapeDoesNotInheritItsHiddenPosture(t *testing.T) {
 	db := overlayTestDB(t)
-	seed, ok := seedAgentByID("seed-kb")
+	seed, ok := seedAgentByID("seed-research")
 	if !ok || !seed.Hidden {
-		t.Fatal("seed-kb is not the hidden template this test is about")
+		t.Fatal("seed-research is not the hidden framework record this test is about")
 	}
-	clone, err := cloneAgent(db, "seed-kb", "craig@example.com", "Handbook", false)
+	clone, err := cloneAgent(db, "seed-research", "craig@example.com", "Scout", false)
 	if err != nil {
 		t.Fatalf("clone: %v", err)
 	}

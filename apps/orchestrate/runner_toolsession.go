@@ -38,7 +38,10 @@ func init() {
 		// authoring agent (builderAuthoringTools; per-credential fetch_url_*
 		// tools are named by their credential and guarded where those mint)
 		"survey", "shape_agent", "create_agent", "update_agent", "list_reference_sources",
-		"archetype", "clone_agent", "delete_agent", "add_tool",
+		"clone_agent", "delete_agent", "add_tool",
+		// retired with the recipe library, still reserved so a custom tool
+		// cannot take a name old sessions call
+		"archetype",
 		"tool_def", "skill_def", "consult", "bridge", "connector",
 		"tool_template", "collections", "draft_oauth_credential",
 		"draft_api_credential", "update_api_credential",

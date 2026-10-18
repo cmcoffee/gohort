@@ -109,11 +109,11 @@ func TestWizardBriefIncludesAboutYou(t *testing.T) {
 // headers, so this checks the derivation end to end: every offered label points
 // at a seed that exists, the create endpoint's guard agrees with what is
 // rendered, and a seed nobody offers stays unclonable through this path.
+//
+// Today nothing is offered: Research and Knowledge Base were the row, and they
+// are specialists Builder shapes now, so the wizard shows no row at all.
 func TestWizardTemplatesResolve(t *testing.T) {
 	tpls := wizardTemplates()
-	if len(tpls) == 0 {
-		t.Fatal("no wizard templates offered; every recipe lost its template label")
-	}
 	for _, tpl := range tpls {
 		if _, ok := seedAgentByID(tpl.id); !ok {
 			t.Errorf("template %q does not resolve to a seed record", tpl.id)
@@ -125,33 +125,10 @@ func TestWizardTemplatesResolve(t *testing.T) {
 			t.Errorf("isWizardTemplate(%q) = false for an offered template", tpl.id)
 		}
 	}
-	// seed-chat is described by an archetype and named by it, but that recipe
-	// carries no template label, so it is not on the row and must not be
-	// clonable through the wizard's create path.
-	if isWizardTemplate("seed-chat") {
-		t.Error("seed-chat must not be clonable through the wizard template path")
-	}
-	if isWizardTemplate("seed-builder") {
-		t.Error("seed-builder must not be clonable through the wizard template path")
-	}
-
-	// The two the wizard has always offered are still on the row. Losing one
-	// is a silent regression: the row still renders, just shorter.
-	offered := map[string]bool{}
-	for _, tpl := range tpls {
-		offered[tpl.id] = true
-	}
-	for _, id := range []string{"seed-research", "seed-kb"} {
-		if !offered[id] {
-			t.Errorf("%s is no longer offered as a template", id)
+	for _, id := range []string{"seed-chat", "seed-builder", "seed-research", "seed-kb"} {
+		if isWizardTemplate(id) {
+			t.Errorf("%s must not be clonable through the wizard template path", id)
 		}
-	}
-
-	// Research leads the row. It is the shape a new user most often wants,
-	// and the first option is the prominent one, so this is an editorial
-	// decision the recipes state rather than something a sort derives.
-	if tpls[0].id != "seed-research" {
-		t.Errorf("the row leads with %q; Research should be first", tpls[0].id)
 	}
 	// Declared order first, label as the tiebreak, so the row does not
 	// shuffle when a shape is added.

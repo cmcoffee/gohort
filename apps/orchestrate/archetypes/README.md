@@ -12,20 +12,18 @@ JSON frontmatter between `---` fences, then the recipe, then the persona:
 ```
 ---
 {
-  "summary": "A deep-research agent that answers a factual question by searching the web.",
-  "aliases": ["researcher"],
-  "template": { "label": "Research Assistant: cited multi-step research", "order": 1 },
-  "rules_required": true,
-  "record": { "id": "seed-research", "name": "Research", "allowed_tools": ["web_search"] }
+  "summary": "A conversational assistant people talk with every day.",
+  "aliases": ["assistant"],
+  "record": { "id": "seed-chat", "name": "Chat", "memory_mode": "chatbot" }
 }
 ---
-# Archetype: Research agent
+# Archetype: Conversational assistant
 
 Build this when the user asks for...
 
 ## Persona
 
-You are a research orchestrator. ...
+You are a conversational assistant. ...
 ```
 
 The slug is the filename stem, so a doc cannot disagree with its own name.

@@ -24,9 +24,9 @@ import (
 // OrchestratorPrompt as the markdown body:
 //
 //	---
-//	{ "id": "seed-kb", "name": "Knowledge Base", ... }
+//	{ "id": "seed-research", "name": "Research", ... }
 //	---
-//	You are a knowledge-base assistant. ...
+//	You are a research orchestrator. ...
 //
 // JSON rather than YAML because AgentRecord already carries json tags for
 // every field, so the file's keys ARE the record's keys with no translation

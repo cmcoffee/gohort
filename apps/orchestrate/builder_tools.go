@@ -95,11 +95,6 @@ func builderAuthoringTools(sess *ToolSession, t *chatTurn) []AgentToolDef {
 		// What an agent can be attached to. Sits beside create/update because
 		// attached_sources is undiscoverable without it.
 		listReferenceSourcesToolDef(authoringUser),
-		// archetype — build recipes for the common shapes (research, KB,
-		// conversational). The successors to the Chat/Research/KB seeds:
-		// Builder reads a recipe and composes a user-owned agent from it
-		// instead of a fixed framework persona living in the fleet.
-		ChatToolToAgentToolDefWithSession(archetypeTool(), sess),
 		ChatToolToAgentToolDefWithSession(&cloneAgentTool{}, sess),
 		ChatToolToAgentToolDefWithSession(&deleteAgentTool{}, sess),
 		ChatToolToAgentToolDefWithSession(addToolTool{}, sess),
@@ -1103,18 +1098,6 @@ func agentCanAuthor(a AgentRecord) bool {
 	return isBuilderAgent(a.ID)
 }
 
-// isCloneOnlySeed reports whether an agent ID is a TEMPLATE seed: one Builder
-// clones to produce real, usable agents, but that is never meant to be run or
-// published DIRECTLY. Such a seed stays out of the Agency picker and can never
-// become publicly exposed — a user gets its capability by cloning it, not by
-// selecting the empty template. seed-kb (the Knowledge Base template) is the
-// case today: you get a KB by cloning it with your own corpus, not by chatting
-// with the corpus-less seed. Centralized like isBuilderAgent so the identity
-// check lives in one place.
-func isCloneOnlySeed(agentID string) bool {
-	return agentID == "seed-kb"
-}
-
 // orchestratorRouteKey picks the lead-routing stage for the main reasoning +
 // synthesis calls. An agent stays on the worker-locked orchestrator stage
 // UNLESS it opted into the lead model (leadModel), in which case it routes
@@ -1395,7 +1378,7 @@ var builderOnDemandTools = map[string]bool{
 	"draft_api_credential": true, "draft_oauth_credential": true, "update_api_credential": true,
 	"store_credential_secret": true, "check_credential": true,
 	"clone_agent": true, "tool_template": true, "add_tool": true,
-	"archetype": true, "collections": true, "bulletins": true,
+	"collections": true, "bulletins": true,
 }
 
 const builderOnDemandIndexHeader = "\n\n## Building tools you use less often (load before use)\n" +

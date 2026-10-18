@@ -287,13 +287,7 @@ func writeAgent(db Database, a AgentRecord, reason string) (AgentRecord, error) 
 	if isBuilderAgent(a.ID) {
 		a.Hidden = true
 	}
-	// Template seeds (Builder clones them; never run/published directly) must
-	// never become Exposed. This ALSO repairs a stale shadow that the
-	// auto-expose rule below wrongly flipped true in the past — checked first so
-	// that rule can't re-expose it.
-	if isCloneOnlySeed(a.ID) {
-		a.Everyone, a.ShowOnDashboard = false, false
-	} else if a.Hidden && !a.ShowOnDashboard && newlyHidden(db, a) {
+	if a.Hidden && !a.ShowOnDashboard && newlyHidden(db, a) {
 		// Reachability DEFAULT (not an invariant): a Hidden agent is
 		// orphaned if it's also unexposed — hidden from the fleet AND
 		// absent from the dashboard leaves the owner no surface to reach

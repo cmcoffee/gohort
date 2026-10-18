@@ -16,12 +16,15 @@ func TestBuiltinAgentsLoad(t *testing.T) {
 	if len(got) == 0 {
 		t.Fatal("no agents loaded from builtin/*.md")
 	}
-	// Builder is the only built-in, and the directory exists to say so. Every
-	// other framework agent is a shape under archetypes/, which users clone,
-	// follow and detach from; Builder cannot be one, because its authoring
-	// catalog comes from an identity check rather than from any record.
-	if len(got) != 1 || got[0].ID != "seed-builder" {
-		t.Errorf("builtin/ holds %d agent(s); it should hold Builder alone. A new framework agent is a SHAPE.", len(got))
+	// Builder, and Research, the former shape apps still run by id. A new
+	// framework agent is neither: Builder's shaper composes it, or it is a
+	// shape under archetypes/ that ships an agent.
+	ids := map[string]bool{}
+	for _, rec := range got {
+		ids[rec.ID] = true
+	}
+	if len(got) != 2 || !ids["seed-builder"] || !ids["seed-research"] {
+		t.Errorf("builtin/ holds %v; it should hold Builder and Research", ids)
 	}
 	seen := map[string]bool{}
 	for _, rec := range got {
@@ -159,33 +162,6 @@ func TestSeedSettingsUnchanged(t *testing.T) {
 		t.Error("research lost its plan guidance")
 	}
 
-	kb := get("seed-kb")
-	if kb.Name != "Knowledge Base" {
-		t.Errorf("kb name = %q", kb.Name)
-	}
-	if want := []string{"ask_user"}; !reflect.DeepEqual(kb.AllowedTools, want) {
-		t.Errorf("kb allowed_tools = %v, want %v", kb.AllowedTools, want)
-	}
-	if kb.MaxPlanSteps != 3 || kb.MaxWorkerRounds != 6 {
-		t.Errorf("kb budgets = %d/%d, want 3/6", kb.MaxPlanSteps, kb.MaxWorkerRounds)
-	}
-	// The anti-contamination stack. Any one of these off would let something
-	// that is not the corpus into an answer.
-	for name, on := range map[string]bool{
-		"force_private":      kb.ForcePrivate,
-		"disable_explicit":   kb.DisableExplicit,
-		"disable_inferred":   kb.DisableInferred,
-		"disable_skills":     kb.DisableSkills,
-		"ingest_attachments": kb.IngestAttachments,
-	} {
-		if !on {
-			t.Errorf("kb %s is off", name)
-		}
-	}
-	if !strings.Contains(kb.Rules, "Answer only from the attached corpus") {
-		t.Errorf("kb lost the corpus-only contract: %q", kb.Rules)
-	}
-
 	// No seed publishes itself, and none of them answer another agent's
 	// dispatch by default.
 	for _, rec := range builtinAgents() {
@@ -212,11 +188,12 @@ func TestSeedSnippetsResolve(t *testing.T) {
 	if _, body, _ := splitFrontmatter(data); strings.Count(body, "{{sandbox_python_note}}") != 1 {
 		t.Errorf("builder.md names the sandbox note %d times, want once", strings.Count(body, "{{sandbox_python_note}}"))
 	}
-	doc, ok := archetypeBySlug("research")
-	if !ok {
-		t.Fatal("the research shape is gone")
+	raw, err := builtinFS.ReadFile("builtin/research.md")
+	if err != nil {
+		t.Fatalf("research.md: %v", err)
 	}
-	if n := strings.Count(doc.Record.OrchestratorPrompt, "{{memory_save_call}}"); n != 1 {
+	_, research, _ := splitFrontmatter(raw)
+	if n := strings.Count(research, "{{memory_save_call}}"); n != 1 {
 		t.Errorf("the research persona names the memory call %d times, want once", n)
 	}
 

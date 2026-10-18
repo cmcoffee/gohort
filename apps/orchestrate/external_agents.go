@@ -318,7 +318,7 @@ func externalTargetsFor(db Database, user string) []ExternalTarget {
 	// can always be given it. It is listed first.
 	var main []ExternalTarget
 	for _, a := range listAgents(UserDB(db, user), user) {
-		if isAppAgent(a.ID) || isCloneOnlySeed(a.ID) {
+		if isAppAgent(a.ID) {
 			continue
 		}
 		if a.ID == defaultConsoleAgent {

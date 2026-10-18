@@ -29,7 +29,7 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 		{
 			kept := agents[:0]
 			for _, a := range agents {
-				if hiddenAppAgent(a.ID) || isCloneOnlySeed(a.ID) {
+				if hiddenAppAgent(a.ID) {
 					continue
 				}
 				kept = append(kept, a)

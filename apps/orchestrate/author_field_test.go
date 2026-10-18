@@ -29,7 +29,7 @@ func TestAuthorFieldIsNotAToggleForBuilder(t *testing.T) {
 // The Author flag is retired, so no other agent gets a toggle for it: a
 // control that changes nothing is worse than none.
 func TestNoAuthorToggleForOtherAgents(t *testing.T) {
-	for _, id := range []string{"", "some-agent", "seed-kb"} {
+	for _, id := range []string{"", "some-agent", "seed-research"} {
 		if f := authorCapabilityFields(id); len(f) != 0 {
 			t.Errorf("agent %q should get no authoring control, got %+v", id, f)
 		}

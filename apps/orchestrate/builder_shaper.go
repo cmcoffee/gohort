@@ -82,6 +82,8 @@ Facts that decide a shape, the ones builds get wrong:
 - A scheduled or other unwatched run refuses a tool that needs approval and queues the request; once the owner approves it, later runs use it.
 - A bulletin board has one poster (a sub-agent posts under its parent's right). Followers see the latest post on every turn with no tool call, at most 600 characters, and a post goes out of date after the board's ttl_hours. A monitor created with bulletin=<board> posts a single value with no model.
 - Reporting every time on a clock is a schedule with when "every". Staying silent until something changes or crosses a line is a monitor.
+- An agent that must answer ONLY from documents: attach them (attached_collections, or ingest_attachments for uploads), force_private so nothing outside reaches it, disable_inferred and disable_explicit so it grows no memory to compete with the documents, disable_skills so no skill adds instructions of its own, and a rule that it answers only from what it found this turn and says plainly when the documents do not cover a question.
+- Cited web research has a tuned built-in, Research (seed-research): when a specialist is that, say to clone it (clone_agent) and change what differs.
 
 On a CHANGE you see the agent as it stands, with its sub-agents. Most changes leave the shape alone (a prompt, a rule, a setting, a tool that fits what it already does): answer exactly "No shape change." and one sentence saying why. Propose a new shape only when the change adds reach or a job that meets one of the three reasons, and say what moves where.
 

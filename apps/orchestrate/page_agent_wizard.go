@@ -146,7 +146,7 @@ func (T *OrchestrateApp) renderAgentWizard(w http.ResponseWriter, r *http.Reques
 				SuggestURL:  "../api/agents/suggest"},
 		},
 	}
-	if kindPreset == "" {
+	if kindPreset == "" && len(wizardTemplates()) > 0 {
 		// "Start from a template" — the archetype axis, deliberately
 		// separate from the two identity types: a template is a finished,
 		// tuned agent copied whole. Choosing one hides the type select

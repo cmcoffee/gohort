@@ -179,7 +179,7 @@ func toolScopeState(db Database, owner, toolName string) (ToolScopeState, bool) 
 		}
 	}
 	scopeTarget := func(a AgentRecord) bool {
-		if isAppAgent(a.ID) || isCloneOnlySeed(a.ID) {
+		if isAppAgent(a.ID) {
 			return false
 		}
 		// Framework seeds (Builder, the retired Chat seed, Research, …) are

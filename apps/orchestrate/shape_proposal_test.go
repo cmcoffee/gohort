@@ -9,17 +9,17 @@ import (
 // The opening proposal is the first thing a person sees when they ask for an
 // agent, so it has to say what the thing IS before asking them anything.
 func TestProposalOpensWithTheAgentItWouldBuild(t *testing.T) {
-	p, ok := proposeAgent("an agent that answers questions from our handbook")
+	p, ok := proposeAgent("a general assistant that can also do things")
 	if !ok {
-		t.Fatal("no proposal for a request that plainly describes a knowledge base")
+		t.Fatal("no proposal for a request that plainly describes an assistant")
 	}
-	if p.Shape != "knowledge_base" || p.Name == "" || p.Summary == "" {
+	if p.Shape != "conversational" || p.Name == "" || p.Summary == "" {
 		t.Fatalf("proposal = %+v", p)
 	}
 	if p.NeedsComposing {
 		t.Error("a shape that ships an agent was reported as needing composing")
 	}
-	if p.Draft.ShapeID != "knowledge_base" {
+	if p.Draft.ShapeID != "conversational" {
 		t.Errorf("the draft follows %q, so improvements would never reach it", p.Draft.ShapeID)
 	}
 	// Unsaved, and not the framework's own record: a proposal is something to
@@ -36,11 +36,8 @@ func TestProposalOpensWithTheAgentItWouldBuild(t *testing.T) {
 	// The points are what a person checks before agreeing: what it refuses,
 	// what it can reach, what it remembers.
 	joined := strings.Join(p.Points, " ")
-	if !strings.Contains(joined, "Stays offline") {
-		t.Errorf("the offline contract, the whole point of this shape, is not in the proposal: %v", p.Points)
-	}
-	if !strings.Contains(joined, "Answer only from the attached corpus") {
-		t.Errorf("the shape's rules are not shown: %v", p.Points)
+	if len(p.Points) == 0 {
+		t.Error("the proposal says nothing about what the agent does")
 	}
 	if strings.Contains(joined, "ask_user") {
 		t.Errorf("conversation mechanics were listed as reach: %v", p.Points)
@@ -119,28 +116,25 @@ func TestShapeTitle(t *testing.T) {
 func TestCreatingFromAShapeWithNoAnswers(t *testing.T) {
 	db := overlayTestDB(t)
 	app := &OrchestrateApp{}
-	rec, err := app.createFromShape(httptest.NewRequest("POST", "/", nil), db, "craig@example.com", "knowledge_base",
-		wizardRequest{Name: "Handbook"})
+	rec, err := app.createFromShape(httptest.NewRequest("POST", "/", nil), db, "craig@example.com", "conversational",
+		wizardRequest{Name: "Wren"})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if rec.Name != "Handbook" {
+	if rec.Name != "Wren" {
 		t.Errorf("name = %q", rec.Name)
 	}
-	if rec.ShapeID != "knowledge_base" {
+	if rec.ShapeID != "conversational" {
 		t.Errorf("the new agent follows %q", rec.ShapeID)
 	}
-	if rec.Owner != "craig@example.com" || rec.ID == "seed-kb" {
+	if rec.Owner != "craig@example.com" || rec.ID == "seed-chat" {
 		t.Errorf("not the user's own record: owner=%q id=%q", rec.Owner, rec.ID)
 	}
-	// It arrives complete: the shape's persona, rules and posture, not a stub
+	// It arrives complete: the shape's persona and posture, not a stub
 	// waiting for a draft that never came.
-	shape, _ := shapeBaseRecord("knowledge_base")
-	if rec.OrchestratorPrompt != shape.OrchestratorPrompt {
+	shape, _ := shapeBaseRecord("conversational")
+	if rec.OrchestratorPrompt != shape.OrchestratorPrompt || rec.MemoryMode != shape.MemoryMode {
 		t.Error("the shape's persona did not come with it")
-	}
-	if rec.Rules != shape.Rules || !rec.ForcePrivate {
-		t.Errorf("the shape's contract did not come with it: rules=%q private=%v", rec.Rules, rec.ForcePrivate)
 	}
 	if rec.Hidden {
 		t.Error("the user's own agent inherited a seed's hidden posture")
@@ -161,18 +155,18 @@ func TestCreatingFromAShapeThatShipsNothing(t *testing.T) {
 // and say you do not know" means nothing without the two questions it answers,
 // and a brief that reads as fragments drafts like one.
 func TestShapeAnswerBrief(t *testing.T) {
-	doc, ok := archetypeBySlug("knowledge_base")
+	doc, ok := archetypeBySlug("conversational")
 	if !ok {
 		t.Fatal("no shape")
 	}
 	got := shapeAnswerBrief(doc, wizardRequest{
-		Purpose: "answers from our handbook",
+		Purpose: "a general assistant for my week",
 		Answers: []string{"Our runbooks and the onboarding guide", ""},
 	})
 	if !strings.Contains(got, doc.Asks[0]) {
 		t.Errorf("the question is missing from the brief: %q", got)
 	}
-	if !strings.Contains(got, "Our runbooks") || !strings.Contains(got, "answers from our handbook") {
+	if !strings.Contains(got, "Our runbooks") || !strings.Contains(got, "a general assistant for my week") {
 		t.Errorf("the answer or the request is missing: %q", got)
 	}
 	if strings.Contains(got, doc.Asks[1]) {

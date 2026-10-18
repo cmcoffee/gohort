@@ -18,8 +18,7 @@ type agentPickerRow struct {
 	App   string // owning app, for App Agents grouping/sort
 }
 
-// agentPickerBuiltInOrder pins the built-in seeds' order in the picker. seed-kb
-// is intentionally absent — a clone-only TEMPLATE kept out of the picker.
+// agentPickerBuiltInOrder pins the built-in seeds' order in the picker.
 var agentPickerBuiltInOrder = map[string]int{
 	"seed-chat":     0,
 	"seed-builder":  1,
@@ -78,11 +77,6 @@ func agentPickerOptions(agents []AgentRecord) (opts []ui.SelectOption, cortex ma
 		// Sub-agents (OwnedBy set) live in the secondary picker, not the main one.
 		if a.OwnedBy != "" {
 			subs[a.OwnedBy] = append(subs[a.OwnedBy], map[string]string{"id": a.ID, "name": a.Name})
-			continue
-		}
-		// Clone-only template seeds (seed-kb) are Builder's raw material, never
-		// directly runnable — out of every group.
-		if isCloneOnlySeed(a.ID) {
 			continue
 		}
 		// App agents get their own per-app group; a Hidden app agent stays out.

@@ -58,9 +58,7 @@ func pipelineScopeState(db Database, owner, name string) (ToolScopeState, bool) 
 		// App agents aren't pipeline-scope targets — their kit is app-declared.
 		// Keyed on identity (the other planes' Hidden proxy leaks for a visible
 		// app agent).
-		// isCloneOnlySeed too, matching the tool plane — see the source plane
-		// for why a live-but-unrunnable template seed must not be a target.
-		if isAppAgent(a.ID) || isCloneOnlySeed(a.ID) {
+		if isAppAgent(a.ID) {
 			continue
 		}
 		holds := agentHasAttachedPipeline(a, def.ID)

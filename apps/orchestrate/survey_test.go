@@ -67,7 +67,6 @@ func TestFleetHiddenCoversRetiredSeedsAndAppTemplates(t *testing.T) {
 	for _, id := range []string{
 		"seed-chat",         // hard-retired
 		"seed-research",     // soft-retired archetype seed
-		"seed-kb",           // soft-retired archetype seed
 		"app-test-template", // Hidden app template
 	} {
 		if !fleetHidden(id) {

@@ -30,8 +30,7 @@ func isSeedID(id string) bool {
 // One predicate so the answer cannot differ by surface. Contextual exclusions
 // (self, Builder) stay at their call sites — those depend on who is asking.
 func fleetHidden(id string) bool {
-	return hiddenAppAgent(id) || isCloneOnlySeed(id) ||
-		isFleetRetiredSeed(id) || isRetiringArchetypeSeed(id)
+	return hiddenAppAgent(id) || isFleetRetiredSeed(id) || isRetiringArchetypeSeed(id)
 }
 
 // isFleetRetiredSeed reports a framework seed that is structurally OUT of the
@@ -39,15 +38,14 @@ func fleetHidden(id string) bool {
 // it, gets it, or runs it, and an unhidden shadow or an explicit dispatch
 // allowlist pick must not resurrect it. seed-chat is the only member: fully
 // retired, its record kept solely for legacy sessions and shadows.
-// seed-research / seed-kb are the SOFT-retired archetype seeds
-// (isRetiringArchetypeSeed) — they materialize a user-owned copy on dispatch
-// rather than refuse. Builder has its own exclusion (isBuilderAgent) with
+// seed-research is the SOFT-retired one (isRetiringArchetypeSeed): it
+// materializes a user-owned copy on dispatch rather than refuse. Builder has its own exclusion (isBuilderAgent) with
 // different, human-in-the-loop reasoning.
 func isFleetRetiredSeed(id string) bool { return id == "seed-chat" }
 
-// isRetiringArchetypeSeed reports the framework PERSONA seeds being retired in
-// favor of Builder archetypes (see archetypes.go): Research and Knowledge
-// Base. Unlike a hard-retired seed (isFleetRetiredSeed, which refuses), these
+// isRetiringArchetypeSeed reports the framework PERSONA seed kept as an engine
+// rather than as something a person picks: Research, a built-in (builtin/)
+// since it stopped being a shape, run by id by Collections and Scribe. Unlike a hard-retired seed (isFleetRetiredSeed, which refuses), these
 // SOFT-retire: dropped from the dispatch-discovery surfaces (no agent sees
 // them as a peer, no picker offers them), but a live dispatch to one
 // materializes a USER-OWNED copy and runs that — so a standing mission that
@@ -55,7 +53,7 @@ func isFleetRetiredSeed(id string) bool { return id == "seed-chat" }
 // The virgin seed still resolves by id (loadAgent → seedAgentByID) so the
 // wizard template + the materialize clone can read its config.
 func isRetiringArchetypeSeed(id string) bool {
-	return id == "seed-research" || id == "seed-kb"
+	return id == "seed-research"
 }
 
 // materializeArchetypeAgent turns a retiring archetype seed into a real

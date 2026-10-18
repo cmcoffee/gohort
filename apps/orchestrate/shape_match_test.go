@@ -11,11 +11,6 @@ import (
 // matching category names is the easy half and never the half that fails.
 func TestMatchShapeOnRealRequests(t *testing.T) {
 	for _, tc := range []struct{ request, want string }{
-		{"an agent that answers questions from our handbook", "knowledge_base"},
-		{"a support bot grounded in our documentation", "knowledge_base"},
-		{"something that only answers from what I upload", "knowledge_base"},
-		{"something that looks things up and cites sources", "research"},
-		{"a research agent for tariff news", "research"},
 		{"someone to talk to about my day", "conversational"},
 		{"a general assistant that can also do things", "conversational"},
 	} {
@@ -47,35 +42,12 @@ func TestMatchShapeDeclinesRatherThanGuesses(t *testing.T) {
 		"an agent that can send messages for me",
 		"something to crunch the numbers in our monthly exports",
 		"post today's headlines to a bulletin board every morning",
+		"an agent that answers questions from our handbook",
+		"a research agent for tariff news",
 	} {
 		if got, ok := matchShape(request); ok {
 			t.Errorf("%q proposed %q via %q; it should have asked", request, got.Shape.Slug, got.Phrase)
 		}
-	}
-}
-
-// A request that fits two shapes equally has not said which, and asking one
-// question beats opening with a coin flip.
-func TestANearTieAsksInsteadOfPicking(t *testing.T) {
-	// Something that looks things up, or something that answers from the
-	// documents: the request contains both and settles neither.
-	const both = "look things up from our docs"
-	all := matchShapes(both)
-	if len(all) < 2 {
-		t.Fatalf("expected two shapes to score, got %d", len(all))
-	}
-	if gap := all[0].Score - all[1].Score; gap >= shapeMatchMargin {
-		t.Fatalf("this request is no longer a tie (%s=%d, %s=%d); pick another ambiguous one rather than deleting the check",
-			all[0].Shape.Slug, all[0].Score, all[1].Shape.Slug, all[1].Score)
-	}
-	if got, ok := matchShape(both); ok {
-		t.Errorf("a tie was resolved by picking %q rather than by asking", got.Shape.Slug)
-	}
-
-	// And a clear winner still wins: the margin must not turn every request
-	// with two scoring shapes into a question.
-	if got, ok := matchShape("a research agent that cites sources from our docs"); !ok || got.Shape.Slug != "research" {
-		t.Errorf("a clear winner was refused: %q ok=%v", got.Shape.Slug, ok)
 	}
 }
 

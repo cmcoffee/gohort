@@ -911,7 +911,7 @@ func (t *chatTurn) agentsRunGate(args map[string]any) (AgentRecord, string, erro
 	}
 	// seed-chat is retired from every surface, dispatch included — an
 	// unhidden shadow or an explicit allowlist pick must not resurrect the
-	// fossil. (seed-research / seed-kb stay dispatchable on purpose.)
+	// fossil. (seed-research stays dispatchable on purpose.)
 	if isFleetRetiredSeed(target.ID) {
 		return AgentRecord{}, "", fmt.Errorf("agents(run, agent=%q) refused: the framework Chat seed is retired; handle the request yourself or dispatch to one of the user's own agents", key)
 	}

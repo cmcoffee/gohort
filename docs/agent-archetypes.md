@@ -1,7 +1,7 @@
 # Agent shapes: two kinds, and Builder's shaper
 
 Status: **the shaper is built** (`apps/orchestrate/builder_shaper.go`). The recipe library it
-replaces is gone except for the shapes that ship an agent. Written 2026-10-17, replacing two
+replaces is gone, and the only shape left is the Assistant. Written 2026-10-17, replacing two
 earlier drafts ("Agent Types", then a library of archetype recipes).
 
 ## The decision
@@ -23,7 +23,8 @@ by whoever uses the agent.
 ## Why not a library of recipes
 
 Builder had one: a recipe per kind of specialist (investigator, librarian, correspondent,
-reviewer, analyst, digest, scheduled watcher), read through the `archetype` tool. Over four days
+reviewer, analyst, digest, scheduled watcher, research, knowledge base), read through the
+`archetype` tool, which is gone too. Over four days
 of logs (2026-10-08 to 12) Builder never called that tool once, which is why it had already been
 moved behind `load_tool`. And the recipes, written side by side, showed the slicing was wrong:
 
@@ -86,16 +87,23 @@ schedule for reporting every time versus a monitor for staying silent until some
 
 ## What is left of the library
 
-`apps/orchestrate/archetypes/` keeps the shapes that ship an agent: `conversational` (the
-Assistant the wizard builds, which agents made from it keep following), `research` and
-`knowledge_base`. A shape that ships a record can be cloned and followed: fields the owner never
-changed are read from the shape at load (`ShapeID`, `agent_overlay.go`).
+`apps/orchestrate/archetypes/` keeps one shape: `conversational`, the Assistant the wizard
+builds. Agents made from it follow it: fields the owner never changed are read from the shape at
+load (`ShapeID`, `agent_overlay.go`).
 
-Open: whether `research` and `knowledge_base` stop shipping records and become plain specialists.
-Their records are the `seed-research` and `seed-kb` seeds, which a dispatch by those names still
-materializes into a user's own agent (`materializeArchetypeAgent`), so retiring them is that path
-first. No data migration either way: an agent built from a shape that stops shipping a record
-keeps its full config and stops receiving updates.
+Research and knowledge base stopped being shapes in 0.8.381 (no recipe, no wizard template, no
+draft from the matcher).
+
+- **Knowledge base is gone.** Nothing ran it; it was a template to clone. A new one is a
+  specialist like any other, and the shaper's brief carries what makes it one: documents
+  attached, Private, no memory of its own, and the answer-only-from-documents rule.
+- **Research is an engine.** Its record moved to `builtin/` because four features run it by id:
+  Collections research and audit (the Knowledge app's Research button too), Scribe's audit and
+  its research tool. It stays hidden. It is not an app agent because the app-agent spec carries
+  no rules, plan guidance, gap check or round budgets. Builder may clone it as a starting point.
+
+Agents made from either shape before stop following it and keep their settings as of their last
+save. No data migration.
 
 ## Where it leads: an assistant as liaison
 

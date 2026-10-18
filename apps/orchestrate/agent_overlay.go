@@ -217,6 +217,7 @@ func shapeBaseRecord(shapeID string) (AgentRecord, bool) {
 	return seedAgentByID(doc.Seed())
 }
 
+
 // instanceOverrides is what a tracking instance has decided for itself.
 func instanceOverrides(base, rec AgentRecord) []string {
 	fields := agentOverrides(base, rec, nil)

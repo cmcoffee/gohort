@@ -89,7 +89,7 @@ func TestAssistDegradesToAPlainReply(t *testing.T) {
 // guidance when there is one rather than re-deriving worse answers.
 func TestAssistPromptCarriesTheAgentAndItsShape(t *testing.T) {
 	rec := assistTestAgent()
-	rec.ShapeID = "research"
+	rec.ShapeID = "conversational"
 	p := buildAgentAssistPrompt(rec)
 
 	if !strings.Contains(p, "Scout") || !strings.Contains(p, "Cite every claim.") {
@@ -98,7 +98,7 @@ func TestAssistPromptCarriesTheAgentAndItsShape(t *testing.T) {
 	if !strings.Contains(p, "Reaches web_search.") {
 		t.Error("the prompt does not describe the agent the way the user sees it")
 	}
-	if !strings.Contains(p, "research shape") || !strings.Contains(p, "Build this when") {
+	if !strings.Contains(p, "conversational shape") || !strings.Contains(p, "Build this when") {
 		t.Error("the shape's own recipe is not in the prompt, so assist would re-derive it worse")
 	}
 	// Every assistable field is named with its current value, and the two

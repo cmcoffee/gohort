@@ -48,15 +48,12 @@ func TestReachableAgent(t *testing.T) {
 	if reachableAgent(AgentRecord{ID: "custom-x"}) {
 		t.Fatal("a private, unshared agent must NOT be reachable")
 	}
-	// A clone-only template seed is never surfaced, even flagged Exposed.
+	// A framework seed is never surfaced, even flagged Exposed or shared.
 	if reachableAgent(AgentRecord{ID: "seed-research", ShowOnDashboard: true}) {
 		t.Error("no framework seed may surface on /agents/, even with a stale Exposed flag")
 	}
-	if reachableAgent(AgentRecord{ID: "seed-kb", ShowOnDashboard: true}) {
-		t.Fatal("a clone-only seed must never be reachable on /agents/")
-	}
-	if reachableAgent(AgentRecord{ID: "seed-kb", AllowedUsers: []string{"bob"}}) {
-		t.Fatal("a clone-only seed must never be reachable even if peer-shared")
+	if reachableAgent(AgentRecord{ID: "seed-research", AllowedUsers: []string{"bob"}}) {
+		t.Error("no framework seed may surface on /agents/, even peer-shared")
 	}
 }
 

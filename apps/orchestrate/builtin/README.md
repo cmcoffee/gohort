@@ -3,15 +3,17 @@
 Framework agents that are not shapes. One file each: JSON frontmatter carrying
 an `AgentRecord`, then the persona as the markdown body.
 
-Only Builder lives here, and that is what the directory is for. Every other
-framework agent is a shape under `../archetypes/`, which users clone, follow,
-and detach from. Builder cannot be one: its authoring catalog comes from an
-identity check rather than from any record, since `builderInternalTools`
-appends tools that no `allowed_tools` list can name and `agentCanAuthor`
-answers true for it ahead of the flag. A file cannot express that.
+Two live here. Builder, whose authoring catalog comes from an identity check
+rather than from any record (`builderInternalTools` appends tools that no
+`allowed_tools` list can name, and `agentCanAuthor` answers true for it ahead
+of the flag), which a shape cannot express. And Research (`seed-research`), a
+shape until 0.8.381 and an engine now: hidden, and run by id by Collections
+(research and audit) and Scribe (audit and its research tool). It is not an
+app agent because the app-agent spec carries no rules, plan guidance, gap
+check or round budgets, and Research depends on all four.
 
-So a new framework agent is almost certainly a shape, not a built-in. Add it
-under `../archetypes/` unless its powers come from code that names it.
+A new framework agent is none of these. Builder's shaper composes a specialist
+from the request; a shape that ships an agent goes under `../archetypes/`.
 
 ## Format
 

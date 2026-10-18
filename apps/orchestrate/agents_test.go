@@ -446,11 +446,11 @@ func TestShadowedRetiringSeedNotMaterialized(t *testing.T) {
 // picker no longer offers the retiring seeds (they're materialized on
 // dispatch, not chosen as targets), while a real agent stays.
 func TestRetiringSeedsFilteredFromDispatchPicker(t *testing.T) {
-	if !isRetiringArchetypeSeed("seed-research") || !isRetiringArchetypeSeed("seed-kb") {
-		t.Fatal("seed-research and seed-kb must be retiring archetype seeds")
+	if !isRetiringArchetypeSeed("seed-research") {
+		t.Fatal("seed-research must be a retiring archetype seed")
 	}
-	if isRetiringArchetypeSeed("seed-chat") || isRetiringArchetypeSeed("seed-builder") {
-		t.Fatal("only research/kb are retiring archetype seeds")
+	if isRetiringArchetypeSeed("seed-chat") || isRetiringArchetypeSeed("seed-builder") || isRetiringArchetypeSeed("seed-kb") {
+		t.Fatal("only research is a retiring archetype seed")
 	}
 }
 
