@@ -68,6 +68,15 @@ func (T *OrchestrateApp) resolveApproval(w http.ResponseWriter, r *http.Request,
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
+	// propose_rule: an agent suggested a rule of its own (propose_rule.go).
+	// Approving adds it to the agent's Rules.
+	if a.Action == proposeRuleAction {
+		if err := addAgentRule(udb, a.Agent, a.Brief); err != nil {
+			Log("[operator.approval] propose_rule %s save failed: %v", a.Agent, err)
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	if a.Action == buildAgentAction {
 		go T.runApprovedDelegation(a, "builder")
 		Log("[operator.approval] build_agent approved: dispatching Builder for owner=%s requester=%s", a.Owner, a.FromAgent)

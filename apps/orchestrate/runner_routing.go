@@ -248,6 +248,10 @@ func (t *chatTurn) frameworkConversationalTools(sess *ToolSession) []AgentToolDe
 	if t.ownerUser != "" && t.ownerUser != t.user {
 		out = append(out, askOwnerToolDef(sess, t.user, t.ownerUser, t.agent.ID, chFirst(t.agent.Name, t.agent.ID)))
 	}
+	// Suggesting a rule of its own for the owner to add (propose_rule.go).
+	// Every agent may: the owner decides each one, so nothing is gained by
+	// withholding the question.
+	out = append(out, t.proposeRuleToolDef())
 	for _, n := range []string{"find_tools", "send_status", "stay_silent", "keep_going", "read_output", "release_output"} {
 		if ct, ok := LookupChatTool(n); ok {
 			out = append(out, ChatToolToAgentToolDefWithSession(ct, sess))

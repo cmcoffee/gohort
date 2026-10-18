@@ -70,6 +70,14 @@ func approvalDisplay(udb Database, user string, a Authorization) (who, detail st
 		if a.Brief != "" {
 			detail = "bind 1:1 thread (" + a.Brief + ")"
 		}
+	case proposeRuleAction:
+		if rec, found := loadAgent(udb, a.Agent); found {
+			who = rec.Name
+		}
+		detail = "add a rule it suggested: \"" + a.Brief + "\""
+		if why := strings.TrimSpace(a.Text); why != "" {
+			detail += ". Why: " + why
+		}
 	case changeApprovalAction:
 		if rec, found := loadAgent(udb, a.Agent); found {
 			who = rec.Name
