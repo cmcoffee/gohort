@@ -79,6 +79,41 @@ func FetchPage(target string, maxChars int) (string, []textutil.PageImage, error
 // pageImageCap is how many images a page lists.
 const pageImageCap = 10
 
+// renderedImages keeps the images of the pages this process rendered most
+// recently, by address, for browse_page to list after it reads the page
+// through the routed BrowserFetchFunc. The seam carries text, and it stays the
+// one way a page is rendered, so a page a peer rendered, or a test's canned
+// one, simply has no images rather than being rendered a second time here.
+var renderedImages = struct {
+	sync.Mutex
+	order []string
+	by    map[string][]textutil.PageImage
+}{by: map[string][]textutil.PageImage{}}
+
+const renderedImagesKept = 32
+
+func noteRenderedImages(target string, images []textutil.PageImage) {
+	renderedImages.Lock()
+	defer renderedImages.Unlock()
+	if _, ok := renderedImages.by[target]; !ok {
+		renderedImages.order = append(renderedImages.order, target)
+	}
+	renderedImages.by[target] = images
+	for len(renderedImages.order) > renderedImagesKept {
+		delete(renderedImages.by, renderedImages.order[0])
+		renderedImages.order = renderedImages.order[1:]
+	}
+}
+
+// takeRenderedImages returns and forgets the images recorded for target.
+func takeRenderedImages(target string) []textutil.PageImage {
+	renderedImages.Lock()
+	defer renderedImages.Unlock()
+	imgs := renderedImages.by[target]
+	delete(renderedImages.by, target)
+	return imgs
+}
+
 // BrowsePageTool fetches a URL using a real headless browser (JavaScript
 // executed, cookies handled). A single Chromium process is shared across
 // all calls; each call gets an isolated page that is closed when done.
@@ -235,6 +270,9 @@ func (t *BrowsePageTool) fetchPage(target string, maxChars int) (string, []textu
 	ch := make(chan result, 1)
 	go func() {
 		text, images, err := t.fetchImpl(target, maxChars)
+		if err == nil {
+			noteRenderedImages(target, images)
+		}
 		ch <- result{text: text, images: images, err: err}
 	}()
 	select {
@@ -475,21 +513,18 @@ func (t *BrowsePageTool) runImpl(args map[string]any, sess *ToolSession) (string
 		return "", err
 	}
 
-	// Through the routed variable when a peer renders pages: that is what lets
-	// an operator point page rendering at a peer and have the LLM-callable tool
-	// follow along with everything else. Rendered here, the page's images come
-	// back too and are listed after the text, so an answer that is IN an image
-	// can be fetched and looked at; a peer renders text only.
-	var text string
-	var images []textutil.PageImage
-	if _, peer := BrowsePeer(); peer {
-		text, err = BrowserFetchFunc(target, 10000)
-	} else {
-		text, images, err = FetchPage(target, 10000)
-	}
+	// Through the routed variable, not t.fetch: that is what lets an operator
+	// point page rendering at a peer and have the LLM-callable tool follow
+	// along with everything else. Rendered here, the page's images were
+	// recorded as it rendered (renderedImages) and are listed after the text,
+	// so an answer that is IN an image can be fetched and looked at; a page a
+	// peer rendered has none.
+	takeRenderedImages(target) // a stale record must not stand in for this render's
+	text, err := BrowserFetchFunc(target, 10000)
 	if err != nil {
 		return "", err
 	}
+	images := takeRenderedImages(target)
 	claim := ToolClaimNote(sess, target)
 	imagesNote := textutil.PageImagesNote(images, textutil.ImageLookHint(sess.HasTool))
 	if text == "" {
