@@ -143,7 +143,34 @@ func (t *chatTurn) runDispatchedStep(ctx context.Context, n int, title, brief, r
 	}
 	user := fmt.Sprintf("## Original request\n%s\n\n## Your task (step %d)\n%s", request, n, chFirst(title, brief))
 	Log("[orchestrate.worker] agent=%s work_step %d (%q): %d tool(s)", t.agent.ID, n, title, len(tools))
+	// The step says what its worker is doing: on the card the run is drawn
+	// under when somebody is watching, and on the run's own row on the live
+	// surface either way, so a schedule or a channel reply shows it too.
+	// Without it the lead's card read "work_step" for as long as the worker
+	// ran, however long that was. The step reports its own end as well, or the
+	// last line left showing is a tool it has finished with.
+	prog := dispatchProgressFrom(ctx, fmt.Sprintf("%s · step %d", chFirst(t.agent.Name, t.agent.ID), n))
+	roundStart, reasoning := prog.hooks()
+	var run *Run
+	if t.app != nil {
+		run = t.app.runsRegistry().Get(parentRunFromCtx(ctx))
+	}
+	line := func(s string) {
+		if run != nil {
+			run.SetDetail(s)
+		}
+	}
+	what := truncate(chFirst(title, brief), 80)
+	line(fmt.Sprintf("Step %d: %s", n, what))
 	resp, _, err := t.app.RunAgentLoop(ctx, []Message{{Role: "user", Content: user}}, AgentLoopConfig{
+		OnRoundStart:    roundStart,
+		ReasoningStream: reasoning,
+		OnStep: func(info StepInfo) {
+			prog.step(info)
+			if k := len(info.ToolCalls); k > 0 {
+				line(fmt.Sprintf("Step %d: %s, round %d", n, info.ToolCalls[k-1].Name, info.Round))
+			}
+		},
 		SystemPrompt:         sys,
 		Tools:                tools,
 		TierOverride:         WORKER,
@@ -166,8 +193,10 @@ func (t *chatTurn) runDispatchedStep(ctx context.Context, n int, title, brief, r
 		ChatOptions:          []ChatOption{WithRouteKey("app.orchestrate.worker"), WithThink(false)},
 	})
 	if err != nil {
+		line(fmt.Sprintf("Step %d failed", n))
 		return "", fmt.Errorf("step %d failed: %w", n, err)
 	}
+	line(fmt.Sprintf("Step %d done: %s", n, what))
 	out := ""
 	if resp != nil {
 		out = strings.TrimSpace(StripToolCallMarkup(resp.Content))
