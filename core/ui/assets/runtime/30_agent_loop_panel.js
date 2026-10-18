@@ -3541,17 +3541,43 @@
       return null;
     }
 
+    // messageRetriers is the registry of retry overrides, the sibling of
+    // messageEditors: a bubble an app drew from more than its text (a
+    // submitted form) is retried by that app, which knows what else rode
+    // with the text when it was first sent. {match, retry}; first match wins.
+    var messageRetriers = [];
+    window.uiRegisterMessageRetry = function(matchFn, retryFn) {
+      if (typeof matchFn !== 'function' || typeof retryFn !== 'function') return;
+      messageRetriers.push({match: matchFn, retry: retryFn});
+    };
+
     // retryUserMessage re-fires the bubble's stored text through the
     // edit-commit pipeline — same as Edit-with-no-changes. Truncates
     // the session at this bubble's index, drops later DOM, replays.
+    // A registered retrier takes over for a bubble it matches, and gets
+    // the same commit the default path uses.
     function retryUserMessage(bubble) {
       if (!activeSessionId) return;
       var entry = msgEntryForBubble(bubble);
       var raw = (entry && entry.rawText) || bubble.querySelector(':scope > .ui-agent-msg-body').textContent || '';
       if (!raw) return;
-      commitUserEdit(bubble, raw).catch(function(err) {
+      var failed = function(err) {
         window.uiAlert('Retry failed: ' + (err && err.message || err));
-      });
+      };
+      for (var i = 0; i < messageRetriers.length; i++) {
+        var r = messageRetriers[i], hit = false;
+        try { hit = !!r.match(bubble); } catch (e) { hit = false; }
+        if (!hit) continue;
+        try {
+          Promise.resolve(r.retry({
+            bubble: bubble,
+            rawText: raw,
+            commit: function(newText) { return commitUserEdit(bubble, newText); },
+          })).catch(failed);
+        } catch (e) { failed(e); }
+        return;
+      }
+      commitUserEdit(bubble, raw).catch(failed);
     }
 
     // retryAssistantMessage finds the user bubble that preceded this

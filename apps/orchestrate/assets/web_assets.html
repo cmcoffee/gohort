@@ -9475,6 +9475,34 @@ select.ui-orch-intake-input {
       }
       registerIntakeEditor();
 
+      // Retry on an intake bubble resends it AS an intake: the same picks
+      // ride with the text, and the bubble comes back as the form summary.
+      // Through the default path a retried intake went out as plain text,
+      // drew as text, and the server lost the picks the turn reads (Builder's
+      // recipe gate and app mode among them).
+      function registerIntakeRetry() {
+        if (!window.uiRegisterMessageRetry) { setTimeout(registerIntakeRetry, 50); return; }
+        window.uiRegisterMessageRetry(
+          function(bubble) { return bubble && bubble.dataset && bubble.dataset.uiIntake === '1'; },
+          function(ctx) {
+            var values = {};
+            try { values = JSON.parse(ctx.bubble.dataset.uiIntakeValues || '{}') || {}; } catch (e) { values = {}; }
+            var fields = activeIntakeForm();
+            if (window.uiSetPendingMessageExtras) {
+              window.uiSetPendingMessageExtras({intake_values: values});
+            }
+            return ctx.commit(ctx.rawText).then(function() {
+              setTimeout(function() {
+                var bubbles = document.querySelectorAll('.ui-agent-msg.ui-agent-msg-user');
+                var latest = bubbles[bubbles.length - 1];
+                if (latest && fields) decorateIntakeBubble(latest, fields, values);
+              }, 0);
+            });
+          }
+        );
+      }
+      registerIntakeRetry();
+
       // On session replay, re-decorate any user message that was
       // submitted via intake form (server persists intake_values on
       // those messages). Without this, the bubble re-renders as plain
