@@ -57,9 +57,9 @@ copy verbatim is one it will copy instead of composing.
 
 ## Shapes that ship nothing
 
-`investigator`, `librarian` and `scheduled_watcher` have no `record` and no
-persona, because a watcher's prompt has to name the thing it watches, and a
-librarian's the thing it catalogues. A shape is instantiable
+`correspondent`, `investigator`, `librarian` and `scheduled_watcher` have no
+`record` and no persona, because each prompt has to name its subject: what a
+watcher watches, what a librarian catalogues, whom a correspondent writes for. A shape is instantiable
 exactly when its prompt can be written without knowing the subject; otherwise
 Builder composes one from the recipe.
 

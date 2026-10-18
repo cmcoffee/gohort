@@ -75,9 +75,17 @@ can reach or who it answers to, and holds nothing the agent remembers.
 
 ## Recipes to add
 
+A sub-agent earns its own record when splitting it off buys one of three things: a memory
+that should not mix with its parent's, permissions that should live on it alone, or a heavy
+transcript kept out of the parent's conversation. Already in the library and usable as
+sub-agents: investigator, research, knowledge base, and the two below marked built.
+
 | Recipe | What it is for |
 |---|---|
-| **Librarian** | Catalogues one subject (a GitLab instance, a document estate) and is the one other agents ask first |
+| **Librarian** (built) | Catalogues one subject (a GitLab instance, a document estate) and is the one other agents ask first |
+| **Correspondent** (built) | The only agent in the family that holds the messaging tools; writes and sends to people on the owner's behalf |
+| Analyst | Works on data in a file store or the sandbox; scripts and large outputs stay in its run |
+| Reviewer | Checks a draft, a plan or a change against rules and requirements; a second judgement that did not write it |
 | Case worker | Works cases in a file store: intake, an evidence folder per case, timelines, a write-up per case |
 | System operator | Looks after Servitor systems: health checks, investigating, asking before any change |
 | Coordinator | Hands work to other agents and keeps track of it: fleet, delegation, monitors |
