@@ -1134,12 +1134,16 @@
   // opts.buttonClass: the arrow's class, to match the row's other buttons
   // (default ui-icon-btn).
   // opts.onInput(value): called on each edit, after a pasted break is folded.
+  // opts.openRows: the least it opens to, so a form's multi-line field still
+  // reads as room to write in while it is being edited (default 1).
   //
   // Returns the arrow, for the caller to place. The height follows the text,
   // with no scrollbar or resize handle, and is refitted when the box's width
-  // changes, which includes a box built while hidden being shown.
+  // changes, which includes a box built while hidden being shown, and when
+  // its value is set from code (a suggestion, a preset) rather than typed.
   window.uiExpandingLine = function(ta, opts) {
     opts = opts || {};
+    var openRows = Math.max(1, opts.openRows || 1);
     ta.rows = 1;
     ta.classList.add('ui-xline');
     var more = document.createElement('button');
@@ -1147,16 +1151,29 @@
     more.className = opts.buttonClass || 'ui-icon-btn';
     var pinned = false; // opened from the arrow, so leaving the box keeps it open
     function isOpen() { return ta.classList.contains('is-open'); }
+    // One line, measured off the box: the page sizes every box border-box, so
+    // a height in em alone would clip the text inside a padded field.
+    function oneLine() {
+      if (!window.getComputedStyle) return '';
+      var cs = window.getComputedStyle(ta);
+      var px = function(v) { return parseFloat(v) || 0; };
+      var line = px(cs.lineHeight) || px(cs.fontSize) * 1.4;
+      if (!line) return '';
+      var box = px(cs.paddingTop) + px(cs.paddingBottom);
+      if (cs.boxSizing === 'border-box') box += px(cs.borderTopWidth) + px(cs.borderBottomWidth);
+      return Math.ceil(line + box) + 'px';
+    }
     function sync(open) {
       if (isOpen() !== open) ta.classList.toggle('is-open', open);
       ta.wrap = open ? 'soft' : 'off';
+      ta.rows = open ? openRows : 1;
       if (open) {
         ta.style.height = 'auto';
         // 0 while the box is off screen; the width watch below refits it
         // once it is shown.
         if (ta.scrollHeight > 0) ta.style.height = ta.scrollHeight + 'px';
       } else {
-        ta.style.height = ''; // the stylesheet's one line
+        ta.style.height = oneLine(); // '' falls back to the stylesheet's line
         ta.scrollLeft = 0; ta.scrollTop = 0; // which starts at the start
       }
       var clipped = ta.scrollWidth > ta.clientWidth + 1 || ta.scrollHeight > ta.clientHeight + 1;
@@ -1200,6 +1217,19 @@
       }).observe(ta);
     } else {
       setTimeout(function() { sync(isOpen()); }, 0);
+    }
+    // A value set from code fires no input event, so a suggestion or a preset
+    // landing in a closed box would leave its arrow saying there is nothing
+    // more. Setting this one box's value refits it, through the element's own
+    // property underneath.
+    var proto = Object.getPrototypeOf(ta);
+    var native = proto && Object.getOwnPropertyDescriptor(proto, 'value');
+    if (native && native.get && native.set) {
+      Object.defineProperty(ta, 'value', {
+        configurable: true,
+        get: function() { return native.get.call(ta); },
+        set: function(v) { native.set.call(ta, v); sync(isOpen()); },
+      });
     }
     return more;
   };

@@ -2174,6 +2174,9 @@
       // so the suggest-row block below can place it right after the Suggest
       // button (sharing its theme) whether or not Suggest is present.
       var expandEditBtn = null;
+      // xlineRow — set by the textarea branch for an inline box: the box and
+      // its open arrow side by side, appended in the box's place below.
+      var xlineRow = null;
       var initial = current[f.field];
       if (initial == null) initial = '';
 
@@ -2268,6 +2271,15 @@
             save(f.field, input.value);
             refreshPreview();
           };
+        } else {
+          // An inline box reads on one line and opens to its whole text while
+          // it is edited, or from its arrow, at no less than its usual rows
+          // (uiExpandingLine). A long document uses the preview above instead,
+          // read in place rather than one line at a time.
+          var xlineMore = window.uiExpandingLine(input, {openRows: f.rows || 3});
+          xlineRow = el('div', {class: 'ui-form-xline-row'});
+          xlineRow.appendChild(input);
+          xlineRow.appendChild(xlineMore);
         }
       } else if (t === 'select') {
         // Multi-select: the same control with `multiple` set, saving an ARRAY.
@@ -3511,7 +3523,7 @@
       }
       // Skip generic input append when the toggle branch already
       // placed the switch into a [label, input] header row above.
-      if (!toggleHandled) fieldWrap.appendChild(input);
+      if (!toggleHandled) fieldWrap.appendChild(xlineRow || input);
       if (f.help) fieldWrap.appendChild(el('span', {class: 'ui-form-help'}, [f.help]));
       if (f.detail && !f.label) {
         fieldWrap.appendChild(window.uiAttachInfo(

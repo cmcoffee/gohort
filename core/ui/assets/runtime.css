@@ -1406,14 +1406,18 @@ select:-webkit-autofill {
 .ui-icon-btn:hover:not(:disabled) { color: var(--text); background: var(--bg-2); border-color: var(--border); }
 .ui-icon-btn.danger:hover:not(:disabled) { color: var(--danger); border-color: var(--danger); }
 .ui-icon-btn:disabled { opacity: 0.45; cursor: default; }
-/* uiExpandingLine (00_prelude.js): a list entry that reads on one line and
- * opens to its whole text while it is edited. Closed, the height is one line
- * from here; open, the script fits it to the text. Set on both states, two
- * classes each, so an app's own row rule for its textareas (one class and an
- * element) cannot bring back a resize handle or a scrollbar. */
-.ui-xline:not(.is-open), .ui-xline.is-open { resize: none; overflow: hidden; line-height: 1.4; }
+/* uiExpandingLine (00_prelude.js): an entry that reads on one line and opens to
+ * its whole text while it is edited. The script sets both heights: one line
+ * measured off the box when closed (1.4em here only until it runs), the text
+ * when open. Set on both states, two classes each, so an app's own rule for
+ * its textareas (one class and an element) cannot bring back a resize handle,
+ * a scrollbar or a form field's minimum height. */
+.ui-xline:not(.is-open), .ui-xline.is-open { resize: none; overflow: hidden; line-height: 1.4; min-height: 0; }
 .ui-xline:not(.is-open) { white-space: pre; height: 1.4em; }
 .ui-xline.is-open { white-space: pre-wrap; }
+/* A form field's box and its arrow, side by side (renderField). */
+.ui-form-xline-row { display: flex; align-items: flex-start; gap: 0.3rem; }
+.ui-form-xline-row > textarea { flex: 1 1 auto; min-width: 0; }
 /* Stack composes multiple components in one expand panel. */
 .ui-stack { display: flex; flex-direction: column; gap: 0.6rem; }
 /* Badge — colored pill for boolean/state indicators in table rows. */

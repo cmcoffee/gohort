@@ -31,22 +31,32 @@ function classes() {
 }
 
 // A box 200px wide, 10px a character, 14px a line: what the browser would
-// report for its text, width and state.
+// report for its text, width and state. Its value is an accessor on the
+// prototype, as an element's is, so setting it from code can be watched.
 var CHARS = 20, LINE = 14;
+var textareaProto = {};
+Object.defineProperty(textareaProto, 'value', {
+  get: function() { return this._v; },
+  set: function(v) { this._v = String(v); },
+});
 function fakeTextarea(value) {
   var l = listeners();
-  var ta = {
-    value: value, rows: 2, wrap: 'soft', style: {height: ''}, classList: classes(),
+  var ta = Object.create(textareaProto);
+  ta._v = value;
+  var own = {
+    rows: 2, wrap: 'soft', style: {height: ''}, classList: classes(),
     scrollLeft: 5, scrollTop: 5, selectionStart: 0, selectionEnd: 0, clientWidth: 200,
     addEventListener: l.addEventListener, fire: l.fire,
   };
+  Object.keys(own).forEach(function(k) { ta[k] = own[k]; });
   function lines() { return ta.value.split('\n'); }
   Object.defineProperty(ta, 'scrollWidth', {get: function() {
     if (ta.wrap === 'soft') return ta.clientWidth;
     return Math.max(ta.clientWidth, Math.max.apply(null, lines().map(function(s) { return s.length * 10; })));
   }});
   Object.defineProperty(ta, 'scrollHeight', {get: function() {
-    if (ta.wrap === 'soft') return lines().reduce(function(n, s) { return n + Math.max(1, Math.ceil(s.length / CHARS)); }, 0) * LINE;
+    // Open, the rows set the least height, as a textarea's rows attribute does.
+    if (ta.wrap === 'soft') return Math.max(ta.rows, lines().reduce(function(n, s) { return n + Math.max(1, Math.ceil(s.length / CHARS)); }, 0)) * LINE;
     return lines().length * LINE;
   }});
   Object.defineProperty(ta, 'clientHeight', {get: function() {
@@ -61,7 +71,11 @@ global.document = {createElement: function() {
     setAttribute: function(k, v) { b.attrs[k] = v; }};
   return b;
 }};
-global.window = {};
+// The computed style a box reports; a test that needs a padded field sets its own.
+global.window = {getComputedStyle: function(ta) {
+  return ta.cs || {lineHeight: LINE + 'px', fontSize: '10px', paddingTop: '0px', paddingBottom: '0px',
+    borderTopWidth: '0px', borderBottomWidth: '0px', boxSizing: 'border-box'};
+}};
 var timers = [];
 global.setTimeout = function(fn) { timers.push(fn); };
 function flush() { while (timers.length) timers.shift()(); }
@@ -90,7 +104,7 @@ long.fire('focus');
 check('editing opens it, wrapped, as tall as its text', long.classList.contains('is-open') && long.wrap === 'soft' && long.style.height === (Math.ceil(long.value.length / CHARS) * LINE) + 'px' && long.style.height !== LINE + 'px');
 check('open, the arrow closes it', shown(b) && b.textContent === '⌃' && b.attrs['aria-expanded'] === 'true');
 long.fire('blur');
-check('leaving the box closes it to one line', !long.classList.contains('is-open') && long.wrap === 'off' && long.style.height === '');
+check('leaving the box closes it to one line', !long.classList.contains('is-open') && long.wrap === 'off' && long.style.height === LINE + 'px');
 check('and its arrow is still there to open it', shown(b) && b.textContent === '⌄');
 
 // From the arrow: opened to read, it stays open when the box loses focus.
@@ -129,5 +143,42 @@ note.value = 'First line\nsecond';
 note.fire('input');
 check('the newline stays', note.value === 'First line\nsecond');
 check('closed, a second line counts as more to see', shown(c));
+
+// A form field opens to at least its usual rows, so a short answer still
+// reads as room to write; closed it is one line again.
+var field = fakeTextarea('Short.');
+window.uiExpandingLine(field, {openRows: 3});
+flush();
+field.fire('focus');
+check('a form field opens to at least its usual rows', field.rows === 3 && field.style.height === (3 * LINE) + 'px');
+field.fire('blur');
+check('and closes to one row', field.rows === 1);
+
+// One line measured off the box, padding and border included: every box is
+// sized border-box, so a height in em alone would clip the text of a padded
+// form field.
+var padded = fakeTextarea('A padded field');
+padded.cs = {lineHeight: '19.6px', fontSize: '14px', paddingTop: '8.8px', paddingBottom: '8.8px',
+  borderTopWidth: '1px', borderBottomWidth: '1px', boxSizing: 'border-box'};
+window.uiExpandingLine(padded, {});
+flush();
+check('closed, a padded box is one line plus its padding and border', padded.style.height === Math.ceil(19.6 + 17.6 + 2) + 'px');
+
+// A value set from code, a suggestion or a preset, fires no input event; the
+// box still learns there is more to see.
+var suggested = fakeTextarea('');
+var sArrow = window.uiExpandingLine(suggested, {});
+flush();
+check('an empty box has no arrow', !shown(sArrow));
+suggested.value = 'A suggestion long enough to run past the end of the line.';
+check('a value set from code shows the arrow', shown(sArrow));
+check('and the box still holds it', suggested.value === 'A suggestion long enough to run past the end of the line.');
+
+// The form's inline boxes use it; a long document keeps its preview instead.
+var basics = fs.readFileSync(__dirname + '/../10_basics.js', 'utf8');
+var branch = basics.match(/if \(useExpand\) \{[\s\S]*?\n        \} else \{([\s\S]*?)\n        \}\n      \} else if \(t === 'select'\)/);
+check('an inline form textarea goes through uiExpandingLine at its rows',
+  !!branch && /window\.uiExpandingLine\(input, \{openRows: f\.rows \|\| 3\}\)/.test(branch[1]));
+check('its row is what the field appends', /fieldWrap\.appendChild\(xlineRow \|\| input\)/.test(basics));
 
 if (fail) { console.log(fail + ' FAIL'); process.exit(1); }
