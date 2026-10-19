@@ -2,11 +2,13 @@ package temptool
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -689,6 +691,7 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 	// emit text, which makes use cases like "fetch a meme + convert
 	// to PNG" impossible to express. See extractAttachmentMarkers.
 	output = extractAttachmentMarkers(output, sess)
+	output = extractFileAttachMarkers(output, sess, workspaceDir)
 
 	// Save state back AFTER successful (or failed — preserve state
 	// either way so state changes during partial runs aren't lost)
@@ -822,6 +825,62 @@ func extractAttachmentMarkers(output string, sess *ToolSession) string {
 		remaining = afterOpen[closeIdx+len(closeMarker):]
 	}
 	return strings.TrimSpace(result.String())
+}
+
+// fileAttachMarker is the file form of the attachment marker: a script that
+// wrote its result into its working directory names the file instead of
+// pushing the whole of it through stdout as base64.
+//
+//	<<<ATTACH_FILE:generated_music.mp3>>>
+var fileAttachMarker = regexp.MustCompile(`<<<ATTACH_FILE:([^>\n]+)>>>`)
+
+// maxAttachFileBytes bounds one file named by an ATTACH_FILE marker.
+const maxAttachFileBytes = 50 << 20
+
+// extractFileAttachMarkers attaches each file an ATTACH_FILE marker names. The
+// path is resolved inside the run's directory and refused if it leaves it, and
+// the kind comes from the extension: images attach as images, audio and video
+// as video, the same as the base64 marker. Each marker is replaced by a line
+// saying what happened, so the model knows the file is attached and does not
+// attach it again, or knows why it was not.
+//
+// It exists because a script that saves its result has no other way to hand it
+// over. A music tool saved the song, printed the path, and the song never
+// reached anyone: run in the background, it came back with nothing attached.
+func extractFileAttachMarkers(output string, sess *ToolSession, workspaceDir string) string {
+	if sess == nil || !strings.Contains(output, "<<<ATTACH_FILE:") {
+		return output
+	}
+	return fileAttachMarker.ReplaceAllStringFunc(output, func(m string) string {
+		rel := strings.TrimSpace(fileAttachMarker.FindStringSubmatch(m)[1])
+		path, err := ResolveWorkspacePath(workspaceDir, rel)
+		if err != nil {
+			return fmt.Sprintf("[not attached: %s: %v]", rel, err)
+		}
+		info, err := os.Stat(path)
+		if err != nil || info.IsDir() {
+			return fmt.Sprintf("[not attached: %s is not a file in the working directory]", rel)
+		}
+		if info.Size() > maxAttachFileBytes {
+			return fmt.Sprintf("[not attached: %s is %d MB, over the %d MB limit]", rel, info.Size()>>20, maxAttachFileBytes>>20)
+		}
+		var attach func(string)
+		switch strings.ToLower(filepath.Ext(path)) {
+		case ".png", ".jpg", ".jpeg", ".gif", ".webp":
+			attach = sess.AppendImage
+		case ".mp3", ".wav", ".m4a", ".ogg", ".mp4", ".webm", ".mov":
+			attach = sess.AppendVideo
+		default:
+			return fmt.Sprintf("[not attached: %s is not an image, audio or video file]", rel)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Sprintf("[not attached: %s: %v]", rel, err)
+		}
+		attach(base64.StdEncoding.EncodeToString(data))
+		Log("[temptool.attach] attached %s from the working directory (%d bytes)", rel, len(data))
+		return fmt.Sprintf("[attached %s]", filepath.Base(path))
+	})
 }
 
 // toolIsGranted reports whether this tool is in the owner's persisted pool, as

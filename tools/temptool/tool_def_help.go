@@ -161,6 +161,16 @@ EMITTING ATTACHMENTS (images, video, audio)
 
   * Supported mimes: image/* (PNG, JPEG, GIF, WEBP), video/*
     (MP4, WEBM, MOV), audio/* (MP3, WAV, M4A, OGG).
+  * A file the script already SAVED in its working directory (a
+    downloaded or rendered result) is attached by naming it, with no
+    base64 at all:
+
+        <<<ATTACH_FILE:generated_music.mp3>>>
+
+    The path is relative to the working directory and cannot leave
+    it; the kind comes from the extension, from the same list above;
+    up to 50 MB. A tool that saves its result and only prints the
+    path delivers NOTHING: print this marker after saving.
   * Multiple markers per stdout = multiple attachments.
   * The dispatcher strips the marker from the LLM-visible output
     and routes the base64 to the session's attachment channel.
