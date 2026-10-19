@@ -1258,6 +1258,13 @@ type ChatSession struct {
 	Messages []ChatMessage  `json:"Messages,omitempty"`
 	Plans    []PlanSnapshot `json:"Plans,omitempty"`
 
+	// AutoTitle is the title gohort last gave the session itself. While Title
+	// still equals it the name is automatic and can be improved as the
+	// conversation goes on (titleDue); a name the user gave differs from it and
+	// is never replaced. Empty on sessions from before it existed, which keep
+	// the title they have.
+	AutoTitle string `json:"auto_title,omitempty"`
+
 	// WorkPlan is the tracked checklist (AgentRecord.WorkPlan), persisted so a
 	// plan committed to in one message is still the plan in the next. Nil until
 	// the agent sets one. Distinct from Plans above, which is the per-turn

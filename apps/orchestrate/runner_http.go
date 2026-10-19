@@ -138,7 +138,7 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 	sr.saveReply()
 	sr.flagFalseClaims()
 
-	sr.turn.titleAfterFirstTurn()
+	sr.turn.retitleIfDue()
 	sr.turn.noteSessionMarker()
 
 	sr.sse.Send(map[string]any{"kind": "done"})
@@ -403,6 +403,7 @@ func (sr *sendRun) openSession() bool {
 			ID:        sr.req.SessionID,
 			AgentID:   sr.agent.ID,
 			Title:     titleFromFirstMessage(sr.req.Message),
+			AutoTitle: titleFromFirstMessage(sr.req.Message),
 			Created:   time.Now(),
 			Incognito: sr.req.Incognito, // clean-room session, set at creation
 			// What this conversation is about, for an app that scopes its
@@ -726,7 +727,6 @@ func (sr *sendRun) buildTurn() {
 		// Incognito (clean-room) sessions also suppress the inferred memory layer
 		// (write side) — nothing accumulates back, matching "no baggage out".
 		inferredDisabled: sr.req.InferredDisabled || sr.sess.Incognito,
-		isNewSession:     sr.isNewSession,
 		userImages:       decodeUserImages(sr.req.Images),
 		// from_client_* tools are exposed only when the request came from the
 		// gohort-desktop viewer (its proxy stamps the bridge key) — never a
@@ -842,7 +842,7 @@ func (sr *sendRun) plan() bool {
 		// rejection writer produces one sentence and no plan.
 		sr.turn.markBlockedReply(&sr.sess)
 		_, _ = saveChatSession(sr.udb, sr.sess)
-		sr.turn.titleAfterFirstTurn()
+		sr.turn.retitleIfDue()
 		sr.turn.noteSessionMarker()
 		sr.sse.Send(map[string]any{"kind": "done"})
 		return false
@@ -870,7 +870,7 @@ func (sr *sendRun) plan() bool {
 		}))
 		sr.turn.markBlockedReply(&sr.sess)
 		_, _ = saveChatSession(sr.udb, sr.sess)
-		sr.turn.titleAfterFirstTurn()
+		sr.turn.retitleIfDue()
 		sr.turn.noteSessionMarker()
 		sr.sse.Send(map[string]any{"kind": "done"})
 		return false

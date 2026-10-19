@@ -89,8 +89,8 @@ func TestANewConversationIsNotRecordedInTheCortex(t *testing.T) {
 	saveChatSession(db, s)
 	app := &OrchestrateApp{}
 	app.LLM = &FakeLLM{Turns: []FakeTurn{{Content: "Weather check", Repeat: true}}}
-	ct := &chatTurn{app: app, udb: db, agent: reader, user: "u", session: &s, isNewSession: true}
-	ct.titleAfterFirstTurn()
+	ct := &chatTurn{app: app, udb: db, agent: reader, user: "u", session: &s}
+	ct.retitleIfDue()
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
 		if got, ok := loadChatSession(db, reader.ID, s.ID); ok && got.Title == "Weather check" {

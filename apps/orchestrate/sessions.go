@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -354,42 +355,92 @@ func titleFromFirstMessage(msg string) string {
 	return t
 }
 
+// titleExchanges is how far into a conversation its title keeps up: the
+// last automatic title is written from the first this many exchanges.
+const titleExchanges = 3
+
+// titleDue reports whether the turn that just ended should name the session.
+// A conversation that opens with a bare greeting was named "Casual Greeting"
+// from that greeting and kept it, so a title waits for the first exchange
+// with something in it, and is written once more from the first
+// titleExchanges, when there is more to go on. Only while the title is still
+// the automatic one: a name the user gave is never replaced, and a session
+// from before AutoTitle existed keeps the title it has.
+func titleDue(s ChatSession) bool {
+	if s.Title != s.AutoTitle {
+		return false
+	}
+	var asked []string
+	for _, m := range s.Messages {
+		if m.Role == "user" {
+			asked = append(asked, m.Content)
+		}
+	}
+	switch len(asked) {
+	case 1:
+		return !isBareGreeting(asked[0])
+	case 2:
+		return isBareGreeting(asked[0])
+	case titleExchanges:
+		return true
+	}
+	return false
+}
+
+// greetingWords open a message that is only saying hello.
+var greetingWords = map[string]bool{
+	"hello": true, "hi": true, "hey": true, "heya": true, "hiya": true, "howdy": true,
+	"yo": true, "sup": true, "hola": true, "greetings": true, "gm": true,
+	"morning": true, "afternoon": true, "evening": true,
+}
+
+// isBareGreeting reports whether a message is a greeting with nothing to name
+// a conversation by: a few words opening with a hello ("Hello", "hey there",
+// "good morning team", "hi how are you"). Anything longer has a subject.
+func isBareGreeting(msg string) bool {
+	words := strings.FieldsFunc(strings.ToLower(msg), func(r rune) bool {
+		return !unicode.IsLetter(r) && r != '\''
+	})
+	if len(words) == 0 || len(words) > 4 {
+		return false
+	}
+	if words[0] == "good" && len(words) > 1 {
+		return greetingWords[words[1]] || words[1] == "day"
+	}
+	return greetingWords[words[0]]
+}
+
 // generateSessionTitle asks the worker LLM to produce a short,
 // descriptive 4-7 word title for a conversation given its first
-// user/assistant exchange. Falls back to the truncated first message
-// on LLM error. Ports chat.GenerateSessionTitle for orchestrate so
+// exchanges (up to titleExchanges). Falls back to the truncated first
+// message on LLM error. Ports chat.GenerateSessionTitle for orchestrate so
 // the sidebar surfaces what each conversation is actually about
 // instead of "Tell me about how to…".
 func generateSessionTitle(ctx context.Context, llm LLM, s ChatSession) string {
 	if llm == nil || len(s.Messages) == 0 {
 		return fallbackTitle(s)
 	}
-	var userMsg, assistantMsg string
+	var exchanges strings.Builder
+	asked, replied := 0, false
 	for _, m := range s.Messages {
-		if userMsg == "" && m.Role == "user" {
-			userMsg = m.Content
-		} else if assistantMsg == "" && m.Role == "assistant" && m.Retracted == "" {
+		if m.Role == "user" {
+			if asked == titleExchanges {
+				break
+			}
+			asked++
+			replied = false
+			exchanges.WriteString("\n\nUser: " + titleInput(m.Content))
+		} else if m.Role == "assistant" && m.Retracted == "" && asked > 0 && !replied {
 			// A struck reply is not what the conversation is about; the
 			// correction after it is.
-			assistantMsg = m.Content
-		}
-		if userMsg != "" && assistantMsg != "" {
-			break
+			replied = true
+			exchanges.WriteString("\n\nAssistant: " + titleInput(m.Content))
 		}
 	}
-	if userMsg == "" {
+	if asked == 0 {
 		return fallbackTitle(s)
 	}
-	if len(userMsg) > 600 {
-		userMsg = userMsg[:600]
-	}
-	if len(assistantMsg) > 600 {
-		assistantMsg = assistantMsg[:600]
-	}
-	prompt := "Write a short, specific 4-7 word title for this chat. No quotes, no trailing period, no prefix like \"Title:\". Just the title itself.\n\nUser: " + userMsg
-	if assistantMsg != "" {
-		prompt += "\n\nAssistant: " + assistantMsg
-	}
+	prompt := "Write a short, specific 4-7 word title for what this chat is about; a greeting is not a topic. No quotes, no trailing period, no prefix like \"Title:\". Just the title itself." + exchanges.String()
 	resp, err := llm.Chat(ctx, []Message{{Role: "user", Content: prompt}},
 		WithSystemPrompt("You name chat conversations with short descriptive titles. Reply with ONLY the title."),
 		WithMaxTokens(64),
@@ -408,6 +459,15 @@ func generateSessionTitle(ctx context.Context, llm LLM, s ChatSession) string {
 		return fallbackTitle(s)
 	}
 	return title
+}
+
+// titleInput is one message as the title prompt reads it: its first 600
+// bytes, enough to say what it is about.
+func titleInput(msg string) string {
+	if len(msg) > 600 {
+		return msg[:600]
+	}
+	return msg
 }
 
 // fallbackTitle derives a best-effort title from the session's first

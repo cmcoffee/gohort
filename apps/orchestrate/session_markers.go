@@ -17,7 +17,7 @@ package orchestrate
 //
 // Markers are not the cortex. The cortex holds what arrives; an automatic
 // line per web session made it read as a copy of the session list, which is
-// why web sessions stopped writing there (titleAfterFirstTurn). Markers live
+// why web sessions stopped writing there (retitleIfDue). Markers live
 // in their own index and show only when recall finds one.
 //
 // On by default for an agent in chatbot memory mode, whose conversations are

@@ -80,19 +80,19 @@ func (t *chatTurn) priorAssistantContext() string {
 	return b.String()
 }
 
-// titleAfterFirstTurn fires a background goroutine that asks the
-// worker LLM for a short, descriptive title given the first
-// user/assistant exchange, then patches it onto the session. No-op
-// when this isn't a fresh session or there's no LLM. Failures stay
-// local — title generation is an optimization, not part of the
-// reply contract.
+// retitleIfDue fires a background goroutine that asks the worker LLM for a
+// short, descriptive title and patches it onto the session, when the turn
+// that just ended is one that names it (titleDue): the first real exchange,
+// then once more from the first three. No-op when no title is due or there's
+// no LLM. Failures stay local — title generation is an optimization, not part
+// of the reply contract.
 //
 // The goroutine takes its own context (background + timeout) since
 // the parent request returns as soon as the reply is delivered;
 // keeping the title work on the request's ctx would cancel it the
 // moment handleSend returns.
-func (t *chatTurn) titleAfterFirstTurn() {
-	if t == nil || !t.isNewSession || t.app == nil || t.app.LLM == nil || t.session == nil {
+func (t *chatTurn) retitleIfDue() {
+	if t == nil || t.app == nil || t.app.LLM == nil || t.session == nil || !titleDue(*t.session) {
 		return
 	}
 	// Snapshot what the goroutine needs — the request's chatTurn /
@@ -122,12 +122,25 @@ func (t *chatTurn) titleAfterFirstTurn() {
 			return
 		}
 		title := generateSessionTitle(ctx, llm, s)
-		if title == "" || title == s.Title {
+		if title == "" {
 			return
 		}
-		s.Title = title
-		_, _ = saveChatSession(udb, s)
-		Log("[orchestrate.title] session=%s renamed: %q", sessID, title)
+		// The model call takes seconds, and a turn or a rename can land in
+		// them: patch the title onto the stored copy as it is now, under the
+		// lock appends take, rather than save the copy read before the call.
+		renamed := false
+		withSessionAppend(agentID, sessID, func() {
+			latest, ok := loadChatSession(udb, agentID, sessID)
+			if !ok || latest.Title != latest.AutoTitle || latest.Title == title {
+				return
+			}
+			renamed = true
+			latest.Title, latest.AutoTitle = title, title
+			_, _ = saveChatSession(udb, latest)
+		})
+		if renamed {
+			Log("[orchestrate.title] session=%s renamed: %q", sessID, title)
+		}
 	}()
 }
 
