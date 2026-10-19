@@ -2336,9 +2336,125 @@ func (s *SecureAPI) PollMayUse(owner, name string, method ...string) error {
 //
 // sess is consulted only for the save_to path, which needs a workspace
 // dir. nil sess just disables save_to.
+//
+// The call's state is apiCall and each phase is a method on it. A phase
+// that ends the call early returns false, and what it handed back is parked
+// by exit for this function to return.
 func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *ToolSession) (string, error) {
+	ac := &apiCall{s: s, c: c, args: args, sess: sess}
+	if !ac.admit() {
+		return ac.ret, ac.retErr
+	}
+	if !ac.target() {
+		return ac.ret, ac.retErr
+	}
+	if !ac.allowed() {
+		return ac.ret, ac.retErr
+	}
+	if !ac.loadSecret() {
+		return ac.ret, ac.retErr
+	}
+	if !ac.online() {
+		return ac.ret, ac.retErr
+	}
+	// Derive from the TURN's context, not Background. Every governed call —
+	// fetch_url, api-mode temp tools, connectors, the image poll — went through
+	// here detached, so Stop cancelled the agent loop while the HTTP call it was
+	// waiting on ran to completion. On a single 30s request that reads as a slow
+	// cancel; on a tool that makes many calls in sequence it reads as Stop not
+	// working at all.
+	baseCtx, releaseConn := ac.connector.DeriveCancelCtx(sess.Context())
+	defer releaseConn()
+	ac.timeout()
+	ctx, cancel := context.WithTimeout(baseCtx, ac.callTimeout)
+	defer cancel()
+	ac.ctx = ctx
+	if !ac.build() {
+		return ac.ret, ac.retErr
+	}
+	if !ac.authorize() {
+		return ac.ret, ac.retErr
+	}
+	ac.redactions()
+	if !ac.client() {
+		return ac.ret, ac.retErr
+	}
+	if !ac.send() {
+		return ac.ret, ac.retErr
+	}
+	defer ac.resp.Body.Close()
+	ac.dropRejectedToken()
+	if !ac.saveFile() {
+		return ac.ret, ac.retErr
+	}
+	if !ac.read() {
+		return ac.ret, ac.retErr
+	}
+	ac.reply()
+	return ac.ret, ac.retErr
+}
+
+// apiCall is one call through a credential: the checks that decide whether
+// it may go, the request with the secret attached, and the reply the caller
+// reads. Each field is a local of the function it was cut from; dispatch is
+// now the order of the phases, and keeps the call's three cleanups as its
+// defers.
+type apiCall struct {
+	s    *SecureAPI
+	c    SecureCredential
+	args map[string]any
+	sess *ToolSession
+
+	// What is asked for, resolved and checked (target, allowed).
+	rawURL   string
+	method   string
+	body     string
+	saveTo   string
+	savePath string
+	parsed   *url.URL
+
+	// The secret and whose call it is (loadSecret).
+	secret   string
+	callUser string
+
+	// Where it may go and for how long (online, timeout). ctx is the call's
+	// own, made in dispatch so its cancel is deferred there.
+	connector   *NetworkConnector
+	callTimeout time.Duration
+	ctx         context.Context
+
+	// The request, its auth, and what the reply must not show (build,
+	// authorize, redactions, client).
+	req         *http.Request
+	oauthBearer string // captured for redaction
+	redactList  []string
+	httpClient  *http.Client
+
+	// The reply (send, saveFile, read, reply).
+	resp       *http.Response
+	auditEntry SecureAPIAuditEntry
+	ct         string
+	bodyBytes  []byte
+	truncated  bool
+
+	// ret and retErr are what the call hands back, parked by exit.
+	ret    string
+	retErr error
+}
+
+// exit records what an early return hands back and tells the driver to take
+// it.
+func (ac *apiCall) exit(out string, err error) bool {
+	ac.ret, ac.retErr = out, err
+	return false
+}
+
+func (ac *apiCall) admit() bool {
+	s := ac.s
+	c := ac.c
+	sess := ac.sess
 	if !s.ready() {
-		return "", fmt.Errorf("secure-api store not initialized")
+		return ac.exit("", fmt.Errorf("secure-api store not initialized"))
 	}
 	// Fail-closed on Disabled. BuildTools already hides disabled
 	// credentials from the LLM catalog, but pre-existing watchers and
@@ -2347,14 +2463,21 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	// stay dispatchable on purpose (their declaring tools keep working);
 	// Disabled is the hard kill switch.
 	if c.Disabled {
-		return "", s.disabledError(c)
+		return ac.exit("", s.disabledError(c))
 	}
 	if err := s.callerMayDispatch(c, sess); err != nil {
-		return "", err
+		return ac.exit("", err)
 	}
-	rawURL := strings.TrimSpace(StringArg(args, "url"))
-	if rawURL == "" {
-		return "", fmt.Errorf("url is required")
+	return true
+}
+
+func (ac *apiCall) target() bool {
+	c := ac.c
+	args := ac.args
+	sess := ac.sess
+	ac.rawURL = strings.TrimSpace(StringArg(args, "url"))
+	if ac.rawURL == "" {
+		return ac.exit("", fmt.Errorf("url is required"))
 	}
 	// Resolve a path-only URL against the credential's Base URL. LLMs
 	// routinely author api-mode tools with url_template "/v1/posts"
@@ -2365,33 +2488,38 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	// couldn't help (observed: a four-round misconfiguration spiral).
 	// Joining here makes the natural authoring shape work and keeps
 	// the allowlist semantics unchanged for absolute URLs.
-	if strings.HasPrefix(rawURL, "/") && !strings.HasPrefix(rawURL, "//") {
+	if strings.HasPrefix(ac.rawURL, "/") && !strings.HasPrefix(ac.rawURL, "//") {
 		if base := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/"); base != "" {
-			rawURL = base + rawURL
+			ac.rawURL = base + ac.rawURL
 		} else {
-			return "", fmt.Errorf("url %q is a path with no host, and credential %q has no Base URL to resolve it against, author the tool with an absolute https:// URL, or set the credential's Base URL", rawURL, c.Name)
+			return ac.exit("", fmt.Errorf("url %q is a path with no host, and credential %q has no Base URL to resolve it against, author the tool with an absolute https:// URL, or set the credential's Base URL", ac.rawURL, c.Name))
 		}
 	}
-	method := strings.ToUpper(strings.TrimSpace(StringArg(args, "method")))
-	if method == "" {
-		method = "GET"
+	ac.method = strings.ToUpper(strings.TrimSpace(StringArg(args, "method")))
+	if ac.method == "" {
+		ac.method = "GET"
 	}
-	body := StringArg(args, "body")
-	saveTo := strings.TrimSpace(StringArg(args, "save_to"))
-	if saveTo != "" && (sess == nil || sess.WorkspaceDir == "") {
-		return "", fmt.Errorf("save_to requires a session with WorkspaceDir set")
+	ac.body = StringArg(args, "body")
+	ac.saveTo = strings.TrimSpace(StringArg(args, "save_to"))
+	if ac.saveTo != "" && (sess == nil || sess.WorkspaceDir == "") {
+		return ac.exit("", fmt.Errorf("save_to requires a session with WorkspaceDir set"))
 	}
 	// Pre-validate the save path before firing the request — no point
 	// fetching megabytes of audio just to discover the path was bad.
-	var savePath string
-	if saveTo != "" {
-		resolved, err := ResolveWorkspacePath(sess.WorkspaceDir, saveTo)
+	if ac.saveTo != "" {
+		resolved, err := ResolveWorkspacePath(sess.WorkspaceDir, ac.saveTo)
 		if err != nil {
-			return "", fmt.Errorf("save_to: %w", err)
+			return ac.exit("", fmt.Errorf("save_to: %w", err))
 		}
-		savePath = resolved
+		ac.savePath = resolved
 	}
+	return true
+}
 
+func (ac *apiCall) allowed() bool {
+	s := ac.s
+	c := ac.c
+	sess := ac.sess
 	// A credential lent for READS is held to reads, however wide the owner's
 	// own use of it is. Enforced here rather than by narrowing AllowedMethods
 	// on the record, so the owner's own turns are untouched and the grant
@@ -2400,10 +2528,10 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	// This is the point of the two lists: a write through somebody else's key
 	// arrives at the far end as THEM, and no allowlist downstream can tell the
 	// two apart afterwards.
-	if readOnlyForUser(c, sessUsername(sess)) && method != http.MethodGet && method != http.MethodHead {
-		return "", s.refuse(c, sess, method, rawURL, fmt.Sprintf(
+	if readOnlyForUser(c, sessUsername(sess)) && ac.method != http.MethodGet && ac.method != http.MethodHead {
+		return ac.exit("", s.refuse(c, sess, ac.method, ac.rawURL, fmt.Sprintf(
 			"%s is not allowed: %s lent you %q for reads (GET/HEAD). Ask them for a read-write share if this genuinely has to write, and say what it would write — a write through their key is recorded as theirs",
-			method, c.Owner, c.Name))
+			ac.method, c.Owner, c.Name)))
 	}
 
 	// Method allowlist check. Empty list = all methods allowed
@@ -2413,25 +2541,25 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	if len(c.AllowedMethods) > 0 {
 		ok := false
 		for _, m := range c.AllowedMethods {
-			if strings.ToUpper(strings.TrimSpace(m)) == method {
+			if strings.ToUpper(strings.TrimSpace(m)) == ac.method {
 				ok = true
 				break
 			}
 		}
 		if !ok {
-			return "", s.refuse(c, sess, method, rawURL, fmt.Sprintf(
-				"method %s not allowed for credential %q (allowed: %v)", method, c.Name, c.AllowedMethods))
+			return ac.exit("", s.refuse(c, sess, ac.method, ac.rawURL, fmt.Sprintf(
+				"method %s not allowed for credential %q (allowed: %v)", ac.method, c.Name, c.AllowedMethods)))
 		}
 	}
 
 	// URL allowlist check. THIS IS THE LINCHPIN. If the LLM somehow
 	// produces a URL outside the allowed pattern, we refuse — no
 	// header is ever attached.
-	if why := credentialURLTrick(rawURL); why != "" {
-		return "", s.refuse(c, sess, method, rawURL, fmt.Sprintf(
-			"url %q is not sent with credential %q: it has %s, which reads as one path to the allow-list and another to the server. Write the plain path", rawURL, c.Name, why))
+	if why := credentialURLTrick(ac.rawURL); why != "" {
+		return ac.exit("", s.refuse(c, sess, ac.method, ac.rawURL, fmt.Sprintf(
+			"url %q is not sent with credential %q: it has %s, which reads as one path to the allow-list and another to the server. Write the plain path", ac.rawURL, c.Name, why)))
 	}
-	if !urlAllowedByCredential(c, rawURL) {
+	if !urlAllowedByCredential(c, ac.rawURL) {
 		// Render the SEMANTICS of an empty endpoint list, not the bare
 		// "[]" — models (and admins) reliably misread "endpoints=[]"
 		// as "nothing is allowed" when empty actually means everything
@@ -2441,7 +2569,7 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 		if len(c.AllowedEndpoints) > 0 {
 			eps = fmt.Sprintf("%v", c.AllowedEndpoints)
 		}
-		baseErr := fmt.Sprintf("url %q is not allowed for credential %q (base_url=%q, endpoints=%s", rawURL, c.Name, c.BaseURL, eps)
+		baseErr := fmt.Sprintf("url %q is not allowed for credential %q (base_url=%q, endpoints=%s", ac.rawURL, c.Name, c.BaseURL, eps)
 		if p := strings.TrimSpace(c.AllowedURLPattern); p != "" {
 			baseErr += fmt.Sprintf(", legacy_pattern=%q", p)
 		}
@@ -2452,27 +2580,28 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 		// EVERYTHING under base_url, and a www-vs-bare-host mismatch
 		// is invisible unless someone diffs the strings by eye.
 		if base := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/"); base != "" {
-			if rawURL != base && !strings.HasPrefix(rawURL, base+"/") {
+			if ac.rawURL != base && !strings.HasPrefix(ac.rawURL, base+"/") {
 				baseErr += fmt.Sprintf(". DIAGNOSIS: the request's scheme+host does not match Base URL %q, they must match EXACTLY (https vs http, and www.host vs bare host count as DIFFERENT hosts). The Allowed Endpoints list is NOT the problem. Fix: correct the Base URL, or author the tool with a path-only url so it inherits the credential's host", c.BaseURL)
 			} else {
 				baseErr += fmt.Sprintf(". DIAGNOSIS: the host matches; the PATH is outside Allowed Endpoints %v. An EMPTY list allows every path under Base URL; a non-empty list allows ONLY the listed patterns: add the missing pattern or clear the list", c.AllowedEndpoints)
 			}
 		}
-		return "", credMisconfigEscalation(c.Name, baseErr, noteCredRejection(c.Name))
+		return ac.exit("", credMisconfigEscalation(c.Name, baseErr, noteCredRejection(c.Name)))
 	}
 
 	// URL deny patterns: applied after the allowlist for fine-grained
 	// carve-outs ("allow Vapi but never /billing/**"). Each pattern
 	// uses the same glob shape as AllowedURLPattern.
-	if deny := urlDeniedByCredential(c, rawURL); deny != "" {
-		return "", fmt.Errorf("url %q matches deny pattern %q for credential %q", rawURL, deny, c.Name)
+	if deny := urlDeniedByCredential(c, ac.rawURL); deny != "" {
+		return ac.exit("", fmt.Errorf("url %q matches deny pattern %q for credential %q", ac.rawURL, deny, c.Name))
 	}
 
 	// Daily call cap: count successful (non-error) audit entries in
 	// the last 24h. Non-zero MaxCallsPerDay activates the cap.
-	parsed, err := url.Parse(rawURL)
+	var err error
+	ac.parsed, err = url.Parse(ac.rawURL)
 	if err != nil {
-		return "", fmt.Errorf("invalid url: %w", err)
+		return ac.exit("", fmt.Errorf("invalid url: %w", err))
 	}
 	// http is allowed only when the credential's allow-list explicitly opts in
 	// (e.g. a LAN appliance served over http). Honor BOTH the new BaseURL
@@ -2480,30 +2609,35 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	// field left http base_url credentials unable to make any call.
 	allowsHTTP := strings.HasPrefix(c.AllowedURLPattern, "http://") ||
 		strings.HasPrefix(strings.ToLower(strings.TrimSpace(c.BaseURL)), "http://")
-	if parsed.Scheme != "https" && !allowsHTTP {
+	if ac.parsed.Scheme != "https" && !allowsHTTP {
 		baseErr := fmt.Sprintf("non-https URL not allowed for credential %q (set the credential's Base URL to http:// if the host is plain-http)", c.Name)
-		return "", credMisconfigEscalation(c.Name, baseErr, noteCredRejection(c.Name))
+		return ac.exit("", credMisconfigEscalation(c.Name, baseErr, noteCredRejection(c.Name)))
 	}
 	// Both config gates passed — the credential can reach this URL; reset the
 	// repeated-rejection escalation so a later, unrelated mistake starts fresh.
 	clearCredRejections(c.Name)
+	return true
+}
 
+func (ac *apiCall) loadSecret() bool {
 	// Type "none" carries no auth — public unauthenticated endpoints.
 	// Skip the secret-load gate; the dispatch switch below also skips
 	// the auth-injection branch for this type. AllowedURLPattern,
 	// audit logging, rate limits, and HTTPS enforcement still apply.
-	var secret string
+	s := ac.s
+	c := ac.c
+	sess := ac.sess
 	// Hoisted out of the branch below: the 401 handler after the response needs
 	// to know WHOSE token was rejected, and an authorization_code credential is
 	// per-user by definition.
-	callUser := ""
+	ac.callUser = ""
 	if sess != nil {
-		callUser = sess.Username
+		ac.callUser = sess.Username
 	}
 	if c.Type != SecureCredNone && c.inlineSecret != "" {
 		// A synthesized credential brings its own secret; there is nothing in
 		// the store under this name to look up.
-		secret = c.inlineSecret
+		ac.secret = c.inlineSecret
 	} else if c.Type != SecureCredNone {
 		if c.IsAuthCode() {
 			// Interactive OAuth: use the CALLING user's per-user access token
@@ -2512,7 +2646,7 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 			// The turn's context, for the reason DeriveCancelCtx states below:
 			// a mint that outlives a Stop holds the call it was minting for.
 			tctx, cancel := context.WithTimeout(sess.Context(), 30*time.Second)
-			tok, terr := s.userAccessToken(tctx, c, callUser)
+			tok, terr := s.userAccessToken(tctx, c, ac.callUser)
 			cancel()
 			if terr != nil || tok == "" {
 				// userAccessToken already distinguishes "never connected" from
@@ -2521,26 +2655,26 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 				// which sent people to click Connect on an account that WAS
 				// connected and had just lost its refresh token.
 				if terr != nil {
-					return "", terr
+					return ac.exit("", terr)
 				}
-				return "", fmt.Errorf("you haven't connected your %q account yet: click Connect on your Account page (Connected accounts)", c.Name)
+				return ac.exit("", fmt.Errorf("you haven't connected your %q account yet: click Connect on your Account page (Connected accounts)", c.Name))
 			}
-			secret = tok
+			ac.secret = tok
 		} else {
 			var ok bool
 			var readable bool
-			secret, readable, ok = s.resolveSecretRead(c, callUser)
+			ac.secret, readable, ok = s.resolveSecretRead(c, ac.callUser)
 			if !readable {
 				// The store could not answer. The credential is not missing
 				// anything, and telling somebody to re-add it would have them
 				// replace a key that is present and correct - which is what
 				// the old wording did, because Get reports a failed read as
 				// "not found".
-				return "", fmt.Errorf("could not read the stored secret for %q right now: the credential is intact, the STORE did not answer. Check Maintenance in the admin console for database read failures, and retry", c.Name)
+				return ac.exit("", fmt.Errorf("could not read the stored secret for %q right now: the credential is intact, the STORE did not answer. Check Maintenance in the admin console for database read failures, and retry", c.Name))
 			}
-			if !ok || secret == "" {
+			if !ok || ac.secret == "" {
 				if c.IsPerUser() {
-					return "", fmt.Errorf("you haven't connected your %q account yet: set your key on your Account page (Connected accounts)", c.Name)
+					return ac.exit("", fmt.Errorf("you haven't connected your %q account yet: set your key on your Account page (Connected accounts)", c.Name))
 				}
 				// Named for WHERE it actually is, and whose it is. "the admin
 				// UI" was wrong twice: credentials moved under Extensions, and
@@ -2552,66 +2686,70 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 				// credential authored by Builder, or added and not finished,
 				// exists with everything except its key.
 				if c.Owner != "" {
-					return "", fmt.Errorf("credential %q has no stored secret. If it was drafted and never finished, open Extensions -> API credentials and set its key; the record is there, only the secret is missing", c.Name)
+					return ac.exit("", fmt.Errorf("credential %q has no stored secret. If it was drafted and never finished, open Extensions -> API credentials and set its key; the record is there, only the secret is missing", c.Name))
 				}
-				return "", fmt.Errorf("credential %q has no stored secret. An administrator sets it under Admin -> Extensions -> API Credentials; if it was drafted and never finished, the record is there and only the secret is missing", c.Name)
+				return ac.exit("", fmt.Errorf("credential %q has no stored secret. An administrator sets it under Admin -> Extensions -> API Credentials; if it was drafted and never finished, the record is there and only the secret is missing", c.Name))
 			}
 		}
 	}
+	return true
+}
 
+func (ac *apiCall) online() bool {
 	// Derive ctx from the session's NetworkConnector so a Private
 	// toggle mid-flight CANCELS this HTTP call (context.Canceled
 	// propagates through client.Do, returning early instead of
 	// completing the request). Layer the per-call timeout on top so
 	// the call still has its own deadline cap.
-	var connector *NetworkConnector
+	sess := ac.sess
 	if sess != nil {
-		connector = sess.Network
+		ac.connector = sess.Network
 		// A session built for one call (a media upload) carries only the
 		// turn's context: read the turn's Private switch from it, or the
 		// upload went out on a turn with the network off.
-		if connector == nil && sess.Ctx != nil {
-			connector = NetworkConnectorFromContext(sess.Ctx)
+		if ac.connector == nil && sess.Ctx != nil {
+			ac.connector = NetworkConnectorFromContext(sess.Ctx)
 		}
 	}
 	// Network egress is OFF for this turn (Private mode). Fail fast with a CLEAR
 	// reason — otherwise the request cancels and surfaces as a generic "context
 	// canceled" that the model misreads as the host being down (it then tells
 	// the user the firewall is unreachable, which is wrong).
-	if connector != nil && !connector.Allowed() {
-		return "", fmt.Errorf("blocked by Private mode: network egress is OFF for this turn, so the call to %q was NOT attempted. The credential and host are fine: this is a local privacy setting, NOT a connectivity or firewall problem. To reach it, turn off Private mode on this agent (or dispatch to an agent that has network). Do NOT report the host as down or unreachable", rawURL)
+	if ac.connector != nil && !ac.connector.Allowed() {
+		return ac.exit("", fmt.Errorf("blocked by Private mode: network egress is OFF for this turn, so the call to %q was NOT attempted. The credential and host are fine: this is a local privacy setting, NOT a connectivity or firewall problem. To reach it, turn off Private mode on this agent (or dispatch to an agent that has network). Do NOT report the host as down or unreachable", ac.rawURL))
 	}
-	// Derive from the TURN's context, not Background. Every governed call —
-	// fetch_url, api-mode temp tools, connectors, the image poll — went through
-	// here detached, so Stop cancelled the agent loop while the HTTP call it was
-	// waiting on ran to completion. On a single 30s request that reads as a slow
-	// cancel; on a tool that makes many calls in sequence it reads as Stop not
-	// working at all.
-	baseCtx, releaseConn := connector.DeriveCancelCtx(sess.Context())
-	defer releaseConn()
-	callTimeout := secureAPIRequestTimeout()
+	return true
+}
+
+func (ac *apiCall) timeout() {
+	args := ac.args
+	ac.callTimeout = secureAPIRequestTimeout()
 	if _, isUpload := args[secureUploadArg].(*FileUpload); isUpload {
 		// A file goes over the wire at whatever the link allows; the 30s cap
 		// that suits an API call would abort a photo on a slow uplink.
-		callTimeout = TuneDuration("tune_secure_api_upload_timeout")
+		ac.callTimeout = TuneDuration("tune_secure_api_upload_timeout")
 	}
 	if secs := secureTimeoutSeconds(args); secs > 0 {
-		callTimeout = time.Duration(secs) * time.Second
+		ac.callTimeout = time.Duration(secs) * time.Second
 	}
-	ctx, cancel := context.WithTimeout(baseCtx, callTimeout)
-	defer cancel()
+}
 
+func (ac *apiCall) build() bool {
+	c := ac.c
+	args := ac.args
+	sess := ac.sess
 	upload, _ := args[secureUploadArg].(*FileUpload)
 	var bodyReader io.Reader
 	switch {
 	case upload != nil:
 		bodyReader = upload.Reader // wrapped into a multipart stream below
-	case body != "":
-		bodyReader = bytes.NewReader([]byte(body))
+	case ac.body != "":
+		bodyReader = bytes.NewReader([]byte(ac.body))
 	}
-	req, err := http.NewRequestWithContext(ctx, method, parsed.String(), bodyReader)
+	var err error
+	ac.req, err = http.NewRequestWithContext(ac.ctx, ac.method, ac.parsed.String(), bodyReader)
 	if err != nil {
-		return "", fmt.Errorf("build request: %w", err)
+		return ac.exit("", fmt.Errorf("build request: %w", err))
 	}
 
 	// Default User-Agent — matches the sandbox hook fetch + fetch_url.
@@ -2619,7 +2757,7 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	// dumb anti-bot heuristics that trip on "Go-http-client",
 	// "+http://" reference patterns, or words like "hook"/"bot".
 	// Caller-supplied request_headers["User-Agent"] overrides.
-	req.Header.Set("User-Agent", "gohort/call")
+	ac.req.Header.Set("User-Agent", "gohort/call")
 
 	// Caller-supplied headers first; auth applied last so it can't
 	// be overridden.
@@ -2637,7 +2775,7 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 				if methodsLimited && (lower == "x-http-method-override" || lower == "x-http-method" || lower == "x-method-override") {
 					continue
 				}
-				req.Header.Set(k, str)
+				ac.req.Header.Set(k, str)
 			}
 		}
 	}
@@ -2650,11 +2788,11 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 		if field == "" {
 			field = "file"
 		}
-		if err := mimebody.ConvertFormFile(req, field, upload.FileName, upload.Fields, upload.ByteLimit); err != nil {
-			return "", fmt.Errorf("build upload: %w", err)
+		if err := mimebody.ConvertFormFile(ac.req, field, upload.FileName, upload.Fields, upload.ByteLimit); err != nil {
+			return ac.exit("", fmt.Errorf("build upload: %w", err))
 		}
 	}
-	if body != "" && req.Header.Get("Content-Type") == "" {
+	if ac.body != "" && ac.req.Header.Get("Content-Type") == "" {
 		ct := ""
 		if v, ok := args["__content_type"].(string); ok {
 			ct = strings.TrimSpace(v)
@@ -2662,112 +2800,132 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 		if ct == "" {
 			ct = "application/json"
 		}
-		req.Header.Set("Content-Type", ct)
+		ac.req.Header.Set("Content-Type", ct)
 	}
+	return true
+}
 
-	var oauthBearer string // captured for redaction
+func (ac *apiCall) authorize() bool {
+	s := ac.s
+	c := ac.c
 	switch c.Type {
 	case SecureCredBearer:
-		req.Header.Set("Authorization", "Bearer "+secret)
+		ac.req.Header.Set("Authorization", "Bearer "+ac.secret)
 	case SecureCredHeader:
-		req.Header.Set(c.ParamName, secret)
+		ac.req.Header.Set(c.ParamName, ac.secret)
 	case SecureCredQuery:
-		q := req.URL.Query()
-		q.Set(c.ParamName, secret)
-		req.URL.RawQuery = q.Encode()
+		q := ac.req.URL.Query()
+		q.Set(c.ParamName, ac.secret)
+		ac.req.URL.RawQuery = q.Encode()
 	case SecureCredBasicAuth:
 		// Username is stored as plain config (c.Username) so it shows on
 		// re-edit; the secret holds only the password. Combine them here.
 		// Legacy credentials with no separate username carry "user:pass" in
 		// the secret directly — the else-if keeps those working.
-		pair := secret
+		pair := ac.secret
 		if c.Username != "" {
-			pair = c.Username + ":" + secret
-		} else if !strings.Contains(secret, ":") {
-			return "", fmt.Errorf("basic_auth needs a username on the credential, or a 'username:password' secret")
+			pair = c.Username + ":" + ac.secret
+		} else if !strings.Contains(ac.secret, ":") {
+			return ac.exit("", fmt.Errorf("basic_auth needs a username on the credential, or a 'username:password' secret"))
 		}
 		auth := base64.StdEncoding.EncodeToString([]byte(pair))
-		req.Header.Set("Authorization", "Basic "+auth)
+		ac.req.Header.Set("Authorization", "Basic "+auth)
 	case SecureCredOAuth2:
 		if c.IsAuthCode() {
 			// Interactive consent: `secret` already holds the calling user's
 			// per-user access token (resolved + refreshed above). Inject directly.
-			req.Header.Set("Authorization", "Bearer "+secret)
-			oauthBearer = secret
+			ac.req.Header.Set("Authorization", "Bearer "+ac.secret)
+			ac.oauthBearer = ac.secret
 			break
 		}
 		// apiclient mints/caches/refreshes the access token and sets the
 		// Authorization header; we capture the token for redaction.
-		tok, oerr := s.oauthSetToken(c, secret, req)
+		tok, oerr := s.oauthSetToken(c, ac.secret, ac.req)
 		if oerr != nil {
-			return "", fmt.Errorf("oauth token for %q: %w", c.Name, oerr)
+			return ac.exit("", fmt.Errorf("oauth token for %q: %w", c.Name, oerr))
 		}
-		oauthBearer = tok
+		ac.oauthBearer = tok
 	case SecureCredNone:
 		// Public unauthenticated endpoint — no auth header injected.
 	default:
-		return "", fmt.Errorf("unknown credential type %q", c.Type)
+		return ac.exit("", fmt.Errorf("unknown credential type %q", c.Type))
 	}
+	return true
+}
 
+func (ac *apiCall) redact(s string) string {
+	for _, sec := range ac.redactList {
+		if sec == "" || len(sec) < 4 {
+			continue
+		}
+		s = strings.ReplaceAll(s, sec, "[REDACTED]")
+	}
+	return s
+}
+
+func (ac *apiCall) redactions() {
+	c := ac.c
 	// Build the redaction set BEFORE the request fires. Any string in
 	// this slice will be replaced with [REDACTED] in any text we
 	// return to the LLM (response body OR error message). Covers the
 	// raw secret plus, for basic_auth, the base64-encoded form.
-	redactList := []string{secret}
+	ac.redactList = []string{ac.secret}
 	if c.Type == SecureCredBasicAuth {
-		pair := secret
+		pair := ac.secret
 		if c.Username != "" {
-			pair = c.Username + ":" + secret
+			pair = c.Username + ":" + ac.secret
 		}
-		redactList = append(redactList, base64.StdEncoding.EncodeToString([]byte(pair)))
+		ac.redactList = append(ac.redactList, base64.StdEncoding.EncodeToString([]byte(pair)))
 	}
-	if oauthBearer != "" {
-		redactList = append(redactList, oauthBearer)
+	if ac.oauthBearer != "" {
+		ac.redactList = append(ac.redactList, ac.oauthBearer)
 	}
 	// And each one as it appears once encoded: a query-param key sits in the
 	// request URL percent-encoded, and Go's transport errors quote that URL
 	// whole; a JSON body escapes "/" and "+". A key with any of those
 	// characters walked past a match on its raw form alone.
-	for _, sec := range append([]string(nil), redactList...) {
+	for _, sec := range append([]string(nil), ac.redactList...) {
 		if sec == "" {
 			continue
 		}
 		enc, _ := json.Marshal(sec)
 		for _, v := range []string{url.QueryEscape(sec), url.PathEscape(sec), strings.Trim(string(enc), `"`), strings.ReplaceAll(sec, "/", `\/`)} {
 			if v != sec {
-				redactList = append(redactList, v)
+				ac.redactList = append(ac.redactList, v)
 			}
 		}
 	}
-	redact := func(s string) string {
-		for _, sec := range redactList {
-			if sec == "" || len(sec) < 4 {
-				continue
-			}
-			s = strings.ReplaceAll(s, sec, "[REDACTED]")
-		}
-		return s
-	}
+}
 
+func (ac *apiCall) client() bool {
+	s := ac.s
+	c := ac.c
 	// Client cap must match the context cap, or the shorter of the two wins
 	// and the override above is silently undone.
-	httpClient := &http.Client{Timeout: callTimeout, CheckRedirect: credentialRedirectCheck(c)}
+	ac.httpClient = &http.Client{Timeout: ac.callTimeout, CheckRedirect: credentialRedirectCheck(c)}
 	if !s.reachesInternal(c) {
 		// Public addresses only, checked on the address actually dialled (a
 		// name that resolves inward, a DNS answer that changes, a redirect),
 		// not only on the URL as written.
-		if err := RefuseNonPublicHost(rawURL); err != nil {
-			return "", fmt.Errorf("%w: credential %q may reach public addresses only", err, c.Name)
+		if err := RefuseNonPublicHost(ac.rawURL); err != nil {
+			return ac.exit("", fmt.Errorf("%w: credential %q may reach public addresses only", err, c.Name))
 		}
-		httpClient.Transport = NewPublicHTTPClient().Transport
+		ac.httpClient.Transport = NewPublicHTTPClient().Transport
 	}
 	if c.InsecureSkipTLS {
 		// Per-credential opt-out of cert verification (self-signed / IP-addressed
 		// LAN appliances). Scoped to this credential's allow-listed host only.
 		tr := http.DefaultTransport.(*http.Transport).Clone()
 		tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-		httpClient.Transport = tr
+		ac.httpClient.Transport = tr
 	}
+	return true
+}
+
+func (ac *apiCall) send() bool {
+	s := ac.s
+	c := ac.c
+	sess := ac.sess
 	// Counted on its own, not read off the audit ring: that keeps the last
 	// 50 entries by default, so a cap above 50 could never be reached. The
 	// call takes its place just before it is sent (two at once cannot both slip
@@ -2776,11 +2934,12 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	if c.MaxCallsPerDay > 0 {
 		count, ok := s.reserveDailyCall(c)
 		if !ok {
-			return "", fmt.Errorf("daily cap of %d reached for credential %q (%d calls in the last 24h): raise the cap in admin if this is legitimate", c.MaxCallsPerDay, c.Name, count)
+			return ac.exit("", fmt.Errorf("daily cap of %d reached for credential %q (%d calls in the last 24h): raise the cap in admin if this is legitimate", c.MaxCallsPerDay, c.Name, count))
 		}
 		capReserved = true
 	}
-	resp, err := httpClient.Do(req)
+	var err error
+	ac.resp, err = ac.httpClient.Do(ac.req)
 	if err == nil {
 		// Cost hook: the request reached the endpoint (any status code is
 		// billable), so price it into the per-source cost ledger. No-op when
@@ -2788,45 +2947,49 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 		// Attributed through the request's own context, so a render or an
 		// api-mode call a PEER triggered is priced to that peer instead of
 		// reading exactly like the operator's own spend.
-		RecordExternalCostFor(req.Context(), "cred:"+c.Name, c.Name, c.CostPerCall)
+		RecordExternalCostFor(ac.req.Context(), "cred:"+c.Name, c.Name, c.CostPerCall)
 	}
-	auditEntry := SecureAPIAuditEntry{
+	ac.auditEntry = SecureAPIAuditEntry{
 		CredentialName: c.Name,
 		Owner:          c.Owner,
 		DispatchedBy:   sessUsername(sess),
-		Method:         method,
-		URL:            rawURL,
+		Method:         ac.method,
+		URL:            ac.rawURL,
 		Timestamp:      time.Now(),
 	}
 	if err != nil {
-		auditEntry.Error = redact(err.Error())
-		s.recordAudit(auditEntry)
+		ac.auditEntry.Error = ac.redact(err.Error())
+		s.recordAudit(ac.auditEntry)
 		// Private mode flipped ON mid-call → the context was cancelled. Report
 		// the real reason, not a "request failed" the model reads as host-down.
-		if connector != nil && !connector.Allowed() {
-			return "", fmt.Errorf("blocked by Private mode: network egress was turned OFF mid-call, so the request to %q was cancelled, this is a privacy setting, NOT a host/connectivity failure. Turn off Private mode to reach it", rawURL)
+		if ac.connector != nil && !ac.connector.Allowed() {
+			return ac.exit("", fmt.Errorf("blocked by Private mode: network egress was turned OFF mid-call, so the request to %q was cancelled, this is a privacy setting, NOT a host/connectivity failure. Turn off Private mode to reach it", ac.rawURL))
 		}
 		// A TIMEOUT is usually transient (slow LAN appliance, connection warmup,
 		// a momentary blip) — NOT a sign the IP / scheme / port / credential is
 		// wrong. Steer the model away from confidently misdiagnosing a one-off
 		// timeout as a config error and sending the user to change settings.
 		if isTimeoutErr(err) {
-			host := rawURL
-			if parsed != nil && parsed.Host != "" {
-				host = parsed.Host
+			host := ac.rawURL
+			if ac.parsed != nil && ac.parsed.Host != "" {
+				host = ac.parsed.Host
 			}
 			// Retrying is the wrong advice for an endpoint that does real work
 			// per request: a music generation timed out three times running
 			// at the same cap, each retry told it was probably a blip.
-			return "", fmt.Errorf("%s did not respond within %s (timeout). That is a wait limit, not a sign the address, scheme, port or credential is wrong: do NOT tell the user to change them over a timeout. If this endpoint does real work per request (a generation, a render, a long report), a retry hits the same limit: raise the wait instead, with timeout_sec on the tool (api, toolbox or shell, up to 300s) or timeout= on a script's fetch_via/fetch_url call, and say so plainly if you cannot. If it is normally fast, it may be a momentary blip: retry once, and if it times out again, stop and report it", host, callTimeout)
+			return ac.exit("", fmt.Errorf("%s did not respond within %s (timeout). That is a wait limit, not a sign the address, scheme, port or credential is wrong: do NOT tell the user to change them over a timeout. If this endpoint does real work per request (a generation, a render, a long report), a retry hits the same limit: raise the wait instead, with timeout_sec on the tool (api, toolbox or shell, up to 300s) or timeout= on a script's fetch_via/fetch_url call, and say so plainly if you cannot. If it is normally fast, it may be a momentary blip: retry once, and if it times out again, stop and report it", host, ac.callTimeout))
 		}
 		if capReserved {
 			s.releaseDailyCall(c) // it never reached the server
 		}
-		return "", fmt.Errorf("request failed: %s", redact(err.Error()))
+		return ac.exit("", fmt.Errorf("request failed: %s", ac.redact(err.Error())))
 	}
-	defer resp.Body.Close()
+	return true
+}
 
+func (ac *apiCall) dropRejectedToken() {
+	s := ac.s
+	c := ac.c
 	// The provider says this token is no longer good. That is more
 	// authoritative than any expiry we stored — and it is the ONLY signal we
 	// have when the provider never sent an expires_in, which is the case that
@@ -2837,10 +3000,14 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	// is never re-sent behind the caller's back), and the next one mints a fresh
 	// token and works. Placed before every return path below so the recovery
 	// happens whatever shape the response takes.
-	if resp.StatusCode == http.StatusUnauthorized && c.IsAuthCode() && callUser != "" {
-		s.InvalidateUserAccessToken(c.Name, callUser)
+	if ac.resp.StatusCode == http.StatusUnauthorized && c.IsAuthCode() && ac.callUser != "" {
+		s.InvalidateUserAccessToken(c.Name, ac.callUser)
 	}
+}
 
+func (ac *apiCall) saveFile() bool {
+	s := ac.s
+	c := ac.c
 	// save_to path: read up to the larger save cap and stream straight
 	// to disk. The LLM only sees a metadata line, so we don't pay the
 	// cost of holding 100MB in memory just to redact-and-discard. Note
@@ -2848,38 +3015,44 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	// them, and the typical use is binary content (audio, video) where
 	// the secret string is statistically vanishingly unlikely to appear
 	// anyway. The audit log records the metadata as usual.
-	ct := resp.Header.Get("Content-Type")
-	if saveTo != "" {
+	ac.ct = ac.resp.Header.Get("Content-Type")
+	if ac.saveTo != "" {
 		// Read with cap+1 so we can detect truncation. ResponseBytes
 		// in the audit reflects what we actually wrote.
-		var limited io.Reader = io.LimitReader(resp.Body, secureAPIMaxSaveBytes()+1)
-		if textualContentType(ct) {
+		var limited io.Reader = io.LimitReader(ac.resp.Body, secureAPIMaxSaveBytes()+1)
+		if textualContentType(ac.ct) {
 			// Text is redacted like a body the model reads: a reply that
 			// echoes the key (a debug route, a next-page link carrying
 			// ?api_key=) would otherwise put it in a file the agent, and a
 			// script whose key is meant to stay on the server, can open.
 			raw, rerr := io.ReadAll(limited)
 			if rerr == nil {
-				limited = strings.NewReader(redact(string(raw)))
+				limited = strings.NewReader(ac.redact(string(raw)))
 			} else {
 				limited = strings.NewReader("")
 			}
 		}
-		written, err := writeWorkspaceFile(savePath, limited, secureAPIMaxSaveBytes())
+		written, err := writeWorkspaceFile(ac.savePath, limited, secureAPIMaxSaveBytes())
 		if err != nil {
-			auditEntry.Status = resp.StatusCode
-			auditEntry.Error = redact("save_to write: " + err.Error())
-			s.recordAudit(auditEntry)
-			return "", fmt.Errorf("save_to: %s", redact(err.Error()))
+			ac.auditEntry.Status = ac.resp.StatusCode
+			ac.auditEntry.Error = ac.redact("save_to write: " + err.Error())
+			s.recordAudit(ac.auditEntry)
+			return ac.exit("", fmt.Errorf("save_to: %s", ac.redact(err.Error())))
 		}
-		auditEntry.Status = resp.StatusCode
-		auditEntry.ResponseBytes = int(written)
-		s.recordAudit(auditEntry)
+		ac.auditEntry.Status = ac.resp.StatusCode
+		ac.auditEntry.ResponseBytes = int(written)
+		s.recordAudit(ac.auditEntry)
 		s.touch(c.Name)
-		return fmt.Sprintf("HTTP %d %s: saved %d bytes to %s (%s). Use attach_file(%q) to deliver to the user.",
-			resp.StatusCode, http.StatusText(resp.StatusCode), written, saveTo, ct, saveTo), nil
+		return ac.exit(fmt.Sprintf("HTTP %d %s: saved %d bytes to %s (%s). Use attach_file(%q) to deliver to the user.",
+			ac.resp.StatusCode, http.StatusText(ac.resp.StatusCode), written, ac.saveTo, ac.ct, ac.saveTo), nil)
 	}
+	return true
+}
 
+func (ac *apiCall) read() bool {
+	s := ac.s
+	c := ac.c
+	args := ac.args
 	// Read cap is higher when a response_pipe is going to project the
 	// body down before the LLM sees it. Without that hint, we'd cut
 	// large JSON mid-string and the pipe (jq) would fail to parse.
@@ -2892,55 +3065,59 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	if pipeFollowing {
 		readCap = secureAPIMaxResponseBytesForPipe()
 	}
-	limited := io.LimitReader(resp.Body, int64(readCap)+1)
-	bodyBytes, err := io.ReadAll(limited)
+	limited := io.LimitReader(ac.resp.Body, int64(readCap)+1)
+	var err error
+	ac.bodyBytes, err = io.ReadAll(limited)
 	if err != nil {
-		auditEntry.Status = resp.StatusCode
-		auditEntry.Error = redact("body read: " + err.Error())
-		s.recordAudit(auditEntry)
-		return "", fmt.Errorf("read response: %s", redact(err.Error()))
+		ac.auditEntry.Status = ac.resp.StatusCode
+		ac.auditEntry.Error = ac.redact("body read: " + err.Error())
+		s.recordAudit(ac.auditEntry)
+		return ac.exit("", fmt.Errorf("read response: %s", ac.redact(err.Error())))
 	}
-	truncated := false
-	if len(bodyBytes) > readCap {
-		bodyBytes = bodyBytes[:readCap]
-		truncated = true
+	ac.truncated = false
+	if len(ac.bodyBytes) > readCap {
+		ac.bodyBytes = ac.bodyBytes[:readCap]
+		ac.truncated = true
 	}
-	if truncated && scriptReads {
+	if ac.truncated && scriptReads {
 		// A script cannot tell a cut body from a whole one: the pipe path
 		// drops the marker, and even with it a base64 field just decodes
 		// short. Songs came back cut at the same length every time with no
 		// error anywhere. So a script gets none of it and the way to get all.
-		auditEntry.Status = resp.StatusCode
-		auditEntry.Error = "response over the script read cap"
-		s.recordAudit(auditEntry)
-		return "", fmt.Errorf("the response is larger than the %s a script can read in one piece, so none of it was returned: a cut body decodes into a fragment with no error. Pass save_to=\"<file>\" to write the whole response to the workspace (up to %s) and read that file", HumanSize(int64(readCap)), HumanSize(secureAPIMaxSaveBytes()))
+		ac.auditEntry.Status = ac.resp.StatusCode
+		ac.auditEntry.Error = "response over the script read cap"
+		s.recordAudit(ac.auditEntry)
+		return ac.exit("", fmt.Errorf("the response is larger than the %s a script can read in one piece, so none of it was returned: a cut body decodes into a fragment with no error. Pass save_to=\"<file>\" to write the whole response to the workspace (up to %s) and read that file", HumanSize(int64(readCap)), HumanSize(secureAPIMaxSaveBytes())))
 	}
 	// When piping, suppress the truncation marker — the pipe filters
 	// down anyway, the marker would just contaminate the LLM-visible
 	// projected output. The pipe operates on whatever bytes we read.
 	if pipeFollowing {
-		truncated = false
+		ac.truncated = false
 	}
-	if redacted := redact(string(bodyBytes)); redacted != string(bodyBytes) {
-		bodyBytes = []byte(redacted)
+	if redacted := ac.redact(string(ac.bodyBytes)); redacted != string(ac.bodyBytes) {
+		ac.bodyBytes = []byte(redacted)
 		Debug("[secure_api] redacted secret from response body for credential %q", c.Name)
 	}
 
-	auditEntry.Status = resp.StatusCode
-	auditEntry.ResponseBytes = len(bodyBytes)
-	s.recordAudit(auditEntry)
+	ac.auditEntry.Status = ac.resp.StatusCode
+	ac.auditEntry.ResponseBytes = len(ac.bodyBytes)
+	s.recordAudit(ac.auditEntry)
 	s.touch(c.Name)
+	return true
+}
 
+func (ac *apiCall) reply() bool {
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "HTTP %d %s\n", resp.StatusCode, http.StatusText(resp.StatusCode))
+	fmt.Fprintf(&sb, "HTTP %d %s\n", ac.resp.StatusCode, http.StatusText(ac.resp.StatusCode))
 	// An HTML body on an error status is a web PAGE, not an API
 	// response — the URL path missed the API entirely (wrong prefix,
 	// SPA catch-all route). Dumping kilobytes of <script> tags buries
 	// that signal and floods the context; say it outright instead.
-	if resp.StatusCode >= 400 {
-		if b := strings.TrimSpace(string(bodyBytes)); strings.HasPrefix(b, "<!DOCTYPE") || strings.HasPrefix(b, "<!doctype") || strings.HasPrefix(b, "<html") {
+	if ac.resp.StatusCode >= 400 {
+		if b := strings.TrimSpace(string(ac.bodyBytes)); strings.HasPrefix(b, "<!DOCTYPE") || strings.HasPrefix(b, "<!doctype") || strings.HasPrefix(b, "<html") {
 			sb.WriteString(secureAPIHTMLPageNote)
-			return sb.String(), nil
+			return ac.exit(sb.String(), nil)
 		}
 	}
 	// A request-shape 4xx (400/404/405/422 — not auth) means the server IS
@@ -2950,35 +3127,35 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	// "this service must be telnet/impossible," and ABANDONS a working HTTP
 	// credential (rebuilds as a shell tool, or blocks the user for the
 	// endpoint) instead of just fixing the path.
-	if s := resp.StatusCode; (s == 400 || s == 403 || s == 422 || s == 451) && contentRefusal(bodyBytes) {
+	if s := ac.resp.StatusCode; (s == 400 || s == 403 || s == 422 || s == 451) && contentRefusal(ac.bodyBytes) {
 		// The provider refused WHAT was asked, not how. The request-shape
 		// hint below told a model to "iterate the request", and it rephrased
 		// the same refused idea a dozen times while a builder rewrote a
 		// working tool. The fixed phrase REFUSED THE CONTENT is also how a
 		// custom tool's failure reader tells a refusal from a broken tool.
 		sb.WriteString(secureAPIRefusalNote + "\n")
-	} else if s := resp.StatusCode; s == 400 || s == 404 || s == 405 || s == 422 {
+	} else if s := ac.resp.StatusCode; s == 400 || s == 404 || s == 405 || s == 422 {
 		sb.WriteString(secureAPIShapeNote(s) + "\n")
 	}
-	if strings.Contains(ct, "json") {
+	if strings.Contains(ac.ct, "json") {
 		var anyVal interface{}
-		if json.Unmarshal(bodyBytes, &anyVal) == nil {
+		if json.Unmarshal(ac.bodyBytes, &anyVal) == nil {
 			if pretty, err := json.MarshalIndent(anyVal, "", "  "); err == nil {
 				// Redacted again: re-encoding undoes escapes, so a key the
 				// body carried escaped comes back out raw.
-				sb.WriteString(redact(string(pretty)))
-				if truncated {
+				sb.WriteString(ac.redact(string(pretty)))
+				if ac.truncated {
 					sb.WriteString(secureAPICutNote)
 				}
-				return sb.String(), nil
+				return ac.exit(sb.String(), nil)
 			}
 		}
 	}
-	sb.Write(bodyBytes)
-	if truncated {
+	sb.Write(ac.bodyBytes)
+	if ac.truncated {
 		sb.WriteString(secureAPICutNote)
 	}
-	return sb.String(), nil
+	return ac.exit(sb.String(), nil)
 }
 
 // CredentialAuthGuard refuses a raw auth header aimed at a host that a
