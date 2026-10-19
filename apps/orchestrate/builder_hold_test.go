@@ -152,3 +152,58 @@ func TestAnApprovedBuilderRequestChangesWhatExisted(t *testing.T) {
 		}
 	}
 }
+
+// From a real channel turn, the held request knows the conversation that
+// asked, so the approved run's result goes back there and not to the ledger.
+func TestAHeldBuilderRequestRemembersTheChatThatAsked(t *testing.T) {
+	df := newDispatchFixture(t,
+		FakeTurn{ToolCalls: []ToolCall{{ID: "c1", Name: "agents", Args: map[string]any{"action": "run", "agent": "seed-builder", "message": "make a map tool"}}}},
+		FakeTurn{Content: "Queued for your approval.", Repeat: true})
+	df.agent.AllowBuilderDispatch = true
+	if _, err := saveAgent(df.udb, df.agent); err != nil {
+		t.Fatal(err)
+	}
+	prevRoot := RootDB
+	RootDB = df.app.DB
+	t.Cleanup(func() { RootDB = prevRoot })
+	df.run(AgentSyncRun{Kind: "channel", SubSessionID: "room-1", Message: "have Builder make a map tool",
+		MessageSender: "u", SenderIsOwner: true, ReplyAuthorizedKey: "chat-1", ChannelChatID: "chat-1"})
+	var held []Authorization
+	for _, a := range ListAuthorizations(RootDB, "u") {
+		if a.Agent == "Builder" {
+			held = append(held, a)
+		}
+	}
+	if len(held) != 1 {
+		t.Fatalf("the channel's Builder request was not held: %+v", held)
+	}
+	if held[0].FromSession != "room-1" || held[0].FromAgent != df.agent.ID {
+		t.Errorf("the held request lost the conversation that asked: session %q agent %q", held[0].FromSession, held[0].FromAgent)
+	}
+}
+
+// The same from a delegated run: the held request records the run that asked.
+func TestAHeldBuilderRequestFromADelegatedRunKnowsWhereItCameFrom(t *testing.T) {
+	app, udb := familyFixture(t)
+	writer, _ := loadAgent(udb, "a-writer")
+	writer.AllowBuilderDispatch = true
+	if _, err := saveAgent(udb, writer); err != nil {
+		t.Fatal(err)
+	}
+	registerStandingRunner(app)
+	t.Cleanup(func() { RegisterStandingRunner(nil); RegisterStandingReporter(nil) })
+	app.LLM = &FakeLLM{Turns: []FakeTurn{
+		{ToolCalls: []ToolCall{{ID: "c1", Name: "agents", Args: map[string]any{"action": "run", "agent": "seed-builder", "message": "make a map tool"}}}},
+		{Content: "Queued.", Repeat: true},
+	}}
+	RunDelegation(context.Background(), RootDB, "alice", "a-writer", "get Builder to make a map tool", "")
+	var held []Authorization
+	for _, a := range ListAuthorizations(RootDB, "alice") {
+		if a.Agent == "Builder" {
+			held = append(held, a)
+		}
+	}
+	if len(held) != 1 || held[0].FromSession == "" || held[0].FromAgent != "a-writer" {
+		t.Fatalf("the delegated run's Builder request should be held with where it came from: %+v", held)
+	}
+}

@@ -1209,13 +1209,16 @@ func (sd *syncDispatch) configureLoop() {
 func (sd *syncDispatch) runLoop() {
 	T := sd.T
 	message := sd.message
-	sd.resp, sd.syncTranscript, sd.runErr = T.RunAgentLoop(sd.ctx, sd.dispatchMsgs, sd.syncCfg)
+	// The session rides the loop's context, as on a web turn: a tool that
+	// queues something for the owner reads where it was asked from off it
+	// (stampRequestOrigin), and without it a queued request lost its way back.
+	sd.resp, sd.syncTranscript, sd.runErr = T.RunAgentLoop(sd.subSess.ContextWithSession(sd.ctx), sd.dispatchMsgs, sd.syncCfg)
 	// The agent's gap check, as one more pass when it finds gaps (GapCheck).
 	// Not on a reply that was a refusal or a machine step's relay.
 	if sd.runErr == nil && sd.resp != nil && sd.gDecline == "" {
 		if follow := sd.subTurn.dispatchGapFollowUp(message, sd.resp.Content); follow != "" {
 			again := append(append([]Message(nil), sd.dispatchMsgs...), Message{Role: "assistant", Content: sd.resp.Content}, Message{Role: "user", Content: follow})
-			if r2, t2, err2 := T.RunAgentLoop(sd.ctx, again, sd.syncCfg); err2 == nil && r2 != nil && strings.TrimSpace(r2.Content) != "" {
+			if r2, t2, err2 := T.RunAgentLoop(sd.subSess.ContextWithSession(sd.ctx), again, sd.syncCfg); err2 == nil && r2 != nil && strings.TrimSpace(r2.Content) != "" {
 				sd.resp, sd.syncTranscript = r2, append(sd.syncTranscript, t2...)
 			}
 		}
@@ -2584,7 +2587,10 @@ func (cr *continuingRun) prepareInput() {
 
 func (cr *continuingRun) runLoop() bool {
 	T := cr.T
-	cr.resp, cr.transcript, cr.runErr = T.RunAgentLoop(cr.ctx, cr.llmMessages, cr.loopCfg)
+	// The session rides the loop's context, as on a web turn: a tool that
+	// queues something for the owner reads where it was asked from off it
+	// (stampRequestOrigin), and without it a queued request lost its way back.
+	cr.resp, cr.transcript, cr.runErr = T.RunAgentLoop(cr.subSess.ContextWithSession(cr.ctx), cr.llmMessages, cr.loopCfg)
 	// The agent's gap check, as one more pass when it finds gaps (GapCheck).
 	if cr.isMessage && cr.runErr == nil && cr.resp != nil && cr.loopCfg.PreEmptedReply == "" {
 		if follow := cr.subTurn.dispatchGapFollowUp(cr.message, cr.resp.Content); follow != "" {

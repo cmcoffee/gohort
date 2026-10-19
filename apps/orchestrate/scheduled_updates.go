@@ -954,7 +954,10 @@ func (fr *fireRun) runLoop() {
 	// (runner_lead_plans_dispatch.go). This loop has no lazy tool fallback
 	// or mid-run tool feed to turn off.
 	fr.subTurn.applyDispatchLeadPlans(fr.subSess, firePin, p.Prompt, &fr.sysPrompt, &fr.tools, fr.gate.confirm)
-	fr.resp, fr.transcript, fr.runErr = fr.app.RunAgentLoop(fr.ctx, fr.msgs, AgentLoopConfig{
+	// The session rides the loop's context, as on a web turn: a tool that
+	// queues something for the owner reads where it was asked from off it
+	// (stampRequestOrigin), and without it a queued request lost its way back.
+	fr.resp, fr.transcript, fr.runErr = fr.app.RunAgentLoop(fr.subSess.ContextWithSession(fr.ctx), fr.msgs, AgentLoopConfig{
 		TierOverride: firePin,
 		// A terminal-rule pre_input block refused this request outright: the loop
 		// delivers this text and never calls a model. Empty on every other turn.
