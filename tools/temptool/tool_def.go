@@ -126,6 +126,7 @@ func BuildToolDef() *GroupedTool {
 					Properties: map[string]ToolParam{
 						"name":             {Type: "string", Description: "Sub-action name, unique within the toolbox."},
 						"description":      {Type: "string", Description: "What this sub-action does, in one sentence (cap 250 chars). The toolbox pays for this line once per action, on every turn."},
+						"follow_ups":       {Type: "array", Items: &ToolParam{Type: "string"}, Description: "(optional) Other actions of THIS toolbox that this action's reply asks you to call as the service's own next step, e.g. create_post: [\"verify_post\"] when the service answers a post with a verification challenge to send back. A reply asking for one of these is not treated as an injection. Only for the service's own protocol."},
 						"url_template":     {Type: "string", Description: "(HTTP action) Endpoint URL with {param} placeholders. Use {param:encoded} when a nested path must arrive as ONE percent-encoded segment (GitLab files, and any API that takes a path as an id). Give this OR command_template."},
 						"command_template": {Type: "string", Description: "(local action) Command line with {param} placeholders, shell-quoted at dispatch and run in the sandbox exactly as a shell-mode tool is. Give this OR url_template. The HTTP-only fields (method, body_template, content_type, headers) do not apply."},
 						"method":           {Type: "string", Description: "HTTP method. Default GET."},

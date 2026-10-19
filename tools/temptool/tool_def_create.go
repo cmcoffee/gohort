@@ -532,7 +532,11 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 			ResponsePipe:    strings.TrimSpace(StringArg(m, "response_pipe")),
 			ResponseExtract: ParseExtractSpec(m["response_extract"]),
 			Disabled:        BoolArg(m, "disabled"),
+			FollowUps:       followUpNames(m["follow_ups"]),
 		})
+	}
+	if err := validateFollowUps(actions); err != nil {
+		return "", err
 	}
 	for _, r := range shared.required {
 		if _, top := shared.params[r]; !top && !sharedRequiredUsed[r] {
@@ -945,4 +949,40 @@ func hasActions(v any) bool {
 		return t != "" && t != "[]"
 	}
 	return true
+}
+
+// followUpNames is an action's follow_ups as given, trimmed and without
+// repeats.
+func followUpNames(v any) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, n := range stringSliceArg(v) {
+		if n = strings.TrimSpace(n); n != "" && !seen[n] {
+			seen[n] = true
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// validateFollowUps holds each action's follow_ups to the other actions of the
+// same toolbox (TempToolAction.FollowUps): a follow-up is another call on the
+// same service, so a name that is not one of them cannot be what the
+// service's reply asks for, and an action is not its own follow-up.
+func validateFollowUps(actions []TempToolAction) error {
+	names := map[string]bool{}
+	for _, a := range actions {
+		names[a.Name] = true
+	}
+	for i, a := range actions {
+		for _, f := range a.FollowUps {
+			switch {
+			case f == a.Name:
+				return fmt.Errorf("actions[%d] (%q): follow_ups names the action itself. A follow-up is another action of this toolbox that this one's reply asks for", i, a.Name)
+			case !names[f]:
+				return fmt.Errorf("actions[%d] (%q): follow_ups names %q, which is not an action of this toolbox. A follow-up is another action of the same toolbox, the call this action's reply asks for", i, a.Name, f)
+			}
+		}
+	}
+	return nil
 }

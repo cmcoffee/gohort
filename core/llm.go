@@ -225,6 +225,14 @@ type Tool struct {
 	// tool's own name for a tool with no actions. See OwnModelReachTool.
 	OwnModelReach map[string]bool `json:"-"`
 
+	// FollowUps is, per action, the other actions a reply to it may ask the
+	// agent to call (a toolbox action's follow_ups), and ActionPaths the
+	// endpoint path each action calls, so a reply naming the path rather than
+	// the action is recognised too. The injection scan reads a flagged reply
+	// asking for one of these as the service's protocol (TempToolAction.FollowUps).
+	FollowUps   map[string][]string `json:"-"`
+	ActionPaths map[string]string   `json:"-"`
+
 	// Prompt is an optional system-prompt fragment that gets appended
 	// when this tool is loaded into an agent. Most tools (web_search,
 	// fetch_url, calculate, …) don't need one — name + description in

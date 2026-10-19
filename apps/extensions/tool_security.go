@@ -447,3 +447,136 @@ func toolWhoRemembered(db Database, user, name string) []string {
 	}
 	return ids
 }
+
+// toolStepsSection serves "Replies may ask for": a toolbox action's declared
+// next steps (TempToolAction.FollowUps), the service's own protocol that a
+// reply to that action asks the agent for, such as a post the service answers
+// with a verification challenge to send back. The injection check reads such
+// a reply as that step, not an attack. GET the actions and the declared
+// steps; POST {action, follow, on} to declare or drop one.
+//
+// The owner's say, as data on the tool: not free text for the check to
+// weigh, which an attacker's post could argue past, but a pair of this tool's
+// own actions, which it cannot reach.
+func toolStepsSection(w http.ResponseWriter, r *http.Request, db Database, user, name string) {
+	tool, save, found := ownedToolbox(db, user, name)
+	if !found {
+		http.Error(w, "not one of your toolboxes", http.StatusNotFound)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		type step struct {
+			Action string `json:"action"`
+			Follow string `json:"follow"`
+		}
+		actions := []string{}
+		steps := []step{}
+		for _, a := range tool.Actions {
+			actions = append(actions, a.Name)
+			for _, f := range a.FollowUps {
+				steps = append(steps, step{a.Name, f})
+			}
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, map[string]any{"actions": actions, "steps": steps,
+			"note": "A step the service asks for in its own reply, such as a post it answers with a verification challenge to send back. " +
+				"When a reply to the first action asks for the second, the injection check treats it as the service's next step rather than an attack. " +
+				"Only that action's replies count, and only actions of this tool, so text in anything else it reads, a feed or another account's post, never does."})
+	case http.MethodPost:
+		var body struct {
+			Action string `json:"action"`
+			Follow string `json:"follow"`
+			On     bool   `json:"on"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "bad body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		updated, err := setFollowUp(tool, strings.TrimSpace(body.Action), strings.TrimSpace(body.Follow), body.On)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := save(updated); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// setFollowUp declares (on) or drops a follow-up of one action of tool,
+// held to another action of the same toolbox.
+func setFollowUp(tool TempTool, action, follow string, on bool) (TempTool, error) {
+	has := map[string]bool{}
+	for _, a := range tool.Actions {
+		has[a.Name] = true
+	}
+	switch {
+	case !has[action]:
+		return tool, Error("no action " + action + " on this tool")
+	case !has[follow]:
+		return tool, Error("no action " + follow + " on this tool")
+	case action == follow:
+		return tool, Error("an action is not its own next step")
+	}
+	tool.Actions = append([]TempToolAction(nil), tool.Actions...)
+	for i, a := range tool.Actions {
+		if a.Name != action {
+			continue
+		}
+		kept := []string{}
+		for _, f := range a.FollowUps {
+			if f != follow {
+				kept = append(kept, f)
+			}
+		}
+		if on {
+			kept = append(kept, follow)
+		}
+		if len(kept) == 0 {
+			kept = nil
+		}
+		tool.Actions[i].FollowUps = kept
+	}
+	return tool, nil
+}
+
+// ownedToolbox finds one of the user's toolboxes, in their pool or kept on
+// their agents, and how to save it back: the pool record, or every agent's
+// copy, as the page's other per-tool edits do.
+func ownedToolbox(db Database, user, name string) (TempTool, func(TempTool) error, bool) {
+	if row, inPool := UserToolByName(db, user, name); inPool && row.Tool.Mode == TempToolModeToolbox {
+		return row.Tool, func(t TempTool) error {
+			if !UpdatePersistentTempTool(db, user, t) {
+				return Error("update failed")
+			}
+			return nil
+		}, true
+	}
+	var agents []string
+	var tool TempTool
+	for _, st := range ListScopedTools(user) {
+		if st.Shadowed || st.Scope != ScopeAgentTool || st.Tool.Name != name || st.Tool.Mode != TempToolModeToolbox {
+			continue
+		}
+		if len(agents) == 0 {
+			tool = st.Tool
+		}
+		agents = append(agents, st.AgentID)
+	}
+	if len(agents) == 0 {
+		return TempTool{}, nil, false
+	}
+	return tool, func(t TempTool) error {
+		for _, id := range agents {
+			if err := AttachToolToAgent(AuthDB(), user, id, t); err != nil {
+				return err
+			}
+		}
+		return nil
+	}, true
+}

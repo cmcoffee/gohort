@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -82,6 +83,56 @@ type toolResultPolicy struct {
 	// because that is the agent whose owner set the scan scope and whose Rules
 	// modal will show the entry.
 	agentID string
+
+	// followUps and actionPaths are the protocol steps the tool's actions
+	// declare their replies may ask for (Tool.FollowUps; see expectedStep).
+	followUps   map[string][]string
+	actionPaths map[string]string
+}
+
+// expectedStep reports the declared follow-up a flagged reply asks for, or
+// "": the step the service's own reply to this action names, by the
+// follow-up's action name or by its endpoint path. That is the service's
+// protocol (a post answered with a verification challenge to send back), not
+// an attack, and only this action's replies get it, so a feed whose posts say
+// the same thing does not.
+func (p toolResultPolicy) expectedStep(args map[string]any, span string) string {
+	steps := p.followUps[strings.TrimSpace(stringArg(args, "action"))]
+	span = strings.TrimSpace(span)
+	if len(steps) == 0 || span == "" {
+		return ""
+	}
+	for _, step := range steps {
+		if strings.Contains(span, step) {
+			return step
+		}
+		if re := endpointPattern(p.actionPaths[step]); re != nil && re.MatchString(span) {
+			return step
+		}
+	}
+	return ""
+}
+
+// endpointPattern matches an endpoint path as a reply would write it: each
+// {placeholder} one path segment, and the path whole, not the prefix of a
+// longer one. Nil for an action with no path (a command).
+func endpointPattern(path string) *regexp.Regexp {
+	path = strings.TrimSpace(path)
+	if path == "" || path == "/" {
+		return nil
+	}
+	var b strings.Builder
+	for i, part := range regexp.MustCompile(`\{[^}]*\}`).Split(path, -1) {
+		if i > 0 {
+			b.WriteString(`[^/\s"'?]+`)
+		}
+		b.WriteString(regexp.QuoteMeta(part))
+	}
+	re, err := regexp.Compile(b.String() + `(?:$|[^\w/-])`)
+	if err != nil {
+		return nil
+	}
+	return re
 }
 
 // toolResultPolicyFor decides what a tool's results carry.
@@ -105,6 +156,9 @@ func toolResultPolicyFor(agent AgentRecord, tl Tool) toolResultPolicy {
 		ownModel:        tl.OwnModelReach,
 		fetchesExternal: tl.FetchesExternal,
 		scanListed:      scan && nameListed(agent.ScanToolsAdd, tl.Name) && !nameListed(agent.ScanToolsSkip, tl.Name),
+
+		followUps:   tl.FollowUps,
+		actionPaths: tl.ActionPaths,
 	}
 }
 
@@ -234,6 +288,12 @@ func (t *chatTurn) applyToolResultPolicyBody(name string, p toolResultPolicy, ar
 	}
 	if p.scan {
 		switch v := t.scanToolResult(name, out); {
+		case v.Flagged() && p.expectedStep(args, v.Span) != "":
+			// The service's own next step, declared on the tool: kept fenced,
+			// and on the trail, but not a detection and no taint.
+			t.turnDiag("tool-scan-expected", fmt.Sprintf(
+				"%s's reply asked for %s, a step the tool declares this action's replies ask for, so it was not treated as an injection: %s",
+				name, p.expectedStep(args, v.Span), strings.TrimSpace(v.Span)))
 		case v.Flagged():
 			t.recordScanDetection(p.agentID, name, v)
 			// The turn is now TAINTED, whether the payload is delivered or

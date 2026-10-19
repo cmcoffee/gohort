@@ -499,6 +499,8 @@ func agentToolFromTemp(sess *ToolSession, tt *TempTool) AgentToolDef {
 			return adviseOnFailure(sess, live, out, err)
 		}
 		def.Tool.Category = toolCategory(sess, tt) // the grouping label rides onto the toolbox def too
+		// The protocol steps its actions' replies may ask for, for the scan.
+		def.Tool.FollowUps, def.Tool.ActionPaths = toolboxFollowUps(tt)
 		return def
 	}
 
@@ -801,4 +803,53 @@ func toolCategory(sess *ToolSession, tt *TempTool) string {
 	}
 	c, _ := toolcat.Of(user, *tt)
 	return c
+}
+
+// toolboxFollowUps is, for each action that declares follow-ups, the enabled
+// actions its reply may ask for, and the endpoint path of every enabled
+// action, for the injection scan (Tool.FollowUps). Both nil when no action
+// declares one.
+func toolboxFollowUps(tt *TempTool) (map[string][]string, map[string]string) {
+	paths := map[string]string{}
+	for _, a := range tt.Actions {
+		if !a.Disabled {
+			paths[a.Name] = endpointPath(a.URLTemplate)
+		}
+	}
+	var steps map[string][]string
+	for _, a := range tt.Actions {
+		if a.Disabled {
+			continue
+		}
+		for _, f := range a.FollowUps {
+			if _, ok := paths[f]; ok && f != a.Name {
+				if steps == nil {
+					steps = map[string][]string{}
+				}
+				steps[a.Name] = append(steps[a.Name], f)
+			}
+		}
+	}
+	if steps == nil {
+		return nil, nil
+	}
+	return steps, paths
+}
+
+// endpointPath is a URL template's path: no scheme, host, query or fragment.
+// "" for an action that is a command rather than an endpoint.
+func endpointPath(tpl string) string {
+	s := strings.TrimSpace(tpl)
+	if i := strings.Index(s, "://"); i >= 0 {
+		s = s[i+3:]
+		j := strings.Index(s, "/")
+		if j < 0 {
+			return ""
+		}
+		s = s[j:]
+	}
+	if i := strings.IndexAny(s, "?#"); i >= 0 {
+		s = s[:i]
+	}
+	return s
 }

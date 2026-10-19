@@ -2525,7 +2525,8 @@ func (T *Extensions) skillsSection() ui.Section {
 }
 
 // handleUserToolAccess serves a tool's Security panel (tool_security.go):
-// ?section=run for How it runs, ?section=who for Who can use it. Which of the
+// ?section=run for How it runs, ?section=who for Who can use it, ?section=steps
+// for a toolbox's Replies may ask for. Which of the
 // user's OWN agents load a tool is theirs to decide; tier 1 (which USERS may
 // reach a shared tool) stays with the share picker and the admin page.
 //
@@ -2551,8 +2552,11 @@ func (T *Extensions) handleUserToolAccess(w http.ResponseWriter, r *http.Request
 		w.Header().Set("Cache-Control", "no-store")
 		toolWhoSection(w, r, db, user, name)
 		return
+	case "steps":
+		toolStepsSection(w, r, db, user, name)
+		return
 	}
-	http.Error(w, "unknown section: use section=run or section=who", http.StatusNotFound)
+	http.Error(w, "unknown section: use section=run, section=who or section=steps", http.StatusNotFound)
 }
 
 // toolSecurityJS drives a tool's Security panel on Extensions › Tools
@@ -2675,6 +2679,79 @@ func toolSecurityJS() string {
     }
     load();
   }
+  // Replies may ask for: a toolbox action's declared next steps, the
+  // service's own protocol (tool_security.go, toolStepsSection). The pairs
+  // already declared, each removable, and one row to add another.
+  function steps(body){
+    var host = document.createElement('div');
+    body.appendChild(host);
+    function post(payload){
+      return fetch('api/tool-access?' + qs + '&section=steps', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(payload)
+      }).then(function(res){
+        if(!res.ok) return res.text().then(function(t){ throw new Error(t || ('HTTP ' + res.status)); });
+      });
+    }
+    function fail(e){ window.uiAlert && window.uiAlert('Could not change it: ' + (e && e.message || e)); load(); }
+    function select(names){
+      var s = document.createElement('select');
+      s.className = 'ui-input';
+      names.forEach(function(n){ var o = document.createElement('option'); o.value = n; o.textContent = n; s.appendChild(o); });
+      return s;
+    }
+    function render(d){
+      host.innerHTML = '';
+      var actions = (d && d.actions) || [];
+      var list = (d && d.steps) || [];
+      if (!list.length) {
+        var none = document.createElement('div');
+        none.style.cssText = 'color:var(--text-mute);font-size:var(--fs-sm, 0.85rem);margin:0.2rem 0';
+        none.textContent = 'None declared.';
+        host.appendChild(none);
+      }
+      list.forEach(function(st){
+        var row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;gap:0.5rem;margin:0.2rem 0;flex-wrap:wrap';
+        var label = document.createElement('span');
+        label.textContent = 'Replies to ' + st.action + ' may ask for ' + st.follow;
+        var rm = document.createElement('button');
+        rm.type = 'button'; rm.className = 'ui-row-btn'; rm.textContent = 'Remove';
+        rm.addEventListener('click', function(){ post({action: st.action, follow: st.follow, on: false}).then(load, fail); });
+        row.appendChild(label);
+        row.appendChild(rm);
+        host.appendChild(row);
+      });
+      if (actions.length > 1) {
+        var add = document.createElement('div');
+        add.style.cssText = 'display:flex;align-items:center;gap:0.5rem;margin:0.4rem 0;flex-wrap:wrap';
+        var from = select(actions), to = select(actions);
+        to.value = actions[1];
+        var btn = document.createElement('button');
+        btn.type = 'button'; btn.className = 'ui-row-btn'; btn.textContent = 'Add';
+        btn.addEventListener('click', function(){ post({action: from.value, follow: to.value, on: true}).then(load, fail); });
+        add.appendChild(document.createTextNode('Replies to'));
+        add.appendChild(from);
+        add.appendChild(document.createTextNode('may ask for'));
+        add.appendChild(to);
+        add.appendChild(btn);
+        host.appendChild(add);
+      }
+      if (d && d.note) {
+        var note = document.createElement('div');
+        note.style.cssText = 'color:var(--text-mute);font-size:var(--fs-sm, 0.85rem);margin-top:0.35rem';
+        note.textContent = d.note;
+        host.appendChild(note);
+      }
+    }
+    function load(){
+      fetch('api/tool-access?' + qs + '&section=steps', {cache:'no-store'}).then(function(res){
+        if(!res.ok) return res.text().then(function(t){ throw new Error(t || ('HTTP ' + res.status)); });
+        return res.json();
+      }).then(render, function(e){ host.textContent = 'Could not load: ' + (e && e.message || e); });
+    }
+    load();
+  }
   window.uiOpenSimpleModal({
     title: 'Security: ' + name,
     width: '600px',
@@ -2683,6 +2760,10 @@ func toolSecurityJS() string {
       pills(body, '&section=run');
       heading(body, 'Who can use it');
       who(body);
+      if (r.mode === 'toolbox') {
+        heading(body, 'Replies may ask for');
+        steps(body);
+      }
       if (r.pool && window.uiMountComponent) {
         heading(body, 'Other people');
         var cfg = JSON.parse(JSON.stringify(` + toolSharePickerJSON() + `).split('__NAME__').join(encodeURIComponent(name)));

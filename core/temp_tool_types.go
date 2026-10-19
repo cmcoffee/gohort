@@ -94,6 +94,14 @@ type TempToolAction struct {
 	// the record being all-or-nothing. Re-enable via tool_def update
 	// (actions=[{name, disabled:false}]).
 	Disabled bool `json:"disabled,omitempty"`
+	// FollowUps names the other actions of this toolbox that a reply to THIS
+	// action may ask the agent to call: the service's own protocol step, such
+	// as a post the service answers with a verification challenge to send back
+	// through verify_post. The injection scan reads a flagged reply that asks
+	// for one of these as that step rather than an attack. Only this action's
+	// replies, and only actions of the same toolbox, so it reaches no new
+	// destination, and text in some other reply (a feed) cannot use it.
+	FollowUps []string `json:"follow_ups,omitempty"`
 }
 
 // TempTool is a runtime-defined tool created via create_temp_tool or
