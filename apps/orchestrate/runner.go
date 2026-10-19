@@ -1981,8 +1981,10 @@ func (pr *planRun) runLoop() {
 		if pr.resp != nil {
 			recordTurnCommitment(t.udb, t.chatSessionID(), pr.resp.Content, len(t.persistedToolCalls()) > 0)
 		}
-		maybeExtractGraph(t.udb, factsNamespace(t.agent.ID),
-			turnExtractText(pr.userSaid, pr.resp), t.app.WorkerChat)
+		if graphExtractAllowed(t.agent, t.inferredDisabled) {
+			maybeExtractGraph(t.udb, factsNamespace(t.agent.ID),
+				turnExtractText(pr.userSaid, pr.resp), t.app.WorkerChat)
+		}
 	}
 	{
 		respLen := 0

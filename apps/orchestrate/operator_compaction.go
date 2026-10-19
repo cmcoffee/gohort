@@ -367,7 +367,18 @@ func (T *OrchestrateApp) foldOperatorHistory(udb Database, agent AgentRecord, se
 	// when the stored thread is trimmed, and a recurring index would
 	// overwrite an older span on re-ingest.
 	cfg.OnFold = func(folded []Message, firstIndex int) error {
-		return T.archiveOperatorSpan(udb, agent.ID, sessID, st.FoldSeq, folded, firstIndex)
+		if err := T.archiveOperatorSpan(udb, agent.ID, sessID, st.FoldSeq, folded, firstIndex); err != nil {
+			return err
+		}
+		// Batch entity extraction: the fold is the completeness backstop for graph
+		// population — every turn's stated relationships get extracted here when they
+		// age out, catching anything the per-turn pass skipped under its cooldown.
+		// Async + gated; idempotent with the per-turn writes. Not for an agent whose
+		// inferred memory is off or a session that keeps nothing (graphExtractAllowed).
+		if graphExtractAllowed(agent, sess.Incognito) {
+			extractGraphFromFold(udb, factsNamespace(agent.ID), folded, T.WorkerChat)
+		}
+		return nil
 	}
 	fold := func(ctx context.Context, aging []Message, prior string) (string, []string, error) {
 		return T.operatorFold(ctx, aging, prior)
@@ -686,11 +697,6 @@ func (T *OrchestrateApp) archiveOperatorSpan(udb Database, agentID, sessID strin
 		return err
 	}
 	Log("[operator.lcm] archived span %s (%d msgs)", reportID, len(folded))
-	// Batch entity extraction: the fold is the completeness backstop for graph
-	// population — every turn's stated relationships get extracted here when they
-	// age out, catching anything the per-turn pass skipped under its cooldown.
-	// Async + gated; idempotent with the per-turn writes.
-	extractGraphFromFold(udb, factsNamespace(agentID), folded, T.WorkerChat)
 	return nil
 }
 

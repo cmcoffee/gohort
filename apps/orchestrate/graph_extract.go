@@ -47,6 +47,17 @@ func init() {
 
 func graphExtractEnabled() bool { return TuneBool(TunableGraphExtract) }
 
+// graphExtractAllowed is whether automatic extraction may write a conversation's
+// relationships into the agent's graph. An extracted graph is inferred memory
+// like any other, so the switches that keep that layer from accumulating keep
+// this from writing too: the agent's own Inferred Memory being off, and a
+// conversation that keeps nothing (an incognito session, a turn with Clean on).
+// Both extraction paths ask it, the per-turn one and the one that runs when a
+// thread folds.
+func graphExtractAllowed(agent AgentRecord, keepsNothing bool) bool {
+	return !agent.DisableInferred && !keepsNothing
+}
+
 const (
 	// graphExtractMinChars skips messages too short to plausibly state a
 	// relationship, so trivial turns ("thanks", "ok") never spend a worker call.
@@ -287,6 +298,9 @@ func extractGraphFromText(db Database, namespace, text string, chat FactChatFunc
 		if subject == "" || relation == "" || object == "" || strings.EqualFold(subject, object) {
 			continue
 		}
+		if graphNameLooksLikeCode(subject) || graphNameLooksLikeCode(object) {
+			continue
+		}
 		subj, _ := UpsertGraphEntity(db, namespace, tr.SubjectKind, subject, nil, nil)
 		obj, _ := UpsertGraphEntity(db, namespace, tr.ObjectKind, object, nil, nil)
 		if subj.ID == "" || obj.ID == "" {
@@ -299,6 +313,31 @@ func extractGraphFromText(db Database, namespace, text string, chat FactChatFunc
 		Debug("[graph-extract] wrote %d edge(s) (ns=%s)", written, namespace)
 	}
 	return written
+}
+
+// graphNameLooksLikeCode reports a name that is a code artifact rather than an
+// entity: a path, a call, an assignment, quoted code, or a single word that is
+// a file name or a snake_case identifier. A technical conversation names many of
+// these, and filed as entities they crowd the people and projects the graph is
+// for out of it at its cap. Checked in code as well as asked of the extractor,
+// so it holds whatever the model returns.
+func graphNameLooksLikeCode(name string) bool {
+	if strings.ContainsAny(name, "/\\=`") || strings.Contains(name, "()") {
+		return true
+	}
+	if strings.ContainsAny(name, " \t") {
+		return false
+	}
+	if strings.Contains(name, "_") {
+		return true
+	}
+	if i := strings.LastIndex(name, "."); i > 0 && i < len(name)-1 {
+		ext := name[i+1:]
+		if len(ext) <= 4 && strings.ToLower(ext) == ext {
+			return true
+		}
+	}
+	return false
 }
 
 // judgeGraphTriples asks the worker to extract explicit named-entity
@@ -318,7 +357,7 @@ Rules:
 - Only EXPLICIT relationships the text actually states. Do NOT infer or guess.
 - Only NAMED entities: specific people, organizations, places, projects, or named things. Skip generic nouns ("a dog", "the meeting") unless they carry a proper name.
 - relation is a short lowercase verb phrase ("works at", "owns", "lives in", "married to", "manages").
-- subject_kind / object_kind is one of: person, org, project, place, thing.
+- subject_kind / object_kind is one of: person, org, project, place, thing. A thing is a named possession or product (a pet, a car, a device, a book), never a file, path, code identifier, command, setting, tool or model name: those are not entities to remember.
 - The text may be labelled "USER SAID" and "ASSISTANT SAID". Take what the USER states as given. From the ASSISTANT take only what it ASSERTS as established: skip anything hedged, proposed or asked about ("might be", "could indicate", "let me check whether", "if X then Y", "I suspect"). A hypothesis it was still testing is not a fact about the world.
 - Skip anything the assistant is quoting as an EXAMPLE, or describing as what it would do rather than what is.
 - If the text states no such relationship, reply with an empty array.
