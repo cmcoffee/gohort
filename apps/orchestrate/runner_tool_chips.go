@@ -69,7 +69,10 @@ func sessAttachmentCounts(sess *ToolSession) (int, int, int) {
 // the tool fired from. Mirrors chat's flushNewImages pattern but
 // targets a specific assistant bubble instead of "the current one".
 func (t *chatTurn) flushNewAttachments(sess *ToolSession, msgID string, imgN, vidN, fileN int) {
-	if sess == nil {
+	// No page (a channel message, a wake): nobody to show it to, so it is left
+	// unclaimed for whatever does deliver it. Claimed here, a picture a
+	// dispatched agent made on a channel turn reached nobody (handBack).
+	if sess == nil || t.sse == nil {
 		return
 	}
 	// Use the session's claim-API: each call atomically claims an

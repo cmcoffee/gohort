@@ -357,3 +357,27 @@ func (s *ToolSession) TakeInThreadReply() string {
 	s.mu.Unlock()
 	return strings.Join(held, "\n\n")
 }
+
+// HandOverUnflushed moves what s attached and nothing has delivered yet onto
+// to, and says how many of each it moved: the session of a run that ended
+// handing its pictures, audio and files to the session of whoever ran it, so
+// they go out with that one's reply. What was already shown (claimed) stays
+// put, so nothing is delivered twice.
+func (s *ToolSession) HandOverUnflushed(to *ToolSession) (images, videos, files int) {
+	if s == nil || to == nil || s == to {
+		return 0, 0, 0
+	}
+	for _, img := range s.ClaimUnflushedImages() {
+		to.AppendImage(img)
+		images++
+	}
+	for _, v := range s.ClaimUnflushedVideos() {
+		to.AppendVideo(v)
+		videos++
+	}
+	for _, f := range s.ClaimUnflushedFiles() {
+		to.AppendFile(f)
+		files++
+	}
+	return images, videos, files
+}

@@ -666,16 +666,5 @@ func stopNote(out string, ctx context.Context, b BackgroundRun, act *RunActivity
 // handOver gives the turn's session what the run attached, when it finished
 // inline: the reply carrying the result collects them from there.
 func handOver(from, to *ToolSession) {
-	if from == nil || to == nil || from == to {
-		return
-	}
-	for _, img := range from.ClaimUnflushedImages() {
-		to.AppendImage(img)
-	}
-	for _, v := range from.ClaimUnflushedVideos() {
-		to.AppendVideo(v)
-	}
-	for _, f := range from.ClaimUnflushedFiles() {
-		to.AppendFile(f)
-	}
+	from.HandOverUnflushed(to)
 }

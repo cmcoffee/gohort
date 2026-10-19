@@ -23,6 +23,8 @@ func delegateToolDef(sess *ToolSession, owner, controllerAgentID string) AgentTo
 			Parameters: map[string]ToolParam{
 				"agent": {Type: "string", Description: "Name or id of the existing agent to delegate to."},
 				"brief": {Type: "string", Description: "What the agent should do."},
+				"attach": {Type: "array", Items: &ToolParam{Type: "string"},
+					Description: "Pictures, audio or video to hand the agent, by your names for them: media#N (something sent to you), an image you kept, or a file in your working folder. They arrive as its own media#1, media#2 and so on. A text or other file needs no attach: name it in the brief, the agent shares your working folder. What the agent attaches comes back to you with its result."},
 			},
 			Required: []string{"agent", "brief"},
 		},
@@ -77,9 +79,20 @@ func delegateToolDef(sess *ToolSession, owner, controllerAgentID string) AgentTo
 				// And this call's card, so the delegated run's progress
 				// shows on it (dispatch_progress.go).
 				dctx = withToolCard(dctx, toolCardFrom(ctx))
+				// And a place for what it attaches, handed on to this turn, and
+				// what this agent hands it (agent_media.go).
+				returned := &ToolSession{}
+				dctx = withMediaReturn(dctx, returned)
+				handed, handedNote, herr := handOut(sess, handerName(owner, controllerAgentID), stringSliceFromArgs(args, "attach"))
+				if herr != nil {
+					return "Not delegated: " + herr.Error(), nil
+				}
+				dctx = withHandedMedia(dctx, handed)
+				brief += handedNote
 				rec := RunDelegation(dctx, RootDB, owner, runKey, brief, controllerAgentID)
+				back := handBack(agent, returned, sess)
 				if rec.Status == RunFailed {
-					return fmt.Sprintf("Delegated to %q but it failed: %s", agent, rec.Err), nil
+					return fmt.Sprintf("Delegated to %q but it failed: %s%s", agent, rec.Err, back), nil
 				}
 				// The whole result, as agents(run) hands it back. Summary is the
 				// Activity feed's line, cut at 280 characters, and the
@@ -90,7 +103,7 @@ func delegateToolDef(sess *ToolSession, owner, controllerAgentID string) AgentTo
 					out = strings.TrimSpace(rec.Summary)
 				}
 				fenced, _ := fenceAgentResult(agent)(out, nil)
-				return fmt.Sprintf("Delegated to %q.%s Result:\n%s", agent, privateDelegationNote(dctx, true), fenced), nil
+				return fmt.Sprintf("Delegated to %q.%s Result:\n%s%s", agent, privateDelegationNote(dctx, true), fenced, back), nil
 			}
 			// FromAgent rides the queued record so an APPROVED delegation runs
 			// with the same channel reach a pre-authorized one gets — the user
@@ -104,6 +117,10 @@ func delegateToolDef(sess *ToolSession, owner, controllerAgentID string) AgentTo
 				sess.PendingApprovalPrompt(a)
 			}
 			note := requestOriginNote(a)
+			// A queued request keeps its brief and nothing else.
+			if len(stringSliceFromArgs(args, "attach")) > 0 {
+				note += " What you attached is not kept with a queued request: hand it over again when it runs."
+			}
 			return fmt.Sprintf("Queued a delegation to %q for the user's approval: it's in the Authorizations pane (id %s) and runs once approved. %s%s", agent, a.ID, note, privateDelegationNote(qctx, false)), nil
 		},
 	}

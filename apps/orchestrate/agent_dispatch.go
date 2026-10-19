@@ -654,6 +654,9 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 	sd.prepareInput()
 	sd.configureLoop()
 	sd.runLoop()
+	// What it attached goes back to whoever is collecting it (withMediaReturn):
+	// a delegation's result had nowhere to carry a picture or a song.
+	sd.subSess.HandOverUnflushed(mediaReturnFrom(sd.ctx))
 	if !sd.report() {
 		return sd.ret, sd.retErr
 	}
@@ -816,6 +819,8 @@ func (sd *syncDispatch) buildSession() {
 		DeniedCredentials: credentialDenySet(sd.target, sd.runtimeUser),
 	}
 	sd.subSess.DirectCredentialRefusal = directCredentialRefusal(sd.target, sd.subSess)
+	// What the agent that delegated this handed over (agent_media.go).
+	sd.ctx = takeHandedMedia(sd.ctx, sd.subSess)
 	sd.subSess.ToolFailureAdvice = toolFailureAdvice(sd.target, false, func() bool { return nonOwnerRequester(sd.ctx) })
 	// Inherit the delegator's workspace when there is one — the sub-agent is
 	// producing something its parent will read — and otherwise run in this
@@ -914,13 +919,16 @@ func (sd *syncDispatch) buildToolkit() {
 		// the argument for fixing it now rather than after the second entry
 		// lands and the two paths disagree about something that matters.
 		toolNames = append(toolNames, availableWorkerToolNames()...)
-	} else if !isNoToolsSentinel(toolNames) {
-		// A curated allowlist still gets the always-on tools the interactive
-		// turn force-includes (runner.go): workspace (the delivery primitive
-		// every producer routes through) and the framework utilities
-		// (calculate, date_math, time_in_zone). Without this, a channel or
-		// dispatched agent with a tight list can't tell the time or deliver an
-		// attachment — the always-on contract has to hold on every path.
+	}
+	if !isNoToolsSentinel(toolNames) {
+		// A curated allowlist and the default pool both get the always-on
+		// tools the interactive turn force-includes (runner.go): workspace
+		// (the delivery primitive every producer routes through) and the
+		// framework utilities (calculate, date_math, time_in_zone). Without
+		// this, a channel or dispatched agent with a tight list can't tell the
+		// time or deliver an attachment, and one with no list at all could not
+		// either: the default pool leaves framework tools out, workspace among
+		// them. The always-on contract has to hold on every path.
 		has := func(n string) bool {
 			for _, x := range toolNames {
 				if x == n {
@@ -2034,13 +2042,16 @@ func (cr *continuingRun) buildToolkit() {
 		// the argument for fixing it now rather than after the second entry
 		// lands and the two paths disagree about something that matters.
 		toolNames = append(toolNames, availableWorkerToolNames()...)
-	} else if !isNoToolsSentinel(toolNames) {
-		// A curated allowlist still gets the always-on tools the interactive
-		// turn force-includes (runner.go): workspace (the delivery primitive
-		// every producer routes through) and the framework utilities
-		// (calculate, date_math, time_in_zone). Without this, a channel or
-		// dispatched agent with a tight list can't tell the time or deliver an
-		// attachment — the always-on contract has to hold on every path.
+	}
+	if !isNoToolsSentinel(toolNames) {
+		// A curated allowlist and the default pool both get the always-on
+		// tools the interactive turn force-includes (runner.go): workspace
+		// (the delivery primitive every producer routes through) and the
+		// framework utilities (calculate, date_math, time_in_zone). Without
+		// this, a channel or dispatched agent with a tight list can't tell the
+		// time or deliver an attachment, and one with no list at all could not
+		// either: the default pool leaves framework tools out, workspace among
+		// them. The always-on contract has to hold on every path.
 		has := func(n string) bool {
 			for _, x := range toolNames {
 				if x == n {
@@ -2317,6 +2328,9 @@ func (cr *continuingRun) buildMessages() {
 			cr.subSess.RegisterInboundMedia("image", img, run.MessageSender)
 		}
 	}
+	// What the agent that handed this off gave it, after what the message
+	// brought (agent_media.go).
+	cr.ctx = takeHandedMedia(cr.ctx, cr.subSess)
 	// Bound the run-view with the same rolling-summary compaction the Cortex
 	// thread uses, so a long-running channel / dispatch session doesn't load
 	// its entire history into the prompt (and eventually blow the window).

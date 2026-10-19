@@ -110,8 +110,10 @@ func (T *OrchestrateApp) runApprovedDelegation(a Authorization, target string) {
 	}
 	origin := strings.TrimSpace(a.FromSession) != "" && strings.TrimSpace(a.FromAgent) != ""
 	var capture *delegationCapture
+	returned := &ToolSession{} // what the run attaches, delivered with its result
 	if origin {
 		ctx, capture = withDelegationCapture(ctx)
+		ctx = withMediaReturn(ctx, returned)
 	}
 	rec := RunDelegation(ctx, RootDB, a.Owner, target, a.Brief, a.FromAgent)
 	if !origin {
@@ -137,7 +139,7 @@ func (T *OrchestrateApp) runApprovedDelegation(a Authorization, target string) {
 	T.deliverTaskResult(taskOrigin{
 		SessionID: a.FromSession, User: a.Owner, AgentID: a.FromAgent,
 		ChatID: a.FromChatID, Handle: a.FromHandle,
-	}, label, TaskProduct{Text: out}, runErr)
+	}, label, TaskProduct{Text: out, Images: returned.Images, Videos: returned.Videos, Files: returned.Files}, runErr)
 }
 
 // delegationTargetName is the name to call a delegation's target by in the

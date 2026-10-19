@@ -114,6 +114,12 @@ func (t *chatTurn) agentsGroupedToolDef(allowRun bool) AgentToolDef {
 			Type:        "string",
 			Description: "(run) The question or task to send to the target agent. Phrase it as the user would phrase it directly; the sub-agent has its own persona and will frame the response. The sub-agent keeps its persona, saved facts, and knowledge base, and it re-threads your prior dispatches to it this session (ephemeral continuity), so a follow-up can be brief without repeating earlier context.",
 		}
+		params["attach"] = ToolParam{
+			Type:  "array",
+			Items: &ToolParam{Type: "string"},
+			Description: "(run, agent) Pictures, audio or video to hand the agent, by your names for them: media#N (something sent to you), an image you kept, or a file in your working folder. They arrive as its own media#1, media#2 and so on. A text or other file needs no attach: name it in the message, the agent shares your working folder. " +
+				"What the agent attaches comes back to you with its answer and goes out with your reply.",
+		}
 		// Whether the CALLER needs the answer, which is the one thing about a
 		// dispatch only the caller knows.
 		//
@@ -276,7 +282,7 @@ func (t *chatTurn) agentsHandler(allowRun, allowRunTool bool) ToolHandlerFunc {
 			if queued, ok := t.queueAskedDispatch(ctx, args); ok {
 				return queued, nil
 			}
-			return fenceAgentResult(stringArg(args, "agent"))(t.agentsRunActionFor(toolCardFrom(ctx), args))
+			return fenceAgentResult(stringArg(args, "agent"))(t.agentsRunActionFor(toolCardFrom(ctx), ToolSessionFromContext(ctx), args))
 		case "run_tool":
 			if !allowRunTool {
 				return "", fmt.Errorf("agents(run_tool) is not available to this agent: it's a Builder-only allowance for verifying an agent's tools directly")
@@ -1060,13 +1066,13 @@ func (t *chatTurn) agentsRunGate(args map[string]any) (AgentRecord, string, erro
 }
 
 func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
-	return t.agentsRunActionFor(toolCard{}, args)
+	return t.agentsRunActionFor(toolCard{}, nil, args)
 }
 
 // agentsRunActionFor is agentsRunAction for a dispatch drawn as card: the
 // sub-agent's calls are drawn under it and its rounds and thinking reported
 // on it (dispatch_progress.go). A zero card reports nothing.
-func (t *chatTurn) agentsRunActionFor(card toolCard, args map[string]any) (string, error) {
+func (t *chatTurn) agentsRunActionFor(card toolCard, caller *ToolSession, args map[string]any) (string, error) {
 	target, msg, err := t.agentsRunGate(args)
 	if err != nil {
 		return "", err
@@ -1403,6 +1409,14 @@ func (t *chatTurn) agentsRunActionFor(card toolCard, args map[string]any) (strin
 		deliveredMsg = markAsDelegatedMayAsk(msg)
 		ask = &delegatedQuestion{}
 	}
+	// What the caller handed over arrives as this run's own inbound media,
+	// and the message says what it is (agent_media.go).
+	handed, handedNote, herr := handOut(caller, t.agent.Name, stringSliceFromArgs(args, "attach"))
+	if herr != nil {
+		return "", herr
+	}
+	receiveHanded(subSess, handed)
+	deliveredMsg += handedNote
 	llmMessages := make([]Message, 0, len(prior.Messages)+1)
 	for _, m := range prior.Messages {
 		llmMessages = append(llmMessages, Message{Role: m.Role, Content: m.Content})
@@ -1569,6 +1583,9 @@ func (t *chatTurn) agentsRunActionFor(card toolCard, args map[string]any) (strin
 	}
 	Log("[orchestrate.agents.run] depth=%d caller=%s → target=%s msg_chars=%d err=%v",
 		t.dispatchHops(), t.agent.ID, target.ID, len(msg), runErr)
+	// What it attached is the caller's to deliver now, made before a failure
+	// or not.
+	back := handBack(target.Name, subSess, caller)
 	if runErr != nil {
 		return "", runErr
 	}
@@ -1629,14 +1646,14 @@ func (t *chatTurn) agentsRunActionFor(card toolCard, args map[string]any) (strin
 	}
 	if asked {
 		Log("[orchestrate.agents.run] %s asked the user a question through caller=%s", target.Name, t.agent.ID)
-		return delegatedRelay(target.Name, cleanReply), nil
+		return delegatedRelay(target.Name, cleanReply) + back, nil
 	}
 	// Asked in prose instead of through ask_user: still the user's question.
 	if ask != nil && endsWithQuestionForUser(cleanReply) {
 		Log("[orchestrate.agents.run] %s ended on a question for the user, relayed through caller=%s", target.Name, t.agent.ID)
-		return delegatedProseRelay(target.Name, cleanReply), nil
+		return delegatedProseRelay(target.Name, cleanReply) + back, nil
 	}
-	return fmt.Sprintf("From %s:\n\n%s", target.Name, cleanReply), nil
+	return fmt.Sprintf("From %s:\n\n%s%s", target.Name, cleanReply, back), nil
 }
 
 // agentsDispatchPolicy is how a dispatch behaves when the caller has handed the
@@ -1749,6 +1766,13 @@ func (t *chatTurn) agentsDispatchPolicy(allowRun bool) DetachPolicy {
 			// carried across by hand: a handoff must not launder a non-owner's
 			// request into one the owner made (authoring_requester.go).
 			runCtx := carryNonOwnerRequester(t.ctx, d.Context())
+			// What it was handed, resolved against what the turn held.
+			handed, handedNote, herr := handOut(d, t.agent.Name, stringSliceFromArgs(args, "attach"))
+			if herr != nil {
+				return "", herr
+			}
+			runCtx = withHandedMedia(runCtx, handed)
+			msg += handedNote
 			res, rerr := t.app.RunAgentSyncContinuingRich(runCtx, AgentSyncRun{
 				AgentOwner: t.user, RuntimeUser: t.user, AgentKey: target.ID,
 				SubSessionID: "dispatch:" + t.chatSessionID() + ":" + target.ID,
@@ -1766,6 +1790,16 @@ func (t *chatTurn) agentsDispatchPolicy(allowRun bool) DetachPolicy {
 					return "", gerr
 				}
 			}
+			// What it attached goes home with the result: the detached
+			// session is what the finished task delivers from (handBack).
+			carried := &ToolSession{}
+			for _, b := range res.Images {
+				carried.AppendImage(b)
+			}
+			for _, b := range res.Videos {
+				carried.AppendVideo(b)
+			}
+			out += handBack(target.Name, carried, d)
 			// Fenced exactly as the inline path fences it. A sub-agent's answer
 			// is outside content whichever way it arrives, and a detached one
 			// lands in a wake note that does no fencing of its own.
