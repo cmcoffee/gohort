@@ -14,32 +14,11 @@ import (
 // registerUsersRoutes wires the users API under the admin sub-mux.
 func (a *AdminApp) registerUsersRoutes(sub *http.ServeMux) {
 	// API: list users.
-	sub.HandleFunc("/api/users", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		switch r.Method {
-		case http.MethodGet:
-			w.Header().Set("Content-Type", "application/json")
-			w.Write(UserListJSON(a.db))
-		case http.MethodPost:
-			a.handleAddUser(w, r)
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		}
-	})
+	sub.HandleFunc("/api/users", a.handleUsersAPI)
 
 	// API: user candidates for ACL pickers ([{value,label}], approved users only).
 	// Shared source for every ui.ACLPicker on this page (credential + tool access).
-	sub.HandleFunc("/api/user-candidates", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		// No exclusion: an admin granting access to a deployment resource may
-		// legitimately be one of the people granted it.
-		w.Write(UserCandidatesJSON(a.db, ""))
-	})
+	sub.HandleFunc("/api/user-candidates", a.handleUserCandidates)
 
 	// API: feature access — the admin gate on outward-facing surfaces a user can
 	// expose through their own keys (the OpenAI /v1 endpoint is the first). Reads
@@ -48,342 +27,34 @@ func (a *AdminApp) registerUsersRoutes(sub *http.ServeMux) {
 	// for the ACLPicker; POST ?feature= sets its allowed_users. Generic over the
 	// registry — an app declares a feature, this renders and stores it, with no
 	// per-feature code here.
-	sub.HandleFunc("/api/feature-access", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		feature := strings.TrimSpace(r.URL.Query().Get("feature"))
-		switch r.Method {
-		case http.MethodGet:
-			if feature != "" {
-				p := LoadFeaturePolicy(a.db, feature)
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(map[string]any{"feature": feature, "allowed_users": p.AllowedUsers})
-				return
-			}
-			type row struct {
-				Feature      string   `json:"feature"` // RowKey
-				Label        string   `json:"label"`
-				Desc         string   `json:"desc"`
-				AllowedUsers []string `json:"allowed_users,omitempty"`
-				Access       string   `json:"access"` // human summary for the table
-			}
-			rows := []row{}
-			for _, f := range ShareableFeatures() {
-				p := LoadFeaturePolicy(a.db, f.Key)
-				access := "All users"
-				if len(p.AllowedUsers) > 0 {
-					access = fmt.Sprintf("%d user(s)", len(p.AllowedUsers))
-				}
-				rows = append(rows, row{Feature: f.Key, Label: f.Label, Desc: f.Desc, AllowedUsers: p.AllowedUsers, Access: access})
-			}
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(rows)
-		case http.MethodPost:
-			if feature == "" || !IsShareableFeature(feature) {
-				http.Error(w, "unknown feature", http.StatusBadRequest)
-				return
-			}
-			var body struct {
-				AllowedUsers []string `json:"allowed_users"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				http.Error(w, "bad request", http.StatusBadRequest)
-				return
-			}
-			SetFeatureAllowedUsers(a.db, feature, body.AllowedUsers)
-			w.WriteHeader(http.StatusNoContent)
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		}
-	})
+	sub.HandleFunc("/api/feature-access", a.handleFeatureAccess)
 
 	// API: user-owned credentials — the governance view over the user plane. The
 	// admin API Credentials page shows only GLOBAL creds; this surfaces the ones
 	// users create for themselves, with owner-aware revoke (disable) + delete.
-	sub.HandleFunc("/api/user-credentials", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		switch r.Method {
-		case http.MethodGet:
-			type row struct {
-				ID       string `json:"id"` // owner/name — unique across users (RowKey)
-				Owner    string `json:"owner"`
-				Name     string `json:"name"`
-				Type     string `json:"type"`
-				Disabled bool   `json:"disabled"`
-				Secured  bool   `json:"secured"`
-				// Who else can use this key, and whether any of them can write
-				// with it. A share the admin cannot see is a share they cannot
-				// govern, and a write lend is the one that arrives at the far
-				// end wearing the owner's name.
-				LentTo      string `json:"lent_to,omitempty"`
-				Lent        bool   `json:"lent"`
-				LendsWrites bool   `json:"lends_writes"`
-				LendLocked  bool   `json:"lend_locked"`
-			}
-			rows := []row{}
-			for _, c := range Secure().ListAllUserOwned() {
-				rows = append(rows, row{ID: c.Owner + "/" + c.Name, Owner: c.Owner, Name: c.Name, Type: c.Type, Disabled: c.Disabled, Secured: c.Secured,
-					LentTo:      describeLend(c),
-					Lent:        len(c.SharedReadOnly)+len(c.SharedReadWrite) > 0,
-					LendsWrites: len(c.SharedReadWrite) > 0,
-					LendLocked:  c.AdminLendLocked})
-			}
-			sort.Slice(rows, func(i, j int) bool {
-				if rows[i].Owner != rows[j].Owner {
-					return rows[i].Owner < rows[j].Owner
-				}
-				return rows[i].Name < rows[j].Name
-			})
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(rows)
-		case http.MethodPost:
-			owner := strings.TrimSpace(r.URL.Query().Get("owner"))
-			name := strings.TrimSpace(r.URL.Query().Get("name"))
-			if owner == "" || name == "" {
-				http.Error(w, "owner and name required", http.StatusBadRequest)
-				return
-			}
-			var err error
-			switch r.URL.Query().Get("action") {
-			// The admin's actions HOLD: the owner's own switch cannot undo them
-			// (AdminDisabled / AdminLendLocked); only an admin action here can.
-			case "disable":
-				err = Secure().AdminSetDisabledOwned(owner, name, true)
-			case "enable":
-				err = Secure().AdminSetDisabledOwned(owner, name, false)
-			case "revoke_share":
-				// Both lists at once. An admin either accepts a lend or stops
-				// it; narrowing somebody's grant from writes to reads on their
-				// behalf would leave the owner believing they gave one thing
-				// and the borrower holding another.
-				err = Secure().AdminRevokeShares(owner, name)
-			case "allow_share":
-				err = Secure().AdminAllowLending(owner, name)
-			default:
-				http.Error(w, "action must be enable|disable|revoke_share|allow_share", http.StatusBadRequest)
-				return
-			}
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			w.WriteHeader(http.StatusNoContent)
-		case http.MethodDelete:
-			owner := strings.TrimSpace(r.URL.Query().Get("owner"))
-			name := strings.TrimSpace(r.URL.Query().Get("name"))
-			if owner == "" || name == "" {
-				http.Error(w, "owner and name required", http.StatusBadRequest)
-				return
-			}
-			if err := Secure().DeleteUser(owner, name); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			w.WriteHeader(http.StatusNoContent)
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		}
-	})
+	sub.HandleFunc("/api/user-credentials", a.handleUserCredentials)
 
 	// API: user-owned agents — the governance view over peer-shared agents. Agents
 	// live in per-user UDBs, so the admin app enumerates them through an orchestrate
 	// hook (nil until orchestrate's init runs). Revoke clears an agent's recipient
 	// list without deleting the agent.
-	sub.HandleFunc("/api/user-agents", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		switch r.Method {
-		case http.MethodGet:
-			rows := []UserOwnedAgentRow{}
-			if AdminListUserOwnedAgents != nil {
-				rows = AdminListUserOwnedAgents(a.db)
-			}
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(rows)
-		case http.MethodPost:
-			action := r.URL.Query().Get("action")
-			owner := strings.TrimSpace(r.URL.Query().Get("owner"))
-			id := strings.TrimSpace(r.URL.Query().Get("id"))
-			if owner == "" || id == "" {
-				http.Error(w, "owner and id required", http.StatusBadRequest)
-				return
-			}
-			var hook func(Database, string, string) error
-			switch action {
-			case "revoke_share":
-				hook = AdminRevokeAgentShare
-			case "publish": // admin "delegate to users" — flip Exposed on
-				hook = AdminPublishAgent
-			default:
-				http.Error(w, "action must be revoke_share|publish", http.StatusBadRequest)
-				return
-			}
-			if hook == nil {
-				http.Error(w, "unavailable (orchestrate not wired)", http.StatusServiceUnavailable)
-				return
-			}
-			if err := hook(a.db, owner, id); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			w.WriteHeader(http.StatusNoContent)
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		}
-	})
+	sub.HandleFunc("/api/user-agents", a.handleUserAgents)
 
 	// The pipeline twin of /api/user-pipelines' agent sibling above. Same
 	// enumerate-and-revoke, minus publish: a pipeline has no app surface to
 	// flip on, so there is no second action to offer.
-	sub.HandleFunc("/api/user-pipelines", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		switch r.Method {
-		case http.MethodGet:
-			rows := []UserOwnedPipelineRow{}
-			if AdminListUserOwnedPipelines != nil {
-				rows = AdminListUserOwnedPipelines(a.db)
-			}
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(rows)
-		case http.MethodPost:
-			owner := strings.TrimSpace(r.URL.Query().Get("owner"))
-			id := strings.TrimSpace(r.URL.Query().Get("id"))
-			if owner == "" || id == "" {
-				http.Error(w, "owner and id required", http.StatusBadRequest)
-				return
-			}
-			if r.URL.Query().Get("action") != "revoke_share" {
-				http.Error(w, "action must be revoke_share", http.StatusBadRequest)
-				return
-			}
-			if AdminRevokePipelineShare == nil {
-				http.Error(w, "unavailable (orchestrate not wired)", http.StatusServiceUnavailable)
-				return
-			}
-			if err := AdminRevokePipelineShare(a.db, owner, id); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			w.WriteHeader(http.StatusNoContent)
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		}
-	})
+	sub.HandleFunc("/api/user-pipelines", a.handleUserPipelines)
 
 	// The machine twin of the two above. Same enumerate-and-revoke; no publish,
 	// for the reason the pipeline route states.
-	sub.HandleFunc("/api/user-machines", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		switch r.Method {
-		case http.MethodGet:
-			rows := []UserOwnedMachineRow{}
-			if AdminListUserOwnedMachines != nil {
-				rows = AdminListUserOwnedMachines(a.db)
-			}
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(rows)
-		case http.MethodPost:
-			owner := strings.TrimSpace(r.URL.Query().Get("owner"))
-			id := strings.TrimSpace(r.URL.Query().Get("id"))
-			if owner == "" || id == "" {
-				http.Error(w, "owner and id required", http.StatusBadRequest)
-				return
-			}
-			if r.URL.Query().Get("action") != "revoke_share" {
-				http.Error(w, "action must be revoke_share", http.StatusBadRequest)
-				return
-			}
-			if AdminRevokeMachineShare == nil {
-				http.Error(w, "unavailable (orchestrate not wired)", http.StatusServiceUnavailable)
-				return
-			}
-			if err := AdminRevokeMachineShare(a.db, owner, id); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			w.WriteHeader(http.StatusNoContent)
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		}
-	})
+	sub.HandleFunc("/api/user-machines", a.handleUserMachines)
 
 	// API: promotion requests — the bottom-up publish queue. Users request that
 	// their own resource be published deployment-wide; the admin approves (runs the
 	// kind-specific side effect) or denies. Approve runs the kind's registered
 	// approver: a tool is Shared to the global catalog, an app is shared to
 	// every signed-in user, a public_link mints an app's anonymous URL.
-	sub.HandleFunc("/api/promotions", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		switch r.Method {
-		case http.MethodGet:
-			// A tool request carries what approving it would publish: the
-			// definition the owner's request froze, as a diff against the
-			// published version for an update, whole for a first publish.
-			type reqRow struct {
-				PromotionRequest
-				Update bool   `json:"update,omitempty"`
-				Review string `json:"review,omitempty"`
-			}
-			releases := map[string]ToolRelease{}
-			for _, rel := range ToolReleases(a.db) {
-				releases[rel.Name] = rel
-			}
-			rows := []reqRow{}
-			for _, req := range ListPromotionRequests(a.db, true) { // pending only — the actionable queue
-				row := reqRow{PromotionRequest: req}
-				if req.Kind == "tool" {
-					row.Update, row.Review = toolRequestReview(a.db, releases, req.Owner, req.Name)
-				}
-				rows = append(rows, row)
-			}
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(rows)
-		case http.MethodPost:
-			action := r.URL.Query().Get("action")
-			id := strings.TrimSpace(r.URL.Query().Get("id"))
-			if id == "" {
-				http.Error(w, "missing id", http.StatusBadRequest)
-				return
-			}
-			if _, ok := GetPromotionRequest(a.db, id); !ok {
-				http.NotFound(w, r)
-				return
-			}
-			switch action {
-			case "approve":
-				// The kind's registered side effect runs BEFORE the row is
-				// marked approved, so a failure leaves the request pending
-				// (re-approvable). Each kind registers its own approver (a
-				// tool in core, an app in customapps); a kind without one
-				// is refused here.
-				if err := promotion.Approve(a.db, id, AuthCurrentUser(r)); err != nil {
-					http.Error(w, err.Error(), http.StatusBadRequest)
-					return
-				}
-			case "deny":
-				if err := SetPromotionRequestState(a.db, id, PromotionDeniedState, AuthCurrentUser(r)); err != nil {
-					http.Error(w, err.Error(), http.StatusBadRequest)
-					return
-				}
-			default:
-				http.Error(w, "action must be approve|deny", http.StatusBadRequest)
-				return
-			}
-			w.WriteHeader(http.StatusNoContent)
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		}
-	})
+	sub.HandleFunc("/api/promotions", a.handlePromotions)
 
 	// API: the global tool catalog — what this deployment publishes, and who
 	// may take it.
@@ -395,229 +66,588 @@ func (a *AdminApp) registerUsersRoutes(sub *http.ServeMux) {
 	// governance question is whether a tool is published and to whom, and an
 	// admin who wants somebody to stop using one takes away the permission
 	// rather than the preference. Unshare and Access do that, on the row.
-	sub.HandleFunc("/api/global-tools", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
+	sub.HandleFunc("/api/global-tools", a.handleGlobalTools)
+
+	// API: user operations (update/delete/apps).
+	sub.HandleFunc("/api/users/", a.handleUserOne)
+
+}
+
+// handleUsersAPI serves /api/users; registerUsersRoutes says what it is for.
+func (a *AdminApp) handleUsersAPI(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(UserListJSON(a.db))
+	case http.MethodPost:
+		a.handleAddUser(w, r)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleUserCandidates serves /api/user-candidates; registerUsersRoutes says what it is for.
+func (a *AdminApp) handleUserCandidates(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	// No exclusion: an admin granting access to a deployment resource may
+	// legitimately be one of the people granted it.
+	w.Write(UserCandidatesJSON(a.db, ""))
+}
+
+// handleFeatureAccess serves /api/feature-access; registerUsersRoutes says what it is for.
+func (a *AdminApp) handleFeatureAccess(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	feature := strings.TrimSpace(r.URL.Query().Get("feature"))
+	switch r.Method {
+	case http.MethodGet:
+		if feature != "" {
+			p := LoadFeaturePolicy(a.db, feature)
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"feature": feature, "allowed_users": p.AllowedUsers})
 			return
+		}
+		type row struct {
+			Feature      string   `json:"feature"` // RowKey
+			Label        string   `json:"label"`
+			Desc         string   `json:"desc"`
+			AllowedUsers []string `json:"allowed_users,omitempty"`
+			Access       string   `json:"access"` // human summary for the table
+		}
+		rows := []row{}
+		for _, f := range ShareableFeatures() {
+			p := LoadFeaturePolicy(a.db, f.Key)
+			access := "All users"
+			if len(p.AllowedUsers) > 0 {
+				access = fmt.Sprintf("%d user(s)", len(p.AllowedUsers))
+			}
+			rows = append(rows, row{Feature: f.Key, Label: f.Label, Desc: f.Desc, AllowedUsers: p.AllowedUsers, Access: access})
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(rows)
+	case http.MethodPost:
+		if feature == "" || !IsShareableFeature(feature) {
+			http.Error(w, "unknown feature", http.StatusBadRequest)
+			return
+		}
+		var body struct {
+			AllowedUsers []string `json:"allowed_users"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		SetFeatureAllowedUsers(a.db, feature, body.AllowedUsers)
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleUserCredentials serves /api/user-credentials; registerUsersRoutes says what it is for.
+func (a *AdminApp) handleUserCredentials(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		type row struct {
+			ID       string `json:"id"` // owner/name — unique across users (RowKey)
+			Owner    string `json:"owner"`
+			Name     string `json:"name"`
+			Type     string `json:"type"`
+			Disabled bool   `json:"disabled"`
+			Secured  bool   `json:"secured"`
+			// Who else can use this key, and whether any of them can write
+			// with it. A share the admin cannot see is a share they cannot
+			// govern, and a write lend is the one that arrives at the far
+			// end wearing the owner's name.
+			LentTo      string `json:"lent_to,omitempty"`
+			Lent        bool   `json:"lent"`
+			LendsWrites bool   `json:"lends_writes"`
+			LendLocked  bool   `json:"lend_locked"`
+		}
+		rows := []row{}
+		for _, c := range Secure().ListAllUserOwned() {
+			rows = append(rows, row{ID: c.Owner + "/" + c.Name, Owner: c.Owner, Name: c.Name, Type: c.Type, Disabled: c.Disabled, Secured: c.Secured,
+				LentTo:      describeLend(c),
+				Lent:        len(c.SharedReadOnly)+len(c.SharedReadWrite) > 0,
+				LendsWrites: len(c.SharedReadWrite) > 0,
+				LendLocked:  c.AdminLendLocked})
+		}
+		sort.Slice(rows, func(i, j int) bool {
+			if rows[i].Owner != rows[j].Owner {
+				return rows[i].Owner < rows[j].Owner
+			}
+			return rows[i].Name < rows[j].Name
+		})
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(rows)
+	case http.MethodPost:
+		owner := strings.TrimSpace(r.URL.Query().Get("owner"))
+		name := strings.TrimSpace(r.URL.Query().Get("name"))
+		if owner == "" || name == "" {
+			http.Error(w, "owner and name required", http.StatusBadRequest)
+			return
+		}
+		var err error
+		switch r.URL.Query().Get("action") {
+		// The admin's actions HOLD: the owner's own switch cannot undo them
+		// (AdminDisabled / AdminLendLocked); only an admin action here can.
+		case "disable":
+			err = Secure().AdminSetDisabledOwned(owner, name, true)
+		case "enable":
+			err = Secure().AdminSetDisabledOwned(owner, name, false)
+		case "revoke_share":
+			// Both lists at once. An admin either accepts a lend or stops
+			// it; narrowing somebody's grant from writes to reads on their
+			// behalf would leave the owner believing they gave one thing
+			// and the borrower holding another.
+			err = Secure().AdminRevokeShares(owner, name)
+		case "allow_share":
+			err = Secure().AdminAllowLending(owner, name)
+		default:
+			http.Error(w, "action must be enable|disable|revoke_share|allow_share", http.StatusBadRequest)
+			return
+		}
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	case http.MethodDelete:
+		owner := strings.TrimSpace(r.URL.Query().Get("owner"))
+		name := strings.TrimSpace(r.URL.Query().Get("name"))
+		if owner == "" || name == "" {
+			http.Error(w, "owner and name required", http.StatusBadRequest)
+			return
+		}
+		if err := Secure().DeleteUser(owner, name); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleUserAgents serves /api/user-agents; registerUsersRoutes says what it is for.
+func (a *AdminApp) handleUserAgents(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		rows := []UserOwnedAgentRow{}
+		if AdminListUserOwnedAgents != nil {
+			rows = AdminListUserOwnedAgents(a.db)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(rows)
+	case http.MethodPost:
+		action := r.URL.Query().Get("action")
+		owner := strings.TrimSpace(r.URL.Query().Get("owner"))
+		id := strings.TrimSpace(r.URL.Query().Get("id"))
+		if owner == "" || id == "" {
+			http.Error(w, "owner and id required", http.StatusBadRequest)
+			return
+		}
+		var hook func(Database, string, string) error
+		switch action {
+		case "revoke_share":
+			hook = AdminRevokeAgentShare
+		case "publish": // admin "delegate to users" — flip Exposed on
+			hook = AdminPublishAgent
+		default:
+			http.Error(w, "action must be revoke_share|publish", http.StatusBadRequest)
+			return
+		}
+		if hook == nil {
+			http.Error(w, "unavailable (orchestrate not wired)", http.StatusServiceUnavailable)
+			return
+		}
+		if err := hook(a.db, owner, id); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleUserPipelines serves /api/user-pipelines; registerUsersRoutes says what it is for.
+func (a *AdminApp) handleUserPipelines(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		rows := []UserOwnedPipelineRow{}
+		if AdminListUserOwnedPipelines != nil {
+			rows = AdminListUserOwnedPipelines(a.db)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(rows)
+	case http.MethodPost:
+		owner := strings.TrimSpace(r.URL.Query().Get("owner"))
+		id := strings.TrimSpace(r.URL.Query().Get("id"))
+		if owner == "" || id == "" {
+			http.Error(w, "owner and id required", http.StatusBadRequest)
+			return
+		}
+		if r.URL.Query().Get("action") != "revoke_share" {
+			http.Error(w, "action must be revoke_share", http.StatusBadRequest)
+			return
+		}
+		if AdminRevokePipelineShare == nil {
+			http.Error(w, "unavailable (orchestrate not wired)", http.StatusServiceUnavailable)
+			return
+		}
+		if err := AdminRevokePipelineShare(a.db, owner, id); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleUserMachines serves /api/user-machines; registerUsersRoutes says what it is for.
+func (a *AdminApp) handleUserMachines(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		rows := []UserOwnedMachineRow{}
+		if AdminListUserOwnedMachines != nil {
+			rows = AdminListUserOwnedMachines(a.db)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(rows)
+	case http.MethodPost:
+		owner := strings.TrimSpace(r.URL.Query().Get("owner"))
+		id := strings.TrimSpace(r.URL.Query().Get("id"))
+		if owner == "" || id == "" {
+			http.Error(w, "owner and id required", http.StatusBadRequest)
+			return
+		}
+		if r.URL.Query().Get("action") != "revoke_share" {
+			http.Error(w, "action must be revoke_share", http.StatusBadRequest)
+			return
+		}
+		if AdminRevokeMachineShare == nil {
+			http.Error(w, "unavailable (orchestrate not wired)", http.StatusServiceUnavailable)
+			return
+		}
+		if err := AdminRevokeMachineShare(a.db, owner, id); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handlePromotions serves /api/promotions; registerUsersRoutes says what it is for.
+func (a *AdminApp) handlePromotions(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		// A tool request carries what approving it would publish: the
+		// definition the owner's request froze, as a diff against the
+		// published version for an update, whole for a first publish.
+		type reqRow struct {
+			PromotionRequest
+			Update bool   `json:"update,omitempty"`
+			Review string `json:"review,omitempty"`
 		}
 		releases := map[string]ToolRelease{}
 		for _, rel := range ToolReleases(a.db) {
 			releases[rel.Name] = rel
 		}
-		switch r.Method {
-		case http.MethodGet:
-			// ?history=<tool>: the versions a release keeps to roll back to,
-			// each with what rolling back to it would change.
-			if name := strings.TrimSpace(r.URL.Query().Get("history")); name != "" {
-				type histRow struct {
-					Tool        string `json:"tool"`
-					Owner       string `json:"owner"`
-					PastVersion int    `json:"past_version"`
-					Label       string `json:"label"`
-					ApprovedAt  string `json:"approved_at,omitempty"`
-					ApprovedBy  string `json:"approved_by,omitempty"`
-					Changes     string `json:"changes"`
-				}
-				hist := []histRow{}
-				if rel, ok := releases[name]; ok {
-					for _, h := range rel.History {
-						hr := histRow{
-							Tool: rel.Name, Owner: rel.Owner, PastVersion: h.Version,
-							Label: fmt.Sprintf("v%d", h.Version), ApprovedBy: h.ApprovedBy,
-							Changes: rel.Tool.DefinitionDiff(h.Tool),
-						}
-						if !h.ApprovedAt.IsZero() {
-							hr.ApprovedAt = h.ApprovedAt.UTC().Format("2006-01-02T15:04:05Z")
-						}
-						if hr.Changes == "" {
-							hr.Changes = "The same definition as the current version."
-						}
-						hist = append(hist, hr)
-					}
-				}
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(hist)
-				return
+		rows := []reqRow{}
+		for _, req := range ListPromotionRequests(a.db, true) { // pending only — the actionable queue
+			row := reqRow{PromotionRequest: req}
+			if req.Kind == "tool" {
+				row.Update, row.Review = toolRequestReview(a.db, releases, req.Owner, req.Name)
 			}
-			type row struct {
-				ID     string `json:"id"`
-				Tool   string `json:"tool"`
-				Owner  string `json:"owner"`
-				Access string `json:"access"`
-				// Restricted drives the badge: "every user" and "these three"
-				// are different grants and should not read the same.
-				Restricted bool `json:"restricted"`
-				// Version is the approved version adopters run; the owner's
-				// working copy may have moved on, which only an approved
-				// update carries to them.
-				Version    string `json:"version"`
-				ApprovedAt string `json:"approved_at,omitempty"`
-				HasHistory bool   `json:"has_history"`
-				// UpdateRequested: the owner asked for their current copy to
-				// become the next version; Review is the diff to approve or
-				// deny in Pending promotions.
-				UpdateRequested bool   `json:"update_requested"`
-				Review          string `json:"review,omitempty"`
-			}
-			rows := []row{}
-			// Who published each one. A catalog entry with no name behind it
-			// is one nobody is answerable for.
-			owners := SharedToolOwners(a.db)
-			for _, p := range LoadSharedPersistentTempTools(a.db) {
-				access, restricted := "Every user", false
-				if len(p.AllowedUsers) > 0 {
-					access, restricted = strings.Join(p.AllowedUsers, ", "), true
-				}
-				rw := row{
-					ID: p.Tool.Name, Tool: p.Tool.Name, Owner: owners[p.Tool.Name],
-					Access: access, Restricted: restricted,
-				}
-				if rel, ok := releases[p.Tool.Name]; ok {
-					rw.Version = fmt.Sprintf("v%d", rel.Version)
-					rw.HasHistory = len(rel.History) > 0
-					if !rel.ApprovedAt.IsZero() {
-						rw.ApprovedAt = rel.ApprovedAt.UTC().Format("2006-01-02T15:04:05Z")
-					}
-					if PendingPromotion(a.db, rel.Owner, "tool", rel.Name) {
-						rw.UpdateRequested, rw.Review = toolRequestReview(a.db, releases, rel.Owner, rel.Name)
-					}
-				}
-				rows = append(rows, rw)
-			}
-			sort.Slice(rows, func(i, j int) bool { return rows[i].Tool < rows[j].Tool })
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(rows)
-		case http.MethodPost:
-			// ?action=rollback&tool=&owner=&to=<version>: make a kept version
-			// the one adopters run. The one it replaces is kept in turn.
-			if r.URL.Query().Get("action") != "rollback" {
-				http.Error(w, "action must be rollback", http.StatusBadRequest)
-				return
-			}
-			name := strings.TrimSpace(r.URL.Query().Get("tool"))
-			rel, ok := releases[name]
-			if !ok || rel.Owner != strings.TrimSpace(r.URL.Query().Get("owner")) {
-				http.Error(w, "no published tool "+name+" of that owner's", http.StatusNotFound)
-				return
-			}
-			var to int
-			if _, err := fmt.Sscanf(r.URL.Query().Get("to"), "%d", &to); err != nil {
-				http.Error(w, "to must be a version number", http.StatusBadRequest)
-				return
-			}
-			if err := rel.RollBack(a.db, to, AuthCurrentUser(r)); err != nil {
+			rows = append(rows, row)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(rows)
+	case http.MethodPost:
+		action := r.URL.Query().Get("action")
+		id := strings.TrimSpace(r.URL.Query().Get("id"))
+		if id == "" {
+			http.Error(w, "missing id", http.StatusBadRequest)
+			return
+		}
+		if _, ok := GetPromotionRequest(a.db, id); !ok {
+			http.NotFound(w, r)
+			return
+		}
+		switch action {
+		case "approve":
+			// The kind's registered side effect runs BEFORE the row is
+			// marked approved, so a failure leaves the request pending
+			// (re-approvable). Each kind registers its own approver (a
+			// tool in core, an app in customapps); a kind without one
+			// is refused here.
+			if err := promotion.Approve(a.db, id, AuthCurrentUser(r)); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
-			w.WriteHeader(http.StatusNoContent)
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		}
-	})
-
-	// API: user operations (update/delete/apps).
-	sub.HandleFunc("/api/users/", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		rest := strings.TrimPrefix(r.URL.Path, "/api/users/")
-		// Check for /api/users/{user}/{action}
-		if parts := strings.SplitN(rest, "/", 2); len(parts) == 2 {
-			username := parts[0]
-			action := parts[1]
-			switch action {
-			case "apps":
-				if r.Method == http.MethodPut {
-					a.handleUpdateUserApps(w, r, username)
-				} else {
-					http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-				}
-			case "groups":
-				if r.Method == http.MethodPut {
-					a.handleUpdateUserGroups(w, r, username)
-				} else {
-					http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-				}
-			case "approve":
-				if r.Method == http.MethodPost {
-					a.handleApproveUser(w, r, username)
-				} else {
-					http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-				}
-			case "reject":
-				if r.Method == http.MethodPost {
-					a.handleRejectUser(w, r, username)
-				} else {
-					http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-				}
-			case "reset-password":
-				if r.Method == http.MethodPost {
-					a.handleResetPassword(w, r, username)
-				} else {
-					http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-				}
-			case "data":
-				if r.Method == http.MethodGet {
-					a.handleUserDataSummary(w, r, username)
-				} else {
-					http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-				}
-			case "data-action":
-				if r.Method == http.MethodPost {
-					a.handleUserDataAction(w, r, username)
-				} else {
-					http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-				}
-			case "revoke-sessions":
-				if r.Method == http.MethodPost {
-					a.handleRevokeSessions(w, r, username)
-				} else {
-					http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-				}
-			default:
-				http.NotFound(w, r)
-			}
-			return
-		}
-		username := rest
-		if username == "" {
-			http.Error(w, "username required", http.StatusBadRequest)
-			return
-		}
-		switch r.Method {
-		case http.MethodGet:
-			// Return the single-user summary so the framework's
-			// ChipPicker (apps) and any other per-user component can
-			// fetch the current state without scanning the full list.
-			user, ok := AuthGetUser(a.db, username)
-			if !ok {
-				http.Error(w, "user not found", http.StatusNotFound)
+		case "deny":
+			if err := SetPromotionRequestState(a.db, id, PromotionDeniedState, AuthCurrentUser(r)); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
-			apps := user.Apps
-			if apps == nil {
-				apps = []string{}
+		default:
+			http.Error(w, "action must be approve|deny", http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleGlobalTools serves /api/global-tools; registerUsersRoutes says what it is for.
+func (a *AdminApp) handleGlobalTools(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	releases := map[string]ToolRelease{}
+	for _, rel := range ToolReleases(a.db) {
+		releases[rel.Name] = rel
+	}
+	switch r.Method {
+	case http.MethodGet:
+		// ?history=<tool>: the versions a release keeps to roll back to,
+		// each with what rolling back to it would change.
+		if name := strings.TrimSpace(r.URL.Query().Get("history")); name != "" {
+			type histRow struct {
+				Tool        string `json:"tool"`
+				Owner       string `json:"owner"`
+				PastVersion int    `json:"past_version"`
+				Label       string `json:"label"`
+				ApprovedAt  string `json:"approved_at,omitempty"`
+				ApprovedBy  string `json:"approved_by,omitempty"`
+				Changes     string `json:"changes"`
 			}
-			groups := user.Groups
-			if groups == nil {
-				groups = []string{}
+			hist := []histRow{}
+			if rel, ok := releases[name]; ok {
+				for _, h := range rel.History {
+					hr := histRow{
+						Tool: rel.Name, Owner: rel.Owner, PastVersion: h.Version,
+						Label: fmt.Sprintf("v%d", h.Version), ApprovedBy: h.ApprovedBy,
+						Changes: rel.Tool.DefinitionDiff(h.Tool),
+					}
+					if !h.ApprovedAt.IsZero() {
+						hr.ApprovedAt = h.ApprovedAt.UTC().Format("2006-01-02T15:04:05Z")
+					}
+					if hr.Changes == "" {
+						hr.Changes = "The same definition as the current version."
+					}
+					hist = append(hist, hr)
+				}
 			}
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]any{
-				"username": user.Username,
-				"admin":    user.Admin,
-				"pending":  user.Pending,
-				"apps":     apps,
-				"groups":   groups,
-			})
-		case http.MethodPut:
-			a.handleUpdateUser(w, r, username)
-		case http.MethodDelete:
-			a.handleDeleteUser(w, r, username)
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			json.NewEncoder(w).Encode(hist)
+			return
 		}
-	})
+		type row struct {
+			ID     string `json:"id"`
+			Tool   string `json:"tool"`
+			Owner  string `json:"owner"`
+			Access string `json:"access"`
+			// Restricted drives the badge: "every user" and "these three"
+			// are different grants and should not read the same.
+			Restricted bool `json:"restricted"`
+			// Version is the approved version adopters run; the owner's
+			// working copy may have moved on, which only an approved
+			// update carries to them.
+			Version    string `json:"version"`
+			ApprovedAt string `json:"approved_at,omitempty"`
+			HasHistory bool   `json:"has_history"`
+			// UpdateRequested: the owner asked for their current copy to
+			// become the next version; Review is the diff to approve or
+			// deny in Pending promotions.
+			UpdateRequested bool   `json:"update_requested"`
+			Review          string `json:"review,omitempty"`
+		}
+		rows := []row{}
+		// Who published each one. A catalog entry with no name behind it
+		// is one nobody is answerable for.
+		owners := SharedToolOwners(a.db)
+		for _, p := range LoadSharedPersistentTempTools(a.db) {
+			access, restricted := "Every user", false
+			if len(p.AllowedUsers) > 0 {
+				access, restricted = strings.Join(p.AllowedUsers, ", "), true
+			}
+			rw := row{
+				ID: p.Tool.Name, Tool: p.Tool.Name, Owner: owners[p.Tool.Name],
+				Access: access, Restricted: restricted,
+			}
+			if rel, ok := releases[p.Tool.Name]; ok {
+				rw.Version = fmt.Sprintf("v%d", rel.Version)
+				rw.HasHistory = len(rel.History) > 0
+				if !rel.ApprovedAt.IsZero() {
+					rw.ApprovedAt = rel.ApprovedAt.UTC().Format("2006-01-02T15:04:05Z")
+				}
+				if PendingPromotion(a.db, rel.Owner, "tool", rel.Name) {
+					rw.UpdateRequested, rw.Review = toolRequestReview(a.db, releases, rel.Owner, rel.Name)
+				}
+			}
+			rows = append(rows, rw)
+		}
+		sort.Slice(rows, func(i, j int) bool { return rows[i].Tool < rows[j].Tool })
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(rows)
+	case http.MethodPost:
+		// ?action=rollback&tool=&owner=&to=<version>: make a kept version
+		// the one adopters run. The one it replaces is kept in turn.
+		if r.URL.Query().Get("action") != "rollback" {
+			http.Error(w, "action must be rollback", http.StatusBadRequest)
+			return
+		}
+		name := strings.TrimSpace(r.URL.Query().Get("tool"))
+		rel, ok := releases[name]
+		if !ok || rel.Owner != strings.TrimSpace(r.URL.Query().Get("owner")) {
+			http.Error(w, "no published tool "+name+" of that owner's", http.StatusNotFound)
+			return
+		}
+		var to int
+		if _, err := fmt.Sscanf(r.URL.Query().Get("to"), "%d", &to); err != nil {
+			http.Error(w, "to must be a version number", http.StatusBadRequest)
+			return
+		}
+		if err := rel.RollBack(a.db, to, AuthCurrentUser(r)); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
 
+// handleUserOne serves /api/users/; registerUsersRoutes says what it is for.
+func (a *AdminApp) handleUserOne(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	rest := strings.TrimPrefix(r.URL.Path, "/api/users/")
+	// Check for /api/users/{user}/{action}
+	if parts := strings.SplitN(rest, "/", 2); len(parts) == 2 {
+		username := parts[0]
+		action := parts[1]
+		switch action {
+		case "apps":
+			if r.Method == http.MethodPut {
+				a.handleUpdateUserApps(w, r, username)
+			} else {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			}
+		case "groups":
+			if r.Method == http.MethodPut {
+				a.handleUpdateUserGroups(w, r, username)
+			} else {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			}
+		case "approve":
+			if r.Method == http.MethodPost {
+				a.handleApproveUser(w, r, username)
+			} else {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			}
+		case "reject":
+			if r.Method == http.MethodPost {
+				a.handleRejectUser(w, r, username)
+			} else {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			}
+		case "reset-password":
+			if r.Method == http.MethodPost {
+				a.handleResetPassword(w, r, username)
+			} else {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			}
+		case "data":
+			if r.Method == http.MethodGet {
+				a.handleUserDataSummary(w, r, username)
+			} else {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			}
+		case "data-action":
+			if r.Method == http.MethodPost {
+				a.handleUserDataAction(w, r, username)
+			} else {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			}
+		case "revoke-sessions":
+			if r.Method == http.MethodPost {
+				a.handleRevokeSessions(w, r, username)
+			} else {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+		return
+	}
+	username := rest
+	if username == "" {
+		http.Error(w, "username required", http.StatusBadRequest)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		// Return the single-user summary so the framework's
+		// ChipPicker (apps) and any other per-user component can
+		// fetch the current state without scanning the full list.
+		user, ok := AuthGetUser(a.db, username)
+		if !ok {
+			http.Error(w, "user not found", http.StatusNotFound)
+			return
+		}
+		apps := user.Apps
+		if apps == nil {
+			apps = []string{}
+		}
+		groups := user.Groups
+		if groups == nil {
+			groups = []string{}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"username": user.Username,
+			"admin":    user.Admin,
+			"pending":  user.Pending,
+			"apps":     apps,
+			"groups":   groups,
+		})
+	case http.MethodPut:
+		a.handleUpdateUser(w, r, username)
+	case http.MethodDelete:
+		a.handleDeleteUser(w, r, username)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
 }
 
 func (a *AdminApp) handleAddUser(w http.ResponseWriter, r *http.Request) {
