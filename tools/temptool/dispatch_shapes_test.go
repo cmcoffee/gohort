@@ -93,3 +93,20 @@ func TestAToolWhoseScriptIsGoneIsRefused(t *testing.T) {
 		t.Errorf("a script that is not on disk should be refused with the fix: %v", err)
 	}
 }
+
+// The run's cleanups behave as the defers they replace: last added runs
+// first, and one that panics does not stop the rest.
+func TestTheExitListRunsLikeDefers(t *testing.T) {
+	var ran []int
+	func() {
+		defer func() { _ = recover() }()
+		var l exitList
+		defer l.run()
+		l.add(func() { ran = append(ran, 1) })
+		l.add(func() { panic("boom") })
+		l.add(func() { ran = append(ran, 3) })
+	}()
+	if len(ran) != 2 || ran[0] != 3 || ran[1] != 1 {
+		t.Errorf("cleanups ran %v, want [3 1]", ran)
+	}
+}

@@ -264,6 +264,10 @@ func splitWorkDir(tt *TempTool, args map[string]any, scoped []string) (string, [
 }
 
 func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]any) (string, error) {
+	// The run's cleanups, registered as each thing they undo is made and run
+	// in reverse when it returns, as defers would be (exitList).
+	var onExit exitList
+	defer onExit.run()
 	// Secured-credential binding enforcement for the credential-dispatching modes
 	// (api / toolbox dispatch through tt.Credential). Only APPROVED tools may reach
 	// a secured cred; a legacy declaring tool is grandfathered, a revoked one
@@ -315,7 +319,7 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 		if err != nil {
 			return "", fmt.Errorf("mkdtemp: %w", err)
 		}
-		defer func() { _ = os.RemoveAll(tmp) }()
+		onExit.add(func() { _ = os.RemoveAll(tmp) })
 		ephemeralDir = true
 		if err := DeployRecipe(tt.Recipe, tmp); err != nil {
 			return "", fmt.Errorf("deploy recipe: %w", err)
@@ -355,7 +359,7 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 		if err != nil {
 			return "", fmt.Errorf("mkdtemp for stateless dispatch: %w", err)
 		}
-		defer func() { _ = os.RemoveAll(tmp) }()
+		onExit.add(func() { _ = os.RemoveAll(tmp) })
 		workspaceDir = tmp
 	}
 	_ = ephemeralDir
@@ -399,7 +403,7 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 	}
 	// The store folders this run reads are in use until it ends, so a
 	// temporary store's sweep cannot remove one mid-run.
-	defer pathhold.HoldAll(append(append(append([]string{workDir}, scopedPaths...), tt.GrantRead...), tt.GrantWrite...)...)()
+	onExit.add(pathhold.HoldAll(append(append(append([]string{workDir}, scopedPaths...), tt.GrantRead...), tt.GrantWrite...)...))
 	cmdTemplate := strings.ReplaceAll(tt.CommandTemplate, "{workspace_dir}", shellQuote(workspaceDir))
 	cmd, err := substitute(cmdTemplate, tt.Params, args)
 	if err != nil {
@@ -546,7 +550,7 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 		cancel()
 		ctx, cancel = context.WithCancel(sess.Context())
 	}
-	defer cancel()
+	onExit.add(cancel)
 	// The workspace is where the command writes, so it is what the run's disk
 	// limits watch. And a run with no end in view keeps the start and end of
 	// its output, not every line of an hour of logging.
@@ -587,11 +591,11 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 	// A value too big to be an environment variable goes by file; see
 	// passLargeArgs. The files are this run's alone.
 	byFile, fileErr := passLargeArgs(tt, args, envArgs, sess, workspaceDir)
-	defer func() {
+	onExit.add(func() {
 		for _, f := range byFile {
 			os.Remove(f.path)
 		}
-	}()
+	})
 	if fileErr != nil {
 		return "", fileErr
 	}
@@ -610,7 +614,7 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 		return "", fmt.Errorf("start sandbox hook: %w", hookErr)
 	}
 	if hook != nil {
-		defer hook.Close()
+		onExit.add(func() { hook.Close() })
 		// Identify the tool to the hook for secured-credential binding
 		// enforcement on fetch_via. Set before the sandbox runs (below).
 		hook.ToolName = tt.Name
@@ -881,6 +885,20 @@ func extractFileAttachMarkers(output string, sess *ToolSession, workspaceDir str
 		Log("[temptool.attach] attached %s from the working directory (%d bytes)", rel, len(data))
 		return fmt.Sprintf("[attached %s]", filepath.Base(path))
 	})
+}
+
+// exitList is a function's defers kept as a list, for a function whose steps
+// are methods: a defer in a method runs when that method returns, not the
+// function. Each add is a defer; run, deferred once by the function, runs them
+// in reverse, and each still runs if one before it panics.
+type exitList []func()
+
+func (l *exitList) add(f func()) { *l = append(*l, f) }
+
+func (l *exitList) run() {
+	for _, f := range *l {
+		defer f()
+	}
 }
 
 // toolIsGranted reports whether this tool is in the owner's persisted pool, as
