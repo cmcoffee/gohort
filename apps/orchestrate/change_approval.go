@@ -20,11 +20,15 @@ package orchestrate
 //     then "Which one?") is already approved in that session: picking it is
 //     the owner saying so. Only changes: deleting it still asks. Only that
 //     item: anything else Builder reaches for asks as before. And only
-//     Builder the owner opened: Builder another agent sent asks every time.
+//     Builder the owner opened: Builder another agent sent asks every time;
+//   - a run of Builder the owner approved from the queue (asked for where
+//     nobody was watching, holdBuilderRun) makes the edits it needs: approving
+//     the request was the owner saying so. Only edits, and only Builder's.
 //
 // Running or testing never asks. Only writes do, and only to what existed.
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -167,6 +171,25 @@ func grantChange(db Database, agentID, key string) {
 	}
 }
 
+type ownerApprovedRunKey struct{}
+
+// withOwnerApprovedRun marks a run the owner approved from the queue as theirs
+// to change things in: agentID's edits to things that exist go ahead without a
+// question for each. Only that agent's, so an agent the run dispatches does
+// not inherit it, and only edits: a deletion still asks.
+func withOwnerApprovedRun(ctx context.Context, agentID string) context.Context {
+	return context.WithValue(ctx, ownerApprovedRunKey{}, agentID)
+}
+
+// ownerApprovedRunFor reports whether ctx is a run the owner approved for agentID.
+func ownerApprovedRunFor(ctx context.Context, agentID string) bool {
+	if ctx == nil || strings.TrimSpace(agentID) == "" {
+		return false
+	}
+	id, _ := ctx.Value(ownerApprovedRunKey{}).(string)
+	return id == agentID
+}
+
 // changeAsker is everything one approval needs: whose things these are, the
 // agent making the change, the session an approval lasts for, the store the
 // queue's grants live in, and the card that reaches the owner live (nil when
@@ -179,6 +202,9 @@ type changeAsker struct {
 	sentBy                    string
 	ask                       func(prompt, detail string, yes []string) string
 	sess                      *ToolSession
+	// approvedRun: the owner approved this run from the queue, so its edits
+	// are theirs (withOwnerApprovedRun).
+	approvedRun bool
 }
 
 // changeApprover builds a session's ApproveChange.
@@ -188,7 +214,8 @@ func changeApprover(sess *ToolSession, owner, agentID, agentName string, ask fun
 			return ""
 		}
 		return changeAsker{owner: owner, agentID: agentID, agentName: agentName, session: sess.ChatSessionID,
-			db: sess.DB, sentBy: sess.DispatchParentAgentID, ask: ask, sess: sess}.approve(kind, name, detail, op)
+			db: sess.DB, sentBy: sess.DispatchParentAgentID, ask: ask, sess: sess,
+			approvedRun: ownerApprovedRunFor(sess.Context(), agentID)}.approve(kind, name, detail, op)
 	}
 }
 
@@ -203,7 +230,7 @@ func (t *chatTurn) approveChange(kind, name, detail string, op ChangeOp) string 
 		ask = t.chatAsker() // this chat's card, or the one of the chat that started this run
 	}
 	return changeAsker{owner: t.user, agentID: t.agent.ID, agentName: t.agent.Name, session: t.chatSessionID(),
-		db: t.udb, ask: ask}.approve(kind, name, detail, op)
+		db: t.udb, ask: ask, approvedRun: ownerApprovedRunFor(t.ctx, t.agent.ID)}.approve(kind, name, detail, op)
 }
 
 // approve is "" when the change may go ahead, or the refusal to return.
@@ -231,6 +258,10 @@ func (c changeAsker) approve(kind, name, detail string, op ChangeOp) string {
 		return ""
 	}
 	if changeGranted(c.db, c.agentID, key) {
+		set.add(key)
+		return ""
+	}
+	if op == ChangeEdit && c.approvedRun {
 		set.add(key)
 		return ""
 	}

@@ -100,6 +100,14 @@ func (T *OrchestrateApp) runApprovedDelegation(a Authorization, target string) {
 	if a.FromPrivate {
 		ctx = WithNetworkConnector(ctx, NewNetworkConnector(true))
 	}
+	// Builder's request was approved with its brief in front of the owner:
+	// that is their say-so for the edits it needs, which an unwatched run
+	// would otherwise queue one by one and drop (withOwnerApprovedRun).
+	if udb := UserDB(T.DB, a.Owner); udb != nil {
+		if rec, ok := findAgentByNameOrID(udb, a.Owner, target); ok && isBuilderAgent(rec.ID) {
+			ctx = withOwnerApprovedRun(ctx, rec.ID)
+		}
+	}
 	origin := strings.TrimSpace(a.FromSession) != "" && strings.TrimSpace(a.FromAgent) != ""
 	var capture *delegationCapture
 	if origin {
