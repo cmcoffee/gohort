@@ -8773,6 +8773,7 @@ select.ui-orch-intake-input {
       // sendMessage path, after which the regular text input takes
       // over for the rest of the session.
       var intakeWrap = null;
+      var intakeSentAt = 0; // when the form was last submitted (the poll below)
       // Answers handed in by the page address (?intake.<field>=value), so a
       // button elsewhere can open an agent's starting form already pointed at
       // something: Build from an agent's page lands on Builder with that agent
@@ -9410,6 +9411,7 @@ select.ui-orch-intake-input {
           var values = valuesByNameFromEntries(entries);
           intakePrefill = null;
           submitBtn.disabled = true;
+          intakeSentAt = Date.now();
           stageIntakeFiles(entries).then(function() {
             clearIntakeForm();
             var ta = document.querySelector('.ui-agent-input');
@@ -9545,8 +9547,25 @@ select.ui-orch-intake-input {
           var values = msg.intake_values;
           if (!values || typeof values !== 'object') return;
           var fields = activeIntakeForm();
-          if (!fields) return; // agent intake spec not loaded yet — fail silent
+          if (!fields) {
+            // The agent's intake spec is fetched once the agent picker
+            // appears, so a reload can replay the thread first. Held and
+            // decorated when the spec lands (refreshIntakeAgent): dropped,
+            // the answer stayed plain text and Edit lost the form.
+            pendingIntakeBubbles.push({bubble: bubble, values: values});
+            return;
+          }
           decorateIntakeBubble(bubble, fields, values);
+        });
+      }
+      var pendingIntakeBubbles = [];
+      function drainPendingIntakeBubbles() {
+        var pending = pendingIntakeBubbles;
+        pendingIntakeBubbles = [];
+        var fields = activeIntakeForm();
+        if (!fields) return;
+        pending.forEach(function(p) {
+          if (p.bubble.isConnected) decorateIntakeBubble(p.bubble, fields, p.values);
         });
       }
       registerIntakeReplayHook();
@@ -9731,8 +9750,9 @@ select.ui-orch-intake-input {
         if (!id) { currentAgentForIntake = null; clearIntakeForm(); return; }
         fetchAgent(id).then(function(a) {
           currentAgentForIntake = a;
+          drainPendingIntakeBubbles();
           renderIntakeForm();
-        }).catch(function() { currentAgentForIntake = null; });
+        }).catch(function() { currentAgentForIntake = null; pendingIntakeBubbles = []; });
       }
       // Initial fetch + re-fetch on agent dropdown change.
       function watchAgentForIntake() {
@@ -9755,6 +9775,16 @@ select.ui-orch-intake-input {
       var lastEmptyState = null;
       setInterval(function() {
         var empty = conversationIsEmpty();
+        // Opening a session clears the log, the form with it, and an empty
+        // session leaves the log empty: no change for the check below to
+        // see, so the form was gone until the page was reloaded. Drawn again
+        // when the log is empty and the form is not in it, except just after
+        // a submit, while the sent message is on its way into the log.
+        if (empty && activeIntakeForm() && !(intakeWrap && intakeWrap.isConnected) && Date.now() - intakeSentAt > 3000) {
+          lastEmptyState = empty;
+          renderIntakeForm();
+          return;
+        }
         if (empty === lastEmptyState) return;
         lastEmptyState = empty;
         if (empty) renderIntakeForm();
