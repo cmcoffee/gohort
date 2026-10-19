@@ -263,38 +263,45 @@ func splitWorkDir(tt *TempTool, args map[string]any, scoped []string) (string, [
 	return dir, out, nil
 }
 
+// dispatchTempToolUncached runs a temp tool: the other modes by their own
+// dispatchers, a shell tool here. The run's state is shellDispatch and each
+// phase is a method on it. A phase that ends the run early returns false, and
+// what it handed back is parked by exit for this function to return; the
+// run's cleanups go in onExit, deferred here once.
 func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]any) (string, error) {
+	sd := &shellDispatch{sess: sess, tt: tt, args: args}
+	defer sd.onExit.run()
+	if !sd.admit() {
+		return sd.ret, sd.retErr
+	}
+	if !sd.prepareWorkspace() {
+		return sd.ret, sd.retErr
+	}
+	if !sd.resolveCommand() {
+		return sd.ret, sd.retErr
+	}
+	if !sd.deployScripts() {
+		return sd.ret, sd.retErr
+	}
+	if !sd.prepareRun() {
+		return sd.ret, sd.retErr
+	}
+	sd.execute()
+	sd.finish()
+	return sd.ret, sd.retErr
+}
+
+// shellDispatch is one run of a shell-mode tool, from the checks on its
+// credential to the output its caller reads. Each field is a local or
+// parameter of the function it was cut from; dispatchTempToolUncached is now
+// the order of the phases, with the run's cleanups kept in onExit.
+type shellDispatch struct {
+	sess *ToolSession
+	tt   *TempTool
+	args map[string]any
 	// The run's cleanups, registered as each thing they undo is made and run
 	// in reverse when it returns, as defers would be (exitList).
-	var onExit exitList
-	defer onExit.run()
-	// Secured-credential binding enforcement for the credential-dispatching modes
-	// (api / toolbox dispatch through tt.Credential). Only APPROVED tools may reach
-	// a secured cred; a legacy declaring tool is grandfathered, a revoked one
-	// refused; open creds pass. Shell-mode fetch_via is enforced in the sandbox
-	// hook (it dispatches per-call, not here). See secured-credential-tool-binding.md.
-	if (tt.Mode == TempToolModeAPI || tt.Mode == TempToolModeToolbox) && strings.TrimSpace(tt.Credential) != "" {
-		securedUser, securedAgent := "", ""
-		if sess != nil {
-			securedUser, securedAgent = sess.Username, sess.AgentID
-		}
-		if err := Secure().EnforceSecuredBinding(tt.Credential, tt.Name, securedUser, securedAgent); err != nil {
-			return "", err
-		}
-	}
-	if tt.Mode == TempToolModeAPI {
-		return dispatchAPIModeTempTool(sess, tt, args)
-	}
-	if tt.Mode == TempToolModePipeline {
-		return dispatchPipelineModeTempTool(sess, tt, args)
-	}
-	if tt.Mode == TempToolModePersistent {
-		return dispatchPersistentShellTempTool(sess, tt, args)
-	}
-	if tt.Mode == TempToolModeToolbox {
-		return dispatchToolboxModeTempTool(sess, tt, args)
-	}
-
+	onExit exitList
 	// Shell-mode dispatch path. Three shapes depending on the tool:
 	//
 	//  (a) Recipe non-empty: persistent tool with packaged content.
@@ -312,17 +319,88 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 	//      command (e.g. "uname -a"). Provision an ephemeral tmpdir
 	//      so bwrap has SOME bind target; the command doesn't depend
 	//      on its contents.
-	var workspaceDir string
-	var ephemeralDir bool
+	workspaceDir string
+	ephemeralDir bool
+	scopedArgs   map[string]any
+	scopedPaths  []string
+	serr         error
+	workDir      string
+	werr         error
+	cmdTemplate  string
+	cmd          string
+	err          error
+	activity     *bgrun.RunActivity
+	runTimeout   time.Duration
+	ctx          context.Context
+	cancel       context.CancelFunc
+	// The workspace is where the command writes, so it is what the run's disk
+	// limits watch. And a run with no end in view keeps the start and end of
+	// its output, not every line of an hour of logging.
+	keepOutput int64
+	envArgs    map[string]string
+	byFile     []fileArg
+	fileErr    error
+	hook       *SandboxHook
+	hookErr    error
+	tExec      time.Time
+	res        sandbox.SandboxedShellResult
+	output     string
+	// ret and retErr are what the run hands back, parked by exit.
+	ret    string
+	retErr error
+}
+
+// exit records what an early return hands back and tells the driver to take
+// it.
+func (sd *shellDispatch) exit(out string, err error) bool {
+	sd.ret, sd.retErr = out, err
+	return false
+}
+
+func (sd *shellDispatch) admit() bool {
+	sess := sd.sess
+	tt := sd.tt
+	// Secured-credential binding enforcement for the credential-dispatching modes
+	// (api / toolbox dispatch through tt.Credential). Only APPROVED tools may reach
+	// a secured cred; a legacy declaring tool is grandfathered, a revoked one
+	// refused; open creds pass. Shell-mode fetch_via is enforced in the sandbox
+	// hook (it dispatches per-call, not here). See secured-credential-tool-binding.md.
+	if (tt.Mode == TempToolModeAPI || tt.Mode == TempToolModeToolbox) && strings.TrimSpace(tt.Credential) != "" {
+		securedUser, securedAgent := "", ""
+		if sess != nil {
+			securedUser, securedAgent = sess.Username, sess.AgentID
+		}
+		if err := Secure().EnforceSecuredBinding(tt.Credential, tt.Name, securedUser, securedAgent); err != nil {
+			return sd.exit("", err)
+		}
+	}
+	if tt.Mode == TempToolModeAPI {
+		return sd.exit(dispatchAPIModeTempTool(sess, tt, sd.args))
+	}
+	if tt.Mode == TempToolModePipeline {
+		return sd.exit(dispatchPipelineModeTempTool(sess, tt, sd.args))
+	}
+	if tt.Mode == TempToolModePersistent {
+		return sd.exit(dispatchPersistentShellTempTool(sess, tt, sd.args))
+	}
+	if tt.Mode == TempToolModeToolbox {
+		return sd.exit(dispatchToolboxModeTempTool(sess, tt, sd.args))
+	}
+	return true
+}
+
+func (sd *shellDispatch) prepareWorkspace() bool {
+	sess := sd.sess
+	tt := sd.tt
 	if len(tt.Recipe) > 0 {
 		tmp, err := MintToolDispatchDir("tooldispatch-")
 		if err != nil {
-			return "", fmt.Errorf("mkdtemp: %w", err)
+			return sd.exit("", fmt.Errorf("mkdtemp: %w", err))
 		}
-		onExit.add(func() { _ = os.RemoveAll(tmp) })
-		ephemeralDir = true
+		sd.onExit.add(func() { _ = os.RemoveAll(tmp) })
+		sd.ephemeralDir = true
 		if err := DeployRecipe(tt.Recipe, tmp); err != nil {
-			return "", fmt.Errorf("deploy recipe: %w", err)
+			return sd.exit("", fmt.Errorf("deploy recipe: %w", err))
 		}
 		// Restore persistent state for stateful tools.
 		if tt.StatePath != "" {
@@ -332,20 +410,20 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 			// one). StatePath travels in imported recipes.
 			stateTarget, err := ResolveWorkspacePath(tmp, tt.StatePath)
 			if err != nil {
-				return "", fmt.Errorf("state_path: %w", err)
+				return sd.exit("", fmt.Errorf("state_path: %w", err))
 			}
 			if err := os.MkdirAll(stateTarget, 0700); err != nil {
-				return "", fmt.Errorf("mkdir state target: %w", err)
+				return sd.exit("", fmt.Errorf("mkdir state target: %w", err))
 			}
 			if err := CopyToolStateInto(sess.Username, tt.Name, stateTarget); err != nil {
-				return "", fmt.Errorf("restore state: %w", err)
+				return sd.exit("", fmt.Errorf("restore state: %w", err))
 			}
 		}
-		workspaceDir = tmp
+		sd.workspaceDir = tmp
 	} else {
-		workspaceDir = sess.WorkspaceDir
+		sd.workspaceDir = sess.WorkspaceDir
 	}
-	if workspaceDir == "" {
+	if sd.workspaceDir == "" {
 		// Recipe-less, no session workspace. The bwrap bind still
 		// needs a path, but the command doesn't depend on its
 		// contents — provision an ephemeral tmpdir for this
@@ -353,16 +431,22 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 		// "echo '{text}' | rev" can't dispatch when the session has
 		// no workspace.
 		if strings.Contains(tt.CommandTemplate, "{workspace_dir}") {
-			return "", fmt.Errorf("temp tool %q references {workspace_dir} but has no recipe and the session has no sandbox", tt.Name)
+			return sd.exit("", fmt.Errorf("temp tool %q references {workspace_dir} but has no recipe and the session has no sandbox", tt.Name))
 		}
 		tmp, err := MintToolDispatchDir("tooldispatch-stateless-")
 		if err != nil {
-			return "", fmt.Errorf("mkdtemp for stateless dispatch: %w", err)
+			return sd.exit("", fmt.Errorf("mkdtemp for stateless dispatch: %w", err))
 		}
-		onExit.add(func() { _ = os.RemoveAll(tmp) })
-		workspaceDir = tmp
+		sd.onExit.add(func() { _ = os.RemoveAll(tmp) })
+		sd.workspaceDir = tmp
 	}
-	_ = ephemeralDir
+	_ = sd.ephemeralDir
+	return true
+}
+
+func (sd *shellDispatch) resolveCommand() bool {
+	sess := sd.sess
+	tt := sd.tt
 	// Path scopes, BEFORE substitution. A parameter declaring
 	// path_scope: "files:<store>" has to be proved to land inside that
 	// registered root, and the value substituted is the absolute path it
@@ -375,15 +459,15 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 	// pointing somewhere else, which core/path_scope.go opens by warning
 	// about: "../../var/lib/something" is a perfectly well-formed single
 	// argument.
-	scopedArgs, scopedPaths, serr := ResolveScopedArgs(sess.Username, sess.AgentID, tt.Params, args, tt.AdminMapped)
-	if serr != nil {
+	sd.scopedArgs, sd.scopedPaths, sd.serr = ResolveScopedArgs(sess.Username, sess.AgentID, tt.Params, sd.args, tt.AdminMapped)
+	if sd.serr != nil {
 		// Refuse. A scope that fails open is not a scope, and the model
 		// gets a message it can act on: the root it may name, and what
 		// it asked for.
-		Log("[temptool] %q refused: %v", tt.Name, serr)
-		return "", fmt.Errorf("%s: %w", tt.Name, serr)
+		Log("[temptool] %q refused: %v", tt.Name, sd.serr)
+		return sd.exit("", fmt.Errorf("%s: %w", tt.Name, sd.serr))
 	}
-	args = scopedArgs
+	sd.args = sd.scopedArgs
 	// The working directory, when this tool declares one. Its parameter was
 	// resolved by ResolveScopedArgs above, so what comes back is an absolute
 	// path already proved inside a registered root.
@@ -396,34 +480,38 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 	// macOS. A cwd needs the folder REACHABLE, not everything else
 	// unreachable, and ShellRun.WorkDir carries exactly that much: bubblewrap
 	// binds it read-only so the chdir resolves, Seatbelt needs nothing.
-	workDir, scopedPaths, werr := splitWorkDir(tt, args, scopedPaths)
-	if werr != nil {
-		Log("[temptool] %q refused: %v", tt.Name, werr)
-		return "", fmt.Errorf("%s: %w", tt.Name, werr)
+	sd.workDir, sd.scopedPaths, sd.werr = splitWorkDir(tt, sd.args, sd.scopedPaths)
+	if sd.werr != nil {
+		Log("[temptool] %q refused: %v", tt.Name, sd.werr)
+		return sd.exit("", fmt.Errorf("%s: %w", tt.Name, sd.werr))
 	}
 	// The store folders this run reads are in use until it ends, so a
 	// temporary store's sweep cannot remove one mid-run.
-	onExit.add(pathhold.HoldAll(append(append(append([]string{workDir}, scopedPaths...), tt.GrantRead...), tt.GrantWrite...)...))
-	cmdTemplate := strings.ReplaceAll(tt.CommandTemplate, "{workspace_dir}", shellQuote(workspaceDir))
-	cmd, err := substitute(cmdTemplate, tt.Params, args)
-	if err != nil {
-		Log("[temptool] %q substitute failed: %v (template=%q args=%v)", tt.Name, err, cmdTemplate, mapKeys(args))
-		return "", err
+	sd.onExit.add(pathhold.HoldAll(append(append(append([]string{sd.workDir}, sd.scopedPaths...), tt.GrantRead...), tt.GrantWrite...)...))
+	sd.cmdTemplate = strings.ReplaceAll(tt.CommandTemplate, "{workspace_dir}", shellQuote(sd.workspaceDir))
+	sd.cmd, sd.err = substitute(sd.cmdTemplate, tt.Params, sd.args)
+	if sd.err != nil {
+		Log("[temptool] %q substitute failed: %v (template=%q args=%v)", tt.Name, sd.err, sd.cmdTemplate, mapKeys(sd.args))
+		return sd.exit("", sd.err)
 	}
 	// Log the rendered command so authors can see whether args
 	// actually made it into the command line. If the LLM passed
 	// first_name but the template lacks {first_name}, the rendered
 	// command will be obviously missing the value — and the script
 	// will (correctly) reject it as "first_name is required".
-	Log("[temptool] %q rendered command: %s", tt.Name, cmd)
+	Log("[temptool] %q rendered command: %s", tt.Name, sd.cmd)
 	// Deployment state at dispatch time — answers "did the LLM author
 	// this with script_body?" and "does the workspace have the file
 	// the command_template expects?" before we even look at exec.
 	// Critical when a tool hangs / errors and we need to know if the
 	// redeploy block (next) will fire and where it'll write.
 	Debug("[temptool] %q deploy state: script_body=%dB script_name=%q canonical=%q workspace=%s",
-		tt.Name, len(tt.ScriptBody), tt.ScriptName, tt.CanonicalScriptName, workspaceDir)
+		tt.Name, len(tt.ScriptBody), tt.ScriptName, tt.CanonicalScriptName, sd.workspaceDir)
+	return true
+}
 
+func (sd *shellDispatch) deployScripts() bool {
+	tt := sd.tt
 	// Redeploy ScriptBody to {workspace_dir}/<CanonicalScriptName>
 	// if missing or stale. Survives workspace wipes — the script
 	// content lives on the tool's DB record, so the very first
@@ -443,12 +531,12 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 			onDiskName = tt.ScriptName
 		}
 		if onDiskName == "" {
-			return "", fmt.Errorf("tool %q has script_body but no script_name: record is malformed", tt.Name)
+			return sd.exit("", fmt.Errorf("tool %q has script_body but no script_name: record is malformed", tt.Name))
 		}
 		if strings.ContainsAny(onDiskName, "/\\") {
-			return "", fmt.Errorf("invalid script filename %q on tool %q (no path separators allowed)", onDiskName, tt.Name)
+			return sd.exit("", fmt.Errorf("invalid script filename %q on tool %q (no path separators allowed)", onDiskName, tt.Name))
 		}
-		scriptPath := filepath.Join(workspaceDir, onDiskName)
+		scriptPath := filepath.Join(sd.workspaceDir, onDiskName)
 		// A tool saved before its escaped script was caught still runs: the
 		// file gets the restored lines, the record keeps what was sent.
 		body := tt.ScriptBody
@@ -464,10 +552,10 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 		Debug("[temptool] %q redeploy check: path=%s needWrite=%v", tt.Name, scriptPath, needWrite)
 		if needWrite {
 			if err := os.MkdirAll(filepath.Dir(scriptPath), 0700); err != nil {
-				return "", fmt.Errorf("create parent dir for script %q on tool %q: %w", onDiskName, tt.Name, err)
+				return sd.exit("", fmt.Errorf("create parent dir for script %q on tool %q: %w", onDiskName, tt.Name, err))
 			}
 			if err := os.WriteFile(scriptPath, []byte(body), 0700); err != nil {
-				return "", fmt.Errorf("redeploy script %q for tool %q: %w", onDiskName, tt.Name, err)
+				return sd.exit("", fmt.Errorf("redeploy script %q for tool %q: %w", onDiskName, tt.Name, err))
 			}
 			Debug("[temptool] redeployed script_body to %s for tool %q (%dB)", scriptPath, tt.Name, len(body))
 		}
@@ -476,7 +564,7 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 		// mile rewrite so the shell sees the right path while the
 		// LLM's view of the tool record stays clean.
 		if tt.CanonicalScriptName != "" && tt.ScriptName != "" && tt.CanonicalScriptName != tt.ScriptName {
-			cmd = strings.ReplaceAll(cmd, tt.ScriptName, tt.CanonicalScriptName)
+			sd.cmd = strings.ReplaceAll(sd.cmd, tt.ScriptName, tt.CanonicalScriptName)
 		}
 	}
 
@@ -497,12 +585,12 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 		if mode == 0 {
 			mode = 0700
 		}
-		filePath := filepath.Join(workspaceDir, rel)
+		filePath := filepath.Join(sd.workspaceDir, rel)
 		if existing, err := os.ReadFile(filePath); err == nil && string(existing) == wf.Content {
 			continue // already present with matching content — no-op
 		}
 		if err := os.WriteFile(filePath, []byte(wf.Content), mode); err != nil {
-			return "", fmt.Errorf("redeploy workspace file %q for tool %q: %w", rel, tt.Name, err)
+			return sd.exit("", fmt.Errorf("redeploy workspace file %q for tool %q: %w", rel, tt.Name, err))
 		}
 		Debug("[temptool] redeployed workspace file %s for tool %q (%dB)", filePath, tt.Name, len(wf.Content))
 	}
@@ -519,7 +607,7 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 	// this — they just redeployed the canonical script above and the
 	// final cmd is translated to its name at line ~957.
 	if tt.ScriptBody == "" {
-		missing := missingWorkspaceScriptRefs(tt.CommandTemplate, workspaceDir)
+		missing := missingWorkspaceScriptRefs(tt.CommandTemplate, sd.workspaceDir)
 		Debug("[temptool] %q missing-script validation: missing=%v", tt.Name, missing)
 		if len(missing) > 0 {
 			// State the CONDITION, not a guess at the cause. This used to assert
@@ -530,10 +618,15 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 			// documented local(write) path after a workspace wipe. A confidently
 			// wrong diagnosis is worse than none — it sent an authoring model
 			// chasing the wrong fix instead of the real one.
-			return "", fmt.Errorf("tool %q references script(s) %v under {workspace_dir} that aren't on disk, and the tool record carries no script_body to redeploy them. Either the script was written into the workspace separately and the workspace has since been wiped, or the tool was authored without shipping its script. Fix: re-author with script_body=\"...\" so the script travels WITH the tool record (preferred, survives workspace wipes and export/import), or call local(action=\"write\", path=\"<exact-filename>\", content=\"...\") with a filename matching what command_template expects before each dispatch", tt.Name, missing)
+			return sd.exit("", fmt.Errorf("tool %q references script(s) %v under {workspace_dir} that aren't on disk, and the tool record carries no script_body to redeploy them. Either the script was written into the workspace separately and the workspace has since been wiped, or the tool was authored without shipping its script. Fix: re-author with script_body=\"...\" so the script travels WITH the tool record (preferred, survives workspace wipes and export/import), or call local(action=\"write\", path=\"<exact-filename>\", content=\"...\") with a filename matching what command_template expects before each dispatch", tt.Name, missing))
 		}
 	}
+	return true
+}
 
+func (sd *shellDispatch) prepareRun() bool {
+	sess := sd.sess
+	tt := sd.tt
 	// The TURN's context, not Background: the timeout is the ceiling, the
 	// parent is what makes a Stop reach a command already running. The loop
 	// tests its own context only between rounds, so a handler that ignores
@@ -543,30 +636,26 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 	// gives way: the run is stopped when it goes quiet, not at a set time, and
 	// its output is copied to the run's activity as it is produced so that
 	// silence can be seen. A tool's own declared timeout still holds.
-	activity := bgrun.RunActivityFrom(sess.Context())
-	runTimeout := shellRunTimeout(tt)
-	ctx, cancel := context.WithTimeout(sess.Context(), runTimeout)
-	if activity != nil && tt.TimeoutSec <= 0 {
-		cancel()
-		ctx, cancel = context.WithCancel(sess.Context())
+	sd.activity = bgrun.RunActivityFrom(sess.Context())
+	sd.runTimeout = shellRunTimeout(tt)
+	sd.ctx, sd.cancel = context.WithTimeout(sess.Context(), sd.runTimeout)
+	if sd.activity != nil && tt.TimeoutSec <= 0 {
+		sd.cancel()
+		sd.ctx, sd.cancel = context.WithCancel(sess.Context())
 	}
-	onExit.add(cancel)
-	// The workspace is where the command writes, so it is what the run's disk
-	// limits watch. And a run with no end in view keeps the start and end of
-	// its output, not every line of an hour of logging.
-	var keepOutput int64
-	if activity != nil {
-		activity.WatchDir(workspaceDir)
+	sd.onExit.add(sd.cancel)
+	if sd.activity != nil {
+		sd.activity.WatchDir(sd.workspaceDir)
 		for _, d := range tt.GrantWrite {
-			activity.WatchDir(d)
+			sd.activity.WatchDir(d)
 		}
-		keepOutput = backgroundOutputKeep
+		sd.keepOutput = backgroundOutputKeep
 	}
 	// Wrap with the session's network connector so the sandbox
 	// applies --unshare-net when the calling turn is in private
 	// mode. No-op when sess has no connector.
-	ctx = sess.ContextWithNetworkConnector(ctx)
-	ctx = sess.ContextWithSandboxCaller(ctx)
+	sd.ctx = sess.ContextWithNetworkConnector(sd.ctx)
+	sd.ctx = sess.ContextWithSandboxCaller(sd.ctx)
 	// Tool-level network policy: shell-mode tools default to
 	// --unshare-net regardless of session policy. Raw network is
 	// granted only when the tool record explicitly opts in with
@@ -577,7 +666,7 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 	// if the session connector is already blocking, this can't
 	// undo that.
 	if !tt.RawNetwork {
-		ctx = WithNetworkConnector(ctx, NewNetworkConnector(true))
+		sd.ctx = WithNetworkConnector(sd.ctx, NewNetworkConnector(true))
 	}
 
 	// Pass every declared arg as an env var so scripts can read them
@@ -587,17 +676,17 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 	// which used to silently fail because the framework only did
 	// {name} substitution. Both paths now coexist; tools authored
 	// either way work.
-	envArgs := buildEnvArgs(args)
+	sd.envArgs = buildEnvArgs(sd.args)
 	// A value too big to be an environment variable goes by file; see
 	// passLargeArgs. The files are this run's alone.
-	byFile, fileErr := passLargeArgs(tt, args, envArgs, sess, workspaceDir)
-	onExit.add(func() {
-		for _, f := range byFile {
+	sd.byFile, sd.fileErr = passLargeArgs(tt, sd.args, sd.envArgs, sess, sd.workspaceDir)
+	sd.onExit.add(func() {
+		for _, f := range sd.byFile {
 			os.Remove(f.path)
 		}
 	})
-	if fileErr != nil {
-		return "", fileErr
+	if sd.fileErr != nil {
+		return sd.exit("", sd.fileErr)
 	}
 
 	// SandboxHook: when the tool declared HookCapabilities, start a
@@ -609,33 +698,37 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 	// WITHOUT opening the sandbox's network namespace — gohort
 	// proxies on its behalf. Empty HookCapabilities ⇒ no hook
 	// started, no env var set, zero extra surface area.
-	hook, hookErr := NewSandboxHook(workspaceDir, tt.HookCapabilities, sess)
-	if hookErr != nil {
-		return "", fmt.Errorf("start sandbox hook: %w", hookErr)
+	sd.hook, sd.hookErr = NewSandboxHook(sd.workspaceDir, tt.HookCapabilities, sess)
+	if sd.hookErr != nil {
+		return sd.exit("", fmt.Errorf("start sandbox hook: %w", sd.hookErr))
 	}
-	if hook != nil {
-		onExit.add(func() { hook.Close() })
+	if sd.hook != nil {
+		sd.onExit.add(func() { sd.hook.Close() })
 		// Identify the tool to the hook for secured-credential binding
 		// enforcement on fetch_via. Set before the sandbox runs (below).
-		hook.ToolName = tt.Name
+		sd.hook.ToolName = tt.Name
 		// A tool already in the owner's pool may reach the network through
 		// this broker even when the agent's workspace may not dial out on its
 		// own. The grant is the point: somebody approved this tool, and gohort
 		// does the dialling rather than the sandbox. A draft the agent wrote
 		// this turn gets no such lift, or tool_def would be the way around the
 		// ceiling. See SandboxHook.WorkspaceNetExempt.
-		hook.WorkspaceNetExempt = toolIsGranted(sess, tt)
+		sd.hook.WorkspaceNetExempt = toolIsGranted(sess, tt)
 		// Somebody else's tool (adopted from their pool) is not handed the
 		// runner's raw keys: see SandboxHook.ForeignTool.
-		hook.ForeignTool = toolIsForeign(sess, tt)
-		envArgs["GOHORT_HOOK_PATH"] = hook.SocketPath
+		sd.hook.ForeignTool = toolIsForeign(sess, tt)
+		sd.envArgs["GOHORT_HOOK_PATH"] = sd.hook.SocketPath
 		// The gohort helper package is bind-mounted RO into the
 		// sandbox from a host-side library dir (see
 		// EnsureGohortLibDir, wired in bwrapArgv). Nothing to deploy
 		// into the workspace.
-		Debug("[temptool] %q hook attached: %s caps=%v", tt.Name, hook.SocketPath, tt.HookCapabilities)
+		Debug("[temptool] %q hook attached: %s caps=%v", tt.Name, sd.hook.SocketPath, tt.HookCapabilities)
 	}
+	return true
+}
 
+func (sd *shellDispatch) execute() {
+	tt := sd.tt
 	// Entry/exit breadcrumb around the sandbox call. The inner
 	// [sandbox] spawn/exit lines bracket the actual exec; the outer
 	// pair here catches anything wedged in argv setup / network
@@ -643,8 +736,8 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 	// "enter" but never the next "exit", the hang is inside the
 	// sandbox call itself; if you don't see this "enter", the hang
 	// is upstream (redeploy or missing-script validation).
-	Debug("[temptool] %q sandbox enter (envArgs=%d hook=%v)", tt.Name, len(envArgs), hook != nil)
-	tExec := time.Now()
+	Debug("[temptool] %q sandbox enter (envArgs=%d hook=%v)", tt.Name, len(sd.envArgs), sd.hook != nil)
+	sd.tExec = time.Now()
 	// Scoped paths are bound READ-ONLY into the sandbox, at the same path
 	// they have outside. Without this the check passes and the script
 	// still cannot open the file, which reads as the check being wrong.
@@ -668,34 +761,38 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 	// named. What is gone is a refusal that protected none of that.
 	// Folders granted to whoever runs the tool (an app's stores) are reached
 	// the same way as a scoped path: opened where they are, read-only.
-	scopedPaths = append(scopedPaths, tt.GrantRead...)
-	res := sandbox.RunSandboxedShellIn(ctx, sandbox.ShellRun{
-		Command: cmd, WorkspaceDir: workspaceDir, WorkDir: workDir,
-		Env: envArgs, Reach: scopedPaths, Writable: tt.GrantWrite,
-		Tee: teeTo(activity), MaxOutput: keepOutput,
+	sd.scopedPaths = append(sd.scopedPaths, tt.GrantRead...)
+	sd.res = sandbox.RunSandboxedShellIn(sd.ctx, sandbox.ShellRun{
+		Command: sd.cmd, WorkspaceDir: sd.workspaceDir, WorkDir: sd.workDir,
+		Env: sd.envArgs, Reach: sd.scopedPaths, Writable: tt.GrantWrite,
+		Tee: teeTo(sd.activity), MaxOutput: sd.keepOutput,
 		// The tool's own declaration that it needs raw TCP. Consulted only
 		// once the deployment closes the default; until then every command
 		// keeps the host's namespace, which is what has always happened.
 		RawNetwork: tt.RawNetwork,
 	})
 	Debug("[temptool] %q sandbox exit: dur=%s err=%v timedOut=%v outBytes=%d",
-		tt.Name, time.Since(tExec), res.Err, res.TimedOut, len(res.Output))
+		tt.Name, time.Since(sd.tExec), sd.res.Err, sd.res.TimedOut, len(sd.res.Output))
 	// A raw key handed to the script (secret:) does not come back out in what
 	// it printed: a traceback or a debug line quoting its own request is the
 	// usual way, and this output goes to the model and the session.
-	if hook != nil {
-		res.Output = hook.ScrubHandedOut(res.Output)
+	if sd.hook != nil {
+		sd.res.Output = sd.hook.ScrubHandedOut(sd.res.Output)
 	}
-	output := strings.TrimSpace(res.Output)
+	sd.output = strings.TrimSpace(sd.res.Output)
+}
 
+func (sd *shellDispatch) finish() bool {
+	sess := sd.sess
+	tt := sd.tt
 	// Extract attachment markers from stdout and route them to the
 	// session's image/video channels. Lets shell-mode tools emit
 	// binary attachments (e.g. fetch + convert an image, return it
 	// as an attachment) — without the marker, shell tools can only
 	// emit text, which makes use cases like "fetch a meme + convert
 	// to PNG" impossible to express. See extractAttachmentMarkers.
-	output = extractAttachmentMarkers(output, sess)
-	output = extractFileAttachMarkers(output, sess, workspaceDir)
+	sd.output = extractAttachmentMarkers(sd.output, sess)
+	sd.output = extractFileAttachMarkers(sd.output, sess, sd.workspaceDir)
 
 	// Save state back AFTER successful (or failed — preserve state
 	// either way so state changes during partial runs aren't lost)
@@ -704,7 +801,7 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 	if len(tt.Recipe) > 0 && tt.StatePath != "" {
 		// Re-resolved rather than reused: the script has just run and may
 		// have replaced a path component with a symlink out of the run dir.
-		if stateTarget, err := ResolveWorkspacePath(workspaceDir, tt.StatePath); err != nil {
+		if stateTarget, err := ResolveWorkspacePath(sd.workspaceDir, tt.StatePath); err != nil {
 			Log("[temptool] state save refused for %s: %v", tt.Name, err)
 		} else if err := CopyToolStateBack(sess.Username, tt.Name, stateTarget); err != nil {
 			Debug("[temptool] state save failed for %s: %v", tt.Name, err)
@@ -718,35 +815,35 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 		TouchPersistentTempTool(sess.DB, sess.Username, tt.Name)
 	}
 
-	if len(output) > maxOutput {
-		totalLines := strings.Count(output, "\n") + 1
-		truncated := output[:maxOutput]
+	if len(sd.output) > maxOutput {
+		totalLines := strings.Count(sd.output, "\n") + 1
+		truncated := sd.output[:maxOutput]
 		shown := strings.Count(truncated, "\n") + 1
-		output = truncated + fmt.Sprintf(
+		sd.output = truncated + fmt.Sprintf(
 			"\n... [TRUNCATED: showing lines 1–%d of %d total (%d chars).]",
-			shown, totalLines, len(output))
+			shown, totalLines, len(sd.output))
 	}
 
-	if res.TimedOut {
-		notice := fmt.Sprintf("\n[TIMED OUT after %s: command killed.]", runTimeout)
-		if hook != nil && hook.Calls.Load() == 0 {
+	if sd.res.TimedOut {
+		notice := fmt.Sprintf("\n[TIMED OUT after %s: command killed.]", sd.runTimeout)
+		if sd.hook != nil && sd.hook.Calls.Load() == 0 {
 			// Observed: a script that re-executed itself forever was tested
 			// again and again with a longer timeout each time, five minutes
 			// and a full model round per try, while it never once called out.
-			notice = fmt.Sprintf("\n[TIMED OUT after %s: command killed. It made no gohort call (fetch_via, fetch_url, log) in that time, so it never reached its service: it is stuck in its own code before the first request (an endless loop, a wait on input, a script that cannot start). A longer timeout will not help; read the script.]", runTimeout)
+			notice = fmt.Sprintf("\n[TIMED OUT after %s: command killed. It made no gohort call (fetch_via, fetch_url, log) in that time, so it never reached its service: it is stuck in its own code before the first request (an endless loop, a wait on input, a script that cannot start). A longer timeout will not help; read the script.]", sd.runTimeout)
 		}
-		if output == "" {
-			return strings.TrimPrefix(notice, "\n"), nil
+		if sd.output == "" {
+			return sd.exit(strings.TrimPrefix(notice, "\n"), nil)
 		}
-		return output + notice, nil
+		return sd.exit(sd.output+notice, nil)
 	}
-	if res.Err != nil {
-		if output == "" {
-			return fmt.Sprintf("[exit: %v, no output]", res.Err) + fileArgsNote(byFile), nil
+	if sd.res.Err != nil {
+		if sd.output == "" {
+			return sd.exit(fmt.Sprintf("[exit: %v, no output]", sd.res.Err)+fileArgsNote(sd.byFile), nil)
 		}
-		return output + fmt.Sprintf("\n[exit: %v]", res.Err) + fileArgsNote(byFile), nil
+		return sd.exit(sd.output+fmt.Sprintf("\n[exit: %v]", sd.res.Err)+fileArgsNote(sd.byFile), nil)
 	}
-	return output, nil
+	return sd.exit(sd.output, nil)
 }
 
 // extractAttachmentMarkers scans the tool's stdout for attachment-

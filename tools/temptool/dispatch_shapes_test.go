@@ -110,3 +110,23 @@ func TestTheExitListRunsLikeDefers(t *testing.T) {
 		t.Errorf("cleanups ran %v, want [3 1]", ran)
 	}
 }
+
+// A run that cannot be put together stops before it runs, with the reason:
+// a parameter the command names and the call left out, and a parameter
+// naming a file that is not in the working folder.
+func TestARunThatCannotBeAssembledStopsWithTheReason(t *testing.T) {
+	root := dispatchRoot(t)
+	ws := filepath.Join(root, "ws")
+	if err := os.MkdirAll(ws, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sess := &ToolSession{Username: "alice", WorkspaceDir: ws}
+	greet := &TempTool{Name: "greet", Mode: TempToolModeShell, CommandTemplate: "echo {name}",
+		Params: map[string]ToolParam{"name": {Type: "string"}}}
+	if out, err := dispatchTempToolUncached(sess, greet, map[string]any{}); err == nil || !strings.Contains(err.Error(), `missing arg "name"`) {
+		t.Errorf("a parameter the command names and the call left out should stop it: %q %v", out, err)
+	}
+	if out, err := dispatchTempToolUncached(sess, greet, map[string]any{"name": map[string]any{"file": "absent.txt"}}); err == nil || !strings.Contains(err.Error(), `names file "absent.txt"`) {
+		t.Errorf("a file that is not there should stop it: %q %v", out, err)
+	}
+}

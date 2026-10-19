@@ -162,16 +162,16 @@ func TestScopedParamsTravelAsReachNotAPromise(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(src)
-	i := strings.Index(body, "res := sandbox.RunSandboxedShellIn(")
+	i := strings.Index(body, "sd.res = sandbox.RunSandboxedShellIn(")
 	if i < 0 {
 		t.Fatal("the shell dispatch call has moved")
 	}
 	call := body[i:min(i+400, len(body))]
-	if !strings.Contains(call, "Reach: scopedPaths") {
+	if !strings.Contains(call, "Reach: sd.scopedPaths") {
 		t.Error("scoped paths must travel as Reach — as ReadOnly they are a promise " +
 			"no Seatbelt host can keep, and every path-scoped tool is refused there")
 	}
-	if strings.Contains(call, "ReadOnly: scopedPaths") {
+	if strings.Contains(call, "ReadOnly: sd.scopedPaths") {
 		t.Error("scoped paths must not claim read confinement")
 	}
 }
