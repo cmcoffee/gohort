@@ -1072,10 +1072,112 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 // agentsRunActionFor is agentsRunAction for a dispatch drawn as card: the
 // sub-agent's calls are drawn under it and its rounds and thinking reported
 // on it (dispatch_progress.go). A zero card reports nothing.
+// The run's state is agentsRun and each phase is a method on it. A phase
+// that ends the run early returns false, and what it handed back is parked by
+// exit for this method to return. The defers stay here, registered in the
+// order they always were.
 func (t *chatTurn) agentsRunActionFor(card toolCard, caller *ToolSession, args map[string]any) (string, error) {
-	target, msg, err := t.agentsRunGate(args)
-	if err != nil {
-		return "", err
+	ar := &agentsRun{t: t, card: card, caller: caller, args: args}
+	if !ar.admit() {
+		return ar.ret, ar.retErr
+	}
+	ar.buildSession()
+	defer clearAuthoringInProgress(t.udb, ar.subSessID)
+	defer DeleteSessionTempTools(t.udb, ar.subSessID)
+	ar.buildToolkit()
+	ar.buildTurn()
+	ar.buildCatalog()
+	ar.buildPrompt()
+	if !ar.buildMessages() {
+		return ar.ret, ar.retErr
+	}
+	ar.announce()
+	ar.openRunContext()
+	defer ar.cancel()
+	ar.prepareInput()
+	ar.configureLoop()
+	if !ar.runLoop() {
+		return ar.ret, ar.retErr
+	}
+	ar.finish()
+	return ar.ret, ar.retErr
+}
+
+const maxDispatchTurns = 24 // ~12 exchanges of ephemeral continuity
+
+// agentsRun is one agents(run) of a named agent from a turn, from the checks
+// on the request to the reply its caller gets back. Each field is a local of
+// the method it was cut from; agentsRunActionFor is now the order of the
+// phases and the defers between them.
+type agentsRun struct {
+	t                 *chatTurn
+	card              toolCard
+	caller            *ToolSession
+	args              map[string]any
+	target            AgentRecord
+	msg               string
+	err               error
+	parentSessID      string
+	subSessID         string
+	subSess           *ToolSession
+	toolNames         []string
+	tools             []AgentToolDef
+	mayAuthor         bool
+	authoringWithheld string
+	subTurn           *chatTurn
+	poolDB            Database
+	poolUser          string
+	dispatchExtra     []AgentToolDef
+	customToolPrompt  string
+	subFacts          []MemoryFact
+	sysPrompt         string
+	prior             ChatSession
+	deliveredMsg      string
+	ask               *delegatedQuestion
+	handed            []handedItem
+	handedNote        string
+	herr              error
+	llmMessages       []Message
+	ctx               context.Context
+	cancel            context.CancelFunc
+	prog              *dispatchProgress
+	roundStart        func() []Message
+	reasoning         func(string)
+	think             bool
+	gDecline          string
+	runPin            LLMTier
+	runRoute          string
+	abortTools        []string
+	runConfirmFn      func(name string, args string) bool
+	runFallback       func(name string) (ToolHandlerFunc, bool)
+	runDynamic        func() []AgentToolDef
+	buildCheck        *dispatchBuildCheck
+	runCfg            AgentLoopConfig
+	resp              *Response
+	runErr            error
+	back              string
+	cleanReply        string
+	asked             bool
+	gErr              error
+	tnow              time.Time
+	// ret and retErr are what the run hands back, parked by exit.
+	ret    string
+	retErr error
+}
+
+// exit records what an early return hands back and tells the driver to take
+// it.
+func (ar *agentsRun) exit(out string, err error) bool {
+	ar.ret, ar.retErr = out, err
+	return false
+}
+
+func (ar *agentsRun) admit() bool {
+	t := ar.t
+	args := ar.args
+	ar.target, ar.msg, ar.err = t.agentsRunGate(args)
+	if ar.err != nil {
+		return ar.exit("", ar.err)
 	}
 	// Per-turn dispatch caps — the hard stop for a chat agent that re-fires
 	// agents(run, X) round after round in ONE turn. dispatchChain misses it
@@ -1095,8 +1197,8 @@ func (t *chatTurn) agentsRunActionFor(card toolCard, caller *ToolSession, args m
 	//       to one target in a turn. Ceiling is generous, and higher still when
 	//       the dispatcher is the Builder, whose job is to sweep an agent's
 	//       whole toolset.
-	if block := t.dispatchCap(target.ID, target.Name, msg); block != "" {
-		Log("[orchestrate.agents.run] per-turn dispatch cap hit: %s → %s, blocking further dispatch", t.agent.ID, target.ID)
+	if block := t.dispatchCap(ar.target.ID, ar.target.Name, ar.msg); block != "" {
+		Log("[orchestrate.agents.run] per-turn dispatch cap hit: %s → %s, blocking further dispatch", t.agent.ID, ar.target.ID)
 		// Returned as an ERROR, never as a normal result. A normal result rides
 		// through fenceAgentsOutput, which wraps it in the untrusted-content
 		// banner — a framework STOP verdict delivered inside a fence that says
@@ -1104,48 +1206,52 @@ func (t *chatTurn) agentsRunActionFor(card toolCard, caller *ToolSession, args m
 		// explicitly licensed to ignore (observed: ~90 ceiling verdicts blown
 		// through in one turn). The error path skips the fence AND feeds the
 		// loop's failure-streak machinery, so repeated cap hits settle the turn.
-		return "", errors.New(block)
+		return ar.exit("", errors.New(block))
 	}
 
 	// The warden at the AGENT door (pipeline_guardrail.go). After the free
 	// checks above, because this one is a model call and a dispatch the cap
 	// already refused should not pay for it.
-	if err := t.guardAgentInput(t.ctx, target.Name, msg); err != nil {
-		return "", err
+	if err := t.guardAgentInput(t.ctx, ar.target.Name, ar.msg); err != nil {
+		return ar.exit("", err)
 	}
 	// A narrowed agent delegating to one that is not needs the owner's say-so
 	// (dispatch_escalation.go). After the warden: if the caller's own rules
 	// refuse the request outright there is nothing to authorize.
-	if err := t.confirmDispatchEdge(target); err != nil {
-		return "", err
+	if err := t.confirmDispatchEdge(ar.target); err != nil {
+		return ar.exit("", err)
 	}
 	// And the delegator's rules ride into the run, so a target with none of its
 	// own is not a way around the caller's (delegated_guardrails.go). A copy: this is
 	// the record for THIS delegation and is never written back.
-	target = inheritDelegatorGuardrails(t.agent, target)
+	ar.target = inheritDelegatorGuardrails(t.agent, ar.target)
+	return true
+}
 
-	parentSessID := ""
+func (ar *agentsRun) buildSession() {
+	t := ar.t
+	ar.parentSessID = ""
 	if t.session != nil {
-		parentSessID = t.session.ID
+		ar.parentSessID = t.session.ID
 	}
 	// Deterministic per-(parent, target) sub-session ID: keys the EPHEMERAL
 	// dispatch continuity (the prior exchange is re-threaded on follow-ups,
 	// see below) and scopes the sub-agent's workspace + session temp tools.
 	// Not registered in the SubSession lifecycle index; that index drives
 	// async promotion, which orchestrate doesn't do (dispatch is sync).
-	subSessID := "dispatch:" + parentSessID + ":" + target.ID
-	subSess := &ToolSession{
+	ar.subSessID = "dispatch:" + ar.parentSessID + ":" + ar.target.ID
+	ar.subSess = &ToolSession{
 		LLM:           t.app.LLM,
 		LeadLLM:       t.app.LeadLLM,
 		Username:      t.user,
 		DB:            t.udb,
-		ChatSessionID: subSessID,
+		ChatSessionID: ar.subSessID,
 		// A dispatch runs under its own id so its ephemeral state stays off the
 		// caller's thread; anything it starts in the background still belongs
 		// to the thread. See ToolSession.DeliverySessionID.
-		DeliverySessionID: parentSessID,
-		AgentID:           target.ID,
-		DeniedCredentials: credentialDenySet(target, t.user),
+		DeliverySessionID: ar.parentSessID,
+		AgentID:           ar.target.ID,
+		DeniedCredentials: credentialDenySet(ar.target, t.user),
 		SubAgentRunner:    t.runPipelineSubAgent,
 		PipelineRunner:    t.runToolPipeline,
 		PipelineSource:    t.toolPipelineSource,
@@ -1162,12 +1268,12 @@ func (t *chatTurn) agentsRunActionFor(card toolCard, caller *ToolSession, args m
 	}
 	// Builder sent work by this agent works within this agent's limits
 	// (builder_delegation.go).
-	applyBuilderDelegation(subSess, t.udb)
+	applyBuilderDelegation(ar.subSess, t.udb)
 	// A change it makes to what already exists asks the owner in THIS chat,
 	// when somebody is watching it (change_approval.go).
-	subSess.ApproveChange = changeApprover(subSess, t.user, target.ID, target.Name, t.chatAsker())
-	subSess.DirectCredentialRefusal = directCredentialRefusal(target, subSess)
-	subSess.ToolFailureAdvice = toolFailureAdvice(target, false, func() bool { return nonOwnerRequester(t.ctx) })
+	ar.subSess.ApproveChange = changeApprover(ar.subSess, t.user, ar.target.ID, ar.target.Name, t.chatAsker())
+	ar.subSess.DirectCredentialRefusal = directCredentialRefusal(ar.target, ar.subSess)
+	ar.subSess.ToolFailureAdvice = toolFailureAdvice(ar.target, false, func() bool { return nonOwnerRequester(t.ctx) })
 
 	// The sub-agent runs WHERE ITS DELEGATOR IS RUNNING, which until now meant
 	// the shared user root — the one directory both could name.
@@ -1184,12 +1290,12 @@ func (t *chatTurn) agentsRunActionFor(card toolCard, caller *ToolSession, args m
 	// since a chain deeper than one hop should stay in the workspace the chain
 	// started in rather than hop into each new delegate's.
 	if inherited := InheritedWorkspaceDir(t.ctx); inherited != "" {
-		subSess.WorkspaceDir = inherited
+		ar.subSess.WorkspaceDir = inherited
 		if root, rerr := EnsureWorkspaceDir(t.user); rerr == nil && root != inherited {
-			subSess.WorkspaceFallback = root
+			ar.subSess.WorkspaceFallback = root
 		}
 	} else {
-		subSess.WorkspaceDir, subSess.WorkspaceID, subSess.WorkspaceFallback = t.turnWorkspace()
+		ar.subSess.WorkspaceDir, ar.subSess.WorkspaceID, ar.subSess.WorkspaceFallback = t.turnWorkspace()
 	}
 	// A run an agent starts for the user is the user's run, so whatever the
 	// sub-run needs to put in front of a person goes to the person watching
@@ -1197,45 +1303,49 @@ func (t *chatTurn) agentsRunActionFor(card toolCard, caller *ToolSession, args m
 	// blocking question card a change to an existing agent raises. Without this a dispatched
 	// Builder got a refusal where a direct one got a card. No-op with nobody
 	// watching, when the owner's unattended gates apply instead.
-	t.wireLiveCallbacks(subSess)
-	defer clearAuthoringInProgress(t.udb, subSessID)
-	defer DeleteSessionTempTools(t.udb, subSessID)
+	t.wireLiveCallbacks(ar.subSess)
+}
 
-	toolNames := target.AllowedTools
-	if len(toolNames) == 0 {
+func (ar *agentsRun) buildToolkit() {
+	t := ar.t
+	ar.toolNames = ar.target.AllowedTools
+	if len(ar.toolNames) == 0 {
 		for _, td := range RegisteredChatTools() {
-			toolNames = append(toolNames, td.Name())
+			ar.toolNames = append(ar.toolNames, td.Name())
 		}
 	}
-	tools, err := GetAgentToolsWithSession(subSess, toolNames...)
-	if err != nil {
-		tools = nil
-		for _, n := range toolNames {
-			if td, terr := GetAgentToolsWithSession(subSess, n); terr == nil && len(td) > 0 {
-				tools = append(tools, td[0])
+	ar.tools, ar.err = GetAgentToolsWithSession(ar.subSess, ar.toolNames...)
+	if ar.err != nil {
+		ar.tools = nil
+		for _, n := range ar.toolNames {
+			if td, terr := GetAgentToolsWithSession(ar.subSess, n); terr == nil && len(td) > 0 {
+				ar.tools = append(ar.tools, td[0])
 			}
 		}
 	}
 	// Only for the owner, and never under a non-owner's request, which rides
 	// down from the channel run that started this (authoring_requester.go).
-	mayAuthor, authoringWithheld := dispatchAuthoring(t.ctx, target, t.user, t.user)
-	if mayAuthor {
-		tools = append(tools, builderAuthoringTools(subSess, nil)...)
+	ar.mayAuthor, ar.authoringWithheld = dispatchAuthoring(t.ctx, ar.target, t.user, t.user)
+	if ar.mayAuthor {
+		ar.tools = append(ar.tools, builderAuthoringTools(ar.subSess, nil)...)
 		// The operator toolset too, as the sync-dispatch and wake paths
 		// (agent_dispatch.go) give an author, so a delegated build can wire
 		// what it built into a schedule or a monitor. This inline path left
 		// it out, so a Builder reached through agents(run) had no schedule
 		// tool, searched for one eight times, and asked the user to create
 		// the Friday run by hand.
-		tools = mergeToolsDedup(tools, operatorManagementTools(subSess, target.ID))
+		ar.tools = mergeToolsDedup(ar.tools, operatorManagementTools(ar.subSess, ar.target.ID))
 		// A dispatched authoring agent (Builder seed, or an Author-flagged agent)
 		// inherits the parent's non-consequential catalog so it can inspect the
 		// parent's world while authoring — read_phantom_chat, web_search, etc. —
 		// but never the parent's texting / delegation / fleet tools. Deduped so
 		// shared names don't double-add.
-		tools = mergeToolsDedup(tools, t.inheritableParentTools(t.agent, subSess))
+		ar.tools = mergeToolsDedup(ar.tools, t.inheritableParentTools(t.agent, ar.subSess))
 	}
+}
 
+func (ar *agentsRun) buildTurn() {
+	t := ar.t
 	// chatTurn-bound framework tools (knowledge_search, memory_*,
 	// agents, store_fact, etc.) are NOT in the global registry —
 	// they're built per-turn so the closure captures the right
@@ -1247,9 +1357,9 @@ func (t *chatTurn) agentsRunActionFor(card toolCard, caller *ToolSession, args m
 	// builders against it. Most chatTurn fields (sse, session,
 	// queue) stay nil — the bound tools that need them aren't
 	// added to the sub-agent's catalog anyway.
-	subTurn := &chatTurn{
+	ar.subTurn = &chatTurn{
 		app:    t.app,
-		agent:  target,
+		agent:  ar.target,
 		user:   t.user,
 		udb:    t.udb,
 		askVia: t.chatAsker(), // the calling turn's question card, see chatTurn.askVia
@@ -1260,7 +1370,7 @@ func (t *chatTurn) agentsRunActionFor(card toolCard, caller *ToolSession, args m
 		// this run's lineage so a delegate or detached run from inside it
 		// keeps counting (dispatch_lineage.go).
 		ctx: withDispatchLineage(t.ctx,
-			append(append(append([]string(nil), t.dispatchChain...), t.agent.ID), target.ID), t.originAuthority()),
+			append(append(append([]string(nil), t.dispatchChain...), t.agent.ID), ar.target.ID), t.originAuthority()),
 		topic:   t.resolveTopic(),
 		network: t.network,
 		// Carry the caller's chain + the caller's own agent ID forward.
@@ -1297,28 +1407,32 @@ func (t *chatTurn) agentsRunActionFor(card toolCard, caller *ToolSession, args m
 	// channel run the runtime identity is a synthetic per-chat user whose store
 	// holds no custom tools, so the sub-agent got an empty pool while the same
 	// target reached by external dispatch got the real one.
-	subTurn.intentText = msg // Tier-1 tool elevation matches against the dispatch brief
-	subTurn.noteAuthoringWithheld(authoringWithheld)
+	ar.subTurn.intentText = ar.msg // Tier-1 tool elevation matches against the dispatch brief
+	ar.subTurn.noteAuthoringWithheld(ar.authoringWithheld)
 	// The app, pipeline and machine managers, built on this sub-turn so they
 	// carry the sending agent's limits (authoring_primitives.go).
-	if mayAuthor {
-		subTurn.editRefusal = subSess.ToolEditRefusal
-		tools = mergeToolsDedup(tools, subTurn.authoringPrimitiveToolDefs())
+	if ar.mayAuthor {
+		ar.subTurn.editRefusal = ar.subSess.ToolEditRefusal
+		ar.tools = mergeToolsDedup(ar.tools, ar.subTurn.authoringPrimitiveToolDefs())
 	}
-	poolDB, poolUser := subTurn.ownerView()
-	dispatchExtra, customToolPrompt := subTurn.dispatchExtraTools(subSess, poolUser, poolDB)
-	tools = append(tools, dispatchExtra...)
+}
+
+func (ar *agentsRun) buildCatalog() {
+	t := ar.t
+	ar.poolDB, ar.poolUser = ar.subTurn.ownerView()
+	ar.dispatchExtra, ar.customToolPrompt = ar.subTurn.dispatchExtraTools(ar.subSess, ar.poolUser, ar.poolDB)
+	ar.tools = append(ar.tools, ar.dispatchExtra...)
 	// delegate runs without asking only where agents(run) would.
-	tools = subTurn.gateDelegate(tools)
+	ar.tools = ar.subTurn.gateDelegate(ar.tools)
 	// Parent-tool inheritance on the DISPATCH path (this resolves tools directly,
 	// not via resolveWorkerTools, so the runtime block there wouldn't fire here).
 	// An owned sub-agent that opted in pulls its parent's non-consequential
 	// catalog (read_phantom_chat etc.) so a Builder-authored summarizer can read
 	// the chat it summarizes even when reached by dispatch. Guarded to top-level
 	// parents; deduped.
-	if target.InheritParentTools && target.OwnedBy != "" {
-		if parent, ok := loadAgent(t.udb, target.OwnedBy); ok && parent.OwnedBy == "" {
-			tools = mergeToolsDedup(tools, subTurn.inheritableParentTools(parent, subSess))
+	if ar.target.InheritParentTools && ar.target.OwnedBy != "" {
+		if parent, ok := loadAgent(t.udb, ar.target.OwnedBy); ok && parent.OwnedBy == "" {
+			ar.tools = mergeToolsDedup(ar.tools, ar.subTurn.inheritableParentTools(parent, ar.subSess))
 		}
 	}
 	// Channel-scoped messaging tools (list_chats / read_chat / send_message)
@@ -1336,11 +1450,11 @@ func (t *chatTurn) agentsRunActionFor(card toolCard, caller *ToolSession, args m
 	// handed "post the summary to the team thread" has to hand its text back up
 	// to be relayed, and the parent's own channel is invisible to it. Same slice
 	// the sub-turn carries for cycle detection; it can only narrow down a chain.
-	tools = append(tools, AgentProvidedTools(subSess, t.user, target.ID)...)
+	ar.tools = append(ar.tools, AgentProvidedTools(ar.subSess, t.user, ar.target.ID)...)
 	// Its Sources, which a chat turn gets in runPlan and this path never did.
-	tools = withSourceTools(tools, subSess, t.user, target)
-	if chTools := channelChatTools(subSess, t.user, target.ID, inheritedChannelChain(target, subTurn.dispatchChain)...); len(chTools) > 0 {
-		tools = append(tools, chTools...)
+	ar.tools = withSourceTools(ar.tools, ar.subSess, t.user, ar.target)
+	if chTools := channelChatTools(ar.subSess, t.user, ar.target.ID, inheritedChannelChain(ar.target, ar.subTurn.dispatchChain)...); len(chTools) > 0 {
+		ar.tools = append(ar.tools, chTools...)
 	}
 
 	// V1 — wrap the sub-agent's tools so their calls emit into the
@@ -1359,20 +1473,23 @@ func (t *chatTurn) agentsRunActionFor(card toolCard, caller *ToolSession, args m
 	// sub-agent's context, so the sub-agent's own scan scope governs whether
 	// they are scanned. Reading it off the caller instead would leave an agent
 	// whose owner turned scanning on unscanned whenever it is dispatched.
-	t.wrapToolsForActivity(subSess, tools, target, "↳ ["+target.Name+"] ")
+	t.wrapToolsForActivity(ar.subSess, ar.tools, ar.target, "↳ ["+ar.target.Name+"] ")
 	// The sub-agent's own pass over its catalog (finalizeDispatchCatalog)
 	// leaves these alone. Wrapped a second time by the sub-turn, each call was
 	// drawn under a card the page was never sent, so it lost its place under
 	// the dispatch, and its result was scanned twice.
-	if subTurn.activityWrapped == nil {
-		subTurn.activityWrapped = map[string]bool{}
+	if ar.subTurn.activityWrapped == nil {
+		ar.subTurn.activityWrapped = map[string]bool{}
 	}
-	for _, td := range tools {
+	for _, td := range ar.tools {
 		if td.Handler != nil {
-			subTurn.activityWrapped[td.Tool.Name] = true
+			ar.subTurn.activityWrapped[td.Tool.Name] = true
 		}
 	}
+}
 
+func (ar *agentsRun) buildPrompt() {
+	t := ar.t
 	// Same prompt the channel/dispatch path builds, from the same two helpers:
 	// dispatchContextBlocks for the Available-agents / skills / topics blocks,
 	// dispatchSystemPrompt for everything around them (agent context, the
@@ -1384,9 +1501,14 @@ func (t *chatTurn) agentsRunActionFor(card toolCard, caller *ToolSession, args m
 	// It also gated the persona against the CALLER's AllowedTools rather than
 	// the target's, which is the wrong agent's tool list to be stripping a
 	// target's persona sections against; gatedPersonaFor reads the target.
-	subFacts := subTurn.facts() // honours the Explicit Memory switch, as a web turn's read does
-	sysPrompt := dispatchSystemPrompt(t.ctx, target, subFacts, subTurn.dispatchContextBlocks(), customToolPrompt, subSessID, t.udb, t.user)
+	ar.subFacts = ar.subTurn.facts() // honours the Explicit Memory switch, as a web turn's read does
+	ar.sysPrompt = dispatchSystemPrompt(t.ctx, ar.target, ar.subFacts, ar.subTurn.dispatchContextBlocks(), ar.customToolPrompt, ar.subSessID, t.udb, t.user)
+}
 
+func (ar *agentsRun) buildMessages() bool {
+	t := ar.t
+	caller := ar.caller
+	args := ar.args
 	// Ephemeral dispatch continuity: a follow-up to the SAME agent in the
 	// SAME parent session re-threads the prior exchange, so the parent can
 	// ask "now tell me more about their B2B presence" without re-briefing.
@@ -1399,56 +1521,65 @@ func (t *chatTurn) agentsRunActionFor(card toolCard, caller *ToolSession, args m
 	//   - additive: the target's long-term facts/knowledge/persona already
 	//     load above; this only adds the running conversation.
 	// Direct Agency chat with a sub-agent is a separate path (handleSend).
-	prior, _ := loadChatSession(t.udb, target.ID, subSessID)
+	ar.prior, _ = loadChatSession(t.udb, ar.target.ID, ar.subSessID)
 	// Only Builder acts on the delegated marker; others get the message verbatim.
 	// This thread persists, so Builder may ask and the answer comes back here
 	// (builder_delegated_ask.go).
-	deliveredMsg := msg
-	var ask *delegatedQuestion
-	if isBuilderAgent(target.ID) {
-		deliveredMsg = markAsDelegatedMayAsk(msg)
-		ask = &delegatedQuestion{}
+	ar.deliveredMsg = ar.msg
+	if isBuilderAgent(ar.target.ID) {
+		ar.deliveredMsg = markAsDelegatedMayAsk(ar.msg)
+		ar.ask = &delegatedQuestion{}
 	}
 	// What the caller handed over arrives as this run's own inbound media,
 	// and the message says what it is (agent_media.go).
-	handed, handedNote, herr := handOut(caller, t.agent.Name, stringSliceFromArgs(args, "attach"))
-	if herr != nil {
-		return "", herr
+	ar.handed, ar.handedNote, ar.herr = handOut(caller, t.agent.Name, stringSliceFromArgs(args, "attach"))
+	if ar.herr != nil {
+		return ar.exit("", ar.herr)
 	}
-	receiveHanded(subSess, handed)
-	deliveredMsg += handedNote
-	llmMessages := make([]Message, 0, len(prior.Messages)+1)
-	for _, m := range prior.Messages {
-		llmMessages = append(llmMessages, Message{Role: m.Role, Content: m.Content})
+	receiveHanded(ar.subSess, ar.handed)
+	ar.deliveredMsg += ar.handedNote
+	ar.llmMessages = make([]Message, 0, len(ar.prior.Messages)+1)
+	for _, m := range ar.prior.Messages {
+		ar.llmMessages = append(ar.llmMessages, Message{Role: m.Role, Content: m.Content})
 	}
-	llmMessages = append(llmMessages, Message{Role: "user", Content: deliveredMsg})
+	ar.llmMessages = append(ar.llmMessages, Message{Role: "user", Content: ar.deliveredMsg})
+	return true
+}
 
-	// V1 — per-step status emit. Hooks the orchestrator's per-round
-	// progress callback so the user sees "[<target>] round N (X tool
-	// calls)" snapshots between rounds. Cheap; one SSE event per
-	// round at most.
-	stepNotice := func(step StepInfo) {
-		text := fmt.Sprintf("[%s] round %d", target.Name, step.Round)
-		if n := len(step.ToolCalls); n > 0 {
-			text += fmt.Sprintf(" (%d tool call%s)", n, plural(n))
-		}
-		if step.Done {
-			text += ", done"
-		}
-		t.sse.Send(map[string]any{
-			"kind": "activity",
-			"type": "status",
-			"id":   activityCheapID(),
-			"text": text,
-		})
+// V1 — per-step status emit. Hooks the orchestrator's per-round
+// progress callback so the user sees "[<target>] round N (X tool
+// calls)" snapshots between rounds. Cheap; one SSE event per
+// round at most.
+func (ar *agentsRun) stepNotice(step StepInfo) {
+	t := ar.t
+	text := fmt.Sprintf("[%s] round %d", ar.target.Name, step.Round)
+	if n := len(step.ToolCalls); n > 0 {
+		text += fmt.Sprintf(" (%d tool call%s)", n, plural(n))
+	}
+	if step.Done {
+		text += ", done"
 	}
 	t.sse.Send(map[string]any{
 		"kind": "activity",
 		"type": "status",
 		"id":   activityCheapID(),
-		"text": fmt.Sprintf("[%s] dispatched", target.Name),
+		"text": text,
 	})
+}
 
+func (ar *agentsRun) announce() {
+	t := ar.t
+	t.sse.Send(map[string]any{
+		"kind": "activity",
+		"type": "status",
+		"id":   activityCheapID(),
+		"text": fmt.Sprintf("[%s] dispatched", ar.target.Name),
+	})
+}
+
+func (ar *agentsRun) openRunContext() {
+	t := ar.t
+	card := ar.card
 	// Bound the sub-agent run by its OWN round cap (MaxRounds below) + the
 	// per-call LLM budget — same as a top-level turn — NOT an arbitrary
 	// wall-clock cap. The previous WithTimeout(knowledgeIngestTimeout*4 =
@@ -1458,12 +1589,15 @@ func (t *chatTurn) agentsRunActionFor(card toolCard, caller *ToolSession, args m
 	// agents(run) tool result ("context deadline exceeded"), looking like
 	// the MAIN agent failed. WithCancel keeps cleanup + client-disconnect
 	// cancellation (t.ctx) without the bogus deadline.
-	ctx, cancel := context.WithCancel(subTurn.ctx) // the caller's, with this run's lineage
+	ar.ctx, ar.cancel = context.WithCancel(ar.subTurn.ctx) // the caller's, with this run's lineage
 	// The sub-agent's calls are drawn under this dispatch's card.
-	ctx = withToolCard(ctx, card)
-	prog := t.newDispatchProgress(card, target.Name)
-	roundStart, reasoning := prog.hooks()
-	defer cancel()
+	ar.ctx = withToolCard(ar.ctx, card)
+	ar.prog = t.newDispatchProgress(card, ar.target.Name)
+	ar.roundStart, ar.reasoning = ar.prog.hooks()
+}
+
+func (ar *agentsRun) prepareInput() {
+	t := ar.t
 	// ForcePrivate enforcement — same shape as the external dispatch
 	// paths. The parent's network connector already propagates via
 	// subSess.Network (set at line ~391), but if THIS sub-agent has
@@ -1471,146 +1605,159 @@ func (t *chatTurn) agentsRunActionFor(card toolCard, caller *ToolSession, args m
 	// stay permissive. This call upgrades to a blocked connector and
 	// strips CapNetwork tools from the catalog. No-op when
 	// target.ForcePrivate is false.
-	ctx, tools = applyForcePrivateToDispatch(ctx, subSess, tools, target)
+	ar.ctx, ar.tools = applyForcePrivateToDispatch(ar.ctx, ar.subSess, ar.tools, ar.target)
 	// The target's machine, resuming where this conversation's thread with it
 	// left off: the same thread carries the exchange, so a follow-up continues
 	// the walk rather than starting it over (enterDispatchMachine).
-	if prior.ID == "" {
-		prior.ID, prior.AgentID, prior.Created = subSessID, target.ID, time.Now()
+	if ar.prior.ID == "" {
+		ar.prior.ID, ar.prior.AgentID, ar.prior.Created = ar.subSessID, ar.target.ID, time.Now()
 	}
 	// The passes a web turn's catalog gets over all of it (dispatch_catalog.go).
-	tools = subTurn.finalizeDispatchCatalog(subSess, tools)
-	subTurn.machineToolList = machineToolNotes(subSess)
-	subTurn.noteAgentAttachments(subSess)
-	subTurn.enterDispatchMachine(&prior, false, msg, &sysPrompt, &tools, "agents-run")
-	think := subTurn.machine.Think(resolveDispatchThink(target))
+	ar.tools = ar.subTurn.finalizeDispatchCatalog(ar.subSess, ar.tools)
+	ar.subTurn.machineToolList = machineToolNotes(ar.subSess)
+	ar.subTurn.noteAgentAttachments(ar.subSess)
+	ar.subTurn.enterDispatchMachine(&ar.prior, false, ar.msg, &ar.sysPrompt, &ar.tools, "agents-run")
+	ar.think = ar.subTurn.machine.Think(resolveDispatchThink(ar.target))
 	// The warden judges the agent that is RUNNING, so a sub-agent answers to its
 	// OWN rules — the same wiring RunAgentSyncContinuing and the channel dispatch
 	// use. This path had neither hook: an inline agents(run) executed completely
 	// unguarded, which made it a laundering route around a guardrail the target
 	// agent's owner had authored. Nothing about the sub-run justified the
 	// exemption; the hooks were simply never added when this path was written.
-	llmMessages, gDecline := subTurn.applyInputGuardrail(llmMessages)
-	if gDecline == "" {
-		gDecline = subTurn.machineRelay() // a relaying step's reply, sent without a model
+	ar.llmMessages, ar.gDecline = ar.subTurn.applyInputGuardrail(ar.llmMessages)
+	if ar.gDecline == "" {
+		ar.gDecline = ar.subTurn.machineRelay() // a relaying step's reply, sent without a model
 	}
 	// The skills and hints a web turn puts beside the message, after the
 	// input guardrail read the message alone (dispatch_catalog.go).
-	if n := len(llmMessages); gDecline == "" && n > 0 && llmMessages[n-1].Role == "user" {
-		llmMessages[n-1].Content = withTurnContext(llmMessages[n-1].Content, subTurn.dispatchTurnContext(msg))
+	if n := len(ar.llmMessages); ar.gDecline == "" && n > 0 && ar.llmMessages[n-1].Role == "user" {
+		ar.llmMessages[n-1].Content = withTurnContext(ar.llmMessages[n-1].Content, ar.subTurn.dispatchTurnContext(ar.msg))
 	}
 	// The target's own "Use Lead model", as over a channel or a delegation;
 	// ctx carries the parent's privacy, so a Private parent stays off the lead.
-	runPin, runRoute := dispatchRouting(ctx, subTurn)
-	var abortTools []string
-	if ask != nil {
-		tools = append(tools, delegatedAskUserTool(ask))
-		abortTools = []string{"ask_user"}
+	ar.runPin, ar.runRoute = dispatchRouting(ar.ctx, ar.subTurn)
+	if ar.ask != nil {
+		ar.tools = append(ar.tools, delegatedAskUserTool(ar.ask))
+		ar.abortTools = []string{"ask_user"}
 	}
 	// An agent that plans on the lead hands its work to work_step
 	// (runner_lead_plans_dispatch.go).
-	runConfirmFn := t.runConfirm(target.ID, subSess, subTurn.asksFirst)
-	runFallback, runDynamic := subTurn.lazyToolFallback, subTurn.dynamicNewTempTools(subSess)
-	if subTurn.applyDispatchLeadPlans(subSess, runPin, msg, &sysPrompt, &tools, runConfirmFn) {
-		runFallback, runDynamic = nil, nil
+	ar.runConfirmFn = t.runConfirm(ar.target.ID, ar.subSess, ar.subTurn.asksFirst)
+	ar.runFallback, ar.runDynamic = ar.subTurn.lazyToolFallback, ar.subTurn.dynamicNewTempTools(ar.subSess)
+	if ar.subTurn.applyDispatchLeadPlans(ar.subSess, ar.runPin, ar.msg, &ar.sysPrompt, &ar.tools, ar.runConfirmFn) {
+		ar.runFallback, ar.runDynamic = nil, nil
 	}
-	buildCheck := newDispatchBuildCheck(target, subSess)
+	ar.buildCheck = newDispatchBuildCheck(ar.target, ar.subSess)
 	// The target's own standing on the model, if it has one; else the
 	// caller's lane rides down (run_lane.go).
-	ctx = agentRunLane(ctx, target, false)
-	runCfg := AgentLoopConfig{
-		TierOverride:    runPin,
-		RoundAbortTools: abortTools,
-		RoundToolFilter: subTurn.machineToolFilter(),
+	ar.ctx = agentRunLane(ar.ctx, ar.target, false)
+}
+
+func (ar *agentsRun) configureLoop() {
+	t := ar.t
+	ar.runCfg = AgentLoopConfig{
+		TierOverride:    ar.runPin,
+		RoundAbortTools: ar.abortTools,
+		RoundToolFilter: ar.subTurn.machineToolFilter(),
 		// A terminal-rule pre_input block refused this request outright: the loop
 		// delivers this text and never calls a model. Empty on every other turn.
-		PreEmptedReply: gDecline,
-		SystemPrompt:   sysPrompt,
-		Tools:          tools,
-		MaxRounds:      resolveMaxWorkerRounds(target),
-		ThinkBudget:    target.ThinkBudget, // per-agent override; 0 = inherit route/global
-		Effort:         target.Effort,      // per-agent level; a budget above wins
+		PreEmptedReply: ar.gDecline,
+		SystemPrompt:   ar.sysPrompt,
+		Tools:          ar.tools,
+		MaxRounds:      resolveMaxWorkerRounds(ar.target),
+		ThinkBudget:    ar.target.ThinkBudget, // per-agent override; 0 = inherit route/global
+		Effort:         ar.target.Effort,      // per-agent level; a budget above wins
 		// Asked of whoever is watching the calling turn; with nobody
 		// watching, queued for the owner (see runConfirm).
-		Confirm:             runConfirmFn,
-		AskFirst:            subTurn.asksFirst, // its marks and the caller's (ask_first.go)
-		GuardrailCheck:      subTurn.guardrailEnforcer().Check,
-		GuardrailActionGate: subTurn.guardrailEnforcer().ActionGate,
-		GuardrailHalted:     subTurn.guardrailEnforcer().Halted,
-		GuardrailReject:     subTurn.guardrailEnforcer().Reject,
-		GuardrailDeclines:   subTurn.agent.GuardrailDeclines,
-		OnStep:              stepNotice,
+		Confirm:             ar.runConfirmFn,
+		AskFirst:            ar.subTurn.asksFirst, // its marks and the caller's (ask_first.go)
+		GuardrailCheck:      ar.subTurn.guardrailEnforcer().Check,
+		GuardrailActionGate: ar.subTurn.guardrailEnforcer().ActionGate,
+		GuardrailHalted:     ar.subTurn.guardrailEnforcer().Halted,
+		GuardrailReject:     ar.subTurn.guardrailEnforcer().Reject,
+		GuardrailDeclines:   ar.subTurn.agent.GuardrailDeclines,
+		OnStep:              ar.stepNotice,
 		// Its round and thinking, on the dispatch's card. Never its prose or
 		// its reasoning text: see dispatch_progress.go.
-		OnRoundStart:    roundStart,
-		ReasoningStream: reasoning,
+		OnRoundStart:    ar.roundStart,
+		ReasoningStream: ar.reasoning,
 		// The sub-agent's own missing references, which the parent's note
 		// does not cover: see dependencyTurnNote.
-		TurnNotes: func(string) string { return dependencyTurnNote(subSess) },
+		TurnNotes: func(string) string { return dependencyTurnNote(ar.subSess) },
 		// Custom-tool resolution, same as the channel/dispatch + web paths:
 		// lazyToolFallback resolves a direct call to a has-args custom tool;
 		// dynamicNewTempTools surfaces tools loaded via load_tool this turn.
-		ToolFallbackResolver: runFallback,
-		DynamicTools:         runDynamic,
-		FinishCheck:          buildCheck.finishCheck(),
-		FinishUnmet:          buildCheck.finishUnmet(),
+		ToolFallbackResolver: ar.runFallback,
+		DynamicTools:         ar.runDynamic,
+		FinishCheck:          ar.buildCheck.finishCheck(),
+		FinishUnmet:          ar.buildCheck.finishUnmet(),
 		// Whether the reply describes things that happened, as the two
 		// sync-dispatch paths already ask; this inline path did not, so a
 		// dispatched Builder's claims went to the caller unread.
-		TurnClaimJudge: subTurn.claimJudge(ctx),
+		TurnClaimJudge: ar.subTurn.claimJudge(ar.ctx),
 		// What the machine's steps did before the loop ran, as on the web turn,
 		// so a reply relaying a step's findings is not convicted as unsupported.
-		PriorWork: subTurn.priorWorkForJudge,
+		PriorWork: ar.subTurn.priorWorkForJudge,
 		// The lead's review of a turn that did work, when this agent asks for one
 		// (lead_review.go).
-		TurnReview:         subTurn.leadReviewer(ctx),
-		TurnGroundingJudge: t.app.turnGroundingJudge(ctx),
-		OnWait:             t.waitNotice(target.Name),
+		TurnReview:         ar.subTurn.leadReviewer(ar.ctx),
+		TurnGroundingJudge: t.app.turnGroundingJudge(ar.ctx),
+		OnWait:             t.waitNotice(ar.target.Name),
 		ChatOptions: []ChatOption{
-			WithRouteKey(runRoute),
-			WithThink(think),
+			WithRouteKey(ar.runRoute),
+			WithThink(ar.think),
 		},
 	}
-	resp, _, runErr := t.app.RunAgentLoop(ctx, llmMessages, runCfg)
+}
+
+func (ar *agentsRun) runLoop() bool {
+	t := ar.t
+	caller := ar.caller
+	ar.resp, _, ar.runErr = t.app.RunAgentLoop(ar.ctx, ar.llmMessages, ar.runCfg)
 	// The agent's gap check, as one more pass when it finds gaps (GapCheck).
-	if runErr == nil && resp != nil && gDecline == "" {
-		if follow := subTurn.dispatchGapFollowUp(msg, resp.Content); follow != "" {
-			again := append(append([]Message(nil), llmMessages...), Message{Role: "assistant", Content: resp.Content}, Message{Role: "user", Content: follow})
-			if r2, _, err2 := t.app.RunAgentLoop(ctx, again, runCfg); err2 == nil && r2 != nil && strings.TrimSpace(r2.Content) != "" {
-				resp = r2
+	if ar.runErr == nil && ar.resp != nil && ar.gDecline == "" {
+		if follow := ar.subTurn.dispatchGapFollowUp(ar.msg, ar.resp.Content); follow != "" {
+			again := append(append([]Message(nil), ar.llmMessages...), Message{Role: "assistant", Content: ar.resp.Content}, Message{Role: "user", Content: follow})
+			if r2, _, err2 := t.app.RunAgentLoop(ar.ctx, again, ar.runCfg); err2 == nil && r2 != nil && strings.TrimSpace(r2.Content) != "" {
+				ar.resp = r2
 			}
 		}
 	}
 	Log("[orchestrate.agents.run] depth=%d caller=%s → target=%s msg_chars=%d err=%v",
-		t.dispatchHops(), t.agent.ID, target.ID, len(msg), runErr)
+		t.dispatchHops(), t.agent.ID, ar.target.ID, len(ar.msg), ar.runErr)
 	// What it attached is the caller's to deliver now, made before a failure
 	// or not.
-	back := handBack(target.Name, subSess, caller)
-	if runErr != nil {
-		return "", runErr
+	ar.back = handBack(ar.target.Name, ar.subSess, caller)
+	if ar.runErr != nil {
+		return ar.exit("", ar.runErr)
 	}
-	if resp == nil {
-		return "", errors.New("agents(run): target returned no response")
+	if ar.resp == nil {
+		return ar.exit("", errors.New("agents(run): target returned no response"))
 	}
-	buildCheck.annotate(resp)
+	ar.buildCheck.annotate(ar.resp)
 	// The waiting step hands off now it has had its turn, as on every surface.
-	subTurn.completeMachine(subTurn.machine)
-	cleanReply := strings.TrimSpace(resp.Content)
+	ar.subTurn.completeMachine(ar.subTurn.machine)
+	return true
+}
+
+func (ar *agentsRun) finish() bool {
+	t := ar.t
+	ar.cleanReply = strings.TrimSpace(ar.resp.Content)
 	// A Builder that asked ends on its question, which is its reply in this
 	// thread and, relayed, the result the caller acts on.
-	asked := ask.asked()
-	if asked {
-		cleanReply = ask.forThread()
-		if note := buildCheck.questionNote(); note != "" {
-			cleanReply += "\n\n" + note
+	ar.asked = ar.ask.asked()
+	if ar.asked {
+		ar.cleanReply = ar.ask.forThread()
+		if note := ar.buildCheck.questionNote(); note != "" {
+			ar.cleanReply += "\n\n" + note
 		}
 	}
 	// What the sub-agent produced, judged by the caller's rules before it lands
 	// in the caller's context. The input check can be asked around; this one
 	// reads what actually came back.
-	cleanReply, gErr := t.guardAgentOutput(t.ctx, target.Name, cleanReply)
-	if gErr != nil {
-		return "", gErr
+	ar.cleanReply, ar.gErr = t.guardAgentOutput(t.ctx, ar.target.Name, ar.cleanReply)
+	if ar.gErr != nil {
+		return ar.exit("", ar.gErr)
 	}
 	// Feed the request into the target's cortex, every agent's record of what
 	// reached it, so a dispatched cortex/channel agent is AWARE another agent
@@ -1621,39 +1768,38 @@ func (t *chatTurn) agentsRunActionFor(card toolCard, caller *ToolSession, args m
 	// dispatching parent; the request text itself is the observation. Not a
 	// request inside one family: a sub-agent's note lands in its parent's
 	// Cortex, and the parent's conversation already shows what it asked.
-	if !familyRequest(t.udb, t.agent.ID, target.ID) {
-		appendCortexObs(t.udb, target.ID, t.agent.Name, cortexKindRequest, msg)
+	if !familyRequest(t.udb, t.agent.ID, ar.target.ID) {
+		appendCortexObs(t.udb, ar.target.ID, t.agent.Name, cortexKindRequest, ar.msg)
 	}
 	// Persist the exchange for the next follow-up. Store the RAW brief (not
 	// the delegated wrapper) so re-threaded history reads cleanly, and cap to
 	// the most recent turns to keep continuity cheap and ephemeral.
-	if prior.ID == "" {
-		prior.ID = subSessID
-		prior.AgentID = target.ID
-		prior.Created = time.Now()
+	if ar.prior.ID == "" {
+		ar.prior.ID = ar.subSessID
+		ar.prior.AgentID = ar.target.ID
+		ar.prior.Created = time.Now()
 	}
-	tnow := time.Now()
-	prior.Messages = append(prior.Messages,
-		ChatMessage{Role: "user", Content: msg, Created: tnow},
-		ChatMessage{Role: "assistant", Content: cleanReply, Created: tnow},
+	ar.tnow = time.Now()
+	ar.prior.Messages = append(ar.prior.Messages,
+		ChatMessage{Role: "user", Content: ar.msg, Created: ar.tnow},
+		ChatMessage{Role: "assistant", Content: ar.cleanReply, Created: ar.tnow},
 	)
-	const maxDispatchTurns = 24 // ~12 exchanges of ephemeral continuity
-	if len(prior.Messages) > maxDispatchTurns {
-		prior.Messages = prior.Messages[len(prior.Messages)-maxDispatchTurns:]
+	if len(ar.prior.Messages) > maxDispatchTurns {
+		ar.prior.Messages = ar.prior.Messages[len(ar.prior.Messages)-maxDispatchTurns:]
 	}
-	if _, err := saveChatSession(t.udb, prior); err != nil {
-		Log("[orchestrate.agents.run] WARN persist dispatch sub-session %s: %v", subSessID, err)
+	if _, err := saveChatSession(t.udb, ar.prior); err != nil {
+		Log("[orchestrate.agents.run] WARN persist dispatch sub-session %s: %v", ar.subSessID, err)
 	}
-	if asked {
-		Log("[orchestrate.agents.run] %s asked the user a question through caller=%s", target.Name, t.agent.ID)
-		return delegatedRelay(target.Name, cleanReply) + back, nil
+	if ar.asked {
+		Log("[orchestrate.agents.run] %s asked the user a question through caller=%s", ar.target.Name, t.agent.ID)
+		return ar.exit(delegatedRelay(ar.target.Name, ar.cleanReply)+ar.back, nil)
 	}
 	// Asked in prose instead of through ask_user: still the user's question.
-	if ask != nil && endsWithQuestionForUser(cleanReply) {
-		Log("[orchestrate.agents.run] %s ended on a question for the user, relayed through caller=%s", target.Name, t.agent.ID)
-		return delegatedProseRelay(target.Name, cleanReply) + back, nil
+	if ar.ask != nil && endsWithQuestionForUser(ar.cleanReply) {
+		Log("[orchestrate.agents.run] %s ended on a question for the user, relayed through caller=%s", ar.target.Name, t.agent.ID)
+		return ar.exit(delegatedProseRelay(ar.target.Name, ar.cleanReply)+ar.back, nil)
 	}
-	return fmt.Sprintf("From %s:\n\n%s%s", target.Name, cleanReply, back), nil
+	return ar.exit(fmt.Sprintf("From %s:\n\n%s%s", ar.target.Name, ar.cleanReply, ar.back), nil)
 }
 
 // agentsDispatchPolicy is how a dispatch behaves when the caller has handed the
