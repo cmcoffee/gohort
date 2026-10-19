@@ -11,14 +11,20 @@ import (
 )
 
 // offered reports whether the call put the tool in front of the model, as a
-// schema or as a name it can load.
+// schema or as a name it can load. Only the agent's own calls, the ones that
+// offer tools: a background call a turn leaves behind (memory, the title)
+// quotes the earlier turn, and can land after the next one has started.
 func offered(llm *FakeLLM, i int, tool string) bool {
-	for _, tl := range llm.Config(i).Tools {
+	cfg := llm.Config(i)
+	if len(cfg.Tools) == 0 {
+		return false
+	}
+	for _, tl := range cfg.Tools {
 		if tl.Name == tool {
 			return true
 		}
 	}
-	return strings.Contains(llm.Prompt(i)+llm.Config(i).SystemPrompt, tool)
+	return strings.Contains(llm.Prompt(i)+cfg.SystemPrompt, tool)
 }
 
 func TestATakenToolIsGoneFromTheChannelThread(t *testing.T) {
