@@ -102,6 +102,7 @@ type accessPage struct {
 	forcePrivateHelp string
 	src              string
 	toolWrite        string
+	handoffURL       string
 	reach            []agentReachRow
 	patchURL         string
 	depthURL         string
@@ -203,6 +204,7 @@ func (ap *accessPage) prepare() bool {
 	// RECORD, so {row_key} finds no such field, resolves to empty, and leaves
 	// a control that posts to a URL with no tool in it.
 	ap.toolWrite = T.WebPrefix() + "/api/agent-access/tool?agent=" + url.QueryEscape(ap.agent.ID) + "&name={name}"
+	ap.handoffURL = T.WebPrefix() + "/api/agent-access/handoff?agent=" + url.QueryEscape(ap.agent.ID) + "&target={id}"
 	ap.reach = agentReach(ap.udb, ap.user, ap.agent)
 
 	// Absolute, not relative: this page sits one level deeper than the editor
@@ -543,7 +545,10 @@ func (ap *accessPage) delegationSections() []ui.Section {
 			Subtitle: "The blast radius. Whatever this agent hands work to runs with ITS catalog, not this one's, " +
 				"so the tools above are the floor and this list is how far past them the agent reaches.",
 			Detail: "Only targets that WIDEN it are listed: something that adds nothing it already has cannot extend the damage. " +
-				"A recipe appears when one of its steps runs an agent. Narrow this on the agent's own editor, under delegation.",
+				"A recipe appears when one of its steps runs an agent. Narrow this on the agent's own editor, under delegation.\n\n" +
+				"First handoff applies when this agent's tools are narrowed. Handing work to another agent could take it past that list, so the first time it hands a given agent work, you are asked: as a card in the chat, or on the Requests tab when nobody is watching, as in a group chat. " +
+				"This is separate from the dispatch setting, which says who it may reach, and Allow all does not answer it. " +
+				"Approve here to answer it ahead of time, or Remove to have it ask again. Its own sub-agents and the agents on its dispatch list never ask.",
 			Body: ui.Table{
 				Source:    ap.src + "&view=reach",
 				RowKey:    "name",
@@ -552,6 +557,12 @@ func (ap *accessPage) delegationSections() []ui.Section {
 					{Field: "name", Label: "Target"},
 					{Field: "kind", Label: "Kind", Mute: true},
 					{Field: "adds", Label: "What it adds", Mute: true},
+					{Field: "first_handoff", Label: "First handoff", Mute: true},
+				},
+				RowActions: []ui.RowAction{
+					{Type: "button", Label: "Approve", OnlyIf: "_asks", PostTo: ap.handoffURL + "&allow=1"},
+					{Type: "button", Label: "Remove", Variant: "danger", OnlyIf: "_granted", PostTo: ap.handoffURL + "&allow=0",
+						Confirm: "Take back this approval? The next time this agent hands that one work, it asks you again."},
 				},
 			},
 		},

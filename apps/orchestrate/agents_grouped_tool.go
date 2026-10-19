@@ -1715,6 +1715,12 @@ func (t *chatTurn) agentsDispatchPolicy(allowRun bool) DetachPolicy {
 			if err != nil {
 				return err
 			}
+			// Nobody here to ask: what needs the owner waits for them instead
+			// of starting (holdForOwner). Reported as the reason it did not
+			// detach, which is what it is.
+			if note, held := t.holdForOwner(sess, args); held {
+				return errors.New(note)
+			}
 			// Asked HERE rather than in the detached run: an approval needs a
 			// person, and by the time the handoff runs the turn that could
 			// have shown them a card is over. Answering it now also means the

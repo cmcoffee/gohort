@@ -67,13 +67,13 @@ func TestBuilderAskedForWithNobodyWatchingWaitsForTheOwner(t *testing.T) {
 
 	// Someone watching answers Builder's questions themselves: it runs.
 	turn.askVia = approveEveryChange
-	if _, held := turn.holdBuilderRun(ctx, run); held {
+	if _, held := turn.holdForOwner(ToolSessionFromContext(ctx), run); held {
 		t.Error("a watched turn's Builder run was held")
 	}
 	turn.askVia = nil
 
 	// Another agent is not held for this: only Builder changes things.
-	if _, held := turn.holdBuilderRun(ctx, map[string]any{"agent": "Comedian", "message": "a joke"}); held {
+	if _, held := turn.holdForOwner(ToolSessionFromContext(ctx), map[string]any{"agent": "Comedian", "message": "a joke"}); held {
 		t.Error("a run of an agent that is not Builder was held")
 	}
 }
@@ -85,7 +85,7 @@ func TestTheOwnersBuilderSettingStillDecides(t *testing.T) {
 	run := map[string]any{"agent": "seed-builder", "message": "make a tool"}
 	for policy, want := range map[string]bool{PolicyAllow: false, PolicyBlock: false, PolicyAsk: true} {
 		SetDelegationPolicy(RootDB, "u", turn.agent.ID, "seed-builder", policy)
-		if _, held := turn.holdBuilderRun(ctx, run); held != want {
+		if _, held := turn.holdForOwner(ToolSessionFromContext(ctx), run); held != want {
 			t.Errorf("Builder set to %s: held = %v, want %v", policy, held, want)
 		}
 	}

@@ -610,6 +610,7 @@ func (T *OrchestrateApp) Routes() {
 	// One tool's standing decisions, written from the access page through the
 	// same setters the Permissions page uses. See agent_access_tools.go.
 	T.HandleFunc("/api/agent-access/tool", T.handleAgentAccessTool)
+	T.HandleFunc("/api/agent-access/handoff", T.handleAgentAccessHandoff)
 	T.HandleFunc("/api/agent-credentials", T.handleAgentCredentials)
 	// Per-tool scope pills (Tools modal): Global + per-agent toggles.
 	T.HandleFunc("/api/tool-scope", T.handleToolScope)

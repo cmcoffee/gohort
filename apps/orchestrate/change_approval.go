@@ -22,7 +22,7 @@ package orchestrate
 //     item: anything else Builder reaches for asks as before. And only
 //     Builder the owner opened: Builder another agent sent asks every time;
 //   - a run of Builder the owner approved from the queue (asked for where
-//     nobody was watching, holdBuilderRun) makes the edits it needs: approving
+//     nobody was watching, holdForOwner) makes the edits it needs: approving
 //     the request was the owner saying so. Only edits, and only Builder's.
 //
 // Running or testing never asks. Only writes do, and only to what existed.

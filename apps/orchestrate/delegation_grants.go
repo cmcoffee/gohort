@@ -91,9 +91,9 @@ func (t *chatTurn) gateDelegate(tools []AgentToolDef) []AgentToolDef {
 			return target, err
 		})
 		tools[i].Handler = func(ctx context.Context, args map[string]any) (string, error) {
-			// Builder from a turn nobody watches waits for the owner, by this
-			// door as by agents(run) (holdBuilderRun).
-			if note, held := t.holdBuilderRun(ctx, map[string]any{"agent": oArgStr(args, "agent"), "message": oArgStr(args, "brief")}); held {
+			// What waits for the owner from a turn nobody watches waits by
+			// this door as by agents(run) (holdForOwner).
+			if note, held := t.holdForOwner(ToolSessionFromContext(ctx), map[string]any{"agent": oArgStr(args, "agent"), "message": oArgStr(args, "brief"), "attach": args["attach"]}); held {
 				return note, nil
 			}
 			return h(context.WithValue(ctx, delegateGateKey{}, gate), args)
@@ -102,36 +102,61 @@ func (t *chatTurn) gateDelegate(tools []AgentToolDef) []AgentToolDef {
 	return tools
 }
 
-// holdBuilderRun queues a run of Builder from a turn nobody is watching (a
-// channel message, a wake, a schedule) for the owner's approval, and reports
-// whether it did. Run there, Builder made new things but every edit it needed
-// to something that existed queued on its own and was refused, and approving
-// those later redid nothing, so the work was lost. Held, the request is one
-// approval: approving it runs Builder in the background with its edits allowed
-// (withOwnerApprovedRun), and the result comes back to the conversation that
-// asked. An explicit Allow for Builder still runs at once; Block and anything
-// else the gate refuses are left to the tool to report.
-func (t *chatTurn) holdBuilderRun(ctx context.Context, args map[string]any) (string, bool) {
+// holdForOwner queues a run from a turn nobody is watching (a channel
+// message, a wake, a schedule) for the owner's approval when the run is one
+// that needs them, and reports whether it did. With a person watching, the
+// same two questions are a card in the chat; with nobody there, they were a
+// refusal the agent then explained wrongly ("it is in the Authorizations
+// pane", "only you can run it"), and nothing reached the owner at all. Held,
+// each is one item on the Requests tab, and the result of approving it comes
+// back to the conversation that asked:
+//
+//   - Builder. Run unwatched, it made new things, but every edit it needed to
+//     something that existed queued on its own and was refused, and approving
+//     those later redid nothing. Approving the request runs it with its edits
+//     allowed (withOwnerApprovedRun). An explicit Allow for Builder still runs
+//     at once.
+//   - The first handoff of a narrowed agent to an agent it is not yet allowed
+//     to reach (dispatch_escalation.go). Approving runs it; Always allow saves
+//     the pairing, so the next one runs at once.
+//
+// Block, and anything else the gate refuses, are left to the tool to report.
+func (t *chatTurn) holdForOwner(sess *ToolSession, args map[string]any) (string, bool) {
 	if t.chatAsker() != nil {
 		return "", false
 	}
 	target, msg, err := t.agentsRunGate(args)
-	if err != nil || !isBuilderAgent(target.ID) {
+	if err != nil {
 		return "", false
 	}
 	_, owner := t.fleetView()
-	if policy, decided := delegationDecisionFor(owner, t.agent.ID, target, stringArg(args, "agent")); decided && policy != PolicyAsk {
+	policy, decided := delegationDecisionFor(owner, t.agent.ID, target, stringArg(args, "agent"))
+	if decided && policy == PolicyBlock {
 		return "", false
 	}
-	a, qctx := t.queueDispatch(ctx, owner, target, msg)
-	return fmt.Sprintf("Not run yet: Builder changes things, and nobody is here to approve its changes, so the request is queued for the user's approval (id %s). Once they approve it, Builder does it in the background with those changes allowed. %s%s Tell them it is waiting on their approval and what it will do.",
-		a.ID, requestOriginNote(a), privateDelegationNote(qctx, false)), true
+	unkept := ""
+	if len(stringSliceFromArgs(args, "attach")) > 0 {
+		unkept = " What you attached is not kept with a queued request: hand it over again when it runs."
+	}
+	switch {
+	case isBuilderAgent(target.ID):
+		if decided && policy != PolicyAsk {
+			return "", false
+		}
+		a, qctx := t.queueDispatch(sess, owner, target, msg)
+		return fmt.Sprintf("Not run yet: Builder changes things, and nobody is here to approve its changes, so the request is queued for the user's approval on the Requests tab (id %s). Once they approve it, Builder does it in the background with those changes allowed. %s%s%s Tell them it is waiting on their approval and what it will do.",
+			a.ID, requestOriginNote(a), privateDelegationNote(qctx, false), unkept), true
+	case !t.dispatchEdgeApproved(target):
+		a, qctx := t.queueDispatch(sess, owner, target, msg)
+		return fmt.Sprintf("Not run yet: your tool list is narrowed, so handing work to %s needs the user's approval the first time, and nobody is here to give it. It is queued for them on the Requests tab (id %s): approving it runs it, and Always allow lets you hand %s work from now on without asking. %s%s%s Tell them it is waiting on their approval.",
+			target.Name, a.ID, target.Name, requestOriginNote(a), privateDelegationNote(qctx, false), unkept), true
+	}
+	return "", false
 }
 
 // queueDispatch saves a run of target for the owner's approval, with where it
 // was asked from so the approved run reports back there.
-func (t *chatTurn) queueDispatch(ctx context.Context, owner string, target AgentRecord, msg string) (Authorization, context.Context) {
-	sess := ToolSessionFromContext(ctx)
+func (t *chatTurn) queueDispatch(sess *ToolSession, owner string, target AgentRecord, msg string) (Authorization, context.Context) {
 	a := Authorization{Owner: owner, Agent: chFirst(target.Name, target.ID), Brief: msg, FromAgent: t.agent.ID}
 	qctx := stampRequestOrigin(&a, sess)
 	a = SaveAuthorization(RootDB, a)
@@ -149,7 +174,7 @@ func (t *chatTurn) queueDispatch(ctx context.Context, owner string, target Agent
 //
 // Anything the gate refuses is left to agentsRunActionFor to report.
 func (t *chatTurn) queueAskedDispatch(ctx context.Context, args map[string]any) (string, bool) {
-	if note, held := t.holdBuilderRun(ctx, args); held {
+	if note, held := t.holdForOwner(ToolSessionFromContext(ctx), args); held {
 		return note, true
 	}
 	target, msg, err := t.agentsRunGate(args)
@@ -161,7 +186,7 @@ func (t *chatTurn) queueAskedDispatch(ctx context.Context, args map[string]any) 
 	if !decided || policy != PolicyAsk {
 		return "", false
 	}
-	a, qctx := t.queueDispatch(ctx, owner, target, msg)
+	a, qctx := t.queueDispatch(ToolSessionFromContext(ctx), owner, target, msg)
 	return fmt.Sprintf("Not run yet: the user set %q to Ask, so it is queued for their approval in the Authorizations pane (id %s) and runs once approved. Tell them it is waiting. %s%s",
 		a.Agent, a.ID, requestOriginNote(a), privateDelegationNote(qctx, false)), true
 }

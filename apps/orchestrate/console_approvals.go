@@ -225,6 +225,15 @@ func (T *OrchestrateApp) resolveApproval(w http.ResponseWriter, r *http.Request,
 		// Under the agent's id, which a rename or another spelling of its
 		// name does not change (delegation_grants.go).
 		SetDelegationPreAuthorized(RootDB, user, strings.TrimSpace(a.FromAgent), delegationGrantKey(user, a.Agent), true)
+		// And the pairing a narrowed agent's first handoff waits on
+		// (dispatch_escalation.go): the same yes the chat card's Always allow
+		// gives, or approving a queued handoff "always" still left the next
+		// one waiting. Harmless for an agent that was never narrowed.
+		if from, ok := loadAgent(udb, strings.TrimSpace(a.FromAgent)); ok {
+			if target, ok := findAgentByNameOrID(udb, user, a.Agent); ok {
+				saveToolGrant(udb, *dispatchEdgeGrant(from, target))
+			}
+		}
 	}
 	// a.FromAgent (captured when the delegation was queued) keeps an approved
 	// delegation's channel reach identical to a pre-authorized one's. Empty on

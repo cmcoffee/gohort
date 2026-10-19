@@ -57,22 +57,52 @@ func dispatchGrantScope(callerID string) string { return "dispatch:" + callerID 
 // allowed, without asking anybody. Used as-is on the detached path, where there
 // is no one to ask and a question would only ever resolve to "denied".
 func (t *chatTurn) dispatchEdgeApproved(target AgentRecord) bool {
-	if !agentIsNarrowed(t.agent) {
-		return true // never restricted; delegation grants it nothing new
+	return edgeApproval(t.udb, t.agent, target) != edgeAsks
+}
+
+// How a narrowed agent's handoff to one target is allowed: the answer the gate
+// acts on and the Access page shows, from one place so they cannot disagree.
+const (
+	edgeOpen     = "open"    // the caller was never narrowed
+	edgeOwnChild = "child"   // its own sub-agent
+	edgeListed   = "listed"  // on its dispatch list
+	edgeGranted  = "granted" // the owner said yes for good (a grant)
+	edgeAsks     = "asks"    // the first one asks the owner
+)
+
+func edgeApproval(udb Database, caller, target AgentRecord) string {
+	if !agentIsNarrowed(caller) {
+		return edgeOpen // never restricted; delegation grants it nothing new
 	}
-	if ownSubAgent(t.agent, target) {
+	if ownSubAgent(caller, target) {
 		// The owner drew this link by creating the sub-agent under this agent,
 		// or by approving the one Builder drafted for it: the same say as an
 		// explicit dispatch-list entry, given earlier. Asking again at call
 		// time asked a question already answered, and on a run with nobody
 		// watching it failed closed and stranded the child.
-		return true
+		return edgeOwnChild
 	}
-	if dispatchListContains(t.agent, target.ID) {
-		return true // the owner drew this link themselves
+	if dispatchListContains(caller, target.ID) {
+		return edgeListed // the owner drew this link themselves
 	}
-	_, ok := findToolGrant(t.udb, dispatchGrantScope(t.agent.ID), "agents", target.ID)
-	return ok
+	if _, ok := findToolGrant(udb, dispatchGrantScope(caller.ID), "agents", target.ID); ok {
+		return edgeGranted
+	}
+	return edgeAsks
+}
+
+// setEdgeGrant records or takes back the owner's standing yes to caller
+// handing target work, from the Access page.
+func setEdgeGrant(udb Database, caller, target AgentRecord, allow bool) {
+	if allow {
+		saveToolGrant(udb, *dispatchEdgeGrant(caller, target))
+		return
+	}
+	for _, g := range listToolGrants(udb, dispatchGrantScope(caller.ID)) {
+		if g.covers(dispatchGrantScope(caller.ID), "agents", target.ID) {
+			udb.Unset(toolGrantTable, g.ID)
+		}
+	}
 }
 
 // confirmDispatchEdge is the whole policy for one delegation: allowed outright,
@@ -92,13 +122,8 @@ func (t *chatTurn) confirmDispatchEdge(target AgentRecord) error {
 		detail: fmt.Sprintf("%s runs with a tool list you narrowed. %s runs with its own.", t.agent.Name, target.Name),
 		// Read by the fail-closed path, which has no viewer to show a prompt
 		// to, so this sentence is the whole explanation the trail gets.
-		because: fmt.Sprintf("%s has a narrowed tool list and has not been approved to delegate to %s", t.agent.Name, target.Name),
-		grant: &ToolGrant{
-			Scope:  dispatchGrantScope(t.agent.ID),
-			Tool:   "agents",
-			Prefix: target.ID,
-			Label:  t.agent.Name + " → " + target.Name,
-		},
+		because:    fmt.Sprintf("%s has a narrowed tool list and has not been approved to delegate to %s", t.agent.Name, target.Name),
+		grant:      dispatchEdgeGrant(t.agent, target),
 		grantLabel: "Always allow " + t.agent.Name + " → " + target.Name,
 	})
 	if ok {
@@ -112,6 +137,18 @@ func (t *chatTurn) confirmDispatchEdge(target AgentRecord) error {
 	return fmt.Errorf("agents(run): %q was not run. This agent has a narrowed tool list, so delegating to another agent needs the user's approval and it was not given. "+
 		"Ask the user to allow it, or to add %q to this agent's dispatch targets (Security & Access). Do what you can with your own tools, or say plainly that you could not.",
 		target.Name, target.Name)
+}
+
+// dispatchEdgeGrant is the standing yes to caller handing target work: what
+// the card's Always allow saves, and an approved queued handoff's Always allow
+// too (holdForOwner).
+func dispatchEdgeGrant(caller, target AgentRecord) *ToolGrant {
+	return &ToolGrant{
+		Scope:  dispatchGrantScope(caller.ID),
+		Tool:   "agents",
+		Prefix: target.ID,
+		Label:  chFirst(caller.Name, caller.ID) + " → " + chFirst(target.Name, target.ID),
+	}
 }
 
 // dispatchEscalationNote says what the target can do that the caller cannot, in

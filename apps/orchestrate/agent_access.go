@@ -39,9 +39,31 @@ import (
 
 // agentReachRow is one thing this agent can hand work to.
 type agentReachRow struct {
+	ID   string `json:"id,omitempty"`
 	Name string `json:"name"`
 	Kind string `json:"kind"`
 	Adds string `json:"adds"`
+	// FirstHandoff is, for an agent whose tools are narrowed, whether handing
+	// this target work waits for the owner the first time and why not when it
+	// does not (edgeApproval). Empty for an agent never narrowed: nothing to say.
+	FirstHandoff string `json:"first_handoff,omitempty"`
+	Asks         bool   `json:"_asks,omitempty"`
+	Granted      bool   `json:"_granted,omitempty"`
+}
+
+// firstHandoffLabel is how a pair's approval reads in the reach list.
+func firstHandoffLabel(how string) string {
+	switch how {
+	case edgeOwnChild:
+		return "Runs: its own sub-agent"
+	case edgeListed:
+		return "Runs: on its dispatch list"
+	case edgeGranted:
+		return "Runs: you approved it"
+	case edgeAsks:
+		return "Asks you the first time"
+	}
+	return ""
 }
 
 // dispatchReachable answers whether the caller's POLICY reaches target, by the
@@ -133,7 +155,9 @@ func agentReach(udb Database, user string, caller AgentRecord) []agentReachRow {
 		if adds == "" {
 			adds = "nothing this agent does not already have"
 		}
-		out = append(out, agentReachRow{Name: target.Name, Kind: "agent", Adds: adds})
+		how := edgeApproval(udb, caller, target)
+		out = append(out, agentReachRow{ID: target.ID, Name: target.Name, Kind: "agent", Adds: adds,
+			FirstHandoff: firstHandoffLabel(how), Asks: how == edgeAsks, Granted: how == edgeGranted})
 	}
 	for _, def := range ListPipelineDefs(udb, user) {
 		if r := pipelineReach(def); r.escalates() && auth.allowsPipeline(def) {

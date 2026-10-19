@@ -336,6 +336,34 @@ func (T *OrchestrateApp) handleAgentAccessTool(w http.ResponseWriter, r *http.Re
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// handleAgentAccessHandoff approves, or takes back, a narrowed agent handing
+// one target work, ahead of the first time it would ask (edgeApproval): the
+// grant the chat card's Always allow saves. allow=1 approves, anything else
+// takes it back.
+func (T *OrchestrateApp) handleAgentAccessHandoff(w http.ResponseWriter, r *http.Request) {
+	user, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+	caller, found := findAgentByNameOrID(udb, user, strings.TrimSpace(q.Get("agent")))
+	if !found {
+		http.NotFound(w, r)
+		return
+	}
+	target, found := findAgentByNameOrID(udb, user, strings.TrimSpace(q.Get("target")))
+	if !found {
+		http.NotFound(w, r)
+		return
+	}
+	setEdgeGrant(udb, caller, target, q.Get("allow") == "1")
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // accessSubAgentRow is one sub-agent and how its parent's restrictions reach it.
 type accessSubAgentRow struct {
 	Name string `json:"name"`
