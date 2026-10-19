@@ -217,6 +217,40 @@ func askQuestionArgs(args map[string]any) (string, []string) {
 	return "", options
 }
 
+// askFormSteps is ask_user_form's steps sent to ask_user: a question value
+// that is a list of questions, each with its own choices
+// ([{"question": "...", "options": [...]}, ...]), as a list or JSON-encoded.
+// Read as one question it was shown to the person as raw JSON, with no card to
+// answer it by. Nil when the value is anything else, a list of plain strings
+// included (askQuestionArgs reads those).
+func askFormSteps(args map[string]any) []map[string]any {
+	for _, key := range []string{"question", "questions"} {
+		raw := args[key]
+		if s, ok := raw.(string); ok {
+			var list []any
+			if s = strings.TrimSpace(s); !strings.HasPrefix(s, "[") || json.Unmarshal([]byte(s), &list) != nil {
+				continue
+			}
+			raw = list
+		}
+		list, ok := raw.([]any)
+		if !ok || len(list) == 0 {
+			continue
+		}
+		var steps []map[string]any
+		for _, it := range list {
+			m, ok := it.(map[string]any)
+			if !ok || strings.TrimSpace(stringArg(m, "question")) == "" {
+				return nil
+			}
+			step, _ := normalizeFormStep(m)
+			steps = append(steps, step)
+		}
+		return steps
+	}
+	return nil
+}
+
 // askListItems is a question value that is a list, as one or JSON-encoded,
 // with its blank items dropped. Nil when it is not a list.
 func askListItems(raw any) []string {

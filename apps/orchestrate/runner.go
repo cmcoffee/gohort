@@ -549,6 +549,15 @@ func (pr *planRun) askUserToolDef() AgentToolDef {
 			Required: []string{"question"},
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+			// Several questions, each with its own choices, are a form sent to
+			// this tool: drawn as the form ask_user_form would draw, where read
+			// as one question they reached the person as raw JSON
+			// (askFormSteps).
+			if steps := askFormSteps(args); len(steps) > 0 {
+				pr.capturedFormSteps = steps
+				pr.cancelOrch()
+				return fmt.Sprintf("Form relayed to the user (%d step%s); the framework will wait for their reply.", len(steps), plural(len(steps))), nil
+			}
 			// The question under "question" or the "questions" smaller models
 			// type for it, and the choices under any near-miss key, or after
 			// the question when it came as a list (askQuestionArgs): reading
