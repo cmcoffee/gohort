@@ -380,638 +380,653 @@ func (T *Extensions) handleUserTools(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
-		// Single-record fetch (?name=) — powers the "View" RecordView and the
-		// "Set category" form prefill. Returns the raw TempTool, whose json tags
-		// already expose every field (category, command_template, script_body,
-		// actions, …). Scoped to this user's own tools, and it must read the SAME
-		// three sources the row listing below builds from — pool, agent-scoped,
-		// then session drafts — or View 404s on a row the table just rendered.
-		// Agent-scoped was the miss: once an authored tool started committing to
-		// the agent that asked for it rather than to a session pool, nearly every
-		// row was agent-scoped and every View failed.
-		// (Sources can't collide — the scoped/draft listers drop anything
-		// shadowed by a committed tool of the same name — but the pool is the
-		// source of truth, so it answers first regardless.)
-		// ?share=<name> is the recipient list and nothing else. Its own door,
-		// so the picker cannot rewrite a command template and the edit form
-		// cannot rewrite who has the tool.
-		if want := strings.TrimSpace(r.URL.Query().Get("share")); want != "" {
-			for _, p := range LoadPersistentTempTools(AuthDB(), user) {
-				if p.Tool.Name == want {
-					writeJSON(w, map[string]any{"shared_with": nonNilList(p.SharedWith)})
-					return
-				}
-			}
-			writeJSON(w, map[string]any{"shared_with": []string{}})
-			return
-		}
-		if name != "" {
-			for _, p := range LoadPersistentTempTools(AuthDB(), user) {
-				if p.Tool.Name == name {
-					writeJSON(w, p.Tool)
-					return
-				}
-			}
-			for _, st := range ListScopedTools(user) {
-				if st.Shadowed || st.Scope != ScopeAgentTool {
-					continue
-				}
-				if st.Tool.Name == name {
-					writeJSON(w, st.Tool)
-					return
-				}
-			}
-			for _, d := range ListSessionDrafts(user) {
-				if d.Shadowed {
-					continue
-				}
-				if d.Tool.Name == name {
-					writeJSON(w, d.Tool)
-					return
-				}
-			}
-			http.Error(w, "not found", http.StatusNotFound)
-			return
-		}
-		type row struct {
-			// Key is the ROW's identity, unique across every bucket a name can
-			// live in. RowKey used to be the bare name, and a name can exist in
-			// several buckets at once — the pool row plus an orphan stashed when
-			// its agent was deleted, say. Two rows sharing one key made the UI's
-			// row identity flicker between the records: enable the pool copy and
-			// the re-render showed the orphan's Disabled badge, which read as
-			// "every time I enable it, it gets disabled." Renaming the tool
-			// "fixed" it by dodging the twin — the tell that found this.
-			Key string `json:"key"`
-			// Conflict marks every row whose NAME exists in more than one bucket,
-			// so the twin is visible instead of mysterious.
-			Conflict bool `json:"conflict"`
-			// Shadows says whose same-named tool this one hides: one the user
-			// was lent or added from the catalog, which their own copy beats.
-			Shadows     string `json:"shadows,omitempty"`
-			Name        string `json:"name"`
-			Description string `json:"description,omitempty"`
-			Mode        string `json:"mode,omitempty"`
-			Credential  string `json:"credential,omitempty"`
-			Category    string `json:"category,omitempty"`
-			// CategoryAuto: the category is one gohort filed it under, not one
-			// the owner set (core/toolcat). Theirs always wins.
-			CategoryAuto bool `json:"category_auto,omitempty"`
-			Missing      bool `json:"missing"`
-			Shared       bool `json:"shared"`
-			// Who the OWNER handed it to, as against Shared, which is the
-			// deployment catalog an admin publishes into. Two different rungs
-			// and two different columns.
-			SharedWith string `json:"shared_with,omitempty"`
-			LastUsed   string `json:"last_used,omitempty"`
-			// User-managed governance flags (Extensions › Tools toggles).
-			Disabled    bool `json:"disabled"`     // off for every agent
-			BuilderOnly bool `json:"builder_only"` // exposed to Builder only
-			BoundOnly   bool `json:"bound_only"`   // hidden from agents; usable only where bound
-			// Never runs without somebody watching: refused on schedules and
-			// unattended machine runs, normal in a conversation.
-			NoUnattended bool `json:"no_unattended"`
-			// Promotion (publish-to-catalog) request state for this tool.
-			Requested  bool `json:"requested"`   // a promotion request is pending admin review
-			CanRequest bool `json:"can_request"` // eligible to request: not already shared, none pending
-			// A published tool's release: what everybody else runs. The row is
-			// the owner's working copy, which they may have edited since; an
-			// edit reaches nobody until an update is approved.
-			Release         string `json:"release,omitempty"` // "Published v3", "... - your copy differs"
-			Differs         bool   `json:"differs"`           // working copy is not the published version
-			Diff            string `json:"diff,omitempty"`    // published -> working copy, field by field
-			CanUpdate       bool   `json:"can_update"`        // differs, and no update request pending
-			UpdateRequested bool   `json:"update_requested"`  // an update request is pending admin review
-			// Session drafts — tools the assistant authored mid-conversation with
-			// persist=false. They are real and callable for the life of their chat
-			// session, but they vanish when it is deleted, and they were only ever
-			// visible from inside that session's Tools modal. Listing them here is
-			// the difference between "what has been built for me?" and "what have I
-			// kept?" — a user could otherwise lose work they never knew existed.
-			Pool      bool `json:"pool"`       // lives in the persistent pool
-			Session   bool `json:"session"`    // draft, not kept anywhere
-			AgentTool bool `json:"agent_tool"` // bundled onto an agent record
-			Orphan    bool `json:"orphan"`     // owning agent was deleted
-			Trial     bool `json:"trial"`      // authored mid-chat, unconfirmed
-			// DisableOK: this row supports the Disable/Enable toggle. True for pool
-			// tools (global governance) AND agent-scoped tools (non-destructive
-			// per-agent off) — the two the endpoint honors. Lock / Builder-only stay
-			// pool-only, so they keep their own OnlyIf:"pool" gate.
-			DisableOK bool `json:"disable_ok"`
-			// Agents / AgentList name every agent this tool is scoped to. One row
-			// per TOOL, not per (tool, agent) pair — Access is where the
-			// per-agent state is changed; this is the at-a-glance version.
-			Agents    []string `json:"agents,omitempty"`
-			AgentList string   `json:"agent_list,omitempty"`
-			// Deletable = has a record of its own to delete (pool or orphan). A
-			// session draft is excluded: Discard is its verb, and DELETE would
-			// 404 on a tool that lives only in a chat session.
-			Deletable bool `json:"deletable"`
-			// Exportable = kept in the user's store (pool or agent-scoped), so
-			// the per-user export can resolve it. A session draft and an orphan
-			// are records awaiting a decision, not things to hand somebody.
-			Exportable bool   `json:"exportable"`
-			SessionID  string `json:"session_id,omitempty"` // for the keep/drop actions
-			AgentID    string `json:"agent_id,omitempty"`
-			// Group is the heading this row renders under (ui.Table group_by).
-			Group string `json:"group"`
-		}
-		// Tools with no category yet are filed in the background, and show
-		// under theirs from the next load (core/toolcat).
-		toolcat.Kick(user)
-		rows := []row{}
-		// The user's own published tools, by name: their releases.
-		released := map[string]ToolRelease{}
-		for _, rel := range ToolReleases(AuthDB()) {
-			if rel.Owner == user {
-				released[rel.Name] = rel
+		T.listUserTools(w, r, user, name)
+	case http.MethodPost:
+		T.changeUserTool(w, r, user, name)
+	case http.MethodDelete:
+		T.deleteUserTool(w, r, user, name)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// listUserTools is handleUserTools' GET: the user's tools as the page lists them.
+func (T *Extensions) listUserTools(w http.ResponseWriter, r *http.Request, user, name string) {
+	// Single-record fetch (?name=) — powers the "View" RecordView and the
+	// "Set category" form prefill. Returns the raw TempTool, whose json tags
+	// already expose every field (category, command_template, script_body,
+	// actions, …). Scoped to this user's own tools, and it must read the SAME
+	// three sources the row listing below builds from — pool, agent-scoped,
+	// then session drafts — or View 404s on a row the table just rendered.
+	// Agent-scoped was the miss: once an authored tool started committing to
+	// the agent that asked for it rather than to a session pool, nearly every
+	// row was agent-scoped and every View failed.
+	// (Sources can't collide — the scoped/draft listers drop anything
+	// shadowed by a committed tool of the same name — but the pool is the
+	// source of truth, so it answers first regardless.)
+	// ?share=<name> is the recipient list and nothing else. Its own door,
+	// so the picker cannot rewrite a command template and the edit form
+	// cannot rewrite who has the tool.
+	if want := strings.TrimSpace(r.URL.Query().Get("share")); want != "" {
+		for _, p := range LoadPersistentTempTools(AuthDB(), user) {
+			if p.Tool.Name == want {
+				writeJSON(w, map[string]any{"shared_with": nonNilList(p.SharedWith)})
+				return
 			}
 		}
-		// Shared rows only: agent-scoped rows live in the same store now, but
-		// they render under "Scoped Tools" (via ListScopedTools), not here.
-		for _, p := range SharedUserTools(AuthDB(), user) {
-			// Dependency check resolves in the USER's namespace (a tool may lean
-			// on the user's own credential, which the global-only CredentialStatus
-			// wouldn't find).
-			missing := false
-			if cred := strings.TrimSpace(p.Tool.Credential); cred != "" && !strings.EqualFold(cred, "no_auth") {
-				if _, found := Secure().Resolve(cred, user); !found {
-					missing = true
-				}
+		writeJSON(w, map[string]any{"shared_with": []string{}})
+		return
+	}
+	if name != "" {
+		for _, p := range LoadPersistentTempTools(AuthDB(), user) {
+			if p.Tool.Name == name {
+				writeJSON(w, p.Tool)
+				return
 			}
-			last := ""
-			if !p.LastUsedAt.IsZero() {
-				last = p.LastUsedAt.Format("2006-01-02")
-			}
-			// A pending request on an unpublished tool asks to publish it; on a
-			// published one it asks for the working copy to become the next
-			// version. Two different badges.
-			pending := PendingPromotion(AuthDB(), user, "tool", p.Tool.Name)
-			r := row{
-				Key:  "pool:" + p.Tool.Name,
-				Name: p.Tool.Name, Description: p.Tool.Description, Mode: p.Tool.Mode,
-				Credential: p.Tool.Credential, Category: toolCategoryOf(user, p.Tool), CategoryAuto: toolCategoryIsAuto(user, p.Tool),
-				Missing: missing, Shared: p.Shared, LastUsed: last,
-				SharedWith: sharedWithSummary(p.SharedWith),
-				Disabled:   p.Tool.Disabled, BuilderOnly: p.Tool.BuilderOnly, BoundOnly: p.Tool.BoundOnly, NoUnattended: p.Tool.NoUnattended,
-				Requested: !p.Shared && pending, CanRequest: !p.Shared && !pending,
-				Pool: true, Deletable: true, DisableOK: true,
-				Group: "All Agents (Global tools)",
-			}
-			if rel, ok := released[p.Tool.Name]; ok && p.Shared && rel.ID == p.ID {
-				r.Release = "Published v" + strconv.Itoa(rel.Version)
-				if !rel.Tool.SameDefinition(p.Tool) {
-					r.Differs, r.Diff = true, rel.Tool.DefinitionDiff(p.Tool)
-					r.Release += " - your copy differs"
-				}
-				r.UpdateRequested = pending
-				r.CanUpdate = r.Differs && !pending
-			}
-			rows = append(rows, r)
 		}
-		// Agent-scoped tools after the global pool. Sections read: All Agents ->
-		// Scoped Tools -> legacy session drafts -> Orphaned.
-		//
-		// A tool on several agents is listed ONCE, with the agents named in its
-		// own column — the same shape the admin table uses. Listing it per agent
-		// meant the same tool appeared two or three times with identical actions,
-		// and "which agents?" is a property of one tool, not a reason to repeat
-		// it. The authoritative per-agent state lives in Access, where it can be
-		// changed; the column is the at-a-glance version.
-		//
-		// Shadowed rows are dropped: a draft already committed under the same
-		// name would invite an action that does nothing.
-		scoped := ListScopedTools(user)
-		// A sub-agent is labelled with its parent so it doesn't read as a
-		// top-level agent of the same name.
-		agentLabel := func(st ScopedTool) string {
-			n := strings.TrimSpace(st.AgentName)
-			if n == "" {
-				n = st.AgentID
-			}
-			if p := strings.TrimSpace(st.ParentName); p != "" {
-				return p + " ▸ " + n
-			}
-			return n
-		}
-		byName := map[string]int{} // tool name -> index into rows
-		for _, st := range scoped {
+		for _, st := range ListScopedTools(user) {
 			if st.Shadowed || st.Scope != ScopeAgentTool {
 				continue
 			}
-			agent := agentLabel(st)
-			if i, seen := byName[st.Tool.Name]; seen {
-				rows[i].Agents = append(rows[i].Agents, agent)
-				rows[i].AgentList = strings.Join(rows[i].Agents, ", ")
-				// Unconfirmed only while EVERY copy is unconfirmed: vouching for
-				// it on one agent is vouching for the tool.
-				rows[i].Trial = rows[i].Trial && st.Trial
-				// Disabled only while EVERY copy is off — if it's live on any agent,
-				// the row reads enabled (and Enable/Disable acts on all copies).
-				rows[i].Disabled = rows[i].Disabled && st.Tool.Disabled
+			if st.Tool.Name == name {
+				writeJSON(w, st.Tool)
+				return
+			}
+		}
+		for _, d := range ListSessionDrafts(user) {
+			if d.Shadowed {
 				continue
 			}
-			missing := false
-			if cred := strings.TrimSpace(st.Tool.Credential); cred != "" && !strings.EqualFold(cred, "no_auth") {
-				if _, found := Secure().Resolve(cred, user); !found {
-					missing = true
-				}
-			}
-			byName[st.Tool.Name] = len(rows)
-			rows = append(rows, row{
-				Key:  "scoped:" + st.AgentID + ":" + st.Tool.Name,
-				Name: st.Tool.Name, Description: st.Tool.Description, Mode: st.Tool.Mode,
-				Credential: st.Tool.Credential, Category: toolCategoryOf(user, st.Tool), CategoryAuto: toolCategoryIsAuto(user, st.Tool), Missing: missing,
-				AgentTool: true, Trial: st.Trial, Disabled: st.Tool.Disabled, DisableOK: true,
-				AgentID: st.AgentID, Agents: []string{agent}, AgentList: agent,
-				Group: "Scoped Tools",
-			})
-		}
-		// Legacy session drafts keep their per-conversation heading: they are
-		// keyed to one session by definition, and they only exist until that
-		// conversation is reopened and they migrate.
-		for _, st := range scoped {
-			if st.Shadowed || st.Scope != ScopeSessionTool {
-				continue
-			}
-			agent := agentLabel(st)
-			group := "Session drafts (legacy): " + agent
-			if t := strings.TrimSpace(st.SessionTitle); t != "" {
-				group += " - " + t
-			}
-			rows = append(rows, row{
-				Key:  "session:" + st.SessionID + ":" + st.Tool.Name,
-				Name: st.Tool.Name, Description: st.Tool.Description, Mode: st.Tool.Mode,
-				Credential: st.Tool.Credential, Category: toolCategoryOf(user, st.Tool), CategoryAuto: toolCategoryIsAuto(user, st.Tool),
-				Session: true, SessionID: st.SessionID, AgentID: st.AgentID, Group: group,
-			})
-		}
-		// Reap expired unconfirmed tools before listing, so the page never shows
-		// a row it is about to delete. Opening Extensions › Tools is the moment a user is
-		// looking at exactly this, which makes it the honest place to sweep.
-		if ReapTrialTools != nil {
-			if n := ReapTrialTools(AuthDB(), user); n > 0 {
-				Log("[gateways] reaped %d unconfirmed tool(s) for %s", n, user)
+			if d.Tool.Name == name {
+				writeJSON(w, d.Tool)
+				return
 			}
 		}
-		// Orphans last: a tool whose agent was deleted is still the user's, and it
-		// was captured precisely so it wouldn't vanish with the record — but it is
-		// attached to nothing, so it needs re-homing (Access) or deleting. Without
-		// this it was visible only on the admin page.
-		for _, o := range LoadOrphanedTempTools(AuthDB(), user) {
-			former := strings.TrimSpace(o.FormerAgentName)
-			if former == "" {
-				former = o.FormerAgentID
-			}
-			missing := false
-			if cred := strings.TrimSpace(o.Tool.Credential); cred != "" && !strings.EqualFold(cred, "no_auth") {
-				if _, found := Secure().Resolve(cred, user); !found {
-					missing = true
-				}
-			}
-			rows = append(rows, row{
-				Key:  "orphan:" + o.Tool.Name,
-				Name: o.Tool.Name, Description: o.Tool.Description, Mode: o.Tool.Mode,
-				Credential: o.Tool.Credential, Category: toolCategoryOf(user, o.Tool), CategoryAuto: toolCategoryIsAuto(user, o.Tool), Missing: missing,
-				Orphan: true, Deletable: true,
-				Group: "Orphaned Tools: agent " + former + " was deleted",
-			})
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	type row struct {
+		// Key is the ROW's identity, unique across every bucket a name can
+		// live in. RowKey used to be the bare name, and a name can exist in
+		// several buckets at once — the pool row plus an orphan stashed when
+		// its agent was deleted, say. Two rows sharing one key made the UI's
+		// row identity flicker between the records: enable the pool copy and
+		// the re-render showed the orphan's Disabled badge, which read as
+		// "every time I enable it, it gets disabled." Renaming the tool
+		// "fixed" it by dodging the twin — the tell that found this.
+		Key string `json:"key"`
+		// Conflict marks every row whose NAME exists in more than one bucket,
+		// so the twin is visible instead of mysterious.
+		Conflict bool `json:"conflict"`
+		// Shadows says whose same-named tool this one hides: one the user
+		// was lent or added from the catalog, which their own copy beats.
+		Shadows     string `json:"shadows,omitempty"`
+		Name        string `json:"name"`
+		Description string `json:"description,omitempty"`
+		Mode        string `json:"mode,omitempty"`
+		Credential  string `json:"credential,omitempty"`
+		Category    string `json:"category,omitempty"`
+		// CategoryAuto: the category is one gohort filed it under, not one
+		// the owner set (core/toolcat). Theirs always wins.
+		CategoryAuto bool `json:"category_auto,omitempty"`
+		Missing      bool `json:"missing"`
+		Shared       bool `json:"shared"`
+		// Who the OWNER handed it to, as against Shared, which is the
+		// deployment catalog an admin publishes into. Two different rungs
+		// and two different columns.
+		SharedWith string `json:"shared_with,omitempty"`
+		LastUsed   string `json:"last_used,omitempty"`
+		// User-managed governance flags (Extensions › Tools toggles).
+		Disabled    bool `json:"disabled"`     // off for every agent
+		BuilderOnly bool `json:"builder_only"` // exposed to Builder only
+		BoundOnly   bool `json:"bound_only"`   // hidden from agents; usable only where bound
+		// Never runs without somebody watching: refused on schedules and
+		// unattended machine runs, normal in a conversation.
+		NoUnattended bool `json:"no_unattended"`
+		// Promotion (publish-to-catalog) request state for this tool.
+		Requested  bool `json:"requested"`   // a promotion request is pending admin review
+		CanRequest bool `json:"can_request"` // eligible to request: not already shared, none pending
+		// A published tool's release: what everybody else runs. The row is
+		// the owner's working copy, which they may have edited since; an
+		// edit reaches nobody until an update is approved.
+		Release         string `json:"release,omitempty"` // "Published v3", "... - your copy differs"
+		Differs         bool   `json:"differs"`           // working copy is not the published version
+		Diff            string `json:"diff,omitempty"`    // published -> working copy, field by field
+		CanUpdate       bool   `json:"can_update"`        // differs, and no update request pending
+		UpdateRequested bool   `json:"update_requested"`  // an update request is pending admin review
+		// Session drafts — tools the assistant authored mid-conversation with
+		// persist=false. They are real and callable for the life of their chat
+		// session, but they vanish when it is deleted, and they were only ever
+		// visible from inside that session's Tools modal. Listing them here is
+		// the difference between "what has been built for me?" and "what have I
+		// kept?" — a user could otherwise lose work they never knew existed.
+		Pool      bool `json:"pool"`       // lives in the persistent pool
+		Session   bool `json:"session"`    // draft, not kept anywhere
+		AgentTool bool `json:"agent_tool"` // bundled onto an agent record
+		Orphan    bool `json:"orphan"`     // owning agent was deleted
+		Trial     bool `json:"trial"`      // authored mid-chat, unconfirmed
+		// DisableOK: this row supports the Disable/Enable toggle. True for pool
+		// tools (global governance) AND agent-scoped tools (non-destructive
+		// per-agent off) — the two the endpoint honors. Lock / Builder-only stay
+		// pool-only, so they keep their own OnlyIf:"pool" gate.
+		DisableOK bool `json:"disable_ok"`
+		// Agents / AgentList name every agent this tool is scoped to. One row
+		// per TOOL, not per (tool, agent) pair — Access is where the
+		// per-agent state is changed; this is the at-a-glance version.
+		Agents    []string `json:"agents,omitempty"`
+		AgentList string   `json:"agent_list,omitempty"`
+		// Deletable = has a record of its own to delete (pool or orphan). A
+		// session draft is excluded: Discard is its verb, and DELETE would
+		// 404 on a tool that lives only in a chat session.
+		Deletable bool `json:"deletable"`
+		// Exportable = kept in the user's store (pool or agent-scoped), so
+		// the per-user export can resolve it. A session draft and an orphan
+		// are records awaiting a decision, not things to hand somebody.
+		Exportable bool   `json:"exportable"`
+		SessionID  string `json:"session_id,omitempty"` // for the keep/drop actions
+		AgentID    string `json:"agent_id,omitempty"`
+		// Group is the heading this row renders under (ui.Table group_by).
+		Group string `json:"group"`
+	}
+	// Tools with no category yet are filed in the background, and show
+	// under theirs from the next load (core/toolcat).
+	toolcat.Kick(user)
+	rows := []row{}
+	// The user's own published tools, by name: their releases.
+	released := map[string]ToolRelease{}
+	for _, rel := range ToolReleases(AuthDB()) {
+		if rel.Owner == user {
+			released[rel.Name] = rel
 		}
-		// Name-conflict pass: the same name living in more than one bucket is
-		// exactly the state that made the old shared RowKey lie, and it stays
-		// confusing even with unique keys — a toggle on one row does not touch
-		// its twin. Badge every copy so the user can see there IS a twin and
-		// delete or re-home the stale one, instead of fighting a record they
-		// cannot see.
-		//
-		// A tool somebody else offers under the same name is a twin too, one the
-		// user cannot see from this list: a colleague's they were lent, or one
-		// they added from the catalog. Their own copy wins (on its agents, for a
-		// scoped one), so the taken tool silently stops running; the badge and
-		// the note say so.
-		{
-			names := map[string]int{}
-			for i := range rows {
-				names[rows[i].Name]++
-			}
-			taken := map[string]string{} // name -> whose tool the user took or was lent
-			for _, p := range PeerSharedToolsFor(AuthDB(), user) {
-				taken[p.Tool.Name] = p.Owner
-			}
-			for _, p := range AdoptedToolsFor(AuthDB(), user) {
-				taken[p.Tool.Name] = p.Owner // the one that would load, when both
-			}
-			for i := range rows {
-				if names[rows[i].Name] > 1 {
-					rows[i].Conflict = true
-				}
-				_, builtin := LookupChatTool(rows[i].Name)
-				other, took := taken[rows[i].Name]
-				switch {
-				case builtin || IsReservedToolName(rows[i].Name):
-					// A tool named after a built-in never loads: hydration drops
-					// it so the built-in keeps its name. Silent unless said here.
-					rows[i].Conflict = true
-					rows[i].Shadows = "Named after a built-in tool, which runs instead; rename it to use this one"
-				case took && (rows[i].Pool || rows[i].AgentTool):
-					rows[i].Conflict = true
-					rows[i].Shadows = "Runs instead of " + other + "'s tool of this name"
-					if rows[i].AgentTool {
-						rows[i].Shadows = "Runs instead of " + other + "'s tool of this name, on these agents"
-					}
-				}
-				rows[i].Exportable = (rows[i].Pool || rows[i].AgentTool) && !rows[i].Session && !rows[i].Orphan
+	}
+	// Shared rows only: agent-scoped rows live in the same store now, but
+	// they render under "Scoped Tools" (via ListScopedTools), not here.
+	for _, p := range SharedUserTools(AuthDB(), user) {
+		// Dependency check resolves in the USER's namespace (a tool may lean
+		// on the user's own credential, which the global-only CredentialStatus
+		// wouldn't find).
+		missing := false
+		if cred := strings.TrimSpace(p.Tool.Credential); cred != "" && !strings.EqualFold(cred, "no_auth") {
+			if _, found := Secure().Resolve(cred, user); !found {
+				missing = true
 			}
 		}
-		// Re-heading by what a tool IS FOR rather than where its record lives,
-		// and re-ordering so the grouping (which follows record order — the
-		// server owns it) renders cleanly.
-		//
-		// Scope answered "who can use this?", which the Agents column already
-		// answers per row; with forty tools the scope headings mostly said
-		// "these forty are yours" and the list read as one wall. Category is
-		// the axis that actually splits it, and it is the axis the tool picker
-		// and each app's tool list already use — so a tool now sits under the
-		// same heading everywhere.
-		//
-		// Two lifecycle buckets keep their own headings instead of being filed
-		// by subject: an orphan and a legacy session draft are not kinds of
-		// tool, they are records awaiting a decision (re-home, keep, discard).
-		// Filing them by subject would scatter them and lose the only thing the
-		// user needs to see. They sort last, after everything healthy.
-		rank := func(r row) int {
-			switch {
-			case r.Orphan:
-				return 3
-			case r.Session:
-				return 2
-			case strings.TrimSpace(r.Category) == "":
-				return 1 // uncategorized sits after the named categories
-			default:
-				return 0
+		last := ""
+		if !p.LastUsedAt.IsZero() {
+			last = p.LastUsedAt.Format("2006-01-02")
+		}
+		// A pending request on an unpublished tool asks to publish it; on a
+		// published one it asks for the working copy to become the next
+		// version. Two different badges.
+		pending := PendingPromotion(AuthDB(), user, "tool", p.Tool.Name)
+		r := row{
+			Key:  "pool:" + p.Tool.Name,
+			Name: p.Tool.Name, Description: p.Tool.Description, Mode: p.Tool.Mode,
+			Credential: p.Tool.Credential, Category: toolCategoryOf(user, p.Tool), CategoryAuto: toolCategoryIsAuto(user, p.Tool),
+			Missing: missing, Shared: p.Shared, LastUsed: last,
+			SharedWith: sharedWithSummary(p.SharedWith),
+			Disabled:   p.Tool.Disabled, BuilderOnly: p.Tool.BuilderOnly, BoundOnly: p.Tool.BoundOnly, NoUnattended: p.Tool.NoUnattended,
+			Requested: !p.Shared && pending, CanRequest: !p.Shared && !pending,
+			Pool: true, Deletable: true, DisableOK: true,
+			Group: "All Agents (Global tools)",
+		}
+		if rel, ok := released[p.Tool.Name]; ok && p.Shared && rel.ID == p.ID {
+			r.Release = "Published v" + strconv.Itoa(rel.Version)
+			if !rel.Tool.SameDefinition(p.Tool) {
+				r.Differs, r.Diff = true, rel.Tool.DefinitionDiff(p.Tool)
+				r.Release += " - your copy differs"
 			}
+			r.UpdateRequested = pending
+			r.CanUpdate = r.Differs && !pending
+		}
+		rows = append(rows, r)
+	}
+	// Agent-scoped tools after the global pool. Sections read: All Agents ->
+	// Scoped Tools -> legacy session drafts -> Orphaned.
+	//
+	// A tool on several agents is listed ONCE, with the agents named in its
+	// own column — the same shape the admin table uses. Listing it per agent
+	// meant the same tool appeared two or three times with identical actions,
+	// and "which agents?" is a property of one tool, not a reason to repeat
+	// it. The authoritative per-agent state lives in Access, where it can be
+	// changed; the column is the at-a-glance version.
+	//
+	// Shadowed rows are dropped: a draft already committed under the same
+	// name would invite an action that does nothing.
+	scoped := ListScopedTools(user)
+	// A sub-agent is labelled with its parent so it doesn't read as a
+	// top-level agent of the same name.
+	agentLabel := func(st ScopedTool) string {
+		n := strings.TrimSpace(st.AgentName)
+		if n == "" {
+			n = st.AgentID
+		}
+		if p := strings.TrimSpace(st.ParentName); p != "" {
+			return p + " ▸ " + n
+		}
+		return n
+	}
+	byName := map[string]int{} // tool name -> index into rows
+	for _, st := range scoped {
+		if st.Shadowed || st.Scope != ScopeAgentTool {
+			continue
+		}
+		agent := agentLabel(st)
+		if i, seen := byName[st.Tool.Name]; seen {
+			rows[i].Agents = append(rows[i].Agents, agent)
+			rows[i].AgentList = strings.Join(rows[i].Agents, ", ")
+			// Unconfirmed only while EVERY copy is unconfirmed: vouching for
+			// it on one agent is vouching for the tool.
+			rows[i].Trial = rows[i].Trial && st.Trial
+			// Disabled only while EVERY copy is off — if it's live on any agent,
+			// the row reads enabled (and Enable/Disable acts on all copies).
+			rows[i].Disabled = rows[i].Disabled && st.Tool.Disabled
+			continue
+		}
+		missing := false
+		if cred := strings.TrimSpace(st.Tool.Credential); cred != "" && !strings.EqualFold(cred, "no_auth") {
+			if _, found := Secure().Resolve(cred, user); !found {
+				missing = true
+			}
+		}
+		byName[st.Tool.Name] = len(rows)
+		rows = append(rows, row{
+			Key:  "scoped:" + st.AgentID + ":" + st.Tool.Name,
+			Name: st.Tool.Name, Description: st.Tool.Description, Mode: st.Tool.Mode,
+			Credential: st.Tool.Credential, Category: toolCategoryOf(user, st.Tool), CategoryAuto: toolCategoryIsAuto(user, st.Tool), Missing: missing,
+			AgentTool: true, Trial: st.Trial, Disabled: st.Tool.Disabled, DisableOK: true,
+			AgentID: st.AgentID, Agents: []string{agent}, AgentList: agent,
+			Group: "Scoped Tools",
+		})
+	}
+	// Legacy session drafts keep their per-conversation heading: they are
+	// keyed to one session by definition, and they only exist until that
+	// conversation is reopened and they migrate.
+	for _, st := range scoped {
+		if st.Shadowed || st.Scope != ScopeSessionTool {
+			continue
+		}
+		agent := agentLabel(st)
+		group := "Session drafts (legacy): " + agent
+		if t := strings.TrimSpace(st.SessionTitle); t != "" {
+			group += " - " + t
+		}
+		rows = append(rows, row{
+			Key:  "session:" + st.SessionID + ":" + st.Tool.Name,
+			Name: st.Tool.Name, Description: st.Tool.Description, Mode: st.Tool.Mode,
+			Credential: st.Tool.Credential, Category: toolCategoryOf(user, st.Tool), CategoryAuto: toolCategoryIsAuto(user, st.Tool),
+			Session: true, SessionID: st.SessionID, AgentID: st.AgentID, Group: group,
+		})
+	}
+	// Reap expired unconfirmed tools before listing, so the page never shows
+	// a row it is about to delete. Opening Extensions › Tools is the moment a user is
+	// looking at exactly this, which makes it the honest place to sweep.
+	if ReapTrialTools != nil {
+		if n := ReapTrialTools(AuthDB(), user); n > 0 {
+			Log("[gateways] reaped %d unconfirmed tool(s) for %s", n, user)
+		}
+	}
+	// Orphans last: a tool whose agent was deleted is still the user's, and it
+	// was captured precisely so it wouldn't vanish with the record — but it is
+	// attached to nothing, so it needs re-homing (Access) or deleting. Without
+	// this it was visible only on the admin page.
+	for _, o := range LoadOrphanedTempTools(AuthDB(), user) {
+		former := strings.TrimSpace(o.FormerAgentName)
+		if former == "" {
+			former = o.FormerAgentID
+		}
+		missing := false
+		if cred := strings.TrimSpace(o.Tool.Credential); cred != "" && !strings.EqualFold(cred, "no_auth") {
+			if _, found := Secure().Resolve(cred, user); !found {
+				missing = true
+			}
+		}
+		rows = append(rows, row{
+			Key:  "orphan:" + o.Tool.Name,
+			Name: o.Tool.Name, Description: o.Tool.Description, Mode: o.Tool.Mode,
+			Credential: o.Tool.Credential, Category: toolCategoryOf(user, o.Tool), CategoryAuto: toolCategoryIsAuto(user, o.Tool), Missing: missing,
+			Orphan: true, Deletable: true,
+			Group: "Orphaned Tools: agent " + former + " was deleted",
+		})
+	}
+	// Name-conflict pass: the same name living in more than one bucket is
+	// exactly the state that made the old shared RowKey lie, and it stays
+	// confusing even with unique keys — a toggle on one row does not touch
+	// its twin. Badge every copy so the user can see there IS a twin and
+	// delete or re-home the stale one, instead of fighting a record they
+	// cannot see.
+	//
+	// A tool somebody else offers under the same name is a twin too, one the
+	// user cannot see from this list: a colleague's they were lent, or one
+	// they added from the catalog. Their own copy wins (on its agents, for a
+	// scoped one), so the taken tool silently stops running; the badge and
+	// the note say so.
+	{
+		names := map[string]int{}
+		for i := range rows {
+			names[rows[i].Name]++
+		}
+		taken := map[string]string{} // name -> whose tool the user took or was lent
+		for _, p := range PeerSharedToolsFor(AuthDB(), user) {
+			taken[p.Tool.Name] = p.Owner
+		}
+		for _, p := range AdoptedToolsFor(AuthDB(), user) {
+			taken[p.Tool.Name] = p.Owner // the one that would load, when both
 		}
 		for i := range rows {
-			if rows[i].Orphan || rows[i].Session {
-				continue // keep the lifecycle heading built at construction
+			if names[rows[i].Name] > 1 {
+				rows[i].Conflict = true
 			}
-			if c := strings.TrimSpace(rows[i].Category); c != "" {
-				rows[i].Group = c
-			} else {
-				rows[i].Group = "Uncategorized"
+			_, builtin := LookupChatTool(rows[i].Name)
+			other, took := taken[rows[i].Name]
+			switch {
+			case builtin || IsReservedToolName(rows[i].Name):
+				// A tool named after a built-in never loads: hydration drops
+				// it so the built-in keeps its name. Silent unless said here.
+				rows[i].Conflict = true
+				rows[i].Shadows = "Named after a built-in tool, which runs instead; rename it to use this one"
+			case took && (rows[i].Pool || rows[i].AgentTool):
+				rows[i].Conflict = true
+				rows[i].Shadows = "Runs instead of " + other + "'s tool of this name"
+				if rows[i].AgentTool {
+					rows[i].Shadows = "Runs instead of " + other + "'s tool of this name, on these agents"
+				}
 			}
+			rows[i].Exportable = (rows[i].Pool || rows[i].AgentTool) && !rows[i].Session && !rows[i].Orphan
 		}
-		sort.SliceStable(rows, func(i, j int) bool {
-			ri, rj := rank(rows[i]), rank(rows[j])
-			if ri != rj {
-				return ri < rj
-			}
-			gi, gj := strings.ToLower(rows[i].Group), strings.ToLower(rows[j].Group)
-			if gi != gj {
-				return gi < gj
-			}
-			return strings.ToLower(rows[i].Name) < strings.ToLower(rows[j].Name)
-		})
-		writeJSON(w, rows)
-	case http.MethodPost:
-		// Governance toggles + category, all on the user's OWN tool record (own
-		// namespace, nothing shared):
-		//   set_category — claim/clear a grouping label (see Tool.Category).
-		//   lock / unlock — freeze the definition against AI modify/delete.
-		//   disable / enable — hide from / restore to every agent's catalog.
-		//   builder_only_on / builder_only_off — expose to Builder agent only.
-		//   keep_draft / drop_draft — resolve a session draft (see below).
-		action := r.URL.Query().Get("action")
-		if name == "" {
-			http.Error(w, "missing name", http.StatusBadRequest)
+	}
+	// Re-heading by what a tool IS FOR rather than where its record lives,
+	// and re-ordering so the grouping (which follows record order — the
+	// server owns it) renders cleanly.
+	//
+	// Scope answered "who can use this?", which the Agents column already
+	// answers per row; with forty tools the scope headings mostly said
+	// "these forty are yours" and the list read as one wall. Category is
+	// the axis that actually splits it, and it is the axis the tool picker
+	// and each app's tool list already use — so a tool now sits under the
+	// same heading everywhere.
+	//
+	// Two lifecycle buckets keep their own headings instead of being filed
+	// by subject: an orphan and a legacy session draft are not kinds of
+	// tool, they are records awaiting a decision (re-home, keep, discard).
+	// Filing them by subject would scatter them and lose the only thing the
+	// user needs to see. They sort last, after everything healthy.
+	rank := func(r row) int {
+		switch {
+		case r.Orphan:
+			return 3
+		case r.Session:
+			return 2
+		case strings.TrimSpace(r.Category) == "":
+			return 1 // uncategorized sits after the named categories
+		default:
+			return 0
+		}
+	}
+	for i := range rows {
+		if rows[i].Orphan || rows[i].Session {
+			continue // keep the lifecycle heading built at construction
+		}
+		if c := strings.TrimSpace(rows[i].Category); c != "" {
+			rows[i].Group = c
+		} else {
+			rows[i].Group = "Uncategorized"
+		}
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		ri, rj := rank(rows[i]), rank(rows[j])
+		if ri != rj {
+			return ri < rj
+		}
+		gi, gj := strings.ToLower(rows[i].Group), strings.ToLower(rows[j].Group)
+		if gi != gj {
+			return gi < gj
+		}
+		return strings.ToLower(rows[i].Name) < strings.ToLower(rows[j].Name)
+	})
+	writeJSON(w, rows)
+}
+
+// changeUserTool is handleUserTools' POST: one change to a tool, named by ?action.
+func (T *Extensions) changeUserTool(w http.ResponseWriter, r *http.Request, user, name string) {
+	// Governance toggles + category, all on the user's OWN tool record (own
+	// namespace, nothing shared):
+	//   set_category — claim/clear a grouping label (see Tool.Category).
+	//   lock / unlock — freeze the definition against AI modify/delete.
+	//   disable / enable — hide from / restore to every agent's catalog.
+	//   builder_only_on / builder_only_off — expose to Builder agent only.
+	//   keep_draft / drop_draft — resolve a session draft (see below).
+	action := r.URL.Query().Get("action")
+	if name == "" {
+		http.Error(w, "missing name", http.StatusBadRequest)
+		return
+	}
+	// Session-draft actions run BEFORE the pool lookup: a draft is by
+	// definition not in the persistent pool, so that lookup would 404 it.
+	// confirm — the user vouching for a trial tool the assistant authored.
+	// It doesn't move the tool; it only clears the unconfirmed mark.
+	if action == "confirm" {
+		agentID := strings.TrimSpace(r.URL.Query().Get("agent_id"))
+		if ConfirmAgentTool == nil {
+			http.Error(w, "confirm unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		// Session-draft actions run BEFORE the pool lookup: a draft is by
-		// definition not in the persistent pool, so that lookup would 404 it.
-		// confirm — the user vouching for a trial tool the assistant authored.
-		// It doesn't move the tool; it only clears the unconfirmed mark.
-		if action == "confirm" {
-			agentID := strings.TrimSpace(r.URL.Query().Get("agent_id"))
-			if ConfirmAgentTool == nil {
-				http.Error(w, "confirm unavailable", http.StatusServiceUnavailable)
-				return
-			}
-			// Vouching for a tool is not per-agent: the row is one TOOL, so
-			// confirm clears the mark on every agent holding a copy. Confirming
-			// one and leaving the others unconfirmed would let the reaper take
-			// copies of a tool the user just approved.
-			targets := []string{}
-			if agentID != "" {
-				targets = append(targets, agentID)
-			} else {
-				for _, st := range ListScopedTools(user) {
-					if st.Scope == ScopeAgentTool && st.Tool.Name == name && st.Trial {
-						targets = append(targets, st.AgentID)
-					}
+		// Vouching for a tool is not per-agent: the row is one TOOL, so
+		// confirm clears the mark on every agent holding a copy. Confirming
+		// one and leaving the others unconfirmed would let the reaper take
+		// copies of a tool the user just approved.
+		targets := []string{}
+		if agentID != "" {
+			targets = append(targets, agentID)
+		} else {
+			for _, st := range ListScopedTools(user) {
+				if st.Scope == ScopeAgentTool && st.Tool.Name == name && st.Trial {
+					targets = append(targets, st.AgentID)
 				}
 			}
-			if len(targets) == 0 {
-				http.Error(w, "not found", http.StatusNotFound)
-				return
-			}
-			for _, id := range targets {
-				if err := ConfirmAgentTool(AuthDB(), user, id, name); err != nil {
-					http.Error(w, err.Error(), http.StatusBadRequest)
-					return
-				}
-			}
-			w.WriteHeader(http.StatusNoContent)
+		}
+		if len(targets) == 0 {
+			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
-		if action == "keep_draft" || action == "drop_draft" {
-			sid := strings.TrimSpace(r.URL.Query().Get("session_id"))
-			if sid == "" {
-				http.Error(w, "missing session_id", http.StatusBadRequest)
-				return
-			}
-			// Resolve from the session that owns it, not by name alone: two
-			// sessions can hold different drafts under the same name.
-			found := false
-			for _, d := range ListSessionDrafts(user) {
-				if !d.Shadowed && d.SessionID == sid && d.Tool.Name == name {
-					found = true
-					break
-				}
-			}
-			if !found {
-				http.Error(w, "no session draft "+name+" in that session", http.StatusNotFound)
-				return
-			}
-			if action == "drop_draft" {
-				RemoveSessionTempTool(AuthDB(), sid, name)
-				w.WriteHeader(http.StatusNoContent)
-				return
-			}
-			// Where a kept draft lands — the user-wide pool (every agent) or the
-			// agent whose session built it. This is the same session-vs-global
-			// choice the in-chat Tools modal offers, routed through the same
-			// implementation so both behave identically (including stripping a
-			// now-redundant agent copy on a global keep). Default global: it is
-			// the answer for most keeps and the one with no agent dependency.
-			target := ScopeTargetGlobal
-			if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("target")), ScopeTargetAgent) {
-				target = ScopeTargetAgent
-			}
-			agentID := ""
-			for _, d := range ListSessionDrafts(user) {
-				if d.SessionID == sid && d.Tool.Name == name {
-					agentID = d.AgentID
-					break
-				}
-			}
-			if _, err := PromoteScopedTool(user, agentID, sid, name, target); err != nil {
+		for _, id := range targets {
+			if err := ConfirmAgentTool(AuthDB(), user, id, name); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
-			w.WriteHeader(http.StatusNoContent)
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if action == "keep_draft" || action == "drop_draft" {
+		sid := strings.TrimSpace(r.URL.Query().Get("session_id"))
+		if sid == "" {
+			http.Error(w, "missing session_id", http.StatusBadRequest)
 			return
 		}
-		// withdraw — the owner taking their published tool back out of the
-		// deployment catalog. Publishing is an administrator's to grant;
-		// withdrawing is the owner's to do. Everyone who added it stops
-		// loading it, and the last approved version is kept.
-		if action == "withdraw" {
-			if err := SetPersistentTempToolShared(AuthDB(), user, name, false); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		var tt *TempTool
-		for _, p := range LoadPersistentTempTools(AuthDB(), user) {
-			if p.Tool.Name == name {
-				t := p.Tool // copy; UpdatePersistentTempTool replaces the whole TempTool
-				tt = &t
+		// Resolve from the session that owns it, not by name alone: two
+		// sessions can hold different drafts under the same name.
+		found := false
+		for _, d := range ListSessionDrafts(user) {
+			if !d.Shadowed && d.SessionID == sid && d.Tool.Name == name {
+				found = true
 				break
 			}
 		}
-		if tt == nil {
-			// Agent-scoped fallback. The tool has no pool record — it lives on one
-			// or more agent records — so the pool lookup above legitimately misses
-			// it. Category is a property of the TOOL, not of one attachment, so it
-			// writes to every agent holding a copy; the same reasoning confirm uses
-			// above, and leaving copies on other agents under the old label would
-			// scatter one tool across two headings.
-			//
-			// set_category, disable, and enable apply to a scoped tool by writing
-			// the changed field back onto the agent record(s) that hold it (the
-			// same load→patch→Attach the pool path uses via UpdatePersistentTempTool,
-			// but owner-scoped to the agent). disable/enable are non-destructive:
-			// the tool stays bundled — its definition survives and Builder can still
-			// repair it — it just stops loading into the agent's kit (see the
-			// tool.Disabled skip in runner.go). Lock / Builder-only remain pool-only.
-			switch action {
-			case "set_category", "disable", "enable":
-			default:
-				http.Error(w, "this action applies to pool tools only: "+name+" is scoped to an agent", http.StatusBadRequest)
-				return
-			}
-			if AttachToolToAgent == nil {
-				http.Error(w, "agent-scoped update unavailable", http.StatusServiceUnavailable)
-				return
-			}
-			var body struct {
-				Category string `json:"category"`
-			}
-			_ = json.NewDecoder(r.Body).Decode(&body)
-			cat := strings.TrimSpace(body.Category)
-			updated := 0
-			for _, st := range ListScopedTools(user) {
-				if st.Shadowed || st.Scope != ScopeAgentTool || st.Tool.Name != name {
-					continue
-				}
-				t := st.Tool // copy; Attach replaces the whole record on that agent
-				switch action {
-				case "set_category":
-					t.Category = cat
-				case "disable":
-					t.Disabled = true
-				case "enable":
-					t.Disabled = false
-				}
-				if err := AttachToolToAgent(AuthDB(), user, st.AgentID, t); err != nil {
-					http.Error(w, err.Error(), http.StatusBadRequest)
-					return
-				}
-				updated++
-			}
-			if updated == 0 {
-				http.Error(w, "not found", http.StatusNotFound)
-				return
-			}
+		if !found {
+			http.Error(w, "no session draft "+name+" in that session", http.StatusNotFound)
+			return
+		}
+		if action == "drop_draft" {
+			RemoveSessionTempTool(AuthDB(), sid, name)
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-		switch action {
-		case "set_category":
-			// Free-form: a tool may coin a new category by name; the admin
-			// ToolGroup registry only supplies optional descriptions for
-			// categories that have a registered entry. The label lives on the
-			// user's own tool record, so this touches nothing outside their
-			// namespace — no per-user group store needed.
-			var body struct {
-				Category string `json:"category"`
-			}
-			_ = json.NewDecoder(r.Body).Decode(&body)
-			tt.Category = strings.TrimSpace(body.Category)
-		case "disable":
-			tt.Disabled = true
-		case "enable":
-			tt.Disabled = false
-		case "builder_only_on":
-			tt.BuilderOnly = true
-		case "builder_only_off":
-			tt.BuilderOnly = false
-		case "bound_only_on":
-			tt.BoundOnly = true
-			// Mutually exclusive with Builder-only, which is a different
-			// statement: one reserves a tool for authoring, the other says it
-			// belongs to whatever binds it. Holding both would leave the
-			// selector describing a state no filter produces.
-			tt.BuilderOnly = false
-		case "bound_only_off":
-			tt.BoundOnly = false
-		default:
-			http.Error(w, "unknown action", http.StatusBadRequest)
-			return
+		// Where a kept draft lands — the user-wide pool (every agent) or the
+		// agent whose session built it. This is the same session-vs-global
+		// choice the in-chat Tools modal offers, routed through the same
+		// implementation so both behave identically (including stripping a
+		// now-redundant agent copy on a global keep). Default global: it is
+		// the answer for most keeps and the one with no agent dependency.
+		target := ScopeTargetGlobal
+		if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("target")), ScopeTargetAgent) {
+			target = ScopeTargetAgent
 		}
-		if !UpdatePersistentTempTool(AuthDB(), user, *tt) {
-			http.Error(w, "update failed", http.StatusBadRequest)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	case http.MethodDelete:
-		if name == "" {
-			http.Error(w, "missing name", http.StatusBadRequest)
-			return
-		}
-		// An orphan isn't in the pool, so the pool delete would 404 it — discard
-		// it from the orphan store instead. Checked first because that is the
-		// only place it lives.
-		for _, o := range LoadOrphanedTempTools(AuthDB(), user) {
-			if o.Tool.Name == name {
-				if !RemoveOrphanedTempTool(AuthDB(), user, name) {
-					http.Error(w, "not found", http.StatusNotFound)
-					return
-				}
-				w.WriteHeader(http.StatusNoContent)
-				return
+		agentID := ""
+		for _, d := range ListSessionDrafts(user) {
+			if d.SessionID == sid && d.Tool.Name == name {
+				agentID = d.AgentID
+				break
 			}
 		}
-		if err := DeletePersistentTempTool(AuthDB(), user, name); err != nil {
+		if _, err := PromoteScopedTool(user, agentID, sid, name, target); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
 	}
+	// withdraw — the owner taking their published tool back out of the
+	// deployment catalog. Publishing is an administrator's to grant;
+	// withdrawing is the owner's to do. Everyone who added it stops
+	// loading it, and the last approved version is kept.
+	if action == "withdraw" {
+		if err := SetPersistentTempToolShared(AuthDB(), user, name, false); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	var tt *TempTool
+	for _, p := range LoadPersistentTempTools(AuthDB(), user) {
+		if p.Tool.Name == name {
+			t := p.Tool // copy; UpdatePersistentTempTool replaces the whole TempTool
+			tt = &t
+			break
+		}
+	}
+	if tt == nil {
+		// Agent-scoped fallback. The tool has no pool record — it lives on one
+		// or more agent records — so the pool lookup above legitimately misses
+		// it. Category is a property of the TOOL, not of one attachment, so it
+		// writes to every agent holding a copy; the same reasoning confirm uses
+		// above, and leaving copies on other agents under the old label would
+		// scatter one tool across two headings.
+		//
+		// set_category, disable, and enable apply to a scoped tool by writing
+		// the changed field back onto the agent record(s) that hold it (the
+		// same load→patch→Attach the pool path uses via UpdatePersistentTempTool,
+		// but owner-scoped to the agent). disable/enable are non-destructive:
+		// the tool stays bundled — its definition survives and Builder can still
+		// repair it — it just stops loading into the agent's kit (see the
+		// tool.Disabled skip in runner.go). Lock / Builder-only remain pool-only.
+		switch action {
+		case "set_category", "disable", "enable":
+		default:
+			http.Error(w, "this action applies to pool tools only: "+name+" is scoped to an agent", http.StatusBadRequest)
+			return
+		}
+		if AttachToolToAgent == nil {
+			http.Error(w, "agent-scoped update unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		var body struct {
+			Category string `json:"category"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		cat := strings.TrimSpace(body.Category)
+		updated := 0
+		for _, st := range ListScopedTools(user) {
+			if st.Shadowed || st.Scope != ScopeAgentTool || st.Tool.Name != name {
+				continue
+			}
+			t := st.Tool // copy; Attach replaces the whole record on that agent
+			switch action {
+			case "set_category":
+				t.Category = cat
+			case "disable":
+				t.Disabled = true
+			case "enable":
+				t.Disabled = false
+			}
+			if err := AttachToolToAgent(AuthDB(), user, st.AgentID, t); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			updated++
+		}
+		if updated == 0 {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	switch action {
+	case "set_category":
+		// Free-form: a tool may coin a new category by name; the admin
+		// ToolGroup registry only supplies optional descriptions for
+		// categories that have a registered entry. The label lives on the
+		// user's own tool record, so this touches nothing outside their
+		// namespace — no per-user group store needed.
+		var body struct {
+			Category string `json:"category"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		tt.Category = strings.TrimSpace(body.Category)
+	case "disable":
+		tt.Disabled = true
+	case "enable":
+		tt.Disabled = false
+	case "builder_only_on":
+		tt.BuilderOnly = true
+	case "builder_only_off":
+		tt.BuilderOnly = false
+	case "bound_only_on":
+		tt.BoundOnly = true
+		// Mutually exclusive with Builder-only, which is a different
+		// statement: one reserves a tool for authoring, the other says it
+		// belongs to whatever binds it. Holding both would leave the
+		// selector describing a state no filter produces.
+		tt.BuilderOnly = false
+	case "bound_only_off":
+		tt.BoundOnly = false
+	default:
+		http.Error(w, "unknown action", http.StatusBadRequest)
+		return
+	}
+	if !UpdatePersistentTempTool(AuthDB(), user, *tt) {
+		http.Error(w, "update failed", http.StatusBadRequest)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// deleteUserTool is handleUserTools' DELETE: the tool dropped.
+func (T *Extensions) deleteUserTool(w http.ResponseWriter, r *http.Request, user, name string) {
+	if name == "" {
+		http.Error(w, "missing name", http.StatusBadRequest)
+		return
+	}
+	// An orphan isn't in the pool, so the pool delete would 404 it — discard
+	// it from the orphan store instead. Checked first because that is the
+	// only place it lives.
+	for _, o := range LoadOrphanedTempTools(AuthDB(), user) {
+		if o.Tool.Name == name {
+			if !RemoveOrphanedTempTool(AuthDB(), user, name) {
+				http.Error(w, "not found", http.StatusNotFound)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+	}
+	if err := DeletePersistentTempTool(AuthDB(), user, name); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // handleUserSkills is the user's OWN skills surface — the per-user counterpart to
