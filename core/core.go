@@ -240,6 +240,7 @@ var (
 	RunSandboxedShellWithEnv     = sandbox.RunSandboxedShellWithEnv
 	RunSandboxedShellScoped      = sandbox.RunSandboxedShellScoped
 	RunSandboxedShellPipe        = sandbox.RunSandboxedShellPipe
+	RunSandboxedShellPipeEnv     = sandbox.RunSandboxedShellPipeEnv
 	RunSandboxedShellWithHook    = sandbox.RunSandboxedShellWithHook
 	RunSandboxedShellWithHookEnv = sandbox.RunSandboxedShellWithHookEnv
 	RunSandboxedScript           = sandbox.RunSandboxedScript

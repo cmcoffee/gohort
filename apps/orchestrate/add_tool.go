@@ -130,7 +130,7 @@ func (addToolTool) Params() map[string]ToolParam {
 		},
 		"response_pipe": {
 			Type:        "string",
-			Description: "(api mode) Optional shell command to post-process the raw response (jq, awk, etc.) before the LLM sees it. Empty = raw response. This is where you set the output shape: project a stable per-item id in list results (jq -c '[.items[] | {id, title, source}]') and keep the field set identical across items, so the caller can't attach a value to the wrong item.",
+			Description: "(api mode) Optional shell command to post-process the raw response (jq, awk, etc.) before the LLM sees it; the call's params are in its environment ($name). Empty = raw response. This is where you set the output shape: project a stable per-item id in list results (jq -c '[.items[] | {id, title, source}]') and keep the field set identical across items, so the caller can't attach a value to the wrong item.",
 		},
 		"test_args": {
 			Type:        "object",

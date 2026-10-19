@@ -194,7 +194,7 @@ func dispatchAPIModeTempTool(sess *ToolSession, tt *TempTool, args map[string]an
 	}
 	pipeCtx, cancel := context.WithTimeout(sess.Context(), commandTimeout)
 	defer cancel()
-	pres := RunSandboxedShellPipe(pipeCtx, tt.ResponsePipe, body)
+	pres := RunSandboxedShellPipeEnv(pipeCtx, tt.ResponsePipe, body, pipeEnv(args))
 	piped := strings.TrimSpace(pres.Output)
 	if pres.TimedOut {
 		notice := fmt.Sprintf("\n[response_pipe TIMED OUT after %s: command killed.]", commandTimeout)
@@ -336,6 +336,21 @@ const (
 	publicAPIMaxResponseBytes = 1 * 1024 * 1024 // 1 MB
 	publicAPIUserAgent        = "gohort-public-api-tool/1.0"
 )
+
+// pipeEnv is the call's params as a response_pipe's environment, named as a
+// shell tool's are, so a pipe can page or filter by what was asked
+// (sed -n "${start_line},+200p"). A pipe has no workspace to hand an oversized
+// value over by file, so one too big for the environment is left out, and so
+// is any GOHORT_ name, which belongs to the framework.
+func pipeEnv(args map[string]any) map[string]string {
+	env := buildEnvArgs(args)
+	for k, v := range env {
+		if len(v) > maxEnvArgBytes || strings.HasPrefix(k, "GOHORT_") {
+			delete(env, k)
+		}
+	}
+	return env
+}
 
 // splitStatusLine separates the leading "HTTP <code> <text>" line from
 // the response body. Returns ("", raw) when the response doesn't start

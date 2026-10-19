@@ -346,7 +346,7 @@ func runToolTest(tt TempTool, args map[string]any, sess *ToolSession) (string, e
 
 		// C. response_pipe compiles (catches a broken jq/awk filter).
 		if ep.ResponsePipe != "" {
-			if serr := pipeCompileError(ep.ResponsePipe, sess); serr != "" {
+			if serr := pipeCompileError(ep.ResponsePipe, sess, pipeEnv(sample)); serr != "" {
 				fail("pipe-compile", "response_pipe has a syntax/compile error: %s", serr)
 			} else {
 				pass("response_pipe compiles")
@@ -387,7 +387,7 @@ func runToolTest(tt TempTool, args map[string]any, sess *ToolSession) (string, e
 						pass("live %s returned %q", method, status)
 					}
 					if ep.ResponsePipe != "" {
-						piped, perr := runPipeAgainst(ep.ResponsePipe, body, sess)
+						piped, perr := runPipeAgainst(ep.ResponsePipe, body, sess, pipeEnv(sample))
 						switch {
 						case perr != "":
 							fail("pipe-shape", "response_pipe failed on the REAL response body (shape mismatch: e.g. the filter expects .posts[] but the body is a bare array): %s", perr)
@@ -1117,7 +1117,7 @@ func emptyResultBody(body string, ep TempToolAction) bool {
 // fire regardless of input shape and are true authoring bugs. A runtime
 // error against the dummy input (null iteration, missing field) is not a
 // compile bug and yields "" (the real shape is checked live for reads).
-func pipeCompileError(pipe string, sess *ToolSession) string {
+func pipeCompileError(pipe string, sess *ToolSession, env map[string]string) string {
 	ctx, cancel := context.WithTimeout(sess.Context(), commandTimeout)
 	defer cancel()
 	// Authoring-time checks are still sandboxed runs, so they carry the same
@@ -1125,7 +1125,7 @@ func pipeCompileError(pipe string, sess *ToolSession) string {
 	// confine gets their tool refused by the checker that was supposed to
 	// help them write it, with "sandbox refused" as the only verdict.
 	ctx = sess.ContextWithSandboxCaller(ctx)
-	res := RunSandboxedShellPipe(ctx, pipe, "{}")
+	res := RunSandboxedShellPipeEnv(ctx, pipe, "{}", env)
 	if res.Err == nil {
 		return ""
 	}
@@ -1138,7 +1138,7 @@ func pipeCompileError(pipe string, sess *ToolSession) string {
 
 // runPipeAgainst runs a response_pipe against a real response body and
 // returns a non-empty message if it failed (bad filter, shape mismatch).
-func runPipeAgainst(pipe, body string, sess *ToolSession) (output, failure string) {
+func runPipeAgainst(pipe, body string, sess *ToolSession, env map[string]string) (output, failure string) {
 	ctx, cancel := context.WithTimeout(sess.Context(), commandTimeout)
 	defer cancel()
 	// Authoring-time checks are still sandboxed runs, so they carry the same
@@ -1146,7 +1146,7 @@ func runPipeAgainst(pipe, body string, sess *ToolSession) (output, failure strin
 	// confine gets their tool refused by the checker that was supposed to
 	// help them write it, with "sandbox refused" as the only verdict.
 	ctx = sess.ContextWithSandboxCaller(ctx)
-	res := RunSandboxedShellPipe(ctx, pipe, body)
+	res := RunSandboxedShellPipeEnv(ctx, pipe, body, env)
 	if res.TimedOut {
 		return "", "timed out"
 	}

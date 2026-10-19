@@ -594,6 +594,10 @@ Notes:
   - The pipe runs in the same sandbox as shell mode (no network,
     no writable fs, /tmp tmpfs).
   - Available binaries: jq, awk, sed, grep, head, tail, tr, cut.
+  - The call's params are in the pipe's environment by name, as in
+    shell mode, so a pipe can page or filter by what was asked:
+      response_pipe='sed -n "${start_line},+200p"'
+    A {name} placeholder is NOT substituted in a pipe: read $name.
 
 URL placeholders are URL-encoded at dispatch. Body placeholders are
 JSON-encoded. Both are safe against injection.

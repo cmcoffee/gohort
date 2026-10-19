@@ -695,6 +695,14 @@ func bwrapArgv(workspaceDir, shellCmd string, allowNetwork bool) []string {
 // without needing filesystem or network access. Falls back to plain
 // `sh -c` (cwd = /tmp) when bwrap isn't installed.
 func RunSandboxedShellPipe(ctx context.Context, command, stdinData string) SandboxedShellResult {
+	return RunSandboxedShellPipeEnv(ctx, command, stdinData, nil)
+}
+
+// RunSandboxedShellPipeEnv is RunSandboxedShellPipe with extraEnv set in the
+// command's environment: a tool's params, so a pipe reads $start_line the way
+// the tool's shell command would. Values only, never the command text, so a
+// param cannot become shell code.
+func RunSandboxedShellPipeEnv(ctx context.Context, command, stdinData string, extraEnv map[string]string) SandboxedShellResult {
 	sb := activeSandbox()
 	if !sb.confines() {
 		if sandboxRequired(ctx) {
@@ -703,7 +711,7 @@ func RunSandboxedShellPipe(ctx context.Context, command, stdinData string) Sandb
 		}
 		warnUnsandboxed("response pipes")
 	}
-	c := buildRun(ctx, sb, sandboxRun{Kind: sandboxPipeRun, Command: command})
+	c := buildRun(ctx, sb, sandboxRun{Kind: sandboxPipeRun, Command: command, Env: extraEnv})
 	sandbox := sb.confines()
 	c.Env = sandboxEnv(sb.remapsPaths())
 	// A pipe got NO PYTHONPATH at all, so `from gohort import ...` and
@@ -717,6 +725,10 @@ func RunSandboxedShellPipe(ctx context.Context, command, stdinData string) Sandb
 	// ("GOHORT_HOOK_PATH not set"), which says what is wrong, instead of a
 	// missing-module error that says the tool is broken.
 	c.Env = append(c.Env, "PYTHONPATH="+sandboxPythonPath(sb.remapsPaths(), ""))
+	// Inherited by every backend but a container, which reads run.Env above.
+	for k, v := range extraEnv {
+		c.Env = append(c.Env, k+"="+v)
+	}
 	c.Stdin = strings.NewReader(stdinData)
 
 	var buf bytes.Buffer
