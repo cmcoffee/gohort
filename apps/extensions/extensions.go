@@ -2680,8 +2680,9 @@ func toolSecurityJS() string {
     load();
   }
   // Replies may ask for: a toolbox's declared next steps, the service's own
-  // protocol (tool_security.go, toolStepsSection). Pick the step, then tick
-  // which actions' replies may ask for it, Every action first.
+  // protocol (tool_security.go, toolStepsSection). Every exception listed,
+  // each editable or removable, and a form under them to add or change one:
+  // the step, then which actions' replies may ask for it, Every action first.
   function steps(body){
     var host = document.createElement('div');
     body.appendChild(host);
@@ -2694,58 +2695,91 @@ func toolSecurityJS() string {
         if(!res.ok) return res.text().then(function(t){ throw new Error(t || ('HTTP ' + res.status)); });
       });
     }
+    // Each change in turn, so two of them never race over the same record.
+    function postAll(list){
+      return list.reduce(function(p, payload){ return p.then(function(){ return post(payload); }); }, Promise.resolve());
+    }
     function fail(e){ window.uiAlert && window.uiAlert('Could not change it: ' + (e && e.message || e)); load(); }
+    function line(css){
+      var el = document.createElement('div');
+      el.style.cssText = css;
+      return el;
+    }
+    function button(text, onClick){
+      var b = document.createElement('button');
+      b.type = 'button'; b.className = 'ui-row-btn'; b.textContent = text;
+      b.addEventListener('click', onClick);
+      return b;
+    }
     function render(d){
       host.innerHTML = '';
       var actions = (d && d.actions) || [];
-      var list = (d && d.steps) || [];
       if (actions.length < 2) {
         host.textContent = 'This tool has one action, so there is no other step for a reply to ask for.';
         return;
       }
-      var asks = {};
-      list.forEach(function(st){ (asks[st.follow] = asks[st.follow] || {})[st.action] = true; });
-      if (!current || actions.indexOf(current) < 0) {
-        current = actions.filter(function(n){ return asks[n]; })[0] || actions[0];
+      var asks = {}, order = [];
+      ((d && d.steps) || []).forEach(function(st){
+        if (!asks[st.follow]) { asks[st.follow] = {}; order.push(st.follow); }
+        asks[st.follow][st.action] = true;
+      });
+      // The exceptions, one row per step.
+      if (!order.length) {
+        host.appendChild(line('color:var(--text-mute);font-size:var(--fs-sm, 0.85rem);margin:0.2rem 0')).textContent = 'No exceptions yet.';
       }
-      var pick = document.createElement('div');
-      pick.style.cssText = 'display:flex;align-items:center;gap:0.5rem;margin:0.2rem 0 0.4rem;flex-wrap:wrap';
+      order.forEach(function(step){
+        var from = Object.keys(asks[step]);
+        var row = line('display:flex;align-items:center;gap:0.5rem;margin:0.2rem 0;flex-wrap:wrap');
+        var label = document.createElement('span');
+        label.textContent = step + ' may be asked for by ' + (asks[step]['*'] ? 'every action' : from.join(', '));
+        row.appendChild(label);
+        row.appendChild(button('Edit', function(){ current = step; render(d); }));
+        row.appendChild(button('Remove', function(){
+          postAll(from.map(function(src){ return {action: src, follow: step, on: false}; })).then(load, fail);
+        }));
+        host.appendChild(row);
+      });
+      // Add or change one.
+      var form = line('border-top:1px solid var(--border, rgba(127,127,127,0.25));margin-top:0.5rem;padding-top:0.5rem');
+      host.appendChild(form);
+      if (!current || actions.indexOf(current) < 0) current = actions[0];
+      var pick = line('display:flex;align-items:center;gap:0.5rem;margin:0 0 0.35rem;flex-wrap:wrap');
       var sel = document.createElement('select');
       sel.className = 'ui-input';
-      actions.forEach(function(n){
-        var o = document.createElement('option');
-        o.value = n;
-        var count = Object.keys(asks[n] || {}).length;
-        o.textContent = count ? n + ' (' + (asks[n]['*'] ? 'every action' : count) + ')' : n;
-        sel.appendChild(o);
-      });
+      actions.forEach(function(n){ var o = document.createElement('option'); o.value = n; o.textContent = n; sel.appendChild(o); });
       sel.value = current;
       sel.addEventListener('change', function(){ current = sel.value; render(d); });
-      pick.appendChild(document.createTextNode('Step'));
+      pick.appendChild(document.createTextNode(asks[current] ? 'Change the exception for' : 'Add an exception: step'));
       pick.appendChild(sel);
-      host.appendChild(pick);
-      var lead = document.createElement('div');
-      lead.style.cssText = 'color:var(--text-mute);font-size:var(--fs-sm, 0.85rem);margin:0.1rem 0 0.25rem';
-      lead.textContent = 'May be asked for by the reply to:';
-      host.appendChild(lead);
-      var from = asks[current] || {};
+      form.appendChild(pick);
+      form.appendChild(line('color:var(--text-mute);font-size:var(--fs-sm, 0.85rem);margin:0.1rem 0 0.25rem')).textContent = 'May be asked for by the reply to:';
+      var had = asks[current] || {};
+      var boxes = [];
+      var every = null;
       [['*', 'Every action']].concat(actions.filter(function(n){ return n !== current; }).map(function(n){ return [n, n]; })).forEach(function(o){
         var row = document.createElement('label');
         row.style.cssText = 'display:flex;align-items:center;gap:0.5rem;margin:0.15rem 0;cursor:pointer' + (o[0] === '*' ? '' : ';margin-left:1.2rem');
         var c = document.createElement('input');
         c.type = 'checkbox';
-        c.checked = !!from[o[0]] || (o[0] !== '*' && !!from['*']);
-        c.disabled = o[0] !== '*' && !!from['*'];
-        c.addEventListener('change', function(){ post({action: o[0], follow: current, on: c.checked}).then(load, fail); });
+        c.checked = !!had[o[0]];
         row.appendChild(c);
         row.appendChild(document.createTextNode(o[1]));
-        host.appendChild(row);
+        form.appendChild(row);
+        if (o[0] === '*') every = c; else boxes.push([o[0], c]);
       });
+      function lockAll(){ boxes.forEach(function(b){ b[1].disabled = every.checked; }); }
+      every.addEventListener('change', lockAll);
+      lockAll();
+      form.appendChild(line('margin-top:0.4rem')).appendChild(button(asks[current] ? 'Save' : 'Add', function(){
+        var want = {'*': every.checked};
+        boxes.forEach(function(b){ want[b[0]] = !every.checked && b[1].checked; });
+        var changes = Object.keys(want).filter(function(src){ return want[src] !== !!had[src]; })
+          .map(function(src){ return {action: src, follow: current, on: want[src]}; });
+        if (!changes.length) return;
+        postAll(changes).then(load, fail);
+      }));
       if (d && d.note) {
-        var note = document.createElement('div');
-        note.style.cssText = 'color:var(--text-mute);font-size:var(--fs-sm, 0.85rem);margin-top:0.45rem';
-        note.textContent = d.note;
-        host.appendChild(note);
+        form.appendChild(line('color:var(--text-mute);font-size:var(--fs-sm, 0.85rem);margin-top:0.45rem')).textContent = d.note;
       }
     }
     function load(){
