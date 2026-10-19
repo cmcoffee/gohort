@@ -28,9 +28,48 @@ import (
 // from a plan_set worker step (gets the FULL authoring catalog).
 // Non-Builder agents are unaffected by the flag — the gate at
 // isBuilderAgent only fires for the Builder seed.
+//
+// The build's state is workerCatalog and each phase is a method on it.
 func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) ([]AgentToolDef, []string, error) {
-	defaultNames := availableWorkerToolNames()
-	var toolNames []string
+	wc := &workerCatalog{t: t, sess: sess, forOrchestrator: forOrchestrator}
+	wc.chooseNames()
+	wc.loadTools()
+	wc.authoringTools()
+	wc.reachTools()
+	wc.finishCatalog()
+	return wc.tools, wc.toolNames, nil
+}
+
+// workerCatalog is one build of a turn's tool catalog, from the names the
+// agent may use to what the session is told resolved. Each field is a local
+// or parameter of the method it was cut from; resolveWorkerTools is now the
+// order of the phases.
+type workerCatalog struct {
+	t               *chatTurn
+	sess            *ToolSession
+	forOrchestrator bool
+	defaultNames    []string
+	toolNames       []string
+	tools           []AgentToolDef
+	err             error
+	ownerRun        bool
+	have            map[string]bool
+	// Only OPEN-POOL agents (empty AllowedTools — the general Chat/seed
+	// assistants) receive the desktop's local surface. A CURATED agent with an
+	// explicit allowlist (a Guide Author, a techwriter, any app agent) scoped
+	// itself to a specific toolset and never opted into local-filesystem /
+	// screenshot / contacts access — appending it silently let those ambient
+	// tools SHADOW the agent's purpose-built ones (a Guide Author rummaging the
+	// local disk instead of dispatching investigate_<system> to servitor). The
+	// allowlist is the opt-in signal: no list ⇒ open pool ⇒ desktop surface; an
+	// explicit list ⇒ exactly those tools, nothing ambient.
+	fromClient []AgentToolDef
+}
+
+func (wc *workerCatalog) chooseNames() {
+	t := wc.t
+	sess := wc.sess
+	wc.defaultNames = availableWorkerToolNames()
 	switch {
 	case isNoToolsSentinel(t.agent.AllowedTools):
 		// Sentinel — admin explicitly unchecked every tool in the
@@ -39,16 +78,16 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 		// stay_silent, keep_going) get appended later in the catalog
 		// build, so the agent still has the minimum it needs to
 		// produce a response — just no read/network/write tools.
-		toolNames = nil
+		wc.toolNames = nil
 	case len(t.agent.AllowedTools) > 0:
 		allow := make(map[string]bool, len(t.agent.AllowedTools))
 		for _, n := range t.agent.AllowedTools {
 			allow[canonicalToolName(n)] = true
 		}
 		matched := 0
-		for _, n := range defaultNames {
+		for _, n := range wc.defaultNames {
 			if allow[n] {
-				toolNames = append(toolNames, n)
+				wc.toolNames = append(wc.toolNames, n)
 				matched++
 			}
 		}
@@ -67,8 +106,8 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 		// unmatched above — the common all-registered case skips it.
 		if matched < len(allow) {
 			for _, td := range Secure().BuildTools(sess) {
-				if n := td.Tool.Name; allow[n] && !slices.Contains(toolNames, n) {
-					toolNames = append(toolNames, n)
+				if n := td.Tool.Name; allow[n] && !slices.Contains(wc.toolNames, n) {
+					wc.toolNames = append(wc.toolNames, n)
 				}
 			}
 		}
@@ -83,7 +122,7 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 		// the most permissive setting genuinely means everything. These carry
 		// CapNetwork, so the Private-mode filter below still drops them per
 		// turn when the agent is running network-restricted.
-		toolNames = defaultNames
+		wc.toolNames = wc.defaultNames
 		// Raw per-credential tools are Builder's by default: an agent that hit
 		// a problem with its bound tool reached for fetch_url_<cred> and started
 		// guessing at the API itself. Other agents reach a credential through
@@ -91,8 +130,8 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 		// lists it explicitly (the allow-list branch above keeps it).
 		if isBuilderAgent(t.agent.ID) {
 			for _, td := range Secure().BuildTools(sess) {
-				if n := td.Tool.Name; !slices.Contains(toolNames, n) {
-					toolNames = append(toolNames, n)
+				if n := td.Tool.Name; !slices.Contains(wc.toolNames, n) {
+					wc.toolNames = append(wc.toolNames, n)
 				}
 			}
 		}
@@ -111,8 +150,8 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 	// admin explicitly wants NO optional tools, and workspace is an
 	// optional tool. Without producers there's nothing to deliver
 	// either, so workspace would be dead weight.
-	if !isNoToolsSentinel(t.agent.AllowedTools) && !slices.Contains(toolNames, "workspace") {
-		toolNames = append(toolNames, "workspace")
+	if !isNoToolsSentinel(t.agent.AllowedTools) && !slices.Contains(wc.toolNames, "workspace") {
+		wc.toolNames = append(wc.toolNames, "workspace")
 	}
 	// The counterpart to a capability the framework grants unilaterally.
 	//
@@ -124,8 +163,8 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 	// keep arriving. Force-included like workspace, for the same reason —
 	// deliberately NOT in frameworkUtilityTools, which is reserved for pure
 	// side-effect-free helpers and this is not one.
-	if !isNoToolsSentinel(t.agent.AllowedTools) && !slices.Contains(toolNames, "background_work") {
-		toolNames = append(toolNames, "background_work")
+	if !isNoToolsSentinel(t.agent.AllowedTools) && !slices.Contains(wc.toolNames, "background_work") {
+		wc.toolNames = append(wc.toolNames, "background_work")
 	}
 	// Framework utility tools — pure CapRead helpers (calculate, date_math,
 	// time_in_zone) kept always-on so an agent never fails basic math /
@@ -135,8 +174,8 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 	// so they survive it. Skip on the no-tools sentinel (admin wants none).
 	if !isNoToolsSentinel(t.agent.AllowedTools) {
 		for _, n := range frameworkUtilityTools {
-			if !slices.Contains(toolNames, n) {
-				toolNames = append(toolNames, n)
+			if !slices.Contains(wc.toolNames, n) {
+				wc.toolNames = append(wc.toolNames, n)
 			}
 		}
 	}
@@ -148,8 +187,8 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 	// missing IsInternetTool would otherwise slip past this filter
 	// (silently breaking Private mode's contract).
 	if t.privateMode {
-		filtered := toolNames[:0]
-		for _, n := range toolNames {
+		filtered := wc.toolNames[:0]
+		for _, n := range wc.toolNames {
 			ct, ok := FindChatTool(n)
 			if !ok {
 				continue
@@ -159,7 +198,7 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 			}
 			filtered = append(filtered, n)
 		}
-		toolNames = filtered
+		wc.toolNames = filtered
 	}
 	// Strip client-bridge tool names (from_client_*) before the
 	// global-registry lookup. They're never in the registered
@@ -168,37 +207,48 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 	// and abort the whole turn. The runtime hook later in this
 	// function reads them from the user's connected desktops and
 	// appends as ChatToolToAgentToolDef so the LLM still sees them.
-	if len(toolNames) > 0 {
-		filtered := toolNames[:0]
-		for _, n := range toolNames {
+	if len(wc.toolNames) > 0 {
+		filtered := wc.toolNames[:0]
+		for _, n := range wc.toolNames {
 			if IsClientToolName(n) {
 				continue
 			}
 			filtered = append(filtered, n)
 		}
-		toolNames = filtered
+		wc.toolNames = filtered
 	}
-	tools, err := GetAgentToolsWithSession(sess, toolNames...)
-	if err != nil {
+}
+
+func (wc *workerCatalog) loadTools() {
+	t := wc.t
+	sess := wc.sess
+	wc.tools, wc.err = GetAgentToolsWithSession(sess, wc.toolNames...)
+	if wc.err != nil {
 		// One unresolvable name used to abort the whole catalog build, which
 		// took the capability toolsets appended BELOW down with it — an agent
 		// could lose its entire authoring set because a single allowlisted
 		// tool had gone missing. The dispatch path already recovers per-name;
 		// do the same here so a stale allowlist entry costs one tool, not all
 		// of them.
-		Log("[orchestrate.tools] catalog build failed for agent=%s (%v): resolving per-name", t.agent.ID, err)
-		tools = nil
-		resolved := toolNames[:0]
-		for _, n := range toolNames {
+		Log("[orchestrate.tools] catalog build failed for agent=%s (%v): resolving per-name", t.agent.ID, wc.err)
+		wc.tools = nil
+		resolved := wc.toolNames[:0]
+		for _, n := range wc.toolNames {
 			if td, terr := GetAgentToolsWithSession(sess, n); terr == nil && len(td) > 0 {
-				tools = append(tools, td[0])
+				wc.tools = append(wc.tools, td[0])
 				resolved = append(resolved, n)
 				continue
 			}
 			Log("[orchestrate.tools] dropping unresolvable tool %q for agent=%s", n, t.agent.ID)
 		}
-		toolNames = resolved
+		wc.toolNames = resolved
 	}
+}
+
+func (wc *workerCatalog) authoringTools() {
+	t := wc.t
+	sess := wc.sess
+	forOrchestrator := wc.forOrchestrator
 	// Builder gets the unregistered authoring tools appended here —
 	// they don't live in any global registry, so they reach the
 	// catalog only via this explicit code path. Identity check
@@ -243,7 +293,7 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 	// Every other owner check in the package already admits seedOwner
 	// (agent_credentials.go, agents_grouped_tool.go, admin_tool_scope.go);
 	// this one was the outlier.
-	ownerRun := t.agent.Owner == "" || t.agent.Owner == seedOwner || t.agent.Owner == t.user
+	wc.ownerRun = t.agent.Owner == "" || t.agent.Owner == seedOwner || t.agent.Owner == t.user
 	// An authoring agent running for someone who is NOT its owner loses the
 	// whole authoring catalog. That is the correct security answer, but it
 	// used to happen in total silence: the model found no tool_def, invented
@@ -251,13 +301,13 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 	// administrators"), and the user went debugging a system that was working
 	// as designed. Say it out loud, in the log AND in the model's own context,
 	// so the absence has a stated cause instead of a guessed one.
-	if agentCanAuthor(t.agent) && !ownerRun {
+	if agentCanAuthor(t.agent) && !wc.ownerRun {
 		Log("[orchestrate.tools] authoring catalog WITHHELD from agent %q (%s): owner=%q but this turn runs as %q, authoring tools are owner-only",
 			t.agent.Name, t.agent.ID, t.agent.Owner, t.user)
 		t.turnDiag("authoring_withheld", "Owned by "+t.agent.Owner+" but this turn runs as "+t.user+
 			". Authoring is owner-only, so tool_def / create_agent / update_agent are absent BY DESIGN: nothing is broken.")
 	}
-	if agentCanAuthor(t.agent) && ownerRun {
+	if agentCanAuthor(t.agent) && wc.ownerRun {
 		Log("[orchestrate.tools] authoring catalog GRANTED to agent %q (%s) for user %q (orchestrator=%v)",
 			t.agent.Name, t.agent.ID, t.user, forOrchestrator)
 		var extra []AgentToolDef
@@ -268,9 +318,9 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 		}
 		// Builder authors constantly, so it carries the catalog inline. It is
 		// the only agent that reaches here since the Author flag retired.
-		tools = append(tools, extra...)
+		wc.tools = append(wc.tools, extra...)
 		for _, td := range extra {
-			toolNames = append(toolNames, td.Tool.Name)
+			wc.toolNames = append(wc.toolNames, td.Tool.Name)
 		}
 	}
 	// Consult the Lead: one self-contained question to the lead model when the
@@ -279,8 +329,8 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 	// tool.
 	if forOrchestrator && settingIsOn(RootDB, t.agent, defaultConsultLead) {
 		ct := consultTool(t)
-		tools = append(tools, ct)
-		toolNames = append(toolNames, ct.Tool.Name)
+		wc.tools = append(wc.tools, ct)
+		wc.toolNames = append(wc.toolNames, ct.Tool.Name)
 	}
 	// An agent IN CHARGE of a collection gets the four corpus actions for that
 	// collection, and only for that one.
@@ -295,11 +345,11 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 	// Owner-only for the reason the rest of this function is: the actions reach
 	// the owner's corpus, and an agent run by a granted non-owner must not
 	// write to collections that are not theirs.
-	if ownerRun {
+	if wc.ownerRun {
 		if cols := curatedCollectionsFor(UserDB(t.app.DB, t.user), t.user, t.agent.ID); len(cols) > 0 {
 			if st := collectionStewardTool(cols); st != nil {
-				tools = append(tools, ChatToolToAgentToolDefWithSession(st, sess))
-				toolNames = append(toolNames, st.Name())
+				wc.tools = append(wc.tools, ChatToolToAgentToolDefWithSession(st, sess))
+				wc.toolNames = append(wc.toolNames, st.Name())
 				Log("[orchestrate.tools] agent=%s: steward of %d collection(s), scoped corpus tools attached", t.agent.ID, len(cols))
 			}
 		}
@@ -321,7 +371,7 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 	// when — so it can WIRE a tool it just authored into a schedule/watch. "Build X and run it every 30s" was structurally
 	// impossible for an author-only agent: it could build the tool and then had
 	// no way to schedule it, so it stopped half-done or handed off.
-	if (t.agent.Fleet || agentCanAuthor(t.agent)) && forOrchestrator && ownerRun {
+	if (t.agent.Fleet || agentCanAuthor(t.agent)) && forOrchestrator && wc.ownerRun {
 		// A FLEET agent schedules through the fleet only (proper cron /
 		// start+interval timing, surfaces in Enabled agents), so its
 		// `schedule` folds no recurring tasks; the BUILDER keeps its own
@@ -335,9 +385,9 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 		om := t.gateDelegate(operatorManagementToolsFor(sess, t.agent.ID, rec))
 		// No standalone history pair: `recall` spans folded-away history, and
 		// two tools that search the past is the choice the collapse removed.
-		tools = append(tools, om...)
+		wc.tools = append(wc.tools, om...)
 		for _, td := range om {
-			toolNames = append(toolNames, td.Tool.Name)
+			wc.toolNames = append(wc.toolNames, td.Tool.Name)
 		}
 	}
 	// request_build — the COMPLEMENT of Fleet's live Builder dispatch. A Fleet
@@ -346,20 +396,26 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 	// it one: queue the build as an approval the user sees, and on approve Builder
 	// authors it OwnedBy this agent. Owner-run conversational turn only, and not
 	// Builder itself (Builder authors directly).
-	if forOrchestrator && ownerRun && !t.agent.Fleet && !isBuilderAgent(t.agent.ID) {
+	if forOrchestrator && wc.ownerRun && !t.agent.Fleet && !isBuilderAgent(t.agent.ID) {
 		rb := requestBuildTool(sess, t.user, t.agent.ID, t.agent.Name)
-		tools = append(tools, rb)
-		toolNames = append(toolNames, rb.Tool.Name)
+		wc.tools = append(wc.tools, rb)
+		wc.toolNames = append(wc.toolNames, rb.Tool.Name)
 	}
+}
+
+func (wc *workerCatalog) reachTools() {
+	t := wc.t
+	sess := wc.sess
+	forOrchestrator := wc.forOrchestrator
 	// Channel-scoped chat tools — ANY agent that has channels gets list_chats /
 	// read_chat over ITS channels (a whole-service binding widens to the global
 	// view). Gated on having channels, independent of Fleet; conversational turn
 	// only, like the Fleet block.
 	if forOrchestrator {
 		if chTools := channelChatTools(sess, t.user, t.agent.ID); len(chTools) > 0 {
-			tools = append(tools, chTools...)
+			wc.tools = append(wc.tools, chTools...)
 			for _, td := range chTools {
-				toolNames = append(toolNames, td.Tool.Name)
+				wc.toolNames = append(wc.toolNames, td.Tool.Name)
 			}
 		}
 		// (cortex deliverables — file_deliverable / note_to_cortex — now come from
@@ -376,10 +432,10 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 		// tools), and the tool-curation UI never lists these names, so an
 		// allowlist agent could not have named them anyway.
 		if appTools := AgentProvidedTools(sess, t.user, t.agent.ID); len(appTools) > 0 {
-			before := len(tools)
-			tools = mergeToolsDedup(tools, appTools)
-			for _, td := range tools[before:] {
-				toolNames = append(toolNames, td.Tool.Name)
+			before := len(wc.tools)
+			wc.tools = mergeToolsDedup(wc.tools, appTools)
+			for _, td := range wc.tools[before:] {
+				wc.toolNames = append(wc.toolNames, td.Tool.Name)
 			}
 		}
 	}
@@ -393,13 +449,18 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 	if t.agent.InheritParentTools && t.agent.OwnedBy != "" {
 		if parent, ok := loadAgent(t.udb, t.agent.OwnedBy); ok && parent.OwnedBy == "" {
 			inherited := t.inheritableParentTools(parent, sess)
-			before := len(tools)
-			tools = mergeToolsDedup(tools, inherited)
-			for _, td := range tools[before:] {
-				toolNames = append(toolNames, td.Tool.Name)
+			before := len(wc.tools)
+			wc.tools = mergeToolsDedup(wc.tools, inherited)
+			for _, td := range wc.tools[before:] {
+				wc.toolNames = append(wc.toolNames, td.Tool.Name)
 			}
 		}
 	}
+}
+
+func (wc *workerCatalog) finishCatalog() {
+	t := wc.t
+	sess := wc.sess
 	// (Skill-granted tools are NOT resolved here anymore. Activation is
 	// per-turn: t.skillsActive is empty when this static catalog is built
 	// at turn start. A skill's tools are surfaced by the per-round
@@ -415,27 +476,17 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 	// offline at call time the tool's wrapper still returns a clean "open your
 	// desktop" error. Keyed off the chat user so seed agents (Chat) get the
 	// surface for whoever is chatting at the desktop.
-	have := map[string]bool{}
-	for _, n := range toolNames {
-		have[n] = true
+	wc.have = map[string]bool{}
+	for _, n := range wc.toolNames {
+		wc.have[n] = true
 	}
-	// Only OPEN-POOL agents (empty AllowedTools — the general Chat/seed
-	// assistants) receive the desktop's local surface. A CURATED agent with an
-	// explicit allowlist (a Guide Author, a techwriter, any app agent) scoped
-	// itself to a specific toolset and never opted into local-filesystem /
-	// screenshot / contacts access — appending it silently let those ambient
-	// tools SHADOW the agent's purpose-built ones (a Guide Author rummaging the
-	// local disk instead of dispatching investigate_<system> to servitor). The
-	// allowlist is the opt-in signal: no list ⇒ open pool ⇒ desktop surface; an
-	// explicit list ⇒ exactly those tools, nothing ambient.
-	var fromClient []AgentToolDef
 	if t.fromDesktopClient && len(t.agent.AllowedTools) == 0 {
 		for _, lt := range LocalToolsForUser(t.user) {
-			if have[lt.Name()] {
+			if wc.have[lt.Name()] {
 				continue
 			}
-			fromClient = append(fromClient, ChatToolToAgentToolDef(lt))
-			toolNames = append(toolNames, lt.Name())
+			wc.fromClient = append(wc.fromClient, ChatToolToAgentToolDef(lt))
+			wc.toolNames = append(wc.toolNames, lt.Name())
 		}
 	}
 	// NOTE: do NOT wrapToolsForActivity here. The client-bridge tools are
@@ -450,10 +501,10 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 	// description of one. Nil unless this agent may already dispatch Builder,
 	// so it grants no new reach.
 	if h := handToBuilderTool(t); h != nil {
-		tools = append(tools, *h)
-		toolNames = append(toolNames, h.Tool.Name)
+		wc.tools = append(wc.tools, *h)
+		wc.toolNames = append(wc.toolNames, h.Tool.Name)
 	}
-	tools = append(tools, fromClient...)
+	wc.tools = append(wc.tools, wc.fromClient...)
 	// Dedupe by tool name at the single exit.
 	//
 	// The catalog is assembled by appending several independent sets — the
@@ -470,19 +521,18 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 	// one, so the noise pointed every reader at the wrong thing. Dedupe
 	// here, with the same first-wins rule, and the loop's warning goes back
 	// to meaning what it says.
-	tools, toolNames = dedupeToolsByName(tools, toolNames)
+	wc.tools, wc.toolNames = dedupeToolsByName(wc.tools, wc.toolNames)
 	// Tell the session what actually resolved, so a tool's OUTPUT can name
 	// only tools the caller really has. fetch_url's binary-response message
 	// used to hardcode "use read_file/run_local", both servitor-only: a
 	// research pipeline stage that downloaded a PDF was handed a recovery
 	// path that did not exist for it, and re-fetched the same 4MB file
 	// instead. Single exit, so every caller gets this.
-	sess.SetAvailableTools(toolNames)
+	sess.SetAvailableTools(wc.toolNames)
 	// Sub-actions this agent may not call. Set beside the tool names because
 	// both answer "what can this caller actually do", and a caller that has
 	// the tool but not one of its actions is the case a name list cannot say.
 	sess.SetWithheldActions(t.withheldToolActions())
-	return tools, toolNames, nil
 }
 
 // dedupeToolsByName keeps the FIRST definition of each tool name, matching
