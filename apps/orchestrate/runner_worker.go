@@ -22,12 +22,14 @@ import (
 // Each tool call the worker makes surfaces as an activity row in the
 // AgentLoopPanel pane so the user can see what the agent is doing
 // live, without waiting for the step to finish.
+//
+// The step's state is workerStep and each phase is a method on it. A phase
+// that ends the step early returns false, and what it handed back is parked
+// by exit for this method to return through the named results the deferred
+// summary reads.
 func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string, notes []injectionNote) (stepOut string, stepErr error) {
-	// Per-step telemetry — same instrumentation as the orchestrator's
-	// runPlan. Each worker step gets its own round budget and its own
-	// telem; the summary log fires when the step exits.
-	telem := newTurnTelemetry()
-	stamp := newBuildStamper(t.chatSessionID())
+	ws := &workerStep{t: t, prior: prior, cur: cur, userMsg: userMsg, notes: notes}
+	ws.startTelemetry()
 	defer func() {
 		softCap := resolveMaxWorkerRounds(t.agent)
 		hardCap := softCap
@@ -36,20 +38,94 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 				hardCap = ec
 			}
 		}
-		exitReason := classifyWorkerExit(stepErr, telem.rounds, softCap, len(stepOut))
+		exitReason := classifyWorkerExit(stepErr, ws.telem.rounds, softCap, len(stepOut))
 		label := fmt.Sprintf("orchestrate.worker step=%d", cur.ID)
-		Log("%s", telem.summary(label, softCap, hardCap, exitReason)+" agent="+t.agent.ID)
-		if line := telem.toolCallSummary(label); line != "" {
+		Log("%s", ws.telem.summary(label, softCap, hardCap, exitReason)+" agent="+t.agent.ID)
+		if line := ws.telem.toolCallSummary(label); line != "" {
 			Log("%s", line)
 		}
 		// Churn is a user-visible outcome, not just a log line — route it
 		// to the ⚠ trail so the person who saw the turn go wrong can see
 		// WHY without reading server logs.
-		if kind, detail, ok := telem.churnDiag(); ok {
+		if kind, detail, ok := ws.telem.churnDiag(); ok {
 			t.turnDiag(kind, detail)
 		}
 	}()
+	ws.openSession()
+	// Persist any managed-workspace switch this step performs so the
+	// next step's fresh session shares the same workspace (a script
+	// written here is then runnable from the following step).
+	defer t.captureActiveWorkspace(ws.sess)
+	if !ws.resolveTools() {
+		return ws.ret, ws.retErr
+	}
+	ws.addFrameworkTools()
+	ws.narrowForTurn()
+	ws.buildPrompt()
+	if !ws.runLoop() {
+		return ws.ret, ws.retErr
+	}
+	ws.finish()
+	return ws.ret, ws.retErr
+}
 
+// workerStep is one plan step run by the worker, from its tool surface to
+// the output the plan block shows. Each field is a local or parameter of the
+// method it was cut from; runWorkerStep is now the order of the phases and
+// the defers between them.
+type workerStep struct {
+	t               *chatTurn
+	prior           []PlanStep
+	cur             PlanStep
+	userMsg         string
+	notes           []injectionNote
+	telem           *turnTelemetry
+	stamp           *buildStamper
+	sess            *ToolSession
+	tools           []AgentToolDef
+	toolNames       []string
+	err             error
+	staticTempTools []AgentToolDef
+	ctxBlock        strings.Builder
+	stepUser        string
+	// Stream the worker's content into nothing visible — the runner
+	// emits the final step output via the plan block in the chat
+	// pane. Capturing chunks here gives a non-empty fallback when
+	// the LLM responds in reasoning-only.
+	fullOut       strings.Builder
+	workerLabel   string
+	brief         string
+	sysPrompt     string
+	stopKeepalive func()
+	f             bool
+	softCap       int
+	hardCap       int
+	roundsUsed    int
+	resp          *Response
+	out           string
+	// ret and retErr are what the step hands back, parked by exit.
+	ret    string
+	retErr error
+}
+
+// exit records what an early return hands back and tells the driver to take
+// it.
+func (ws *workerStep) exit(out string, err error) bool {
+	ws.ret, ws.retErr = out, err
+	return false
+}
+
+func (ws *workerStep) startTelemetry() {
+	t := ws.t
+	// Per-step telemetry — same instrumentation as the orchestrator's
+	// runPlan. Each worker step gets its own round budget and its own
+	// telem; the summary log fires when the step exits.
+	ws.telem = newTurnTelemetry()
+	ws.stamp = newBuildStamper(t.chatSessionID())
+}
+
+func (ws *workerStep) openSession() {
+	t := ws.t
 	// Reset the active-bubble id at each worker-step boundary so the
 	// first tool call of THIS step materializes its own card under
 	// the just-emitted intent block, instead of attaching to the
@@ -59,12 +135,12 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 
 	// Build the worker's per-call session — same helper the
 	// orchestrator uses, so persistent temp tools land on both paths.
-	sess := t.newToolSession()
-	// Persist any managed-workspace switch this step performs so the
-	// next step's fresh session shares the same workspace (a script
-	// written here is then runnable from the following step).
-	defer t.captureActiveWorkspace(sess)
+	ws.sess = t.newToolSession()
+}
 
+func (ws *workerStep) resolveTools() bool {
+	t := ws.t
+	cur := ws.cur
 	// forOrchestrator=false — this is the per-step worker running one
 	// plan_set step. The Builder branch returns builderWorkerResearchTools
 	// (raw call_<credential> for endpoint probing + the full authoring
@@ -73,18 +149,18 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 	// (call tool_def themselves and return confirmation) or return
 	// components for Builder to assemble. The framework doesn't dictate;
 	// Builder's brief decides which shape the worker takes.
-	tools, toolNames, err := t.resolveWorkerTools(sess, false)
-	if err != nil {
-		return "", fmt.Errorf("resolve tools: %w", err)
+	ws.tools, ws.toolNames, ws.err = t.resolveWorkerTools(ws.sess, false)
+	if ws.err != nil {
+		return ws.exit("", fmt.Errorf("resolve tools: %w", ws.err))
 	}
 	// The agent's attached sources (file stores, systems, doc spaces) and
 	// pipelines, which the lead's round offers directly and a step never got:
 	// a step asked to search a store had no search_<store>, and a lead that
 	// plans (runner_lead_plans.go) has no other way to reach them.
-	for _, td := range append(t.buildAttachedSourceToolDefs(sess), t.buildAttachedPipelineToolDefs()...) {
-		if !slices.Contains(toolNames, td.Tool.Name) {
-			tools = append(tools, td)
-			toolNames = append(toolNames, td.Tool.Name)
+	for _, td := range append(t.buildAttachedSourceToolDefs(ws.sess), t.buildAttachedPipelineToolDefs()...) {
+		if !slices.Contains(ws.toolNames, td.Tool.Name) {
+			ws.tools = append(ws.tools, td)
+			ws.toolNames = append(ws.toolNames, td.Tool.Name)
 		}
 	}
 	// Orchestrator-curated per-step tool surface — when the plan
@@ -101,33 +177,38 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 		for _, n := range cur.Tools {
 			want[strings.TrimSpace(n)] = true
 		}
-		keptTools := tools[:0]
-		keptNames := toolNames[:0]
-		for i, t := range tools {
+		keptTools := ws.tools[:0]
+		keptNames := ws.toolNames[:0]
+		for i, t := range ws.tools {
 			if want[t.Tool.Name] {
 				keptTools = append(keptTools, t)
-				if i < len(toolNames) {
-					keptNames = append(keptNames, toolNames[i])
+				if i < len(ws.toolNames) {
+					keptNames = append(keptNames, ws.toolNames[i])
 				}
 			}
 		}
 		Log("[orchestrate.worker] step %d (%q): orchestrator picked %d tools → %d resolved",
 			cur.ID, cur.Title, len(cur.Tools), len(keptTools))
-		tools = keptTools
-		toolNames = keptNames
+		ws.tools = keptTools
+		ws.toolNames = keptNames
 	}
 	// Builder's coder (code_app) writes an app, so it gets app_def; no other
 	// step does.
 	if cur.appCoder && isBuilderAgent(t.agent.ID) {
 		for _, td := range t.authoringPrimitiveToolDefs() {
-			if td.Tool.Name == "app_def" && !slices.Contains(toolNames, td.Tool.Name) {
-				tools = append(tools, td)
-				toolNames = append(toolNames, td.Tool.Name)
+			if td.Tool.Name == "app_def" && !slices.Contains(ws.toolNames, td.Tool.Name) {
+				ws.tools = append(ws.tools, td)
+				ws.toolNames = append(ws.toolNames, td.Tool.Name)
 			}
 		}
 	}
-	tools, toolNames = filterToolAuthoringWithoutFocus(tools, toolNames, t.session)
-	t.gateAgentCRUDTools(tools)
+	ws.tools, ws.toolNames = filterToolAuthoringWithoutFocus(ws.tools, ws.toolNames, t.session)
+	t.gateAgentCRUDTools(ws.tools)
+	return true
+}
+
+func (ws *workerStep) addFrameworkTools() {
+	t := ws.t
 	// Three layers, each gated by its own helper — same split as
 	// the orchestrator catalog in runPlan. Workers are the ones
 	// actually researching, so they get write access to the Inferred
@@ -144,24 +225,24 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 	// two separate branches, which is the second copy of a decision that
 	// now lives in one place.
 	for _, td := range t.corpusToolDefs() {
-		tools = append(tools, td)
-		toolNames = append(toolNames, td.Tool.Name)
+		ws.tools = append(ws.tools, td)
+		ws.toolNames = append(ws.toolNames, td.Tool.Name)
 	}
 	for _, td := range t.skillToolDefs() {
-		tools = append(tools, td)
-		toolNames = append(toolNames, td.Tool.Name)
+		ws.tools = append(ws.tools, td)
+		ws.toolNames = append(ws.toolNames, td.Tool.Name)
 	}
 	// (dispatch_to_worker temporarily unmounted on the worker step
 	// too — same reason as the orchestrator catalog: discoverability
 	// problem, not a wiring problem.)
 	if !t.explicitOff() {
-		tools = append(tools, t.linkEntitiesToolDef(), t.recallAboutToolDef(), t.forgetGraphToolDef())
+		ws.tools = append(ws.tools, t.linkEntitiesToolDef(), t.recallAboutToolDef(), t.forgetGraphToolDef())
 	}
 	// Working notes (rewritable running-state block) — its own opt-in layer,
 	// independent of the Explicit/Reference memory toggles.
 	if t.agent.EnableNotes {
-		tools = append(tools, t.updateNotesToolDef())
-		toolNames = append(toolNames, "update_notes")
+		ws.tools = append(ws.tools, t.updateNotesToolDef())
+		ws.toolNames = append(ws.toolNames, "update_notes")
 	}
 	// create_pipeline_tool intentionally NOT added — add_tool with
 	// mode="pipeline" is the single pipeline-authoring surface.
@@ -173,16 +254,16 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 	// …when there is something to dispatch TO. A worker step that can reach
 	// nothing gets no delegation surface; see agentsToolWanted.
 	if t.agentsToolWanted() {
-		tools = append(tools, t.agentsGroupedToolDef(true))
+		ws.tools = append(ws.tools, t.agentsGroupedToolDef(true))
 	}
 	if !t.agent.Fleet {
 		// Fleet agents schedule through schedule(when="every"), not the generic
 		// per-session recurring scheduler — see runPlan's note.
-		tools = append(tools, t.recurringToolDef())
+		ws.tools = append(ws.tools, t.recurringToolDef())
 	}
-	tools = append(tools, t.openSessionToolDef())
+	ws.tools = append(ws.tools, t.openSessionToolDef())
 	if t.agent.AllowExplorer {
-		tools = append(tools, t.enterExplorerModeToolDef())
+		ws.tools = append(ws.tools, t.enterExplorerModeToolDef())
 	}
 	// Include persistent temp tools in the static set so the group
 	// rewriter (called below) can collapse them when they're members
@@ -191,15 +272,20 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 	// visible at the top level even when grouped — the LLM then sees
 	// both the toolbox AND the individual temp tools and picks
 	// non-deterministically. Matches the runPlan fix.
-	staticTempTools := temptool.BuildAgentToolDefs(sess)
-	tools = append(tools, staticTempTools...)
+	ws.staticTempTools = temptool.BuildAgentToolDefs(ws.sess)
+	ws.tools = append(ws.tools, ws.staticTempTools...)
 	if t.staticTempToolNames == nil {
 		t.staticTempToolNames = map[string]bool{}
 	}
-	for _, td := range staticTempTools {
-		toolNames = append(toolNames, td.Tool.Name)
+	for _, td := range ws.staticTempTools {
+		ws.toolNames = append(ws.toolNames, td.Tool.Name)
 		t.staticTempToolNames[td.Tool.Name] = true
 	}
+}
+
+func (ws *workerStep) narrowForTurn() {
+	t := ws.t
+	cur := ws.cur
 	// Private-mode backstop for worker-step catalog — same pattern as
 	// runPlan. Drops any AgentToolDef that declares CapNetwork in its
 	// Tool.Caps (the `agents` grouped tool, any temp/source-hook tool
@@ -207,11 +293,11 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 	// orchestrator turn could plan a step, then the worker step gets
 	// `agents` + dispatch its way to a network-capable sub-agent.
 	if t.privateMode {
-		filtered := tools[:0]
-		filteredNames := toolNames[:0]
+		filtered := ws.tools[:0]
+		filteredNames := ws.toolNames[:0]
 		nameSet := map[string]bool{}
 		dropped := []string{}
-		for _, td := range tools {
+		for _, td := range ws.tools {
 			hasNet := false
 			for _, c := range td.Tool.Caps {
 				if c == CapNetwork {
@@ -226,13 +312,13 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 			filtered = append(filtered, td)
 			nameSet[td.Tool.Name] = true
 		}
-		for _, n := range toolNames {
+		for _, n := range ws.toolNames {
 			if nameSet[n] {
 				filteredNames = append(filteredNames, n)
 			}
 		}
-		tools = filtered
-		toolNames = filteredNames
+		ws.tools = filtered
+		ws.toolNames = filteredNames
 		if len(dropped) > 0 {
 			Log("[orchestrate.tools] step %d private mode dropped %d network-capable tool(s): %v",
 				cur.ID, len(dropped), dropped)
@@ -243,44 +329,47 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 	// read when a tool is missing, and a name list that disagrees with the
 	// catalog is worse than no list.
 	if withheld := t.guardrailWithheldTools(); len(withheld) > 0 {
-		tools = t.applyGuardrailToolWithholding(tools)
-		kept := toolNames[:0]
-		for _, n := range toolNames {
+		ws.tools = t.applyGuardrailToolWithholding(ws.tools)
+		kept := ws.toolNames[:0]
+		for _, n := range ws.toolNames {
 			if _, gone := withheld[n]; !gone {
 				kept = append(kept, n)
 			}
 		}
-		toolNames = kept
+		ws.toolNames = kept
 	}
 	Log("[orchestrate.tools] step %d resolved %d tools: %v",
-		cur.ID, len(tools), toolNames)
+		cur.ID, len(ws.tools), ws.toolNames)
+}
 
-	var ctxBlock strings.Builder
+func (ws *workerStep) stream(chunk string) {
+	ws.fullOut.WriteString(chunk)
+}
+
+func (ws *workerStep) buildPrompt() {
+	t := ws.t
+	prior := ws.prior
+	cur := ws.cur
+	userMsg := ws.userMsg
+	notes := ws.notes
 	if priorTurn := t.priorAssistantContext(); priorTurn != "" {
-		ctxBlock.WriteString(priorTurn)
+		ws.ctxBlock.WriteString(priorTurn)
 	}
 	if len(prior) > 0 {
-		ctxBlock.WriteString("## Earlier steps in this plan\n\n")
+		ws.ctxBlock.WriteString("## Earlier steps in this plan\n\n")
 		for _, p := range prior {
-			fmt.Fprintf(&ctxBlock, "### Step %d: %s\n%s\n\n", p.ID, p.Title, strings.TrimSpace(p.Output))
+			fmt.Fprintf(&ws.ctxBlock, "### Step %d: %s\n%s\n\n", p.ID, p.Title, strings.TrimSpace(p.Output))
 		}
 	}
-	stepUser := fmt.Sprintf(
+	ws.stepUser = fmt.Sprintf(
 		"## Original user request\n%s\n\n%s%s%s## Your task (step %d)\n%s",
 		userMsg,
 		notesContextBlock(notes),
 		t.toolLogPromptSection(),
-		ctxBlock.String(),
+		ws.ctxBlock.String(),
 		cur.ID,
 		cur.Title,
 	)
-
-	// Stream the worker's content into nothing visible — the runner
-	// emits the final step output via the plan block in the chat
-	// pane. Capturing chunks here gives a non-empty fallback when
-	// the LLM responds in reasoning-only.
-	var fullOut strings.Builder
-	stream := func(chunk string) { fullOut.WriteString(chunk) }
 
 	// Tag every tool call this worker makes with a "↳ [worker: <Title>]"
 	// nesting prefix so the user can tell at a glance which calls are
@@ -289,14 +378,14 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 	// Builder's own chips and the conversation reads as if Builder
 	// authored them inline — defeating the whole conductor metaphor.
 	// Mirrors the agents(run) sub-dispatch nesting ("↳ [TargetName] …").
-	workerLabel := strings.TrimSpace(cur.Title)
-	if workerLabel == "" {
-		workerLabel = "step"
+	ws.workerLabel = strings.TrimSpace(cur.Title)
+	if ws.workerLabel == "" {
+		ws.workerLabel = "step"
 	}
-	if len(workerLabel) > 32 {
-		workerLabel = workerLabel[:32] + "…"
+	if len(ws.workerLabel) > 32 {
+		ws.workerLabel = ws.workerLabel[:32] + "…"
 	}
-	t.wrapToolsForActivity(sess, tools, t.agent, "↳ [worker: "+workerLabel+"] ")
+	t.wrapToolsForActivity(ws.sess, ws.tools, t.agent, "↳ [worker: "+ws.workerLabel+"] ")
 
 	// Collapse admin-curated tool groups. Workers may have a totally
 	// different tool surface than the orchestrator (each step
@@ -317,21 +406,21 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 	//   3. The framework-side tool-use directive when tools are
 	//      present, so the worker prefers tool calls over fabricating
 	//      from training for time-sensitive or specific information.
-	brief := strings.TrimSpace(cur.WorkerBrief)
-	if brief == "" {
-		brief = fmt.Sprintf(
+	ws.brief = strings.TrimSpace(cur.WorkerBrief)
+	if ws.brief == "" {
+		ws.brief = fmt.Sprintf(
 			"Execute this step: %s. %s\n\nBe direct, factual, no preamble.",
 			cur.Title,
 			strings.TrimSpace(cur.Intent),
 		)
 	}
-	sysPrompt := prependAgentContext(t.gatedPersona(brief), t.agent, t.facts(), t.operatingNotes())
-	if len(tools) > 0 {
-		sysPrompt += "\n\n" + buildToolUseDirective(tools)
+	ws.sysPrompt = prependAgentContext(t.gatedPersona(ws.brief), t.agent, t.facts(), t.operatingNotes())
+	if len(ws.tools) > 0 {
+		ws.sysPrompt += "\n\n" + buildToolUseDirective(ws.tools)
 	}
-	sysPrompt += noWebAccessNotice(tools)
-	if frag := RenderToolPromptFragments(tools); frag != "" {
-		sysPrompt += "\n\n" + frag
+	ws.sysPrompt += noWebAccessNotice(ws.tools)
+	if frag := RenderToolPromptFragments(ws.tools); frag != "" {
+		ws.sysPrompt += "\n\n" + frag
 	}
 	// Universal authoring directives for Builder-spawned workers.
 	// Workers don't see Builder's OrchestratorPrompt (only the brief
@@ -345,56 +434,60 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 		// builderWorkerDirectives is appended after prependAgentContext and this
 		// worker path skips appendAgentCapabilityBlocks, so run the mode-aware
 		// rewrite here too (the directives name store_fact in prose).
-		sysPrompt += "\n\n" + rewriteMemoryToolNames(builderWorkerDirectives)
-		sysPrompt += sandboxPythonNoteSection()
+		ws.sysPrompt += "\n\n" + rewriteMemoryToolNames(builderWorkerDirectives)
+		ws.sysPrompt += sandboxPythonNoteSection()
 	}
+}
 
-	stopKeepalive := startKeepalive(t.sse)
-	f := false
+func (ws *workerStep) runLoop() bool {
+	t := ws.t
+	cur := ws.cur
+	ws.stopKeepalive = startKeepalive(t.sse)
+	ws.f = false
 	// Builder's coder thinks: it is writing a whole app from a design, the
 	// one step whose quality comes from working it out first (Qwen built a
 	// designed app one-shot mostly by thinking). Its budget is the agent's,
 	// as any step's is.
 	if cur.appCoder {
-		f = true
+		ws.f = true
 	}
 	// Reset explorer state per worker step so a step starts at the
 	// soft cap; the LLM must opt back into explorer mode if it
 	// still needs more rounds.
 	t.explorerMode = false
 	t.explorerReason = ""
-	softCap := resolveMaxWorkerRounds(t.agent)
-	hardCap := softCap
-	if t.agent.AllowExplorer && softCap < explorerHardCap {
-		hardCap = explorerHardCap
+	ws.softCap = resolveMaxWorkerRounds(t.agent)
+	ws.hardCap = ws.softCap
+	if t.agent.AllowExplorer && ws.softCap < explorerHardCap {
+		ws.hardCap = explorerHardCap
 	}
-	roundsUsed := 0
+	ws.roundsUsed = 0
 	// The step's own composition. The plan round is not the turn: a turn runs
 	// one plan call and a call per step, each re-sending the whole catalog, and
 	// the usage report totals ALL of them — so a 43k prompt and a 212k turn are
 	// the same turn seen from two ends. Without this line the difference has to
 	// be inferred, and it was: the 212k read as one enormous prompt for days.
-	logPromptComposition(fmt.Sprintf("step %d", cur.ID), t.chatSessionID(), sysPrompt, tools,
-		[]Message{{Role: "user", Content: stepUser}})
-	resp, _, err := t.app.RunAgentLoop(t.ctx, []Message{{Role: "user", Content: stepUser}}, AgentLoopConfig{
+	logPromptComposition(fmt.Sprintf("step %d", cur.ID), t.chatSessionID(), ws.sysPrompt, ws.tools,
+		[]Message{{Role: "user", Content: ws.stepUser}})
+	ws.resp, _, ws.err = t.app.RunAgentLoop(t.ctx, []Message{{Role: "user", Content: ws.stepUser}}, AgentLoopConfig{
 		SendGuardKey:         sendGuardKey,
-		SystemPrompt:         sysPrompt,
-		Tools:                tools,
-		DynamicTools:         t.dynamicNewTempTools(sess),
+		SystemPrompt:         ws.sysPrompt,
+		Tools:                ws.tools,
+		DynamicTools:         t.dynamicNewTempTools(ws.sess),
 		ToolFallbackResolver: t.lazyToolFallback,
-		MaxRounds:            hardCap,
+		MaxRounds:            ws.hardCap,
 		ThinkBudget:          t.agent.ThinkBudget, // per-agent override; 0 = inherit route/global
 		Effort:               t.agent.Effort,      // per-agent level; a budget above wins
 		ActionQuotas:         t.agent.ActionQuotas,
 		BudgetKey:            t.agent.ID,
 		DailySpendUSD:        t.agent.DailySpendUSD,
 		SharedBudgets:        familyBudgets(t.agent),
-		Stream:               stream,
+		Stream:               ws.stream,
 		OnResponse:           t.thinkResponse, // the footer totals every call of the turn
 		// Same turn-scoped notes the orchestrator round gets. A worker step is
 		// where the work usually actually runs, so leaving them out would hand the
 		// context to the layer that plans and withhold it from the one that acts.
-		TurnNotes: func(user string) string { return turnNotes(sess, t.udb, t.chatSessionID(), user) },
+		TurnNotes: func(user string) string { return turnNotes(ws.sess, t.udb, t.chatSessionID(), user) },
 		// Last look before the reply goes out: is it true about what this turn
 		// actually did? Backstops the phrase-list guards on the shapes they don't
 		// know. See turn_judge.go.
@@ -418,9 +511,9 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 		// model call. See grounding_judge.go.
 		TurnGroundingJudge: t.app.turnGroundingJudge(t.ctx),
 		UncheckedClaims:    t.uncheckedClaims(t.facts()),
-		DeliveredCount:     func() int { return len(sess.Images) + len(sess.Videos) + len(sess.Files) },
-		Backgrounded:       func() bool { return sess.Detach.Any() },
-		BackgroundEstimate: func() string { return sess.Detach.EstimateText() },
+		DeliveredCount:     func() int { return len(ws.sess.Images) + len(ws.sess.Videos) + len(ws.sess.Files) },
+		Backgrounded:       func() bool { return ws.sess.Detach.Any() },
+		BackgroundEstimate: func() string { return ws.sess.Detach.EstimateText() },
 		// Worker-step corrections breadcrumb into the same session trail as
 		// the orchestrator loop — a silent re-prompt during a plan step is
 		// still a framework decision the user should be able to see.
@@ -432,26 +525,26 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 		// OnStep feeds telemetry — rounds, tool calls, dup-args
 		// fingerprints. Summary log fires from the deferred block at
 		// the top of runWorkerStep.
-		OnStep: func(info StepInfo) { telem.record(info); stamp.step(info) },
+		OnStep: func(info StepInfo) { ws.telem.record(info); ws.stamp.step(info) },
 		// The step's prompt clauses, for the build ledger's stamps.
-		OnPromptDigest: stamp.digest,
+		OnPromptDigest: ws.stamp.digest,
 		// Soft-cap enforcement for explorer-mode agents: pass hardCap
 		// as MaxRounds upfront, then stop early at softCap UNLESS the
 		// LLM has flipped explorerMode via enter_explorer_mode. For
 		// non-explorer agents softCap == hardCap so StopRound never
 		// fires until both are exhausted.
 		StopRound: func() bool {
-			roundsUsed++
+			ws.roundsUsed++
 			if t.explorerMode {
 				return false
 			}
-			return roundsUsed > softCap
+			return ws.roundsUsed > ws.softCap
 		},
 		// Escalation policy hook (confirm.go) — same policy as the
 		// orchestrator loop: flagged-credential calls park on the
 		// in-chat approval card; everything else auto-approves (no
 		// stdin fallback — gohort runs as a service).
-		Confirm:             t.confirmFuncFor(sess),
+		Confirm:             t.confirmFuncFor(ws.sess),
 		ConfirmRefusal:      t.confirmRefusal,
 		AskFirst:            t.asksFirst, // the owner's ask marks reach every tool (ask_first.go)
 		GuardrailCheck:      t.guardrailEnforcer().Check,
@@ -472,22 +565,27 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 		// architecture.)
 		ChatOptions: []ChatOption{
 			WithRouteKey("app.orchestrate.worker"),
-			WithThink(f),
+			WithThink(ws.f),
 		},
 	})
-	stopKeepalive()
+	ws.stopKeepalive()
 	// A step can close the whole turn too: stay_silent inside a step means the
 	// same thing it means anywhere else, and the driver checks this before the
 	// next step runs.
-	if sess != nil && sess.Silenced {
+	if ws.sess != nil && ws.sess.Silenced {
 		t.turnClosed = true
 	}
-	if err != nil {
-		return "", err
+	if ws.err != nil {
+		return ws.exit("", ws.err)
 	}
-	out := fullOut.String()
-	if out == "" && resp != nil {
-		out = resp.Content
+	return true
+}
+
+func (ws *workerStep) finish() bool {
+	t := ws.t
+	ws.out = ws.fullOut.String()
+	if ws.out == "" && ws.resp != nil {
+		ws.out = ws.resp.Content
 	}
 	// Defensive markup strip — models sometimes emit prompt-style
 	// <tool_call><function=...>...</function></tool_call> markup IN
@@ -496,10 +594,10 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 	// call and strips its markup from history, but a parse failure
 	// or extra unparsed blocks leak markup into the step output.
 	// Always sweep before returning so the user never sees raw XML.
-	out = StripToolCallMarkup(out)
-	out = strings.TrimSpace(out)
-	if out == "" {
-		out = "(no output)"
+	ws.out = StripToolCallMarkup(ws.out)
+	ws.out = strings.TrimSpace(ws.out)
+	if ws.out == "" {
+		ws.out = "(no output)"
 	}
 	// Finalize the per-step bubble (if a tool created one via
 	// ensureBubbleForTool) so it sheds the streaming class and any
@@ -509,7 +607,7 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 		t.sse.Send(map[string]any{"kind": "message_done", "id": id})
 		t.setCurrentMsgID("")
 	}
-	return out, nil
+	return ws.exit(ws.out, nil)
 }
 
 // runSynthesis has the orchestrator compose the final user-facing
