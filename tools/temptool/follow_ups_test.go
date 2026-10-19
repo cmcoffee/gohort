@@ -62,3 +62,35 @@ func TestAnActionDeclaresTheStepsItsReplyAsksFor(t *testing.T) {
 		t.Error("an action that declares nothing was given a step")
 	}
 }
+
+// The every-action form: one named step that the reply to any action may ask
+// for, and nothing else, so a feed can at most get the agent to try that one.
+func TestEveryActionsReplyMayAskForTheOneNamedStep(t *testing.T) {
+	sess := &ToolSession{Username: "alice"}
+	bad := postingToolbox(nil)
+	bad["follow_ups_from_any"] = []any{"nowhere"}
+	if _, err := createGrouped(bad, sess); err == nil || !strings.Contains(err.Error(), "not an action of this toolbox") {
+		t.Errorf("an every-action step that is not an action should be refused: %v", err)
+	}
+	args := postingToolbox(nil)
+	args["follow_ups_from_any"] = []any{"verify_post"}
+	if _, err := createGrouped(args, sess); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := updateGrouped(map[string]any{"name": "social", "actions": []any{map[string]any{"name": "get_feed", "description": "The feed."}}}, sess); err != nil {
+		t.Fatal(err)
+	}
+	tt := sess.LookupTempTool("social")
+	if !slices.Equal(tt.FollowUpsFromAny, []string{"verify_post"}) {
+		t.Fatalf("the every-action step did not survive an update: %v", tt.FollowUpsFromAny)
+	}
+	def := agentToolFromTemp(sess, tt)
+	for _, from := range []string{"create_post", "get_feed"} {
+		if got := def.Tool.FollowUps[from]; !slices.Equal(got, []string{"verify_post"}) {
+			t.Errorf("%s's reply may ask for verify_post and nothing else: %v", from, got)
+		}
+	}
+	if got, ok := def.Tool.FollowUps["verify_post"]; ok {
+		t.Errorf("verify_post was made a step of itself: %v", got)
+	}
+}

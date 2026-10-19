@@ -2679,12 +2679,13 @@ func toolSecurityJS() string {
     }
     load();
   }
-  // Replies may ask for: a toolbox action's declared next steps, the
-  // service's own protocol (tool_security.go, toolStepsSection). The pairs
-  // already declared, each removable, and one row to add another.
+  // Replies may ask for: a toolbox's declared next steps, the service's own
+  // protocol (tool_security.go, toolStepsSection). Pick the step, then tick
+  // which actions' replies may ask for it, Every action first.
   function steps(body){
     var host = document.createElement('div');
     body.appendChild(host);
+    var current = '';
     function post(payload){
       return fetch('api/tool-access?' + qs + '&section=steps', {
         method: 'POST', headers: {'Content-Type':'application/json'},
@@ -2694,52 +2695,55 @@ func toolSecurityJS() string {
       });
     }
     function fail(e){ window.uiAlert && window.uiAlert('Could not change it: ' + (e && e.message || e)); load(); }
-    function select(names){
-      var s = document.createElement('select');
-      s.className = 'ui-input';
-      names.forEach(function(n){ var o = document.createElement('option'); o.value = n; o.textContent = n; s.appendChild(o); });
-      return s;
-    }
     function render(d){
       host.innerHTML = '';
       var actions = (d && d.actions) || [];
       var list = (d && d.steps) || [];
-      if (!list.length) {
-        var none = document.createElement('div');
-        none.style.cssText = 'color:var(--text-mute);font-size:var(--fs-sm, 0.85rem);margin:0.2rem 0';
-        none.textContent = 'None declared.';
-        host.appendChild(none);
+      if (actions.length < 2) {
+        host.textContent = 'This tool has one action, so there is no other step for a reply to ask for.';
+        return;
       }
-      list.forEach(function(st){
-        var row = document.createElement('div');
-        row.style.cssText = 'display:flex;align-items:center;gap:0.5rem;margin:0.2rem 0;flex-wrap:wrap';
-        var label = document.createElement('span');
-        label.textContent = 'Replies to ' + st.action + ' may ask for ' + st.follow;
-        var rm = document.createElement('button');
-        rm.type = 'button'; rm.className = 'ui-row-btn'; rm.textContent = 'Remove';
-        rm.addEventListener('click', function(){ post({action: st.action, follow: st.follow, on: false}).then(load, fail); });
-        row.appendChild(label);
-        row.appendChild(rm);
+      var asks = {};
+      list.forEach(function(st){ (asks[st.follow] = asks[st.follow] || {})[st.action] = true; });
+      if (!current || actions.indexOf(current) < 0) {
+        current = actions.filter(function(n){ return asks[n]; })[0] || actions[0];
+      }
+      var pick = document.createElement('div');
+      pick.style.cssText = 'display:flex;align-items:center;gap:0.5rem;margin:0.2rem 0 0.4rem;flex-wrap:wrap';
+      var sel = document.createElement('select');
+      sel.className = 'ui-input';
+      actions.forEach(function(n){
+        var o = document.createElement('option');
+        o.value = n;
+        var count = Object.keys(asks[n] || {}).length;
+        o.textContent = count ? n + ' (' + (asks[n]['*'] ? 'every action' : count) + ')' : n;
+        sel.appendChild(o);
+      });
+      sel.value = current;
+      sel.addEventListener('change', function(){ current = sel.value; render(d); });
+      pick.appendChild(document.createTextNode('Step'));
+      pick.appendChild(sel);
+      host.appendChild(pick);
+      var lead = document.createElement('div');
+      lead.style.cssText = 'color:var(--text-mute);font-size:var(--fs-sm, 0.85rem);margin:0.1rem 0 0.25rem';
+      lead.textContent = 'May be asked for by the reply to:';
+      host.appendChild(lead);
+      var from = asks[current] || {};
+      [['*', 'Every action']].concat(actions.filter(function(n){ return n !== current; }).map(function(n){ return [n, n]; })).forEach(function(o){
+        var row = document.createElement('label');
+        row.style.cssText = 'display:flex;align-items:center;gap:0.5rem;margin:0.15rem 0;cursor:pointer' + (o[0] === '*' ? '' : ';margin-left:1.2rem');
+        var c = document.createElement('input');
+        c.type = 'checkbox';
+        c.checked = !!from[o[0]] || (o[0] !== '*' && !!from['*']);
+        c.disabled = o[0] !== '*' && !!from['*'];
+        c.addEventListener('change', function(){ post({action: o[0], follow: current, on: c.checked}).then(load, fail); });
+        row.appendChild(c);
+        row.appendChild(document.createTextNode(o[1]));
         host.appendChild(row);
       });
-      if (actions.length > 1) {
-        var add = document.createElement('div');
-        add.style.cssText = 'display:flex;align-items:center;gap:0.5rem;margin:0.4rem 0;flex-wrap:wrap';
-        var from = select(actions), to = select(actions);
-        to.value = actions[1];
-        var btn = document.createElement('button');
-        btn.type = 'button'; btn.className = 'ui-row-btn'; btn.textContent = 'Add';
-        btn.addEventListener('click', function(){ post({action: from.value, follow: to.value, on: true}).then(load, fail); });
-        add.appendChild(document.createTextNode('Replies to'));
-        add.appendChild(from);
-        add.appendChild(document.createTextNode('may ask for'));
-        add.appendChild(to);
-        add.appendChild(btn);
-        host.appendChild(add);
-      }
       if (d && d.note) {
         var note = document.createElement('div');
-        note.style.cssText = 'color:var(--text-mute);font-size:var(--fs-sm, 0.85rem);margin-top:0.35rem';
+        note.style.cssText = 'color:var(--text-mute);font-size:var(--fs-sm, 0.85rem);margin-top:0.45rem';
         note.textContent = d.note;
         host.appendChild(note);
       }

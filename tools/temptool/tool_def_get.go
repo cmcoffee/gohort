@@ -383,6 +383,9 @@ func tempToolToCreateArgs(tt TempTool) map[string]any {
 		if tt.Expand {
 			out["expand"] = true
 		}
+		if len(tt.FollowUpsFromAny) > 0 {
+			out["follow_ups_from_any"] = tt.FollowUpsFromAny
+		}
 	case TempToolModePipeline:
 		// Round-tripped like the other modes. Without this case an update
 		// rebuilt a pipeline tool with no prompt, steps or inner tools, and

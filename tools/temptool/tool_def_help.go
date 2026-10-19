@@ -898,8 +898,11 @@ A flagged reply to create_post that asks for verify_post (by name or
 by its endpoint path) is then the service's protocol, not an attack.
 Only that action's replies count, and only actions of the same
 toolbox, so declare it only for a step the provider's docs or a live
-reply show the service itself asks for. The owner sees and edits these
-in the tool's Security panel ("Replies may ask for").
+reply show the service itself asks for. When the service asks for the
+same step after many of its actions (a verification challenge on posts and
+comments alike), follow_ups_from_any=["verify_post"] on the toolbox lets
+any of its replies ask for that one step and nothing else. The owner sees
+and edits both in the tool's Security panel ("Replies may ask for").
 
 ================================================================
 verify: action="test" (DO THIS BEFORE YOU CALL A TOOL DONE)

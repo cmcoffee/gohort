@@ -453,7 +453,8 @@ func toolWhoRemembered(db Database, user, name string) []string {
 // reply to that action asks the agent for, such as a post the service answers
 // with a verification challenge to send back. The injection check reads such
 // a reply as that step, not an attack. GET the actions and the declared
-// steps; POST {action, follow, on} to declare or drop one.
+// steps; POST {action, follow, on} to declare or drop one, with action "*"
+// for the reply to every action (TempTool.FollowUpsFromAny).
 //
 // The owner's say, as data on the tool: not free text for the check to
 // weigh, which an attacker's post could argue past, but a pair of this tool's
@@ -472,6 +473,9 @@ func toolStepsSection(w http.ResponseWriter, r *http.Request, db Database, user,
 		}
 		actions := []string{}
 		steps := []step{}
+		for _, f := range tool.FollowUpsFromAny {
+			steps = append(steps, step{"*", f})
+		}
 		for _, a := range tool.Actions {
 			actions = append(actions, a.Name)
 			for _, f := range a.FollowUps {
@@ -482,7 +486,8 @@ func toolStepsSection(w http.ResponseWriter, r *http.Request, db Database, user,
 		writeJSON(w, map[string]any{"actions": actions, "steps": steps,
 			"note": "A step the service asks for in its own reply, such as a post it answers with a verification challenge to send back. " +
 				"When a reply to the first action asks for the second, the injection check treats it as the service's next step rather than an attack. " +
-				"Only that action's replies count, and only actions of this tool, so text in anything else it reads, a feed or another account's post, never does."})
+				"Pick the step, then which actions' replies may ask for it. Only those replies count, and only this tool's own actions can be asked for, so text in anything else the agent reads never does. " +
+				"Every action includes what it reads, a feed or a search, where other accounts write: that is safe because only the step you picked is allowed, never anything else."})
 	case http.MethodPost:
 		var body struct {
 			Action string `json:"action"`
@@ -509,11 +514,19 @@ func toolStepsSection(w http.ResponseWriter, r *http.Request, db Database, user,
 }
 
 // setFollowUp declares (on) or drops a follow-up of one action of tool,
-// held to another action of the same toolbox.
+// held to another action of the same toolbox. action "*" is the reply to
+// every action (TempTool.FollowUpsFromAny).
 func setFollowUp(tool TempTool, action, follow string, on bool) (TempTool, error) {
 	has := map[string]bool{}
 	for _, a := range tool.Actions {
 		has[a.Name] = true
+	}
+	if action == "*" {
+		if !has[follow] {
+			return tool, Error("no action " + follow + " on this tool")
+		}
+		tool.FollowUpsFromAny = toggled(tool.FollowUpsFromAny, follow, on)
+		return tool, nil
 	}
 	switch {
 	case !has[action]:
@@ -528,21 +541,23 @@ func setFollowUp(tool TempTool, action, follow string, on bool) (TempTool, error
 		if a.Name != action {
 			continue
 		}
-		kept := []string{}
-		for _, f := range a.FollowUps {
-			if f != follow {
-				kept = append(kept, f)
-			}
-		}
-		if on {
-			kept = append(kept, follow)
-		}
-		if len(kept) == 0 {
-			kept = nil
-		}
-		tool.Actions[i].FollowUps = kept
+		tool.Actions[i].FollowUps = toggled(a.FollowUps, follow, on)
 	}
 	return tool, nil
+}
+
+// toggled is list with name in it (on) or out of it, nil when empty.
+func toggled(list []string, name string, on bool) []string {
+	var kept []string
+	for _, f := range list {
+		if f != name {
+			kept = append(kept, f)
+		}
+	}
+	if on {
+		kept = append(kept, name)
+	}
+	return kept
 }
 
 // ownedToolbox finds one of the user's toolboxes, in their pool or kept on

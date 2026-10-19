@@ -126,7 +126,7 @@ func BuildToolDef() *GroupedTool {
 					Properties: map[string]ToolParam{
 						"name":             {Type: "string", Description: "Sub-action name, unique within the toolbox."},
 						"description":      {Type: "string", Description: "What this sub-action does, in one sentence (cap 250 chars). The toolbox pays for this line once per action, on every turn."},
-						"follow_ups":       {Type: "array", Items: &ToolParam{Type: "string"}, Description: "(optional) Other actions of THIS toolbox that this action's reply asks you to call as the service's own next step, e.g. create_post: [\"verify_post\"] when the service answers a post with a verification challenge to send back. A reply asking for one of these is not treated as an injection. Only for the service's own protocol."},
+						"follow_ups":       {Type: "array", Items: &ToolParam{Type: "string"}, Description: "(optional) Actions of this toolbox this action's reply may ask you to call next (a verification step). See action=\"help\"."},
 						"url_template":     {Type: "string", Description: "(HTTP action) Endpoint URL with {param} placeholders. Use {param:encoded} when a nested path must arrive as ONE percent-encoded segment (GitLab files, and any API that takes a path as an id). Give this OR command_template."},
 						"command_template": {Type: "string", Description: "(local action) Command line with {param} placeholders, shell-quoted at dispatch and run in the sandbox exactly as a shell-mode tool is. Give this OR url_template. The HTTP-only fields (method, body_template, content_type, headers) do not apply."},
 						"method":           {Type: "string", Description: "HTTP method. Default GET."},
@@ -144,7 +144,8 @@ func BuildToolDef() *GroupedTool {
 					// action fail schema validation before it was read.
 					Required: []string{"name"},
 				}},
-			"expand": {Type: "boolean", Description: "(toolbox) Surface each action as its own top-level <toolbox>_<action> tool instead of one collapsed tool. See action=\"help\"."},
+			"expand":              {Type: "boolean", Description: "(toolbox) Surface each action as its own top-level <toolbox>_<action> tool instead of one collapsed tool. See action=\"help\"."},
+			"follow_ups_from_any": {Type: "array", Items: &ToolParam{Type: "string"}, Description: "(toolbox, optional) Actions any reply of this toolbox may ask for next. See action=\"help\"."},
 		},
 		// description is checked by the handler rather than here, so a toolbox
 		// that has descriptions only inside its actions can be told why those
@@ -263,6 +264,8 @@ func BuildToolDef() *GroupedTool {
 			"test_args":         {Type: "object", Description: "(optional) Sample {param: value} to run the edited tool with once, as action=\"test\" would; the result is added to this reply. On a toolbox, include action: the endpoint to run. An edit is untested until something runs it."},
 			"cases":             {Type: "array", Items: &ToolParam{Type: "object"}, Description: "(optional) Test cases to run the edited tool with, as action=\"test\" takes them: [{action?: \"<toolbox action>\", args: {param: value}}]. The result is added to this reply."},
 			"timeout_sec":       {Type: "integer", Description: "(api/toolbox/shell, optional) Seconds, up to 300: one request of an api/toolbox tool, or a hard ceiling on the whole run of a shell tool (which otherwise moves to the background when slow and stops only when silent). Omit to keep the current value."},
+
+			"follow_ups_from_any": {Type: "array", Items: &ToolParam{Type: "string"}, Description: "(toolbox) Actions any reply may ask for next."},
 		},
 		Required:     []string{"name"},
 		Caps:         nil,

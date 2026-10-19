@@ -311,6 +311,13 @@ type TempTool struct {
 	// a broken action fixes/quarantines as one named tool instead of an
 	// opaque bundle. Ignored for non-toolbox modes.
 	Expand bool `json:"expand,omitempty"`
+	// FollowUpsFromAny (toolbox mode only) names the actions the reply to ANY
+	// of this toolbox's actions may ask for as the service's own next step:
+	// TempToolAction.FollowUps for every action at once, ones added later
+	// included. Broad in where the ask may come from and narrow in what it may
+	// be: verify_post may be asked for by any reply, and nothing else is, so a
+	// feed post can at most get the agent to try that one step.
+	FollowUpsFromAny []string `json:"follow_ups_from_any,omitempty"`
 	// Recipe is a declarative manifest of files that get deployed
 	// into a fresh sandbox dir on every dispatch. Replaces the older
 	// tar.gz-snapshot model: the recipe is human-readable, diffable,

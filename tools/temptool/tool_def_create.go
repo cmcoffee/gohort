@@ -535,7 +535,7 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 			FollowUps:       followUpNames(m["follow_ups"]),
 		})
 	}
-	if err := validateFollowUps(actions); err != nil {
+	if err := validateFollowUps(actions, followUpNames(args["follow_ups_from_any"])); err != nil {
 		return "", err
 	}
 	for _, r := range shared.required {
@@ -555,8 +555,10 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 		Credential:  credential,
 		Actions:     actions,
 		Expand:      BoolArg(args, "expand"),
-		Category:    strings.TrimSpace(StringArg(args, "category")),
-		TimeoutSec:  timeoutSecArg(args),
+		// What any of its replies may ask for.
+		FollowUpsFromAny: followUpNames(args["follow_ups_from_any"]),
+		Category:         strings.TrimSpace(StringArg(args, "category")),
+		TimeoutSec:       timeoutSecArg(args),
 	}
 	sess.RemoveTempTool(tool.Name)
 	if err := sess.AppendTempTool(tool); err != nil {
@@ -968,11 +970,17 @@ func followUpNames(v any) []string {
 // validateFollowUps holds each action's follow_ups to the other actions of the
 // same toolbox (TempToolAction.FollowUps): a follow-up is another call on the
 // same service, so a name that is not one of them cannot be what the
-// service's reply asks for, and an action is not its own follow-up.
-func validateFollowUps(actions []TempToolAction) error {
+// service's reply asks for, and an action is not its own follow-up. fromAny is
+// the toolbox's follow_ups_from_any, held to the same actions.
+func validateFollowUps(actions []TempToolAction, fromAny []string) error {
 	names := map[string]bool{}
 	for _, a := range actions {
 		names[a.Name] = true
+	}
+	for _, f := range fromAny {
+		if !names[f] {
+			return fmt.Errorf("follow_ups_from_any names %q, which is not an action of this toolbox. It lists the actions of this toolbox that any of its replies may ask for", f)
+		}
 	}
 	for i, a := range actions {
 		for _, f := range a.FollowUps {

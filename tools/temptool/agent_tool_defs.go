@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"time"
 
@@ -807,8 +808,8 @@ func toolCategory(sess *ToolSession, tt *TempTool) string {
 
 // toolboxFollowUps is, for each action that declares follow-ups, the enabled
 // actions its reply may ask for, and the endpoint path of every enabled
-// action, for the injection scan (Tool.FollowUps). Both nil when no action
-// declares one.
+// action, for the injection scan (Tool.FollowUps), FollowUpsFromAny on top
+// of each action's own. Both nil when nothing is declared.
 func toolboxFollowUps(tt *TempTool) (map[string][]string, map[string]string) {
 	paths := map[string]string{}
 	for _, a := range tt.Actions {
@@ -821,8 +822,8 @@ func toolboxFollowUps(tt *TempTool) (map[string][]string, map[string]string) {
 		if a.Disabled {
 			continue
 		}
-		for _, f := range a.FollowUps {
-			if _, ok := paths[f]; ok && f != a.Name {
+		for _, f := range append(append([]string(nil), a.FollowUps...), tt.FollowUpsFromAny...) {
+			if _, ok := paths[f]; ok && f != a.Name && !slices.Contains(steps[a.Name], f) {
 				if steps == nil {
 					steps = map[string][]string{}
 				}

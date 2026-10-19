@@ -62,4 +62,26 @@ func TestTheOwnerDeclaresAToolboxsNextSteps(t *testing.T) {
 	if code, _ := set("create_post", "verify_post", false); code != 204 || stored() != nil {
 		t.Errorf("removing the step left %v", stored())
 	}
+
+	// The reply to every action at once, for one step.
+	if code, _ := set("*", "verify_post", true); code != 204 {
+		t.Fatalf("declaring the step for every action answered %d", code)
+	}
+	if row, _ := UserToolByName(AuthDB(), "alice", "social"); !slices.Equal(row.Tool.FollowUpsFromAny, []string{"verify_post"}) {
+		t.Fatalf("the every-action step was not stored: %v", row.Tool.FollowUpsFromAny)
+	}
+	w = httptest.NewRecorder()
+	app.handleUserToolAccess(w, req("GET", "/api/tool-access?section=steps&name=social"))
+	if !strings.Contains(w.Body.String(), `{"action":"*","follow":"verify_post"}`) {
+		t.Errorf("the panel does not read the every-action step back: %s", w.Body.String())
+	}
+	if code, _ := set("*", "elsewhere", true); code != 400 {
+		t.Errorf("an every-action step that is not an action of the tool should be refused: %d", code)
+	}
+	if code, _ := set("*", "verify_post", false); code != 204 {
+		t.Errorf("dropping the every-action step answered %d", code)
+	}
+	if row, _ := UserToolByName(AuthDB(), "alice", "social"); row.Tool.FollowUpsFromAny != nil {
+		t.Errorf("dropping the every-action step left %v", row.Tool.FollowUpsFromAny)
+	}
 }
