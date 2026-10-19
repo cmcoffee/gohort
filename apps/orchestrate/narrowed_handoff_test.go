@@ -44,13 +44,16 @@ func queuedFor(agent string) []Authorization {
 }
 
 func TestANarrowedAgentsFirstHandoffFromAChannelWaitsForTheOwner(t *testing.T) {
+	// Its own thread: a finished task's wake coalesces per session id across
+	// the process, so a shared id hands this wake to another test's window.
+	room := "room-" + UUIDv4()
 	df, scout := narrowedFixture(t,
 		FakeTurn{ToolCalls: []ToolCall{{ID: "c1", Name: "agents", Args: map[string]any{"action": "run", "agent": "Scout", "message": "make the song"}}}},
 		FakeTurn{Content: "It is waiting on your approval.", Repeat: true})
-	df.run(AgentSyncRun{Kind: "channel", SubSessionID: "room-1", Message: "have Scout make the song", MessageSender: "u", SenderIsOwner: true})
+	df.run(AgentSyncRun{Kind: "channel", SubSessionID: room, Message: "have Scout make the song", MessageSender: "u", SenderIsOwner: true})
 
 	q := queuedFor("Scout")
-	if len(q) != 1 || q[0].FromSession != "room-1" || q[0].Brief != "make the song" {
+	if len(q) != 1 || q[0].FromSession != room || q[0].Brief != "make the song" {
 		t.Fatalf("the handoff should wait on the Requests tab with where it came from: %+v", q)
 	}
 	told := false
@@ -71,7 +74,7 @@ func TestANarrowedAgentsFirstHandoffFromAChannelWaitsForTheOwner(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "/api/console/approvals/always?id="+q[0].ID, nil)
 	r.AddCookie(&http.Cookie{Name: "gohort_session", Value: AuthCreateSession(AuthDB(), "u")})
 	w := httptest.NewRecorder()
-	before := len(df.thread("room-1").Messages)
+	before := len(df.thread(room).Messages)
 	df.app.resolveApproval(w, r, true)
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("approve answered %d %s", w.Code, w.Body.String())
@@ -79,10 +82,10 @@ func TestANarrowedAgentsFirstHandoffFromAChannelWaitsForTheOwner(t *testing.T) {
 	// Approving runs the handoff in the background and wakes the chat with
 	// its result. Wait for that, or it lands in whichever test runs next.
 	deadline := time.Now().Add(10 * time.Second)
-	for len(df.thread("room-1").Messages) <= before && time.Now().Before(deadline) {
+	for len(df.thread(room).Messages) <= before && time.Now().Before(deadline) {
 		time.Sleep(50 * time.Millisecond)
 	}
-	if len(df.thread("room-1").Messages) <= before {
+	if len(df.thread(room).Messages) <= before {
 		t.Error("the approved handoff's result never came back to the chat that asked")
 	}
 	turn := &chatTurn{app: df.app, user: "u", udb: df.udb, agent: df.agent}

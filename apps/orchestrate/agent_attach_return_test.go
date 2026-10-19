@@ -87,6 +87,9 @@ func TestASongADelegateMadeComesBackToTheAgentThatAsked(t *testing.T) {
 // An approved request's run brings its song back to the conversation that
 // asked, with the result, rather than the result alone.
 func TestAnApprovedRequestsSongReachesTheConversationThatAsked(t *testing.T) {
+	// Its own thread: a finished task's wake coalesces per session id across
+	// the process, so a shared id hands this wake to another test's window.
+	room := "room-" + UUIDv4()
 	SetWorkspacesDir(t.TempDir())
 	t.Cleanup(func() { SetWorkspacesDir("") })
 	df := newDispatchFixture(t,
@@ -101,11 +104,11 @@ func TestAnApprovedRequestsSongReachesTheConversationThatAsked(t *testing.T) {
 	t.Cleanup(func() { RootDB = prevRoot })
 	registerStandingRunner(df.app)
 	t.Cleanup(func() { RegisterStandingRunner(nil); RegisterStandingReporter(nil) })
-	saveChatSession(df.udb, ChatSession{ID: "room-1", AgentID: df.agent.ID, Title: "Room"})
+	saveChatSession(df.udb, ChatSession{ID: room, AgentID: df.agent.ID, Title: "Room"})
 
-	df.app.runApprovedDelegation(Authorization{Owner: "u", Agent: "Scout", Brief: "make the song", FromAgent: df.agent.ID, FromSession: "room-1"}, "Scout")
+	df.app.runApprovedDelegation(Authorization{Owner: "u", Agent: "Scout", Brief: "make the song", FromAgent: df.agent.ID, FromSession: room}, "Scout")
 
-	s := df.thread("room-1")
+	s := df.thread(room)
 	carried := false
 	for _, m := range s.Messages {
 		if m.Role == "assistant" && len(m.Files)+len(m.Attachments) > 0 {
