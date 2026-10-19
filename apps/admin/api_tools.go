@@ -52,6 +52,76 @@ func (a *AdminApp) handlePersistentTools(w http.ResponseWriter, r *http.Request)
 // listPersistentTools answers GET: every user's tools by where they live,
 // or one tool's access list for the picker.
 func (a *AdminApp) listPersistentTools(w http.ResponseWriter, r *http.Request, username string) {
+	ov := &toolsOverview{a: a, w: w, r: r, username: username}
+	if !ov.answerPicker() {
+		return
+	}
+	ov.pools()
+	ov.scoped()
+	ov.orphans()
+	ov.write()
+}
+
+// pendingWithOwner is a tool waiting for approval, with whose it is.
+type pendingWithOwner struct {
+	Owner string `json:"owner"`
+	PendingTempTool
+}
+
+// activeWithOwner is a pool tool with whose it is and what it lacks.
+type activeWithOwner struct {
+	Owner      string   `json:"owner"`
+	Missing    []string `json:"missing,omitempty"`
+	HasMissing bool     `json:"has_missing"`
+	PersistentTempTool
+}
+
+// bundledAgent is one agent a scoped tool is on.
+type bundledAgent struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// One row per (owner, tool): a tool scoped to several agents is listed
+// ONCE with all of them, not duplicated per agent. Agent is the
+// comma-joined names for the column; Agents is the structured list.
+type bundledWithOwner struct {
+	Owner      string         `json:"owner"`
+	Agent      string         `json:"agent"`
+	Agents     []bundledAgent `json:"agents"`
+	Missing    []string       `json:"missing,omitempty"`
+	HasMissing bool           `json:"has_missing"`
+	Tool       TempTool       `json:"tool"`
+}
+
+// orphanWithOwner is an orphaned tool with whose it is.
+type orphanWithOwner struct {
+	Owner string `json:"owner"`
+	OrphanedTempTool
+	Missing    []string `json:"missing,omitempty"`
+	HasMissing bool     `json:"has_missing"`
+}
+
+// toolsOverview is one GET of Admin › Tools: every user's tools by where
+// they live (the pending queue, the shared pool, the tools scoped to agents,
+// the orphans), or a single tool's access list for the picker. Each field is
+// a local of listPersistentTools, which is now the order of the phases.
+type toolsOverview struct {
+	a        *AdminApp
+	w        http.ResponseWriter
+	r        *http.Request
+	username string
+	pending  []pendingWithOwner
+	active   []activeWithOwner
+	bundled  []bundledWithOwner
+	orphaned []orphanWithOwner
+}
+
+func (ov *toolsOverview) answerPicker() bool {
+	a := ov.a
+	w := ov.w
+	r := ov.r
+	username := ov.username
 	// Single-tool adopt-ACL fetch for the ACLPicker: ?allowed_users=<name>&owner=<u>
 	// returns just {allowed_users:[...]} for that tool (the picker reads the
 	// array and posts it back via action=set_allowed_users).
@@ -72,8 +142,28 @@ func (a *AdminApp) listPersistentTools(w http.ResponseWriter, r *http.Request, u
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{"allowed_users": allowed})
-		return
+		return false
 	}
+	return true
+}
+
+// Flag a tool whose credential dependency doesn't resolve, for a
+// row badge. Cheap (a registry lookup); no-auth / credential-less
+// tools return nil.
+func toolMissingDeps(t TempTool) []string {
+	cred := strings.TrimSpace(t.Credential)
+	if cred == "" || strings.EqualFold(cred, "no_auth") {
+		return nil
+	}
+	if exists, _, _ := Secure().CredentialStatus(cred); !exists {
+		return []string{"credential:" + cred}
+	}
+	return nil
+}
+
+func (ov *toolsOverview) pools() {
+	a := ov.a
+	username := ov.username
 	// Persistent + pending pools are stored per-user at the
 	// kvlite layer, but admins see the whole deployment —
 	// the tool-groups registry walks all users; this page
@@ -83,31 +173,6 @@ func (a *AdminApp) listPersistentTools(w http.ResponseWriter, r *http.Request, u
 	if store == nil {
 		store = a.db
 	}
-	// Flag a tool whose credential dependency doesn't resolve, for a
-	// row badge. Cheap (a registry lookup); no-auth / credential-less
-	// tools return nil.
-	toolMissingDeps := func(t TempTool) []string {
-		cred := strings.TrimSpace(t.Credential)
-		if cred == "" || strings.EqualFold(cred, "no_auth") {
-			return nil
-		}
-		if exists, _, _ := Secure().CredentialStatus(cred); !exists {
-			return []string{"credential:" + cred}
-		}
-		return nil
-	}
-	type pendingWithOwner struct {
-		Owner string `json:"owner"`
-		PendingTempTool
-	}
-	type activeWithOwner struct {
-		Owner      string   `json:"owner"`
-		Missing    []string `json:"missing,omitempty"`
-		HasMissing bool     `json:"has_missing"`
-		PersistentTempTool
-	}
-	var pending []pendingWithOwner
-	var active []activeWithOwner
 	if store != nil {
 		// Pending pool keys live in a separate table; load
 		// both per-user pools then merge with owner attribution.
@@ -118,14 +183,14 @@ func (a *AdminApp) listPersistentTools(w http.ResponseWriter, r *http.Request, u
 			}
 			seen[u] = true
 			for _, p := range LoadPendingTempTools(a.db, u) {
-				pending = append(pending, pendingWithOwner{Owner: u, PendingTempTool: p})
+				ov.pending = append(ov.pending, pendingWithOwner{Owner: u, PendingTempTool: p})
 			}
 			// Shared rows only — agent-scoped rows in the same unified
 			// store render in the "bundled" section below, not as
 			// user-wide pool tools.
 			for _, p := range SharedUserTools(a.db, u) {
 				m := toolMissingDeps(p.Tool)
-				active = append(active, activeWithOwner{Owner: u, Missing: m, HasMissing: len(m) > 0, PersistentTempTool: p})
+				ov.active = append(ov.active, activeWithOwner{Owner: u, Missing: m, HasMissing: len(m) > 0, PersistentTempTool: p})
 			}
 		}
 		// Walk both tables — usernames may exist in one and not
@@ -141,31 +206,19 @@ func (a *AdminApp) listPersistentTools(w http.ResponseWriter, r *http.Request, u
 		// instead of erroring on a fresh deployment).
 		addUser(username)
 	} else {
-		pending = nil
-		active = nil
+		ov.pending = nil
+		ov.active = nil
 	}
-	// Agent-bundled tools — rows in each user's unified tool store
-	// whose ScopeAgents restricts them to specific agents (the
-	// flattened replacement for the old embedded AgentRecord.Tools
-	// copies). Read-only here: they're removed via Builder, not the
-	// admin. Surface each with its carrying agents so nothing is
-	// invisible in the DB.
-	type bundledAgent struct {
-		ID   string `json:"id"`
-		Name string `json:"name"`
-	}
-	// One row per (owner, tool): a tool scoped to several agents is listed
-	// ONCE with all of them, not duplicated per agent. Agent is the
-	// comma-joined names for the column; Agents is the structured list.
-	type bundledWithOwner struct {
-		Owner      string         `json:"owner"`
-		Agent      string         `json:"agent"`
-		Agents     []bundledAgent `json:"agents"`
-		Missing    []string       `json:"missing,omitempty"`
-		HasMissing bool           `json:"has_missing"`
-		Tool       TempTool       `json:"tool"`
-	}
-	var bundled []bundledWithOwner
+}
+
+// Agent-bundled tools — rows in each user's unified tool store
+// whose ScopeAgents restricts them to specific agents (the
+// flattened replacement for the old embedded AgentRecord.Tools
+// copies). Read-only here: they're removed via Builder, not the
+// admin. Surface each with its carrying agents so nothing is
+// invisible in the DB.
+func (ov *toolsOverview) scoped() {
+	a := ov.a
 	// One unified store per user: a tool is either shared (listed under
 	// "active" above) or scoped, so the old global-supersedes-scoped
 	// duplicate handling is gone by construction. Each scoped row is
@@ -221,38 +274,39 @@ func (a *AdminApp) listPersistentTools(w http.ResponseWriter, r *http.Request, u
 			}
 			m := toolMissingDeps(p.Tool)
 			entry.Missing, entry.HasMissing = m, len(m) > 0
-			bundled = append(bundled, entry)
+			ov.bundled = append(ov.bundled, entry)
 		}
 	}
 	// Comma-join each row's agent names for the display column.
-	for i := range bundled {
-		names := make([]string, 0, len(bundled[i].Agents))
-		for _, ag := range bundled[i].Agents {
+	for i := range ov.bundled {
+		names := make([]string, 0, len(ov.bundled[i].Agents))
+		for _, ag := range ov.bundled[i].Agents {
 			names = append(names, ag.Name)
 		}
-		bundled[i].Agent = strings.Join(names, ", ")
+		ov.bundled[i].Agent = strings.Join(names, ", ")
 	}
-	// Orphaned tools — formerly agent-scoped, captured when their
-	// owning agent was deleted. Walk every user's orphan pool.
-	type orphanWithOwner struct {
-		Owner string `json:"owner"`
-		OrphanedTempTool
-		Missing    []string `json:"missing,omitempty"`
-		HasMissing bool     `json:"has_missing"`
-	}
-	var orphaned []orphanWithOwner
+}
+
+// Orphaned tools — formerly agent-scoped, captured when their
+// owning agent was deleted. Walk every user's orphan pool.
+func (ov *toolsOverview) orphans() {
+	a := ov.a
 	for _, u := range AuthListUsers(a.db) {
 		for _, o := range LoadOrphanedTempTools(a.db, u.Username) {
 			m := toolMissingDeps(o.Tool)
-			orphaned = append(orphaned, orphanWithOwner{Owner: u.Username, OrphanedTempTool: o, Missing: m, HasMissing: len(m) > 0})
+			ov.orphaned = append(ov.orphaned, orphanWithOwner{Owner: u.Username, OrphanedTempTool: o, Missing: m, HasMissing: len(m) > 0})
 		}
 	}
+}
+
+func (ov *toolsOverview) write() {
+	w := ov.w
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"pending":  pending,
-		"active":   active,
-		"bundled":  bundled,
-		"orphaned": orphaned,
+		"pending":  ov.pending,
+		"active":   ov.active,
+		"bundled":  ov.bundled,
+		"orphaned": ov.orphaned,
 	})
 }
 
