@@ -644,6 +644,23 @@ func isReplyToActiveInbound(sess *ToolSession, recip string) bool {
 	return sess != nil && sess.ReplyAuthorizedKey != "" && recip != "" && recip == sess.ReplyAuthorizedKey
 }
 
+// replyInThread makes a message to the conversation this turn is answering
+// the turn's reply: held, with what it carries, and sent once when the turn
+// ends (ToolSession.HoldInThreadReply). Sent at once, it went out and then the
+// turn's own reply followed it, two messages saying the same thing. Both doors
+// a turn can write to its own conversation through come here: send_message
+// and message_contact.
+func replyInThread(sess *ToolSession, label, text string, images, videos []string) string {
+	sess.HoldInThreadReply(text)
+	for _, b := range images {
+		sess.AppendImage(b)
+	}
+	for _, b := range videos {
+		sess.AppendVideo(b)
+	}
+	return fmt.Sprintf("That is your reply to %s: it goes out, with what it carries, as the one message this turn sends when you finish. End the turn now and do not repeat it.", label)
+}
+
 // resolveCheckAgent maps a user-supplied poll-monitor checker reference to a
 // real agent id. Tries: exact id, then case-insensitive display-name match,
 // then falls back to the creating channel agent (always valid). This prevents

@@ -35,6 +35,7 @@ type ToolSession struct {
 	imageRefsFrozen   []string           // what image#1, image#2 … meant when this round's tool calls were written; index i is the stable ref for image#(i+1), "" where the picture has no stable id. Positional refs in tool arguments resolve against THIS, not the live ring. See SnapshotImageRefs.
 	Silenced          bool               // set true by the stay_silent tool — caller suppresses the LLM's text reply but still flushes attachments
 	SilencedReason    string             // why stay_silent was called, in the model's words: shown to the owner on the turn's card, never sent
+	inThreadReply     []string           // what send_message addressed to the conversation this turn is answering: held and sent as the turn's reply, so it goes out once. See HoldInThreadReply.
 	availableTools    map[string]bool    // names that actually resolved for this caller; see SetAvailableTools/HasTool. nil = unknown, which callers must treat as "name no tools"
 	LLM               LLM                // optional LLM made available to tools that need sub-calls
 	LeadLLM           LLM                // optional lead/judge LLM for tools that want a higher-tier reasoner (delegate orchestrator); falls back to LLM when nil

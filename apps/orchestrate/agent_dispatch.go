@@ -2621,6 +2621,17 @@ func (cr *continuingRun) shapeReply() {
 			cr.cleanReply += "\n\n" + note
 		}
 	}
+	// What send_message addressed to this conversation is the reply (see
+	// HoldInThreadReply): the turn's own closing words would have gone out as a
+	// second message after it. They are kept on the trail rather than sent, so
+	// a closing line that said something new is not lost from sight.
+	if held := cr.subSess.TakeInThreadReply(); held != "" {
+		if own := cr.cleanReply; own != "" && own != held {
+			appendSessionDiag(cr.runtimeDB, cr.target.ID, cr.subSessionID, "in-thread-reply",
+				"This turn replied with send_message, so its closing text was not sent as a second message: "+truncateObs(own, 300))
+		}
+		cr.cleanReply = held
+	}
 	// Round-cap fallback: the loop ran out of its budget without producing any
 	// text (and even the loop's forced-final-answer rescue came up empty). Don't
 	// hand the caller (channel reply, MCP client, inline dispatch) an empty

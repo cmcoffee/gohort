@@ -422,12 +422,10 @@ func channelChatTools(sess *ToolSession, owner, agentID string, via ...string) [
 					return fmt.Sprintf("Messaging %s is blocked in the user's permission settings: not sent.", label), nil
 				}
 				// Replying to the conversation that just messaged us is in-thread,
-				// not a proactive reach-out — deliver without the approval queue.
+				// not a proactive reach-out, so no approval queue; and it is the
+				// turn's reply rather than a message beside it (replyInThread).
 				if isReplyToActiveInbound(sess, recip) {
-					if _, err := operatorDeliverMedia(owner, agentID, chatID, handle, text, images, videos); err != nil {
-						return "", err
-					}
-					return fmt.Sprintf("Sent to %s (replying in-thread).", label), nil
+					return replyInThread(sess, label, text, images, videos), nil
 				}
 				// A standing approval is the owner's say-so for the owner's own
 				// asks, not for someone else's (standingGrantApplies).

@@ -331,3 +331,29 @@ func (s *ToolSession) NextImageAttempt(refine bool) (attempt, total int) {
 	}
 	return s.imgGenAttempts, s.imgGenTotal
 }
+
+// HoldInThreadReply keeps a message addressed to the conversation this turn is
+// answering, to go out as the turn's reply rather than beside it. Sent at once,
+// it reached the conversation and then the turn's own reply followed it: two
+// messages saying the same thing. Several holds in one turn are kept in order.
+func (s *ToolSession) HoldInThreadReply(text string) {
+	if s == nil || strings.TrimSpace(text) == "" {
+		return
+	}
+	s.mu.Lock()
+	s.inThreadReply = append(s.inThreadReply, strings.TrimSpace(text))
+	s.mu.Unlock()
+}
+
+// TakeInThreadReply returns what HoldInThreadReply kept, joined, and clears it.
+// "" when the turn addressed nothing to its own conversation.
+func (s *ToolSession) TakeInThreadReply() string {
+	if s == nil {
+		return ""
+	}
+	s.mu.Lock()
+	held := s.inThreadReply
+	s.inThreadReply = nil
+	s.mu.Unlock()
+	return strings.Join(held, "\n\n")
+}

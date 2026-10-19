@@ -61,12 +61,10 @@ func messageContactToolDef(sess *ToolSession, owner, agentID, controllerAgentID 
 				return fmt.Sprintf("Messaging %s is blocked in the user's permission settings: not sent.", label), nil
 			}
 			// Replying to the conversation that just messaged us is in-thread,
-			// not a proactive reach-out — deliver without the approval queue.
+			// not a proactive reach-out, so no approval queue; and it is the
+			// turn's reply rather than a message beside it (replyInThread).
 			if isReplyToActiveInbound(sess, recip) {
-				if _, err := operatorDeliverMedia(owner, agentID, rec.ChatID, rec.Handle, text, images, videos); err != nil {
-					return "", err
-				}
-				return fmt.Sprintf("Sent to %s (replying in-thread).", label), nil
+				return replyInThread(sess, label, text, images, videos), nil
 			}
 			// Pre-authorized recipient: send immediately, skip the queue,
 			// unless someone else's request is reaching past where they wrote.
