@@ -1148,6 +1148,14 @@ select:-webkit-autofill {
  * crowded the other columns are; past it, it still ellipsizes, and its
  * title carries the whole value. */
 .ui-row-cells > .ui-table-cell-key { min-width: min(15rem, 45%); flex-shrink: 0; }
+/* A badge is a whole word or nothing. As an ordinary cell it shrank with the
+ * text around it and a crowded row cut the pill partway through; the text
+ * cells beside it ellipsize instead. A badge that is off draws no pill, and
+ * its empty cell is dropped too, or each one still cost a gap and a row of
+ * a dozen badge columns placed its pills differently from the next row. */
+.ui-row-cells > .ui-table-cell-badge { flex-shrink: 0; }
+.ui-table-cell-badge > .ui-badge { white-space: nowrap; }
+.ui-row-cells > .ui-table-cell-badge:empty { display: none; }
 .ui-row-actions {
   display: flex; align-items: center; gap: 0.5rem;
   flex-wrap: wrap; /* buttons wrap as a group, never one-per-line */
@@ -1212,6 +1220,9 @@ select:-webkit-autofill {
   white-space: normal; display: -webkit-box; -webkit-box-orient: vertical;
   -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; overflow-wrap: anywhere;
 }
+/* The second line is prose, not aligned columns, so a note this row does not
+ * have gives its share to the text beside it rather than holding it blank. */
+.ui-row-cells-2 > .ui-table-cell:empty { display: none; }
 .ui-table-cell a.ui-table-link { color: var(--accent); text-decoration: none; }
 .ui-table-cell a.ui-table-link:hover { text-decoration: underline; }
 .ui-table-empty { color: var(--text-mute); font-size: var(--fs-md); padding: 0.5rem 0; }

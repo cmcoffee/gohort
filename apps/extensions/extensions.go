@@ -2106,10 +2106,6 @@ func (T *Extensions) toolsSection(user string) ui.Section {
 						{Field: "shared", Type: "badge", Badges: []ui.BadgeMapping{
 							{Value: true, Label: "In the catalog", Color: "info"},
 						}},
-						// Which version everybody else runs, and whether this copy
-						// has moved on from it.
-						{Field: "release", Label: "", Mute: true, Flex: 1},
-						{Field: "shared_with", Label: "", Mute: true, Flex: 1},
 						{Field: "requested", Type: "badge", Badges: []ui.BadgeMapping{
 							{Value: true, Label: "Publish requested", Color: "warning"},
 						}},
@@ -2119,7 +2115,6 @@ func (T *Extensions) toolsSection(user string) ui.Section {
 						{Field: "conflict", Type: "badge", Badges: []ui.BadgeMapping{
 							{Value: true, Label: "Name conflict", Color: "danger"},
 						}},
-						{Field: "shadows", Label: "", Mute: true, Flex: 1},
 						{Field: "missing", Label: "Deps", Type: "badge", Badges: []ui.BadgeMapping{
 							{Value: true, Label: "⚠ missing", Color: "danger"},
 						}},
@@ -2156,6 +2151,15 @@ func (T *Extensions) toolsSection(user string) ui.Section {
 						// the width with the name, the category, a dozen badges and
 						// the agents, and was cut to a few words.
 						{Field: "description", Mute: true, Flex: 3, Line: 2},
+						// Sentences, not states, so they read beside the description
+						// rather than ellipsized among the badges. A row without one
+						// leaves the description the whole line.
+						//
+						// Which version everybody else runs, and whether this copy
+						// has moved on from it.
+						{Field: "release", Label: "", Mute: true, Flex: 1, Line: 2},
+						{Field: "shared_with", Label: "", Mute: true, Flex: 1, Line: 2},
+						{Field: "shadows", Label: "", Mute: true, Flex: 1, Line: 2},
 					},
 					RowActions: []ui.RowAction{
 						{Type: "button", Label: "Export", Method: "client",
