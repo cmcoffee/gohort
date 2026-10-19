@@ -1866,7 +1866,9 @@ func persistedToolCallsFromTranscript(transcript []Message) []PersistedToolCall 
 	var out []PersistedToolCall
 	for _, m := range transcript {
 		for _, tc := range m.ToolCalls {
-			pc := PersistedToolCall{Name: tc.Name, Args: tc.Args}
+			// ID is the model's id for the call: a dispatched agent's calls name
+			// it as their parent (chatTurn.dispatchCard), so they nest under it.
+			pc := PersistedToolCall{Name: tc.Name, Args: tc.Args, ID: tc.ID}
 			if tr, ok := results[tc.ID]; ok {
 				if tr.IsError {
 					pc.Err = tr.Content

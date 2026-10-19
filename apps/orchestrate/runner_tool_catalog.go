@@ -925,6 +925,17 @@ func (t *chatTurn) wrapToolsForActivity(sess *ToolSession, tools []AgentToolDef,
 				if msgID != "" {
 					callID = t.emitToolCallUnder(parent.callID, msgID, name, shownArgs, "", prefix)
 				}
+				// With no page to draw on (a channel message, a wake), a call
+				// the model made goes by the model's own id: the id the turn's
+				// saved trace gives it, so what runs beneath it (a dispatched
+				// agent's calls) is saved nested there rather than dropped
+				// (continuingRun.savedToolCalls). Not for a call beneath
+				// another: a sub-agent's model ids can repeat its parent's.
+				if t.sse == nil && parent.callID == "" {
+					if id := ToolCallIDFrom(ctx); id != "" {
+						callID = id
+					}
+				}
 			}
 			// What runs beneath this call knows which card it belongs under.
 			ctx = withToolCard(ctx, toolCard{msgID: msgID, callID: callID, send: t.sse.Send})

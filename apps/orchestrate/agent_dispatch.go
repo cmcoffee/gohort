@@ -2611,6 +2611,18 @@ func (cr *continuingRun) runLoop() bool {
 	return true
 }
 
+// savedToolCalls is what the stored reply shows as its tool chips: the turn's
+// own calls, and beneath an agents(run) call what its agent ran. Only here:
+// the checks on what this turn did (a deliverable it made, the diagnostics,
+// the channel's observation) read the turn's own calls, as they did.
+func (cr *continuingRun) savedToolCalls() []PersistedToolCall {
+	nested := cr.subTurn.nestedToolCalls()
+	if len(nested) == 0 {
+		return cr.turnToolCalls
+	}
+	return append(append([]PersistedToolCall(nil), cr.turnToolCalls...), nested...)
+}
+
 func (cr *continuingRun) shapeReply() {
 	cr.cleanReply = strings.TrimSpace(cr.resp.Content)
 	// A Builder that asked ends on its question: stored as its turn in this
@@ -2710,7 +2722,7 @@ func (cr *continuingRun) saveExchange() {
 			// then dropped. Same field, same shape, same renderer as runner.go
 			// and scheduled_updates.go; a rule on one side of that symmetry is
 			// a bug.
-			ChatMessage{Role: "assistant", Content: cr.cleanReply, Created: now, Sender: assistantSender, Attachments: deliveredIDs, Files: deliveredFiles, ToolCalls: cr.turnToolCalls},
+			ChatMessage{Role: "assistant", Content: cr.cleanReply, Created: now, Sender: assistantSender, Attachments: deliveredIDs, Files: deliveredFiles, ToolCalls: cr.savedToolCalls()},
 		)
 		// Bound STORAGE the same way the Cortex home thread does (runner.go
 		// handleSend): drop leading messages already folded into the summary

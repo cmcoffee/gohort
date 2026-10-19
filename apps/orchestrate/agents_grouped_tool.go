@@ -1354,6 +1354,18 @@ func (t *chatTurn) agentsRunActionFor(card toolCard, args map[string]any) (strin
 	// they are scanned. Reading it off the caller instead would leave an agent
 	// whose owner turned scanning on unscanned whenever it is dispatched.
 	t.wrapToolsForActivity(subSess, tools, target, "↳ ["+target.Name+"] ")
+	// The sub-agent's own pass over its catalog (finalizeDispatchCatalog)
+	// leaves these alone. Wrapped a second time by the sub-turn, each call was
+	// drawn under a card the page was never sent, so it lost its place under
+	// the dispatch, and its result was scanned twice.
+	if subTurn.activityWrapped == nil {
+		subTurn.activityWrapped = map[string]bool{}
+	}
+	for _, td := range tools {
+		if td.Handler != nil {
+			subTurn.activityWrapped[td.Tool.Name] = true
+		}
+	}
 
 	// Same prompt the channel/dispatch path builds, from the same two helpers:
 	// dispatchContextBlocks for the Available-agents / skills / topics blocks,

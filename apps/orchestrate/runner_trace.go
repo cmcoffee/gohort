@@ -432,6 +432,25 @@ func (t *chatTurn) persistedToolCalls() []PersistedToolCall {
 	return t.persistedToolCallsFromUnlocked(t.lastBubbleToolIdx)
 }
 
+// nestedToolCalls are the calls this turn recorded beneath another call (a
+// dispatched agent's, under the agents(run) that started it), for a path that
+// takes the turn's own calls from the model transcript, where these never
+// appear.
+func (t *chatTurn) nestedToolCalls() []PersistedToolCall {
+	if t == nil {
+		return nil
+	}
+	t.toolMu.Lock()
+	defer t.toolMu.Unlock()
+	var out []PersistedToolCall
+	for _, c := range t.persistedToolCallsFromUnlocked(0) {
+		if c.Parent != "" {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
 // cacheableTools is the opt-in allowlist of tools whose results are
 // safe to cache for the rest of a turn. The default is DON'T cache —
 // blanket caching silently returns stale data for anything mutating,

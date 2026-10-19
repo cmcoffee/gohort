@@ -37,6 +37,30 @@ import (
 // absence nobody could see.
 type ToolHandlerFunc func(ctx context.Context, args map[string]any) (string, error)
 
+// The model's id for the tool call a handler is running, on the handler's
+// context. A call that runs other calls beneath it (a dispatched agent) names
+// this id as their parent, so a turn with no page to draw cards on can still
+// save them nested under the call that ran them.
+
+type toolCallIDKey struct{}
+
+// WithToolCallID puts the running call's id on ctx. Empty leaves ctx as it is.
+func WithToolCallID(ctx context.Context, id string) context.Context {
+	if ctx == nil || id == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, toolCallIDKey{}, id)
+}
+
+// ToolCallIDFrom is the id of the tool call running on ctx, or "".
+func ToolCallIDFrom(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	id, _ := ctx.Value(toolCallIDKey{}).(string)
+	return id
+}
+
 // safeInvoke runs a tool handler, converting a panic into an ordinary error.
 // A tool handler is arbitrary app code; without this a panic (a) crashes the
 // whole process in the parallel-tool branch, where the handler runs in a bare
@@ -2352,7 +2376,7 @@ func (lr *loopRun) recordResponse() loopAction {
 		}
 
 		// Execute the tool.
-		output, toolErr := safeInvoke(lr.ctx, tc.Name, lr.handlers[tc.Name], tc.Args)
+		output, toolErr := safeInvoke(WithToolCallID(lr.ctx, tc.ID), tc.Name, lr.handlers[tc.Name], tc.Args)
 		lr.toolFiredThisTurn = true
 		lr.toolsRun++
 		toolErrors := 0
@@ -3919,7 +3943,7 @@ func (lr *loopRun) dispatchTools() loopAction {
 	if len(lr.rs.work) == 1 {
 		// Single call — no goroutine overhead.
 		w := lr.rs.work[0]
-		output, err := safeInvoke(lr.ctx, w.tc.Name, w.handler, w.tc.Args)
+		output, err := safeInvoke(WithToolCallID(lr.ctx, w.tc.ID), w.tc.Name, w.handler, w.tc.Args)
 		if err != nil {
 			lr.debugToolErr(toolCallLabel(w.tc), err)
 			lr.rs.results[w.index] = ToolResult{ID: w.tc.ID, Content: fmt.Sprintf("Error: %s", err), IsError: true}
@@ -3933,7 +3957,7 @@ func (lr *loopRun) dispatchTools() loopAction {
 		var wg sync.WaitGroup
 		var errCount int32
 		invokeStore := func(w toolWork) {
-			output, err := safeInvoke(lr.ctx, w.tc.Name, w.handler, w.tc.Args)
+			output, err := safeInvoke(WithToolCallID(lr.ctx, w.tc.ID), w.tc.Name, w.handler, w.tc.Args)
 			if err != nil {
 				lr.debugToolErr(toolCallLabel(w.tc), err)
 				lr.rs.results[w.index] = ToolResult{ID: w.tc.ID, Content: fmt.Sprintf("Error: %s", err), IsError: true}
