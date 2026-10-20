@@ -94,13 +94,13 @@ func (a *AdminApp) systemSections() []ui.Section {
 		{
 			Title:    "Channel Wake Rules",
 			Subtitle: "Master gatekeeper applied to every channel before an inbound message wakes its agent.",
-			Detail:   "One rule per line, and rules are OR'd: a message matching ANY rule wakes the agent. These merge on top of each channel's own per-channel rules, set in the channel rail. Leave it blank to apply no global rule.",
+			Detail:   "Rules are OR'd: a message matching ANY rule wakes the agent. These merge on top of each channel's own rules, set in the channel rail. With none, no global rule applies.",
 			Body: ui.FormPanel{
 				Source: "api/settings",
 				Method: settingsSaveMethod,
 				Fields: []ui.FormField{
-					{Field: "channel_wake_rules", Label: "Master rules", Type: "textarea", Rows: 5,
-						Placeholder: "Respond only when called by name\nAlways respond to a direct 1:1 message",
+					{Field: "channel_wake_rules", Label: "Master rules", Type: "rules",
+						Placeholder: "Respond only when called by name",
 						Help:        "A cheap worker-LLM check runs these on each inbound.",
 						Detail:      "Follow-ups to the agent's own last message bypass the rules. Owner messages are evaluated like anyone else's unless a rule says otherwise."},
 				},

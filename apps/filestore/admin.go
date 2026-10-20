@@ -470,9 +470,9 @@ func commandUsesFields() []ui.FormField {
 			Placeholder: "What it is for, the order of its steps, what each value means, where its output goes, what to watch for.",
 			Help:        "Optional, in markdown. Builder reads it to map the command, and agents read it where they list this store's commands.",
 			Detail:      "Runs in Show it how teach Builder the syntax; this says what runs cannot: that a signature is answered by someone in support, that a response is single-use, that output lands in a folder named after the archive. Changing it does not switch Agents off: it changes what agents are told, not what they can run."},
-		{Field: "allowed_uses", Type: "textarea", Label: "Allowed uses", Rows: 3,
+		{Field: "allowed_uses", Type: "rules", Label: "Allowed uses",
 			Placeholder: "download --src={source} --dst={folder}",
-			Help:        "One per line: the arguments after the command, with {placeholders} for what the agent fills in. Builder adds the lines it maps.",
+			Help:        "One use each: the arguments after the command, with {placeholders} for what the agent fills in. Builder adds the ones it maps.",
 			Detail:      "Write lines here to tell Builder what to map, or leave it empty and let Builder work them out with you. Each line becomes one tool an agent can call, running exactly that line, and an agent can run nothing else. It runs directly as the server's account with no shell, the way a person's click runs, so a binary with its own saved login works. Each placeholder is filled with one value, never an option; a placeholder that names a file or folder in this store is proved to be inside it. A line with no placeholders is a fixed call.\n\nNothing reaches an agent until you turn Agents on. Changing these lines, or a re-map, turns it off again."},
 	}
 }

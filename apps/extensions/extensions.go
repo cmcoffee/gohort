@@ -1097,8 +1097,8 @@ func (T *Extensions) handleUserSkills(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		// Single-record fetch (?id=) — prefills the Edit form with the BEHAVIOR
-		// fields the user may edit (triggers flattened to newline-separated
-		// text). Builder-managed fields (bundled Tools, AllowedTools,
+		// fields the user may edit (triggers as the list the tags editor
+		// takes). Builder-managed fields (bundled Tools, AllowedTools,
 		// AttachedCollections) are intentionally omitted — this surface edits
 		// behavior, not capability grants.
 		if id := strings.TrimSpace(r.URL.Query().Get("id")); id != "" {
@@ -1108,7 +1108,7 @@ func (T *Extensions) handleUserSkills(w http.ResponseWriter, r *http.Request) {
 					"id":           s.ID,
 					"name":         s.Name,
 					"description":  s.Description,
-					"triggers":     strings.Join(s.Triggers, "\n"),
+					"triggers":     append([]string{}, s.Triggers...),
 					"instructions": s.Instructions,
 					// Two doors, both here: the rules as JSON to edit in
 					// place (what the admin form offers), and the address of
@@ -1242,11 +1242,11 @@ func (T *Extensions) handleUserSkills(w http.ResponseWriter, r *http.Request) {
 		// those grants — a form-authored skill is pure behavior; anything that
 		// ships code or grants tools stays in Builder. Own namespace only.
 		var body struct {
-			Name         string  `json:"name"`
-			Description  string  `json:"description"`
-			Triggers     string  `json:"triggers"`
-			Instructions string  `json:"instructions"`
-			PlaybookText *string `json:"playbook_text"`
+			Name         string        `json:"name"`
+			Description  string        `json:"description"`
+			Triggers     skillTriggers `json:"triggers"`
+			Instructions string        `json:"instructions"`
+			PlaybookText *string       `json:"playbook_text"`
 			// Pointers, so a form that did not carry a grant leaves it alone
 			// while one that carried an empty list clears it. The chip
 			// pickers post the whole record; the behaviour form posts neither.
@@ -1309,7 +1309,7 @@ func (T *Extensions) handleUserSkills(w http.ResponseWriter, r *http.Request) {
 		rec.Name = name
 		rec.Description = strings.TrimSpace(body.Description)
 		rec.Instructions = body.Instructions
-		rec.Triggers = splitSkillTriggers(body.Triggers)
+		rec.Triggers = []string(body.Triggers)
 		if body.PlaybookText != nil {
 			rec.Playbook = playbook // nil when the field came through blank — clears
 		}
@@ -1763,7 +1763,7 @@ func userSkillFormFields() []ui.FormField {
 	return []ui.FormField{
 		{Field: "name", Label: "Name", Placeholder: "Contract Reviewer", Help: "Shown to your agents; also the H2 header above the instructions when the skill is active."},
 		{Field: "description", Label: "Description", Help: "One line: when this skill applies. The assistant reads it to decide relevance."},
-		{Field: "triggers", Label: "Triggers", Type: "textarea", Rows: 3, Placeholder: "contract\n*.pdf", Help: "Substring patterns, or *.ext for attachments, ONE PER LINE. Any match activates the skill.",
+		{Field: "triggers", Label: "Triggers", Type: "tags", Placeholder: "contract, or *.pdf", Help: "Substring patterns, or *.ext for attachments, one each. Any match activates the skill.",
 			Detail: "Leave it blank to rely on the description instead."},
 		{Field: "instructions", Label: "Instructions", Type: "textarea", Rows: 12, Help: "Markdown appended to the assistant's prompt while the skill is active.",
 			Detail: "The approach, voice, or method it should apply."},
@@ -1783,9 +1783,27 @@ func userSkillFormFields() []ui.FormField {
 	}
 }
 
-// splitSkillTriggers parses the triggers textarea (one pattern per line) into
-// the stored slice, trimming blanks. Newline-only split so a pattern may
-// itself contain a comma.
+// skillTriggers is a skill's triggers as the form sends them: a list from the
+// tags editor, or one pattern per line from a caller still sending text.
+// Blanks are dropped either way.
+type skillTriggers []string
+
+func (st *skillTriggers) UnmarshalJSON(b []byte) error {
+	var list []string
+	if err := json.Unmarshal(b, &list); err == nil {
+		*st = skillTriggers(splitSkillTriggers(strings.Join(list, "\n")))
+		return nil
+	}
+	var text string
+	if err := json.Unmarshal(b, &text); err != nil {
+		return err
+	}
+	*st = skillTriggers(splitSkillTriggers(text))
+	return nil
+}
+
+// splitSkillTriggers parses one pattern per line into the stored slice,
+// trimming blanks. Newline-only split so a pattern may itself contain a comma.
 func splitSkillTriggers(s string) []string {
 	var out []string
 	for _, ln := range strings.Split(s, "\n") {

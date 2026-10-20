@@ -119,3 +119,19 @@ func TestTheOldActivityTabLandsOnTheLog(t *testing.T) {
 		t.Fatalf("the old tab answered %d %q", w.Code, w.Header().Get("Location"))
 	}
 }
+
+// Channel Wake's master rules are a list to add to and remove from, like a
+// channel's own rules in the rail, not a box of lines.
+func TestChannelWakeRulesAreAList(t *testing.T) {
+	for _, s := range (&AdminApp{}).systemSections() {
+		if s.Title != "Channel Wake Rules" {
+			continue
+		}
+		b, _ := json.Marshal(s)
+		if !strings.Contains(string(b), `"field":"channel_wake_rules"`) || !strings.Contains(string(b), `"type":"rules"`) {
+			t.Fatalf("the master rules are not a rules list: %s", b)
+		}
+		return
+	}
+	t.Fatal("no Channel Wake Rules section on System")
+}
