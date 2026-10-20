@@ -667,4 +667,10 @@ func stopNote(out string, ctx context.Context, b BackgroundRun, act *RunActivity
 // inline: the reply carrying the result collects them from there.
 func handOver(from, to *ToolSession) {
 	from.HandOverUnflushed(to)
+	// And what it wrote into the folder: the turn's work as much as what it
+	// attached. Left on the run's own session, a file a custom tool made was
+	// unknown to the turn, so it drew the "not made this turn" warning when
+	// attached, and a delegation never handed it back to the agent that asked
+	// for it (a music agent's song).
+	to.AddStagedFiles(from.StagedFiles())
 }

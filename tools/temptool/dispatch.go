@@ -762,6 +762,14 @@ func (sd *shellDispatch) execute() {
 	// Folders granted to whoever runs the tool (an app's stores) are reached
 	// the same way as a scoped path: opened where they are, read-only.
 	sd.scopedPaths = append(sd.scopedPaths, tt.GrantRead...)
+	// What the run writes into the session's own folder is this turn's, as a
+	// built-in tool's is (core.WatchWorkspaceWrites): offered to attach
+	// without the "not made this turn" warning, and copied back to the agent
+	// that ran this one. A recipe's run folder is its own and thrown away.
+	var writes func() []string
+	if sd.sess != nil && sd.sess.WorkspaceDir != "" && sd.workspaceDir == sd.sess.WorkspaceDir {
+		writes = WatchWorkspaceWrites(sd.sess)
+	}
 	sd.res = sandbox.RunSandboxedShellIn(sd.ctx, sandbox.ShellRun{
 		Command: sd.cmd, WorkspaceDir: sd.workspaceDir, WorkDir: sd.workDir,
 		Env: sd.envArgs, Reach: sd.scopedPaths, Writable: tt.GrantWrite,
@@ -773,6 +781,12 @@ func (sd *shellDispatch) execute() {
 	})
 	Debug("[temptool] %q sandbox exit: dur=%s err=%v timedOut=%v outBytes=%d",
 		tt.Name, time.Since(sd.tExec), sd.res.Err, sd.res.TimedOut, len(sd.res.Output))
+	if writes != nil {
+		if made := writes(); len(made) > 0 {
+			sd.sess.AddStagedFiles(made)
+			Debug("[temptool] %q wrote %v", tt.Name, made)
+		}
+	}
 	// A raw key handed to the script (secret:) does not come back out in what
 	// it printed: a traceback or a debug line quoting its own request is the
 	// usual way, and this output goes to the model and the session.

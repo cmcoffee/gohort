@@ -286,6 +286,17 @@ func diffWorkspaceFiles(sess *ToolSession, before map[string]workspaceFileStamp)
 	return written
 }
 
+// WatchWorkspaceWrites snapshots the session's workspace and returns what,
+// called after a tool ran, lists the files it wrote there: new, or there
+// before and rewritten. The one check every way a tool runs uses, built-in
+// (the wrapper below) or authored (temptool): an authored tool's writes went
+// unrecorded, so a song a custom music tool made was never handed back to the
+// agent that asked for it, whatever its name.
+func WatchWorkspaceWrites(sess *ToolSession) func() []string {
+	before := snapshotWorkspaceFiles(sess)
+	return func() []string { return diffWorkspaceFiles(sess, before) }
+}
+
 // chatToolHandler adapts a plain ChatTool to the handler signature.
 //
 // The context is dropped, and that is the honest shape: a ChatTool's Run takes
@@ -354,7 +365,7 @@ func ChatToolToAgentToolDefWithSession(ct ChatTool, sess *ToolSession) AgentTool
 			// return JSON or other unfriendly formats leave the
 			// LLM guessing at filenames that may or may not
 			// exist in the workspace.
-			wsBefore := snapshotWorkspaceFiles(sess)
+			writes := WatchWorkspaceWrites(sess)
 			out, err := base(ctx, args)
 			// A result that is purely a data:image/...;base64,... URI is a
 			// vision attachment, not text. Decode it into the session's
@@ -399,7 +410,7 @@ func ChatToolToAgentToolDefWithSession(ct ChatTool, sess *ToolSession) AgentTool
 			// unmounted path, the diff shows nothing new and the
 			// LLM gets a clear "no new files appeared in your
 			// workspace" signal instead of chasing phantom paths.
-			if newFiles := diffWorkspaceFiles(sess, wsBefore); len(newFiles) > 0 {
+			if newFiles := writes(); len(newFiles) > 0 {
 				// Keep the list, not just the sentence. The workspace root is
 				// shared across every session and agent this user has, so
 				// "what is newest in there" answers a different question from
