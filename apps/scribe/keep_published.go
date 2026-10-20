@@ -109,6 +109,7 @@ func (T *Scribe) republishAll(ctx context.Context, user string, udb Database, gu
 			return
 		}
 		p := republishOf(cur, udb, user, prev)
+		p.background = true
 		if !waitForPublishJob(ctx, guideID, keepPublishedWait) {
 			failed = append(failed, p.where+": another publish of this guide was still running")
 			continue

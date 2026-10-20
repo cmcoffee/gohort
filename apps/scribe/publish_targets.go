@@ -47,6 +47,10 @@ type publishJob struct {
 	// cancel stops it. Closing the dialog does not: the publish outlives
 	// the page, and Stop is how a person ends it.
 	cancel context.CancelFunc
+	// For the Monitor's row (publish_live.go): whose guide, which, and
+	// whether it started on its own (Keep published) or was asked for.
+	owner, guideID, title string
+	background            bool
 }
 
 // publishJobStep is one step and when it happened, in seconds from the start.
@@ -88,6 +92,9 @@ type publishRun struct {
 	where    string // the place's name, for the dialog and the record's note
 	req      docs.PublishRequest
 	rec      docs.PublishRecord
+	// background is a publish nobody asked for just now: Keep published
+	// following a change. The Monitor paints it as work that acted alone.
+	background bool
 }
 
 // runPublishJob publishes in the background as the guide's publish job. It
@@ -105,7 +112,8 @@ func runPublishJob(r *http.Request, g Guide, ownerUDB Database, user, kind, wher
 // returns the context it runs on: parent's, ended early by the job's Stop.
 func (p publishRun) start(parent context.Context) (*publishJob, context.Context) {
 	ctx, cancel := context.WithCancel(parent)
-	job := &publishJob{Target: p.where, Started: time.Now(), cancel: cancel}
+	job := &publishJob{Target: p.where, Started: time.Now(), cancel: cancel,
+		owner: p.user, guideID: p.guideID, title: p.req.Title, background: p.background}
 	publishJobsMu.Lock()
 	publishJobs[p.guideID] = job
 	publishJobsMu.Unlock()
