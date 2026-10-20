@@ -342,21 +342,14 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 		if req.ID == "" {
 			req.ID = UUIDv4()
 		}
+		var prev Appliance
+		hadPrev := targetUDB.Get(applianceTable, req.ID, &prev)
+		// Shared with everyone only ever stays; it is never turned on.
+		req.Shared = hadPrev && keptEveryone(prev.Shared, req.AllowedUsers, req.Shared)
 		// Absent from the body (nil, where a cleared list arrives as []):
 		// a save that did not send it keeps who it is shared with.
-		if req.AllowedUsers == nil {
-			var prev Appliance
-			if targetUDB.Get(applianceTable, req.ID, &prev) {
-				req.AllowedUsers = prev.AllowedUsers
-			}
-		}
-		// Everyone is one more choice in the picker's list, stored where it
-		// always was: the Shared flag and its index. A body that still sends
-		// shared:true means the same.
-		for _, u := range req.AllowedUsers {
-			if strings.TrimSpace(u) == ShareEveryone {
-				req.Shared = true
-			}
+		if req.AllowedUsers == nil && hadPrev {
+			req.AllowedUsers = prev.AllowedUsers
 		}
 		req.AllowedUsers = cleanSystemRecipients(req.AllowedUsers, owner)
 		targetUDB.Set(applianceTable, req.ID, req)

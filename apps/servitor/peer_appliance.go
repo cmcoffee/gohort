@@ -255,8 +255,8 @@ func (T *Servitor) handleAppliancePeers(w http.ResponseWriter, r *http.Request) 
 				}
 			}
 			switch {
-			case k.Owner != "" && k.Owner != owner && !a.Shared:
-				rw.Blocked = "this key runs as " + k.Owner + ", who cannot reach this system: share the system with Everyone first, or use a key owned by " + owner
+			case k.Owner != "" && k.Owner != owner && !T.reaches(k.Owner, a.ID):
+				rw.Blocked = "this key runs as " + k.Owner + ", who cannot reach this system: share the system with " + k.Owner + " first, or use a key owned by " + owner
 			case k.Disabled:
 				rw.Blocked = "this key is disabled"
 			}

@@ -1547,13 +1547,14 @@
       ]);
       if (rec.type !== 'toolset') { runAsSection.style.display = 'none'; }
 
-      // Who it is shared with: Everyone, people, or a team you are on, all in
-      // one list. Each of them can open and use it (owner's creds, one repo
-      // clone, shared accumulated knowledge) and keeps their own chat
-      // sessions; to give one of their agents its tools, they add it to that
-      // agent's Sources. Everyone is stored as the record's shared flag.
+      // Who it is shared with: people, or a team you are on. Each of them can
+      // open and use it (owner's creds, one repo clone, shared accumulated
+      // knowledge) and keeps their own chat sessions; to give one of their
+      // agents its tools, they add it to that agent's Sources. Never
+      // Everyone: a system shared with everyone before reads it back, and it
+      // can be taken out but not put back (keptEveryone).
       var shareWith = (rec.shared ? ['*'] : []).concat(rec.allowed_users || []);
-      var shareLabels = {'*': 'Everyone'};
+      var shareLabels = {'*': 'Everyone (no longer offered: remove it and name people or a team)'};
       var shareChips = el('div', {style: 'display:flex; flex-wrap:wrap; gap:0.35rem; margin:0.3rem 0;'});
       var sharePick = el('select', {class: 'ui-input', style: 'max-width:16rem;'});
       var shareAdd = el('button', {type: 'button', class: 'ui-row-btn'}, ['Add']);
@@ -1567,20 +1568,20 @@
         });
         if (!shareWith.length) shareChips.appendChild(el('span', {class: 'ui-form-hint'}, ['Only you.']));
         sharePick.innerHTML = '';
-        var opts = Object.keys(shareLabels).filter(function(v) { return shareWith.indexOf(v) < 0; });
+        var opts = Object.keys(shareLabels).filter(function(v) { return v !== '*' && shareWith.indexOf(v) < 0; });
         opts.forEach(function(v) { sharePick.appendChild(el('option', {value: v}, [shareLabels[v]])); });
         sharePick.disabled = shareAdd.disabled = !opts.length;
       }
       shareAdd.addEventListener('click', function() {
         if (sharePick.value && shareWith.indexOf(sharePick.value) < 0) { shareWith.push(sharePick.value); drawShare(); }
       });
-      fetch('api/user-candidates?groups=1&everyone=1', {credentials: 'same-origin'}).then(function(r) { return r.ok ? r.json() : []; })
+      fetch('api/user-candidates?groups=1', {credentials: 'same-origin'}).then(function(r) { return r.ok ? r.json() : []; })
         .then(function(list) { (list || []).forEach(function(c) { shareLabels[c.value] = c.label; }); drawShare(); })
         .catch(function() { drawShare(); });
       drawShare();
       var shareSection = el('div', {style: 'margin-top:0.6rem;'}, [
         el('label', {}, ['Shared with']),
-        el('div', {class: 'ui-form-hint'}, ['Everyone, or the people and teams you add, can open and use it with its stored credentials; their chat sessions stay their own. Only you or an admin can change or delete it. To give one of their agents its tools, they add it to that agent\'s Sources.']),
+        el('div', {class: 'ui-form-hint'}, ['The people and teams you add can open and use it with its stored credentials; their chat sessions stay their own. Only you or an admin can change or delete it. To give one of their agents its tools, they add it to that agent\'s Sources.']),
         shareChips,
         el('div', {style: 'display:flex; gap:0.4rem; align-items:center;'}, [sharePick, shareAdd]),
       ]);

@@ -69,6 +69,12 @@ func (T *Servitor) systemsSharedWith(user string) map[string]string {
 	return out
 }
 
+// reaches reports whether a system somebody else owns is shared with user.
+func (T *Servitor) reaches(user, id string) bool {
+	_, ok := T.systemsSharedWith(user)[id]
+	return ok
+}
+
 // listSharedAppliances returns every shared appliance ID -> owner username.
 func (T *Servitor) listSharedAppliances() map[string]string {
 	return ListSharedOwners(T.DB, sharedIndexTable)
@@ -197,8 +203,34 @@ func canManageAppliance(reqUser string, a Appliance, isAdmin bool) bool {
 	return CanManageShared(reqUser, a.Owner, isAdmin)
 }
 
+// keptEveryone is whether a save leaves a system shared with everyone.
+//
+// A system is never newly shared with everyone. Whoever it is shared with
+// runs it as the owner (the same login, the same repository token), so
+// Everyone would hand every account in the deployment, and every one made
+// later, the owner's access to that machine. Name the people or the team.
+//
+// A system shared with everyone before stays so until its owner takes it
+// out: the list reads Everyone back, and a save that keeps it keeps it. A
+// save that drops it, or a list sent without it, ends it, and nothing turns
+// it on: not Everyone in the list, not the old shared:true.
+func keptEveryone(prevShared bool, list []string, legacyShared bool) bool {
+	if !prevShared {
+		return false
+	}
+	if list == nil {
+		return legacyShared // a body from before the list said it this way
+	}
+	for _, u := range list {
+		if strings.TrimSpace(u) == ShareEveryone {
+			return true
+		}
+	}
+	return false
+}
+
 // cleanSystemRecipients trims a recipient list and drops the owner, repeats
-// and Everyone, which is kept as the Shared flag instead.
+// and Everyone, which is only ever the kept Shared flag (keptEveryone).
 func cleanSystemRecipients(users []string, owner string) []string {
 	seen := map[string]bool{}
 	var out []string
@@ -211,14 +243,13 @@ func cleanSystemRecipients(users []string, owner string) []string {
 	return out
 }
 
-// handleUserCandidates serves the share picker's people and teams, and
-// Everyone first when asked for (?everyone=1).
+// handleUserCandidates serves the share picker's people and teams. Never
+// Everyone: see keptEveryone.
 func (T *Servitor) handleUserCandidates(w http.ResponseWriter, r *http.Request) {
 	user, _, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return
 	}
-	q := r.URL.Query()
 	w.Header().Set("Content-Type", "application/json")
-	w.Write(ShareCandidatesJSON(user, q.Get("groups") == "1", q.Get("everyone") == "1"))
+	w.Write(ShareCandidatesJSON(user, r.URL.Query().Get("groups") == "1", false))
 }

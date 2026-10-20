@@ -1,7 +1,9 @@
 package servitor
 
-// A system's sharing is one list: Everyone, people, or a team. It used to be a
-// "Shared with all users" box above a separate list of names.
+// A system is never newly shared with everyone. Whoever it is shared with runs
+// it as the owner, so Everyone would hand every account the owner's access to
+// the machine. One shared with everyone before stays so until its owner takes
+// it out, and then it cannot be put back.
 
 import (
 	"encoding/json"
@@ -14,7 +16,7 @@ import (
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
-func TestEveryoneIsOneMoreChoiceInASystemsShareList(t *testing.T) {
+func TestASystemIsNeverNewlySharedWithEveryone(t *testing.T) {
 	prev := AuthDB
 	auth := &DBase{Store: kvlite.MemStore()}
 	for _, u := range []string{"alice", "bob", "dana"} {
@@ -36,31 +38,40 @@ func TestEveryoneIsOneMoreChoiceInASystemsShareList(t *testing.T) {
 		json.Unmarshal(w.Body.Bytes(), &a)
 		return a
 	}
-	reaches := func(user, id string) bool {
-		_, ok := app.systemsSharedWith(user)[id]
-		return ok
+	box := func(id, extra string) string {
+		return `{"id":"` + id + `","type":"ssh","name":"web01","host":"web01.example.com"` + extra + `}`
 	}
 
-	a := save(`{"type":"ssh","name":"web01","host":"web01.example.com","allowed_users":["*","bob"]}`)
-	if !a.Shared || strings.Join(a.AllowedUsers, ",") != "bob" {
-		t.Errorf("Everyone is kept as the shared flag, the names beside it: %+v", a)
+	// Neither Everyone in the list nor the old flag shares a new one, or an
+	// existing one, with everyone. The names beside it still count.
+	a := save(box("", `,"allowed_users":["*","bob"]`))
+	if a.Shared || strings.Join(a.AllowedUsers, ",") != "bob" || app.reaches("dana", a.ID) || !app.reaches("bob", a.ID) {
+		t.Errorf("Everyone in the list shared it: shared %v, list %v", a.Shared, a.AllowedUsers)
 	}
-	if !reaches("dana", a.ID) || !reaches("bob", a.ID) {
-		t.Error("shared with Everyone, it does not reach everyone")
-	}
-
-	// Taking Everyone out of the list takes it back from dana.
-	a = save(`{"id":"` + a.ID + `","type":"ssh","name":"web01","host":"web01.example.com","allowed_users":["bob"]}`)
-	if a.Shared || reaches("dana", a.ID) || !reaches("bob", a.ID) {
-		t.Errorf("narrowed to bob: shared %v, dana %v, bob %v", a.Shared, reaches("dana", a.ID), reaches("bob", a.ID))
+	if a = save(box(a.ID, `,"shared":true`)); a.Shared || app.reaches("dana", a.ID) {
+		t.Error("the old shared:true shared it with everyone")
 	}
 
-	// The picker offers Everyone first when it asks for it, and not otherwise.
-	for q, want := range map[string]bool{"?groups=1&everyone=1": true, "?groups=1": false} {
-		w := httptest.NewRecorder()
-		app.handleUserCandidates(w, reqAs(t, http.MethodGet, "/api/user-candidates"+q, "alice", ""))
-		if got := strings.HasPrefix(w.Body.String(), `[{"value":"*"`); got != want {
-			t.Errorf("%s: Everyone offered first = %v, want %v: %s", q, got, want, w.Body.String())
-		}
+	// One shared with everyone before keeps it while its list keeps Everyone.
+	stored := a
+	stored.Shared = true
+	UserDB(app.DB, "alice").Set(applianceTable, a.ID, stored)
+	app.setApplianceShared(a.ID, "alice", true)
+	if a = save(box(a.ID, `,"allowed_users":["*","bob"]`)); !a.Shared || !app.reaches("dana", a.ID) {
+		t.Error("a save that kept Everyone took it away")
+	}
+	// Taken out, it is gone, and putting it back does nothing.
+	if a = save(box(a.ID, `,"allowed_users":["bob"]`)); a.Shared || app.reaches("dana", a.ID) {
+		t.Error("taking Everyone out left it shared with everyone")
+	}
+	if a = save(box(a.ID, `,"allowed_users":["*","bob"]`)); a.Shared || app.reaches("dana", a.ID) {
+		t.Error("Everyone went back in")
+	}
+
+	// The picker does not offer it.
+	w := httptest.NewRecorder()
+	app.handleUserCandidates(w, reqAs(t, http.MethodGet, "/api/user-candidates?groups=1&everyone=1", "alice", ""))
+	if strings.Contains(w.Body.String(), `"value":"*"`) {
+		t.Errorf("the picker offers Everyone: %s", w.Body.String())
 	}
 }
