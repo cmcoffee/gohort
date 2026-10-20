@@ -165,6 +165,23 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 					Help: "Say which sections, or what to look for.",
 					Text: "Update this guide from its LINKED SOURCES only: the attached knowledge collections and reference sources, not web research. Use search_knowledge and pull_reference to check, and edit_section to revise. "},
 			}},
+			// The brief says how the guide is written, and the Author follows it
+			// on every edit, but a changed brief reached only the sections
+			// written after it. This puts the ones already there through it:
+			// presentation only, since what a section says is Update from
+			// sources' job. The turn's chat prompt carries the brief.
+			{Label: "Edit to the brief", Kind: "compose", ComposeTitle: "Edit to the writing brief", ComposeOptions: []ui.ComposeOption{
+				{Label: "Every section", Help: "Revise each section to read the way the brief asks, keeping what it says.",
+					Text: "Edit this guide to its WRITING BRIEF as it stands now (it is in your instructions). Change how each section is presented, not what it says.\n\n" +
+						"1. Call list_sections to see the guide.\n" +
+						"2. For each section in order, read_section it and judge whether it already reads the way the brief asks: its structure, voice, length and formatting.\n" +
+						"3. Where it does not, call edit_section with the whole revised body. Keep every fact, step, command, value and citation, and remove only what the brief says to leave out. Add nothing from elsewhere, and do no research.\n" +
+						"4. Leave a section that already fits the brief unchanged: don't rewrite for the sake of it.\n\n" +
+						"When done, reply with a short bulleted summary of which sections you changed and what about them. If the guide has no writing brief, say so and change nothing."},
+				{Label: "Something else", Input: true, Placeholder: "e.g. only Troubleshooting, and make it a checklist",
+					Help: "Say which sections, or what to change about how they read.",
+					Text: "Edit this guide to its writing brief. Change how it is presented, not what it says: keep every fact, step and citation. "},
+			}},
 		},
 		// The agent writes sections via its tools; re-render the open guide when a
 		// chat round finishes.
