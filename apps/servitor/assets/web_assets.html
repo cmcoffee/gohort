@@ -1555,6 +1555,12 @@
       // can be taken out but not put back (keptEveryone).
       var shareWith = (rec.shared ? ['*'] : []).concat(rec.allowed_users || []);
       var shareLabels = {'*': 'Everyone (no longer offered: remove it and name people or a team)'};
+      // Each person or team reads (asks from what has been gathered) or has
+      // Full access (investigates live, with your login). A list saved before
+      // levels existed gave everybody full use, so it reads back that way;
+      // somebody newly added starts at Read.
+      var shareFull = {};
+      (rec.levels_set ? (rec.full_access || []) : (rec.allowed_users || [])).forEach(function(v) { shareFull[v] = true; });
       var shareChips = el('div', {style: 'display:flex; flex-wrap:wrap; gap:0.35rem; margin:0.3rem 0;'});
       var sharePick = el('select', {class: 'ui-input', style: 'max-width:16rem;'});
       var shareAdd = el('button', {type: 'button', class: 'ui-row-btn'}, ['Add']);
@@ -1563,8 +1569,17 @@
         shareChips.innerHTML = '';
         shareWith.forEach(function(v) {
           var x = el('button', {type: 'button', class: 'ui-row-btn', title: 'Stop sharing with ' + shareName(v)}, ['\u00d7']);
-          x.addEventListener('click', function() { shareWith = shareWith.filter(function(u) { return u !== v; }); drawShare(); });
-          shareChips.appendChild(el('span', {class: 'ui-chip', style: 'display:inline-flex; align-items:center; gap:0.25rem;'}, [shareName(v), x]));
+          x.addEventListener('click', function() { shareWith = shareWith.filter(function(u) { return u !== v; }); delete shareFull[v]; drawShare(); });
+          var parts = [shareName(v)];
+          if (v !== '*') {
+            var lvl = el('button', {type: 'button', class: 'ui-row-btn',
+              title: shareFull[v] ? 'Full access: investigates it live, with your login. Click for Read.' : 'Read: asks from what has been gathered; nothing runs on it. Click for Full access.'},
+              [shareFull[v] ? 'Full access' : 'Read']);
+            lvl.addEventListener('click', function() { if (shareFull[v]) { delete shareFull[v]; } else { shareFull[v] = true; } drawShare(); });
+            parts.push(lvl);
+          }
+          parts.push(x);
+          shareChips.appendChild(el('span', {class: 'ui-chip', style: 'display:inline-flex; align-items:center; gap:0.25rem;'}, parts));
         });
         if (!shareWith.length) shareChips.appendChild(el('span', {class: 'ui-form-hint'}, ['Only you.']));
         sharePick.innerHTML = '';
@@ -1581,7 +1596,7 @@
       drawShare();
       var shareSection = el('div', {style: 'margin-top:0.6rem;'}, [
         el('label', {}, ['Shared with']),
-        el('div', {class: 'ui-form-hint'}, ['The people and teams you add can open and use it with its stored credentials; their chat sessions stay their own. Only you or an admin can change or delete it. To give one of their agents its tools, they add it to that agent\'s Sources.']),
+        el('div', {class: 'ui-form-hint'}, ['The people and teams you add can open it and keep their own chat sessions. Read answers their questions from what has been gathered, and nothing runs on the system for them. Full access investigates it live with its stored credentials. Only you or an admin can change or delete it. To give one of their agents its tools, they add it to that agent\'s Sources.']),
         shareChips,
         el('div', {style: 'display:flex; gap:0.4rem; align-items:center;'}, [sharePick, shareAdd]),
       ]);
@@ -1625,6 +1640,7 @@
             persona_name:   personaNameIn.value.trim(),
             persona_prompt: personaPromptIn.value,
             allowed_users:  shareWith.slice(),
+            full_access:    shareWith.filter(function(v) { return v !== '*' && shareFull[v]; }),
             members:        wsSelected.slice(),
             member_roles:   wsRoles,
             member_links:   wsLinks,

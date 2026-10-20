@@ -74,6 +74,7 @@ func normalizeTask(s string) string {
 // one function.
 func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string, appliance Appliance, confirm chan bool, messages []Message, udb Database, saveProfile bool) {
 	pr := &probeRun{T: T, ctx: ctx, id: id, userID: userID, ownerUser: ownerUser, appliance: appliance, confirm: confirm, messages: messages, udb: udb, saveProfile: saveProfile}
+	pr.readOnly = ownerUser != "" && ownerUser != userID && !appliance.fullAccessFor(ownerUser, userID)
 	pr.guard = servitorGuard(ctx, userID)
 	// scratch is this run's private write location on the target (see scratch.go).
 	// Set once the transport is up; cleared if the directory can't be created, so
@@ -89,6 +90,10 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 		probeSessions.AppendEvent(id, probeEvent{Kind: "done"}, true)
 		probeSessions.ScheduleCleanup(id)
 	}()
+	if pr.readOnly && pr.saveProfile {
+		probeSessions.AppendEvent(id, probeEvent{Kind: "error", Text: "Mapping runs commands on the system, and it is shared with you to read: ask " + ownerUser + " for Full access, or ask questions to answer from what has been gathered."}, true)
+		return
+	}
 	if pr.connect() == actReturn {
 		return
 	}
@@ -199,6 +204,11 @@ type probeRun struct {
 	record_finding_tool     AgentToolDef
 	push_to_guide_tool      AgentToolDef
 	ptyLocal                bool
+	// readOnly is a run for somebody the system is shared with at Read
+	// (Appliance.fullAccessFor): it answers from what has been gathered,
+	// and nothing reaches the system for them, not a connection, not a
+	// command, not a write to its memory.
+	readOnly bool
 	// workerTools holds a placeholder run_command entry. Every call site must use
 	// withFreshRunTool(workerTools) so each invocation gets isolated counters.
 	workerTools []AgentToolDef
@@ -250,6 +260,13 @@ func (pr *probeRun) connect() probeAction {
 		// re-enters this function in its own owner's context. See workspace.go.
 		pr.T.runWorkspaceSession(pr.ctx, pr.id, pr.userID, pr.appliance, pr.messages, pr.udb)
 		return actReturn
+	}
+	if pr.readOnly && pr.appliance.Type != "repo" && pr.appliance.Type != "bundle" {
+		// Read: nothing reaches the system, so there is nothing to connect.
+		// A repo and a bundle are stored here and read as they are.
+		emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf(
+			"Read access: answering from what has been gathered about %s. Nothing runs on it for you.", applianceLabel(pr.appliance.Name, pr.appliance.ID))})
+		return actNone
 	}
 	if strings.TrimSpace(pr.appliance.PeerName) != "" {
 		// Reached through a peer: no connection to acquire here, because the
@@ -1778,10 +1795,40 @@ func (pr *probeRun) assembleToolkit() {
 			emit(pr.id, probeEvent{Kind: "status", Text: "Code linked: " + strings.Join(names, ", ")})
 		}
 	}
+	if pr.readOnly {
+		pr.workerTools = pr.readOnlyTools(pr.workerTools)
+	}
 	// Enforced sanity check — servitor handles sensitive system data and
 	// must never call out to third-party services. assertOnlyAllowedTools
 	// panics if anything outside the local-only allow-list sneaks in.
 	assertAllowedWithBindings("servitor.worker", pr.workerTools, servitorWorkerToolAllowList, toolsetBindingNames(pr.appliance))
+}
+
+// readOnlyTools is a Read run's toolkit: tools that reach the system (its
+// commands, its logs, its bound tools) and those that write to what is known
+// about it are taken out; searching what is gathered, the map, linked
+// knowledge and code, and putting findings into the reader's own guides stay.
+func (pr *probeRun) readOnlyTools(in []AgentToolDef) []AgentToolDef {
+	drop := map[string]bool{"run_command": true, "run_pty": true}
+	for _, td := range []AgentToolDef{
+		pr.read_log_tool, pr.search_logs_tool, pr.count_lines_tool, pr.read_range_tool,
+		pr.note_lesson_tool, pr.record_technique_tool, pr.record_discovery_tool,
+		pr.store_fact_tool, pr.link_entities_tool, pr.store_rule_tool,
+	} {
+		if td.Tool.Name != "" {
+			drop[td.Tool.Name] = true
+		}
+	}
+	for _, td := range pr.resolvedTools.Defs {
+		drop[td.Tool.Name] = true
+	}
+	out := make([]AgentToolDef, 0, len(in))
+	for _, td := range in {
+		if !drop[td.Tool.Name] {
+			out = append(out, td)
+		}
+	}
+	return out
 }
 
 const probeTopicLimit = 3

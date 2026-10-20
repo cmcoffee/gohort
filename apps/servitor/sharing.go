@@ -75,6 +75,25 @@ func (T *Servitor) reaches(user, id string) bool {
 	return ok
 }
 
+// fullAccessFor reports whether user may reach the live system: run commands
+// on it, with the owner's login. The owner may. Somebody it is shared with
+// may when they hold Full access, or when the owner has not saved levels yet
+// (LevelsSet), or through the old shared-with-everyone, which kept its full
+// use. Everyone else it reaches has Read.
+func (a Appliance) fullAccessFor(owner, user string) bool {
+	switch {
+	case user == "" || owner == "":
+		return false
+	case user == owner:
+		return true
+	case a.Shared:
+		return true
+	case !a.LevelsSet:
+		return SharedWithUser(a.AllowedUsers, owner, user)
+	}
+	return SharedWithUser(a.FullAccess, owner, user)
+}
+
 // listSharedAppliances returns every shared appliance ID -> owner username.
 func (T *Servitor) listSharedAppliances() map[string]string {
 	return ListSharedOwners(T.DB, sharedIndexTable)
@@ -237,6 +256,30 @@ func cleanSystemRecipients(users []string, owner string) []string {
 	for _, u := range users {
 		if u = strings.TrimSpace(u); u != "" && u != owner && u != ShareEveryone && !seen[u] {
 			seen[u] = true
+			out = append(out, u)
+		}
+	}
+	return out
+}
+
+// readOnlyRefusal is why user may not reach the system live, or "" when they
+// may: for a door that runs on the system whatever the request says (a map).
+func readOnlyRefusal(a Appliance, owner, user string) string {
+	if owner == "" || owner == user || a.fullAccessFor(owner, user) {
+		return ""
+	}
+	return applianceLabel(a.Name, a.ID) + " is shared with you to read: mapping runs commands on it. Ask " + owner + " for Full access, or ask questions to answer from what has been gathered."
+}
+
+// keepReached is the entries of list that reach is also listing.
+func keepReached(list, reach []string) []string {
+	in := map[string]bool{}
+	for _, u := range reach {
+		in[u] = true
+	}
+	var out []string
+	for _, u := range list {
+		if in[u] {
 			out = append(out, u)
 		}
 	}

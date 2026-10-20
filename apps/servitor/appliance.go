@@ -210,6 +210,17 @@ type Appliance struct {
 	// AllowedUsers shares it with named people, or a team ("group:<id>"),
 	// rather than everyone: the owner's own call, like every other kind.
 	AllowedUsers []string `json:"allowed_users,omitempty"`
+	// FullAccess are the people and teams among AllowedUsers who may
+	// investigate the system live, with the owner's login (Full access).
+	// Everyone else it is shared with has Read: they ask from what has been
+	// gathered about it, and nothing runs on it for them (fullAccessFor).
+	//
+	// LevelsSet says the owner has saved the list since levels existed.
+	// Until then everybody on it keeps the full use a share always gave, so
+	// no share narrowed on its own; from then, a newly added person starts
+	// at Read.
+	FullAccess []string `json:"full_access,omitempty"`
+	LevelsSet  bool     `json:"levels_set,omitempty"`
 	// Shared config below (persona/instructions/profile/etc.)
 	Instructions  string     `json:"instructions"`   // freeform notes injected into every session
 	PersonaName   string     `json:"persona_name"`   // short label shown in the UI (e.g. "Support", "QA")

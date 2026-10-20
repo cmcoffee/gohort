@@ -36,6 +36,10 @@ func (T *Servitor) handleMap(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "system not found", http.StatusNotFound)
 		return
 	}
+	if why := readOnlyRefusal(appliance, ownerUser, userID); why != "" {
+		http.Error(w, why, http.StatusForbidden)
+		return
+	}
 	if appliance.Type == "workspace" {
 		// A workspace owns no system to map — its knowledge IS its members'.
 		// Refreshing it means refreshing them, individually.
@@ -115,9 +119,13 @@ func (T *Servitor) handleMapApp(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no database", http.StatusInternalServerError)
 		return
 	}
-	appliance, _, _, found := T.resolveAppliance(userID, udb, req.ApplianceID)
+	appliance, ownerUser, _, found := T.resolveAppliance(userID, udb, req.ApplianceID)
 	if !found {
 		http.Error(w, "system not found", http.StatusNotFound)
+		return
+	}
+	if why := readOnlyRefusal(appliance, ownerUser, userID); why != "" {
+		http.Error(w, why, http.StatusForbidden)
 		return
 	}
 

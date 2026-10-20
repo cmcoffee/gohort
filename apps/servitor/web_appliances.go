@@ -352,6 +352,14 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 			req.AllowedUsers = prev.AllowedUsers
 		}
 		req.AllowedUsers = cleanSystemRecipients(req.AllowedUsers, owner)
+		// Who among them has Full access: sent by the editor, which sets the
+		// levels; a save that did not send it keeps the stored ones.
+		if req.FullAccess == nil && hadPrev {
+			req.FullAccess, req.LevelsSet = prev.FullAccess, prev.LevelsSet
+		} else if req.FullAccess != nil {
+			req.LevelsSet = true
+		}
+		req.FullAccess = keepReached(cleanSystemRecipients(req.FullAccess, owner), req.AllowedUsers)
 		targetUDB.Set(applianceTable, req.ID, req)
 		// Keep the global shared index in sync with the record's Shared flag,
 		// and the named one with who it is shared with by name or team.

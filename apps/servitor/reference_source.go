@@ -241,7 +241,7 @@ func (s servitorSource) ItemToolsWithSession(sess *ToolSession, user, itemID str
 	if s.app == nil || s.app.DB == nil || user == "" || itemID == "" {
 		return nil
 	}
-	a, _, _, ok := s.app.resolveAppliance(user, UserDB(s.app.DB, user), itemID)
+	a, owner, _, ok := s.app.resolveAppliance(user, UserDB(s.app.DB, user), itemID)
 	if !ok || a.ID == "" {
 		return nil
 	}
@@ -313,6 +313,10 @@ func (s servitorSource) ItemToolsWithSession(sess *ToolSession, user, itemID str
 	// but open questions are not sent to the system. Without this, adding it
 	// as a Source gave back the investigation the flag exists to withhold.
 	if a.ToolsOnly {
+		return []AgentToolDef{searchTool, factsTool}
+	}
+	// Shared at Read: what is recorded, and nothing sent to the system.
+	if !a.fullAccessFor(owner, user) {
 		return []AgentToolDef{searchTool, factsTool}
 	}
 	return []AgentToolDef{searchTool, factsTool, investigateTool}
