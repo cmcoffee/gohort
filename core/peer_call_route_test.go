@@ -54,19 +54,26 @@ func TestTheServingSideShowsWhatABorrowedCallIsFor(t *testing.T) {
 		}
 	}
 
-	done1 := notePeerCallRoute("peer:gpu-box", "caller:history.fold")
-	done2 := notePeerCallRoute("peer:gpu-box", "caller:history.fold")
-	done3 := notePeerCallRoute("peer:gpu-box", "")
-	rows := peerRowsFrom(OllamaSchedStats{Callers: map[string]int{"peer:gpu-box": 3}}, "running a model")
-	if len(rows) != 1 || rows[0].Status != "on this machine's hardware, for its caller:history.fold (2), unnamed" {
-		t.Fatalf("the peer's row should say what its calls are for: %+v", rows)
+	w := func(app, route string) peerCall { return peerCall{tier: "worker", app: app, route: route} }
+	done1 := notePeerCall("peer:gpu-box", w("scribe", "caller:history.fold"))
+	done2 := notePeerCall("peer:gpu-box", w("scribe", "caller:history.fold"))
+	done3 := notePeerCall("peer:gpu-box", w("", ""))
+	rows := peerRowsFrom(OllamaSchedStats{Callers: map[string]int{"peer:gpu-box": 3}}, peerModelWork)
+	if len(rows) != 1 || rows[0].Label != "Peer gpu-box: remote scribe is using this machine's worker model (3 at once)" ||
+		rows[0].Status != "only the model runs here; its calls: caller:history.fold (2), unnamed" {
+		t.Fatalf("the peer's row should say which app, which model and what its calls are for: %+v", rows)
+	}
+	done4 := notePeerCall("peer:gpu-box", peerCall{tier: "lead", app: "chat", route: "memory.gate"})
+	if got := peerRowsFrom(OllamaSchedStats{Callers: map[string]int{"peer:gpu-box": 4}}, peerModelWork)[0].Label; got != "Peer gpu-box: remote chat and scribe are using this machine's worker and lead models (4 at once)" {
+		t.Errorf("two apps on both tiers read %q", got)
 	}
 	done1()
 	done2()
 	done3()
-	rows = peerRowsFrom(OllamaSchedStats{Callers: map[string]int{"peer:gpu-box": 1}}, "running a model")
-	if rows[0].Status != "on this machine's hardware" {
-		t.Errorf("finished calls are still counted: %q", rows[0].Status)
+	done4()
+	rows = peerRowsFrom(OllamaSchedStats{Callers: map[string]int{"peer:gpu-box": 1}}, peerModelWork)
+	if rows[0].Label != "Peer gpu-box: using this machine's model" || rows[0].Status != "only the model runs here" {
+		t.Errorf("finished calls are still counted: %+v", rows[0])
 	}
 }
 
@@ -74,9 +81,9 @@ func TestTheServingSideShowsWhatABorrowedCallIsFor(t *testing.T) {
 // says what it is for, and it stops saying so when the call ends.
 func TestTheServingSideCountsACallWhileItRuns(t *testing.T) {
 	db := peerModelDB(t)
-	var during string
+	var during peerCallsNow
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		during = peerCallRoutesFor("peer:mac")
+		during = peerCallsFor("peer:mac")
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"hi"}}]}`))
 	}))
@@ -93,10 +100,10 @@ func TestTheServingSideCountsACallWhileItRuns(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", w.Code, w.Body.String())
 	}
-	if during != ", for its scribe (caller:history.fold)" {
-		t.Errorf("while it ran, the peer's calls read %q", during)
+	if got := peerModelDoing(peerModelWork, during); got != "remote scribe is using this machine's worker model" || during.routes != "caller:history.fold" {
+		t.Errorf("while it ran, the peer's row read %q, its calls %q", got, during.routes)
 	}
-	if after := peerCallRoutesFor("peer:mac"); after != "" {
+	if after := peerCallsFor("peer:mac"); after.routes != "" {
 		t.Errorf("the ended call is still counted: %q", after)
 	}
 }

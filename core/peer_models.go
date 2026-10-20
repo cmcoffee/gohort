@@ -387,7 +387,7 @@ func HandlePeerChatCompletions(w http.ResponseWriter, r *http.Request) {
 	// the serialization fictional for exactly the requests that need it most.
 	defer release()
 	defer countModelUse(served, lane == LaneInteractive)()
-	defer notePeerCallRoute("peer:"+k.Label, peerCallLabel(r))()
+	defer notePeerCall("peer:"+k.Label, peerCall{tier: tier.Tier, app: peerCallApp(r), route: peerCallRoute(r)})()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, strings.NewReader(string(body)))
 	if err != nil {
@@ -661,20 +661,6 @@ func peerCallRoute(r *http.Request) string { return peerCodeName(r.Header.Get(pe
 
 // peerCallApp is the app a borrowed call says it is for, held to the same.
 func peerCallApp(r *http.Request) string { return peerCodeName(r.Header.Get(peerAppHeader)) }
-
-// peerCallLabel is how the serving side counts a borrowed call: the app that
-// asked with its route, "scribe (app.orchestrate.worker)", or the route alone
-// from a peer that does not say the app.
-func peerCallLabel(r *http.Request) string {
-	route, app := peerCallRoute(r), peerCallApp(r)
-	switch {
-	case app == "":
-		return route
-	case route == "":
-		return app
-	}
-	return app + " (" + route + ")"
-}
 
 // peerCodeName is v when it has the shape of a name from the code, else "".
 func peerCodeName(v string) string {

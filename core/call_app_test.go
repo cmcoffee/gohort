@@ -65,13 +65,12 @@ func TestABorrowedCallSaysWhichAppAsked(t *testing.T) {
 		t.Errorf("a core's own call went out as %q's", a)
 	}
 
-	// The serving side shows it beside the route, and drops what is no name.
-	for app, want := range map[string]string{"scribe": "scribe (memory.gate)", "": "memory.gate", "<b>": "memory.gate"} {
+	// The serving side reads the app, and drops what is no name.
+	for app, want := range map[string]string{"scribe": "scribe", "": "", "<b>": ""} {
 		r := httptest.NewRequest(http.MethodPost, "/", nil)
-		r.Header.Set(peerCallHeader, "memory.gate")
 		r.Header.Set(peerAppHeader, app)
-		if l := peerCallLabel(r); l != want {
-			t.Errorf("app %q is counted as %q, want %q", app, l, want)
+		if a := peerCallApp(r); a != want {
+			t.Errorf("app %q is read as %q, want %q", app, a, want)
 		}
 	}
 }

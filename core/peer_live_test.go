@@ -38,7 +38,7 @@ func TestAPeerRunningTheModelIsVisible(t *testing.T) {
 	if found.App != "Peers" {
 		t.Errorf("row is filed under %q", found.App)
 	}
-	if !strings.Contains(found.Label, "running a model") {
+	if !strings.Contains(found.Label, "using this machine's model") {
 		t.Errorf("the row does not say what the peer is doing: %q", found.Label)
 	}
 }
@@ -65,14 +65,14 @@ func TestQueuedPeerWorkReadsDifferently(t *testing.T) {
 	rows := peerRowsFrom(OllamaSchedStats{
 		Callers: map[string]int{"peer:mac": 1},
 		Queued:  map[string]int{"peer:laptop": 3},
-	}, "running a model")
+	}, peerModelWork)
 
 	var running, queued *LiveEntry
 	for i := range rows {
 		switch {
-		case strings.Contains(rows[i].Label, "mac"):
+		case strings.HasPrefix(rows[i].Label, "Peer mac:"):
 			running = &rows[i]
-		case strings.Contains(rows[i].Label, "laptop"):
+		case strings.HasPrefix(rows[i].Label, "Peer laptop:"):
 			queued = &rows[i]
 		}
 	}
@@ -85,7 +85,7 @@ func TestQueuedPeerWorkReadsDifferently(t *testing.T) {
 	if !queued.Queued {
 		t.Error("waiting work is not marked queued, so it reads as using the GPU right now")
 	}
-	if !strings.Contains(queued.Label, "3 waiting") {
+	if queued.Label != "Peer laptop: 3 waiting for this machine's model" {
 		t.Errorf("the queued row does not say how deep it is: %q", queued.Label)
 	}
 }
@@ -106,7 +106,7 @@ func TestTheRowNamesThePeer(t *testing.T) {
 // TestConcurrentWorkSaysHowMuch — one peer holding several slots is a different
 // situation from one holding one, and the ribbon has room to say which.
 func TestConcurrentWorkSaysHowMuch(t *testing.T) {
-	rows := peerRowsFrom(OllamaSchedStats{Callers: map[string]int{"peer:mac": 3}}, "rendering an image")
+	rows := peerRowsFrom(OllamaSchedStats{Callers: map[string]int{"peer:mac": 3}}, peerImageWork)
 	if len(rows) != 1 {
 		t.Fatalf("got %d rows, want one", len(rows))
 	}

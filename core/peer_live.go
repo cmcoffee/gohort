@@ -42,14 +42,32 @@ func peerLiveEntries() []LiveEntry {
 	var out []LiveEntry
 	// Both model schedulers: a deployment runs one, and asking the idle one
 	// costs a nil check.
-	out = append(out, peerRowsFrom(LlamacppSchedulerStats(), "running a model")...)
-	out = append(out, peerRowsFrom(OllamaSchedulerStats(), "running a model")...)
-	out = append(out, peerRowsFrom(ImageSchedulerStats(), "rendering an image")...)
+	out = append(out, peerRowsFrom(LlamacppSchedulerStats(), peerModelWork)...)
+	out = append(out, peerRowsFrom(OllamaSchedulerStats(), peerModelWork)...)
+	out = append(out, peerRowsFrom(ImageSchedulerStats(), peerImageWork)...)
 	// Stable order so the ribbon does not reshuffle between polls — a row that
 	// moves reads as a new row, and the point of this is to be glanceable.
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
 }
+
+// peerWork is what one scheduler lends a peer, in the words of its rows. A
+// peer borrows that one thing and nothing else: its apps, agents and their
+// tools all run on the peer, so the row names the peer's app as remote and
+// says only the model (or the renderer) runs here. Read as "running a model,
+// for its app.orchestrate.worker" it sounded like this machine's orchestrate.
+type peerWork struct {
+	uses    string // "this machine's model"
+	doing   string // a row with nothing more to say: "using this machine's model"
+	waiting string // "waiting for this machine's model"
+	here    string // what runs here: "the model"
+	model   bool   // its calls name a tier, an app and a route (notePeerCall)
+}
+
+var (
+	peerModelWork = peerWork{uses: "this machine's model", doing: "using this machine's model", waiting: "waiting for this machine's model", here: "the model", model: true}
+	peerImageWork = peerWork{doing: "rendering an image", waiting: "waiting to render an image", here: "the render"}
+)
 
 // peerRowsFrom turns one scheduler's per-caller counts into live rows.
 //
@@ -57,14 +75,22 @@ func peerLiveEntries() []LiveEntry {
 // and "a peer is waiting behind you" are different facts, and the second is the
 // one that explains why a queue is deep without implying the machine is busy
 // with someone else's work right now.
-func peerRowsFrom(st OllamaSchedStats, doing string) []LiveEntry {
+func peerRowsFrom(st OllamaSchedStats, work peerWork) []LiveEntry {
 	var out []LiveEntry
 	for caller, n := range st.Callers {
 		if n <= 0 || !strings.HasPrefix(caller, peerLivePrefix) {
 			continue
 		}
+		doing, status := work.doing, "only "+work.here+" runs here"
+		if work.model {
+			c := peerCallsFor(caller)
+			doing = peerModelDoing(work, c)
+			if c.routes != "" {
+				status += "; its calls: " + c.routes
+			}
+		}
 		out = append(out, LiveEntry{
-			ID:         "peerwork:" + doing + ":" + caller,
+			ID:         "peerwork:" + work.doing + ":" + caller,
 			Label:      peerRowLabel(caller, doing, n),
 			Background: true, // it started without the viewer, by definition
 			// Nothing here was typed by anybody: the peer's own key label and a
@@ -72,7 +98,7 @@ func peerRowsFrom(st OllamaSchedStats, doing string) []LiveEntry {
 			// "Peers - another user", which withholds the only thing it is for.
 			PublicLabel: true,
 			App:         "Peers",
-			Status:      "on this machine's hardware" + peerCallRoutesFor(caller),
+			Status:      status,
 			Order:       peerLiveOrder,
 		})
 	}
@@ -81,8 +107,8 @@ func peerRowsFrom(st OllamaSchedStats, doing string) []LiveEntry {
 			continue
 		}
 		out = append(out, LiveEntry{
-			ID:          "peerqueue:" + doing + ":" + caller,
-			Label:       fmt.Sprintf("%s: %d waiting to %s", peerDisplayName(caller), n, doing),
+			ID:          "peerqueue:" + work.doing + ":" + caller,
+			Label:       fmt.Sprintf("%s: %d %s", peerDisplayName(caller), n, work.waiting),
 			Queued:      true,
 			Background:  true,
 			PublicLabel: true,
@@ -91,6 +117,22 @@ func peerRowsFrom(st OllamaSchedStats, doing string) []LiveEntry {
 		})
 	}
 	return out
+}
+
+// peerModelDoing is what a peer's model calls are doing, in the row's words:
+// "remote scribe is using this machine's worker model".
+func peerModelDoing(work peerWork, c peerCallsNow) string {
+	uses := work.uses
+	if c.tiers != "" {
+		uses = "this machine's " + c.tiers
+	}
+	switch len(c.apps) {
+	case 0:
+		return "using " + uses
+	case 1:
+		return "remote " + c.apps[0] + " is using " + uses
+	}
+	return "remote " + strings.Join(c.apps, " and ") + " are using " + uses
 }
 
 // peerRowLabel names the peer and what it is doing, pluralized honestly.
@@ -115,33 +157,36 @@ func peerDisplayName(caller string) string {
 	return "Peer " + name
 }
 
-// peerCallRoutes counts the borrowed model calls in flight by peer and by what
-// each says it is for, so a peer's row names what its calls are doing. Kept
-// beside the scheduler's per-caller counts, not in them: a caller per purpose
-// would change who the scheduler's round-robin is fair between.
+// peerCallRoutes counts the borrowed model calls in flight by peer: the tier
+// of this machine's each runs on, and the app and route the peer named, so a
+// peer's row says which. Kept beside the scheduler's per-caller counts, not in
+// them: a caller per purpose would change who the scheduler's round-robin is
+// fair between.
 var peerCallRoutes = struct {
 	sync.Mutex
-	m map[string]map[string]int
-}{m: map[string]map[string]int{}}
+	m map[string]map[peerCall]int
+}{m: map[string]map[peerCall]int{}}
 
-// notePeerCallRoute counts one call until the returned func is called.
-func notePeerCallRoute(caller, route string) func() {
-	if route == "" {
-		route = "unnamed"
-	}
+// peerCall is one kind of borrowed call: the tier it runs on here ("worker",
+// "lead"), and the app and route the peer named.
+type peerCall struct{ tier, app, route string }
+
+// notePeerCall counts one call until the returned func is called.
+func notePeerCall(caller string, c peerCall) func() {
+	c.tier = strings.ToLower(strings.TrimSpace(c.tier))
 	peerCallRoutes.Lock()
 	if peerCallRoutes.m[caller] == nil {
-		peerCallRoutes.m[caller] = map[string]int{}
+		peerCallRoutes.m[caller] = map[peerCall]int{}
 	}
-	peerCallRoutes.m[caller][route]++
+	peerCallRoutes.m[caller][c]++
 	peerCallRoutes.Unlock()
 	return func() {
 		peerCallRoutes.Lock()
 		defer peerCallRoutes.Unlock()
-		if n := peerCallRoutes.m[caller][route] - 1; n > 0 {
-			peerCallRoutes.m[caller][route] = n
+		if n := peerCallRoutes.m[caller][c] - 1; n > 0 {
+			peerCallRoutes.m[caller][c] = n
 		} else {
-			delete(peerCallRoutes.m[caller], route)
+			delete(peerCallRoutes.m[caller], c)
 		}
 		if len(peerCallRoutes.m[caller]) == 0 {
 			delete(peerCallRoutes.m, caller)
@@ -149,27 +194,61 @@ func notePeerCallRoute(caller, route string) func() {
 	}
 }
 
-// peerCallRoutesFor is what a peer's calls in flight are for, as a suffix for
-// its row's status: ", for its scribe (app.orchestrate.worker), history.fold
-// (2)". The names are the PEER's, its apps and routes, never this machine's,
-// so the suffix says "its". Empty when none said, which is every call from a
-// peer older than the header.
-func peerCallRoutesFor(caller string) string {
+// peerCallsNow is what a peer's calls in flight are: the tiers they run on
+// ("worker model"), the apps that asked, and their routes ("history.fold (2),
+// unnamed"). The apps and routes are the PEER's, never this machine's.
+type peerCallsNow struct {
+	tiers  string
+	apps   []string
+	routes string
+}
+
+// peerCallsFor reads what caller's calls in flight are; zero when none.
+func peerCallsFor(caller string) peerCallsNow {
 	peerCallRoutes.Lock()
 	defer peerCallRoutes.Unlock()
-	routes := peerCallRoutes.m[caller]
-	if len(routes) == 0 {
-		return ""
+	var out peerCallsNow
+	calls := peerCallRoutes.m[caller]
+	if len(calls) == 0 {
+		return out
 	}
-	names := make([]string, 0, len(routes))
-	for r := range routes {
-		names = append(names, r)
-	}
-	sort.Strings(names)
-	for i, r := range names {
-		if n := routes[r]; n > 1 {
-			names[i] = fmt.Sprintf("%s (%d)", r, n)
+	routes := map[string]int{}
+	seenTier, seenApp := map[string]bool{}, map[string]bool{}
+	var ts []string
+	for c, n := range calls {
+		route := c.route
+		if route == "" {
+			route = "unnamed"
+		}
+		routes[route] += n
+		if c.tier != "" && !seenTier[c.tier] {
+			seenTier[c.tier] = true
+			ts = append(ts, c.tier)
+		}
+		if c.app != "" && !seenApp[c.app] {
+			seenApp[c.app] = true
+			out.apps = append(out.apps, c.app)
 		}
 	}
-	return ", for its " + strings.Join(names, ", ")
+	sort.Strings(out.apps)
+	sort.Sort(sort.Reverse(sort.StringSlice(ts))) // worker before lead
+	switch len(ts) {
+	case 0:
+	case 1:
+		out.tiers = ts[0] + " model"
+	default:
+		out.tiers = strings.Join(ts, " and ") + " models"
+	}
+	list := make([]string, 0, len(routes))
+	for r := range routes {
+		list = append(list, r)
+	}
+	sort.Strings(list)
+	for i, r := range list {
+		if n := routes[r]; n > 1 {
+			list[i] = fmt.Sprintf("%s (%d)", r, n)
+		}
+	}
+	out.routes = strings.Join(list, ", ")
+	return out
 }
