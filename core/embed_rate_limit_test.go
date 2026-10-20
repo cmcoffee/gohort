@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -24,8 +25,16 @@ func rateLimitedEmbedder(t *testing.T, refuse int32, retryAfter string) (*httpte
 			http.Error(w, `{"error":"rate limit reached for this key"}`, http.StatusTooManyRequests)
 			return
 		}
+		var req struct {
+			Input []string `json:"input"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		vecs := make([][]float32, len(req.Input))
+		for i := range vecs {
+			vecs[i] = []float32{0.1, 0.2}
+		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"embeddings": [][]float32{{0.1, 0.2}}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"embeddings": vecs})
 	}))
 	t.Cleanup(srv.Close)
 	prev := GetEmbeddingConfig()
@@ -52,8 +61,57 @@ func TestARateLimitingEmbedderIsWaitedOut(t *testing.T) {
 	if took := time.Since(started); took < 2*time.Second {
 		t.Errorf("finished in %s: the Retry-After pauses were not waited out", took)
 	}
-	if got := int(*calls); got != len(ids)+2 {
-		t.Errorf("%d calls, want one per chunk plus the two refused", got)
+	// One batch for all seven, sent three times: refused twice, then answered.
+	if got := int(*calls); got != 3 {
+		t.Errorf("%d calls, want the one batch twice refused and once answered", got)
+	}
+}
+
+// A backend that answers one vector however many inputs it is sent is not
+// one to batch with: the pass sees the short answer, goes one chunk a request
+// for the rest of the pass, and repairs everything.
+func TestABackendThatEmbedsOneAtATimeStillRepairsEverything(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"embeddings": [][]float32{{0.3, 0.4}}})
+	}))
+	t.Cleanup(srv.Close)
+	prev := GetEmbeddingConfig()
+	SetEmbeddingConfig(EmbeddingConfig{Endpoint: srv.URL, Model: "m", Enabled: true})
+	t.Cleanup(func() { SetEmbeddingConfig(prev) })
+	db := &DBase{Store: kvlite.MemStore()}
+	for _, id := range []string{"a", "b", "c", "d"} {
+		db.Set(EmbeddedChunks, id, EmbeddedChunk{ID: id, Source: "kb", Text: "unembedded " + id})
+	}
+	if fixed := ReembedUnvectoredChunks(context.Background(), db); fixed != 4 {
+		t.Fatalf("repaired %d of 4", fixed)
+	}
+	if got := atomic.LoadInt32(&calls); got != 5 {
+		t.Errorf("%d calls, want the batch and then one per chunk", got)
+	}
+}
+
+// A pass of more chunks than one batch holds sends them reembedBatchSize to a
+// request.
+func TestAPassSendsChunksInBatches(t *testing.T) {
+	var sizes []int
+	_, calls := stubEmbedServerOf(t, "m", func(_ int32, inputs []string) (int, []float32) {
+		sizes = append(sizes, len(inputs))
+		return 200, []float32{1, 0}
+	})
+	db := &DBase{Store: kvlite.MemStore()}
+	n := reembedBatchSize*2 + 3
+	for i := 0; i < n; i++ {
+		id := fmt.Sprintf("c%03d", i)
+		db.Set(EmbeddedChunks, id, EmbeddedChunk{ID: id, Source: "kb", Text: "unembedded " + id})
+	}
+	if fixed := ReembedUnvectoredChunks(context.Background(), db); fixed != n {
+		t.Fatalf("repaired %d of %d", fixed, n)
+	}
+	if *calls != 3 || sizes[0] != reembedBatchSize || sizes[2] != 3 {
+		t.Errorf("%d requests of %v, want two full batches and the rest", *calls, sizes)
 	}
 }
 

@@ -225,6 +225,27 @@ func EmbedWith(ctx context.Context, cfg EmbeddingConfig, text string) ([]float32
 // endpoint, which embeds on behalf of another instance that has already
 // applied its own prefixes, and the dimension probe.
 func embedRaw(ctx context.Context, cfg EmbeddingConfig, text string) ([]float32, error) {
+	vecs, err := embedTexts(ctx, cfg, []string{text})
+	if err != nil {
+		return nil, err
+	}
+	return vecs[0], nil
+}
+
+// embedTexts embeds several texts in one request (the OpenAI input array),
+// exactly as given, and returns a vector for each in order, or an error. One
+// request for many is what lets a bulk pass get through an endpoint that
+// limits requests, a peer key's per-minute ceiling among them. A backend that
+// answers with fewer vectors than it was sent is an error, so a caller can
+// fall back to one at a time.
+func embedTexts(ctx context.Context, cfg EmbeddingConfig, texts []string) ([][]float32, error) {
+	if len(texts) == 0 {
+		return nil, fmt.Errorf("nothing to embed")
+	}
+	chars := 0
+	for _, t := range texts {
+		chars += len(t)
+	}
 	if !cfg.Enabled {
 		return nil, fmt.Errorf("embeddings disabled")
 	}
@@ -240,11 +261,11 @@ func embedRaw(ctx context.Context, cfg EmbeddingConfig, text string) ([]float32,
 		payload, _ = json.Marshal(struct {
 			Model string   `json:"model"`
 			Input []string `json:"input"`
-		}{cfg.Model, []string{text}})
+		}{cfg.Model, texts})
 	} else {
 		payload, _ = json.Marshal(struct {
 			Input []string `json:"input"`
-		}{[]string{text}})
+		}{texts})
 	}
 
 	url := embedEndpointURL(cfg)
@@ -299,9 +320,9 @@ func embedRaw(ctx context.Context, cfg EmbeddingConfig, text string) ([]float32,
 	// DEBUG on, because that is the case an operator needs to see.
 	if elapsed > embedSlowWarn {
 		Log("[embed] SLOW %s in %s (endpoint=%s, %d chars): an embed on a turn's critical path delays the whole message; check whether this endpoint shares a server with the worker model",
-			embedOutcome(err, resp), elapsed.Round(time.Millisecond), url, len(text))
+			embedOutcome(err, resp), elapsed.Round(time.Millisecond), url, chars)
 	} else {
-		Debug("[embed] %s in %s (endpoint=%s, %d chars)", embedOutcome(err, resp), elapsed.Round(time.Millisecond), url, len(text))
+		Debug("[embed] %s in %s (endpoint=%s, %d input(s), %d chars)", embedOutcome(err, resp), elapsed.Round(time.Millisecond), url, len(texts), chars)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("embed request failed (%s): %w", url, err)
@@ -328,6 +349,7 @@ func embedRaw(ctx context.Context, cfg EmbeddingConfig, text string) ([]float32,
 	// servers (llama.cpp, etc.) return {"data": [{"embedding": [...]}]}.
 	// Handle all three.
 	type openAIItem struct {
+		Index     int       `json:"index"`
 		Embedding []float32 `json:"embedding"`
 	}
 	var out struct {
@@ -338,16 +360,34 @@ func embedRaw(ctx context.Context, cfg EmbeddingConfig, text string) ([]float32,
 	if err := json.Unmarshal(body, &out); err != nil {
 		return nil, fmt.Errorf("embed response parse: %w", err)
 	}
-	if len(out.Embeddings) > 0 && len(out.Embeddings[0]) > 0 {
-		return out.Embeddings[0], nil
+	var vecs [][]float32
+	switch {
+	case len(out.Data) > 0:
+		// Placed by index: the index is what says which input a vector is for.
+		vecs = make([][]float32, len(texts))
+		for i, d := range out.Data {
+			at := d.Index
+			if at < 0 || at >= len(texts) || vecs[at] != nil {
+				at = i
+			}
+			if at < len(vecs) {
+				vecs[at] = d.Embedding
+			}
+		}
+	case len(out.Embeddings) > 0:
+		vecs = out.Embeddings
+	case len(out.Embedding) > 0:
+		vecs = [][]float32{out.Embedding}
 	}
-	if len(out.Embedding) > 0 {
-		return out.Embedding, nil
+	if len(vecs) != len(texts) {
+		return nil, fmt.Errorf("embed response had %d vector(s) for %d input(s)", len(vecs), len(texts))
 	}
-	if len(out.Data) > 0 && len(out.Data[0].Embedding) > 0 {
-		return out.Data[0].Embedding, nil
+	for _, v := range vecs {
+		if len(v) == 0 {
+			return nil, fmt.Errorf("embed response had no vector")
+		}
 	}
-	return nil, fmt.Errorf("embed response had no vector")
+	return vecs, nil
 }
 
 // An embedder that answers 429 (a peer's per-key limit, a hosted API's quota)

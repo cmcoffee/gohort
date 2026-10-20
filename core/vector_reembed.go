@@ -35,6 +35,19 @@ const reembedFailStreak = 5
 // the breaker can trip while the operator is still watching.
 const reembedChunkTimeout = 20 * time.Second
 
+// reembedBatchSize and reembedBatchChars bound one request of the pass: as
+// many chunks as a peer instance takes in one call (maxPeerEmbedInputs is 64),
+// halved for headroom, and a text budget so a batch of long chunks stays a
+// request any embedder accepts.
+const (
+	reembedBatchSize  = 32
+	reembedBatchChars = 32000
+)
+
+// reembedBatchTimeout bounds one batch's request: a chunk's budget for the
+// first few, since the embedder works through them in one go.
+const reembedBatchTimeout = 90 * time.Second
+
 // reembedReportEvery is how often the pass says where it is. Often enough
 // that a watching operator sees movement, rare enough that the report is not
 // the work.
@@ -97,7 +110,7 @@ func reembedChunks(ctx context.Context, db Database, what string, want func(c Em
 	keys := db.Keys(EmbeddedChunks)
 	var scanned, candidates, fixed, failed, streak, split int
 	started := time.Now()
-	// This pass embeds one chunk at a time and a full store takes minutes, so
+	// A full store takes minutes even in batches, so
 	// it says where it is. Reported on a tick rather than per chunk: the
 	// admin panel reads the latest line, and writing one per row would be
 	// lock traffic nobody sees.
@@ -105,24 +118,139 @@ func reembedChunks(ctx context.Context, db Database, what string, want func(c Em
 	lastReport := time.Now()
 
 	url := embedEndpointURL(cfg)
-	for i := 0; i < len(keys); i++ {
-		key := keys[i]
-		if ctx.Err() != nil {
-			Log("[vector-reembed] cancelled after %d repaired", fixed)
-			break
+	// waitOut waits out a pause the embedder asked for (a peer key's per
+	// minute ceiling), with no chunk's deadline running and the wait on the
+	// progress line. False means the pass was cancelled.
+	waitOut := func() bool {
+		d := embedPausedFor(url)
+		if d <= 0 {
+			return true
 		}
-		// An embedder that is rate limiting this instance (a peer key's per
-		// minute ceiling) is waited out here, with no chunk's deadline running,
-		// and the wait is on the progress line: a pass that sent into the
-		// refusals counted each one a failure and stopped at five.
-		if d := embedPausedFor(url); d > 0 {
-			ReportMaintenanceProgress(ctx, fmt.Sprintf("%d of %d chunk(s) checked - %d re-embedded - the embedder is rate limiting, waiting %s",
-				scanned, len(keys), fixed, d.Round(time.Second)))
-			if err := waitEmbedRateLimit(ctx, url); err != nil {
-				Log("[vector-reembed] cancelled after %d repaired", fixed)
-				break
+		ReportMaintenanceProgress(ctx, fmt.Sprintf("%d of %d chunk(s) checked - %d re-embedded - the embedder is rate limiting, waiting %s",
+			scanned, len(keys), fixed, d.Round(time.Second)))
+		if waitEmbedRateLimit(ctx, url) != nil {
+			return false
+		}
+		lastReport = time.Now()
+		return true
+	}
+	type pending struct {
+		key string
+		c   EmbeddedChunk
+	}
+	// repairOne is one chunk through the path ingest uses, split fallback
+	// included, and reports whether the pass has to stop: cancelled, or the
+	// breaker tripped. A chunk refused for the rate, not itself, goes again
+	// once the pause is over and is no step toward the breaker.
+	repairOne := func(p pending) (stop bool) {
+		for {
+			if !waitOut() {
+				return true
 			}
-			lastReport = time.Now()
+			// The SAME embed path ingest uses, split fallback included. This
+			// used to call the embedder once, which meant a chunk too large
+			// for it could never be repaired: such rows exist precisely
+			// because the embedder was unreachable at ingest (a non-size
+			// error bails without splitting, storing the whole text raw).
+			ectx, cancel := context.WithTimeout(ctx, reembedChunkTimeout)
+			pieces := embedWithSplitFallback(ectx, cfg, embedHeader(p.c.Title, p.c.Section), p.c.Text)
+			cancel()
+			if len(pieces) == 0 || len(pieces[0].Vector) == 0 {
+				if ctx.Err() != nil {
+					return true
+				}
+				if embedPausedFor(url) > 0 {
+					continue
+				}
+				failed++
+				streak++
+				Debug("[vector-reembed] %s/%s section %q failed", p.c.Source, p.c.ReportID, p.c.Section)
+				if streak >= reembedFailStreak {
+					Log("[vector-reembed] stopping, %d consecutive failures (endpoint likely down: %s). Repaired %d before the streak; re-run once the embedder is back.",
+						streak, cfg.Endpoint, fixed)
+					return true
+				}
+				return false
+			}
+			streak = 0
+			// One piece is the ordinary case and the row keeps its identity.
+			// Several means the text only embeds in halves, so the row becomes
+			// the rows ingest would have written: same parent, same position,
+			// each tagged "(part i/N)", which SortChunksForAssembly orders
+			// within the position they share.
+			base := p.c.Section
+			for i, pc := range pieces {
+				row := p.c
+				row.Vector, row.Model, row.Text = pc.Vector, space, pc.Text
+				if len(pieces) > 1 {
+					row.Section = fmt.Sprintf("%s (part %d/%d)", base, i+1, len(pieces))
+				}
+				if i == 0 {
+					db.Set(EmbeddedChunks, p.key, row) // in place, keeping its ID
+				} else {
+					row.ID = UUIDv4()
+					db.Set(EmbeddedChunks, row.ID, row)
+					split++
+				}
+				fixed++
+			}
+			return false
+		}
+	}
+	// Chunks go to the embedder reembedBatchSize at a time, one request for
+	// the lot: a pass of one request a chunk took a 10k backlog through a
+	// peer key at its 600 a minute. A batch the embedder will not take whole
+	// (a backend that embeds one input a request, an oversized chunk, a short
+	// answer) turns batching off for the rest of the pass, and its chunks and
+	// every later one go one at a time, where splitting and the breaker work
+	// as they always have.
+	var batch []pending
+	batchChars, batching := 0, true
+	flush := func() (stop bool) {
+		defer func() { batch, batchChars = nil, 0 }()
+		for len(batch) > 0 && batching {
+			if !waitOut() {
+				return true
+			}
+			prompts := make([]string, len(batch))
+			for i, p := range batch {
+				prompts[i] = cfg.DocPrefix + embedHeader(p.c.Title, p.c.Section) + "\n\n" + p.c.Text
+			}
+			bctx, cancel := context.WithTimeout(ctx, reembedBatchTimeout)
+			vecs, err := embedTexts(bctx, cfg, prompts)
+			cancel()
+			if err == nil {
+				for i, p := range batch {
+					row := p.c
+					row.Vector, row.Model = vecs[i], space
+					db.Set(EmbeddedChunks, p.key, row) // in place, keeping its ID
+					fixed++
+				}
+				streak = 0
+				return false
+			}
+			if ctx.Err() != nil {
+				return true
+			}
+			if embedPausedFor(url) > 0 {
+				continue // the same batch again once the pause is over
+			}
+			batching = false
+			Log("[vector-reembed] %s would not embed %d chunk(s) in one request (%v): going one at a time", cfg.Endpoint, len(batch), err)
+		}
+		for _, p := range batch {
+			if repairOne(p) {
+				return true
+			}
+		}
+		return false
+	}
+
+	stopped := false
+	for _, key := range keys {
+		if ctx.Err() != nil {
+			stopped = true
+			break
 		}
 		if time.Since(lastReport) >= reembedReportEvery {
 			ReportMaintenanceProgress(ctx, fmt.Sprintf("%d of %d chunk(s) checked - %d re-embedded - %s elapsed",
@@ -138,56 +266,25 @@ func reembedChunks(ctx context.Context, db Database, what string, want func(c Em
 			continue
 		}
 		candidates++
-
-		// The SAME embed path ingest uses, split fallback included. This used
-		// to call the embedder once, which meant a chunk too large for it
-		// could never be repaired — and such rows exist precisely because the
-		// embedder was unreachable at ingest (a non-size error bails without
-		// splitting, storing the whole text raw). Once it is back, it answers
-		// "too large" every time, so those rows sat in the missing-vector
-		// count forever and no amount of re-running moved them.
-		ectx, cancel := context.WithTimeout(ctx, reembedChunkTimeout)
-		pieces := embedWithSplitFallback(ectx, cfg, embedHeader(c.Title, c.Section), c.Text)
-		cancel()
-		if len(pieces) == 0 || len(pieces[0].Vector) == 0 {
-			// Refused for the rate, not the chunk: the same chunk again once
-			// the pause is over, and no step toward the breaker.
-			if embedPausedFor(url) > 0 {
-				i--
-				continue
-			}
-			failed++
-			streak++
-			Debug("[vector-reembed] %s/%s section %q failed", c.Source, c.ReportID, c.Section)
-			if streak >= reembedFailStreak {
-				Log("[vector-reembed] stopping, %d consecutive failures (endpoint likely down: %s). Repaired %d before the streak; re-run once the embedder is back.",
-					streak, cfg.Endpoint, fixed)
+		if !batching {
+			if stopped = repairOne(pending{key, c}); stopped {
 				break
 			}
 			continue
 		}
-		streak = 0
-		// One piece is the ordinary case and the row keeps its identity.
-		// Several means the text only embeds in halves, so the row becomes the
-		// rows ingest would have written: same parent, same position, each
-		// tagged "(part i/N)" — which SortChunksForAssembly orders within the
-		// position they share.
-		base := c.Section
-		for i, pc := range pieces {
-			row := c
-			row.Vector, row.Model, row.Text = pc.Vector, space, pc.Text
-			if len(pieces) > 1 {
-				row.Section = fmt.Sprintf("%s (part %d/%d)", base, i+1, len(pieces))
+		batch = append(batch, pending{key, c})
+		batchChars += len(c.Text)
+		if len(batch) >= reembedBatchSize || batchChars >= reembedBatchChars {
+			if stopped = flush(); stopped {
+				break
 			}
-			if i == 0 {
-				db.Set(EmbeddedChunks, key, row) // in place, keeping its ID
-			} else {
-				row.ID = UUIDv4()
-				db.Set(EmbeddedChunks, row.ID, row)
-				split++
-			}
-			fixed++
 		}
+	}
+	if !stopped && len(batch) > 0 {
+		stopped = flush()
+	}
+	if ctx.Err() != nil {
+		Log("[vector-reembed] cancelled after %d repaired", fixed)
 	}
 
 	if fixed > 0 {

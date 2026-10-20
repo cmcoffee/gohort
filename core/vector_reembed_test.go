@@ -16,16 +16,31 @@ import (
 // request gets, so a test can serve vectors, fail everything, or count calls.
 func stubEmbedServer(t *testing.T, model string, reply func(n int32) (int, []float32)) (*httptest.Server, *int32) {
 	t.Helper()
+	return stubEmbedServerOf(t, model, func(n int32, _ []string) (int, []float32) { return reply(n) })
+}
+
+// stubEmbedServerOf is stubEmbedServer whose reply also sees the request's
+// inputs, and which answers a vector for each input, as an embedder does.
+func stubEmbedServerOf(t *testing.T, model string, reply func(n int32, inputs []string) (int, []float32)) (*httptest.Server, *int32) {
+	t.Helper()
 	var calls int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := atomic.AddInt32(&calls, 1)
-		status, vec := reply(n)
+		var req struct {
+			Input []string `json:"input"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		status, vec := reply(n, req.Input)
 		if status != 200 {
 			http.Error(w, "embedder unavailable", status)
 			return
 		}
+		vecs := make([][]float32, len(req.Input))
+		for i := range vecs {
+			vecs[i] = vec
+		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"embeddings": [][]float32{vec}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"embeddings": vecs})
 	}))
 	t.Cleanup(srv.Close)
 
@@ -65,8 +80,9 @@ func TestReembedFillsMissingVectorsOnly(t *testing.T) {
 	if fixed != 2 {
 		t.Fatalf("expected 2 rows repaired, got %d", fixed)
 	}
-	if *calls != 2 {
-		t.Errorf("only the vectorless rows with text should be embedded; server saw %d calls", *calls)
+	// Both in one request: the pass sends its chunks in batches.
+	if *calls != 1 {
+		t.Errorf("only the vectorless rows with text should be embedded, in one request; server saw %d calls", *calls)
 	}
 
 	// A repaired row must carry the CURRENT model, or chunkVectorComparable
@@ -108,17 +124,22 @@ func TestReembedStopsWhenEndpointIsDown(t *testing.T) {
 	if fixed := ReembedUnvectoredChunks(context.Background(), db); fixed != 0 {
 		t.Fatalf("nothing can be repaired against a dead endpoint, got %d", fixed)
 	}
-	if int(*calls) != reembedFailStreak {
-		t.Errorf("should stop after %d consecutive failures, made %d attempts against 10 rows", reembedFailStreak, *calls)
+	// The batch, refused, then one at a time until the breaker trips.
+	if int(*calls) != reembedFailStreak+1 {
+		t.Errorf("should stop after the batch and %d consecutive failures, made %d attempts against 10 rows", reembedFailStreak, *calls)
 	}
 }
 
 // A single failing chunk (oversized, say) is not an outage: the pass skips it
 // and keeps going, and the streak resets on the next success.
 func TestReembedSkipsOneBadChunkAndContinues(t *testing.T) {
-	_, calls := stubEmbedServer(t, "m", func(n int32) (int, []float32) {
-		if n == 1 {
-			return 500, nil
+	// The embedder refuses any request carrying chunk b: the batch with it,
+	// then b alone.
+	_, calls := stubEmbedServerOf(t, "m", func(_ int32, inputs []string) (int, []float32) {
+		for _, in := range inputs {
+			if strings.Contains(in, "unembedded b") {
+				return 500, nil
+			}
 		}
 		return 200, []float32{1, 0}
 	})
@@ -131,7 +152,8 @@ func TestReembedSkipsOneBadChunkAndContinues(t *testing.T) {
 	if fixed := ReembedUnvectoredChunks(context.Background(), db); fixed != 2 {
 		t.Fatalf("one bad chunk should cost only itself; expected 2 repaired, got %d", fixed)
 	}
-	if *calls != 3 {
+	// The batch, then each candidate alone.
+	if *calls != 4 {
 		t.Errorf("every candidate should be attempted, server saw %d calls", *calls)
 	}
 }
@@ -220,8 +242,8 @@ func TestReembedStaleTouchesOnlyRowsOutsideTheSpace(t *testing.T) {
 	}
 
 	fixed := ReembedStaleChunks(context.Background(), db)
-	if fixed != 3 || *calls != 3 {
-		t.Fatalf("expected old, unstamp and empty repaired (3), got fixed=%d calls=%d", fixed, *calls)
+	if fixed != 3 || *calls != 1 {
+		t.Fatalf("expected old, unstamp and empty repaired (3) in one request, got fixed=%d calls=%d", fixed, *calls)
 	}
 	for _, id := range []string{"old", "unstamp", "empty"} {
 		var c EmbeddedChunk
@@ -239,7 +261,7 @@ func TestReembedStaleTouchesOnlyRowsOutsideTheSpace(t *testing.T) {
 		t.Errorf("nothing should be stale after the pass")
 	}
 	// A second run finds nothing to do.
-	if again := ReembedStaleChunks(context.Background(), db); again != 0 || *calls != 3 {
+	if again := ReembedStaleChunks(context.Background(), db); again != 0 || *calls != 1 {
 		t.Errorf("second run must be a no-op, repaired %d with %d calls", again, *calls)
 	}
 	// The forced pass re-embeds the current row too.
