@@ -20,6 +20,7 @@ package orchestrate
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -49,10 +50,9 @@ func publishPipelineForDeployment(owner, key string) error {
 		return nil // already out; approving a stale duplicate request is not an error
 	}
 	def.Published = true
-	// The recipient list goes. Everybody has it now, so a list naming three
-	// people decides nothing, and leaving it would have a later un-publishing
-	// silently restore an ACL the owner had forgotten.
-	def.AllowedUsers = nil
+	// The recipient list stays. Everybody has it now, so it decides nothing
+	// while published, but it is in the share list beside Everyone where the
+	// owner sees it, and taking Everyone back leaves those people their share.
 	SavePipelineDefAs(UserDB(orchestrateBaseDB, owner), def, "published deployment-wide")
 	Log("[orchestrate.publish] pipeline %q by %q is now deployment-wide", def.Name, owner)
 	return nil
@@ -67,15 +67,14 @@ func publishMachineForDeployment(owner, key string) error {
 		return nil
 	}
 	def.Published = true
-	def.AllowedUsers = nil
 	SaveMachineDefAs(UserDB(orchestrateBaseDB, owner), def, "published deployment-wide")
 	Log("[orchestrate.publish] machine %q by %q is now deployment-wide", def.Name, owner)
 	return nil
 }
 
 // unpublishPipeline and unpublishMachine are the way back, and they are the
-// OWNER's. The record returns to being private, with no recipients, because the
-// alternative is guessing which of the deployment's users they meant to keep.
+// OWNER's. The record returns to its named list: the people and teams the
+// owner kept in it beside Everyone.
 func unpublishPipeline(owner, id string) error {
 	def, err := findOwnedPipeline(owner, id)
 	if err != nil {
@@ -85,7 +84,6 @@ func unpublishPipeline(owner, id string) error {
 		return Error("pipeline " + def.Name + " is not published")
 	}
 	def.Published = false
-	def.AllowedUsers = nil
 	SavePipelineDefAs(UserDB(orchestrateBaseDB, owner), def, "taken back from the deployment")
 	Log("[orchestrate.publish] %q took pipeline %q back from the deployment", owner, def.Name)
 	return nil
@@ -100,7 +98,6 @@ func unpublishMachine(owner, id string) error {
 		return Error("machine " + def.Name + " is not published")
 	}
 	def.Published = false
-	def.AllowedUsers = nil
 	SaveMachineDefAs(UserDB(orchestrateBaseDB, owner), def, "taken back from the deployment")
 	Log("[orchestrate.publish] %q took machine %q back from the deployment", owner, def.Name)
 	return nil
@@ -152,37 +149,12 @@ func findOwnedMachine(owner, key string) (MachineDef, error) {
 }
 
 // Everyone is one more choice in a pipeline's or a machine's share list, and
-// the list's door turns it into the publish steps above: an administrator's
-// Everyone publishes at once, anybody else's files the request, and taking it
-// back out unpublishes (owner-direct) or withdraws a request still waiting.
-// The list itself never stores it; Published and the request queue do.
-
-// everyoneStep is what the list's Everyone entry asks for on one save.
-type everyoneStep int
-
-const (
-	everyoneKeep everyoneStep = iota
-	everyonePublish
-	everyoneRequest
-	everyoneUnpublish
-	everyoneWithdraw
-)
-
-// everyoneStepFor decides it from what the list says (want) and where the
-// record stands: published, or waiting on a request.
-func everyoneStepFor(r *http.Request, want, published, pending bool) everyoneStep {
-	switch {
-	case want && !published && requestIsAdminAgent(r):
-		return everyonePublish
-	case want && !published && !pending:
-		return everyoneRequest
-	case !want && published:
-		return everyoneUnpublish
-	case !want && pending:
-		return everyoneWithdraw
-	}
-	return everyoneKeep
-}
+// the list's door turns it into the publish steps above through the shared
+// rule (promotion.AskEveryone): an administrator's Everyone publishes at
+// once, anybody else's files the request, and taking it back out unpublishes
+// (owner-direct) or withdraws a request still waiting. The list itself never
+// stores it; Published and the request queue do. The names beside it are
+// kept either way.
 
 // splitEveryone is the list without Everyone, and whether it was in it.
 func splitEveryone(in []string) ([]string, bool) {
@@ -225,6 +197,22 @@ type recipeShare struct {
 
 func (rs recipeShare) pending() bool { return publishPending(rs.kind, rs.owner, rs.name) }
 
+// ask is the save as a request: filed under the record's name, which is what
+// an administrator reads and what the /publish door has always filed under.
+func (rs recipeShare) ask(r *http.Request, want bool) promotion.EveryoneAsk {
+	a := promotion.EveryoneAsk{
+		Kind: rs.kind, Owner: rs.owner, ID: rs.name, Admin: requestIsAdminAgent(r),
+		Note: strings.ToUpper(rs.kind[:1]) + rs.kind[1:] + " " + strconv.Quote(rs.name) + ": everyone can run it",
+	}
+	if want {
+		a.Want = promotion.EveryoneOn
+	}
+	if rs.published {
+		a.Has = promotion.EveryoneOn
+	}
+	return a
+}
+
 // publishPending reports whether owner's request to publish name is waiting.
 func publishPending(kind, owner, name string) bool {
 	return AuthDB != nil && PendingPromotion(AuthDB(), owner, kind, name)
@@ -235,29 +223,26 @@ func (rs recipeShare) list() map[string]any {
 	return map[string]any{"allowed_users": withEveryone(rs.before, rs.published || rs.pending())}
 }
 
-// apply runs the Everyone step the posted list asks for, then stores the
-// names. Publishing replaces the named list (everybody already includes
-// them), so a publish keeps none.
+// apply settles the Everyone the posted list asks for, then stores the names.
 func (rs recipeShare) apply(r *http.Request, posted []string) (any, error) {
 	names, want := splitEveryone(posted)
-	switch everyoneStepFor(r, want, rs.published, rs.pending()) {
-	case everyonePublish:
+	var db promotion.Store
+	if AuthDB != nil {
+		db = AuthDB()
+	}
+	level, err := promotion.AskEveryone(db, rs.ask(r, want))
+	if err != nil {
+		return nil, err
+	}
+	switch on := level != ""; {
+	case on && !rs.published:
 		if err := rs.publish(); err != nil {
 			return nil, err
 		}
-		names = nil
-	case everyoneRequest:
-		if err := CreatePromotionRequest(AuthDB(), rs.owner, rs.kind, rs.name, ""); err != nil {
-			return nil, err
-		}
-		Log("[orchestrate.publish] user=%q asked to publish %s %q", rs.owner, rs.kind, rs.name)
-	case everyoneUnpublish:
+	case !on && rs.published:
 		if err := rs.unpublish(); err != nil {
 			return nil, err
 		}
-	case everyoneWithdraw:
-		promotion.WithdrawPromotionRequest(AuthDB(), rs.owner, rs.kind, rs.name)
-		Log("[orchestrate.publish] user=%q withdrew the request to publish %s %q", rs.owner, rs.kind, rs.name)
 	}
 	return rs.save(names), nil
 }
@@ -285,4 +270,4 @@ func recipeShareSubtitle(noun string, published, pending bool) string {
 // recipeEveryoneDetail is the share section's word on Everyone.
 const recipeEveryoneDetail = "Everyone reaches every account in the deployment, so it is requested rather than applied: an administrator approves it from the pending queue. " +
 	"Taking it back out is yours and takes effect at once; anyone who only had it through Everyone loses it, including any schedule they armed against it. " +
-	"Once published, the names you had are dropped, because everybody already includes them."
+	"The people and teams in the list keep it either way."

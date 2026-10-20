@@ -51,10 +51,9 @@ func TestAPublishedPipelineReachesEverybody(t *testing.T) {
 	t.Error("a published pipeline does not reach an ordinary user")
 }
 
-// The named list goes when it is published: everybody already includes them,
-// and leaving it would have a later un-publishing restore an ACL the owner had
-// forgotten.
-func TestPublishingAPipelineClearsItsRecipientList(t *testing.T) {
+// The named list stays when it is published, and is the share again when it
+// is taken back: the owner sees it in the share list beside Everyone.
+func TestPublishingAPipelineKeepsItsRecipientList(t *testing.T) {
 	recipeTestApp(t)
 	def := publishTestPipeline(t, "alice", "Nightly")
 	def.AllowedUsers = []string{"bob"}
@@ -67,8 +66,14 @@ func TestPublishingAPipelineClearsItsRecipientList(t *testing.T) {
 	if !ok {
 		t.Fatal("the pipeline went missing")
 	}
-	if !got.Published || len(got.AllowedUsers) != 0 {
+	if !got.Published || strings.Join(got.AllowedUsers, ",") != "bob" {
 		t.Errorf("published=%v recipients=%v", got.Published, got.AllowedUsers)
+	}
+	if err := unpublishPipeline("alice", def.ID); err != nil {
+		t.Fatalf("unpublish: %v", err)
+	}
+	if got, _ = LoadPipelineDef(UserDB(orchestrateBaseDB, "alice"), "alice", def.ID); got.Published || !userCanRunSharedPipeline(got, "bob") {
+		t.Errorf("taken back, bob lost his share: published=%v recipients=%v", got.Published, got.AllowedUsers)
 	}
 }
 
@@ -146,8 +151,8 @@ func TestAPublishRequestResolvesByName(t *testing.T) {
 // Everyone is one more choice in a pipeline's and a machine's share list. From
 // an ordinary owner it files the publish request and reads back as chosen
 // while it waits; taken out, the request is withdrawn; from an administrator
-// it publishes, and taken out it unpublishes and keeps the names left in the
-// list.
+// it publishes. The names beside it are kept through both, and taking
+// Everyone out unpublishes and leaves them their share.
 func TestEveryoneInARecipesShareListFilesTheRequest(t *testing.T) {
 	T, udb, _ := newTestOrchestrate(t)
 	prev := PipelineSavedHook
@@ -205,8 +210,8 @@ func TestEveryoneInARecipesShareListFilesTheRequest(t *testing.T) {
 		}
 
 		admin = true
-		if got := share(http.MethodPost, `{"allowed_users":["*","bob"]}`); got != "*" || !c.published() {
-			t.Errorf("%s: an administrator's Everyone publishes and drops the names: %q, published %v", c.kind, got, c.published())
+		if got := share(http.MethodPost, `{"allowed_users":["*","bob"]}`); got != "*,bob" || !c.published() {
+			t.Errorf("%s: an administrator's Everyone publishes and keeps the names: %q, published %v", c.kind, got, c.published())
 		}
 		if got := share(http.MethodPost, `{"allowed_users":["carol"]}`); got != "carol" || c.published() {
 			t.Errorf("%s: taking Everyone out unpublishes and keeps the names left: %q, published %v", c.kind, got, c.published())
