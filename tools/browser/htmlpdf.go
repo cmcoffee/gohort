@@ -30,7 +30,11 @@ func htmlToPDF(html []byte) ([]byte, error) {
 	}
 	var out []byte
 	err := rod.Try(func() {
-		page := b.MustPage()
+		// A throwaway context: what the document loads (its images) goes out
+		// without the cookies the shared profile holds.
+		inc := b.MustIncognito()
+		defer inc.Close()
+		page := inc.MustPage()
 		defer page.MustClose()
 		page.MustSetDocumentContent(string(html))
 		// Let layout settle (fonts/styles applied) before printing.

@@ -408,7 +408,12 @@ func (t *BrowsePageTool) fetchImage(pageURL string) ([]byte, error) {
 		var data []byte
 		var noImg bool
 		err := rod.Try(func() {
-			page := b.MustPage()
+			// A throwaway context, as fetchImpl's: the profile is shared by
+			// every user, and a page opened for one must not carry the
+			// cookies another left behind.
+			inc := b.MustIncognito()
+			defer inc.Close()
+			page := inc.MustPage()
 			defer page.MustClose()
 			page.MustSetUserAgent(&proto.NetworkSetUserAgentOverride{
 				UserAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
