@@ -670,6 +670,12 @@ type PipelineDef struct {
 	// copies. Stripped on export, like Owner and Global — a recipient list is a
 	// fact about THIS deployment's users and means nothing in another one.
 	AllowedUsers []string `json:"allowed_users,omitempty"`
+	// Editors are the recipients among AllowedUsers who may also CHANGE the
+	// definition: its name, description and stages. Their edits land in the
+	// owner's store and the pipeline stays the owner's; sharing it, publishing
+	// it and deleting it stay the owner's alone. Stripped on export, with
+	// AllowedUsers.
+	Editors []string `json:"editors,omitempty"`
 
 	// Published is the third rung: an administrator agreed that EVERY user of
 	// this deployment may read and run this pipeline, so there is no recipient

@@ -50,7 +50,8 @@ func (T *OrchestrateApp) handleAgentRevisions(w http.ResponseWriter, r *http.Req
 // Restore is offered only to the owner, and by leaving the callback nil rather
 // than refusing the click: a button that is always going to say no is worse
 // than no button.
-func (T *OrchestrateApp) handleMachineRevisions(w http.ResponseWriter, r *http.Request, user string, def MachineDef, owner string, mine bool, action string) {
+// canEdit is the owner's, or an editor's (recipeEdit): either may restore.
+func (T *OrchestrateApp) handleMachineRevisions(w http.ResponseWriter, r *http.Request, user string, def MachineDef, owner string, canEdit bool, action string) {
 	ownerDB := UserDB(T.DB, ownerOr(owner, user))
 	s := revisions.Surface{
 		Store:   ownerDB,
@@ -64,7 +65,7 @@ func (T *OrchestrateApp) handleMachineRevisions(w http.ResponseWriter, r *http.R
 		// the diff.
 		Ignore: []string{"previous"},
 	}
-	if mine {
+	if canEdit {
 		s.Restore = func(ref string) error {
 			_, err := RollbackMachineDef(ownerDB, def.ID, ref)
 			return err
@@ -74,7 +75,8 @@ func (T *OrchestrateApp) handleMachineRevisions(w http.ResponseWriter, r *http.R
 }
 
 // handlePipelineRevisions serves the same three routes for a pipeline.
-func (T *OrchestrateApp) handlePipelineRevisions(w http.ResponseWriter, r *http.Request, user string, def PipelineDef, owner string, mine bool, action string) {
+// canEdit is the owner's, or an editor's (recipeEdit): either may restore.
+func (T *OrchestrateApp) handlePipelineRevisions(w http.ResponseWriter, r *http.Request, user string, def PipelineDef, owner string, canEdit bool, action string) {
 	ownerDB := UserDB(T.DB, ownerOr(owner, user))
 	s := revisions.Surface{
 		Store:   ownerDB,
@@ -84,7 +86,7 @@ func (T *OrchestrateApp) handlePipelineRevisions(w http.ResponseWriter, r *http.
 		Current: def,
 		Ignore:  []string{"previous"},
 	}
-	if mine {
+	if canEdit {
 		s.Restore = func(ref string) error {
 			_, err := RollbackPipelineDef(ownerDB, def.ID, ref)
 			return err

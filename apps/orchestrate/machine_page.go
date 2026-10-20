@@ -259,10 +259,15 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 		http.NotFound(w, r)
 		return
 	}
-	if !mine {
+	// An editor (MachineDef.Editors) gets this page too, working on the
+	// owner's copy in the owner's namespace; what stays the owner's, who it
+	// is shared with and which agents carry it, is left off for them.
+	ed := recipeEditFor(user, udb, defOwner, mine, def.Editors)
+	if !ed.ok {
 		T.serveSharedMachinePage(w, r, def, defOwner)
 		return
 	}
+	udb, user = ed.db, ed.owner
 	// The pieces by NAME, not by position in a flat list. Indexing into
 	// that list is how every phase's form ended up under the first phase
 	// and the second phase's section showed the "add" button: the menu
@@ -325,7 +330,7 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 					// bundle carries; Duplicate lands in the copy, so
 					// trying something drastic never costs the original.
 					ui.Toolbar{Actions: []ui.ToolbarAction{exportToolbarAction("machine", def.ID, def.Name,
-						"/orchestrate/api/machines/"+url_(def.ID)+"/export", true), {
+						"/orchestrate/api/machines/"+url_(def.ID)+"/export", mine), {
 						Label:  "Duplicate",
 						Title:  "Make a copy to experiment on, and open it",
 						Method: "client",
@@ -483,13 +488,29 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 			}),
 		},
 	}...)
+	if !mine {
+		// Attaching it to agents is the owner's: the agents are theirs.
+		kept := page.Sections[:0]
+		for _, sec := range page.Sections {
+			if sec.Title != "Assign to agents" {
+				kept = append(kept, sec)
+			}
+		}
+		page.Sections = append(kept, ui.Section{
+			Title:    "Shared with you to edit",
+			Subtitle: defOwner + " shared this machine with you and lets you change it. Your changes are to " + defOwner + "'s copy, which everyone it is shared with runs; who it is shared with, the agents that carry it, and deleting it stay " + defOwner + "'s.",
+		})
+		page.Sections = withoutEmptySections(page.Sections)
+		page.ServeHTTP(w, r)
+		return
+	}
 	// Share with users — the owner's decision, so the section exists only on
 	// the owner's page. A recipient gets the note on theirs instead.
 	page.Sections = append(page.Sections, ui.Section{
 		Title:    "Who may run this machine",
 		Subtitle: recipeShareSubtitle("machine", def.Published, publishPending(machinePromotionKind, def.Owner, def.Name)),
 		Detail: "They run YOUR procedure against THEIR agents, tools and credentials: nothing of yours travels with the share, and nothing of theirs comes back. " +
-			"Editing stays yours: a recipient can run it, put it on a timetable, hand it to their agents, and take a copy, not change it. An admin can audit or revoke shares.\n\n" + recipeEveryoneDetail,
+			"A recipient can run it, put it on a timetable, hand it to their agents, and take a copy. Can edit lets one of them change its steps too, in your copy; who it is shared with, the agents that carry it, and deleting it stay yours. Everyone can run it and never edit it. An admin can audit or revoke shares.\n\n" + recipeEveryoneDetail,
 		Body: ui.ACLPicker(ui.ACLPickerConfig{
 			OptionsSource: "api/user-candidates?groups=1&everyone=" + everyoneParam(def.Published),
 			RecordSource:  "api/machines/" + url_(def.ID) + "/share",
@@ -499,6 +520,11 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 			Noun:          "user",
 			Intro:         "Everyone, people, or a team you are on, who may run this machine.",
 			EmptyText:     "No other users to share with yet.",
+			FlagField:     "editors",
+			FlagLabel:     "Can edit",
+			FlagOffLabel:  "Can run",
+			FlagHelp:      "Can edit: change its name, description and steps, in your copy. Sharing, the agents that carry it and deleting it stay yours.",
+			FlagWhenField: "named",
 		}),
 	})
 	page.Sections = withoutEmptySections(page.Sections)

@@ -160,6 +160,7 @@ func (T *OrchestrateApp) handlePipelines(w http.ResponseWriter, r *http.Request)
 		// recipient list would let one POST make a pipeline and hand it out
 		// in the same breath, which is not a thing anybody asked to do.
 		def.AllowedUsers = nil
+		def.Editors = nil
 		def.Published = false
 		if err := def.Validate(); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -243,11 +244,15 @@ func (T *OrchestrateApp) handlePipelineOne(w http.ResponseWriter, r *http.Reques
 		http.NotFound(w, r)
 		return
 	}
+	// Where an edit goes, and as whose (recipeEdit): the owner's own, or an
+	// editor's change to the owner's copy. Sharing, publishing, deleting and
+	// attaching to agents stay the owner's (pipelineOwnerOnly).
+	ed := recipeEditFor(user, udb, defOwner, mine, def.Editors)
 
 	// Revisions: the list, one version read-only, and the way back. Matched
 	// before the switch, which compares whole strings and would miss a tail.
 	if sub, isRev := revisionAction(action); isRev {
-		T.handlePipelineRevisions(w, r, user, def, defOwner, mine, sub)
+		T.handlePipelineRevisions(w, r, user, def, defOwner, ed.ok, sub)
 		return
 	}
 
@@ -257,7 +262,7 @@ func (T *OrchestrateApp) handlePipelineOne(w http.ResponseWriter, r *http.Reques
 		case http.MethodGet:
 			writeJSON(w, def)
 		case http.MethodPut:
-			if !pipelineOwnerOnly(w, mine, defOwner, "edit") {
+			if !recipeEditorOnly(w, ed, "pipeline", defOwner, "edit") {
 				return
 			}
 			var body PipelineDef
@@ -271,8 +276,9 @@ func (T *OrchestrateApp) handlePipelineOne(w http.ResponseWriter, r *http.Reques
 			// to widen or clear who a pipeline is shared with, the same way
 			// an agent's guardrails survive a whole-record save.
 			body.ID = def.ID
-			body.Owner = user
+			body.Owner = ed.owner
 			body.AllowedUsers = def.AllowedUsers
+			body.Editors = def.Editors
 			// Published is an administrator's approval, reached only through
 			// the promotion queue; an edit form must not be able to assert it.
 			body.Published = def.Published
@@ -281,8 +287,8 @@ func (T *OrchestrateApp) handlePipelineOne(w http.ResponseWriter, r *http.Reques
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
-			saved := SavePipelineDef(udb, body)
-			Log("[orchestrate.pipelines] user=%q updated pipeline %q (id=%s)", user, saved.Name, saved.ID)
+			saved := SavePipelineDef(ed.db, body)
+			Log("[orchestrate.pipelines] user=%q updated pipeline %q (id=%s, owner %q)", user, saved.Name, saved.ID, ed.owner)
 			writeJSON(w, saved)
 		case http.MethodDelete:
 			if !pipelineOwnerOnly(w, mine, defOwner, "delete") {
@@ -324,6 +330,7 @@ func (T *OrchestrateApp) handlePipelineOne(w http.ResponseWriter, r *http.Reques
 		// your store would re-share their work under your name.
 		dup.Owner = user
 		dup.AllowedUsers = nil
+		dup.Editors = nil
 		// And not published either. An administrator agreed that THAT record
 		// should reach everybody, not every copy anyone makes of it.
 		dup.Published = false
@@ -335,21 +342,21 @@ func (T *OrchestrateApp) handlePipelineOne(w http.ResponseWriter, r *http.Reques
 		// Say what should change, against the pipeline on screen
 		// (pipeline_revise.go). Undoable, because it can rewrite every
 		// prompt in it.
-		if !pipelineOwnerOnly(w, mine, defOwner, "revise") {
+		if !recipeEditorOnly(w, ed, "pipeline", defOwner, "revise") {
 			return
 		}
-		T.handlePipelineRevise(w, r, udb, user, def)
+		T.handlePipelineRevise(w, r, ed.db, ed.owner, def)
 	case "undo":
-		if !pipelineOwnerOnly(w, mine, defOwner, "undo a change to") {
+		if !recipeEditorOnly(w, ed, "pipeline", defOwner, "undo a change to") {
 			return
 		}
-		T.handlePipelineUndo(w, r, udb, user, def)
+		T.handlePipelineUndo(w, r, ed.db, ed.owner, def)
 	case "stages":
 		// The per-stage form (pipeline_editor.go).
-		if !pipelineOwnerOnly(w, mine, defOwner, "edit") {
+		if !recipeEditorOnly(w, ed, "pipeline", defOwner, "edit") {
 			return
 		}
-		T.handlePipelineStages(w, r, udb, user, def)
+		T.handlePipelineStages(w, r, ed.db, ed.owner, def)
 	case "share":
 		// The recipient list, and ONLY the recipient list. The ACLPicker posts
 		// the whole record back (record mode), and this reads one field out of
@@ -368,11 +375,11 @@ func (T *OrchestrateApp) handlePipelineOne(w http.ResponseWriter, r *http.Reques
 		}
 		rs := recipeShare{
 			kind: pipelinePromotionKind, owner: user, name: def.Name,
-			published: def.Published, before: def.AllowedUsers,
+			published: def.Published, before: def.AllowedUsers, editors: def.Editors,
 			publish:   func() error { return publishPipelineForDeployment(user, def.ID) },
 			unpublish: func() error { return unpublishPipeline(user, def.ID) },
 		}
-		rs.save = func(names []string) any {
+		rs.save = func(names, editors []string) any {
 			cur, err := findOwnedPipeline(user, def.ID)
 			if err != nil {
 				cur = def
@@ -380,6 +387,7 @@ func (T *OrchestrateApp) handlePipelineOne(w http.ResponseWriter, r *http.Reques
 			before := cur.AllowedUsers
 			cur.Owner = user
 			cur.AllowedUsers = normalizeShareList(names, user)
+			cur.Editors = editors
 			saved := SavePipelineDef(udb, cur)
 			// Anybody dropped from the list loses it now, including any
 			// schedule they had armed against it: a share taken back has to
@@ -394,13 +402,14 @@ func (T *OrchestrateApp) handlePipelineOne(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		var body struct {
-			AllowedUsers []string `json:"allowed_users"`
+			AllowedUsers []string  `json:"allowed_users"`
+			Editors      *[]string `json:"editors"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
-		out, err := rs.apply(r, body.AllowedUsers)
+		out, err := rs.apply(r, body.AllowedUsers, body.Editors)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return

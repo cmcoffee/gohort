@@ -160,6 +160,13 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 		http.NotFound(w, r)
 		return
 	}
+	// An editor (PipelineDef.Editors) works on the owner's copy, so the
+	// pickers offer what the owner's namespace holds.
+	ed := recipeEditFor(user, udb, defOwner, mine, def.Editors)
+	catDB, catUser := udb, user
+	if ed.ok {
+		catDB, catUser = ed.db, ed.owner
+	}
 
 	page := ui.Page{
 		Title:     def.Name,
@@ -231,8 +238,8 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 	// asks for a verdict nobody has earned yet. It also put the biggest
 	// button on the page in front of somebody who came to edit one prompt.
 	page.Sections = append(page.Sections, pipelineStageSections(def,
-		editorCatalog{agents: agentOptions(udb, user), tools: phaseToolOptions(user),
-			machines: childMachineOptions(udb, user, MachineDef{})})...)
+		editorCatalog{agents: agentOptions(catDB, catUser), tools: phaseToolOptions(catUser),
+			machines: childMachineOptions(catDB, catUser, MachineDef{})})...)
 	page.Sections = append(page.Sections,
 		// Run it, here. The streaming endpoints have existed since a
 		// PipelineDef could back an app (core/pipeline_runs.go), and
@@ -366,7 +373,7 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 			Title:    "Who may run this pipeline",
 			Subtitle: recipeShareSubtitle("pipeline", def.Published, publishPending(pipelinePromotionKind, def.Owner, def.Name)),
 			Detail: "They run YOUR recipe against THEIR agents, tools and credentials: nothing of yours travels with the share, and nothing of theirs comes back. " +
-				"Editing stays yours: a recipient can run it and take a copy, not change it. An admin can audit or revoke shares.\n\n" + recipeEveryoneDetail,
+				"A recipient can run it and take a copy. Can edit lets one of them change its stages too, in your copy; who it is shared with, the agents that carry it, and deleting it stay yours. Everyone can run it and never edit it. An admin can audit or revoke shares.\n\n" + recipeEveryoneDetail,
 			Body: ui.ACLPicker(ui.ACLPickerConfig{
 				OptionsSource: "api/user-candidates?groups=1&everyone=" + everyoneParam(def.Published),
 				RecordSource:  "api/pipelines/" + url_(def.ID) + "/share",
@@ -376,6 +383,11 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 				Noun:          "user",
 				Intro:         "Everyone, people, or a team you are on, who may run this pipeline.",
 				EmptyText:     "No other users to share with yet.",
+				FlagField:     "editors",
+				FlagLabel:     "Can edit",
+				FlagOffLabel:  "Can run",
+				FlagHelp:      "Can edit: change its name, description and stages, in your copy. Sharing, the agents that carry it and deleting it stay yours.",
+				FlagWhenField: "named",
 			}),
 		})
 	} else {
@@ -383,9 +395,13 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 		if def.Published {
 			who = "This pipeline is published to everybody in the deployment, by " + defOwner + "."
 		}
+		can := " You can run it and duplicate it; the definition stays theirs"
+		if ed.ok {
+			can = " You can run it, duplicate it and change it: your changes are to " + defOwner + "'s copy, which everyone it is shared with runs. Who it is shared with, the agents that carry it and deleting it stay theirs"
+		}
 		page.Sections = append(page.Sections, ui.Section{
 			Title:    "Shared with you",
-			Subtitle: who + " You can run it and duplicate it; the definition stays theirs, and it runs against your own agents, tools and credentials rather than " + defOwner + "'s.",
+			Subtitle: who + can + ", and it runs against your own agents, tools and credentials rather than " + defOwner + "'s.",
 		})
 	}
 	page.ServeHTTP(w, r)

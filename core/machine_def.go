@@ -143,6 +143,12 @@ type MachineDef struct {
 	// somebody else's deployment naming users of yours would be asserting
 	// a grant across a boundary it cannot see.
 	AllowedUsers []string `json:"allowed_users,omitempty"`
+	// Editors are the recipients among AllowedUsers who may also CHANGE the
+	// machine: its name, description and steps. Their edits land in the
+	// owner's store and the machine stays the owner's; sharing it, publishing
+	// it and deleting it stay the owner's alone. Stripped on export, with
+	// AllowedUsers.
+	Editors []string `json:"editors,omitempty"`
 
 	// Published is the third rung: an administrator agreed that EVERY user of
 	// this deployment may read and run this machine, so there is no recipient
@@ -1771,6 +1777,7 @@ func ExportMachine(d MachineDef) MachineDef {
 	// not part of the recipe. Carrying it would either name strangers or
 	// assert a grant in a deployment that never made it.
 	d.AllowedUsers = nil
+	d.Editors = nil
 	// Published is the same kind of claim: an administrator of THIS deployment
 	// agreed to it, and a recipe arriving elsewhere already published would be
 	// asserting an approval nobody there gave.

@@ -293,6 +293,7 @@ func revokeMachineShareForAdmin(db Database, owner, id string) error {
 	before := def.AllowedUsers
 	def.Owner = owner
 	def.AllowedUsers = nil
+	def.Editors = nil
 	// Published goes with it. An admin revoking a machine's sharing while it
 	// stayed deployment-wide would have revoked nothing at all — the narrower
 	// grant removed and the widest one left standing.

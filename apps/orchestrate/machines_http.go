@@ -201,6 +201,7 @@ func (T *OrchestrateApp) handleMachines(w http.ResponseWriter, r *http.Request) 
 		// recipient list would be a second way to grant, and the two would
 		// eventually disagree about what a grant means.
 		def.AllowedUsers = nil
+		def.Editors = nil
 		def.Published = false
 		if err := def.Validate(); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -291,8 +292,12 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 	// Revisions: the list, one version read-only, and the way back. Matched
 	// before the switch for the same reason runs/... is — the tail carries a
 	// sub-action and the switch compares whole strings.
+	// Where an edit goes, and as whose (recipeEdit): the owner's own, or an
+	// editor's change to the owner's copy. Sharing, publishing, deleting and
+	// attaching stay the owner's (machineOwnerOnly).
+	ed := recipeEditFor(user, udb, defOwner, mine, def.Editors)
 	if sub, isRev := revisionAction(action); isRev {
-		T.handleMachineRevisions(w, r, user, def, defOwner, mine, sub)
+		T.handleMachineRevisions(w, r, user, def, defOwner, ed.ok, sub)
 		return
 	}
 
@@ -302,7 +307,7 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 		case http.MethodGet:
 			writeJSON(w, def)
 		case http.MethodPut:
-			if !machineOwnerOnly(w, mine, defOwner, "edit") {
+			if !recipeEditorOnly(w, ed, "machine", defOwner, "edit") {
 				return
 			}
 			var body MachineDef
@@ -316,8 +321,9 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 			// clear who a machine is shared with, which is why /share is its
 			// own door.
 			body.ID = def.ID
-			body.Owner = user
+			body.Owner = ed.owner
 			body.AllowedUsers = def.AllowedUsers
+			body.Editors = def.Editors
 			// Published is an administrator's approval, reached only through
 			// the promotion queue; an edit form must not be able to assert it.
 			body.Published = def.Published
@@ -326,8 +332,8 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
-			saved := SaveMachineDef(udb, body)
-			Log("[orchestrate.machines] user=%q updated machine %q (id=%s)", user, saved.Name, saved.ID)
+			saved := SaveMachineDef(ed.db, body)
+			Log("[orchestrate.machines] user=%q updated machine %q (id=%s, owner %q)", user, saved.Name, saved.ID, ed.owner)
 			writeJSON(w, saved)
 		case http.MethodDelete:
 			if !machineOwnerOnly(w, mine, defOwner, "delete") {
@@ -355,15 +361,15 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 		// what is still missing plus the components that edit it.
 		T.handleMachineEditor(w, r, udb, user, def)
 	case "meta":
-		if !machineOwnerOnly(w, mine, defOwner, "edit") {
+		if !recipeEditorOnly(w, ed, "machine", defOwner, "edit") {
 			return
 		}
-		T.handleMachineMeta(w, r, udb, user, def)
+		T.handleMachineMeta(w, r, ed.db, ed.owner, def)
 	case "phases":
-		if !machineOwnerOnly(w, mine, defOwner, "edit") {
+		if !recipeEditorOnly(w, ed, "machine", defOwner, "edit") {
 			return
 		}
-		T.handleMachinePhases(w, r, udb, user, def)
+		T.handleMachinePhases(w, r, ed.db, ed.owner, def)
 	case "try":
 		T.handleMachineTry(w, r, udb, user, def)
 	case "duplicate":
@@ -382,6 +388,7 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 		// an undo of an edit you did not make is not an undo.
 		dup.Owner = user
 		dup.AllowedUsers = nil
+		dup.Editors = nil
 		// And not published. An administrator agreed that THAT record should
 		// reach everybody, not every copy anyone makes of it.
 		dup.Published = false
@@ -394,15 +401,15 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 		// Describe a change against the machine already on screen
 		// (machine_revise.go). Undoable, because a revision can rewrite
 		// every prompt in it.
-		if !machineOwnerOnly(w, mine, defOwner, "revise") {
+		if !recipeEditorOnly(w, ed, "machine", defOwner, "revise") {
 			return
 		}
-		T.handleMachineRevise(w, r, udb, user, def)
+		T.handleMachineRevise(w, r, ed.db, ed.owner, def)
 	case "undo":
-		if !machineOwnerOnly(w, mine, defOwner, "undo a change to") {
+		if !recipeEditorOnly(w, ed, "machine", defOwner, "undo a change to") {
 			return
 		}
-		T.handleMachineUndo(w, r, udb, user, def)
+		T.handleMachineUndo(w, r, ed.db, ed.owner, def)
 	case "repair":
 		// Settle the findings that have exactly one right answer. The
 		// class this exists for is a reference to a step that is gone:
@@ -424,7 +431,7 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 			http.Error(w, "unknown repair kind", http.StatusBadRequest)
 			return
 		}
-		if !machineOwnerOnly(w, mine, defOwner, "repair") {
+		if !recipeEditorOnly(w, ed, "machine", defOwner, "repair") {
 			return
 		}
 		fixed := def.Repair(kind)
@@ -432,7 +439,7 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 			writeJSON(w, map[string]any{"fixed": []string{}})
 			return
 		}
-		saved := SaveMachineDef(udb, def)
+		saved := SaveMachineDef(ed.db, def)
 		Log("[orchestrate.machines] user=%q repaired machine %q: %s", user, saved.Name,
 			strings.Join(RepairLines(fixed), "; "))
 		writeJSON(w, map[string]any{"fixed": RepairLines(fixed), "id": saved.ID})
@@ -452,7 +459,7 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
-		if !machineOwnerOnly(w, mine, defOwner, "reorder") {
+		if !recipeEditorOnly(w, ed, "machine", defOwner, "reorder") {
 			return
 		}
 		idx := -1
@@ -480,7 +487,7 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 			def.Start = def.StartPhase()
 		}
 		def.Phases[idx], def.Phases[to] = def.Phases[to], def.Phases[idx]
-		SaveMachineDef(udb, def)
+		SaveMachineDef(ed.db, def)
 		writeJSON(w, map[string]any{"ok": true, "start": def.Start})
 	case "agents":
 		// Who runs this machine — readable and settable from the editor,
@@ -514,11 +521,11 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 		}
 		rs := recipeShare{
 			kind: machinePromotionKind, owner: user, name: def.Name,
-			published: def.Published, before: def.AllowedUsers,
+			published: def.Published, before: def.AllowedUsers, editors: def.Editors,
 			publish:   func() error { return publishMachineForDeployment(user, def.ID) },
 			unpublish: func() error { return unpublishMachine(user, def.ID) },
 		}
-		rs.save = func(names []string) any {
+		rs.save = func(names, editors []string) any {
 			cur, err := findOwnedMachine(user, def.ID)
 			if err != nil {
 				cur = def
@@ -526,6 +533,7 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 			before := cur.AllowedUsers
 			cur.Owner = user
 			cur.AllowedUsers = normalizeShareList(names, user)
+			cur.Editors = editors
 			saved := SaveMachineDef(udb, cur)
 			// Anybody dropped from the list loses it now, including any
 			// schedule they had armed against it: a share taken back has to
@@ -540,13 +548,14 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 			return
 		}
 		var body struct {
-			AllowedUsers []string `json:"allowed_users"`
+			AllowedUsers []string  `json:"allowed_users"`
+			Editors      *[]string `json:"editors"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
-		out, err := rs.apply(r, body.AllowedUsers)
+		out, err := rs.apply(r, body.AllowedUsers, body.Editors)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -594,10 +603,10 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 	case "suggest":
 		// Drafting one step's instructions, grounded in the machine
 		// around it (machine_suggest.go).
-		if !machineOwnerOnly(w, mine, defOwner, "draft a step for") {
+		if !recipeEditorOnly(w, ed, "machine", defOwner, "draft a step for") {
 			return
 		}
-		T.handleMachineSuggest(w, r, udb, user, def)
+		T.handleMachineSuggest(w, r, ed.db, ed.owner, def)
 	case "block":
 		// One derived block of the editor page, by name, as the HTML the
 		// page itself renders (machine_page.go). A ui.Card with a Source

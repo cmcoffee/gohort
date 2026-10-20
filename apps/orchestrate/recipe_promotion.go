@@ -188,11 +188,13 @@ type recipeShare struct {
 	name      string
 	published bool
 	before    []string // the stored list, without Everyone
+	editors   []string // who among them may edit
 	publish   func() error
 	unpublish func() error
-	// save stores names as the list and returns the record to answer with,
-	// re-read after a publish step so it carries what that step changed.
-	save func(names []string) any
+	// save stores names as the list and editors as who among them may
+	// edit, and returns the record to answer with, re-read after a publish
+	// step so it carries what that step changed.
+	save func(names, editors []string) any
 }
 
 func (rs recipeShare) pending() bool { return publishPending(rs.kind, rs.owner, rs.name) }
@@ -218,14 +220,22 @@ func publishPending(kind, owner, name string) bool {
 	return AuthDB != nil && PendingPromotion(AuthDB(), owner, kind, name)
 }
 
-// list is what GET answers: {"allowed_users": [...]}.
+// list is what GET answers: {"allowed_users": [...], "editors": [...]}.
 func (rs recipeShare) list() map[string]any {
-	return map[string]any{"allowed_users": withEveryone(rs.before, rs.published || rs.pending())}
+	return map[string]any{"allowed_users": withEveryone(nonNilUsers(rs.before), rs.published || rs.pending()),
+		"editors": nonNilUsers(rs.editors)}
 }
 
-// apply settles the Everyone the posted list asks for, then stores the names.
-func (rs recipeShare) apply(r *http.Request, posted []string) (any, error) {
+// apply settles the Everyone the posted list asks for, then stores the names
+// and, of them, the editors (posted, or the current ones when the body sent
+// none). Everyone runs a recipe and never edits it (cleanEditors).
+func (rs recipeShare) apply(r *http.Request, posted []string, editors *[]string) (any, error) {
 	names, want := splitEveryone(posted)
+	ed := rs.editors
+	if editors != nil {
+		ed = *editors
+	}
+	ed = cleanEditors(ed, normalizeShareList(names, rs.owner), rs.owner)
 	var db promotion.Store
 	if AuthDB != nil {
 		db = AuthDB()
@@ -244,7 +254,7 @@ func (rs recipeShare) apply(r *http.Request, posted []string) (any, error) {
 			return nil, err
 		}
 	}
-	return rs.save(names), nil
+	return rs.save(names, ed), nil
 }
 
 // everyoneParam is the share picker's ?everyone=: "on" once it is published,

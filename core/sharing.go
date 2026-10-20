@@ -465,16 +465,23 @@ func EveryoneChoiceLabel(granted, pending, admin bool) string {
 // ShareCandidatesFor is ShareCandidatesJSON with Everyone first under
 // everyoneLabel, or left out when it is "".
 func ShareCandidatesFor(owner string, groups bool, everyoneLabel string) []byte {
+	// Named is set on a person and a team, never on Everyone: a picker
+	// whose higher level Everyone may not hold offers it only on these
+	// (ui.ACLPickerConfig.FlagWhenField "named").
 	type candidate struct {
 		Value string `json:"value"`
 		Label string `json:"label"`
 		Desc  string `json:"desc,omitempty"`
+		Named bool   `json:"named,omitempty"`
 	}
 	var out []candidate
 	if AuthDB == nil {
 		return []byte("[]")
 	}
 	json.Unmarshal(UserCandidatesJSON(AuthDB(), owner), &out)
+	for i := range out {
+		out[i].Named = true
+	}
 	if everyoneLabel != "" {
 		out = append([]candidate{{Value: ShareEveryone, Label: everyoneLabel,
 			Desc: "every signed-in user, " + strconv.Itoa(len(out)) + " besides you today"}}, out...)
@@ -497,6 +504,7 @@ func ShareCandidatesFor(owner string, groups bool, everyoneLabel string) []byte 
 				Value: shareGroupPrefix + id,
 				Label: "Team: " + g.Name,
 				Desc:  strconv.Itoa(n) + " other " + map[bool]string{true: "member", false: "members"}[n == 1],
+				Named: true,
 			})
 		}
 		sort.Slice(groups, func(i, j int) bool { return strings.ToLower(groups[i].Label) < strings.ToLower(groups[j].Label) })

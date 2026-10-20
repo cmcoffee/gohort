@@ -299,8 +299,9 @@ func TestEditorCoversEveryMachineField(t *testing.T) {
 	// administrator approves it, through /publish. A control here would be a
 	// checkbox that either lied or granted what only an admin may grant. Its
 	// surface is Everyone in the page's share list (recipeShare).
+	// "editors" is the share list's Can edit, set beside allowed_users.
 	skip := map[string]bool{"id": true, "owner": true, "created": true, "updated": true,
-		"phases": true, "previous": true, "allowed_users": true, "published": true}
+		"phases": true, "previous": true, "allowed_users": true, "published": true, "editors": true}
 
 	check := func(what string, typ reflect.Type) {
 		for i := 0; i < typ.NumField(); i++ {

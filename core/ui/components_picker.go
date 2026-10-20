@@ -249,6 +249,10 @@ type ACLPickerConfig struct {
 	// permission, but some (a whole team, everyone) are where it would widen
 	// too far by default. Blank keeps every new member unflagged.
 	FlagDefaultField string
+	// FlagWhenField names an option key: only a candidate with it truthy is
+	// offered the flag. For a kind whose extra permission some choices may
+	// not hold (Everyone, which share candidates leave without "named").
+	FlagWhenField string
 }
 
 // ACLPicker builds a ChipPicker preconfigured as an access-control editor: a
@@ -280,6 +284,7 @@ func ACLPicker(c ACLPickerConfig) ChipPicker {
 		FlagHelp:      c.FlagHelp,
 
 		FlagDefaultField: c.FlagDefaultField,
+		FlagWhenField:    c.FlagWhenField,
 	}
 	if c.RecordSource != "" {
 		// Record mode: current selection + save both go through the owning record.

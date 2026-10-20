@@ -45,6 +45,7 @@ package orchestrate
 
 import (
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 
@@ -301,6 +302,7 @@ func revokePipelineShareForAdmin(db Database, owner, id string) error {
 	before := def.AllowedUsers
 	def.Owner = owner
 	def.AllowedUsers = nil
+	def.Editors = nil
 	// Published goes with it. An admin revoking a pipeline's sharing while it
 	// stayed deployment-wide would have revoked nothing at all — the narrower
 	// grant removed and the widest one left standing.
@@ -309,4 +311,52 @@ func revokePipelineShareForAdmin(db Database, owner, id string) error {
 	breakSchedulesForLostRecipients(def, before)
 	Log("[orchestrate.pipelines] admin revoked every share of pipeline %q (owner=%q)", def.Name, owner)
 	return nil
+}
+
+// recipeEdit is where an edit to a pipeline or machine is written, and as
+// whose. Its owner edits their own record in their own store; an editor of one
+// shared with them (Editors) edits the OWNER's record in the owner's store, so
+// there is one copy and it stays the owner's. Anybody else may not edit.
+type recipeEdit struct {
+	db    Database
+	owner string
+	ok    bool
+}
+
+func recipeEditFor(user string, udb Database, owner string, mine bool, editors []string) recipeEdit {
+	if mine {
+		return recipeEdit{db: udb, owner: user, ok: true}
+	}
+	if owner != "" && SharedWithUser(editors, owner, user) && orchestrateBaseDB != nil {
+		if odb := UserDB(orchestrateBaseDB, owner); odb != nil {
+			return recipeEdit{db: odb, owner: owner, ok: true}
+		}
+	}
+	return recipeEdit{}
+}
+
+// recipeEditorOnly refuses a change to a recipe somebody shared with the
+// requester to run, not to edit. noun is "pipeline" or "machine".
+func recipeEditorOnly(w http.ResponseWriter, ed recipeEdit, noun, owner, verb string) bool {
+	if ed.ok {
+		return true
+	}
+	http.Error(w, "this "+noun+" is shared with you by "+owner+" to run, so you can run and copy it but not "+verb+" it: ask "+owner+" to give you edit access, or duplicate it and edit your copy", http.StatusForbidden)
+	return false
+}
+
+// cleanEditors keeps the editors the share list reaches: named people and
+// teams, never Everyone, which runs a recipe and does not edit it.
+func cleanEditors(editors, names []string, owner string) []string {
+	reach := map[string]bool{}
+	for _, n := range names {
+		reach[n] = true
+	}
+	var out []string
+	for _, e := range normalizeShareList(editors, owner) {
+		if e != ShareEveryone && reach[e] {
+			out = append(out, e)
+		}
+	}
+	return out
 }
