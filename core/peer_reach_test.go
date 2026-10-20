@@ -16,14 +16,14 @@ import (
 // stops what it already has running.
 func TestAPeerKeysWorkIsBoundedAndStopsWithTheKey(t *testing.T) {
 	peerTestDB(t)
-	k, err := MintPeerKey("den", []string{PeerCapInvestigate}, 0)
+	k, err := MintPeerKey("den", []string{PeerCapExec}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	r := httptest.NewRequest(http.MethodPost, "/x", nil)
 	var held []*http.Request
-	for i := 0; i < peerConcurrency[PeerCapInvestigate]; i++ {
-		hr, release, ok := peerHold(httptest.NewRecorder(), r, k, PeerCapInvestigate)
+	for i := 0; i < peerConcurrency[PeerCapExec]; i++ {
+		hr, release, ok := peerHold(httptest.NewRecorder(), r, k, PeerCapExec)
 		if !ok {
 			t.Fatalf("request %d refused under the cap", i+1)
 		}
@@ -31,7 +31,7 @@ func TestAPeerKeysWorkIsBoundedAndStopsWithTheKey(t *testing.T) {
 		held = append(held, hr)
 	}
 	w := httptest.NewRecorder()
-	if _, _, ok := peerHold(w, r, k, PeerCapInvestigate); ok || w.Code != http.StatusTooManyRequests {
+	if _, _, ok := peerHold(w, r, k, PeerCapExec); ok || w.Code != http.StatusTooManyRequests {
 		t.Errorf("a request past the cap: ok=%v code=%d", ok, w.Code)
 	}
 	SetPeerKeyDisabled(k.ID, true)
@@ -106,7 +106,7 @@ func TestAPeerKeyEndsWithItsAccount(t *testing.T) {
 	AuthDB = func() Database { return adb }
 	t.Cleanup(func() { AuthDB = prev })
 
-	k, _ := MintPeerKey("den", []string{PeerCapInvestigate}, 0)
+	k, _ := MintPeerKey("den", []string{PeerCapExec}, 0)
 	if _, err := SetPeerKeyScope(k.ID, "alice", nil); err != nil {
 		t.Fatal(err)
 	}

@@ -75,7 +75,7 @@ type RemotePeer struct {
 	// swept up by a peer being forgotten.
 	ImageConnectors []string `json:"image_connectors,omitempty"`
 	// Investigable is what this peer's manifest said THIS instance's key may
-	// ask about. Cached on the record so the "add a remote system" picker can
+	// run commands on (exec). Cached on the record so the "add a remote system" picker can
 	// offer real names without a round trip, and refreshed whenever the
 	// manifest is re-read.
 	Investigable []PeerInvestigable `json:"investigable,omitempty"`
@@ -249,7 +249,7 @@ func usableCaps(m PeerManifest) []string {
 // between that process accepting connections and the app that implements the
 // capability finishing its wiring. A refresh landing inside that window used
 // to write the capability out of the local record — and since a call checks
-// the local record first (PeerExec, PeerInvestigate), the capability then
+// the local record first (PeerExec), the capability then
 // failed HERE, without a request, until the next refresh half an hour later.
 // The far side was fine the whole time.
 //
@@ -564,11 +564,11 @@ func RefreshRemotePeer(ctx context.Context, name string) (RemotePeer, error) {
 	// as something that 403s when asked.
 	//
 	// But only when the far side actually ANSWERED the question. An instance
-	// that is not serving investigate right now sends no list, and an absent
+	// that is not serving exec right now sends no list, and an absent
 	// list is not the same statement as an empty one — reading it as "nothing
 	// is granted any more" emptied the picker on the strength of a question
 	// that was never asked.
-	if servesCap(m, PeerCapInvestigate) {
+	if servesCap(m, PeerCapExec) {
 		p.Investigable = m.Investigable
 	}
 	// The same rule for the models it runs: replaced when the far side said

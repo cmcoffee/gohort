@@ -187,7 +187,9 @@ type PeerManifest struct {
 	// a local backend entry, so this carries what that entry needs to be
 	// truthful — whether it edits, and how many source photos it takes.
 	Images []PeerImageBackend `json:"images,omitempty"`
-	// Investigable lists the appliances the CALLING key may ask about. Scoped
+	// Investigable lists the appliances the CALLING key may run commands on
+	// (exec). The name is from when a peer could also be asked to investigate
+	// them, kept so instances of either version read each other. Scoped
 	// to the key rather than to the instance: two peers holding different keys
 	// see different lists, and a key granted the capability but no appliances
 	// sees an empty one — which is the honest rendering of "granted nothing".
@@ -277,12 +279,12 @@ func HandlePeerManifest(w http.ResponseWriter, r *http.Request) {
 			e.Note = "not implemented by this instance yet"
 		case e.Served && !e.Granted:
 			e.Note = "offered, but this key was not granted it"
-		case name == PeerCapInvestigate && len(k.Appliances) == 0:
+		case name == PeerCapExec && len(k.Appliances) == 0:
 			// Granted the capability and no appliances reaches nothing. Said
 			// plainly, because the capability list otherwise reads as working.
 			e.Note = "granted, but this key names no systems: it can reach none"
-		case name == PeerCapInvestigate && strings.TrimSpace(k.Owner) == "":
-			e.Note = "granted, but this key has no owner: an investigation runs as a user and there is none"
+		case name == PeerCapExec && strings.TrimSpace(k.Owner) == "":
+			e.Note = "granted, but this key has no owner: a command runs as a user and there is none"
 		}
 		m.Capabilities = append(m.Capabilities, e)
 	}

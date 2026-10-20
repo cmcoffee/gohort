@@ -18,9 +18,10 @@ import (
 //
 // Embeddings, images, transcription, search, browse and models are ANONYMOUS
 // COMPUTE — an input goes in, a derived output comes back, and nothing about
-// the request belongs to anybody here. Investigate, knowledge and exec are the
-// deliberate exception: they name an Owner because they reach that user's
-// systems, and they write to that user's stores on purpose.
+// the request belongs to anybody here. Exec is the one exception: it names an
+// Owner because it is a wire to that user's systems. It still reads and writes
+// none of this instance's app stores: a peer key lends resources, never the
+// instance (investigate and knowledge, which did, were retired).
 //
 // The anonymous half is currently clean by construction rather than by
 // enforcement, which is the fragile kind: adding a vector cache to Embed, or
@@ -172,16 +173,12 @@ func tempFileCount(t *testing.T) int {
 // TestOnlyTheScopedCapabilitiesNameAnOwner — the line between anonymous compute
 // and work done on a person's behalf.
 //
-// Investigate, knowledge and exec write to a user's stores BY DESIGN, which is
-// exactly why they require an Owner and an explicit appliance list. The others
-// must never be able to name a user at all: a capability that could would be
-// one edit away from filing a peer's work under somebody here.
+// Exec reaches a user's systems, which is exactly why it requires an Owner and
+// an explicit appliance list. The others must never be able to name a user at
+// all: a capability that could would be one edit away from filing a peer's
+// work under somebody here.
 func TestOnlyTheScopedCapabilitiesNameAnOwner(t *testing.T) {
-	scoped := map[string]bool{
-		PeerCapInvestigate: true,
-		PeerCapKnowledge:   true,
-		PeerCapExec:        true,
-	}
+	scoped := map[string]bool{PeerCapExec: true}
 	k := PeerKey{Caps: PeerCapabilities(), Owner: "craig", Appliances: []string{"box-1"}}
 	for _, c := range PeerCapabilities() {
 		got := k.AllowsApplianceFor(c, "box-1")

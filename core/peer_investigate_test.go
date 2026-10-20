@@ -11,201 +11,124 @@ import (
 	"testing"
 )
 
-// TestAllowsApplianceNeedsAllThreeParts — a capability grant reaches nothing on
-// its own. Unlike the other six capabilities, which are anonymous compute, an
-// investigation runs as a user against a specific machine, so the key has to
-// name both.
+// TestAllowsApplianceNeedsAllThreeParts: a capability grant reaches nothing on
+// its own. Unlike the other capabilities, which are anonymous compute, exec
+// runs as a user against a specific machine, so the key has to name both.
 func TestAllowsApplianceNeedsAllThreeParts(t *testing.T) {
-	full := PeerKey{Caps: []string{PeerCapInvestigate}, Owner: "craig", Appliances: []string{"app-1"}}
-	if !full.AllowsAppliance("app-1") {
+	full := PeerKey{Caps: []string{PeerCapExec}, Owner: "craig", Appliances: []string{"app-1"}}
+	allows := func(k PeerKey, id string) bool { return k.AllowsApplianceFor(PeerCapExec, id) }
+	if !allows(full, "app-1") {
 		t.Fatal("a fully specified key was refused")
 	}
-	if full.AllowsAppliance("app-2") {
+	if allows(full, "app-2") {
 		t.Error("a key reached an appliance it does not name")
 	}
 
 	noCap := full
 	noCap.Caps = nil
-	if noCap.AllowsAppliance("app-1") {
-		t.Error("a key with no investigate capability reached an appliance")
+	if allows(noCap, "app-1") {
+		t.Error("a key with no exec capability reached an appliance")
 	}
 	noOwner := full
 	noOwner.Owner = ""
-	if noOwner.AllowsAppliance("app-1") {
-		t.Error("a key with no owner reached an appliance — the investigation would run as nobody")
+	if allows(noOwner, "app-1") {
+		t.Error("a key with no owner reached an appliance: the command would run as nobody")
 	}
 	noList := full
 	noList.Appliances = nil
-	if noList.AllowsAppliance("app-1") {
-		t.Error("EMPTY GRANTS NOTHING was violated — a key naming no appliances reached one")
+	if allows(noList, "app-1") {
+		t.Error("EMPTY GRANTS NOTHING was violated: a key naming no appliances reached one")
 	}
 	disabled := full
 	disabled.Disabled = true
-	if disabled.AllowsAppliance("app-1") {
+	if allows(disabled, "app-1") {
 		t.Error("a revoked key still reached an appliance")
 	}
+	// Anonymous compute never resolves against a machine.
+	if (PeerKey{Caps: []string{PeerCapEmbeddings}, Owner: "craig", Appliances: []string{"app-1"}}).AllowsApplianceFor(PeerCapEmbeddings, "app-1") {
+		t.Error("an embeddings grant reached an appliance")
+	}
 }
 
-// TestInvestigateIsAdvertisedAndServed — a capability the manifest offers but
-// nothing implements is worse than one it never mentions.
-func TestInvestigateIsAdvertisedAndServed(t *testing.T) {
-	found := false
+// A peer key lends resources, never the instance. Investigate (this
+// instance's investigator answering a peer's question) and knowledge (a copy
+// of what this instance had gathered) were retired for that. A key that still
+// carries those names from before gets neither: no route, nothing in the
+// manifest, and the system list it is shown follows exec alone.
+func TestAPeerKeyReachesNoInvestigatorAndNoKnowledge(t *testing.T) {
 	for _, c := range PeerCapabilities() {
-		if c == PeerCapInvestigate {
-			found = true
+		if c == "investigate" || c == "knowledge" {
+			t.Errorf("%q can still be granted", c)
 		}
 	}
-	if !found {
-		t.Error("investigate is not in PeerCapabilities, so no key can be granted it")
+	if peerCapServed("investigate") || peerCapServed("knowledge") {
+		t.Error("a retired capability is reported as served")
 	}
-	if !peerCapServed(PeerCapInvestigate) {
-		t.Error("investigate is advertised but reported unserved")
-	}
-}
-
-// TestPeerInvestigateRejectsAnUngrantedAppliance — the capability check passes
-// and the appliance check must still refuse, with the granted set named so a
-// peer pointed at the wrong key can tell that from an appliance this instance
-// does not have.
-func TestPeerInvestigateRejectsUngrantedAppliance(t *testing.T) {
-	prev := PeerInvestigateFunc
-	called := false
-	PeerInvestigateFunc = func(context.Context, string, string, string) (string, error) {
-		called = true
-		return "should not happen", nil
-	}
-	t.Cleanup(func() { PeerInvestigateFunc = prev })
-
-	k := PeerKey{Caps: []string{PeerCapInvestigate}, Owner: "craig", Appliances: []string{"allowed-1"}}
-	if k.AllowsAppliance("other-2") {
-		t.Fatal("precondition: the key should not allow other-2")
-	}
-	if called {
-		t.Error("the investigator ran for an appliance the key does not name")
-	}
-}
-
-// TestPeerInvestigateNeedsBothFields.
-func TestPeerInvestigateRequiresBodyFields(t *testing.T) {
-	body, _ := json.Marshal(map[string]string{"appliance_id": "", "question": ""})
-	r := httptest.NewRequest(http.MethodPost, "/api/peer/v1/investigate", strings.NewReader(string(body)))
-	w := httptest.NewRecorder()
-	HandlePeerInvestigate(w, r)
-	// Unauthenticated, so it should not reach the field check — but it must not
-	// be a 200 either.
-	if w.Code == http.StatusOK {
-		t.Errorf("an unauthenticated request succeeded (%d)", w.Code)
-	}
-}
-
-// TestPeerInvestigateRefusesNonPost.
-func TestPeerInvestigateRefusesNonPost(t *testing.T) {
-	r := httptest.NewRequest(http.MethodGet, "/api/peer/v1/investigate", nil)
-	w := httptest.NewRecorder()
-	HandlePeerInvestigate(w, r)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("GET → %d, want 405", w.Code)
-	}
-}
-
-// TestPeerInvestigateClientRefusesAPeerThatDoesNotOfferIt — caught locally with
-// a message naming what the peer DOES offer, rather than by sending a request
-// that comes back 403.
-func TestPeerInvestigateClientChecksTheOffer(t *testing.T) {
-	p := RemotePeer{Name: "mac", BaseURL: "https://example.invalid", Key: "k", Caps: []string{PeerCapEmbeddings}}
-	_, err := PeerInvestigate(context.Background(), p, "app-1", "what is running?")
-	if err == nil {
-		t.Fatal("calling a peer that does not offer investigation succeeded")
-	}
-	if !strings.Contains(err.Error(), PeerCapInvestigate) {
-		t.Errorf("error = %v, want it to name the missing capability", err)
-	}
-	if !strings.Contains(err.Error(), PeerCapEmbeddings) {
-		t.Errorf("error = %v, want it to list what the peer does offer", err)
-	}
-	// The cached list is three situations in one sentence; the message has to
-	// separate them or the reader fixes the wrong end.
-	for _, want := range []string{"last check", "rebuild", "granted", "out of date"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error does not mention %q — the reader cannot tell which of the three causes it is:\n%v", want, err)
-		}
-	}
-}
-
-// TestPeerInvestigateClientNeedsConfiguration.
-func TestPeerInvestigateClientNeedsConfiguration(t *testing.T) {
-	_, err := PeerInvestigate(context.Background(),
-		RemotePeer{Name: "mac", Caps: []string{PeerCapInvestigate}}, "app-1", "q")
-	if err == nil || !strings.Contains(err.Error(), "not configured") {
-		t.Errorf("an unconfigured peer gave %v", err)
-	}
-}
-
-// TestPeerInvestigateReadsTheAnswer — and distinguishes a transport failure
-// from an investigation that ran and could not answer, because the two need
-// different fixes.
-func TestPeerInvestigateReadsTheAnswer(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get(peerKeyHeader) == "" {
-			t.Error("the peer key was not carried, so the far side would 401")
-		}
-		var in struct {
-			ApplianceID string `json:"appliance_id"`
-			Question    string `json:"question"`
-		}
-		json.NewDecoder(r.Body).Decode(&in)
-		if in.ApplianceID != "app-1" || in.Question != "what is running?" {
-			t.Errorf("body = %+v", in)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"answer": "nginx and postgres"})
-	}))
-	defer srv.Close()
-
-	p := RemotePeer{Name: "mac", BaseURL: srv.URL, Key: "secret", Caps: []string{PeerCapInvestigate}}
-	got, err := PeerInvestigate(context.Background(), p, "app-1", "what is running?")
+	src, err := os.ReadFile("dashboard.go")
 	if err != nil {
-		t.Fatalf("investigate: %v", err)
+		t.Skipf("cannot read dashboard.go: %v", err)
 	}
-	if got != "nginx and postgres" {
-		t.Errorf("answer = %q", got)
+	for _, route := range []string{"/api/peer/v1/investigate", "/api/peer/v1/knowledge"} {
+		if strings.Contains(string(src), `"`+route+`"`) {
+			t.Errorf("%s is still routed", route)
+		}
+	}
+
+	// An old key's retired names grant nothing, and an edit drops them
+	// rather than refusing the save.
+	old := PeerKey{Caps: []string{"investigate", "knowledge"}, Owner: "craig", Appliances: []string{"app-1"}}
+	if old.AllowsApplianceFor("investigate", "app-1") || old.AllowsApplianceFor("knowledge", "app-1") {
+		t.Error("a retired capability reaches a system")
+	}
+	if caps, err := cleanPeerCaps([]string{"investigate", "exec", "knowledge"}); err != nil || strings.Join(caps, ",") != "exec" {
+		t.Errorf("re-granting a key that carries retired names: %v, %v", caps, err)
+	}
+
+	// The advertised list of systems follows exec.
+	prev := PeerInvestigableFunc
+	PeerInvestigableFunc = func(user string, ids []string) []PeerInvestigable {
+		out := []PeerInvestigable{}
+		for _, id := range ids {
+			out = append(out, PeerInvestigable{ID: id, Name: id})
+		}
+		return out
+	}
+	t.Cleanup(func() { PeerInvestigableFunc = prev })
+	if got := peerInvestigablesFor(old); len(got) != 0 {
+		t.Errorf("a key with only retired names is shown systems: %v", got)
+	}
+	execKey := PeerKey{Caps: []string{PeerCapExec}, Owner: "craig", Appliances: []string{"app-1"}}
+	if got := peerInvestigablesFor(execKey); len(got) != 1 || got[0].ID != "app-1" {
+		t.Errorf("an exec key is shown %v, want app-1", got)
 	}
 }
 
-// TestPeerInvestigateSurfacesTheFarSidesReason — a 200 carrying an error is an
-// investigation that ran and failed, and the caller needs the reason rather
-// than a generic transport complaint.
-func TestPeerInvestigateSurfacesTheFarSidesReason(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"error": "connection refused on the appliance"})
-	}))
-	defer srv.Close()
-
-	p := RemotePeer{Name: "mac", BaseURL: srv.URL, Key: "secret", Caps: []string{PeerCapInvestigate}}
-	_, err := PeerInvestigate(context.Background(), p, "app-1", "q")
-	if err == nil {
-		t.Fatal("an error response was read as success")
+// TestPeerExecRefusesAnUngrantedAppliance: the capability check passes and the
+// appliance check must still refuse, before anything runs.
+func TestPeerExecRefusesAnUngrantedAppliance(t *testing.T) {
+	prev := PeerExecFunc
+	ran := false
+	PeerExecFunc = func(context.Context, string, string, string) (string, error) {
+		ran = true
+		return "", nil
 	}
-	if !strings.Contains(err.Error(), "connection refused on the appliance") {
-		t.Errorf("the far side's reason was lost: %v", err)
+	t.Cleanup(func() { PeerExecFunc = prev })
+	k := PeerKey{Caps: []string{PeerCapExec}, Owner: "craig", Appliances: []string{"allowed-1"}}
+	if k.AllowsApplianceFor(PeerCapExec, "other-2") || ran {
+		t.Error("an ungranted appliance was allowed")
 	}
 }
 
-// TestPeerInvestigateRejectsAnEmptyAnswer — an empty string would render in the
-// chat as a successful investigation that found nothing, which is a different
-// claim from "the far side returned nothing".
-func TestPeerInvestigateRejectsAnEmptyAnswer(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"answer": "   "})
-	}))
-	defer srv.Close()
-
-	p := RemotePeer{Name: "mac", BaseURL: srv.URL, Key: "secret", Caps: []string{PeerCapInvestigate}}
-	if _, err := PeerInvestigate(context.Background(), p, "app-1", "q"); err == nil {
-		t.Error("an empty answer was accepted as a result")
+// TestPeerExecRefusesNonPost: the handler answers a GET before it looks at
+// any key.
+func TestPeerExecRefusesNonPost(t *testing.T) {
+	w := httptest.NewRecorder()
+	HandlePeerExec(w, httptest.NewRequest(http.MethodGet, "/api/peer/v1/exec", nil))
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("GET answered %d", w.Code)
 	}
+	var body map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
 }
 
 // TestSetPeerKeyScopeRequiresAnOwner — naming machines with nobody to run as
@@ -215,7 +138,7 @@ func TestSetPeerKeyScopeRequiresAnOwner(t *testing.T) {
 	if RootDB == nil {
 		t.Skip("no RootDB in this test binary")
 	}
-	pk, err := MintPeerKey("scope-test", []string{PeerCapInvestigate}, 0)
+	pk, err := MintPeerKey("scope-test", []string{PeerCapExec}, 0)
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}
@@ -236,10 +159,10 @@ func TestSetPeerKeyScopeRequiresAnOwner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("clear: %v", err)
 	}
-	if len(cleared.Appliances) != 0 || !cleared.Allows(PeerCapInvestigate) {
+	if len(cleared.Appliances) != 0 || !cleared.Allows(PeerCapExec) {
 		t.Error("clearing the scope should empty the reach and keep the capability")
 	}
-	if cleared.AllowsAppliance("app-1") {
+	if cleared.AllowsApplianceFor(PeerCapExec, "app-1") {
 		t.Error("a cleared key still reaches an appliance")
 	}
 }
@@ -248,7 +171,7 @@ func TestSetPeerKeyScopeRequiresAnOwner(t *testing.T) {
 // the authorization rule for granting from an appliance's own page: you may
 // only add a box to a key whose owner could already reach it, so the grant
 // cannot widen what that identity sees. It also stops a grant that looks right
-// in the admin table and fails at question time, from a machine nobody is at.
+// in the admin table and fails at command time, from a machine nobody is at.
 func TestSetPeerKeyScopeRefusesWhatTheOwnerCannotReach(t *testing.T) {
 	if RootDB == nil {
 		t.Skip("no RootDB in this test binary")
@@ -266,7 +189,7 @@ func TestSetPeerKeyScopeRefusesWhatTheOwnerCannotReach(t *testing.T) {
 	}
 	t.Cleanup(func() { PeerInvestigableFunc = prev })
 
-	pk, err := MintPeerKey("reach-test", []string{PeerCapInvestigate}, 0)
+	pk, err := MintPeerKey("reach-test", []string{PeerCapExec}, 0)
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}
@@ -296,7 +219,7 @@ func TestSetPeerKeyScopeRefusesWhatTheOwnerCannotReach(t *testing.T) {
 // public gets 401'd by the SESSION layer before its handler runs, so the peer
 // key is never even looked at. The caller then sees a bare "unauthorized"
 // instead of the handler's message naming what was actually wrong, which reads
-// exactly like a bad key. Missed precisely this on the investigate route.
+// exactly like a bad key. Missed precisely this on a peer route once.
 //
 // Checked against the SOURCE rather than the registry: RegisterPublicPath runs
 // during real route registration, which a unit-test binary never performs, so a

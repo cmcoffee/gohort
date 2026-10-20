@@ -65,25 +65,6 @@ const (
 	PeerCapSearch     = "search"
 	PeerCapBrowse     = "browse"
 	PeerCapModels     = "models"
-	// PeerCapInvestigate lets a peer ask THIS instance to investigate one of a
-	// named user's appliances and return the answer.
-	//
-	// Unlike every other capability, this one is not anonymous compute. The
-	// other six take an input and give back a derived output; this one reaches a
-	// specific user's systems, so a key granting it must also name WHOSE
-	// appliances and WHICH ones (Owner + Appliances below). A capability grant
-	// alone is not enough to reach anything.
-	PeerCapInvestigate = "investigate"
-	// PeerCapKnowledge lets a peer pull the knowledge already GATHERED about
-	// those same appliances — the structured docs and facts — so it can answer
-	// from them locally instead of paying a live investigation for something
-	// written down months ago.
-	//
-	// Deliberately separate from investigate. They are different postures: one
-	// lets a peer ask a question and receive prose, the other lets it hold a
-	// COPY of what this instance knows. An operator may reasonably want either
-	// without the other, and folding them together would make that unsayable.
-	PeerCapKnowledge = "knowledge"
 	// PeerCapExec lets a peer run commands on those appliances through this
 	// instance's connection to them — the peer as a WIRE to a machine it cannot
 	// route to itself.
@@ -92,12 +73,28 @@ const (
 	// key granted exec has a shell on the named appliances, gated by the CALLING
 	// instance rather than this one. It is for instances the same operator owns
 	// on both ends, and it is per appliance and revocable for that reason.
+	//
+	// Unlike the others it is not anonymous compute, so a key granting it must
+	// also name WHOSE appliances and WHICH ones (Owner + Appliances below). A
+	// capability grant alone reaches nothing.
+	//
+	// It is the only appliance-scoped capability. A peer key lends resources,
+	// never the instance: the PEER's servitor investigates, with its own
+	// records and knowledge, and this machine is the wire to a system only it
+	// can reach. "investigate" (this instance's investigator answering a
+	// question) and "knowledge" (a copy of what this instance had gathered)
+	// were retired for that reason; see retiredPeerCaps.
 	PeerCapExec = "exec"
 )
 
+// retiredPeerCaps are capability names a key may still carry from before they
+// were withdrawn. They grant nothing: no route serves them, the manifest does
+// not list them, and an edit drops them rather than refusing the save.
+var retiredPeerCaps = map[string]bool{"investigate": true, "knowledge": true}
+
 // PeerCapabilities is every capability name, in a stable order.
 func PeerCapabilities() []string {
-	return []string{PeerCapEmbeddings, PeerCapImages, PeerCapTranscribe, PeerCapSearch, PeerCapBrowse, PeerCapModels, PeerCapInvestigate, PeerCapKnowledge, PeerCapExec}
+	return []string{PeerCapEmbeddings, PeerCapImages, PeerCapTranscribe, PeerCapSearch, PeerCapBrowse, PeerCapModels, PeerCapExec}
 }
 
 // peerCapServed reports whether this build can actually serve a capability.
@@ -105,7 +102,7 @@ func PeerCapabilities() []string {
 // so plainly rather than advertising something that would 404.
 func peerCapServed(cap string) bool {
 	switch cap {
-	case PeerCapEmbeddings, PeerCapImages, PeerCapTranscribe, PeerCapSearch, PeerCapBrowse, PeerCapInvestigate, PeerCapKnowledge, PeerCapExec:
+	case PeerCapEmbeddings, PeerCapImages, PeerCapTranscribe, PeerCapSearch, PeerCapBrowse, PeerCapExec:
 		return true
 	case PeerCapModels:
 		// Served only when there is something lendable. A hosted provider is
@@ -136,13 +133,12 @@ type PeerKey struct {
 	Created  string   `json:"created"`
 	LastSeen string   `json:"last_seen,omitempty"`
 	Calls    int64    `json:"calls,omitempty"` // lifetime, for the admin table
-	// Owner is the LOCAL user whose appliances an investigate grant reaches.
-	// Required for PeerCapInvestigate and meaningless for the others: an
-	// embedding request is anonymous compute, an investigation is somebody's
-	// machines. The investigation runs AS this user, so it can reach exactly
-	// what they can and nothing else.
+	// Owner is the LOCAL user whose appliances an exec grant reaches.
+	// Required for PeerCapExec and meaningless for the others: an embedding
+	// request is anonymous compute, a command is somebody's machines. It runs
+	// AS this user, so it can reach exactly what they can and nothing else.
 	Owner string `json:"owner,omitempty"`
-	// Appliances is the explicit set of appliance ids this key may investigate.
+	// Appliances is the explicit set of appliance ids this key may reach.
 	// EMPTY GRANTS NOTHING, and there is deliberately no wildcard — the same
 	// rule command_grants.go applies to agents, for the same reason: "every
 	// appliance, including the ones that do not exist yet" is a decision nobody
@@ -159,20 +155,9 @@ type PeerKey struct {
 	Paired string `json:"paired,omitempty"`
 }
 
-// AllowsAppliance reports whether this key may investigate one appliance.
-func (k PeerKey) AllowsAppliance(id string) bool {
-	return k.AllowsApplianceFor(PeerCapInvestigate, id)
-}
-
 // AllowsApplianceFor reports whether this key may use one appliance-scoped
 // capability against one appliance. Three things must hold: the capability, an
 // owner to run as, and this specific id.
-//
-// The appliance LIST is shared between investigate and knowledge — it answers
-// "which systems", and the capabilities answer "what may be done with them".
-// Two lists would let them drift, and a peer granted knowledge of a system it
-// cannot ask about (or the reverse) is a distinction nobody wants to maintain
-// per id.
 func (k PeerKey) AllowsApplianceFor(capability, id string) bool {
 	// Only the appliance-scoped capabilities can reach a machine at all. The
 	// others are anonymous compute — an input in, a derived output back — and
@@ -201,15 +186,11 @@ func (k PeerKey) AllowsApplianceFor(capability, id string) bool {
 // peerCapAppliesToAppliances reports whether a capability is scoped to specific
 // machines rather than being anonymous compute.
 //
-// The scoped three name an Owner and an appliance list because they reach that
-// user's systems; the rest take an input and give back a derived output, and
-// must never resolve against a machine.
+// Exec names an Owner and an appliance list because it reaches that user's
+// systems; the rest take an input and give back a derived output, and must
+// never resolve against a machine.
 func peerCapAppliesToAppliances(capability string) bool {
-	switch capability {
-	case PeerCapInvestigate, PeerCapKnowledge, PeerCapExec:
-		return true
-	}
-	return false
+	return capability == PeerCapExec
 }
 
 // defaultPeerRatePerMin caps an unconfigured key. A peer sharing an embedder is
@@ -283,7 +264,7 @@ func cleanPeerCaps(caps []string) ([]string, error) {
 	seen := map[string]bool{}
 	for _, c := range caps {
 		c = strings.TrimSpace(strings.ToLower(c))
-		if c == "" || seen[c] {
+		if c == "" || seen[c] || retiredPeerCaps[c] {
 			continue
 		}
 		if !known[c] {
@@ -505,16 +486,16 @@ func touchPeerKey(k PeerKey) {
 	RootDB.CryptSet(peerKeysTable, cur.ID, cur)
 }
 
-// SetPeerKeyScope sets WHOSE appliances an investigate grant reaches and WHICH
+// SetPeerKeyScope sets WHOSE appliances an exec grant reaches and WHICH
 // ones. Separate from SetPeerKeyCaps because the two answer different questions
 // and are edited at different moments: the capability says what kind of work a
 // peer may ask for, the scope says what it may ask about.
 //
 // Both are replaced wholesale, so clearing the list revokes the reach without
-// touching the capability — the way to say "still an investigate peer, just not
+// touching the capability — the way to say "still an exec peer, just not
 // for anything right now" rather than having to re-grant later.
 //
-// An owner is required whenever appliances are named: an investigation runs AS
+// An owner is required whenever appliances are named: a command runs AS
 // a user, and a list with nobody to run it as would authorize a request that
 // then fails at dispatch, which is a worse failure than refusing here.
 func SetPeerKeyScope(id, owner string, appliances []string) (PeerKey, error) {
@@ -537,7 +518,7 @@ func SetPeerKeyScope(id, owner string, appliances []string) (PeerKey, error) {
 		clean = append(clean, a)
 	}
 	if len(clean) > 0 && owner == "" {
-		return PeerKey{}, fmt.Errorf("naming systems needs an owner: an investigation runs as a user")
+		return PeerKey{}, fmt.Errorf("naming systems needs an owner: a command runs as a user")
 	}
 	// Every id must actually resolve for that owner. Without this a grant can
 	// name an appliance the owner cannot see — wrong user, never shared, since
@@ -561,7 +542,7 @@ func SetPeerKeyScope(id, owner string, appliances []string) (PeerKey, error) {
 		}
 		if len(bad) > 0 {
 			return PeerKey{}, fmt.Errorf(
-				"%s cannot reach %s: an investigation runs as that user, so the grant would fail when used",
+				"%s cannot reach %s: a command runs as that user, so the grant would fail when used",
 				owner, strings.Join(bad, ", "))
 		}
 	}
@@ -668,12 +649,12 @@ func peerNoteAuthFailure(r *http.Request) {
 
 // peerConcurrency is how many requests of one capability a single key may have
 // running at once. The rate limit counts calls per minute; it says nothing
-// about a key starting ten investigations that each run for ten minutes, or
+// about a key starting ten long commands that each run for minutes, or
 // twenty renders that each hold the GPU. Bounded per capability, because a
-// search is cheap and an investigation dials a host and plans for minutes.
+// search is cheap and a command can hold a host for minutes.
 var peerConcurrency = map[string]int{
-	PeerCapInvestigate: 2, PeerCapExec: 4, PeerCapBrowse: 3, PeerCapImages: 2,
-	PeerCapTranscribe: 2, PeerCapModels: 4, PeerCapEmbeddings: 8, PeerCapSearch: 4, PeerCapKnowledge: 4,
+	PeerCapExec: 4, PeerCapBrowse: 3, PeerCapImages: 2,
+	PeerCapTranscribe: 2, PeerCapModels: 4, PeerCapEmbeddings: 8, PeerCapSearch: 4,
 }
 
 type peerLiveReq struct{ cancel context.CancelFunc }

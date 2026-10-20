@@ -1343,7 +1343,7 @@
            'other respect. Requires the "Run commands" grant on the peer key over there.']),
       ]);
 
-      // Peers that may investigate this system. Sits beside the Shared toggle
+      // Peers that may reach this system. Sits beside the Shared toggle
       // because it answers the same question the user came here to ask —
       // who can see this box — and the grant itself lives on a peer key in
       // Admin, which is not where anyone thinks to look.
@@ -1364,8 +1364,8 @@
             peerShareBox.innerHTML = '';
             if (!d || !d.keys || !d.keys.length) {
               peerShareBox.appendChild(el('div', {class: 'ui-form-hint'},
-                ['No peer keys grant investigation yet. An admin mints one under ' +
-                 'Admin \u203a Resource Sharing \u203a Keys, granting "Investigate systems".']));
+                ['No peer keys grant running commands yet. An admin mints one under ' +
+                 'Admin \u203a Resource Sharing \u203a Keys, granting "Run commands".']));
               return;
             }
             d.keys.forEach(function(k) {
@@ -1402,11 +1402,11 @@
           });
       }
       var peerShareSection = el('div', {class: 'ui-servitor-app-section'}, [
-        el('label', {}, ['Peers that may investigate this']), peerShareBox,
+        el('label', {}, ['Peers that may reach this']), peerShareBox,
         el('div', {class: 'ui-form-hint'},
-          ['For another gohort instance that cannot reach this system itself. It sends a QUESTION; ' +
-           'this instance runs the investigation, read-only, under its own approval rules, and returns the answer. ' +
-           'No command from the peer is executed here and no credential leaves this machine. ' +
+          ['For another gohort instance that cannot reach this system itself. Its own servitor investigates, ' +
+           'and this instance only carries its commands to the system and the output back. ' +
+           'Nothing this instance has gathered about the system is shared, and no credential leaves this machine. ' +
            'Revoke any time here or on the key.']),
       ]);
       loadAppliancePeers();

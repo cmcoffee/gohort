@@ -1,4 +1,4 @@
-// peer_appliance.go — reaching an appliance that lives on another instance.
+// peer_appliance.go: reaching an appliance that lives on another instance.
 //
 // This is a NETWORK problem wearing a data-sharing costume. A box on the lab
 // network answers the instance sitting on that network and nothing else; a
@@ -6,10 +6,12 @@
 // Copying the appliance across would move credentials onto the laptop and still
 // fail to route.
 //
-// So a stub appliance points at (peer, remote appliance id), and asking it a
-// question sends the QUESTION to that peer. The far side runs its own
-// investigator against its own SSH config, on its own network, under its own
-// risk gate and its own per-(agent, appliance) grants. What comes back is prose.
+// So a stub appliance points at (peer, remote appliance id), and its commands
+// travel to that peer, which runs them and sends the output back. Everything
+// above the command (the plan, the probes, the risk gate, the approvals, the
+// knowledge docs and the graph) is THIS instance's. A peer key lends
+// resources, never the instance: the far side never answers with its own
+// investigator, and never hands over what it has gathered (both were retired).
 //
 // Both halves live here: serving other instances (the hooks core calls) and
 // consuming them (the stub dispatch).
@@ -23,37 +25,15 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
 	. "github.com/cmcoffee/gohort/core"
-
-	"github.com/cmcoffee/gohort/apps/orchestrate"
 )
 
-// registerPeerInvestigation wires servitor into core's peer surface. Called
-// once from Routes, where T.DB is live.
-func (T *Servitor) registerPeerInvestigation() {
-	// Serve: run one investigation for a peer, as the key's owner.
-	//
-	// InvestigateSync is reused verbatim rather than reimplemented — it is the
-	// same call the reference-source investigate_<system> tool makes, so a
-	// question arriving over the wire is answered by exactly the machinery that
-	// answers one asked locally, including the auto-deny that keeps it
-	// read-only. A second implementation here would be the place the two
-	// silently diverged on what "read-only" means.
-	PeerInvestigateFunc = func(ctx context.Context, user, applianceID, question string) (string, error) {
-		// A stub is not investigated on a peer's behalf for the reason exec
-		// refuses one: the investigation would run its commands through THIS
-		// instance's link onward, for a key the far instance never issued.
-		if udb := UserDB(T.DB, user); udb != nil {
-			if a, _, _, ok := T.resolveAppliance(user, udb, applianceID); ok && strings.TrimSpace(a.PeerName) != "" {
-				return "", fmt.Errorf("%q is itself a remote system here: investigations are not relayed onward", a.Name)
-			}
-		}
-		return T.InvestigateSync(ctx, user, applianceID, question)
-	}
-
-	// Advertise: what the calling key may ask about, named so the far side can
+// registerPeerSystems wires servitor into core's peer surface: the systems a
+// key may run commands on, named for the far side's picker. Called once from
+// Routes, where T.DB is live.
+func (T *Servitor) registerPeerSystems() {
+	// Advertise: what the calling key may reach, named so the far side can
 	// build something a person recognizes instead of a list of UUIDs.
 	PeerInvestigableFunc = func(user string, ids []string) []PeerInvestigable {
 		if user == "" || len(ids) == 0 {
@@ -151,11 +131,11 @@ func peerExecFor(ctx context.Context, a Appliance) func(string) (string, error) 
 }
 
 // peerApplianceOptions lists the appliances a registered peer says this
-// instance may investigate, for the "add a remote system" picker.
+// instance may run commands on, for the "add a remote system" picker.
 func peerApplianceOptions() map[string][]PeerInvestigable {
 	out := map[string][]PeerInvestigable{}
 	for _, p := range ListRemotePeers() {
-		if !p.Offers(PeerCapInvestigate) || len(p.Investigable) == 0 {
+		if !p.Offers(PeerCapExec) || len(p.Investigable) == 0 {
 			continue
 		}
 		out[p.Name] = p.Investigable
@@ -164,7 +144,7 @@ func peerApplianceOptions() map[string][]PeerInvestigable {
 }
 
 // handlePeerAppliances GETs what each registered peer says this instance may
-// investigate — the source for the "add a remote system" picker.
+// reach, the source for the "add a remote system" picker.
 func (T *Servitor) handlePeerAppliances(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -211,7 +191,7 @@ func (T *Servitor) handlePeerAppliances(w http.ResponseWriter, r *http.Request) 
 // — so granting can never widen what that identity reaches, only expose to a
 // peer what it already had.
 
-// handleAppliancePeers lists the peer keys that could investigate one appliance
+// handleAppliancePeers lists the peer keys that could reach one appliance
 // and which of them currently may, and toggles that membership.
 func (T *Servitor) handleAppliancePeers(w http.ResponseWriter, r *http.Request) {
 	userID, udb, ok := RequireUser(w, r, T.DB)
@@ -244,7 +224,7 @@ func (T *Servitor) handleAppliancePeers(w http.ResponseWriter, r *http.Request) 
 		}
 		out := []row{}
 		for _, k := range ListPeerKeys() {
-			if !k.Allows(PeerCapInvestigate) {
+			if !k.Allows(PeerCapExec) {
 				continue
 			}
 			rw := row{KeyID: k.ID, Label: k.Label, Owner: k.Owner}
@@ -298,8 +278,8 @@ func (T *Servitor) handleAppliancePeers(w http.ResponseWriter, r *http.Request) 
 			http.Error(w, "no such peer key", http.StatusNotFound)
 			return
 		}
-		if !key.Allows(PeerCapInvestigate) {
-			http.Error(w, "that key is not granted the investigate capability: an admin sets that under Resource Sharing", http.StatusBadRequest)
+		if !key.Allows(PeerCapExec) {
+			http.Error(w, "that key is not granted the exec capability: an admin sets that under Resource Sharing", http.StatusBadRequest)
 			return
 		}
 		// A key that has never been scoped adopts this appliance's owner. It
@@ -332,195 +312,6 @@ func (T *Servitor) handleAppliancePeers(w http.ResponseWriter, r *http.Request) 
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
-}
-
-// --- gathered knowledge, both directions ------------------------------------
-
-// registerPeerKnowledge serves this instance's gathered knowledge to peers.
-// Called alongside registerPeerInvestigation.
-func (T *Servitor) registerPeerKnowledge() {
-	PeerKnowledgeFunc = func(user, applianceID string) (PeerKnowledge, error) {
-		udb := UserDB(T.DB, user)
-		if udb == nil {
-			return PeerKnowledge{}, fmt.Errorf("no store for %q", user)
-		}
-		a, _, ownerUDB, ok := T.resolveAppliance(user, udb, applianceID)
-		if !ok || ownerUDB == nil {
-			return PeerKnowledge{}, fmt.Errorf("system %q not found", applianceID)
-		}
-		out := PeerKnowledge{
-			ApplianceID: a.ID,
-			Name:        applianceLabel(a.Name, a.ID),
-			Kind:        firstNonEmptyStr(a.Type, "ssh"),
-			Scanned:     a.Scanned,
-		}
-		// Each document carries the timestamp the ORIGIN holds, not now().
-		for _, name := range knowledgeDocNames {
-			var entry KnowledgeDocEntry
-			if !ownerUDB.Get(knowledgeTable, a.ID+":"+name, &entry) || strings.TrimSpace(entry.Content) == "" {
-				continue
-			}
-			out.Docs = append(out.Docs, PeerKnowledgeDoc{
-				Name: name, Content: entry.Content, Updated: entry.Updated,
-			})
-		}
-		for _, f := range factsForAppliance(ownerUDB, a.ID) {
-			if strings.TrimSpace(f.Key) == "" {
-				continue
-			}
-			out.Facts = append(out.Facts, PeerKnowledgeFact{
-				Key: f.Key, Value: f.Value, Tags: f.Tags, Updated: f.Updated,
-			})
-		}
-		if orch, scope, ok := mapScope(a.ID); ok {
-			ents, edges := orch.ScopedGraphExport(scope)
-			byID := map[string]string{}
-			for _, e := range ents {
-				byID[e.ID] = e.Name
-				out.Entities = append(out.Entities, PeerKnowledgeEntity{
-					Kind: e.Kind, Name: e.Name, Aliases: e.Aliases, Attrs: e.Attrs,
-					Updated: e.Updated.UTC().Format(time.RFC3339),
-				})
-			}
-			for _, ed := range edges {
-				from, fok := byID[ed.From]
-				to, tok := byID[ed.To]
-				if !fok || !tok {
-					continue
-				}
-				out.Edges = append(out.Edges, PeerKnowledgeEdge{From: from, Rel: ed.Rel, To: to, Note: ed.Note})
-			}
-		}
-		return out, nil
-	}
-}
-
-// pullPeerKnowledge backfills what the owning instance already knows about a
-// machine reached through a peer, so the first question here does not re-derive
-// months of work.
-//
-// MERGED BY RECENCY, not replaced. Replacement was right while a stub was
-// passive; it is a data-loss bug now that this instance investigates the same
-// machine and records what it finds — a second pull would delete everything
-// learned locally. So each document and fact is kept from whichever side has
-// the newer timestamp, which is only possible because the origin's timestamps
-// travel with the content.
-//
-// Returns what came across and what was kept local, because a merge that
-// silently reports a total tells you nothing about which copy you are now
-// reading.
-func (T *Servitor) pullPeerKnowledge(ctx context.Context, ownerUDB Database, a Appliance) (imported, kept int, err error) {
-	if strings.TrimSpace(a.PeerName) == "" || ownerUDB == nil {
-		return 0, 0, fmt.Errorf("not a remote system")
-	}
-	peer, ok := GetRemotePeer(a.PeerName)
-	if !ok {
-		return 0, 0, fmt.Errorf("peer %q is not registered here", a.PeerName)
-	}
-	kn, ferr := PeerFetchKnowledge(ctx, peer, a.RemoteID)
-	if ferr != nil {
-		return 0, 0, ferr
-	}
-	for _, d := range kn.Docs {
-		if newerHere(docUpdatedAt(ownerUDB, a.ID, d.Name), d.Updated) {
-			kept++
-			continue
-		}
-		// The ORIGIN's timestamp, deliberately. See writeDocAt.
-		writeDocAt(ownerUDB, a.ID, d.Name, d.Content, d.Updated)
-		imported++
-	}
-	for _, f := range kn.Facts {
-		var mine SshFact
-		if ownerUDB.Get(factsTable, a.ID+":"+f.Key, &mine) && newerHere(mine.Updated, f.Updated) {
-			kept++
-			continue
-		}
-		ownerUDB.Set(factsTable, a.ID+":"+f.Key, SshFact{
-			ID:            a.ID + ":" + f.Key,
-			ApplianceID:   a.ID,
-			ApplianceName: a.Name,
-			Key:           f.Key,
-			Value:         f.Value,
-			Tags:          f.Tags,
-			Updated:       f.Updated,
-		})
-		imported++
-	}
-	if len(kn.Entities) > 0 || len(kn.Edges) > 0 {
-		if orch, scope, ok := mapScope(a.ID); ok {
-			ents := make([]GraphEntity, 0, len(kn.Entities))
-			for _, e := range kn.Entities {
-				g := GraphEntity{Kind: e.Kind, Name: e.Name, Aliases: e.Aliases, Attrs: e.Attrs}
-				if t, perr := time.Parse(time.RFC3339, e.Updated); perr == nil {
-					g.Updated = t
-				}
-				ents = append(ents, g)
-			}
-			edges := make([]orchestrate.GraphEdgeByName, 0, len(kn.Edges))
-			for _, ed := range kn.Edges {
-				edges = append(edges, orchestrate.GraphEdgeByName{
-					From: ed.From, Rel: ed.Rel, To: ed.To, Note: ed.Note,
-				})
-			}
-			gi, gk := orch.ScopedGraphImport(scope, ents, edges)
-			imported += gi
-			kept += gk
-		}
-	}
-	return imported, kept, nil
-}
-
-// newerHere reports whether the local copy is more recently updated than the
-// incoming one. An unparseable or missing local timestamp loses: the incoming
-// side at least states when it learned the thing.
-func newerHere(local, incoming string) bool {
-	lt, lerr := time.Parse(time.RFC3339, strings.TrimSpace(local))
-	if lerr != nil {
-		return false
-	}
-	it, ierr := time.Parse(time.RFC3339, strings.TrimSpace(incoming))
-	if ierr != nil {
-		return true
-	}
-	return lt.After(it)
-}
-
-// docUpdatedAt returns the stored timestamp of one local document, or "".
-func docUpdatedAt(udb Database, applianceID, doc string) string {
-	var entry KnowledgeDocEntry
-	if udb == nil || !udb.Get(knowledgeTable, applianceID+":"+doc, &entry) {
-		return ""
-	}
-	return entry.Updated
-}
-
-// refreshPeerKnowledge re-syncs a stub's local copy of the owning instance's
-// knowledge and reports what landed.
-func (T *Servitor) refreshPeerKnowledge(ctx context.Context, id string, appliance Appliance, ownerUDB Database) {
-	emit(id, probeEvent{Kind: "status", Text: "Syncing what " + appliance.PeerName + " knows about " + appliance.Name + "…"})
-	imported, kept, err := T.pullPeerKnowledge(ctx, ownerUDB, appliance)
-	if err != nil {
-		probeSessions.AppendEvent(id, probeEvent{Kind: "error", Text: err.Error()}, true)
-		probeSessions.ScheduleCleanup(id)
-		return
-	}
-	if imported == 0 && kept == 0 {
-		probeSessions.AppendEvent(id, probeEvent{Kind: "reply", Text: "Synced, but " + appliance.PeerName +
-			" has nothing recorded about this system yet. Map it on " + appliance.PeerName +
-			" first: a refresh here copies what it knows, it does not make it go and look."}, true)
-		probeSessions.ScheduleCleanup(id)
-		return
-	}
-	msg := fmt.Sprintf("Took %d item(s) from %s", imported, appliance.PeerName)
-	if kept > 0 {
-		// Named explicitly: after a merge you are reading a mixture, and which
-		// side won matters when the two disagree.
-		msg += fmt.Sprintf(" and kept %d that this instance had learned more recently", kept)
-	}
-	msg += ".\n\nAges shown against this system are the ORIGIN's: when each thing was learned, not when it was copied here."
-	probeSessions.AppendEvent(id, probeEvent{Kind: "reply", Text: msg}, true)
-	probeSessions.ScheduleCleanup(id)
 }
 
 // registerPeerExec serves the command transport: run one command against a

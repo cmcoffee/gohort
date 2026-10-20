@@ -200,10 +200,10 @@ func (T *Servitor) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	// ingest, without re-sending a gigabyte. See bundle_upload.go.
 	// Tools bindable to a toolset appliance — the owner's own pool.
 	sub.HandleFunc("/api/bindable-tools", T.handleBindableTools)
-	// Serve investigations to other instances, and list what registered peers
-	// let US ask about. Wired here rather than in init because it needs T.DB.
-	T.registerPeerInvestigation()
-	T.registerPeerKnowledge()
+	// Serve commands to other instances (a wire to a system only this machine
+	// reaches), and list what registered peers let US reach. Wired here
+	// rather than in init because it needs T.DB.
+	T.registerPeerSystems()
 	T.registerPeerExec()
 	sub.HandleFunc("/api/peer-appliances", T.handlePeerAppliances)
 	sub.HandleFunc("/api/appliance-peers", T.handleAppliancePeers)

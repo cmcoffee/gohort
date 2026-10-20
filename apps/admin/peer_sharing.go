@@ -586,10 +586,6 @@ func peerCapShortLabel(cap string) string {
 		return "Page rendering"
 	case PeerCapModels:
 		return "Inference"
-	case PeerCapInvestigate:
-		return "Investigate systems"
-	case PeerCapKnowledge:
-		return "Gathered knowledge"
 	case PeerCapExec:
 		return "Run commands"
 	}
@@ -618,16 +614,8 @@ func peerCapOptions() []ui.SelectOption {
 		PeerCapModels: "Let the peer run its LLM turns on THIS instance's model: the machine with the GPU does the thinking for the one without. " +
 			"The peer configures an ordinary llama.cpp provider pointed here and everything works as if the model were local: streaming, tool calls, images, thinking budgets. " +
 			"Only LOCAL backends are lent (llama.cpp and ollama). A hosted provider is never relayed, because that would spend this operator's API key on someone else's prompts.",
-		PeerCapInvestigate: "Let the peer ask questions about systems THIS instance can reach, for a machine on a network the peer has no route to. " +
-			"It sends a question; this instance runs the investigation itself, read-only, under its own approval rules, and returns prose. " +
-			"No command from the peer is ever executed, and no credential leaves here. " +
-			"Requires picking which systems below: the grant alone reaches nothing.",
-		PeerCapKnowledge: "Let the peer hold a COPY of what this instance has already learned about those systems: " +
-			"the structured docs and recorded facts, so it can answer from them instantly instead of asking every time. " +
-			"Each item keeps the age it has here, so a copy of a two-month-old map reads as two months old over there. " +
-			"Separate from Investigate on purpose: this one moves knowledge off this machine, the other only answers questions. " +
-			"Uses the same system list below.",
-		PeerCapExec: "Let the peer run commands on those systems through THIS instance's connection to them: the peer as a wire to a machine it cannot route to. " +
+		PeerCapExec: "Let the peer run commands on the systems below through THIS instance's connection to them: the peer as a wire to a machine it cannot route to. " +
+			"The peer's own servitor does the investigating, with its own records; nothing this instance has gathered about the system is shared. " +
 			"Understand what this is: a key granted it has a shell on the named systems, and the CALLING instance decides what runs, not this one. " +
 			"There is no risk gate on this side, by design, that is what makes a peer-reached system behave exactly like a local one. " +
 			"Grant it only to instances you own, and only for the systems below.",
@@ -637,12 +625,10 @@ func peerCapOptions() []ui.SelectOption {
 	// as the same thing here, in the Granted column, and on the far side's
 	// Offers column. Restating them is how "exec" came to have three names.
 	qualifier := map[string]string{
-		PeerCapTranscribe:  " (speech-to-text)",
-		PeerCapBrowse:      " (browser)",
-		PeerCapModels:      " (the peer's turns execute on this machine's model)",
-		PeerCapInvestigate: " (answers questions, runs no remote commands)",
-		PeerCapKnowledge:   " (copies docs and facts to the peer)",
-		PeerCapExec:        " (the peer gets a shell on these systems, gated on ITS side)",
+		PeerCapTranscribe: " (speech-to-text)",
+		PeerCapBrowse:     " (browser)",
+		PeerCapModels:     " (the peer's turns execute on this machine's model)",
+		PeerCapExec:       " (the peer gets a shell on these systems, gated on ITS side)",
 	}
 	label := map[string]string{}
 	for _, c := range PeerCapabilities() {
@@ -838,11 +824,11 @@ func peerSharingSections() []ui.Section {
 								Detail:  "Removing one takes effect immediately, and the peer keeps the same key either way."},
 							{Field: "appliances", Label: "Systems this key may reach", Type: "checklist",
 								Options:  peerApplianceScopeOptions(),
-								ShowWhen: "caps:" + PeerCapInvestigate + "|" + PeerCapKnowledge + "|" + PeerCapExec,
-								Help: "For the Investigate, Share-knowledge and Run-commands grants, and only these: there is no \"all systems\". " +
-									"The peer sends a QUESTION; this instance runs the investigation itself, on its own network, read-only. " +
-									"Credentials never leave here. Pick systems belonging to ONE user: the investigation runs as them, so it reaches exactly what they can. " +
-									"Leave empty and an Investigate grant reaches nothing."},
+								ShowWhen: "caps:" + PeerCapExec,
+								Help: "For the Run commands grant, and only it: there is no \"all systems\". " +
+									"The peer sends a command; this instance runs it on the system and returns the output. Credentials never leave here. " +
+									"Pick systems belonging to ONE user: commands run as them, so they reach exactly what that user can. " +
+									"Leave empty and the grant reaches nothing."},
 						},
 					}),
 					// The replacement for re-displaying a secret that is no longer

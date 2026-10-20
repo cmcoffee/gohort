@@ -215,17 +215,13 @@ func ServeDashboard(addr string) error {
 	// at <base>/api/peer/v1 and needs no gohort-specific client at all.
 	RegisterPublicPath("/api/peer/v1/embeddings")
 	mux.HandleFunc("/api/peer/v1/embeddings", HandlePeerEmbeddings)
-	// Public in the session-auth sense ONLY: the peer key is the credential, and
-	// HandlePeerInvestigate authenticates it before anything else. Without this
-	// the session layer 401s a peer with a bare "unauthorized" that never
-	// reaches — and so never mentions — the key.
-	RegisterPublicPath("/api/peer/v1/investigate")
-	mux.HandleFunc("/api/peer/v1/investigate", HandlePeerInvestigate)
-	// Same reasoning: peer-key authenticated, so it must bypass session auth.
-	RegisterPublicPath("/api/peer/v1/knowledge")
-	mux.HandleFunc("/api/peer/v1/knowledge", HandlePeerKnowledge)
-	// The command transport. Peer-key authenticated, so session auth must not
-	// see it first.
+	// The command transport. Public in the session-auth sense ONLY: the peer
+	// key is the credential, and HandlePeerExec authenticates it before
+	// anything else. Without this the session layer 401s a peer with a bare
+	// "unauthorized" that never reaches, and so never mentions, the key.
+	//
+	// There is no investigate or knowledge route: a peer key lends resources,
+	// never this instance's servitor or what it has gathered (peer_key.go).
 	RegisterPublicPath("/api/peer/v1/exec")
 	mux.HandleFunc("/api/peer/v1/exec", HandlePeerExec)
 	// Renders for a peer. A1111-shaped so the far side drives it with an

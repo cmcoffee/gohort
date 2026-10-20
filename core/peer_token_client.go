@@ -602,7 +602,7 @@ func republishPeerImageCredential(p RemotePeer) {
 // credential is what goes stale, and a name is what stays true.
 //
 // held is the record a caller already had in hand. Most callers reach a peer
-// BECAUSE they were given one — investigate and browse are handed a RemotePeer
+// BECAUSE they were given one — exec and browse are handed a RemotePeer
 // — and requiring the store to agree would break them the moment a caller works
 // with a peer that is not (or not yet) written down. The store still wins when
 // it has the peer, since a record read now is fresher than one passed in a
@@ -848,7 +848,7 @@ func PeerHTTPClient(peerName string, timeout time.Duration) *http.Client {
 }
 
 // PeerClientFor is PeerHTTPClient for a caller that already holds the peer
-// record — investigate, browse, anything handed a RemotePeer. The record is
+// record — exec, browse, anything handed a RemotePeer. The record is
 // used when the store has nothing to say, so a peer that is not written down
 // still authenticates instead of silently going out bare.
 func PeerClientFor(p RemotePeer, timeout time.Duration) *http.Client {

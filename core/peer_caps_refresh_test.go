@@ -21,34 +21,34 @@ func hasCap(caps []string, name string) bool {
 // local record and every later call failed HERE, with no request made, until
 // the next refresh. The far side was healthy throughout.
 func TestRefreshKeepsAGrantedCapabilityThatIsMomentarilyUnserved(t *testing.T) {
-	prev := []string{PeerCapExec, PeerCapInvestigate}
+	prev := []string{PeerCapExec, PeerCapImages}
 	m := capsManifest(
 		PeerManifestEntry{Name: PeerCapExec, Served: false, Granted: true},
-		PeerManifestEntry{Name: PeerCapInvestigate, Served: true, Granted: true},
+		PeerManifestEntry{Name: PeerCapImages, Served: true, Granted: true},
 	)
 	got := refreshedCaps(prev, m)
 	if !hasCap(got, PeerCapExec) {
 		t.Errorf("exec was dropped on a not-yet-served refresh; caps = %v", got)
 	}
-	if !hasCap(got, PeerCapInvestigate) {
-		t.Errorf("investigate should have survived; caps = %v", got)
+	if !hasCap(got, PeerCapImages) {
+		t.Errorf("images should have survived; caps = %v", got)
 	}
 }
 
 // A withdrawal is an operator's decision and must take effect at the next
 // check — that is the whole reason the refresh replaces rather than merges.
 func TestRefreshDropsARevokedCapability(t *testing.T) {
-	prev := []string{PeerCapExec, PeerCapInvestigate}
+	prev := []string{PeerCapExec, PeerCapImages}
 	m := capsManifest(
 		PeerManifestEntry{Name: PeerCapExec, Served: true, Granted: false},
-		PeerManifestEntry{Name: PeerCapInvestigate, Served: true, Granted: true},
+		PeerManifestEntry{Name: PeerCapImages, Served: true, Granted: true},
 	)
 	got := refreshedCaps(prev, m)
 	if hasCap(got, PeerCapExec) {
 		t.Errorf("a revoked grant must not survive the refresh; caps = %v", got)
 	}
-	if !hasCap(got, PeerCapInvestigate) {
-		t.Errorf("investigate should have survived; caps = %v", got)
+	if !hasCap(got, PeerCapImages) {
+		t.Errorf("images should have survived; caps = %v", got)
 	}
 }
 
@@ -61,18 +61,18 @@ func TestRefreshNeverInventsACapability(t *testing.T) {
 	}
 }
 
-// An instance not serving investigate sends no list at all, which is not the
+// An instance not serving exec sends no system list at all, which is not the
 // same statement as "nothing is granted any more". Reading absence as an
 // empty answer emptied the remote-systems picker on a question the far side
 // never answered.
-func TestUnservedInvestigateDoesNotClaimAnEmptyList(t *testing.T) {
-	if servesCap(capsManifest(PeerManifestEntry{Name: PeerCapInvestigate, Served: false, Granted: true}), PeerCapInvestigate) {
+func TestUnservedExecDoesNotClaimAnEmptyList(t *testing.T) {
+	if servesCap(capsManifest(PeerManifestEntry{Name: PeerCapExec, Served: false, Granted: true}), PeerCapExec) {
 		t.Error("servesCap reported an unserved capability as served")
 	}
-	if !servesCap(capsManifest(PeerManifestEntry{Name: PeerCapInvestigate, Served: true, Granted: false}), PeerCapInvestigate) {
+	if !servesCap(capsManifest(PeerManifestEntry{Name: PeerCapExec, Served: true, Granted: false}), PeerCapExec) {
 		t.Error("servesCap should key on Served alone — a served capability this key lacks is still being served")
 	}
-	if servesCap(capsManifest(), PeerCapInvestigate) {
+	if servesCap(capsManifest(), PeerCapExec) {
 		t.Error("a manifest that never mentions the capability is not serving it")
 	}
 }
