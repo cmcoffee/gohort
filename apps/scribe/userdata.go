@@ -68,9 +68,9 @@ func (h *scribeUserData) Reassign(from, to string) error {
 				src.Unset(guideImagesTable, ik)
 			}
 		}
-		if g.Shared {
-			SetSharedOwner(h.app.DB, sharedGuidesIndex, g.ID, to, true)
-		}
+		// Both indexes name the owner, so they follow the move.
+		indexGuideShares(h.app.DB, from, g.ID, false, nil)
+		indexGuideShares(h.app.DB, to, g.ID, g.Shared, g.AllowedUsers)
 	}
 	return nil
 }
@@ -88,7 +88,7 @@ func (h *scribeUserData) Purge(uid string) error {
 	}
 	for _, k := range udb.Keys(guidesTable) {
 		deleteGuide(udb, uid, k)
-		SetSharedOwner(h.app.DB, sharedGuidesIndex, k, "", false)
+		indexGuideShares(h.app.DB, uid, k, false, nil)
 	}
 	for _, tbl := range scribeUserTables {
 		for _, k := range udb.Keys(tbl) {

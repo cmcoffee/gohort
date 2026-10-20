@@ -94,7 +94,7 @@ func undoAvailability(appDB, udb Database, user string, e CuratorEntry) (bool, s
 	if !ok {
 		return false, "that guide no longer exists"
 	}
-	if !(CanManageShared(user, owner, false) || g.sharedForEdit()) {
+	if !(CanManageShared(user, owner, false) || g.editableBy(owner, user)) {
 		return false, "you don't have edit access to that guide"
 	}
 	if _, revOK := loadRevision(ownerUDB, e.GuideID, e.PriorRev); !revOK {

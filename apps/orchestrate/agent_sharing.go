@@ -127,7 +127,7 @@ func (T *OrchestrateApp) handleUserCandidates(w http.ResponseWriter, r *http.Req
 	}
 	w.Header().Set("Content-Type", "application/json")
 	// ?groups=1 from a picker whose kind can go to a group as well.
-	w.Write(ShareCandidatesJSON(user, r.URL.Query().Get("groups") == "1"))
+	w.Write(ShareCandidatesJSON(user, r.URL.Query().Get("groups") == "1", false))
 }
 
 // SharedAgentsTable indexes peer shares: recipient -> (owner, agent id).

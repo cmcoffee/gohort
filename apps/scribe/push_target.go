@@ -92,7 +92,7 @@ func (g *guideTarget) Append(ctx context.Context, user, docID, newDocTitle, sect
 	if !ok {
 		return "", fmt.Errorf("guide %q not found", docID)
 	}
-	if !(CanManageShared(user, owner, false) || resolved.sharedForEdit()) {
+	if !(CanManageShared(user, owner, false) || resolved.editableBy(owner, user)) {
 		return "", fmt.Errorf("you don't have edit access to that guide")
 	}
 	if orch := findOrchestrate(); orch != nil {

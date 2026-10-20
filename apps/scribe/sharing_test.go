@@ -139,10 +139,10 @@ func TestResolveGuideSharing(t *testing.T) {
 	}
 }
 
-// canEdit mirrors the composition in (*Scribe).resolve: a manager, or anyone when
-// the guide is shared for edit.
+// canEdit mirrors the composition in (*Scribe).resolve: a manager, or someone
+// the guide is shared with for edit.
 func canEdit(g Guide, reqUser, owner string, isAdmin bool) bool {
-	return CanManageShared(reqUser, owner, isAdmin) || g.sharedForEdit()
+	return CanManageShared(reqUser, owner, isAdmin) || g.editableBy(owner, reqUser)
 }
 
 // TestShareModeEdit covers the view-vs-edit distinction: a view-shared guide is

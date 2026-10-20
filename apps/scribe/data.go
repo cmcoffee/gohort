@@ -17,6 +17,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/docs"
+	"github.com/cmcoffee/gohort/core/peershare"
 )
 
 const guidesTable = "guides"
@@ -73,6 +74,13 @@ type Guide struct {
 	Owner     string `json:"owner,omitempty"`
 	Shared    bool   `json:"shared,omitempty"`
 	ShareMode string `json:"share_mode,omitempty"` // "" | "view" | "edit"
+	// AllowedUsers are the people and teams ("group:<id>") the owner shares
+	// it with by name, and Editors those of them who may also edit. Everyone
+	// stays Shared/ShareMode above, so a guide shared before this reads as it
+	// did; the share picker shows it as one more choice (ShareEveryone). The
+	// owner's rights are the same either way. See guideShareOf.
+	AllowedUsers []string `json:"allowed_users,omitempty"`
+	Editors      []string `json:"editors,omitempty"`
 	// Private locks the Guide Author to NO internet access on this guide: its
 	// turns run ForcePrivate (network tools stripped, worker-tier routing) and the
 	// web-research tool is withheld, so answers/edits are grounded only in the
@@ -209,13 +217,56 @@ func newDocument(owner, title, md string, private bool) Guide {
 // shared guide (vs the default view-only share).
 const ShareModeEdit = "edit"
 
-// sharedForEdit reports whether this guide is shared with EDIT permission — any
-// authenticated user may change its content, not just view it.
+// sharedForEdit reports whether this guide is shared with everyone for EDIT —
+// any authenticated user may change its content, not just view it.
 func (g Guide) sharedForEdit() bool { return g.Shared && g.ShareMode == ShareModeEdit }
+
+// sharedWith reports whether the guide reaches user as someone it is shared
+// with: everyone, or by name or team. owner is the resolved owner.
+func (g Guide) sharedWith(owner, user string) bool {
+	return g.Shared || SharedWithUser(g.AllowedUsers, owner, user)
+}
+
+// editableBy reports whether user may change the guide's content as someone
+// it is shared with: it is shared with everyone for edit, or with them (by
+// name or team) as an editor. The owner's rights are CanManageShared's.
+func (g Guide) editableBy(owner, user string) bool {
+	return g.sharedForEdit() || (SharedWithUser(g.AllowedUsers, owner, user) && SharedWithUser(g.Editors, owner, user))
+}
 
 // sharedGuidesIndex lives in the app-wide store (T.DB, NOT a per-user UserDB) and
 // maps a shared guide ID -> its owner username. Presence IS the shared flag.
 const sharedGuidesIndex = "shared_guides"
+
+// namedSharedGuides indexes guides shared with named people or teams:
+// recipient -> (owner, guide id). Derived from Guide.AllowedUsers and checked
+// against it on every read.
+const namedSharedGuides = "named_shared_guides"
+
+// indexGuideShares makes both indexes follow the guide's sharing: the
+// everyone index its Shared flag, the named one its AllowedUsers. A deleted
+// guide passes shared false and no users.
+func indexGuideShares(appDB Database, owner, id string, shared bool, users []string) {
+	SetSharedOwner(appDB, sharedGuidesIndex, id, owner, shared)
+	peershare.SetRecipients(appDB, namedSharedGuides, owner, id, users)
+}
+
+// guidesSharedWith is every guide someone else shares with user, id to
+// owner: with everyone, or with them by name or through a team.
+func guidesSharedWith(appDB Database, user string) map[string]string {
+	out := map[string]string{}
+	for id, owner := range ListSharedOwners(appDB, sharedGuidesIndex) {
+		if owner != user {
+			out[id] = owner
+		}
+	}
+	for _, ref := range SharedRefsFor(appDB, namedSharedGuides, user) {
+		if ref.Owner != user {
+			out[ref.ID] = ref.Owner
+		}
+	}
+	return out
+}
 
 // resolveGuide finds a guide for a request: the requester's OWN store first, else
 // via the shared index (the owner's store). Returns the guide, its owner, the
@@ -236,6 +287,18 @@ func resolveGuide(appDB, reqUDB Database, reqUser, id string) (Guide, string, Da
 		if oudb := UserDB(appDB, owner); oudb != nil {
 			if g, ok := loadGuide(oudb, id); ok {
 				return g, owner, oudb, true
+			}
+		}
+	}
+	// Shared with them by name or team: the index finds the owner, and the
+	// guide's own list decides, so a share taken back is gone on this read.
+	for _, ref := range SharedRefsFor(appDB, namedSharedGuides, reqUser) {
+		if ref.ID != id {
+			continue
+		}
+		if oudb := UserDB(appDB, ref.Owner); oudb != nil {
+			if g, ok := loadGuide(oudb, id); ok && SharedWithUser(g.AllowedUsers, ref.Owner, reqUser) {
+				return g, ref.Owner, oudb, true
 			}
 		}
 	}

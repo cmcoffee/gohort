@@ -217,5 +217,5 @@ func (T *Servitor) handleUserCandidates(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	w.Write(ShareCandidatesJSON(user, r.URL.Query().Get("groups") == "1"))
+	w.Write(ShareCandidatesJSON(user, r.URL.Query().Get("groups") == "1", false))
 }

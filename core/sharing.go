@@ -411,6 +411,9 @@ func ShareRecipientsText(list []string) string {
 	for _, e := range list {
 		id, group := shareGroupOf(e)
 		if !group {
+			if strings.TrimSpace(e) == ShareEveryone {
+				e = "everyone"
+			}
 			parts = append(parts, e)
 			continue
 		}
@@ -425,10 +428,19 @@ func ShareRecipientsText(list []string) string {
 	return strings.Join(parts, ", ")
 }
 
-// ShareCandidatesJSON is a share picker's candidates: everyone but owner and,
-// with groups (a kind that can be shared with one), then each group owner may
-// share with, named for what it is and how many it reaches today.
-func ShareCandidatesJSON(owner string, groups bool) []byte {
+// ShareEveryone is the share picker's Everyone: every signed-in user. It is
+// offered only by a kind that can be shared that widely, and that kind maps it
+// to its own everyone setting when it saves. As an entry in a recipient list
+// it names nobody, so SharedWithUser never reads it as everyone: a list that
+// picked it up where it was not offered fails closed.
+const ShareEveryone = "*"
+
+// ShareCandidatesJSON is a share picker's candidates: with everyone (a kind
+// that can be shared with every signed-in user), Everyone first; then each
+// person but owner; then, with groups (a kind that can be shared with one),
+// each group owner may share with, named for what it is and how many it
+// reaches today.
+func ShareCandidatesJSON(owner string, groups, everyone bool) []byte {
 	type candidate struct {
 		Value string `json:"value"`
 		Label string `json:"label"`
@@ -439,6 +451,10 @@ func ShareCandidatesJSON(owner string, groups bool) []byte {
 		return []byte("[]")
 	}
 	json.Unmarshal(UserCandidatesJSON(AuthDB(), owner), &out)
+	if everyone {
+		out = append([]candidate{{Value: ShareEveryone, Label: "Everyone",
+			Desc: "every signed-in user, " + strconv.Itoa(len(out)) + " besides you today"}}, out...)
+	}
 	if u, ok := AuthGetUser(AuthDB(), owner); ok && groups {
 		users := AuthListUsers(AuthDB())
 		var groups []candidate

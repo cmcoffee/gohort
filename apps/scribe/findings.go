@@ -302,7 +302,7 @@ func undoCuratorEntry(appDB, udb Database, user, runID, findingID string) error 
 		if !found {
 			return errGuideGone
 		}
-		if !(CanManageShared(user, owner, false) || g.sharedForEdit()) {
+		if !(CanManageShared(user, owner, false) || g.editableBy(owner, user)) {
 			return errNoEditAccess
 		}
 		rev, revOK := loadRevision(ownerUDB, e.GuideID, e.PriorRev)

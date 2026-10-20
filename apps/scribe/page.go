@@ -78,11 +78,116 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 		EmptyHint:  "Pick a document on the left, or create one. Then ask the assistant to draft it, or write it yourself.",
 		// Per-document toolbar: preview/export, revision history, freshness audit.
 		ViewerActions: []ui.WorkbenchAction{
-			// The open document's own name, privacy, sharing, writing brief and
-			// how findings reach it: first, ahead of Edit all, because it is
-			// what the document IS, which the rest of the bar acts on.
-			{Label: "Settings", Kind: "client", URL: "guides_settings"},
+			// Thirteen buttons were eight. Each menu holds one kind of thing:
+			// what the document is and what it is built from, the passes that
+			// rewrite it, and the ones that check it.
+			//
+			// The open document's own name, privacy, writing brief and how
+			// findings reach it, with its header image and the material the
+			// Author builds from: first, ahead of Edit all, because it is what
+			// the document IS, which the rest of the bar acts on.
+			{Label: "Document", Kind: "menu", Children: []ui.WorkbenchAction{
+				{Label: "Settings", Kind: "client", URL: "guides_settings"},
+				{Label: "Header image", Kind: "client", URL: "scribe_image"},
+				{Label: "Sources", Kind: "client", URL: "guides_sources"},
+				{Label: "Knowledge", Kind: "client", URL: "guides_knowledge"},
+			}},
 			{Kind: "edit"},
+			// The passes that rewrite the document through the Guide Author.
+			{Label: "Revise", Kind: "menu", Children: []ui.WorkbenchAction{
+				// A macro, and now shaped like one. This was a "report" action: it
+				// POSTed a fixed system prompt to a one-shot JSON-mode call, spun,
+				// and reordered the sections — a prompt the user could not read,
+				// could not adjust, and could not learn from. The Guide Author has
+				// list_sections and move_section, so it can do the same work in the
+				// conversation, where the instruction is visible and amendable.
+				//
+				// The first option's text is the old system prompt's rules said as a
+				// request, so one click is the behavior this button always had. The
+				// second is the behavior it never had ("move troubleshooting up
+				// front"), and it costs one more click rather than taxing every use.
+				//
+				// It SENDS. Seeding the composer and stopping was tried first and got
+				// the common case backwards: it made the reader confirm the default
+				// every single time to buy an edit they rarely want.
+				//
+				// No {id}: the chat already carries the open document (SendURL's
+				// guide={scope}), so "this guide" resolves server-side.
+				{Label: "Reorganize", Kind: "compose", ComposeTitle: "Reorganize this document", ComposeOptions: []ui.ComposeOption{
+					{Label: "Into the clearest reading order", Help: "Overview and prerequisites first, steps in sequence, reference and troubleshooting last.",
+						Text: "Reorganize this guide into the clearest reading order for someone new to the topic: " +
+							"overview and prerequisites first, then setup and steps in sequence, then advanced and reference material, " +
+							"with troubleshooting or FAQ last. Only change the order; don't rewrite any section's content."},
+					{Label: "Something else", Input: true, Placeholder: "e.g. move troubleshooting up front: that's what people open this for",
+						Help: "Say how you want it ordered.",
+						// Seeded with the rule the default enforces, so the common
+						// edit ("…but keep X first") is a change to one clause rather
+						// than a blank page.
+						Text: "Reorganize this guide. Only change the order; don't rewrite any section's content. "},
+				}},
+				// Same conversion, and a safer one than it looks. This already
+				// dispatched the Guide Author with the co-author kit — the agent the
+				// chat column runs — just in an isolated guide-update session the
+				// author never saw. The prompt below IS that dispatch's prompt.
+				//
+				// Its Private guard does not come with it, and does not need to.
+				// The old runner blocked the network and dropped "research";
+				// handleChatSend sets ForcePrivate, strips web_search and fetch_url,
+				// drops research, AND filters attached source tools down to
+				// read/write caps. A Private guide is MORE contained through the
+				// conversation than it was through the button.
+				//
+				// What genuinely changes is the session: the run now carries the
+				// thread's context instead of starting fresh. Usually an improvement
+				// (the author has just been discussing the guide); start a new
+				// session when it isn't.
+				//
+				// The second option is the one this button could never do at all: the
+				// old endpoint swept every section or nothing, and "only the Install
+				// section" meant not using it.
+				{Label: "Update from sources", Kind: "compose", ComposeTitle: "Update from linked sources", ComposeOptions: []ui.ComposeOption{
+					{Label: "Every section", Help: "Check each section against the linked sources and revise what has drifted.",
+						Text: "Update this guide so its sections reflect its LINKED SOURCES (the attached knowledge collections and reference sources) as they stand right now.\n\n" +
+							"1. Call list_sections to see the current structure.\n" +
+							"2. For the guide's subject and each section, use search_knowledge and pull_reference to gather what the linked sources CURRENTLY say.\n" +
+							"3. Where a section is outdated or contradicted by the sources, call edit_section to revise it: grounded strictly in the sources, carrying any citations. Where the sources cover something important the guide is missing, add_section for it.\n" +
+							"4. Leave sections that already match their sources unchanged: don't rewrite for the sake of it. Work ONLY from the guide's linked sources here; do not use web research.\n\n" +
+							"When done, reply with a short bulleted summary of exactly which sections you changed or added and why. If nothing needed changing, say so plainly."},
+					{Label: "Something else", Input: true, Placeholder: "e.g. only the Install section: the rest is still right",
+						Help: "Say which sections, or what to look for.",
+						Text: "Update this guide from its LINKED SOURCES only: the attached knowledge collections and reference sources, not web research. Use search_knowledge and pull_reference to check, and edit_section to revise. "},
+				}},
+				// The brief says how the guide is written, and the Author follows it
+				// on every edit, but a changed brief reached only the sections
+				// written after it. This puts the ones already there through it:
+				// presentation only, since what a section says is Update from
+				// sources' job. The turn's chat prompt carries the brief.
+				{Label: "Edit to the brief", Kind: "compose", ComposeTitle: "Edit to the writing brief", ComposeOptions: []ui.ComposeOption{
+					{Label: "Every section", Help: "Revise each section to read the way the brief asks, keeping what it says.",
+						Text: "Edit this guide to its WRITING BRIEF as it stands now (it is in your instructions). Change how each section is presented, not what it says.\n\n" +
+							"1. Call list_sections to see the guide.\n" +
+							"2. For each section in order, read_section it and judge whether it already reads the way the brief asks: its structure, voice, length and formatting.\n" +
+							"3. Where it does not, call edit_section with the whole revised body. Keep every fact, step, command, value and citation, and remove only what the brief says to leave out. Add nothing from elsewhere, and do no research.\n" +
+							"4. Leave a section that already fits the brief unchanged: don't rewrite for the sake of it.\n\n" +
+							"When done, reply with a short bulleted summary of which sections you changed and what about them. If the guide has no writing brief, say so and change nothing."},
+					{Label: "Something else", Input: true, Placeholder: "e.g. only Troubleshooting, and make it a checklist",
+						Help: "Say which sections, or what to change about how they read.",
+						Text: "Edit this guide to its writing brief. Change how it is presented, not what it says: keep every fact, step and citation. "},
+				}},
+			}},
+			// The ones that check it: is it still true, and what the Curator
+			// filed into it.
+			{Label: "Review", Kind: "menu", Children: []ui.WorkbenchAction{
+				{Label: "Audit", Kind: "report", URL: "audit?id={id}", Spinner: "Auditing…", Invalidate: []string{"guides"}},
+				{Label: "Curator", Kind: "client", URL: "guides_curator"},
+			}},
+			// Ahead of the outbound buttons. Reaching for an earlier version is a
+			// recovery move — a section is gone and you want it back — so it
+			// should not be hunted for at the far end of the toolbar.
+			{Label: "History", Kind: "history", URL: "revisions?id={id}",
+				PreviewURL: "revision?id={id}&rev={rev}", RestoreURL: "restore?id={id}&rev={rev}"},
+			// Who it reaches, then where it goes.
+			{Label: "Share", Kind: "client", URL: "guides_share"},
 			{Label: "Export", Kind: "menu", Children: []ui.WorkbenchAction{
 				{Label: "Preview (HTML)", Kind: "download", URL: "export?id={id}&format=html"},
 				{Label: "HTML file", Kind: "download", URL: "export?id={id}&format=html&download=1"},
@@ -92,96 +197,7 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 				// the one export that imports back as the same document.
 				{Label: "Bundle (lossless)", Kind: "client", URL: "scribe_export_bundle"},
 			}},
-			// Second, not eighth. Reaching for an earlier version is a recovery
-			// move — a section is gone and you want it back — so it should not be
-			// hunted for at the far end of the toolbar.
-			{Label: "History", Kind: "history", URL: "revisions?id={id}",
-				PreviewURL: "revision?id={id}&rev={rev}", RestoreURL: "restore?id={id}&rev={rev}"},
 			{Label: "Publish", Kind: "client", URL: "guides_publish"},
-			{Label: "Image", Kind: "client", URL: "scribe_image"},
-			{Label: "Sources", Kind: "client", URL: "guides_sources"},
-			{Label: "Curator", Kind: "client", URL: "guides_curator"},
-			{Label: "Knowledge", Kind: "client", URL: "guides_knowledge"},
-			{Label: "Audit", Kind: "report", URL: "audit?id={id}", Spinner: "Auditing…", Invalidate: []string{"guides"}},
-			// A macro, and now shaped like one. This was a "report" action: it
-			// POSTed a fixed system prompt to a one-shot JSON-mode call, spun,
-			// and reordered the sections — a prompt the user could not read,
-			// could not adjust, and could not learn from. The Guide Author has
-			// list_sections and move_section, so it can do the same work in the
-			// conversation, where the instruction is visible and amendable.
-			//
-			// The first option's text is the old system prompt's rules said as a
-			// request, so one click is the behavior this button always had. The
-			// second is the behavior it never had ("move troubleshooting up
-			// front"), and it costs one more click rather than taxing every use.
-			//
-			// It SENDS. Seeding the composer and stopping was tried first and got
-			// the common case backwards: it made the reader confirm the default
-			// every single time to buy an edit they rarely want.
-			//
-			// No {id}: the chat already carries the open document (SendURL's
-			// guide={scope}), so "this guide" resolves server-side.
-			{Label: "Reorganize", Kind: "compose", ComposeTitle: "Reorganize this document", ComposeOptions: []ui.ComposeOption{
-				{Label: "Into the clearest reading order", Help: "Overview and prerequisites first, steps in sequence, reference and troubleshooting last.",
-					Text: "Reorganize this guide into the clearest reading order for someone new to the topic: " +
-						"overview and prerequisites first, then setup and steps in sequence, then advanced and reference material, " +
-						"with troubleshooting or FAQ last. Only change the order; don't rewrite any section's content."},
-				{Label: "Something else", Input: true, Placeholder: "e.g. move troubleshooting up front: that's what people open this for",
-					Help: "Say how you want it ordered.",
-					// Seeded with the rule the default enforces, so the common
-					// edit ("…but keep X first") is a change to one clause rather
-					// than a blank page.
-					Text: "Reorganize this guide. Only change the order; don't rewrite any section's content. "},
-			}},
-			// Same conversion, and a safer one than it looks. This already
-			// dispatched the Guide Author with the co-author kit — the agent the
-			// chat column runs — just in an isolated guide-update session the
-			// author never saw. The prompt below IS that dispatch's prompt.
-			//
-			// Its Private guard does not come with it, and does not need to.
-			// The old runner blocked the network and dropped "research";
-			// handleChatSend sets ForcePrivate, strips web_search and fetch_url,
-			// drops research, AND filters attached source tools down to
-			// read/write caps. A Private guide is MORE contained through the
-			// conversation than it was through the button.
-			//
-			// What genuinely changes is the session: the run now carries the
-			// thread's context instead of starting fresh. Usually an improvement
-			// (the author has just been discussing the guide); start a new
-			// session when it isn't.
-			//
-			// The second option is the one this button could never do at all: the
-			// old endpoint swept every section or nothing, and "only the Install
-			// section" meant not using it.
-			{Label: "Update from sources", Kind: "compose", ComposeTitle: "Update from linked sources", ComposeOptions: []ui.ComposeOption{
-				{Label: "Every section", Help: "Check each section against the linked sources and revise what has drifted.",
-					Text: "Update this guide so its sections reflect its LINKED SOURCES (the attached knowledge collections and reference sources) as they stand right now.\n\n" +
-						"1. Call list_sections to see the current structure.\n" +
-						"2. For the guide's subject and each section, use search_knowledge and pull_reference to gather what the linked sources CURRENTLY say.\n" +
-						"3. Where a section is outdated or contradicted by the sources, call edit_section to revise it: grounded strictly in the sources, carrying any citations. Where the sources cover something important the guide is missing, add_section for it.\n" +
-						"4. Leave sections that already match their sources unchanged: don't rewrite for the sake of it. Work ONLY from the guide's linked sources here; do not use web research.\n\n" +
-						"When done, reply with a short bulleted summary of exactly which sections you changed or added and why. If nothing needed changing, say so plainly."},
-				{Label: "Something else", Input: true, Placeholder: "e.g. only the Install section: the rest is still right",
-					Help: "Say which sections, or what to look for.",
-					Text: "Update this guide from its LINKED SOURCES only: the attached knowledge collections and reference sources, not web research. Use search_knowledge and pull_reference to check, and edit_section to revise. "},
-			}},
-			// The brief says how the guide is written, and the Author follows it
-			// on every edit, but a changed brief reached only the sections
-			// written after it. This puts the ones already there through it:
-			// presentation only, since what a section says is Update from
-			// sources' job. The turn's chat prompt carries the brief.
-			{Label: "Edit to the brief", Kind: "compose", ComposeTitle: "Edit to the writing brief", ComposeOptions: []ui.ComposeOption{
-				{Label: "Every section", Help: "Revise each section to read the way the brief asks, keeping what it says.",
-					Text: "Edit this guide to its WRITING BRIEF as it stands now (it is in your instructions). Change how each section is presented, not what it says.\n\n" +
-						"1. Call list_sections to see the guide.\n" +
-						"2. For each section in order, read_section it and judge whether it already reads the way the brief asks: its structure, voice, length and formatting.\n" +
-						"3. Where it does not, call edit_section with the whole revised body. Keep every fact, step, command, value and citation, and remove only what the brief says to leave out. Add nothing from elsewhere, and do no research.\n" +
-						"4. Leave a section that already fits the brief unchanged: don't rewrite for the sake of it.\n\n" +
-						"When done, reply with a short bulleted summary of which sections you changed and what about them. If the guide has no writing brief, say so and change nothing."},
-				{Label: "Something else", Input: true, Placeholder: "e.g. only Troubleshooting, and make it a checklist",
-					Help: "Say which sections, or what to change about how they read.",
-					Text: "Edit this guide to its writing brief. Change how it is presented, not what it says: keep every fact, step and citation. "},
-			}},
 		},
 		// The agent writes sections via its tools; re-render the open guide when a
 		// chat round finishes.
@@ -267,6 +283,7 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 			ClientAction("guides_knowledge", guideKnowledgeAction).
 			ClientAction("guides_sources", guideSourcesAction).
 			ClientAction("guides_settings", guideSettingsAction).
+			ClientAction("guides_share", guideShareAction).
 			ClientAction("guides_curator", guideCuratorAction).
 			ClientAction("guides_publish", guidePublishAction).
 			ClientAction("scribe_rules", scribeRulesAction).
@@ -747,11 +764,42 @@ const guideSourcesAction = `function(ctx){
       }});
 }`
 
-// guideSettingsAction is the 'guides_settings' client action behind the Edit
-// toolbar button: ONE modal for the guide's name/subtitle, the Private
-// (no-internet) flag, AND its sharing (off / view / edit). Owner/admin only
-// (server-enforced). App-specific, injected via ExtraHeadHTML to keep it out of
-// core/ui.
+// guideShareAction is the 'guides_share' client action behind the Share
+// toolbar button: the shared people-and-teams picker, with Everyone as one
+// more choice, and Can edit / Can view on each. It saves as it changes.
+// Owner/admin only (server-enforced).
+const guideShareAction = `function(ctx){
+      var gid = ctx.recordId;
+      if (!gid || !window.uiOpenSimpleModal) return;
+      var qp = 'id=' + encodeURIComponent(gid);
+      fetch('share?' + qp, {credentials:'same-origin'}).then(function(r){
+        window.uiOpenSimpleModal({title:'Share', width:'560px', mount: function(body){
+          if (!r.ok){
+            body.appendChild(el('p', {class:'guide-kn-intro', text:'Only the owner can change who this guide is shared with.'}));
+            return;
+          }
+          window.uiMountComponent({
+            type:'chip_picker', mode:'attach',
+            options_source:'share/candidates',
+            record_source:'share?' + qp, field:'allowed_users',
+            post_to:'share?' + qp, method:'PATCH',
+            name_field:'value', label_field:'label', desc_field:'desc',
+            noun:'person or team',
+            intro:'Who can open this guide: people, a team you are on, or everyone signed in. Each starts able to read and export it.',
+            empty_text:'There is no one else on this deployment to share with yet.',
+            flag_field:'editors', flag_label:'Can edit', flag_off_label:'Can view',
+            flag_help:'Can edit: change sections and write with the assistant. Only you can change sharing, delete the guide, or manage its knowledge and sources.',
+            invalidate:['guides']
+          }, body);
+        }});
+      });
+}`
+
+// guideSettingsAction is the 'guides_settings' client action behind the
+// Settings toolbar button: ONE modal for the guide's name/subtitle, the
+// Private (no-internet) flag, the writing brief and how findings reach it.
+// Sharing is the Share button's. Owner/admin only (server-enforced).
+// App-specific, injected via ExtraHeadHTML to keep it out of core/ui.
 const guideSettingsAction = `function(ctx){
       function fieldText(label, value){
         var inp = el('input', {type:'text', value: value || ''});
@@ -811,20 +859,6 @@ const guideSettingsAction = `function(ctx){
           var pcb = el('input', {type:'checkbox'}); if (d && d.private) pcb.checked = true;
           body.appendChild(el('label', {class:'guide-share-row'}, [pcb,
             el('span', {text: "Private, no internet access. The assistant answers and edits only from this document's attached knowledge; web search and research are disabled, and every model call stays on the local worker."})]));
-          // Sharing.
-          body.appendChild(el('div', {class:'guide-set-head', text:'Sharing'}));
-          var scb = el('input', {type:'checkbox'}); if (d && d.shared) scb.checked = true;
-          body.appendChild(el('label', {class:'guide-share-row'}, [scb, el('span', {text:'Share with everyone signed in'})]));
-          var rView = el('input', {type:'radio', name:'guide-share-mode', value:'view'});
-          var rEdit = el('input', {type:'radio', name:'guide-share-mode', value:'edit'});
-          if ((d && d.mode) === 'edit') rEdit.checked = true; else rView.checked = true;
-          var modeWrap = el('div', {class:'guide-share-modes'}, [
-            el('label', {class:'guide-share-mode'}, [rView, el('span', {text:'View only, read & export'})]),
-            el('label', {class:'guide-share-mode'}, [rEdit, el('span', {text:'Can edit, edit sections & co-author'})]),
-          ]);
-          body.appendChild(modeWrap);
-          function syncModes(){ modeWrap.style.display = scb.checked ? 'flex' : 'none'; }
-          scb.addEventListener('change', syncModes); syncModes();
           // Findings: what agents attached to this guide report into it.
           body.appendChild(el('div', {class:'guide-set-head', text:'Findings'}));
           var ccb = el('input', {type:'checkbox'}); if (d && d.curate_on_report) ccb.checked = true;
@@ -834,7 +868,7 @@ const guideSettingsAction = `function(ctx){
           save.addEventListener('click', function(){
             save.disabled = true; save.textContent = 'Saving…';
             fetch('settings?' + qp, {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'},
-              body: JSON.stringify({title: tf.input.value, subtitle: sf.input.value, private: pcb.checked, shared: scb.checked, mode: (rEdit.checked ? 'edit' : 'view'), curate_on_report: ccb.checked, brief: bta.value})})
+              body: JSON.stringify({title: tf.input.value, subtitle: sf.input.value, private: pcb.checked, curate_on_report: ccb.checked, brief: bta.value})})
               .then(function(r){ if (!r.ok) return r.text().then(function(t){ throw new Error(t || ('HTTP ' + r.status)); }); })
               .then(function(){ try { dlg.close(); dlg.remove(); } catch(e){} if (window.uiInvalidate) window.uiInvalidate('guides'); })
               .catch(function(err){ save.disabled = false; save.textContent = 'Save'; window.uiAlert('Save failed: ' + (err && err.message || err)); });
@@ -845,8 +879,6 @@ const guideSettingsAction = `function(ctx){
 
 // guideSettingsCSS styles the settings/sharing modal rows.
 const guideSettingsCSS = `.guide-share-row { display: flex; align-items: center; gap: 0.55rem; cursor: pointer; padding: 0.5rem 0; font-size: var(--fs-md, 0.92rem); color: var(--text-hi); }
-.guide-share-modes { display: flex; flex-direction: column; gap: 0.4rem; margin: 0.2rem 0 0.3rem 1.6rem; }
-.guide-share-mode { display: flex; align-items: center; gap: 0.5rem; cursor: pointer; font-size: var(--fs-md, 0.88rem); color: var(--text); }
 .guide-set-head { font-size: var(--fs-2xs, 0.72rem); text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-mute); font-weight: 700; margin: 0.9rem 0 0.2rem; border-top: 1px solid var(--border); padding-top: 0.7rem; }`
 
 // guidePublishAction is the 'guides_publish' client action behind the Publish

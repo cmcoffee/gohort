@@ -79,7 +79,7 @@ func (T *KnowledgeApp) handleUserCandidates(w http.ResponseWriter, r *http.Reque
 	}
 	w.Header().Set("Content-Type", "application/json")
 	// ?groups=1 from a picker whose kind can go to a group as well.
-	w.Write(ShareCandidatesJSON(user, r.URL.Query().Get("groups") == "1"))
+	w.Write(ShareCandidatesJSON(user, r.URL.Query().Get("groups") == "1", false))
 }
 
 func (T *KnowledgeApp) handleListPage(w http.ResponseWriter, r *http.Request) {

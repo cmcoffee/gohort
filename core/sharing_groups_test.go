@@ -81,15 +81,27 @@ func TestAGroupEntryReachesItsMembers(t *testing.T) {
 // the kind asked for them.
 func TestThePickerOffersTheOwnersShareableGroups(t *testing.T) {
 	groupShareFixture(t)
-	with := string(ShareCandidatesJSON("alice", true))
+	with := string(ShareCandidatesJSON("alice", true, false))
 	if !strings.Contains(with, `"value":"group:g-ops"`) || !strings.Contains(with, "Team: Ops") || !strings.Contains(with, `"desc":"1 other member"`) {
 		t.Errorf("alice's shareable group is missing: %s", with)
 	}
 	if strings.Contains(with, "g-bundle") || strings.Contains(with, `"value":"alice"`) {
 		t.Errorf("offered a group she may not share with, or herself: %s", with)
 	}
-	if without := string(ShareCandidatesJSON("alice", false)); strings.Contains(without, "group:") || !strings.Contains(without, `"value":"bob"`) {
+	if without := string(ShareCandidatesJSON("alice", false, false)); strings.Contains(without, "group:") || !strings.Contains(without, `"value":"bob"`) {
 		t.Errorf("a picker that did not ask for groups: %s", without)
+	}
+	// Everyone only where the kind offers it, and first.
+	if strings.Contains(with, `"value":"*"`) {
+		t.Errorf("Everyone offered by a kind that did not ask for it: %s", with)
+	}
+	if all := string(ShareCandidatesJSON("alice", true, true)); !strings.HasPrefix(all, `[{"value":"*","label":"Everyone"`) {
+		t.Errorf("Everyone should lead the picker: %s", all)
+	}
+	// In a list, Everyone names nobody: the kind that offers it maps it to its
+	// own setting, and one that does not cannot be widened by it.
+	if SharedWithUser([]string{ShareEveryone}, "alice", "bob") {
+		t.Error("a bare Everyone entry reached somebody")
 	}
 }
 

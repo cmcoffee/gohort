@@ -43,6 +43,12 @@ func (T *Scribe) route(w http.ResponseWriter, r *http.Request) {
 		T.handleNew(w, r, udb, user)
 	case path == "settings":
 		T.handleSettings(w, r, udb, user)
+	// Who it is shared with, and the people and teams to pick from.
+	case path == "share":
+		T.handleShare(w, r, udb, user)
+	case path == "share/candidates":
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(ShareCandidatesJSON(user, true, true))
 	// The whole guide edited as one page (the viewer's Edit all), the header
 	// image, importing a page exported earlier, and the pictures pasted or
 	// dropped into a guide (stored, then served to whoever may read it).
@@ -137,7 +143,7 @@ func (T *Scribe) resolve(r *http.Request, reqUDB Database, user, id string) (g G
 		return Guide{}, nil, false, false, false
 	}
 	canManage = CanManageShared(user, owner, RequestIsAdmin(r))
-	return g, oudb, canManage, canManage || g.sharedForEdit(), true
+	return g, oudb, canManage, canManage || g.editableBy(owner, user), true
 }
 
 // handleList feeds the workbench's left list: [{id, title, shared, own}]. It
@@ -158,14 +164,14 @@ func (T *Scribe) handleList(w http.ResponseWriter, r *http.Request, udb Database
 	}
 	// Guides shared by other users: resolve each from its owner's store, skipping
 	// any the user already owns.
-	for id, owner := range ListSharedOwners(T.DB, sharedGuidesIndex) {
-		if seen[id] || owner == user {
+	for id, owner := range guidesSharedWith(T.DB, user) {
+		if seen[id] {
 			continue
 		}
 		if oudb := UserDB(T.DB, owner); oudb != nil {
-			if g, ok := loadGuide(oudb, id); ok {
+			if g, ok := loadGuide(oudb, id); ok && g.sharedWith(owner, user) {
 				suffix := " - shared"
-				if g.sharedForEdit() {
+				if g.editableBy(owner, user) {
 					suffix = " - shared (editable)"
 				}
 				out = append(out, row{ID: g.ID, Title: listLabel(g, suffix), Kind: g.Kind, Shared: true})
@@ -211,7 +217,7 @@ func (T *Scribe) handleGuide(w http.ResponseWriter, r *http.Request, udb Databas
 		// behind, orphaned, with its chunks still in the index.
 		_, owner, _, _ := resolveGuide(T.DB, udb, user, id)
 		deleteGuide(ownerUDB, owner, id)
-		SetSharedOwner(T.DB, sharedGuidesIndex, id, "", false) // drop from the shared index
+		indexGuideShares(T.DB, owner, id, false, nil) // drop from both shared indexes
 		writeJSON(w, map[string]bool{"ok": true})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -380,29 +386,11 @@ func (T *Scribe) handleImport(w http.ResponseWriter, r *http.Request, udb Databa
 	writeJSON(w, map[string]string{"id": g.ID, "title": g.Title})
 }
 
-// normalizeShareMode maps an arbitrary mode string to a stored ShareMode: "edit"
-// stays "edit", anything else is view-only ("").
-func normalizeShareMode(mode string) string {
-	if strings.TrimSpace(mode) == ShareModeEdit {
-		return ShareModeEdit
-	}
-	return ""
-}
-
-// shareModeOf reports a guide's share mode for the UI: "edit" or "view".
-func shareModeOf(g Guide) string {
-	if g.ShareMode == ShareModeEdit {
-		return ShareModeEdit
-	}
-	return "view"
-}
-
-// handleSettings drives the guide Edit modal — the single place to change a
-// guide's name/subtitle, the Private (no-internet) flag, AND its sharing (shared
-// on/off + view/edit mode). GET ?id=<id> returns current values + can_manage.
-// POST ?id=<id> with {title, subtitle, private, shared, mode} updates them
-// (owner/admin only). Metadata, so it saves without a content revision; sharing
-// changes also sync the app-wide shared index.
+// handleSettings drives the guide Settings modal: its name/subtitle, the
+// Private (no-internet) flag, the writing brief and how findings reach it.
+// GET ?id=<id> returns current values + can_manage. POST ?id=<id> with
+// {title, subtitle, private, ...} updates them (owner/admin only). Metadata,
+// so it saves without a content revision. Sharing is handleShare's.
 func (T *Scribe) handleSettings(w http.ResponseWriter, r *http.Request, udb Database, user string) {
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
 	g, ownerUDB, canManage, _, found := T.resolve(r, udb, user, id)
@@ -414,8 +402,7 @@ func (T *Scribe) handleSettings(w http.ResponseWriter, r *http.Request, udb Data
 	case http.MethodGet:
 		writeJSON(w, map[string]any{
 			"title": g.Title, "subtitle": g.Subtitle, "private": g.Private,
-			"shared": g.Shared, "mode": shareModeOf(g), "owner": g.Owner,
-			"can_manage": canManage, "curate_on_report": g.CurateOnReport, "brief": g.Brief,
+			"owner": g.Owner, "can_manage": canManage, "curate_on_report": g.CurateOnReport, "brief": g.Brief,
 		})
 	case http.MethodPost:
 		if !canManage {
@@ -426,8 +413,6 @@ func (T *Scribe) handleSettings(w http.ResponseWriter, r *http.Request, udb Data
 			Title    string `json:"title"`
 			Subtitle string `json:"subtitle"`
 			Private  bool   `json:"private"`
-			Shared   bool   `json:"shared"`
-			Mode     string `json:"mode"` // "view" | "edit"
 			// A pointer: a dialog that does not send it (one opened before
 			// the setting existed) leaves it as it is.
 			CurateOnReport *bool `json:"curate_on_report"`
@@ -441,8 +426,6 @@ func (T *Scribe) handleSettings(w http.ResponseWriter, r *http.Request, udb Data
 		g.Title = firstNonEmpty(strings.TrimSpace(body.Title), "Untitled guide")
 		g.Subtitle = strings.TrimSpace(body.Subtitle)
 		g.Private = body.Private
-		g.Shared = body.Shared
-		g.ShareMode = normalizeShareMode(body.Mode)
 		if body.CurateOnReport != nil {
 			g.CurateOnReport = *body.CurateOnReport
 		}
@@ -455,15 +438,112 @@ func (T *Scribe) handleSettings(w http.ResponseWriter, r *http.Request, udb Data
 			g.Brief = brief
 		}
 		saveGuide(ownerUDB, g) // metadata, not a content change — no revision snapshot
-		// Keep the app-wide shared index in sync (drives other users' discovery).
-		owner := g.Owner
-		if owner == "" {
-			owner = user
-		}
-		SetSharedOwner(T.DB, sharedGuidesIndex, id, owner, body.Shared)
 		writeJSON(w, map[string]bool{"ok": true})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleShare drives the Share picker: who the guide is shared with, people
+// and teams by name and Everyone as one more choice, and which of them may
+// edit. GET ?id=<id> returns {allowed_users, editors}; PATCH ?id=<id> with
+// either list replaces it (owner/admin only). Everyone is stored where it
+// always was, Shared and ShareMode, so it reads in the lists as ShareEveryone.
+func (T *Scribe) handleShare(w http.ResponseWriter, r *http.Request, udb Database, user string) {
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	g, owner, ownerUDB, ok := resolveGuide(T.DB, udb, user, id)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	if !CanManageShared(user, owner, RequestIsAdmin(r)) {
+		http.Error(w, "only the owner can change who this guide is shared with", http.StatusForbidden)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, guideShareOf(g))
+	case http.MethodPatch, http.MethodPost:
+		var body struct {
+			AllowedUsers *[]string `json:"allowed_users"`
+			Editors      *[]string `json:"editors"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		cur := guideShareOf(g)
+		if body.AllowedUsers != nil {
+			cur.AllowedUsers = *body.AllowedUsers
+		}
+		if body.Editors != nil {
+			cur.Editors = *body.Editors
+		}
+		g.applyShare(owner, cur)
+		saveGuide(ownerUDB, g) // who it reaches, not what it says: no revision
+		indexGuideShares(T.DB, owner, id, g.Shared, g.AllowedUsers)
+		writeJSON(w, guideShareOf(g))
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// guideShare is a guide's sharing as the Share picker reads and writes it:
+// one list of who it reaches and the editors among them, Everyone included
+// as ShareEveryone.
+type guideShare struct {
+	AllowedUsers []string `json:"allowed_users"`
+	Editors      []string `json:"editors"`
+}
+
+// guideShareOf is g's sharing as the picker shows it.
+func guideShareOf(g Guide) guideShare {
+	out := guideShare{AllowedUsers: []string{}, Editors: []string{}}
+	if g.Shared {
+		out.AllowedUsers = append(out.AllowedUsers, ShareEveryone)
+		if g.sharedForEdit() {
+			out.Editors = append(out.Editors, ShareEveryone)
+		}
+	}
+	out.AllowedUsers = append(out.AllowedUsers, g.AllowedUsers...)
+	out.Editors = append(out.Editors, g.Editors...)
+	return out
+}
+
+// applyShare stores what the picker sent: Everyone in Shared and ShareMode,
+// the people and teams in AllowedUsers, and as Editors only those it reaches.
+// The owner, blanks and repeats are dropped.
+func (g *Guide) applyShare(owner string, sh guideShare) {
+	clean := func(list []string) []string {
+		seen := map[string]bool{}
+		var out []string
+		for _, u := range list {
+			if u = strings.TrimSpace(u); u != "" && u != owner && !seen[u] {
+				seen[u] = true
+				out = append(out, u)
+			}
+		}
+		return out
+	}
+	reach := map[string]bool{}
+	g.Shared, g.AllowedUsers = false, nil
+	for _, u := range clean(sh.AllowedUsers) {
+		reach[u] = true
+		if u == ShareEveryone {
+			g.Shared = true
+		} else {
+			g.AllowedUsers = append(g.AllowedUsers, u)
+		}
+	}
+	g.ShareMode, g.Editors = "", nil
+	for _, u := range clean(sh.Editors) {
+		switch {
+		case !reach[u]:
+		case u == ShareEveryone:
+			g.ShareMode = ShareModeEdit
+		default:
+			g.Editors = append(g.Editors, u)
+		}
 	}
 }
 
@@ -544,6 +624,7 @@ func (T *Scribe) handleRestore(w http.ResponseWriter, r *http.Request, udb Datab
 	g.Owner = cur.Owner // preserve ownership + sharing across a restore
 	g.Shared = cur.Shared
 	g.ShareMode = cur.ShareMode
+	g.AllowedUsers, g.Editors = cur.AllowedUsers, cur.Editors
 	saveGuideRev(ownerUDB, g, "Restored revision from "+rev.At)
 	writeJSON(w, map[string]bool{"ok": true})
 }
@@ -610,7 +691,7 @@ func (T *Scribe) handleAudit(w http.ResponseWriter, r *http.Request, udb Databas
 		http.NotFound(w, r)
 		return
 	}
-	if !(CanManageShared(user, owner, RequestIsAdmin(r)) || g.sharedForEdit()) {
+	if !(CanManageShared(user, owner, RequestIsAdmin(r)) || g.editableBy(owner, user)) {
 		http.Error(w, "you don't have edit access to this guide", http.StatusForbidden)
 		return
 	}

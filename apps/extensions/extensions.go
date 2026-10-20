@@ -3281,7 +3281,7 @@ func (T *Extensions) handleUserCandidates(w http.ResponseWriter, r *http.Request
 	}
 	w.Header().Set("Content-Type", "application/json")
 	// ?groups=1 from a picker whose kind can go to a group as well.
-	w.Write(ShareCandidatesJSON(user, r.URL.Query().Get("groups") == "1"))
+	w.Write(ShareCandidatesJSON(user, r.URL.Query().Get("groups") == "1", false))
 }
 
 // nonNilList keeps an empty array an array in JSON: an ACLPicker handed null

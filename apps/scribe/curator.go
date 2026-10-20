@@ -118,7 +118,7 @@ func (cs *curatorSession) resolveEditable(guideID string) (Guide, Database, erro
 	if !ok {
 		return Guide{}, nil, fmt.Errorf("no guide %q", guideID)
 	}
-	if !(CanManageShared(cs.user, owner, false) || g.sharedForEdit()) {
+	if !(CanManageShared(cs.user, owner, false) || g.editableBy(owner, cs.user)) {
 		return Guide{}, nil, fmt.Errorf("no edit access to guide %q", guideID)
 	}
 	return g, ownerUDB, nil
@@ -311,12 +311,12 @@ func (cs *curatorSession) editableGuides() []Guide {
 		seen[g.ID] = true
 		out = append(out, g)
 	}
-	for id, owner := range ListSharedOwners(cs.app.DB, sharedGuidesIndex) {
-		if seen[id] || owner == cs.user {
+	for id, owner := range guidesSharedWith(cs.app.DB, cs.user) {
+		if seen[id] {
 			continue
 		}
 		if oudb := UserDB(cs.app.DB, owner); oudb != nil {
-			if g, ok := loadGuide(oudb, id); ok && g.sharedForEdit() {
+			if g, ok := loadGuide(oudb, id); ok && g.sharedWith(owner, cs.user) && g.editableBy(owner, cs.user) {
 				out = append(out, g)
 			}
 		}
