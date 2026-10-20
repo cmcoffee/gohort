@@ -135,12 +135,7 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 		_ = json.Unmarshal(raw, &sent)
 		_, sentMachine := sent["machine"]
 		_, sentBulletins := sent["bulletins"]
-		if v, ok := sent["lead_use"]; ok {
-			var choice string
-			if json.Unmarshal(v, &choice) == nil {
-				applyLeadUse(RootDB, &req, choice)
-			}
-		}
+		applyEditorChoices(RootDB, &req, sent)
 		req.Owner = user
 		// Seed-IDs are saved in place as a per-user shadow record;
 		// the in-code seed stays untouched and surfaces back if the
@@ -421,6 +416,14 @@ func (T *OrchestrateApp) patchAgent(w http.ResponseWriter, r *http.Request, udb 
 		patch["lead_plans"] = choice.LeadPlans
 		patch["lead_review"] = choice.LeadReview
 		patch["consult_lead"] = choice.ConsultLead
+	}
+	// reasoning is the same over Think and Effort.
+	if v, ok := patch["reasoning"]; ok {
+		delete(patch, "reasoning")
+		choice := existing
+		applyReasoning(&choice, fmt.Sprint(v))
+		patch["think"] = choice.Think
+		patch["effort"] = choice.Effort
 	}
 	applied := make([]string, 0, len(patch))
 	var refused, requested []string
@@ -783,8 +786,9 @@ func (T *OrchestrateApp) handleAgentOne(w http.ResponseWriter, r *http.Request) 
 		// below strips Tools before save, so the fetch-modify-post round-trip
 		// can't write the view back into storage.
 		a.Tools = toolsOfScoped(AgentScopedTools(udb, user, a.ID))
-		// With lead_use: the editor's one choice over LeadModel + ConsultLead.
-		_ = json.NewEncoder(w).Encode(withLeadUse(RootDB, a))
+		// With lead_use and reasoning: the editor's one choice over
+		// LeadModel + ConsultLead, and over Think + Effort.
+		_ = json.NewEncoder(w).Encode(withEditorChoices(RootDB, a))
 	case http.MethodPost:
 		// PARTIAL update of one existing agent. The full edit form posts the
 		// whole record to /api/agents (handleAgentList); single-field surfaces

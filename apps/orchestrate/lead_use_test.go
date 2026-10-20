@@ -84,7 +84,7 @@ func TestTheLeadChoiceRoundTrips(t *testing.T) {
 		!strings.Contains(f.Options[0].Help, "This is the default.") {
 		t.Errorf("the scale: %+v", f.Options)
 	}
-	if m := withLeadUse(RootDB, plain); string(m["lead_use"]) != `"off"` {
+	if m := withEditorChoices(RootDB, plain); string(m["lead_use"]) != `"off"` {
 		t.Errorf("the form's lead_use: %s", m["lead_use"])
 	}
 }

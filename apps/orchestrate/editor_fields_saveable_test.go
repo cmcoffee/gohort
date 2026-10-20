@@ -70,6 +70,9 @@ func TestEveryEditorFieldIsSaveable(t *testing.T) {
 		// the allowlist is consulted, so each of them has to be on it
 		// (TestTheLeadChoiceSavesThroughPATCH).
 		"lead_use": true,
+		// The same over think and effort (applyReasoning,
+		// TestTheReasoningChoiceSavesThroughPATCH).
+		"reasoning": true,
 	}
 	// Two spellings: ui.FormField{Field: ...} on its own, and a bare
 	// {Field: ...} inside a []ui.FormField{...} list. Reading only the first

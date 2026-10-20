@@ -179,8 +179,11 @@ func (T *OrchestrateApp) serveAppAgentSettings(w http.ResponseWriter, r *http.Re
 		switch r.Method {
 		case http.MethodGet:
 			out := pickFields(rec, allowed)
-			if allowed["lead_use"] {
-				out["lead_use"] = withLeadUse(RootDB, rec)["lead_use"]
+			view := withEditorChoices(RootDB, rec)
+			for _, k := range []string{"lead_use", "reasoning"} {
+				if allowed[k] {
+					out[k] = view[k]
+				}
 			}
 			writeJSON(w, out)
 		case http.MethodPatch, http.MethodPost:
@@ -238,12 +241,7 @@ func saveAppAgentSettings(udb Database, user string, rec AgentRecord, allowed ma
 	if err := json.Unmarshal(raw, &rec); err != nil {
 		return fmt.Errorf("bad value: %v", err)
 	}
-	if v, ok := body["lead_use"]; ok {
-		var choice string
-		if json.Unmarshal(v, &choice) == nil {
-			applyLeadUse(RootDB, &rec, choice)
-		}
-	}
+	applyEditorChoices(RootDB, &rec, body)
 	rec.Owner = user
 	_, err := saveAgent(udb, rec)
 	return err

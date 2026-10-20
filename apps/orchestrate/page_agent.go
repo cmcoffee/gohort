@@ -1242,33 +1242,25 @@ func (T *OrchestrateApp) budgetReasoningFields(editRec AgentRecord, leadModelLoc
 			Detail: "Each step is started, then closed with findings or marked blocked with a reason, and anything left unfinished is stated in the answer instead of quietly dropped. The checklist survives the turn, so a plan begun in one message is still the plan in the next.\n\nReplaces this agent's plan_set, which fans a single turn out to workers and ends the round. Worth it for work with several results that build on each other, overhead for questions one call answers."},
 		{Type: "header", Label: "Reasoning", Collapsed: true,
 			Help: "Override the LLM's reasoning mode for this agent's turns."},
-		// A set effort decides whether the agent reasons (thinkMode), so
-		// Think mode is only read while effort is left at its default.
-		{Field: "think", Type: "select", Label: "Think mode", ShowWhen: "!effort",
+		// One choice over Think and Effort (applyReasoning): a set effort
+		// already decides whether the agent reasons, so two controls had
+		// Effort Off and Think Off doing the same thing.
+		{Field: "reasoning", Type: "select", Label: "Mode",
 			Options: []ui.SelectOption{
-				{Value: "auto", Label: "Auto: follow the deployment routing (" + currentAutoThinkLabel() + ")"},
-				{Value: "on", Label: "On: force reasoning for every turn"},
-				{Value: "off", Label: "Off: force no reasoning (faster)"},
-			},
-			Help:   "Whether this agent reasons before it answers.",
-			Detail: "Top-level conversational agents default On, because reasoning helps planners and synthesizers. Sub-agent specialists default Off, for faster lookups. Pick Auto only when you want the framework route to decide."},
-		// Shown while reasoning can be on: an effort level, or no effort and
-		// Think mode not off.
-		{Field: "think_budget", Type: "number", Label: "Think budget (tokens)", Min: 0, Max: 32768,
-			ShowWhen:    "effort:low|medium|high||!effort;think:!off",
-			Placeholder: "0",
-			Help:        "Max thinking tokens per LLM call. 0 inherits the deployment default (4096).",
-			Detail:      "The admin global budget is a hard ceiling, so this can only LOWER the budget, for snappier turns. A value above the ceiling is clamped. Only applies when Think is on."},
-		{Field: "effort", Type: "select", Label: "Effort",
-			Options: []ui.SelectOption{
-				{Value: "", Label: "Default: follow the model tier's setting"},
-				{Value: "off", Label: "Off: no reasoning"},
+				{Value: "", Label: "Default: follow the deployment routing (" + currentAutoThinkLabel() + ")"},
+				{Value: "off", Label: "Off: no reasoning (faster)"},
 				{Value: "low", Label: "Low"},
 				{Value: "medium", Label: "Medium"},
 				{Value: "high", Label: "High"},
 			},
-			Help:   "How hard this agent reasons. A think budget, if set, overrides it.",
-			Detail: "Each model gets its own dial: Claude's effort setting, OpenAI's reasoning effort, or a thinking budget sized for local models. When set, it also decides Think mode: Off means no reasoning, any other level means reasoning on. The admin's maximum effort for the model tier still caps it."},
+			Help:   "Whether this agent reasons before it answers, and how hard.",
+			Detail: "Each model gets its own dial for the level: Claude's effort setting, OpenAI's reasoning effort, or a thinking budget sized for local models. The admin's maximum effort for the model tier still caps it.\n\nReasoning helps planners and synthesizers; Off suits fast lookups, transformers and routers. Default reasons unless the deployment routing is set otherwise; a new sub-agent starts Off."},
+		// Shown while reasoning can be on.
+		{Field: "think_budget", Type: "number", Label: "Think budget (tokens)", Min: 0, Max: 32768,
+			ShowWhen:    "reasoning:!off",
+			Placeholder: "0",
+			Help:        "Max thinking tokens per LLM call. 0 inherits the deployment default (4096). Overrides the level.",
+			Detail:      "The admin global budget is a hard ceiling, so this can only LOWER the budget, for snappier turns. A value above the ceiling is clamped. Only applies when the agent reasons."},
 		// Which MODEL does the reasoning — a Reasoning setting, not an
 		// Autonomous-runs one. It sat under Autonomous runs purely by
 		// position (a header owns the fields until the next header), so it

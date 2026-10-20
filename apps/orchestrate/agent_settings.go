@@ -405,9 +405,56 @@ func applyLeadUse(db Database, a *AgentRecord, v string) {
 	}
 }
 
-// withLeadUse is the agent's JSON with lead_use beside its fields, for a form
-// that shows the one choice.
-func withLeadUse(db Database, a AgentRecord) map[string]json.RawMessage {
+// How an agent reasons, as one choice. Two fields store it, Think (on, off,
+// or "" for the route to decide) and Effort (a level, or "" for the tier's),
+// and a set Effort already decides Think (AgentRecord.thinkMode), so they made
+// two controls where Effort Off and Think Off were the same thing. The editor
+// shows one choice, reasoning: Default, Off, or a level. Think "on" with no
+// level reads as Default: the route reasons unless the admin turned it off,
+// and a forced on with nothing to say how hard is what a level is for.
+
+// reasoningOf is the agent's choice as it runs: a set Effort, else Think.
+func reasoningOf(a AgentRecord) string {
+	switch e := strings.ToLower(strings.TrimSpace(a.Effort)); e {
+	case "off", "low", "medium", "high":
+		return e
+	}
+	if a.Think == "off" {
+		return "off"
+	}
+	return ""
+}
+
+// applyReasoning sets the stored fields for choice v: "" (the route decides
+// whether, the tier how hard), "off", or an effort level. Each choice stores
+// one exact pair, so a form sending back what it loaded runs as it did; a
+// value that is not a choice is ignored.
+func applyReasoning(a *AgentRecord, v string) {
+	switch v = strings.ToLower(strings.TrimSpace(v)); v {
+	case "":
+		a.Effort, a.Think = "", ""
+	case "off", "low", "medium", "high":
+		a.Effort, a.Think = v, thinkForEffort(v, a.Think)
+	}
+}
+
+// applyEditorChoices applies the editor's one-choice fields, lead_use and
+// reasoning, from a posted body onto a. They go after the stored fields they
+// stand for, so the choice wins over the echoed fields beside it.
+func applyEditorChoices(db Database, a *AgentRecord, sent map[string]json.RawMessage) {
+	var choice string
+	if v, ok := sent["lead_use"]; ok && json.Unmarshal(v, &choice) == nil {
+		applyLeadUse(db, a, choice)
+	}
+	choice = ""
+	if v, ok := sent["reasoning"]; ok && json.Unmarshal(v, &choice) == nil {
+		applyReasoning(a, choice)
+	}
+}
+
+// withEditorChoices is the agent's JSON with lead_use and reasoning beside its
+// fields, for a form that shows the one choice.
+func withEditorChoices(db Database, a AgentRecord) map[string]json.RawMessage {
 	raw, _ := json.Marshal(a)
 	var m map[string]json.RawMessage
 	_ = json.Unmarshal(raw, &m)
@@ -416,5 +463,7 @@ func withLeadUse(db Database, a AgentRecord) map[string]json.RawMessage {
 	}
 	v, _ := json.Marshal(leadUseOf(db, a))
 	m["lead_use"] = v
+	v, _ = json.Marshal(reasoningOf(a))
+	m["reasoning"] = v
 	return m
 }
