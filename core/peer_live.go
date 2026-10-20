@@ -86,7 +86,7 @@ func peerRowsFrom(st OllamaSchedStats, work peerWork) []LiveEntry {
 			c := peerCallsFor(caller)
 			doing = peerModelDoing(work, c)
 			if c.routes != "" {
-				status += "; its calls: " + c.routes
+				status += "; " + c.routes
 			}
 		}
 		out = append(out, LiveEntry{
@@ -195,8 +195,11 @@ func notePeerCall(caller string, c peerCall) func() {
 }
 
 // peerCallsNow is what a peer's calls in flight are: the tiers they run on
-// ("worker model"), the apps that asked, and their routes ("history.fold (2),
-// unnamed"). The apps and routes are the PEER's, never this machine's.
+// ("worker model"), the apps that asked, and what each is for, by app ("remote
+// scribe: history.fold (2), 1 other"). The apps and routes are the
+// PEER's, never this machine's. A call that names nothing is counted as
+// "other", and an app with only those lists nothing: "its calls: unnamed" said
+// less than no list at all.
 type peerCallsNow struct {
 	tiers  string
 	apps   []string
@@ -212,15 +215,21 @@ func peerCallsFor(caller string) peerCallsNow {
 	if len(calls) == 0 {
 		return out
 	}
-	routes := map[string]int{}
+	routes := map[string]map[string]int{} // app -> route -> calls
+	others := map[string]int{}            // app -> calls naming nothing
 	seenTier, seenApp := map[string]bool{}, map[string]bool{}
 	var ts []string
 	for c, n := range calls {
-		route := c.route
-		if route == "" {
-			route = "unnamed"
+		// "caller:" is the request log's way of saying the name is a caller's
+		// rather than a route key (routeForLog); here it is only noise.
+		if route := strings.TrimPrefix(c.route, "caller:"); route == "" || route == "unnamed" {
+			others[c.app] += n
+		} else {
+			if routes[c.app] == nil {
+				routes[c.app] = map[string]int{}
+			}
+			routes[c.app][route] += n
 		}
-		routes[route] += n
 		if c.tier != "" && !seenTier[c.tier] {
 			seenTier[c.tier] = true
 			ts = append(ts, c.tier)
@@ -239,7 +248,26 @@ func peerCallsFor(caller string) peerCallsNow {
 	default:
 		out.tiers = strings.Join(ts, " and ") + " models"
 	}
-	list := make([]string, 0, len(routes))
+	apps := make([]string, 0, len(routes))
+	for app := range routes {
+		apps = append(apps, app)
+	}
+	sort.Strings(apps)
+	groups := make([]string, 0, len(apps))
+	for _, app := range apps {
+		from := "remote app"
+		if app != "" {
+			from = "remote " + app
+		}
+		groups = append(groups, from+": "+peerRouteList(routes[app], others[app]))
+	}
+	out.routes = strings.Join(groups, "; ")
+	return out
+}
+
+// peerRouteList is one app's routes in flight: "history.fold (2), 1 other".
+func peerRouteList(routes map[string]int, others int) string {
+	list := make([]string, 0, len(routes)+1)
 	for r := range routes {
 		list = append(list, r)
 	}
@@ -249,6 +277,8 @@ func peerCallsFor(caller string) peerCallsNow {
 			list[i] = fmt.Sprintf("%s (%d)", r, n)
 		}
 	}
-	out.routes = strings.Join(list, ", ")
-	return out
+	if others > 0 {
+		list = append(list, fmt.Sprintf("%d other", others))
+	}
+	return strings.Join(list, ", ")
 }

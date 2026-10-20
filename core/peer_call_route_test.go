@@ -57,15 +57,19 @@ func TestTheServingSideShowsWhatABorrowedCallIsFor(t *testing.T) {
 	w := func(app, route string) peerCall { return peerCall{tier: "worker", app: app, route: route} }
 	done1 := notePeerCall("peer:gpu-box", w("scribe", "caller:history.fold"))
 	done2 := notePeerCall("peer:gpu-box", w("scribe", "caller:history.fold"))
-	done3 := notePeerCall("peer:gpu-box", w("", ""))
+	done3 := notePeerCall("peer:gpu-box", w("scribe", ""))
 	rows := peerRowsFrom(OllamaSchedStats{Callers: map[string]int{"peer:gpu-box": 3}}, peerModelWork)
 	if len(rows) != 1 || rows[0].Label != "Peer gpu-box: remote scribe is using this machine's worker model (3 at once)" ||
-		rows[0].Status != "only the model runs here; its calls: caller:history.fold (2), unnamed" {
+		rows[0].Status != "only the model runs here; remote scribe: history.fold (2), 1 other" {
 		t.Fatalf("the peer's row should say which app, which model and what its calls are for: %+v", rows)
 	}
 	done4 := notePeerCall("peer:gpu-box", peerCall{tier: "lead", app: "chat", route: "memory.gate"})
-	if got := peerRowsFrom(OllamaSchedStats{Callers: map[string]int{"peer:gpu-box": 4}}, peerModelWork)[0].Label; got != "Peer gpu-box: remote chat and scribe are using this machine's worker and lead models (4 at once)" {
+	rows = peerRowsFrom(OllamaSchedStats{Callers: map[string]int{"peer:gpu-box": 4}}, peerModelWork)
+	if got := rows[0].Label; got != "Peer gpu-box: remote chat and scribe are using this machine's worker and lead models (4 at once)" {
 		t.Errorf("two apps on both tiers read %q", got)
+	}
+	if got := rows[0].Status; got != "only the model runs here; remote chat: memory.gate; remote scribe: history.fold (2), 1 other" {
+		t.Errorf("two apps' calls read %q", got)
 	}
 	done1()
 	done2()
@@ -74,6 +78,12 @@ func TestTheServingSideShowsWhatABorrowedCallIsFor(t *testing.T) {
 	rows = peerRowsFrom(OllamaSchedStats{Callers: map[string]int{"peer:gpu-box": 1}}, peerModelWork)
 	if rows[0].Label != "Peer gpu-box: using this machine's model" || rows[0].Status != "only the model runs here" {
 		t.Errorf("finished calls are still counted: %+v", rows[0])
+	}
+	// Calls that name nothing list nothing, rather than "tasks: 1 other".
+	done5 := notePeerCall("peer:gpu-box", w("scribe", ""))
+	defer done5()
+	if got := peerRowsFrom(OllamaSchedStats{Callers: map[string]int{"peer:gpu-box": 1}}, peerModelWork)[0].Status; got != "only the model runs here" {
+		t.Errorf("an unnamed call alone reads %q", got)
 	}
 }
 
@@ -100,7 +110,7 @@ func TestTheServingSideCountsACallWhileItRuns(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", w.Code, w.Body.String())
 	}
-	if got := peerModelDoing(peerModelWork, during); got != "remote scribe is using this machine's worker model" || during.routes != "caller:history.fold" {
+	if got := peerModelDoing(peerModelWork, during); got != "remote scribe is using this machine's worker model" || during.routes != "remote scribe: history.fold" {
 		t.Errorf("while it ran, the peer's row read %q, its calls %q", got, during.routes)
 	}
 	if after := peerCallsFor("peer:mac"); after.routes != "" {
