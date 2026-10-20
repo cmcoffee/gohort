@@ -48,13 +48,20 @@ answer in something stronger than a model's opinion:
    recorded, played back in a fresh sandbox by a script instead of a model,
    through Builder's real loop, tools and checks. One that fails is the
    platform broken, proven, by the call that failed or the grader.
-2. Every task is built **twice on the worker and twice on the lead** with
-   the wording as it is live, and the lead **reviews every build**, passing
-   ones too (a pass that worked around a tool error is still friction).
+2. Every task is built **once on the worker** with the wording as it is
+   live, and a task that fails is built **once more**, to tell a one-off from
+   a failure that repeats. The lead **reviews the failed builds**. Slimmed
+   2026-10-19: it used to build every task twice on the worker and twice on
+   the lead and review every build, passing ones too, about 80 builds and 80
+   paid reviews for 20 tasks; now about 20-25 builds and a review per
+   failure. **Build on the lead too** (off by default, a switch on the
+   report's page, `TuneSettings.FrictionLead`) builds every task on the lead
+   the same way, for when telling the worker's trouble from the platform's
+   is worth the paid builds.
 3. A passing build that passes again when played becomes that task's
    known-good build.
-4. Each task comes out **broken**, **not shown possible** (nothing passed on
-   either model: the strongest sign), **worker struggles**, or **ok**.
+4. Each task comes out **broken**, **not shown possible** (nothing passed:
+   the strongest sign), **worker struggles** (only with lead builds), or **ok**.
    Problems group by component as **proven**, **blocking** (on a task
    nothing could do) or **friction** (on tasks shown doable), with the
    models each was seen on: friction both hit is the platform's.
@@ -86,34 +93,34 @@ Optimizing lives with the models, on the admin **LLMs** tab, under
 **Optimize**: one row, **Builder's wording**, one button (decided
 2026-10-04; it was a row per model). The page explains the process, not
 the models: what Optimize is for (improving the wording Builder works from
-by building real things with it, keeping only changes that make more
-builds pass), a run's six steps (tighten, build, read, fix, confirm, apply), and
-its limits, the spend cap at the admin Prices among them. Which model does
-what gets one sentence there; the detail is here. A run builds on the **worker** and the **lead helps**: it proposes
+where the latest friction report saw a build fail), a run's five steps
+(start from the report, build again, read, fix, apply), and its limits, the
+spend cap at the admin Prices among them. Which model does what gets one
+sentence there; the detail is here. A run builds on the **worker** and the **lead helps**: it proposes
 the edits, reads the failures and reviews the builds. What it keeps is one
 wording that both models read. Why (the owner's reasoning): the worker is
 local and cheap, so its builds cost nothing but time, and it is the likely
 cause of most friction; the lead is generally a larger model that costs
 money per call, and wording that helps the worker will likely already
 translate to it. Tuning the lead apart spent its paid builds on the model
-that needed it least. A run is
-quick by default (two passes at most, about four hours); the **Extended
-run** switch under the button makes it take the limits on Details as they
-are (named for what it is, not when to start it: it is the run to leave
-overnight). Details is linked under it, so its settings are reachable
-before the first run. A run works one
-way:
+that needed it least.
 
-- **Tighten first.** Before anything is fixed, the lead says the 6 longest
-  blocks in fewer words, which takes minutes; nothing is built for it. The
-  passes build on the shorter wording, each build cheaper, and the fixes
-  are written into the short text instead of being cut back out of it by a
-  trim that follows. Pass 1's confirm judges the cuts along with its fixes;
-  if it disagrees, the cuts are taken back first, as one. A pass that kept
-  no fix judges them alone, by no build lost (see "Tool descriptions are
-  weights too"). Once per run, quick or extended. On by default; off on
-  Details with **Tighten first**.
-- **Probe first.** Before a task is built, Builder is given its request and
+**Failures only (2026-10-19).** A run works on the tasks the worker failed in
+the latest finished friction report, and builds nothing else. It used to
+build the whole suite to find its failures and again to confirm each pass
+(and again per take-back), with Tighten first, passes, a quick and an
+Extended run: on the 2026-10-16 runs, 15 passing tasks took a minute or two
+each and five failing ones 5 to 24 minutes, so most of a run re-proved what
+already passed. The friction report already builds every task, so it is
+both where a run's work comes from and the check after it. With no finished
+report, or none with a failed worker build, the row says so and Start
+refuses. A run works one way:
+
+- **Build again.** Each failed task is built once on the wording as it is
+  now, a few side by side (Builds at once). One that passes was fixed since
+  the report, in source or by an earlier run, and is left alone ("passes
+  now").
+- **Probe first.** Before a failed task gets a fix, Builder is given its request and
   its real turn is stopped at its first authoring call, without making it
   (`core.WithToolProbe`, `/sandbox/probe`): which tool it reached for, with
   which settings. Each probe is asked twice. A task's probes are its own
@@ -122,7 +129,7 @@ way:
   `unattended: true`. A wrong reach is fixed against the probes, seconds a
   check, before a build spends minutes finding it out. What is checked is
   what Builder did first, not what it says it would do.
-- **Fix as it goes.** Each train task is built once. A failure is read by
+- **Read and fix.** A failure is read by
   the lead as the framework's (a tool that cannot express what was asked, a
   broken platform check, the harness) or the wording's. The framework's is
   set aside, since no prompt can fix it, and listed with why on the run's
@@ -130,18 +137,23 @@ way:
   hands it over (and a report's Copy includes what was set aside after
   it). Re-checking it is the friction report's. The
   wording's gets one edit, and that task alone is built again with it,
-  twice at most; the edit is kept if the task now passes.
-- **Confirm end to end.** After a pass, the whole suite runs, held out
-  included, on what the pass kept. It stays only if more train builds pass
-  and neither split got worse; if not, the pass's edits are taken back one
-  at a time to find the one that hurt, and failing that the pass is dropped.
+  twice at most; the edit is kept if the task now passes, and every later
+  task builds on it. A task whose wording moved since its rebuild (an
+  earlier task's fix) is built again before it is read, so no fix is
+  written for a failure already gone.
+
+Nothing in a run checks that a fix did not break a task that passed. That
+is the next friction report's job: it builds every task on both models and
+lists what is new since the last report; Undo the run if it shows a
+regression. The proposer now sees held-out tasks' failures too: they were
+hidden so a whole suite could catch overfitting, and no whole suite runs.
 
 When the run ends it applies what it kept as the shared text, and **Undo**
 takes the whole run back; **Reset to shipped** takes back every run. The
 risk is an edit that helps the worker and hurts the lead, which a run no
 longer measures: the friction report still builds every task on both
 models, so a task the lead used to pass and no longer does shows there. While it runs, its stages show above "What it is doing"
-(each pass, and in the pass running each task as it goes), and it sits in
+(fixing what failed, each task as it goes, then applying), and it sits in
 the live indicator and on the Monitor page like any other work using the
 models.
 
@@ -185,9 +197,10 @@ Ask Builder does not pause: someone is waiting on it.
 
 A restart does not lose a run. Ninety seconds after the server starts, the
 newest run, if a restart cut it off in the last day, is picked up where it
-was: from its last confirmed point, the pass it was in done again from its
-start, its best's suite run reused, its set-aside tasks still set aside,
-and its spend carried over. The time it lay stopped does not count against
+was: from its best so far, with the same report's failed tasks it had not
+finished (set aside, passing now, or with a fix tried), and its spend
+carried over. A run from before failures-only is not picked up: it built the
+whole suite, which Optimize no longer does. The time it lay stopped does not count against
 its hours. One that cannot be picked up (another run going, the model
 behind its tier changed) says why, and its row offers Resume.
 
