@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -449,6 +450,25 @@ var (
 type peerWindow struct {
 	start time.Time
 	n     int
+}
+
+// peerRateRetryAfter is how long until k's minute window resets: the
+// Retry-After a refused call is told, so a peer waits that and not a flat
+// minute when the window frees in seconds.
+func peerRateRetryAfter(k PeerKey) time.Duration {
+	peerRateMu.Lock()
+	defer peerRateMu.Unlock()
+	if w := peerRate[k.ID]; w != nil {
+		if d := time.Minute - time.Since(w.start); d > 0 {
+			return d
+		}
+	}
+	return time.Second
+}
+
+// peerRetryAfterHeader is d as whole seconds, rounded up, at least one.
+func peerRetryAfterHeader(d time.Duration) string {
+	return strconv.Itoa(max(int((d+time.Second-1)/time.Second), 1))
 }
 
 // peerRateAllow records one call against a key and reports whether it fits

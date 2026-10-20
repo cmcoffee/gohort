@@ -104,10 +104,25 @@ func reembedChunks(ctx context.Context, db Database, what string, want func(c Em
 	ReportMaintenanceProgress(ctx, fmt.Sprintf("starting: %d chunk(s) to check", len(keys)))
 	lastReport := time.Now()
 
-	for _, key := range keys {
+	url := embedEndpointURL(cfg)
+	for i := 0; i < len(keys); i++ {
+		key := keys[i]
 		if ctx.Err() != nil {
 			Log("[vector-reembed] cancelled after %d repaired", fixed)
 			break
+		}
+		// An embedder that is rate limiting this instance (a peer key's per
+		// minute ceiling) is waited out here, with no chunk's deadline running,
+		// and the wait is on the progress line: a pass that sent into the
+		// refusals counted each one a failure and stopped at five.
+		if d := embedPausedFor(url); d > 0 {
+			ReportMaintenanceProgress(ctx, fmt.Sprintf("%d of %d chunk(s) checked - %d re-embedded - the embedder is rate limiting, waiting %s",
+				scanned, len(keys), fixed, d.Round(time.Second)))
+			if err := waitEmbedRateLimit(ctx, url); err != nil {
+				Log("[vector-reembed] cancelled after %d repaired", fixed)
+				break
+			}
+			lastReport = time.Now()
 		}
 		if time.Since(lastReport) >= reembedReportEvery {
 			ReportMaintenanceProgress(ctx, fmt.Sprintf("%d of %d chunk(s) checked - %d re-embedded - %s elapsed",
@@ -135,6 +150,12 @@ func reembedChunks(ctx context.Context, db Database, what string, want func(c Em
 		pieces := embedWithSplitFallback(ectx, cfg, embedHeader(c.Title, c.Section), c.Text)
 		cancel()
 		if len(pieces) == 0 || len(pieces[0].Vector) == 0 {
+			// Refused for the rate, not the chunk: the same chunk again once
+			// the pause is over, and no step toward the breaker.
+			if embedPausedFor(url) > 0 {
+				i--
+				continue
+			}
 			failed++
 			streak++
 			Debug("[vector-reembed] %s/%s section %q failed", c.Source, c.ReportID, c.Section)

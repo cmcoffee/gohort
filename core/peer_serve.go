@@ -161,7 +161,7 @@ func peerAuthorize(w http.ResponseWriter, r *http.Request, capability string) (P
 		return PeerKey{}, false
 	}
 	if !peerRateAllow(k) {
-		w.Header().Set("Retry-After", "60")
+		w.Header().Set("Retry-After", peerRetryAfterHeader(peerRateRetryAfter(k)))
 		peerDeny(w, http.StatusTooManyRequests, "rate limit reached for this key")
 		return PeerKey{}, false
 	}
@@ -258,7 +258,7 @@ func HandlePeerManifest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !peerRateAllow(k) {
-		w.Header().Set("Retry-After", "60")
+		w.Header().Set("Retry-After", peerRetryAfterHeader(peerRateRetryAfter(k)))
 		peerDeny(w, http.StatusTooManyRequests, "rate limit reached for this key")
 		return
 	}

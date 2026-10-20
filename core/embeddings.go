@@ -8,6 +8,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -246,7 +247,7 @@ func embedRaw(ctx context.Context, cfg EmbeddingConfig, text string) ([]float32,
 		}{[]string{text}})
 	}
 
-	url := strings.TrimRight(cfg.Endpoint, "/") + "/embeddings"
+	url := embedEndpointURL(cfg)
 
 	// Queue behind the local model scheduler, the same one chat completions
 	// use. An embed is usually served by the SAME process as the worker model,
@@ -264,6 +265,11 @@ func embedRaw(ctx context.Context, cfg EmbeddingConfig, text string) ([]float32,
 		defer release()
 	}
 
+	// An endpoint that said "too many" is left alone until it said to come
+	// back, within this call's own deadline.
+	if err := waitEmbedRateLimit(ctx, url); err != nil {
+		return nil, err
+	}
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(payload))
 	if err != nil {
 		return nil, err
@@ -302,6 +308,9 @@ func embedRaw(ctx context.Context, cfg EmbeddingConfig, text string) ([]float32,
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == http.StatusTooManyRequests {
+		noteEmbedRateLimit(url, resp.Header.Get("Retry-After"))
+	}
 	if resp.StatusCode != 200 {
 		// Include the URL and response body in the error so the
 		// operator can see at a glance whether the request even
@@ -339,6 +348,76 @@ func embedRaw(ctx context.Context, cfg EmbeddingConfig, text string) ([]float32,
 		return out.Data[0].Embedding, nil
 	}
 	return nil, fmt.Errorf("embed response had no vector")
+}
+
+// An embedder that answers 429 (a peer's per-key limit, a hosted API's quota)
+// is paused until the time its Retry-After names, per endpoint. Every embed to
+// it waits that out instead of sending into the refusal: a repair pass that
+// re-embeds one chunk after another hit a peer key's 600 a minute, counted
+// each refusal as a failure, and five in a row ended the pass as though the
+// endpoint were down.
+var (
+	embedPauseMu sync.Mutex
+	embedPause   = map[string]time.Time{}
+)
+
+// embedRateLimitDefault is the pause when a 429 names no Retry-After.
+const embedRateLimitDefault = 10 * time.Second
+
+// noteEmbedRateLimit records a 429 from url: paused for retryAfter (seconds,
+// or an HTTP date), capped at a minute.
+func noteEmbedRateLimit(url, retryAfter string) {
+	wait := embedRateLimitDefault
+	if s, err := strconv.Atoi(strings.TrimSpace(retryAfter)); err == nil && s > 0 {
+		wait = time.Duration(s) * time.Second
+	} else if t, err := http.ParseTime(retryAfter); err == nil {
+		wait = time.Until(t)
+	}
+	wait = min(max(wait, time.Second), time.Minute)
+	until := time.Now().Add(wait)
+	embedPauseMu.Lock()
+	if until.After(embedPause[url]) {
+		embedPause[url] = until
+	}
+	embedPauseMu.Unlock()
+	Log("[embed] %s is rate limiting: pausing embeds to it for %s", url, wait.Round(time.Second))
+}
+
+// embedPausedFor is how long embeds to url still wait, or 0.
+func embedPausedFor(url string) time.Duration {
+	embedPauseMu.Lock()
+	defer embedPauseMu.Unlock()
+	if d := time.Until(embedPause[url]); d > 0 {
+		return d
+	}
+	delete(embedPause, url)
+	return 0
+}
+
+// waitEmbedRateLimit waits out url's pause. A deadline that ends first is the
+// error, without sending: a call that cannot wait (a turn's query embed)
+// fails fast instead of adding to the refusals.
+func waitEmbedRateLimit(ctx context.Context, url string) error {
+	d := embedPausedFor(url)
+	if d <= 0 {
+		return nil
+	}
+	if dl, ok := ctx.Deadline(); ok && time.Until(dl) < d {
+		return fmt.Errorf("embed rate limited by %s for another %s", url, d.Round(time.Second))
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// embedEndpointURL is the URL embedRaw posts to for cfg.
+func embedEndpointURL(cfg EmbeddingConfig) string {
+	return strings.TrimRight(cfg.Endpoint, "/") + "/embeddings"
 }
 
 // Cosine returns the cosine similarity between two vectors. Returns 0
