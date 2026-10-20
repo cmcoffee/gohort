@@ -339,9 +339,32 @@ func deleteGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	if msg := toolEditRefused(sess, name, nil); msg != "" {
 		return msg, nil
 	}
-	if msg := toolChangeRefused(sess, name, "Delete it.", true); msg != "" {
+	// The one question a delete asks, with what it costs and who loses it.
+	holders := toolHolders(sess, name)
+	detail := "Delete it. Its actions, credential wiring and approval go with it, and a rebuild rarely gets every detail back."
+	if len(holders) > 0 {
+		detail += " " + strings.Join(holders, ", ") + " use it and would lose it."
+	}
+	if msg := toolChangeRefused(sess, name, detail, true); msg != "" {
 		return msg, nil
 	}
+	res, err := removeTool(args, sess, name)
+	if err == nil && len(holders) > 0 {
+		res += fmt.Sprintf(" %s had it and no longer do. If they still need what it did, give them its replacement: update_agent with tools: [{\"name\": \"<replacement>\"}].", strings.Join(holders, ", "))
+	}
+	return res, err
+}
+
+// toolHolders names the agents that have the tool (ToolHolders), or none.
+func toolHolders(sess *ToolSession, name string) []string {
+	if ToolHolders == nil || sess == nil || sess.DB == nil || sess.Username == "" || name == "" {
+		return nil
+	}
+	return ToolHolders(sess.DB, sess.Username, name)
+}
+
+// removeTool deletes the tool from wherever its durable copy lives.
+func removeTool(args map[string]any, sess *ToolSession, name string) (string, error) {
 	// Forget this tool's secured-credential bindings (approved/pending) on delete —
 	// tidy-up under auto-resolve. A revoke tombstone is deliberately KEPT so an
 	// admin's deny survives a delete + same-name recreate.

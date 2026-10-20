@@ -153,13 +153,17 @@ func (b *syncBuf) String() string {
 }
 
 // A confirmation scoped to one action of a grouped tool stops that action and
-// no other. tool_def's delete asks; its get runs. Unattended, the delete is
-// denied rather than allowed, as every confirmation is.
+// no other: the delete asks, the get runs. Unattended, the delete is denied
+// rather than allowed, as every confirmation is.
 func TestAConfirmationScopedToOneActionStopsOnlyThatAction(t *testing.T) {
-	spec := frameworkToolConfirmations["tool_def"]
-	if !spec.Asks() || spec.Action != "delete" || !spec.NeverRemember {
-		t.Fatalf("tool_def delete should ask, once-or-deny: %+v", spec)
+	// tool_def's own delete asks through the change approval, so it is not
+	// asked here too (two clicks for one delete); a scoped spec stands in.
+	if spec := frameworkToolConfirmations["tool_def"]; spec != nil {
+		t.Fatalf("tool_def delete is asked twice: %+v", spec)
 	}
+	spec := &ToolConfirmation{Prompt: "Delete this tool?", Action: "delete", GrantArg: "name", NeverRemember: true}
+	frameworkToolConfirmations["tool_def"] = spec
+	t.Cleanup(func() { delete(frameworkToolConfirmations, "tool_def") })
 	if !confirmationCoversCall(spec, "action: delete\nname: post_news") {
 		t.Fatal("the delete call is covered")
 	}

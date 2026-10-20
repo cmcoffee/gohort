@@ -46,7 +46,7 @@ func TestToolChangesAskTheOwner(t *testing.T) {
 	}, sess); !strings.Contains(out, "declined") {
 		t.Fatalf("a create over an existing tool went ahead unapproved; got: %s", out)
 	}
-	if len(calls) != 3 || !strings.Contains(calls[0].detail, "description") || calls[1].detail != "Delete it." ||
+	if len(calls) != 3 || !strings.Contains(calls[0].detail, "description") || !strings.HasPrefix(calls[1].detail, "Delete it.") ||
 		calls[0].op != ChangeEdit || calls[1].op != ChangeDelete || calls[2].op != ChangeEdit {
 		t.Errorf("approval asked with %+v", calls)
 	}
@@ -89,5 +89,47 @@ func TestGovernanceFlagsPreservedOnRepersist(t *testing.T) {
 	}
 	if got.CommandTemplate != "echo NEW" {
 		t.Fatalf("the edit itself should apply; got %q", got.CommandTemplate)
+	}
+}
+
+// A delete asks once, says what it costs and who loses the tool, and its
+// result names them again: a Builder that looked for holders in the agent
+// list (which shows no tools) deleted tools two agents had, and said none did.
+func TestADeleteSaysWhoLosesTheTool(t *testing.T) {
+	prev := ToolHolders
+	ToolHolders = func(db Database, owner, name string) []string {
+		if name == "cal" {
+			return []string{"Agent One", "Agent Two"}
+		}
+		return nil
+	}
+	t.Cleanup(func() { ToolHolders = prev })
+	var details []string
+	sess := &ToolSession{
+		Username: "alice", ChatSessionID: "s1",
+		WorkspaceDir: t.TempDir(), DB: &DBase{Store: kvlite.MemStore()},
+		ApproveChange: func(kind, name, detail string, op ChangeOp) string {
+			details = append(details, detail)
+			return ""
+		},
+	}
+	for _, n := range []string{"cal", "spare"} {
+		if err := AdminPersistTempTool(sess.DB, "alice", TempTool{Name: n, Mode: TempToolModeShell, CommandTemplate: "echo hi"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, err := deleteGrouped(map[string]any{"name": "cal"}, sess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(details) != 1 || !strings.Contains(details[0], "rebuild rarely") || !strings.Contains(details[0], "Agent One, Agent Two use it") {
+		t.Errorf("the delete should ask once, with its cost and who loses it: %q", details)
+	}
+	if !strings.Contains(out, "Agent One, Agent Two had it and no longer do") {
+		t.Errorf("the result should say who lost it: %s", out)
+	}
+	out, _ = deleteGrouped(map[string]any{"name": "spare"}, sess)
+	if strings.Contains(out, "no longer do") || strings.Contains(details[1], "would lose it") {
+		t.Errorf("a tool nobody had names nobody: %q / %s", details[1], out)
 	}
 }

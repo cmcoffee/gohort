@@ -357,19 +357,9 @@ func (t *chatTurn) appToolConfirmation(name string) *ToolConfirmation {
 // so no custom tool can take it. Written at init, read-only after.
 var frameworkToolConfirmations = map[string]*ToolConfirmation{}
 
-func init() {
-	// tool_def's delete carried NeedsConfirm, which on the web is not a
-	// prompt (see AgentToolDef.NeedsConfirm): a Builder deleted an approved
-	// tool within a second of deciding to, and the person watching was never
-	// asked. This is the question; the group's other actions run unasked.
-	// Fails closed on a run nobody watches, which is right for a delete.
-	frameworkToolConfirmations["tool_def"] = &ToolConfirmation{
-		Prompt:        "Delete this tool? Its actions, credential wiring and approval go with it, and a rebuild rarely gets every detail back.",
-		Action:        "delete",
-		GrantArg:      "name",
-		NeverRemember: true,
-	}
-}
+// tool_def's delete is not in it. It asks through the change approval
+// (ToolSession.ApproveChange), with what the delete costs and which agents
+// lose the tool; asked here as well, every delete took two clicks.
 
 // confirmationCoversCall reports whether a confirmation scoped to one action
 // of a grouped tool applies to this call. Unscoped, it covers every call.

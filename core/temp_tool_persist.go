@@ -186,6 +186,14 @@ var FindUserAgentTool func(db Database, owner, name string) (TempTool, string, b
 // records; nil ⇒ cross-agent delete unavailable.
 var DetachToolFromAgent func(db Database, owner, agentID, toolName string) error
 
+// ToolHolders names the owner's agents that have the tool called name: the
+// ones it is scoped to and the ones whose tool list names it. A delete says
+// who loses it, in the question and in its result, so the agent deleting it
+// does not have to know where to look (a Builder that checked the agent list,
+// which shows no tools, reported "no agents use these" and took a tool away
+// from two). Nil when no app owns agents.
+var ToolHolders func(db Database, owner, name string) []string
+
 // AdminSetToolScope, when set, applies ONE pill toggle. target is either
 // "global" (the Global pill) or an agent id; on is the desired state.
 // The orchestrate impl interprets the transition against current state:

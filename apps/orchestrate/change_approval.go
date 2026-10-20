@@ -58,17 +58,30 @@ type changeGrant struct {
 // changeApprovalSet is what one session may change without asking again:
 // what it made, and what the owner approved in it. named is what the owner
 // picked in Builder's form, which covers changes but not deletion, so it is
-// kept apart from items.
+// kept apart from items. made is what the session made, the only thing it
+// deletes without asking: an approved change is not an approved deletion.
 type changeApprovalSet struct {
 	mu    sync.Mutex
 	items map[string]bool
 	named map[string]bool
+	made  map[string]bool
 }
 
-func (s *changeApprovalSet) has(key string) bool {
+// has reports whether the session may make op to the item without asking.
+func (s *changeApprovalSet) has(key string, op ChangeOp) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if op == ChangeDelete {
+		return s.made[key]
+	}
 	return s.items[key]
+}
+
+// madeHere records an item the session made.
+func (s *changeApprovalSet) madeHere(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.items[key], s.made[key] = true, true
 }
 
 // isNamed reports whether the owner picked this item in Builder's form.
@@ -122,7 +135,7 @@ func (s *changeApprovalSet) add(key string) {
 var sessionChangeApprovals sync.Map // owner\x00session -> *changeApprovalSet
 
 func changeApprovalsFor(owner, session string) *changeApprovalSet {
-	v, _ := sessionChangeApprovals.LoadOrStore(owner+"\x00"+session, &changeApprovalSet{items: map[string]bool{}, named: map[string]bool{}})
+	v, _ := sessionChangeApprovals.LoadOrStore(owner+"\x00"+session, &changeApprovalSet{items: map[string]bool{}, named: map[string]bool{}, made: map[string]bool{}})
 	return v.(*changeApprovalSet)
 }
 
@@ -248,10 +261,10 @@ func (c changeAsker) approve(kind, name, detail string, op ChangeOp) string {
 	set := changeApprovalsFor(c.owner, c.session)
 	if op == ChangeNew {
 		// Made here: the session's own work.
-		set.add(key)
+		set.madeHere(key)
 		return ""
 	}
-	if set.has(key) {
+	if set.has(key, op) {
 		return ""
 	}
 	// Picked in Builder's form by the owner: approved, for a change. Builder

@@ -414,6 +414,21 @@ func (T *OrchestrateApp) wireAgentTools() {
 	DetachToolFromAgent = func(db Database, owner, agentID, toolName string) error {
 		return unbundleAgentToolByID(agentUserDB(db, owner), owner, agentID, toolName)
 	}
+	ToolHolders = func(db Database, owner, name string) []string {
+		udb := agentUserDB(db, owner)
+		p, stored := UserToolByName(udb, owner, name)
+		var out []string
+		for _, a := range listAgents(udb, owner) {
+			has := stored && len(p.ScopeAgents) > 0 && p.ScopedToAgent(a.ID)
+			for _, n := range a.AllowedTools {
+				has = has || canonicalToolName(n) == name
+			}
+			if has {
+				out = append(out, chFirst(strings.TrimSpace(a.Name), a.ID))
+			}
+		}
+		return out
+	}
 	// FindUserAgentTool lets Builder's update path resolve a tool that lives on
 	// ANOTHER of the user's agents (its own resolver only sees the user-wide pool
 	// + its own tools). Flattened namespace: every user tool is ONE row in the

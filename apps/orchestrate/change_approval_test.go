@@ -251,3 +251,23 @@ func TestMakingOneAgentDoesNotApproveItsNamesake(t *testing.T) {
 		t.Errorf("the question should name the agent, not its id: %v", prompts)
 	}
 }
+
+// An approved change is not an approved deletion: deleting something whose
+// change was approved in this session asks again. What the session made, it
+// deletes freely.
+func TestAnApprovedChangeDoesNotCoverADelete(t *testing.T) {
+	udb := changeTestStores(t)
+	asked := 0
+	c := changeAsker{owner: "u", agentID: "seed-builder", session: "s-del", db: udb,
+		ask: func(string, string, []string) string { asked++; return "Approve" }}
+	if msg := c.approve("tool", "cal", "Change it.", ChangeEdit); msg != "" || asked != 1 {
+		t.Fatalf("the change: %q asked %d", msg, asked)
+	}
+	if msg := c.approve("tool", "cal", "Delete it.", ChangeDelete); msg != "" || asked != 2 {
+		t.Errorf("a delete rode an approved change: %q asked %d", msg, asked)
+	}
+	c.approve("tool", "probe", "", ChangeNew)
+	if msg := c.approve("tool", "probe", "Delete it.", ChangeDelete); msg != "" || asked != 2 {
+		t.Errorf("deleting what the session made asked: %q asked %d", msg, asked)
+	}
+}
