@@ -361,9 +361,14 @@ const scribeImportPageAction = `function(ctx){
           var keepRow = el('label', {style:'display:flex;align-items:center;gap:0.5rem;margin-top:0.6rem'});
           var keep = el('input', {type:'checkbox'});
           keepRow.appendChild(keep); keepRow.appendChild(document.createTextNode('Keep it published: update the page whenever the guide changes'));
+          var briefRow = el('label', {style:'display:flex;align-items:center;gap:0.5rem;margin-top:0.4rem'});
+          var brief = el('input', {type:'checkbox'});
+          brief.checked = true;
+          briefRow.appendChild(brief); briefRow.appendChild(document.createTextNode('Write its brief from it: what it is for and how it is written, for whoever writes in it next'));
           body.appendChild(el('label', {text:'Where it is'})); body.appendChild(pick);
           body.appendChild(el('label', {text:'Its address', style:'margin-top:0.6rem;display:block'})); body.appendChild(link);
           body.appendChild(keepRow);
+          body.appendChild(briefRow);
           var status = el('div', {style:'margin-top:0.8rem;font-size:var(--fs-sm, 0.8rem);line-height:1.5'});
           body.appendChild(status);
           var go = el('button', {type:'button', class:'ui-row-btn primary', text:'Import'});
@@ -392,7 +397,7 @@ const scribeImportPageAction = `function(ctx){
             go.disabled = true;
             status.textContent = frames[0] + ' Starting';
             fetch('import/page', {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'},
-              body: JSON.stringify({kind: p.kind, target: p.target || '', link: link.value.trim(), keep_published: keep.checked})})
+              body: JSON.stringify({kind: p.kind, target: p.target || '', link: link.value.trim(), keep_published: keep.checked, write_brief: brief.checked})})
               .then(function(r){ if (!r.ok) return r.text().then(function(t){ throw new Error(t || ('HTTP ' + r.status)); }); return r.json(); })
               .then(function(d){
                 job = d.job;

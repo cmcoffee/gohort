@@ -66,6 +66,9 @@ func (T *Scribe) handleImportPage(w http.ResponseWriter, r *http.Request, udb Da
 			Target        string `json:"target"`
 			Link          string `json:"link"`
 			KeepPublished bool   `json:"keep_published"`
+			// WriteBrief has the model write the guide's brief from it
+			// (brief_draft.go). On unless the body says otherwise.
+			WriteBrief *bool `json:"write_brief"`
 		}
 		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
@@ -93,7 +96,8 @@ func (T *Scribe) handleImportPage(w http.ResponseWriter, r *http.Request, udb Da
 		publishJobsMu.Lock()
 		publishJobs[job.guideID] = job
 		publishJobsMu.Unlock()
-		go T.importPage(ctx, udb, user, where, body.Kind, body.Target, body.Link, body.KeepPublished, job)
+		brief := body.WriteBrief == nil || *body.WriteBrief
+		go T.importPage(ctx, udb, user, where, body.Kind, body.Target, body.Link, body.KeepPublished, brief, job)
 		writeJSON(w, map[string]any{"job": id})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -101,10 +105,27 @@ func (T *Scribe) handleImportPage(w http.ResponseWriter, r *http.Request, udb Da
 }
 
 // importPage reads the page and makes the guide, reporting on job.
-func (T *Scribe) importPage(ctx context.Context, udb Database, user, where, kind, target, link string, keep bool, job *publishJob) {
+func (T *Scribe) importPage(ctx context.Context, udb Database, user, where, kind, target, link string, keep, brief bool, job *publishJob) {
 	ctx = docs.WithPublishSteps(ctx, job.step)
 	ctx = docs.WithPublishActivity(ctx, job.activity)
 	g, err := T.guideFromPage(ctx, udb, user, where, kind, target, link, keep)
+	// The brief, from the document as it came in. A brief that could not be
+	// written leaves the guide as it is: the import worked, and the brief can
+	// be written from Settings.
+	briefNote := ""
+	if err == nil && brief && ctx.Err() == nil {
+		job.activity("Writing the brief")
+		docs.PublishStep(ctx, "Writing the guide's brief from it")
+		if text, berr := T.draftBrief(ctx, g); berr != nil {
+			docs.PublishStep(ctx, "Could not write the brief: %v", berr)
+			briefNote = " The brief could not be written (" + berr.Error() + "): write it in Settings."
+		} else if cur, ok := loadGuide(udb, g.ID); ok {
+			cur.Brief = text
+			g = saveGuideRev(udb, cur, "Brief written from the imported page")
+			docs.PublishStep(ctx, "Wrote the brief: %d words", len(strings.Fields(text)))
+			briefNote = " Its brief was written from it: read it in Settings."
+		}
+	}
 	publishJobsMu.Lock()
 	defer publishJobsMu.Unlock()
 	job.Done, job.Ended, job.Now = true, time.Now(), ""
@@ -118,7 +139,7 @@ func (T *Scribe) importPage(ctx context.Context, udb Database, user, where, kind
 		job.Message = err.Error()
 	default:
 		job.OK, job.GuideID, job.URL = true, g.ID, firstNonEmpty(g.Published[0].URL)
-		job.Message = "Took in " + g.Title + " from " + where + ", " + countOf(len(g.Sections), "section") + ". Publishing it there updates that page."
+		job.Message = "Took in " + g.Title + " from " + where + ", " + countOf(len(g.Sections), "section") + ". Publishing it there updates that page." + briefNote
 		Log("[scribe.import] user=%q took in %q from %s as guide %s", user, g.Title, where, g.ID)
 	}
 }
