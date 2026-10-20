@@ -58,6 +58,9 @@ type publishJob struct {
 	// linking is the guide being pointed at a page already published
 	// somewhere (page_import.go), run as the guide's own job.
 	linking bool
+	// distilling is a guide being distilled into another (distill.go);
+	// Target is the receiving guide.
+	distilling bool
 }
 
 // publishJobStep is one step and when it happened, in seconds from the start.

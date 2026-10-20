@@ -178,6 +178,10 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 						Help: "Say which sections, or what to change about how they read.",
 						Text: "Edit this guide to its writing brief. Change how it is presented, not what it says: keep every fact, step and citation. "},
 				}},
+				// Another guide takes what this one holds, through its Curator:
+				// that guide's brief says what to take, its Curator what fits
+				// where (distill.go).
+				{Label: "Distill into another guide", Kind: "client", URL: "guides_distill"},
 			}},
 			// The ones that check it: is it still true, and what the Curator
 			// filed into it.
@@ -293,6 +297,7 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 			ClientAction("scribe_rules", scribeRulesAction).
 			ClientAction("scribe_import", scribeImportAction).
 			ClientAction("scribe_import_page", scribeImportPageAction).
+			ClientAction("guides_distill", guideDistillAction).
 			JS(ArtifactClientJS).
 			ClientAction("scribe_export_bundle", scribeExportBundleAction).
 			ClientAction("scribe_import_bundle", scribeImportBundleAction).
@@ -406,6 +411,76 @@ const scribeImportPageAction = `function(ctx){
                 timer = setInterval(poll, 1000); poll();
               })
               .catch(function(err){ go.disabled = false; status.textContent = 'Import failed: ' + (err && err.message || err); });
+          });
+        }});
+      });
+}`
+
+// guideDistillAction is Revise > Distill into another guide: pick one of your
+// guides, and the distill sends it what its brief says belongs there, for its
+// Curator to place. Followed here with a spinner, each part's count, and Stop
+// beside Close (distill.go). Opened while one runs, it rejoins it.
+const guideDistillAction = `function(ctx){
+      var gid = ctx.recordId;
+      if (!gid || !window.uiOpenSimpleModal) return;
+      var qp = 'id=' + encodeURIComponent(gid);
+      Promise.all([
+        fetch('guides', {credentials:'same-origin'}).then(function(r){ return r.ok ? r.json() : []; }),
+        fetch('distill/job?' + qp, {credentials:'same-origin', cache:'no-store'}).then(function(r){ return r.ok ? r.json() : {none: true}; })
+      ]).then(function(res){
+        var mine = (res[0] || []).filter(function(g){ return g.own && g.id !== gid; });
+        var running = res[1] && !res[1].none && !res[1].done;
+        window.uiOpenSimpleModal({title:'Distill into another guide', width:'560px', mount: function(body, dlg){
+          body.appendChild(el('p', {class:'guide-kn-intro', text:'Reads this guide a part at a time and sends the guide you pick whatever its brief says belongs there. Its Curator then places each piece: folded into a section, a new one, or dropped, every change in its digest. This guide is not changed.'}));
+          var status = el('div', {style:'margin-top:0.8rem;font-size:var(--fs-sm, 0.8rem);line-height:1.5'});
+          var frames = ['\u280b','\u2819','\u2839','\u2838','\u283c','\u2834','\u2826','\u2827','\u2807','\u280f'], fi = 0, last = null, spin = null;
+          var stop = el('button', {type:'button', class:'ui-row-btn', text:'Stop'});
+          stop.addEventListener('click', function(){ stop.disabled = true; stop.textContent = 'Stopping'; fetch('distill/stop?' + qp, {method:'POST', credentials:'same-origin'}); });
+          function draw(){
+            if (!last) return;
+            status.innerHTML = '';
+            var head = last.done ? (last.ok ? 'Done. ' : 'It did not finish. ') + (last.message || '')
+              : frames[fi] + ' Distilling into ' + last.target + (last.now ? ' - ' + last.now : '') + (last.elapsed >= 3 ? ' - ' + last.elapsed + 's' : '');
+            status.appendChild(el('div', {text: head}));
+            (last.steps || []).slice(-8).forEach(function(s){ status.appendChild(el('div', {text: s.text, style:'color:var(--text-mute)'})); });
+          }
+          function follow(){
+            dlg.addAction(stop);
+            spin = setInterval(function(){ fi = (fi + 1) % frames.length; if (last && !last.done) draw(); }, 120);
+            (function poll(){
+              fetch('distill/job?' + qp, {credentials:'same-origin', cache:'no-store'}).then(function(r){ return r.json(); }).then(function(j){
+                if (j.none) { clearInterval(spin); stop.remove(); return; }
+                last = j; draw();
+                if (!j.done) { setTimeout(poll, 1500); return; }
+                clearInterval(spin); stop.remove();
+                if (window.uiInvalidate) window.uiInvalidate('guides');
+              }).catch(function(){ setTimeout(poll, 3000); });
+            })();
+          }
+          if (running) { body.appendChild(status); follow(); return; }
+          if (!mine.length) {
+            body.appendChild(el('p', {class:'guide-kn-intro', text:'You have no other guide of your own to send it to yet: make one first.'}));
+            return;
+          }
+          var pick = el('select', {class:'ui-input'});
+          mine.forEach(function(g){ var o = el('option', {text: g.title || 'Untitled guide'}); o.value = g.id; pick.appendChild(o); });
+          var nowRow = el('label', {style:'display:flex;align-items:center;gap:0.5rem;margin-top:0.6rem'});
+          var now = el('input', {type:'checkbox'});
+          now.checked = true;
+          nowRow.appendChild(now); nowRow.appendChild(document.createTextNode('Have its Curator place them as soon as they are sent'));
+          body.appendChild(el('label', {text:'Send to'})); body.appendChild(pick);
+          body.appendChild(nowRow);
+          body.appendChild(status);
+          var go = el('button', {type:'button', class:'ui-row-btn primary', text:'Distill'});
+          dlg.addAction(go);
+          go.addEventListener('click', function(){
+            go.disabled = true;
+            status.textContent = frames[0] + ' Starting';
+            fetch('distill?' + qp, {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'},
+              body: JSON.stringify({to: pick.value, curate_now: now.checked})})
+              .then(function(r){ return r.text().then(function(t){ if (!r.ok) throw new Error(t || ('HTTP ' + r.status)); return t; }); })
+              .then(function(){ go.remove(); follow(); })
+              .catch(function(err){ go.disabled = false; status.textContent = 'Could not start: ' + (err && err.message || err); });
           });
         }});
       });

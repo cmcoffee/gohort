@@ -32,7 +32,9 @@ func publishLiveEntries() []LiveEntry {
 		if j.background {
 			label = "Keeping " + firstNonEmpty(j.title, "a guide") + " published"
 		}
-		if j.linking {
+		if j.distilling {
+			label = "Distilling " + firstNonEmpty(j.title, "a guide") + " into " + firstNonEmpty(j.Target, "another guide")
+		} else if j.linking {
 			label = "Linking " + firstNonEmpty(j.title, "a guide") + " to a page"
 			if j.Target != "" {
 				label += " in " + j.Target
@@ -69,6 +71,9 @@ func publishLiveEntries() []LiveEntry {
 func cancelURL(j *publishJob) string {
 	if j.importing {
 		return "/scribe/import/page/stop?job=" + url.QueryEscape(strings.TrimPrefix(j.guideID, importJobPrefix))
+	}
+	if j.distilling {
+		return "/scribe/distill/stop?id=" + url.QueryEscape(strings.TrimPrefix(j.guideID, distillJobPrefix))
 	}
 	return "/scribe/publish/stop?id=" + url.QueryEscape(j.guideID)
 }
