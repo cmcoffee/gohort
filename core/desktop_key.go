@@ -134,8 +134,8 @@ func LookupDesktopKey(secret string) (string, bool) {
 // HandleDesktopKey is the cookie-authed endpoint the desktop client calls
 // to auto-provision its bridge key — no manual setup:
 //
-//	GET / POST /api/desktop/key  → mint-or-return the caller's key, as {"key": "..."}
-//	DELETE     /api/desktop/key  → rotate (revoke old, return a fresh one)
+//	POST   /api/desktop/key  → mint-or-return the caller's key, as {"key": "..."} (never GET)
+//	DELETE /api/desktop/key  → rotate (revoke old, return a fresh one)
 //
 // Cookie auth (AuthCurrentUser) only — this mints a credential, so it must
 // never be reachable via the very key it issues.
@@ -149,11 +149,20 @@ func HandleDesktopKey(w http.ResponseWriter, r *http.Request) {
 		key string
 		ok  bool
 	)
+	// Never on a GET. A GET is what any same-origin read can issue with the
+	// viewer's cookies (a live artifact's data bridge was one), and this
+	// answer is the key to the user's desktop tools. A POST from another
+	// origin is refused by the CSRF check, and the desktop app's own request
+	// carries no Origin.
 	switch r.Method {
 	case http.MethodDelete:
 		key, ok = RotateDesktopKey(user)
-	default: // GET, POST
+	case http.MethodPost:
 		key, ok = MintDesktopKey(user)
+	default:
+		w.Header().Set("Allow", "POST, DELETE")
+		http.Error(w, "method not allowed: POST to get the key", http.StatusMethodNotAllowed)
+		return
 	}
 	if !ok {
 		http.Error(w, "could not provision key", http.StatusInternalServerError)

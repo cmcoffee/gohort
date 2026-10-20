@@ -1573,11 +1573,11 @@
       try { frame.contentWindow.focus(); } catch (_) {}
     });
     // sameOriginPath accepts only a relative path on THIS origin: one
-    // leading "/" (not "//host"), no scheme. Everything else is refused —
-    // the url mode renders UNsandboxed, so it must never frame foreign
-    // content.
+    // leading "/" (not "//host"), no scheme, no backslash (a browser reads
+    // "/\host" as "//host"). Everything else is refused — the url mode
+    // renders UNsandboxed, so it must never frame foreign content.
     function sameOriginPath(u) {
-      return typeof u === 'string' && u.charAt(0) === '/' && u.charAt(1) !== '/';
+      return typeof u === 'string' && u.charAt(0) === '/' && u.charAt(1) !== '/' && u.indexOf('\\') < 0;
     }
     var state = {id: '', html: '', url: '', dataUrls: [], dataKey: ''};
     // gohort.fetch shim, injected into authored documents that declared

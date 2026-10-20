@@ -143,6 +143,9 @@ func (s seatbeltSandbox) remapsPaths() bool { return false }
 // here turns that into a refusal that names the reason.
 func (s seatbeltSandbox) scopesReads() bool { return false }
 
+// inheritsEnv: sandbox-exec hands its environment to the command it starts.
+func (s seatbeltSandbox) inheritsEnv() bool { return true }
+
 func (s seatbeltSandbox) build(ctx context.Context, run sandboxRun) *exec.Cmd {
 	spec := seatbeltSpec{
 		Workspace:    run.WorkspaceDir,

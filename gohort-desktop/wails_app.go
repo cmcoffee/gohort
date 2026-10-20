@@ -102,7 +102,8 @@ func (a *App) provisionBridgeKey() error {
 	if base == "" {
 		return fmt.Errorf("no server URL configured")
 	}
-	req, err := http.NewRequest(http.MethodGet, base+"/api/desktop/key", nil)
+	// POST: the server never hands this key out on a GET.
+	req, err := http.NewRequest(http.MethodPost, base+"/api/desktop/key", nil)
 	if err != nil {
 		return err
 	}

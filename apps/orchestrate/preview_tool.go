@@ -114,7 +114,7 @@ func (t *chatTurn) showHTMLToolDef() AgentToolDef {
 				},
 				"data_urls": {
 					Type:        "array",
-					Description: "Optional, html mode only: up to 8 same-origin GET paths (each starting with \"/\", e.g. \"/apps/myapp/data/metrics\") the page may fetch LIVE while the user views it. The viewer injects window.gohort.fetch(path): returns a Promise of {ok, status, body} (body is the response text; JSON.parse it yourself). Combine with setInterval for an auto-refreshing dashboard. Paths NOT listed here are blocked, so declare everything the page needs up front.",
+					Description: "Optional, html mode only: up to 8 paths to a custom app's data the page may fetch LIVE while the user views it: /apps/<slug>/data/<source>, /apps/<slug>/shared/<collection>, or /apps/<slug>/records (e.g. \"/apps/myapp/data/metrics\"). Nothing else may be named. The viewer injects window.gohort.fetch(path): returns a Promise of {ok, status, body} (body is the response text; JSON.parse it yourself). Combine with setInterval for an auto-refreshing dashboard. Paths NOT listed here are blocked, so declare everything the page needs up front.",
 					Items:       &ToolParam{Type: "string"},
 				},
 				"id": {
@@ -171,12 +171,13 @@ func (t *chatTurn) showHTMLToolDef() AgentToolDef {
 			// page), so it must never point off-origin: require a single
 			// leading "/" — no scheme, no protocol-relative "//host". The
 			// client-side pane enforces the same rule.
-			if url != "" && (!strings.HasPrefix(url, "/") || strings.HasPrefix(url, "//")) {
+			// A backslash counts as "/" to a browser, so "/\host" is "//host".
+			if url != "" && (!strings.HasPrefix(url, "/") || strings.HasPrefix(url, "//") || strings.Contains(url, "\\")) {
 				return "", fmt.Errorf("url must be a same-origin path starting with \"/\" (got %q): external pages can't be previewed; to show external content, author an html document instead", url)
 			}
-			// Live-data allowlist (html mode). Same same-origin-path rule as
-			// url mode — the pane proxies these WITH the user's cookies, so
-			// off-origin or scheme-carrying entries are refused outright.
+			// Live-data allowlist (html mode). The pane proxies these WITH the
+			// user's cookies, so only an app's own data may be named
+			// (artifact_data_paths.go).
 			dataURLs := stringSliceFromArgs(args, "data_urls")
 			if len(dataURLs) > 0 && !hasHTML {
 				return "", fmt.Errorf("data_urls applies to html mode only: a url preview is already live")
@@ -185,8 +186,8 @@ func (t *chatTurn) showHTMLToolDef() AgentToolDef {
 				return "", fmt.Errorf("data_urls is capped at 8 paths (got %d): consolidate your data endpoints", len(dataURLs))
 			}
 			for _, u := range dataURLs {
-				if !strings.HasPrefix(u, "/") || strings.HasPrefix(u, "//") {
-					return "", fmt.Errorf("data_urls entry %q must be a same-origin path starting with \"/\"", u)
+				if why := artifactDataPathProblem(u); why != "" {
+					return "", fmt.Errorf("data_urls entry %q refused: %s", u, why)
 				}
 			}
 			if title == "" {
@@ -392,8 +393,8 @@ func (t *chatTurn) reopenArtifact(id, title string) (string, error) {
 	payload := map[string]any{"kind": "block", "type": "html_artifact", "id": blk.ID, "title": title, "open": true}
 	if blk.HTML != "" {
 		payload["html"] = blk.HTML
-		if len(blk.DataURLs) > 0 {
-			payload["data_urls"] = blk.DataURLs
+		if dataURLs := allowedArtifactDataURLs(blk.DataURLs); len(dataURLs) > 0 {
+			payload["data_urls"] = dataURLs
 		}
 	} else {
 		payload["url"] = blk.URL

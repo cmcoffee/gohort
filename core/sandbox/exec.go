@@ -390,9 +390,9 @@ func buildSandboxedShellCmd(ctx context.Context, spec ShellRun) (SandboxedCmd, e
 	// find the helper because the workspace doesn't contain it.
 	// Prepend rather than clobber so a caller-supplied PYTHONPATH
 	// also stays in the search list.
-	if extraEnv == nil {
-		extraEnv = map[string]string{}
-	}
+	// A copy, filtered: the map is the caller's, and the names that change
+	// which code loads never go anywhere (env_guard.go).
+	extraEnv = safeExtraEnv(extraEnv)
 	// PYTHONPATH must include both the gohort helper (so `from gohort import
 	// fetch` resolves) and the managed python-deps (so `import openpyxl` and
 	// friends resolve). WHERE those are depends on whether we are about to run
@@ -429,10 +429,17 @@ func buildSandboxedShellCmd(ctx context.Context, spec ShellRun) (SandboxedCmd, e
 		Reach: spec.Reach, WorkDir: spec.WorkDir, Writable: spec.Writable,
 	})
 	env := sandboxEnv(sb.remapsPaths())
-	// Append extras AFTER sandboxEnv so a tool arg "PATH" (rare but
-	// possible) wins over the inherited PATH inside the subshell.
-	for k, v := range extraEnv {
-		env = append(env, k+"="+v)
+	// Extras reach the command through the launcher's environment only on a
+	// backend that hands it down. bwrap and podman carry them in the argv
+	// (build put them there), and the launcher itself runs on the host
+	// unconfined, so its environment gets nothing a caller chose.
+	//
+	// Appended AFTER sandboxEnv so a tool arg "PATH" (rare but possible)
+	// wins over the inherited PATH inside the subshell.
+	if sb.inheritsEnv() {
+		for k, v := range extraEnv {
+			env = append(env, k+"="+v)
+		}
 	}
 	c.Env = env
 	// Spawn breadcrumb: when a dispatch hangs, the gap between this and the
@@ -549,31 +556,6 @@ func bwrapArgvWithEnv(workspaceDir, shellCmd string, extraEnv map[string]string,
 	if len(extraEnv) == 0 {
 		return args
 	}
-	// Find the "--" separator. Everything before it is bwrap flags;
-	// everything after is the command. --setenv must land before "--".
-	sepIdx := -1
-	for i, a := range args {
-		if a == "--" {
-			sepIdx = i
-			break
-		}
-	}
-	if sepIdx < 0 {
-		// Defensive: bwrapArgv lost the separator somehow. Return
-		// the unmodified argv rather than silently corrupting the
-		// invocation.
-		return args
-	}
-	// Copy tail into its own slice BEFORE mutating head — both
-	// args[:sepIdx] and args[sepIdx:] share the same backing array,
-	// so `append(head, ...)` would otherwise overwrite tail's
-	// "--", "sh", "-c", shellCmd entries in place. Symptom of the
-	// aliasing bug was bwrap trying to execvp the whole shell
-	// command string directly (because "sh" and "-c" had been
-	// silently clobbered by the setenv tokens).
-	tail := append([]string{}, args[sepIdx:]...)
-	out := make([]string, 0, sepIdx+len(extraEnv)*3+len(tail)+3)
-	out = append(out, args[:sepIdx]...)
 	// The hook socket no longer lives in the workspace — a per-agent
 	// workspace path is long enough to blow the 107-byte unix socket
 	// limit, so it binds under a short host dir instead (see
@@ -584,13 +566,9 @@ func bwrapArgvWithEnv(workspaceDir, shellCmd string, extraEnv map[string]string,
 	// socket and cannot list anyone else's. Same path inside as out, so
 	// GOHORT_HOOK_PATH is correct on both sides with no translation.
 	if p := extraEnv["GOHORT_HOOK_PATH"]; p != "" && !withinDir(p, workspaceDir) {
-		out = append(out, "--bind", p, p)
+		args = beforeSeparator(args, "--bind", p, p)
 	}
-	for k, v := range extraEnv {
-		out = append(out, "--setenv", k, v)
-	}
-	out = append(out, tail...)
-	return out
+	return withSetenv(args, extraEnv)
 }
 
 // withinDir reports whether path sits under dir, so a socket that IS in
@@ -711,6 +689,7 @@ func RunSandboxedShellPipeEnv(ctx context.Context, command, stdinData string, ex
 		}
 		warnUnsandboxed("response pipes")
 	}
+	extraEnv = safeExtraEnv(extraEnv)
 	c := buildRun(ctx, sb, sandboxRun{Kind: sandboxPipeRun, Command: command, Env: extraEnv})
 	sandbox := sb.confines()
 	c.Env = sandboxEnv(sb.remapsPaths())
@@ -725,9 +704,12 @@ func RunSandboxedShellPipeEnv(ctx context.Context, command, stdinData string, ex
 	// ("GOHORT_HOOK_PATH not set"), which says what is wrong, instead of a
 	// missing-module error that says the tool is broken.
 	c.Env = append(c.Env, "PYTHONPATH="+sandboxPythonPath(sb.remapsPaths(), ""))
-	// Inherited by every backend but a container, which reads run.Env above.
-	for k, v := range extraEnv {
-		c.Env = append(c.Env, k+"="+v)
+	// Only where the launcher hands its environment down: bwrap and podman
+	// got these in the argv, and their launcher runs on the host unconfined.
+	if sb.inheritsEnv() {
+		for k, v := range extraEnv {
+			c.Env = append(c.Env, k+"="+v)
+		}
 	}
 	c.Stdin = strings.NewReader(stdinData)
 

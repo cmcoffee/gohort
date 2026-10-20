@@ -170,6 +170,12 @@ type sandboxBackend interface {
 	// confines and whether it can scope a read are two facts, so the next
 	// backend answers both by construction rather than by remembering.
 	scopesReads() bool
+	// inheritsEnv reports whether the command inside receives its environment
+	// by inheriting the launcher's. False when the backend carries it in the
+	// argv instead (bwrap --setenv, podman --env): there a caller's variables
+	// must stay OFF the launcher's own environment, since the launcher runs on
+	// the host before anything is confined (see env_guard.go).
+	inheritsEnv() bool
 	// build returns the command to execute for one run.
 	build(ctx context.Context, run sandboxRun) *exec.Cmd
 }
@@ -183,11 +189,14 @@ func (b bwrapSandbox) confines() bool    { return true }
 func (b bwrapSandbox) remapsPaths() bool { return true } // it builds a mount namespace
 func (b bwrapSandbox) scopesReads() bool { return true } // --ro-bind: unlisted paths do not exist
 
+// inheritsEnv: no, a caller's variables go in as --setenv.
+func (b bwrapSandbox) inheritsEnv() bool { return false }
+
 func (b bwrapSandbox) build(ctx context.Context, run sandboxRun) *exec.Cmd {
 	var args []string
 	switch run.Kind {
 	case sandboxPipeRun:
-		args = bwrapPipeArgv(run.Command)
+		args = withSetenv(bwrapPipeArgv(run.Command), run.Env)
 	case sandboxScriptRun:
 		args = bwrapScriptArgv(run.Interpreter, run.Command)
 	default:
@@ -215,6 +224,7 @@ func (noSandbox) name() string      { return "none" }
 func (noSandbox) confines() bool    { return false }
 func (noSandbox) remapsPaths() bool { return false }
 func (noSandbox) scopesReads() bool { return false }
+func (noSandbox) inheritsEnv() bool { return true }
 
 func (noSandbox) build(ctx context.Context, run sandboxRun) *exec.Cmd {
 	switch run.Kind {

@@ -88,6 +88,7 @@ func (c containerSandbox) remapsPaths() bool { return true }
 // mounted into it, so a path nobody mounted does not exist. Same property
 // bubblewrap gets from a mount namespace, reached the same way.
 func (c containerSandbox) scopesReads() bool { return true }
+func (c containerSandbox) inheritsEnv() bool { return false } // --env, see build
 
 func (c containerSandbox) build(ctx context.Context, run sandboxRun) *exec.Cmd {
 	args := []string{"run", "--rm", "--interactive"}
