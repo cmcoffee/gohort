@@ -1043,30 +1043,63 @@ func oaiVisionContent(text string, images [][]byte) json.RawMessage {
 		Text     string  `json:"text,omitempty"`
 		ImageURL *imgURL `json:"image_url,omitempty"`
 	}
-	parts := []part{{Type: "text", Text: text}}
+	var imgs []part
+	var unread []string
 	for _, img := range images {
 		img = resizeImage(img)
-		mime := detectImageMIME(img)
+		mime, ok := visionImageMIME(img)
+		if !ok {
+			unread = append(unread, imageFormatName(img))
+			continue
+		}
 		b64 := "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(img)
-		parts = append(parts, part{Type: "image_url", ImageURL: &imgURL{URL: b64}})
+		imgs = append(imgs, part{Type: "image_url", ImageURL: &imgURL{URL: b64}})
 	}
-	b, _ := json.Marshal(parts)
+	if len(unread) > 0 {
+		Debug("[vision] left out %d image(s) the model cannot read: %s", len(unread), strings.Join(unread, ", "))
+		text = unreadableImagesNote(unread) + "\n\n" + text
+	}
+	b, _ := json.Marshal(append([]part{{Type: "text", Text: text}}, imgs...))
 	return b
 }
 
-// detectImageMIME returns the MIME type of image bytes.
-// Falls back to image/jpeg for unrecognised formats (HEIC, AVIF, etc.).
-func detectImageMIME(data []byte) string {
-	ct := http.DetectContentType(data)
-	switch ct {
+// visionImageMIME is the MIME type of image bytes a vision server reads, and
+// false for any other. vLLM refuses the WHOLE request over one image it
+// cannot open ("cannot identify image file"), so an iPhone's HEIC or an AVIF
+// is left out rather than sent under a label it does not match.
+func visionImageMIME(data []byte) (string, bool) {
+	switch ct := http.DetectContentType(data); ct {
 	case "image/jpeg", "image/png", "image/gif", "image/webp":
-		return ct
+		return ct, true
 	}
-	// ISO Base Media File Format (HEIC, AVIF): bytes 4-7 are "ftyp".
+	return "", false
+}
+
+// imageFormatName names an image format the model cannot read, for the note
+// that stands in for it.
+func imageFormatName(data []byte) string {
+	// ISO Base Media File Format (HEIC, AVIF): bytes 4-7 are "ftyp", 8-11
+	// the brand.
 	if len(data) >= 12 && string(data[4:8]) == "ftyp" {
-		return "image/jpeg" // treat as JPEG; caller should convert if possible
+		switch string(data[8:12]) {
+		case "avif", "avis":
+			return "AVIF"
+		case "heic", "heix", "hevc", "hevx", "heim", "heis", "mif1", "msf1":
+			return "HEIC"
+		}
 	}
-	return "image/jpeg"
+	return "an unrecognised format"
+}
+
+// unreadableImagesNote is what the model is told in place of images it was
+// not sent, so it says so instead of answering as if it saw them.
+func unreadableImagesNote(formats []string) string {
+	n := "An attached image was"
+	if len(formats) > 1 {
+		n = fmt.Sprintf("%d attached images were", len(formats))
+	}
+	return "[" + n + " not shown to you: " + strings.Join(formats, ", ") +
+		" cannot be read here (JPEG, PNG, GIF and WebP can). Tell the user, and ask them to send it as a JPEG or PNG.]"
 }
 
 type oaiResponse struct {
