@@ -441,6 +441,30 @@ const ShareEveryone = "*"
 // each group owner may share with, named for what it is and how many it
 // reaches today.
 func ShareCandidatesJSON(owner string, groups, everyone bool) []byte {
+	label := ""
+	if everyone {
+		label = "Everyone"
+	}
+	return ShareCandidatesFor(owner, groups, label)
+}
+
+// EveryoneChoiceLabel is how a share picker names Everyone where widening to
+// it is an administrator's call (promotion.AskEveryone): plainly once it is
+// granted or for an administrator, else as the request it files or is
+// waiting on.
+func EveryoneChoiceLabel(granted, pending, admin bool) string {
+	switch {
+	case granted || admin:
+		return "Everyone"
+	case pending:
+		return "Everyone (waiting for an administrator)"
+	}
+	return "Everyone (an administrator approves)"
+}
+
+// ShareCandidatesFor is ShareCandidatesJSON with Everyone first under
+// everyoneLabel, or left out when it is "".
+func ShareCandidatesFor(owner string, groups bool, everyoneLabel string) []byte {
 	type candidate struct {
 		Value string `json:"value"`
 		Label string `json:"label"`
@@ -451,8 +475,8 @@ func ShareCandidatesJSON(owner string, groups, everyone bool) []byte {
 		return []byte("[]")
 	}
 	json.Unmarshal(UserCandidatesJSON(AuthDB(), owner), &out)
-	if everyone {
-		out = append([]candidate{{Value: ShareEveryone, Label: "Everyone",
+	if everyoneLabel != "" {
+		out = append([]candidate{{Value: ShareEveryone, Label: everyoneLabel,
 			Desc: "every signed-in user, " + strconv.Itoa(len(out)) + " besides you today"}}, out...)
 	}
 	if u, ok := AuthGetUser(AuthDB(), owner); ok && groups {

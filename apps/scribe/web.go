@@ -10,9 +10,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/promotion"
 
 	"github.com/cmcoffee/gohort/apps/orchestrate"
 	"github.com/cmcoffee/gohort/apps/publish"
@@ -47,8 +49,7 @@ func (T *Scribe) route(w http.ResponseWriter, r *http.Request) {
 	case path == "share":
 		T.handleShare(w, r, udb, user)
 	case path == "share/candidates":
-		w.Header().Set("Content-Type", "application/json")
-		w.Write(ShareCandidatesJSON(user, true, true))
+		T.handleShareCandidates(w, r, udb, user)
 	// The whole guide edited as one page (the viewer's Edit all), the header
 	// image, importing a page exported earlier, and the pictures pasted or
 	// dropped into a guide (stored, then served to whoever may read it).
@@ -460,9 +461,10 @@ func (T *Scribe) handleShare(w http.ResponseWriter, r *http.Request, udb Databas
 		http.Error(w, "only the owner can change who this guide is shared with", http.StatusForbidden)
 		return
 	}
+	ask := guideEveryoneAsk(owner, g, RequestIsAdmin(r))
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, guideShareOf(g))
+		writeJSON(w, guideShareOf(g, promotion.EveryonePending(AuthDB(), ask)))
 	case http.MethodPatch, http.MethodPost:
 		var body struct {
 			AllowedUsers *[]string `json:"allowed_users"`
@@ -472,7 +474,7 @@ func (T *Scribe) handleShare(w http.ResponseWriter, r *http.Request, udb Databas
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
-		cur := guideShareOf(g)
+		cur := guideShareOf(g, promotion.EveryonePending(AuthDB(), ask))
 		if body.AllowedUsers != nil {
 			cur.AllowedUsers = *body.AllowedUsers
 		}
@@ -480,9 +482,19 @@ func (T *Scribe) handleShare(w http.ResponseWriter, r *http.Request, udb Databas
 			cur.Editors = *body.Editors
 		}
 		g.applyShare(owner, cur)
+		// Everyone is the administrator's to widen to (guide_everyone.go):
+		// the list asks, and what is stored is what may be granted now.
+		ask.Want = g.everyoneLevel()
+		ask.Note = "Guide " + strconv.Quote(g.Title) + ": everyone can " + ask.Want
+		level, err := promotion.AskEveryone(AuthDB(), ask)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		g.setEveryoneLevel(level)
 		saveGuide(ownerUDB, g) // who it reaches, not what it says: no revision
 		indexGuideShares(T.DB, owner, id, g.Shared, g.AllowedUsers)
-		writeJSON(w, guideShareOf(g))
+		writeJSON(w, guideShareOf(g, promotion.EveryonePending(AuthDB(), ask)))
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -496,12 +508,18 @@ type guideShare struct {
 	Editors      []string `json:"editors"`
 }
 
-// guideShareOf is g's sharing as the picker shows it.
-func guideShareOf(g Guide) guideShare {
+// guideShareOf is g's sharing as the picker shows it: Everyone at the level
+// granted, or at the one waiting on an administrator (pending) when that is
+// wider, so the list reads back what was asked for.
+func guideShareOf(g Guide, pending string) guideShare {
 	out := guideShare{AllowedUsers: []string{}, Editors: []string{}}
-	if g.Shared {
+	level := g.everyoneLevel()
+	if pending == guideLevelEdit || (pending == guideLevelView && level == "") {
+		level = pending
+	}
+	if level != "" {
 		out.AllowedUsers = append(out.AllowedUsers, ShareEveryone)
-		if g.sharedForEdit() {
+		if level == guideLevelEdit {
 			out.Editors = append(out.Editors, ShareEveryone)
 		}
 	}

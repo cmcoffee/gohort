@@ -131,6 +131,8 @@ func (T *Scribe) Routes() {
 	// Register Scribe as a write target so other apps (servitor) can push a
 	// section into a user's guide.
 	RegisterDocumentTarget(&guideTarget{app: T})
+	// Everyone on a guide is approved by an administrator (guide_everyone.go).
+	T.registerGuidePromotion()
 	// A guide as a Source an agent is attached to: it reads and searches the
 	// guide and reports findings into it (agent_source.go).
 	RegisterReferenceSource(guideSource{app: T})

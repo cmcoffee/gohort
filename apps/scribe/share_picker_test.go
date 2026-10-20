@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/promotion"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -29,7 +30,9 @@ func shareFixture(t *testing.T) (*Scribe, Database) {
 	t.Cleanup(func() { AuthDB, RootDB = prevAuth, prevRoot })
 	appDB := &DBase{Store: kvlite.MemStore()}
 	saveGuide(UserDB(appDB, "alice"), Guide{ID: "g1", Title: "Runbook", Owner: "alice"})
-	return &Scribe{AppCore: AppCore{DB: appDB}}, appDB
+	T := &Scribe{AppCore: AppCore{DB: appDB}}
+	T.registerGuidePromotion()
+	return T, appDB
 }
 
 // share PATCHes the picker's lists as user and returns the status.
@@ -66,9 +69,24 @@ func TestAGuideIsSharedWithWhomTheOwnerPicks(t *testing.T) {
 		}
 	}
 
-	// Everyone to read, which reaches dan too; bob stays an editor.
+	// Everyone to read is asked of an administrator, not granted: dan gets
+	// nothing yet, and the picker reads back what was asked for.
 	if c := share(T, "alice", `{"allowed_users":["*","bob"],"editors":["bob"]}`); c != http.StatusOK {
 		t.Fatalf("share answered %d", c)
+	}
+	if got := reach(T, "dan"); got != "" {
+		t.Errorf("Everyone reached dan before an administrator approved it: %q", got)
+	}
+	if !PendingPromotion(AuthDB(), "alice", guidePromotionKind, "g1:view") {
+		t.Fatal("Everyone filed no request")
+	}
+	pw := httptest.NewRecorder()
+	T.handleShare(pw, httptest.NewRequest(http.MethodGet, "/scribe/share?id=g1", nil), UserDB(appDB, "alice"), "alice")
+	if !strings.Contains(pw.Body.String(), `"allowed_users":["*","bob"]`) {
+		t.Errorf("while it waits the picker reads %s", pw.Body.String())
+	}
+	if err := promotion.Approve(AuthDB(), promotion.RequestKey(guidePromotionKind, "alice", "g1:view"), "root"); err != nil {
+		t.Fatalf("approve: %v", err)
 	}
 	g, _ := loadGuide(UserDB(appDB, "alice"), "g1")
 	if !g.Shared || g.ShareMode != "" || len(g.AllowedUsers) != 1 || g.AllowedUsers[0] != "bob" {
@@ -78,6 +96,16 @@ func TestAGuideIsSharedWithWhomTheOwnerPicks(t *testing.T) {
 		if got := reach(T, user); got != want {
 			t.Errorf("shared with everyone, %s gets %q, want %q", user, got, want)
 		}
+	}
+	// Asking for everyone to edit is a new request; viewing stays meanwhile.
+	share(T, "alice", `{"allowed_users":["*","bob"],"editors":["*","bob"]}`)
+	if got := reach(T, "dan"); got != "view" || !PendingPromotion(AuthDB(), "alice", guidePromotionKind, "g1:edit") {
+		t.Errorf("asking for edit: dan gets %q, request pending %v", got, PendingPromotion(AuthDB(), "alice", guidePromotionKind, "g1:edit"))
+	}
+	// Taking edit back withdraws the request, and needs nobody.
+	share(T, "alice", `{"allowed_users":["*","bob"],"editors":["bob"]}`)
+	if PendingPromotion(AuthDB(), "alice", guidePromotionKind, "g1:edit") {
+		t.Error("taking edit back left the request waiting")
 	}
 	// The picker reads Everyone back as one more choice.
 	w := httptest.NewRecorder()

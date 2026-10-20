@@ -780,12 +780,12 @@ const guideShareAction = `function(ctx){
           }
           window.uiMountComponent({
             type:'chip_picker', mode:'attach',
-            options_source:'share/candidates',
+            options_source:'share/candidates?'+qp,
             record_source:'share?' + qp, field:'allowed_users',
             post_to:'share?' + qp, method:'PATCH',
             name_field:'value', label_field:'label', desc_field:'desc',
             noun:'person or team',
-            intro:'Who can open this guide: people, a team you are on, or everyone signed in. Each starts able to read and export it.',
+            intro:'Who can open this guide: people, a team you are on, or everyone signed in. Each starts able to read and export it. Everyone needs an administrator to approve it.',
             empty_text:'There is no one else on this deployment to share with yet.',
             flag_field:'editors', flag_label:'Can edit', flag_off_label:'Can view',
             flag_help:'Can edit: change sections and write with the assistant. Only you can change sharing, delete the guide, or manage its knowledge and sources.',
