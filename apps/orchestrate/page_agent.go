@@ -1248,10 +1248,10 @@ func (T *OrchestrateApp) budgetReasoningFields(editRec AgentRecord, leadModelLoc
 		{Field: "reasoning", Type: "select", Label: "Mode",
 			Options: []ui.SelectOption{
 				{Value: "", Label: "Default: follow the deployment routing (" + currentAutoThinkLabel() + ")"},
-				{Value: "off", Label: "Off: no reasoning (faster)"},
-				{Value: "low", Label: "Low"},
-				{Value: "medium", Label: "Medium"},
 				{Value: "high", Label: "High"},
+				{Value: "medium", Label: "Medium"},
+				{Value: "low", Label: "Low"},
+				{Value: "off", Label: "Off: no reasoning (faster)"},
 			},
 			Help:   "Whether this agent reasons before it answers, and how hard.",
 			Detail: "Each model gets its own dial for the level: Claude's effort setting, OpenAI's reasoning effort, or a thinking budget sized for local models. The admin's maximum effort for the model tier still caps it.\n\nReasoning helps planners and synthesizers; Off suits fast lookups, transformers and routers. Default reasons unless the deployment routing is set otherwise; a new sub-agent starts Off."},
