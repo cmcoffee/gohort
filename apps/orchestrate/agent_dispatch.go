@@ -2733,6 +2733,7 @@ func (cr *continuingRun) saveExchange() {
 		if latest, ok := loadChatSession(cr.runtimeDB, cr.target.ID, cr.subSessionID); ok && len(latest.Messages) > baseCount {
 			cr.priorSession.Messages = append(cr.priorSession.Messages, latest.Messages[baseCount:]...)
 		}
+		reply := ChatMessage{Role: "assistant", Content: cr.cleanReply, Created: now, Sender: assistantSender, Attachments: deliveredIDs, Files: deliveredFiles, ToolCalls: cr.savedToolCalls()}
 		cr.priorSession.Messages = append(cr.priorSession.Messages,
 			storedRunInput(run, cr.deliveredMessage, now),
 			// ToolCalls is what a replayed turn shows as its tool chips, and
@@ -2743,8 +2744,11 @@ func (cr *continuingRun) saveExchange() {
 			// then dropped. Same field, same shape, same renderer as runner.go
 			// and scheduled_updates.go; a rule on one side of that symmetry is
 			// a bug.
-			ChatMessage{Role: "assistant", Content: cr.cleanReply, Created: now, Sender: assistantSender, Attachments: deliveredIDs, Files: deliveredFiles, ToolCalls: cr.savedToolCalls()},
 		)
+		// Sent as several messages, it is kept as several: the thread shows
+		// what the conversation received. What the turn carried and ran rides
+		// the first, as the pictures went out with the first.
+		cr.priorSession.Messages = append(cr.priorSession.Messages, cr.storedReplies(reply)...)
 		// Bound STORAGE the same way the Cortex home thread does (runner.go
 		// handleSend): drop leading messages already folded into the summary
 		// AND archived to recall, cursor kept consistent. Without this, a
@@ -2755,6 +2759,25 @@ func (cr *continuingRun) saveExchange() {
 			Log("[orchestrate.RunAgentSyncContinuing] WARN failed to persist sub-session %s: %v", cr.subSessionID, serr)
 		}
 	})
+}
+
+// storedReplies is the turn's reply as the thread keeps it: one message, or
+// one per part when it went out as several (replyParts) and is still exactly
+// those parts.
+func (cr *continuingRun) storedReplies(reply ChatMessage) []ChatMessage {
+	if len(cr.replyParts) < 2 || reply.Content != strings.Join(cr.replyParts, "\n\n") {
+		return []ChatMessage{reply}
+	}
+	out := make([]ChatMessage, 0, len(cr.replyParts))
+	for i, p := range cr.replyParts {
+		m := ChatMessage{Role: "assistant", Content: p, Created: reply.Created, Sender: reply.Sender}
+		if i == 0 {
+			m = reply
+			m.Content = p
+		}
+		out = append(out, m)
+	}
+	return out
 }
 
 func (cr *continuingRun) collectMedia() {

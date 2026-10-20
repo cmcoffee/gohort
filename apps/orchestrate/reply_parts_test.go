@@ -42,9 +42,24 @@ func TestPartsAskedForGoOutAsSeparateMessages(t *testing.T) {
 	if reply.Text != "one" || strings.Join(reply.More, "|") != "two|three" {
 		t.Errorf("want three messages one|two|three, got %q + %q", reply.Text, reply.More)
 	}
+	// The thread keeps them as the conversation got them: three messages, the
+	// turn's tool calls on the first.
 	s := df.thread("room-1")
-	if n := len(s.Messages); n == 0 || s.Messages[n-1].Content != "one\n\ntwo\n\nthree" {
-		t.Errorf("the thread should record all three: %+v", s.Messages)
+	n := len(s.Messages)
+	if n < 4 {
+		t.Fatalf("thread too short: %+v", s.Messages)
+	}
+	last := s.Messages[n-3:]
+	for i, want := range []string{"one", "two", "three"} {
+		if last[i].Role != "assistant" || last[i].Content != want {
+			t.Errorf("stored message %d = %s %q, want assistant %q", i, last[i].Role, last[i].Content, want)
+		}
+	}
+	if len(last[0].ToolCalls) == 0 || len(last[1].ToolCalls)+len(last[2].ToolCalls) != 0 {
+		t.Errorf("the tool calls should ride the first message only: %d %d %d", len(last[0].ToolCalls), len(last[1].ToolCalls), len(last[2].ToolCalls))
+	}
+	if s.Messages[n-4].Role != "user" {
+		t.Errorf("the three should follow the message they answer: %+v", s.Messages[n-4])
 	}
 	var hint, told bool
 	for i := 0; i < df.llm.Calls(); i++ {
