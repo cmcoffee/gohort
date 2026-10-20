@@ -88,3 +88,54 @@ func TestAPublishedPageIsTakenInAndKept(t *testing.T) {
 		t.Errorf("the publish did not go to the page it was taken in from: %+v", got)
 	}
 }
+
+// A guide that made a page of its own is linked to the page that was there
+// first: that page replaces the other as its copy, what was read is the
+// baseline, and the next update goes to it.
+func TestAGuideIsLinkedToAnExistingPage(t *testing.T) {
+	var got docs.PublishRequest
+	docs.RegisterPublishDestination(wikiDest{published: &got})
+	T := &Scribe{AppCore: AppCore{DB: &DBase{Store: kvlite.MemStore()}}}
+	udb := UserDB(T.DB, "alice")
+	saveGuide(udb, Guide{ID: "g-link", Title: "Runbook", Owner: "alice",
+		Sections:  []Section{{ID: "s", Title: "Restart", Markdown: "Restart it now.", Order: 1}},
+		Published: []docs.PublishRecord{{Kind: "wikitest", Target: "space-1", ExternalID: "99", URL: "https://wiki.example.com/pages/99"}}})
+
+	w := httptest.NewRecorder()
+	T.handlePublishLink(w, httptest.NewRequest(http.MethodPost, "/scribe/publish/link?id=g-link",
+		strings.NewReader(`{"kind":"wikitest","link":"https://wiki.example.com/pages/77/Runbook"}`)), udb, "alice")
+	if w.Code != http.StatusOK {
+		t.Fatalf("link answered %d: %s", w.Code, w.Body.String())
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	var j publishJob
+	for {
+		j, _ = currentPublishJob("g-link")
+		if j.Done || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !j.Done || !j.OK || !j.linking {
+		t.Fatalf("the link ended %+v", j)
+	}
+	g, _ := loadGuide(udb, "g-link")
+	rec, _ := docs.FindPublishRecord(g.Published, "wikitest")
+	if len(g.Published) != 1 || rec.ExternalID != "77" {
+		t.Fatalf("the guide's copy: %+v", g.Published)
+	}
+	if b, ok := loadBaseline(udb, "g-link", "wikitest"); !ok || b.Version != "4" {
+		t.Errorf("no baseline from the linked page: %+v", b)
+	}
+	if len(g.Sections) != 1 || g.Sections[0].Markdown != "Restart it now." {
+		t.Errorf("linking changed what the guide says: %+v", g.Sections)
+	}
+	p := republishOf(g, udb, "alice", rec)
+	pj, ctx := p.start(context.Background())
+	if err := p.do(ctx, pj); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	if got.ExternalID != "77" || !strings.Contains(got.Doc.Markdown, "Restart it now.") {
+		t.Errorf("the update did not put the guide on the linked page: %+v", got.ExternalID)
+	}
+}

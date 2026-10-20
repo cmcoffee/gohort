@@ -55,6 +55,9 @@ type publishJob struct {
 	// guide going out; GuideID is the guide it became, once it has.
 	importing bool
 	GuideID   string `json:"guide_id,omitempty"`
+	// linking is the guide being pointed at a page already published
+	// somewhere (page_import.go), run as the guide's own job.
+	linking bool
 }
 
 // publishJobStep is one step and when it happened, in seconds from the start.
@@ -304,6 +307,7 @@ func (T *Scribe) handlePublishJob(w http.ResponseWriter, r *http.Request, udb Da
 		"steps":   j.Steps,
 		"now":     j.Now,
 		"stopped": j.Stopped,
+		"linked":  j.linking,
 	})
 }
 

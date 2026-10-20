@@ -210,3 +210,105 @@ func countOf(n int, noun string) string {
 	}
 	return itoa(n) + " " + noun + "s"
 }
+
+// handlePublishLink points a guide at a page already published somewhere:
+// POST ?id=<guide> {kind, target, link}. The page becomes the guide's copy at
+// that destination (in place of any it had there), with what was read as its
+// baseline, so the next update puts the guide on that page. Edit rights, like
+// publishing. Runs as the guide's publish job, which the Publish dialog
+// follows.
+func (T *Scribe) handlePublishLink(w http.ResponseWriter, r *http.Request, udb Database, user string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	g, ownerUDB, _, canEdit, found := T.resolve(r, udb, user, id)
+	if !found {
+		http.NotFound(w, r)
+		return
+	}
+	if !canEdit {
+		http.Error(w, "You need edit access to change where this guide is published.", http.StatusForbidden)
+		return
+	}
+	var body struct {
+		Kind   string `json:"kind"`
+		Target string `json:"target"`
+		Link   string `json:"link"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	var where string
+	for _, p := range importPlaces(r.Context(), user) {
+		if p.Kind == body.Kind && p.Target == body.Target {
+			where = p.Title
+		}
+	}
+	if where == "" {
+		http.Error(w, "That is not one of the places you can link a page from.", http.StatusNotFound)
+		return
+	}
+	if strings.TrimSpace(body.Link) == "" {
+		http.Error(w, "Paste the page's address.", http.StatusBadRequest)
+		return
+	}
+	if j, running := currentPublishJob(g.ID); running && !j.Done {
+		http.Error(w, "This guide is already being published to "+j.Target+".", http.StatusConflict)
+		return
+	}
+	ctx, cancel := context.WithCancel(context.WithoutCancel(r.Context()))
+	job := &publishJob{Target: where, Started: time.Now(), cancel: cancel,
+		owner: user, guideID: g.ID, title: g.Title, linking: true}
+	publishJobsMu.Lock()
+	publishJobs[g.ID] = job
+	publishJobsMu.Unlock()
+	go T.linkGuide(ctx, ownerUDB, user, g.ID, where, body.Kind, body.Target, body.Link, job)
+	writeJSON(w, map[string]any{"started": true, "target": where})
+}
+
+// linkGuide reads the page and records it as the guide's copy there.
+func (T *Scribe) linkGuide(ctx context.Context, udb Database, user, guideID, where, kind, target, link string, job *publishJob) {
+	ctx = docs.WithPublishSteps(ctx, job.step)
+	ctx = docs.WithPublishActivity(ctx, job.activity)
+	rec, err := func() (docs.PublishRecord, error) {
+		lp, err := docs.LinkPage(ctx, user, kind, target, link)
+		if err != nil {
+			return docs.PublishRecord{}, err
+		}
+		if ctx.Err() != nil {
+			return docs.PublishRecord{}, errors.New("stopped")
+		}
+		g, ok := loadGuide(udb, guideID)
+		if !ok {
+			return docs.PublishRecord{}, errors.New("the guide is gone")
+		}
+		rec := lp.Record
+		rec.Kind = kind
+		rec.At = now()
+		rec.Title = firstNonEmpty(rec.Title, lp.Title, g.Title)
+		rec.TargetTitle = firstNonEmpty(rec.TargetTitle, where)
+		g.Published = docs.UpsertPublishRecord(g.Published, rec)
+		saveGuideRev(udb, g, "Linked to a page in "+where)
+		saveBaseline(udb, guideID, kind, lp.Copy)
+		return rec, nil
+	}()
+	publishJobsMu.Lock()
+	defer publishJobsMu.Unlock()
+	job.Done, job.Ended, job.Now = true, time.Now(), ""
+	if job.cancel != nil {
+		job.cancel()
+	}
+	switch {
+	case job.Stopped:
+		job.Message = "Stopped before the guide was linked."
+	case err != nil:
+		job.Message = err.Error()
+	default:
+		job.OK, job.URL = true, rec.URL
+		job.Message = "Linked to " + firstNonEmpty(rec.Title, "the page") + " in " + where + ". The next update puts this guide on that page, in place of what it says now."
+		Log("[scribe.link] user=%q linked guide %s to %s %s", user, guideID, kind, rec.ExternalID)
+	}
+}

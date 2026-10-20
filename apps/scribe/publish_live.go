@@ -32,7 +32,12 @@ func publishLiveEntries() []LiveEntry {
 		if j.background {
 			label = "Keeping " + firstNonEmpty(j.title, "a guide") + " published"
 		}
-		if j.importing {
+		if j.linking {
+			label = "Linking " + firstNonEmpty(j.title, "a guide") + " to a page"
+			if j.Target != "" {
+				label += " in " + j.Target
+			}
+		} else if j.importing {
 			label = "Importing a page"
 			if j.Target != "" {
 				label += " from " + j.Target

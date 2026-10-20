@@ -1026,7 +1026,7 @@ const guidePublishAction = `function(ctx){
               // What it is doing now (its round, its thinking, the step it is
               // on) rides beside the target, so a long model round reads as
               // working rather than stuck on the last step listed.
-              if (last && !last.done) line.textContent = frames[fi] + ' Publishing to ' + last.target + (last.now ? ' - ' + last.now : '') + (last.elapsed >= 3 ? ' - ' + last.elapsed + 's' : '');
+              if (last && !last.done) line.textContent = frames[fi] + (last.linked ? ' Linking to a page in ' : ' Publishing to ') + last.target + (last.now ? ' - ' + last.now : '') + (last.elapsed >= 3 ? ' - ' + last.elapsed + 's' : '');
             }, 120);
             function poll(){
               fetch('publish/job?' + qp, {credentials:'same-origin', cache:'no-store'}).then(function(r){ return r.json(); }).then(function(j){
@@ -1036,14 +1036,15 @@ const guidePublishAction = `function(ctx){
                 if (!j.done){ setTimeout(poll, 2000); return; }
                 clearInterval(spin);
                 dropStop();
-                line.textContent = (j.ok ? 'Published to ' : j.stopped ? 'Stopped publishing to ' : 'Could not publish to ') + j.target + ' (' + j.took + ').';
+                line.textContent = (j.linked ? (j.ok ? 'Linked to a page in ' : j.stopped ? 'Stopped linking to ' : 'Could not link to a page in ')
+                  : (j.ok ? 'Published to ' : j.stopped ? 'Stopped publishing to ' : 'Could not publish to ')) + j.target + ' (' + j.took + ').';
                 line.className = 'guide-pub-status ' + (j.ok ? 'guide-pub-ok' : 'guide-pub-fail');
                 if (j.message) view.appendChild(el('p', {class:'guide-kn-intro', text: j.message}));
                 if (j.url) view.appendChild(el('a', {class:'guide-pub-link', href: j.url, target:'_blank', rel:'noopener', text:'Open it'}));
                 var back = el('button', {class:'ui-row-btn', text:'Back'});
                 back.addEventListener('click', function(){ reload(); });
                 var btns = [back];
-                if (!j.ok && !j.stopped){
+                if (!j.ok && !j.stopped && !j.linked){
                   // A quick update that failed usually needs an answer: hand
                   // it to the Publisher with what went wrong.
                   var talk = el('button', {class:'ui-row-btn primary', text:'Work it out with the Publisher'});
@@ -1158,6 +1159,42 @@ const guidePublishAction = `function(ctx){
               other.addEventListener('click', function(){ openChat('Publish this guide.'); });
               view.appendChild(el('div', {style:'margin-top:0.8rem'}, [other]));
             }
+            // A page this guide should keep, that it did not make: link it,
+            // so the next update goes there instead of to a new page.
+            view.appendChild(el('div', {class:'guide-set-head', text:'Already on a page somewhere?'}));
+            view.appendChild(el('p', {class:'guide-kn-intro', text:'Link this guide to that page and updates go there, in place of a new page. The next update replaces what the page says with this guide.'}));
+            var linkBtn = el('button', {class:'ui-row-btn', text:'Link to an existing page'});
+            var linkForm = el('div', {style:'margin-top:0.5rem'});
+            linkBtn.addEventListener('click', function(){
+              linkBtn.disabled = true;
+              fetch('import/page', {credentials:'same-origin'}).then(function(r){ return r.ok ? r.json() : {places: []}; }).then(function(pd){
+                var places = (pd && pd.places) || [];
+                linkForm.innerHTML = '';
+                if (!places.length){
+                  linkForm.appendChild(el('p', {class:'guide-kn-intro', text:'Nothing you can read a page from is set up yet: connect Confluence, or make a publishing target in Extensions.'}));
+                  return;
+                }
+                var pick = el('select', {class:'ui-input'});
+                places.forEach(function(pl, i){ var o = el('option', {text: pl.title + (pl.group ? ' (' + pl.group + ')' : '')}); o.value = String(i); pick.appendChild(o); });
+                var addr = el('input', {class:'ui-input', type:'text', placeholder:'The page address, from your browser'});
+                var go = el('button', {class:'ui-row-btn primary', text:'Link'});
+                go.addEventListener('click', function(){
+                  var pl = places[parseInt(pick.value, 10)];
+                  if (!pl || !addr.value.trim()) { window.uiAlert('Pick where the page is and paste its address.'); return; }
+                  go.disabled = true;
+                  fetch('publish/link?' + qp, {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'},
+                    body: JSON.stringify({kind: pl.kind, target: pl.target || '', link: addr.value.trim()})})
+                    .then(function(r){ return r.text().then(function(t){ if (!r.ok) throw new Error(t || ('HTTP ' + r.status)); return t; }); })
+                    .then(function(){ followJob(); })
+                    .catch(function(err){ go.disabled = false; window.uiAlert('Could not link it: ' + (err && err.message || err)); });
+                });
+                linkForm.appendChild(el('label', {text:'Where it is'})); linkForm.appendChild(pick);
+                linkForm.appendChild(el('label', {text:'Its address', style:'margin-top:0.5rem;display:block'})); linkForm.appendChild(addr);
+                linkForm.appendChild(el('div', {style:'margin-top:0.5rem'}, [go]));
+              }).catch(function(){ linkBtn.disabled = false; });
+            });
+            view.appendChild(linkBtn);
+            view.appendChild(linkForm);
           }
           if (d.running) followJob(); else showList();
         }});
