@@ -39,6 +39,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/cmcoffee/gohort/core/activity"
 )
 
 const (
@@ -378,6 +380,7 @@ func peerExchangePairingCode(w http.ResponseWriter, r *http.Request, code string
 		return PeerKey{}, false
 	}
 	markPeerKeyPaired(k.ID)
+	RecordActivity(r, activity.Peer, "", "the peer "+k.Label+" paired with this machine")
 	Log("[peer] %s paired and took a token family", k.Label)
 	writeJSON(w, pair)
 	return k, true

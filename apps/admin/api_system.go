@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/activity"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -298,7 +299,7 @@ func (a *AdminApp) handleUpdateSettings(w http.ResponseWriter, r *http.Request) 
 	// handler would not keep.
 	if app := strings.TrimSpace(r.URL.Query().Get("app")); app != "" {
 		var generic map[string]any
-		if json.Unmarshal(raw, &generic) == nil && a.applyTunables(generic, TunablesForApp(app), current) {
+		if json.Unmarshal(raw, &generic) == nil && a.applyTunables(generic, TunablesForApp(app), r) {
 			InvalidateTunables()
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -307,33 +308,33 @@ func (a *AdminApp) handleUpdateSettings(w http.ResponseWriter, r *http.Request) 
 	}
 	if req.AllowSignup != nil {
 		a.db.Set(WebTable, "allow_signup", *req.AllowSignup)
-		Log("[admin] user %q set allow_signup=%v", current, *req.AllowSignup)
+		adminChange(r, activity.Settings, "set allow_signup=%v", *req.AllowSignup)
 	}
 	if req.SessionAbsoluteDays != nil && *req.SessionAbsoluteDays >= 0 && *req.SessionAbsoluteDays <= 3650 {
 		// Written even when 0 — that is the "no ceiling" choice, and storing it
 		// is what keeps it from reading as unset on the next load.
 		a.db.Set(WebTable, "session_absolute_days", *req.SessionAbsoluteDays)
-		Log("[admin] user %q set session_absolute_days=%d", current, *req.SessionAbsoluteDays)
+		adminChange(r, activity.Settings, "set session_absolute_days=%d", *req.SessionAbsoluteDays)
 	}
 	if req.SessionDays != nil && *req.SessionDays >= 1 && *req.SessionDays <= 90 {
 		a.db.Set(WebTable, "session_days", *req.SessionDays)
-		Log("[admin] user %q set session_days=%d", current, *req.SessionDays)
+		adminChange(r, activity.Settings, "set session_days=%d", *req.SessionDays)
 	}
 	if req.MaxLoginAttempts != nil && *req.MaxLoginAttempts >= 1 && *req.MaxLoginAttempts <= 100 {
 		a.db.Set(WebTable, "max_login_attempts", *req.MaxLoginAttempts)
-		Log("[admin] user %q set max_login_attempts=%d", current, *req.MaxLoginAttempts)
+		adminChange(r, activity.Settings, "set max_login_attempts=%d", *req.MaxLoginAttempts)
 	}
 	if req.LockoutMinutes != nil && *req.LockoutMinutes >= 1 && *req.LockoutMinutes <= 1440 {
 		a.db.Set(WebTable, "lockout_minutes", *req.LockoutMinutes)
-		Log("[admin] user %q set lockout_minutes=%d", current, *req.LockoutMinutes)
+		adminChange(r, activity.Settings, "set lockout_minutes=%d", *req.LockoutMinutes)
 	}
 	if req.ServiceName != nil {
 		a.db.Set(WebTable, "service_name", *req.ServiceName)
-		Log("[admin] user %q set service_name=%q", current, *req.ServiceName)
+		adminChange(r, activity.Settings, "set service_name=%q", *req.ServiceName)
 	}
 	if req.ExternalURL != nil {
 		a.db.Set(WebTable, "external_url", *req.ExternalURL)
-		Log("[admin] user %q set external_url=%q", current, *req.ExternalURL)
+		adminChange(r, activity.Settings, "set external_url=%q", *req.ExternalURL)
 	}
 	if req.APIKeyAllowQuery != nil {
 		// Stored as "on"/"off" rather than a bool: gob omits a false bool, so
@@ -347,23 +348,23 @@ func (a *AdminApp) handleUpdateSettings(w http.ResponseWriter, r *http.Request) 
 		// Logged as the security decision it is, with who made it: turning
 		// this on puts a blanket auth bypass back into URLs, where it reaches
 		// browser history and every proxy log in between.
-		Log("[admin] user %q set api_key_allow_query=%s", current, v)
+		adminChange(r, activity.Settings, "set api_key_allow_query=%s", v)
 	}
 	if req.NotifyFrom != nil {
 		a.db.Set(WebTable, "notify_from", *req.NotifyFrom)
-		Log("[admin] user %q set notify_from=%q", current, *req.NotifyFrom)
+		adminChange(r, activity.Settings, "set notify_from=%q", *req.NotifyFrom)
 	}
 	if req.DefaultApps != nil {
 		AuthSetDefaultApps(a.db, *req.DefaultApps)
-		Log("[admin] user %q set default_apps=%v", current, *req.DefaultApps)
+		adminChange(r, activity.Settings, "set default_apps=%v", *req.DefaultApps)
 	}
 	if req.OllamaProxyEnabled != nil {
 		a.db.Set(WebTable, "ollama_proxy_enabled", *req.OllamaProxyEnabled)
-		Log("[admin] user %q set ollama_proxy_enabled=%v", current, *req.OllamaProxyEnabled)
+		adminChange(r, activity.Settings, "set ollama_proxy_enabled=%v", *req.OllamaProxyEnabled)
 	}
 	if req.OllamaProxyPort != nil && *req.OllamaProxyPort >= 0 && *req.OllamaProxyPort <= 65535 {
 		a.db.Set(WebTable, "ollama_proxy_port", *req.OllamaProxyPort)
-		Log("[admin] user %q set ollama_proxy_port=%d", current, *req.OllamaProxyPort)
+		adminChange(r, activity.Settings, "set ollama_proxy_port=%d", *req.OllamaProxyPort)
 	}
 	if req.OllamaProxyBind != nil {
 		bind := strings.TrimSpace(*req.OllamaProxyBind)
@@ -380,34 +381,34 @@ func (a *AdminApp) handleUpdateSettings(w http.ResponseWriter, r *http.Request) 
 		if bind == "0.0.0.0" {
 			Warn("[admin] user %q exposed the Ollama proxy on all interfaces: requests from off-box now require an API key", current)
 		} else {
-			Log("[admin] user %q set ollama_proxy_bind=%s", current, bind)
+			adminChange(r, activity.Settings, "set ollama_proxy_bind=%s", bind)
 		}
 	}
 	if req.FetchCacheQuotaMB != nil && *req.FetchCacheQuotaMB >= 0 && *req.FetchCacheQuotaMB <= 10240 {
 		a.db.Set(WebTable, "fetch_cache_quota_mb", *req.FetchCacheQuotaMB)
-		Log("[admin] user %q set fetch_cache_quota_mb=%d", current, *req.FetchCacheQuotaMB)
+		adminChange(r, activity.Settings, "set fetch_cache_quota_mb=%d", *req.FetchCacheQuotaMB)
 	}
 	if req.ChannelWakeRules != nil {
 		AuthSetChannelWakeRules(a.db, strings.TrimSpace(*req.ChannelWakeRules))
-		Log("[admin] user %q updated channel_wake_rules (%d chars)", current, len(strings.TrimSpace(*req.ChannelWakeRules)))
+		adminChange(r, activity.Settings, "updated channel_wake_rules (%d chars)", len(strings.TrimSpace(*req.ChannelWakeRules)))
 	}
 	if req.UITheme != nil {
 		// Validate against the theme registry (core/ui) so a typo can't blank
 		// the whole UI — and so it stays correct as themes are added.
 		if t := strings.TrimSpace(*req.UITheme); ui.IsValidTheme(t) {
 			AuthSetUITheme(a.db, t)
-			Log("[admin] user %q set ui_theme=%q", current, t)
+			adminChange(r, activity.Settings, "set ui_theme=%q", t)
 		} else {
 			Log("[admin] user %q tried to set unknown ui_theme=%q: ignored", current, t)
 		}
 	}
 	if req.DocBrand != nil {
 		AuthSetDocBrand(a.db, strings.TrimSpace(*req.DocBrand)) // also syncs PDFBranding live
-		Log("[admin] user %q set doc_brand=%q", current, strings.TrimSpace(*req.DocBrand))
+		adminChange(r, activity.Settings, "set doc_brand=%q", strings.TrimSpace(*req.DocBrand))
 	}
 	if req.SiteName != nil {
 		AuthSetSiteName(a.db, strings.TrimSpace(*req.SiteName))
-		Log("[admin] user %q set site_name=%q", current, strings.TrimSpace(*req.SiteName))
+		adminChange(r, activity.Settings, "set site_name=%q", strings.TrimSpace(*req.SiteName))
 	}
 	if req.Timezone != nil {
 		// Validate against the zone resolver so a typo can't strand the
@@ -417,12 +418,12 @@ func (a *AdminApp) handleUpdateSettings(w http.ResponseWriter, r *http.Request) 
 		// formatting.
 		if tz := strings.TrimSpace(*req.Timezone); tz == "" {
 			a.db.Set(WebTable, TimezoneKey, "")
-			Log("[admin] user %q cleared timezone (host zone; applies on restart)", current)
+			adminChange(r, activity.Settings, "cleared timezone (host zone; applies on restart)")
 		} else if _, iana, err := ResolveZone(tz); err != nil {
 			Log("[admin] user %q tried to set unknown timezone=%q: ignored", current, tz)
 		} else {
 			a.db.Set(WebTable, TimezoneKey, iana)
-			Log("[admin] user %q set timezone=%q (applies on restart)", current, iana)
+			adminChange(r, activity.Settings, "set timezone=%q (applies on restart)", iana)
 		}
 	}
 	// Tunables — validated against the registry, so adding a knob needs no
@@ -439,7 +440,7 @@ func (a *AdminApp) handleUpdateSettings(w http.ResponseWriter, r *http.Request) 
 	// to the default is stored as no value at all (which also clears a pin
 	// the old behaviour left behind).
 	var generic map[string]any
-	if json.Unmarshal(raw, &generic) == nil && a.applyTunables(generic, AllTunableSpecs(), current) {
+	if json.Unmarshal(raw, &generic) == nil && a.applyTunables(generic, AllTunableSpecs(), r) {
 		InvalidateTunables()
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -449,7 +450,7 @@ func (a *AdminApp) handleUpdateSettings(w http.ResponseWriter, r *http.Request) 
 // applyTunables stores the knobs in generic that specs names, validated against
 // each spec, and reports whether anything changed. The caller invalidates the
 // cache once.
-func (a *AdminApp) applyTunables(generic map[string]any, specs []TunableSpec, current string) bool {
+func (a *AdminApp) applyTunables(generic map[string]any, specs []TunableSpec, r *http.Request) bool {
 	tuned := false
 	for _, s := range specs {
 		v, ok := generic[s.Key]
@@ -479,7 +480,7 @@ func (a *AdminApp) applyTunables(generic map[string]any, specs []TunableSpec, cu
 		if f == s.Default {
 			if has {
 				a.db.Unset(WebTable, s.Key)
-				Log("[admin] user %q set %s back to its default (%g)", current, s.Key, f)
+				adminChange(r, activity.Settings, "set %s back to its default (%g)", s.Key, f)
 				tuned = true
 			}
 			continue
@@ -488,7 +489,7 @@ func (a *AdminApp) applyTunables(generic map[string]any, specs []TunableSpec, cu
 			continue
 		}
 		a.db.Set(WebTable, s.Key, f)
-		Log("[admin] user %q set %s=%g", current, s.Key, f)
+		adminChange(r, activity.Settings, "set %s=%g", s.Key, f)
 		tuned = true
 	}
 	return tuned
@@ -514,7 +515,7 @@ func (a *AdminApp) handleResetTunables(w http.ResponseWriter, r *http.Request) {
 			a.db.Unset(WebTable, s.Key)
 		}
 		InvalidateTunables()
-		Log("[admin] user %q reverted tunables to defaults (app=%q)", AuthCurrentUser(r), app)
+		adminChange(r, activity.Settings, "reverted tunables to defaults (app=%q)", app)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"status": "reset"})
 		return
@@ -525,7 +526,7 @@ func (a *AdminApp) handleResetTunables(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	InvalidateTunables()
-	Log("[admin] user %q reverted tunables to defaults (category=%q)", AuthCurrentUser(r), cat)
+	adminChange(r, activity.Settings, "reverted tunables to defaults (category=%q)", cat)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "reset"})
 }

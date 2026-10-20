@@ -134,7 +134,7 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	sub.HandleFunc("/api/peers/add", a.handlePeerAdd)
 	sub.HandleFunc("/api/peers/", a.handlePeerItem)
 
-	// Apps tab: the enable/disable switchboard and the per-app summary rows
+	// Apps tab: the table of apps with its switches, and each app's page
 	// (apps_tab.go).
 	//
 	// NOT /api/apps: that path is the permission picker's options source
@@ -145,6 +145,8 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	sub.HandleFunc("/api/app-switches", a.handleApps)
 	sub.HandleFunc("/api/app-summary", a.handleAppSummary)
 	sub.HandleFunc("/api/app-panels", a.handleAppPanels)
+	// One app's own page, opened from its row in the table.
+	sub.HandleFunc("/app", a.handleAppPage)
 
 	// The rest of the API, one file per area. Each register*Routes lives in
 	// api_<area>.go beside the handlers it wires; registration order does
@@ -167,6 +169,7 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	a.registerSkillsRoutes(sub)
 	a.registerGroupsRoutes(sub)
 	a.registerRulesRoutes(sub)
+	a.registerActivityRoutes(sub)
 
 	// Gate the entire sub-mux behind IP allowlist + admin check.
 	gated := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

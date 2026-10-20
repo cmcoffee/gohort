@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/activity"
 )
 
 // resolveApproval approves a queued delegation: optionally pre-authorizes the
@@ -38,6 +39,7 @@ func (T *OrchestrateApp) resolveApproval(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	DeleteAuthorization(RootDB, user, a.ID)
+	RecordActivity(r, activity.Approval, user, approvalActivity(a, map[bool]string{true: "approved and always allowed", false: "approved"}[always]))
 	// activate_sub_agent: a dispatched Builder drafted this sub-agent and held it
 	// for approval. Approval just clears the PendingApproval hold so it goes
 	// live — no delegation runs. ("Always allow" has no meaning here.)
@@ -355,6 +357,23 @@ func (T *OrchestrateApp) handleApprovalDeny(w http.ResponseWriter, r *http.Reque
 	if found && a.Action == "" {
 		T.noteDeniedDelegation(a)
 	}
+	if found {
+		RecordActivity(r, activity.Approval, user, approvalActivity(a, "denied"))
+	}
 	DeleteAuthorization(RootDB, user, id)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// approvalActivity says, for the activity log, which request was decided. It
+// names the kind of request and the agent, never the request's own words:
+// those are the user's conversation, and the log is read by administrators.
+func approvalActivity(a Authorization, verb string) string {
+	kind := strings.ReplaceAll(strings.TrimSpace(a.Action), "_", " ")
+	if kind == "" {
+		kind = "handoff"
+	}
+	if who := strings.TrimSpace(a.Agent); who != "" {
+		return verb + " a " + kind + " request for " + who
+	}
+	return verb + " a " + kind + " request"
 }

@@ -431,6 +431,8 @@ var (
 type (
 	AdminSectionEntry     = sections.AdminSectionEntry
 	AdminSectionSource    = sections.AdminSectionSource
+	AdminAppEntry         = sections.AdminAppEntry
+	AdminAppSource        = sections.AdminAppSource
 	AccountSectionEntry   = sections.AccountSectionEntry
 	ExtensionSectionEntry = sections.ExtensionSectionEntry
 )
@@ -441,6 +443,8 @@ var (
 	AdminSectionEntriesFor     = sections.AdminSectionEntriesFor
 	AdminSectionEntriesForApp  = sections.AdminSectionEntriesForApp
 	RegisterAdminSectionSource = sections.RegisterAdminSectionSource
+	RegisterAdminAppSource     = sections.RegisterAdminAppSource
+	AdminAppEntriesFor         = sections.AdminAppEntriesFor
 	RegisterAccountSection     = sections.RegisterAccountSection
 	AccountSectionEntries      = sections.AccountSectionEntries
 

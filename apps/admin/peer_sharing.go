@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/activity"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -122,6 +123,8 @@ func (a *AdminApp) handlePeerKeyMint(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		// Never the key: the log is read by every administrator.
+		RecordActivity(r, activity.Peer, AuthCurrentUser(r), "issued a peer key for "+pk.Label)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
 			"ok":      true,
@@ -199,7 +202,7 @@ func (a *AdminApp) handlePeerKeyItem(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, rerr.Error(), http.StatusBadRequest)
 			return
 		}
-		Log("[admin] user %q re-paired peer key %q", AuthCurrentUser(r), pk.Label)
+		adminChange(r, activity.Peer, "re-paired peer key %q", pk.Label)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{"ok": true, "key": pk.Key})
 		return
@@ -242,8 +245,8 @@ func (a *AdminApp) handlePeerKeyItem(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, cerr.Error(), http.StatusBadRequest)
 				return
 			}
-			Log("[admin] user %q re-granted peer key %q: %s",
-				AuthCurrentUser(r), pk.Label, strings.Join(pk.Caps, ", "))
+			adminChange(r, activity.Peer, "re-granted peer key %q: %s",
+				pk.Label, strings.Join(pk.Caps, ", "))
 		}
 		// Scope — whose appliances, and which. Sent together by the Grants
 		// modal: setting one without the other would leave a key naming
@@ -272,18 +275,22 @@ func (a *AdminApp) handlePeerKeyItem(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, serr.Error(), http.StatusBadRequest)
 				return
 			}
-			Log("[admin] user %q scoped peer key %q to owner=%q over %d appliance(s)",
-				AuthCurrentUser(r), pk.Label, pk.Owner, len(pk.Appliances))
+			adminChange(r, activity.Peer, "scoped peer key %q to owner=%q over %d appliance(s)",
+				pk.Label, pk.Owner, len(pk.Appliances))
 		}
 		if req.Enabled != nil && !SetPeerKeyDisabled(id, !*req.Enabled) {
 			http.Error(w, "no such key", http.StatusNotFound)
 			return
+		}
+		if req.Enabled != nil {
+			RecordActivity(r, activity.Peer, AuthCurrentUser(r), map[bool]string{true: "enabled", false: "disabled"}[*req.Enabled]+" the peer key "+id)
 		}
 	case http.MethodDelete:
 		if !DeletePeerKey(id) {
 			http.Error(w, "no such key", http.StatusNotFound)
 			return
 		}
+		RecordActivity(r, activity.Peer, AuthCurrentUser(r), "removed the peer key "+id)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -368,6 +375,7 @@ func (a *AdminApp) handlePeerAdd(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		RecordActivity(r, activity.Peer, AuthCurrentUser(r), "connected to the peer "+req.Name+" ("+p.Instance+")")
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
 			"ok": true,
@@ -399,6 +407,7 @@ func (a *AdminApp) handlePeerItem(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "no such peer", http.StatusNotFound)
 			return
 		}
+		RecordActivity(r, activity.Peer, AuthCurrentUser(r), "removed the peer "+name)
 	case r.Method == http.MethodPost && action == "refresh":
 		if _, err := RefreshRemotePeer(r.Context(), name); err != nil {
 			http.Error(w, err.Error(), http.StatusBadGateway)
@@ -425,7 +434,7 @@ func (a *AdminApp) handlePeerItem(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
 		}
-		Log("[admin] user %q re-paired peer %q with a new key", AuthCurrentUser(r), name)
+		adminChange(r, activity.Peer, "re-paired peer %q with a new key", name)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
 			"ok":      true,

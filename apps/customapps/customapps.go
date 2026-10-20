@@ -121,10 +121,10 @@ func (T *CustomApps) Routes() {
 		MigrateAppPathGrants(AuthDB(), customAppsLegacyPath, T.WebPath())
 	}
 
-	// The operator's tab: one section per custom app, contributed as a SOURCE
-	// because these rows are records people write while the server runs.
+	// The operator's rows in admin's list of apps, contributed as a SOURCE
+	// because these are records people write while the server runs.
 	T.registerAdminControls()
-	RegisterAdminSectionSource(T.adminSections)
+	RegisterAdminAppSource(T.adminApps)
 	// Approving an "app" publish request is the same act as the owner's
 	// Share toggle would have been: share it to every signed-in user.
 	promotion.RegisterApprover("app", T.approvePublish)

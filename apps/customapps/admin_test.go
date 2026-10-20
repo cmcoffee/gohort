@@ -1,6 +1,8 @@
 package customapps
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -172,5 +174,62 @@ func TestTierDialsOnlyForStagesThatReadATier(t *testing.T) {
 		if got := stageTierHonoured(kind); got != want {
 			t.Errorf("stageTierHonoured(%q) = %v, want %v", kind, got, want)
 		}
+	}
+}
+
+// Every owner's apps are rows in admin's list of apps, each with what the list
+// says about it and, when it has controls, a page that holds them.
+func TestEveryAuthoredAppIsARowInTheAdminList(t *testing.T) {
+	prevRoot, prevAuth := RootDB, AuthDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	authDB := &DBase{Store: kvlite.MemStore()}
+	AuthDB = func() Database { return authDB }
+	t.Cleanup(func() { RootDB, AuthDB = prevRoot, prevAuth })
+	authDB.Set(AuthTable, "user:alice", AuthUser{Username: "alice", Admin: true})
+	authDB.Set(AuthTable, "user:bob", AuthUser{Username: "bob"})
+	SaveAppSpec(AppSpec{Slug: "weather", Name: "Weather", Desc: "the forecast", Owner: "bob", RecordKey: "id", Shared: true})
+	SaveAppSpec(AppSpec{Slug: "notes", Name: "Notes", Owner: "alice", RecordKey: "id", Disabled: true})
+	appadmin.Register(appadmin.Control{Key: "test.adminlist", Group: "Access",
+		Render: func(app appadmin.App) ui.Component {
+			if app.Slug != "weather" {
+				return nil
+			}
+			return ui.Toolbar{}
+		}})
+	t.Cleanup(func() {
+		appadmin.Register(appadmin.Control{Key: "test.adminlist", Group: "Access",
+			Render: func(appadmin.App) ui.Component { return nil }})
+	})
+
+	app := &CustomApps{}
+	r := httptest.NewRequest("GET", "/admin/apps", nil)
+	if got := app.adminApps(r); got != nil {
+		t.Fatalf("a request that is not an admin's got %d rows", len(got))
+	}
+	r.AddCookie(&http.Cookie{Name: "gohort_session", Value: AuthCreateSession(authDB, "alice")})
+	rows := app.adminApps(r)
+	if len(rows) != 2 || rows[0].Key != "alice/notes" || rows[1].Key != "bob/weather" {
+		t.Fatalf("rows by owner, keyed owner/slug: %+v", rows)
+	}
+	notes, weather := rows[0], rows[1]
+	if weather.Name != "Weather" || weather.Owner != "bob" || weather.Desc != "the forecast" ||
+		weather.Access != "shared" || weather.Disabled {
+		t.Errorf("weather's row: %+v", weather)
+	}
+	if !notes.Disabled || notes.Access != "its owner only" {
+		t.Errorf("notes' row: %+v", notes)
+	}
+	// Weather has a control, so a page holding it; notes may have others
+	// registered by tests here, so only its agreement is checked.
+	if weather.Page == nil || !strings.HasSuffix(weather.Settings, "control") && !strings.HasSuffix(weather.Settings, "controls") {
+		t.Fatalf("weather has a control and no page: %+v", weather)
+	}
+	if secs := weather.Page(); len(secs) != 1 || secs[0].Title != "Operator controls" {
+		t.Errorf("weather's page: %+v", secs)
+	} else if st, ok := secs[0].Body.(ui.Stack); !ok || len(st.Children) == 0 {
+		t.Errorf("weather's controls are not on its page: %#v", secs[0].Body)
+	}
+	if (notes.Page == nil) != (notes.Settings == "") {
+		t.Errorf("a page and its count should agree: %+v", notes)
 	}
 }

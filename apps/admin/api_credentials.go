@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/activity"
 )
 
 // registerCredentialsRoutes wires the credentials API under the admin sub-mux.
@@ -284,6 +285,7 @@ func (a *AdminApp) credentialAction(w http.ResponseWriter, r *http.Request, acti
 		http.Error(w, "action must be enable|disable|secure|unsecure|access|approve_binding|revoke_binding|test", http.StatusBadRequest)
 		return
 	}
+	RecordActivity(r, activity.Credential, AuthCurrentUser(r), credentialActionDetail(action, name, r.URL.Query().Get("tool")))
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -357,6 +359,8 @@ func (a *AdminApp) saveCredential(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// By name only: the log is read by every administrator.
+	RecordActivity(r, activity.Credential, AuthCurrentUser(r), "saved the credential "+c.Name)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -412,6 +416,7 @@ func (a *AdminApp) deleteCredential(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	RecordActivity(r, activity.Credential, AuthCurrentUser(r), "deleted the credential "+name)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -461,4 +466,26 @@ func saveCredWithPassword(c SecureCredential, secret, password string) error {
 		return Secure().SavePassword(c.Name, password)
 	}
 	return nil
+}
+
+// credentialActionDetail says, for the activity log, what a credential toggle
+// did.
+func credentialActionDetail(action, name, tool string) string {
+	switch action {
+	case "enable":
+		return "enabled the credential " + name
+	case "disable":
+		return "disabled the credential " + name
+	case "secure":
+		return "locked the credential " + name + " to the tools that declare it"
+	case "unsecure":
+		return "unlocked the credential " + name
+	case "access":
+		return "set the access of the credential " + name
+	case "approve_binding":
+		return "let the tool " + tool + " use the credential " + name
+	case "revoke_binding":
+		return "stopped the tool " + tool + " using the credential " + name
+	}
+	return action + " on the credential " + name
 }

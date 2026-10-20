@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/activity"
 )
 
 // registerCostRoutes wires the cost API under the admin sub-mux.
@@ -117,38 +118,37 @@ func (a *AdminApp) handleUpdateCostRates(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	rates := GetCostRates()
-	current := AuthCurrentUser(r)
 	if req.WorkerInputPer1K != nil {
 		rates.WorkerInputPer1K = *req.WorkerInputPer1K
-		Log("[admin] user %q set worker_input_per_1k=%g", current, *req.WorkerInputPer1K)
+		adminChange(r, activity.Settings, "set worker_input_per_1k=%g", *req.WorkerInputPer1K)
 	}
 	if req.WorkerOutputPer1K != nil {
 		rates.WorkerOutputPer1K = *req.WorkerOutputPer1K
-		Log("[admin] user %q set worker_output_per_1k=%g", current, *req.WorkerOutputPer1K)
+		adminChange(r, activity.Settings, "set worker_output_per_1k=%g", *req.WorkerOutputPer1K)
 	}
 	if req.LeadInputPer1K != nil {
 		rates.LeadInputPer1K = *req.LeadInputPer1K
-		Log("[admin] user %q set lead_input_per_1k=%g", current, *req.LeadInputPer1K)
+		adminChange(r, activity.Settings, "set lead_input_per_1k=%g", *req.LeadInputPer1K)
 	}
 	if req.LeadOutputPer1K != nil {
 		rates.LeadOutputPer1K = *req.LeadOutputPer1K
-		Log("[admin] user %q set lead_output_per_1k=%g", current, *req.LeadOutputPer1K)
+		adminChange(r, activity.Settings, "set lead_output_per_1k=%g", *req.LeadOutputPer1K)
 	}
 	if req.SearchPerCall != nil {
 		rates.SearchPerCall = *req.SearchPerCall
-		Log("[admin] user %q set search_per_call=%g", current, *req.SearchPerCall)
+		adminChange(r, activity.Settings, "set search_per_call=%g", *req.SearchPerCall)
 	}
 	if req.ImagePerCall != nil {
 		rates.ImagePerCall = *req.ImagePerCall
-		Log("[admin] user %q set image_per_call=%g", current, *req.ImagePerCall)
+		adminChange(r, activity.Settings, "set image_per_call=%g", *req.ImagePerCall)
 	}
 	if req.CacheReadMultiplier != nil {
 		rates.CacheReadMultiplier = *req.CacheReadMultiplier
-		Log("[admin] user %q set cache_read_multiplier=%g", current, *req.CacheReadMultiplier)
+		adminChange(r, activity.Settings, "set cache_read_multiplier=%g", *req.CacheReadMultiplier)
 	}
 	if req.CacheWriteMultiplier != nil {
 		rates.CacheWriteMultiplier = *req.CacheWriteMultiplier
-		Log("[admin] user %q set cache_write_multiplier=%g", current, *req.CacheWriteMultiplier)
+		adminChange(r, activity.Settings, "set cache_write_multiplier=%g", *req.CacheWriteMultiplier)
 	}
 	// Applied LAST: the form PUTs the whole record it loaded, which still
 	// carries the per-thousand fields, and those must not undo what was
@@ -165,7 +165,7 @@ func (a *AdminApp) handleUpdateCostRates(w http.ResponseWriter, r *http.Request)
 	} {
 		if m.in != nil {
 			*m.dst = *m.in / 1000
-			Log("[admin] user %q set %s=$%g per 1M tokens", current, m.name, *m.in)
+			adminChange(r, activity.Settings, "set %s=$%g per 1M tokens", m.name, *m.in)
 		}
 	}
 	if err := SaveCostRatesToDB(a.db, rates); err != nil {

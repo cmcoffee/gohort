@@ -1,11 +1,18 @@
 # The Apps Tab: admin organised by subject, not only by mechanism
 
-Status: the list, the per-app summary rows and the availability switch are
-built, and each app's pane shows the route stages and tunables it has claimed
-(the LLM Routing table and the Tuning fields, filtered by `?app=` and writing
-the same keys; the scoped settings address also saves and reverts only that
-app's knobs) and LINKS to the admin sections it contributes on other tabs.
-Hidden apps that claim controls have a pane but no switch.
+Status: built. Since v0.8.472 the tab is ONE table of every app (the ones
+that ship, then the ones people built, in two bands) with the availability
+switch, who can open each, and a count of what can be set on it. A row with
+something to set opens that app's own admin page (`/admin/app?path=<mount>`,
+or `?key=<owner>/<slug>` for an authored app) with Apps still marked in the
+menu. What this document calls a "pane" is that page: About, then Model
+routing and Tuning when claimed (the LLM Routing table and the Tuning fields,
+filtered by `?app=` and writing the same keys), then any section the app filed
+under the Apps tab, drawn there, then links to its sections on other tabs.
+Hidden apps that claim controls have a row and a page but no switch.
+
+It was a section per app until then, and the page's section tabs drew those as
+a row of tabs wider than the screen.
 
 Admin is organised by MECHANISM. Everything configurable about techwriter is
 spread across three tabs: its tier in **LLMs** (a route stage), its knobs in
@@ -139,8 +146,9 @@ record. Each link names the tab the section is filed on (the same
 address, `#<tab>/<section>` (`ui.SectionOnTab`): an app's pane and its panel
 usually share the app's name, and a bare `#<slug>` resolves to the tab already
 open, which is the pane. An untitled section (the prompt-block editor) is
-addressed by its tab alone, `#<tab>/`. A section already on the Apps tab is
-not linked: it sits in this rail already.
+addressed by its tab alone, `#<tab>/`. A section the app filed under the Apps
+tab is not linked: it is drawn on the app's page, its only place, since the tab
+itself holds only the table.
 
 ## Hidden apps with a pane
 
@@ -152,9 +160,8 @@ A pane is not a switch. So a hidden app that has claimed a control on another
 tab gets a pane, says in its state line that it is always on and why there is
 no switch, and stays off the switchboard and out of the enable endpoint.
 
-A hidden app whose only claim is a section already on the Apps tab
-(`publish`) gets no pane: that section is its row, and a pane beside it with
-the same name would be two entries for one thing.
+A hidden app whose only claim is a section filed under the Apps tab
+(`publish`) gets a row and a page, and the section is drawn on that page.
 
 **Nothing else.** An app with no declared controls renders identity and access
 and stops. That is a true statement about it, and a truer one than a page of

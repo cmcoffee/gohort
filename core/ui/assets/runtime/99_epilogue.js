@@ -252,8 +252,8 @@
   // the header, the live menu, the footer. A host that already has those does
   // not want a second set.
   // navStrip renders Page.Nav — the shared page menu for a multi-page app,
-  // active page highlighted — or null when a page declares none. Scrolls
-  // horizontally on narrow screens rather than wrapping.
+  // active page highlighted — or null when a page declares none. The tabs that
+  // fit stay on the row; the rest fold into a More menu at its end.
   //
   // Belongs to the page HEADER and is laid out as a column of its grid, so it
   // has one caller. See renderPageBody for why a body rendering does not get
@@ -261,18 +261,57 @@
   function navStrip(cfg) {
     if (!cfg.nav || !cfg.nav.length) return null;
     var tabs = el('nav', {class: 'ui-page-tabs'});
-    var current = null;
+    var current = null, links = [];
     cfg.nav.forEach(function(it) {
       var a = el('a', {
         class: 'ui-page-tab' + (it.active ? ' active' : ''),
         href: it.url || '#',
       }, [it.label || '']);
       if (it.active) current = a;
+      links.push(a);
       tabs.appendChild(a);
     });
-    // On a phone the tabs are a row of their own that scrolls sideways: it
-    // fades where there are more, and opens with this page's tab in view
-    // rather than wherever it fell past the edge.
+    // A row that scrolled hid its last tabs past the edge, with only a fade
+    // to say they were there. So the tabs that do not fit move into a menu
+    // behind a More button, last first, and the page you are on is never one
+    // of them: the row still says where you are. The tabs themselves move
+    // (not copies), and every one is back in the row before each fit.
+    var more = el('button', {type: 'button', class: 'ui-page-tab ui-page-tab-more', 'aria-haspopup': 'menu'},
+      ['More', el('span', {class: 'ui-page-tab-caret', 'aria-hidden': 'true'}, ['\u25BE'])]);
+    var menu = el('div', {class: 'ui-page-tabs-menu', role: 'menu'});
+    more.style.display = 'none';
+    tabs.appendChild(more);
+    var anchor = window.uiAnchorMenu ? window.uiAnchorMenu(more, menu, {align: 'right', display: 'flex'}) : null;
+    if (anchor) {
+      more.addEventListener('click', function(ev) { ev.stopPropagation(); anchor.toggle(); });
+      // A menu that only its own button closes is one a reader gets stuck in.
+      document.addEventListener('click', function(ev) {
+        if (anchor.isOpen() && !menu.contains(ev.target)) anchor.close();
+      });
+      document.addEventListener('keydown', function(ev) {
+        if (ev.key === 'Escape' && anchor.isOpen()) { anchor.close(); more.focus(); }
+      });
+    }
+    var width = -1;
+    function fit() {
+      // Hidden or not yet laid out measures zero: wait for a width.
+      if (!anchor || !tabs.clientWidth || tabs.clientWidth === width) return;
+      width = tabs.clientWidth;
+      anchor.close();
+      links.forEach(function(a) { tabs.insertBefore(a, more); });
+      more.style.display = 'none';
+      if (tabs.scrollWidth <= tabs.clientWidth) return;
+      more.style.display = '';
+      for (var i = links.length - 1; i >= 0 && tabs.scrollWidth > tabs.clientWidth; i--) {
+        if (links[i] !== current) menu.insertBefore(links[i], menu.firstChild);
+      }
+    }
+    // The row's width is set by the header, not by the tabs in it, so moving
+    // them does not set this off again.
+    if (window.ResizeObserver) new window.ResizeObserver(fit).observe(tabs);
+    window.addEventListener('resize', fit);
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(function() { width = -1; fit(); });
+    // Without a menu to fold into, the row scrolls sideways as it always has.
     if (window.uiEdgeFade) window.uiEdgeFade(tabs);
     if (window.uiRevealInRow) window.uiRevealInRow(tabs, current);
     return tabs;

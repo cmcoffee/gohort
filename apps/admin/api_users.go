@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/activity"
 	"github.com/cmcoffee/gohort/core/promotion"
 )
 
@@ -396,7 +397,8 @@ func (a *AdminApp) handlePromotions(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "missing id", http.StatusBadRequest)
 			return
 		}
-		if _, ok := GetPromotionRequest(a.db, id); !ok {
+		req, ok := GetPromotionRequest(a.db, id)
+		if !ok {
 			http.NotFound(w, r)
 			return
 		}
@@ -420,6 +422,8 @@ func (a *AdminApp) handlePromotions(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "action must be approve|deny", http.StatusBadRequest)
 			return
 		}
+		verb := map[string]string{"approve": "approved", "deny": "denied"}[action]
+		RecordActivity(r, activity.Approval, AuthCurrentUser(r), verb+" publishing the "+req.Kind+" "+req.Name+" of "+req.Owner)
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -559,31 +563,31 @@ func (a *AdminApp) handleUserOne(w http.ResponseWriter, r *http.Request) {
 		switch action {
 		case "apps":
 			if r.Method == http.MethodPut {
-				a.handleUpdateUserApps(w, r, username)
+				audited(w, r, activity.Account, "changed the apps of "+username, func(w http.ResponseWriter) { a.handleUpdateUserApps(w, r, username) })
 			} else {
 				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			}
 		case "groups":
 			if r.Method == http.MethodPut {
-				a.handleUpdateUserGroups(w, r, username)
+				audited(w, r, activity.Account, "changed the groups of "+username, func(w http.ResponseWriter) { a.handleUpdateUserGroups(w, r, username) })
 			} else {
 				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			}
 		case "approve":
 			if r.Method == http.MethodPost {
-				a.handleApproveUser(w, r, username)
+				audited(w, r, activity.Account, "approved the account "+username, func(w http.ResponseWriter) { a.handleApproveUser(w, r, username) })
 			} else {
 				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			}
 		case "reject":
 			if r.Method == http.MethodPost {
-				a.handleRejectUser(w, r, username)
+				audited(w, r, activity.Account, "rejected the account "+username, func(w http.ResponseWriter) { a.handleRejectUser(w, r, username) })
 			} else {
 				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			}
 		case "reset-password":
 			if r.Method == http.MethodPost {
-				a.handleResetPassword(w, r, username)
+				audited(w, r, activity.Account, "reset the password of "+username, func(w http.ResponseWriter) { a.handleResetPassword(w, r, username) })
 			} else {
 				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			}
@@ -595,13 +599,13 @@ func (a *AdminApp) handleUserOne(w http.ResponseWriter, r *http.Request) {
 			}
 		case "data-action":
 			if r.Method == http.MethodPost {
-				a.handleUserDataAction(w, r, username)
+				audited(w, r, activity.Account, "moved or deleted the data of "+username, func(w http.ResponseWriter) { a.handleUserDataAction(w, r, username) })
 			} else {
 				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			}
 		case "revoke-sessions":
 			if r.Method == http.MethodPost {
-				a.handleRevokeSessions(w, r, username)
+				audited(w, r, activity.Account, "signed "+username+" out everywhere", func(w http.ResponseWriter) { a.handleRevokeSessions(w, r, username) })
 			} else {
 				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			}
@@ -642,9 +646,9 @@ func (a *AdminApp) handleUserOne(w http.ResponseWriter, r *http.Request) {
 			"groups":   groups,
 		})
 	case http.MethodPut:
-		a.handleUpdateUser(w, r, username)
+		audited(w, r, activity.Account, "changed the account "+username, func(w http.ResponseWriter) { a.handleUpdateUser(w, r, username) })
 	case http.MethodDelete:
-		a.handleDeleteUser(w, r, username)
+		audited(w, r, activity.Account, "deleted the account "+username, func(w http.ResponseWriter) { a.handleDeleteUser(w, r, username) })
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -689,6 +693,7 @@ func (a *AdminApp) handleAddUser(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		Log("[admin] user %q invited %q (admin=%v, emailed=%v)", current, req.Username, req.Admin, emailed)
+		RecordActivity(r, activity.Account, current, "invited "+req.Username+asAdmin(req.Admin))
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{"status": "invited", "link": link, "emailed": emailed})
 		return
@@ -701,6 +706,7 @@ func (a *AdminApp) handleAddUser(w http.ResponseWriter, r *http.Request) {
 	}
 	AuthSetUser(a.db, req.Username, req.Password, req.Admin)
 	Log("[admin] user %q created user %q (admin=%v)", current, req.Username, req.Admin)
+	RecordActivity(r, activity.Account, current, "added the account "+req.Username+asAdmin(req.Admin))
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"status": "created"})
 }
@@ -1022,4 +1028,12 @@ func toolRequestReview(db Database, releases map[string]ToolRelease, owner, name
 		return true, fmt.Sprintf("Update to %s's published tool, now at version %d. Approving makes this the next version for everyone who added it.\n\n%s", owner, rel.Version, d)
 	}
 	return false, "A new tool for the catalog. Its whole definition:\n\n" + (TempTool{}).DefinitionDiff(want)
+}
+
+// asAdmin says, for the activity log, that an account was given admin rights.
+func asAdmin(admin bool) string {
+	if admin {
+		return " as an administrator"
+	}
+	return ""
 }

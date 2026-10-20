@@ -1,6 +1,11 @@
 # Custom App Administration: one tab, one app per row
 
-Status: **design / target** (not built).
+Status: built. Since v0.8.472 each custom app is a row in admin's one table of
+apps (`RegisterAdminAppSource`, core/sections/admin_apps.go), in a band after
+the apps that ship, and its operator controls are on its own admin page,
+`/admin/app?key=<owner>/<slug>`. The section-per-app rail described below was
+the first build; drawn as section tabs it became a row of tabs as wide as the
+number of apps anybody had built, which is why it moved.
 
 Custom apps are the only apps an operator cannot administer. A compiled app
 registers its dials at startup (a route stage, a tunable, an admin section)

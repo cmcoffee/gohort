@@ -10,6 +10,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/ui"
+	"github.com/cmcoffee/snugforge/kvlite"
 )
 
 // The tab is a VIEW over registries that keep working exactly as they did, so
@@ -54,6 +55,22 @@ func TestAccessLineNamesAdminsSeparately(t *testing.T) {
 	}
 }
 
+// The count is of accounts that can open the app, a grant of a page inside it
+// included, with the admins said separately: they reach every app anyway.
+func TestAccessLineCountsGrantsOncePerAccount(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	db.Set(AuthTable, "user:root", AuthUser{Username: "root", Admin: true})
+	db.Set(AuthTable, "user:bob", AuthUser{Username: "bob", Apps: []string{"/accesstest", "/accesstest/sub"}})
+	db.Set(AuthTable, "user:carol", AuthUser{Username: "carol", Apps: []string{"/accesstest/sub"}})
+	db.Set(AuthTable, "user:dave", AuthUser{Username: "dave", Apps: []string{"/elsewhere"}})
+	if got := describeAppAccess(db, "/accesstest"); got != "2 accounts granted, plus 1 admin" {
+		t.Errorf("granted app: %q", got)
+	}
+	if got := describeAppAccess(db, "/nobodyhasthis"); got != "1 admin only: no other account has been granted it" {
+		t.Errorf("app granted to nobody: %q", got)
+	}
+}
+
 // The tab map keys on TITLE and an Apps row's title is an app's NAME, which
 // nobody here chose. A collision must not move the row to another tab.
 func TestAppsGroupSurvivesATitleCollision(t *testing.T) {
@@ -80,23 +97,29 @@ func TestSwitchboardWithholdsTheWayBack(t *testing.T) {
 	}
 }
 
-// The switch is the section an operator lands on, so it has to be first — the
-// per-app cards below it are reference, not the control.
-func TestAvailabilitySectionLeadsTheAppsTab(t *testing.T) {
+// The tab is one table: a section per app drew as a tab per app, a row of
+// them wider than the screen. An app's controls are on its own page.
+func TestTheAppsTabIsOneTable(t *testing.T) {
 	a := &AdminApp{}
 	secs := a.appsTabSections(httptest.NewRequest("GET", "/admin", nil))
-	if len(secs) == 0 || secs[0].Title != "Enabled apps" {
-		t.Fatalf("the Apps tab must lead with the switchboard, got %v", sectionTitles(secs))
+	if len(secs) != 1 || secs[0].Group != AppsTabGroup {
+		t.Fatalf("the Apps tab should be one section, got %v", sectionTitles(secs))
 	}
-	sec := appsAvailabilitySection()
-	if sec.Group != AppsTabGroup {
-		t.Errorf("availability section group = %q, want %q", sec.Group, AppsTabGroup)
+	tbl, ok := secs[0].Body.(ui.Table)
+	if !ok {
+		t.Fatalf("body = %T, want the table", secs[0].Body)
 	}
-	// The subtitle is the whole scope promise: what the switch does and, just
+	if tbl.RowLink != "href" || tbl.GroupBy != "group" {
+		t.Errorf("rows should open their app's page, in bands by origin: %+v", tbl)
+	}
+	if len(tbl.RowActions) != 1 || tbl.RowActions[0].Type != "toggle" || tbl.RowActions[0].OnlyIf != "switchable" {
+		t.Errorf("the switch should show only on rows it can switch: %+v", tbl.RowActions)
+	}
+	// The detail is the whole scope promise: what the switch does and, just
 	// as importantly, what it leaves running.
 	for _, want := range []string{"503", "restart", "grants", "web surface"} {
-		if !strings.Contains(sec.Subtitle, want) {
-			t.Errorf("availability subtitle should mention %q: %q", want, sec.Subtitle)
+		if !strings.Contains(secs[0].Detail, want) {
+			t.Errorf("the detail should mention %q: %q", want, secs[0].Detail)
 		}
 	}
 }
@@ -147,30 +170,26 @@ func TestAnUnservedPathResolvesToNothing(t *testing.T) {
 	}
 }
 
-// The subtitle on each section is the path its source asks about. If those ever
-// drift the page shows one app's heading over another app's answer, which is
-// worse than the 404 was: it looks right.
-func TestASectionAsksAboutTheAppItNames(t *testing.T) {
-	a := &AdminApp{}
-	for _, sec := range a.appsTabSections(httptest.NewRequest("GET", "/admin", nil)) {
-		dp, ok := paneSummary(sec.Body)
-		if !ok {
+// An app's page asks about the app it is for. If those ever drift the page
+// shows one app's name over another app's answer, which is worse than the
+// 404 was: it looks right.
+func TestAnAppPageAsksAboutItsApp(t *testing.T) {
+	req := httptest.NewRequest("GET", "/admin", nil)
+	rows := paneApps(req)
+	if len(rows) == 0 {
+		t.Fatal("no apps listed: this test would pass vacuously")
+	}
+	for _, rw := range rows {
+		secs := appPageSections(req, rw.path)
+		dp, ok := secs[0].Body.(ui.DisplayPanel)
+		if !ok || secs[0].Title != "About" {
+			t.Errorf("%s: the page should open on its summary, got %q %T", rw.path, secs[0].Title, secs[0].Body)
 			continue
 		}
-		if want := "api/app-summary?path=" + sec.Subtitle; dp.Source != want {
-			t.Errorf("section %q sources %q, want %q", sec.Title, dp.Source, want)
+		if want := "api/app-summary?path=" + rw.path; dp.Source != want {
+			t.Errorf("%s: the summary sources %q, want %q", rw.path, dp.Source, want)
 		}
 	}
-}
-
-// paneSummary finds the summary panel in an app pane, which is the whole body
-// for an app that claims nothing and the first child for one that does.
-func paneSummary(body ui.Component) (ui.DisplayPanel, bool) {
-	if st, ok := body.(ui.Stack); ok && len(st.Children) > 0 {
-		body = st.Children[0]
-	}
-	dp, ok := body.(ui.DisplayPanel)
-	return dp, ok
 }
 
 // fakeWebApp is the shape an ordinary app arrives in: registered as an App that
@@ -213,6 +232,7 @@ func TestEveryAdminSectionSourceIsRoutable(t *testing.T) {
 
 	var secs []ui.Section
 	secs = append(secs, a.appsTabSections(httptest.NewRequest("GET", "/admin", nil))...)
+	secs = append(secs, appPageSections(httptest.NewRequest("GET", "/admin", nil), "/routabilitytest")...)
 	secs = append(secs, a.extensionsSections()...)
 	secs = append(secs, a.skillsSections()...)
 	secs = append(secs, a.capabilitiesSections()...)

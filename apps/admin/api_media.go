@@ -9,6 +9,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/activity"
 )
 
 // registerMediaRoutes wires the media API under the admin sub-mux.
@@ -83,8 +84,8 @@ func (a *AdminApp) handleEmbeddings(w http.ResponseWriter, r *http.Request) {
 			a.db.Set(EmbeddingTable, "current", req)
 		}
 		SetEmbeddingConfig(req)
-		Log("[admin] user %q updated embeddings config (enabled=%v provider=%q endpoint=%q model=%q)",
-			AuthCurrentUser(r), req.Enabled, req.Provider, req.Endpoint, req.Model)
+		adminChange(r, activity.Settings, "updated embeddings config (enabled=%v provider=%q endpoint=%q model=%q)",
+			req.Enabled, req.Provider, req.Endpoint, req.Model)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -229,8 +230,8 @@ func (a *AdminApp) handleTranscribe(w http.ResponseWriter, r *http.Request) {
 			a.db.Set(TranscribeTable, "current", req)
 		}
 		SetTranscribeConfig(req)
-		Log("[admin] user %q updated transcribe config (enabled=%v endpoint=%q model=%q)",
-			AuthCurrentUser(r), req.Enabled, req.Endpoint, req.Model)
+		adminChange(r, activity.Settings, "updated transcribe config (enabled=%v endpoint=%q model=%q)",
+			req.Enabled, req.Endpoint, req.Model)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -259,8 +260,8 @@ func (a *AdminApp) handleImageGen(w http.ResponseWriter, r *http.Request) {
 			a.db.Set(ImageTable, "provider", req.Provider)
 			a.db.Set(ImageTable, "api_key", req.APIKey)
 		}
-		Log("[admin] user %q updated image-gen config (provider=%q)",
-			AuthCurrentUser(r), req.Provider)
+		adminChange(r, activity.Settings, "updated image-gen config (provider=%q)",
+			req.Provider)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}

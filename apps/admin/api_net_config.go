@@ -10,6 +10,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/activity"
 )
 
 // secretUnchanged is what a stored secret reads as on a GET. The admin forms
@@ -71,8 +72,8 @@ func (a *AdminApp) registerNetConfigRoutes(sub *http.ServeMux) {
 				a.db.Set(SearchTable, "endpoint", req.Endpoint)
 				a.db.Set(SearchTable, "source", req.Source)
 			}
-			Log("[admin] user %q updated web-search config (provider=%q)",
-				AuthCurrentUser(r), req.Provider)
+			adminChange(r, activity.Settings, "updated web-search config (provider=%q)",
+				req.Provider)
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
@@ -122,7 +123,7 @@ func (a *AdminApp) registerNetConfigRoutes(sub *http.ServeMux) {
 				a.db.Set(BrowseTable, "source", src)
 			}
 			SetBrowseConfig(BrowseConfig{Source: src})
-			Log("[admin] user %q set page rendering to %q", AuthCurrentUser(r), src)
+			adminChange(r, activity.Settings, "set page rendering to %q", src)
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
@@ -214,8 +215,8 @@ func (a *AdminApp) registerNetConfigRoutes(sub *http.ServeMux) {
 				a.db.Set(MailTable, "username", req.Username)
 				a.db.Set(MailTable, "password", req.Password)
 			}
-			Log("[admin] user %q updated mail config (server=%q from=%q)",
-				AuthCurrentUser(r), req.Server, req.From)
+			adminChange(r, activity.Settings, "updated mail config (server=%q from=%q)",
+				req.Server, req.From)
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
@@ -293,8 +294,8 @@ func (a *AdminApp) registerNetConfigRoutes(sub *http.ServeMux) {
 					a.db.Set(NetworkTable, "request_timeout_seconds", req.RequestTimeoutSeconds)
 				}
 			}
-			Log("[admin] user %q updated network timeouts (connect=%ds request=%ds)",
-				AuthCurrentUser(r), req.ConnectTimeoutSeconds, req.RequestTimeoutSeconds)
+			adminChange(r, activity.Settings, "updated network timeouts (connect=%ds request=%ds)",
+				req.ConnectTimeoutSeconds, req.RequestTimeoutSeconds)
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
@@ -337,8 +338,8 @@ func (a *AdminApp) registerNetConfigRoutes(sub *http.ServeMux) {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
-			Log("[admin] user %q updated agent-loop tuning (history_budget_percent=%d)",
-				AuthCurrentUser(r), GetAgentLoopTuning().HistoryBudgetPercent)
+			adminChange(r, activity.Settings, "updated agent-loop tuning (history_budget_percent=%d)",
+				GetAgentLoopTuning().HistoryBudgetPercent)
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}

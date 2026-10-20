@@ -52,6 +52,11 @@ func TestEachAdminTabIsItsOwnPage(t *testing.T) {
 			t.Errorf("the Costs page's nav lacks %s", want)
 		}
 	}
+	// A tab's sections are a rail down its left: tabs above them as well
+	// read as a second header.
+	if !strings.Contains(costs, `"section_nav":true`) {
+		t.Error("the admin page does not ask for the section rail")
+	}
 	if !strings.Contains(costs, "location.replace(tabs[t]+location.hash)") {
 		t.Error("a #tab/section link has no way to reach its tab's page")
 	}

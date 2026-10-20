@@ -364,6 +364,21 @@ select:-webkit-autofill {
 }
 .ui-page-tab:hover { color: var(--text); background: var(--bg-2); }
 .ui-page-tab.active { color: var(--text); background: var(--bg-2); font-weight: 600; }
+/* More: the button the tabs that do not fit fold behind (navStrip), drawn as
+ * one more tab so the row reads as one control. Its menu is anchored to the
+ * page body, so the row's sideways overflow cannot clip it. */
+.ui-page-tab-more {
+  gap: 0.3rem; flex-shrink: 0;
+  font: inherit; font-size: var(--fs-sm); background: transparent; border: none; cursor: pointer;
+}
+.ui-page-tab-caret { color: var(--text-mute); }
+.ui-page-tabs-menu {
+  min-width: 10rem; max-width: calc(100vw - 8px);
+  flex-direction: column; gap: 0.1rem; padding: 0.25rem;
+  background: var(--bg-1); border: 1px solid var(--border);
+  border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+}
+.ui-page-tabs-menu .ui-page-tab { color: var(--text); padding: 0.45rem 0.7rem; }
 @media (max-width: 700px) {
   /* Their own row now, so a thumb-height that does not double the bar. */
   .ui-page-tab { min-height: 2.25rem; padding: 0.4rem 0.7rem; }

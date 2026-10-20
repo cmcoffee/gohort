@@ -55,13 +55,13 @@ func TestRoutingFiltersToAnAppsClaimedStages(t *testing.T) {
 func TestAppPaneCarriesItsRoutingTable(t *testing.T) {
 	RegisterRouteStage(RouteStage{Key: "app.panebody.a", Label: "A", App: "/panebody"})
 
-	st, ok := appPaneBody(nil, "/panebody").(ui.Stack)
-	if !ok || len(st.Children) != 2 {
-		t.Fatalf("an app with claimed routing should get summary + table, got %#v", appPaneBody(nil, "/panebody"))
+	secs := appPageSections(nil, "/panebody")
+	if len(secs) != 2 {
+		t.Fatalf("an app with claimed routing should get About + Model routing, got %v", sectionTitles(secs))
 	}
-	tbl, ok := st.Children[1].(ui.Table)
+	tbl, ok := secs[1].Body.(ui.Table)
 	if !ok {
-		t.Fatalf("second child = %T, want ui.Table", st.Children[1])
+		t.Fatalf("second section = %T, want ui.Table", secs[1].Body)
 	}
 	if tbl.Source != routingSourceForApp("/panebody") {
 		t.Errorf("source = %q", tbl.Source)
@@ -78,8 +78,8 @@ func TestAppPaneCarriesItsRoutingTable(t *testing.T) {
 
 	// And an app that claims nothing gets the summary alone: no empty table
 	// implying there is something to set.
-	if _, ok := appPaneBody(nil, "/claims-nothing").(ui.DisplayPanel); !ok {
-		t.Errorf("unclaimed pane = %T, want the bare summary", appPaneBody(nil, "/claims-nothing"))
+	if secs := appPageSections(nil, "/claims-nothing"); len(secs) != 1 {
+		t.Errorf("unclaimed page = %v, want the summary alone", sectionTitles(secs))
 	}
 }
 

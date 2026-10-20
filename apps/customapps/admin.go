@@ -1,15 +1,14 @@
-// The operator's view of custom apps: one admin tab, the apps down the left,
-// that app's operator controls on the right.
+// The operator's view of custom apps: a row each in admin's list of apps, and
+// a page of its own holding that app's operator controls.
 //
 // Custom apps are the only apps an operator could not administer. A compiled
 // app registers its dials at startup; a custom app is a record somebody wrote
 // at runtime, so there was nothing to register and nowhere to answer "who may
 // reach this" or "revoke that link".
 //
-// The rail is NOT a NavShell. Admin Tuning had an embedded one and it was
-// deliberately replaced by one ui.Section per entry sharing a Group, which the
-// page's own SectionNav draws as the side index — see apps/admin/page.go. This
-// follows that, so the tab navigates like every other admin tab.
+// A row and a page, not a section per app: a section per app made the tab's
+// index grow with every app anybody built. The rows join the compiled apps in
+// admin's one table.
 //
 // See docs/custom-app-admin.md.
 package customapps
@@ -28,20 +27,12 @@ import (
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
-// customAppsAdminGroup is the admin TAB these rows land on. The same one the
-// compiled apps use: a custom app is an app, and a tab that said otherwise
-// would be sorting by how a thing was built rather than by what it is.
-//
-// A literal rather than a reference to admin's constant, because admin imports
-// nothing from here and this imports nothing from admin — the two agree through
-// the section source, which is the whole point of that seam.
-const customAppsAdminGroup = "Apps"
-
-// adminSections builds one section per custom app, across every owner.
+// adminApps lists every custom app, across every owner, as rows of admin's
+// list of apps.
 //
 // A SOURCE and not a registration: these rows are records people write while
 // the server runs, so a list fixed at startup is wrong by lunchtime.
-func (T *CustomApps) adminSections(r *http.Request) []AdminSectionEntry {
+func (T *CustomApps) adminApps(r *http.Request) []AdminAppEntry {
 	if !AuthIsAdmin(AuthDB(), r) {
 		// The source's own responsibility, exactly as it is for a dashboard
 		// card source. The admin page is gated too; this is the second lock,
@@ -66,50 +57,39 @@ func (T *CustomApps) adminSections(r *http.Request) []AdminSectionEntry {
 		return strings.ToLower(rows[i].spec.Name) < strings.ToLower(rows[j].spec.Name)
 	})
 
-	if len(rows) == 0 {
-		// An empty rail reads as a broken tab. Say what is true instead.
-		return []AdminSectionEntry{{Section: ui.Section{
-			Title: "Authored apps",
-			Group: customAppsAdminGroup,
-			Body: ui.EmptyState{
-				Icon:  "🧩",
-				Title: "None authored yet",
-				Hint:  "An app built from a chat with the Builder joins this list, beneath the apps that ship with the framework, with its own operator controls.",
-			},
-		}}}
-	}
-
-	out := make([]AdminSectionEntry, 0, len(rows))
+	out := make([]AdminAppEntry, 0, len(rows))
 	for _, rw := range rows {
 		spec := rw.spec
-		body := appadmin.For(adminAppView(spec, rw.owner))
-		if len(body) == 0 {
-			body = []ui.Component{ui.EmptyState{
-				Icon: "-", Title: "Nothing to set", Hint: "This app has no operator controls that apply to it.",
-			}}
+		e := AdminAppEntry{
+			// Owner and slug: a slug is unique only among one owner's apps.
+			Key:      rw.owner + "/" + spec.Slug,
+			Name:     spec.Name,
+			Owner:    rw.owner,
+			Desc:     spec.Desc,
+			Disabled: spec.Disabled,
+			Access:   adminAccess(spec, rw.owner),
 		}
-		out = append(out, AdminSectionEntry{Section: ui.Section{
-			Title:    spec.Name,
-			Subtitle: adminRowSubtitle(spec, rw.owner),
-			Group:    customAppsAdminGroup,
-			Wide:     true,
-			Body:     ui.Stack{Children: body},
-		}})
+		if body := appadmin.For(adminAppView(spec, rw.owner)); len(body) > 0 {
+			e.Settings = plural(len(body), "control")
+			e.Page = func() []ui.Section {
+				return []ui.Section{{
+					Title: "Operator controls",
+					Subtitle: "Who may reach " + spec.Name + ", how it is exposed, and what it may cost. " +
+						"Its owner builds and edits it; these are the deployment's limits on it.",
+					Wide: true,
+					Body: ui.Stack{Children: body},
+				}}
+			}
+		}
+		out = append(out, e)
 	}
 	return out
 }
 
-// adminRowSubtitle answers, in the rail, the question an operator is scanning
-// for: whose app is this and what state is it in.
-func adminRowSubtitle(spec AppSpec, owner string) string {
+// adminAccess answers, in the list, the question an operator scans it for:
+// who can open this app.
+func adminAccess(spec AppSpec, owner string) string {
 	var state []string
-	if spec.Disabled {
-		if st := appadmin.Load(RootDB, owner, spec.Slug); st.DisabledBy != "" {
-			state = append(state, "disabled by "+st.DisabledBy)
-		} else {
-			state = append(state, "disabled")
-		}
-	}
 	if spec.PublicToken != "" {
 		state = append(state, "public link")
 	}
@@ -120,9 +100,21 @@ func adminRowSubtitle(spec AppSpec, owner string) string {
 		state = append(state, "shared with "+strings.Join(live, ", "))
 	}
 	if len(state) == 0 {
-		return owner
+		state = append(state, "its owner only")
 	}
-	return owner + " - " + strings.Join(state, " - ")
+	if spec.Disabled {
+		if st := appadmin.Load(RootDB, owner, spec.Slug); st.DisabledBy != "" {
+			state = append(state, "switched off by "+st.DisabledBy)
+		}
+	}
+	return strings.Join(state, " - ")
+}
+
+func plural(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
 }
 
 // adminAppView narrows a stored spec to what a control needs. ListAppSpecs

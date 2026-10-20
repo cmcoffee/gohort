@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/activity"
 )
 
 // registerLLMRoutes wires the llm API under the admin sub-mux.
@@ -152,8 +153,8 @@ func (a *AdminApp) registerLLMRoutes(sub *http.ServeMux) {
 			// holding SSH credentials and system data may reach the lead tier.
 			// An audit asking "when did servitor start using the lead model"
 			// needs to find an answer.
-			Log("[admin] user %q set all-LLMs-private=%v: private stages %s escalate to the lead tier",
-				AuthCurrentUser(r), req.AllPrivate,
+			adminChange(r, activity.Settings, "set all-LLMs-private=%v: private stages %s escalate to the lead tier",
+				req.AllPrivate,
 				map[bool]string{true: "MAY now", false: "may no longer"}[req.AllPrivate])
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -425,7 +426,7 @@ func (a *AdminApp) handleLLMConfig(w http.ResponseWriter, r *http.Request, table
 				http.StatusConflict)
 			return
 		}
-		Log("[admin] user %q updated %s (provider=%q model=%q)", AuthCurrentUser(r), table, req.Provider, req.Model)
+		adminChange(r, activity.Settings, "updated %s (provider=%q model=%q)", table, req.Provider, req.Model)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}

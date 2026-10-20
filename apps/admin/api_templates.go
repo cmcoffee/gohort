@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/activity"
 )
 
 // registerTemplatesRoutes wires the templates API under the admin sub-mux.
@@ -179,7 +180,7 @@ func (a *AdminApp) handleConnectorConfig(w http.ResponseWriter, r *http.Request)
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
-			Log("[admin] user %q configured backend %q via template %q", AuthCurrentUser(r), req.Connector, req.Template)
+			adminChange(r, activity.Settings, "configured backend %q via template %q", req.Connector, req.Template)
 		} else {
 			// Create + approve (admin is the approver).
 			name := strings.TrimSpace(req.Name)
@@ -203,7 +204,7 @@ func (a *AdminApp) handleConnectorConfig(w http.ResponseWriter, r *http.Request)
 			if req.SetDefault && a.db != nil && t.Category == "Image generation" {
 				a.db.Set(ImageTable, "provider", name)
 			}
-			Log("[admin] user %q added backend %q via template %q", AuthCurrentUser(r), name, req.Template)
+			adminChange(r, activity.Settings, "added backend %q via template %q", name, req.Template)
 		}
 		w.WriteHeader(http.StatusNoContent)
 	default:

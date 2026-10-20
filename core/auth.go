@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cmcoffee/gohort/core/activity"
 	"github.com/cmcoffee/gohort/core/media"
 	"github.com/cmcoffee/gohort/core/netgate"
 	"github.com/cmcoffee/gohort/core/ui"
@@ -1837,6 +1838,7 @@ func LoginHandler(db Database) http.HandlerFunc {
 			for _, k := range keys {
 				if isLockedOut(k) {
 					Log("[auth] locked out (%s) attempted login as %q from %s", k, username, ip)
+					RecordActivity(r, activity.SignInFailed, username, "refused: locked out after repeated failed attempts")
 					serveLoginPage(w, fmt.Sprintf("Too many failed attempts. Try again in %d minutes.", int(lockoutDuration().Minutes())))
 					return
 				}
@@ -1844,6 +1846,7 @@ func LoginHandler(db Database) http.HandlerFunc {
 
 			if !AuthCheckPassword(db, username, password) {
 				Log("[auth] failed login attempt for user %q from %s", username, ip)
+				RecordActivity(r, activity.SignInFailed, username, "wrong username or password")
 				locked := false
 				for _, k := range keys {
 					if recordFailedLogin(k) {
@@ -1861,6 +1864,7 @@ func LoginHandler(db Database) http.HandlerFunc {
 
 			// Block pending users from logging in.
 			if user, ok := AuthGetUser(db, username); ok && user.Pending {
+				RecordActivity(r, activity.SignInFailed, username, "refused: the account is waiting for approval")
 				serveLoginPage(w, "Your account is pending approval by an administrator.")
 				return
 			}
@@ -1879,6 +1883,7 @@ func LoginHandler(db Database) http.HandlerFunc {
 				MaxAge:   sessionMaxAge(),
 			})
 			Log("[auth] user %q logged in from %s", username, ClientIP(r))
+			RecordActivity(r, activity.SignIn, username, "signed in")
 			http.Redirect(w, r, "/", http.StatusFound)
 
 		default:
@@ -1905,6 +1910,7 @@ func LogoutHandler(db Database) http.HandlerFunc {
 			AuthDestroySession(db, cookie.Value)
 			if username != "" {
 				Log("[auth] user %q logged out", username)
+				RecordActivity(r, activity.SignOut, username, "signed out")
 			}
 		}
 		http.SetCookie(w, &http.Cookie{
@@ -1984,6 +1990,7 @@ func SignupHandler(db Database) http.HandlerFunc {
 			db.Set(AuthTable, "user:"+email, user)
 
 			Log("[auth] new signup (pending): %q from %s", email, ClientIP(r))
+			RecordActivity(r, activity.SignUp, email, "signed up; waiting for approval")
 
 			// Notify admins of the new signup.
 			NotifyAdmin("["+ServiceName()+"] New signup pending approval",
@@ -2464,4 +2471,39 @@ func UserCandidatesJSON(db Database, except string) []byte {
 	sort.Slice(out, func(i, j int) bool { return out[i].Value < out[j].Value })
 	data, _ := json.Marshal(out)
 	return data
+}
+
+const tuneActivityRetention = "tune_activity_retention_days"
+
+func init() {
+	RegisterTunable(TunableSpec{
+		Key: tuneActivityRetention, Category: "Security",
+		Label:  "Activity log retention",
+		Help:   "How many days Admin › Activity keeps an event: sign-ins and failed sign-ins, account and credential changes, peers, approvals.",
+		Detail: "Older events are removed as new ones are written, at most once an hour, so lowering this takes effect within the hour. Raising it keeps what is still there; it cannot bring back what was already removed.",
+		Kind:   KindDays, Default: 90, Min: 1, Max: 3650,
+	})
+	activity.RetentionDays = func() int { return TuneInt(tuneActivityRetention) }
+}
+
+// RecordActivity adds an event to the activity log (core/activity), with
+// where the request came from. user is who acted, or for a failed sign-in the
+// name that was tried; detail says what happened, in an administrator's words.
+// Never pass a secret: the log is read by every administrator.
+func RecordActivity(r *http.Request, kind, user, detail string) {
+	if AuthDB == nil {
+		return
+	}
+	db := AuthDB()
+	if db == nil {
+		return
+	}
+	e := activity.Event{Kind: kind, User: user, Detail: detail}
+	if r != nil {
+		if ip := ClientIP(r); ip != nil {
+			e.IP = ip.String()
+		}
+		e.Browser = r.UserAgent()
+	}
+	activity.Record(db, e)
 }

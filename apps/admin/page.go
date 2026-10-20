@@ -27,6 +27,8 @@ var sectionGroup = map[string]string{
 	"Users": "System", "Add account": "System", "Default Apps": "System",
 	"Teams": "System",
 
+	"Activity Log": "Activity",
+
 	"Cost History (Last 30 Days)": "Costs", "Cost by source": "Costs", "Prices": "Costs",
 
 	"Worker LLM": "LLMs", "Lead LLM": "LLMs", "LLM Routing": "LLMs", "Model Privacy": "LLMs",
@@ -270,6 +272,13 @@ var costSources = []string{costHistorySource, costBySourceSource}
 // what is on screen, and a change made on one tab is on the next because
 // the next is rendered fresh when it is opened.
 func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request, tab string) {
+	a.serveAdminPage(w, r, tab, nil)
+}
+
+// serveAdminPage serves an administrator page with tab marked in the menu.
+// With open set, the page holds what open returns in place of the tab's own
+// sections (one app's page, under Apps), and is a 404 when open returns nil.
+func (a *AdminApp) serveAdminPage(w http.ResponseWriter, r *http.Request, tab string, open func(*panes) *appPage) {
 	if !a.requireAdmin(w, r) {
 		return
 	}
@@ -317,9 +326,12 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request, tab
 			ClientAction("peer_key_issued", peerKeyIssuedAction).
 			ClientAction("peer_key_reissue", peerKeyReissueAction).
 			ClientAction("artifacts_export_all", artifactsExportAllAction),
-		MaxWidth:   "1200px", // desktop admin: wide enough for full-width tables in a single column
-		Grid:       false,    // single column: sections stack vertically within each tab (Wide flags become no-ops)
-		SectionNav: true,     // a left-rail sub-nav of the tab's sections (one at a time); the tabs are Nav links, one page each
+		MaxWidth: "1200px", // desktop admin: wide enough for full-width tables in a single column
+		Grid:     false,    // single column: sections stack vertically within each tab (Wide flags become no-ops)
+		// The tabs are Nav links, one page each, across the header; the ones
+		// that do not fit fold into its More menu. A tab's sections are a rail
+		// down its left, one shown at a time.
+		SectionNav: true,
 	}
 	// The page body, one builder per tab area (page_<area>.go). Appended in
 	// this order; within a tab, sections keep the order their builder lists.
@@ -339,6 +351,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request, tab
 		build func() []ui.Section
 	}{
 		{"system", a.systemSections},
+		{"activity", a.activitySections},
 		{"llm", a.llmSections},
 		{"cost", a.costSections},
 		{"capabilities", a.capabilitiesSections},
@@ -358,7 +371,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request, tab
 	// two-up. The tab each section lands on is sectionTab, at package level
 	// because the Apps tab names those tabs in its links.
 	wideSections := map[string]bool{
-		"System Status": true, "Users": true, "LLM Routing": true,
+		"System Status": true, "Users": true, "LLM Routing": true, "Activity Log": true,
 		"Cost History (Last 30 Days)": true, "Cost by source": true, "Scheduled Tasks": true,
 		"API Credentials": true, "MCP Servers": true, "Connectors": true, "Source Hooks": true,
 		"Persistent Tools (Pending)": true, "Global Tools": true,
@@ -383,9 +396,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request, tab
 	// instance. Lands under Capabilities via sectionGroup, next to the
 	// Embeddings and Image Generation settings it shares.
 	page.Sections = append(page.Sections, timed("peer-sharing", peerSharingSections)...)
-	// The Apps tab: one row per compiled app. Custom apps land on the SAME tab
-	// through the runtime section source below, which is why this is appended
-	// first — compiled apps, then whatever people have authored.
+	// The Apps tab: one table of apps (apps_tab.go).
 	builtOwn := time.Since(started)
 	panes := newPanes(r)
 	page.Sections = append(page.Sections, timed("apps", panes.sections)...)
@@ -397,8 +408,12 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request, tab
 	// tab, which asks the same sources about every app.
 	order := map[string]int{} // section title -> its Order within its tab
 	for _, e := range panes.entries {
-		page.Sections = append(page.Sections, e.Section)
 		page.ExtraHeadHTML += e.Head
+		// An app's section filed under Apps is on that app's own page.
+		if e.App != "" && sectionTab(e.Section.Title, e.Section.Group) == AppsTabGroup {
+			continue
+		}
+		page.Sections = append(page.Sections, e.Section)
 		if e.Order != 0 {
 			order[e.Section.Title] = e.Order
 		}
@@ -439,7 +454,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request, tab
 	// above has to appear here. "Tools" is deliberately absent now: the tool
 	// sections all live under Extensions, and a rank for a tab nothing lands on
 	// is a tab that never appears.
-	groupRank := map[string]int{"System": 0, "Costs": 1, "LLMs": 2, "Capabilities": 3, "Agents": 4, "Governance": 5, "Extensions": 6, "Apps": 7, "Tuning": 8, "Prompts": 9, "Maintenance": 10}
+	groupRank := map[string]int{"System": 0, "Activity": 1, "Costs": 2, "LLMs": 3, "Capabilities": 4, "Agents": 5, "Governance": 6, "Extensions": 7, "Apps": 8, "Tuning": 9, "Prompts": 10, "Maintenance": 11}
 	sort.SliceStable(page.Sections, func(i, j int) bool {
 		gi, gj := groupRank[page.Sections[i].Group], groupRank[page.Sections[j].Group]
 		if gi != gj {
@@ -465,6 +480,16 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request, tab
 		}
 	}
 	page.Sections = keep
+	if open != nil {
+		pg := open(panes)
+		if pg == nil {
+			http.NotFound(w, r)
+			return
+		}
+		page.Title, page.BackURL = pg.title, tabs[cur].url
+		page.Sections = pg.sections
+		page.ExtraHeadHTML += pg.head
+	}
 	for i, t := range tabs {
 		page.Nav = append(page.Nav, ui.NavLink{Label: t.name, URL: t.url, Active: i == cur})
 	}

@@ -21,8 +21,8 @@ type fakeHiddenApp struct{ fakeWebApp }
 func (fakeHiddenApp) WebHidden() bool { return true }
 
 func init() {
-	// Its only claim is a section already on the Apps tab: that section is its
-	// row, so it gets no second one.
+	// Its only claim is a section filed under the Apps tab: that section goes
+	// on its page, and the tab keeps only the table.
 	RegisterApp(fakeHiddenApp{fakeWebApp{path: "/hiddenonappstab"}})
 	RegisterAdminSection(AdminSectionEntry{App: "/hiddenonappstab",
 		Section: ui.Section{Title: "On Apps Already", Group: AppsTabGroup}})
@@ -113,17 +113,14 @@ func TestPanelLinksNameTheTabTheSectionIsOn(t *testing.T) {
 // Linked, never rendered twice: a contributed section is a whole surface and
 // two live copies of it on one page are two editors over one record.
 func TestPaneLinksPanelsRatherThanRenderingThem(t *testing.T) {
-	st, ok := appPaneBody(adminReq(), "/hiddenpanetest").(ui.Stack)
-	if !ok {
-		t.Fatalf("pane body = %T", appPaneBody(adminReq(), "/hiddenpanetest"))
-	}
+	secs := appPageSections(adminReq(), "/hiddenpanetest")
 	// Summary and the link table, nothing else: this app claims no routing
-	// or knobs, so any third child is a contributed section's body.
-	if len(st.Children) != 2 {
-		t.Fatalf("pane has %d children, want summary + link table", len(st.Children))
+	// or knobs, so any third section is a contributed section's body.
+	if len(secs) != 2 {
+		t.Fatalf("the page has %v, want About + Other settings", sectionTitles(secs))
 	}
 	var tbl *ui.Table
-	if t2, ok := st.Children[1].(ui.Table); ok && t2.Source == appPanelsSource("/hiddenpanetest") {
+	if t2, ok := secs[1].Body.(ui.Table); ok && t2.Source == appPanelsSource("/hiddenpanetest") {
 		tbl = &t2
 	}
 	if tbl == nil {
@@ -134,11 +131,38 @@ func TestPaneLinksPanelsRatherThanRenderingThem(t *testing.T) {
 	}
 }
 
-func TestASectionAlreadyOnTheAppsTabIsNotASecondRow(t *testing.T) {
+func TestASectionFiledUnderAppsIsOnItsAppsPage(t *testing.T) {
+	listed := false
 	for _, rw := range paneApps(adminReq()) {
-		if rw.path == "/hiddenonappstab" {
-			t.Error("a hidden app whose only panel is on the Apps tab got a pane beside it")
-		}
+		listed = listed || rw.path == "/hiddenonappstab"
+	}
+	if !listed {
+		t.Error("a hidden app whose panel is filed under Apps has no row to reach it by")
+	}
+	secs := appPageSections(adminReq(), "/hiddenonappstab")
+	if got := sectionTitles(secs); len(got) != 2 || got[1] != "On Apps Already" {
+		t.Errorf("its page = %v, want About and its section drawn there", got)
+	}
+	if len(panelsElsewhere(adminReq(), "/hiddenonappstab")) != 0 {
+		t.Error("the section is on the page; it should not also be linked as elsewhere")
+	}
+
+	// And the Apps tab itself holds only the table.
+	db := &DBase{Store: kvlite.MemStore()}
+	db.Set(LLMTable, "provider", "openai")
+	prev := AuthDB
+	AuthDB = func() Database { return db }
+	t.Cleanup(func() { AuthDB = prev })
+	a := &AdminApp{db: db}
+	mux := http.NewServeMux()
+	a.RegisterRoutes(mux, "/admin")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest("GET", "/admin/apps", nil))
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "api/app-switches") {
+		t.Fatalf("the Apps tab: %d", w.Code)
+	}
+	if strings.Contains(w.Body.String(), "On Apps Already") {
+		t.Error("an app's section was drawn on the Apps tab beside the table")
 	}
 }
 
