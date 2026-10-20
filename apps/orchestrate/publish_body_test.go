@@ -64,6 +64,19 @@ func TestAPublishSendsTheDocumentByReference(t *testing.T) {
 		t.Fatalf("the call did not carry the document: %.200v", sent)
 	}
 
+	// A success that names no page is not taken: the model is sent back for
+	// the address, and a run that never gives one did not publish anywhere
+	// the next update could find.
+	sent = nil
+	T.LLM = &FakeLLM{Turns: []FakeTurn{
+		{ToolCalls: []ToolCall{{ID: "1", Name: "fetch_url_wiki", Args: map[string]any{"method": "POST", "url": "/pages", "body": `{"body":"{{document}}"}`}}}},
+		{ToolCalls: []ToolCall{{ID: "2", Name: "report_published", Args: map[string]any{"ok": true, "note": "made the page"}}}},
+		{Content: "made the page", Repeat: true},
+	}}
+	if _, url, err := docs.PublishViaCredential(docs.WithPublishBody(context.Background(), req), "alice", "wiki", "Post it.\n\n"+docs.ReferenceInstruction(req)); err == nil {
+		t.Errorf("a success that named no page was taken (url %q)", url)
+	}
+
 	// Without it: whatever the model typed went out, so it is not a success.
 	if _, err := run(`{"title":"Runbook","body":"A short summary of the runbook."}`); err == nil || !strings.Contains(err.Error(), "none of its calls carried the document") {
 		t.Errorf("a publish that never sent the document reads as done: %v", err)

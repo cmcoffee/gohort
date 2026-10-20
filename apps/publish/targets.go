@@ -189,7 +189,9 @@ func targetInstruction(t Target, req docs.PublishRequest) string {
 		}
 	}
 	if prev := strings.TrimSpace(req.ExternalID); prev != "" {
-		b.WriteString("\n\nThis document was published here before, at " + prev + ". Update that one rather than making a new one, if the API allows it.")
+		// Firm: a second copy is worse than a failed update. The person
+		// then has two pages, and every later update finds the wrong one.
+		b.WriteString("\n\nThis document is ALREADY published here, at " + prev + ". Update that page in place: find it from this address (its id is usually in it), read it, and change it. Never create a new one. If you cannot find or update it, change nothing and call report_published with ok=false saying why.")
 	}
 	// An integration's run gets the document by reference (docs.ReferenceInstruction):
 	// it writes a placeholder where the body goes, and never types it out.

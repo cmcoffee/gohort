@@ -155,3 +155,37 @@ func TestStopEndsARunningPublish(t *testing.T) {
 		t.Errorf("a stopped publish filed a record: %+v", saved.Published)
 	}
 }
+
+// noAddressDest updates a page and answers without saying which one.
+type noAddressDest struct{}
+
+func (noAddressDest) Kind() string                    { return "noaddrtest" }
+func (noAddressDest) Label() string                   { return "No address test" }
+func (noAddressDest) Available(string) (bool, string) { return true, "" }
+func (noAddressDest) Targets(context.Context, string) ([]docs.PublishTarget, error) {
+	return nil, nil
+}
+func (noAddressDest) Publish(ctx context.Context, user string, req docs.PublishRequest) (docs.PublishResult, error) {
+	return docs.PublishResult{Label: "updated", Updated: true}, nil
+}
+
+// An update that comes back without an address still went to the page the
+// guide already had, and the guide keeps it: losing it is how the next
+// publish made a second page.
+func TestAnUpdateWithNoAddressKeepsThePage(t *testing.T) {
+	docs.RegisterPublishDestination(noAddressDest{})
+	udb := Database(&DBase{Store: kvlite.MemStore()})
+	prev := docs.PublishRecord{Kind: "noaddrtest", Title: "G", ExternalID: "page-42", URL: "https://wiki.example.com/page-42"}
+	saveGuide(udb, Guide{ID: "g-addr", Title: "G", Owner: "alice", Published: []docs.PublishRecord{prev}})
+	g, _ := loadGuide(udb, "g-addr")
+	p := republishOf(g, udb, "alice", prev)
+	job, ctx := p.start(context.Background())
+	if err := p.do(ctx, job); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	g, _ = loadGuide(udb, "g-addr")
+	rec, _ := docs.FindPublishRecord(g.Published, "noaddrtest")
+	if rec.ExternalID != "page-42" || rec.URL != "https://wiki.example.com/page-42" {
+		t.Errorf("the guide lost its page: %+v", rec)
+	}
+}

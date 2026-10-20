@@ -170,6 +170,14 @@ func (p publishRun) do(ctx context.Context, job *publishJob) error {
 	}
 	rec := p.rec
 	rec.ExternalID, rec.URL, rec.Version, rec.At = res.ExternalID, res.URL, res.Version, now()
+	// An update that came back without an address still went to the page
+	// this guide already had: keep it, or the next publish makes a new one.
+	if strings.TrimSpace(rec.ExternalID) == "" {
+		rec.ExternalID = p.req.ExternalID
+	}
+	if strings.TrimSpace(rec.URL) == "" {
+		rec.URL = p.rec.URL
+	}
 	cur.Published = docs.UpsertPublishRecord(cur.Published, rec)
 	saveGuideRev(p.ownerUDB, cur, "Published to "+p.where)
 	return nil

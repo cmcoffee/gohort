@@ -51,7 +51,7 @@ func TestATargetPublishesThroughItsIntegration(t *testing.T) {
 	if gotCred != "blogapi" || res.URL != "https://blog.example/p/9" || res.ExternalID != res.URL {
 		t.Errorf("published through the credential, address kept for the next update: %q %+v", gotCred, res)
 	}
-	for _, want := range []string{"Create a draft post.", "Title: Launch notes", "Category: News", "published here before, at https://blog.example/p/8", docs.BodyMarkdownPlaceholder} {
+	for _, want := range []string{"Create a draft post.", "Title: Launch notes", "Category: News", "ALREADY published here, at https://blog.example/p/8", "Never create a new one", docs.BodyMarkdownPlaceholder} {
 		if !strings.Contains(gotInstr, want) {
 			t.Errorf("the pass should be handed %q:\n%s", want, gotInstr)
 		}

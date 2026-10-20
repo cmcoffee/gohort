@@ -171,6 +171,12 @@ func registerCredentialPublisher(app *OrchestrateApp) {
 				Required: []string{"ok", "note"},
 			},
 			Handler: func(_ context.Context, args map[string]any) (string, error) {
+				// A success with no address is a page nobody can update:
+				// the next publish would make another. Asked for, not
+				// recorded.
+				if okArg, _ := args["ok"].(bool); okArg && strings.TrimSpace(stringArg(args, "url")) == "" {
+					return "", fmt.Errorf("give url: the address of the page you created or updated, from the API's response. The next update finds the page by it")
+				}
 				url = strings.TrimSpace(stringArg(args, "url"))
 				note = strings.TrimSpace(stringArg(args, "note"))
 				ok, _ = args["ok"].(bool)
