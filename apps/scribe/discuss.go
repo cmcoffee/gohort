@@ -73,7 +73,7 @@ func (d discussTurn) prompt() string {
 			fmt.Fprintf(&b, "The guide's sections so far: %s. Read them when it helps to know what it already holds.\n\n", strings.Join(titles, "; "))
 		}
 		b.WriteString("You can look things up with your tools rather than asking for what you can find. You cannot change the guide yourself: the brief you write goes back to the author, who decides whether to keep it.\n\n")
-		b.WriteString("## How to reply\n\n" + textutil.DiscussReplyContract + "\n")
+		b.WriteString("## How to reply\n\n" + textutil.DiscussReplyContract + discussAskNote + "\n")
 	} else if d.first {
 		fmt.Fprintf(&b, "You are discussing one section of the guide %q with its author, before anything is written.\n\n", firstNonEmpty(d.guide.Title, "Untitled guide"))
 		if d.context != "" {
@@ -94,7 +94,7 @@ func (d discussTurn) prompt() string {
 			fmt.Fprintf(&b, "The guide's other sections, which this one should not repeat: %s.\n\n", strings.Join(others, "; "))
 		}
 		b.WriteString("You can look things up with your tools (list_sections, the guide's knowledge and Sources, research) rather than asking for what you can find. You cannot change the guide yourself: the text you write goes back to the author, who decides whether it goes in.\n\n")
-		b.WriteString("## How to reply\n\n" + textutil.DiscussReplyContract + "\n")
+		b.WriteString("## How to reply\n\n" + textutil.DiscussReplyContract + discussAskNote + "\n")
 	}
 	if strings.TrimSpace(d.draft) == "" {
 		fmt.Fprintf(&b, "## The %s's current text\n\n(empty: nothing written yet)\n\n", what)
@@ -105,6 +105,11 @@ func (d discussTurn) prompt() string {
 	b.WriteString("## The author says\n\n" + d.message)
 	return b.String()
 }
+
+// discussAskNote says how a question with a few clear answers is put: the
+// window shows ask_user's options as buttons, so the author clicks rather than
+// types. Asking whether to go ahead is one of those.
+const discussAskNote = "- A question with a few clear answers (who reads it, which of two approaches, whether to go ahead with what you proposed) goes through ask_user with those answers as its options, one question per call. The author picks one with a click. Open questions stay in your reply.\n"
 
 // discussSessionRe keeps the browser's conversation id to a safe key.
 var discussSessionRe = regexp.MustCompile(`[^A-Za-z0-9_-]`)
@@ -227,9 +232,16 @@ func (T *Scribe) runDiscussTurn(w http.ResponseWriter, r *http.Request, udb Data
 		FreshSession: turn.first,
 		Message:      turn.prompt(),
 		AppTools:     tools,
+		AskUser:      true,
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	// A question asked with ask_user comes back with its choices, which the
+	// window shows as buttons; an answer is the next message.
+	if res.Question != "" {
+		writeJSON(w, map[string]any{"reply": res.Question, "options": res.Options})
 		return
 	}
 	reply, value := SplitDraftReply(res.Text)

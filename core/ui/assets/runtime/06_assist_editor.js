@@ -21,9 +21,11 @@
   //   initial   — the text to open with
   //   placeholder — composer placeholder
   //   send      — fn({message, draft, history}, done). Call
-  //               done({reply, value}) on success — value omitted or
-  //               empty means the model answered without proposing a
-  //               change — or done(null, "error text") on failure.
+  //               done({reply, value, options}) on success — value omitted
+  //               or empty means the model answered without proposing a
+  //               change; options, when given, are answers to the reply's
+  //               question, drawn as buttons that send the one picked — or
+  //               done(null, "error text") on failure.
   //   ask       — an opening request, sent automatically on open, as
   //               though the caller had typed it. For a workbench opened
   //               with a specific brief ("settle this finding", "make it
@@ -34,8 +36,7 @@
   //   mode      — 'discuss' talks it through before anything is written:
   //               the model asks, proposes, and returns text only once the
   //               person agrees (the server's reply contract does that;
-  //               mode rides on every send so it knows which to use). Adds
-  //               a "Write it now" button for when enough has been said.
+  //               mode rides on every send so it knows which to use).
   //               'write' revises on request: every turn may propose text.
   //               Either one pins the window to it.
   //   switchable — no mode pinned: the person picks, with a switch at the
@@ -133,17 +134,12 @@
     }
     composer.placeholder = placeholderFor();
     var sendBtn = el('button', {type: 'button', class: 'ui-assist-send', 'aria-label': 'Send'}, ['Send']);
-    // Discuss mode: skip ahead once enough has been said. Sent as a message
-    // like any other, so it is in the log and the history.
-    var writeBtn = (discuss || switchable) ? el('button', {type: 'button', class: 'ui-assist-send ui-assist-write', title: 'Stop discussing and write it from what has been said'}, ['Write it now']) : null;
-    var writeNowText = 'Write it now from what we have discussed. Say in one sentence what you had to assume.';
 
     // The switch between the two, when the caller lets the person choose.
     // The mode rides on each send, so a switch takes effect on the next
     // message and the conversation so far carries on under it.
     var modeRow = null, talkBtn = null, justBtn = null;
     function showMode() {
-      if (writeBtn) writeBtn.style.display = discuss ? '' : 'none';
       composer.placeholder = placeholderFor();
       if (!modeRow) return;
       talkBtn.classList.toggle('active', discuss);
@@ -174,13 +170,29 @@
       busy = on;
       sendBtn.disabled = on;
       composer.disabled = on;
-      if (writeBtn) writeBtn.disabled = on;
+    }
+
+    // The answers to the question just asked, as buttons: one sends itself as
+    // the reply. Any send answers the question, so the buttons go then.
+    var choices = null;
+    function addChoices(options) {
+      if (!Array.isArray(options)) return;
+      var opts2 = options.map(function(o) { return String(o == null ? '' : o).trim(); }).filter(Boolean);
+      if (!opts2.length) return;
+      choices = el('div', {class: 'ui-assist-choices'}, opts2.map(function(o) {
+        var b = el('button', {type: 'button', class: 'ui-assist-choice'}, [o]);
+        b.addEventListener('click', function() { send(o); });
+        return b;
+      }));
+      log.appendChild(choices);
+      log.scrollTop = log.scrollHeight;
     }
 
     function send(preset) {
       if (busy) return;
       var text = (typeof preset === 'string' ? preset : (composer.value || '')).trim();
       if (!text) return;
+      if (choices) { choices.remove(); choices = null; }
       composer.value = '';
       addMsg('user', text);
       // Snapshot the history BEFORE this turn — the server appends the
@@ -214,11 +226,11 @@
         }
         addMsg('assistant', mdToHTML(reply), true);
         history.push({role: 'assistant', content: reply});
+        addChoices(res.options);
         if (!coarse) composer.focus();
       });
     }
     sendBtn.addEventListener('click', function() { send(); });
-    if (writeBtn) writeBtn.addEventListener('click', function() { send(writeNowText); });
     composer.addEventListener('keydown', function(ev) {
       // Enter sends, Shift+Enter breaks the line: this is a chat box, and
       // multi-line requests are rare enough to cost a modifier.
@@ -263,7 +275,6 @@
         field.appendChild(composer);
         field.appendChild(sendBtn);
         composerRow.appendChild(field);
-        if (writeBtn) composerRow.appendChild(writeBtn);
         right.appendChild(composerRow);
 
         wrap.appendChild(left);

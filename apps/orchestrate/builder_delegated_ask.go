@@ -30,11 +30,14 @@ import (
 )
 
 // delegatedQuestion holds what a delegated Builder asked, for the caller to
-// turn into the run's result.
+// turn into the run's result. direct is a run whose caller has the person
+// there (AgentSyncRun.AskUser): the question goes to them as it stands, with
+// no agent between to relay it.
 type delegatedQuestion struct {
 	mu       sync.Mutex
 	question string
 	options  []string
+	direct   bool
 }
 
 func (q *delegatedQuestion) asked() bool {
@@ -74,12 +77,20 @@ func delegatedRelay(builderName, question string) string {
 // delegatedAskUserTool is ask_user for a Builder run another agent started.
 // Listed in the run's RoundAbortTools, so a call ends the run.
 func delegatedAskUserTool(q *delegatedQuestion) AgentToolDef {
+	desc := "Ask the user something only they can settle, when you cannot go on without it: which account or instance, or a choice between meaningfully different designs. " +
+		"This run ends when you call it. The question goes to the agent that sent the brief, it asks the user, and their answer comes back as the next message in this thread. " +
+		"Ask once, with everything you need in one question, and never for what you can look up, probe or reasonably decide."
+	sent := "Sent. This run ends here; the answer arrives as the next message in this thread."
+	if q.direct {
+		desc = "Ask the user a question whose answer is one of a few choices, shown to them as buttons to pick from. " +
+			"This turn ends when you call it, and their answer comes back as the next message. " +
+			"Use it for a question with bounded answers; ask an open question in your reply instead. Never ask for what you can look up."
+		sent = "Asked. This turn ends here; their answer arrives as the next message."
+	}
 	return AgentToolDef{
 		Tool: Tool{
-			Name: "ask_user",
-			Description: "Ask the user something only they can settle, when you cannot go on without it: which account or instance, or a choice between meaningfully different designs. " +
-				"This run ends when you call it. The question goes to the agent that sent the brief, it asks the user, and their answer comes back as the next message in this thread. " +
-				"Ask once, with everything you need in one question, and never for what you can look up, probe or reasonably decide.",
+			Name:        "ask_user",
+			Description: desc,
 			Parameters: map[string]ToolParam{
 				"question": {Type: "string", Description: "The question, in plain text, as the user should read it."},
 				"options": {
@@ -99,7 +110,7 @@ func delegatedAskUserTool(q *delegatedQuestion) AgentToolDef {
 			q.question = question
 			q.options = options
 			q.mu.Unlock()
-			return "Sent. This run ends here; the answer arrives as the next message in this thread.", nil
+			return sent, nil
 		},
 	}
 }

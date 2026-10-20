@@ -1440,6 +1440,12 @@ type AgentSyncRun struct {
 	// per-instance closure tools here, e.g. servitor handing its worker the SSH
 	// command tools bound to one appliance's connection. Empty for ordinary runs.
 	AppTools []AgentToolDef
+	// AskUser marks a run whose caller has a person watching who can answer a
+	// question: an app's own window, such as an assist workbench. The run gets
+	// ask_user, a call ends it, and the result carries Question and Options for
+	// the caller to put to them; their answer is the next message in the
+	// thread.
+	AskUser bool
 	// Loop, when set, supplies rich agent-loop knobs (pacing callbacks, chat
 	// options, round budget) a sophisticated instance needs that the default
 	// dispatch run doesn't — so e.g. servitor's investigator runs through the
@@ -1537,6 +1543,10 @@ type AgentSyncResult struct {
 	// agent's "I wasn't able to put together a response" line, which is the
 	// framework overriding an instruction the user gave and the model obeyed.
 	Silenced bool
+	// Question and Options are what the run asked with ask_user when it was
+	// run with AskUser; Text is the question as the thread keeps it.
+	Question string
+	Options  []string
 }
 
 // buildInboundMediaManifest individuates the media that arrived on THIS turn,
@@ -1783,7 +1793,11 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	cr.shapeReply()
 	cr.saveExchange()
 	cr.collectMedia()
-	return AgentSyncResult{Text: cr.cleanReply, Parts: cr.replyParts, Images: cr.imgs, Videos: cr.vids, Made: madeFiles(cr.subSess), HitRoundCap: cr.resp.HitRoundCap, PhantomDelivery: cr.phantomDelivery, ToolCalls: cr.turnToolCalls, Silenced: cr.subSess != nil && cr.subSess.Silenced}, nil
+	res := AgentSyncResult{Text: cr.cleanReply, Parts: cr.replyParts, Images: cr.imgs, Videos: cr.vids, Made: madeFiles(cr.subSess), HitRoundCap: cr.resp.HitRoundCap, PhantomDelivery: cr.phantomDelivery, ToolCalls: cr.turnToolCalls, Silenced: cr.subSess != nil && cr.subSess.Silenced}
+	if cr.ask != nil && cr.ask.direct && cr.ask.asked() {
+		res.Question, res.Options = cr.ask.question, cr.ask.options
+	}
+	return res, nil
 }
 
 // continuingRun is one turn of an agent on a thread it keeps, from the
@@ -2278,7 +2292,9 @@ func (cr *continuingRun) buildMessages() {
 	// Skip it for everyone else, and always on an interactive surface (a channel
 	// has a human who answers follow-ups in the next message).
 	cr.deliveredMessage = cr.message
-	if !run.Interactive && isBuilderAgent(cr.target.ID) {
+	if run.AskUser {
+		cr.ask = &delegatedQuestion{direct: true}
+	} else if !run.Interactive && isBuilderAgent(cr.target.ID) {
 		if strings.TrimSpace(run.DelegatorAgentID) != "" {
 			cr.deliveredMessage = markAsDelegatedMayAsk(cr.message)
 			cr.ask = &delegatedQuestion{}
@@ -2836,7 +2852,9 @@ func (cr *continuingRun) collectMedia() {
 	if len(cr.imgs) > 0 || len(cr.vids) > 0 {
 		cr.phantomDelivery = false // the backstop recovered something after all
 	}
-	if cr.ask.asked() {
+	if cr.ask != nil && cr.ask.direct {
+		// Asked of the person at the caller's window, who reads it there.
+	} else if cr.ask.asked() {
 		Log("[orchestrate.RunAgentSyncContinuing] %s asked the user a question through delegator=%s", cr.target.Name, run.DelegatorAgentID)
 		cr.cleanReply = delegatedRelay(cr.target.Name, cr.cleanReply)
 	} else if cr.ask != nil && endsWithQuestionForUser(cr.cleanReply) {

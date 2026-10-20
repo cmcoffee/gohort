@@ -89,8 +89,9 @@ function node(tag) {
   return {
     tagName: tag, value: '', textContent: '', className: '', disabled: false,
     style: {}, children: [],
-    appendChild: function(c) { this.children.push(c); return c; },
-    removeChild: function(c) {}, remove: function() {},
+    appendChild: function(c) { this.children.push(c); if (c && typeof c === 'object') c.parentNode = this; return c; },
+    removeChild: function(c) {},
+    remove: function() { var p = this.parentNode; if (p) { var i = p.children.indexOf(this); if (i >= 0) p.children.splice(i, 1); this.parentNode = null; } },
     setAttribute: function() {}, getAttribute: function() { return null; },
     addEventListener: function(k, fn) { (listeners[k] = listeners[k] || []).push(fn); (this['__' + k] = this['__' + k] || []).push(fn); },
     querySelector: function() { return null; }, querySelectorAll: function() { return []; },
@@ -210,11 +211,8 @@ var row = find(wrap, 'ui-assist-modes');
 if (!row) throw new Error('a switchable window shows no switch');
 var talk = row.children[0], just = row.children[1];
 if (!talk.classList.contains('active')) throw new Error('an empty field should open on Talk it through');
-var write = find(wrap, 'ui-assist-write');
-if (!write || write.style.display === 'none') throw new Error('Write it now should show while talking it through');
 say(wrap, 'one');
 fire(just);
-if (write.style.display !== 'none') throw new Error('Write it now should hide under Just write');
 say(wrap, 'two');
 fire(talk);
 say(wrap, 'three');
@@ -231,7 +229,6 @@ if (!find(wrap, 'ui-assist-modes').children[1].classList.contains('active')) thr
 
 wrap = open({initial: ''});
 if (find(wrap, 'ui-assist-modes')) throw new Error('a window that did not offer the switch shows one');
-if (find(wrap, 'ui-assist-write')) throw new Error('a write-only window shows Write it now');
 
 wrap = open({switchable: true, mode: 'discuss', initial: 'text'});
 if (find(wrap, 'ui-assist-modes')) throw new Error('a pinned mode should not show the switch');
@@ -243,5 +240,43 @@ console.log('OK');
 	}
 	if out, err := exec.Command("node", tmp).CombinedOutput(); err != nil || !strings.Contains(string(out), "OK") {
 		t.Fatalf("the assist mode switch:\n%s", out)
+	}
+}
+
+// A reply that asks with choices shows them as buttons: one click sends the
+// choice as the answer, and any send answers the question, so the buttons go.
+// Seen live: Discuss asked its questions as prose only, and its one shortcut,
+// "Write it now", was a canned message that read as the person's own words.
+func TestAssistChoices(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node not installed")
+	}
+	src := readRuntimeFile(t, "06_assist_editor.js")
+	script := assistStubDOM + src + `
+function find(n, cls) {
+  if (n.className && (' ' + n.className + ' ').indexOf(' ' + cls + ' ') >= 0) return n;
+  for (var i = 0; i < (n.children || []).length; i++) { var f = find(n.children[i], cls); if (f) return f; }
+  return null;
+}
+function fire(n) { (n.__click || []).forEach(function(f) { f(); }); }
+var sent = [], answers = [{reply: 'Who reads it?', options: ['Operators', ' ', 'New hires']}, {reply: 'ok'}, {reply: 'ok'}];
+window.uiOpenAssist({mode: 'discuss', initial: '', send: function(req, done) { sent.push(req.message); done(answers.shift()); }});
+var wrap = find(document.body, 'ui-assist');
+if (find(wrap, 'ui-assist-write')) throw new Error('the window still has Write it now');
+find(wrap, 'ui-assist-input').value = 'help me';
+fire(find(wrap, 'ui-assist-send'));
+var row = find(wrap, 'ui-assist-choices');
+if (!row || row.children.length !== 2) throw new Error('the choices should be two buttons, blanks dropped');
+fire(row.children[1]);
+if (sent[1] !== 'New hires') throw new Error('the pick sent ' + JSON.stringify(sent[1]));
+if (find(wrap, 'ui-assist-choices')) throw new Error('the answered question kept its buttons');
+console.log('OK');
+`
+	tmp := filepath.Join(t.TempDir(), "choices.js")
+	if err := os.WriteFile(tmp, []byte(script), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("node", tmp).CombinedOutput(); err != nil || !strings.Contains(string(out), "OK") {
+		t.Fatalf("the assist choices:\n%s", out)
 	}
 }

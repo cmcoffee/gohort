@@ -2518,11 +2518,18 @@ select:-webkit-autofill {
   border-radius: var(--btn-radius); padding: 0.55rem 0.9rem; font-size: var(--fs-sm); cursor: pointer;
 }
 .ui-assist-send:disabled { opacity: 0.5; cursor: default; }
+/* The answers to the question the assistant just asked, one button each. */
+.ui-assist-choices { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.1rem 0 0.4rem; }
+.ui-assist-choice {
+  background: transparent; color: var(--accent); cursor: pointer; font: inherit;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--border));
+  border-radius: 999px; padding: 0.3rem 0.85rem; font-size: var(--fs-xs); line-height: 1.3;
+}
+.ui-assist-choice:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
 /* Narrow: the helper takes the whole screen, and the conversation and the
  * draft take turns under two tabs instead of stacking into two short boxes.
  * The composer is one rounded field with a round send arrow, as the agent
- * chat draws it on a phone, and "Write it now" sits above it rather than
- * squeezing the text into a third of the row. */
+ * chat draws it on a phone. */
 @media (max-width: 760px) {
   .ui-modal-overlay.ui-assist-overlay { padding: 0; }
   .ui-modal-box.ui-assist-modal {
@@ -2554,12 +2561,6 @@ select:-webkit-autofill {
   .ui-assist.ui-assist-on-draft .ui-assist-right { flex: 0 0 auto; }
   .ui-assist-draft, .ui-assist-log { min-height: 0; }
   .ui-assist-composer { flex-direction: column; align-items: stretch; gap: 0.35rem; }
-  .ui-assist-write {
-    order: -1; align-self: flex-end;
-    background: transparent; color: var(--accent);
-    border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--border));
-    border-radius: 999px; padding: 0.3rem 0.8rem; font-size: var(--fs-xs);
-  }
   .ui-assist-field {
     padding: 0.3rem 0.3rem 0.3rem 0.55rem; gap: 0.3rem;
     border: 1px solid var(--border); border-radius: 1.4rem; background: var(--bg-2);
@@ -6971,7 +6972,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
       .ui-cw-prof-pill, .ui-cw-prof-save, .ui-cw-coll-add, .ui-tw-variant,
       .ui-suggest-pick, .ui-chip, .ui-chat-act, .ui-rules-add, .ui-sec-add,
       .ui-sections-view, .ui-cw-doc-view, .ui-rules-edit-suggest,
-      .ui-rules-edit-done, .ui-rules-edit-cancel, .ui-assist-send,
+      .ui-rules-edit-done, .ui-rules-edit-cancel, .ui-assist-send, .ui-assist-choice,
       .ui-cp-add-btn, .ui-cp-add, .ui-form-preset-chip, .ui-bell-act,
       .ui-suggest-secondary, .ui-channels-add, .ui-bell, .ui-page-tab, .ui-tab,
       .ui-scope-pill, .ui-scope-more) {
