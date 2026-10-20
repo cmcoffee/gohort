@@ -162,7 +162,7 @@ func (t *chatTurn) rememberToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "remember",
-			Description: "Save something worth keeping. ONE decision: `pin`.\n\n**pin=true**, a SHORT note that must shape EVERY future turn (a preference, an identity fact, a standing instruction). It's injected into your prompt automatically from now on, so keep it to a sentence and use it sparingly. Examples: \"User prefers metric units.\", \"Deploy header is X-Auth: <jwt>.\"\n\n**pin=false** (default), a longer FINDING you might need to look up later (an API spec, a config recipe, a working approach, a document detail). It's stored for retrieval, not injected; you get it back later via `recall`. Paragraph-length, self-contained.\n\nRule of thumb: if you'd want it in front of you unprompted → pin=true; if you'd go looking for it when a relevant question comes up → pin=false. The framework dedupes either way. Don't re-save something `recall` just returned.\n\nRequired: `content`. Optional: `pin`, `topic` (snake_case bucket for findings), `subject` (short heading for a finding).",
+			Description: "Save something worth keeping. ONE decision: `pin`.\n\n**pin=true**, a SHORT note that must shape EVERY future turn (a preference, an identity fact, a standing instruction). It's injected into your prompt automatically from now on, so keep it to a sentence and use it sparingly. Examples: \"User prefers metric units.\", \"Deploy header is X-Auth: <jwt>.\"\n\n**pin=false** (default), a longer FINDING you might need to look up later (an API spec, a config recipe, a working approach, a document detail). It's stored for retrieval, not injected; you get it back later via `recall`. Paragraph-length, self-contained.\n\nRule of thumb: if you'd want it in front of you unprompted → pin=true; if you'd go looking for it when a relevant question comes up → pin=false. The framework dedupes either way. Don't re-save something `recall` just returned.\n\nNever pin a record of something you did (a picture you made, a message you sent). A note true only for a while (a status, today's plan) takes `expires`.\n\nRequired: `content`. Optional: `pin`, `topic` (snake_case bucket for findings), `subject` (short heading for a finding).",
 			Parameters: map[string]ToolParam{
 				"content": {Type: "string", Description: "What to remember, as a self-contained statement. For pin=true keep it to one sentence; for a finding, several sentences to a paragraph with enough context to make sense later out of context."},
 				"pin":     {Type: "boolean", Description: "true → always-in-prompt note (durable preference/identity/instruction). false (default) → recall-on-demand finding (reference material)."},
@@ -171,6 +171,7 @@ func (t *chatTurn) rememberToolDef() AgentToolDef {
 				// not the other would classify the identical note differently
 				// depending on which tool the model happened to reach for.
 				"domain":  {Type: "string", Enum: []string{"self", "world"}, Description: "(pin=true) Whether the person telling you this SETTLES it. \"self\" = about them: a preference, their name, their goals, they are the authority. \"world\" = true or false independently of who said it: a server, a version, how some system behaves, being told is not having checked, and recall marks these so a remark is not later quoted as established fact."},
+				"expires": {Type: "string", Description: "(pin=true) When the note stops being true, for one that holds only a while: a date (2026-10-25, it ends with that day) or a span from now (6h, 3d, 2w). Leave it out for a note that stays true."},
 				"origin":  {Type: "string", Enum: []string{"told", "concluded"}, Description: "(pin=true) Where the note came from. \"told\" = someone said it to you. \"concluded\" = you worked it out yourself, from tool results or your own reasoning. Recall labels the two differently, so a conclusion is never later passed off as something the user said. Left out, it is saved as concluded."},
 				"topic":   {Type: "string", Description: "(findings only) snake_case bucket slug, e.g. `acme_api`. Reuse one from the \"Known topics\" block when it fits, or mint a new one. Omit for `general`."},
 				"subject": {Type: "string", Description: "(findings only) short heading for THIS finding, e.g. \"Acme API rotates tokens every 24h\". Optional."},
@@ -194,7 +195,11 @@ func (t *chatTurn) rememberToolDef() AgentToolDef {
 				if t.explicitOff() {
 					return "", errors.New("always-in-prompt memory is disabled for this agent: call remember with pin=false (or omit pin) to save a recall-only finding instead")
 				}
-				return t.storeFactNote(content, claimDomainArg(args), claimOriginArg(args))
+				expires, err := noteExpiry(stringArg(args, "expires"), t.user, time.Now())
+				if err != nil {
+					return "", err
+				}
+				return t.storeFactNote(content, claimDomainArg(args), claimOriginArg(args), expires)
 			}
 			if t.inferredOff() {
 				// Deliberately does NOT steer to pin=true: reference material

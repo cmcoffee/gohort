@@ -212,10 +212,11 @@ func reduceRecentUser(user string) string {
 }
 
 // transientImageRefPattern finds picture handles that do NOT survive: a
-// positional ring id (image#3) and a turn-scoped inbound id (media#2). A KEPT
-// image is image#<name> — letters, not digits — and is deliberately not matched,
-// because that one lasts.
-var transientImageRefPattern = regexp.MustCompile(`(?i)\b(image|media)#\d+`)
+// positional ring id (image#3), a turn-scoped inbound id (media#2), and a
+// stable ring id (image#r.7a3f9c2b), which holds only while the picture is
+// among the last few the agent made. A KEPT image is image#<name> (a name can
+// hold no dot) and is deliberately not matched, because that one lasts.
+var transientImageRefPattern = regexp.MustCompile(`(?i)\b(?:(?:image|media)#\d+|image#r\.[0-9a-z]+)`)
 
 // TransientImageRefs returns the picture handles in a text that will stop
 // resolving, in order and deduplicated.

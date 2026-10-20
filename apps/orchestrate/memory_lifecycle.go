@@ -100,7 +100,7 @@ type memoryMove struct {
 	ID      string    `json:"id"`
 	At      time.Time `json:"at"`
 	AgentID string    `json:"agent_id"`
-	Kind    string    `json:"kind"` // "past_event" | "not_pursued"
+	Kind    string    `json:"kind"` // "past_event" | "not_pursued" | "expired"
 	FactID  string    `json:"fact_id"`
 	Note    string    `json:"note"`              // the saved note as it was
 	Finding string    `json:"finding,omitempty"` // the reference-memory report a past event became
@@ -108,10 +108,10 @@ type memoryMove struct {
 
 // lifecycleTally is what one pass did, for its outcome line.
 type lifecycleTally struct {
-	users, events, closed, dated int
+	users, events, closed, expired, dated int
 }
 
-func (lt lifecycleTally) moved() int { return lt.events + lt.closed }
+func (lt lifecycleTally) moved() int { return lt.events + lt.closed + lt.expired }
 
 // runMemoryLifecycle is the daily pass over every user's agent memory.
 func runMemoryLifecycle(ctx context.Context) int {
@@ -138,8 +138,8 @@ func runMemoryLifecycle(ctx context.Context) int {
 	if ctx.Err() == nil {
 		lt.dated = dateEventFindings(now)
 	}
-	line := fmt.Sprintf("Checked %d users: %d past event(s) moved to reference memory, %d open item(s) closed, %d finding(s) dated",
-		lt.users, lt.events, lt.closed, lt.dated)
+	line := fmt.Sprintf("Checked %d users: %d past event(s) moved to reference memory, %d open item(s) closed, %d expired note(s) let go, %d finding(s) dated",
+		lt.users, lt.events, lt.closed, lt.expired, lt.dated)
 	if ctx.Err() != nil {
 		line = "Stopped early. " + line
 	}
@@ -174,6 +174,14 @@ func lifecycleForUser(ctx context.Context, user string, now time.Time, lt *lifec
 	fresh, answer := eventFreshFor(), openAnswerFor()
 	for _, ns := range factNamespaces(udb) {
 		agentID := strings.TrimPrefix(ns, "agent:")
+		// A note saved as lasting only a while has already left the prompt at
+		// its end (ListMemoryFacts); here it leaves the store's live set. Not
+		// moved to reference memory: it was saved as something that would stop
+		// being true, so there is nothing to look up later.
+		for _, f := range ExpiredMemoryFacts(udb, ns) {
+			expireNote(udb, agentID, f, now)
+			lt.expired++
+		}
 		for _, f := range ListMemoryFacts(udb, ns) {
 			if ctx.Err() != nil {
 				return
@@ -277,6 +285,13 @@ func moveEventToReference(ctx context.Context, udb Database, user, agentID strin
 	udb.Set(MemoryFactsTable, factsNamespace(agentID)+"/"+f.ID, f)
 	recordMemoryMove(udb, memoryMove{AgentID: agentID, Kind: "past_event", FactID: f.ID, Note: f.Note, Finding: reportID}, now)
 	return true
+}
+
+// expireNote retires a note past the end it was saved with, and records it.
+func expireNote(udb Database, agentID string, f MemoryFact, now time.Time) {
+	f.Reason, f.RetiredAt, f.Successor, f.Updated = provenance.RetireExpired, now, "", now
+	udb.Set(MemoryFactsTable, factsNamespace(agentID)+"/"+f.ID, f)
+	recordMemoryMove(udb, memoryMove{AgentID: agentID, Kind: "expired", FactID: f.ID, Note: f.Note}, now)
 }
 
 // closeOpenItem retires an open item as not pursued and records it.
@@ -431,6 +446,10 @@ func undoMemoryMove(udb Database, agentID, moveID string) error {
 		}
 	case "not_pursued":
 		f.AskedAt, f.AsOf = time.Time{}, now
+	case "expired":
+		// Put back as standing: the end it was given has passed, and keeping
+		// it would retire it again on the next pass.
+		f.ExpiresAt = time.Time{}
 	}
 	udb.Set(MemoryFactsTable, ns+"/"+f.ID, f)
 	udb.Unset(memoryMovesTable, moveID)

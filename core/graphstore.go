@@ -63,12 +63,12 @@ func init() {
 		Label:  "Graph entity cap per agent (0 = off)",
 		Help:   "Max entities in one agent's memory graph.",
 		Detail: "Past the cap, the least-recently-updated entities are evicted, edges included, so auto-extraction cannot grow the graph without bound.",
-		Kind:   KindInt, Default: 500, Min: 0, Max: 10000})
+		Kind:   KindInt, Default: 2000, Min: 0, Max: 10000})
 	RegisterTunable(TunableSpec{Key: TunableGraphEdgeCap, Category: "Memory",
 		Label:  "Graph edge cap per agent (0 = off)",
 		Help:   "Max live relationships in one agent's memory graph.",
 		Detail: "Past the cap, the least-recently-updated edges are evicted.",
-		Kind:   KindInt, Default: 2000, Min: 0, Max: 50000})
+		Kind:   KindInt, Default: 8000, Min: 0, Max: 50000})
 }
 
 // GraphEntity is one node: a thing the agent knows about. Identity is the
@@ -298,7 +298,9 @@ func GraphEntitiesMentionedIn(db Database, namespace, text string, limit int) []
 // UpsertGraphEntity creates or MERGES an entity by name/alias within a
 // namespace. If an existing node matches the name or any supplied alias
 // (case-insensitive), the new aliases + attrs are folded into it and Updated
-// is bumped; otherwise a fresh node is created with a "<kind>:<slug>" ID
+// is bumped — on a plain re-mention too, at most once per graphTouchInterval,
+// so the entity cap evicts what stopped being mentioned rather than what was
+// learned first; otherwise a fresh node is created with a "<kind>:<slug>" ID
 // (suffixed -2, -3… on slug collision with a different node). Returns the
 // resolved entity and whether it was newly created.
 func UpsertGraphEntity(db Database, namespace, kind, name string, aliases []string, attrs map[string]string) (GraphEntity, bool) {
@@ -318,7 +320,7 @@ func UpsertGraphEntity(db Database, namespace, kind, name string, aliases []stri
 	for _, p := range probes {
 		if e, ok := matchGraphEntity(ents, p); ok {
 			changed := mergeGraphEntity(&e, name, aliases, attrs)
-			if changed {
+			if changed || graphTouchDue(e, now) {
 				e.Updated = now
 				db.Set(GraphEntityTable, graphEntityKey(namespace, e.ID), e)
 			}
@@ -391,7 +393,7 @@ func enforceGraphEdgeCap(db Database, namespace string) {
 	if limit <= 0 {
 		return
 	}
-	edges := scanGraphEdges(db, namespace, func(e GraphEdge) bool { return !e.Retired() })
+	edges := scanGraphEdges(db, namespace, nil, func(e GraphEdge) bool { return !e.Retired() })
 	if len(edges) <= limit {
 		return
 	}
@@ -416,6 +418,31 @@ func graphStamp(updated, created time.Time) time.Time {
 		return updated
 	}
 	return created
+}
+
+// graphTouchInterval throttles the use-touch: a node re-mentioned or linked
+// again has its Updated bumped at most this often, so a busy extraction pass
+// doesn't rewrite the same rows every turn. Coarse is fine — the cap's LRU only
+// needs to tell "mentioned this week" from "not seen in a month".
+const graphTouchInterval = time.Hour
+
+// graphTouchDue reports whether a node's LRU stamp is old enough to bump.
+func graphTouchDue(e GraphEntity, now time.Time) bool {
+	return now.Sub(graphStamp(e.Updated, e.Created)) >= graphTouchInterval
+}
+
+// touchGraphEntity bumps a node's Updated when it is in use (an edge linked to
+// it) and the throttle allows. Without it the entity cap's LRU read creation
+// order: extraction re-mentions known nodes with nothing new to merge, so the
+// oldest, most-referenced people were evicted first, taking fresh edges with
+// them. No-op for an ID with no stored node.
+func touchGraphEntity(db Database, namespace, id string, now time.Time) {
+	e, ok := getGraphEntity(db, namespace, id)
+	if !ok || !graphTouchDue(e, now) {
+		return
+	}
+	e.Updated = now
+	db.Set(GraphEntityTable, graphEntityKey(namespace, id), e)
 }
 
 // mergeGraphEntity folds new aliases + attrs into an existing node. Returns
@@ -540,6 +567,8 @@ func LinkGraphEdgeP(db Database, namespace, from, rel, to, note string, replace 
 		}
 	}
 	db.Set(GraphEdgeTable, key, edge)
+	touchGraphEntity(db, namespace, from, now)
+	touchGraphEntity(db, namespace, to, now)
 	// Only a NEW triple can push the namespace past the edge cap — rewrites
 	// and revivals reuse their key.
 	if isNew {
@@ -548,18 +577,37 @@ func LinkGraphEdgeP(db Database, namespace, from, rel, to, note string, replace 
 	return edge
 }
 
-// GraphEdgesFrom returns a node's outbound edges (prefix scan).
+// GraphEdgesFrom returns a node's outbound edges. The key is matched before
+// decoding, so the scan reads only this node's edges; decoding every edge to
+// test From cost ~190ms per hinted turn at 500 entities.
 func GraphEdgesFrom(db Database, namespace, from string) []GraphEdge {
-	return scanGraphEdges(db, namespace, func(e GraphEdge) bool { return e.From == from })
+	return scanGraphEdges(db, namespace, graphEdgeKeyFrom(from), func(e GraphEdge) bool { return e.From == from })
 }
 
-// GraphEdgesTo returns a node's inbound edges (full scan + filter; the graph
-// is small in v1, so no reverse index yet).
+// GraphEdgesTo returns a node's inbound edges (key-suffix match, then decode;
+// no reverse index yet).
 func GraphEdgesTo(db Database, namespace, to string) []GraphEdge {
-	return scanGraphEdges(db, namespace, func(e GraphEdge) bool { return e.To == to })
+	return scanGraphEdges(db, namespace, graphEdgeKeyTo(to), func(e GraphEdge) bool { return e.To == to })
 }
 
-func scanGraphEdges(db Database, namespace string, keep func(GraphEdge) bool) []GraphEdge {
+// graphEdgeKeyFrom / graphEdgeKeyTo match an edge key (namespace prefix already
+// stripped) by its From or To endpoint, using the pipe-delimited triple layout
+// of graphEdgeKey. A pipe never occurs inside an ID or rel slug, so the match is
+// exact rather than a substring guess.
+func graphEdgeKeyFrom(from string) func(string) bool {
+	pre := from + "|"
+	return func(k string) bool { return strings.HasPrefix(k, pre) }
+}
+
+func graphEdgeKeyTo(to string) func(string) bool {
+	suf := "|" + to
+	return func(k string) bool { return strings.HasSuffix(k, suf) }
+}
+
+// scanGraphEdges returns the namespace's live edges passing keep, sorted by
+// (rel, to). keyMatch (nil = all) filters on the key before decoding, which is
+// where the cost is.
+func scanGraphEdges(db Database, namespace string, keyMatch func(string) bool, keep func(GraphEdge) bool) []GraphEdge {
 	namespace = strings.TrimSpace(namespace)
 	if db == nil || namespace == "" {
 		return nil
@@ -568,6 +616,9 @@ func scanGraphEdges(db Database, namespace string, keep func(GraphEdge) bool) []
 	var out []GraphEdge
 	for _, k := range db.Keys(GraphEdgeTable) {
 		if !strings.HasPrefix(k, prefix) {
+			continue
+		}
+		if keyMatch != nil && !keyMatch(k[len(prefix):]) {
 			continue
 		}
 		var e GraphEdge
@@ -598,8 +649,12 @@ func DeleteGraphEntity(db Database, namespace, id string) bool {
 	}
 	db.Unset(GraphEntityTable, graphEntityKey(namespace, id))
 	prefix := namespace + "/"
+	isFrom, isTo := graphEdgeKeyFrom(id), graphEdgeKeyTo(id)
 	for _, k := range db.Keys(GraphEdgeTable) {
 		if !strings.HasPrefix(k, prefix) {
+			continue
+		}
+		if rest := k[len(prefix):]; !isFrom(rest) && !isTo(rest) {
 			continue
 		}
 		var e GraphEdge
@@ -748,9 +803,10 @@ func RetiredGraphEdgesFrom(db Database, namespace, from string) []GraphEdge {
 		return nil
 	}
 	prefix := namespace + "/"
+	isFrom := graphEdgeKeyFrom(from)
 	var out []GraphEdge
 	for _, k := range db.Keys(GraphEdgeTable) {
-		if !strings.HasPrefix(k, prefix) {
+		if !strings.HasPrefix(k, prefix) || !isFrom(k[len(prefix):]) {
 			continue
 		}
 		var e GraphEdge

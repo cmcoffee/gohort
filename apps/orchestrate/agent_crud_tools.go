@@ -988,6 +988,7 @@ func agentMutationParams(includeID bool) map[string]ToolParam {
 		"work_plan":                {Type: "boolean", Description: "When true, the agent gets a TRACKED plan: it commits to a visible checklist, marks each step in progress, closes it with findings or blocks it with a reason, and states anything unfinished in its answer. The checklist survives the turn. Replaces plan_set for that agent. Default false: set it for work with several results that build on each other, leave it off for question-answering."},
 		"disable_explicit":         {Type: "boolean", Description: rewriteMemoryToolNames("Turns off Explicit Memory (store_fact / list_facts / forget_fact + the always-in-prompt facts block). For agents that should hold no standing state. Orthogonal to disable_inferred. Default false.")},
 		"disable_inferred":         {Type: "boolean", Description: rewriteMemoryToolNames("Turns off Reference Memory: memory_save / memory_search / memory_forget stripped from the catalog, derived chunks excluded from recall. For agents that must answer from authoritative sources only. The per-turn Clean toggle is this switch scoped to one turn. Default false.")},
+		"keeps_memory":             {Type: "boolean", Description: "Sub-agents only: keeps its own facts and findings between runs, never read by its parent. Default false."},
 		"memory_mode":              {Type: "string", Description: rewriteMemoryToolNames("Explicit Memory framing: \"agent\" (default) or \"chatbot\". agent = store_fact holds generalized lessons only; specifics go to Reference Memory via memory_save. chatbot = those PLUS user personalization and conversation-coherence notes. chatbot for conversational agents, agent for task-focused ones. No-op when disable_explicit is true.")},
 		"session_recall":            {Type: "string", Enum: []string{"default", "on", "off"}, Description: "Whether the agent finds its earlier sessions with recall ([session] hits, each with a link to the session): \"on\", \"off\", or \"default\", which is on in chatbot memory mode and off in agent mode. On for an assistant people come back to, off for a task specialist."},
 		"allow_private_mode":       {Type: "boolean", Description: "Exposes a per-turn Private toggle that drops internet-capability tools. Default false."},
@@ -1117,6 +1118,9 @@ func agentRecordFromArgs(args map[string]any) AgentRecord {
 	}
 	if v, ok := args["disable_inferred"].(bool); ok {
 		rec.DisableInferred = v
+	}
+	if v, ok := args["keeps_memory"].(bool); ok {
+		rec.KeepsMemory = v
 	}
 	if v := strings.TrimSpace(stringArg(args, "memory_mode")); v != "" {
 		rec.MemoryMode = v
@@ -1306,6 +1310,9 @@ func mergeAgentArgs(rec *AgentRecord, args map[string]any) {
 	}
 	if v, ok := args["disable_inferred"].(bool); ok {
 		rec.DisableInferred = v
+	}
+	if v, ok := args["keeps_memory"].(bool); ok {
+		rec.KeepsMemory = v
 	}
 	if v := strings.TrimSpace(stringArg(args, "memory_mode")); v != "" {
 		rec.MemoryMode = v

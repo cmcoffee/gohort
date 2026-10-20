@@ -24,11 +24,13 @@ func TestGraphEntityCapEvictsLRU(t *testing.T) {
 	SetTunablesDB(db)
 	defer SetTunablesDB(nil)
 
+	// Link before seeding: a link touches its endpoints, and this test wants
+	// the controlled stamps the seeds write.
+	LinkGraphEdge(db, ns, "thing:e0", "knows", "thing:e1", "", false)
 	base := time.Now().Add(-10 * time.Hour)
 	for i := 0; i < 3; i++ {
 		seedGraphEntity(db, ns, fmt.Sprintf("thing:e%d", i), base.Add(time.Duration(i)*time.Hour))
 	}
-	LinkGraphEdge(db, ns, "thing:e0", "knows", "thing:e1", "", false)
 
 	// 4th node crosses the cap → e0 (oldest) and its edge must go.
 	if _, isNew := UpsertGraphEntity(db, ns, "thing", "fresh node", nil, nil); !isNew {
@@ -45,6 +47,91 @@ func TestGraphEntityCapEvictsLRU(t *testing.T) {
 	}
 	if _, edges := GraphCounts(db, ns); edges != 0 {
 		t.Fatalf("evicted node's edge should be gone, %d edges remain", edges)
+	}
+}
+
+// TestGraphEntityCapKeepsMentioned: a node re-mentioned with nothing new to
+// merge, or linked again, counts as in use. Before the touch, extraction's bare
+// re-mentions left Updated at creation, so the cap evicted the oldest (most
+// referenced) node first and took its fresh edges with it.
+func TestGraphEntityCapKeepsMentioned(t *testing.T) {
+	db := memDB(t)
+	ns := "agent:x"
+	db.Set(WebTable, TunableGraphEntityCap, float64(3))
+	SetTunablesDB(db)
+	defer SetTunablesDB(nil)
+
+	base := time.Now().Add(-10 * time.Hour)
+	for i := 0; i < 3; i++ {
+		seedGraphEntity(db, ns, fmt.Sprintf("thing:e%d", i), base.Add(time.Duration(i)*time.Hour))
+	}
+	// e0 is re-mentioned bare (the extraction shape); e1 gets a new edge to a
+	// target with no stored node, so each touch path is tested on its own.
+	if _, isNew := UpsertGraphEntity(db, ns, "thing", "thing:e0", nil, nil); isNew {
+		t.Fatal("re-mention should resolve to the existing node")
+	}
+	LinkGraphEdge(db, ns, "thing:e1", "knows", "thing:outside", "", false)
+
+	// A 4th node crosses the cap: e2 is now the one nobody mentioned.
+	UpsertGraphEntity(db, ns, "thing", "fresh node", nil, nil)
+	ids := map[string]bool{}
+	for _, e := range ListGraphEntities(db, ns) {
+		ids[e.ID] = true
+	}
+	if !ids["thing:e0"] || !ids["thing:e1"] || ids["thing:e2"] {
+		t.Fatalf("expected e0+e1 kept and e2 evicted, got %v", ids)
+	}
+	if got := GraphEdgesFrom(db, ns, "thing:e1"); len(got) != 1 {
+		t.Fatalf("the touched nodes' edge should survive, got %d", len(got))
+	}
+}
+
+// TestGraphTouchThrottled: a node touched within graphTouchInterval is not
+// rewritten, so a busy extraction pass doesn't write the same row every turn.
+func TestGraphTouchThrottled(t *testing.T) {
+	db := memDB(t)
+	ns := "agent:x"
+	recent := time.Now().Add(-time.Minute).Truncate(time.Second)
+	seedGraphEntity(db, ns, "thing:a", recent)
+	UpsertGraphEntity(db, ns, "thing", "thing:a", nil, nil)
+	LinkGraphEdge(db, ns, "thing:a", "knows", "thing:b", "", false)
+	e, _ := GetGraphEntity(db, ns, "thing:a")
+	if !e.Updated.Equal(recent) {
+		t.Fatalf("touch inside the interval rewrote Updated: %v -> %v", recent, e.Updated)
+	}
+}
+
+// TestGraphEdgeKeyMatchExact: the key filter matches whole endpoint IDs, so
+// "p-1" never picks up "p-11"'s edges in either direction, and a node's delete
+// removes exactly its own edges.
+func TestGraphEdgeKeyMatchExact(t *testing.T) {
+	db := memDB(t)
+	ns := "agent:x"
+	LinkGraphEdge(db, ns, "person:p-1", "knows", "person:p-2", "", false)
+	LinkGraphEdge(db, ns, "person:p-11", "knows", "person:p-2", "", false)
+	LinkGraphEdge(db, ns, "person:p-2", "knows", "person:p-11", "", false)
+	LinkGraphEdge(db, ns, "person:p-3", "knows", "person:p-1", "", false)
+	LinkGraphEdge(db, "agent:y", "person:p-1", "knows", "person:p-9", "", false)
+
+	if got := GraphEdgesFrom(db, ns, "person:p-1"); len(got) != 1 || got[0].To != "person:p-2" {
+		t.Fatalf("from p-1: got %+v", got)
+	}
+	if got := GraphEdgesTo(db, ns, "person:p-1"); len(got) != 1 || got[0].From != "person:p-3" {
+		t.Fatalf("to p-1: got %+v", got)
+	}
+	if got := GraphEdgesTo(db, ns, "person:p-2"); len(got) != 2 {
+		t.Fatalf("to p-2: want 2, got %+v", got)
+	}
+
+	seedGraphEntity(db, ns, "person:p-1", time.Now())
+	if !DeleteGraphEntity(db, ns, "person:p-1") {
+		t.Fatal("delete p-1")
+	}
+	if _, edges := GraphCounts(db, ns); edges != 2 {
+		t.Fatalf("deleting p-1 should leave p-11's two edges, got %d", edges)
+	}
+	if got := GraphEdgesFrom(db, "agent:y", "person:p-1"); len(got) != 1 {
+		t.Fatal("another namespace's edges must be untouched")
 	}
 }
 
@@ -72,7 +159,7 @@ func TestGraphEdgeCapEvictsLRU(t *testing.T) {
 
 	// A new live edge crosses the cap → the oldest live edge (a0) goes.
 	LinkGraphEdge(db, ns, "c", "knows", "d", "", false)
-	live := scanGraphEdges(db, ns, func(e GraphEdge) bool { return !e.Retired() })
+	live := scanGraphEdges(db, ns, nil, func(e GraphEdge) bool { return !e.Retired() })
 	if len(live) != 2 {
 		t.Fatalf("expected 2 live edges at the cap, got %d", len(live))
 	}

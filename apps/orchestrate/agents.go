@@ -154,8 +154,9 @@ func applyLegacyMode(a AgentRecord) AgentRecord {
 //     Memory can't be meaningfully scoped and would contaminate fresh lookups.
 //     BUT a parent-inheriting sub-agent (InheritParentTools) is the persistent,
 //     often SCHEDULED kind — e.g. a "summarize between time periods" agent that
-//     must remember its last checkpoint across runs — so it KEEPS both memory
-//     layers (forced ON here, overriding any stale stored disable).
+//     must remember its last checkpoint across runs — and one whose author set
+//     KeepsMemory builds up what it learns across runs, so both KEEP both
+//     memory layers (forced ON here, overriding any stale stored disable).
 //
 // Think is left untouched — it's a legitimate per-agent author choice.
 // Posture is enforced at the runtime read path so even if the stored
@@ -189,9 +190,9 @@ func enforceSubAgentPosture(a AgentRecord) AgentRecord {
 	// counts against them, and a second set of knobs on the sub-agent was one
 	// more place a cap could hide.
 	a.ActionQuotas, a.DailySpendUSD = nil, 0
-	if a.InheritParentTools {
-		// Stateful inheriting sub-agent: memory ON so it can persist state
-		// (a checkpoint) between scheduled runs.
+	if a.InheritParentTools || a.KeepsMemory {
+		// Stateful sub-agent: memory ON so it can persist state (a checkpoint,
+		// what it has learned) between runs. Its own, never the parent's.
 		a.DisableExplicit = false
 		a.DisableInferred = false
 	} else {

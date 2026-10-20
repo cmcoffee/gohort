@@ -16,7 +16,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
+	"strconv"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -65,7 +68,7 @@ func claimOriginArg(args map[string]any) MemSource {
 	return MemSourceInferred
 }
 
-func (t *chatTurn) storeFactNote(note string, domain ClaimDomain, origin MemSource) (string, error) {
+func (t *chatTurn) storeFactNote(note string, domain ClaimDomain, origin MemSource, expires time.Time) (string, error) {
 	note = strings.TrimSpace(note)
 	if note == "" {
 		return "", errors.New("note is required")
@@ -80,8 +83,9 @@ func (t *chatTurn) storeFactNote(note string, domain ClaimDomain, origin MemSour
 	// moment it is written, and goes on being read as authoritative.
 	//
 	// image#N is a POSITION in the ring: it silently comes to mean a different
-	// picture as new ones arrive. media#N belongs to one turn and is gone by
-	// the next. Neither ages out of memory on its own — facts are durable by
+	// picture as new ones arrive. image#r.<id> names one picture, but only
+	// while it is among the last ten the agent made. media#N belongs to one
+	// turn and is gone by the next. Neither ages out of memory on its own — facts are durable by
 	// design and leave only via the hard cap's LRU eviction — so "Reference
 	// images confirmed: … (image#9), … (media#10)" sits in every future prompt
 	// pointing at pictures that are no longer those pictures.
@@ -90,7 +94,7 @@ func (t *chatTurn) storeFactNote(note string, domain ClaimDomain, origin MemSour
 	// picture under a NAME makes image#<name> valid indefinitely, which is what
 	// the note was reaching for.
 	if refs := TransientImageRefs(note); len(refs) > 0 {
-		return "", fmt.Errorf("not saved: %s %s a handle that will stop resolving. image#N is a POSITION in the recent list (it means a different picture as new ones arrive) and media#N lasts only the turn it arrived on, but this note is kept forever, so it would point at the wrong pictures within a few turns while still reading as fact. If these pictures matter later, keep each one under a name first (image action=\"keep\", name=…), then write the note using image#<name>, which stays valid. If the note is really about this conversation rather than something durable, don't pin it at all",
+		return "", fmt.Errorf("not saved: %s %s a handle that will stop resolving. image#N is a POSITION in the recent list (it means a different picture as new ones arrive), image#r.<id> lasts only while the picture is among the last ten made, and media#N lasts only the turn it arrived on, but this note is kept forever, so it would point at the wrong pictures within a few turns while still reading as fact. If these pictures matter later, keep each one under a name first (image action=\"keep\", name=…), then write the note using image#<name>, which stays valid. If the note is really about this conversation rather than something durable, don't pin it at all",
 			strings.Join(refs, ", "), map[bool]string{true: "are", false: "is"}[len(refs) > 1])
 	}
 	// Pass the agent's memory mode + worker chat so: (a) a changed fact
@@ -116,6 +120,8 @@ func (t *chatTurn) storeFactNote(note string, domain ClaimDomain, origin MemSour
 		Speaker:        strings.TrimSpace(t.requesterName),
 		SpeakerHandle:  strings.TrimSpace(t.requesterHandle),
 		SpeakerIsOwner: t.requesterOwnerHandle,
+		// A note that holds only a while leaves the saved notes at its end.
+		Expires: expires,
 	})
 	switch res.Reason {
 	case FactDuplicate:
@@ -124,6 +130,10 @@ func (t *chatTurn) storeFactNote(note string, domain ClaimDomain, origin MemSour
 		return "Not saved. That reads as a passing detail rather than a durable fact worth injecting into every future turn. If it's a lasting preference, identity fact, or standing instruction, rephrase it as one and try again.", nil
 	}
 	msg := fmt.Sprintf("Stored: %q. Will appear in every future turn's %q block.", res.Fact.Note, t.factsBlockName())
+	if !res.Fact.ExpiresAt.IsZero() {
+		msg = fmt.Sprintf("Stored: %q. Will appear in every future turn's %q block until %s, then it leaves your notes.",
+			res.Fact.Note, t.factsBlockName(), res.Fact.ExpiresAt.In(UserLocation(t.user)).Format("2006-01-02 15:04"))
+	}
 	if len(res.Superseded) > 0 {
 		dropped := make([]string, len(res.Superseded))
 		for i, s := range res.Superseded {
@@ -133,6 +143,32 @@ func (t *chatTurn) storeFactNote(note string, domain ClaimDomain, origin MemSour
 	}
 	return msg, nil
 }
+
+// noteExpiry reads remember's expires: a date, which ends with that day in the
+// user's zone, or a span from now (6h, 3d, 2w). Empty is no end.
+func noteExpiry(raw, user string, now time.Time) (time.Time, error) {
+	raw = strings.ToLower(strings.TrimSpace(raw))
+	if raw == "" {
+		return time.Time{}, nil
+	}
+	if d, err := time.ParseInLocation("2006-01-02", raw, UserLocation(user)); err == nil {
+		end := d.AddDate(0, 0, 1)
+		if !end.After(now) {
+			return time.Time{}, fmt.Errorf("not saved: expires %s is already past, so the note is no longer true", raw)
+		}
+		return end, nil
+	}
+	if m := noteExpirySpan.FindStringSubmatch(raw); m != nil {
+		n, _ := strconv.Atoi(m[1])
+		if n > 0 {
+			unit := map[string]time.Duration{"h": time.Hour, "d": 24 * time.Hour, "w": 7 * 24 * time.Hour}[m[2]]
+			return now.Add(time.Duration(n) * unit), nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("not saved: expires must be a date (2026-10-25) or a span (6h, 3d, 2w), got %q", raw)
+}
+
+var noteExpirySpan = regexp.MustCompile(`^(\d+)\s*([hdw])$`)
 
 // explainRetiredHole builds a recall message for a query that matched no LIVE
 // fact but is relevant to one or more retired (tombstoned) ones — so the model

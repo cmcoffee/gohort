@@ -50,7 +50,11 @@ func TestAuthoringCatalogStaysWithinBudget(t *testing.T) {
 	// Deliberately loose: this is a ratchet against unnoticed growth, not a target.
 	// If a genuinely necessary tool pushes past it, raise it in the same commit
 	// that adds the tool — the point is that the cost gets stated out loud.
-	const budgetBytes = 90000
+	//
+	// 90000 -> 91000 (0.8.475): keeps_memory on create_agent and update_agent,
+	// about 130 bytes each, so a sub-agent can be given memory of its own. The
+	// catalog was within 200 bytes of the old budget before it.
+	const budgetBytes = 91000
 	if auth > budgetBytes {
 		t.Errorf("the authoring catalog is %d bytes (~%d tokens), past the %d-byte budget.\n"+
 			"Every Builder-capable agent pays this on every turn. Either trim a description, "+

@@ -811,6 +811,7 @@ func slimAgentJSON(udb Database, user string, a AgentRecord) []byte {
 		"lead_model":               a.LeadModel,
 		"disable_explicit":         a.DisableExplicit,
 		"disable_inferred":         a.DisableInferred,
+		"keeps_memory":             a.KeepsMemory,
 		"disable_skills":           a.DisableSkills,
 		"recall_hints":             a.RecallHints,
 		"memory_mode":              a.MemoryMode,

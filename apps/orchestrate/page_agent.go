@@ -332,6 +332,18 @@ func (ed *agentEditor) formFields() {
 		})
 	}
 
+	if ed.subAgent {
+		// A sub-agent has none of the memory settings below, only whether it
+		// keeps memory at all (enforceSubAgentPosture).
+		ed.fields = append(ed.fields,
+			ui.FormField{Type: "header", Label: "Memory",
+				Help: "Whether it remembers what it learns from one run to the next. Its knowledge (uploaded files) is always available."},
+			ui.FormField{Field: "keeps_memory", Type: "toggle", Label: "Keeps its own memory",
+				Help: "On, it keeps pinned facts and searchable findings between runs. Off, each run starts from its prompt and knowledge alone.",
+				Detail: "Its memory is its own: the parent never reads it, so what this sub-agent builds up (a map of a system, where things are, what it checked last time) stays out of the parent's context. The parent gets only what it reports back.\n\n" +
+					"Turn it on for a sub-agent that gets better at its job by remembering, and leave it off for a one-shot specialist, where notes from an earlier run would colour a fresh lookup. A sub-agent that inherits its parent's tools always keeps memory."},
+		)
+	}
 	if !ed.subAgent {
 		ed.fields = append(ed.fields,
 			ui.FormField{Field: "capture_prompt", Type: "toggle", Label: "Capture prompt text",
@@ -477,9 +489,9 @@ func (ed *agentEditor) mainSection() {
 	if ed.subAgent {
 		ed.agentSection.Title = "Sub-agent"
 		if ed.parentName != "" {
-			ed.agentSection.Subtitle = "Owned by parent agent: " + ed.parentName + ". Sub-agents are focused capability components called by their parent via dispatch: public surfaces, intake form, memory, and explorer mode are structurally off and hidden from this editor."
+			ed.agentSection.Subtitle = "Owned by parent agent: " + ed.parentName + ". Sub-agents are focused capability components called by their parent via dispatch: public surfaces, intake form, and explorer mode are structurally off and hidden from this editor, and memory is off unless it keeps its own."
 		} else {
-			ed.agentSection.Subtitle = "Sub-agent owned by another agent. Public surfaces, intake form, memory, and explorer mode are structurally off and hidden from this editor."
+			ed.agentSection.Subtitle = "Sub-agent owned by another agent. Public surfaces, intake form, and explorer mode are structurally off and hidden from this editor, and memory is off unless it keeps its own."
 		}
 	}
 }

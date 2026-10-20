@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/snugforge/kvlite"
@@ -85,7 +86,7 @@ func TestIncognitoRefusesDurableMemoryWrites(t *testing.T) {
 	clean := &chatTurn{user: "u", udb: udb, agent: agent, session: &ChatSession{ID: "s2", Incognito: true}}
 
 	// store_fact / remember(pin=true) both land here.
-	out, err := clean.storeFactNote("something worth keeping", ClaimDomainUnknown, MemSourceObserved)
+	out, err := clean.storeFactNote("something worth keeping", ClaimDomainUnknown, MemSourceObserved, time.Time{})
 	if err == nil {
 		t.Fatalf("incognito stored a fact anyway: %q", out)
 	}

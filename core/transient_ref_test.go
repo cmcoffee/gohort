@@ -53,3 +53,13 @@ func TestRepeatedRefsAreDeduplicated(t *testing.T) {
 		t.Errorf("repeats should collapse case-insensitively, got %v", got)
 	}
 }
+
+// A ring id names one picture, but only while it is among the last ten: a
+// pinned "two renders produced (image#r.72967687 and image#r.1a2b3c4d)" points
+// at nothing a dozen pictures later, and reads as fact the whole time.
+func TestRingIDsAreTransient(t *testing.T) {
+	got := TransientImageRefs("two renders produced (image#r.72967687 and image#r.1a2b3c4d)")
+	if len(got) != 2 || got[0] != "image#r.72967687" {
+		t.Errorf("ring ids should be caught, got %v", got)
+	}
+}

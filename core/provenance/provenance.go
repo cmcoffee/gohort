@@ -247,6 +247,7 @@ const (
 	RetireMerged                         // a sweep folded it into a combined row (Successor = that row)
 	RetirePast                           // an event aged out of the live set into reference memory (Successor = that finding)
 	RetireNotPursued                     // an open item nobody picked back up, closed after being asked about once
+	RetireExpired                        // a note saved as lasting only a while, past the end it was given
 )
 
 // MemoryProvenance is embedded (anonymously) into the stored memory types, so
@@ -298,6 +299,10 @@ type MemoryProvenance struct {
 	MemKind MemKind   `json:"mk,omitempty"`
 	EventAt time.Time `json:"ev_at,omitempty"`
 	AskedAt time.Time `json:"asked_at,omitempty"`
+	// ExpiresAt is when a note stops being true, for one saved as lasting only
+	// a while ("at practice until six", today's plan). Zero means it stands
+	// until something replaces it, which is every note saved before this.
+	ExpiresAt time.Time `json:"exp_at,omitempty"`
 
 	// --- Retirement: set when the row leaves the live set. Zero = live. ---
 	Reason    RetireReason `json:"reason,omitempty"`
@@ -308,6 +313,11 @@ type MemoryProvenance struct {
 // Retired reports whether the row has left the live set. It is the single
 // liveness test used by the store's live/history split.
 func (p MemoryProvenance) Retired() bool { return p.Reason != RetireLive }
+
+// Expired reports whether a note given an end has reached it.
+func (p MemoryProvenance) Expired(now time.Time) bool {
+	return !p.ExpiresAt.IsZero() && !now.Before(p.ExpiresAt)
+}
 
 // RetireReasonLabel renders a retirement reason as user-facing prose, so recall
 // can explain a hole ("you had X; it was <label> on <date>") when a live query
@@ -324,6 +334,8 @@ func RetireReasonLabel(r RetireReason) string {
 		return "moved to reference memory as a past event"
 	case RetireNotPursued:
 		return "closed as not pursued"
+	case RetireExpired:
+		return "expired: it was saved as lasting only a while"
 	default:
 		return "retired"
 	}

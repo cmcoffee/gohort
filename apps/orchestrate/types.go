@@ -854,6 +854,16 @@ type AgentRecord struct {
 	// unaffected. Only meaningful with OwnedBy set.
 	InheritParentTools bool `json:"inherit_parent_tools,omitempty"`
 
+	// KeepsMemory gives an owned sub-agent (OwnedBy set) the two memory layers
+	// a sub-agent otherwise runs without: pinned facts and Reference Memory.
+	// Its memory is its OWN, keyed by its id like every agent's, so what it
+	// learns over many runs (a map of a system, where things are, what it
+	// checked last) stays with it and never fills its parent's context; the
+	// parent gets what it reports. Off by default, so a sub-agent stays the
+	// one-shot specialist enforceSubAgentPosture assumes unless its author says
+	// otherwise. Only meaningful with OwnedBy set.
+	KeepsMemory bool `json:"keeps_memory,omitempty"`
+
 	// PendingApproval holds a freshly-authored agent OUT of service until the
 	// owner approves it. Set when a dispatched Builder mints an agent on a
 	// parent's behalf: the record is saved but excluded from dispatch / run /

@@ -278,7 +278,8 @@ const agentMemoryModalTemplate = `<script>
           var what = document.createElement('div');
           what.style.cssText = 'font-size:var(--fs-xs, 0.78rem);font-weight:600;color:var(--text)';
           var when = mv.at ? new Date(mv.at).toLocaleDateString() : '';
-          what.textContent = (mv.kind === 'past_event' ? 'Past event, moved to reference memory' : 'Open item, closed as not pursued') + (when ? ' - ' + when : '');
+          var kinds = {past_event: 'Past event, moved to reference memory', not_pursued: 'Open item, closed as not pursued', expired: 'Expired, no longer kept'};
+          what.textContent = (kinds[mv.kind] || 'Moved') + (when ? ' - ' + when : '');
           meta.appendChild(what);
           var q = document.createElement('div');
           q.style.cssText = 'font-size:var(--fs-xs, 0.78rem);color:var(--text);opacity:0.85;white-space:pre-wrap;word-break:break-word;margin-top:0.15rem';

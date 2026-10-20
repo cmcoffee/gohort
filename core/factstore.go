@@ -162,6 +162,9 @@ type FactWritePolicy struct {
 	// anything checkable independently of who said it (a lead). Zero leaves it
 	// unclassified, which recall reads cautiously rather than as authority.
 	Domain ClaimDomain
+	// Expires, when set, is when the note stops being true: it leaves the
+	// saved notes then (see MemoryProvenance.ExpiresAt). Zero never expires.
+	Expires time.Time
 	// Speaker / SpeakerHandle / SpeakerIsOwner record WHO asserted this, for a
 	// thread with more than one person in it. Leave all three zero for a
 	// one-to-one with the principal, which is every non-channel turn.
@@ -435,8 +438,9 @@ func StoreMemoryFactP(db Database, namespace, note string, p FactWritePolicy) Fa
 		// its subject (category-based, deterministic), and its Source comes from the
 		// write policy (MemSourceUnknown when the caller doesn't set one).
 		MemoryProvenance: MemoryProvenance{AsOf: now, Volatility: classifyVolatility(note), Source: p.Source, Domain: domainFor(p, note),
-			Speaker: strings.TrimSpace(p.Speaker), SpeakerHandle: strings.TrimSpace(p.SpeakerHandle), SpeakerIsOwner: p.SpeakerIsOwner},
-		Vector:           newVec,
+			Speaker: strings.TrimSpace(p.Speaker), SpeakerHandle: strings.TrimSpace(p.SpeakerHandle), SpeakerIsOwner: p.SpeakerIsOwner,
+			ExpiresAt: p.Expires},
+		Vector: newVec,
 	}
 	if len(newVec) > 0 {
 		f.VectorModel = EmbedVersion()
@@ -1314,6 +1318,7 @@ func ListMemoryFacts(db Database, namespace string) []MemoryFact {
 		return nil
 	}
 	prefix := namespace + "/"
+	now := time.Now()
 	var out []MemoryFact
 	for _, k := range db.Keys(MemoryFactsTable) {
 		if !strings.HasPrefix(k, prefix) {
@@ -1323,8 +1328,10 @@ func ListMemoryFacts(db Database, namespace string) []MemoryFact {
 		if db.Get(MemoryFactsTable, k, &f) {
 			// Retired facts (superseded, evicted, merged) stay in the table for
 			// history but never inject, dedup, or get indexed for forget — they
-			// have left the live set by definition.
-			if f.Retired() {
+			// have left the live set by definition. So does a note past the end
+			// it was saved with, from that moment: the daily pass that retires it
+			// may be hours off, and it was not true for any of them.
+			if f.Retired() || f.Expired(now) {
 				continue
 			}
 			out = append(out, f)
@@ -1333,6 +1340,29 @@ func ListMemoryFacts(db Database, namespace string) []MemoryFact {
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].Created.Before(out[j].Created)
 	})
+	return out
+}
+
+// ExpiredMemoryFacts is the live notes of a namespace that have passed the end
+// they were saved with: out of ListMemoryFacts already, waiting for the pass
+// that retires them.
+func ExpiredMemoryFacts(db Database, namespace string) []MemoryFact {
+	namespace = strings.TrimSpace(namespace)
+	if db == nil || namespace == "" {
+		return nil
+	}
+	prefix := namespace + "/"
+	now := time.Now()
+	var out []MemoryFact
+	for _, k := range db.Keys(MemoryFactsTable) {
+		if !strings.HasPrefix(k, prefix) {
+			continue
+		}
+		var f MemoryFact
+		if db.Get(MemoryFactsTable, k, &f) && !f.Retired() && f.Expired(now) {
+			out = append(out, f)
+		}
+	}
 	return out
 }
 
