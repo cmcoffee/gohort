@@ -500,10 +500,11 @@ func validateGuardrailToolBindings(agent AgentRecord, rules string) error {
 	}
 	for _, line := range strings.Split(rules, "\n") {
 		r := parseGuardrailRule(strings.TrimSpace(line))
-		if r.Tool == "" || known[r.Tool] {
-			continue
+		for _, tool := range r.Tools {
+			if !known[tool] {
+				return fmt.Errorf("the rule %q is bound to %q, which is not a tool this agent can call: pick one from the list, or drop the #%s", r.Text, tool, tool)
+			}
 		}
-		return fmt.Errorf("the rule %q is bound to %q, which is not a tool this agent can call: pick one from the list, or drop the #%s to make the rule apply everywhere", r.Text, r.Tool, r.Tool)
 	}
 	return nil
 }
@@ -531,15 +532,20 @@ func (T *OrchestrateApp) scopeBoundGuardrailRules(ctx context.Context, db Databa
 	if T == nil || db == nil {
 		return
 	}
-	var pending []guardrailRule
+	// One pair per tool a rule is bound to: whether it forbids every use of
+	// one is a separate question from whether it forbids every use of another.
+	type pair struct{ text, tool string }
+	var pending []pair
 	for _, r := range enforcedGuardrailRules(agent) {
-		if r.Tool == "" || guardrailToolsNeverWithheld[r.Tool] {
-			continue
+		for _, tool := range r.Tools {
+			if guardrailToolsNeverWithheld[tool] {
+				continue
+			}
+			if _, ok := findGuardrailToolScope(db, agent.ID, r.Text, tool); ok {
+				continue // already read
+			}
+			pending = append(pending, pair{r.Text, tool})
 		}
-		if _, ok := findGuardrailToolScope(db, agent.ID, r.Text, r.Tool); ok {
-			continue // already read
-		}
-		pending = append(pending, r)
 	}
 	if len(pending) == 0 {
 		return
@@ -547,11 +553,11 @@ func (T *OrchestrateApp) scopeBoundGuardrailRules(ctx context.Context, db Databa
 	agentID := agent.ID
 	detached := context.WithoutCancel(ctx)
 	go func() {
-		for _, r := range pending {
+		for _, p := range pending {
 			// The binding names the pair, so there is no blocked call to show
 			// the classifier — the rule and the tool are the whole question.
 			scopeAndRecordGuardrailTool(detached, T, db, agentID, agentID, "",
-				r.Text, r.Tool, r.Tool)
+				p.text, p.tool, p.tool)
 		}
 	}()
 }

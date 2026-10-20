@@ -751,7 +751,7 @@ func (t *chatTurn) loadToolToolDef(sess *ToolSession) AgentToolDef {
 			}
 			// Partial success: load every valid name, bucket the rest, so
 			// one bad name doesn't sink the batch or make the LLM loop.
-			var loaded, already, unknown []string
+			var loaded, already, unknown, withheld []string
 			unknown = append(unknown, unknownGroups...)
 			schemas := make([]map[string]any, 0, len(want))
 			for _, n := range want {
@@ -787,11 +787,16 @@ func (t *chatTurn) loadToolToolDef(sess *ToolSession) AgentToolDef {
 					// (and that tool_def get can read) isn't in lazyCustomToolDefs
 					// — without this branch load_tool would reject the very tool
 					// that list told the model to load, an observed dead-end loop.
-					if def, ok := t.loadPersistentToolOnDemand(sess, n); ok {
+					def, ok, held := t.loadPersistentToolOnDemand(sess, n)
+					switch {
+					case ok:
 						t.lazyCustomToolDefs[n] = def
 						t.lazyCustomToolNames[n] = true
 						td = def
-					} else {
+					case held:
+						withheld = append(withheld, n)
+						continue
+					default:
 						unknown = append(unknown, n)
 						continue
 					}
@@ -820,6 +825,9 @@ func (t *chatTurn) loadToolToolDef(sess *ToolSession) AgentToolDef {
 			}
 			if len(unknown) > 0 {
 				fmt.Fprintf(&b, "Unknown, check the \"Your custom tools\" list or call find_tools: %s\n", strings.Join(unknown, ", "))
+			}
+			if len(withheld) > 0 {
+				fmt.Fprintf(&b, "Not on your tool list, so you cannot call it: %s. If another agent has it, hand the work to that agent.\n", strings.Join(withheld, ", "))
 			}
 			return strings.TrimSpace(b.String()), nil
 		},
@@ -852,26 +860,41 @@ func (t *chatTurn) noteMountedTools(tools []AgentToolDef) {
 // inspect or test it). Appends it to sess.TempTools (so dynamicNewTempTools
 // surfaces the wrapped, callable version next round) and returns the
 // activity-wrapped def for the same-round lazyToolFallback path. Returns
-// false when no persistent tool of that name exists.
-func (t *chatTurn) loadPersistentToolOnDemand(sess *ToolSession, name string) (AgentToolDef, bool) {
+// false when no persistent tool of that name exists, and withheld true when
+// one does but this agent may not load it.
+//
+// Held to the same gate the session's own load applies (loadAgentTempTools).
+// It read the whole pool, so a tool taken off this agent's list, on its
+// disabled list, or scoped to another agent came back by name: offered
+// nowhere, it still ran for an agent that remembered it.
+func (t *chatTurn) loadPersistentToolOnDemand(sess *ToolSession, name string) (def AgentToolDef, ok, withheld bool) {
 	if sess == nil || t.udb == nil || t.user == "" {
-		return AgentToolDef{}, false
+		return AgentToolDef{}, false, false
+	}
+	gate := newPoolToolGate(t.udb, t.agent)
+	var sender *poolToolGate
+	if from, ok := builderDelegator(sess, t.udb); ok {
+		g := newPoolToolGate(t.udb, from)
+		sender = &g
 	}
 	var found *TempTool
 	for _, p := range LoadPersistentTempTools(t.udb, t.user) {
 		if p.Tool.Name == name {
+			if !gate.admits(p) || (sender != nil && !sender.admits(p)) || (t.privateMode && p.Tool.Mode == TempToolModeAPI) {
+				return AgentToolDef{}, false, true
+			}
 			tt := p.Tool
 			found = &tt
 			break
 		}
 	}
 	if found == nil {
-		return AgentToolDef{}, false
+		return AgentToolDef{}, false, false
 	}
 	if !sess.HasTempTool(name) {
 		if err := sess.AppendTempTool(found); err != nil {
 			Log("[orchestrate.tools] load_tool on-demand append %q failed: %v", name, err)
-			return AgentToolDef{}, false
+			return AgentToolDef{}, false, false
 		}
 	}
 	// Build + activity-wrap the single def for the immediate fallback path;
@@ -880,12 +903,12 @@ func (t *chatTurn) loadPersistentToolOnDemand(sess *ToolSession, name string) (A
 		if td.Tool.Name == name {
 			wrapped := t.wrapToolsForActivity(sess, []AgentToolDef{td}, t.agent)
 			if len(wrapped) > 0 {
-				return wrapped[0], true
+				return wrapped[0], true, false
 			}
-			return td, true
+			return td, true, false
 		}
 	}
-	return AgentToolDef{}, false
+	return AgentToolDef{}, false, false
 }
 
 // lazyToolFallback resolves a direct call to a lazy custom tool that

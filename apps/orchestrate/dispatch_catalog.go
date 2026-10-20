@@ -20,7 +20,17 @@ import (
 
 // finalizeDispatchCatalog applies those passes to a dispatched run's whole
 // catalog. Call it once the catalog is complete and before the machine
-// narrows it.
+// narrows it, and add dispatchCatalogPrompt to the run's system prompt.
+//
+// Two more a web turn makes and a dispatched run did not. A tool offered
+// twice under one name is offered once, the first kept (keep_going and
+// stay_silent rode in twice). And Builder's less-used building tools go
+// behind load_tool: a Builder another agent handed work to carried connector,
+// machine, schedule, the credential tools and the rest inline, ~14k tokens
+// on every round. They are deferred after wrapping, so one load_tool brings
+// back keeps its wrappers, and after the session is told the names: they are
+// still tools this run has. The run's dynamic feed and fallback resolver
+// (lazyToolFallback) surface one once it is loaded, or called by name.
 func (t *chatTurn) finalizeDispatchCatalog(sess *ToolSession, tools []AgentToolDef) []AgentToolDef {
 	tools = t.applyGuardrailToolWithholding(tools)
 	for i := range tools {
@@ -32,9 +42,25 @@ func (t *chatTurn) finalizeDispatchCatalog(sess *ToolSession, tools []AgentToolD
 	for _, td := range tools {
 		names = append(names, td.Tool.Name)
 	}
+	tools, names = dedupeToolsByName(tools, names)
 	sess.SetAvailableTools(names)
 	sess.SetWithheldActions(t.withheldToolActions())
+	tools, _ = t.deferBuilderOnDemandTools(tools, nil)
 	return tools
+}
+
+// dispatchCatalogPrompt is what a dispatched run's system prompt needs beside
+// its finalized catalog: the index of the tools it deferred, without which
+// the model cannot know they exist, and for Builder the user's existing
+// custom tools, read-only, so a request for something like one already built
+// finds it rather than building it twice. A web turn adds both (runner.go);
+// "" for an agent that has neither.
+func (t *chatTurn) dispatchCatalogPrompt() string {
+	db, user := t.ownerDB, t.ownerUser
+	if db == nil || user == "" {
+		db, user = t.udb, t.user
+	}
+	return t.builderOnDemandIndexText() + t.builderExistingToolsBlockFor(db, user)
 }
 
 // dispatchTurnContext is what a web turn puts beside the person's message

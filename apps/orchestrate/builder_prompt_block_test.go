@@ -36,7 +36,7 @@ func TestBuildersPromptIsABlock(t *testing.T) {
 	j := strings.Index(block.Text[i:], "}}") + i + 2
 	SetPromptOverride(BuilderPromptKey, "EDITED BUILDER. "+block.Text[i:j])
 	edited, _ := seedAgentByID("seed-builder")
-	if !strings.HasPrefix(edited.OrchestratorPrompt, "EDITED BUILDER. ") || strings.Contains(edited.OrchestratorPrompt, "{{") {
+	if !strings.HasPrefix(edited.OrchestratorPrompt, builderInstructionsHeading+"EDITED BUILDER. ") || strings.Contains(edited.OrchestratorPrompt, "{{") {
 		t.Fatalf("edited prompt = %.120q", edited.OrchestratorPrompt)
 	}
 	ClearPromptOverride(BuilderPromptKey)

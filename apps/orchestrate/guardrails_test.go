@@ -999,8 +999,8 @@ func TestAToolBindingSurvivesTheEditorsRoundTrip(t *testing.T) {
 		"a-b-c_d",
 	} {
 		r := parseGuardrailRule("#" + name + " never do the thing")
-		if r.Tool != name {
-			t.Errorf("#%s bound to %q", name, r.Tool)
+		if r.boundTo() != name {
+			t.Errorf("#%s bound to %q", name, r.boundTo())
 		}
 		// And the rule text is the rule, with no fragment of the name left in
 		// it - the leak that made this visible.
@@ -1012,19 +1012,19 @@ func TestAToolBindingSurvivesTheEditorsRoundTrip(t *testing.T) {
 	// A SLASH is not part of a name: it is not legal in a tool name, so
 	// "#tool/action" must not bind a rule to something no agent can call - a
 	// rule enforced nowhere is the one direction this must not fail in.
-	if r := parseGuardrailRule("#moltbook/create_post never"); r.Tool != "moltbook" {
-		t.Errorf("a slash joined the name: %q", r.Tool)
+	if r := parseGuardrailRule("#moltbook/create_post never"); r.boundTo() != "moltbook" {
+		t.Errorf("a slash joined the name: %q", r.boundTo())
 	}
 
 	// A trailing hyphen is punctuation, not part of a name.
-	if r := parseGuardrailRule("#send_email- never"); r.Tool != "send_email" {
-		t.Errorf("a trailing hyphen joined the name: %q", r.Tool)
+	if r := parseGuardrailRule("#send_email- never"); r.boundTo() != "send_email" {
+		t.Errorf("a trailing hyphen joined the name: %q", r.boundTo())
 	}
 
 	// A bare "#" still binds nothing, which is the safe reading: a rule that
 	// applies nowhere is a rule that is not enforced.
-	if r := parseGuardrailRule("# never do the thing"); r.Tool != "" {
-		t.Errorf("a bare marker bound to %q", r.Tool)
+	if r := parseGuardrailRule("# never do the thing"); r.boundTo() != "" {
+		t.Errorf("a bare marker bound to %q", r.boundTo())
 	}
 }
 

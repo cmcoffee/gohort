@@ -40,6 +40,14 @@ func init() {
 	prompts.RegisterTierRender(BuilderPromptKey, expandSeedSnippets)
 }
 
+// builderInstructionsHeading opens Builder's instructions in its prompt. The
+// facts block and its "## Lessons learned" heading are put ahead of the
+// persona, and the instructions carry no heading of their own, so the prompt
+// size log counted all 20 KB of them as lessons and made a 1.7 KB facts block
+// look like the biggest part of the prompt. Added outside the block, after
+// any edit to it, so an edited or tuned wording gets it too.
+const builderInstructionsHeading = "## Builder's instructions\n\n"
+
 // builderPrompt is the raw prompt Builder runs with: the operator's edit when
 // there is one, else what shipped.
 func builderPrompt(shipped string) string {

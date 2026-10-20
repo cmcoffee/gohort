@@ -541,13 +541,20 @@ func lastDispatchTopic(msgs []ChatMessage) string {
 // current agent isn't Builder. Format mirrors renderAvailableAgentsBlock
 // — one bullet per tool, name + one-line description.
 func (t *chatTurn) renderBuilderExistingToolsBlock() string {
-	if t == nil || t.udb == nil || t.user == "" {
+	if t == nil {
 		return ""
 	}
-	if !isBuilderAgent(t.agent.ID) {
+	return t.builderExistingToolsBlockFor(t.udb, t.user)
+}
+
+// builderExistingToolsBlockFor is renderBuilderExistingToolsBlock over one
+// user's pool: a handed-over run lists the owner's, the pool its custom tools
+// come from, since the run's own user may be a channel identity with none.
+func (t *chatTurn) builderExistingToolsBlockFor(db Database, user string) string {
+	if db == nil || user == "" || !isBuilderAgent(t.agent.ID) {
 		return ""
 	}
-	persistent := LoadPersistentTempTools(t.udb, t.user)
+	persistent := LoadPersistentTempTools(db, user)
 	if len(persistent) == 0 {
 		return ""
 	}

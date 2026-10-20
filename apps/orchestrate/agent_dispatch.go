@@ -1078,6 +1078,7 @@ func (sd *syncDispatch) enterMachine() {
 	}
 	// The passes a web turn's catalog gets over all of it (dispatch_catalog.go).
 	sd.tools = sd.subTurn.finalizeDispatchCatalog(sd.subSess, sd.tools)
+	sd.sysPrompt += sd.subTurn.dispatchCatalogPrompt()
 	sd.subTurn.machineToolList = machineToolNotes(sd.subSess)
 	sd.subTurn.noteAgentAttachments(sd.subSess)
 	sd.subTurn.enterDispatchMachine(machThread, ephemeral, message, &sd.sysPrompt, &sd.tools, "delegation")
@@ -2252,6 +2253,7 @@ func (cr *continuingRun) loadThread() {
 	// something happened, which is not what a machine is there to route.
 	// The passes a web turn's catalog gets over all of it (dispatch_catalog.go).
 	cr.tools = cr.subTurn.finalizeDispatchCatalog(cr.subSess, cr.tools)
+	cr.sysPrompt += cr.subTurn.dispatchCatalogPrompt()
 	cr.subTurn.machineToolList = machineToolNotes(cr.subSess)
 	cr.subTurn.noteAgentAttachments(cr.subSess)
 	if strings.TrimSpace(run.SystemPromptOverride) == "" && strings.TrimSpace(run.InputReportFrom) == "" {

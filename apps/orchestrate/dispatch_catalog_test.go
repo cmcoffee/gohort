@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/snugforge/kvlite"
 )
 
 func TestADispatchedCatalogGetsTheWebTurnsPasses(t *testing.T) {
@@ -118,5 +119,83 @@ func TestAnAgentsResultCarriesItsOwnBanner(t *testing.T) {
 	}
 	if got := stripResultFence(untrustedContentFence + agentResultFence("Comedian") + "body"); got != "body" {
 		t.Errorf("both banners should strip: %q", got)
+	}
+}
+
+// A Builder handed work by another agent gets the catalog its own chat turn
+// gets: its less-used building tools behind load_tool (still tools the run
+// has, and back on a load or a direct call), each tool offered once, and a
+// prompt that indexes the deferred ones and lists the owner's custom tools
+// so a request for one like them finds it. Another agent's catalog keeps
+// every tool inline and adds nothing to its prompt.
+func TestADispatchedBuilderDefersAndKnowsTheOwnersTools(t *testing.T) {
+	prevRoot := RootDB
+	RootDB = nil
+	t.Cleanup(func() { RootDB = prevRoot })
+	owner := &DBase{Store: kvlite.MemStore()}
+	owner.Set("persistent_temp_tools", "owner", []PersistentTempTool{{Tool: TempTool{Name: "weather_now", Mode: "api", Description: "Current weather for a city."}}})
+	def := func(name string) AgentToolDef {
+		return AgentToolDef{Tool: Tool{Name: name, Description: name + " does things"}, Handler: func(context.Context, map[string]any) (string, error) { return name, nil }}
+	}
+	catalog := func() []AgentToolDef {
+		return []AgentToolDef{def("app_def"), def("connector"), def("machine"), def("schedule"), def("keep_going"), def("keep_going")}
+	}
+
+	turn := &chatTurn{user: "channel:x", udb: &DBase{Store: kvlite.MemStore()}, ownerUser: "owner", ownerDB: owner,
+		agent: AgentRecord{ID: "seed-builder", Name: "Builder"}}
+	sess := &ToolSession{Username: "channel:x"}
+	tools := turn.finalizeDispatchCatalog(sess, catalog())
+	var got []string
+	for _, td := range tools {
+		got = append(got, td.Tool.Name)
+	}
+	if strings.Join(got, ",") != "app_def,keep_going" {
+		t.Fatalf("Builder's dispatched catalog = %v, want app_def and one keep_going inline", got)
+	}
+	if !sess.HasTool("connector") || !sess.HasTool("schedule") {
+		t.Error("a deferred tool is still one this run has")
+	}
+	if h, ok := turn.lazyToolFallback("connector"); !ok || h == nil || !turn.deferredAuthoringLoaded["connector"] {
+		t.Error("a deferred tool called by name did not resolve and load")
+	}
+	prompt := turn.dispatchCatalogPrompt()
+	for _, want := range []string{"load before use", "connector", "machine", "Existing custom tools", "weather_now", "Current weather for a city."} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("the dispatched Builder's prompt lacks %q:\n%s", want, prompt)
+		}
+	}
+
+	other := &chatTurn{user: "u", udb: owner, agent: AgentRecord{ID: "a1", Name: "Helper"}}
+	tools = other.finalizeDispatchCatalog(&ToolSession{Username: "u"}, catalog())
+	if len(tools) != 5 || other.dispatchCatalogPrompt() != "" {
+		t.Errorf("another agent's catalog changed: %d tools, prompt %q", len(tools), other.dispatchCatalogPrompt())
+	}
+}
+
+// Every dispatch path puts the catalog's prompt text beside the catalog, or
+// a tool it deferred is one the model never hears of.
+func TestEveryDispatchPathAddsTheCatalogPrompt(t *testing.T) {
+	for file, want := range map[string]int{"agent_dispatch.go": 2, "agents_grouped_tool.go": 1, "scheduled_updates.go": 1} {
+		src, err := os.ReadFile(file)
+		if err != nil {
+			t.Skip("source unavailable")
+		}
+		body := string(src)
+		if f, p := strings.Count(body, ".finalizeDispatchCatalog("), strings.Count(body, ".dispatchCatalogPrompt()"); f != want || p != want {
+			t.Errorf("%s finalizes %d catalog(s) and adds the prompt %d time(s), want %d each", file, f, p, want)
+		}
+	}
+}
+
+// Builder's instructions carry a heading of their own, so the prompt size log
+// names them rather than counting them under the facts block above.
+func TestBuildersInstructionsAreTheirOwnSection(t *testing.T) {
+	b, _ := seedAgentByID("seed-builder")
+	if !strings.HasPrefix(b.OrchestratorPrompt, builderInstructionsHeading) {
+		t.Fatalf("Builder's prompt opens %.60q", b.OrchestratorPrompt)
+	}
+	sys := prependAgentContext(b.OrchestratorPrompt, b, []MemoryFact{{ID: "f1", Note: "a short lesson"}}, OperatingNotes{})
+	if strings.Index(sys, "## Builder's instructions") < strings.Index(sys, "a short lesson") {
+		t.Fatal("the instructions should follow the facts block, under their own heading")
 	}
 }

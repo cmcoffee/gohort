@@ -177,6 +177,9 @@ func copySeedRecord(rec AgentRecord) AgentRecord {
 		rec.OrchestratorPrompt = builderPrompt(rec.OrchestratorPrompt)
 	}
 	rec.OrchestratorPrompt = expandSeedSnippets(rec.OrchestratorPrompt)
+	if rec.ID == "seed-builder" {
+		rec.OrchestratorPrompt = builderInstructionsHeading + rec.OrchestratorPrompt
+	}
 	rec.AllowedTools = append([]string(nil), rec.AllowedTools...)
 	rec.Triggers = append([]string(nil), rec.Triggers...)
 	if rec.IntakeForm != nil {

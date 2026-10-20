@@ -16,6 +16,7 @@
 package orchestrate
 
 import (
+	"slices"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -139,8 +140,11 @@ const guardrailContestableMarker = "~"
 // doesn't match, an empty handle — all leave the rule enforced.
 const guardrailAuthorizedMarker = "@"
 
-// guardrailToolMarker binds a rule to ONE tool: "#send_email never email
-// anyone outside the company".
+// guardrailToolMarker binds a rule to a tool: "#send_email never email
+// anyone outside the company". Each marker binds one, so "#web_search
+// #fetch_url never put an internal name in a search" is judged when either is
+// used. The second marker used to replace the first, so a rule about two tools
+// was bound to the last one alone, with nothing to say so.
 //
 // It says where the rule applies, which is a different claim from what the
 // rule forbids, and it buys two things no prose rule can.
@@ -191,9 +195,9 @@ type guardrailRule struct {
 	// established the requester as an authorized person. See
 	// guardrailAuthorizedMarker.
 	ExceptAuthorized bool
-	// Tool is the ONE tool this rule is about, or "" for a rule about the
-	// agent's conduct generally. See guardrailToolMarker.
-	Tool string
+	// Tools are the tools this rule is about, in the order written, or none
+	// for a rule about the agent's conduct generally. See guardrailToolMarker.
+	Tools []string
 	// Links are the carve-outs this rule is linked to, in the order written.
 	// "@night-shift" links one; "@-night-shift" links it and switches it OFF
 	// for THIS rule, leaving every other rule that shares it untouched.
@@ -318,7 +322,9 @@ func stripGuardrailMarker(s string, r *guardrailRule) (string, bool) {
 		if name == "" {
 			return rest, true
 		}
-		r.Tool = strings.ToLower(name)
+		if name = strings.ToLower(name); !slices.Contains(r.Tools, name) {
+			r.Tools = append(r.Tools, name)
+		}
 		return rest[len(name):], true
 	case strings.HasPrefix(s, guardrailAuthorizedMarker):
 		// "@name" links a carve-out, "@-name" links it switched OFF for this
@@ -419,10 +425,16 @@ func leadingToolName(s string) string {
 // "never email anyone outside the company" invites it to flag the agent for
 // TALKING about email.
 func ruleAppliesToTool(r guardrailRule, toolName string) bool {
-	if r.Tool == "" {
+	if len(r.Tools) == 0 {
 		return true
 	}
-	return r.Tool == strings.ToLower(strings.TrimSpace(toolName))
+	return slices.Contains(r.Tools, strings.ToLower(strings.TrimSpace(toolName)))
+}
+
+// boundTo names the tools a rule is bound to, "web_search or fetch_url", or ""
+// for a rule that applies to everything.
+func (r guardrailRule) boundTo() string {
+	return strings.Join(r.Tools, " or ")
 }
 
 // ruleIsCorrectable reports whether the rule the warden named was authored as
@@ -730,10 +742,14 @@ func renderGuardrailsPromptSection(agent AgentRecord) string {
 		// "never email anyone outside the company" as a rule about its conduct
 		// and declines to DISCUSS the topic, which is not what was asked for —
 		// and it is the binding, not the prose, that says so.
-		if r.Tool != "" {
+		if len(r.Tools) == 1 {
 			b.WriteString(" (applies when you use the ")
-			b.WriteString(r.Tool)
+			b.WriteString(r.Tools[0])
 			b.WriteString(" tool)")
+		} else if len(r.Tools) > 1 {
+			b.WriteString(" (applies when you use ")
+			b.WriteString(r.boundTo())
+			b.WriteString(")")
 		}
 		b.WriteString("\n")
 	}

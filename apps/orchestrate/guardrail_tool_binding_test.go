@@ -36,16 +36,20 @@ func TestTheToolMarkerParsesAlongsideTheOthers(t *testing.T) {
 		// picker offers it. This asserted the opposite, and the truncation it
 		// pinned is what made a hyphenated binding reopen as "any action".
 		{"#send-email never email", "never email", "send-email"},
+		// Each marker binds one tool: a rule about two is judged when either
+		// is used. The second used to replace the first.
+		{"#web_search #fetch_url never put an internal name in a search", "never put an internal name in a search", "web_search or fetch_url"},
+		{"#web_search #web_search never search", "never search", "web_search"},
 	}
 	for _, c := range cases {
 		r := parseGuardrailRule(c.line)
-		if r.Text != c.text || r.Tool != c.tool {
-			t.Errorf("parse(%q) = {Text:%q Tool:%q}, want {Text:%q Tool:%q}", c.line, r.Text, r.Tool, c.text, c.tool)
+		if r.Text != c.text || r.boundTo() != c.tool {
+			t.Errorf("parse(%q) = {Text:%q Tool:%q}, want {Text:%q Tool:%q}", c.line, r.Text, r.boundTo(), c.text, c.tool)
 		}
 	}
 	// Case folded on the way in, so "#Send_Email" and "#send_email" are one
 	// binding rather than two that each half-work.
-	if got := parseGuardrailRule("#Send_Email never").Tool; got != "send_email" {
+	if got := parseGuardrailRule("#Send_Email never").boundTo(); got != "send_email" {
 		t.Errorf("tool name not folded: %q", got)
 	}
 }
@@ -53,9 +57,10 @@ func TestTheToolMarkerParsesAlongsideTheOthers(t *testing.T) {
 // The narrowing. A bound rule is judged where it applies and nowhere else.
 func TestABoundRuleIsJudgedOnlyForItsTool(t *testing.T) {
 	rules := []guardrailRule{
-		{Text: "never email outside the company", Tool: "send_email"},
-		{Text: "never delegate", Tool: "agents"},
+		{Text: "never email outside the company", Tools: []string{"send_email"}},
+		{Text: "never delegate", Tools: []string{"agents"}},
 		{Text: "always be polite"},
+		{Text: "never put an internal name in a search", Tools: []string{"web_search", "fetch_url"}},
 	}
 	names := func(rs []guardrailRule) string {
 		var out []string
@@ -69,6 +74,12 @@ func TestABoundRuleIsJudgedOnlyForItsTool(t *testing.T) {
 	}
 	if got := names(rulesForTool(rules, "calculate")); got != "always be polite" {
 		t.Errorf("an unrelated tool must not be judged against either binding: %s", got)
+	}
+	// A rule bound to two tools is judged for either, and only for them.
+	for _, tool := range []string{"web_search", "fetch_url"} {
+		if got := names(rulesForTool(rules, tool)); got != "always be polite | never put an internal name in a search" {
+			t.Errorf("a call to %s must be judged against the rule bound to it: %s", tool, got)
+		}
 	}
 	// No tool in play at all. A rule about USING email must not be turned on a
 	// reply that merely discusses it — that is how a rule about conduct becomes
@@ -200,10 +211,9 @@ func TestABoundRuleIsScopedWhenItIsSavedNotWhenItIsHit(t *testing.T) {
 
 	// Synchronous stand-in for what the save fires off the request.
 	for _, r := range enforcedGuardrailRules(agent) {
-		if r.Tool == "" {
-			continue
+		for _, tool := range r.Tools {
+			scopeAndRecordGuardrailTool(context.Background(), app, udb, "a1", "a1", "", r.Text, tool, tool)
 		}
-		scopeAndRecordGuardrailTool(context.Background(), app, udb, "a1", "a1", "", r.Text, r.Tool, r.Tool)
 	}
 
 	turn := &chatTurn{app: app, agent: agent, user: "u", udb: udb, ctx: context.Background()}
@@ -249,11 +259,11 @@ func TestTheRulePickerIsASelectNotAField(t *testing.T) {
 	}
 	html := string(raw)
 	for _, want := range []string{
-		"function gTool(",                  // read the binding off the line
-		"createElement('select')",          // picked, never typed
-		"d.tool_choices",                   // from the live catalog
-		"if (tool) { pre += '#' + tool; }", // written back with the other markers
-		"(not available)",                  // a binding whose tool is gone is flagged, not dropped
+		"function gTools(",           // read the bindings off the line
+		"createElement('select')",    // picked, never typed
+		"d.tool_choices",             // from the live catalog
+		"if (t) { pre += '#' + t; }", // written back with the other markers
+		"(not available)",            // a binding whose tool is gone is flagged, not dropped
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("the rules editor is missing %q", want)
@@ -268,11 +278,43 @@ func TestTheRulePickerIsASelectNotAField(t *testing.T) {
 			continue
 		}
 		calls++
-		if !strings.Contains(line, "gTool(") && !strings.Contains(line, "toolSel.value") {
+		// gTools carries the rule's own; setTools passes the edited list.
+		if !strings.Contains(line, "gTools(") && !strings.Contains(line, ", next);") {
 			t.Errorf("a gCompose call drops the tool binding:\n%s", strings.TrimSpace(line))
 		}
 	}
 	if calls == 0 {
 		t.Error("found no gCompose call sites — this assertion is checking nothing")
+	}
+}
+
+// A rule about two tools says so wherever it is shown: to the agent, on the
+// card asking whether to check again, and at save time when one of them is a
+// name the agent cannot call.
+func TestARuleAboutTwoToolsSaysWhereItApplies(t *testing.T) {
+	agent := AgentRecord{ID: "a1", Guardrails: "#web_search #fetch_url never put an internal name in a search\nalways be polite",
+		GuardrailHooks: []string{guardHookPreInput, guardHookPreAction}}
+
+	if p := renderGuardrailsPromptSection(agent); !strings.Contains(p, "never put an internal name in a search (applies when you use web_search or fetch_url)") {
+		t.Errorf("the agent is not told where the rule applies:\n%s", p)
+	}
+
+	// A check on the person's message: the bound rule is not in it, and the
+	// message is called the person's, not something the agent will say.
+	msg := recheckDetail(agent, guardHookPreInput, "what's our roadmap", requesterIdentity{})
+	if !strings.Contains(msg, "Your message: what's our roadmap") || strings.Contains(msg, "About to say") {
+		t.Errorf("a check on the message is labelled as a reply:\n%s", msg)
+	}
+	if strings.Contains(msg, "internal name") || !strings.Contains(msg, "always be polite (applies to everything)") {
+		t.Errorf("the message check lists the wrong rules:\n%s", msg)
+	}
+	// A search: both, each saying where it applies.
+	act := recheckDetail(agent, guardHookPreAction, "web_search query=project falcon", requesterIdentity{})
+	if !strings.Contains(act, "never put an internal name in a search (applies to web_search, fetch_url)") {
+		t.Errorf("the search check does not say where the rule applies:\n%s", act)
+	}
+
+	if err := validateGuardrailToolBindings(AgentRecord{AllowedTools: []string{"web_search"}}, "#web_search #no_such_tool never"); err == nil || !strings.Contains(err.Error(), "no_such_tool") {
+		t.Errorf("a second tool the agent cannot call was accepted: %v", err)
 	}
 }

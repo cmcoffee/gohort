@@ -159,9 +159,13 @@ func recheckDetail(agent AgentRecord, hookPoint, candidate string, who requester
 	if r := []rune(what); len(r) > 300 {
 		what = string(r[:300]) + "..."
 	}
-	if hookPoint == guardHookPreAction {
+	switch hookPoint {
+	case guardHookPreAction:
 		b.WriteString("About to run: " + what + "\n")
-	} else {
+	case guardHookPreInput:
+		// The person's own message, not something the agent is about to say.
+		b.WriteString("Your message: " + what + "\n")
+	default:
 		b.WriteString("About to say: " + what + "\n")
 	}
 	var own []string
@@ -171,7 +175,14 @@ func recheckDetail(agent AgentRecord, hookPoint, candidate string, who requester
 			deployment++
 			continue
 		}
-		own = append(own, "- "+strings.TrimSpace(r.Text))
+		// Where the rule applies, said outright: the card shows the rule
+		// without its markers, so a rule meant for two tools and bound to
+		// neither read exactly like one bound to both.
+		where := "applies to everything"
+		if len(r.Tools) > 0 {
+			where = "applies to " + strings.Join(r.Tools, ", ")
+		}
+		own = append(own, "- "+strings.TrimSpace(r.Text)+" ("+where+")")
 	}
 	if len(own) > 0 {
 		b.WriteString("Checked against:\n" + strings.Join(own, "\n") + "\n")

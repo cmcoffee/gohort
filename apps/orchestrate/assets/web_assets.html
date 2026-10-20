@@ -5729,22 +5729,26 @@ select.ui-orch-intake-input {
             return out;
           }
           function gBody(s) { return String(s || '').slice(gMarkers(s).length); }
-          // The ONE tool this rule is about, or '' for a rule about conduct
-          // generally. A bare '#' names nothing and binds nothing — the safe
-          // reading, matching the server.
-          function gTool(s) {
+          // The tools this rule is about, in order, or none for a rule about
+          // conduct generally. Each '#name' binds one; a bare '#' names nothing
+          // and binds nothing — the safe reading, matching the server.
+          function gTools(s) {
             // The hyphen is part of a NAME: a tool name is
             // ^[a-zA-Z0-9_-]+, so truncating at the first hyphen bound the
             // rule to a prefix the picker does not offer, which reopened as
             // "any action". Matches the server's leadingToolName, trailing
             // hyphen and all.
-            var m = String(gMarkers(s) || '').match(/#([a-z0-9_-]+)/i);
-            return m ? m[1].toLowerCase().replace(/-+$/, '') : '';
+            var out = [], re = /#([a-z0-9_-]+)/gi, m, marks = String(gMarkers(s) || '');
+            while ((m = re.exec(marks))) {
+              var n = m[1].toLowerCase().replace(/-+$/, '');
+              if (n && out.indexOf(n) < 0) { out.push(n); }
+            }
+            return out;
           }
-          function gCompose(body, mode, exempt, links, tool) {
+          function gCompose(body, mode, exempt, links, tools) {
             var pre = exempt ? '@' : '';
             (links || []).forEach(function(l) { pre += '@' + (l.off ? '-' : '') + l.name; });
-            if (tool) { pre += '#' + tool; }
+            (tools || []).forEach(function(t) { if (t) { pre += '#' + t; } });
             if (mode === G_RECOVER) { pre += '?'; }
             else if (mode === G_APPEAL) { pre += '~'; }
             return pre ? pre + ' ' + body : body;
@@ -5910,7 +5914,7 @@ select.ui-orch-intake-input {
             // reopened the whole dialog to refresh, which looked like a glitch
             // and lost your place in the list.
             function commit() {
-              grules[idx] = gCompose(gBody(grules[idx]), gMode(grules[idx]), builtin, chosen, gTool(grules[idx]));
+              grules[idx] = gCompose(gBody(grules[idx]), gMode(grules[idx]), builtin, chosen, gTools(grules[idx]));
               gCommit();
               renderG();
             }
@@ -6061,7 +6065,7 @@ select.ui-orch-intake-input {
               // than closing over it: the toggle below rewrites grules[idx], and a
               // captured copy would put the stale severity back.
               var more = window.uiExpandingLine(input, {oneLine: true, buttonClass: 'ui-orch-list-del', onInput: function(v) {
-                grules[idx] = gCompose(v, gMode(grules[idx]), gExempt(grules[idx]), gLinks(grules[idx]), gTool(grules[idx]));
+                grules[idx] = gCompose(v, gMode(grules[idx]), gExempt(grules[idx]), gLinks(grules[idx]), gTools(grules[idx]));
               }});
               var term = document.createElement('button');
               term.type = 'button';
@@ -6071,7 +6075,7 @@ select.ui-orch-intake-input {
                 gModeStyle[gMode(text)];
               term.title = gModeTitle[gMode(text)];
               term.onclick = function() {
-                grules[idx] = gCompose(gBody(grules[idx]), gNextMode(gMode(grules[idx])), gExempt(grules[idx]), gLinks(grules[idx]), gTool(grules[idx]));
+                grules[idx] = gCompose(gBody(grules[idx]), gNextMode(gMode(grules[idx])), gExempt(grules[idx]), gLinks(grules[idx]), gTools(grules[idx]));
                 gCommit();
                 renderG();
               };
@@ -6117,44 +6121,65 @@ select.ui-orch-intake-input {
               // nothing and stop it being judged anywhere — so the name can
               // only ever be one the agent can actually call. The server
               // refuses an unknown one on save for the same reason.
-              var boundTool = gTool(text);
+              // The tools this rule is about: a chip each, and a SELECT that adds
+              // another. Never a text field: a mistyped carve-out name makes a
+              // rule stronger (it excepts nobody), but a mistyped tool name would
+              // bind the rule to nothing and stop it being judged anywhere, so a
+              // name can only ever be one the agent can actually call. The server
+              // refuses an unknown one on save for the same reason.
+              var bound = gTools(text);
+              var toolBox = document.createElement('span');
+              toolBox.className = 'ui-orch-guard-tools';
+              toolBox.style.cssText = 'display:inline-flex;flex-wrap:wrap;gap:0.2rem;align-items:center';
+              var setTools = function(next) {
+                grules[idx] = gCompose(gBody(grules[idx]), gMode(grules[idx]), gExempt(grules[idx]), gLinks(grules[idx]), next);
+                renderG();
+              };
+              bound.forEach(function(n) {
+                // A binding whose tool the agent can no longer call is kept and
+                // flagged, never silently dropped: the rule is enforced nowhere
+                // for it, and that has to be visible rather than corrected behind
+                // the owner's back.
+                var gone = gToolChoices.length && gToolChoices.indexOf(n) < 0;
+                var chip = document.createElement('button');
+                chip.type = 'button';
+                chip.className = 'ui-orch-list-del';
+                chip.textContent = n + (gone ? ' (not available)' : '') + ' ×';
+                chip.style.cssText = 'width:auto;padding:0 0.35rem;font-size:0.7rem;' +
+                  (gone ? 'color:var(--danger);border-color:var(--danger)' : 'color:var(--accent,#6366f1);border-color:var(--accent,#6366f1)');
+                chip.title = gone
+                  ? 'This rule is bound to ' + n + ', which this agent cannot call, so for it the rule is enforced nowhere. Remove it, or pick another tool.'
+                  : 'Judged when the agent uses ' + n + '. Click to remove ' + n + ' from this rule.';
+                chip.onclick = function() { setTools(bound.filter(function(b) { return b !== n; })); };
+                toolBox.appendChild(chip);
+              });
               var toolSel = document.createElement('select');
               toolSel.className = 'ui-orch-list-del';
               toolSel.style.cssText = 'width:auto;max-width:9rem;padding:0 0.35rem;font-size:0.7rem;' +
-                (boundTool ? 'color:var(--accent,#6366f1);border-color:var(--accent,#6366f1)' : 'color:var(--text-mute);opacity:0.6');
-              toolSel.title = boundTool
-                ? 'This rule is judged only when the agent uses ' + boundTool + ', and it is not judged against what the agent SAYS. If it forbids every use of that tool, the tool is taken out of the agent\'s catalog entirely.'
-                : 'Applies to everything this agent does. Pick a tool to judge this rule only when that tool is used: cheaper, and it stops the rule being applied to replies that merely mention the subject.';
+                (bound.length ? 'color:var(--text-mute)' : 'color:var(--text-mute);opacity:0.6');
+              toolSel.title = bound.length
+                ? 'This rule is judged only when the agent uses ' + bound.join(' or ') + ', and it is not judged against your messages or what the agent SAYS. Add another tool it is about here.'
+                : 'Applies to everything this agent does, your messages and its replies included. Pick a tool to judge this rule only when that tool is used: cheaper, and it stops the rule being applied to messages that merely mention the subject.';
               var anyOpt = document.createElement('option');
-              anyOpt.value = ''; anyOpt.textContent = 'any action';
+              anyOpt.value = ''; anyOpt.textContent = bound.length ? '+ tool' : 'any action';
               toolSel.appendChild(anyOpt);
-              // A binding whose tool the agent can no longer call is kept in
-              // the list and flagged, never silently dropped: the rule IS
-              // enforced nowhere, and that has to be visible rather than
-              // corrected behind the owner's back.
-              var choices = gToolChoices.slice();
-              if (boundTool && choices.indexOf(boundTool) < 0) { choices.unshift(boundTool); }
-              choices.forEach(function(n) {
+              gToolChoices.forEach(function(n) {
+                if (bound.indexOf(n) >= 0) { return; }
                 var o = document.createElement('option');
                 o.value = n; o.textContent = n;
-                if (gToolChoices.indexOf(n) < 0) { o.textContent = n + ' (not available)'; }
                 toolSel.appendChild(o);
               });
-              toolSel.value = boundTool;
-              if (boundTool && gToolChoices.length && gToolChoices.indexOf(boundTool) < 0) {
-                toolSel.style.cssText = 'width:auto;max-width:9rem;padding:0 0.35rem;font-size:0.7rem;color:var(--danger);border-color:var(--danger)';
-                toolSel.title = 'This rule is bound to ' + boundTool + ', which this agent cannot call, so the rule is enforced nowhere. Pick another tool, or "any action".';
-              }
+              toolSel.value = '';
               toolSel.addEventListener('change', function() {
-                grules[idx] = gCompose(gBody(grules[idx]), gMode(grules[idx]), gExempt(grules[idx]), gLinks(grules[idx]), toolSel.value);
-                renderG();
+                if (toolSel.value) { setTools(bound.concat([toolSel.value])); }
               });
+              toolBox.appendChild(toolSel);
               var del = document.createElement('button');
               del.className = 'ui-orch-list-del'; del.type = 'button'; del.textContent = '×';
               del.onclick = function() { grules.splice(idx, 1); renderG(); gCommit(); };
               var apply = document.createElement('div');
               apply.className = 'ui-orch-guard-apply';
-              apply.appendChild(toolSel); apply.appendChild(term); apply.appendChild(exempt); apply.appendChild(del);
+              apply.appendChild(toolBox); apply.appendChild(term); apply.appendChild(exempt); apply.appendChild(del);
               row.appendChild(input); row.appendChild(more); row.appendChild(apply);
               gList.appendChild(row);
             });

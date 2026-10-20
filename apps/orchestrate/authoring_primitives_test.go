@@ -12,7 +12,9 @@ import (
 // A Builder another agent (or MCP, or a schedule) sends has the app,
 // pipeline and machine managers its own chat has. The dispatch paths added
 // only the session-built authoring tools, and a sent Builder told the person
-// app_def "isn't actually available in this deployment".
+// app_def "isn't actually available in this deployment". Machine is one of
+// the less-used tools its own chat keeps behind load_tool, so a sent Builder
+// is offered it the same way: indexed in its prompt, not inline.
 func TestADispatchedBuilderCanBuildApps(t *testing.T) {
 	T, _, user := newTestOrchestrate(t)
 	pinRootDB(t)
@@ -28,10 +30,16 @@ func TestADispatchedBuilderCanBuildApps(t *testing.T) {
 	for _, tl := range fake.Config(0).Tools {
 		offered = append(offered, tl.Name)
 	}
-	for _, want := range []string{"app_def", "pipeline", "machine"} {
+	for _, want := range []string{"app_def", "pipeline", "load_tool"} {
 		if !slices.Contains(offered, want) {
 			t.Errorf("a dispatched Builder was not offered %s: %v", want, offered)
 		}
+	}
+	if slices.Contains(offered, "machine") {
+		t.Error("machine rode inline on a sent Builder: its own chat keeps it behind load_tool")
+	}
+	if p := fake.Config(0).SystemPrompt + fake.Prompt(0); !strings.Contains(p, "load before use") || !strings.Contains(p, "- `machine` ") {
+		t.Error("a sent Builder's prompt does not index machine to load")
 	}
 }
 

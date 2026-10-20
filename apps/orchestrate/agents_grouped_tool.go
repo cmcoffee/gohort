@@ -1596,6 +1596,7 @@ func (ar *agentsRun) prepareInput() {
 	}
 	// The passes a web turn's catalog gets over all of it (dispatch_catalog.go).
 	ar.tools = ar.subTurn.finalizeDispatchCatalog(ar.subSess, ar.tools)
+	ar.sysPrompt += ar.subTurn.dispatchCatalogPrompt()
 	ar.subTurn.machineToolList = machineToolNotes(ar.subSess)
 	ar.subTurn.noteAgentAttachments(ar.subSess)
 	ar.subTurn.enterDispatchMachine(&ar.prior, false, ar.msg, &ar.sysPrompt, &ar.tools, "agents-run")
