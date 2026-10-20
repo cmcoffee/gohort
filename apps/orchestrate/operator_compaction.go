@@ -387,7 +387,12 @@ func (T *OrchestrateApp) foldOperatorHistory(udb Database, owner string, agent A
 	// fold makes model calls of its own, and with no row they were activity
 	// nothing on the page could account for. Stopped, it fails like any fold
 	// that did not finish: the cursor holds and the next one picks it up.
-	ctx, run := T.runsRegistry().CreateCancellable(context.Background(), owner, agent.ID, sessID)
+	//
+	// Not under the conversation's session: a run registered there replaces
+	// the run already in it, so a fold a turn set off cancelled that turn, and
+	// a channel answered "Sorry: I ran into a problem". The session slot is
+	// the turn's; the fold is beside it.
+	ctx, run := T.runsRegistry().CreateCancellable(context.Background(), owner, agent.ID, "")
 	run.Describe("compaction", agent.Name, "Compacting the thread")
 	run.SetDetail(fmt.Sprintf("summarizing %d messages", len(cm)-st.SummarizedThrough))
 	newSt, facts, changed, err := CompactConversation(ctx, cm, st, cfg, fold)

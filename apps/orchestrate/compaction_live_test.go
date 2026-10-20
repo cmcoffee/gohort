@@ -6,6 +6,7 @@ package orchestrate
 // lending its model saw an unnamed call.
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -20,6 +21,11 @@ func TestAFoldShowsWhileItRuns(t *testing.T) {
 	T := &OrchestrateApp{AppCore: AppCore{DB: db, LLM: &FakeLLM{Turns: []FakeTurn{{Content: "Running summary.", Wait: hold, Repeat: true}}}}}
 	agent := AgentRecord{ID: "ag", Name: "Wiwee", Owner: "u", ContextDepth: 4}
 	seedFoldSession(t, db, "ag", "s1", 30)
+	// The turn that set the fold off, running in the same conversation. A run
+	// registered under a session replaces the one there, so a fold registered
+	// under it cancelled this turn and a channel answered with an apology.
+	turnCtx, turn := T.runsRegistry().CreateCancellable(context.Background(), "u", "ag", "s1")
+	defer turn.Complete(RunStatusCompleted)
 
 	done := make(chan struct{})
 	go func() {
@@ -42,6 +48,12 @@ func TestAFoldShowsWhileItRuns(t *testing.T) {
 	}
 	if fold.UserID != "u" || fold.AgentID != "ag" || fold.AgentName != "Wiwee" || !strings.Contains(fold.Detail, "summarizing") || !fold.Cancellable {
 		t.Errorf("the fold's run should name whose thread it is and offer a Stop: %+v", fold)
+	}
+	if turnCtx.Err() != nil {
+		t.Error("the fold cancelled the turn running in its conversation")
+	}
+	if r := T.runsRegistry().BySession("u", "s1"); r == nil || r.ID != turn.ID {
+		t.Error("the conversation's run is no longer the turn: a page reattaching would find the fold")
 	}
 	if !markBackground([]RunSnapshot{fold})[fold.ID] {
 		t.Error("a fold should read as background work")

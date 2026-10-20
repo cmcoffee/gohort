@@ -10,6 +10,7 @@ package orchestrate
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -243,6 +244,16 @@ const inboundVideoFrameCount = 4
 
 // registerChannelAgentRunner installs the closure core invokes to run a
 // channel's bound agent on one inbound message. Call once at startup.
+// supersededInConversation reports a channel run cancelled because a newer
+// message in its conversation took over: the run answering that one is
+// active there now, so this one says nothing. The apology it sent read as the
+// agent failing, once for each message sent while it worked, right before it
+// answered the last of them. Any other failure is not this, and still gets
+// the apology.
+func (app *OrchestrateApp) supersededInConversation(owner, sessionID string, err error) bool {
+	return err != nil && errors.Is(err, context.Canceled) && app.runsRegistry().BySession(owner, sessionID) != nil
+}
+
 func registerChannelAgentRunner(app *OrchestrateApp) {
 	RegisterChannelAgentRunner(func(ctx context.Context, in ChannelInbound) (ChannelReply, error) {
 		// agentOwner == runtimeUser: the channel owner's agent runs under the
@@ -420,6 +431,10 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 			SurfaceContext: channelSurfaceContextFull(in),
 			StatusCallback: in.StatusCallback,
 		})
+		if app.supersededInConversation(in.Owner, sessionID, err) {
+			Log("[channel] run for owner=%s agent=%s gave way to a newer message in the same conversation", in.Owner, in.AgentID)
+			return ChannelReply{AgentName: agentNameTag(in.Owner, in.AgentID), Silenced: true}, nil
+		}
 		if err != nil {
 			// A messaging surface must not go silent — the contact texted and
 			// expects a reply. Deliver a brief, friendly note instead of nothing;
