@@ -25,9 +25,7 @@ import (
 var sectionGroup = map[string]string{
 	"System Status": "System", "Site Settings": "System",
 	"Users": "System", "Add account": "System", "Default Apps": "System",
-	"Teams": "System",
-
-	"Activity Log": "Activity",
+	"Teams": "System", "Activity Log": "System",
 
 	"Cost History (Last 30 Days)": "Costs", "Cost by source": "Costs", "Prices": "Costs",
 
@@ -350,8 +348,7 @@ func (a *AdminApp) serveAdminPage(w http.ResponseWriter, r *http.Request, tab st
 		name  string
 		build func() []ui.Section
 	}{
-		{"system", a.systemSections},
-		{"activity", a.activitySections},
+		{"system", a.systemSections}, // the activity log among them
 		{"llm", a.llmSections},
 		{"cost", a.costSections},
 		{"capabilities", a.capabilitiesSections},
@@ -454,7 +451,7 @@ func (a *AdminApp) serveAdminPage(w http.ResponseWriter, r *http.Request, tab st
 	// above has to appear here. "Tools" is deliberately absent now: the tool
 	// sections all live under Extensions, and a rank for a tab nothing lands on
 	// is a tab that never appears.
-	groupRank := map[string]int{"System": 0, "Activity": 1, "Costs": 2, "LLMs": 3, "Capabilities": 4, "Agents": 5, "Governance": 6, "Extensions": 7, "Apps": 8, "Tuning": 9, "Prompts": 10, "Maintenance": 11}
+	groupRank := map[string]int{"System": 0, "Costs": 2, "LLMs": 3, "Capabilities": 4, "Agents": 5, "Governance": 6, "Extensions": 7, "Apps": 8, "Tuning": 9, "Prompts": 10, "Maintenance": 11}
 	sort.SliceStable(page.Sections, func(i, j int) bool {
 		gi, gj := groupRank[page.Sections[i].Group], groupRank[page.Sections[j].Group]
 		if gi != gj {

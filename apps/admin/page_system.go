@@ -7,7 +7,7 @@ import (
 
 // systemSections is the system part of the admin page: System Status, Site Settings, Channel Wake Rules, Add account, Users, Feature Access, Default Apps, App Groups.
 func (a *AdminApp) systemSections() []ui.Section {
-	return []ui.Section{
+	secs := []ui.Section{
 		{
 			Title:    "System Status",
 			Subtitle: "Live readiness summary. Refreshes every 10 seconds.",
@@ -313,6 +313,10 @@ func (a *AdminApp) systemSections() []ui.Section {
 			},
 		},
 	}
+	// The activity log second, after System Status: the status says what is
+	// running now, the log who did what afterwards. It was a tab of its own,
+	// one section wide, on a header row already folding tabs under More.
+	return append(append(secs[:1:1], a.activitySections()...), secs[1:]...)
 }
 
 // themePickerOptions builds the Theme dropdown from the core/ui theme

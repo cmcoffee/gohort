@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/ui"
 )
 
 func writeTestResult(w http.ResponseWriter, ok bool, message, errMsg string) {
@@ -103,6 +104,12 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		tab := strings.Trim(r.URL.Path, "/")
 		if strings.Contains(tab, "/") {
 			http.NotFound(w, r)
+			return
+		}
+		// The activity log was a tab of its own; a link to it still lands on
+		// the log, now on System.
+		if tab == "activity" {
+			http.Redirect(w, r, a.WebPath()+"/"+ui.SectionOnTab("System", "Activity Log"), http.StatusFound)
 			return
 		}
 		// First run: an install with no LLM provider cannot do anything, so

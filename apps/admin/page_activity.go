@@ -1,6 +1,6 @@
 package admin
 
-// Admin › Activity: the deployment's activity log (core/activity). Who signed
+// Admin › System › Activity Log: the deployment's activity log (core/activity). Who signed
 // in, who failed to and from where, and the changes an administrator wants a
 // record of. The live views say what is running now; this says who did what,
 // and when, afterwards.
