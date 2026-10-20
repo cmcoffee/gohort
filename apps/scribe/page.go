@@ -607,17 +607,17 @@ const guideSectionCode = `(function(){
       var tf = fieldText('Section title', t0);
       var mf = fieldArea('Body (markdown)', m0, true);
       body.appendChild(tf.wrap); body.appendChild(mf.wrap);
-      var save = el('button', {class:'ui-row-btn primary', text:'Save'});
-      var actions = el('div', {class:'guide-edit-actions'}, [save]);
+      // Save beside Close in the footer; the picture controls stay under
+      // the body they add to.
+      var save = dlg.addAction(el('button', {class:'ui-row-btn primary', text:'Save'}));
       // Pictures: paste a screenshot or drop a file into the body, or pick one.
       if (gid && window.uiImagePaste){
         var pics = window.uiImagePaste(mf.input, 'images?id=' + encodeURIComponent(gid));
         var addImg = el('button', {class:'ui-row-btn', type:'button', text:'Add image'});
         addImg.addEventListener('click', function(){ pics.pick(); });
-        actions.insertBefore(addImg, save);
-        actions.insertBefore(el('span', {class:'guide-edit-hint', text:'Paste or drop a screenshot to add it.'}), addImg);
+        body.appendChild(el('div', {class:'guide-edit-actions'}, [
+          el('span', {class:'guide-edit-hint', text:'Paste or drop a screenshot to add it.'}), addImg]));
       }
-      body.appendChild(actions);
       save.addEventListener('click', function(){
         save.disabled = true; save.textContent = 'Saving…';
         onSave(tf.input.value, mf.input.value).then(function(){
@@ -830,8 +830,7 @@ const guideSettingsAction = `function(ctx){
           var ccb = el('input', {type:'checkbox'}); if (d && d.curate_on_report) ccb.checked = true;
           body.appendChild(el('label', {class:'guide-share-row'}, [ccb,
             el('span', {text:'Curate findings as they arrive. When an agent reports something for this guide, the Guide Curator files it within about a minute, with no review first. Every change is in the Curator digest, with Undo.'})]));
-          var save = el('button', {class:'ui-row-btn primary', text:'Save'});
-          body.appendChild(el('div', {class:'guide-edit-actions'}, [save]));
+          var save = dlg.addAction(el('button', {class:'ui-row-btn primary', text:'Save'}));
           save.addEventListener('click', function(){
             save.disabled = true; save.textContent = 'Saving…';
             fetch('settings?' + qp, {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'},
@@ -865,7 +864,7 @@ const guidePublishAction = `function(ctx){
       if (!gid || !window.uiOpenSimpleModal) return;
       var qp = 'id=' + encodeURIComponent(gid);
       fetch('publish/state?' + qp, {credentials:'same-origin'}).then(function(r){ return r.json(); }).then(function(d){
-        window.uiOpenSimpleModal({title:'Publish guide', width:'760px', mount: function(body){
+        window.uiOpenSimpleModal({title:'Publish guide', width:'760px', mount: function(body, dlg){
           var targets = (d && d.targets) || [];
           // Where publishing targets are made, opened in a new tab so this
           // guide stays put; reopening Publish picks up the new target.
@@ -892,9 +891,9 @@ const guidePublishAction = `function(ctx){
           function followJob(){
             view.innerHTML = '';
             var line = el('div', {class:'guide-pub-status'});
-            // Stop beside the spinner. Closing the window leaves the publish
-            // running (it outlives the page, and reopening rejoins it); Stop
-            // is how it is ended.
+            // Stop beside Close in the footer while it runs. Closing the
+            // window leaves the publish running (it outlives the page, and
+            // reopening rejoins it); Stop is how it is ended.
             var stop = el('button', {class:'ui-row-btn', text:'Stop'});
             stop.addEventListener('click', function(){
               stop.disabled = true; stop.textContent = 'Stopping';
@@ -903,7 +902,9 @@ const guidePublishAction = `function(ctx){
                 .catch(function(err){ stop.disabled = false; stop.textContent = 'Stop';
                   window.uiAlert('Could not stop it: ' + (err && err.message || err)); });
             });
-            view.appendChild(el('div', {class:'guide-pub-running'}, [line, stop]));
+            view.appendChild(el('div', {class:'guide-pub-running'}, [line]));
+            dlg.addAction(stop);
+            function dropStop(){ if (stop.parentNode) stop.parentNode.removeChild(stop); }
             // What the publish is doing, step by step, under the spinner;
             // kept when it ends, so an outcome can be checked against what
             // was actually done.
@@ -926,12 +927,12 @@ const guidePublishAction = `function(ctx){
             }, 120);
             function poll(){
               fetch('publish/job?' + qp, {credentials:'same-origin', cache:'no-store'}).then(function(r){ return r.json(); }).then(function(j){
-                if (j.none){ clearInterval(spin); showList(); return; }
+                if (j.none){ clearInterval(spin); dropStop(); showList(); return; }
                 last = j;
                 showSteps(j.steps);
                 if (!j.done){ setTimeout(poll, 2000); return; }
                 clearInterval(spin);
-                if (stop.parentNode) stop.parentNode.removeChild(stop);
+                dropStop();
                 line.textContent = (j.ok ? 'Published to ' : j.stopped ? 'Stopped publishing to ' : 'Could not publish to ') + j.target + ' (' + j.took + ').';
                 line.className = 'guide-pub-status ' + (j.ok ? 'guide-pub-ok' : 'guide-pub-fail');
                 if (j.message) view.appendChild(el('p', {class:'guide-kn-intro', text: j.message}));
@@ -1075,7 +1076,6 @@ const guidePublishCSS = `.guide-pub-row { display: flex; align-items: center; ga
 .guide-pub-status { font-size: var(--fs-lg, 0.95rem); color: var(--text-hi); padding: 0.6rem 0; }
 .guide-pub-running { display: flex; align-items: center; gap: 0.6rem; }
 .guide-pub-running .guide-pub-status { flex: 1; min-width: 0; }
-.guide-pub-running .ui-row-btn { flex: none; }
 .guide-pub-steps { margin: 0 0 0.6rem; padding-left: 1.4rem; max-height: 16rem; overflow-y: auto; font-size: var(--fs-sm, 0.8rem); line-height: 1.45; color: var(--text); font-family: var(--mono, ui-monospace, monospace); word-break: break-word; }
 .guide-pub-steps li { margin: 0.1rem 0; }
 .guide-pub-ok { color: var(--ok, #3fb950); }

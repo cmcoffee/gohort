@@ -1406,10 +1406,18 @@
     // Footer: omit opts.actions -> single Close; [] -> no footer (mount builds
     // its own); otherwise one button per entry.
     var actions = opts.actions;
-    if (actions === undefined) actions = [{label: opts.closeLabel || 'Close', primary: true}];
+    var defaultClose = actions === undefined;
+    if (defaultClose) actions = [{label: opts.closeLabel || 'Close', primary: true}];
+    var bar = null;
+    function footer() {
+      if (!bar) {
+        bar = document.createElement('div');
+        bar.className = 'ui-modal-footer';
+        dlg.appendChild(bar);
+      }
+      return bar;
+    }
     if (actions && actions.length) {
-      var bar = document.createElement('div');
-      bar.className = 'ui-modal-footer';
       actions.forEach(function(a) {
         var btn = document.createElement('button');
         btn.type = 'button';
@@ -1420,10 +1428,29 @@
           else close();
         });
         if (a.primary && !api.primaryButton) api.primaryButton = btn;
-        bar.appendChild(btn);
+        footer().appendChild(btn);
       });
-      dlg.appendChild(bar);
     }
+    // api.addAction(btn): a button the mount built (Save, Stop, Apply) goes
+    // in the footer after Close, so a dialog's buttons sit together in one
+    // row instead of one at the end of the content and Close below it. A
+    // primary one takes over from the default Close, which then reads as
+    // the way out rather than the thing to press. Removing the button
+    // (btn.remove()) takes it out of the row again.
+    api.addAction = function(btn) {
+      if (!btn) return btn;
+      if (btn.type !== 'button' && btn.tagName === 'BUTTON') btn.type = 'button';
+      var primary = /(^|\s)primary(\s|$)/.test(btn.className || '');
+      if (primary && defaultClose && api.primaryButton) {
+        api.primaryButton.className = 'ui-row-btn';
+        defaultClose = false;
+        api.primaryButton = btn;
+      } else if (primary && !api.primaryButton) {
+        api.primaryButton = btn;
+      }
+      footer().appendChild(btn);
+      return btn;
+    };
     document.body.appendChild(overlay);
     if (typeof opts.mount === 'function') {
       try { opts.mount(body, api); } catch (e) {
@@ -1467,6 +1494,7 @@
         // whole overlay down, not just the inner card.
         api.dialog.close = api.close;
         api.dialog.remove = api.close;
+        api.dialog.addAction = api.addAction;
         if (typeof userMount === 'function') userMount(body, api.dialog);
       },
     });

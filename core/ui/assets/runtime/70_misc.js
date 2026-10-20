@@ -554,12 +554,11 @@
             try { dlg.close(); dlg.remove(); } catch (e) {}
             window.uiComposeMessage(msg, {send: true});
           }
-          var send = el('button', {class: 'ui-wb-action-btn', text: a.label || 'Send'});
+          // Beside Close in the footer, which is the way out: a Cancel of
+          // its own made two buttons that both closed the window.
+          var send = el('button', {class: 'ui-row-btn primary', text: a.label || 'Send'});
           send.addEventListener('click', go);
-          var cancel = el('button', {class: 'ui-row-btn', text: 'Cancel', onclick: function() {
-            try { dlg.close(); dlg.remove(); } catch (e) {}
-          }});
-          body.appendChild(el('div', {class: 'ui-wb-working-actions'}, [cancel, send]));
+          dlg.addAction(send);
         },
       });
     }
@@ -606,9 +605,10 @@
       if (a.kind === 'report') {
         var orig = btn.textContent;
         btn.disabled = true; btn.textContent = a.spinner || 'Working…';
-        // Cancellable: the working modal's Cancel aborts the request, which
+        // Cancellable: the working modal's Stop aborts the request, which
         // cancels the server-side run (the handler drives its agent loop off the
-        // request context).
+        // request context). It sits in the footer beside Close, which only
+        // hides the window: the report still opens when it is done.
         var controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
         var cancelled = false, workDlg = null;
         function closeWork() { if (workDlg) { try { workDlg.close(); workDlg.remove(); } catch(e){} workDlg = null; } }
@@ -618,12 +618,11 @@
           body.appendChild(el('div', {class: 'ui-wb-working'}, [
             el('span', {class: 'ui-spinner'}), el('span', {text: a.spinner || 'Working…'}),
           ]));
-          var cancel = el('button', {class: 'ui-row-btn', text: 'Cancel', onclick: function() {
+          dlg.addAction(el('button', {class: 'ui-row-btn', text: 'Stop', onclick: function() {
             cancelled = true;
             if (controller) { try { controller.abort(); } catch(e){} }
             closeWork(); restore();
-          }});
-          body.appendChild(el('div', {class: 'ui-wb-working-actions'}, [cancel]));
+          }}));
         }});
         var fopts = {method: 'POST', credentials: 'same-origin'};
         if (controller) fopts.signal = controller.signal;
@@ -658,9 +657,9 @@
               // shape makes the agent re-derive findings already computed. Kept
               // generic — core/ui never knows what "apply" means for an app.
               var ap = d && d.apply;
+              // The apply button goes in the footer beside Close.
               if (ap && ap.compose) {
-                var cFooter = el('div', {class: 'ui-wb-working-actions'});
-                var cBtn = el('button', {class: 'ui-wb-action-btn', text: ap.label || 'Apply'});
+                var cBtn = el('button', {class: 'ui-row-btn primary', text: ap.label || 'Apply'});
                 cBtn.addEventListener('click', function() {
                   if (typeof window.uiComposeMessage !== 'function') {
                     showToast('No conversation on this page to write into.');
@@ -677,11 +676,9 @@
                   window.uiComposeMessage(ap.compose.replace('{id}', selectedId || ''),
                     {body: ap.compose_body || (d && d.report) || '', send: true});
                 });
-                cFooter.appendChild(cBtn);
-                body.appendChild(cFooter);
+                dlg.addAction(cBtn);
               } else if (ap && ap.url) {
-                var footer = el('div', {class: 'ui-wb-working-actions'});
-                var applyBtn = el('button', {class: 'ui-wb-action-btn', text: ap.label || 'Apply'});
+                var applyBtn = el('button', {class: 'ui-row-btn primary', text: ap.label || 'Apply'});
                 applyBtn.addEventListener('click', function() {
                   function go() {
                     var aurl = (ap.url || '').replace('{id}', encodeURIComponent(selectedId));
@@ -690,15 +687,14 @@
                       .then(function(r){ return r.ok ? r.json() : r.text().then(function(t){ throw new Error(t); }); })
                       .then(function(res) {
                         if (ap.invalidate && ap.invalidate.length && window.uiInvalidate) window.uiInvalidate(ap.invalidate);
-                        footer.remove();
+                        applyBtn.remove();
                         uiRenderMarkdown(md, (res && res.report) || '_Applied._');
                       })
                       .catch(function(err) { applyBtn.disabled = false; applyBtn.textContent = ap.label || 'Apply'; window.uiAlert((ap.label || 'Apply') + ' failed: ' + (err && err.message || err)); });
                   }
                   if (ap.confirm) { window.uiConfirm(ap.confirm).then(function(ok){ if (ok) go(); }); } else { go(); }
                 });
-                footer.appendChild(applyBtn);
-                body.appendChild(footer);
+                dlg.addAction(applyBtn);
               }
             }});
           })
