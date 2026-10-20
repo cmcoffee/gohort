@@ -288,7 +288,7 @@ func (t *chatTurn) emitToolCallUnder(parentCallID, msgID, name string, args map[
 		"msg_id":    msgID,
 		"call_id":   callID,
 		"name":      displayName,
-		"args":      summarizeToolArgs(args) + suffix,
+		"args":      summarizeToolArgs(t.chipArgs(name, args)) + suffix,
 		"args_full": callArgs,
 	}
 	// Mark pipeline-mode temp tools so the client can decorate the
@@ -302,6 +302,31 @@ func (t *chatTurn) emitToolCallUnder(parentCallID, msgID, name string, args map[
 	}
 	t.sse.Send(payload)
 	return callID
+}
+
+// chipArgs is args as a tool chip shows them: a hand-off's target agent by
+// its name when the call named it by id. agents(action="list") hands out ids,
+// so a model hands work over by id, and the chip read agent="dfaf35c4-…",
+// which says nothing about who is being asked. args_full keeps what was sent.
+func (t *chatTurn) chipArgs(name string, args map[string]any) map[string]any {
+	if name != "agents" && name != "delegate" {
+		return args
+	}
+	ref, _ := args["agent"].(string)
+	if ref = strings.TrimSpace(ref); ref == "" {
+		return args
+	}
+	db, owner := t.fleetView()
+	rec, ok := findAgentByNameOrID(db, owner, ref)
+	if !ok || strings.TrimSpace(rec.Name) == "" || strings.EqualFold(rec.Name, ref) {
+		return args
+	}
+	out := make(map[string]any, len(args))
+	for k, v := range args {
+		out[k] = v
+	}
+	out["agent"] = rec.Name
+	return out
 }
 
 // toolKindFor returns "pipeline" when name belongs to a pipeline-mode
