@@ -126,27 +126,86 @@ func (T *OrchestrateApp) handleAgentPage(w http.ResponseWriter, r *http.Request)
 // surface clean and prevent accidental misconfiguration. enforceSubAgentPosture
 // at loadAgent is the runtime safety net even if the UI ever leaks.
 func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Request, user string, udb Database, id string) {
-	if spec, isApp := appagents.AppAgentByID(id); isApp {
-		T.renderAppAgentEditor(w, r, udb, id, spec)
+	ed := &agentEditor{T: T, w: w, r: r, user: user, udb: udb, id: id}
+	if !ed.answerAppAgent() {
 		return
 	}
-	source := ""
-	title := "New agent"
-	subAgent := false
-	parentName := ""
+	ed.load()
+	ed.formFields()
+	ed.templates()
+	ed.mainSection()
+	ed.splitSections()
+	ed.picturesSection()
+	ed.shareSection()
+	ed.shapeSection()
+	ed.usedBySection()
+	ed.deleteSection()
+	ed.serve()
+}
+
+// agentEditor is one render of the agent editor: who the agent is (or
+// that it is new, or a sub-agent), its form, and the sections an existing
+// agent adds below it. Each field is a local of renderAgentEditor, which is
+// now the order of the phases.
+type agentEditor struct {
+	T    *OrchestrateApp
+	w    http.ResponseWriter
+	r    *http.Request
+	user string
+	udb  Database
+	id   string
+
+	// Who it is (load).
+	source           string
+	title            string
+	subAgent         bool
+	parentName       string
+	subAgentParentID string
+	leadModelLocked  bool
+	editRec          AgentRecord // for fields that say where their answer came from
+
+	// The form and the sections it becomes.
+	redirectURL    string
+	fields         []ui.FormField
+	agentTemplates []ui.FormTemplate
+	agentSection   ui.Section
+	sections       []ui.Section
+}
+
+func (ed *agentEditor) answerAppAgent() bool {
+	T := ed.T
+	w := ed.w
+	r := ed.r
+	udb := ed.udb
+	id := ed.id
+	if spec, isApp := appagents.AppAgentByID(id); isApp {
+		T.renderAppAgentEditor(w, r, udb, id, spec)
+		return false
+	}
+	return true
+}
+
+func (ed *agentEditor) load() {
+	r := ed.r
+	udb := ed.udb
+	id := ed.id
+	ed.source = ""
+	ed.title = "New agent"
+	ed.subAgent = false
+	ed.parentName = ""
 	// owned_by from the URL marks "create as a sub-agent owned by this
 	// parent" — set by the Create button's confirm dialog. Drives the
 	// sub-agent layout (mask publishing / intake / memory) and gets
 	// baked into the form via a hidden field so the POST persists the
 	// parent link.
-	subAgentParentID := ""
+	ed.subAgentParentID = ""
 	if id == "" {
 		if v := strings.TrimSpace(r.URL.Query().Get("owned_by")); v != "" {
 			if parent, ok := loadAgent(udb, v); ok {
-				subAgentParentID = v
-				subAgent = true
-				parentName = parent.Name
-				title = "New sub-agent"
+				ed.subAgentParentID = v
+				ed.subAgent = true
+				ed.parentName = parent.Name
+				ed.title = "New sub-agent"
 			}
 		}
 	}
@@ -155,44 +214,49 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 	// has declared every model private, in which case the lead is not remote
 	// and there is nothing for gate 2 to protect. Hiding a toggle the runtime
 	// would honor is a control that reads as broken.
-	leadModelLocked := false
-	var editRec AgentRecord // for fields that say where their answer came from
+	ed.leadModelLocked = false
 	if id != "" {
-		source = "../api/agents/" + id
-		title = "Edit agent"
+		ed.source = "../api/agents/" + id
+		ed.title = "Edit agent"
 		// Agents live in the user's per-user DB (udb), NOT the global
 		// T.DB — reading from the wrong store leaves OwnedBy empty and
 		// the editor falls back to the top-level shape (intake form,
 		// publishing, etc. still rendering for what's actually a
 		// sub-agent).
 		if rec, ok := loadAgent(udb, id); ok {
-			editRec = rec
-			leadModelLocked = agentForcesPrivate(rec) && !AllLLMsPrivate()
+			ed.editRec = rec
+			ed.leadModelLocked = agentForcesPrivate(rec) && !AllLLMsPrivate()
 			if rec.OwnedBy != "" {
-				subAgent = true
+				ed.subAgent = true
 				if parent, pok := loadAgent(udb, rec.OwnedBy); pok {
-					parentName = parent.Name
+					ed.parentName = parent.Name
 				}
-				title = "Edit sub-agent"
+				ed.title = "Edit sub-agent"
 			}
 		}
 	}
+}
+
+func (ed *agentEditor) formFields() {
+	T := ed.T
+	user := ed.user
+	id := ed.id
 	// On save, redirect back to the chat surface AND pre-select the
 	// agent the user was editing — landing on Chat (the dropdown's
 	// default) after editing a research agent makes the save feel
 	// disconnected. For new agents we don't know the id yet (server
 	// assigns on save), so they land on the dropdown default and the
 	// user picks manually.
-	redirectURL := ".."
+	ed.redirectURL = ".."
 	if id != "" {
-		redirectURL = "..?agent=" + id
+		ed.redirectURL = "..?agent=" + id
 	}
 
 	// (Skill / expert / collection pickers moved out of the editor
 	// — curation now lives on the in-chat Knowledge + Skills
 	// buttons so the editor stays focused on full agent shape.)
 
-	fields := []ui.FormField{
+	ed.fields = []ui.FormField{
 		{Type: "header", Label: "Identity",
 			Help: "Name + short description shown in the agent picker."},
 		{Field: "name", Type: "text", Label: "Name", Placeholder: "Research helper",
@@ -253,23 +317,23 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 	}
 	// Budgets and Reasoning close the form; the app-agent editor shows only
 	// these (renderAppAgentEditor).
-	fields = append(fields, T.budgetReasoningFields(editRec, leadModelLocked)...)
+	ed.fields = append(ed.fields, T.budgetReasoningFields(ed.editRec, ed.leadModelLocked)...)
 	// Sub-agent create flow (chat-toolbar Create → "sub-agent of X")
 	// bakes the parent ID into the form via a hidden field so the POST
 	// to /api/agents includes owned_by=<parent_id>. enforceSubAgentPosture
 	// then pins the sub-agent posture flags at load. Only relevant on
 	// the new-agent path; editing an existing sub-agent already knows
 	// its OwnedBy from the loaded record.
-	if subAgentParentID != "" {
-		fields = append(fields, ui.FormField{
+	if ed.subAgentParentID != "" {
+		ed.fields = append(ed.fields, ui.FormField{
 			Field:   "owned_by",
 			Type:    "hidden",
-			Default: subAgentParentID,
+			Default: ed.subAgentParentID,
 		})
 	}
 
-	if !subAgent {
-		fields = append(fields,
+	if !ed.subAgent {
+		ed.fields = append(ed.fields,
 			ui.FormField{Field: "capture_prompt", Type: "toggle", Label: "Capture prompt text",
 				Help:   "Keeps each run's round-1 prompt as text, readable with inspect_run.",
 				Detail: "For answering \"what was actually in the prompt\". Switch it off again afterwards: it stores the whole conversation, once per turn."},
@@ -332,8 +396,8 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 				Help:   "Grants the conductor toolset: delegate, scheduling, monitors, run-ledger, history-recall.",
 				Detail: "This is DISTINCT from \"the fleet\", the collection of all your agents, which every agent is in. It is also NOT the master switch for agent-to-agent calls: every non-sub agent can call peers via agents(action=\"run\") regardless, governed by the Dispatch policy below. Set that to \"Allow none\" to fully ground this agent.\n\nIt does not stop the agent doing work itself, it just adds the tools. An agent carrying these tools is never published publicly, since they reach owner-only management endpoints."},
 		)
-		fields = append(fields, authorCapabilityFields(id)...)
-		fields = append(fields,
+		ed.fields = append(ed.fields, authorCapabilityFields(id)...)
+		ed.fields = append(ed.fields,
 			ui.FormField{Field: "tag_name", Type: "toggle", Label: "Sign outbound messages with this agent's name",
 				Help:   "Prefixes every message this agent sends over a channel with its name.",
 				Detail: "For example, \"[Assistant] on my way\". Lets the recipient tell the agent's texts apart from your own messages in the same thread. Off by default; turn it on for agents that reply in conversations you also text in."},
@@ -370,15 +434,20 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 	}
 	// (Sub-agent surface has no extra toggles — memory / publishing / intake are
 	// pinned off structurally, and disable_skills was dropped as redundant.)
+}
 
+func (ed *agentEditor) templates() {
 	// "Agent type" presets — create mode only (a template stamps fields, which
 	// would clobber a real agent's values when editing; flags stay editable in
 	// Advanced after). Picking a type sets the character-defining defaults
 	// (Cortex + memory mode, Fleet off) so you choose what KIND of agent it is.
-	var agentTemplates []ui.FormTemplate
-	if id == "" && !subAgent {
-		agentTemplates = agentTypeTemplates()
+	id := ed.id
+	if id == "" && !ed.subAgent {
+		ed.agentTemplates = agentTypeTemplates()
 	}
+}
+
+func (ed *agentEditor) mainSection() {
 	// EDIT mode splits the form's header groups into page-level sections, so
 	// they appear in the page's own left rail (SectionNav) instead of eight
 	// accordions stacked inside one section. Each section is its own
@@ -389,37 +458,44 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 	//
 	// CREATE mode stays one POST form: there is no record to PATCH yet, and a
 	// new agent needs its fields submitted together with the templates picker.
-	agentSection := ui.Section{
+	ed.agentSection = ui.Section{
 		Title:    "Agent",
 		Subtitle: "Identity, prompts, and behavior.",
 		Detail:   "Clone an existing agent from the landing page if you want a quick copy to tweak.",
 		Body: ui.FormPanel{
-			Source:         source,
+			Source:         ed.source,
 			PostURL:        "../api/agents",
 			Method:         "POST",
 			SubmitLabel:    "Save agent",
-			RedirectURL:    redirectURL,
+			RedirectURL:    ed.redirectURL,
 			RedirectTarget: "_self",
-			Templates:      agentTemplates,
+			Templates:      ed.agentTemplates,
 			TemplatesLabel: "Agent type",
-			Fields:         fields,
+			Fields:         ed.fields,
 		},
 	}
-	if subAgent {
-		agentSection.Title = "Sub-agent"
-		if parentName != "" {
-			agentSection.Subtitle = "Owned by parent agent: " + parentName + ". Sub-agents are focused capability components called by their parent via dispatch: public surfaces, intake form, memory, and explorer mode are structurally off and hidden from this editor."
+	if ed.subAgent {
+		ed.agentSection.Title = "Sub-agent"
+		if ed.parentName != "" {
+			ed.agentSection.Subtitle = "Owned by parent agent: " + ed.parentName + ". Sub-agents are focused capability components called by their parent via dispatch: public surfaces, intake form, memory, and explorer mode are structurally off and hidden from this editor."
 		} else {
-			agentSection.Subtitle = "Sub-agent owned by another agent. Public surfaces, intake form, memory, and explorer mode are structurally off and hidden from this editor."
+			ed.agentSection.Subtitle = "Sub-agent owned by another agent. Public surfaces, intake form, memory, and explorer mode are structurally off and hidden from this editor."
 		}
 	}
-	sections := []ui.Section{agentSection}
-	if id != "" {
-		if split := splitAgentFormSections(id, source, fields, agentSection.Subtitle); len(split) > 0 {
-			sections = split
-		}
-	}
+}
 
+func (ed *agentEditor) splitSections() {
+	id := ed.id
+	ed.sections = []ui.Section{ed.agentSection}
+	if id != "" {
+		if split := splitAgentFormSections(id, ed.source, ed.fields, ed.agentSection.Subtitle); len(split) > 0 {
+			ed.sections = split
+		}
+	}
+}
+
+func (ed *agentEditor) picturesSection() {
+	id := ed.id
 	// (Channels section removed from the agent editor — channels are managed in
 	// the chat rail's Channels area and in the Bridges app, scoped to the agent
 	// you're viewing, so the editor no longer carries a duplicate attach form.)
@@ -452,7 +528,7 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 	// to look and catch it. The thumbnail is the point; the rest is context for
 	// deciding whether to keep the row.
 	if id != "" {
-		sections = append(sections, ui.Section{
+		ed.sections = append(ed.sections, ui.Section{
 			Title:    "Picture library",
 			Subtitle: "Every picture this agent has kept for reuse. Look at them.",
 			Detail:   "A name, a caption and an origin can all be confidently wrong together, and only the picture settles it.\n\n\"Unrecorded\" origin means nobody captured where it came from. It may be something the agent made, so do not trust it as a likeness until you have looked.\n\nForget what should not be here, and label anyone the agent has not identified, so a request naming them finds the right face. If two rows show the same person, both are flagged: the agent will pick one and you will not know which, so forget whichever is wrong.",
@@ -490,20 +566,23 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			},
 		})
 	}
+}
 
+func (ed *agentEditor) shareSection() {
+	id := ed.id
 	// Share with users — peer-sharing (namespacing phase 5). Existing, non-seed,
 	// top-level agents only: a seed is framework-owned and a sub-agent is a
 	// component of its parent, neither is independently shareable. The recipient
 	// runs the OWNER's agent, but its credentials + tools resolve in the
 	// RECIPIENT's namespace, so no secret travels with the share.
-	if id != "" && !subAgent && !isSeedID(id) {
+	if id != "" && !ed.subAgent && !isSeedID(id) {
 		// Who may RUN this agent, and what travels with it, are not here.
 		// They are the Share tab of its Security page.
 		//
 		// Both are enforcement: a person either reaches the agent or does
 		// not, and a recipient either reads a memory layer or does not,
 		// whatever the agent would say. This form is for what the agent IS.
-		sections = append(sections, ui.Section{
+		ed.sections = append(ed.sections, ui.Section{
 			Title:    "What it reaches",
 			Indent:   1,
 			Wide:     true,
@@ -512,7 +591,7 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 				"One exception, and it is the only thing a share has to ask about. A credential is not a copy somebody is missing — it is whose identity the call goes out as — so it resolves by name in the namespace of whoever is running, and you decide per key whether to lend yours or let them bring their own. That choice is made when you share, in Sharing.\n\n" +
 				"Nothing here changes anything. It is the list to check before you share, and the answer to \"why does it work for me and not for them\" afterwards.",
 			Body: ui.Table{
-				Source: source + "/reach",
+				Source: ed.source + "/reach",
 				RowKey: "name",
 				Columns: []ui.Col{
 					{Field: "kind", Label: "Kind", Flex: 0},
@@ -531,7 +610,7 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 				RowActions: []ui.RowAction{
 					{
 						Type: "segmented", Field: "lend", OnlyIf: "decide",
-						PostTo: source + "/reach/credential",
+						PostTo: ed.source + "/reach/credential",
 						Options: []ui.SelectOption{
 							{Value: credOwn, Label: "Theirs"},
 							{Value: credRead, Label: "Mine, reads"},
@@ -543,7 +622,11 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			},
 		})
 	}
+}
 
+func (ed *agentEditor) shapeSection() {
+	udb := ed.udb
+	id := ed.id
 	// (Phantom dispatch + wipe sections removed — phantom's per-chat dispatch
 	// surface is retiring with phantom; channel threads are inspected via the
 	// rail + the channel-scoped chat tools now.)
@@ -565,7 +648,7 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 				kept = fmt.Sprintf("%d field%s stay yours; everything else follows the framework.",
 					n, plural(n))
 			}
-			sections = append(sections, ui.Section{
+			ed.sections = append(ed.sections, ui.Section{
 				Title: "Built from the " + shapeName + " shape",
 				Subtitle: "Fields you have changed here are yours permanently. " + kept +
 					" That is how a framework improvement reaches an agent you made months ago. Stop following to freeze this agent exactly as it reads now.",
@@ -584,11 +667,16 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			})
 		}
 	}
+}
 
+func (ed *agentEditor) usedBySection() {
+	user := ed.user
+	udb := ed.udb
+	id := ed.id
 	if id != "" {
 		if rec, ok := loadAgent(udb, id); ok {
 			if sec, ok := agentMoveSection(udb, user, rec); ok {
-				sections = append(sections, sec)
+				ed.sections = append(ed.sections, sec)
 			}
 			// Used by: what runs through this agent, so it is plain before
 			// anyone changes or deletes it (agent_used_by.go). Only when
@@ -600,7 +688,7 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 						pairs = append(pairs, ui.DisplayPair{Label: k.label, Field: k.field})
 					}
 				}
-				sections = append(sections, ui.Section{
+				ed.sections = append(ed.sections, ui.Section{
 					Title:    "Used by",
 					Subtitle: "These run through this agent. Changing it changes them; deleting it stops them working until they are pointed at another agent.",
 					Body: ui.DisplayPanel{
@@ -611,7 +699,10 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			}
 		}
 	}
+}
 
+func (ed *agentEditor) deleteSection() {
+	id := ed.id
 	// Delete — the human's authoritative remove for any existing agent the editor
 	// is open on, INCLUDING a sub-agent reached via the picker (which other
 	// agents can't delete). Non-seed only: seeds
@@ -620,10 +711,10 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 	// dispatch-allowlist references.
 	if id != "" && !isSeedID(id) {
 		deleteRedirect := ".."
-		if editRec.OwnedBy != "" {
-			deleteRedirect = "..?agent=" + url.QueryEscape(editRec.OwnedBy)
+		if ed.editRec.OwnedBy != "" {
+			deleteRedirect = "..?agent=" + url.QueryEscape(ed.editRec.OwnedBy)
 		}
-		sections = append(sections, ui.Section{
+		ed.sections = append(ed.sections, ui.Section{
 			Title:    "Delete agent",
 			Subtitle: "Permanently remove this agent. This cannot be undone.",
 			Detail:   "Its sessions, memory, knowledge and any sub-agents it owns go with it, and its channels are removed. The schedules it runs can be kept parked for 30 days, to be relinked to a replacement agent, or deleted with it: the delete asks.",
@@ -640,14 +731,19 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 						// parent, anything else to the agent list.
 						Method:  "client",
 						URL:     "orchestrate_delete_agent_ask",
-						Data:    agentDeleteData(id, editRec.Name, deleteRedirect),
+						Data:    agentDeleteData(id, ed.editRec.Name, deleteRedirect),
 						Variant: "danger",
 					},
 				},
 			},
 		})
 	}
+}
 
+func (ed *agentEditor) serve() {
+	w := ed.w
+	r := ed.r
+	id := ed.id
 	// Carry the edited agent's ID back to Agents so the picker
 	// reopens on the agent the user was just editing instead of
 	// snapping to Chat. Empty id (create form) skips the param.
@@ -665,7 +761,7 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		headHTML += agentDeleteAskJS
 	}
 	page := ui.Page{
-		Title:     title,
+		Title:     ed.title,
 		ShowTitle: true,
 		BackURL:   backURL,
 		// Left-rail section nav, one section at a time — same shape as admin and
@@ -673,7 +769,7 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		// credentials, sharing, delete); stacking them made the page a long scroll.
 		MaxWidth:      "1100px",
 		SectionNav:    true,
-		Sections:      sections,
+		Sections:      ed.sections,
 		ExtraHeadHTML: headHTML,
 	}
 	page.ServeHTTP(w, r)
@@ -1102,7 +1198,6 @@ func shareSubtitleFor(a AgentRecord) string {
 	return "Published, and narrowed by you to " + ShareRecipientsText(a.AllowedUsers) +
 		". They also need the admin's grant of the app; this list can only narrow it, never widen it."
 }
-
 
 // budgetReasoningFields are the agent editor's Budgets and Reasoning sections:
 // how much a turn may spend, and how it reasons. Shared by the full editor

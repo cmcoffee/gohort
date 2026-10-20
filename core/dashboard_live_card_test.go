@@ -152,11 +152,16 @@ func TestTheNotificationsPanelFollowsItsBell(t *testing.T) {
 // string rather than an asset — so the source is the only place to check it.
 func dashboardPageSource(t *testing.T) string {
 	t.Helper()
-	raw, err := os.ReadFile("dashboard_page.go")
-	if err != nil {
-		t.Fatalf("reading the dashboard page: %v", err)
+	// The page is an asset now; the Go file still draws the cards and bars.
+	var src strings.Builder
+	for _, f := range []string{"dashboard_page.go", "assets/dashboard_page.html"} {
+		raw, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("reading the dashboard page: %v", err)
+		}
+		src.Write(raw)
 	}
-	return string(raw)
+	return src.String()
 }
 
 // cssBlock returns the declarations of the first rule opening with sel.

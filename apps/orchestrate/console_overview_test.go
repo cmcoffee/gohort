@@ -203,16 +203,17 @@ type navEntry struct {
 	body  string // the whole declaration, row actions included
 }
 
-// navEntries parses the OrchestratorNav block into its top-level entries.
-// Parsing beats searching here because three labels appear twice, and because
-// a test that cannot tell the two apart cannot check either.
+// navEntries parses the OrchestratorNav entries (chatAgentNav, then
+// chatFleetNav) into its top-level entries. Parsing beats searching here
+// because three labels appear twice, and because a test that cannot tell the
+// two apart cannot check either.
 func navEntries(t *testing.T, page string) []navEntry {
 	t.Helper()
-	start := strings.Index(page, "OrchestratorNav: []ui.OrchestratorNavItem{")
+	start := strings.Index(page, "func chatAgentNav() []ui.OrchestratorNavItem {")
 	if start < 0 {
 		t.Fatal("the orchestrator nav block is gone")
 	}
-	end := strings.Index(page[start:], "AltNavFlag:")
+	end := strings.Index(page[start:], "func chatModes()")
 	if end < 0 {
 		t.Fatal("could not find the end of the nav block")
 	}
@@ -220,7 +221,7 @@ func navEntries(t *testing.T, page string) []navEntry {
 
 	// Top-level entries only: they are the ones at this exact indent. A row
 	// action is nested deeper, so it never matches.
-	const sep = "\n\t\t\t\t\t\t{Label: "
+	const sep = "\n\t\t{Label: "
 	parts := strings.Split(nav, sep)
 	var out []navEntry
 	for _, part := range parts[1:] {

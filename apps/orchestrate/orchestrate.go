@@ -277,6 +277,22 @@ func (T *OrchestrateApp) webRestrictedLegacy(r *http.Request) bool {
 //	/api/confirm               — operator confirm (Phase 1 no-op stub)
 //	/api/inject                — POST/PATCH/DELETE: mid-flight note queue
 func (T *OrchestrateApp) Routes() {
+	T.wireRunners()
+	T.wireArtifactTypes()
+	T.wireSeams()
+	T.wireChannelHooks()
+	T.wireAgentTools()
+	T.wireExternalHooks()
+	T.wireWakeAndConsole()
+	T.runMigrations()
+	T.startBackgroundPasses()
+	T.runLateMigrations()
+	T.registerHandlers()
+}
+
+// wireRunners wires what runs agents on their own: scheduled updates, standing
+// agents, a deleted account's data, how notices get out, and publishing.
+func (T *OrchestrateApp) wireRunners() {
 	// Wire the scheduled-update handler before any session runs —
 	// the scheduler fires async so orchRef must be set by the time
 	// the loop ticks.
@@ -302,7 +318,10 @@ func (T *OrchestrateApp) Routes() {
 	registerAgentPromotion(T)
 	registerRecipePromotions()
 	registerShareProviders()
+}
 
+// wireArtifactTypes registers the types this app exports and imports.
+func (T *OrchestrateApp) wireArtifactTypes() {
 	// Register "agent" as a portable artifact type so agents export/import via
 	// the unified bundle (Admin > /api/artifacts/*). Holds the app because
 	// agents live in per-user stores (UserDB(T.DB, owner)), not RootDB.
@@ -316,7 +335,11 @@ func (T *OrchestrateApp) Routes() {
 	// agent stages need the agent type.
 	RegisterPipelineArtifactType(T)
 	RegisterMachineArtifactType(T)
+}
 
+// wireSeams hands core and the other apps the lookups only this app can
+// answer, because only it can read agent records.
+func (T *OrchestrateApp) wireSeams() {
 	// Agent-name resolution seam for core-side artifact types: the custom-app
 	// recipe normalizes its bound AgentID to the agent's NAME on export (an
 	// imported agent is reborn under a fresh ID; only the name survives).
@@ -352,7 +375,11 @@ func (T *OrchestrateApp) Routes() {
 		}
 		return a.Name, true
 	}
+}
 
+// wireChannelHooks registers what the channel transport and other surfaces call
+// into this app for.
+func (T *OrchestrateApp) wireChannelHooks() {
 	// Channel agent runner: lets the transport (phantom) run a Channel's bound
 	// agent on inbound messages (Phase 2). core owns the Channel store + seam;
 	// this registers the agent-execution half. See docs/channels-and-agents.md.
@@ -368,6 +395,11 @@ func (T *OrchestrateApp) Routes() {
 	// surfaces outside this app (Extensions > Tools). Only this app can map
 	// agents and sessions to a user.
 	registerScopedToolLister(T)
+}
+
+// wireAgentTools lets the tool authoring paths reach the tools bundled onto a
+// user's agents.
+func (T *OrchestrateApp) wireAgentTools() {
 	// Authored tools commit onto the requesting agent's record. Wired here
 	// because only this app owns agent records.
 	AttachToolToAgent = func(db Database, owner, agentID string, t TempTool) error {
@@ -430,6 +462,12 @@ func (T *OrchestrateApp) Routes() {
 		t.TrialSince = time.Time{}
 		return AdminReconfigureTempTool(udb, owner, t)
 	}
+}
+
+// wireExternalHooks registers the hooks outside surfaces reach agents through: a
+// blocked channel message's transcript, agents as a reference source, a
+// reply with no way out, and MCP.
+func (T *OrchestrateApp) wireExternalHooks() {
 	// Recorded-only mirror: when the gatekeeper BLOCKS an inbound (no wake), the
 	// transport calls this to append the message into the bound agent's own
 	// transcript, so it shows in the agent's chat and is in-context on the next
@@ -471,7 +509,11 @@ func (T *OrchestrateApp) Routes() {
 			return prevTargets(T.DB, user)
 		}
 	}
+}
 
+// wireWakeAndConsole wires the event monitors that wake an agent, and the channel
+// console.
+func (T *OrchestrateApp) wireWakeAndConsole() {
 	// Wire the event-monitor engine: webhook + poll triggers that WAKE a
 	// channel agent (inject into its home thread + run a turn) when something
 	// happens. core owns the store + poll schedule; this supplies the waker
@@ -484,7 +526,10 @@ func (T *OrchestrateApp) Routes() {
 	// management box — reusing the agent runtime for chat + the shared core
 	// spine for the data panels.
 	T.registerConsoleRoutes()
+}
 
+// runMigrations runs the one-shot migrations of stored agents and tools.
+func (T *OrchestrateApp) runMigrations() {
 	// One-shot Builder shadow migration. Walks every user's store,
 	// finds existing seed-builder shadows, re-writes them with the
 	// current in-code seed (preserving only the shadow's Rules).
@@ -530,7 +575,10 @@ func (T *OrchestrateApp) Routes() {
 	// re-checks in loadAgentTempTools + import cover records written by old
 	// binaries after this sweep. See tool_flatten_migration.go.
 	migrateAllAgentToolsToStore(T.DB)
+}
 
+// startBackgroundPasses starts the passes that run off the boot path.
+func (T *OrchestrateApp) startBackgroundPasses() {
 	// Agent-wide working notes were retired for task and link-group notes;
 	// each agent's text is kept as a fact (notes_retire.go). Off the boot
 	// path: storing a fact can reach the embedder.
@@ -546,7 +594,10 @@ func (T *OrchestrateApp) Routes() {
 	// Every tool gets a category on its own; the owner's label always wins
 	// (tool_autofile.go). Off the boot path: filing asks the worker.
 	T.startToolFiling()
+}
 
+// runLateMigrations runs the migrations that follow the background passes.
+func (T *OrchestrateApp) runLateMigrations() {
 	// Channels bound to a sub-agent before that was refused move to its
 	// parent, and so do board posting rights granted to one (agent_family.go).
 	moveSubAgentChannels()
@@ -573,7 +624,10 @@ func (T *OrchestrateApp) Routes() {
 			}
 		}
 	}
+}
 
+// registerHandlers registers the app's HTTP routes.
+func (T *OrchestrateApp) registerHandlers() {
 	// These routes are USER-scoped, not administrator-only.
 	//
 	// Every one of them used to be wrapped in an admin gate, on the posture

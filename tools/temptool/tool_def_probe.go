@@ -140,7 +140,61 @@ func noteTestOutcome(sess *ToolSession, name string, failed bool) {
 
 // runToolTest is the test itself, for a tool already resolved.
 func runToolTest(tt TempTool, args map[string]any, sess *ToolSession) (string, error) {
-	name := tt.Name
+	tc := &toolTest{tt: tt, args: args, sess: sess}
+	if !tc.flatten() {
+		return tc.ret, tc.retErr
+	}
+	tc.prepare()
+	tc.checkEndpoints()
+	tc.verdict()
+	return tc.ret, tc.retErr
+}
+
+// toolTest is one tool_def test of an api or toolbox tool: its endpoints, the
+// cases, what the run may do (the network, a tool that asks first), the
+// report and its tallies. Each field is a local of runToolTest, which is now
+// the order of the phases.
+type toolTest struct {
+	tt   TempTool
+	args map[string]any
+	sess *ToolSession
+
+	name         string
+	endpoints    []TempToolAction
+	cases        map[string]map[string]any
+	netOK        bool
+	gated        bool
+	b            strings.Builder
+	failCount    int
+	writeManual  int
+	emptyRead    int
+	gatedManual  int
+	unprobedRead int
+	// The failure kinds this run found, for the build ledger. One token per
+	// kind of check, never the endpoint's own words.
+	failClasses []string
+	// Dispatch names of the writes this run could not count as fired, for
+	// noteEndpointStatus to settle when a direct call fires them.
+	unfired  []string
+	badCases int
+
+	// ret and retErr are what the test hands back, parked by exit.
+	ret    string
+	retErr error
+}
+
+// exit records what an early return hands back and tells the driver to take
+// it.
+func (tc *toolTest) exit(out string, err error) bool {
+	tc.ret, tc.retErr = out, err
+	return false
+}
+
+func (tc *toolTest) flatten() bool {
+	tt := tc.tt
+	args := tc.args
+	sess := tc.sess
+	tc.name = tt.Name
 
 	// Flatten to a uniform endpoint list. A single api tool becomes one
 	// synthetic endpoint; a toolbox contributes each of its actions.
@@ -153,395 +207,464 @@ func runToolTest(tt TempTool, args map[string]any, sess *ToolSession) (string, e
 	// `unsupported protocol scheme ""` verdict on a working script and
 	// sent the authoring model editing command_template in a loop trying
 	// to make a python3 invocation look like a URL.
-	var endpoints []TempToolAction
 	switch effectiveTempToolMode(tt) {
 	case TempToolModeToolbox:
-		endpoints = tt.Actions
+		tc.endpoints = tt.Actions
 	case TempToolModeShell:
-		return testShellTool(tt, args, sess)
+		return tc.exit(testShellTool(tt, args, sess))
 	case TempToolModeAPI:
 		if strings.TrimSpace(tt.CommandTemplate) == "" {
-			return "", fmt.Errorf("tool %q has no url_template: nothing to probe", name)
+			return tc.exit("", fmt.Errorf("tool %q has no url_template: nothing to probe", tc.name))
 		}
-		endpoints = []TempToolAction{{
-			Name: name, Params: tt.Params, Required: tt.Required,
+		tc.endpoints = []TempToolAction{{
+			Name: tc.name, Params: tt.Params, Required: tt.Required,
 			URLTemplate: tt.CommandTemplate, Method: tt.Method,
 			BodyTemplate: tt.BodyTemplate, ContentType: tt.ContentType,
 			Headers:      tt.Headers,
 			ResponsePipe: tt.ResponsePipe, ResponseExtract: tt.ResponseExtract,
 		}}
 	default:
-		return "", fmt.Errorf("tool %q is mode=%q: test verifies shell, api and toolbox tools. For a %s tool, exercise it by calling it directly with real args", name, tt.Mode, tt.Mode)
+		return tc.exit("", fmt.Errorf("tool %q is mode=%q: test verifies shell, api and toolbox tools. For a %s tool, exercise it by calling it directly with real args", tc.name, tt.Mode, tt.Mode))
 	}
-	if len(endpoints) == 0 {
-		return "", fmt.Errorf("tool %q has no endpoints to test", name)
+	if len(tc.endpoints) == 0 {
+		return tc.exit("", fmt.Errorf("tool %q has no endpoints to test", tc.name))
 	}
+	return true
+}
 
-	cases := parseTestCases(args["cases"])
+func (tc *toolTest) prepare() {
+	tt := tc.tt
+	args := tc.args
+	sess := tc.sess
+	tc.cases = parseTestCases(args["cases"])
 
 	// Private mode / a blocked network connector means the offline checks
 	// (param wiring, body render, pipe compile) still run, but live read
 	// probes can't — degrade gracefully to offline-only rather than
 	// reporting a spurious "live probe errored" on every read endpoint.
-	netOK := sess.NetworkAllowed()
+	tc.netOK = sess.NetworkAllowed()
 	// A tool that asks before each call is not fired by test either: the ask
 	// lives in the agent loop's gate on the tool's OWN name, and test calls it
 	// from inside tool_def, which asks nobody. Firing it here ran a gated tool
 	// (and, on an unattended fire, one the owner had blocked) with no consent.
-	gated := tempToolNeedsConfirm(&tt, sessUser(sess))
+	tc.gated = tempToolNeedsConfirm(&tt, sessUser(sess))
 
-	var b strings.Builder
-	fmt.Fprintf(&b, "Verification report for %q (%d endpoint(s)):\n\n", name, len(endpoints))
-	if !netOK {
-		b.WriteString("(network is blocked this turn: running OFFLINE checks only; read endpoints are not live-probed.)\n\n")
+	fmt.Fprintf(&tc.b, "Verification report for %q (%d endpoint(s)):\n\n", tc.name, len(tc.endpoints))
+	if !tc.netOK {
+		tc.b.WriteString("(network is blocked this turn: running OFFLINE checks only; read endpoints are not live-probed.)\n\n")
 	}
-	failCount, writeManual, emptyRead, gatedManual, unprobedRead := 0, 0, 0, 0, 0
-	// The failure kinds this run found, for the build ledger. One token per
-	// kind of check, never the endpoint's own words.
-	var failClasses []string
-	// Dispatch names of the writes this run could not count as fired, for
-	// noteEndpointStatus to settle when a direct call fires them.
-	var unfired []string
-
+	tc.failCount, tc.writeManual, tc.emptyRead, tc.gatedManual, tc.unprobedRead = 0, 0, 0, 0, 0
 	// A case naming no endpoint was dropped without a word, so the endpoint
 	// it was written for ran with no case at all and the author read that as
 	// covered. Say so, and fail the run: what the case was meant to test
 	// never ran.
-	badCases := 0
+	tc.badCases = 0
 	{
-		known := make(map[string]bool, len(endpoints))
+		known := make(map[string]bool, len(tc.endpoints))
 		var names []string
-		for _, ep := range endpoints {
+		for _, ep := range tc.endpoints {
 			known[strings.ToLower(ep.Name)] = true
 			names = append(names, ep.Name)
 		}
 		var stray []string
-		for key := range cases {
+		for key := range tc.cases {
 			if key != "" && !known[key] {
 				stray = append(stray, key)
 			}
 		}
 		sort.Strings(stray)
 		for _, key := range stray {
-			fmt.Fprintf(&b, "[FAIL] case action=%q: this tool has no endpoint by that name, so the case never ran. Endpoints: %s.\n\n", key, strings.Join(names, ", "))
-			failClasses = append(failClasses, "case-unknown-action")
-			badCases++
+			fmt.Fprintf(&tc.b, "[FAIL] case action=%q: this tool has no endpoint by that name, so the case never ran. Endpoints: %s.\n\n", key, strings.Join(names, ", "))
+			tc.failClasses = append(tc.failClasses, "case-unknown-action")
+			tc.badCases++
 		}
 	}
+}
 
-	for _, ep := range endpoints {
-		method := strings.ToUpper(strings.TrimSpace(ep.Method))
-		if method == "" {
-			method = "GET"
-		}
-		// GET/HEAD and the read-only WebDAV query methods (REPORT, PROPFIND,
-		// SEARCH — RFC 3253/4918) are safe to live-fire: they QUERY, never
-		// mutate. A CalDAV list_events is a REPORT; without this it was
-		// misclassified as a write, so verify refused to fire it and the model
-		// punted a manual call to the user for a plain read.
-		isRead := method == "GET" || method == "HEAD" || method == "REPORT" || method == "PROPFIND" || method == "SEARCH"
-		sample, labeled := cases[strings.ToLower(ep.Name)]
-		if sample == nil {
-			// Unlabeled case: meant for this endpoint when the tool is a
-			// single api tool, shared by every action of a toolbox.
-			sample = cases[""]
-			labeled = sample != nil && len(endpoints) == 1 && effectiveTempToolMode(tt) != TempToolModeToolbox
-		}
+func (tc *toolTest) checkEndpoints() {
+	for _, ep := range tc.endpoints {
+		tc.checkEndpoint(ep)
+	}
+}
 
-		var lines []string
-		epFail, epUnproven := false, false
-		fail := func(class, f string, a ...any) {
-			lines = append(lines, "FAIL  "+fmt.Sprintf(f, a...))
-			epFail = true
-			failClasses = append(failClasses, class)
-		}
-		pass := func(f string, a ...any) { lines = append(lines, "ok    "+fmt.Sprintf(f, a...)) }
-		note := func(f string, a ...any) { lines = append(lines, "note  "+fmt.Sprintf(f, a...)) }
+// checkEndpoint runs the checks on one endpoint and writes its verdict.
+func (tc *toolTest) checkEndpoint(ep TempToolAction) {
+	ec := &endpointCheck{tc: tc, ep: ep}
+	ec.classify()
+	ec.caseArgs()
+	ec.checkSent()
+	ec.checkBody()
+	ec.checkPipe()
+	ec.probeRead()
+	ec.report()
+}
 
-		// A case arg this endpoint does not declare never reaches the call:
-		// substitution only fills declared params. An optional param spelled
-		// wrong in a case was therefore just absent, the probe ran without
-		// it, and the endpoint PASSed with the value the author meant to test
-		// never sent. Fail the case and name the param it was probably meant
-		// to be. A shared unlabeled case on a toolbox is exempt: it is not
-		// written for any one action.
-		badCase := false
-		if labeled {
-			nearest := &GroupedToolAction{Params: ep.Params}
-			var keys []string
-			for k := range sample {
-				keys = append(keys, k)
-			}
-			sort.Strings(keys)
-			for _, k := range keys {
-				if _, declared := lookupParamCI(ep.Params, k); declared {
-					continue
-				}
-				badCase = true
-				hint := "."
-				if near := nearest.NearestParamName(k); near != "" {
-					hint = fmt.Sprintf(": did you mean %q?", near)
-				}
-				fail("case-unknown-arg", "case arg %q is not a param of %s%s Declared: %s. Nothing was sent for this case; fix the case and re-run.", k, ep.Name, hint, strings.Join(sortedParamNames(ep.Params), ", "))
-			}
-		}
-		// Declared defaults fill what the case leaves out, as dispatch fills
-		// them for a real call, so the probe sends what the tool will send.
-		sample = withParamDefaults(sample, ep.Params)
+// endpointCheck is the test of one endpoint: how it is called, the case it
+// runs with, the report lines its checks write, and whether any failed or
+// went unproven. Each field is a local of checkEndpoint, which is now the
+// order of the checks.
+type endpointCheck struct {
+	tc *toolTest
+	ep TempToolAction
 
-		// A. Every required param must be SENT somewhere. This is the
-		//    deterministic, offline catch for the "content must be a
-		//    string" class: a required param referenced in neither the
-		//    url_template nor the body_template never reaches the API.
-		var unref []string
-		for _, r := range ep.Required {
-			if !templateReferences(ep.URLTemplate, r) && !templateReferences(ep.BodyTemplate, r) {
-				unref = append(unref, r)
-			}
+	method     string
+	isRead     bool
+	sample     map[string]any
+	labeled    bool
+	lines      []string
+	epFail     bool
+	epUnproven bool
+	badCase    bool
+}
+
+func (ec *endpointCheck) classify() {
+	tc := ec.tc
+	ep := ec.ep
+	tt := ec.tc.tt
+	ec.method = strings.ToUpper(strings.TrimSpace(ep.Method))
+	if ec.method == "" {
+		ec.method = "GET"
+	}
+	// GET/HEAD and the read-only WebDAV query methods (REPORT, PROPFIND,
+	// SEARCH — RFC 3253/4918) are safe to live-fire: they QUERY, never
+	// mutate. A CalDAV list_events is a REPORT; without this it was
+	// misclassified as a write, so verify refused to fire it and the model
+	// punted a manual call to the user for a plain read.
+	ec.isRead = ec.method == "GET" || ec.method == "HEAD" || ec.method == "REPORT" || ec.method == "PROPFIND" || ec.method == "SEARCH"
+	ec.sample, ec.labeled = tc.cases[strings.ToLower(ep.Name)]
+	if ec.sample == nil {
+		// Unlabeled case: meant for this endpoint when the tool is a
+		// single api tool, shared by every action of a toolbox.
+		ec.sample = tc.cases[""]
+		ec.labeled = ec.sample != nil && len(tc.endpoints) == 1 && effectiveTempToolMode(tt) != TempToolModeToolbox
+	}
+}
+
+func (ec *endpointCheck) fail(class, f string, a ...any) {
+	tc := ec.tc
+	ec.lines = append(ec.lines, "FAIL  "+fmt.Sprintf(f, a...))
+	ec.epFail = true
+	tc.failClasses = append(tc.failClasses, class)
+}
+
+func (ec *endpointCheck) pass(f string, a ...any) {
+	ec.lines = append(ec.lines, "ok    "+fmt.Sprintf(f, a...))
+}
+
+func (ec *endpointCheck) note(f string, a ...any) {
+	ec.lines = append(ec.lines, "note  "+fmt.Sprintf(f, a...))
+}
+
+func (ec *endpointCheck) caseArgs() {
+	ep := ec.ep
+	ec.epFail, ec.epUnproven = false, false
+	// A case arg this endpoint does not declare never reaches the call:
+	// substitution only fills declared params. An optional param spelled
+	// wrong in a case was therefore just absent, the probe ran without
+	// it, and the endpoint PASSed with the value the author meant to test
+	// never sent. Fail the case and name the param it was probably meant
+	// to be. A shared unlabeled case on a toolbox is exempt: it is not
+	// written for any one action.
+	ec.badCase = false
+	if ec.labeled {
+		nearest := &GroupedToolAction{Params: ep.Params}
+		var keys []string
+		for k := range ec.sample {
+			keys = append(keys, k)
 		}
-		if len(unref) > 0 {
-			if ep.BodyTemplate == "" && !isRead {
-				fail("unsent-param", "required param(s) %v are sent NOWHERE: this %s action has no body_template, so the API never receives them (the exact cause of a 400 like \"content must be a string\"). Add a body_template, e.g. {\"content\": {content}}.", unref, method)
-			} else {
-				fail("unsent-param", "required param(s) %v appear in neither url_template nor body_template: the API will never receive them.", unref)
+		sort.Strings(keys)
+		for _, k := range keys {
+			if _, declared := lookupParamCI(ep.Params, k); declared {
+				continue
 			}
+			ec.badCase = true
+			hint := "."
+			if near := nearest.NearestParamName(k); near != "" {
+				hint = fmt.Sprintf(": did you mean %q?", near)
+			}
+			ec.fail("case-unknown-arg", "case arg %q is not a param of %s%s Declared: %s. Nothing was sent for this case; fix the case and re-run.", k, ep.Name, hint, strings.Join(sortedParamNames(ep.Params), ", "))
+		}
+	}
+	// Declared defaults fill what the case leaves out, as dispatch fills
+	// them for a real call, so the probe sends what the tool will send.
+	ec.sample = withParamDefaults(ec.sample, ep.Params)
+}
+
+func (ec *endpointCheck) checkSent() {
+	ep := ec.ep
+	// A. Every required param must be SENT somewhere. This is the
+	//    deterministic, offline catch for the "content must be a
+	//    string" class: a required param referenced in neither the
+	//    url_template nor the body_template never reaches the API.
+	var unref []string
+	for _, r := range ep.Required {
+		if !templateReferences(ep.URLTemplate, r) && !templateReferences(ep.BodyTemplate, r) {
+			unref = append(unref, r)
+		}
+	}
+	if len(unref) > 0 {
+		if ep.BodyTemplate == "" && !ec.isRead {
+			ec.fail("unsent-param", "required param(s) %v are sent NOWHERE: this %s action has no body_template, so the API never receives them (the exact cause of a 400 like \"content must be a string\"). Add a body_template, e.g. {\"content\": {content}}.", unref, ec.method)
 		} else {
-			pass("all required params are wired into the url/body templates")
+			ec.fail("unsent-param", "required param(s) %v appear in neither url_template nor body_template: the API will never receive them.", unref)
 		}
+	} else {
+		ec.pass("all required params are wired into the url/body templates")
+	}
+}
 
-		// B. Body template renders with the sample args. A non-JSON
-		// content_type (application/xml for CalDAV/SOAP) switches to RAW
-		// substitution + no JSON validation — mirroring the dispatch path,
-		// so an XML PROPFIND/REPORT body doesn't fail verify as "invalid
-		// JSON". content_type is a tool-level field (toolbox actions are
-		// JSON-only today), so it applies to the single-endpoint api case.
-		if ep.BodyTemplate != "" {
-			// Per-action content_type wins (toolbox actions each carry their own);
-			// fall back to the tool-level one for a single api tool.
-			epCT := ep.ContentType
-			if epCT == "" {
-				epCT = tt.ContentType
-			}
-			rawBody := epCT != "" && !isJSONContentType(epCT)
-			if badCase {
-				// Reported above; rendering without the misnamed arg proves nothing.
-			} else if coversRequired(sample, ep.Required) {
-				if rawBody {
-					if _, err := substituteRaw(ep.BodyTemplate, ep.Params, ep.Required, sample); err != nil {
-						fail("body-render", "body_template render failed: %v", err)
-					} else {
-						pass("body_template renders (raw, %s: no JSON validation)", epCT)
-					}
-				} else if body, err := substituteJSON(ep.BodyTemplate, ep.Params, ep.Required, sample); err != nil {
-					fail("body-render", "body_template render failed: %v", err)
-				} else if jerr := json.Unmarshal([]byte(body), new(any)); jerr != nil {
-					fail("body-invalid-json", "body_template produced INVALID JSON: %v, rendered body: %s. (For an XML/non-JSON API set content_type, e.g. \"application/xml\", so the body is sent RAW.)", jerr, oneLine(body, 200))
+func (ec *endpointCheck) checkBody() {
+	ep := ec.ep
+	tt := ec.tc.tt
+	// B. Body template renders with the sample args. A non-JSON
+	// content_type (application/xml for CalDAV/SOAP) switches to RAW
+	// substitution + no JSON validation — mirroring the dispatch path,
+	// so an XML PROPFIND/REPORT body doesn't fail verify as "invalid
+	// JSON". content_type is a tool-level field (toolbox actions are
+	// JSON-only today), so it applies to the single-endpoint api case.
+	if ep.BodyTemplate != "" {
+		// Per-action content_type wins (toolbox actions each carry their own);
+		// fall back to the tool-level one for a single api tool.
+		epCT := ep.ContentType
+		if epCT == "" {
+			epCT = tt.ContentType
+		}
+		rawBody := epCT != "" && !isJSONContentType(epCT)
+		if ec.badCase {
+			// Reported above; rendering without the misnamed arg proves nothing.
+		} else if coversRequired(ec.sample, ep.Required) {
+			if rawBody {
+				if _, err := substituteRaw(ep.BodyTemplate, ep.Params, ep.Required, ec.sample); err != nil {
+					ec.fail("body-render", "body_template render failed: %v", err)
 				} else {
-					pass("body_template renders valid JSON")
+					ec.pass("body_template renders (raw, %s: no JSON validation)", epCT)
 				}
+			} else if body, err := substituteJSON(ep.BodyTemplate, ep.Params, ep.Required, ec.sample); err != nil {
+				ec.fail("body-render", "body_template render failed: %v", err)
+			} else if jerr := json.Unmarshal([]byte(body), new(any)); jerr != nil {
+				ec.fail("body-invalid-json", "body_template produced INVALID JSON: %v, rendered body: %s. (For an XML/non-JSON API set content_type, e.g. \"application/xml\", so the body is sent RAW.)", jerr, oneLine(body, 200))
 			} else {
-				note("body_template not render-checked: no sample args covering required %v (pass a case)", ep.Required)
+				ec.pass("body_template renders valid JSON")
 			}
-		}
-
-		// C. response_pipe compiles (catches a broken jq/awk filter).
-		if ep.ResponsePipe != "" {
-			if serr := pipeCompileError(ep.ResponsePipe, sess, pipeEnv(sample)); serr != "" {
-				fail("pipe-compile", "response_pipe has a syntax/compile error: %s", serr)
-			} else {
-				pass("response_pipe compiles")
-			}
-		}
-
-		// D. READ endpoints: real call + assert 2xx + run pipe on the
-		//    real body. WRITE endpoints are never auto-fired.
-		if isRead {
-			switch {
-			case badCase:
-				// Reported above. Probing without the misnamed arg is the
-				// false PASS this check exists to stop.
-			case !netOK:
-				note("read endpoint NOT live-probed: network is blocked this turn (private mode); offline checks only")
-				unprobedRead++
-				epUnproven = true
-			case gated:
-				note("read endpoint NOT live-probed: this tool asks for confirmation before each call, and test does not fire it past that. Call %s directly once so the confirmation applies: a 2xx from that call counts as verified.", tt.Name)
-				gatedManual++
-				epUnproven = true
-			case coversRequired(sample, ep.Required):
-				status, body, derr := liveProbe(sess, tt.Credential, ep, sample)
-				switch {
-				case derr != nil:
-					fail("live-error", "live probe errored: %v. Sent: %s", derr, probeRequestLine(tt.Credential, ep, sample))
-					noteProbeStatus(sess, endpointTool(tt, ep), false)
-				case !isStatus2xx(status):
-					fail("live-status", "live call returned %q (want 2xx), body: %s. Sent: %s", status, oneLine(body, 200), probeRequestLine(tt.Credential, ep, sample))
-					noteProbeStatus(sess, endpointTool(tt, ep), false)
-				default:
-					// The body rides on the PASS line as it does on a FAIL: the
-					// author was asked for these results and had only a status
-					// to show the user.
-					if excerpt := oneLine(body, 300); excerpt != "" {
-						pass("live %s returned %q: %s", method, status, excerpt)
-					} else {
-						pass("live %s returned %q", method, status)
-					}
-					if ep.ResponsePipe != "" {
-						piped, perr := runPipeAgainst(ep.ResponsePipe, body, sess, pipeEnv(sample))
-						switch {
-						case perr != "":
-							fail("pipe-shape", "response_pipe failed on the REAL response body (shape mismatch: e.g. the filter expects .posts[] but the body is a bare array): %s", perr)
-						case pipeOutputEmpty(piped) && !emptyResultBody(body, ep):
-							// A jq path that names nothing runs clean and prints
-							// null, so "runs clean" passed a pipe that hands the
-							// caller nothing from a body full of data.
-							fail("pipe-empty", "response_pipe produced null (or nothing) from the real response: the path probably does not match its shape. Raw body: %s", oneLine(body, 300))
-						default:
-							pass("response_pipe runs clean on the real response")
-						}
-					}
-					if !epFail {
-						noteProbeStatus(sess, endpointTool(tt, ep), true)
-					}
-					// A 2xx that carried NO records is the single most
-					// misleading result this action can produce. It proves the
-					// request was well-formed and says NOTHING about whether the
-					// query is right — and it is exactly what a CalDAV REPORT
-					// missing its Depth header returns (an empty 207
-					// multistatus). Reported live: "all endpoints passed, tool
-					// verified" on a list tool that could never return an event,
-					// while the user was saying it didn't work.
-					//
-					// Not a FAIL — an empty collection is a legitimate state for
-					// a fresh account — but it must never read as proof the tool
-					// returns data.
-					if emptyResultBody(body, ep) {
-						note("live call returned 2xx but ZERO records: this proves the request is well-formed, NOT that the query is right. If you expected data: check the filter/date-range, and for WebDAV/CalDAV check headers (a REPORT/PROPFIND without \"Depth\": \"1\" matches nothing and returns exactly this). Confirm against data you know exists before calling it done.")
-						emptyRead++
-					}
-				}
-			default:
-				// A read that answered 2xx for this same definition, on an
-				// earlier probe or a direct call, stays proven: a test whose
-				// cases cover another action says nothing new about it.
-				if at, ok, probe := endpointAnswered(sess, endpointTool(tt, ep)); ok {
-					from := "a direct call"
-					if probe {
-						from = "an earlier probe"
-					}
-					pass("read endpoint answered %s with a 2xx at %s for this same definition: kept from %s (pass a case to probe it again)", method, at.Format("15:04:05"), from)
-					break
-				}
-				// Not a PASS: nothing proved this endpoint works, and a
-				// toolbox whose reads all went unprobed used to come out
-				// "all endpoints passed. Tool verified."
-				note("read endpoint NOT live-probed: no value for required %v. To probe it, pass cases=[{%sargs:{%s}}] with real values.", ep.Required, caseActionPrefix(tt, ep), sampleArgsHint(ep.Required))
-				unprobedRead++
-				epUnproven = true
-			}
-		} else if at, fired := endpointFired(sess, endpointTool(tt, ep)); fired {
-			// A direct call already answered 2xx, and the endpoint is the
-			// same one since. Re-running test used to set it back to
-			// "never fired".
-			pass("write endpoint answered a direct %s call with a 2xx at %s: counted as fired", method, at.Format("15:04:05"))
 		} else {
-			note("write endpoint NOT auto-fired: make ONE manual %s call and confirm a 2xx before calling this done", method)
-			writeManual++
-			epUnproven = true
-			unfired = append(unfired, endpointTool(tt, ep).Name)
+			ec.note("body_template not render-checked: no sample args covering required %v (pass a case)", ep.Required)
 		}
-
-		verdict := "PASS"
-		switch {
-		case epFail:
-			verdict = "FAIL"
-			failCount++
-		case epUnproven:
-			verdict = "UNPROVEN"
-		}
-		fmt.Fprintf(&b, "[%s] %s (%s)\n", verdict, ep.Name, method)
-		for _, l := range lines {
-			fmt.Fprintf(&b, "   %s\n", l)
-		}
-		b.WriteByte('\n')
 	}
+}
 
+func (ec *endpointCheck) checkPipe() {
+	ep := ec.ep
+	sess := ec.tc.sess
+	// C. response_pipe compiles (catches a broken jq/awk filter).
+	if ep.ResponsePipe != "" {
+		if serr := pipeCompileError(ep.ResponsePipe, sess, pipeEnv(ec.sample)); serr != "" {
+			ec.fail("pipe-compile", "response_pipe has a syntax/compile error: %s", serr)
+		} else {
+			ec.pass("response_pipe compiles")
+		}
+	}
+}
+
+func (ec *endpointCheck) probeRead() {
+	tc := ec.tc
+	ep := ec.ep
+	tt := ec.tc.tt
+	sess := ec.tc.sess
+	// D. READ endpoints: real call + assert 2xx + run pipe on the
+	//    real body. WRITE endpoints are never auto-fired.
+	if ec.isRead {
+		switch {
+		case ec.badCase:
+			// Reported above. Probing without the misnamed arg is the
+			// false PASS this check exists to stop.
+		case !tc.netOK:
+			ec.note("read endpoint NOT live-probed: network is blocked this turn (private mode); offline checks only")
+			tc.unprobedRead++
+			ec.epUnproven = true
+		case tc.gated:
+			ec.note("read endpoint NOT live-probed: this tool asks for confirmation before each call, and test does not fire it past that. Call %s directly once so the confirmation applies: a 2xx from that call counts as verified.", tt.Name)
+			tc.gatedManual++
+			ec.epUnproven = true
+		case coversRequired(ec.sample, ep.Required):
+			status, body, derr := liveProbe(sess, tt.Credential, ep, ec.sample)
+			switch {
+			case derr != nil:
+				ec.fail("live-error", "live probe errored: %v. Sent: %s", derr, probeRequestLine(tt.Credential, ep, ec.sample))
+				noteProbeStatus(sess, endpointTool(tt, ep), false)
+			case !isStatus2xx(status):
+				ec.fail("live-status", "live call returned %q (want 2xx), body: %s. Sent: %s", status, oneLine(body, 200), probeRequestLine(tt.Credential, ep, ec.sample))
+				noteProbeStatus(sess, endpointTool(tt, ep), false)
+			default:
+				// The body rides on the PASS line as it does on a FAIL: the
+				// author was asked for these results and had only a status
+				// to show the user.
+				if excerpt := oneLine(body, 300); excerpt != "" {
+					ec.pass("live %s returned %q: %s", ec.method, status, excerpt)
+				} else {
+					ec.pass("live %s returned %q", ec.method, status)
+				}
+				if ep.ResponsePipe != "" {
+					piped, perr := runPipeAgainst(ep.ResponsePipe, body, sess, pipeEnv(ec.sample))
+					switch {
+					case perr != "":
+						ec.fail("pipe-shape", "response_pipe failed on the REAL response body (shape mismatch: e.g. the filter expects .posts[] but the body is a bare array): %s", perr)
+					case pipeOutputEmpty(piped) && !emptyResultBody(body, ep):
+						// A jq path that names nothing runs clean and prints
+						// null, so "runs clean" passed a pipe that hands the
+						// caller nothing from a body full of data.
+						ec.fail("pipe-empty", "response_pipe produced null (or nothing) from the real response: the path probably does not match its shape. Raw body: %s", oneLine(body, 300))
+					default:
+						ec.pass("response_pipe runs clean on the real response")
+					}
+				}
+				if !ec.epFail {
+					noteProbeStatus(sess, endpointTool(tt, ep), true)
+				}
+				// A 2xx that carried NO records is the single most
+				// misleading result this action can produce. It proves the
+				// request was well-formed and says NOTHING about whether the
+				// query is right — and it is exactly what a CalDAV REPORT
+				// missing its Depth header returns (an empty 207
+				// multistatus). Reported live: "all endpoints passed, tool
+				// verified" on a list tool that could never return an event,
+				// while the user was saying it didn't work.
+				//
+				// Not a FAIL — an empty collection is a legitimate state for
+				// a fresh account — but it must never read as proof the tool
+				// returns data.
+				if emptyResultBody(body, ep) {
+					ec.note("live call returned 2xx but ZERO records: this proves the request is well-formed, NOT that the query is right. If you expected data: check the filter/date-range, and for WebDAV/CalDAV check headers (a REPORT/PROPFIND without \"Depth\": \"1\" matches nothing and returns exactly this). Confirm against data you know exists before calling it done.")
+					tc.emptyRead++
+				}
+			}
+		default:
+			// A read that answered 2xx for this same definition, on an
+			// earlier probe or a direct call, stays proven: a test whose
+			// cases cover another action says nothing new about it.
+			if at, ok, probe := endpointAnswered(sess, endpointTool(tt, ep)); ok {
+				from := "a direct call"
+				if probe {
+					from = "an earlier probe"
+				}
+				ec.pass("read endpoint answered %s with a 2xx at %s for this same definition: kept from %s (pass a case to probe it again)", ec.method, at.Format("15:04:05"), from)
+				break
+			}
+			// Not a PASS: nothing proved this endpoint works, and a
+			// toolbox whose reads all went unprobed used to come out
+			// "all endpoints passed. Tool verified."
+			ec.note("read endpoint NOT live-probed: no value for required %v. To probe it, pass cases=[{%sargs:{%s}}] with real values.", ep.Required, caseActionPrefix(tt, ep), sampleArgsHint(ep.Required))
+			tc.unprobedRead++
+			ec.epUnproven = true
+		}
+	} else if at, fired := endpointFired(sess, endpointTool(tt, ep)); fired {
+		// A direct call already answered 2xx, and the endpoint is the
+		// same one since. Re-running test used to set it back to
+		// "never fired".
+		ec.pass("write endpoint answered a direct %s call with a 2xx at %s: counted as fired", ec.method, at.Format("15:04:05"))
+	} else {
+		ec.note("write endpoint NOT auto-fired: make ONE manual %s call and confirm a 2xx before calling this done", ec.method)
+		tc.writeManual++
+		ec.epUnproven = true
+		tc.unfired = append(tc.unfired, endpointTool(tt, ep).Name)
+	}
+}
+
+func (ec *endpointCheck) report() {
+	tc := ec.tc
+	ep := ec.ep
+	verdict := "PASS"
+	switch {
+	case ec.epFail:
+		verdict = "FAIL"
+		tc.failCount++
+	case ec.epUnproven:
+		verdict = "UNPROVEN"
+	}
+	fmt.Fprintf(&tc.b, "[%s] %s (%s)\n", verdict, ep.Name, ec.method)
+	for _, l := range ec.lines {
+		fmt.Fprintf(&tc.b, "   %s\n", l)
+	}
+	tc.b.WriteByte('\n')
+}
+
+func (tc *toolTest) verdict() bool {
+	sess := tc.sess
 	// Record the verdict where it's actually known, rather than leaving
 	// downstream to parse this prose. Only a clean sweep counts as verified:
 	// a FAIL obviously doesn't, and neither does "all automated checks passed
 	// but N write endpoints still need a manual call" — an unfired write
 	// endpoint is exactly the untested grenade this action exists to catch.
 	var unproven []string
-	if gatedManual > 0 {
+	if tc.gatedManual > 0 {
 		unproven = append(unproven, "needs-confirm")
 	}
-	if writeManual > 0 {
+	if tc.writeManual > 0 {
 		unproven = append(unproven, "write-unfired")
 	}
-	if emptyRead > 0 {
+	if tc.emptyRead > 0 {
 		unproven = append(unproven, "read-empty")
 	}
-	if unprobedRead > 0 {
+	if tc.unprobedRead > 0 {
 		unproven = append(unproven, "read-unprobed")
 	}
 	// Only writes stand between the tool and verified: a direct call that
 	// fires the last of them verifies it (noteEndpointStatus). Anything else
 	// still open needs another test, so no write is left waiting.
-	if failCount == 0 && badCases == 0 && len(unproven) == 1 && writeManual > 0 {
-		setUnfiredWrites(sess, name, unfired)
+	if tc.failCount == 0 && tc.badCases == 0 && len(unproven) == 1 && tc.writeManual > 0 {
+		setUnfiredWrites(sess, tc.name, tc.unfired)
 	} else {
-		setUnfiredWrites(sess, name, nil)
+		setUnfiredWrites(sess, tc.name, nil)
 	}
 	switch {
-	case failCount > 0 || badCases > 0:
-		recordTestOutcome(sess, name, buildledger.Fail, failClasses, fmt.Sprintf("%d of %d endpoint(s) failed, %d case(s) named no endpoint", failCount, len(endpoints), badCases))
+	case tc.failCount > 0 || tc.badCases > 0:
+		recordTestOutcome(sess, tc.name, buildledger.Fail, tc.failClasses, fmt.Sprintf("%d of %d endpoint(s) failed, %d case(s) named no endpoint", tc.failCount, len(tc.endpoints), tc.badCases))
 	case len(unproven) > 0:
-		recordTestOutcome(sess, name, buildledger.Unproven, unproven, "checks passed; not every endpoint was proven live")
+		recordTestOutcome(sess, tc.name, buildledger.Unproven, unproven, "checks passed; not every endpoint was proven live")
 	default:
-		recordTestOutcome(sess, name, buildledger.Pass, nil, "")
+		recordTestOutcome(sess, tc.name, buildledger.Pass, nil, "")
 	}
 	switch {
-	case failCount > 0:
-		RecordToolVerification(sess, name, false, fmt.Sprintf("%d of %d endpoint(s) FAILED verification", failCount, len(endpoints)))
-		fmt.Fprintf(&b, "RESULT: %d of %d endpoint(s) FAILED. Fix each with tool_def(action=\"update\", actions=[{name, ...}]) and re-run test until green. Do NOT call this tool done or hand it to a user while any endpoint is FAIL.", failCount, len(endpoints))
-	case badCases > 0:
-		RecordToolVerification(sess, name, false, fmt.Sprintf("%d test case(s) named no endpoint of the tool", badCases))
-		fmt.Fprintf(&b, "RESULT: FAILED. %d case(s) named no endpoint of this tool, so what they were written to test never ran. Fix each case's action to an endpoint name above and re-run.", badCases)
-	case gatedManual > 0:
-		RecordToolVerification(sess, name, false, fmt.Sprintf("%d read endpoint(s) not fired: the tool needs confirmation, so it needs one direct call", gatedManual))
-		b.WriteString("RESULT: offline checks passed. The tool asks for confirmation before each call, so test did not fire it: make one direct call, confirm it, and check for a 2xx.")
-	case writeManual > 0:
-		RecordToolVerification(sess, name, false, fmt.Sprintf("%d write endpoint(s) never fired: needs one manual live call each to confirm a 2xx", writeManual))
+	case tc.failCount > 0:
+		RecordToolVerification(sess, tc.name, false, fmt.Sprintf("%d of %d endpoint(s) FAILED verification", tc.failCount, len(tc.endpoints)))
+		fmt.Fprintf(&tc.b, "RESULT: %d of %d endpoint(s) FAILED. Fix each with tool_def(action=\"update\", actions=[{name, ...}]) and re-run test until green. Do NOT call this tool done or hand it to a user while any endpoint is FAIL.", tc.failCount, len(tc.endpoints))
+	case tc.badCases > 0:
+		RecordToolVerification(sess, tc.name, false, fmt.Sprintf("%d test case(s) named no endpoint of the tool", tc.badCases))
+		fmt.Fprintf(&tc.b, "RESULT: FAILED. %d case(s) named no endpoint of this tool, so what they were written to test never ran. Fix each case's action to an endpoint name above and re-run.", tc.badCases)
+	case tc.gatedManual > 0:
+		RecordToolVerification(sess, tc.name, false, fmt.Sprintf("%d read endpoint(s) not fired: the tool needs confirmation, so it needs one direct call", tc.gatedManual))
+		tc.b.WriteString("RESULT: offline checks passed. The tool asks for confirmation before each call, so test did not fire it: make one direct call, confirm it, and check for a 2xx.")
+	case tc.writeManual > 0:
+		RecordToolVerification(sess, tc.name, false, fmt.Sprintf("%d write endpoint(s) never fired: needs one manual live call each to confirm a 2xx", tc.writeManual))
 		// The verdict leads. "all automated checks passed" came first before,
 		// and builders read that much and reported the tool verified.
-		if writeManual == 1 {
-			b.WriteString("RESULT: not verified yet: 1 write endpoint still needs ONE manual live call: fire it, confirm a 2xx, and it counts.")
+		if tc.writeManual == 1 {
+			tc.b.WriteString("RESULT: not verified yet: 1 write endpoint still needs ONE manual live call: fire it, confirm a 2xx, and it counts.")
 		} else {
-			fmt.Fprintf(&b, "RESULT: not verified yet: %d write endpoints still need ONE manual live call each: fire each, confirm a 2xx, and it counts.", writeManual)
+			fmt.Fprintf(&tc.b, "RESULT: not verified yet: %d write endpoints still need ONE manual live call each: fire each, confirm a 2xx, and it counts.", tc.writeManual)
 		}
-		if unprobedRead > 0 {
-			fmt.Fprintf(&b, " %d read endpoint(s) were never called either: pass a case for each (the UNPROVEN lines above say which args) and re-run.", unprobedRead)
+		if tc.unprobedRead > 0 {
+			fmt.Fprintf(&tc.b, " %d read endpoint(s) were never called either: pass a case for each (the UNPROVEN lines above say which args) and re-run.", tc.unprobedRead)
 		} else {
-			b.WriteString(" Everything else passed.")
+			tc.b.WriteString(" Everything else passed.")
 		}
-	case emptyRead > 0:
+	case tc.emptyRead > 0:
 		// Checks passed, but every read came back empty — the tool is
 		// UNPROVEN, not verified. Signing it off here is what let a list tool
 		// that could never return a row ship as "verified".
-		RecordToolVerification(sess, name, false, fmt.Sprintf("%d read endpoint(s) returned 2xx with zero records: not proven to return data", emptyRead))
-		fmt.Fprintf(&b, "RESULT: the request shape is valid, but %d read endpoint(s) came back EMPTY, nothing here proves the tool returns data. Point a case at a record you KNOW exists and re-run; if it is still empty, the query (filter, date range, headers) is wrong, not the plumbing.", emptyRead)
-	case unprobedRead > 0:
-		RecordToolVerification(sess, name, false, fmt.Sprintf("%d read endpoint(s) never live-probed", unprobedRead))
-		if !netOK {
-			fmt.Fprintf(&b, "RESULT: offline checks passed, but the network is blocked this turn, so %d read endpoint(s) were never called: the tool is NOT verified. Re-run test in a turn with the network on.", unprobedRead)
+		RecordToolVerification(sess, tc.name, false, fmt.Sprintf("%d read endpoint(s) returned 2xx with zero records: not proven to return data", tc.emptyRead))
+		fmt.Fprintf(&tc.b, "RESULT: the request shape is valid, but %d read endpoint(s) came back EMPTY, nothing here proves the tool returns data. Point a case at a record you KNOW exists and re-run; if it is still empty, the query (filter, date range, headers) is wrong, not the plumbing.", tc.emptyRead)
+	case tc.unprobedRead > 0:
+		RecordToolVerification(sess, tc.name, false, fmt.Sprintf("%d read endpoint(s) never live-probed", tc.unprobedRead))
+		if !tc.netOK {
+			fmt.Fprintf(&tc.b, "RESULT: offline checks passed, but the network is blocked this turn, so %d read endpoint(s) were never called: the tool is NOT verified. Re-run test in a turn with the network on.", tc.unprobedRead)
 		} else {
-			fmt.Fprintf(&b, "RESULT: offline checks passed, but %d read endpoint(s) were never called, so nothing proves they work: the tool is NOT verified. Pass a case for each (the UNPROVEN lines above say which args) and re-run.", unprobedRead)
+			fmt.Fprintf(&tc.b, "RESULT: offline checks passed, but %d read endpoint(s) were never called, so nothing proves they work: the tool is NOT verified. Pass a case for each (the UNPROVEN lines above say which args) and re-run.", tc.unprobedRead)
 		}
 	default:
-		RecordToolVerification(sess, name, true, "")
-		b.WriteString("RESULT: all endpoints passed. Tool verified.")
+		RecordToolVerification(sess, tc.name, true, "")
+		tc.b.WriteString("RESULT: all endpoints passed. Tool verified.")
 	}
-	return b.String(), nil
+	return tc.exit(tc.b.String(), nil)
 }
 
 // effectiveTempToolMode resolves a stored record's mode. Mode=="" is the

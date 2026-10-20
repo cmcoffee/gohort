@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="%THEME%">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+%FAVICON%
+%APPHEAD%
+<title>Gohort Dashboard</title>
+<style>
+%THEMECSS%
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    background: var(--bg-0, #0d1117); color: var(--text, #c9d1d9); min-height: 100vh;
+    display: flex; flex-direction: column; align-items: center;
+    padding: 80px 20px;
+  }
+  /* The masthead: the mark (the favicon's three squares) in front of GOHORT,
+     both in block letters five rows tall. Left-aligned inside a centred block,
+     because centring each line on its own slides rows of unequal length
+     against each other. Each row steps from bright to muted, like a lit sign.
+     45 columns, sized to fit a 360px phone. (The mark standing in for the O's
+     read as GAHART: a square over two is an A.)
+
+     It builds itself once on load (the squares drop in, then the letters fill
+     in around them), and while sessions are running the marks are the
+     dashboard's heartbeat: their squares light in turn. Still when nothing is
+     running, and no motion at all under prefers-reduced-motion. */
+  .ascii-logo {
+    font-family: 'SF Mono', ui-monospace, Menlo, Consolas, 'Liberation Mono', monospace;
+    font-size: var(--fs-lg, 1rem); line-height: 1; white-space: pre; letter-spacing: 0;
+    margin-bottom: 0.9rem; text-align: left;
+  }
+  /* The fade starts at the page's text colour, not its brightest white:
+     GOHORT's top row is nearly all flat letter-caps, and in pure white it
+     read as one bright bar above the word instead of the tops of letters. */
+  .ascii-logo .r0 { color: var(--text, #c9d1d9); }
+  .ascii-logo .r1 { color: color-mix(in srgb, var(--text, #c9d1d9) 78%, var(--text-mute, #8b949e)); }
+  .ascii-logo .r2 { color: color-mix(in srgb, var(--text, #c9d1d9) 56%, var(--text-mute, #8b949e)); }
+  .ascii-logo .r3 { color: color-mix(in srgb, var(--text, #c9d1d9) 34%, var(--text-mute, #8b949e)); }
+  .ascii-logo .r4 { color: var(--text-mute, #8b949e); }
+  .ascii-logo .s1 { color: var(--accent, #6366f1); }
+  .ascii-logo .s2, .ascii-logo .s3 { color: color-mix(in srgb, var(--accent, #6366f1) 55%, var(--bg-0, #0d1117)); }
+  .ascii-logo .sq, .ascii-logo .lt { display: inline-block; }
+  .ascii-logo.play .sq { animation: logo-drop 0.42s cubic-bezier(.2,.9,.3,1.25) backwards; }
+  .ascii-logo.play .s2 { animation-delay: 0.16s; }
+  .ascii-logo.play .s3 { animation-delay: 0.32s; }
+  .ascii-logo.play .lt { animation: logo-rise 0.5s ease-out backwards; animation-delay: calc(0.6s + var(--i) * 90ms); }
+  .ascii-logo.running:not(.play) .sq { animation: logo-beat 1.5s ease-in-out infinite; }
+  .ascii-logo.running:not(.play) .s3 { animation-delay: 0.5s; }
+  .ascii-logo.running:not(.play) .s2 { animation-delay: 1s; }
+  @keyframes logo-drop { from { opacity: 0; transform: translateY(-0.9em) scale(0.6); } }
+  @keyframes logo-rise { from { opacity: 0; transform: translateY(0.25em); filter: blur(2px); } }
+  @keyframes logo-beat {
+    0%, 55%, 100% { color: color-mix(in srgb, var(--accent, #6366f1) 45%, var(--bg-0, #0d1117)); }
+    20% { color: var(--accent-hi, #818cf8); text-shadow: 0 0 0.5em color-mix(in srgb, var(--accent, #6366f1) 60%, transparent); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .ascii-logo .sq, .ascii-logo .lt { animation: none !important; }
+  }
+  @media (max-width: 640px) { .ascii-logo { font-size: var(--fs-xs, 0.74rem); } }
+  .subtitle { color: var(--text-mute, #8b949e); margin-bottom: 3rem; font-size: var(--fs-lg, 1rem); }
+  /* A notice is a thing to DO, so it reads as one: an accent edge, the
+     sentence, and the button that resolves it. Sized to the grid so it sits
+     with the cards rather than floating over them. The button goes on its
+     own line under the sentence: beside it, the sentence's last line and the
+     button shared a row, and the two read as run together. */
+  .notice {
+    width: 100%; max-width: var(--dash-w); margin: 0 auto 1.25rem;
+    display: flex; flex-direction: column; align-items: stretch; gap: 0.75rem;
+    padding: 0.85rem 1.1rem; border-radius: 8px;
+    background: rgba(99,102,241,0.10); border: 1px solid rgba(99,102,241,0.35);
+    color: var(--text, #c9d1d9); font-size: var(--fs-lg, 0.95rem); line-height: 1.5;
+  }
+  /* The notices' holder is full width so each notice can size itself to the
+     grid's column (the body centres its children at their own width). */
+  .notices { width: 100%; }
+  /* An error quotes ARNs, profile names and paths with no spaces in them;
+     they break anywhere rather than pushing the page wider than a phone. */
+  .notice span { min-width: 0; overflow-wrap: anywhere; }
+  .notice-act {
+    align-self: flex-start; text-decoration: none; font-weight: 600; font-size: var(--fs-md, 0.9rem);
+    padding: 0.45rem 0.9rem; border-radius: 6px;
+    background: var(--accent, #6366f1); color: var(--text-on-accent, #fff);
+  }
+  .notice-act:hover { filter: brightness(1.1); }
+  /* Column width for the PHONE layout, where one centred column is the right
+     answer. Desktop stops being that shape entirely: see the wide layout
+     below, so this is not a cap that grows, it is the narrow case's width. */
+  :root { --dash-w: 700px; }
+  .grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 1.5rem; width: 100%; max-width: var(--dash-w);
+  }
+  .card {
+    display: block; text-decoration: none; color: var(--text, #c9d1d9);
+    background: var(--bg-1, #161b22); border: 1px solid var(--border, #30363d); border-radius: 8px;
+    padding: 1.5rem; transition: border-color 0.2s, transform 0.2s;
+  }
+  .card:hover { border-color: var(--accent, #58a6ff); transform: translateY(-2px); }
+  .card-name { font-size: 1.25rem; font-weight: 600; color: var(--text-hi, #f0f6fc); margin-bottom: 0.5rem; }
+  /* Two lines at most. A description is whatever its author typed, and an
+     agent's often runs to a paragraph: every line of it made its card taller
+     than the rest of its row. The full text is the card's title. */
+  .card-desc {
+    font-size: var(--fs-md, 0.9rem); color: var(--text-mute, #8b949e); line-height: 1.4;
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden;
+  }
+  /* Featured hero card: the primary entry point. Spans the full grid
+     width and is larger so it stands apart by SIZE, not color (a blue
+     border reads as a hover/selected state and is confusing here). */
+  .card.featured {
+    grid-column: 1 / -1;
+    padding: 2.25rem 2rem;
+    background: linear-gradient(135deg, var(--bg-1, #161b22) 0%, var(--bg-2, #1b2230) 100%);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+  }
+  .card.featured:hover { transform: translateY(-3px); box-shadow: 0 12px 30px rgba(0,0,0,0.45); }
+  .card.featured .card-name { font-size: 1.9rem; margin-bottom: 0.6rem; }
+  /* Capped by MEASURE, not by the card: the hero spans every column, and at
+     four of them its one line of description would run the width of the
+     screen. A line that long is measurably harder to read, and the card looks
+     empty rather than generous. */
+  .card.featured .card-desc { font-size: var(--fs-lg, 1.02rem); max-width: 62ch; display: block; -webkit-line-clamp: unset; line-clamp: unset; }
+  /* Wide card: spans the full grid row at the REGULAR card height (a
+     "double" button). Used for a bottom utility entry like Administrator. */
+  .card.wide { grid-column: 1 / -1; }
+  /* Orchestrator family cluster: a full-width titled block grouping the apps
+     that also appear as shared top-nav tabs (Agents / Bridges / Knowledge /
+     Gateways), so the dashboard mirrors that grouping instead of scattering
+     them among unrelated cards. It spans the full grid width and holds its own
+     inner card grid. */
+  .cluster {
+    grid-column: 1 / -1;
+    border: 1px solid var(--border, #30363d); border-radius: 10px;
+    padding: 1rem 1rem 1.25rem;
+  }
+  .cluster-head {
+    font-size: var(--fs-xs, 0.78rem); font-weight: 600; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--text-mute, #8b949e); margin-bottom: 0.9rem;
+  }
+  .cluster-grid {
+    /* auto-FIT, not auto-fill. The cluster holds a bounded set: the apps that
+       are also hub tabs, four of them, so a reserved empty track reads as a
+       missing app rather than as spare room, and invites filling a hole by
+       moving something in that does not belong. auto-fit collapses the empty
+       track and the members share the width instead.
+       The main grid above keeps auto-fill on purpose: it is an open-ended list
+       where a short last row is just the end of the list. */
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 1rem;
+  }
+  /* A kind's band (Apps, My apps, Agents) is an open-ended list, like the
+     main grid used to be, so it keeps auto-FILL: one app in a band stays a
+     card's width instead of stretching across the row. */
+  .cluster.band .cluster-grid { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+  #live-panel {
+    width: 100%; max-width: var(--dash-w); margin-top: 2rem;
+  }
+  #live-panel h3 { color: var(--text-mute, #8b949e); font-size: var(--fs-md, 0.9rem); margin-bottom: 0.75rem; cursor: pointer; }
+  #live-panel h3:hover { color: var(--text, #c9d1d9); }
+  /* A row is a flex LINE THAT MAY BECOME TWO, and every part of that is load
+     bearing. In the 320px rail (and on a handset) an app badge, a state badge
+     and a status string are all the width there is; the label was flex:1
+     basis 0, shrink 1, min-width auto, so it took only what was left over,
+     which was sometimes a few pixels. A track that narrow wraps the topic one
+     character per line: text stacked on itself, a row far taller than the
+     badges beside it, and the tail spilling past the card's own border.
+     The three rules that stop it: the badges never shrink below their words,
+     the label carries a real minimum so it wraps DOWN to its own full-width
+     line instead of being squeezed onto this one, and a long unbroken string
+     breaks anywhere rather than running out of the box. */
+  .live-item {
+    display: flex; align-items: center; flex-wrap: wrap;
+    gap: 0.35rem 0.75rem;
+    padding: 0.6rem 0.8rem; background: var(--bg-1, #161b22); border: 1px solid var(--border, #21262d);
+    border-radius: 6px; margin-bottom: 0.4rem; cursor: pointer;
+    text-decoration: none; color: var(--text, #c9d1d9); font-size: var(--fs-sm, 0.85rem);
+  }
+  .live-item:hover { border-color: var(--border, #30363d); }
+  .live-badge {
+    flex: 0 0 auto;
+    font-size: var(--fs-2xs, 0.7rem); padding: 0.15rem 0.4rem; border-radius: 4px;
+    font-weight: 600; white-space: nowrap;
+  }
+  .live-badge.running { background: var(--success); color: #fff; }
+  .live-badge.queued { background: var(--warning); color: #fff; }
+  .live-label {
+    /* 7rem is the floor: below that the topic is not worth reading, so the
+       label takes the next line whole instead of sharing this one. */
+    flex: 1 1 7rem; min-width: 0;
+    overflow-wrap: anywhere; line-height: 1.35;
+  }
+  .live-status {
+    flex: 0 1 auto; min-width: 0; margin-left: auto; text-align: right;
+    color: var(--text-mute, #8b949e); font-size: var(--fs-sm, 0.8rem);
+    overflow-wrap: anywhere; line-height: 1.35;
+  }
+  .auth-bar {
+    position: fixed; top: 12px; right: 12px; z-index: 9999;
+    display: flex; align-items: center; gap: 0.6rem;
+    font-size: var(--fs-sm, 0.8rem);
+    max-width: calc(100vw - 64px); /* leave room for the dashboard-back icon at top-left */
+  }
+  .auth-user {
+    color: var(--text-mute, #8b949e);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 40vw;
+  }
+  .auth-link {
+    color: var(--text-mute, #8b949e); text-decoration: none;
+    padding: 0.3rem 0.7rem; border: 1px solid var(--border, #30363d); border-radius: 6px;
+    background: var(--bg-1, #161b22); transition: border-color 0.2s, color 0.2s;
+    white-space: nowrap;
+    /* Match a <button class="auth-link"> (POST-logout) to the <a> siblings. */
+    cursor: pointer; font: inherit; line-height: normal;
+  }
+  .auth-link:hover { border-color: var(--accent, #58a6ff); color: var(--text-hi, #f0f6fc); }
+  .auth-logout { display: inline; margin: 0; padding: 0; }
+  /* DESKTOP: stop being a phone. Below this the page is one centred column,
+     which is the right answer on a handset and the wrong one on a monitor
+     the same 700px ribbon sat in the middle of a 27-inch screen with two feet
+     of nothing either side, and widening the ribbon would only have made a
+     bigger ribbon.
+     So the shape changes rather than the size. Body becomes a two-region grid:
+     the apps take the room, and Live Sessions moves out of the stack below
+     them into a rail on the right, where the horizontal space it is given is
+     space it can use. The masthead still spans and centres, because a logo
+     that slides left to sit over one column reads as misaligned rather than as
+     laid out.
+     1100px is where the rail earns its place: it needs ~300px and the grid
+     needs two comfortable columns beside it, and below that sum the rail is
+     stealing width rather than using it. */
+  @media (min-width: 1100px) {
+    body {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 320px;
+      column-gap: 2.5rem;
+      align-content: start;
+      /* The base rule centres items for the phone column; in a grid that
+         would centre the shorter of the two regions against the taller, so a
+         short rail would float halfway down beside a long card grid. */
+      align-items: start;
+      width: 100%;
+      max-width: 1600px;
+      margin: 0 auto;
+      padding: 72px 40px 48px;
+    }
+    /* Masthead spans both regions and stays centred over them. */
+    .ascii-logo, .subtitle { grid-column: 1 / -1; justify-self: center; }
+    /* The notices get a row of their own across both regions, above the
+       cards. Left to auto-placement they had no free cell before the cards'
+       pinned row and landed after it, at the bottom of the page. */
+    .notices { grid-column: 1 / -1; grid-row: 3; }
+    /* The grid drops its cap and fills its region: auto-fill then decides the
+       column count from the space it actually has, which is the whole point of
+       auto-fill and was never reachable behind a fixed max-width. */
+    .grid { grid-column: 1; grid-row: 4; max-width: none; }
+    #live-panel {
+      grid-column: 2; grid-row: 4;
+      max-width: none; margin-top: 0;
+      position: sticky; top: 72px;
+    }
+  }
+  /* Past a point the cards stop growing and the page gains margin instead: a
+     tile wide enough to hold a paragraph it will never contain is not using
+     the space, it is padding it. */
+  @media (min-width: 1900px) {
+    body { max-width: 1800px; }
+  }
+  @media (max-width: 640px) {
+    body { padding: 60px 12px 20px; }
+    .auth-bar { top: 8px; right: 8px; gap: 0.4rem; }
+    /* Tracks the bar above it: both move in, so the panel stays under the
+       bell rather than drifting off its corner. */
+    .notify-panel { top: 2.6rem; right: 8px; }
+    .auth-user { display: none; } /* keep just the Logout button visible on narrow screens */
+    .grid { grid-template-columns: 1fr; gap: 0.75rem; }
+    .cluster-grid, .cluster.band .cluster-grid { grid-template-columns: 1fr; gap: 0.75rem; }
+    .card { padding: 1rem; }
+    /* The featured card and the group block kept their desktop size: 2.25rem
+       of padding and a 1.9rem title spent a phone's first screen on one card. */
+    .card-name { font-size: 1.1rem; }
+    .card.featured { padding: 1.25rem 1.1rem; }
+    .card.featured .card-name { font-size: 1.45rem; }
+    .cluster { padding: 0.8rem 0.7rem 0.9rem; }
+    .cluster-head { margin-bottom: 0.6rem; }
+  }
+  /* Theme overrides: re-point chrome surfaces to the active theme's tokens
+     (injected above via %THEMECSS%). Additive + same selector specificity as
+     the rules above, so these win; anything not re-pointed keeps its original
+     color as a fallback. */
+  body { background: var(--bg-0); color: var(--text); }
+  .subtitle, .card-desc, .auth-user, .live-status, #live-panel h3 { color: var(--text-mute); }
+  .card, .card.featured, .live-item, .auth-link { background: var(--bg-1); border-color: var(--border); color: var(--text); }
+  .cluster { border-color: var(--border); }
+  .cluster-head { color: var(--text-mute); }
+  .card-name { color: var(--text-hi); }
+  .card:hover, .auth-link:hover, .live-item:hover { border-color: var(--accent); }
+  .auth-link:hover { color: var(--text-hi); }
+  .live-badge.running { background: var(--success); }
+  /* A bell that is always lit is a bell nobody reads. Muted until there is
+     something unread, and then it carries the number. */
+  .bell {
+    position: relative; background: none; border: 0; cursor: pointer;
+    display: inline-flex; align-items: center; opacity: 0.55; padding: 0.2rem;
+  }
+  .bell.unread { opacity: 1; }
+  .bell svg { width: 1.05rem; height: 1.05rem; display: block; }
+  .bell-count {
+    display: none; position: absolute; top: -0.35rem; right: -0.55rem;
+    min-width: 1.05rem; padding: 0 0.25rem; border-radius: 0.6rem;
+    background: var(--accent, #6366f1); color: var(--text-on-accent, #fff);
+    font-size: 0.65rem; line-height: 1.05rem; text-align: center;
+  }
+  .bell.unread .bell-count { display: inline-block; }
+  /* FIXED, like the bar the bell sits in. It used to be absolute, which
+     resolves against the page rather than the viewport: the bell followed you
+     down the page (the bar is fixed) while the panel it opened stayed pinned
+     2.6rem from the top of the DOCUMENT. Click it anywhere but the very top
+     and the panel opened off-screen above you. Whatever anchors the button has
+     to anchor the thing the button opens. */
+  .notify-panel {
+    display: none; position: fixed; right: 12px; top: 3rem; z-index: 10000;
+    width: min(26rem, calc(100vw - 2rem)); max-height: 60vh; overflow-y: auto;
+    background: var(--bg-elev, #1b1b1f); border: 1px solid var(--border);
+    border-radius: 0.5rem; padding: 0.4rem; text-align: left;
+  }
+  .notify-panel.open { display: block; }
+  .notify-empty { padding: 0.9rem; color: var(--text-mute, #999); font-size: var(--fs-sm, 0.85rem); }
+  .notify-item { padding: 0.55rem 0.6rem; border-bottom: 1px solid var(--border); }
+  .notify-item:last-child { border-bottom: 0; }
+  .notify-item.unread { background: color-mix(in srgb, var(--accent, #6366f1) 8%, transparent); }
+  .notify-title { font-size: var(--fs-sm, 0.85rem); color: var(--text-hi); }
+  .notify-body { font-size: var(--fs-xs, 0.78rem); color: var(--text-mute, #999); margin-top: 0.2rem; }
+  .notify-meta { font-size: var(--fs-2xs, 0.7rem); color: var(--text-mute, #999); margin-top: 0.25rem; display: flex; gap: 0.5rem; }
+  .notify-meta button { background: none; border: 0; color: var(--accent, #6366f1); cursor: pointer; font-size: var(--fs-2xs, 0.7rem); padding: 0; }
+  .notify-head { display: flex; justify-content: space-between; align-items: center; padding: 0.35rem 0.6rem; }
+  .notify-head button { background: none; border: 0; color: var(--accent, #6366f1); cursor: pointer; font-size: var(--fs-2xs, 0.72rem); padding: 0; }
+  /* A section's gear: quiet until pointed at or focused, never hidden (a
+     phone cannot point), and lit when the section has cards new to the
+     viewer. */
+  .cluster-head { display: flex; align-items: center; gap: 0.5rem; }
+  .band-gear {
+    margin-left: auto; display: inline-flex; align-items: center; gap: 0.35rem;
+    min-width: 30px; min-height: 30px; padding: 0.25rem 0.4rem; justify-content: center;
+    background: none; border: 1px solid transparent; border-radius: 6px; cursor: pointer;
+    color: var(--text-mute, #8b949e); opacity: 0.55; font: inherit; text-transform: none; letter-spacing: 0;
+  }
+  .band-gear:hover, .band-gear:focus-visible { opacity: 1; color: var(--text, #c9d1d9); border-color: var(--border, #30363d); }
+  .band-gear:has(.band-new) { opacity: 1; }
+  .band-gear.busy svg { animation: band-spin 0.9s linear infinite; }
+  @keyframes band-spin { to { transform: rotate(360deg); } }
+  .band-new {
+    background: var(--accent, #6366f1); color: var(--text-on-accent, #fff); border-radius: 999px;
+    padding: 0.05rem 0.45rem; font-size: var(--fs-2xs, 0.72rem); font-weight: 600;
+  }
+  @media (pointer: coarse) { .band-gear { opacity: 0.8; min-width: 36px; min-height: 36px; } }
+  .hero-wrap { grid-column: 1 / -1; position: relative; }
+  .hero-gear { position: absolute; top: 0.5rem; right: 0.5rem; z-index: 1; background: var(--bg-1, #161b22); }
+  .band-empty { color: var(--text-mute, #8b949e); font-size: var(--fs-sm, 0.85rem); }
+  .hidden-bands {
+    grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem;
+    color: var(--text-mute, #8b949e); font-size: var(--fs-sm, 0.85rem);
+  }
+  .band-show {
+    background: none; border: 1px solid var(--border, #30363d); border-radius: 999px; color: var(--text, #c9d1d9);
+    padding: 0.2rem 0.65rem; cursor: pointer; font: inherit; min-height: 30px;
+  }
+  .band-show:hover { border-color: var(--accent, #58a6ff); }
+  .band-switch { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.9rem; cursor: pointer; }
+</style>
+</head>
+<body>
+  %AUTH%
+  <div class="ascii-logo play" id="logo" role="img" aria-label="gohort"><span class="r0"><span class="mk">  <span class="sq s1">███</span>  </span>   <span class="lt" style="--i:0"> ████</span> <span class="lt" style="--i:1"> ███ </span> <span class="lt" style="--i:2">█   █</span> <span class="lt" style="--i:3"> ███ </span> <span class="lt" style="--i:4">████ </span> <span class="lt" style="--i:5">█████</span></span>
+<span class="r1"><span class="mk">  <span class="sq s1">███</span>  </span>   <span class="lt" style="--i:0">█    </span> <span class="lt" style="--i:1">█   █</span> <span class="lt" style="--i:2">█   █</span> <span class="lt" style="--i:3">█   █</span> <span class="lt" style="--i:4">█   █</span> <span class="lt" style="--i:5">  █  </span></span>
+<span class="r2"><span class="mk">       </span>   <span class="lt" style="--i:0">█  ██</span> <span class="lt" style="--i:1">█   █</span> <span class="lt" style="--i:2">█████</span> <span class="lt" style="--i:3">█   █</span> <span class="lt" style="--i:4">████ </span> <span class="lt" style="--i:5">  █  </span></span>
+<span class="r3"><span class="mk"><span class="sq s2">███</span> <span class="sq s3">███</span></span>   <span class="lt" style="--i:0">█   █</span> <span class="lt" style="--i:1">█   █</span> <span class="lt" style="--i:2">█   █</span> <span class="lt" style="--i:3">█   █</span> <span class="lt" style="--i:4">█  █ </span> <span class="lt" style="--i:5">  █  </span></span>
+<span class="r4"><span class="mk"><span class="sq s2">███</span> <span class="sq s3">███</span></span>   <span class="lt" style="--i:0"> ███ </span> <span class="lt" style="--i:1"> ███ </span> <span class="lt" style="--i:2">█   █</span> <span class="lt" style="--i:3"> ███ </span> <span class="lt" style="--i:4">█   █</span> <span class="lt" style="--i:5">  █  </span></span></div>
+  <p class="subtitle">Your models. Your agents. Your rules.</p>
+  <div class="notices">%NOTICES%</div>
+  <div class="grid">%CARDS%</div>
+  <div id="live-panel"><h3><a href="/monitor" style="color:inherit;text-decoration:none">Live Sessions &rarr;</a></h3><div id="live-list"></div></div>
+<script>
+var liveHidden = false;
+// Every field below is user content (a topic someone typed, an app name) and
+// lands in innerHTML. Escaped here so a "<" renders as a "<" instead of
+// opening a tag and taking the rest of the row with it.
+function esc(v) {
+  return String(v == null ? '' : v).replace(/[&<>"]/g, function(c) {
+    return c === '&' ? '&amp;' : c === '<' ? '&lt;' : c === '>' ? '&gt;' : '&quot;';
+  });
+}
+function toggleLive() {
+  liveHidden = !liveHidden;
+  document.getElementById('live-list').style.display = liveHidden ? 'none' : 'block';
+  if (!liveHidden) refreshLive();
+}
+function refreshLive() {
+  if (liveHidden) return;
+  var list = document.getElementById('live-list');
+  fetch('/api/live').then(function(r){return r.json()}).then(function(items){
+    // Drop spawned child sessions. The parent session's status
+    // already reflects its current stage, so showing both the parent
+    // and every child turns one logical operation into several noisy
+    // rows on the dashboard.
+    items = (items || []).filter(function(it) { return !it.spawned; });
+    // The logo's heartbeat: on while anything is actually running.
+    document.getElementById('logo').classList.toggle('running',
+      items.some(function(it) { return !it.queued; }));
+    if (items.length === 0) {
+      list.innerHTML = '<div style="color:var(--text-mute);padding:0.5rem;font-size:var(--fs-sm, 0.85rem)">No active sessions.</div>';
+      return;
+    }
+    items.sort(function(a, b) {
+      return (a.app || '').localeCompare(b.app || '');
+    });
+    var html = '';
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i];
+      var badge = it.queued ? '<span class="live-badge queued">Queued</span>' : '<span class="live-badge running">Running</span>';
+      var app = it.app ? '<span class="live-badge" style="background:var(--bg-2);color:var(--text-mute)">' + esc(it.app) + '</span>' : '';
+      var label = it.topic || it.label || 'Untitled';
+      // Back to the work itself, as the live pill goes: /api/live resolves
+      // where (the run's own page, if this viewer may open it). The Monitor
+      // is for work with no page of its own.
+      html += '<a class="live-item" href="' + esc(it.href || '/monitor').replace(/"/g, '&quot;') + '" title="' + esc(label).replace(/"/g, '&quot;') + '">';
+      html += app + badge;
+      html += '<span class="live-label">' + esc(label) + '</span>';
+      if (it.status) html += '<span class="live-status">' + esc(it.status) + '</span>';
+      html += '</a>';
+    }
+    list.innerHTML = html;
+  });
+}
+// The masthead builds itself once, then hands its squares to the heartbeat.
+setTimeout(function() { document.getElementById('logo').classList.remove('play'); }, 1800);
+refreshLive();
+setInterval(refreshLive, 10000);
+</script>
+%SECTIONS%
+</body>
+</html>
