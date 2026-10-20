@@ -350,6 +350,14 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 				req.AllowedUsers = prev.AllowedUsers
 			}
 		}
+		// Everyone is one more choice in the picker's list, stored where it
+		// always was: the Shared flag and its index. A body that still sends
+		// shared:true means the same.
+		for _, u := range req.AllowedUsers {
+			if strings.TrimSpace(u) == ShareEveryone {
+				req.Shared = true
+			}
+		}
 		req.AllowedUsers = cleanSystemRecipients(req.AllowedUsers, owner)
 		targetUDB.Set(applianceTable, req.ID, req)
 		// Keep the global shared index in sync with the record's Shared flag,

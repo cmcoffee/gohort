@@ -197,12 +197,13 @@ func canManageAppliance(reqUser string, a Appliance, isAdmin bool) bool {
 	return CanManageShared(reqUser, a.Owner, isAdmin)
 }
 
-// cleanSystemRecipients trims a recipient list and drops the owner and repeats.
+// cleanSystemRecipients trims a recipient list and drops the owner, repeats
+// and Everyone, which is kept as the Shared flag instead.
 func cleanSystemRecipients(users []string, owner string) []string {
 	seen := map[string]bool{}
 	var out []string
 	for _, u := range users {
-		if u = strings.TrimSpace(u); u != "" && u != owner && !seen[u] {
+		if u = strings.TrimSpace(u); u != "" && u != owner && u != ShareEveryone && !seen[u] {
 			seen[u] = true
 			out = append(out, u)
 		}
@@ -210,12 +211,14 @@ func cleanSystemRecipients(users []string, owner string) []string {
 	return out
 }
 
-// handleUserCandidates serves the share picker's people and teams.
+// handleUserCandidates serves the share picker's people and teams, and
+// Everyone first when asked for (?everyone=1).
 func (T *Servitor) handleUserCandidates(w http.ResponseWriter, r *http.Request) {
 	user, _, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return
 	}
+	q := r.URL.Query()
 	w.Header().Set("Content-Type", "application/json")
-	w.Write(ShareCandidatesJSON(user, r.URL.Query().Get("groups") == "1", false))
+	w.Write(ShareCandidatesJSON(user, q.Get("groups") == "1", q.Get("everyone") == "1"))
 }
