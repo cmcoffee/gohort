@@ -648,8 +648,11 @@ func (T *CustomApps) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}.ServeHTTP(w, r)
 }
 
-// shareModalScript registers the "customapps_share" client action: a modal that
-// toggles sharing to signed-in users, applied immediately via _app/share.
+// shareModalScript registers the "customapps_share" client action: a modal with
+// one list of who the app is shared with (Everyone, a team, people by name),
+// each change applied at once through _app/share, _app/share_group and
+// _app/share_person. Everyone from a non-admin is a request, and taking it out
+// while it waits withdraws it.
 //
 // There is ONE sharing mode. The anonymous capability link was removed: it
 // served the app to whoever held a URL, with no account, running the owner's
@@ -675,25 +678,6 @@ const shareModalScript = `<script>
   var slug = rec.slug;
   function truthy(v){ return v === '1' || v === 1 || v === true; }
   var direct = truthy(rec.direct);
-  var shareHelp = 'Every signed-in user gets their own copy. Your data-source and action scripts run with your credentials for them.'
-    + (direct ? '' : ' An administrator approves this before it goes live.');
-  var requestedHelp = 'Publish requested: an administrator reviews it before it goes live. ' + shareHelp;
-    + (direct ? '' : ' An administrator approves the link before it exists.');
-  function makeToggle(label, help, checked, onChange) {
-    var wrap = document.createElement('label');
-    wrap.style.cssText = 'display:block;cursor:pointer';
-    var top = document.createElement('div');
-    top.style.cssText = 'display:flex;align-items:center;gap:0.5rem;font-weight:600';
-    var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = !!checked;
-    top.appendChild(cb); top.appendChild(document.createTextNode(label));
-    var h = document.createElement('div');
-    h.style.cssText = 'font-size:var(--fs-xs, 0.78rem);color:var(--text-mute);margin:0.25rem 0 0 1.6rem;line-height:1.4';
-    h.textContent = help;
-    wrap.appendChild(top); wrap.appendChild(h);
-    wrap.help = h;
-    cb.addEventListener('change', function(){ onChange(cb.checked, cb); });
-    return wrap;
-  }
   function post(url, cb, onOk) {
     fetch(url, {method:'POST'}).then(function(r){
       if (!r.ok) return r.text().then(function(t){ throw new Error(t || ('HTTP ' + r.status)); });
@@ -725,105 +709,108 @@ const shareModalScript = `<script>
         lines.forEach(function(l){ var d = document.createElement('div'); d.textContent = l; status.appendChild(d); });
         body.appendChild(status);
       }
-      var share = makeToggle(
-        'Share with signed-in users',
-        truthy(rec.requested) ? requestedHelp : shareHelp,
-        truthy(rec.shared),
-        function(on, cb){
-          post('_app/share?slug=' + encodeURIComponent(slug) + '&on=' + on, cb, function(d){
-            // A non-admin's share is a REQUEST: the app is not shared yet, so
-            // the box stays clear and the help says who it is waiting on.
-            if (d.requested) { cb.checked = false; share.help.textContent = requestedHelp; }
-            else if (!d.shared) { share.help.textContent = shareHelp; }
-          });
-        }
-      );
-      body.appendChild(share);
-      // Groups: the owner's own call, no administrator in it. Only groups the
-      // owner is in, and whose administrator let members share, are offered.
-      var groups = [];
+      // Who it is shared with, in one list: Everyone, a team, or people by
+      // name. Everyone is the one an administrator approves (unless this is
+      // an administrator), so until then its chip says it is waiting.
+      var groups = [], people = {with: [], others: []};
       try { groups = JSON.parse(rec.share_groups || '[]') || []; } catch (e) { groups = []; }
-      var gwrap = document.createElement('div');
-      gwrap.style.cssText = 'margin-top:1.1rem';
-      var gh = document.createElement('div');
-      gh.style.cssText = 'font-weight:600;margin-bottom:0.25rem';
-      gh.textContent = 'Share with a team';
-      gwrap.appendChild(gh);
-      var gnote = document.createElement('div');
-      gnote.style.cssText = 'font-size:var(--fs-xs, 0.78rem);color:var(--text-mute);margin:0 0 0.5rem;line-height:1.4';
-      gnote.textContent = groups.length
-        ? 'Everyone on the team can open it, now and as people join, each with their own copy. No administrator needed; your scripts run with your credentials for them.'
-        : 'You are not on a team whose administrator lets members share.';
-      gwrap.appendChild(gnote);
-      groups.forEach(function(g){
-        var who = g.members + (g.members === 1 ? ' person' : ' people');
-        var t = makeToggle(g.name + ' (' + who + ')', '', g.on, function(on, cb){
-          post('_app/share_group?slug=' + encodeURIComponent(slug) + '&group=' + encodeURIComponent(g.id) + '&on=' + on, cb);
-        });
-        t.help.style.display = 'none';
-        t.style.marginBottom = '0.35rem';
-        gwrap.appendChild(t);
-      });
-      body.appendChild(gwrap);
-      // People: shared by name, the owner's own call like a group.
-      var people = {with: [], others: []};
       try { people = JSON.parse(rec.share_people || '{}') || people; } catch (e) {}
       people.with = people.with || []; people.others = people.others || [];
-      var pwrap = document.createElement('div');
-      pwrap.style.cssText = 'margin-top:1.1rem';
-      var ph = document.createElement('div');
-      ph.style.cssText = 'font-weight:600;margin-bottom:0.25rem';
-      ph.textContent = 'Share with people';
-      pwrap.appendChild(ph);
-      var pnote = document.createElement('div');
-      pnote.style.cssText = 'font-size:var(--fs-xs, 0.78rem);color:var(--text-mute);margin:0 0 0.5rem;line-height:1.4';
-      pnote.textContent = 'Each person can open it, with their own copy. No administrator needed; your scripts run with your credentials for them.';
-      pwrap.appendChild(pnote);
-      var plist = document.createElement('div');
-      pwrap.appendChild(plist);
+      var everyone = truthy(rec.shared) ? 'on' : (truthy(rec.requested) ? 'requested' : '');
+      var note = document.createElement('div');
+      note.style.cssText = 'font-size:var(--fs-xs, 0.78rem);color:var(--text-mute);margin:0 0 0.5rem;line-height:1.4';
+      note.textContent = 'Each of them gets their own copy, and your data-source and action scripts run with your credentials for them.'
+        + (direct ? '' : ' Everyone needs an administrator to approve it; a team or people by name are yours to add.');
+      var chips = document.createElement('div');
+      chips.style.cssText = 'display:flex;flex-wrap:wrap;gap:0.35rem;margin:0.3rem 0';
       var addRow = document.createElement('div');
       addRow.style.cssText = 'display:flex;gap:0.4rem;align-items:center;margin-top:0.35rem';
       var pick = document.createElement('select');
       pick.className = 'ui-input';
-      pick.style.cssText = 'max-width:16rem';
+      pick.style.cssText = 'max-width:18rem';
       var addBtn = document.createElement('button');
       addBtn.type = 'button'; addBtn.className = 'ui-row-btn'; addBtn.textContent = 'Add';
       addRow.appendChild(pick); addRow.appendChild(addBtn);
-      pwrap.appendChild(addRow);
-      function drawPeople() {
-        plist.innerHTML = '';
-        people.with.forEach(function(u){
-          var row = document.createElement('div');
-          row.style.cssText = 'display:flex;align-items:center;gap:0.5rem;margin:0.2rem 0';
-          var name = document.createElement('span'); name.textContent = u; name.style.flex = '1';
-          var rm = document.createElement('button');
-          rm.type = 'button'; rm.className = 'ui-row-btn compact'; rm.textContent = 'Remove';
-          rm.addEventListener('click', function(){
-            post('_app/share_person?slug=' + encodeURIComponent(slug) + '&user=' + encodeURIComponent(u) + '&on=false', null, function(){
-              people.with = people.with.filter(function(x){ return x !== u; });
+      function teamLabel(g) { return 'Team: ' + g.name + ' (' + g.members + (g.members === 1 ? ' person)' : ' people)'); }
+      function chip(label, title, onRemove) {
+        var c = document.createElement('span');
+        c.className = 'ui-chip';
+        c.style.cssText = 'display:inline-flex;align-items:center;gap:0.25rem';
+        c.appendChild(document.createTextNode(label));
+        var x = document.createElement('button');
+        x.type = 'button'; x.className = 'ui-row-btn'; x.textContent = '\u00d7'; x.title = title;
+        x.addEventListener('click', onRemove);
+        c.appendChild(x);
+        chips.appendChild(c);
+      }
+      function option(value, label) { var o = document.createElement('option'); o.value = value; o.textContent = label; pick.appendChild(o); }
+      function draw() {
+        chips.innerHTML = '';
+        if (everyone) {
+          chip(everyone === 'on' ? 'Everyone' : 'Everyone (waiting for an administrator)',
+            everyone === 'on' ? 'Stop sharing with everyone' : 'Withdraw the request', function() {
+              post('_app/share?slug=' + encodeURIComponent(slug) + '&on=false', null, function() { everyone = ''; draw(); });
+            });
+        }
+        groups.forEach(function(g) {
+          if (!g.on) return;
+          chip(teamLabel(g), 'Stop sharing with ' + g.name, function() {
+            post('_app/share_group?slug=' + encodeURIComponent(slug) + '&group=' + encodeURIComponent(g.id) + '&on=false', null, function() { g.on = false; draw(); });
+          });
+        });
+        people.with.forEach(function(u) {
+          chip(u, 'Stop sharing with ' + u, function() {
+            post('_app/share_person?slug=' + encodeURIComponent(slug) + '&user=' + encodeURIComponent(u) + '&on=false', null, function() {
+              people.with = people.with.filter(function(x) { return x !== u; });
               people.others.push(u); people.others.sort();
-              drawPeople();
+              draw();
             });
           });
-          row.appendChild(name); row.appendChild(rm);
-          plist.appendChild(row);
         });
+        if (!chips.children.length) {
+          var none = document.createElement('span');
+          none.style.cssText = 'font-size:var(--fs-xs, 0.78rem);color:var(--text-mute)';
+          none.textContent = 'Only you.';
+          chips.appendChild(none);
+        }
         pick.innerHTML = '';
-        people.others.forEach(function(u){ var o = document.createElement('option'); o.value = u; o.textContent = u; pick.appendChild(o); });
-        addRow.style.display = people.others.length ? 'flex' : 'none';
-        if (!people.with.length && !people.others.length) pnote.textContent = 'Nobody else has an account here yet.';
+        if (!everyone) option('*', direct ? 'Everyone' : 'Everyone (an administrator approves)');
+        groups.forEach(function(g) { if (!g.on) option('group:' + g.id, teamLabel(g)); });
+        people.others.forEach(function(u) { option('user:' + u, u); });
+        addRow.style.display = pick.options.length ? 'flex' : 'none';
       }
-      addBtn.addEventListener('click', function(){
-        var u = pick.value;
-        if (!u) return;
-        post('_app/share_person?slug=' + encodeURIComponent(slug) + '&user=' + encodeURIComponent(u) + '&on=true', null, function(){
-          people.others = people.others.filter(function(x){ return x !== u; });
-          people.with.push(u); people.with.sort();
-          drawPeople();
-        });
+      addBtn.addEventListener('click', function() {
+        var v = pick.value;
+        if (!v) return;
+        if (v === '*') {
+          post('_app/share?slug=' + encodeURIComponent(slug) + '&on=true', null, function(d) {
+            // A non-admin's Everyone is a REQUEST: not shared yet.
+            everyone = d.requested ? 'requested' : (d.shared ? 'on' : '');
+            draw();
+          });
+        } else if (v.indexOf('group:') === 0) {
+          var id = v.slice(6);
+          post('_app/share_group?slug=' + encodeURIComponent(slug) + '&group=' + encodeURIComponent(id) + '&on=true', null, function() {
+            groups.forEach(function(g) { if (g.id === id) g.on = true; });
+            draw();
+          });
+        } else {
+          var u = v.slice(5);
+          post('_app/share_person?slug=' + encodeURIComponent(slug) + '&user=' + encodeURIComponent(u) + '&on=true', null, function() {
+            people.others = people.others.filter(function(x) { return x !== u; });
+            people.with.push(u); people.with.sort();
+            draw();
+          });
+        }
       });
-      drawPeople();
-      body.appendChild(pwrap);
+      var head = document.createElement('div');
+      head.style.cssText = 'font-weight:600;margin-bottom:0.25rem';
+      head.textContent = 'Shared with';
+      body.appendChild(head);
+      body.appendChild(note);
+      body.appendChild(chips);
+      body.appendChild(addRow);
+      draw();
     },
     actions: [{label: 'Done', primary: true, onClick: function(api){ api.close(); if (ctx.reload) ctx.reload(); }}]
   });
@@ -1816,6 +1803,11 @@ func (T *CustomApps) handleShareApp(w http.ResponseWriter, r *http.Request, user
 		}
 		writeJSON(w, map[string]any{"ok": true, "shared": false, "requested": true})
 		return
+	}
+	if !on && promotion.WithdrawPromotionRequest(AuthDB(), user, "app", slug) {
+		// Everyone taken back out while it waited: the request goes, so
+		// an administrator is not left approving what nobody wants now.
+		Log("[customapps] %s withdrew the publish request for %q", user, slug)
 	}
 	if err := T.setShared(user, slug, on); err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)

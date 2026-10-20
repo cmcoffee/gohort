@@ -143,6 +143,18 @@ func DropOwnerRequests(db Store, owner string) int {
 	return n
 }
 
+// WithdrawPromotionRequest drops (kind, owner, name)'s request while it is
+// still pending: the owner taking Everyone back out of a share list before an
+// administrator got to it. A decided request stays, as the record of what was
+// decided. Reports whether there was one to drop.
+func WithdrawPromotionRequest(db Store, owner, kind, name string) bool {
+	if !PendingPromotion(db, owner, kind, name) {
+		return false
+	}
+	db.Unset(promotionRequestsTable, RequestKey(kind, owner, name))
+	return true
+}
+
 func PendingPromotion(db Store, owner, kind, name string) bool {
 	req, ok := GetPromotionRequest(db, RequestKey(kind, owner, name))
 	return ok && req.State == PromotionPendingState

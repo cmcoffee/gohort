@@ -282,6 +282,16 @@ func TestShareIsAPublishRequestForNonAdmins(t *testing.T) {
 		t.Fatalf("pending queue = %+v", reqs)
 	}
 
+	// Taking Everyone back out while it waits withdraws the request, so an
+	// administrator is not left approving what the owner no longer wants.
+	if w = share("false", ""); w.Code != http.StatusOK {
+		t.Fatalf("withdraw: %d %s", w.Code, w.Body.String())
+	}
+	if PendingPromotion(auth, "alice", "app", "tally") {
+		t.Fatal("taking Everyone out left the request in the queue")
+	}
+	share("true", `{"note":"the team wants it"}`)
+
 	// The owner's list carries the state so the modal can say who it waits on.
 	w = httptest.NewRecorder()
 	T.handleAppsList(w, httptest.NewRequest(http.MethodGet, "/apps/_apps", nil), "alice")
