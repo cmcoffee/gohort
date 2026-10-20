@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"reflect"
 	"regexp"
 	"slices"
 	"sort"
@@ -101,7 +102,10 @@ func (createAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	// LLM-supplied inline tools commit to the user's unified store AFTER the
 	// record is saved (scoping a store row needs the assigned agent ID) — the
 	// record no longer carries embedded tool copies.
-	inlineTools := agentScopedToolsFromArgs(args)
+	inlineTools, msg := resolveToolReferences(sess, agentScopedToolsFromArgs(args))
+	if msg != "" {
+		return msg, nil
+	}
 	// A run another agent sent may not give the new agent what that agent may
 	// not use (builder_delegation.go).
 	if msg := agentToolsRefusal(sess, inlineTools, rec.AllowedTools); msg != "" {
@@ -696,7 +700,10 @@ func (updateAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	// onto the record.
 	var inlineTools []TempTool
 	if v, ok := args["tools"]; ok && v != nil {
-		inlineTools = agentScopedToolsFromArgs(args)
+		var msg string
+		if inlineTools, msg = resolveToolReferences(sess, agentScopedToolsFromArgs(args)); msg != "" {
+			return msg, nil
+		}
 	}
 	// A run another agent sent may not give the agent what that agent may not
 	// use (builder_delegation.go). Before anything is written: the auto-copy
@@ -1015,7 +1022,7 @@ func agentMutationParams(includeID bool) map[string]ToolParam {
 		},
 		"tools": {
 			Type:        "array",
-			Description: "Agent-scoped tools that auto-load whenever this agent runs: bespoke shell/api tools for THIS agent's job, kept out of the user-wide pool. A tool name is one tool across all your agents: reusing a name another agent's tool already has shares that tool, and a different definition under it is refused, so give a new tool a new name. Each entry a TempTool: {name, description, params, mode (\"shell\"|\"api\"), command_template, body_template, credential, method}. Do NOT also list these in allowed_tools; they attach automatically. For a multi-stage workflow use attached_pipelines instead.",
+			Description: "Agent-scoped tools that auto-load whenever this agent runs: bespoke shell/api tools for THIS agent's job, kept out of the user-wide pool. A tool name is one tool across all your agents: reusing a name another agent's tool already has shares that tool, and a different definition under it is refused, so give a new tool a new name. Each entry a TempTool: {name, description, params, mode (\"shell\"|\"api\"), command_template, body_template, credential, method}. An entry with only a name (and mode/description, as agents get lists them) attaches that existing tool of yours unchanged. Listing adds: a tool left out stays on the agent. Do NOT also list these in allowed_tools; they attach automatically. For a multi-stage workflow use attached_pipelines instead.",
 			Items:       &ToolParam{Type: "object"},
 		},
 		// exposed / public_name are intentionally OMITTED here — they're
@@ -1420,6 +1427,39 @@ func agentScopedToolsFromArgs(args map[string]any) []TempTool {
 		out = append(out, t)
 	}
 	return out
+}
+
+// isToolReference reports whether a tools[] entry names a tool without
+// defining one: nothing set beyond name, mode and description, the shape
+// agents(action="get") lists an agent's tools in. A model that edits that list
+// and sends it back means "this agent has these tools", not "replace each with
+// an empty definition".
+func isToolReference(t TempTool) bool {
+	t.Name, t.Mode, t.Description = "", "", ""
+	return reflect.DeepEqual(t, TempTool{})
+}
+
+// resolveToolReferences swaps each name-only tools[] entry for the definition
+// it names: the owner's stored tool, else one drafted in this session. Bundled
+// unchanged, the tool only gains the agent in its scope, so nothing asks to
+// replace it. A name that names no such tool is refused, since there is
+// nothing to attach and an empty definition is never what was meant.
+func resolveToolReferences(sess *ToolSession, tools []TempTool) ([]TempTool, string) {
+	for i, t := range tools {
+		if !isToolReference(t) {
+			continue
+		}
+		if p, ok := UserToolByName(sess.DB, sess.Username, t.Name); ok {
+			tools[i] = p.Tool
+			continue
+		}
+		if d := sess.LookupTempTool(t.Name); d != nil {
+			tools[i] = *d
+			continue
+		}
+		return nil, fmt.Sprintf("NOT DONE: tools entry %q has no definition and you have no tool by that name to attach. An entry with only a name attaches an existing tool of yours unchanged; a new tool needs its definition (command_template, or url_template and credential). A built-in tool goes in allowed_tools instead.", t.Name)
+	}
+	return tools, ""
 }
 
 // intakeFormFromArgs coerces the LLM-supplied intake_form payload
