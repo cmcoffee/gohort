@@ -16,6 +16,10 @@ func TestStripEmDashes(t *testing.T) {
 			"before, after\n```\nx := a—b // keep\n```\nend, done"},
 		{"preserves inline code", "run `a — b` then — go", "run `a — b` then, go"},
 		{"line structure preserved (no newline eaten)", "line one —\nline two", "line one,\nline two"},
+		// Seen live: the comma after a code span was dropped as if it led a
+		// line, so "`a: true` — it" showed as "a: trueit".
+		{"dash after inline code keeps its comma", "set `a: true` — it keeps `b`", "set `a: true`, it keeps `b`"},
+		{"line-leading dash after code on the line before", "`x`\n— y", "`x`\ny"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

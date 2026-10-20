@@ -527,18 +527,23 @@
     s = String(s == null ? '' : s);
     if (s.indexOf('—') === -1) return s;
     var codeRe = /```[\s\S]*?```|`[^`\n]*`/g, out = '', last = 0, m;
-    function tx(seg) {
+    // lineStart: a segment after a code span starts mid-line, so its leading
+    // comma is the dash after the code ("`x` — y" is "`x`, y"), not one to drop.
+    function tx(seg, lineStart) {
       if (seg.indexOf('—') === -1) return seg;
       seg = seg.replace(/[ \t]*—[ \t]*/g, ', ');
-      seg = seg.replace(/^,[ \t]*/gm, '');       // line-leading dash artifact
+      var head = '';
+      if (!lineStart && seg.charAt(0) === ',') { head = ','; seg = seg.slice(1); }
+      seg = head + seg.replace(/^,[ \t]*/gm, '');  // line-leading dash artifact
       seg = seg.replace(/, \n/g, ',\n');          // trailing space before newline
       return seg.replace(/, ,/g, ',');
     }
+    function atLineStart(i) { return i === 0 || s.charAt(i - 1) === '\n'; }
     while ((m = codeRe.exec(s)) !== null) {
-      out += tx(s.slice(last, m.index)) + m[0];   // prose transformed, code verbatim
+      out += tx(s.slice(last, m.index), atLineStart(last)) + m[0];   // prose transformed, code verbatim
       last = m.index + m[0].length;
     }
-    return out + tx(s.slice(last));
+    return out + tx(s.slice(last), atLineStart(last));
   };
   window.uiRenderMarkdown = function(target, raw) {
     if (!target) return;

@@ -132,21 +132,31 @@ func StripEmDashes(s string) string {
 	b.Grow(len(s))
 	last := 0
 	for _, loc := range codeSpanRe.FindAllStringIndex(s, -1) {
-		b.WriteString(transformEmDash(s[last:loc[0]]))
+		b.WriteString(transformEmDash(s[last:loc[0]], atLineStart(s, last)))
 		b.WriteString(s[loc[0]:loc[1]]) // code span verbatim
 		last = loc[1]
 	}
-	b.WriteString(transformEmDash(s[last:]))
+	b.WriteString(transformEmDash(s[last:], atLineStart(s, last)))
 	return b.String()
 }
 
+// atLineStart reports whether offset i of s begins a line.
+func atLineStart(s string, i int) bool { return i == 0 || s[i-1] == '\n' }
+
 // transformEmDash applies the em-dash → comma rewrite to a non-code segment.
-func transformEmDash(seg string) string {
+// lineStart says whether the segment begins a line: one that follows a code
+// span starts mid-line, and its leading comma is the dash after the code
+// ("`x` — y" is "`x`, y"), not a line-leading one to drop.
+func transformEmDash(seg string, lineStart bool) string {
 	if !strings.ContainsRune(seg, '—') {
 		return seg
 	}
 	seg = emDashRe.ReplaceAllString(seg, ", ")
-	seg = leadingCommaRe.ReplaceAllString(seg, "")
+	head := ""
+	if !lineStart && strings.HasPrefix(seg, ",") {
+		head, seg = ",", seg[1:]
+	}
+	seg = head + leadingCommaRe.ReplaceAllString(seg, "")
 	// A dash at end-of-line leaves the inserted ", " stranded before the
 	// newline; drop the trailing space so line ends stay clean.
 	seg = strings.ReplaceAll(seg, ", \n", ",\n")
