@@ -120,7 +120,10 @@ func (T *OrchestrateApp) runStanding(ctx context.Context, sa StandingAgent) Stan
 	// the live pill and Cancel on the Monitor row reach THIS work. Both
 	// offered the button before and neither could do anything.
 	ctx, liveRun := T.runsRegistry().CreateCancellable(ctx, sa.Owner, sa.AgentID, "")
-	liveRun.Describe("standing", display, truncateObs(mission, 100))
+	// Under whatever started it, when something did: an approved hand-off
+	// runs as a background task of the asking conversation, and shows there.
+	liveRun.Describe("standing", display, truncateObs(mission, 100)).
+		Parent(parentRunFromCtx(ctx))
 	defer liveRun.Complete(RunStatusFailed) // safety net; explicit calls below win (idempotent)
 
 	// Standing agents run as their owner (no separate runtime user).

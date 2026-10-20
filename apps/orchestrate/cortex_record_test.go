@@ -71,8 +71,10 @@ func TestARunThatReportedElsewhereLeavesAPointer(t *testing.T) {
 
 	// An approved delegation whose result went back to the asker is still a
 	// request that reached this agent.
+	ask := "s-ask-" + UUIDv4()
 	app.runApprovedDelegation(Authorization{Owner: "u", Agent: a.ID, Brief: "check the queue",
-		FromAgent: "lead", FromSession: "s-ask-" + UUIDv4()}, a.ID)
+		FromAgent: "lead", FromSession: ask}, a.ID)
+	waitBackgroundJobs(t, ask)
 	if got := cortexLines(t, udb, a.ID); !strings.Contains(got, "Asked: check the queue") || !strings.Contains(got, "went back to the conversation that asked") {
 		t.Errorf("the delegation should be on the target's record:\n%s", got)
 	}
@@ -172,8 +174,10 @@ func TestADelegationByNameReachesTheTargetsCortex(t *testing.T) {
 	udb := UserDB(root, "u")
 	a, _ := saveAgent(udb, AgentRecord{Name: "Builder Helper", Owner: "u", OrchestratorPrompt: "p"})
 
+	ask := "s-ask-" + UUIDv4()
 	app.runApprovedDelegation(Authorization{Owner: "u", Agent: "builder helper", Brief: "wire the song API",
-		FromAgent: "lead", FromSession: "s-ask-" + UUIDv4()}, "builder helper")
+		FromAgent: "lead", FromSession: ask}, "builder helper")
+	waitBackgroundJobs(t, ask)
 	if got := cortexLines(t, udb, a.ID); !strings.Contains(got, "Asked: wire the song API") {
 		t.Errorf("a delegation made by name should land on the target's cortex:\n%s", got)
 	}

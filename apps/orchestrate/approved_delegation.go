@@ -81,7 +81,31 @@ func stampRequestOrigin(a *Authorization, sess *ToolSession) context.Context {
 	a.FromChatID = strings.TrimSpace(sess.ChannelChatID)
 	a.FromHandle = strings.TrimSpace(sess.ChannelHandle)
 	a.FromPrivate = !NetworkAllowedFromContext(qctx)
+	if id, _ := liveRunRegistry().threadAgent(sess); id != "" && id != a.FromAgent {
+		a.FromThreadAgent = id
+	}
 	return qctx
+}
+
+// liveRunRegistry is the running app's run registry, for code that records a
+// request with no app in hand. Empty (never nil) before the app is up.
+func liveRunRegistry() *RunRegistry {
+	orchRefMu.Lock()
+	o := orchRef
+	orchRefMu.Unlock()
+	if o == nil {
+		return NewRunRegistry()
+	}
+	return o.runsRegistry()
+}
+
+// approvedOrigin is where a queued request's result goes: the conversation it
+// was asked from, woken as the agent whose thread that is.
+func approvedOrigin(a Authorization) taskOrigin {
+	return taskOrigin{
+		SessionID: a.FromSession, User: a.Owner, AgentID: chFirst(a.FromThreadAgent, a.FromAgent),
+		ChatID: a.FromChatID, Handle: a.FromHandle,
+	}
 }
 
 // requestOriginNote tells the asking agent where the result of its queued
@@ -96,54 +120,91 @@ func requestOriginNote(a Authorization) string {
 // runApprovedDelegation runs an approved delegation to target and, when the
 // request recorded where it came from, wakes that conversation with the result.
 func (T *OrchestrateApp) runApprovedDelegation(a Authorization, target string) {
-	ctx := context.Background()
-	if a.FromPrivate {
-		ctx = WithNetworkConnector(ctx, NewNetworkConnector(true))
-	}
 	// Builder's request was approved with its brief in front of the owner:
 	// that is their say-so for the edits it needs, which an unwatched run
 	// would otherwise queue one by one and drop (withOwnerApprovedRun).
+	ownerApproved := ""
 	if udb := UserDB(T.DB, a.Owner); udb != nil {
 		if rec, ok := findAgentByNameOrID(udb, a.Owner, target); ok && isBuilderAgent(rec.ID) {
-			ctx = withOwnerApprovedRun(ctx, rec.ID)
+			ownerApproved = rec.ID
 		}
 	}
-	origin := strings.TrimSpace(a.FromSession) != "" && strings.TrimSpace(a.FromAgent) != ""
-	var capture *delegationCapture
-	returned := &ToolSession{} // what the run attaches, delivered with its result
-	if origin {
-		ctx, capture = withDelegationCapture(ctx)
-		ctx = withMediaReturn(ctx, returned)
+	name := T.delegationTargetName(a.Owner, target)
+	T.runApproved(approvedRun{
+		a: a, target: target, brief: a.Brief, ownerApproved: ownerApproved,
+		label: fmt.Sprintf("the delegation to %s you queued for the user's approval, which they approved (%s)", name, truncateObs(a.Brief, 160)),
+	})
+}
+
+// approvedRun is one run of an agent the owner approved from the queue.
+type approvedRun struct {
+	a             Authorization // the request, and where it was asked from
+	target        string        // the agent that runs
+	brief         string        // what it is asked to do
+	label         string        // how the wake names it to the agent that asked
+	ownerApproved string        // the agent whose edits the approval covers (withOwnerApprovedRun); "" for none
+}
+
+// runApproved runs ar. With a conversation to come back to, it is a background
+// task of that conversation, the way a long tool call is: a live row with a
+// Stop, nested work under it, and the conversation woken with the result. It
+// used to run with nothing on screen, so an approved hand-off looked like one
+// that never went out, and its wake went to the agent that asked, which for an
+// agent another one sent is not the agent whose thread it was.
+func (T *OrchestrateApp) runApproved(ar approvedRun) {
+	a := ar.a
+	prep := func(ctx context.Context) context.Context {
+		if a.FromPrivate {
+			ctx = WithNetworkConnector(ctx, NewNetworkConnector(true))
+		}
+		if ar.ownerApproved != "" {
+			ctx = withOwnerApprovedRun(ctx, ar.ownerApproved)
+		}
+		return ctx
 	}
-	rec := RunDelegation(ctx, RootDB, a.Owner, target, a.Brief, a.FromAgent)
-	if !origin {
+	// Who handed it over, unless that is the agent running: an agent asking
+	// for its own change is not on its own call path twice.
+	var via []string
+	if from := strings.TrimSpace(a.FromAgent); from != "" && from != ar.target {
+		via = []string{from}
+	}
+	if strings.TrimSpace(a.FromSession) == "" || strings.TrimSpace(a.FromAgent) == "" {
+		RunDelegation(prep(context.Background()), RootDB, a.Owner, ar.target, ar.brief, via...)
 		return
 	}
-	out := strings.TrimSpace(capture.raw)
-	if out == "" {
-		out = strings.TrimSpace(rec.Summary)
-	}
-	var runErr error
-	if rec.Status == RunFailed {
-		msg := strings.TrimSpace(rec.Err)
-		if msg == "" {
-			msg = "the run failed"
+	name := T.delegationTargetName(a.Owner, ar.target)
+	origin := approvedOrigin(a)
+	T.startTask(backgroundTask{
+		origin:    origin,
+		agentName: name,
+		title:     truncateObs(ar.brief, 100),
+		label:     ar.label,
+	}, func(ctx context.Context) (TaskProduct, error) {
+		ctx, capture := withDelegationCapture(prep(ctx))
+		returned := &ToolSession{} // what the run attaches, delivered with its result
+		ctx = withMediaReturn(ctx, returned)
+		rec := RunDelegation(ctx, RootDB, a.Owner, ar.target, ar.brief, via...)
+		out := strings.TrimSpace(capture.raw)
+		if out == "" {
+			out = strings.TrimSpace(rec.Summary)
 		}
-		runErr = errors.New(msg)
-	}
-	if a.FromPrivate && out != "" {
-		out += "\n(It ran Private, with its network tools removed, because the conversation that asked is Private.)"
-	}
-	// What it created goes to the folder of the agent that asked, where the
-	// turn that delivers this runs (agent_media.go).
-	home := &ToolSession{WorkspaceDir: familyWorkspace(UserDB(T.DB, a.Owner), a.Owner, a.FromAgent)}
-	out += handBackFiles(T.delegationTargetName(a.Owner, target), madeFiles(returned), home)
-	label := fmt.Sprintf("the delegation to %s you queued for the user's approval, which they approved (%s)",
-		T.delegationTargetName(a.Owner, target), truncateObs(a.Brief, 160))
-	T.deliverTaskResult(taskOrigin{
-		SessionID: a.FromSession, User: a.Owner, AgentID: a.FromAgent,
-		ChatID: a.FromChatID, Handle: a.FromHandle,
-	}, label, TaskProduct{Text: out, Images: returned.Images, Videos: returned.Videos, Files: returned.Files}, runErr)
+		var runErr error
+		if rec.Status == RunFailed {
+			msg := strings.TrimSpace(rec.Err)
+			if msg == "" {
+				msg = "the run failed"
+			}
+			runErr = errors.New(msg)
+		}
+		if a.FromPrivate && out != "" {
+			out += "\n(It ran Private, with its network tools removed, because the conversation that asked is Private.)"
+		}
+		// What it created goes to the folder of the agent the result wakes,
+		// where the turn that delivers it runs (agent_media.go).
+		home := &ToolSession{WorkspaceDir: familyWorkspace(UserDB(T.DB, a.Owner), a.Owner, origin.AgentID)}
+		out += handBackFiles(name, madeFiles(returned), home)
+		return TaskProduct{Text: out, Images: returned.Images, Videos: returned.Videos, Files: returned.Files}, runErr
+	})
 }
 
 // delegationTargetName is the name to call a delegation's target by in the
@@ -163,8 +224,8 @@ func (T *OrchestrateApp) delegationTargetName(owner, target string) string {
 // none, it is kept in the thread as a hidden note the next turn reads, so the
 // agent stops describing the request as pending and does not queue it again.
 func (T *OrchestrateApp) noteDeniedDelegation(a Authorization) {
-	sid, agentID := strings.TrimSpace(a.FromSession), strings.TrimSpace(a.FromAgent)
-	if sid == "" || agentID == "" {
+	sid, agentID := strings.TrimSpace(a.FromSession), approvedOrigin(a).AgentID
+	if sid == "" || strings.TrimSpace(agentID) == "" {
 		return
 	}
 	note := fmt.Sprintf("%sThe user DENIED the delegation to %s you queued for approval (%s). It did not run and nothing came back. Do not queue it again unless they ask for it; if the work still matters to them, ask how they want to go about it.",

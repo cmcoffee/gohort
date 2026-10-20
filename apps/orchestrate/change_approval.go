@@ -14,8 +14,10 @@ package orchestrate
 //     what is about to change, Approve or Deny. Approve covers that one item
 //     for the rest of the session, so iterating on it asks once;
 //   - with nobody watching (a schedule, a job another agent sent), the change
-//     is not made: it waits in the owner's approval queue, and approving it
-//     lets that agent make it in its next run (for a day);
+//     is not made: it waits in the owner's approval queue. Approving it lets
+//     that agent make it (for a day), and when the request came from a
+//     conversation, runs the agent again to make it there and then, with the
+//     result delivered back to that conversation (runApprovedChange);
 //   - the one thing the owner picked in Builder's form ("Change" or "Fix",
 //     then "Which one?") is already approved in that session: picking it is
 //     the owner saying so. Only changes: deleting it still asks. Only that
@@ -279,8 +281,11 @@ func (c changeAsker) approve(kind, name, detail string, op ChangeOp) string {
 		}
 		return fmt.Sprintf("NOT DONE: the owner declined this change to the %s. Leave it as it is: do not make the change another way, and do not recreate it under a different name. Tell them what you would have changed and why, and ask how they want to proceed.", what)
 	}
-	queueChangeApproval(c, kind, name, detail)
-	return fmt.Sprintf("NOT DONE: changing the %s needs the owner's approval, and nobody is here to give it. It is waiting in their approval queue; once they approve it, the change can be made in the next run. Do not make it another way, and do not recreate it under a different name.", what)
+	then := "once they approve it, the change can be made in the next run"
+	if queueChangeApproval(c, kind, name, detail) {
+		then = "once they approve it, it is made in a fresh run and the result comes back to this conversation"
+	}
+	return fmt.Sprintf("NOT DONE: changing the %s needs the owner's approval, and nobody is here to give it. It is waiting in their approval queue; %s. Do not make it another way, and do not recreate it under a different name.", what, then)
 }
 
 // sessionApprove is the change question for a tool that holds only the
@@ -296,12 +301,13 @@ func sessionApprove(sess *ToolSession, kind, name, detail string, op ChangeOp) s
 
 // queueChangeApproval puts a change made with nobody watching in the owner's
 // approval queue, once: a run that tries again before they answer does not
-// add a second entry.
-func queueChangeApproval(c changeAsker, kind, name, detail string) {
+// add a second entry. Reports whether approving it brings the result back to
+// a conversation (it recorded one to come back to).
+func queueChangeApproval(c changeAsker, kind, name, detail string) bool {
 	key := changeKey(kind, name)
 	for _, a := range ListAuthorizations(RootDB, c.owner) {
 		if a.Action == changeApprovalAction && a.Agent == c.agentID && a.Handle == key {
-			return
+			return a.FromSession != ""
 		}
 	}
 	brief := fmt.Sprintf("Change the %s %s.", strings.TrimSpace(kind), changeItemLabel(c.db, kind, name))
@@ -316,9 +322,36 @@ func queueChangeApproval(c changeAsker, kind, name, detail string) {
 		Handle:    key,                                             // the item, matched when it is approved
 		Brief:     brief,
 	}
+	if c.sess != nil {
+		a.Text = strings.TrimSpace(c.sess.IntentText) // what the re-run finishes
+	}
 	stampRequestOrigin(&a, c.sess)
 	SaveAuthorization(RootDB, a)
 	Log("[orchestrate.change] %s: %s wants to change %s, queued for approval", c.owner, c.agentID, key)
+	return a.FromSession != ""
+}
+
+// runApprovedChange runs the agent that wanted a change the owner just
+// approved, to make it now. Without a conversation to come back to it does
+// nothing: the grant waits for the agent's next run, as it always has.
+//
+// Approval used to only grant. A run that hit the gate had already ended,
+// with "it can be made in the next run", and for a job another agent sent
+// there was no next run: the change sat approved and unmade, and the agent
+// that sent the job never heard of it again.
+func (T *OrchestrateApp) runApprovedChange(a Authorization) {
+	if strings.TrimSpace(a.FromSession) == "" || strings.TrimSpace(a.Agent) == "" {
+		return
+	}
+	brief := "The owner approved a change you were held from making earlier, with nobody there to approve it: " + strings.TrimSpace(a.Brief) + " Make that change now and check that it took."
+	if work := strings.TrimSpace(a.Text); work != "" {
+		brief += " It was part of the work below: finish what the change was holding up, and nothing that was already done.\n\n" + truncateObs(work, 2000)
+	}
+	name := T.delegationTargetName(a.Owner, a.Agent)
+	T.runApproved(approvedRun{
+		a: a, target: a.Agent, brief: brief,
+		label: fmt.Sprintf("the change %s queued for the user's approval, which they approved (%s)", name, truncateObs(a.Brief, 160)),
+	})
 }
 
 // changeItemLabel is how a change names its item to a person: an agent by its

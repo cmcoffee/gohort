@@ -29,101 +29,125 @@ func (T *OrchestrateApp) installTaskRunner() {
 		if sess == nil {
 			return TaskRun{}, fmt.Errorf("no session")
 		}
-		// The conversation this run is answering, read off the turn while it is
-		// still here. Recovering it later from the session id fails exactly
-		// where it matters — see orchUpdatePayload.ChannelChatID.
-		originChat := strings.TrimSpace(sess.ChannelChatID)
-		originHandle := strings.TrimSpace(sess.ChannelHandle)
 		sessionID := sess.DeliverySession()
 		if sessionID == "" {
 			// Nowhere to deliver the result. Better to run inline than to
 			// finish into a void — core falls back when this errors.
 			return TaskRun{}, fmt.Errorf("no chat session to deliver into")
 		}
-
-		// The task outlives the turn, so it cannot inherit the turn's context —
-		// that is cancelled the moment the turn ends. It gets its own, with the
-		// parent run recorded for the live tree.
-		parentID := parentRunFromCtx(sess.Context())
 		// The agent that owns the conversation, read off the turn that spawned
 		// us: the wake has to run as that agent, or the result arrives in the
 		// thread wearing the wrong identity.
-		agentID, agentName := "", ""
-		if parentID != "" {
-			if pr := T.runsRegistry().Get(parentID); pr != nil {
-				snap := pr.Snapshot()
-				agentID, agentName = snap.AgentID, snap.AgentName
-			}
-		}
+		agentID, agentName := T.runsRegistry().threadAgent(sess)
 		if agentID == "" {
 			return TaskRun{}, fmt.Errorf("no owning agent to deliver as")
 		}
-
-		ctx, cancel := context.WithCancel(withParentRun(context.Background(), parentID))
-		// A render queues on the lane of the turn that asked for it: a
-		// person's goes ahead of a schedule's (WithRenderLane). The job's
-		// own model calls stay background, as a detached job's always have.
-		ctx = WithRenderLane(ctx, RunLaneOf(sess.Context()))
-		run := T.runsRegistry().Create(sess.Username, agentID, "", cancel).
-			// The agent's NAME, not just its id: the live provider falls back to
-			// the id when the name is empty, so a background task would sit in
-			// the pill labelled with a raw UUID — which is how a user learns
-			// nothing from the one surface that was meant to tell them work is
-			// still running.
-			Describe("task", agentName, label).
-			Parent(parentID)
-
-		// Findable, and stoppable, from inside the conversation. The runs
-		// registry keys by user and agent, and this run deliberately carries no
-		// session id — so without this nothing could answer the only question
-		// the agent actually has: what did I start in HERE, and can I stop it.
-		RegisterBackgroundJob(sessionID, TaskRun{ID: run.ID, Label: label}, func() { run.Cancel() })
-		// Its progress, when it reports any, beside it in the live pill.
-		ctx = bgrun.WithTaskProgress(ctx, run.SetDetail)
-
-		// The task outlives the turn that spawned it, so its spend is its
-		// own — it cannot ride the turn's line, which has usually already
-		// printed by the time a long render finishes. Scope it and it
-		// reports when the work does. Covers the delivery wake too, since
-		// that is part of what the detach costs.
-		ctx, reportUsage := WithSubUsage(ctx, "task "+agentName+" "+run.ID)
-
-		go func() {
-			// First defer, so it runs LAST — after the panic recovery below
-			// has had its say, and after the result is delivered.
-			defer reportUsage()
-			defer CompleteBackgroundJob(sessionID, run.ID)
-			defer func() {
-				if r := recover(); r != nil {
-					run.Complete(RunStatusFailed)
-					T.deliverTaskResult(taskOrigin{sessionID, sess.Username, agentID, originChat, originHandle}, label, TaskProduct{}, fmt.Errorf("task panicked: %v", r))
-				}
-			}()
-			out, err := fn(ctx)
-			if ctx.Err() != nil {
-				// Cancelled. The user already knows they stopped it; announcing
-				// it again in the conversation is noise.
-				//
-				// The SET it belonged to stops with it. Without this the button
-				// lies: stop the second of four renders and the next wake
-				// cheerfully starts the third, because the ledger still says
-				// there are pieces left and nothing told it otherwise.
-				run.Complete(RunStatusCanceled)
+		return T.startTask(backgroundTask{
+			// The conversation this run is answering, read off the turn while
+			// it is still here. Recovering it later from the session id fails
+			// exactly where it matters — see orchUpdatePayload.ChannelChatID.
+			origin: taskOrigin{
+				SessionID: sessionID, User: sess.Username, AgentID: agentID,
+				ChatID: strings.TrimSpace(sess.ChannelChatID), Handle: strings.TrimSpace(sess.ChannelHandle),
+			},
+			agentName: agentName,
+			title:     label,
+			label:     label,
+			parentID:  parentRunFromCtx(sess.Context()),
+			// A render queues on the lane of the turn that asked for it: a
+			// person's goes ahead of a schedule's (WithRenderLane). The job's
+			// own model calls stay background, as a detached job's always have.
+			lane: RunLaneOf(sess.Context()),
+			// The SET it belonged to stops with it. Without this the button
+			// lies: stop the second of four renders and the next wake
+			// cheerfully starts the third, because the ledger still says there
+			// are pieces left and nothing told it otherwise.
+			onCancel: func(runID string) {
 				if n := CloseTaskSeriesForSession(sessionID); n > 0 {
-					Log("[task] cancelled run %s: closed %d set(s) still running in session %s", run.ID, n, sessionID)
+					Log("[task] cancelled run %s: closed %d set(s) still running in session %s", runID, n, sessionID)
 				}
-				return
-			}
-			if err != nil {
-				run.Complete(RunStatusFailed)
-			} else {
-				run.Complete(RunStatusCompleted)
-			}
-			T.deliverTaskResult(taskOrigin{sessionID, sess.Username, agentID, originChat, originHandle}, label, out, err)
-		}()
-
-		return TaskRun{ID: run.ID, Label: label}, nil
+			},
+		}, fn), nil
 	}
+}
+
+// backgroundTask is work that runs on after the turn that started it, for a
+// conversation, and wakes that conversation with what it produced.
+type backgroundTask struct {
+	origin    taskOrigin // where the result goes, and the agent it wakes
+	agentName string     // that agent's name, for the live row
+	title     string     // what the live row and the conversation's job list call it
+	label     string     // what the wake calls it, to the agent reading the result
+	parentID  string     // the run it nests under on the live surface; "" for none
+	lane      RunLane
+	onCancel  func(runID string) // optional: what else stops when it is stopped
+}
+
+// startTask runs fn in the background as bt, with a live row and a Stop, and
+// delivers what it returns into bt's conversation.
+//
+// The run is registered with no session id, for the reason at the top of this
+// file, and with its own context: the turn that started it is usually over
+// before it finishes, and its context with it.
+func (T *OrchestrateApp) startTask(bt backgroundTask, fn func(ctx context.Context) (TaskProduct, error)) TaskRun {
+	ctx, cancel := context.WithCancel(withParentRun(context.Background(), bt.parentID))
+	ctx = WithRenderLane(ctx, bt.lane)
+	run := T.runsRegistry().Create(bt.origin.User, bt.origin.AgentID, "", cancel).
+		// The agent's NAME, not just its id: the live provider falls back to
+		// the id when the name is empty, so a background task would sit in
+		// the pill labelled with a raw UUID — which is how a user learns
+		// nothing from the one surface that was meant to tell them work is
+		// still running.
+		Describe("task", bt.agentName, bt.title).
+		Parent(bt.parentID)
+	// The tree hangs off this run from here, so what fn starts nests under it.
+	ctx = withParentRun(ctx, run.ID)
+
+	// Findable, and stoppable, from inside the conversation. The runs
+	// registry keys by user and agent, and this run deliberately carries no
+	// session id — so without this nothing could answer the only question
+	// the agent actually has: what did I start in HERE, and can I stop it.
+	job := TaskRun{ID: run.ID, Label: bt.title}
+	RegisterBackgroundJob(bt.origin.SessionID, job, func() { run.Cancel() })
+	// Its progress, when it reports any, beside it in the live pill.
+	ctx = bgrun.WithTaskProgress(ctx, run.SetDetail)
+
+	// The task outlives the turn that spawned it, so its spend is its
+	// own — it cannot ride the turn's line, which has usually already
+	// printed by the time a long render finishes. Scope it and it
+	// reports when the work does. Covers the delivery wake too, since
+	// that is part of what the detach costs.
+	ctx, reportUsage := WithSubUsage(ctx, "task "+bt.agentName+" "+run.ID)
+
+	go func() {
+		// First defer, so it runs LAST — after the panic recovery below
+		// has had its say, and after the result is delivered.
+		defer reportUsage()
+		defer CompleteBackgroundJob(bt.origin.SessionID, run.ID)
+		defer func() {
+			if r := recover(); r != nil {
+				run.Complete(RunStatusFailed)
+				T.deliverTaskResult(bt.origin, bt.label, TaskProduct{}, fmt.Errorf("task panicked: %v", r))
+			}
+		}()
+		out, err := fn(ctx)
+		if ctx.Err() != nil {
+			// Cancelled. The user already knows they stopped it; announcing
+			// it again in the conversation is noise.
+			run.Complete(RunStatusCanceled)
+			if bt.onCancel != nil {
+				bt.onCancel(run.ID)
+			}
+			return
+		}
+		if err != nil {
+			run.Complete(RunStatusFailed)
+		} else {
+			run.Complete(RunStatusCompleted)
+		}
+		T.deliverTaskResult(bt.origin, bt.label, out, err)
+	}()
+	return job
 }
 
 // deliverTaskResult wakes the conversation with what the task produced.

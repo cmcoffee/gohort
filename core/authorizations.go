@@ -52,7 +52,7 @@ type Authorization struct {
 	Brief     string    `json:"brief"`             // delegate: what the delegate should do; converse_contact: the goal
 	ChatID    string    `json:"chat_id,omitempty"` // send_message / converse_contact: target conversation (preferred; REQUIRED for groups)
 	Handle    string    `json:"handle,omitempty"`  // send_message / converse_contact: recipient handle (new-individual fallback)
-	Text      string    `json:"text,omitempty"`    // send_message: message body
+	Text      string    `json:"text,omitempty"`    // send_message: message body; approve_change: the work the change was part of
 	Images    []string  `json:"images,omitempty"`  // send_message: base64 attachments captured at queue time (survive until approval)
 	Videos    []string  `json:"videos,omitempty"`  // send_message: base64 video and audio, delivered as files, not images
 	Requested time.Time `json:"requested"`
@@ -72,6 +72,12 @@ type Authorization struct {
 	FromSession string `json:"from_session,omitempty"`
 	FromChatID  string `json:"from_chat_id,omitempty"`
 	FromHandle  string `json:"from_handle,omitempty"`
+	// FromThreadAgent is the agent whose conversation FromSession is, when
+	// that is not FromAgent. An agent another one sent asks from inside its
+	// sender's thread: FromAgent (the asker) is who the grants are for, and
+	// this is who the result wakes. Woken as the asker, it landed in a thread
+	// of that agent's that nobody was reading, and never came back.
+	FromThreadAgent string `json:"from_thread_agent,omitempty"`
 	// FromPrivate records that the asking conversation was running Private
 	// (network cut off). An approved delegation runs Private too: approving the
 	// work is not lifting the privacy it was asked under. A pre-authorized

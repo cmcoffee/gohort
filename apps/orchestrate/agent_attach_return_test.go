@@ -107,6 +107,7 @@ func TestAnApprovedRequestsSongReachesTheConversationThatAsked(t *testing.T) {
 	saveChatSession(df.udb, ChatSession{ID: room, AgentID: df.agent.ID, Title: "Room"})
 
 	df.app.runApprovedDelegation(Authorization{Owner: "u", Agent: "Scout", Brief: "make the song", FromAgent: df.agent.ID, FromSession: room}, "Scout")
+	waitBackgroundJobs(t, room)
 
 	s := df.thread(room)
 	carried := false

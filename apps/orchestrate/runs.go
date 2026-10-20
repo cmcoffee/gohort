@@ -33,6 +33,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -497,6 +498,33 @@ func (rr *RunRegistry) Get(id string) *Run {
 	rr.mu.Lock()
 	defer rr.mu.Unlock()
 	return rr.runs[id]
+}
+
+// threadAgent is the agent whose conversation work running in sess comes home
+// to: the agent of the nearest run, or, when sess delivers into a conversation
+// other than its own (a sent agent, whose sub-session is not the thread), the
+// agent of the turn at the top of the run tree, which is that conversation's.
+// Waking the nearest run's agent there put the result in a thread of the SENT
+// agent's, keyed by the right session id, that nobody was reading.
+func (rr *RunRegistry) threadAgent(sess *ToolSession) (id, name string) {
+	if sess == nil {
+		return "", ""
+	}
+	walk := strings.TrimSpace(sess.DeliverySessionID) != ""
+	runID := parentRunFromCtx(sess.Context())
+	for depth := 0; runID != "" && depth < 32; depth++ {
+		r := rr.Get(runID)
+		if r == nil {
+			break
+		}
+		snap := r.Snapshot()
+		id, name = snap.AgentID, snap.AgentName
+		if !walk {
+			break
+		}
+		runID = snap.ParentID
+	}
+	return id, name
 }
 
 // BySession returns the active run for a session, or nil if there

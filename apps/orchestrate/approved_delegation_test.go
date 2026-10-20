@@ -10,6 +10,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -27,6 +28,19 @@ func stubDelegationRunner(t *testing.T, app *OrchestrateApp) *[]bool {
 	})
 	t.Cleanup(func() { RegisterStandingRunner(nil); RegisterStandingReporter(nil) })
 	return &network
+}
+
+// waitBackgroundJobs waits for the background tasks of a conversation to end:
+// an approved request runs as one, and is delivered before its job is struck.
+func waitBackgroundJobs(t *testing.T, sessionID string) {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for len(ListBackgroundJobs(sessionID)) > 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("background work in %s still running: %+v", sessionID, ListBackgroundJobs(sessionID))
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 func TestAQueuedDelegationRecordsWhereItWasAskedFrom(t *testing.T) {
@@ -65,6 +79,7 @@ func TestAnApprovedDelegationWakesTheAskerAndStaysPrivate(t *testing.T) {
 
 	app.runApprovedDelegation(Authorization{Owner: "u", Agent: "helper", Brief: "find the news",
 		FromAgent: "lead", FromSession: sid, FromPrivate: true}, "helper")
+	waitBackgroundJobs(t, sid)
 
 	if len(*network) != 1 || (*network)[0] {
 		t.Fatalf("an approved delegation from a Private conversation must run Private, network seen = %v", *network)
