@@ -802,6 +802,16 @@
           fetchJSON(url, {
             method: act.method || 'POST', headers: {'Content-Type': 'application/json'},
             body: JSON.stringify(body)
+          }).then(function(d){
+            // The server can answer with what the field became, which is not
+            // always what was asked: a switch that files a request for
+            // someone else to approve stays off until they do. Its message
+            // says so.
+            if (d && typeof d[act.field] === 'boolean' && d[act.field] !== rec[act.field]) {
+              rec[act.field] = d[act.field];
+              renderRows();
+            }
+            if (d && typeof d.message === 'string' && d.message) showToast(d.message);
           }).catch(function(err){
             // The server refused (it may have its own rules about what can be
             // switched), so the row must stop claiming otherwise.
