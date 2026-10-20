@@ -1286,4 +1286,3 @@ func costText(def MachineDef) string {
 	}
 	return "Beyond the reply itself: " + strings.Join(parts, "; ") + ". The reply step is the turn you were paying for anyway."
 }
-

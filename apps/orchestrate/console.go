@@ -226,6 +226,8 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	// Who may RUN the agent. Its own door because publishing is requested,
 	// not applied: see handleConsolePermissionAudience.
 	T.HandleFunc("/api/console/permissions/audience", T.handleConsolePermissionAudience)
+	// The agent's one share list, Everyone in it (agent_promotion.go).
+	T.HandleFunc("/api/console/permissions/share", T.handleAgentShare)
 	// What holds for every agent until one says otherwise.
 	// ONE default for every agent, and the ceiling over all of them. Admin-gated
 	// inside the handler. There was a per-OWNER rung here too, on its own

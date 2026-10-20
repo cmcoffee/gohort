@@ -2,10 +2,10 @@ package orchestrate
 
 // Who can reach an agent, and by whose decision.
 //
-// A published agent takes TWO gates: the admin's grant of the app is the
-// ceiling, and the owner's own list narrows inside it. It used to be an OR,
-// which meant the owner's list could reach somebody the admin had never
-// granted — a narrowing that widened.
+// A published agent reaches the people the admin granted the app AND the
+// people the owner named: Everyone is one more choice in the owner's share
+// list, so the names beside it add to it. For a while the list narrowed
+// inside the grant, which made "Everyone, Bob" read as "only Bob".
 
 import (
 	"net/http"
@@ -40,30 +40,25 @@ func signedInAs(t *testing.T, who string) *http.Request {
 	return r
 }
 
-func TestAPublishedAgentTakesBothGates(t *testing.T) {
+func TestAPublishedAgentReachesTheGrantedAndTheNamed(t *testing.T) {
 	T := reachCeilingFixture(t)
 
-	// Not narrowed: everybody the admin allowed. Carol has no grant, so the
-	// ceiling alone stops her.
+	// Bob has the admin's grant, carol has nothing.
 	if !T.AgentReachableBy(signedInAs(t, "bob"), "tro", "alice", nil, true) {
-		t.Error("a granted user cannot reach an unnarrowed published agent")
+		t.Error("a granted user cannot reach a published agent")
 	}
 	if T.AgentReachableBy(signedInAs(t, "carol"), "tro", "alice", nil, true) {
-		t.Error("a user with no grant reached a published agent")
+		t.Error("a user with no grant and no name reached a published agent")
 	}
-
-	// Narrowed to carol: she is on the owner's list but has no grant, so the
-	// ceiling still stops her. A list that could admit her would be widening.
-	if T.AgentReachableBy(signedInAs(t, "carol"), "tro", "alice", []string{"carol"}, true) {
-		t.Error("the owner's list reached past the admin's grant")
+	// Carol named by the owner reaches it with no grant, as she did before it
+	// was published: publishing does not take a share away.
+	if !T.AgentReachableBy(signedInAs(t, "carol"), "tro", "alice", []string{"carol"}, true) {
+		t.Error("publishing took the share away from somebody the owner named")
 	}
-	// Narrowed to carol: bob HAS the grant but is not on the list.
-	if T.AgentReachableBy(signedInAs(t, "bob"), "tro", "alice", []string{"carol"}, true) {
-		t.Error("a granted user reached an agent the owner narrowed away from them")
-	}
-	// Both: granted and named.
-	if !T.AgentReachableBy(signedInAs(t, "bob"), "tro", "alice", []string{"bob"}, true) {
-		t.Error("a user with both the grant and the owner's nod was refused")
+	// And naming carol does not take it from bob: the names add, they do not
+	// narrow.
+	if !T.AgentReachableBy(signedInAs(t, "bob"), "tro", "alice", []string{"carol"}, true) {
+		t.Error("the owner's list narrowed the administrator's grant")
 	}
 }
 

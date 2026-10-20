@@ -285,33 +285,23 @@ func (T *OrchestrateApp) AgentReachableBy(r *http.Request, slug, owner string, a
 		// the owner's business, as it is for every other kind.
 		return SharedWithUser(allowedUsers, owner, u)
 	}
-	// Published: two gates, and it takes BOTH.
+	// Published: the owner's list and the administrator's grant each reach,
+	// and either is enough.
 	//
-	// The admin's grant of /agents/<slug> is the CEILING — who this deployment
-	// will let near the agent at all. The owner's list narrows inside it: they
-	// know who the agent is for, they are answerable for it (their tools,
-	// their documents, their key lent into it), and making them file a ticket
-	// to add a teammate is how admins end up granting broadly to stop being
-	// asked, which is the worse position.
+	// Somebody the owner named reaches it as they did before it was
+	// published: naming people is the owner's own call, the same as for an
+	// unpublished agent, and publishing must not take a share away. Everybody
+	// else needs the administrator's grant of /agents/<slug>, which is the
+	// publishing.
 	//
-	// It used to be an OR, which meant the owner's list could reach somebody
-	// the admin had not granted — a narrowing that widened.
-	//
-	// An admin is admitted regardless of the narrowing. They can already read
-	// the record, revoke the share and un-publish it; locking them out of the
-	// thing they govern would be a gate that protects nothing and confuses
-	// whoever is debugging it.
-	if !UserHasAppAccess(r, "/agents/"+slug) {
-		return false
-	}
-	if RequestIsAdmin(r) {
+	// It used to be both gates at once, the list narrowing inside the grant.
+	// With Everyone one more choice in the same list (handleAgentShare),
+	// "Everyone, Bob" reading as "only Bob" would have been a list that says
+	// the opposite of what it does.
+	if SharedWithUser(allowedUsers, owner, u) {
 		return true
 	}
-	// Empty means the owner has not narrowed it: everybody the admin allowed.
-	// The same reading AllowedUsers has on a credential and on a shared tool,
-	// and the alternative — empty means nobody — would have made every agent
-	// published before this unreachable overnight.
-	return len(allowedUsers) == 0 || SharedWithUser(allowedUsers, owner, u)
+	return UserHasAppAccess(r, "/agents/"+slug)
 }
 
 // CortexSessionID exposes a channel agent's pinned home-thread session id so

@@ -263,6 +263,10 @@ func TestMemoryGateUsesTheCanonicalSlug(t *testing.T) {
 	udb := UserDB(T.DB, "bob")
 	udb.Get(agentsTable, slugReviewerB, &b)
 	b.Everyone = true
+	// Not by name either: a published agent's list adds to the grant, so a
+	// carol named here would reach it that way, which is not what this is
+	// about.
+	b.AllowedUsers = []string{"dave"}
 	// Newer than alice's, so alice's keeps the plain path. Between two
 	// published agents the older one does, since nothing records which was
 	// published first.

@@ -1194,21 +1194,16 @@ func currentAutoThinkLabel() string {
 	return "currently reasoning OFF"
 }
 
-// shareSubtitleFor says what the list in front of somebody actually decides,
-// which differs entirely once an agent is published.
-//
-// Before publication it is the whole grant. After, it is a narrowing inside
-// the admin's, and a line that still said "let specific users run this" would
-// be describing a control that no longer does that on its own.
-func shareSubtitleFor(a AgentRecord) string {
-	if !a.Everyone && !a.MCPExposed {
-		return "Let specific people, or a team you are on, run this agent. Empty means private to you."
+// shareSubtitleFor says who the share list reaches now, and where Everyone
+// stands with the administrator.
+func shareSubtitleFor(a AgentRecord, pending bool) string {
+	switch {
+	case a.Everyone:
+		return "Shared with everyone: every user the administrator has granted this app can run it, and the people and teams in the list besides."
+	case pending:
+		return "Everyone is waiting for an administrator to approve it. Until then, the people and teams in the list can run it."
 	}
-	if len(a.AllowedUsers) == 0 {
-		return "Published: everybody the admin has granted this app can run it. Name people here to narrow it to them."
-	}
-	return "Published, and narrowed by you to " + ShareRecipientsText(a.AllowedUsers) +
-		". They also need the admin's grant of the app; this list can only narrow it, never widen it."
+	return "Everyone, people, or a team you are on. Empty means private to you."
 }
 
 // budgetReasoningFields are the agent editor's Budgets and Reasoning sections:

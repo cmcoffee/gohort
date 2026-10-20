@@ -19,7 +19,9 @@ package orchestrate
 // needs permission to stop publishing.
 
 import (
+	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -130,4 +132,79 @@ func (T *OrchestrateApp) agentPublishNeedsApproval(r *http.Request, user, agentI
 		Log("[orchestrate.publish] %s could not file a publish request for %s/%s: %v", user, agentID, flag, err)
 	}
 	return true
+}
+
+// handleAgentShare is the agent's share list: GET and POST
+// /api/console/permissions/share?agent=<id>, {"allowed_users": [...]}.
+//
+// One list, as every other kind has: people, a team, or Everyone. Everyone is
+// publishing, so it goes through the shared rule (promotion.AskEveryone):
+// filed for an administrator unless one is asking, taken back by the owner at
+// once. The names beside it are kept, and add to Everyone rather than narrow
+// it: somebody named reaches the agent whether or not it is published.
+func (T *OrchestrateApp) handleAgentShare(w http.ResponseWriter, r *http.Request) {
+	user, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	rec, found := findAgentByNameOrID(udb, user, strings.TrimSpace(r.URL.Query().Get("agent")))
+	if !found || !isShareableAgent(rec, user) {
+		http.NotFound(w, r)
+		return
+	}
+	ask := promotion.EveryoneAsk{
+		Kind: agentPromotionKind, Owner: user, ID: agentPromotionName(rec.ID, "exposed"),
+		Note:  "Agent " + strconv.Quote(chFirst(rec.Name, rec.ID)) + ": everyone can run it",
+		Admin: requestIsAdminAgent(r),
+	}
+	if rec.Everyone {
+		ask.Has = promotion.EveryoneOn
+	}
+	var db promotion.Store
+	if AuthDB != nil {
+		db = AuthDB()
+	}
+	list := func(a AgentRecord) map[string]any {
+		return map[string]any{"allowed_users": withEveryone(nonNilUsers(a.AllowedUsers),
+			a.Everyone || promotion.EveryonePending(db, ask) != "")}
+	}
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, list(rec))
+	case http.MethodPost, http.MethodPatch:
+		var body struct {
+			AllowedUsers []string `json:"allowed_users"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		names, want := splitEveryone(body.AllowedUsers)
+		if want {
+			ask.Want = promotion.EveryoneOn
+		}
+		level, err := promotion.AskEveryone(db, ask)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if on := level != ""; on && !rec.Everyone {
+			if err := T.publishedSlugClash(rec); err != nil {
+				http.Error(w, err.Error(), http.StatusConflict)
+				return
+			}
+			rec.Everyone = true
+		} else if !on {
+			rec.Everyone = false
+		}
+		rec.AllowedUsers = normalizeShareList(names, user)
+		saved, err := saveAgent(udb, rec)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, list(saved))
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
 }

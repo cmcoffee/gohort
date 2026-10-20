@@ -812,46 +812,49 @@ func (ap *accessPage) accessSections() []ui.Section {
 	}
 }
 
+// shareURL is the agent's one share list (handleAgentShare).
+func (ap *accessPage) shareURL() string {
+	return ap.T.WebPrefix() + "/api/console/permissions/share?agent=" + url.QueryEscape(ap.agent.ID)
+}
+
+// publishPending reports whether the owner's Everyone is waiting on an
+// administrator.
+func (ap *accessPage) publishPending() bool {
+	return publishPending(agentPromotionKind, ap.agent.Owner, agentPromotionName(ap.agent.ID, "exposed"))
+}
+
 // shareSections is the Share tab's sections, from "Who may run this agent" on.
 func (ap *accessPage) shareSections() []ui.Section {
 	T := ap.T
 	return []ui.Section{
 		{
-			Group:    "Share",
-			Title:    "Who may run this agent",
-			Subtitle: "One choice, not two switches. Published means every signed-in person; otherwise it is the people you name and nobody else.",
-			Detail: "Publishing reaches every signed-in user, so it is REQUESTED rather than applied: it goes to the administrator's pending queue and takes effect once approved. Turning it back is yours and takes effect at once.\n\n" +
-				"What the agent uses travels with it either way: your tools, your documents, your skills, readable through this agent and nowhere else. Each person gets their own sessions and memory under it. A credential is the exception, because it is whose identity a call goes out as rather than a copy anybody is missing: decide that per key.\n\n" +
-				"Where an administrator has published the agent, the named list narrows INSIDE that grant rather than adding to it: somebody has to be allowed the app and be on your list.",
-			Body: ui.FormPanel{
-				Source: ap.patchURL,
-				// Its own door, not the record PATCH: publishing reaches
-				// every signed-in user, so it is requested rather than
-				// applied and has to go through the one place that rule
-				// is enforced.
-				PostURL: T.WebPrefix() + "/api/console/permissions/audience?agent=" + url.QueryEscape(ap.agent.ID),
-				Method:  "POST",
-				Fields: []ui.FormField{
-					// "everyone", not the legacy "exposed": that one is
-					// read-only and migrates to TWO decisions at once,
-					// everyone may use it and put a card on the dashboard,
-					// which were deliberately split apart.
-					{Field: "everyone", Type: "select", Label: "Audience",
-						Options: []ui.SelectOption{
-							{Value: "false", Label: "Only the people I name"},
-							{Value: "true", Label: "Everyone (publish globally)"},
-						},
-						Help: "Naming people is yours alone. Publishing to everyone needs an administrator.",
-					},
-				},
-			},
+			Group: "Share",
+			Title: "Who may run this agent",
+			// Says where Everyone stands: granted, waiting on an
+			// administrator, or not asked for.
+			Subtitle: shareSubtitleFor(ap.agent, ap.publishPending()),
+			Detail: "People and teams are yours to add and take effect at once. Everyone reaches every signed-in user, so it is REQUESTED rather than applied: it goes to the administrator's pending queue and takes effect once approved. Taking it back out is yours and takes effect at once; the people and teams in the list keep it either way.\n\n" +
+				"What the agent uses travels with it either way: your tools, your documents, your skills, readable through this agent and nowhere else. Each person gets their own sessions and memory under it. A credential is the exception, because it is whose identity a call goes out as rather than a copy anybody is missing: decide that per key.",
+			// Its own door, not the record PATCH: Everyone is publishing,
+			// which is requested rather than applied and has to go through
+			// the one place that rule is enforced (handleAgentShare).
+			Body: ui.ACLPicker(ui.ACLPickerConfig{
+				OptionsSource: T.WebPrefix() + "/api/user-candidates?groups=1&everyone=" + everyoneParam(ap.agent.Everyone),
+				RecordSource:  ap.shareURL(),
+				Field:         "allowed_users",
+				PostTo:        ap.shareURL(),
+				Method:        "POST",
+				Noun:          "user",
+				Intro:         "Everyone, people, or a team you are on, who may run this agent.",
+				EmptyText:     "No other users to share with yet.",
+			}),
 		},
 		{
 			Group:    "Share",
 			Title:    "Reachable from outside",
 			Subtitle: "Whether an external MCP client can dispatch to this agent over gohort's /mcp/ endpoint.",
 			Detail: "For example a desktop client with a bridge key calling ask_agent. Off by default, and REQUESTED rather than applied for the same reason publishing is: it takes this agent, with your tools and your documents, outside the deployment. Turning it back off is yours.\n\n" +
-				"Independent of the audience above. An agent nobody else may run can still be reachable this way, and one published to everyone need not be.",
+				"Independent of who may run it above. An agent nobody else may run can still be reachable this way, and one shared with everyone need not be.",
 			Body: ui.FormPanel{
 				Source: ap.patchURL,
 				// The same door as the audience, and for the same reason:
@@ -878,24 +881,6 @@ func (ap *accessPage) shareSections() []ui.Section {
 						Placeholder: "(uses the agent name when blank)"},
 				},
 			},
-		},
-		{
-			Group: "Share",
-			Title: "The people you name",
-			// Says what this list actually decides, which differs entirely
-			// once an agent is published: before, it is the whole grant;
-			// after, it is a narrowing inside the administrator's.
-			Subtitle: shareSubtitleFor(ap.agent),
-			Body: ui.ACLPicker(ui.ACLPickerConfig{
-				OptionsSource: T.WebPrefix() + "/api/user-candidates?groups=1",
-				RecordSource:  ap.patchURL,
-				Field:         "allowed_users",
-				PostTo:        ap.patchURL,
-				Method:        "PATCH",
-				Noun:          "user",
-				Intro:         "People, or a team you are on, who may run this agent.",
-				EmptyText:     "No other users to share with yet.",
-			}),
 		},
 		{
 			Group:    "Share",

@@ -24,7 +24,7 @@ import (
 func shareSectionSource(t *testing.T) string {
 	t.Helper()
 	src := mustRead(t, "page_agent_access.go")
-	i := strings.Index(src, `Title:    "Who may run this agent"`)
+	i := strings.Index(src, `Title: "Who may run this agent"`)
 	if i < 0 {
 		t.Fatal("no audience control on the Security page")
 	}
@@ -40,9 +40,8 @@ func shareSectionSource(t *testing.T) string {
 func TestSharingArrivesInOnePlace(t *testing.T) {
 	block := shareSectionSource(t)
 	for _, part := range []string{
-		`Title:    "Who may run this agent"`, // the audience
-		`Title: "The people you name"`,       // exactly who
-		`Title:    "What a recipient sees"`,  // what travels
+		`Title: "Who may run this agent"`,   // Everyone, people, teams
+		`Title:    "What a recipient sees"`, // what travels
 	} {
 		if !strings.Contains(block, part) {
 			t.Errorf("missing %s from the Share tab", part)
@@ -54,28 +53,25 @@ func TestSharingArrivesInOnePlace(t *testing.T) {
 	}
 }
 
-// One choice, not two switches. "Everyone" and "these people" read as
-// independent grants that could both be on, when publishing makes the list a
-// narrowing rather than an addition.
-func TestTheAudienceIsASingleChoice(t *testing.T) {
+// One list, as every other kind has. Everyone is a choice in it rather than a
+// separate switch beside it, and the list goes through its own door, because
+// Everyone is publishing and that is REQUESTED, not applied.
+func TestEveryoneIsAChoiceInTheShareList(t *testing.T) {
 	block := shareSectionSource(t)
-	if !strings.Contains(block, `Field: "everyone", Type: "select"`) {
-		t.Error("the audience is not one choice")
+	if !strings.Contains(block, "ui.ACLPicker(") || !strings.Contains(block, "everyone=") {
+		t.Error("the share list does not offer Everyone")
+	}
+	if strings.Contains(block, `Field: "everyone", Type: "select"`) {
+		t.Error("Everyone is still a switch beside the list")
 	}
 	// NOT the legacy exposed flag: it is read-only and migrates to two
 	// decisions at once, everyone may use it AND a card on the dashboard,
 	// which were deliberately split apart.
 	if strings.Contains(block, `Field: "exposed"`) {
-		t.Error("the audience writes the retired flag, which welds the dashboard shortcut back onto publishing")
+		t.Error("the share list writes the retired flag, which welds the dashboard shortcut back onto publishing")
 	}
-	// Through its own door, because publishing is REQUESTED and not applied.
-	if !strings.Contains(block, "permissions/audience") {
-		t.Error("the audience PATCHes the record, bypassing the approval gate")
-	}
-	for _, label := range []string{"Everyone (publish globally)", "Only the people I name"} {
-		if !strings.Contains(block, label) {
-			t.Errorf("the audience choice does not offer %q", label)
-		}
+	if !strings.Contains(block, "shareURL()") || strings.Contains(block, "PostTo:        ap.patchURL") {
+		t.Error("the share list PATCHes the record, bypassing the approval gate")
 	}
 }
 
@@ -246,10 +242,13 @@ func TestReachGrantsAreNotInTheEditor(t *testing.T) {
 		}
 	}
 	sec := mustRead(t, "page_agent_access.go")
-	for _, f := range []string{"everyone", "mcp_exposed", "public_name"} {
+	for _, f := range []string{"mcp_exposed", "public_name"} {
 		if !strings.Contains(sec, `Field: "`+f+`"`) {
 			t.Errorf("%s is offered nowhere", f)
 		}
+	}
+	if !strings.Contains(sec, "/api/console/permissions/share") {
+		t.Error("Everyone is offered nowhere")
 	}
 	// The editor's "everyone" toggle wrote the RETIRED exposed flag, which
 	// migrates to two decisions at once and welded the dashboard shortcut back
