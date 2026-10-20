@@ -485,7 +485,28 @@ func (T *OrchestrateApp) trimStoredHistory(udb Database, agent AgentRecord, sess
 // worker model to mimic the wake pattern — reflexive list_runs + a canned
 // greeting — instead of engaging the user on their next real message. That is
 // exactly the "channel crystallized" failure. We collapse long runs.
-const monitorWakePrefix = "[EVENT: monitor"
+//
+// The wake is WRITTEN with this constant too (monitorWakeMessage), so the two
+// cannot drift apart again: a wording sweep once changed the writer to
+// "[EVENT, monitor" and this to "[EVENT: monitor", and nothing collapsed from
+// then on. The older spellings stay readable, for wakes already stored.
+const monitorWakePrefix = "[EVENT, monitor"
+
+var monitorWakeLegacyPrefixes = []string{"[EVENT: monitor", "[EVENT \u2014 monitor"}
+
+// isMonitorWakeText reports whether a user turn's text is a monitor wake.
+func isMonitorWakeText(s string) bool {
+	s = strings.TrimSpace(s)
+	if strings.HasPrefix(s, monitorWakePrefix) {
+		return true
+	}
+	for _, p := range monitorWakeLegacyPrefixes {
+		if strings.HasPrefix(s, p) {
+			return true
+		}
+	}
+	return false
+}
 
 // collapseMonitorWakes replaces a maximal CONTIGUOUS run of monitor-wake turns
 // (each a wake user-message plus its assistant reply) with a single marker,
@@ -497,7 +518,7 @@ func collapseMonitorWakes(msgs []ChatMessage, keepRecent int) []ChatMessage {
 		keepRecent = 0
 	}
 	isWakeUser := func(m ChatMessage) bool {
-		return m.Role == "user" && strings.HasPrefix(strings.TrimSpace(m.Content), monitorWakePrefix)
+		return m.Role == "user" && isMonitorWakeText(m.Content)
 	}
 	out := make([]ChatMessage, 0, len(msgs))
 	i := 0
@@ -638,7 +659,9 @@ func (T *OrchestrateApp) operatorFoldOnce(ctx context.Context, aging []Message, 
 	}
 
 	sys := "You maintain a running summary of an ongoing operator conversation. EXTEND the existing summary with the new exchanges (do not restart). Preserve: decisions, standing jobs created or changed, facts about the user's systems, and open threads. Drop chitchat and exact wording. Keep the summary under ~500 tokens.\n\nGROUNDING (critical): summarize ONLY what is explicitly present in the exchanges above. Never add a specific (a name, place, topic, title, number, or date) that does not appear verbatim in them, and never infer one from surrounding context. If an exchange only notes that media was attached (for example a '[N image(s) attached]' line, or one that says 'Depicts: ...'), carry across ONLY what that line literally says and do NOT guess or name the image's subject yourself. A shorter summary that omits an uncertain detail is correct; an invented detail that later reads back as established fact is the failure to avoid. This matters because the summary you write is injected into every later turn as trusted context, so a guess here becomes a hallucination the agent repeats.\n\nThen add a final line beginning with 'FACTS:' listing 0-5 short durable facts worth remembering verbatim, separated by semicolons (or 'FACTS: none'). The same grounding rule applies to FACTS: never record a detail you cannot point to verbatim in the exchanges."
-	resp, err := T.LLM.Chat(ctx, []Message{{Role: "user", Content: sb.String()}}, WithSystemPrompt(sys), WithMaxTokens(700))
+	// Named, so a fold is not an unnamed call in the request log, or on the
+	// peer whose model it borrows.
+	resp, err := T.LLM.Chat(ctx, []Message{{Role: "user", Content: sb.String()}}, WithSystemPrompt(sys), WithMaxTokens(700), WithCaller("history.fold"))
 	if err != nil || resp == nil {
 		return "", nil, err
 	}

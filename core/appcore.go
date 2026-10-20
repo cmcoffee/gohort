@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -40,6 +41,9 @@ type AppCore struct {
 	// systemPrompt is populated by the framework from the Agent's
 	// SystemPrompt() method before Main() is called.
 	systemPrompt string
+	// appName is which app this core belongs to (SetAppName), so the model
+	// calls its sessions make are named for it.
+	appName string
 
 	// PromptTools when true makes Run() describe tools in the system prompt
 	// instead of using native function calling. See AgentLoopConfig.PromptTools.
@@ -124,6 +128,11 @@ func (T *AppCore) Get() *AppCore {
 func (T *AppCore) SystemPrompt() string {
 	return ""
 }
+
+// SetAppName records which app this core belongs to. Called by the framework
+// at setup, so the calls a session of this app makes are named for it (see
+// sessionCallerID).
+func (T *AppCore) SetAppName(name string) { T.appName = strings.TrimSpace(name) }
 
 // SetSystemPrompt stores the system prompt resolved from the Agent interface.
 // Called by the framework before Main().

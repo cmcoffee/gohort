@@ -387,6 +387,7 @@ func HandlePeerChatCompletions(w http.ResponseWriter, r *http.Request) {
 	// the serialization fictional for exactly the requests that need it most.
 	defer release()
 	defer countModelUse(served, lane == LaneInteractive)()
+	defer notePeerCallRoute("peer:"+k.Label, peerCallRoute(r))()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, strings.NewReader(string(body)))
 	if err != nil {
@@ -616,7 +617,48 @@ func peerModelAuth(name string) func(*http.Request) {
 		// The lane travels with the call, so the GPU's own people come first
 		// there too: see peerCallLane.
 		req.Header.Set(peerLaneHeader, string(RunLaneOf(req.Context())))
+		// And what it is for, so the far side can say what is borrowing its
+		// model rather than only that something is.
+		if route := callRouteOf(req.Context()); route != "" {
+			req.Header.Set(peerCallHeader, route)
+		}
 	}
+}
+
+// peerCallHeader carries what a borrowed model call is for: its route key or
+// caller (routeForLog), a name from the code and never anything a person
+// typed, since the serving machine shows it to everyone who looks.
+const peerCallHeader = "X-Gohort-Call"
+
+type callRouteKey struct{}
+
+// withCallRoute puts what a model call is for on the context its request is
+// sent under, where peerModelAuth reads it.
+func withCallRoute(ctx context.Context, route string) context.Context {
+	return context.WithValue(ctx, callRouteKey{}, route)
+}
+
+func callRouteOf(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	r, _ := ctx.Value(callRouteKey{}).(string)
+	return r
+}
+
+// peerCallRoute is what a borrowed call says it is for, kept to the shape a
+// code name has: a header is the caller's to fill, and this one is shown.
+func peerCallRoute(r *http.Request) string {
+	route := strings.TrimSpace(r.Header.Get(peerCallHeader))
+	if route == "" || len(route) > 64 {
+		return ""
+	}
+	for _, c := range route {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune(":._-/", c)) {
+			return ""
+		}
+	}
+	return route
 }
 
 // peerLaneHeader carries the caller's lane on a borrowed model call.

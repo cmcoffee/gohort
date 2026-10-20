@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 )
 
 func init() {
@@ -71,7 +72,7 @@ func peerRowsFrom(st OllamaSchedStats, doing string) []LiveEntry {
 			// "Peers - another user", which withholds the only thing it is for.
 			PublicLabel: true,
 			App:         "Peers",
-			Status:      "on this machine's hardware",
+			Status:      "on this machine's hardware" + peerCallRoutesFor(caller),
 			Order:       peerLiveOrder,
 		})
 	}
@@ -112,4 +113,61 @@ func peerDisplayName(caller string) string {
 		return "A peer"
 	}
 	return "Peer " + name
+}
+
+// peerCallRoutes counts the borrowed model calls in flight by peer and by what
+// each says it is for, so a peer's row names what its calls are doing. Kept
+// beside the scheduler's per-caller counts, not in them: a caller per purpose
+// would change who the scheduler's round-robin is fair between.
+var peerCallRoutes = struct {
+	sync.Mutex
+	m map[string]map[string]int
+}{m: map[string]map[string]int{}}
+
+// notePeerCallRoute counts one call until the returned func is called.
+func notePeerCallRoute(caller, route string) func() {
+	if route == "" {
+		route = "unnamed"
+	}
+	peerCallRoutes.Lock()
+	if peerCallRoutes.m[caller] == nil {
+		peerCallRoutes.m[caller] = map[string]int{}
+	}
+	peerCallRoutes.m[caller][route]++
+	peerCallRoutes.Unlock()
+	return func() {
+		peerCallRoutes.Lock()
+		defer peerCallRoutes.Unlock()
+		if n := peerCallRoutes.m[caller][route] - 1; n > 0 {
+			peerCallRoutes.m[caller][route] = n
+		} else {
+			delete(peerCallRoutes.m[caller], route)
+		}
+		if len(peerCallRoutes.m[caller]) == 0 {
+			delete(peerCallRoutes.m, caller)
+		}
+	}
+}
+
+// peerCallRoutesFor is what a peer's calls in flight are for, as a suffix for
+// its row's status: ": history.fold, caller:memory.gate (2)". Empty when none
+// said, which is every call from a peer older than the header.
+func peerCallRoutesFor(caller string) string {
+	peerCallRoutes.Lock()
+	defer peerCallRoutes.Unlock()
+	routes := peerCallRoutes.m[caller]
+	if len(routes) == 0 {
+		return ""
+	}
+	names := make([]string, 0, len(routes))
+	for r := range routes {
+		names = append(names, r)
+	}
+	sort.Strings(names)
+	for i, r := range names {
+		if n := routes[r]; n > 1 {
+			names[i] = fmt.Sprintf("%s (%d)", r, n)
+		}
+	}
+	return ": " + strings.Join(names, ", ")
 }

@@ -47,7 +47,7 @@ import (
 func monitorWakeMessage(m EventMonitor, monitorName, summary, brief string) string {
 	// The owner's brief comes BEFORE what the event carried, so text inside
 	// the event cannot pose as the instruction that follows it.
-	msg := fmt.Sprintf("[EVENT, monitor %q fired]%s\n\n%s\n\nReact in this thread: report it, delegate any needed work (delegation routes through the authorization queue), or just note it.",
+	msg := fmt.Sprintf(monitorWakePrefix+" %q fired]%s\n\n%s\n\nReact in this thread: report it, delegate any needed work (delegation routes through the authorization queue), or just note it.",
 		monitorName, brief, summary)
 	if block := objectiveAttemptsBlock(monitorObjective(m)); block != "" {
 		msg += "\n\n" + block

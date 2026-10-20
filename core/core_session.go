@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"strings"
 	"sync"
 )
 
@@ -84,7 +85,29 @@ type SessionUsage struct {
 // counters; call Report() at the end of the logical operation to read
 // back what this session consumed.
 func (T *AppCore) CreateSession(tier LLMTier) *Session {
-	return &Session{CallerID: UUIDv4(), Tier: tier, agent: T}
+	return &Session{CallerID: sessionCallerID(T.appName), Tier: tier, agent: T}
+}
+
+// sessionCallerID is a session's caller: unique, because the model scheduler
+// takes turns between callers, and led by its app's name, because the caller
+// names a call that has no route key (routeForLog), in the request log and on
+// a peer lending its model. A bare UUID said nothing about whose call it was.
+func sessionCallerID(app string) string {
+	id := UUIDv4()
+	var b strings.Builder
+	for _, c := range strings.ToLower(app) {
+		switch {
+		case c >= 'a' && c <= 'z', c >= '0' && c <= '9', c == '_', c == '-':
+			b.WriteRune(c)
+		case b.Len() > 0:
+			b.WriteRune('_')
+		}
+	}
+	name := strings.Trim(b.String(), "_")
+	if name == "" {
+		return id
+	}
+	return name + "." + id[:8]
 }
 
 // Chat dispatches to WorkerChat or LeadChat based on the session's

@@ -2010,7 +2010,8 @@ func (c *openAIClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 	// Non-streaming: the whole body arrives as one read, so the
 	// operator's RequestTimeout (the header-wait / response budget)
 	// applies directly.
-	resp, err := c.doRequest(ctx, body, c.api.RequestTimeout)
+	// What the call is for rides with it, so a peer serving it can say so.
+	resp, err := c.doRequest(withCallRoute(ctx, routeForLog(cfg)), body, c.api.RequestTimeout)
 	if err != nil {
 		return nil, err
 	}
@@ -2244,7 +2245,7 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 	}
 	Debug("[%s]: Sending stream request (route=%s, body=%d bytes, think=%s, thinking_budget=%s, json=%v, per_read=%s watchdog=%s req_timeout=%s ctx_deadline=%s)",
 		c.provider(), routeForLog(cfg), len(body), fmtThink(cfg.Think), fmtThinkBudget(payload.ThinkingBudgetTokens), cfg.JSONMode, streamRead, watchdogTimeout, c.api.RequestTimeout, ctxDeadline)
-	resp, err := c.doRequest(ctx, body, streamRead)
+	resp, err := c.doRequest(withCallRoute(ctx, routeForLog(cfg)), body, streamRead)
 	if err != nil {
 		return nil, err
 	}

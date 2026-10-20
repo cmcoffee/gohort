@@ -77,6 +77,8 @@ func set_agent_flags(agent Agent, Flags FlagSet) {
 // set_agent_db sets the database and cache for a given agent.
 func set_agent_db(agent Agent, DB Database) {
 	T := agent.Get()
+	// Every setup path comes through here, web and command line alike.
+	T.SetAppName(agent.Name())
 	T.DB = DB
 	T.Cache = global.cache
 	for _, k := range T.Cache.Tables() {
