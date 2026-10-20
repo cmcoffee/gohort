@@ -916,6 +916,10 @@ func AttachWorkspaceFile(sess *ToolSession, relPath, displayName string, cleanup
 	if info.IsDir() {
 		return "", fmt.Errorf("%q is a directory, not a file", relPath)
 	}
+	if newer := renamedCopyThisTurn(sess, relPath); newer != "" {
+		return "", fmt.Errorf("not attached: %q is an older file. This turn made a new file under the same name, and it is in your folder as %q because the name was taken: attach %q. "+
+			"If the person really asked for the earlier %q, it can be sent on a later turn", relPath, newer, newer, relPath)
+	}
 	const maxAttach = 20 * 1024 * 1024
 	if info.Size() > maxAttach {
 		return "", fmt.Errorf("file too large: %d bytes (cap %d)", info.Size(), maxAttach)
@@ -987,6 +991,40 @@ func staleAttachWarning(sess *ToolSession, relPath string, info os.FileInfo) str
 	return fmt.Sprintf(" NOTE: this file is NOT one your tools produced this turn (it was already in the workspace, last written %s ago). This turn produced: %s."+
 		" If you meant to send what you just made, attach one of those instead: do not describe this one as something you have just created.",
 		humanAge(time.Since(info.ModTime())), strings.Join(staged, ", "))
+}
+
+// renamedCopyThisTurn is the copy this turn made of relPath under a numbered
+// name ("song-2.mp3" for "song.mp3"), when relPath itself is not this turn's,
+// or "". A file another agent made and handed back takes the next free name
+// when the folder already holds one (freeFileName in orchestrate), and the
+// other agent's reply calls it by the name it saved: an agent going by that
+// name attached its own older file, of any kind, and sent it as the new one.
+// Refused rather than warned: the warning comes after the old file is already
+// on its way.
+func renamedCopyThisTurn(sess *ToolSession, relPath string) string {
+	if sess == nil || sess.Detached {
+		return ""
+	}
+	staged := sess.StagedFiles()
+	base := filepath.Base(relPath)
+	for _, name := range staged {
+		if name == relPath || filepath.Base(name) == base {
+			return ""
+		}
+	}
+	ext := filepath.Ext(base)
+	stem := strings.TrimSuffix(base, ext)
+	for _, name := range staged {
+		b := filepath.Base(name)
+		if filepath.Ext(b) != ext || !strings.HasPrefix(b, stem+"-") {
+			continue
+		}
+		n := strings.TrimSuffix(strings.TrimPrefix(b, stem+"-"), ext)
+		if n != "" && strings.Trim(n, "0123456789") == "" {
+			return name
+		}
+	}
+	return ""
 }
 
 // humanAge renders a file's age the way the warning needs to read it: coarse,

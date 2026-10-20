@@ -85,3 +85,44 @@ func TestAttachingWithNothingStagedIsQuiet(t *testing.T) {
 		t.Errorf("nothing was made this turn, so there is nothing to warn about:\n%s", out)
 	}
 }
+
+// A file of any kind handed back under a taken name arrives as name-2: the
+// older file under the original name is refused this turn, pointing at the
+// copy, and nothing is queued to send. The copy attaches, a name with no such
+// copy still attaches with the warning, and so does the older file on a turn
+// that made no copy of it.
+func TestAnOlderFileWithARenamedCopyThisTurnIsRefused(t *testing.T) {
+	dir := t.TempDir()
+	for _, n := range []string{"generated_music.mp3", "generated_music-2.mp3", "report.pdf", "report-3.pdf", "notes.txt", "notes-final.txt"} {
+		writeWorkspaceFile(t, dir, n, time.Hour)
+	}
+	sess := &ToolSession{Username: "alice", WorkspaceDir: dir}
+	sess.AddStagedFiles([]string{"generated_music-2.mp3", "report-3.pdf", "notes-final.txt"})
+
+	for old, copy := range map[string]string{"generated_music.mp3": "generated_music-2.mp3", "report.pdf": "report-3.pdf"} {
+		_, err := AttachWorkspaceFile(sess, old, "", false)
+		if err == nil || !strings.Contains(err.Error(), "not attached") || !strings.Contains(err.Error(), copy) {
+			t.Errorf("%s with %s made this turn: err %v", old, copy, err)
+		}
+	}
+	if len(sess.Videos)+len(sess.Files)+len(sess.Images) != 0 {
+		t.Fatal("a refused file was queued to send")
+	}
+	if _, err := AttachWorkspaceFile(sess, "generated_music-2.mp3", "", false); err != nil {
+		t.Errorf("the copy itself: %v", err)
+	}
+	// "-final" is not a free-name number: only the warning.
+	if out, err := AttachWorkspaceFile(sess, "notes.txt", "", false); err != nil || !strings.Contains(out, "NOT one your tools produced") {
+		t.Errorf("notes.txt: %q %v", out, err)
+	}
+	// A turn that made both names itself sends either.
+	both := &ToolSession{Username: "alice", WorkspaceDir: dir}
+	both.AddStagedFiles([]string{"generated_music.mp3", "generated_music-2.mp3"})
+	if _, err := AttachWorkspaceFile(both, "generated_music.mp3", "", false); err != nil {
+		t.Errorf("a file this turn made itself was refused: %v", err)
+	}
+	later := &ToolSession{Username: "alice", WorkspaceDir: dir}
+	if _, err := AttachWorkspaceFile(later, "generated_music.mp3", "", false); err != nil {
+		t.Errorf("on a turn that made no copy, the older file is refused: %v", err)
+	}
+}

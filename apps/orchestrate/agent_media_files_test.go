@@ -38,7 +38,11 @@ func TestFilesARunCreatedComeBackToTheAgentThatRanIt(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(mine, "gone.png")); err == nil {
 		t.Error("a file the run removed was conjured")
 	}
-	for _, want := range []string{"Music created", "song.mp3", "notes-2.txt", "attach any you mean to send"} {
+	// The renamed copy is named as the new one, and the caller's own file
+	// under the old name as older: the other agent's reply calls it by the
+	// name it saved, and going by that name attaches the wrong file.
+	for _, want := range []string{"Music created", "song.mp3", "notes-2.txt", "attach any you mean to send",
+		"notes.txt is notes-2.txt in your folder", "an older one"} {
 		if !strings.Contains(note, want) {
 			t.Errorf("the note lacks %q: %s", want, note)
 		}

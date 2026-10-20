@@ -109,7 +109,7 @@ func handBackFiles(agent string, made []string, to *ToolSession) string {
 		return ""
 	}
 	dir := to.WorkspaceDir
-	var copied, tooBig []string
+	var copied, renamed, tooBig []string
 	var total int64
 	for _, src := range made {
 		if filepath.Dir(src) == filepath.Clean(dir) {
@@ -130,12 +130,23 @@ func handBackFiles(agent string, made []string, to *ToolSession) string {
 		}
 		total += info.Size()
 		copied = append(copied, name)
+		if base := filepath.Base(src); name != base {
+			renamed = append(renamed, fmt.Sprintf("%s is %s in your folder", base, name))
+		}
 	}
 	to.AddStagedFiles(copied)
 	var b strings.Builder
 	if len(copied) > 0 {
 		fmt.Fprintf(&b, "\n\n[%s created %s. Copied into your working folder: attach any you mean to send.]",
 			agent, strings.Join(copied, ", "))
+	}
+	// Said outright: a copy that had to take another name is the new file,
+	// and the agent's own file under the old name is something older. The
+	// other agent's reply names the file as it saved it, so an agent going
+	// by that name attaches the wrong one.
+	if len(renamed) > 0 {
+		fmt.Fprintf(&b, "\n\n[You already had files by those names, so the copies were renamed: %s. Attach the renamed copy: the file under the original name in your folder is an older one.]",
+			strings.Join(renamed, "; "))
 	}
 	if len(tooBig) > 0 {
 		fmt.Fprintf(&b, "\n\n[%s also created %s, too large to copy to you; it stays in that agent's own folder.]",

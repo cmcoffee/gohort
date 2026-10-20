@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 // SetupSection represents a configuration section contributed by an app.
@@ -223,11 +224,11 @@ func GetAgentTools(names ...string) ([]AgentToolDef, error) {
 	return tools, nil
 }
 
-// snapshotWorkspaceFiles returns a set of filenames currently in
-// the session's workspace root. Used by the tool-call wrapper to
-// detect new files written during the dispatch. Best-effort:
-// returns an empty map on any error.
-func snapshotWorkspaceFiles(sess *ToolSession) map[string]bool {
+// snapshotWorkspaceFiles returns the files currently in the session's
+// workspace root, each with its size and modification time. Used by the
+// tool-call wrapper to detect files written during the dispatch, new or
+// rewritten. Best-effort: returns an empty map on any error.
+func snapshotWorkspaceFiles(sess *ToolSession) map[string]workspaceFileStamp {
 	if sess == nil || sess.WorkspaceDir == "" {
 		return nil
 	}
@@ -235,7 +236,7 @@ func snapshotWorkspaceFiles(sess *ToolSession) map[string]bool {
 	if err != nil {
 		return nil
 	}
-	out := make(map[string]bool, len(entries))
+	out := make(map[string]workspaceFileStamp, len(entries))
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
@@ -245,16 +246,30 @@ func snapshotWorkspaceFiles(sess *ToolSession) map[string]bool {
 		if strings.HasPrefix(n, ".") || strings.HasPrefix(n, "_") {
 			continue
 		}
-		out[n] = true
+		var st workspaceFileStamp
+		if info, err := e.Info(); err == nil {
+			st = workspaceFileStamp{size: info.Size(), mod: info.ModTime()}
+		}
+		out[n] = st
 	}
 	return out
 }
 
-// diffWorkspaceFiles returns filenames present in the current
-// workspace that weren't in the `before` snapshot. Used to detect
-// what a tool dispatch wrote, so the framework can tell the LLM
-// what's available to attach.
-func diffWorkspaceFiles(sess *ToolSession, before map[string]bool) []string {
+// workspaceFileStamp is what tells a file a call rewrote from one it left
+// alone: its size and modification time.
+type workspaceFileStamp struct {
+	size int64
+	mod  time.Time
+}
+
+// diffWorkspaceFiles returns the files a tool dispatch wrote: present now and
+// not in the `before` snapshot, or there before and rewritten since. Used to
+// tell the LLM what is available to attach, and as what the run made, which a
+// delegation copies back to the agent that ran it. A tool that saves to the
+// same name every time (generated_music.mp3) rewrote a file that was already
+// there, and a names-only diff saw nothing made: the song never reached the
+// agent that asked for it, which attached its own older file of that name.
+func diffWorkspaceFiles(sess *ToolSession, before map[string]workspaceFileStamp) []string {
 	if sess == nil || sess.WorkspaceDir == "" {
 		return nil
 	}
@@ -262,13 +277,13 @@ func diffWorkspaceFiles(sess *ToolSession, before map[string]bool) []string {
 	if len(after) == 0 {
 		return nil
 	}
-	var added []string
-	for name := range after {
-		if !before[name] {
-			added = append(added, name)
+	var written []string
+	for name, now := range after {
+		if was, ok := before[name]; !ok || was.size != now.size || !was.mod.Equal(now.mod) {
+			written = append(written, name)
 		}
 	}
-	return added
+	return written
 }
 
 // chatToolHandler adapts a plain ChatTool to the handler signature.
