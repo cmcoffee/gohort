@@ -43,8 +43,21 @@ var reapableArtifacts = []struct {
 	Prefix, Ext, Producer string
 }{
 	{"gen-", ".png", "generate_image"},
+	{"generated-", ".png", "image(generate)"},
 	{"edit-", ".png", "image(edit)"},
 	{"video-", ".mp4", "download_video"},
+	// image(find) saves a found picture under the type it turned out to be
+	// (imagefetch's extForMime), so each of those is listed.
+	{"find-", ".jpg", "image(find)"},
+	{"find-", ".png", "image(find)"},
+	{"find-", ".gif", "image(find)"},
+	{"find-", ".webp", "image(find)"},
+	{"find-", ".avif", "image(find)"},
+	{"find-", ".svg", "image(find)"},
+	{"find-", ".bmp", "image(find)"},
+	{"find-", ".heic", "image(find)"},
+	{"find-", ".tiff", "image(find)"},
+	{"find-", ".img", "image(find)"},
 }
 
 // ArtifactReapAge is how long a transient artifact is kept. Long enough that a

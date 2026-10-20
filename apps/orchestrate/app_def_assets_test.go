@@ -23,7 +23,7 @@ func TestAWorkspaceFileBecomesAnAppAsset(t *testing.T) {
 
 	SaveAppSpec(AppSpec{Owner: "u", Slug: "game", Name: "Game"})
 	turn := &chatTurn{user: "u", agent: AgentRecord{ID: "builder"}}
-	dir, _, _ := turn.turnWorkspace()
+	dir, _ := turn.turnWorkspace()
 	if err := os.MkdirAll(filepath.Join(dir, "art"), 0o755); err != nil {
 		t.Fatal(err)
 	}

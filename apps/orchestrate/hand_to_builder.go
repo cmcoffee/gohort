@@ -150,9 +150,11 @@ func (t *chatTurn) collectHandoffFiles(names []string) ([]handoffFile, []string,
 	if len(names) == 0 {
 		return nil, nil, nil
 	}
-	dir, err := EnsureWorkspaceDir(t.user)
-	if err != nil {
-		return nil, nil, fmt.Errorf("workspace unavailable: %w", err)
+	// The folder this turn is working in, where the agent wrote what it is
+	// handing over.
+	dir, _ := t.turnWorkspace()
+	if dir == "" {
+		return nil, nil, fmt.Errorf("workspace unavailable")
 	}
 	var out []handoffFile
 	var warn []string

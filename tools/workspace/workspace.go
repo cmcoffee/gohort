@@ -881,8 +881,7 @@ func AttachWorkspaceFile(sess *ToolSession, relPath, displayName string, cleanup
 	if sess == nil {
 		return "", fmt.Errorf("attach requires a session")
 	}
-	// Ensures the session HAS a workspace (auto-minting one when it doesn't);
-	// the path itself resolves through ResolveWorkspaceRead below.
+	// Ensures the session HAS a workspace (auto-minting one when it doesn't).
 	if _, err := EnsureSessionWorkspace(sess); err != nil {
 		return "", fmt.Errorf("session workspace unavailable: %w", err)
 	}
@@ -904,9 +903,9 @@ func AttachWorkspaceFile(sess *ToolSession, relPath, displayName string, cleanup
 	if data, ok := ResolveKeptImage(sess, relPath); ok && len(data) > 0 {
 		return attachBytes(sess, data, keptDisplayName(relPath, displayName)), nil
 	}
-	// Read path: the agent's own workspace first, then the user's root. A file
-	// a person put there stays deliverable from any of their agents.
-	abs, err := ResolveWorkspaceRead(sess, relPath)
+	// The agent's own workspace, and nowhere else: a file another agent holds
+	// is not this one's to send (core/workspace_agent.go).
+	abs, err := ResolveWorkspacePath(sess.WorkspaceDir, relPath)
 	if err != nil {
 		return "", fmt.Errorf("resolve path: %w", err)
 	}
@@ -1069,7 +1068,7 @@ func handleViewImage(args map[string]any, sess *ToolSession) (string, error) {
 	if rel == "" {
 		return "", fmt.Errorf("path is required")
 	}
-	abs, err := ResolveWorkspaceRead(sess, rel)
+	abs, err := ResolveWorkspacePath(sess.WorkspaceDir, rel)
 	if err != nil {
 		return "", fmt.Errorf("resolve path: %w", err)
 	}

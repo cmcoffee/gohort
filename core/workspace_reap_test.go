@@ -20,27 +20,32 @@ func TestReapTakesOnlyRecognizedArtifacts(t *testing.T) {
 	writeAged(t, filepath.Join(dir, "gen-abc123.png"), 100, old)
 	writeAged(t, filepath.Join(dir, "video-xyz789.mp4"), 200, old)
 	writeAged(t, filepath.Join(dir, "edit-def456.png"), 50, old)
+	writeAged(t, filepath.Join(dir, "generated-0f0d3f15.png"), 60, old)
+	writeAged(t, filepath.Join(dir, "find-dkga6l94gp59.jpg"), 70, old)
+	writeAged(t, filepath.Join(dir, "find-dkgaf00o1rxd.webp"), 70, old)
 	// Not ours: a person's file that happens to start the same way, a script,
 	// and a name whose extension does not match its prefix.
 	writeAged(t, filepath.Join(dir, "video-notes.txt"), 10, old)
 	writeAged(t, filepath.Join(dir, "get_market_data.py"), 10, old)
 	writeAged(t, filepath.Join(dir, "invoice.pdf"), 10, old)
 	writeAged(t, filepath.Join(dir, "gen-.png"), 10, old) // nothing between prefix and ext
+	writeAged(t, filepath.Join(dir, "find-me.txt"), 10, old)
 
 	got := scanReapable(dir, "alice", "", 14*24*time.Hour)
 	names := map[string]bool{}
 	for _, c := range got {
 		names[c.Name] = true
 	}
-	if len(got) != 3 {
+	if len(got) != 6 {
 		t.Fatalf("selected %d file(s): %v", len(got), names)
 	}
-	for _, want := range []string{"gen-abc123.png", "video-xyz789.mp4", "edit-def456.png"} {
+	for _, want := range []string{"gen-abc123.png", "video-xyz789.mp4", "edit-def456.png",
+		"generated-0f0d3f15.png", "find-dkga6l94gp59.jpg", "find-dkgaf00o1rxd.webp"} {
 		if !names[want] {
 			t.Errorf("%q was not selected", want)
 		}
 	}
-	for _, mustKeep := range []string{"video-notes.txt", "get_market_data.py", "invoice.pdf", "gen-.png"} {
+	for _, mustKeep := range []string{"video-notes.txt", "get_market_data.py", "invoice.pdf", "gen-.png", "find-me.txt"} {
 		if names[mustKeep] {
 			t.Errorf("%q was selected for deletion", mustKeep)
 		}

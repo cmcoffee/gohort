@@ -117,8 +117,8 @@ func (t *chatTurn) agentsGroupedToolDef(allowRun bool) AgentToolDef {
 		params["attach"] = ToolParam{
 			Type:  "array",
 			Items: &ToolParam{Type: "string"},
-			Description: "(run, agent) Pictures, audio or video to hand the agent, by your names for them: media#N (something sent to you), an image you kept, or a file in your working folder. They arrive as its own media#1, media#2 and so on. A text or other file needs no attach: name it in the message, the agent shares your working folder. " +
-				"What the agent attaches comes back to you with its answer and goes out with your reply.",
+			Description: "(run, agent) What to hand the agent, by your names for it: media#N (something sent to you), an image you kept, or a file in your working folder. Pictures, audio and video arrive as its own media#1, media#2 and so on. Any other file in your working folder is copied into the agent's, under received/. " +
+				"What the agent attaches comes back to you with its answer and goes out with your reply; files it creates are copied into your folder.",
 		}
 		// Whether the CALLER needs the answer, which is the one thing about a
 		// dispatch only the caller knows.
@@ -1276,28 +1276,9 @@ func (ar *agentsRun) buildSession() {
 	ar.subSess.DirectCredentialRefusal = directCredentialRefusal(ar.target, ar.subSess)
 	ar.subSess.ToolFailureAdvice = toolFailureAdvice(ar.target, false, func() bool { return nonOwnerRequester(t.ctx) })
 
-	// The sub-agent runs WHERE ITS DELEGATOR IS RUNNING, which until now meant
-	// the shared user root — the one directory both could name.
-	//
-	// It has to be somewhere they share, because agents(run) hands the result
-	// back as text and nothing else: a file the sub-agent produced reaches its
-	// parent by path or not at all. The root satisfied that and nothing else.
-	// Every delegated agent wrote into the same place, so one agent's name
-	// collided with another's file, and any agent could list, attach and report
-	// work it had not done — the failure per-agent directories exist to stop.
-	//
-	// The delegator's own directory satisfies it too, and only for the pair
-	// that needs it. A ctx stamped by RunDelegation wins when there is one,
-	// since a chain deeper than one hop should stay in the workspace the chain
-	// started in rather than hop into each new delegate's.
-	if inherited := InheritedWorkspaceDir(t.ctx); inherited != "" {
-		ar.subSess.WorkspaceDir = inherited
-		if root, rerr := EnsureWorkspaceDir(t.user); rerr == nil && root != inherited {
-			ar.subSess.WorkspaceFallback = root
-		}
-	} else {
-		ar.subSess.WorkspaceDir, ar.subSess.WorkspaceID, ar.subSess.WorkspaceFallback = t.turnWorkspace()
-	}
+	// A sub-agent of this family runs where this turn is running; any other
+	// agent in its own family's folder (delegateWorkspace).
+	ar.subSess.WorkspaceDir, ar.subSess.WorkspaceID = t.delegateWorkspace(ar.target)
 	// A run an agent starts for the user is the user's run, so whatever the
 	// sub-run needs to put in front of a person goes to the person watching
 	// THIS turn: status lines, connect prompts, approval cards, and the
@@ -1952,6 +1933,7 @@ func (t *chatTurn) agentsDispatchPolicy(allowRun bool) DetachPolicy {
 			for _, b := range res.Videos {
 				carried.AppendVideo(b)
 			}
+			carried.AddStagedFiles(res.Made)
 			out += handBack(target.Name, carried, d)
 			// Fenced exactly as the inline path fences it. A sub-agent's answer
 			// is outside content whichever way it arrives, and a detached one

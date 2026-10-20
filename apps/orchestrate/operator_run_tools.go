@@ -24,7 +24,7 @@ func delegateToolDef(sess *ToolSession, owner, controllerAgentID string) AgentTo
 				"agent": {Type: "string", Description: "Name or id of the existing agent to delegate to."},
 				"brief": {Type: "string", Description: "What the agent should do."},
 				"attach": {Type: "array", Items: &ToolParam{Type: "string"},
-					Description: "Pictures, audio or video to hand the agent, by your names for them: media#N (something sent to you), an image you kept, or a file in your working folder. They arrive as its own media#1, media#2 and so on. A text or other file needs no attach: name it in the brief, the agent shares your working folder. What the agent attaches comes back to you with its result."},
+					Description: "What to hand the agent, by your names for it: media#N (something sent to you), an image you kept, or a file in your working folder. Pictures, audio and video arrive as its own media#1, media#2 and so on; any other file is copied into its working folder, under received/. What the agent attaches comes back to you with its result; files it creates are copied into your folder."},
 			},
 			Required: []string{"agent", "brief"},
 		},

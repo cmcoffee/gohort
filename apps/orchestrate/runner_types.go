@@ -439,13 +439,13 @@ type chatTurn struct {
 	// activeWorkspaceID carries the session's active managed-workspace ID
 	// ACROSS the per-step / inline sessions of a single turn. Each call to
 	// newToolSession() mints a fresh ToolSession whose WorkspaceDir defaults
-	// to the per-user root; without this, a workspace(create) isolation
+	// to the agent family's folder; without this, a workspace(create) isolation
 	// switch made in one authoring step is lost in the next step's fresh
 	// session — a script written into the isolated workspace then can't be
 	// found when a later step tries to run it (the dropped-file symptom
 	// Builder hit). newToolSession restores this; the post-call capture in
 	// runPlan / runWorkerStep writes back any switch the step performed.
-	// Empty = no managed workspace active yet → per-user root (the default).
+	// Empty = no managed workspace active yet → the agent family's folder.
 	activeWorkspaceID string
 
 	// stagedFiles are the workspace files THIS turn's tools created, carried

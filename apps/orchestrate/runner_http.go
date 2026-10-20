@@ -442,21 +442,18 @@ func (sr *sendRun) attachmentPreamble() {
 	// to <workspace>/.attachments/<sanitized-name>.txt and inject a
 	// stub; small ones inline as before via FormatAttachmentPreamble.
 	//
-	// Workspace dir: per-user root (same default the agent loop falls
-	// back to in newToolSession). The agent loop's later ToolSession
-	// resolves to the same directory unless a workspace(create/use)
-	// switched to a managed one mid-turn — which doesn't happen before
-	// the first user message anyway. So a spilled attachment is always
-	// readable via workspace(action="head"/"grep"/...) at the path the
-	// stub prints.
+	// Workspace dir: the agent's own folder, where the agent loop's later
+	// ToolSession starts (turnWorkspace). A turn moves to a managed workspace
+	// only by workspace(create/use) during the turn, after this. So a spilled
+	// attachment is always readable via workspace(action="head"/"grep"/...) at
+	// the path the stub prints. It went to the user root once, which every
+	// agent could read; an upload is the conversation's, not every agent's.
 	if len(sr.extractedAttachments) > 0 {
 		attachSess := &ToolSession{
 			Username:      sr.user,
 			ChatSessionID: sr.sess.ID,
 		}
-		if ws, err := EnsureWorkspaceDir(sr.user); err == nil {
-			attachSess.WorkspaceDir = ws
-		}
+		attachSess.WorkspaceDir = agentWorkspace(sr.udb, sr.user, sr.agent)
 		var preamble strings.Builder
 		for _, a := range sr.extractedAttachments {
 			if a.failNote != "" {

@@ -134,6 +134,10 @@ func (T *OrchestrateApp) runApprovedDelegation(a Authorization, target string) {
 	if a.FromPrivate && out != "" {
 		out += "\n(It ran Private, with its network tools removed, because the conversation that asked is Private.)"
 	}
+	// What it created goes to the folder of the agent that asked, where the
+	// turn that delivers this runs (agent_media.go).
+	home := &ToolSession{WorkspaceDir: familyWorkspace(UserDB(T.DB, a.Owner), a.Owner, a.FromAgent)}
+	out += handBackFiles(T.delegationTargetName(a.Owner, target), madeFiles(returned), home)
 	label := fmt.Sprintf("the delegation to %s you queued for the user's approval, which they approved (%s)",
 		T.delegationTargetName(a.Owner, target), truncateObs(a.Brief, 160))
 	T.deliverTaskResult(taskOrigin{

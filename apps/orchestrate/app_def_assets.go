@@ -33,7 +33,7 @@ func (t *chatTurn) appDefAddAsset(args map[string]any) (string, error) {
 	if path == "" {
 		return "", fmt.Errorf("path is required: the workspace file to add, e.g. \"art/hero.png\" (or prompt, to have the image generator draw it)")
 	}
-	dir, _, _ := t.turnWorkspace()
+	dir, _ := t.turnWorkspace()
 	full, err := ResolveWorkspacePath(dir, path)
 	if err != nil {
 		return "", fmt.Errorf("path: %w", err)

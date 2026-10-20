@@ -42,11 +42,6 @@ type ToolSession struct {
 	DB                Database           // optional DB handle for tools that need persistence (e.g. create_temp_tool with persist=true)
 	WorkspaceDir      string             // absolute path to the sandbox dir for local-exec / file-I/O tools; empty disables sandboxed tools entirely
 	WorkspaceID       string             // ID of the managed workspace currently active; "" when WorkspaceDir is the app's default user workspace, set by workspace(action=create|use)
-	// WorkspaceFallback is a second root READS may fall back to when a path
-	// isn't in WorkspaceDir — the user's own root, when the turn is running in
-	// a per-agent directory. Writes never use it: an agent writes into its own
-	// workspace or the separation means nothing. Empty = no fallback.
-	WorkspaceFallback string
 
 	// CallTool, when set, is what gohort.call_tool reaches: one of the
 	// session user's tools, run for a script that declared "tool:<name>".
@@ -720,7 +715,7 @@ func (s *ToolSession) ContextWithNetworkConnector(ctx context.Context) context.C
 	// delegated run has to inherit, and this is the one place that knows the
 	// CURRENT one — a turn that called workspace(create) mid-flight has
 	// already moved, and a dir captured when the turn started would be stale.
-	ctx = WithWorkspaceDir(ctx, s.WorkspaceDir)
+	ctx = WithWorkspaceDir(ctx, s.WorkspaceDir, s.AgentID)
 	if s.Network == nil {
 		return ctx
 	}

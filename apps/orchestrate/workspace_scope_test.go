@@ -1,8 +1,14 @@
 package orchestrate
 
+// Each agent family works in a folder of its own and reads nothing outside it:
+// a top-level agent's folder, which its sub-agents share. Delegation hands the
+// delegator's folder on within a family and nowhere else.
+
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -23,105 +29,111 @@ func TestWakeFindsWhatTheAgentJustWrote(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(agentDir, name), []byte("mp4"), 0600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-
-	dir, fallback := agentTurnWorkspace(owner, agentID)
-	sess := &ToolSession{Username: owner, WorkspaceDir: dir, WorkspaceFallback: fallback}
-	abs, err := ResolveWorkspaceRead(sess, name)
-	if err != nil {
-		t.Fatalf("resolve: %v", err)
-	}
-	if _, err := os.Stat(abs); err != nil {
-		t.Fatalf("wake could not reach the agent's own artifact at %s: %v", abs, err)
+	dir := agentWorkspace(nil, owner, AgentRecord{ID: agentID})
+	if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+		t.Fatalf("wake could not reach the agent's own artifact in %s: %v", dir, err)
 	}
 }
 
-// The root stays readable from inside an agent's directory, so a file a person
-// dropped in their own workspace is still reachable from a fire.
-func TestFireStillReadsTheUserRoot(t *testing.T) {
-	SetWorkspacesDir(t.TempDir())
-	const owner, agentID = "owner@example.test", "b625cc9f"
-
-	root, err := EnsureWorkspaceDir(owner)
-	if err != nil {
-		t.Fatalf("root: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "notes.txt"), []byte("hi"), 0600); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-
-	dir, fallback := agentTurnWorkspace(owner, agentID)
-	if dir == root {
-		t.Fatalf("fire ran at the user root, not the agent's own directory")
-	}
-	if fallback != root {
-		t.Fatalf("read fallback = %q, want the user root %q", fallback, root)
-	}
-	sess := &ToolSession{Username: owner, WorkspaceDir: dir, WorkspaceFallback: fallback}
-	abs, err := ResolveWorkspaceRead(sess, "notes.txt")
-	if err != nil {
-		t.Fatalf("resolve: %v", err)
-	}
-	if _, err := os.Stat(abs); err != nil {
-		t.Fatalf("user root unreachable from the agent dir: %v", err)
-	}
-}
-
-// No agent id (a CLI turn, a bare tool call) keeps today's behavior: the root,
-// and no fallback to itself.
+// No agent id (a CLI turn, a bare tool call) keeps the user's root.
 func TestNoAgentKeepsTheRoot(t *testing.T) {
 	SetWorkspacesDir(t.TempDir())
 	root, err := EnsureWorkspaceDir("owner@example.test")
 	if err != nil {
 		t.Fatalf("root: %v", err)
 	}
-	dir, fallback := agentTurnWorkspace("owner@example.test", "")
-	if dir != root || fallback != "" {
-		t.Fatalf("no-agent turn: dir=%q fallback=%q, want %q and empty", dir, fallback, root)
+	if dir := agentWorkspace(nil, "owner@example.test", AgentRecord{}); dir != root {
+		t.Fatalf("no-agent turn: dir=%q, want %q", dir, root)
 	}
 }
 
-// A delegated sub-agent runs where its delegator runs. agents(run) returns
-// TEXT — no attachments — so a file the sub-agent made reaches its parent by
-// path or not at all, and the two have to share a directory.
-//
-// The shared user root was the directory they shared, which is why it worked
-// and why it was wrong: every delegated agent wrote into one place. The
-// delegator's OWN directory shares it with the one agent that needs it.
-func TestDelegateRunsWhereItsDelegatorRuns(t *testing.T) {
+func TestAgentFamiliesWorkInFoldersOfTheirOwn(t *testing.T) {
+	_, udb := familyFixture(t)
 	SetWorkspacesDir(t.TempDir())
-	const owner, parentID = "owner@example.test", "parent-agent"
-
-	parent := &chatTurn{user: owner, agent: AgentRecord{ID: parentID}}
-	dir, _, fallback := parent.turnWorkspace()
-
-	root, err := EnsureWorkspaceDir(owner)
-	if err != nil {
-		t.Fatalf("root: %v", err)
+	if _, err := saveAgent(udb, AgentRecord{ID: "a-other", Name: "Other", Owner: "alice", OrchestratorPrompt: "p"}); err != nil {
+		t.Fatal(err)
 	}
-	if dir == root {
-		t.Fatal("the delegator itself is running at the shared root")
+	load := func(id string) AgentRecord {
+		a, ok := loadAgent(udb, id)
+		if !ok {
+			t.Fatalf("no %s", id)
+		}
+		return a
 	}
-	if fallback != root {
-		t.Fatalf("read fallback = %q, want the user root", fallback)
+	writer, critic, nit, other := load("a-writer"), load("a-critic"), load("a-nit"), load("a-other")
+	turn := func(a AgentRecord, ctx context.Context) *chatTurn {
+		return &chatTurn{user: "alice", udb: udb, agent: a, ctx: ctx}
 	}
-
-	// What the sub-agent writes, the parent finds by name.
-	if err := os.WriteFile(filepath.Join(dir, "report.md"), []byte("findings"), 0600); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	parentSess := &ToolSession{Username: owner, WorkspaceDir: dir, WorkspaceFallback: fallback}
-	abs, err := ResolveWorkspaceRead(parentSess, "report.md")
-	if err != nil {
-		t.Fatalf("resolve: %v", err)
-	}
-	if _, err := os.Stat(abs); err != nil {
-		t.Fatalf("parent could not read what its delegate wrote: %v", err)
+	home, _ := turn(writer, nil).turnWorkspace()
+	root, _ := EnsureWorkspaceDir("alice")
+	if home == "" || home == root {
+		t.Fatalf("the writer works in %q, want a folder of its own", home)
 	}
 
-	// And another agent's directory is not it.
-	other := &chatTurn{user: owner, agent: AgentRecord{ID: "other-agent"}}
-	if od, _, _ := other.turnWorkspace(); od == dir {
-		t.Fatal("two agents resolved to the same directory")
+	// Sub-agents, at any depth, work in their top-level parent's folder.
+	for _, a := range []AgentRecord{critic, nit} {
+		if got, _ := turn(a, nil).turnWorkspace(); got != home {
+			t.Errorf("%s works in %q, want its top-level parent's %q", a.ID, got, home)
+		}
+	}
+	// Another top-level agent does not.
+	away, _ := turn(other, nil).turnWorkspace()
+	if away == home || away == root {
+		t.Fatalf("another agent works in %q", away)
+	}
+
+	// A wake or a machine run knows its agent by id: the same folders.
+	if got := familyWorkspace(udb, "alice", "a-nit"); got != home {
+		t.Errorf("a sub-agent's wake works in %q, want %q", got, home)
+	}
+	if got := familyWorkspace(udb, "alice", ""); got != root {
+		t.Errorf("a run with no agent works in %q, want the user's root %q", got, root)
+	}
+
+	// Delegating inline: a sub-agent works where the delegator is working,
+	// even a project workspace; another family in its own folder.
+	project := filepath.Join(t.TempDir(), "project")
+	working := turn(writer, WithWorkspaceDir(context.Background(), project, "a-writer"))
+	if got, _ := working.delegateWorkspace(critic); got != project {
+		t.Errorf("a sub-agent sent work runs in %q, want where its parent is working %q", got, project)
+	}
+	if got, _ := working.delegateWorkspace(other); got != away {
+		t.Errorf("another family sent work runs in %q, want its own %q", got, away)
+	}
+	// A folder handed down by another family is not adopted.
+	foreign := turn(writer, WithWorkspaceDir(context.Background(), project, "a-other"))
+	if got, _ := foreign.delegateWorkspace(critic); got != home {
+		t.Errorf("a sub-agent adopted another family's folder: %q", got)
+	}
+
+	// The same rule on the dispatch paths.
+	ctx := WithWorkspaceDir(context.Background(), project, "a-critic")
+	if got := delegatedWorkspace(ctx, udb, "alice", nit); got != project {
+		t.Errorf("dispatched within the family: %q, want %q", got, project)
+	}
+	if got := delegatedWorkspace(ctx, udb, "alice", other); got != away {
+		t.Errorf("dispatched to another family: %q, want %q", got, away)
+	}
+}
+
+// A large upload is written where the agent's turn will read it: its own
+// folder. It went to the user root once, where every agent could read it.
+func TestALargeUploadLandsInTheAgentsFolder(t *testing.T) {
+	_, udb := familyFixture(t)
+	SetWorkspacesDir(t.TempDir())
+	writer, _ := loadAgent(udb, "a-writer")
+	sr := &sendRun{udb: udb, user: "alice", agent: writer, sess: ChatSession{ID: "s1"},
+		req: sendRequest{Message: "read this"},
+		extractedAttachments: []extractedAttachment{{name: "big.txt", mime: "text/plain",
+			text: strings.Repeat("a line of the upload\n", attachmentSpillThresholdBytes()/10+10)}}}
+	sr.attachmentPreamble()
+	home := agentWorkspace(udb, "alice", writer)
+	if _, err := os.Stat(filepath.Join(home, attachmentSpillDirName)); err != nil {
+		t.Errorf("the upload is not in the agent's folder: %v\n%s", err, sr.req.Message)
+	}
+	root, _ := EnsureWorkspaceDir("alice")
+	if _, err := os.Stat(filepath.Join(root, attachmentSpillDirName)); err == nil {
+		t.Error("the upload was written to the user's root")
 	}
 }
 
@@ -133,7 +145,7 @@ func TestATurnWithNoManagedWorkspaceReportsNone(t *testing.T) {
 	const owner = "owner@example.test"
 
 	plain := &chatTurn{user: owner, agent: AgentRecord{ID: "parent-agent"}}
-	agentDir, wsID, _ := plain.turnWorkspace()
+	agentDir, wsID := plain.turnWorkspace()
 	if wsID != "" {
 		t.Fatalf("a turn with no managed workspace reported one: %q", wsID)
 	}

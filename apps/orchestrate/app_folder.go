@@ -84,7 +84,7 @@ func (t *chatTurn) appFolderDir(args map[string]any) (abs, rel string, err error
 			return "", "", errors.New("name the folder (dir, e.g. \"weather.app\") or the app (id)")
 		}
 	}
-	ws, _, _ := t.turnWorkspace()
+	ws, _ := t.turnWorkspace()
 	abs, err = ResolveWorkspacePath(ws, rel)
 	if err == nil && t.session != nil {
 		t.session.AppFolder = rel
@@ -625,7 +625,7 @@ func (t *chatTurn) saveAppScreenshot(slug string, shot []byte) string {
 	if len(shot) == 0 {
 		return ""
 	}
-	ws, _, _ := t.turnWorkspace()
+	ws, _ := t.turnWorkspace()
 	if ws == "" {
 		return ""
 	}
@@ -696,7 +696,7 @@ func (t *chatTurn) appFolderOwnsEdit(args map[string]any) error {
 	if !ok {
 		return nil
 	}
-	ws, _, _ := t.turnWorkspace()
+	ws, _ := t.turnWorkspace()
 	if ws == "" {
 		return nil
 	}

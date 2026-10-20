@@ -476,7 +476,7 @@ func registerOperatorWake(app *OrchestrateApp) {
 		// no-sandbox error rather than a silent one.
 		// The agent's OWN directory, matching where its turns run — a script
 		// this tool writes has to be the one a later turn reads.
-		sess.WorkspaceDir, sess.WorkspaceFallback = agentTurnWorkspace(owner, agentID)
+		sess.WorkspaceDir = familyWorkspace(UserDB(app.DB, owner), owner, agentID)
 		// (1) operator-management tools (read_phantom_chat, list_phantom_chats…).
 		for _, td := range operatorManagementTools(sess, defaultConsoleAgent) {
 			if td.Tool.Name == toolName {

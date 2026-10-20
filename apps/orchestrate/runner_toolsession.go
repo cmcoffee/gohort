@@ -81,9 +81,9 @@ func init() {
 // captureActiveWorkspace records a managed-workspace switch a session
 // performed (via workspace create/use, which set sess.WorkspaceID) so
 // the next newToolSession() this turn restores the same workspace.
-// No-op when the session stayed on the per-user root (WorkspaceID
+// No-op when the session stayed in its agent's own folder (WorkspaceID
 // empty) — that case keeps activeWorkspaceID empty so we don't pin a
-// transient root path. Safe to call via defer on any session.
+// transient path. Safe to call via defer on any session.
 func (t *chatTurn) captureActiveWorkspace(sess *ToolSession) {
 	if sess != nil && sess.WorkspaceID != "" {
 		t.activeWorkspaceID = sess.WorkspaceID
@@ -519,12 +519,11 @@ func (t *chatTurn) newToolSession() *ToolSession {
 	// has no watcher, so send_status falls through to its built-in no-op
 	// guidance there instead of emitting into a dead writer.
 	t.wireLiveCallbacks(sess)
-	// Default workspace = per-user root. Tools that author scripts
-	// via script_body ship them here at registration; dispatch finds
-	// the same path. Tools that want explicit per-conversation
-	// isolation call workspace(create) which switches sess.WorkspaceDir
-	// to a managed workspace; otherwise everything operates at the
-	// user root.
+	// Default workspace = the agent family's folder (turnWorkspace), and
+	// nothing outside it. A tool's script_body lives in its record and is
+	// written into whichever folder runs it. Tools that want explicit
+	// per-conversation isolation call workspace(create), which switches
+	// sess.WorkspaceDir to a managed workspace.
 	//
 	// History note: this was briefly auto-minting a managed workspace
 	// per session. That broke existing persistent_temp_tools whose
@@ -535,9 +534,9 @@ func (t *chatTurn) newToolSession() *ToolSession {
 	// If a PRIOR step this turn switched to a managed workspace (via
 	// workspace create/use), restore it so multi-step authoring shares
 	// one workspace: a script written in step N is visible to a run in
-	// step N+1. Falls through to the per-user root if the managed
+	// step N+1. Falls through to the agent family's folder if the managed
 	// workspace is gone (deleted / not ours).
-	sess.WorkspaceDir, sess.WorkspaceID, sess.WorkspaceFallback = t.turnWorkspace()
+	sess.WorkspaceDir, sess.WorkspaceID = t.turnWorkspace()
 	if sess.DB == nil || sess.Username == "" {
 		return sess
 	}

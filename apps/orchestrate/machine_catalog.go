@@ -49,9 +49,9 @@ func (p machineRunPool) names() map[string]bool {
 // a schedule or a pipeline stage. udb is the user's own store.
 func machineRunCatalog(udb Database, user, agentID string, def MachineDef) machineRunPool {
 	sess := &ToolSession{Username: user, DB: AuthDB(), AgentID: agentID}
-	if ws, err := EnsureWorkspaceDir(user); err == nil {
-		sess.WorkspaceDir = ws
-	}
+	// The agent's family folder when an agent is behind the run, where its
+	// turns read what the run made; the user's own root for a run with none.
+	sess.WorkspaceDir = familyWorkspace(udb, user, agentID)
 	pool := machineRunPool{Withheld: map[string]string{}}
 	builtins, err := GetAgentToolsWithSession(sess, availableWorkerToolNames()...)
 	if err != nil {

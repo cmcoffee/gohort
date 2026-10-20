@@ -156,3 +156,20 @@ func TestHandToBuilderHiddenWithoutDispatchRights(t *testing.T) {
 		t.Error("an agent granted Builder dispatch should get the tool")
 	}
 }
+
+// The files handed over are read from the folder the agent is working in,
+// where it wrote them, not from the user's root.
+func TestHandoffReadsTheAgentsOwnFolder(t *testing.T) {
+	user, root := withWorkspace(t)
+	turn := &chatTurn{user: user, agent: AgentRecord{ID: "wren"}}
+	dir, _ := turn.turnWorkspace()
+	write(t, dir, "made.py", "print('mine')")
+	write(t, root, "kept.py", "print('elsewhere')")
+	files, warn, err := turn.collectHandoffFiles([]string{"made.py", "kept.py"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0].name != "made.py" || len(warn) != 1 || !strings.Contains(warn[0], "kept.py") {
+		t.Errorf("files %+v, warnings %v: want the agent's own file and the root's reported missing", files, warn)
+	}
+}

@@ -53,7 +53,7 @@ func (t *chatTurn) appDefPack(args map[string]any) (string, error) {
 	if out == "" {
 		out = spec.Slug + appBundleExt
 	}
-	ws, _, _ := t.turnWorkspace()
+	ws, _ := t.turnWorkspace()
 	p, err := ResolveWorkspacePath(ws, out)
 	if err != nil {
 		return "", err
@@ -88,7 +88,7 @@ func (t *chatTurn) appDefUnpack(args map[string]any) (string, error) {
 	if file == "" {
 		return "", errors.New("file is required: the bundle in your workspace, e.g. \"voidrunner.gohortapp\"")
 	}
-	ws, _, _ := t.turnWorkspace()
+	ws, _ := t.turnWorkspace()
 	p, err := ResolveWorkspacePath(ws, file)
 	if err != nil {
 		return "", err

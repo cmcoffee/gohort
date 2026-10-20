@@ -657,6 +657,7 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 	// What it attached goes back to whoever is collecting it (withMediaReturn):
 	// a delegation's result had nowhere to carry a picture or a song.
 	sd.subSess.HandOverUnflushed(mediaReturnFrom(sd.ctx))
+	returnMadeFiles(sd.subSess, mediaReturnFrom(sd.ctx))
 	if !sd.report() {
 		return sd.ret, sd.retErr
 	}
@@ -819,20 +820,13 @@ func (sd *syncDispatch) buildSession() {
 		DeniedCredentials: credentialDenySet(sd.target, sd.runtimeUser),
 	}
 	sd.subSess.DirectCredentialRefusal = directCredentialRefusal(sd.target, sd.subSess)
-	// What the agent that delegated this handed over (agent_media.go).
-	sd.ctx = takeHandedMedia(sd.ctx, sd.subSess)
 	sd.subSess.ToolFailureAdvice = toolFailureAdvice(sd.target, false, func() bool { return nonOwnerRequester(sd.ctx) })
-	// Inherit the delegator's workspace when there is one — the sub-agent is
-	// producing something its parent will read — and otherwise run in this
-	// agent's own directory rather than the shared user root.
-	if inherited := InheritedWorkspaceDir(sd.ctx); inherited != "" {
-		sd.subSess.WorkspaceDir = inherited
-	} else if ws, werr := EnsureAgentWorkspaceDir(sd.runtimeUser, sd.subSess.AgentID); werr == nil {
-		sd.subSess.WorkspaceDir = ws
-	}
-	if root, rerr := EnsureWorkspaceDir(sd.runtimeUser); rerr == nil && root != sd.subSess.WorkspaceDir {
-		sd.subSess.WorkspaceFallback = root
-	}
+	// The delegator's workspace when it is of this agent's family (a sub-agent
+	// producing something its parent will read), otherwise its own family's.
+	sd.subSess.WorkspaceDir = delegatedWorkspace(sd.ctx, sd.ownerDB, sd.runtimeUser, sd.target)
+	// What the agent that delegated this handed over (agent_media.go), once
+	// the folder a handed file is copied into is known.
+	sd.ctx = takeHandedMedia(sd.ctx, sd.subSess)
 	// A Builder run dispatched ON SOMEONE'S BEHALF — the async twin of a live
 	// Fleet dispatch — must stamp its creations OwnedBy the requester, or an
 	// approved build_agent request would produce a loose top-level agent instead
@@ -1503,6 +1497,9 @@ type AgentSyncResult struct {
 	// they ride out as videos, not mislabeled images — restoring the outbound
 	// video channel phantom had before the bridges migration dropped it.
 	Videos []string
+	// Made is the files the turn's tools created, by absolute path, so the
+	// agent that ran it can be handed them (agent_media.go, handBackFiles).
+	Made []string
 	// HitRoundCap reports that the loop stopped because it exhausted its round
 	// budget (not a natural finish). A caller driving a multi-pass loop (e.g.
 	// servitor's investigator continuing while plan steps remain) re-runs with the
@@ -1780,7 +1777,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	cr.shapeReply()
 	cr.saveExchange()
 	cr.collectMedia()
-	return AgentSyncResult{Text: cr.cleanReply, Images: cr.imgs, Videos: cr.vids, HitRoundCap: cr.resp.HitRoundCap, PhantomDelivery: cr.phantomDelivery, ToolCalls: cr.turnToolCalls, Silenced: cr.subSess != nil && cr.subSess.Silenced}, nil
+	return AgentSyncResult{Text: cr.cleanReply, Images: cr.imgs, Videos: cr.vids, Made: madeFiles(cr.subSess), HitRoundCap: cr.resp.HitRoundCap, PhantomDelivery: cr.phantomDelivery, ToolCalls: cr.turnToolCalls, Silenced: cr.subSess != nil && cr.subSess.Silenced}, nil
 }
 
 // continuingRun is one turn of an agent on a thread it keeps, from the
@@ -1964,17 +1961,9 @@ func (cr *continuingRun) buildSession() {
 	cr.subSess.ApproveChange = changeApprover(cr.subSess, cr.runtimeUser, cr.target.ID, cr.target.Name, nil)
 	cr.subSess.DirectCredentialRefusal = directCredentialRefusal(cr.target, cr.subSess)
 	cr.subSess.ToolFailureAdvice = toolFailureAdvice(cr.target, false, func() bool { return nonOwnerRequester(cr.ctx) })
-	// Inherit the delegator's workspace when there is one — the sub-agent is
-	// producing something its parent will read — and otherwise run in this
-	// agent's own directory rather than the shared user root.
-	if inherited := InheritedWorkspaceDir(cr.ctx); inherited != "" {
-		cr.subSess.WorkspaceDir = inherited
-	} else if ws, werr := EnsureAgentWorkspaceDir(cr.runtimeUser, cr.subSess.AgentID); werr == nil {
-		cr.subSess.WorkspaceDir = ws
-	}
-	if root, rerr := EnsureWorkspaceDir(cr.runtimeUser); rerr == nil && root != cr.subSess.WorkspaceDir {
-		cr.subSess.WorkspaceFallback = root
-	}
+	// The delegator's workspace when it is of this agent's family (a sub-agent
+	// producing something its parent will read), otherwise its own family's.
+	cr.subSess.WorkspaceDir = delegatedWorkspace(cr.ctx, cr.ownerDB, cr.runtimeUser, cr.target)
 	// Mid-turn status (channel path): the agent's send_status / progress
 	// pings land here so the transport can deliver them before the final
 	// reply. nil for the legacy text-only callers — graceful no-op.

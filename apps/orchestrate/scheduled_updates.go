@@ -774,7 +774,7 @@ func (fr *fireRun) buildSession() {
 
 	// The fire runs in ITS AGENT's directory, the same place the agent's own
 	// turns run, so a wake can see what the agent just made.
-	fr.subSess.WorkspaceDir, fr.subSess.WorkspaceFallback = agentTurnWorkspace(p.Username, fr.agent.ID)
+	fr.subSess.WorkspaceDir = agentWorkspace(fr.udb, p.Username, fr.agent)
 	// A background task's result arrives through this same fire path, and what
 	// it produced is staged against the session rather than described in the
 	// prompt. Fold it in BEFORE the loop: from here the files are ordinary

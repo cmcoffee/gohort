@@ -1,11 +1,10 @@
 package core
 
-// Per-agent workspaces: what each agent may write, what it may still read, and
-// what a delegated run inherits.
+// Per-agent workspaces: where each agent works, and what a delegated run
+// inherits.
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"testing"
 )
@@ -19,9 +18,8 @@ func workspaceRoot(t *testing.T) string {
 	return dir
 }
 
-// The leak this exists to close: agent dirs must be SIBLINGS of the user root,
-// never children. Underneath it, a fallback read of "…/other/notes.txt" would
-// pass the root's containment check and hand one agent another's files.
+// Agent dirs are SIBLINGS of the user root, never children, so no user root
+// contains another family's files.
 func TestAgentWorkspaceIsNotInsideTheUserRoot(t *testing.T) {
 	workspaceRoot(t)
 	root, err := EnsureWorkspaceDir("alice")
@@ -52,78 +50,24 @@ func TestAgentsDirNameIsReserved(t *testing.T) {
 	}
 }
 
-func TestReadFallsBackToTheRootButWritesDoNot(t *testing.T) {
-	workspaceRoot(t)
-	root, _ := EnsureWorkspaceDir("alice")
-	agentDir, _ := EnsureAgentWorkspaceDir("alice", "wren")
-	if err := os.WriteFile(filepath.Join(root, "notes.txt"), []byte("personal"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	sess := &ToolSession{Username: "alice", AgentID: "wren", WorkspaceDir: agentDir, WorkspaceFallback: root}
-
-	// Reachable, because a person put it at their own root.
-	got, err := ResolveWorkspaceRead(sess, "notes.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != filepath.Join(root, "notes.txt") {
-		t.Errorf("read resolved to %q, want the root copy", got)
-	}
-	// A file the agent has its own copy of resolves to ITS copy, not the root's.
-	if err := os.WriteFile(filepath.Join(agentDir, "notes.txt"), []byte("mine"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	got, _ = ResolveWorkspaceRead(sess, "notes.txt")
-	if got != filepath.Join(agentDir, "notes.txt") {
-		t.Errorf("own copy must win; got %q", got)
-	}
-	// A path that exists NOWHERE reports against the agent's own dir, so the
-	// error names where the write would have gone.
-	got, _ = ResolveWorkspaceRead(sess, "missing.txt")
-	if got != filepath.Join(agentDir, "missing.txt") {
-		t.Errorf("unresolved path = %q, want the agent's own dir", got)
-	}
-}
-
-// Traversal must still report as traversal, not as a miss that quietly falls
-// through to the other root.
-func TestReadFallbackDoesNotWeakenContainment(t *testing.T) {
-	workspaceRoot(t)
-	root, _ := EnsureWorkspaceDir("alice")
-	agentDir, _ := EnsureAgentWorkspaceDir("alice", "wren")
-	sess := &ToolSession{WorkspaceDir: agentDir, WorkspaceFallback: root}
-	for _, bad := range []string{"../escape.txt", "/etc/passwd"} {
-		if _, err := ResolveWorkspaceRead(sess, bad); err == nil {
-			t.Errorf("%q was accepted", bad)
-		}
-	}
-}
-
-func TestDelegationCarriesTheWorkspace(t *testing.T) {
-	sess := &ToolSession{WorkspaceDir: "/tmp/parent-ws"}
+// Delegation carries the folder the delegator is working in AND whose it is,
+// so the child can tell whether it is of the same family before adopting it.
+func TestDelegationCarriesTheWorkspaceAndItsAgent(t *testing.T) {
+	sess := &ToolSession{WorkspaceDir: "/tmp/parent-ws", AgentID: "wren"}
 	ctx := sess.ContextWithNetworkConnector(context.Background())
-	if got := InheritedWorkspaceDir(ctx); got != "/tmp/parent-ws" {
-		t.Fatalf("inherited %q, want the parent's workspace — a sub-agent's output must land where its parent will read it", got)
+	if dir, from := InheritedWorkspace(ctx); dir != "/tmp/parent-ws" || from != "wren" {
+		t.Fatalf("inherited %q from %q, want the parent's workspace and the parent", dir, from)
 	}
 	// A run that starts outside any session inherits nothing and mints its own.
-	if got := InheritedWorkspaceDir(context.Background()); got != "" {
-		t.Errorf("bare context carried %q", got)
+	if dir, from := InheritedWorkspace(context.Background()); dir != "" || from != "" {
+		t.Errorf("bare context carried %q from %q", dir, from)
 	}
 }
 
-// A detached run must resolve paths exactly as the turn that spawned it does.
-// Anything the turn could read, the background half has to be able to read too
-// — otherwise the failure only appears in the path nobody exercises by hand.
-func TestDetachedSessionKeepsTheReadFallback(t *testing.T) {
-	parent := &ToolSession{
-		Username: "alice", AgentID: "wren",
-		WorkspaceDir: "/w/.agents/alice/wren", WorkspaceFallback: "/w/alice",
-	}
-	child := parent.ForDetachedTask(context.Background())
-	if child.WorkspaceDir != parent.WorkspaceDir {
+// A detached run works where the turn that spawned it works.
+func TestDetachedSessionKeepsTheWorkspace(t *testing.T) {
+	parent := &ToolSession{Username: "alice", AgentID: "wren", WorkspaceDir: "/w/.agents/alice/wren"}
+	if child := parent.ForDetachedTask(context.Background()); child.WorkspaceDir != parent.WorkspaceDir {
 		t.Errorf("workspace = %q, want the parent's", child.WorkspaceDir)
-	}
-	if child.WorkspaceFallback != parent.WorkspaceFallback {
-		t.Errorf("fallback = %q, want %q — a detached run would not find files at the user root", child.WorkspaceFallback, parent.WorkspaceFallback)
 	}
 }
