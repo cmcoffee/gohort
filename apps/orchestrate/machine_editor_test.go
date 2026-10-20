@@ -298,7 +298,7 @@ func TestEditorCoversEveryMachineField(t *testing.T) {
 	// all, and the ONE field on a machine its owner cannot set — an
 	// administrator approves it, through /publish. A control here would be a
 	// checkbox that either lied or granted what only an admin may grant. Its
-	// surface is the publish section on the page (machinePublishSection).
+	// surface is Everyone in the page's share list (recipeShare).
 	skip := map[string]bool{"id": true, "owner": true, "created": true, "updated": true,
 		"phases": true, "previous": true, "allowed_users": true, "published": true}
 

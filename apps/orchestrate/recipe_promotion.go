@@ -19,6 +19,7 @@ package orchestrate
 // needs permission to stop publishing something they wrote.
 
 import (
+	"net/http"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -149,3 +150,139 @@ func findOwnedMachine(owner, key string) (MachineDef, error) {
 	return MachineDef{}, Error("no machine " + key + " owned by " + owner +
 		" (one renamed after the request was filed no longer answers to the name on it)")
 }
+
+// Everyone is one more choice in a pipeline's or a machine's share list, and
+// the list's door turns it into the publish steps above: an administrator's
+// Everyone publishes at once, anybody else's files the request, and taking it
+// back out unpublishes (owner-direct) or withdraws a request still waiting.
+// The list itself never stores it; Published and the request queue do.
+
+// everyoneStep is what the list's Everyone entry asks for on one save.
+type everyoneStep int
+
+const (
+	everyoneKeep everyoneStep = iota
+	everyonePublish
+	everyoneRequest
+	everyoneUnpublish
+	everyoneWithdraw
+)
+
+// everyoneStepFor decides it from what the list says (want) and where the
+// record stands: published, or waiting on a request.
+func everyoneStepFor(r *http.Request, want, published, pending bool) everyoneStep {
+	switch {
+	case want && !published && requestIsAdminAgent(r):
+		return everyonePublish
+	case want && !published && !pending:
+		return everyoneRequest
+	case !want && published:
+		return everyoneUnpublish
+	case !want && pending:
+		return everyoneWithdraw
+	}
+	return everyoneKeep
+}
+
+// splitEveryone is the list without Everyone, and whether it was in it.
+func splitEveryone(in []string) ([]string, bool) {
+	out := make([]string, 0, len(in))
+	want := false
+	for _, u := range in {
+		if strings.TrimSpace(u) == ShareEveryone {
+			want = true
+			continue
+		}
+		out = append(out, u)
+	}
+	return out, want
+}
+
+// withEveryone is the list as the picker reads it: Everyone first when the
+// record is published or asked to be.
+func withEveryone(list []string, on bool) []string {
+	if !on {
+		return list
+	}
+	return append([]string{ShareEveryone}, list...)
+}
+
+// recipeShare is a pipeline's or machine's share door after the owner check:
+// GET reads the list with Everyone in it, POST applies one. publish, unpublish,
+// load and save are the kind's own.
+type recipeShare struct {
+	kind      string // pipelinePromotionKind or machinePromotionKind
+	owner     string
+	name      string
+	published bool
+	before    []string // the stored list, without Everyone
+	publish   func() error
+	unpublish func() error
+	// save stores names as the list and returns the record to answer with,
+	// re-read after a publish step so it carries what that step changed.
+	save func(names []string) any
+}
+
+func (rs recipeShare) pending() bool { return publishPending(rs.kind, rs.owner, rs.name) }
+
+// publishPending reports whether owner's request to publish name is waiting.
+func publishPending(kind, owner, name string) bool {
+	return AuthDB != nil && PendingPromotion(AuthDB(), owner, kind, name)
+}
+
+// list is what GET answers: {"allowed_users": [...]}.
+func (rs recipeShare) list() map[string]any {
+	return map[string]any{"allowed_users": withEveryone(rs.before, rs.published || rs.pending())}
+}
+
+// apply runs the Everyone step the posted list asks for, then stores the
+// names. Publishing replaces the named list (everybody already includes
+// them), so a publish keeps none.
+func (rs recipeShare) apply(r *http.Request, posted []string) (any, error) {
+	names, want := splitEveryone(posted)
+	switch everyoneStepFor(r, want, rs.published, rs.pending()) {
+	case everyonePublish:
+		if err := rs.publish(); err != nil {
+			return nil, err
+		}
+		names = nil
+	case everyoneRequest:
+		if err := CreatePromotionRequest(AuthDB(), rs.owner, rs.kind, rs.name, ""); err != nil {
+			return nil, err
+		}
+		Log("[orchestrate.publish] user=%q asked to publish %s %q", rs.owner, rs.kind, rs.name)
+	case everyoneUnpublish:
+		if err := rs.unpublish(); err != nil {
+			return nil, err
+		}
+	case everyoneWithdraw:
+		promotion.WithdrawPromotionRequest(AuthDB(), rs.owner, rs.kind, rs.name)
+		Log("[orchestrate.publish] user=%q withdrew the request to publish %s %q", rs.owner, rs.kind, rs.name)
+	}
+	return rs.save(names), nil
+}
+
+// everyoneParam is the share picker's ?everyone=: "on" once it is published,
+// so the choice reads plainly, else "1", worded as the request it files.
+func everyoneParam(published bool) string {
+	if published {
+		return "on"
+	}
+	return "1"
+}
+
+// recipeShareSubtitle says who the list reaches now, and where Everyone stands.
+func recipeShareSubtitle(noun string, published, pending bool) string {
+	switch {
+	case published:
+		return "Published: every user of the deployment can run this " + noun + ". Take Everyone out of the list to make it private again."
+	case pending:
+		return "Everyone is waiting for an administrator to approve it. Until then, the people and teams in the list can run it."
+	}
+	return "Everyone, people, or a team you are on. Empty means private to you."
+}
+
+// recipeEveryoneDetail is the share section's word on Everyone.
+const recipeEveryoneDetail = "Everyone reaches every account in the deployment, so it is requested rather than applied: an administrator approves it from the pending queue. " +
+	"Taking it back out is yours and takes effect at once; anyone who only had it through Everyone loses it, including any schedule they armed against it. " +
+	"Once published, the names you had are dropped, because everybody already includes them."

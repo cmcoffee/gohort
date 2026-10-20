@@ -5,6 +5,9 @@ package orchestrate
 // publishing one is a wider grant on the same record rather than a move.
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -137,5 +140,76 @@ func TestAPublishRequestResolvesByName(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "renamed") {
 		t.Errorf("the refusal does not explain itself: %v", err)
+	}
+}
+
+// Everyone is one more choice in a pipeline's and a machine's share list. From
+// an ordinary owner it files the publish request and reads back as chosen
+// while it waits; taken out, the request is withdrawn; from an administrator
+// it publishes, and taken out it unpublishes and keeps the names left in the
+// list.
+func TestEveryoneInARecipesShareListFilesTheRequest(t *testing.T) {
+	T, udb, _ := newTestOrchestrate(t)
+	prev := PipelineSavedHook
+	PipelineSavedHook = syncPipelineShareIndex
+	t.Cleanup(func() { PipelineSavedHook = prev })
+	prevAdmin := requestIsAdminAgent
+	admin := false
+	requestIsAdminAgent = func(*http.Request) bool { return admin }
+	t.Cleanup(func() { requestIsAdminAgent = prevAdmin })
+
+	pl := SavePipelineDef(udb, PipelineDef{Owner: "alice", Name: "Nightly", Stages: []PipelineStage{{Name: "one"}}})
+	mc := SaveMachineDef(udb, MachineDef{Owner: "alice", Name: "Triage", Phases: []MachinePhase{{Name: "one"}}})
+
+	for _, c := range []struct {
+		kind, base string
+		handle     func(http.ResponseWriter, *http.Request)
+		published  func() bool
+	}{
+		{pipelinePromotionKind, "/api/pipelines/" + pl.ID, T.handlePipelineOne, func() bool {
+			d, _ := LoadPipelineDef(udb, "alice", pl.ID)
+			return d.Published
+		}},
+		{machinePromotionKind, "/api/machines/" + mc.ID, T.handleMachineOne, func() bool {
+			d, _ := LoadMachineDef(udb, "alice", mc.ID)
+			return d.Published
+		}},
+	} {
+		name := map[string]string{pipelinePromotionKind: "Nightly", machinePromotionKind: "Triage"}[c.kind]
+		share := func(method, body string) string {
+			t.Helper()
+			w := httptest.NewRecorder()
+			c.handle(w, asUser(httptest.NewRequest(method, c.base+"/share", strings.NewReader(body)), "alice"))
+			if w.Code != http.StatusOK {
+				t.Fatalf("%s %s share answered %d: %s", c.kind, method, w.Code, w.Body.String())
+			}
+			var got struct {
+				AllowedUsers []string `json:"allowed_users"`
+			}
+			json.Unmarshal(w.Body.Bytes(), &got)
+			return strings.Join(got.AllowedUsers, ",")
+		}
+
+		admin = false
+		if got := share(http.MethodPost, `{"allowed_users":["*","bob"]}`); got != "*,bob" {
+			t.Errorf("%s: an owner's Everyone reads back %q", c.kind, got)
+		}
+		if c.published() || !PendingPromotion(AuthDB(), "alice", c.kind, name) {
+			t.Errorf("%s: Everyone from an owner is a request, not a publish (published %v)", c.kind, c.published())
+		}
+		if got := share(http.MethodGet, ""); got != "*,bob" {
+			t.Errorf("%s: the picker reads %q while the request waits", c.kind, got)
+		}
+		if got := share(http.MethodPost, `{"allowed_users":["bob"]}`); got != "bob" || PendingPromotion(AuthDB(), "alice", c.kind, name) {
+			t.Errorf("%s: taking Everyone out left %q and the request pending=%v", c.kind, got, PendingPromotion(AuthDB(), "alice", c.kind, name))
+		}
+
+		admin = true
+		if got := share(http.MethodPost, `{"allowed_users":["*","bob"]}`); got != "*" || !c.published() {
+			t.Errorf("%s: an administrator's Everyone publishes and drops the names: %q, published %v", c.kind, got, c.published())
+		}
+		if got := share(http.MethodPost, `{"allowed_users":["carol"]}`); got != "carol" || c.published() {
+			t.Errorf("%s: taking Everyone out unpublishes and keeps the names left: %q, published %v", c.kind, got, c.published())
+		}
 	}
 }

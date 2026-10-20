@@ -15,6 +15,7 @@
 package orchestrate
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -125,9 +126,34 @@ func (T *OrchestrateApp) handleUserCandidates(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
+	q := r.URL.Query()
 	w.Header().Set("Content-Type", "application/json")
-	// ?groups=1 from a picker whose kind can go to a group as well.
-	w.Write(ShareCandidatesJSON(user, r.URL.Query().Get("groups") == "1", false))
+	// ?groups=1 from a picker whose kind can go to a group as well, and
+	// ?everyone=1 from one that offers Everyone: worded as the request it is
+	// for anybody but an administrator, and ?everyone=on once it is granted.
+	everyone := q.Get("everyone")
+	out := ShareCandidatesJSON(user, q.Get("groups") == "1", everyone != "")
+	if everyone == "1" && !requestIsAdminAgent(r) {
+		out = relabelEveryone(out, "Everyone (an administrator approves)")
+	}
+	w.Write(out)
+}
+
+// relabelEveryone renames the Everyone choice in a candidate list.
+func relabelEveryone(list []byte, label string) []byte {
+	var cands []map[string]any
+	if json.Unmarshal(list, &cands) != nil {
+		return list
+	}
+	for _, c := range cands {
+		if c["value"] == ShareEveryone {
+			c["label"] = label
+		}
+	}
+	if b, err := json.Marshal(cands); err == nil {
+		return b
+	}
+	return list
 }
 
 // SharedAgentsTable indexes peer shares: recipient -> (owner, agent id).

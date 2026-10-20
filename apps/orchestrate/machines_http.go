@@ -502,11 +502,41 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 		// the whole record back (record mode), and this reads one field out of
 		// it — so a picker save cannot rewrite a step, and the ordinary edit
 		// path cannot rewrite the ACL.
-		if r.Method != http.MethodPost {
+		//
+		// Everyone rides in the same list (recipeShare): the publish steps,
+		// requested rather than applied unless an administrator is asking.
+		if r.Method != http.MethodGet && r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 		if !machineOwnerOnly(w, mine, defOwner, "change who can see") {
+			return
+		}
+		rs := recipeShare{
+			kind: machinePromotionKind, owner: user, name: def.Name,
+			published: def.Published, before: def.AllowedUsers,
+			publish:   func() error { return publishMachineForDeployment(user, def.ID) },
+			unpublish: func() error { return unpublishMachine(user, def.ID) },
+		}
+		rs.save = func(names []string) any {
+			cur, err := findOwnedMachine(user, def.ID)
+			if err != nil {
+				cur = def
+			}
+			before := cur.AllowedUsers
+			cur.Owner = user
+			cur.AllowedUsers = normalizeShareList(names, user)
+			saved := SaveMachineDef(udb, cur)
+			// Anybody dropped from the list loses it now, including any
+			// schedule they had armed against it: a share taken back has to
+			// take back everything it enabled, not just the next page load.
+			breakMachineSchedulesForLostRecipients(saved, before)
+			Log("[orchestrate.machines] user=%q shared machine %q with %d user(s)", user, saved.Name, len(saved.AllowedUsers))
+			saved.AllowedUsers = withEveryone(saved.AllowedUsers, saved.Published || rs.pending())
+			return saved
+		}
+		if r.Method == http.MethodGet {
+			writeJSON(w, rs.list())
 			return
 		}
 		var body struct {
@@ -516,16 +546,12 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
-		before := def.AllowedUsers
-		def.Owner = user
-		def.AllowedUsers = normalizeShareList(body.AllowedUsers, user)
-		saved := SaveMachineDef(udb, def)
-		// Anybody dropped from the list loses it now, including any schedule
-		// they had armed against it — a share taken back has to take back
-		// everything it enabled, not just the next page load.
-		breakMachineSchedulesForLostRecipients(saved, before)
-		Log("[orchestrate.machines] user=%q shared machine %q with %d user(s)", user, saved.Name, len(saved.AllowedUsers))
-		writeJSON(w, saved)
+		out, err := rs.apply(r, body.AllowedUsers)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, out)
 	case "publish":
 		// The third rung: ask an administrator to let EVERY user of the
 		// deployment run this. The narrower grant beside it is the owner's own
