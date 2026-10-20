@@ -302,7 +302,7 @@ func (T *OrchestrateApp) handleChannelClear(w http.ResponseWriter, r *http.Reque
 // ground between doing nothing and Clear Cortex. The fold runs in the background
 // (single-flight per thread), so this returns immediately. POST ?agent=<id>.
 func (T *OrchestrateApp) handleChannelCompact(w http.ResponseWriter, r *http.Request) {
-	_, udb, ok := RequireUser(w, r, T.DB)
+	user, udb, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return
 	}
@@ -328,6 +328,6 @@ func (T *OrchestrateApp) handleChannelCompact(w http.ResponseWriter, r *http.Req
 	}
 	// Trigger=1 forces a fold regardless of how short the unsummarized tail is:
 	// everything older than the KeepRecent verbatim tail folds now.
-	T.maybeFoldOperatorHistory(udb, agent, cortexSessionID(agentID), CompactionConfig{KeepRecent: keepRecent, Trigger: 1})
+	T.maybeFoldOperatorHistory(udb, user, agent, cortexSessionID(agentID), CompactionConfig{KeepRecent: keepRecent, Trigger: 1})
 	w.WriteHeader(http.StatusNoContent)
 }

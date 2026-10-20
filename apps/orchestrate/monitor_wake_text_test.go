@@ -1,6 +1,8 @@
 package orchestrate
 
 import (
+	"os"
+	"strings"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -29,5 +31,21 @@ func TestAMonitorWakeIsRecognisedAsOne(t *testing.T) {
 	}
 	if got := collapseMonitorWakes(msgs, 2); len(got) >= len(msgs) {
 		t.Errorf("a run of six wakes did not fold: %d messages left of %d", len(got), len(msgs))
+	}
+}
+
+// Both pages that show an agent's thread draw report cards, the restricted
+// chat on /agents/ included: without it a wake showed as its whole prompt.
+func TestEveryThreadPageDrawsReportCards(t *testing.T) {
+	if !strings.Contains(ReportCardHead, "uiRegisterMessageReplayHook") || !strings.Contains(ReportCardHead, ".orch-report-card-hdr") {
+		t.Fatal("the shared card is missing its hook or its styles")
+	}
+	if strings.Contains(orchestrateWebAssets, "orch-report-card") {
+		t.Error("the console's assets still carry a second copy of the card")
+	}
+	chat, _ := os.ReadFile("page_chat.go")
+	agents, _ := os.ReadFile("../agents/agents.go")
+	if !strings.Contains(string(chat), "+ ReportCardHead +") || !strings.Contains(string(agents), "orchestrate.ReportCardHead") {
+		t.Error("a thread page does not load the report card")
 	}
 }

@@ -34,7 +34,7 @@ func TestFoldOperatorHistoryCycle(t *testing.T) {
 	agent := AgentRecord{ID: "ag", Owner: "u", ContextDepth: 4}
 	seedFoldSession(t, db, "ag", "s1", 30)
 
-	T.foldOperatorHistory(db, agent, "s1", CompactionConfig{KeepRecent: 4, Trigger: 6})
+	T.foldOperatorHistory(db, "u", agent, "s1", CompactionConfig{KeepRecent: 4, Trigger: 6})
 
 	st := loadCompactState(db, "ag", "s1")
 	if st.SummarizedThrough != 26 || st.FoldSeq != 1 {
@@ -61,7 +61,7 @@ func TestFoldRespectsMemoryToggles(t *testing.T) {
 	agent := AgentRecord{ID: "ag2", Owner: "u", DisableExplicit: true}
 	seedFoldSession(t, db, "ag2", "s1", 30)
 
-	T.foldOperatorHistory(db, agent, "s1", CompactionConfig{KeepRecent: 4, Trigger: 6})
+	T.foldOperatorHistory(db, "u", agent, "s1", CompactionConfig{KeepRecent: 4, Trigger: 6})
 
 	if st := loadCompactState(db, "ag2", "s1"); st.SummarizedThrough == 0 {
 		t.Fatal("memory-off agent should still get its history folded")

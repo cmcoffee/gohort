@@ -20,3 +20,12 @@ import _ "embed"
 
 //go:embed assets/web_assets.html
 var orchestrateWebAssets string
+
+// ReportCardHead draws a message that arrived on its own (a scheduled report,
+// a monitor wake, a channel message) as a titled card. Every page showing an
+// agent's thread loads it: the console here, and the restricted chat on
+// /agents/, which showed a wake's whole prompt as an ordinary bubble without
+// it.
+//
+//go:embed assets/report_cards.html
+var ReportCardHead string

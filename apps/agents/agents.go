@@ -414,7 +414,11 @@ func (T *AgentsApp) handleChatPage(w http.ResponseWriter, r *http.Request, agent
 				Body:     panel,
 			},
 		},
-		ExtraHeadHTML: intakeHead + TranscribeRuntimeFlagScript() + dashboardBarCSS + memoryModalScript + docsModalScript + askOwnerScript + blockedMarkScript,
+		ExtraHeadHTML: intakeHead + TranscribeRuntimeFlagScript() + dashboardBarCSS + memoryModalScript + docsModalScript + askOwnerScript + blockedMarkScript +
+			// A monitor wake, a scheduled report or a channel message drawn as
+			// the console draws it: a titled card, not the wake's prompt in a
+			// bubble from the owner.
+			orchestrate.ReportCardHead,
 	}
 	page.ServeHTTP(w, r)
 }

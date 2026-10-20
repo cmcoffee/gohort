@@ -1644,6 +1644,16 @@ type ChatMessage struct {
 	// stored on the message (reply_flags.go keeps them).
 	Flag   string `json:"flag,omitempty"`
 	FlagID string `json:"flag_id,omitempty"`
+	// FoldBefore marks the first message the agent still sees word for word
+	// after a history fold: the page draws the fold above it, where it is.
+	// Set on the copy a page is served (markFoldPoint), never stored.
+	FoldBefore *foldMark `json:"fold_before,omitempty"`
+}
+
+// foldMark is what the fold marker says: how many earlier messages the agent
+// now works from as a summary.
+type foldMark struct {
+	Summarized int `json:"summarized"`
 }
 
 // A message's Block holds an ask_user_form's questions as []map[string]any,

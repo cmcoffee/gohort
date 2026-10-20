@@ -2325,31 +2325,24 @@
     inputArea.addEventListener('paste', function(ev) {
       var clip = ev.clipboardData || window.clipboardData;
       if (!clip) return;
-      // Pasted image (e.g. a macOS screenshot taken with Ctrl-Cmd-Shift-4,
-      // which copies the grab to the clipboard): attach it the same way
-      // the paperclip does, so the flow is shoot -> paste -> send with no
-      // "get a screenshot" round-trip. Only when attachments are enabled.
-      if (cfg.attachments && clip.items) {
-        var imgItems = Array.prototype.slice.call(clip.items).filter(function(it) {
-          return it.type && it.type.indexOf('image/') === 0;
-        });
-        if (imgItems.length) {
+      // A pasted file attaches the way the paperclip does: a screenshot
+      // copied to the clipboard (shoot -> paste -> send), or a PDF, document
+      // or audio file copied in the Finder. Into THIS panel's queue: the page
+      // hook window.uiAddPendingAttachment is whichever panel was built last,
+      // so a second panel on the page (an assist chat) took the paste.
+      // Finder hands over the file's name as text beside the file, so the
+      // file wins and the name is not pasted.
+      if (cfg.attachments) {
+        var pasted = pastedFiles(clip);
+        if (pasted.length) {
           ev.preventDefault();
-          imgItems.forEach(function(it) {
-            var file = it.getAsFile();
-            if (!file) return;
-            var reader = new FileReader();
-            reader.onload = function() {
-              if (window.uiAddPendingAttachment) {
-                window.uiAddPendingAttachment({
-                  name: 'pasted-image.png',
-                  dataURL: reader.result,
-                  mime: file.type || 'image/png',
-                  kind: 'image',
-                });
-              }
-            };
-            reader.readAsDataURL(file);
+          pasted.forEach(function(file) {
+            if (!attachAccepts(file)) {
+              showToast('Cannot attach ' + (file.name || 'that file') + ': attach an image, PDF, Word or text document' +
+                (window.GOHORT_TRANSCRIBE_ENABLED ? ', or audio.' : '.'));
+              return;
+            }
+            queueAttachment(file);
           });
           return;
         }
@@ -2375,6 +2368,55 @@
       inputArea.focus();
     });
 
+    // queueAttachment reads a file into this panel's pending attachments: the
+    // paperclip and a paste both come here.
+    function queueAttachment(file) {
+      var reader = new FileReader();
+      reader.onload = function() {
+        var mime = file.type || '';
+        pendingAttachments.push({
+          // A screenshot pasted from the clipboard arrives named "image.png"
+          // or not at all.
+          name: file.name || (mime.indexOf('image/') === 0 ? 'pasted-image.png' : 'pasted-file'),
+          dataURL: reader.result,
+          mime: mime,
+          kind: mime.indexOf('image/') === 0 ? 'image' : 'document',
+        });
+        renderAttachments();
+      };
+      reader.readAsDataURL(file);
+    }
+    // pastedFiles is the files a paste carries: the list itself, or the file
+    // items, which is where some browsers put a pasted screenshot.
+    function pastedFiles(clip) {
+      var out = Array.prototype.slice.call(clip.files || []);
+      if (out.length) return out;
+      Array.prototype.forEach.call(clip.items || [], function(it) {
+        if (it.kind !== 'file') return;
+        var f = it.getAsFile();
+        if (f) out.push(f);
+      });
+      return out;
+    }
+    // attachAccepts reports whether the paperclip would take this file: by
+    // its type against the accept list, else by its extension.
+    function attachAccepts(file) {
+      var type = (file.type || '').toLowerCase();
+      var name = (file.name || '').toLowerCase();
+      return attachAccept.split(',').some(function(a) {
+        a = a.trim().toLowerCase();
+        if (!a) return false;
+        if (a.charAt(0) === '.') return name.slice(-a.length) === a;
+        if (a.slice(-2) === '/*') return type.indexOf(a.slice(0, -1)) === 0;
+        return type === a;
+      });
+    }
+
+    // What the paperclip takes, and so what a paste may attach.
+    var attachAccept = 'image/*,.pdf,application/pdf,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.doc,application/msword,.txt,.md,text/*';
+    if (window.GOHORT_TRANSCRIBE_ENABLED) {
+      attachAccept += ',audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac,.webm,.opus';
+    }
     var attachInput = null, attachBtn = null;
     if (cfg.attachments) {
       // Images go to vision via .images[]; PDFs / DOCX / text files
@@ -2383,31 +2425,12 @@
       // Build accept conditionally — only include audio types when
       // transcription is enabled at the server. window.GOHORT_TRANSCRIBE_ENABLED
       // is set by TranscribeRuntimeFlagScript at page render time.
-      var attachAccept = 'image/*,.pdf,application/pdf,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.doc,application/msword,.txt,.md,text/*';
-      if (window.GOHORT_TRANSCRIBE_ENABLED) {
-        attachAccept += ',audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac,.webm,.opus';
-      }
       attachInput = el('input', {
         type: 'file', style: 'display:none',
         accept: attachAccept,
       });
       attachInput.addEventListener('change', function(ev) {
-        var files = Array.prototype.slice.call(ev.target.files || []);
-        files.forEach(function(file) {
-          var reader = new FileReader();
-          reader.onload = function() {
-            var kind = 'document';
-            if ((file.type || '').indexOf('image/') === 0) kind = 'image';
-            pendingAttachments.push({
-              name: file.name,
-              dataURL: reader.result,
-              mime: file.type || '',
-              kind: kind,
-            });
-            renderAttachments();
-          };
-          reader.readAsDataURL(file);
-        });
+        Array.prototype.slice.call(ev.target.files || []).forEach(queueAttachment);
         attachInput.value = '';
       });
       attachBtn = el('button', {
@@ -3917,15 +3940,69 @@
           return;
         }
       }
-      beginComposerEdit(bubble, raw);
+      if (editsInComposer()) beginComposerEdit(bubble, raw);
+      else beginBubbleEdit(bubble, body, actions, raw);
     }
 
-    // An earlier message is edited in the composer, not in a box inside its
-    // bubble. On a phone the in-bubble box opened mid-conversation with the
-    // keyboard over its Save button, and Enter there only added a line. So
-    // the message and everything after it (a send replaces all of it) are
-    // hidden, the text goes to the input where Enter already sends, and
-    // Escape or Cancel puts everything back as it was, the draft included.
+    // editsInComposer: a phone edits an earlier message in the composer, a
+    // desktop in a box where the message is. On a phone the box opened
+    // mid-conversation with the keyboard over its Save button; on a desktop
+    // the composer route pulled the message to the bottom of the screen, away
+    // from what it answered and what came after it.
+    function editsInComposer() {
+      var mq = window.matchMedia;
+      return !!mq && (mq('(max-width: 700px)').matches || mq('(pointer: coarse)').matches);
+    }
+
+    // beginBubbleEdit opens the edit box in the message's own bubble: the text
+    // in a textarea sized to it, Save & resend and Cancel under it. Enter
+    // saves and Shift+Enter adds a line, as in the composer; Escape cancels.
+    function beginBubbleEdit(bubble, body, actions, raw) {
+      var open = bubble.querySelector(':scope > .ui-agent-msg-edit-bar');
+      if (open) { var t0 = open.querySelector('textarea'); if (t0) t0.focus(); return; }
+      body.style.display = 'none';
+      if (actions) actions.style.display = 'none';
+      var ta = el('textarea', {class: 'ui-agent-msg-edit-ta', rows: '8'});
+      ta.value = raw;
+      function autosizeEdit() {
+        ta.style.height = 'auto';
+        ta.style.height = (ta.scrollHeight + 2) + 'px';
+      }
+      function close() {
+        editBar.remove();
+        body.style.display = '';
+        if (actions) actions.style.display = '';
+      }
+      function commit() {
+        var newText = ta.value.trim();
+        if (!newText || save.disabled) return;
+        save.disabled = true;
+        commitUserEdit(bubble, newText).catch(function(err) {
+          save.disabled = false;
+          window.uiAlert('Edit failed: ' + (err && err.message || err));
+        });
+      }
+      ta.addEventListener('input', autosizeEdit);
+      ta.addEventListener('keydown', function(ev) {
+        if (ev.key === 'Escape') { ev.preventDefault(); close(); return; }
+        if (ev.key === 'Enter' && !ev.shiftKey && !ev.isComposing) { ev.preventDefault(); commit(); }
+      });
+      var save = el('button', {class: 'ui-agent-msg-act primary', type: 'button', onclick: commit}, ['Save & resend']);
+      var cancel = el('button', {class: 'ui-agent-msg-act', type: 'button', onclick: close}, ['Cancel']);
+      var editBar = el('div', {class: 'ui-agent-msg-edit-bar'},
+        [ta, el('div', {class: 'ui-agent-msg-edit-actions'}, [save, cancel])]);
+      bubble.appendChild(editBar);
+      // Sized once it is on the page and has a real scrollHeight to read.
+      setTimeout(autosizeEdit, 0);
+      ta.focus();
+      ta.setSelectionRange(ta.value.length, ta.value.length);
+    }
+
+    // On a phone an earlier message is edited in the composer, not in a box
+    // inside its bubble: the message and everything after it (a send replaces
+    // all of it) are hidden, the text goes to the input where Enter already
+    // sends, and Escape or Cancel puts everything back as it was, the draft
+    // included.
     var userEdit = null;   // {bubble, hidden: [nodes], draft}
     var editBanner = null;
 

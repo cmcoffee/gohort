@@ -1,0 +1,109 @@
+<!-- Report cards: a message that arrived on its own (a scheduled report, a
+     monitor wake, a channel message, a filed deliverable) drawn as a titled
+     card rather than a chat bubble. Shared by every page that shows an agent's
+     thread: the console (page_chat.go) and the restricted chat on /agents/
+     (apps/agents), which without it showed a monitor wake's whole prompt as a
+     bubble from the owner. Exported as ReportCardHead. -->
+<style>
+/* Standing-agent / monitor report card — a message that arrived on its own
+ * (not a back-and-forth turn) reads as a distinct titled card, not a chat
+ * bubble. Decorated by the report replay hook below. */
+.ui-agent-msg.orch-report-card {
+  border: 1px solid var(--accent, #4a9eff);
+  border-radius: 8px;
+  background: var(--accent-soft, rgba(74,158,255,0.06));
+  padding-top: 0;
+}
+.orch-report-card-hdr {
+  display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap;
+  padding: 0.4rem 0.65rem;
+  margin: 0 0 0.5rem 0;
+  border-bottom: 1px solid var(--border, rgba(127,127,127,0.25));
+  font-size: 0.78rem;
+}
+.orch-report-card-icon { flex: 0 0 auto; }
+.orch-report-card-name { font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.orch-report-card-time { color: var(--text-mute, #999); font-size: 0.7rem; flex: 0 0 auto; }
+.orch-report-card-detail { flex: 0 0 100%; margin-top: 0.15rem; color: var(--text-mute, #999); font-size: 0.7rem; font-weight: 400; }
+/* History fold marker: where the agent stops reading word for word. A quiet
+ * rule across the thread, not a message, because nobody said it. */
+.orch-fold-mark {
+  display: flex; align-items: center; gap: 0.6rem;
+  margin: 0.4rem 0; color: var(--text-mute, #999); font-size: 0.72rem;
+}
+.orch-fold-mark::before, .orch-fold-mark::after {
+  content: ""; flex: 1; border-top: 1px dashed var(--border, rgba(127,127,127,0.35));
+}
+</style>
+<script>
+(function() {
+  // Standing-agent / monitor report card. A message with report_from arrived
+  // on its own (a scheduled report, a monitor wake), not as a turn in the
+  // conversation — render it as a distinct titled card (producer name + fire
+  // time header) so it doesn't read like the agent talking back.
+  function registerReportReplayHook() {
+    if (!window.uiRegisterMessageReplayHook) { setTimeout(registerReportReplayHook, 50); return; }
+    window.uiRegisterMessageReplayHook(function(bubble, msg) {
+      if (!bubble || !msg || !msg.report_from) return;
+      if (bubble.querySelector(':scope > .orch-report-card-hdr')) return; // idempotent
+      bubble.classList.add('orch-report-card');
+      var when = '';
+      if (msg.created) {
+        var t = (typeof msg.created === 'number') ? (msg.created > 1e12 ? msg.created : msg.created * 1000) : Date.parse(msg.created);
+        if (!isNaN(t)) { try { when = new Date(t).toLocaleString(); } catch (e) {} }
+      }
+      var hdr = document.createElement('div');
+      hdr.className = 'orch-report-card-hdr';
+      // Icon by kind so a person's channel message reads differently from a
+      // scheduled report or a monitor wake. Default (scheduled / unknown) = ⏰.
+      var kindIcon = {
+        message: '💬',      // a channel inbound from a person
+        scheduled: '⏰',    // a standing-agent report
+        monitor: '🔔',      // an event-monitor wake
+        deliverable: '📄',  // a filed-artifact pointer
+        request: '🤖',      // a dispatch/request from another agent (agent-to-agent)
+        session: '📝'       // a one-line pointer a session left behind
+      };
+      var icon = document.createElement('span'); icon.className = 'orch-report-card-icon';
+      icon.textContent = kindIcon[msg.report_kind] || '⏰';
+      if (msg.report_kind) bubble.classList.add('orch-report-card-' + msg.report_kind);
+      var name = document.createElement('span'); name.className = 'orch-report-card-name'; name.textContent = msg.report_from;
+      hdr.appendChild(icon); hdr.appendChild(name);
+      if (when) { var ts = document.createElement('span'); ts.className = 'orch-report-card-time'; ts.textContent = when; hdr.appendChild(ts); }
+      // Optional subtitle: secondary context a name can't carry (for a
+      // recurring fire: owning agent - cadence - fire N). Sits under the
+      // name/time header so the card says WHICH schedule fired and where it
+      // is in its run, not just that something reported.
+      if (msg.report_detail) {
+        var sub = document.createElement('div');
+        sub.className = 'orch-report-card-detail';
+        sub.textContent = msg.report_detail;
+        hdr.appendChild(sub);
+      }
+      bubble.insertBefore(hdr, bubble.firstChild);
+    });
+  }
+  registerReportReplayHook();
+
+  // History fold marker. After a fold the agent reads the messages above this
+  // point only as a summary; the thread still shows them whole, so without a
+  // mark it looked like the agent had forgotten what was on the screen. The
+  // server tags the first message still read word for word (fold_before).
+  function registerFoldReplayHook() {
+    if (!window.uiRegisterMessageReplayHook) { setTimeout(registerFoldReplayHook, 50); return; }
+    window.uiRegisterMessageReplayHook(function(bubble, msg) {
+      if (!bubble || !msg || !msg.fold_before || !bubble.parentNode) return;
+      var prev = bubble.previousElementSibling;
+      if (prev && prev.classList.contains('orch-fold-mark')) return; // idempotent
+      var n = msg.fold_before.summarized || 0;
+      var mark = document.createElement('div');
+      mark.className = 'orch-fold-mark';
+      mark.textContent = n === 1 ? 'The message above is summarized for the agent'
+        : 'The ' + n + ' messages above are summarized for the agent';
+      mark.title = 'A history fold: the agent works from a summary of everything above this line, and reads what follows word for word.';
+      bubble.parentNode.insertBefore(mark, bubble);
+    });
+  }
+  registerFoldReplayHook();
+})();
+</script>

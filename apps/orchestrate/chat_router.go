@@ -460,6 +460,7 @@ func (T *OrchestrateApp) handleSessionOne(w http.ResponseWriter, r *http.Request
 		var off int
 		isCortex := sid == cortexSessionID(agent.ID)
 		s.Messages, off = tailMessages(s.Messages, resolveTailLimitFor(r.URL.Query().Get("limit"), isCortex))
+		markFoldPoint(loadCompactState(udb, agent.ID, sid), s.Messages, off)
 		w.Header().Set("Content-Type", "application/json")
 		// The chunk is this thread's OWN default, not whatever the client just
 		// asked for: after a "show earlier" the request carries an accumulated

@@ -160,7 +160,7 @@ func (T *OrchestrateApp) compactOperatorHistory(udb Database, owner string, agen
 		through = 0
 	}
 	if len(cm)-through > cfg.Trigger {
-		T.maybeFoldOperatorHistory(udb, agent, sessID, cfg)
+		T.maybeFoldOperatorHistory(udb, owner, agent, sessID, cfg)
 	}
 
 	block, _ := CompactedView(cm, st, cfg)
@@ -298,7 +298,7 @@ func operatorFoldBusy(agentID, sessID string) bool {
 // queue for a shared resource, not a critical section.
 var operatorFoldSlot = make(chan struct{}, 1)
 
-func (T *OrchestrateApp) maybeFoldOperatorHistory(udb Database, agent AgentRecord, sessID string, cfg CompactionConfig) {
+func (T *OrchestrateApp) maybeFoldOperatorHistory(udb Database, owner string, agent AgentRecord, sessID string, cfg CompactionConfig) {
 	key := operatorFoldKey(agent.ID, sessID)
 	operatorFoldMu.Lock()
 	if operatorFoldInFlight[key] {
@@ -335,7 +335,7 @@ func (T *OrchestrateApp) maybeFoldOperatorHistory(udb Database, agent AgentRecor
 		operatorFoldSlot <- struct{}{}
 		defer func() { <-operatorFoldSlot }()
 
-		T.foldOperatorHistory(udb, agent, sessID, cfg)
+		T.foldOperatorHistory(udb, owner, agent, sessID, cfg)
 	}()
 }
 
@@ -344,7 +344,7 @@ func (T *OrchestrateApp) maybeFoldOperatorHistory(udb Database, agent AgentRecor
 // tail messages sit beyond the fold window and are harmless; leading indices
 // can't move because trim defers while this runs), summarize the aging span,
 // archive it, persist the new cursor, and store the surfaced facts.
-func (T *OrchestrateApp) foldOperatorHistory(udb Database, agent AgentRecord, sessID string, cfg CompactionConfig) {
+func (T *OrchestrateApp) foldOperatorHistory(udb Database, owner string, agent AgentRecord, sessID string, cfg CompactionConfig) {
 	sess, ok := loadChatSession(udb, agent.ID, sessID)
 	if !ok || len(sess.Messages) == 0 {
 		return
@@ -383,7 +383,15 @@ func (T *OrchestrateApp) foldOperatorHistory(udb Database, agent AgentRecord, se
 	fold := func(ctx context.Context, aging []Message, prior string) (string, []string, error) {
 		return T.operatorFold(ctx, aging, prior)
 	}
-	newSt, facts, changed, err := CompactConversation(context.Background(), cm, st, cfg, fold)
+	// Shown while it runs, on the live ribbon and the Monitor, with a Stop: a
+	// fold makes model calls of its own, and with no row they were activity
+	// nothing on the page could account for. Stopped, it fails like any fold
+	// that did not finish: the cursor holds and the next one picks it up.
+	ctx, run := T.runsRegistry().CreateCancellable(context.Background(), owner, agent.ID, sessID)
+	run.Describe("compaction", agent.Name, "Compacting the thread")
+	run.SetDetail(fmt.Sprintf("summarizing %d messages", len(cm)-st.SummarizedThrough))
+	newSt, facts, changed, err := CompactConversation(ctx, cm, st, cfg, fold)
+	run.Complete(runOutcomeStatus(err, true))
 	if err != nil {
 		Log("[operator.compact] fold failed for %s:%s (cursor held, will retry): %v", agent.ID, sessID, err)
 		return
@@ -417,6 +425,26 @@ func (T *OrchestrateApp) foldOperatorHistory(udb Database, agent AgentRecord, se
 					Source: MemSourceObserved,
 				})
 			}
+		}
+	}
+}
+
+// markFoldPoint puts the fold marker on the first visible message the agent
+// still sees word for word, in the slice a page is served (tail is the stored
+// thread from index off). A fold changed what the agent reads and said so only
+// in the trail, so a thread looked whole while the agent worked from a summary
+// of most of it. Nothing is marked when the fold point is not in what was
+// served: drawn at the top instead, it would claim the messages between there
+// and the fold were summarized too.
+func markFoldPoint(st CompactState, tail []ChatMessage, off int) {
+	through := st.SummarizedThrough
+	if through <= off || through >= off+len(tail) {
+		return
+	}
+	for i := through - off; i < len(tail); i++ {
+		if !tail[i].Hidden {
+			tail[i].FoldBefore = &foldMark{Summarized: through}
+			return
 		}
 	}
 }

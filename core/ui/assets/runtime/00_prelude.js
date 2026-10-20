@@ -391,7 +391,14 @@
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     var fenceRe  = /```([\s\S]*?)```/g;
     var inlineRe = /`([^`\n]+)`/g;
-    s = s.replace(fenceRe, function(_, body){ return '<pre><code>' + body.replace(/^\n/, '') + '</code></pre>'; });
+    // The rest of the opening fence's line is its language ("```text",
+    // "```json"), not code: kept, it drew the word as the block's first line.
+    // Only a single word is taken for one, so a fence written on one line
+    // ("```npm install```") keeps its code.
+    s = s.replace(fenceRe, function(_, body){
+      body = body.replace(/^[A-Za-z0-9_+.#-]*[ \t]*\n/, '');
+      return '<pre><code>' + body + '</code></pre>';
+    });
     s = s.replace(inlineRe, '<code>$1</code>');
     s = s.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
     s = s.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
