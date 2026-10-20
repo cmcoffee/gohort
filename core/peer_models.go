@@ -387,7 +387,7 @@ func HandlePeerChatCompletions(w http.ResponseWriter, r *http.Request) {
 	// the serialization fictional for exactly the requests that need it most.
 	defer release()
 	defer countModelUse(served, lane == LaneInteractive)()
-	defer notePeerCallRoute("peer:"+k.Label, peerCallRoute(r))()
+	defer notePeerCallRoute("peer:"+k.Label, peerCallLabel(r))()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, strings.NewReader(string(body)))
 	if err != nil {
@@ -622,8 +622,17 @@ func peerModelAuth(name string) func(*http.Request) {
 		if route := callRouteOf(req.Context()); route != "" {
 			req.Header.Set(peerCallHeader, route)
 		}
+		// And which app asked, which the route does not always say: Scribe's
+		// chat runs on orchestrate's loop (WithCallApp).
+		if app := CallAppOf(req.Context()); app != "" {
+			req.Header.Set(peerAppHeader, app)
+		}
 	}
 }
+
+// peerAppHeader carries the app a borrowed model call is for, an app's code
+// name, shown beside the route on the serving machine.
+const peerAppHeader = "X-Gohort-App"
 
 // peerCallHeader carries what a borrowed model call is for: its route key or
 // caller (routeForLog), a name from the code and never anything a person
@@ -648,17 +657,37 @@ func callRouteOf(ctx context.Context) string {
 
 // peerCallRoute is what a borrowed call says it is for, kept to the shape a
 // code name has: a header is the caller's to fill, and this one is shown.
-func peerCallRoute(r *http.Request) string {
-	route := strings.TrimSpace(r.Header.Get(peerCallHeader))
-	if route == "" || len(route) > 64 {
+func peerCallRoute(r *http.Request) string { return peerCodeName(r.Header.Get(peerCallHeader)) }
+
+// peerCallApp is the app a borrowed call says it is for, held to the same.
+func peerCallApp(r *http.Request) string { return peerCodeName(r.Header.Get(peerAppHeader)) }
+
+// peerCallLabel is how the serving side counts a borrowed call: the app that
+// asked with its route, "scribe (app.orchestrate.worker)", or the route alone
+// from a peer that does not say the app.
+func peerCallLabel(r *http.Request) string {
+	route, app := peerCallRoute(r), peerCallApp(r)
+	switch {
+	case app == "":
+		return route
+	case route == "":
+		return app
+	}
+	return app + " (" + route + ")"
+}
+
+// peerCodeName is v when it has the shape of a name from the code, else "".
+func peerCodeName(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" || len(v) > 64 {
 		return ""
 	}
-	for _, c := range route {
+	for _, c := range v {
 		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune(":._-/", c)) {
 			return ""
 		}
 	}
-	return route
+	return v
 }
 
 // peerLaneHeader carries the caller's lane on a borrowed model call.

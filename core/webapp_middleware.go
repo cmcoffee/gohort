@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -416,4 +417,70 @@ func (lw *loggingWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 		return nil, nil, fmt.Errorf("underlying ResponseWriter does not implement http.Hijacker")
 	}
 	return h.Hijack()
+}
+
+// Which app a model call is for. A route key says what a call does
+// (app.orchestrate.worker, history.fold) and the code that makes it, which is
+// not always the app that asked: Scribe's chat runs on orchestrate's agent
+// loop, so its calls carry orchestrate's routes. The app rides on the context
+// from where the work came in, a request to an app's pages or the app's own
+// core for work started without one, and a borrowed call sends it to the peer
+// beside the route.
+
+type callAppKey struct{}
+
+// WithCallApp names the app the work on ctx is for. The first name stays:
+// the app a request came in through is the one asking, whichever app's code
+// goes on to make the call.
+func WithCallApp(ctx context.Context, app string) context.Context {
+	app = strings.TrimSpace(app)
+	if ctx == nil || app == "" || CallAppOf(ctx) != "" {
+		return ctx
+	}
+	return context.WithValue(ctx, callAppKey{}, app)
+}
+
+// CallAppOf is the app the work on ctx is for, "" when none was named.
+func CallAppOf(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	a, _ := ctx.Value(callAppKey{}).(string)
+	return a
+}
+
+// appPaths maps each web app's path prefix to its name, filled as the
+// dashboard mounts the apps.
+var appPaths = struct {
+	sync.RWMutex
+	m map[string]string
+}{m: map[string]string{}}
+
+// noteAppPath records that requests under prefix are app's.
+func noteAppPath(prefix, app string) {
+	prefix = "/" + strings.Trim(prefix, "/")
+	if prefix == "/" || strings.TrimSpace(app) == "" {
+		return
+	}
+	appPaths.Lock()
+	appPaths.m[prefix] = strings.TrimSpace(app)
+	appPaths.Unlock()
+}
+
+// appForPath is the app whose prefix a request path is under, "" for none.
+func appForPath(path string) string {
+	seg := "/" + strings.SplitN(strings.TrimPrefix(path, "/"), "/", 2)[0]
+	appPaths.RLock()
+	defer appPaths.RUnlock()
+	return appPaths.m[seg]
+}
+
+// callAppMiddleware names the app on each request to an app's pages.
+func callAppMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if app := appForPath(r.URL.Path); app != "" {
+			r = r.WithContext(WithCallApp(r.Context(), app))
+		}
+		next.ServeHTTP(w, r)
+	})
 }

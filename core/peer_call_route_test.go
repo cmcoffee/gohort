@@ -58,7 +58,7 @@ func TestTheServingSideShowsWhatABorrowedCallIsFor(t *testing.T) {
 	done2 := notePeerCallRoute("peer:gpu-box", "caller:history.fold")
 	done3 := notePeerCallRoute("peer:gpu-box", "")
 	rows := peerRowsFrom(OllamaSchedStats{Callers: map[string]int{"peer:gpu-box": 3}}, "running a model")
-	if len(rows) != 1 || rows[0].Status != "on this machine's hardware: caller:history.fold (2), unnamed" {
+	if len(rows) != 1 || rows[0].Status != "on this machine's hardware, for its caller:history.fold (2), unnamed" {
 		t.Fatalf("the peer's row should say what its calls are for: %+v", rows)
 	}
 	done1()
@@ -87,12 +87,13 @@ func TestTheServingSideCountsACallWhileItRuns(t *testing.T) {
 		strings.NewReader(`{"model":"qwen-27b","messages":[{"role":"user","content":"hi"}]}`))
 	r.Header.Set(peerKeyHeader, peerAuth(t, pk))
 	r.Header.Set(peerCallHeader, "caller:history.fold")
+	r.Header.Set(peerAppHeader, "scribe")
 	w := httptest.NewRecorder()
 	HandlePeerChatCompletions(w, r)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", w.Code, w.Body.String())
 	}
-	if during != ": caller:history.fold" {
+	if during != ", for its scribe (caller:history.fold)" {
 		t.Errorf("while it ran, the peer's calls read %q", during)
 	}
 	if after := peerCallRoutesFor("peer:mac"); after != "" {

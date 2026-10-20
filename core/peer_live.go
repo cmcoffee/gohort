@@ -150,8 +150,10 @@ func notePeerCallRoute(caller, route string) func() {
 }
 
 // peerCallRoutesFor is what a peer's calls in flight are for, as a suffix for
-// its row's status: ": history.fold, caller:memory.gate (2)". Empty when none
-// said, which is every call from a peer older than the header.
+// its row's status: ", for its scribe (app.orchestrate.worker), history.fold
+// (2)". The names are the PEER's, its apps and routes, never this machine's,
+// so the suffix says "its". Empty when none said, which is every call from a
+// peer older than the header.
 func peerCallRoutesFor(caller string) string {
 	peerCallRoutes.Lock()
 	defer peerCallRoutes.Unlock()
@@ -169,5 +171,5 @@ func peerCallRoutesFor(caller string) string {
 			names[i] = fmt.Sprintf("%s (%d)", r, n)
 		}
 	}
-	return ": " + strings.Join(names, ", ")
+	return ", for its " + strings.Join(names, ", ")
 }

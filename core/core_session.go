@@ -114,6 +114,9 @@ func sessionCallerID(app string) string {
 // tier, with the session's caller ID prepended. Any explicit
 // WithCaller later in opts overrides it.
 func (s *Session) Chat(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error) {
+	if s.agent != nil {
+		ctx = WithCallApp(ctx, s.agent.appName) // see WithCallApp
+	}
 	opts = prependCaller(s.CallerID, opts)
 	var resp *Response
 	var err error
@@ -133,6 +136,9 @@ func (s *Session) Chat(ctx context.Context, messages []Message, opts ...ChatOpti
 // middleware reports stay in sync (the direct llm.ChatStream path
 // skips the trackTokens call that WorkerChat/LeadChat do for us).
 func (s *Session) ChatStream(ctx context.Context, messages []Message, handler StreamHandler, opts ...ChatOption) (*Response, error) {
+	if s.agent != nil {
+		ctx = WithCallApp(ctx, s.agent.appName) // see WithCallApp
+	}
 	opts = prependCaller(s.CallerID, opts)
 	// servedByLead — true only when a SEPARATE lead LLM is wired
 	// AND this session asked for LEAD. GetLeadLLM() silently falls

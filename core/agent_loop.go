@@ -268,6 +268,7 @@ func (T *AppCore) Run(ctx context.Context, messages []Message, opts ...ChatOptio
 // The returned Response is from the final LLM call. The returned []Message
 // contains the full conversation history including all tool interactions.
 func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg AgentLoopConfig) (*Response, []Message, error) {
+	ctx = WithCallApp(ctx, T.appName) // see WithCallApp
 	// Pre-empted: an app-layer check already refused this request, so there is no
 	// turn to run. Handled at the OUTER boundary, before runAgentLoopInner, because
 	// nothing inside the loop should have to know about a turn that never happens.

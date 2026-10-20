@@ -10,6 +10,7 @@ import (
 // If the lead LLM fails and a separate primary LLM is available, it falls
 // back to the primary so the session can continue rather than aborting.
 func (T *AppCore) LeadChat(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error) {
+	ctx = WithCallApp(ctx, T.appName) // see WithCallApp
 	if T.LeadDenied() {
 		// The private pin binds — redirect to worker instead of escalating.
 		return T.WorkerChat(ctx, messages, opts...)
@@ -149,6 +150,7 @@ func (T *AppCore) WorkerChat(ctx context.Context, messages []Message, opts ...Ch
 	if T == nil || T.LLM == nil {
 		return nil, Error("no worker LLM is configured")
 	}
+	ctx = WithCallApp(ctx, T.appName) // see WithCallApp
 	var probe ChatConfig
 	for _, opt := range opts {
 		opt(&probe)
@@ -385,6 +387,7 @@ func appendSystemPrompt(extra string) ChatOption {
 
 // ChatStreamWithReport calls T.LLM.ChatStream and tallies token usage on T.Report.
 func (T *AppCore) ChatStreamWithReport(ctx context.Context, messages []Message, handler StreamHandler, opts ...ChatOption) (*Response, error) {
+	ctx = WithCallApp(ctx, T.appName) // see WithCallApp
 	// Honor routing config on the STREAMING path the same way LeadChat does
 	// on the non-streaming path. Without this, every streaming agent-loop
 	// round silently ran on the worker regardless of its route stage — the

@@ -56,6 +56,13 @@ func ServeDashboard(addr string) error {
 	// Second pass: register routes now that all agents are ready.
 	for _, wa := range webApps {
 		prefix := wa.WebPath()
+		// Requests under the app's path are its work (WithCallApp), named as
+		// its core names the calls it makes itself.
+		if agent, ok := wa.(Agent); ok {
+			noteAppPath(prefix, agent.Name())
+		} else {
+			noteAppPath(prefix, strings.Trim(prefix, "/"))
+		}
 		// SimpleWebApp path — framework owns the sub-mux + mount.
 		// App's Routes() just registers via T.HandleFunc against
 		// the pre-wired AppCore.webMux.
@@ -280,7 +287,7 @@ func ServeDashboard(addr string) error {
 // through, innermost first. Split out of ServeDashboard so the order, and the
 // fact that each layer is present at all, can be tested without a listener.
 func dashboardChain(mux http.Handler) http.Handler {
-	var handler http.Handler = accessLogMiddleware(mux)
+	var handler http.Handler = accessLogMiddleware(callAppMiddleware(mux))
 	if AuthDB != nil {
 		handler = AuthMiddleware(AuthDB(), handler)
 	}
