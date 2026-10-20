@@ -191,6 +191,13 @@ func targetInstruction(t Target, req docs.PublishRequest) string {
 	if prev := strings.TrimSpace(req.ExternalID); prev != "" {
 		b.WriteString("\n\nThis document was published here before, at " + prev + ". Update that one rather than making a new one, if the API allows it.")
 	}
+	// An integration's run gets the document by reference (docs.ReferenceInstruction):
+	// it writes a placeholder where the body goes, and never types it out.
+	// An agent is handed the text, since its tools are its own.
+	if t.Uses != "agent" {
+		b.WriteString("\n\n" + docs.ReferenceInstruction(req))
+		return b.String()
+	}
 	// The document's links to its own sections, rebuilt the destination's way.
 	if nav := docs.NavInstruction(req.Nav); nav != "" {
 		b.WriteString("\n\n" + nav)
@@ -259,7 +266,7 @@ func (d *targetsDest) Publish(ctx context.Context, user string, req docs.Publish
 			docs.PublishStep(ctx, "The agent said: %s", clipToLabel(said))
 		}
 	} else {
-		said, url, err = docs.PublishViaCredential(ctx, user, t.Credential, instruction)
+		said, url, err = docs.PublishViaCredential(docs.WithPublishBody(ctx, req), user, t.Credential, instruction)
 	}
 	if err != nil {
 		return docs.PublishResult{}, err

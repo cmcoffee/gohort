@@ -29,9 +29,12 @@ func TestATargetPublishesThroughItsIntegration(t *testing.T) {
 	tgt.ID = "t1"
 	app.targetsDB("alice").Set(targetTable, tgt.ID, tgt)
 
-	var gotCred, gotInstr string
-	docs.RegisterCredentialPublisher(func(_ context.Context, user, cred, instr string) (string, string, error) {
+	var gotCred, gotInstr, gotBody string
+	docs.RegisterCredentialPublisher(func(ctx context.Context, user, cred, instr string) (string, string, error) {
 		gotCred, gotInstr = cred, instr
+		if b := docs.PublishBodyFrom(ctx); b != nil {
+			gotBody = b.Markdown()
+		}
 		return "Draft post created.", "https://blog.example/p/9", nil
 	})
 	d := &targetsDest{app: app}
@@ -48,10 +51,14 @@ func TestATargetPublishesThroughItsIntegration(t *testing.T) {
 	if gotCred != "blogapi" || res.URL != "https://blog.example/p/9" || res.ExternalID != res.URL {
 		t.Errorf("published through the credential, address kept for the next update: %q %+v", gotCred, res)
 	}
-	for _, want := range []string{"Create a draft post.", "Title: Launch notes", "Category: News", "published here before, at https://blog.example/p/8", "# Launch"} {
+	for _, want := range []string{"Create a draft post.", "Title: Launch notes", "Category: News", "published here before, at https://blog.example/p/8", docs.BodyMarkdownPlaceholder} {
 		if !strings.Contains(gotInstr, want) {
 			t.Errorf("the pass should be handed %q:\n%s", want, gotInstr)
 		}
+	}
+	// The document rides by reference, not in the instruction.
+	if strings.Contains(gotInstr, "\n---\n") || gotBody != "# Launch\n\nBody." {
+		t.Errorf("the document went in the instruction, or not on the context: body %q\n%s", gotBody, gotInstr)
 	}
 	specs := d.TargetSpecs(context.Background(), "alice")
 	if len(specs) != 1 || specs[0].Kind != "target:t1" || specs[0].Fields[0].Type != "select" || !specs[0].Fields[0].Required {

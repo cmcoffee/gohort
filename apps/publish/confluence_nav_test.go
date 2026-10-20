@@ -40,7 +40,14 @@ func TestConfluenceRebuildsTheNavigation(t *testing.T) {
 func TestATargetIsToldToRebuildTheNavigation(t *testing.T) {
 	md := "## Contents\n\n- [Setup](#setup)\n\n## Setup\n\nGo."
 	req := docs.PublishRequest{Title: "Guide", Doc: docs.PublishDoc{Markdown: md}, Nav: docs.AnalyzeNav(md)}
+	// An integration does not type the document, so it names the anchors and
+	// set_document_links rewrites them.
 	ins := targetInstruction(Target{Instructions: "Create a page."}, req)
+	if !strings.Contains(ins, "Navigation within the document") || !strings.Contains(ins, "set_document_links") || strings.Contains(ins, "\n---\n") {
+		t.Fatalf("an integration is not told how to rebuild the navigation, or is handed the document:\n%s", ins)
+	}
+	// An agent target is handed the text, the paragraph before it.
+	ins = targetInstruction(Target{Uses: "agent", Instructions: "Create a page."}, req)
 	nav := strings.Index(ins, "Navigation within the document")
 	if nav < 0 || nav > strings.Index(ins, "---") {
 		t.Fatalf("the navigation paragraph is missing or after the document:\n%s", ins)

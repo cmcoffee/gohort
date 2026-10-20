@@ -112,7 +112,7 @@ func registerCredentialPublisher(app *OrchestrateApp) {
 			})
 		}
 		sess := &ToolSession{Username: user}
-		tools, err := publishIntegrationTools(sess, credential)
+		tools, err := publishIntegrationToolsFor(sess, credential)
 		if err != nil {
 			docs.PublishStep(ctx, "Could not start: %v", err)
 			return "", "", err
@@ -123,10 +123,18 @@ func registerCredentialPublisher(app *OrchestrateApp) {
 		// go (publish_readback_runner.go); results are numbered so the model
 		// can point at the one holding the page.
 		guard, readBack := docs.GuardsUpdate(ctx), docs.WantsReadBack(ctx)
-		results, gate := &publishResults{}, &publishWriteGate{}
+		// The document by reference (docs.PublishBody): its placeholders are
+		// filled in as each call goes out, innermost so every other wrapper
+		// sees the call as the model wrote it, and what comes back is clipped
+		// for the model, the whole of it kept by number.
+		body := docs.PublishBodyFrom(ctx)
+		results, gate := &publishResults{clip: body != nil}, &publishWriteGate{}
 		for i := range tools {
+			if body != nil {
+				tools[i] = publishBodyCarried(body, tools[i])
+			}
 			tools[i] = publishStepReported(ctx, tools[i])
-			if guard || readBack {
+			if guard || readBack || body != nil {
 				tools[i] = results.wrap(tools[i])
 			}
 			if guard {
@@ -135,6 +143,10 @@ func registerCredentialPublisher(app *OrchestrateApp) {
 		}
 		var extra []AgentToolDef
 		prompt := credentialPublisherPrompt
+		if body != nil {
+			prompt += "\n\n" + credentialPublisherBodyPrompt
+			extra = append(extra, setDocumentLinksTool(ctx, body))
+		}
 		if guard {
 			prompt += "\n\n" + credentialPublisherGuardPrompt
 			extra = append(extra, reportCurrentPageTool(func(n int) (string, error) {
@@ -207,8 +219,61 @@ func registerCredentialPublisher(app *OrchestrateApp) {
 		if !ok {
 			return note, "", fmt.Errorf("the publish did not go through: %s", chFirst(note, "no reason given"))
 		}
+		// Reported done, but no call carried the document: whatever went
+		// out is only what the model typed, a title or a summary. Not a
+		// success, whatever it says.
+		if body != nil && body.Expanded() == 0 {
+			docs.PublishStep(ctx, "No call carried the document (its placeholder was never sent)")
+			return note, url, fmt.Errorf("the publish run reported success, but none of its calls carried the document, so what was sent is only what it typed: publish again")
+		}
 		return note, url, nil
 	})
+}
+
+// credentialPublisherBodyPrompt is added when the document travels by
+// reference.
+const credentialPublisherBodyPrompt = `The document is NOT in the instruction: you send it by writing its placeholder where the body goes, as the instruction says, and it is filled in as the call goes out. Never type the document, or a summary of it, as the body. Long text in what the API sends back is cut short for you, and the whole of it is kept: refer to a result by its number when asked.`
+
+// publishBodyCarried fills the document's placeholders into td's calls as
+// they go out.
+func publishBodyCarried(body *docs.PublishBody, td AgentToolDef) AgentToolDef {
+	h := td.Handler
+	if h == nil {
+		return td
+	}
+	td.Handler = func(ctx context.Context, args map[string]any) (string, error) {
+		if full, hit := body.ExpandArgs(args); hit {
+			args = full
+		}
+		return h(ctx, args)
+	}
+	return td
+}
+
+// setDocumentLinksTool lets the model name the destination's anchors for the
+// document's links to its own sections, which the framework then rewrites:
+// it does not type the document, so it cannot rewrite them there.
+func setDocumentLinksTool(ctx context.Context, body *docs.PublishBody) AgentToolDef {
+	return AgentToolDef{
+		Tool: Tool{
+			Name:        "set_document_links",
+			Description: "Say where the document's links to its own sections point at this destination, before you send it. They are rewritten in the document as it goes out.",
+			Parameters: map[string]ToolParam{
+				"links":    {Type: "string", Description: "One line per link: \"#anchor -> where it points here\", or \"#anchor ->\" to keep its words as plain text."},
+				"contents": {Type: "string", Description: "Optional: the destination's own table-of-contents markup, to put in place of the document's contents list. Empty drops the list; leave it out to keep the list."},
+			},
+		},
+		Handler: func(_ context.Context, args map[string]any) (string, error) {
+			links := docs.ParseLinkLines(stringArg(args, "links"))
+			var contents *string
+			if c, ok := args["contents"].(string); ok {
+				contents = &c
+			}
+			body.SetLinks(links, contents)
+			docs.PublishStep(ctx, "Links within the document set for this destination (%d)", len(links))
+			return fmt.Sprintf("Recorded %d link(s). They are rewritten when the document goes out.", len(links)), nil
+		},
+	}
 }
 
 // publishIntegrationTools is what a credential-backed publish may hold: the
@@ -216,6 +281,10 @@ func registerCredentialPublisher(app *OrchestrateApp) {
 // confirmation on each is lifted (see registerCredentialPublisher). An MCP
 // server's tools that delete, remove or archive are left out: a publish
 // creates and updates, and a server's full toolset can do far more than that.
+// publishIntegrationToolsFor is publishIntegrationTools, a var so a test can
+// stand in an integration without a credential store or an MCP server.
+var publishIntegrationToolsFor = publishIntegrationTools
+
 func publishIntegrationTools(sess *ToolSession, credential string) ([]AgentToolDef, error) {
 	if server, isMCP := strings.CutPrefix(credential, docs.MCPIntegrationPrefix); isMCP {
 		cfg, ok := MCP().Load(server)

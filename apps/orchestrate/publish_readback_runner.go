@@ -25,7 +25,15 @@ import (
 type publishResults struct {
 	mu   sync.Mutex
 	outs []string
+	// clip shows the model each result with its long text cut short
+	// (docs.ClipForModel), the whole kept here: the document travels by
+	// reference, and a page read back in full would carry it into every
+	// round again.
+	clip bool
 }
+
+// publishClipAt is the size past which a result is clipped for the model.
+const publishClipAt = 4000
 
 // wrap numbers td's results: "(result 3)" heads each one the model sees.
 func (r *publishResults) wrap(td AgentToolDef) AgentToolDef {
@@ -42,6 +50,9 @@ func (r *publishResults) wrap(td AgentToolDef) AgentToolDef {
 		r.outs = append(r.outs, out)
 		n := len(r.outs)
 		r.mu.Unlock()
+		if r.clip {
+			return fmt.Sprintf("(result %d)\n%s", n, docs.ClipForModel(out, n, publishClipAt)), nil
+		}
 		return fmt.Sprintf("(result %d)\n%s", n, out), nil
 	}
 	return td
