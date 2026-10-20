@@ -57,7 +57,8 @@ func dispatchGrantScope(callerID string) string { return "dispatch:" + callerID 
 // allowed, without asking anybody. Used as-is on the detached path, where there
 // is no one to ask and a question would only ever resolve to "denied".
 func (t *chatTurn) dispatchEdgeApproved(target AgentRecord) bool {
-	return edgeApproval(t.udb, t.agent, target) != edgeAsks
+	_, owner := t.fleetView()
+	return edgeApproval(t.udb, owner, t.agent, target) != edgeAsks
 }
 
 // How a narrowed agent's handoff to one target is allowed: the answer the gate
@@ -70,7 +71,7 @@ const (
 	edgeAsks     = "asks"    // the first one asks the owner
 )
 
-func edgeApproval(udb Database, caller, target AgentRecord) string {
+func edgeApproval(udb Database, owner string, caller, target AgentRecord) string {
 	if !agentIsNarrowed(caller) {
 		return edgeOpen // never restricted; delegation grants it nothing new
 	}
@@ -86,6 +87,11 @@ func edgeApproval(udb Database, caller, target AgentRecord) string {
 		return edgeListed // the owner drew this link themselves
 	}
 	if _, ok := findToolGrant(udb, dispatchGrantScope(caller.ID), "agents", target.ID); ok {
+		return edgeGranted
+	}
+	// The Permissions pane's Allow for this pairing, and a request approved
+	// with Always allow, are the same say (delegationAllowedFor).
+	if delegationAllowedFor(owner, caller.ID, target) {
 		return edgeGranted
 	}
 	return edgeAsks

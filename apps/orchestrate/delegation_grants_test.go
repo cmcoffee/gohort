@@ -141,3 +141,91 @@ func TestAgentsRunAsksWhenTheUserSaidAsk(t *testing.T) {
 		t.Error("a parent was made to ask before calling its own sub-agent")
 	}
 }
+
+// The Permissions pane's Allow for a pairing approves a narrowed agent's
+// handoff, as the card's Always allow does: it was stored where the edge never
+// looked, so the owner was asked again for a handoff they had allowed. Only
+// the pairing's own row counts: an every-agent Allow was no decision about
+// this caller, and an Ask is not a yes.
+func TestAnAllowedPairingApprovesANarrowedAgentsHandoff(t *testing.T) {
+	depStores(t, "u")
+	udb := UserDB(orchestrateBaseDB, "u")
+	comedian, err := saveAgent(udb, AgentRecord{Name: "Comedian", Owner: "u", OrchestratorPrompt: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	turn := &chatTurn{user: "u", udb: udb, agent: AgentRecord{ID: "wiwee", Name: "WiWee", AllowedTools: []string{"web_search"}}}
+	if turn.dispatchEdgeApproved(comedian) {
+		t.Fatal("a narrowed agent's handoff was approved with no decision")
+	}
+	SetDelegationPolicy(RootDB, "u", "", comedian.ID, PolicyAllow)
+	if turn.dispatchEdgeApproved(comedian) {
+		t.Error("the every-agent Allow approved a narrowed agent's handoff")
+	}
+	SetDelegationPolicy(RootDB, "u", "wiwee", comedian.ID, PolicyAsk)
+	if turn.dispatchEdgeApproved(comedian) {
+		t.Error("an Ask for the pairing approved it")
+	}
+	// An Allow written under the name, before grants were keyed by id.
+	RemoveDelegationPolicy(RootDB, "u", "wiwee", comedian.ID)
+	SetDelegationPolicy(RootDB, "u", "wiwee", "comedian", PolicyAllow)
+	if !turn.dispatchEdgeApproved(comedian) {
+		t.Fatal("the pairing's Allow did not approve the handoff")
+	}
+	if how := edgeApproval(udb, "u", turn.agent, comedian); how != edgeGranted {
+		t.Errorf("Security & Access would read the pairing as %q, not granted", how)
+	}
+}
+
+// Deciding a pairing again leaves one row for it: a row keyed by the agent's
+// name, from before grants were keyed by id, is dropped when the id's is
+// written, and removing the pairing removes both. Until it is rewritten the
+// list shows one row for the pair, the id's, the one the gate reads first.
+func TestAPairingIsOneRow(t *testing.T) {
+	depStores(t, "u")
+	udb := UserDB(orchestrateBaseDB, "u")
+	comedian, err := saveAgent(udb, AgentRecord{Name: "Comedian", Owner: "u", OrchestratorPrompt: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := func(scope string) []string {
+		var out []string
+		for _, e := range ListDelegationPolicies(RootDB, "u") {
+			if e.Scope == scope {
+				out = append(out, e.Target+"="+e.Policy)
+			}
+		}
+		return out
+	}
+	SetDelegationPolicy(RootDB, "u", "wiwee", "Comedian", PolicyAllow)
+	SetDelegationPolicy(RootDB, "u", "other", "Comedian", PolicyBlock)
+	SetDelegationPolicy(RootDB, "u", "wiwee", comedian.ID, PolicyAllow)
+
+	resolve := func(key string) string {
+		if rec, ok := findAgentByNameOrID(udb, "u", key); ok {
+			return rec.ID
+		}
+		return ""
+	}
+	SetDelegationPolicy(RootDB, "u", "wiwee", "gone-agent", PolicyAsk)
+	shown := map[string]int{}
+	for _, e := range collapseDelegationAliases(ListDelegationPolicies(RootDB, "u"), resolve) {
+		shown[e.Scope+"/"+e.Target]++
+	}
+	if shown["wiwee/"+comedian.ID] != 1 || shown["wiwee/Comedian"] != 0 || shown["other/Comedian"] != 1 || shown["wiwee/gone-agent"] != 1 {
+		t.Fatalf("the list shows %v", shown)
+	}
+
+	setDelegationDecision("u", "wiwee", "Comedian", PolicyAllow)
+	if got := strings.Join(rows("wiwee"), ","); got != comedian.ID+"=allow,gone-agent=ask" {
+		t.Fatalf("after approving again, WiWee's rows are %s", got)
+	}
+	if got := strings.Join(rows("other"), ","); got != "Comedian=block" {
+		t.Errorf("another agent's row changed: %s", got)
+	}
+	SetDelegationPolicy(RootDB, "u", "wiwee", "comedian", PolicyAllow) // an alias again
+	removeDelegationDecision("u", "wiwee", comedian.ID)
+	if got := strings.Join(rows("wiwee"), ","); got != "gone-agent=ask" {
+		t.Fatalf("removing the pairing left %s", got)
+	}
+}

@@ -190,7 +190,13 @@ func (T *OrchestrateApp) handleConsolePermissions(w http.ResponseWriter, r *http
 	// Agent delegation, scoped to the agent doing the delegating. A row with no
 	// scope is the one the dispatch surfaces have always read: off limits (or
 	// open) to everyone, whatever route is taken to reach the target.
-	for _, e := range ListDelegationPolicies(RootDB, user) {
+	resolve := func(key string) string {
+		if rec, found := findAgentByNameOrID(udb, user, key); found {
+			return rec.ID
+		}
+		return ""
+	}
+	for _, e := range collapseDelegationAliases(ListDelegationPolicies(RootDB, user), resolve) {
 		agentLabel := func(id string) string {
 			if rec, found := loadAgent(udb, id); found && rec.Name != "" {
 				return rec.Name
@@ -683,10 +689,10 @@ func (T *OrchestrateApp) handleConsolePermissionPolicy(w http.ResponseWriter, r 
 	}
 	switch kind {
 	case "agent":
-		SetDelegationPolicy(RootDB, user, "", target, value)
+		setDelegationDecision(user, "", target, value)
 	case "agentfor":
 		if from, tgt, ok := strings.Cut(target, ":"); ok && tgt != "" {
-			SetDelegationPolicy(RootDB, user, from, tgt, value)
+			setDelegationDecision(user, from, tgt, value)
 		}
 	case "contact":
 		SetContactPolicy(RootDB, user, "", target, value)
@@ -782,10 +788,10 @@ func (T *OrchestrateApp) handleConsolePermissionRemove(w http.ResponseWriter, r 
 	}
 	switch kind {
 	case "agent":
-		RemoveDelegationPolicy(RootDB, user, "", target)
+		removeDelegationDecision(user, "", target)
 	case "agentfor":
 		if from, tgt, ok := strings.Cut(target, ":"); ok && tgt != "" {
-			RemoveDelegationPolicy(RootDB, user, from, tgt)
+			removeDelegationDecision(user, from, tgt)
 		}
 	case "contact":
 		RemoveContactPolicy(RootDB, user, "", target)
@@ -838,8 +844,8 @@ func (T *OrchestrateApp) handleConsolePermissionPromote(w http.ResponseWriter, r
 	}
 	if kind == "agentfor" {
 		policy := DelegationPolicy(RootDB, user, aid, subject)
-		SetDelegationPolicy(RootDB, user, "", subject, policy)
-		RemoveDelegationPolicy(RootDB, user, aid, subject)
+		setDelegationDecision(user, "", subject, policy)
+		removeDelegationDecision(user, aid, subject)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -881,8 +887,8 @@ func (T *OrchestrateApp) handleConsolePermissionNarrow(w http.ResponseWriter, r 
 	switch kind {
 	case "agent":
 		policy := DelegationPolicy(RootDB, user, "", subject)
-		SetDelegationPolicy(RootDB, user, agentID, subject, policy)
-		RemoveDelegationPolicy(RootDB, user, "", subject)
+		setDelegationDecision(user, agentID, subject, policy)
+		removeDelegationDecision(user, "", subject)
 	case "contact":
 		policy := ContactPolicy(RootDB, user, "", subject)
 		SetContactPolicy(RootDB, user, agentID, subject, policy)
@@ -1001,7 +1007,7 @@ func (T *OrchestrateApp) handleConsolePermissionGrant(w http.ResponseWriter, r *
 				return
 			}
 		}
-		SetDelegationPolicy(RootDB, user, agentID, subject, value)
+		setDelegationDecision(user, agentID, subject, value)
 	default:
 		http.Error(w, "unknown kind "+kind, http.StatusBadRequest)
 		return

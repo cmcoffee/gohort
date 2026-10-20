@@ -226,7 +226,7 @@ func (T *OrchestrateApp) resolveApproval(w http.ResponseWriter, r *http.Request,
 		// falls back to all agents rather than losing the owner's yes.
 		// Under the agent's id, which a rename or another spelling of its
 		// name does not change (delegation_grants.go).
-		SetDelegationPreAuthorized(RootDB, user, strings.TrimSpace(a.FromAgent), delegationGrantKey(user, a.Agent), true)
+		setDelegationDecision(user, strings.TrimSpace(a.FromAgent), a.Agent, PolicyAllow)
 		// And the pairing a narrowed agent's first handoff waits on
 		// (dispatch_escalation.go): the same yes the chat card's Always allow
 		// gives, or approving a queued handoff "always" still left the next

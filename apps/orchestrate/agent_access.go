@@ -155,7 +155,7 @@ func agentReach(udb Database, user string, caller AgentRecord) []agentReachRow {
 		if adds == "" {
 			adds = "nothing this agent does not already have"
 		}
-		how := edgeApproval(udb, caller, target)
+		how := edgeApproval(udb, user, caller, target)
 		out = append(out, agentReachRow{ID: target.ID, Name: target.Name, Kind: "agent", Adds: adds,
 			FirstHandoff: firstHandoffLabel(how), Asks: how == edgeAsks, Granted: how == edgeGranted})
 	}

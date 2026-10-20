@@ -25,35 +25,110 @@ import (
 // all-agents row, as in DelegationPolicy, and within each, the id before a
 // name.
 func delegationDecisionFor(owner, from string, target AgentRecord, typed string) (string, bool) {
-	id := strings.TrimSpace(target.ID)
-	names := []string{strings.TrimSpace(target.Name), strings.TrimSpace(typed)}
 	entries := ListDelegationPolicies(RootDB, owner)
 	scopes := []string{strings.TrimSpace(from)}
 	if scopes[0] != "" {
 		scopes = append(scopes, "")
 	}
 	for _, scope := range scopes {
-		var byName string
-		for _, e := range entries {
-			if e.Scope != scope {
-				continue
-			}
-			if id != "" && e.Target == id {
-				return e.Policy, true
-			}
-			if byName == "" {
-				for _, n := range names {
-					if n != "" && strings.EqualFold(e.Target, n) {
-						byName = e.Policy
-					}
-				}
-			}
-		}
-		if byName != "" {
-			return byName, true
+		if p, ok := delegationDecisionIn(entries, scope, target, typed); ok {
+			return p, true
 		}
 	}
 	return "", false
+}
+
+// delegationDecisionIn is the decision recorded in one scope ("" is every
+// agent) on handing work to target: under its id first, then under a name.
+func delegationDecisionIn(entries []PolicyEntry, scope string, target AgentRecord, typed string) (string, bool) {
+	id := strings.TrimSpace(target.ID)
+	names := []string{strings.TrimSpace(target.Name), strings.TrimSpace(typed)}
+	var byName string
+	for _, e := range entries {
+		if e.Scope != scope {
+			continue
+		}
+		if id != "" && e.Target == id {
+			return e.Policy, true
+		}
+		if byName == "" {
+			for _, n := range names {
+				if n != "" && strings.EqualFold(e.Target, n) {
+					byName = e.Policy
+				}
+			}
+		}
+	}
+	return byName, byName != ""
+}
+
+// delegationAllowedFor reports the owner's standing Allow for exactly from
+// handing target work: a Permissions row for that pairing, or a request
+// approved with Always allow. A narrowed agent's first handoff
+// (edgeApproval) asked again past one: the Allow was stored here and the
+// edge read only its own grant, so the owner was asked for what they had
+// already allowed. The every-agent row does not count: it was not a decision
+// about this caller, and the edge is.
+func delegationAllowedFor(owner, from string, target AgentRecord) bool {
+	from = strings.TrimSpace(from)
+	if owner == "" || from == "" {
+		return false
+	}
+	p, ok := delegationDecisionIn(ListDelegationPolicies(RootDB, owner), from, target, "")
+	return ok && p == PolicyAllow
+}
+
+// setDelegationDecision records the owner's decision on from handing agent
+// work, under the agent's id when the name resolves to one, and drops any row
+// in the scope still keyed by another name for the same agent. A grant
+// written before grants were keyed by id carries a name, so approving the
+// pairing again left two rows for it, shown as two identical entries, and
+// removing one exposed the other.
+func setDelegationDecision(owner, from, agent, policy string) {
+	key := delegationGrantKey(owner, agent)
+	SetDelegationPolicy(RootDB, owner, from, key, policy)
+	dropDelegationAliases(owner, from, key)
+}
+
+// removeDelegationDecision forgets the pairing, under every key it is stored by.
+func removeDelegationDecision(owner, from, agent string) {
+	key := delegationGrantKey(owner, agent)
+	RemoveDelegationPolicy(RootDB, owner, from, key)
+	if key != strings.TrimSpace(agent) {
+		RemoveDelegationPolicy(RootDB, owner, from, agent)
+	}
+	dropDelegationAliases(owner, from, key)
+}
+
+// dropDelegationAliases removes the rows in from's scope that name the agent
+// with this id by anything but the id.
+func dropDelegationAliases(owner, from, id string) {
+	for _, e := range ListDelegationPolicies(RootDB, owner) {
+		if e.Scope == from && e.Target != id && delegationGrantKey(owner, e.Target) == id {
+			RemoveDelegationPolicy(RootDB, owner, from, e.Target)
+		}
+	}
+}
+
+// collapseDelegationAliases is the Permissions list with one row per scope
+// and agent: where a name-keyed row and an id-keyed one name the same agent,
+// the id's, which is the one delegationDecisionFor reads first. resolve maps
+// a row's key to the agent id it names, "" when it names none.
+func collapseDelegationAliases(entries []PolicyEntry, resolve func(string) string) []PolicyEntry {
+	byID := map[string]bool{}
+	for _, e := range entries {
+		if resolve(e.Target) == e.Target {
+			byID[e.Scope+"\x00"+e.Target] = true
+		}
+	}
+	out := entries[:0:0]
+	for _, e := range entries {
+		if id := resolve(e.Target); id != "" && id != e.Target && byID[e.Scope+"\x00"+id] {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
 }
 
 // delegationGrantKey is what a new grant for agent is written under: its id
