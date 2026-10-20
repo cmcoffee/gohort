@@ -51,6 +51,10 @@ type publishJob struct {
 	// whether it started on its own (Keep published) or was asked for.
 	owner, guideID, title string
 	background            bool
+	// importing is a page being taken in (page_import.go) rather than a
+	// guide going out; GuideID is the guide it became, once it has.
+	importing bool
+	GuideID   string `json:"guide_id,omitempty"`
 }
 
 // publishJobStep is one step and when it happened, in seconds from the start.

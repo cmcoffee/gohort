@@ -57,6 +57,14 @@ func (T *Scribe) route(w http.ResponseWriter, r *http.Request) {
 		T.handleBody(w, r, udb, user)
 	case path == "image":
 		T.handleImage(w, r, udb, user)
+	// A page already published somewhere, taken in to start a guide that
+	// keeps it (page_import.go).
+	case path == "import/page":
+		T.handleImportPage(w, r, udb, user)
+	case path == "import/page/job":
+		T.handleImportPageJob(w, r, user)
+	case path == "import/page/stop":
+		T.handleImportPageStop(w, r, user)
 	case path == "import":
 		T.handleImport(w, r, udb, user)
 	case path == "images":

@@ -19,6 +19,7 @@ func TestPublishDialogScriptParses(t *testing.T) {
 		"publish":  "var act = " + guidePublishAction + ";\n",
 		"settings": "var act = " + guideSettingsAction + ";\n",
 		"share":    "var act = " + guideShareAction + ";\n",
+		"import":   "var act = " + scribeImportPageAction + ";\n",
 		"sections": guideSectionCode + "\n",
 	} {
 		f := filepath.Join(t.TempDir(), name+".js")

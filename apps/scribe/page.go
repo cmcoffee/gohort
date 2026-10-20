@@ -48,6 +48,10 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 			// library menu holds them.
 			{Label: "Import", Kind: "menu", Scope: "library", Children: []ui.WorkbenchAction{
 				{Label: "HTML page", Kind: "client", URL: "scribe_import"},
+				// A page already published somewhere (Confluence, one of your
+				// publishing targets), taken in so the guide keeps that page
+				// rather than publishing a second one (page_import.go).
+				{Label: "A published page", Kind: "client", URL: "scribe_import_page"},
 				// The lossless door: a bundle (from Export > Bundle, or a whole
 				// account export) through the shared preview-then-import flow.
 				{Label: "Bundle", Kind: "client", URL: "scribe_import_bundle"},
@@ -288,6 +292,7 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 			ClientAction("guides_publish", guidePublishAction).
 			ClientAction("scribe_rules", scribeRulesAction).
 			ClientAction("scribe_import", scribeImportAction).
+			ClientAction("scribe_import_page", scribeImportPageAction).
 			JS(ArtifactClientJS).
 			ClientAction("scribe_export_bundle", scribeExportBundleAction).
 			ClientAction("scribe_import_bundle", scribeImportBundleAction).
@@ -333,6 +338,72 @@ const scribeImportAction = `function(ctx){
           .catch(function(err){ window.uiAlert('Import failed: ' + (err && err.message || err)); });
       });
       input.click();
+}`
+
+// scribeImportPageAction takes in a page already published somewhere: pick
+// where it is, paste its address, and the guide made from it keeps that page
+// as its published copy (page_import.go). The read runs as a job, followed
+// here with a spinner, its steps and a Stop beside Close.
+const scribeImportPageAction = `function(ctx){
+      if (!window.uiOpenSimpleModal) return;
+      fetch('import/page', {credentials:'same-origin'}).then(function(r){ return r.ok ? r.json() : {places: []}; }).then(function(d){
+        var places = (d && d.places) || [];
+        window.uiOpenSimpleModal({title:'Import a published page', width:'560px', mount: function(body, dlg){
+          var intro = el('p', {class:'guide-kn-intro', text:'Start a guide from a page that is already published, and keep it there: publishing the guide updates that page instead of making a new one, and edits made on the page come back to the guide.'});
+          body.appendChild(intro);
+          if (!places.length) {
+            body.appendChild(el('p', {class:'guide-kn-intro', text:'Nothing you can read a page from is set up yet: connect Confluence, or make a publishing target in Extensions.'}));
+            return;
+          }
+          var pick = el('select', {class:'ui-input'});
+          places.forEach(function(p, i){ var o = el('option', {text: p.title + (p.group ? ' (' + p.group + ')' : '')}); o.value = String(i); pick.appendChild(o); });
+          var link = el('input', {class:'ui-input', type:'text', placeholder:'https://your-site.atlassian.net/wiki/spaces/OPS/pages/123456/Runbook'});
+          var keepRow = el('label', {style:'display:flex;align-items:center;gap:0.5rem;margin-top:0.6rem'});
+          var keep = el('input', {type:'checkbox'});
+          keepRow.appendChild(keep); keepRow.appendChild(document.createTextNode('Keep it published: update the page whenever the guide changes'));
+          body.appendChild(el('label', {text:'Where it is'})); body.appendChild(pick);
+          body.appendChild(el('label', {text:'Its address', style:'margin-top:0.6rem;display:block'})); body.appendChild(link);
+          body.appendChild(keepRow);
+          var status = el('div', {style:'margin-top:0.8rem;font-size:var(--fs-sm, 0.8rem);line-height:1.5'});
+          body.appendChild(status);
+          var go = el('button', {type:'button', class:'ui-row-btn primary', text:'Import'});
+          var stop = el('button', {type:'button', class:'ui-row-btn', text:'Stop'});
+          dlg.addAction(go);
+          var frames = ['\u280b','\u2819','\u2839','\u2838','\u283c','\u2834','\u2826','\u2827','\u2807','\u280f'], f = 0, job = null, timer = null;
+          function show(j){
+            status.innerHTML = '';
+            var line = j.done ? (j.ok ? 'Done. ' : 'It did not work. ') + (j.message || '') : frames[f++ % frames.length] + ' ' + (j.now || 'Reading the page') + (j.elapsed > 2 ? ' \u00b7 ' + j.elapsed + 's' : '');
+            status.appendChild(el('div', {text: line, style: j.done && !j.ok ? 'color:var(--danger, #c33)' : ''}));
+            (j.steps || []).slice(-6).forEach(function(s){ status.appendChild(el('div', {text: s.text, style:'color:var(--text-mute)'})); });
+          }
+          function poll(){
+            fetch('import/page/job?job=' + encodeURIComponent(job), {credentials:'same-origin'}).then(function(r){ return r.json(); }).then(function(j){
+              show(j);
+              if (j.done) {
+                clearInterval(timer); stop.remove();
+                if (j.ok) { if (window.uiInvalidate) window.uiInvalidate('guides'); status.appendChild(el('div', {text:'It is in the list on the left.'})); }
+                else { go.disabled = false; }
+              }
+            }).catch(function(){});
+          }
+          go.addEventListener('click', function(){
+            var p = places[parseInt(pick.value, 10)];
+            if (!p || !link.value.trim()) { status.textContent = 'Pick where it is and paste its address.'; return; }
+            go.disabled = true;
+            status.textContent = frames[0] + ' Starting';
+            fetch('import/page', {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'},
+              body: JSON.stringify({kind: p.kind, target: p.target || '', link: link.value.trim(), keep_published: keep.checked})})
+              .then(function(r){ if (!r.ok) return r.text().then(function(t){ throw new Error(t || ('HTTP ' + r.status)); }); return r.json(); })
+              .then(function(d){
+                job = d.job;
+                dlg.addAction(stop);
+                stop.onclick = function(){ fetch('import/page/stop?job=' + encodeURIComponent(job), {method:'POST', credentials:'same-origin'}); };
+                timer = setInterval(poll, 1000); poll();
+              })
+              .catch(function(err){ go.disabled = false; status.textContent = 'Import failed: ' + (err && err.message || err); });
+          });
+        }});
+      });
 }`
 
 // scribeExportBundleAction downloads the open document as a bundle through the

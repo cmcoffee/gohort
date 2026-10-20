@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/url"
 	"sort"
+	"strings"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -31,7 +32,12 @@ func publishLiveEntries() []LiveEntry {
 		if j.background {
 			label = "Keeping " + firstNonEmpty(j.title, "a guide") + " published"
 		}
-		if j.Target != "" {
+		if j.importing {
+			label = "Importing a page"
+			if j.Target != "" {
+				label += " from " + j.Target
+			}
+		} else if j.Target != "" {
 			label += " to " + j.Target
 		}
 		status := fmt.Sprintf("%ds", int(time.Since(j.Started).Seconds()))
@@ -46,10 +52,18 @@ func publishLiveEntries() []LiveEntry {
 			App:        "Scribe",
 			Path:       "/scribe",
 			URL:        "/scribe/",
-			CancelURL:  "/scribe/publish/stop?id=" + url.QueryEscape(j.guideID),
+			CancelURL:  cancelURL(j),
 			Owner:      j.owner, // the title is the owner's words: masked for others
 		})
 	}
 	sort.Slice(out, func(a, b int) bool { return out[a].ID < out[b].ID })
 	return out
+}
+
+// cancelURL is where the row's Stop posts: the guide's publish, or the import.
+func cancelURL(j *publishJob) string {
+	if j.importing {
+		return "/scribe/import/page/stop?job=" + url.QueryEscape(strings.TrimPrefix(j.guideID, importJobPrefix))
+	}
+	return "/scribe/publish/stop?id=" + url.QueryEscape(j.guideID)
 }
