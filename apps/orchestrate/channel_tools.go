@@ -391,6 +391,7 @@ func channelChatTools(sess *ToolSession, owner, agentID string, via ...string) [
 				Parameters: map[string]ToolParam{
 					"to":          {Type: "string", Description: "Recipient as shown by list_chats: a display name, handle (phone/email), or chat_id. (Alias: chat_id.)"},
 					"text":        {Type: "string", Description: "The message text to send to the channel. (Alias: message.)"},
+					"parts":       {Type: "array", Items: &ToolParam{Type: "string"}, Description: "Several messages to send one after another, each its own message, in order (after text, if text is set too). Only when the person asked for separate messages; never for alternative drafts of one message. A second send_message to the same recipient in one turn is held, so this is the way to send several."},
 					"chat_id":     {Type: "string", Description: "Alias for `to` (a conversation's chat id): accepted for compatibility; prefer `to`."},
 					"message":     {Type: "string", Description: "Alias for `text`: accepted for compatibility; prefer `text`."},
 					"attachments": {Type: "array", Items: &ToolParam{Type: "string"}, Description: attachmentsParamDesc},
@@ -408,11 +409,18 @@ func channelChatTools(sess *ToolSession, owner, agentID string, via ...string) [
 				if text == "" {
 					text = strings.TrimSpace(oArgStr(args, "message")) // alias
 				}
-				if to == "" || text == "" {
-					return "", fmt.Errorf("a recipient (`to`, or its alias `chat_id`) and message text (`text`, or its alias `message`) are both required")
+				msgs := messageParts(text, args["parts"])
+				if to == "" || len(msgs) == 0 {
+					return "", fmt.Errorf("a recipient (`to`, or its alias `chat_id`) and message text (`text`, its alias `message`, or `parts`) are both required")
 				}
+				text = strings.Join(msgs, "\n\n")
 				chatID, handle, ok := resolve(to)
 				if !ok {
+					// The usual miss is naming the person who just spoke, in a
+					// group, instead of the conversation itself.
+					if sess != nil && sess.ReplyAuthorizedKey != "" {
+						return "", fmt.Errorf("no recipient %q on your channels. To write in the conversation you are answering, put the text in your reply, or use to=%q; otherwise use a name, handle, or chat_id from list_chats", to, sess.ReplyAuthorizedKey)
+					}
 					return "", fmt.Errorf("no recipient %q on your channels: use a name, handle, or chat_id from list_chats", to)
 				}
 				recip := operatorRecipientKey(chatID, handle)
@@ -425,29 +433,27 @@ func channelChatTools(sess *ToolSession, owner, agentID string, via ...string) [
 				// not a proactive reach-out, so no approval queue; and it is the
 				// turn's reply rather than a message beside it (replyInThread).
 				if isReplyToActiveInbound(sess, recip) {
-					return replyInThread(sess, label, text, images, videos), nil
+					return replyInThread(sess, label, msgs, images, videos), nil
 				}
 				// A standing approval is the owner's say-so for the owner's own
 				// asks, not for someone else's (standingGrantApplies).
 				standing := standingGrantApplies(ctx, recip)
 				if standing && familyContactAllowed(owner, agentID, recip) {
-					if _, err := operatorDeliverMedia(owner, agentID, chatID, handle, text, images, videos); err != nil {
-						return "", err
-					}
 					// If this chat is a bound channel, make its agent see the post
 					// (channel session + cortex) so it can field follow-ups.
-					recordChannelPost(sess.DB, owner, chatID, handle, text)
-					return fmt.Sprintf("Sent to %s (you've pre-authorized this recipient).", label), nil
+					if err := deliverParts(sess, owner, agentID, chatID, handle, msgs, images, videos); err != nil {
+						return "", err
+					}
+					return fmt.Sprintf("Sent %sto %s (you've pre-authorized this recipient).", partsCount(msgs), label), nil
 				}
 				// Authorized sender: this agent — or a parent it's owned by — may
 				// deliver to this channel (inherited down the ownership chain). Send
 				// without queuing; the grant is the approval.
 				if standing && channelSenderAuthorized(UserDB(orchestrateBaseDB, owner), owner, chatID, handle, agentID) {
-					if _, err := operatorDeliverMedia(owner, agentID, chatID, handle, text, images, videos); err != nil {
+					if err := deliverParts(sess, owner, agentID, chatID, handle, msgs, images, videos); err != nil {
 						return "", err
 					}
-					recordChannelPost(sess.DB, owner, chatID, handle, text)
-					return fmt.Sprintf("Sent to %s (authorized sender for this channel).", label), nil
+					return fmt.Sprintf("Sent %sto %s (authorized sender for this channel).", partsCount(msgs), label), nil
 				}
 				// Agent rides the queued record so the approved send tags with
 				// this agent's name (if it opted into TagName). The direct-send
@@ -465,7 +471,11 @@ func channelChatTools(sess *ToolSession, owner, agentID string, via ...string) [
 				if sess != nil && sess.PendingApprovalPrompt != nil {
 					sess.PendingApprovalPrompt(a)
 				}
-				return fmt.Sprintf("Queued a message to %s for the user's approval (id %s): it sends once approved.", label, a.ID), nil
+				joined := ""
+				if len(msgs) > 1 {
+					joined = fmt.Sprintf(" Its %d parts go as ONE message: an approval sends one.", len(msgs))
+				}
+				return fmt.Sprintf("Queued a message to %s for the user's approval (id %s): it sends once approved.%s", label, a.ID, joined), nil
 			},
 		},
 	}

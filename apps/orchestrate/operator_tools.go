@@ -650,15 +650,62 @@ func isReplyToActiveInbound(sess *ToolSession, recip string) bool {
 // turn's own reply followed it, two messages saying the same thing. Both doors
 // a turn can write to its own conversation through come here: send_message
 // and message_contact.
-func replyInThread(sess *ToolSession, label, text string, images, videos []string) string {
-	sess.HoldInThreadReply(text)
+func replyInThread(sess *ToolSession, label string, msgs, images, videos []string) string {
+	for _, m := range msgs {
+		sess.HoldInThreadReply(m)
+	}
 	for _, b := range images {
 		sess.AppendImage(b)
 	}
 	for _, b := range videos {
 		sess.AppendVideo(b)
 	}
+	if len(msgs) > 1 {
+		return fmt.Sprintf("That is your reply to %s: it goes out as %d separate messages, in order, with what it carries on the first, when you finish. End the turn now and do not repeat it.", label, len(msgs))
+	}
 	return fmt.Sprintf("That is your reply to %s: it goes out, with what it carries, as the one message this turn sends when you finish. End the turn now and do not repeat it.", label)
+}
+
+// messageParts is a send's messages: text, then each of parts, blanks dropped.
+func messageParts(text string, parts any) []string {
+	var out []string
+	if t := strings.TrimSpace(text); t != "" {
+		out = append(out, t)
+	}
+	if list, ok := parts.([]any); ok {
+		for _, e := range list {
+			if p, ok := e.(string); ok && strings.TrimSpace(p) != "" {
+				out = append(out, strings.TrimSpace(p))
+			}
+		}
+	}
+	return out
+}
+
+// partsCount is "3 messages " for a send of several, "" for one.
+func partsCount(msgs []string) string {
+	if len(msgs) < 2 {
+		return ""
+	}
+	return fmt.Sprintf("%d messages ", len(msgs))
+}
+
+// deliverParts sends each message on its own, in order, the attachments
+// with the first, and records each as a post on the chat.
+func deliverParts(sess *ToolSession, owner, agentID, chatID, handle string, msgs, images, videos []string) error {
+	for i, m := range msgs {
+		if i > 0 {
+			images, videos = nil, nil
+		}
+		if _, err := operatorDeliverMedia(owner, agentID, chatID, handle, m, images, videos); err != nil {
+			if i > 0 {
+				return fmt.Errorf("sent %d of %d messages, then: %w", i, len(msgs), err)
+			}
+			return err
+		}
+		recordChannelPost(sess.DB, owner, chatID, handle, m)
+	}
+	return nil
 }
 
 // resolveCheckAgent maps a user-supplied poll-monitor checker reference to a

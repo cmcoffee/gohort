@@ -335,7 +335,9 @@ func (s *ToolSession) NextImageAttempt(refine bool) (attempt, total int) {
 // HoldInThreadReply keeps a message addressed to the conversation this turn is
 // answering, to go out as the turn's reply rather than beside it. Sent at once,
 // it reached the conversation and then the turn's own reply followed it: two
-// messages saying the same thing. Several holds in one turn are kept in order.
+// messages saying the same thing. Several holds in one turn are kept in order,
+// and each goes out as its own message: the duplicate-send guard holds a second
+// send to one recipient, so several come only from one send of several parts.
 func (s *ToolSession) HoldInThreadReply(text string) {
 	if s == nil || strings.TrimSpace(text) == "" {
 		return
@@ -345,17 +347,17 @@ func (s *ToolSession) HoldInThreadReply(text string) {
 	s.mu.Unlock()
 }
 
-// TakeInThreadReply returns what HoldInThreadReply kept, joined, and clears it.
-// "" when the turn addressed nothing to its own conversation.
-func (s *ToolSession) TakeInThreadReply() string {
+// TakeInThreadReply returns the messages HoldInThreadReply kept, in order, and
+// clears them. Empty when the turn addressed nothing to its own conversation.
+func (s *ToolSession) TakeInThreadReply() []string {
 	if s == nil {
-		return ""
+		return nil
 	}
 	s.mu.Lock()
 	held := s.inThreadReply
 	s.inThreadReply = nil
 	s.mu.Unlock()
-	return strings.Join(held, "\n\n")
+	return held
 }
 
 // HandOverUnflushed moves what s attached and nothing has delivered yet onto

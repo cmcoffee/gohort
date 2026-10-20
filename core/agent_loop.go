@@ -630,6 +630,7 @@ type roundState struct {
 	silentSeen            bool
 	work                  []toolWork
 	batchSend             map[string]bool
+	batchHeld             map[string][]int // results held only because a sibling in this batch claimed the recipient
 	batchSig              map[string]int
 	batchDup              [][2]int
 	knownIDs              map[string]bool
@@ -3525,6 +3526,7 @@ func (lr *loopRun) toolRoundSetup() loopAction {
 	// the first when the second is checked. Claimed pre-execution here so the
 	// second in the same batch is held too.
 	lr.rs.batchSend = map[string]bool{}
+	lr.rs.batchHeld = map[string][]int{}
 
 	// In-batch identical-call dedup. batchSig maps a call signature to the
 	// results index of the ONE call that will actually run; batchDup lists
@@ -3776,8 +3778,13 @@ func (lr *loopRun) toolRoundPlanCalls() loopAction {
 			lr.rs.guardBlockedThisRound = true
 			lr.rs.results[i] = ToolResult{
 				ID:      tc.ID,
-				Content: fmt.Sprintf("HELD: you already sent a message to this recipient this turn via '%s', so this additional send was NOT delivered (it would double-message them). If you drafted several variations, that's expected: pick the ONE you want and send it on your NEXT turn. If you genuinely need to send a distinct follow-up, do it next turn, not batched with the first.", tc.Name),
+				Content: fmt.Sprintf("HELD: you already sent a message to this recipient this turn via '%s', so this additional send was NOT delivered (it would double-message them). If you drafted several variations, that's expected: pick the ONE you want and send it on your NEXT turn. If the person asked for several separate messages, send them in ONE call, as that tool's parts where it has them.", tc.Name),
 				IsError: true,
+			}
+			if !lr.sentThisTurn[sendKey] {
+				// Held for a sibling that has not run yet: if it fails, this
+				// was not a double message, and the result must not say so.
+				lr.rs.batchHeld[sendKey] = append(lr.rs.batchHeld[sendKey], i)
 			}
 			lr.rs.toolErrors++
 			continue
@@ -4063,6 +4070,16 @@ func (lr *loopRun) dispatchTools() loopAction {
 		// delivery shouldn't block a legitimate retry to the same recipient.
 		if w.sendKey != "" && !lr.rs.results[w.index].IsError {
 			lr.sentThisTurn[w.sendKey] = true
+		}
+		// The send that claimed this recipient for the batch failed, so the
+		// ones held behind it were never a double message: observed, a first
+		// send to a name that did not resolve, and four more told "you already
+		// sent a message to this recipient" when nothing had been sent.
+		if w.sendKey != "" && lr.rs.results[w.index].IsError {
+			for _, j := range lr.rs.batchHeld[w.sendKey] {
+				lr.rs.results[j].Content = fmt.Sprintf("NOT SENT: it was held behind another send to the same recipient in this batch, and that send failed: %s Nothing reached them. Fix what failed, then send again in ONE call (several separate messages go as that tool's parts where it has them).", truncateRunes(lr.rs.results[w.index].Content, 300))
+			}
+			delete(lr.rs.batchHeld, w.sendKey)
 		}
 		// Identical-repeat tracking (see repeatSame decl). Count byte-identical
 		// results per signature on success OR error; a changed result resets.

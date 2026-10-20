@@ -106,3 +106,48 @@ func TestSendGuardPerRecipientAndCrossRound(t *testing.T) {
 		t.Errorf("Bob (distinct recipient) should be delivered, got %d", seen["Bob"])
 	}
 }
+
+// When the send that claimed a recipient for the batch FAILS, the ones held
+// behind it were never a double message, and must not say "you already sent".
+// Observed: a first send to a name that did not resolve, then four more told a
+// message had already gone, when nothing had reached anyone.
+func TestSendGuardHeldBehindAFailedSendSaysNothingWasSent(t *testing.T) {
+	app, _ := withTierStubs(t, "test.sendguard.failed", func(n int) []ToolCall {
+		if n == 1 {
+			return []ToolCall{
+				{ID: "1", Name: "message_contact", Args: map[string]any{"to": "Somebody", "text": "one"}},
+				{ID: "2", Name: "message_contact", Args: map[string]any{"to": "Somebody", "text": "two"}},
+			}
+		}
+		return nil
+	})
+	sendTool := AgentToolDef{
+		Tool: Tool{Name: "message_contact", Description: "send", Parameters: map[string]ToolParam{"to": {Type: "string"}, "text": {Type: "string"}}},
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+			return "", fmt.Errorf("no recipient %q on your channels", args["to"])
+		},
+	}
+	guardKey := func(name string, args map[string]any) string {
+		if to, _ := args["to"].(string); name == "message_contact" && to != "" {
+			return "send:" + strings.ToLower(to)
+		}
+		return ""
+	}
+	_, history, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "send two"}}, AgentLoopConfig{
+		Tools: []AgentToolDef{sendTool}, MaxRounds: 4, RouteKey: "test.sendguard.failed", SendGuardKey: guardKey,
+	})
+	if err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	var held string
+	for _, m := range history {
+		for _, r := range m.ToolResults {
+			if r.ID == "2" {
+				held = r.Content
+			}
+		}
+	}
+	if strings.Contains(held, "already sent") || !strings.Contains(held, "NOT SENT") || !strings.Contains(held, "no recipient") {
+		t.Errorf("the held send should say nothing went, and why: %q", held)
+	}
+}

@@ -628,14 +628,29 @@ func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
 			logLoopCut(chatID, cut)
 		}
 		if hasOutput {
-			T.enqueueOutbox(OutboxItem{ChatID: chatID, Handle: handle, Service: svc, Text: reply.Text, Images: reply.Images, Videos: reply.Videos, Agent: reply.AgentName, Owner: ch.Owner, Type: "reply"})
-		} else if OverflowChannelReply(in, reply.Text) {
+			T.enqueueReply(OutboxItem{ChatID: chatID, Handle: handle, Service: svc, Text: reply.Text, Images: reply.Images, Videos: reply.Videos, Agent: reply.AgentName, Owner: ch.Owner, Type: "reply"}, reply.More)
+		} else if OverflowChannelReply(in, strings.Join(append([]string{reply.Text}, reply.More...), "\n\n")) {
 			// No delivery path for this service — surface the reply to the agent's
 			// cortex/session instead of stranding it in an outbox nothing drains.
 			Log("[bridges] channel %q reply overflowed to agent cortex/session (no output path for svc=%s)", ch.Name, svc)
 		}
 		T.storeMessage(owner, StoredMessage{ID: newToken()[:12], ChatID: chatID, Role: "assistant", Text: reply.Text})
+		for _, more := range reply.More {
+			T.storeMessage(owner, StoredMessage{ID: newToken()[:12], ChatID: chatID, Role: "assistant", Text: more})
+		}
 	}()
+}
+
+// enqueueReply queues an agent's reply, then each further message it sent on
+// purpose (ChannelReply.More) as its own, in order, after it.
+func (T *Bridges) enqueueReply(first OutboxItem, more []string) {
+	T.enqueueOutbox(first)
+	for _, m := range more {
+		next := first
+		next.ID, next.Seq, next.Created = "", 0, ""
+		next.Text, next.Images, next.Videos = m, nil, nil
+		T.enqueueOutbox(next)
+	}
 }
 
 // serviceHasOutput reports whether a service can actually deliver outbound. A

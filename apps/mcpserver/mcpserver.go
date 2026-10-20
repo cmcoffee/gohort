@@ -809,7 +809,8 @@ func (T *MCPServer) askAgent(ctx context.Context, owner string, token *AccountTo
 	}
 	// Videos have no content type every client renders, so they are named
 	// rather than sent — better than a block the other side drops silently.
-	text := reply.Text
+	// One reply here, so several messages are one text.
+	text := strings.Join(append([]string{reply.Text}, reply.More...), "\n\n")
 	if n := len(reply.Videos); n > 0 {
 		text += fmt.Sprintf("\n\n[%d video(s) produced; this connector carries images only. Ask the agent to deliver them over a messaging channel, or open the thread in gohort.]", n)
 	}

@@ -508,7 +508,26 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 		// Carry the bound agent's display name so the transport can prefix an
 		// outbound name tag (opt-in) — lets the recipient tell the agent's reply
 		// apart from the owner's own texts in the same thread.
-		return ChannelReply{Text: replyText, Images: res.Images, Videos: res.Videos, AgentName: agentNameTag(in.Owner, in.AgentID)}, nil
+		out := ChannelReply{Text: replyText, Images: res.Images, Videos: res.Videos, AgentName: agentNameTag(in.Owner, in.AgentID)}
+		// Sent as several messages: each part is its own message, through the
+		// same enforcers, and the pictures ride the first.
+		if len(res.Parts) > 1 {
+			out.Text = ""
+			for _, p := range res.Parts {
+				if p = strings.TrimSpace(prompts.ApplyRuleEnforcers(StripMetaTags(p))); p == "" {
+					continue
+				}
+				if out.Text == "" {
+					out.Text = p
+				} else {
+					out.More = append(out.More, p)
+				}
+			}
+			if out.Text == "" {
+				out.Text = replyText
+			}
+		}
+		return out, nil
 	})
 }
 

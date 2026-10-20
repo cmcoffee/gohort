@@ -64,7 +64,7 @@ func messageContactToolDef(sess *ToolSession, owner, agentID, controllerAgentID 
 			// not a proactive reach-out, so no approval queue; and it is the
 			// turn's reply rather than a message beside it (replyInThread).
 			if isReplyToActiveInbound(sess, recip) {
-				return replyInThread(sess, label, text, images, videos), nil
+				return replyInThread(sess, label, []string{text}, images, videos), nil
 			}
 			// Pre-authorized recipient: send immediately, skip the queue,
 			// unless someone else's request is reaching past where they wrote.

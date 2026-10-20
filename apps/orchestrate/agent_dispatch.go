@@ -1491,7 +1491,12 @@ type AgentLoopOverrides struct {
 // AgentSyncResult is the bound agent's output: reply text plus any attachments
 // it produced this turn (base64).
 type AgentSyncResult struct {
-	Text   string
+	Text string
+	// Parts is Text as the separate messages the turn deliberately sent to its
+	// own conversation (send_message with parts), when it sent more than one.
+	// Text is them joined, for the stored thread and every caller that takes
+	// one reply; a channel delivers Parts one message each.
+	Parts  []string
 	Images []string
 	// Videos are base64 video attachments the turn produced (video tools via
 	// sess.Videos, or a [ATTACH: file.mp4] marker). Kept SEPARATE from Images so
@@ -1778,7 +1783,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	cr.shapeReply()
 	cr.saveExchange()
 	cr.collectMedia()
-	return AgentSyncResult{Text: cr.cleanReply, Images: cr.imgs, Videos: cr.vids, Made: madeFiles(cr.subSess), HitRoundCap: cr.resp.HitRoundCap, PhantomDelivery: cr.phantomDelivery, ToolCalls: cr.turnToolCalls, Silenced: cr.subSess != nil && cr.subSess.Silenced}, nil
+	return AgentSyncResult{Text: cr.cleanReply, Parts: cr.replyParts, Images: cr.imgs, Videos: cr.vids, Made: madeFiles(cr.subSess), HitRoundCap: cr.resp.HitRoundCap, PhantomDelivery: cr.phantomDelivery, ToolCalls: cr.turnToolCalls, Silenced: cr.subSess != nil && cr.subSess.Silenced}, nil
 }
 
 // continuingRun is one turn of an agent on a thread it keeps, from the
@@ -1841,6 +1846,7 @@ type continuingRun struct {
 	transcript      []Message
 	runErr          error
 	cleanReply      string
+	replyParts      []string // cleanReply as separate messages, when send_message sent several (AgentSyncResult.Parts)
 	turnToolCalls   []PersistedToolCall
 	modelCalls      int
 	imgs            []string
@@ -2648,12 +2654,16 @@ func (cr *continuingRun) shapeReply() {
 	// HoldInThreadReply): the turn's own closing words would have gone out as a
 	// second message after it. They are kept on the trail rather than sent, so
 	// a closing line that said something new is not lost from sight.
-	if held := cr.subSess.TakeInThreadReply(); held != "" {
+	if parts := cr.subSess.TakeInThreadReply(); len(parts) > 0 {
+		held := strings.Join(parts, "\n\n")
 		if own := cr.cleanReply; own != "" && own != held {
 			appendSessionDiag(cr.runtimeDB, cr.target.ID, cr.subSessionID, "in-thread-reply",
 				"This turn replied with send_message, so its closing text was not sent as a second message: "+truncateObs(own, 300))
 		}
 		cr.cleanReply = held
+		if len(parts) > 1 {
+			cr.replyParts = parts
+		}
 	}
 	// Round-cap fallback: the loop ran out of its budget without producing any
 	// text (and even the loop's forced-final-answer rescue came up empty). Don't

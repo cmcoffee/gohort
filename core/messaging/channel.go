@@ -538,7 +538,12 @@ type ChannelInbound struct {
 // ChannelReply is the bound agent's response for the transport to deliver
 // back out the channel.
 type ChannelReply struct {
-	Text   string
+	Text string
+	// More is further messages to send after Text, each its own message, in
+	// order. Set only when the agent deliberately sent several (the person
+	// asked for them as separate messages); a transport that cannot send more
+	// than one joins them onto Text.
+	More   []string
 	Images []string // base64 image attachments the agent produced this turn
 	Videos []string // base64 video attachments (kept separate so the transport delivers them as video, not mislabeled images)
 	// AgentName is the display name of the bound agent that produced this reply,

@@ -61,3 +61,26 @@ func TestDeliverStillWorksWithoutVideos(t *testing.T) {
 func TestBridgesSatisfiesTheMediaDeliverer(t *testing.T) {
 	var _ ChannelMediaDeliverer = channelThreadsImpl{}
 }
+
+// A reply the agent sent as several messages goes out as several, in order,
+// the pictures on the first only.
+func TestAReplyOfSeveralMessagesGoesOutAsSeveral(t *testing.T) {
+	T := &Bridges{AppCore{DB: OpenCache()}}
+	T.enqueueReply(OutboxItem{ChatID: "chat1", Service: "imessage", Owner: "craig", Text: "one", Images: []string{"img"}, Type: "reply"},
+		[]string{"two", "three"})
+	items := T.drainOutbox("imessage", "craig")
+	if len(items) != 3 {
+		t.Fatalf("want 3 messages, got %d: %+v", len(items), items)
+	}
+	for i, want := range []string{"one", "two", "three"} {
+		if !strings.Contains(items[i].Text, want) || items[i].ChatID != "chat1" {
+			t.Errorf("message %d = %+v, want %q to chat1", i, items[i], want)
+		}
+	}
+	if len(items[0].Images) != 1 || len(items[1].Images)+len(items[2].Images) != 0 {
+		t.Errorf("the picture should ride the first message only: %+v", items)
+	}
+	if items[1].ID == items[0].ID || items[2].Seq <= items[1].Seq {
+		t.Errorf("each message needs its own id, in order: %+v", items)
+	}
+}
