@@ -7,8 +7,13 @@ import (
 	neturl "net/url"
 	"strings"
 
+	"github.com/cmcoffee/gohort/core/flows"
 	"github.com/cmcoffee/gohort/core/sourcehooks"
 )
+
+// A job that takes a link (a video download) checks it here, whichever flow
+// does the job.
+func init() { flows.URLGuard = RefuseNonPublicHost }
 
 // RefuseNonPublicHost rejects a URL that names loopback, private, link-local or
 // unspecified address space, or a hostname reserved for local resolution.

@@ -37,7 +37,7 @@ func (a *AdminApp) registerSystemRoutes(sub *http.ServeMux) {
 		a.handleStatus(w, r)
 	})
 
-	// System Dependencies — probes optional host binaries (ffmpeg, pdftotext,
+	// System Hooks — probes optional host binaries (ffmpeg, pdftotext,
 	// bwrap, …) so the admin panel can show what's installed and what each gates.
 	sub.HandleFunc("/api/dependencies", func(w http.ResponseWriter, r *http.Request) {
 		if !a.requireAdmin(w, r) {

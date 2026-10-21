@@ -218,7 +218,14 @@ type UploadRequest struct {
 //
 // Returns ("", error) when STT is disabled or unreachable — callers
 // should treat this as a skip condition, not a fatal error.
+//
+// By the transcription job (TranscribeHook, core/flows) when it is loaded:
+// the service configured here is its native flow, and an admin can adapt it
+// to a command (a local whisper.cpp, say) where none is set up.
 func Transcribe(ctx context.Context, audio []byte, filename string) (string, error) {
+	if TranscribeHook != nil {
+		return TranscribeHook(ctx, audio, filename)
+	}
 	return TranscribeWith(ctx, GetTranscribeConfig(), audio, filename)
 }
 

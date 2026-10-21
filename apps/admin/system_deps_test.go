@@ -1,0 +1,661 @@
+package admin
+
+import (
+	"bytes"
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"image"
+	"image/png"
+	"io"
+	"mime/multipart"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/flows"
+	"github.com/cmcoffee/gohort/core/media"
+	"github.com/cmcoffee/gohort/core/ui"
+	"github.com/cmcoffee/gohort/tools/systemhook"
+	"github.com/cmcoffee/snugforge/kvlite"
+	"github.com/go-pdf/fpdf"
+)
+
+type depsFixture struct {
+	mux   *http.ServeMux
+	token string
+	db    Database
+}
+
+func newDepsFixture(t *testing.T) *depsFixture {
+	t.Helper()
+	db := &DBase{Store: kvlite.MemStore()}
+	prevRoot, prevAuth := RootDB, AuthDB
+	RootDB = db
+	AuthDB = func() Database { return db }
+	t.Cleanup(func() { RootDB, AuthDB = prevRoot, prevAuth })
+	AuthSetUser(db, "root", "pw", true)
+	AuthSetUser(db, "someone", "pw", false)
+	f := &depsFixture{mux: http.NewServeMux(), token: AuthCreateSession(db, "root"), db: db}
+	a := &AdminApp{db: db}
+	a.registerConnectorsRoutes(f.mux)
+	a.registerSystemDepsRoutes(f.mux)
+	a.registerSystemDepsChatRoutes(f.mux)
+	// Runs need a folder outside /tmp, which the sandbox replaces, laid out
+	// as gohort's data folder is.
+	if cache, err := os.UserCacheDir(); err == nil {
+		if root, err := os.MkdirTemp(cache, "gohort-admin-deps-test-"); err == nil {
+			flows.SetWorkBase(filepath.Join(root, "data", "workspaces", "_flows"))
+			t.Cleanup(func() { flows.SetWorkBase(""); os.RemoveAll(root) })
+		}
+	}
+	convSamples.Lock()
+	convSamples.byUser, convSamples.seq = map[string][]convSample{}, map[string]int{}
+	convSamples.Unlock()
+	return f
+}
+
+func (f *depsFixture) req(t *testing.T, token, method, path, body, ctype string) *httptest.ResponseRecorder {
+	t.Helper()
+	r := httptest.NewRequest(method, path, strings.NewReader(body))
+	if ctype != "" {
+		r.Header.Set("Content-Type", ctype)
+	}
+	r.AddCookie(&http.Cookie{Name: "gohort_session", Value: token})
+	w := httptest.NewRecorder()
+	f.mux.ServeHTTP(w, r)
+	return w
+}
+
+func (f *depsFixture) do(t *testing.T, method, path, body string) *httptest.ResponseRecorder {
+	return f.req(t, f.token, method, path, body, "")
+}
+
+func (f *depsFixture) rows(t *testing.T) ([]depRow, map[string]depRow) {
+	t.Helper()
+	var rows []depRow
+	if err := json.Unmarshal(f.do(t, "GET", "/api/system-deps", "").Body.Bytes(), &rows); err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]depRow{}
+	for _, r := range rows {
+		byID[r.ID] = r
+	}
+	return rows, byID
+}
+
+// wrappedPNG is a PNG behind 8 bytes nothing reads, which the dd command
+// drops.
+func wrappedPNG(t *testing.T) (wrapped, plain []byte) {
+	var b bytes.Buffer
+	png.Encode(&b, image.NewRGBA(image.Rect(0, 0, 4, 4)))
+	return append([]byte("GOHORTX!"), b.Bytes()...), b.Bytes()
+}
+
+const ddCustom = `{"name":"strip8","direction":"input","takes":"*","becomes":"image","steps":"dd if={in} of={out} bs=8 skip=1"}`
+
+func needDepsSandbox(t *testing.T) {
+	t.Helper()
+	w, _ := wrappedPNG(t)
+	a := flows.Adapted{Takes: []string{flows.Any}, Becomes: flows.KindImage, Steps: []string{"dd if={in} of={out} bs=8 skip=1"}}
+	if _, err := flows.RunAdapted(context.Background(), "probe", a, flows.Input{Data: w, From: "x/y"}); err != nil && strings.Contains(err.Error(), "sandbox") {
+		t.Skipf("no sandbox here: %v", err)
+	}
+}
+
+func samplePDF(t *testing.T, text string) []byte {
+	pdf := fpdf.New("P", "mm", "A4", "")
+	pdf.AddPage()
+	pdf.SetFont("Helvetica", "", 14)
+	pdf.Cell(40, 10, text)
+	var b bytes.Buffer
+	if err := pdf.Output(&b); err != nil {
+		t.Fatal(err)
+	}
+	return b.Bytes()
+}
+
+func upload(t *testing.T, data []byte) (string, string) {
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	part, _ := mw.CreateFormFile("file", "sample.bin")
+	part.Write(data)
+	mw.Close()
+	return body.String(), mw.FormDataContentType()
+}
+
+// One table, by group in order: every job, with what does it and what to
+// install, and the tools that are not jobs yet.
+func TestTheTableListsJobsAndToolsByGroup(t *testing.T) {
+	f := newDepsFixture(t)
+	rows, byID := f.rows(t)
+	for _, j := range flows.Jobs() {
+		if strings.HasPrefix(j.ID, "test.") {
+			continue
+		}
+		if r, ok := byID[j.ID]; !ok || !r.Job || r.Group != j.Group {
+			t.Errorf("job %s should be a job row in %s: %+v", j.ID, j.Group, r)
+		}
+	}
+	if r := byID["read.image"]; r.State != "ready" || r.By != "built in" {
+		t.Errorf("the built-in image job should be ready: %+v", r)
+	}
+	if _, err := exec.LookPath("heif-convert"); err != nil {
+		if r := byID["read.heic"]; r.State != "missing" || !strings.Contains(r.Detail, "libheif") {
+			t.Errorf("a missing heif-convert should say what to install: %+v", r)
+		}
+	}
+	if _, err := exec.LookPath("pdftotext"); err == nil {
+		if r := byID["read.pdf"]; r.State != "ready" || !strings.HasPrefix(r.By, "pdftotext") {
+			t.Errorf("pdftotext is installed, so PDF is ready by it: %+v", r)
+		}
+	}
+	if r := byID["export.pdf"]; r.Testable || !r.Output || r.By != "built in" {
+		t.Errorf("PDF export is the app's own, not tested here: %+v", r)
+	}
+	// The tools that are not jobs, in their group, with no Adapt.
+	if r, ok := byID["tool:git"]; !ok || r.Job || r.Group != flows.GroupCode {
+		t.Errorf("git should be a tool row in Running code: %+v", r)
+	}
+	if _, ok := byID["tool:pdftotext"]; ok {
+		t.Error("a job's tool should be in its job's row, not listed again")
+	}
+	// Groups in order, each together.
+	var seen []string
+	for _, r := range rows {
+		if len(seen) == 0 || seen[len(seen)-1] != r.Group {
+			seen = append(seen, r.Group)
+		}
+	}
+	if strings.Join(seen, "|") != strings.Join(groupOrder, "|") {
+		t.Errorf("want the groups once each, in order: %v", seen)
+	}
+}
+
+// Adapting a job saves a flow under it, off; on, gohort uses it where the
+// native tool cannot; deleted, it stops.
+func TestAJobIsAdaptedUnderItsRow(t *testing.T) {
+	needDepsSandbox(t)
+	f := newDepsFixture(t)
+	var form flowForm
+	json.Unmarshal(f.do(t, "GET", "/api/system-deps/adapt?id=read.heic", "").Body.Bytes(), &form)
+	if form.Name != "read-heic-adapted" || form.Prefer {
+		t.Errorf("Adapt should suggest a name, not preferred: %+v", form)
+	}
+	body := `{"name":"heic-two-steps","steps":"dd if={in} of={out.png} bs=8 skip=1\ncp {in} {out}"}`
+	if w := f.do(t, "POST", "/api/system-deps?job=read.heic", body); w.Code != 200 {
+		t.Fatalf("adapt: %d %s", w.Code, w.Body.String())
+	}
+	rows, byID := f.rows(t)
+	r := byID["heic-two-steps"]
+	if !r.Fills || r.Custom || r.State != "off" || r.Group != flows.GroupReading || !strings.Contains(r.By, "then") {
+		t.Fatalf("want an off, two-step flow filling read.heic: %+v", r)
+	}
+	for i, row := range rows {
+		if row.ID == "read.heic" && (i+1 >= len(rows) || rows[i+1].ID != "heic-two-steps") {
+			t.Error("the adapted flow should sit right under the job it fills")
+		}
+	}
+	heic := append([]byte{0, 0, 0, 24}, []byte("ftypheic\x00\x00\x00\x00mif1heic")...)
+	_, plain := wrappedPNG(t)
+	in := append(heic[:0:0], []byte("GOHORTX!")...)
+	in = append(in, plain...)
+	f.do(t, "POST", "/api/connectors?action=approve&name=heic-two-steps", "")
+	// The flow keeps the job's contract: a HEIC becomes an image.
+	res, err := flows.Convert(context.Background(), in, "image/heic", flows.KindImage)
+	if _, installed := exec.LookPath("heif-convert"); installed != nil && (err != nil || res.By != "heic-two-steps") {
+		t.Errorf("with heif-convert missing, the adapted flow should do it: %v %+v", err, res.By)
+	}
+	f.do(t, "DELETE", "/api/connectors?name=heic-two-steps", "")
+	if _, ok := mapOf(f, t)["heic-two-steps"]; ok {
+		t.Error("deleted, it should be gone")
+	}
+}
+
+func mapOf(f *depsFixture, t *testing.T) map[string]depRow { _, m := f.rows(t); return m }
+
+// customRows are the Custom area's table.
+func (f *depsFixture) customRows(t *testing.T) map[string]depRow {
+	t.Helper()
+	var rows []depRow
+	if err := json.Unmarshal(f.do(t, "GET", "/api/system-deps?custom=1", "").Body.Bytes(), &rows); err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]depRow{}
+	for _, r := range rows {
+		out[r.ID] = r
+	}
+	return out
+}
+
+// A format gohort does not support is added as its own row; changing one
+// that is on turns it off; the form reads short names.
+func TestAFormatIsAddedAndEditedSafely(t *testing.T) {
+	needDepsSandbox(t)
+	f := newDepsFixture(t)
+	if w := f.do(t, "POST", "/api/system-deps", ddCustom); w.Code != 200 {
+		t.Fatalf("add: %d %s", w.Code, w.Body.String())
+	}
+	r := f.customRows(t)["strip8"]
+	if !r.Custom || r.Fills || r.State != "off" || r.Enables != "Reads anything else" {
+		t.Fatalf("want an off added format in the Custom table: %+v", r)
+	}
+	if _, ok := mapOf(f, t)["strip8"]; ok {
+		t.Error("an added format belongs in the Custom table, not the main one")
+	}
+	in, plain := wrappedPNG(t)
+	if _, err := flows.Convert(context.Background(), in, "", flows.KindImage); !errors.Is(err, flows.ErrNoConversion) {
+		t.Fatalf("off, it should not be used: %v", err)
+	}
+	f.do(t, "POST", "/api/connectors?action=approve&name=strip8", "")
+	if res, err := flows.Convert(context.Background(), in, "", flows.KindImage); err != nil || !bytes.Equal(res.Out, plain) {
+		t.Fatalf("on, it should be used: %v", err)
+	}
+	edited := strings.Replace(ddCustom, "bs=8 skip=1", "bs=4 skip=2", 1)
+	if w := f.do(t, "POST", "/api/system-deps?edit=strip8", edited); w.Code != 200 {
+		t.Fatalf("edit: %d %s", w.Code, w.Body.String())
+	}
+	if c, _ := GetConnector(f.db, "strip8"); c.Approved {
+		t.Error("an edit should turn it off")
+	}
+	short := `{"name":"heicish","direction":"input","takes":"heic, avif","becomes":"image","steps":"magick {in} {out.png}"}`
+	f.do(t, "POST", "/api/system-deps", short)
+	var form flowForm
+	json.Unmarshal(f.do(t, "GET", "/api/system-deps/one?name=heicish", "").Body.Bytes(), &form)
+	if form.Takes != "heic, avif" || form.Direction != "input" {
+		t.Errorf("the edit form should show it short: %+v", form)
+	}
+	if w := f.do(t, "POST", "/api/system-deps", short); w.Code != http.StatusBadRequest {
+		t.Errorf("adding a name twice should be refused, got %d", w.Code)
+	}
+	bad := strings.Replace(ddCustom, `"strip8"`, `"bad"`, 1)
+	bad = strings.Replace(bad, " if={in}", "", 1)
+	if w := f.do(t, "POST", "/api/system-deps", bad); w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "{in}") {
+		t.Errorf("a flow with no {in} should be refused: %d %s", w.Code, w.Body.String())
+	}
+}
+
+// Test runs a row on a sample: a job's native flow, an adapted flow (off),
+// and an export on gohort's sample document.
+func TestARowIsTested(t *testing.T) {
+	needDepsSandbox(t)
+	f := newDepsFixture(t)
+	f.do(t, "POST", "/api/system-deps", ddCustom)
+	in, _ := wrappedPNG(t)
+	body, ctype := upload(t, in)
+	var got struct {
+		OK       bool   `json:"ok"`
+		Message  string `json:"message"`
+		Preview  string `json:"preview"`
+		Text     string `json:"text"`
+		Download string `json:"download"`
+	}
+	w := f.req(t, f.token, "POST", "/api/system-deps/test?id=strip8", body, ctype)
+	json.Unmarshal(w.Body.Bytes(), &got)
+	if !got.OK || !strings.HasPrefix(got.Preview, "data:image/png;base64,") {
+		t.Fatalf("want a worked test with a preview: %s", w.Body.String())
+	}
+	if _, err := exec.LookPath("pdftotext"); err == nil {
+		body, ctype = upload(t, samplePDF(t, "Test of the native row"))
+		got = struct {
+			OK       bool   `json:"ok"`
+			Message  string `json:"message"`
+			Preview  string `json:"preview"`
+			Text     string `json:"text"`
+			Download string `json:"download"`
+		}{}
+		w = f.req(t, f.token, "POST", "/api/system-deps/test?id=read.pdf", body, ctype)
+		json.Unmarshal(w.Body.Bytes(), &got)
+		if !got.OK || !strings.Contains(got.Text, "native row") {
+			t.Errorf("want the PDF's text from the job's row: %s", w.Body.String())
+		}
+	}
+	if _, err := exec.LookPath("pandoc"); err == nil {
+		w = f.do(t, "POST", "/api/system-deps/test?id=export.docx", "")
+		json.Unmarshal(w.Body.Bytes(), &got)
+		if !got.OK || !strings.HasPrefix(got.Download, "data:"+flows.MIMEDocx) {
+			t.Errorf("want the sample as Word to download: %s", w.Body.String())
+		}
+	}
+}
+
+func TestSystemDepsAreAdminOnly(t *testing.T) {
+	f := newDepsFixture(t)
+	tok := AuthCreateSession(f.db, "someone")
+	for _, p := range []string{"/api/system-deps", "/api/system-deps/test?id=x", "/api/system-deps/chat/send", "/api/system-deps/chat/sessions", "/api/system-deps/chat/cancel"} {
+		if w := f.req(t, tok, "POST", p, ddCustom, ""); w.Code != http.StatusForbidden {
+			t.Errorf("%s: a non-admin should be refused, got %d", p, w.Code)
+		}
+	}
+}
+
+// One section on Capabilities: the table, then the Custom area; the old
+// File Conversion section is gone.
+func TestSystemDependenciesIsOneSection(t *testing.T) {
+	var sec *ui.Section
+	n := 0
+	for _, s := range (&AdminApp{}).capabilitiesSections() {
+		if s.Title == "System Hooks" {
+			s := s
+			sec = &s
+			n++
+		}
+		if s.Title == "File Conversion" {
+			t.Error("File Conversion should be part of System Hooks now")
+		}
+	}
+	if sec == nil || n != 1 {
+		t.Fatalf("want one System Hooks section, got %d", n)
+	}
+	kids := sec.Body.(ui.Stack).Children
+	if tbl, ok := kids[0].(ui.Table); !ok || tbl.GroupBy != "group" {
+		t.Error("the section should open with the grouped table")
+	}
+	// Then the Custom area: its table, and Add and Builder behind buttons,
+	// nothing open until it is asked for.
+	if len(kids) != 2 {
+		t.Fatalf("want the table and the Custom area, got %d parts", len(kids))
+	}
+	custom, ok := kids[1].(ui.Subsection)
+	if !ok || custom.Title != "Custom" {
+		t.Fatalf("the second part should be the Custom area: %+v", kids[1])
+	}
+	parts := custom.Body.(ui.Stack).Children
+	if tbl, ok := parts[0].(ui.Table); !ok || tbl.Source != "api/system-deps?custom=1" {
+		t.Error("the Custom area should list the custom formats")
+	}
+	buttons := parts[1].(ui.Stack)
+	var add, builder bool
+	for _, c := range buttons.Children {
+		mb, ok := c.(ui.ModalButton)
+		if !ok {
+			t.Errorf("only buttons below the custom table, got %T", c)
+			continue
+		}
+		if fp, ok := mb.Body.(ui.FormPanel); ok && mb.Label == "Add…" && fp.PostURL == "api/system-deps" {
+			add = true
+		}
+		if p, ok := mb.Body.(ui.AgentLoopPanel); ok && p.Attachments && p.SendURL == "api/system-deps/chat/send" {
+			builder = true
+		}
+	}
+	if !buttons.Row || !add || !builder {
+		t.Errorf("want Add and Ask Builder side by side: row=%v add=%v builder=%v", buttons.Row, add, builder)
+	}
+}
+
+func TestSystemDepsScriptParses(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	path := filepath.Join(t.TempDir(), "test.js")
+	os.WriteFile(path, []byte("var f = "+systemDepsTestAction+";\n"), 0o600)
+	if out, err := exec.Command(node, "--check", path).CombinedOutput(); err != nil {
+		t.Errorf("%v\n%s", err, out)
+	}
+}
+
+// --- Builder ---------------------------------------------------------------
+
+func TestAttachmentsBecomeSamples(t *testing.T) {
+	newDepsFixture(t)
+	in, _ := wrappedPNG(t)
+	body, _ := json.Marshal(map[string]any{
+		"message":   "set it up",
+		"images":    []string{base64.StdEncoding.EncodeToString(in)},
+		"documents": []map[string]string{{"name": "IMG_0001.heic", "mime_type": "image/heic", "data": base64.StdEncoding.EncodeToString([]byte("\x00\x00\x00\x18ftypheic\x00\x00\x00\x00mif1"))}},
+	})
+	r := httptest.NewRequest("POST", "/api/system-deps/chat/send", strings.NewReader(string(body)))
+	if err := takeConvSamples(r, "root"); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := io.ReadAll(r.Body)
+	var got map[string]any
+	json.Unmarshal(raw, &got)
+	if _, ok := got["images"]; ok {
+		t.Error("the images should be taken out of the message")
+	}
+	msg, _ := got["message"].(string)
+	if !strings.Contains(msg, "sample-2 (iPhone photos (HEIC)") || !strings.HasSuffix(msg, "set it up") {
+		t.Errorf("the message should name the samples ahead of what was said: %q", msg)
+	}
+	if got["app_context"] != convChatContext || len(convSamplesFor("someone")) != 0 {
+		t.Errorf("filed under %s, samples the admin's own: %v", convChatContext, got["app_context"])
+	}
+}
+
+// Builder adapts a job by its id, off; a change to a live one turns it off;
+// it tests on the admin's sample, and an export on the sample document.
+func TestBuilderAdaptsAJobAndTestsIt(t *testing.T) {
+	needDepsSandbox(t)
+	f := newDepsFixture(t)
+	if _, err := builderAdapt("root", map[string]any{"name": "x", "job": "read.nope", "steps": "cp {in} {out}"}); err == nil {
+		t.Error("an unknown job should be refused")
+	}
+	msg, err := builderAdapt("root", map[string]any{"name": "heic-dd", "job": "read.heic", "steps": "dd if={in} of={out} bs=8 skip=1"})
+	if err != nil || !strings.Contains(msg, "iPhone photos") {
+		t.Fatalf("want the HEIC job adapted: %v %q", err, msg)
+	}
+	if c, _ := GetConnector(f.db, "heic-dd"); c.Approved {
+		t.Fatal("Builder's flow should land off")
+	}
+	ApproveConnector(f.db, "heic-dd")
+	if msg, _ := builderAdapt("root", map[string]any{"name": "heic-dd", "job": "read.heic", "steps": "dd if={in} of={out} bs=4 skip=2"}); !strings.Contains(msg, "off now") {
+		t.Errorf("changing a live flow should turn it off: %q", msg)
+	}
+	in, _ := wrappedPNG(t)
+	addConvSample("root", "photo", in)
+	builderAdapt("root", map[string]any{"name": "heic-dd", "job": "read.heic", "steps": "dd if={in} of={out} bs=8 skip=1"})
+	out, err := builderTest(context.Background(), "root", "heic-dd", "", "")
+	if err != nil || !strings.Contains(out, "Worked") || !strings.Contains(out, "4x4") || !strings.Contains(out, "is off") {
+		t.Errorf("want a worked test of the 4x4 image, still off: %v %q", err, out)
+	}
+	if _, err := exec.LookPath("pandoc"); err == nil {
+		if out, err := builderTest(context.Background(), "root", "export.docx", "", ""); err != nil || !strings.Contains(out, "Word") {
+			t.Errorf("an export tests on the sample document: %v %q", err, out)
+		}
+	}
+	text := depsText("root")
+	for _, want := range []string{"job read.heic: iPhone photos", "placeholders {in} {out}", "adapted heic-dd", "tool git", "sample-1"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("missing %q in:\n%s", want, text)
+		}
+	}
+}
+
+func TestBuilderCannotTurnAFlowOn(t *testing.T) {
+	var names []string
+	for _, d := range convBuilderTools("root") {
+		names = append(names, d.Tool.Name)
+		for _, bad := range []string{"approve", "turn_on", "enable", "install"} {
+			if strings.Contains(d.Tool.Name, bad) {
+				t.Errorf("%s should not exist", d.Tool.Name)
+			}
+		}
+	}
+	if strings.Join(names, ",") != "dependency_list,dependency_check_program,dependency_adapt,dependency_test" {
+		t.Errorf("unexpected tools: %v", names)
+	}
+}
+
+// The media jobs are rows in Media and the web, with the tools they drive;
+// ffmpeg and ffprobe are no longer listed apart; transcription says what to
+// set up when no speech service is.
+func TestTheMediaJobsAreRows(t *testing.T) {
+	f := newDepsFixture(t)
+	was := media.GetTranscribeConfig()
+	defer media.SetTranscribeConfig(was)
+	media.SetTranscribeConfig(media.TranscribeConfig{})
+	_, byID := f.rows(t)
+	for _, id := range []string{"media.frames", "media.metadata", "media.audio", "media.wav", "media.transcribe"} {
+		if r, ok := byID[id]; !ok || !r.Job || r.Group != flows.GroupMedia {
+			t.Errorf("%s should be a job row in Media: %+v", id, r)
+		}
+	}
+	if _, err := exec.LookPath("ffmpeg"); err == nil {
+		if r := byID["media.frames"]; r.State != "ready" || !strings.Contains(r.By, "ffprobe") || !strings.Contains(r.By, "ffmpeg") {
+			t.Errorf("frame sampling should be ready by ffprobe and ffmpeg: %+v", r)
+		}
+	}
+	for _, tool := range []string{"tool:ffmpeg", "tool:ffprobe"} {
+		if _, ok := byID[tool]; ok {
+			t.Errorf("%s is a job's tool now and should not be listed apart", tool)
+		}
+	}
+	if r := byID["media.transcribe"]; r.State != "missing" || !strings.HasPrefix(r.Detail, "To use it, set up a speech-to-text service") {
+		t.Errorf("with no speech service, transcription should say what to set up: %+v", r)
+	}
+}
+
+// Test on a media job gives its results: a video's frames, the first shown.
+func TestAMediaJobIsTested(t *testing.T) {
+	needDepsSandbox(t)
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg is not installed here")
+	}
+	f := newDepsFixture(t)
+	out := filepath.Join(t.TempDir(), "v.mp4")
+	if b, err := exec.Command("ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=duration=3:size=64x64:rate=10", "-pix_fmt", "yuv420p", out).CombinedOutput(); err != nil {
+		t.Skipf("could not make a sample video: %v %s", err, b)
+	}
+	video, _ := os.ReadFile(out)
+	body, ctype := upload(t, video)
+	w := f.req(t, f.token, "POST", "/api/system-deps/test?id=media.frames", body, ctype)
+	var got struct {
+		OK      bool   `json:"ok"`
+		Message string `json:"message"`
+		Preview string `json:"preview"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &got)
+	if !got.OK || !strings.Contains(got.Message, "results") || !strings.HasPrefix(got.Preview, "data:image/") {
+		t.Errorf("want the frames, the first shown: %s", w.Body.String())
+	}
+}
+
+// Steps are a list the form adds to a row at a time ("+ Add step"): saved
+// as the list, read back as the list, blank rows dropped. A string of one
+// command per line still saves (Builder's tool posts that).
+func TestStepsAreAListOfRows(t *testing.T) {
+	f := newDepsFixture(t)
+	body := `{"name":"two","direction":"input","takes":"*","becomes":"image","steps":[{"command":"dd if={in} of={out.png} bs=8 skip=1"},{"command":""},{"command":"cp {in} {out}"}]}`
+	if w := f.do(t, "POST", "/api/system-deps", body); w.Code != 200 {
+		t.Fatalf("save: %d %s", w.Code, w.Body.String())
+	}
+	c, _ := GetConnector(f.db, "two")
+	var a flows.Adapted
+	json.Unmarshal(c.Spec, &a)
+	if len(a.Steps) != 2 || a.Steps[1] != "cp {in} {out}" {
+		t.Errorf("want two steps, the blank row dropped: %q", a.Steps)
+	}
+	var raw map[string]any
+	json.Unmarshal(f.do(t, "GET", "/api/system-deps/one?name=two", "").Body.Bytes(), &raw)
+	rows, _ := raw["steps"].([]any)
+	if len(rows) != 2 || rows[0].(map[string]any)["command"] != "dd if={in} of={out.png} bs=8 skip=1" {
+		t.Errorf("the edit form should get the steps back as rows: %v", raw["steps"])
+	}
+	var field ui.FormField
+	for _, fl := range flowFields(true, true) {
+		if fl.Field == "steps" {
+			field = fl
+		}
+	}
+	if field.Type != "rows" || field.AddLabel != "+ Add step" || len(field.Columns) != 1 || field.Columns[0].Type != "textarea" {
+		t.Errorf("Steps should be rows with + Add step: %+v", field)
+	}
+}
+
+// System Hooks is the first thing on Capabilities: the settings below it
+// are what some of its rows point to.
+func TestSystemHooksIsFirstOnCapabilities(t *testing.T) {
+	secs := (&AdminApp{}).capabilitiesSections()
+	if len(secs) == 0 || secs[0].Title != "System Hooks" || sectionTab(secs[0].Title, "") != "Capabilities" {
+		t.Errorf("System Hooks should open the Capabilities tab, got %q", secs[0].Title)
+	}
+}
+
+// Agents on a row lets agents run it with the system_hook tool: the switch
+// is on the rows that have something to run, and the row says its state.
+func TestAgentsCanBeLetRunAHook(t *testing.T) {
+	f := newDepsFixture(t)
+	_, byID := f.rows(t)
+	if r := byID["media.frames"]; !r.Offerable || r.Agents {
+		t.Fatalf("frame sampling should be offerable and off: %+v", r)
+	}
+	if r := byID["export.pdf"]; r.Offerable {
+		t.Error("PDF export is the app's own: no Agents switch")
+	}
+	if w := f.do(t, "POST", "/api/system-deps/agents?id=media.frames", `{"agents":true}`); w.Code != 200 || !strings.Contains(w.Body.String(), `"agents":true`) {
+		t.Fatalf("turn on: %d %s", w.Code, w.Body.String())
+	}
+	if !systemhook.Offered("media.frames") || !mapOf(f, t)["media.frames"].Agents {
+		t.Error("frame sampling should be offered to agents now")
+	}
+	if w := f.do(t, "POST", "/api/system-deps/agents?id=export.pdf", `{"agents":true}`); w.Code != http.StatusBadRequest {
+		t.Errorf("an app-rendered export should be refused, got %d", w.Code)
+	}
+	if w := f.do(t, "POST", "/api/system-deps/agents?id=nothing", `{"agents":true}`); w.Code != http.StatusNotFound {
+		t.Errorf("an unknown row should be refused, got %d", w.Code)
+	}
+	tok := AuthCreateSession(f.db, "someone")
+	if w := f.req(t, tok, "POST", "/api/system-deps/agents?id=media.frames", `{"agents":false}`, ""); w.Code != http.StatusForbidden {
+		t.Errorf("a non-admin should be refused, got %d", w.Code)
+	}
+	f.do(t, "POST", "/api/system-deps/agents?id=media.frames", `{"agents":false}`)
+	if systemhook.Offered("media.frames") {
+		t.Error("turned off, it should not be offered")
+	}
+}
+
+// The download is a row that takes a link: yt-dlp is its tool now (not
+// listed apart), and Test fetches from the link the admin gives.
+func TestTheDownloadRowTakesALink(t *testing.T) {
+	needDepsSandbox(t)
+	f := newDepsFixture(t)
+	_, byID := f.rows(t)
+	r, ok := byID["media.download"]
+	if !ok || !r.Job || !r.Link || r.Group != flows.GroupMedia {
+		t.Fatalf("the download should be a link row in Media: %+v", r)
+	}
+	if _, ok := byID["tool:yt-dlp"]; ok {
+		t.Error("yt-dlp is the download's tool now and should not be listed apart")
+	}
+	if _, err := exec.LookPath("yt-dlp"); err != nil {
+		t.Skip("yt-dlp is not installed here")
+	}
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg is not installed here")
+	}
+	clip := filepath.Join(t.TempDir(), "v.mp4")
+	if err := exec.Command("ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=duration=1:size=32x32:rate=5", "-pix_fmt", "yuv420p", clip).Run(); err != nil {
+		t.Skip("could not make a sample video")
+	}
+	video, _ := os.ReadFile(clip)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(video) }))
+	defer srv.Close()
+	was := flows.URLGuard
+	flows.URLGuard = func(v string) error {
+		if !strings.HasPrefix(v, srv.URL) {
+			return errors.New("not the test server")
+		}
+		return nil
+	}
+	defer func() { flows.URLGuard = was }()
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	mw.WriteField("url", srv.URL+"/clip.mp4")
+	mw.Close()
+	w := f.req(t, f.token, "POST", "/api/system-deps/test?id=media.download", body.String(), mw.FormDataContentType())
+	if !strings.Contains(w.Body.String(), `"ok":true`) || !strings.Contains(w.Body.String(), "from the link") {
+		t.Errorf("want the video fetched from the link: %s", w.Body.String())
+	}
+	if out, err := builderTest(context.Background(), "root", "media.download", "", ""); err == nil {
+		t.Errorf("Builder testing a download without a link should be asked for one: %q", out)
+	}
+}

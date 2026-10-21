@@ -5,9 +5,12 @@ import (
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
-// capabilitiesSections is the capabilities part of the admin page: Embeddings, Audio Transcription (STT), System Dependencies, Image Generation, Web Search, Page Rendering (Browser), Mail (SMTP), Network Timeouts.
+// capabilitiesSections is the capabilities part of the admin page: System Hooks, Embeddings, Audio Transcription (STT), Image Generation, Web Search, Page Rendering (Browser), Mail (SMTP), Network Timeouts.
 func (a *AdminApp) capabilitiesSections() []ui.Section {
 	return []ui.Section{
+		// First: what this machine can and cannot do, which the settings
+		// below it are referred to from (transcription, for one).
+		systemDepsSection(),
 		{
 			Title:    "Embeddings",
 			Subtitle: "Vector store ingestion and semantic search.",
@@ -28,29 +31,6 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 				TestURL:   "api/transcribe/test",
 				TestLabel: "Test endpoint",
 				Fields:    transcribeFormFields(),
-			},
-		},
-		{
-			Title:    "System Dependencies",
-			Subtitle: "External tools gohort shells out to for media and document handling.",
-			Detail:   "A missing one disables the feature it gates: no ffmpeg means inbound voice memos cannot be transcribed.\n\nDate-versioned tools like yt-dlp are flagged when they go stale. Its extractors rot fast, so a stale yt-dlp silently breaks video downloads. Install or update on the gohort host and restart; this list refreshes on reload.",
-			Body: ui.Table{
-				Source: "api/dependencies",
-				RowKey: "name",
-				Columns: []ui.Col{
-					{Field: "name", Label: "Tool", Flex: 1},
-					{Field: "present", Label: "Status", Type: "badge", Badges: []ui.BadgeMapping{
-						{Value: true, Label: "Installed", Color: "success"},
-						{Value: false, Label: "Missing", Color: "danger"},
-					}},
-					{Field: "version", Label: "Version", Flex: 1, Mute: true},
-					{Field: "stale", Label: "Freshness", Type: "badge", Badges: []ui.BadgeMapping{
-						{Value: true, Label: "Stale, update", Color: "warning"},
-					}},
-					{Field: "enables", Label: "Enables", Flex: 3, Mute: true},
-					{Field: "install", Label: "Install", Flex: 2, Mute: true},
-				},
-				EmptyText: "No dependency information.",
 			},
 		},
 		{

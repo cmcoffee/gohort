@@ -23,6 +23,7 @@ import (
 	_ "github.com/cmcoffee/gohort/tools/readoutput"
 	_ "github.com/cmcoffee/gohort/tools/silent"
 	_ "github.com/cmcoffee/gohort/tools/status"
+	_ "github.com/cmcoffee/gohort/tools/systemhook"
 	_ "github.com/cmcoffee/gohort/tools/temptool"
 	_ "github.com/cmcoffee/gohort/tools/timezone"
 	_ "github.com/cmcoffee/gohort/tools/video"

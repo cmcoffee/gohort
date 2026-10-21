@@ -196,15 +196,7 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 				PreviewURL: "revision?id={id}&rev={rev}", RestoreURL: "restore?id={id}&rev={rev}"},
 			// Who it reaches, then where it goes.
 			{Label: "Share", Kind: "client", URL: "guides_share"},
-			{Label: "Export", Kind: "menu", Children: []ui.WorkbenchAction{
-				{Label: "Preview (HTML)", Kind: "download", URL: "export?id={id}&format=html"},
-				{Label: "HTML file", Kind: "download", URL: "export?id={id}&format=html&download=1"},
-				{Label: "PDF", Kind: "download", URL: "export?id={id}&format=pdf"},
-				{Label: "Markdown", Kind: "download", URL: "export?id={id}&format=md"},
-				// Every section, the subtitle, attached knowledge and sources:
-				// the one export that imports back as the same document.
-				{Label: "Bundle (lossless)", Kind: "client", URL: "scribe_export_bundle"},
-			}},
+			{Label: "Export", Kind: "menu", Children: exportMenu()},
 			{Label: "Publish", Kind: "client", URL: "guides_publish"},
 		},
 		// The agent writes sections via its tools; re-render the open guide when a

@@ -14,9 +14,10 @@ import (
 	"github.com/cmcoffee/snugforge/nfo"
 )
 
-// ExtractVideoFrames is the exported variant of extractVideoFrames; same
-// semantics. Lets non-core packages (chat tools that download or transcode
-// video) reuse the frame sampler without re-implementing the ffmpeg dance.
+// ExtractVideoFrames samples count frames evenly across a video, as JPEG:
+// by the frame sampling job (FramesHook, core/flows) when it is loaded, else
+// by SampleFrames here. Lets non-core packages (chat tools that download or
+// transcode video) reuse the frame sampler without re-implementing it.
 func ExtractVideoFrames(data []byte, count int) ([][]byte, error) {
 	return extractVideoFrames(data, count)
 }
@@ -29,9 +30,28 @@ func ExtractVideoMetadata(data []byte) string {
 	return extractVideoMetadata(data)
 }
 
-// extractVideoFrames samples N frames evenly distributed across the video
-// at `path`, returning each as JPEG bytes. The first frame is sampled at
-// ~1% into the clip (skipping any black opening frame), the last at ~99%
+func extractVideoFrames(data []byte, count int) ([][]byte, error) {
+	if count <= 0 {
+		count = videoFrameSampleCount
+	}
+	if len(data) == 0 {
+		return nil, fmt.Errorf("no video data")
+	}
+	if FramesHook != nil {
+		return FramesHook(data, count)
+	}
+	var frames [][]byte
+	err := withLocalTools(func(t Tools) error {
+		var err error
+		frames, err = SampleFrames(context.Background(), t, data, count)
+		return err
+	})
+	return frames, err
+}
+
+// SampleFrames samples count frames evenly distributed across the video,
+// with t, returning each as JPEG bytes. The first frame is sampled at ~1%
+// into the clip (skipping any black opening frame), the last at ~99%
 // (avoiding fade-outs). Frames in between are evenly spaced.
 //
 // Frames are extracted via N independent ffmpeg invocations with -ss seek
@@ -42,23 +62,14 @@ func ExtractVideoMetadata(data []byte) string {
 //
 // Returns ([]frame, nil) on success. If ffmpeg is missing, returns
 // (nil, error) — caller can degrade to metadata-only video handling.
-func extractVideoFrames(data []byte, count int) ([][]byte, error) {
+func SampleFrames(ctx context.Context, t Tools, data []byte, count int) ([][]byte, error) {
 	if count <= 0 {
 		count = videoFrameSampleCount
 	}
-	if len(data) == 0 {
-		return nil, fmt.Errorf("no video data")
-	}
-	srcPath, err := writeTempFile(data, "*.mp4")
-	if err != nil {
-		return nil, fmt.Errorf("tempfile: %w", err)
-	}
-	defer os.Remove(srcPath)
-
-	if err := checkMediaFile(srcPath); err != nil {
+	if err := writeInput(t, data); err != nil {
 		return nil, err
 	}
-	probe, err := runFfprobe(srcPath)
+	probe, err := probeWith(ctx, t, mediaInput)
 	if err != nil {
 		return nil, fmt.Errorf("ffprobe: %w", err)
 	}
@@ -84,39 +95,31 @@ func extractVideoFrames(data []byte, count int) ([][]byte, error) {
 		}
 	}
 
-	tmpDir, err := os.MkdirTemp("", "gohort-frames-*")
-	if err != nil {
-		return nil, fmt.Errorf("frame dir: %w", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
 	type indexed struct {
 		idx int
 		buf []byte
 	}
 	var frames []indexed
 	for i, ts := range timestamps {
-		out := filepath.Join(tmpDir, fmt.Sprintf("frame_%03d.jpg", i))
+		out := fmt.Sprintf("frame_%03d.jpg", i)
 		// -ss before -i is faster (input seek) but less accurate on some
 		// codecs; -ss after -i is frame-accurate. We want quality over
 		// latency for vision input, so use the accurate path.
-		cmd, cancel := ffmpegCommand(ffFrameLimit, "ffmpeg",
+		_, err := t.Run(ctx, ffFrameLimit, "ffmpeg",
 			"-loglevel", "error",
 			"-y",
 			"-protocol_whitelist", "file,pipe",
-			"-i", srcPath,
+			"-i", mediaInput,
 			"-ss", strconv.FormatFloat(ts, 'f', 3, 64),
 			"-frames:v", "1",
 			"-q:v", "2",
 			out,
 		)
-		err := cmd.Run()
-		cancel()
 		if err != nil {
 			nfo.Debug("[video] frame %d at %.2fs failed: %v", i, ts, err)
 			continue
 		}
-		buf, err := os.ReadFile(out)
+		buf, err := os.ReadFile(filepath.Join(t.Dir(), out))
 		if err != nil || len(buf) == 0 {
 			continue
 		}
@@ -134,54 +137,62 @@ func extractVideoFrames(data []byte, count int) ([][]byte, error) {
 }
 
 // ExtractVideoAudio pulls the audio stream out of a video and returns
-// it as MP3 bytes (compact + universally supported by STT endpoints).
-// Returns (nil, error) when:
+// it as MP3 bytes (compact + universally supported by STT endpoints): by
+// the sound-from-video job (AudioHook, core/flows) when it is loaded, else
+// by AudioTrack here. Returns (nil, error) when:
 //   - the video has no audio track (silent clip, GIF-style)
 //   - ffmpeg is missing
 //   - the audio stream is corrupt
 //
 // All failures are non-fatal at the caller's level — videodl falls
 // back to frames-only transcription.
-//
-// MP3 chosen over WAV because: most STT services accept it (OpenAI
-// /audio/transcriptions, whisper.cpp server), the file is 10-20× smaller
-// for typical speech, and ffmpeg's libmp3lame encoder is fast.
 func ExtractVideoAudio(data []byte) ([]byte, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("no video data")
 	}
-	srcPath, err := writeTempFile(data, "*.mp4")
-	if err != nil {
-		return nil, fmt.Errorf("tempfile: %w", err)
+	if AudioHook != nil {
+		return AudioHook(data)
 	}
-	defer os.Remove(srcPath)
+	var audio []byte
+	err := withLocalTools(func(t Tools) error {
+		var err error
+		audio, err = AudioTrack(context.Background(), t, data)
+		return err
+	})
+	return audio, err
+}
 
-	outPath := srcPath + ".mp3"
-	defer os.Remove(outPath)
+// AudioTrack extracts a video's sound with t, as MP3.
+//
+// MP3 chosen over WAV because: most STT services accept it (OpenAI
+// /audio/transcriptions, whisper.cpp server), the file is 10-20× smaller
+// for typical speech, and ffmpeg's libmp3lame encoder is fast.
+func AudioTrack(ctx context.Context, t Tools, data []byte) ([]byte, error) {
+	if err := writeInput(t, data); err != nil {
+		return nil, err
+	}
+	if err := checkMediaFile(filepath.Join(t.Dir(), mediaInput)); err != nil {
+		return nil, err
+	}
 	// -vn skips video; -ac 1 forces mono (smaller, fine for STT);
 	// -ar 16000 matches Whisper's expected sample rate (it resamples
 	// to 16k internally anyway, so sending 16k saves bytes).
-	if err := checkMediaFile(srcPath); err != nil {
-		return nil, err
-	}
-	cmd, cancel := ffmpegCommand(ffAudioLimit, "ffmpeg",
+	if _, err := t.Run(ctx, ffAudioLimit, "ffmpeg",
 		"-loglevel", "error",
 		"-y",
 		"-protocol_whitelist", "file,pipe",
-		"-i", srcPath,
+		"-i", mediaInput,
 		"-vn",
 		"-ac", "1",
 		"-ar", "16000",
 		"-codec:a", "libmp3lame",
 		"-q:a", "5",
 		"-fs", ffAudioMaxBytes,
-		outPath,
-	)
-	defer cancel()
-	if err := cmd.Run(); err != nil {
+		"audio.mp3",
+	); err != nil {
 		return nil, fmt.Errorf("ffmpeg audio extract: %w", err)
 	}
-	audio, err := os.ReadFile(outPath)
+	audio, err := os.ReadFile(filepath.Join(t.Dir(), "audio.mp3"))
 	if err != nil {
 		return nil, fmt.Errorf("read audio: %w", err)
 	}
@@ -193,43 +204,52 @@ func ExtractVideoAudio(data []byte) ([]byte, error) {
 
 // TranscodeAudioToWAV converts arbitrary input audio (m4a/aac/caf/ogg/amr/…)
 // to 16 kHz mono 16-bit PCM WAV — the one format whisper.cpp decodes NATIVELY,
-// without needing its own ffmpeg/codec build. Inbound voice memos arrive as m4a
-// (AAC in an mp4 container); a stock whisper server rejects those with a 400.
-// Normalizing here, on the gohort host (which already has ffmpeg for video),
-// makes transcription independent of the STT server's format support. ffmpeg
-// probes the container, so the input's extension is irrelevant.
+// without needing its own ffmpeg/codec build: by the audio preparation job
+// (WAVHook, core/flows) when it is loaded, else by ToWAV here. Inbound voice
+// memos arrive as m4a (AAC in an mp4 container); a stock whisper server
+// rejects those with a 400. Normalizing here, on the gohort host (which
+// already has ffmpeg for video), makes transcription independent of the STT
+// server's format support. ffmpeg probes the container, so the input's
+// extension is irrelevant.
 func TranscodeAudioToWAV(data []byte) ([]byte, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("no audio data")
 	}
-	srcPath, err := writeTempFile(data, "*.audio")
-	if err != nil {
-		return nil, fmt.Errorf("tempfile: %w", err)
+	if WAVHook != nil {
+		return WAVHook(data)
 	}
-	defer os.Remove(srcPath)
+	var wav []byte
+	err := withLocalTools(func(t Tools) error {
+		var err error
+		wav, err = ToWAV(context.Background(), t, data)
+		return err
+	})
+	return wav, err
+}
 
-	outPath := srcPath + ".wav"
-	defer os.Remove(outPath)
-	if err := checkMediaFile(srcPath); err != nil {
+// ToWAV converts audio to 16 kHz mono WAV with t.
+func ToWAV(ctx context.Context, t Tools, data []byte) ([]byte, error) {
+	if err := writeInput(t, data); err != nil {
 		return nil, err
 	}
-	cmd, cancel := ffmpegCommand(ffAudioLimit, "ffmpeg",
+	if err := checkMediaFile(filepath.Join(t.Dir(), mediaInput)); err != nil {
+		return nil, err
+	}
+	if _, err := t.Run(ctx, ffAudioLimit, "ffmpeg",
 		"-loglevel", "error",
 		"-y",
 		"-protocol_whitelist", "file,pipe",
-		"-i", srcPath,
+		"-i", mediaInput,
 		"-vn",
 		"-ac", "1",
 		"-ar", "16000",
 		"-c:a", "pcm_s16le",
 		"-fs", ffAudioMaxBytes,
-		outPath,
-	)
-	defer cancel()
-	if err := cmd.Run(); err != nil {
+		"audio.wav",
+	); err != nil {
 		return nil, fmt.Errorf("ffmpeg audio transcode: %w", err)
 	}
-	wav, err := os.ReadFile(outPath)
+	wav, err := os.ReadFile(filepath.Join(t.Dir(), "audio.wav"))
 	if err != nil {
 		return nil, fmt.Errorf("read wav: %w", err)
 	}

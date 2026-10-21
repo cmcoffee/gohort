@@ -63,7 +63,7 @@ var sectionGroup = map[string]string{
 	"Housekeeping": "Maintenance",
 	// Also unmapped, and landing in General for the same reason.
 	"Channel Wake Rules": "System", "Feature Access": "System",
-	"System Dependencies": "Capabilities", "Page Rendering (Browser)": "Capabilities",
+	"System Hooks": "Capabilities", "Page Rendering (Browser)": "Capabilities",
 	"MCP Tools (exposed to external clients)": "Extensions", "Bridges": "Extensions",
 	"Categories": "Extensions",
 
@@ -302,6 +302,7 @@ func (a *AdminApp) serveAdminPage(w http.ResponseWriter, r *http.Request, tab st
 			ClientAction("connectors_export", connectorsExportAction).
 			ClientAction("connectors_export_all", connectorsExportAllAction).
 			ClientAction("connector_edit_spec", connectorEditSpecAction).
+			ClientAction("system_deps_test", systemDepsTestAction).
 			ClientAction("connector_webhook", connectorWebhookAction).
 			ClientAction("add_image_backend", addImageBackendAction).
 			ClientAction("configure_backend", configureBackendAction).
@@ -371,7 +372,7 @@ func (a *AdminApp) serveAdminPage(w http.ResponseWriter, r *http.Request, tab st
 		"System Status": true, "Users": true, "LLM Routing": true, "Activity Log": true,
 		"Cost History (Last 30 Days)": true, "Cost by source": true, "Scheduled Tasks": true,
 		"API Credentials": true, "MCP Servers": true, "Connectors": true, "Source Hooks": true,
-		"Persistent Tools (Pending)": true, "Global Tools": true,
+		"Persistent Tools (Pending)": true, "Global Tools": true, "System Hooks": true,
 		"Agent-Scoped Tools": true, "Orphaned Tools": true,
 		"Tool Groups": true, "Skills": true, "Pipelines": true, "Teams": true,
 		"Templates":  true,

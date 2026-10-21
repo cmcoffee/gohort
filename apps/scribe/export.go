@@ -1,6 +1,8 @@
 // Document export + standalone preview. A guide exports to PDF (via
 // core's markdown PDF renderer), a self-contained HTML document (shareable /
-// printable, styled inline so it stands alone), or raw markdown.
+// printable, styled inline so it stands alone), raw markdown, or any format
+// System Hooks can write (core/flows): Word and
+// OpenDocument by pandoc, and whatever an admin adds.
 package scribe
 
 import (
@@ -10,12 +12,35 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/flows"
+	"github.com/cmcoffee/gohort/core/ui"
 )
 
-// handleExport serves a guide as pdf | html | md. GET ?id=&format=…
-//   - pdf:  attachment download (core MarkdownToPDFBytes).
-//   - html: inline (a preview that opens in the browser) — a self-contained doc.
+// exportMenu is the Export menu: the formats Scribe renders itself, then
+// every other format System Hooks can write here now, then the bundle.
+func exportMenu() []ui.WorkbenchAction {
+	menu := []ui.WorkbenchAction{
+		{Label: "Preview (HTML)", Kind: "download", URL: "export?id={id}&format=html"},
+		{Label: "HTML file", Kind: "download", URL: "export?id={id}&format=html&download=1"},
+		{Label: "PDF", Kind: "download", URL: "export?id={id}&format=pdf"},
+		{Label: "Markdown", Kind: "download", URL: "export?id={id}&format=md"},
+	}
+	for _, ext := range flows.Available() {
+		menu = append(menu, ui.WorkbenchAction{Label: flows.OutLabel(ext), Kind: "download", URL: "export?id={id}&format=" + ext})
+	}
+	// Every section, the subtitle, attached knowledge and sources: the one
+	// export that imports back as the same document.
+	return append(menu, ui.WorkbenchAction{Label: "Bundle (lossless)", Kind: "client", URL: "scribe_export_bundle"})
+}
+
+// handleExport serves a guide in a format. GET ?id=&format=…
+//   - pdf:  attachment download (rendered by renderGuidePDF).
+//   - html: inline (a preview that opens in the browser), a self-contained doc.
 //   - md:   attachment download of the assembled markdown.
+//   - any other extension (docx, odt, epub...): written by System Hooks.
+//
+// Every one goes through flows.Export, so a conversion an admin adapted
+// and preferred replaces Scribe's own renderer for its format.
 func (T *Scribe) handleExport(w http.ResponseWriter, r *http.Request, udb Database, user string) {
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
 	format := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("format")))
@@ -27,32 +52,36 @@ func (T *Scribe) handleExport(w http.ResponseWriter, r *http.Request, udb Databa
 	// An exported file stands alone, so its pictures travel inside it.
 	g = inlineGuideImages(g, ownerUDB)
 	name := sanitizeFilename(firstNonEmpty(g.Title, "guide"))
+	brand, siteName := docBranding()
+	md, html := renderGuideMarkdown(g), renderGuideStandaloneHTML(g, brand, siteName)
+	doc := flows.Document{Title: g.Title, Markdown: []byte(md), HTML: []byte(html)}
+	var ext string
+	var builtin func() ([]byte, error)
 	switch format {
 	case "pdf":
-		pdf, err := renderGuidePDF(g)
-		if err != nil {
-			http.Error(w, "pdf render failed: "+err.Error(), http.StatusInternalServerError)
+		ext, builtin = "pdf", func() ([]byte, error) { return renderGuidePDF(g) }
+	case "md", "markdown":
+		ext, builtin = "md", func() ([]byte, error) { return []byte(md), nil }
+	case "html", "":
+		ext, builtin = "html", func() ([]byte, error) { return []byte(html), nil }
+	default:
+		if ext = flows.ParseOutFormat(format); ext == "" {
+			http.Error(w, "unknown format: use pdf, html, md, or one System Hooks writes", http.StatusBadRequest)
 			return
 		}
-		w.Header().Set("Content-Type", "application/pdf")
-		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.pdf"`, name))
-		_, _ = w.Write(pdf)
-	case "md", "markdown":
-		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
-		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.md"`, name))
-		_, _ = w.Write([]byte(renderGuideMarkdown(g)))
-	case "html", "":
-		// Inline preview — opens in a browser tab, prints/saves cleanly. With
-		// download=1 it comes down as a file instead (the page is the same).
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if r.URL.Query().Get("download") != "" {
-			w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.html"`, name))
-		}
-		brand, siteName := docBranding()
-		_, _ = w.Write([]byte(renderGuideStandaloneHTML(g, brand, siteName)))
-	default:
-		http.Error(w, "unknown format: use pdf | html | md", http.StatusBadRequest)
 	}
+	res, err := flows.Export(r.Context(), doc, ext, builtin)
+	if err != nil {
+		http.Error(w, flows.OutLabel(ext)+" export failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", flows.OutMIME(ext))
+	// The HTML is a preview that opens in the browser; with download=1 it
+	// comes down as a file instead (the page is the same).
+	if ext != "html" || r.URL.Query().Get("download") != "" {
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.%s"`, name, ext))
+	}
+	_, _ = w.Write(res.Out)
 }
 
 // docBranding returns the deployment's configured document brand + site name

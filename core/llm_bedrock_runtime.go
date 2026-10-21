@@ -916,6 +916,9 @@ func buildConverseMessages(messages []Message, tools bool) []cvMessage {
 			var blocks []cvBlock
 			if role == "user" {
 				for _, img := range m.Images {
+					if converseImageFormat(img) == "" {
+						img = resizeImage(img) // converted to an image it reads
+					}
 					if f := converseImageFormat(img); f != "" {
 						b := cvBlock{Image: &cvImage{Format: f}}
 						b.Image.Source.Bytes = img

@@ -6,7 +6,7 @@
 // case that motivated the version/staleness fields) Instagram downloads quietly
 // break because yt-dlp went months out of date. CheckDependencies probes them on
 // PATH, captures each version, and flags date-stamped tools that have gone stale,
-// so the admin "System Dependencies" panel and the boot log both surface it.
+// so the admin "System Hooks" panel and the boot log both surface it.
 package deps
 
 import (
@@ -54,6 +54,7 @@ var knownDependencies = []struct {
 	},
 	{name: "ffmpeg", enables: "Video frame sampling and inbound audio/video transcription (normalizes m4a → WAV for STT)", apt: "ffmpeg", brew: "ffmpeg", versionArgs: []string{"-version"}},
 	{name: "ffprobe", enables: "Inbound-video metadata (duration / resolution); ships with ffmpeg", apt: "ffmpeg", brew: "ffmpeg", versionArgs: []string{"-version"}},
+	{name: "heif-convert", enables: "Reading iPhone photos (HEIC) and AVIF images you attach", apt: "libheif-examples", brew: "libheif", hint: heifHint()},
 	{name: "pdftotext", enables: "Text extraction from PDF attachments", apt: "poppler-utils", brew: "poppler", versionArgs: []string{"-v"}},
 	{name: "pandoc", enables: "Text extraction from docx / odt / rtf attachments", apt: "pandoc", brew: "pandoc", versionArgs: []string{"--version"}},
 	// macOS has no brew formula for antiword any more, and never needed one:
@@ -69,6 +70,15 @@ var knownDependencies = []struct {
 	// obtain — for a capability the machine provides under a different name.
 	sandboxDependency(),
 	{name: "python3", enables: "Python interpreter for sandboxed scripts", apt: "python3", brew: "python3", versionArgs: []string{"--version"}},
+}
+
+// heifHint names the package per platform: Debian and Ubuntu call it
+// libheif-examples, Fedora and RHEL libheif-tools (EPEL), Homebrew libheif.
+func heifHint() string {
+	if runtime.GOOS == "darwin" {
+		return "brew install libheif"
+	}
+	return "libheif-examples (apt) or libheif-tools (dnf, from EPEL on RHEL)"
 }
 
 // CheckDependencies probes each known external binary on PATH and returns its

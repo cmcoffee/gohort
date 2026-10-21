@@ -4,12 +4,11 @@
 // prepended to the user message so the LLM has the document content
 // in context.
 //
-// Implementation: shell out to commonly-installed extractors
-// (poppler-utils' pdftotext for PDFs, pandoc for DOCX, antiword for
-// legacy binary DOC — pandoc cannot read the old .doc format). No CGo,
-// no large new dependency — the tradeoff is the deployment needs
-// these binaries on PATH. They're standard on most Linux servers and
-// available via brew/apt/dnf.
+// PDF, Word, OpenDocument, RTF and legacy .doc are jobs (core/flows, via
+// DocumentConverter): the tool for each (pdftotext, pandoc, antiword or
+// textutil) runs sandboxed, and an admin can adapt one that is missing under
+// Admin > Capabilities > System Hooks. HTML, JSON
+// and plain text are read here.
 //
 // Extraction returns the plain-text body. Callers compose the final
 // prompt: a typical "Attached: <filename>\n\n<text>\n\n<user msg>"
@@ -21,11 +20,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
-	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 
@@ -68,13 +63,17 @@ func ExtractDocument(ctx context.Context, doc DocumentAttachment) (string, error
 	nfo.Debug("[document_extract] %q mime=%q ext=%q size=%d", doc.Name, mime, ext, len(doc.Data))
 	switch {
 	case mime == "application/pdf" || ext == ".pdf":
-		return extractPDF(ctx, doc.Data)
+		return convertDocument(ctx, doc.Data, "application/pdf")
 	case mime == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || ext == ".docx":
-		return extractWithPandoc(ctx, doc.Data, "docx")
+		return convertDocument(ctx, doc.Data, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+	case mime == "application/vnd.oasis.opendocument.text" || ext == ".odt":
+		return convertDocument(ctx, doc.Data, "application/vnd.oasis.opendocument.text")
+	case mime == "application/rtf" || mime == "text/rtf" || ext == ".rtf":
+		return convertDocument(ctx, doc.Data, "application/rtf")
 	case mime == "application/msword" || ext == ".doc":
-		// Legacy binary Word (.doc) — pandoc has NO reader for this
-		// format (only .docx), so it routes to antiword instead.
-		return extractWithAntiword(ctx, doc.Data)
+		// Legacy binary Word (.doc): pandoc has NO reader for this format
+		// (only .docx), so its conversion runs antiword or textutil.
+		return convertDocument(ctx, doc.Data, "application/msword")
 	case strings.HasPrefix(mime, "text/html") || ext == ".html" || ext == ".htm":
 		// HTML needs parsing — returning the raw bytes as "text"
 		// dumps markup (typically 5-10× the actual readable text)
@@ -439,135 +438,17 @@ func extractAudio(ctx context.Context, doc DocumentAttachment) (string, error) {
 	return text, nil
 }
 
-// extractPDF runs `pdftotext` (poppler-utils) against the bytes via
-// stdin / stdout, avoiding a tempfile. -layout preserves rough column
-// structure which generally reads better than the default tight stream.
-func extractPDF(ctx context.Context, data []byte) (string, error) {
-	if _, err := exec.LookPath("pdftotext"); err != nil {
-		return "", fmt.Errorf("pdftotext not installed (poppler-utils): %w", err)
-	}
-	ctx, cancel := context.WithTimeout(ctx, DocumentExtractTimeout())
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "pdftotext", "-layout", "-", "-")
-	cmd.Stdin = bytes.NewReader(data)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("pdftotext failed: %w (stderr: %s)", err, strings.TrimSpace(stderr.String()))
-	}
-	return stdout.String(), nil
-}
+// DocumentConverter turns a document of the given type into text: core/flows
+// sets it when it loads. A hook rather than an import, because flows reads
+// images through this package.
+var DocumentConverter func(ctx context.Context, data []byte, mime string) (string, error)
 
-// extractWithPandoc runs pandoc with the given input format,
-// outputting plain text. pandoc reads docx/doc directly from a path,
-// so we drop the data to a temp file. The file lives in the OS temp
-// dir and is removed on return; pandoc is sandboxed enough to not
-// need an additional layer here (extraction is read-only).
-func extractWithPandoc(ctx context.Context, data []byte, inputFmt string) (string, error) {
-	if _, err := exec.LookPath("pandoc"); err != nil {
-		return "", fmt.Errorf("pandoc not installed: %w", err)
+// convertDocument is a document's text, by its job in core/flows.
+func convertDocument(ctx context.Context, data []byte, mime string) (string, error) {
+	if DocumentConverter == nil {
+		return "", fmt.Errorf("document reading is not available, so a %s cannot be read", mime)
 	}
-	ctx, cancel := context.WithTimeout(ctx, DocumentExtractTimeout())
-	defer cancel()
-	tmp, err := os.CreateTemp("", "gohort-doc-*."+inputFmt)
-	if err != nil {
-		return "", fmt.Errorf("temp file: %w", err)
-	}
-	defer os.Remove(tmp.Name())
-	if _, err := io.Copy(tmp, bytes.NewReader(data)); err != nil {
-		tmp.Close()
-		return "", fmt.Errorf("write temp: %w", err)
-	}
-	tmp.Close()
-	cmd := exec.CommandContext(ctx, "pandoc", "-f", inputFmt, "-t", "plain", tmp.Name())
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("pandoc failed: %w (stderr: %s)", err, strings.TrimSpace(stderr.String()))
-	}
-	return stdout.String(), nil
-}
-
-// extractWithAntiword runs `antiword` against a legacy binary Word
-// (.doc) file, outputting plain text. antiword reads a file path (not
-// stdin reliably), so we drop the bytes to a temp file mirroring
-// extractWithPandoc. `-w 0` disables line wrapping so paragraphs come
-// through as unbroken lines — better for embedding/search than
-// column-wrapped output. pandoc cannot read this format, which is why
-// .doc gets its own extractor.
-func extractWithAntiword(ctx context.Context, data []byte) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, DocumentExtractTimeout())
-	defer cancel()
-	tmp, err := os.CreateTemp("", "gohort-doc-*.doc")
-	if err != nil {
-		return "", fmt.Errorf("temp file: %w", err)
-	}
-	defer os.Remove(tmp.Name())
-	if _, err := io.Copy(tmp, bytes.NewReader(data)); err != nil {
-		tmp.Close()
-		return "", fmt.Errorf("write temp: %w", err)
-	}
-	tmp.Close()
-
-	var lastErr error
-	// Whichever converter this machine actually has. antiword first where it
-	// exists — "-w 0" gives unwrapped paragraphs, which embed and search better
-	// than column-wrapped text — then textutil, which ships WITH macOS and
-	// needs no install at all. That fallback is why a Mac can still read a .doc
-	// now that Homebrew has dropped the antiword formula: the capability was
-	// never actually missing there, only the package.
-	for _, conv := range legacyDocConverters {
-		if _, err := exec.LookPath(conv.bin); err != nil {
-			continue
-		}
-		cmd := exec.CommandContext(ctx, conv.bin, append(conv.args, tmp.Name())...)
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
-			// Try the next converter rather than giving up: a file one tool
-			// chokes on is often readable by another, and the alternative is
-			// refusing a document this machine could have read.
-			lastErr = fmt.Errorf("%s failed: %w (stderr: %s)", conv.bin, err, strings.TrimSpace(stderr.String()))
-			continue
-		}
-		return stdout.String(), nil
-	}
-	if lastErr != nil {
-		return "", lastErr
-	}
-	return "", fmt.Errorf("no converter for legacy .doc files is installed: %s, or convert the file to .docx", legacyDocInstallHint())
-}
-
-// legacyDocConverters are the tools that can read a legacy binary Word file,
-// in preference order.
-//
-// textutil is the macOS answer and always present there, which matters more
-// than it used to: Homebrew no longer ships an antiword formula, so a Mac that
-// followed the old advice now has no way to satisfy it. The capability was
-// never missing on that platform — only the package everyone was pointed at.
-var legacyDocConverters = []struct {
-	bin  string
-	args []string
-}{
-	// -w 0 disables line wrapping, so paragraphs arrive unbroken.
-	{bin: "antiword", args: []string{"-w", "0"}},
-	// Built into macOS. -stdout keeps it in the same read-from-stdout shape.
-	{bin: "textutil", args: []string{"-convert", "txt", "-stdout"}},
-	// Common on Linux where antiword is absent; harmless where it is not.
-	{bin: "catdoc", args: nil},
-}
-
-// legacyDocInstallHint names something the reader can actually do on THIS
-// platform. Telling a Mac to install antiword is telling it to run a command
-// that no longer resolves.
-func legacyDocInstallHint() string {
-	if runtime.GOOS == "darwin" {
-		return "macOS normally provides textutil at /usr/bin/textutil; if it is missing, install catdoc"
-	}
-	return "install antiword or catdoc"
+	return DocumentConverter(ctx, data, mime)
 }
 
 // FormatDocumentPreamble builds the "Attached: name\n\n<text>" block

@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cmcoffee/gohort/core/flows"
 	"github.com/cmcoffee/gohort/core/media"
 	"github.com/cmcoffee/snugforge/apiclient"
 	"github.com/cmcoffee/snugforge/iotimeout"
@@ -942,19 +943,53 @@ func oaiTextContent(s string) json.RawMessage {
 // resizeImage resizes a single image to visionMaxDim on the longest side
 // and encodes it as JPEG at visionJQQual quality. Returns the encoded bytes;
 // on any decode/encode failure returns the original src unchanged.
+//
+// An image the model cannot read (an iPhone's HEIC) is first converted
+// (core/flows): by heif-convert when installed, Go itself for TIFF and
+// BMP, or a command the admin adapted.
+//
+// The agent loop sends the turn's image again on every round, and a hook's
+// conversion or a large photo takes seconds, so the last few results are
+// kept (resizedImages) and a later round reuses them. A conversion that
+// failed is kept too, so a broken command is not run again every round.
 func resizeImage(src []byte) []byte {
+	key := fmt.Sprintf("%x:%d:%d", sha256.Sum256(src), visionMaxDim(), visionJQQual())
+	if out, ok := resizedImages.get(key); ok {
+		return out
+	}
+	out, keep := encodeVisionImage(src)
+	if keep {
+		resizedImages.put(key, out)
+	}
+	return out
+}
+
+// encodeVisionImage is resizeImage's work, uncached. keep says it is worth
+// keeping: a conversion ran or the image was re-encoded.
+func encodeVisionImage(src []byte) (out []byte, keep bool) {
+	if _, readable := visionImageMIME(src); !readable {
+		res, err := flows.Convert(context.Background(), src, "", flows.KindImage)
+		switch {
+		case err == nil:
+			src, keep = res.Out, true
+		case errors.Is(err, flows.ErrNoConversion):
+		default:
+			Log("[vision] could not make a %s readable: %v", flows.FormatLabel(flows.Sniff(src)), err)
+			return src, true
+		}
+	}
 	// Bounded decode: this is a user's upload, and a header claiming a
 	// gigapixel would otherwise be allocated in full just to be shrunk. A
 	// refused one goes on as sent, the same as any undecodable image.
 	img, _, err := media.DecodeImage(src)
 	if err != nil {
-		return src // fallback to original if decode fails
+		return src, keep // fallback to original if decode fails
 	}
 	bounds := img.Bounds()
 	w, h := bounds.Dx(), bounds.Dy()
 	maxDim := visionMaxDim()
 	if w <= maxDim && h <= maxDim {
-		return src // already small enough
+		return src, keep // already small enough
 	}
 	// Compute new dimensions preserving aspect ratio.
 	var nw, nh int
@@ -968,9 +1003,44 @@ func resizeImage(src []byte) []byte {
 	resized := resizePNG(img, nw, nh)
 	var buf bytes.Buffer
 	if err := jpeg.Encode(&buf, resized, &jpeg.Options{Quality: visionJQQual()}); err != nil {
-		return src
+		return src, keep
 	}
-	return buf.Bytes()
+	return buf.Bytes(), true
+}
+
+// resizedImages holds the last few images resizeImage converted.
+var resizedImages = &imageMemo{max: 8}
+
+// imageMemo is a small cache of converted images, oldest dropped first.
+type imageMemo struct {
+	mu    sync.Mutex
+	max   int
+	order []string
+	byKey map[string][]byte
+}
+
+func (m *imageMemo) get(key string) ([]byte, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out, ok := m.byKey[key]
+	return out, ok
+}
+
+func (m *imageMemo) put(key string, out []byte) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.byKey == nil {
+		m.byKey = make(map[string][]byte)
+	}
+	if _, ok := m.byKey[key]; ok {
+		return
+	}
+	m.byKey[key] = out
+	m.order = append(m.order, key)
+	if len(m.order) > m.max {
+		delete(m.byKey, m.order[0])
+		m.order = m.order[1:]
+	}
 }
 
 // resizePNG scales img to nw×nh using a simple box filter (fast, good enough for vision).
@@ -1099,7 +1169,8 @@ func unreadableImagesNote(formats []string) string {
 		n = fmt.Sprintf("%d attached images were", len(formats))
 	}
 	return "[" + n + " not shown to you: " + strings.Join(formats, ", ") +
-		" cannot be read here (JPEG, PNG, GIF and WebP can). Tell the user, and ask them to send it as a JPEG or PNG.]"
+		" cannot be read here (JPEG, PNG, GIF and WebP can). Tell the user, and ask them to send it as a JPEG or PNG." +
+		" An administrator can make these readable under Admin > Capabilities > System Hooks.]"
 }
 
 type oaiResponse struct {

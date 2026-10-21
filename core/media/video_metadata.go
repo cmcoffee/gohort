@@ -1,11 +1,11 @@
 package media
 
 import (
-	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
-	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -48,31 +48,60 @@ type ffprobeOutput struct {
 	} `json:"streams"`
 }
 
-// extractVideoMetadata runs ffprobe on the given bytes and returns a
-// formatted `[video_context]` block ready for prepending to a message. If
-// ffprobe is unavailable or the bytes don't parse, returns "".
+// extractVideoMetadata returns a formatted `[video_context]` block for the
+// given bytes, ready for prepending to a message: by the video metadata job
+// (MetadataHook, core/flows) when it is loaded, else by ProbeMetadata here.
+// "" when nothing can read it.
 func extractVideoMetadata(data []byte) string {
 	if len(data) == 0 {
 		return ""
 	}
-	tmp, err := writeTempFile(data, "*.mp4")
-	if err != nil {
-		nfo.Debug("[video] tempfile failed: %v", err)
-		return ""
+	if MetadataHook != nil {
+		s, err := MetadataHook(data)
+		if err != nil {
+			nfo.Debug("[video] metadata failed: %v", err)
+			return ""
+		}
+		return s
 	}
-	defer os.Remove(tmp)
-
-	probe, err := runFfprobe(tmp)
+	var out string
+	err := withLocalTools(func(t Tools) error {
+		var err error
+		out, err = ProbeMetadata(context.Background(), t, data)
+		return err
+	})
 	if err != nil {
 		nfo.Debug("[video] ffprobe failed: %v", err)
 		return ""
 	}
+	return out
+}
 
+// ProbeMetadata runs ffprobe on data with t and formats what it reads as a
+// `[video_context]` block.
+func ProbeMetadata(ctx context.Context, t Tools, data []byte) (string, error) {
+	if err := writeInput(t, data); err != nil {
+		return "", err
+	}
+	probe, err := probeWith(ctx, t, mediaInput)
+	if err != nil {
+		return "", err
+	}
+	out := formatVideoMetadata(probe, len(data))
+	if out == "" {
+		return "", fmt.Errorf("ffprobe found nothing to say about it")
+	}
+	return out, nil
+}
+
+// formatVideoMetadata is the `[video_context]` block for what ffprobe read
+// of a video of size bytes.
+func formatVideoMetadata(probe *ffprobeOutput, size int) string {
 	var lines []string
 	if mime := http_DetectVideoMime(probe.Format.FormatName); mime != "" {
 		lines = append(lines, "mime: "+mime)
 	}
-	lines = append(lines, "size: "+humanBytes(int64(len(data))))
+	lines = append(lines, "size: "+humanBytes(int64(size)))
 
 	// Pick the first video stream for dimensions / codec / fps.
 	var videoStream *struct {
@@ -176,45 +205,28 @@ func ExtractVideosMetadata(videos [][]byte) string {
 	return strings.Join(blocks, "\n\n")
 }
 
-// runFfprobe invokes `ffprobe -show_format -show_streams` on path and parses JSON.
-func runFfprobe(path string) (*ffprobeOutput, error) {
-	if err := checkMediaFile(path); err != nil {
+// probeWith runs `ffprobe -show_format -show_streams` with t on the file
+// called name in t's folder, and parses its JSON.
+func probeWith(ctx context.Context, t Tools, name string) (*ffprobeOutput, error) {
+	if err := checkMediaFile(filepath.Join(t.Dir(), name)); err != nil {
 		return nil, err
 	}
-	cmd, cancel := ffmpegCommand(ffProbeLimit, "ffprobe",
+	out, err := t.Run(ctx, ffProbeLimit, "ffprobe",
 		"-v", "quiet",
 		"-protocol_whitelist", "file,pipe",
 		"-print_format", "json",
 		"-show_format",
 		"-show_streams",
-		path,
+		name,
 	)
-	defer cancel()
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	if err := cmd.Run(); err != nil {
+	if err != nil {
 		return nil, err
 	}
 	var probe ffprobeOutput
-	if err := json.Unmarshal(out.Bytes(), &probe); err != nil {
+	if err := json.Unmarshal(out, &probe); err != nil {
 		return nil, err
 	}
 	return &probe, nil
-}
-
-// writeTempFile writes data to a new temp file with the given pattern and
-// returns the absolute path. Caller is responsible for os.Remove.
-func writeTempFile(data []byte, pattern string) (string, error) {
-	f, err := os.CreateTemp("", pattern)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-	if _, err := f.Write(data); err != nil {
-		os.Remove(f.Name())
-		return "", err
-	}
-	return f.Name(), nil
 }
 
 // videoStreamTags returns the tags map of a video stream pointer or nil-safe empty.

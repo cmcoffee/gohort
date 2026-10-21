@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"github.com/cmcoffee/gohort/core/flows"
 )
 
 // Per-user workspace directories isolate the local-exec and file-I/O tools'
@@ -29,6 +31,11 @@ func SetWorkspacesDir(dir string) {
 	workspacesDirMu.Lock()
 	workspacesDir = dir
 	workspacesDirMu.Unlock()
+	// Flows run their commands in folders here too: the
+	// sandbox hides the system temp folder (core/flows).
+	if dir != "" {
+		flows.SetWorkBase(filepath.Join(dir, "_flows"))
+	}
 }
 
 // WorkspacesDir returns the configured base. Empty if SetWorkspacesDir
