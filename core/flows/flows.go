@@ -497,6 +497,22 @@ func OutMIME(ext string) string {
 
 // outTarget is an output format as a command's target: its result is named
 // for it and checked by it.
+// formatTarget is a hand-off's result: a file of the format it said it
+// hands on, or the reader it goes to would be handed something else.
+type formatTarget string
+
+func (t formatTarget) defaultExt() string { return extFor(string(t)) }
+
+func (t formatTarget) accept(out []byte) ([]byte, error) {
+	if len(out) == 0 {
+		return nil, errors.New("it is empty")
+	}
+	if got := Sniff(out); got != string(t) {
+		return nil, fmt.Errorf("it is %s, not %s", FormatLabel(got), FormatLabel(string(t)))
+	}
+	return out, nil
+}
+
 type outTarget string
 
 func (t outTarget) defaultExt() string { return "." + string(t) }

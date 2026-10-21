@@ -45,6 +45,9 @@ type Job struct {
 	Becomes Kind
 	Gives   string
 	Files   bool
+	// Then is a hand-off's: the format its result is, handed on to whatever
+	// reads that format here (an admin's converter, Adapted.Then).
+	Then string
 	// Params are values a call passes, as {name} placeholders: {count},
 	// {url}.
 	Params  []Param
@@ -112,6 +115,10 @@ func checkParams(j Job, params map[string]string) error {
 
 // IsRead reports whether j reads a file into something the model uses.
 func (j Job) IsRead() bool { return j.Becomes != "" && !j.Files && j.Gives == "" }
+
+// HandsOff reports whether j's result is a format another reader takes,
+// rather than something the model uses.
+func (j Job) HandsOff() bool { return j.Then != "" }
 
 // IsExport reports whether j writes a document as a format.
 func (j Job) IsExport() bool { return j.Gives != "" }
@@ -372,6 +379,9 @@ func (j Job) Placeholders() []string {
 func (j Job) target() target {
 	if j.IsExport() {
 		return outTarget(j.Gives)
+	}
+	if j.HandsOff() {
+		return formatTarget(j.Then)
 	}
 	return j.Becomes
 }

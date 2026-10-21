@@ -2459,7 +2459,9 @@ input[type="checkbox"].ui-input { width: auto; }
    the right, version walk above the draft. */
 .ui-assist {
   display: flex; gap: 0.85rem; align-items: stretch;
-  min-height: min(62vh, 32rem);
+  /* A height, not a minimum: the conversation scrolls in its own box
+     rather than growing the window past the screen. */
+  height: min(62vh, 32rem);
 }
 .ui-assist-left { flex: 1 1 58%; display: flex; flex-direction: column; gap: 0.4rem; min-width: 0; }
 .ui-assist-right { flex: 1 1 42%; display: flex; flex-direction: column; gap: 0.4rem; min-width: 0; }
@@ -2551,10 +2553,13 @@ input[type="checkbox"].ui-input { width: auto; }
 .ui-assist-helper { display: flex; flex-direction: column; gap: 0.6rem; }
 .ui-assist-helper-h { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; flex-wrap: wrap; }
 .ui-assist-helper-t { font-weight: 600; color: var(--text-hi, var(--text)); }
-.ui-assist-helper-b { display: flex; gap: 0.85rem; align-items: stretch; min-height: min(56vh, 28rem); }
-.ui-assist-helper-b .ui-assist-right { flex: 1 1 62%; }
+/* A height, not a minimum: the conversation scrolls in its own box, and
+   the small form beside it in its own, rather than the editor growing with
+   every reply. */
+.ui-assist-helper-b { display: flex; gap: 0.85rem; align-items: stretch; height: min(60vh, 34rem); }
+.ui-assist-helper-b .ui-assist-right { flex: 1 1 62%; min-height: 0; }
 .ui-assist-mini {
-  flex: 1 1 38%; min-width: 0; overflow-y: auto; max-height: min(64vh, 34rem);
+  flex: 1 1 38%; min-width: 0; min-height: 0; overflow-y: auto;
   border: 1px solid var(--border); border-radius: 8px; background: var(--bg-0); padding: 0.5rem 0.6rem;
 }
 .ui-assist-mini-h { font-size: var(--fs-xs); color: var(--text-mute); margin: 0 0 0.35rem; }
@@ -2591,8 +2596,9 @@ input[type="checkbox"].ui-input { width: auto; }
 }
 .ui-form-assist:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
 @media (max-width: 760px) {
-  .ui-assist-helper-b { flex-direction: column; min-height: 0; }
-  .ui-assist-mini { max-height: 30vh; }
+  .ui-assist-helper-b { flex-direction: column; height: auto; }
+  .ui-assist-mini { flex: 0 0 auto; max-height: 26vh; }
+  .ui-assist-helper-b .ui-assist-right { flex: 0 0 auto; height: 56vh; }
 }
 /* Files attached for the endpoint's tools: one chip each, until sent. */
 .ui-assist-attach {
@@ -2637,7 +2643,7 @@ input[type="checkbox"].ui-input { width: auto; }
     overflow: hidden;
   }
   .ui-assist-modal .ui-modal-footer { margin-top: 0.5rem; padding-top: 0.5rem; }
-  .ui-assist { flex: 1 1 auto; flex-direction: column; gap: 0.5rem; min-height: 0; }
+  .ui-assist { flex: 1 1 auto; flex-direction: column; gap: 0.5rem; min-height: 0; height: auto; }
   .ui-assist-tabs { display: flex; flex-wrap: wrap; gap: 0.4rem; flex: 0 0 auto; }
   .ui-assist-tabs .ui-tab { flex: 1 1 0; position: relative; }
   /* A new version arrived while the conversation was showing. */

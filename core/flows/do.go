@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/cmcoffee/gohort/core/media"
@@ -163,7 +164,21 @@ func Do(ctx context.Context, id string, in Input) (Result, error) {
 // Convert turns data into kind: by an adapted flow its admin preferred,
 // then gohort's own, then the other adapted ones. from is the format when
 // the caller knows it (an upload's type), else it is sniffed.
+//
+// Where nothing reads the format as kind, a hand-off may: an admin's
+// converter whose result is a format something here does read (Pages to
+// PDF, then gohort's PDF reader). Its result is checked to be that format,
+// then read the same way, at most maxHandOffs converters deep and never
+// back to a format already passed through.
 func Convert(ctx context.Context, data []byte, from string, kind Kind) (Result, error) {
+	return convert(ctx, data, from, kind, nil)
+}
+
+// maxHandOffs is how many converters a file may pass through before the
+// reader that finishes it.
+const maxHandOffs = 2
+
+func convert(ctx context.Context, data []byte, from string, kind Kind, passed []string) (Result, error) {
 	if from == "" {
 		from = Sniff(data)
 	}
@@ -194,10 +209,109 @@ func Convert(ctx context.Context, data []byte, from string, kind Kind) (Result, 
 		}
 	}
 	res, err := ways(live(true, match), native, live(false, match), in)(ctx)
-	if err == nil && res.Out == nil {
+	if err == nil && res.Out != nil {
+		return res, nil
+	}
+	if res2, err2, tried := handOff(ctx, in, kind, append(passed, from)); tried {
+		if err2 == nil {
+			return res2, nil
+		}
+		err = err2
+	}
+	if err == nil {
 		return res, fmt.Errorf("%w: nothing here turns %s into %s", ErrNoConversion, FormatLabel(from), kind.Label())
 	}
 	return res, err
+}
+
+// handOff tries the converters that take in's format and hand it on as one
+// not yet passed through, reading each one's result as kind. tried is
+// false when there is none to try.
+func handOff(ctx context.Context, in Input, kind Kind, passed []string) (Result, error, bool) {
+	if len(passed) > maxHandOffs {
+		return Result{}, nil, false
+	}
+	match := func(a Adapted, j Job) (bool, bool) {
+		if !j.HandsOff() || contains(passed, j.Then) {
+			return false, false
+		}
+		return contains(j.Takes, in.From), contains(j.Takes, Any)
+	}
+	var lastErr error
+	tried := false
+	for _, h := range append(live(true, match), live(false, match)...) {
+		tried = true
+		mid, err := RunAdapted(ctx, h.Name, h.A, in)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		res, err := convert(ctx, mid.Out, h.J.Then, kind, passed)
+		if err != nil {
+			lastErr = fmt.Errorf("%s gave %s, which could not be read: %w", h.Name, FormatLabel(h.J.Then), err)
+			continue
+		}
+		res.By = h.Name + ", then " + res.By
+		res.Took += mid.Took
+		if mid.Log != "" {
+			res.Log = strings.TrimSpace(mid.Log + "\n" + res.Log)
+		}
+		return res, nil, true
+	}
+	return Result{}, lastErr, tried
+}
+
+// Reader is what reads one format here: gohort's own job, or an admin's
+// converter that is on.
+type Reader struct {
+	Format  string
+	By      string // the job's title, or the converter's name
+	Builtin bool
+}
+
+// Readers are the formats read here, each with what reads it: the formats
+// a file can be handed on as. gohort's own reading jobs first (whether or
+// not their tool is installed here: an adapted flow may fill one), then the
+// converters that are on, each format once.
+func Readers() []Reader {
+	var out []Reader
+	seen := map[string]bool{}
+	for _, j := range jobs {
+		if j.Group != GroupReading || !j.IsRead() {
+			continue
+		}
+		for _, f := range j.Takes {
+			if f != Any && !seen[f] {
+				seen[f] = true
+				out = append(out, Reader{Format: f, By: j.Title, Builtin: true})
+			}
+		}
+	}
+	for _, h := range append(live(true, anyInput), live(false, anyInput)...) {
+		for _, f := range h.J.Takes {
+			if f != Any && !seen[f] {
+				seen[f] = true
+				out = append(out, Reader{Format: f, By: h.Name})
+			}
+		}
+	}
+	return out
+}
+
+// anyInput matches every adapted flow that adds a format to read.
+func anyInput(a Adapted, j Job) (bool, bool) {
+	return a.Job == "" && (j.IsRead() || j.HandsOff()), false
+}
+
+// BuiltinReader is the title of gohort's own job that reads format, or ""
+// when none does: a format that needs no converter added for it.
+func BuiltinReader(format string) string {
+	for _, j := range jobs {
+		if j.Group == GroupReading && j.IsRead() && contains(j.Takes, format) {
+			return j.Title
+		}
+	}
+	return ""
 }
 
 // Export writes doc as format ext: by an adapted flow its admin preferred,

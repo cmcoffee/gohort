@@ -292,6 +292,8 @@ func adaptedRow(c Connector, a flows.Adapted, refusing bool) depRow {
 		row.Detail = "Adapted, for " + j.Title + "."
 	} else if j.IsExport() {
 		row.Enables, row.Detail = "Writes "+j.Title, "Exports documents as "+j.Title+"."
+	} else if j.HandsOff() {
+		row.Enables, row.Detail = "Reads "+j.Title, "Hands it on as "+flows.FormatLabel(j.Then)+", "+readerOf(j.Then)+"."
 	} else {
 		row.Enables, row.Detail = "Reads "+j.Title, "Becomes "+j.Becomes.Label()+"."
 	}
@@ -410,7 +412,11 @@ func (ff flowForm) adapted(job string) flows.Adapted {
 		}
 		return a
 	}
-	a.Becomes = flows.Kind(strings.TrimSpace(ff.Becomes))
+	if then, ok := strings.CutPrefix(strings.TrimSpace(ff.Becomes), handOffPrefix); ok {
+		a.Then = flows.ParseFormat(then)
+	} else {
+		a.Becomes = flows.Kind(strings.TrimSpace(ff.Becomes))
+	}
 	for _, tok := range strings.FieldsFunc(ff.Takes, func(r rune) bool { return r == ',' || r == ' ' }) {
 		a.Takes = append(a.Takes, flows.ParseFormat(tok))
 	}
@@ -433,6 +439,9 @@ func formOf(name string, a flows.Adapted) flowForm {
 			short[i] = flows.ShortName(t)
 		}
 		ff.Direction, ff.Takes, ff.Becomes = "input", strings.Join(short, ", "), string(a.Becomes)
+		if a.Then != "" {
+			ff.Becomes = handOffPrefix + a.Then
+		}
 	}
 	return ff
 }
@@ -535,6 +544,54 @@ func isOutputRow(id string) bool {
 	return false
 }
 
+// handOffPrefix marks a Becomes that hands the result on as a format.
+const handOffPrefix = "then:"
+
+// readerOf says what reads format here: "which gohort reads (built in)",
+// or the converter that does.
+func readerOf(format string) string {
+	for _, r := range flows.Readers() {
+		if r.Format == format {
+			if r.Builtin {
+				return "which gohort reads (built in: " + r.By + ")"
+			}
+			return "which your " + r.By + " reads"
+		}
+	}
+	return "which nothing here reads now"
+}
+
+// checkCustomInput refuses a custom input for a format gohort already reads
+// (that is its row's Adapt), and a hand-off to a format nothing here reads.
+func checkCustomInput(a flows.Adapted) error {
+	for _, t := range a.Takes {
+		if by := flows.BuiltinReader(t); by != "" {
+			return fmt.Errorf("gohort already reads %s (%s, under Reading): to use another tool for it, adapt that row instead", flows.FormatLabel(t), by)
+		}
+	}
+	if a.Then != "" && readerOf(a.Then) == "which nothing here reads now" {
+		return fmt.Errorf("nothing here reads %s, so there is no one to hand it on to: pick a format from the list", flows.FormatLabel(a.Then))
+	}
+	return nil
+}
+
+// becomesOptions are Becomes's choices: the kinds a file becomes, then the
+// formats it can be handed on as, each with what reads it.
+func becomesOptions() []map[string]string {
+	var out []map[string]string
+	for _, k := range flows.Kinds {
+		out = append(out, map[string]string{"value": string(k), "label": k.Label(), "group": "It becomes"})
+	}
+	for _, r := range flows.Readers() {
+		label := flows.FormatLabel(r.Format) + " (built in)"
+		if !r.Builtin {
+			label = flows.FormatLabel(r.Format) + " (your " + r.By + ")"
+		}
+		out = append(out, map[string]string{"value": handOffPrefix + r.Format, "label": label, "group": "Or hand it on as"})
+	}
+	return out
+}
+
 // flowName is a name for a new flow adapting job id: read.heic -> read-heic-adapted.
 func flowName(id string) string { return strings.ReplaceAll(id, ".", "-") + "-adapted" }
 
@@ -581,7 +638,14 @@ func (a *AdminApp) registerSystemDepsRoutes(sub *http.ServeMux) {
 					return
 				}
 			}
-			if _, err := saveAdapted(AuthCurrentUser(r), name, ff.adapted(job), edit != "", "Adapted flow"); err != nil {
+			ad := ff.adapted(job)
+			if job == "" && !ad.IsOutput() {
+				if err := checkCustomInput(ad); err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+			}
+			if _, err := saveAdapted(AuthCurrentUser(r), name, ad, edit != "", "Adapted flow"); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
@@ -628,6 +692,14 @@ func (a *AdminApp) registerSystemDepsRoutes(sub *http.ServeMux) {
 			msg = "Agents can run it now, with the system_hook tool."
 		}
 		writeJSONOut(w, map[string]any{"agents": body.Agents, "message": msg})
+	})
+
+	// Becomes's choices for a custom input, as the form renders.
+	sub.HandleFunc("/api/system-deps/becomes", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		writeJSONOut(w, becomesOptions())
 	})
 
 	// One adapted flow as its edit form fills from: GET ?name=.
@@ -786,9 +858,11 @@ func flowFields(withName, custom bool) []ui.FormField {
 				{Value: "output", Label: "writes documents as a format gohort does not"},
 			}},
 			ui.FormField{Field: "takes", Label: "Takes", Type: "text", ShowWhen: "direction:input",
-				Help:   "The formats it reads, separated by commas: pages, heic, mp4, or a MIME type.",
+				Help:   "The formats it reads, separated by commas: pages, or a MIME type. Not one gohort already reads (PDF, Word, HEIC and the rest under Reading): adapt that one's row instead.",
 				Detail: "Use * for any format nothing else reads, for a converter that reads everything."},
-			ui.FormField{Field: "becomes", Label: "Becomes", Type: "select", Options: becomes, ShowWhen: "direction:input"},
+			ui.FormField{Field: "becomes", Label: "Becomes", Type: "select", Options: becomes, OptionsSource: "api/system-deps/becomes", ShowWhen: "direction:input",
+				Help:   "What it turns the file into: an image or text the model reads, or a format gohort already reads, handed on to that reader.",
+				Detail: "Handed on, its result has to be that format, and the reader listed with it finishes the job: a converter from Pages to PDF, say, then gohort's own PDF reader. Built in means gohort reads it; your converter means one added here."},
 			ui.FormField{Field: "gives", Label: "Format", Type: "text", ShowWhen: "direction:output",
 				Help: "The format it writes, by its extension: epub, rtf, or any other."},
 			ui.FormField{Field: "from", Label: "Reads the document as", Type: "select", Default: "markdown", ShowWhen: "direction:output", Options: []ui.SelectOption{

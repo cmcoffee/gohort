@@ -382,3 +382,25 @@ realTimeout(function() {
 		t.Fatalf("the panel waiting for the record:\n%s", out)
 	}
 }
+
+// The conversation scrolls in its own box: the helper and the draft window
+// have a height, not a minimum, so a long conversation does not grow the
+// editor (seen: the whole editor scrolled instead of the chat).
+func TestTheConversationScrollsInItsOwnBox(t *testing.T) {
+	css := readRuntimeCSSForTest(t)
+	rule := func(sel string) string {
+		at := strings.Index(css, "\n"+sel+" {")
+		if at < 0 {
+			t.Fatalf("no rule for %s", sel)
+		}
+		return css[at : at+strings.Index(css[at:], "}")]
+	}
+	for _, sel := range []string{".ui-assist", ".ui-assist-helper-b"} {
+		if r := rule(sel); !strings.Contains(r, "height: min(") || strings.Contains(r, "min-height: min(") {
+			t.Errorf("%s should have a height, not a minimum:%s", sel, r)
+		}
+	}
+	if r := rule(".ui-assist-log"); !strings.Contains(r, "overflow-y: auto") || !strings.Contains(r, "min-height: 0") {
+		t.Errorf("the log should scroll inside its box:%s", r)
+	}
+}

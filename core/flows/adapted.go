@@ -21,14 +21,19 @@ const Any = "*"
 
 // Adapted is an admin's own flow: the connector's spec. It fills a job of
 // gohort's (Job), or adds a format gohort does not support, as a job of its
-// own: an input that Takes formats and Becomes a kind, or an export that
+// own: an input that Takes formats and Becomes a kind, or hands its result
+// on (Then) as a format something here already reads; or an export that
 // Gives a format from the document as text/markdown or text/html.
 type Adapted struct {
 	Job     string   `json:"job,omitempty"`
 	Takes   []string `json:"takes,omitempty"`
 	Becomes Kind     `json:"becomes,omitempty"`
-	Gives   string   `json:"gives,omitempty"`
-	Steps   []string `json:"steps,omitempty"`
+	// Then hands the result on as this format, for whatever reads it here
+	// (gohort's own reader, or another converter) to finish: Pages to PDF,
+	// then PDF to text by gohort. An input either Becomes a kind or Then.
+	Then  string   `json:"then,omitempty"`
+	Gives string   `json:"gives,omitempty"`
+	Steps []string `json:"steps,omitempty"`
 	// Command is a one-step flow, as saved before flows had steps.
 	Command string `json:"command,omitempty"`
 	// Reads are folders the flow may also read (a model file a transcriber
@@ -67,6 +72,9 @@ func (a Adapted) Contract() (Job, error) {
 	if a.Gives != "" {
 		return Job{ID: "export." + a.Gives, Group: GroupWriting, Title: OutLabel(a.Gives), Takes: a.Takes, Gives: a.Gives}, nil
 	}
+	if a.Then != "" {
+		return Job{Group: GroupReading, Title: FormatsLabel(a.Takes), Takes: a.Takes, Then: a.Then}, nil
+	}
 	return Job{Group: GroupReading, Title: FormatsLabel(a.Takes), Takes: a.Takes, Becomes: a.Becomes}, nil
 }
 
@@ -98,8 +106,21 @@ func (a Adapted) Timeout() time.Duration {
 func (a Adapted) Validate() error {
 	if a.Job == "" {
 		switch {
-		case a.Gives != "" && a.Becomes != "":
+		case a.Gives != "" && (a.Becomes != "" || a.Then != ""):
 			return errors.New("an export names the format it gives, not what it becomes")
+		case a.Then != "":
+			if a.Becomes != "" {
+				return errors.New("it either becomes an image or text, or hands its result on as a format: not both")
+			}
+			if a.Then == Any || !strings.Contains(a.Then, "/") {
+				return fmt.Errorf("%q is not a format to hand it on as: name one gohort reads, like pdf", a.Then)
+			}
+			if len(a.Takes) == 0 {
+				return errors.New("say which formats it takes")
+			}
+			if contains(a.Takes, a.Then) {
+				return errors.New("it cannot hand on the format it takes: that would read it again")
+			}
 		case a.Gives != "":
 			if !extRE.MatchString(a.Gives) {
 				return fmt.Errorf("name the format it gives by its extension, like docx or epub, not %q", a.Gives)

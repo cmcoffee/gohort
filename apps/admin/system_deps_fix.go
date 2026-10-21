@@ -147,7 +147,7 @@ func fixAbout(r *http.Request) (string, error) {
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
 	if id == "" {
 		// Add: a format gohort does not support, not a row yet.
-		return hooksScope + "\n\nThe admin is adding a custom format: an input that reads a format gohort does not (takes formats, becomes an image the model can read or text), or an output that writes documents as a format gohort does not (gives a format, from the document's Markdown or HTML). The form beside this conversation is the new format's; saving it saves it off, under Custom.\n\n" +
+		return hooksScope + "\n\nThe admin is adding a custom format: an input that reads a format gohort does not (takes formats, becomes an image the model can read or text, or hands its result on as a format something here already reads, for that reader to finish: Pages to PDF, then gohort's PDF reader), or an output that writes documents as a format gohort does not (gives a format, from the document's Markdown or HTML). The form beside this conversation is the new format's; saving it saves it off, under Custom.\n\n" +
 			"How to work: ask what format they want if the form does not say, find a program installed here that converts it, and read its help (dependency_check_program). Try your steps with dependency_try, giving the direction and what it takes and becomes (or gives), before you put them in the form. If nothing installed can do it, say which package to install: you cannot install software.\n\n" +
 			"What a try runs on: an input, on a file the admin attaches in this window (ask for one when none is listed); an output, on gohort's sample document.", nil
 	}
@@ -231,7 +231,7 @@ func fixTools(r *http.Request) []AgentToolDef {
 					"file":         {Type: "string", Description: "An attached file's id to run on (file-1); the latest when left out. Not for a job that writes documents or takes a link."},
 					"direction":    {Type: "string", Description: "Adding a format only: input or output."},
 					"takes":        {Type: "string", Description: "Adding an input only: the formats it reads, comma separated (pages, image/heic), or * for any nothing else reads."},
-					"becomes":      {Type: "string", Description: "Adding an input only: image or text."},
+					"becomes":      {Type: "string", Description: "Adding an input only: image or text, or then:<format> to hand the result on to what already reads that format here (then:pdf)."},
 					"gives":        {Type: "string", Description: "Adding an output only: its extension (epub, rtf)."},
 					"from":         {Type: "string", Description: "Adding an output only: markdown or html, the form of the document it reads."},
 					"url":          {Type: "string", Description: "For a job that takes a link (a download): the link to try it on, a public http(s) address."},

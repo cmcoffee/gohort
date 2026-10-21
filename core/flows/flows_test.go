@@ -766,3 +766,71 @@ func wordFallback(t *testing.T) {
 		t.Fatalf("want a Word file from python-docx: %v (%s)", err, res.Log)
 	}
 }
+
+// A converter can hand its result on as a format something here reads: the
+// file goes through it, its result is checked to be that format, and that
+// format's reader finishes it. The table and the Add form list what reads
+// each format, gohort's own marked as such.
+func TestAHandOffIsReadByTheNextReader(t *testing.T) {
+	needSandbox(t)
+	var b bytes.Buffer
+	bmp.Encode(&b, image.NewRGBA(image.Rect(0, 0, 3, 3)))
+	wrappedBMP := append([]byte("GOHORTX!"), b.Bytes()...)
+	unwrap := Adapted{Takes: []string{"x/wrapped"}, Then: "image/bmp", Command: "dd if={in} of={out} bs=8 skip=1", TimeoutSecs: 20}
+	if err := SetAdapted("unwrap", unwrap); err != nil {
+		t.Fatal(err)
+	}
+	defer RemoveAdapted("unwrap")
+	res, err := Convert(context.Background(), wrappedBMP, "x/wrapped", KindImage)
+	if err != nil || res.By != "unwrap, then built in" || !Readable(res.Out, KindImage) {
+		t.Fatalf("want it unwrapped, then read by gohort's BMP reader: %v %+v", err, res.By)
+	}
+
+	// A converter whose result is not the format it promised is refused,
+	// not handed on as something it is not.
+	liar := unwrap
+	liar.Then = "application/pdf"
+	SetAdapted("unwrap", liar)
+	if _, err := Convert(context.Background(), wrappedBMP, "x/wrapped", KindImage); err == nil || !strings.Contains(err.Error(), "not PDF") {
+		t.Errorf("a result that is not the promised format should be refused: %v", err)
+	}
+	SetAdapted("unwrap", unwrap)
+
+	// Never back to a format already passed through, and no deeper than
+	// maxHandOffs converters.
+	if _, _, tried := handOff(context.Background(), Input{Data: wrappedBMP, From: "x/wrapped"}, KindImage, []string{"x/wrapped", "image/bmp"}); tried {
+		t.Error("a hand-off back to a format already passed through was tried")
+	}
+	if _, _, tried := handOff(context.Background(), Input{Data: wrappedBMP, From: "x/wrapped"}, KindImage, []string{"a/a", "b/b", "x/wrapped"}); tried {
+		t.Error("a hand-off past the depth was tried")
+	}
+
+	// What reads each format: gohort's own, then the converters.
+	var pdf, mine *Reader
+	for _, r := range Readers() {
+		r := r
+		switch r.Format {
+		case "application/pdf":
+			pdf = &r
+		case "x/wrapped":
+			mine = &r
+		}
+	}
+	if pdf == nil || !pdf.Builtin || mine == nil || mine.Builtin || mine.By != "unwrap" {
+		t.Errorf("want PDF read by gohort's own job and the wrapped format by the converter: %+v %+v", pdf, mine)
+	}
+	if BuiltinReader("application/pdf") == "" || BuiltinReader("x/wrapped") != "" {
+		t.Error("BuiltinReader should name gohort's own readers only")
+	}
+
+	// A hand-off is one or the other, and never to what it takes.
+	for name, bad := range map[string]Adapted{
+		"both":  {Takes: []string{"x/a"}, Then: "image/bmp", Becomes: KindImage, Command: "cp {in} {out}"},
+		"self":  {Takes: []string{"image/bmp"}, Then: "image/bmp", Command: "cp {in} {out}"},
+		"vague": {Takes: []string{"x/a"}, Then: "pdf", Command: "cp {in} {out}"},
+	} {
+		if bad.Validate() == nil {
+			t.Errorf("%s: should be refused", name)
+		}
+	}
+}

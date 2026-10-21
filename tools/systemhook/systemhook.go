@@ -145,6 +145,9 @@ func contract(j flows.Job) string {
 	case !j.TakesFile():
 		return "takes a link, gives " + j.Becomes.Label() + " (it goes online)"
 	}
+	if j.HandsOff() {
+		return "takes " + flows.FormatsLabel(j.Takes) + ", gives " + flows.FormatLabel(j.Then)
+	}
 	return "takes " + flows.FormatsLabel(j.Takes) + ", gives " + j.Becomes.Label()
 }
 

@@ -272,11 +272,15 @@ func TestAFormatIsAddedAndEditedSafely(t *testing.T) {
 	if c, _ := GetConnector(f.db, "strip8"); c.Approved {
 		t.Error("an edit should turn it off")
 	}
-	short := `{"name":"heicish","direction":"input","takes":"heic, avif","becomes":"image","steps":"magick {in} {out.png}"}`
-	f.do(t, "POST", "/api/system-deps", short)
+	// Formats no reader of gohort's takes (these two are media jobs'), by
+	// their short names.
+	short := `{"name":"stills","direction":"input","takes":"mov, mkv","becomes":"image","steps":"ffmpeg -i {in} -frames:v 1 {out.png}"}`
+	if w := f.do(t, "POST", "/api/system-deps", short); w.Code >= 300 {
+		t.Fatalf("add: %d %s", w.Code, w.Body.String())
+	}
 	var form flowForm
-	json.Unmarshal(f.do(t, "GET", "/api/system-deps/one?name=heicish", "").Body.Bytes(), &form)
-	if form.Takes != "heic, avif" || form.Direction != "input" {
+	json.Unmarshal(f.do(t, "GET", "/api/system-deps/one?name=stills", "").Body.Bytes(), &form)
+	if form.Takes != "mov, mkv" || form.Direction != "input" {
 		t.Errorf("the edit form should show it short: %+v", form)
 	}
 	if w := f.do(t, "POST", "/api/system-deps", short); w.Code != http.StatusBadRequest {
@@ -788,5 +792,37 @@ func TestTheAddFormHasTheHooksAssistant(t *testing.T) {
 	}
 	if fp := adaptForm(); fp.AssistURL != "api/system-deps/fix?id={id}" {
 		t.Errorf("Adapt's assistant should be the row's: %q", fp.AssistURL)
+	}
+}
+
+// Add takes a format gohort does not read, and may hand its result on to a
+// reader that is here: listed with what reads it, built in or a converter.
+// A format gohort already reads is that row's Adapt, not an Add.
+func TestAddHandsOnToAReaderThatIsHere(t *testing.T) {
+	f := newDepsFixture(t)
+	if w := f.do(t, "POST", "/api/system-deps", `{"name":"mypdf","direction":"input","takes":"pdf","becomes":"text","steps":"pdftotext {in} {out}"}`); w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "adapt that row") {
+		t.Errorf("a format gohort reads should point to its row: %d %s", w.Code, w.Body.String())
+	}
+	if w := f.do(t, "POST", "/api/system-deps", `{"name":"pages","direction":"input","takes":"application/x-pages","becomes":"then:x/nothing-reads","steps":"cp {in} {out}"}`); w.Code != http.StatusBadRequest {
+		t.Errorf("a hand-off to a format nothing reads should be refused: %d", w.Code)
+	}
+	if w := f.do(t, "POST", "/api/system-deps", `{"name":"pages","direction":"input","takes":"application/x-pages","becomes":"then:application/pdf","steps":"cp {in} {out}"}`); w.Code >= 300 {
+		t.Fatalf("a hand-off to PDF: %d %s", w.Code, w.Body.String())
+	}
+	var ff flowForm
+	json.Unmarshal(f.do(t, "GET", "/api/system-deps/one?name=pages", "").Body.Bytes(), &ff)
+	if ff.Becomes != "then:application/pdf" {
+		t.Errorf("the form should read the hand-off back: %q", ff.Becomes)
+	}
+	var custom []depRow
+	json.Unmarshal(f.do(t, "GET", "/api/system-deps?custom=1", "").Body.Bytes(), &custom)
+	if len(custom) != 1 || !strings.Contains(custom[0].Detail, "Hands it on as PDF, which gohort reads (built in") {
+		t.Errorf("the row should name the chain: %+v", custom)
+	}
+	body := f.do(t, "GET", "/api/system-deps/becomes", "").Body.String()
+	for _, want := range []string{`"value":"image"`, `"value":"then:application/pdf"`, `"label":"PDF (built in)"`, `"group":"Or hand it on as"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("Becomes should offer %s: %s", want, body)
+		}
 	}
 }
