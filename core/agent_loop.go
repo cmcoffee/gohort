@@ -2952,6 +2952,13 @@ func (lr *loopRun) finalRoundStallGuards() loopAction {
 		// spend a round to arrive at the same text, or worse, at a reply to the
 		// correction itself ("Nothing is stopping me...") in its place.
 		Debug("[agent_loop] the reply came back unchanged after an action-promise correction: delivered as an offer")
+		// The first copy is already on screen: the correction settled it before
+		// re-prompting. This round streamed the same words into a bubble of its
+		// own, so the person saw the reply twice (the saved transcript drops
+		// the echo; the live page did not). Take the repeat back; the reply is
+		// still the turn's answer, and the host's echo check matches it to the
+		// bubble already shown.
+		lr.retractRound()
 		return actNone
 	}
 	if gaveUp {

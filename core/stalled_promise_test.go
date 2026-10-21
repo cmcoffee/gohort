@@ -172,6 +172,11 @@ func TestAnOfferThatWaitsOnTheUserIsNotAStall(t *testing.T) {
 		// A handover with no "you" in it: both slipped through at 19:19.
 		"Here it is, sunset out and the city way down below. If the tag didn't make it into the corner, say the word and I'll fix that part.",
 		"There's no job left in flight. If the tag isn't in the corner, say so and I'll reroll it.",
+		// A handover by an imperative to the person: nothing to do until they
+		// do it. Seen 2026-10-20, re-prompted, and shown twice.
+		"Yes, exactly. Web search, live pages, specific sources, your own files and contacts on your desktop, and deeper dives through specialists when the question needs them. Hand me the question and I'll get the answer.",
+		"Send me the file and I'll convert it.",
+		"Just give me the address and I'll look it up.",
 	} {
 		if replyStalledOnAPromise(offer) {
 			t.Errorf("an offer waiting on the user is not a stall: %q", offer)
@@ -182,6 +187,9 @@ func TestAnOfferThatWaitsOnTheUserIsNotAStall(t *testing.T) {
 		"I'll grab a fresh copy and try that again.",
 		// A condition about a fact, not the person: still work it said it would do.
 		"If the API is down, I'll try the backup endpoint.",
+		// Asking for a moment is not handing anything over.
+		"Give me a sec and I'll check the logs.",
+		"Give me a minute and I'll pull the numbers.",
 	} {
 		if !replyStalledOnAPromise(stall) {
 			t.Errorf("work the agent said it would do now is still a stall: %q", stall)
@@ -278,12 +286,19 @@ func TestAReplySentBackUnchangedIsDelivered(t *testing.T) {
 		{Content: "I'll  pull the logs now.", Repeat: true},
 	}}
 	app := &AppCore{LLM: stub, LeadLLM: stub}
-	resp, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "logs?"}}, AgentLoopConfig{MaxRounds: 8})
+	settled, retracted := 0, 0
+	resp, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "logs?"}}, AgentLoopConfig{MaxRounds: 8,
+		SettleRound: func() { settled++ }, RetractRound: func() { retracted++ }})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if stub.Calls() != 2 {
 		t.Errorf("the unchanged reply was corrected again: calls=%d, want 2", stub.Calls())
+	}
+	// The first copy stays on screen and the repeat is taken back: seen
+	// 2026-10-20, the same line showed twice on the live page.
+	if settled != 1 || retracted != 1 {
+		t.Errorf("want the first copy settled and the repeat retracted: settled=%d retracted=%d", settled, retracted)
 	}
 	if !strings.Contains(resp.Content, "pull the logs") {
 		t.Errorf("delivered %q", resp.Content)

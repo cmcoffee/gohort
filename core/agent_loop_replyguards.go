@@ -651,6 +651,12 @@ func promiseWaitsOnTheUser(lower string) bool {
 	if userHandoverRe.MatchString(sentence) {
 		return true
 	}
+	// Or by an imperative that opens the sentence: "Hand me the question and
+	// I'll get the answer" waits on the question. Asking for a moment ("give
+	// me a sec and I'll check") hands nothing over and is still a promise.
+	if imperativeHandoverRe.MatchString(sentence) && !momentRe.MatchString(sentence) {
+		return true
+	}
 	return userConditionRe.MatchString(sentence) && youRe.MatchString(sentence)
 }
 
@@ -661,6 +667,13 @@ var userConditionRe = regexp.MustCompile(`\b(?:if|unless|once)\b`)
 // userHandoverRe hands the next move to the person, so what follows it waits
 // on them.
 var userHandoverRe = regexp.MustCompile(`\b(?:say the word|say so|just say|give me the word|let me know|tell me|ping me|holler)\b`)
+
+// imperativeHandoverRe is a sentence that opens by asking the person for
+// something, then promises: "send me the file and I'll convert it".
+var imperativeHandoverRe = regexp.MustCompile(`^\s*(?:just\s+|ok(?:ay)?,?\s+|so\s+)?(?:hand|give|send|show|pass|paste|drop|toss|forward|share|point)\s+me\b[^.!?]*\band (?:i'll|i will)\b`)
+
+// momentRe is asking for time, not for something to work on.
+var momentRe = regexp.MustCompile(`\bgive me (?:a |one )?(?:sec|second|minute|moment|bit|few)\b`)
 
 // youRe is the person being addressed.
 var youRe = regexp.MustCompile(`\byou(?:'d|'re|r)?\b`)
