@@ -875,7 +875,7 @@ func (t *chatTurn) agentsRunGate(args map[string]any) (AgentRecord, string, erro
 	}
 	// A dispatch to a retiring archetype seed (Research / KB) materializes the
 	// user's own copy and runs that — retirement never breaks a live dispatch.
-	target = materializeIfRetiringSeed(fleetDB, fleetUser, target)
+	target = materializeIfRetiringSeed(fleetDB, fleetUser, key, target)
 	// A sub-agent held for approval is not live yet — refuse to dispatch it until
 	// the owner activates it from the Authorizations pane.
 	if target.PendingApproval {

@@ -777,7 +777,7 @@ func (sd *syncDispatch) admit() bool {
 	}
 	// Standing fire / monitor wake / external dispatch to a retiring archetype
 	// seed → materialize the owner's own copy and run that.
-	sd.target = materializeIfRetiringSeed(sd.ownerDB, sd.agentOwner, sd.target)
+	sd.target = materializeIfRetiringSeed(sd.ownerDB, sd.agentOwner, agentKey, sd.target)
 	sd.runtimeDB = sd.ownerDB
 	if sd.runtimeUser != sd.agentOwner {
 		sd.runtimeDB = UserDB(T.DB, sd.runtimeUser)
@@ -1920,7 +1920,7 @@ func (cr *continuingRun) admit() bool {
 	if !cr.ok {
 		return cr.exit(AgentSyncResult{}, fmt.Errorf("agent %q not found in agentOwner %q store", cr.agentKey, cr.agentOwner))
 	}
-	cr.target = materializeIfRetiringSeed(cr.ownerDB, cr.agentOwner, cr.target)
+	cr.target = materializeIfRetiringSeed(cr.ownerDB, cr.agentOwner, cr.agentKey, cr.target)
 	cr.runtimeDB = cr.ownerDB
 	if cr.runtimeUser != cr.agentOwner {
 		cr.runtimeDB = UserDB(T.DB, cr.runtimeUser)

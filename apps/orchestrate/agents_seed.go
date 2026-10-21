@@ -91,7 +91,18 @@ func materializeArchetypeAgent(db Database, owner, seedID string) (AgentRecord, 
 // (Owner=user at the seed id) or an already-user-owned agent passes through
 // unchanged. The single seam every dispatch resolver calls right after
 // findAgentByNameOrID so retirement never breaks a live dispatch.
-func materializeIfRetiringSeed(db Database, owner string, target AgentRecord) AgentRecord {
+//
+// Only a dispatch BY NAME (key) materializes: that is a standing mission or
+// an agent asking for "Research", which the copy keeps working. A key that IS
+// the seed's id is an app running the seed as its engine (Collections'
+// research and claim check, Scribe's co-author research and fact-check), and
+// runs the seed in place. Materializing those gave every user who touched
+// one of them a "Research" agent of their own, listed in pickers and in every
+// agent's Available agents, that came back each time it was deleted.
+func materializeIfRetiringSeed(db Database, owner, key string, target AgentRecord) AgentRecord {
+	if strings.EqualFold(strings.TrimSpace(key), target.ID) {
+		return target
+	}
 	if target.Owner == seedOwner && isRetiringArchetypeSeed(target.ID) {
 		if mat, ok := materializeArchetypeAgent(db, owner, target.ID); ok {
 			return mat

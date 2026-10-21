@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"context"
 	"errors"
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/appagents"
@@ -378,7 +379,7 @@ func TestMaterializeArchetypeAgent(t *testing.T) {
 	}
 
 	// materializeIfRetiringSeed swaps the virgin seed for a user-owned copy.
-	got := materializeIfRetiringSeed(udb, "u", seed)
+	got := materializeIfRetiringSeed(udb, "u", "Research", seed)
 	if got.ID == "seed-research" || got.Owner != "u" {
 		t.Fatalf("virgin seed should materialize to a user-owned agent; got id=%q owner=%q", got.ID, got.Owner)
 	}
@@ -389,8 +390,8 @@ func TestMaterializeArchetypeAgent(t *testing.T) {
 		t.Fatal("materialized Research should carry the seed's curated toolset")
 	}
 
-	// Idempotent: a second call (and a by-id dispatch) returns the SAME copy.
-	again := materializeIfRetiringSeed(udb, "u", seed)
+	// Idempotent: a second call returns the SAME copy.
+	again := materializeIfRetiringSeed(udb, "u", "Research", seed)
 	if again.ID != got.ID {
 		t.Fatalf("materialize must be idempotent; first=%q second=%q", got.ID, again.ID)
 	}
@@ -401,8 +402,27 @@ func TestMaterializeArchetypeAgent(t *testing.T) {
 
 	// A non-seed target is untouched.
 	normal := AgentRecord{ID: "abc", Owner: "u", Name: "Normal"}
-	if out := materializeIfRetiringSeed(udb, "u", normal); out.ID != "abc" {
+	if out := materializeIfRetiringSeed(udb, "u", "Normal", normal); out.ID != "abc" {
 		t.Fatalf("non-seed target must pass through unchanged; got %q", out.ID)
+	}
+}
+
+// An app that runs the seed as its engine names it by id, and runs it in
+// place: no "Research" of the user's own appears, in the store or the lists.
+func TestASeedRunByIDIsNotMaterialized(t *testing.T) {
+	root := &DBase{Store: kvlite.MemStore()}
+	udb := UserDB(root, "u")
+	seed, ok, err := resolveAgentRef(udb, "u", "seed-research")
+	if err != nil || !ok || seed.ID != "seed-research" {
+		t.Fatalf("the seed should resolve by id: %+v", seed)
+	}
+	if got := materializeIfRetiringSeed(udb, "u", "seed-research", seed); got.ID != "seed-research" || got.Owner != seedOwner {
+		t.Fatalf("by id it should run in place, got id=%q owner=%q", got.ID, got.Owner)
+	}
+	for _, a := range listAgents(udb, "u") {
+		if a.Owner == "u" && a.Name == "Research" {
+			t.Fatalf("no user-owned Research should have been made: %+v", a)
+		}
 	}
 }
 
@@ -426,7 +446,7 @@ func TestShadowedRetiringSeedNotMaterialized(t *testing.T) {
 	// no new agent minted, the id stays the seed id. (The prompt is governed
 	// by the seed-field merge in loadAgent, not by materialize — out of scope
 	// here.)
-	out := materializeIfRetiringSeed(udb, "u", resolved)
+	out := materializeIfRetiringSeed(udb, "u", "Research", resolved)
 	if out.ID != "seed-research" || out.Owner != "u" {
 		t.Fatalf("shadow must pass through unmaterialized; got id=%q owner=%q", out.ID, out.Owner)
 	}
@@ -477,5 +497,38 @@ func TestEffectiveDispatchMode(t *testing.T) {
 		if got != c.want {
 			t.Errorf("mode=%q targets=%v → %q, want %q", c.mode, c.targets, got, c.want)
 		}
+	}
+}
+
+// The whole run, as Scribe and Collections make it: RunAgentSync of the seed
+// by id answers, and leaves the user with no "Research" agent of their own.
+// By name it still makes the copy, which is what keeps a standing mission
+// that asks for "Research" working.
+func TestRunningTheResearchSeedByIDLeavesNoAgentBehind(t *testing.T) {
+	T, udb, user := newTestOrchestrate(t)
+	pinRootDB(t)
+	fake := &FakeLLM{Turns: []FakeTurn{{Content: "Here is what the sources say.", Repeat: true}}}
+	T.LLM, T.LeadLLM = fake, fake
+	out, err := T.RunAgentSync(context.Background(), user, user, "seed-research", "What changed in the release?")
+	if err != nil || !strings.Contains(out, "sources say") {
+		t.Fatalf("the seed should answer: %v %q", err, out)
+	}
+	own := func() int {
+		n := 0
+		for _, a := range listAgents(udb, user) {
+			if a.Owner == user && strings.EqualFold(a.Name, "Research") {
+				n++
+			}
+		}
+		return n
+	}
+	if n := own(); n != 0 {
+		t.Fatalf("a run by id made %d Research agent(s) of the user's own", n)
+	}
+	if _, err := T.RunAgentSync(context.Background(), user, user, "Research", "And by name?"); err != nil {
+		t.Fatal(err)
+	}
+	if n := own(); n != 1 {
+		t.Errorf("a run by name should make the user's copy, made %d", n)
 	}
 }
