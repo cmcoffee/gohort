@@ -145,6 +145,12 @@ func fixRow(id string) (depRow, bool) {
 // what it has to do, why it fails, and what the form beside it is.
 func fixAbout(r *http.Request) (string, error) {
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	if id == "" {
+		// Add: a format gohort does not support, not a row yet.
+		return hooksScope + "\n\nThe admin is adding a custom format: an input that reads a format gohort does not (takes formats, becomes an image the model can read or text), or an output that writes documents as a format gohort does not (gives a format, from the document's Markdown or HTML). The form beside this conversation is the new format's; saving it saves it off, under Custom.\n\n" +
+			"How to work: ask what format they want if the form does not say, find a program installed here that converts it, and read its help (dependency_check_program). Try your steps with dependency_try, giving the direction and what it takes and becomes (or gives), before you put them in the form. If nothing installed can do it, say which package to install: you cannot install software.\n\n" +
+			"What a try runs on: an input, on a file the admin attaches in this window (ask for one when none is listed); an output, on gohort's sample document.", nil
+	}
 	row, ok := fixRow(id)
 	if !ok {
 		return "", fmt.Errorf("there is no job or flow called %q", id)
@@ -223,6 +229,11 @@ func fixTools(r *http.Request) []AgentToolDef {
 					"steps":        {Type: "string", Description: "The commands, one per line, run in order, e.g. heif-convert {in} {out.jpg}."},
 					"timeout_secs": {Type: "integer", Description: "Seconds before it is stopped, all steps together: 60 when left out, 1800 at most."},
 					"file":         {Type: "string", Description: "An attached file's id to run on (file-1); the latest when left out. Not for a job that writes documents or takes a link."},
+					"direction":    {Type: "string", Description: "Adding a format only: input or output."},
+					"takes":        {Type: "string", Description: "Adding an input only: the formats it reads, comma separated (pages, image/heic), or * for any nothing else reads."},
+					"becomes":      {Type: "string", Description: "Adding an input only: image or text."},
+					"gives":        {Type: "string", Description: "Adding an output only: its extension (epub, rtf)."},
+					"from":         {Type: "string", Description: "Adding an output only: markdown or html, the form of the document it reads."},
 					"url":          {Type: "string", Description: "For a job that takes a link (a download): the link to try it on, a public http(s) address."},
 				},
 				Required: []string{"steps"},
@@ -258,8 +269,13 @@ func fixTools(r *http.Request) []AgentToolDef {
 // flow's, never the model's.
 func fixTry(ctx context.Context, id string, args map[string]any) (string, error) {
 	steps, _ := args["steps"].(string)
+	str := func(k string) string { v, _ := args[k].(string); return strings.TrimSpace(v) }
 	a := flows.Adapted{Job: id}
-	if _, isJob := flows.JobByID(id); !isJob {
+	if id == "" {
+		// Adding a format: its contract is the one being written.
+		a = flowForm{Direction: firstNonEmptyStr(str("direction"), "input"), Takes: str("takes"), Becomes: str("becomes"),
+			Gives: str("gives"), From: str("from")}.adapted("")
+	} else if _, isJob := flows.JobByID(id); !isJob {
 		c, ok := GetConnector(RootDB, id)
 		if !ok || c.Kind != flows.ConnectorKind {
 			return "", fmt.Errorf("there is nothing called %q", id)
@@ -415,6 +431,8 @@ func fixPanel(form ui.FormPanel) ui.AssistPanel {
 }
 
 // adaptForm is the form for a new flow filling job {id}.
+// Each has its ✨ Get assistance, this row's assistant: told the row, with
+// its tools and the 📎 for a sample.
 func adaptForm() ui.FormPanel {
 	return ui.FormPanel{
 		Source:      "api/system-deps/adapt?id={id}",
@@ -422,6 +440,7 @@ func adaptForm() ui.FormPanel {
 		SubmitLabel: "Save",
 		Fields:      flowFields(true, false),
 		Invalidate:  depsSources,
+		Assist:      true, AssistURL: "api/system-deps/fix?id={id}", AssistAttach: true,
 	}
 }
 
@@ -430,6 +449,19 @@ func editForm(custom bool) ui.FormPanel {
 	return ui.FormPanel{
 		Source: "api/system-deps/one?name={name}", PostURL: "api/system-deps?edit={name}", SubmitLabel: "Save",
 		Fields: flowFields(false, custom), Invalidate: depsSources,
+		Assist: true, AssistURL: "api/system-deps/fix?id={id}", AssistAttach: true,
+	}
+}
+
+// addForm is the form for a format gohort does not support: its assistant
+// has no row yet, and takes the format's contract from the form.
+func addForm() ui.FormPanel {
+	return ui.FormPanel{
+		PostURL:     "api/system-deps",
+		SubmitLabel: "Save",
+		Fields:      flowFields(true, true),
+		Invalidate:  depsSources,
+		Assist:      true, AssistURL: "api/system-deps/fix", AssistAttach: true,
 	}
 }
 

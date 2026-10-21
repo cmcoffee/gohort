@@ -45,6 +45,7 @@ func (a *AdminApp) sourceHooksSections() []ui.Section {
 						},
 						RowActions: []ui.RowAction{
 							ui.Expand("Edit", ui.FormPanel{
+								Assist:      true,
 								Source:      "api/source-hooks?name={name}",
 								PostURL:     "api/source-hooks",
 								Invalidate:  costSources,
@@ -85,6 +86,7 @@ func (a *AdminApp) sourceHooksSections() []ui.Section {
 						Variant:  "primary",
 						Width:    "640px",
 						Body: ui.FormPanel{
+							Assist:      true,
 							PostURL:     "api/source-hooks",
 							Invalidate:  costSources,
 							SubmitLabel: "Create source hook",

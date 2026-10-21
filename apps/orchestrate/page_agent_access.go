@@ -650,6 +650,7 @@ func (ap *accessPage) limitsSections() []ui.Section {
 				"Counted here, a call is refused when the allowance is spent and the agent is told when it frees up. Only SUCCESSFUL calls count, so an outage never spends the day.\n\n" +
 				"These ratchet. An agent with authoring tools may lower its own limits and cannot raise or clear them - an update that tries is reverted and the agent is told to ask you.",
 			Body: ui.FormPanel{
+				Assist:  true,
 				Source:  ap.patchURL,
 				PostURL: ap.patchURL,
 				Method:  "PATCH",

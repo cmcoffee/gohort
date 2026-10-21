@@ -67,6 +67,7 @@ func (a *AdminApp) costSections() []ui.Section {
 			Subtitle: "Per-token and per-call dollar rates that feed the dollar estimate above.",
 			Detail:   "Worker is the local LLM, Lead the remote one. Set 0 for free tiers. Saved automatically as you edit.\n\nThe two cached-prompt weights at the bottom are multipliers on the input rates, not dollar figures. With prompt caching on, most of a prompt is billed through them rather than at the full input rate.",
 			Body: ui.FormPanel{
+				Assist: true,
 				Source: "api/cost-rates",
 				Method: "PUT",
 				Fields: []ui.FormField{

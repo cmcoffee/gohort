@@ -1862,17 +1862,41 @@
   components.form_panel = function(cfg, ctx) {
     var wrap = el('div', {class: 'ui-form'});
     var current = {};
-    // What an assist beside the form reads and fills (ui.AssistPanel): the
-    // values as they stand, and a fill that redraws the fields with new
-    // ones. A fill is a change like typing: nothing is saved until Save.
+    // What the assistant reads and fills (the ✨: ui.AssistPanel, or the
+    // form's own Get assistance): the values as they stand, and a fill that
+    // redraws the fields with new ones, marking what it changed until the
+    // person touches it. A fill saves nothing: in a form with Save it waits
+    // for Save, and in one that saves as you type it waits for saveFilled,
+    // which the assistant's "Save what it filled in" calls.
+    var filled = {}; // field -> true while it holds what the assistant put there
+    var wizardAt = -1; // the wizard's step, kept across a redraw
     wrap.uiForm = {
+      cfg: cfg,
+      autosave: !cfg.submit_label,
       values: function() { return JSON.parse(JSON.stringify(current)); },
-      fill: function(vals) {
+      fill: function(vals, changed) {
         current = JSON.parse(JSON.stringify(vals || {}));
+        (changed || []).forEach(function(k) { filled[k] = true; });
         render();
         if (typeof Event === 'function') wrap.dispatchEvent(new Event('change'));
       },
+      filled: function() { return Object.keys(filled); },
+      unmark: function() { filled = {}; markFilled(); },
+      saveFilled: function(keys) {
+        var isPatch = cfg.method && cfg.method.toUpperCase() === 'PATCH';
+        (keys || []).filter(function(k, i) { return isPatch || i === 0; }).forEach(function(k) { save(k, current[k]); });
+        filled = {};
+        markFilled();
+      },
+      onSaved: null, // set by the assistant: a submit that went through
+      loaded: false, // its record is in: what the assistant is told is real
     };
+    function markFilled() {
+      Object.keys(fieldEls).forEach(function(k) {
+        var n = fieldEls[k];
+        if (n && n.classList) n.classList.toggle('ui-form-filled', !!filled[k]);
+      });
+    }
     var debounceTimers = {}; // field -> setTimeout id
     var savingIndicator = el('span', {class: 'ui-form-saving'}, ['Saving…']);
     var fieldEls = {}; // field name -> rendered field wrap (for show_when)
@@ -2021,6 +2045,10 @@
     }
 
     function save(field, value) {
+      if (filled[field] && fieldEls[field] && fieldEls[field].classList) {
+        delete filled[field];
+        fieldEls[field].classList.remove('ui-form-filled');
+      }
       if (submitMode) {
         // In submit-button mode field changes just update local
         // state — the POST fires once when the user clicks submit.
@@ -3955,9 +3983,24 @@
       nameIn.focus();
     }
 
+    // ✨ Get assistance, in the form's corner: on every wizard, and on any
+    // other form that asks for it (FormPanel.Assist). It shows once the
+    // deployment says there is a worker to help, and it swaps a helper in
+    // where the form is (uiFormAssist).
+    function appendAssistButton() {
+      if (!(cfg.assist || stepsMode) || cfg.no_assist || !window.uiFormAssistAvailable) return;
+      var b = el('button', {type: 'button', class: 'ui-form-assist',
+        title: 'Ask about this form, or have it help you fill it in'}, ['✨ Get assistance']);
+      var row = el('div', {class: 'ui-form-assist-row'}, [b]);
+      row.style.display = 'none';
+      b.addEventListener('click', function() { window.uiFormAssist(wrap, ctx); });
+      wrap.appendChild(row);
+      window.uiFormAssistAvailable(cfg.assist_url).then(function(ok) { if (ok) row.style.display = ''; });
+    }
     function render() {
       wrap.innerHTML = '';
       fieldEls = {};
+      appendAssistButton();
       // "Start from template" — optional prefill dropdown. Picking a
       // template applies its values through the same per-field setters
       // the Suggest button uses, so every field type fills correctly.
@@ -4083,6 +4126,7 @@
       else if (cfg.side_nav) renderSideNav(wrap, cfg.fields);
       else renderFieldsInto(wrap, cfg.fields);
       applyVisibility();
+      markFilled();
       // Saving indicator gets attached to the parent section header.
       var section = wrap.closest('.ui-section');
       if (section) {
@@ -4414,6 +4458,10 @@
           }).then(function(resp) {
             done();
             window.uiInvalidateSaved(cfg);
+            filled = {};
+            if (typeof wrap.uiForm.onSaved === 'function') {
+              try { wrap.uiForm.onSaved(resp); } catch (e) {}
+            }
             // A server response the FORM could not have produced — a one-time
             // secret, a generated link — goes to an app handler rather than a
             // toast, which holds one line and then takes it away. Runs before
@@ -4565,6 +4613,7 @@
         var openFired = {};
         function show(i) {
           idx = i;
+          wizardAt = i;
           bodies.forEach(function(b, j) { b.style.display = j === i ? '' : 'none'; });
           refreshRail();
           // Fields on this step that asked to suggest on arrival. Once each:
@@ -4641,7 +4690,9 @@
         host.appendChild(note);
         host.appendChild(navRow);
         host.appendChild(finishWrap);
-        var first = stepShown(0) ? 0 : nextVisible(0, +1);
+        // A redraw (the assistant filling it) stays on the step it was on.
+        var first = (wizardAt >= 0 && wizardAt < steps.length && stepShown(wizardAt)) ? wizardAt
+          : (stepShown(0) ? 0 : nextVisible(0, +1));
         show(first < 0 ? 0 : first);
       }
 
@@ -4675,10 +4726,11 @@
     function load() {
       loadOptionSources().then(function() {
         if (cfg.source) {
-          fetchJSON(cfg.source).then(function(d){ current = d || {}; render(); })
+          fetchJSON(cfg.source).then(function(d){ current = d || {}; render(); wrap.uiForm.loaded = true; })
             .catch(function(err){ wrap.textContent = 'Failed to load: ' + err.message; });
         } else {
           render();
+          wrap.uiForm.loaded = true;
         }
       });
     }

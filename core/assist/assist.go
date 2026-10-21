@@ -72,6 +72,11 @@ type Field struct {
 	Detail  string   `json:"detail,omitempty"`
 	Options []string `json:"options,omitempty"`
 	Columns []Field  `json:"columns,omitempty"`
+	// Required fields are what the form cannot be saved without. A Secret
+	// one (a password, a key) travels as whether it is set, never its value,
+	// and a proposal cannot fill it.
+	Required bool `json:"required,omitempty"`
+	Secret   bool `json:"secret,omitempty"`
 }
 
 // Turn is one message of the conversation so far.
@@ -82,15 +87,19 @@ type Turn struct {
 
 // Request is one turn.
 type Request struct {
-	Message string         `json:"message"`
-	History []Turn         `json:"history"`
-	Mode    string         `json:"mode"`
-	Web     bool           `json:"web"`
-	Window  string         `json:"window"`
-	Files   []upload       `json:"files"`
-	Draft   string         `json:"draft"`
-	Form    []Field        `json:"form"`
-	Values  map[string]any `json:"values"`
+	Message string   `json:"message"`
+	History []Turn   `json:"history"`
+	Mode    string   `json:"mode"`
+	Web     bool     `json:"web"`
+	Window  string   `json:"window"`
+	Files   []upload `json:"files"`
+	Draft   string   `json:"draft"`
+	// Page is where the work is, in the page's own words (its section's
+	// title and description): from the browser, so it shapes the help and
+	// nothing else.
+	Page   string         `json:"page"`
+	Form   []Field        `json:"form"`
+	Values map[string]any `json:"values"`
 }
 
 // Reply is the turn's answer.
@@ -107,6 +116,7 @@ const (
 	maxDraft   = 32 << 10
 	maxValue   = 4 << 10
 	maxHistory = 30
+	maxPage    = 4 << 10
 )
 
 // Handler is the assist's endpoint.
@@ -121,6 +131,15 @@ func Handler(s Spec) http.HandlerFunc {
 			return
 		}
 		if !s.Allow(w, r) {
+			return
+		}
+		// GET says whether help is there to be had: a worker to give it. A
+		// page asks before it shows the ✨, so a deployment with no worker
+		// never offers what it cannot do.
+		if r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-Control", "no-store")
+			json.NewEncoder(w).Encode(map[string]bool{"available": s.LLM != nil || SharedWorkerLLM() != nil})
 			return
 		}
 		if r.Method != http.MethodPost {
@@ -326,6 +345,14 @@ func (t turn) system(kit []AgentToolDef, web int) string {
 		b.WriteString(strings.TrimSpace(t.about))
 		b.WriteString("\n")
 	}
+	if page := strings.TrimSpace(t.req.Page); page != "" {
+		if len(page) > maxPage {
+			page = page[:maxPage]
+		}
+		b.WriteString("\n## Where this is, in the page's own words\n\n")
+		b.WriteString(page)
+		b.WriteString("\n")
+	}
 	if len(t.req.Form) > 0 {
 		b.WriteString("\n## The form, as it stands now\n\n")
 		for _, f := range t.req.Form {
@@ -382,6 +409,12 @@ func writeField(b *strings.Builder, f Field, v any) {
 	if len(f.Options) > 0 {
 		about = append(about, "one of: "+strings.Join(f.Options, ", "))
 	}
+	if f.Required {
+		about = append(about, "required")
+	}
+	if f.Secret {
+		about = append(about, "secret: you see only whether it is set, and you never fill it")
+	}
 	if len(f.Columns) > 0 {
 		var cols []string
 		for _, c := range f.Columns {
@@ -399,6 +432,15 @@ func writeField(b *strings.Builder, f Field, v any) {
 		fmt.Fprintf(b, " %s", f.Detail)
 	}
 	now := "(empty)"
+	if f.Secret {
+		// The browser sends a secret as whether it is set; a value that came
+		// anyway is not repeated to the model.
+		if s, _ := v.(string); s != "" && s != "(empty)" {
+			now = "(set)"
+		}
+		fmt.Fprintf(b, "\n  Now: %s\n", now)
+		return
+	}
 	if v != nil {
 		if raw, err := json.Marshal(v); err == nil && string(raw) != `""` && string(raw) != "null" && string(raw) != "[]" {
 			now = string(raw)
@@ -410,10 +452,13 @@ func writeField(b *strings.Builder, f Field, v any) {
 	fmt.Fprintf(b, "\n  Now: %s\n", now)
 }
 
+// fieldNames are the fields a proposal may fill: the form's, secrets aside.
 func (t turn) fieldNames() map[string]bool {
 	names := map[string]bool{}
 	for _, f := range t.req.Form {
-		names[f.Field] = true
+		if !f.Secret {
+			names[f.Field] = true
+		}
 	}
 	return names
 }

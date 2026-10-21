@@ -172,6 +172,7 @@ func adminSection(r *http.Request) ui.Section {
 		Subtitle: "Where a finished document can be published from a writer app's Publish button.",
 		Detail:   "Each destination points at a SecureAPI credential, which is what actually holds the secret and what an admin can disable to cut off publishing entirely. A destination with no credential is not offered.",
 		Body: ui.FormPanel{
+			Assist:      true,
 			Source:      "/publish/api/config",
 			SubmitLabel: "Save publishing settings",
 			Fields: []ui.FormField{

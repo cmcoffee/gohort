@@ -105,6 +105,7 @@ func targetsExtensionSection(r *http.Request, user string) (ui.Section, bool) {
 	}
 	form := func(source string) ui.FormPanel {
 		return ui.FormPanel{
+			Assist: true,
 			Source: source, PostURL: targetsAPI, SubmitLabel: "Save",
 			Invalidate: []string{targetsAPI},
 			Fields:     targetFormFields(user),

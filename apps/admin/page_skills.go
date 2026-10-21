@@ -36,6 +36,7 @@ func (a *AdminApp) skillsSections() []ui.Section {
 					ui.Expand("Edit", ui.Stack{
 						Children: []ui.Component{
 							ui.FormPanel{
+								Assist:  true,
 								Source:  "api/skills/{id}?view=form",
 								PostURL: "api/skills",
 								Method:  "POST",

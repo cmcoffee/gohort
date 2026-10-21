@@ -274,3 +274,49 @@ func TestAttachedFilesServeTheWindow(t *testing.T) {
 		t.Errorf("files where none are taken: %d", code)
 	}
 }
+
+// A secret travels as whether it is set and cannot be filled; required
+// fields are marked; the page's own words reach the model.
+func TestSecretsStayOutAndThePageComesIn(t *testing.T) {
+	fake := &FakeLLM{Turns: []FakeTurn{{Content: "Filled.\n```fields\n{\"api_key\": \"guess\", \"host\": \"example.org\"}\n```"}}}
+	h := Handler(Spec{Route: "test.assist.secret", Allow: allowAll, LLM: fake})
+	_, reply, code := post(t, h, Request{Message: "help", Page: "Connect a mail server: what it needs and why.",
+		Form: []Field{{Field: "host", Required: true}, {Field: "api_key", Type: "password", Secret: true}},
+		Values: map[string]any{"api_key": "hunter2-real-key", "host": ""}})
+	if code != http.StatusOK {
+		t.Fatalf("status %d", code)
+	}
+	sys := fake.Config(0).SystemPrompt
+	if strings.Contains(sys, "hunter2") {
+		t.Error("a secret's value reached the model")
+	}
+	for _, want := range []string{"- api_key (password; secret", "Now: (set)", "- host (required)", "Connect a mail server"} {
+		if !strings.Contains(sys, want) {
+			t.Errorf("the prompt lacks %q:\n%s", want, sys)
+		}
+	}
+	if _, filled := reply.Fields["api_key"]; filled || reply.Fields["host"] != "example.org" {
+		t.Errorf("a secret should not be fillable: %+v", reply.Fields)
+	}
+}
+
+// GET says whether there is a worker to help, so a page offers the ✨ only
+// where it can.
+func TestAvailableSaysWhetherThereIsAWorker(t *testing.T) {
+	prevW, prevL := SharedWorkerLLM(), SharedLeadLLM()
+	defer SetSharedLLMs(prevW, prevL)
+	h := Handler(Spec{Route: "test.assist.avail", Allow: allowAll})
+	get := func() string {
+		rec := httptest.NewRecorder()
+		h(rec, httptest.NewRequest("GET", "/", nil))
+		return strings.TrimSpace(rec.Body.String())
+	}
+	SetSharedLLMs(nil, nil)
+	if got := get(); got != `{"available":false}` {
+		t.Errorf("no worker: %s", got)
+	}
+	SetSharedLLMs(&FakeLLM{}, nil)
+	if got := get(); got != `{"available":true}` {
+		t.Errorf("a worker: %s", got)
+	}
+}

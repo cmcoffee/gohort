@@ -82,6 +82,7 @@ func (a *AdminApp) credentialsSections() []ui.Section {
 							// edited by its own picker below the form, not as a
 							// free-text tags field — so admins pick real users.
 							ui.Expand("Edit", ui.FormPanel{
+								Assist:     true,
 								Source:     "api/secure-api?name={name}",
 								PostURL:    "api/secure-api",
 								Invalidate: costSources,
@@ -214,6 +215,7 @@ func (a *AdminApp) credentialsSections() []ui.Section {
 						Variant:  "primary",
 						Width:    "640px",
 						Body: ui.FormPanel{
+							Assist:       true,
 							PostURL:      "api/secure-api",
 							TestURL:      "api/secure-api/test",
 							TestLabel:    "Test token (oauth2)",

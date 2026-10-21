@@ -16,6 +16,7 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 			Subtitle: "Vector store ingestion and semantic search.",
 			Detail:   "The endpoint is an Ollama-compatible /api/embed server, typically the same host as the worker LLM. Disabling it makes ingestion and search no-ops.",
 			Body: ui.FormPanel{
+				Assist:    true,
 				Source:    "api/embeddings",
 				TestURL:   "api/embeddings/test",
 				TestLabel: "Test embed call",
@@ -27,6 +28,7 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 			Subtitle: "Transcription for video and audio attachments.",
 			Detail:   "An OpenAI-compatible /audio/transcriptions endpoint. The endpoint you give includes the API version prefix; gohort appends /audio/transcriptions.",
 			Body: ui.FormPanel{
+				Assist:    true,
 				Source:    "api/transcribe",
 				TestURL:   "api/transcribe/test",
 				TestLabel: "Test endpoint",
@@ -40,6 +42,7 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 			Body: ui.Stack{
 				Children: []ui.Component{
 					ui.FormPanel{
+						Assist:    true,
 						Source:    "api/image-gen",
 						TestURL:   "api/image-gen/test",
 						TestLabel: "Test API key",
@@ -63,6 +66,7 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 			Subtitle: "Provider for the web_search tool.",
 			Detail:   "DuckDuckGo and a SearXNG instance require no key; Brave, Google and Serper need one.",
 			Body: ui.FormPanel{
+				Assist:    true,
 				Source:    "api/web-search",
 				TestURL:   "api/web-search/test",
 				TestLabel: "Test search call",
@@ -83,6 +87,7 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 			Subtitle: "Outbound SMTP for notification emails.",
 			Detail:   "Signup approvals, scheduled deliveries and watcher alerts. Leave Server blank for localhost:25.",
 			Body: ui.FormPanel{
+				Assist:    true,
 				Source:    "api/mail",
 				TestURL:   "api/mail/test",
 				TestLabel: "Send test email",

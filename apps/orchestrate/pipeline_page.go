@@ -620,6 +620,7 @@ func pipelineStageSections(def PipelineDef, cat editorCatalog) []ui.Section {
 	for i, s := range def.Stages {
 		body := []ui.Component{
 			ui.FormPanel{
+				Assist:  true,
 				Source:  base + "?name=" + url_(s.Name),
 				PostURL: base + "?name=" + url_(s.Name),
 				Fields:  stageFormFields(def, s, cat),
@@ -895,6 +896,7 @@ func pipelineBodySections(def PipelineDef, parent PipelineStage, base string, ca
 			Subtitle: bodyStageSubtitle(parent, b),
 			Body: ui.Stack{Children: []ui.Component{
 				ui.FormPanel{
+					Assist:  true,
 					Source:  base + "?name=" + path,
 					PostURL: base + "?name=" + path,
 					Fields:  bodyStageFormFields(def, b, cat),

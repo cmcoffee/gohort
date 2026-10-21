@@ -96,6 +96,7 @@ func machineEditorSpec(def MachineDef, cat editorCatalog) map[string]any {
 // conversation starts.
 func metaPanel(def MachineDef, base string, cat editorCatalog) ui.FormPanel {
 	return ui.FormPanel{
+		Assist:  true,
 		Source:  base + "/meta",
 		PostURL: base + "/meta",
 		// The last few edits, each readable without applying it. On the
@@ -254,7 +255,7 @@ func phasePanels(def MachineDef, base string, cat editorCatalog) []ui.Component 
 				URL:    "machine_move_step",
 				Data:   p.Name + "|down",
 			}}},
-			ui.FormPanel{Source: q, PostURL: q, Fields: phaseFieldsFor(def, p, cat)},
+			ui.FormPanel{Assist: true, Source: q, PostURL: q, Fields: phaseFieldsFor(def, p, cat)},
 		}
 		// The tool limit saves on its own, so no other setting on this step
 		// can carry it (see phaseToolFields).

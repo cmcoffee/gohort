@@ -762,6 +762,10 @@ func describeResult(out []byte) string {
 
 var depsSources = []string{"api/system-deps", "api/system-deps?custom=1"}
 
+// flowFormWidth is the dialog a flow's form opens in: wide enough that a
+// step's command line reads on one line, a program and its arguments.
+const flowFormWidth = "min(760px, 96vw)"
+
 // flowFields are the forms' fields. withName adds a name; custom adds the
 // contract of a format gohort does not support (direction, what it takes
 // and becomes, or the format it gives).
@@ -813,15 +817,15 @@ func depsRowActions() []ui.RowAction {
 	// A row that cannot run, or failed its test, has ✨ Fix: the same form
 	// as its Adapt or Edit, with the assist beside it.
 	adapt := ui.ModalAction("Adapt…", adaptForm())
-	adapt.OnlyIf = "adapt"
+	adapt.OnlyIf, adapt.Width = "adapt", flowFormWidth
 	fixJob := ui.AssistAction("Fix", fixPanel(adaptForm()))
 	fixJob.OnlyIf, fixJob.Variant = "fix_job", "primary"
 	editFill := ui.ModalAction("Edit", editForm(false))
-	editFill.OnlyIf = "edit_fill"
+	editFill.OnlyIf, editFill.Width = "edit_fill", flowFormWidth
 	fixFill := ui.AssistAction("Fix", fixPanel(editForm(false)))
 	fixFill.OnlyIf, fixFill.Variant = "fix_fill", "primary"
 	editCustom := ui.ModalAction("Edit", editForm(true))
-	editCustom.OnlyIf = "edit_custom"
+	editCustom.OnlyIf, editCustom.Width = "edit_custom", flowFormWidth
 	fixCustom := ui.AssistAction("Fix", fixPanel(editForm(true)))
 	fixCustom.OnlyIf, fixCustom.Variant = "fix_custom", "primary"
 	return []ui.RowAction{
@@ -890,15 +894,10 @@ func systemDepsSection() ui.Section {
 						EmptyText:  "Nothing custom yet. Add one to read a format gohort does not, or to write documents as one.",
 					},
 					ui.ModalButton{
-						Label: "Add…", Variant: "primary", Align: "left",
+						Label: "Add…", Variant: "primary", Align: "left", Width: flowFormWidth,
 						Title:    "Add a custom input or output",
 						Subtitle: "Saved off: test it from its row, then turn it on.",
-						Body: ui.FormPanel{
-							PostURL:     "api/system-deps",
-							SubmitLabel: "Save",
-							Fields:      flowFields(true, true),
-							Invalidate:  depsSources,
-						},
+						Body:     addForm(),
 					},
 				}},
 			},

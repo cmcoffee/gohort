@@ -37,6 +37,8 @@
   //   switchable — show the "Talk it through | Just write" switch.
   //   web       — offer "Look things up on the web", off until turned on.
   //   attach    — offer a 📎 to attach files, for the endpoint's tools.
+  //   starters  — opening requests offered as buttons, before anything is
+  //               said: the two things most people came to ask.
   //   intro     — the opening note.
   //   writeNote — the note when switched to just writing.
   //   placeholders — {discuss, write} for the composer.
@@ -278,6 +280,7 @@
     if (fileRow) { right.appendChild(picker); right.appendChild(fileRow); }
     right.appendChild(composerRow);
     if (webRow) right.appendChild(webRow);
+    if (opts.starters) addChoices(opts.starters);
 
     return {
       right: right,
@@ -501,11 +504,240 @@
     };
   }
 
-  // assist_panel (ui.AssistPanel): any component on the left, a form
-  // usually, and the conversation on the right. The model is told the
-  // form's fields and what they hold, and what it proposes fills them, as a
-  // version: ◀ ▶ walk back to what was there. Nothing is saved by the
-  // conversation; the form's own Save keeps what is in it.
+  // --- the form helper ---------------------------------------------------
+  //
+  // Help with a form, swapped in where the form is rather than squeezed
+  // beside it: one thing at a time, the same on a phone as on a desk. The
+  // helper shows the conversation and a small version of the form, each
+  // field and what it holds, the ones it just changed lit and the required
+  // ones still empty marked; Back to the form swaps the form in again, with
+  // what it filled marked until the person touches it, and a bar to undo
+  // that or (where the form saves as you type) save it. Nothing is saved by
+  // the conversation.
+  //
+  // Two ways in: the form's own ✨ Get assistance (a wizard, or a form with
+  // FormPanel.Assist), which talks to the framework's form help or the
+  // form's AssistURL; and ui.AssistPanel, a form opened with the helper
+  // already on it and a request already sent (System Hooks' Fix).
+
+  var FORM_ASSIST_URL = '/api/assist/form';
+  var assistAvail = {};
+
+  // uiFormAssistAvailable(url) is whether the endpoint has a worker to help,
+  // asked once a page.
+  window.uiFormAssistAvailable = function(url) {
+    url = url || FORM_ASSIST_URL;
+    if (!assistAvail[url]) {
+      assistAvail[url] = fetchJSON(url).then(function(d) { return !!(d && d.available); }, function() { return false; });
+    }
+    return assistAvail[url];
+  };
+
+  // uiFormAssist(formEl) swaps the helper in for a form panel, making it the
+  // first time and keeping its conversation after.
+  window.uiFormAssist = function(formEl) {
+    if (!formEl || !formEl.uiForm) return;
+    if (!formEl.__assist) {
+      var cfg = formEl.uiForm.cfg || {};
+      formEl.__assist = assistHelper(formEl, {url: cfg.assist_url || FORM_ASSIST_URL, web: true, starters: true,
+        attach: !!cfg.assist_attach});
+    }
+    formEl.__assist.open();
+  };
+
+  // assistPageContext is where a form is, in the page's own words: the
+  // dialog or section around it, and the page.
+  function assistPageContext(node) {
+    var parts = [];
+    function text(n, sel) {
+      var x = n && n.querySelector && n.querySelector(sel);
+      return x ? String(x.textContent || '').trim() : '';
+    }
+    for (var n = node; n; n = n.parentNode) {
+      var c = ' ' + (n.className || '') + ' ';
+      if (c.indexOf(' ui-modal-box ') >= 0) {
+        var mt = text(n, '.ui-modal-title'), ms = text(n, '.ui-modal-sub');
+        if (mt) parts.push('Dialog: ' + mt + (ms ? ' - ' + ms : ''));
+      } else if (c.indexOf(' ui-section ') >= 0) {
+        var st = text(n, '.ui-section-h'), ss = text(n, '.ui-section-sub');
+        if (st) parts.push('Section: ' + st + (ss ? ' - ' + ss : ''));
+      }
+    }
+    if (typeof document !== 'undefined' && document.title) parts.push('Page: ' + document.title);
+    return parts.join('\n');
+  }
+
+  // describeForm is the form as the model is told it: each field it may
+  // see, with its help, whether it is required, and whether it is a secret.
+  function describeForm(cfg) {
+    var fields = Array.isArray(cfg.fields) ? cfg.fields : [];
+    if (Array.isArray(cfg.steps) && cfg.steps.length) {
+      fields = cfg.steps.reduce(function(acc, st) { return acc.concat(st.fields || []); }, []);
+    }
+    function describe(f) {
+      var d = {field: f.field, label: f.label || '', type: f.type || 'text'};
+      if (f.help) d.help = f.help;
+      if (f.detail) d.detail = f.detail;
+      if (f.required) d.required = true;
+      if (f.type === 'password' || f.secret) d.secret = true;
+      if (Array.isArray(f.options) && f.options.length) {
+        d.options = f.options.map(function(o) { return (o && typeof o === 'object') ? String(o.value) : String(o); });
+      }
+      if (Array.isArray(f.columns) && f.columns.length) d.columns = f.columns.map(describe);
+      return d;
+    }
+    return fields.filter(function(f) {
+      return f && f.field && f.type !== 'header' && f.type !== 'hidden' && !f.read_only;
+    }).map(describe);
+  }
+
+  // assistShort is a value as the small version of the form shows it.
+  function assistShort(d, v) {
+    if (d.secret) return (v != null && v !== '') ? 'set' : '';
+    if (v == null || v === '') return '';
+    if (Array.isArray(v)) {
+      var col = d.columns && d.columns[0] && d.columns[0].field;
+      return v.map(function(r) { return (r && typeof r === 'object') ? String(r[col] == null ? '' : r[col]) : String(r); })
+        .filter(Boolean).join(' · ');
+    }
+    if (typeof v === 'boolean') return v ? 'on' : 'off';
+    if (typeof v === 'object') return JSON.stringify(v);
+    return String(v);
+  }
+
+  // assistHelper makes the helper for a form panel: inserted beside it,
+  // swapped with it by open() and close().
+  //   opts: url, web, attach, intro, placeholder, starters
+  function assistHelper(formEl, opts) {
+    var f = formEl.uiForm;
+    var parent = formEl.parentNode;
+    var formDoc = describeForm(f.cfg || {});
+    var byField = {};
+    formDoc.forEach(function(d) { byField[d.field] = d; });
+    var lastChanged = {};
+    var before = null; // the values before its first fill, for Undo
+
+    function shownValues() {
+      var v = f.values(), out = {};
+      formDoc.forEach(function(d) {
+        out[d.field] = d.secret ? ((v[d.field] != null && v[d.field] !== '') ? '(set)' : '(empty)') : v[d.field];
+      });
+      return out;
+    }
+
+    // The small version of the form.
+    var mini = el('div', {class: 'ui-assist-mini'});
+    function drawMini() {
+      mini.innerHTML = '';
+      var v = f.values();
+      mini.appendChild(el('div', {class: 'ui-assist-mini-h'}, ['The form']));
+      formDoc.forEach(function(d) {
+        var val = assistShort(d, v[d.field]);
+        var cls = 'ui-assist-mini-row';
+        if (lastChanged[d.field]) cls += ' new';
+        if (d.required && val === '') cls += ' needed';
+        mini.appendChild(el('div', {class: cls}, [
+          el('span', {class: 'ui-assist-mini-k'}, [d.label || d.field]),
+          el('span', {class: 'ui-assist-mini-v'}, [val || (d.required ? 'needed' : '-')]),
+        ]));
+      });
+    }
+
+    var backBtn = el('button', {type: 'button', class: 'ui-row-btn compact'}, ['Back to the form']);
+    var helperHead = el('div', {class: 'ui-assist-helper-h'}, [
+      el('span', {class: 'ui-assist-helper-t'}, ['✨ Assistance']), backBtn]);
+    var chat = window.uiAssistChat({
+      discuss: false, switchable: false, web: !!opts.web, attach: !!opts.attach,
+      intro: opts.intro || 'Ask what any of it means, or say what you are setting up and it will help you fill it in. What it suggests goes into the form, marked, for you to check; nothing is saved until you save it.',
+      writeNote: 'Each request can fill the form right away.',
+      placeholders: {write: opts.placeholder || 'Ask about the form, or say what you want…'},
+      starters: opts.starters ? ['Help me fill this in', 'What is this for?'] : null,
+      send: window.uiAssistPost(opts.url),
+      extra: function() { return {form: formDoc, values: shownValues(), page: assistPageContext(formEl)}; },
+      onResult: function(res) {
+        var got = res.fields && typeof res.fields === 'object' ? res.fields : null;
+        if (!got) return '';
+        var now = f.values(), next = JSON.parse(JSON.stringify(now)), changed = [];
+        Object.keys(got).forEach(function(k) {
+          var d = byField[k];
+          if (!d || d.secret) return;
+          if (JSON.stringify(now[k]) === JSON.stringify(got[k])) return;
+          next[k] = got[k];
+          changed.push(k);
+        });
+        if (!changed.length) return '';
+        if (!before) before = now;
+        lastChanged = {};
+        changed.forEach(function(k) { lastChanged[k] = true; });
+        f.fill(next, changed);
+        drawMini();
+        drawBar();
+        return 'Filled in ' + changed.map(function(k) { return byField[k].label || k; }).join(', ') + '. Back to the form to check it.';
+      },
+    });
+    var body = el('div', {class: 'ui-assist-helper-b'}, [mini, chat.right]);
+    var helper = el('div', {class: 'ui-assist-helper'}, [helperHead, body]);
+
+    // The bar over the form once the helper exists: back to it, and what it
+    // filled, with Undo and (where the form saves as you type) Save.
+    var bar = el('div', {class: 'ui-assist-bar'});
+    function drawBar() {
+      bar.innerHTML = '';
+      var n = f.filled().length;
+      bar.appendChild(el('span', {class: 'ui-assist-bar-t'}, [n
+        ? '✨ It filled ' + n + (n === 1 ? ' field' : ' fields') + ', marked below' + (f.autosave ? ': not saved yet.' : ': check them, then save.')
+        : '✨ Assistance']));
+      if (n && f.autosave) {
+        var save = el('button', {type: 'button', class: 'ui-row-btn compact primary'}, ['Save what it filled in']);
+        save.addEventListener('click', function() { f.saveFilled(f.filled()); before = null; drawBar(); });
+        bar.appendChild(save);
+      }
+      if (n && before) {
+        var undo = el('button', {type: 'button', class: 'ui-row-btn compact'}, ['Undo']);
+        undo.addEventListener('click', function() {
+          f.fill(before, []);
+          f.unmark();
+          before = null;
+          lastChanged = {};
+          drawBar();
+        });
+        bar.appendChild(undo);
+      }
+      var again = el('button', {type: 'button', class: 'ui-row-btn compact'}, ['Back to the helper']);
+      again.addEventListener('click', open);
+      bar.appendChild(again);
+    }
+
+    function open() {
+      bar.style.display = 'none';
+      formEl.style.display = 'none';
+      helper.style.display = '';
+      drawMini();
+      chat.focus();
+    }
+    function close() {
+      helper.style.display = 'none';
+      formEl.style.display = '';
+      drawBar();
+      bar.style.display = '';
+    }
+    backBtn.addEventListener('click', close);
+    // A submit that went through ends the help: the form has done its job.
+    f.onSaved = function() {
+      helper.style.display = 'none';
+      bar.style.display = 'none';
+      formEl.style.display = '';
+      before = null;
+    };
+    helper.style.display = 'none';
+    bar.style.display = 'none';
+    parent.insertBefore(bar, formEl);
+    parent.insertBefore(helper, formEl);
+    return {open: open, close: close, say: chat.say, helper: helper, bar: bar};
+  }
+
+  // assist_panel (ui.AssistPanel): a form opened with the helper on it, and
+  // the request it was opened for already sent.
   components.assist_panel = function(cfg, ctx) {
     if (cfg.walk && cfg.walk.source) return assistWalk(cfg, ctx);
     return assistPanel(cfg, ctx);
@@ -571,104 +803,23 @@
   }
 
   function assistPanel(cfg, ctx) {
-    var wrap = el('div', {class: 'ui-assist ui-assist-panel'});
-    var left = el('div', {class: 'ui-assist-left ui-assist-work'});
-    var host = el('div', {class: 'ui-assist-work-body'});
-    var work = cfg.work || null;
-    mountComponent(work, host, ctx);
-
-    // The form the work holds, found once it has rendered: a form panel
-    // exposes {values(), fill(map)} on its element.
-    function form() {
-      var f = host.querySelector && host.querySelector('.ui-form');
-      return (f && f.uiForm) || null;
-    }
-    var fields = (work && Array.isArray(work.fields)) ? work.fields : [];
-    if (work && Array.isArray(work.steps)) {
-      fields = work.steps.reduce(function(acc, st) { return acc.concat(st.fields || []); }, []);
-    }
-    function describe(f) {
-      var d = {field: f.field, label: f.label || '', type: f.type || 'text'};
-      if (f.help) d.help = f.help;
-      if (f.detail) d.detail = f.detail;
-      if (Array.isArray(f.options) && f.options.length) {
-        d.options = f.options.map(function(o) { return (o && typeof o === 'object') ? String(o.value) : String(o); });
-      }
-      if (Array.isArray(f.columns) && f.columns.length) d.columns = f.columns.map(describe);
-      return d;
-    }
-    var formDoc = fields.filter(function(f) {
-      return f && f.field && f.type !== 'header' && f.type !== 'hidden' && !f.read_only;
-    }).map(describe);
-
-    // The version walk, over the form's values.
-    var versions = null, idx = 0;
-    var backBtn = el('button', {type: 'button', class: 'ui-assist-nav', title: 'Previous version'}, ['◀']);
-    var fwdBtn = el('button', {type: 'button', class: 'ui-assist-nav', title: 'Next version'}, ['▶']);
-    var verLabel = el('span', {class: 'ui-assist-ver'});
-    var navRow = el('div', {class: 'ui-assist-navrow'}, [backBtn, verLabel, fwdBtn]);
-    function updateNav() {
-      var n = versions ? versions.length : 1;
-      navRow.style.display = n > 1 ? '' : 'none';
-      backBtn.disabled = idx <= 0;
-      fwdBtn.disabled = idx >= n - 1;
-      verLabel.textContent = 'v' + (idx + 1) + ' of ' + n + (idx === 0 ? ' (as it was)' : '');
-    }
-    function showVersion(i) {
-      var f = form();
-      if (!f || !versions || i < 0 || i >= versions.length) return;
-      versions[idx] = f.values(); // keep what was typed into this one
-      idx = i;
-      f.fill(versions[idx]);
-      updateNav();
-    }
-    backBtn.addEventListener('click', function() { showVersion(idx - 1); });
-    fwdBtn.addEventListener('click', function() { showVersion(idx + 1); });
-    updateNav();
-
-    var tabs = assistTabs(wrap, cfg.work_label || 'Form');
-    var chat = window.uiAssistChat({
-      discuss: false, switchable: false, web: !!cfg.web, attach: !!cfg.attach,
-      intro: cfg.intro || 'Ask about it, or say what to change. What it suggests fills the form; nothing is saved until you save it.',
-      writeNote: 'Each request can fill the form right away.',
-      placeholders: {write: cfg.placeholder || 'What is wrong with it?'},
-      send: window.uiAssistPost(cfg.url),
-      extra: function() {
-        var f = form();
-        return {form: formDoc, values: f ? f.values() : {}};
-      },
-      onResult: function(res) {
-        var f = form();
-        var got = res.fields && typeof res.fields === 'object' ? res.fields : null;
-        if (!f || !got || !Object.keys(got).length) return '';
-        var now = f.values();
-        if (!versions) versions = [now];
-        else versions[idx] = now;
-        var next = JSON.parse(JSON.stringify(now));
-        Object.keys(got).forEach(function(k) { next[k] = got[k]; });
-        versions.push(next);
-        idx = versions.length - 1;
-        f.fill(next);
-        updateNav();
-        tabs.markNew();
-        return 'Filled in the form.';
-      },
-    });
-    tabs.show('chat');
-
-    left.appendChild(navRow);
-    left.appendChild(host);
-    wrap.appendChild(tabs.row);
-    wrap.appendChild(left);
-    wrap.appendChild(chat.right);
-    var ask = String(cfg.ask == null ? '' : cfg.ask).trim();
-    // The opening request waits for the form: it travels with the values,
-    // and the form loads its record first.
+    var wrap = el('div', {class: 'ui-assist-panel'});
+    mountComponent(cfg.work || null, wrap, ctx);
+    // The helper goes on once the form has its record: the opening request
+    // travels with the values, and they have to be the real ones.
     var tries = 0;
-    (function start() {
-      if (!ask) { chat.focus(); return; }
-      if (!form() && tries++ < 40) { setTimeout(start, 50); return; }
-      chat.say(ask);
+    (function attach() {
+      var formEl = wrap.querySelector && wrap.querySelector('.ui-form');
+      if (!formEl || !formEl.uiForm || !formEl.uiForm.loaded) {
+        if (tries++ < 200) setTimeout(attach, 50);
+        return;
+      }
+      var h = assistHelper(formEl, {url: cfg.url, web: !!cfg.web, attach: !!cfg.attach,
+        intro: cfg.intro, placeholder: cfg.placeholder});
+      formEl.__assist = h;
+      h.open();
+      var ask = String(cfg.ask == null ? '' : cfg.ask).trim();
+      if (ask) h.say(ask);
     })();
     return wrap;
   }

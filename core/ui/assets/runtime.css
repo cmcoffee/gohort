@@ -1770,6 +1770,18 @@ select:-webkit-autofill {
 .ui-form-textarea:focus,
 .ui-form-select:focus { border-color: var(--accent); }
 .ui-form-textarea { resize: vertical; min-height: calc(var(--tap) * 1.5); line-height: 1.4; }
+/* The compact control a rows cell (and a few app dialogs) draws: the form
+   input's look at a row's size. It had no rule at all, so a cell's text box
+   kept the browser's default width, about twenty characters, however wide
+   its cell was, and a step's command line could not be read in it. */
+.ui-input {
+  width: 100%; box-sizing: border-box;
+  padding: 0.4rem 0.55rem;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--btn-radius);
+  color: var(--text); font-size: var(--fs-sm); font-family: inherit; outline: none;
+}
+.ui-input:focus { border-color: var(--accent); }
+input[type="checkbox"].ui-input { width: auto; }
 /* A single-line text field that grew into a textarea because the user
  * pasted multi-line content (see upgradeFieldToTextarea). It keeps the
  * .ui-form-input chrome so the form doesn't visibly reshuffle — only the
@@ -2533,14 +2545,55 @@ select:-webkit-autofill {
   font-size: var(--fs-xs); color: var(--text-mute); cursor: pointer;
 }
 .ui-assist-web input { margin: 0; }
-/* AssistPanel: the work is a form, which scrolls on its own beside the
-   conversation rather than stretching the dialog. */
-.ui-assist-work { min-height: 0; }
-.ui-assist-work-body {
-  flex: 1 1 auto; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch;
-  max-height: min(70vh, 40rem); padding-right: 0.2rem;
+/* The form helper, swapped in where the form is: the conversation beside a
+   small version of the form (stacked on a phone), and the bar over the form
+   once it is back. */
+.ui-assist-helper { display: flex; flex-direction: column; gap: 0.6rem; }
+.ui-assist-helper-h { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; flex-wrap: wrap; }
+.ui-assist-helper-t { font-weight: 600; color: var(--text-hi, var(--text)); }
+.ui-assist-helper-b { display: flex; gap: 0.85rem; align-items: stretch; min-height: min(56vh, 28rem); }
+.ui-assist-helper-b .ui-assist-right { flex: 1 1 62%; }
+.ui-assist-mini {
+  flex: 1 1 38%; min-width: 0; overflow-y: auto; max-height: min(64vh, 34rem);
+  border: 1px solid var(--border); border-radius: 8px; background: var(--bg-0); padding: 0.5rem 0.6rem;
 }
-.ui-assist-panel .ui-assist-navrow { flex: 0 0 auto; }
+.ui-assist-mini-h { font-size: var(--fs-xs); color: var(--text-mute); margin: 0 0 0.35rem; }
+.ui-assist-mini-row {
+  display: flex; flex-direction: column; gap: 0.05rem; padding: 0.3rem 0.4rem; border-radius: 6px;
+  transition: background 0.6s;
+}
+.ui-assist-mini-k { font-size: var(--fs-xs); color: var(--text-mute); }
+.ui-assist-mini-v {
+  font-size: var(--fs-sm); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ui-assist-mini-row.needed .ui-assist-mini-v { color: var(--warning, #d29922); }
+.ui-assist-mini-row.new { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.ui-assist-bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin: 0 0 0.6rem;
+  padding: 0.45rem 0.6rem; border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.ui-assist-bar-t { flex: 1 1 14rem; min-width: 0; font-size: var(--fs-sm); }
+/* A field the assistant filled, until the person touches it. */
+.ui-form-filled {
+  border-radius: 6px; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+/* Once a helper is on the form, its bar is the way back to it. */
+.ui-assist-bar ~ .ui-form > .ui-form-assist-row { display: none; }
+/* ✨ Get assistance, in the form's corner. */
+.ui-form-assist-row { display: flex; justify-content: flex-end; margin: 0 0 0.2rem; }
+.ui-form-assist {
+  background: transparent; cursor: pointer; font: inherit; font-size: var(--fs-xs);
+  color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  border-radius: 999px; padding: 0.25rem 0.75rem; line-height: 1.3;
+}
+.ui-form-assist:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+@media (max-width: 760px) {
+  .ui-assist-helper-b { flex-direction: column; min-height: 0; }
+  .ui-assist-mini { max-height: 30vh; }
+}
 /* Files attached for the endpoint's tools: one chip each, until sent. */
 .ui-assist-attach {
   flex: 0 0 auto; background: transparent; color: var(--text-mute); cursor: pointer;

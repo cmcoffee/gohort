@@ -179,7 +179,7 @@ func rulePanel(endpoint string, rule PlaybookRule) ui.FormPanel {
 		ui.FormField{Field: "remove", Type: "toggle", Label: "Remove this rule", ReloadOnChange: true,
 			Help: "Saving with this on deletes the rule. There is no undo beyond adding it again."},
 	)
-	return ui.FormPanel{Source: endpoint, PostURL: endpoint, Method: "POST", Fields: fields}
+	return ui.FormPanel{Assist: true, Source: endpoint, PostURL: endpoint, Method: "POST", Fields: fields}
 }
 
 // ruleForm flattens a rule into the form's values.

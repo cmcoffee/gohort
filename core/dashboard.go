@@ -18,6 +18,24 @@ import (
 	"github.com/cmcoffee/gohort/core/webui"
 )
 
+// rootRoutes are framework endpoints a core package serves at the root,
+// beside the dashboard's own: one that imports core cannot be mounted by it
+// directly, so it registers here (RegisterRootRoute) and is mounted with
+// the rest.
+var rootRoutes []struct {
+	path string
+	h    http.HandlerFunc
+}
+
+// RegisterRootRoute mounts h at path on the dashboard's root mux, behind the
+// same sign-in as every other endpoint there. Call it from an init.
+func RegisterRootRoute(path string, h http.HandlerFunc) {
+	rootRoutes = append(rootRoutes, struct {
+		path string
+		h    http.HandlerFunc
+	}{path, h})
+}
+
 // ServeDashboard starts the unified web dashboard on the given address.
 // It discovers all registered WebApps, initializes them, and mounts
 // them under their prefix paths with a landing page at /.
@@ -155,6 +173,9 @@ func ServeDashboard(addr string) error {
 	mux.HandleFunc("/api/document-sinks", handleDocSinks)
 	mux.HandleFunc("/api/document-sinks/save", handleDocSinkSave)
 	mux.HandleFunc("/api/access", host.handleAccess)
+	for _, rr := range rootRoutes {
+		mux.HandleFunc(rr.path, rr.h)
+	}
 
 	// Mount the shared declarative-UI runtime (CSS + JS at /_ui/*).
 	// Apps that render via core/ui depend on these endpoints — register

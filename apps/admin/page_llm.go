@@ -13,6 +13,7 @@ func (a *AdminApp) llmSections() []ui.Section {
 			Subtitle: "The primary, local model most work runs on.",
 			Detail:   "Applies immediately on save, because the live LLM is rebuilt and nothing restarts. The API key is stored encrypted; leave it blank to keep the current one.",
 			Body: ui.FormPanel{
+				Assist: true,
 				Source: "api/worker-llm",
 				// Says what is actually at a local endpoint as well as whether
 				// it answers: the kind of server, the model and its context,
@@ -93,6 +94,7 @@ func (a *AdminApp) llmSections() []ui.Section {
 			Subtitle: "The precision, remote model for high-stakes stages.",
 			Detail:   "Routing sends \"lead\" stages here. Provider \"(use primary)\" reuses the worker. Applies immediately on save with no restart; the key is stored encrypted, and blank keeps the current one.",
 			Body: ui.FormPanel{
+				Assist:       true,
 				Source:       "api/lead-llm",
 				TestURL:      "api/lead-llm/test",
 				TestLabel:    "Test connection",
@@ -221,6 +223,7 @@ func (a *AdminApp) llmSections() []ui.Section {
 			Subtitle: "Per-round behavior of the agent loop.",
 			Detail:   "Lower the history budget when long sessions push prefill latency or thrash the LLM's prompt cache; raise it when you need the model to remember more context across rounds.",
 			Body: ui.FormPanel{
+				Assist: true,
 				Source: "api/agent-loop-tuning",
 				Fields: []ui.FormField{
 					{Field: "history_budget_percent", Label: "History budget (% of context window)",
@@ -235,6 +238,7 @@ func (a *AdminApp) llmSections() []ui.Section {
 			Subtitle: "How requests share the model: concurrent-request caps for local backends (default 1, strictly serial; 8 for vLLM, which batches), and whether background work waits for people.",
 			Detail:   "Raise it only when the backend supports parallel requests. Applies immediately on save, because the live LLM is rebuilt.",
 			Body: ui.FormPanel{
+				Assist: true,
 				Source: "api/local-scheduler",
 				Fields: []ui.FormField{
 					{Field: "ollama_max_parallel", Label: "Ollama max parallel", Type: "number",

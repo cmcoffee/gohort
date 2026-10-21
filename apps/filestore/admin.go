@@ -171,6 +171,7 @@ func (T *FileStoreApp) adminSection() ui.Section {
 								// How Builder and agents may use it: Open, or
 								// only the lines written here.
 								ui.Expand("Uses", ui.FormPanel{
+									Assist:      true,
 									Source:      "/filestore/api/commands/uses?id={cmd}",
 									PostURL:     "/filestore/api/commands/uses?id={cmd}",
 									SubmitLabel: "Save uses",
@@ -203,6 +204,7 @@ func (T *FileStoreApp) adminSection() ui.Section {
 								// from (command_examples.go).
 								ui.Expand("Show it how", ui.Stack{Children: []ui.Component{
 									ui.FormPanel{
+										Assist:    true,
 										Source:    "/filestore/api/map/try-args?id={cmd}",
 										TestURL:   "/filestore/api/map/try?id={cmd}",
 										TestLabel: "Run",
@@ -318,6 +320,7 @@ func (T *FileStoreApp) adminSection() ui.Section {
 							Subtitle: "An absolute path on this server, run as `<command> <folder>` with no shell.",
 							Width:    "620px",
 							Body: ui.FormPanel{
+								Assist:      true,
 								PostURL:     "/filestore/api/commands?slug={slug}",
 								SubmitLabel: "Add command",
 								Fields:      actionFormFields(),
@@ -398,6 +401,7 @@ func (T *FileStoreApp) adminSection() ui.Section {
 							// view=form leaves allowed_users out: the form posts
 							// back everything it loaded, so the list would be
 							// saved as it stood when the row opened.
+							Assist:      true,
 							Source:      "/filestore/api/stores?slug={slug}&view=form",
 							PostURL:     "/filestore/api/stores",
 							SubmitLabel: "Save changes",
@@ -419,6 +423,7 @@ func (T *FileStoreApp) adminSection() ui.Section {
 				Variant:  "primary",
 				Width:    "560px",
 				Body: ui.FormPanel{
+					Assist:      true,
 					PostURL:     "/filestore/api/stores",
 					SubmitLabel: "Add store",
 					// Who may reach it, first: a store made without it

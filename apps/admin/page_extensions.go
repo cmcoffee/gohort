@@ -68,6 +68,7 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 						},
 						RowActions: []ui.RowAction{
 							ui.Expand("Edit", ui.FormPanel{
+								Assist:      true,
 								Source:      "api/mcp-servers?name={name}",
 								PostURL:     "api/mcp-servers",
 								TestURL:     "api/mcp-servers/test",
@@ -108,6 +109,7 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 						Variant:  "primary",
 						Width:    "640px",
 						Body: ui.FormPanel{
+							Assist:      true,
 							PostURL:     "api/mcp-servers",
 							TestURL:     "api/mcp-servers/test",
 							TestLabel:   "Test connection",
@@ -325,6 +327,7 @@ func (a *AdminApp) templatesSection() ui.Section {
 				Subtitle: "Pick what goes in, then turn the values that differ between deployments into questions.",
 				Width:    "720px",
 				Body: ui.FormPanel{
+					Assist:  true,
 					PostURL: "api/templates/save", SubmitLabel: "Save template",
 					Invalidate: []string{"api/templates"},
 					Fields: []ui.FormField{

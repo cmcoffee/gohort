@@ -276,7 +276,7 @@ func deploymentSettingsSection() ui.Section {
 		Subtitle: "What every agent starts from, and what none of them may exceed.",
 		Detail: "An agent answers for itself; failing that, the Default below. The Limit sits over both, including over the Default: a default looser than the limit is a value nothing ever runs under.\n\n" +
 			"An owner still decides for each of their own agents. This is what those agents start from, and how far any of them may go.",
-		Body: ui.FormPanel{Source: api, PostURL: api, Method: "PATCH", Fields: fields},
+		Body: ui.FormPanel{Assist: true, Source: api, PostURL: api, Method: "PATCH", Fields: fields},
 	}
 }
 

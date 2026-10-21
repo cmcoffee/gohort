@@ -1924,6 +1924,7 @@ func (T *Extensions) apisSection() ui.Section {
 						},
 						RowActions: []ui.RowAction{
 							ui.Expand("Edit", ui.FormPanel{
+								Assist:      true,
 								Source:      "api/credentials?name={name}",
 								PostURL:     "api/credentials",
 								SubmitLabel: "Save changes",
@@ -1955,6 +1956,7 @@ func (T *Extensions) apisSection() ui.Section {
 							// lent, who has it, and what has gone through it.
 							ui.Expand("Security", ui.Stack{Children: []ui.Component{
 								ui.FormPanel{
+									Assist:      true,
 									Source:      "api/credentials?name={name}&view=security",
 									PostURL:     "api/credentials?action=security&name={name}",
 									SubmitLabel: "Save security",
@@ -2037,6 +2039,7 @@ func (T *Extensions) apisSection() ui.Section {
 						Variant:  "primary",
 						Width:    "560px",
 						Body: ui.FormPanel{
+							Assist:      true,
 							PostURL:     "api/credentials",
 							SubmitLabel: "Create credential",
 							Fields:      credentialFormFields(),
@@ -2480,6 +2483,7 @@ func (T *Extensions) skillsSection() ui.Section {
 									}},
 								},
 								ui.FormPanel{
+									Assist:      true,
 									Source:      "api/skills?id={id}&view=form",
 									PostURL:     "api/skills?id={id}",
 									SubmitLabel: "Save skill",
@@ -2584,6 +2588,7 @@ func (T *Extensions) skillsSection() ui.Section {
 						Variant:  "primary",
 						Width:    "640px",
 						Body: ui.FormPanel{
+							Assist:      true,
 							PostURL:     "api/skills",
 							SubmitLabel: "Create skill",
 							Fields:      userSkillFormFields(),

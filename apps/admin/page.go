@@ -138,6 +138,7 @@ func buildTunableSections() []ui.Section {
 			Wide:     true, // each category pane wants full width, not the two-up config column
 			Subtitle: "Saved automatically as you edit.",
 			Body: ui.FormPanel{
+				Assist:       true,
 				Source:       "api/settings",
 				Method:       settingsSaveMethod,
 				ResetURL:     "api/settings/reset-tunables?category=" + url.QueryEscape(cat),
@@ -224,6 +225,7 @@ func appTuningForm(app string) *ui.FormPanel {
 	// there would have it reload after every one of its own edits. The server
 	// takes only this app's knobs at that address.
 	return &ui.FormPanel{
+		Assist:       true,
 		Source:       tuningSourceForApp(app),
 		Method:       settingsSaveMethod,
 		ResetURL:     "api/settings/reset-tunables?app=" + url.QueryEscape(app),

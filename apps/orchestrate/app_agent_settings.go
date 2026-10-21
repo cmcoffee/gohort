@@ -106,7 +106,7 @@ func (T *OrchestrateApp) appAgentSettingsPage(udb Database, agents []appagents.A
 			Title:    name,
 			Subtitle: about,
 			Body: ui.Stack{Children: []ui.Component{
-				ui.FormPanel{Source: "settings/data" + q, PostURL: "settings/data" + q, Method: "PATCH", Fields: T.appAgentSettingsFields(rec)},
+				ui.FormPanel{Assist: true, Source: "settings/data" + q, PostURL: "settings/data" + q, Method: "PATCH", Fields: T.appAgentSettingsFields(rec)},
 				ui.DisplayPanel{
 					Source: "settings/data" + q,
 					Pairs:  []ui.DisplayPair{},

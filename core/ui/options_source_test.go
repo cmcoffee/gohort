@@ -20,7 +20,7 @@ func TestAFormFieldCanFetchItsOptionsWhenTheFormRenders(t *testing.T) {
 	if !strings.Contains(src, "f.options_source") || !strings.Contains(src, "function loadOptionSources()") {
 		t.Error("the form panel no longer fetches a field's options_source")
 	}
-	if strings.Index(src, "loadOptionSources().then(") > strings.Index(src, "fetchJSON(cfg.source).then(function(d){ current = d || {}; render(); })") {
+	if strings.Index(src, "loadOptionSources().then(") > strings.Index(src, "fetchJSON(cfg.source).then(function(d){ current = d || {}; render();") {
 		t.Error("options are not fetched before the form renders")
 	}
 }

@@ -587,3 +587,21 @@ func TestChecklistGroupsCollapseButNeverHideASelection(t *testing.T) {
 		t.Error("a live filter should open the groups that still have matches")
 	}
 }
+
+// A rows cell's control fills its cell. The class it carries had no rule,
+// so a text box kept the browser's default width of about twenty characters
+// however wide the dialog was: System Hooks' steps read a few words at a time.
+func TestARowsCellFillsItsCell(t *testing.T) {
+	css := readRuntimeCSSForTest(t)
+	at := strings.Index(css, "\n.ui-input {")
+	if at < 0 {
+		t.Fatal("the rows cell control has no rule")
+	}
+	rule := css[at : at+strings.Index(css[at:], "}")]
+	if !strings.Contains(rule, "width: 100%") || !strings.Contains(rule, "box-sizing: border-box") {
+		t.Errorf("a rows cell's control should fill its cell:%s", rule)
+	}
+	if src := readRuntimeFile(t, "10_basics.js"); !strings.Contains(src, "ctl = el('textarea', {\n                  class: 'ui-input',") {
+		t.Error("the rows textarea no longer carries the class the rule styles")
+	}
+}

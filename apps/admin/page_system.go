@@ -45,6 +45,7 @@ func (a *AdminApp) systemSections() []ui.Section {
 			Title:    "Site Settings",
 			Subtitle: "Authentication, naming, and operational quotas. Saved automatically as you edit.",
 			Body: ui.FormPanel{
+				Assist: true,
 				Source: "api/settings",
 				Method: settingsSaveMethod,
 				Fields: []ui.FormField{

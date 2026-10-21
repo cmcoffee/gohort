@@ -20,62 +20,49 @@ func TestAssistPanelFillsTheForm(t *testing.T) {
 		t.Skip("node not installed")
 	}
 	src := readRuntimeFile(t, "06_assist_editor.js")
-	script := assistStubDOM + src + `
-global.setTimeout = function(fn) { fn(); };
-// A form as form_panel exposes it: values() and fill().
-var formVals = {steps: [{command: 'heif-dec {in} {out}'}], name: 'heic-adapted'};
-components.fake_form = function(cfg) {
-  var f = node('div'); f.className = 'ui-form';
-  f.uiForm = {
-    values: function() { return JSON.parse(JSON.stringify(formVals)); },
-    fill: function(v) { formVals = JSON.parse(JSON.stringify(v)); },
-  };
-  return f;
-};
-var sent = null, progressSeen = [];
+	script := assistStubDOM + src + formStub + `
+var sent = null;
 global.fetch = function(url, o) {
   sent = {url: url, body: JSON.parse(o.body)};
   return Promise.resolve({ok: true, text: function() {
     return Promise.resolve('{"progress":"check program: heif-convert"}\n' +
-      '{"reply":"heif-convert is here.","fields":{"steps":[{"command":"heif-convert {in} {out}"}]}}\n');
+      '{"reply":"heif-convert is here.","fields":{"steps":[{"command":"heif-convert {in} {out}"}],"key":"guess"}}\n');
   }});
 };
-function find(n, cls) {
-  if (n.className && (' ' + n.className + ' ').indexOf(' ' + cls + ' ') >= 0) return n;
-  for (var i = 0; i < (n.children || []).length; i++) { var f = find(n.children[i], cls); if (f) return f; }
-  return null;
-}
-function fire(n) { (n.__click || []).forEach(function(f) { f(); }); }
-function texts(n, out) { out = out || []; if (n.textContent) out.push(n.textContent); if (n.innerHTML) out.push(n.innerHTML); (n.children || []).forEach(function(c) { texts(c, out); }); return out; }
-
-var panel = components.assist_panel({
-  url: 'api/assist?id=read.heic', ask: 'Why does it fail?', web: true,
-  work: {type: 'fake_form', fields: [
-    {field: 'name', label: 'Name', type: 'text'},
-    {field: 'steps', label: 'Steps', type: 'rows', columns: [{field: 'command', label: 'Command'}]},
-    {field: 'id', type: 'hidden'},
-  ]},
-});
+var panel = components.assist_panel({url: 'api/assist?id=read.heic', ask: 'Why does it fail?', web: true, work: {type: 'fake_form'}});
+var formEl = find(panel, 'ui-form');
 setImmediate(function() { setImmediate(function() {
   if (!sent) throw new Error('the opening request was never sent');
   if (sent.url !== 'api/assist?id=read.heic') throw new Error('sent to ' + sent.url);
   var b = sent.body;
   if (b.message !== 'Why does it fail?') throw new Error('message: ' + b.message);
   if (b.web !== false) throw new Error('web should go out off until ticked: ' + b.web);
-  if (!b.form || b.form.length !== 2) throw new Error('the form should travel without its hidden field: ' + JSON.stringify(b.form));
-  if (b.form[1].columns[0].field !== 'command') throw new Error('a list field should carry its columns');
+  if (!b.form || b.form.length !== 4) throw new Error('the form should travel without its hidden field: ' + JSON.stringify(b.form));
+  var steps = b.form.filter(function(d) { return d.field === 'steps'; })[0];
+  if (steps.columns[0].field !== 'command' || !steps.required) throw new Error('a list field carries its columns, and required: ' + JSON.stringify(steps));
   if (b.values.steps[0].command !== 'heif-dec {in} {out}') throw new Error('the values should travel');
+  if (b.values.key !== '(set)' || JSON.stringify(b).indexOf('hunter2') >= 0) throw new Error('a secret travelled: ' + JSON.stringify(b.values));
+  // The proposal fills the form, marked, and never the secret.
   if (formVals.steps[0].command !== 'heif-convert {in} {out}') throw new Error('the proposal did not fill the form: ' + JSON.stringify(formVals));
-  if (formVals.name !== 'heic-adapted') throw new Error('a field it did not propose changed');
-  var all = texts(panel).join(' | ');
-  if (all.indexOf('heif-convert is here.') < 0) throw new Error('the reply is not shown: ' + all);
-  if (all.indexOf('v2 of 2') < 0) throw new Error('the proposal should be a version: ' + all);
-  // Walk back: what was there before comes back into the form.
-  var navs = [];
-  (function walk(n) { if (n.className === 'ui-assist-nav') navs.push(n); (n.children || []).forEach(walk); })(panel);
-  fire(navs[0]);
-  if (formVals.steps[0].command !== 'heif-dec {in} {out}') throw new Error('walking back did not restore the form');
-  if (!find(panel, 'ui-assist-web')) throw new Error('web was offered but no switch shows');
+  if (formVals.key !== 'hunter2') throw new Error('a secret was filled');
+  if (filledKeys.join(',') !== 'steps') throw new Error('what it filled should be marked: ' + filledKeys);
+  // The helper is in, the form out, and the small version shows the change.
+  var helper = find(panel, 'ui-assist-helper');
+  if (helper.style.display === 'none' || formEl.style.display !== 'none') throw new Error('the helper should be swapped in for the form');
+  var mini = find(panel, 'ui-assist-mini');
+  var lit = find(mini, 'new');
+  if (!lit || String(lit.children[1].children[0]) !== 'heif-convert {in} {out}') throw new Error('the change should be lit in the small form');
+  var needed = find(mini, 'needed');
+  if (!needed || String(needed.children[0].children[0]) !== 'Name') throw new Error('an empty required field should be marked needed');
+  if (texts(panel).join(' | ').indexOf('heif-convert is here.') < 0) throw new Error('the reply is not shown');
+  // Back to the form: the form in, the bar saying what it filled, Undo.
+  fire(find(helper, 'ui-row-btn'));
+  var bar = find(panel, 'ui-assist-bar');
+  if (formEl.style.display === 'none' || helper.style.display !== 'none' || bar.style.display === 'none') throw new Error('Back to the form should swap them');
+  if (texts(bar).join(' ').indexOf('It filled 1 field') < 0) throw new Error('the bar should say what it filled: ' + texts(bar).join(' '));
+  var undo = bar.children.filter(function(c) { return c.children && String(c.children[0]) === 'Undo'; })[0];
+  fire(undo);
+  if (formVals.steps[0].command !== 'heif-dec {in} {out}' || filledKeys.length) throw new Error('Undo should put back what was there');
   console.log('OK');
 }); });
 `
@@ -87,6 +74,90 @@ setImmediate(function() { setImmediate(function() {
 		t.Fatalf("the assist panel:\n%s", out)
 	}
 }
+
+// A form that saves as you type keeps what the assistant filled in until
+// the person saves it from the bar; and the form's own ✨ opens the helper
+// with its two starters, the same helper each time.
+func TestTheFormHelperOnAnAutosaveForm(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node not installed")
+	}
+	src := readRuntimeFile(t, "06_assist_editor.js")
+	script := assistStubDOM + src + formStub + `
+var reqs = [];
+global.fetch = function(url, o) {
+  reqs.push({url: url, body: JSON.parse(o.body)});
+  return Promise.resolve({ok: true, text: function() { return Promise.resolve('{"reply":"Set.","fields":{"name":"heic-magick"}}\n'); }});
+};
+autosave = true;
+var host = node('div');
+var formEl = components.fake_form({});
+host.appendChild(formEl);
+window.uiFormAssist(formEl);
+var helper = find(host, 'ui-assist-helper');
+if (!helper || formEl.style.display !== 'none') throw new Error('Get assistance should swap the helper in');
+var starters = find(helper, 'ui-assist-choices');
+if (!starters || starters.children.length !== 2) throw new Error('two starters should be offered');
+fire(starters.children[0]);
+setImmediate(function() { setImmediate(function() {
+  if (reqs[0].url !== '/api/assist/form' || reqs[0].body.message !== 'Help me fill this in') throw new Error('the starter should go to the form help: ' + JSON.stringify(reqs[0]));
+  if (saved) throw new Error('an autosave form saved what it filled on its own');
+  fire(find(helper, 'ui-row-btn'));
+  var bar = find(host, 'ui-assist-bar');
+  if (texts(bar).join(' ').indexOf('not saved yet') < 0) throw new Error('the bar should say it is not saved: ' + texts(bar).join(' '));
+  var save = bar.children.filter(function(c) { return c.children && String(c.children[0]) === 'Save what it filled in'; })[0];
+  fire(save);
+  if (!saved || saved.join(',') !== 'name') throw new Error('Save should save what it filled: ' + saved);
+  window.uiFormAssist(formEl);
+  var helpers = 0;
+  (function walk(n) { if (n.className === 'ui-assist-helper') helpers++; (n.children || []).forEach(walk); })(host);
+  if (helpers !== 1) throw new Error('a second Get assistance should reopen the same helper, found ' + helpers);
+  console.log('OK');
+}); });
+`
+	tmp := filepath.Join(t.TempDir(), "autosave.js")
+	if err := os.WriteFile(tmp, []byte(script), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("node", tmp).CombinedOutput(); err != nil || !strings.Contains(string(out), "OK") {
+		t.Fatalf("the form helper on an autosave form:\n%s", out)
+	}
+}
+
+// formStub is a form panel as the helper sees one, and the helpers the
+// scripts use.
+const formStub = `
+global.setTimeout = function(fn) { fn(); };
+function fetchJSON() { return Promise.resolve({available: true}); }
+var formVals = {steps: [{command: 'heif-dec {in} {out}'}], name: '', key: 'hunter2'};
+var filledKeys = [], saved = null, autosave = false;
+components.fake_form = function(cfg) {
+  var f = node('div'); f.className = 'ui-form';
+  f.uiForm = {
+    cfg: {fields: [
+      {field: 'name', label: 'Name', type: 'text', required: true},
+      {field: 'steps', label: 'Steps', type: 'rows', required: true, columns: [{field: 'command', label: 'Command'}]},
+      {field: 'key', label: 'Key', type: 'password'},
+      {field: 'prefer', label: 'Prefer', type: 'toggle'},
+      {field: 'id', type: 'hidden'},
+    ]},
+    autosave: autosave, loaded: true,
+    values: function() { return JSON.parse(JSON.stringify(formVals)); },
+    fill: function(v, changed) { formVals = JSON.parse(JSON.stringify(v)); filledKeys = filledKeys.concat(changed || []); },
+    filled: function() { return filledKeys; },
+    unmark: function() { filledKeys = []; },
+    saveFilled: function(keys) { saved = keys.slice(); filledKeys = []; },
+  };
+  return f;
+};
+function find(n, cls) {
+  if (n.className && (' ' + n.className + ' ').indexOf(' ' + cls + ' ') >= 0) return n;
+  for (var i = 0; i < (n.children || []).length; i++) { var f = find(n.children[i], cls); if (f) return f; }
+  return null;
+}
+function fire(n) { (n.__click || []).forEach(function(f) { f(); }); }
+function texts(n, out) { out = out || []; if (typeof n === 'string') { out.push(n); return out; } if (n.textContent) out.push(n.textContent); if (n.innerHTML) out.push(n.innerHTML); (n.children || []).forEach(function(c) { texts(c, out); }); return out; }
+`
 
 // The panel's Go shape: the work rides as a nested component, and the row
 // action carries the ✨ and opens wide.
@@ -114,14 +185,22 @@ func TestTheFormExposesWhatAnAssistFills(t *testing.T) {
 	if at < 0 {
 		t.Fatal("form_panel not found")
 	}
-	head := basics[at : at+1600]
-	for _, want := range []string{"wrap.uiForm = {", "values: function()", "fill: function(vals)", "render();", "new Event('change')"} {
+	head := basics[at : at+4000]
+	for _, want := range []string{"wrap.uiForm = {", "values: function()", "fill: function(vals, changed)", "saveFilled: function(keys)", "onSaved: null", "loaded: false", "new Event('change')"} {
 		if !strings.Contains(head, want) {
 			t.Errorf("form_panel's assist handle lacks %q", want)
 		}
 	}
-	if strings.Contains(head[strings.Index(head, "fill: function"):strings.Index(head, "fill: function")+300], "save(") {
-		t.Error("a fill should not save")
+	fill := head[strings.Index(head, "fill: function(vals, changed)"):strings.Index(head, "filled: function()")]
+	if strings.Contains(fill, "save(") || !strings.Contains(fill, "render();") {
+		t.Errorf("a fill redraws and does not save:\n%s", fill)
+	}
+	// What it filled is marked until the person touches the field, and a
+	// submit that goes through tells the helper.
+	for _, want := range []string{"if (filled[field] && fieldEls[field]", "markFilled();", "wrap.uiForm.onSaved(resp)", "wizardAt = i;", "appendAssistButton();", "(cfg.assist || stepsMode) || cfg.no_assist"} {
+		if !strings.Contains(basics, want) {
+			t.Errorf("form_panel lacks %q", want)
+		}
 	}
 }
 
@@ -186,7 +265,8 @@ components.fake_form = function(cfg, ctx) {
   shown.push(cfg.source);
   saveHook = ctx.__closeModal;
   var f = node('div'); f.className = 'ui-form';
-  f.uiForm = {values: function() { return {}; }, fill: function() {}};
+  f.uiForm = {cfg: {fields: []}, loaded: true, values: function() { return {}; }, fill: function() {},
+    filled: function() { return []; }, unmark: function() {}, saveFilled: function() {}};
   return f;
 };
 function find(n, cls) {
@@ -265,5 +345,40 @@ setImmediate(function() {
 	}
 	if out, err := exec.Command("node", tmp).CombinedOutput(); err != nil || !strings.Contains(string(out), "OK") {
 		t.Fatalf("the assist attach:\n%s", out)
+	}
+}
+
+// The opening request waits for the form's record: it goes with the values,
+// and before the record is in, those are not the real ones.
+func TestAssistPanelWaitsForTheRecord(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node not installed")
+	}
+	src := readRuntimeFile(t, "06_assist_editor.js")
+	script := assistStubDOM + src + formStub + `
+var realTimeout = require('timers').setTimeout;
+global.setTimeout = realTimeout;
+var sent = null;
+global.fetch = function(url, o) { sent = JSON.parse(o.body); return Promise.resolve({ok: true, text: function() { return Promise.resolve('{"reply":"ok"}\n'); }}); };
+var made = null;
+var inner = components.fake_form;
+components.fake_form = function(cfg) { made = inner(cfg); made.uiForm.loaded = false; formVals = {name: ''}; return made; };
+components.assist_panel({url: 'x', ask: 'help', work: {type: 'fake_form'}});
+realTimeout(function() {
+  if (sent) throw new Error('sent before the record was in');
+  formVals = {name: 'the real one'};
+  made.uiForm.loaded = true;
+  realTimeout(function() {
+    if (!sent || sent.values.name !== 'the real one') throw new Error('want the request with the loaded values: ' + JSON.stringify(sent));
+    console.log('OK');
+  }, 150);
+}, 120);
+`
+	tmp := filepath.Join(t.TempDir(), "wait.js")
+	if err := os.WriteFile(tmp, []byte(script), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("node", tmp).CombinedOutput(); err != nil || !strings.Contains(string(out), "OK") {
+		t.Fatalf("the panel waiting for the record:\n%s", out)
 	}
 }

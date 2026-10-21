@@ -767,3 +767,26 @@ func TestAFailedTestMarksTheRow(t *testing.T) {
 		t.Error("a failed test should be recorded for the row")
 	}
 }
+
+// Add has the hooks assistant too: no row yet, so it is told what adding a
+// format is, and a try takes the contract being written.
+func TestTheAddFormHasTheHooksAssistant(t *testing.T) {
+	needDepsSandbox(t)
+	newDepsFixture(t)
+	about, err := fixAbout(httptest.NewRequest("POST", "/api/system-deps/fix", nil))
+	if err != nil || !strings.Contains(about, "adding a custom format") {
+		t.Fatalf("Add's assistant should know it is adding a format: %v %q", err, about)
+	}
+	in, _ := wrappedPNG(t)
+	ctx := assist.WithFiles(context.Background(), []assist.File{{ID: "file-1", Data: in}})
+	out, err := fixTry(ctx, "", map[string]any{"steps": "dd if={in} of={out} bs=8 skip=1", "direction": "input", "takes": "*", "becomes": "image"})
+	if err != nil || !strings.Contains(out, "Worked on file-1") {
+		t.Errorf("a try of a new input format: %v %q", err, out)
+	}
+	if fp := addForm(); !fp.Assist || fp.AssistURL != "api/system-deps/fix" || !fp.AssistAttach {
+		t.Errorf("the Add form should offer the hooks assistant: %+v", fp)
+	}
+	if fp := adaptForm(); fp.AssistURL != "api/system-deps/fix?id={id}" {
+		t.Errorf("Adapt's assistant should be the row's: %q", fp.AssistURL)
+	}
+}

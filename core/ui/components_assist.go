@@ -2,14 +2,15 @@ package ui
 
 import "encoding/json"
 
-// AssistPanel is the ✨ assist beside a piece of work: the work on the left,
-// a form usually, and a conversation with the model on the right that
-// already knows what is being worked on. The model is told the form's
-// fields and what they hold now; what it proposes fills them, as a version
-// the person can walk back from (◀ ▶), and nothing is saved until the
-// form's own Save. Put it in a ModalAction or a ModalButton for the window:
+// AssistPanel is a form opened with the ✨ helper already on it, and the
+// request it was opened for already sent: the form's own Get assistance
+// (FormPanel.Assist), started for the person. The helper is swapped in where
+// the form is, the conversation beside a small version of the form; what it
+// suggests goes into the form, marked, and Back to the form shows it there
+// with Undo, for the form's own Save to keep. Put it in a ModalAction or a
+// ModalButton for the window:
 //
-//	ui.ModalAction("✨ Fix", ui.AssistPanel{
+//	ui.AssistAction("Fix", ui.AssistPanel{
 //		Work: ui.FormPanel{Source: "api/thing?id={id}", PostURL: "api/thing", SubmitLabel: "Save", Fields: fields},
 //		URL:  "api/thing/assist?id={id}",
 //		Ask:  "Why does this fail, and what would fix it?",
@@ -20,7 +21,7 @@ import "encoding/json"
 // placeholders fill from the row, as the Work's do, so the endpoint knows
 // which record the window is about without trusting the browser to say.
 type AssistPanel struct {
-	Work Component `json:"-"` // the left side: a FormPanel, whose fields the model fills
+	Work Component `json:"-"` // the form: a FormPanel, whose fields the model fills
 	URL  string    `json:"url"`
 	// Ask is an opening request, sent once the work has loaded, as though
 	// the person had typed it: a window opened to fix something starts on
@@ -36,7 +37,6 @@ type AssistPanel struct {
 	Attach      bool   `json:"attach,omitempty"`
 	Intro       string `json:"intro,omitempty"`       // the conversation's opening note
 	Placeholder string `json:"placeholder,omitempty"` // the composer's
-	WorkLabel   string `json:"work_label,omitempty"`  // its tab on a phone (default "Form")
 	// Walk goes through a list of records in turn, the panel for each: the
 	// Work's and URL's {field} placeholders fill from the record shown, and
 	// saving the form moves on to the next. For "fix the ones that are
@@ -62,9 +62,9 @@ func (p AssistPanel) MarshalJSON() ([]byte, error) {
 	}{"assist_panel", marshalComponent(p.Work), alias(p)})
 }
 
-// AssistWidth is the dialog width an AssistPanel wants: both sides side by
-// side, as wide as the screen allows.
-const AssistWidth = "min(1180px, 96vw)"
+// AssistWidth is the dialog width an AssistPanel wants: the conversation
+// beside the small version of the form.
+const AssistWidth = "min(900px, 96vw)"
 
 // AssistAction is a row's ✨ button opening an AssistPanel in a dialog.
 // The label gets its ✨, the mark every assist carries.

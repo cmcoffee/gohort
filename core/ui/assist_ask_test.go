@@ -91,6 +91,7 @@ function node(tag) {
     style: {}, children: [],
     appendChild: function(c) { this.children.push(c); if (c && typeof c === 'object') c.parentNode = this; return c; },
     removeChild: function(c) {},
+    insertBefore: function(c, ref) { var i = this.children.indexOf(ref); if (i < 0) this.children.push(c); else this.children.splice(i, 0, c); if (c && typeof c === 'object') c.parentNode = this; return c; },
     remove: function() { var p = this.parentNode; if (p) { var i = p.children.indexOf(this); if (i >= 0) p.children.splice(i, 1); this.parentNode = null; } },
     setAttribute: function() {}, getAttribute: function() { return null; },
     addEventListener: function(k, fn) { (listeners[k] = listeners[k] || []).push(fn); (this['__' + k] = this['__' + k] || []).push(fn); },

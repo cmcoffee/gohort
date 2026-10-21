@@ -51,6 +51,25 @@ type FormPanel struct {
 	// flows ("New Agent", connector onboarding); keep flat Fields
 	// for edit-in-place settings forms.
 	Steps []FormStep `json:"steps,omitempty"`
+	// Assist puts ✨ Get assistance in the form's corner: a helper swapped
+	// in where the form is, that answers questions about it and helps fill
+	// it in, and puts what it suggests into the form, marked, for the person
+	// to check and save. A wizard (Steps) has it without asking; set it on
+	// any other form that is not plain to fill in. It shows only where a
+	// worker is set up. NoAssist takes it off a wizard where help would be
+	// noise.
+	//
+	// The help knows the form's fields, their Help and Detail, and the
+	// section around it, and nothing else. AssistURL gives it more: an
+	// endpoint built with core/assist.Handler, with what the app knows and
+	// tools of its own (System Hooks' Fix is one). Secrets (password fields)
+	// travel as set or empty, and are never filled.
+	Assist    bool   `json:"assist,omitempty"`
+	AssistURL string `json:"assist_url,omitempty"`
+	NoAssist  bool   `json:"no_assist,omitempty"`
+	// AssistAttach offers the helper's 📎, for an AssistURL whose tools take
+	// a file (a sample to try on; assist.Spec.Attach).
+	AssistAttach bool `json:"assist_attach,omitempty"`
 	// PostURL — destination for saves when it differs from Source.
 	// Defaults to Source. Use when the GET endpoint that returns the
 	// current record shape isn't the right write target — e.g. an

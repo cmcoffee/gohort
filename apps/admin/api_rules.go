@@ -169,6 +169,7 @@ func rulesSection() ui.Section {
 // select as it is picked), posting the whole record so no field is blanked.
 func alwaysRulesForm() ui.FormPanel {
 	return ui.FormPanel{
+		Assist:  true,
 		Source:  "api/global-rules",
 		PostURL: "api/global-rules",
 		Fields: []ui.FormField{{

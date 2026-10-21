@@ -475,6 +475,7 @@ func (ed *agentEditor) mainSection() {
 		Subtitle: "Identity, prompts, and behavior.",
 		Detail:   "Clone an existing agent from the landing page if you want a quick copy to tweak.",
 		Body: ui.FormPanel{
+			Assist:         true,
 			Source:         ed.source,
 			PostURL:        "../api/agents",
 			Method:         "POST",
@@ -1089,6 +1090,7 @@ func splitAgentFormSections(id, source string, fields []ui.FormField, identitySu
 	}
 	panel := func(ff []ui.FormField) ui.FormPanel {
 		return ui.FormPanel{
+			Assist: true,
 			Source: source,
 			// The id rides in the QUERY, not the body: a FormPanel's PATCH body
 			// is exactly {changed_field: value} and carries no record id, so

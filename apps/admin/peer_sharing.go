@@ -678,6 +678,7 @@ func peerSharingSections() []ui.Section {
 					// Its OWN endpoint, not the list. A FormPanel loads its
 					// Source and posts that state back, so a source returning
 					// the key list would make the form save an array.
+					Assist:      true,
 					Source:      "api/peer-keys/mint",
 					Method:      "POST",
 					SubmitLabel: "Mint key",
@@ -723,6 +724,7 @@ func peerSharingSections() []ui.Section {
 				"contributes its image backends to the picker, edits included.",
 			Body: ui.Stack{Children: []ui.Component{
 				ui.FormPanel{
+					Assist:      true,
 					Source:      "api/peers/add",
 					Method:      "POST",
 					SubmitLabel: "Connect",
@@ -812,6 +814,7 @@ func peerSharingSections() []ui.Section {
 					// a newly-shipped capability without anything being
 					// re-pasted or re-probed on the other machine.
 					ui.ModalAction("Grants", ui.FormPanel{
+						Assist:      true,
 						Source:      "api/peer-keys/{id}",
 						PostURL:     "api/peer-keys/{id}",
 						Method:      "PUT",
