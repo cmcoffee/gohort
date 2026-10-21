@@ -94,3 +94,31 @@ func TestTheWholeAgentAssistRunsOnTheAssistHandler(t *testing.T) {
 		t.Errorf("another person's agent: %d", w.Code)
 	}
 }
+
+// The dialog is the shared conversation pane now, so a turn arrives as
+// uiAssistPost sends it: streamed lines asked for, the mode and window on it,
+// web lookups when the person turned them on. The last line still carries
+// the changes, and the lookups are allowed here, as on every ✨.
+func TestTheWholeAgentAssistAnswersTheSharedPane(t *testing.T) {
+	fake := &FakeLLM{Turns: []FakeTurn{{Content: `{"reply":"Added a rule.","changes":[{"field":"rules","why":"stops guessing","value":"Cite every claim. Say when you do not know."}]}`}}}
+	T, req := assistAppFixture(t, fake)
+	udb := &DBase{Store: kvlite.MemStore()}
+	rec := assistTestAgent()
+	rec.Owner = "u"
+	if _, err := saveAgent(udb, rec); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	r := req("/api/agents/a1/assist", `{"message":"it guesses","history":[],"mode":"write","window":"w1","web":true}`)
+	r.Header.Set("Accept", "application/x-ndjson")
+	T.handleAgentAssist(w, r, "u", udb, rec.ID)
+	lines := strings.Split(strings.TrimSpace(w.Body.String()), "\n")
+	var out assistReply
+	json.Unmarshal([]byte(lines[len(lines)-1]), &out)
+	if w.Code != 200 || out.Reply != "Added a rule." || len(out.Changes) != 1 || out.Changes[0].Field != "rules" {
+		t.Fatalf("the last line should be the reply and its change: %d %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(fake.Config(0).SystemPrompt, "turned on web lookups") {
+		t.Error("web lookups the person turned on should be allowed here")
+	}
+}

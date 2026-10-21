@@ -149,6 +149,12 @@ func TestAssistDialogHTML(t *testing.T) {
 		"../api/agents/'+id",          // apply, via the PATCH allowlist
 		"'PATCH'",
 		"window.uiOpenModal", // THE modal, not a hand-rolled overlay
+		// The shared conversation pane and its client: the spinner, Stop
+		// and web lookups every ✨ has, not a conversation of its own.
+		"window.uiAssistChat({",
+		"send:window.uiAssistPost('../api/agents/'+id+'/assist'),",
+		"web:true,",
+		"onResult:function(res){",
 		"agent-123",
 	} {
 		if !strings.Contains(got, want) {

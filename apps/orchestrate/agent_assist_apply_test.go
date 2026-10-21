@@ -26,7 +26,7 @@ func applyBlock(t *testing.T) string {
 	if i < 0 {
 		t.Fatal("the Apply button is gone")
 	}
-	end := strings.Index(src[i:], "body.appendChild(log);")
+	end := strings.Index(src[i:], "body.appendChild(el('div',{class:'aa-chat'}")
 	if end < 0 {
 		t.Fatal("could not bound the Apply handler")
 	}

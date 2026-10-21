@@ -74,6 +74,9 @@ func (T *OrchestrateApp) handleAgentAssist(w http.ResponseWriter, r *http.Reques
 	assist.Handler(assist.Spec{
 		Route: "app.orchestrate.assist", Label: "Agents: whole-agent assist", App: "/orchestrate",
 		Core: &T.AppCore, Think: assist.Off,
+		// Web lookups when the person turns them on in the window (an API
+		// the agent should know about, say), as every ✨ offers.
+		Web: true,
 		// The agent's route checked who is asking before it got here.
 		Allow: func(http.ResponseWriter, *http.Request) bool { return true },
 		Prompt: func(r *http.Request, req assist.Request) (string, error) {

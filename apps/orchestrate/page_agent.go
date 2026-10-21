@@ -793,10 +793,12 @@ func (ed *agentEditor) serve() {
 // you accept.
 //
 // App-specific behavior, so it rides in through ExtraHeadHTML rather than into
-// core/ui. It reuses uiOpenModal (THE modal) and the
-// existing PATCH endpoint to apply, which is what keeps it small: no new
-// persistence path, no form-field plumbing, and a reload afterwards so the
-// editor is showing what was actually stored rather than what we hoped.
+// core/ui. It reuses uiOpenModal (THE modal), the shared conversation pane
+// (uiAssistChat, with its spinner, Stop and web lookups, as every other ✨
+// has) and the existing PATCH endpoint to apply, which is what keeps it
+// small: what is its own here is the list of proposed changes, no new
+// persistence path, and a reload afterwards so the editor is showing what
+// was actually stored rather than what we hoped.
 //
 // Why a whole-agent dialog next to a per-field one: the field workbench sees
 // the field it was opened on, so it cannot notice that an agent has no rules,
@@ -806,20 +808,20 @@ func (ed *agentEditor) serve() {
 func agentAssistHTML(id string) string {
 	return fmt.Sprintf(`<style>
 @media (pointer: coarse){#agent-assist{min-height:var(--btn-h-sm, 2.25rem)}}
-.aa-log{display:flex;flex-direction:column;gap:.5rem;margin-bottom:.75rem;max-height:38vh;overflow-y:auto}
-.aa-msg{padding:.45rem .6rem;border-radius:6px;font-size:var(--fs-md, .9rem);line-height:1.45;white-space:pre-wrap}
-.aa-you{background:var(--bg-2);align-self:flex-end;max-width:85%%}
-.aa-them{background:var(--bg-2);border-left:3px solid var(--accent,#6366f1)}
+.aa-chat{display:flex;flex-direction:column;height:min(46vh, 26rem)}
+.aa-chat .ui-assist-right{flex:1 1 auto;min-height:0}
+.aa-changes{max-height:32vh;overflow-y:auto;margin-top:.6rem}
+.aa-changes:empty{display:none}
 .aa-change{border:1px solid var(--border);border-radius:6px;padding:.5rem .6rem;margin:.4rem 0;background:var(--bg-2)}
 .aa-change label{display:flex;gap:.5rem;align-items:baseline;cursor:pointer;font-weight:600}
 .aa-why{font-size:var(--fs-sm, .85rem);opacity:.8;margin:.2rem 0 .35rem 1.4rem}
 .aa-val{margin-left:1.4rem;font-size:var(--fs-sm, .85rem);white-space:pre-wrap;max-height:9rem;overflow:auto;padding:.4rem;background:var(--bg-1);border:1px solid var(--border);border-radius:4px}
-.aa-row{display:flex;gap:.5rem;align-items:flex-end}
-.aa-row textarea{flex:1;min-height:3.2rem;resize:vertical}
+.aa-foot{display:flex;gap:.5rem;justify-content:flex-end;margin-top:.75rem}
+@media (max-width: 760px){.aa-chat{height:52vh}}
 </style>
 <script>
 (function(){
-  var id=%q, history=[], pending=[];
+  var id=%q, pending=[];
   function el(t,a,kids){var n=document.createElement(t);a=a||{};for(var k in a){if(k==='class')n.className=a[k];else if(k==='text')n.textContent=a[k];else n.setAttribute(k,a[k]);}
     (kids||[]).forEach(function(c){n.appendChild(c);});return n;}
 
@@ -830,19 +832,12 @@ func agentAssistHTML(id string) string {
       width:'760px',
       actions:[],
       mount:function(body,api){
-        var log=el('div',{class:'aa-log'});
-        var changes=el('div');
-        var input=el('textarea',{placeholder:'What should be different? For example: it keeps answering from memory, make it stick to sources.'});
-        var send=el('button',{type:'button',class:'ui-row-btn primary',text:'Ask'});
-        var apply=el('button',{type:'button',class:'ui-row-btn',text:'Apply selected'});
+        var changes=el('div',{class:'aa-changes'});
+        var apply=el('button',{type:'button',class:'ui-row-btn primary',text:'Apply selected'});
         apply.style.display='none';
         var close=el('button',{type:'button',class:'ui-row-btn',text:'Close'});
         close.onclick=function(){api.close();};
 
-        function say(role,text){
-          log.appendChild(el('div',{class:'aa-msg '+(role==='you'?'aa-you':'aa-them'),text:text}));
-          log.scrollTop=log.scrollHeight;
-        }
         function renderChanges(list){
           changes.innerHTML=''; pending=list||[];
           apply.style.display=pending.length?'':'none';
@@ -856,25 +851,19 @@ func agentAssistHTML(id string) string {
             changes.appendChild(box);
           });
         }
-        function ask(){
-          var msg=(input.value||'').trim();
-          if(!msg) return;
-          say('you',msg); input.value=''; send.disabled=true; send.textContent='Thinking…';
-          fetch('../api/agents/'+id+'/assist',{method:'POST',headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({message:msg,history:history})})
-            .then(function(r){ if(!r.ok) return r.text().then(function(t){throw new Error(t||('HTTP '+r.status));}); return r.json(); })
-            .then(function(d){
-              history.push({role:'user',content:msg});
-              if(d.reply) history.push({role:'assistant',content:d.reply});
-              say('them',d.reply||'(no reply)');
-              renderChanges(d.changes);
-            })
-            .catch(function(e){ say('them','Could not ask: '+((e&&e.message)||e)); })
-            .then(function(){ send.disabled=false; send.textContent='Ask'; });
-        }
-        send.onclick=ask;
-        input.addEventListener('keydown',function(ev){
-          if(ev.key==='Enter'&&(ev.metaKey||ev.ctrlKey)){ ev.preventDefault(); ask(); }
+        var chat=window.uiAssistChat({
+          web:true,
+          intro:'Tell me what is not working about this agent, or what you want it to do differently. I will propose changes you can review before anything is saved.',
+          placeholders:{write:'What should be different? For example: it keeps answering from memory, make it stick to sources.'},
+          starters:['Look it over: what would you change?','What is this agent set up to do?'],
+          send:window.uiAssistPost('../api/agents/'+id+'/assist'),
+          // A reply that proposes changes replaces the ones shown; one that
+          // only answers (a question about them, say) leaves them standing.
+          onResult:function(res){
+            if(!res||!Array.isArray(res.changes)||!res.changes.length) return '';
+            renderChanges(res.changes);
+            return 'Here is what I would change. Tick the ones to keep and apply them.';
+          }
         });
         apply.onclick=function(){
           var patch={},n=0;
@@ -895,21 +884,17 @@ func agentAssistHTML(id string) string {
               : c.value;
             n++;
           }
-          if(!n){ say('them','Nothing selected.'); return; }
+          if(!n){ window.uiToast('Nothing selected.'); return; }
           apply.disabled=true; apply.textContent='Applying…';
           fetch('../api/agents/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(patch)})
             .then(function(r){ if(!r.ok) return r.text().then(function(t){throw new Error(t||('HTTP '+r.status));}); location.reload(); })
-            .catch(function(e){ apply.disabled=false; apply.textContent='Apply selected'; say('them','Could not apply: '+((e&&e.message)||e)); });
+            .catch(function(e){ apply.disabled=false; apply.textContent='Apply selected'; window.uiAlert('Could not apply: '+((e&&e.message)||e)); });
         };
 
-        body.appendChild(log);
+        body.appendChild(el('div',{class:'aa-chat'},[chat.right]));
         body.appendChild(changes);
-        body.appendChild(el('div',{class:'aa-row'},[input,send]));
-        var foot=el('div',{class:'aa-row'}); foot.style.marginTop='.75rem'; foot.style.justifyContent='flex-end';
-        foot.appendChild(apply); foot.appendChild(close);
-        body.appendChild(foot);
-        say('them','Tell me what is not working about this agent, or what you want it to do differently. I will propose changes you can review before anything is saved.');
-        input.focus();
+        body.appendChild(el('div',{class:'aa-foot'},[apply,close]));
+        chat.focus();
       }
     });
   }
