@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/assist"
 )
 
 // Assist: a conversation about the WHOLE agent, which proposes changes you
@@ -65,67 +66,36 @@ type assistTurn struct {
 }
 
 // handleAgentAssist answers a message about one agent with a reply and a set
-// of proposed changes: POST /api/agents/{id}/assist {message, history}.
+// of proposed changes: POST /api/agents/{id}/assist {message, history}. On
+// core/assist, with its own prompt (the agent as the person sees it) and its
+// own reading of the answer (the changes, held to the allowlist).
 func (T *OrchestrateApp) handleAgentAssist(w http.ResponseWriter, r *http.Request, user string, udb Database, id string) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if T.LLM == nil {
-		http.Error(w, "worker LLM not configured", http.StatusServiceUnavailable)
-		return
-	}
-	var req struct {
-		Message string       `json:"message"`
-		History []assistTurn `json:"history"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-	if strings.TrimSpace(req.Message) == "" {
-		http.Error(w, "message is required", http.StatusBadRequest)
-		return
-	}
-	rec, ok := loadAgent(udb, id)
-	if !ok {
-		http.Error(w, "agent not found", http.StatusNotFound)
-		return
-	}
-	if rec.Owner != user && rec.Owner != seedOwner {
-		http.Error(w, "not yours", http.StatusForbidden)
-		return
-	}
-
-	msgs := make([]Message, 0, len(req.History)+1)
-	for _, t := range req.History {
-		role := "user"
-		if strings.EqualFold(t.Role, "assistant") {
-			role = "assistant"
-		}
-		if strings.TrimSpace(t.Content) == "" {
-			continue
-		}
-		msgs = append(msgs, Message{Role: role, Content: t.Content})
-	}
-	msgs = append(msgs, Message{Role: "user", Content: req.Message})
-
-	resp, err := T.LLM.Chat(r.Context(), msgs,
-		WithSystemPrompt(buildAgentAssistPrompt(rec)),
-		WithRouteKey("app.orchestrate.assist"),
-		WithThink(false),
-	)
-	if err != nil {
-		http.Error(w, "assist failed: "+err.Error(), http.StatusBadGateway)
-		return
-	}
-	if resp == nil {
-		http.Error(w, "empty response", http.StatusBadGateway)
-		return
-	}
-	out := parseAssistReply(resp.Content, rec)
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(out)
+	var rec AgentRecord // loaded by Prompt, read by Parse: one request
+	assist.Handler(assist.Spec{
+		Route: "app.orchestrate.assist", Label: "Agents: whole-agent assist", App: "/orchestrate",
+		Core: &T.AppCore, Think: assist.Off,
+		// The agent's route checked who is asking before it got here.
+		Allow: func(http.ResponseWriter, *http.Request) bool { return true },
+		Prompt: func(r *http.Request, req assist.Request) (string, error) {
+			got, ok := loadAgent(udb, id)
+			if !ok {
+				return "", assist.Refuse(http.StatusNotFound, "agent not found")
+			}
+			if got.Owner != user && got.Owner != seedOwner {
+				return "", assist.Refuse(http.StatusForbidden, "not yours")
+			}
+			rec = got
+			return buildAgentAssistPrompt(rec), nil
+		},
+		Parse: func(req assist.Request, raw string) assist.Reply {
+			out := parseAssistReply(raw, rec)
+			rp := assist.Reply{Reply: out.Reply}
+			if len(out.Changes) > 0 {
+				rp.Extra = map[string]any{"changes": out.Changes}
+			}
+			return rp
+		},
+	})(w, r)
 }
 
 // buildAgentAssistPrompt gives the model the agent as a person sees it, plus

@@ -562,7 +562,12 @@ func TestTheFixEndpointFillsTheForm(t *testing.T) {
 		"form":   []map[string]any{{"field": "steps", "type": "rows", "columns": []map[string]string{{"field": "command"}}}},
 		"values": map[string]any{"steps": []any{}},
 	})
-	w := f.req(t, f.token, "POST", "/api/system-deps/fix?id=read.heic", string(body), "application/json")
+	r := httptest.NewRequest("POST", "/api/system-deps/fix?id=read.heic", strings.NewReader(string(body)))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Accept", "application/x-ndjson") // as the browser's helper asks
+	r.AddCookie(&http.Cookie{Name: "gohort_session", Value: f.token})
+	w := httptest.NewRecorder()
+	f.mux.ServeHTTP(w, r)
 	got := w.Body.String()
 	if !strings.Contains(got, `"progress":"dependency try: dd if={in} of={out} bs=8 skip=1"`) || !strings.Contains(got, `"fields":{"steps":[{"command":"dd if={in} of={out} bs=8 skip=1"}]}`) {
 		t.Fatalf("want the try reported and the form filled: %s", got)

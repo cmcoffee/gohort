@@ -19,13 +19,13 @@
 package orchestrate
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/assist"
 )
 
 // maxAssistPrompt bounds the field framing a client may send. Advisory
@@ -34,91 +34,76 @@ import (
 const maxAssistPrompt = 2000
 
 func (T *OrchestrateApp) handleMachineSuggest(w http.ResponseWriter, r *http.Request, udb Database, user string, def MachineDef) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if T.LLM == nil {
-		http.Error(w, "worker LLM not configured", http.StatusServiceUnavailable)
-		return
-	}
-	var req struct {
-		Field        string         `json:"field"`
-		Hint         string         `json:"hint"`
-		Message      string         `json:"message"`
-		Draft        string         `json:"draft"`
-		Mode         string         `json:"mode"`
-		History      []suggestTurn  `json:"history"`
-		AssistPrompt string         `json:"assist_prompt"`
-		Record       map[string]any `json:"record"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
 	// The step is identified by the record the form already carries, so a
 	// caller cannot ask about a step it is not looking at.
-	name := strings.TrimSpace(fmt.Sprint(req.Record["name"]))
-	ph, found := def.Phase(name)
-	if !found {
-		http.Error(w, "no step called "+strconv.Quote(name)+" in this machine", http.StatusNotFound)
-		return
+	step := func(req assist.Request) (MachinePhase, string, error) {
+		var record map[string]any
+		req.Get("record", &record)
+		name := strings.TrimSpace(fmt.Sprint(record["name"]))
+		ph, found := def.Phase(name)
+		if !found {
+			return ph, "", assist.Refuse(http.StatusNotFound, "no step called "+strconv.Quote(name)+" in this machine")
+		}
+		if req.String("field") != "prompt" {
+			// Deliberately narrow. The other fields are selects and toggles
+			// with computed options: there is nothing for a model to draft,
+			// and a suggest button on a picker would be a worse way to choose.
+			return ph, "", assist.Refuse(http.StatusBadRequest, "only a step's instructions can be drafted")
+		}
+		var framing string
+		req.Get("assist_prompt", &framing)
+		if len(framing) > maxAssistPrompt {
+			framing = framing[:maxAssistPrompt]
+		}
+		return ph, machineAssistSystem(def, ph, framing), nil
 	}
-	if strings.TrimSpace(req.Field) != "prompt" {
-		// Deliberately narrow. The other fields are selects and toggles
-		// with computed options — there is nothing for a model to draft,
-		// and a suggest button on a picker would be a worse way to choose.
-		http.Error(w, "only a step's instructions can be drafted", http.StatusBadRequest)
-		return
-	}
-	if len(req.AssistPrompt) > maxAssistPrompt {
-		req.AssistPrompt = req.AssistPrompt[:maxAssistPrompt]
-	}
-
-	sys := machineAssistSystem(def, ph, req.AssistPrompt)
-	ctx := r.Context()
-
-	if strings.TrimSpace(req.Message) != "" {
-		msgs := make([]Message, 0, len(req.History)+1)
-		for _, t := range req.History {
-			role := strings.TrimSpace(t.Role)
-			if role != "user" && role != "assistant" {
-				continue
+	assist.Handler(assist.Spec{
+		Route: "app.orchestrate.suggest", Label: "Agents: field suggestions", App: "/orchestrate",
+		Core: &T.AppCore, Think: assist.Off,
+		// The machine's route checked who is asking before it found def.
+		Allow: func(http.ResponseWriter, *http.Request) bool { return true },
+		Prompt: func(r *http.Request, req assist.Request) (string, error) {
+			_, sys, err := step(req)
+			if err != nil {
+				return "", err
 			}
-			msgs = append(msgs, Message{Role: role, Content: t.Content})
-		}
-		if d := strings.TrimSpace(req.Draft); d != "" {
-			sys += "\n\nThe current draft, which they can see and edit:\n" + d
-		}
-		// In a conversation the reply is a sentence and, when there is new
-		// text, the text fenced on its own, which is how the window tells
-		// the two apart. Without this the instructions came back as chat
-		// and the draft never changed.
-		sys += "\n\n## How to reply in this conversation\n\nThis replaces \"reply with the instructions only\" above.\n\n" + AssistReplyContract(req.Mode)
-		msgs = append(msgs, Message{Role: "user", Content: req.Message})
-		resp, err := T.LLM.Chat(ctx, msgs, WithSystemPrompt(sys),
-			WithRouteKey("app.orchestrate.suggest"), WithThink(false))
-		if err != nil || resp == nil {
-			http.Error(w, "assist failed", http.StatusBadGateway)
-			return
-		}
-		reply, value := splitDraftReply(resp.Content)
-		writeJSON(w, map[string]any{"reply": reply, "value": strings.TrimSpace(value)})
-		return
-	}
-
-	ask := "Write the instructions for this step."
-	if h := strings.TrimSpace(req.Hint); h != "" {
-		ask += " The person adds: " + h
-	}
-	resp, err := T.LLM.Chat(ctx, []Message{{Role: "user", Content: ask}},
-		WithSystemPrompt(sys), WithRouteKey("app.orchestrate.suggest"), WithThink(false))
-	if err != nil || resp == nil {
-		http.Error(w, "assist failed", http.StatusBadGateway)
-		return
-	}
-	Log("[orchestrate.machines] user=%q drafted instructions for %s/%s", user, def.Name, ph.Name)
-	writeJSON(w, map[string]any{"value": strings.TrimSpace(resp.Content)})
+			if d := strings.TrimSpace(req.Draft); d != "" {
+				sys += "\n\nThe current draft, which they can see and edit:\n" + d
+			}
+			// In a conversation the reply is a sentence and, when there is
+			// new text, the text fenced on its own, which is how the window
+			// tells the two apart. Without this the instructions came back
+			// as chat and the draft never changed.
+			return sys + "\n\n## How to reply in this conversation\n\nThis replaces \"reply with the instructions only\" above.\n\n" + AssistReplyContract(req.Mode), nil
+		},
+		Parse: func(req assist.Request, raw string) assist.Reply {
+			reply, value := splitDraftReply(raw)
+			return assist.Reply{Reply: reply, Value: strings.TrimSpace(value)}
+		},
+		Shot: func(w http.ResponseWriter, r *http.Request, req assist.Request) {
+			ph, sys, err := step(req)
+			if err != nil {
+				assist.WriteError(w, err)
+				return
+			}
+			if T.LLM == nil {
+				http.Error(w, "worker LLM not configured", http.StatusServiceUnavailable)
+				return
+			}
+			ask := "Write the instructions for this step."
+			if h := req.String("hint"); h != "" {
+				ask += " The person adds: " + h
+			}
+			resp, err := T.LLM.Chat(r.Context(), []Message{{Role: "user", Content: ask}},
+				WithSystemPrompt(sys), WithRouteKey("app.orchestrate.suggest"), WithThink(false))
+			if err != nil || resp == nil {
+				http.Error(w, "assist failed", http.StatusBadGateway)
+				return
+			}
+			Log("[orchestrate.machines] user=%q drafted instructions for %s/%s", user, def.Name, ph.Name)
+			writeJSON(w, map[string]any{"value": strings.TrimSpace(resp.Content)})
+		},
+	})(w, r)
 }
 
 // machineAssistSystem gives the drafter the same picture the author has —

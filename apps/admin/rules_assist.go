@@ -9,11 +9,10 @@ package admin
 // cannot turn this into a general model proxy.
 
 import (
-	"encoding/json"
 	"net/http"
-	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/assist"
 )
 
 const alwaysAssistPrompt = "You write operator rules that bind an AI assistant's conduct: short imperative " +
@@ -35,68 +34,34 @@ var rulesAssistPrompts = map[string]string{
 const rulesAssistMax = 24000
 
 func (a *AdminApp) handleRulesAssist(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
-		return
+	assist.Handler(a.rulesAssistSpec())(w, r)
+}
+
+// rulesAssistSpec is the rules lists' assist on core/assist: its own prompt
+// (the list's framing, then the document assist), its own reading of the
+// answer (the list without a heading that restates its name).
+func (a *AdminApp) rulesAssistSpec() assist.Spec {
+	return assist.Spec{
+		Route: "app.admin.rules_assist", Label: "Admin: rules assist", App: "/admin",
+		Allow: a.requireAdmin, Think: assist.Off,
+		Prompt: func(r *http.Request, req assist.Request) (string, error) {
+			section := req.String("section")
+			framing, ok := rulesAssistPrompts[section]
+			if !ok {
+				return "", assist.Refuse(http.StatusBadRequest, "no rules list named "+section)
+			}
+			draft := req.Draft
+			if len(draft) > rulesAssistMax {
+				draft = draft[:rulesAssistMax]
+			}
+			return framing + "\n\n" + BuildDocAssistPrompt(section+" rules", section, draft, "", req.Mode), nil
+		},
+		Parse: func(req assist.Request, raw string) assist.Reply {
+			reply, value := SplitDraftReply(raw)
+			if value != "" {
+				value = StripLeadingHeading(value, req.String("section"))
+			}
+			return assist.Reply{Reply: reply, Value: value}
+		},
 	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST only", http.StatusMethodNotAllowed)
-		return
-	}
-	var req struct {
-		Section string `json:"section"`
-		Mode    string `json:"mode"`
-		Message string `json:"message"`
-		Draft   string `json:"draft"`
-		History []struct {
-			Role    string `json:"role"`
-			Content string `json:"content"`
-		} `json:"history"`
-	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4*rulesAssistMax)).Decode(&req); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-	framing, ok := rulesAssistPrompts[strings.TrimSpace(req.Section)]
-	if !ok {
-		http.Error(w, "no rules list named "+req.Section, http.StatusBadRequest)
-		return
-	}
-	if strings.TrimSpace(req.Message) == "" {
-		http.Error(w, "message required", http.StatusBadRequest)
-		return
-	}
-	llm := SharedWorkerLLM()
-	if llm == nil {
-		http.Error(w, "no worker LLM is configured", http.StatusServiceUnavailable)
-		return
-	}
-	draft := req.Draft
-	if len(draft) > rulesAssistMax {
-		draft = draft[:rulesAssistMax]
-	}
-	msgs := make([]Message, 0, len(req.History)+1)
-	for _, t := range req.History {
-		role := strings.TrimSpace(t.Role)
-		if (role != "user" && role != "assistant") || strings.TrimSpace(t.Content) == "" {
-			continue
-		}
-		msgs = append(msgs, Message{Role: role, Content: t.Content})
-	}
-	msgs = append(msgs, Message{Role: "user", Content: req.Message})
-	system := framing + "\n\n" + BuildDocAssistPrompt(req.Section+" rules", req.Section, draft, "", req.Mode)
-	resp, err := llm.Chat(r.Context(), msgs,
-		WithSystemPrompt(system),
-		WithRouteKey("app.admin.rules_assist"),
-		WithThink(false),
-	)
-	if err != nil {
-		http.Error(w, "assist failed: "+err.Error(), http.StatusBadGateway)
-		return
-	}
-	reply, value := SplitDraftReply(ResponseText(resp))
-	if value != "" {
-		value = StripLeadingHeading(value, req.Section)
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"reply": reply, "value": value})
 }

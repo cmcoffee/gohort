@@ -9,6 +9,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/assist"
 )
 
 const (
@@ -921,72 +922,31 @@ func (T *CodeWriterAgent) handleTemplate(w http.ResponseWriter, r *http.Request)
 // handles. Folding them together would mean one prompt trying to be
 // both, which is how both get worse.
 func (T *CodeWriterAgent) handleAssist(w http.ResponseWriter, r *http.Request) {
-	_, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if T.AppCore.LLM == nil {
-		http.Error(w, "worker LLM not configured", http.StatusServiceUnavailable)
-		return
-	}
-	var req struct {
-		Name    string `json:"name"`
-		Section string `json:"section"`
-		Message string `json:"message"`
-		Draft   string `json:"draft"`
-		Context string `json:"context"`
-		Mode    string `json:"mode"`
-		History []struct {
-			Role    string `json:"role"`
-			Content string `json:"content"`
-		} `json:"history"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-	if strings.TrimSpace(req.Message) == "" {
-		http.Error(w, "message required", http.StatusBadRequest)
-		return
-	}
-	req.Section = strings.TrimSpace(req.Section)
-
-	msgs := make([]Message, 0, len(req.History)+1)
-	for _, t := range req.History {
-		role := strings.TrimSpace(t.Role)
-		if (role != "user" && role != "assistant") || strings.TrimSpace(t.Content) == "" {
-			continue
-		}
-		msgs = append(msgs, Message{Role: role, Content: t.Content})
-	}
-	msgs = append(msgs, Message{Role: "user", Content: req.Message})
-
-	// The user's standing rules ride on every assist turn, the same way
-	// they do on chat — a draft that ignores them gets rejected on sight.
-	var rules string
-	if uid := AuthCurrentUser(r); uid != "" {
-		rules = DocRulesSection(UserDB(T.DB, uid), "codewriter")
-	}
-	agent := &AppCore{LLM: T.AppCore.LLM}
-	session := agent.CreateSession(WORKER)
-	resp, err := session.Chat(r.Context(), msgs,
-		WithSystemPrompt(BuildDocAssistPrompt(req.Name, req.Section, req.Draft, req.Context, req.Mode)+rules),
-		WithThink(false),
-	)
-	if err != nil {
-		http.Error(w, "assist failed: "+err.Error(), http.StatusBadGateway)
-		return
-	}
-	reply, value := SplitDraftReply(ResponseText(resp))
-	if value != "" && req.Section != "" {
-		value = StripLeadingHeading(value, req.Section)
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"reply": reply, "value": value})
+	assist.Handler(assist.Spec{
+		Route: "app.codewriter.assist", Label: "CodeWriter: document assist", App: "/codewriter",
+		Core: &T.AppCore, Think: assist.Off,
+		Allow: func(w http.ResponseWriter, r *http.Request) bool {
+			_, _, ok := RequireUser(w, r, T.DB)
+			return ok
+		},
+		Prompt: func(r *http.Request, req assist.Request) (string, error) {
+			// The user's standing rules ride on every assist turn, the same
+			// way they do on chat: a draft that ignores them gets rejected on
+			// sight.
+			var rules string
+			if uid := AuthCurrentUser(r); uid != "" {
+				rules = DocRulesSection(UserDB(T.DB, uid), "codewriter")
+			}
+			return BuildDocAssistPrompt(req.String("name"), req.String("section"), req.Draft, req.String("context"), req.Mode) + rules, nil
+		},
+		Parse: func(req assist.Request, raw string) assist.Reply {
+			reply, value := SplitDraftReply(raw)
+			if section := req.String("section"); value != "" && section != "" {
+				value = StripLeadingHeading(value, section)
+			}
+			return assist.Reply{Reply: reply, Value: value}
+		},
+	})(w, r)
 }
 
 // uniqueReferences drops repeat selections of the same item, keeping the

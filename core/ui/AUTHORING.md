@@ -304,6 +304,16 @@ For one long value rather than a form, `FormField.SuggestURL` on a textarea
 opens the draft window (`uiOpenAssist`). Your own JS opening that window passes
 `url` (a `core/assist` endpoint) in place of `send`.
 
+Every assist endpoint is an `assist.Handler`, including the ones with
+instructions of their own (an agent's fields, a workflow step, the rules lists,
+a CodeWriter document). `Prompt` writes the system prompt yourself, used as
+written; `Parse` reads the answer your way (a draft cleaned for its field, a
+list of changes, returned through `Reply.Extra`); `Shot` answers a request with
+no message (a one-shot suggestion); `Request.Get` and `Request.String` read the
+keys your client sends. A client that asks for the stream
+(`Accept: application/x-ndjson`, as `uiAssistPost` does) gets progress lines;
+any other gets one JSON reply. Never write a second assist handler.
+
 ### Repeating rows
 
 A `rows` field edits a LIST of small records inside one field of one record:

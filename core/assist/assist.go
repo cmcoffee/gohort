@@ -30,11 +30,14 @@ package assist
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -61,7 +64,55 @@ type Spec struct {
 	Attach bool
 	// LLM is the model, for a test; nil is the shared worker.
 	LLM LLM
+	// Core is the app's own model handle (its worker, its name on the usage
+	// report), where it has one; nil is the shared worker.
+	Core *AppCore
+
+	// Prompt writes the whole system prompt itself, for an assist whose
+	// instructions are its own (a field of an agent's, a step of a
+	// workflow's): used as written, with only what this turn adds (web
+	// lookups, attached files) after it. About and the form or draft
+	// sections are not added. An error refuses the request (Refuse for its
+	// status).
+	Prompt func(r *http.Request, req Request) (string, error)
+	// Parse reads the model's answer the app's way (a draft cleaned for
+	// its field, a list of changes); nil reads the draft or fields
+	// contract.
+	Parse func(req Request, raw string) Reply
+	// Shot answers a request with no message: an app's one-shot
+	// suggestion. nil refuses it.
+	Shot func(w http.ResponseWriter, r *http.Request, req Request)
+	// Think, when set, pins thinking on or off for its calls.
+	Think *bool
+	// Timeout bounds a turn; 0 is the request's own.
+	Timeout time.Duration
 }
+
+// Refusal is a refusal with the status it carries: from About, Prompt or a
+// Shot, as Refuse makes it.
+type Refusal struct {
+	Code int
+	Msg  string
+}
+
+func (e Refusal) Error() string { return e.Msg }
+
+// Refuse is a refusal with status code.
+func Refuse(code int, msg string) error { return Refusal{Code: code, Msg: msg} }
+
+// WriteError writes err as its status: a Refusal's own, 400 for a plain
+// error. For a Shot that refuses the way the handler does.
+func WriteError(w http.ResponseWriter, err error) {
+	var rf Refusal
+	if errors.As(err, &rf) {
+		http.Error(w, rf.Msg, rf.Code)
+		return
+	}
+	http.Error(w, err.Error(), http.StatusBadRequest)
+}
+
+// Off is false, for Spec.Think.
+var Off = func() *bool { v := false; return &v }()
 
 // Field describes one field of the form beside the conversation.
 type Field struct {
@@ -100,6 +151,27 @@ type Request struct {
 	Page   string         `json:"page"`
 	Form   []Field        `json:"form"`
 	Values map[string]any `json:"values"`
+
+	// raw is every key the request carried, for an app's own (Get).
+	raw map[string]json.RawMessage
+}
+
+// Get decodes the request's own key (an app's: field, section, record)
+// into v, and reports whether it was there and read.
+func (q Request) Get(key string, v any) bool {
+	raw, ok := q.raw[key]
+	if !ok {
+		return false
+	}
+	return json.Unmarshal(raw, v) == nil
+}
+
+// String is the request's own key as a string, trimmed: "" when it is not
+// one.
+func (q Request) String(key string) string {
+	var s string
+	q.Get(key, &s)
+	return strings.TrimSpace(s)
 }
 
 // Reply is the turn's answer.
@@ -108,6 +180,27 @@ type Reply struct {
 	Value  string         `json:"value,omitempty"`
 	Fields map[string]any `json:"fields,omitempty"`
 	Error  string         `json:"error,omitempty"`
+	// Extra is an app's own keys beside these (a list of changes).
+	Extra map[string]any `json:"-"`
+}
+
+// MarshalJSON writes the reply with its Extra keys beside the rest.
+func (rp Reply) MarshalJSON() ([]byte, error) {
+	type plain Reply
+	base, err := json.Marshal(plain(rp))
+	if err != nil || len(rp.Extra) == 0 {
+		return base, err
+	}
+	var m map[string]any
+	if err := json.Unmarshal(base, &m); err != nil {
+		return nil, err
+	}
+	for k, v := range rp.Extra {
+		if _, taken := m[k]; !taken {
+			m[k] = v
+		}
+	}
+	return json.Marshal(m)
 }
 
 // Bounds on what a turn carries to the model.
@@ -151,7 +244,8 @@ func Handler(s Spec) http.HandlerFunc {
 			limit = attachBody
 		}
 		var req Request
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit)).Decode(&req); err != nil {
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
+		if err != nil || json.Unmarshal(body, &req) != nil || json.Unmarshal(body, &req.raw) != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
@@ -160,18 +254,29 @@ func Handler(s Spec) http.HandlerFunc {
 			return
 		}
 		if strings.TrimSpace(req.Message) == "" {
+			if s.Shot != nil {
+				s.Shot(w, r, req)
+				return
+			}
 			http.Error(w, "message required", http.StatusBadRequest)
 			return
 		}
-		about := ""
-		if s.About != nil {
-			var err error
+		about, prompt := "", ""
+		if s.Prompt != nil {
+			if prompt, err = s.Prompt(r, req); err != nil {
+				WriteError(w, err)
+				return
+			}
+		} else if s.About != nil {
 			if about, err = s.About(r); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
+				WriteError(w, err)
 				return
 			}
 		}
 		llm := s.LLM
+		if llm == nil && s.Core != nil {
+			llm = s.Core.LLM
+		}
 		if llm == nil {
 			llm = SharedWorkerLLM()
 		}
@@ -192,15 +297,20 @@ func Handler(s Spec) http.HandlerFunc {
 		}
 		files := filesOf(key)
 
-		out := newStream(w)
-		t := turn{spec: s, req: req, about: about, user: user, out: out, files: files, arrived: arrived}
+		out := newStream(w, strings.Contains(r.Header.Get("Accept"), "application/x-ndjson"))
+		t := turn{spec: s, req: req, about: about, prompt: prompt, user: user, out: out, files: files, arrived: arrived}
 		ctx := WithFiles(r.Context(), files)
+		if s.Timeout > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, s.Timeout)
+			defer cancel()
+		}
 		reply, err := t.run(ctx, llm, s.tools(r))
 		if err != nil {
-			out.send(Reply{Error: "assist failed: " + err.Error()})
+			out.fail("assist failed: " + err.Error())
 			return
 		}
-		out.send(reply)
+		out.final(reply)
 	}
 }
 
@@ -226,8 +336,10 @@ type turn struct {
 	spec  Spec
 	req   Request
 	about string
-	user  string
-	out   *stream
+	// prompt is the app's own system prompt, when it writes one.
+	prompt string
+	user   string
+	out    *stream
 	// files are the window's attachments; arrived, the labels of those
 	// this turn brought.
 	files   []File
@@ -247,14 +359,25 @@ func (t turn) run(ctx context.Context, llm LLM, kit []AgentToolDef) (Reply, erro
 		kit[i].Handler = t.reporting(kit[i])
 	}
 	msgs := t.messages()
-	ac := &AppCore{LLM: llm}
-	resp, err := ac.WorkerChatWithTools(ctx, msgs, kit,
-		WithSystemPrompt(t.system(kit, web)),
-		WithRouteKey(t.spec.Route))
+	ac := t.spec.Core
+	if ac == nil || ac.LLM == nil {
+		ac = &AppCore{LLM: llm}
+	}
+	opts := []ChatOption{WithSystemPrompt(t.system(kit, web)), WithRouteKey(t.spec.Route)}
+	if t.spec.Think != nil {
+		opts = append(opts, WithThink(*t.spec.Think))
+	}
+	resp, err := ac.WorkerChatWithTools(ctx, msgs, kit, opts...)
 	if err != nil {
 		return Reply{}, err
 	}
+	if resp == nil {
+		return Reply{}, errors.New("empty response")
+	}
 	raw := ResponseText(resp)
+	if t.spec.Parse != nil {
+		return t.spec.Parse(t.req, raw), nil
+	}
 	if len(t.req.Form) > 0 {
 		reply, fields, note := SplitFieldsReply(raw, t.fieldNames())
 		if note != "" {
@@ -339,6 +462,13 @@ func (t turn) messages() []Message {
 // work as it stands, what it may use, and how to answer.
 func (t turn) system(kit []AgentToolDef, web int) string {
 	var b strings.Builder
+	if t.prompt != "" {
+		// The app's own instructions, as written; only what this turn
+		// brings is added after them.
+		b.WriteString(t.prompt)
+		t.writeTurnExtras(&b, web)
+		return b.String()
+	}
 	b.WriteString("You are helping someone in gohort with one piece of work, which is shown beside this conversation. Find things out with the tools you have rather than guessing, say plainly what you found, and keep replies short.\n")
 	if strings.TrimSpace(t.about) != "" {
 		b.WriteString("\n## What this is about\n\n")
@@ -370,6 +500,22 @@ func (t turn) system(kit []AgentToolDef, web int) string {
 		b.WriteString(d)
 		b.WriteString("\n")
 	}
+	t.writeTurnExtras(&b, web)
+	if len(kit) == 0 {
+		b.WriteString("\nYou have no tools in this conversation: work from what is above and what the person says.\n")
+	}
+	b.WriteString("\n## How to reply\n\n")
+	if len(t.req.Form) > 0 {
+		b.WriteString(FieldsReplyContract)
+	} else {
+		b.WriteString(AssistReplyContract(t.req.Mode))
+	}
+	return b.String()
+}
+
+// writeTurnExtras is what this turn brings to the prompt: the files
+// attached in the window, and web lookups asked for.
+func (t turn) writeTurnExtras(b *strings.Builder, web int) {
 	if len(t.files) > 0 {
 		b.WriteString("\n## Files attached here\n\n")
 		for _, f := range t.files {
@@ -383,16 +529,6 @@ func (t turn) system(kit []AgentToolDef, web int) string {
 	case webRefused:
 		b.WriteString("\n## The web\n\nThe person asked to look things up on the web, but web lookups are off here. Work from what you have, and say so if an answer needs the web.\n")
 	}
-	if len(kit) == 0 {
-		b.WriteString("\nYou have no tools in this conversation: work from what is above and what the person says.\n")
-	}
-	b.WriteString("\n## How to reply\n\n")
-	if len(t.req.Form) > 0 {
-		b.WriteString(FieldsReplyContract)
-	} else {
-		b.WriteString(AssistReplyContract(t.req.Mode))
-	}
-	return b.String()
 }
 
 // writeField is one field's line in the system prompt: its name, what it
@@ -463,16 +599,47 @@ func (t turn) fieldNames() map[string]bool {
 	return names
 }
 
-// stream writes the answer's JSON lines, flushing each.
+// stream is how the answer goes back: as JSON lines, flushed as they come
+// ({progress} while it works, then the reply), to a client that asks for
+// them (Accept: application/x-ndjson, as uiAssistPost does); else as one
+// JSON reply at the end, as the assists that came before this answered.
 type stream struct {
 	mu      sync.Mutex
 	w       http.ResponseWriter
+	lines   bool
 	started bool
 }
 
-func newStream(w http.ResponseWriter) *stream { return &stream{w: w} }
+func newStream(w http.ResponseWriter, lines bool) *stream { return &stream{w: w, lines: lines} }
 
+// send writes one line: progress, which a plain JSON client never sees.
 func (s *stream) send(v any) {
+	if !s.lines {
+		return
+	}
+	s.line(v)
+}
+
+// final is the reply.
+func (s *stream) final(rp Reply) {
+	if s.lines {
+		s.line(rp)
+		return
+	}
+	s.w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(s.w).Encode(rp)
+}
+
+// fail ends the turn with msg: a line, or a 502.
+func (s *stream) fail(msg string) {
+	if s.lines {
+		s.line(Reply{Error: msg})
+		return
+	}
+	http.Error(s.w, msg, http.StatusBadGateway)
+}
+
+func (s *stream) line(v any) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !s.started {

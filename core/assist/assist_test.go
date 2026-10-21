@@ -30,7 +30,9 @@ func post(t *testing.T, h http.HandlerFunc, req Request) ([]string, Reply, int) 
 	t.Helper()
 	body, _ := json.Marshal(req)
 	rec := httptest.NewRecorder()
-	h(rec, httptest.NewRequest("POST", "/assist?id=read.heic", strings.NewReader(string(body))))
+	r := httptest.NewRequest("POST", "/assist?id=read.heic", strings.NewReader(string(body)))
+	r.Header.Set("Accept", "application/x-ndjson") // as uiAssistPost asks
+	h(rec, r)
 	if rec.Code != http.StatusOK {
 		return nil, Reply{}, rec.Code
 	}
@@ -281,7 +283,7 @@ func TestSecretsStayOutAndThePageComesIn(t *testing.T) {
 	fake := &FakeLLM{Turns: []FakeTurn{{Content: "Filled.\n```fields\n{\"api_key\": \"guess\", \"host\": \"example.org\"}\n```"}}}
 	h := Handler(Spec{Route: "test.assist.secret", Allow: allowAll, LLM: fake})
 	_, reply, code := post(t, h, Request{Message: "help", Page: "Connect a mail server: what it needs and why.",
-		Form: []Field{{Field: "host", Required: true}, {Field: "api_key", Type: "password", Secret: true}},
+		Form:   []Field{{Field: "host", Required: true}, {Field: "api_key", Type: "password", Secret: true}},
 		Values: map[string]any{"api_key": "hunter2-real-key", "host": ""}})
 	if code != http.StatusOK {
 		t.Fatalf("status %d", code)
@@ -318,5 +320,58 @@ func TestAvailableSaysWhetherThereIsAWorker(t *testing.T) {
 	SetSharedLLMs(&FakeLLM{}, nil)
 	if got := get(); got != `{"available":true}` {
 		t.Errorf("a worker: %s", got)
+	}
+}
+
+// The assists that came before the stream (a field's ✨ Suggest, a document's
+// ✨ Draft) ask for plain JSON and get it: one reply, the app's own prompt
+// used as written, its own reading of the answer and its own keys beside;
+// a request with no message goes to the app's one-shot; a refusal carries
+// its status.
+func TestAnAppsOwnAssistRunsOnTheHandler(t *testing.T) {
+	fake := &FakeLLM{Turns: []FakeTurn{{Content: "Tightened.\n```draft\n## Rules\nBe brief.\n```"}}}
+	shot := false
+	h := Handler(Spec{Route: "test.assist.own", Allow: allowAll, LLM: fake, Think: Off,
+		Prompt: func(r *http.Request, req Request) (string, error) {
+			if req.String("field") != "rules" {
+				return "", Refuse(http.StatusNotFound, "no field like that")
+			}
+			return "THE APP'S OWN PROMPT for " + req.String("field") + "\n" + AssistReplyContract(req.Mode), nil
+		},
+		Parse: func(req Request, raw string) Reply {
+			reply, value := SplitDraftReply(raw)
+			return Reply{Reply: reply, Value: StripLeadingHeading(value, "Rules"), Extra: map[string]any{"changes": []string{"rules"}}}
+		},
+		Shot: func(w http.ResponseWriter, r *http.Request, req Request) {
+			shot = true
+			w.Write([]byte(`{"value":"one shot"}`))
+		},
+	})
+	do := func(body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		h(rec, httptest.NewRequest("POST", "/", strings.NewReader(body)))
+		return rec
+	}
+	rec := do(`{"field":"rules","message":"tighten","draft":"be brief please","mode":"write"}`)
+	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("a plain client gets JSON: %q", ct)
+	}
+	var got map[string]any
+	json.Unmarshal(rec.Body.Bytes(), &got)
+	if got["reply"] != "Tightened." || got["value"] != "Be brief." || got["changes"] == nil {
+		t.Errorf("want the app's reading of the answer, with its own keys: %s", rec.Body.String())
+	}
+	sys := fake.Config(0).SystemPrompt
+	if !strings.HasPrefix(sys, "THE APP'S OWN PROMPT for rules") || strings.Contains(sys, "You are helping someone") || !strings.Contains(sys, DraftReplyContract) {
+		t.Errorf("the app's prompt should be used as written:\n%s", sys)
+	}
+	if think := fake.Config(0).Think; think == nil || *think {
+		t.Error("Think: Off should reach the call")
+	}
+	if do(`{"field":"rules"}`); !shot {
+		t.Error("a request with no message should go to the one-shot")
+	}
+	if rec := do(`{"field":"other","message":"x"}`); rec.Code != http.StatusNotFound {
+		t.Errorf("a refusal should carry its status: %d", rec.Code)
 	}
 }

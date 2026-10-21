@@ -18,6 +18,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/assist"
 )
 
 // suggestableFields lists agent fields the suggest endpoint will honor,
@@ -87,106 +88,83 @@ func fieldGuidance(field string) string {
 }
 
 func (T *OrchestrateApp) handleAgentSuggest(w http.ResponseWriter, r *http.Request) {
-	_, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
+	assist.Handler(T.agentSuggestSpec())(w, r)
+}
+
+// suggestTimeout bounds a suggestion or an assist turn.
+const suggestTimeout = 90 * time.Second
+
+// agentSuggestSpec is the agent editor's ✨ on core/assist. The request
+// carries the field it is about (only a suggestable one), the section of a
+// sections field when it narrows to one, the field's own framing
+// (assist_prompt: advisory, composed INTO the system prompt below, never
+// substituted for it, and bounded), and the record as it stands. A message
+// is a turn of the assist workbench, a conversation about the value the
+// person can see and edit between turns; none is the one-shot suggestion,
+// which short fields and the wizard use.
+func (T *OrchestrateApp) agentSuggestSpec() assist.Spec {
+	field := func(req assist.Request) (string, error) {
+		f := req.String("field")
+		if !fieldsSuggestable[f] {
+			return "", assist.Refuse(http.StatusBadRequest, "field not suggestable")
+		}
+		return f, nil
 	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
+	return assist.Spec{
+		Route: "app.orchestrate.suggest", Label: "Agents: field suggestions", App: "/orchestrate",
+		Core: &T.AppCore, Think: assist.Off, Timeout: suggestTimeout,
+		Allow: func(w http.ResponseWriter, r *http.Request) bool {
+			_, _, ok := RequireUser(w, r, T.DB)
+			return ok
+		},
+		// The draft is context in the system prompt (it changes every turn,
+		// including from the person's own edits) and the message list is the
+		// pure back-and-forth.
+		Prompt: func(r *http.Request, req assist.Request) (string, error) {
+			f, err := field(req)
+			if err != nil {
+				return "", err
+			}
+			var record map[string]any
+			req.Get("record", &record)
+			var framing string
+			req.Get("assist_prompt", &framing)
+			return buildAssistSystemPrompt(f, req.String("section"), req.Draft, framing, req.Mode, record), nil
+		},
+		Parse: func(req assist.Request, raw string) assist.Reply {
+			reply, value := splitDraftReply(raw)
+			if value != "" {
+				value = cleanSuggestion(req.String("field"), value)
+				if section := req.String("section"); section != "" {
+					value = stripSectionHeading(value, section)
+				}
+			}
+			return assist.Reply{Reply: reply, Value: value}
+		},
+		Shot: func(w http.ResponseWriter, r *http.Request, req assist.Request) {
+			f, err := field(req)
+			if err != nil {
+				assist.WriteError(w, err)
+				return
+			}
+			T.suggestOnce(w, r, f, req)
+		},
 	}
+}
+
+// suggestOnce is the one-shot suggestion: a value for the field from the
+// record and an optional hint, and for a name a few to choose from.
+func (T *OrchestrateApp) suggestOnce(w http.ResponseWriter, r *http.Request, field string, req assist.Request) {
 	if T.LLM == nil {
 		http.Error(w, "worker LLM not configured", http.StatusServiceUnavailable)
 		return
 	}
-	var req struct {
-		Field string `json:"field"`
-		// Section, when set, narrows the request to ONE section of a
-		// sections-backed field: the reply is that section's body only,
-		// and the rest of the document is left alone. Asking for a part
-		// beats regenerating the whole prompt, which throws away the
-		// parts already working.
-		Section string `json:"section"`
-		Hint    string `json:"hint"`
-		// Message, Draft, and History drive the assist workbench: an
-		// ongoing conversation about a value the user can see and edit
-		// between turns. Message set = conversation mode; the reply
-		// carries both a sentence for the chat and (usually) the revised
-		// text. Empty Message keeps the original one-shot behavior, so
-		// short fields and the wizard are untouched.
-		Message string        `json:"message"`
-		Draft   string        `json:"draft"`
-		History []suggestTurn `json:"history"`
-		// Mode is the assist window's: "discuss" talks it through before
-		// writing, anything else revises on request.
-		Mode string `json:"mode"`
-		// AssistPrompt is the field's own framing, declared in Go on the
-		// FormField and round-tripped through the browser. Advisory: it
-		// is composed INTO the system prompt below, never substituted
-		// for it, so it can shape the advice but cannot reach another
-		// field or escape the response contract. Bounded to keep a
-		// tampered client from turning this into a general LLM proxy.
-		AssistPrompt string `json:"assist_prompt"`
-
-		Record map[string]any `json:"record"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-	req.Field = strings.TrimSpace(req.Field)
-	req.Section = strings.TrimSpace(req.Section)
-	if !fieldsSuggestable[req.Field] {
-		http.Error(w, "field not suggestable", http.StatusBadRequest)
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), suggestTimeout)
 	defer cancel()
-
-	// Conversation mode: the draft is context in the system prompt (it
-	// changes every turn, including from the user's own edits) and the
-	// message list is the pure back-and-forth.
-	if strings.TrimSpace(req.Message) != "" {
-		msgs := make([]Message, 0, len(req.History)+1)
-		for _, t := range req.History {
-			role := strings.TrimSpace(t.Role)
-			if role != "user" && role != "assistant" {
-				continue
-			}
-			if strings.TrimSpace(t.Content) == "" {
-				continue
-			}
-			msgs = append(msgs, Message{Role: role, Content: t.Content})
-		}
-		msgs = append(msgs, Message{Role: "user", Content: req.Message})
-
-		resp, err := T.LLM.Chat(ctx, msgs,
-			WithSystemPrompt(buildAssistSystemPrompt(req.Field, req.Section, req.Draft, req.AssistPrompt, req.Mode, req.Record)),
-			WithRouteKey("app.orchestrate.suggest"),
-			WithThink(false),
-		)
-		if err != nil {
-			http.Error(w, "assist failed: "+err.Error(), http.StatusBadGateway)
-			return
-		}
-		if resp == nil {
-			http.Error(w, "empty response", http.StatusBadGateway)
-			return
-		}
-		reply, value := splitDraftReply(resp.Content)
-		if value != "" {
-			value = cleanSuggestion(req.Field, value)
-			if req.Section != "" {
-				value = stripSectionHeading(value, req.Section)
-			}
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"reply": reply, "value": value})
-		return
-	}
-
-	prompt := buildSuggestPrompt(req.Field, req.Section, req.Hint, req.Record)
+	section := req.String("section")
+	var record map[string]any
+	req.Get("record", &record)
+	prompt := buildSuggestPrompt(field, section, req.String("hint"), record)
 	resp, err := T.LLM.Chat(ctx,
 		[]Message{{Role: "user", Content: prompt}},
 		WithSystemPrompt(suggestSystemPrompt),
@@ -201,15 +179,15 @@ func (T *OrchestrateApp) handleAgentSuggest(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "empty response", http.StatusBadGateway)
 		return
 	}
-	value := cleanSuggestion(req.Field, resp.Content)
-	if req.Section != "" {
-		value = stripSectionHeading(value, req.Section)
+	value := cleanSuggestion(field, resp.Content)
+	if section != "" {
+		value = stripSectionHeading(value, section)
 	}
 	out := map[string]any{"value": value}
 	// A name is chosen, not computed. The model returns a handful; the client
 	// shows them as a pick-one list with "write my own" alongside, and a single
 	// candidate still lands straight in the field as before.
-	if req.Field == "name" {
+	if field == "name" {
 		if cands := suggestionCandidates(resp.Content); len(cands) > 1 {
 			out["values"] = cands
 			out["value"] = cands[0]
