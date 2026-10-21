@@ -2,6 +2,7 @@ package flows
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -26,6 +27,16 @@ type Input struct {
 func (in Input) source(j Job) ([]byte, string, error) {
 	if in.Doc == nil {
 		return in.Data, in.From, nil
+	}
+	if contains(j.Takes, "application/json") {
+		if len(in.Doc.Data) == 0 {
+			return nil, "", fmt.Errorf("%s is built from data, and this document has none: give it %s", j.Title, firstNonEmpty(j.Hint, "data"))
+		}
+		payload, err := json.Marshal(map[string]any{"title": in.Doc.Title, "date": in.Doc.Date, "data": in.Doc.Data})
+		if err != nil {
+			return nil, "", err
+		}
+		return payload, "application/json", nil
 	}
 	if contains(j.Takes, "text/html") {
 		if len(in.Doc.HTML) == 0 {
@@ -66,7 +77,8 @@ func RunNative(ctx context.Context, j Job, in Input) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	return runFlow(ctx, flowRun{by: j.By(), job: j, steps: f.Steps, in: src, from: from, params: in.Params, timeout: j.defaultTimeout()})
+	return runFlow(ctx, flowRun{by: j.By(), job: j, steps: f.Steps, in: src, from: from, params: in.Params, timeout: j.defaultTimeout(),
+		files: f.Files, py: f.Py})
 }
 
 // RunAdapted runs an adapted flow on in, against its contract.
@@ -204,7 +216,7 @@ func Export(ctx context.Context, doc Document, ext string, builtin func() ([]byt
 			return Result{}, err, true
 		}
 		for _, j := range jobs {
-			if j.IsExport() && j.Gives == ext && !j.Builtin {
+			if j.IsExport() && j.Gives == ext && !j.AppRendered() {
 				if _, ready := j.Ready(); !ready {
 					return Result{}, notInstalled(j), false
 				}
@@ -221,14 +233,25 @@ func Export(ctx context.Context, doc Document, ext string, builtin func() ([]byt
 	return res, err
 }
 
-// Available are the export formats that can be written here now, beyond
-// the app's own: a native tool that is installed, or an adapted flow that is
-// on. Sorted by name, for an export menu.
-func Available() []string {
+// Available are the export formats that can be written here now from a
+// document in one of forms (text/markdown, text/html, application/json),
+// beyond the app's own: a native flow that can run, or an adapted flow
+// that is on. Sorted by name, for an export menu.
+func Available(forms ...string) []string {
+	takes := func(j Job) bool {
+		for _, t := range j.Takes {
+			if contains(forms, t) {
+				return true
+			}
+		}
+		return false
+	}
 	seen := map[string]bool{}
 	for _, j := range jobs {
-		if _, ok := j.Ready(); ok && j.IsExport() && !j.Builtin {
-			seen[j.Gives] = true
+		if j.IsExport() && !j.Builtin && takes(j) {
+			if _, ok := j.Ready(); ok {
+				seen[j.Gives] = true
+			}
 		}
 	}
 	builtinExt := func(ext string) bool {
@@ -239,14 +262,11 @@ func Available() []string {
 		}
 		return false
 	}
-	for _, a := range live(false, func(a Adapted, j Job) (bool, bool) { return j.IsExport(), false }) {
-		if !builtinExt(a.J.Gives) {
-			seen[a.J.Gives] = true
-		}
-	}
-	for _, a := range live(true, func(a Adapted, j Job) (bool, bool) { return j.IsExport(), false }) {
-		if !builtinExt(a.J.Gives) {
-			seen[a.J.Gives] = true
+	for _, prefer := range []bool{false, true} {
+		for _, a := range live(prefer, func(a Adapted, j Job) (bool, bool) { return j.IsExport(), false }) {
+			if !builtinExt(a.J.Gives) && takes(a.J) {
+				seen[a.J.Gives] = true
+			}
 		}
 	}
 	out := make([]string, 0, len(seen))
@@ -283,4 +303,32 @@ func Live(name string) (Adapted, Job, bool) {
 	}
 	j, err := a.Contract()
 	return a, j, err == nil
+}
+
+// Exports are the export formats that can be written here, whoever asks:
+// gohort's export jobs that run here (not an app's own, and ready or filled
+// by a live adapted flow), then the formats an admin added that are on, one
+// per format, by name.
+func Exports() []Job {
+	var out []Job
+	seen := map[string]bool{}
+	for _, j := range jobs {
+		if !j.IsExport() || j.AppRendered() || seen[j.Gives] {
+			continue
+		}
+		if _, ready := j.Ready(); ready || LiveFor(j.ID) {
+			out = append(out, j)
+			seen[j.Gives] = true
+		}
+	}
+	for _, prefer := range []bool{true, false} {
+		for _, a := range live(prefer, func(a Adapted, j Job) (bool, bool) { return a.Job == "" && j.IsExport(), false }) {
+			if !seen[a.J.Gives] {
+				out = append(out, a.J)
+				seen[a.J.Gives] = true
+			}
+		}
+	}
+	sort.Slice(out, func(i, k int) bool { return out[i].Gives < out[k].Gives })
+	return out
 }

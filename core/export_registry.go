@@ -1,17 +1,16 @@
-// Export format registry — the domain-agnostic core of document
-// generation. A format is data + a generator; the registry maps a name
-// ("xlsx", "docx", "pptx", "pdf", or an app/LLM-defined name) to the
-// generator that turns a JSON payload into file bytes.
+// Export format registry: the formats an app or an agent defines at
+// runtime, beyond the export jobs every deployment has (PDF, Word,
+// OpenDocument, Excel, PowerPoint: core/flows, listed and adaptable under
+// Admin > Capabilities > System Hooks). A format here is data + a
+// generator; the registry maps its name to the generator that turns a JSON
+// payload into file bytes.
 //
 // Two generator kinds share one execution path (RunExportFormat):
 //
-//   - Go built-in (GoGen != nil): pure in-process, zero deps. Used by
-//     "pdf", which reuses MarkdownToPDFBytes.
+//   - Go (GoGen != nil): in-process.
 //   - Sandboxed script (Interp + Script): runs under bwrap via
 //     RunSandboxedScript, with PyRequires provisioned host-side by
-//     EnsurePyDeps first. Used by the openpyxl / python-docx /
-//     python-pptx generators, and by any format an app or the LLM
-//     defines at runtime.
+//     EnsurePyDeps first. Every format an agent defines is one.
 //
 // The generator contract for script formats is deliberately tiny so it
 // composes with anything: read the ExportInput JSON on stdin, write the
@@ -153,30 +152,6 @@ func RunExportFormat(ctx context.Context, f *ExportFormat, in ExportInput) ([]by
 	return nil, Error("export: " + f.Name + " generator produced no output marker. stderr: " + tailLines(stderr, 8))
 }
 
-// markdownFromData extracts a markdown string from an ExportInput.Data
-// that is either a bare JSON string or an object with a "markdown" (or
-// "content"/"body") field. Empty when none present.
-func markdownFromData(raw json.RawMessage) string {
-	if len(raw) == 0 {
-		return ""
-	}
-	var s string
-	if err := json.Unmarshal(raw, &s); err == nil {
-		return s
-	}
-	var obj map[string]any
-	if err := json.Unmarshal(raw, &obj); err == nil {
-		for _, k := range []string{"markdown", "content", "body", "text"} {
-			if v, ok := obj[k]; ok {
-				if str, ok := v.(string); ok {
-					return str
-				}
-			}
-		}
-	}
-	return ""
-}
-
 // tailLines returns at most the last n lines of s, for compact error surfacing.
 func tailLines(s string, n int) string {
 	lines := strings.Split(s, "\n")
@@ -185,153 +160,3 @@ func tailLines(s string, n int) string {
 	}
 	return "...\n" + strings.Join(lines[len(lines)-n:], "\n")
 }
-
-func init() {
-	// pdf — Go built-in, zero deps, reuses the markdown→PDF renderer.
-	RegisterExportFormat(&ExportFormat{
-		Name:      "pdf",
-		Ext:       ".pdf",
-		MIME:      "application/pdf",
-		Desc:      "PDF document from markdown (headings, lists, blockquotes, tables of sources).",
-		InputHint: `data: a markdown string, or {"markdown": "..."}. title/date render as a cover header.`,
-		GoGen: func(in ExportInput) ([]byte, error) {
-			return MarkdownToPDFBytes(in.Title, in.Date, markdownFromData(in.Data))
-		},
-	})
-
-	// xlsx — openpyxl.
-	RegisterExportFormat(&ExportFormat{
-		Name:       "xlsx",
-		Ext:        ".xlsx",
-		MIME:       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-		Desc:       "Excel spreadsheet (.xlsx) with one or more sheets of rows.",
-		InputHint:  `data: {"sheets":[{"name":"Sheet1","rows":[["Name","Qty"],["alpha",1]]}]}, or a single sheet as {"sheet_name":"...","rows":[[...]]}. First row is typically the header.`,
-		PyRequires: []string{"openpyxl"},
-		Interp:     "python3",
-		Script:     xlsxGeneratorPy,
-	})
-
-	// docx — python-docx.
-	RegisterExportFormat(&ExportFormat{
-		Name:       "docx",
-		Ext:        ".docx",
-		MIME:       "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-		Desc:       "Word document (.docx) rendered from markdown (headings, bullets, paragraphs).",
-		InputHint:  `data: a markdown string, or {"markdown":"..."}. title renders as the document heading. Supported: #/##/### headings, "- " bullets, paragraphs.`,
-		PyRequires: []string{"python-docx"},
-		Interp:     "python3",
-		Script:     docxGeneratorPy,
-	})
-
-	// pptx — python-pptx.
-	RegisterExportFormat(&ExportFormat{
-		Name:       "pptx",
-		Ext:        ".pptx",
-		MIME:       "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-		Desc:       "PowerPoint deck (.pptx) from a list of slides with titles + bullets.",
-		InputHint:  `data: {"slides":[{"title":"Slide 1","bullets":["point a","point b"]}]}. Optional top-level title adds an opening title slide.`,
-		PyRequires: []string{"python-pptx"},
-		Interp:     "python3",
-		Script:     pptxGeneratorPy,
-	})
-}
-
-// --- built-in python generators (stdin JSON → base64 marker on stdout) ---
-
-const xlsxGeneratorPy = `
-import sys, json, base64, io
-import openpyxl
-MARKER = "@@GOHORT_EXPORT_B64@@"
-payload = json.load(sys.stdin)
-data = payload.get("data") or {}
-if isinstance(data, str):
-    s = data.strip()
-    # Tuple membership, NOT substring: an empty/whitespace string has ""
-    # as its first char, and "" is a substring of every string, so the
-    # old test routed "" into json.loads("") and raised. s[:1] in the
-    # tuple is False for "", so it falls through to a one-cell sheet.
-    data = json.loads(s) if s[:1] in ("{", "[") else {"rows": [[data]]}
-if isinstance(data, list):
-    data = {"rows": data}
-sheets = data.get("sheets")
-if not sheets:
-    sheets = [{"name": data.get("sheet_name", "Sheet1"), "rows": data.get("rows", [])}]
-wb = openpyxl.Workbook()
-default = wb.active
-for i, sh in enumerate(sheets):
-    name = str(sh.get("name", "Sheet%d" % (i + 1)))[:31]
-    ws = default if i == 0 else wb.create_sheet()
-    ws.title = name
-    for row in sh.get("rows", []):
-        ws.append(row if isinstance(row, list) else [row])
-buf = io.BytesIO()
-wb.save(buf)
-print(MARKER + base64.b64encode(buf.getvalue()).decode())
-`
-
-const docxGeneratorPy = `
-import sys, json, base64, io
-from docx import Document
-MARKER = "@@GOHORT_EXPORT_B64@@"
-payload = json.load(sys.stdin)
-title = payload.get("title", "")
-data = payload.get("data")
-md = data if isinstance(data, str) else (data or {}).get("markdown", "") if isinstance(data, dict) else ""
-doc = Document()
-if title:
-    doc.add_heading(title, level=0)
-for raw in md.split("\n"):
-    s = raw.strip()
-    if not s:
-        continue
-    if s.startswith("### "):
-        doc.add_heading(s[4:], level=3)
-    elif s.startswith("## "):
-        doc.add_heading(s[3:], level=2)
-    elif s.startswith("# "):
-        doc.add_heading(s[2:], level=1)
-    elif s[:2] in ("- ", "* "):
-        doc.add_paragraph(s[2:], style="List Bullet")
-    else:
-        doc.add_paragraph(s)
-buf = io.BytesIO()
-doc.save(buf)
-print(MARKER + base64.b64encode(buf.getvalue()).decode())
-`
-
-const pptxGeneratorPy = `
-import sys, json, base64, io
-from pptx import Presentation
-MARKER = "@@GOHORT_EXPORT_B64@@"
-payload = json.load(sys.stdin)
-data = payload.get("data") or {}
-if isinstance(data, str):
-    s = data.strip()
-    # Only parse a string that looks like JSON; treat any other string as
-    # prose -> one slide whose bullets are its non-empty lines, instead of
-    # letting json.loads raise an opaque "generator failed".
-    if s[:1] in ("{", "["):
-        data = json.loads(s)
-    else:
-        data = {"slides": [{"title": payload.get("title", ""),
-                            "bullets": [ln.strip() for ln in data.split("\n") if ln.strip()]}]}
-if isinstance(data, list):
-    data = {"slides": data}
-slides = data.get("slides", [])
-prs = Presentation()
-deck_title = payload.get("title", "")
-if deck_title:
-    s = prs.slides.add_slide(prs.slide_layouts[0])
-    s.shapes.title.text = deck_title
-for sl in slides:
-    slide = prs.slides.add_slide(prs.slide_layouts[1])
-    slide.shapes.title.text = str(sl.get("title", ""))
-    tf = slide.placeholders[1].text_frame
-    bullets = sl.get("bullets", [])
-    for i, b in enumerate(bullets):
-        p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
-        p.text = str(b)
-buf = io.BytesIO()
-prs.save(buf)
-print(MARKER + base64.b64encode(buf.getvalue()).decode())
-`

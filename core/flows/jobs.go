@@ -3,6 +3,7 @@ package flows
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"image/png"
 	"net/http"
@@ -64,13 +65,24 @@ type Job struct {
 	// whose programs are all installed is used.
 	Native  []Flow
 	timeout time.Duration
+	// Hint says, for an export, what its document has to hold: the shape
+	// of the data a structured format (a spreadsheet, a deck) is built from.
+	Hint string
 }
 
+// AppRendered reports whether j is an export only the app that asks for it
+// can write (Scribe's HTML and Markdown): nothing runs for it here.
+func (j Job) AppRendered() bool { return j.Builtin && j.run == nil }
+
 // Flow is a way to do a job: its steps, in order, each a command line, and
-// where its programs come from.
+// where its programs come from. A native flow may also bring Files (a
+// generator script, written into the run's folder before its steps run) and
+// Py, the Python packages its script imports, provisioned first.
 type Flow struct {
 	Steps   []string
 	Install string
+	Files   map[string]string
+	Py      []string
 }
 
 // Param is a value a job is called with. Default is what a test of the
@@ -151,19 +163,69 @@ var jobs = []Job{
 			{Steps: []string{"catdoc {in}"}, Install: "catdoc"},
 		},
 	},
-	{ID: "export.pdf", Group: GroupWriting, Title: "PDF", UsedFor: "exporting a guide", Takes: []string{"text/html"}, Gives: "pdf", Builtin: true},
+	{
+		ID: "export.pdf", Group: GroupWriting, Title: "PDF", UsedFor: "exporting a guide, and documents an agent makes",
+		Takes: []string{"text/markdown"}, Gives: "pdf", Builtin: true, run: pdfNative,
+		Hint: "a Markdown document; its title and date make a cover header",
+	},
 	{ID: "export.html", Group: GroupWriting, Title: "HTML", UsedFor: "exporting and previewing a guide", Takes: []string{"text/html"}, Gives: "html", Builtin: true},
 	{ID: "export.md", Group: GroupWriting, Title: "Markdown", UsedFor: "exporting a guide", Takes: []string{"text/markdown"}, Gives: "md", Builtin: true},
 	{
-		ID: "export.docx", Group: GroupWriting, Title: "Word (.docx)", UsedFor: "exporting a guide as Word",
+		ID: "export.docx", Group: GroupWriting, Title: "Word (.docx)", UsedFor: "exporting a guide as Word, and Word files an agent makes",
 		Takes: []string{"text/markdown"}, Gives: "docx",
-		Native: []Flow{{Steps: []string{"pandoc -f markdown {in} -o {out}"}, Install: "pandoc"}},
+		Hint: "a Markdown document (headings, lists, tables, pictures)",
+		Native: []Flow{
+			{Steps: []string{"pandoc -f markdown {in} -o {out}"}, Install: "pandoc"},
+			// Where pandoc is not installed: headings, bullets and paragraphs.
+			{Steps: []string{"python3 gen.py {in} {out}"}, Files: map[string]string{"gen.py": docxGeneratorPy},
+				Py: []string{"python-docx"}, Install: "python3 (python-docx is provisioned for it)"},
+		},
 	},
 	{
 		ID: "export.odt", Group: GroupWriting, Title: "OpenDocument (.odt)", UsedFor: "exporting a guide as OpenDocument",
 		Takes: []string{"text/markdown"}, Gives: "odt",
+		Hint:   "a Markdown document",
 		Native: []Flow{{Steps: []string{"pandoc -f markdown {in} -o {out}"}, Install: "pandoc"}},
 	},
+	{
+		ID: "export.xlsx", Group: GroupWriting, Title: "Excel (.xlsx)", UsedFor: "spreadsheets an agent makes",
+		Takes: []string{"application/json"}, Gives: "xlsx",
+		Hint: `data: {"sheets":[{"name":"Sheet1","rows":[["Name","Qty"],["alpha",1]]}]}, or one sheet as {"sheet_name":"...","rows":[[...]]}; the first row is usually the header`,
+		Native: []Flow{{Steps: []string{"python3 gen.py {in} {out}"}, Files: map[string]string{"gen.py": xlsxGeneratorPy},
+			Py: []string{"openpyxl"}, Install: "python3 (openpyxl is provisioned for it)"}},
+	},
+	{
+		ID: "export.pptx", Group: GroupWriting, Title: "PowerPoint (.pptx)", UsedFor: "slide decks an agent makes",
+		Takes: []string{"application/json"}, Gives: "pptx",
+		Hint: `data: {"slides":[{"title":"Slide 1","bullets":["point a","point b"]}]}; a title adds an opening title slide`,
+		Native: []Flow{{Steps: []string{"python3 gen.py {in} {out}"}, Files: map[string]string{"gen.py": pptxGeneratorPy},
+			Py: []string{"python-pptx"}, Install: "python3 (python-pptx is provisioned for it)"}},
+	},
+}
+
+// ExportPyPackages are the Python packages the export jobs provision: the
+// ones any format an agent defines may use too (tools/export).
+func ExportPyPackages() []string {
+	var out []string
+	for _, j := range jobs {
+		for _, f := range j.Native {
+			for _, p := range f.Py {
+				if !contains(out, p) {
+					out = append(out, p)
+				}
+			}
+		}
+	}
+	return out
+}
+
+// pdfNative is Go's own Markdown renderer.
+func pdfNative(_ context.Context, _ *Box, in Input) ([]byte, [][]byte, error) {
+	if in.Doc == nil || len(in.Doc.Markdown) == 0 {
+		return nil, nil, fmt.Errorf("this document has no Markdown to write as PDF")
+	}
+	out, err := media.MarkdownToPDFBytes(in.Doc.Title, in.Doc.Date, string(in.Doc.Markdown))
+	return out, nil, err
 }
 
 // Jobs are gohort's jobs, in the page's order.
@@ -345,11 +407,14 @@ func Installed(program string) bool {
 }
 
 // Document is what gohort hands an export: the document as Markdown and as
-// HTML, its pictures inside both.
+// HTML, its pictures inside both, or for a structured format (a
+// spreadsheet, a deck) its data, as JSON.
 type Document struct {
 	Title    string
+	Date     string
 	Markdown []byte
 	HTML     []byte
+	Data     json.RawMessage
 }
 
 // SampleDocument is what an export is tested on: a heading, emphasis, a
@@ -357,7 +422,8 @@ type Document struct {
 func SampleDocument() Document {
 	md := "# Sample document\n\nA paragraph with **bold** and *italic* text.\n\n- First point\n- Second point\n\n| Name | Value |\n|---|---|\n| one | 1 |\n| two | 2 |\n\n```\nconfig set mode=fast\n```\n"
 	html := "<!doctype html><html><head><meta charset=\"utf-8\"><title>Sample document</title></head><body><h1>Sample document</h1><p>A paragraph with <b>bold</b> and <i>italic</i> text.</p><ul><li>First point</li><li>Second point</li></ul><table><tr><th>Name</th><th>Value</th></tr><tr><td>one</td><td>1</td></tr><tr><td>two</td><td>2</td></tr></table><pre>config set mode=fast</pre></body></html>"
-	return Document{Title: "Sample document", Markdown: []byte(md), HTML: []byte(html)}
+	data := `{"sheets":[{"name":"Sample","rows":[["Name","Value"],["one",1],["two",2]]}],"slides":[{"title":"First point","bullets":["A paragraph with bold text","A list"]},{"title":"Second point","bullets":["A table","A code block"]}]}`
+	return Document{Title: "Sample document", Markdown: []byte(md), HTML: []byte(html), Data: json.RawMessage(data)}
 }
 
 // DetectOutput names what a result looks like, for a test's message.

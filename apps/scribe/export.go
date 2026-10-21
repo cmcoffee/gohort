@@ -25,7 +25,9 @@ func exportMenu() []ui.WorkbenchAction {
 		{Label: "PDF", Kind: "download", URL: "export?id={id}&format=pdf"},
 		{Label: "Markdown", Kind: "download", URL: "export?id={id}&format=md"},
 	}
-	for _, ext := range flows.Available() {
+	// A guide is Markdown and HTML: formats built from structured data (a
+	// spreadsheet, a deck) have nothing to work from here.
+	for _, ext := range flows.Available("text/markdown", "text/html") {
 		menu = append(menu, ui.WorkbenchAction{Label: flows.OutLabel(ext), Kind: "download", URL: "export?id={id}&format=" + ext})
 	}
 	// Every section, the subtitle, attached knowledge and sources: the one

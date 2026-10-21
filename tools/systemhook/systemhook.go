@@ -2,11 +2,13 @@
 // machine's System Hooks (core/flows) on a file in its workspace, and gets
 // what it gives back as files there.
 //
-// Which hooks an agent may run is an admin's choice, row by row, on the
-// System Hooks page ("Agents" on a row): nothing is offered until one is
-// turned on, and the tool is not in any catalog until then. Once it is, it
-// is an ordinary tool: listed in agents' tool pickers, curated like the
-// rest, and its schema names only the hooks that are on and can run here.
+// It offers the formats an admin ADDED (System Hooks > Custom), one by one
+// as they turn Agents on for it: nothing is offered until one is, and the
+// tool is in no catalog until then. Once it is, it is an ordinary tool:
+// listed in agents' tool pickers, curated like the rest, and its schema
+// names only the hooks that are on and can run here. gohort's own jobs are
+// not offered here: agents already reach them through gohort's own tools
+// (video, export, attachments), which run as those jobs.
 //
 // A hook reads one file and writes new ones in a sandboxed folder of its own
 // with no network, so running one changes nothing outside the agent's
@@ -56,42 +58,25 @@ func SetOffered(id string, on bool) {
 	RootDB.Unset(offeredTable, id)
 }
 
-// Offerable reports whether a job can be offered to agents at all: every
-// job but an export the app renders itself, which has nothing to run here.
-func Offerable(j flows.Job) bool { return !(j.Builtin && j.IsExport()) }
-
-// hook is one hook an agent may run now.
+// hook is one added format an agent may run now: its flow and contract.
 type hook struct {
-	ID     string
-	Job    flows.Job
-	custom bool
-	a      flows.Adapted
+	ID  string
+	Job flows.Job
+	a   flows.Adapted
 }
 
-// available are the hooks agents may run now: offered, and able to run here
-// (the native tool installed, a live adapted flow, or a custom one that is
-// on). online is whether the session may use the network: a hook that needs
-// it is left out of one that may not.
+// available are the hooks agents may run now: added formats that are on
+// and offered. online is whether the session may use the network: a hook
+// that needs it is left out of one that may not.
 func available(online bool) []hook {
 	var out []hook
-	for _, j := range flows.Jobs() {
-		if strings.HasPrefix(j.ID, "test.") || !Offerable(j) || !Offered(j.ID) {
-			continue
-		}
-		if j.Network && !online {
-			continue
-		}
-		if _, ready := j.Ready(); ready || flows.LiveFor(j.ID) {
-			out = append(out, hook{ID: j.ID, Job: j})
-		}
-	}
 	if RootDB != nil {
 		for _, c := range ListConnectors(RootDB) {
 			if c.Kind != flows.ConnectorKind || !c.Approved || !Offered(c.Name) {
 				continue
 			}
-			if a, j, ok := flows.Live(c.Name); ok && a.Job == "" {
-				out = append(out, hook{ID: c.Name, Job: j, custom: true, a: a})
+			if a, j, ok := flows.Live(c.Name); ok && a.Job == "" && (online || !j.Network) {
+				out = append(out, hook{ID: c.Name, Job: j, a: a})
 			}
 		}
 	}
@@ -267,15 +252,9 @@ func (t *HookTool) RunWithSession(args map[string]any, sess *ToolSession) (strin
 		} else {
 			doc.Markdown = data
 		}
-		if h.custom {
-			res, err = flows.RunAdapted(ctx, h.ID, h.a, flows.Input{Doc: &doc})
-		} else {
-			res, err = flows.Export(ctx, doc, h.Job.Gives, nil)
-		}
-	case h.custom:
-		res, err = flows.RunAdapted(ctx, h.ID, h.a, in)
+		res, err = flows.RunAdapted(ctx, h.ID, h.a, flows.Input{Doc: &doc})
 	default:
-		res, err = flows.Do(ctx, h.ID, in)
+		res, err = flows.RunAdapted(ctx, h.ID, h.a, in)
 	}
 	if err != nil {
 		return "", fmt.Errorf("%s did not work on %s: %v", h.Job.Title, firstNonEmpty(StringArg(args, "path"), in.Params["url"]), err)

@@ -99,8 +99,10 @@ type depRow struct {
 	CanOff   bool   `json:"can_off"`
 	Testable bool   `json:"testable"`
 	Output   bool   `json:"output"`
-	// Offerable rows have an Agents switch: Agents is whether agents may run
-	// it with the system_hook tool (tools/systemhook).
+	// Offerable rows (the formats an admin added) have an Agents switch:
+	// Agents is whether agents may run it with the system_hook tool
+	// (tools/systemhook). gohort's own jobs have none: agents reach them
+	// through gohort's own tools (video, export, attachments).
 	Offerable bool `json:"offerable"`
 	Agents    bool `json:"agents"`
 	// Link rows take a link rather than a file: Test asks for one.
@@ -183,8 +185,7 @@ func depRows(custom bool) []depRow {
 		}
 		f, ready := j.Ready()
 		row := depRow{ID: j.ID, Group: j.Group, Enables: j.Title, Detail: "Used for " + j.UsedFor + ".", Job: true,
-			Testable: !(j.Builtin && j.IsExport()), Output: j.IsExport(),
-			Offerable: systemhook.Offerable(j), Agents: systemhook.Offered(j.ID), Link: takesLink(j)}
+			Testable: !j.AppRendered(), Output: j.IsExport(), Link: takesLink(j)}
 		for _, p := range j.Programs() {
 			covered[p] = true
 		}
@@ -577,14 +578,17 @@ func (a *AdminApp) registerSystemDepsRoutes(sub *http.ServeMux) {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
-		j, isJob := flows.JobByID(id)
-		c, isConn := GetConnector(RootDB, id)
-		switch {
-		case isJob && !systemhook.Offerable(j):
-			http.Error(w, j.Title+" is written by the app itself: there is nothing for an agent to run", http.StatusBadRequest)
+		if _, isJob := flows.JobByID(id); isJob {
+			http.Error(w, "gohort's own jobs reach agents through gohort's own tools (video, export, attachments): there is no switch for them", http.StatusBadRequest)
 			return
-		case !isJob && !(isConn && c.Kind == flows.ConnectorKind):
+		}
+		c, isConn := GetConnector(RootDB, id)
+		if !isConn || c.Kind != flows.ConnectorKind {
 			http.NotFound(w, r)
+			return
+		}
+		if a, _ := (adaptedFlowHandler{}).adapted(c); a.Job != "" {
+			http.Error(w, "this flow fills one of gohort's own jobs, which agents reach through gohort's own tools", http.StatusBadRequest)
 			return
 		}
 		systemhook.SetOffered(id, body.Agents)
@@ -822,7 +826,7 @@ func systemDepsSection() ui.Section {
 	return ui.Section{
 		Title:    "System Hooks",
 		Subtitle: "The jobs gohort hands to tools on this machine (reading what arrives, writing documents, media), how each is done here, and where to plug in another tool when one is missing.",
-		Detail: "Each job gohort needs done, reading what arrives or writing documents, has a native flow: Go itself, the app, or the best tool for it when installed. Where that tool is missing, or you want another, adapt the job: give a flow of commands you have, test it, and turn it on. Under Custom, add a format gohort does not support at all, or ask Builder to find a tool and set it up. Turn on Agents on a row to let agents run it themselves, with the system_hook tool, on files in their workspace. The tools listed without Adapt are not jobs yet: install them.\n\n" +
+		Detail: "Each job gohort needs done, reading what arrives or writing documents, has a native flow: Go itself, the app, or the best tool for it when installed. Where that tool is missing, or you want another, adapt the job: give a flow of commands you have, test it, and turn it on. Under Custom, add a format gohort does not support at all, or ask Builder to find a tool and set it up. Agents already reach every job here through gohort's own tools (video, export, attachments); turn on Agents on a custom row to let them run that one too, with the system_hook tool, on files in their workspace. The tools listed without Adapt are not jobs yet: install them.\n\n" +
 			"A flow's commands run as written, with no shell reading them. They run in the sandbox, which sees the system folders read-only and nothing else on this machine except the folders a flow says it reads, with no network unless the job needs it, and they are stopped at the time limit. What a flow gives is checked before gohort uses it: an image has to be one the model can read, text has to be text, a Word file has to be a Word file, or it is thrown away. On a machine whose sandbox cannot confine commands, none of them run.",
 		Body: ui.Stack{Children: []ui.Component{
 			ui.Table{

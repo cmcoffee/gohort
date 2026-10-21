@@ -2,17 +2,17 @@
 // downloadable document (pdf / xlsx / docx / pptx, or a runtime-defined
 // format) and delivers it to the user as an attachment.
 //
-// The heavy lifting lives in core's export registry (core.ExportFormat /
-// core.RunExportFormat) and the managed-python-deps primitive
-// (core.EnsurePyDeps). This package is just the tool surface: it maps
-// LLM args onto an ExportInput, runs the resolved format, and appends
-// the resulting bytes to the session's file-delivery channel.
+// The formats every deployment has (PDF, Word, OpenDocument, Excel,
+// PowerPoint) are export jobs in System Hooks (core/flows): the same ones
+// Scribe's Export menu and system_hook use, so an admin who adapts one
+// (Word by pandoc, a PDF by another renderer) changes it for all of them,
+// and a format an admin adds there is offered here too. This package is
+// the tool surface: it maps the LLM's args onto a document, runs the job,
+// and appends the bytes to the session's file-delivery channel.
 //
-// Extensibility has two tiers, both routing through the same executor:
-//   - Built-in / app formats: registered in-code via
-//     core.RegisterExportFormat (see core/export_registry.go).
-//   - Runtime per-user formats: authored by the LLM via action="define",
-//     stored per-user in the DB, and resolved by action="create".
+// A format an agent defines for its user (action="define") is the other
+// tier: stored per user, run by core's registry (core.RunExportFormat) in
+// the sandbox, and listed beside the jobs.
 
 package export
 
@@ -25,6 +25,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/flows"
 )
 
 // maxExportBytes caps a delivered document, matching the attach cap.
@@ -69,7 +70,7 @@ func init() {
 	gt.AddAction("define", &GroupedToolAction{
 		Description: "Register a NEW reusable export format backed by a generator script. The script reads the ExportInput JSON ({title,date,data}) on stdin and writes the file's bytes base64-encoded to stdout on a line beginning with the marker \"" + ExportB64Marker + "\". Any pip packages it imports must be listed in py_requires: they're provisioned host-side at define time so create is fast. Only packages the built-in formats already use (openpyxl, python-docx, python-pptx) are available unless an admin defines the format. Use when a user wants a format the built-ins don't cover (CSV, an invoice .xlsx with your layout, a branded .docx, etc.).",
 		Params: map[string]ToolParam{
-			"name":        {Type: "string", Description: "Format name (lowercase identifier: letters, digits, _, -). Cannot shadow a built-in (pdf/xlsx/docx/pptx)."},
+			"name":        {Type: "string", Description: "Format name (lowercase identifier: letters, digits, _, -). Cannot be one of the deployment's formats (pdf, docx, odt, xlsx, pptx, and any listed by action=formats)."},
 			"ext":         {Type: "string", Description: "File extension including the dot, e.g. \".csv\". Defaults to \".\"+name."},
 			"mime":        {Type: "string", Description: "MIME type for the download, e.g. \"text/csv\". Optional but recommended."},
 			"desc":        {Type: "string", Description: "One-line description shown in action=formats."},
@@ -104,10 +105,13 @@ func init() {
 
 func handleFormats(_ map[string]any, sess *ToolSession) (string, error) {
 	var b strings.Builder
-	b.WriteString("Built-in formats:\n")
-	builtins := ListExportFormats()
-	sort.Slice(builtins, func(i, j int) bool { return builtins[i].Name < builtins[j].Name })
-	for _, f := range builtins {
+	b.WriteString("Formats:\n")
+	for _, j := range flows.Exports() {
+		fmt.Fprintf(&b, "- %s (.%s), %s\n    data: %s\n", j.Gives, j.Gives, j.Title, dataHint(j))
+	}
+	apps := ListExportFormats()
+	sort.Slice(apps, func(i, k int) bool { return apps[i].Name < apps[k].Name })
+	for _, f := range apps {
 		fmt.Fprintf(&b, "- %s (%s), %s\n    data: %s\n", f.Name, f.Ext, f.Desc, f.InputHint)
 	}
 	if user := listUserFormats(sess); len(user) > 0 {
@@ -123,54 +127,91 @@ func handleFormats(_ map[string]any, sess *ToolSession) (string, error) {
 	return b.String(), nil
 }
 
+// dataHint is what a job's data has to be, as the tool tells the model.
+func dataHint(j flows.Job) string {
+	if contains(j.Takes, "application/json") {
+		return firstNonEmpty(j.Hint, "a JSON object")
+	}
+	return `a markdown string, or {"markdown": "..."}` + map[bool]string{true: "; " + j.Hint, false: ""}[j.Hint != ""]
+}
+
+// exportJob is the export job for a format name, when one can run here.
+func exportJob(name string) (flows.Job, bool) {
+	for _, j := range flows.Exports() {
+		if j.Gives == name {
+			return j, true
+		}
+	}
+	return flows.Job{}, false
+}
+
 func handleCreate(args map[string]any, sess *ToolSession) (string, error) {
 	if sess == nil {
 		return "", Error("export requires a session")
 	}
-	name := strings.TrimSpace(StringArg(args, "format"))
+	name := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(StringArg(args, "format")), "."))
 	if name == "" {
 		return "", Error("format is required (call action=formats to list options)")
-	}
-	f, err := resolveFormat(sess, name)
-	if err != nil {
-		return "", err
 	}
 	if _, ok := args["data"]; !ok {
 		return "", Error("data is required: see the expected shape via action=formats")
 	}
-	// A stored format is re-checked on every run: one saved before the
-	// package gate existed would otherwise provision whatever it named.
-	if f.UserDefined {
+	title := strings.TrimSpace(StringArg(args, "title"))
+	date := strings.TrimSpace(StringArg(args, "date"))
+	raw := rawArg(args, "data")
+
+	var data []byte
+	var ext, mime string
+	if j, ok := exportJob(name); ok {
+		// One of the deployment's formats: its System Hooks job.
+		doc := flows.Document{Title: title, Date: date}
+		if contains(j.Takes, "application/json") {
+			doc.Data = raw
+		} else {
+			md := markdownFromData(raw)
+			if strings.TrimSpace(md) == "" {
+				return "", Error(name + " is written from a markdown document: give data as a markdown string, or {\"markdown\": \"...\"}")
+			}
+			// A title heads the document where the format has no cover of
+			// its own (PDF's renderer makes one from the title).
+			if title != "" && name != "pdf" && !strings.HasPrefix(strings.TrimSpace(md), "#") {
+				md = "# " + title + "\n\n" + md
+			}
+			doc.Markdown = []byte(md)
+		}
+		res, err := flows.Export(sess.Context(), doc, name, nil)
+		if err != nil {
+			return "", Error("export: " + err.Error())
+		}
+		data, ext, mime = res.Out, "."+name, flows.OutMIME(name)
+	} else {
+		f, err := resolveFormat(sess, name)
+		if err != nil {
+			return "", err
+		}
+		// A stored format is re-checked on every run: one saved before the
+		// package gate existed would otherwise provision whatever it named.
 		if err := checkPyRequires(sess, f.PyRequires); err != nil {
 			return "", err
 		}
-	}
-
-	in := ExportInput{
-		Title: strings.TrimSpace(StringArg(args, "title")),
-		Date:  strings.TrimSpace(StringArg(args, "date")),
-		Data:  rawArg(args, "data"),
-	}
-
-	// Use the turn's cancelable context (nil-safe: falls back to
-	// Background) so cancelling the request also aborts the sandbox run
-	// and any cold pip provisioning, instead of leaving them running.
-	data, err := RunExportFormat(sess.Context(), f, in)
-	if err != nil {
-		return "", err
+		// Use the turn's cancelable context (nil-safe: falls back to
+		// Background) so cancelling the request also aborts the sandbox run
+		// and any cold pip provisioning, instead of leaving them running.
+		if data, err = RunExportFormat(sess.Context(), f, ExportInput{Title: title, Date: date, Data: raw}); err != nil {
+			return "", err
+		}
+		ext, mime = f.Ext, f.MIME
 	}
 	if len(data) == 0 {
-		return "", Error("export: " + f.Name + " generator produced no bytes")
+		return "", Error("export: " + name + " produced no bytes")
 	}
 	if len(data) > maxExportBytes {
 		return "", Error(fmt.Sprintf("export: generated file too large (%d bytes, cap %d)", len(data), maxExportBytes))
 	}
-
-	fname := deriveFilename(strings.TrimSpace(StringArg(args, "filename")), in.Title, f)
-	mime := f.MIME
 	if mime == "" {
 		mime = "application/octet-stream"
 	}
+	fname := deriveFilename(strings.TrimSpace(StringArg(args, "filename")), title, name, ext)
 	sess.AppendFile(FileAttachment{
 		Name:     fname,
 		MimeType: mime,
@@ -189,8 +230,8 @@ func handleDefine(args map[string]any, sess *ToolSession) (string, error) {
 	if !validFormatName.MatchString(name) {
 		return "", Error("invalid format name: use lowercase letters, digits, _ or - (max 40 chars)")
 	}
-	if _, ok := LookupExportFormat(name); ok {
-		return "", Error("cannot define " + name + ", it's a reserved built-in format")
+	if _, ok := LookupExportFormat(name); ok || isDeploymentFormat(name) {
+		return "", Error("cannot define " + name + ": it is one of this deployment's formats, so it already exists")
 	}
 	script := StringArg(args, "script")
 	if strings.TrimSpace(script) == "" {
@@ -247,8 +288,8 @@ func handleUndefine(args map[string]any, sess *ToolSession) (string, error) {
 		return "", Error("undefine requires an authenticated session with persistence")
 	}
 	name := strings.ToLower(strings.TrimSpace(StringArg(args, "name")))
-	if _, ok := LookupExportFormat(name); ok {
-		return "", Error(name + " is a built-in format and cannot be removed")
+	if isDeploymentFormat(name) {
+		return "", Error(name + " is one of this deployment's formats and cannot be removed here")
 	}
 	key := userFormatKey(sess.Username, name)
 	var existing ExportFormat
@@ -275,10 +316,8 @@ func checkPyRequires(sess *ToolSession, specs []string) error {
 		return nil
 	}
 	builtin := map[string]bool{}
-	for _, f := range ListExportFormats() {
-		for _, s := range f.PyRequires {
-			builtin[PySpecName(s)] = true
-		}
+	for _, s := range flows.ExportPyPackages() {
+		builtin[PySpecName(s)] = true
 	}
 	admin := sess != nil && UserIsAdmin(sess.Username)
 	for _, s := range specs {
@@ -298,6 +337,7 @@ func checkPyRequires(sess *ToolSession, specs []string) error {
 }
 
 func resolveFormat(sess *ToolSession, name string) (*ExportFormat, error) {
+	// A format an app registered in code.
 	if f, ok := LookupExportFormat(name); ok {
 		return f, nil
 	}
@@ -341,18 +381,70 @@ func userFormatKey(owner, name string) string { return owner + ":" + name }
 
 // deriveFilename picks the delivered filename: an explicit filename
 // (extension appended if missing), else the title, else the format name.
-func deriveFilename(explicit, title string, f *ExportFormat) string {
+func deriveFilename(explicit, title, name, ext string) string {
 	if explicit != "" {
-		if !strings.HasSuffix(strings.ToLower(explicit), strings.ToLower(f.Ext)) {
-			explicit += f.Ext
+		if !strings.HasSuffix(strings.ToLower(explicit), strings.ToLower(ext)) {
+			explicit += ext
 		}
 		return explicit
 	}
 	base := sanitizeBase(title)
 	if base == "" {
-		base = f.Name
+		base = name
 	}
-	return base + f.Ext
+	return base + ext
+}
+
+// isDeploymentFormat reports whether name is one of the deployment's
+// export formats: a System Hooks export job (whether or not it can run
+// here), or a format an admin added there.
+func isDeploymentFormat(name string) bool {
+	for _, j := range flows.Jobs() {
+		if j.IsExport() && j.Gives == name {
+			return true
+		}
+	}
+	_, ok := exportJob(name)
+	return ok
+}
+
+// markdownFromData is the markdown in a data argument: a bare string, or an
+// object's "markdown" (or "content", "body", "text") field.
+func markdownFromData(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return s
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(raw, &obj); err == nil {
+		for _, k := range []string{"markdown", "content", "body", "text"} {
+			if str, ok := obj[k].(string); ok {
+				return str
+			}
+		}
+	}
+	return ""
+}
+
+func contains(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
+func firstNonEmpty(ss ...string) string {
+	for _, s := range ss {
+		if s != "" {
+			return s
+		}
+	}
+	return ""
 }
 
 var nonFilenameChars = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)

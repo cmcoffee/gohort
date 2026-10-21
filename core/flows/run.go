@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cmcoffee/gohort/core/deps"
 	"github.com/cmcoffee/gohort/core/netgate"
 	"github.com/cmcoffee/gohort/core/sandbox"
 )
@@ -86,6 +87,10 @@ type flowRun struct {
 	params  map[string]string
 	timeout time.Duration
 	reads   []string
+	// files and py are a native flow's script files and the Python
+	// packages they import (Flow.Files, Flow.Py).
+	files map[string]string
+	py    []string
 }
 
 // runFlow runs a flow's steps in one folder, each step's result the next
@@ -118,8 +123,18 @@ func runFlow(ctx context.Context, r flowRun) (Result, error) {
 		return Result{}, err
 	}
 	defer os.RemoveAll(dir)
+	if len(r.py) > 0 {
+		if err := deps.EnsurePyDeps(ctx, r.py...); err != nil {
+			return Result{}, fmt.Errorf("the Python packages it needs (%s) could not be provisioned: %v", strings.Join(r.py, ", "), err)
+		}
+	}
+	for name, body := range r.files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			return Result{}, err
+		}
+	}
 	inName := "in" + extFor(r.from)
-	if r.job.TakesFile() {
+	if r.job.TakesFile() || r.job.IsExport() {
 		if err := os.WriteFile(filepath.Join(dir, inName), r.in, 0o600); err != nil {
 			return Result{}, err
 		}

@@ -264,6 +264,8 @@ func extFor(mime string) string {
 		return ".html"
 	case "text/plain":
 		return ".txt"
+	case "application/json":
+		return ".json"
 	}
 	return ""
 }
@@ -417,6 +419,22 @@ var outFormats = []outFormat{
 	{"epub", "EPUB", "application/epub+zip", func(out []byte) error { return prefixed(out, "PK\x03\x04", "an EPUB") }},
 	{"rtf", "Rich Text (.rtf)", "application/rtf", func(out []byte) error { return prefixed(out, `{\rtf`, "an RTF file") }},
 	{"txt", "Plain text", "text/plain; charset=utf-8", textOnly},
+	{"xlsx", "Excel (.xlsx)", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", func(out []byte) error { return zipHolds(out, "xl/workbook.xml", "an Excel workbook") }},
+	{"pptx", "PowerPoint (.pptx)", "application/vnd.openxmlformats-officedocument.presentationml.presentation", func(out []byte) error { return zipHolds(out, "ppt/presentation.xml", "a PowerPoint deck") }},
+}
+
+// zipHolds checks out is a zip holding name: how an Office file is told
+// from any other zip.
+func zipHolds(out []byte, name, what string) error {
+	zr, err := zip.NewReader(bytes.NewReader(out), int64(len(out)))
+	if err == nil {
+		for _, f := range zr.File {
+			if f.Name == name {
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("it is not %s", what)
 }
 
 func prefixed(out []byte, prefix, what string) error {

@@ -156,8 +156,16 @@ func TestTheTableListsJobsAndToolsByGroup(t *testing.T) {
 			t.Errorf("pdftotext is installed, so PDF is ready by it: %+v", r)
 		}
 	}
-	if r := byID["export.pdf"]; r.Testable || !r.Output || r.By != "built in" {
-		t.Errorf("PDF export is the app's own, not tested here: %+v", r)
+	if r := byID["export.pdf"]; !r.Testable || !r.Output || r.By != "built in" {
+		t.Errorf("PDF is written here in Go, and tested: %+v", r)
+	}
+	if r := byID["export.html"]; r.Testable {
+		t.Errorf("HTML export is the app's own, not tested here: %+v", r)
+	}
+	for _, id := range []string{"export.xlsx", "export.pptx"} {
+		if r, ok := byID[id]; !ok || r.Group != flows.GroupWriting {
+			t.Errorf("%s should be a row in Writing documents: %+v", id, r)
+		}
 	}
 	// The tools that are not jobs, in their group, with no Adapt.
 	if r, ok := byID["tool:git"]; !ok || r.Job || r.Group != flows.GroupCode {
@@ -580,36 +588,36 @@ func TestSystemHooksIsFirstOnCapabilities(t *testing.T) {
 	}
 }
 
-// Agents on a row lets agents run it with the system_hook tool: the switch
-// is on the rows that have something to run, and the row says its state.
-func TestAgentsCanBeLetRunAHook(t *testing.T) {
+// The Agents switch is on the formats an admin added, and nowhere else:
+// gohort's own jobs reach agents through gohort's own tools.
+func TestTheAgentsSwitchIsOnAddedFormatsOnly(t *testing.T) {
+	needDepsSandbox(t)
 	f := newDepsFixture(t)
+	f.do(t, "POST", "/api/system-deps", ddCustom)
 	_, byID := f.rows(t)
-	if r := byID["media.frames"]; !r.Offerable || r.Agents {
-		t.Fatalf("frame sampling should be offerable and off: %+v", r)
+	for _, id := range []string{"media.frames", "export.pdf", "read.heic"} {
+		if byID[id].Offerable {
+			t.Errorf("%s is gohort's own: no Agents switch", id)
+		}
 	}
-	if r := byID["export.pdf"]; r.Offerable {
-		t.Error("PDF export is the app's own: no Agents switch")
+	if r := f.customRows(t)["strip8"]; !r.Offerable || r.Agents {
+		t.Fatalf("an added format should have the switch, off: %+v", r)
 	}
-	if w := f.do(t, "POST", "/api/system-deps/agents?id=media.frames", `{"agents":true}`); w.Code != 200 || !strings.Contains(w.Body.String(), `"agents":true`) {
+	if w := f.do(t, "POST", "/api/system-deps/agents?id=strip8", `{"agents":true}`); w.Code != 200 || !strings.Contains(w.Body.String(), `"agents":true`) {
 		t.Fatalf("turn on: %d %s", w.Code, w.Body.String())
 	}
-	if !systemhook.Offered("media.frames") || !mapOf(f, t)["media.frames"].Agents {
-		t.Error("frame sampling should be offered to agents now")
+	if !systemhook.Offered("strip8") || !f.customRows(t)["strip8"].Agents {
+		t.Error("the added format should be offered to agents now")
 	}
-	if w := f.do(t, "POST", "/api/system-deps/agents?id=export.pdf", `{"agents":true}`); w.Code != http.StatusBadRequest {
-		t.Errorf("an app-rendered export should be refused, got %d", w.Code)
+	if w := f.do(t, "POST", "/api/system-deps/agents?id=media.frames", `{"agents":true}`); w.Code != http.StatusBadRequest {
+		t.Errorf("one of gohort's own jobs should be refused, got %d", w.Code)
 	}
 	if w := f.do(t, "POST", "/api/system-deps/agents?id=nothing", `{"agents":true}`); w.Code != http.StatusNotFound {
 		t.Errorf("an unknown row should be refused, got %d", w.Code)
 	}
 	tok := AuthCreateSession(f.db, "someone")
-	if w := f.req(t, tok, "POST", "/api/system-deps/agents?id=media.frames", `{"agents":false}`, ""); w.Code != http.StatusForbidden {
+	if w := f.req(t, tok, "POST", "/api/system-deps/agents?id=strip8", `{"agents":false}`, ""); w.Code != http.StatusForbidden {
 		t.Errorf("a non-admin should be refused, got %d", w.Code)
-	}
-	f.do(t, "POST", "/api/system-deps/agents?id=media.frames", `{"agents":false}`)
-	if systemhook.Offered("media.frames") {
-		t.Error("turned off, it should not be offered")
 	}
 }
 

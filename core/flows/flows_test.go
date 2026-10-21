@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cmcoffee/gohort/core/deps"
 	"github.com/cmcoffee/gohort/core/media"
 	"github.com/cmcoffee/gohort/core/sandbox"
 	"github.com/go-pdf/fpdf"
@@ -510,7 +511,7 @@ func TestExportTriesPreferredThenBuiltinThenNativeThenAdapted(t *testing.T) {
 func TestAvailableListsWhatCanBeExportedHere(t *testing.T) {
 	SetAdapted("epub-mine", Adapted{Takes: []string{"text/markdown"}, Gives: "epub", Command: "pandoc -f markdown {in} -o {out}"})
 	defer RemoveAdapted("epub-mine")
-	got := strings.Join(Available(), ",")
+	got := strings.Join(Available("text/markdown", "text/html"), ",")
 	if !strings.Contains(got, "epub") || strings.Contains(got, "pdf") || strings.Contains(got, "html") {
 		t.Errorf("want the adapted epub and none of the app's formats: %s", got)
 	}
@@ -669,5 +670,99 @@ func TestDoUsesTheNativeFlowOrTheAdaptedOne(t *testing.T) {
 	SetAdapted("mine", Adapted{Job: "test.native", Command: "sh -c 'echo mine' {in}", Prefer: true})
 	if res, _ := Do(context.Background(), "test.native", in); res.By != "mine" {
 		t.Errorf("preferred, the adapted flow goes first: %+v", res.By)
+	}
+}
+
+// --- Exports: one list, every format a job ---------------------------------
+
+// pyDeps points the Python package folder at a cache that outlives the
+// test, so the generators' packages are installed once, and skips when pip
+// cannot provision them here (no python3, no network).
+func pyDeps(t *testing.T, pkgs ...string) {
+	t.Helper()
+	if !Installed("python3") {
+		t.Skip("python3 is not installed here")
+	}
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		t.Skip("no cache folder")
+	}
+	root := filepath.Join(cache, "gohort-flows-pydeps", "workspaces")
+	os.MkdirAll(root, 0o700)
+	was := deps.WorkspacesDir
+	deps.WorkspacesDir = func() string { return root }
+	t.Cleanup(func() { deps.WorkspacesDir = was })
+	if err := deps.EnsurePyDeps(context.Background(), pkgs...); err != nil {
+		t.Skipf("could not provision %v here: %v", pkgs, err)
+	}
+}
+
+// The export formats are one list: PDF in Go, the documents by pandoc, the
+// structured ones by their generators; a guide (Markdown, HTML) is offered
+// only the formats it can feed.
+func TestTheExportsAreOneList(t *testing.T) {
+	var names []string
+	for _, j := range Exports() {
+		names = append(names, j.Gives)
+	}
+	got := strings.Join(names, ",")
+	if !strings.Contains(got, "pdf") || strings.Contains(got, "html") || strings.Contains(got, "md") {
+		t.Errorf("PDF is written here; HTML and Markdown are the app's own: %s", got)
+	}
+	if Installed("python3") && (!strings.Contains(got, "xlsx") || !strings.Contains(got, "pptx")) {
+		t.Errorf("with python3, Excel and PowerPoint: %s", got)
+	}
+	doc := strings.Join(Available("text/markdown", "text/html"), ",")
+	if strings.Contains(doc, "xlsx") || strings.Contains(doc, "pptx") {
+		t.Errorf("a document has no data for a spreadsheet or a deck: %s", doc)
+	}
+	if Installed("python3") && !strings.Contains(strings.Join(Available("application/json"), ","), "xlsx") {
+		t.Error("data should be offered Excel")
+	}
+}
+
+// PDF is Go's own renderer, with the title and date for a cover.
+func TestPDFIsWrittenInGo(t *testing.T) {
+	res, err := Export(context.Background(), Document{Title: "Report", Date: "Oct 20", Markdown: []byte("# Findings\n\nAll good.")}, "pdf", nil)
+	if err != nil || !bytes.HasPrefix(res.Out, []byte("%PDF-")) || res.By != "built in" {
+		t.Fatalf("want a PDF in Go: %v %+v", err, res.By)
+	}
+	// An app's own renderer still goes first where it gives one.
+	res, _ = Export(context.Background(), Document{Markdown: []byte("x")}, "pdf", func() ([]byte, error) { return []byte("%PDF-app"), nil })
+	if string(res.Out) != "%PDF-app" {
+		t.Error("the app's renderer should be used where it gives one")
+	}
+}
+
+// Excel and PowerPoint from data, and Word from Markdown where pandoc is
+// not there: the generators that were core's, as native flows in the
+// sandbox with their packages provisioned.
+func TestStructuredFormatsAreWrittenFromData(t *testing.T) {
+	needSandbox(t)
+	pyDeps(t, "openpyxl", "python-pptx")
+	doc := SampleDocument()
+	for ext, part := range map[string]string{"xlsx": "xl/workbook.xml", "pptx": "ppt/presentation.xml"} {
+		res, err := Export(context.Background(), doc, ext, nil)
+		if err != nil {
+			t.Fatalf("%s: %v (%s)", ext, err, res.Log)
+		}
+		if err := zipHolds(res.Out, part, ext); err != nil {
+			t.Errorf("%s: %v", ext, err)
+		}
+	}
+	if _, err := Export(context.Background(), Document{Markdown: []byte("no data")}, "xlsx", nil); err == nil || !strings.Contains(err.Error(), "sheets") {
+		t.Errorf("a spreadsheet with no data should say what it needs: %v", err)
+	}
+	// Word's fallback, as if pandoc were missing.
+	t.Run("word fallback", func(t *testing.T) { wordFallback(t) })
+}
+
+func wordFallback(t *testing.T) {
+	pyDeps(t, "python-docx")
+	j, _ := JobByID("export.docx")
+	j.Native = j.Native[1:]
+	res, err := RunNative(context.Background(), j, Input{Doc: &Document{Markdown: []byte("# Title\n\n- a point\n\nA paragraph.")}})
+	if err != nil || zipDocType(res.Out) != MIMEDocx {
+		t.Fatalf("want a Word file from python-docx: %v (%s)", err, res.Log)
 	}
 }
