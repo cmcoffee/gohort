@@ -2525,6 +2525,22 @@ select:-webkit-autofill {
   border-radius: 999px; padding: 0.3rem 0.85rem; font-size: var(--fs-xs); line-height: 1.3;
 }
 .ui-assist-choice:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+/* While a turn runs, Send is its Stop. */
+.ui-assist-send.ui-assist-stop { background: var(--bg-2); color: var(--text); border: 1px solid var(--border); }
+/* Look things up on the web: off until ticked. */
+.ui-assist-web {
+  display: inline-flex; align-items: center; gap: 0.4rem; align-self: flex-start;
+  font-size: var(--fs-xs); color: var(--text-mute); cursor: pointer;
+}
+.ui-assist-web input { margin: 0; }
+/* AssistPanel: the work is a form, which scrolls on its own beside the
+   conversation rather than stretching the dialog. */
+.ui-assist-work { min-height: 0; }
+.ui-assist-work-body {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch;
+  max-height: min(70vh, 40rem); padding-right: 0.2rem;
+}
+.ui-assist-panel .ui-assist-navrow { flex: 0 0 auto; }
 /* Narrow: the helper takes the whole screen, and the conversation and the
  * draft take turns under two tabs instead of stacking into two short boxes.
  * The composer is one rounded field with a round send arrow, as the agent
@@ -2579,6 +2595,10 @@ select:-webkit-autofill {
     content: ""; width: 1.1rem; height: 1.1rem; background: currentColor;
     -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 19V5M5.5 11.5L12 5l6.5 6.5'/%3E%3C/svg%3E") center / contain no-repeat;
     mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 19V5M5.5 11.5L12 5l6.5 6.5'/%3E%3C/svg%3E") center / contain no-repeat;
+  }
+  /* Stop: a square where the arrow was. */
+  .ui-assist-field .ui-assist-send.ui-assist-stop::before {
+    -webkit-mask: none; mask: none; width: 0.75rem; height: 0.75rem; border-radius: 2px;
   }
 }
 /* Structured "sections" field — an outline of headed blocks over one

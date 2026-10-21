@@ -1862,6 +1862,17 @@
   components.form_panel = function(cfg, ctx) {
     var wrap = el('div', {class: 'ui-form'});
     var current = {};
+    // What an assist beside the form reads and fills (ui.AssistPanel): the
+    // values as they stand, and a fill that redraws the fields with new
+    // ones. A fill is a change like typing: nothing is saved until Save.
+    wrap.uiForm = {
+      values: function() { return JSON.parse(JSON.stringify(current)); },
+      fill: function(vals) {
+        current = JSON.parse(JSON.stringify(vals || {}));
+        render();
+        if (typeof Event === 'function') wrap.dispatchEvent(new Event('change'));
+      },
+    };
     var debounceTimers = {}; // field -> setTimeout id
     var savingIndicator = el('span', {class: 'ui-form-saving'}, ['Saving…']);
     var fieldEls = {}; // field name -> rendered field wrap (for show_when)

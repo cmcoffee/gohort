@@ -94,9 +94,19 @@ function node(tag) {
     remove: function() { var p = this.parentNode; if (p) { var i = p.children.indexOf(this); if (i >= 0) p.children.splice(i, 1); this.parentNode = null; } },
     setAttribute: function() {}, getAttribute: function() { return null; },
     addEventListener: function(k, fn) { (listeners[k] = listeners[k] || []).push(fn); (this['__' + k] = this['__' + k] || []).push(fn); },
-    querySelector: function() { return null; }, querySelectorAll: function() { return []; },
+    querySelector: function(sel) { return sel.charAt(0) === '.' ? findClass(this, sel.slice(1)) : null; },
+    querySelectorAll: function() { return []; },
     focus: function() {}, scrollHeight: 0, scrollTop: 0, classList: classes(),
   };
+}
+function findClass(n, cls) {
+  for (var i = 0; i < (n.children || []).length; i++) {
+    var c = n.children[i];
+    if (c && c.className && (' ' + c.className + ' ').indexOf(' ' + cls + ' ') >= 0) return c;
+    var f = c && findClass(c, cls);
+    if (f) return f;
+  }
+  return null;
 }
 function classes() {
   var set = {};
@@ -123,6 +133,8 @@ function el(tag, attrs, kids) {
   return n;
 }
 function mdToHTML(s) { return s; }
+var components = {};
+function mountComponent(cfg, parent, ctx) { if (cfg && components[cfg.type]) parent.appendChild(components[cfg.type](cfg, ctx)); }
 var mounted = null;
 window.uiOpenModal = function(o) { mounted = o; o.mount(document.body, {overlay: node('div'), dialog: node('div')}); };
 `

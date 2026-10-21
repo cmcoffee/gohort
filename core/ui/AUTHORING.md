@@ -219,6 +219,7 @@ behind, which is worse than not having one, so it was retired.
 | A pipeline: submit a job, watch SSE blocks stream in, view past runs | `ui.PipelinePanel` (with a bridge that emits `block`/`chunk`/`status` events) |
 | A live-watch page for an in-flight pipeline (separate from submit) | `ui.PipelineWatchPanel` |
 | An LLM-backed suggestion list ("Suggest topics") | `ui.SuggestPanel` |
+| ✨ Help from the model fixing or filling one record (a form on the left, a conversation that already knows the record on the right) | `ui.AssistAction` / `ui.AssistPanel`, served by `core/assist.Handler` (see below) |
 | A single rotatable API key | `ui.ApiKeyPanel` |
 | A pickable chip cloud (apps assigned to a user, etc.) | `ui.ChipPicker` |
 | A multi-line list editor (each row a rule) | `ui.FormField{Type: "rules"}` inside `FormPanel` |
@@ -259,6 +260,37 @@ ui.FormPanel{
 `Required: true` on a field blocks Next (and the final submit) while it's empty, highlighting the offender. A step hidden by `ShowWhen` is skipped by navigation, dropped from the rail, and exempt from required gating. Use a wizard for guided create/onboarding flows; keep flat `Fields` for edit-in-place settings forms.
 
 ---
+
+### Assist (✨)
+
+Anything gohort offers the model's help with carries a ✨, and opens one window:
+the work on the left, a conversation on the right that already knows what the
+work is. For a record, that is an `AssistPanel` around the record's own form:
+
+```go
+ui.AssistAction("Fix", ui.AssistPanel{
+    Work: ui.FormPanel{Source: "api/thing?id={id}", PostURL: "api/thing?id={id}",
+        SubmitLabel: "Save", Fields: fields},
+    URL:  "api/thing/assist?id={id}",
+    Ask:  "Why does this fail, and what would fix it?",
+})
+```
+
+The model is told the form's fields and what they hold; what it proposes fills
+the form as a version (◀ ▶ walks back), and the form's Save keeps it. The
+conversation never saves. `Web: true` offers "Look things up on the web", off
+until the person ticks it.
+
+The endpoint is `assist.Handler(assist.Spec{...})` from `core/assist`: give it the
+access check, what the record is about (`About`, read from the URL, never from
+the browser), and your app's tools for it (`Tools`; one that writes is dropped,
+since the person saves). It runs the shared worker, says what it is doing while
+it works, and owns the reply contract, so the instruction and its parser cannot
+drift. Its `Route` is registered for you as a private worker stage.
+
+For one long value rather than a record, `FormField.SuggestURL` on a textarea
+opens the draft window (`uiOpenAssist`). Your own JS opening that window passes
+`url` (a `core/assist` endpoint) in place of `send`.
 
 ### Repeating rows
 
