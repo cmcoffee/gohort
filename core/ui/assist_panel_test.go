@@ -168,3 +168,102 @@ console.log('OK');
 		t.Fatalf("the assist Stop:\n%s", out)
 	}
 }
+
+// A walk goes through the records in turn, the panel for each with its
+// placeholders filled from it; saving moves on, and from the last closes.
+func TestAssistWalkGoesThroughTheRecords(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node not installed")
+	}
+	src := readRuntimeFile(t, "06_assist_editor.js")
+	script := assistStubDOM + `
+function fetchJSON(url) { return Promise.resolve([{id: 'read.heic', enables: 'Reading HEIC'}, {id: 'media.transcribe', enables: 'Transcribing'}]); }
+function substitute(s, rec) { return s.replace(/\{([a-z_]+)\}/g, function(m, k) { return rec[k] == null ? m : encodeURIComponent(rec[k]); }); }
+` + src + `
+global.setTimeout = function(fn) { fn(); };
+var shown = [], saveHook = null;
+components.fake_form = function(cfg, ctx) {
+  shown.push(cfg.source);
+  saveHook = ctx.__closeModal;
+  var f = node('div'); f.className = 'ui-form';
+  f.uiForm = {values: function() { return {}; }, fill: function() {}};
+  return f;
+};
+function find(n, cls) {
+  if (n.className && (' ' + n.className + ' ').indexOf(' ' + cls + ' ') >= 0) return n;
+  for (var i = 0; i < (n.children || []).length; i++) { var f = find(n.children[i], cls); if (f) return f; }
+  return null;
+}
+function fire(n) { (n.__click || []).forEach(function(f) { f(); }); }
+var closed = false;
+var walk = components.assist_panel({
+  url: 'api/fix?id={id}', walk: {source: 'api/rows?fix=1', label: 'enables'},
+  work: {type: 'fake_form', source: 'api/adapt?id={id}'},
+}, {__closeModal: function() { closed = true; }});
+setImmediate(function() {
+  var at = find(walk, 'ui-assist-walk-at');
+  if (!at || String(at.children[0]) !== '1 of 2: Reading HEIC') throw new Error('where it is: ' + JSON.stringify(at && at.children[0]));
+  if (shown[0] !== 'api/adapt?id=read.heic') throw new Error('the first record\'s form: ' + shown[0]);
+  saveHook();
+  if (shown[1] !== 'api/adapt?id=media.transcribe') throw new Error('saving should move on: ' + shown.join(','));
+  if (closed) throw new Error('it closed mid-walk');
+  saveHook();
+  if (!closed) throw new Error('saving the last should close the dialog');
+  console.log('OK');
+});
+`
+	tmp := filepath.Join(t.TempDir(), "walk.js")
+	if err := os.WriteFile(tmp, []byte(script), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("node", tmp).CombinedOutput(); err != nil || !strings.Contains(string(out), "OK") {
+		t.Fatalf("the assist walk:\n%s", out)
+	}
+}
+
+// A file attached with the 📎 goes with the next turn, once; every turn
+// names the window, so the endpoint keeps the file for the conversation.
+func TestAssistAttachSendsAFileOnce(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node not installed")
+	}
+	src := readRuntimeFile(t, "06_assist_editor.js")
+	script := assistStubDOM + src + `
+global.FileReader = function() {
+  var self = this;
+  this.readAsDataURL = function(f) { self.result = 'data:x;base64,' + f.b64; self.onload(); };
+};
+function find(n, pred) {
+  if (pred(n)) return n;
+  for (var i = 0; i < (n.children || []).length; i++) { var f = find(n.children[i], pred); if (f) return f; }
+  return null;
+}
+function cls(c) { return function(n) { return n.className && (' ' + n.className + ' ').indexOf(' ' + c + ' ') >= 0; }; }
+function fire(n, k) { (n['__' + (k || 'click')] || []).forEach(function(f) { f(); }); }
+var reqs = [];
+var chat = window.uiAssistChat({attach: true, send: function(req, done) { reqs.push(req); done({reply: 'ok'}); }});
+var picker = find(chat.right, function(n) { return n.type === 'file'; });
+if (!picker) throw new Error('no file picker');
+picker.files = [{name: 'photo.heic', b64: 'QUJD'}];
+fire(picker, 'change');
+if (find(chat.right, cls('ui-assist-files')).children.length !== 1) throw new Error('the picked file should show');
+chat.say('try this');
+setImmediate(function() {
+  if (reqs.length !== 1 || !reqs[0].files || reqs[0].files[0].name !== 'photo.heic' || reqs[0].files[0].data !== 'QUJD') throw new Error('the file did not go: ' + JSON.stringify(reqs[0]));
+  if (!reqs[0].window) throw new Error('the turn names no window');
+  chat.say('again');
+  setImmediate(function() {
+    if (reqs[1].files) throw new Error('the file went twice');
+    if (reqs[1].window !== reqs[0].window) throw new Error('the window changed');
+    console.log('OK');
+  });
+});
+`
+	tmp := filepath.Join(t.TempDir(), "attach.js")
+	if err := os.WriteFile(tmp, []byte(script), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("node", tmp).CombinedOutput(); err != nil || !strings.Contains(string(out), "OK") {
+		t.Fatalf("the assist attach:\n%s", out)
+	}
+}

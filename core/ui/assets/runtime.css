@@ -2541,6 +2541,29 @@ select:-webkit-autofill {
   max-height: min(70vh, 40rem); padding-right: 0.2rem;
 }
 .ui-assist-panel .ui-assist-navrow { flex: 0 0 auto; }
+/* Files attached for the endpoint's tools: one chip each, until sent. */
+.ui-assist-attach {
+  flex: 0 0 auto; background: transparent; color: var(--text-mute); cursor: pointer;
+  border: 1px solid var(--border); border-radius: var(--btn-radius);
+  width: 2.25rem; height: 2.25rem; padding: 0; font-size: var(--fs-sm); line-height: 1;
+}
+.ui-assist-attach:hover { color: var(--text); border-color: var(--accent); }
+.ui-assist-files { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.ui-assist-file {
+  display: inline-flex; align-items: center; gap: 0.3rem; max-width: 100%;
+  padding: 0.15rem 0.2rem 0.15rem 0.6rem; border-radius: 999px;
+  background: var(--bg-2); border: 1px solid var(--border); font-size: var(--fs-xs);
+}
+.ui-assist-file > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.ui-assist-file-x {
+  background: transparent; border: 0; color: var(--text-mute); cursor: pointer;
+  width: 1.6rem; height: 1.6rem; border-radius: 50%; padding: 0; font-size: var(--fs-sm);
+}
+.ui-assist-file-x:hover { color: var(--danger); }
+/* A walk through several records: where it is, and the way between them. */
+.ui-assist-walk-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin: 0 0 0.6rem; }
+.ui-assist-walk-at { flex: 1 1 12rem; min-width: 0; font-weight: 600; color: var(--text-hi, var(--text)); }
+.ui-assist-walk-empty { color: var(--text-mute); padding: 1rem 0; }
 /* Narrow: the helper takes the whole screen, and the conversation and the
  * draft take turns under two tabs instead of stacking into two short boxes.
  * The composer is one rounded field with a round send arrow, as the agent

@@ -8,7 +8,6 @@ import (
 	"errors"
 	"image"
 	"image/png"
-	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -19,6 +18,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/assist"
 	"github.com/cmcoffee/gohort/core/flows"
 	"github.com/cmcoffee/gohort/core/media"
 	"github.com/cmcoffee/gohort/core/ui"
@@ -46,7 +46,7 @@ func newDepsFixture(t *testing.T) *depsFixture {
 	a := &AdminApp{db: db}
 	a.registerConnectorsRoutes(f.mux)
 	a.registerSystemDepsRoutes(f.mux)
-	a.registerSystemDepsChatRoutes(f.mux)
+	a.registerSystemDepsFixRoutes(f.mux)
 	// Runs need a folder outside /tmp, which the sandbox replaces, laid out
 	// as gohort's data folder is.
 	if cache, err := os.UserCacheDir(); err == nil {
@@ -55,9 +55,9 @@ func newDepsFixture(t *testing.T) *depsFixture {
 			t.Cleanup(func() { flows.SetWorkBase(""); os.RemoveAll(root) })
 		}
 	}
-	convSamples.Lock()
-	convSamples.byUser, convSamples.seq = map[string][]convSample{}, map[string]int{}
-	convSamples.Unlock()
+	lastTests.Lock()
+	lastTests.m = map[string]testOutcome{}
+	lastTests.Unlock()
 	return f
 }
 
@@ -336,7 +336,7 @@ func TestARowIsTested(t *testing.T) {
 func TestSystemDepsAreAdminOnly(t *testing.T) {
 	f := newDepsFixture(t)
 	tok := AuthCreateSession(f.db, "someone")
-	for _, p := range []string{"/api/system-deps", "/api/system-deps/test?id=x", "/api/system-deps/chat/send", "/api/system-deps/chat/sessions", "/api/system-deps/chat/cancel"} {
+	for _, p := range []string{"/api/system-deps", "/api/system-deps/test?id=x", "/api/system-deps/fix?id=read.heic"} {
 		if w := f.req(t, tok, "POST", p, ddCustom, ""); w.Code != http.StatusForbidden {
 			t.Errorf("%s: a non-admin should be refused, got %d", p, w.Code)
 		}
@@ -361,47 +361,44 @@ func TestSystemDependenciesIsOneSection(t *testing.T) {
 	if sec == nil || n != 1 {
 		t.Fatalf("want one System Hooks section, got %d", n)
 	}
+	// Fix what cannot run here, the grouped table, then the Custom area:
+	// its table and Add behind a button. No Builder conversation.
 	kids := sec.Body.(ui.Stack).Children
-	if tbl, ok := kids[0].(ui.Table); !ok || tbl.GroupBy != "group" {
-		t.Error("the section should open with the grouped table")
+	if len(kids) != 3 {
+		t.Fatalf("want the walk, the table and the Custom area, got %d parts", len(kids))
 	}
-	// Then the Custom area: its table, and Add and Builder behind buttons,
-	// nothing open until it is asked for.
-	if len(kids) != 2 {
-		t.Fatalf("want the table and the Custom area, got %d parts", len(kids))
+	walk, ok := kids[0].(ui.ModalButton)
+	p, _ := walk.Body.(ui.AssistPanel)
+	if !ok || p.Walk == nil || p.Walk.Source != "api/system-deps?fix=1" || !p.Attach || p.URL != "api/system-deps/fix?id={id}" {
+		t.Errorf("the section should open with the walk through what cannot run: %+v", kids[0])
 	}
-	custom, ok := kids[1].(ui.Subsection)
+	if tbl, ok := kids[1].(ui.Table); !ok || tbl.GroupBy != "group" {
+		t.Error("then the grouped table")
+	}
+	custom, ok := kids[2].(ui.Subsection)
 	if !ok || custom.Title != "Custom" {
-		t.Fatalf("the second part should be the Custom area: %+v", kids[1])
+		t.Fatalf("the last part should be the Custom area: %+v", kids[2])
 	}
 	parts := custom.Body.(ui.Stack).Children
 	if tbl, ok := parts[0].(ui.Table); !ok || tbl.Source != "api/system-deps?custom=1" {
 		t.Error("the Custom area should list the custom formats")
 	}
-	buttons := parts[1].(ui.Stack)
-	var add, builder bool
-	for _, c := range buttons.Children {
-		mb, ok := c.(ui.ModalButton)
-		if !ok {
-			t.Errorf("only buttons below the custom table, got %T", c)
-			continue
-		}
-		if fp, ok := mb.Body.(ui.FormPanel); ok && mb.Label == "Add…" && fp.PostURL == "api/system-deps" {
-			add = true
-		}
-		if p, ok := mb.Body.(ui.AgentLoopPanel); ok && p.Attachments && p.SendURL == "api/system-deps/chat/send" {
-			builder = true
-		}
+	if len(parts) != 2 {
+		t.Fatalf("want the custom table and Add, got %d", len(parts))
 	}
-	if !buttons.Row || !add || !builder {
-		t.Errorf("want Add and Ask Builder side by side: row=%v add=%v builder=%v", buttons.Row, add, builder)
+	if mb, ok := parts[1].(ui.ModalButton); !ok || mb.Label != "Add…" {
+		t.Errorf("Add should follow the custom table: %+v", parts[1])
+	}
+	raw, _ := json.Marshal(sec)
+	if strings.Contains(string(raw), "agent_loop") || strings.Contains(string(raw), "Ask Builder") {
+		t.Error("the Builder conversation should be gone")
 	}
 }
 
 func TestSystemDepsScriptParses(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
-		t.Skip("node is not installed")
+		t.Skip("node not installed")
 	}
 	path := filepath.Join(t.TempDir(), "test.js")
 	os.WriteFile(path, []byte("var f = "+systemDepsTestAction+";\n"), 0o600)
@@ -410,86 +407,172 @@ func TestSystemDepsScriptParses(t *testing.T) {
 	}
 }
 
-// --- Builder ---------------------------------------------------------------
+// --- Fix ------------------------------------------------------------------
 
-func TestAttachmentsBecomeSamples(t *testing.T) {
-	newDepsFixture(t)
-	in, _ := wrappedPNG(t)
-	body, _ := json.Marshal(map[string]any{
-		"message":   "set it up",
-		"images":    []string{base64.StdEncoding.EncodeToString(in)},
-		"documents": []map[string]string{{"name": "IMG_0001.heic", "mime_type": "image/heic", "data": base64.StdEncoding.EncodeToString([]byte("\x00\x00\x00\x18ftypheic\x00\x00\x00\x00mif1"))}},
-	})
-	r := httptest.NewRequest("POST", "/api/system-deps/chat/send", strings.NewReader(string(body)))
-	if err := takeConvSamples(r, "root"); err != nil {
+// A row whose test failed, or which cannot run, has ✨ Fix in place of its
+// Adapt or Edit, and says why; a test that passes clears it, and so does a
+// change to the flow.
+func TestABrokenRowHasFixInPlaceOfAdapt(t *testing.T) {
+	f := newDepsFixture(t)
+	_, byID := f.rows(t)
+	if r := byID["read.pdf"]; r.FixJob && r.State != "missing" {
+		t.Fatalf("read.pdf should only be fixable when it cannot run: %+v", r)
+	}
+	recordTest("read.pdf", testOutcome{Message: "pdftotext failed: exit status 1"})
+	_, byID = f.rows(t)
+	if r := byID["read.pdf"]; !r.FixJob || r.Adapt || !strings.Contains(r.Detail, "Last test failed: pdftotext failed") {
+		t.Errorf("a failed test should put Fix in place of Adapt, with why: %+v", r)
+	}
+	recordTest("read.pdf", testOutcome{OK: true})
+	if _, byID = f.rows(t); byID["read.pdf"].FixJob && byID["read.pdf"].State != "missing" {
+		t.Error("a passing test should clear Fix")
+	}
+	// A flow whose program is not installed.
+	if _, err := saveAdapted("root", "heic-nope", flows.Adapted{Job: "read.heic", Steps: []string{"no-such-program-here {in} {out}"}}, false, "x"); err != nil {
 		t.Fatal(err)
 	}
-	raw, _ := io.ReadAll(r.Body)
-	var got map[string]any
-	json.Unmarshal(raw, &got)
-	if _, ok := got["images"]; ok {
-		t.Error("the images should be taken out of the message")
+	_, byID = f.rows(t)
+	if r := byID["heic-nope"]; !r.FixFill || r.EditFill || r.State != "missing" {
+		t.Errorf("a flow that cannot run should have Fix in place of Edit: %+v", r)
 	}
-	msg, _ := got["message"].(string)
-	if !strings.Contains(msg, "sample-2 (iPhone photos (HEIC)") || !strings.HasSuffix(msg, "set it up") {
-		t.Errorf("the message should name the samples ahead of what was said: %q", msg)
-	}
-	if got["app_context"] != convChatContext || len(convSamplesFor("someone")) != 0 {
-		t.Errorf("filed under %s, samples the admin's own: %v", convChatContext, got["app_context"])
+	recordTest("heic-nope", testOutcome{Message: "boom"})
+	saveAdapted("root", "heic-nope", flows.Adapted{Job: "read.heic", Steps: []string{"cp {in} {out}"}}, true, "x")
+	if _, failed := failedTest("heic-nope"); failed {
+		t.Error("a changed flow should forget the old flow's test")
 	}
 }
 
-// Builder adapts a job by its id, off; a change to a live one turns it off;
-// it tests on the admin's sample, and an export on the sample document.
-func TestBuilderAdaptsAJobAndTestsIt(t *testing.T) {
-	needDepsSandbox(t)
+// The walk lists the jobs that need fixing, and only those.
+func TestTheWalkListsWhatCannotRun(t *testing.T) {
 	f := newDepsFixture(t)
-	if _, err := builderAdapt("root", map[string]any{"name": "x", "job": "read.nope", "steps": "cp {in} {out}"}); err == nil {
-		t.Error("an unknown job should be refused")
+	recordTest("read.pdf", testOutcome{Message: "failed"})
+	var rows []depRow
+	json.Unmarshal(f.do(t, "GET", "/api/system-deps?fix=1", "").Body.Bytes(), &rows)
+	found := false
+	for _, r := range rows {
+		if !r.FixJob {
+			t.Errorf("%s is in the walk but needs no fixing", r.ID)
+		}
+		found = found || r.ID == "read.pdf"
 	}
-	msg, err := builderAdapt("root", map[string]any{"name": "heic-dd", "job": "read.heic", "steps": "dd if={in} of={out} bs=8 skip=1"})
-	if err != nil || !strings.Contains(msg, "iPhone photos") {
-		t.Fatalf("want the HEIC job adapted: %v %q", err, msg)
+	if !found {
+		t.Error("the job whose test failed should be in the walk")
 	}
-	if c, _ := GetConnector(f.db, "heic-dd"); c.Approved {
-		t.Fatal("Builder's flow should land off")
+}
+
+// The adapt form never offers a name that is taken.
+func TestTheAdaptFormOffersAFreeName(t *testing.T) {
+	f := newDepsFixture(t)
+	saveAdapted("root", "read-heic-adapted", flows.Adapted{Job: "read.heic", Steps: []string{"cp {in} {out}"}}, false, "x")
+	var ff flowForm
+	json.Unmarshal(f.do(t, "GET", "/api/system-deps/adapt?id=read.heic", "").Body.Bytes(), &ff)
+	if ff.Name != "read-heic-adapted-2" {
+		t.Errorf("want a free name, got %q", ff.Name)
 	}
-	ApproveConnector(f.db, "heic-dd")
-	if msg, _ := builderAdapt("root", map[string]any{"name": "heic-dd", "job": "read.heic", "steps": "dd if={in} of={out} bs=4 skip=2"}); !strings.Contains(msg, "off now") {
-		t.Errorf("changing a live flow should turn it off: %q", msg)
+}
+
+// The assistant is told which row, what it has to do, why it fails, and
+// what the form beside it is.
+func TestTheFixKnowsTheRow(t *testing.T) {
+	newDepsFixture(t)
+	recordTest("read.heic", testOutcome{Message: "heif-dec is not installed", Log: "the end of the log"})
+	about, err := fixAbout(httptest.NewRequest("POST", "/api/system-deps/fix?id=read.heic", nil))
+	if err != nil {
+		t.Fatal(err)
 	}
-	in, _ := wrappedPNG(t)
-	addConvSample("root", "photo", in)
-	builderAdapt("root", map[string]any{"name": "heic-dd", "job": "read.heic", "steps": "dd if={in} of={out} bs=8 skip=1"})
-	out, err := builderTest(context.Background(), "root", "heic-dd", "", "")
-	if err != nil || !strings.Contains(out, "Worked") || !strings.Contains(out, "4x4") || !strings.Contains(out, "is off") {
-		t.Errorf("want a worked test of the 4x4 image, still off: %v %q", err, out)
-	}
-	if _, err := exec.LookPath("pandoc"); err == nil {
-		if out, err := builderTest(context.Background(), "root", "export.docx", "", ""); err != nil || !strings.Contains(out, "Word") {
-			t.Errorf("an export tests on the sample document: %v %q", err, out)
+	for _, want := range []string{"job read.heic: iPhone photos", "placeholders {in} {out}", "Its last test failed: heif-dec is not installed", "the end of the log", "a new flow for this job", "cannot install software"} {
+		if !strings.Contains(about, want) {
+			t.Errorf("the assistant is not told %q:\n%s", want, about)
 		}
 	}
-	text := depsText("root")
-	for _, want := range []string{"job read.heic: iPhone photos", "placeholders {in} {out}", "adapted heic-dd", "tool git", "sample-1"} {
+	if _, err := fixAbout(httptest.NewRequest("POST", "/api/system-deps/fix?id=nope", nil)); err == nil {
+		t.Error("an unknown row should be refused")
+	}
+}
+
+// The assistant's tools read and try; none of them saves or turns on.
+func TestTheFixToolsNeverSave(t *testing.T) {
+	newDepsFixture(t)
+	var names []string
+	for _, d := range fixTools(httptest.NewRequest("POST", "/?id=read.heic", nil)) {
+		names = append(names, d.Tool.Name)
+		for _, c := range d.Tool.Caps {
+			if c == CapWrite {
+				t.Errorf("%s writes", d.Tool.Name)
+			}
+		}
+	}
+	if strings.Join(names, ",") != "dependency_list,dependency_check_program,dependency_try,dependency_test" {
+		t.Errorf("unexpected tools: %v", names)
+	}
+	text := depsText()
+	for _, want := range []string{"job read.heic: iPhone photos", "placeholders {in} {out}", "tool git"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("missing %q in:\n%s", want, text)
 		}
 	}
 }
 
-func TestBuilderCannotTurnAFlowOn(t *testing.T) {
-	var names []string
-	for _, d := range convBuilderTools("root") {
-		names = append(names, d.Tool.Name)
-		for _, bad := range []string{"approve", "turn_on", "enable", "install"} {
-			if strings.Contains(d.Tool.Name, bad) {
-				t.Errorf("%s should not exist", d.Tool.Name)
-			}
-		}
+// A try runs the steps on the attached file, keeping the job's contract,
+// and saves nothing; the folders it may read are never the model's to set.
+func TestATryRunsOnTheAttachedFile(t *testing.T) {
+	needDepsSandbox(t)
+	newDepsFixture(t)
+	ctx := context.Background()
+	if _, err := fixTry(ctx, "read.heic", map[string]any{"steps": "dd if={in} of={out} bs=8 skip=1"}); err == nil {
+		t.Error("a try on a job that reads a file, with nothing attached, should ask for one")
 	}
-	if strings.Join(names, ",") != "dependency_list,dependency_check_program,dependency_adapt,dependency_test" {
-		t.Errorf("unexpected tools: %v", names)
+	in, _ := wrappedPNG(t)
+	ctx = assist.WithFiles(ctx, []assist.File{{ID: "file-1", Name: "photo.heic", Data: in}})
+	out, err := fixTry(ctx, "read.heic", map[string]any{"steps": "dd if={in} of={out} bs=8 skip=1", "reads": "/etc"})
+	if err != nil || !strings.Contains(out, "Worked on file-1") || !strings.Contains(out, "4x4") || !strings.Contains(out, "Nothing was saved") {
+		t.Errorf("want the try to work on the attached file: %v %q", err, out)
+	}
+	if len(ListConnectors(RootDB)) != 0 {
+		t.Error("a try saved a flow")
+	}
+	if out, _ := fixTry(ctx, "read.heic", map[string]any{"steps": "dd if={in} of={out} bs=1 skip=0"}); !strings.Contains(out, "Failed") {
+		t.Errorf("a try that gives what the job cannot use should say it failed: %q", out)
+	}
+	if _, err := fixTest(context.Background(), "media.download", "", ""); err == nil {
+		t.Error("testing a download without a link should ask for one")
+	}
+}
+
+// The whole turn, through the endpoint: the worker is told the row, tries
+// steps on the file attached in the window, and fills the form.
+func TestTheFixEndpointFillsTheForm(t *testing.T) {
+	needDepsSandbox(t)
+	f := newDepsFixture(t)
+	fake := &FakeLLM{Turns: []FakeTurn{
+		{ToolCalls: []ToolCall{{ID: "1", Name: "dependency_try", Args: map[string]any{"steps": "dd if={in} of={out} bs=8 skip=1"}}}},
+		{Content: "dd strips the header, and the try worked.\n\n```fields\n{\"steps\": [{\"command\": \"dd if={in} of={out} bs=8 skip=1\"}]}\n```"},
+	}}
+	prevW, prevL := SharedWorkerLLM(), SharedLeadLLM()
+	SetSharedLLMs(fake, nil)
+	defer SetSharedLLMs(prevW, prevL)
+	in, _ := wrappedPNG(t)
+	body, _ := json.Marshal(map[string]any{
+		"message": "fix it", "window": "w1",
+		"files":  []map[string]string{{"name": "photo.heic", "data": base64.StdEncoding.EncodeToString(in)}},
+		"form":   []map[string]any{{"field": "steps", "type": "rows", "columns": []map[string]string{{"field": "command"}}}},
+		"values": map[string]any{"steps": []any{}},
+	})
+	w := f.req(t, f.token, "POST", "/api/system-deps/fix?id=read.heic", string(body), "application/json")
+	got := w.Body.String()
+	if !strings.Contains(got, `"progress":"dependency try: dd if={in} of={out} bs=8 skip=1"`) || !strings.Contains(got, `"fields":{"steps":[{"command":"dd if={in} of={out} bs=8 skip=1"}]}`) {
+		t.Fatalf("want the try reported and the form filled: %s", got)
+	}
+	if sys := fake.Config(0).SystemPrompt; !strings.Contains(sys, "job read.heic") || !strings.Contains(sys, "file-1 (photo.heic") {
+		t.Errorf("the worker should know the row and the file: %s", sys)
+	}
+	last := fake.LastSent()[len(fake.LastSent())-1]
+	reached := strings.Contains(last.Content, "Worked on file-1")
+	for _, tr := range last.ToolResults {
+		reached = reached || strings.Contains(tr.Content, "Worked on file-1")
+	}
+	if !reached {
+		t.Errorf("the try's outcome should reach the model: %+v", last)
 	}
 }
 
@@ -663,7 +746,24 @@ func TestTheDownloadRowTakesALink(t *testing.T) {
 	if !strings.Contains(w.Body.String(), `"ok":true`) || !strings.Contains(w.Body.String(), "from the link") {
 		t.Errorf("want the video fetched from the link: %s", w.Body.String())
 	}
-	if out, err := builderTest(context.Background(), "root", "media.download", "", ""); err == nil {
-		t.Errorf("Builder testing a download without a link should be asked for one: %q", out)
+	if out, err := fixTest(context.Background(), "media.download", "", ""); err == nil {
+		t.Errorf("testing a download without a link should ask for one: %q", out)
+	}
+}
+
+// The row's Test is what marks it: a test that fails through the page puts
+// Fix on the row.
+func TestAFailedTestMarksTheRow(t *testing.T) {
+	f := newDepsFixture(t)
+	saveAdapted("root", "heic-nope", flows.Adapted{Job: "read.heic", Steps: []string{"no-such-program-here {in} {out}"}}, false, "x")
+	forgetTest("heic-nope")
+	in, _ := wrappedPNG(t)
+	body, ctype := upload(t, in)
+	w := f.req(t, f.token, "POST", "/api/system-deps/test?id=heic-nope", body, ctype)
+	if !strings.Contains(w.Body.String(), `"ok":false`) {
+		t.Fatalf("the test should fail: %s", w.Body.String())
+	}
+	if _, failed := failedTest("heic-nope"); !failed {
+		t.Error("a failed test should be recorded for the row")
 	}
 }

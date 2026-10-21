@@ -12,6 +12,7 @@ package admin
 // with what to install.
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -107,6 +108,15 @@ type depRow struct {
 	Agents    bool `json:"agents"`
 	// Link rows take a link rather than a file: Test asks for one.
 	Link bool `json:"link"`
+	// A row that cannot run here, or whose last test failed, has a ✨ Fix in
+	// place of its plain Adapt or Edit (markFix): the same form, with the
+	// assist beside it.
+	FixJob     bool `json:"fix_job"`
+	FixFill    bool `json:"fix_fill"`
+	FixCustom  bool `json:"fix_custom"`
+	Adapt      bool `json:"adapt"`
+	EditFill   bool `json:"edit_fill"`
+	EditCustom bool `json:"edit_custom"`
 }
 
 var groupOrder = []string{flows.GroupReading, flows.GroupWriting, flows.GroupMedia, flows.GroupCode}
@@ -224,6 +234,7 @@ func depRows(custom bool) []depRow {
 		if refusing && !j.Builtin {
 			row.State = "nosandbox"
 		}
+		row.markFix()
 		byGroup[j.Group] = append(byGroup[j.Group], row)
 		for _, x := range adapted {
 			if x.a.Job == j.ID {
@@ -304,6 +315,7 @@ func adaptedRow(c Connector, a flows.Adapted, refusing bool) depRow {
 	default:
 		row.State = "off"
 	}
+	row.markFix()
 	return row
 }
 
@@ -333,8 +345,8 @@ type step struct {
 }
 
 // stepList is a flow's steps as the form edits them: rows, each a command.
-// It also reads a string of one command per line (Builder's tool, and
-// anything posted before the list), so either shape saves.
+// It also reads a string of one command per line (anything posted before
+// the list was), so either shape saves.
 type stepList []step
 
 func (sl *stepList) UnmarshalJSON(b []byte) error {
@@ -445,6 +457,8 @@ func saveAdapted(owner, name string, a flows.Adapted, edit bool, desc string) (t
 		turnedOff = true
 	}
 	spec, _ := json.Marshal(a)
+	// A changed flow is another flow: its last test said nothing of this one.
+	forgetTest(name)
 	c := Connector{Name: name, Kind: flows.ConnectorKind, Owner: owner, Spec: spec, Desc: desc}
 	if existed {
 		c.Owner, c.Desc = prev.Owner, prev.Desc
@@ -477,14 +491,20 @@ func runRow(r *http.Request, id string, in []byte) (flows.Result, string, bool, 
 	if err != nil {
 		return flows.Result{}, "", false, err
 	}
+	return runFlowOn(r.Context(), c.Name, a, in, link)
+}
+
+// runFlowOn runs an adapted flow, saved or not, as gohort would: an output
+// on gohort's sample document, anything else on in (or the link).
+func runFlowOn(ctx context.Context, name string, a flows.Adapted, in []byte, link string) (flows.Result, string, bool, error) {
 	if a.IsOutput() {
 		doc := flows.SampleDocument()
-		res, err := flows.RunAdapted(r.Context(), c.Name, a, flows.Input{Doc: &doc})
+		res, err := flows.RunAdapted(ctx, name, a, flows.Input{Doc: &doc})
 		return res, "", true, err
 	}
 	from := flows.Sniff(in)
 	j, _ := a.Contract()
-	res, err := flows.RunAdapted(r.Context(), c.Name, a, flows.Input{Data: in, From: from, Params: testParams(j, link)})
+	res, err := flows.RunAdapted(ctx, name, a, flows.Input{Data: in, From: from, Params: testParams(j, link)})
 	return res, from, false, err
 }
 
@@ -528,6 +548,17 @@ func (a *AdminApp) registerSystemDepsRoutes(sub *http.ServeMux) {
 		}
 		switch r.Method {
 		case http.MethodGet:
+			if r.URL.Query().Get("fix") != "" {
+				// The jobs that cannot run here, for the walk.
+				fix := []depRow{}
+				for _, row := range depRows(false) {
+					if row.FixJob {
+						fix = append(fix, row)
+					}
+				}
+				writeJSONOut(w, fix)
+				return
+			}
 			writeJSONOut(w, depRows(r.URL.Query().Get("custom") != ""))
 		case http.MethodPost:
 			var ff flowForm
@@ -624,7 +655,14 @@ func (a *AdminApp) registerSystemDepsRoutes(sub *http.ServeMux) {
 			http.NotFound(w, r)
 			return
 		}
-		writeJSONOut(w, flowForm{Name: flowName(j.ID), Prefer: j.Builtin})
+		name := flowName(j.ID)
+		for n := 2; ; n++ {
+			if _, taken := GetConnector(RootDB, name); !taken {
+				break
+			}
+			name = fmt.Sprintf("%s-%d", flowName(j.ID), n)
+		}
+		writeJSONOut(w, flowForm{Name: name, Prefer: j.Builtin})
 	})
 
 	// Test a row: POST ?id=, multipart "file" for one that reads a file; an
@@ -657,10 +695,15 @@ func (a *AdminApp) registerSystemDepsRoutes(sub *http.ServeMux) {
 		res, from, output, err := runRow(r, id, in)
 		out := map[string]any{"took_ms": time.Since(start).Milliseconds(), "log": res.Log}
 		if err != nil {
+			// A failure marks the row for fixing, with why; Stop is not one.
+			if r.Context().Err() == nil {
+				recordTest(id, testOutcome{Message: err.Error(), Log: res.Log, At: time.Now()})
+			}
 			out["ok"], out["message"] = false, err.Error()
 			writeJSONOut(w, out)
 			return
 		}
+		recordTest(id, testOutcome{OK: true, At: time.Now()})
 		out["ok"] = true
 		if output {
 			ext := outputExt(id)
@@ -767,28 +810,25 @@ func flowFields(withName, custom bool) []ui.FormField {
 }
 
 func depsRowActions() []ui.RowAction {
-	adapt := ui.ModalAction("Adapt…", ui.FormPanel{
-		Source:      "api/system-deps/adapt?id={id}",
-		PostURL:     "api/system-deps?job={id}",
-		SubmitLabel: "Save",
-		Fields:      flowFields(true, false),
-		Invalidate:  depsSources,
-	})
-	adapt.OnlyIf = "job"
-	editFill := ui.ModalAction("Edit", ui.FormPanel{
-		Source: "api/system-deps/one?name={name}", PostURL: "api/system-deps?edit={name}", SubmitLabel: "Save",
-		Fields: flowFields(false, false), Invalidate: depsSources,
-	})
-	editFill.OnlyIf = "fills"
-	editCustom := ui.ModalAction("Edit", ui.FormPanel{
-		Source: "api/system-deps/one?name={name}", PostURL: "api/system-deps?edit={name}", SubmitLabel: "Save",
-		Fields: flowFields(false, true), Invalidate: depsSources,
-	})
-	editCustom.OnlyIf = "custom"
+	// A row that cannot run, or failed its test, has ✨ Fix: the same form
+	// as its Adapt or Edit, with the assist beside it.
+	adapt := ui.ModalAction("Adapt…", adaptForm())
+	adapt.OnlyIf = "adapt"
+	fixJob := ui.AssistAction("Fix", fixPanel(adaptForm()))
+	fixJob.OnlyIf, fixJob.Variant = "fix_job", "primary"
+	editFill := ui.ModalAction("Edit", editForm(false))
+	editFill.OnlyIf = "edit_fill"
+	fixFill := ui.AssistAction("Fix", fixPanel(editForm(false)))
+	fixFill.OnlyIf, fixFill.Variant = "fix_fill", "primary"
+	editCustom := ui.ModalAction("Edit", editForm(true))
+	editCustom.OnlyIf = "edit_custom"
+	fixCustom := ui.AssistAction("Fix", fixPanel(editForm(true)))
+	fixCustom.OnlyIf, fixCustom.Variant = "fix_custom", "primary"
 	return []ui.RowAction{
 		// Whether agents may run it, with the system_hook tool.
 		{Type: "toggle", Field: "agents", Label: "Agents", PostTo: "api/system-deps/agents?id={id}", Method: "POST", OnlyIf: "offerable"},
 		{Type: "button", Label: "Test", Method: "client", PostTo: "system_deps_test", OnlyIf: "testable"},
+		fixJob, fixFill, fixCustom,
 		adapt,
 		{Type: "button", Label: "Turn on", PostTo: "api/connectors?action=approve&name={name}",
 			Method: "POST", OnlyIf: "can_on", Variant: "primary"},
@@ -820,15 +860,16 @@ func depsColumns() []ui.Col {
 }
 
 // systemDepsSection is the System Hooks section on the Capabilities
-// tab: the table of jobs and tools, then the Custom area, where Add sets up
-// a format gohort does not support and Builder can help.
+// tab: Fix what cannot run here, the table of jobs and tools, then the
+// Custom area, where Add sets up a format gohort does not support.
 func systemDepsSection() ui.Section {
 	return ui.Section{
 		Title:    "System Hooks",
 		Subtitle: "The jobs gohort hands to tools on this machine (reading what arrives, writing documents, media), how each is done here, and where to plug in another tool when one is missing.",
-		Detail: "Each job gohort needs done, reading what arrives or writing documents, has a native flow: Go itself, the app, or the best tool for it when installed. Where that tool is missing, or you want another, adapt the job: give a flow of commands you have, test it, and turn it on. Under Custom, add a format gohort does not support at all, or ask Builder to find a tool and set it up. Agents already reach every job here through gohort's own tools (video, export, attachments); turn on Agents on a custom row to let them run that one too, with the system_hook tool, on files in their workspace. The tools listed without Adapt are not jobs yet: install them.\n\n" +
+		Detail: "Each job gohort needs done, reading what arrives or writing documents, has a native flow: Go itself, the app, or the best tool for it when installed. Where that tool is missing, or you want another, adapt the job: give a flow of commands you have, test it, and turn it on. A row that cannot run here, or whose test failed, has ✨ Fix: its form, with an assistant beside it that knows the row, reads a program's help, tries steps on a file you attach, and fills the form for you to save. Fix what cannot run here goes through every such job in turn. Under Custom, add a format gohort does not support at all. Agents already reach every job here through gohort's own tools (video, export, attachments); turn on Agents on a custom row to let them run that one too, with the system_hook tool, on files in their workspace. The tools listed without Adapt are not jobs yet: install them.\n\n" +
 			"A flow's commands run as written, with no shell reading them. They run in the sandbox, which sees the system folders read-only and nothing else on this machine except the folders a flow says it reads, with no network unless the job needs it, and they are stopped at the time limit. What a flow gives is checked before gohort uses it: an image has to be one the model can read, text has to be text, a Word file has to be a Word file, or it is thrown away. On a machine whose sandbox cannot confine commands, none of them run.",
 		Body: ui.Stack{Children: []ui.Component{
+			fixWalkButton(),
 			ui.Table{
 				Source:     depsSources[0],
 				RowKey:     "id",
@@ -848,25 +889,17 @@ func systemDepsSection() ui.Section {
 						RowActions: depsRowActions(),
 						EmptyText:  "Nothing custom yet. Add one to read a format gohort does not, or to write documents as one.",
 					},
-					ui.Stack{Row: true, Children: []ui.Component{
-						ui.ModalButton{
-							Label: "Add…", Variant: "primary", Align: "left",
-							Title:    "Add a custom input or output",
-							Subtitle: "Saved off: test it from its row, then turn it on.",
-							Body: ui.FormPanel{
-								PostURL:     "api/system-deps",
-								SubmitLabel: "Save",
-								Fields:      flowFields(true, true),
-								Invalidate:  depsSources,
-							},
+					ui.ModalButton{
+						Label: "Add…", Variant: "primary", Align: "left",
+						Title:    "Add a custom input or output",
+						Subtitle: "Saved off: test it from its row, then turn it on.",
+						Body: ui.FormPanel{
+							PostURL:     "api/system-deps",
+							SubmitLabel: "Save",
+							Fields:      flowFields(true, true),
+							Invalidate:  depsSources,
 						},
-						ui.ModalButton{
-							Label: "Ask Builder…", Align: "left", Width: "900px",
-							Title:    "Set one up with Builder",
-							Subtitle: "Builder finds a tool here, reads its help, adapts the job or adds the format, and tests it. Attach a sample file for one that reads files.",
-							Body:     depsBuilderPanel(),
-						},
-					}},
+					},
 				}},
 			},
 		}},
@@ -922,6 +955,8 @@ const systemDepsTestAction = `function(ctx){
       tick(); timer = setInterval(tick, 250);
       function finish(text, ok){
         done = true; clearInterval(timer); timer = null;
+        // A failed test marks the row for fixing, a passing one clears it.
+        if (window.uiInvalidate) window.uiInvalidate(['api/system-deps', 'api/system-deps?custom=1']);
         status.textContent = text;
         status.style.color = ok ? '' : 'var(--danger, #e5484d)';
         if (stop) stop.textContent = 'Close';

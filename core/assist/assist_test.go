@@ -220,3 +220,57 @@ func TestSplitFieldsReply(t *testing.T) {
 		}
 	}
 }
+
+// A file attached in the window is kept for it: the turn it arrives says
+// so, later turns list it, and the app's tool reads it without the browser
+// sending it again. It is never put in front of the model as content.
+func TestAttachedFilesServeTheWindow(t *testing.T) {
+	read := ""
+	fake := &FakeLLM{Turns: []FakeTurn{
+		{Content: "Got it."},
+		{ToolCalls: []ToolCall{{ID: "1", Name: "try_it", Args: map[string]any{}}}},
+		{Content: "It worked."},
+	}}
+	spec := Spec{Route: "test.assist.files", Allow: allowAll, LLM: fake, Attach: true,
+		Tools: func(*http.Request) []AgentToolDef {
+			return []AgentToolDef{{Tool: Tool{Name: "try_it", Caps: []Capability{CapExecute}},
+				Handler: func(ctx context.Context, _ map[string]any) (string, error) {
+					f, err := FileByID(ctx, "")
+					if err != nil {
+						return "", err
+					}
+					read = f.ID + ":" + string(f.Data)
+					return "ok", nil
+				}}}
+		}}
+	h := Handler(spec)
+	data := "c2FtcGxlIGJ5dGVz" // "sample bytes"
+	if _, _, code := post(t, h, Request{Message: "here is one", Window: "w1", Files: []upload{{Name: "photo.heic", Data: data}}}); code != http.StatusOK {
+		t.Fatalf("status %d", code)
+	}
+	first := fake.Sent(0)
+	if last := first[len(first)-1].Content; !strings.Contains(last, "file-1 (photo.heic") || strings.Contains(last, "sample bytes") || strings.Contains(last, data) {
+		t.Errorf("the turn should say what arrived, and never carry it: %q", last)
+	}
+	if _, _, code := post(t, h, Request{Message: "try it", Window: "w1"}); code != http.StatusOK {
+		t.Fatalf("status %d", code)
+	}
+	if read != "file-1:sample bytes" {
+		t.Errorf("the tool should read the window's file: %q", read)
+	}
+	if !strings.Contains(fake.Config(1).SystemPrompt, "file-1 (photo.heic") {
+		t.Error("later turns should list the window's files")
+	}
+	// Another window has none of them.
+	fake2 := &FakeLLM{Turns: []FakeTurn{{Content: "none"}}}
+	spec.LLM = fake2
+	post(t, Handler(spec), Request{Message: "x", Window: "w2"})
+	if strings.Contains(fake2.Config(0).SystemPrompt, "photo.heic") {
+		t.Error("a file leaked into another window")
+	}
+	// An assist that takes no files refuses them.
+	noFiles := Handler(Spec{Route: "test.assist.nofiles", Allow: allowAll, LLM: &FakeLLM{}})
+	if _, _, code := post(t, noFiles, Request{Message: "x", Window: "w1", Files: []upload{{Name: "a", Data: data}}}); code != http.StatusBadRequest {
+		t.Errorf("files where none are taken: %d", code)
+	}
+}

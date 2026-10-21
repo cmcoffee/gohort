@@ -36,6 +36,7 @@
   //   discuss   — whether it starts by talking it through.
   //   switchable — show the "Talk it through | Just write" switch.
   //   web       — offer "Look things up on the web", off until turned on.
+  //   attach    — offer a 📎 to attach files, for the endpoint's tools.
   //   intro     — the opening note.
   //   writeNote — the note when switched to just writing.
   //   placeholders — {discuss, write} for the composer.
@@ -48,6 +49,9 @@
     var busy = null;  // the turn in flight: {ctl}
     var coarse = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
     var ph = opts.placeholders || {};
+    // The window's name, on every turn: the endpoint keeps what was attached
+    // in it under this, so a file goes once and serves the conversation.
+    var windowId = 'w' + Math.random().toString(36).slice(2, 12) + Date.now().toString(36);
 
     var log = el('div', {class: 'ui-assist-log'});
     function addMsg(role, text, isHTML) {
@@ -111,6 +115,42 @@
         [webBox, el('span', {}, ['Look things up on the web'])]);
     }
 
+    // Files for the endpoint's tools (a sample to try a conversion on):
+    // picked with the 📎, shown until the next send carries them.
+    var pendingFiles = [], attachBtn = null, fileRow = null, picker = null;
+    function drawFiles() {
+      fileRow.innerHTML = '';
+      fileRow.style.display = pendingFiles.length ? '' : 'none';
+      pendingFiles.forEach(function(f, i) {
+        var x = el('button', {type: 'button', class: 'ui-assist-file-x', title: 'Remove', 'aria-label': 'Remove ' + f.name}, ['×']);
+        x.addEventListener('click', function() { pendingFiles.splice(i, 1); drawFiles(); });
+        fileRow.appendChild(el('span', {class: 'ui-assist-file'}, [el('span', {}, [f.name]), x]));
+      });
+    }
+    if (opts.attach) {
+      picker = el('input', {type: 'file', multiple: true, style: 'display:none'});
+      attachBtn = el('button', {type: 'button', class: 'ui-assist-attach', title: 'Attach a file for it to try things on', 'aria-label': 'Attach a file'}, ['📎']);
+      fileRow = el('div', {class: 'ui-assist-files'});
+      fileRow.style.display = 'none';
+      attachBtn.addEventListener('click', function() { picker.click(); });
+      picker.addEventListener('change', function() {
+        Array.prototype.forEach.call(picker.files || [], function(f) { pendingFiles.push(f); });
+        picker.value = '';
+        drawFiles();
+      });
+    }
+    // readFiles is the files as a turn carries them, base64.
+    function readFiles(files) {
+      return Promise.all(files.map(function(f) {
+        return new Promise(function(resolve, reject) {
+          var rd = new FileReader();
+          rd.onload = function() { var u = String(rd.result || ''); resolve({name: f.name, data: u.slice(u.indexOf(',') + 1)}); };
+          rd.onerror = function() { reject(new Error(f.name + ' could not be read')); };
+          rd.readAsDataURL(f);
+        });
+      }));
+    }
+
     function setBusy(turn) {
       busy = turn;
       composer.disabled = !!turn;
@@ -157,10 +197,13 @@
     function send(preset) {
       if (busy) return;
       var text = (typeof preset === 'string' ? preset : (composer.value || '')).trim();
+      var files = pendingFiles.slice();
+      if (!text && files.length) text = 'I attached ' + (files.length > 1 ? 'files' : 'a file') + '.';
       if (!text) return;
       if (choices) { choices.remove(); choices = null; }
       composer.value = '';
-      addMsg('user', text);
+      addMsg('user', text + (files.length ? '\n📎 ' + files.map(function(f) { return f.name; }).join(', ') : ''));
+      if (files.length) { pendingFiles = []; drawFiles(); }
       // Snapshot the history BEFORE this turn — the server appends the
       // new message itself, so sending it in both places would duplicate.
       var priorHistory = history.slice();
@@ -168,7 +211,7 @@
       var turn = {ctl: (typeof AbortController !== 'undefined') ? new AbortController() : null};
       setBusy(turn);
       var pending = pendingLine();
-      var req = {message: text, history: priorHistory, mode: discuss ? 'discuss' : 'write'};
+      var req = {message: text, history: priorHistory, mode: discuss ? 'discuss' : 'write', window: windowId};
       if (webBox) req.web = !!webBox.checked;
       var more = typeof opts.extra === 'function' ? (opts.extra() || {}) : {};
       Object.keys(more).forEach(function(k) { req[k] = more[k]; });
@@ -179,7 +222,15 @@
         if (turn.ctl) turn.ctl.abort();
         finish(null, 'Stopped.');
       };
-      opts.send(req, finish, function(text) { if (!settled) pending.doing(text); }, turn.ctl ? turn.ctl.signal : undefined);
+      var go = function() {
+        if (settled) return;
+        opts.send(req, finish, function(text) { if (!settled) pending.doing(text); }, turn.ctl ? turn.ctl.signal : undefined);
+      };
+      if (files.length) {
+        readFiles(files).then(function(got) { req.files = got; go(); }, function(e) { finish(null, e.message); });
+      } else {
+        go();
+      }
       function finish(res, err) {
         if (settled) return;
         settled = true;
@@ -220,9 +271,11 @@
     right.appendChild(log);
     var composerRow = el('div', {class: 'ui-assist-composer'});
     var field = el('div', {class: 'ui-assist-field'});
+    if (attachBtn) field.appendChild(attachBtn);
     field.appendChild(composer);
     field.appendChild(sendBtn);
     composerRow.appendChild(field);
+    if (fileRow) { right.appendChild(picker); right.appendChild(fileRow); }
     right.appendChild(composerRow);
     if (webRow) right.appendChild(webRow);
 
@@ -454,6 +507,70 @@
   // version: ◀ ▶ walk back to what was there. Nothing is saved by the
   // conversation; the form's own Save keeps what is in it.
   components.assist_panel = function(cfg, ctx) {
+    if (cfg.walk && cfg.walk.source) return assistWalk(cfg, ctx);
+    return assistPanel(cfg, ctx);
+  };
+
+  // assistWalk is an assist panel over each record of a list in turn (Walk):
+  // "2 of 3: <the record>" with Previous and Next, and the panel for the
+  // record shown, its {field} placeholders filled from it. Saving the form
+  // moves on to the next, and from the last closes the dialog. Moving off a
+  // record leaves its conversation: each record is its own.
+  function assistWalk(cfg, ctx) {
+    var walk = cfg.walk;
+    var wrap = el('div', {class: 'ui-assist-walk'});
+    var head = el('div', {class: 'ui-assist-walk-head'});
+    var body = el('div', {class: 'ui-assist-walk-body'});
+    wrap.appendChild(head);
+    wrap.appendChild(body);
+    var items = [], at = 0;
+    if (window.uiLoading) head.appendChild(window.uiLoading());
+    fetchJSON(walk.source).then(function(d) {
+      items = Array.isArray(d) ? d : ((d && (d.records || d.items)) || []);
+      show(0);
+    }).catch(function(err) { head.textContent = 'Failed to load: ' + ((err && err.message) || err); });
+    function fill(obj, rec) {
+      if (!obj || typeof obj !== 'object') return;
+      for (var k in obj) {
+        if (typeof obj[k] === 'string' && obj[k].indexOf('{') >= 0) obj[k] = substitute(obj[k], rec, true);
+        else if (typeof obj[k] === 'object') fill(obj[k], rec);
+      }
+    }
+    function show(i) {
+      head.innerHTML = '';
+      body.innerHTML = '';
+      if (!items.length) {
+        body.appendChild(el('div', {class: 'ui-assist-walk-empty'}, [walk.empty || 'Nothing to work on.']));
+        return;
+      }
+      at = Math.max(0, Math.min(i, items.length - 1));
+      var rec = items[at];
+      var prev = el('button', {type: 'button', class: 'ui-row-btn compact'}, ['‹ Previous']);
+      var next = el('button', {type: 'button', class: 'ui-row-btn compact'}, ['Next ›']);
+      prev.disabled = at <= 0;
+      next.disabled = at >= items.length - 1;
+      prev.addEventListener('click', function() { show(at - 1); });
+      next.addEventListener('click', function() { show(at + 1); });
+      head.appendChild(el('span', {class: 'ui-assist-walk-at'}, [(at + 1) + ' of ' + items.length + ': ' + String(rec[walk.label] == null ? '' : rec[walk.label])]));
+      head.appendChild(prev);
+      head.appendChild(next);
+      var one = JSON.parse(JSON.stringify(cfg));
+      delete one.walk;
+      fill(one, rec);
+      var childCtx = {};
+      for (var k in (ctx || {})) childCtx[k] = ctx[k];
+      for (var k2 in rec) childCtx[k2] = rec[k2];
+      // The form's save moves on, rather than closing the dialog mid-walk.
+      childCtx.__closeModal = function() {
+        if (at < items.length - 1) show(at + 1);
+        else if (ctx && ctx.__closeModal) ctx.__closeModal();
+      };
+      body.appendChild(assistPanel(one, childCtx));
+    }
+    return wrap;
+  }
+
+  function assistPanel(cfg, ctx) {
     var wrap = el('div', {class: 'ui-assist ui-assist-panel'});
     var left = el('div', {class: 'ui-assist-left ui-assist-work'});
     var host = el('div', {class: 'ui-assist-work-body'});
@@ -511,7 +628,7 @@
 
     var tabs = assistTabs(wrap, cfg.work_label || 'Form');
     var chat = window.uiAssistChat({
-      discuss: false, switchable: false, web: !!cfg.web,
+      discuss: false, switchable: false, web: !!cfg.web, attach: !!cfg.attach,
       intro: cfg.intro || 'Ask about it, or say what to change. What it suggests fills the form; nothing is saved until you save it.',
       writeNote: 'Each request can fill the form right away.',
       placeholders: {write: cfg.placeholder || 'What is wrong with it?'},
@@ -554,4 +671,4 @@
       chat.say(ask);
     })();
     return wrap;
-  };
+  }

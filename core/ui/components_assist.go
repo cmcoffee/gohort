@@ -29,10 +29,26 @@ type AssistPanel struct {
 	// Web offers "Look things up on the web", off until the person turns it
 	// on: a search sends what is searched for to an outside engine. The
 	// endpoint must allow it too (assist.Spec.Web).
-	Web         bool   `json:"web,omitempty"`
+	Web bool `json:"web,omitempty"`
+	// Attach offers a 📎 for files the endpoint's tools use (a sample to try
+	// a conversion on): kept for the window, never shown to the model. The
+	// endpoint must take them too (assist.Spec.Attach).
+	Attach      bool   `json:"attach,omitempty"`
 	Intro       string `json:"intro,omitempty"`       // the conversation's opening note
 	Placeholder string `json:"placeholder,omitempty"` // the composer's
 	WorkLabel   string `json:"work_label,omitempty"`  // its tab on a phone (default "Form")
+	// Walk goes through a list of records in turn, the panel for each: the
+	// Work's and URL's {field} placeholders fill from the record shown, and
+	// saving the form moves on to the next. For "fix the ones that are
+	// broken", one after another, without going back to the table.
+	Walk *AssistWalk `json:"walk,omitempty"`
+}
+
+// AssistWalk is the list an AssistPanel walks.
+type AssistWalk struct {
+	Source string `json:"source"`          // GET: the records, as a Table's source answers
+	Label  string `json:"label"`           // the field naming each record in "2 of 3: ..."
+	Empty  string `json:"empty,omitempty"` // shown when there are none
 }
 
 func (AssistPanel) componentType() string { return "assist_panel" }

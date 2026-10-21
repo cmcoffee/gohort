@@ -18,8 +18,9 @@
 // logged. Looking things up on the web is the person's choice per message,
 // and never in private mode.
 //
-// THE PROTOCOL. The request is JSON: {message, history, mode, web} with
-// either {draft} or {form, values}; form is the browser's description of
+// THE PROTOCOL. The request is JSON: {message, history, mode, web, window}
+// with either {draft} or {form, values}, and {files: [{name, data}]} on the
+// turn a file is attached (Spec.Attach; see files.go); form is the browser's description of
 // the fields, which only shapes what the model is told and which fields a
 // proposal may fill, never what is saved. The answer is a stream of JSON
 // lines: {"progress": "..."} while it works, then one {"reply", "value"}
@@ -55,6 +56,9 @@ type Spec struct {
 	Tools func(r *http.Request) []AgentToolDef
 	// Web lets the person turn on web lookups (web_search, fetch_url).
 	Web bool
+	// Attach lets the person add files in the window, for the app's tools
+	// (Files): never shown to the model.
+	Attach bool
 	// LLM is the model, for a test; nil is the shared worker.
 	LLM LLM
 }
@@ -82,6 +86,8 @@ type Request struct {
 	History []Turn         `json:"history"`
 	Mode    string         `json:"mode"`
 	Web     bool           `json:"web"`
+	Window  string         `json:"window"`
+	Files   []upload       `json:"files"`
 	Draft   string         `json:"draft"`
 	Form    []Field        `json:"form"`
 	Values  map[string]any `json:"values"`
@@ -121,9 +127,17 @@ func Handler(s Spec) http.HandlerFunc {
 			http.Error(w, "POST only", http.StatusMethodNotAllowed)
 			return
 		}
+		limit := int64(maxBody)
+		if s.Attach {
+			limit = attachBody
+		}
 		var req Request
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBody)).Decode(&req); err != nil {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit)).Decode(&req); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		if len(req.Files) > 0 && !s.Attach {
+			http.Error(w, "this assist takes no files", http.StatusBadRequest)
 			return
 		}
 		if strings.TrimSpace(req.Message) == "" {
@@ -147,9 +161,22 @@ func Handler(s Spec) http.HandlerFunc {
 			return
 		}
 
+		user := AuthCurrentUser(r)
+		key := windowKey(user, s.Route, req.Window)
+		var arrived []string
+		if len(req.Files) > 0 {
+			var err error
+			if arrived, err = keep(key, req.Files); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+		}
+		files := filesOf(key)
+
 		out := newStream(w)
-		t := turn{spec: s, req: req, about: about, user: AuthCurrentUser(r), out: out}
-		reply, err := t.run(r.Context(), llm, s.tools(r))
+		t := turn{spec: s, req: req, about: about, user: user, out: out, files: files, arrived: arrived}
+		ctx := WithFiles(r.Context(), files)
+		reply, err := t.run(ctx, llm, s.tools(r))
 		if err != nil {
 			out.send(Reply{Error: "assist failed: " + err.Error()})
 			return
@@ -182,6 +209,10 @@ type turn struct {
 	about string
 	user  string
 	out   *stream
+	// files are the window's attachments; arrived, the labels of those
+	// this turn brought.
+	files   []File
+	arrived []string
 }
 
 func (t turn) run(ctx context.Context, llm LLM, kit []AgentToolDef) (Reply, error) {
@@ -278,7 +309,11 @@ func (t turn) messages() []Message {
 		}
 		msgs = append(msgs, Message{Role: role, Content: h.Content})
 	}
-	return append(msgs, Message{Role: "user", Content: t.req.Message})
+	msg := t.req.Message
+	if len(t.arrived) > 0 {
+		msg = "[I attached " + strings.Join(t.arrived, "; ") + ".]\n\n" + msg
+	}
+	return append(msgs, Message{Role: "user", Content: msg})
 }
 
 // system is the turn's system prompt: the role, what the work is about, the
@@ -307,6 +342,13 @@ func (t turn) system(kit []AgentToolDef, web int) string {
 		}
 		b.WriteString(d)
 		b.WriteString("\n")
+	}
+	if len(t.files) > 0 {
+		b.WriteString("\n## Files attached here\n\n")
+		for _, f := range t.files {
+			b.WriteString("- " + f.Label() + "\n")
+		}
+		b.WriteString("They are not shown to you: a tool that takes a file uses one by its id, the latest when none is given.\n")
 	}
 	switch web {
 	case webOn:
