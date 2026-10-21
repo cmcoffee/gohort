@@ -20,6 +20,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"github.com/cmcoffee/gohort/core/sourcehooks"
 )
 
 // BuildSourceHookAgentToolDefs walks the configured source hooks and
@@ -33,7 +35,7 @@ func BuildSourceHookAgentToolDefs(db Database) []AgentToolDef {
 	}
 	out := make([]AgentToolDef, 0, len(hooks))
 	for _, h := range hooks {
-		if !h.ExposeToLLM || h.Disabled {
+		if !h.ExposeToLLM || h.Disabled || sourcehooks.IsSearchEngine(h) {
 			continue
 		}
 		// Paywall hooks aren't search surfaces — skip.
@@ -45,6 +47,18 @@ func BuildSourceHookAgentToolDefs(db Database) []AgentToolDef {
 		}
 	}
 	return out
+}
+
+// The hook that is the web search engine, for sourcehooks to keep out of
+// every other use (sourcehooks.IsSearchEngine).
+func init() {
+	sourcehooks.EngineHook = func() string {
+		c := LoadWebSearchConfig()
+		if c.Provider != "hook" {
+			return ""
+		}
+		return c.Hook
+	}
 }
 
 // sourceHookToolName is the LLM-facing tool name for a hook: the
@@ -80,7 +94,7 @@ func SourceHookToolDefByName(name string) (AgentToolDef, bool) {
 		return AgentToolDef{}, false
 	}
 	for _, h := range RegisteredSourceHooks() {
-		if h.Type == HookTypePaywall || h.Disabled {
+		if h.Type == HookTypePaywall || h.Disabled || sourcehooks.IsSearchEngine(h) {
 			continue
 		}
 		if sourceHookToolName(h) == name {
@@ -196,7 +210,7 @@ func sourceHookToAgentToolDef(h SourceHook) (AgentToolDef, bool) {
 func exposedQueryableHooks() []SourceHook {
 	var out []SourceHook
 	for _, h := range RegisteredSourceHooks() {
-		if !h.ExposeToLLM || h.Type == HookTypePaywall || h.Disabled {
+		if !h.ExposeToLLM || h.Type == HookTypePaywall || h.Disabled || sourcehooks.IsSearchEngine(h) {
 			continue
 		}
 		out = append(out, h)

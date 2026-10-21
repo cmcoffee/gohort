@@ -67,6 +67,8 @@ type SearchRequest struct {
 	APIKey string
 	// Source records where the config came from — "local", or "peer:<name>".
 	Source string
+	// Hook is the Source Hook that answers, for the "hook" provider.
+	Hook string
 }
 
 // --- per-capability rate limiting -------------------------------------------
@@ -186,7 +188,7 @@ func HandlePeerSearch(w http.ResponseWriter, r *http.Request) {
 	// relay it (the guard above), so what reaches here is always a config this
 	// instance owns.
 	out, err := SearchWithProviderFunc(SearchRequest{
-		Query: query, Provider: cfg.Provider, APIKey: cfg.APIKey, Endpoint: cfg.Endpoint,
+		Query: query, Provider: cfg.Provider, APIKey: cfg.APIKey, Endpoint: cfg.Endpoint, Hook: cfg.Hook,
 	})
 	// Priced whether or not it answered usefully: the provider bills for the
 	// call, not for the quality of the result, and recording only successes

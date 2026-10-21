@@ -247,7 +247,7 @@ func RegisteredSourceHooks() []SourceHook {
 func ActiveSourceHooks() []SourceHook {
 	var out []SourceHook
 	for _, h := range RegisteredSourceHooks() {
-		if h.Disabled {
+		if h.Disabled || IsSearchEngine(h) {
 			continue
 		}
 		out = append(out, h)
@@ -329,7 +329,7 @@ func HooksForTopic(topic_domains []string) []SourceHook {
 
 	var matched []SourceHook
 	for _, hook := range sourceHookRegistry.hooks {
-		if hook.Disabled {
+		if hook.Disabled || IsSearchEngine(hook) {
 			continue
 		}
 		if hook.AlwaysActive {
@@ -1105,6 +1105,46 @@ func QuerySourceHook(hook SourceHook, query string) (string, error) {
 	} else {
 		nfo.Debug("[source-hooks] cache STORE %s: %q (%d chars)", hook.Name, query, len(result))
 	}
+	return result, err
+}
+
+// EngineHook names the hook that is the web search engine, from the search
+// settings (core sets it); empty when the engine is another provider.
+var EngineHook func() string
+
+// IsSearchEngine reports whether h is the web search engine. Picked under
+// Web Search, a hook stops being a source hook of its own: it is asked only
+// as web_search, never routed to by topic or offered as a tool of its own,
+// so one API is not called twice under two names.
+func IsSearchEngine(h SourceHook) bool {
+	if EngineHook == nil {
+		return false
+	}
+	n := strings.TrimSpace(EngineHook())
+	return n != "" && strings.EqualFold(n, strings.TrimSpace(h.Name))
+}
+
+// SearchHook is the hook called name that can be the web search engine: an
+// API hook, switched on, which answers a query with results. A hook that is
+// gone, switched off, or another kind is not one.
+func SearchHook(name string) (SourceHook, bool) {
+	name = strings.TrimSpace(name)
+	for _, h := range RegisteredSourceHooks() {
+		if !h.Disabled && h.Type == HookTypeAPI && strings.EqualFold(h.Name, name) {
+			return h, true
+		}
+	}
+	return SourceHook{}, false
+}
+
+// QueryLive asks hook's API itself, bypassing both caches, and prices the
+// call. It is what a hook does as the web search engine: a search is live,
+// and the tier-2 index answers near-misses from results earlier queries
+// gathered, which a peer borrowing this machine's search must never be
+// handed (a peer key lends the engine, not what the instance found).
+func QueryLive(hook SourceHook, query string) (string, error) {
+	result, err := queryHookLive(hook, query)
+	costledger.RecordExternalCost("hook:"+hook.Name, hook.Name, hook.CostPerCall)
 	return result, err
 }
 

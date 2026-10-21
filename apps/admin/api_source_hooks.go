@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/sourcehooks"
 )
 
 // registerSourceHooksRoutes wires the source hooks API under the admin sub-mux.
@@ -66,6 +67,11 @@ func (a *AdminApp) registerSourceHooksRoutes(sub *http.ServeMux) {
 					// Display approximation of the derived name (the real
 					// derivation lives in sourceHookToAgentToolDef).
 					eff = strings.ToLower(strings.ReplaceAll(strings.TrimSpace(h.Name), " ", "_")) + "_search"
+				}
+				// Picked as the search engine, it answers web_search and
+				// nothing else: no topic routing, no tool of its own.
+				if sourcehooks.IsSearchEngine(h) {
+					eff = "web_search (the search engine)"
 				}
 				out = append(out, row{
 					Name: h.Name, Type: string(h.Type), Endpoint: h.Endpoint,

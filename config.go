@@ -279,6 +279,7 @@ func (d dbCFG) search() WebSearchConfig {
 	global.db.Get(SearchTable, "provider", &c.Provider)
 	global.db.Get(SearchTable, "api_key", &c.APIKey)
 	global.db.Get(SearchTable, "endpoint", &c.Endpoint)
+	global.db.Get(SearchTable, "hook", &c.Hook)
 	// Source, without which a peer-backed search cannot work at all.
 	//
 	// It is the pointer at the peer, and BOTH mechanisms that keep such a

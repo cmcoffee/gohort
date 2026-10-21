@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/activity"
+	"github.com/cmcoffee/gohort/core/sourcehooks"
 )
 
 // secretUnchanged is what a stored secret reads as on a GET. The admin forms
@@ -66,31 +68,65 @@ func (a *AdminApp) registerNetConfigRoutes(sub *http.ServeMux) {
 				return
 			}
 			req = resolved
+			// A Source Hook as the engine must be one that can be: refused
+			// here, where the admin sees it, rather than every search failing.
+			if req.Provider == "hook" {
+				if _, ok := sourcehooks.SearchHook(req.Hook); !ok {
+					http.Error(w, "pick a Source Hook to search with: an API hook that is switched on", http.StatusBadRequest)
+					return
+				}
+			} else {
+				req.Hook = ""
+			}
 			if a.db != nil {
 				a.db.Set(SearchTable, "provider", req.Provider)
 				a.db.Set(SearchTable, "api_key", req.APIKey)
 				a.db.Set(SearchTable, "endpoint", req.Endpoint)
 				a.db.Set(SearchTable, "source", req.Source)
+				a.db.Set(SearchTable, "hook", req.Hook)
 			}
 			adminChange(r, activity.Settings, "updated web-search config (provider=%q)",
 				req.Provider)
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-		var provider, key, endpoint, source string
+		var provider, key, endpoint, source, hook string
 		if a.db != nil {
 			a.db.Get(SearchTable, "provider", &provider)
 			a.db.Get(SearchTable, "api_key", &key)
 			a.db.Get(SearchTable, "endpoint", &endpoint)
 			a.db.Get(SearchTable, "source", &source)
+			a.db.Get(SearchTable, "hook", &hook)
 		}
 		if source == "" {
 			source = EmbeddingProviderLocal
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
-			"provider": provider, "api_key": maskSecret(key), "endpoint": endpoint, "source": source,
+			"provider": provider, "api_key": maskSecret(key), "endpoint": endpoint, "source": source, "hook": hook,
 		})
+	})
+
+	// The Source Hooks that can be the search engine: API hooks that are on,
+	// for the Web Search form's picker.
+	sub.HandleFunc("/api/web-search/hooks", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		opts := []map[string]string{}
+		// Every hook that can be the engine, the engine itself among them:
+		// it is out of the source hooks' own uses, not out of this list.
+		for _, h := range sourcehooks.RegisteredSourceHooks() {
+			if _, ok := sourcehooks.SearchHook(h.Name); !ok {
+				continue
+			}
+			label := h.Name
+			if u, err := url.Parse(h.Endpoint); err == nil && u.Host != "" {
+				label += " (" + u.Host + ")"
+			}
+			opts = append(opts, map[string]string{"value": h.Name, "label": label})
+		}
+		writeJSONOut(w, opts)
 	})
 
 	// Page rendering — where browse_page and the render escalations happen.

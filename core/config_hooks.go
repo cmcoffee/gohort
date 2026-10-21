@@ -15,9 +15,12 @@ type MailConfig struct {
 
 // WebSearchConfig holds web search provider settings.
 type WebSearchConfig struct {
-	Provider string `json:"provider"` // Search provider: "duckduckgo", "brave", "google", "searxng"
+	Provider string `json:"provider"` // Search provider: "duckduckgo", "brave", "google", "serper", "searxng", "hook"
 	APIKey   string `json:"api_key"`  // API key (not required for duckduckgo/searxng)
 	Endpoint string `json:"endpoint"` // Custom endpoint (for searxng instances)
+	// Hook is the Source Hook that is the search engine when Provider is
+	// "hook": an API hook of the admin's own, called live (sourcehooks.QueryLive).
+	Hook string `json:"hook,omitempty"`
 	// Source records WHERE this config came from: "local" (a provider was
 	// picked below) or "peer:<name>" (the fields were filled from a peer — see
 	// ResolveSearchProvider). Separate from Provider because a resolved peer

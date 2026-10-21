@@ -21,6 +21,7 @@ import (
 	"unicode"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/sourcehooks"
 	"github.com/cmcoffee/gohort/core/textutil"
 	"github.com/cmcoffee/gohort/tools/browser"
 	"github.com/cmcoffee/snugforge/apiclient"
@@ -200,7 +201,7 @@ func (t *WebSearchTool) runWithSession(args map[string]any, sess *ToolSession) (
 	}
 
 	result, err := SearchWithProvider(SearchRequest{
-		Query: query, Provider: provider, APIKey: cfg.APIKey, Endpoint: cfg.Endpoint, Source: cfg.Source,
+		Query: query, Provider: provider, APIKey: cfg.APIKey, Endpoint: cfg.Endpoint, Source: cfg.Source, Hook: cfg.Hook,
 	})
 	// The operator's own searches are priced too. Recording only a peer's would
 	// make a shared key look like the peer was spending all of it.
@@ -956,6 +957,8 @@ func SearchWithProvider(req SearchRequest) (string, error) {
 		result, err = searchSearXNG(req)
 	case "serper":
 		result, err = searchSerper(query, apiKey)
+	case "hook":
+		result, err = searchHook(req.Hook, query)
 	default:
 		return "", fmt.Errorf("unknown search provider: %s", provider)
 	}
@@ -983,7 +986,7 @@ func CrossProviderSearch(query string) (string, error) {
 	}
 
 	out, err := SearchWithProvider(SearchRequest{
-		Query: query, Provider: provider, APIKey: cfg.APIKey, Endpoint: cfg.Endpoint, Source: cfg.Source,
+		Query: query, Provider: provider, APIKey: cfg.APIKey, Endpoint: cfg.Endpoint, Source: cfg.Source, Hook: cfg.Hook,
 	})
 	recordSearchCost(cfg, provider)
 	return out, err
@@ -996,7 +999,26 @@ func CrossProviderSearch(query string) (string, error) {
 // number can be right: what a provider charges is on their invoice, not in any
 // response.
 func recordSearchCost(cfg WebSearchConfig, provider string) {
+	if provider == "hook" {
+		return // the hook prices its own calls (sourcehooks.QueryLive)
+	}
 	RecordExternalCost("search:"+provider, "Web search ("+provider+")", cfg.CostPerCall)
+}
+
+// searchHook is a Source Hook of the admin's own as the search engine: its
+// API, asked live, its results already in the numbered shape every provider
+// gives. One that is gone or switched off says so rather than searching
+// somewhere else, which would send queries where nobody chose to.
+func searchHook(name, query string) (string, error) {
+	hook, ok := sourcehooks.SearchHook(name)
+	if !ok {
+		return "", fmt.Errorf("the source hook %q that web search uses is gone, switched off, or not an API hook: pick another under Web Search", name)
+	}
+	out, err := sourcehooks.QueryLive(hook, query)
+	if err == nil && strings.TrimSpace(out) == "" {
+		return "No results found.", nil
+	}
+	return out, err
 }
 
 // searchDuckDuckGo scrapes DuckDuckGo's lite HTML interface (no API key needed).
