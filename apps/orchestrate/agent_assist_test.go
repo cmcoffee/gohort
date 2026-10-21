@@ -158,6 +158,11 @@ func TestAssistDialogHTML(t *testing.T) {
 	if strings.Contains(got, "%!") {
 		t.Error("a format verb went unfilled, which ships a script that cannot parse")
 	}
+	// The button is the forms' ✨ Get assistance pill, words and all: a bare
+	// ✨ in the header said nothing about what it was.
+	if !strings.Contains(got, "b.className='ui-form-assist'; b.textContent='✨ Get assistance';") {
+		t.Error("the agent's assist button is not labelled like every form's ✨ Get assistance")
+	}
 	// Applying must not be able to reach past what assist may propose: the
 	// patch is built from the returned changes, so nothing here should name a
 	// reach or exposure field.

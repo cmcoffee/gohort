@@ -788,7 +788,7 @@ func (ed *agentEditor) serve() {
 	page.ServeHTTP(w, r)
 }
 
-// agentAssistHTML mounts the "Assist" button in the first section's header, and the dialog
+// agentAssistHTML mounts "✨ Get assistance" in the first section's header, and the dialog
 // behind it: a conversation about the WHOLE agent that answers with changes
 // you accept.
 //
@@ -805,10 +805,7 @@ func (ed *agentEditor) serve() {
 // not one line in whichever box happened to be focused.
 func agentAssistHTML(id string) string {
 	return fmt.Sprintf(`<style>
-#agent-assist{cursor:pointer;border:none;background:none;font-size:var(--fs-lg, 1.05rem);line-height:1;opacity:.85;padding:0 .2rem}
-#agent-assist:hover{opacity:1;transform:scale(1.1)}
-#agent-assist[disabled]{opacity:.4;cursor:wait}
-@media (pointer: coarse){#agent-assist{min-width:var(--btn-h-sm, 2.25rem);min-height:var(--btn-h-sm, 2.25rem)}}
+@media (pointer: coarse){#agent-assist{min-height:var(--btn-h-sm, 2.25rem)}}
 .aa-log{display:flex;flex-direction:column;gap:.5rem;margin-bottom:.75rem;max-height:38vh;overflow-y:auto}
 .aa-msg{padding:.45rem .6rem;border-radius:6px;font-size:var(--fs-md, .9rem);line-height:1.45;white-space:pre-wrap}
 .aa-you{background:var(--bg-2);align-self:flex-end;max-width:85%%}
@@ -828,8 +825,8 @@ func agentAssistHTML(id string) string {
 
   function open(){
     window.uiOpenModal({
-      title:'Assist',
-      subtitle:'Ask for a change and review what it proposes. Nothing is saved until you apply.',
+      title:'✨ Get assistance with this agent',
+      subtitle:'Ask for a change to any part of it and review what it proposes. Nothing is saved until you apply.',
       width:'760px',
       actions:[],
       mount:function(body,api){
@@ -918,8 +915,10 @@ func agentAssistHTML(id string) string {
   }
 
   var b=document.createElement('button');
-  b.id='agent-assist'; b.type='button'; b.textContent='✨';
-  b.title='Assist: talk about the whole agent and review proposed changes';
+  // The form's own ✨ Get assistance pill (ui-form-assist), so it reads as
+  // the same thing: a bare ✨ in a header said nothing about what it does.
+  b.id='agent-assist'; b.type='button'; b.className='ui-form-assist'; b.textContent='✨ Get assistance';
+  b.title='Talk about the whole agent and review the changes it proposes';
   b.onclick=open;
   var tries=0;
   function mount(){
