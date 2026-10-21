@@ -1089,8 +1089,10 @@ func splitAgentFormSections(id, source string, fields []ui.FormField, identitySu
 		return nil
 	}
 	panel := func(ff []ui.FormField) ui.FormPanel {
+		// No ✨ Get assistance on these: the page's own ✨ (agentAssistHTML)
+		// is the agent's assist, and it sees the whole agent where a form's
+		// helper would see one section of it. Two sparkles for one agent.
 		return ui.FormPanel{
-			Assist: true,
 			Source: source,
 			// The id rides in the QUERY, not the body: a FormPanel's PATCH body
 			// is exactly {changed_field: value} and carries no record id, so

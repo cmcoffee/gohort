@@ -1,8 +1,11 @@
 package orchestrate
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/cmcoffee/gohort/core/ui"
 )
 
 func assistTestAgent() AgentRecord {
@@ -167,5 +170,25 @@ func TestAssistDialogHTML(t *testing.T) {
 	// store one trigger that is the whole box.
 	if !strings.Contains(got, "c.field==='triggers'") {
 		t.Error("triggers is applied without being split into a list")
+	}
+}
+
+// One ✨ per agent: the edit page's own assist sees the whole agent, so its
+// section forms carry no Get assistance of their own (seen: two sparkles).
+func TestTheAgentEditPageHasOneAssist(t *testing.T) {
+	fields := []ui.FormField{
+		{Field: "name", Label: "Name"},
+		{Type: "header", Label: "Prompts"},
+		{Field: "orchestrator_prompt", Label: "Persona", Type: "textarea"},
+		{Type: "header", Label: "Rules"},
+		{Field: "rules", Label: "Rules", Type: "textarea"},
+	}
+	secs := splitAgentFormSections("a1", "../api/agents?id=a1", fields, "")
+	if len(secs) == 0 {
+		t.Fatal("no sections")
+	}
+	raw, _ := json.Marshal(secs)
+	if strings.Contains(string(raw), `"assist":true`) {
+		t.Error("an edit section's form should not carry its own ✨")
 	}
 }
