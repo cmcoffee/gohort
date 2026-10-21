@@ -17,6 +17,11 @@ function check(name, cond) {
 check('discuss mode is opt-in: pinned by the caller, or offered by a switchable window',
   src.indexOf("var switchable = !!opts.switchable && !opts.mode;") >= 0 &&
   src.indexOf("var discuss = opts.mode === 'discuss' ||") >= 0);
+// The conversation pane is shared (uiAssistChat): it builds every request,
+// and the draft window adds its draft through extra.
 check('every send says which mode it is in',
-  src.indexOf("opts.send({message: text, draft: draft.value, history: priorHistory, mode: discuss ? 'discuss' : 'write'}") >= 0);
+  src.indexOf("var req = {message: text, history: priorHistory, mode: discuss ? 'discuss' : 'write', window: windowId};") >= 0 &&
+  src.indexOf("opts.send(req, finish,") >= 0);
+check('the draft window sends its draft with every turn',
+  src.indexOf("extra: function() { return {draft: draft.value}; },") >= 0);
 process.exit(fail ? 1 : 0);
