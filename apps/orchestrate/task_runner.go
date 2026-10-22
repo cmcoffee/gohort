@@ -522,6 +522,13 @@ const taskWakeCoalesce = 15 * time.Second
 // 1.27 MB of PNG at 22:32:00, posted 103 characters at 22:32:01, and the
 // outbox never saw any of it.
 
+// wakeHasSomethingToSend reports whether a finished result has anything for
+// the conversation. Audio and video count: a result that is only a song has
+// no text and no picture, and is still the whole answer.
+func wakeHasSomethingToSend(text string, imgs, vids []string) bool {
+	return text != "" || len(imgs) > 0 || len(vids) > 0
+}
+
 // channelTargetForWake resolves the conversation a wake should be delivered to,
 // or ok=false when the session isn't a channel thread (a plain web session
 // needs no send — the user is looking at it).
@@ -611,7 +618,7 @@ func deliverWakeToChannel(p orchUpdatePayload, subSess *ToolSession, reply strin
 	// one nothing corrected.
 	text := strings.TrimSpace(prompts.ApplyRuleEnforcers(StripMetaTags(reply)))
 	imgs, vids := collectMessageMedia(subSess, reply)
-	if text == "" && len(imgs) == 0 {
+	if !wakeHasSomethingToSend(text, imgs, vids) {
 		return true, false
 	}
 	if _, err := operatorDeliverMedia(p.Username, p.AgentID, chatID, handle, text, imgs, vids); err != nil {

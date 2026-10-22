@@ -28,6 +28,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/media"
 	"github.com/cmcoffee/gohort/core/timing"
 )
 
@@ -432,13 +433,12 @@ func isDeliverableFile(name string) bool {
 // which delivers it as a file, instead of the image channel.
 func isVideoAttachment(name string) bool {
 	switch strings.ToLower(filepath.Ext(strings.TrimSpace(name))) {
-	case ".mp4", ".mov", ".webm", ".mkv", ".avi", ".m4v",
-		// Audio rides the video list: the transport sends it as a file. On
-		// the image list a song went out named .jpg.
-		".mp3", ".m4a", ".aac", ".wav", ".ogg", ".oga", ".opus", ".flac":
+	case ".mp4", ".mov", ".webm", ".mkv", ".avi", ".m4v":
 		return true
 	}
-	return false
+	// Audio rides the video list: the transport sends it as a file. On the
+	// image list a song went out named .jpg.
+	return media.IsAudioFileName(name)
 }
 
 // resolveWorkspaceImages reads each workspace-relative path and returns its
@@ -539,10 +539,11 @@ var attachmentHTTP = &http.Client{Timeout: 20 * time.Second}
 // balloon memory or the outbound payload.
 const maxAttachmentBytes = 20 << 20 // 20 MB
 
-// fetchAttachmentURL downloads a remote http(s) image/video (e.g. a meme URL) so
-// it can ride along on an outbound message. SSRF-guarded (IsNonPublicHost),
-// size-capped, and restricted to image/* or video/* content — arbitrary remote
-// content is never attached. Returns base64 + kind ("image"/"video") on success.
+// fetchAttachmentURL downloads a remote http(s) image, video or song (e.g. a
+// meme URL) so it can ride along on an outbound message. SSRF-guarded
+// (IsNonPublicHost), size-capped, and restricted to image, video and audio
+// content: arbitrary remote content is never attached. Returns base64 + kind
+// ("image"/"video", audio being "video") on success.
 func fetchAttachmentURL(ref string) (b64, kind string, ok bool) {
 	if !strings.HasPrefix(ref, "http://") && !strings.HasPrefix(ref, "https://") {
 		return "", "", false
@@ -573,10 +574,20 @@ func fetchAttachmentURL(ref string) (b64, kind string, ok bool) {
 	switch {
 	case strings.HasPrefix(ct, "image/"):
 		return base64.StdEncoding.EncodeToString(data), "image", true
-	case strings.HasPrefix(ct, "video/"):
+	// Audio rides the video list, as everywhere: the transport sends it as a
+	// file, under its own name.
+	case strings.HasPrefix(ct, "video/"), strings.HasPrefix(ct, "audio/"):
 		return base64.StdEncoding.EncodeToString(data), "video", true
 	}
-	return "", "", false // not an image/video — don't attach arbitrary content
+	// A song served as a plain download is still a song: by its bytes, or
+	// for a format the sniffer cannot place, by the name in its URL.
+	if ct == "application/octet-stream" || ct == "application/ogg" {
+		sniff := http.DetectContentType(data)
+		if strings.HasPrefix(sniff, "audio/") || strings.HasPrefix(sniff, "video/") || media.IsUnsniffedAudio(sniff, u.Path) {
+			return base64.StdEncoding.EncodeToString(data), "video", true
+		}
+	}
+	return "", "", false // not an image, video or audio: don't attach arbitrary content
 }
 
 // attachmentsParamDesc is the shared description for the messaging tools' explicit

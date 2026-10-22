@@ -32,6 +32,7 @@ import (
 	// Imported directly rather than through a core alias: the shell run needs a
 	// working directory, and two more symbols in core put it over
 	// TestCoreStaysUnderItsCeiling.
+	"github.com/cmcoffee/gohort/core/media"
 	"github.com/cmcoffee/gohort/core/sandbox"
 	"github.com/cmcoffee/gohort/tools/files"
 )
@@ -933,22 +934,7 @@ func AttachWorkspaceFile(sess *ToolSession, relPath, displayName string, cleanup
 	if displayName == "" {
 		displayName = filepath.Base(relPath)
 	}
-	channel := "file"
-	switch {
-	case strings.HasPrefix(mime, "image/"):
-		sess.AppendImage(base64.StdEncoding.EncodeToString(data))
-		channel = "image"
-	case strings.HasPrefix(mime, "audio/"), strings.HasPrefix(mime, "video/"):
-		sess.AppendVideo(base64.StdEncoding.EncodeToString(data))
-		channel = "audio/video"
-	default:
-		sess.AppendFile(FileAttachment{
-			Name:     displayName,
-			MimeType: mime,
-			Data:     base64.StdEncoding.EncodeToString(data),
-			Size:     len(data),
-		})
-	}
+	channel := attachOn(sess, data, mime, relPath, displayName)
 	var suffix string
 	if cleanup {
 		if err := os.Remove(abs); err != nil {
@@ -1042,26 +1028,34 @@ func humanAge(d time.Duration) string {
 	}
 }
 
+// attachOn queues data on the channel its type calls for and names it:
+// image, audio/video, or file. By what the bytes are, and for audio the
+// sniffer cannot place (an untagged MP3, Ogg, Opus, FLAC, raw AAC) by the
+// file's name, since a song queued as a file never reaches a messaging
+// channel.
+func attachOn(sess *ToolSession, data []byte, mime, name, displayName string) string {
+	switch {
+	case strings.HasPrefix(mime, "image/"):
+		sess.AppendImage(base64.StdEncoding.EncodeToString(data))
+		return "image"
+	case strings.HasPrefix(mime, "audio/"), strings.HasPrefix(mime, "video/"), media.IsUnsniffedAudio(mime, name):
+		sess.AppendVideo(base64.StdEncoding.EncodeToString(data))
+		return "audio/video"
+	}
+	sess.AppendFile(FileAttachment{
+		Name: displayName, MimeType: mime,
+		Data: base64.StdEncoding.EncodeToString(data), Size: len(data),
+	})
+	return "file"
+}
+
 // attachBytes delivers already-resolved bytes on the channel their type calls
 // for. Split out of AttachWorkspaceFile so a kept image takes exactly the same
 // route to the user as a file does — a second delivery path is how one of them
 // ends up quietly not supporting video, or not reporting its size.
 func attachBytes(sess *ToolSession, data []byte, displayName string) string {
 	mime := http.DetectContentType(data)
-	channel := "file"
-	switch {
-	case strings.HasPrefix(mime, "image/"):
-		sess.AppendImage(base64.StdEncoding.EncodeToString(data))
-		channel = "image"
-	case strings.HasPrefix(mime, "audio/"), strings.HasPrefix(mime, "video/"):
-		sess.AppendVideo(base64.StdEncoding.EncodeToString(data))
-		channel = "audio/video"
-	default:
-		sess.AppendFile(FileAttachment{
-			Name: displayName, MimeType: mime,
-			Data: base64.StdEncoding.EncodeToString(data), Size: len(data),
-		})
-	}
+	channel := attachOn(sess, data, mime, displayName, displayName)
 	// No cleanup clause: a kept image is deliberately durable, and sending a
 	// copy must never consume the library entry.
 	return fmt.Sprintf("Attached %q (%s, %s) via %s channel. The kept image is unchanged and still available under that id.",

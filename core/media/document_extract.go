@@ -135,6 +135,29 @@ func isAudioAttachment(mime, ext string) bool {
 	return false
 }
 
+// IsAudioFileName reports whether a file's name says it is audio.
+func IsAudioFileName(name string) bool {
+	switch strings.ToLower(filepath.Ext(strings.TrimSpace(name))) {
+	case ".mp3", ".m4a", ".aac", ".wav", ".ogg", ".oga", ".opus", ".flac":
+		return true
+	}
+	return false
+}
+
+// IsUnsniffedAudio reports whether bytes the content sniffer could not place
+// are audio by their name. Go's sniffer knows a tagged MP3, WAV, AIFF and MP4,
+// and calls an untagged MP3, FLAC or raw AAC application/octet-stream and an
+// Ogg or Opus file application/ogg. A song sent on as a generic file never
+// reaches a messaging channel, which carries images and audio/video only, so
+// for those two answers the name decides. Any other answer stands: a text
+// file named .mp3 is still text.
+func IsUnsniffedAudio(sniffed, name string) bool {
+	if sniffed != "application/octet-stream" && sniffed != "application/ogg" {
+		return false
+	}
+	return IsAudioFileName(name)
+}
+
 // extractHTML walks a parsed HTML document and returns just the
 // readable text — strips <script>, <style>, <nav>, <header>, <footer>,
 // and aria-hidden content. Output is normalized whitespace (single
