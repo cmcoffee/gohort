@@ -34,6 +34,8 @@ func (a *AdminApp) registerUsersRoutes(sub *http.ServeMux) {
 	// admin API Credentials page shows only GLOBAL creds; this surfaces the ones
 	// users create for themselves, with owner-aware revoke (disable) + delete.
 	sub.HandleFunc("/api/user-credentials", a.handleUserCredentials)
+	// Whether people add their own credentials and MCP servers at all.
+	sub.HandleFunc("/api/personal-integrations", a.handlePersonalIntegrations)
 
 	// API: user-owned agents — the governance view over peer-shared agents. Agents
 	// live in per-user UDBs, so the admin app enumerates them through an orchestrate
@@ -174,6 +176,9 @@ func (a *AdminApp) handleUserCredentials(w http.ResponseWriter, r *http.Request)
 			Lent        bool   `json:"lent"`
 			LendsWrites bool   `json:"lends_writes"`
 			LendLocked  bool   `json:"lend_locked"`
+			// Added while personal credentials need approval, and not yet
+			// approved: Enable approves it.
+			Awaiting bool `json:"awaiting"`
 		}
 		rows := []row{}
 		for _, c := range Secure().ListAllUserOwned() {
@@ -181,7 +186,8 @@ func (a *AdminApp) handleUserCredentials(w http.ResponseWriter, r *http.Request)
 				LentTo:      describeLend(c),
 				Lent:        len(c.SharedReadOnly)+len(c.SharedReadWrite) > 0,
 				LendsWrites: len(c.SharedReadWrite) > 0,
-				LendLocked:  c.AdminLendLocked})
+				LendLocked:  c.AdminLendLocked,
+				Awaiting:    c.AwaitingApproval})
 		}
 		sort.Slice(rows, func(i, j int) bool {
 			if rows[i].Owner != rows[j].Owner {

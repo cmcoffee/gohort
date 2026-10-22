@@ -148,6 +148,12 @@ type SecureCredential struct {
 	// action lasted until the owner's next click. Only an admin clears them.
 	AdminDisabled   bool `json:"admin_disabled,omitempty"`
 	AdminLendLocked bool `json:"admin_lend_locked,omitempty"`
+	// AwaitingApproval marks a user's own credential added while personal
+	// credentials need an administrator's approval (core/governance): held
+	// off, with AdminDisabled, until an administrator enables it, which
+	// approves it. Said apart from an admin's hold so the owner and the
+	// admin both read "waiting for approval", not "switched off".
+	AwaitingApproval bool `json:"awaiting_approval,omitempty"`
 	// Secured locks the credential to the tools that DECLARE it
 	// (hook_capabilities fetch_via:<name> / secret:<name>). A secured
 	// credential has no access-scope of its own — access is whatever the
@@ -674,6 +680,7 @@ func (s *SecureAPI) Save(c SecureCredential, secret string) error {
 		c.OnlyAgents = existing.OnlyAgents
 		c.AdminDisabled = existing.AdminDisabled
 		c.AdminLendLocked = existing.AdminLendLocked
+		c.AwaitingApproval = existing.AwaitingApproval
 		// The share lists belong to SetCredentialShares for the same reason
 		// Disabled and Secured belong to their own setters: the upsert form
 		// does not carry them, so letting the body win would silently revoke
@@ -962,6 +969,9 @@ func (s *SecureAPI) SetDisabledOwned(owner, name string, disabled bool) error {
 	if !s.db.Get(secureAPITable, key, &c) {
 		return fmt.Errorf("credential %q not found", name)
 	}
+	if !disabled && c.AwaitingApproval {
+		return fmt.Errorf("credential %q is waiting for an administrator to approve it", name)
+	}
 	if !disabled && c.AdminDisabled {
 		return fmt.Errorf("an administrator switched credential %q off: ask them to enable it", name)
 	}
@@ -976,6 +986,18 @@ func (s *SecureAPI) SetDisabledOwned(owner, name string, disabled bool) error {
 func (s *SecureAPI) AdminSetDisabledOwned(owner, name string, disabled bool) error {
 	return s.mutateOwned(owner, name, func(c *SecureCredential) {
 		c.Disabled, c.AdminDisabled = disabled, disabled
+		if !disabled {
+			c.AwaitingApproval = false // enabling one that waited approves it
+		}
+	})
+}
+
+// HoldForApproval holds a user's own credential off until an administrator
+// approves it (AwaitingApproval): what a new one gets while personal
+// credentials need approval.
+func (s *SecureAPI) HoldForApproval(owner, name string) error {
+	return s.mutateOwned(owner, name, func(c *SecureCredential) {
+		c.Disabled, c.AdminDisabled, c.AwaitingApproval = true, true, true
 	})
 }
 

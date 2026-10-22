@@ -9,6 +9,7 @@ func (a *AdminApp) governanceSections() []ui.Section {
 	return []ui.Section{
 		// First: the deployment's obligations frame everything else here.
 		rulesSection(),
+		personalIntegrationsSection(),
 		{
 			Title:    "User-owned credentials",
 			Subtitle: "Credentials users create for themselves, on their Extensions page.",
@@ -29,15 +30,22 @@ func (a *AdminApp) governanceSections() []ui.Section {
 					{Field: "secured", Flex: 0, Type: "badge", Badges: []ui.BadgeMapping{
 						{Value: true, Label: "Secured", Color: "mute"},
 					}},
+					{Field: "awaiting", Flex: 0, Type: "badge", Badges: []ui.BadgeMapping{
+						{Value: true, Label: "Awaiting approval", Color: "warning"},
+					}},
 					{Field: "disabled", Flex: 0, Type: "badge", Badges: []ui.BadgeMapping{
 						{Value: true, Label: "Disabled", Color: "danger"},
 						{Value: false, Label: "Enabled", Color: "success"},
 					}},
 				},
 				RowActions: []ui.RowAction{
+					// Approving one that waits is enabling it: the same switch.
+					{Type: "button", Label: "Approve",
+						PostTo: "api/user-credentials?action=enable&owner={owner}&name={name}",
+						Method: "POST", OnlyIf: "awaiting"},
 					{Type: "button", Label: "Enable",
 						PostTo: "api/user-credentials?action=enable&owner={owner}&name={name}",
-						Method: "POST", OnlyIf: "disabled"},
+						Method: "POST", OnlyIf: "disabled", HideIf: "awaiting"},
 					{Type: "button", Label: "Disable",
 						PostTo: "api/user-credentials?action=disable&owner={owner}&name={name}",
 						Method: "POST", HideIf: "disabled"},

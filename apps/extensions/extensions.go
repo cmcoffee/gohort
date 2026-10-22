@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/governance"
 	"github.com/cmcoffee/gohort/core/promotion"
 	"github.com/cmcoffee/gohort/core/toolcat"
 	"github.com/cmcoffee/gohort/core/ui"
@@ -146,6 +147,9 @@ func (T *Extensions) handleCredentials(w http.ResponseWriter, r *http.Request) {
 			// the first — so the row says it is waiting instead.
 			HandoverPending bool `json:"handover_pending"`
 			CanHandOver     bool `json:"can_hand_over"`
+			// Added while personal credentials need approval: off until an
+			// administrator approves it, which the row says.
+			AwaitingApproval bool `json:"awaiting_approval"`
 		}
 		toRow := func(c SecureCredential) row {
 			_, _, stored := Secure().CredentialStatusOwned(user, c.Name)
@@ -162,6 +166,8 @@ func (T *Extensions) handleCredentials(w http.ResponseWriter, r *http.Request) {
 				LendingLabel:    lendingListLabel(c),
 				HandoverPending: handoverPending(user, c.Name),
 				CanHandOver:     !handoverPending(user, c.Name),
+
+				AwaitingApproval: c.AwaitingApproval,
 			}
 		}
 		// ?audit=<name> is the owner's own dispatch ledger for their own key.
@@ -288,6 +294,17 @@ func (T *Extensions) handleCredentials(w http.ResponseWriter, r *http.Request) {
 			Description: strings.TrimSpace(body.Description),
 			Owner:       user,
 		}
+		// A NEW one answers to the administrator's policy for personal
+		// credentials (core/governance): refused, held for approval, or live.
+		// An edit to one they have is not adding one.
+		var hold bool
+		if _, found := Secure().LoadUser(user, c.Name); !found {
+			var perr error
+			if hold, perr = governance.Permit(governance.Credentials, user); perr != nil {
+				http.Error(w, perr.Error(), http.StatusForbidden)
+				return
+			}
+		}
 		if prev, found := Secure().LoadUser(user, c.Name); found {
 			c.RequiresConfirm, c.ConfirmWrites, c.Lending = prev.RequiresConfirm, prev.ConfirmWrites, prev.Lending
 		}
@@ -312,7 +329,18 @@ func (T *Extensions) handleCredentials(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if !wasEnabled && !hadSecret && strings.TrimSpace(body.Secret) != "" {
+		if hold {
+			if err := Secure().HoldForApproval(user, c.Name); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+		// One waiting for approval stays off with its secret kept: approving
+		// it is the administrator's switch, not this one.
+		if cur, ok := Secure().LoadUser(user, c.Name); ok && cur.AwaitingApproval {
+			hold = true
+		}
+		if !hold && !wasEnabled && !hadSecret && strings.TrimSpace(body.Secret) != "" {
 			if err := Secure().SetDisabledOwned(user, c.Name, false); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
@@ -1916,6 +1944,9 @@ func (T *Extensions) apisSection() ui.Section {
 							// is set, so the list says so rather than "Active".
 							{Field: "needs_key", Label: "", Type: "badge", Badges: []ui.BadgeMapping{
 								{Value: true, Label: "Needs its key", Color: "warning"},
+							}},
+							{Field: "awaiting_approval", Label: "", Type: "badge", Badges: []ui.BadgeMapping{
+								{Value: true, Label: "Waiting for approval", Color: "warning"},
 							}},
 							{Field: "disabled", Label: "Status", Type: "dot", Badges: []ui.BadgeMapping{
 								{Value: true, Label: "Disabled", Color: "danger"},

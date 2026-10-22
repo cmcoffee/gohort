@@ -33,6 +33,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/appstores"
+	"github.com/cmcoffee/gohort/core/governance"
 	"github.com/cmcoffee/gohort/tools/temptool"
 )
 
@@ -356,8 +357,20 @@ func draftAPICredentialToolDef(t *chatTurn) AgentToolDef {
 				// see draft_oauth_credential.)
 				Owner: t.user,
 			}
+			// A new personal credential answers to the administrator's policy
+			// (core/governance): refused, held for approval, or the user's to
+			// finish. The re-draft refusals above cover one that exists.
+			hold, perr := governance.Permit(governance.Credentials, t.user)
+			if perr != nil {
+				return "NOT drafted: " + perr.Error() + ". Tell the person so, plainly; the tool can be built once the administrator has added the credential, with credential=<its name>.", nil
+			}
 			if err := Secure().SaveAPIDraft(c); err != nil {
 				return "", err
+			}
+			if hold {
+				if err := Secure().HoldForApproval(t.user, c.Name); err != nil {
+					return "", err
+				}
 			}
 			secretNeeded := map[string]string{
 				SecureCredBearer:    "the bearer token",
@@ -369,6 +382,10 @@ func draftAPICredentialToolDef(t *chatTurn) AgentToolDef {
 				secretNeeded = "the secret value"
 			}
 			t.emitCredentialSetupCard(c.Name, c.Type, "", secretNeeded, true)
+			if hold {
+				return fmt.Sprintf("Drafted %s credential %q in the user's OWN API credentials. Personal credentials need an administrator's approval here, so it is held OFF until one approves it in Admin > Governance. A setup card is showing: the USER pastes %s now, and it goes live as fetch_url_%s once approved. Tell them both steps plainly. Then build the tool with tool_def(mode=\"api\", credential=%q), with url_template as a PATH.",
+					c.Type, c.Name, secretNeeded, c.Name, c.Name), nil
+			}
 			return fmt.Sprintf("Drafted %s credential %q in the user's OWN API credentials, created DISABLED. A setup card is showing in the chat: the USER pastes %s and enables it in Extensions › API credentials (no admin needed). It goes live as fetch_url_%s for their agents. %s Then build the tool with tool_def(mode=\"api\", credential=%q): do NOT take the key/secret/host as tool params, and author url_template as a PATH (e.g. \"/api/v1/posts\"): it resolves against the credential's Base URL so the host can never drift.",
 				c.Type, c.Name, secretNeeded, c.Name, credentialWaitNote(c.Name), c.Name), nil
 		},
