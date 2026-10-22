@@ -42,6 +42,25 @@ func TaskNamespace(surface, owner, id string) string {
 	return "task:" + surface + ":" + owner + ":" + id
 }
 
+// LinkNotesMaxShares is how many members' worth a link group's shared note
+// holds at most. Every member's every run carries the whole note, in the part
+// of the prompt that is never cached, so past this the members share.
+const LinkNotesMaxShares = 4
+
+// LinkNotesCap is the cap of a link group's shared note: a task's cap per
+// member, up to LinkNotesMaxShares of them. Linking replaces each member's own
+// notes with the shared one, so a group holding less than its members held
+// alone would leave every step less room for being linked.
+func LinkNotesCap(members int) int {
+	if members < 1 {
+		members = 1
+	}
+	if members > LinkNotesMaxShares {
+		members = LinkNotesMaxShares
+	}
+	return members * OperatingNotesCap
+}
+
 // RenderLinkNotesBlock is RenderTaskNotesBlock for a task in a link group: the
 // group's one shared note, which every schedule in the group reads and writes,
 // in run order, so a step can leave something for the step after it.

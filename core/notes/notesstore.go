@@ -55,12 +55,22 @@ func LoadOperatingNotes(db Store, namespace string) OperatingNotes {
 // history ring. An empty text clears the notes (row removed). Returns the
 // stored value and overCap=true when text exceeds the cap (nothing written).
 func SaveOperatingNotes(db Store, namespace, text string) (OperatingNotes, bool) {
+	return SaveOperatingNotesWithin(db, namespace, text, OperatingNotesCap)
+}
+
+// SaveOperatingNotesWithin is SaveOperatingNotes for a block with a cap of
+// its own: a link group's shared note, which holds a share per member
+// (LinkNotesCap). A limit below 1 is the standard cap.
+func SaveOperatingNotesWithin(db Store, namespace, text string, limit int) (OperatingNotes, bool) {
+	if limit < 1 {
+		limit = OperatingNotesCap
+	}
 	namespace = strings.TrimSpace(namespace)
 	if db == nil || namespace == "" {
 		return OperatingNotes{}, false
 	}
 	text = strings.TrimSpace(text)
-	if len([]rune(text)) > OperatingNotesCap {
+	if len([]rune(text)) > limit {
 		return LoadOperatingNotes(db, namespace), true
 	}
 	prev := LoadOperatingNotes(db, namespace)

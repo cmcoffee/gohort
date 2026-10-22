@@ -287,3 +287,42 @@ func TestGoalRowsCanReachTheirTasksNotes(t *testing.T) {
 		}
 	}
 }
+
+// A link group's shared note holds a share per member, up to four: each member
+// gave up its own notes to join. The cap follows the group as it is now, and a
+// lone task's stays where it was.
+func TestALinkGroupsNoteHoldsAShareForEachMember(t *testing.T) {
+	pinRootDB(t)
+	g := linkGroup{ID: "lg-notes", Owner: "craig", Members: []linkMember{{Kind: "standing", ID: "a"}, {Kind: "standing", ID: "b"}, {Kind: "standing", ID: "c"}}}
+	saveLinkGroup(g)
+	tn := linkGroupNotes("craig", g.ID)
+	if tn.cap() != 3*OperatingNotesCap {
+		t.Fatalf("three members' note holds %d, want %d", tn.cap(), 3*OperatingNotesCap)
+	}
+	long := strings.Repeat("x", 2*OperatingNotesCap)
+	if _, err := tn.tool()[0].Handler(t.Context(), map[string]any{"text": long}); err != nil {
+		t.Errorf("two shares' worth in a three-member note: %v", err)
+	}
+	if !strings.Contains(tn.tool()[0].Tool.Description, "4500") {
+		t.Error("the tool does not tell the model the group's cap")
+	}
+	for i := 0; i < 6; i++ {
+		g.Members = append(g.Members, linkMember{Kind: "standing", ID: string(rune('d' + i))})
+	}
+	saveLinkGroup(g)
+	if got := linkGroupNotes("craig", g.ID).cap(); got != notes.LinkNotesMaxShares*OperatingNotesCap {
+		t.Errorf("nine members' note holds %d, want the four-share ceiling", got)
+	}
+	g.Members = g.Members[:1]
+	saveLinkGroup(g)
+	small := linkGroupNotes("craig", g.ID)
+	if _, err := small.tool()[0].Handler(t.Context(), map[string]any{"text": long}); err == nil {
+		t.Error("a write past the shrunken cap was taken")
+	}
+	if got := LoadOperatingNotes(RootDB, small.ns).Text; got != long {
+		t.Error("shrinking the group cut the note already there")
+	}
+	if c := newTaskNotes(notes.TaskSurfaceMonitor, "craig", "pr-12").cap(); c != OperatingNotesCap {
+		t.Errorf("a lone task's cap moved: %d", c)
+	}
+}

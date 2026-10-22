@@ -40,6 +40,17 @@ type taskNotes struct {
 	// group: the row is a link group's shared note (schedule_links.go), which
 	// every member reads and writes while it is linked.
 	group bool
+	// limit is the block's cap: a task's, or a link group's share per member
+	// (notes.LinkNotesCap). Zero is a task's.
+	limit int
+}
+
+// cap is the block's character cap.
+func (t taskNotes) cap() int {
+	if t.limit > 0 {
+		return t.limit
+	}
+	return OperatingNotesCap
 }
 
 func newTaskNotes(surface, owner, id string) taskNotes {
@@ -82,12 +93,12 @@ func (t taskNotes) tool() []AgentToolDef {
 	return []AgentToolDef{{
 		Tool: Tool{
 			Name:        "update_notes",
-			Description: fmt.Sprintf(t.scope()+" This run's conversation ends when it does; this block is what the next run reads, so anything worked out here that is not written down is worked out again from scratch.\n\nRight for it: what is half-done and what the next step was, a command or path that turned out to work (or to look right and not work), a decision already made so it is not reopened, an id or name that took digging to find. Wrong for it: durable facts about the user (store_fact), anything the task's own prompt already says, and NEVER a tool call parked to make later, because a remembered call you have no way to make becomes an improvised workaround.\n\nThis REPLACES the whole block; it does NOT append. Pass `section` to update ONE named part and leave the rest: your own register, named by you, created the first time you write it. Keep the WHOLE block under %d characters; sections share that budget rather than adding to it, so if it will not fit, COMPRESS. Pass empty text to clear the block, or empty text WITH a section to remove just that section.", OperatingNotesCap),
-			Parameters:  notesToolParams(),
+			Description: fmt.Sprintf(t.scope()+" This run's conversation ends when it does; this block is what the next run reads, so anything worked out here that is not written down is worked out again from scratch.\n\nRight for it: what is half-done and what the next step was, a command or path that turned out to work (or to look right and not work), a decision already made so it is not reopened, an id or name that took digging to find. Wrong for it: durable facts about the user (store_fact), anything the task's own prompt already says, and NEVER a tool call parked to make later, because a remembered call you have no way to make becomes an improvised workaround.\n\nThis REPLACES the whole block; it does NOT append. Pass `section` to update ONE named part and leave the rest: your own register, named by you, created the first time you write it. Keep the WHOLE block under %d characters; sections share that budget rather than adding to it, so if it will not fit, COMPRESS. Pass empty text to clear the block, or empty text WITH a section to remove just that section.", t.cap()),
+			Parameters:  notesToolParams(t.cap()),
 			Required:    []string{"text"},
 			Caps:        []Capability{CapWrite},
 		},
-		Handler: notesWriteHandler(RootDB, t.ns, "", taskNotesCopy),
+		Handler: notesWriteHandler(RootDB, t.ns, "", taskNotesCopy, t.cap()),
 	}}
 }
 
@@ -153,9 +164,19 @@ func (t taskNotes) scope() string {
 
 // linkGroupNotes is a link group's shared note. A member's runs use it, not
 // their own, while the member is linked; their own come back on unlink.
+//
+// It holds a share per member, up to notes.LinkNotesMaxShares: each member
+// gave up its own notes to join, so the group keeps the room they had between
+// them. The cap follows the group as it is now, so a member leaving shrinks
+// it; a note already over the new cap is kept, and the next write has to fit.
 func linkGroupNotes(owner, groupID string) taskNotes {
 	t := newTaskNotes(schedKindLink, owner, groupID)
 	t.group = true
+	members := 1
+	if g, ok := getLinkGroup(owner, groupID); ok {
+		members = len(g.Members)
+	}
+	t.limit = notes.LinkNotesCap(members)
 	return t
 }
 
@@ -290,7 +311,7 @@ func (T *OrchestrateApp) handleTaskNotes(w http.ResponseWriter, r *http.Request)
 		n := tn.load()
 		writeJSON(w, map[string]any{
 			"text":       n.Text,
-			"cap":        OperatingNotesCap,
+			"cap":        tn.cap(),
 			"updated_at": n.UpdatedAt,
 			// The same measurement the over-cap refusal quotes at the agent,
 			// served rather than counted in the browser so the person trimming
