@@ -61,7 +61,7 @@ const builderRecipeShipped = `You write the RECIPE for the agents a request need
 
 Two kinds:
 - ASSISTANT: people talk with it (the owner, a group chat, a contact). It keeps a standing mind and remembers who it talks to. memory_mode "chatbot".
-- SPECIALIST: one job, used directly or handed work by another agent. It remembers lessons, not people. memory_mode "agent". "An agent that does X" is a specialist unless people will talk to it. A specialist whose job is mapping something (a codebase, a system, how a project's parts connect) gets memory_mode "cartographer": it also keeps a map in its graph memory, which is worth attaching to other agents as a Source.
+- SPECIALIST: one job, used directly or handed work by another agent. It remembers lessons, not people. memory_mode "agent". "An agent that does X" is a specialist unless people will talk to it.
 
 Split a part off into its own sub-agent (owned_by the parent, hidden) only for one of three reasons, and name the reason:
 1. REACH that should live on it alone: the parent should not hold that tool at all (sending messages to people, running code, changing a system).
@@ -349,11 +349,8 @@ func recipeInput(sess *ToolSession, action, request, agentRef, buildOn string) s
 func recipeAgentSummary(rec AgentRecord, prefix string) string {
 	var b strings.Builder
 	kind := "specialist"
-	switch {
-	case memoryForPeople(rec.MemoryMode):
+	if memoryForPeople(rec.MemoryMode) {
 		kind = "assistant"
-	case memoryModeOf(rec.MemoryMode) == memoryModeCartographer:
-		kind = "specialist, cartographer"
 	}
 	fmt.Fprintf(&b, "- %s%s (%s)", prefix, rec.Name, kind)
 	if d := strings.TrimSpace(rec.Description); d != "" {

@@ -377,11 +377,10 @@ func (T *OrchestrateApp) renderAgentWizard(w http.ResponseWriter, r *http.Reques
 					{Value: "", Label: "Default for this type, Assistant: personalized, Specialist: lessons only"},
 					{Value: "personalized", Label: "Personalized: remembers the people it talks to, plus lessons"},
 					{Value: "lessons", Label: "Lessons only: remembers what works, not who"},
-					{Value: "map", Label: "Cartographer: lessons, plus a map of what it works on"},
 					{Value: "none", Label: "None: starts fresh every conversation"},
 				},
-				Help:   "Whether the agent remembers people, only lessons, a map, or nothing across sessions.",
-				Detail: "Personalized stores facts about people attributed by name (\"Dana prefers texts before 8pm\") alongside general lessons. Pick Lessons only for an agent shared across unrelated groups, so one room's personal details never surface in another.\n\nCartographer is Lessons only, plus a map of what it works on (the parts of a codebase or system and how they connect), built in its graph memory as it goes and kept current. Attach it to other agents as a Source and they can read the map.\n\nNone turns off remembering across sessions entirely. Uploaded knowledge and working notes still apply."},
+				Help:   "Whether the agent remembers people, only lessons, or nothing across sessions.",
+				Detail: "Personalized stores facts about people attributed by name (\"Dana prefers texts before 8pm\") alongside general lessons. Pick Lessons only for an agent shared across unrelated groups, so one room's personal details never surface in another.\n\nNone turns off remembering across sessions entirely. Uploaded knowledge and working notes still apply."},
 			{Field: "cortex", Type: "select", Label: "Reads its Cortex",
 				Options: []ui.SelectOption{
 					{Value: "", Label: "Default for this type, Assistant: on, Specialist: off"},
@@ -830,7 +829,7 @@ type wizardRequest struct {
 	FirstRun string   `json:"first_run"`
 	Triggers []string `json:"triggers"`
 	// Memory-step dials; "" = the type's default.
-	// Memory: "personalized" | "lessons" | "map" | "none".
+	// Memory: "personalized" | "lessons" | "none".
 	// Cortex: "on" | "off".
 	Memory string `json:"memory"`
 	Cortex string `json:"cortex"`
@@ -852,8 +851,6 @@ func applyWizardMemory(rec *AgentRecord, req wizardRequest) bool {
 		rec.MemoryMode = memoryModeChatbot
 	case "lessons":
 		rec.MemoryMode = memoryModeAgent
-	case "map":
-		rec.MemoryMode = memoryModeCartographer
 	case "none":
 		rec.DisableExplicit = true
 		rec.DisableInferred = true

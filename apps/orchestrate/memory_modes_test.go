@@ -1,48 +1,17 @@
 package orchestrate
 
-// Memory modes: Cartographer is lessons like Agent mode plus a map it keeps in
-// graph memory, and the two questions asked of a mode differ only on an unset
-// one.
+// Memory modes: the two questions asked of a mode differ only on an unset one,
+// and the graph list says how big a graph may grow.
 
 import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
-
-func TestACartographerIsToldToKeepItsMap(t *testing.T) {
-	mapper := AgentRecord{MemoryMode: memoryModeCartographer}
-	sys := prependAgentContext("persona", mapper, nil, OperatingNotes{})
-	for _, want := range []string{"## Your map", "link_entities", "recall_about", "forget_graph", "replace=true"} {
-		if !strings.Contains(sys, want) {
-			t.Errorf("a cartographer's prompt lacks %q:\n%s", want, sys)
-		}
-	}
-	if strings.Index(sys, "## Your map") > strings.Index(sys, "persona") {
-		t.Error("the map section should sit above the persona")
-	}
-	if memoryModeCopy(memoryModeCartographer).Header != memoryModeCopy("agent").Header {
-		t.Error("a cartographer's pinned notes should read as Agent mode's lessons")
-	}
-	for _, a := range []AgentRecord{{}, {MemoryMode: "agent"}, {MemoryMode: "chatbot"}, {MemoryMode: memoryModeCartographer, DisableExplicit: true}} {
-		if s := prependAgentContext("persona", a, nil, OperatingNotes{}); strings.Contains(s, "## Your map") {
-			t.Errorf("told to keep a map: %+v", a)
-		}
-	}
-	// Focused like Agent mode: no Cortex reading by default, no session recall.
-	if newAgentReadsCortex(mapper) || sessionRecallOn(mapper) {
-		t.Error("a cartographer reads like a chat assistant")
-	}
-	rec := AgentRecord{}
-	if !applyWizardMemory(&rec, wizardRequest{Memory: "map"}) || rec.MemoryMode != memoryModeCartographer {
-		t.Errorf("the wizard's Cartographer choice: %+v", rec)
-	}
-}
 
 // The Memory window's graph list says how big the graph may grow beside how
 // big it is.
@@ -75,7 +44,6 @@ func TestTheMemoryModeQuestions(t *testing.T) {
 		{memoryModeChatbot, true, false},
 		{"Chatbot ", true, false},
 		{memoryModeAgent, false, true},
-		{memoryModeCartographer, false, true},
 		{"", false, false},
 	} {
 		if memoryForPeople(c.mode) != c.people || memoryForAJob(c.mode) != c.job {
@@ -85,8 +53,7 @@ func TestTheMemoryModeQuestions(t *testing.T) {
 	if sessionRecallOn(AgentRecord{}) || !newAgentReadsCortex(AgentRecord{}) {
 		t.Error("an unset mode's two defaults moved")
 	}
-	if memoryModeCopy(memoryModeCartographer).Header != memoryModeCopy(memoryModeAgent).Header ||
-		memoryModeCopy(memoryModeChatbot).Header == memoryModeCopy(memoryModeAgent).Header {
+	if memoryModeCopy(memoryModeChatbot).Header == memoryModeCopy(memoryModeAgent).Header {
 		t.Error("the pinned-notes wording per mode")
 	}
 }

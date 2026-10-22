@@ -61,11 +61,6 @@ func renderRulesPromptSection(rules string) string {
 // tail made the next new conversation 5.2s instead of 0.5s.
 func prependAgentContext(base string, agent AgentRecord, facts []MemoryFact, notes OperatingNotes) string {
 	out := base
-	// An agent that maps something is told where its map lives, just above the
-	// persona. Fixed text, so it keeps the prompt cacheable.
-	if m := renderMapPromptSection(agent); m != "" {
-		out = m + out
-	}
 	// Working notes sit just below the facts block (weaker than durable facts,
 	// stronger than nothing) and above the persona — running state the agent
 	// maintains for itself. Advisory framing lives in the block copy.
@@ -141,7 +136,7 @@ func memoryModeCopy(mode string) memoryModeText {
 			Intro:           "Working commands and quick references to keep in view: how to access and operate this system directly (auth methods, entry points, log locations, service controls), plus gotchas to avoid. Use these directly rather than re-discovering. Each entry is numbered so you can reference an index when one is no longer accurate.",
 			StoreToolSuffix: "This agent is in SHORTCUTS MODE: Explicit Memory holds the operational commands and gotchas you want ALWAYS in view (working auth, entry points, log locations, \"do X not Y\" rules). Specific one-off findings you only occasionally need go in Reference Memory (searchable), not here.",
 		}
-	default: // agent, cartographer (lessons like agent; its map is renderMapPromptSection), or unset
+	default: // agent, or unset
 		return memoryModeText{
 			Header:          "## Lessons learned",
 			Intro:           "Generalized lessons from prior sessions: design principles, recurring gotchas, things that bit you and the workaround that worked. Apply when the current task touches similar territory. Each lesson is numbered so you can reference an index when forgetting one that's no longer accurate.",
