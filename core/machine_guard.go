@@ -165,9 +165,12 @@ func (d MachineDef) guardPrompt(ph MachinePhase, st MachineState, input string) 
 		b.WriteString("\nWhat earlier phases of this conversation settled:\n")
 		b.WriteString(est)
 	}
+	// Only the steps this one may move to. Listing every step offered moves
+	// guardTarget then refuses, which fell back to GuardTo without a word to
+	// the model that its pick was never a choice.
 	b.WriteString("\nThe phases you may move to:\n")
 	for _, p := range d.Phases {
-		if p.Name == ph.Name {
+		if p.Name == ph.Name || !ph.MayExitTo(p.Name) {
 			continue
 		}
 		line := "- " + p.Name

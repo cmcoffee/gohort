@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -313,11 +314,22 @@ func systemSectionRanking(systemPrompt string) string {
 	var rows []section
 	cur := section{head: "(preamble)"}
 	for _, line := range strings.SplitAfter(systemPrompt, "\n") {
-		if t := strings.TrimSpace(line); isMarkdownHeading(t) {
+		t := strings.TrimSpace(line)
+		head, starts := "", false
+		switch {
+		case isMarkdownHeading(t):
+			head, starts = strings.TrimSpace(strings.TrimLeft(t, "#")), true
+		case bracketClauseRE.MatchString(t):
+			// A loop clause ("[Grounding: …]") is a section of its own. With no
+			// heading, the clauses appended after the last one were counted
+			// under it: about 8k of standing rules read as an 8k "Other phases
+			// in this workflow" or "Tools available".
+			head, starts = "["+bracketClauseRE.FindStringSubmatch(t)[1]+"]", true
+		}
+		if starts {
 			if cur.n > 0 {
 				rows = append(rows, cur)
 			}
-			head := strings.TrimSpace(strings.TrimLeft(t, "#"))
 			if r := []rune(head); len(r) > 48 {
 				head = string(r[:48]) + "…"
 			}
@@ -336,6 +348,9 @@ func systemSectionRanking(systemPrompt string) string {
 	return fmt.Sprintf("%d sections, %d bytes (~%dk tokens), largest first: %s",
 		len(rows), len(systemPrompt), len(systemPrompt)/4000, strings.Join(parts, " "))
 }
+
+// bracketClauseRE matches the opening of a bracketed loop clause.
+var bracketClauseRE = regexp.MustCompile(`^\[([A-Z][^:\]\n]{1,40}):`)
 
 // isMarkdownHeading reports whether a trimmed line is a markdown heading: one to
 // six '#' and then a space. The space is what keeps a "#include" or "#!/bin/sh"

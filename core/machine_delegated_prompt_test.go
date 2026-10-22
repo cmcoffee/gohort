@@ -36,3 +36,21 @@ func TestADelegatedStepPassesOnTheTaskAlone(t *testing.T) {
 		t.Errorf("a prompt with neither: %q / %q", got, rest)
 	}
 }
+
+// The guard is offered only the steps its step may move to: a pick outside
+// them was refused and fell back without the model knowing it was no choice.
+func TestTheGuardIsOfferedOnlyTheStepsItMayMoveTo(t *testing.T) {
+	def := MachineDef{Name: "m", Phases: []MachinePhase{
+		{Name: "chat", Resident: true, Guard: "the person asks for a refund", GuardTo: "refund", ExitsTo: []string{"refund"}},
+		{Name: "refund", Desc: "process a refund", Resident: true},
+		{Name: "billing", Desc: "explain a bill", Resident: true},
+	}}
+	got := def.guardPrompt(def.Phases[0], nil, "I want my money back")
+	if !strings.Contains(got, "- refund") || strings.Contains(got, "- billing") {
+		t.Errorf("the guard's choices:\n%s", got)
+	}
+	open := MachineDef{Name: "m", Phases: []MachinePhase{{Name: "chat", Resident: true, Guard: "x"}, {Name: "billing", Resident: true}}}
+	if !strings.Contains(open.guardPrompt(open.Phases[0], nil, "hi"), "- billing") {
+		t.Error("a step with no exit list is offered every other step")
+	}
+}

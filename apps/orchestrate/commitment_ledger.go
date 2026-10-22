@@ -186,5 +186,19 @@ func turnNotes(sess *ToolSession, db Database, sessionID, userMessage string) st
 	if n := commitmentTurnNote(db, sessionID); n != "" {
 		parts = append(parts, n)
 	}
-	return strings.Join(parts, "\n\n")
+	return oneFrameworkNote(parts)
+}
+
+// oneFrameworkNote joins notes that each open with frameworkNoteTag under one
+// copy of it: the tag is 168 characters, and a turn carrying three notes paid
+// it three times on the part of the prompt that never caches.
+func oneFrameworkNote(parts []string) string {
+	if len(parts) == 0 {
+		return ""
+	}
+	bodies := make([]string, 0, len(parts))
+	for _, p := range parts {
+		bodies = append(bodies, strings.TrimPrefix(p, frameworkNoteTag))
+	}
+	return frameworkNoteTag + strings.Join(bodies, "\n\n")
 }

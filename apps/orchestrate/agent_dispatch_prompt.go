@@ -53,7 +53,7 @@ func dispatchSystemPrompt(ctx context.Context, target AgentRecord, subFacts []Me
 	// these describe the framework's tools (request_build, skills, Builder),
 	// which its catalog does not carry.
 	if !appAgentExactTools(target.ID) {
-		sysPrompt = appendAgentCapabilityBlocks(sysPrompt, target, runtimeDB, user, false, surface)
+		sysPrompt = appendAgentCapabilityBlocks(sysPrompt, target, runtimeDB, user, turnShape{surface: surface})
 	}
 	return sysPrompt
 }
@@ -68,7 +68,20 @@ func dispatchSystemPrompt(ctx context.Context, target AgentRecord, subFacts []Me
 // plain chat agent that lacks a capability gets nothing extra. Message-dependent
 // content (triggered-skill instructions, per-turn trigger hints) is deliberately
 // NOT here — it rides the user message for prompt-cache stability.
-func appendAgentCapabilityBlocks(sys string, agent AgentRecord, udb Database, user string, hasPlanSet bool, surface promptSurface) string {
+// turnShape is what a turn's prompt is assembled for: whether it gets the web
+// chat's own guidance (How to decide, clarifying questions, plan_set, working
+// honestly), who reads its reply, and which tools it has, where that is known
+// before its catalog is (a machine step's narrowing; nil is every tool).
+type turnShape struct {
+	chat    bool
+	surface promptSurface
+	offers  func(name string) bool
+}
+
+func (s turnShape) has(name string) bool { return s.offers == nil || s.offers(name) }
+
+func appendAgentCapabilityBlocks(sys string, agent AgentRecord, udb Database, user string, shape turnShape) string {
+	hasPlanSet, surface := shape.chat, shape.surface
 	// Framework orchestration blocks lifted out of individual seed personas
 	// (see framework_prompts.go) so every capable agent inherits them, not
 	// just whichever seed happened to hand-author the prose. Gated by
@@ -82,7 +95,11 @@ func appendAgentCapabilityBlocks(sys string, agent AgentRecord, udb Database, us
 		sys += "\n\n## Plan guidance\n" + g
 	}
 	sys += availableSkillsBlock(agent, udb, user)
-	sys += searchOrderGuidanceBlock(agent, agentRecordHasRetrievableContent(agent))
+	// "Search your knowledge first" is for a turn that has both to choose
+	// between; a machine step that left either out does not.
+	if shape.has("knowledge_search") && shape.has("web_search") {
+		sys += searchOrderGuidanceBlock(agent, agentRecordHasRetrievableContent(agent))
+	}
 	// Plan-first + pre-mortem discipline. On for an explicit PreMortem opt-in AND
 	// by default for any Cortex agent: a persistent channel/home-thread presence
 	// IS an orchestrator that accomplishes goals over a channel, which is exactly

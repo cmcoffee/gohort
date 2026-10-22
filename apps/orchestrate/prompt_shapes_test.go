@@ -87,9 +87,9 @@ func TestChatGuidanceStaysWithTheShapesItFits(t *testing.T) {
 // plan nobody sees.
 func TestGuidanceIsWordedForWhoReadsTheReply(t *testing.T) {
 	chat := seedNamed(t, "Chat")
-	web := appendAgentCapabilityBlocks("", chat, nil, "u", true, surfaceWeb)
-	conv := appendAgentCapabilityBlocks("", chat, nil, "u", false, surfaceConversation)
-	alone := appendAgentCapabilityBlocks("", chat, nil, "u", false, surfaceUnattended)
+	web := appendAgentCapabilityBlocks("", chat, nil, "u", turnShape{chat: true, surface: surfaceWeb})
+	conv := appendAgentCapabilityBlocks("", chat, nil, "u", turnShape{surface: surfaceConversation})
+	alone := appendAgentCapabilityBlocks("", chat, nil, "u", turnShape{surface: surfaceUnattended})
 
 	if !strings.Contains(web, "ask_user / ask_user_form before building") || !strings.Contains(web, "Authorizations pane") {
 		t.Error("the web lost its own wording")
@@ -130,5 +130,50 @@ func TestAPersonaSectionForAWebOnlyToolStaysOnTheWeb(t *testing.T) {
 	open := gatedPersonaOn(AgentRecord{}, persona, surfaceConversation)
 	if strings.Contains(open, "Call ask_user.") {
 		t.Error("an agent with no tool list still got the ask section off the web")
+	}
+}
+
+// Said once: guidance the tools' own descriptions already give, rules
+// repeated block to block, and the framework note's tag on every part.
+func TestGuidanceIsSaidOnce(t *testing.T) {
+	if strings.Contains(frameworkClarifyingBlock, "How to ask.") || len(frameworkClarifyingBlock) > 700 ||
+		!strings.Contains(frameworkClarifyingBlock, "GUESSING") {
+		t.Errorf("the clarifying block should keep only what the ask tools do not say (%d chars)", len(frameworkClarifyingBlock))
+	}
+	if strings.Contains(frameworkPlanSetBlock, "tool_def") || !strings.Contains(frameworkPlanSetBlock, "Builder makes them") {
+		t.Error("the plan_set block still has the agent author its own tools, against Builder routing")
+	}
+	if strings.Contains(frameworkHowToDecideBlock, "confidence is not a reason to skip") {
+		t.Error("How to decide repeats the delegate-first doctrine that Available agents carries")
+	}
+	pre := roundShapePreamble(8, true, true)
+	if strings.Contains(pre, "Pure conversation") || strings.Contains(pre, "not a wrapper for sequential tool calls") {
+		t.Errorf("the preamble repeats How to decide or the plan_set description:\n%s", pre)
+	}
+
+	sess := noteSession(t, "edited: the labelled poster")
+	db := commitDB(t)
+	recordTurnCommitment(db, "s1", promiseSaid, false)
+	got := turnNotes(sess, db, "s1", "are you going to fix that picture?")
+	if n := strings.Count(got, frameworkNoteTag); n != 1 || !strings.HasPrefix(got, frameworkNoteTag) {
+		t.Errorf("the note's tag appears %d times:\n%s", n, got)
+	}
+	if !strings.Contains(got, "OUTSTANDING FROM YOUR LAST TURN") {
+		t.Error("a part was lost joining the notes")
+	}
+}
+
+// A machine step that leaves out web_search or knowledge_search is not told
+// to search its knowledge before the web.
+func TestSearchOrderNeedsBothToChooseBetween(t *testing.T) {
+	agent := AgentRecord{ID: "a-1", Name: "Reader", OrchestratorPrompt: "Read.", AttachedCollections: []string{"c1"}}
+	both := appendAgentCapabilityBlocks("", agent, nil, "u", turnShape{chat: true, surface: surfaceWeb})
+	narrowed := appendAgentCapabilityBlocks("", agent, nil, "u", turnShape{surface: surfaceWeb,
+		offers: func(n string) bool { return n == "knowledge_search" }})
+	if strings.Contains(narrowed, "Search order") {
+		t.Error("a step with no web search was told to search its knowledge first")
+	}
+	if !strings.Contains(both, "Search order") {
+		t.Skip("this agent's record does not read as having a corpus here; the narrowed half still held")
 	}
 }

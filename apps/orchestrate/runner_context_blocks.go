@@ -670,12 +670,12 @@ func roundShapePreamble(maxSteps int, canAsk, canPlan bool) string {
 	switch {
 	case canAsk && canPlan:
 		stepBudget := fmt.Sprintf("up to %d step%s", maxSteps, plural(maxSteps))
-		ends = " or end the round with **ask_user / ask_user_form** (pause for input) or **plan_set** (hand off to fresh-context workers, " + stepBudget + ", min 2, research-style \"investigate A and B in parallel\": not a wrapper for sequential tool calls)"
+		ends = " or end the round with **ask_user / ask_user_form** (pause for input) or **plan_set** (hand off to fresh-context workers, " + stepBudget + ")"
 	case canAsk:
 		ends = " or end the round with **ask_user / ask_user_form** (pause for input)"
 	case canPlan:
 		stepBudget := fmt.Sprintf("up to %d step%s", maxSteps, plural(maxSteps))
-		ends = " or end the round with **plan_set** (hand off to fresh-context workers, " + stepBudget + ", min 2: not a wrapper for sequential tool calls)"
+		ends = " or end the round with **plan_set** (hand off to fresh-context workers, " + stepBudget + ")"
 	}
 	return "## How this round works\n\n" +
 		"Call tools inline (call → see result → call again → reply; multi-round is fine)" + ends + ". To reply, just write your answer as text; that ends the turn. There is no separate reply tool. The persona below wins on anything it addresses; this is the default otherwise.\n\n" +
@@ -684,8 +684,7 @@ func roundShapePreamble(maxSteps int, canAsk, canPlan bool) string {
 		// bubble. It used to be asked for, to fill the wait, before tools and
 		// thinking showed while they ran.
 		"There is no need to announce a tool call: the person sees each one as it runs. Do NOT write your answer before a tool call either: you would repeat yourself once the result is back. Write the answer once, in your final, tool-free reply AFTER you have the results.\n\n" +
-		"**Delivering files.** Producer tools (image, video, screenshot_page, custom tools that save a file) write to your workspace and return the path: they do NOT auto-attach. To deliver, follow up with `workspace(action=\"attach\", path=\"<returned-path>\", cleanup=true)`. cleanup=true for one-shot deliveries, cleanup=false when the file is also work product. Multiple files in one turn is fine: chain one workspace(attach) per file.\n\n" +
-		"Pure conversation (greetings, opinions, follow-ups already answered): just reply as text.\n\n"
+		"**Delivering files.** Producer tools (image, video, screenshot_page, custom tools that save a file) write to your workspace and return the path: they do NOT auto-attach. To deliver, follow up with `workspace(action=\"attach\", path=\"<returned-path>\", cleanup=true)`. cleanup=true for one-shot deliveries, cleanup=false when the file is also work product. Multiple files in one turn is fine: chain one workspace(attach) per file.\n\n"
 }
 
 // drainNotes pulls all queued interjections and persists them as

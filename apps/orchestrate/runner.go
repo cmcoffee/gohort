@@ -447,7 +447,7 @@ func (pr *planRun) assemblePrompt() {
 	// and working honestly are a chat's guidance, for a step whose author
 	// already said what it does and with what.
 	if !appAgentExactTools(t.agent.ID) {
-		pr.sys = appendAgentCapabilityBlocks(pr.sys, t.agent, t.udb, t.user, !pr.mach.narrows(), surfaceWeb)
+		pr.sys = appendAgentCapabilityBlocks(pr.sys, t.agent, t.udb, t.user, turnShape{chat: !pr.mach.narrows(), surface: surfaceWeb, offers: pr.mach.offers})
 	}
 }
 
