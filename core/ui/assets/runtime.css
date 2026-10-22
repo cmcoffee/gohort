@@ -5269,6 +5269,19 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   margin-bottom: 0.25rem;
   padding: 0 0.2rem;
 }
+/* Folded: the reason line stands in for the struck text until it is shown. */
+.ui-agent-msg-struck-folded .ui-agent-msg-body { display: none; }
+.ui-agent-msg-struck-folded > .ui-agent-msg-struck-reason { margin-bottom: 0; }
+.ui-agent-msg-struck-toggle {
+  margin-left: 0.4rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
 /* Label chip at the head of a message ("Correction"). */
 .ui-agent-msg-label {
   align-self: flex-start;

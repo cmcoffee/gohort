@@ -3436,18 +3436,38 @@
     // reason is the server's words. The reason sits OUTSIDE the body so the
     // markdown pass (which rewrites the body) cannot wipe it, and so a copy of
     // the card text is still just the text. Idempotent: live, then replay.
+    //
+    // The struck text starts folded behind its reason line, which stays in
+    // view with a control to show it: what was taken back is still there to
+    // inspect, without its whole length on screen for a reply that does not
+    // stand. Folded only when there is a reason to show in its place, so a
+    // struck message is never something you have to know to look for.
     function strikeMessage(id, reason) {
       var m = msgEls[id];
       if (!m || !m.bubble) return;
       m.bubble.classList.add('ui-agent-msg-struck');
       m.struck = reason || '';
       var line = m.bubble.querySelector(':scope > .ui-agent-msg-struck-reason');
-      if (!reason) { if (line) line.remove(); return; }
+      if (!reason) {
+        if (line) line.remove();
+        m.bubble.classList.remove('ui-agent-msg-struck-folded');
+        return;
+      }
       if (!line) {
         line = el('div', {class: 'ui-agent-msg-struck-reason'});
         m.bubble.insertBefore(line, m.body);
       }
-      line.textContent = reason;
+      var toggle = el('button', {class: 'ui-agent-msg-struck-toggle', type: 'button'});
+      function paint() {
+        m.bubble.classList.toggle('ui-agent-msg-struck-folded', !m.struckOpen);
+        toggle.textContent = m.struckOpen ? 'hide' : 'show';
+        toggle.setAttribute('aria-expanded', m.struckOpen ? 'true' : 'false');
+      }
+      toggle.onclick = function() { m.struckOpen = !m.struckOpen; paint(); };
+      line.textContent = '';
+      line.appendChild(el('span', {}, [reason]));
+      line.appendChild(toggle);
+      paint();
     }
 
     // labelMessage puts a small label chip at the head of a message (e.g. a
