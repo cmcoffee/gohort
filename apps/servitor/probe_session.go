@@ -535,6 +535,13 @@ func (pr *probeRun) gateHits(cmd string, hits []risk_hit) error {
 		emit(pr.id, probeEvent{Kind: "status", Text: "Declined, this investigation is read-only (" + string(cat) + "): " + cmd})
 		return readOnlyDecline(cmd, cat, reason, applianceLabel(pr.appliance.Name, pr.appliance.ID))
 	}
+	return pr.awaitApproval(cmd, reason, wait)
+}
+
+// awaitApproval shows the person a card for cmd and waits for their answer,
+// or for wait to pass. One at a time (confirmMu): a run has one answer
+// channel, so two asked at once would have one answer taken for the other.
+func (pr *probeRun) awaitApproval(cmd, reason string, wait time.Duration) error {
 	pr.confirmMu.Lock()
 	defer pr.confirmMu.Unlock()
 	pendingCmds.Store(pr.id, cmd)
@@ -1581,6 +1588,7 @@ func (pr *probeRun) reportTools() {
 				"code": {Type: "string", Description: "The full script or query text to save."},
 			},
 			Required: []string{"name", "lang", "code"},
+			Caps:     []Capability{CapWrite},
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			if SaveSnippetFunc == nil {
@@ -1610,6 +1618,7 @@ func (pr *probeRun) reportTools() {
 				"body":    {Type: "string", Description: "Full document body in markdown. Use ## headings for its main parts: each becomes a section of the guide."},
 			},
 			Required: []string{"subject", "body"},
+			Caps:     []Capability{CapWrite},
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			if SaveArticleFunc == nil {
@@ -1638,6 +1647,7 @@ func (pr *probeRun) reportTools() {
 		Tool: Tool{
 			Name:        "list_guides",
 			Description: "List the user's existing guides (living multi-section documents in the gohort Guides app), so you can pick the right one to push a finding into with push_to_guide. Local read: do NOT look for guides on the remote system. No arguments.",
+			Caps:        []Capability{CapRead},
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			ds := ListDocuments(pr.userID, "guide")
@@ -1712,6 +1722,7 @@ func (pr *probeRun) reportTools() {
 				"content":       {Type: "string", Description: "The section body in markdown: the finding, written up cleanly. No top-level heading; the title is separate."},
 			},
 			Required: []string{"guide", "section_title", "content"},
+			Caps:     []Capability{CapWrite},
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			guide, _ := args["guide"].(string)
@@ -1733,6 +1744,14 @@ func (pr *probeRun) reportTools() {
 				}
 				if docID == "" {
 					newTitle = guide
+				}
+			}
+			// An existing guide is the person's to add to. Command output can
+			// steer a worker, and what it writes into a guide is read as
+			// documentation by everyone who opens it.
+			if docID != "" {
+				if err := pr.approveGuideWrite(guide, title); err != nil {
+					return "", err
 				}
 			}
 			writtenID, err := AppendToDocument(pr.ctx, pr.userID, "guide", docID, newTitle, title, content)
@@ -1764,6 +1783,19 @@ func (pr *probeRun) reportTools() {
 		},
 		NeedsConfirm: false,
 	}
+}
+
+// approveGuideWrite asks the person before an investigation adds to one of
+// their existing guides, the way a risky command asks. Where nobody can
+// answer (an agent asked for the investigation, or nobody is watching it) the
+// write is refused and the finding goes to record_finding, whose curator
+// decides where it belongs.
+func (pr *probeRun) approveGuideWrite(guide, section string) error {
+	if ActingAgent(pr.ctx) != "" || !confirmAnswerable(pr.id) {
+		return fmt.Errorf("adding to the existing guide %q needs the person to approve it, and nobody can here: use record_finding, and the Guide Curator decides where it belongs", guide)
+	}
+	return pr.awaitApproval(fmt.Sprintf("Add the section %q to your guide %q", strings.TrimSpace(section), guide),
+		"an investigation is writing into one of your guides", 5*time.Minute)
 }
 
 func (pr *probeRun) assembleToolkit() {
