@@ -47,6 +47,16 @@ type probeEvent struct {
 	// plan instance (per buildPlanTools call) gives each investigation its own
 	// card, which is what makes a follow-up investigation legible.
 	PlanID string `json:"plan_id,omitempty"`
+	// Card names one approval card, on the confirm that raises it and the
+	// confirm_resolved that settles it, so a page arriving later draws the
+	// card answered rather than armed again for a command no longer waiting.
+	// A confirm_resolved carries the command in Text, as its confirm did (the
+	// card's id is built from it), the outcome in Reason and the stamp here.
+	Card  string `json:"card,omitempty"`
+	Stamp string `json:"stamp,omitempty"`
+	// Origin is who started a run from outside servitor (an agent, in its
+	// conversation): the origin event that opens such a session.
+	Origin *investigationOrigin `json:"origin,omitempty"`
 }
 
 // toInt extracts an int from an arbitrary JSON-decoded value. JSON numbers

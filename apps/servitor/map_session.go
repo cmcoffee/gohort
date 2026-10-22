@@ -179,15 +179,22 @@ func (T *Servitor) runMapAppSession(ctx context.Context, id, userID, ownerUser s
 		}
 		pendingCmds.Store(id, cmd)
 		defer pendingCmds.Delete(id)
-		emit(id, probeEvent{Kind: "confirm", Text: cmd, Reason: reason})
+		card := strings.ReplaceAll(UUIDv4(), "-", "")[:12]
+		emit(id, probeEvent{Kind: "confirm", Text: cmd, Reason: reason, Card: card})
+		settle := func(value, stamp string) {
+			emit(id, probeEvent{Kind: "confirm_resolved", Text: cmd, Card: card, Reason: value, Stamp: stamp})
+		}
 		select {
 		case allowed := <-confirm:
 			if !allowed {
+				settle("deny", "Denied")
 				emit(id, probeEvent{Kind: "status", Text: "Command denied."})
 				return fmt.Errorf("command denied by user")
 			}
+			settle("allow", "Allowed")
 			return nil
 		case <-time.After(5 * time.Minute):
+			settle("deny", "Timed out: not run")
 			return fmt.Errorf("confirmation timed out")
 		case <-ctx.Done():
 			return ctx.Err()

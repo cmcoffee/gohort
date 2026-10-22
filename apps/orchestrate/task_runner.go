@@ -15,6 +15,7 @@ package orchestrate
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +26,24 @@ import (
 )
 
 func (T *OrchestrateApp) installTaskRunner() {
+	// Where a background result for this turn would land, as a link: the
+	// thread's agent and the conversation, the same two facts the runner
+	// below delivers by.
+	ConversationLinkFunc = func(sess *ToolSession) ConversationLink {
+		sessionID := sess.DeliverySession()
+		agentID, agentName := T.runsRegistry().threadAgent(sess)
+		if sessionID == "" || agentID == "" {
+			return ConversationLink{}
+		}
+		link := ConversationLink{
+			Path:  T.WebPath() + "/?agent=" + url.QueryEscape(agentID) + "&session=" + url.QueryEscape(sessionID),
+			Agent: agentName,
+		}
+		if cs, ok := loadChatSession(UserDB(T.DB, sess.Username), agentID, sessionID); ok {
+			link.Title = strings.TrimSpace(cs.Title)
+		}
+		return link
+	}
 	TaskRunnerFunc = func(sess *ToolSession, label string, fn func(ctx context.Context) (TaskProduct, error)) (TaskRun, error) {
 		if sess == nil {
 			return TaskRun{}, fmt.Errorf("no session")

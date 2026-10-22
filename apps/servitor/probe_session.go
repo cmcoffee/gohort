@@ -467,23 +467,43 @@ func (pr *probeRun) gateHits(cmd string, hits []risk_hit) error {
 	// An acting agent has nobody watching this stream, so parking the
 	// command here would block for five minutes and time out. Refuse now,
 	// legibly — see agent_confirm.go for why this is a refusal rather than
-	// a queued approval.
+	// a queued approval. The exception is an investigation that can hand
+	// the owner a link (agent_investigation.go): it parks on a card they
+	// reach through it, and the agent's turn goes on without waiting.
+	wait := 5 * time.Minute
 	if acting := ActingAgent(pr.ctx); acting != "" {
-		emit(pr.id, probeEvent{Kind: "status", Text: "Needs approval (" + string(cat) + "): " + cmd})
-		Log("[servitor] agent %s refused %q on %s: no standing permission for %s", acting, cmd, pr.appliance.ID, cat)
-		return agentCommandRefusal(cmd, cat, reason, applianceLabel(pr.appliance.Name, pr.appliance.ID))
+		park := approvalByLink(pr.ctx)
+		if park == nil || !park(cmd) {
+			emit(pr.id, probeEvent{Kind: "status", Text: "Needs approval (" + string(cat) + "): " + cmd})
+			Log("[servitor] agent %s refused %q on %s: no standing permission for %s", acting, cmd, pr.appliance.ID, cat)
+			return agentCommandRefusal(cmd, cat, reason, applianceLabel(pr.appliance.Name, pr.appliance.ID))
+		}
+		wait = agentApprovalWait
+	} else if !confirmAnswerable(pr.id) {
+		// Nobody can answer this run (a read-only investigation another app
+		// started): a card here would be one no click can reach, declined
+		// already by the time anyone saw it. Say what was declined instead.
+		emit(pr.id, probeEvent{Kind: "status", Text: "Declined, this investigation is read-only (" + string(cat) + "): " + cmd})
+		return readOnlyDecline(cmd, cat, reason, applianceLabel(pr.appliance.Name, pr.appliance.ID))
 	}
 	pendingCmds.Store(pr.id, cmd)
 	defer pendingCmds.Delete(pr.id)
-	emit(pr.id, probeEvent{Kind: "confirm", Text: cmd, Reason: reason})
+	card := strings.ReplaceAll(UUIDv4(), "-", "")[:12]
+	emit(pr.id, probeEvent{Kind: "confirm", Text: cmd, Reason: reason, Card: card})
+	settle := func(value, stamp string) {
+		emit(pr.id, probeEvent{Kind: "confirm_resolved", Text: cmd, Card: card, Reason: value, Stamp: stamp})
+	}
 	select {
 	case allowed := <-pr.confirm:
 		if !allowed {
+			settle("deny", "Denied")
 			emit(pr.id, probeEvent{Kind: "status", Text: "Command denied."})
 			return fmt.Errorf("command denied by user")
 		}
+		settle("allow", "Allowed")
 		return nil
-	case <-time.After(5 * time.Minute):
+	case <-time.After(wait):
+		settle("deny", "Timed out: not run")
 		return fmt.Errorf("confirmation timed out")
 	case <-pr.ctx.Done():
 		return pr.ctx.Err()

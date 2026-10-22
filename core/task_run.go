@@ -220,6 +220,21 @@ type TaskProduct struct {
 // touches must hang off that instead — see ForDetachedTask.
 var TaskRunnerFunc func(sess *ToolSession, label string, fn func(ctx context.Context) (TaskProduct, error)) (TaskRun, error)
 
+// ConversationLinkFunc names the conversation a turn belongs to, for work that
+// points back at it from somewhere else (a servitor investigation waiting on
+// the owner says which chat asked for it). Set by the app that owns
+// conversations, the same seam as TaskRunnerFunc; nil, or an empty Path back,
+// means there is nothing to link to.
+var ConversationLinkFunc func(sess *ToolSession) ConversationLink
+
+// ConversationLink is a conversation as another app links to it: the site
+// path that opens it, its title, and the agent whose conversation it is.
+type ConversationLink struct {
+	Path  string
+	Title string
+	Agent string
+}
+
 // taskDetachThreshold is the duration past which a call is detached, for the
 // surface this turn is happening on. See ToolSession.Unattended.
 func taskDetachThreshold(sess *ToolSession) time.Duration {

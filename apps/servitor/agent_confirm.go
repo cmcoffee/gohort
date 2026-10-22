@@ -73,3 +73,33 @@ func truncateCmd(s string, max int) string {
 	}
 	return s[:max] + "…"
 }
+
+// readOnlyDecline is what an investigation that nobody can answer is told
+// when a command needs approval: the read-only runs another app starts
+// (Guides grounding a section, a workspace's fan-out). They used to raise a
+// card anyway, which the run had already declined before anyone could click
+// it, and report the decline as "denied by user", which nobody had said.
+func readOnlyDecline(cmd string, cat RiskCategory, reason, appliance string) error {
+	where := strings.TrimSpace(appliance)
+	if where == "" {
+		where = "this system"
+	}
+	detail := strings.TrimSpace(reason)
+	if detail != "" {
+		detail = " (" + detail + ")"
+	}
+	return fmt.Errorf("not run: %q is %s%s on %s, and this investigation is read-only, so nobody is asked to approve it. "+
+		"Nothing was executed and nothing is waiting. Answer from what you can find without it, and say plainly that this step needs the owner",
+		truncateCmd(cmd, 160), string(cat), detail, where)
+}
+
+// confirmAnswerable reports whether a person can answer this run's approval
+// cards: the console's own runs register their channel as interactive.
+func confirmAnswerable(sid string) bool {
+	v, ok := confirmChans.Load(sid)
+	if !ok {
+		return false
+	}
+	p, ok := v.(pendingConfirm)
+	return ok && p.interactive && p.ch != nil
+}

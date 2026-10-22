@@ -105,9 +105,13 @@ func translateProbeEvent(ev probeEvent) map[string]any {
 	case "done":
 		return map[string]any{"kind": "done"}
 	case "confirm":
+		card := ev.Card
+		if card == "" {
+			card = cheapID()
+		}
 		return map[string]any{
 			"kind":   "confirm",
-			"id":     "c-" + cheapID(),
+			"id":     "c-" + card,
 			"prompt": "Command needs approval",
 			"detail": ev.Text + "\n\nReason: " + ev.Reason,
 			"actions": []map[string]string{
@@ -115,6 +119,24 @@ func translateProbeEvent(ev probeEvent) map[string]any {
 				{"label": "Always", "value": "always"},
 				{"label": "Deny", "value": "deny", "variant": "danger"},
 			},
+		}
+	case "confirm_resolved":
+		return map[string]any{
+			"kind":  "confirm_resolved",
+			"id":    "c-" + ev.Card,
+			"value": ev.Reason,
+			"label": ev.Stamp,
+		}
+	case "origin":
+		if ev.Origin == nil {
+			return nil
+		}
+		return map[string]any{
+			"kind": "block", "type": "servitor_origin",
+			"id":    "b-origin",
+			"agent": ev.Origin.Agent,
+			"title": ev.Origin.Title,
+			"url":   ev.Origin.URL,
 		}
 	case "confirm_technique":
 		return map[string]any{
@@ -272,17 +294,9 @@ func (T *Servitor) handleChatEvents(w http.ResponseWriter, r *http.Request) {
 	// Nil return from the translator = "drop silently" (e.g. SSH
 	// connection chatter that we don't want surfacing to the user).
 	sendEvent := func(ev probeEvent) bool {
-		out := translateProbeEvent(ev)
+		out := chatEventFor(id, ev)
 		if out == nil {
 			return true
-		}
-		// An approval card names the session and the command it is about,
-		// so the answer can only land on THAT pending command (see
-		// deliverConfirm). The bridge's random id alone could not say.
-		if ev.Kind == "confirm" {
-			if cid, ok := out["id"].(string); ok {
-				out["id"] = confirmCardID(id, ev.Text, cid)
-			}
 		}
 		if finalize, ok := out["_finalize"].(string); ok {
 			delete(out, "_finalize")
@@ -309,6 +323,25 @@ func (T *Servitor) handleChatEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		return nil
 	})
+}
+
+// chatEventFor is one event of session sid as the chat stream sends it.
+//
+// An approval card names the session and the command it is about, so the
+// answer can only land on THAT pending command (see deliverConfirm); the
+// bridge's id alone could not say. The settle that answers it is named the
+// same way, or a page arriving later draws the card armed again.
+func chatEventFor(sid string, ev probeEvent) map[string]any {
+	out := translateProbeEvent(ev)
+	if out == nil {
+		return nil
+	}
+	if ev.Kind == "confirm" || ev.Kind == "confirm_resolved" {
+		if cid, ok := out["id"].(string); ok {
+			out["id"] = confirmCardID(sid, ev.Text, cid)
+		}
+	}
+	return out
 }
 
 // errViewerLeft ends a tail whose viewer's stream can no longer be written.

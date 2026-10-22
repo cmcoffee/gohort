@@ -10,11 +10,12 @@
 // worker with SSH — so the question ROUTES to it, and only the ANSWER comes
 // back.
 //
-// The bridge is InvestigateSync, which is strictly read-only: every command
-// the classifier calls destructive is auto-denied before anyone is asked. So
-// connecting an agent (the same grant that lights request_capability) is a
-// safe consent for this too — the caller gains "may ask about this machine",
-// never "may change it".
+// The bridge is InvestigateForAgent: a command the classifier flags runs only
+// on a standing grant for this agent or the owner's own approval of that exact
+// command, asked for by a link the agent hands them, and is refused where
+// nobody can answer. So connecting an agent (the same grant that lights
+// request_capability) is a safe consent for this too: the caller gains "may
+// ask about this machine", never "may change it" on its own say.
 package servitor
 
 import (
@@ -50,7 +51,7 @@ func AskSystemToolDef(sess *ToolSession, udb Database, owner, agentID string, co
 	// it had been given, and wrong about what it could do.
 	desc := "Ask Servitor a question about the live state or configuration of one of the owner's systems: \"what's the current load?\", \"is nginx running?\", \"how full is the data disk?\". " +
 		"This is THE way to answer anything about the owner's machines, servers, devices, lab systems or infrastructure: a Servitor investigator that already knows the system answers it, consulting what it has recorded and probing over SSH where records aren't enough. " +
-		"Strictly read-only: it can inspect, never change. " +
+		"Meant for inspecting, not changing: a command the investigation needs that wants the owner's approval waits for them, and you are given a link to hand them (where nobody can answer, it is declined). " +
 		"Slow (tens of seconds): ask one well-formed question rather than many small ones. " +
 		"For ACTIONS (restart, deploy, clean up), use request_capability or an approved tool instead."
 	if list := connectedSystemList(connected, via); list != "" {
@@ -84,19 +85,19 @@ func AskSystemToolDef(sess *ToolSession, udb Database, owner, agentID string, co
 			if servitorRef == nil {
 				return "", fmt.Errorf("servitor is not running: the investigator cannot be reached")
 			}
-			// The investigation runs in the CONSOLE posture, exactly as the
-			// Guides co-author does: no acting-agent stamp, because stamping
-			// would gate the read-only probes on the agent's (usually empty)
-			// auto-run grant and the auto-deny would starve the run. Safety
-			// comes from InvestigateSync's own destructive-command denial, not
-			// from the grant ladder. Logged so "who asked" survives anyway.
+			// The investigation acts for this agent, so its standing grants
+			// apply (with none of its own it has the owner's auto-run
+			// settings, as the console does). A command beyond them parks for
+			// the owner where the turn can hand over a link, and is refused
+			// where it cannot (agent_investigation.go).
 			Log("[servitor] agent %q asking %s: %s", agentID, appliance.ID, question)
-			// The turn's context under the timeout, so BOTH bounds apply:
-			// a wedged SSH session still ends at askSystemTimeout, and a
-			// stopped turn ends it immediately.
+			// The turn's context under the timeout, so BOTH bounds apply
+			// while the agent waits: a wedged SSH session still ends at
+			// askSystemTimeout, and a stopped turn ends it immediately. A run
+			// parked for the owner is the background's from then on.
 			ctx, cancel := context.WithTimeout(sess.Context(), askSystemTimeout)
 			defer cancel()
-			answer, err := servitorRef.InvestigateSync(ctx, owner, appliance.ID, question)
+			answer, err := servitorRef.InvestigateForAgent(ctx, sess, owner, appliance.ID, question, agentID)
 			if err != nil {
 				return "", fmt.Errorf("the investigator could not answer: %w", err)
 			}

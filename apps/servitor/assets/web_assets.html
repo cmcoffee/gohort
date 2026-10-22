@@ -45,6 +45,15 @@
   font-style: italic;
 }
 
+/* Who started this session from outside servitor, and a link back. */
+.ui-servitor-origin {
+  align-self: stretch; margin: 0.2rem 0 0.4rem;
+  padding: 0.4rem 0.7rem; border-radius: 4px;
+  border: 1px dashed var(--border); color: var(--text-mute);
+  font-size: 0.82rem; line-height: 1.4;
+}
+.ui-servitor-origin a { color: var(--accent); }
+
 .ui-servitor-plan {
   background: var(--bg-2);
   border-left: 3px solid var(--accent);
@@ -266,6 +275,23 @@
       if (d.reason) {
         wrap.appendChild(el('div', {class: 'ui-servitor-intent-reason'}, [d.reason]));
       }
+      return {wrap: wrap, body: null};
+    });
+
+    // Who started the session: an agent, from its conversation, with a link
+    // back to it. Sessions an agent opens wait on the owner's approval here,
+    // and the answer goes back to that conversation on its own.
+    window.uiRegisterBlockRenderer('servitor_origin', function(d) {
+      var wrap = el('div', {class: 'ui-servitor-origin'});
+      var who = d.agent || 'An agent';
+      wrap.appendChild(document.createTextNode('Started by ' + who + ' in '));
+      var href = window.uiSafeURL ? window.uiSafeURL(d.url || '') : (d.url || '');
+      if (href) {
+        wrap.appendChild(el('a', {href: href}, [d.title || 'its conversation']));
+      } else {
+        wrap.appendChild(document.createTextNode(d.title || 'its conversation'));
+      }
+      wrap.appendChild(document.createTextNode('. What it finds goes back there.'));
       return {wrap: wrap, body: null};
     });
 
