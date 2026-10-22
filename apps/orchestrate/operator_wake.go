@@ -86,6 +86,37 @@ func providedWatchTool(sess *ToolSession, owner, agentID, toolName string) (Agen
 	return AgentToolDef{}, false, nil
 }
 
+// watchableTempTool reports whether a call to a Builder-made tool may be
+// polled. An API call must use a method that reads: its caps say only that it
+// reaches the network, so the method is the one honest signal, and for a
+// toolbox it is the method of the action called. A script tool runs sandboxed
+// in the agent's own workspace, which is what a watch on it is for.
+func watchableTempTool(tt TempTool, args map[string]any) bool {
+	method := ""
+	switch tt.Mode {
+	case TempToolModeAPI:
+		method = tt.Method
+	case TempToolModeToolbox:
+		action, _ := args["action"].(string)
+		found := false
+		for _, a := range tt.Actions {
+			if a.Name == action {
+				method, found = a.Method, true
+			}
+		}
+		if !found {
+			return false
+		}
+	default:
+		return true
+	}
+	switch strings.ToUpper(strings.TrimSpace(method)) {
+	case "", "GET", "HEAD", "OPTIONS", "PROPFIND", "REPORT":
+		return true
+	}
+	return false
+}
+
 // watchableTool reports whether a provided tool declares that it only reads.
 // One that declares nothing is not taken to.
 func watchableTool(td AgentToolDef) bool {
@@ -477,10 +508,22 @@ func registerOperatorWake(app *OrchestrateApp) {
 		// The agent's OWN directory, matching where its turns run — a script
 		// this tool writes has to be the one a later turn reads.
 		sess.WorkspaceDir = familyWorkspace(UserDB(app.DB, owner), owner, agentID)
-		// (1) operator-management tools (read_phantom_chat, list_phantom_chats…).
-		for _, td := range operatorManagementTools(sess, defaultConsoleAgent) {
-			if td.Tool.Name == toolName {
-				return td.Handler(sess.Context(), toolArgs)
+		// Every branch below resolves within what THIS agent has, and only a
+		// tool that reads: a poll runs every interval with nobody there, so one
+		// that makes changes would make them every minute. Resolving against the
+		// owner's whole kit let a watch run tools the agent was never given, the
+		// Operator's management tools and other agents' scoped tools among them.
+		//
+		// (1) operator-management tools (read_phantom_chat, list_phantom_chats…):
+		// the Operator's own, so a watch for the Operator or for none.
+		if agentID == "" || agentID == defaultConsoleAgent {
+			for _, td := range operatorManagementTools(sess, defaultConsoleAgent) {
+				if td.Tool.Name == toolName {
+					if !watchableTool(td) {
+						return "", fmt.Errorf("%w: %s can make changes", errWatchToolMakesChanges, toolName)
+					}
+					return td.Handler(sess.Context(), toolArgs)
+				}
 			}
 		}
 		// (2) channel-scoped tools (read_chat, list_chats, list_members): built
@@ -491,6 +534,9 @@ func registerOperatorWake(app *OrchestrateApp) {
 		if agentID != "" {
 			for _, td := range channelChatTools(sess, owner, agentID) {
 				if td.Tool.Name == toolName {
+					if !watchableTool(td) {
+						return "", fmt.Errorf("%w: %s can make changes", errWatchToolMakesChanges, toolName)
+					}
 					return td.Handler(sess.Context(), toolArgs)
 				}
 			}
@@ -514,8 +560,25 @@ func registerOperatorWake(app *OrchestrateApp) {
 			sess.TempTools = append(sess.TempTools, &c)
 		}
 		// Owner's unified store — one walk covers the pool AND agent-scoped
-		// rows (flattened namespace; no separate per-agent walk needed).
+		// rows (flattened namespace; no separate per-agent walk needed). Only
+		// what this agent's own catalog holds: the shared pool less what it
+		// switched off, and the tools scoped to it, never another agent's.
+		off := map[string]bool{}
+		if a, ok := loadAgent(UserDB(app.DB, owner), agentID); ok {
+			for _, n := range a.DisabledPersistentTools {
+				off[n] = true
+			}
+		}
 		for _, p := range LoadPersistentTempTools(AuthDB(), owner) {
+			if len(p.ScopeAgents) > 0 && !p.ScopedToAgent(agentID) {
+				continue
+			}
+			if len(p.ScopeAgents) == 0 && off[p.Tool.Name] {
+				continue
+			}
+			if p.Tool.Name == toolName && !watchableTempTool(p.Tool, toolArgs) {
+				return "", fmt.Errorf("%w: %s can make changes", errWatchToolMakesChanges, toolName)
+			}
 			addTool(p.Tool)
 		}
 		// The same resolver as the runner: each adoption to the owner it was
