@@ -272,7 +272,21 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 	// Pre-empted: an app-layer check already refused this request, so there is no
 	// turn to run. Handled at the OUTER boundary, before runAgentLoopInner, because
 	// nothing inside the loop should have to know about a turn that never happens.
+	if cfg.FirstRoundGate != nil {
+		cfg.firstRound = startFirstRoundGate(cfg.FirstRoundGate)
+		cfg.Stream = cfg.firstRound.hold(cfg.Stream)
+		cfg.ReasoningStream = cfg.firstRound.hold(cfg.ReasoningStream)
+		// Not returned before it answers, on any path: what it records
+		// about the turn is read by the caller the moment this returns.
+		defer cfg.firstRound.wait()
+	}
 	if reply := strings.TrimSpace(cfg.PreEmptedReply); reply != "" {
+		if g := cfg.firstRound; g != nil {
+			if d := strings.TrimSpace(g.wait().Decline); d != "" {
+				reply = d
+			}
+			g.open()
+		}
 		resp, history := T.deliverPreEmptedReply(messages, reply, cfg)
 		return resp, history, nil
 	}
@@ -467,6 +481,46 @@ const keepGoingSpinLimit = 3
 // let the caller decide (e.g. "I ran out of rounds, please retry").
 const rescueLookback = 4
 
+// primaryCall is the round's model call, on whichever tier the round settled.
+// The context is a parameter because round 1 may run on one a request check
+// can cancel (FirstRoundGate); every retry after it uses the loop's own.
+func (lr *loopRun) primaryCall(ctx context.Context) {
+	if lr.rs.streamHandler != nil {
+		lr.rs.resp, lr.rs.err = lr.T.ChatStreamWithReport(ctx, lr.history, lr.rs.streamHandler, lr.rs.callOpts...)
+	} else {
+		// A binding private pin redirects all routing to worker — no escalation.
+		useLead := !lr.T.LeadDenied() && lr.cfg.wantsLead()
+		if lr.deescalated != "" {
+			useLead = false
+		}
+		callFn := lr.T.WorkerChat
+		if useLead {
+			callFn = lr.T.LeadChat
+			// The tier is settled HERE, from wantsLead — which already
+			// consulted the route stage and any per-run override. Without
+			// saying so, LeadChat re-derives it from the same RouteKey,
+			// finds the stage says worker, and transparently delegates
+			// back: the override reaches the call and is undone one frame
+			// later. RouteKey stays on the options because it still
+			// carries the stage's thinking preference.
+			lr.rs.callOpts = append(lr.rs.callOpts, WithTierResolved())
+			// An EXPLICIT pin also refuses the quiet degrade. A routing
+			// preference should keep the session alive on the worker when
+			// the lead is unavailable; somebody who pinned one system to the
+			// lead said which model they wanted, and answering from the
+			// other one behind a debug line is the substitution the pin
+			// exists to prevent.
+			if lr.cfg.TierOverride == LEAD {
+				lr.rs.callOpts = append(lr.rs.callOpts, WithNoTierFallback())
+			}
+		}
+		// Empty/timeout/empty-error retry happens inside retryLLM
+		// (core/llm.go) — every caller gets it for free, including
+		// direct WorkerChat/LeadChat and chat-handler ChatStream.
+		lr.rs.resp, lr.rs.err = callFn(ctx, lr.history, lr.rs.callOpts...)
+	}
+}
+
 // First pass: resolve handlers and handle confirmations serially.
 type toolWork struct {
 	index   int
@@ -494,6 +548,7 @@ type loopRun struct {
 	llmWall     time.Duration
 	llmCalls    int
 	laneWait    time.Duration // time the run gave way to people at its own calls (shared_llm.go)
+	requestAt   int           // index in history of the request this turn answers; -1 when none
 	maxRounds   int
 	confirmFn   ConfirmFunc
 	// Capability allow-set, computed once. Static tools and dynamic ones
@@ -896,6 +951,15 @@ func (lr *loopRun) setupHistory() {
 	// the stamp goes on the front — so the app is handed the user's own words,
 	// not a message that opens with a timestamp it has to look past.
 	applyTurnNotes(lr.cfg, lr.history)
+	// Where a request check's steer goes in (FirstRoundGate): just ahead of
+	// the request, as it would have if the check had run first.
+	lr.requestAt = -1
+	for i := len(lr.history) - 1; i >= 0; i-- {
+		if lr.history[i].Role == "user" {
+			lr.requestAt = i
+			break
+		}
+	}
 
 	// Stamp the current date+time onto the latest user turn (the human message
 	// that opened this turn — tool-result user messages get appended below, so at
@@ -2072,39 +2136,22 @@ func (lr *loopRun) callModel() loopAction {
 	if lr.deescalated == "" && !lr.T.LeadDenied() {
 		lr.rs.roundUsedLead = lr.cfg.wantsLead()
 	}
-	if lr.rs.streamHandler != nil {
-		lr.rs.resp, lr.rs.err = lr.T.ChatStreamWithReport(lr.ctx, lr.history, lr.rs.streamHandler, lr.rs.callOpts...)
-	} else {
-		// A binding private pin redirects all routing to worker — no escalation.
-		useLead := !lr.T.LeadDenied() && lr.cfg.wantsLead()
-		if lr.deescalated != "" {
-			useLead = false
-		}
-		callFn := lr.T.WorkerChat
-		if useLead {
-			callFn = lr.T.LeadChat
-			// The tier is settled HERE, from wantsLead — which already
-			// consulted the route stage and any per-run override. Without
-			// saying so, LeadChat re-derives it from the same RouteKey,
-			// finds the stage says worker, and transparently delegates
-			// back: the override reaches the call and is undone one frame
-			// later. RouteKey stays on the options because it still
-			// carries the stage's thinking preference.
-			lr.rs.callOpts = append(lr.rs.callOpts, WithTierResolved())
-			// An EXPLICIT pin also refuses the quiet degrade. A routing
-			// preference should keep the session alive on the worker when
-			// the lead is unavailable; somebody who pinned one system to the
-			// lead said which model they wanted, and answering from the
-			// other one behind a debug line is the substitution the pin
-			// exists to prevent.
-			if lr.cfg.TierOverride == LEAD {
-				lr.rs.callOpts = append(lr.rs.callOpts, WithNoTierFallback())
-			}
-		}
-		// Empty/timeout/empty-error retry happens inside retryLLM
-		// (core/llm.go) — every caller gets it for free, including
-		// direct WorkerChat/LeadChat and chat-handler ChatStream.
-		lr.rs.resp, lr.rs.err = callFn(lr.ctx, lr.history, lr.rs.callOpts...)
+	// Round 1 may be running alongside a check on the request
+	// (FirstRoundGate): its call gets a context the check can cancel, and
+	// nothing below sees the response until the check has answered.
+	baseOpts := lr.rs.callOpts
+	callCtx := lr.ctx
+	if g := lr.cfg.firstRound; g != nil && !g.settled {
+		var cancel context.CancelFunc
+		callCtx, cancel = g.arm(lr.ctx)
+		defer cancel()
+	}
+	lr.primaryCall(callCtx)
+	if act, rerun := lr.settleFirstRound(); act != actNone {
+		return act
+	} else if rerun {
+		lr.rs.callOpts = baseOpts
+		lr.primaryCall(lr.ctx)
 	}
 	// Context-exceeded recovery: provider rejected the prompt as
 	// too large. Naive retries don't help (same prompt → same

@@ -1,10 +1,12 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/cmcoffee/gohort/core/textutil"
 	"math/rand/v2"
@@ -192,6 +194,149 @@ var (
 	guardrailDeclineMu   sync.Mutex
 	guardrailLastDecline string
 )
+
+// FirstRoundVerdict is what a FirstRoundGate check answers. The zero value
+// admits round 1 as it ran.
+type FirstRoundVerdict struct {
+	Decline string // the turn's reply; round 1 is thrown away
+	Steer   string // a directive put just ahead of the request; round 1 runs again with it
+}
+
+func (v FirstRoundVerdict) admits() bool {
+	return strings.TrimSpace(v.Decline) == "" && strings.TrimSpace(v.Steer) == ""
+}
+
+// firstRoundGate is a FirstRoundGate check in flight: it holds what round 1
+// emits until the check answers, then lets it out or drops it.
+type firstRoundGate struct {
+	mu      sync.Mutex
+	held    []func()           // emissions waiting on the verdict, in order
+	passing bool               // emissions go straight through
+	dropped bool               // the verdict refused round 1: emissions are discarded
+	cancel  context.CancelFunc // round 1's call, once it has started
+	verdict FirstRoundVerdict
+	started time.Time
+	took    time.Duration
+	done    chan struct{}
+	settled bool // the loop has acted on the verdict; read and written by the loop only
+}
+
+// startFirstRoundGate runs check in the background.
+func startFirstRoundGate(check func() FirstRoundVerdict) *firstRoundGate {
+	g := &firstRoundGate{started: time.Now(), done: make(chan struct{})}
+	go func() {
+		v := check()
+		g.mu.Lock()
+		g.verdict, g.took = v, time.Since(g.started)
+		if v.admits() {
+			g.flush()
+		} else {
+			g.held, g.dropped = nil, true
+			if g.cancel != nil {
+				g.cancel()
+			}
+		}
+		g.mu.Unlock()
+		close(g.done)
+	}()
+	return g
+}
+
+// hold wraps an emitter so what it is handed waits on the verdict. Calls stay
+// in order across every wrapped emitter, since one lock serves them all.
+func (g *firstRoundGate) hold(emit func(string)) func(string) {
+	if emit == nil {
+		return nil
+	}
+	return func(chunk string) {
+		g.mu.Lock()
+		defer g.mu.Unlock()
+		switch {
+		case g.passing:
+			emit(chunk)
+		case !g.dropped:
+			g.held = append(g.held, func() { emit(chunk) })
+		}
+	}
+}
+
+// arm gives round 1's call a context the check cancels if it refuses the
+// round, cancelled at once when it already has.
+func (g *firstRoundGate) arm(ctx context.Context) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(ctx)
+	g.mu.Lock()
+	g.cancel = cancel
+	if g.dropped {
+		cancel()
+	}
+	g.mu.Unlock()
+	return ctx, cancel
+}
+
+// flush lets the held emissions out and opens the gate. Caller holds mu.
+func (g *firstRoundGate) flush() {
+	for _, f := range g.held {
+		f()
+	}
+	g.held, g.passing = nil, true
+}
+
+// open lets everything after this through, whatever the verdict was. Called
+// once the call the verdict was about has returned, so what follows is a round
+// the check already shaped, or the decline itself.
+func (g *firstRoundGate) open() {
+	g.mu.Lock()
+	g.held, g.passing = nil, true
+	g.mu.Unlock()
+}
+
+// wait blocks until the check has answered.
+func (g *firstRoundGate) wait() FirstRoundVerdict {
+	<-g.done
+	return g.verdict
+}
+
+// settleFirstRound acts on the request check once round 1's call is back. A
+// no-op on every later call. A Decline ends the turn (actReturn); a Steer
+// reports rerun, with the directive in place ahead of the request.
+func (lr *loopRun) settleFirstRound() (act loopAction, rerun bool) {
+	g := lr.cfg.firstRound
+	if g == nil || g.settled {
+		return actNone, false
+	}
+	g.settled = true
+	back := time.Now()
+	v := g.wait()
+	g.open()
+	// The figure that says whether running it alongside paid: a wait of
+	// zero means the check was done before the model was.
+	waited := time.Since(back)
+	Debug("[agent_loop] round 1: request check took %s alongside the call (%s of it waited on)", g.took.Round(time.Millisecond), waited.Round(time.Millisecond))
+	if v.admits() {
+		return actNone, false
+	}
+	lr.rs.resp, lr.rs.err = nil, nil
+	if d := strings.TrimSpace(v.Decline); d != "" {
+		Debug("[agent_loop] round 1: the request check refused the request; the round was discarded")
+		// Straight to the result, not through exit: the decline is a reply
+		// the framework wrote, and the output check exit runs is for the
+		// model's.
+		resp, history := lr.T.deliverPreEmptedReply(lr.history, d, lr.cfg)
+		lr.ret = loopResult{resp, history, nil}
+		return actReturn, false
+	}
+	steer := Message{Role: "system", Content: strings.TrimSpace(v.Steer)}
+	at := lr.requestAt
+	if at < 0 || at > len(lr.history) {
+		at = len(lr.history)
+	}
+	lr.history = append(lr.history[:at], append([]Message{steer}, lr.history[at:]...)...)
+	if lr.requestAt >= 0 {
+		lr.requestAt++
+	}
+	Debug("[agent_loop] round 1: the request check steered the request; the round runs again with its directive")
+	return actNone, true
+}
 
 // deliverPreEmptedReply hands back a reply for a turn that never ran, shaped like
 // a turn that did.

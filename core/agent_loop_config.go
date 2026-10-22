@@ -400,6 +400,25 @@ type AgentLoopConfig struct {
 	// caller needing its own short-circuit.
 	PreEmptedReply string
 
+	// FirstRoundGate, when set, is a check on the incoming request that runs
+	// ALONGSIDE round 1 instead of ahead of it. The loop starts it as the turn
+	// begins and makes round 1's model call at the same time, holding back all
+	// the call produces (streamed text and reasoning, and any tool it asks for)
+	// until the check answers. Admitted, the held text goes out and the turn
+	// carries on. Otherwise round 1 is cancelled and thrown away: a Decline is
+	// the turn's reply, as PreEmptedReply would be, and a Steer goes in just
+	// ahead of the request and round 1 runs again with it.
+	//
+	// For a check the person would otherwise wait on before the model starts,
+	// such as a pre_input guardrail, which is a model call of its own and admits
+	// nearly every turn. Nothing the discarded round wrote reaches anyone, so it
+	// keeps back everything a check run first would have. A PreEmptedReply
+	// waits for it too, so a refusal still wins over a relayed reply, and the
+	// loop does not return until it has answered, so whatever it records about
+	// the turn is in place when the caller reads it.
+	FirstRoundGate func() FirstRoundVerdict
+	firstRound     *firstRoundGate // the running gate; set by RunAgentLoop
+
 	// InterimContentHidden tells the loop that assistant prose from NON-FINAL
 	// rounds is neither shown to anyone nor stored by this host — only the final
 	// reply is. When set, the periodic guardrail check is skipped, because the

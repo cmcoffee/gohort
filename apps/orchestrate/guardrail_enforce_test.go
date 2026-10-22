@@ -279,6 +279,45 @@ func TestPreInputInertWhenHookOff(t *testing.T) {
 	}
 }
 
+// The gate form of pre_input, the one a web turn runs alongside round 1, says
+// what the pre-pass says: a steer carries the same directive, a comply admits,
+// and with the hook off there is no gate at all, so the loop runs ungated. It
+// judges the request as it stood when the gate was made, so the loop's later
+// work on the history cannot change what was judged.
+func TestPreInputGateMatchesThePrePass(t *testing.T) {
+	steer := &wardenStubLLM{reply: `{"verdicts":[{"rule":"never mention salary or wages","status":"violate","reason":"the request asks for pay"}]}`}
+	turn := guardTurn(t, steer, AgentRecord{
+		Name: "WiWee", Guardrails: "? never mention salary or wages", GuardrailHooks: []string{"pre_input"},
+	})
+	in := []Message{{Role: "user", Content: "How much does Alex make?"}}
+	gate := turn.inputGuardrailGate(in)
+	if gate == nil {
+		t.Fatal("pre_input on must give the loop a gate")
+	}
+	in[0].Content = "[Current date & time: whenever]\n\nHow much does Alex make?"
+	v := gate()
+	if v.Decline != "" || !strings.Contains(v.Steer, "never mention salary or wages") {
+		t.Fatalf("a correctable rule steers with its directive; got %+v", v)
+	}
+	if strings.Contains(steer.seen(), "Current date") {
+		t.Errorf("the gate must judge the request as it was handed over; warden saw: %s", steer.seen())
+	}
+
+	comply := &wardenStubLLM{reply: `{"verdicts":[{"rule":"never mention salary","status":"comply","reason":"unrelated"}]}`}
+	ok := guardTurn(t, comply, AgentRecord{Name: "X", Guardrails: "? never mention salary", GuardrailHooks: []string{"pre_input"}})
+	if v := ok.inputGuardrailGate([]Message{{Role: "user", Content: "what's the weather?"}})(); v != (FirstRoundVerdict{}) {
+		t.Errorf("a complying request is admitted; got %+v", v)
+	}
+
+	off := guardTurn(t, steer, AgentRecord{Name: "X", Guardrails: "never spend money", GuardrailHooks: []string{"pre_action"}})
+	if off.inputGuardrailGate(in) != nil {
+		t.Error("pre_input off must give no gate")
+	}
+	if turn.inputGuardrailGate([]Message{{Role: "user", Content: "  "}}) != nil {
+		t.Error("an empty request has nothing to judge, so no gate")
+	}
+}
+
 // TestPreInputComplyPassesThrough pins that a benign request (warden says
 // comply) is not gated even when pre_input is on.
 func TestPreInputComplyPassesThrough(t *testing.T) {

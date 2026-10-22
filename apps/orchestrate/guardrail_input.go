@@ -107,19 +107,8 @@ func buildPreInputCandidate(msgs []Message, lastIdx int) string {
 // invoking the loop. Callers that ignore it would run the very turn the guardrail
 // refused, so the signature is deliberately awkward to drop on the floor.
 func (t *chatTurn) applyInputGuardrail(msgs []Message) (out []Message, decline string) {
-	if len(msgs) == 0 || !guardrailHookActive(t.agent, guardHookPreInput) {
-		return msgs, ""
-	}
-	// Locate the current request — the last user turn — and judge it WITH the
-	// conversation window so context-free follow-ups can't slip the guard.
-	lastIdx := -1
-	for i := len(msgs) - 1; i >= 0; i-- {
-		if msgs[i].Role == "user" {
-			lastIdx = i
-			break
-		}
-	}
-	if lastIdx < 0 || strings.TrimSpace(msgs[lastIdx].Content) == "" {
+	lastIdx := t.inputGuardrailRequest(msgs)
+	if lastIdx < 0 {
 		return msgs, ""
 	}
 	// Timed into the prep clock: this is a model call the person waits on
@@ -154,6 +143,51 @@ func (t *chatTurn) applyInputGuardrail(msgs []Message) (out []Message, decline s
 	res = append(res, Message{Role: "system", Content: directive})
 	res = append(res, msgs[lastIdx:]...)
 	return res, ""
+}
+
+// inputGuardrailRequest locates the request pre_input judges, the last user
+// turn, or -1 when the hook is off or there is nothing to judge. It is judged
+// WITH the conversation window (buildPreInputCandidate) so a context-free
+// follow-up can't slip the guard.
+func (t *chatTurn) inputGuardrailRequest(msgs []Message) int {
+	if len(msgs) == 0 || !guardrailHookActive(t.agent, guardHookPreInput) {
+		return -1
+	}
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role != "user" {
+			continue
+		}
+		if strings.TrimSpace(msgs[i].Content) == "" {
+			return -1
+		}
+		return i
+	}
+	return -1
+}
+
+// inputGuardrailGate is the pre_input pre-pass as the loop's FirstRoundGate:
+// the warden judges the request while round 1's model call runs, instead of
+// before it, and the loop shows nothing of that round until it answers. On a
+// turn it clears, which is nearly every turn, the person no longer waits for
+// it; measured at a median of 400ms. A block or a steer costs what it always
+// did, plus a round 1 that was cancelled unseen.
+//
+// What it judges is taken now, from the messages as they stand, not from the
+// loop's history after turn notes and the date stamp went on. nil when
+// pre_input is off or there is no request, and the loop runs without a gate.
+func (t *chatTurn) inputGuardrailGate(msgs []Message) func() FirstRoundVerdict {
+	lastIdx := t.inputGuardrailRequest(msgs)
+	if lastIdx < 0 {
+		return nil
+	}
+	candidate, request := buildPreInputCandidate(msgs, lastIdx), msgs[lastIdx].Content
+	return func() FirstRoundVerdict {
+		directive, blocked := t.guardrailInputDirective(candidate)
+		if blocked {
+			return FirstRoundVerdict{Decline: t.guardrailInputDecline(request)}
+		}
+		return FirstRoundVerdict{Steer: directive}
+	}
 }
 
 // guardrailInputDecline writes the reply for a hard-blocked request. Same

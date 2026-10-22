@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"strings"
 
 	"github.com/cmcoffee/gohort/core/textutil"
@@ -994,4 +995,188 @@ func TestAnErrorExitIsNotJudged(t *testing.T) {
 	// And an empty reply is nothing to judge either.
 	lr.outputChecked = false
 	lr.exit(&Response{Content: "   "}, nil, nil)
+}
+
+// The hold is the whole safety argument for running a request check alongside
+// round 1: nothing the round emits gets out before the check answers, it all
+// gets out in order once the check admits it, and none of it ever does once
+// the check refuses.
+func TestFirstRoundGateHoldsUntilTheVerdict(t *testing.T) {
+	release := make(chan struct{})
+	g := startFirstRoundGate(func() FirstRoundVerdict { <-release; return FirstRoundVerdict{} })
+	var out []string
+	text := g.hold(func(c string) { out = append(out, "text:"+c) })
+	thought := g.hold(func(c string) { out = append(out, "thought:"+c) })
+	thought("weighing it")
+	text("hel")
+	text("lo")
+	g.mu.Lock()
+	early := len(out)
+	g.mu.Unlock()
+	if early != 0 {
+		t.Fatalf("emitted before the check answered: %v", out)
+	}
+	close(release)
+	g.wait()
+	text("!")
+	if got := strings.Join(out, " "); got != "thought:weighing it text:hel text:lo text:!" {
+		t.Errorf("an admitted round goes out whole and in order, got %q", got)
+	}
+
+	refused := startFirstRoundGate(func() FirstRoundVerdict { return FirstRoundVerdict{Decline: "no"} })
+	refused.wait()
+	ctx, cancel := refused.arm(context.Background())
+	defer cancel()
+	if ctx.Err() == nil {
+		t.Error("a call armed after a refusal must start cancelled")
+	}
+	out = nil
+	refused.hold(func(c string) { out = append(out, c) })("the forbidden answer")
+	if len(out) != 0 {
+		t.Errorf("a refused round must emit nothing, got %v", out)
+	}
+	if g.hold(nil) != nil {
+		t.Error("holding no emitter must stay no emitter")
+	}
+}
+
+// A refusal cancels round 1 where it stands: the call that would otherwise run
+// forever returns, the tool it asked for never runs, and the decline is the
+// only thing streamed.
+func TestFirstRoundGateDeclineCancelsTheRound(t *testing.T) {
+	ran := false
+	tool := AgentToolDef{
+		Tool:    Tool{Name: "lookup", Description: "d", Parameters: map[string]ToolParam{"q": {Type: "string"}}},
+		Handler: func(ctx context.Context, args map[string]any) (string, error) { ran = true; return "salary data", nil },
+	}
+	never := make(chan struct{})
+	fake := &FakeLLM{Turns: []FakeTurn{{Chunks: []string{"Their salary is "}, Wait: never}}}
+	app := &AppCore{LLM: fake}
+	var streamed strings.Builder
+	resp, history, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "what do they earn?"}}, AgentLoopConfig{
+		MaxRounds:      4,
+		Tools:          []AgentToolDef{tool},
+		Stream:         func(c string) { streamed.WriteString(c) },
+		FirstRoundGate: func() FirstRoundVerdict { return FirstRoundVerdict{Decline: "Not one I'll get into."} },
+	})
+	if err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	if ran {
+		t.Error("a refused round's tool must never run")
+	}
+	if resp.Content != "Not one I'll get into." || streamed.String() != "Not one I'll get into." {
+		t.Errorf("the decline is the reply and all that streams; got reply %q, streamed %q", resp.Content, streamed.String())
+	}
+	if n := len(history); n == 0 || history[n-1].Role != "assistant" || history[n-1].Content != "Not one I'll get into." {
+		t.Errorf("history must end on the decline, got %+v", history)
+	}
+	if fake.Calls() != 1 {
+		t.Errorf("expected the one cancelled call, got %d", fake.Calls())
+	}
+}
+
+// A steer throws round 1 away and runs it again with the directive just ahead
+// of the request, where a check run first would have put it.
+func TestFirstRoundGateSteerRerunsWithTheDirective(t *testing.T) {
+	ran := false
+	tool := AgentToolDef{
+		Tool:    Tool{Name: "lookup", Description: "d", Parameters: map[string]ToolParam{"q": {Type: "string"}}},
+		Handler: func(ctx context.Context, args map[string]any) (string, error) { ran = true; return "salary data", nil },
+	}
+	never := make(chan struct{})
+	fake := &FakeLLM{Turns: []FakeTurn{
+		{Chunks: []string{"Looking that up"}, ToolCalls: []ToolCall{{ID: "c1", Name: "lookup", Args: map[string]any{"q": "salary"}}}, Wait: never},
+		{Content: "I can help with the role, not the pay."},
+	}}
+	app := &AppCore{LLM: fake}
+	var streamed strings.Builder
+	resp, _, err := app.RunAgentLoop(context.Background(), []Message{
+		{Role: "user", Content: "hi"}, {Role: "assistant", Content: "hello"}, {Role: "user", Content: "what do they earn?"},
+	}, AgentLoopConfig{
+		MaxRounds:      4,
+		Tools:          []AgentToolDef{tool},
+		Stream:         func(c string) { streamed.WriteString(c) },
+		FirstRoundGate: func() FirstRoundVerdict { return FirstRoundVerdict{Steer: "Constraint on this reply: no pay."} },
+	})
+	if err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	if ran {
+		t.Error("the discarded round's tool must never run")
+	}
+	if deliveredReply(resp.Content) != "I can help with the role, not the pay." {
+		t.Errorf("the reply comes from the rerun, got %q", resp.Content)
+	}
+	if strings.Contains(streamed.String(), "Looking that up") {
+		t.Errorf("the discarded round must not stream, got %q", streamed.String())
+	}
+	sent := fake.Sent(1)
+	at := -1
+	for i, m := range sent {
+		if m.Role == "system" && m.Content == "Constraint on this reply: no pay." {
+			at = i
+		}
+	}
+	if at < 0 || at+1 >= len(sent) || sent[at+1].Role != "user" || !strings.Contains(sent[at+1].Content, "what do they earn?") {
+		t.Errorf("the directive must sit just ahead of the request; sent %+v", sent)
+	}
+	if fake.Calls() != 2 {
+		t.Errorf("expected the cancelled call and the rerun, got %d", fake.Calls())
+	}
+}
+
+// An admitted round is the round: one call, its text streamed once, and the
+// loop does not return before the check has finished whatever it records.
+func TestFirstRoundGateAdmitKeepsTheRound(t *testing.T) {
+	fake := &FakeLLM{Turns: []FakeTurn{{Chunks: []string{"hel", "lo"}}}}
+	app := &AppCore{LLM: fake}
+	var streamed strings.Builder
+	var recorded atomic.Bool
+	resp, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "hi"}}, AgentLoopConfig{
+		MaxRounds: 3,
+		Stream:    func(c string) { streamed.WriteString(c) },
+		FirstRoundGate: func() FirstRoundVerdict {
+			for fake.Calls() == 0 {
+				runtime.Gosched()
+			}
+			recorded.Store(true)
+			return FirstRoundVerdict{}
+		},
+	})
+	if err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	if deliveredReply(resp.Content) != "hello" || streamed.String() != "hello" {
+		t.Errorf("got reply %q, streamed %q", resp.Content, streamed.String())
+	}
+	if fake.Calls() != 1 {
+		t.Errorf("an admitted round runs once, got %d calls", fake.Calls())
+	}
+	if !recorded.Load() {
+		t.Error("the loop returned before the check finished")
+	}
+}
+
+// A relayed reply waits on the check too: a refusal wins over it, and an
+// admitted request gets the relay.
+func TestFirstRoundGateOutranksARelayedReply(t *testing.T) {
+	for _, tc := range []struct{ decline, want string }{{"Not one I'll get into.", "Not one I'll get into."}, {"", "the relayed answer"}} {
+		fake := &FakeLLM{}
+		app := &AppCore{LLM: fake}
+		resp, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "go"}}, AgentLoopConfig{
+			MaxRounds:      3,
+			PreEmptedReply: "the relayed answer",
+			FirstRoundGate: func() FirstRoundVerdict { return FirstRoundVerdict{Decline: tc.decline} },
+		})
+		if err != nil {
+			t.Fatalf("loop: %v", err)
+		}
+		if resp.Content != tc.want {
+			t.Errorf("decline %q: got %q, want %q", tc.decline, resp.Content, tc.want)
+		}
+		if fake.Calls() != 0 {
+			t.Errorf("a relayed turn calls no model, got %d", fake.Calls())
+		}
+	}
 }
