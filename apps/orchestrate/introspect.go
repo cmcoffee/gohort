@@ -52,7 +52,7 @@ func (t *chatTurn) introspectToolDef() AgentToolDef {
 				b.WriteString("- Type: " + strings.Join(typeBits, "; ") + "\n")
 				mode := a.MemoryMode
 				if mode == "" {
-					mode = "agent"
+					mode = memoryModeAgent
 				}
 				b.WriteString("- Memory mode: " + mode + "\n")
 				if r := strings.TrimSpace(a.Rules); r != "" {

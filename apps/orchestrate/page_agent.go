@@ -65,11 +65,11 @@ func agentTypeTemplates() []ui.FormTemplate {
 	return []ui.FormTemplate{
 		{
 			Label:  "Assistant: a conversational agent that works with people",
-			Values: map[string]any{"channel": true, "memory_mode": "chatbot", "fleet": false, "recall_hints": true},
+			Values: map[string]any{"channel": true, "memory_mode": memoryModeChatbot, "fleet": false, "recall_hints": true},
 		},
 		{
 			Label:  "Specialist: a focused agent for one job, used directly or by dispatch",
-			Values: map[string]any{"channel": false, "memory_mode": "agent", "fleet": false, "recall_hints": true},
+			Values: map[string]any{"channel": false, "memory_mode": memoryModeAgent, "fleet": false, "recall_hints": true},
 		},
 	}
 }
@@ -344,8 +344,8 @@ func (ed *agentEditor) formFields() {
 					"Turn it on for a sub-agent that gets better at its job by remembering, and leave it off for a one-shot specialist, where notes from an earlier run would colour a fresh lookup. A sub-agent that inherits its parent's tools always keeps memory."},
 			ui.FormField{Field: "memory_mode", Type: "select", Label: "What its memory is for", ShowWhen: "keeps_memory",
 				Options: []ui.SelectOption{
-					{Value: "agent", Label: "Lessons: what works for its job"},
-					{Value: "cartographer", Label: "Cartographer: lessons + a map of what it works on"},
+					{Value: memoryModeAgent, Label: "Lessons: what works for its job"},
+					{Value: memoryModeCartographer, Label: "Cartographer: lessons + a map of what it works on"},
 				},
 				Help: "A Cartographer builds a map in its graph memory as it goes, and keeps it current."},
 		)
@@ -363,9 +363,9 @@ func (ed *agentEditor) formFields() {
 			// Only shapes Explicit Memory, so it steps aside when that is off.
 			ui.FormField{Field: "memory_mode", Type: "select", Label: "Memory mode", ShowWhen: "!disable_explicit",
 				Options: []ui.SelectOption{
-					{Value: "agent", Label: "Agent: generalized lessons only"},
-					{Value: "chatbot", Label: "Chatbot: lessons + user personalization"},
-					{Value: "cartographer", Label: "Cartographer: lessons + a map of what it works on"},
+					{Value: memoryModeAgent, Label: "Agent: generalized lessons only"},
+					{Value: memoryModeChatbot, Label: "Chatbot: lessons + user personalization"},
+					{Value: memoryModeCartographer, Label: "Cartographer: lessons + a map of what it works on"},
 				},
 				Help:   "What its memory is for: lessons, the people it talks with, or a map.",
 				Detail: "Agent, the default, pins generalized lessons only; specifics go to remember (pin=false), which is searchable rather than always in prompt. Chatbot pins the same, plus user personalization and conversation notes.\n\nCartographer pins lessons like Agent, and builds a map of what it works on in its graph memory: the parts of a codebase or system and how they connect, recorded as it finds them and kept current. For an agent whose job is mapping, and one you attach to other agents as a Source so they can read the map."},

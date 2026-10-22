@@ -128,8 +128,8 @@ type memoryModeText struct {
 // Both modes use Reference Memory (memory_save) identically; the mode
 // only widens or narrows what fits in the Explicit Memory bucket.
 func memoryModeCopy(mode string) memoryModeText {
-	switch mode {
-	case "chatbot":
+	switch memoryModeOf(mode) {
+	case memoryModeChatbot:
 		return memoryModeText{
 			Header:          "## Saved notes",
 			Intro:           "What you've kept in mind across sessions with this user: generalized lessons (design principles, recurring gotchas) PLUS personalization (their name, preferences, recurring details) PLUS conversation-coherence notes (\"the project we discussed last week\", \"the user is on the beta plan\"). Apply silently; don't list them back. Each entry is numbered so you can reference an index when one is no longer accurate.",
@@ -141,7 +141,7 @@ func memoryModeCopy(mode string) memoryModeText {
 			Intro:           "Working commands and quick references to keep in view: how to access and operate this system directly (auth methods, entry points, log locations, service controls), plus gotchas to avoid. Use these directly rather than re-discovering. Each entry is numbered so you can reference an index when one is no longer accurate.",
 			StoreToolSuffix: "This agent is in SHORTCUTS MODE: Explicit Memory holds the operational commands and gotchas you want ALWAYS in view (working auth, entry points, log locations, \"do X not Y\" rules). Specific one-off findings you only occasionally need go in Reference Memory (searchable), not here.",
 		}
-	default: // "" or "agent"
+	default: // agent, cartographer (lessons like agent; its map is renderMapPromptSection), or unset
 		return memoryModeText{
 			Header:          "## Lessons learned",
 			Intro:           "Generalized lessons from prior sessions: design principles, recurring gotchas, things that bit you and the workaround that worked. Apply when the current task touches similar territory. Each lesson is numbered so you can reference an index when forgetting one that's no longer accurate.",

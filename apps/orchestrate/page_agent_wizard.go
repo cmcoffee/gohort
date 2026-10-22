@@ -46,8 +46,8 @@ var wizard_kinds = map[string]struct {
 	cortex      bool
 	memory_mode string
 }{
-	"assistant":  {"Assistant: a conversational agent that works with people", true, "chatbot"},
-	"specialist": {"Specialist: a focused agent for one job, used directly or by dispatch", false, "agent"},
+	"assistant":  {"Assistant: a conversational agent that works with people", true, memoryModeChatbot},
+	"specialist": {"Specialist: a focused agent for one job, used directly or by dispatch", false, memoryModeAgent},
 }
 
 // wizard_template is one crafted starting point offered by the wizard's
@@ -849,9 +849,9 @@ func applyWizardMemory(rec *AgentRecord, req wizardRequest) bool {
 	switch req.Memory {
 	case "":
 	case "personalized":
-		rec.MemoryMode = "chatbot"
+		rec.MemoryMode = memoryModeChatbot
 	case "lessons":
-		rec.MemoryMode = "agent"
+		rec.MemoryMode = memoryModeAgent
 	case "map":
 		rec.MemoryMode = memoryModeCartographer
 	case "none":

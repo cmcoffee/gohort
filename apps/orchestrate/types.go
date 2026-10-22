@@ -864,11 +864,6 @@ type AgentRecord struct {
 	// otherwise. Only meaningful with OwnedBy set.
 	KeepsMemory bool `json:"keeps_memory,omitempty"`
 
-	// GraphSize is retired: "large" briefly gave an agent a bigger graph and
-	// the map instruction at once. It is read as the Cartographer memory mode
-	// on load (migrateGraphSize) and never written.
-	GraphSize string `json:"graph_size,omitempty"`
-
 	// PendingApproval holds a freshly-authored agent OUT of service until the
 	// owner approves it. Set when a dispatched Builder mints an agent on a
 	// parent's behalf: the record is saved but excluded from dispatch / run /

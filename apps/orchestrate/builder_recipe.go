@@ -350,9 +350,9 @@ func recipeAgentSummary(rec AgentRecord, prefix string) string {
 	var b strings.Builder
 	kind := "specialist"
 	switch {
-	case strings.EqualFold(rec.MemoryMode, "chatbot"):
+	case memoryForPeople(rec.MemoryMode):
 		kind = "assistant"
-	case strings.EqualFold(rec.MemoryMode, memoryModeCartographer):
+	case memoryModeOf(rec.MemoryMode) == memoryModeCartographer:
 		kind = "specialist, cartographer"
 	}
 	fmt.Fprintf(&b, "- %s%s (%s)", prefix, rec.Name, kind)

@@ -1085,7 +1085,7 @@ func newAgentReadsCortex(rec AgentRecord) bool {
 	if strings.TrimSpace(rec.OwnedBy) != "" || len(rec.IntakeForm) > 0 {
 		return false
 	}
-	return !focusedMemoryMode(rec.MemoryMode)
+	return !memoryForAJob(rec.MemoryMode)
 }
 
 func agentRecordFromArgs(args map[string]any) AgentRecord {

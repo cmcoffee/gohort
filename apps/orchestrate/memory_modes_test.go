@@ -1,7 +1,7 @@
 package orchestrate
 
-// The Cartographer memory mode: lessons like Agent mode, plus a map it keeps
-// in graph memory. An agent saved with the retired GraphSize "large" reads as
+// Memory modes: Cartographer is lessons like Agent mode plus a map it keeps in
+// graph memory, and the two questions asked of a mode differ only on an unset
 // one.
 
 import (
@@ -14,20 +14,6 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
-
-func TestAnAgentSavedLargeLoadsAsACartographer(t *testing.T) {
-	udb := UserDB(&DBase{Store: kvlite.MemStore()}, "u-carto")
-	for _, c := range []struct {
-		mode, want string
-	}{{"", memoryModeCartographer}, {"agent", memoryModeCartographer}, {"chatbot", "chatbot"}} {
-		id := "a-" + c.want + c.mode
-		udb.Set(agentsTable, id, AgentRecord{ID: id, Name: "Mapper", OrchestratorPrompt: "Map it.", MemoryMode: c.mode, GraphSize: "large"})
-		a, ok := loadAgent(udb, id)
-		if !ok || a.MemoryMode != c.want || a.GraphSize != "" {
-			t.Errorf("saved %q with Large: loads as %q (graph_size %q)", c.mode, a.MemoryMode, a.GraphSize)
-		}
-	}
-}
 
 func TestACartographerIsToldToKeepItsMap(t *testing.T) {
 	mapper := AgentRecord{MemoryMode: memoryModeCartographer}
@@ -76,5 +62,31 @@ func TestTheGraphListSaysItsCap(t *testing.T) {
 	}
 	if got.Counts["entities"] != 1 || got.Caps["entities"] != TuneInt(TunableGraphEntityCap) || got.Caps["edges"] != TuneInt(TunableGraphEdgeCap) {
 		t.Errorf("the graph list: %s", w.Body.String())
+	}
+}
+
+// The two questions asked of a mode agree on every mode but the unset one,
+// where session recall stays off and a new agent from Builder reads its Cortex.
+func TestTheMemoryModeQuestions(t *testing.T) {
+	for _, c := range []struct {
+		mode        string
+		people, job bool
+	}{
+		{memoryModeChatbot, true, false},
+		{"Chatbot ", true, false},
+		{memoryModeAgent, false, true},
+		{memoryModeCartographer, false, true},
+		{"", false, false},
+	} {
+		if memoryForPeople(c.mode) != c.people || memoryForAJob(c.mode) != c.job {
+			t.Errorf("%q: for people %v, for a job %v", c.mode, memoryForPeople(c.mode), memoryForAJob(c.mode))
+		}
+	}
+	if sessionRecallOn(AgentRecord{}) || !newAgentReadsCortex(AgentRecord{}) {
+		t.Error("an unset mode's two defaults moved")
+	}
+	if memoryModeCopy(memoryModeCartographer).Header != memoryModeCopy(memoryModeAgent).Header ||
+		memoryModeCopy(memoryModeChatbot).Header == memoryModeCopy(memoryModeAgent).Header {
+		t.Error("the pinned-notes wording per mode")
 	}
 }

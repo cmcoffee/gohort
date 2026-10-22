@@ -83,7 +83,7 @@ func sessionRecallOn(a AgentRecord) bool {
 	case "off":
 		return false
 	}
-	return strings.EqualFold(strings.TrimSpace(a.MemoryMode), "chatbot")
+	return memoryForPeople(a.MemoryMode)
 }
 
 // sessionRecallActive reports whether this turn can recall earlier sessions.
