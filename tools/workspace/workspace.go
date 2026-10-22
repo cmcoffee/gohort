@@ -349,6 +349,8 @@ func handleCreate(args map[string]any, sess *ToolSession) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// The agent family that made it is the only one that may switch into it.
+	w = w.ClaimFor(sess)
 	// Switch the session's active workspace dir to the new one for
 	// the remainder of this turn. Tools that resolve paths against
 	// sess.WorkspaceDir will land here automatically. WorkspaceID is
@@ -372,7 +374,7 @@ func handleUse(args map[string]any, sess *ToolSession) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("workspace %q not found", id)
 	}
-	if w.Owner != ownerFor(sess) {
+	if w.Owner != ownerFor(sess) || !w.ReachableBy(sess) {
 		return "", fmt.Errorf("workspace %q is not yours", id)
 	}
 	dir, err := ManagedWorkspaceDir(w.Owner, w.ID)
@@ -392,7 +394,14 @@ func handleList(args map[string]any, sess *ToolSession) (string, error) {
 	if owner == "" {
 		return "", fmt.Errorf("workspaces require an authenticated session")
 	}
-	ws := ListManagedWorkspaces(owner)
+	// Another agent family's workspaces are not listed: they cannot be used
+	// from here, and their names say what that family is working on.
+	var ws []ManagedWorkspace
+	for _, w := range ListManagedWorkspaces(owner) {
+		if w.ReachableBy(sess) {
+			ws = append(ws, w)
+		}
+	}
 	if len(ws) == 0 {
 		return "No workspaces: use action=create to mint one.", nil
 	}
@@ -423,7 +432,7 @@ func setPinned(args map[string]any, sess *ToolSession, pinned bool) (string, err
 	if !ok {
 		return "", fmt.Errorf("workspace %q not found", id)
 	}
-	if w.Owner != ownerFor(sess) {
+	if w.Owner != ownerFor(sess) || !w.ReachableBy(sess) {
 		return "", fmt.Errorf("workspace %q is not yours", id)
 	}
 	if err := SetManagedWorkspacePinned(id, pinned); err != nil {
@@ -442,7 +451,7 @@ func handleDelete(args map[string]any, sess *ToolSession) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("workspace %q not found", id)
 	}
-	if w.Owner != ownerFor(sess) {
+	if w.Owner != ownerFor(sess) || !w.ReachableBy(sess) {
 		return "", fmt.Errorf("workspace %q is not yours", id)
 	}
 	if err := DeleteManagedWorkspace(id); err != nil {
@@ -463,7 +472,7 @@ func handleInfo(args map[string]any, sess *ToolSession) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("workspace %q not found", id)
 	}
-	if w.Owner != ownerFor(sess) {
+	if w.Owner != ownerFor(sess) || !w.ReachableBy(sess) {
 		return "", fmt.Errorf("workspace %q is not yours", id)
 	}
 	size := ManagedWorkspaceSize(w.Owner, w.ID)

@@ -19,6 +19,17 @@ func workspaceFamily(udb Database, a AgentRecord) string {
 
 // workspaceFamilyOf is workspaceFamily for an agent known by id. An id with no
 // record is its own family.
+// init points core's per-family rule on managed workspaces at the agents'
+// own families (core.WorkspaceFamilyOf).
+func init() {
+	WorkspaceFamilyOf = func(owner, agentID string) string {
+		if orchestrateBaseDB == nil {
+			return ""
+		}
+		return workspaceFamilyOf(UserDB(orchestrateBaseDB, owner), agentID)
+	}
+}
+
 func workspaceFamilyOf(udb Database, id string) string {
 	if a, ok := loadAgent(udb, id); ok {
 		return workspaceFamily(udb, a)
@@ -88,7 +99,8 @@ func delegatedWorkspace(ctx context.Context, udb Database, user string, target A
 // Otherwise the turn runs in its agent family's folder (agentWorkspace).
 func (t *chatTurn) turnWorkspace() (dir, wsID string) {
 	if t.activeWorkspaceID != "" {
-		if w, ok := LoadManagedWorkspace(t.activeWorkspaceID); ok && w.Owner == t.user {
+		if w, ok := LoadManagedWorkspace(t.activeWorkspaceID); ok && w.Owner == t.user &&
+			(w.Family == "" || w.Family == workspaceFamily(t.udb, t.agent)) {
 			if d, derr := ManagedWorkspaceDir(w.Owner, w.ID); derr == nil {
 				return d, w.ID
 			}

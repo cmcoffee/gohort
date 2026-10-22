@@ -46,6 +46,53 @@ type ManagedWorkspace struct {
 	SessionID  string    `json:"session_id,omitempty"` // origin chat/phantom session; empty for detached pinned
 	CreatedAt  time.Time `json:"created_at"`
 	LastUsedAt time.Time `json:"last_used_at"`
+	// Family is the agent family that made it (its top-level agent), and the
+	// only one whose agents may use it. Empty for a workspace a person made,
+	// and for every one made before this was recorded: those stay open to all
+	// of the owner's agents, which is what a project workspace is for.
+	Family string `json:"family,omitempty"`
+}
+
+// WorkspaceFamilyOf names the family an agent belongs to, its top-level
+// agent, for the per-family rule on managed workspaces. Set by the app that
+// owns agents; nil, or an agent it does not know, is the agent's own family.
+var WorkspaceFamilyOf func(owner, agentID string) string
+
+// WorkspaceFamily is the agent family this session works for, or "" when it
+// works for none (a person, the CLI).
+func (s *ToolSession) WorkspaceFamily() string {
+	if s == nil || strings.TrimSpace(s.AgentID) == "" {
+		return ""
+	}
+	if WorkspaceFamilyOf != nil {
+		if f := strings.TrimSpace(WorkspaceFamilyOf(s.Username, s.AgentID)); f != "" {
+			return f
+		}
+	}
+	return s.AgentID
+}
+
+// ReachableBy reports whether sess may use this workspace: one with no family
+// is open to the owner's agents, and one with a family is that family's.
+// Between families nothing is shared (workspace_agent.go); a workspace
+// switched into by id was the way around that.
+func (w ManagedWorkspace) ReachableBy(sess *ToolSession) bool {
+	f := sess.WorkspaceFamily()
+	return w.Family == "" || f == "" || w.Family == f
+}
+
+// ClaimFor records sess's family on a workspace it just made, so another
+// family's agents cannot switch into it. A session working for no family
+// leaves it open.
+func (w ManagedWorkspace) ClaimFor(sess *ToolSession) ManagedWorkspace {
+	f := sess.WorkspaceFamily()
+	db := managedWorkspaceDB()
+	if f == "" || db == nil {
+		return w
+	}
+	w.Family = f
+	db.Set(managedWorkspaceTable, w.ID, w)
+	return w
 }
 
 func managedWorkspaceDB() Database {
@@ -140,6 +187,9 @@ func EnsureSessionWorkspace(sess *ToolSession) (string, error) {
 		sessionID = sess.RoutingTarget
 	}
 	w, dir, err := CreateManagedWorkspace("", sess.Username, sessionID, false)
+	if err == nil {
+		w = w.ClaimFor(sess)
+	}
 	if err != nil {
 		return "", err
 	}
