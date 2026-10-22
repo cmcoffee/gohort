@@ -23,6 +23,9 @@ func TestReadingAnAgentShowsWhatRunsAsIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = target
+	// Reading an agent's record is Builder's, on the owner's run: another
+	// agent reads only who a dispatch target is (agentsGetAction).
+	turn.agent = AgentRecord{ID: "seed-builder", Name: "Builder", Owner: "u"}
 	SaveStandingAgent(RootDB, StandingAgent{Owner: "u", Name: "Daily engagement", AgentID: poster.ID,
 		Mission: "1. Count today's posts. 2. If post count >= 5, skip posting."})
 	SaveStandingAgent(RootDB, StandingAgent{Owner: "u", Name: "Someone else's run", AgentID: other.ID, Mission: "unrelated"})

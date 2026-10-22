@@ -581,6 +581,9 @@ func (t *chatTurn) agentsListAction() (string, error) {
 		Owned       bool   `json:"owned"`
 	}
 	all := listAgents(fleetDB, fleetUser)
+	if !t.readsWholeFleet() {
+		all = t.dispatchableFleet()
+	}
 	out := make([]row, 0, len(all))
 	for _, a := range all {
 		// Builder is not dispatch-callable for most callers (see
@@ -616,6 +619,30 @@ func (t *chatTurn) agentsListAction() (string, error) {
 	}
 	b, _ := json.Marshal(out)
 	return string(b), nil
+}
+
+// readsWholeFleet reports whether agents(list/get) may read every agent the
+// owner has: Builder, on the owner's own run, which authors them. Every other
+// turn reads what it may dispatch to (dispatchableFleet), which already
+// weighs the agent's DispatchMode, its allowed targets, Hidden agents and
+// other agents' sub-agents.
+//
+// list and get used to read the owner's whole store. On a shared agent that
+// is the owner's store, so whoever chatted it could list the owner's agents
+// and read any one in full (prompt, rules, tools, Sources) through its
+// get(full=true), past every limit dispatch keeps.
+func (t *chatTurn) readsWholeFleet() bool {
+	return agentCanAuthor(t.agent) && t.ranBy() == "" && !t.strangerOnChannel()
+}
+
+// mayDispatchTo reports whether id is in this turn's dispatchable fleet.
+func (t *chatTurn) mayDispatchTo(id string) bool {
+	for _, a := range t.dispatchableFleet() {
+		if a.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 // agentsGetAction reads one agent record + stamps authoring focus.
@@ -675,6 +702,12 @@ func (t *chatTurn) agentsGetAction(args map[string]any) (string, error) {
 	if isFleetRetiredSeed(a.ID) || isRetiringArchetypeSeed(a.ID) {
 		return "", fmt.Errorf("agent %q not found", key)
 	}
+	// Outside Builder's own runs, an agent this one may not dispatch to is
+	// not found, answered as a missing one is so the error says nothing.
+	whole := t.readsWholeFleet()
+	if !whole && !t.mayDispatchTo(a.ID) {
+		return "", fmt.Errorf("agent %q not found", key)
+	}
 	if t.session != nil && t.session.ID != "" {
 		saveAuthoringInProgress(t.udb, t.session.ID, a.ID)
 	}
@@ -692,11 +725,27 @@ func (t *chatTurn) agentsGetAction(args map[string]any) (string, error) {
 	// See project_long_context_management.
 	//
 	// Either way it ends with what runs as the agent (agent_runs_on.go).
-	if b, ok := args["full"].(bool); ok && b {
+	// The full record (prompt, rules, tools, Sources) is Builder's, to edit
+	// what it authors. Anyone else gets the compact view.
+	if b, ok := args["full"].(bool); ok && b && whole {
 		full, _ := json.Marshal(a)
 		return string(withRunsOn(full, fleetUser, a.ID)), nil
 	}
+	if !whole {
+		return string(dispatchTargetJSON(a)), nil
+	}
 	return string(withRunsOn(slimAgentJSON(fleetDB, fleetUser, a), fleetUser, a.ID)), nil
+}
+
+// dispatchTargetJSON is what an agent that is not authoring reads about one
+// it may dispatch to: who it is, what it is for and what it can call, which is
+// what a brief needs. Not its prompt, rules, collections or settings: those
+// are its author's, and the compact view previews all of them.
+func dispatchTargetJSON(a AgentRecord) []byte {
+	b, _ := json.Marshal(map[string]any{
+		"id": a.ID, "name": a.Name, "description": a.Description, "allowed_tools": a.AllowedTools,
+	})
+	return b
 }
 
 // agentsRunToolAction executes ONE of a target agent's attached tools
