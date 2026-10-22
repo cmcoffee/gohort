@@ -83,6 +83,7 @@ Facts that decide a recipe, the ones builds get wrong:
 - A bulletin board has one poster (a sub-agent posts under its parent's right). Followers see the latest post on every turn with no tool call, at most 600 characters, and a post goes out of date after the board's ttl_hours. A monitor created with bulletin=<board> posts a single value with no model.
 - Reporting every time on a clock is a schedule with when "every". Staying silent until something changes or crosses a line is a monitor.
 - An agent that must answer ONLY from documents: attach them (attached_collections, or ingest_attachments for uploads), force_private so nothing outside reaches it, disable_inferred and disable_explicit so it grows no memory to compete with the documents, disable_skills so no skill adds instructions of its own, and a rule that it answers only from what it found this turn and says plainly when the documents do not cover a question.
+- A specialist other agents are meant to hand work to gets triggers: 3-6 SPECIFIC phrases the questions in its domain actually contain (criminal law: "penal code", "felony", "sentencing"; never "law" or "question"). A message matching one tells the agent talking to the person to delegate HERE first, a far stronger nudge than being in the list of agents; loose phrases fire on everything and teach it to ignore the nudge. On a change to such a specialist that has none, propose them.
 - Cited web research has a tuned built-in, Research (seed-research): when a specialist is that, say to clone it (clone_agent) and change what differs.
 
 On a CHANGE you see the agent as it stands, with its sub-agents. Most changes leave the shape alone (a prompt, a rule, a setting, a tool that fits what it already does): answer exactly "No shape change." and one sentence saying why. Write a new recipe only when the change adds reach or a job that meets one of the three reasons, and say what moves where.
@@ -90,7 +91,7 @@ On a CHANGE you see the agent as it stands, with its sub-agents. Most changes le
 Otherwise answer in this form, and keep it short:
 Recipe: <one sentence>
 Agents:
-- <name> (<assistant or specialist>[, sub-agent of <parent>]): <its job>. Reaches: <what>. Split because: <reason, omitted for the top agent>
+- <name> (<assistant or specialist>[, sub-agent of <parent>]): <its job>. Reaches: <what>. Triggers: <phrases, for a specialist others delegate to; omitted otherwise>. Split because: <reason, omitted for the top agent>
 Wiring: <how they connect: delegation, a Source, a schedule, a board, a guardrail>, or none
 Ask the person: <only what they must decide>, or none`
 
@@ -372,6 +373,12 @@ func recipeAgentSummary(rec AgentRecord, prefix string) string {
 	}
 	if rec.Machine != "" {
 		fmt.Fprintf(&b, "  machine: %s\n", rec.Machine)
+	}
+	// Shown either way for a specialist, so a change can see it has none.
+	if len(rec.Triggers) > 0 {
+		fmt.Fprintf(&b, "  triggers: %s\n", strings.Join(rec.Triggers, ", "))
+	} else if kind == "specialist" {
+		b.WriteString("  triggers: none\n")
 	}
 	if len(rec.Bulletins) > 0 {
 		fmt.Fprintf(&b, "  follows boards: %s\n", strings.Join(rec.Bulletins, ", "))

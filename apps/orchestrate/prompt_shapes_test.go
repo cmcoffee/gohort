@@ -177,3 +177,17 @@ func TestSearchOrderNeedsBothToChooseBetween(t *testing.T) {
 		t.Skip("this agent's record does not read as having a corpus here; the narrowed half still held")
 	}
 }
+
+// Builder's recipe gives a specialist its dispatch triggers, and a change sees
+// a specialist that has none.
+func TestTheRecipeGivesASpecialistItsTriggers(t *testing.T) {
+	if !strings.Contains(builderRecipeShipped, "gets triggers: 3-6 SPECIFIC phrases") || !strings.Contains(builderRecipeShipped, "Triggers: <phrases") {
+		t.Error("the recipe does not ask for a specialist's triggers")
+	}
+	none := recipeAgentSummary(AgentRecord{Name: "Lawyer", MemoryMode: memoryModeAgent}, "")
+	some := recipeAgentSummary(AgentRecord{Name: "Lawyer", MemoryMode: memoryModeAgent, Triggers: []string{"penal code", "felony"}}, "")
+	chat := recipeAgentSummary(AgentRecord{Name: "Pal", MemoryMode: memoryModeChatbot}, "")
+	if !strings.Contains(none, "triggers: none") || !strings.Contains(some, "triggers: penal code, felony") || strings.Contains(chat, "triggers") {
+		t.Errorf("the summary's triggers:\n%s%s%s", none, some, chat)
+	}
+}
