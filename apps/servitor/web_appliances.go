@@ -34,6 +34,7 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 					}
 					a.Password = ""
 					a.RepoToken = ""
+					a.HasKey, a.PrivateKey = a.PrivateKey != "", ""
 					a.LeadTierAvailable = AllLLMsPrivate()
 					items = append(items, a)
 					seen[a.ID] = true
@@ -53,6 +54,7 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 					a.Shared = true
 					a.Password = ""
 					a.RepoToken = ""
+					a.HasKey, a.PrivateKey = a.PrivateKey != "", ""
 					// Someone else's record: its EnvVars can hold the
 					// secrets the command runs with. Names only, unless an
 					// admin (who may manage it) is looking.
@@ -261,6 +263,9 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 			if req.Password == "" {
 				req.Password = existing.Password
 			}
+			if req.PrivateKey == "" && !req.ClearKey {
+				req.PrivateKey = existing.PrivateKey
+			}
 			if req.RepoToken == "" {
 				req.RepoToken = existing.RepoToken
 			}
@@ -272,6 +277,7 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 			if req.Type != "" && req.Type != existing.Type {
 				if req.Type != "ssh" {
 					req.Password = ""
+					req.PrivateKey = ""
 				}
 				if req.Type != "repo" {
 					req.RepoToken = ""
@@ -360,6 +366,20 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 			req.LevelsSet = true
 		}
 		req.FullAccess = keepReached(cleanSystemRecipients(req.FullAccess, owner), req.AllowedUsers)
+		// A private key is checked as it is saved, where a bad paste can be
+		// told apart, rather than at the first connection, where it reads as
+		// the system refusing to let us in.
+		if req.Type != "" && req.Type != "ssh" {
+			req.PrivateKey = ""
+		}
+		if req.PrivateKey != "" {
+			req.PrivateKey = strings.TrimSpace(req.PrivateKey) + "\n"
+			if _, err := parseSystemKey(req.PrivateKey, req.Password); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+		}
+		req.HasKey, req.ClearKey = false, false
 		targetUDB.Set(applianceTable, req.ID, req)
 		// Keep the global shared index in sync with the record's Shared flag,
 		// and the named one with who it is shared with by name or team.
@@ -379,6 +399,7 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 		resp := req
 		resp.Password = ""
 		resp.RepoToken = ""
+		resp.HasKey, resp.PrivateKey = resp.PrivateKey != "", ""
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
 
@@ -409,6 +430,7 @@ func (T *Servitor) handleAppliance(w http.ResponseWriter, r *http.Request) {
 		a.Owner = owner
 		a.Password = ""
 		a.RepoToken = "" // never send the stored token back to the edit form
+		a.HasKey, a.PrivateKey = a.PrivateKey != "", ""
 		// EnvVars values are the owner's secrets: a user it is merely shared
 		// with sees the names (see redactEnvVars).
 		if !canManageAppliance(userID, a, servitorIsAdmin(r)) {

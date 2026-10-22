@@ -70,6 +70,10 @@ func (T *Servitor) runMapAppSession(ctx context.Context, id, userID, ownerUser s
 		// the peer; only this seam did not.
 		emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf(
 			"Mapping %s through %s.", appliance.Command, appliance.PeerName)})
+		if err := peerReachable(ctx, appliance); err != nil {
+			probeSessions.AppendEvent(id, probeEvent{Kind: "error", Text: "Connection failed: " + err.Error()}, true)
+			return
+		}
 		execFn = peerExecFor(ctx, appliance)
 	} else if appliance.Type == "command" {
 		if err := localCommandAllowed(appliance); err != nil {

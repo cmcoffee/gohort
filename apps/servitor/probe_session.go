@@ -275,6 +275,11 @@ func (pr *probeRun) connect() probeAction {
 		// risk gate, same knowledge — because only the exec seam differs.
 		emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf(
 			"Working %s through %s.", applianceLabel(pr.appliance.Name, pr.appliance.ID), pr.appliance.PeerName)})
+		if err := peerReachable(pr.ctx, pr.appliance); err != nil {
+			probeSessions.AppendEvent(pr.id, probeEvent{Kind: "error", Text: "Connection failed: " + err.Error()}, true)
+			probeSessions.ScheduleCleanup(pr.id)
+			return actReturn
+		}
 	} else if pr.appliance.Type == "command" {
 		if err := localCommandAllowed(pr.appliance); err != nil {
 			probeSessions.AppendEvent(pr.id, probeEvent{Kind: "error", Text: err.Error()}, true)

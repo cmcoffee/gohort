@@ -94,6 +94,7 @@ type Servitor struct {
 		port       int
 		user       string
 		key        string
+		key_pem    string // a system's own private key, as saved with it; wins over key and the home key
 		password   string
 		confirm    bool
 		allow      string
@@ -580,11 +581,40 @@ func (T *Servitor) confirm_cmd(cmd, reason string, destructive bool) bool {
 	return answer == "y" || answer == "yes"
 }
 
+// parseSystemKey reads a private key saved with a system. A key with a
+// passphrase is opened with the system's password, which is where the editor
+// asks for it.
+func parseSystemKey(pem, password string) (ssh.Signer, error) {
+	signer, err := ssh.ParsePrivateKey([]byte(pem))
+	var missing *ssh.PassphraseMissingError
+	if errors.As(err, &missing) {
+		if password == "" {
+			return nil, fmt.Errorf("the private key has a passphrase: put it in Password, or save the key without one")
+		}
+		signer, err = ssh.ParsePrivateKeyWithPassphrase([]byte(pem), []byte(password))
+		if err != nil {
+			return nil, fmt.Errorf("the private key's passphrase did not open it (Password is used as the passphrase): %w", err)
+		}
+		return signer, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("the saved private key could not be read (it needs the whole PRIVATE KEY block, not the .pub): %w", err)
+	}
+	return signer, nil
+}
+
 func (T *Servitor) connect() error {
 	var auth_methods []ssh.AuthMethod
 
 	key_path := T.input.key
-	if key_path == "" && !T.input.no_home_key {
+	if T.input.key_pem != "" {
+		signer, err := parseSystemKey(T.input.key_pem, T.input.password)
+		if err != nil {
+			return err
+		}
+		auth_methods = append(auth_methods, ssh.PublicKeys(signer))
+		key_path = "" // the system's own key, not the server's
+	} else if key_path == "" && !T.input.no_home_key {
 		if home, err := os.UserHomeDir(); err == nil {
 			candidate := home + "/.ssh/id_rsa"
 			if _, err := os.Stat(candidate); err == nil {
@@ -611,7 +641,7 @@ func (T *Servitor) connect() error {
 
 	if len(auth_methods) == 0 {
 		if T.input.no_home_key {
-			return fmt.Errorf("no authentication method: this system has no password saved (the server's own SSH key is only used for an administrator's systems)")
+			return fmt.Errorf("no authentication method: this system has no password or private key saved (the server's own SSH key is only used for an administrator's systems)")
 		}
 		return fmt.Errorf("no authentication method: provide --key or --password")
 	}

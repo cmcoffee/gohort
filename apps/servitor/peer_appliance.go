@@ -130,6 +130,21 @@ func peerExecFor(ctx context.Context, a Appliance) func(string) (string, error) 
 	}
 }
 
+// peerReachable asks the far side to run `true` before a session starts.
+//
+// A command that cannot fail separates "the system is out of reach" from "a
+// command ran and failed", which a peer's replies do not: both come back as
+// an error beside some output. Run locally, a refused sign-in ends the session
+// at "Connection failed". Through a peer it came back as one more failed
+// command, so the investigation went on sending commands, every one of them
+// another refused sign-in on the far side, until the system there locked the
+// peer out. So any error here IS the connection failing, and the session ends
+// the way a local one does.
+func peerReachable(ctx context.Context, a Appliance) error {
+	_, err := peerExecFor(ctx, a)("true")
+	return err
+}
+
 // peerApplianceOptions lists the appliances a registered peer says this
 // instance may run commands on, for the "add a remote system" picker.
 func peerApplianceOptions() map[string][]PeerInvestigable {

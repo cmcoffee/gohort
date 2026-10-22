@@ -26,6 +26,13 @@ type Appliance struct {
 	Port     int    `json:"port"`
 	User     string `json:"user"`
 	Password string `json:"password"`
+	// PrivateKey is a key this system signs in with, in place of the
+	// server's own (which only an administrator's systems may borrow). A key
+	// with a passphrase is opened with Password. Write-only like Password:
+	// every read path blanks it and says HasKey instead.
+	PrivateKey string `json:"private_key,omitempty"`
+	HasKey     bool   `json:"has_key,omitempty"`   // set on the way out, never stored
+	ClearKey   bool   `json:"clear_key,omitempty"` // the editor's "remove the saved key", never stored
 	// ToolsOnly withholds the ASKING tools for this target: a connected
 	// agent gets its approved minted tools and nothing else. Open
 	// questions (ask_system) route to the per-appliance investigator,

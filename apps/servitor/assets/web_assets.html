@@ -855,15 +855,28 @@
       var passIn = el('input', {type: 'password', class: 'ui-form-input',
         placeholder: isEdit
           ? '(unchanged, type to replace)'
-          : 'leave blank to use server SSH key',
+          : 'optional',
         value: ''});
+      // The key is write-only like the password: the form never gets it
+      // back, only whether one is saved (has_key).
+      var keyIn = el('textarea', {class: 'ui-form-input', rows: 4,
+        spellcheck: 'false', autocomplete: 'off',
+        placeholder: rec.has_key
+          ? '(a key is saved; paste a new one to replace it)'
+          : 'paste the private key file (not the .pub)'});
+      var clearKeyIn = el('input', {type: 'checkbox'});
       var sshSection = el('div', {class: 'ui-servitor-app-section'}, [
         el('label', {}, ['Host *']), hostIn,
         el('label', {}, ['Port']),   portIn,
         el('label', {}, ['User']),   userIn,
         el('label', {}, ['Password']), passIn,
+        el('label', {}, ['Private key']), keyIn,
+        rec.has_key ? el('label', {class: 'ui-servitor-inline'}, [clearKeyIn, ' Remove the saved key']) : null,
         el('div', {class: 'ui-form-hint'},
-          ['Password is stored in the server database. If omitted, the server\'s default SSH key is used.']),
+          ['Sign in with a password, a private key, or both: the key is tried first. Paste the whole private key ' +
+           '(the file without .pub). If it has a passphrase, put the passphrase in Password. Both are stored ' +
+           'in the server database and never shown again. With neither, an administrator\'s system uses the ' +
+           'server\'s own SSH key.']),
       ]);
 
       // Command section
@@ -1658,6 +1671,8 @@
             port:           parseInt(portIn.value, 10) || 22,
             user:           userIn.value.trim(),
             password:       passIn.value,
+            private_key:    keyIn.value.trim(),
+            clear_key:      clearKeyIn.checked && !keyIn.value.trim(),
             command:        cmdIn.value.trim(),
             work_dir:       workIn.value.trim(),
             tools_only:     toolsOnlyIn.checked,
