@@ -159,6 +159,10 @@ type probeRun struct {
 	// channel (confirm) and one pending command, so two workers asking at
 	// once would have the answer to one taken as the answer to the other.
 	confirmMu sync.Mutex
+	// execSlots caps the commands this run has open on the system at once,
+	// across every worker (sshExec). See execSlotsPerRun.
+	execSlots     chan struct{}
+	execSlotsOnce sync.Once
 	// pickedNotes are the notes written mid-run that the run picked up, in
 	// order, saved with the turn so the thread keeps them like any message.
 	pickedNotes      []string
@@ -391,6 +395,13 @@ func (pr *probeRun) termEcho(label, output string) {
 // appliances, SSH with transparent reconnect for ssh-type appliances. ctx is the
 // session context so a cancelled session aborts in-flight commands.
 func (pr *probeRun) sshExec(cmd string) (string, error) {
+	pr.execSlotsOnce.Do(func() { pr.execSlots = make(chan struct{}, execSlotsPerRun) })
+	select {
+	case pr.execSlots <- struct{}{}:
+	case <-pr.ctx.Done():
+		return "", pr.ctx.Err()
+	}
+	defer func() { <-pr.execSlots }()
 	if strings.TrimSpace(pr.appliance.PeerName) != "" {
 		return peerExecFor(pr.ctx, pr.appliance)(cmd)
 	}
@@ -2099,13 +2110,12 @@ func (pr *probeRun) mapProbeTool() probeAction {
 						// worker persists through failures rather than handing
 						// the first dead end back to the investigator.
 						SystemPrompt:    buildProbeWorkerPrompt(pr.appliance, pr.scratch, true, pr.resolvedTools),
-						Tools:           pr.withFreshRunTool(pr.workerTools),
+						Tools:           pr.workerLanes(pr.withFreshRunTool(pr.workerTools)),
 						MaxRounds:       12,
 						RouteKey:        "app.servitor",
 						TierOverride:    applianceTierOverride(pr.appliance.WorkerTier),
 						MaskDebugOutput: true,
 						ChatOptions:     []ChatOption{WithTemperature(0.2), WithThink(false)},
-						SerialTools:     true,
 					}),
 				)
 			})
@@ -2195,6 +2205,69 @@ func mapProbeLane() func(map[string]any) string {
 	return func(map[string]any) string {
 		return strconv.FormatInt(n.Add(1)%mapProbeWidth, 10)
 	}
+}
+
+// execSlotsPerRun is how many commands one run keeps open on the system at
+// once. Workers batch their reads (workerLanes) and a map runs three workers
+// (mapProbeLane), which without a cap could open a dozen SSH sessions at
+// once, past the ten an OpenSSH server allows a connection by default.
+const execSlotsPerRun = 6
+
+// workerReadWidth is how many read-only calls one worker runs at once.
+const workerReadWidth = 4
+
+// workerReadTools only read: logs, line counts and ranges of files, and the
+// run's own stores. run_command joins them when the command it carries reads
+// and nothing more (workerLanes).
+var workerReadTools = map[string]bool{
+	"read_log": true, "search_logs": true, "count_lines": true, "read_range": true,
+	"search_facts": true, "search_knowledge": true,
+}
+
+// workerLanes lets a worker run its read-only calls side by side.
+//
+// Workers ran with SerialTools: one call a round, so reading three config
+// files took three rounds of the model, though none of the three needed
+// another's answer. Now reads in one round run together, up to
+// workerReadWidth at once. Anything else keeps the old order, in one lane:
+// a command that writes, deletes, restarts, asks for approval or makes a
+// lookup, an interactive session, and every tool that records what was
+// found. Unknown tools take that lane too, so a tool added later is serial
+// until someone says it only reads.
+//
+// A command counts as a read when the risk classifier finds nothing in it
+// with NO scratch directory allowed. Writes into the run's scratch directory
+// are allowed without asking, but a write there and a read of it in one
+// round would race, so for this purpose they count as writes.
+func (pr *probeRun) workerLanes(tools []AgentToolDef) []AgentToolDef {
+	var n atomic.Int64
+	read := func(map[string]any) string {
+		return "read" + strconv.FormatInt(n.Add(1)%workerReadWidth, 10)
+	}
+	lookups := lookup_scope_for(pr.appliance)
+	out := make([]AgentToolDef, len(tools))
+	copy(out, tools)
+	for i := range out {
+		switch name := out[i].Tool.Name; {
+		case name == "run_command":
+			out[i].BatchLane = func(args map[string]any) string {
+				if _, ok := args["output_id"]; ok {
+					return read(args) // paging a kept capture runs nothing
+				}
+				cmd, _ := args["command"].(string)
+				if strings.TrimSpace(cmd) == "" || len(assess_command(cmd, "", lookups)) > 0 || gohortDataRefusal(pr.appliance, cmd) != nil {
+					return "" // the ordered lane
+				}
+				return read(args)
+			}
+		case workerReadTools[name]:
+			out[i].BatchLane = read
+		default:
+			out[i].BatchLane = nil
+			out[i].SerialFirePerBatch = true
+		}
+	}
+	return out
 }
 
 func (pr *probeRun) mapBrief() probeAction {
@@ -2680,13 +2753,12 @@ func (pr *probeRun) chatProbeTool() probeAction {
 						// mapping=false: a chat probe stops at the first dead end and
 						// lets the investigator pick the next angle.
 						SystemPrompt:    buildProbeWorkerPrompt(pr.appliance, pr.scratch, false, pr.resolvedTools),
-						Tools:           pr.withFreshRunTool(pr.workerTools),
+						Tools:           pr.workerLanes(pr.withFreshRunTool(pr.workerTools)),
 						MaxRounds:       15,
 						RouteKey:        "app.servitor",
 						TierOverride:    applianceTierOverride(pr.appliance.WorkerTier),
 						MaskDebugOutput: true,
 						ChatOptions:     []ChatOption{WithTemperature(0.2), WithThink(false)},
-						SerialTools:     true,
 						// Repo workers read code that names their own tools; don't
 						// misread a description as an intended call.
 						DisableToolMentionCorrection: pr.appliance.Type == "repo",

@@ -76,7 +76,7 @@ No-repeat rule: never run the same command twice. Running an identical command t
 
 Simplest path first: use the most direct method available. If a credential is in a .env file, use it. Never reconstruct encryption or reverse-engineer auth when a simpler path exists.
 
-One command at a time: submit exactly one tool call per message.
+Reads can go together: commands that only read and do not depend on each other (reading several files, checking several services) can go in one message, and they run at the same time. Anything that writes, changes or restarts something goes alone, and so does a command that needs an earlier one's output.
 
 Record wins immediately: call store_fact after any command that returns a concrete value. Call record_technique when you confirm a working auth method or non-obvious command.
 
@@ -128,7 +128,7 @@ Simplest path first: always look for the most direct way to access a resource be
 
 Indirect access: if direct access to a resource fails, extrapolate how the running process itself accesses it and use that method instead. Look at config files, application source code, service unit files, compose files, and process environment variables to discover the credentials, socket path, or connection method the app already uses successfully. If the app can reach it, you can too: find out how.
 
-One command at a time: submit exactly one tool call per message. Never batch multiple commands in a single response. Each result must be observed before deciding what to run next.
+Reads can go together: commands that only read and do not depend on each other (reading several files, checking several services) can go in one message, and they run at the same time. Anything that writes, changes or restarts something goes alone, and so does a command that needs an earlier one's output.
 
 Record wins immediately: when a command succeeds after prior failures on the same binary, call record_technique BEFORE proceeding. Do not continue without recording what worked. The tool result will prompt you when this is required: treat it as a mandatory step, not a suggestion.
 
