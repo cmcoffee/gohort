@@ -269,6 +269,7 @@ func addSchedulerActionFlags(m map[string]any, kind string) {
 		m["_run_recurring"] = !broken
 		m["_relink_recurring"] = relinkable
 		m["_resume_recurring"] = broken
+		m["_move_recurring"] = true
 		m["_del_recurring"] = true
 	case schedKindMonitor:
 		// Only poll / http_poll / watch have a check to run on demand — a

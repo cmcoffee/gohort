@@ -550,6 +550,9 @@ func chatAgentNav() []ui.OrchestratorNavItem {
 				{Label: "Run now", Method: "POST", URL: "api/console/recurring/run", OnlyIf: "_run_recurring", Confirm: "Run this recurring task's prompt once right now? This is a one-off test: it does not change the schedule or count against the fire cap."},
 				{Label: "Relink", Method: "POST", URL: "api/console/recurring/relink", PickerSource: "api/console/agent-options", PickerTitle: "Relink to a live agent", OnlyIf: "_relink_recurring"},
 				{Label: "Resume", Method: "POST", URL: "api/console/recurring/resume", OnlyIf: "_resume_recurring", Confirm: "Put this parked task back on its schedule? A stalled objective gets a fresh attempt allowance; what it already tried is kept."},
+				// Lost when the three lists became this one page; the handler
+				// and its route stayed.
+				{Label: "Move to…", Method: "POST", URL: "api/console/recurring/move", PickerSource: "api/console/surface-options", PickerTitle: "Where the recurring conversation runs (cortex / session / background)", OnlyIf: "_move_recurring"},
 				{Label: "Delete", Method: "DELETE", URL: "api/console/recurring/delete", Variant: "danger", OnlyIf: "_del_recurring", Confirm: "Delete this recurring task and cancel its schedule?"},
 				// Event monitors.
 				{Label: "Edit schedule", Method: "client", URL: "orchestrate_edit_monitor", OnlyIf: "_edit_monitor"},
