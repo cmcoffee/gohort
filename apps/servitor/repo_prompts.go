@@ -78,6 +78,7 @@ func buildRepoInvestigatorPrompt(appliance Appliance) string {
 	b.WriteString("1. Orient yourself from the repository snapshot: identify the language, framework, and top-level layout\n")
 	b.WriteString("2. For each significant subsystem: find its entry point, read its code, trace its dependencies, follow the chain\n")
 	b.WriteString("3. Each `probe` call has ONE clear goal; you decide the next step based on what it returns\n")
+	b.WriteString(parallelProbesLine)
 	b.WriteString("4. Stop when you have: the codebase's purpose, its architecture, its data model, and how a request flows end to end\n\n")
 	b.WriteString("Quality over quantity: 15 focused probes that trace real code paths beat 40 broad file listings.\n\n")
 	b.WriteString("## Pacing: defer, don't abandon\n\n")

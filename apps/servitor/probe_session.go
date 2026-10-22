@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cmcoffee/gohort/apps/orchestrate"
@@ -150,6 +151,14 @@ type probeRun struct {
 	read_log_tool    AgentToolDef
 	search_logs_tool AgentToolDef
 	ptyCount         map[string]int
+	// connMu guards a.conn while a map runs probes side by side: a worker
+	// that finds the connection dead reconnects, and the others pick up the
+	// new one instead of the closed one (client, reconnect).
+	connMu sync.Mutex
+	// confirmMu holds approvals to one at a time. A run has one answer
+	// channel (confirm) and one pending command, so two workers asking at
+	// once would have the answer to one taken as the answer to the other.
+	confirmMu sync.Mutex
 	// pickedNotes are the notes written mid-run that the run picked up, in
 	// order, saved with the turn so the thread keeps them like any message.
 	pickedNotes      []string
@@ -392,7 +401,8 @@ func (pr *probeRun) sshExec(cmd string) (string, error) {
 		}
 		return out, err
 	}
-	result, err := pr.a.exec_command_ctx(pr.ctx, cmd)
+	client := pr.client()
+	result, err := execOverSSH(pr.ctx, client, cmd)
 	if err == nil {
 		return result, nil
 	}
@@ -404,17 +414,40 @@ func (pr *probeRun) sshExec(cmd string) (string, error) {
 	if !isConnErr {
 		return result, err
 	}
-	emit(pr.id, probeEvent{Kind: "status", Text: "SSH connection lost: reconnecting…"})
-	dropConn(pr.userID, pr.appliance.ID)
-	newClient, rerr := acquireConn(pr.userID, pr.appliance)
+	newClient, rerr := pr.reconnect(client)
 	if rerr != nil {
 		reconnMsg := fmt.Sprintf("[SSH DISCONNECTED, reconnect failed: %v. Stop issuing SSH commands; the session must be restarted.]", rerr)
 		emit(pr.id, probeEvent{Kind: "error", Text: "Reconnect failed: " + rerr.Error()})
 		return reconnMsg, nil
 	}
-	pr.a.conn = newClient
 	emit(pr.id, probeEvent{Kind: "status", Text: "SSH reconnected: retrying command…"})
-	return pr.a.exec_command_ctx(pr.ctx, cmd)
+	return execOverSSH(pr.ctx, newClient, cmd)
+}
+
+// client is the run's SSH connection as it stands.
+func (pr *probeRun) client() *ssh.Client {
+	pr.connMu.Lock()
+	defer pr.connMu.Unlock()
+	return pr.a.conn
+}
+
+// reconnect replaces a connection that died under failed. When probes run
+// side by side, several can find the same dead connection: the first one here
+// dials, and the rest get the connection it made instead of each dialling.
+func (pr *probeRun) reconnect(failed *ssh.Client) (*ssh.Client, error) {
+	pr.connMu.Lock()
+	defer pr.connMu.Unlock()
+	if pr.a.conn != failed && pr.a.conn != nil {
+		return pr.a.conn, nil
+	}
+	emit(pr.id, probeEvent{Kind: "status", Text: "SSH connection lost: reconnecting…"})
+	dropConn(pr.userID, pr.appliance.ID)
+	newClient, err := acquireConn(pr.userID, pr.appliance)
+	if err != nil {
+		return nil, err
+	}
+	pr.a.conn = newClient
+	return newClient, nil
 }
 
 // gateCommand applies the risk gate to one command line: classify it against
@@ -491,6 +524,8 @@ func (pr *probeRun) gateHits(cmd string, hits []risk_hit) error {
 		emit(pr.id, probeEvent{Kind: "status", Text: "Declined, this investigation is read-only (" + string(cat) + "): " + cmd})
 		return readOnlyDecline(cmd, cat, reason, applianceLabel(pr.appliance.Name, pr.appliance.ID))
 	}
+	pr.confirmMu.Lock()
+	defer pr.confirmMu.Unlock()
 	pendingCmds.Store(pr.id, cmd)
 	defer pendingCmds.Delete(pr.id)
 	card := strings.ReplaceAll(UUIDv4(), "-", "")[:12]
@@ -562,7 +597,7 @@ func (pr *probeRun) execSeam() {
 			if pr.appliance.Type == "command" {
 				return pr.a.exec_local_ctx(c, cmd, pr.appliance.WorkDir, pr.appliance.EnvVars)
 			}
-			return pr.a.exec_command_ctx(c, cmd)
+			return execOverSSH(c, pr.client(), cmd)
 		}
 		dir := scratch_dir(pr.id)
 		if err := scratch_setup(pr.ctx, rawExec, dir); err != nil {
@@ -628,8 +663,8 @@ func (pr *probeRun) newRunTool() AgentToolDef {
 				if len(reason) > 120 {
 					reason = reason[:120] + "…"
 				}
-				pr.sessionFailures = append(pr.sessionFailures, sessionFailure{Cmd: cmd, Reason: reason})
 				pr.failMu.Lock()
+				pr.sessionFailures = append(pr.sessionFailures, sessionFailure{Cmd: cmd, Reason: reason})
 				pr.failCount[bin]++
 				pr.failMu.Unlock()
 			} else {
@@ -668,10 +703,13 @@ func (pr *probeRun) newRunPtyTool() AgentToolDef {
 			if cmd == "" {
 				return "", fmt.Errorf("command is required")
 			}
+			pr.cmdMu.Lock()
 			pr.ptyCount[cmd]++
-			if pr.ptyCount[cmd] > loopLimit {
-				msg := fmt.Sprintf("[LOOP DETECTED] run_pty(%q) has been called %d times in this session. Stop. Use a different command or approach.", cmd, pr.ptyCount[cmd]-1)
-				emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf("Loop detected (pty): %q (%dx)", cmd, pr.ptyCount[cmd]-1)})
+			ptyRuns := pr.ptyCount[cmd]
+			pr.cmdMu.Unlock()
+			if ptyRuns > loopLimit {
+				msg := fmt.Sprintf("[LOOP DETECTED] run_pty(%q) has been called %d times in this session. Stop. Use a different command or approach.", cmd, ptyRuns-1)
+				emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf("Loop detected (pty): %q (%dx)", cmd, ptyRuns-1)})
 				return msg, nil
 			}
 			inputText, _ := args["input"].(string)
@@ -705,7 +743,8 @@ func (pr *probeRun) newRunPtyTool() AgentToolDef {
 			// where the nil used to be dereferenced. The tool is also not
 			// offered in that case (see ptyLocal below) — this is the
 			// second line of defence.
-			sess, err := newPTYSession(pr.a.conn)
+			client := pr.client()
+			sess, err := newPTYSession(client)
 			if err != nil {
 				// Attempt reconnect on connection-level errors.
 				errMsg := err.Error()
@@ -714,15 +753,12 @@ func (pr *probeRun) newRunPtyTool() AgentToolDef {
 					strings.Contains(errMsg, "broken pipe") ||
 					strings.Contains(errMsg, "new SSH session")
 				if isConnErr {
-					emit(pr.id, probeEvent{Kind: "status", Text: "SSH connection lost: reconnecting…"})
-					dropConn(pr.userID, pr.appliance.ID)
-					newClient, rerr := acquireConn(pr.userID, pr.appliance)
+					newClient, rerr := pr.reconnect(client)
 					if rerr != nil {
 						return fmt.Sprintf("[SSH DISCONNECTED, reconnect failed: %v. Stop issuing SSH commands; the session must be restarted.]", rerr), nil
 					}
-					pr.a.conn = newClient
 					emit(pr.id, probeEvent{Kind: "status", Text: "SSH reconnected."})
-					sess, err = newPTYSession(pr.a.conn)
+					sess, err = newPTYSession(newClient)
 				}
 				if err != nil {
 					return "", fmt.Errorf("new SSH session: %w", err)
@@ -787,8 +823,8 @@ func (pr *probeRun) newRunPtyTool() AgentToolDef {
 			}
 			pr.termEcho("pty: "+cmd, result)
 			// If this PTY session succeeded after prior attempts, force technique recording.
-			if pr.ptyCount[cmd] > 1 {
-				result += fmt.Sprintf("\n\n[TECHNIQUE FOUND] run_pty(%q) succeeded after %d attempt(s). You MUST call record_technique NOW with the exact working command and input sequence, before doing anything else.", cmd, pr.ptyCount[cmd]-1)
+			if ptyRuns > 1 {
+				result += fmt.Sprintf("\n\n[TECHNIQUE FOUND] run_pty(%q) succeeded after %d attempt(s). You MUST call record_technique NOW with the exact working command and input sequence, before doing anything else.", cmd, ptyRuns-1)
 			}
 			return result, nil
 		},
@@ -1883,6 +1919,7 @@ type mapState struct {
 	revise_plan_tool           AgentToolDef
 	report_gaps_tool           AgentToolDef
 	probeLoopSignalCount       int
+	probeMu                    sync.Mutex // probeCache, probeTopicCount and probeLoopSignalCount, with probes side by side
 	probe_tool                 AgentToolDef
 	invMsg                     strings.Builder
 	invResp                    *Response
@@ -2019,18 +2056,9 @@ func (pr *probeRun) mapProbeTool() probeAction {
 			// attention via tool-call rejection rather than relying
 			// on the orchestrator to read [LOOP DETECTED] strings
 			// it's been ignoring.
-			if pr.m.probeLoopSignalCount >= probeLoopSignalLimit {
-				emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf("Probe refused: orchestrator hit loop-signal limit (%d signals)", pr.m.probeLoopSignalCount)})
-				return fmt.Sprintf("[DELEGATION REFUSED: your prior %d delegations have triggered worker LOOP DETECTED responses. Your current investigation strategy is not converging. STOP delegating new probes. Write your final report based on what you have already learned. Acknowledge what you could not determine and why. Do not call probe again in this session.]", pr.m.probeLoopSignalCount), nil
-			}
 			cacheKey := normalizeTask(task)
-			if cached, ok := pr.m.probeCache[cacheKey]; ok {
-				pr.m.probeTopicCount[cacheKey]++
-				if pr.m.probeTopicCount[cacheKey] >= probeTopicLimit {
-					emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf("Topic exhausted: %q (%dx)", task, pr.m.probeTopicCount[cacheKey])})
-					return fmt.Sprintf("[TOPIC EXHAUSTED: you have re-delegated this topic %d times now. Stop probing this area entirely. Pivot to a fundamentally different domain (different service, different layer, different angle on the original goal). Re-delegating the same topic in different words will not produce new information.]\n\nLast result for reference:\n\n%s", pr.m.probeTopicCount[cacheKey], cached), nil
-				}
-				return "[ALREADY PROBED: result below. Do not probe this topic again; move to a different area.]\n\n" + cached, nil
+			if refusal := pr.probeAlreadyAnswered(task, cacheKey); refusal != "" {
+				return refusal, nil
 			}
 			context, _ := args["context"].(string)
 			var msg strings.Builder
@@ -2060,10 +2088,13 @@ func (pr *probeRun) mapProbeTool() probeAction {
 			emit(pr.id, probeEvent{Kind: "intent", Text: task, Reason: context})
 			var workerResp *Response
 			var workerErr error
+			// Its own guard: probes run side by side (mapProbeLane), and one
+			// guard is one turn's record of what its rules caught.
+			guard := servitorGuard(pr.ctx, pr.userID)
 			withHeartbeat(pr.ctx, pr.id, "Probe: "+short, func() {
 				workerResp, _, workerErr = pr.a.RunAgentLoop(pr.ctx,
 					[]Message{{Role: "user", Content: msg.String()}},
-					pr.guard.Apply(AgentLoopConfig{
+					guard.Apply(AgentLoopConfig{
 						// mapping=true: this is the reconnaissance pass, so the
 						// worker persists through failures rather than handing
 						// the first dead end back to the investigator.
@@ -2086,15 +2117,21 @@ func (pr *probeRun) mapProbeTool() probeAction {
 			}
 			result := strings.TrimSpace(workerResp.Content)
 			result = parseProbeOutcome(result)
+			pr.m.probeMu.Lock()
 			pr.m.probeCache[cacheKey] = result
 			// If the worker hit the cmd loop limit during this
 			// delegation, propagate the signal up to the
 			// orchestrator-level counter so we can refuse future
 			// delegations once the orchestrator has demonstrated
 			// it's not pivoting in response.
+			loopSignals := pr.m.probeLoopSignalCount
 			if strings.Contains(result, "[LOOP DETECTED]") {
 				pr.m.probeLoopSignalCount++
-				emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf("Worker loop signal received (%d/%d)", pr.m.probeLoopSignalCount, probeLoopSignalLimit)})
+				loopSignals = pr.m.probeLoopSignalCount
+			}
+			pr.m.probeMu.Unlock()
+			if strings.Contains(result, "[LOOP DETECTED]") {
+				emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf("Worker loop signal received (%d/%d)", loopSignals, probeLoopSignalLimit)})
 			}
 			// Kept, not cut: the rest is read with read_output rather than
 			// by asking the worker to do the whole investigation again.
@@ -2105,6 +2142,59 @@ func (pr *probeRun) mapProbeTool() probeAction {
 		NeedsConfirm: false,
 	}
 	return actNone
+}
+
+// probeAlreadyAnswered is the probe tool's refusal before it spawns a worker:
+// the loop-signal limit, a topic re-delegated too many times, or one already
+// answered. "" means the probe runs. Under probeMu, because probes run side by
+// side (mapProbeLane).
+func (pr *probeRun) probeAlreadyAnswered(task, cacheKey string) string {
+	pr.m.probeMu.Lock()
+	defer pr.m.probeMu.Unlock()
+	// Hard refusal: orchestrator has accumulated too many
+	// worker [LOOP DETECTED] signals across prior delegations
+	// without effectively pivoting. Refuse the new delegation
+	// outright before spawning a worker — forces model
+	// attention via tool-call rejection rather than relying
+	// on the orchestrator to read [LOOP DETECTED] strings
+	// it's been ignoring.
+	if pr.m.probeLoopSignalCount >= probeLoopSignalLimit {
+		emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf("Probe refused: orchestrator hit loop-signal limit (%d signals)", pr.m.probeLoopSignalCount)})
+		return fmt.Sprintf("[DELEGATION REFUSED: your prior %d delegations have triggered worker LOOP DETECTED responses. Your current investigation strategy is not converging. STOP delegating new probes. Write your final report based on what you have already learned. Acknowledge what you could not determine and why. Do not call probe again in this session.]", pr.m.probeLoopSignalCount)
+	}
+	cached, ok := pr.m.probeCache[cacheKey]
+	if !ok {
+		return ""
+	}
+	pr.m.probeTopicCount[cacheKey]++
+	if pr.m.probeTopicCount[cacheKey] >= probeTopicLimit {
+		emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf("Topic exhausted: %q (%dx)", task, pr.m.probeTopicCount[cacheKey])})
+		return fmt.Sprintf("[TOPIC EXHAUSTED: you have re-delegated this topic %d times now. Stop probing this area entirely. Pivot to a fundamentally different domain (different service, different layer, different angle on the original goal). Re-delegating the same topic in different words will not produce new information.]\n\nLast result for reference:\n\n%s", pr.m.probeTopicCount[cacheKey], cached)
+	}
+	return "[ALREADY PROBED: result below. Do not probe this topic again; move to a different area.]\n\n" + cached
+}
+
+// mapProbeWidth is how many probes a map runs at once. The investigator may
+// hand out independent probes in one round; past this many they queue, in
+// order, behind the ones running. Three keeps a map from crowding out
+// everything else on the worker and from opening a wall of sessions on the
+// system, while still cutting most of a map's wait.
+const mapProbeWidth = 3
+
+// mapProbeLane spreads one round's probes over mapProbeWidth lanes, so up to
+// that many run at once. The investigator used to run with SerialTools: one
+// probe per round, each waiting for the last, though most map steps (the web
+// server, the database, the logs) do not depend on each other. Measured on a
+// map of 18 probes: 12 of its 17 minutes were probes, one at a time.
+//
+// Every other investigator tool stays in one ordered lane (SerialFirePerBatch),
+// so a round that records a step's findings and starts the next still does
+// them in that order.
+func mapProbeLane() func(map[string]any) string {
+	var n atomic.Int64
+	return func(map[string]any) string {
+		return strconv.FormatInt(n.Add(1)%mapProbeWidth, 10)
+	}
 }
 
 func (pr *probeRun) mapBrief() probeAction {
@@ -2244,6 +2334,17 @@ func (pr *probeRun) mapInvestigate() probeAction {
 	// a 75-round budget where that room is worth having.
 	pr.m.investigatorTools = append(pr.m.investigatorTools, OutputPagingToolDefs()...)
 	assertOnlyAllowedTools("servitor.investigator", pr.m.investigatorTools, servitorOrchestratorToolAllowList)
+	// Probes fan out, up to mapProbeWidth at a time; everything else keeps to
+	// one ordered lane (mapProbeLane). This is why the loop below runs without
+	// SerialTools, which every other Servitor loop keeps.
+	lane := mapProbeLane()
+	for i := range pr.m.investigatorTools {
+		if pr.m.investigatorTools[i].Tool.Name == "probe" {
+			pr.m.investigatorTools[i].BatchLane = lane
+		} else {
+			pr.m.investigatorTools[i].SerialFirePerBatch = true
+		}
+	}
 	// Per-step pacing reset — the soft-pacing windows
 	// (midpoint nudge, wrap-up warning, failure streak)
 	// rebase whenever the in_progress step ID changes. Stops
@@ -2291,7 +2392,6 @@ func (pr *probeRun) mapInvestigate() probeAction {
 		RouteKey:        "app.servitor.orchestrator",
 		TierOverride:    applianceTierOverride(pr.appliance.OrchestratorTier),
 		MaskDebugOutput: true,
-		SerialTools:     true,
 		ChatOptions:     append([]ChatOption{WithTemperature(0.3), WithThink(true)}, orchestratorThinkOpts()...),
 		OnRoundReset:    pr.stepResetCb,
 		OnRoundStart:    pr.stuckMsgFn,

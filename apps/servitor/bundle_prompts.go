@@ -77,6 +77,7 @@ func buildBundleInvestigatorPrompt(appliance Appliance) string {
 	b.WriteString("1. Call `bundle_summary` first: it tells you the scale, the span, and where the errors are, without reading any content\n")
 	b.WriteString("2. Establish the timeline of the significant failures before explaining any single one\n")
 	b.WriteString("3. Each `probe` call has ONE clear goal; you decide the next step from what it returns\n")
+	b.WriteString(parallelProbesLine)
 	b.WriteString("4. Stop when you have: what the bundle covers, the period, the hosts and services, and the shape of whatever went wrong\n\n")
 	b.WriteString("## The evidence is fixed\n\n")
 	b.WriteString("You cannot re-run a command, restart a service, or ask the system a new question. Everything obtainable is already in these files. When something you need was not captured, that is the finding: record the gap and move on rather than inferring what the missing file would have said.\n\n")

@@ -231,6 +231,13 @@ func buildSynthesisMessage(invNarrative string, storedFacts, techniques, notes, 
 // rt carries the resolved toolset and is present ONLY for a toolset appliance —
 // variadic so the four other types' call sites stay unchanged rather than
 // passing an empty struct they have no use for.
+// parallelProbesLine tells a map's investigator it may send independent probes
+// together. They run side by side, up to mapProbeWidth at once (mapProbeLane),
+// and a probe that waits on another's answer still goes after it. Without the
+// line the investigator keeps sending one probe a round, out of the habit the
+// old one-at-a-time rule taught it, and the fan-out never happens.
+const parallelProbesLine = "   Probes that do not depend on each other can go in the same round, up to three: they run at the same time. A probe that needs another's answer goes after it, in a later round.\n"
+
 func buildInvestigatorSystemPrompt(appliance Appliance, rt ...resolvedToolset) string {
 	if appliance.Type == "repo" {
 		return buildRepoInvestigatorPrompt(appliance)
@@ -270,6 +277,7 @@ func buildInvestigatorSystemPrompt(appliance Appliance, rt ...resolvedToolset) s
 	b.WriteString("1. Orient yourself from the system snapshot: identify the primary role and main services\n")
 	b.WriteString("2. For each significant service: probe its config, its connections, its auth, follow the chain\n")
 	b.WriteString("3. Each `probe` call has ONE clear goal; the investigator (you) decides the next step based on what it returns\n")
+	b.WriteString(parallelProbesLine)
 	b.WriteString("4. Stop when you have: the system's purpose, its full architecture, working DB access for every engine, operational procedures\n\n")
 	b.WriteString("Quality over quantity: 15 focused probes that reveal real configuration beat 40 broad sweeps.\n\n")
 	b.WriteString("## Pacing: defer, don't abandon\n\n")
