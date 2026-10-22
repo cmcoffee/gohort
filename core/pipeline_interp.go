@@ -1044,13 +1044,18 @@ func previewForRepair(s string) string {
 	return s[:max] + "…(truncated)"
 }
 
+// outputContractLead opens every rendered output contract, so a runner that
+// hands a step's work to something else can find where the contract begins
+// (SplitDelegatedStepPrompt).
+const outputContractLead = "\n\nReply with a single JSON object and nothing else, using these keys:\n"
+
 // renderOutputContract turns a stage's declared fields into the prompt
 // instruction that asks for them. Fields render in DECLARED order, not
 // map order, so the same def produces a byte-identical prompt on every
 // run — a prompt that reshuffles itself never hits the cache.
 func renderOutputContract(fields []PipelineField) string {
 	var b strings.Builder
-	b.WriteString("\n\nReply with a single JSON object and nothing else, using these keys:\n")
+	b.WriteString(outputContractLead)
 	writeContractFields(&b, fields, "")
 	b.WriteString("\nNo prose, no markdown, no code fences: the JSON object only.")
 	return b.String()

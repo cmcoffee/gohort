@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -264,9 +265,6 @@ func (pr *planRun) assemblePrompt() {
 	// Agents with detailed phased personas (Builder) skip the
 	// universal block entirely — their persona governs the rhythm.
 	persona := t.gatedPersona(t.agent.OrchestratorPrompt)
-	if !isBuilderAgent(t.agent.ID) {
-		persona = roundShapePreamble(resolveMaxPlanSteps(t.agent)) + persona
-	}
 	// The newest user message, hoisted above the persona because the phase
 	// machine needs it: a decompose phase runs ON this message, before
 	// there is a persona to put its findings into. Also feeds the trigger
@@ -290,6 +288,11 @@ func (pr *planRun) assemblePrompt() {
 	t.machineToolList = machineToolNotes(pr.sess)
 	pr.mach = t.enterMachine(pr.triggerMsg)
 	t.emitMachineTrace() // the steps it walked, as chips, before the reply streams
+	// The round-shape preamble goes above the persona, once the step is known,
+	// so it names only the ways out this turn has (see roundShapePreamble).
+	if !isBuilderAgent(t.agent.ID) {
+		persona = roundShapePreamble(resolveMaxPlanSteps(t.agent), pr.mach.offers("ask_user"), pr.offersPlanSet()) + persona
+	}
 	persona += pr.mach.Block()
 	// Incognito (clean-room) session: inherit NOTHING — no memory facts and no
 	// cortex standing context. A one-off with no baggage. Connected sessions
@@ -375,7 +378,11 @@ func (pr *planRun) assemblePrompt() {
 	// them via agents(action="run", agent=..., message=...). Without
 	// this block the LLM has to call agents(action="list") to
 	// discover them, which it almost never does speculatively.
-	pr.sys += t.renderAvailableAgentsBlock()
+	// Not in a step that leaves agents out: "delegate first" with no way to
+	// delegate is an instruction to reach for nothing.
+	if pr.mach.offers("agents") {
+		pr.sys += t.renderAvailableAgentsBlock()
+	}
 	// Per-turn dispatch nudge: when this turn matches an agent's triggers,
 	// hint "dispatch to it FIRST" right after the catalog — the salient,
 	// turn-specific signal the static block alone doesn't provide. Soft;
@@ -434,9 +441,28 @@ func (pr *planRun) assemblePrompt() {
 	// framework's tools and planning (plan_set, request_build, skills), which
 	// its catalog will not carry, and a block naming a tool it lacks is an
 	// instruction to reach for nothing.
+	//
+	// A machine step that narrows its tools gets the blocks a run with nobody
+	// to plan or ask with gets: How to decide, clarifying questions, plan_set
+	// and working honestly are a chat's guidance, for a step whose author
+	// already said what it does and with what.
 	if !appAgentExactTools(t.agent.ID) {
-		pr.sys = appendAgentCapabilityBlocks(pr.sys, t.agent, t.udb, t.user, true)
+		pr.sys = appendAgentCapabilityBlocks(pr.sys, t.agent, t.udb, t.user, !pr.mach.narrows())
 	}
+}
+
+// offersPlanSet reports whether this turn's catalog carries plan_set: not for
+// an agent on a tracked work plan (it holds that group instead), one held to
+// exact tools that did not list it, or a machine step that leaves it out.
+func (pr *planRun) offersPlanSet() bool {
+	t := pr.t
+	if t.agent.WorkPlan || !pr.mach.offers("plan_set") {
+		return false
+	}
+	if appAgentExactTools(t.agent.ID) {
+		return slices.Contains(t.agent.AllowedTools, "plan_set")
+	}
+	return true
 }
 
 func (pr *planRun) planSetToolDef() AgentToolDef {

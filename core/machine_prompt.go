@@ -188,6 +188,30 @@ func (d MachineDef) PhaseBlock(ph MachinePhase, st MachineState, v PhaseVars) st
 // a router chose from names and descriptions alone, and "make a song about
 // it" went to a step that could only write the lyrics back, past the one
 // that held the music tool.
+// routingBlockLead opens a step's routing block (SplitDelegatedStepPrompt).
+const routingBlockLead = "\n## Where this goes next\n"
+
+// SplitDelegatedStepPrompt separates a step's prompt into the task and what
+// only the step's own model call needs: its routing block and its output
+// contract, which come last. A step that hands its work to another agent, a
+// pipeline or a child machine passes on the task alone. Handed the whole
+// prompt, a delegate running its own persona was told "Reply with a single
+// JSON object and nothing else", and which routing key to fill, for a reply
+// that is read into those fields afterwards anyway. shape is "" when the
+// prompt carries neither.
+func SplitDelegatedStepPrompt(prompt string) (task, shape string) {
+	cut := -1
+	for _, lead := range []string{routingBlockLead, outputContractLead} {
+		if i := strings.LastIndex(prompt, lead); i >= 0 && (cut < 0 || i < cut) {
+			cut = i
+		}
+	}
+	if cut < 0 {
+		return prompt, ""
+	}
+	return strings.TrimRight(prompt[:cut], "\n"), prompt[cut:]
+}
+
 func (d MachineDef) routingBlock(ph MachinePhase, v PhaseVars) string {
 	from := ph.RoutesBy()
 	if from == "" {
@@ -198,7 +222,7 @@ func (d MachineDef) routingBlock(ph MachinePhase, v PhaseVars) string {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("\n## Where this goes next\n")
+	b.WriteString(routingBlockLead)
 	b.WriteString("Put exactly one of these in \"" + from + "\". Choose by what the work needs, not by order.\n")
 	usesOwn := false
 	for _, t := range targets {

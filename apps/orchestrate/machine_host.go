@@ -301,6 +301,9 @@ func (h *machineHost) runDelegatedPhase(ctx context.Context, ph MachinePhase, re
 	h.diag("phase_delegate", "phase "+ph.Name+" delegated to "+chFirst(target.Name, target.ID))
 
 	label := chFirst(target.Name, target.ID)
+	// The delegate is handed the task, not the step's routing and output
+	// contract: those are for the call that reads its answer afterwards.
+	task, shape := SplitDelegatedStepPrompt(prompt)
 	// One level deeper: the delegate runs its own machine, which may delegate
 	// in turn, and two agents whose machines hand to each other would never
 	// stop. enterMachine counts the levels (maxMachineDelegation).
@@ -310,7 +313,7 @@ func (h *machineHost) runDelegatedPhase(ctx context.Context, ph MachinePhase, re
 		RuntimeUser:  h.user,
 		AgentKey:     target.ID,
 		SubSessionID: sub,
-		Message:      prompt,
+		Message:      task,
 		// A caller mid-turn has a person waiting, so the delegate's progress
 		// rides the same activity surface the rest of the turn uses rather than
 		// disappearing into a silence. A run with nobody watching drops it.
@@ -326,7 +329,7 @@ func (h *machineHost) runDelegatedPhase(ctx context.Context, ph MachinePhase, re
 	if report == "" {
 		return "", Error("phase " + ph.Name + " delegated to " + label + " and got nothing back")
 	}
-	recordMachineDelegation(h.udb, target.ID, h.agentName, ph.Name, prompt, report, res.ToolCalls)
+	recordMachineDelegation(h.udb, target.ID, h.agentName, ph.Name, task, report, res.ToolCalls)
 	if len(ph.Output) == 0 {
 		// Nothing declared: the report IS the step's product, and there is
 		// nothing to decode.
@@ -334,11 +337,11 @@ func (h *machineHost) runDelegatedPhase(ctx context.Context, ph MachinePhase, re
 	}
 	// Shape the report into the declared fields, through the same worker the
 	// step would have used. The delegate is asked for its work, not for a schema.
-	return base(ctx, ph, "A delegate was given this task:\n\n"+prompt+
+	return base(ctx, shapingStep(ph), "A delegate was given this task:\n\n"+task+
 		"\n\nIt reported back:\n\n"+report+
 		"\n\nRecord what it found in the fields below. Take the delegate's findings as given: "+
 		"do not re-do its work, second-guess it, or fill a field it did not address. "+
-		"A field it left unanswered is better left empty than invented.")
+		"A field it left unanswered is better left empty than invented."+shape)
 }
 
 // recordMachineDelegation puts a machine step's request on the delegate's
@@ -380,10 +383,13 @@ func (h *machineHost) runPipelinePhase(ctx context.Context, ph MachinePhase, ref
 	}
 	label := chFirst(def.Name, def.ID)
 	status := func(s string) { h.emitActivity(label, s) }
+	// The pipeline's input is the task; the step's routing and contract are
+	// for reading its result afterwards (SplitDelegatedStepPrompt).
+	task, shape := SplitDelegatedStepPrompt(prompt)
 	// The step's own catalog is the pipeline's inherited pool, so a stage that
 	// names no tools reaches exactly what the step may reach, and one that names
 	// some gets that subset. Nothing widens here.
-	out, fields, err := h.app.RunPipelineDefHooks(ctx, def, prompt, PipelineHooks{
+	out, fields, err := h.app.RunPipelineDefHooks(ctx, def, task, PipelineHooks{
 		Dispatch: dispatch,
 		// A stage of that pipeline may itself run a machine. The depth on the
 		// context is what stops that going round forever.
@@ -413,11 +419,11 @@ func (h *machineHost) runPipelinePhase(ctx context.Context, ph MachinePhase, ref
 	}
 	// Shapes did not line up. Same recovery as a delegate: the step's own worker
 	// reads the report into the declared fields.
-	return base(ctx, ph, "A pipeline was run for this task:\n\n"+prompt+
+	return base(ctx, shapingStep(ph), "A pipeline was run for this task:\n\n"+task+
 		"\n\nIt produced:\n\n"+report+
 		"\n\nRecord what it produced in the fields below. Take its output as given: "+
 		"do not re-do the work, second-guess it, or fill a field it did not address. "+
-		"A field it left unanswered is better left empty than invented.")
+		"A field it left unanswered is better left empty than invented."+shape)
 }
 
 // runChildMachinePhase runs one step as a whole machine of its own.
@@ -475,7 +481,9 @@ func (h *machineHost) runChildMachinePhase(ctx context.Context, ph MachinePhase,
 	// the context is the only thing that differs, and it is what stops the
 	// third level.
 	childCtx := WithMachineDepth(ctx, MachineDepth(ctx)+1)
-	final, text, err := h.app.RunUnattended(childCtx, child, cur, h.machineTurn(prompt), childHost.phaseRunner(), h.note)
+	// The child's input is the task, as a delegate's is.
+	task, shape := SplitDelegatedStepPrompt(prompt)
+	final, text, err := h.app.RunUnattended(childCtx, child, cur, h.machineTurn(task), childHost.phaseRunner(), h.note)
 	if err != nil {
 		// Falling back to inline would answer the question with something else
 		// wearing the right name. Fail the step, as a failed delegate or
@@ -495,11 +503,26 @@ func (h *machineHost) runChildMachinePhase(ctx context.Context, ph MachinePhase,
 		h.diag("phase_child_machine_shape", "step "+ph.Name+" took its fields from the child run's own last step; no second call")
 		return js, nil
 	}
-	return base(ctx, ph, "A separate run was carried out for this task:\n\n"+prompt+
+	return base(ctx, shapingStep(ph), "A separate run was carried out for this task:\n\n"+task+
 		"\n\nIt finished with:\n\n"+report+
 		"\n\nRecord what it found in the fields below. Take its findings as given: "+
 		"do not re-do the work, second-guess it, or fill a field it did not address. "+
-		"A field it left unanswered is better left empty than invented.")
+		"A field it left unanswered is better left empty than invented."+shape)
+}
+
+// shapingStep is a step as the call that reads a delegate's, pipeline's or
+// child run's report into the step's fields: no tools and no reasoning, since
+// the work is done. It ran with the step's whole catalog and the standing
+// rule to look things up rather than answer from memory, while being told
+// not to redo the work.
+//
+// A copy of the step, so its declared fields and routing choices are the
+// ones decoded; offersSkip already leaves a step with no reach without the
+// skip tool.
+func shapingStep(ph MachinePhase) MachinePhase {
+	s := ph
+	s.Think, s.Reach = "off", ReachNone
+	return s
 }
 
 // declaredFieldsJSON re-encodes a sub-run's values for the fields this step

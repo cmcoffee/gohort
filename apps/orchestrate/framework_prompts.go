@@ -261,14 +261,20 @@ func frameworkPromptBlocks(existing string, agent AgentRecord, hasPlanSet bool) 
 	// Builder is told so up front, with request_build as its one path, so a
 	// "create an agent" request produces a clean handoff instead of the
 	// self-dispatch / malformed-search flail.
-	add(!canHand && !agentCanAuthor(agent), "framework.cannot_author", cannotAuthorMarker, frameworkCannotAuthorBlock)
+	//
+	// Neither this nor the broken-tool block below is for a sub-agent: its
+	// reply goes to the agent that dispatched it, not to a person, so "tell
+	// the user it's queued" and "ask whether they want Builder" have no one
+	// to say it to. Its parent hears what it found and decides.
+	subAgent := strings.TrimSpace(agent.OwnedBy) != ""
+	add(!canHand && !agentCanAuthor(agent) && !subAgent, "framework.cannot_author", cannotAuthorMarker, frameworkCannotAuthorBlock)
 	// A custom tool that works but returns the wrong thing: offer Builder, or
 	// point to it. Builder is the fixer and gets neither.
 	brokenEnd := frameworkBrokenToolPoint
 	if canHand {
 		brokenEnd = frameworkBrokenToolAsk
 	}
-	add(!isBuilderAgent(agent.ID), "framework.broken_tool", brokenToolMarker, frameworkBrokenToolBlock+brokenEnd)
+	add(!isBuilderAgent(agent.ID) && !subAgent, "framework.broken_tool", brokenToolMarker, frameworkBrokenToolBlock+brokenEnd)
 	// Channel home thread — Cortex agents only (carries the section heading).
 	add(agent.Cortex, "framework.channel", channelSectionHeading, frameworkChannelBlock())
 	// Fleet supervision, monitors, notify, phantom reach — Fleet agents. Ordered

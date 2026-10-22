@@ -257,6 +257,15 @@ func (t *chatTurn) enterDispatchMachine(thread *ChatSession, ephemeral bool, mes
 		return mach
 	}
 	*sysPrompt += mach.Block()
+	// The prompt was built before the step was known. A step that leaves
+	// agents out takes the fleet block with it, as the web turn does:
+	// "delegate first" with no way to delegate is an instruction to reach
+	// for nothing.
+	if !mach.offers("agents") {
+		if blk := t.renderAvailableAgentsBlock(); blk != "" {
+			*sysPrompt = strings.Replace(*sysPrompt, blk, "", 1)
+		}
+	}
 	narrowed, dropped, unmatched, _ := mach.narrowCatalog(*tools, t.attachedToolNames)
 	*tools = narrowed
 	if t.hasMachineExit() {
@@ -1080,6 +1089,41 @@ func (m turnMachine) phaseGovernsAttachments(attached map[string]bool) bool {
 	return false
 }
 
+// narrows reports whether the current step limits the turn's tools at all.
+func (m turnMachine) narrows() bool {
+	return m.on && !(len(m.phase.Tools) == 0 && len(m.phase.Deny) == 0 && PhaseReach(m.phase) == ReachAll)
+}
+
+// offers reports whether a tool by this name survives the current step's
+// narrowing, for prompt text written before the catalog is narrowed: guidance
+// that names a tool the step drops is an instruction to reach for nothing.
+// narrowCatalog's rule, read for one name: the step's list, or its control
+// tools, and never what it denies. A step that narrows only by reach or deny
+// keeps what it does not deny.
+func (m turnMachine) offers(name string) bool {
+	if !m.narrows() {
+		return true
+	}
+	if phaseDenies(m.phase, name) {
+		return false
+	}
+	if machineControlTools[name] {
+		return true
+	}
+	if PhaseReach(m.phase) == ReachNone {
+		return false
+	}
+	if len(m.phase.Tools) == 0 {
+		return true
+	}
+	for _, n := range m.phase.Tools {
+		if strings.TrimSpace(n) == name {
+			return true
+		}
+	}
+	return false
+}
+
 // Denies reports whether the CURRENT phase denies this tool name. Off when no
 // machine is running, so a plain turn answers false to everything.
 func (m turnMachine) Denies(name string) bool {
@@ -1100,9 +1144,11 @@ func phaseDenies(ph MachinePhase, name string) bool {
 	return false
 }
 
+// plan_set is not among them. It fans the turn out to workers that know
+// nothing of the step, so a step whose tool list leaves it out does not get
+// it; one that wants it names it.
 var machineControlTools = map[string]bool{
 	"change_phase":     true,
-	"plan_set":         true,
 	"respond_directly": true,
 	"stay_silent":      true,
 	"keep_going":       true,

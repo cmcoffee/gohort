@@ -487,7 +487,10 @@ func (ws *workerStep) runLoop() bool {
 		// Same turn-scoped notes the orchestrator round gets. A worker step is
 		// where the work usually actually runs, so leaving them out would hand the
 		// context to the layer that plans and withhold it from the one that acts.
-		TurnNotes: func(user string) string { return turnNotes(ws.sess, t.udb, t.chatSessionID(), user) },
+		// All but the unkept promise from the agent's last turn, which is keyed
+		// by the session: a worker never said it, and was told "Do it NOW" about
+		// a step that may not be its own.
+		TurnNotes: func(user string) string { return turnNotes(ws.sess, t.udb, "", user) },
 		// Last look before the reply goes out: is it true about what this turn
 		// actually did? Backstops the phrase-list guards on the shapes they don't
 		// know. See turn_judge.go.

@@ -1022,10 +1022,15 @@ func TestPhaseNarrowingKeepsTheControlPlane(t *testing.T) {
 	if len(unmatched) != 0 {
 		t.Errorf("nothing was misnamed, got unmatched %v", unmatched)
 	}
-	for _, n := range []string{"plan_set", "stay_silent", "keep_going", "respond_directly", "change_phase"} {
+	for _, n := range []string{"stay_silent", "keep_going", "respond_directly", "change_phase"} {
 		if !hasScopeName(out, n) {
 			t.Errorf("phase narrowing revoked %q — the model cannot end the turn or leave the phase without it", n)
 		}
+	}
+	// plan_set is not the control plane: it fans the turn out to workers that
+	// know nothing of the step, so a step that does not name it goes without.
+	if hasScopeName(out, "plan_set") {
+		t.Error("a step that did not name plan_set kept it")
 	}
 	if !hasScopeName(out, "web_search") {
 		t.Error("the tool the phase actually asked for is missing")
@@ -1034,8 +1039,18 @@ func TestPhaseNarrowingKeepsTheControlPlane(t *testing.T) {
 	if hasScopeName(out, "atlassian_search") {
 		t.Error("a tool the phase did not name survived the narrowing")
 	}
-	if len(dropped) != 2 {
-		t.Errorf("dropped = %v, want the two atlassian tools", dropped)
+	if len(dropped) != 3 {
+		t.Errorf("dropped = %v, want plan_set and the two atlassian tools", dropped)
+	}
+	named := turnMachine{on: true, phase: MachinePhase{Name: "investigate", Tools: []string{"web_search", "plan_set"}}}
+	if out, _, _, _ := named.narrowCatalog(scopeCatalog(), nil); !hasScopeName(out, "plan_set") {
+		t.Error("a step that names plan_set lost it")
+	}
+	if named.offers("ask_user") || !named.offers("plan_set") || !named.offers("change_phase") || m.offers("plan_set") {
+		t.Error("offers disagrees with the narrowing")
+	}
+	if !(turnMachine{}).offers("ask_user") {
+		t.Error("with no machine every tool is offered")
 	}
 }
 
@@ -1046,7 +1061,7 @@ func TestPhaseNarrowingPreservesCatalogOrder(t *testing.T) {
 	out, _, _, _ := m.narrowCatalog(scopeCatalog(), nil)
 
 	got := scopeNames(out)
-	want := []string{"plan_set", "stay_silent", "keep_going", "respond_directly", "change_phase", "web_search", "atlassian_search"}
+	want := []string{"stay_silent", "keep_going", "respond_directly", "change_phase", "web_search", "atlassian_search"}
 	if len(got) != len(want) {
 		t.Fatalf("catalog = %v, want %v", got, want)
 	}
@@ -1551,7 +1566,7 @@ func TestThePhaseToolPickerOffersTheFrameworkTools(t *testing.T) {
 
 	// The control plane survives narrowing whatever a phase names, so offering
 	// it would be a tick that changes nothing.
-	for _, exempt := range []string{"plan_set", "change_phase", "stay_silent", "keep_going"} {
+	for _, exempt := range []string{"change_phase", "stay_silent", "keep_going"} {
 		if containsString(offered, exempt) {
 			t.Errorf("%q is exempt from narrowing; offering it invites a tick that does nothing", exempt)
 		}

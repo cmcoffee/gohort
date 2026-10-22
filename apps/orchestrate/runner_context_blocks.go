@@ -336,7 +336,7 @@ func (t *chatTurn) renderAvailableAgentsBlock() string {
 	}
 	var b strings.Builder
 	b.WriteString("\n\n## Available agents\n\n")
-	b.WriteString("Specialists the user has authored. **If a question lands in one of these agents' domains, DELEGATE FIRST.** Rely on the agent for the work it's built for, when the use case fits it gives the best result: its own persona, tools, and grounded sources beat your general knowledge. This holds EVEN WHEN you could handle it with your own tools, for a question in a listed agent's domain, delegate rather than web_searching it yourself; a tool call is not a substitute for the specialist. Dispatch as your FIRST move on such a question: don't run several of your own searches and fall back to the agent only when they come up short; the specialist IS the move, not the backup. Answer yourself only when no agent's domain fits: NOT because you feel you already know it or could look it up. And don't narrate that you'll consult an agent and then answer anyway: either dispatch, or answer plainly as you.\n\nDelegate via `agents(action=\"run\", agent=\"<name>\", message=\"<the brief>\")`. **The agent remembers within this session.** It re-threads your prior dispatches to it this session (ephemeral continuity) on top of its own persona, saved facts, and knowledge base, so a follow-up to the same agent can be brief without repeating earlier context. A RELATED FOLLOW-UP goes back to the SAME agent; don't interpret or answer it yourself from the earlier result. This dispatch memory is ephemeral, scoped to this session. Re-dispatch, including the prior context in the brief: \"Earlier you summarized Acme Corp as <X>. Now tell me more about their B2B presence.\" You own the context; the sub-agent answers the question in front of it.\n\nIntegrate the answers into your reply as if they were your own: don't say \"I asked X\" or \"the X agent said\"; the user doesn't know the fleet structure. Just answer with the substance.\n\nFormat: **name**, when to delegate.\n\n")
+	b.WriteString("Specialists the user has authored. **If a question lands in one of these agents' domains, DELEGATE FIRST.** Rely on the agent for the work it's built for, when the use case fits it gives the best result: its own persona, tools, and grounded sources beat your general knowledge. This holds EVEN WHEN you could handle it with your own tools, for a question in a listed agent's domain, delegate rather than web_searching it yourself; a tool call is not a substitute for the specialist. Dispatch as your FIRST move on such a question: don't run several of your own searches and fall back to the agent only when they come up short; the specialist IS the move, not the backup. Answer yourself only when no agent's domain fits: NOT because you feel you already know it or could look it up. And don't narrate that you'll consult an agent and then answer anyway: either dispatch, or answer plainly as you.\n\nDelegate via `agents(action=\"run\", agent=\"<name>\", message=\"<the brief>\")`. **The agent remembers within this session.** It re-threads your prior dispatches to it this session (ephemeral continuity) on top of its own persona, saved facts, and knowledge base, so a follow-up to the same agent can be brief without repeating earlier context. A RELATED FOLLOW-UP goes back to the SAME agent; don't interpret or answer it yourself from the earlier result. This dispatch memory is ephemeral, scoped to this session. Re-dispatch, including the prior context in the brief: \"Earlier you summarized Acme Corp as <X>. Now tell me more about their B2B presence.\" You own the context; the sub-agent answers the question in front of it.\n\nThe person sees each delegation as it runs, so there is no need to say you asked: answer with the substance.\n\nFormat: **name**, when to delegate.\n\n")
 	// Two agents answering to one name are shown with their ids, and the
 	// model is told to dispatch by id: a name that matches more than one agent
 	// is refused rather than guessed. Only when names actually collide, so
@@ -660,11 +660,30 @@ func (t *chatTurn) skillToolDefs() []AgentToolDef {
 // content heavier, so the persona (more recent) reads as the
 // authoritative voice. The preamble is reference material for when
 // the persona is silent on a question.
-func roundShapePreamble(maxSteps int) string {
-	stepBudget := fmt.Sprintf("up to %d step%s", maxSteps, plural(maxSteps))
+//
+// It names only the ways out this turn has: ask_user where the turn can ask,
+// plan_set where it can fan out. A machine step that narrows its tools, an
+// agent on a tracked work plan, and one held to exact tools lack one or both,
+// and a preamble naming them anyway is an instruction to reach for nothing.
+func roundShapePreamble(maxSteps int, canAsk, canPlan bool) string {
+	ends := ""
+	switch {
+	case canAsk && canPlan:
+		stepBudget := fmt.Sprintf("up to %d step%s", maxSteps, plural(maxSteps))
+		ends = " or end the round with **ask_user / ask_user_form** (pause for input) or **plan_set** (hand off to fresh-context workers, " + stepBudget + ", min 2, research-style \"investigate A and B in parallel\": not a wrapper for sequential tool calls)"
+	case canAsk:
+		ends = " or end the round with **ask_user / ask_user_form** (pause for input)"
+	case canPlan:
+		stepBudget := fmt.Sprintf("up to %d step%s", maxSteps, plural(maxSteps))
+		ends = " or end the round with **plan_set** (hand off to fresh-context workers, " + stepBudget + ", min 2: not a wrapper for sequential tool calls)"
+	}
 	return "## How this round works\n\n" +
-		"Call tools inline (call → see result → call again → reply; multi-round is fine) or end the round with **ask_user / ask_user_form** (pause for input) or **plan_set** (hand off to fresh-context workers, " + stepBudget + ", min 2, research-style \"investigate A and B in parallel\": not a wrapper for sequential tool calls). To reply, just write your answer as text; that ends the turn. There is no separate reply tool. The persona below wins on anything it addresses; this is the default otherwise.\n\n" +
-		"**Before a tool call, write ONE short sentence in your own voice saying what you're about to do**: \"Let me grab that video.\" / \"Checking your calendar…\" / \"Pulling the latest numbers.\" The user sees it right away, so they're never left watching dead air while the tool runs. Keep it to a sentence. Do NOT write your actual ANSWER before a tool call: that's not the place for it, and you'd just repeat yourself once the result is back. Save the real answer for your final, tool-free reply AFTER you have the results.\n\n" +
+		"Call tools inline (call → see result → call again → reply; multi-round is fine)" + ends + ". To reply, just write your answer as text; that ends the turn. There is no separate reply tool. The persona below wins on anything it addresses; this is the default otherwise.\n\n" +
+		// No announcing tool calls: the person watches each one run, with its
+		// own card, and a sentence written beside a call is kept as its own
+		// bubble. It used to be asked for, to fill the wait, before tools and
+		// thinking showed while they ran.
+		"There is no need to announce a tool call: the person sees each one as it runs. Do NOT write your answer before a tool call either: you would repeat yourself once the result is back. Write the answer once, in your final, tool-free reply AFTER you have the results.\n\n" +
 		"**Delivering files.** Producer tools (image, video, screenshot_page, custom tools that save a file) write to your workspace and return the path: they do NOT auto-attach. To deliver, follow up with `workspace(action=\"attach\", path=\"<returned-path>\", cleanup=true)`. cleanup=true for one-shot deliveries, cleanup=false when the file is also work product. Multiple files in one turn is fine: chain one workspace(attach) per file.\n\n" +
 		"Pure conversation (greetings, opinions, follow-ups already answered): just reply as text.\n\n"
 }

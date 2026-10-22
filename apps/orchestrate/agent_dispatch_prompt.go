@@ -48,7 +48,13 @@ func dispatchSystemPrompt(ctx context.Context, target AgentRecord, subFacts []Me
 	// thinning out. Without this, an agent reached over a channel (e.g. an
 	// iMessage bridge) ran on a materially thinner prompt than in web chat —
 	// the "works in the web UI but not over a channel" drift.
-	sysPrompt = appendAgentCapabilityBlocks(sysPrompt, target, runtimeDB, user, false)
+	//
+	// Not for an agent held to exactly its own tools, as on the web turn:
+	// these describe the framework's tools (request_build, skills, Builder),
+	// which its catalog does not carry.
+	if !appAgentExactTools(target.ID) {
+		sysPrompt = appendAgentCapabilityBlocks(sysPrompt, target, runtimeDB, user, false)
+	}
 	return sysPrompt
 }
 
