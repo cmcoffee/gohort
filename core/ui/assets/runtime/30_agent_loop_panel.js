@@ -4531,6 +4531,36 @@
       return host;
     }
 
+    // liveToolHost picks where a LIVE tool_call hangs: the bubble once it has
+    // text, otherwise the most recent visible block in the conversation, and
+    // remembers the choice per call so its result and anything run beneath it
+    // land in the same place (callHostFor).
+    //
+    // toolHostFor walks back from the bubble and caches the first answer for
+    // the whole turn. The bubble is made early, so its first answer is the
+    // person's question; when the model then said something mid-turn ("Let
+    // me check what is going on in this space"), that line arrived as a new
+    // bubble further down, and every tool it went on to call still hung on
+    // the question above it. Searched from the end instead, the newest line
+    // the model wrote is where its next calls go.
+    function liveToolHost(m) {
+      if (!m || !m.bubble) return null;
+      if (!m.bubble.classList.contains('ui-agent-msg-empty')) return m.bubble;
+      var node = convoLog.lastElementChild;
+      while (node) {
+        if (node !== thinkingEl && node !== m.bubble && !node.classList.contains('ui-agent-msg-empty')) return node;
+        node = node.previousElementSibling;
+      }
+      return toolHostFor(m);
+    }
+    // callHostFor is where one call was drawn (liveToolHost), falling back to
+    // the bubble's own host for a call drawn some other way (a reload).
+    function callHostFor(m, callID) {
+      if (!m) return null;
+      if (callID && m.callHosts && m.callHosts[callID]) return m.callHosts[callID];
+      return toolHostFor(m);
+    }
+
     // agentMsgAttachmentBox returns (creating on first call) the per-
     // bubble container that holds inline image / file / video deliveries.
     // Box hangs off the bottom of the bubble so it lands BELOW the text
@@ -5247,7 +5277,7 @@
           // doing now.
           if (ev.parent_call_id) {
             var pm = ensureMsgBubbleFor(ev.msg_id, 'assistant');
-            var phost = pm && pm.bubble ? toolHostFor(pm) : null;
+            var phost = pm && pm.bubble ? callHostFor(pm, ev.parent_call_id) : null;
             var parentEntry = phost ? findToolEntry(phost.tools, ev.parent_call_id) : null;
             if (parentEntry) {
               if (!parentEntry.children) parentEntry.children = [];
@@ -5274,8 +5304,12 @@
           // specific call (see tool_result case below).
           var bm = ensureMsgBubbleFor(ev.msg_id, 'assistant');
           if (!bm || !bm.bubble) break;
-          var host = toolHostFor(bm);
+          var host = liveToolHost(bm);
           if (!host) break;
+          if (ev.call_id) {
+            if (!bm.callHosts) bm.callHosts = {};
+            bm.callHosts[ev.call_id] = host;
+          }
           if (!host.tools) host.tools = [];
           host.tools.push({
             call_id: ev.call_id || '',
@@ -5295,7 +5329,7 @@
         case 'tool_result': {
           var bm2 = msgEls[ev.msg_id];
           if (!bm2 || !bm2.bubble) break;
-          var host2 = toolHostFor(bm2);
+          var host2 = callHostFor(bm2, ev.call_id);
           if (!host2 || !host2.tools) break;
           // Pair the result back to the exact tool_call that emitted
           // it via call_id. Without call_id the renderer used to fall
