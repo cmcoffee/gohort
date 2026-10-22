@@ -7,28 +7,21 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 )
 
-// One round sent two updates to the same app in parallel: one carrying a new
-// action, one carrying sections. Both loaded the same stored spec and the
-// second saved over the first, so the action was gone. The lane is what puts
-// those two in order, which only works if every spelling of one app lands in
-// the same lane.
-func TestAppDefBatchLaneKeysOnTheApp(t *testing.T) {
-	byName := appDefBatchLane(map[string]any{"action": "create", "name": "Balance Game"})
-	byID := appDefBatchLane(map[string]any{"action": "update", "id": "balance-game", "actions": []any{}})
-	bySlug := appDefBatchLane(map[string]any{"action": "patch_html", "slug": "balance-game"})
-	if byName == "" || byName != byID || byID != bySlug {
-		t.Fatalf("one app must share one lane across spellings: name=%q id=%q slug=%q", byName, byID, bySlug)
-	}
-	if other := appDefBatchLane(map[string]any{"action": "update", "id": "reading-list"}); other == byID {
-		t.Fatalf("different apps must not share a lane, both keyed %q", other)
-	}
-	// Naming no app is the shared serial lane, never a lane of its own.
-	if lane := appDefBatchLane(map[string]any{"action": "list"}); lane != "" {
-		t.Fatalf("a call naming no app belongs in the shared lane, got %q", lane)
-	}
+// One round's app_def calls run in the order asked, and with the workspace
+// edits around them. Two updates to one app in parallel lost each other's
+// writes, and a folder edit beside a publish let the publish read the folder
+// before the edit landed, so it said "Published" without the change. app_def
+// is serial-fire and the loop orders a round that writes (core
+// dispatchTools); a lane per app would keep it outside that order.
+func TestAppDefAndWorkspaceCallsKeepTheirOrder(t *testing.T) {
 	td := (&chatTurn{}).appDefToolDef()
-	if td.BatchLane == nil {
-		t.Fatal("app_def must declare a BatchLane; without one parallel updates to one app lose each other's writes")
+	if !td.SerialFirePerBatch || td.BatchLane != nil {
+		t.Fatal("app_def must be serial-fire, not laned per app: a workspace edit in the same round has to stay in its order with it")
+	}
+	byName := appDefSlug(map[string]any{"action": "create", "name": "Balance Game"})
+	byID := appDefSlug(map[string]any{"action": "update", "id": "balance-game"})
+	if byName == "" || byName != byID {
+		t.Fatalf("one app must resolve to one slug across spellings: name=%q id=%q", byName, byID)
 	}
 }
 

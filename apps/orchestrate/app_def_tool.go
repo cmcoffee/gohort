@@ -163,7 +163,7 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 			switch action {
 			case "update", "update_section", "add_section", "remove_section", "patch_html", "patch",
 				"replace_function", "patch_function", "revert", "undo", "restore", "delete", "add_asset", "remove_asset":
-				if slug := appDefBatchLane(args); slug != "" {
+				if slug := appDefSlug(args); slug != "" {
 					if prev, ok := LoadAppSpec(t.user, slug); ok {
 						if msg := t.approveChange("app", slug, appChangeDetail(action, args), appChangeOp(action)); msg != "" {
 							return msg, nil
@@ -239,27 +239,28 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 				return "", fmt.Errorf("unknown action %q: use checkout | publish | run | pack | unpack | create | update | update_section | add_section | remove_section | patch_html | replace_function | revisions | revert | test | verify | list | get | stores | request_store | delete | add_asset | remove_asset | help", action)
 			}
 		},
-		BatchLane: appDefBatchLane,
+		// Every call this round runs in the order asked, in the lane every
+		// serial-fire tool shares.
+		//
+		// Every write here is load, modify, save of the WHOLE spec, so two
+		// parallel writes to one app are a lost update. Observed: one round
+		// sent an update with actions:[{name:"step"}] and a sibling update
+		// with sections + note; the second saved over the first and the action
+		// was gone. A lane per app closed that, and left the folder open:
+		// publish, run and checkout read or write the app's folder in the
+		// workspace, and a lane of app_def's own kept it out of the order the
+		// loop gives a round that writes (dispatchTools), so a workspace edit
+		// in the same round ran beside the publish. Builder edited a folder
+		// and published it in one round, the publish read the folder first,
+		// and "Published" went out with the edit missing.
+		SerialFirePerBatch: true,
 	}
 }
 
-// appDefBatchLane is app_def's core.AgentToolDef.BatchLane: calls this round
-// that name the same app run in submission order, calls on different apps
-// still overlap.
-//
-// Every write here is load, modify, save of the WHOLE spec, so two parallel
-// writes to one app are a lost update. Observed: one round sent an update
-// with actions:[{name:"step"}] and a sibling update with sections + note.
-// Both loaded the same stored spec, the second saved it back with its own
-// sections and the OLD actions, and both reported the same revision. The
-// action was gone, and the next patch_html answered `no action named "step"`.
-//
-// The key is resolved the way appDefCreateOrUpdate resolves it, so "My Game",
-// "my-game" and id:"my-game" share a lane. A call naming no app (list, help)
-// returns "", the shared serial lane. No store read: the slug is all a lane
-// needs, and an app that does not exist yet still needs its create ordered
-// ahead of the update that follows it.
-func appDefBatchLane(args map[string]any) string {
+// appDefSlug is the app a call names, resolved the way appDefCreateOrUpdate
+// resolves it, so "My Game", "my-game" and id:"my-game" are one app. "" for a
+// call naming none (list, help).
+func appDefSlug(args map[string]any) string {
 	return slugify(firstNonEmptyStr(stringArg(args, "id"), stringArg(args, "slug"), stringArg(args, "name")))
 }
 

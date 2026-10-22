@@ -21,7 +21,7 @@ func (t *CalculateTool) Name() string { return "calculate" }
 func (t *CalculateTool) Desc() string {
 	return "Evaluate an arithmetic expression. Supports +, -, *, / and parentheses. Example: \"0.088 + (0.015 * 0.5)\""
 }
-func (t *CalculateTool) Caps() []Capability { return nil } // pure transform — no side effects
+func (t *CalculateTool) Caps() []Capability { return []Capability{CapRead} } // pure transform, no side effects
 
 func (t *CalculateTool) Params() map[string]ToolParam {
 	return map[string]ToolParam{

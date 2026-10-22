@@ -565,6 +565,7 @@ type loopRun struct {
 	premise         premiseGate
 	needsConfirm    map[string]bool
 	writeTools      map[string]bool
+	toolCaps        map[string]Tool // each tool's Caps and ActionCaps, for callWrites
 	singleFireTools map[string]bool
 	serialFireTools map[string]bool
 	batchLaneFns    map[string]func(map[string]any) string
@@ -844,6 +845,7 @@ func (lr *loopRun) rebuildToolMaps(active []AgentToolDef) {
 		}
 		lr.toolDefs = append(lr.toolDefs, td.Tool)
 		lr.handlers[td.Tool.Name] = td.Handler
+		lr.toolCaps[td.Tool.Name] = Tool{Caps: td.Tool.Caps, ActionCaps: td.Tool.ActionCaps}
 		// A declared ConfirmPrompt implies NeedsConfirm. Without this the
 		// two flags are a trap: a tool author writes the sentence the user
 		// is meant to read, forgets the boolean, and the loop never calls
@@ -919,6 +921,7 @@ func (lr *loopRun) setupTools() {
 	// the framework's own annotation, not a name list, so a tool added later is
 	// covered by declaring what it is.
 	lr.writeTools = make(map[string]bool)
+	lr.toolCaps = make(map[string]Tool)
 	lr.singleFireTools = make(map[string]bool)
 	lr.serialFireTools = make(map[string]bool)
 	lr.batchLaneFns = make(map[string]func(map[string]any) string)
@@ -4045,16 +4048,40 @@ func (lr *loopRun) dispatchTools() loopAction {
 		// partitioning — same guarantee within a lane, concurrency across
 		// lanes — and its keys are namespaced by tool name so two tools'
 		// lane functions cannot collide on a shared string.
+		//
+		// And a round that CHANGES something runs in the order asked: when
+		// any call in it writes (callWrites), every call without a lane of
+		// its own joins the shared lane too. Parallel, a write and the call
+		// meant to see it raced. Observed: Builder edited an app's folder and
+		// published it in one round, the publish read the folder first, and
+		// "Published" went out with the edit missing. The same shape sits
+		// under any pair of tools: write a report then export it, create a
+		// schedule then list it (and, seeing it missing, create it again). A
+		// round that only reads still fans out, and a tool with its own
+		// BatchLane keeps it: those already say which of their calls may
+		// overlap, and know it better than a capability can.
+		keys := make([]string, len(lr.rs.work))
+		explicit := make([]bool, len(lr.rs.work))
+		ordered := false
+		for i, w := range lr.rs.work {
+			if fn := lr.batchLaneFns[w.tc.Name]; fn != nil {
+				keys[i] = fn(w.tc.Args)
+				explicit[i] = keys[i] != ""
+			}
+			if !explicit[i] && lr.callWrites(w.tc) {
+				ordered = true
+			}
+		}
 		lanes := map[string][]toolWork{}
 		var laneOrder []string
-		for _, w := range lr.rs.work {
+		for i, w := range lr.rs.work {
 			lane, laned := "", false
-			if fn := lr.batchLaneFns[w.tc.Name]; fn != nil {
+			if lr.batchLaneFns[w.tc.Name] != nil {
 				laned = true
-				if key := fn(w.tc.Args); key != "" {
-					lane = w.tc.Name + "\x00" + key
+				if explicit[i] {
+					lane = w.tc.Name + "\x00" + keys[i]
 				}
-			} else if lr.serialFireTools[w.tc.Name] {
+			} else if lr.serialFireTools[w.tc.Name] || ordered {
 				laned = true
 			}
 			if !laned {
@@ -4244,6 +4271,31 @@ func (lr *loopRun) dispatchTools() loopAction {
 // tool is handed its arguments and its session, never the history it is
 // part of, and a name-driven hook works in every loop the framework runs
 // rather than only the ones an app remembered to wire.
+// callWrites reports whether one call may change something a sibling call in
+// the same round could read: it declares write or execute, for the action it
+// names when its tool says per action (Tool.ActionCaps), or it declares
+// nothing at all. Unannotated counts as writing because the cost of that
+// guess is a round run in order, and the cost of the other guess is the race
+// this exists to stop.
+func (lr *loopRun) callWrites(tc ToolCall) bool {
+	t := lr.toolCaps[tc.Name]
+	caps := t.Caps
+	if action, _ := tc.Args["action"].(string); action != "" {
+		if c, ok := t.ActionCaps[action]; ok {
+			caps = c
+		}
+	}
+	if len(caps) == 0 {
+		return true
+	}
+	for _, c := range caps {
+		if c == CapWrite || c == CapExecute {
+			return true
+		}
+	}
+	return false
+}
+
 func (lr *loopRun) releaseSpentOutputs() {
 	var ids []string
 	for _, w := range lr.rs.work {

@@ -26,7 +26,7 @@ func (t *ParseXMLTool) Desc() string {
 }
 
 // Caps: nil — pure transform, no side effects (matches calculate).
-func (t *ParseXMLTool) Caps() []Capability { return nil }
+func (t *ParseXMLTool) Caps() []Capability { return []Capability{CapRead} }
 
 func (t *ParseXMLTool) Params() map[string]ToolParam {
 	return map[string]ToolParam{
