@@ -49,6 +49,20 @@ func (T *OrchestrateApp) AppLoopGuard(ctx context.Context, user, agentID string)
 	}}
 }
 
+// AgentCredentialDeny is the credentials agentID, one of owner's agents, has
+// switched off or may not use (credentialDenySet), for an app that builds a
+// session on an agent's behalf and must hold it to the same limits.
+func (T *OrchestrateApp) AgentCredentialDeny(owner, agentID string) map[string]bool {
+	if T == nil || T.DB == nil || owner == "" || agentID == "" {
+		return nil
+	}
+	a, ok := loadAgent(UserDB(T.DB, owner), agentID)
+	if !ok {
+		return nil
+	}
+	return credentialDenySet(a, owner)
+}
+
 // Apply returns cfg with the guardrail hooks set and every tool wrapped in the
 // agent's tool-result policy (the untrusted-content fence and the injection
 // scan, by what each tool declares). cfg.Tools is copied, not mutated.

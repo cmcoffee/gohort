@@ -242,6 +242,20 @@ func resolveToolset(ctx context.Context, owner, caller string, a Appliance) reso
 		runAs = caller
 	}
 	sess := &ToolSession{Username: runAs, DB: authDBOrNil(), Ctx: ctx}
+	// An investigation an agent asked for runs its bound tools under that
+	// agent's credential limits, as the agent's own calls do: without them a
+	// credential the agent has switched off was reachable through the system's
+	// tools. The agent belongs to the caller.
+	if agent := ActingAgent(ctx); agent != "" {
+		sess.AgentID = agent
+		who := strings.TrimSpace(caller)
+		if who == "" {
+			who = owner
+		}
+		if orch := servitorOrch(); orch != nil {
+			sess.DeniedCredentials = orch.AgentCredentialDeny(who, agent)
+		}
+	}
 	// A bound tool must behave the same here as it does in the agent that
 	// authored it. An agent's session carries a workspace, so a tool that
 	// downloads a file, uses save_to, or takes an upload parameter works there

@@ -192,3 +192,18 @@ func TestAPeerSystemIsReachedBeforeItsSessionRuns(t *testing.T) {
 		}
 	}
 }
+
+// A tool-backed system's investigation, asked for by an agent, runs its bound
+// tools under that agent's credential limits, as the agent's own calls do.
+func TestAToolsetRunsUnderTheActingAgentsCredentialLimits(t *testing.T) {
+	raw, err := os.ReadFile("toolset.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(raw)
+	for _, want := range []string{"if agent := ActingAgent(ctx); agent != \"\" {", "sess.DeniedCredentials = orch.AgentCredentialDeny(who, agent)"} {
+		if !strings.Contains(src, want) {
+			t.Errorf("toolset sessions lost %q", want)
+		}
+	}
+}

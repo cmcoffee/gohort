@@ -60,6 +60,13 @@ func (t *chatTurn) runPipelineSubAgent(ctx context.Context, sysPrompt, userMsg s
 	// agent turn. Without a session, session-aware tools get user="" and the
 	// per-user path can't run.
 	subSess := &ToolSession{Username: t.user, Ctx: ctx}
+	// The calling agent's credential limits ride the stage too, as they do on
+	// every other session a turn spawns: without them a fetch_url_<cred> the
+	// agent has switched off, or is left off the credential's list for, went
+	// through from inside a pipeline stage.
+	subSess.AgentID = t.agent.ID
+	subSess.DeniedCredentials = credentialDenySet(t.agent, t.user)
+	subSess.DirectCredentialRefusal = directCredentialRefusal(t.agent, subSess)
 	t.wireLiveCallbacks(subSess)
 	tools, err := GetAgentToolsWithSession(subSess, cleanNames...)
 	if err != nil {
