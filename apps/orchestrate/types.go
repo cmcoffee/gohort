@@ -1590,8 +1590,10 @@ type ChatMessage struct {
 	// icon — a channel message from a person reads differently from a scheduled
 	// report or a monitor wake. One of: "message" (a channel inbound),
 	// "scheduled" (a standing-agent report), "monitor" (an event-monitor wake),
-	// "deliverable" (a filed artifact pointer). Empty falls back to the default
-	// (scheduled) icon. Display-only — the LLM context marker keys off ReportFrom.
+	// "deliverable" (a filed artifact pointer), "result" (the agent's own reply
+	// when a background task finished: drawn and read as its own words). Empty
+	// falls back to the default (scheduled) icon. The LLM context marker keys
+	// off ReportFrom, except on a "result".
 	ReportKind string `json:"report_kind,omitempty"`
 	// ReportDetail is an optional one-line subtitle for a ReportFrom card,
 	// rendered under the name + time header. Carries the secondary context a

@@ -25,6 +25,9 @@
 .orch-report-card-name { font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .orch-report-card-time { color: var(--text-mute, #999); font-size: 0.7rem; flex: 0 0 auto; }
 .orch-report-card-detail { flex: 0 0 100%; margin-top: 0.15rem; color: var(--text-mute, #999); font-size: 0.7rem; font-weight: 400; }
+/* The agent's own reply, posted when a background task it started finished:
+ * its ordinary bubble, with a quiet line saying when it came. */
+.orch-result-note { color: var(--text-mute, #999); font-size: 0.7rem; margin: 0 0 0.3rem 0; }
 /* History fold marker: where the agent stops reading word for word. A quiet
  * rule across the thread, not a message, because nobody said it. */
 .orch-fold-mark {
@@ -45,7 +48,18 @@
     if (!window.uiRegisterMessageReplayHook) { setTimeout(registerReportReplayHook, 50); return; }
     window.uiRegisterMessageReplayHook(function(bubble, msg) {
       if (!bubble || !msg || !msg.report_from) return;
-      if (bubble.querySelector(':scope > .orch-report-card-hdr')) return; // idempotent
+      if (bubble.querySelector(':scope > .orch-report-card-hdr, :scope > .orch-result-note')) return; // idempotent
+      // The agent's own reply, delivered when a background task finished (a
+      // render it started earlier in this conversation). It is the agent
+      // talking, so it keeps its bubble; drawn as a report card it looked like
+      // a schedule had answered the person.
+      if (msg.report_kind === 'result') {
+        var note = document.createElement('div');
+        note.className = 'orch-result-note';
+        note.textContent = '↩ When the background work finished';
+        bubble.insertBefore(note, bubble.firstChild);
+        return;
+      }
       bubble.classList.add('orch-report-card');
       var when = '';
       if (msg.created) {

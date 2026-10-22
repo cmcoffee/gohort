@@ -27,6 +27,11 @@ const (
 	cortexKindRequest     = "request"     // a dispatch/request from ANOTHER agent
 	cortexKindSession     = "session"     // a one-line pointer a session left behind
 	cortexKindOverflow    = "overflow"    // an agent reply a channel couldn't deliver
+	// The agent's own reply, posted when a background task it started (a
+	// render, a long tool call) finished: its words in the conversation, not
+	// something that reached it. A card only because a page that is open
+	// picks arrivals up as cards (see isOwnReply).
+	cortexKindResult = "result"
 )
 
 // AppendCortexObservation records one non-triggering observation into an agent's
@@ -262,7 +267,7 @@ func cortexContextLines(db Database, agentID string) []string {
 	var lines []string
 	for i := len(sess.Messages) - 1; i >= 0 && len(lines) < maxLines; i-- {
 		m := sess.Messages[i]
-		if strings.TrimSpace(m.ReportFrom) == "" {
+		if strings.TrimSpace(m.ReportFrom) == "" || isOwnReply(m) {
 			continue // observations are ReportFrom cards; skip ordinary turns
 		}
 		first := m.Content
@@ -274,6 +279,11 @@ func cortexContextLines(db Database, agentID string) []string {
 	}
 	return lines
 }
+
+// isOwnReply reports whether a card is the agent's own reply rather than
+// something that reached it: what a finished background task brought back,
+// which the agent then said in the conversation.
+func isOwnReply(m ChatMessage) bool { return m.ReportKind == cortexKindResult }
 
 // tuneCortexFeedLines caps how many recent cortex observations the standing-
 // activity block injects into a forked session's prompt. 0 hides the block.

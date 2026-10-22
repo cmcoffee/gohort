@@ -1323,6 +1323,17 @@ func (fr *fireRun) composeDetail() {
 	}
 }
 
+// fireCardKind is the kind of card a fire posts. A background task's result
+// shares this path but is no schedule's report: it is the agent's own reply in
+// the conversation that started the work, and drawn or read as a scheduled
+// report it looked like a recurring task had answered the person.
+func fireCardKind(p orchUpdatePayload) string {
+	if isTaskWake(p.Prompt) {
+		return cortexKindResult
+	}
+	return cortexKindScheduled
+}
+
 func (fr *fireRun) postReport() {
 	p := fr.p
 	// Render the fire as a scheduled-report card (ReportFrom/ReportKind), the
@@ -1359,7 +1370,7 @@ func (fr *fireRun) postReport() {
 			Content:      fr.reply,
 			Created:      time.Now(),
 			ReportFrom:   recurringName(p),
-			ReportKind:   cortexKindScheduled,
+			ReportKind:   fireCardKind(p),
 			ReportDetail: fr.detail,
 			ToolCalls:    fr.toolTrace,
 			// This turn had no live stream to paint an attachment onto — it ran

@@ -944,7 +944,7 @@ func priorReportsFrom(msgs []ChatMessage) []string {
 	var out []string
 	for _, m := range msgs {
 		from := strings.TrimSpace(m.ReportFrom)
-		if from == "" {
+		if from == "" || isOwnReply(m) {
 			continue
 		}
 		if line := judgeFirstLine(m.Content, 160); line != "" {

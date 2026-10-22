@@ -1773,7 +1773,11 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	}
 	cr.buildSession()
 	defer clearAuthoringInProgress(cr.runtimeDB, cr.subSessionID)
-	defer DeleteSessionTempTools(cr.runtimeDB, cr.subSessionID)
+	// No DeleteSessionTempTools here, unlike the one-shot dispatch whose
+	// sub-session is thrown away: this thread is kept, and the tools drafted
+	// in it belong to it until it is deleted (deleteChatSession clears them).
+	// Deleting them at the end of every turn wiped a tool the person was
+	// building whenever a channel message or a monitor wake ran there.
 	cr.startLiveRun()
 	defer cr.liveRun.Complete(RunStatusFailed)
 	cr.tagRun()
@@ -2281,6 +2285,21 @@ func (cr *continuingRun) loadThread() {
 	}
 }
 
+// withoutUnansweredAsk is a thread as an arrival (a monitor wake, an event
+// card) reads it: without a person's message at the end that nothing has
+// answered yet. That message belongs to the turn answering it, which may be
+// running right now: a wake that loaded the thread just after the person
+// asked read their question as the last thing said and answered it in its
+// own card, while their turn answered it too. Only the model's view: the
+// thread keeps every message.
+func withoutUnansweredAsk(msgs []ChatMessage) []ChatMessage {
+	end := len(msgs)
+	for end > 0 && msgs[end-1].Role == "user" && strings.TrimSpace(msgs[end-1].ReportFrom) == "" && !msgs[end-1].Hidden {
+		end--
+	}
+	return msgs[:end]
+}
+
 func (cr *continuingRun) buildMessages() {
 	run := cr.run
 	T := cr.T
@@ -2353,6 +2372,9 @@ func (cr *continuingRun) buildMessages() {
 	// are unaffected; fact extraction honors the agent's memory setting (see
 	// compactOperatorHistory).
 	bounded := T.compactOperatorHistory(cr.runtimeDB, cr.runtimeUser, cr.target, cr.subSessionID, cr.priorSession.Messages)
+	if strings.TrimSpace(run.InputReportFrom) != "" {
+		bounded = withoutUnansweredAsk(bounded)
+	}
 	cr.llmMessages = make([]Message, 0, len(bounded)+1)
 	for _, m := range bounded {
 		cr.llmMessages = append(cr.llmMessages, Message{Role: m.Role, Content: llmHistoryContent(m)})
@@ -3003,7 +3025,10 @@ func llmHistoryText(m ChatMessage) string {
 	// so that if the model echoes it into a reply it's scrubbed (a bare
 	// [standing agent …] would leak); the model still reads it as input
 	// (StripMetaTags only touches output).
-	if strings.TrimSpace(m.ReportFrom) != "" {
+	// Except the agent's own reply carried on one (a background task's result):
+	// it said that, and reading it as an outside report it lost track of what
+	// it had already delivered.
+	if strings.TrimSpace(m.ReportFrom) != "" && !isOwnReply(m) {
 		// Fenced through textutil.FenceMeta rather than by hand: the producer
 		// name is not ours, and a name carrying a closer would end the fence
 		// early and put the rest of itself back in the model's plain input.
