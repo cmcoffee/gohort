@@ -407,3 +407,22 @@ func TestGraphRelSlug(t *testing.T) {
 		t.Fatalf("rel not slugged: %q", out[0].Rel)
 	}
 }
+
+// A graph cap saved at its old default follows the new one: the settings page
+// once saved every field, so a machine pinned at 500 read "500 of 500" after
+// the default went to 2000.
+func TestAGraphCapPinnedAtItsOldDefaultFollowsTheNewOne(t *testing.T) {
+	db := memDB(t)
+	db.Set(WebTable, TunableGraphEntityCap, float64(500))
+	db.Set(WebTable, TunableGraphEdgeCap, float64(2000))
+	SetTunablesDB(db)
+	defer SetTunablesDB(nil)
+	if e, l := GraphCaps(); e != 2000 || l != 8000 {
+		t.Errorf("caps pinned at their old defaults read %d / %d, want 2000 / 8000", e, l)
+	}
+	db.Set(WebTable, TunableGraphEntityCap, float64(750))
+	InvalidateTunables()
+	if e, _ := GraphCaps(); e != 750 {
+		t.Errorf("a value somebody chose was overridden: %d", e)
+	}
+}

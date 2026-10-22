@@ -22,6 +22,7 @@
 package core
 
 import (
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -63,6 +64,14 @@ type TunableSpec struct {
 	// since Category groups them by SUBJECT (Retrieval, Timeouts) rather than
 	// by owner. Declared, never inferred; see RouteStage.App.
 	App string
+	// PriorDefaults are values this knob's default used to be. A stored value
+	// equal to one reads as unset, so it follows the default: the settings
+	// page once saved every field, defaults included, and a value pinned that
+	// way stayed behind when the default moved (a graph cap read 500 of 500
+	// after its default went to 2000). Read-time, so nothing stored is
+	// rewritten. Someone who deliberately chose an old default gets the new
+	// one, which nobody does on purpose.
+	PriorDefaults []float64
 }
 
 var (
@@ -120,9 +129,10 @@ func tuneValue(key string) float64 {
 	val := spec.Default // 0 for an unknown key
 	if known && db != nil {
 		var v float64
-		if db.Get(WebTable, key, &v) && (v != 0 || spec.Min <= 0) {
+		if db.Get(WebTable, key, &v) && (v != 0 || spec.Min <= 0) && !slices.Contains(spec.PriorDefaults, v) {
 			// Accept a stored 0 only when 0 is a legal value for this knob
 			// (Min <= 0, e.g. "off"); otherwise treat 0 as unset → default.
+			// A stored prior default is unset too (PriorDefaults).
 			val = v
 		}
 	}

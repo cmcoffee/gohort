@@ -63,12 +63,12 @@ func init() {
 		Label:  "Graph entity cap per agent (0 = off)",
 		Help:   "Max entities in one agent's memory graph.",
 		Detail: "Past the cap, the least-recently-updated entities are evicted, edges included, so auto-extraction cannot grow the graph without bound.",
-		Kind:   KindInt, Default: 2000, Min: 0, Max: 10000})
+		Kind:   KindInt, Default: 2000, Min: 0, Max: 10000, PriorDefaults: []float64{500}})
 	RegisterTunable(TunableSpec{Key: TunableGraphEdgeCap, Category: "Memory",
 		Label:  "Graph edge cap per agent (0 = off)",
 		Help:   "Max live relationships in one agent's memory graph.",
 		Detail: "Past the cap, the least-recently-updated edges are evicted.",
-		Kind:   KindInt, Default: 8000, Min: 0, Max: 50000})
+		Kind:   KindInt, Default: 8000, Min: 0, Max: 50000, PriorDefaults: []float64{2000}})
 }
 
 // GraphCaps is how big a graph may grow, for showing beside how big it is: its
