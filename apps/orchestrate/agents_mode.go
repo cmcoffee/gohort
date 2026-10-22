@@ -8,6 +8,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/appagents"
+	"github.com/cmcoffee/gohort/core/mcppersonal"
 )
 
 // noToolsSentinel is the reserved AllowedTools[0] marker meaning
@@ -370,6 +371,12 @@ func isResolvableToolName(db Database, owner, name string) bool {
 		if p.Tool.Name == name {
 			return true
 		}
+	}
+	// A tool one of the owner's own MCP servers offers, on or off: theirs
+	// (core/mcppersonal). Not a registered tool, so without this every load
+	// of the agent healed it away.
+	if mcppersonal.Offers(owner, name, registeredToolNames()) {
+		return true
 	}
 	// A tool the owner TOOK from somebody is theirs to name, whether or not
 	// it resolves right now. Healing it away made every load of the agent

@@ -302,6 +302,63 @@ func (s *SecureAPI) AuthorizeRequest(credName string, req *http.Request) error {
 	return err
 }
 
+// AuthorizeRequestAs signs req with credName as user reaches it: their own
+// credential, one lent to them, or a deployment one they may use, of any
+// type. It is for a person's own MCP server, which signs in with one of their
+// credentials and goes through no tool dispatch, so it is held here to what a
+// dispatch would hold it to: the credential's people, its switch, and its
+// allow-list, on the address the request is actually for.
+//
+// Every MCP request is a POST, its reads included, so a credential that
+// cannot make one (lent for reads, limited to other methods, or asking before
+// writes) is refused rather than half used, and so is a SECURED one, which is
+// reached only through the tools bound to it.
+func (s *SecureAPI) AuthorizeRequestAs(user, credName string, req *http.Request) error {
+	if !s.ready() {
+		return fmt.Errorf("secure-api store not initialized")
+	}
+	credName = strings.TrimSpace(credName)
+	c, ok := s.Resolve(credName, user)
+	if !ok {
+		return fmt.Errorf("no API credential named %q that you can use", credName)
+	}
+	if c.Disabled {
+		return s.disabledError(c)
+	}
+	sess := &ToolSession{Username: user}
+	if err := s.callerMayDispatch(c, sess); err != nil {
+		return err
+	}
+	switch {
+	case s.EffectiveSecured(c, user):
+		return fmt.Errorf("credential %q is SECURED: it is reached only through the tools bound to it, and an MCP server is not one", credName)
+	case readOnlyForUser(c, user):
+		return fmt.Errorf("credential %q was lent to you for reads, and every MCP request is a POST: ask %s for a read-write share", credName, c.Owner)
+	case len(c.AllowedMethods) > 0 && !credSliceHas(c.AllowedMethods, http.MethodPost):
+		return fmt.Errorf("credential %q does not allow POST, and every MCP request is one", credName)
+	case c.AsksBefore(http.MethodPost):
+		return fmt.Errorf("credential %q asks before writes, and every MCP request is a POST, its reads included: the server's tools that change something ask in the chat instead, so turn the credential's asking off to use it here", credName)
+	}
+	if req == nil || req.URL == nil {
+		return fmt.Errorf("no request to sign")
+	}
+	u := req.URL.String()
+	if why := credentialURLTrick(u); why != "" {
+		return fmt.Errorf("%s is not sent with credential %q: it has %s", u, credName, why)
+	}
+	if !urlAllowedByCredential(c, u) {
+		return fmt.Errorf("credential %q does not cover %s: its key is not sent there (add the server to the credential's allowed endpoints)", credName, u)
+	}
+	if deny := urlDeniedByCredential(c, u); deny != "" {
+		return fmt.Errorf("%s matches deny pattern %q for credential %q", u, deny, credName)
+	}
+	ac := &apiCall{s: s, c: c, sess: sess, req: req}
+	if !ac.loadSecret() || !ac.authorize() {
+		return ac.retErr
+	}
+	return nil
+}
+
 // tokenHTTPClient is the client for a token request: bounded, and it follows
 // no redirect. A token request carries the client secret, a password or a
 // refresh token, and a 307/308 re-sends that body to wherever it points,

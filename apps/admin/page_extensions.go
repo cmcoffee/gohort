@@ -295,6 +295,9 @@ func mcpServerFormFields() []ui.FormField {
 
 		{Field: "expose_hdr", Type: "header", Label: "Exposure"},
 		{Field: "expose_tools", Label: "Expose tools to agents", Type: "toggle", Help: "Register the server's tools as <name>.<tool> in the agent catalog."},
+		{Field: "one_tool", Label: "Offer as one tool", Type: "toggle", ShowWhen: "expose_tools",
+			Help:   "Agents see one tool named for the server, with an action per tool, instead of each tool on its own.",
+			Detail: "For a server with many tools, which otherwise fill an agent's catalog. It takes effect on the next turn, and an agent whose tool list names the server's tools either way keeps them."},
 		{Field: "expose_reference", Label: "Expose as a reference source", Type: "toggle", Help: "Make the server selectable in writer/research source pickers (uses the Search tool below)."},
 		{Field: "search_tool", Label: "Search tool name", Placeholder: "search", ShowWhen: "expose_reference", Help: "MCP tool called for reference lookups. Defaults to 'search'."},
 

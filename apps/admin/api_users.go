@@ -36,6 +36,7 @@ func (a *AdminApp) registerUsersRoutes(sub *http.ServeMux) {
 	sub.HandleFunc("/api/user-credentials", a.handleUserCredentials)
 	// Whether people add their own credentials and MCP servers at all.
 	sub.HandleFunc("/api/personal-integrations", a.handlePersonalIntegrations)
+	sub.HandleFunc("/api/personal-mcp-servers", a.handlePersonalMCPServers)
 
 	// API: user-owned agents — the governance view over peer-shared agents. Agents
 	// live in per-user UDBs, so the admin app enumerates them through an orchestrate

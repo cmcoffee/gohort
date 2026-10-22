@@ -324,6 +324,17 @@ type DynamicChatTool interface {
 	SchemaWithSession(sess *ToolSession) (desc string, params map[string]ToolParam)
 }
 
+// RedirectedTool is a tool offered, for this caller right now, under other
+// names: an MCP server's tools offered one way (each its own tool) or the
+// other (one tool with an action per tool), as the server is set. A grant
+// naming it in the shape it is not offered in reaches the shape it is, so
+// switching a server between the two keeps every agent that lists its tools.
+// nil means it is offered as itself.
+type RedirectedTool interface {
+	ChatTool
+	RedirectTo(sess *ToolSession) []string
+}
+
 // NeedInteract pauses for user input.
 func NeedInteract() {
 	nfo.PressEnter("\n(press enter to continue)")

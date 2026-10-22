@@ -76,6 +76,7 @@ func (T *Extensions) Routes() {
 		}
 	}
 	T.HandleFunc("/api/credentials", T.handleCredentials)
+	T.HandleFunc("/api/mcp-servers", T.handleMCPServers)
 	T.HandleFunc("/api/tools", T.handleUserTools)
 	T.HandleFunc("/api/tool-access", T.handleUserToolAccess)
 	T.HandleFunc("/api/category-security", T.handleCategorySecurity)
@@ -1849,6 +1850,7 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 	}
 	sections := []ui.Section{
 		T.apisSection(),
+		T.mcpServersSection(user),
 		T.connectedAccountsSection(),
 		T.toolsSection(user),
 		T.skillsSection(),

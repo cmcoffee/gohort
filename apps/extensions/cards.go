@@ -33,7 +33,8 @@ const connectionsHTML = `<div id="acct-conns" class="acct-conns">Loading…</div
   if (window.uiLoading) { box.textContent = ''; box.appendChild(window.uiLoading()); }
   var API = '/account/api/connections';
   // A consent popup reports success via postMessage; refresh so the badge flips.
-  window.addEventListener('message', function(e){ if (e && e.data === 'gohort-mcp-connected') load(); });
+  // Your own MCP servers list it too, with what it now offers.
+  window.addEventListener('message', function(e){ if (e && e.data === 'gohort-mcp-connected'){ load(); if (window.uiInvalidate) window.uiInvalidate('api/mcp-servers'); } });
   function el(t, a, k){ var n=document.createElement(t); if(a) for(var x in a){ if(x==='text') n.textContent=a[x]; else if(x==='class') n.className=a[x]; else n.setAttribute(x,a[x]); } (k||[]).forEach(function(c){ n.appendChild(typeof c==='string'?document.createTextNode(c):c); }); return n; }
   function post(body, btn){
     btn.disabled = true; var orig = btn.textContent; btn.textContent = '…';

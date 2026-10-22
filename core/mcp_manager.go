@@ -97,6 +97,12 @@ type MCPServerConfig struct {
 	// requires audience=api.atlassian.com). When set it is sent instead of the RFC
 	// 8707 resource indicator. Blank ⇒ send resource (the MCP-spec default).
 	OAuthAudience string `json:"oauth_audience,omitempty"`
+	// OneTool offers the server's tools to agents as ONE tool, named for the
+	// server, with an action per tool, instead of each as its own. A server
+	// with dozens of tools fills an agent's catalog; one tool keeps it to a
+	// line. Switching takes effect on the next turn, and an agent listing the
+	// tools in the other shape keeps them (RedirectedTool).
+	OneTool bool `json:"one_tool,omitempty"`
 }
 
 // mcpConn is a live connection to one server plus the tools it reported.
@@ -129,6 +135,9 @@ type MCPManager struct {
 
 	dialMu sync.Mutex // serializes on-demand redials so one dead server is dialed once, not once per waiting turn
 
+	whole   map[string]*mcpServerTool // server name -> its tools as one tool (register-once)
+	oneTool map[string]bool           // server name -> offered as one tool right now (under mu)
+
 	oauthMu        sync.Mutex                // serializes token refresh
 	oauthPendingMu sync.Mutex                // guards oauthPending
 	oauthPending   map[string]mcpPendingAuth // state -> in-flight authorization
@@ -149,6 +158,8 @@ func MCP() *MCPManager {
 			conns:        map[string]*mcpConn{},
 			userConns:    map[string]*mcpConn{},
 			proxies:      map[string]*mcpProxyTool{},
+			whole:        map[string]*mcpServerTool{},
+			oneTool:      map[string]bool{},
 			dialFail:     map[string]time.Time{},
 			oauthPending: map[string]mcpPendingAuth{},
 		}
@@ -323,6 +334,7 @@ func (m *MCPManager) Save(c MCPServerConfig, token string) error {
 		Log("[mcp] server %q moved from %s to %s: its stored tokens were dropped", c.Name, credOrigin(prev.URL), credOrigin(c.URL))
 	}
 	m.db.Set(mcpServersTable, c.Name, c)
+	m.setOneTool(c.Name, c.Enabled && c.OneTool)
 	if c.AuthMode == MCPAuthBearer && strings.TrimSpace(token) != "" {
 		m.db.CryptSet(mcpServersTable, mcpTokenKey(c.Name), strings.TrimSpace(token))
 	}
@@ -417,6 +429,9 @@ func (m *MCPManager) Reload() {
 	configured := map[string]bool{}
 	for _, cfg := range m.List() {
 		configured[cfg.Name] = true
+		m.mu.Lock()
+		m.setOneTool(cfg.Name, cfg.Enabled && cfg.OneTool)
+		m.mu.Unlock()
 		if !cfg.Enabled {
 			m.disconnect(cfg.Name)
 			continue
@@ -871,6 +886,35 @@ func (m *MCPManager) DisconnectUser(user, server string) {
 	}
 }
 
+// OAuthAuthorizer, OAuthConnected, InvalidateOAuth and ForgetOAuth are the
+// per-user OAuth this manager keeps, for a server it holds no record of: a
+// person's own (core/mcppersonal), under the key MCPOAuthStart named. Its
+// sign-in, refresh and reconnect barrier are the administrator's servers'.
+func (m *MCPManager) OAuthAuthorizer(user, server string) func(*http.Request) error {
+	return m.oauthAuthorizer(user, server)
+}
+
+// OAuthConnected reports whether user holds a token for server that can be
+// used or renewed.
+func (m *MCPManager) OAuthConnected(user, server string) bool {
+	tok, ok := m.loadOAuthTokenRaw(server, user)
+	return ok && (tok.AccessToken != "" || tok.RefreshToken != "")
+}
+
+// InvalidateOAuth drops user's access token for server after the server
+// refused it, keeping the refresh token so the next call renews it.
+func (m *MCPManager) InvalidateOAuth(server, user string) { m.invalidateOAuthToken(server, user) }
+
+// ForgetOAuth drops server's OAuth client and every token issued under it.
+func (m *MCPManager) ForgetOAuth(server string) {
+	if !m.ready() {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.forgetServerSecrets(server)
+}
+
 // oauthAuthorizer returns a refresh-aware per-user Authorizer for an
 // oauth server: it sets a valid Bearer token, refreshing when near
 // expiry.
@@ -1083,9 +1127,51 @@ func (m *MCPManager) StartOAuth(user, server, redirectURI string) (string, error
 	if !ok || cfg.AuthMode != MCPAuthOAuth {
 		return "", fmt.Errorf("server %q is not an oauth server", server)
 	}
+	return m.startOAuth(cfg, MCPOAuthStart{User: user, RedirectURI: redirectURI})
+}
+
+// MCPOAuthStart is an authorization to begin for a server that is not one of
+// the administrator's: a person's own (core/mcppersonal). Server is the key
+// its OAuth client and tokens are kept under, which no administrator's server
+// name can be; URL is its address. The callback is the same one, and
+// CompleteOAuth redeems it the same way.
+type MCPOAuthStart struct {
+	User, Server, URL, RedirectURI string
+	// ClientID is a client its owner registered at the provider by hand, for
+	// one that does not register clients itself, with ClientSecret when the
+	// provider made it confidential. Blank registers one. Scopes, when set,
+	// replace the ones discovery advertises.
+	ClientID, ClientSecret, Scopes string
+	// PublicOnly holds discovery, registration and every token request,
+	// refreshes included, to public addresses.
+	PublicOnly bool
+}
+
+// StartOAuthFor is StartOAuth for one of those. The endpoints come from
+// discovery: there is no administrator's record to carry them.
+func (m *MCPManager) StartOAuthFor(st MCPOAuthStart) (string, error) {
+	if !m.ready() {
+		return "", fmt.Errorf("mcp store not ready")
+	}
+	if mcpNameRE.MatchString(st.Server) {
+		return "", fmt.Errorf("%q is an administrator's server name", st.Server)
+	}
+	cfg := MCPServerConfig{Name: st.Server, URL: st.URL, AuthMode: MCPAuthOAuth,
+		OAuthClientID: strings.TrimSpace(st.ClientID), OAuthScopes: strings.TrimSpace(st.Scopes)}
+	return m.startOAuth(cfg, st)
+}
+
+// startOAuth is both: cfg is the server, st who is signing in and how (its
+// Server and URL are cfg's).
+func (m *MCPManager) startOAuth(cfg MCPServerConfig, st MCPOAuthStart) (string, error) {
+	server, user, redirectURI, publicOnly := cfg.Name, st.User, st.RedirectURI, st.PublicOnly
+	base := context.Background()
+	if publicOnly {
+		base = mcpPublicOnly(base)
+	}
 	oc, ok := m.loadOAuthCfg(server)
 	if !ok || oc.AuthEndpoint == "" {
-		ctx, cancel := context.WithTimeout(context.Background(), mcpHandshakeTimeout())
+		ctx, cancel := context.WithTimeout(base, mcpHandshakeTimeout())
 		defer cancel()
 		// Try discovery; tolerate failure here because the admin may have
 		// supplied the endpoints manually (a provider with no .well-known).
@@ -1106,6 +1192,18 @@ func (m *MCPManager) StartOAuth(user, server, redirectURI string) (string, error
 		if disc.Resource == "" {
 			disc.Resource = mcpCanonicalResource(cfg.URL)
 		}
+		// A person's own server has no record to set endpoints on, and its
+		// client is one the provider registers or one its owner did.
+		personal := !mcpNameRE.MatchString(server)
+		if personal && (disc.AuthEndpoint == "" || disc.TokenEndpoint == "") {
+			if discErr != nil {
+				return "", fmt.Errorf("OAuth discovery failed (%w): a server that does not publish its OAuth endpoints is one an administrator adds", discErr)
+			}
+			return "", fmt.Errorf("the server publishes no OAuth sign-in endpoints: one like that is one an administrator adds")
+		}
+		if personal && strings.TrimSpace(cfg.OAuthClientID) == "" && strings.TrimSpace(disc.RegistrationEndpoint) == "" {
+			return "", fmt.Errorf("the provider does not register OAuth clients itself: register an OAuth app with it, then put its Client ID (and secret) on the server under Extensions > MCP servers")
+		}
 		if disc.AuthEndpoint == "" || disc.TokenEndpoint == "" {
 			if discErr != nil {
 				return "", fmt.Errorf("discovery failed (%w): set Authorize URL + Token URL on the server for a provider without OAuth discovery", discErr)
@@ -1117,16 +1215,24 @@ func (m *MCPManager) StartOAuth(user, server, redirectURI string) (string, error
 		if id := strings.TrimSpace(cfg.OAuthClientID); id != "" {
 			disc.ClientID = id
 			disc.ClientSecret = m.loadOAuthClientSecret(server)
+			if personal {
+				disc.ClientSecret = strings.TrimSpace(st.ClientSecret)
+			}
 		} else {
 			all := MCPRedirectURIs(redirectURI)
 			clientID, clientSecret, err := mcpRegisterClient(ctx, disc.RegistrationEndpoint, all...)
 			if err != nil {
-				return "", fmt.Errorf("client registration: %w, or set a Client ID on the server (Admin -> MCP Servers) to use a pre-registered OAuth app", err)
+				where := "the server (Admin -> MCP Servers)"
+				if personal {
+					where = "the server under Extensions > MCP servers"
+				}
+				return "", fmt.Errorf("client registration: %w, or set a Client ID on %s to use a pre-registered OAuth app", err, where)
 			}
 			disc.ClientID = clientID
 			disc.ClientSecret = clientSecret
 			disc.RegisteredRedirects = all
 		}
+		disc.PublicOnly = publicOnly
 		oc = disc
 		m.saveOAuthCfg(server, oc)
 	}
@@ -1152,7 +1258,7 @@ func (m *MCPManager) StartOAuth(user, server, redirectURI string) (string, error
 	}
 	if strings.TrimSpace(cfg.OAuthClientID) == "" && !oc.knowsRedirect(redirectURI) &&
 		strings.TrimSpace(oc.RegistrationEndpoint) != "" {
-		rctx, rcancel := context.WithTimeout(context.Background(), mcpHandshakeTimeout())
+		rctx, rcancel := context.WithTimeout(base, mcpHandshakeTimeout())
 		defer rcancel()
 		all := MCPRedirectURIs(redirectURI, oc.RegisteredRedirects...)
 		if clientID, clientSecret, err := mcpRegisterClient(rctx, oc.RegistrationEndpoint, all...); err == nil {
@@ -1283,6 +1389,61 @@ func (m *MCPManager) registerTools(cfg MCPServerConfig, tools []mcpclient.ToolDe
 			RegisterChatTool(proxy)
 		}
 	}
+	// Registered once a server is set to one tool, and kept: switching it
+	// back leaves it offering nothing (SchemaWithSession) and redirecting to
+	// the separate tools, since the registry cannot unregister.
+	if cfg.OneTool {
+		m.registerWholeTool(cfg.Name, taken)
+	}
+}
+
+// setOneTool records how server's tools are offered. Callers hold m.mu.
+func (m *MCPManager) setOneTool(server string, one bool) {
+	if m.oneTool == nil {
+		m.oneTool = map[string]bool{}
+	}
+	m.oneTool[server] = one
+}
+
+// isOneTool reports whether server's tools are offered as one right now: set
+// so, AND its one tool registered. A server whose one tool found no free name
+// stays offered one by one; read from the setting alone, its separate tools
+// hid themselves and nothing stood in for them.
+func (m *MCPManager) isOneTool(server string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.oneTool[server] && m.whole[server] != nil
+}
+
+// registerWholeTool registers server's tools-as-one, once: it is there for
+// either setting, and offers itself only while the server is set to one tool.
+func (m *MCPManager) registerWholeTool(server string, taken map[string]bool) {
+	m.mu.Lock()
+	if m.whole == nil {
+		m.whole = map[string]*mcpServerTool{}
+	}
+	if _, ok := m.whole[server]; ok {
+		m.mu.Unlock()
+		return
+	}
+	name := sanitizeToolName(server)
+	if name == "" || taken[name] || IsReservedToolName(name) {
+		name = sanitizeToolName(server + "_mcp")
+	}
+	if name == "" || taken[name] || IsReservedToolName(name) {
+		m.mu.Unlock()
+		Log("[mcp] %s: no free name to offer its tools as one tool; they stay offered one by one", server)
+		return
+	}
+	if _, clash := FindChatTool(name); clash {
+		m.mu.Unlock()
+		Log("[mcp] %s: %q is already a tool; its tools stay offered one by one", server, name)
+		return
+	}
+	w := &mcpServerTool{mgr: m, server: server, name: name}
+	m.whole[server] = w
+	m.mu.Unlock()
+	RegisterChatTool(w)
 }
 
 // namesHeldElsewhere is every tool name a server's tools must not take: other
@@ -1328,6 +1489,16 @@ const maxLLMToolNameBytes = 128
 // sanitize to the same string do not collide. Callers iterate in sorted order,
 // which keeps the assignment stable across reloads — a name that moved between
 // restarts would invalidate any agent allow-list that referenced it.
+// MCPToolShape is how one tool a remote MCP server offers is shown to an
+// agent, for a server whose tools this manager does not register (a person's
+// own, core/mcppersonal): its name (server_tool, free of taken), its
+// parameters and which are required, and whether a call asks first. The same
+// rules as the servers it does register, so the two cannot drift apart.
+func MCPToolShape(server, raw string, schema map[string]any, taken map[string]bool) (name string, params map[string]ToolParam, required []string, confirm bool) {
+	params, required = mcpMapSchema(schema)
+	return mcpExposedName(server, raw, taken), params, required, mcpLooksMutating(raw)
+}
+
 func mcpExposedName(server, raw string, taken map[string]bool) string {
 	base := sanitizeToolName(server + "_" + raw)
 	if base == "" {
@@ -1536,6 +1707,107 @@ func (t *mcpProxyTool) NeedsConfirm() bool { return t.confirm }
 
 // IsInternetTool drops these from private-mode sessions.
 func (t *mcpProxyTool) IsInternetTool() bool { return true }
+
+// SchemaWithSession offers nothing while the server's tools are offered as
+// one (DynamicChatTool): an agent's catalog then has the server's one tool
+// rather than both.
+func (t *mcpProxyTool) SchemaWithSession(sess *ToolSession) (string, map[string]ToolParam) {
+	if t.mgr.isOneTool(t.server) {
+		return "", nil
+	}
+	return t.desc, t.params
+}
+
+// RedirectTo is the server's one tool while it is set to one tool, so an
+// agent listing this tool keeps reaching it.
+func (t *mcpProxyTool) RedirectTo(*ToolSession) []string {
+	if !t.mgr.isOneTool(t.server) {
+		return nil
+	}
+	t.mgr.mu.Lock()
+	w := t.mgr.whole[t.server]
+	t.mgr.mu.Unlock()
+	if w == nil {
+		return nil
+	}
+	return []string{w.name}
+}
+
+// mcpServerTool is one server's tools offered as one tool: action=<tool>,
+// each action the server's own tool. Built from the server's proxies on
+// each look, so a reconnect that changes what the server offers changes it.
+type mcpServerTool struct {
+	mgr    *MCPManager
+	server string
+	name   string
+}
+
+// grouped is the server's tools as a GroupedTool, built now.
+func (t *mcpServerTool) grouped() *GroupedTool {
+	t.mgr.mu.Lock()
+	var proxies []*mcpProxyTool
+	for _, p := range t.mgr.proxies {
+		if p.server == t.server {
+			proxies = append(proxies, p)
+		}
+	}
+	t.mgr.mu.Unlock()
+	sort.Slice(proxies, func(i, j int) bool { return proxies[i].rawName < proxies[j].rawName })
+	g := NewGroupedTool(t.name, "The tools of the "+t.server+" MCP server, one action each.")
+	for _, p := range proxies {
+		p := p
+		g.AddAction(p.rawName, &GroupedToolAction{
+			Description:  p.desc,
+			Params:       p.params,
+			Required:     p.required,
+			Caps:         []Capability{CapNetwork, CapRead},
+			NeedsConfirm: p.confirm,
+			Handler:      func(args map[string]any, sess *ToolSession) (string, error) { return p.RunWithSession(args, sess) },
+		})
+	}
+	return g
+}
+
+func (t *mcpServerTool) Name() string                 { return t.name }
+func (t *mcpServerTool) Desc() string                 { return t.grouped().Desc() }
+func (t *mcpServerTool) Params() map[string]ToolParam { return t.grouped().Params() }
+func (t *mcpServerTool) Category() string             { return MCPToolCategory(t.server) }
+func (t *mcpServerTool) Caps() []Capability           { return []Capability{CapNetwork, CapRead} }
+func (t *mcpServerTool) IsInternetTool() bool         { return true }
+func (t *mcpServerTool) NeedsConfirm() bool           { return t.grouped().NeedsConfirm() }
+func (t *mcpServerTool) Run(args map[string]any) (string, error) {
+	return t.grouped().RunWithSession(args, nil)
+}
+func (t *mcpServerTool) RunWithSession(args map[string]any, sess *ToolSession) (string, error) {
+	return t.grouped().RunWithSession(args, sess)
+}
+
+// SchemaWithSession offers it only while the server is set to one tool.
+func (t *mcpServerTool) SchemaWithSession(*ToolSession) (string, map[string]ToolParam) {
+	if !t.mgr.isOneTool(t.server) {
+		return "", nil
+	}
+	g := t.grouped()
+	return g.Desc(), g.Params()
+}
+
+// RedirectTo is the server's own tools while it is not set to one tool, so
+// an agent listing this one keeps reaching them.
+func (t *mcpServerTool) RedirectTo(*ToolSession) []string {
+	if t.mgr.isOneTool(t.server) {
+		return nil
+	}
+	t.mgr.mu.Lock()
+	defer t.mgr.mu.Unlock()
+	var out []string
+	for name, p := range t.mgr.proxies {
+		if p.server == t.server {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
 
 // --- reference source exposure ---
 

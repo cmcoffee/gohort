@@ -67,6 +67,7 @@ func (a *AdminApp) governanceSections() []ui.Section {
 				EmptyText: "No user-owned credentials. When a user creates one on their Extensions page, it appears here.",
 			},
 		},
+		personalMCPServersSection(),
 		{
 			Title:    "Global tools",
 			Subtitle: "What this deployment publishes, and who may take it.",

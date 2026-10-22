@@ -7,11 +7,14 @@
 package account
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/mcppersonal"
 	"github.com/cmcoffee/gohort/core/ui"
 	"strconv"
 )
@@ -169,6 +172,16 @@ func (T *Account) handleMCPConnect(w http.ResponseWriter, r *http.Request) {
 			"Close this window and try Connect again from Extensions.")
 		return
 	}
+	// One of the person's own MCP servers (Extensions > MCP servers).
+	if r.URL.Query().Get("own") == "1" {
+		authURL, err := mcppersonal.StartConnect(user, server, mcpConnectCallbackURI(r))
+		if err != nil {
+			mcpConnectResultPage(w, "Could not start signing in to "+server+":\n\n"+err.Error())
+			return
+		}
+		http.Redirect(w, r, authURL, http.StatusFound)
+		return
+	}
 	cfg, found := MCP().Load(server)
 	switch {
 	case !found:
@@ -214,6 +227,11 @@ func (T *Account) handleMCPCallback(w http.ResponseWriter, r *http.Request) {
 		mcpConnectResultPage(w, "Could not complete the connection:\n\n"+err.Error())
 		return
 	}
+	// A sign-in to one of their own servers: ask it what it offers now, so
+	// its tools reach their agents without a Check by hand.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 45*time.Second)
+	mcppersonal.AfterConnect(ctx, user)
+	cancel()
 	mcpConnectResultPage(w, "Connected. You can close this tab and return to your conversation.")
 }
 
@@ -259,6 +277,7 @@ func (T *Account) handleConnections(w http.ResponseWriter, r *http.Request) {
 		conns := Secure().PerUserConnectionsFor(user)
 		conns = append(conns, Secure().OwnConnectionsFor(user)...)
 		conns = append(conns, MCP().PerUserOAuthConnectionsFor(user)...)
+		conns = append(conns, mcppersonal.Connections(user)...)
 		if conns == nil {
 			conns = []PerUserConnection{}
 		}
@@ -300,6 +319,16 @@ func (T *Account) handleConnections(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		// One of their own MCP servers: Disconnect only, as below.
+		if body.Kind == mcppersonal.ConnKind {
+			if !body.Disconnect {
+				http.Error(w, "this server connects via OAuth: use Connect", http.StatusBadRequest)
+				return
+			}
+			mcppersonal.Disconnect(user, body.Name)
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}

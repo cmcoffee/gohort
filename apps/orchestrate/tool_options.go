@@ -129,6 +129,11 @@ func availableWorkerToolOptions(user string) []ui.SelectOption {
 		if isSupersededWorkerTool(t.Name()) {
 			continue // covered by a grouped tool (image/video) — registered but out of the default pool
 		}
+		// Offered right now under other names (an MCP server's tools, one
+		// way or the other as it is set): the picker shows the shape that is.
+		if rt, ok := t.(RedirectedTool); ok && len(rt.RedirectTo(nil)) > 0 {
+			continue
+		}
 		defs = append(defs, ChatToolToAgentToolDefWithSession(t, nil))
 	}
 	defs = FilterToolsByCaps(defs, []Capability{CapRead, CapNetwork})

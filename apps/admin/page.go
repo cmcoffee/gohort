@@ -73,7 +73,7 @@ var sectionGroup = map[string]string{
 	"User-owned credentials": "Governance", "Global tools": "Governance",
 	"User-owned agents": "Governance", "User-owned pipelines": "Governance",
 	"User-owned machines": "Governance", "Pending promotions": "Governance",
-	"Personal integrations": "Governance",
+	"Personal integrations": "Governance", "Personal MCP servers": "Governance",
 }
 
 // sectionTab is the tab a section lands on: its entry in sectionGroup, else

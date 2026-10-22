@@ -575,7 +575,7 @@ func GetAgentToolsWithSession(sess *ToolSession, names ...string) ([]AgentToolDe
 	// four begun on one was continued on the other and reported as finished
 	// after two. The grant stays valid: an agent granted ONLY the specific
 	// backend keeps exactly that access, because nothing supersedes it there.
-	names = dropSupersededNames(sess, names)
+	names = dropSupersededNames(sess, redirectedNames(sess, names))
 	var tools []AgentToolDef
 	var secureCache []AgentToolDef // built lazily, only when a name isn't in the static registry
 	secureBuilt := false
@@ -715,6 +715,40 @@ type SupersedingTool interface {
 	ChatTool
 	// Supersedes reports that this tool covers everything the named one does.
 	Supersedes(name string) bool
+}
+
+// redirectedNames follows each name to the names it is offered under for this
+// caller (RedirectedTool), keeping the order and dropping repeats.
+func redirectedNames(sess *ToolSession, names []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(names))
+	add := func(n string) {
+		if !seen[n] {
+			seen[n] = true
+			out = append(out, n)
+		}
+	}
+	for _, n := range names {
+		ct, ok := FindChatTool(n)
+		if !ok {
+			add(n)
+			continue
+		}
+		rt, ok := ct.(RedirectedTool)
+		if !ok {
+			add(n)
+			continue
+		}
+		to := rt.RedirectTo(sess)
+		if len(to) == 0 {
+			add(n)
+			continue
+		}
+		for _, t := range to {
+			add(t)
+		}
+	}
+	return out
 }
 
 // dropSupersededNames removes any requested name that another requested tool

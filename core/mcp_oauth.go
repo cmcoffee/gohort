@@ -31,6 +31,26 @@ import (
 // token). Per-call context still bounds each request.
 var mcpOAuthHTTP = &http.Client{Timeout: 30 * time.Second}
 
+// mcpPublicOnlyKey marks a context whose OAuth calls may reach public
+// addresses only: a person's own server, whose metadata names the
+// endpoints this machine then calls, and could name one on this network.
+type mcpPublicOnlyKey struct{}
+
+func mcpPublicOnly(ctx context.Context) context.Context {
+	return context.WithValue(ctx, mcpPublicOnlyKey{}, true)
+}
+
+// mcpOAuthDo sends one OAuth-side request, on the public-only client when its
+// context says so, checked on the address actually dialled.
+func mcpOAuthDo(req *http.Request) (*http.Response, error) {
+	if public, _ := req.Context().Value(mcpPublicOnlyKey{}).(bool); public {
+		c := NewPublicHTTPClient()
+		c.Timeout = mcpOAuthHTTP.Timeout
+		return c.Do(req)
+	}
+	return mcpOAuthHTTP.Do(req)
+}
+
 // mcpOAuthConfig is the server-level OAuth config, shared across users:
 // the (dynamically registered) client + discovered endpoints + the
 // canonical resource URI. Persisted encrypted under <server>__oauthcfg.
@@ -61,6 +81,9 @@ type mcpOAuthConfig struct {
 	// with no way to register anything by hand because the client was
 	// created programmatically.
 	RegisteredRedirects []string `json:"registered_redirects,omitempty"`
+	// PublicOnly holds every call for this client, its token refreshes
+	// included, to public addresses (mcpOAuthDo).
+	PublicOnly bool `json:"public_only,omitempty"`
 }
 
 // knowsRedirect reports whether the registered client will accept this
@@ -197,7 +220,7 @@ func mcpProbeWWWAuthPRM(ctx context.Context, serverURL string) string {
 	if err != nil {
 		return ""
 	}
-	resp, err := mcpOAuthHTTP.Do(req)
+	resp, err := mcpOAuthDo(req)
 	if err != nil {
 		return ""
 	}
@@ -307,7 +330,7 @@ func mcpRegisterClient(ctx context.Context, registrationEndpoint string, redirec
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	resp, err := mcpOAuthHTTP.Do(req)
+	resp, err := mcpOAuthDo(req)
 	if err != nil {
 		return "", "", err
 	}
@@ -373,6 +396,9 @@ func mcpAuthorizeURL(cfg mcpOAuthConfig, redirectURI, state, challenge string) s
 
 // mcpExchangeCode swaps an authorization code (+ PKCE verifier) for tokens.
 func mcpExchangeCode(ctx context.Context, cfg mcpOAuthConfig, code, verifier, redirectURI string) (mcpOAuthToken, error) {
+	if cfg.PublicOnly {
+		ctx = mcpPublicOnly(ctx)
+	}
 	form := url.Values{}
 	form.Set("grant_type", "authorization_code")
 	form.Set("code", code)
@@ -389,6 +415,9 @@ func mcpExchangeCode(ctx context.Context, cfg mcpOAuthConfig, code, verifier, re
 // mcpRefreshAccess renews an access token using the refresh token. The
 // old refresh token is retained if the AS doesn't rotate one.
 func mcpRefreshAccess(ctx context.Context, cfg mcpOAuthConfig, prev mcpOAuthToken) (mcpOAuthToken, error) {
+	if cfg.PublicOnly {
+		ctx = mcpPublicOnly(ctx)
+	}
 	if prev.RefreshToken == "" {
 		return mcpOAuthToken{}, fmt.Errorf("no refresh token")
 	}
@@ -413,7 +442,7 @@ func mcpTokenRequest(ctx context.Context, endpoint string, form url.Values, prev
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
-	resp, err := mcpOAuthHTTP.Do(req)
+	resp, err := mcpOAuthDo(req)
 	if err != nil {
 		return tok, err
 	}
@@ -451,7 +480,7 @@ func mcpGetJSON(ctx context.Context, url string, out any) error {
 		return err
 	}
 	req.Header.Set("Accept", "application/json")
-	resp, err := mcpOAuthHTTP.Do(req)
+	resp, err := mcpOAuthDo(req)
 	if err != nil {
 		return err
 	}
