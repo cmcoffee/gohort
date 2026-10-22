@@ -57,4 +57,13 @@ check('the state is visually distinct from still-waiting and from failed-to-send
   /\.ui-agent-interjection-undelivered \.ui-agent-msg-body/.test(css) &&
   /\.ui-agent-interjection-note \{/.test(css));
 
+// A note resent as the next message went: it reads delivered, and its Edit and
+// Delete, which act on a queue the ended turn no longer has, go with it.
+var resend = panel.slice(panel.indexOf('function sendUnreadNotes('));
+resend = resend.slice(0, resend.indexOf('function enableInput'));
+check('a resent note is marked delivered',
+  /sendMessage\(\);[\s\S]*unreadBubbles\.forEach\(function\(b\) \{ b\.classList\.add\('consumed'\); \}\)/.test(resend));
+check('the bubbles marked are the ones this marking found',
+  /unreadBubbles = \[\];[\s\S]{0,400}?unreadBubbles\.push\(b\)/.test(panel));
+
 process.exit(fail ? 1 : 0);

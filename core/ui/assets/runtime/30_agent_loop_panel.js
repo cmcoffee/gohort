@@ -5678,13 +5678,17 @@
     // to the agent with the next message — dropping the bubble would claim the
     // opposite. The honest thing is to say which of the two happened.
     // Returns the text of each note it marked, oldest first.
+    // unreadBubbles are the ones the last marking found, for sendUnreadNotes.
+    var unreadBubbles = [];
     function markUndeliveredInterjections(why) {
       var texts = [];
+      unreadBubbles = [];
       if (!convoLog) return texts;
       var pending = convoLog.querySelectorAll('.ui-agent-interjection:not(.consumed):not(.ui-agent-interjection-undelivered)');
       for (var i = 0; i < pending.length; i++) {
         var b = pending[i];
         b.classList.add('ui-agent-interjection-undelivered');
+        unreadBubbles.push(b);
         var body = b.querySelector('.ui-agent-msg-body') || b;
         var t = (b.dataset.noteText || body.textContent || '').trim();
         if (t) texts.push(t);
@@ -5709,6 +5713,11 @@
       window.uiSuppressNextUserBubble = true;
       sendingNotes = true;
       try { sendMessage(); } finally { sendingNotes = false; }
+      // They went as that message, so they are delivered, and no longer in a
+      // queue to edit or delete: a bubble still offering Edit tried to lock a
+      // note in the queue of a turn that had ended.
+      unreadBubbles.forEach(function(b) { b.classList.add('consumed'); });
+      unreadBubbles = [];
       inputArea.value = draft;
       pendingAttachments = attached;
       renderAttachments();
