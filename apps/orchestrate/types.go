@@ -864,6 +864,12 @@ type AgentRecord struct {
 	// otherwise. Only meaningful with OwnedBy set.
 	KeepsMemory bool `json:"keeps_memory,omitempty"`
 
+	// GraphSize is how big its memory graph may grow: "" is standard, and
+	// GraphSizeLarge is for an agent whose job is mapping something (a
+	// codebase, a system), whose graph outgrows a conversation's people and
+	// projects. The caps themselves are deployment tunables (core/graphstore).
+	GraphSize string `json:"graph_size,omitempty"`
+
 	// PendingApproval holds a freshly-authored agent OUT of service until the
 	// owner approves it. Set when a dispatched Builder mints an agent on a
 	// parent's behalf: the record is saved but excluded from dispatch / run /

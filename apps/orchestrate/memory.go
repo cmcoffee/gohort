@@ -61,6 +61,11 @@ func renderRulesPromptSection(rules string) string {
 // tail made the next new conversation 5.2s instead of 0.5s.
 func prependAgentContext(base string, agent AgentRecord, facts []MemoryFact, notes OperatingNotes) string {
 	out := base
+	// An agent that maps something is told where its map lives, just above the
+	// persona. Fixed text, so it keeps the prompt cacheable.
+	if m := renderMapPromptSection(agent); m != "" {
+		out = m + out
+	}
 	// Working notes sit just below the facts block (weaker than durable facts,
 	// stronger than nothing) and above the persona — running state the agent
 	// maintains for itself. Advisory framing lives in the block copy.

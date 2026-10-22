@@ -336,7 +336,7 @@ var patchAgentFields = map[string]bool{
 	// writes all of them (and consult_lead), and leaving one off refused
 	// that choice with a 400.
 	"lead_model": true, "lead_plans": true, "lead_review": true, "memory_mode": true, "session_recall": true, "disable_explicit": true,
-	"disable_inferred": true, "disable_compaction": true, "recall_hints": true, "keeps_memory": true,
+	"disable_inferred": true, "disable_compaction": true, "recall_hints": true, "keeps_memory": true, "graph_size": true,
 	"capture_prompt": true,
 	"allow_explorer": true, "explorer_hard_cap": true,
 	"channel": true, "fleet": true, "tag_name": true,

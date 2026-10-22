@@ -116,6 +116,9 @@ type Appliance struct {
 	// this adds is what the target is as a whole, what a good answer looks like
 	// for it, and what "absent" means here.
 	Domain string `json:"domain,omitempty"`
+	// MapSize is how big this system's map may grow: "standard", "large", or
+	// "" for by type, which is Large for a repository and Standard otherwise.
+	MapSize string `json:"map_size,omitempty"`
 	// LinkedRepos (system types only) are repo-appliance IDs whose ingested
 	// code THIS system's investigations may search — the owner's declaration
 	// that this box runs that code. The linked repos' search/read tools join

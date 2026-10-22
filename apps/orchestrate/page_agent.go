@@ -342,6 +342,13 @@ func (ed *agentEditor) formFields() {
 				Help: "On, it keeps pinned facts and searchable findings between runs. Off, each run starts from its prompt and knowledge alone.",
 				Detail: "Its memory is its own: the parent never reads it, so what this sub-agent builds up (a map of a system, where things are, what it checked last time) stays out of the parent's context. The parent gets only what it reports back.\n\n" +
 					"Turn it on for a sub-agent that gets better at its job by remembering, and leave it off for a one-shot specialist, where notes from an earlier run would colour a fresh lookup. A sub-agent that inherits its parent's tools always keeps memory."},
+			ui.FormField{Field: "graph_size", Type: "select", Label: "Memory graph size", ShowWhen: "keeps_memory",
+				Options: []ui.SelectOption{
+					{Value: "", Label: "Standard"},
+					{Value: "large", Label: "Large: for an agent that maps something"},
+				},
+				Help:   "How many things and relationships its memory graph keeps before the least recently used go.",
+				Detail: "Standard suits an agent that remembers people, projects and preferences. Large is for one whose job is building a map, of a codebase or a system, which records far more; it is also told, in its prompt, to keep that map in its graph memory as it goes. The two sizes are set in Admin > Tunables > Memory."},
 		)
 	}
 	if !ed.subAgent {
@@ -382,6 +389,13 @@ func (ed *agentEditor) formFields() {
 			ui.FormField{Field: "recall_hints", Type: "toggle", Label: "Recall hints",
 				Help:   "Each turn, surface a scored list of knowledge that looks relevant to the message.",
 				Detail: "Pointers only, a title plus a relevance, not the content. The agent pulls one with recall if it fits, so it stops missing material it should look up. Best for agents with a real corpus: attached collections, uploaded docs. The thresholds are deployment tunables."},
+			ui.FormField{Field: "graph_size", Type: "select", Label: "Memory graph size",
+				Options: []ui.SelectOption{
+					{Value: "", Label: "Standard"},
+					{Value: "large", Label: "Large: for an agent that maps something"},
+				},
+				Help:   "How many things and relationships its memory graph keeps before the least recently used go.",
+				Detail: "Standard suits an agent that remembers people, projects and preferences. Large is for one whose job is building a map, of a codebase or a system, which records far more; it is also told, in its prompt, to keep that map in its graph memory as it goes. The two sizes are set in Admin > Tunables > Memory."},
 			// (disable_skills toggle removed — redundant: skills only fire when a
 			// skill is ATTACHED (AllowedSkills), so "no skills" = attach none; the
 			// per-turn Clean toggle covers ad-hoc suppression. Field kept for the

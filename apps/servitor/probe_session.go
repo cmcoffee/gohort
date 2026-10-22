@@ -2694,6 +2694,8 @@ func (pr *probeRun) chatInvestigate() probeAction {
 		ScopeUser: applianceMemScope(pr.appliance.ID),
 		SessionID: pr.id,
 	}
+	// The map is sized before the investigator writes to it.
+	sizeMap(pr.c.orch, pr.appliance)
 	pr.c.leadLoop = &orchestrate.AgentLoopOverrides{
 		MaxRounds:   75,
 		SerialTools: true,

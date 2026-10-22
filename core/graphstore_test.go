@@ -407,3 +407,38 @@ func TestGraphRelSlug(t *testing.T) {
 		t.Fatalf("rel not slugged: %q", out[0].Rel)
 	}
 }
+
+// A graph its owner made Large keeps up to the Large cap; every other graph
+// keeps to the standard one. A Large cap below the standard one is ignored, and
+// a standard cap of 0 (off) stays off.
+func TestALargeGraphKeepsToTheLargeCap(t *testing.T) {
+	db := memDB(t)
+	db.Set(WebTable, TunableGraphEntityCap, float64(3))
+	db.Set(WebTable, TunableGraphEntityCapLarge, float64(5))
+	SetTunablesDB(db)
+	defer SetTunablesDB(nil)
+	RegisterGraphSizer(func(_ Database, ns string) bool { return ns == "agent:sized-large" })
+
+	fill := func(ns string, n int) int {
+		for i := 0; i < n; i++ {
+			UpsertGraphEntity(db, ns, "thing", fmt.Sprintf("node %d", i), nil, nil)
+		}
+		return len(ListGraphEntities(db, ns))
+	}
+	if got := fill("agent:sized-large", 8); got != 5 {
+		t.Errorf("a Large graph holds %d, want the Large cap of 5", got)
+	}
+	if got := fill("agent:sized-standard", 8); got != 3 {
+		t.Errorf("a standard graph holds %d, want 3", got)
+	}
+	db.Set(WebTable, TunableGraphEntityCapLarge, float64(2))
+	InvalidateTunables()
+	if got := graphCap(db, "agent:sized-large", TunableGraphEntityCap, TunableGraphEntityCapLarge); got != 3 {
+		t.Errorf("a Large cap below the standard one should not shrink it: %d", got)
+	}
+	db.Set(WebTable, TunableGraphEntityCap, float64(0))
+	InvalidateTunables()
+	if got := graphCap(db, "agent:sized-large", TunableGraphEntityCap, TunableGraphEntityCapLarge); got != 0 {
+		t.Errorf("a cap switched off stays off for Large graphs: %d", got)
+	}
+}

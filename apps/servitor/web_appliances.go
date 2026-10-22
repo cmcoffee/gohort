@@ -360,7 +360,11 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 			req.LevelsSet = true
 		}
 		req.FullAccess = keepReached(cleanSystemRecipients(req.FullAccess, owner), req.AllowedUsers)
+		if req.MapSize != "large" && req.MapSize != "standard" {
+			req.MapSize = ""
+		}
 		targetUDB.Set(applianceTable, req.ID, req)
+		sizeMap(servitorOrch(), req)
 		// Keep the global shared index in sync with the record's Shared flag,
 		// and the named one with who it is shared with by name or team.
 		T.setApplianceShared(req.ID, owner, req.Shared)

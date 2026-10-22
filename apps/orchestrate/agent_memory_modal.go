@@ -594,7 +594,17 @@ const agentMemoryModalTemplate = `<script>
         var ents = (data && data.entities) || [];
         var counts = (data && data.counts) || {};
         if (counts.entities != null) {
-          graphTitle.textContent = 'Graph Memory (' + counts.entities + ' entit' + (counts.entities === 1 ? 'y' : 'ies') + ', ' + (counts.edges || 0) + ' link' + (counts.edges === 1 ? '' : 's') + ')';
+          // Beside how big it is, how big it may grow, and whether it is a Large
+          // graph (a mapping agent's, a repository's map).
+          var caps = (data && data.caps) || {};
+          var num = function(v) { return Number(v || 0).toLocaleString(); };
+          var part = function(have, cap, one, many) {
+            if (cap) return num(have) + ' of ' + num(cap) + ' ' + many;
+            return num(have) + ' ' + (have === 1 ? one : many);
+          };
+          graphTitle.textContent = 'Graph Memory' + (data.large ? ': Large' : '') + ' (' +
+            part(counts.entities, caps.entities, 'entity', 'entities') + ', ' +
+            part(counts.edges || 0, caps.edges, 'link', 'links') + ')';
         }
         if (!ents.length) {
           var empty = document.createElement('div');
