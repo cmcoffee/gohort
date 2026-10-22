@@ -342,13 +342,12 @@ func (ed *agentEditor) formFields() {
 				Help: "On, it keeps pinned facts and searchable findings between runs. Off, each run starts from its prompt and knowledge alone.",
 				Detail: "Its memory is its own: the parent never reads it, so what this sub-agent builds up (a map of a system, where things are, what it checked last time) stays out of the parent's context. The parent gets only what it reports back.\n\n" +
 					"Turn it on for a sub-agent that gets better at its job by remembering, and leave it off for a one-shot specialist, where notes from an earlier run would colour a fresh lookup. A sub-agent that inherits its parent's tools always keeps memory."},
-			ui.FormField{Field: "graph_size", Type: "select", Label: "Memory graph size", ShowWhen: "keeps_memory",
+			ui.FormField{Field: "memory_mode", Type: "select", Label: "What its memory is for", ShowWhen: "keeps_memory",
 				Options: []ui.SelectOption{
-					{Value: "", Label: "Standard"},
-					{Value: "large", Label: "Large: for an agent that maps something"},
+					{Value: "agent", Label: "Lessons: what works for its job"},
+					{Value: "cartographer", Label: "Cartographer: lessons + a map of what it works on"},
 				},
-				Help:   "How many things and relationships its memory graph keeps before the least recently used go.",
-				Detail: "Standard suits an agent that remembers people, projects and preferences. Large is for one whose job is building a map, of a codebase or a system, which records far more; it is also told, in its prompt, to keep that map in its graph memory as it goes. The two sizes are set in Admin > Tunables > Memory."},
+				Help: "A Cartographer builds a map in its graph memory as it goes, and keeps it current."},
 		)
 	}
 	if !ed.subAgent {
@@ -366,12 +365,13 @@ func (ed *agentEditor) formFields() {
 				Options: []ui.SelectOption{
 					{Value: "agent", Label: "Agent: generalized lessons only"},
 					{Value: "chatbot", Label: "Chatbot: lessons + user personalization"},
+					{Value: "cartographer", Label: "Cartographer: lessons + a map of what it works on"},
 				},
-				Help:   "Shapes what the agent pins with remember (pin=true).",
-				Detail: "Agent, the default, pins generalized lessons only; specifics go to remember (pin=false), which is searchable rather than always in prompt. Chatbot pins the same, plus user personalization and conversation notes."},
+				Help:   "What its memory is for: lessons, the people it talks with, or a map.",
+				Detail: "Agent, the default, pins generalized lessons only; specifics go to remember (pin=false), which is searchable rather than always in prompt. Chatbot pins the same, plus user personalization and conversation notes.\n\nCartographer pins lessons like Agent, and builds a map of what it works on in its graph memory: the parts of a codebase or system and how they connect, recorded as it finds them and kept current. For an agent whose job is mapping, and one you attach to other agents as a Source so they can read the map."},
 			ui.FormField{Field: "session_recall", Type: "select", Label: "Session recall",
 				Options: []ui.SelectOption{
-					{Value: "", Label: "Default: on in Chatbot mode, off in Agent mode"},
+					{Value: "", Label: "Default: on in Chatbot mode, off in Agent and Cartographer modes"},
 					{Value: "on", Label: "On"},
 					{Value: "off", Label: "Off"},
 				},
@@ -389,13 +389,6 @@ func (ed *agentEditor) formFields() {
 			ui.FormField{Field: "recall_hints", Type: "toggle", Label: "Recall hints",
 				Help:   "Each turn, surface a scored list of knowledge that looks relevant to the message.",
 				Detail: "Pointers only, a title plus a relevance, not the content. The agent pulls one with recall if it fits, so it stops missing material it should look up. Best for agents with a real corpus: attached collections, uploaded docs. The thresholds are deployment tunables."},
-			ui.FormField{Field: "graph_size", Type: "select", Label: "Memory graph size",
-				Options: []ui.SelectOption{
-					{Value: "", Label: "Standard"},
-					{Value: "large", Label: "Large: for an agent that maps something"},
-				},
-				Help:   "How many things and relationships its memory graph keeps before the least recently used go.",
-				Detail: "Standard suits an agent that remembers people, projects and preferences. Large is for one whose job is building a map, of a codebase or a system, which records far more; it is also told, in its prompt, to keep that map in its graph memory as it goes. The two sizes are set in Admin > Tunables > Memory."},
 			// (disable_skills toggle removed — redundant: skills only fire when a
 			// skill is ATTACHED (AllowedSkills), so "no skills" = attach none; the
 			// per-turn Clean toggle covers ad-hoc suppression. Field kept for the

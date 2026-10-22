@@ -56,12 +56,6 @@ const (
 	// least-recently-updated live edges are evicted. Tombstoned (retired)
 	// edges are bounded separately by tombstone retention. 0 disables.
 	TunableGraphEdgeCap = "tune_graph_edge_cap"
-	// TunableGraphEntityCapLarge / TunableGraphEdgeCapLarge are the caps of a
-	// graph its owner made Large (RegisterGraphSizer): a map of a codebase or
-	// a system holds far more than a conversation's people and projects. A
-	// standard cap of 0 (off) stays off for Large graphs too.
-	TunableGraphEntityCapLarge = "tune_graph_entity_cap_large"
-	TunableGraphEdgeCapLarge   = "tune_graph_edge_cap_large"
 )
 
 func init() {
@@ -75,62 +69,15 @@ func init() {
 		Help:   "Max live relationships in one agent's memory graph.",
 		Detail: "Past the cap, the least-recently-updated edges are evicted.",
 		Kind:   KindInt, Default: 8000, Min: 0, Max: 50000})
-	RegisterTunable(TunableSpec{Key: TunableGraphEntityCapLarge, Category: "Memory",
-		Label:  "Graph entity cap, Large graphs",
-		Help:   "Max entities in a graph set to Large: an agent's or a system map's.",
-		Detail: "Every write reads the whole graph, so a very large cap makes each one slower. Below the standard cap, the standard cap applies.",
-		Kind:   KindInt, Default: 10000, Min: 0, Max: 50000})
-	RegisterTunable(TunableSpec{Key: TunableGraphEdgeCapLarge, Category: "Memory",
-		Label:  "Graph edge cap, Large graphs",
-		Help:   "Max live relationships in a graph set to Large.",
-		Detail: "Below the standard cap, the standard cap applies.",
-		Kind:   KindInt, Default: 40000, Min: 0, Max: 200000})
 }
 
-// graphSizers answer whether a graph is Large, for whoever owns it: an agent
-// for its own graph, an app for the graphs it keeps. Registered at init and
-// only read after, so no lock.
-var graphSizers []func(db Database, namespace string) bool
-
-// RegisterGraphSizer adds an answer to "is this graph Large?". The store does
-// not know what an agent or a system map is; the app that owns the graph does.
-// Any sizer saying yes makes it Large.
-func RegisterGraphSizer(fn func(db Database, namespace string) bool) {
-	if fn != nil {
-		graphSizers = append(graphSizers, fn)
-	}
-}
-
-// graphCap is the cap for one graph: the standard one, or the Large one when
-// its owner says so and it is the larger. 0 is off.
-func graphCap(db Database, namespace, standard, large string) int {
-	limit := TuneInt(standard)
-	if limit <= 0 {
-		return limit
-	}
-	if graphIsLarge(db, namespace) {
-		if l := TuneInt(large); l > limit {
-			return l
-		}
-	}
-	return limit
-}
-
-func graphIsLarge(db Database, namespace string) bool {
-	for _, fn := range graphSizers {
-		if fn(db, namespace) {
-			return true
-		}
-	}
-	return false
-}
-
-// GraphCaps is how big one graph may grow, for showing beside how big it is:
-// its entity and edge caps (0 is no cap) and whether its owner made it Large.
-func GraphCaps(db Database, namespace string) (entities, edges int, large bool) {
-	return graphCap(db, namespace, TunableGraphEntityCap, TunableGraphEntityCapLarge),
-		graphCap(db, namespace, TunableGraphEdgeCap, TunableGraphEdgeCapLarge),
-		graphIsLarge(db, namespace)
+// GraphCaps is how big a graph may grow, for showing beside how big it is: its
+// entity and edge caps, 0 for no cap. Every graph has the same two. The store
+// has no index, so every lookup and write reads the whole graph (about 0.05ms
+// an entity on disk): past a few thousand that is felt on every call, which is
+// why there is one cap and not a larger one for maps.
+func GraphCaps() (entities, edges int) {
+	return TuneInt(TunableGraphEntityCap), TuneInt(TunableGraphEdgeCap)
 }
 
 // GraphEntity is one node: a thing the agent knows about. Identity is the
@@ -428,10 +375,7 @@ func UpsertGraphEntity(db Database, namespace, kind, name string, aliases []stri
 // already-loaded live list (post-insert) so no second scan is needed. No-op
 // when the cap is 0 (disabled).
 func enforceGraphEntityCap(db Database, namespace string, ents []GraphEntity) {
-	if len(ents) <= TuneInt(TunableGraphEntityCap) && TuneInt(TunableGraphEntityCap) > 0 {
-		return
-	}
-	limit := graphCap(db, namespace, TunableGraphEntityCap, TunableGraphEntityCapLarge)
+	limit := TuneInt(TunableGraphEntityCap)
 	if limit <= 0 || len(ents) <= limit {
 		return
 	}
@@ -454,7 +398,7 @@ func enforceGraphEntityCap(db Database, namespace string, ents []GraphEntity) {
 // (tombstone retention bounds them). Hard delete, logged — same rationale as
 // the entity cap. No-op when the cap is 0.
 func enforceGraphEdgeCap(db Database, namespace string) {
-	limit := graphCap(db, namespace, TunableGraphEdgeCap, TunableGraphEdgeCapLarge)
+	limit := TuneInt(TunableGraphEdgeCap)
 	if limit <= 0 {
 		return
 	}

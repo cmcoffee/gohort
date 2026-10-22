@@ -1548,21 +1548,6 @@
       var tierHint = el('div', {class: 'ui-form-hint'}, [rec.lead_tier_available
         ? 'Overrides Admin \u2192 LLMs \u2192 LLM Routing for this system alone.'
         : 'Overrides LLM Routing for this system alone. "Lead" is not offered: Servitor handles credentials and log contents, so it stays on the worker unless every configured model is private (Admin \u2192 LLMs \u2192 Model Privacy).']);
-      // How big this system's map may grow. Blank follows the type: a
-      // repository's map records far more than a machine's.
-      var mapSizeIn = el('select', {class: 'ui-form-input'});
-      [['', rec.type === 'repo' ? 'By type (Large, for a repository)' : 'By type (Standard)'],
-       ['standard', 'Standard'], ['large', 'Large']].forEach(function(o) {
-        var opt = el('option', {value: o[0]}, [o[1]]);
-        if ((rec.map_size || '') === o[0]) opt.selected = true;
-        mapSizeIn.appendChild(opt);
-      });
-      var mapSizeSection = el('div', {class: 'ui-servitor-app-section'}, [
-        el('label', {}, ['Map size']), mapSizeIn,
-        el('div', {class: 'ui-form-hint'}, [
-          'How many things and relationships this system\'s map keeps before the least recently used go. ' +
-          'Large suits a codebase or a project with many parts. Both sizes are set in Admin \u2192 Tunables \u2192 Memory.']),
-      ]);
       var tierSection = el('div', {class: 'ui-servitor-app-section'}, [
         el('label', {}, ['Model']),
         el('label', {class: 'ui-form-sublabel'}, ['Orchestrator']), orchTierIn,
@@ -1657,7 +1642,6 @@
         knowledgeSection,
         runAsSection,
         tierSection,
-        mapSizeSection,
         peerShareSection,
         shareSection,
       ]);
@@ -1697,7 +1681,6 @@
             worker_tier:       workTierIn.value,
             linked_repos:   lrSelected.slice(),
             domain:         domainIn.value.trim(),
-            map_size:       mapSizeIn.value,
             peer_name:      remotePeerIn.value,
             remote_id:      remoteIDIn.value,
             remote_kind:    remoteKindIn.value,

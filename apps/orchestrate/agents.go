@@ -76,10 +76,10 @@ func loadAgent(db Database, id string) (AgentRecord, bool) {
 			// including which fields the framework keeps for itself.
 			merged := resolveSeedShadow(seed, shadow)
 			merged = selfHealAllowedTools(db, merged)
-			return enforceSubAgentPosture(applyLegacyMode(migrateExposedFlag(merged))), true
+			return enforceSubAgentPosture(applyLegacyMode(migrateGraphSize(migrateExposedFlag(merged)))), true
 		}
 		// No shadow exists: return the framework default.
-		return enforceSubAgentPosture(applyLegacyMode(migrateExposedFlag(seed))), true
+		return enforceSubAgentPosture(applyLegacyMode(migrateGraphSize(migrateExposedFlag(seed)))), true
 	}
 	// Non-seed (user-created / cloned) agent: the DB record is authoritative,
 	// except for the fields a tracking instance has left to its shape.
@@ -95,7 +95,7 @@ func loadAgent(db Database, id string) (AgentRecord, bool) {
 		}
 		a = resolveShapeInstance(a)
 		a = selfHealAllowedTools(db, a)
-		a = enforceSubAgentPosture(applyLegacyMode(migrateExposedFlag(a)))
+		a = enforceSubAgentPosture(applyLegacyMode(migrateGraphSize(migrateExposedFlag(a))))
 		return a, true
 	}
 	return a, false

@@ -125,28 +125,6 @@ func applianceMemScope(applianceID string) string {
 	return "app:servitor:" + applianceID
 }
 
-// largeMap reports whether a's map is Large: as its owner set it, or by type,
-// where a repository's is, since a codebase's map records far more than a
-// machine's.
-func (a Appliance) largeMap() bool {
-	switch a.MapSize {
-	case "large":
-		return true
-	case "standard":
-		return false
-	}
-	return a.Type == "repo"
-}
-
-// sizeMap tells a's map store how big the map may grow, before anything
-// writes to it: past the standard cap, a write evicts.
-func sizeMap(orch *orchestrate.OrchestrateApp, a Appliance) {
-	if orch == nil || a.ID == "" {
-		return
-	}
-	orch.SetScopedGraphSize(orchestrate.AgentScope{AgentID: servitorInvestigatorAgentID, ScopeUser: applianceMemScope(a.ID)}, a.largeMap())
-}
-
 // clearApplianceScopedMemory wipes the appliance's orchestrate-scoped memory
 // (graph entity, Reference Memory, Explicit facts) and resets the one-time seed
 // marker, so servitor's "Clear Memory" is consistent across the dual-write
@@ -276,7 +254,6 @@ func recordScopedApplianceFact(a Appliance, key, value, ttl string) {
 		name = a.ID
 	}
 	scope := orchestrate.AgentScope{AgentID: servitorInvestigatorAgentID, ScopeUser: applianceMemScope(a.ID)}
-	sizeMap(orch, a)
 	_ = orch.SeedScopedGraphEntity(scope, "appliance", name, []string{a.ID}, map[string]string{key: value})
 }
 
@@ -310,7 +287,6 @@ func recordScopedLink(a Appliance, subjectKind, subject string, subjectAttrs map
 		return nil
 	}
 	scope := orchestrate.AgentScope{AgentID: servitorInvestigatorAgentID, ScopeUser: applianceMemScope(a.ID)}
-	sizeMap(orch, a)
 	return orch.SeedScopedGraphLink(scope, subjectKind, subject, subjectAttrs, relation, objectKind, object, note, replace)
 }
 
@@ -397,7 +373,6 @@ func seedApplianceMemoryFromFacts(udb Database, a Appliance) {
 		name = a.ID
 	}
 	scope := orchestrate.AgentScope{AgentID: servitorInvestigatorAgentID, ScopeUser: applianceMemScope(a.ID)}
-	sizeMap(orch, a)
 	if err := orch.SeedScopedGraphEntity(scope, "appliance", name, []string{a.ID}, attrs); err != nil {
 		return // leave unmarked so a later open retries
 	}

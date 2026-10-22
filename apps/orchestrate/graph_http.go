@@ -61,14 +61,13 @@ func (T *OrchestrateApp) handleAgentGraph(w http.ResponseWriter, r *http.Request
 		views = append(views, ev)
 	}
 	ec, edc := GraphCounts(udb, ns)
-	// How big it may grow, beside how big it is: a Large graph (a mapping
-	// agent's, a repository's map) says so, and a graph near its cap shows it.
-	capEnt, capEdge, large := GraphCaps(udb, ns)
+	// How big it may grow, beside how big it is, so a graph near its cap
+	// shows it.
+	capEnt, capEdge := GraphCaps()
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"counts":   map[string]int{"entities": ec, "edges": edc},
 		"caps":     map[string]int{"entities": capEnt, "edges": capEdge},
-		"large":    large,
 		"entities": views,
 	})
 }

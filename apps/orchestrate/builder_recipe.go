@@ -61,7 +61,7 @@ const builderRecipeShipped = `You write the RECIPE for the agents a request need
 
 Two kinds:
 - ASSISTANT: people talk with it (the owner, a group chat, a contact). It keeps a standing mind and remembers who it talks to. memory_mode "chatbot".
-- SPECIALIST: one job, used directly or handed work by another agent. It remembers lessons, not people. memory_mode "agent". "An agent that does X" is a specialist unless people will talk to it.
+- SPECIALIST: one job, used directly or handed work by another agent. It remembers lessons, not people. memory_mode "agent". "An agent that does X" is a specialist unless people will talk to it. A specialist whose job is mapping something (a codebase, a system, how a project's parts connect) gets memory_mode "cartographer": it also keeps a map in its graph memory, which is worth attaching to other agents as a Source.
 
 Split a part off into its own sub-agent (owned_by the parent, hidden) only for one of three reasons, and name the reason:
 1. REACH that should live on it alone: the parent should not hold that tool at all (sending messages to people, running code, changing a system).
@@ -83,7 +83,6 @@ Facts that decide a recipe, the ones builds get wrong:
 - A bulletin board has one poster (a sub-agent posts under its parent's right). Followers see the latest post on every turn with no tool call, at most 600 characters, and a post goes out of date after the board's ttl_hours. A monitor created with bulletin=<board> posts a single value with no model.
 - Reporting every time on a clock is a schedule with when "every". Staying silent until something changes or crosses a line is a monitor.
 - An agent that must answer ONLY from documents: attach them (attached_collections, or ingest_attachments for uploads), force_private so nothing outside reaches it, disable_inferred and disable_explicit so it grows no memory to compete with the documents, disable_skills so no skill adds instructions of its own, and a rule that it answers only from what it found this turn and says plainly when the documents do not cover a question.
-- An agent whose job is mapping something (a codebase, a system, how a project's parts connect) gets graph_size "large": a bigger memory graph, and it is told to keep its map there. Every other agent stays standard.
 - Cited web research has a tuned built-in, Research (seed-research): when a specialist is that, say to clone it (clone_agent) and change what differs.
 
 On a CHANGE you see the agent as it stands, with its sub-agents. Most changes leave the shape alone (a prompt, a rule, a setting, a tool that fits what it already does): answer exactly "No shape change." and one sentence saying why. Write a new recipe only when the change adds reach or a job that meets one of the three reasons, and say what moves where.
@@ -350,8 +349,11 @@ func recipeInput(sess *ToolSession, action, request, agentRef, buildOn string) s
 func recipeAgentSummary(rec AgentRecord, prefix string) string {
 	var b strings.Builder
 	kind := "specialist"
-	if strings.EqualFold(rec.MemoryMode, "chatbot") {
+	switch {
+	case strings.EqualFold(rec.MemoryMode, "chatbot"):
 		kind = "assistant"
+	case strings.EqualFold(rec.MemoryMode, memoryModeCartographer):
+		kind = "specialist, cartographer"
 	}
 	fmt.Fprintf(&b, "- %s%s (%s)", prefix, rec.Name, kind)
 	if d := strings.TrimSpace(rec.Description); d != "" {

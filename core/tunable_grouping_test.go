@@ -11,16 +11,14 @@ import "testing"
 // Every knob that governs the fact store or the memory graph belongs together.
 func TestMemoryKnobsAreFiledUnderMemory(t *testing.T) {
 	want := map[string]bool{
-		TunableFactGate:            true,
-		TunableFactSweepThreshold:  true,
-		TunableFactHardCap:         true,
-		TunableFactTombstoneDays:   true,
-		TunableStaleVolatileDays:   true,
-		TunableStaleSlowDays:       true,
-		TunableGraphEntityCap:      true,
-		TunableGraphEdgeCap:        true,
-		TunableGraphEntityCapLarge: true,
-		TunableGraphEdgeCapLarge:   true,
+		TunableFactGate:           true,
+		TunableFactSweepThreshold: true,
+		TunableFactHardCap:        true,
+		TunableFactTombstoneDays:  true,
+		TunableStaleVolatileDays:  true,
+		TunableStaleSlowDays:      true,
+		TunableGraphEntityCap:     true,
+		TunableGraphEdgeCap:       true,
 	}
 	seen := map[string]bool{}
 	for _, s := range AllTunableSpecs() {
