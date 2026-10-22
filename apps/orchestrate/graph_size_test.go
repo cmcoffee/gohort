@@ -59,7 +59,8 @@ func TestAGraphIsLargeWhenItsOwnerSaysSo(t *testing.T) {
 func TestALargeGraphAgentIsToldToKeepItsMap(t *testing.T) {
 	mapper := AgentRecord{GraphSize: GraphSizeLarge}
 	sys := prependAgentContext("persona", mapper, nil, OperatingNotes{})
-	if !strings.Contains(sys, "## Your map") || !strings.Contains(sys, "link_entities") || !strings.Contains(sys, "recall_about") {
+	if !strings.Contains(sys, "## Your map") || !strings.Contains(sys, "link_entities") || !strings.Contains(sys, "recall_about") ||
+		!strings.Contains(sys, "forget_graph") || !strings.Contains(sys, "replace=true") {
 		t.Errorf("a mapping agent is not told to keep its map:\n%s", sys)
 	}
 	if strings.Index(sys, "## Your map") > strings.Index(sys, "persona") {
