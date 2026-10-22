@@ -215,3 +215,25 @@ func TestSessionAwareProviderWinsOverThePlainOne(t *testing.T) {
 		t.Fatalf("legacy entry point should route through the same provider, got %+v", defs)
 	}
 }
+
+// One source can head part of what it holds separately (ReferenceItem.Group)
+// while every item keeps the source's kind, so a saved selection is unchanged.
+func TestASourceCanShowUnderTwoHeadings(t *testing.T) {
+	groups := splitReferenceGroups("system", "Servitor: Systems", []ReferenceItem{
+		{ID: "web1", Name: "web1"}, {ID: "code", Name: "code", Group: "Servitor: Repos"}, {ID: "db1", Name: "db1"},
+	})
+	if len(groups) != 2 {
+		t.Fatalf("want two headings, got %+v", groups)
+	}
+	for _, g := range groups {
+		if g.Kind != "system" {
+			t.Errorf("every heading keeps the source's kind, got %q", g.Kind)
+		}
+	}
+	if groups[0].Label != "Servitor: Systems" || len(groups[0].Items) != 2 || groups[1].Label != "Servitor: Repos" || groups[1].Items[0].ID != "code" {
+		t.Errorf("items under the wrong headings: %+v", groups)
+	}
+	if one := splitReferenceGroups("guide", "Guides", []ReferenceItem{{ID: "a"}, {ID: "b"}}); len(one) != 1 || one[0].Label != "Guides" || len(one[0].Items) != 2 {
+		t.Errorf("a source naming no group is one heading, got %+v", one)
+	}
+}

@@ -31,6 +31,12 @@ type ReferenceItem struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 	Desc string `json:"desc,omitempty"`
+	// Group, when set, lists this item under its own heading in a picker
+	// instead of the source's Label, still as the source's Kind: one source
+	// can show what it holds under two names without the selections it saves
+	// changing shape. Servitor's repos are the case: "Servitor: Repos" beside
+	// "Servitor: Systems", both stored as kind "system".
+	Group string `json:"-"`
 }
 
 // ReferenceGroup is one source's items, for grouped display in a picker.
@@ -172,13 +178,35 @@ func ReferenceGroups(user string) []ReferenceGroup {
 		if len(items) == 0 {
 			continue
 		}
-		groups = append(groups, ReferenceGroup{Kind: s.Kind(), Label: s.Label(), Items: items})
+		groups = append(groups, splitReferenceGroups(s.Kind(), s.Label(), items)...)
 	}
 	if len(slow) > 0 {
 		Log("[reference] listing sources took %s, slow: %s", time.Since(start).Round(time.Millisecond), strings.Join(slow, ", "))
 	}
 	sort.Slice(groups, func(i, j int) bool { return groups[i].Label < groups[j].Label })
 	return groups
+}
+
+// splitReferenceGroups is one source's items as picker groups: those naming a
+// Group under it, the rest under the source's label. One group, unchanged,
+// when no item names one.
+func splitReferenceGroups(kind, label string, items []ReferenceItem) []ReferenceGroup {
+	var out []ReferenceGroup
+	at := map[string]int{}
+	for _, it := range items {
+		l := label
+		if g := strings.TrimSpace(it.Group); g != "" {
+			l = g
+		}
+		i, ok := at[l]
+		if !ok {
+			i = len(out)
+			at[l] = i
+			out = append(out, ReferenceGroup{Kind: kind, Label: l})
+		}
+		out[i].Items = append(out[i].Items, it)
+	}
+	return out
 }
 
 // ReferenceSourceCounter is the cheap half of a reference source: whether it

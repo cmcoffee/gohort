@@ -22,7 +22,12 @@ import (
 type servitorSource struct{ app *Servitor }
 
 func (s servitorSource) Kind() string  { return "system" }
-func (s servitorSource) Label() string { return "Systems" }
+func (s servitorSource) Label() string { return "Servitor: Systems" }
+
+// servitorReposLabel heads repos in a picker, apart from the machines
+// (ReferenceItem.Group). Stored as kind "system" like the rest, so a repo an
+// agent already has stays attached.
+const servitorReposLabel = "Servitor: Repos"
 
 // List returns the appliances the user can reach — the ones they OWN plus the
 // ones shared with them — as pickable items, mirroring servitor's own appliance
@@ -53,7 +58,11 @@ func (s servitorSource) List(user string) []ReferenceItem {
 		if name == "" {
 			name = a.ID
 		}
-		items = append(items, ReferenceItem{ID: a.ID, Name: name, Desc: desc})
+		item := ReferenceItem{ID: a.ID, Name: name, Desc: desc}
+		if a.Type == "repo" {
+			item.Group = servitorReposLabel
+		}
+		items = append(items, item)
 	}
 	// The user's OWN appliances.
 	if udb := UserDB(s.app.DB, user); udb != nil {
