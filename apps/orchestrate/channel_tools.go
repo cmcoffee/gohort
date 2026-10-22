@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -195,6 +196,10 @@ func channelChatTools(sess *ToolSession, owner, agentID string, via ...string) [
 	}
 	wholeService := map[string]bool{}
 	addrSet := map[string]bool{}
+	// Recipients already told, this turn, that a text-only send had a fresh
+	// picture beside it: the next text-only send to them goes (unsentPicture).
+	var textOnlyMu sync.Mutex
+	textOnlyOK := map[string]bool{}
 	for _, ch := range chans {
 		if ch.Service == "" {
 			continue // inert channel — no source hooked, nothing to read/send
@@ -426,6 +431,19 @@ func channelChatTools(sess *ToolSession, owner, agentID string, via ...string) [
 				recip := operatorRecipientKey(chatID, handle)
 				label := chFirst(handle, chatID)
 				images, videos := messageMedia(sess, args, text)
+				// Only for another conversation: a reply where the person is
+				// carries the turn's own pictures already.
+				if len(images) == 0 && len(videos) == 0 && !isReplyToActiveInbound(sess, recip) {
+					if pic, ok := unsentPicture(sess); ok {
+						textOnlyMu.Lock()
+						asked := textOnlyOK[recip]
+						textOnlyOK[recip] = true
+						textOnlyMu.Unlock()
+						if !asked {
+							return "", fmt.Errorf("not sent yet: nothing is attached, and you made %s %s. If this message is meant to carry it, call send_message again with attachments [%q]. If it is text only, call again as it is and it goes", pic.ID, pictureAge(pic), pic.ID)
+						}
+					}
+				}
 				if familyContactBlocked(owner, agentID, recip) {
 					return fmt.Sprintf("Messaging %s is blocked in the user's permission settings: not sent.", label), nil
 				}
@@ -656,4 +674,40 @@ func chFirst(ss ...string) string {
 		}
 	}
 	return ""
+}
+
+// unsentPicture is the newest picture the agent made in the last few minutes,
+// for a send that attaches nothing: a message announcing a picture went to
+// another chat as its caption alone, twice, while the picture sat in the turn
+// that rendered it. Asked about once per recipient per turn, never blocked.
+func unsentPicture(sess *ToolSession) (RecentImage, bool) {
+	for _, r := range RecentImages(sess) {
+		if !r.Origin.AgentMade() || r.ID == "" {
+			continue
+		}
+		if !r.When.IsZero() && time.Since(r.When) <= unsentPictureWindow {
+			return r, true
+		}
+		return RecentImage{}, false // newest first: the rest are older
+	}
+	return RecentImage{}, false
+}
+
+// unsentPictureWindow is how recent a picture must be to be asked about.
+const unsentPictureWindow = 15 * time.Minute
+
+// pictureAge says what a picture is and when it was made, for the ask.
+func pictureAge(r RecentImage) string {
+	what := strings.TrimSpace(r.Caption)
+	if what == "" {
+		what = strings.TrimSpace(r.Note)
+	}
+	when := "just now"
+	if m := int(time.Since(r.When).Minutes()); m >= 1 {
+		when = fmt.Sprintf("%d minute(s) ago", m)
+	}
+	if what == "" {
+		return when
+	}
+	return "(" + truncateObs(what, 120) + ") " + when
 }

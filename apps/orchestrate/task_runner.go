@@ -590,17 +590,22 @@ func wakeChannelTarget(p orchUpdatePayload) (chatID, handle string, ok bool) {
 
 // deliverWakeToChannel sends a finished task's result out over the conversation
 // that asked for it. No-op for a web session, and no-op when the turn already
-// sent something itself — a model that called send_message has delivered, and a
-// second copy is worse than none.
+// sent to that conversation itself: a second copy there is worse than none.
 //
 // Reports whether the conversation is a channel at all, and whether this sent
 // the result: the caller's "carried files but delivered nothing" warning has to
 // be judged after the send, not before it.
 func deliverWakeToChannel(p orchUpdatePayload, subSess *ToolSession, reply string, toolTrace []PersistedToolCall) (isChannel, sent bool) {
-	if !isTaskWake(p.Prompt) || toolCallsInclude(toolTrace, "send_message") {
+	if !isTaskWake(p.Prompt) {
 		return false, false
 	}
 	chatID, handle, ok := wakeChannelTarget(p)
+	// A send_message to THIS conversation delivered it. One to another chat
+	// (the picture sent where the person asked) did not: the person who asked
+	// still hears it is done, here.
+	if ok && sentToConversation(toolTrace, chatID, handle) {
+		return false, false
+	}
 	if !ok {
 		// Say so. A silent return here is what hid this for as long as it was
 		// broken: the work finished, the thread showed it, and the only person
@@ -628,4 +633,28 @@ func deliverWakeToChannel(p orchUpdatePayload, subSess *ToolSession, reply strin
 	Log("[task] delivered a finished background result to %s (%d char(s), %d image(s), %d video(s))",
 		chFirst(chatID, handle), len(text), len(imgs), len(vids))
 	return true, true
+}
+
+// sentToConversation reports whether a turn's send_message reached the chat
+// given by chatID or handle: a successful send whose recipient or result names
+// it. A send naming someone by display name alone is not counted, which only
+// errs toward the person also hearing it in their own chat.
+func sentToConversation(trace []PersistedToolCall, chatID, handle string) bool {
+	for _, tc := range trace {
+		if tc.Name != "send_message" || tc.Err != "" || !strings.HasPrefix(strings.TrimSpace(tc.Result), "Sent") {
+			continue
+		}
+		for _, key := range []string{"to", "chat_id"} {
+			v, _ := tc.Args[key].(string)
+			if v = strings.TrimSpace(v); v != "" && (strings.EqualFold(v, chatID) || strings.EqualFold(v, handle)) {
+				return true
+			}
+		}
+		for _, id := range []string{chatID, handle} {
+			if id != "" && strings.Contains(tc.Result, id) {
+				return true
+			}
+		}
+	}
+	return false
 }

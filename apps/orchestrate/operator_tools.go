@@ -513,6 +513,15 @@ func resolveAttachmentRef(sess *ToolSession, ref string, allowInbound bool) (b64
 	if data, found := ResolveKeptImage(sess, ref); found && len(data) > 0 {
 		return base64.StdEncoding.EncodeToString(data), "image", true
 	}
+	// A picture the agent MADE, by its image# handle: one it drew or edited,
+	// which is the agent's own output and no echo of anybody's photo. A
+	// background render's picture had no other name a later turn could send
+	// it by, so "send that to the other chat" went out as text alone.
+	if OriginForRef(sess, ref).AgentMade() {
+		if data, found := ResolveRecentImage(sess, ref); found && len(data) > 0 {
+			return base64.StdEncoding.EncodeToString(data), "image", true
+		}
+	}
 	imgs := resolveWorkspaceImages(sess, []string{ref})
 	if len(imgs) == 0 {
 		// Not a workspace file or inbound media — try a remote http(s) image/video
@@ -593,7 +602,7 @@ func fetchAttachmentURL(ref string) (b64, kind string, ok bool) {
 // attachmentsParamDesc is the shared description for the messaging tools' explicit
 // image/file param. One self-contained call ("send THIS image to X") instead of
 // the implicit, easily-skipped workspace(action="attach")-first convention.
-const attachmentsParamDesc = "Optional attachment reference(s) to send WITH this message. Any of: a workspace file path from image(action=\"find\"/\"generate\") e.g. [\"find-djbk.jpg\"]; an inbound media id from the media manifest e.g. [\"media#1\"] to re-send a photo someone sent you; or a direct http(s) image/video URL e.g. [\"https://i.redd.it/abc.jpg\"] (fetched + attached; image/video only, size-capped). The items ride out to the recipient in one call. Prefer this over a separate workspace(action=\"attach\") step."
+const attachmentsParamDesc = "Optional attachment reference(s) to send WITH this message. Any of: a picture you made, by its handle e.g. [\"image#r.7a3f9c2b\"]; a workspace file path from image(action=\"find\"/\"generate\") e.g. [\"find-djbk.jpg\"]; an inbound media id from the media manifest e.g. [\"media#1\"] to re-send a photo someone sent you; or a direct http(s) image/video URL e.g. [\"https://i.redd.it/abc.jpg\"] (fetched + attached; image/video only, size-capped). The items ride out to the recipient in one call. Prefer this over a separate workspace(action=\"attach\") step."
 
 // messageMedia gathers what rides an outbound message, split by how the
 // transport delivers it: images, and videos (which carries audio too, as

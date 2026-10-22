@@ -840,6 +840,17 @@ func (fr *fireRun) buildToolkit() {
 	// `recurring` group for the same reason the pacing lever is: the turn that
 	// can use it is this one, and a Fleet agent never gets that group.
 	fr.tools = append(fr.tools, fr.tnotes.tool()...)
+	// A background task's result reaches the agent's channels, as the turn
+	// that started the work did. The result comes back through here holding
+	// the picture it made, and "send it to the other group chat" had no tool
+	// to do it with: the agent searched for one, and the picture went back to
+	// the chat that asked. A send beyond the conversation still asks the owner
+	// unless that recipient is approved, as everywhere else. Only a wake: a
+	// scheduled report has its own delivery, and a send of it would be a
+	// second copy.
+	if isTaskWake(p.Prompt) {
+		fr.tools = append(fr.tools, channelChatTools(fr.subSess, p.Username, fr.agent.ID)...)
+	}
 	// The passes a web turn's catalog gets over all of it (dispatch_catalog.go).
 	fr.tools = fr.subTurn.finalizeDispatchCatalog(fr.subSess, fr.tools)
 	// Marks the run as belonging to a task, which is what keeps the agent's own
