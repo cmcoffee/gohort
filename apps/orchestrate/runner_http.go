@@ -393,6 +393,16 @@ func (sr *sendRun) openSession() bool {
 		tmp.Send(map[string]any{"kind": "error", "text": cortexWriteRefusal})
 		return false
 	}
+	// A conversation belongs to what it started about (AppContext). A send
+	// naming something else, from a page whose chat outlived a switch to
+	// another document, starts a new conversation there: continued, this
+	// one's history went with it, and "do what we discussed" landed on the
+	// document now open. The page starts a new session itself on a switch;
+	// this holds for a stale tab or any caller that does not.
+	if sr.sess.ID != "" && sr.sess.AppContext != "" && sr.req.AppContext != "" && sr.sess.AppContext != sr.req.AppContext {
+		Log("[orchestrate.session] session %s is about %q, the send is about %q: starting a new session there", sr.sess.ID, sr.sess.AppContext, sr.req.AppContext)
+		sr.sess, sr.req.SessionID = ChatSession{}, ""
+	}
 	sr.isNewSession = sr.sess.ID == ""
 	if sr.isNewSession {
 		sr.sess = ChatSession{

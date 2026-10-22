@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"net/http/httptest"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -97,5 +98,35 @@ func TestAppContextBackfillsOnceAndDoesNotFollowTheUser(t *testing.T) {
 	apply("guide-b")
 	if s, _ := loadChatSession(db, "ag", "s1"); s.AppContext != "guide-a" {
 		t.Errorf("AppContext must not follow the open document; got %q", s.AppContext)
+	}
+}
+
+// A send naming another document does not continue a conversation about the
+// first one: it starts a new session there. Continued, the first document's
+// history went with it, and "do what we discussed" landed on the one now open.
+// The same document, or a session that names none, continues as before.
+func TestASendAboutAnotherDocumentStartsANewSession(t *testing.T) {
+	udb := UserDB(&DBase{Store: kvlite.MemStore()}, "u")
+	agent := AgentRecord{ID: "ag"}
+	about, err := saveChatSession(udb, ChatSession{AgentID: "ag", Title: "guide a", AppContext: "guide-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	send := func(ctx string) *sendRun {
+		sr := &sendRun{w: httptest.NewRecorder(), udb: udb, agent: agent,
+			req: sendRequest{SessionID: about.ID, AppContext: ctx, Message: "fix that section"}}
+		if !sr.openSession() {
+			t.Fatal("openSession refused the send")
+		}
+		return sr
+	}
+	if sr := send("guide-b"); !sr.isNewSession || sr.sess.ID == about.ID || sr.sess.AppContext != "guide-b" {
+		t.Errorf("a send about guide-b must start its own session, got new=%v id=%q ctx=%q", sr.isNewSession, sr.sess.ID, sr.sess.AppContext)
+	}
+	if sr := send("guide-a"); sr.isNewSession || sr.sess.ID != about.ID {
+		t.Errorf("the same document continues its conversation, got new=%v id=%q", sr.isNewSession, sr.sess.ID)
+	}
+	if sr := send(""); sr.isNewSession || sr.sess.ID != about.ID {
+		t.Errorf("a send naming no document continues, got new=%v id=%q", sr.isNewSession, sr.sess.ID)
 	}
 }

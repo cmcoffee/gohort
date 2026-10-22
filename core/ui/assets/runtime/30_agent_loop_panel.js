@@ -2903,6 +2903,28 @@
         return (host && host.getAttribute('data-ui-scope')) || '';
       } catch (e) { return ''; }
     }
+    // A conversation belongs to the record it is about. A panel whose URLs
+    // name the host's open record ({scope}) starts a new session when that
+    // record changes to another, and lists the new record's sessions. Kept,
+    // the open conversation carried its history from one record into the
+    // next: "do what we discussed" landed on the document now open. Each send
+    // already named the open record; the history did not change with it.
+    //
+    // From nothing to a record is a first open, not a switch: the session
+    // restored on load stays.
+    var scopedPanel = [cfg.send_url, cfg.list_url].some(function(u) { return (u || '').indexOf('{scope}') >= 0; });
+    var lastScope = '';
+    if (scopedPanel && typeof MutationObserver === 'function') {
+      new MutationObserver(function() {
+        var now = panelScope();
+        if (now === lastScope) return;
+        var was = lastScope;
+        lastScope = now;
+        if (!was || !now) return;
+        openSession(null);
+        loadSessions();
+      }).observe(document.documentElement, {attributes: true, attributeFilter: ['data-ui-scope'], subtree: true});
+    }
     function substituteExtras(url) {
       if (!url) return url;
       Object.keys(extraInputs).forEach(function(k) {
