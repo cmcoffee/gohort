@@ -284,6 +284,12 @@ better, give it `AssistURL`: an endpoint built with `assist.Handler` from
 `core/assist`, with what only the app knows (`About`, read from the URL, never
 from the browser) and tools of its own (`Tools`; one that writes is dropped).
 
+A create form whose help is the point of it can name the button and start the
+conversation: `AssistLabel: "Draft with AI"` shows **✨ Draft with AI** in the
+corner, and `AssistAsk: "Assist me with setting this up."` is sent
+as the helper first opens, so it starts on the setting up rather than on an
+empty box.
+
 To open a form with the helper already on it and a request already sent, use
 `ui.AssistPanel` (in a dialog, `ui.AssistAction` on a row):
 

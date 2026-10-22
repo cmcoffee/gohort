@@ -2472,7 +2472,7 @@ func (T *Extensions) skillsSection() ui.Section {
 								// changes, and the form below reloads to show it.
 								ui.FormPanel{
 									PostURL:     "api/skills/{id}/revise",
-									SubmitLabel: "Revise it",
+									SubmitLabel: "✨ Revise it",
 									Invalidate:  []string{"api/skills"},
 									Fields: []ui.FormField{{
 										Field: "description", Type: "textarea", Rows: 3,

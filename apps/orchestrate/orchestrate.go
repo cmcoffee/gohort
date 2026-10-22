@@ -718,10 +718,6 @@ func (T *OrchestrateApp) registerHandlers() {
 	// The gate exists for the WORKBENCH beside these: agent CRUD, prompts,
 	// tool allowlists, memory pruning. Those keep it.
 	T.HandleFunc("/api/collections", T.handleCollections)
-	// More-specific path wins over /api/collections/ in Go's ServeMux,
-	// so this route serves the pre-create draft endpoint without
-	// colliding with handleCollectionOne's per-id paths.
-	T.HandleFunc("/api/collections/draft-description", T.handleCollectionDraftDescription)
 	T.HandleFunc("/api/collections/", T.handleCollectionOne)
 	// Runs interrupted by a restart resume (pipeline_runs.go); registered
 	// with the routes so they exist before the queue is restored.

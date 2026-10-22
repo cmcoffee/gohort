@@ -29,7 +29,7 @@ func TestTheCollectionRoutesAreNotAdminGated(t *testing.T) {
 		t.Errorf("collections routes are behind the admin gate again: %v", m)
 	}
 	// And they are still registered at all.
-	for _, route := range []string{`"/api/collections"`, `"/api/collections/"`, `"/api/collections/draft-description"`} {
+	for _, route := range []string{`"/api/collections"`, `"/api/collections/"`} {
 		if !strings.Contains(src, "HandleFunc("+route) {
 			t.Errorf("route %s is gone", route)
 		}

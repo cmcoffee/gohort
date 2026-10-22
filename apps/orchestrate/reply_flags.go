@@ -777,7 +777,7 @@ func replyGuardSections() []ui.Section {
 					},
 					RowActions: []ui.RowAction{
 						ui.Expand("Detail", flagDetail),
-						{Type: "button", Label: "Draft a guard", Compact: true, PostTo: "/orchestrate/api/console/reply-guards/draft?flag={id}",
+						{Type: "button", Label: "✨ Draft a guard", Compact: true, PostTo: "/orchestrate/api/console/reply-guards/draft?flag={id}",
 							Confirm: "Draft a reply guard from this flagged reply? A model drafts it and it is tested against everything flagged; it appears under Drafted guards, and nothing runs until you enable it."},
 						status(flagKept, "Keep", "success", ""),
 						status(flagDismissed, "Dismiss", "", ""),

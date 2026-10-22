@@ -98,7 +98,7 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 			}},
 			{Kind: "edit"},
 			// The passes that rewrite the document through the Guide Author.
-			{Label: "Revise", Kind: "menu", Children: []ui.WorkbenchAction{
+			{Label: "✨ Revise", Kind: "menu", Children: []ui.WorkbenchAction{
 				// A macro, and now shaped like one. This was a "report" action: it
 				// POSTed a fixed system prompt to a one-shot JSON-mode call, spun,
 				// and reordered the sections — a prompt the user could not read,
@@ -973,7 +973,7 @@ const guideSettingsAction = `function(ctx){
           bta.style.resize = 'vertical'; bta.style.fontFamily = 'inherit';
           // Discuss: work the brief out with the guide's Author, which asks
           // before it writes. Its draft fills the box; Save keeps it.
-          var bdisc = el('button', {class:'ui-row-btn', type:'button', text:'Discuss', title:'Work the brief out with the assistant: it asks what the guide is for, then writes it'});
+          var bdisc = el('button', {class:'ui-row-btn', type:'button', text:'✨ Discuss', title:'Work the brief out with the assistant: it asks what the guide is for, then writes it'});
           bdisc.addEventListener('click', function(){
             if (!window.uiOpenAssist) return;
             var session = Math.random().toString(36).slice(2) + Date.now().toString(36);

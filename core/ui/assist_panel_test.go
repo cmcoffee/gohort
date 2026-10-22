@@ -124,6 +124,47 @@ setImmediate(function() { setImmediate(function() {
 	}
 }
 
+// A form with an opening request (AssistAsk) starts its helper on it: sent
+// the first time it opens, in place of the starters, and not again when it
+// is opened a second time.
+func TestTheFormHelperOpensOnItsRequest(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node not installed")
+	}
+	src := readRuntimeFile(t, "06_assist_editor.js")
+	script := assistStubDOM + src + formStub + `
+var reqs = [];
+global.fetch = function(url, o) {
+  reqs.push({url: url, body: JSON.parse(o.body)});
+  return Promise.resolve({ok: true, text: function() { return Promise.resolve('{"reply":"What is it about?"}\n'); }});
+};
+var host = node('div');
+var formEl = components.fake_form({});
+formEl.uiForm.cfg.assist_ask = 'Assist me with setting this up.';
+host.appendChild(formEl);
+window.uiFormAssist(formEl);
+var helper = find(host, 'ui-assist-helper');
+if (find(helper, 'ui-assist-choices')) throw new Error('an opening request takes the place of the starters');
+setImmediate(function() { setImmediate(function() {
+  if (reqs.length !== 1 || reqs[0].body.message !== 'Assist me with setting this up.') throw new Error('the opening request should go out as the helper opens: ' + JSON.stringify(reqs));
+  if (!reqs[0].body.form || reqs[0].body.form.length !== 4) throw new Error('with the form: ' + JSON.stringify(reqs[0].body.form));
+  fire(find(helper, 'ui-row-btn'));
+  window.uiFormAssist(formEl);
+  setImmediate(function() {
+    if (reqs.length !== 1) throw new Error('opening it again should not ask again: ' + reqs.length);
+    console.log('OK');
+  });
+}); });
+`
+	tmp := filepath.Join(t.TempDir(), "ask.js")
+	if err := os.WriteFile(tmp, []byte(script), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("node", tmp).CombinedOutput(); err != nil || !strings.Contains(string(out), "OK") {
+		t.Fatalf("the form helper's opening request:\n%s", out)
+	}
+}
+
 // formStub is a form panel as the helper sees one, and the helpers the
 // scripts use.
 const formStub = `
@@ -197,7 +238,7 @@ func TestTheFormExposesWhatAnAssistFills(t *testing.T) {
 	}
 	// What it filled is marked until the person touches the field, and a
 	// submit that goes through tells the helper.
-	for _, want := range []string{"if (filled[field] && fieldEls[field]", "markFilled();", "wrap.uiForm.onSaved(resp)", "wizardAt = i;", "appendAssistButton();", "(cfg.assist || stepsMode) || cfg.no_assist"} {
+	for _, want := range []string{"if (filled[field] && fieldEls[field]", "markFilled();", "wrap.uiForm.onSaved(resp)", "wizardAt = i;", "appendAssistButton();", "(cfg.assist || stepsMode) || cfg.no_assist", "['✨ ' + (cfg.assist_label || 'Get assistance')]"} {
 		if !strings.Contains(basics, want) {
 			t.Errorf("form_panel lacks %q", want)
 		}

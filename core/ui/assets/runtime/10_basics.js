@@ -2908,7 +2908,7 @@
             var ask = el('div', {class: 'ui-rules-edit-ask'});
             var askIn = el('input', {type: 'text', class: 'ui-rules-edit-askin',
               placeholder: 'Describe the change, e.g. also allow it in quoted text'});
-            var askBtn = el('button', {class: 'ui-rules-edit-suggest', type: 'button'}, ['Suggest changes']);
+            var askBtn = el('button', {class: 'ui-rules-edit-suggest', type: 'button'}, ['✨ Suggest changes']);
             function askFor() {
               var msg = (askIn.value || '').trim();
               if (!msg) { return; }
@@ -2920,14 +2920,14 @@
                   draft: ta.value, assist_prompt: f.assist_prompt || '',
                 }),
               }).then(function(r){ return r.json(); }).then(function(d) {
-                askBtn.disabled = false; askBtn.textContent = 'Suggest changes';
+                askBtn.disabled = false; askBtn.textContent = '✨ Suggest changes';
                 var next = (d && (d.value || d.reply) || '').trim();
                 if (!next) { showToast('No suggestion came back'); return; }
                 // Into the box, not straight onto the rule: a suggestion is a
                 // draft and Done is still what commits it.
                 ta.value = next; askIn.value = ''; ta.focus();
               }).catch(function(err) {
-                askBtn.disabled = false; askBtn.textContent = 'Suggest changes';
+                askBtn.disabled = false; askBtn.textContent = '✨ Suggest changes';
                 showToast('Suggest failed: ' + (err && err.message || err));
               });
             }
@@ -3644,7 +3644,7 @@
           // front of them rather than starting from nothing.
           var autoSuggest = !!f.suggest_on_open;
           var sBtn = el('button', {type: 'button', class: 'ui-form-suggest-btn'},
-            [autoSuggest ? '↻ Suggest again' : '✨ Suggest']);
+            [autoSuggest ? '✨ Suggest again' : '✨ Suggest']);
           sBtn.addEventListener('click', function() {
             runFieldSuggest(f, sBtn, autoSuggest);
           });
@@ -3921,7 +3921,7 @@
       var actions = el('div', {class: 'ui-form-modal-actions'});
       var assistBtn = null;
       if (f.chips_assist_url) {
-        assistBtn = el('button', {class: 'ui-pl-btn secondary'}, ['AI Assist']);
+        assistBtn = el('button', {class: 'ui-pl-btn secondary'}, ['✨ AI Assist']);
         assistBtn.addEventListener('click', function() {
           var seed = nameIn.value.trim() || textIn.value.trim();
           if (!seed) { showToast('Type a name or seed first.'); return; }
@@ -3990,7 +3990,7 @@
     function appendAssistButton() {
       if (!(cfg.assist || stepsMode) || cfg.no_assist || !window.uiFormAssistAvailable) return;
       var b = el('button', {type: 'button', class: 'ui-form-assist',
-        title: 'Ask about this form, or have it help you fill it in'}, ['✨ Get assistance']);
+        title: 'Ask about this form, or have it help you fill it in'}, ['✨ ' + (cfg.assist_label || 'Get assistance')]);
       var row = el('div', {class: 'ui-form-assist-row'}, [b]);
       row.style.display = 'none';
       b.addEventListener('click', function() { window.uiFormAssist(wrap, ctx); });

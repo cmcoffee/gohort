@@ -70,6 +70,13 @@ type FormPanel struct {
 	// AssistAttach offers the helper's 📎, for an AssistURL whose tools take
 	// a file (a sample to try on; assist.Spec.Attach).
 	AssistAttach bool `json:"assist_attach,omitempty"`
+	// AssistLabel names the ✨ button for this form ("Draft with AI"), in
+	// place of Get assistance; the ✨ is added. AssistAsk is a request sent
+	// as the helper first opens, as though the person had typed it, so the
+	// conversation starts on the setting up ("Assist me with setting this
+	// up") rather than on an empty box.
+	AssistLabel string `json:"assist_label,omitempty"`
+	AssistAsk   string `json:"assist_ask,omitempty"`
 	// PostURL — destination for saves when it differs from Source.
 	// Defaults to Source. Use when the GET endpoint that returns the
 	// current record shape isn't the right write target — e.g. an

@@ -574,7 +574,7 @@ func renderGuideHTML(g Guide, controls bool) string {
 				`<button type="button" class="guide-sec-btn guide-sec-del" data-guide-act="delete" title="Delete">&times;</button>` +
 				// Last, so it sits flush right while the others are hidden and
 				// does not move when they appear.
-				`<button type="button" class="guide-sec-btn guide-sec-discuss" data-guide-act="discuss" title="Talk this section through with the assistant before it is rewritten">Discuss</button>` +
+				`<button type="button" class="guide-sec-btn guide-sec-discuss" data-guide-act="discuss" title="Talk this section through with the assistant before it is rewritten">✨ Discuss</button>` +
 				`</div>`)
 		}
 		num := ""
@@ -587,7 +587,7 @@ func renderGuideHTML(g Guide, controls bool) string {
 	}
 	if controls {
 		b.WriteString(`<div class="guide-add-row"><button type="button" class="guide-add-btn" data-guide-act="add">+ Add section</button> ` +
-			`<button type="button" class="guide-add-btn" data-guide-act="discuss-new" title="Talk a new section through with the assistant before it is written">+ Discuss a new section</button></div>`)
+			`<button type="button" class="guide-add-btn" data-guide-act="discuss-new" title="Talk a new section through with the assistant before it is written">✨ Discuss a new section</button></div>`)
 	}
 	b.WriteString(`</article>`)
 	return b.String()

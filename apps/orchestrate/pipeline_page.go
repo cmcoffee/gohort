@@ -299,7 +299,7 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 			Body: ui.Stack{Children: []ui.Component{
 				ui.FormPanel{
 					PostURL:     "api/pipelines/" + url_(def.ID) + "/revise",
-					SubmitLabel: "Revise it",
+					SubmitLabel: "✨ Revise it",
 					RedirectURL: "/orchestrate/pipeline?id=" + url_(def.ID),
 					Fields: []ui.FormField{{
 						Field: "description", Type: "textarea", Rows: 4,
@@ -423,7 +423,7 @@ func (T *OrchestrateApp) servePipelineDescribePage(w http.ResponseWriter, r *htt
 				"A draft opens for you to adjust. A pipeline that would not run is refused rather than saved, so an empty result means the draft failed, not that it vanished.",
 			Body: ui.FormPanel{
 				PostURL:     "/orchestrate/api/pipelines/draft",
-				SubmitLabel: "Draft it",
+				SubmitLabel: "✨ Draft it",
 				RedirectURL: "/orchestrate/pipeline?id={id}",
 				Fields: []ui.FormField{{
 					Field: "description", Type: "textarea", Rows: 8,

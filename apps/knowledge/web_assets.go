@@ -38,10 +38,6 @@ const documentsListAssets = `<style>
 .docs-card-meta { display: flex; gap: 0.8rem; font-size: var(--fs-2xs, 0.72rem); color: var(--text-mute); margin-top: auto; padding-top: 0.4rem; border-top: 1px solid var(--border); }
 .docs-card-meta span { display: inline-flex; align-items: center; gap: 0.2rem; }
 .docs-empty { color: var(--text-mute); font-style: italic; padding: 2rem; text-align: center; border: 1px dashed var(--border); border-radius: 8px; }
-.docs-modal-form { display: flex; flex-direction: column; gap: 0.5rem; }
-.docs-modal-form label { font-size: var(--fs-sm, 0.82rem); color: var(--text); font-weight: 600; }
-.docs-modal-form input, .docs-modal-form textarea { background: var(--bg-0); color: var(--text); border: 1px solid var(--border); border-radius: var(--btn-radius, 6px); padding: 0.4rem 0.6rem; font: inherit; }
-.docs-modal-form textarea { min-height: 4rem; resize: vertical; }
 </style>
 <script>
 (function() {
@@ -122,85 +118,18 @@ const documentsListAssets = `<style>
     });
   });
 
+  // + New collection: the framework's form (newCollectionForm) in the
+  // framework's modal. The form has its own Create, which posts and opens
+  // the new collection, and its own ✨ Draft with AI. There is no close on
+  // a click outside it (a drag-select copy would dismiss it mid-copy);
+  // Close closes.
   newBtn.addEventListener('click', function() {
-    // The framework's modal: its look, its phone layout, Escape to close,
-    // and focus handed back to New collection afterwards. There is no close
-    // on a click outside it (a drag-select copy would dismiss it mid-copy);
-    // Cancel closes.
-    var inpN, inpD;
     window.uiOpenModal({
       title: 'New collection',
-      actions: [
-        {label: 'Cancel'},
-        {label: 'Create', primary: true, onClick: function(modal, btn) {
-          var name = inpN.value.trim();
-          if (!name) { window.uiAlert('Name required'); return; }
-          btn.disabled = true;
-          fetch(api('/api/collections'), {
-            method: 'POST', credentials: 'same-origin',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-              name: name,
-              description: inpD.value.trim(),
-            }),
-          }).then(function(r) {
-            if (!r.ok) return r.text().then(function(t){ throw new Error(t); });
-            return r.json();
-          }).then(function(c) {
-            modal.close();
-            window.location.href = '/knowledge/c/' + encodeURIComponent(c.id);
-          }).catch(function(err) {
-            btn.disabled = false;
-            window.uiAlert('Create failed: ' + (err && err.message || err));
-          });
-        }},
-      ],
+      subtitle: 'A named bundle of documents your agents and skills can search. Name it and say what it should hold; you add the documents next.',
+      width: 'min(760px, 96vw)',
       mount: function(body) {
-        var form = document.createElement('div');
-        form.className = 'docs-modal-form';
-        body.appendChild(form);
-
-        var lblN = document.createElement('label'); lblN.textContent = 'Name'; form.appendChild(lblN);
-        inpN = document.createElement('input'); inpN.type = 'text'; inpN.placeholder = 'e.g. Kubernetes Reference'; form.appendChild(inpN);
-
-        var lblD = document.createElement('label'); lblD.textContent = 'Description'; form.appendChild(lblD);
-        inpD = document.createElement('textarea');
-        inpD.placeholder = 'What documents should this collection contain? (Drives Auto-fill search queries.)';
-        form.appendChild(inpD);
-        var draftRow = document.createElement('div');
-        draftRow.style.cssText = 'display:flex;align-items:center;gap:0.5rem;margin-top:0.3rem';
-        var draftBtn = document.createElement('button');
-        draftBtn.type = 'button'; draftBtn.className = 'ui-row-btn';
-        draftBtn.textContent = 'Draft with AI';
-        var draftStatus = document.createElement('span');
-        draftStatus.style.cssText = 'font-size:var(--fs-2xs, 0.72rem);color:var(--text-mute)';
-        draftRow.appendChild(draftBtn); draftRow.appendChild(draftStatus);
-        form.appendChild(draftRow);
-
-        draftBtn.addEventListener('click', function() {
-          var name = inpN.value.trim();
-          if (!name) { window.uiAlert('Enter a name first, that\'s what the AI uses to draft.'); return; }
-          draftBtn.disabled = true;
-          draftStatus.style.color = 'var(--text-mute)';
-          draftStatus.textContent = 'Drafting…';
-          fetch(api('/api/collections/draft-description'), {
-            method: 'POST', credentials: 'same-origin',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({name: name, description: inpD.value.trim()}),
-          }).then(function(r){
-            if (!r.ok) return r.text().then(function(t){ throw new Error(t); });
-            return r.json();
-          }).then(function(out) {
-            inpD.value = (out && out.description) || '';
-            draftStatus.style.color = 'var(--text-mute)';
-            draftStatus.textContent = 'Edit if needed, then Create.';
-            draftBtn.disabled = false;
-          }).catch(function(err) {
-            draftStatus.style.color = 'var(--danger,#ff7b72)';
-            draftStatus.textContent = 'Draft failed: ' + (err && err.message || err);
-            draftBtn.disabled = false;
-          });
-        });
+        window.uiMountComponent(window.knowledgeNewCollectionForm, body);
       },
     });
   });
@@ -217,7 +146,7 @@ const documentsDetailBody = `
       <textarea id="docs-desc" class="docs-detail-desc-edit" placeholder="Describe what this collection should contain. The description steers Auto-fill's search queries: be specific (e.g. &quot;Official Kubernetes API reference, operator best practices, and our cluster runbook&quot;)."></textarea>
       <div class="docs-desc-actions">
         <button id="docs-desc-save" class="ui-row-btn" disabled>Save</button>
-        <button id="docs-desc-suggest" class="ui-row-btn">Suggest with AI</button>
+        <button id="docs-desc-suggest" class="ui-row-btn">✨ Suggest with AI</button>
         <span id="docs-desc-status"></span>
       </div>
     </div>

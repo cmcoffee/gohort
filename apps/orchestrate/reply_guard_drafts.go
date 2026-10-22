@@ -538,7 +538,7 @@ func draftedGuardsSection() ui.Section {
 				act("enable", "Enable", "success", "_can_enable", ""),
 				act("disable", "Disable", "", "_active", ""),
 				act("test", "Test again", "", "_can_test", ""),
-				{Type: "button", Label: "Redraft", Compact: true, OnlyIf: "_can_redraft", Method: "client", PostTo: "reply_guard_redraft"},
+				{Type: "button", Label: "✨ Redraft", Compact: true, OnlyIf: "_can_redraft", Method: "client", PostTo: "reply_guard_redraft"},
 				act("delete", "Delete", "danger", "", "Delete this guard? If it is enabled it stops running, and its counts go with it."),
 			},
 			EmptyText: "No guards drafted yet. Use Draft a guard on a flagged reply."},
@@ -562,7 +562,7 @@ const draftedGuardsHead = `<script>
         var ta = el('textarea', {class: 'ui-input', rows: '4', style: 'width:100%;box-sizing:border-box',
           placeholder: 'It also catches short replies that are fine. Only fire when the turn made no tool call.'});
         body.appendChild(ta);
-        var go = el('button', {class: 'ui-row-btn', text: 'Redraft'});
+        var go = el('button', {class: 'ui-row-btn', text: '✨ Redraft'});
         go.addEventListener('click', function() {
           var note = ta.value.trim();
           if (!note) { ta.focus(); return; }

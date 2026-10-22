@@ -408,7 +408,7 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 			Body: ui.Stack{Children: []ui.Component{
 				ui.FormPanel{
 					PostURL:     machineAPIBase(def) + "/revise",
-					SubmitLabel: "Revise it",
+					SubmitLabel: "✨ Revise it",
 					RedirectURL: "/orchestrate/machine?id=" + url_(def.ID),
 					Fields: []ui.FormField{{
 						Field: "description", Type: "textarea", Rows: 4,
@@ -667,7 +667,7 @@ func (T *OrchestrateApp) serveMachineDescribePage(w http.ResponseWriter, r *http
 				"A draft machine opens in the editor for you to adjust; anything the draft got wrong is waiting in its checklist, which beats an empty editor.",
 			Body: ui.FormPanel{
 				PostURL:     "/orchestrate/api/machines/draft",
-				SubmitLabel: "Draft it",
+				SubmitLabel: "✨ Draft it",
 				RedirectURL: "/orchestrate/machine?id={id}",
 				Fields: []ui.FormField{{
 					Field: "description", Type: "textarea", Rows: 8,
@@ -961,7 +961,7 @@ func findingsHTML(def MachineDef, items []string, empty string) string {
 		}
 		if step, ok := rewritable[it]; ok {
 			b.WriteString(` <button type="button" class="machine-finding-rewrite" data-rewrite-step="` +
-				HTMLEscape(step) + `">Rewrite the instructions…</button>`)
+				HTMLEscape(step) + `">✨ Rewrite the instructions…</button>`)
 		}
 		b.WriteString(`</li>`)
 	}

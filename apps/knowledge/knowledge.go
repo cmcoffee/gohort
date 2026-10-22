@@ -111,7 +111,7 @@ func (T *KnowledgeApp) handleListPage(w http.ResponseWriter, r *http.Request) {
 		Sections: []ui.Section{
 			{
 				NoChrome: true,
-				Body:     ui.Card{HTML: documentsListBody + documentsListAssets},
+				Body:     ui.Card{HTML: documentsListBody + newCollectionFormScript() + documentsListAssets},
 			},
 			bulletinsSection(),
 		},

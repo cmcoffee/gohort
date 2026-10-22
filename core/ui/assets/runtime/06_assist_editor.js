@@ -534,15 +534,20 @@
   };
 
   // uiFormAssist(formEl) swaps the helper in for a form panel, making it the
-  // first time and keeping its conversation after.
+  // first time and keeping its conversation after. A form with an opening
+  // request (FormPanel.AssistAsk) sends it the first time, in place of the
+  // starters.
   window.uiFormAssist = function(formEl) {
     if (!formEl || !formEl.uiForm) return;
+    var ask = '';
     if (!formEl.__assist) {
       var cfg = formEl.uiForm.cfg || {};
-      formEl.__assist = assistHelper(formEl, {url: cfg.assist_url || FORM_ASSIST_URL, web: true, starters: true,
+      ask = String(cfg.assist_ask == null ? '' : cfg.assist_ask).trim();
+      formEl.__assist = assistHelper(formEl, {url: cfg.assist_url || FORM_ASSIST_URL, web: true, starters: !ask,
         attach: !!cfg.assist_attach});
     }
     formEl.__assist.open();
+    if (ask) formEl.__assist.say(ask);
   };
 
   // assistPageContext is where a form is, in the page's own words: the
