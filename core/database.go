@@ -401,7 +401,38 @@ func (d *DBase) child(bucket bool, name string) Database {
 	}
 	h := &DBase{s}
 	dbHandles[key] = h
+	dbHandleOf[h] = key
 	return h
+}
+
+// dbHandleOf is dbHandles the other way: the parent and name a handle was
+// made from, so a handle can say whose it is (UserOfDB).
+var dbHandleOf = map[*DBase]dbHandleKey{}
+
+// UserOfDB is the user a store belongs to: the uid of the UserDB it is, or
+// is inside of, and "" when it is not one. For code handed only a user's
+// store that has to say whose it is, such as a save that wakes that person's
+// pages (core/changes).
+func UserOfDB(db Database) string {
+	h, ok := db.(*DBase)
+	if !ok || h == nil {
+		return ""
+	}
+	dbHandleMu.Lock()
+	defer dbHandleMu.Unlock()
+	for depth := 0; depth < 16; depth++ {
+		key, ok := dbHandleOf[h]
+		if !ok {
+			return ""
+		}
+		if !key.bucket {
+			if uid, ok := strings.CutPrefix(key.name, "user:"); ok {
+				return uid
+			}
+		}
+		h = key.parent
+	}
+	return ""
 }
 
 // Bucket returns the Database instance representing the given table —

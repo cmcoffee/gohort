@@ -19,6 +19,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/changes"
 )
 
 // sessionTable scopes sessions per appliance — switching the appliance
@@ -82,7 +83,16 @@ func saveSession(udb Database, applianceID string, s chatSession) chatSession {
 	}
 	s.Updated = now
 	udb.Set(sessionTable(applianceID), s.ID, s)
+	noteSessionsChanged(udb)
 	return s
+}
+
+// noteSessionsChanged wakes the owner's open pages to re-read their session
+// lists (the core/changes "sessions" topic), the Sessions rail among them.
+func noteSessionsChanged(udb Database) {
+	if user := UserOfDB(udb); user != "" {
+		changes.Note(changes.ForUser("sessions", user))
+	}
 }
 
 // sessionIDUsableBy reports whether user may run under session id: it is not
@@ -187,6 +197,7 @@ func deleteSession(udb Database, applianceID, id string) {
 		return
 	}
 	udb.Unset(sessionTable(applianceID), id)
+	noteSessionsChanged(udb)
 }
 
 // handleServitorSessionList → GET /api/sessions?appliance_id=<id>.

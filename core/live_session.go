@@ -63,6 +63,7 @@ func (m *LiveSessionMap[T]) Register(id, label string, cancel context.CancelFunc
 	defer m.mu.Unlock()
 	s := &LiveSession[T]{ID: id, Label: label, Cancel: cancel}
 	m.sessions[id] = s
+	LiveChanged()
 	return s
 }
 
@@ -182,6 +183,7 @@ func (m *LiveSessionMap[T]) AppendEvent(id string, event T, isDone bool) {
 		s.Events = append(s.Events, event)
 		if isDone {
 			s.Done = true
+			LiveChanged()
 		}
 		s.changed()
 	}
@@ -235,6 +237,7 @@ func (m *LiveSessionMap[T]) ScheduleCleanupAfter(id string, d time.Duration) {
 				current.changed() // a Tail still on it sees it gone
 			}
 			delete(m.sessions, id)
+			LiveChanged()
 		}
 		m.mu.Unlock()
 	}()

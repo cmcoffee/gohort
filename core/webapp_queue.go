@@ -62,6 +62,7 @@ func (q *TaskQueue) Acquire(ctx context.Context, id, label, app, linkPath string
 	q.queue = append(q.queue, w)
 	pos := len(q.queue)
 	q.mu.Unlock()
+	LiveChanged()
 
 	Log("[queue] %s queued at position %d: %s", id[:8], pos, label)
 
@@ -84,6 +85,7 @@ func (q *TaskQueue) Acquire(ctx context.Context, id, label, app, linkPath string
 				}
 			}
 			q.mu.Unlock()
+			LiveChanged()
 			return false
 		case <-q.notify:
 			// Check if we moved up in the queue.
@@ -136,6 +138,7 @@ func (q *TaskQueue) QueuedEntries() []LiveEntry {
 
 // Release frees a slot and starts the next queued task.
 func (q *TaskQueue) Release() {
+	defer LiveChanged()
 	q.mu.Lock()
 	if len(q.queue) > 0 {
 		// Start the next queued task — don't decrement active.

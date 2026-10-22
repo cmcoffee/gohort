@@ -25,6 +25,7 @@ import (
 var streamingPaths = []string{
 	"/api/events",
 	"/api/live",
+	"/api/changes", // a long poll, held up to changesWait
 	"/api/reconnect",
 	"/api/terminal",
 }

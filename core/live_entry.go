@@ -3,8 +3,13 @@ package core
 import (
 	"net/http"
 	"net/url"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
+
+	"github.com/cmcoffee/gohort/core/changes"
 )
 
 // LiveEntry is a JSON-serializable summary of an active or queued session.
@@ -217,6 +222,79 @@ func RegisterLiveProvider(p LiveProvider) {
 	liveProviderMu.Lock()
 	defer liveProviderMu.Unlock()
 	liveProviders = append(liveProviders, p)
+}
+
+// liveTopic is the changes topic for the live view: the work running or
+// queued now. One for everyone, because /api/live shows every viewer every
+// entry (labels masked to their owner), so it is the set that changed, not
+// anyone's share of it.
+const liveTopic = "live"
+
+// liveWatch turns "the live set may have moved" into a version a page waits
+// on. Providers are pull functions, so the set is compared rather than
+// trusted: a kick (LiveChanged, or a LiveSessionMap or the queue moving)
+// re-reads it shortly after, and a slow reconcile catches the providers that
+// cannot say. Either way the topic moves only when the set did: the ids, and
+// which are queued or in the background.
+var liveWatch struct {
+	sync.Mutex
+	last    string
+	pending bool
+	once    sync.Once
+}
+
+// LiveChanged says that work an app shows in the live view started, ended or
+// moved between queued and running, so every page showing the view hears it
+// at once instead of on its next poll.
+func LiveChanged() {
+	liveWatch.Lock()
+	defer liveWatch.Unlock()
+	if liveWatch.pending {
+		return
+	}
+	liveWatch.pending = true
+	time.AfterFunc(150*time.Millisecond, reconcileLive)
+}
+
+// reconcileLive compares the live set with the last one seen.
+func reconcileLive() {
+	liveWatch.Lock()
+	liveWatch.pending = false
+	liveWatch.Unlock()
+	fp := liveFingerprint(AllLiveSessions())
+	liveWatch.Lock()
+	moved := fp != liveWatch.last
+	liveWatch.last = fp
+	liveWatch.Unlock()
+	if moved {
+		changes.Note(liveTopic)
+	}
+}
+
+// liveReconcileEvery is how often the live set is compared without a kick,
+// for the providers that cannot say they moved.
+var liveReconcileEvery = 2 * time.Second
+
+// watchLive starts the slow reconcile, once, when the first page asks.
+func watchLive() {
+	liveWatch.once.Do(func() {
+		reconcileLive()
+		go func() {
+			for range time.Tick(liveReconcileEvery) {
+				reconcileLive()
+			}
+		}()
+	})
+}
+
+// liveFingerprint is the live set as reconcileLive compares it.
+func liveFingerprint(entries []LiveEntry) string {
+	keys := make([]string, 0, len(entries))
+	for _, e := range entries {
+		keys = append(keys, e.ID+"|"+strconv.FormatBool(e.Queued)+"|"+strconv.FormatBool(e.Background))
+	}
+	sort.Strings(keys)
+	return strings.Join(keys, "\n")
 }
 
 // AllLiveSessions aggregates active sessions from all registered providers plus the global queue.

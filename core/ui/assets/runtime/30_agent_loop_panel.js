@@ -178,6 +178,10 @@
     // is engaged. loadSessions re-reads both on every render.
     var bulkSelected = {};
     var bulkState    = {mode: false};
+    // afterChange is the nav's refresh of its counts and the session list,
+    // set where the nav is built: a turn's tool results and its end call it,
+    // since a tool can change what they count (an agent adding a schedule).
+    var afterChange = null;
 
     var wrap = el('div', {class: 'ui-agent' + (hasList ? '' : ' ui-agent-no-list')});
     // cfg.height overrides the viewport-tall default. Set inline rather than
@@ -1185,6 +1189,33 @@
       // after; the two fetches race, and the all-agents one is the bigger
       // read, so it could land last and leave the badge counting the wrong
       // thing. A switch between agents raced the same way.
+      // refreshAfterChange re-reads the counts and the session list once
+      // something may have moved them: a turn's tool did (an agent adding a
+      // schedule), or work ran without the page (a scheduled run writing to
+      // the cortex). Debounced, so a burst of tool calls is one read.
+      var changeTimer = null;
+      function refreshAfterChange() {
+        if (changeTimer) clearTimeout(changeTimer);
+        changeTimer = setTimeout(function() {
+          changeTimer = null;
+          // Not under a row selection in progress, which a redraw would undo.
+          if (document.hidden || (bulkState && bulkState.mode)) return;
+          if (isAltNavAgent(window.GOHORT_AGENT_ID)) refreshChannelBadges();
+          else if (hasAllAgentNav) refreshChannelBadges(true);
+          if (hasList) loadSessions();
+        }, 1200);
+      }
+      afterChange = refreshAfterChange;
+      window.addEventListener('ui-live-changed', function(ev) {
+        var d = ev.detail || {};
+        if ((d.ended && d.ended.length) || (d.started && d.started.length)) refreshAfterChange();
+      });
+      // The viewer's sessions changed (the page's change feed): saved by work
+      // running on its own, renamed, read or deleted in another tab.
+      window.addEventListener('ui-changes', function(ev) {
+        var topics = (ev.detail && ev.detail.topics) || [];
+        if (topics.indexOf('sessions') >= 0) refreshAfterChange();
+      });
       var badgeSeq = {};
       function refreshChannelBadges(onlyAllAgents, onlyQueues) {
         (cfg.orchestrator_nav || []).forEach(function(item, i) {
@@ -1472,8 +1503,10 @@
       // unread dots + management counts must refresh on their own, not only
       // on navigation. Light and guarded: only for channel agents, only when
       // the tab is visible, and never mid bulk-select (which would fight the
-      // user's row selection). Non-channel agents never get background
-      // appends, so there's nothing to poll for them.
+      // user's row selection). Any agent's list and counts also refresh when
+      // work starts or ends (refreshAfterChange, on 'ui-live-changed'), which
+      // is what reaches an agent whose cortex is a record: a scheduled run
+      // writes to it, and this tick does not reload its list.
       if (hasList) {
         setInterval(function() {
           if (document.hidden) return;
@@ -5238,6 +5271,7 @@
           }
           attachAgentToolToggle(host2); // refresh count + open panel
           scrollConvo(false);
+          if (afterChange) afterChange();
           break;
         }
         case 'event': {
@@ -5369,6 +5403,8 @@
           // And whatever the page shows around the panel: the sources it
           // declared are refetched by whoever shows them.
           if (cfg.invalidate && cfg.invalidate.length && window.uiInvalidate) window.uiInvalidate(cfg.invalidate);
+          // And the nav's counts, which a tool in the turn may have moved.
+          if (afterChange) afterChange();
           // Refresh side rail so the just-completed turn's timestamp
           // bumps to the top. Second delayed refresh catches the
           // async title summarizer that some apps fire as a

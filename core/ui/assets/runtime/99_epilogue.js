@@ -879,8 +879,29 @@
         if (queued) parts.push(queued + ' queued');
         return parts.length ? parts.join(', ') : 'Active sessions across all apps';
       }
+      // liveSeen is the work running at the last look, by id. When some of it
+      // has ended, or new work has started, the page hears 'ui-live-changed'
+      // {started, ended}: whatever it shows that work changes (a count, a
+      // thread that a scheduled run just wrote to) can refresh then, instead
+      // of when someone reloads.
+      var liveSeen = null;
+      function noteLiveChange(all) {
+        var now = {}, started = [], ended = [];
+        all.forEach(function(it) { if (it && it.id) now[it.id] = true; });
+        if (liveSeen) {
+          Object.keys(now).forEach(function(id) { if (!liveSeen[id]) started.push(id); });
+          Object.keys(liveSeen).forEach(function(id) { if (!now[id]) ended.push(id); });
+        }
+        liveSeen = now;
+        if (started.length || ended.length) {
+          try { window.dispatchEvent(new CustomEvent('ui-live-changed', {detail: {started: started, ended: ended}})); } catch (e) {}
+        }
+      }
+      var lastLive = 0;
       function refreshLive() {
+        lastLive = Date.now();
         fetch('/api/live').then(function(r){ return r.json(); }).then(function(items) {
+          noteLiveChange(items || []);
           items = (items || []).filter(function(it){ return !it.spawned; });
           liveItems = items;
           var n = items.length;
@@ -931,7 +952,56 @@
         if (!liveWrap.contains(ev.target)) liveMenu.style.display = 'none';
       });
       refreshLive();
-      setInterval(refreshLive, 10000);
+      // The change feed (/api/changes, core/changes): one long poll per page,
+      // answered the moment work starts or ends or the viewer's sessions
+      // change, so the pill, and whatever listens for 'ui-changes', follows
+      // what happens instead of a clock. A hidden tab lets go of it (a held
+      // request per tab adds up against the browser's per-site connections)
+      // and catches up when shown: its versions are older, so the first answer
+      // after says what moved. The first answer of all is only a baseline.
+      var feedSeen = {live: '', sessions: ''}, feedPrimed = false, feedOK = false;
+      var feedAbort = null, feedRunning = false;
+      function followChanges() {
+        if (feedRunning || document.hidden) return;
+        feedRunning = true;
+        feedAbort = window.AbortController ? new AbortController() : null;
+        fetch('/api/changes?wait=1&live=' + encodeURIComponent(feedSeen.live) + '&sessions=' + encodeURIComponent(feedSeen.sessions),
+          {cache: 'no-store', credentials: 'same-origin', signal: feedAbort ? feedAbort.signal : undefined})
+          .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+          .then(function(v) {
+            feedRunning = false;
+            feedOK = true;
+            var moved = [];
+            ['live', 'sessions'].forEach(function(k) {
+              var now = (v && v[k]) || '';
+              if (feedPrimed && now !== feedSeen[k]) moved.push(k);
+              feedSeen[k] = now;
+            });
+            feedPrimed = true;
+            if (moved.indexOf('live') >= 0) refreshLive();
+            if (moved.length) {
+              try { window.dispatchEvent(new CustomEvent('ui-changes', {detail: {topics: moved}})); } catch (e) {}
+            }
+            setTimeout(followChanges, 0);
+          })
+          .catch(function(e) {
+            feedRunning = false;
+            feedOK = false;
+            // Let go of by a hidden tab: ask again as soon as it is shown
+            // (followChanges waits while hidden). Anything else waits a while.
+            setTimeout(followChanges, (e && e.name === 'AbortError') ? 0 : 10000);
+          });
+      }
+      document.addEventListener('visibilitychange', function() {
+        if (document.hidden) { if (feedAbort) feedAbort.abort(); return; }
+        followChanges();
+      });
+      followChanges();
+      // The backstop: the poll it replaced, at a minute while the feed
+      // answers and at its old ten seconds while it cannot.
+      setInterval(function() {
+        if (!feedOK || Date.now() - lastLive >= 60000) refreshLive();
+      }, 10000);
       // A 10s poll is fine for background work nobody is watching, but it is
       // the wrong clock for work the user just started: asking a question and
       // watching the pill sit idle for most of the answer reads as the pill

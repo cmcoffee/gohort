@@ -8,7 +8,9 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
+	"github.com/cmcoffee/gohort/core/changes"
 	"github.com/cmcoffee/gohort/core/ui"
 
 	"github.com/cmcoffee/gohort/core/docsink"
@@ -159,6 +161,7 @@ func ServeDashboard(addr string) error {
 	mux.HandleFunc("/api/dashboard/band", host.handleDashboardBand)
 	mux.HandleFunc("/api/dashboard/seen", host.handleDashboardSeen)
 	mux.HandleFunc("/api/live", host.handleLive)
+	mux.HandleFunc("/api/changes", handleChanges)
 	mux.HandleFunc("/debug/pprof/", handlePprof)
 	mux.HandleFunc("/api/notify-preference", handleNotifyPreference)
 	// Notifications are deployment-wide, not one app's: anything that runs on
@@ -466,6 +469,66 @@ func (d dashboardHost) handleLive(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(entries)
+}
+
+// pageTopics are the core/changes topics a page may follow, by the name it
+// asks with. A per-user one is the asker's own: a page names the topic, never
+// whose it is, so nobody can follow someone else's.
+var pageTopics = []struct {
+	name    string
+	perUser bool
+}{
+	{liveTopic, false}, // work starting, ending, queued: the live view
+	{"sessions", true}, // the viewer's sessions saved, renamed, deleted, seen
+}
+
+// changesWait is how long /api/changes holds a request with nothing new.
+const changesWait = 25 * time.Second
+
+// handleChanges is GET /api/changes?live=<v>&sessions=<v>[&wait=1]: the
+// current version of each topic named, answered at once when one already
+// differs from the version given, else (with wait=1) when one moves or after
+// changesWait. A page asks with what it last saw and refetches what a moved
+// topic covers, through its usual endpoints. See core/changes.
+func handleChanges(w http.ResponseWriter, r *http.Request) {
+	viewer := AuthCurrentUser(r)
+	if viewer == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	q := r.URL.Query()
+	seen := map[string]string{}
+	stored := map[string]string{} // the page's name -> the topic it is
+	for _, t := range pageTopics {
+		if !q.Has(t.name) {
+			continue
+		}
+		name := t.name
+		if t.perUser {
+			name = changes.ForUser(t.name, viewer)
+		}
+		stored[t.name] = name
+		seen[name] = q.Get(t.name)
+	}
+	if len(seen) == 0 {
+		http.Error(w, "name a topic to follow", http.StatusBadRequest)
+		return
+	}
+	if _, ok := stored[liveTopic]; ok {
+		watchLive()
+	}
+	var hold time.Duration
+	if q.Get("wait") == "1" {
+		hold = changesWait
+	}
+	got := changes.Wait(r.Context(), seen, hold)
+	out := make(map[string]string, len(stored))
+	for page, name := range stored {
+		out[page] = got[name]
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	json.NewEncoder(w).Encode(out)
 }
 
 // handlePprof is admin-gated pprof — live runtime introspection WITHOUT

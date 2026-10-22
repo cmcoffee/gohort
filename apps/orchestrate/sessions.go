@@ -9,6 +9,7 @@ import (
 	"unicode"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/changes"
 )
 
 // sessionTable returns the per-agent session table name. One bucket
@@ -105,6 +106,7 @@ func saveChatSession(db Database, s ChatSession) (ChatSession, error) {
 	}
 	s.LastAt = now
 	defer noteSessionChange(s.AgentID, s.ID)
+	defer noteSessionsChanged(db)
 	// Channel-model groundwork: every thread records its membership. Stage 1
 	// has exactly one agent per thread (the lead); the human owner is implicit
 	// in the user-scoped db. Additive — nothing reads it yet (see
@@ -214,6 +216,15 @@ func listChatSessions(db Database, agentID string) []ChatSession {
 	return out
 }
 
+// noteSessionsChanged wakes the owner's open pages to re-read their session
+// lists (the core/changes "sessions" topic): a thread saved, renamed, read or
+// deleted, here or by work running on its own.
+func noteSessionsChanged(db Database) {
+	if user := UserOfDB(db); user != "" {
+		changes.Note(changes.ForUser("sessions", user))
+	}
+}
+
 // renameChatSession sets a session's Title. Writes directly (NOT via
 // saveChatSession) so it does NOT bump LastAt — renaming isn't activity and
 // shouldn't reorder the session to the top. No-op if the session is missing or
@@ -233,6 +244,7 @@ func renameChatSession(db Database, agentID, sessionID, name string) {
 	}
 	s.Title = name
 	db.Set(tbl, sessionID, s)
+	noteSessionsChanged(db)
 }
 
 // markAllSessionsSeen clears the unread state on every session of an agent —
@@ -257,6 +269,9 @@ func markAllSessionsSeen(db Database, agentID string) int {
 		db.Set(tbl, k, s)
 		n++
 	}
+	if n > 0 {
+		noteSessionsChanged(db)
+	}
 	return n
 }
 
@@ -279,6 +294,7 @@ func markSessionSeen(db Database, agentID, sessionID string) {
 	}
 	s.LastSeen = s.LastAt
 	db.Set(tbl, sessionID, s)
+	noteSessionsChanged(db)
 }
 
 // deleteChatSession removes one session from an agent's bucket and
@@ -289,6 +305,7 @@ func deleteChatSession(db Database, agentID, sessionID string) {
 		return
 	}
 	db.Unset(sessionTable(agentID), sessionID)
+	defer noteSessionsChanged(db)
 	clearAuthoringInProgress(db, sessionID)
 	clearToolVerifications(db, sessionID)
 	DeleteSessionTempTools(db, sessionID)

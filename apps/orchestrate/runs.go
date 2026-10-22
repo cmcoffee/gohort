@@ -408,6 +408,8 @@ func (r *Run) Complete(status string) {
 		close(ch)
 	}
 	r.subscribers = nil
+	// It leaves the live view now: pages showing the view hear it at once.
+	LiveChanged()
 }
 
 // RunRegistry tracks live + recently-completed runs. One per
@@ -490,6 +492,7 @@ func (rr *RunRegistry) Create(userID, agentID, sessionID string, cancel context.
 	if sessionID != "" {
 		rr.bySess[sk] = r
 	}
+	LiveChanged()
 	return r
 }
 
