@@ -234,6 +234,7 @@ func appAgentSpecToRecord(s appagents.AppAgentSpec) AgentRecord {
 		Cortex:             s.Cortex,
 		MemoryMode:         s.MemoryMode,
 		DisableExplicit:    s.DisableExplicit,
+		MemoryPerDocument:  s.MemoryPerDocument,
 		ForcePrivate:       s.ForcePrivate,
 		// Carried onto the record so the agent editor SHOWS the policy rather
 		// than an empty select that reads as "all". effectiveDispatchMode still

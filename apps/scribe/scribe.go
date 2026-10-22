@@ -49,6 +49,9 @@ func init() {
 		Description:  "Drafts and edits guides in Scribe, writing clear, well-structured markdown and committing it into the open guide.",
 		AllowedTools: []string{"web_search", "fetch_url", "ask_user", "ask_user_form"},
 		Hidden:       true, // reached through the Scribe app, not the agent picker
+		// One Guide Author works on every guide, so what it saves about one
+		// stays with that guide; its lessons for writing them stay shared.
+		MemoryPerDocument: true,
 		Prompt: "You are the Guide Author. You help the user craft living, multi-section GUIDES.\n\n" +
 			"The guide is shown in the middle of the screen, rendered as a formatted page. You edit it by CALLING TOOLS, not by pasting content into chat. The user may also edit it directly, a section at a time or the whole guide at once.\n\n" +
 			"GUIDE tools (a guide is sections under a title):\n" +

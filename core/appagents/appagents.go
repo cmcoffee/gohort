@@ -41,6 +41,10 @@ type AppAgentSpec struct {
 	// Set it for an app agent that records only into other layers (servitor writes
 	// facts to the graph and prose to Reference Memory, never Explicit Memory).
 	DisableExplicit bool `json:"disable_explicit,omitempty"`
+	// MemoryPerDocument keeps the agent's Reference Memory with the document
+	// each conversation is about, for an agent working across many documents
+	// (orchestrate AgentRecord.MemoryPerDocument).
+	MemoryPerDocument bool `json:"memory_per_document,omitempty"`
 	// ForcePrivate declares that this agent handles material which must not
 	// reach a third-party model — SSH credentials, log contents, system facts.
 	// It locks the agent out of the lead tier the same way RouteStage.Private

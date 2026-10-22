@@ -1135,6 +1135,12 @@ Findings live under snake_case topic slugs; reuse from the
 // grouped memoryToolDef can route through it cleanly.
 func (t *chatTurn) memorySave(args map[string]any) (string, error) {
 	topic := normalizeTopic(stringArg(args, "topic"))
+	// A finding saved in a conversation about one document stays with it
+	// (MemoryPerDocument): under that document's topic, which seesFinding
+	// keeps out of every other document's turns.
+	if doc := t.memoryDocument(); doc != "" {
+		topic = docTopic(doc) + "." + topic
+	}
 	content := strings.TrimSpace(stringArg(args, "content"))
 	if content == "" {
 		return "", errors.New("content is required")
@@ -1164,6 +1170,10 @@ func (t *chatTurn) memorySave(args map[string]any) (string, error) {
 				agentPrefix := knowledgeSource(t.user, t.agent.ID, "")
 				allow := func(c EmbeddedChunk) bool {
 					if c.Source != agentPrefix && !strings.HasPrefix(c.Source, agentPrefix+":") {
+						return false
+					}
+					// Another document's finding is not a duplicate of this one's.
+					if !t.seesFinding(c.Source) {
 						return false
 					}
 					return strings.HasPrefix(c.ReportID, "orch-know-") // derived (memory_save) only
@@ -1217,6 +1227,9 @@ func (t *chatTurn) findingExactDuplicate(content string) bool {
 	for _, c := range ChunksWhere(VectorDB, func(c EmbeddedChunk) bool {
 		if c.Source != agentPrefix && !strings.HasPrefix(c.Source, agentPrefix+":") {
 			return false
+		}
+		if !t.seesFinding(c.Source) {
+			return false // another document's, not a duplicate of this one's
 		}
 		return strings.HasPrefix(c.ReportID, "orch-know-")
 	}) {
@@ -1407,6 +1420,11 @@ func (t *chatTurn) fetchKnowledgeDocScoped(scopeSkills []SkillRecord) AgentToolD
 			ownerPrefix := t.ownerCorpusPrefix(ChunkScopeAll)
 			exact := t.agentCorpusSources(scopeSkills)
 			allowSource := func(src string) bool {
+				// Another document's finding stays with it (MemoryPerDocument),
+				// fetched by id or not.
+				if !t.seesFinding(src) {
+					return false
+				}
 				if src == agentPrefix || strings.HasPrefix(src, agentPrefix+":") {
 					return true
 				}

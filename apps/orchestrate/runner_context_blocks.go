@@ -594,7 +594,7 @@ func (t *chatTurn) renderKnownTopicsBlock() string {
 	if t == nil || t.app == nil || t.app.DB == nil {
 		return ""
 	}
-	topics := listAgentTopics(t.app.DB, t.user, t.agent.ID)
+	topics := t.visibleTopics(listAgentTopics(t.app.DB, t.user, t.agent.ID))
 	if len(topics) == 0 {
 		return ""
 	}

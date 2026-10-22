@@ -497,6 +497,15 @@ type AgentRecord struct {
 	// No-op when DisableExplicit is true.
 	MemoryMode string `json:"memory_mode,omitempty"`
 
+	// MemoryPerDocument keeps what the agent saves to Reference Memory with
+	// the document its conversation is about (ChatSession.AppContext), and out
+	// of its conversations about every other one (memory_scope.go). For an app
+	// agent with one record across many documents, such as Scribe's Guide
+	// Author, where a finding about one guide surfacing in another is the agent
+	// doing what nobody asked. Explicit Memory, its lessons for doing the job,
+	// stays shared.
+	MemoryPerDocument bool `json:"memory_per_document,omitempty"`
+
 	// SessionRecall is whether the agent keeps a marker per web session and
 	// finds earlier sessions with recall ([session] hits; session_markers.go):
 	// "on", "off", or "" for the memory mode's default (on for chatbot, off

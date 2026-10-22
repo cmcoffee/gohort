@@ -136,6 +136,88 @@ func (t *chatTurn) ownLayerShared(key string) bool {
 	return !t.strangerOnChannel() || settingIsOn(RootDB, t.agent, key)
 }
 
+// memoryDocument is the document this turn's Reference Memory belongs to, for
+// an agent whose memory follows the document (MemoryPerDocument): what its
+// conversation is about. Empty otherwise, and when no document is open, where
+// what it saves is shared as before.
+func (t *chatTurn) memoryDocument() string {
+	if t == nil || !t.agent.MemoryPerDocument || t.session == nil {
+		return ""
+	}
+	return strings.TrimSpace(t.session.AppContext)
+}
+
+// docTopicPrefix opens the topic of a finding saved about one document.
+const docTopicPrefix = "doc."
+
+// docTopic is the topic findings about doc are saved under, normalizeTopic's
+// alphabet so the topic survives it.
+func docTopic(doc string) string {
+	var b strings.Builder
+	for _, c := range strings.ToLower(strings.TrimSpace(doc)) {
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') {
+			b.WriteRune(c)
+		} else {
+			b.WriteByte('_')
+		}
+	}
+	return docTopicPrefix + b.String()
+}
+
+// seesFinding reports whether this turn may read a chunk of the agent's own
+// corpus: everything, for an agent whose memory is not per document; and for
+// one whose is, everything but what was saved about another document. With
+// no document open it sees none of them.
+func (t *chatTurn) seesFinding(source string) bool {
+	if t == nil || !t.agent.MemoryPerDocument {
+		return true
+	}
+	mine := ""
+	if doc := t.memoryDocument(); doc != "" {
+		mine = docTopic(doc)
+	}
+	for _, prefix := range []string{t.agentCorpusPrefix(), t.ownerCorpusPrefix(ChunkScopeAll)} {
+		if prefix == "" || !strings.HasPrefix(source, prefix+":") {
+			continue
+		}
+		topic := strings.TrimPrefix(source, prefix+":")
+		if !strings.HasPrefix(topic, docTopicPrefix) {
+			return true
+		}
+		return mine != "" && (topic == mine || strings.HasPrefix(topic, mine+"."))
+	}
+	return true
+}
+
+// visibleTopics is the agent's topic slugs as this turn may see them. For an
+// agent whose memory follows the document: the open document's topics with
+// their prefix taken off, since memorySave puts it back, and no other
+// document's at all, which would name documents this conversation is not about.
+func (t *chatTurn) visibleTopics(topics []string) []string {
+	if t == nil || !t.agent.MemoryPerDocument {
+		return topics
+	}
+	mine := ""
+	if doc := t.memoryDocument(); doc != "" {
+		mine = docTopic(doc) + "."
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, tp := range topics {
+		switch {
+		case mine != "" && strings.HasPrefix(tp, mine):
+			tp = strings.TrimPrefix(tp, mine)
+		case strings.HasPrefix(tp, docTopicPrefix):
+			continue
+		}
+		if tp != "" && !seen[tp] {
+			seen[tp] = true
+			out = append(out, tp)
+		}
+	}
+	return out
+}
+
 // searchOwnKnowledge searches the agent's knowledge for this turn, narrowed for
 // a stranger on a channel when the owner did not share the derived (reference)
 // layer: a search of derived memory finds nothing, and a search of everything
@@ -149,7 +231,17 @@ func (t *chatTurn) searchOwnKnowledge(ctx context.Context, topic, query string, 
 			scope = ChunkScopeCuratedOnly
 		}
 	}
-	return searchAgentKnowledgeVec(ctx, t.app.DB, t.user, t.ownerUser, t.readsOwnerCorpus(scope), t.agent.ID, topic, query, qVec, k, skills, t.agent.AttachedCollections, scope)
+	hits := searchAgentKnowledgeVec(ctx, t.app.DB, t.user, t.ownerUser, t.readsOwnerCorpus(scope), t.agent.ID, topic, query, qVec, k, skills, t.agent.AttachedCollections, scope)
+	if !t.agent.MemoryPerDocument {
+		return hits
+	}
+	kept := hits[:0]
+	for _, h := range hits {
+		if t.seesFinding(h.Source) {
+			kept = append(kept, h)
+		}
+	}
+	return kept
 }
 
 // readsOwnerCortex reports whether this turn's prompt carries the owner's
