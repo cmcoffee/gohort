@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/mcppersonal"
 	"github.com/cmcoffee/gohort/tools/temptool"
 )
 
@@ -1114,6 +1116,7 @@ func (t *chatTurn) withheldToolActions() []string {
 		}
 	}
 	add(t.agent.DisabledToolActions)
+	add(t.partialOneToolWithheld())
 	db, _ := t.ownerView()
 	for id, guard := t.agent.OwnedBy, 0; id != "" && guard < maxDispatchDepth; guard++ {
 		parent, ok := loadAgent(db, id)
@@ -1123,6 +1126,72 @@ func (t *chatTurn) withheldToolActions() []string {
 		add(parent.DisabledToolActions)
 		id = parent.OwnedBy
 	}
+	return out
+}
+
+// partialOneToolWithheld is what an agent with its own tool list may not call
+// on an MCP server offered as one tool, when it was granted only some of the
+// server's tools: every action of that one tool it was not granted.
+//
+// A grant of one of the server's tools reaches the one tool, which is how a
+// list written while the server offered its tools separately keeps working.
+// It reached all of it, though: an agent granted a server's search could
+// call its create_ticket through the one tool, and an ask-first mark on
+// create_ticket never fired, since the name called was the server's.
+func (t *chatTurn) partialOneToolWithheld() []string {
+	if t == nil || len(t.agent.AllowedTools) == 0 {
+		return nil
+	}
+	listed := map[string]bool{}
+	for _, n := range t.agent.AllowedTools {
+		listed[strings.TrimSpace(n)] = true
+	}
+	granted := map[string]map[string]bool{}
+	actions := map[string][]string{}
+	grant := func(whole, action string) {
+		if granted[whole] == nil {
+			granted[whole] = map[string]bool{}
+		}
+		granted[whole][action] = true
+	}
+	for n := range listed {
+		if ct, ok := FindChatTool(n); ok {
+			if ar, ok := ct.(ActionRedirectTool); ok {
+				if w, act := ar.RedirectAction(); w != "" {
+					grant(w, act)
+				}
+			}
+		}
+	}
+	for w := range granted {
+		if ct, ok := FindChatTool(w); ok {
+			for act := range ChatToolActionCaps(ct) {
+				actions[w] = append(actions[w], act)
+			}
+		}
+	}
+	for w, byName := range mcppersonal.OneToolActions(t.user, registeredToolNames()) {
+		for name, act := range byName {
+			actions[w] = append(actions[w], act)
+			if listed[name] {
+				grant(w, act)
+			}
+		}
+	}
+	var out []string
+	for w, acts := range actions {
+		// The whole tool granted by its own name keeps every action; one
+		// granted by nothing is not in the catalog at all.
+		if listed[w] || len(granted[w]) == 0 {
+			continue
+		}
+		for _, a := range acts {
+			if !granted[w][a] {
+				out = append(out, w+"/"+a)
+			}
+		}
+	}
+	sort.Strings(out)
 	return out
 }
 

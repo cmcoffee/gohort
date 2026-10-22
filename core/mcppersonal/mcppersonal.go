@@ -677,6 +677,24 @@ func Aliases(owner string, taken map[string]bool) map[string][]string {
 	return out
 }
 
+// OneToolActions maps each of owner's servers set to one tool to its actions,
+// keyed by the name each would have as a separate tool: one tool, then that
+// name, then the action. A grant of a separate tool's name reaches the one
+// tool, and with this only the action it names.
+func OneToolActions(owner string, taken map[string]bool) map[string]map[string]string {
+	tools, whole := namedTools(owner, taken)
+	out := map[string]map[string]string{}
+	for _, n := range tools {
+		if w, one := whole[n.server.Name]; one {
+			if out[w] == nil {
+				out[w] = map[string]string{}
+			}
+			out[w][n.name] = n.raw
+		}
+	}
+	return out
+}
+
 func sanitizedServerName(server string) string {
 	n, _, _, _ := MCPToolShape(server, "", nil, nil)
 	return strings.TrimSuffix(n, "_")

@@ -717,6 +717,13 @@ type SupersedingTool interface {
 	Supersedes(name string) bool
 }
 
+// ActionRedirectTool is a tool whose grant reaches one action of another
+// (a one-tool MCP server's proxy). RedirectAction names the tool and the
+// action, or ("", "") when the grant is not redirected now.
+type ActionRedirectTool interface {
+	RedirectAction() (tool, action string)
+}
+
 // redirectedNames follows each name to the names it is offered under for this
 // caller (RedirectedTool), keeping the order and dropping repeats.
 func redirectedNames(sess *ToolSession, names []string) []string {

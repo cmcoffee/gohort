@@ -1733,6 +1733,24 @@ func (t *mcpProxyTool) RedirectTo(*ToolSession) []string {
 	return []string{w.name}
 }
 
+// RedirectAction is the one tool and the action this tool is offered as while
+// its server is set to one tool, or ("", "") when it is not. A grant of this
+// tool reaches that one action and no other of the server's (orchestrate
+// withholds the rest), where a grant that only redirected to the one tool
+// handed over every action the server has.
+func (t *mcpProxyTool) RedirectAction() (tool, action string) {
+	if !t.mgr.isOneTool(t.server) {
+		return "", ""
+	}
+	t.mgr.mu.Lock()
+	w := t.mgr.whole[t.server]
+	t.mgr.mu.Unlock()
+	if w == nil {
+		return "", ""
+	}
+	return w.name, t.rawName
+}
+
 // mcpServerTool is one server's tools offered as one tool: action=<tool>,
 // each action the server's own tool. Built from the server's proxies on
 // each look, so a reconnect that changes what the server offers changes it.
@@ -1782,13 +1800,17 @@ func (t *mcpServerTool) RunWithSession(args map[string]any, sess *ToolSession) (
 	return t.grouped().RunWithSession(args, sess)
 }
 
-// SchemaWithSession offers it only while the server is set to one tool.
-func (t *mcpServerTool) SchemaWithSession(*ToolSession) (string, map[string]ToolParam) {
+// ActionCaps names the server's tools as the one tool's actions, which is how
+// a grant of only some of them is told apart from a grant of all.
+func (t *mcpServerTool) ActionCaps() map[string][]Capability { return t.grouped().ActionCaps() }
+
+// SchemaWithSession offers it only while the server is set to one tool, with
+// the actions this caller may call.
+func (t *mcpServerTool) SchemaWithSession(sess *ToolSession) (string, map[string]ToolParam) {
 	if !t.mgr.isOneTool(t.server) {
 		return "", nil
 	}
-	g := t.grouped()
-	return g.Desc(), g.Params()
+	return t.grouped().SchemaWithSession(sess)
 }
 
 // RedirectTo is the server's own tools while it is not set to one tool, so

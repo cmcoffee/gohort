@@ -76,6 +76,14 @@ func TestAServerOfferedAsOneToolOrMany(t *testing.T) {
 	if acts := g.ActionNames(); len(acts) != 2 {
 		t.Errorf("an action per tool: %v", acts)
 	}
+	// A grant of one separate tool reaches one action of the one tool, so the
+	// caller can tell it from a grant of all of them.
+	if w, act := proxy.(ActionRedirectTool).RedirectAction(); w != "onetooltest" || act != "search" {
+		t.Errorf("onetooltest_search should be the one tool's search action, got %q/%q", w, act)
+	}
+	if acts := ChatToolActionCaps(whole); len(acts) != 2 {
+		t.Errorf("the one tool should name its actions, got %v", acts)
+	}
 }
 
 // A server set to one tool whose one tool could not be registered (its name
