@@ -3055,7 +3055,22 @@
       var gap = convoLog.scrollHeight - convoLog.scrollTop - convoLog.clientHeight;
       return gap <= convoBottomTolerance;
     }
+    // The reader leaving the bottom is acted on AT ONCE, not after the
+    // debounce below. While a long reply streams, every chunk scrolls the
+    // pane; a reader's upward scroll that a chunk overtook inside the
+    // debounce window was put back at the bottom, and the debounce then read
+    // "at bottom" and kept following. So moving up unsticks immediately, a
+    // wheel or swipe upward holds the next chunk's scroll for a moment (the
+    // scroll event can arrive after the chunk that undoes it), and following
+    // starts again only once the reader is back at the very end.
+    var convoHoldUntil = 0;
+    var convoLastTop = 0;
+    var convoReaderLeft = false;
+    function convoHoldForReader() {
+      convoHoldUntil = Date.now() + 300;
+    }
     function scrollConvo(force) {
+      if (!force && Date.now() < convoHoldUntil) return;
       if (force || convoStickToBottom) {
         convoLog.scrollTop = convoLog.scrollHeight;
       }
@@ -3083,6 +3098,7 @@
     // yank someone back down after they have started reading.
     function settleConvoScroll() {
       convoStickToBottom = true;
+      convoReaderLeft = false;
       scrollConvo(true);
       var again = function() {
         if (!convoStickToBottom) return;
@@ -3109,10 +3125,31 @@
       // browser support. 120ms is short enough to feel responsive
       // and long enough to coalesce momentum frames.
       if (convoUserScrollTimer) clearTimeout(convoUserScrollTimer);
+      var top = convoLog.scrollTop;
+      var gap = convoLog.scrollHeight - top - convoLog.clientHeight;
+      if (top < convoLastTop - 1 && gap > 4) {
+        convoStickToBottom = false;
+        convoReaderLeft = true;
+      }
+      convoLastTop = top;
       convoUserScrollTimer = setTimeout(function() {
-        convoStickToBottom = convoIsAtBottom();
+        var g = convoLog.scrollHeight - convoLog.scrollTop - convoLog.clientHeight;
+        convoStickToBottom = convoReaderLeft ? g <= 4 : convoIsAtBottom();
+        if (convoStickToBottom) convoReaderLeft = false;
       }, 120);
     });
+    convoLog.addEventListener('wheel', function(e) {
+      if (e.deltaY < 0) convoHoldForReader();
+    }, {passive: true});
+    var convoTouchY = null;
+    convoLog.addEventListener('touchstart', function(e) {
+      convoTouchY = e.touches && e.touches[0] ? e.touches[0].clientY : null;
+    }, {passive: true});
+    convoLog.addEventListener('touchmove', function(e) {
+      var y = e.touches && e.touches[0] ? e.touches[0].clientY : null;
+      if (y !== null && convoTouchY !== null && y > convoTouchY) convoHoldForReader();
+      convoTouchY = y;
+    }, {passive: true});
 
     // keepPendingInterjectionsLast holds a queued note at the BOTTOM of the
     // conversation until the agent actually picks it up.
