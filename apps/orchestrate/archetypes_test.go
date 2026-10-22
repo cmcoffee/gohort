@@ -247,7 +247,7 @@ func TestAnEmptySlugResolvesToNothing(t *testing.T) {
 func TestShippedPersonasUnchanged(t *testing.T) {
 	for _, tc := range []struct{ slug, sum string }{
 		{"conversational", "b1653501dafbbe23fdef4cef36b9872826be19b50dd6e526479054df74bad0b3"},
-		{"builtin/research", "220d7a2c31e5bad3db74bf693cfbdffede4d49b3c93cf8beedef1074fa4dc110"},
+		{"builtin/research", "a369d8f9044e84f654920b68f834a6334ad7056ab89e33635a9aaae52c037efc"},
 	} {
 		builtin := strings.HasPrefix(tc.slug, "builtin/")
 		var data []byte

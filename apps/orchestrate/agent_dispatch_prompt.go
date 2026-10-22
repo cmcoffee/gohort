@@ -28,7 +28,7 @@ func dispatchPriorReports(target AgentRecord, sessID string, runtimeDB Database)
 // Cortex agent answering OUTSIDE its own cortex thread — its recent cortex feed.
 // Single source of truth so adding a prompt block (as custom-tools just did)
 // can't get appended to one dispatch site and forgotten on the other.
-func dispatchSystemPrompt(ctx context.Context, target AgentRecord, subFacts []MemoryFact, availableBlock, customToolPrompt, sessID string, runtimeDB Database, user string) string {
+func dispatchSystemPrompt(ctx context.Context, target AgentRecord, subFacts []MemoryFact, availableBlock, customToolPrompt, sessID string, runtimeDB Database, user string, surface promptSurface) string {
 	// The agent's own Working notes, unless this run is a scheduled fire that
 	// carries the TASK's notes instead. Two always-in-prompt scratchpads with
 	// no rule for choosing between them is how running state lands in the wrong
@@ -37,7 +37,7 @@ func dispatchSystemPrompt(ctx context.Context, target AgentRecord, subFacts []Me
 	if agentNotesSuppressed(ctx) {
 		agentNotes = OperatingNotes{}
 	}
-	sysPrompt := prependAgentContext(gatedPersonaFor(target, target.OrchestratorPrompt), target, subFacts, agentNotes)
+	sysPrompt := prependAgentContext(gatedPersonaOn(target, target.OrchestratorPrompt, surface), target, subFacts, agentNotes)
 	sysPrompt += availableBlock
 	sysPrompt += customToolPrompt
 	if target.Cortex && sessID != cortexSessionID(target.ID) {
@@ -53,7 +53,7 @@ func dispatchSystemPrompt(ctx context.Context, target AgentRecord, subFacts []Me
 	// these describe the framework's tools (request_build, skills, Builder),
 	// which its catalog does not carry.
 	if !appAgentExactTools(target.ID) {
-		sysPrompt = appendAgentCapabilityBlocks(sysPrompt, target, runtimeDB, user, false)
+		sysPrompt = appendAgentCapabilityBlocks(sysPrompt, target, runtimeDB, user, false, surface)
 	}
 	return sysPrompt
 }
@@ -68,14 +68,16 @@ func dispatchSystemPrompt(ctx context.Context, target AgentRecord, subFacts []Me
 // plain chat agent that lacks a capability gets nothing extra. Message-dependent
 // content (triggered-skill instructions, per-turn trigger hints) is deliberately
 // NOT here — it rides the user message for prompt-cache stability.
-func appendAgentCapabilityBlocks(sys string, agent AgentRecord, udb Database, user string, hasPlanSet bool) string {
+func appendAgentCapabilityBlocks(sys string, agent AgentRecord, udb Database, user string, hasPlanSet bool, surface promptSurface) string {
 	// Framework orchestration blocks lifted out of individual seed personas
 	// (see framework_prompts.go) so every capable agent inherits them, not
 	// just whichever seed happened to hand-author the prose. Gated by
 	// capability; splices in ahead of the agent's own plan-guidance addendum.
 	// Passes the prompt-so-far so a block a cloned persona already carries
 	// isn't injected twice.
-	sys += frameworkPromptBlocks(sys, agent, hasPlanSet)
+	// Worded for the surface: the blocks were written for a person watching
+	// the web chat (prompt_surface.go).
+	sys += forSurface(frameworkPromptBlocks(sys, agent, hasPlanSet), surface)
 	if g := strings.TrimSpace(agent.PlanGuidance); g != "" {
 		sys += "\n\n## Plan guidance\n" + g
 	}
@@ -90,7 +92,7 @@ func appendAgentCapabilityBlocks(sys string, agent AgentRecord, udb Database, us
 	if agent.PreMortem || agent.Cortex {
 		// await_result only mounts for Fleet agents; plan_set only exists on
 		// the web runPlan surface (the caller knows which surface it is).
-		sys += "\n\n" + preMortemPlanningBlock(hasPlanSet, agent.Fleet)
+		sys += "\n\n" + preMortemPlanningBlock(hasPlanSet, agent.Fleet, surface)
 	}
 	// The guidance blocks appended above (search-order guidance, plan/pre-mortem,
 	// skills) also hardcode legacy tool names in prose. Re-run the mode-aware

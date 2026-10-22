@@ -24,16 +24,30 @@ package orchestrate
 // await_result only mounts for Fleet agents — a Cortex agent reached over a
 // channel has neither, and a prompt that names tools outside the catalog just
 // burns a round on an unknown-tool error.
-func preMortemPlanningBlock(hasPlanSet, hasAwait bool) string {
+//
+// And on the surface: only the web shows prose written before a tool call, so
+// elsewhere the plan is worked out rather than written out, and missing
+// information is asked for in the reply, or, with nobody to ask, named in the
+// result instead of guessed (prompt_surface.go).
+func preMortemPlanningBlock(hasPlanSet, hasAwait bool, surface promptSurface) string {
 	planClause := "lay it out briefly in your reply before acting"
 	if hasPlanSet {
 		planClause = "use plan_set for anything past a couple of steps"
+	}
+	missing := "(1) information you're missing and must ask for"
+	switch surface {
+	case surfaceConversation:
+		planClause = "work it out before acting: only your final reply reaches them, so it need not be written out"
+		missing = "(1) information you're missing and must ask for, in your reply"
+	case surfaceUnattended:
+		planClause = "work it out before acting: nobody reads this as it runs, so it need not be written out"
+		missing = "(1) information you're missing (nobody is here to ask, so say in your result what is missing rather than guessing)"
 	}
 	awaitClause := `Kick the step off, note plainly what you're waiting for and what you'll do once it lands, then END the turn: the framework wakes you when the result arrives (a reply lands in the thread, a monitor fires). Recognizing "this result arrives later" is the difference between a plan that completes and one that quietly stalls.`
 	if hasAwait {
 		awaitClause = `Kick the step off, then call await_result on the tool that will reveal the outcome (read_chat for a reply, a status tool for a call or job) with a note saying what you're waiting for and what to do once it lands, then END the turn. You'll be woken with the result and continue the plan from there. Recognizing "this result arrives later, so I have to await it" is the difference between a plan that completes and one that quietly stalls: any step that expects feedback needs an await.`
 	}
-	return `[Planning a goal: When the user hands you a real GOAL (a multi-step task to accomplish, not a question to answer or a casual message), do NOT start firing tools immediately. First lay the plan out (` + planClause + `), then PRE-MORTEM it before you act: walk the steps and surface, up front and briefly, (1) information you're missing and must ask for, (2) steps that touch a real person or the outside world and will need approval, (3) steps that can fail, return empty, or time out, and what you'll do if they do, and (4) DEFERRED steps whose result comes back later on someone else's schedule (a person's reply, a phone call's outcome, an external job you kicked off). Name the risks in the plan; don't bury them and discover them mid-execution.
+	return `[Planning a goal: When the user hands you a real GOAL (a multi-step task to accomplish, not a question to answer or a casual message), do NOT start firing tools immediately. First lay the plan out (` + planClause + `), then PRE-MORTEM it before you act: walk the steps and surface, up front and briefly, ` + missing + `, (2) steps that touch a real person or the outside world and will need approval, (3) steps that can fail, return empty, or time out, and what you'll do if they do, and (4) DEFERRED steps whose result comes back later on someone else's schedule (a person's reply, a phone call's outcome, an external job you kicked off). Name the risks in the plan; don't bury them and discover them mid-execution.
 
 For every DEFERRED step: do NOT sit and block, do NOT poll it yourself round after round, and NEVER pretend it finished. ` + awaitClause + `
 

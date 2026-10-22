@@ -86,7 +86,7 @@ func TestDispatchPathsRenderTheSameBlocks(t *testing.T) {
 	subSess := &ToolSession{LLM: llm, LeadLLM: llm, Username: "u", DB: udb, AgentID: target.ID}
 	_, availableBlock, customToolPrompt, _ := app.buildDispatchTurnExtras(context.Background(), target, "u", udb, subSess)
 	external := dispatchSystemPrompt(t.Context(), target, ListMemoryFacts(udb, factsNamespace(target.ID)),
-		availableBlock, customToolPrompt, "chan:1", udb, "u")
+		availableBlock, customToolPrompt, "chan:1", udb, "u", surfaceUnattended)
 
 	gotInline, gotExternal := promptHeadings(inline), promptHeadings(external)
 	if strings.Join(gotInline, "|") != strings.Join(gotExternal, "|") {
@@ -186,7 +186,7 @@ func TestDispatchPromptEmitsEachBlockOnce(t *testing.T) {
 	}
 
 	turn := &chatTurn{user: "u", udb: udb, agent: target}
-	prompt := dispatchSystemPrompt(t.Context(), target, nil, turn.dispatchContextBlocks(), "", "chan:1", udb, "u")
+	prompt := dispatchSystemPrompt(t.Context(), target, nil, turn.dispatchContextBlocks(), "", "chan:1", udb, "u", surfaceUnattended)
 
 	for _, heading := range []string{"## Available skills", "## Available agents"} {
 		if n := strings.Count(prompt, heading); n > 1 {

@@ -8,6 +8,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/replyguard"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 // lastUserContent returns the .Content of the last user-role message
@@ -503,4 +504,20 @@ func gatedPersonaFor(agent AgentRecord, prompt string) string {
 	}
 	gate := append(frameworkAlwaysOnToolNames(), agent.AllowedTools...)
 	return StripPromptSectionsForTools(prompt, gate)
+}
+
+// webOnlyTools are the framework tools only the web chat mounts: asking the
+// person, and fanning the turn out to workers. The agent's own list allows
+// them everywhere, so the gate above keeps their sections on every surface.
+var webOnlyTools = []string{"ask_user", "ask_user_form", "plan_set"}
+
+// gatedPersonaOn is gatedPersonaFor for a run on a surface: off the web it
+// first drops the persona sections that need a tool only the web mounts, so a
+// seed telling itself "call ask_user" or "use plan_set" does not carry that
+// into a run that has neither (Research run by an app, for one).
+func gatedPersonaOn(agent AgentRecord, prompt string, surface promptSurface) string {
+	if surface != surfaceWeb {
+		prompt = textutil.StripPromptSectionsRequiring(prompt, webOnlyTools)
+	}
+	return gatedPersonaFor(agent, prompt)
 }

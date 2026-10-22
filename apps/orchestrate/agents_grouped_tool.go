@@ -1484,7 +1484,7 @@ func (ar *agentsRun) buildPrompt() {
 	// the target's, which is the wrong agent's tool list to be stripping a
 	// target's persona sections against; gatedPersonaFor reads the target.
 	ar.subFacts = ar.subTurn.facts() // honours the Explicit Memory switch, as a web turn's read does
-	ar.sysPrompt = dispatchSystemPrompt(t.ctx, ar.target, ar.subFacts, ar.subTurn.dispatchContextBlocks(), ar.customToolPrompt, ar.subSessID, t.udb, t.user)
+	ar.sysPrompt = dispatchSystemPrompt(t.ctx, ar.target, ar.subFacts, ar.subTurn.dispatchContextBlocks(), ar.customToolPrompt, ar.subSessID, t.udb, t.user, surfaceUnattended)
 }
 
 func (ar *agentsRun) buildMessages() bool {

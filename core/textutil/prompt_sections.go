@@ -53,6 +53,27 @@ func StripPromptSectionsForTools(prompt string, allowedTools []string) string {
 	for _, t := range allowedTools {
 		allowed[strings.TrimSpace(t)] = true
 	}
+	return stripPromptSections(prompt, func(name string) bool { return !allowed[name] }, true)
+}
+
+// StripPromptSectionsRequiring removes any marked section that requires one
+// of the missing tools, and keeps every other section, markers included, for
+// a later StripPromptSectionsForTools. For a run that lacks tools the agent's
+// own list allows: the ones a surface does not mount.
+func StripPromptSectionsRequiring(prompt string, missing []string) string {
+	if len(missing) == 0 || !strings.Contains(prompt, "@requires-tool") {
+		return prompt
+	}
+	gone := map[string]bool{}
+	for _, t := range missing {
+		gone[strings.TrimSpace(t)] = true
+	}
+	return stripPromptSections(prompt, func(name string) bool { return gone[name] }, false)
+}
+
+// stripPromptSections drops each marked section with a required tool that
+// lacks says is missing, and strips the markers from the rest when clean.
+func stripPromptSections(prompt string, lacks func(name string) bool, clean bool) string {
 	lines := strings.Split(prompt, "\n")
 	type section struct {
 		startIdx int // index of the `## ` heading line
@@ -102,7 +123,7 @@ func StripPromptSectionsForTools(prompt string, allowedTools []string) string {
 		}
 		drop := false
 		for _, name := range s.required {
-			if !allowed[name] {
+			if lacks(name) {
 				drop = true
 				break
 			}
@@ -119,6 +140,9 @@ func StripPromptSectionsForTools(prompt string, allowedTools []string) string {
 		if keep[i] {
 			out = append(out, ln)
 		}
+	}
+	if !clean {
+		return strings.Join(out, "\n")
 	}
 	// Strip the @requires-tools comment lines from surviving
 	// sections — they're authoring metadata, not for the model.

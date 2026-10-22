@@ -864,7 +864,7 @@ func (fr *fireRun) prepareLoop() {
 	// customToolPrompt (so the LLM SEES the names of its lazily-loaded custom
 	// tools) + per-agent capability guidance.
 	fr.facts = fr.subTurn.facts() // honours the Explicit Memory switch, as a web turn's read does
-	fr.sysPrompt = dispatchSystemPrompt(fr.ctx, fr.agent, fr.facts, fr.availableBlock, fr.customToolPrompt, fr.schedSessID, fr.udb, p.Username)
+	fr.sysPrompt = dispatchSystemPrompt(fr.ctx, fr.agent, fr.facts, fr.availableBlock, fr.customToolPrompt, fr.schedSessID, fr.udb, p.Username, surfaceUnattended)
 	// Built after the catalog was finalized (prepareInput), unlike the other
 	// dispatch paths, so the catalog's prompt text is added here.
 	fr.sysPrompt += fr.subTurn.dispatchCatalogPrompt()
