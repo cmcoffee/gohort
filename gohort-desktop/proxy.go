@@ -103,9 +103,15 @@ const OPEN_PATH = "/__desktop/open"
 // COPY_PATH receives selected text from popup_shim.js and writes it to the
 // system pasteboard in Go. The shim mirrors every page copy (Cmd+C, context
 // menu, copy buttons) here because WKWebView's own pasteboard write has been
-// unreliable in this app; an empty text falls back to Forge's tmux paste
-// buffer so the explicit Copy Selection menu item still works in the terminal.
+// unreliable in this app.
 const COPY_PATH = "/__desktop/copy"
+
+// TERMINAL_PASTE_PATH is the shim's right-click Paste over Forge's terminal.
+// The terminal draws on a canvas with no editable field under the pointer,
+// so there is nowhere in the page to insert the text: Go reads the pasteboard
+// and hands it to Forge's api/paste, which types it into the session. The
+// text never passes through the page.
+const TERMINAL_PASTE_PATH = "/__desktop/terminalpaste"
 
 // COPYIMG_PATH receives image bytes (base64) from the shim's image context
 // menu and writes them to the pasteboard as a real image (see
@@ -213,6 +219,11 @@ func (gp *gohort_proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// we open it from the Go side instead.
 	if r.URL.Path == OPEN_PATH {
 		gp.handle_open_post(w, r)
+		return
+	}
+	// Paste into Forge's terminal from its right-click menu.
+	if r.URL.Path == TERMINAL_PASTE_PATH {
+		gp.handle_terminal_paste_post(w, r)
 		return
 	}
 	// Copy to pasteboard — popup_shim.js POSTs the page selection here (the
@@ -543,11 +554,6 @@ func (gp *gohort_proxy) handle_dialog_post(w http.ResponseWriter, r *http.Reques
 }
 
 // handle_copy_post writes text to the system pasteboard from the Go side.
-// Empty text means "nothing selected in the DOM" — that happens on the Forge
-// terminal, where tmux owns the mouse and the selection lives in its paste
-// buffer, so we fall back to fetching that (the pre-existing Copy Selection
-// behavior). The quiet mirror paths in the shim never POST empty text, so
-// the fallback only fires on the explicit menu action.
 func (gp *gohort_proxy) handle_copy_post(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodPost {
@@ -567,11 +573,6 @@ func (gp *gohort_proxy) handle_copy_post(w http.ResponseWriter, r *http.Request)
 	}
 	text := req.Text
 	if strings.TrimSpace(text) == "" {
-		if t, err := gp.app.forgeClipboard(); err == nil {
-			text = t
-		}
-	}
-	if strings.TrimSpace(text) == "" {
 		json.NewEncoder(w).Encode(map[string]any{"ok": true, "copied": 0})
 		return
 	}
@@ -581,6 +582,26 @@ func (gp *gohort_proxy) handle_copy_post(w http.ResponseWriter, r *http.Request)
 	}
 	core.Debug("[gohort-desktop] copied %d bytes to pasteboard", len(text))
 	json.NewEncoder(w).Encode(map[string]any{"ok": true, "copied": len(text)})
+}
+
+// handle_terminal_paste_post pastes the pasteboard into Forge's terminal
+// (TERMINAL_PASTE_PATH).
+func (gp *gohort_proxy) handle_terminal_paste_post(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "method not allowed"})
+		return
+	}
+	if gp.app == nil {
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "desktop not ready"})
+		return
+	}
+	n, err := gp.app.forgePaste()
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]any{"ok": true, "pasted": n})
 }
 
 // handle_copyimg_post decodes base64 image bytes from the shim's Copy Image

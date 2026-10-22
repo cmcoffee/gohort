@@ -676,26 +676,35 @@ func (a *App) copyImageToClipboard(raw []byte) error {
 	return nil
 }
 
-// forgeClipboard fetches whatever tmux most recently copied, from Forge's
-// api/clipboard endpoint on the configured server.
+// forgePaste types the pasteboard's text into Forge's terminal, through
+// Forge's api/paste on the configured server, and reports how much it sent.
 //
-// This exists because the desktop's copy path cannot run in the page: Forge is
-// proxy-served and Wails injects no Go bridge there, so window.go — and with it
-// CopyToClipboard — is unavailable. Go has to fetch the text itself.
-//
-// Authenticated with the webview's session cookies, the same approach
-// provisionBridgeKey uses. A non-200 (not logged in, Forge not mounted, no
-// admin rights) returns empty rather than an error: there is simply nothing to
-// copy, which is not a failure worth interrupting the user over.
-func (a *App) forgeClipboard() (string, error) {
+// Go does it because the page cannot: Forge is proxy-served and Wails injects
+// no Go bridge there, the page is not a secure context so it cannot read the
+// clipboard, and the terminal has no editable field for a native paste to
+// land in. Authenticated with the webview's session cookies, the same
+// approach provisionBridgeKey uses. An empty pasteboard pastes nothing.
+func (a *App) forgePaste() (int, error) {
+	text, err := clipboard.ReadAll()
+	if err != nil {
+		return 0, fmt.Errorf("could not read the clipboard: %w", err)
+	}
+	if text == "" {
+		return 0, nil
+	}
 	base := strings.TrimRight(a.config.ServerURL(), "/")
 	if base == "" {
-		return "", fmt.Errorf("no server URL configured")
+		return 0, fmt.Errorf("no server URL configured")
 	}
-	req, err := http.NewRequest(http.MethodGet, base+"/forge/api/clipboard", nil)
+	body, err := json.Marshal(map[string]string{"text": text})
 	if err != nil {
-		return "", err
+		return 0, err
 	}
+	req, err := http.NewRequest(http.MethodPost, base+"/forge/api/paste", bytes.NewReader(body))
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Content-Type", "application/json")
 	if a.cookies != nil {
 		if u, e := url.Parse(base); e == nil {
 			for _, c := range a.cookies.Cookies(u) {
@@ -703,19 +712,16 @@ func (a *App) forgeClipboard() (string, error) {
 			}
 		}
 	}
-	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
-		return "", err
+		return 0, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", nil
+	if resp.StatusCode/100 != 2 {
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return 0, fmt.Errorf("Forge refused the paste (%d): %s", resp.StatusCode, strings.TrimSpace(string(msg)))
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return "", err
-	}
-	return string(body), nil
+	return len(text), nil
 }
 
 // nameWithExt gives a save name its extension from the type when it has none.

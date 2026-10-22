@@ -16,10 +16,7 @@ psty.textContent='.ui-page-header{padding-right:2.9rem}.auth-bar,.notify-panel,#
 // WKWebView's own pasteboard write has proven unreliable in this app
 // (see menu.go copyAction's history). Mirror every copy the page sees
 // into the Go-side pasteboard via POST /__desktop/copy — plain fetch,
-// because proxy-served pages have no window.go. The Go handler falls
-// back to Forge's tmux paste buffer when the posted text is empty, so
-// the explicit menu action still works in the terminal where tmux owns
-// the selection and the DOM has none.
+// because proxy-served pages have no window.go.
 var last_text='',last_at=0;
 function toast(t){if(window.__desktop_toast)window.__desktop_toast(t);}
 function selection_text(){
@@ -46,9 +43,14 @@ function push_copy(text,quiet){
       else{toast('Nothing to copy');}
     }).catch(function(){});
 }
-// Explicit copy (menu: Copy Selection / ⌘⇧C). Posts even when the
-// selection is empty so the Go side can fall back to the tmux buffer.
-window.__desktop_copy_selection=function(){push_copy(selection_text(),false);};
+// Explicit copy (menu: Copy Selection / ⌘⇧C). A page whose selection is
+// not in the DOM (Forge's terminal) answers for the focused element through
+// __desktopSelectionProvider; everything else copies the DOM selection.
+window.__desktop_copy_selection=function(){
+  var p=window.__desktopSelectionProvider,t=null;
+  if(typeof p==='function'){try{t=p(document.activeElement);}catch(e){t=null;}}
+  push_copy(typeof t==='string'?t:selection_text(),false);
+};
 // Copy an explicit string — the context menu captures its text at
 // right-click time and hands it over, because by the time an item is
 // clicked the live selection may be gone.
@@ -56,8 +58,8 @@ window.__desktop_copy_text=function(text){push_copy(String(text||''),false);};
 // Quiet mirrors: whenever the page performs a copy (context menu,
 // Edit▸Copy reaching the webview, a copy button using execCommand),
 // or Cmd/Ctrl+C lands as a keydown, push the selection Go-side too.
-// Guarded on non-empty text so an empty selection never overwrites
-// the pasteboard with the stale tmux buffer.
+// Guarded on non-empty text so an empty selection never empties the
+// pasteboard.
 document.addEventListener('copy',function(){var t=selection_text();if(t)push_copy(t,true);},true);
 document.addEventListener('keydown',function(e){
   if((e.metaKey||e.ctrlKey)&&!e.altKey&&(e.key==='c'||e.key==='C')){
@@ -232,15 +234,15 @@ function clipboard_reader(){
 // provided_selection asks the page whether the selection is its business.
 //
 // Not every selection lives in the DOM. Forge's terminal is the case that
-// forced this: tmux owns the highlight, so window.getSelection() is empty --
-// and the webview helpfully selects the WORD UNDER THE CURSOR when you right
-// click, which is a selection the user never made. A menu that trusted the DOM
-// copied that word instead of the highlight.
+// forced this: it draws its text, so window.getSelection() is empty -- and the
+// webview helpfully selects the WORD UNDER THE CURSOR when you right click,
+// which is a selection the user never made. A menu that trusted the DOM copied
+// that word instead of the highlight.
 //
 // The provider is handed the element that was clicked and returns the text (or
 // a promise of it) when it owns the selection there, or null to mean "not
-// mine, use the DOM". An empty string is an ANSWER, not a refusal: the copy
-// endpoint falls back to the terminal's own paste buffer on empty text.
+// mine, use the DOM". An empty string is an ANSWER, not a refusal: mine, and
+// nothing is highlighted, so the menu offers no Copy.
 function provided_selection(target){
   var p=window.__desktopSelectionProvider;
   if(typeof p!=='function')return null;
@@ -248,6 +250,17 @@ function provided_selection(target){
     var v=p(target);
     return (v===null||v===undefined)?null:v;
   }catch(e){return null;}
+}
+
+// terminal_paste asks the page whether a paste here goes to its terminal,
+// which has no editable field for the menu to insert into. A function means
+// yes: the desktop pastes into the terminal through Forge (Go reads the
+// pasteboard, so the text never passes through the page) and calls it once
+// the paste has landed. null means no.
+function terminal_paste(target){
+  var p=window.__desktopTerminalPaste;
+  if(typeof p!=='function')return null;
+  try{var f=p(target);return typeof f==='function'?f:null;}catch(e){return null;}
 }
 
 // context_at reads EVERYTHING the menu will need, at right-click time.
@@ -277,7 +290,7 @@ function context_at(e){
     try{text=String(window.getSelection()||'');}catch(err){text='';}
   }
   return {img:img,field:field,writable:writable,text:text,start:start,end:end,
-          provided:provided_selection(t)};
+          provided:provided_selection(t),terminal:terminal_paste(t)};
 }
 
 function fire_input(el){
@@ -339,7 +352,7 @@ function open_menu(x,y,ctx){
   // A page that claims the selection wins outright: the DOM selection here is
   // the word the webview picked on our behalf, not anything the user chose.
   var owns=(ctx.provided!==null);
-  var has_text=owns||!!(ctx.text&&ctx.text.length);
+  var has_text=owns?(ctx.provided!==''):!!(ctx.text&&ctx.text.length);
   if(has_text){
     if(count)add(separator());
     if(!owns&&ctx.writable&&ctx.start!=null&&ctx.end>ctx.start){
@@ -357,7 +370,17 @@ function open_menu(x,y,ctx){
   }
 
   var read=clipboard_reader();
-  if(ctx.writable&&read){
+  if(ctx.terminal){
+    if(count&&!has_text)add(separator());
+    add(item('Paste',function(){
+      fetch('/__desktop/terminalpaste',{method:'POST'})
+        .then(function(r){return r.json();})
+        .then(function(res){
+          if(res&&res.ok){ctx.terminal();return;}
+          toast('Paste failed: '+((res&&res.error)||'unknown'));
+        }).catch(function(e){toast('Paste failed: '+(e&&e.message||e));});
+    }));
+  }else if(ctx.writable&&read){
     if(count&&!has_text)add(separator());
     add(item('Paste',function(){
       Promise.resolve(read()).then(function(txt){

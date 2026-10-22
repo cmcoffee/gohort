@@ -162,3 +162,25 @@ func TestASaveNameGetsItsExtension(t *testing.T) {
 		}
 	}
 }
+
+// Right-click over Forge's terminal offers Paste, which went missing because
+// the menu offered it only over an editable field and the terminal has none.
+// The page says where a paste goes (__desktopTerminalPaste) and Go pastes from
+// the pasteboard, so the text never reaches the page. And a terminal that
+// answers an empty string for its selection means "nothing highlighted": no
+// Copy, rather than a Copy that copies the word under the pointer.
+func TestTerminalRightClickOffersPaste(t *testing.T) {
+	for _, want := range []string{
+		"window.__desktopTerminalPaste",
+		"terminal:terminal_paste(t)",
+		"fetch('/__desktop/terminalpaste',{method:'POST'})",
+		"owns?(ctx.provided!=='')",
+	} {
+		if !strings.Contains(popup_shim_js, want) {
+			t.Errorf("shim is missing %q", want)
+		}
+	}
+	if !strings.Contains(popup_shim_js, "if(ctx.terminal){") {
+		t.Error("the terminal Paste must be its own branch, not gated on an editable field")
+	}
+}

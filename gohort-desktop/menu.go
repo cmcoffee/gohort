@@ -236,11 +236,9 @@ func build_app_menu(app *App) *wails_menu.Menu {
 // fetch, not window.go: Wails does not inject its Go bridge into proxy-served
 // pages, which is what silently killed every earlier page-side copy attempt.
 //
-// When the DOM selection is empty (the Forge terminal, where tmux owns the
-// mouse and neither the DOM nor xterm has a selection to offer), the Go
-// handler falls back to Forge's api/clipboard — tmux's paste buffer, the only
-// place that selection actually lives. So one action covers both worlds:
-// normal pages copy like a browser, Forge copies the tmux buffer.
+// A page whose selection is not in the DOM answers for it instead: Forge's
+// terminal draws its text, so its __desktopSelectionProvider hands over the
+// terminal's own selection.
 func copyAction(app *App) func(*wails_menu.CallbackData) {
 	return func(_ *wails_menu.CallbackData) {
 		if app.ctx == nil {
