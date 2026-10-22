@@ -884,8 +884,8 @@ const guideKnowledgeCSS = `.guide-kn-intro { color: var(--text-mute); font-size:
 // guideSourcesAction is the 'guides_sources' client action behind the Sources
 // toolbar button: a modal that attaches/detaches cross-app reference sources
 // (servitor Systems, connected document sources like Confluence) to the open
-// guide. The Guide Author's list_reference_sources flags the attached set so it
-// builds from them. App-specific, injected via ExtraHeadHTML to keep it out of
+// guide. They are all the Guide Author's list_reference_sources and
+// pull_reference can reach. App-specific, injected via ExtraHeadHTML to keep it out of
 // core/ui. Reuses the guide-kn-* picker styles plus a group header.
 const guideSourcesAction = `function(ctx){
       var gid = ctx.recordId;

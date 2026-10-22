@@ -2,6 +2,7 @@ package scribe
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/cmcoffee/gohort/apps/orchestrate"
@@ -114,5 +115,50 @@ func TestGuideDispatchFollowsAttachedAgents(t *testing.T) {
 		if !want[id] {
 			t.Errorf("targets include %q, which the guide never attached", id)
 		}
+	}
+}
+
+// fetchProbeSource has two items and says which one it was asked for.
+type fetchProbeSource struct{}
+
+func (fetchProbeSource) Kind() string  { return "fetchprobe" }
+func (fetchProbeSource) Label() string { return "Fetch Probe" }
+func (fetchProbeSource) List(string) []ReferenceItem {
+	return []ReferenceItem{{ID: "given", Name: "Given Item"}, {ID: "other", Name: "Other Item"}}
+}
+func (fetchProbeSource) Fetch(_ context.Context, _, itemID, _ string) string {
+	return "contents of " + itemID
+}
+
+// The guide's coauthor reaches the guide's Sources and nothing else, for an
+// editor as for a reader. Editors used to get every source the person could
+// reach, with the attached ones merely marked, so the coauthor pulled from
+// systems, repos and file stores nobody had given the guide.
+func TestCoauthorPullsOnlyTheGuidesSources(t *testing.T) {
+	RegisterReferenceSource(fetchProbeSource{})
+	root := &DBase{Store: kvlite.MemStore()}
+	udb := UserDB(root, "u")
+	saveGuide(udb, Guide{ID: "g1", Owner: "u", Title: "G",
+		References: []ReferenceSelection{{Kind: "fetchprobe", ItemID: "given"}}})
+	udb.Set(activeTable, "current", "g1")
+	T := &Scribe{AppCore: AppCore{DB: root}}
+	orch := &orchestrate.OrchestrateApp{AppCore: AppCore{DB: root}}
+	tools := map[string]AgentToolDef{}
+	for _, td := range T.coauthorTools(coauthorScope{Ctx: context.Background(), UDB: udb, Orch: orch, User: "u", CanEdit: true}) {
+		tools[td.Tool.Name] = td
+	}
+	list, err := tools["list_reference_sources"].Handler(context.Background(), map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(list, "Given Item") || strings.Contains(list, "Other Item") {
+		t.Errorf("an editor's list must hold the guide's Sources only:\n%s", list)
+	}
+	pull := tools["pull_reference"].Handler
+	if got, _ := pull(context.Background(), map[string]any{"kind": "fetchprobe", "item_id": "other"}); strings.Contains(got, "contents of other") {
+		t.Errorf("an editor pulled a source the guide was never given: %s", got)
+	}
+	if got, _ := pull(context.Background(), map[string]any{"kind": "fetchprobe", "item_id": "given"}); !strings.Contains(got, "contents of given") {
+		t.Errorf("the guide's own Source must still pull, got %s", got)
 	}
 }

@@ -547,75 +547,45 @@ func (T *Scribe) searchKnowledgeTool(sc coauthorScope) AgentToolDef {
 	}
 }
 
-// list_reference_sources + pull_reference expose the cross-app reference
-// registry: knowledge OTHER gohort services have gathered — servitor Systems
-// (facts about the user's appliances) and connected document sources like
-// Confluence (any ExposeReference MCP server). This is how a guide gets BUILT
-// FROM internal knowledge, not just web research. Per-user and access-gated by
-// the registry: the user only ever sees their own systems / connected docs.
+// list_reference_sources + pull_reference reach the guide's Sources: knowledge
+// OTHER gohort services have gathered, such as Servitor systems and repos,
+// file stores, and connected document sources like Confluence (any
+// ExposeReference MCP server), as the person attached them to this guide.
+// This is how a guide gets BUILT FROM internal knowledge, not just web
+// research.
 func (T *Scribe) listReferencesTool(sc coauthorScope) AgentToolDef {
-	user, canEdit := sc.User, sc.CanEdit
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "list_reference_sources",
-			Description: "List the internal knowledge sources you can pull into the guide from OTHER gohort services: e.g. Systems (facts gathered about the user's own servers and devices) and connected document sources like Confluence. Returns each source's items with their IDs. Call this to discover what's available before pull_reference, especially when the user asks to build a guide ABOUT a specific system or from internal docs. No arguments.",
+			Description: "List this guide's Sources: the internal knowledge the person attached to it with the Sources button, from OTHER gohort services (Servitor systems and repos, file stores, connected documents such as Confluence). Returns each with its kind and id for pull_reference. Only these can be pulled: anything else has to be added under Sources first. No arguments.",
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
-			// Reader of a shared guide: only the sources the OWNER linked to this
-			// guide, resolved under the owner's identity. The reader never sees the
-			// wider registry — just the guide's own sources.
-			if !canEdit {
-				g, _, ownerUser, ok := T.openGuide(sc)
-				if !ok || len(g.References) == 0 {
-					return "This guide has no linked reference sources.", nil
-				}
-				return describeAttachedReferences(ownerUser, g.References), nil
+			// The guide's own Sources, for everyone who works on it, resolved
+			// under the OWNER's identity, since the sources are theirs.
+			//
+			// Editors used to get the whole registry, with the attached items
+			// marked: every system, repo, file store and connected document
+			// the person could reach. The coauthor then pulled from sources
+			// nobody had given the guide, and a file store reached that way
+			// was files the guide was never meant to read. Sources is where a
+			// guide's reach is decided, as it is for an agent.
+			g, _, ownerUser, ok := T.openGuide(sc)
+			if !ok || len(g.References) == 0 {
+				return "This guide has no Sources yet. Ask the person to add what it should be built from with the Sources button; for public topics use the `research` tool instead.", nil
 			}
-			groups := ReferenceGroups(user)
-			if len(groups) == 0 {
-				return "No internal reference sources are available right now. (Systems appear once the user has systems in the servitor app; document sources like Confluence appear once they're connected as a reference source.) Use the `research` tool for public/web topics instead.", nil
-			}
-			// Which items did the user attach to THIS guide via the Sources picker?
-			attached := map[string]bool{}
-			if g, _, _, ok := T.openGuide(sc); ok {
-				for _, s := range g.References {
-					attached[s.Kind+"\x00"+s.ItemID] = true
-				}
-			}
-			var b strings.Builder
-			if len(attached) > 0 {
-				b.WriteString("Internal reference sources. Items marked [attached] were selected by the user via the Sources button as this guide's sources: build the guide from those unless told otherwise. Pull any item with pull_reference:\n")
-			} else {
-				b.WriteString("Internal reference sources you can pull from with pull_reference:\n")
-			}
-			for _, g := range groups {
-				fmt.Fprintf(&b, "\n%s (kind: %s):\n", g.Label, g.Kind)
-				for _, it := range g.Items {
-					mark := ""
-					if attached[g.Kind+"\x00"+it.ID] {
-						mark = " [attached]"
-					}
-					if strings.TrimSpace(it.Desc) != "" {
-						fmt.Fprintf(&b, "- %s, %s [id: %s]%s\n", it.Name, it.Desc, it.ID, mark)
-					} else {
-						fmt.Fprintf(&b, "- %s [id: %s]%s\n", it.Name, it.ID, mark)
-					}
-				}
-			}
-			return strings.TrimRight(b.String(), "\n"), nil
+			return describeAttachedReferences(ownerUser, g.References), nil
 		},
 	}
 }
 
 func (T *Scribe) pullReferenceTool(sc coauthorScope) AgentToolDef {
-	user, canEdit := sc.User, sc.CanEdit
 	return AgentToolDef{
 		Tool: Tool{
 			Name: "pull_reference",
 			// Returns documents, not the agent's own words: fenced and scanned as
 			// outside content, as a fetched page is.
 			FetchesExternal: true,
-			Description:     "Pull the knowledge for one reference item (from list_reference_sources) into your context so you can write a guide section GROUNDED in it: e.g. build a guide from a system's gathered facts (servitor) or from connected docs (Confluence). Provide the kind and item id from list_reference_sources, and a query describing what you're writing about: every source uses it to return the most relevant material (a system/servitor source searches its gathered knowledge, docs, and facts; a document source searches its content). Omit the query only when you want the source's full picture. Then write the section with add_section using only details the reference actually contains: do not invent specifics it doesn't include.",
+			Description:     "Pull the knowledge for one of this guide's Sources (from list_reference_sources) into your context so you can write a guide section GROUNDED in it: e.g. build a guide from a system's gathered facts (servitor) or from connected docs (Confluence). Provide the kind and item id from list_reference_sources, and a query describing what you're writing about: every source uses it to return the most relevant material (a system/servitor source searches its gathered knowledge, docs, and facts; a document source searches its content). Omit the query only when you want the source's full picture. Then write the section with add_section using only details the reference actually contains: do not invent specifics it doesn't include.",
 			Parameters: map[string]ToolParam{
 				"kind":    {Type: "string", Description: "The source kind from list_reference_sources, e.g. \"system\" or \"mcp:confluence\"."},
 				"item_id": {Type: "string", Description: "The item id from list_reference_sources."},
@@ -633,19 +603,13 @@ func (T *Scribe) pullReferenceTool(sc coauthorScope) AgentToolDef {
 			if q, ok := args["query"]; ok {
 				query = strings.TrimSpace(fmt.Sprint(q))
 			}
-			// Editors pull from their own registry; readers pull ONLY the guide's
-			// linked sources, resolved with the OWNER's identity — so the answer is
-			// grounded in the guide's own sources, but the reader can't pull any
-			// source the owner didn't link to this guide.
-			fetchUser := user
-			if !canEdit {
-				g, _, ownerUser, ok := T.openGuide(sc)
-				if !ok || !referenceAttached(g, kind, itemID) {
-					return "That source isn't linked to this guide: you can only pull the sources the guide's owner attached to it.", nil
-				}
-				fetchUser = ownerUser
+			// Only the guide's own Sources, for editors and readers alike, and
+			// under the OWNER's identity: see list_reference_sources.
+			g, _, ownerUser, ok := T.openGuide(sc)
+			if !ok || !referenceAttached(g, kind, itemID) {
+				return "That source isn't one of this guide's Sources: only what the person attached with the Sources button can be pulled. Ask them to add it there if the guide needs it.", nil
 			}
-			txt := FetchReference(ctx, fetchUser, kind, itemID, query)
+			txt := FetchReference(ctx, ownerUser, kind, itemID, query)
 			if strings.TrimSpace(txt) == "" {
 				return fmt.Sprintf("No content available for %s item %q: it may be empty, or the id is wrong; re-check with list_reference_sources.", kind, itemID), nil
 			}
