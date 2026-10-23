@@ -198,6 +198,13 @@ type TurnClaimVerdict struct {
 	Claim string
 	// Why is one line naming what actually happened instead.
 	Why string
+	// Requested is true when the person's own message asked for the very
+	// action the claim describes. Then the honest remedy on a turn that ran
+	// nothing is to do it, not to confess and ask: asked to pin a note, an
+	// agent replied "Pinned" with no call, was told to rewrite and never
+	// act, and answered "Haven't done it yet. Say the word and I'll write
+	// it", to a person who had just said the word.
+	Requested bool
 	// Machinery quotes a sentence that explains the framework's own plumbing to
 	// someone who did not ask about it — a task id, that work is running in the
 	// background, an invitation to check back or wait. Empty when clean.
@@ -414,7 +421,18 @@ func judgeTurnClaim(cfg AgentLoopConfig, ev TurnClaimEvidence) (TurnClaimVerdict
 // A turn that DID work keeps the offer: a claim there is usually the last step
 // of that work left undone, and the tools it was already using are the way to
 // finish it.
-func unkeptClaimCorrection(v TurnClaimVerdict, didWork bool) string {
+//
+// So does a turn where the person asked for exactly what the claim says
+// (asked: the judge's Requested, on a turn someone is attending). The
+// correction is then still not the reason anything is sent: the person's
+// request is, and the correction holds the agent to that request alone.
+func unkeptClaimCorrection(v TurnClaimVerdict, didWork, asked bool) string {
+	if !didWork && asked {
+		return fmt.Sprintf("Your reply says: %q. That did not happen: %s. The person asked you for exactly this, so do it now with a real tool call, then reply with what actually happened. "+
+			"Do only what they asked: nothing else may be sent, posted or delivered because of this correction. "+
+			"If no tool you have can do it, say plainly that you could not and why. Do not ask them to confirm a request they already made. "+withdrawnReplyRule,
+			v.Claim, v.Why)
+	}
 	if !didWork {
 		return fmt.Sprintf("Your reply says: %q. That did not happen: %s. This turn ran nothing, so rewrite the reply to say only what is true. "+
 			"Do not call a tool to make the sentence come true: this is a correction to your wording, not a request to act, and nothing may be sent, posted or delivered because of it. "+

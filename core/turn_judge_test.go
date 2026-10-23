@@ -371,7 +371,7 @@ func TestNoToolOutputsRendersNothing(t *testing.T) {
 // only way to make a sentence true is to go and do something.
 func TestACorrectionOnATurnThatRanNothingOnlyAsksForARewrite(t *testing.T) {
 	v := TurnClaimVerdict{Unkept: true, Claim: "Wishing you a pleasant evening.", Why: "the turn did not do it"}
-	idle := unkeptClaimCorrection(v, false)
+	idle := unkeptClaimCorrection(v, false, false)
 	if strings.Contains(idle, "do it NOW") || strings.Contains(idle, "real tool call") {
 		t.Errorf("a turn that ran nothing must not be invited to act:\n%s", idle)
 	}
@@ -380,7 +380,7 @@ func TestACorrectionOnATurnThatRanNothingOnlyAsksForARewrite(t *testing.T) {
 	}
 	// A turn that did work keeps the offer: the claim there is usually its
 	// last step left undone.
-	busy := unkeptClaimCorrection(v, true)
+	busy := unkeptClaimCorrection(v, true, false)
 	if !strings.Contains(busy, "do it NOW with a real tool call") {
 		t.Errorf("a turn that did work should still be offered the tool call:\n%s", busy)
 	}
@@ -455,6 +455,71 @@ func TestARewriteOnlyTurnRunsNoTools(t *testing.T) {
 	}
 	if resp == nil || resp.Content != "Good evening!" {
 		t.Errorf("the rewritten reply should be what goes out, got %+v", resp)
+	}
+}
+
+// Asked for exactly what the claim says, a turn that ran nothing is told to do
+// it. The live case: asked to pin a note, an agent replied "Pinned" with no
+// call, was held to a rewrite, and asked the person to "say the word" they
+// had just said.
+func TestACorrectionForWhatThePersonAskedAsksForTheCall(t *testing.T) {
+	v := TurnClaimVerdict{Unkept: true, Claim: "Pinned.", Why: "no tool ran", Requested: true}
+	c := unkeptClaimCorrection(v, false, true)
+	for _, want := range []string{"do it now with a real tool call", "Do only what they asked", "Do not ask them to confirm", "write it as your first and only reply"} {
+		if !strings.Contains(c, want) {
+			t.Errorf("the asked-for correction should say %q:\n%s", want, c)
+		}
+	}
+	if strings.Contains(c, "Do not call a tool") {
+		t.Errorf("the asked-for correction must not forbid the call it asks for:\n%s", c)
+	}
+}
+
+// The loop half: an attended turn whose claim the person asked for keeps its
+// tools after the correction and runs the call; the same verdict on an
+// unattended turn stays rewrite-only, since a schedule's prompt is not a
+// person waiting on the action.
+func TestAnAskedForClaimIsDoneOnlyWhenSomeoneIsAttending(t *testing.T) {
+	for _, unattended := range []bool{false, true} {
+		fired := 0
+		pin := AgentToolDef{
+			Tool: Tool{Name: "pin_note", Description: "pin a note", Parameters: map[string]ToolParam{"text": {Type: "string"}}},
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
+				fired++
+				return "Pinned.", nil
+			},
+		}
+		stub := &FakeLLM{Turns: []FakeTurn{
+			{Content: "Pinned."},
+			{ToolCalls: []ToolCall{{ID: "c1", Name: "pin_note", Args: map[string]any{"text": "the rules"}}}},
+			{Content: "Pinned it.", Repeat: true},
+		}}
+		judged := 0
+		app := &AppCore{LLM: stub, LeadLLM: stub}
+		_, _, err := app.RunAgentLoop(context.Background(),
+			[]Message{{Role: "user", Content: "Pin that as a note to yourself."}},
+			AgentLoopConfig{
+				SystemPrompt: "Be helpful.",
+				Tools:        []AgentToolDef{pin},
+				MaxRounds:    6,
+				Unattended:   unattended,
+				TurnClaimJudge: func(ev TurnClaimEvidence) (TurnClaimVerdict, bool) {
+					judged++
+					if judged == 1 {
+						return TurnClaimVerdict{Unkept: true, Claim: "Pinned.", Why: "no tool ran", Requested: true}, true
+					}
+					return TurnClaimVerdict{}, true
+				},
+			})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if unattended && fired != 0 {
+			t.Errorf("unattended: the correction must stay rewrite-only; pin_note fired %d time(s)", fired)
+		}
+		if !unattended && fired != 1 {
+			t.Errorf("attended and asked: the correction should get the call made; pin_note fired %d time(s)", fired)
+		}
 	}
 }
 

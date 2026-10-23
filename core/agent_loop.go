@@ -3195,8 +3195,14 @@ func (lr *loopRun) finalRoundJudges() loopAction {
 		if verdict.Unkept && lr.corrections.available(correctionUnkeptClaim) && lr.round < lr.maxRounds && lr.guardActs(correctionUnkeptClaim) {
 			Debug("[agent_loop] turn judge: reply claims work the turn did not do (%q), %s; re-prompting: correction %d/%d",
 				truncForLog(verdict.Claim, 80), verdict.Why, lr.corrections.spend(correctionUnkeptClaim), maxCorrectionsPerKind)
+			// A turn nobody attends never counts as asked: a schedule's prompt
+			// is not a person waiting on the action.
+			asked := verdict.Requested && !ev.Unattended
 			how := "Re-prompted to do it or say so."
-			if !ev.TurnDidWork() {
+			switch {
+			case !ev.TurnDidWork() && asked:
+				how = "Re-prompted to do it; nothing ran this turn, but the person asked for exactly this."
+			case !ev.TurnDidWork():
 				how = "Re-prompted to rewrite it; nothing ran this turn, so it was not asked to act."
 			}
 			lr.emitDiag("unkept-claim-corrected", fmt.Sprintf("The reply said %q, which did not happen: %s. %s", truncForLog(verdict.Claim, 120), verdict.Why, how))
@@ -3214,8 +3220,8 @@ func (lr *loopRun) finalRoundJudges() loopAction {
 			// copy would still publish it.
 			lr.strikeRound(unkeptStrikeReason(verdict))
 			lr.history[len(lr.history)-1] = Message{Role: "assistant", Content: lr.rs.resp.Content, Reasoning: lr.rs.resp.Reasoning}
-			lr.history = append(lr.history, Message{Role: "user", Content: frameworkNoticeTag + unkeptClaimCorrection(verdict, ev.TurnDidWork())})
-			if !ev.TurnDidWork() {
+			lr.history = append(lr.history, Message{Role: "user", Content: frameworkNoticeTag + unkeptClaimCorrection(verdict, ev.TurnDidWork(), asked)})
+			if !ev.TurnDidWork() && !asked {
 				lr.rewriteOnly = true
 			}
 			return actContinue

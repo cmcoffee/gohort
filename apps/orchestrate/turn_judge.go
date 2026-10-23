@@ -101,7 +101,9 @@ That is NOT machinery, and you must leave it alone, when:
 
 Machinery is about the FRAMEWORK, not about the task. When in doubt, leave it alone.
 
-Reply with JSON only: {"verdict":"KEPT"|"UNKEPT","claim":"<the exact sentence from the reply that is untrue, copied verbatim, empty if KEPT>","why":"<one short line naming what actually happened instead, empty if KEPT>","machinery":"<the exact sentence explaining plumbing, copied verbatim, empty if there is none>"}`
+When the verdict is UNKEPT, answer one more thing: did the user's request ask the assistant to do the very action the untrue sentence claims? "YES" only when it plainly did: they asked for a note to be saved and the reply says it saved one, they asked for a reminder and the reply says it set one. "NO" when the sentence claims something they did not ask for, when the verdict is KEPT, or when you are unsure.
+
+Reply with JSON only: {"verdict":"KEPT"|"UNKEPT","claim":"<the exact sentence from the reply that is untrue, copied verbatim, empty if KEPT>","why":"<one short line naming what actually happened instead, empty if KEPT>","requested":"YES"|"NO","machinery":"<the exact sentence explaining plumbing, copied verbatim, empty if there is none>"}`
 
 // judgeTurnClaims is the TurnClaimJudge implementation. ok=false on any doubt
 // about the JUDGEMENT ITSELF — a model error, an unparseable answer, a verdict
@@ -145,6 +147,9 @@ func (T *OrchestrateApp) judgeTurnClaims(ctx context.Context, ev TurnClaimEviden
 	out := TurnClaimVerdict{Readings: []TurnClaimVerdict{first, second}}
 	if first.Unkept && second.Unkept {
 		out.Unkept, out.Claim, out.Why = true, second.Claim, second.Why
+		// Asked only when both readings say so: it lets the correction ask
+		// for a tool call, so it takes the same agreement a conviction does.
+		out.Requested = first.Requested && second.Requested
 	}
 	if first.Machinery != "" && second.Machinery != "" {
 		out.Machinery = second.Machinery
@@ -173,6 +178,7 @@ func (T *OrchestrateApp) readTurnClaims(ctx context.Context, ev TurnClaimEvidenc
 		Verdict   string `json:"verdict"`
 		Claim     string `json:"claim"`
 		Why       string `json:"why"`
+		Requested string `json:"requested"`
 		Machinery string `json:"machinery"`
 	}
 	if derr := DecodeJSON(resp.Content, &out); derr != nil {
@@ -181,12 +187,12 @@ func (T *OrchestrateApp) readTurnClaims(ctx context.Context, ev TurnClaimEvidenc
 		// no text fallback, unlike the gatekeeper. There a scan for "YES" is a
 		// reasonable guess because the cost of guessing wrong is one message
 		// not delivered; here it is a retracted reply and a burnt round.
-		fields, ok := salvageJudgeJSON(resp.Content, []string{"verdict", "claim", "why", "machinery"})
+		fields, ok := salvageJudgeJSON(resp.Content, []string{"verdict", "claim", "why", "requested", "machinery"})
 		if !ok {
 			Debug("[turn-judge] %s reading: unparseable verdict %q: no opinion", pass, truncateObs(resp.Content, 120))
 			return TurnClaimVerdict{}, false
 		}
-		out.Verdict, out.Claim, out.Why, out.Machinery = fields["verdict"], fields["claim"], fields["why"], fields["machinery"]
+		out.Verdict, out.Claim, out.Why, out.Requested, out.Machinery = fields["verdict"], fields["claim"], fields["why"], fields["requested"], fields["machinery"]
 	}
 	machinery := strings.TrimSpace(out.Machinery)
 	if !strings.EqualFold(strings.TrimSpace(out.Verdict), "UNKEPT") {
@@ -211,12 +217,13 @@ func (T *OrchestrateApp) readTurnClaims(ctx context.Context, ev TurnClaimEvidenc
 	if why == "" {
 		why = "the turn did not do it"
 	}
-	Log("[turn-judge] %s reading: UNKEPT (%s): claim=%q why=%q (tools=%d errors=%d delivered=%d)",
-		pass, judgeTrigger(ev), truncateObs(claim, 100), truncateObs(why, 100), len(ev.ToolCalls), ev.ToolErrors, ev.Delivered)
+	requested := strings.EqualFold(strings.TrimSpace(out.Requested), "YES")
+	Log("[turn-judge] %s reading: UNKEPT (%s): claim=%q why=%q requested=%v (tools=%d errors=%d delivered=%d)",
+		pass, judgeTrigger(ev), truncateObs(claim, 100), truncateObs(why, 100), requested, len(ev.ToolCalls), ev.ToolErrors, ev.Delivered)
 	// Machinery carried through even though the loop acts on the claim first:
 	// the rewrite it asks for drops the plumbing anyway, and a verdict that
 	// silently loses half its findings is one nobody can debug.
-	return TurnClaimVerdict{Unkept: true, Claim: claim, Why: why, Machinery: machinery}, true
+	return TurnClaimVerdict{Unkept: true, Claim: claim, Why: why, Requested: requested, Machinery: machinery}, true
 }
 
 // judgeTrigger names which arm of the pre-filter put this turn in front of the
