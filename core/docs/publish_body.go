@@ -59,7 +59,45 @@ type publishBodyKey struct{}
 // WithPublishBody carries req's document on ctx for the integration run to
 // put into its calls.
 func WithPublishBody(ctx context.Context, req PublishRequest) context.Context {
-	return context.WithValue(ctx, publishBodyKey{}, &PublishBody{doc: req.Doc, nav: req.Nav})
+	b := &PublishBody{doc: req.Doc, nav: req.Nav}
+	// What the destination named last time is where this one starts: an
+	// update whose run does not name them again keeps them, where it used to
+	// send the document's own list and leave the destination's table of
+	// contents behind.
+	if len(req.NavLinks) > 0 {
+		b.links = map[string]string{}
+		for a, to := range req.NavLinks {
+			b.links[a] = to
+		}
+	}
+	if req.NavContents != nil {
+		b.contents, b.contentsSet = *req.NavContents, true
+	}
+	return context.WithValue(ctx, publishBodyKey{}, b)
+}
+
+// Navigation is how this publish writes the document's navigation at the
+// destination, as SetLinks left it (or as the last publish did): for the
+// producer to keep and hand to the next update.
+func (b *PublishBody) Navigation() (map[string]string, *string) {
+	if b == nil {
+		return nil, nil
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	var links map[string]string
+	if len(b.links) > 0 {
+		links = map[string]string{}
+		for a, to := range b.links {
+			links[a] = to
+		}
+	}
+	var contents *string
+	if b.contentsSet {
+		c := b.contents
+		contents = &c
+	}
+	return links, contents
 }
 
 // PublishBodyFrom is the document ctx carries by reference, or nil.

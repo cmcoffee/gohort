@@ -180,6 +180,13 @@ func (p publishRun) do(ctx context.Context, job *publishJob) error {
 	}
 	rec := p.rec
 	rec.ExternalID, rec.URL, rec.Version, rec.At = res.ExternalID, res.URL, res.Version, now()
+	// How the destination wrote the document's navigation, for the next
+	// update; kept from the record when this publish named none.
+	if res.NavLinks != nil || res.NavContents != nil {
+		rec.NavLinks, rec.NavContents = res.NavLinks, res.NavContents
+	} else if p.req.ExternalID != "" {
+		rec.NavLinks, rec.NavContents = p.req.NavLinks, p.req.NavContents
+	}
 	// An update that came back without an address still went to the page
 	// this guide already had: keep it, or the next publish makes a new one.
 	if strings.TrimSpace(rec.ExternalID) == "" {
@@ -205,6 +212,9 @@ func republishOf(g Guide, ownerUDB Database, user string, prev docs.PublishRecor
 			ExternalID: prev.ExternalID,
 			Version:    prev.Version,
 			Answers:    prev.Answers,
+			// How the destination wrote its navigation last time.
+			NavLinks:    prev.NavLinks,
+			NavContents: prev.NavContents,
 		},
 		rec: prev,
 	}
@@ -285,6 +295,7 @@ func (T *Scribe) handlePublishTo(w http.ResponseWriter, r *http.Request, udb Dat
 		docs.PublishRequest{
 			Target: spec.Target.ID, Title: title, Doc: publishDoc(g, ownerUDB), Answers: body.Answers,
 			ExternalID: prev.ExternalID, Version: prev.Version,
+			NavLinks: prev.NavLinks, NavContents: prev.NavContents,
 		},
 		docs.PublishRecord{Kind: spec.Kind, Target: spec.Target.ID, TargetTitle: spec.Target.Title, Title: title, Answers: body.Answers})
 	writeJSON(w, map[string]any{"started": true, "target": spec.Target.Title})

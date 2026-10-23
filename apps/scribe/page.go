@@ -535,6 +535,7 @@ const guideDocCSS = `<style>
 .guide-toc ol { margin: 0; padding-left: 1.3rem; display: flex; flex-direction: column; gap: 0.25rem; }
 .guide-toc a { color: var(--accent); text-decoration: none; }
 .guide-toc a:hover { text-decoration: underline; }
+.guide-toc ol.guide-toc-sub { list-style: none; padding-left: 1rem; margin-top: 0.2rem; gap: 0.15rem; font-size: 0.92em; }
 .guide-section { margin: 0 0 2.2rem; scroll-margin-top: 1rem; }
 .guide-section > h2 {
   font-size: 1.35rem; color: var(--text-hi);

@@ -67,6 +67,14 @@ type PublishRequest struct {
 	// Nav is the document's navigation within itself, which the destination
 	// rebuilds its own way (publish_nav.go). PublishDocument fills it.
 	Nav DocNav `json:"nav,omitempty"`
+	// NavLinks and NavContents are how the destination wrote that navigation
+	// the last time the document was published there: its anchors for the
+	// document's links to its own sections, and its own table-of-contents
+	// markup (publish_body.go). An update starts from them, so a destination
+	// whose run named them once keeps them on every update without naming
+	// them again. From the producer's PublishRecord; nil when it has none.
+	NavLinks    map[string]string `json:"-"`
+	NavContents *string           `json:"-"`
 }
 
 // PublishResult is where a document landed. ExternalID + Version are what a
@@ -79,6 +87,11 @@ type PublishResult struct {
 	Label string `json:"label,omitempty"`
 	// Updated reports whether this replaced an existing remote document.
 	Updated bool `json:"updated,omitempty"`
+	// NavLinks and NavContents are how this publish wrote the document's
+	// navigation at the destination, for the producer to keep on its
+	// PublishRecord and hand to the next update. Nil when it set none.
+	NavLinks    map[string]string `json:"nav_links,omitempty"`
+	NavContents *string           `json:"nav_contents,omitempty"`
 }
 
 // PublishDestination is implemented by an outbound integration. Like
@@ -257,6 +270,10 @@ type PublishRecord struct {
 	// Answers are the intake answers it was published with, so an update to
 	// a target that asks questions goes out with the same ones.
 	Answers map[string]string `json:"answers,omitempty"`
+	// NavLinks and NavContents are how the destination wrote the document's
+	// navigation last time (PublishResult), handed to the next update.
+	NavLinks    map[string]string `json:"nav_links,omitempty"`
+	NavContents *string           `json:"nav_contents,omitempty"`
 }
 
 // FindPublishRecord returns the record for a destination kind, and whether one

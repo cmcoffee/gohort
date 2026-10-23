@@ -100,3 +100,40 @@ func TestALongReplyIsClippedForTheModel(t *testing.T) {
 		t.Error("a short reply was changed")
 	}
 }
+
+// What a destination named for the document's navigation last time is where
+// an update starts: its table-of-contents markup goes in place of the
+// document's own list without the run naming it again, and is reported back
+// for the next update. An update that named nothing used to send the plain
+// list and leave the destination's table of contents behind.
+func TestAnUpdateStartsFromLastTimesNavigation(t *testing.T) {
+	md := "# Guide\n\n## Contents\n\n1. Setup\n   - 1.1 Install\n2. Use\n\n## 1. Setup\n\nSee [Use](#2-use).\n\n## 2. Use\n\nGo."
+	macro := "<toc-block/>"
+	req := PublishRequest{Doc: PublishDoc{Title: "Guide", Markdown: md}, Nav: AnalyzeNav(md),
+		NavContents: &macro, NavLinks: map[string]string{"2-use": "#Use"}}
+	ctx := WithPublishBody(context.Background(), req)
+	b := PublishBodyFrom(ctx)
+	out := b.Markdown()
+	if !strings.Contains(out, macro) || strings.Contains(out, "1. Setup\n   - 1.1 Install") {
+		t.Errorf("the saved markup replaces the list, nested entries and all:\n%s", out)
+	}
+	if !strings.Contains(out, "[Use](#Use)") {
+		t.Errorf("the saved links are used:\n%s", out)
+	}
+	links, contents := b.Navigation()
+	if contents == nil || *contents != macro || links["2-use"] != "#Use" {
+		t.Errorf("reported back for the next update: %v %v", links, contents)
+	}
+	// Named again, the new markup wins.
+	again := "<toc-block depth=2/>"
+	b.SetLinks(nil, &again)
+	if _, c := b.Navigation(); c == nil || *c != again {
+		t.Error("a run that names it again changes it")
+	}
+	// Nothing saved, nothing named: the list goes out as written, and nothing
+	// is reported.
+	plain := PublishBodyFrom(WithPublishBody(context.Background(), PublishRequest{Doc: PublishDoc{Markdown: md}, Nav: AnalyzeNav(md)}))
+	if l, c := plain.Navigation(); l != nil || c != nil || !strings.Contains(plain.Markdown(), "1. Setup") {
+		t.Error("with nothing saved the document goes out as written")
+	}
+}

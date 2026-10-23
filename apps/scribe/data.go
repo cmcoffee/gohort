@@ -18,6 +18,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/docs"
 	"github.com/cmcoffee/gohort/core/peershare"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 const guidesTable = "guides"
@@ -559,11 +560,41 @@ func renderGuideHTML(g Guide, controls bool) string {
 	// Table of contents, once there is enough to navigate. A short guide reads
 	// as one flow: no contents block and no section numbers.
 	withTOC := hasContents(secs)
+	// Each section's body as it is shown: its ### headings numbered 1.1,
+	// 1.2 under a numbered guide, and listed under it in the contents.
+	bodies := make([]string, len(secs))
+	subs := make([][]subHeading, len(secs))
+	for i, s := range secs {
+		bodies[i] = s.Markdown
+		if withTOC {
+			bodies[i], subs[i] = numberSubheadings(s.Markdown, i+1)
+		}
+	}
 	if withTOC {
 		b.WriteString(`<nav class="guide-toc"><div class="guide-toc-title">Contents</div><ol>`)
 		for i, s := range secs {
 			anchor := fmt.Sprintf("sec-%d", i+1)
-			b.WriteString(`<li><a href="#` + anchor + `">` + HTMLEscape(sectionHeading(s, i)) + `</a></li>`)
+			b.WriteString(`<li><a href="#` + anchor + `">` + HTMLEscape(sectionHeading(s, i)) + `</a>`)
+			if len(subs[i]) > 0 {
+				// The anchors the renderer gives those headings, so a link
+				// lands on its own subsection.
+				slugs := textutil.HeadingSlugs(bodies[i])
+				b.WriteString(`<ol class="guide-toc-sub">`)
+				for _, h := range subs[i] {
+					href := ""
+					for _, sl := range slugs {
+						// By its number: the slug's text is the heading
+						// with its inline markup taken out.
+						if strings.HasPrefix(sl.Text, h.Num+" ") {
+							href = sl.Slug
+							break
+						}
+					}
+					b.WriteString(`<li><a href="#` + HTMLEscape(href) + `">` + HTMLEscape(h.Num+" "+h.Text) + `</a></li>`)
+				}
+				b.WriteString(`</ol>`)
+			}
+			b.WriteString(`</li>`)
 		}
 		b.WriteString(`</ol></nav>`)
 	}
@@ -588,7 +619,7 @@ func renderGuideHTML(g Guide, controls bool) string {
 			num = `<span class="guide-section-num">` + fmt.Sprint(i+1) + `.</span> `
 		}
 		b.WriteString(`<h2>` + num + HTMLEscape(sectionHeading(s, i)) + `</h2>`)
-		b.WriteString(`<div class="guide-section-body">` + MarkdownToHTML(s.Markdown) + `</div>`)
+		b.WriteString(`<div class="guide-section-body">` + MarkdownToHTML(bodies[i]) + `</div>`)
 		b.WriteString(`</section>`)
 	}
 	if controls {
@@ -637,10 +668,21 @@ func renderGuideMarkdown(g Guide) string {
 	}
 	secs := g.sorted()
 	withTOC := hasContents(secs)
+	bodies := make([]string, len(secs))
+	subs := make([][]subHeading, len(secs))
+	for i, s := range secs {
+		bodies[i] = s.Markdown
+		if withTOC {
+			bodies[i], subs[i] = numberSubheadings(s.Markdown, i+1)
+		}
+	}
 	if withTOC {
 		b.WriteString("## Contents\n\n")
 		for i, s := range secs {
 			b.WriteString(fmt.Sprintf("%d. %s\n", i+1, sectionHeading(s, i)))
+			for _, h := range subs[i] {
+				b.WriteString("   - " + h.Num + " " + h.Text + "\n")
+			}
 		}
 		b.WriteString("\n")
 	}
@@ -650,9 +692,47 @@ func renderGuideMarkdown(g Guide) string {
 		} else {
 			b.WriteString("## " + sectionHeading(s, i) + "\n\n")
 		}
-		b.WriteString(strings.TrimSpace(s.Markdown) + "\n\n")
+		b.WriteString(strings.TrimSpace(bodies[i]) + "\n\n")
 	}
 	return b.String()
+}
+
+// subHeading is one ### heading inside a section, numbered in it.
+type subHeading struct{ Num, Text string }
+
+// numberSubheadings numbers a section's ### headings sec.1, sec.2 and lists
+// them, for the contents of a numbered guide: "### Setup" in section 2
+// becomes "### 2.1 Setup". Only ### is a subsection; deeper headings stay as
+// they are, and a heading inside a code fence is not one. A heading already
+// numbered for this section (written out by an earlier export, say) is not
+// numbered twice.
+func numberSubheadings(md string, sec int) (string, []subHeading) {
+	lines := strings.Split(md, "\n")
+	var subs []subHeading
+	inFence := false
+	n := 0
+	for i, line := range lines {
+		t := strings.TrimSpace(line)
+		if strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~") {
+			inFence = !inFence
+			continue
+		}
+		if inFence || !strings.HasPrefix(t, "### ") {
+			continue
+		}
+		text := strings.TrimSpace(strings.TrimPrefix(t, "### "))
+		if text == "" {
+			continue
+		}
+		n++
+		num := fmt.Sprintf("%d.%d", sec, n)
+		if rest, ok := strings.CutPrefix(text, num+" "); ok {
+			text = strings.TrimSpace(rest)
+		}
+		lines[i] = "### " + num + " " + text
+		subs = append(subs, subHeading{Num: num, Text: text})
+	}
+	return strings.Join(lines, "\n"), subs
 }
 
 // renderGuideMarkdownPlain is the assembled guide WITHOUT the Contents block —

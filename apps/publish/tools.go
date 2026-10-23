@@ -204,6 +204,8 @@ func BuildPublishTools(ctx context.Context, user string, open func() (Document, 
 			if hadPrev && !newCopy {
 				req.ExternalID = prev.ExternalID
 				req.Version = prev.Version
+				// How the destination wrote its navigation last time.
+				req.NavLinks, req.NavContents = prev.NavLinks, prev.NavContents
 				// An update keeps what was answered last time unless the
 				// answers were given again.
 				if len(req.Answers) == 0 {
@@ -246,6 +248,11 @@ func BuildPublishTools(ctx context.Context, user string, open func() (Document, 
 				Version:     res.Version,
 				At:          time.Now().UTC().Format(time.RFC3339),
 				Answers:     req.Answers,
+				NavLinks:    res.NavLinks,
+				NavContents: res.NavContents,
+			}
+			if res.NavLinks == nil && res.NavContents == nil && req.ExternalID != "" {
+				rec.NavLinks, rec.NavContents = req.NavLinks, req.NavContents
 			}
 			if doc.Save != nil {
 				if err := doc.Save(rec); err != nil {

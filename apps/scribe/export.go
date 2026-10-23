@@ -214,6 +214,7 @@ body { margin: 0; background: #f6f7f9; color: #1f2328; font: 16px/1.65 -apple-sy
 .guide-toc ol { margin: 0; padding-left: 1.4rem; }
 .guide-toc li { margin: 0.2rem 0; }
 .guide-toc a { color: #0969da; text-decoration: none; }
+.guide-toc ol.guide-toc-sub { list-style: none; padding-left: 1rem; margin: 0.15rem 0 0.25rem; font-size: 0.92em; }
 .guide-section { margin: 0 0 2.4rem; }
 .guide-section > h2 { font-size: 1.5rem; color: #0b1320; border-bottom: 1px solid #d6dae0; padding-bottom: 0.3rem; margin: 0 0 1rem; }
 .guide-section-num { color: #8893a0; font-weight: 600; margin-right: 0.3rem; }

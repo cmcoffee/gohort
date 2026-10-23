@@ -399,3 +399,79 @@ func TestThePublisherUpdatesTheSamePageUnlessACopyIsAsked(t *testing.T) {
 		t.Errorf("new_copy makes a new page and says the earlier one is left: %s\n%s", out, instrs[3])
 	}
 }
+
+// An integration target keeps the page's table of contents across updates
+// without the destination being named anywhere: the markup its run gave the
+// first time is kept on the record and goes out again on every update, and
+// the update is told so. A publish that sends the document's own list where a
+// contents list exists says so instead of a bare "Published".
+func TestATargetKeepsItsTableOfContentsAcrossUpdates(t *testing.T) {
+	app := &PublishApp{}
+	app.DB = &DBase{Store: kvlite.MemStore()}
+	tgt, err := normalizeTarget(Target{Label: "Team wiki", Credential: docs.MCPIntegrationPrefix + "wiki", Instructions: "Create a page."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tgt.ID = "tw"
+	app.targetsDB("fran").Set(targetTable, tgt.ID, tgt)
+	docs.RegisterPublishDestination(&targetsDest{app: app})
+	macro := "<toc-block/>"
+	nameContents := true
+	var instrs, sent []string
+	docs.RegisterCredentialPublisher(func(ctx context.Context, _, _, instr string) (string, string, error) {
+		instrs = append(instrs, instr)
+		body := docs.PublishBodyFrom(ctx)
+		if nameContents {
+			body.SetLinks(nil, &macro)
+		}
+		args, _ := body.ExpandArgs(map[string]any{"body": docs.BodyMarkdownPlaceholder})
+		sent = append(sent, args["body"].(string))
+		return "Done.", "https://wiki.example/p/1", nil
+	})
+	md := "# Guide\n\n## Contents\n\n1. Setup\n2. Use\n3. Fix\n\n## 1. Setup\n\nA.\n\n## 2. Use\n\nB.\n\n## 3. Fix\n\nC."
+	var records []docs.PublishRecord
+	open := func() (Document, bool) {
+		return Document{Doc: docs.PublishDoc{Title: "Guide", Markdown: md}, Records: records,
+			Save: func(r docs.PublishRecord) error { records = docs.UpsertPublishRecord(records, r); return nil }}, true
+	}
+	tools := map[string]AgentToolDef{}
+	for _, td := range BuildPublishTools(context.Background(), "fran", open) {
+		tools[td.Tool.Name] = td
+	}
+	publish := func() string {
+		t.Helper()
+		out, err := tools["publish_document"].Handler(context.Background(), map[string]any{"destination": "target:tw"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+
+	publish()
+	if len(records) != 1 || records[0].NavContents == nil || *records[0].NavContents != macro {
+		t.Fatalf("the markup the run gave is kept on the record: %+v", records)
+	}
+	// The update's run names nothing: the page keeps its table of contents.
+	nameContents = false
+	publish()
+	if !strings.Contains(instrs[1], "go out as they did last time") {
+		t.Errorf("the update is told its table of contents goes out as before:\n%s", instrs[1])
+	}
+	if !strings.Contains(sent[1], macro) || strings.Contains(sent[1], "1. Setup\n2. Use") {
+		t.Errorf("the update carries the destination's table of contents, not the plain list:\n%s", sent[1])
+	}
+	if records[0].NavContents == nil || *records[0].NavContents != macro {
+		t.Error("and it stays on the record for the next one")
+	}
+
+	// A page published before any was kept: the update is asked for it, and
+	// one that still sends the plain list says so.
+	records[0].NavContents, records[0].NavLinks = nil, nil
+	out := publish()
+	if !strings.Contains(instrs[2], "Keep the page's table of contents") {
+		t.Errorf("an update with nothing kept asks for it:\n%s", instrs[2])
+	}
+	if !strings.Contains(out, "went out as a plain list") {
+		t.Errorf("a plain list is said, not a bare Published: %s", out)
+	}
+}

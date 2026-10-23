@@ -196,6 +196,18 @@ func targetInstruction(t Target, req docs.PublishRequest) string {
 			fail = "say so and why"
 		}
 		b.WriteString("\n\nThis document is ALREADY published here, at " + prev + ". Update that page in place: find it from this address (its id is usually in it), read it, and change it. Never create a new one. If you cannot find or update it, change nothing and " + fail + ".")
+		// The page's own table of contents (a destination's macro or block)
+		// is kept on an update: either it was named last time and goes out
+		// again by itself, or this run is asked to name it.
+		if req.Nav.Contents != "" && t.Uses != "agent" {
+			if req.NavContents != nil {
+				b.WriteString(" Its table of contents and its links to its own sections go out as they did last time; call set_document_links only to change them.")
+			} else {
+				b.WriteString(" Keep the page's table of contents: if it has this destination's own table-of-contents block, call set_document_links with that same markup as contents before you send the document, so the update does not replace it with a plain list.")
+			}
+		} else if req.Nav.Contents != "" {
+			b.WriteString(" Keep the page's table of contents as this destination's own table-of-contents block, as it is on the page now.")
+		}
 	} else if t.Uses == "agent" {
 		b.WriteString("\n\nWhen it is published, say where: give its address (a link) in your reply, so the next update changes that page instead of making another.")
 	}
@@ -265,7 +277,9 @@ func (d *targetsDest) Publish(ctx context.Context, user string, req docs.Publish
 		return docs.PublishResult{}, fmt.Errorf("%s needs: %s", t.Label, strings.Join(missing, ", "))
 	}
 	instruction := targetInstruction(t, req)
-	var said, url string
+	var said, url, contentsNote string
+	var navLinks map[string]string
+	var navContents *string
 	var err error
 	if t.Uses == "agent" {
 		// An update is checked like every other: the page as it stands is
@@ -296,7 +310,16 @@ func (d *targetsDest) Publish(ctx context.Context, user string, req docs.Publish
 			}
 		}
 	} else {
-		said, url, err = docs.PublishViaCredential(docs.WithPublishBody(ctx, req), user, t.Credential, instruction)
+		bctx := docs.WithPublishBody(ctx, req)
+		said, url, err = docs.PublishViaCredential(bctx, user, t.Credential, instruction)
+		navLinks, navContents = docs.PublishBodyFrom(bctx).Navigation()
+		// The document's own contents list went out as a plain list: say
+		// so, rather than a bare "Published" over a page whose table of
+		// contents is gone.
+		if err == nil && req.Nav.Contents != "" && navContents == nil {
+			contentsNote = "its table of contents went out as a plain list, not this destination's own: publish again and it is asked for it"
+			docs.PublishStep(ctx, "Published, but %s", contentsNote)
+		}
 	}
 	if err != nil {
 		return docs.PublishResult{}, err
@@ -306,9 +329,13 @@ func (d *targetsDest) Publish(ctx context.Context, user string, req docs.Publish
 	if note := clipToLabel(said); note != "" {
 		label += " - " + note
 	}
+	if contentsNote != "" {
+		label += " (" + contentsNote + ")"
+	}
 	// The address rides back as the ExternalID too, so a Republish hands it to
 	// the next pass as "update this one".
-	return docs.PublishResult{URL: url, ExternalID: url, Label: label, Updated: strings.TrimSpace(req.ExternalID) != ""}, nil
+	return docs.PublishResult{URL: url, ExternalID: url, Label: label, Updated: strings.TrimSpace(req.ExternalID) != "",
+		NavLinks: navLinks, NavContents: navContents}, nil
 }
 
 // ReadPublished reads a copy published to one of the person's targets, through
