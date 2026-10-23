@@ -175,3 +175,27 @@ func TestOneSchedulingToolPerAgent(t *testing.T) {
 		t.Error("schedule is not a reserved name: a custom tool could shadow it")
 	}
 }
+
+// An agent offered to set up a schedule without looking for one that already
+// did the job. schedule waits behind load_tool, so the index line (the first
+// sentence, cut to indexLeadMax) is what it has in view when it offers: the
+// check-first rule is in that line, whole, for both shapes of the tool, and
+// again in the full description and the fleet block.
+func TestScheduleSaysToLookBeforeOffering(t *testing.T) {
+	ops := map[string]ToolHandlerFunc{"create_monitor": nil}
+	for label, tool := range map[string]AgentToolDef{
+		"plain": scheduleToolDef(nil, "craig", "a1", nil, &recordingRecurring{}),
+		"fleet": scheduleToolDef(nil, "craig", "a1", ops, nil),
+	} {
+		line := deferredIndexLine(tool)
+		if !strings.Contains(line, "list what exists before offering one.") {
+			t.Errorf("%s: the index line lost the check-first rule: %q", label, line)
+		}
+		if !strings.Contains(tool.Tool.Description, "Before you suggest a schedule or create one, call list") {
+			t.Errorf("%s: the description lost the check-first rule", label)
+		}
+	}
+	if !strings.Contains(frameworkFleetBlock, `Before you suggest a schedule or set one up, check schedule(action="list") first`) {
+		t.Error("the fleet block lost the check-first rule")
+	}
+}

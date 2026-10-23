@@ -218,6 +218,40 @@
   }
   window.uiStateGlyph = uiStateGlyph;
 
+  // uiActionGlyph(name) — a small filled mark for a button, before its label:
+  // play, pause, or once (play with a bar after it: do it one time, now).
+  // Drawn rather than typed, for the reason the notice bell is: an emoji is a
+  // different picture on every platform, sits off the text's baseline, and
+  // cannot take the button's colour. Filled shapes, no strokes, in the same
+  // 64-unit grid as the state marks; currentColor, so a disabled or danger
+  // button tints it with its text. Unknown names draw nothing.
+  var UI_ACTION_SHAPES = {
+    play:  [['path', {d: 'M20 14L50 32L20 50Z'}]],
+    pause: [['rect', {x: '17', y: '14', width: '11', height: '36', rx: '2'}],
+            ['rect', {x: '36', y: '14', width: '11', height: '36', rx: '2'}]],
+    once:  [['path', {d: 'M12 14L40 32L12 50Z'}],
+            ['rect', {x: '43', y: '14', width: '9', height: '36', rx: '2'}]],
+  };
+  function uiActionGlyph(name) {
+    var shapes = UI_ACTION_SHAPES[name];
+    if (!shapes) return null;
+    var ns = 'http://www.w3.org/2000/svg';
+    var svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('viewBox', '0 0 64 64');
+    svg.setAttribute('width', '12');
+    svg.setAttribute('height', '12');
+    svg.setAttribute('fill', 'currentColor');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('class', 'ui-action-glyph');
+    shapes.forEach(function(s) {
+      var n = document.createElementNS(ns, s[0]);
+      for (var k in s[1]) n.setAttribute(k, s[1][k]);
+      svg.appendChild(n);
+    });
+    return svg;
+  }
+  window.uiActionGlyph = uiActionGlyph;
+
   // uiInfoIcon(detail, opts) — the ⓘ affordance that holds what the line
   // beside it had to drop.
   //

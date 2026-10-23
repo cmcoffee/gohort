@@ -111,7 +111,7 @@ func BuildPublishTools(ctx context.Context, user string, open func() (Document, 
 				if r.URL != "" {
 					fmt.Fprintf(&b, ", %s", r.URL)
 				}
-				b.WriteString("\n  Publishing here again with update_existing=true REPLACES that page rather than making a second one.\n")
+				b.WriteString("\n  Publishing here again UPDATES that page in place. A second, separate copy only with new_copy=true, when the user asked for one.\n")
 			}
 			return b.String(), nil
 		},
@@ -157,14 +157,14 @@ func BuildPublishTools(ctx context.Context, user string, open func() (Document, 
 		Tool: Tool{
 			Name: "publish_document",
 			Description: "Publish the open document to a destination and return the link. " +
-				"Set update_existing=true to REPLACE the page this document was published to before (list_publish_destinations shows whether there is one); leave it false to create a new one. " +
+				"When this document was published to the destination before (list_publish_destinations shows it), this UPDATES that page in place; set new_copy=true only when the user asked for a second, separate copy. " +
 				"The target must be an id from list_publish_targets for this destination: anything else is refused.",
 			Parameters: map[string]ToolParam{
-				"destination":     {Type: "string", Description: "The destination id from list_publish_destinations."},
-				"target":          {Type: "string", Description: "The target id from list_publish_targets (e.g. a Confluence space id). Omit only for a destination that lists no targets."},
-				"title":           {Type: "string", Description: "The name the document gets in the destination. Defaults to the document's own title."},
-				"update_existing": {Type: "boolean", Description: "Replace the previously published page instead of creating a new one. Only meaningful when this document has been published to this destination before."},
-				"answers":         {Type: "object", Description: "The target's questions, by name, when list_publish_targets showed any: {\"category\": \"News\"}. Required ones must be given."},
+				"destination": {Type: "string", Description: "The destination id from list_publish_destinations."},
+				"target":      {Type: "string", Description: "The target id from list_publish_targets (e.g. a Confluence space id). Omit only for a destination that lists no targets."},
+				"title":       {Type: "string", Description: "The name the document gets in the destination. Defaults to the document's own title."},
+				"new_copy":    {Type: "boolean", Description: "Make a second, separate copy instead of updating the page this document was published to before. Only when the user asked for a separate copy; the earlier page is then no longer updated from here."},
+				"answers":     {Type: "object", Description: "The target's questions, by name, when list_publish_targets showed any: {\"category\": \"News\"}. Required ones must be given."},
 			},
 			Required: []string{"destination"},
 		},
@@ -193,11 +193,15 @@ func BuildPublishTools(ctx context.Context, user string, open func() (Document, 
 			if req.Title == "" || req.Title == "<nil>" {
 				req.Title = doc.Doc.Title
 			}
-			// An update only happens when the model asked for one AND a record
-			// actually exists — asking to update a document that was never
-			// published would otherwise send an empty external id downstream.
+			// A document already published here is updated in place unless a
+			// separate copy was asked for. Updating was the model's choice, so
+			// one that left the flag out made a second page, and its record
+			// took the first one's place: the next update went to the copy.
+			// The form and the Update button always updated; now this does.
 			prev, hadPrev := docs.FindPublishRecord(doc.Records, kind)
-			if truthy(args["update_existing"]) && hadPrev {
+			hadPrev = hadPrev && strings.TrimSpace(prev.ExternalID) != ""
+			newCopy := truthy(args["new_copy"])
+			if hadPrev && !newCopy {
 				req.ExternalID = prev.ExternalID
 				req.Version = prev.Version
 				// An update keeps what was answered last time unless the
@@ -223,6 +227,15 @@ func BuildPublishTools(ctx context.Context, user string, open func() (Document, 
 				return "", fmt.Errorf("%v%s", err, steps.text())
 			}
 
+			// An update that came back without an address still went to the
+			// page this document already had: keep it, or the next publish
+			// makes a new one (the form path does the same).
+			if strings.TrimSpace(res.ExternalID) == "" {
+				res.ExternalID = req.ExternalID
+			}
+			if strings.TrimSpace(res.URL) == "" && req.ExternalID != "" {
+				res.URL = prev.URL
+			}
 			rec := docs.PublishRecord{
 				Kind:        kind,
 				Target:      req.Target,
@@ -246,7 +259,11 @@ func BuildPublishTools(ctx context.Context, user string, open func() (Document, 
 			if res.Updated {
 				verb = "Updated"
 			}
-			return fmt.Sprintf("%s %q in %s: %s%s", verb, req.Title, kind, linkOrLabel(res), steps.text()), nil
+			note := ""
+			if hadPrev && newCopy {
+				note = fmt.Sprintf(" This is a separate copy: the earlier page (%s) stays as it was and is no longer updated from here.", chFirst(prev.URL, prev.ExternalID))
+			}
+			return fmt.Sprintf("%s %q in %s: %s%s%s", verb, req.Title, kind, linkOrLabel(res), note, steps.text()), nil
 		},
 	}
 

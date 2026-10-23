@@ -230,9 +230,8 @@ func addSchedulerFilterFlags(m map[string]any) {
 	// Failing carries the streak, and is empty while nothing is wrong.
 	failing, _ := m["failing"].(string)
 	m["_attention"] = broken || failing != ""
-	// At rest: not going to fire again until somebody does something. Paused is
-	// how a standing agent and a monitor say it; a recurring task has no pause
-	// in the scheduler store, so parked is how it says the same thing.
+	// At rest: not going to fire again until somebody does something: paused
+	// (any kind) or parked.
 	m["_at_rest"] = broken || schedFlag(m, "_paused")
 }
 
@@ -263,12 +262,14 @@ func addSchedulerActionFlags(m map[string]any, kind string) {
 		m["_del_standing"] = true
 	case schedKindRecurring:
 		// A parked payload short-circuits at the top of the fire, so Run now
-		// would do nothing; a parked task gets Relink or Resume instead. And
-		// there is no pause concept in the scheduler store.
+		// would do nothing; a parked task gets Relink or Resume instead. A
+		// paused one gets its own Resume, without the parked one's warning.
 		m["_edit_recurring"] = true
 		m["_run_recurring"] = !broken
 		m["_relink_recurring"] = relinkable
+		m["_pause_recurring"] = !broken && !paused
 		m["_resume_recurring"] = broken
+		m["_unpause_recurring"] = paused && !broken
 		m["_move_recurring"] = true
 		m["_del_recurring"] = true
 	case schedKindMonitor:

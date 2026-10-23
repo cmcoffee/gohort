@@ -114,6 +114,14 @@ func scheduleToolDef(sess *ToolSession, owner, controllerAgentID string, impl ma
 		runsAs = "With no `agent` it runs as you, as a recurring task of your own; `agent` / `pipeline` / `machine` hands it to another runner on a real schedule."
 	}
 	var b strings.Builder
+	// The first sentence is all the deferred index shows (indexLead), and the
+	// index is what an agent has in view when it offers to set one up, so the
+	// check-first rule rides in it.
+	if hasOp {
+		b.WriteString("Reminders, jobs on a clock and alerts; list what exists before offering one. ")
+	} else {
+		b.WriteString("Reminders and jobs on a clock; list what exists before offering one. ")
+	}
 	b.WriteString("Anything that should happen LATER or REPEATEDLY: a reminder, a job on a clock")
 	if hasOp {
 		b.WriteString(", an alert when something changes")
@@ -138,9 +146,9 @@ func scheduleToolDef(sess *ToolSession, owner, controllerAgentID string, impl ma
 		b.WriteString("runs (\"do this 5 times\")")
 	}
 	b.WriteString(". until=\"...\" makes it an objective judged after each run and stopped when true (max_attempts bounds the tries).\n")
-	b.WriteString("Other actions: list (everything scheduled), ")
+	b.WriteString("Other actions: list (everything scheduled, and which schedules are linked), pause / resume (by name; name=<a link group's id> pauses or resumes the whole group, which is how to hold schedules that run together), ")
 	if hasOp {
-		b.WriteString("pause / resume / run_now / ")
+		b.WriteString("run_now / ")
 	}
 	b.WriteString("delete (by name)")
 	if hasRec {
@@ -148,7 +156,8 @@ func scheduleToolDef(sess *ToolSession, owner, controllerAgentID string, impl ma
 	}
 	b.WriteString(", relink (a schedule parked because the agent it ran as was deleted: name + run_by, the agent replacing it; it keeps its mission, timing, goal and notes, so relink rather than create it again)")
 	b.WriteString(", get (name: one scheduled run or monitor with what it does IN FULL; list shortens long ones), edit (name + one of: then, the whole new text; find + replace, one passage changed in place; append, a line added at the end. Changes only WHAT an existing scheduled run or monitor does; its timing, link group and goal stay as they are. To add a rule, append it: never retype a long mission you have only seen shortened)")
-	b.WriteString(". Re-issuing create with the SAME name edits that schedule in place, timing included. To run something once right now, don't schedule it: agents(action=\"run\") or machine(action=\"run\"), or do it yourself.")
+	b.WriteString(". Before you suggest a schedule or create one, call list: when one already does the job, tell the user it exists and offer to change it, rather than proposing a second.")
+	b.WriteString(" Re-issuing create with the SAME name edits that schedule in place, timing included. To run something once right now, don't schedule it: agents(action=\"run\") or machine(action=\"run\"), or do it yourself.")
 	if hasRec {
 		b.WriteString(" Tell the user which thread a recurring task of yours will report in.")
 	}
@@ -512,7 +521,33 @@ func scheduleList(ctx context.Context, owner, controllerAgentID string, impl map
 	if len(parts) == 0 {
 		return "Nothing is scheduled.", nil
 	}
+	if groups := linkGroupsListing(owner); groups != "" {
+		parts = append(parts, groups)
+	}
 	return strings.Join(parts, "\n\n"), nil
+}
+
+// scheduleLinkGroupPause pauses or resumes a whole link group for the tool,
+// and says what that means for its members.
+func scheduleLinkGroupPause(owner string, g linkGroup, paused bool) (string, error) {
+	title := linkGroupTitle(owner, g, nil)
+	if g.Paused == paused {
+		if paused {
+			return fmt.Sprintf("Link group %q (%s) is already paused.", g.ID, title), nil
+		}
+		return fmt.Sprintf("Link group %q (%s) is not paused.", g.ID, title), nil
+	}
+	if err := setLinkGroupPaused(owner, g.ID, paused); err != nil {
+		return "", err
+	}
+	if paused {
+		return fmt.Sprintf("Paused link group %q (%s): none of its members runs until it is resumed. Each keeps its place in the group.", g.ID, title), nil
+	}
+	next := ""
+	if cur, ok := getLinkGroup(owner, g.ID); ok && !cur.NextRun.IsZero() {
+		next = " Next run: " + cur.NextRun.In(UserLocation(owner)).Format("Mon Jan 2 3:04 PM") + "."
+	}
+	return fmt.Sprintf("Resumed link group %q (%s).%s", g.ID, title, next), nil
 }
 
 // scheduleControl applies pause / resume / run_now / delete to whatever the
@@ -520,6 +555,13 @@ func scheduleList(ctx context.Context, owner, controllerAgentID string, impl map
 // by both is refused rather than guessed, with both named so the agent can
 // delete one and retry.
 func scheduleControl(ctx context.Context, owner, controllerAgentID string, impl map[string]ToolHandlerFunc, rec recurringImpl, action, name string, args map[string]any) (string, error) {
+	// A link group by its id: paused and resumed as one, the way the
+	// Scheduler's group row does it.
+	if action == "pause" || action == "resume" {
+		if g, ok := linkGroupNamed(owner, name); ok {
+			return scheduleLinkGroupPause(owner, g, action == "pause")
+		}
+	}
 	_, isStanding := GetStandingAgent(RootDB, owner, name)
 	mon, isMonitor := GetEventMonitor(RootDB, owner, name)
 	isMonitor = isMonitor && mon.WakeAgent == controllerAgentID
@@ -562,8 +604,13 @@ func scheduleControl(ctx context.Context, owner, controllerAgentID string, impl 
 				}
 			}
 			return rec.recurringMove(m)
+		case "pause", "resume":
+			if hits := recurringOfAgent(owner, agentKey, userRecurringMatches(owner, id)); len(hits) == 1 {
+				return setRecurringPaused(owner, hits[0].TaskID, action == "pause")
+			}
+			return "", fmt.Errorf("no recurring task %q on that agent: schedule(action=\"list\", agent=%q) shows them", name, agentKey)
 		}
-		return "", fmt.Errorf("a recurring task cannot be %sd, only deleted or moved: schedule(action=\"delete\", name=%q)", action, id)
+		return "", fmt.Errorf("a recurring task cannot be %sd, only paused, resumed, deleted or moved: schedule(action=\"delete\", name=%q)", action, id)
 	}
 	if rec != nil {
 		for _, rt := range rec.recurringTasks() {
@@ -604,8 +651,10 @@ func scheduleControl(ctx context.Context, owner, controllerAgentID string, impl 
 		switch action {
 		case "delete", "cancel", "remove":
 			return rec.recurringCancel(map[string]any{"id": others[0].TaskID, "agent": "all"})
+		case "pause", "resume":
+			return setRecurringPaused(owner, others[0].TaskID, action == "pause")
 		}
-		return "", fmt.Errorf("a recurring task cannot be %sd, only deleted or moved: schedule(action=\"delete\", name=%q)", action, others[0].TaskID)
+		return "", fmt.Errorf("a recurring task cannot be %sd, only paused, resumed, deleted or moved: schedule(action=\"delete\", name=%q)", action, others[0].TaskID)
 	}
 	if ownTaskID != "" {
 		switch action {
@@ -619,8 +668,10 @@ func scheduleControl(ctx context.Context, owner, controllerAgentID string, impl 
 				}
 			}
 			return rec.recurringMove(m)
+		case "pause", "resume":
+			return setRecurringPaused(owner, ownTaskID, action == "pause")
 		}
-		return "", fmt.Errorf("a recurring task of your own has no %s: delete %q and create it again when it should run, or move it", action, name)
+		return "", fmt.Errorf("a recurring task of your own has no %s: pause, resume, delete or move it", action)
 	}
 	if action == "move" {
 		return "", fmt.Errorf("only a recurring task of your own moves; %q is relocated from the console's Move-to control", name)
@@ -1155,10 +1206,25 @@ func scheduleChangeApproval(sess *ToolSession, owner, actingAgent, action, name 
 			}
 		}
 	default:
-		if sa, ok := GetStandingAgent(RootDB, owner, name); ok {
+		if g, ok := linkGroupNamed(owner, name); ok && (action == "pause" || action == "resume") {
+			// A group can hold several agents' schedules: it asks unless every
+			// one of them is in the acting agent's family.
+			runner = actingAgent
+			for _, a := range linkGroupAgents(owner, g) {
+				if db == nil || topAgentOf(db, a) != topAgentOf(db, actingAgent) {
+					runner = a
+					break
+				}
+			}
+		} else if sa, ok := GetStandingAgent(RootDB, owner, name); ok {
 			runner = sa.AgentID
 		} else if m, ok := GetEventMonitor(RootDB, owner, name); ok {
 			runner = m.WakeAgent
+		} else if hits := userRecurringMatches(owner, name); len(hits) == 1 {
+			// Another agent's recurring task, found by its name or id, is
+			// that agent's: it used to read as the acting agent's own and
+			// never asked.
+			runner = hits[0].Payload.AgentID
 		} else {
 			runner = actingAgent // its own recurring task
 		}

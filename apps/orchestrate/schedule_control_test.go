@@ -69,8 +69,16 @@ func TestScheduleReachesEveryRecurringTaskAndRefusesAClash(t *testing.T) {
 		t.Errorf("a name on the agent should resolve to the task's id: %+v", rec.cancelled)
 	}
 
-	_, err = scheduleControl(ctx, "u", "builder", impl, rec, "pause", "Random engagement", map[string]any{"agent": "gone-agent"})
-	if err == nil || !strings.Contains(err.Error(), "only deleted or moved") || !strings.Contains(err.Error(), taskID) {
-		t.Errorf("pausing a recurring task should say what can be done, with its id: %v", err)
+	// A recurring task pauses by its name on its agent, as every kind does.
+	// Pausing re-arms it under a new id, so the cleanup takes every task u
+	// has, not only the first.
+	t.Cleanup(func() {
+		for _, rt := range listAgentRecurringTasks("u", "") {
+			UnscheduleTask(rt.TaskID)
+		}
+	})
+	out, err := scheduleControl(ctx, "u", "builder", impl, rec, "pause", "Random engagement", map[string]any{"agent": "gone-agent"})
+	if err != nil || !strings.HasPrefix(out, "Paused \"Random engagement\"") {
+		t.Errorf("a recurring task pauses by its name on its agent: %q %v", out, err)
 	}
 }

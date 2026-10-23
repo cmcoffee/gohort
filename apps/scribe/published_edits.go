@@ -184,30 +184,51 @@ func editContent(c docs.SectionChange, where string) string {
 }
 
 // guideWatcher follows every publish of a guide (docs.RegisterPublishWatcher).
-// It acts on the publisher's OWN guides: a shared guide's edits would be filed
-// for its owner's Curator, which is not the publisher's to start.
+//
+// A guide published by someone it is shared with is guarded the same as the
+// owner's own publish, against the OWNER's guide: its baselines are the
+// owner's, and edits found on the page go to the owner's Curator. It used to
+// act on the publisher's own guides only, so a co-editor's publish found no
+// guide of theirs and overwrote the page unchecked.
 type guideWatcher struct{ app *Scribe }
 
-func (w guideWatcher) own(user, id string) (Database, Guide, bool) {
+// resolve finds the guide a publish is of, the publisher's own or one shared
+// with them, and whose it is.
+func (w guideWatcher) resolve(user, id string) (owner string, odb Database, g Guide, ok bool) {
 	if w.app == nil || w.app.DB == nil {
-		return nil, Guide{}, false
+		return "", nil, Guide{}, false
 	}
 	udb := UserDB(w.app.DB, user)
 	if udb == nil {
-		return nil, Guide{}, false
+		return "", nil, Guide{}, false
 	}
-	g, ok := loadGuide(udb, id)
-	return udb, g, ok
+	g, owner, odb, ok = resolveGuide(w.app.DB, udb, user, id)
+	return owner, odb, g, ok && odb != nil
 }
+
+// errNoBaseline is an update stopped because there is no record of how its
+// copy read after the last publish, so whether it was edited there cannot be
+// told.
+var errNoBaseline = errors.New("no record of how it read when last published")
 
 // BeforeUpdate takes in any edits made on the page and, when there were
 // some, stops the update: they go to the Curator first.
 func (w guideWatcher) BeforeUpdate(ctx context.Context, user string, doc docs.PublishDoc, kind string, cur docs.PublishedCopy) error {
-	udb, g, ok := w.own(user, doc.SourceID)
+	owner, udb, g, ok := w.resolve(user, doc.SourceID)
 	if !ok {
 		return nil
 	}
-	n := w.app.takeInEdits(user, udb, g, kind, cur, "")
+	// A copy with no baseline (its read-back failed after the last publish,
+	// or it was published before baselines were kept) could hold edits made
+	// there, and nothing to tell them by. It used to take what it read as the
+	// baseline and update anyway, overwriting any. Now it keeps what it read
+	// and stops once; the next update compares against it.
+	if _, had := loadBaseline(udb, g.ID, kind); !had {
+		w.app.takeInEdits(owner, udb, g, kind, cur, "")
+		return fmt.Errorf("%w: %s had no record of how it read after its last publish, so Scribe cannot tell whether anyone edited it there and did not overwrite it. It has recorded how the page reads now: look it over there, then publish again to update it",
+			errNoBaseline, publishedWhere(g, kind))
+	}
+	n := w.app.takeInEdits(owner, udb, g, kind, cur, "")
 	if n == 0 {
 		return nil
 	}
@@ -222,7 +243,7 @@ func (w guideWatcher) BeforeUpdate(ctx context.Context, user string, doc docs.Pu
 // Landed keeps what the copy reads after a publish as its baseline. A copy
 // that could not be read back has none: the next look starts a new one.
 func (w guideWatcher) Landed(user string, doc docs.PublishDoc, kind string, cur docs.PublishedCopy, read bool) {
-	udb, g, ok := w.own(user, doc.SourceID)
+	_, udb, g, ok := w.resolve(user, doc.SourceID)
 	if !ok {
 		return
 	}

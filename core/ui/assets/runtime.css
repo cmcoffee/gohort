@@ -1417,6 +1417,8 @@ select:-webkit-autofill {
  * the standard 44px-min target would push the auto-reply switch and
  * row name off the visible width. */
 .ui-row-btn.compact { padding-left: 0.4rem; padding-right: 0.4rem; font-size: var(--fs-lg); }
+/* A row button's icon sits before its label, on the text's line. */
+.ui-row-btn .ui-action-glyph { flex: none; vertical-align: -0.08em; margin-right: 0.35em; }
 @media (pointer: coarse) { .ui-row-btn.compact { min-width: var(--btn-h-sm); min-height: var(--btn-h-sm); } }
 /* An icon button: one glyph (x, a pencil, a sparkle) in a quiet square, for
  * the remove-this-row and do-this-to-it controls an app would otherwise
@@ -1601,6 +1603,12 @@ select:-webkit-autofill {
 .ui-cp-intro { font-size: var(--fs-sm); color: var(--text-mute); line-height: 1.45; margin-bottom: 0.6rem; }
 .ui-cp-empty, .ui-cp-none { font-size: var(--fs-xs); color: var(--text-mute); font-style: italic; }
 .ui-cp-pills { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-bottom: 0.5rem; }
+/* Grouped: one row per kind, its heading beside its pills, the same headings
+ * the attach list uses. */
+.ui-cp-pills.ui-cp-pills-grouped { flex-direction: column; flex-wrap: nowrap; gap: 0.35rem; }
+.ui-cp-pill-group { display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; }
+.ui-cp-pill-group-label { font-size: var(--fs-xs); color: var(--text-mute); white-space: nowrap; min-width: 7.5rem; }
+.ui-cp-pill-group-pills { display: flex; flex-wrap: wrap; gap: 0.3rem; flex: 1 1 auto; }
 .ui-cp-pill {
   display: inline-flex; align-items: center; gap: 0.3rem;
   padding: 0.1rem 0.35rem 0.1rem 0.55rem;
@@ -5432,6 +5440,13 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   white-space: pre-wrap; overflow-wrap: anywhere;
 }
 .ui-agent-confirm-btns  { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+/* An answer carrying text to check first: the field, what it means, then
+ * the send button and Back. */
+.ui-agent-confirm-edit { flex-direction: column; align-items: stretch; gap: 0.3rem; }
+.ui-agent-confirm-input-label { font-size: var(--fs-xs); color: var(--text-hi); }
+.ui-agent-confirm-input { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: var(--fs-sm); width: 100%; box-sizing: border-box; }
+.ui-agent-confirm-input-help { font-size: var(--fs-xs); color: var(--text-mute); white-space: pre-wrap; }
+.ui-agent-confirm-input-btns { display: flex; gap: 0.4rem; flex-wrap: wrap; }
 /* Resolved confirm card — the operator answered. Drop the warning
  * tint to a neutral/settled look and stamp the chosen disposition so
  * the card no longer reads as a pending, unacted prompt. */

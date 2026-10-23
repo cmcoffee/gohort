@@ -51,6 +51,34 @@ func (g *guideTarget) ListReferencing(user, srcKind, srcItemID string) []DocItem
 	return out
 }
 
+// AttachReference adds (srcKind, srcItemID) to the Sources of one of the
+// user's own guides, as the guide's Sources picker would. Own guides only: the
+// picker lets only the owner change a guide's sources. Implements
+// core/docs.ReferenceAttachingDocumentTarget.
+func (g *guideTarget) AttachReference(user, docID, srcKind, srcItemID string) error {
+	udb := UserDB(g.app.DB, user)
+	if udb == nil {
+		return fmt.Errorf("no store for user")
+	}
+	if strings.TrimSpace(srcKind) == "" || strings.TrimSpace(srcItemID) == "" {
+		return fmt.Errorf("a source is required")
+	}
+	gd, ok := loadGuide(udb, docID)
+	// A guide in the user's own store is theirs; one shared with them lives
+	// in its owner's store and is not found here.
+	if !ok || (gd.Owner != "" && gd.Owner != user) {
+		return fmt.Errorf("guide %q not found among your own guides", docID)
+	}
+	for _, ref := range gd.References {
+		if ref.Kind == srcKind && ref.ItemID == srcItemID {
+			return nil
+		}
+	}
+	gd.References = append(gd.References, ReferenceSelection{Kind: srcKind, ItemID: srcItemID})
+	saveGuide(udb, gd) // attachment is not a content change: no revision snapshot
+	return nil
+}
+
 // Append lands pushed content in the user's guide docID. For an EXISTING guide it
 // hands the content to the Guide Author to INCORPORATE coherently (merge into a
 // section or add one, in the guide's voice) rather than blind-appending a raw

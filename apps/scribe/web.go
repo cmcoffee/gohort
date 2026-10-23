@@ -59,11 +59,10 @@ func (T *Scribe) route(w http.ResponseWriter, r *http.Request) {
 		T.handleImage(w, r, udb, user)
 	// A page already published somewhere, taken in to start a guide that
 	// keeps it (page_import.go).
-	// Distilling this guide into another (distill.go).
-	case path == "distill":
-		T.handleDistill(w, r, udb, user)
-	case path == "distill/job":
-		T.handleDistillJob(w, r, user)
+	// Update from sources: the distills from guides set to Distill, and the
+	// Stop on a running one (follow.go, distill.go).
+	case path == "sources/update":
+		T.handleUpdateFromSources(w, r, udb, user)
 	case path == "distill/stop":
 		T.handleDistillStop(w, r, user)
 	case path == "publish/link":
@@ -1028,13 +1027,13 @@ func (T *Scribe) handleReferences(w http.ResponseWriter, r *http.Request, udb Da
 	gid := strings.TrimSpace(r.URL.Query().Get("guide"))
 	switch r.Method {
 	case http.MethodGet:
-		items := []map[string]string{}
+		items := []map[string]any{}
 		for _, grp := range ReferenceGroups(user) {
 			for _, it := range grp.Items {
 				if grp.Kind == "guide" && it.ID == gid {
 					continue // a guide is not a source for itself
 				}
-				items = append(items, map[string]string{
+				items = append(items, map[string]any{
 					// ReferenceSelection.Ref(), NOT a hand-rolled join. This built
 					// "kind::item" while core emits "kind:item", so the two
 					// pickers put different strings on the wire for the same
@@ -1044,16 +1043,22 @@ func (T *Scribe) handleReferences(w http.ResponseWriter, r *http.Request, udb Da
 					// (escaping, a third component) reach one picker and not
 					// the other.
 					"id": ReferenceSelection{Kind: grp.Kind, ItemID: it.ID}.Ref(), "name": it.Name, "desc": it.Desc, "group": grp.Label,
+					// Only a guide changes in a way that can feed this one
+					// (follow.go), so only a guide's pill has Distill.
+					"can_distill": grp.Kind == guideSourceKind,
 				})
 			}
 		}
-		attached := []string{}
+		attached, distill := []string{}, []string{}
 		if g, _, _, _, ok := T.resolve(r, udb, user, gid); ok {
 			for _, s := range g.References {
 				attached = append(attached, s.Ref())
 			}
+			for _, id := range g.DistillFrom {
+				distill = append(distill, ReferenceSelection{Kind: guideSourceKind, ItemID: id}.Ref())
+			}
 		}
-		writeJSON(w, map[string]any{"items": items, "attached": attached})
+		writeJSON(w, map[string]any{"items": items, "attached": attached, "distill": distill})
 	case http.MethodPost:
 		g, ownerUDB, canManage, _, found := T.resolve(r, udb, user, gid)
 		if !found {
@@ -1066,6 +1071,9 @@ func (T *Scribe) handleReferences(w http.ResponseWriter, r *http.Request, udb Da
 		}
 		var body struct {
 			References []string `json:"references"`
+			// The guide Sources set to Distill, as the picker's flag sends
+			// them. Absent (an older page) leaves the setting as it is.
+			Distill *[]string `json:"distill"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
@@ -1081,6 +1089,43 @@ func (T *Scribe) handleReferences(w http.ResponseWriter, r *http.Request, udb Da
 			}
 		}
 		g.References = sel
+		if body.Distill != nil {
+			attachedGuide := map[string]bool{}
+			for _, s := range sel {
+				if s.Kind == guideSourceKind {
+					attachedGuide[s.ItemID] = true
+				}
+			}
+			var from []string
+			for _, ref := range *body.Distill {
+				s, ok := ParseReferenceRef(ref)
+				if !ok || s.Kind != guideSourceKind || !attachedGuide[s.ItemID] {
+					continue // only an attached guide can be distilled from
+				}
+				if followLoops(ownerUDB, g.ID, s.ItemID) {
+					name := s.ItemID
+					if src, ok := loadGuide(ownerUDB, s.ItemID); ok {
+						name = firstNonEmpty(src.Title, name)
+					}
+					http.Error(w, fmt.Sprintf("%q already distills from this guide, directly or through others: set one of them back to Consult first", name), http.StatusBadRequest)
+					return
+				}
+				from = append(from, s.ItemID)
+			}
+			g.DistillFrom = from
+		} else {
+			// Detaching a guide takes its Distill with it.
+			var kept []string
+			for _, id := range g.DistillFrom {
+				for _, s := range sel {
+					if s.Kind == guideSourceKind && s.ItemID == id {
+						kept = append(kept, id)
+						break
+					}
+				}
+			}
+			g.DistillFrom = kept
+		}
 		saveGuide(ownerUDB, g) // attachment is not a content change — no revision snapshot
 		writeJSON(w, map[string]bool{"ok": true})
 	default:

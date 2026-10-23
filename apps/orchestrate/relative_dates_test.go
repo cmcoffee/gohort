@@ -63,6 +63,11 @@ func TestWhatAnAgentKeepsGetsItsDays(t *testing.T) {
 		if out, err := td.Handler(context.Background(), map[string]any{"note": "Texted Mom her flight info yesterday."}); err != nil || !strings.Contains(out, "yesterday (") {
 			t.Errorf("the cortex pointer was not dated: %q %v", out, err)
 		}
+		// Headed as the agent's note, without the session's name: a session
+		// renamed later would leave the card holding the old one.
+		if got := strings.Join(cortexContextLines(db, "ag"), "\n"); !strings.Contains(got, "- Agent note from session: ") {
+			t.Errorf("the note is headed %q, got:\n%s", sessionNoteLabel, got)
+		}
 	}
 }
 

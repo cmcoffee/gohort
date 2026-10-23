@@ -67,7 +67,7 @@ changes. Each destination rebuilds it its own way:
 - **Webhook:** the JSON carries `nav` for its receiver.
 
 The Publisher's prompt: how a document looks at its destination is its job
-(fixed by republishing with `update_existing`); what it says is the author's.
+(fixed by publishing again, which updates the same page); what it says is the author's.
 It used to send the person to the author for broken links.
 
 ## Watching a publish

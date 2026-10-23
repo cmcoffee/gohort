@@ -31,6 +31,7 @@ type consoleRecurringRow struct {
 	ID        string `json:"_id"`               // hidden; row-action target (the scheduler task id)
 	UID       string `json:"_uid,omitempty"`    // hidden; the task's own id, stable across fires (link groups key on it)
 	Broken    bool   `json:"_broken,omitempty"` // hidden gate (Delete-only on a broken row)
+	Paused    bool   `json:"_paused,omitempty"` // hidden gate: Pause on a live row, Resume on a paused one
 	// Relinkable gates the Relink row action: only a schedule whose target is
 	// GONE has anything to relink. A stalled objective gets Resume instead.
 	Relinkable bool   `json:"_relinkable,omitempty"`
@@ -49,8 +50,7 @@ func subAgentRunsLabel(text string) string {
 // handleConsoleRecurring lists the owner's recurring tasks (the `recurring` tool
 // → per-session scheduled updates) for the Recurring-tasks nav card view — the
 // status-card sibling of Enabled agents / Event monitors. Scoped to the agent
-// that runs them (AgentID), matching the other two panes. Recurring tasks have
-// no pause concept, so the only row action is Delete.
+// that runs them (AgentID), matching the other two panes.
 func (T *OrchestrateApp) handleConsoleRecurring(w http.ResponseWriter, r *http.Request) {
 	user, _, ok := RequireUser(w, r, T.DB)
 	if !ok {
@@ -100,6 +100,11 @@ func consoleRecurringRows(user, agentID string) []consoleRecurringRow {
 				row.State = "waiting: " + truncateObs(w, 120)
 			}
 		}
+		if rt.Payload.Paused && !rt.Payload.Broken {
+			row.Paused = true
+			row.State = "paused"
+			row.NextRun = "" // held: the dormant re-check isn't a real next run
+		}
 		if rt.Payload.Broken {
 			row.Broken = true
 			row.State = parkedStateLabel(recurringParkCause(rt.Payload), rt.Payload.BrokenReason)
@@ -141,9 +146,20 @@ func (T *OrchestrateApp) handleConsoleRecurringResume(w http.ResponseWriter, r *
 		if rt.TaskID != id {
 			continue
 		}
+		// A paused task (and not parked) is a plain resume: its attempt
+		// allowance is its own, and nothing it was waiting on has changed.
+		if rt.Payload.Paused && !rt.Payload.Broken {
+			if _, err := setRecurringPaused(user, id, false); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		UnscheduleTask(id)
 		p := rt.Payload
 		p.Broken = false
+		p.Paused = false
 		p.BrokenReason = ""
 		p.AttemptsBase = p.FireCount
 		p.LastActive = time.Now().Format(time.RFC3339)
@@ -161,6 +177,83 @@ func (T *OrchestrateApp) handleConsoleRecurringResume(w http.ResponseWriter, r *
 		return
 	}
 	http.Error(w, "recurring task not found", http.StatusNotFound)
+}
+
+// handleConsoleRecurringPause holds one of the user's recurring tasks: POST
+// ?id=<scheduler id>. Resume is handleConsoleRecurringResume.
+func (T *OrchestrateApp) handleConsoleRecurringPause(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	if id == "" {
+		http.Error(w, "id required", http.StatusBadRequest)
+		return
+	}
+	if _, err := setRecurringPaused(user, id, true); err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// setRecurringPaused pauses or resumes one of the owner's recurring tasks, by
+// its scheduler id, and says what happened in words a caller can pass on. The
+// Scheduler's buttons and the schedule tool both come here.
+//
+// A paused task waits on the dormant tick a parked one uses, so it stays
+// listed; Resume puts it back on its own time, or its link group's. Found
+// among the owner's own tasks only: the scheduler bucket is global.
+func setRecurringPaused(owner, id string, paused bool) (string, error) {
+	for _, rt := range listAgentRecurringTasks(owner, "") {
+		if rt.TaskID != id {
+			continue
+		}
+		p := rt.Payload
+		name := recurringName(p)
+		if p.Paused == paused {
+			if paused {
+				return fmt.Sprintf("%q is already paused.", name), nil
+			}
+			return fmt.Sprintf("%q is not paused.", name), nil
+		}
+		p.Paused = paused
+		next := time.Now().Add(brokenDormantReArm)
+		if !paused {
+			// Resuming renews it, as an edit does: the idle guard counts from
+			// here, not from before the pause.
+			p.LastActive = time.Now().Format(time.RFC3339)
+			n, err := computeNextFire(&p, time.Now().In(UserLocation(owner)))
+			if err != nil {
+				return "", fmt.Errorf("could not put %q back on its schedule: %w", name, err)
+			}
+			next = n
+		}
+		UnscheduleTask(id)
+		if _, err := ScheduleTask(OrchestrateScheduledUpdateKind, p, next); err != nil {
+			return "", err
+		}
+		Log("[orchestrate/scheduled] %s %s recurring task %q", owner, map[bool]string{true: "paused", false: "resumed"}[paused], name)
+		switch {
+		case p.LinkGroup != "":
+			verb := "Resumed"
+			if paused {
+				verb = "Paused"
+			}
+			return fmt.Sprintf("%s %q.%s", verb, name, linkMemberNote(owner, p.LinkGroup, paused)), nil
+		case paused:
+			return fmt.Sprintf("Paused %q. Resume it to put it back on its schedule.", name), nil
+		case p.Broken:
+			return fmt.Sprintf("Resumed %q, but it is still parked: %s", name, chFirst(p.BrokenReason, "it needs attention before it runs")), nil
+		}
+		return fmt.Sprintf("Resumed %q. Next run: %s.", name, next.In(UserLocation(owner)).Format("Mon Jan 2 3:04 PM")), nil
+	}
+	return "", fmt.Errorf("no recurring task %q is yours", id)
 }
 
 // handleConsoleRecurringDelete removes a recurring task by scheduler id from the

@@ -191,7 +191,13 @@ func targetInstruction(t Target, req docs.PublishRequest) string {
 	if prev := strings.TrimSpace(req.ExternalID); prev != "" {
 		// Firm: a second copy is worse than a failed update. The person
 		// then has two pages, and every later update finds the wrong one.
-		b.WriteString("\n\nThis document is ALREADY published here, at " + prev + ". Update that page in place: find it from this address (its id is usually in it), read it, and change it. Never create a new one. If you cannot find or update it, change nothing and call report_published with ok=false saying why.")
+		fail := "call report_published with ok=false saying why"
+		if t.Uses == "agent" {
+			fail = "say so and why"
+		}
+		b.WriteString("\n\nThis document is ALREADY published here, at " + prev + ". Update that page in place: find it from this address (its id is usually in it), read it, and change it. Never create a new one. If you cannot find or update it, change nothing and " + fail + ".")
+	} else if t.Uses == "agent" {
+		b.WriteString("\n\nWhen it is published, say where: give its address (a link) in your reply, so the next update changes that page instead of making another.")
 	}
 	// An integration's run gets the document by reference (docs.ReferenceInstruction):
 	// it writes a placeholder where the body goes, and never types it out.
@@ -262,10 +268,32 @@ func (d *targetsDest) Publish(ctx context.Context, user string, req docs.Publish
 	var said, url string
 	var err error
 	if t.Uses == "agent" {
+		// An update is checked like every other: the page as it stands is
+		// read first, so an edit made there since the last publish is not
+		// overwritten. The agent reads it, since its tools are its own.
+		if prev := strings.TrimSpace(req.ExternalID); prev != "" && docs.GuardsUpdate(ctx) {
+			docs.PublishStep(ctx, "Asking the agent %s to read the page as it stands first", t.Agent)
+			cur, rerr := d.readViaAgent(ctx, user, t, req.Title, prev)
+			if rerr != nil {
+				return docs.PublishResult{}, fmt.Errorf("could not read %s as it stands before updating it, so it was not overwritten: %w", prev, rerr)
+			}
+			if gerr := docs.CheckBeforeUpdate(ctx, cur); gerr != nil {
+				return docs.PublishResult{}, gerr
+			}
+		}
 		docs.PublishStep(ctx, "Handed to the agent %s", t.Agent)
 		said, err = docs.PublishViaAgent(ctx, user, t.Agent, instruction)
 		if err == nil {
 			docs.PublishStep(ctx, "The agent said: %s", clipToLabel(said))
+			// Where it put it, so the next publish updates that page. An
+			// agent's run returned only what it said, so every republish was
+			// a fresh publish: no update, no check before it.
+			url = chFirst(strings.TrimSpace(req.ExternalID), firstLink(said))
+			if url != "" && docs.WantsReadBack(ctx) {
+				if cur, rerr := d.readViaAgent(ctx, user, t, req.Title, url); rerr == nil {
+					docs.ReportReadBack(ctx, cur)
+				}
+			}
 		}
 	} else {
 		said, url, err = docs.PublishViaCredential(docs.WithPublishBody(ctx, req), user, t.Credential, instruction)
@@ -291,15 +319,70 @@ func (d *targetsDest) ReadPublished(ctx context.Context, user string, rec docs.P
 	if !ok {
 		return docs.PublishedCopy{}, fmt.Errorf("no publishing target %q", rec.Kind)
 	}
-	if t.Uses == "agent" {
-		return docs.PublishedCopy{}, docs.ErrCannotReadBack
-	}
 	where := chFirst(strings.TrimSpace(rec.URL), strings.TrimSpace(rec.ExternalID))
+	if t.Uses == "agent" {
+		if where == "" {
+			return docs.PublishedCopy{}, docs.ErrCannotReadBack
+		}
+		return d.readViaAgent(ctx, user, t, rec.Title, where)
+	}
 	var b strings.Builder
 	b.WriteString("Read a document published through this integration, as it stands now. How documents are published here:\n\n")
 	b.WriteString(t.Instructions)
 	b.WriteString("\n\nThe document: " + chFirst(rec.Title, "(untitled)") + ", published at " + where + ".")
 	return docs.ReadViaCredential(ctx, user, t.Credential, b.String())
+}
+
+// readViaAgent asks a target's agent for a published copy as it stands, word
+// for word, changing nothing. The reply carries the document between two
+// marker lines; one without them is not taken as the page, since what an
+// agent says about a page is not the page.
+func (d *targetsDest) readViaAgent(ctx context.Context, user string, t Target, title, where string) (docs.PublishedCopy, error) {
+	instruction := t.Instructions + "\n\nDo NOT change anything. Read the document " + chFirst(strings.TrimSpace(title), "(untitled)") +
+		" as it stands now at " + where + ", and reply with its full text in Markdown, word for word, between a line reading " +
+		agentReadOpen + " and a line reading " + agentReadClose + ". Nothing else goes between them. If you cannot read it, say so and why, without the markers."
+	said, err := docs.PublishViaAgent(ctx, user, t.Agent, instruction)
+	if err != nil {
+		return docs.PublishedCopy{}, err
+	}
+	body, ok := betweenMarkers(said, agentReadOpen, agentReadClose)
+	if !ok {
+		return docs.PublishedCopy{}, fmt.Errorf("the agent did not return the page: %s", clipToLabel(said))
+	}
+	return docs.PublishedCopy{Body: body}, nil
+}
+
+const (
+	agentReadOpen  = "<<<DOCUMENT"
+	agentReadClose = "DOCUMENT>>>"
+)
+
+// betweenMarkers is the text between the first open marker and the close
+// after it, trimmed.
+func betweenMarkers(s, open, close string) (string, bool) {
+	i := strings.Index(s, open)
+	if i < 0 {
+		return "", false
+	}
+	rest := s[i+len(open):]
+	j := strings.Index(rest, close)
+	if j < 0 {
+		return "", false
+	}
+	return strings.TrimSpace(rest[:j]), true
+}
+
+// firstLink is the first http(s) address in s, less trailing punctuation.
+func firstLink(s string) string {
+	for _, f := range strings.Fields(s) {
+		if i := strings.Index(f, "http"); i >= 0 {
+			u := strings.TrimRight(f[i:], ".,;:!?)]}>\"'`")
+			if strings.HasPrefix(u, "https://") || strings.HasPrefix(u, "http://") {
+				return u
+			}
+		}
+	}
+	return ""
 }
 
 // --- HTTP: the Publishing targets section --------------------------------

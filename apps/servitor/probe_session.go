@@ -489,9 +489,9 @@ func (pr *probeRun) gateHits(cmd string, hits []risk_hit) error {
 	}
 	cat, reason := hits[0].cat, hits[0].reason
 	if pr.udb != nil {
-		// Per-command always-allow (operator trusts this exact command).
-		var alwaysOK bool
-		if pr.udb.Get(alwaysAllowTable, alwaysAllowKey(pr.appliance.ID, cmd), &alwaysOK) && alwaysOK {
+		// An Always answer: this exact command, or a rule saved from an
+		// approval card that matches it (allow_rules.go).
+		if commandAlwaysAllowed(pr.udb, pr.appliance.ID, cmd) {
 			emit(pr.id, probeEvent{Kind: "status", Text: "Auto-allowed: " + cmd})
 			return nil
 		}

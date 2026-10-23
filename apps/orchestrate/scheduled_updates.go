@@ -146,6 +146,12 @@ type orchUpdatePayload struct {
 	Broken       bool   `json:"broken,omitempty"`
 	BrokenReason string `json:"broken_reason,omitempty"`
 	BrokenCause  string `json:"broken_cause,omitempty"`
+	// Paused holds a task its owner (or an agent, with their say) stopped for
+	// now. Kept apart from Broken on purpose: Broken is read in a dozen places
+	// as "something needs fixing", and a paused task has nothing wrong with
+	// it. It waits on the same dormant tick, and Resume puts it back on its
+	// own time (setRecurringPaused).
+	Paused bool `json:"paused,omitempty"`
 	// LastActive (RFC3339) is renewed on a productive fire (one that called
 	// tools) and on create / edit-in-place. The idle guard reaps a task whose
 	// LastActive — or CreatedAt, for legacy tasks that predate this field — is
@@ -573,6 +579,14 @@ func (fr *fireRun) admit() bool {
 	if p.Broken {
 		if fr.reArm {
 			parkRecurringBroken(p, "")
+		}
+		return fr.exit(nil)
+	}
+	// A paused task stays listed and waits; a Run now on its row still runs it
+	// once, as it does for a paused scheduled agent.
+	if p.Paused && fr.reArm {
+		if _, err := ScheduleTask(OrchestrateScheduledUpdateKind, p, time.Now().Add(brokenDormantReArm)); err != nil {
+			Log("[orchestrate/scheduled] paused task %s: dormant re-arm failed: %v", recurringName(p), err)
 		}
 		return fr.exit(nil)
 	}

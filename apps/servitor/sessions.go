@@ -273,6 +273,46 @@ func (T *Servitor) handleServitorSessionOne(w http.ResponseWriter, r *http.Reque
 		// durable artifact and outlives the investigation that produced it.
 		forgetSessionGuides(udb, id)
 		w.WriteHeader(http.StatusNoContent)
+	case http.MethodPatch:
+		// The chat's Edit and Delete on a message, the contract orchestrate's
+		// sessions follow: {at: N} drops messages from index N on (Edit then
+		// resends the changed text), {delete_at: N} drops just that one. The
+		// next turn's history comes from the page, which drops the same rows.
+		var body struct {
+			At       int  `json:"at"`
+			DeleteAt *int `json:"delete_at"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&body); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		s, found := loadSession(udb, appID, id)
+		if !found {
+			http.NotFound(w, r)
+			return
+		}
+		out := map[string]any{}
+		if body.DeleteAt != nil {
+			if di := *body.DeleteAt; di >= 0 && di < len(s.Messages) {
+				s.Messages = append(s.Messages[:di], s.Messages[di+1:]...)
+				s = saveSession(udb, appID, s)
+			}
+			out["deleted_at"] = *body.DeleteAt
+		} else {
+			at := body.At
+			if at < 0 {
+				at = 0
+			}
+			if at > len(s.Messages) {
+				at = len(s.Messages)
+			}
+			s.Messages = s.Messages[:at]
+			s = saveSession(udb, appID, s)
+			out["at"] = at
+		}
+		out["messages_remaining"] = len(s.Messages)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(out)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}

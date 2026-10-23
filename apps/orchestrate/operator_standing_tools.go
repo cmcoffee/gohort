@@ -275,8 +275,13 @@ func listStandingAgentsToolDef(sess *ToolSession, owner string) AgentToolDef {
 						}
 					}
 				}
+				when := StandingScheduleLabel(sa)
+				if sa.LinkGroup != "" {
+					when += " (link group " + strconv.Quote(sa.LinkGroup) + ", on the group's time)"
+					next = "with its group"
+				}
 				fmt.Fprintf(&b, "- %s (%s): runs %s on %s; last=%s; next=%s\n",
-					sa.Name, state, target, StandingScheduleLabel(sa), status, next)
+					sa.Name, state, target, when, status, next)
 				// What it does, so an edit (schedule action="edit") starts
 				// from the text it replaces rather than a guess at it.
 				if m := strings.TrimSpace(sa.Mission); m != "" {
@@ -341,11 +346,19 @@ func setStandingPausedToolDef(owner string) AgentToolDef {
 					sa.NextRun = time.Time{}
 				}
 				SaveStandingAgent(RootDB, sa)
+				if sa.LinkGroup != "" {
+					return fmt.Sprintf("Paused %q.%s", name, linkMemberNote(owner, sa.LinkGroup, true)), nil
+				}
 				return fmt.Sprintf("Paused %q.", name), nil
 			}
 			SaveStandingAgent(RootDB, sa)
 			if err := ScheduleStandingAgent(RootDB, sa); err != nil {
 				return "", err
+			}
+			// A linked one has no time of its own while it is linked, so its
+			// next run is the group's, not an empty date.
+			if sa.LinkGroup != "" {
+				return fmt.Sprintf("Resumed %q.%s", name, linkMemberNote(owner, sa.LinkGroup, false)), nil
 			}
 			got, _ := GetStandingAgent(RootDB, owner, name)
 			return fmt.Sprintf("Resumed %q. Next run: %s.", name, got.NextRun.Local().Format("Mon Jan 2 3:04 PM")), nil

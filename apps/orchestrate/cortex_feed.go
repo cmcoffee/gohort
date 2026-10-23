@@ -225,12 +225,18 @@ func cortexDeliverableTools(db Database, agentID string, dated func(string) (str
 					}
 					note = d
 				}
-				appendCortexObs(db, agentID, "Session", cortexKindSession, note)
+				appendCortexObs(db, agentID, sessionNoteLabel, cortexKindSession, note)
 				return fmt.Sprintf("Noted to your cortex: %q.", note), nil
 			},
 		},
 	}
 }
+
+// sessionNoteLabel heads a note_to_cortex entry: the agent's note, left from a
+// session. "Session" alone read as a session rather than a note one left
+// behind. The session is not named: a session is renamed after the note is
+// written, and the card would keep the old name.
+const sessionNoteLabel = "Agent note from session"
 
 // cortexContextBlock renders the agent's recent cortex observations as a concise
 // background-awareness block for a FORKED session — the "inherit the cortex's

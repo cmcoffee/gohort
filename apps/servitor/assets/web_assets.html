@@ -727,21 +727,56 @@
         .then(function(d) { state = d || {}; render(); })
         .catch(function() { state = {}; render(); });
 
-      // Always allowed: each command answered Always on an approval card. It
-      // runs without asking on that appliance only; Remove makes it ask again.
+      // Always allowed: each rule saved from Always on an approval card. A
+      // command it matches runs without asking on that system only; Edit
+      // changes what it covers (the server keeps its program and operators),
+      // Remove makes it ask again.
       var alwaysBox = el('div', {}, [el('div', {class: 'ui-pl-empty'}, ['Loading…'])]);
       function renderAlways(list) {
         alwaysBox.innerHTML = '';
         alwaysBox.appendChild(el('div', {style: 'font-weight:600;margin:18px 0 4px'}, ['Always allowed']));
         alwaysBox.appendChild(el('div', {class: 'ui-pl-empty', style: 'text-align:left;margin-bottom:6px'},
-          ['Commands you answered Always for. Each runs without asking, as written, on that system only. Remove one and it asks again.']));
+          ['Rules saved with Always allow. A command that matches one runs without asking, on that system only. In a rule, <number> stands for any number, <text> for any word that is not a path, and * for any run of characters within one word (a * in a path stays inside its folder). Every other word must be exactly as written. Edit one to widen or narrow it; Remove one and it asks again.']));
         if (!list.length) {
           alwaysBox.appendChild(el('div', {class: 'ui-pl-empty', style: 'text-align:left'},
             ['None yet. Answer Always on an approval card to add one.']));
           return;
         }
         list.forEach(function(it) {
-          var btn = el('button', {class: 'ui-row-btn danger', style: 'margin-left:auto;flex:none'}, ['Remove']);
+          var code = el('code', {style: 'display:block;white-space:pre-wrap;word-break:break-all;margin-top:2px'}, [it.command]);
+          var info = el('div', {style: 'min-width:0;flex:1'}, [
+            el('div', {style: 'font-weight:600'}, [it.appliance]), code]);
+          var edit = el('button', {class: 'ui-row-btn', style: 'flex:none'}, ['Edit']);
+          edit.onclick = function() {
+            var field = el('input', {type: 'text', value: it.command, spellcheck: 'false', autocomplete: 'off',
+              style: 'width:100%;box-sizing:border-box;margin-top:4px;font-family:ui-monospace,Menlo,monospace'});
+            var saveBtn = el('button', {class: 'ui-row-btn primary'}, ['Save']);
+            var cancel = el('button', {class: 'ui-row-btn'}, ['Cancel']);
+            var editor = el('div', {}, [field,
+              el('div', {style: 'display:flex;gap:6px;margin-top:4px'}, [saveBtn, cancel])]);
+            code.replaceWith(editor);
+            edit.disabled = true;
+            cancel.onclick = function() { editor.replaceWith(code); edit.disabled = false; };
+            saveBtn.onclick = function() {
+              var rule = field.value.trim();
+              if (!rule || rule === it.command) { cancel.onclick(); return; }
+              saveBtn.disabled = true;
+              saveBtn.textContent = 'Saving…';
+              fetch('api/permissions/always', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({appliance_id: it.appliance_id, command: it.command, rule: rule}),
+              }).then(function(r) {
+                if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
+                loadAlways();
+              }).catch(function(err) {
+                saveBtn.disabled = false;
+                saveBtn.textContent = 'Save';
+                window.uiAlert('Could not save the rule: ' + (err && err.message || err));
+              });
+            };
+            field.focus();
+          };
+          var btn = el('button', {class: 'ui-row-btn danger', style: 'flex:none'}, ['Remove']);
           btn.onclick = function() {
             btn.disabled = true;
             btn.textContent = 'Removing…';
@@ -759,10 +794,7 @@
           };
           alwaysBox.appendChild(el('div', {
             style: 'display:flex;gap:10px;align-items:flex-start;padding:8px 4px;border-bottom:1px solid var(--border)'},
-            [el('div', {style: 'min-width:0'}, [
-              el('div', {style: 'font-weight:600'}, [it.appliance]),
-              el('code', {style: 'display:block;white-space:pre-wrap;word-break:break-all;margin-top:2px'}, [it.command]),
-            ]), btn]));
+            [info, el('div', {style: 'display:flex;gap:6px;margin-left:auto;flex:none'}, [edit, btn])]));
         });
       }
       function loadAlways() {
@@ -772,7 +804,7 @@
           .catch(function(err) {
             alwaysBox.innerHTML = '';
             alwaysBox.appendChild(el('div', {class: 'ui-pl-empty'},
-              ['Could not load the always-allowed commands: ' + (err && err.message || err)]));
+              ['Could not load the always-allow rules: ' + (err && err.message || err)]));
           });
       }
       loadAlways();
@@ -1933,22 +1965,29 @@
         // and api/save_snippet endpoints remain for any caller that
         // wants the blunt version.
         //
-        // Push this reply into a Guide — but only guides that already list THIS
-        // appliance/repo as a source (fetched on click). One match pushes
-        // directly; several show a picker.
+        // Push this reply into a Guide. The picker always opens, so a new
+        // guide is always one click away: guides that already list THIS
+        // appliance/repo as a source first (fetched on click), then the
+        // person's other guides, then a new one. Choosing an unlinked guide
+        // links this system to it first, so the link no longer has to be
+        // made from the guide's Sources picker.
         if (saveDestinations.guide) {
           var gBtn = makeBtn('↗ Guide', function() {
             var aid = getApplianceID();
             if (!aid) { window.uiAlert('Pick a system first'); return; }
-            function pushTo(gid) {
+            function pushTo(payload) {
               gBtn.disabled = true; gBtn.textContent = 'Incorporating…';
+              payload.appliance_id = aid; payload.text = m.rawText;
               fetch('api/push-to-guide?appliance_id=' + encodeURIComponent(aid), {
                 method: 'POST', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({appliance_id: aid, guide_id: gid, text: m.rawText}),
+                body: JSON.stringify(payload),
               }).then(function(r) {
-                gBtn.disabled = false;
-                gBtn.textContent = r.ok ? 'Saved ✓' : 'Failed';
-                if (r.ok) gBtn.classList.add('saved');
+                if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
+                gBtn.disabled = false; gBtn.textContent = 'Saved ✓';
+                gBtn.classList.add('saved');
+              }).catch(function(err) {
+                gBtn.disabled = false; gBtn.textContent = '↗ Guide';
+                window.uiAlert('Could not add it to the guide: ' + (err && err.message || err));
               });
             }
             gBtn.disabled = true; gBtn.textContent = 'Loading…';
@@ -1957,18 +1996,47 @@
               .then(function(d) {
                 gBtn.disabled = false; gBtn.textContent = '↗ Guide';
                 var guides = (d && d.guides) || [];
-                if (!guides.length) {
+                var others = (d && d.others) || [];
+                if (!window.uiOpenSimpleModal) {
+                  if (guides.length) { pushTo({guide_id: guides[0].id}); return; }
                   window.uiAlert("No guide lists this system as a source yet. Add it via a guide's Sources picker, then push here.");
                   return;
                 }
-                if (guides.length === 1 || !window.uiOpenSimpleModal) { pushTo(guides[0].id); return; }
-                window.uiOpenSimpleModal({title: 'Add to which guide?', width: '420px', mount: function(body, dlg) {
-                  guides.forEach(function(g) {
+                window.uiOpenSimpleModal({title: 'Add to which guide?', width: '440px', mount: function(body, dlg) {
+                  function done() { try { dlg.close(); dlg.remove(); } catch(e){} }
+                  function heading(text, note) {
+                    var h = document.createElement('div');
+                    h.style.fontWeight = '600'; h.style.margin = '0.6rem 0 0.1rem';
+                    h.textContent = text;
+                    body.appendChild(h);
+                    if (note) {
+                      var n = document.createElement('div');
+                      n.className = 'ui-pl-empty'; n.style.textAlign = 'left'; n.style.margin = '0 0 0.2rem';
+                      n.textContent = note;
+                      body.appendChild(n);
+                    }
+                  }
+                  function choice(label, onpick) {
                     var b = document.createElement('button');
-                    b.className = 'ui-row-btn'; b.textContent = g.title;
+                    b.className = 'ui-row-btn'; b.textContent = label;
                     b.style.display = 'block'; b.style.width = '100%'; b.style.margin = '0.25rem 0'; b.style.textAlign = 'left';
-                    b.onclick = function() { try { dlg.close(); dlg.remove(); } catch(e){} pushTo(g.id); };
+                    b.onclick = function() { done(); onpick(); };
                     body.appendChild(b);
+                  }
+                  if (guides.length) {
+                    heading('Linked to this system');
+                    guides.forEach(function(g) { choice(g.title, function() { pushTo({guide_id: g.id}); }); });
+                  }
+                  if (others.length) {
+                    heading('Your other guides', 'Choosing one adds this system to its Sources, then adds the reply.');
+                    others.forEach(function(g) { choice(g.title, function() { pushTo({guide_id: g.id, link: true}); }); });
+                  }
+                  heading('A new guide', 'Starts a guide with this reply as its first section and this system as its source.');
+                  choice('New guide…', function() {
+                    window.uiPrompt('Title for the new guide:', '').then(function(title) {
+                      title = (title || '').trim();
+                      if (title) pushTo({new_title: title});
+                    });
                   });
                 }});
               })

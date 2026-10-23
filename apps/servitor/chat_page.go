@@ -137,6 +137,8 @@ func (T *Servitor) handleChatPage(w http.ResponseWriter, r *http.Request) {
 					ListURL:       "api/sessions?appliance_id={appliance_id}",
 					LoadURL:       "api/sessions/{id}?appliance_id={appliance_id}",
 					DeleteURL:     "api/sessions/{id}?appliance_id={appliance_id}",
+					TruncateURL:   "api/sessions/{id}?appliance_id={appliance_id}", // Edit on the last question
+					MessageScrub:  true,                                            // and a ✕ on every message, as in the other chats
 					MessagesField: "messages",
 					ListTitle:     "Sessions",
 					NewLabel:      "New session",
@@ -242,6 +244,9 @@ func (T *Servitor) handleChatConfirm(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		ID    string `json:"id"`
 		Value string `json:"value"`
+		// Input is the rule an Always answer saves, as the card showed it and
+		// the person left or edited it (allow_rules.go).
+		Input string `json:"input"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&body); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
@@ -253,7 +258,24 @@ func (T *Servitor) handleChatConfirm(w http.ResponseWriter, r *http.Request) {
 	// so the run's next identical command already finds it.
 	var remember func(sid, cmd string)
 	if body.Value == "always" {
-		remember = func(sid, cmd string) { rememberAlwaysAllow(udb, user, sid, cmd) }
+		// Checked before anything is let go: a rule that no longer covers
+		// the command it was made from is refused with the reason, and the
+		// card stays live to fix it.
+		if rule := strings.TrimSpace(body.Input); rule != "" {
+			if cmd, ok := pendingCommand(body.ID); ok {
+				if err := validAllowRule(rule, cmd); err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+			}
+		}
+		remember = func(sid, cmd string) {
+			rule := strings.TrimSpace(body.Input)
+			if rule == "" || validAllowRule(rule, cmd) != nil {
+				rule = cmd
+			}
+			rememberAlwaysAllow(udb, user, sid, rule)
+		}
 	}
 
 	delivered := deliverConfirmWith(user, body.ID, allow, remember)
@@ -321,6 +343,20 @@ func parseConfirmCardID(id string) (sessionID, tag string, ok bool) {
 // and a plain function of its inputs can be tested without a session cookie.
 func deliverConfirm(user, cardID string, allow bool) string {
 	return deliverConfirmWith(user, cardID, allow, nil)
+}
+
+// pendingCommand is the command a confirm card is about, while it waits.
+func pendingCommand(cardID string) (string, bool) {
+	sid, tag, ok := parseConfirmCardID(cardID)
+	if !ok {
+		return "", false
+	}
+	pending, _ := pendingCmds.Load(sid)
+	cmd, ok := pending.(string)
+	if !ok || confirmCmdTag(cmd) != tag {
+		return "", false
+	}
+	return cmd, true
 }
 
 // rememberAlwaysAllow records an Always answer for sid's appliance. A session

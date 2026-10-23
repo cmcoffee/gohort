@@ -122,6 +122,32 @@ func ListDocumentsReferencing(user, kind, srcKind, srcItemID string) []DocItem {
 	return t.List(user)
 }
 
+// ReferenceAttachingDocumentTarget is an optional DocumentTarget capability:
+// attach a source (a reference-source kind + item id) to one of the user's own
+// documents. It lets a producer link "this thing" to a document from its own
+// page, rather than sending the person to the writer app's Sources picker
+// first. The target decides who may change a document's sources.
+type ReferenceAttachingDocumentTarget interface {
+	DocumentTarget
+	AttachReference(user, docID, srcKind, srcItemID string) error
+}
+
+// AttachDocumentReference attaches (srcKind, srcItemID) to the user's document
+// docID of the given target kind. Attaching one already there is not an error.
+func AttachDocumentReference(user, kind, docID, srcKind, srcItemID string) error {
+	docTargetsMu.RLock()
+	t := docTargets[kind]
+	docTargetsMu.RUnlock()
+	if t == nil {
+		return fmt.Errorf("no document target registered for kind %q", kind)
+	}
+	at, ok := t.(ReferenceAttachingDocumentTarget)
+	if !ok {
+		return fmt.Errorf("%s documents cannot have a source attached from here", t.Label())
+	}
+	return at.AttachReference(user, docID, srcKind, srcItemID)
+}
+
 // HasDocumentTarget reports whether a writer target is registered for kind.
 func HasDocumentTarget(kind string) bool {
 	docTargetsMu.RLock()

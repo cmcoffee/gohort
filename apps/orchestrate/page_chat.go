@@ -539,17 +539,19 @@ func chatAgentNav() []ui.OrchestratorNavItem {
 				// own JS, which is where anything knowing what a cron is
 				// belongs.
 				{Label: "Edit schedule", Method: "client", URL: "orchestrate_edit_standing", OnlyIf: "_edit_standing"},
-				{Label: "Run now", Method: "POST", URL: "api/console/agents/run", OnlyIf: "_run_standing", Confirm: "Run this agent's mission once right now? This is a one-off test and does not change its schedule."},
-				{Label: "Pause", Method: "POST", URL: "api/console/agents/pause", OnlyIf: "_pause_standing"},
-				{Label: "Resume", Method: "POST", URL: "api/console/agents/resume", OnlyIf: "_resume_standing"},
+				{Label: "Run now", Icon: "once", Method: "POST", URL: "api/console/agents/run", OnlyIf: "_run_standing", Confirm: "Run this agent's mission once right now? This is a one-off test and does not change its schedule."},
+				{Label: "Pause", Icon: "pause", Method: "POST", URL: "api/console/agents/pause", OnlyIf: "_pause_standing"},
+				{Label: "Resume", Icon: "play", Method: "POST", URL: "api/console/agents/resume", OnlyIf: "_resume_standing"},
 				{Label: "Relink", Method: "POST", URL: "api/console/agents/relink", PickerSource: "api/console/agent-options", PickerTitle: "Relink to a live target", OnlyIf: "_relink_standing"},
 				{Label: "Move to…", Method: "POST", URL: "api/console/agents/move", PickerSource: "api/console/surface-options", PickerTitle: "Where the per-run report lands (cortex / session / background)", OnlyIf: "_move_standing"},
 				{Label: "Delete", Method: "DELETE", URL: "api/console/agents/delete", Variant: "danger", OnlyIf: "_del_standing", Confirm: "Delete this standing agent and cancel its schedule?"},
 				// Recurring tasks.
 				{Label: "Edit schedule", Method: "client", URL: "orchestrate_edit_schedule", OnlyIf: "_edit_recurring"},
-				{Label: "Run now", Method: "POST", URL: "api/console/recurring/run", OnlyIf: "_run_recurring", Confirm: "Run this recurring task's prompt once right now? This is a one-off test: it does not change the schedule or count against the fire cap."},
+				{Label: "Run now", Icon: "once", Method: "POST", URL: "api/console/recurring/run", OnlyIf: "_run_recurring", Confirm: "Run this recurring task's prompt once right now? This is a one-off test: it does not change the schedule or count against the fire cap."},
 				{Label: "Relink", Method: "POST", URL: "api/console/recurring/relink", PickerSource: "api/console/agent-options", PickerTitle: "Relink to a live agent", OnlyIf: "_relink_recurring"},
-				{Label: "Resume", Method: "POST", URL: "api/console/recurring/resume", OnlyIf: "_resume_recurring", Confirm: "Put this parked task back on its schedule? A stalled objective gets a fresh attempt allowance; what it already tried is kept."},
+				{Label: "Resume", Icon: "play", Method: "POST", URL: "api/console/recurring/resume", OnlyIf: "_resume_recurring", Confirm: "Put this parked task back on its schedule? A stalled objective gets a fresh attempt allowance; what it already tried is kept."},
+				{Label: "Pause", Icon: "pause", Method: "POST", URL: "api/console/recurring/pause", OnlyIf: "_pause_recurring"},
+				{Label: "Resume", Icon: "play", Method: "POST", URL: "api/console/recurring/resume", OnlyIf: "_unpause_recurring"},
 				// Lost when the three lists became this one page; the handler
 				// and its route stayed.
 				{Label: "Move to…", Method: "POST", URL: "api/console/recurring/move", PickerSource: "api/console/surface-options", PickerTitle: "Where the recurring conversation runs (cortex / session / background)", OnlyIf: "_move_recurring"},
@@ -561,8 +563,8 @@ func chatAgentNav() []ui.OrchestratorNavItem {
 				// otherwise looks just like a broken one.
 				{Label: "Recent checks", Method: "GET", URL: "api/console/monitors/checks", ShowResult: true, OnlyIf: "_del_monitor"},
 				{Label: "Test", Method: "POST", URL: "api/console/monitors/run", OnlyIf: "_test_monitor", Confirm: "Run this monitor's check once right now? If its condition matches, it will fire (wake/notify) as it would on a normal poll."},
-				{Label: "Pause", Method: "POST", URL: "api/console/monitors/pause", OnlyIf: "_pause_monitor"},
-				{Label: "Resume", Method: "POST", URL: "api/console/monitors/resume", OnlyIf: "_resume_monitor"},
+				{Label: "Pause", Icon: "pause", Method: "POST", URL: "api/console/monitors/pause", OnlyIf: "_pause_monitor"},
+				{Label: "Resume", Icon: "play", Method: "POST", URL: "api/console/monitors/resume", OnlyIf: "_resume_monitor"},
 				{Label: "Relink", Method: "POST", URL: "api/console/monitors/relink", PickerSource: "api/console/agent-options?with_default=1", PickerTitle: "Relink (Default agent, or pick a specific one)", OnlyIf: "_relink_monitor"},
 				{Label: "Move to…", Method: "POST", URL: "api/console/monitors/move", PickerSource: "api/console/surface-options", PickerTitle: "Move this monitor: its card, badge & wake all follow", OnlyIf: "_move_monitor"},
 				{Label: "Delete", Method: "DELETE", URL: "api/console/monitors/delete", Variant: "danger", OnlyIf: "_del_monitor", Confirm: "Delete this event monitor?"},
@@ -771,21 +773,23 @@ func chatFleetNav() []ui.OrchestratorNavItem {
 				// own JS, which is where anything knowing what a cron is
 				// belongs.
 				{Label: "Edit schedule", Method: "client", URL: "orchestrate_edit_standing", OnlyIf: "_edit_standing"},
-				{Label: "Run now", Method: "POST", URL: "api/console/agents/run", OnlyIf: "_run_standing", Confirm: "Run this agent's mission once right now? This is a one-off test and does not change its schedule."},
-				{Label: "Pause", Method: "POST", URL: "api/console/agents/pause", OnlyIf: "_pause_standing"},
-				{Label: "Resume", Method: "POST", URL: "api/console/agents/resume", OnlyIf: "_resume_standing"},
+				{Label: "Run now", Icon: "once", Method: "POST", URL: "api/console/agents/run", OnlyIf: "_run_standing", Confirm: "Run this agent's mission once right now? This is a one-off test and does not change its schedule."},
+				{Label: "Pause", Icon: "pause", Method: "POST", URL: "api/console/agents/pause", OnlyIf: "_pause_standing"},
+				{Label: "Resume", Icon: "play", Method: "POST", URL: "api/console/agents/resume", OnlyIf: "_resume_standing"},
 				{Label: "Relink", Method: "POST", URL: "api/console/agents/relink", PickerSource: "api/console/agent-options", PickerTitle: "Relink to a live target", OnlyIf: "_relink_standing"},
 				{Label: "Delete", Method: "DELETE", URL: "api/console/agents/delete", Variant: "danger", OnlyIf: "_del_standing", Confirm: "Delete this standing agent and cancel its schedule?"},
 				// Recurring tasks.
 				{Label: "Edit schedule", Method: "client", URL: "orchestrate_edit_schedule", OnlyIf: "_edit_recurring"},
-				{Label: "Run now", Method: "POST", URL: "api/console/recurring/run", OnlyIf: "_run_recurring", Confirm: "Run this recurring task's prompt once right now? This is a one-off test: it does not change the schedule or count against the fire cap."},
+				{Label: "Run now", Icon: "once", Method: "POST", URL: "api/console/recurring/run", OnlyIf: "_run_recurring", Confirm: "Run this recurring task's prompt once right now? This is a one-off test: it does not change the schedule or count against the fire cap."},
 				{Label: "Relink", Method: "POST", URL: "api/console/recurring/relink", PickerSource: "api/console/agent-options", PickerTitle: "Relink to a live agent", OnlyIf: "_relink_recurring"},
-				{Label: "Resume", Method: "POST", URL: "api/console/recurring/resume", OnlyIf: "_resume_recurring", Confirm: "Put this parked task back on its schedule? A stalled objective gets a fresh attempt allowance; what it already tried is kept."},
+				{Label: "Resume", Icon: "play", Method: "POST", URL: "api/console/recurring/resume", OnlyIf: "_resume_recurring", Confirm: "Put this parked task back on its schedule? A stalled objective gets a fresh attempt allowance; what it already tried is kept."},
+				{Label: "Pause", Icon: "pause", Method: "POST", URL: "api/console/recurring/pause", OnlyIf: "_pause_recurring"},
+				{Label: "Resume", Icon: "play", Method: "POST", URL: "api/console/recurring/resume", OnlyIf: "_unpause_recurring"},
 				{Label: "Delete", Method: "DELETE", URL: "api/console/recurring/delete", Variant: "danger", OnlyIf: "_del_recurring", Confirm: "Delete this recurring task and cancel its schedule?"},
 				// Event monitors.
 				{Label: "Edit schedule", Method: "client", URL: "orchestrate_edit_monitor", OnlyIf: "_edit_monitor"},
-				{Label: "Pause", Method: "POST", URL: "api/console/monitors/pause", OnlyIf: "_pause_monitor"},
-				{Label: "Resume", Method: "POST", URL: "api/console/monitors/resume", OnlyIf: "_resume_monitor"},
+				{Label: "Pause", Icon: "pause", Method: "POST", URL: "api/console/monitors/pause", OnlyIf: "_pause_monitor"},
+				{Label: "Resume", Icon: "play", Method: "POST", URL: "api/console/monitors/resume", OnlyIf: "_resume_monitor"},
 				{Label: "Relink", Method: "POST", URL: "api/console/monitors/relink", PickerSource: "api/console/agent-options?with_default=1", PickerTitle: "Relink (Default agent, or pick a specific one)", OnlyIf: "_relink_monitor"},
 				{Label: "Delete", Method: "DELETE", URL: "api/console/monitors/delete", Variant: "danger", OnlyIf: "_del_monitor", Confirm: "Delete this event monitor?"},
 			}},
@@ -1025,10 +1029,10 @@ func (p *phaseTimer) report(what string) {
 // way out; Link… is on every row that can join a group.
 var (
 	linkActEditTime = ui.OrchestratorRowAction{Label: "Edit time", Method: "client", URL: "orchestrate_edit_link", OnlyIf: "_link_head"}
-	linkActRun      = ui.OrchestratorRowAction{Label: "Run now", Method: "POST", URL: "api/console/links/run", OnlyIf: "_link_head",
+	linkActRun      = ui.OrchestratorRowAction{Label: "Run now", Icon: "once", Method: "POST", URL: "api/console/links/run", OnlyIf: "_link_head",
 		Confirm: "Run every schedule in this group now, one after another? Its time is not changed."}
-	linkActPause  = ui.OrchestratorRowAction{Label: "Pause", Method: "POST", URL: "api/console/links/pause", OnlyIf: "_link_pause"}
-	linkActResume = ui.OrchestratorRowAction{Label: "Resume", Method: "POST", URL: "api/console/links/resume", OnlyIf: "_link_go"}
+	linkActPause  = ui.OrchestratorRowAction{Label: "Pause", Icon: "pause", Method: "POST", URL: "api/console/links/pause", OnlyIf: "_link_pause"}
+	linkActResume = ui.OrchestratorRowAction{Label: "Resume", Icon: "play", Method: "POST", URL: "api/console/links/resume", OnlyIf: "_link_go"}
 	linkActUp     = ui.OrchestratorRowAction{Label: "↑", Method: "POST", URL: "api/console/links/up", OnlyIf: "_link_up", IDField: "_ref"}
 	linkActDown   = ui.OrchestratorRowAction{Label: "↓", Method: "POST", URL: "api/console/links/down", OnlyIf: "_link_down", IDField: "_ref"}
 	linkActUnlink = ui.OrchestratorRowAction{Label: "Unlink", Method: "POST", URL: "api/console/links/unlink", OnlyIf: "_linked", IDField: "_ref",

@@ -144,9 +144,28 @@ func (T *Servitor) handleAlwaysAllowed(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			ApplianceID string `json:"appliance_id"`
 			Command     string `json:"command"`
+			// Rule, when set, replaces the saved one (an edit) rather than
+			// removing it.
+			Rule string `json:"rule"`
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&body); err != nil || body.ApplianceID == "" || body.Command == "" {
 			http.Error(w, "appliance_id and command are required", http.StatusBadRequest)
+			return
+		}
+		if rule := strings.TrimSpace(body.Rule); rule != "" {
+			var on bool
+			if !udb.Get(alwaysAllowTable, alwaysAllowKey(body.ApplianceID, body.Command), &on) || !on {
+				http.Error(w, "that rule is no longer saved", http.StatusNotFound)
+				return
+			}
+			if err := validEditedRule(body.Command, rule); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			udb.Unset(alwaysAllowTable, alwaysAllowKey(body.ApplianceID, body.Command))
+			udb.Set(alwaysAllowTable, alwaysAllowKey(body.ApplianceID, rule), true)
+			Log("[servitor] %s changed an always-allow rule on %s: %s -> %s", user, body.ApplianceID, body.Command, rule)
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		udb.Unset(alwaysAllowTable, alwaysAllowKey(body.ApplianceID, body.Command))

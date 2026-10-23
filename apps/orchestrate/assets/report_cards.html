@@ -73,10 +73,10 @@
       var kindIcon = {
         message: '💬',      // a channel inbound from a person
         scheduled: '⏰',    // a standing-agent report
-        monitor: '🔔',      // an event-monitor wake
-        deliverable: '📄',  // a filed-artifact pointer
+        monitor: '👁️',      // an event-monitor wake: the eye the sessions list badges live watchers with
+        deliverable: '📦',  // a filed-artifact pointer
         request: '🤖',      // a dispatch/request from another agent (agent-to-agent)
-        session: '📝'       // a one-line pointer a session left behind
+        session: '✍️'       // a one-line pointer a session left behind
       };
       var icon = document.createElement('span'); icon.className = 'orch-report-card-icon';
       icon.textContent = kindIcon[msg.report_kind] || '⏰';

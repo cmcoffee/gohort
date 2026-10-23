@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 
@@ -178,6 +179,13 @@ func (d *confluenceDest) update(ctx context.Context, user string, cfg PublishCon
 		return docs.PublishResult{}, err
 	}
 	body, err := callAPI(user, cfg.ConfluenceCredential, "PUT", d.apiURL(user, "/pages/"+id), string(payload))
+	if httpStatus(err) == http.StatusConflict {
+		// The version it read was overtaken: somebody saved the page between
+		// the read and this write. Nothing was written, and the next publish
+		// reads their change first and sends it to whoever follows the
+		// document.
+		return docs.PublishResult{}, fmt.Errorf("somebody saved page %s in Confluence while it was being updated, so this update was not written: publish again, and their change is read before anything is overwritten", id)
+	}
 	if err != nil {
 		return docs.PublishResult{}, err
 	}

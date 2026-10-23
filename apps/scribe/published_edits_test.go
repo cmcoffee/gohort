@@ -68,9 +68,11 @@ func TestAnEditOnThePublishedPageGoesToTheCurator(t *testing.T) {
 }
 
 // With nothing to compare against (published before copies were read back,
-// or a publish that could not read its copy), a look keeps what it sees and
-// files nothing: it cannot tell an edit from the original.
-func TestAFirstLookFilesNothing(t *testing.T) {
+// or a publish that could not read its copy), an update keeps what it reads
+// and stops once: it cannot tell an edit from the original, and overwriting
+// would lose one. It files nothing, and the next update compares against what
+// it kept.
+func TestAnUpdateWithNoBaselineStopsOnce(t *testing.T) {
 	app, udb, g := publishedGuideFixture(t)
 	w := guideWatcher{app: app}
 	doc := docs.PublishDoc{SourceKind: "guide", SourceID: g.ID}
@@ -79,14 +81,41 @@ func TestAFirstLookFilesNothing(t *testing.T) {
 	if _, ok := loadBaseline(udb, g.ID, wikiKind); ok {
 		t.Fatal("a publish that could not read its copy kept the old baseline")
 	}
-	if err := w.BeforeUpdate(context.Background(), "u", doc, wikiKind, docs.PublishedCopy{Body: wikiPage + "<p>anything</p>"}); err != nil {
-		t.Fatalf("a first look stopped the update: %v", err)
+	page := docs.PublishedCopy{Body: wikiPage + "<p>anything</p>"}
+	err := w.BeforeUpdate(context.Background(), "u", doc, wikiKind, page)
+	if !errors.Is(err, errNoBaseline) || !strings.Contains(err.Error(), "Team wiki") {
+		t.Fatalf("an update with no baseline must stop and say where, got %v", err)
 	}
 	if _, ok := loadBaseline(udb, g.ID, wikiKind); !ok {
-		t.Error("a first look should keep what it saw")
+		t.Error("it should keep what it read as the baseline")
 	}
 	if n := len(listPendingFindings(udb)); n != 0 {
-		t.Errorf("a first look filed %d findings", n)
+		t.Errorf("with nothing to compare against it filed %d findings", n)
+	}
+	if err := w.BeforeUpdate(context.Background(), "u", doc, wikiKind, page); err != nil {
+		t.Errorf("the next update, against the kept baseline, should go ahead: %v", err)
+	}
+}
+
+// A guide published by someone it is shared with is guarded too, against the
+// owner's guide: an edit on the page stops the update and goes to the owner's
+// Curator. The check used to look for the guide among the publisher's own,
+// find nothing, and let the update overwrite the page.
+func TestACoEditorsPublishIsGuardedToo(t *testing.T) {
+	app, udb, g := publishedGuideFixture(t)
+	SetSharedOwner(app.DB, sharedGuidesIndex, g.ID, "u", true)
+	w := guideWatcher{app: app}
+	doc := docs.PublishDoc{SourceKind: "guide", SourceID: g.ID}
+	w.Landed("v", doc, wikiKind, docs.PublishedCopy{Body: wikiPage}, true)
+	if _, ok := loadBaseline(udb, g.ID, wikiKind); !ok {
+		t.Fatal("a co-editor's publish should leave its baseline on the owner's guide")
+	}
+	edited := strings.Replace(wikiPage, "is unreachable.", "is unreachable. Check the firewall first.", 1)
+	if err := w.BeforeUpdate(context.Background(), "v", doc, wikiKind, docs.PublishedCopy{Body: edited}); !errors.Is(err, errEditedThere) {
+		t.Fatalf("an edit on the page must stop a co-editor's update too, got %v", err)
+	}
+	if n := len(listPendingFindings(udb)); n != 1 {
+		t.Errorf("the edit should go to the owner's Curator, got %d findings there", n)
 	}
 }
 

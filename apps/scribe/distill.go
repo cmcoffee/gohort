@@ -2,8 +2,10 @@ package scribe
 
 // Distilling one guide into another.
 //
-// "Take the general concepts from this and send them there." Two filters, in
-// order. The distill reads the source a part at a time and writes what the
+// "Take the general concepts from this and send them there." A guide does it
+// for each guide among its Sources set to Distill (follow.go): the sections a
+// Curator pass changed there, or all of it from Update from sources. Two
+// filters, in order. The distill reads the source a part at a time and writes what the
 // request asks for, each piece made to stand on its own, as findings for the
 // receiving guide; the source is not changed. The receiving guide's Curator
 // then decides what fits, by its brief and what it already holds: folded into
@@ -14,15 +16,14 @@ package scribe
 // their inbox, and their Curator edits their own guides (agent_source.go). The
 // source is any guide they can read.
 //
-// It runs as a job, followed by the dialog and on the Monitor: one model call
-// per part of the source, so a long guide is many calls and some minutes.
+// It runs as a job, on the Monitor with a Stop: one model call per part of the
+// source, so a long guide is many calls and some minutes.
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"regexp"
 	"strings"
@@ -51,7 +52,9 @@ const distillPrompt = `You distill material from one document for another. You a
 
 Take what the request asks for from this part. Write each piece so it stands on its own in the receiving document: general, without details that only make sense in the source (its particular incident, its host names, its people) unless the request says to keep them. One piece per idea. Leave out what the receiving document already covers, what the request does not ask for, and what does not fit its brief. Taking nothing from a part is a fine answer.
 
-Reply with JSON only, in this shape: {"findings": [{"topic": "one line: what this piece is about", "content": "the piece itself in markdown, complete enough to use without the source"}]}`
+The brief limits what goes INTO a piece, not only which pieces you take. Keep in a piece only what the brief says belongs, and leave out the rest of the source even where it sits right beside what you take (a command next to the log line it explains, a fix next to the symptom), unless the brief covers that too. A piece is complete when it is complete for what the brief covers.
+
+Reply with JSON only, in this shape: {"findings": [{"topic": "one line: what this piece is about", "content": "the piece itself in markdown, holding only what the receiving document's brief covers"}]}`
 
 // distillPart is a run of the source's sections read in one call.
 type distillPart struct {
@@ -126,57 +129,6 @@ type distillRun struct {
 	curateNow bool
 	job       *publishJob
 	jobID     string
-}
-
-// handleDistill starts a distill of the guide ?id= into another of the
-// user's guides: POST {to, what, curate_now}.
-func (T *Scribe) handleDistill(w http.ResponseWriter, r *http.Request, udb Database, user string) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST required", http.StatusMethodNotAllowed)
-		return
-	}
-	src, _, _, _, found := T.resolve(r, udb, user, strings.TrimSpace(r.URL.Query().Get("id")))
-	if !found {
-		http.NotFound(w, r)
-		return
-	}
-	var body struct {
-		To        string `json:"to"`
-		What      string `json:"what"`
-		CurateNow bool   `json:"curate_now"`
-	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-	dst, ok := loadGuide(udb, strings.TrimSpace(body.To))
-	if !ok {
-		http.Error(w, "Pick one of your own guides to send it to.", http.StatusNotFound)
-		return
-	}
-	if dst.ID == src.ID {
-		http.Error(w, "Pick a different guide to send it to.", http.StatusBadRequest)
-		return
-	}
-	if len(src.Sections) == 0 {
-		http.Error(w, "This guide has nothing in it to distill.", http.StatusBadRequest)
-		return
-	}
-	key := distillJobPrefix + src.ID
-	if j, running := currentPublishJob(key); running && !j.Done {
-		http.Error(w, "This guide is already being distilled into "+j.Target+".", http.StatusConflict)
-		return
-	}
-	ctx, cancel := context.WithCancel(context.WithoutCancel(r.Context()))
-	job := &publishJob{Target: dst.Title, Started: time.Now(), cancel: cancel,
-		owner: user, guideID: key, title: src.Title, distilling: true}
-	publishJobsMu.Lock()
-	publishJobs[key] = job
-	publishJobsMu.Unlock()
-	d := distillRun{T: T, user: user, src: src, dst: dst, what: firstNonEmpty(strings.TrimSpace(body.What), distillDefault),
-		curateNow: body.CurateNow, job: job, jobID: newID()}
-	go d.run(ctx)
-	writeJSON(w, map[string]any{"started": true, "target": dst.Title})
 }
 
 // run reads the source part by part and files what it takes.
@@ -277,20 +229,6 @@ func (d distillRun) distillPart(ctx context.Context, p distillPart, i, n int) ([
 		return nil, err
 	}
 	return parseDistill(resp.Content)
-}
-
-// handleDistillJob reports the distill of the guide ?id=.
-func (T *Scribe) handleDistillJob(w http.ResponseWriter, r *http.Request, user string) {
-	snap, ok := currentPublishJob(distillJobPrefix + strings.TrimSpace(r.URL.Query().Get("id")))
-	if !ok || snap.owner != user {
-		writeJSON(w, map[string]any{"none": true})
-		return
-	}
-	writeJSON(w, map[string]any{
-		"target": snap.Target, "done": snap.Done, "ok": snap.OK, "message": snap.Message,
-		"steps": snap.Steps, "now": snap.Now, "stopped": snap.Stopped,
-		"elapsed": int(time.Since(snap.Started).Seconds()),
-	})
 }
 
 // handleDistillStop stops it: POST ?id=.

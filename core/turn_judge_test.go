@@ -380,8 +380,17 @@ func TestACorrectionOnATurnThatRanNothingOnlyAsksForARewrite(t *testing.T) {
 	}
 	// A turn that did work keeps the offer: the claim there is usually its
 	// last step left undone.
-	if busy := unkeptClaimCorrection(v, true); !strings.Contains(busy, "do it NOW with a real tool call") {
+	busy := unkeptClaimCorrection(v, true)
+	if !strings.Contains(busy, "do it NOW with a real tool call") {
 		t.Errorf("a turn that did work should still be offered the tool call:\n%s", busy)
+	}
+	// Both say the struck reply is withdrawn and the new one stands alone: on
+	// a channel the person never got the struck one, and a rewrite that began
+	// "My bad on that last line" was the only message they received.
+	for _, c := range []string{idle, busy} {
+		if !strings.Contains(c, "write it as your first and only reply") || !strings.Contains(c, "Never refer to the withdrawn one") {
+			t.Errorf("the correction must say the struck reply is withdrawn and never referred to:\n%s", c)
+		}
 	}
 }
 

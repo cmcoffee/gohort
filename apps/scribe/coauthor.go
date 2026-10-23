@@ -243,7 +243,7 @@ func (T *Scribe) draftSectionTool(sc coauthorScope) AgentToolDef {
 			}
 			// Deterministic grounded write: a single lead-LLM completion (no tools),
 			// strictly bounded to the gathered material.
-			sys := fmt.Sprintf("You are the Guide Author writing ONE section of a guide titled %q. Write the section body as clean markdown: sub-headings (###), lists, fenced code where useful. Do NOT repeat the section title as a heading. Ground every specific (commands, values, names, versions, paths) STRICTLY in the provided material; do not invent anything it doesn't contain. If the material is thin, write only what it supports. Output ONLY the markdown body, nothing else.", g.Title) + "\n" + BannedWordsRule
+			sys := fmt.Sprintf("You are the Guide Author writing ONE section of a guide titled %q. Write the section body as clean markdown: sub-headings (###), lists, fenced code where useful. Do NOT repeat the section title as a heading. Ground every specific (commands, values, names, versions, paths) STRICTLY in the provided material; do not invent anything it doesn't contain. If the material is thin, write only what it supports. Output ONLY the markdown body, nothing else.", g.Title) + "\n" + BannedWordsRule + draftBriefRule(g)
 			brief := instr
 			if brief == "" {
 				brief = "(no extra instructions: cover the topic from the material)"
@@ -850,6 +850,18 @@ func gatherLinkedSourceSnapshot(ctx context.Context, ownerUser string, g Guide) 
 	return strings.TrimSpace(b.String())
 }
 
+// draftBriefRule holds a grounded draft to the guide's brief, "" when it has
+// none. draft_section writes from everything its Sources hold on a topic in
+// one call that never saw the brief, and was told to ground every command and
+// value in the material: a guide about reading logs, with a raw
+// troubleshooting guide as its Source, got the commands too.
+func draftBriefRule(g Guide) string {
+	if strings.TrimSpace(g.Brief) == "" {
+		return ""
+	}
+	return guideBriefSection(g) + "\nThe material can hold more than the brief covers. Write in only what the brief says belongs in this guide, and leave the rest of the material out, even where it sits next to what you use."
+}
+
 // runIncorporate dispatches the Guide Author to weave a PUSHED finding INTO the
 // guide — merging it into the right existing section or adding a new one, in the
 // guide's voice — rather than blind-appending a raw block. Used by the
@@ -861,6 +873,7 @@ func (T *Scribe) runIncorporate(ctx context.Context, udb Database, orch *orchest
 	if c := T.authorBackgroundContext(udb, user, guideID); c != "" {
 		prompt += c + "\n\nWrite the finding into the guide the way that asks: it decides what the section says, not the finding's own shape.\n\n"
 	}
+	prompt += T.briefKeepRule(udb, user, guideID)
 	prompt +=
 		"1. Call list_sections to see the current structure.\n" +
 			"2. If the finding extends, updates, or overlaps an EXISTING section, read it with read_section, then use edit_section to weave it in so that section still reads as one coherent piece (merge and re-flow: don't tack a fragment on the end). If it's a genuinely new topic, use add_section with a fitting title"
@@ -868,7 +881,7 @@ func (T *Scribe) runIncorporate(ctx context.Context, udb Database, orch *orchest
 		prompt += " (a reasonable title: \"" + strings.TrimSpace(suggestedTitle) + "\")"
 	}
 	prompt += ".\n" +
-		"3. Keep the guide's voice and structure, don't duplicate anything already covered, and preserve any values/citations the finding carries.\n\n" +
+		"3. Keep the guide's voice and structure, don't duplicate anything already covered, and preserve the values/citations of what you write in.\n\n" +
 		UntrustedData("pushed finding", content) + "\n\n" +
 		"When done, reply with a one-line summary of what you changed."
 	tools := T.coauthorTools(coauthorScope{Ctx: ctx, UDB: udb, Orch: orch, User: user, CanEdit: true})

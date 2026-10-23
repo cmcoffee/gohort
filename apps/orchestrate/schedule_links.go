@@ -279,8 +279,8 @@ func (t linkTarget) restore(owner string) {
 		p := t.p
 		p.LinkGroup = ""
 		next, err := computeNextFire(&p, time.Now().In(UserLocation(owner)))
-		if err != nil {
-			next = time.Now().Add(brokenDormantReArm)
+		if err != nil || p.Paused {
+			next = time.Now().Add(brokenDormantReArm) // a paused one stays held
 		}
 		if _, err := ScheduleTask(OrchestrateScheduledUpdateKind, p, next); err != nil {
 			Log("[orchestrate/link] %s back on its own time failed: %v", recurringName(p), err)
@@ -405,6 +405,10 @@ func runLinkMember(ctx context.Context, owner string, m linkMember) linkMemberRu
 	case schedKindRecurring:
 		if t.p.Broken {
 			r.Status, r.Note = "skipped", "needs relink"
+			return r
+		}
+		if t.p.Paused {
+			r.Status, r.Note = "skipped", "paused"
 			return r
 		}
 		// The scheduler consumes an entry as it fires it; this fire is the
@@ -700,6 +704,74 @@ func linkOptions(owner string, names map[string]string, rowRef, fallback string)
 }
 
 // linkGroupTitle names a group by its members in order.
+// linkGroupNamed finds one of the owner's groups by the id a listing shows,
+// as an agent might write it: bare, quoted, or as "link group <id>".
+func linkGroupNamed(owner, name string) (linkGroup, bool) {
+	id := strings.TrimSpace(name)
+	for _, p := range []string{"link group ", "link:", "group "} {
+		if len(id) > len(p) && strings.EqualFold(id[:len(p)], p) {
+			id = strings.TrimSpace(id[len(p):])
+		}
+	}
+	id = strings.Trim(id, "\"' ")
+	if id == "" {
+		return linkGroup{}, false
+	}
+	return getLinkGroup(owner, id)
+}
+
+// linkGroupAgents is every agent with a schedule in the group.
+func linkGroupAgents(owner string, g linkGroup) []string {
+	var out []string
+	for _, m := range g.Members {
+		if t, ok := resolveLinkMember(owner, m); ok && t.agent != "" {
+			out = append(out, t.agent)
+		}
+	}
+	return out
+}
+
+// linkGroupsListing tells an agent what its schedule listing could not: which
+// schedules run together, on whose time, and that the group is paused or
+// resumed as one, by its id. Without it an agent asked to hold a group's
+// schedules paused them one by one, or offered to and could not.
+func linkGroupsListing(owner string) string {
+	groups := listLinkGroups(owner)
+	if len(groups) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("LINK GROUPS (members run one after another on the group's time, not their own. Pause or resume a whole group with schedule(action=\"pause\" / \"resume\", name=\"<its id>\"); pausing one member only skips that one when the group runs)\n")
+	for _, g := range groups {
+		state := "active"
+		if g.Paused {
+			state = "paused"
+		}
+		fmt.Fprintf(&b, "- %q: %s; %s, %s\n", g.ID, linkGroupTitle(owner, g, nil), StandingScheduleLabel(g.timing()), state)
+	}
+	return strings.TrimSpace(b.String())
+}
+
+// linkMemberNote is what a pause or resume of one member says about its
+// group, so the agent knows the rest of the group goes on.
+func linkMemberNote(owner, groupID string, paused bool) string {
+	g, ok := getLinkGroup(owner, groupID)
+	if !ok {
+		return ""
+	}
+	if paused {
+		return fmt.Sprintf(" It is in link group %q, which still runs its other members on the group's time; pause the group (name=%q) to hold them all.", g.ID, g.ID)
+	}
+	if g.Paused {
+		return fmt.Sprintf(" It runs with link group %q, on the group's time, and the group itself is paused: nothing runs until the group is resumed (name=%q).", g.ID, g.ID)
+	}
+	next := ""
+	if !g.NextRun.IsZero() {
+		next = ", next " + g.NextRun.In(UserLocation(owner)).Format("Mon Jan 2 3:04 PM")
+	}
+	return fmt.Sprintf(" It runs with link group %q, on the group's time%s.", g.ID, next)
+}
+
 func linkGroupTitle(owner string, g linkGroup, names map[string]string) string {
 	var parts []string
 	for _, m := range g.Members {

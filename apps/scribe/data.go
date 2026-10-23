@@ -106,6 +106,12 @@ type Guide struct {
 	// Brief is the owner's writing brief for this guide: what it is for and
 	// how it is written, followed by everything that writes it (brief.go).
 	Brief string `json:"brief,omitempty"`
+	// DistillFrom is the guides among References set to Distill rather than
+	// Consult in the Sources picker: each Curator pass that changes one has
+	// the sections it changed distilled into this guide (follow.go). Kept
+	// here rather than on the shared ReferenceSelection because distilling is
+	// this app's idea, not every Sources picker's.
+	DistillFrom []string `json:"distill_from,omitempty"`
 }
 
 // upgradeLegacyArticle turns a stored article (one body under a title) into a

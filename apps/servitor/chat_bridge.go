@@ -114,9 +114,16 @@ func translateProbeEvent(ev probeEvent) map[string]any {
 			"id":     "c-" + card,
 			"prompt": "Command needs approval",
 			"detail": ev.Text + "\n\nReason: " + ev.Reason,
-			"actions": []map[string]string{
+			"actions": []map[string]any{
 				{"label": "Allow", "value": "allow", "variant": "primary"},
-				{"label": "Always", "value": "always"},
+				// Always saves a rule, not the exact command: one naming a
+				// file or a date never came round again (allow_rules.go). The
+				// card shows the rule to edit before it is saved.
+				{"label": "Always", "value": "always", "input": map[string]string{
+					"label": "Always allow commands like",
+					"value": suggestAllowRule(ev.Text),
+					"help":  "<number> is any number, <text> any word without a slash, and * any part of a name inside its folder. The rule has to cover this command.",
+				}},
 				{"label": "Deny", "value": "deny", "variant": "danger"},
 			},
 		}

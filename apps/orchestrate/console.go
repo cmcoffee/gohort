@@ -297,6 +297,7 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	T.HandleFunc("/api/console/recurring/delete", w(T.handleConsoleRecurringDelete))
 	T.HandleFunc("/api/console/recurring/relink", w(T.handleConsoleRecurringRelink))
 	T.HandleFunc("/api/console/recurring/resume", w(T.handleConsoleRecurringResume))
+	T.HandleFunc("/api/console/recurring/pause", w(T.handleConsoleRecurringPause))
 	// Get one recurring task's editable fields (for the rail's edit modal) and
 	// update its schedule in place (re-validate + reschedule, prompt preserved).
 	T.HandleFunc("/api/console/recurring/get", T.handleConsoleRecurringGet)

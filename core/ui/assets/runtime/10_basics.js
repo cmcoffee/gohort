@@ -1636,55 +1636,88 @@
         });
       }
 
+      // renderPills draws what is selected. A picker whose options carry a
+      // group (group_by_field) puts its pills under the same headings its list
+      // uses: a row of bare names (node-7, Ops, Intake) said nothing about
+      // which was a system, a guide or a store, though the list they were
+      // picked from did. Headings label what is there and fold nothing away.
       function renderPills() {
         pills.innerHTML = '';
         var vals = selected.slice();
         if (!vals.length) { pills.appendChild(el('span', {class: 'ui-cp-none', text: 'None selected yet.'})); return; }
+        if (!cfg.group_by_field) {
+          pills.classList.remove('ui-cp-pills-grouped');
+          vals.forEach(function(v){ pills.appendChild(pillFor(v)); });
+          return;
+        }
+        pills.classList.add('ui-cp-pills-grouped');
+        var order = [], byGroup = {};
         vals.forEach(function(v){
           var opt = byVal[v];
-          if (!opt) {
-            // Selected, but no longer among the options: deleted, or no
-            // longer reachable by this viewer. Said as such, by its last known
-            // name when the caller supplied one (cfg.missing_labels), rather
-            // than as a bare stored value that reads like a glitch.
-            var gone = el('span', {
-              class: 'ui-cp-pill ui-cp-pill-missing',
-              title: cfg.missing_help || 'Still selected, but no longer available to choose. Remove it to clear it.'
-            }, [(cfg.missing_labels && cfg.missing_labels[v]) || v,
-                el('span', {class: 'ui-cp-pill-note', text: cfg.missing_text || 'no longer available'})]);
-            var gx = el('span', {class: 'ui-cp-pill-x', title: 'Remove', text: '×'});
-            gx.addEventListener('click', function(){ toggle(v, false); });
-            gone.appendChild(gx);
-            pills.appendChild(gone);
-            return;
-          }
-          var pill = el('span', {class: 'ui-cp-pill'}, [labelOf(opt)]);
-          if (cfg.flag_field && (!cfg.flag_when_field || opt[cfg.flag_when_field])) {
-            // Default OFF, and it says which state it is in rather than only
-            // which state it can be put into: a control that reads "make
-            // contributor" tells you nothing about the person in front of it.
-            var on = !!flagged[v];
-            var mark = el('button', {
-              type: 'button',
-              class: 'ui-cp-pill-flag' + (on ? ' on' : ''),
-              title: cfg.flag_help || ''
-            }, [on ? (cfg.flag_label || 'Flagged') : (cfg.flag_off_label || 'Reader')]);
-            mark.addEventListener('click', function(){
+          // One no longer available has no group to go under: it goes last,
+          // in a row of its own.
+          var g = opt ? (opt[cfg.group_by_field] || '') : '\u0000';
+          if (!byGroup[g]) { byGroup[g] = []; order.push(g); }
+          byGroup[g].push(v);
+        });
+        order.sort(function(a, b){
+          if (a === '\u0000' || b === '\u0000') return a === '\u0000' ? 1 : -1;
+          return a.localeCompare(b);
+        });
+        order.forEach(function(g){
+          var row = el('div', {class: 'ui-cp-pill-group'});
+          if (g && g !== '\u0000') row.appendChild(el('span', {class: 'ui-cp-pill-group-label', text: g}));
+          var line = el('div', {class: 'ui-cp-pill-group-pills'});
+          byGroup[g].forEach(function(v){ line.appendChild(pillFor(v)); });
+          row.appendChild(line);
+          pills.appendChild(row);
+        });
+      }
+
+      // pillFor is one selected value's pill, with its switch and its ×.
+      function pillFor(v) {
+        var opt = byVal[v];
+        if (!opt) {
+          // Selected, but no longer among the options: deleted, or no
+          // longer reachable by this viewer. Said as such, by its last known
+          // name when the caller supplied one (cfg.missing_labels), rather
+          // than as a bare stored value that reads like a glitch.
+          var gone = el('span', {
+            class: 'ui-cp-pill ui-cp-pill-missing',
+            title: cfg.missing_help || 'Still selected, but no longer available to choose. Remove it to clear it.'
+          }, [(cfg.missing_labels && cfg.missing_labels[v]) || v,
+              el('span', {class: 'ui-cp-pill-note', text: cfg.missing_text || 'no longer available'})]);
+          var gx = el('span', {class: 'ui-cp-pill-x', title: 'Remove', text: '×'});
+          gx.addEventListener('click', function(){ toggle(v, false); });
+          gone.appendChild(gx);
+          return gone;
+        }
+        var pill = el('span', {class: 'ui-cp-pill'}, [labelOf(opt)]);
+        if (cfg.flag_field && (!cfg.flag_when_field || opt[cfg.flag_when_field])) {
+          // Default OFF, and it says which state it is in rather than only
+          // which state it can be put into: a control that reads "make
+          // contributor" tells you nothing about the person in front of it.
+          var on = !!flagged[v];
+          var mark = el('button', {
+            type: 'button',
+            class: 'ui-cp-pill-flag' + (on ? ' on' : ''),
+            title: cfg.flag_help || ''
+          }, [on ? (cfg.flag_label || 'Flagged') : (cfg.flag_off_label || 'Reader')]);
+          mark.addEventListener('click', function(){
+            flagged[v] = !flagged[v];
+            renderPills();
+            persist().catch(function(err){
+              showToast('Save failed: ' + err.message);
               flagged[v] = !flagged[v];
               renderPills();
-              persist().catch(function(err){
-                showToast('Save failed: ' + err.message);
-                flagged[v] = !flagged[v];
-                renderPills();
-              });
             });
-            pill.appendChild(mark);
-          }
-          var x = el('span', {class: 'ui-cp-pill-x', title: 'Remove', text: '×'});
-          x.addEventListener('click', function(){ toggle(v, false); });
-          pill.appendChild(x);
-          pills.appendChild(pill);
-        });
+          });
+          pill.appendChild(mark);
+        }
+        var x = el('span', {class: 'ui-cp-pill-x', title: 'Remove', text: '×'});
+        x.addEventListener('click', function(){ toggle(v, false); });
+        pill.appendChild(x);
+        return pill;
       }
 
       function addRow(opt, host) {

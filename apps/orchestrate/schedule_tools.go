@@ -288,6 +288,10 @@ func (t *chatTurn) recurringList(args map[string]any) (string, error) {
 		Objective string `json:"objective,omitempty"`
 		State     string `json:"objective_state,omitempty"`
 		Parked    string `json:"parked,omitempty"`
+		Paused    bool   `json:"paused,omitempty"`
+		// LinkGroup is the group it runs with, on the group's time: pause or
+		// resume the group by this id to hold them all.
+		LinkGroup string `json:"link_group,omitempty"`
 	}
 	scopeID, scopeLabel, err := t.recurringScope(args)
 	if err != nil {
@@ -321,6 +325,7 @@ func (t *chatTurn) recurringList(args map[string]any) (string, error) {
 			PostsTo:   postsTo,
 			Objective: p.Until, State: objectiveStateLabel(p.objective()),
 			Parked: brokenListReason(p),
+			Paused: p.Paused, LinkGroup: p.LinkGroup,
 		})
 	}
 	if len(rows) == 0 {

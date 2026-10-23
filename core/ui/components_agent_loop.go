@@ -645,6 +645,10 @@ type OrchestratorRowAction struct {
 	Method  string `json:"method,omitempty"`  // default POST
 	Variant string `json:"variant,omitempty"` // "success" | "danger" | ""
 	Confirm string `json:"confirm,omitempty"`
+	// Icon draws a small mark before the label: "play", "pause" or "once"
+	// (a play mark with a bar after it, for doing a thing one time now). It
+	// names a shape, never what an app means by it; the label stays beside it.
+	Icon string `json:"icon,omitempty"`
 	// OnlyIf / HideIf gate the button on a row field's truthiness (use a
 	// hidden "_"-prefixed field so it doesn't render as a column). OnlyIf
 	// shows the button only when row[field] is truthy; HideIf hides it when

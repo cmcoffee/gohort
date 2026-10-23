@@ -335,3 +335,67 @@ func TestAPublishCallKeepsItsSteps(t *testing.T) {
 		t.Errorf("a failure should say how far it got: %v", err)
 	}
 }
+
+// A document published before is updated in place whatever the model sends.
+// Updating used to be the model's choice (update_existing), and a call that
+// left it out made a second page whose record replaced the first one's, so
+// the next update went to the copy. A second copy is now only new_copy=true,
+// and an update that comes back without an address keeps the page it had.
+func TestThePublisherUpdatesTheSamePageUnlessACopyIsAsked(t *testing.T) {
+	app := &PublishApp{}
+	app.DB = &DBase{Store: kvlite.MemStore()}
+	tgt, err := normalizeTarget(Target{Label: "Team wiki", Credential: "wikiapi", Instructions: "Create a page."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tgt.ID = "tw"
+	app.targetsDB("erin").Set(targetTable, tgt.ID, tgt)
+	docs.RegisterPublishDestination(&targetsDest{app: app})
+	var instrs []string
+	reply := "https://wiki.example/p/1"
+	docs.RegisterCredentialPublisher(func(_ context.Context, _, _, instr string) (string, string, error) {
+		instrs = append(instrs, instr)
+		return "Done.", reply, nil
+	})
+	var records []docs.PublishRecord
+	open := func() (Document, bool) {
+		return Document{Doc: docs.PublishDoc{Title: "Runbook", Markdown: "# Runbook"}, Records: records,
+			Save: func(r docs.PublishRecord) error { records = docs.UpsertPublishRecord(records, r); return nil }}, true
+	}
+	tools := map[string]AgentToolDef{}
+	for _, td := range BuildPublishTools(context.Background(), "erin", open) {
+		tools[td.Tool.Name] = td
+	}
+	publish := func(args map[string]any) string {
+		t.Helper()
+		out, err := tools["publish_document"].Handler(context.Background(), args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+
+	publish(map[string]any{"destination": "target:tw"})
+	// No flag at all: still an update of the page it made.
+	reply = "" // and the integration says nothing about where it is
+	if out := publish(map[string]any{"destination": "target:tw"}); !strings.HasPrefix(out, "Updated") {
+		t.Errorf("a republish with no flag updates: %s", out)
+	}
+	if !strings.Contains(instrs[1], "https://wiki.example/p/1") {
+		t.Errorf("the update points at the page it made:\n%s", instrs[1])
+	}
+	if len(records) != 1 || records[0].ExternalID != "https://wiki.example/p/1" || records[0].URL != "https://wiki.example/p/1" {
+		t.Fatalf("an update that said nothing about where keeps the page it had: %+v", records)
+	}
+	publish(map[string]any{"destination": "target:tw"})
+	if !strings.Contains(instrs[2], "https://wiki.example/p/1") {
+		t.Errorf("so the next one updates the same page:\n%s", instrs[2])
+	}
+
+	// A separate copy is only on request, and says what happens to the first.
+	reply = "https://wiki.example/p/2"
+	out := publish(map[string]any{"destination": "target:tw", "new_copy": true})
+	if strings.Contains(instrs[3], "https://wiki.example/p/1") || !strings.Contains(out, "separate copy") {
+		t.Errorf("new_copy makes a new page and says the earlier one is left: %s\n%s", out, instrs[3])
+	}
+}

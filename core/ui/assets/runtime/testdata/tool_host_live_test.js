@@ -18,6 +18,12 @@ var fn = src.slice(src.indexOf('function liveToolHost(m) {'), src.indexOf('funct
 check('the search starts from the end of the conversation', fn.indexOf('var node = convoLog.lastElementChild;') > 0);
 check('it skips the spinner, the empty bubble itself and other empties',
   fn.indexOf("node !== thinkingEl && node !== m.bubble && !node.classList.contains('ui-agent-msg-empty')") > 0);
+check('a line that is not the model\'s is passed over', fn.indexOf('!notToolHost(node)') > 0);
+var skip = src.slice(src.indexOf('function notToolHost(node) {'), src.indexOf('function callHostFor(m, callID) {'));
+check('status lines, notes and approval cards are not hosts',
+  skip.indexOf("c.contains('ui-agent-act')") > 0 && skip.indexOf("c.contains('ui-agent-interjection')") > 0 && skip.indexOf("c.contains('ui-agent-confirm')") > 0);
+var cached = src.slice(src.indexOf('function toolHostFor(m) {'), src.indexOf('function liveToolHost(m) {'));
+check('the reload fallback passes over them too', cached.indexOf('notToolHost(prev)') > 0);
 check('a bubble with text hosts its own calls', fn.indexOf("if (!m.bubble.classList.contains('ui-agent-msg-empty')) return m.bubble;") > 0);
 
 var call = src.slice(src.indexOf("case 'tool_call': {"), src.indexOf("case 'tool_progress':"));

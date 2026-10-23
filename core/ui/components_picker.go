@@ -79,8 +79,9 @@ type ChipPicker struct {
 	// Default "desc".
 	DescField string `json:"desc_field,omitempty"`
 	// GroupByField groups the attach-mode option list under headers by
-	// this option key (e.g. reference sources grouped by kind). Blank =
-	// no grouping. Ignored in chips mode.
+	// this option key (e.g. reference sources grouped by kind), and the
+	// selected pills under the same headings. Blank = no grouping. Ignored
+	// in chips mode.
 	GroupByField string `json:"group_by_field,omitempty"`
 	// MetaFields render a compact "12 documents - 44 chunks" line beneath
 	// each attach-row: for each listed key present on the option, the

@@ -10,6 +10,7 @@
 package publish
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -47,12 +48,30 @@ func callAPI(user, credential, method, url, body string) ([]byte, error) {
 		return nil, fmt.Errorf("unexpected response from %s: %s", url, firstLine(out))
 	}
 	if status >= 400 {
-		return nil, fmt.Errorf("%s returned HTTP %d: %s", url, status, trimForError(payload))
+		return nil, httpError{status: status, msg: fmt.Sprintf("%s returned HTTP %d: %s", url, status, trimForError(payload))}
 	}
 	if strings.Contains(payload, truncationMarker) {
 		return nil, fmt.Errorf("the response from %s was too large to read in full", url)
 	}
 	return []byte(payload), nil
+}
+
+// httpError is a destination refusing a request, with its status, so a caller
+// can say what a particular refusal means rather than pass the API's words on.
+type httpError struct {
+	status int
+	msg    string
+}
+
+func (e httpError) Error() string { return e.msg }
+
+// httpStatus is the status of a refused request, or 0.
+func httpStatus(err error) int {
+	var he httpError
+	if errors.As(err, &he) {
+		return he.status
+	}
+	return 0
 }
 
 // splitHTTPEnvelope pulls the status code and body out of dispatch's

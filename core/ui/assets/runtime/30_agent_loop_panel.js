@@ -494,6 +494,12 @@
                 .catch(function(err) { status.textContent = 'Failed to load: ' + err.message; });
             }});
           }
+          // rowActionLabel is a row button's contents: its icon, when it names one,
+          // then its label.
+          function rowActionLabel(a) {
+            var g = a.icon && window.uiActionGlyph ? window.uiActionGlyph(a.icon) : null;
+            return g ? [g, a.label] : [a.label];
+          }
           // fireRowAction runs one row action the way both layouts need: a picker
           // opens its chooser; a show_result action GETs the record and shows it
           // in a modal; everything else fires and reloads the view. One place, so
@@ -669,7 +675,7 @@
                   if (ev) ev.stopPropagation();
                   if (a.confirm && window.uiConfirm && !(await window.uiConfirm(a.confirm))) return;
                   fireRowAction(a, row);
-                }}, [a.label]);
+                }}, rowActionLabel(a));
                 controls.appendChild(btn);
               });
               if (controls.childNodes.length) card.appendChild(controls);
@@ -721,7 +727,7 @@
                   // fireRowAction stamps the in-view agent so per-agent row actions
                   // (e.g. History turn-scrub) target the right agent's thread.
                   fireRowAction(a, row);
-                }}, [a.label]);
+                }}, rowActionLabel(a));
                 cell.appendChild(btn);
               });
               tr.appendChild(cell);
@@ -4538,8 +4544,9 @@
       if (m.bubble.classList.contains('ui-agent-msg-empty')) {
         var prev = m.bubble.previousElementSibling;
         while (prev) {
-          // Skip the thinking spinner + other empty bubbles.
-          if (prev === thinkingEl || prev.classList.contains('ui-agent-msg-empty')) {
+          // Skip the thinking spinner, other empty bubbles, and lines that
+          // are not the model's (notToolHost).
+          if (prev === thinkingEl || prev.classList.contains('ui-agent-msg-empty') || notToolHost(prev)) {
             prev = prev.previousElementSibling;
             continue;
           }
@@ -4568,10 +4575,19 @@
       if (!m.bubble.classList.contains('ui-agent-msg-empty')) return m.bubble;
       var node = convoLog.lastElementChild;
       while (node) {
-        if (node !== thinkingEl && node !== m.bubble && !node.classList.contains('ui-agent-msg-empty')) return node;
+        if (node !== thinkingEl && node !== m.bubble && !node.classList.contains('ui-agent-msg-empty') && !notToolHost(node)) return node;
         node = node.previousElementSibling;
       }
       return toolHostFor(m);
+    }
+    // notToolHost is a line in the conversation that is not the model's to
+    // carry tool calls: a one-line status ("2 notes picked up by agent"), a
+    // note the person sent, an approval card. The tools button joins a host
+    // with no action bar as its last child, so on a status line it ran into
+    // the text ("...picked up by agent🔧 3 tools").
+    function notToolHost(node) {
+      var c = node.classList;
+      return c.contains('ui-agent-act') || c.contains('ui-agent-interjection') || c.contains('ui-agent-confirm');
     }
     // callHostFor is where one call was drawn (liveToolHost), falling back to
     // the bubble's own host for a call drawn some other way (a reload).
@@ -4927,7 +4943,10 @@
         var cls = 'ui-row-btn';
         if (a.variant) cls += ' ' + a.variant;
         var b = el('button', {class: cls,
-          onclick: function() { submitConfirm(id, a, card, b); }},
+          onclick: function() {
+            if (a.input) { editConfirmInput(id, a, card, btns); return; }
+            submitConfirm(id, a, card, b);
+          }},
           [a.label || a.value || 'OK']);
         btns.appendChild(b);
       });
@@ -4965,7 +4984,36 @@
       if (row) { row.replaceWith(stamp); } else { card.appendChild(stamp); }
     }
 
-    function submitConfirm(id, action, card, btn) {
+    // editConfirmInput is an answer that carries text the person sees and can
+    // change before sending it (action.input: label, value, help). The button
+    // row gives way to the field, a send button named for the answer, and
+    // Back; what was typed rides with the answer as `input`. A refusal from
+    // the server leaves the field up with its reason, so it can be fixed.
+    function editConfirmInput(id, action, card, btns) {
+      var spec = action.input || {};
+      var field = el('input', {type: 'text', class: 'ui-agent-confirm-input',
+        value: spec.value || '', spellcheck: 'false', autocomplete: 'off'});
+      var send, back;
+      var go = function() { submitConfirm(id, action, card, send, field.value); };
+      send = el('button', {class: 'ui-row-btn' + (action.variant ? ' ' + action.variant : ''),
+        onclick: go}, [action.label || action.value || 'OK']);
+      back = el('button', {class: 'ui-row-btn', onclick: function() { row.replaceWith(btns); }}, ['Back']);
+      field.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') { e.preventDefault(); go(); }
+        if (e.key === 'Escape') { e.preventDefault(); row.replaceWith(btns); }
+      });
+      var kids = [];
+      if (spec.label) kids.push(el('label', {class: 'ui-agent-confirm-input-label'}, [spec.label]));
+      kids.push(field);
+      if (spec.help) kids.push(el('div', {class: 'ui-agent-confirm-input-help'}, [spec.help]));
+      kids.push(el('div', {class: 'ui-agent-confirm-input-btns'}, [send, back]));
+      var row = el('div', {class: 'ui-agent-confirm-btns ui-agent-confirm-edit'}, kids);
+      btns.replaceWith(row);
+      field.focus();
+      field.select();
+    }
+
+    function submitConfirm(id, action, card, btn, input) {
       if (!cfg.confirm_url) return;
       var value = (action && action.value) || '';
       // Disable all buttons immediately so a double-click doesn't
@@ -4976,7 +5024,7 @@
       fetchJSON(cfg.confirm_url, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({id: id, value: value}),
+        body: JSON.stringify(input === undefined ? {id: id, value: value} : {id: id, value: value, input: input}),
       }).then(function() {
         settleConfirmCard(id, value, (action && action.label) || value);
       }).catch(function(err) {

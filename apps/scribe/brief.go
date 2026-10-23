@@ -34,6 +34,21 @@ func guideBriefSection(g Guide) string {
 	return "\n\nTHIS GUIDE'S WRITING BRIEF, from its owner: what the document is for and how it is written. Follow it in everything you write in it:\n" + brief
 }
 
+// briefKeepRule is what a background write of a finding is told about the
+// guide's brief, "" when it has none. A finding is written whole by whatever
+// produced it, and can carry more than the brief covers: a distilled piece
+// about reading a log came with the commands that sat beside it in the source,
+// and the Author, told to keep what the finding carries, wrote them in.
+func (T *Scribe) briefKeepRule(udb Database, user, guideID string) string {
+	g, _, _, ok := resolveGuide(T.DB, udb, user, guideID)
+	if !ok || strings.TrimSpace(g.Brief) == "" {
+		return ""
+	}
+	return briefKeepText
+}
+
+const briefKeepText = "Write in only what this guide's brief says belongs in it. A finding can carry more than that (a command next to the log line it explains, a fix next to the symptom): leave out every part the brief excludes, and name what you left out in your reply. If nothing in the finding fits the brief, change nothing and say so.\n\n"
+
 // authorBackgroundContext is what a background run of the Author on guideID
 // is told before its task: the user's Rules and the guide's brief, the two
 // things an interactive turn carries in its instructions.
