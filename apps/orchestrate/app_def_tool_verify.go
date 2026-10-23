@@ -157,6 +157,10 @@ func (t *chatTurn) appDefTest(args map[string]any) (string, error) {
 	}
 	if fail > 0 {
 		b.WriteString(" Fix the failing scripts with app_def action=update, then test again before telling the user the app is ready.")
+	} else if len(spec.Actions) > 0 {
+		// Its actions ran and none failed: a changed action no longer holds
+		// the app back.
+		t.clearActionsUnrun(spec.Slug)
 	}
 	return b.String(), nil
 }

@@ -341,8 +341,15 @@ func (t *chatTurn) saveScriptEdit(spec AppSpec, ref appScriptRef, next, summary,
 	} else {
 		msg += " Actions are not run on save (one may reach an external API): run app_def(action=\"test\", id=" + quoteName(saved.Slug) + ") to execute it."
 	}
-	t.noteAppStanding(saved.Slug, false, "a script was edited after its last check: run app_def(action=\"verify\")")
-	return msg + " " + saved.VerifyStatus() + ".", nil
+	// What changed, said as for any save, and a changed action held to a run
+	// (app_change.go).
+	ch := appChangeOf(&before, saved)
+	if ref.kind == "data" {
+		t.noteAppStanding(saved.Slug, false, "a script was edited after its last check: run app_def(action=\"verify\")")
+	} else {
+		t.noteActionsUnrun(saved.Slug, ch.actions)
+	}
+	return msg + " " + saved.VerifyStatus() + "." + ch.summary(saved.Slug), nil
 }
 
 // scriptSyntaxProblem checks a script body with the language's own parser —

@@ -25,6 +25,17 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 	}
 	aw.report()
 	aw.check()
+	// What this save changed, and a changed action held to a run before the
+	// app counts as done (app_change.go).
+	if aw.retErr == nil && aw.saved.Slug != "" {
+		var prior *AppSpec
+		if aw.isUpdate {
+			prior = &aw.prior
+		}
+		ch := appChangeOf(prior, aw.saved)
+		aw.ret += ch.summary(aw.saved.Slug)
+		t.noteActionsUnrun(aw.saved.Slug, ch.actions)
+	}
 	return aw.ret, aw.retErr
 }
 
@@ -43,6 +54,9 @@ type appWrite struct {
 	// it — an update is only recognizable as a wipe by comparison with what it
 	// replaces (see appRewriteRisk).
 	priorHTML string
+	// prior is the whole app as it stood before an update, for saying what
+	// the save changed (app_change.go).
+	prior AppSpec
 	// promoted is what the bound pipeline puts on a run's sidebar row. Captured
 	// here because this is the only place the DEFINITION is in hand; a meta
 	// field naming something it does not promote renders an empty pill, which
@@ -80,6 +94,7 @@ func (aw *appWrite) load() bool {
 			return aw.exit("", appNotFound(args, "to update"))
 		}
 		aw.spec = existing
+		aw.prior = existing
 		aw.priorHTML = appSpecHTMLText(existing)
 		if name != "" {
 			aw.spec.Name = name
