@@ -1272,7 +1272,7 @@ func (c *openAIClient) buildMessages(cfg ChatConfig, messages []Message) []oaiMe
 		case m.Role == "assistant" && len(m.ToolCalls) > 0:
 			var calls []oaiToolCallMsg
 			for _, tc := range m.ToolCalls {
-				argsJSON, _ := json.Marshal(tc.Args)
+				argsJSON := toolArgsJSON(tc.Args)
 				calls = append(calls, oaiToolCallMsg{
 					ID:   oaiToolID(tc.ID),
 					Type: "function",
@@ -1396,6 +1396,23 @@ func (c *openAIClient) renderLateToolsInline(cfg ChatConfig, messages []Message)
 	out = append(out, messages...)
 	out = append(out, Message{Role: "user", Content: b.String()})
 	return cfg, out
+}
+
+// toolArgsJSON is a call's arguments as the JSON text an OpenAI-compatible
+// request carries in "arguments". Without HTML escaping: that text is a
+// string inside the request, so the model reads it as written, and
+// json.Marshal's default turns every < and > into a six-character \u003c /
+// \u003e. A page or a file sent as an argument came back to the model on
+// every later round two to three times its size, which on an authoring
+// thread is most of the prompt.
+func toolArgsJSON(args map[string]any) string {
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(args); err != nil {
+		return "{}"
+	}
+	return strings.TrimSuffix(b.String(), "\n")
 }
 
 func buildOAITools(tools []Tool) []oaiTool {

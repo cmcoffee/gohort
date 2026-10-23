@@ -414,7 +414,7 @@ func promptSizeReport(cfg AgentLoopConfig, systemPrompt string, history []Messag
 	histBytes, resultBytes := 0, 0
 	biggestMsg, biggestMsgAt, biggestMsgRole := 0, -1, ""
 	for i, m := range history {
-		n := len(m.Content) + len(m.Reasoning)
+		n := len(m.Content) + len(m.Reasoning) + toolCallArgBytes(m)
 		for _, tr := range m.ToolResults {
 			n += len(tr.Content)
 			resultBytes += len(tr.Content)
@@ -459,7 +459,7 @@ func promptSizeHeadline(cfg AgentLoopConfig, systemPrompt string, history []Mess
 	sysBytes := len(systemPrompt)
 	histBytes := 0
 	for _, m := range history {
-		histBytes += len(m.Content) + len(m.Reasoning)
+		histBytes += len(m.Content) + len(m.Reasoning) + toolCallArgBytes(m)
 		for _, tr := range m.ToolResults {
 			histBytes += len(tr.Content)
 		}

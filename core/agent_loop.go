@@ -1945,6 +1945,9 @@ func (lr *loopRun) prepareCall() loopAction {
 	// worker actually granted. Otherwise every turn rebuilds to the claim
 	// and rediscovers the wall a round later.
 	lr.rs.window = effectiveContextSize(lr.cfg.ContextSize)
+	// In the estimate's own units: compaction measures history at four
+	// bytes a token, and the real count runs higher (tokenRatio).
+	lr.rs.window = calibratedWindow(lr.rs.window, lr.cfg.ContextSize)
 	lr.rs.budget = compactHistory(lr.history, lr.systemPrompt, ToolSchemaTokens(lr.toolDefs), lr.rs.window, lr.rs.forceCompact)
 	// One digest per TURN, measured on the prompt of the first round after
 	// compaction has run — the prompt that is actually sent. Later rounds
@@ -2176,6 +2179,9 @@ func (lr *loopRun) callModel() loopAction {
 		// and recover harder than strictly needed.
 		refused := estimatePromptTokens(lr.history, lr.systemPrompt)
 		noteContextRefusal(lr.cfg.ContextSize, refused)
+		// A refusal states the real size too: the next turn's compaction
+		// learns from it before it is refused again.
+		noteTokenRatio(lr.cfg.ContextSize, refused+ToolSchemaTokens(lr.toolDefs), promptTokensInRefusal(lr.rs.err))
 		window := recoveryWindow(lr.cfg.ContextSize, lr.rs.err, refused)
 		Debug("[agent_loop] round %d: context exceeded, recovering into a %d-token window (refused prompt ~%d tokens)", lr.round, window, refused)
 
@@ -2197,6 +2203,16 @@ func (lr *loopRun) callModel() loopAction {
 			budget := window - EstimateTokens(lr.systemPrompt) - roundReserve(toolTokens)
 			if n := elideOldMessageText(lr.history, budget, contextRecoveryKeepWhole); n > 0 {
 				Log("[agent_loop] context recovery: summarization unavailable, elided ~%d tokens of older message text", n)
+			}
+		}
+		// Every rung above spares the newest messages, and when THEY are the
+		// bulk (a few whole files read the round before) the retry re-sent
+		// most of what was refused. Observed: 25 of 31 messages folded into a
+		// 3.7 KB summary and the retry still went out at 770 KB.
+		if stillTooBig(lr.history, lr.systemPrompt, toolTokens, window) {
+			budget := window - EstimateTokens(lr.systemPrompt) - roundReserve(toolTokens)
+			if n := shrinkLargestBodies(lr.history, budget); n > 0 {
+				Log("[agent_loop] context recovery: the newest messages were the bulk, cut ~%d tokens from their largest bodies", n)
 			}
 		}
 		if lr.rs.streamHandler != nil {
@@ -2317,6 +2333,11 @@ func (lr *loopRun) callModel() loopAction {
 	// first response, because InputTokens is the one number in it that is
 	// measured rather than estimated — and when it disagrees badly with
 	// the estimate, the estimator is the thing that is wrong.
+	// What the provider counted for this prompt against what the estimate
+	// said, for the next round's compaction (tokenRatio).
+	if lr.rs.resp != nil && lr.rs.resp.InputTokens > 0 {
+		noteTokenRatio(lr.cfg.ContextSize, estimatePromptTokens(lr.history, lr.systemPrompt)+ToolSchemaTokens(lr.toolDefs), lr.rs.resp.InputTokens)
+	}
 	if lr.digestBuilt && !lr.digestSent {
 		lr.digest.InputTokens = lr.rs.resp.InputTokens
 		lr.digest.Prefilled = lr.rs.resp.PromptTokensPrefilled
@@ -4244,6 +4265,12 @@ func (lr *loopRun) dispatchTools() loopAction {
 	// bookkeeping/OnStep/iteration-restart path. Log-level (not
 	// Debug) so it surfaces regardless of debug flags.
 	Log("[agent_loop] round %d: tool dispatch complete (%d tools, %d errors), appending results to history", lr.round, len(lr.rs.work), lr.rs.toolErrors)
+	// Each result held to its share of the window as it arrives, so one
+	// round of whole-file reads cannot put the next past it (capIngestedResults).
+	_, canPage := lr.handlers["read_output"]
+	if n := capIngestedResults(lr.rs.results, ingestCapBytes(calibratedWindow(effectiveContextSize(lr.cfg.ContextSize), lr.cfg.ContextSize)), canPage); n > 0 {
+		Log("[agent_loop] round %d: %d tool result(s) larger than a round can carry were capped as they arrived", lr.round, n)
+	}
 	// Add tool results to history for the next LLM round.
 	lr.history = append(lr.history, Message{
 		Role:        "user",

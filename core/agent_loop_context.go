@@ -110,7 +110,99 @@ func estimateMessageTokens(m Message) int {
 	for _, tr := range m.ToolResults {
 		n += len(tr.Content) / 4
 	}
+	return n + toolCallArgBytes(m)/4
+}
+
+// toolCallArgBytes is what a message's tool calls send as their arguments.
+//
+// Every earlier call goes back to the model with its arguments whole (see the
+// OpenAI-compatible request builder), and an authoring turn's arguments are
+// where its weight is: a page, a file, a script, sent as one argument. None of
+// it was counted, so a thread could be ~120k tokens by every estimate here and
+// past a 208k window at the provider, and neither compaction nor the recovery
+// ladder could shrink what they could not see.
+func toolCallArgBytes(m Message) int {
+	n := 0
+	for _, tc := range m.ToolCalls {
+		if len(tc.Args) == 0 {
+			continue
+		}
+		n += len(toolArgsJSON(tc.Args)) // as it is sent
+	}
 	return n
+}
+
+// elideOldToolArgs replaces the long string values in the arguments of older
+// tool calls with a marker, oldest first, keeping the newest keepRecent calls
+// whole, until the history fits budget. Returns the estimated tokens
+// reclaimed. The call stays in the history with its name and its short
+// arguments, so the model still knows what it did; the bulk it sent (a whole
+// page, a file) is what goes. Copy on write: an arguments map can be shared
+// with the stored turn, which must keep what was actually sent.
+func elideOldToolArgs(msgs []Message, total, budget, keepRecent int) (reclaimed int) {
+	var calls []int
+	for i := range msgs {
+		if len(msgs[i].ToolCalls) > 0 {
+			calls = append(calls, i)
+		}
+	}
+	if len(calls) <= keepRecent {
+		return 0
+	}
+	for _, i := range calls[:len(calls)-keepRecent] {
+		if total-reclaimed <= budget {
+			break
+		}
+		before := toolCallArgBytes(msgs[i])
+		next := append([]ToolCall(nil), msgs[i].ToolCalls...)
+		changed := false
+		for j := range next {
+			if a, ok := elideLongArgs(next[j].Args).(map[string]any); ok && !sameArgs(a, next[j].Args) {
+				next[j].Args = a
+				changed = true
+			}
+		}
+		if !changed {
+			continue
+		}
+		msgs[i].ToolCalls = next
+		reclaimed += (before - toolCallArgBytes(msgs[i])) / 4
+	}
+	return reclaimed
+}
+
+// elideLongArgMin is the shortest argument value worth replacing.
+const elideLongArgMin = 400
+
+// elideLongArgs is v with every string longer than elideLongArgMin replaced
+// by a marker, at any depth, as a new value: v itself is not changed.
+func elideLongArgs(v any) any {
+	switch t := v.(type) {
+	case string:
+		if len(t) > elideLongArgMin {
+			return fmt.Sprintf("[sent in this earlier call, elided to fit context: %d characters]", len(t))
+		}
+		return t
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for k, x := range t {
+			out[k] = elideLongArgs(x)
+		}
+		return out
+	case []any:
+		out := make([]any, len(t))
+		for i, x := range t {
+			out[i] = elideLongArgs(x)
+		}
+		return out
+	}
+	return v
+}
+
+// sameArgs reports whether eliding changed nothing, by size: elision only
+// ever shortens.
+func sameArgs(a, b map[string]any) bool {
+	return len(toolArgsJSON(a)) == len(toolArgsJSON(b))
 }
 
 // compactHistory bounds the agent loop's working history so a long
@@ -176,6 +268,15 @@ func compactHistory(msgs []Message, systemPrompt string, toolTokens, contextSize
 			budget = floor // never starve history below 25% of the window
 		}
 	}
+	// Any tool result past a round's share of the window, wherever it sits:
+	// the cap a result gets as it arrives (capIngestedResults), held on every
+	// round, because a later turn rebuilds its history from the stored
+	// conversation with each result whole. Observed: a turn refused on its
+	// FIRST round, before any tool ran, by results read the turn before.
+	// Deterministic, so the prompt prefix stays the same round to round.
+	if contextSize > 0 {
+		capStoredResults(msgs, ingestCapBytes(contextSize))
+	}
 	total := EstimateMessagesTokens(msgs)
 	// Per-round breadcrumb — fires every compaction call so a long
 	// session's history trajectory is visible under --debug without
@@ -237,7 +338,15 @@ func compactHistory(msgs []Message, systemPrompt string, toolTokens, contextSize
 			elided++
 		}
 	}
-	if elided > 0 {
+	// Then what earlier calls SENT: a page or a file written through a tool
+	// rides in its call's arguments, and on an authoring thread that is most
+	// of the history.
+	argsReclaimed := 0
+	if total > budget {
+		argsReclaimed = elideOldToolArgs(msgs, total, budget, keepRecentToolMsgs)
+		total -= argsReclaimed
+	}
+	if elided > 0 || argsReclaimed > 0 {
 		mode := "budget"
 		if force {
 			mode = "compact_context"
@@ -245,7 +354,7 @@ func compactHistory(msgs []Message, systemPrompt string, toolTokens, contextSize
 		// Log (not Debug): compaction firing is infrequent (only over
 		// budget or when the LLM asks) and notable — surface it so long-
 		// session context management is visible without --debug.
-		Log("[agent_loop] compaction (%s): elided %d old tool-result body(ies), est %d→%d tokens (budget=%d, window=%d)", mode, elided, origTotal, total, budget, contextSize)
+		Log("[agent_loop] compaction (%s): elided %d old tool-result body(ies) and ~%d tokens of old tool-call arguments, est %d→%d tokens (budget=%d, window=%d)", mode, elided, argsReclaimed, origTotal, total, budget, contextSize)
 	}
 	return budget
 }
@@ -356,6 +465,14 @@ func elideOldMessageText(msgs []Message, budgetTokens, keepWhole int) (reclaimed
 		for _, tr := range msgs[i].ToolResults {
 			total += len(tr.Content) / 4
 		}
+		total += toolCallArgBytes(msgs[i]) / 4
+	}
+	// What earlier calls sent goes before what was said: it is the bulk of an
+	// authoring thread, and a call keeps its name and short arguments.
+	if total > budgetTokens {
+		n := elideOldToolArgs(msgs, total, budgetTokens, keepWhole)
+		total -= n
+		reclaimed += n
 	}
 	for i := 0; i < len(msgs)-keepWhole && total > budgetTokens; i++ {
 		body := msgs[i].Content
@@ -366,6 +483,76 @@ func elideOldMessageText(msgs []Message, budgetTokens, keepWhole int) (reclaimed
 		total -= (len(body) - len(marker)) / 4
 		reclaimed += (len(body) - len(marker)) / 4
 		msgs[i].Content = marker
+	}
+	return reclaimed
+}
+
+// shrinkBodyFloor is the least a body is cut to by shrinkLargestBodies: enough
+// of its end to still say what it was.
+const shrinkBodyFloor = 4096
+
+// shrinkLargestBodies cuts the largest bodies anywhere in msgs, newest ones
+// included, until the history fits budgetTokens: each cut halves one body
+// (to no less than shrinkBodyFloor), keeping its end with a note. Tool
+// results go first, since the tool can be run again; then the long values
+// in tool-call arguments; a message's own text last. Returns the estimated
+// tokens reclaimed. Recovery's last rung: every other one spares the newest
+// messages, which is right until they are what does not fit.
+func shrinkLargestBodies(msgs []Message, budgetTokens int) (reclaimed int) {
+	total := EstimateMessagesTokens(msgs)
+	for total-reclaimed > budgetTokens {
+		// The largest tool result, else the largest argument-heavy call,
+		// else the largest message text, of what is still above the floor.
+		bi, bj, best := -1, -1, shrinkBodyFloor
+		for i := range msgs {
+			for j, tr := range msgs[i].ToolResults {
+				if len(tr.Content) > best {
+					bi, bj, best = i, j, len(tr.Content)
+				}
+			}
+		}
+		if bi >= 0 {
+			body := msgs[bi].ToolResults[bj].Content
+			cut := truncateTail(body, len(body)/2,
+				"[tool result cut to fit context: it was %d bytes, the last %d are kept. Re-run the tool with a narrower query if you need the rest.]")
+			reclaimed += (len(body) - len(cut)) / 4
+			msgs[bi].ToolResults[bj].Content = cut
+			continue
+		}
+		ai, abest := -1, shrinkBodyFloor
+		for i := range msgs {
+			if n := toolCallArgBytes(msgs[i]); n > abest {
+				ai, abest = i, n
+			}
+		}
+		if ai >= 0 {
+			before := abest
+			next := append([]ToolCall(nil), msgs[ai].ToolCalls...)
+			for j := range next {
+				if a, ok := elideLongArgs(next[j].Args).(map[string]any); ok {
+					next[j].Args = a
+				}
+			}
+			msgs[ai].ToolCalls = next
+			if after := toolCallArgBytes(msgs[ai]); after < before {
+				reclaimed += (before - after) / 4
+				continue
+			}
+		}
+		ci, cbest := -1, shrinkBodyFloor
+		for i := range msgs {
+			if len(msgs[i].Content) > cbest {
+				ci, cbest = i, len(msgs[i].Content)
+			}
+		}
+		if ci < 0 {
+			break // nothing left above the floor
+		}
+		body := msgs[ci].Content
+		cut := truncateTail(body, len(body)/2,
+			"[message cut to fit context: it was %d bytes, the last %d are kept]")
+		reclaimed += (len(body) - len(cut)) / 4
+		msgs[ci].Content = cut
 	}
 	return reclaimed
 }
@@ -587,6 +774,7 @@ func estimatePromptTokens(msgs []Message, systemPrompt string) int {
 		for _, tr := range msgs[i].ToolResults {
 			total += EstimateTokens(tr.Content)
 		}
+		total += toolCallArgBytes(msgs[i]) / 4
 	}
 	return total
 }
@@ -708,6 +896,160 @@ func noteContextRefusal(configured, refusedTokens int) {
 //
 // Expired observations are dropped rather than merely ignored, so a worker that
 // stops refusing gets its full window back on its own — no restart, no setting.
+// --- measured token ratio ---------------------------------------------------
+//
+// Every estimate here counts four bytes a token. Code, JSON and logs run
+// nearer three with the tokenizers in use, so a prompt this file put at 165k
+// tokens was over 208k at the provider, and compaction had been holding the
+// conversation to a budget that was a quarter too generous all along. The
+// provider counts the real number on every reply; comparing it with the
+// estimate for the same prompt gives the correction, kept per configured
+// window (one model, as observedCeilings is kept), and compaction works from
+// a window shrunk by it.
+
+var tokenRatios sync.Map // configured window -> float64: real tokens per estimated token
+
+// Bounds on the ratio. Never below 1: a provider that leaves cached tokens
+// out of its count would otherwise read as the estimate running HIGH, and
+// loosen compaction past where it has always been.
+const (
+	tokenRatioMin = 1.0
+	tokenRatioMax = 2.0
+)
+
+// noteTokenRatio folds one measurement in: the provider counted actual for a
+// prompt estimated at estimated. It rises quickly and falls slowly, since the
+// cost of guessing low is a refused turn and the cost of guessing high is
+// some history compacted early. Small prompts say little and are skipped.
+func noteTokenRatio(configured, estimated, actual int) {
+	if configured <= 0 || estimated < 4000 || actual <= 0 {
+		return
+	}
+	r := float64(actual) / float64(estimated)
+	if r < tokenRatioMin {
+		r = tokenRatioMin
+	}
+	if r > tokenRatioMax {
+		r = tokenRatioMax
+	}
+	prev := tokenRatio(configured)
+	next := prev + (r-prev)*0.1
+	if r > prev {
+		next = prev + (r-prev)*0.5
+	}
+	tokenRatios.Store(configured, next)
+}
+
+// tokenRatio is the measured correction for a configured window, 1 when
+// nothing has been measured.
+func tokenRatio(configured int) float64 {
+	if v, ok := tokenRatios.Load(configured); ok {
+		return v.(float64)
+	}
+	return tokenRatioMin
+}
+
+// calibratedWindow is window in the estimate's own units: the real window
+// shrunk by what the estimate is measured to miss.
+func calibratedWindow(window, configured int) int {
+	if window <= 0 {
+		return window
+	}
+	return int(float64(window) / tokenRatio(configured))
+}
+
+// promptTokensInRefusal is the prompt size a refusal states ("your prompt
+// contains at least 208401 input tokens"), 0 when it states none.
+func promptTokensInRefusal(err error) int {
+	if err == nil {
+		return 0
+	}
+	m := refusalPromptPattern.FindStringSubmatch(err.Error())
+	if m == nil {
+		return 0
+	}
+	n, _ := strconv.Atoi(m[1])
+	return n
+}
+
+var refusalPromptPattern = regexp.MustCompile(`(?i)prompt (?:contains|is|has)(?: at least)? (\d+)(?: input)? tokens`)
+
+// ingestShare is the most of the window one tool result may take as it
+// arrives: compaction runs at the start of a round, and a single round that
+// read three whole files could put the next one past the window before it
+// ever ran.
+const ingestShare = 0.15
+
+// capNoteSlack is room past a cap for the note a capped result carries.
+const capNoteSlack = 2048
+
+// ingestFloorBytes keeps the cap from starving a small window.
+const ingestFloorBytes = 32 << 10
+
+// ingestCapBytes is the largest tool result a round takes in whole for a
+// window (in estimate units, calibrated); 0 when the window is unknown.
+func ingestCapBytes(window int) int {
+	if window <= 0 {
+		return 0
+	}
+	n := int(float64(window)*ingestShare) * 4
+	if n < ingestFloorBytes {
+		n = ingestFloorBytes
+	}
+	return n
+}
+
+// capStoredResults holds every tool result in msgs to capBytes, keeping its
+// end with a note: for results already in the history, whose full text the
+// paged store may no longer hold. Returns how many were cut.
+func capStoredResults(msgs []Message, capBytes int) int {
+	if capBytes <= 0 {
+		return 0
+	}
+	n := 0
+	for i := range msgs {
+		for j := range msgs[i].ToolResults {
+			body := msgs[i].ToolResults[j].Content
+			// Room for the note a capped result already carries, so one
+			// that was cut (on arrival or a round ago) is not cut again
+			// every round, shifting the prompt each time.
+			if len(body) <= capBytes+capNoteSlack {
+				continue
+			}
+			msgs[i].ToolResults[j].Content = truncateTail(body, capBytes,
+				"[tool result truncated to fit context: it was %d bytes, the last %d are kept. Re-run the tool with a narrower query if you need the rest.]")
+			n++
+		}
+	}
+	return n
+}
+
+// capIngestedResults keeps each of a round's results within capBytes as it
+// joins the history: a larger one is kept whole in the paged-output store
+// and arrives as its first window with a note naming the id to read on
+// with, when the loop holds read_output; without it, its end is kept with a
+// note saying how much there was. Returns how many were capped.
+func capIngestedResults(results []ToolResult, capBytes int, canPage bool) int {
+	if capBytes <= 0 {
+		return 0
+	}
+	n := 0
+	for i := range results {
+		body := results[i].Content
+		if len(body) <= capBytes {
+			continue
+		}
+		if canPage {
+			results[i].Content = SpillOutput(body, capBytes, "read_output")
+		} else {
+			results[i].Content = truncateTail(body, capBytes,
+				"[tool result truncated as it arrived: it was %d bytes, more than one round can carry, so the last %d are kept. Re-run the tool with a narrower query for the rest.]")
+		}
+		n++
+	}
+	return n
+}
+
 func effectiveContextSize(configured int) int {
 	if configured <= 0 {
 		return configured
