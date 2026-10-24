@@ -355,6 +355,17 @@ func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
 	if T.seenMessage(owner, activeChatID, msgID) {
 		return
 	}
+	// A photo-only iMessage's text is the mark iMessage leaves where the
+	// attachment sits. Read as text it is a caption with nothing in it, and the
+	// gatekeeper judged the picture by it (inbound_media.go).
+	req.Text = withoutAttachmentMarks(req.Text, len(req.Images)+len(req.Videos)+len(req.Audios) > 0)
+	// One line per message the connector hands over, with what came with it:
+	// whether it was the owner's own (a connector clears the handle for those),
+	// and how many pictures, clips and voice memos. Without it, "was that two
+	// messages or one, and did the photo arrive" had no answer on this side.
+	Log("[bridges] inbound on %s (id %s, %s): %d char(s), %d picture(s), %d video(s), %d voice memo(s)",
+		activeChatID, firstNonEmpty(msgID, "none"), map[bool]string{true: "from the owner", false: "from " + req.Handle}[strings.TrimSpace(req.Handle) == ""],
+		len([]rune(req.Text)), len(req.Images), len(req.Videos), len(req.Audios))
 	// The id dedupe above has nothing to key on when a delivery carries no
 	// message id, so it lets every copy through as new. Fall back to content
 	// for those: a duplicate delivery is what typically starts a self-thread
@@ -398,6 +409,13 @@ func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
 	if sent, stale := inboundIsStale(req.Timestamp); stale {
 		Log("[bridges] inbound on %s was sent %s (%s ago): recorded as history, not routed",
 			activeChatID, sent.Format(time.RFC3339), time.Since(sent).Round(time.Minute))
+		return
+	}
+
+	// The second copy of a message to yourself: kept in the thread, not
+	// answered a second time (inbound_media.go).
+	if T.isSelfCopy(activeChatID, req.Handle, req.Text) {
+		Log("[bridges] inbound on %s is the second copy of a message sent to your own number: recorded, not routed", activeChatID)
 		return
 	}
 
@@ -587,12 +605,20 @@ func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
 		gcancel()
 		if !allowed {
 			Log("[bridges] gatekeeper blocked inbound from %s on channel %q: recorded only", sender, ch.Name)
+			// Its pictures wait for this sender's next message that is let
+			// through: "there ya go, can you make it now?" is about them.
+			holdBlockedMedia(owner, chatID, handle, in.Images, in.Videos)
 			// Mirror the blocked message into the bound agent's own transcript so it
 			// shows in the agent's chat and is in-context on its next wake — the
 			// agent reads along even when it stays silent. No-op if orchestrate isn't
 			// loaded. Store A already has it (storeMessage above); this is Store B.
 			RecordChannelSilent(in)
 			return
+		}
+		if imgs, vids := takeHeldMedia(owner, chatID, handle); len(imgs)+len(vids) > 0 {
+			in.Images = append(imgs, in.Images...)
+			in.Videos = append(vids, in.Videos...)
+			Log("[bridges] carrying %d picture(s) and %d video(s) from %s's blocked message on channel %q into this one", len(imgs), len(vids), sender, ch.Name)
 		}
 		// Coalesce rapid same-session messages (a question, then an image posted
 		// right after) into one turn instead of racing separate turns on the same
