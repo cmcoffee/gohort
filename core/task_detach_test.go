@@ -161,3 +161,36 @@ func TestAPictureTheJobBuildsOnIsKeptBackForIt(t *testing.T) {
 		t.Errorf("the result should name what went in: %q", product.Inputs)
 	}
 }
+
+// A finished pass's picture, carried by the turn it woke, is a step when that
+// turn starts another pass, even one that does not take it. Observed
+// 2026-10-24: a blend done in pairs sent its first pair with "final pass is
+// running", the second pair rendering on its own.
+func TestAFinishedPassIsAStepWhenAnotherStarts(t *testing.T) {
+	product := stubTaskRunner(t)
+	sess := &ToolSession{ChatSessionID: "sess-steps"}
+	pair := base64.StdEncoding.EncodeToString([]byte("first pair"))
+	sess.AppendImage(pair)
+	sess.OfferAsSteps([]string{pair})
+
+	h := WrapDetachable(DetachPolicy{
+		Tool:   "image",
+		Always: func(map[string]any, *ToolSession) bool { return true },
+		Inputs: func(map[string]any, *ToolSession) ([]string, [][]byte) {
+			return []string{"find-a.jpg"}, [][]byte{[]byte("a")}
+		},
+		Detached: func(map[string]any, *ToolSession) (string, error) { return "done", nil },
+	}, sess, func(context.Context, map[string]any) (string, error) { return "", nil })
+	if _, err := h(context.Background(), map[string]any{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(sess.Images) != 0 || len(product.Carried) != 1 || product.Carried[0] != pair {
+		t.Errorf("the first pair should ride with the next pass: sending %d, carried %d", len(sess.Images), len(product.Carried))
+	}
+	// Taken once: put back (a detach that fell to inline restores it), it
+	// is this turn's to send again.
+	sess.AppendImage(pair)
+	if again := sess.WithdrawSteps(); len(again) != 0 || len(sess.Images) != 1 {
+		t.Error("a step is taken once")
+	}
+}

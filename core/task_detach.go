@@ -167,13 +167,17 @@ func WrapDetachable(p DetachPolicy, sess *ToolSession, inline ToolHandlerFunc) T
 		}
 		// A picture this turn was about to send that the job builds on is a
 		// step toward the job's result: a four-photo blend sent the person
-		// its first pass with "the next pass is running". Kept back, it goes
-		// out only if the job fails. See TaskProduct.Carried.
+		// its first pass with "the next pass is running". So is a finished
+		// pass's picture when the turn it woke starts another, whether or not
+		// that one takes it: a blend done in pairs merges them only at the
+		// end. Kept back, it goes out only if the job fails. See
+		// TaskProduct.Carried.
 		var inputs, carried []string
 		if p.Inputs != nil {
 			var data [][]byte
 			inputs, data = p.Inputs(args, sess)
-			if carried = sess.WithdrawImages(data); len(carried) > 0 {
+			carried = append(sess.WithdrawImages(data), sess.WithdrawSteps()...)
+			if len(carried) > 0 {
 				Debug("[task] %s builds on %d picture(s) this turn was sending: kept back for its result", p.Tool, len(carried))
 			}
 		}

@@ -34,3 +34,28 @@ func TestARenderNamesThePicturesItBuildsOn(t *testing.T) {
 		t.Error("only a render builds on pictures")
 	}
 }
+
+// Each input is named with what it shows, so a list of pictures a result was
+// made from tells two blends apart. Observed 2026-10-24: listed as bare
+// filenames, a black hole and comet pair was taken for the nebula and planet.
+func TestARenderSaysWhatEachInputShows(t *testing.T) {
+	saved := ImageDir()
+	SetImageDir(t.TempDir())
+	t.Cleanup(func() { SetImageDir(saved) })
+	prev := CaptionOnRecord
+	CaptionOnRecord = false
+	t.Cleanup(func() { CaptionOnRecord = prev })
+	sess := &ToolSession{Username: "alice", WorkspaceDir: t.TempDir()}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 3, 3))); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sess.WorkspaceDir, "find-bh.jpg"), buf.Bytes(), 0600); err != nil {
+		t.Fatal(err)
+	}
+	RecordRecentImage(sess, buf.Bytes(), "found: a black hole with a glowing disk", ImageFromFound)
+	refs, _ := (&ImageTool{}).InputImages(map[string]any{"action": "edit", "images": []any{"find-bh.jpg"}}, sess)
+	if len(refs) != 1 || refs[0] != "find-bh.jpg (found: a black hole with a glowing disk)" {
+		t.Errorf("refs = %q", refs)
+	}
+}

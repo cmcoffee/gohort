@@ -800,9 +800,11 @@ func (fr *fireRun) buildSession() {
 	fr.carriedAttachments = 0
 	if isTaskWake(p.Prompt) {
 		fr.held = claimHeldImages(p.SessionID)
+		before := len(fr.subSess.Images)
 		if fr.carriedAttachments = claimTaskAttachments(p.SessionID, fr.subSess); fr.carriedAttachments > 0 {
 			Log("[orchestrate/scheduled] session=%s carrying %d staged attachment(s) from a finished background task", p.SessionID, fr.carriedAttachments)
 		}
+		offerWakeSteps(fr.subSess, p.Prompt, fr.subSess.Images[before:])
 	}
 }
 
@@ -1294,6 +1296,17 @@ func (fr *fireRun) objectiveCheck() {
 			Log("[orchestrate/pacing] task %q asked to move its next attempt, but the objective %s: the ask was dropped", recurringName(p), fr.objLine)
 		}
 	}
+}
+
+// offerWakeSteps marks what a wake carries from a finished pass as a step if
+// the turn starts another pass: a blend done in pairs sent its first pair with
+// "final pass is running". Not for a set, whose every piece is one the person
+// asked to see.
+func offerWakeSteps(sess *ToolSession, prompt string, carried []string) {
+	if len(carried) == 0 || strings.Contains(prompt, SeriesContinuationMarker) {
+		return
+	}
+	sess.OfferAsSteps(carried)
 }
 
 // sendHeldIfStalled settles a wake that carried a held step. Reports true when

@@ -1325,3 +1325,17 @@ func TestKeptLibraryFollowsItsSoleOwnerToTheNewFolder(t *testing.T) {
 		t.Error("the shared legacy folder should be left where it is")
 	}
 }
+
+// A picture is described by what the space knows of it, found by its bytes
+// whatever name it was passed under.
+func TestAPictureInTheSpaceSaysWhatItShows(t *testing.T) {
+	sess := imageSpaceSession(t)
+	data := testPNG(t, 8, 8)
+	RecordRecentImage(sess, data, "found: a black hole with a glowing disk", ImageFromFound)
+	if got := sess.RecentImageAbout(data); got != "found: a black hole with a glowing disk" {
+		t.Errorf("about = %q", got)
+	}
+	if got := sess.RecentImageAbout(testPNG(t, 9, 9)); got != "" {
+		t.Errorf("a picture not in the space has nothing to say, got %q", got)
+	}
+}

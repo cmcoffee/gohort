@@ -57,6 +57,42 @@ func (s *ToolSession) WithdrawImages(data [][]byte) []string {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.withdrawLocked(want)
+}
+
+// OfferAsSteps marks pictures (base64) this turn carries from a finished pass:
+// if the turn starts another pass, they are steps toward it and go with it
+// rather than out with this turn (WithdrawSteps).
+func (s *ToolSession) OfferAsSteps(b64s []string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.steps = append(s.steps, b64s...)
+}
+
+// WithdrawSteps takes back the pictures OfferAsSteps marked, those not yet
+// delivered, and returns them. Once: a second pass started in the same turn
+// finds none.
+func (s *ToolSession) WithdrawSteps() []string {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	want := map[string]bool{}
+	for _, b64 := range s.steps {
+		want[b64] = true
+	}
+	s.steps = nil
+	if len(want) == 0 {
+		return nil
+	}
+	return s.withdrawLocked(want)
+}
+
+func (s *ToolSession) withdrawLocked(want map[string]bool) []string {
 	var out []string
 	keep := append([]string(nil), s.Images[:s.flushedImages]...)
 	for _, b64 := range s.Images[s.flushedImages:] {

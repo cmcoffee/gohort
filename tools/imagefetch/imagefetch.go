@@ -165,8 +165,9 @@ func (t *ImageTool) Preflight(args map[string]any, sess *ToolSession) error {
 }
 
 // InputImages is the pictures a render was given. See core.InputImagesTool.
-// A reference that does not resolve is still named: Preflight has already
-// refused a call with one.
+// Each is named as the model referred to it, with what it shows when the
+// image space knows. A reference that does not resolve is still named:
+// Preflight has already refused a call with one.
 func (t *ImageTool) InputImages(args map[string]any, sess *ToolSession) (refs []string, data [][]byte) {
 	switch effectiveImageAction(args) {
 	case "generate", "edit":
@@ -177,10 +178,16 @@ func (t *ImageTool) InputImages(args map[string]any, sess *ToolSession) (refs []
 		if ref = strings.TrimSpace(ref); ref == "" {
 			continue
 		}
-		refs = append(refs, ref)
-		if b, _, err := sess.ResolveImageRef(ref); err == nil {
-			data = append(data, b)
+		b, _, err := sess.ResolveImageRef(ref)
+		if err != nil {
+			refs = append(refs, ref)
+			continue
 		}
+		data = append(data, b)
+		if about := sess.RecentImageAbout(b); about != "" {
+			ref += " (" + truncate(strings.Join(strings.Fields(about), " "), 120) + ")"
+		}
+		refs = append(refs, ref)
 	}
 	return refs, data
 }

@@ -20,6 +20,7 @@
 package core
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -663,6 +664,33 @@ func RecentImages(sess *ToolSession) []RecentImage {
 		out = append(out, r)
 	}
 	return out
+}
+
+// RecentImageAbout says what a picture in the space shows, found by its
+// bytes: its caption, or the note it was saved under while the caption has not
+// caught up. "" when the picture is not in the space.
+//
+// By bytes because the model names one picture several ways (a position, a
+// stable id, the workspace file it was saved as), and a filename like
+// find-dmcxqdrfq5dy.jpg says nothing about what is in it: two blends listed by
+// filename alone were mistaken for each other.
+func (s *ToolSession) RecentImageAbout(data []byte) string {
+	if len(data) == 0 {
+		return ""
+	}
+	for _, r := range RecentImages(s) {
+		if info, err := os.Stat(r.path); err != nil || info.Size() != int64(len(data)) {
+			continue
+		}
+		if b, err := os.ReadFile(r.path); err != nil || !bytes.Equal(b, data) {
+			continue
+		}
+		if c := strings.TrimSpace(r.Caption); c != "" {
+			return c
+		}
+		return strings.TrimSpace(r.Note)
+	}
+	return ""
 }
 
 // ResolveRecentImage reads the bytes behind an "image#N" reference. Returns

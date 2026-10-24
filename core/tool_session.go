@@ -483,6 +483,10 @@ type ToolSession struct {
 	held     []string
 	heldRefs []string
 
+	// steps are pictures this turn carries from a finished pass that count as
+	// a step when the turn starts another pass (OfferAsSteps).
+	steps []string
+
 	// Detach is this TURN's background-job ledger, one slot per tool. Shared by
 	// every session a turn mints — a host that runs a turn across several
 	// sessions (one per plan step, one for the inline round) points them all at

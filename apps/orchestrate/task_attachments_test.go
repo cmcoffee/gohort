@@ -288,7 +288,7 @@ func TestAWakeSaysWhatThePictureWasMadeFrom(t *testing.T) {
 		Text:   "The finished picture IS ATTACHED.",
 		Inputs: []string{"image#r.66c18084", "find-jelly.jpg"},
 	}, nil)
-	if !strings.Contains(note.history, "made from 2 picture(s): image#r.66c18084, find-jelly.jpg") {
+	if !strings.Contains(note.history, "made from 2 picture(s): image#r.66c18084; find-jelly.jpg") {
 		t.Errorf("the wake should name the inputs:\n%s", note.prompt)
 	}
 }
@@ -304,5 +304,21 @@ func TestAKeptBackPictureGoesOutOnlyWhenThePassFails(t *testing.T) {
 	buildWakeNote("sess-carry-fail", "image edit", TaskProduct{Carried: []string{"c3RlcA=="}}, errTestTaskFailed)
 	if held := claimHeldImages("sess-carry-fail"); len(held) != 1 || held[0] != "c3RlcA==" {
 		t.Errorf("a failed pass should send the step it built on: %q", held)
+	}
+}
+
+// What a wake carries is offered as a step, except a piece of a set.
+func TestAWakeOffersItsPictureAsAStepExceptInASet(t *testing.T) {
+	sess := &ToolSession{}
+	sess.AppendImage("cGFpcg==")
+	offerWakeSteps(sess, taskWakeMarker+" done", []string{"cGFpcg=="})
+	if got := sess.WithdrawSteps(); len(got) != 1 {
+		t.Errorf("a finished pass should be offered as a step: %q", got)
+	}
+	set := &ToolSession{}
+	set.AppendImage("cGllY2U=")
+	offerWakeSteps(set, taskWakeMarker+" done\n"+SeriesContinuationMarker+" 1 of 3", []string{"cGllY2U="})
+	if got := set.WithdrawSteps(); len(got) != 0 || len(set.Images) != 1 {
+		t.Error("a piece of a set is sent as it comes")
 	}
 }

@@ -238,7 +238,7 @@ func buildWakeNote(sessionID, label string, out TaskProduct, taskErr error) wake
 		// photos it was made from.
 		if len(out.Inputs) > 0 {
 			fmt.Fprintf(&fact, "It was made from %d picture(s): %s. Nothing else went into it: a picture the request asked for that is not among these is not in it.\n",
-				len(out.Inputs), strings.Join(out.Inputs, ", "))
+				len(out.Inputs), strings.Join(out.Inputs, "; "))
 		}
 		stageHeldImages(sessionID, out.Held)
 		if n := stageTaskAttachments(sessionID, out); n > 0 {
