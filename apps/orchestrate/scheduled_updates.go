@@ -511,19 +511,22 @@ type fireRun struct {
 	schedSessID        string
 	subSess            *ToolSession
 	carriedAttachments int
-	tools              []AgentToolDef
-	err                error
-	extraTools         []AgentToolDef
-	availableBlock     string
-	customToolPrompt   string
-	subTurn            *chatTurn
-	pacingAsk          *pacing.Ask
-	facts              []MemoryFact
-	sysPrompt          string
-	started            time.Time
-	think              bool
-	softCap            int
-	lastRound          int
+	// held are the pictures a held step kept back, for this wake to send if
+	// it starts no further pass (sendHeldIfStalled).
+	held             []string
+	tools            []AgentToolDef
+	err              error
+	extraTools       []AgentToolDef
+	availableBlock   string
+	customToolPrompt string
+	subTurn          *chatTurn
+	pacingAsk        *pacing.Ask
+	facts            []MemoryFact
+	sysPrompt        string
+	started          time.Time
+	think            bool
+	softCap          int
+	lastRound        int
 	// Filled by the loop's OnPromptDigest hook, read by record() below.
 	promptDigest PromptDigest
 	// liveCalls accumulates the tool calls the model actually requested each
@@ -796,6 +799,7 @@ func (fr *fireRun) buildSession() {
 	// ordinary recurring fire never picks up a delivery meant for another turn.
 	fr.carriedAttachments = 0
 	if isTaskWake(p.Prompt) {
+		fr.held = claimHeldImages(p.SessionID)
 		if fr.carriedAttachments = claimTaskAttachments(p.SessionID, fr.subSess); fr.carriedAttachments > 0 {
 			Log("[orchestrate/scheduled] session=%s carrying %d staged attachment(s) from a finished background task", p.SessionID, fr.carriedAttachments)
 		}
@@ -1180,6 +1184,11 @@ func (fr *fireRun) reportable() bool {
 	if fr.resp != nil {
 		fr.reply = strings.TrimSpace(fr.resp.Content)
 	}
+	if fr.sendHeldIfStalled() {
+		// The next pass is running and will deliver; this step says nothing.
+		fr.record(RunOK, "(a held step: the next pass started)", fr.reply, "")
+		return fr.exit(nil)
+	}
 	if fr.reply == "" {
 		Log("[orchestrate/scheduled] agent=%s session=%s fire %d produced no reply, skipping append", fr.agentLabel, p.SessionID, p.FireCount+1)
 		fr.record(RunOK, "(no output: nothing to post this cycle)", "", "")
@@ -1285,6 +1294,31 @@ func (fr *fireRun) objectiveCheck() {
 			Log("[orchestrate/pacing] task %q asked to move its next attempt, but the objective %s: the ask was dropped", recurringName(p), fr.objLine)
 		}
 	}
+}
+
+// sendHeldIfStalled settles a wake that carried a held step. Reports true when
+// the turn started the next pass, which delivers in its place, so this turn
+// posts nothing. When it started none, the chain stopped here, and what the
+// step made goes out with the reply rather than nowhere.
+func (fr *fireRun) sendHeldIfStalled() bool {
+	if len(fr.held) == 0 {
+		return false
+	}
+	if fr.subSess.Detach.Any() {
+		Log("[orchestrate/task] agent=%s session=%s: a held step's wake started the next pass", fr.agentLabel, fr.p.SessionID)
+		return true
+	}
+	for _, img := range fr.held {
+		fr.subSess.AppendImage(img)
+	}
+	fr.carriedAttachments += len(fr.held)
+	Log("[orchestrate/task] agent=%s session=%s: a held step's wake started no further pass; sending its %d picture(s)", fr.agentLabel, fr.p.SessionID, len(fr.held))
+	appendSessionDiag(fr.udb, fr.p.AgentID, fr.p.SessionID, "held-step-sent",
+		"A pass of a chain was held back as a step toward a later one, and the turn it woke started no further pass, so the held picture was sent with that turn's reply instead of being left unsent.")
+	if fr.reply == "" {
+		fr.reply = "Here is where the picture got to."
+	}
+	return false
 }
 
 func (fr *fireRun) composeDetail() {

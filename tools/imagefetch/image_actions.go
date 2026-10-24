@@ -354,6 +354,15 @@ func imageSchemaFor(a imageActions) imageSchema {
 		// and this is where it is told. Without it the model made one picture,
 		// was refused when it tried to start the second in the same turn, and
 		// the promise went unkept.
+		// A pass that is a step toward a later one. Each background render is
+		// sent on its own, so a four-picture blend on a two-picture editor
+		// sent the person two in-between pictures before the one they asked
+		// for.
+		params["deliver"] = ToolParam{
+			Type: "boolean",
+			Description: "Defaults to TRUE. Set FALSE on a pass that is only a step toward a later one: when you blend more pictures than one render takes, every pass but the last. " +
+				"A held pass is kept under its id and NOT sent; you pass that id to the next pass, and only the last pass, left at the default, is sent to the person. Never hold a picture the person asked to see.",
+		}
 		params["variations"] = ToolParam{
 			Type: "integer",
 			Description: "How many pictures you are going to make IN TOTAL, when you are making a set: variations on one idea, a few options to pick from. Say it on the FIRST call only; it carries from there. " +

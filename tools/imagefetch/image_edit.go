@@ -150,7 +150,7 @@ func editImage(sess *ToolSession, args map[string]any, avail imageActions) (stri
 	// Source BEFORE result, so the two pictures the model is about to compare
 	// arrive in the order the instruction claims.
 	compared := queueSourceForComparison(sess, p.refs)
-	out, serr := saveImageResult(sess, result, "edit", "edited "+strings.Join(p.refs, "+")+": "+truncate(p.prompt, 60), ImageFromEdited)
+	out, serr := saveImageResult(sess, result, "edit", "edited "+strings.Join(p.refs, "+")+": "+truncate(p.prompt, 60), ImageFromEdited, holdsResult(args))
 	if serr != nil {
 		return out, serr
 	}

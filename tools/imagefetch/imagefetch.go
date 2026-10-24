@@ -377,6 +377,7 @@ var imageArgOwner = map[string]string{
 	"prompt":     "generate", // generate or edit — routeRender picks, from the sources
 	"images":     "generate",
 	"variations": "generate",
+	"deliver":    "generate",
 	"query":      "find",
 	"url":        "fetch",
 }

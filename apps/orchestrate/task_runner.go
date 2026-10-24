@@ -229,6 +229,7 @@ func buildWakeNote(sessionID, label string, out TaskProduct, taskErr error) wake
 		act = "Tell the user it failed and what went wrong. Do not silently retry it."
 	} else {
 		fact.WriteString(strings.TrimSpace(out.Text) + "\n")
+		stageHeldImages(sessionID, out.Held)
 		if n := stageTaskAttachments(sessionID, out); n > 0 {
 			fmt.Fprintf(&fact, "The %d file(s) it produced are ATTACHED to the message you are about to send: they go out with it automatically. Do not attach them again and do not describe how to find them.\n", n)
 		}
@@ -415,6 +416,10 @@ type stagedTaskMedia struct {
 	images []string
 	videos []string
 	files  []FileAttachment
+	// held are pictures a pass kept back as a step toward a later one: not
+	// folded into the turn, and sent only if that turn starts nothing more
+	// (claimHeldImages).
+	held []string
 }
 
 var (
@@ -448,6 +453,40 @@ func stageTaskAttachments(sessionID string, out TaskProduct) int {
 	s.videos = append(s.videos, out.Videos...)
 	s.files = append(s.files, out.Files...)
 	return n
+}
+
+// stageHeldImages keeps a held step's pictures for the session's next wake.
+func stageHeldImages(sessionID string, held []string) {
+	if len(held) == 0 || strings.TrimSpace(sessionID) == "" {
+		return
+	}
+	stagedMediaMu.Lock()
+	defer stagedMediaMu.Unlock()
+	sweepStagedMediaLocked()
+	s := stagedMedia[sessionID]
+	if s == nil {
+		s = &stagedTaskMedia{}
+		stagedMedia[sessionID] = s
+	}
+	s.at = time.Now()
+	s.held = append(s.held, held...)
+}
+
+// claimHeldImages takes the held pictures waiting for a session, leaving its
+// attachments for claimTaskAttachments. Called first.
+func claimHeldImages(sessionID string) []string {
+	stagedMediaMu.Lock()
+	defer stagedMediaMu.Unlock()
+	s := stagedMedia[sessionID]
+	if s == nil {
+		return nil
+	}
+	held := s.held
+	s.held = nil
+	if len(s.images)+len(s.videos)+len(s.files) == 0 {
+		delete(stagedMedia, sessionID)
+	}
+	return held
 }
 
 // hasStagedAttachments reports whether anything is waiting for this session.

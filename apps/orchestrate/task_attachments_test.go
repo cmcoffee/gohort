@@ -247,3 +247,35 @@ func TestAWakeQuotesTheMessageThatAskedForIt(t *testing.T) {
 		t.Error("no request, no quote")
 	}
 }
+
+// A held step's picture waits apart from what a wake carries out, and the wake
+// sends it only when it starts no further pass: a chain that goes on sends
+// nothing for the step, and one that stops sends where it got to rather than
+// nothing at all.
+func TestAHeldStepIsSentOnlyWhenTheChainStops(t *testing.T) {
+	const sid = "sess-held-step"
+	stageHeldImages(sid, []string{"c3RlcA=="})
+	stageTaskAttachments(sid, TaskProduct{Images: []string{"ZG9uZQ=="}})
+	if held := claimHeldImages(sid); len(held) != 1 || held[0] != "c3RlcA==" {
+		t.Fatalf("held = %q", held)
+	}
+	carried := &ToolSession{}
+	if n := claimTaskAttachments(sid, carried); n != 1 || carried.Images[0] != "ZG9uZQ==" {
+		t.Errorf("a held picture should not ride out as an attachment: %d, %q", n, carried.Images)
+	}
+
+	// The wake started the next pass: this turn posts nothing.
+	going := &fireRun{p: orchUpdatePayload{SessionID: sid}, subSess: &ToolSession{}, held: []string{"c3RlcA=="}}
+	going.subSess.ClaimDetachSlot(RenderDetachIdentity)
+	if !going.sendHeldIfStalled() || len(going.subSess.Images) != 0 {
+		t.Errorf("a chain that goes on should post nothing for the step: %d image(s)", len(going.subSess.Images))
+	}
+	// It started none: the step goes out, with a line if the turn wrote none.
+	stopped := &fireRun{p: orchUpdatePayload{SessionID: sid}, subSess: &ToolSession{}, held: []string{"c3RlcA=="}}
+	if stopped.sendHeldIfStalled() || len(stopped.subSess.Images) != 1 || stopped.reply == "" || stopped.carriedAttachments != 1 {
+		t.Errorf("a chain that stops should send its step: %d image(s), reply %q", len(stopped.subSess.Images), stopped.reply)
+	}
+	if (&fireRun{subSess: &ToolSession{}}).sendHeldIfStalled() {
+		t.Error("a wake with nothing held is not a held step")
+	}
+}

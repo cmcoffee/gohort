@@ -174,7 +174,7 @@ func TestEditGuardNeverPadsAnEmptyPrompt(t *testing.T) {
 // on unrelated images.
 func TestRenderResultDoesNotPromiseAPositionalRefIsDurable(t *testing.T) {
 	sess := fidelitySession(t)
-	msg, err := saveImageResult(sess, &ImageGenResult{URL: stagedPNG(t)}, "gen", "generated: a cat", ImageFromGenerated)
+	msg, err := saveImageResult(sess, &ImageGenResult{URL: stagedPNG(t)}, "gen", "generated: a cat", ImageFromGenerated, false)
 	if err != nil {
 		t.Fatalf("saveImageResult: %v", err)
 	}

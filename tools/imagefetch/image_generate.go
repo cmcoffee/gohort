@@ -42,7 +42,7 @@ func (t *GenerateImageTool) RunWithSession(args map[string]any, sess *ToolSessio
 	// The standalone tool has no backend selector — it always renders through
 	// the configured default. Backend choice arrives via the grouped `image`
 	// tool, which owns the reachability check.
-	return generateImageInto(sess, StringArg(args, "prompt"), "")
+	return generateImageInto(sess, StringArg(args, "prompt"), "", false)
 }
 
 // generateImage runs the generate action. Split out of the switch for the same
@@ -53,7 +53,16 @@ func generateImage(sess *ToolSession, args map[string]any, avail imageActions) (
 	if err != nil {
 		return "", err
 	}
-	return generateImageInto(sess, StringArg(args, "prompt"), backend)
+	return generateImageInto(sess, StringArg(args, "prompt"), backend, holdsResult(args))
+}
+
+// holdsResult reports a render asked to keep its result back (deliver=false):
+// a pass that is a step toward a later one.
+func holdsResult(args map[string]any) bool {
+	if v, ok := args["deliver"]; !ok || v == nil {
+		return false
+	}
+	return !BoolArg(args, "deliver")
 }
 
 // checkGeneratePrompt is the subject check for a render with NO source images.
@@ -112,7 +121,7 @@ func planGenerate(sess *ToolSession, args map[string]any, avail imageActions) (s
 // grouped `image` tool's generate action so the two can't drift.
 //
 // Callers are responsible for authorizing backend first (ImageBackendReachable).
-func generateImageInto(sess *ToolSession, prompt, backend string) (string, error) {
+func generateImageInto(sess *ToolSession, prompt, backend string, hold bool) (string, error) {
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {
 		return "", fmt.Errorf("prompt is required")
@@ -131,7 +140,7 @@ func generateImageInto(sess *ToolSession, prompt, backend string) (string, error
 		via = "default"
 	}
 	Log("[imagefetch/generate_image] backend=%s generating for prompt: %s", via, truncate(prompt, 80))
-	return saveImageResult(sess, result, "gen", "generated: "+truncate(prompt, 60), ImageFromGenerated)
+	return saveImageResult(sess, result, "gen", "generated: "+truncate(prompt, 60), ImageFromGenerated, hold)
 }
 
 // saveImageResult lands a finished image in both places it needs to be: the
@@ -142,7 +151,10 @@ func generateImageInto(sess *ToolSession, prompt, backend string) (string, error
 // It keeps a bounded ring and prunes on write, so the reply no longer has to
 // push cleanup=true — the file is retained on purpose and named something the
 // model can actually refer back to.
-func saveImageResult(sess *ToolSession, result *ImageGenResult, prefix, note string, origin ImageOrigin) (string, error) {
+//
+// hold keeps the picture back (deliver=false): recorded under its id for the
+// next pass, and not attached.
+func saveImageResult(sess *ToolSession, result *ImageGenResult, prefix, note string, origin ImageOrigin, hold bool) (string, error) {
 	var data []byte
 	var err error
 	if strings.HasPrefix(result.URL, "http://") || strings.HasPrefix(result.URL, "https://") {
@@ -174,9 +186,23 @@ func saveImageResult(sess *ToolSession, result *ImageGenResult, prefix, note str
 	// stored, announced as done — and never actually sent. Delivery of a
 	// detached call's attachments is the framework's job from here on.
 	if sess != nil && sess.Detached {
-		sess.AppendImage(base64.StdEncoding.EncodeToString(data))
 		msg := fmt.Sprintf("The finished picture (%d bytes) IS ATTACHED to this result and will be delivered with the message you send about it. Do NOT call workspace(action=\"attach\") for it, that would send it twice. Just say what it is.", len(data))
-		if ref, stable := RecordRecentImageStable(sess, data, note, origin); ref != "" {
+		ref, stable := RecordRecentImageStable(sess, data, note, origin)
+		if hold {
+			// A step toward a later pass: kept under its id and not sent, so
+			// a chain of passes sends the person its finished picture and not
+			// every step on the way.
+			id := stable
+			if id == "" {
+				id = ref
+			}
+			sess.HoldImage(base64.StdEncoding.EncodeToString(data), id)
+			msg = fmt.Sprintf("This pass was HELD (deliver=false): the picture (%d bytes) was kept and NOT sent. It is %s: pass it to the next pass by that id.", len(data), id)
+			sess.AppendViewImageAs(data, "the held step (the AFTER picture of this pass)")
+			return msg + " LOOK AT IT FIRST: if it came back wrong, say so instead of building the next pass on it.", nil
+		}
+		sess.AppendImage(base64.StdEncoding.EncodeToString(data))
+		if ref != "" {
 			// The STABLE id only, and deliberately no position. This render
 			// finished in the background, between rounds — naming a position
 			// here would be stating a number for a picture that was never in
@@ -207,6 +233,17 @@ func saveImageResult(sess *ToolSession, result *ImageGenResult, prefix, note str
 		return msg, nil
 	}
 
+	if hold {
+		// Inline, nothing is sent until it is attached, so a held step is
+		// only told not to be.
+		ref, stable := RecordRecentImageStable(sess, data, note, origin)
+		id := stable
+		if id == "" {
+			id = ref
+		}
+		msg := fmt.Sprintf("This pass is HELD (deliver=false): it was saved and NOT sent. Do not attach it: pass %s to the next pass, and attach only the finished picture.", id)
+		return msg + showToModel(sess, data, "the held step (the AFTER picture of this pass)", "This is what the backend produced, which is not always what was asked for"), nil
+	}
 	msg := fmt.Sprintf("Stored at %q (%d bytes). This is normally meant for delivery: call workspace(action=\"attach\", path=%q, cleanup=true) and then write a short line describing it. (Skip the attach only if the user explicitly asked you NOT to send it: rare.)", name, len(data), name)
 	// Spell out that the workspace copy is one-shot. Saying "do not delete it"
 	// next to a path the model is told to clean up reads as a contradiction, and

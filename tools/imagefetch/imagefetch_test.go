@@ -180,7 +180,7 @@ func stagedPNG(t *testing.T) string {
 
 func TestDetachedRenderAttachesItself(t *testing.T) {
 	sess := &ToolSession{Username: "alice", WorkspaceDir: t.TempDir(), Detached: true}
-	msg, err := saveImageResult(sess, &ImageGenResult{URL: stagedPNG(t)}, "edit", "edited: a cat", ImageFromEdited)
+	msg, err := saveImageResult(sess, &ImageGenResult{URL: stagedPNG(t)}, "edit", "edited: a cat", ImageFromEdited, false)
 	if err != nil {
 		t.Fatalf("saveImageResult: %v", err)
 	}
@@ -203,7 +203,7 @@ func TestInlineRenderStillLeavesDeliveryToTheModel(t *testing.T) {
 	// turn that HAS a next round the model still decides what goes out.
 	ws := t.TempDir()
 	sess := &ToolSession{Username: "alice", WorkspaceDir: ws}
-	msg, err := saveImageResult(sess, &ImageGenResult{URL: stagedPNG(t)}, "gen", "generated: a cat", ImageFromGenerated)
+	msg, err := saveImageResult(sess, &ImageGenResult{URL: stagedPNG(t)}, "gen", "generated: a cat", ImageFromGenerated, false)
 	if err != nil {
 		t.Fatalf("saveImageResult: %v", err)
 	}

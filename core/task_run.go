@@ -208,6 +208,29 @@ type TaskProduct struct {
 	// (ToolSession.Request), or, for a piece of a set started by a later
 	// wake, the message that asked for the set. Empty when there is none.
 	Request string
+
+	// Held are pictures (base64) a pass kept back rather than delivered,
+	// because it is a step toward a later pass (ToolSession.HoldImage). The
+	// host sends them only when the turn the result wakes starts nothing more.
+	Held []string
+}
+
+// HeldStepMarker opens the instruction a held step's result carries, so the
+// turn it wakes can be told apart from one delivering a finished picture.
+const HeldStepMarker = "[STEP HELD]"
+
+// HeldStepContinuation is the instruction for the turn a held step wakes: the
+// picture was not sent, so start the next pass with it, and say nothing about
+// the step. Held because each pass delivered on its own sent every
+// intermediate picture as a message of its own.
+func HeldStepContinuation(refs []string) string {
+	if len(refs) == 0 {
+		return ""
+	}
+	return HeldStepMarker + " The picture this pass made was NOT sent: it is a step toward the finished one, " + strings.Join(refs, ", ") + ".\n" +
+		"FIRST, before you write anything: call the image tool for the next pass, with " + refs[len(refs)-1] + " among its images. Hold that pass too if more come after it; the last pass is the one that is sent.\n" +
+		"THEN end your turn with stay_silent: the person is waiting for the finished picture, not this step, and a message about it is noise.\n" +
+		"If they have since asked for something different, or the chain cannot go on, start nothing: what this pass made goes out with your reply, so say what it is."
 }
 
 // TaskRunnerFunc starts fn in the background and returns a handle. The host

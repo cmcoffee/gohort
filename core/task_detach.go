@@ -168,6 +168,11 @@ func WrapDetachable(p DetachPolicy, sess *ToolSession, inline ToolHandlerFunc) T
 			// context is the turn's, and everything downstream honours it.
 			detached := sess.ForDetachedTask(taskCtx)
 			out, rerr := p.Detached(args, detached)
+			held, heldRefs := detached.ClaimHeldImages()
+			cont := detached.TakeTaskContinuation()
+			if h := HeldStepContinuation(heldRefs); h != "" {
+				cont = strings.TrimSpace(h + "\n" + cont)
+			}
 			// Take whatever the call attached along with its text. The detached
 			// session's accumulators are the ONLY record of it — nothing else
 			// holds this session, and the turn that could have collected them
@@ -177,8 +182,9 @@ func WrapDetachable(p DetachPolicy, sess *ToolSession, inline ToolHandlerFunc) T
 				Images:       detached.ClaimUnflushedImages(),
 				Videos:       detached.ClaimUnflushedVideos(),
 				Files:        detached.ClaimUnflushedFiles(),
-				Continuation: detached.TakeTaskContinuation(),
+				Continuation: cont,
 				Request:      request,
+				Held:         held,
 			}, rerr
 		})
 		if err != nil {

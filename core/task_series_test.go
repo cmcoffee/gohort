@@ -498,3 +498,43 @@ func TestABookedCallIsMadeAgainAsItWas(t *testing.T) {
 		t.Errorf("a declared set should still ask for a variation:\n%s", c)
 	}
 }
+
+// A held pass's job carries its picture apart from what is delivered, and the
+// turn it wakes is told to start the next pass with it and say nothing. A set
+// the pass belonged to keeps its own instruction too.
+func TestAHeldPassWakesTheNextOne(t *testing.T) {
+	var job func(context.Context) (TaskProduct, error)
+	saved := TaskRunnerFunc
+	TaskRunnerFunc = func(_ *ToolSession, _ string, fn func(context.Context) (TaskProduct, error)) (TaskRun, error) {
+		job = fn
+		return TaskRun{ID: "t1"}, nil
+	}
+	t.Cleanup(func() { TaskRunnerFunc = saved })
+	p := DetachPolicy{
+		Tool: "image", Key: RenderDetachIdentity,
+		Always: func(map[string]any, *ToolSession) bool { return true },
+		Detached: func(_ map[string]any, ds *ToolSession) (string, error) {
+			ds.HoldImage("aGVsZA==", "image#r.step1")
+			ds.SetTaskContinuation("[SET IN PROGRESS] the rest of a set")
+			return "held", nil
+		},
+	}
+	h := WrapDetachable(p, &ToolSession{ChatSessionID: "sess-held"}, func(context.Context, map[string]any) (string, error) { return "inline", nil })
+	if _, err := h(context.Background(), map[string]any{"prompt": "two of four"}); err != nil || job == nil {
+		t.Fatalf("should detach: %v", err)
+	}
+	got, err := job(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Held) != 1 || len(got.Images) != 0 {
+		t.Errorf("held %d, attached %d: want the step held and nothing attached", len(got.Held), len(got.Images))
+	}
+	c := got.Continuation
+	if !strings.HasPrefix(c, HeldStepMarker) || !strings.Contains(c, "image#r.step1") || !strings.Contains(c, "stay_silent") || !strings.Contains(c, "[SET IN PROGRESS]") {
+		t.Errorf("continuation:\n%s", c)
+	}
+	if HeldStepContinuation(nil) != "" {
+		t.Error("nothing held, no instruction")
+	}
+}

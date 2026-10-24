@@ -477,6 +477,12 @@ type ToolSession struct {
 	// prompt only.
 	continuation string
 
+	// held are pictures a render kept back rather than attached: a pass that
+	// is a step toward a later one (HoldImage). heldRefs names each by the id
+	// the next pass takes it as.
+	held     []string
+	heldRefs []string
+
 	// Detach is this TURN's background-job ledger, one slot per tool. Shared by
 	// every session a turn mints — a host that runs a turn across several
 	// sessions (one per plan step, one for the inline round) points them all at
@@ -602,6 +608,30 @@ func (s *ToolSession) StagedFiles() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return slices.Clone(s.stagedFiles)
+}
+
+// HoldImage keeps a finished picture (base64) back from delivery, for a pass
+// that is a step toward a later one, with the id the next pass names it by.
+func (s *ToolSession) HoldImage(b64, ref string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.held = append(s.held, b64)
+	s.heldRefs = append(s.heldRefs, ref)
+}
+
+// ClaimHeldImages returns the held pictures and their ids, and clears them.
+func (s *ToolSession) ClaimHeldImages() (images, refs []string) {
+	if s == nil {
+		return nil, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	images, refs = s.held, s.heldRefs
+	s.held, s.heldRefs = nil, nil
+	return images, refs
 }
 
 // ClaimUnflushedImages returns the slice of images that haven't
