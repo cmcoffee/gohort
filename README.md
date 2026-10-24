@@ -80,7 +80,7 @@ There are two deliberate exceptions, granted per tool when the tool is approved:
 
 A tool with both can send that key anywhere its network reaches, and any script holding a key can print it into output the model reads. Approving such a tool is trusting it with the key. In a chat, such a tool asks the person watching before its first call, with the reason on the card ("It has raw network access"), and "Allow for this session" covers the rest of that conversation. A Private conversation cuts the network either way. A scheduled or unattended run does not stop for either: attaching the tool to the agent is the approval.
 
-There has been no external security review of this design. It is set out above, and in the source, so you can judge it rather than take it on faith.
+There has been no external security review of this design. It is set out above, and in the source, so you can judge it rather than take it on faith. [SECURITY.md](SECURITY.md) has the trust model in full and how to report a problem privately.
 
 One thing to be straight about, because it is the question a careful reader asks: gohort **skills can carry tools**, and activating one is the opt-in that lets its bundled scripts run. They are not merely prompt text. What bounds them is that they are per-user and authored in-product rather than installed from a public registry, and that anything they bring still runs inside the sandbox and under the same credential allowlist as everything else.
 
@@ -101,6 +101,8 @@ Because a step can narrow its own tools, a router agent can be built with **no c
 gohort registers credentials **per user**: each person brings their own API key, and no key is shared between accounts. It does not support subscription OAuth tokens for programmatic use: API keys only.
 
 That is a design choice, and it also happens to be the shape that keeps you on the right side of most providers' terms, which generally expect each end user to authenticate with their own credential and treat subscription plans as individual usage rather than a backend for automation. Check your provider's current terms rather than taking a README's word for it: especially for scheduled or autonomous agents, which are exactly the case those limits are written about.
+
+The same goes for MCP servers: where the administrator allows it (**Admin → Governance**), each person adds their own, signs in to them their own way, and their agents reach them with nobody else's account.
 
 ## Three ways to think about it
 
@@ -131,6 +133,10 @@ That's the loop: **describe it, approve it, it runs.**
 - **Your keys are never handed to the model.** Credentials are registered once, stored encrypted, and injected **server-side** at call time: the LLM drives the wiring but never sees the secret, and a universal rule forbids any agent from asking for one in chat. Every external call is checked against a Base-URL + endpoint allow-list before the secret is attached. Shell tools run in a network-isolated `bwrap` sandbox whose *only* path to the network is a narrow, audited gohort hook (urllib/requests/curl/wget are refused at authoring time). An agent that holds your keys in its memory is a liability; here the model orchestrates access to keys it is never handed. The two exceptions (raw network access, and a key handed to a script) are set out under [Credential isolation](#2-credential-isolation-where-the-model-orchestrates-and-never-holds).
 
 - **Memory that's governed, not just persistent.** "Memory that grows with you" is table stakes; the real question is whether you control it. Each agent gets several distinct layers: always-in-prompt facts (with semantic dedup and supersession, so a changed fact *replaces* the stale one instead of piling up), vector-grown reference memory, a graph layer of entities and relationships, a rewritable working-notes scratchpad, and drillable conversation history that archives on compaction rather than collapsing into a lossy summary. Every layer is toggled **per agent**, isolated **per (user, agent)**, and bounded by admin-tunable caps and a background prune sweep. And because credentials are injected server-side, **secrets never land in a memory layer**: the failure mode where a persistent store quietly accumulates your API keys does not arise on the normal paths (a script handed a key, above, is the exception).
+
+- **Guardrails written as sentences.** Rules in plain language, set per agent or across the deployment, judged by a model on what comes in, before a consequential tool call, and before the reply goes out. A block carries its reason and lands in a fleet-wide log. An owner can make their agent fail closed when a check cannot reach a verdict, and the administrator's deployment rules are not the owner's to relax.
+
+- **System Hooks: the jobs gohort hands to the host's tools.** Reading what arrives (PDFs, Word files, audio, video) and writing documents each have a native flow. Where the tool a flow wants is missing, an administrator adapts the job to a command the machine does have, tests it on a file, and turns it on, with ✨ Fix reading the program's own help and filling in the form. Flows run in the sandbox with no shell reading their commands, and what they hand back is checked before gohort uses it.
 
 - **Local-first, not local-only.** By default the worker tier is your own GPU (Ollama / llama.cpp) and does the bulk of the work; an optional precision tier escalates to a frontier model only for the stages that earn it. Any stage can instead point at a hosted provider: run fully local, fully hosted, or any mix. Privacy is structural: `ForcePrivate` agents and `Private:true` route stages hard-lock to the local tier, so sensitive data (credentials, internal docs, system facts) never leaves the box even by accident.
 
@@ -187,7 +193,7 @@ Then sign in and visit **/admin**: nearly all operator config (LLM routing, embe
 
 **Do `--setup` first, and on loopback.** An instance with no users configured has nobody to authenticate, so the dashboard's front door is open and `/admin/` leads to the wizard that mints the first admin. That is how the first account gets created and it is fine on `127.0.0.1` (the setup default is `127.0.0.1:8181`); it is not fine on a public interface. Create the admin account, then widen the bind address.
 
-**Optional host tools.** The binary needs nothing else to run, but a few features shell out to programs it expects on `PATH`: `ffmpeg`/`ffprobe` (audio and video), `pdftotext` and `pandoc` (document extraction), `yt-dlp` (video downloads), `git` (repository appliances), `python3` (sandboxed scripts), and `bwrap` (the shell sandbox, Linux). Each is optional and only the feature that uses it degrades when it is missing; **Admin → System Dependencies** shows what is present, what version, and what it enables.
+**Optional host tools.** The binary needs nothing else to run, but a few features shell out to programs it expects on `PATH`: `ffmpeg`/`ffprobe` (audio and video), `pdftotext` and `pandoc` (document extraction), `yt-dlp` (video downloads), `git` (repository appliances), `python3` (sandboxed scripts), and `bwrap` (the shell sandbox, Linux). Each is optional and only the feature that uses it degrades when it is missing. **Admin → Capabilities → System Hooks** shows how each job is done on this machine, and adapts a job to another tool when the usual one is missing.
 
 ## Extend it: a whole app in ~20 lines
 
@@ -217,12 +223,16 @@ Add `WebPath()` / `WebName()` / `WebDesc()` / `Routes()` and it gets a web dashb
 |-----|-----------|
 | `orchestrate` | **Agency**: the agent fleet runner. Chat with seed agents (Chat, Builder, Research, …) or your own; multi-layer governed per-(user, agent) memory, plan-driven authoring, sub-agent dispatch, attachable pipelines and machines |
 | `admin` | Operator panel: users, permissions, app groups, API credentials, MCP servers, connectors, tool/skill curation, and all service config |
+| `extensions` | What your agents draw on, in one place: credentials, tools, skills, connections, and your own MCP servers |
 | `agents` | One published agent, one URL: a permission-gated chat surface scoped to a single agent |
-| `knowledge` | Document Collections: shared / per-user RAG buckets agents attach to |
+| `knowledge` | Named document collections that travel with your skills, recalled by every agent that has those skills on |
+| `filestore` | File stores: make a folder on this server searchable by an agent |
 | `bridges` | Messaging transport: wire iMessage / Telegram / … to a channel agent, with a wake-rule gatekeeper |
 | `servitor` | SSH system investigator + git-repo Q&A, plan-driven, with an xterm pane; systems are shareable |
-| `guides` | Living multi-section guide documents co-authored with an AI Guide Author; source-grounded, exportable, shareable |
-| `scribe` - `codewriter` | Living guides with an AI co-author; script/query co-editor |
+| `scribe` | Living multi-section guides with an AI co-author: grounded in their sources, a Changes card on every turn with Undo, a header picture that can carry your logo |
+| `publish` | Sends finished documents out to Confluence and other destinations, and keeps them updated |
+| `codewriter` | Shell scripts, SQL queries and code snippets with an LLM co-editor |
+| `monitor` | Live view of what every agent and app is doing right now, with Cancel beside each run |
 | `mcpserver` | Expose gohort agents to an external MCP client (e.g. Claude Desktop) |
 | `customapps` | Host for Builder-authored apps (the My Apps tile) at `/apps/<slug>/`: declarative sections (form, table, chart, chat, workbench, pipeline, or a raw HTML canvas), a per-app record store, sandboxed data/action scripts, schedules, and per-user sharing or an anonymous link |
 | `hello` | Minimal scaffold for a new app |
@@ -263,6 +273,7 @@ On deck:
 - **[docs/workflow-graph.md](docs/workflow-graph.md)**: one picture for both, and what a fanout, a branch and a loop are drawn as
 - **[docs/skill-playbooks.md](docs/skill-playbooks.md)**, declared conditional behavior on a skill: establish a fact, then act on what it turned out to be
 - **[docs/troubleshoot.md](docs/troubleshoot.md)**: the shipped troubleshooting machine, as a worked example of a decision tree
+- **[SECURITY.md](SECURITY.md)**: the trust model, and how to report a vulnerability privately
 
 ## License
 
@@ -284,6 +295,12 @@ chosen for its express patent grant, which MIT does not provide.
 
 ## Dependencies
 
+The ten direct dependencies, from `go.mod`:
+
 - [snugforge](https://github.com/cmcoffee/snugforge), logging, config, flags, kvlite database, concurrency primitives
 - [go-pdf/fpdf](https://github.com/go-pdf/fpdf), PDF generation
-- [charmbracelet/bubbletea](https://github.com/charmbracelet/bubbletea), terminal text editor (Options textarea)
+- [go-rod/rod](https://github.com/go-rod/rod), the headless browser behind page rendering and browsing tools
+- [go-shiori/go-readability](https://github.com/go-shiori/go-readability), article text out of a fetched page
+- [gorilla/websocket](https://github.com/gorilla/websocket), Servitor's live terminal and the desktop bridge
+- [rwcarlsen/goexif](https://github.com/rwcarlsen/goexif), a photo's EXIF (date, place, camera) handed to the vision model
+- [golang.org/x](https://pkg.go.dev/golang.org/x) `crypto`, `image`, `net` and `sys`, the Go project's own extended libraries
