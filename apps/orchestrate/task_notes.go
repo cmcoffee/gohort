@@ -12,7 +12,7 @@
 // THE FIRE, the way set_next_attempt is (core/pacing), because it is the turn
 // that can use it.
 //
-// See docs/task-notes.md.
+// See docs/design/task-notes.md.
 
 package orchestrate
 

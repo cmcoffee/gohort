@@ -3,7 +3,7 @@
 // operations into a TOOLBOX (one action per endpoint). Params are derived from
 // the path/query parameters; a requestBody becomes a `body` argument. Supports
 // OpenAPI 3.x (servers[]) and Swagger 2.0 (host/basePath/schemes). See
-// docs/templates.md. Governance is unchanged — the artifact is a toolbox TempTool
+// docs/design/templates.md. Governance is unchanged — the artifact is a toolbox TempTool
 // that still goes through the tool approval flow.
 package core
 

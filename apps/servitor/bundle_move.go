@@ -1,6 +1,6 @@
 package servitor
 
-// Moving an evidence bundle into a file store (docs/servitor-systems-model.md,
+// Moving an evidence bundle into a file store (docs/design/servitor-systems-model.md,
 // stage 3).
 //
 // Evidence lives in file store folders now: a store with "Index folders as

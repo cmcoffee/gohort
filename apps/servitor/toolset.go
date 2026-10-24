@@ -23,7 +23,7 @@
 // since approval is a tool nobody approved, and running it behind a warning is
 // the same as running it.
 //
-// See docs/servitor-toolset-type.md.
+// See docs/design/servitor-toolset-type.md.
 package servitor
 
 import (

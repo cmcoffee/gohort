@@ -1,7 +1,7 @@
 package orchestrate
 
 // Turn-side wiring for session-resident phase machines (core/machine.go,
-// docs/agent-machines.md).
+// docs/design/agent-machines.md).
 //
 // The core driver owns the walk: which phase is current, what its prompt
 // resolves to, decoding its declared output, where control goes next.

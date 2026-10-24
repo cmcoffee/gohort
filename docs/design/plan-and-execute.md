@@ -48,7 +48,7 @@ primitive is for:
   list under one name, and the report reads `{state:findings}` without knowing which pass
   produced what.
 
-So the machine is the spine and the pipeline is the muscle: `docs/machine-as-spine.md`
+So the machine is the spine and the pipeline is the muscle: `docs/design/machine-as-spine.md`
 argued for exactly this, and this is the first shipped recipe that uses it.
 
 ## What it needs to be useful

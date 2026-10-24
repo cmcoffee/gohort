@@ -120,7 +120,7 @@ func saveChatSession(db Database, s ChatSession) (ChatSession, error) {
 	// Channel-model groundwork: every thread records its membership. Stage 1
 	// has exactly one agent per thread (the lead); the human owner is implicit
 	// in the user-scoped db. Additive — nothing reads it yet (see
-	// docs/channel-model.md), so this just keeps the field populated for Stage 2.
+	// docs/design/channel-model.md), so this just keeps the field populated for Stage 2.
 	ensureLeadParticipant(&s)
 	db.Set(sessionTable(s.AgentID), s.ID, s)
 	return s, nil

@@ -54,7 +54,7 @@ var orchestratorPromptSections = []ui.SectionSpec{
 // editable here and surfaced in the wizard's Memory step, not species. The
 // type is a starting point, not a lock. Fleet is deliberately OFF on both —
 // granting the fleet (delegate / standing agents / monitors) is an explicit
-// per-agent choice, not a type default. See docs/channels-and-agents.md.
+// per-agent choice, not a type default. See docs/design/channels-and-agents.md.
 //
 //	Assistant  — conversational agent for people (you, a room, a contact):
 //	             Cortex on, personalized memory (attributed by name).

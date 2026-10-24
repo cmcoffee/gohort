@@ -4,7 +4,7 @@
 // per domain; these are assembled from the owner's Domain paragraph plus the
 // bound tools' own descriptions. That is enough to prove the plumbing and to
 // run real investigations, and it is not yet slice 3 of
-// docs/servitor-toolset-type.md — the full structural templates (the pacing
+// docs/design/servitor-toolset-type.md — the full structural templates (the pacing
 // block, the acronym discipline, the complete recording guidance) are not
 // generated here, so a toolset investigation is currently a little thinner than
 // an SSH or repo one.

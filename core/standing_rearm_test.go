@@ -80,7 +80,7 @@ func TestRearmStrandedStandingAgents(t *testing.T) {
 // A standing agent's next occurrence does not exist while its fire runs: the
 // re-arm is deferred and re-reads the record. So an attempt that asks to come
 // back later just writes the time down, and arming has to honour it — for that
-// one occurrence, and then go back to the cadence (docs/objective-pacing.md).
+// one occurrence, and then go back to the cadence (docs/design/objective-pacing.md).
 func TestScheduleStandingAgentHonoursAPacedAttempt(t *testing.T) {
 	withSchedulerDB(t)
 	db := &DBase{Store: kvlite.MemStore()}

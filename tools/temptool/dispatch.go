@@ -364,7 +364,7 @@ func (sd *shellDispatch) admit() bool {
 	// (api / toolbox dispatch through tt.Credential). Only APPROVED tools may reach
 	// a secured cred; a legacy declaring tool is grandfathered, a revoked one
 	// refused; open creds pass. Shell-mode fetch_via is enforced in the sandbox
-	// hook (it dispatches per-call, not here). See secured-credential-tool-binding.md.
+	// hook (it dispatches per-call, not here). See docs/design/secured-credential-tool-binding.md.
 	if (tt.Mode == TempToolModeAPI || tt.Mode == TempToolModeToolbox) && strings.TrimSpace(tt.Credential) != "" {
 		securedUser, securedAgent := "", ""
 		if sess != nil {

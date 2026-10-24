@@ -121,7 +121,7 @@ cadence, let a pacing ask override it, consume the ask, schedule) and the overri
 | monitor | it is later than the next poll | a snooze is by definition later; core must never poll faster than its owner set it to |
 | recurring | (stored as a string, applied in the app) | window and reap ceiling apply too |
 
-Three floors, three reasons, all three written down in `docs/objective-pacing.md` before I looked.
+Three floors, three reasons, all three written down in `docs/design/objective-pacing.md` before I looked.
 Not drift.
 
 **Slice 4 (the fold), goes with it.** It was contingent on 1–3 leaving standing and recurring

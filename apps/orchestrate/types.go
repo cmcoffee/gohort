@@ -83,7 +83,7 @@ type AgentRecord struct {
 	// The JSON/storage key stays "channel" (legacy) so existing agent records
 	// keep working without a migration; the concept and all code is Cortex.
 	// The word "Channel" is now reserved for messaging surfaces attached to
-	// an agent (see docs/channels-and-agents.md).
+	// an agent (see docs/design/channels-and-agents.md).
 	Cortex bool `json:"channel,omitempty"`
 
 	// Fleet, when true, attaches the fleet-management toolset to the agent:
@@ -162,7 +162,7 @@ type AgentRecord struct {
 	// in by the framework.
 	OrchestratorPrompt string `json:"orchestrator_prompt"`
 
-	// Machine names the MachineDef (core, docs/agent-machines.md) that
+	// Machine names the MachineDef (core, docs/design/agent-machines.md) that
 	// drives this agent's turns: a session-resident phase machine that
 	// decomposes once, routes once, and then sits in a resident phase
 	// instead of re-deciding its whole approach every turn.
@@ -679,7 +679,7 @@ type AgentRecord struct {
 	// Naturally partitioned per-user, so it never becomes an unmanageable central
 	// list. Tier 1 — which USERS may use a credential — lives on the credential
 	// itself (SecureCredential.AllowedUsers), the scalable admin control. See
-	// docs/tool-credential-namespacing.md.
+	// docs/design/tool-credential-namespacing.md.
 	DisabledCredentials []string `json:"disabled_credentials,omitempty"`
 
 	// AllowedUsers is the peer-share recipient set for a USER-OWNED agent: which
@@ -691,7 +691,7 @@ type AgentRecord struct {
 	// share. Mirrors SecureCredential.AllowedUsers and PersistentTempTool.AllowedUsers
 	// — one ACL concept across all three shareable kinds. Governed (audited /
 	// revocable) by the admin console but ORIGINATED by the owner. See
-	// docs/sharing-governance.md.
+	// docs/design/sharing-governance.md.
 	AllowedUsers []string `json:"allowed_users,omitempty"`
 
 	// What of this agent's own memory a recipient's turns READ.
@@ -1119,7 +1119,7 @@ type AgentRecord struct {
 	GuardrailHooks []string `json:"guardrail_hooks,omitempty"`
 
 	// ScanToolResults turns on injection scanning of what TOOLS RETURN
-	// (core/toolscan.go, docs/tool-result-scan.md).
+	// (core/toolscan.go, docs/design/tool-result-scan.md).
 	//
 	// Independent of Guardrails on purpose, in both directions: it needs no
 	// authored rule, and GuardrailsDisabled does not suspend it. That flag
@@ -1257,7 +1257,7 @@ type AgentRecord struct {
 // orchestrator-user conversation visible to the user; Plans are the
 // per-round decomposition snapshots that drove the activity pane.
 // Participant identifies one member of a thread (channel). See
-// docs/channel-model.md: every conversation is a thread; a 1:1 session is
+// docs/design/channel-model.md: every conversation is a thread; a 1:1 session is
 // the case whose only agent participant is the lead. Kind is "human" or
 // "agent"; ID is the user (human) or agent id (agent).
 type Participant struct {
@@ -1304,7 +1304,7 @@ type ChatSession struct {
 	Imported *ImportedSession `json:"imported,omitempty"`
 
 	// Participants is the thread's membership (channel model — see
-	// docs/channel-model.md). Stage 1 holds only the single lead agent; the
+	// docs/design/channel-model.md). Stage 1 holds only the single lead agent; the
 	// human owner is implicit in the user-scoped db. Additive and not yet read
 	// by behavior — it gives Stage 2's shared channels + addressing a place to
 	// live so the migration there is mechanical, not a schema change.
@@ -1357,7 +1357,7 @@ type ChatSession struct {
 	// answering.
 	AwaitingUserConfirm bool `json:"AwaitingUserConfirm,omitempty"`
 
-	// --- phase machine (docs/agent-machines.md) ---
+	// --- phase machine (docs/design/agent-machines.md) ---
 	//
 	// A session running a machine persists WHERE IT IS between turns.
 	// That is the whole difference between a machine and a pipeline, and

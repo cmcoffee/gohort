@@ -3,7 +3,7 @@
 // a bound Channel, the transport (phantom) calls core.RunChannelAgent, which
 // dispatches here to run the bound agent in a per-contact session and return
 // its reply for the transport to deliver. Mirrors registerStandingRunner.
-// See docs/channels-and-agents.md.
+// See docs/design/channels-and-agents.md.
 
 package orchestrate
 

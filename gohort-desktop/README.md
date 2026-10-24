@@ -114,7 +114,7 @@ via `core.ReplaceDynamicTools(source, tools)`, keyed by source (an MCP server,
 a declared command), and can be swapped or dropped wholesale. A native tool
 always wins a name clash. When the dynamic set changes the registry fires a
 change hook, so the WS bridge **re-announces** the fresh catalog without a
-reconnect. This is what makes the tool surface expandable at runtime.
+reconnect.
 
 **Server-push install.** The server can send an `install` frame (a
 `desktop_mcp` or `desktop_command` connector, once admin-approved on the
@@ -123,7 +123,7 @@ gated by the same user-consent prompt as a tool call (`install_capability:*`),
 so the machine's owner authorizes running new local code; a nil `Installer`
 turns server-push off entirely. Accepted installs persist to `mcp.json` /
 `commands.json`, so they survive a daemon restart, and the resulting tools ride
-the dynamic-registry path above. Removes apply directly (tearing down is safe).
+the dynamic-registry path above. Removes apply directly.
 Declared commands run via `exec` with no shell involved: `{placeholder}` tokens
 only fill argument values, so there is no shell-injection surface.
 
@@ -151,9 +151,8 @@ only fill argument values, so there is no shell-injection surface.
 - **API-key auth**, loopback-scoped: the desktop proxy strips
   `X-Forwarded-For` so the gohort server never sees the request as
   loopback (which would bypass its auth).
-- **Folder consent** is just-in-time and per-folder; write consent is a
-  separate, stronger grant than read. Approvals are remembered in the
-  sidecar.
+- **Folder consent** is asked per folder at first use (see Tools above).
+  Approvals are remembered in the sidecar.
 - Tools execute with the bridge binary's privileges; the allowlists are
-  scope guards against the LLM, not a sandbox. OS-level boundaries remain
-  the real perimeter.
+  scope guards against the LLM, not a sandbox. The OS-level permissions
+  are the perimeter.

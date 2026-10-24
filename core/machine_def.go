@@ -37,7 +37,7 @@
 //   - Routing is a reference to a DECLARED FIELD, never an expression
 //     language — the same discipline branchTaken already enforces.
 //
-// See docs/agent-machines.md for the full design and staging.
+// See docs/design/agent-machines.md for the full design and staging.
 
 package core
 

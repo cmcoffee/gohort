@@ -3,7 +3,7 @@ package orchestrate
 // One page for every goal in flight.
 //
 // An objective is a schedule with a completion check — never a fifth trigger
-// kind and never its own table (docs/loop-objectives.md). That decision is what
+// kind and never its own table (docs/design/loop-objectives.md). That decision is what
 // makes the feature cheap, and it is also why the goals themselves had nowhere
 // to be read: they live on three different records, in three different
 // consoles, and the only way to answer "what am I still waiting on" was to open

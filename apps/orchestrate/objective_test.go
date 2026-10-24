@@ -719,7 +719,7 @@ func TestAMonitorWhoseChecksFailIsNotAnUnlinkEither(t *testing.T) {
 	}
 }
 
-// Slice 1 of the scheduling unification (docs/scheduling-unification.md). The
+// Slice 1 of the scheduling unification (docs/design/scheduling-unification.md). The
 // six lines around the judge — pull the labels and the failure count off the
 // trace, ask, read the verdict, name the reason — were written once per
 // surface. They settle through one path now.

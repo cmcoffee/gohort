@@ -12,7 +12,7 @@
 // signal), unit-testable in Go, no dependency, and nothing to verify in
 // a browser beyond "the image appeared".
 //
-// See docs/workflow-graph.md.
+// See docs/design/workflow-graph.md.
 
 package core
 

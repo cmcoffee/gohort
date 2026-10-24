@@ -1005,7 +1005,7 @@ func TestAThresholdThatNeverRecoversSaysSoToo(t *testing.T) {
 // A monitor's next check does not exist while the current one runs: the re-arm
 // is deferred and re-reads the record. So a wake that asked to be left alone
 // until later just writes the time down, and arming has to honour it — for that
-// one check, and then back to the cadence (docs/objective-pacing.md).
+// one check, and then back to the cadence (docs/design/objective-pacing.md).
 func TestScheduleEventMonitorHonoursAPacedCheck(t *testing.T) {
 	withSchedulerDB(t)
 	db := memDB(t)

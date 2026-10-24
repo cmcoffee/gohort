@@ -27,7 +27,7 @@ stops being an engine and becomes the channel transport layer.
 ```
 
 The Slice 1 multi-service work (the `Service` dimension, the key-scoped
-poll, `ServicePolicy`, and `docs/phantom-service-bridge.md`) is the
+poll, `ServicePolicy`, and `docs/design/phantom-service-bridge.md`) is the
 transport substrate this builds on. See `project_phantom_multichannel`.
 
 ## The three surfaces of an agent

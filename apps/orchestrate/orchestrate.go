@@ -382,7 +382,7 @@ func (T *OrchestrateApp) wireSeams() {
 func (T *OrchestrateApp) wireChannelHooks() {
 	// Channel agent runner: lets the transport (phantom) run a Channel's bound
 	// agent on inbound messages (Phase 2). core owns the Channel store + seam;
-	// this registers the agent-execution half. See docs/channels-and-agents.md.
+	// this registers the agent-execution half. See docs/design/channels-and-agents.md.
 	registerChannelAgentRunner(T)
 	registerAgentPublisher(T)
 	registerCredentialPublisher(T)
@@ -732,7 +732,7 @@ func (T *OrchestrateApp) registerHandlers() {
 	T.HandleFunc("/api/pipelines/import", T.handlePipelineImport)
 	T.HandleFunc("/api/pipelines/draft", T.handlePipelineDraft)
 	T.HandleFunc("/api/pipelines/", T.handlePipelineOne)
-	// Phase machines (machines_http.go, docs/agent-machines.md). Same
+	// Phase machines (machines_http.go, docs/design/agent-machines.md). Same
 	// route shape as pipelines, minus /run — a machine only runs inside a
 	// session, so there is nothing to invoke from here.
 	// The machine editor as a page (machine_page.go). Registered before

@@ -2,13 +2,13 @@
 
 This is the spec for a **Telegram connector**: a small external process that relays
 between Telegram's Bot API and gohort's Bridges transport. The gohort side is
-already done: a `telegram` service entry (`core/channel.go` `bridgeServices`),
+already done: a `telegram` service entry (`core/messaging/channel.go` `bridgeServices`),
 service-agnostic routing, the outbox, groups/aliases, and the approval gate all
-work for any service. The connector is the only thing left to build.
+work for any service. The connector is what remains to build.
 
 Unlike the iMessage bridge (which needs a Mac running the desktop daemon), a
-Telegram connector is **cloud-friendly**: a bot token + a process that can reach
-your gohort host. It can run anywhere: the homelab, a small VM, a container.
+Telegram connector needs only a bot token and a process that can reach your gohort
+host, so it can run anywhere: a small VM, a container.
 
 ## The shape
 
@@ -21,10 +21,9 @@ The connector speaks exactly two gohort endpoints, both authenticated with the
 bridge key in an `X-API-Key` header. It is stateless beyond an inbound dedup set
 and an update offset.
 
-The service-agnostic version of this contract: the same two endpoints, the
-payload fields, the `chat_id` encoding, the handle rules, and how to write an
-iMessage connector without the desktop app: is `docs/bridges-connector-contract.md`.
-This page is that contract worked through for one service.
+The service-agnostic contract (the two endpoints, the payload fields, the `chat_id`
+encoding, the handle rules, and an iMessage connector without the desktop app) is
+[bridges-connector-contract.md](bridges-connector-contract.md). This page applies it to one service.
 
 ## One-time setup
 
@@ -118,8 +117,8 @@ For each item:
 **Markdown**: gohort delivers **plain text** for Telegram by default
 (`bridgeServices["telegram"].RendersMarkdown = false`), so send with no
 `parse_mode`. If you implement proper MarkdownV2 escaping in the connector, flip
-that flag to `true` in `core/channel.go` and gohort will stop flattening, then
-you own the escaping.
+that flag to `true` in `core/messaging/channel.go` and gohort stops flattening;
+the connector then owns the escaping.
 
 ## Robustness checklist
 
@@ -135,8 +134,8 @@ you own the escaping.
 ## What works today vs. later
 
 - **Inbound → agent → reply**, **whole-service and per-chat bindings**, **groups**,
-  **aliases**, **proactive `send_message` to a Telegram chat** (outbound now
-  resolves the transport from the conversation, not a hardcoded default), and the
-  **approval gate** for proactive sends: all functional with the generic code.
+  **aliases**, **proactive `send_message` to a Telegram chat** (outbound resolves
+  the transport from the conversation), and the **approval gate** for proactive
+  sends: all functional with the generic code.
 - **Rich markdown** (MarkdownV2) and **inline keyboards / buttons** are future
   connector enhancements; the MVP is plain text in and out.

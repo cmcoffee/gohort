@@ -9,8 +9,8 @@ speaks it is a bridge, including a shell script under `launchd`.
 
 The Bridges app itself is pure transport: no persona, no LLM, no tools. A
 Channel (core) binds a conversation to an agent; the agent owns all behaviour.
-See `docs/channel-model.md` for that half, and `docs/bridges-telegram.md` for
-this contract worked through end to end for a cloud-friendly service.
+See [design/channel-model.md](design/channel-model.md) for that half, and
+[bridges-telegram.md](bridges-telegram.md) for this contract applied to a service with no desktop half.
 
 ## Auth
 
@@ -21,9 +21,9 @@ The key **declares the service** (`imessage`, `telegram`, …). The server reads
 the service off the key rather than off the request, so one key relays one
 service and a compromised key cannot post as another.
 
-There is deliberately no "Add a bridge" button today: the only live connector
-auto-registers its own key on first connect, so a manual mint would create a key
-for something that does not exist. Minting one for a hand-rolled connector means
+There is no "Add a bridge" button: the only live connector auto-registers its
+own key on first connect, so a manual mint would create a key for something that
+does not exist. Minting one for a hand-rolled connector means
 either POSTing to `/bridges/api/keys` with `{name, service}` or letting the
 desktop daemon register once and reusing what it made.
 
@@ -98,7 +98,7 @@ script, with no `.app`, no Wails, and no code signing:
 
 - **Inbound**: read new rows from `~/Library/Messages/chat.db` (the `message`
   table joined to `chat`), and POST each as a hook request. Send `row_id` as the
-message's `ROWID` (that is exactly what the existing relay does), and set
+  message's `ROWID` (as the existing relay does), and set
   `timestamp` from the message date rather than from now. Requires Full Disk
   Access for whatever runs the script.
 - **Outbound**: poll, then hand each item to Messages via `osascript`. Recover
@@ -107,10 +107,10 @@ message's `ROWID` (that is exactly what the existing relay does), and set
   above.
 - **Run it** under `launchd` so it survives logout and restarts with the Mac.
 
-The trade against the desktop app is scope, not capability: the daemon also
-carries the client-side tools (filesystem, screenshot, and the rest) over its
-own WebSocket, which a hook/poll script does not. For iMessage alone, the two
-endpoints are the whole story.
+The difference from the desktop app is scope: the daemon also carries the
+client-side tools (filesystem, screenshot, and the rest) over its own WebSocket,
+which a hook/poll script does not. For iMessage alone, the two endpoints are
+enough.
 
 ## Robustness checklist
 

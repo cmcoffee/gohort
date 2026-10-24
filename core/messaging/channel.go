@@ -17,7 +17,7 @@ import (
 // Agent. A message arriving on the channel runs the bound agent's loop;
 // the reply goes back out the same surface. Phantom is the transport (it
 // POSTs inbound and drains the outbox per Service); the binding here says
-// WHICH agent handles a given channel. See docs/channels-and-agents.md.
+// WHICH agent handles a given channel. See docs/design/channels-and-agents.md.
 //
 // The binding is authoritative on the Channel (AgentID), so routing an
 // inbound is a single lookup and "one channel, one agent" is an

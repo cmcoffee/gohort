@@ -219,7 +219,7 @@ data, and three places say so out loud.
    is trusted because it is "owner-authored, owner-served" and warns against
    interpolating untrusted data into it. That sentence is currently a style
    note. With submissions it becomes a security boundary, on the same origin
-   that holds admin sessions. `docs/custom-app-tier.md` argues the general case
+   that holds admin sessions. `docs/design/custom-app-tier.md` argues the general case
    already. Minimum: warn at enable time when the app has an `html` section
    that fetches a data source. Better: submissions reach the page only through
    typed sections, which escape.
@@ -232,7 +232,7 @@ data, and three places say so out loud.
 3. **Anything that forwards a submission to an agent.** Out of scope here, since
    the public mount has no chat. But the moment a schedule or an action
    summarizes submissions with a model, that text is untrusted input and needs
-   the fencing described in `docs/tool-result-scan.md`.
+   the fencing described in `docs/design/tool-result-scan.md`.
 
 The enable-time warning should say the honest version: *anything typed here
 reaches your app's scripts and your dashboard, so treat it like email from a

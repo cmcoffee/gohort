@@ -4,7 +4,7 @@
 // a PURE DECLARATION: it writes no code, just its options + Strategy:
 // "rest_image_preset". Adding another preset-shaped backend (Flux-api, a
 // DALL·E-style endpoint) is likewise one declaration. Only a genuinely new shape
-// (ComfyUI) needs a strategy. See docs/templates.md.
+// (ComfyUI) needs a strategy. See docs/design/templates.md.
 package core
 
 import (

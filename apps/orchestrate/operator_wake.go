@@ -406,7 +406,7 @@ func registerOperatorWake(app *OrchestrateApp) {
 			msg := monitorWakeMessage(m, monitorName, modelSummary, brief)
 			// A monitor carrying a goal lets the woken agent say when the next
 			// CHECK is worth making — "still in review, don't look again until
-			// tomorrow" (docs/objective-pacing.md). This turn is the only place
+			// tomorrow" (docs/design/objective-pacing.md). This turn is the only place
 			// in a monitor's cycle where anything can ask: the check itself is a
 			// poll with no turn in it. A monitor delivering by text or direct
 			// alone therefore never paces, which is correct — nothing ran that

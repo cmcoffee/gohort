@@ -477,7 +477,7 @@ func (T *OrchestrateApp) handlePipelineOne(w http.ResponseWriter, r *http.Reques
 		w.Header().Set("Cache-Control", "no-store")
 		_, _ = w.Write([]byte(html))
 	case "graph":
-		// The picture (docs/workflow-graph.md), so the editor can redraw
+		// The picture (docs/design/workflow-graph.md), so the editor can redraw
 		// it after an edit that changed the SHAPE — ticking a branch's
 		// destination adds an arrow, and the map is rendered server-side.
 		//

@@ -31,7 +31,7 @@ import (
 // `user` is the SESSION user, not agent.Owner — a system-owned seed agent runs on
 // behalf of whoever is in the session. Populated onto every ToolSession that runs
 // this agent's loop so the fetch_url auto-route enforces the same scope
-// everywhere the agent can fetch. See docs/tool-credential-namespacing.md.
+// everywhere the agent can fetch. See docs/design/tool-credential-namespacing.md.
 func credentialDenySet(a AgentRecord, user string) map[string]bool {
 	var deny map[string]bool
 	add := func(name string) {

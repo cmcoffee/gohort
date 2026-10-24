@@ -173,7 +173,7 @@ type StandingAgent struct {
 	// creator's channels. A real (saved) standing agent leaves this empty.
 	DispatchedBy []string `json:"dispatched_by,omitempty"`
 
-	// Objective (docs/loop-objectives.md). Until is what must be TRUE for this
+	// Objective (docs/design/loop-objectives.md). Until is what must be TRUE for this
 	// schedule to be finished, in the owner's own words; empty is an ordinary
 	// standing agent, which runs its cron and never asks whether it is done.
 	// With it set, every fire is judged from what it actually did, a met
@@ -190,7 +190,7 @@ type StandingAgent struct {
 	UnmetCount  int                `json:"unmet_count,omitempty"`
 	Attempts    []ObjectiveAttempt `json:"attempts,omitempty"`
 
-	// Pacing (docs/objective-pacing.md): when an attempt could not finish
+	// Pacing (docs/design/objective-pacing.md): when an attempt could not finish
 	// because it was WAITING on something, it may say when the next one should
 	// happen. Consumed by ScheduleStandingAgent, which is where the next fire
 	// is armed.
@@ -502,7 +502,7 @@ func StandingStopNote(sa StandingAgent) string {
 // already stored flat. A shared reader costs nothing; a shared field layout
 // would cost a migration on records that are firing.
 //
-// Slice 2 of docs/scheduling-unification.md.
+// Slice 2 of docs/design/scheduling-unification.md.
 func ParkCauseOf(broken bool, storedCause string) string {
 	if !broken {
 		return ""

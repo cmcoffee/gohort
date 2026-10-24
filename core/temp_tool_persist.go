@@ -402,7 +402,7 @@ type PersistentTempTool struct {
 	// offers it to all). Non-empty = only those usernames see it in the catalog
 	// and may adopt it. A user's own (unshared) pool is always fully theirs, so
 	// this is ignored when Shared is false. Mirrors SecureCredential.AllowedUsers
-	// — one ACL concept across creds and tools. See docs/sharing-governance.md.
+	// — one ACL concept across creds and tools. See docs/design/sharing-governance.md.
 	AllowedUsers []string `json:"allowed_users,omitempty"`
 	// SharedWith is the OWNER's own rung: colleagues who may adopt this tool
 	// without it ever reaching the deployment catalog. Distinct from

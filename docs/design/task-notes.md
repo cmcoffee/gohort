@@ -120,7 +120,7 @@ The two blocks are complementary and both belong:
 The same `update_notes`, with the same section semantics, mounted BY THE FIRE.
 
 This is the pattern `set_next_attempt` already establishes (`core/pacing`,
-`docs/objective-pacing.md`): the lever belongs to the turn that can use it, and
+`docs/design/objective-pacing.md`): the lever belongs to the turn that can use it, and
 it is never an action on `recurring`, which a Fleet agent never gets. The mount
 points already exist and already carry the pacing tool:
 
@@ -180,7 +180,7 @@ exists (see Migration).
 
 Unchanged. One document, 1500 runes, sections competing inside that budget,
 an over cap write refused rather than truncated with the largest sections named
-(`OverCapAdvice`). Everything in `docs/working-notes-sections.md` applies as
+(`OverCapAdvice`). Everything in `docs/design/working-notes-sections.md` applies as
 written; only the namespace and the render site differ.
 
 The seed splice bug fixed once on the agent path applies here too and must be

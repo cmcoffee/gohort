@@ -194,7 +194,7 @@ type SecureCredential struct {
 	// [Owner]). Admin-created credentials are global; user-created ones (via the
 	// future user surface, phase 3) carry their owner. A hybrid
 	// (cred_scope=per_user) stays GLOBAL config with per-user SECRETS — Owner is
-	// still empty for it. See docs/tool-credential-namespacing.md.
+	// still empty for it. See docs/design/tool-credential-namespacing.md.
 	Owner string `json:"owner,omitempty"`
 	// AllowedUsers is TIER 1 of credential access: which USERS may dispatch
 	// through this credential. Empty = all users (open). Non-empty = only those
@@ -204,7 +204,7 @@ type SecureCredential struct {
 	// config lives on the admin page. User-OWNED credentials are governed by
 	// ownership instead. A user's per-agent opt-out is tier 2
 	// (AgentRecord.DisabledCredentials). Secured creds ignore this (their access
-	// follows the tool-binding model). See docs/tool-credential-namespacing.md.
+	// follows the tool-binding model). See docs/design/tool-credential-namespacing.md.
 	AllowedUsers []string `json:"allowed_users,omitempty"`
 	// OnlyAgents narrows a USER-OWNED credential to some of its owner's own
 	// agents: non-empty = only these agent ids may dispatch through it (the
@@ -276,7 +276,7 @@ type SecureCredential struct {
 	// TOOL scope: whoever has an approved tool scoped can use the cred through it,
 	// secret server-side. A tool not listed can't newly bind the secured cred at
 	// authoring time. Empty / ignored on Open creds. See
-	// docs/secured-credential-tool-binding.md.
+	// docs/design/secured-credential-tool-binding.md.
 	ApprovedToolBindings []string `json:"approved_tool_bindings,omitempty"`
 	// RevokedToolBindings are TOMBSTONES: tools an admin explicitly revoked. They
 	// are the reason dispatch enforcement needs no eager backfill — a legacy
@@ -1356,7 +1356,7 @@ func (s *SecureAPI) SetOnlyAgentsOwned(owner, name string, agents []string) erro
 // --- secured-credential tool bindings ---------------------------------------
 // The binding allowlist is how a SECURED credential's access follows TOOL scope:
 // a tool must be an APPROVED binding to declare (and thus dispatch through) the
-// cred. See docs/secured-credential-tool-binding.md. secret:<cred> is never a
+// cred. See docs/design/secured-credential-tool-binding.md. secret:<cred> is never a
 // binding — that path stays hard-blocked in the authoring guard; only the
 // secret-safe fetch_via / api-mode declarations are bindable.
 

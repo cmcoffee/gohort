@@ -14,7 +14,7 @@ import (
 // it — a received channel message, a session digest — for awareness, WITHOUT
 // running a turn over them. The cortex stays the agent's continuous context; it
 // only RUNS on a real received turn or a trigger, and then it has all the
-// accumulated observations on hand. See docs/channels-and-agents.md.
+// accumulated observations on hand. See docs/design/channels-and-agents.md.
 
 // Cortex report-card kinds — classify a ReportFrom observation so the UI picks a
 // fitting icon (a person's channel message vs a scheduled report vs a monitor

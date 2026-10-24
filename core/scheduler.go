@@ -157,7 +157,7 @@ func UpdateScheduledTaskPayload(id string, payload any) bool {
 // the pre-arm pattern arms the next occurrence BEFORE a long fire, so whatever
 // the fire learns about the next occurrence arrives after the entry exists.
 // This is the same problem for the other half of the entry: what the fire
-// learns about WHEN the next one should run (docs/objective-pacing.md).
+// learns about WHEN the next one should run (docs/design/objective-pacing.md).
 //
 // Atomic with fireDueTasks' dequeue under schedDBMu, and wakes the loop so a
 // task moved EARLIER is not left waiting behind the old sleep target.

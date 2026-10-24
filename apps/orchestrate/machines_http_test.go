@@ -187,7 +187,7 @@ func TestMachinesHTTP_ImportRoundTrip(t *testing.T) {
 	}
 }
 
-// The machine printed in docs/agent-machines.md under "Trying one live",
+// The machine printed in docs/design/agent-machines.md under "Trying one live",
 // verbatim. It is the first thing anyone will paste at this endpoint, and
 // a documented example that 400s is worse than no example — so it is
 // posted here rather than trusted.

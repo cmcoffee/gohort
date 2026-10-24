@@ -16,7 +16,7 @@ package core
 // WHEN THIS FAILS, in order of preference:
 //
 //  1. Put the code in a subpackage. `go run ./scripts/cutmap core <prefix>`
-//     says whether a cluster can leave and what it would cost; docs/core-cuts.md
+//     says whether a cluster can leave and what it would cost; docs/design/core-cuts.md
 //     ranks the candidates and records the two traps (methods pinned to a type
 //     in another file, and outbound TYPE edges, which cannot become hooks).
 //  2. Unexport what does not need to be exported. Every exported name here lands
@@ -44,7 +44,7 @@ const (
 	//
 	// 167 as of v0.6.444, for connector_botframework.go. A connector kind has
 	// nowhere else to live: it implements ConnectorHandler and takes Connector,
-	// both declared here, and docs/core-cuts.md records that outbound TYPE edges
+	// both declared here, and docs/design/core-cuts.md records that outbound TYPE edges
 	// are the thing that kills a cut. Every sibling kind (bridge, restmessaging,
 	// restpoll, mcp, desktop, command) is in the hub for that same reason. The
 	// part of that work with no such edge, JWKS verification, did leave: it is
@@ -149,7 +149,7 @@ const (
 	// on 2164 — the exact top of the slack — when it arrived, which is the
 	// ceiling working rather than a reason to argue with it. The type cannot
 	// leave the hub: it is a field on RunRecord and a hook parameter on
-	// AgentLoopConfig, both declared here, and docs/core-cuts.md records
+	// AgentLoopConfig, both declared here, and docs/design/core-cuts.md records
 	// outbound TYPE edges as the thing that kills a cut. It cannot be
 	// unexported either, because orchestrate writes the hook's closure and has
 	// to name the parameter. What did NOT get exported is its total: Estimated
@@ -360,7 +360,7 @@ func TestCoreStaysUnderItsCeiling(t *testing.T) {
 	switch {
 	case files > coreFileCeiling:
 		t.Errorf("package core is %d files, ceiling %d.\n"+
-			"Prefer a subpackage (see docs/core-cuts.md and `go run ./scripts/cutmap core <prefix>`).\n"+
+			"Prefer a subpackage (see docs/design/core-cuts.md and `go run ./scripts/cutmap core <prefix>`).\n"+
 			"If the hub is genuinely the right home, raise coreFileCeiling to %d in this file and say why in the commit.",
 			files, coreFileCeiling, files)
 	case files < coreFileCeiling:

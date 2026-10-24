@@ -19,7 +19,7 @@
 // one-off schedule, a wrapping pipeline) either never reported back or had
 // no machine runner at all.
 //
-// See docs/agent-machines.md.
+// See docs/design/agent-machines.md.
 
 package orchestrate
 

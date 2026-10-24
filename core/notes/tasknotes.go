@@ -11,7 +11,7 @@
 // none of those can happen, and the model needs no rule for telling the two
 // apart because it is never offered both at once.
 //
-// See docs/task-notes.md.
+// See docs/design/task-notes.md.
 
 package notes
 

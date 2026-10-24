@@ -7,7 +7,7 @@ package filestore
 // count, time span, emitting host, severity counts), timestamps are parsed, a
 // timeline merges files in time order, and the indexed copy is encrypted at
 // rest. That used to need a servitor bundle system per dump, uploaded by hand
-// (docs/servitor-systems-model.md). With "Index folders as evidence" on, each
+// (docs/design/servitor-systems-model.md). With "Index folders as evidence" on, each
 // subfolder of the store (a case, a run, a dump) is indexed into the bundle
 // store as it arrives, and an attached agent gets summarize_<slug> and
 // timeline_<slug> next to list, search and read.

@@ -298,7 +298,7 @@ func (c *chatPage) page(nav []ui.NavLink) ui.Page {
 					ChannelsURL:    "api/channels?agent_id={agent_id}",
 					DiagnosticsURL: "api/session-diag?agent={agent_id}&session={session}",
 					// Phase pill — empty for every session not running a
-					// machine, which is the default (docs/agent-machines.md).
+					// machine, which is the default (docs/design/agent-machines.md).
 					StatusURL:        "api/session-status?agent={agent_id}&session={session}",
 					ChannelSaveURL:   "api/channels?agent_id={agent_id}",
 					ChannelDeleteURL: "api/channels?id={id}",
@@ -311,7 +311,7 @@ func (c *chatPage) page(nav []ui.NavLink) ui.Page {
 					TruncateURL:           "api/sessions/{id}?agent_id={agent_id}",
 					// Per-turn scrub (✕ on each bubble) — replaces the separate
 					// History view's row-delete; works on every thread, not just
-					// the home thread. See docs/channel-model.md.
+					// the home thread. See docs/design/channel-model.md.
 					MessageScrub:   true,
 					RenameURL:      "api/sessions/rename?agent_id={agent_id}",
 					MarkAllReadURL: "api/sessions/mark-all-read?agent_id={agent_id}",
@@ -355,7 +355,7 @@ func (c *chatPage) page(nav []ui.NavLink) ui.Page {
 					// Orchestrator-mode agents (the Operator) swap the session
 					// list for this nav; normal agents ignore it entirely.
 					// No "Channel" or "History" rows anymore (channel model — see
-					// docs/channel-model.md): the home thread is just the pinned
+					// docs/design/channel-model.md): the home thread is just the pinned
 					// session at the top of the list (open it to read it), and
 					// per-turn scrubbing is the inline ✕ on each bubble (works on
 					// every thread, not only the home thread). What remains is the

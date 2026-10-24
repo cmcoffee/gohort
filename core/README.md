@@ -1,16 +1,16 @@
 # core
 
-Framework foundation for all fuzz agents. Provides the agent interface, LLM abstraction, web infrastructure, and shared utilities.
+The framework every gohort app builds on: the app base type, the LLM abstraction, web infrastructure, and shared utilities.
 
 ## Key Types
 
-### FuzzAgent
+### AppCore
 
-Base struct embedded by all agents. Provides:
+Base struct embedded by every app. Provides:
 
 - `LLM`: Primary (worker) model for volume calls
 - `LeadLLM`: Optional precision model for critical calls (falls back to LLM if nil)
-- `DB`: Agent-private database bucket
+- `DB`: App-private database bucket
 - `Cache`: Ephemeral per-run cache
 - `Report`: Token usage tracking
 - `Flags`: CLI flag parsing
@@ -19,14 +19,14 @@ Base struct embedded by all agents. Provides:
 
 ```go
 // Worker LLM call with token tracking
-resp, err := agent.WorkerChat(ctx, messages, opts...)
+resp, err := app.WorkerChat(ctx, messages, opts...)
 
-// Precision LLM call — uses LeadLLM if available, falls back to LLM
+// Precision LLM call: uses LeadLLM if available, falls back to LLM
 // Also falls back on error or empty response (safety filter)
-resp, err := agent.LeadChat(ctx, messages, opts...)
+resp, err := app.LeadChat(ctx, messages, opts...)
 
 // Get the precision model (or worker if not configured)
-llm := agent.GetLeadLLM()
+llm := app.GetLeadLLM()
 ```
 
 ## LLM Providers
@@ -45,12 +45,13 @@ type LLM interface {
 | `llm_openai.go` | OpenAI + Ollama | Ollama uses OpenAI-compatible endpoint with `num_ctx` warmup |
 | `llm_gemini.go` | Google Gemini | Thinking model support (2.5+), safety settings, auto thinking budget |
 | `llm_anthropic.go` | Anthropic | Claude models with streaming and tool use |
+| `llm_bedrock.go` | AWS Bedrock | Region and profile per config; SigV4 signing |
 
 ## Web Infrastructure
 
 ### LiveSessionMap[T]
 
-Generic concurrent session manager for SSE-based agents:
+Generic concurrent session manager for SSE-based apps:
 
 ```go
 sessions := NewLiveSessionMap[MyEvent](3) // max 3 concurrent
@@ -62,7 +63,7 @@ s := sessions.Register(id, label, cancelFunc)
 sessions.AppendEvent(id, event, isDone)
 
 // HTTP handlers (mount directly on routes)
-mux.HandleFunc("/api/cancel", sessions.HandleCancel("Agent"))
+mux.HandleFunc("/api/cancel", sessions.HandleCancel("App"))
 mux.HandleFunc("/api/reconnect", sessions.HandleReconnect())
 mux.HandleFunc("/api/live", sessions.HandleLive())
 
@@ -72,7 +73,7 @@ sessions.ScheduleCleanup(id)
 
 ### HistoryHandlers[R, S]
 
-Generic CRUD handlers for agent history:
+Generic CRUD handlers for app history:
 
 ```go
 list, detail, delete := HistoryHandlers[Record, Summary](dbFunc, tableName, transformFunc)
@@ -97,27 +98,26 @@ result := CachedSearch(cache, query)
 
 ## Tunables Registry
 
-Framework knobs self-register instead of living as hardcoded constants, so they
-surface in the admin **Tuning** tab automatically:
+Framework knobs self-register instead of living as hardcoded constants, and appear in the admin **Tuning** tab:
 
 ```go
 // Register once (typically in an init()), then read through the typed accessor.
+// From core/stream_watchdog.go and core/run_ledger.go.
 RegisterTunable(TunableSpec{
-    Key: "document_extract_timeout", Category: "Timeouts",
-    Kind: KindSeconds, Default: 30,
-    Label: "Document extract timeout", Help: "Max wall-clock per PDF/DOCX extract.",
+    Key: "tune_stream_idle_timeout", Category: "Timeouts",
+    Kind: KindSeconds, Default: 60, Min: 10, Max: 600,
+    Label: "Stream idle timeout", Help: "Max wall-clock gap with no bytes on a streaming LLM response before the read aborts.",
 })
 
-timeout := TuneDuration("document_extract_timeout") // honors the admin override, else Default
-maxK    := TuneInt("knowledge_top_k")
-ratio   := TuneFloat("hybrid_search_alpha")
+idle    := TuneDuration("tune_stream_idle_timeout") // honors the admin override, else Default
+maxRuns := TuneInt("tune_max_runs_per_owner")
 ```
 
-Each knob gets an editable, revert-to-default row in the admin UI; no per-knob UI code.
+Each knob gets an editable, revert-to-default row in the admin UI with no per-knob UI code.
 
 ## Memory Primitives
 
-Per-namespace stores agents layer on top of:
+Per-namespace stores the memory layers are built on:
 
 - `factstore.go`: flat always-in-prompt facts (semantic dedup + supersession at save).
 - `graphstore.go`: entities + typed relationships (`UpsertGraphEntity` / `LinkGraphEdge`, queried via the agent's `link_entities` / `recall_about` tools), with a query-time graph→vector bridge that folds the top related knowledge passages into a recall.
@@ -125,8 +125,7 @@ Per-namespace stores agents layer on top of:
 
 ## External-Cost Ledger
 
-Source hooks and API credentials carry an optional per-call cost; record it once
-and it accrues per-source for the admin **Costs** tab:
+Source hooks and API credentials carry an optional per-call cost, which accrues per source for the admin **Costs** tab:
 
 ```go
 RecordExternalCost(sourceID, label, costPerCall) // accrues per-source; read via CostBySource
@@ -134,19 +133,10 @@ RecordExternalCost(sourceID, label, costPerCall) // accrues per-source; read via
 
 ## Connectors
 
-`connector.go` is a domain-agnostic "bridge type" primitive: a `Connector`
-record an authoring agent drafts and an admin approves, materializing a real
-capability with no code change. core owns only the record + draft→approve
-lifecycle; each kind supplies a handler:
+`connector.go` is a domain-agnostic "bridge type" primitive: a `Connector` record an authoring agent drafts and an admin approves, materializing a capability with no code change. core owns only the record and the draft→approve lifecycle; each kind supplies a handler:
 
 ```go
 RegisterConnectorKind(kind, handler) // handler: Validate / Materialize / Teardown / Summary
 ```
 
-Shipped kinds live in sibling files: `connector_mcp.go` (`remote_mcp`, wraps
-`MCPServerConfig`), `connector_restpoll.go` (`rest_poll`, a watch-monitor;
-implements the optional `ConnectorAutoApprover` so it goes live on create),
-`connector_desktop.go` (`desktop_mcp`) and `connector_command.go`
-(`desktop_command`): the last two push a `DesktopInstall` to the owner's
-desktop bridge via `InstallToDesktop`. The LLM-facing `connector` tool and the
-**Admin › Connectors** surface live in `apps/orchestrate` and `apps/admin`.
+Shipped kinds live in sibling files, among them `connector_mcp.go` (`remote_mcp`, wraps `MCPServerConfig`), `connector_restpoll.go` (`rest_poll`, a watch-monitor; implements the optional `ConnectorAutoApprover` so it goes live on create), `connector_desktop.go` (`desktop_mcp`) and `connector_command.go` (`desktop_command`). The last two push a `DesktopInstall` to the owner's desktop bridge via `InstallToDesktop`. The LLM-facing `connector` tool lives in `apps/orchestrate`, and the Connectors section is on the admin **Extensions** tab.

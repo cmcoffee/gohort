@@ -60,7 +60,7 @@ func (T *OrchestrateApp) handleAgentGuardrails(w http.ResponseWriter, r *http.Re
 			// Scan scope rides this endpoint because it is owner-only and
 			// protected the same way — NOT because it is a rule. It is not one:
 			// it needs no authored guardrail and "disabled" above does not
-			// suspend it. See docs/tool-result-scan.md.
+			// suspend it. See docs/design/tool-result-scan.md.
 			"scan_tool_results": scansToolResults(agent),
 			"scan_tools_add":    agent.ScanToolsAdd,
 			"scan_tools_skip":   agent.ScanToolsSkip,

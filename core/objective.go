@@ -12,7 +12,7 @@
 // The judging and the outcome rules live with the runner in
 // apps/orchestrate/objective_judge.go — core owns the record, not the policy.
 //
-// See docs/loop-objectives.md.
+// See docs/design/loop-objectives.md.
 package core
 
 // ObjectiveAttempt is one earlier fire's verdict, as the next fire is told it.
@@ -34,4 +34,4 @@ type ObjectiveAttempt struct {
 // The other half of an objective, the ASK for when the next attempt should
 // happen, lives in core/pacing: it is a tool and a bit of state that only the
 // surfaces mounting it need, and core's namespace lands in every file that
-// dot-imports it. See docs/objective-pacing.md.
+// dot-imports it. See docs/design/objective-pacing.md.

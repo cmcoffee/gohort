@@ -365,7 +365,7 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 				// the tool's own scope. Two exceptions: secret:<cred> (raw key to a
 				// script) is never a binding and stays hard-blocked; and an admin's
 				// explicit REVOKE of this tool is a durable deny. See
-				// docs/secured-credential-tool-binding.md.
+				// docs/design/secured-credential-tool-binding.md.
 				if cr, ok := Secure().Load(name); ok && cr.Secured {
 					switch {
 					case method == "secret":

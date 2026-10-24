@@ -22,7 +22,7 @@ job, so each one rebuilt, inside Servitor, something agents now do in general:
 
 Both were made appliance types because the appliance record was the cheapest chassis: it gave
 sharing, agent access, memory, sessions, linked repos and a place in the picker for free
-(`docs/servitor-evidence-bundles.md` says so, and weighs "attachment" as the cheaper option that
+(`docs/design/servitor-evidence-bundles.md` says so, and weighs "attachment" as the cheaper option that
 gets none of that). Agents and file stores now give all of those things themselves.
 
 ## The model
@@ -93,7 +93,7 @@ history and the investigation's map of the code are what they are for.
 
 Each stage ships on its own, and nothing existing stops working until its replacement is in use.
 
-1. **Evidence on file stores. BUILT, v0.8.333** (`docs/file-stores.md`, Evidence). The switch, the
+1. **Evidence on file stores. BUILT, v0.8.333** (`docs/design/file-stores.md`, Evidence). The switch, the
    ingest on arrival, the `summarize_<slug>` and `timeline_<slug>` tools, wiping on delete. Tests: a folder pulled in is indexed; two folders
    in one store stay separate; deleting a folder wipes its index; the tools refuse a folder that
    is not in the store. Nothing in Servitor changes.

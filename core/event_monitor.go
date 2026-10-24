@@ -239,7 +239,7 @@ type EventMonitor struct {
 	// wherever it was set.
 	Attempts []ObjectiveAttempt `json:"attempts,omitempty"`
 
-	// Pacing (docs/objective-pacing.md): the agent this monitor woke may say
+	// Pacing (docs/design/objective-pacing.md): the agent this monitor woke may say
 	// when the next CHECK should happen — "still in review, don't look again
 	// until tomorrow". Consumed by ScheduleEventMonitor, which is where the
 	// next poll is armed, the same way a standing agent's is.

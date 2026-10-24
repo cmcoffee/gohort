@@ -80,8 +80,8 @@ The machine supplies the progression; the agent supplies the reach. Attach all o
 
 | Reach | From |
 |---|---|
-| the log folders | a **file store** (`docs/file-stores.md`) attached under Sources |
-| the command | the store's own mapped commands (`docs/file-stores.md`, Commands for agents) |
+| the log folders | a **file store** (`docs/design/file-stores.md`) attached under Sources |
+| the command | the store's own mapped commands (`docs/design/file-stores.md`, Commands for agents) |
 | GitLab, Confluence, tickets | MCP servers (`core/mcp_manager.go`), admin-configured |
 | a live system | a servitor SSH appliance, connected |
 
@@ -138,7 +138,7 @@ missing was ever asking: a model does not volunteer memory writes.
 - **The blackboard overwrites.** Re-entering `hunch` replaces the previous hypothesis rather than
   keeping a history of what has been ruled out (`walk()` assigns `cur.State[ph.Name]`). Across a long
   investigation with several hypotheses, that loses the trail. This is prediction 1 from
-  `docs/troubleshooting-machine.md` and this machine is the thing likely to hit it first.
+  `docs/design/troubleshooting-machine.md` and this machine is the thing likely to hit it first.
 
 ## Loading it
 

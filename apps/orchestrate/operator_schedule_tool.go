@@ -30,7 +30,7 @@ import (
 // here rather than by the agent. Everything else has a default. Underneath,
 // each `when` calls the handler of the tool it replaced, so records, runners,
 // the console and the run ledger are untouched: this is one surface over the
-// same machinery, not a merge of the stores (docs/scheduling-unification.md
+// same machinery, not a merge of the stores (docs/design/scheduling-unification.md
 // says why the stores stay apart).
 
 // scheduleFoldedTools are the operator tools `schedule` replaces. They are

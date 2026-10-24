@@ -5,7 +5,7 @@ item (`kind: machine`, v0.6.276), which is the parallel child-run shape a
 branching investigation wants. Bodies became EDITABLE on the page in v0.6.278
 (a section per body step, addressed by path). The per-branch block mode remains
 unbuilt. Related: `core/pipeline_def.go`, `core/pipeline_interp.go`,
-`docs/pipeline-structured-outputs.md`, `project_pipeline_loop_stage`,
+`docs/design/pipeline-structured-outputs.md`, `project_pipeline_loop_stage`,
 `project_pipeline_framework_future`.
 
 A fanout runs ONE call per item. A loop runs MANY stages per pass. Nothing runs
@@ -18,7 +18,7 @@ once per item, with per-branch scope and a structured collection of results.**
 
 ## Why this is the gap that matters
 
-`docs/pipeline-structured-outputs.md` made stages typed, which is what let
+`docs/design/pipeline-structured-outputs.md` made stages typed, which is what let
 `loop`, `branch`, `fan_over NAME.field` and `tool` exist. Composition is the
 piece that never landed. Today:
 
@@ -188,7 +188,7 @@ are visible in the joined text is more useful than an aborted run.
   unaffected, and `items` simply does not appear.
 - Stored defs need no migration: `Body` is already on the struct and already
   round-trips through JSON and the `pipeline` tool.
-- `docs/pipeline-surfaces.md` and the `pipeline` tool's help text need the new
+- `docs/design/pipeline-surfaces.md` and the `pipeline` tool's help text need the new
   shape described, since the tool is how bodies are authored today.
 
 ## Authoring surface (BUILT v0.6.278)
@@ -250,4 +250,4 @@ disappointment worth avoiding.
 - `core/pipeline_structured_test.go` (or a new `pipeline_fanout_body_test.go`):
   the list above.
 - `apps/orchestrate/pipeline_tools.go`: the `pipeline` tool's schema and help.
-- `docs/pipeline-surfaces.md`: the authoring surface note.
+- `docs/design/pipeline-surfaces.md`: the authoring surface note.

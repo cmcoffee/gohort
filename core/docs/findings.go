@@ -14,7 +14,7 @@
 //
 // So a finding names no destination. It says what was learned and where it came
 // from; something with a view of the whole corpus decides the rest. See
-// docs/guides-curator.md.
+// docs/design/guides-curator.md.
 package docs
 
 import (

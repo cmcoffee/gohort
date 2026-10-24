@@ -275,7 +275,7 @@ func SearchCollections(ctx context.Context, base Database, user string, collecti
 // collectionsEnv bundles the storage + embedding state the retrieval primitives
 // read, so they run against injected state (an SDK consumer's AppCore) or the
 // process globals (the server) through one seam. SDK Phase 1 — see
-// docs/sdk-decoupling-scope.md.
+// docs/design/sdk-decoupling-scope.md.
 type collectionsEnv struct {
 	Base       Database        // user-scoped collections home
 	VectorDB   Database        // dedicated vector store (all shared chunk I/O)

@@ -272,7 +272,7 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	// One task's working notes: what its fires have left for each other. GET
 	// reads, POST replaces (the same write path update_notes uses). Scoped by
 	// (kind, id) from the row, and only for tasks this user owns. See
-	// task_notes.go and docs/task-notes.md.
+	// task_notes.go and docs/design/task-notes.md.
 	T.HandleFunc("/api/console/scheduler/notes", T.handleTaskNotes)
 	T.HandleFunc("/api/console/goals", T.handleConsoleGoals)
 	// Link groups: schedules that run together at one time, one after another.

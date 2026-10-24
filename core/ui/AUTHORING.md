@@ -2,11 +2,9 @@
 
 ## What this framework is for
 
-gohort is a platform for assembling small AI-backed apps. The goal of the `core/ui` framework is to make it **simple for an app developer with no prior web experience to add new capabilities to gohort** by reusing primitives and structures already in place. You should not have to write HTML, CSS, or DOM-manipulation JavaScript to ship a working app. You write a Go struct, declare a page in terms of pre-built components (Table, FormPanel, ChatPanel, PipelinePanel, …), and the framework renders it.
+`core/ui` lets an app developer with no web experience add capabilities to gohort from primitives that already exist. You should not have to write HTML, CSS, or DOM-manipulation JavaScript to ship a working app. You write a Go struct, declare a page in terms of pre-built components (Table, FormPanel, ChatPanel, PipelinePanel, …), and the framework renders it.
 
-Every primitive in `core/ui` is intentionally generic: *no* primitive knows what "debate" or "research" or "techwriter" means. When an app needs behavior beyond what the primitives offer, it plugs into one of four extension registries (block renderer, markdown extension, client action, `ExtraHeadHTML`) from its own package. This separation is enforced; see `CLAUDE.md` at the repo root for the rule and `scripts/hooks/pre-commit` for the guard.
-
-The payoff: each new app pulls from a growing toolkit of reusable parts. You don't redesign the page chrome, the sidebar, the form fields, the chat layout, or the SSE pipeline: you reach for the parts that already exist. The framework stays generic *so that* the toolkit keeps compounding.
+Every primitive in `core/ui` is generic: no primitive knows what a particular app means. When an app needs behavior beyond what the primitives offer, it plugs into one of four extension registries (block renderer, markdown extension, client action, `ExtraHeadHTML`) from its own package. This separation is enforced; see `CLAUDE.md` at the repo root for the rule and `scripts/hooks/pre-commit` for the guard.
 
 ## App anatomy
 
@@ -114,7 +112,7 @@ func (T *HelloAgent) handleEcho(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
-Add a blank import in `apps.go` to register it:
+Add a blank import in `agents.go` (the loader at the repo root) to register it:
 
 ```go
 import _ "github.com/cmcoffee/gohort/apps/hello"
@@ -138,7 +136,7 @@ If you need direct mux/prefix control (custom access wrappers, alternate mount s
 ## Concepts in 5 minutes
 
 ### App = Agent + Routes
-An app is one struct that implements `core.Agent`. Its `RegisterRoutes` mounts HTTP handlers on a sub-mux. The framework gives it user auth, a per-user kvlite database (`T.DB`), and LLM sessions (`T.WorkerChat()`, optionally `T.LeadChat()`).
+An app is one struct that implements `core.Agent`. Its `Routes()` registers HTTP handlers on the app's sub-mux. The framework gives it user auth, a per-user kvlite database (`T.DB`), and LLM sessions (`T.WorkerChat()`, optionally `T.LeadChat()`).
 
 ### Page = declarative tree of components
 `ui.Page` is a Go struct describing the page. You don't write HTML or CSS. The framework's runtime JS (`/_ui/ui.js`) reads your page config and builds the DOM.
@@ -164,7 +162,7 @@ ui.Card{
 `RefreshOn` entries match an invalidated source by PREFIX, so one entry covers
 the per-record writes (`…/parts?name=x`) a form broadcasts when it saves. The
 card coalesces a burst of saves into one fetch, keeps the last good content if
-the fetch fails, and dispatches `ui-card-refreshed` on itself afterwards
+the fetch fails, and dispatches `ui-card-refreshed` on itself afterwards:
 listen for that if your page decorates the card's elements. Serve the block
 from the SAME function the page renders it with, so the refresh cannot drift
 from the first paint.
@@ -172,18 +170,14 @@ from the first paint.
 ### SSE for streaming, REST for the rest
 Static data → JSON over plain HTTP. Live pipelines → SSE (`/api/send`, framework runtime handles the protocol). The `PipelinePanel` primitive does this for you: you write a *bridge* function that translates your app's events into framework SSE events.
 
-### Apps stay in their lane
-The shared runtime (`core/ui/`) knows nothing about debate, research, blogger, etc. Anything app-specific lives in the app's package: CSS, custom block renderers, markdown extensions. Apps inject them via `Page.ExtraHeadHTML`. This is enforced; new code in `core/ui/` that mentions an app name is a bug.
-
 ### The public surface (what an app may depend on)
 
 An app should build only against the surface below. Everything else in `package
 core` is framework internals: it may change or move without notice, and it is
-being migrated under `core/internal/` package-by-package as it proves separable
-(Go bars apps from importing anything under `core/internal/`: the boundary is
-compiler-enforced, not a convention). If you find yourself reaching for a `core`
-symbol not listed here, that's a signal to either (a) request it be promoted to
-the public surface, or (b) solve it in your own package.
+being migrated under `core/internal/` package by package (Go bars apps from
+importing anything there). If you need a `core` symbol not listed here, either
+(a) request it be promoted to the public surface, or (b) solve it in your own
+package.
 
 The public surface, ordered most → least stable:
 
@@ -197,12 +191,9 @@ The public surface, ordered most → least stable:
 Deprecations: a symbol slated for removal is marked `// Deprecated:` for at
 least one minor release before it goes.
 
-Changes to this surface are recorded in the **commit log**, not a separate
-changelog file. Every commit names the version it ships (`(v0.5.x)`) and its
-message explains what moved and why, so `git log -- core/ core/ui/` is the
-authoritative history, and unlike a hand-maintained list, it cannot drift out
-of date. A `CHANGELOG.md` used to live at the repo root; it fell 600+ versions
-behind, which is worse than not having one, so it was retired.
+Changes to this surface are recorded in the **commit log**, not a changelog
+file: each commit message explains what moved and why, so `git log -- core/
+core/ui/` is the authoritative history.
 
 ---
 
@@ -337,9 +328,9 @@ A `rows` field edits a LIST of small records inside one field of one record:
 The value is a plain array of objects keyed by the columns' `Field` names, so an
 endpoint keeps its natural shape (`output: [{name, type, required}]`).
 
-Reach for it wherever a structured editor would otherwise be a JSON textarea
+Reach for it wherever a structured editor would otherwise be a JSON textarea:
 phase outputs, pipeline stage outputs, an action's parameters, an intake form's
-fields. That is what every one of those was before this existed.
+fields.
 
 A column is itself a `FormField`, so cells use the same vocabulary as the rest of
 the form (`text` / `number` / `select` / `toggle`). `Width` is a flex weight, so a
@@ -349,7 +340,7 @@ Order is preserved and editable (↑↓ per row), because in most of these the o
 IS meaning. There is no drag-to-reorder: the buttons are keyboard-reachable, work
 on a phone, and cannot drop a row somewhere nobody meant.
 
-Two behaviours worth knowing before you design around it: adding a blank row does
+Adding a blank row does
 NOT save (an empty row is not data, and persisting it makes validation complain
 about a field nobody has reached yet), and a text cell commits on blur rather than
 per keystroke, because the whole array is one save.
@@ -440,15 +431,15 @@ You write a *bridge* in a `chat_endpoints.go` that:
 
 ### 3. Chat app
 
-User-and-assistant message thread, optionally with tools and attachments. Use `ui.ChatPanel`. See `apps/chat/` for the reference.
+User-and-assistant message thread, optionally with tools and attachments. Use `ui.ChatPanel`.
 
 **A chat that runs on an agent** (the agent plans, calls tools, and the app hands it tools that write into the app's own data, as Scribe's Guide Author does): use `ui.AgentLoopPanel` and let orchestrate run the turns.
 
 1. Register the agent with `appagents.RegisterAppAgent` (an `AppAgentSpec`: id, owning app, prompt, allowed tools; `Hidden: true` when it only makes sense inside your app). Each user gets their own copy layered over your definition. It is your app's: orchestrate does not list it, it cannot be deleted, and it is set up in your app (step 3).
 2. Send through `orch.PublicHandleSendWithAppTools(w, r, agent, tools)`, with the agent from `orch.LookupAppAgent(user, id)` and your tools as `[]AgentToolDef`.
-3. Wire everything else with `orchestrate.AppChat`. `chat.Panel(ui.AgentLoopPanel{...})` fills in every endpoint you leave empty (edit and retry on a message, rename, rejoining a running turn after a reload, tool confirmations, question cards, guard notices), and `orch.ServeAppChat(w, r, agent, chat, path, scope)` answers them. Set `Settings: true` and `Back` (your page's path) for "Agent settings" in the chat's toolbar: a settings page served under your prefix with the agent's rounds, plan steps, gap detection and reasoning, and Reset to default. It covers every app agent your app registers (one section each), plus any you list in `Agents` that another app owns but yours runs (Scribe lists Publishing's Publisher). The save takes those fields, for those agents, and nothing else. Do not hand-wire these URLs: a URL left off is a control that is silently missing, which is how apps drifted apart before this existed. `apps/scribe/web.go` (`scribeChat`) is the reference.
+3. Wire everything else with `orchestrate.AppChat`. `chat.Panel(ui.AgentLoopPanel{...})` fills in every endpoint you leave empty (edit and retry on a message, rename, rejoining a running turn after a reload, tool confirmations, question cards, guard notices), and `orch.ServeAppChat(w, r, agent, chat, path, scope)` answers them. Set `Settings: true` and `Back` (your page's path) for "Agent settings" in the chat's toolbar: a settings page served under your prefix with the agent's rounds, plan steps, gap detection and reasoning, and Reset to default. It covers every app agent your app registers (one section each), plus any you list in `Agents` that another app owns but yours runs (Scribe lists Publishing's Publisher). The save takes those fields, for those agents, and nothing else. Do not hand-wire these URLs: a URL left off is a control that is silently missing. `apps/scribe/web.go` (`scribeChat`) is the reference.
 4. **Declare what each tool does.** The guards act on declarations, not names: `Caps: []Capability{CapNetwork}` for a tool that reaches the network (Private mode drops it; its output is fenced and scanned), `FetchesExternal: true` for one that returns outside documents without a network capability of its own, `CapWrite` for one that changes stored data. A tool that declares nothing gets none of that. A handler that starts its own run passes the handler's `ctx` along, never `context.Background()`, or Private mode and Stop do not reach it.
-5. **An app that runs its own agent loops** (not orchestrate's runner) applies `orch.AppLoopGuard(ctx, user, agentID).Apply(cfg)` to each loop config, one guard per run, or no guardrail sees those loops. `docs/app-agents.md` has the whole picture.
+5. **An app that runs its own agent loops** (not orchestrate's runner) applies `orch.AppLoopGuard(ctx, user, agentID).Apply(cfg)` to each loop config, one guard per run, or no guardrail sees those loops. `docs/design/app-agents.md` has the whole picture.
 
 ### 4. Live-watch page
 
@@ -519,7 +510,7 @@ window.uiRegisterMarkdownExtension(function(html) {
 ```
 
 ### Rendering markdown into your own element
-If a custom block renderer (or any app DOM) needs to show rendered markdown, use `window.uiRenderMarkdown(el, text)` rather than `el.innerHTML = uiMdToHTML(text)`. It stamps the `.ui-md` prose class on the target, which is what gives headings, code blocks, lists, and links the shared, proportionate type scale. Setting `innerHTML` from `uiMdToHTML` directly works too, but the element then falls back to the browser's default heading/monospace sizes: the giant-headings-next-to-tiny-code look. The styling lives entirely in `.ui-md`; never re-declare generic `h*`/`pre`/`code` rules in your app CSS: override only genuinely app-specific bits.
+If a custom block renderer (or any app DOM) needs to show rendered markdown, use `window.uiRenderMarkdown(el, text)` rather than `el.innerHTML = uiMdToHTML(text)`. It stamps the `.ui-md` prose class on the target, which is what gives headings, code blocks, lists, and links the shared, proportionate type scale. Setting `innerHTML` from `uiMdToHTML` directly works too, but the element then falls back to the browser's default heading/monospace sizes. The styling lives entirely in `.ui-md`; never re-declare generic `h*`/`pre`/`code` rules in your app CSS, and override only app-specific bits.
 
 ### Client action
 A browser-side action invoked by a `PipelineAction{Method: "client"}`. Use for things like `window.print`, custom clipboard handling, focus/scroll helpers.
@@ -543,7 +534,7 @@ A `<style>` block in `Page.ExtraHeadHTML` alongside your `<script>`. Namespace y
 
 ## Routing + auth
 
-Every app gets a sub-mux scoped to its prefix (`/<app-name>/`). Inside `RegisterRoutes` you mount handlers on the sub. The framework:
+Every app gets a sub-mux scoped to its prefix (`/<app-name>/`). Inside `Routes()` you register handlers on it with `T.HandleFunc`. The framework:
 
 - Requires a valid session, and checks the viewer has access to your app (`AuthMiddleware`)
 - Provides a per-user kvlite store (`T.DB`)
@@ -552,10 +543,9 @@ Every app gets a sub-mux scoped to its prefix (`/<app-name>/`). Inside `Register
 
 ### What the framework does NOT do: identify the caller
 
-This used to say the framework "gates everything behind `RequireUser`". It does
-not, and reading it that way is how several handlers shipped with no identity
-check at all. `AuthMiddleware` answers *is this a logged-in user who may reach
-this app*: a question about the app, not about the request. **Every handler
+The framework does not gate handlers behind `RequireUser`. `AuthMiddleware`
+answers *is this a logged-in user who may reach this app*: a question about the
+app, not about the request. **Every handler
 calls `RequireUser` itself**, and the answer is not a gate, it is a key:
 
 ```go
@@ -573,9 +563,9 @@ func (T *MyApp) handleRecord(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
-The failure worth naming is the middle ground: resolving the caller and then
-looking the record up in a store that is not scoped to them. That reads like a
-check, passes review, and serves every user's data to every user. If you take
+The common mistake is resolving the caller and then looking the record up in a
+store that is not scoped to them. It looks like a check and serves every user's
+data to every user. If you take
 an id off a request (a session id, a record id, a run id), either load it from
 that user's own store (`udb`, which `RequireUser` hands you), or compare an
 owner field against `user` before you touch it. Answer 404 rather than 403 for
@@ -584,17 +574,18 @@ someone else's id, so a probe cannot confirm it exists.
 `apps/hello/agent.go` is the worked example: `demoStore`'s methods all take a
 user, so a handler that forgets to resolve one does not compile.
 
-A typical `RegisterRoutes`:
+A typical `Routes()`:
 
 ```go
-func (T *MyApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
-    sub := NewWebUI(T, prefix, AppUIAssets{})
-    sub.HandleFunc("/", T.handlePage)
-    sub.HandleFunc("/api/records", T.handleRecordsList)
-    sub.HandleFunc("/api/records/", T.handleRecordSingle)
-    sub.HandleFunc("/api/send", T.handleSend) // SSE pipeline
+func (T *MyApp) Routes() {
+    T.HandleFunc("/", T.handlePage)
+    T.HandleFunc("/api/records", T.handleRecordsList)
+    T.HandleFunc("/api/records/", T.handleRecordSingle)
+    T.HandleFunc("/api/send", T.handleSend) // SSE pipeline
 }
 ```
+
+An app on the `WebApp` escape hatch does the same in `RegisterRoutes(mux, prefix)`, building its sub-mux with `NewWebUI(T, prefix, AppUIAssets{})`.
 
 ---
 
@@ -622,19 +613,7 @@ Your bridge struct keeps the mapping from your app's domain events (e.g., `direc
 ## Gotchas
 
 ### Registry init order
-Anything you register via `window.uiRegister*` from `ExtraHeadHTML` runs *before* the runtime script at body-end has executed: `window.uiRegister*` won't be defined yet. Always wrap registration in a `DOMContentLoaded` deferral:
-
-```js
-function register() {
-  if (!window.uiRegisterBlockRenderer) return;
-  // ... your registrations
-}
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', register);
-} else {
-  register();
-}
-```
+Anything you register via `window.uiRegister*` from raw `ExtraHeadHTML` runs *before* the runtime script at body-end has executed: `window.uiRegister*` won't be defined yet. Wrap registration in a `DOMContentLoaded` deferral, as the block renderer example above does (`ui.Head` does this for you).
 
 The framework registers its own `DOMContentLoaded → mount()` handler from the runtime IIFE at body end. Yours registers from `<head>`, which fires first in handler order, so your registrations land before the panel mounts.
 
@@ -654,10 +633,10 @@ b.sse.SendNamed("block", map[string]interface{}{
 The runtime appends `class` to the wrap div. Your CSS in `ExtraHeadHTML` targets `.ui-my-final-report .ui-pl-block-body p { … }`.
 
 ### Don't mention apps in `core/ui/`
-The shared runtime stays domain-agnostic. If you find yourself wanting to add an `if (type === "verdict")` to `core/ui/runtime.go`, that's a sign: it should be a registered renderer in your app's package instead.
+The shared runtime stays domain-agnostic; new code in `core/ui/` that mentions an app name is a bug. An `if (type === "verdict")` you want to add to `core/ui/runtime.go` belongs in a registered renderer in your app's package instead.
 
 ### CLI-mode hiding
-Apps that only make sense in the dashboard (most of them) should NOT implement `core.CLIApp`. Without that marker, they're hidden from `gohort --help` and from CLI dispatch, with a friendly "use serve" hint if anyone tries.
+Apps that only make sense in the dashboard (most of them) should NOT implement `core.CLIApp`. Without that marker, they're hidden from `gohort --help` and from CLI dispatch, with a "use serve" hint if anyone tries.
 
 ### Private (no-lead) apps
 For apps handling sensitive data (servitor SSH probes, phantom messages) call `T.Private()` in `Init()`. Sets `NoLead` on the AppCore: any reference to `T.LeadChat()` / `T.LeadLLM` silently routes to the worker instead. Combine with `Private: true` on registered route stages so the admin UI can't accidentally route the app to a remote LLM.
@@ -681,7 +660,7 @@ apps/<name>/
 └── chat_endpoints.go # (optional, for pipeline apps) bridge + sessions handlers
 ```
 
-Private apps live in `private/<name>/` with the same shape. Apps register themselves via `init()` and get loaded via blank imports in `apps.go` / `private.go`.
+Private apps live in `private/<name>/` with the same shape. Apps register themselves via `init()` and get loaded via blank imports in `agents.go` / `private.go`.
 
 ---
 
@@ -692,7 +671,6 @@ Private apps live in `private/<name>/` with the same shape. Apps register themse
 | `apps/admin/page.go` | The cleanest reference for admin-style sections (Table + FormPanel + DisplayPanel). |
 | `private/research/page.go` + `chat_endpoints.go` | Reference for a one-shot pipeline app with a bridge. |
 | `private/debate/web_assets.go` | Reference for ExtraHeadHTML with `<style>` + `<script>` (custom block renderers + markdown extension + client action). |
-| `apps/phantom/mobile.go` | Reference for nested CRUD (per-user conversations with per-conv overrides). |
 | `private/blogger/page.go` | Reference for a multi-surface admin app (queue + rejected + schedule + settings + suggest panel). |
 
 ---
@@ -700,7 +678,5 @@ Private apps live in `private/<name>/` with the same shape. Apps register themse
 ## When in doubt
 
 - **Read an existing app** of the same shape and copy its structure.
-- **Avoid editing `core/ui/`** unless you're adding a generic primitive everyone benefits from.
-- **App-specific styling lives in the app's package**, injected via `ExtraHeadHTML`.
-- **Per-block class hints + the registries** cover most customization.
-- **If you need to add a knob to a primitive**, do it as an optional field with a sensible default: never break existing apps.
+- **Edit `core/ui/` only** to add a generic primitive; per-block class hints and the registries cover most customization.
+- **A new knob on a primitive** is an optional field with a sensible default: never break existing apps.

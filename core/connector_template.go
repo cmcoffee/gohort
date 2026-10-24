@@ -7,7 +7,7 @@
 // A template is NOT a new kind. Kinds (rest_image, rest_messaging) are the runtime
 // mechanism (a ConnectorHandler); templates are the authored, user-facing
 // integration with its config surface. Many templates ride one kind (comfyui,
-// a1111, flux are all rest_image). See docs/connector-templates.md.
+// a1111, flux are all rest_image). See docs/design/connector-templates.md.
 package core
 
 import (
@@ -67,7 +67,7 @@ type TemplateField struct {
 // logic lives in a named ConnectorStrategy it points at; Params carry the few
 // per-declaration knobs the strategy reads (e.g. which rest_image preset). A new
 // INSTANCE of a known shape is just a declaration; only a new SHAPE needs a
-// strategy. See docs/templates.md.
+// strategy. See docs/design/templates.md.
 type Template struct {
 	Name        string            `json:"name"` // stable id (per target); stored on the connector for provenance
 	Label       string            `json:"label"`

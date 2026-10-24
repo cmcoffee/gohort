@@ -9,7 +9,7 @@
 // a session, a persona, or a tool catalog is, which is what keeps this
 // usable by any app rather than only by orchestrate.
 //
-// See machine_def.go for the recipe layer and docs/agent-machines.md for
+// See machine_def.go for the recipe layer and docs/design/agent-machines.md for
 // the design.
 
 package core

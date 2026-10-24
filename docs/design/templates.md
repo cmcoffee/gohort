@@ -1,7 +1,7 @@
 # Templates: connectors, tools, and the const→data path
 
 **Status:** vision spec (2026-07-21); adding moved to recipe templates in v0.8.15, see Stage C. Extends
-`docs/connector-templates.md` (connector templates, Stages 1–2 shipped).
+`docs/design/connector-templates.md` (connector templates, Stages 1–2 shipped).
 
 ## Goal
 
@@ -80,7 +80,7 @@ Same model, different `Target`/output:
 **Governance is unchanged.** A template makes *authoring* easier; it grants no new
 power. A tool authored from a template still passes credential binding, tool
 scope, the verify gate, and approval: same as a hand-authored `tool_def`. See
-`docs/secured-credential-tool-binding.md`.
+`docs/design/secured-credential-tool-binding.md`.
 
 ## Who maintains what
 

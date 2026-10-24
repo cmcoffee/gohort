@@ -4,7 +4,7 @@
 // gives a URL template + method + credential, and the tool's params are DERIVED
 // from the {placeholders} in the URL/body — so "add a REST tool" is one
 // declaration. A later openapi_tool strategy will add a Detect that generates
-// actions from a spec (the killer feature). See docs/templates.md.
+// actions from a spec (the killer feature). See docs/design/templates.md.
 //
 // Governance is unchanged: a tool built from a template is a TempTool that still
 // runs through credential binding + the tool approval flow — templates ease

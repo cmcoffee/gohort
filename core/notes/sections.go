@@ -1,6 +1,6 @@
 // Sections: a register the agent names, inside the one notes document.
 //
-// See docs/working-notes-sections.md. An agent could already invent structure
+// See docs/design/working-notes-sections.md. An agent could already invent structure
 // here — a heading is just text — but not update one part without rewriting all
 // of it, because update_notes replaces the whole block. Rewriting a document to
 // change one line is how a model drops the rest of it.

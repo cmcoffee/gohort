@@ -10,7 +10,7 @@
 // index grow with every app anybody built. The rows join the compiled apps in
 // admin's one table.
 //
-// See docs/custom-app-admin.md.
+// See docs/design/custom-app-admin.md.
 package customapps
 
 import (

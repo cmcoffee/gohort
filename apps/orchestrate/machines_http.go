@@ -626,7 +626,7 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 		w.Header().Set("Cache-Control", "no-store")
 		_, _ = w.Write([]byte(html))
 	case "graph":
-		// The picture (docs/workflow-graph.md). With ?session=<id> it
+		// The picture (docs/design/workflow-graph.md). With ?session=<id> it
 		// carries the overlay: where that conversation is sitting and
 		// which edges it has actually taken. Without one it is the plain
 		// structure.

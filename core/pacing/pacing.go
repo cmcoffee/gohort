@@ -20,7 +20,7 @@
 // state that only the surfaces mounting it need, and every exported name in
 // core lands in the namespace of every file that dot-imports core.
 //
-// See docs/objective-pacing.md.
+// See docs/design/objective-pacing.md.
 package pacing
 
 import (

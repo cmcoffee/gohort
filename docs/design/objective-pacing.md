@@ -3,7 +3,7 @@
 Status: **built** (v0.6.758, 2026-09-14), on all three scheduling surfaces. The one piece
 deliberately NOT built is stage 3's optional `pace: "self"` backoff: see the end of **Stages**. Written after the
 question "should we have a Task registry for agentic tasks", where the answer was no (objectives
-already are that registry, `docs/loop-objectives.md`) but one of the two gaps behind the question is
+already are that registry, `docs/design/loop-objectives.md`) but one of the two gaps behind the question is
 real.
 
 Stage 1 landed as: `core.RescheduleTaskAt`, the `core/pacing` package (the ask and the tool),
@@ -19,7 +19,7 @@ and the tool went to a subpackage instead: `pacing.Tool`, `pacing.ToolSpec`, `pa
 scheduler's own store). This is the better shape anyway and the documented answer to that pressure:
 a host imports `core/pacing` directly rather than reaching it through an alias.
 
-Read `docs/loop-objectives.md` first. This changes exactly one thing about an objective: *when* its
+Read `docs/design/loop-objectives.md` first. This changes exactly one thing about an objective: *when* its
 next attempt happens.
 
 ## The gap

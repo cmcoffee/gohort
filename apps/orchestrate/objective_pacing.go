@@ -1,6 +1,6 @@
 // An attempt that can say when the next one should happen.
 //
-// See docs/objective-pacing.md. An objective's cadence is decided once, at
+// See docs/design/objective-pacing.md. An objective's cadence is decided once, at
 // creation, and until now nothing that happened afterward could change it: a
 // fire that knew exactly why it fell short ("the build was still running") had
 // the reason recorded, shown to the next fire, and then the next fire happened

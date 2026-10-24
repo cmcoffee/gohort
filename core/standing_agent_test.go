@@ -227,7 +227,7 @@ func TestClearStandingAgentBrokenRestartsTheObjectiveAllowance(t *testing.T) {
 	}
 }
 
-// Slice 2 of docs/scheduling-unification.md. Three records carried the same
+// Slice 2 of docs/design/scheduling-unification.md. Three records carried the same
 // "stopped and kept" state and each read it back itself; they read it through
 // one pair of functions now.
 func TestParkCauseOfReadsEveryRecordTheSameWay(t *testing.T) {

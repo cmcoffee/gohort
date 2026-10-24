@@ -16,7 +16,7 @@ type AppCore struct {
 	// VectorDB + EmbedCfg let an SDK consumer inject the retrieval backend
 	// (semantic collections / RAG) instead of relying on the process globals.
 	// Unset falls back to the globals, so the running server is unaffected.
-	// SDK Phase 1 — see docs/sdk-decoupling-scope.md.
+	// SDK Phase 1 — see docs/design/sdk-decoupling-scope.md.
 	VectorDB     Database
 	EmbedCfg     EmbeddingConfig
 	Report       *TaskReport

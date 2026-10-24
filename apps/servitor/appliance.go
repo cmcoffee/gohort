@@ -85,7 +85,7 @@ type Appliance struct {
 	// Bundle fields (Type == "bundle") — uploaded evidence: a support dump, a
 	// log tarball, a diagnostic capture. The upload is staged on local disk,
 	// expanded, sliced into the encrypted BundleFilesDB, and the staged
-	// plaintext is deleted. See docs/servitor-evidence-bundles.md.
+	// plaintext is deleted. See docs/design/servitor-evidence-bundles.md.
 	//
 	// BundleState is the lifecycle ("staging" | "ingesting" | "ready" |
 	// "failed") and is what the UI polls: expanding a multi-gigabyte dump
@@ -109,7 +109,7 @@ type Appliance struct {
 	// CURATED set of already-authored tools rather than a host or a clone. The
 	// bindings are the permission: each names one of the owner's pool tools, a
 	// posture, and a fingerprint of the tool as approved. See toolset.go and
-	// docs/servitor-toolset-type.md.
+	// docs/design/servitor-toolset-type.md.
 	Toolset []ToolBinding `json:"toolset,omitempty"`
 	// Peer fields — a STUB pointing at an appliance that lives on another
 	// gohort instance, because that instance is on the network the system
@@ -182,7 +182,7 @@ type Appliance struct {
 	// Workspace fields (Type == "workspace") — a master appliance that references
 	// other appliances (repos and/or SSH boxes) and investigates them together.
 	// It owns no store/creds of its own; each member is resolved and run in its
-	// own owner's context. See docs/servitor-workspace-mvp.md.
+	// own owner's context. See docs/design/servitor-workspace-mvp.md.
 	Members []string `json:"members,omitempty"` // member appliance IDs
 	// MemberRoles maps a member ID to a short operator-written role ("scheduler
 	// + primary DB", "app worker"). Members of a real cluster are rarely

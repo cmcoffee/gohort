@@ -1,6 +1,6 @@
 // Backing off a schedule that keeps failing.
 //
-// The sibling of docs/objective-pacing.md and deliberately a DIFFERENT feature:
+// The sibling of docs/design/objective-pacing.md and deliberately a DIFFERENT feature:
 // pacing is an attempt saying what it is waiting for, and this is the framework
 // noticing that nothing is working. One has a reason written by something that
 // knew; the other has a streak. They meet only at the end, where both move the

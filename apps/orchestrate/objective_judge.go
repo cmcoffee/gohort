@@ -9,7 +9,7 @@
 // check reads the same evidence the claim judge does. The actions the attempt
 // ran are the evidence; what it said about them is a claim.
 //
-// See docs/loop-objectives.md.
+// See docs/design/loop-objectives.md.
 package orchestrate
 
 import (
@@ -218,7 +218,7 @@ func (T *OrchestrateApp) settleMonitorObjective(ctx context.Context, m EventMoni
 		return
 	}
 	cur.Attempts = appendObjectiveAttempt(cur.Attempts, judged && v.Met, reason)
-	// Pacing (docs/objective-pacing.md), before the save: the woken agent may
+	// Pacing (docs/design/objective-pacing.md), before the save: the woken agent may
 	// have asked to be left alone until later. Not when the goal is met — the
 	// monitor is stopping, and moving a check it will never make would leave a
 	// reason on a stopped record for nobody.
@@ -340,7 +340,7 @@ type objectiveRun struct {
 	Attempts []ObjectiveAttempt
 	Username string // whose local clock the attempt timestamps are shown in
 	// PacedWhy is why the NEXT attempt is when it is, when an earlier one moved
-	// it (docs/objective-pacing.md). Empty on the surfaces that do not carry
+	// it (docs/design/objective-pacing.md). Empty on the surfaces that do not carry
 	// pacing yet, which is the same as "nobody moved it".
 	PacedWhy string
 }

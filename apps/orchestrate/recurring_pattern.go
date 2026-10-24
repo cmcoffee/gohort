@@ -62,7 +62,7 @@ type RecurringSpec struct {
 	MaxFires int // per-task total cap; 0 = deployment default
 
 	// Until / MaxAttempts make this an objective rather than a cadence — see
-	// orchUpdatePayload and docs/loop-objectives.md.
+	// orchUpdatePayload and docs/design/loop-objectives.md.
 	Until       string
 	MaxAttempts int
 

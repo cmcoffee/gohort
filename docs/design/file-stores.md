@@ -561,7 +561,7 @@ different trust. Folding both onto one engine is a real lift-to-core candidate.
 
 The original `extras/investigator.agent.json` was replaced in v0.6.107 by a machine,
 `extras/investigation.machine.json`, which triages, commits to one hypothesis and tests it against
-independent evidence. See [docs/investigation.md](investigation.md). Attach a store to whichever
+independent evidence. See [docs/design/investigation.md](investigation.md). Attach a store to whichever
 agent runs it.
 
 The memory advice still stands: for an agent that investigates one bundle after another, keep its

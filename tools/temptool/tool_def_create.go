@@ -380,7 +380,7 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 	}
 	// Secured-credential binding is AUTO-RESOLVED: a toolbox that declares a
 	// secured cred is bound to it (its actions dispatch server-side). Exception: an
-	// admin's explicit REVOKE is a durable deny. See docs/secured-credential-tool-binding.md.
+	// admin's explicit REVOKE is a durable deny. See docs/design/secured-credential-tool-binding.md.
 	if cr, ok := Secure().Load(credential); ok && cr.Secured {
 		if Secure().ToolBindingRevoked(credential, name) {
 			return "", fmt.Errorf("credential %q is SECURED and toolbox %q's binding was REVOKED by an admin: ask them to restore it in Admin > APIs", credential, name)

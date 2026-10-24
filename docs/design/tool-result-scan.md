@@ -91,7 +91,7 @@ Default-on by capability, opt-out by name. Not the reverse.
 registers (Scribe's Guide Author, Servitor's investigator) scans whatever its
 stored switch says. The switch lived on orchestrate's Security page, which
 app agents are not set up on, so it was off for all of them, and they are the
-agents that read outside documents for a living. See `docs/app-agents.md`.
+agents that read outside documents for a living. See `docs/design/app-agents.md`.
 
 ## Where it runs
 

@@ -16,7 +16,7 @@
 // through the AdminAppSource that apps/customapps registers. The apps that
 // ship come first and the authored ones follow, each in a band of its own.
 //
-// See docs/apps-tab.md.
+// See docs/design/apps-tab.md.
 package admin
 
 import (

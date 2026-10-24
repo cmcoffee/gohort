@@ -136,7 +136,7 @@ func (T *OrchestrateApp) runStanding(ctx context.Context, sa StandingAgent) Stan
 	ctx, promptDigest := WithPromptDigest(ctx)
 	// The one lever this fire has over its own schedule: an objective that
 	// cannot finish because it is WAITING may say when to try again
-	// (docs/objective-pacing.md). Run-scoped, so it is passed to the run
+	// (docs/design/objective-pacing.md). Run-scoped, so it is passed to the run
 	// rather than hung on the agent, which has no next fire to move when it
 	// is dispatched from a conversation.
 	pacingAsk := &pacing.Ask{}
@@ -261,7 +261,7 @@ func (T *OrchestrateApp) runStanding(ctx context.Context, sa StandingAgent) Stan
 		Log("[orchestrate/standing] agent=%s schedule=%q INJECTION DETECTED x%d (%d follow-up action(s) stopped): run flagged for attention",
 			sa.AgentID, sa.Name, run.Detections, run.TaintBlocks)
 	}
-	// Objective check (docs/loop-objectives.md). A standing agent with an
+	// Objective check (docs/design/loop-objectives.md). A standing agent with an
 	// `until` is asking for a state of the world, so the fire that reaches
 	// it is the last one, and the fire that runs out of attempts stops and
 	// says so. Judged from what this run RAN and reported, never from the

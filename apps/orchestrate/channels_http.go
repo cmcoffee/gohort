@@ -13,7 +13,7 @@ import (
 // handleChannels manages an agent's attached messaging Channels. Phase 1 is
 // data model + attach only — a binding here records WHICH agent owns a
 // messaging surface, but nothing routes inbound to the agent yet (that's
-// Phase 2). See docs/channels-and-agents.md. Owner-scoped; stored in RootDB
+// Phase 2). See docs/design/channels-and-agents.md. Owner-scoped; stored in RootDB
 // alongside the other fleet data.
 //
 //	GET    /api/channels?agent_id=<id>  → list this owner's channels (filtered

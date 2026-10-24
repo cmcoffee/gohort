@@ -16,7 +16,7 @@
 // decision they can see the consequence of; a rewritten threshold is an edit to
 // their app.
 //
-// See docs/custom-app-admin.md.
+// See docs/design/custom-app-admin.md.
 package appadmin
 
 import (

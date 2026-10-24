@@ -54,7 +54,7 @@ func TestUpdateScheduledTaskPayload(t *testing.T) {
 
 // TestRescheduleTaskAt: the other half of the pre-arm write-back. The next
 // occurrence is armed BEFORE a long fire, so anything the fire learns about
-// WHEN it should run arrives after the entry exists (docs/objective-pacing.md).
+// WHEN it should run arrives after the entry exists (docs/design/objective-pacing.md).
 // Same refusal contract as the payload updater: a consumed task is not moved
 // and must not be re-created.
 func TestRescheduleTaskAt(t *testing.T) {

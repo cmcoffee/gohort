@@ -169,7 +169,7 @@ type orchUpdatePayload struct {
 	WindowToMin   int    `json:"window_to_min,omitempty"`   // window end, minutes since local midnight
 	MaxFires      int    `json:"max_fires,omitempty"`       // per-task total cap; 0 = indefinite (run until cancelled or idle-reaped)
 
-	// Objective (docs/loop-objectives.md). Until is the completion check in the
+	// Objective (docs/design/loop-objectives.md). Until is the completion check in the
 	// owner's own words; empty is an ordinary recurring task, which runs its
 	// cadence and never asks whether it is finished. With it set, every fire is
 	// judged and the one that reaches the goal is the last.
@@ -192,7 +192,7 @@ type orchUpdatePayload struct {
 	// who fixed what a stall named gets a fresh allowance instead of one fire
 	// that stalls again immediately. See objectiveAttemptNumber.
 	AttemptsBase int `json:"attempts_base,omitempty"`
-	// Pacing (docs/objective-pacing.md): what the PREVIOUS attempt asked for
+	// Pacing (docs/design/objective-pacing.md): what the PREVIOUS attempt asked for
 	// when it moved this occurrence, so the console can say why the next run is
 	// when it is instead of showing a time nobody chose.
 	//
@@ -842,7 +842,7 @@ func (fr *fireRun) buildToolkit() {
 	fr.tools = append(fr.tools, fr.extraTools...)
 	// The one lever an attempt has over its own schedule: an objective that
 	// cannot finish because it is WAITING on something may say when to try
-	// again (docs/objective-pacing.md). Mounted by the fire rather than by the
+	// again (docs/design/objective-pacing.md). Mounted by the fire rather than by the
 	// `recurring` tool group on purpose — a Fleet agent is never given that
 	// group, and scoping objectives to it is the mistake v0.6.621 already paid
 	// for. The ask is read after the loop, in the objective block below.
@@ -1217,7 +1217,7 @@ func (fr *fireRun) reportable() bool {
 
 func (fr *fireRun) objectiveCheck() {
 	p := fr.p
-	// Objective check (docs/loop-objectives.md): a task carrying an `until` is
+	// Objective check (docs/design/loop-objectives.md): a task carrying an `until` is
 	// asking for a state of the world, so the fire that reaches it should be the
 	// last one, and the fire that runs out of attempts should say so rather than
 	// keep going. Judged from what this attempt RAN and reported, never from the

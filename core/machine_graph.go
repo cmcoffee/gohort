@@ -1,4 +1,4 @@
-// MachineDef → WorkflowGraph. The adapter half of docs/workflow-graph.md.
+// MachineDef → WorkflowGraph. The adapter half of docs/design/workflow-graph.md.
 //
 // The only file that knows both what a phase is and what a graph node
 // is. Everything drawing-related lives in workflow_graph.go and stays

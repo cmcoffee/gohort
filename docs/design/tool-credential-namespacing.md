@@ -1,8 +1,8 @@
 # Tool & credential namespacing
 
 **Status:** Phases 1-3 (credentials axis) shipped. Related: `project_credential_ownership`,
-`reference_tenancy_map`, `docs/agent-record-split.md`,
-`docs/secured-credential-tool-binding.md`.
+`reference_tenancy_map`, `docs/design/agent-record-split.md`,
+`docs/design/secured-credential-tool-binding.md`.
 
 The target: tools and API credentials live in **two namespaces**, a global
 (system) one and a per-user one, so the deployment scales past 1-2 users without
@@ -56,7 +56,7 @@ hasn't excluded `X` on that agent (tier 2). The user is the **session** user
 whoever is in the session.
 
 Secured credentials are a separate axis: their access follows the tool-binding
-model (`docs/secured-credential-tool-binding.md`), not `AllowedUsers`.
+model (`docs/design/secured-credential-tool-binding.md`), not `AllowedUsers`.
 
 ## Admin page (target)
 

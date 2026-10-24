@@ -1,7 +1,7 @@
 package core
 
 // Contact permissions are scoped to the agent that earned them. See
-// contactScopeKey for why, and docs/task-notes.md's sibling reasoning about a
+// contactScopeKey for why, and docs/design/task-notes.md's sibling reasoning about a
 // restriction that has to travel with the thing it restricts.
 
 import (

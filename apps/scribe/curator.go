@@ -13,7 +13,7 @@
 // writing is the one that looks like progress.
 //
 // The curator writes on its own authority and reports afterwards; see
-// docs/guides-curator.md for why, and findings.go for the digest that makes that
+// docs/design/guides-curator.md for why, and findings.go for the digest that makes that
 // safe.
 package scribe
 

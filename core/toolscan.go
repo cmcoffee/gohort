@@ -33,7 +33,7 @@
 //
 // St1: the primitive. Prompt, verdict, window, cache, banner — with a chat seam
 // so it is testable without a model. Nothing calls it yet; the wiring at the
-// fence site is St2. See docs/tool-result-scan.md.
+// fence site is St2. See docs/design/tool-result-scan.md.
 package core
 
 import (

@@ -276,7 +276,7 @@ func (pr *planRun) assemblePrompt() {
 			break
 		}
 	}
-	// Session-resident phase machine (machine.go, docs/agent-machines.md).
+	// Session-resident phase machine (machine.go, docs/design/agent-machines.md).
 	// Walks any transient phases at the head of this turn and returns the
 	// phase that owns the reply. Inert — and free — for an agent with no
 	// machine, which is every agent unless its author picked one.

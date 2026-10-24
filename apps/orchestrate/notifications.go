@@ -11,7 +11,7 @@
 // refused, it narrates around the gap and finishes the turn looking successful.
 // The gate knows. So the gate writes.
 //
-// See docs/task-notes.md's sibling reasoning about surfaces that only the model
+// See docs/design/task-notes.md's sibling reasoning about surfaces that only the model
 // can see: a thing nobody can find is a thing that did not happen.
 
 package orchestrate

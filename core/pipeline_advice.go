@@ -21,7 +21,7 @@
 //
 // One rule was built, tested against the pipelines this repo ships, and
 // REMOVED: "nothing reads this declared field". It fired on all three,
-// and was wrong all three times. See pipeline-structured-outputs.md —
+// and was wrong all three times. See docs/design/pipeline-structured-outputs.md —
 // the short version is that {prev} renders the previous stage's whole
 // JSON, so the default way stages chain already reads every field, and
 // a field that genuinely is unreferenced is usually a rationale beside

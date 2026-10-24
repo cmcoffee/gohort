@@ -12,7 +12,7 @@
 // off pays two bools and no branches it can feel.
 //
 // St2. Hard-fence only; the drop-the-payload path for tools where a miss costs
-// more than a false positive is St4. See docs/tool-result-scan.md.
+// more than a false positive is St4. See docs/design/tool-result-scan.md.
 package orchestrate
 
 import (

@@ -1,6 +1,6 @@
 package servitor
 
-// Making an agent from a workspace (docs/servitor-systems-model.md, stage 3).
+// Making an agent from a workspace (docs/design/servitor-systems-model.md, stage 3).
 //
 // A workspace is a coordinator over several systems, which is what an agent
 // with those systems as its Sources is. The button makes the person an agent

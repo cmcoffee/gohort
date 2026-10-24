@@ -117,7 +117,7 @@ func (t *CreateAPIToolTool) RunWithSession(args map[string]any, sess *ToolSessio
 	// A secured credential auto-binds to any tool that declares it (api-mode
 	// dispatches server-side; secret never exposed) — no approval step, access
 	// follows the tool's scope. Exception: an admin's explicit REVOKE is a durable
-	// deny. See docs/secured-credential-tool-binding.md.
+	// deny. See docs/design/secured-credential-tool-binding.md.
 	if cr.Secured {
 		if Secure().ToolBindingRevoked(credName, name) {
 			return "", fmt.Errorf("credential %q is SECURED and tool %q's binding was REVOKED by an admin: ask them to restore it in Admin > APIs", credName, name)

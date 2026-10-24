@@ -65,7 +65,7 @@ func TestExtrasMachineRecipesValidate(t *testing.T) {
 }
 
 // The investigation machine is the one with a real job (see
-// docs/investigation.md). Its shape IS the design: a hypothesis is formed
+// docs/design/investigation.md). Its shape IS the design: a hypothesis is formed
 // in one phase and TESTED in another, against evidence the first phase
 // had to name. Collapse those and you get an agent that confirms its own
 // hunch from the source that produced it — which reads as thorough and

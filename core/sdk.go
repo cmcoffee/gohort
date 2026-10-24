@@ -3,7 +3,7 @@
 // config, then run agentic turns with your own tools. This is Phase 0 of the
 // SDK plan: the agent loop is already global-free, so this just packages the
 // pattern. The richer subsystems (persistent memory, RAG) still read the RootDB
-// family of package globals; see docs/sdk-decoupling-scope.md for decoupling.
+// family of package globals; see docs/design/sdk-decoupling-scope.md for decoupling.
 package core
 
 import (
@@ -55,7 +55,7 @@ func (T *AppCore) RunOnce(ctx context.Context, message string, tools []AgentTool
 // stored (false if a near-duplicate already existed). Set AppCore.DB to your own
 // kvlite/Database instance first. Works with no server boot; semantic dedup is
 // off unless you configure embeddings (a Phase 1 SDK item, see
-// docs/sdk-decoupling-scope.md). Recall the facts and put them in your system
+// docs/design/sdk-decoupling-scope.md). Recall the facts and put them in your system
 // prompt to give the model persistent memory across turns.
 func (T *AppCore) Remember(namespace, fact string) (bool, error) {
 	if T == nil || T.DB == nil {

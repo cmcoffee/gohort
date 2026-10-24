@@ -1671,7 +1671,7 @@ func (pr *probeRun) reportTools() {
 	// make (it can see one probe, not the corpus, and not the other findings from
 	// the same run). The Guide Curator batches these and decides. push_to_guide
 	// stays for the case where the USER named a destination in the request.
-	// See docs/guides-curator.md.
+	// See docs/design/guides-curator.md.
 	pr.record_finding_tool = AgentToolDef{
 		Tool: Tool{
 			Name:        "record_finding",

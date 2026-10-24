@@ -7,8 +7,8 @@ it", v0.6.274, streaming through the framework's run panel since v0.6.282),
 and from a SCHEDULE (v0.6.275)
 `StandingAgent.MachineID`, beside the agent and pipeline targets, which is the
 background door. A dispatch target (an agent asking for a run) is still to come. Related: `core/machine.go`, `core/machine_def.go`,
-`apps/orchestrate/machine_delegate.go`, `docs/agent-machines.md`,
-`docs/pipeline-fanout-body.md`, `project_agent_machines`,
+`apps/orchestrate/machine_delegate.go`, `docs/design/agent-machines.md`,
+`docs/design/pipeline-fanout-body.md`, `project_agent_machines`,
 `project_pipeline_framework_future`.
 
 The shape this is written against is a long investigative run: twenty-odd
@@ -173,7 +173,7 @@ Machine string `json:"machine,omitempty"`
   mechanism.
 - Fan of children (one per hole) is the pipeline's job, not the machine's:
   the phase names a pipeline whose fanout body runs the child machine per item.
-  Which is why `docs/pipeline-fanout-body.md` is a prerequisite for this one.
+  Which is why `docs/design/pipeline-fanout-body.md` is a prerequisite for this one.
 
 **What landed (v0.6.273):** `MachinePhase.Machine`, run through the same
 `PhaseRunner` seam as the delegate and the pipeline phase. The child must be
@@ -216,7 +216,7 @@ app-level concern by design (see `CLAUDE.md`: the four registries).
 
 | Step | Unlocks | Depends on |
 |---|---|---|
-| Fanout bodies (`docs/pipeline-fanout-body.md`) | per-item multi-stage work, structured `items` | nothing |
+| Fanout bodies (`docs/design/pipeline-fanout-body.md`) | per-item multi-stage work, structured `items` | nothing |
 | Change 2, unattended machines | any long non-conversational run | nothing |
 | Change 1, pipeline phases | the spine calling the muscle | fanout bodies (to be worth it) |
 | Change 3, accumulators | a working set that survives 20 phases | Change 2 |
@@ -260,5 +260,5 @@ machine is just a router, and the working set goes back to being app code.
 - `apps/orchestrate/machine_delegate.go`: the pipeline runner beside the agent
   one (same file, same seam).
 - `apps/orchestrate/machine_editor.go`: controls for the new fields, which is
-  also where the missing body editor lives (`docs/pipeline-fanout-body.md`).
+  also where the missing body editor lives (`docs/design/pipeline-fanout-body.md`).
 - `core/tool_cache.go` (new): run-scoped tool result cache.

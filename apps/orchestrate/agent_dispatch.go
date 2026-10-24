@@ -614,7 +614,7 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 // it gets a parameter instead of a field.
 //
 // It exists for work that has a lever nothing else does: a standing fire that
-// carries an objective may move its own next run (docs/objective-pacing.md),
+// carries an objective may move its own next run (docs/design/objective-pacing.md),
 // and that tool belongs to the fire, not to the agent — the same agent
 // dispatched from a conversation has no next run to move. Passing it in beats
 // the alternatives of a flag on the agent record (wrong owner) or a context
