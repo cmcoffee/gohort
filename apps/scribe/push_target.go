@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/docs"
 )
 
 type guideTarget struct{ app *Scribe }
@@ -135,4 +136,36 @@ func (g *guideTarget) Append(ctx context.Context, user, docID, newDocTitle, sect
 	})
 	saveGuideRev(ownerUDB, resolved, "Added section (pushed): "+sectionTitle)
 	return docID, nil
+}
+
+// CreateWithSections makes a new guide from whole sections at once, with a
+// brief: a report pushed as a guide arrives as its parts, each its own section
+// to edit, rather than one block, or a push per section that the Guide Author
+// would weave into one another. One revision, so one undo takes it all back.
+// Implements core/docs.SectionedDocumentTarget.
+func (g *guideTarget) CreateWithSections(ctx context.Context, user, title, brief string, sections []docs.DocSection) (string, error) {
+	udb := UserDB(g.app.DB, user)
+	if udb == nil {
+		return "", fmt.Errorf("no store for user")
+	}
+	gd := Guide{
+		ID:    newID(),
+		Title: firstNonEmpty(strings.TrimSpace(title), "Untitled guide"),
+		Owner: user,
+		Brief: strings.TrimSpace(brief),
+	}
+	for _, s := range sections {
+		md := strings.TrimSpace(s.Text)
+		if md == "" {
+			continue
+		}
+		gd.Sections = append(gd.Sections, Section{
+			ID: newID(), Title: firstNonEmpty(strings.TrimSpace(s.Title), "Section"), Markdown: md, Order: gd.nextOrder(),
+		})
+	}
+	if len(gd.Sections) == 0 {
+		return "", fmt.Errorf("nothing to make a guide from: every section was empty")
+	}
+	saved := saveGuideRev(udb, gd, fmt.Sprintf("Created guide (pushed, %d sections)", len(gd.Sections)))
+	return saved.ID, nil
 }

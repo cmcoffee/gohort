@@ -51,9 +51,13 @@ func TestAskCardSubmitsToItsOwnPanel(t *testing.T) {
 	if !strings.Contains(src, "function uiAskPanelRoot(") {
 		t.Error("uiAskPanelRoot is gone; nothing scopes the answer to the panel that asked")
 	}
-	// Both card types must route through the scoped submit, card first.
-	if n := strings.Count(src, "uiAskSubmitAnswer(wrap,"); n != 2 {
-		t.Errorf("uiAskSubmitAnswer(wrap, …) called %d time(s), want 2 (the options card and the multi-step form)", n)
+	// Both card types must route through the scoped submit, card first: each
+	// builds its buttons with uiAskActions, whose Submit is the one call.
+	if n := strings.Count(src, "uiAskSubmitAnswer(wrap,"); n != 1 {
+		t.Errorf("uiAskSubmitAnswer(wrap, …) called %d time(s), want 1 (uiAskActions' Submit)", n)
+	}
+	if n := strings.Count(src, "uiAskActions(wrap, get, set, function("); n != 2 {
+		t.Errorf("uiAskActions(wrap, …) called %d time(s), want 2 (the options card and the multi-step form)", n)
 	}
 }
 

@@ -663,3 +663,22 @@ func TestJudgeIsShownTheBulletinsTheTurnCarried(t *testing.T) {
 		t.Errorf("evidence does not show the post:\n%s", msg)
 	}
 }
+
+// A clipped announcement ("Switching to a uniform grid") says a change is
+// being made as surely as "I'll switch it now" does, and it was read KEPT on
+// a turn that ran nothing. The judge is shown that shape.
+func TestTheJudgeKnowsAClippedAnnouncement(t *testing.T) {
+	for _, want := range []string{`"Switching to a uniform grid"`, `"On to the fix:`, "the turn ran nothing that changes anything"} {
+		if !strings.Contains(turnJudgeSysPrompt, want) {
+			t.Errorf("the judge prompt is missing %s", want)
+		}
+	}
+}
+
+// The dispatch hint rides on the person's message; it says they cannot see
+// it, so a hint that does not fit is not answered out loud.
+func TestTheAgentHintSaysThePersonCannotSeeIt(t *testing.T) {
+	if h := agentTriggerHintBlock([]string{"Lawyer"}); !strings.Contains(h, "cannot see it, so never mention it") {
+		t.Errorf("hint: %q", h)
+	}
+}

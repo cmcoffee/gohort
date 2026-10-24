@@ -295,8 +295,7 @@ func renderSessionMarkdownWithDiag(agent AgentRecord, sess ChatSession, udb Data
 	if udb != nil {
 		if events := guardrailExportEvents(udb, agent.ID, sess.ID); len(events) > 0 {
 			fmt.Fprintf(&b, "## Guardrail activity\n\n")
-			fmt.Fprintf(&b, "A check acted %d time(s) during this session, so one or more replies below are not\n", len(events))
-			b.WriteString("what the model originally wrote. ")
+			b.WriteString(guardrailExportLead(events))
 			if TuneBool(tuneExportGuardrailDetail) {
 				fmt.Fprintf(&b, "Each event's own detail is included below because\n")
 				fmt.Fprintf(&b, "the admin setting for it is on; it names the rules this agent enforces.\n\n")
@@ -505,6 +504,39 @@ type guardrailExportEvent struct {
 	At     time.Time
 	What   string
 	Detail string
+	// Kept is an event that left the reply as written: a check that could
+	// not run or reached no verdict, a flag a second reading cleared.
+	Kept bool
+}
+
+// guardrailKeptKinds are the events that changed nothing the reader sees.
+// The export's header counted them with the rest and told the reader the
+// replies were not what the model wrote, for a session where no reply was
+// touched.
+var guardrailKeptKinds = map[string]bool{
+	"guardrail-error":                true,
+	"guardrail-no-verdict":           true,
+	"turn-judge-overturned":          true,
+	"ungrounded-claim-retry-dropped": true,
+}
+
+// guardrailExportLead is the sentence the export's guardrail section opens
+// on: how many checks changed a reply, and how many only noted something.
+func guardrailExportLead(events []guardrailExportEvent) string {
+	changed := 0
+	for _, e := range events {
+		if !e.Kept {
+			changed++
+		}
+	}
+	kept := len(events) - changed
+	switch {
+	case changed == 0:
+		return fmt.Sprintf("Checks noted %d event(s) during this session, and none of them changed a reply: the replies below are what the model wrote. ", kept)
+	case kept == 0:
+		return fmt.Sprintf("A check acted %d time(s) during this session, so one or more replies below are not\nwhat the model originally wrote. ", changed)
+	}
+	return fmt.Sprintf("A check acted %d time(s) during this session, so one or more replies below are not\nwhat the model originally wrote; %d more event(s) left the reply as written. ", changed, kept)
 }
 
 // guardrailExportEvents reads the session's diagnostics trail and returns the
@@ -568,7 +600,7 @@ func guardrailExportEvents(udb Database, agentID, sessionID string) []guardrailE
 	var out []guardrailExportEvent
 	for _, d := range list {
 		if what, ok := label[d.Kind]; ok {
-			e := guardrailExportEvent{At: d.At, What: what}
+			e := guardrailExportEvent{At: d.At, What: what, Kept: guardrailKeptKinds[d.Kind]}
 			if withDetail {
 				e.Detail = strings.TrimSpace(d.Detail)
 			}

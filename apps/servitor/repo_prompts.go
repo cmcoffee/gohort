@@ -148,7 +148,7 @@ func repoOverviewStale(a Appliance) bool {
 
 // repoStaleDocBanner is the warning prepended to stale repo knowledge so the LLM
 // treats the docs as a starting point and re-verifies against current files.
-const repoStaleDocBanner = "> **STALE: code refreshed since this was generated.** The repository was re-cloned AFTER these documents were written, so they may describe code that has since changed. Treat them as a starting point, not ground truth: dispatch the worker to re-verify anything load-bearing against the current files, and run Map to regenerate the knowledge base.\n\n"
+const repoStaleDocBanner = "> **STALE: code refreshed since this was generated.** The repository was refreshed AFTER these documents were written, so they may describe code that has since changed. Treat them as a starting point, not ground truth: dispatch the worker to re-verify anything load-bearing against the current files, and run Map to regenerate the knowledge base.\n\n"
 
 // buildRepoLeadPrompt is the repo analogue of buildLeadSystemPrompt: the Q&A lead
 // that answers the user's question about the codebase, dispatching probe workers
@@ -263,6 +263,9 @@ func buildRepoConsolidationPrompt(appliance Appliance) string {
 // repoDisplayTarget returns a human label for the repo (owner/name from the URL),
 // used where the SSH prompts show host — keeps the shared prompt shape intact.
 func repoDisplayTarget(appliance Appliance) string {
+	if p := strings.TrimSpace(appliance.RepoPath); p != "" {
+		return p // a local folder is named by where it is
+	}
 	if n := repoNameFromURL(appliance.RepoURL); n != "" {
 		return n
 	}

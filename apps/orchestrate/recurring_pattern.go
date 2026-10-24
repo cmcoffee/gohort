@@ -66,10 +66,9 @@ type RecurringSpec struct {
 	Until       string
 	MaxAttempts int
 
-	// Surface — where the fire REPORTS: "" (nobody chose; see
-	// scheduleSurfaceDefault) | "session" | "cortex" | "background". Stored on the
-	// payload and resolved at fire time against SessionID, which stays the home
-	// thread either way so a move back always works.
+	// Surface was where the fire reported. No longer read: a recurring task
+	// reports into its agent's cortex, linking SessionID (console_surface.go).
+	// Kept so payloads made before still decode.
 	Surface string
 
 	// Carry-over identity, set ONLY by an edit-in-place (handleConsoleRecurringUpdate)

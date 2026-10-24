@@ -13,7 +13,6 @@ import (
 type recordingRecurring struct {
 	scheduled []map[string]any
 	cancelled []map[string]any
-	moved     []map[string]any
 	tasks     []recurringTaskRow
 }
 
@@ -27,10 +26,6 @@ func (r *recordingRecurring) recurringList(args map[string]any) (string, error) 
 func (r *recordingRecurring) recurringCancel(args map[string]any) (string, error) {
 	r.cancelled = append(r.cancelled, args)
 	return "CANCELLED ok", nil
-}
-func (r *recordingRecurring) recurringMove(args map[string]any) (string, error) {
-	r.moved = append(r.moved, args)
-	return "MOVED ok", nil
 }
 func (r *recordingRecurring) recurringTasks() []recurringTaskRow { return r.tasks }
 
@@ -49,7 +44,7 @@ func TestPlainAgentScheduleIsItsOwnRecurringPath(t *testing.T) {
 			t.Errorf("a plain agent is offered %q, which it cannot use", p)
 		}
 	}
-	for _, p := range []string{"agent", "to", "random", "until", "max_attempts", "stop_after"} {
+	for _, p := range []string{"agent", "random", "until", "max_attempts", "stop_after"} {
 		if _, ok := tool.Tool.Parameters[p]; !ok {
 			t.Errorf("a plain agent lost %q", p)
 		}
@@ -66,11 +61,11 @@ func TestPlainAgentScheduleIsItsOwnRecurringPath(t *testing.T) {
 	if got["pattern"] != RecurringFixed || got["interval_minutes"] != 15 || got["prompt"] != "check the build, post if red" || got["name"] != "build watch" || got["max_fires"] != 5 {
 		t.Errorf("fixed cadence translated wrong: %v", got)
 	}
-	if _, err := call(map[string]any{"when": "every", "time": "every morning at 8", "then": "summarize overnight alerts", "to": "cortex", "until": "the alerts are triaged", "max_attempts": 3}); err != nil {
+	if _, err := call(map[string]any{"when": "every", "time": "every morning at 8", "then": "summarize overnight alerts", "until": "the alerts are triaged", "max_attempts": 3}); err != nil {
 		t.Fatal(err)
 	}
 	got = rec.scheduled[1]
-	if got["pattern"] != RecurringDaily || got["daily_at"] != "08:00" || got["to"] != "cortex" || got["until"] != "the alerts are triaged" || got["max_attempts"] != 3 {
+	if got["pattern"] != RecurringDaily || got["daily_at"] != "08:00" || got["until"] != "the alerts are triaged" || got["max_attempts"] != 3 {
 		t.Errorf("daily cadence translated wrong: %v", got)
 	}
 	if _, err := call(map[string]any{"when": "every", "time": "90s", "then": "x", "random": true, "times_per_day": 4, "active_from": "09:00", "active_to": "17:00", "min_gap_minutes": 30}); err != nil {
@@ -98,14 +93,11 @@ func TestPlainAgentScheduleIsItsOwnRecurringPath(t *testing.T) {
 		t.Errorf("a monitor on a plain agent was not refused plainly: %v", err)
 	}
 
-	// list / delete / move reach the agent's own tasks by NAME, not id.
+	// list / delete reach the agent's own tasks by NAME, not id.
 	rec.tasks = []recurringTaskRow{{TaskID: "t1", Payload: orchUpdatePayload{Name: "build watch"}}}
 	out, err := call(map[string]any{"action": "list"})
 	if err != nil || !strings.Contains(out, "build watch") {
 		t.Errorf("list does not show the agent's own task: %q %v", out, err)
-	}
-	if _, err := call(map[string]any{"action": "move", "name": "build watch", "to": "cortex"}); err != nil || rec.moved[0]["id"] != "t1" || rec.moved[0]["to"] != "cortex" {
-		t.Errorf("move by name did not reach the task: %v %v", rec.moved, err)
 	}
 	if _, err := call(map[string]any{"action": "delete", "name": "Build Watch"}); err != nil || rec.cancelled[0]["id"] != "t1" {
 		t.Errorf("delete by name did not reach the task: %v %v", rec.cancelled, err)
@@ -136,8 +128,9 @@ func TestAuthorScheduleFoldsBothPaths(t *testing.T) {
 	if _, ok := tool.Tool.Parameters["url"]; !ok {
 		t.Error("an author lost the monitor whens")
 	}
-	if _, ok := tool.Tool.Parameters["to"]; !ok {
-		t.Error("an author lost its own task's report target")
+	// Everything scheduled reports into the cortex: nothing names a target.
+	if _, ok := tool.Tool.Parameters["to"]; ok {
+		t.Error("schedule still takes a report target")
 	}
 	call := func(args map[string]any) (string, error) { return tool.Handler(context.Background(), args) }
 	if _, err := call(map[string]any{"when": "every", "time": "hourly", "then": "poll the thing"}); err != nil {

@@ -305,12 +305,19 @@ func registerOperatorWake(app *OrchestrateApp) {
 		// delivery fan-out below.
 		pacingAsk := &pacing.Ask{}
 
-		// Resolve where the fire SURFACES for the agent (Surface: session / cortex /
-		// background). The trace card AND the channel wake both land here; the home
-		// (wakeSession) is left intact so a switch back to "session" always works.
-		// Background → recordCard=false + no surface session (external delivery only).
-		surfSession, recordCard := resolveSurface(m.Surface, wakeSession, wakeAgent)
+		// The fire surfaces in the wake agent's cortex (console_surface.go): the
+		// trace card and the channel wake both land there, with a line linking
+		// the session the monitor was made in.
+		app.ensureScheduleCortex(owner, wakeAgent)
+		surfSession := scheduleSession(wakeAgent, wakeSession)
 		cardSession := surfSession
+		source := app.scheduleSourceNote(UserDB(app.DB, owner), wakeAgent, wakeSession)
+		withSource := func(text string) string {
+			if source == "" {
+				return text
+			}
+			return strings.TrimSpace(text) + "\n\n" + source
+		}
 		toParent := false // a sub-agent's fire went to its parent's Cortex
 
 		// direct: post the change verbatim, no LLM, WHERE the watcher was created
@@ -332,7 +339,7 @@ func registerOperatorWake(app *OrchestrateApp) {
 				// Locked + re-read, like every other card written into a shared
 				// thread: a monitor fires on its own clock, so it collides with
 				// scheduled fires and standing reports by construction.
-				if err := appendToStoredSession(udb, wakeAgent, cardSession,
+				if err := app.appendToThread(udb, wakeAgent, cardSession,
 					ChatSession{ID: cardSession, AgentID: wakeAgent},
 					ChatMessage{
 						Role:       "assistant",
@@ -368,19 +375,15 @@ func registerOperatorWake(app *OrchestrateApp) {
 					if err := link.SendToChat(owner, chatTarget, outSummary); err == nil {
 						delivered = true
 						Debug("[operator.wake] %s/%s notify=direct enqueued alert to phantom chat %s", owner, monitorName, chatTarget)
-						if recordCard {
-							recordMonitorCard(fmt.Sprintf("%s\n\n(auto-posted directly to %s: no reply needed)", summary, chatTarget))
-						}
+						recordMonitorCard(withSource(fmt.Sprintf("%s\n\n(auto-posted directly to %s: no reply needed)", summary, chatTarget)))
 					} else {
 						Log("[operator.wake] %s/%s notify=direct send to chat %s failed: %v", owner, monitorName, chatTarget, err)
 					}
 				} else {
 					Log("[operator.wake] %s/%s notify=direct but phantom bridge unavailable", owner, monitorName)
 				}
-			} else if recordCard && recordMonitorCard(summary) {
-				// No external target: the trace card IS the delivery. (A Background
-				// monitor with no external target records nothing here — the
-				// never-drop fallback below wakes the agent so the alert isn't lost.)
+			} else if recordMonitorCard(withSource(summary)) {
+				// No external target: the trace card IS the delivery.
 				delivered = true
 			}
 		}
@@ -396,17 +399,10 @@ func registerOperatorWake(app *OrchestrateApp) {
 			}
 		}
 
-		// channel: wake the agent to react — in the SURFACED session (cortex when
-		// moved there). Also the never-drop fallback when nothing else delivered:
-		// a Background monitor has no surface session, so the fallback wakes the
-		// home thread rather than an empty session so the alert isn't lost.
+		// channel: wake the agent to react, in its cortex. Also the never-drop
+		// fallback when nothing else delivered.
 		if modes[EventNotifyChannel] || !delivered {
 			wakeTarget := surfSession
-			if wakeTarget == "" {
-				if wakeTarget = wakeSession; wakeTarget == "" {
-					wakeTarget = cortexSessionID(wakeAgent)
-				}
-			}
 			msg := monitorWakeMessage(m, monitorName, modelSummary, brief)
 			// A monitor carrying a goal lets the woken agent say when the next
 			// CHECK is worth making — "still in review, don't look again until
@@ -434,7 +430,7 @@ func registerOperatorWake(app *OrchestrateApp) {
 				AgentOwner: owner, RuntimeUser: owner, AgentKey: wakeAgent,
 				SubSessionID: wakeTarget, Message: msg,
 				InputReportFrom: monitorName, InputReportKind: cortexKindMonitor,
-				InputCardText: wakeCardText(ctx, summary),
+				InputCardText: withSource(wakeCardText(ctx, summary)),
 				AppTools:      append(monitorPacingTool(m, pacingAsk), tnotes.tool()...),
 			})
 			if err != nil {
@@ -444,11 +440,9 @@ func registerOperatorWake(app *OrchestrateApp) {
 			delivered = true
 			// Woke a sub-agent: what it made of the event goes to its parent's
 			// home thread too (agent_family.go).
-			if recordCard { // background posts to no thread, the parent's included
-				if reportToParent(UserDB(app.DB, owner), wakeAgent, ChatMessage{Role: "assistant", Content: res.Text,
-					ReportFrom: monitorName, ReportKind: cortexKindMonitor}) {
-					toParent = true
-				}
+			if reportToParent(UserDB(app.DB, owner), wakeAgent, ChatMessage{Role: "assistant", Content: res.Text,
+				ReportFrom: monitorName, ReportKind: cortexKindMonitor}) {
+				toParent = true
 			}
 		}
 		// A monitor with a stopping condition is judged on what it just saw,
@@ -463,11 +457,8 @@ func registerOperatorWake(app *OrchestrateApp) {
 		// already has.
 		if delivered && surfSession != cortexSessionID(wakeAgent) && !toParent {
 			where := "delivered to its session"
-			switch {
-			case channelTargetDelivered:
+			if channelTargetDelivered {
 				where = "delivered to a channel"
-			case !recordCard:
-				where = "delivered outside the app"
 			}
 			appendCortexObs(UserDB(app.DB, owner), wakeAgent, monitorName, cortexKindMonitor, cortexPointer(summary, where))
 		}

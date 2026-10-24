@@ -206,7 +206,7 @@ func TestLinkGroupRowsPerAgent(t *testing.T) {
 	if err := linkSchedules("u", "standing:gather", "standing:post"); err != nil {
 		t.Fatal(err)
 	}
-	rows, placed := appendLinkGroupRows(nil, "u", nil, "agent-a")
+	rows, placed := appendLinkGroupRows(nil, "u", nil, "agent-a", nil)
 	if len(rows) != 2 {
 		t.Fatalf("agent-a's view should be the header and its one member, got %d rows: %v", len(rows), rows)
 	}
@@ -226,7 +226,7 @@ func TestLinkGroupRowsPerAgent(t *testing.T) {
 		t.Fatalf("placed: %v", placed)
 	}
 
-	rows, _ = appendLinkGroupRows(nil, "u", nil, "")
+	rows, _ = appendLinkGroupRows(nil, "u", nil, "", nil)
 	if len(rows) != 3 {
 		t.Fatalf("the all-agents view should list every member, got %d rows", len(rows))
 	}

@@ -375,7 +375,7 @@ func (T *OrchestrateApp) reportStanding(ctx context.Context, sa StandingAgent, r
 	if reportAgent == "" {
 		reportAgent = sa.AgentID // legacy records: fall back to the target agent's channel
 	}
-	surface, home := sa.Surface, sa.ReportSessionID
+	home := sa.ReportSessionID
 	reportFrom, reportKind := sa.Name, cortexKindScheduled
 	// A delegation is a request from another agent, not a schedule, and
 	// the record it runs on is named after its TARGET, by id since grants
@@ -386,35 +386,28 @@ func (T *OrchestrateApp) reportStanding(ctx context.Context, sa StandingAgent, r
 	}
 	label := reportFrom
 	// A sub-agent has no thread anybody reads: a schedule it runs reports
-	// to its top-level parent's home thread (agent_family.go), saying
-	// which sub-agent ran it, as its recurring tasks and monitors do.
-	// Background stays background.
+	// to its top-level parent's cortex (agent_family.go), saying which
+	// sub-agent ran it, as its recurring tasks and monitors do.
 	if top := topAgentOf(udb, reportAgent); top != reportAgent {
 		if a, ok := loadAgent(udb, reportAgent); ok && strings.TrimSpace(a.Name) != "" {
 			reportFrom += " (by " + strings.TrimSpace(a.Name) + ")"
 		}
-		reportAgent, home = top, ""
-		if strings.TrimSpace(surface) != "background" {
-			surface = "cortex"
-		}
+		reportAgent = top
 	}
-	// Surface routes the report: session (home) / cortex / background. The run
-	// still happened; background just doesn't post the result to any thread.
-	reportSession, record := resolveSurface(surface, home, reportAgent)
+	// The report lands in the agent's cortex (console_surface.go), linking
+	// the session the schedule was made in.
+	T.ensureScheduleCortex(sa.Owner, reportAgent)
+	reportSession := scheduleSession(reportAgent, home)
+	if src := T.scheduleSourceNote(udb, reportAgent, home); src != "" && body != "" {
+		body = strings.TrimSpace(body) + "\n\n" + src
+	}
 	// Every run leaves a line in the cortex of the agent that RAN it, the
 	// record of what reached it, unless the full report is landing there
 	// anyway. A sub-agent's line goes to its parent's Cortex, so that is
 	// where the report has to be landing (agent_family.go).
 	holder := topAgentOf(udb, sa.AgentID)
-	if !record || reportAgent != holder || reportSession != cortexSessionID(holder) {
-		where := "full report in the session it was scheduled from"
-		if !record {
-			where = "ran in the background"
-		}
-		appendCortexObs(udb, sa.AgentID, label, reportKind, cortexPointer(body, where))
-	}
-	if !record {
-		return
+	if reportAgent != holder || reportSession != cortexSessionID(holder) {
+		appendCortexObs(udb, sa.AgentID, label, reportKind, cortexPointer(body, "full report in the cortex of the agent it reports to"))
 	}
 	if body == "" {
 		return // nothing to report
@@ -425,7 +418,7 @@ func (T *OrchestrateApp) reportStanding(ctx context.Context, sa StandingAgent, r
 	// load-append-save loses whichever card was written while this one was
 	// being composed. Observed on the scheduled path, where the daily blog
 	// post card vanished whenever the engagement fire overlapped it.
-	if err := appendToStoredSession(udb, reportAgent, reportSession,
+	if err := T.appendToThread(udb, reportAgent, reportSession,
 		ChatSession{ID: reportSession, AgentID: reportAgent},
 		ChatMessage{
 			Role:       "assistant",

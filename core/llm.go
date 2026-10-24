@@ -1495,11 +1495,16 @@ func isTransientError(err error) bool {
 	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 		return true
 	}
-	if netErr, ok := err.(net.Error); ok {
-		// Timeout or temporary (connection reset, refused, etc.)
-		return netErr.Timeout() || netErr.Temporary() //nolint:staticcheck
+	if netErr, ok := err.(net.Error); ok && (netErr.Timeout() || netErr.Temporary()) { //nolint:staticcheck
+		return true
 	}
-	// Unwrap and retry any net.OpError (e.g. "connection reset by peer").
+	// Unwrap and retry any net.OpError (e.g. "connection reset by peer",
+	// "broken pipe"). The net.Error check above used to return its answer
+	// outright, and the *url.Error every failed request comes back as is a
+	// net.Error whose Timeout and Temporary are false for a reset or a broken
+	// pipe, so this line was never reached for one. Observed: vLLM closed a
+	// keep-alive connection idle for its five seconds, the next request wrote
+	// into it, and the turn ended with no reply instead of retrying.
 	var opErr *net.OpError
 	if errors.As(err, &opErr) {
 		return true

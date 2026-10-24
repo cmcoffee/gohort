@@ -145,7 +145,12 @@ func (T *Scribe) addSectionTool(sc coauthorScope) AgentToolDef {
 			},
 			Required: []string{"section_title", "markdown"},
 		},
-		SingleFirePerBatch: true,
+		// Every tool that writes the guide runs in one serial lane: a batch
+		// of them is a sequence, each reading what the one before it saved.
+		// They were single-fire, so a restructure of five sections took five
+		// rounds of the model; run side by side, two would each save the
+		// guide as they read it and the second would undo the first.
+		SerialFirePerBatch: true,
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			title := strings.TrimSpace(fmt.Sprint(args["section_title"]))
 			md := modelText(fmt.Sprint(args["markdown"]))
@@ -178,7 +183,7 @@ func (T *Scribe) editSectionTool(sc coauthorScope) AgentToolDef {
 			},
 			Required: []string{"section_title"},
 		},
-		SingleFirePerBatch: true,
+		SerialFirePerBatch: true,
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			title := strings.TrimSpace(fmt.Sprint(args["section_title"]))
 			change := sectionChange{Body: modelText(str(args, "markdown")), Find: str(args, "find"),
@@ -222,7 +227,7 @@ func (T *Scribe) draftSectionTool(sc coauthorScope) AgentToolDef {
 			},
 			Required: []string{"section_title", "instructions"},
 		},
-		SingleFirePerBatch: true,
+		SerialFirePerBatch: true,
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			title := strings.TrimSpace(fmt.Sprint(args["section_title"]))
 			instr := strings.TrimSpace(fmt.Sprint(args["instructions"]))
@@ -346,18 +351,12 @@ func (T *Scribe) deleteSectionTool(sc coauthorScope) AgentToolDef {
 			},
 			Required: []string{"section_title"},
 		},
-		// Asks the person first: removing a section is the one change here
-		// that takes their content away. The card names the section, and a
-		// standing "always allow" is not offered, since each delete is a
-		// decision about different text. Fails closed when nobody is there to
-		// ask: the curator's scheduled runs cannot delete sections (it edits
-		// and supersedes them instead).
-		Confirmation: &ToolConfirmation{
-			Prompt:        "Delete this section from the guide? It can be brought back from the guide's History.",
-			Scope:         "scribe-delete-section",
-			NeverRemember: true,
-		},
-		SingleFirePerBatch: true,
+		// Does not ask. It asked for every section, so a restructure was a
+		// card per section on its way out, for a change History undoes like
+		// any other. A chat turn lists what it changed on one card with one
+		// Undo (turn_changes.go). The curator's unattended runs are not given
+		// this tool at all (withoutDelete): they edit and supersede instead.
+		SerialFirePerBatch: true,
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			title := strings.TrimSpace(fmt.Sprint(args["section_title"]))
 			g, ownerUDB, _, ok := T.openGuide(sc)
@@ -389,7 +388,7 @@ func (T *Scribe) renameSectionTool(sc coauthorScope) AgentToolDef {
 			},
 			Required: []string{"section_title", "new_title"},
 		},
-		SingleFirePerBatch: true,
+		SerialFirePerBatch: true,
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			title := strings.TrimSpace(fmt.Sprint(args["section_title"]))
 			newTitle := strings.TrimSpace(fmt.Sprint(args["new_title"]))
@@ -423,7 +422,7 @@ func (T *Scribe) moveSectionTool(sc coauthorScope) AgentToolDef {
 			},
 			Required: []string{"section_title", "position"},
 		},
-		SingleFirePerBatch: true,
+		SerialFirePerBatch: true,
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			title := strings.TrimSpace(fmt.Sprint(args["section_title"]))
 			pos := coerceIntArg(args["position"])
@@ -636,7 +635,7 @@ func (T *Scribe) addImageTool(sc coauthorScope) AgentToolDef {
 			},
 			Required: []string{"section_title", "image"},
 		},
-		SingleFirePerBatch: true,
+		SerialFirePerBatch: true,
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			title := strings.TrimSpace(fmt.Sprint(args["section_title"]))
 			ref := strings.TrimSpace(fmt.Sprint(args["image"]))
@@ -884,7 +883,7 @@ func (T *Scribe) runIncorporate(ctx context.Context, udb Database, orch *orchest
 		"3. Keep the guide's voice and structure, don't duplicate anything already covered, and preserve the values/citations of what you write in.\n\n" +
 		UntrustedData("pushed finding", content) + "\n\n" +
 		"When done, reply with a one-line summary of what you changed."
-	tools := T.coauthorTools(coauthorScope{Ctx: ctx, UDB: udb, Orch: orch, User: user, CanEdit: true})
+	tools := withoutDelete(T.coauthorTools(coauthorScope{Ctx: ctx, UDB: udb, Orch: orch, User: user, CanEdit: true}))
 	if private {
 		ctx = WithNetworkConnector(ctx, NewNetworkConnector(true))
 		tools = withoutTools(tools, "research")

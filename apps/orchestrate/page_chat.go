@@ -514,7 +514,7 @@ func chatAgentNav() []ui.OrchestratorNavItem {
 			}},
 		// Not on a sub-agent's page: its schedules are on its
 		// parent's Scheduler, with the rest of the family.
-		{Label: "Scheduler", Icon: "⏰", Pinned: true, AllAgents: true, HideFlag: "ORCH_SUB_AGENT_OF", Source: "api/console/scheduler", Layout: "cards", TitleField: "name",
+		{Label: "Scheduler", Icon: "⏰", Pinned: true, AllAgents: true, HideFlag: "ORCH_SUB_AGENT_OF", Source: "api/console/scheduler", Layout: "cards", TitleField: "name", NoBadge: true,
 			SearchPlaceholder: schedulerSearchHint,
 			Filters:           schedulerFilters(),
 			ViewActions: []ui.OrchestratorRowAction{
@@ -534,30 +534,26 @@ func chatAgentNav() []ui.OrchestratorNavItem {
 				// can join one.
 				linkActEditTime, linkActRun, linkActPause, linkActResume,
 				linkActUp, linkActDown, linkActUnlink, linkActLink,
-				// Scheduled agents. "Edit schedule" is a CLIENT action: the
+				// Scheduled agents. "Edit" is a CLIENT action: the
 				// modal that changes a cron or an interval lives in this app's
 				// own JS, which is where anything knowing what a cron is
 				// belongs.
-				{Label: "Edit schedule", Method: "client", URL: "orchestrate_edit_standing", OnlyIf: "_edit_standing"},
+				{Label: "Edit", Method: "client", URL: "orchestrate_edit_standing", OnlyIf: "_edit_standing"},
 				{Label: "Run now", Icon: "once", Method: "POST", URL: "api/console/agents/run", OnlyIf: "_run_standing", Confirm: "Run this agent's mission once right now? This is a one-off test and does not change its schedule."},
 				{Label: "Pause", Icon: "pause", Method: "POST", URL: "api/console/agents/pause", OnlyIf: "_pause_standing"},
 				{Label: "Resume", Icon: "play", Method: "POST", URL: "api/console/agents/resume", OnlyIf: "_resume_standing"},
 				{Label: "Relink", Method: "POST", URL: "api/console/agents/relink", PickerSource: "api/console/agent-options", PickerTitle: "Relink to a live target", OnlyIf: "_relink_standing"},
-				{Label: "Move to…", Method: "POST", URL: "api/console/agents/move", PickerSource: "api/console/surface-options", PickerTitle: "Where the per-run report lands (cortex / session / background)", OnlyIf: "_move_standing"},
 				{Label: "Delete", Method: "DELETE", URL: "api/console/agents/delete", Variant: "danger", OnlyIf: "_del_standing", Confirm: "Delete this standing agent and cancel its schedule?"},
 				// Recurring tasks.
-				{Label: "Edit schedule", Method: "client", URL: "orchestrate_edit_schedule", OnlyIf: "_edit_recurring"},
+				{Label: "Edit", Method: "client", URL: "orchestrate_edit_schedule", OnlyIf: "_edit_recurring"},
 				{Label: "Run now", Icon: "once", Method: "POST", URL: "api/console/recurring/run", OnlyIf: "_run_recurring", Confirm: "Run this recurring task's prompt once right now? This is a one-off test: it does not change the schedule or count against the fire cap."},
 				{Label: "Relink", Method: "POST", URL: "api/console/recurring/relink", PickerSource: "api/console/agent-options", PickerTitle: "Relink to a live agent", OnlyIf: "_relink_recurring"},
 				{Label: "Resume", Icon: "play", Method: "POST", URL: "api/console/recurring/resume", OnlyIf: "_resume_recurring", Confirm: "Put this parked task back on its schedule? A stalled objective gets a fresh attempt allowance; what it already tried is kept."},
 				{Label: "Pause", Icon: "pause", Method: "POST", URL: "api/console/recurring/pause", OnlyIf: "_pause_recurring"},
 				{Label: "Resume", Icon: "play", Method: "POST", URL: "api/console/recurring/resume", OnlyIf: "_unpause_recurring"},
-				// Lost when the three lists became this one page; the handler
-				// and its route stayed.
-				{Label: "Move to…", Method: "POST", URL: "api/console/recurring/move", PickerSource: "api/console/surface-options", PickerTitle: "Where the recurring conversation runs (cortex / session / background)", OnlyIf: "_move_recurring"},
 				{Label: "Delete", Method: "DELETE", URL: "api/console/recurring/delete", Variant: "danger", OnlyIf: "_del_recurring", Confirm: "Delete this recurring task and cancel its schedule?"},
 				// Event monitors.
-				{Label: "Edit schedule", Method: "client", URL: "orchestrate_edit_monitor", OnlyIf: "_edit_monitor"},
+				{Label: "Edit", Method: "client", URL: "orchestrate_edit_monitor", OnlyIf: "_edit_monitor"},
 				// What its recent checks found, the ones that would
 				// have fired included: a monitor that never fires
 				// otherwise looks just like a broken one.
@@ -566,7 +562,6 @@ func chatAgentNav() []ui.OrchestratorNavItem {
 				{Label: "Pause", Icon: "pause", Method: "POST", URL: "api/console/monitors/pause", OnlyIf: "_pause_monitor"},
 				{Label: "Resume", Icon: "play", Method: "POST", URL: "api/console/monitors/resume", OnlyIf: "_resume_monitor"},
 				{Label: "Relink", Method: "POST", URL: "api/console/monitors/relink", PickerSource: "api/console/agent-options?with_default=1", PickerTitle: "Relink (Default agent, or pick a specific one)", OnlyIf: "_relink_monitor"},
-				{Label: "Move to…", Method: "POST", URL: "api/console/monitors/move", PickerSource: "api/console/surface-options", PickerTitle: "Move this monitor: its card, badge & wake all follow", OnlyIf: "_move_monitor"},
 				{Label: "Delete", Method: "DELETE", URL: "api/console/monitors/delete", Variant: "danger", OnlyIf: "_del_monitor", Confirm: "Delete this event monitor?"},
 			}},
 		// Permissions — pinned ABOVE the session list (it's an action
@@ -748,10 +743,6 @@ func chatFleetNav() []ui.OrchestratorNavItem {
 		// difference between this and the Manage entry above, and the
 		// reason both exist.
 		//
-		// Its action set stays narrower than Manage's, as it was when
-		// these were three entries: no Move to…, which relocates where
-		// a report lands and belongs where you are looking at one
-		// agent's arrangements rather than sweeping the fleet.
 		{Label: "Goals", Menu: "Fleet", AllAgents: true, Scope: "fleet", Source: "api/console/goals", Layout: "cards",
 			SearchPlaceholder: goalsSearchHint,
 			Filters:           goalsFilters(),
@@ -762,24 +753,24 @@ func chatFleetNav() []ui.OrchestratorNavItem {
 			RowActions: []ui.OrchestratorRowAction{
 				{Label: "Notes", Method: "client", URL: "orchestrate_task_notes", OnlyIf: "_notes"},
 			}},
-		{Label: "Scheduler", Menu: "Fleet", AllAgents: true, Scope: "fleet", Source: "api/console/scheduler", Layout: "cards", TitleField: "name",
+		{Label: "Scheduler", Menu: "Fleet", AllAgents: true, Scope: "fleet", Source: "api/console/scheduler", Layout: "cards", TitleField: "name", NoBadge: true,
 			SearchPlaceholder: schedulerSearchHint,
 			Filters:           schedulerFilters(),
 			RowActions: []ui.OrchestratorRowAction{
 				linkActEditTime, linkActRun, linkActPause, linkActResume,
 				linkActUp, linkActDown, linkActUnlink, linkActLink,
-				// Scheduled agents. "Edit schedule" is a CLIENT action: the
+				// Scheduled agents. "Edit" is a CLIENT action: the
 				// modal that changes a cron or an interval lives in this app's
 				// own JS, which is where anything knowing what a cron is
 				// belongs.
-				{Label: "Edit schedule", Method: "client", URL: "orchestrate_edit_standing", OnlyIf: "_edit_standing"},
+				{Label: "Edit", Method: "client", URL: "orchestrate_edit_standing", OnlyIf: "_edit_standing"},
 				{Label: "Run now", Icon: "once", Method: "POST", URL: "api/console/agents/run", OnlyIf: "_run_standing", Confirm: "Run this agent's mission once right now? This is a one-off test and does not change its schedule."},
 				{Label: "Pause", Icon: "pause", Method: "POST", URL: "api/console/agents/pause", OnlyIf: "_pause_standing"},
 				{Label: "Resume", Icon: "play", Method: "POST", URL: "api/console/agents/resume", OnlyIf: "_resume_standing"},
 				{Label: "Relink", Method: "POST", URL: "api/console/agents/relink", PickerSource: "api/console/agent-options", PickerTitle: "Relink to a live target", OnlyIf: "_relink_standing"},
 				{Label: "Delete", Method: "DELETE", URL: "api/console/agents/delete", Variant: "danger", OnlyIf: "_del_standing", Confirm: "Delete this standing agent and cancel its schedule?"},
 				// Recurring tasks.
-				{Label: "Edit schedule", Method: "client", URL: "orchestrate_edit_schedule", OnlyIf: "_edit_recurring"},
+				{Label: "Edit", Method: "client", URL: "orchestrate_edit_schedule", OnlyIf: "_edit_recurring"},
 				{Label: "Run now", Icon: "once", Method: "POST", URL: "api/console/recurring/run", OnlyIf: "_run_recurring", Confirm: "Run this recurring task's prompt once right now? This is a one-off test: it does not change the schedule or count against the fire cap."},
 				{Label: "Relink", Method: "POST", URL: "api/console/recurring/relink", PickerSource: "api/console/agent-options", PickerTitle: "Relink to a live agent", OnlyIf: "_relink_recurring"},
 				{Label: "Resume", Icon: "play", Method: "POST", URL: "api/console/recurring/resume", OnlyIf: "_resume_recurring", Confirm: "Put this parked task back on its schedule? A stalled objective gets a fresh attempt allowance; what it already tried is kept."},
@@ -787,7 +778,7 @@ func chatFleetNav() []ui.OrchestratorNavItem {
 				{Label: "Resume", Icon: "play", Method: "POST", URL: "api/console/recurring/resume", OnlyIf: "_unpause_recurring"},
 				{Label: "Delete", Method: "DELETE", URL: "api/console/recurring/delete", Variant: "danger", OnlyIf: "_del_recurring", Confirm: "Delete this recurring task and cancel its schedule?"},
 				// Event monitors.
-				{Label: "Edit schedule", Method: "client", URL: "orchestrate_edit_monitor", OnlyIf: "_edit_monitor"},
+				{Label: "Edit", Method: "client", URL: "orchestrate_edit_monitor", OnlyIf: "_edit_monitor"},
 				{Label: "Pause", Icon: "pause", Method: "POST", URL: "api/console/monitors/pause", OnlyIf: "_pause_monitor"},
 				{Label: "Resume", Icon: "play", Method: "POST", URL: "api/console/monitors/resume", OnlyIf: "_resume_monitor"},
 				{Label: "Relink", Method: "POST", URL: "api/console/monitors/relink", PickerSource: "api/console/agent-options?with_default=1", PickerTitle: "Relink (Default agent, or pick a specific one)", OnlyIf: "_relink_monitor"},

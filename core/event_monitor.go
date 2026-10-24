@@ -121,16 +121,11 @@ type EventMonitor struct {
 	// own home thread as before.
 	WakeChannel string `json:"wake_channel,omitempty"`
 
-	// Surface controls WHERE this monitor's fire lands for the agent — its trace
-	// card, rail badge, and (for a channel wake) its LLM turn all follow it:
-	//   "" / "session" — the monitor's home session (WakeSession).
-	//   "cortex"        — the agent's cortex home thread.
-	//   "background"    — nowhere: NO agent visibility (external delivery only,
-	//                     no card, no rail badge).
-	// A MODE resolved at fire time — the home (WakeSession) is left intact, so a
-	// switch back to "session" always works. "cortex" is only meaningful when the
-	// wake agent has a cortex. Unified across monitors / standing agents /
-	// recurring (see SurfaceSession / same "Move to…" control).
+	// Surface controlled WHERE this monitor's fire landed for the agent: its trace
+	// card, rail badge, and (for a channel wake) its LLM turn all followed it:
+	// the home session, the agent's cortex, or nowhere. No longer read: every
+	// fire reports into the wake agent's cortex. Kept so records and bundles
+	// made before still decode.
 	Surface string `json:"surface,omitempty"`
 
 	// poll kind

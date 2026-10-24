@@ -791,7 +791,7 @@ func linkGroupTitle(owner string, g linkGroup, names map[string]string) string {
 // other agents, and each member's step number is its place in the whole order.
 // The all-agents view lists every member, labelled "(Agent) name" as every
 // row there is (agentRowLabel).
-func appendLinkGroupRows(out []map[string]any, user string, udb Database, agentID string) ([]map[string]any, map[string]bool) {
+func appendLinkGroupRows(out []map[string]any, user string, udb Database, agentID string, ix *standingRunIndex) ([]map[string]any, map[string]bool) {
 	placed := map[string]bool{}
 	linkMu.Lock()
 	var groups []linkGroup
@@ -806,7 +806,7 @@ func appendLinkGroupRows(out []map[string]any, user string, udb Database, agentI
 	}
 	names := agentNames(udb, user)
 	standingRows := map[string]consoleAgentRow{}
-	for _, r := range consoleAgentRows(user, udb, "") {
+	for _, r := range consoleAgentRows(user, udb, "", ix) {
 		standingRows[r.ID] = r
 	}
 	recurringRows := map[string]consoleRecurringRow{}

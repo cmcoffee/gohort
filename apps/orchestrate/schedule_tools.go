@@ -15,7 +15,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -42,27 +41,6 @@ func (t *chatTurn) recurringTasks() []recurringTaskRow {
 		return nil
 	}
 	return listAgentRecurringTasks(t.user, t.agent.ID)
-}
-
-// recurringSurfaceArg reads the optional `to` argument shared by schedule and
-// move: "" (nobody chose — the caller defaults it), "session", "cortex", or
-// "background". Cortex is refused for an agent that has no cortex thread rather
-// than silently downgraded, so the model learns why instead of quietly getting
-// the other destination.
-func recurringSurfaceArg(args map[string]any, agentHasCortex bool) (string, error) {
-	switch v := strings.ToLower(strings.TrimSpace(stringArg(args, "to"))); v {
-	case "":
-		return "", nil
-	case "cortex":
-		if !agentHasCortex {
-			return "", errors.New("this agent doesn't maintain a Cortex thread: enable \"Maintain a Cortex thread\" in its editor first, or leave the task in a session")
-		}
-		return "cortex", nil
-	case "session", "background":
-		return v, nil
-	default:
-		return "", fmt.Errorf("to must be \"cortex\", \"session\", or \"background\" (got %q)", v)
-	}
 }
 
 // recurringEditTarget reports whether an existing task is the one a re-issued
@@ -200,15 +178,6 @@ func (t *chatTurn) recurringSchedule(args map[string]any) (string, error) {
 	default:
 		spec.IntervalSeconds = intFromArgs(args, "interval_minutes") * 60
 	}
-	// Where the reports land. An explicit `to` wins; otherwise the agent decides
-	// (scheduleSurfaceDefault): a cortex agent reports into its cortex, because
-	// that thread exists precisely to hold background work the user reads when
-	// they choose to, instead of fires wedged into whatever conversation happened
-	// to author them.
-	chosen, err := recurringSurfaceArg(args, t.agent.Cortex)
-	if err != nil {
-		return "", err
-	}
 	// Update, don't duplicate: a re-issue that names (or restates) a task this
 	// agent already runs REPLACES it rather than stacking a second copy.
 	//
@@ -235,17 +204,12 @@ func (t *chatTurn) recurringSchedule(args map[string]any) (string, error) {
 		}
 	}
 	if prior != nil {
-		// An edit keeps the task's identity: its home thread (so a retime never
-		// relocates the reports to whichever conversation authored the edit), its
-		// run history, and its destination unless `to` says otherwise.
+		// An edit keeps the task's identity: the session it was made in (which
+		// its fires link back to) and its run history.
 		spec.SessionID = prior.SessionID
 		spec.FireCount = prior.FireCount
 		spec.CreatedAt = prior.CreatedAt
-		if chosen == "" {
-			chosen = strings.TrimSpace(prior.Surface)
-		}
 	}
-	spec.Surface = scheduleSurfaceDefault(chosen, t.agent.Cortex)
 	id, err := ScheduleOrchestrateUpdate(spec)
 	if err != nil {
 		return "", err
@@ -254,7 +218,7 @@ func (t *chatTurn) recurringSchedule(args map[string]any) (string, error) {
 	if replaced {
 		verb, note = "UPDATED_OK", " (edited the existing task in place: no duplicate created; its run history and home thread carried over)"
 	}
-	out := fmt.Sprintf("%s id=%s%s: a recurring TASK now runs %s, appending its reply into %s each cycle. It also appears in this agent's Schedules rail, where the user can cancel it. When you confirm to the user, call it a \"recurring task\" (not a bridge/monitor), SAY WHERE ITS REPORTS WILL APPEAR, and don't send them to the Bridges app. Move it with recurring(action=\"move\"); manage it with recurring(action=\"list\") or recurring(action=\"cancel\", id=%q).", verb, id, note, specCadence(spec), surfaceDestLabel(spec.Surface), id)
+	out := fmt.Sprintf("%s id=%s%s: a recurring TASK now runs %s, appending its reply into this agent's cortex each cycle. It also appears in this agent's Schedules rail, where the user can cancel it. When you confirm to the user, call it a \"recurring task\" (not a bridge/monitor), say its reports appear in the cortex, and don't send them to the Bridges app. Manage it with recurring(action=\"list\") or recurring(action=\"cancel\", id=%q).", verb, id, note, specCadence(spec), id)
 	// Unattended fires answer to gates an interactive turn never meets — a tool
 	// that needs confirmation with nobody there to give it, a proactive message
 	// with no inbound to reply to. Both used to surface only when the task fired,
@@ -283,7 +247,7 @@ func (t *chatTurn) recurringList(args map[string]any) (string, error) {
 		Cadence   string `json:"cadence"`
 		FireCount int    `json:"fire_count"`
 		CreatedAt string `json:"created_at"`
-		PostsTo   string `json:"posts_to"` // this_session | cortex | other_session
+		PostsTo   string `json:"posts_to"` // cortex, or its_session for a task naming no agent
 		// Objective fields, present only on a task that has a goal.
 		Objective string `json:"objective,omitempty"`
 		State     string `json:"objective_state,omitempty"`
@@ -304,18 +268,9 @@ func (t *chatTurn) recurringList(args map[string]any) (string, error) {
 		if pattern == "" {
 			pattern = RecurringFixed
 		}
-		// Where it ACTUALLY lands: Surface resolved against the home session, not
-		// the home alone — a task surfacing to the cortex still stores the session
-		// it was created in, and reporting that would name the wrong thread.
-		dest, record := resolveSurface(p.Surface, p.SessionID, p.AgentID)
-		postsTo := "other_session"
-		switch {
-		case !record:
-			postsTo = "background"
-		case dest == cortexSessionID(p.AgentID):
-			postsTo = "cortex"
-		case dest == t.session.ID:
-			postsTo = "this_session"
+		postsTo := "cortex"
+		if scheduleSession(p.AgentID, p.SessionID) != cortexSessionID(p.AgentID) {
+			postsTo = "its_session"
 		}
 		rows = append(rows, row{
 			ID: rt.TaskID, Agent: t.recurringAgentName(p.AgentID),
@@ -358,108 +313,6 @@ func (t *chatTurn) recurringCancel(args map[string]any) (string, error) {
 			// having cancelled one of your own.
 			return fmt.Sprintf("CANCELLED ok. Recurring task %s on %s removed.", id, t.recurringAgentName(rt.Payload.AgentID)), nil
 		}
-	}
-	return "", fmt.Errorf("no recurring task %s on %s: recurring(action=\"list\", agent=\"all\") shows every id you own", id, scopeLabel)
-}
-
-// recurringMove retargets where an existing task posts its reports — the agent's
-// Cortex mind thread (background cycles the user shouldn't wade through
-// mid-conversation), a session, or background (it runs, nothing is posted). The
-// queued occurrence's payload is updated ATOMICALLY in place
-// (UpdateScheduledTaskPayload), so timing, fire count, and budget carry over
-// untouched and no fire is consumed. If the task is mid-fire its queued entry is
-// the pre-armed next occurrence, which this updates the same way.
-//
-// It writes Surface, not just the home session — the same field the console's
-// Move-to control writes, and the one a create now defaults to "cortex" on a
-// cortex agent. Re-homing alone would leave that default in place and quietly
-// keep sending the reports to the cortex.
-func (t *chatTurn) recurringMove(args map[string]any) (string, error) {
-	if t.session == nil || t.session.ID == "" {
-		return "", errors.New("recurring(move) requires an active session")
-	}
-	id := strings.TrimSpace(stringArg(args, "id"))
-	if id == "" {
-		return "", errors.New("id is required for recurring(move)")
-	}
-	scopeID, scopeLabel, err := t.recurringScope(args)
-	if err != nil {
-		return "", err
-	}
-	cross := scopeID != t.agent.ID
-	// Whether the DESTINATION agent has a cortex thread, not whether this one
-	// does: moving another agent's task to "cortex" means that agent's.
-	hasCortex := t.agent.Cortex
-	if cross {
-		if scopeID == "" {
-			return "", errors.New(`recurring(move) needs one agent: agent="all" is for list only`)
-		}
-		tgt, ok := loadAgent(t.udb, scopeID)
-		if !ok {
-			return "", fmt.Errorf("agent %s no longer exists", scopeID)
-		}
-		hasCortex = tgt.Cortex
-	}
-	surface, err := recurringSurfaceArg(args, hasCortex)
-	if err != nil {
-		return "", err
-	}
-	if surface == "" {
-		return "", errors.New("to is required for recurring(move): \"cortex\", \"session\", or \"background\"")
-	}
-	// home is the session the task is re-homed to; only a move to a session
-	// changes it, so switching to cortex/background and back always returns to
-	// the thread the task was created in.
-	// A session move re-homes the task to a thread of the agent being talked
-	// to, which is meaningless for someone else's task — refused rather than
-	// silently re-homing another agent's schedule into this conversation.
-	if cross && surface == "session" {
-		return "", errors.New(`to="session" re-homes a task into a thread of the agent you are talking to, so it cannot target another agent's task: use "cortex" or "background", or move it from that agent's own session`)
-	}
-	home, destLabel := "", surfaceDestLabel(surface)
-	if surface == "session" {
-		home = t.session.ID
-		// A specific thread — e.g. a dedicated reports session the agent
-		// just created via open_session. Must already exist on this agent
-		// (the user-scoped store enforces ownership); a typo'd id should
-		// error, not silently spawn a thread nobody can find.
-		if sid := strings.TrimSpace(stringArg(args, "session_id")); sid != "" && sid != t.session.ID {
-			sess, ok := loadChatSession(t.udb, t.agent.ID, sid)
-			if !ok {
-				return "", fmt.Errorf("no session %s on this agent: use the id returned by open_session, or omit session_id to target this conversation", sid)
-			}
-			home = sid
-			destLabel = fmt.Sprintf("the session %q", firstNonEmptyStr(strings.TrimSpace(sess.Title), sid))
-		}
-	}
-	for _, rt := range listAgentRecurringTasks(t.user, scopeID) {
-		if rt.TaskID != id {
-			continue
-		}
-		p := rt.Payload
-		// Compare where it ACTUALLY lands today (surface resolved against the
-		// home), not the stored home alone — a task defaulted to the cortex has
-		// its creating session as home and is already there.
-		curDest, _ := resolveSurface(p.Surface, p.SessionID, p.AgentID)
-		newDest, _ := resolveSurface(surface, firstNonEmptyStr(home, p.SessionID), p.AgentID)
-		if p.Surface == surface && curDest == newDest {
-			return fmt.Sprintf("Recurring task %s already posts into %s: nothing to move.", id, destLabel), nil
-		}
-		// Respect the destination thread's active-task cap, same as schedule —
-		// only when the home actually changes (the cap counts tasks per home).
-		if home != "" && home != p.SessionID {
-			if active := ListOrchestrateUpdates(home); len(active) >= orchUpdateMaxPerSession() {
-				return "", fmt.Errorf("the destination already has %d active recurring tasks (cap %d): cancel one there first", len(active), orchUpdateMaxPerSession())
-			}
-			p.SessionID = home
-		}
-		p.Surface = surface
-		// A deliberate edit renews the idle clock, same as create/update.
-		p.LastActive = time.Now().UTC().Format(time.RFC3339)
-		if !UpdateScheduledTaskPayload(rt.TaskID, p) {
-			return "", errors.New("that task is firing right now: try the move again in a moment (recurring(action=\"list\") for a fresh id)")
-		}
-		return fmt.Sprintf("MOVED_OK id=%s: the recurring task now posts its reports into %s. Timing, fire count, and budget are unchanged. Tell the user where its reports will appear from now on.", id, destLabel), nil
 	}
 	return "", fmt.Errorf("no recurring task %s on %s: recurring(action=\"list\", agent=\"all\") shows every id you own", id, scopeLabel)
 }

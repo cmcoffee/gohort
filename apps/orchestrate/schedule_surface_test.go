@@ -1,73 +1,110 @@
-// Where a schedule REPORTS, when nobody said.
-//
-// A schedule authored mid-conversation used to post its fires back into that
-// conversation, which is the wrong thread for an agent that keeps a cortex: the
-// cortex is the standing home for exactly this kind of background work, and
-// interleaving hourly cycles into a live conversation buries the conversation.
-// So an agent with a cortex now defaults there, on create AND on edit.
-//
-// The edit half is why "session" has to be a STORED value rather than an empty
-// one. Empty means "nobody chose" and gets defaulted; if a deliberate move back
-// to the session stored empty, the next timing edit would quietly send the
-// reports to the cortex again.
+// Every scheduled thing reports into its agent's cortex (console_surface.go).
+// There was a choice per schedule (the cortex, the session it was made in, or
+// nowhere), and the session's only use was a conversation the schedule
+// outlives.
 package orchestrate
 
-import "testing"
+import (
+	"os"
+	"strings"
+	"testing"
 
-func TestScheduleSurfaceDefaultsToCortexOnlyWhenUnchosen(t *testing.T) {
-	for _, tc := range []struct {
-		name      string
-		chosen    string
-		hasCortex bool
-		want      string
-	}{
-		{"unchosen on a cortex agent takes the cortex", "", true, "cortex"},
-		{"unchosen without a cortex stays the session", "", false, ""},
-		{"an explicit session survives the default", "session", true, "session"},
-		{"an explicit background survives the default", "background", true, "background"},
-		{"an explicit cortex is kept", "cortex", true, "cortex"},
-	} {
-		if got := scheduleSurfaceDefault(tc.chosen, tc.hasCortex); got != tc.want {
-			t.Errorf("%s: scheduleSurfaceDefault(%q, %v) = %q, want %q", tc.name, tc.chosen, tc.hasCortex, got, tc.want)
+	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/snugforge/kvlite"
+)
+
+func TestAScheduleReportsIntoItsAgentsCortex(t *testing.T) {
+	if got := scheduleSession("agent-1", "sess-42"); got != cortexSessionID("agent-1") {
+		t.Errorf("a fire made in a session lands in %q, want the cortex", got)
+	}
+	// A record from before schedules named an agent has only its session.
+	if got := scheduleSession("", "sess-42"); got != "sess-42" {
+		t.Errorf("a record with no agent lands in %q", got)
+	}
+}
+
+// An agent without a cortex gets one at its first fire, as attaching a
+// channel gives it one. A sub-agent does not: what reaches it is its
+// parent's.
+func TestAFireGivesATopLevelAgentACortex(t *testing.T) {
+	root := &DBase{Store: kvlite.MemStore()}
+	T := &OrchestrateApp{AppCore: AppCore{DB: root}}
+	udb := UserDB(root, "u")
+	parent, err := saveAgent(udb, AgentRecord{Name: "Parent", Owner: "u", OrchestratorPrompt: "You plan."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sub, err := saveAgent(udb, AgentRecord{Name: "Helper", Owner: "u", OwnedBy: parent.ID, OrchestratorPrompt: "You help."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	T.ensureScheduleCortex("u", parent.ID)
+	T.ensureScheduleCortex("u", sub.ID)
+	if a, _ := loadAgent(udb, parent.ID); !a.Cortex {
+		t.Error("the agent was not given a cortex for its schedule to report into")
+	}
+	if a, _ := loadAgent(udb, sub.ID); a.Cortex {
+		t.Error("a sub-agent was given a cortex of its own")
+	}
+}
+
+// The fire says where it came from, as a link back to the session the
+// schedule was made in, and says nothing for one made in the cortex.
+func TestAFireLinksTheSessionItWasMadeIn(t *testing.T) {
+	root := &DBase{Store: kvlite.MemStore()}
+	T := &OrchestrateApp{AppCore: AppCore{DB: root}}
+	udb := UserDB(root, "u")
+	if _, err := saveChatSession(udb, ChatSession{ID: "s-build", AgentID: "a1", Title: "Build [nightly] watch"}); err != nil {
+		t.Fatal(err)
+	}
+	note := T.scheduleSourceNote(udb, "a1", "s-build")
+	if !strings.HasPrefix(note, "Scheduled from [Build (nightly) watch](") || !strings.Contains(note, "?agent=a1&session=s-build)") {
+		t.Errorf("source note: %q", note)
+	}
+	for _, home := range []string{"", cortexSessionID("a1"), "s-gone"} {
+		if got := T.scheduleSourceNote(udb, "a1", home); got != "" {
+			t.Errorf("home %q should carry no note, got %q", home, got)
 		}
 	}
 }
 
-// The picker's "session" has to come back as the word, and it has to mean the
-// home session at fire time — the two halves of a durable move back.
-func TestExplicitSessionChoiceIsStoredAndStillResolvesHome(t *testing.T) {
-	got, ok := normalizeSurface("session")
-	if !ok || got != "session" {
-		t.Fatalf("normalizeSurface(\"session\") = %q, %v — want \"session\", true (empty would be re-defaulted on the next edit)", got, ok)
+// A recurring task runs in the cortex whatever it was set to; a background
+// job's result coming back is not a schedule and returns to its session.
+func TestARecurringFireRunsInTheCortexAndATaskWakeDoesNot(t *testing.T) {
+	root := &DBase{Store: kvlite.MemStore()}
+	T := &OrchestrateApp{AppCore: AppCore{DB: root}}
+	udb := UserDB(root, "u")
+	a, err := saveAgent(udb, AgentRecord{Name: "Watcher", Owner: "u", OrchestratorPrompt: "You watch."})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if again := scheduleSurfaceDefault(got, true); again != "session" {
-		t.Fatalf("a stored session choice was re-defaulted to %q on a cortex agent", again)
+	for _, surface := range []string{"", "session", "background", "cortex"} {
+		fr := &fireRun{app: T, udb: udb, p: orchUpdatePayload{AgentID: a.ID, Username: "u", SessionID: "s1", Prompt: "check the queue", Surface: surface}}
+		fr.loadThread()
+		if fr.loadSession != cortexSessionID(a.ID) {
+			t.Errorf("surface %q ran in %q, want the cortex", surface, fr.loadSession)
+		}
 	}
-	sess, record := resolveSurface(got, "sess-42", "agent-1")
-	if !record || sess != "sess-42" {
-		t.Fatalf("resolveSurface(%q, home) = %q, record=%v — want the home session", got, sess, record)
-	}
-	// And an empty value (a client that sent nothing) still means "unchosen".
-	if got, ok := normalizeSurface(""); !ok || got != "" {
-		t.Fatalf("normalizeSurface(\"\") = %q, %v — want \"\", true", got, ok)
+	wake := &fireRun{app: T, udb: udb, p: orchUpdatePayload{AgentID: a.ID, Username: "u", SessionID: "s1", Prompt: "done " + taskWakeMarker}}
+	wake.loadThread()
+	if wake.loadSession != "s1" {
+		t.Errorf("a task wake ran in %q, want the session that started the job", wake.loadSession)
 	}
 }
 
-func TestRecurringSurfaceArg(t *testing.T) {
-	if got, err := recurringSurfaceArg(map[string]any{}, true); err != nil || got != "" {
-		t.Fatalf("omitted `to` = %q, %v — want \"\", nil so the caller defaults it", got, err)
-	}
-	if _, err := recurringSurfaceArg(map[string]any{"to": "cortex"}, false); err == nil {
-		t.Error("to=cortex on an agent with no cortex thread should be refused, not silently downgraded")
-	}
-	for _, v := range []string{"cortex", "session", "background"} {
-		got, err := recurringSurfaceArg(map[string]any{"to": v}, true)
-		if err != nil || got != v {
-			t.Errorf("to=%q = %q, %v — want it honored", v, got, err)
+// Nothing asks where a schedule reports any more: not the tools.
+func TestTheToolsTakeNoDestination(t *testing.T) {
+	for _, f := range []string{"operator_schedule_tool.go", "operator_monitor_tools.go"} {
+		src, _ := os.ReadFile(f)
+		for _, gone := range []string{`"surface":`, `"to":`, `"move"`, "recurringMove"} {
+			if strings.Contains(string(src), gone) {
+				t.Errorf("%s still has %s", f, gone)
+			}
 		}
 	}
-	if _, err := recurringSurfaceArg(map[string]any{"to": "elsewhere"}, true); err == nil {
-		t.Error("an unknown destination should error rather than fall through to a default")
+	src, _ := os.ReadFile("operator_schedule_tool.go")
+	if !strings.Contains(string(src), "write `then` to stand on its own") {
+		t.Error("the schedule tool should say a fire runs without the conversation")
 	}
 }
 
@@ -125,5 +162,43 @@ func TestTheCortexRefusesWebWritesButTakesAnAnswer(t *testing.T) {
 		t.Error("an ordinary session is untouched")
 	case refusesWebWrite("wren", cortexSessionID("other"), plain):
 		t.Error("only this agent's own cortex id counts")
+	}
+}
+
+// A fire appends to the cortex without taking a turn there, and the cortex
+// takes no web turns, so its storage is bounded on the append: messages
+// already folded into the summary and archive are dropped, the rest kept, and
+// the fold cursor moved with them.
+func TestAFireBoundsTheCortexItAppendsTo(t *testing.T) {
+	root := &DBase{Store: kvlite.MemStore()}
+	T := &OrchestrateApp{AppCore: AppCore{DB: root}}
+	udb := UserDB(root, "u")
+	a, err := saveAgent(udb, AgentRecord{Name: "Reporter", Owner: "u", OrchestratorPrompt: "You report.", Cortex: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sid := cortexSessionID(a.ID)
+	keep := storedHistoryCap
+	if !GetEmbeddingConfig().Enabled {
+		keep = storedHistoryCapNoEmbed
+	}
+	n := keep + storedHistorySlack + 10
+	sess := ChatSession{ID: sid, AgentID: a.ID}
+	for i := 0; i < n; i++ {
+		sess.Messages = append(sess.Messages, ChatMessage{Role: "assistant", Content: "report"})
+	}
+	if _, err := saveChatSession(udb, sess); err != nil {
+		t.Fatal(err)
+	}
+	saveCompactState(udb, a.ID, sid, CompactState{SummarizedThrough: n - 20, Summary: "earlier reports"})
+	if err := T.appendToThread(udb, a.ID, sid, ChatSession{}, ChatMessage{Role: "assistant", Content: "the new one"}); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := loadChatSession(udb, a.ID, sid)
+	if len(got.Messages) != keep || got.Messages[len(got.Messages)-1].Content != "the new one" {
+		t.Errorf("stored %d messages, want %d ending in the new card", len(got.Messages), keep)
+	}
+	if st := loadCompactState(udb, a.ID, sid); st.SummarizedThrough != n-20-(n+1-keep) {
+		t.Errorf("fold cursor %d did not move with the trim", st.SummarizedThrough)
 	}
 }

@@ -25,15 +25,17 @@ func TestScribeToolsDeclareWhatTheyDo(t *testing.T) {
 		tools[td.Tool.Name] = td.Tool
 		defs[td.Tool.Name] = td
 	}
-	// Deleting a section asks, every time; nothing else here does, since
-	// every other change is one edit away from undone and the curator makes
-	// them unattended.
-	if c := defs["delete_section"].Confirmation; !c.Asks() || !c.NeverRemember {
-		t.Error("delete_section takes a section away without asking")
-	}
-	for _, n := range []string{"add_section", "edit_section", "draft_section"} {
+	// Nothing here asks first. A delete is a revision like any other change,
+	// and a chat turn lists its changes on one card with one Undo
+	// (turn_changes.go), where asking per section put a card in front of the
+	// person for every section a restructure removed. The writers run as a
+	// sequence, not one per round.
+	for n := range guideWriteTools {
 		if defs[n].Confirmation.Asks() || defs[n].NeedsConfirm {
-			t.Errorf("%s asks first, which would stop the curator's unattended edits", n)
+			t.Errorf("%s asks first", n)
+		}
+		if !defs[n].SerialFirePerBatch || defs[n].SingleFirePerBatch {
+			t.Errorf("%s should run in the writers' serial lane", n)
 		}
 	}
 	has := func(tl Tool, c Capability) bool {

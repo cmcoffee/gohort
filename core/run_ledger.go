@@ -230,6 +230,19 @@ type RunFilter struct {
 // narrowing. Subject wins when both the filter and the record carry one; a
 // record without a Subject is matched the old way so its history stays
 // reachable.
+// Matches reports whether r is a run the filter selects: everything ListRuns
+// checks except Limit, for a caller that reads the ledger once and asks
+// several questions of it.
+func (f RunFilter) Matches(r RunRecord) bool {
+	if !f.matches(r) {
+		return false
+	}
+	if f.Status != "" && r.Status != f.Status {
+		return false
+	}
+	return f.Since.IsZero() || !r.Started.Before(f.Since)
+}
+
 func (f RunFilter) matches(r RunRecord) bool {
 	// Task is its own axis, ANDed with the rest like Status: a caller asking
 	// for one schedule's fires gets that schedule's fires. Callers that want
@@ -346,13 +359,7 @@ func ListRuns(db Database, owner string, filter RunFilter) []RunRecord {
 		if !db.Get(runLedgerTable, k, &r) {
 			continue
 		}
-		if !filter.matches(r) {
-			continue
-		}
-		if filter.Status != "" && r.Status != filter.Status {
-			continue
-		}
-		if !filter.Since.IsZero() && r.Started.Before(filter.Since) {
+		if !filter.Matches(r) {
 			continue
 		}
 		out = append(out, r)

@@ -82,6 +82,11 @@ type PipelinePanel struct {
 	SessionTitleField  string `json:"session_title_field,omitempty"`  // default "Title"
 	SessionDateField   string `json:"session_date_field,omitempty"`   // default "Date"
 	SessionBlocksField string `json:"session_blocks_field,omitempty"` // default "Blocks"
+	// SessionRunningField names the field that marks a sidebar row as a
+	// run still going (default "Running"). Opening such a row rejoins the
+	// live run through ReconnectURL instead of loading a saved record,
+	// which a run in progress does not have yet.
+	SessionRunningField string `json:"session_running_field,omitempty"`
 
 	// SessionMetaFields list extra fields to surface under each
 	// sidebar row's title — verdict snippet, confidence badge,

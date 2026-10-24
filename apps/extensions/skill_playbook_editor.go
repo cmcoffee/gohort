@@ -135,7 +135,7 @@ func rulePanel(endpoint string, rule PlaybookRule) ui.FormPanel {
 	fields := []ui.FormField{
 		{Field: "sentence", Type: "readonly", Label: "Reads as"},
 		{Field: "when", Type: "tags", Label: "Applies when the message mentions (optional)",
-			Help:   "Matched like the skill's triggers: case-insensitive substrings of the message.",
+			Help:   "Matched like the skill's triggers: case-insensitive whole words or phrases of the message.",
 			Detail: "Empty means every time the skill is consulted."},
 		{Field: "fact", Type: "text", Label: "What must be established first?",
 			Help: "One word, no spaces: the name of the field the check fills in."},

@@ -27,6 +27,7 @@ const (
 	repoFilesTable    = "repo_files"
 	repoHashTable     = "repo_hashes" // path → content hash; drives diff-based re-ingest
 	maxIngestFileSize = 1 << 20       // 1 MiB — skip larger (data/generated/minified)
+	maxIngestFiles    = 50000         // a folder past this is not a codebase; ingest stops
 	binarySniff       = 8000          // bytes checked for NUL to detect binary
 )
 
@@ -81,43 +82,23 @@ func (T *Servitor) cloneAndIngestRepo(ctx context.Context, user string, udb Data
 		Log("[servitor.repo] RepoFilesDB not initialized; cannot ingest %s", rec.RepoURL)
 		return
 	}
-	base := "/dev/shm"
-	if _, err := os.Stat(base); err != nil {
-		base = os.TempDir()
-	}
-	dir, err := os.MkdirTemp(base, "servitor-repo-")
-	if err != nil {
-		Log("[servitor.repo] tmp dir: %v", err)
-		return
-	}
-	defer os.RemoveAll(dir)
-
-	// Checked again here, not only when the record was saved: a record from
-	// before the check, an import, or a store edited some other way reaches
-	// this line too, and this is the line that runs git on the server.
-	if err := validateRepoSource(rec.RepoURL, rec.RepoBranch, UserIsAdmin(user)); err != nil {
-		Log("[servitor.repo] refusing to clone %s: %v", rec.Name, err)
-		return
-	}
-	args := []string{"clone", "--depth", "1", "--single-branch"}
-	if b := strings.TrimSpace(rec.RepoBranch); b != "" {
-		args = append(args, "--branch", b)
-	}
-	// "--" so neither operand can ever be read as an option, whatever it
-	// starts with.
-	args = append(args, "--", repoCloneURL(rec), dir)
-
-	// Derive the timeout from the caller's ctx so a session Cancel aborts the
-	// clone mid-flight, not just the surrounding work.
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", args...)
-	// GIT_ALLOW_PROTOCOL also binds what git reaches on its own behalf
-	// (submodules, redirects), not just the URL checked above.
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_ALLOW_PROTOCOL=https:ssh")
-	if _, err := cmd.CombinedOutput(); err != nil {
-		Log("[servitor.repo] clone failed for %s: %v", rec.Name, err)
-		return
+	// The tree to ingest: a local folder read where it is, or a clone made
+	// for this ingest and removed after it.
+	var dir string
+	if strings.TrimSpace(rec.RepoPath) != "" {
+		root, err := repoLocalRoot(rec.RepoPath, UserIsAdmin(user))
+		if err != nil {
+			Log("[servitor.repo] refusing to read %s: %v", rec.Name, err)
+			return
+		}
+		dir = root
+	} else {
+		cloned, ok := T.cloneRepoToTmp(ctx, user, rec)
+		if !ok {
+			return
+		}
+		defer os.RemoveAll(cloned)
+		dir = cloned
 	}
 
 	// Diff-based re-ingest: keep the encrypted store in sync with the fresh clone
@@ -137,7 +118,17 @@ func (T *Servitor) cloneAndIngestRepo(ctx context.Context, user string, udb Data
 
 	seen := map[string]bool{}
 	var count, added, changed int
+	capped := false
 	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		// A local folder can be far bigger than a repository: stop when the
+		// session is cancelled or the file cap is reached, not at the end.
+		if ctx.Err() != nil {
+			return filepath.SkipAll
+		}
+		if count >= maxIngestFiles {
+			capped = true
+			return filepath.SkipAll
+		}
 		if err != nil {
 			// Don't abort the whole walk on one bad entry, but log it — a silent
 			// skip (e.g. a permission-denied file) otherwise undercounts the repo
@@ -187,10 +178,20 @@ func (T *Servitor) cloneAndIngestRepo(ctx context.Context, user string, udb Data
 		return nil
 	})
 
+	// A walk that stopped early has not seen the whole tree, so nothing it
+	// missed may be taken for deleted.
+	if ctx.Err() != nil {
+		Log("[servitor.repo] ingest of %s stopped: %v", rec.Name, ctx.Err())
+		return
+	}
+	if capped {
+		Log("[servitor.repo] %s has more than %d text files; ingested the first %d (narrow it with Skip Directories)", rec.Name, maxIngestFiles, maxIngestFiles)
+	}
+
 	// Drop files that disappeared from the repo since the last ingest.
 	removed := 0
 	for p := range prev {
-		if !seen[p] {
+		if !seen[p] && !capped {
 			store.Unset(repoFilesTable, p)
 			store.Unset(repoHashTable, p)
 			removed++
@@ -202,6 +203,51 @@ func (T *Servitor) cloneAndIngestRepo(ctx context.Context, user string, udb Data
 	udb.Set(applianceTable, applianceID, rec)
 	Log("[servitor.repo] ingested %s: %d files (%d new, %d changed, %d removed)",
 		rec.Name, count, added, changed, removed)
+}
+
+// cloneRepoToTmp clones rec's git remote into a fresh tmpfs folder, which
+// the caller removes. False when it may not be cloned or the clone failed.
+func (T *Servitor) cloneRepoToTmp(ctx context.Context, user string, rec Appliance) (string, bool) {
+	base := "/dev/shm"
+	if _, err := os.Stat(base); err != nil {
+		base = os.TempDir()
+	}
+	dir, err := os.MkdirTemp(base, "servitor-repo-")
+	if err != nil {
+		Log("[servitor.repo] tmp dir: %v", err)
+		return "", false
+	}
+
+	// Checked again here, not only when the record was saved: a record from
+	// before the check, an import, or a store edited some other way reaches
+	// this line too, and this is the line that runs git on the server.
+	if err := validateRepoSource(rec.RepoURL, rec.RepoBranch, UserIsAdmin(user)); err != nil {
+		Log("[servitor.repo] refusing to clone %s: %v", rec.Name, err)
+		os.RemoveAll(dir)
+		return "", false
+	}
+	args := []string{"clone", "--depth", "1", "--single-branch"}
+	if b := strings.TrimSpace(rec.RepoBranch); b != "" {
+		args = append(args, "--branch", b)
+	}
+	// "--" so neither operand can ever be read as an option, whatever it
+	// starts with.
+	args = append(args, "--", repoCloneURL(rec), dir)
+
+	// Derive the timeout from the caller's ctx so a session Cancel aborts the
+	// clone mid-flight, not just the surrounding work.
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", args...)
+	// GIT_ALLOW_PROTOCOL also binds what git reaches on its own behalf
+	// (submodules, redirects), not just the URL checked above.
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_ALLOW_PROTOCOL=https:ssh")
+	if _, err := cmd.CombinedOutput(); err != nil {
+		Log("[servitor.repo] clone failed for %s: %v", rec.Name, err)
+		os.RemoveAll(dir)
+		return "", false
+	}
+	return dir, true
 }
 
 // scpLikeRepo is the "user@host:path" form git accepts for ssh.
@@ -256,6 +302,83 @@ func validateRepoSource(rawURL, branch string, ownerIsAdmin bool) error {
 		return fmt.Errorf("an ssh repo url clones with the gohort server's own ssh keys, so only an admin-owned repo may use one: use an https:// url with an access token instead")
 	}
 	return nil
+}
+
+// repoLocalRoot decides whether a repo appliance may read the local folder p,
+// and returns the folder to walk (symlinks resolved).
+//
+// The folder is on the gohort server and is read as the gohort process, so
+// this is the line validateRepoSource draws against "file://" and bare local
+// paths, moved for an admin: only an admin-owned appliance may name one (the
+// save also requires the person saving it to be an admin). Even then it may
+// not be the root of the filesystem, nor overlap gohort's own data or install
+// folders: the databases, keys and configuration are not a codebase, and an
+// investigation of a folder is not the place to read them.
+func repoLocalRoot(p string, ownerIsAdmin bool) (string, error) {
+	p = strings.TrimSpace(p)
+	if p == "" {
+		return "", fmt.Errorf("a local folder is required")
+	}
+	if strings.IndexFunc(p, func(r rune) bool { return r < ' ' || r == 0x7f }) >= 0 {
+		return "", fmt.Errorf("the folder path may not contain control characters")
+	}
+	if !filepath.IsAbs(p) {
+		return "", fmt.Errorf("the folder must be an absolute path on the gohort server, such as /srv/app")
+	}
+	if !ownerIsAdmin {
+		return "", fmt.Errorf("a local folder is read from the gohort server's own disk, so only an admin-owned repo may use one")
+	}
+	root, err := filepath.EvalSymlinks(filepath.Clean(p))
+	if err != nil {
+		return "", fmt.Errorf("the folder cannot be read: %v", err)
+	}
+	if info, err := os.Stat(root); err != nil || !info.IsDir() {
+		return "", fmt.Errorf("%s is not a folder", p)
+	}
+	if root == string(filepath.Separator) {
+		return "", fmt.Errorf("the root of the filesystem is not a folder to ingest: name the project folder")
+	}
+	for _, guarded := range gohortOwnFolders() {
+		if overlaps(root, guarded) {
+			return "", fmt.Errorf("%s overlaps gohort's own folder %s, which holds its databases and configuration", p, guarded)
+		}
+	}
+	return root, nil
+}
+
+// localRepoAdminOnly is the refusal for a save of a local-folder repo by
+// someone who is not an admin.
+const localRepoAdminOnly = "a local folder is read from the gohort server's own disk, so only an admin can add or change one"
+
+// gohortOwnFolders are the folders a local repo may not overlap: the data
+// folder (the workspaces folder's parent) and the folder gohort runs from.
+func gohortOwnFolders() []string {
+	var out []string
+	add := func(d string) {
+		if d == "" {
+			return
+		}
+		if r, err := filepath.EvalSymlinks(d); err == nil {
+			d = r
+		}
+		out = append(out, filepath.Clean(d))
+	}
+	if ws := WorkspacesDir(); ws != "" {
+		add(filepath.Dir(ws))
+	}
+	if exe, err := os.Executable(); err == nil {
+		add(filepath.Dir(exe))
+	}
+	return out
+}
+
+// overlaps reports whether folder a is b, inside b, or holds b.
+func overlaps(a, b string) bool {
+	within := func(x, y string) bool {
+		rel, err := filepath.Rel(y, x)
+		return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+	}
+	return within(a, b) || within(b, a)
 }
 
 // repoCloneURL injects the access token (if any) for private-repo HTTPS clone.

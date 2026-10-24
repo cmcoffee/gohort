@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/promotion"
@@ -313,10 +314,13 @@ func (T *Scribe) handleBody(w http.ResponseWriter, r *http.Request, udb Database
 }
 
 // handleImage manages a guide's header image. GET ?id= → {image_url,
-// can_generate}. POST ?id= with {url} sets one the user supplies; with
-// {generate: true} generates one from the title through the deployment's image
-// profile and stores it (a remote URL, or a data URL when the generator writes
-// a local file). DELETE ?id= removes it. Each change is a revision.
+// can_generate, logo_url, from_url, can_generate_from}. POST ?id= with {url}
+// sets one the user supplies; with {generate: true} generates one for the
+// guide (header_image.go) and stores it (a remote URL, or a data URL when the
+// generator writes a local file or a logo is placed on it). {logo} or {from}
+// sets or, empty, clears a picture that goes with a generated header; each is
+// the URL an upload of this guide's returned. DELETE ?id= removes the header.
+// Each change is a revision.
 func (T *Scribe) handleImage(w http.ResponseWriter, r *http.Request, udb Database, user string) {
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
 	g, ownerUDB, _, canEdit, found := T.resolve(r, udb, user, id)
@@ -327,9 +331,13 @@ func (T *Scribe) handleImage(w http.ResponseWriter, r *http.Request, udb Databas
 	switch r.Method {
 	case http.MethodGet:
 		writeJSON(w, map[string]any{
-			"image_url":    g.ImageURL,
-			"can_edit":     canEdit,
-			"can_generate": ImageProfileAvailable("blog") || ImageGenerationAvailable(),
+			"image_url":         g.ImageURL,
+			"can_edit":          canEdit,
+			"can_generate":      ImageProfileAvailable("blog") || ImageGenerationAvailable(),
+			"logo_url":          g.HeaderLogo,
+			"from_url":          g.HeaderFrom,
+			"can_generate_from": headerEditor(1).Name != "",
+			"can_blend_logo":    headerEditor(2).Name != "",
 		})
 		return
 	case http.MethodPost, http.MethodDelete:
@@ -348,17 +356,49 @@ func (T *Scribe) handleImage(w http.ResponseWriter, r *http.Request, udb Databas
 		return
 	}
 	var body struct {
-		URL      string `json:"url"`
-		Generate bool   `json:"generate"`
+		URL      string  `json:"url"`
+		Generate bool    `json:"generate"`
+		Logo     *string `json:"logo"`
+		From     *string `json:"from"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
+	if body.Logo != nil || body.From != nil {
+		note := ""
+		for _, p := range []struct {
+			in    *string
+			field *string
+			what  string
+		}{{body.Logo, &g.HeaderLogo, "logo"}, {body.From, &g.HeaderFrom, "starting picture"}} {
+			if p.in == nil {
+				continue
+			}
+			v := strings.TrimSpace(*p.in)
+			if v != "" && guidePicture(ownerUDB, g, v) == nil {
+				http.Error(w, "the "+p.what+" must be a picture uploaded to this guide", http.StatusBadRequest)
+				return
+			}
+			*p.field = v
+			if v == "" {
+				note = "Removed the header's " + p.what
+			} else {
+				note = "Set the header's " + p.what
+			}
+		}
+		saveGuideRev(ownerUDB, g, note)
+		writeJSON(w, map[string]string{"logo_url": g.HeaderLogo, "from_url": g.HeaderFrom})
+		return
+	}
 	url := strings.TrimSpace(body.URL)
 	if body.Generate {
 		if !ImageProfileAvailable("blog") && !ImageGenerationAvailable() {
 			http.Error(w, "image generation is not configured on this deployment", http.StatusServiceUnavailable)
 			return
 		}
-		generated, err := generateHeaderImage(r.Context(), g.Title)
+		// The render is not the request's: a header that takes a minute lands
+		// even if the dialog is closed.
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 10*time.Minute)
+		defer cancel()
+		generated, err := T.generateHeader(ctx, g, ownerUDB)
 		if err != nil {
 			http.Error(w, "image generation failed: "+err.Error(), http.StatusInternalServerError)
 			return
@@ -1221,14 +1261,18 @@ func (T *Scribe) handleChatSend(w http.ResponseWriter, r *http.Request, udb Data
 	defer endTurn()
 
 	var tools []AgentToolDef
+	// The turn's changes go on one card in the conversation (turn_changes.go).
+	pub := &orchestrate.AppBlockPublisher{}
 	if g, _, _, canEdit, found := T.resolve(r, udb, user, guideID); found {
 		agent.DispatchMode, agent.AllowedDispatchTargets = guideDispatchPolicy(g)
 		agent.OrchestratorPrompt += guideBriefSection(g)
-		all := T.coauthorTools(coauthorScope{
-			Ctx: turnCtx, UDB: udb, Orch: orch, User: user, CanEdit: canEdit, Guide: guideID,
-		})
+		sc := coauthorScope{Ctx: turnCtx, UDB: udb, Orch: orch, User: user, CanEdit: canEdit, Guide: guideID}
+		all := T.coauthorTools(sc)
 		if canEdit {
-			tools = all
+			tools = newTurnChanges(pub, func() (Guide, Database, bool) {
+				g, oudb, _, ok := T.openGuide(sc)
+				return g, oudb, ok
+			}).wrap(all)
 		} else {
 			tools = readOnlyGuideTools(all)
 		}
@@ -1239,6 +1283,7 @@ func (T *Scribe) handleChatSend(w http.ResponseWriter, r *http.Request, udb Data
 		// strips what reaches the network.
 		if canEdit && len(agent.AllowedTools) > 0 && ImageGenerationAvailable() {
 			agent.AllowedTools = append(append([]string(nil), agent.AllowedTools...), "generate_image")
+			agent.OrchestratorPrompt += guidePictureRule
 		}
 		// A Private guide gets NO internet access this turn: run the agent
 		// ForcePrivate (framework strips network tools + locks worker-tier
@@ -1261,8 +1306,14 @@ func (T *Scribe) handleChatSend(w http.ResponseWriter, r *http.Request, udb Data
 	// the previous document — so the list could be correct and still show the
 	// wrong thing.
 	stampAppContext(r, guideID)
-	orch.PublicHandleSendWithAppTools(w, r, agent, followTurn(tools, endTurn))
+	orch.PublicHandleSendWithAppToolsPublishing(w, r, agent, followTurn(tools, endTurn), pub)
 }
+
+// guidePictureRule rides a turn that may draw a picture. Image models write
+// text badly: a label comes out misspelled, a sign as invented letters, a
+// figure as the wrong number, and in a guide that reads as an error. So a
+// picture carries no writing, and the words go where they come out right.
+const guidePictureRule = "\n\nPICTURES: a picture you generate for this guide carries no writing. Its prompt describes only what is seen: objects, people, setting, colour, light, composition. Never ask for words, letters, numbers, labels, captions, signs, screens with text, logos or diagrams with callouts, and never put a quoted phrase or the guide's title in the prompt, since a quoted phrase is drawn as text. Anything that needs words goes in the picture's caption or in the section text beside it. If what you meant to show only works with words in it (a chart, a labelled diagram, a screenshot), write it as text or a table instead."
 
 // turnContext is the context a chat send's tools are built on.
 //

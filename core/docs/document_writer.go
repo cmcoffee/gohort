@@ -15,6 +15,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 )
 
@@ -154,4 +155,39 @@ func HasDocumentTarget(kind string) bool {
 	_, ok := docTargets[kind]
 	docTargetsMu.RUnlock()
 	return ok
+}
+
+// SectionedDocumentTarget is an optional DocumentTarget capability: make a new
+// document from several sections at once (DocSection: a heading and its
+// markdown), with a brief saying what it is for.
+// A whole report pushed as a new document arrives as its sections, each one
+// editable on its own. Through Append it could only be one section, or one
+// push per section, and every push after the first is woven in by the target's
+// writer, which rewrites sections against each other.
+type SectionedDocumentTarget interface {
+	DocumentTarget
+	CreateWithSections(ctx context.Context, user, title, brief string, sections []DocSection) (string, error)
+}
+
+// CreateDocument makes a new document of the given target kind from sections,
+// returning its ID. A target that cannot take sections gets them as one, made
+// with Append.
+func CreateDocument(ctx context.Context, user, kind, title, brief string, sections []DocSection) (string, error) {
+	docTargetsMu.RLock()
+	t := docTargets[kind]
+	docTargetsMu.RUnlock()
+	if t == nil {
+		return "", fmt.Errorf("no document target registered for kind %q", kind)
+	}
+	if len(sections) == 0 {
+		return "", fmt.Errorf("a document needs at least one section")
+	}
+	if st, ok := t.(SectionedDocumentTarget); ok {
+		return st.CreateWithSections(ctx, user, title, brief, sections)
+	}
+	var whole []string
+	for _, s := range sections {
+		whole = append(whole, "## "+s.Title+"\n\n"+s.Text)
+	}
+	return t.Append(ctx, user, "", title, title, strings.Join(whole, "\n\n"))
 }

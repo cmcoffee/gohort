@@ -1409,7 +1409,7 @@
             var ac = (item.variant === 'danger') ? 'var(--danger, #d9534f)' : (item.variant === 'warning') ? 'var(--warning, #d98c34)' : 'var(--text-mute, #999)';
             label.style.color = ac;
             label.style.fontSize = '0.85rem';
-          } else if (item.source) {
+          } else if (item.source && !item.no_badge) {
             badge = el('span', {class: 'ui-channel-badge', style: 'display:none;min-width:1.2rem;text-align:center;padding:0.05rem 0.4rem;border-radius:999px;font-size:var(--fs-xs, 0.75rem);background:var(--bg-2, rgba(127,127,127,0.22));color:var(--text-mute, #999)'}, ['']);
             kids.push(badge);
           }
@@ -3209,20 +3209,37 @@
     // conversation as the live stream drew it, through the same registered
     // renderer. answered switches its controls off. False when nothing is
     // registered for the type, so the caller falls back to the text.
-    function replayBlock(d, answered) {
+    // answer is the state the card's answer was sent with (ask_state on the
+    // message after it), so the card is drawn filled in. Returns the card.
+    function replayBlock(d, answered, answer) {
       var fn = window.UIBlockRenderers && window.UIBlockRenderers[d.type];
-      if (typeof fn !== 'function' || !convoLog) return false;
+      if (typeof fn !== 'function' || !convoLog) return null;
       var built;
-      try { built = fn(d, {sessionId: activeSessionId, replayed: true}); } catch (_) { return false; }
-      if (!built || !built.wrap) return false;
+      try { built = fn(d, {sessionId: activeSessionId, replayed: true, answer: answer || null}); } catch (_) { return null; }
+      if (!built || !built.wrap) return null;
       // keep_open: a card whose own record says whether it was answered (it
-      // stays live however much was written after it).
+      // stays live however much was written after it). .ui-ask-keep is a
+      // control that reopens an answered card, so it stays live.
       if (answered && !d.keep_open) {
         built.wrap.classList.add('submitted');
-        built.wrap.querySelectorAll('input, textarea, select, button').forEach(function(x) { x.disabled = true; });
+        built.wrap.querySelectorAll('input, textarea, select, button').forEach(function(x) {
+          if (!x.classList.contains('ui-ask-keep')) x.disabled = true;
+        });
       }
       convoLog.appendChild(built.wrap);
-      return true;
+      return built.wrap;
+    }
+
+    // linkAskAnswer ties a question card to the message that answered it. The
+    // card is the answer on screen, so the message's bubble stays in the
+    // thread hidden: it is still the turn's place in the conversation, which
+    // is what changing the answer replaces (commitUserEdit). Changing needs a
+    // truncate, so a panel without one, or a record, shows no Change answer.
+    function linkAskAnswer(card, bubble) {
+      if (!card || !bubble) return;
+      bubble.classList.add('ui-agent-ask-answer');
+      card.__uiAskAnswer = bubble;
+      card.classList.toggle('ui-ask-editable', !!cfg.truncate_url && !recordLocked);
     }
 
     // addPickedUpNote draws a note the agent has picked up that this page has
@@ -3962,7 +3979,9 @@
       // No stored index: a bubble created this session, with no reload since.
       // Counting is right relative to what is on screen, so what is missing
       // from the front has to be added back.
-      var all = convoLog.querySelectorAll('.ui-agent-msg');
+      // An ask card is a stored message too (the question it asks), with no
+      // bubble of its own, so it counts.
+      var all = convoLog.querySelectorAll('.ui-agent-msg, .ui-ask-card');
       var idx = loadedMsgOffset;
       for (var i = 0; i < all.length; i++) {
         var b = all[i];
@@ -3970,7 +3989,7 @@
         // assistant, and the bubble must have actually committed
         // content (empty placeholders don't persist).
         var isUser = b.classList.contains('ui-agent-msg-user');
-        var isAsst = b.classList.contains('ui-agent-msg-assistant');
+        var isAsst = b.classList.contains('ui-agent-msg-assistant') || b.classList.contains('ui-ask-card');
         if (!isUser && !isAsst) continue;
         if (b.classList.contains('ui-agent-msg-empty')) continue;
         if (b === target) return idx;
@@ -5889,14 +5908,34 @@
 
     // A question card answers through this rather than through the Send
     // button, so its answer reaches a run waiting in a read-only thread.
+    //
+    // The send carries the card's state and links the card to the message it
+    // makes (askPending, read by sendMessage). Changing an answer replaces the
+    // message the card was linked to and everything after it, the way an
+    // edited message does.
+    var askPending = null;
     inputArea.addEventListener('ui-ask-answer', function(ev) {
       ev.preventDefault();
-      inputArea.value = (ev.detail && ev.detail.answer) || '';
+      var d = ev.detail || {};
+      var prior = d.card && d.card.__uiAskAnswer;
+      // Never in a record: it takes answers, and replacing one is a truncate.
+      if (d.edit && prior && prior.parentNode && !recordLocked) {
+        askPending = {card: d.card, state: d.state};
+        commitUserEdit(prior, d.answer || '').catch(function(err) {
+          askPending = null;
+          window.uiAlert('Changing the answer failed: ' + (err && err.message || err));
+        });
+        return;
+      }
+      inputArea.value = d.answer || '';
+      askPending = d.card ? {card: d.card, state: d.state} : null;
       answerPass = true;
-      try { sendMessage(); } finally { answerPass = false; }
+      try { sendMessage(); } finally { answerPass = false; askPending = null; }
     });
 
     function sendMessage() {
+      var ask = askPending;
+      askPending = null;
       if (recordLocked && !answerPass) return;
       if (userEdit) { commitComposerEdit(); return; }
       var text = inputArea.value.trim();
@@ -5988,6 +6027,7 @@
       var localMsgId = 'u-' + Date.now();
       if (!suppressBubble) {
         addMessage('user', localMsgId, text);
+        if (ask && msgEls[localMsgId]) linkAskAnswer(ask.card, msgEls[localMsgId].bubble);
       }
       // Render the user's own attachments under their bubble so they
       // see what they sent — same surface we use for tool-delivered
@@ -6044,6 +6084,7 @@
         documents:  documents,
       };
       if (suppressBubble) body.hidden = true;
+      if (ask && ask.state) body.ask_state = ask.state;
       if (sendingNotes) body.from_notes = true;
       if (cfg.list_is_context) {
         // In CONTEXT mode, the rail's active id ships under a
@@ -7533,8 +7574,13 @@
         // the pass below because that is the only place a message's bubble and
         // its timestamp are both in hand.
         var noticeAnchors = [];
+        // The card drawn from the previous message, for the answer that
+        // follows it (linkAskAnswer).
+        var replayedCard = null;
         if (Array.isArray(msgs)) {
           msgs.forEach(function(m, idx) {
+            var card = replayedCard;
+            replayedCard = null;
             var i = idx + msgOffset;
             // Hidden messages still ride along for the LLM's history
             // view but the prior bubble already shows their content
@@ -7552,7 +7598,10 @@
               for (var k = idx + 1; k < msgs.length; k++) {
                 if (msgs[k] && msgs[k].role === 'user') { answered = true; break; }
               }
-              if (replayBlock(m.block, answered)) return;
+              var next = msgs[idx + 1];
+              var answer = (next && next.role === 'user' && next.ask_state) || null;
+              var drawn = replayBlock(m.block, answered, answer);
+              if (drawn) { if (answer) replayedCard = drawn; return; }
             }
             var mid = m.id || ('m-' + Math.random().toString(36).slice(2));
             addMessage(m.role || 'assistant', mid, m.content || m.text || '', m.sender);
@@ -7560,6 +7609,7 @@
             // PATCH {delete_at: i}. Only replayed bubbles carry it; live ones
             // get one on the next load (reload re-syncs after a scrub/delete).
             if (msgEls[mid]) msgEls[mid].storageIndex = i;
+            if (card && m.role === 'user' && m.ask_state && msgEls[mid]) linkAskAnswer(card, msgEls[mid].bubble);
             // A stored note keeps its note id, so a replayed "picked up"
             // event finds it here instead of drawing it a second time.
             if (m.note_id && msgEls[mid] && msgEls[mid].bubble) msgEls[mid].bubble.dataset.noteId = m.note_id;

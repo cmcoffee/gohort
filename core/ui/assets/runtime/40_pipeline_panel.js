@@ -3,6 +3,7 @@
     var titleF  = cfg.session_title_field || 'Title';
     var dateF   = cfg.session_date_field  || 'Date';
     var blocksF = cfg.session_blocks_field || 'Blocks';
+    var runningF = cfg.session_running_field || 'Running';
 
     var currentSessionId = '';
     var blockEls = {};       // block id -> DOM element { wrap, body, raw }
@@ -11,6 +12,17 @@
     var replayWindow = window.uiReplayWindow(400);
     var liveVerdictBid = null; // most-recent verdict id (for auto-scroll on done)
     var activeStream = null; // AbortController for in-flight submit
+    // streamGen numbers the stream this panel follows. Opening anything
+    // else moves it on (stopFollowing), and a stream whose number is no
+    // longer current drops its events: the run it was following goes on
+    // (it belongs to the server, not to this page), but its events used to
+    // keep landing in whatever had been opened since.
+    var streamGen = 0;
+    function stopFollowing() {
+      streamGen++;
+      if (activeStream) { try { activeStream.abort(); } catch (_) {} }
+      activeStream = null;
+    }
 
     var wrap = el('div', {class: 'ui-pl ui-chat'});
     var side = el('div', {class: 'ui-chat-side'});
@@ -880,12 +892,16 @@
     function ensureBlock(id, type, data) {
       if (blockEls[id]) return blockEls[id];
       if (emptyHint.parentNode === transcript) emptyHint.remove();
-      // Drop any live status before a structural block lands —
-      // the new block IS the next thing, so the "Researching…"
-      // status is stale by definition. Matches legacy arena
-      // behavior: a real event always clears the prior spinner.
+      // A structural block lands: the status goes below it. It used to be
+      // dropped, on the reasoning that the block IS the next thing, but the
+      // run is still going, and with the status gone nothing on the page
+      // moved until the next one. A page rejoining a run replays its events
+      // at once, so whenever the last of them was a block (a finished
+      // section, an opening statement) it showed the run with no spinner at all.
+      // While the run is going its latest status stays last; it ends with
+      // the run (the done event, finish).
       var prior = transcript.querySelector('.ui-pl-status');
-      if (prior) prior.remove();
+      if (prior && !runningState) prior.remove();
       // ctx carries panel-level flags the renderers might consult
       // without reaching into pipeline_panel's closure scope. Apps
       // that ship their own renderers via Page.ExtraHeadHTML rely
@@ -902,6 +918,7 @@
       rec.done = false;
       rec.data = data || {};
       transcript.appendChild(rec.wrap);
+      if (prior && runningState) transcript.appendChild(prior);
       blockEls[id] = rec;
       scrollTranscript();
       return rec;
@@ -1131,6 +1148,8 @@
     // reconnects. fetchOpts is whatever fetch() needs (method/body
     // for POST, default GET for reconnect).
     function streamFrom(url, fetchOpts) {
+      stopFollowing();
+      var gen = streamGen;
       activeStream = new AbortController();
       fetchOpts = fetchOpts || {};
       fetchOpts.signal = activeStream.signal;
@@ -1141,10 +1160,11 @@
         var buf = '';
         function pump() {
           return reader.read().then(function(res) {
+            if (gen !== streamGen) return;
             if (res.done) { finish(); return; }
             buf += decoder.decode(res.value, {stream: true});
             var idx;
-            while ((idx = buf.indexOf('\n\n')) >= 0) {
+            while ((idx = buf.indexOf('\n\n')) >= 0 && gen === streamGen) {
               var raw = buf.slice(0, idx);
               buf = buf.slice(idx + 2);
               processEvent(raw);
@@ -1154,6 +1174,7 @@
         }
         return pump();
       }).catch(function(err) {
+        if (gen !== streamGen) return; // the page moved on; not this stream's to end
         if (err.name !== 'AbortError') showToast('Failed: ' + err.message);
         finish();
       });
@@ -1209,6 +1230,8 @@
     function tryReconnect(sessionId) {
       if (!cfg.reconnect_url || !sessionId) return false;
       var url = cfg.reconnect_url.replace('{id}', encodeURIComponent(sessionId));
+      stopFollowing();
+      var gen = streamGen;
       currentSessionId = sessionId;
       clearTranscript();
       setFormVisible(false);
@@ -1236,6 +1259,7 @@
       activeStream = new AbortController();
       replayWindow.arm(); // what it replays shows at once
       fetch(url, {signal: activeStream.signal}).then(function(r) {
+        if (gen !== streamGen) return;
         if (r.status === 404) {
           // Not live anymore — load the saved record instead.
           setRunning(false);
@@ -1248,10 +1272,11 @@
         var buf = '';
         function pump() {
           return reader.read().then(function(res) {
+            if (gen !== streamGen) return;
             if (res.done) { finish(); return; }
             buf += decoder.decode(res.value, {stream: true});
             var idx;
-            while ((idx = buf.indexOf('\n\n')) >= 0) {
+            while ((idx = buf.indexOf('\n\n')) >= 0 && gen === streamGen) {
               var raw = buf.slice(0, idx);
               buf = buf.slice(idx + 2);
               processEvent(raw);
@@ -1261,6 +1286,7 @@
         }
         return pump();
       }).catch(function(err) {
+        if (gen !== streamGen) return; // the page moved on; not this stream's to end
         if (err.name !== 'AbortError') showToast('Reconnect failed: ' + err.message);
         finish();
       });
@@ -1379,6 +1405,9 @@
           scrollTranscript();
           break;
         case 'done':
+          // The run is over, so nothing is happening any more.
+          var doneStatus = transcript.querySelector('.ui-pl-status');
+          if (doneStatus) doneStatus.remove();
           // Finalize any block still open.
           Object.keys(blockEls).forEach(function(k){ finalizeBlock(k); });
           // Auto-scroll to the verdict block (mirrors the
@@ -1402,6 +1431,11 @@
     }
 
     function finish() {
+      // A stream that ended without its done event (stopped, dropped, an
+      // error) leaves its last status where the page stopped following it,
+      // without the spinner, rather than spinning on for nothing.
+      var lastStatus = transcript.querySelector('.ui-pl-status-live');
+      if (lastStatus) lastStatus.classList.replace('ui-pl-status-live', 'ui-pl-status-done');
       setRunning(false);
       activeStream = null;
       loadSessions();
@@ -1420,6 +1454,7 @@
     // reader picked — see the deep-link bootstrap at the bottom.
     function openSession(id, opts) {
       var guessed = !!(opts && opts.guessed);
+      stopFollowing();
       currentSessionId = id || '';
       clearTranscript();
       transcript.appendChild(emptyHint);
@@ -1604,7 +1639,9 @@
                 loadSessions();
                 return;
               }
-              openSession(s[idF]);
+              // A run still going has no saved record to load yet: rejoin it.
+              if (s[runningF] && cfg.reconnect_url) tryReconnect(s[idF]);
+              else openSession(s[idF]);
               closeDrawer();
             },
           });

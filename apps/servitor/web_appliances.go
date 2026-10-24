@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -107,12 +108,27 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 			}
 		case "repo":
 			req.RepoURL = strings.TrimSpace(req.RepoURL)
-			if req.RepoURL == "" {
-				http.Error(w, "repo url required", http.StatusBadRequest)
+			req.RepoPath = strings.TrimSpace(req.RepoPath)
+			if req.RepoURL == "" && req.RepoPath == "" {
+				http.Error(w, "a git url or a local folder is required", http.StatusBadRequest)
+				return
+			}
+			// A local folder is read from the gohort server's own disk. The
+			// owner being an admin is not enough (repoLocalRoot): someone
+			// with edit access to an admin's repo could otherwise point it
+			// anywhere on the server. As with the local command system, the
+			// person saving it must be an admin too (and to change one that
+			// already reads a folder: see the edit branch below).
+			if req.RepoPath != "" && !servitorIsAdmin(r) {
+				http.Error(w, localRepoAdminOnly, http.StatusForbidden)
 				return
 			}
 			if req.Name == "" {
-				req.Name = repoNameFromURL(req.RepoURL)
+				if req.RepoPath != "" {
+					req.Name = filepath.Base(filepath.Clean(req.RepoPath))
+				} else {
+					req.Name = repoNameFromURL(req.RepoURL)
+				}
 			}
 		case "bundle":
 			// A bundle owns no host and no remote of its own — it is created
@@ -246,6 +262,10 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, why, http.StatusBadRequest)
 				return
 			}
+			if existing.RepoPath != "" && !servitorIsAdmin(r) {
+				http.Error(w, localRepoAdminOnly, http.StatusForbidden)
+				return
+			}
 			targetUDB = exUDB
 			owner = exOwner
 			// Write-only secrets. Every read path blanks these before the
@@ -324,7 +344,15 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 		// A repo is cloned on THIS server; refuse a source it must not reach
 		// before the record exists to be cloned (see validateRepoSource).
 		if req.Type == "repo" {
-			if err := validateRepoSource(req.RepoURL, req.RepoBranch, UserIsAdmin(owner)); err != nil {
+			if req.RepoPath != "" {
+				// One source or the other: a folder has no remote, branch or
+				// token, and a stored token would linger unused.
+				req.RepoURL, req.RepoBranch, req.RepoToken = "", "", ""
+				if _, err := repoLocalRoot(req.RepoPath, UserIsAdmin(owner)); err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+			} else if err := validateRepoSource(req.RepoURL, req.RepoBranch, UserIsAdmin(owner)); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}

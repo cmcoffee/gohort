@@ -1792,7 +1792,7 @@ func userSkillFormFields() []ui.FormField {
 	return []ui.FormField{
 		{Field: "name", Label: "Name", Placeholder: "Contract Reviewer", Help: "Shown to your agents; also the H2 header above the instructions when the skill is active."},
 		{Field: "description", Label: "Description", Help: "One line: when this skill applies. The assistant reads it to decide relevance."},
-		{Field: "triggers", Label: "Triggers", Type: "tags", Placeholder: "contract, or *.pdf", Help: "Substring patterns, or *.ext for attachments, one each. Any match activates the skill.",
+		{Field: "triggers", Label: "Triggers", Type: "tags", Placeholder: "contract, or *.pdf", Help: "Words or phrases matched as whole words, or *.ext for attachments, one each. Any match activates the skill.",
 			Detail: "Leave it blank to rely on the description instead."},
 		{Field: "instructions", Label: "Instructions", Type: "textarea", Rows: 12, Help: "Markdown appended to the assistant's prompt while the skill is active.",
 			Detail: "The approach, voice, or method it should apply."},

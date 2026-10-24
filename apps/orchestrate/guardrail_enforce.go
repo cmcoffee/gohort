@@ -200,13 +200,21 @@ func (t *chatTurn) guardrailCheckHookCtx(ctx context.Context) func(hookPoint, ca
 		verdicts, err := outcome.verdicts, outcome.err
 		if err != nil {
 			// The warden is itself an LLM call, so an infra hiccup has to have
-			// a policy; either way the gap is recorded, never silent.
+			// a policy; either way the gap is recorded, never silent. Not a
+			// check the turn's own Stop ended: that is no gap, the turn is
+			// over (guardrail_input.go). The decision itself is unchanged.
+			stopped := ctx.Err() != nil
 			if failClosed {
+				if stopped {
+					return GuardrailDecision{Blocked: true, Message: guardrailNoVerdictMessage()}
+				}
 				t.turnDiag("guardrail-blocked", fmt.Sprintf("Guardrail check could not run (%v): BLOCKED (set to block when a check cannot run).%s", err, outcome.note()))
 				Log("[orchestrate.guardrail] agent=%s fail-closed block at %s: warden error: %v (%d tries)", t.agent.ID, hookPoint, err, outcome.tries)
 				return GuardrailDecision{Blocked: true, Message: guardrailNoVerdictMessage()}
 			}
-			t.turnDiag("guardrail-error", fmt.Sprintf("Guardrail check could not run (%v): the action proceeded unchecked.%s", err, outcome.note()))
+			if !stopped {
+				t.turnDiag("guardrail-error", fmt.Sprintf("Guardrail check could not run (%v): the action proceeded unchecked.%s", err, outcome.note()))
+			}
 			return pass
 		}
 		// UNSURE is not compliance. parseWardenVerdicts deliberately returns

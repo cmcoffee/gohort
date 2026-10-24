@@ -6,16 +6,12 @@ package orchestrate
 // POST a recurring task's id at the standing-agent endpoint.
 
 import (
-	"net/http"
-	"net/http/httptest"
-	"net/url"
 	"os"
 	"strings"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/ui"
-	"github.com/cmcoffee/snugforge/kvlite"
 )
 
 func flagsOf(row any, section, kind string) map[string]any {
@@ -26,7 +22,7 @@ func flagsOf(row any, section, kind string) map[string]any {
 // that is not there, which reads as false in the panel.
 func TestARowOffersOnlyItsOwnActions(t *testing.T) {
 	standing := flagsOf(consoleAgentRow{Name: "Molt Poster", ID: "Molt Poster"}, schedSectionStanding, schedKindStanding)
-	for _, want := range []string{"_run_standing", "_pause_standing", "_move_standing", "_del_standing"} {
+	for _, want := range []string{"_run_standing", "_pause_standing", "_del_standing"} {
 		if standing[want] != true {
 			t.Errorf("a live standing row must offer %s: %v", want, standing[want])
 		}
@@ -38,10 +34,10 @@ func TestARowOffersOnlyItsOwnActions(t *testing.T) {
 	}
 
 	recurring := flagsOf(consoleRecurringRow{Name: "check feed", ID: "t-1"}, schedSectionRecurring, schedKindRecurring)
-	if recurring["_run_recurring"] != true || recurring["_del_recurring"] != true || recurring["_move_recurring"] != true {
+	if recurring["_run_recurring"] != true || recurring["_del_recurring"] != true {
 		t.Errorf("recurring row missing its own actions: %v", recurring)
 	}
-	for _, gone := range []string{"_pause_standing", "_pause_monitor", "_move_standing"} {
+	for _, gone := range []string{"_pause_standing", "_pause_monitor"} {
 		if _, present := recurring[gone]; present {
 			t.Errorf("a recurring row must not carry %s (it has no pause concept at all)", gone)
 		}
@@ -163,8 +159,8 @@ func TestRetiringTheRailKeptWhatItCouldDo(t *testing.T) {
 			t.Errorf("no way to edit a schedule's timing any more: %s is unreachable", action)
 		}
 	}
-	if n := strings.Count(page, `Label: "Edit schedule"`); n != 6 {
-		t.Errorf("expected three kinds × two menus of Edit schedule, found %d", n)
+	if n := strings.Count(page, `Label: "Edit", Method: "client", URL: "orchestrate_edit_`); n != 6 {
+		t.Errorf("expected three kinds × two menus of Edit, found %d", n)
 	}
 	// Creating. These were buttons at the top of the retired modal, then nav
 	// entries of their own, and are now VIEW ACTIONS on the Scheduler page —
@@ -247,86 +243,38 @@ func TestTheLinkActionsSendAKindQualifiedID(t *testing.T) {
 }
 
 // A recurring task can be moved to another surface, as a scheduled agent or a
-// monitor can, from the agent's own Scheduler. It lost its Move to… when the
+// monitor can, from the agent's own Scheduler. It lost its Where (then "Move to…") when the
 // three lists became one page, though the handler and its route stayed. The
 // fleet Scheduler keeps leaving Move out, on purpose: it sweeps every agent.
-func TestARecurringTaskCanBeMovedFromItsAgentsScheduler(t *testing.T) {
-	moveOf := func(items []ui.OrchestratorNavItem, fleet bool) (found bool) {
+func TestNoScheduleAsksWhereItReports(t *testing.T) {
+	for _, items := range [][]ui.OrchestratorNavItem{chatAgentNav(), chatFleetNav()} {
 		for _, it := range items {
-			if it.Label != "Scheduler" || (it.Scope == "fleet") != fleet {
-				continue
-			}
 			for _, a := range it.RowActions {
-				if a.URL == "api/console/recurring/move" {
-					if a.OnlyIf != "_move_recurring" || a.PickerSource != "api/console/surface-options" {
-						t.Errorf("the move should be gated on its own row flag and pick a surface: %+v", a)
-					}
-					found = true
+				if strings.HasSuffix(a.URL, "/move") || a.PickerSource == "api/console/surface-options" || a.Label == "Where" {
+					t.Errorf("%s still offers a Where: %+v", it.Label, a)
 				}
 			}
 		}
-		return found
 	}
-	if !moveOf(chatAgentNav(), false) {
-		t.Error("the agent's Scheduler offers no Move to… on a recurring task")
-	}
-	if moveOf(chatFleetNav(), true) {
-		t.Error("the fleet Scheduler should not move anything")
-	}
-	src, err := os.ReadFile("console.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(src), `T.HandleFunc("/api/console/recurring/move", w(T.handleConsoleRecurringMove))`) {
-		t.Error("the recurring move has no route")
-	}
-}
-
-// Moving a recurring task changes where it reports and nothing else: it stays
-// on its schedule, keeps its home session, and only its owner can move it.
-func TestMovingARecurringTaskKeepsItScheduled(t *testing.T) {
-	root := parkedTestSetup(t)
-	adb := &DBase{Store: kvlite.MemStore()}
-	adb.Set(AuthTable, "user:u-move", AuthUser{Username: "u-move"})
-	adb.Set(AuthTable, "user:v", AuthUser{Username: "v"})
-	prevAuth := AuthDB
-	AuthDB = func() Database { return adb }
-	t.Cleanup(func() { AuthDB = prevAuth })
-	// Its own user, and its task gone after: the scheduler is shared by the
-	// package's tests, and a task left behind is one more in someone's list.
-	t.Cleanup(func() {
-		for _, rt := range listAgentRecurringTasks("u-move", "") {
-			UnscheduleTask(rt.TaskID)
+	for _, kind := range []struct {
+		row     any
+		section string
+		kind    string
+	}{
+		{consoleAgentRow{Name: "a", ID: "a"}, schedSectionStanding, schedKindStanding},
+		{consoleRecurringRow{Name: "b", ID: "b"}, schedSectionRecurring, schedKindRecurring},
+		{consoleMonitorRow{Name: "c", ID: "c"}, schedSectionMonitors, schedKindMonitor},
+	} {
+		for k := range flagsOf(kind.row, kind.section, kind.kind) {
+			if strings.HasPrefix(k, "_move_") {
+				t.Errorf("a %s row still carries %s", kind.kind, k)
+			}
 		}
-	})
-	if _, err := ScheduleOrchestrateUpdate(RecurringSpec{SessionID: "s1", AgentID: "a1", Username: "u-move",
-		Prompt: "gather", Name: "gather", Pattern: RecurringFixed, IntervalSeconds: 7200}); err != nil {
-		t.Fatal(err)
 	}
-	id := listAgentRecurringTasks("u-move", "")[0].TaskID
-	T := &OrchestrateApp{AppCore: AppCore{DB: root}}
-	move := func(who, value string) int {
-		r := httptest.NewRequest(http.MethodPost, "/api/console/recurring/move?id="+url.QueryEscape(id)+"&value="+value, nil)
-		r.AddCookie(&http.Cookie{Name: "gohort_session", Value: AuthCreateSession(AuthDB(), who)})
-		w := httptest.NewRecorder()
-		T.handleConsoleRecurringMove(w, r)
-		return w.Code
-	}
-	if code := move("u-move", "background"); code != http.StatusNoContent {
-		t.Fatalf("move: %d", code)
-	}
-	tasks := listAgentRecurringTasks("u-move", "")
-	if len(tasks) != 1 || tasks[0].Payload.Surface != "background" || tasks[0].Payload.SessionID != "s1" {
-		t.Fatalf("the task should be moved, still scheduled, home kept: %+v", tasks)
-	}
-	id = tasks[0].TaskID
-	if code := move("u-move", "nowhere"); code != http.StatusBadRequest {
-		t.Errorf("an unknown surface: %d", code)
-	}
-	if code := move("v", "cortex"); code != http.StatusNotFound {
-		t.Errorf("someone else's task: %d", code)
-	}
-	if got := listAgentRecurringTasks("u-move", "")[0].Payload.Surface; got != "background" {
-		t.Errorf("a refused move changed it: %q", got)
+	src := readFile(t, "console.go")
+	for _, gone := range []string{"/api/console/surface-options", "/api/console/monitors/move", "/api/console/agents/move", "/api/console/recurring/move"} {
+		if strings.Contains(src, gone) {
+			t.Errorf("%s is still routed", gone)
+		}
 	}
 }

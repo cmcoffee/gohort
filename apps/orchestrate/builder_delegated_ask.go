@@ -95,7 +95,7 @@ func delegatedAskUserTool(q *delegatedQuestion) AgentToolDef {
 				"question": {Type: "string", Description: "The question, in plain text, as the user should read it."},
 				"options": {
 					Type:        "array",
-					Description: "The answers to choose between, when the choice is bounded: one short label each.",
+					Description: "The answers to choose between, when the choice is bounded: one short label each. An Other row the user can type in is added for you, so never include one.",
 					Items:       &ToolParam{Type: "string"},
 				},
 			},

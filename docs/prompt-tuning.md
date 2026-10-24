@@ -1,7 +1,8 @@
 # Prompt tuning: a proving ground for what Builder builds
 
-Status: **built, first live runs and friction report done** (v0.7.362). The harness and the
-friction report are private (`private/tuning`, not in the release); the
+Status: **built; the Friction report app was removed 2026-10-23** and Optimize
+builds every task itself (see the notes under the two sections below). The
+harness is private (`private/tuning`, not in the release); the
 pieces they stand on (tool probes, the yield gate, per-tier wording, the
 stage tracker) are in core. The build ledger (v0.7.263, `core/buildledger`,
 Admin > Agents > Build outcomes) records every tool test and app verify from
@@ -29,6 +30,15 @@ ends, what it kept is applied as the one wording both models read, and Undo
 takes the run back.
 
 ## Map the framework first: the Friction report
+
+**Removed 2026-10-23.** The separate `/friction` app is gone, with its
+known-good replays, lead builds, per-component grouping, comparison with
+the previous report and Re-check. Optimize now builds every task once
+itself, so each run is its own measurement and the next run is the check
+that a kept change broke nothing. Failures read as the platform's are
+listed on the admin LLMs tab under **Platform failures** (the newest run's),
+with **Copy** handing them over with why and the evidence. What follows is
+the design as it was.
 
 Two sources feed it (2026-10-04): a report written on purpose, and every
 Optimize run, whose failures read as the platform's are listed under
@@ -104,6 +114,13 @@ cause of most friction; the lead is generally a larger model that costs
 money per call, and wording that helps the worker will likely already
 translate to it. Tuning the lead apart spent its paid builds on the model
 that needed it least.
+
+**Every task again (2026-10-23).** A run no longer starts from a friction
+report: it builds the whole suite once, a few side by side, and works on
+the tasks that fail, the steps below otherwise unchanged. "Passes now"
+reads "passes on the wording as it is now", and what is set aside is
+listed under Platform failures, not on a friction page. A session from
+before (WholeSuite unset) is not resumed.
 
 **Failures only (2026-10-19).** A run works on the tasks the worker failed in
 the latest finished friction report, and builds nothing else. It used to

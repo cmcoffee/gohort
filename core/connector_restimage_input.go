@@ -94,11 +94,12 @@ const maxCascadeStages = 6
 // images. Five images into a 3-input backend is [3, 2]: edit the first three,
 // then blend that result with the remaining two.
 //
-// EVERY stage must be exactly full. A compose graph writes one mapped node per
-// image and errors on a partial fill (BuildComfyBody), because an unwritten
-// node renders against whatever placeholder the workflow was saved with. So a
-// short final stage is not a smaller render, it is a failed one — after the
-// earlier stages have already been paid for. That makes the arithmetic exact:
+// EVERY stage is kept exactly full. One call with fewer images than inputs
+// renders with the unused inputs taken out of the graph (BuildComfyBody), but
+// whether a given workflow's last node accepts that is only known when it
+// runs, and a short final stage that fails does so after the earlier stages
+// have already been paid for. So a cascade plans full stages only, which makes
+// the arithmetic exact:
 // R renders consume R*max and produce R, so n + (R-1) = R*max, i.e. a cascade
 // exists only when (n-1) is divisible by (max-1).
 //

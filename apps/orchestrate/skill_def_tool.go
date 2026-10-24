@@ -40,7 +40,7 @@ func (skillDefImpl) Params() map[string]ToolParam {
 		},
 		"triggers": {
 			Type:        "array",
-			Description: "(create / update) Optional precision nudge. Plain substrings, case-insensitive, matched against the user message (and inlined attachment header); a glob like *.pdf matches attachment filenames. A match surfaces a 'likely relevant this turn' hint to the host LLM: it does NOT force injection; the LLM still decides. Use disambiguating phrases (gh pr, SELECT ), not standalone words. Empty triggers = the skill activates purely when the LLM picks it from the description. Triggers supplement the description; they don't replace it.",
+			Description: "(create / update) Optional precision nudge. Words or phrases, case-insensitive, matched as whole words against the user message (and inlined attachment header); a glob like *.pdf matches attachment filenames. A match surfaces a 'likely relevant this turn' hint to the host LLM: it does NOT force injection; the LLM still decides. Use disambiguating phrases (gh pr, SELECT ), not standalone words. Empty triggers = the skill activates purely when the LLM picks it from the description. Triggers supplement the description; they don't replace it.",
 			Items:       &ToolParam{Type: "string"},
 		},
 		"allowed_tools": {
@@ -141,7 +141,7 @@ What skills do: every allowed skill's name + description is listed in
 the host agent's prompt. The LLM reads that list and, when a skill's
 domain fits the task, consults it (read_skill / skill_knowledge_search)
 - activation is the model's call, and the description is what it judges
-against. If a skill has triggers, a substring/glob match on the message
+against. If a skill has triggers, a whole-word or glob match on the message
 or an attachment filename surfaces a "likely relevant this turn" hint to
 the host LLM: a nudge toward consulting, not a forced injection.
 A consulted skill's BUNDLED tools (scripts snapshotted from allowed_tools at

@@ -952,6 +952,16 @@
 
       // Repository section — cloned + encrypted at rest; ask it questions
       // like any other appliance.
+      // Two sources: a git remote, cloned for each ingest, or a folder on the
+      // gohort server read where it is (admins only; the server refuses
+      // anyone else). A folder need not be a git checkout.
+      var repoSourceIn = el('select', {class: 'ui-form-input'}, [
+        el('option', {value: 'git'}, ['Git repository']),
+        el('option', {value: 'local'}, ['Local folder on this server (admins only)']),
+      ]);
+      repoSourceIn.value = rec.repo_path ? 'local' : 'git';
+      var repoPathIn = el('input', {type: 'text', class: 'ui-form-input',
+        placeholder: '/srv/projects/app', value: rec.repo_path || ''});
       var repoUrlIn = el('input', {type: 'text', class: 'ui-form-input',
         placeholder: 'https://github.com/owner/repo', value: rec.repo_url || ''});
       var repoBranchIn = el('input', {type: 'text', class: 'ui-form-input',
@@ -962,13 +972,31 @@
       var repoSkipIn = el('input', {type: 'text', class: 'ui-form-input',
         placeholder: 'e.g. testdata, generated, docs/build',
         value: (rec.repo_skip_dirs || []).join(', ')});
-      var repoSection = el('div', {class: 'ui-servitor-app-section'}, [
+      var repoGitFields = el('div', {}, [
         el('label', {}, ['Git URL *']), repoUrlIn,
         el('label', {}, ['Branch']), repoBranchIn,
         el('label', {}, ['Access Token']), repoTokenIn,
+        el('div', {class: 'ui-form-hint'},
+          ['The repository is cloned, its text files ingested into an encrypted store, and the plaintext clone discarded. Token is stored encrypted, used only for private clones.']),
+      ]);
+      var repoLocalFields = el('div', {}, [
+        el('label', {}, ['Folder *']), repoPathIn,
+        el('div', {class: 'ui-form-hint'},
+          ['An absolute path on the gohort server. Its text files are ingested into the encrypted store where they are, with nothing copied; it does not have to be a git checkout. Only an admin can add or change a local folder, and it may not overlap gohort\'s own data or install folders. Refresh re-reads it.']),
+      ]);
+      function showRepoSource() {
+        var local = repoSourceIn.value === 'local';
+        repoGitFields.style.display = local ? 'none' : '';
+        repoLocalFields.style.display = local ? '' : 'none';
+      }
+      repoSourceIn.addEventListener('change', showRepoSource);
+      showRepoSource();
+      var repoSection = el('div', {class: 'ui-servitor-app-section'}, [
+        el('label', {}, ['Source']), repoSourceIn,
+        repoGitFields, repoLocalFields,
         el('label', {}, ['Skip Directories']), repoSkipIn,
         el('div', {class: 'ui-form-hint'},
-          ['The repository is cloned, its text files ingested into an encrypted store, and the plaintext clone discarded. Token is stored encrypted, used only for private clones. Skip Directories (comma-separated) are excluded from ingest on top of the built-in defaults (.git, node_modules, dist, build, target, vendor, …).']),
+          ['Skip Directories (comma-separated) are excluded from ingest on top of the built-in defaults (.git, node_modules, dist, build, target, vendor, …).']),
       ]);
 
       // Workspace section — a master appliance that investigates several existing
@@ -1710,9 +1738,10 @@
             tools_only:     toolsOnlyIn.checked,
             lookup_allow:   lookupIn.value.split('\n').map(function(s){return s.trim();}).filter(Boolean),
             env_vars:       envIn.value.split('\n').map(function(s){return s.trim();}).filter(Boolean),
-            repo_url:       repoUrlIn.value.trim(),
-            repo_branch:    repoBranchIn.value.trim(),
-            repo_token:     repoTokenIn.value,
+            repo_url:       repoSourceIn.value === 'local' ? '' : repoUrlIn.value.trim(),
+            repo_path:      repoSourceIn.value === 'local' ? repoPathIn.value.trim() : '',
+            repo_branch:    repoSourceIn.value === 'local' ? '' : repoBranchIn.value.trim(),
+            repo_token:     repoSourceIn.value === 'local' ? '' : repoTokenIn.value,
             repo_skip_dirs: repoSkipIn.value.split(',').map(function(s){return s.trim();}).filter(Boolean),
             instructions:   instrIn.value,
             persona_name:   personaNameIn.value.trim(),
@@ -1737,7 +1766,9 @@
           if (!payload.name && payload.type !== 'repo') { window.uiAlert('Name is required'); return; }
           if (payload.type === 'ssh' && !payload.host) { window.uiAlert('Host is required'); return; }
           if (payload.type === 'command' && !payload.command) { window.uiAlert('Command is required'); return; }
-          if (payload.type === 'repo' && !payload.repo_url) { window.uiAlert('Git URL is required'); return; }
+          if (payload.type === 'repo' && !payload.repo_url && !payload.repo_path) {
+            window.uiAlert(repoSourceIn.value === 'local' ? 'Folder is required' : 'Git URL is required'); return;
+          }
           if (payload.type === 'bundle' && !payload.name) { window.uiAlert('Name is required'); return; }
           if (payload.type === 'toolset' && !payload.toolset.length) { window.uiAlert('Pick at least one tool this system may use'); return; }
           if (payload.type === 'remote' && (!payload.peer_name || !payload.remote_id)) { window.uiAlert('Pick the system on the peer'); return; }

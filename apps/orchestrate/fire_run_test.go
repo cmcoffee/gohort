@@ -87,9 +87,10 @@ func (ff *fireFixture) fire(reArm bool) {
 	}
 }
 
-// cards are the thread's assistant messages.
+// cards are the assistant messages in the agent's cortex, where a recurring
+// fire reports (console_surface.go).
 func (ff *fireFixture) cards() []ChatMessage {
-	s, _ := loadChatSession(ff.udb, ff.agent.ID, ff.p.SessionID)
+	s, _ := loadChatSession(ff.udb, ff.agent.ID, cortexSessionID(ff.agent.ID))
 	var out []ChatMessage
 	for _, m := range s.Messages {
 		if m.Role == "assistant" {
@@ -170,9 +171,9 @@ func TestARecurringFireRunsEndToEnd(t *testing.T) {
 		t.Errorf("the successor is not the next fire with a renewed idle clock: fire=%d last_active=%q", next.FireCount, next.LastActive)
 	}
 
-	// Reported into its session, so the cortex keeps a pointer to it.
-	if got := cortexLines(t, ff.udb, ff.agent.ID); !strings.Contains(got, ff.p.Name) {
-		t.Errorf("the cortex has no pointer to the fire:\n%s", got)
+	// Reported into the cortex, and not into the session it was made in.
+	if s, _ := loadChatSession(ff.udb, ff.agent.ID, ff.p.SessionID); len(s.Messages) != 0 {
+		t.Errorf("the fire also wrote into the session it was made in: %d message(s)", len(s.Messages))
 	}
 }
 

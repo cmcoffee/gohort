@@ -43,7 +43,10 @@ func TestAnAgentThatDoesNotReadItsCortexStillKeepsOne(t *testing.T) {
 	}
 }
 
-func TestARunThatReportedElsewhereLeavesAPointer(t *testing.T) {
+// A standing run reports into its agent's cortex whatever it was set to, and
+// the session it was made in is left alone. The report itself is the cortex's
+// record of the run, so no pointer line is added beside it.
+func TestAStandingRunReportsIntoTheCortex(t *testing.T) {
 	root := depStores(t, "u")
 	app := orchRef
 	stubDelegationRunner(t, app)
@@ -61,12 +64,21 @@ func TestARunThatReportedElsewhereLeavesAPointer(t *testing.T) {
 	if _, err := RunStandingAgentNow(context.Background(), RootDB, "u", "nightly"); err != nil {
 		t.Fatal(err)
 	}
-	got := cortexLines(t, udb, a.ID)
-	if strings.Count(got, "\n") != before+1 || !strings.Contains(got, "nightly: FULL RESULT") || !strings.Contains(got, "full report in the session") {
-		t.Errorf("a report delivered to a session should leave one pointer in the cortex:\n%s", got)
+	if got := cortexLines(t, udb, a.ID); strings.Count(got, "\n") != before+1 || strings.Contains(got, "full report in") {
+		t.Errorf("the report itself is the one new entry, with no pointer beside it:\n%s", got)
 	}
-	if s, ok := loadChatSession(udb, a.ID, sid); !ok || len(s.Messages) == 0 {
-		t.Error("the full report still goes to its session")
+	cortex, _ := loadChatSession(udb, a.ID, cortexSessionID(a.ID))
+	reported := false
+	for _, m := range cortex.Messages {
+		if m.ReportFrom == "nightly" && strings.Contains(m.Content, "FULL RESULT") {
+			reported = true
+		}
+	}
+	if !reported {
+		t.Error("the full report should be in the cortex")
+	}
+	if s, ok := loadChatSession(udb, a.ID, sid); ok && len(s.Messages) != 0 {
+		t.Error("the report also went into the session the schedule was made in")
 	}
 
 	// An approved delegation whose result went back to the asker is still a

@@ -46,3 +46,31 @@ func TestATargetFamilyServesEveryKindInIt(t *testing.T) {
 		t.Errorf("a required question left empty is named: %v", m)
 	}
 }
+
+// appendOnlyTarget is a writer that takes sections only one push at a time.
+type appendOnlyTarget struct{ title, section, text string }
+
+func (a *appendOnlyTarget) Kind() string          { return "append-only-test" }
+func (a *appendOnlyTarget) Label() string         { return "Append only" }
+func (a *appendOnlyTarget) List(string) []DocItem { return nil }
+func (a *appendOnlyTarget) Append(_ context.Context, _, _, newTitle, section, md string) (string, error) {
+	a.title, a.section, a.text = newTitle, section, md
+	return "doc-1", nil
+}
+
+// A writer that cannot take sections gets them as one, under their headings;
+// one with nothing to make is refused before it is asked.
+func TestCreateDocumentFallsBackToOneSection(t *testing.T) {
+	tgt := &appendOnlyTarget{}
+	RegisterDocumentTarget(tgt)
+	id, err := CreateDocument(context.Background(), "alice", tgt.Kind(), "Title", "brief", []DocSection{{Title: "A", Text: "one"}, {Title: "B", Text: "two"}})
+	if err != nil || id != "doc-1" || tgt.title != "Title" || tgt.text != "## A\n\none\n\n## B\n\ntwo" {
+		t.Errorf("fallback: %q %v %+v", id, err, tgt)
+	}
+	if _, err := CreateDocument(context.Background(), "alice", tgt.Kind(), "Title", "", nil); err == nil {
+		t.Error("a document with no sections was made")
+	}
+	if _, err := CreateDocument(context.Background(), "alice", "nobody-registered", "Title", "", []DocSection{{Title: "A", Text: "x"}}); err == nil {
+		t.Error("an unknown kind should be an error")
+	}
+}

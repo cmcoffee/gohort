@@ -173,3 +173,63 @@ func TestConfirmRefusalReplacesTheDenial(t *testing.T) {
 		t.Errorf("the model was not told it is waiting: %q", seen)
 	}
 }
+
+// A batch of a confirmed single-fire tool asks about the call that runs and
+// not about the ones the single-fire pass drops: five deletes in one batch put
+// five cards in front of the person, and four of the approved calls were then
+// dropped as excess. A first call that is denied leaves the next one to be
+// asked about, since that one is then the call that would run.
+func TestConfirmIsNotAskedForACallTheBatchDrops(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		answers []bool
+		asks    int
+		runs    int
+	}{
+		{"approved", []bool{true}, 1, 1},
+		{"first denied", []bool{false, true}, 2, 1},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			app, _ := withTierStubs(t, "test.confirmsinglefire", func(n int) []ToolCall {
+				if n == 1 {
+					return []ToolCall{
+						{ID: "1", Name: "drop", Args: map[string]any{"what": "a"}},
+						{ID: "2", Name: "drop", Args: map[string]any{"what": "b"}},
+						{ID: "3", Name: "drop", Args: map[string]any{"what": "c"}},
+					}
+				}
+				return nil
+			})
+			var mu sync.Mutex
+			asks, runs := 0, 0
+			_, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "go"}}, AgentLoopConfig{
+				RouteKey:  "test.confirmsinglefire",
+				MaxRounds: 3,
+				Confirm: func(name, args string) bool {
+					mu.Lock()
+					defer mu.Unlock()
+					ok := asks < len(c.answers) && c.answers[asks]
+					asks++
+					return ok
+				},
+				Tools: []AgentToolDef{{
+					Tool:               Tool{Name: "drop", Description: "drop", Parameters: map[string]ToolParam{"what": {Type: "string"}}},
+					Confirmation:       &ToolConfirmation{Prompt: "Drop it?"},
+					SingleFirePerBatch: true,
+					Handler: func(context.Context, map[string]any) (string, error) {
+						mu.Lock()
+						runs++
+						mu.Unlock()
+						return "dropped", nil
+					},
+				}},
+			})
+			if err != nil {
+				t.Fatalf("loop: %v", err)
+			}
+			if asks != c.asks || runs != c.runs {
+				t.Errorf("asked %d time(s) and ran %d, want %d and %d", asks, runs, c.asks, c.runs)
+			}
+		})
+	}
+}

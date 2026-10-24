@@ -295,6 +295,13 @@ func TestEditorIsRoutedByImageCount(t *testing.T) {
 	if got := defaultEditBackend(a, 7); got != "retouch" {
 		t.Errorf("an unservable count should fall back to the default, got %q", got)
 	}
+	// With no exact match, the fewest inputs that take them all: two pictures
+	// on a deployment with only a one- and a three-input backend go to the
+	// three-input one, whose unused input is taken out of the graph.
+	sparse := imageActions{edit: true, editors: []ImageBackendChoice{one, three}}
+	if got := defaultEditBackend(sparse, 2); got != "blend3" {
+		t.Errorf("two pictures with no two-input backend should go to the smallest that takes them, got %q", got)
+	}
 }
 
 // Two connectors with the same count must resolve the same way every time.
@@ -326,9 +333,8 @@ func TestSchemaNamesTheServableCounts(t *testing.T) {
 	}
 }
 
-// Too many and too few are opposite problems and need opposite advice. One
-// sentence for both told a caller holding a spare picture to go and find
-// another one.
+// Too many is refused with advice to drop one. Too few is not refused: the
+// backend renders with its unused inputs taken out of the graph.
 func TestCountMismatchAdviceMatchesTheDirection(t *testing.T) {
 	avail := imageActions{fetch: true, edit: true, editors: []ImageBackendChoice{
 		{Name: "blend2", Edits: true, MaxImages: 2, Default: true},
@@ -353,15 +359,12 @@ func TestCountMismatchAdviceMatchesTheDirection(t *testing.T) {
 		t.Errorf("too many must not ask for MORE pictures, got %v", err)
 	}
 
-	_, err = planEdit(sess, map[string]any{"images": refs(1), "prompt": "combine"}, avail)
-	if err == nil {
-		t.Fatal("one picture into a two-picture backend must be refused")
-	}
-	if !strings.Contains(err.Error(), "ask the person for the missing") {
-		t.Errorf("too few should ask for the missing one, got %v", err)
-	}
-	// And it must read as a sentence rather than a template.
-	if !strings.Contains(err.Error(), "1 picture,") || strings.Contains(err.Error(), "picture(s)") {
+	// And it reads as a sentence rather than a template.
+	if !strings.Contains(err.Error(), "3 pictures,") || strings.Contains(err.Error(), "picture(s)") {
 		t.Errorf("the count should pluralize properly, got %v", err)
+	}
+
+	if _, err = planEdit(sess, map[string]any{"images": refs(1), "prompt": "combine"}, avail); err != nil && strings.Contains(err.Error(), "composes") {
+		t.Errorf("one picture into a two-picture backend is no longer refused for its count, got %v", err)
 	}
 }

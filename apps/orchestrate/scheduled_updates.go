@@ -127,11 +127,10 @@ type orchUpdatePayload struct {
 	FireCount       int    `json:"fire_count"`
 	CreatedAt       string `json:"created_at"`
 
-	// Surface — same mode as EventMonitor/StandingAgent, resolved at fire time
-	// against SessionID (the home): "" / "session" appends the fire into the
-	// creating session, "cortex" into the agent's cortex home thread, "background"
-	// runs it but posts nothing to a thread. The recurring conversation continues
-	// in whichever thread it surfaces to.
+	// Surface was where the fire reported, as EventMonitor.Surface. No longer
+	// read: a recurring task runs in its agent's cortex and links SessionID, the
+	// session it was made in (console_surface.go). A task wake still returns to
+	// SessionID. Kept so payloads made before still decode.
 	Surface string `json:"surface,omitempty"`
 
 	// Broken parks a recurring task that has stopped and is being KEPT. Unlike a
@@ -506,7 +505,6 @@ type fireRun struct {
 	retireReason       string
 	armed              orchUpdatePayload
 	loadSession        string
-	recordFire         bool
 	sess               ChatSession
 	msgs               []Message
 	tnotes             taskNotes
@@ -656,15 +654,15 @@ func (fr *fireRun) preArm() {
 
 func (fr *fireRun) loadThread() {
 	p := fr.p
-	// Surface routes the recurring conversation: "cortex" moves it (context +
-	// reply) to the agent's cortex home thread; "background" runs it but posts no
-	// reply card; "" / "session" keeps it in the creating session. The home
-	// (p.SessionID) is left intact so a switch back always works.
+	// A recurring task runs in the agent's cortex (console_surface.go), its
+	// context and its reply both. A task wake is not a schedule: it is a
+	// background job's result coming back to the conversation that started
+	// it, and it stays there.
 	fr.loadSession = p.SessionID
-	if strings.TrimSpace(p.Surface) == "cortex" {
-		fr.loadSession = cortexSessionID(p.AgentID)
+	if !isTaskWake(p.Prompt) {
+		fr.app.ensureScheduleCortex(p.Username, p.AgentID)
+		fr.loadSession = scheduleSession(p.AgentID, p.SessionID)
 	}
-	fr.recordFire = strings.TrimSpace(p.Surface) != "background"
 	fr.sess, fr.ok = loadChatSession(fr.udb, p.AgentID, fr.loadSession)
 	if !fr.ok {
 		// The target thread doesn't exist yet — synthesize it rather than
@@ -1367,73 +1365,71 @@ func (fr *fireRun) postReport() {
 	// Carry the full tool trace too (extracted from the loop transcript, since a
 	// scheduled fire has no live chatTurn to snapshot from) so the export and the
 	// session UI show WHAT the agent did to produce the reply, not just the text.
-	// Background (Surface): the fire ran (tools executed, recorded to the run
-	// ledger below) but posts no reply card to any thread — no agent visibility.
 	toParent := false // a sub-agent's report went to its parent's Cortex
-	if fr.recordFire {
-		// A task wake's note is the only record of WHAT came back — the handle
-		// for a finished picture, the id of a produced file. It reached this
-		// turn's model as a prompt and was then thrown away, so the next thing
-		// the user said ran against a history where the agent announced a
-		// result that nothing identifies. Asked for one more change to it, the
-		// model has no handle to name, invents one, and the edit fails.
-		//
-		// Hidden: the LLM reads it, the transcript doesn't render it. The user
-		// already saw the reply it produced; showing them the machinery that
-		// prompted it would be showing the same news twice.
-		var cards []ChatMessage
-		if note := strings.TrimSpace(p.HistoryNote); note != "" {
-			cards = append(cards, ChatMessage{
-				Role:    "user",
-				Content: note,
-				Created: time.Now(),
-				Hidden:  true,
-			})
-		}
+	// A task wake's note is the only record of WHAT came back — the handle
+	// for a finished picture, the id of a produced file. It reached this
+	// turn's model as a prompt and was then thrown away, so the next thing
+	// the user said ran against a history where the agent announced a
+	// result that nothing identifies. Asked for one more change to it, the
+	// model has no handle to name, invents one, and the edit fails.
+	//
+	// Hidden: the LLM reads it, the transcript doesn't render it. The user
+	// already saw the reply it produced; showing them the machinery that
+	// prompted it would be showing the same news twice.
+	var cards []ChatMessage
+	if note := strings.TrimSpace(p.HistoryNote); note != "" {
 		cards = append(cards, ChatMessage{
-			Role:         "assistant",
-			Content:      fr.reply,
-			Created:      time.Now(),
-			ReportFrom:   recurringName(p),
-			ReportKind:   fireCardKind(p),
-			ReportDetail: fr.detail,
-			ToolCalls:    fr.toolTrace,
-			// This turn had no live stream to paint an attachment onto — it ran
-			// with nobody watching. Keeping the bytes is the only way the thread
-			// can ever show what it delivered.
-			Attachments: keepDeliveredAttachments(p.Username, fr.subSess.Images),
-			Files:       keepDeliveredFiles(p.Username, fr.subSess.Videos, fr.subSess.Files),
+			Role:    "user",
+			Content: note,
+			Created: time.Now(),
+			Hidden:  true,
 		})
-		// `sess` was loaded before the agent loop ran, minutes ago on a local
-		// model. Two fires on the same thread at the same instant (the scheduler
-		// starts every due task in its own goroutine, and a 09:00 daily task
-		// plus a 09:00–23:00 random one for the same agent are both due at
-		// 09:00:00) each carried their own stale copy to this point, and the
-		// second save overwrote the first's card. Observed: the daily blog post
-		// card missing whenever the engagement fire overlapped it, while the
-		// run ledger and the log both said it posted. The append goes through
-		// the per-session lock and re-reads the stored thread first, the same
-		// discipline RunAgentSyncContinuing uses.
-		if err := appendToStoredSession(fr.udb, p.AgentID, fr.loadSession, fr.sess, cards...); err != nil {
-			Log("[orchestrate/scheduled] save failed for session %s: %v", p.SessionID, err)
+	}
+	content := fr.reply
+	if !isTaskWake(p.Prompt) {
+		if src := fr.app.scheduleSourceNote(fr.udb, p.AgentID, p.SessionID); src != "" && strings.TrimSpace(content) != "" {
+			content = strings.TrimSpace(content) + "\n\n" + src
 		}
-		// Run by a sub-agent: the report also goes to its parent's home
-		// thread, where somebody reads it (agent_family.go). A task wake is
-		// the agent's own work coming back to it, not a report.
-		if !isTaskWake(p.Prompt) {
-			toParent = reportToParent(fr.udb, p.AgentID, cards[len(cards)-1])
-		}
+	}
+	cards = append(cards, ChatMessage{
+		Role:         "assistant",
+		Content:      content,
+		Created:      time.Now(),
+		ReportFrom:   recurringName(p),
+		ReportKind:   fireCardKind(p),
+		ReportDetail: fr.detail,
+		ToolCalls:    fr.toolTrace,
+		// This turn had no live stream to paint an attachment onto — it ran
+		// with nobody watching. Keeping the bytes is the only way the thread
+		// can ever show what it delivered.
+		Attachments: keepDeliveredAttachments(p.Username, fr.subSess.Images),
+		Files:       keepDeliveredFiles(p.Username, fr.subSess.Videos, fr.subSess.Files),
+	})
+	// `sess` was loaded before the agent loop ran, minutes ago on a local
+	// model. Two fires on the same thread at the same instant (the scheduler
+	// starts every due task in its own goroutine, and a 09:00 daily task
+	// plus a 09:00–23:00 random one for the same agent are both due at
+	// 09:00:00) each carried their own stale copy to this point, and the
+	// second save overwrote the first's card. Observed: the daily blog post
+	// card missing whenever the engagement fire overlapped it, while the
+	// run ledger and the log both said it posted. The append goes through
+	// the per-session lock and re-reads the stored thread first, the same
+	// discipline RunAgentSyncContinuing uses.
+	if err := fr.app.appendToThread(fr.udb, p.AgentID, fr.loadSession, fr.sess, cards...); err != nil {
+		Log("[orchestrate/scheduled] save failed for session %s: %v", p.SessionID, err)
+	}
+	// Run by a sub-agent: the report also goes to its parent's home
+	// thread, where somebody reads it (agent_family.go). A task wake is
+	// the agent's own work coming back to it, not a report.
+	if !isTaskWake(p.Prompt) {
+		toParent = reportToParent(fr.udb, p.AgentID, cards[len(cards)-1])
 	}
 	// The agent's cortex records every scheduled fire that reported somewhere
 	// else. Not a background task's own result coming back to it: that is the
 	// agent's work returning, not something reaching it. Nor a sub-agent's
 	// fire whose report its parent's Cortex (where its notes go) already has.
-	if (fr.loadSession != cortexSessionID(p.AgentID) || !fr.recordFire) && !isTaskWake(p.Prompt) && !toParent {
-		where := "full reply in its session"
-		if !fr.recordFire {
-			where = "ran in the background"
-		}
-		appendCortexObs(fr.udb, p.AgentID, recurringName(p), cortexKindScheduled, cortexPointer(fr.reply, where))
+	if fr.loadSession != cortexSessionID(p.AgentID) && !isTaskWake(p.Prompt) && !toParent {
+		appendCortexObs(fr.udb, p.AgentID, recurringName(p), cortexKindScheduled, cortexPointer(fr.reply, "full reply in its session"))
 	}
 	// A background result whose conversation lives on a messaging channel has to
 	// be SENT there — appending it to the stored session is what the recurring

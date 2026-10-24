@@ -178,6 +178,10 @@ type sendRequest struct {
 	// intake form. Persisted on the user message so re-edit on
 	// replayed sessions can rehydrate the form with original values.
 	IntakeValues map[string]string `json:"intake_values,omitempty"`
+	// AskState, when set, marks this message as the answer to the ask card
+	// the conversation ended on: what was picked and typed there, in the
+	// card's own shape. See ChatMessage.AskState.
+	AskState json.RawMessage `json:"ask_state,omitempty"`
 }
 
 // Extract attached documents (PDFs, DOCX, text files). Hold them
@@ -568,6 +572,7 @@ func (sr *sendRun) recordUserMessage() {
 		sort.Strings(keys)
 		Log("[orchestrate] intake on session %s: fields %v, kind %q", sr.sess.ID, keys, sr.req.IntakeValues["kind"])
 	}
+	userMsg.AskState = askStateOf(sr.req.AskState)
 	if !notesAreInput {
 		sr.sess.Messages = append(sr.sess.Messages, userMsg)
 		if saved, err := saveChatSession(sr.udb, sr.sess); err == nil {

@@ -18,14 +18,14 @@ func TestAStoredCardIsRedrawnAsACard(t *testing.T) {
 	}
 	src := readRuntimeFile(t, "30_agent_loop_panel.js")
 	fn := boundedRuntime(t, src, "function replayBlock(", "\n    }\n")
-	if !strings.Contains(src, "if (replayBlock(m.block, answered)) return;") {
+	if !strings.Contains(src, "var drawn = replayBlock(m.block, answered, answer);") {
 		t.Fatal("the thread redraw no longer draws stored cards")
 	}
 	harness := `
 var activeSessionId = 's1';
-function control() { return {disabled: false}; }
+function control(keep) { return {disabled: false, classList: {contains: function(c) { return !!keep && c === 'ui-ask-keep'; }}}; }
 function card() {
-  var controls = [control(), control()];
+  var controls = [control(), control(), control(true)];
   return {classes: [], controls: controls,
     classList: {add: function(c) { this.owner.classes.push(c); }},
     querySelectorAll: function() { return controls; }};
@@ -41,9 +41,12 @@ var open = drawn[0];
 if (open.steps.length !== 3 || !open.ctx.replayed) throw new Error('drawn without its steps');
 if (open.controls[0].disabled || open.classes.length) throw new Error('an unanswered form was switched off');
 
-replayBlock({type: 'ui_ask_form', steps: [1]}, true);
+var answer = {values: ['x']};
+if (replayBlock({type: 'ui_ask_form', steps: [1]}, true, answer) !== drawn[1]) throw new Error('the drawn card is not returned');
 var done = drawn[1];
 if (!done.controls[0].disabled || !done.controls[1].disabled || done.classes.indexOf('submitted') < 0) throw new Error('an answered form is still live');
+if (done.controls[2].disabled) throw new Error('Change answer was switched off with the rest');
+if (done.ctx.answer !== answer) throw new Error('the answer state did not reach the card');
 
 if (replayBlock({type: 'nobody_renders_this'}, false)) throw new Error('an unknown card claimed to be drawn');
 console.log('OK');

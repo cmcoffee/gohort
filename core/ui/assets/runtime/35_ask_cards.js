@@ -36,8 +36,27 @@
   }
 
   // The answer is sent through the panel's own input row — the same send flow a
-  // typed message takes — so the agent sees it as the next user turn.
-  function uiAskSubmitAnswer(card, answer) {
+  // typed message takes — so the agent sees it as the next user turn. state is
+  // what the card holds (picks, typed text): the panel stores it with the
+  // message, so a redrawn thread fills the card in rather than drawing the
+  // answer as a bubble of its own. A card being changed (.ui-ask-editing) asks
+  // the panel to replace its earlier answer instead.
+  //
+  // A card that names an answer_url (data-answer-url) answers there instead: a
+  // run with no chat to reply through, waiting on what the card asks.
+  function uiAskSubmitAnswer(card, answer, state) {
+    if (card.dataset && card.dataset.answerUrl) {
+      fetch(card.dataset.answerUrl, {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({answer: answer, state: state}),
+      }).then(function(r) {
+        if (!r.ok) return r.text().then(function(t) { throw new Error(t || r.statusText); });
+      }).catch(function(err) {
+        uiAskLock(card, false);
+        if (window.uiAlert) window.uiAlert('Your answer did not go through: ' + (err && err.message || err));
+      });
+      return true;
+    }
     var root = uiAskPanelRoot(card);
     var inputArea = root.querySelector('.ui-agent-input');
     var sendBtn = root.querySelector('.ui-agent-input-row .ui-row-btn.primary');
@@ -48,8 +67,10 @@
     // A panel that handles answers itself takes it here, which is how an
     // answer reaches a thread whose composer is locked; otherwise it goes
     // through the Send button like a typed message.
-    var ev = new CustomEvent('ui-ask-answer', {detail: {answer: answer}, cancelable: true});
+    var edit = card.classList.contains('ui-ask-editing');
+    var ev = new CustomEvent('ui-ask-answer', {detail: {answer: answer, state: state, card: card, edit: edit}, cancelable: true});
     if (!inputArea.dispatchEvent(ev)) return true;
+    if (edit) return false; // only a panel can replace an answer
     inputArea.value = answer;
     sendBtn.click();
     return true;
@@ -60,123 +81,247 @@
     if (window.uiMdToHTML) { elm.innerHTML = window.uiMdToHTML(text); } else { elm.textContent = text; }
   }
 
+  // uiAskIsCatchAll is an option that only means "something not listed". The
+  // card draws its own Other row with a box to type in, so one the model wrote
+  // as well was a second Other with no box: picking it told the agent nothing.
+  function uiAskIsCatchAll(opt) {
+    var s = String(opt || '').trim().replace(/[\s.:…]+$/, '').toLowerCase();
+    return /^(other|others|something else|anything else)( \(.*\))?$/.test(s) || /^other\b.*(specify|describe|type)/.test(s);
+  }
+
+  function uiAskOptions(list) {
+    return (list || []).map(function(s) { return String(s || '').trim(); })
+      .filter(function(s) { return s.length > 0 && !uiAskIsCatchAll(s); });
+  }
+
+  // uiAskChoices draws a list of choices with an Other row last: a box of its
+  // own and a line to type in, which ticks it. Single-select, picking Other
+  // clears the rest, so the typed line is the answer; multi-select, it rides
+  // along with the picks as a note. get/set read and restore {picks, other}.
+  function uiAskChoices(name, opts, multi) {
+    var box = el('div', {class: 'ui-ask-opts'});
+    var inputs = [];
+    opts.forEach(function(opt) {
+      var row = el('label', {class: 'ui-ask-opt'});
+      var inp = document.createElement('input');
+      inp.type = multi ? 'checkbox' : 'radio';
+      inp.name = name;
+      inp.value = opt;
+      row.appendChild(inp);
+      row.appendChild(el('span', {}, [opt]));
+      box.appendChild(row);
+      inputs.push(inp);
+    });
+    var other = document.createElement('input');
+    other.type = multi ? 'checkbox' : 'radio';
+    other.name = name;
+    other.value = '';
+    var text = document.createElement('textarea');
+    text.className = 'ui-ask-extra ui-ask-other-text';
+    text.rows = 1;
+    text.placeholder = multi ? 'Something not listed, or a note…' : 'Your own answer, or push back…';
+    text.addEventListener('input', function() { if (text.value.trim()) other.checked = true; });
+    other.addEventListener('change', function() { if (other.checked) text.focus(); });
+    var lbl = el('label', {class: 'ui-ask-other-lbl'}, [other, el('span', {}, ['Other:'])]);
+    box.appendChild(el('div', {class: 'ui-ask-opt ui-ask-other'}, [lbl, text]));
+    return {
+      node: box,
+      focus: function() { text.focus(); },
+      get: function() {
+        return {
+          picks: inputs.filter(function(i) { return i.checked; }).map(function(i) { return i.value; }),
+          other: other.checked ? (text.value || '').trim() : '',
+        };
+      },
+      set: function(st) {
+        st = st || {};
+        var picks = Array.isArray(st.picks) ? st.picks : [];
+        inputs.forEach(function(i) { i.checked = picks.indexOf(i.value) >= 0; });
+        text.value = st.other || '';
+        other.checked = !!st.other;
+      },
+    };
+  }
+
+  // uiAskChoiceText is the answer a choice list gives, as the agent reads it:
+  // "pick1, pick2. typed line".
+  function uiAskChoiceText(st) {
+    var parts = [];
+    if (st && st.picks && st.picks.length) parts.push(st.picks.join(', '));
+    if (st && st.other) parts.push(st.other);
+    return parts.join('. ');
+  }
+
+  // uiAskLock switches an answered card's controls off, or back on while the
+  // answer is being changed. Change answer and Cancel (.ui-ask-keep) stay live:
+  // they are how an answered card opens again.
+  function uiAskLock(wrap, locked) {
+    wrap.classList.toggle('submitted', locked);
+    wrap.querySelectorAll('input, textarea, select, button').forEach(function(x) {
+      if (!x.classList.contains('ui-ask-keep')) x.disabled = locked;
+    });
+  }
+
+  // uiAskActions is the card's button row: Submit, plus Change answer for an
+  // answered card the panel linked to its answer (.ui-ask-editable, since
+  // changing it replaces that message and everything after it) and Cancel
+  // while it is being changed. CSS shows each in its state.
+  function uiAskActions(wrap, get, set, onSubmit) {
+    var submit = el('button', {class: 'ui-row-btn primary ui-ask-submit', type: 'button'}, ['Submit']);
+    var change = el('button', {class: 'ui-row-btn ui-ask-keep ui-ask-change', type: 'button'}, ['Change answer']);
+    var cancel = el('button', {class: 'ui-row-btn ui-ask-keep ui-ask-cancel', type: 'button'}, ['Cancel']);
+    var before = null;
+    change.addEventListener('click', function() {
+      before = get();
+      wrap.classList.add('ui-ask-editing');
+      uiAskLock(wrap, false);
+    });
+    cancel.addEventListener('click', function() {
+      if (before) set(before);
+      wrap.classList.remove('ui-ask-editing');
+      uiAskLock(wrap, true);
+    });
+    submit.addEventListener('click', function() {
+      var st = get();
+      var answer = onSubmit(st);
+      if (!answer) return;
+      if (!uiAskSubmitAnswer(wrap, answer, st)) return;
+      wrap.classList.remove('ui-ask-editing');
+      wrap.classList.add('ui-ask-filled');
+      uiAskLock(wrap, true);
+    });
+    wrap.appendChild(el('div', {class: 'ui-ask-actions'}, [change, cancel, submit]));
+  }
+
+  // Both cards take an answer to show: ctx.answer on a chat redraw (the state
+  // the answer was sent with), d.answer when the block carries it, or a later
+  // block_meta {answer} when it arrived from elsewhere (another viewer, or the
+  // run giving up waiting). Each fills the card in and locks it.
+  function uiAskAnswered(wrap, set) {
+    return function(rec, meta) {
+      if (!meta || !meta.answer) return;
+      set(meta.answer);
+      wrap.classList.add('ui-ask-filled');
+      uiAskLock(wrap, true);
+    };
+  }
+
+  // uiAskCardWrap is the card both renderers start from, carrying the block's
+  // answer_url when it answers to one.
+  function uiAskCardWrap(d) {
+    var wrap = el('div', {class: 'ui-ask-card'});
+    if (d && d.answer_url) wrap.dataset.answerUrl = d.answer_url;
+    return wrap;
+  }
   if (!window.UIBlockRenderers.ui_ask) {
-    window.uiRegisterBlockRenderer('ui_ask', function(d) {
-      var wrap = el('div', {class: 'ui-ask-card'});
+    window.uiRegisterBlockRenderer('ui_ask', function(d, ctx) {
+      var wrap = uiAskCardWrap(d);
       var q = el('div', {class: 'ui-ask-q'});
       uiAskQuestionHTML(q, d.question);
       wrap.appendChild(q);
-      var opts = (d.options || []).map(function(s){ return String(s || '').trim(); }).filter(function(s){ return s.length > 0; });
-      var multi = !!d.multi;
-      var inputs = [];
+      var opts = uiAskOptions(d.options);
+      var get, set, focus;
       if (opts.length) {
-        var box = el('div', {class: 'ui-ask-opts'});
-        opts.forEach(function(opt) {
-          var row = el('label', {class: 'ui-ask-opt'});
-          var inp = document.createElement('input');
-          inp.type = multi ? 'checkbox' : 'radio';
-          inp.name = 'ui-ask-' + (d.id || '');
-          inp.value = opt;
-          row.appendChild(inp);
-          row.appendChild(el('span', {}, [opt]));
-          box.appendChild(row);
-          inputs.push(inp);
-        });
-        wrap.appendChild(box);
+        var choices = uiAskChoices('ui-ask-' + (d.id || Math.random().toString(36).slice(2)), opts, !!d.multi);
+        wrap.appendChild(choices.node);
+        get = choices.get; set = choices.set; focus = choices.focus;
+      } else {
+        var extra = document.createElement('textarea');
+        extra.className = 'ui-ask-extra';
+        extra.rows = 3;
+        extra.placeholder = 'Type your answer…';
+        wrap.appendChild(extra);
+        get = function() { return {picks: [], other: (extra.value || '').trim()}; };
+        set = function(st) { extra.value = (st && st.other) || ''; };
+        focus = function() { extra.focus(); };
       }
-      var extra = document.createElement('textarea');
-      extra.className = 'ui-ask-extra';
-      extra.rows = opts.length ? 2 : 3;
-      extra.placeholder = opts.length ? 'Or type your own answer / push back…' : 'Type your answer…';
-      wrap.appendChild(extra);
-      var submit = el('button', {class: 'ui-row-btn primary', type: 'button'}, ['Submit']);
-      wrap.appendChild(el('div', {class: 'ui-ask-actions'}, [submit]));
-      submit.addEventListener('click', function() {
-        var picked = inputs.filter(function(i){ return i.checked; }).map(function(i){ return i.value; });
-        var note = (extra.value || '').trim();
-        var parts = [];
-        if (picked.length) parts.push(picked.join(', '));
-        if (note) parts.push(note);
-        var answer = parts.join('. ');
-        if (!answer) { extra.focus(); return; }
-        if (!uiAskSubmitAnswer(wrap, answer)) return;
-        wrap.classList.add('submitted');
-        inputs.forEach(function(i){ i.disabled = true; });
-        extra.disabled = true;
-        submit.disabled = true;
+      uiAskActions(wrap, get, set, function(st) {
+        var answer = uiAskChoiceText(st);
+        if (!answer) focus();
+        return answer;
       });
-      return {wrap: wrap, body: null};
+      var onMeta = uiAskAnswered(wrap, set);
+      if (d.answer) onMeta(null, {answer: d.answer});
+      else if (ctx && ctx.answer) { set(ctx.answer); wrap.classList.add('ui-ask-filled'); }
+      return {wrap: wrap, body: null, onMeta: onMeta};
     });
   }
 
   if (!window.UIBlockRenderers.ui_ask_form) {
-    window.uiRegisterBlockRenderer('ui_ask_form', function(d) {
-      var wrap = el('div', {class: 'ui-ask-card'});
+    window.uiRegisterBlockRenderer('ui_ask_form', function(d, ctx) {
+      var wrap = uiAskCardWrap(d);
       var steps = (d.steps || []).filter(function(s){ return s && s.question; });
       if (!steps.length) {
         wrap.appendChild(el('div', {class: 'ui-ask-q'}, ['(form had no questions)']));
         return {wrap: wrap, body: null};
       }
-      // Render every step at once as a labeled field with one Submit (the
-      // compact default; the Agency chat ships a step-through variant).
+      // An optional lead line over the fields: what the form is for.
+      if (d.question) {
+        var lead = el('div', {class: 'ui-ask-lead'});
+        uiAskQuestionHTML(lead, d.question);
+        wrap.appendChild(lead);
+      }
+      // Render every step at once as a labeled field with one Submit. Each
+      // field reads and restores its own value: a choice step's {picks,
+      // other}, a typed field's string.
       var fields = [];
       steps.forEach(function(step, i) {
         var fw = el('div', {class: 'ui-ask-field'});
         var lbl = el('div', {class: 'ui-ask-q'});
         uiAskQuestionHTML(lbl, (i + 1) + '. ' + step.question);
         fw.appendChild(lbl);
-        var opts = (step.options || []).map(function(s){ return String(s || '').trim(); }).filter(function(s){ return s.length > 0; });
-        var t = step.type || (opts.length ? 'choice' : 'text');
+        var rawOpts = (step.options || []).map(function(s){ return String(s || '').trim(); }).filter(function(s){ return s.length > 0; });
+        var t = step.type || (rawOpts.length ? 'choice' : 'text');
         // A chooser with nothing to choose renders a control the user cannot
         // answer through — an empty dropdown showing only its placeholder, or a
         // radio group with no rows. The server drops the type when it authors a
         // step that way, but blocks persisted before that fix still replay from
         // stored sessions, so degrade here too rather than render a dead field.
-        if (!opts.length && (t === 'select' || t === 'choice')) t = 'text';
-        var input, getVal;
-        if (t === 'textarea') {
-          input = document.createElement('textarea'); input.className = 'ui-ask-extra'; input.rows = 3;
-          if (step.placeholder) input.placeholder = step.placeholder;
-          getVal = function(){ return (input.value || '').trim(); };
-        } else if (t === 'select') {
-          input = document.createElement('select'); input.className = 'ui-ask-input';
-          input.appendChild(el('option', {value: ''}, ['(choose)']));
-          opts.forEach(function(o){ input.appendChild(el('option', {value: o}, [o])); });
-          getVal = function(){ return input.value || ''; };
-        } else if (t === 'choice') {
-          input = el('div', {class: 'ui-ask-opts'});
-          var multi = !!step.multi;
-          opts.forEach(function(o) {
-            var row = el('label', {class: 'ui-ask-opt'});
-            var inp = document.createElement('input');
-            inp.type = multi ? 'checkbox' : 'radio';
-            inp.name = 'ui-askf-' + (d.id || '') + '-' + i;
-            inp.value = o;
-            row.appendChild(inp);
-            row.appendChild(el('span', {}, [o]));
-            input.appendChild(row);
-          });
-          getVal = function(){ var p = []; input.querySelectorAll('input').forEach(function(x){ if (x.checked) p.push(x.value); }); return p.join(', '); };
+        if (!rawOpts.length && (t === 'select' || t === 'choice')) t = 'text';
+        var input, f = {step: step};
+        if (t === 'choice') {
+          var choices = uiAskChoices('ui-askf-' + (d.id || '') + '-' + i, uiAskOptions(rawOpts), !!step.multi);
+          input = choices.node;
+          f.get = choices.get; f.set = choices.set;
+          f.text = uiAskChoiceText;
         } else {
-          input = document.createElement('input');
-          input.type = (t === 'number') ? 'number' : (t === 'password' ? 'password' : 'text');
-          input.className = 'ui-ask-input';
-          if (step.placeholder) input.placeholder = step.placeholder;
-          getVal = function(){ return (input.value || '').trim(); };
+          if (t === 'textarea') {
+            input = document.createElement('textarea'); input.className = 'ui-ask-extra'; input.rows = 3;
+          } else if (t === 'select') {
+            input = document.createElement('select'); input.className = 'ui-ask-input';
+            input.appendChild(el('option', {value: ''}, ['(choose)']));
+            rawOpts.forEach(function(o){ input.appendChild(el('option', {value: o}, [o])); });
+          } else {
+            input = document.createElement('input');
+            input.type = (t === 'number') ? 'number' : (t === 'password' ? 'password' : 'text');
+            input.className = 'ui-ask-input';
+          }
+          if (step.placeholder && t !== 'select') input.placeholder = step.placeholder;
+          // A secret is never kept to be filled back in: it went to the agent
+          // as the answer, and a redraw has no business showing it again.
+          var secret = t === 'password';
+          f.get = function() { return secret ? '' : (input.value || '').trim(); };
+          f.set = function(v) { input.value = (typeof v === 'string') ? v : ''; };
+          f.text = function() { return (input.value || '').trim(); };
         }
         fw.appendChild(input);
         wrap.appendChild(fw);
-        fields.push({step: step, getVal: getVal});
+        fields.push(f);
       });
-      var submit = el('button', {class: 'ui-row-btn primary', type: 'button'}, ['Submit']);
-      wrap.appendChild(el('div', {class: 'ui-ask-actions'}, [submit]));
-      submit.addEventListener('click', function() {
-        var lines = fields.map(function(f, i){ var v = f.getVal(); return (i + 1) + '. ' + f.step.question + ' -> ' + (v || '(no answer)'); });
-        if (!uiAskSubmitAnswer(wrap, lines.join('\n'))) return;
-        wrap.classList.add('submitted');
-        wrap.querySelectorAll('input, textarea, select, button').forEach(function(x){ x.disabled = true; });
+      var get = function() { return {values: fields.map(function(f) { return f.get(); })}; };
+      var set = function(st) {
+        var vals = (st && Array.isArray(st.values)) ? st.values : [];
+        fields.forEach(function(f, i) { f.set(vals[i]); });
+      };
+      uiAskActions(wrap, get, set, function() {
+        return fields.map(function(f, i) {
+          return (i + 1) + '. ' + f.step.question + ' -> ' + (f.text(f.get()) || '(no answer)');
+        }).join('\n');
       });
-      return {wrap: wrap, body: null};
+      var onMeta = uiAskAnswered(wrap, set);
+      if (d.answer) onMeta(null, {answer: d.answer});
+      else if (ctx && ctx.answer) { set(ctx.answer); wrap.classList.add('ui-ask-filled'); }
+      return {wrap: wrap, body: null, onMeta: onMeta};
     });
   }
 

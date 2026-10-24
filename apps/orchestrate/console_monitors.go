@@ -47,30 +47,6 @@ func (T *OrchestrateApp) handleConsoleMonitorRelink(w http.ResponseWriter, r *ht
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleConsoleMonitorMove sets a monitor's Surface in place — moves the whole
-// monitor (card + rail badge + wake all follow) without a delete+recreate. The
-// home session (WakeSession) is left intact, so Session always works to return.
-func (T *OrchestrateApp) handleConsoleMonitorMove(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	name := strings.TrimSpace(r.URL.Query().Get("id"))
-	surface, valid := normalizeSurface(r.URL.Query().Get("value"))
-	if !valid {
-		http.Error(w, "move target must be cortex, session, or background", http.StatusBadRequest)
-		return
-	}
-	m, found := GetEventMonitor(RootDB, user, name)
-	if !found {
-		http.Error(w, "no such monitor", http.StatusNotFound)
-		return
-	}
-	m.Surface = surface
-	SaveEventMonitor(RootDB, m)
-	w.WriteHeader(http.StatusNoContent)
-}
-
 // handleConsoleMonitorGet returns an event monitor's editable record for the
 // Scheduler edit modal: what it watches for, what it hands the agent when it
 // fires, and how often it looks. Only scheduled kinds (poll / http_poll /
@@ -602,9 +578,6 @@ func consoleMonitorRows(user, agentID string) []consoleMonitorRow {
 			if !hasWake {
 				detail += " (no LLM)"
 			}
-			// Show where the monitor surfaces (Surface) so the user sees + can change
-			// it via the Move-to action (its card/badge/wake all follow).
-			detail += surfaceSuffix(m.Surface)
 			// A bounded monitor says so in the row. Without this the list shows
 			// "active" for a monitor with one fire left and for one that will
 			// run forever, which is the whole reason a missing bound went

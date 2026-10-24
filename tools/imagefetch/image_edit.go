@@ -83,19 +83,16 @@ func planEdit(sess *ToolSession, args map[string]any, avail imageActions) (editP
 	// Count mismatch, named in terms of what this deployment can do. Checked
 	// here rather than left to the backend so the answer arrives before an
 	// upload and names the alternatives: "wrong number of images" sends the
-	// model guessing, "this can combine 2, you passed 3" does not.
-	if n := backendImageCount(avail, backend); n > 0 && len(refs) != n {
+	// model guessing, "this can combine 2, you passed 3" does not. Too FEW is
+	// no longer refused: the unused inputs are taken out of the graph (core
+	// BuildComfyBody), so two pictures can go to a three-input backend.
+	if n := backendImageCount(avail, backend); n > 0 && len(refs) > n {
 		counts := editorImageCounts(avail)
 		strs := make([]string, 0, len(counts))
 		for _, c := range counts {
 			strs = append(strs, strconv.Itoa(c))
 		}
-		// Too MANY and too FEW need opposite advice, and one sentence for both
-		// told a caller with a spare picture to go and find another one.
 		fix := "Choose the %d that matter and pass those, or do it in more than one call."
-		if len(refs) < n {
-			fix = "Supply %d, or ask the person for the missing one(s) before trying again."
-		}
 		return p, fmt.Errorf("you passed %s, and this deployment composes %s at a time: %q takes exactly %d. "+fix,
 			pluralPictures(len(refs)), joinCounts(editorImageCounts(avail)), backend, n, n)
 	}

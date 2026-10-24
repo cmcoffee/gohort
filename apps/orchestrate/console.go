@@ -188,13 +188,6 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	T.HandleFunc("/api/console/monitors/pause", w(T.handleConsoleMonitorPause))
 	T.HandleFunc("/api/console/monitors/resume", w(T.handleConsoleMonitorResume))
 	T.HandleFunc("/api/console/monitors/relink", w(T.handleConsoleMonitorRelink))
-	// "Move to…" (Surface: Cortex / Session / Background) — shared dynamic picker
-	// source (cortex gated on the agent) + per-type in-place setters, no
-	// delete+recreate.
-	T.HandleFunc("/api/console/surface-options", T.handleConsoleSurfaceOptions)
-	T.HandleFunc("/api/console/monitors/move", w(T.handleConsoleMonitorMove))
-	T.HandleFunc("/api/console/agents/move", w(T.handleConsoleStandingMove))
-	T.HandleFunc("/api/console/recurring/move", w(T.handleConsoleRecurringMove))
 	T.HandleFunc("/api/console/monitors/run", w(T.handleConsoleMonitorRun))
 	T.HandleFunc("/api/console/monitors/checks", w(T.handleConsoleMonitorChecks))
 	T.HandleFunc("/api/console/monitors/get", T.handleConsoleMonitorGet)

@@ -164,11 +164,6 @@ func createStandingAgentToolDef(sess *ToolSession, owner, agentID, controllerAge
 					}
 					return controllerSession
 				}(),
-				// Same default as a recurring task: a controller with a cortex
-				// reads its scheduled runs there, not interleaved into whichever
-				// conversation set the schedule up. The report session stays the
-				// home, so the console's Move-to → Session brings it back.
-				Surface: scheduleSurfaceDefault("", hasCortexThread(owner, scheduleHomeAgent(sess, controllerAgentID, agentID))),
 			}
 			spec, hasSpec, err := timingArg(args)
 			if err != nil {

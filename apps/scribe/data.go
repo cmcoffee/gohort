@@ -55,6 +55,12 @@ type Guide struct {
 	// data URL, either of which renders without further work. Shown under the
 	// title in the viewer and in exports.
 	ImageURL string `json:"image_url,omitempty"`
+	// HeaderLogo and HeaderFrom are pictures of the owner's own that go with a
+	// generated header (header_image.go), each the URL its upload returned: a
+	// logo placed on it exactly as uploaded, and a picture an editing backend
+	// works from.
+	HeaderLogo string `json:"header_logo,omitempty"`
+	HeaderFrom string `json:"header_from,omitempty"`
 	// Collections are knowledge-collection IDs attached to this guide. The Guide
 	// Author searches them (search_knowledge tool) to ground sections in the
 	// user's own curated knowledge, alongside web research.
@@ -494,19 +500,27 @@ func modelText(md string) string {
 
 func saveGuideRev(udb Database, g Guide, note string) Guide {
 	saved := saveGuide(udb, g)
+	appendRevision(udb, saved, note)
+	return saved
+}
+
+// appendRevision records g as it stands as a revision, without saving the
+// guide itself, and returns the revision's id.
+func appendRevision(udb Database, g Guide, note string) string {
 	var rl guideRevisions
-	udb.Get(revisionsTable, saved.ID, &rl)
+	udb.Get(revisionsTable, g.ID, &rl)
+	id := newID()
 	rl.Revisions = append(rl.Revisions, GuideRevision{
-		ID:    newID(),
+		ID:    id,
 		At:    now(),
 		Note:  strings.TrimSpace(note),
-		Guide: saved,
+		Guide: g,
 	})
 	if keep := maxRevisions(); len(rl.Revisions) > keep {
 		rl.Revisions = rl.Revisions[len(rl.Revisions)-keep:]
 	}
-	udb.Set(revisionsTable, saved.ID, rl)
-	return saved
+	udb.Set(revisionsTable, g.ID, rl)
+	return id
 }
 
 func listRevisions(udb Database, guideID string) []GuideRevision {

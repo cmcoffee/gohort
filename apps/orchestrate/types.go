@@ -142,7 +142,7 @@ type AgentRecord struct {
 	// chokepoint from the name the runner stamps on the reply.
 	TagName bool `json:"tag_name,omitempty"`
 
-	// Triggers are substring/glob patterns (same shape as a skill's
+	// Triggers are word/glob patterns (same shape as a skill's
 	// Triggers) matched against the user message each turn. When one
 	// matches, the framework injects a per-turn HINT next to the message —
 	// "this turn is <agent>'s domain, dispatch FIRST" — far more salient
@@ -1554,6 +1554,21 @@ type BuildPlanStep struct {
 // turns only, persisted so the per-message stats footer survives
 // session reload — the SSE flow already emits the same shape live
 // via emitStats).
+// maxAskStateBytes caps a card answer's stored state: picks and a typed
+// line, never a document.
+const maxAskStateBytes = 16 << 10
+
+// askStateOf is the card state a send carried, as it is stored: a JSON
+// object within maxAskStateBytes, or nil. Anything else is dropped, and
+// the answer still stands as the message's text.
+func askStateOf(raw json.RawMessage) json.RawMessage {
+	b := bytes.TrimSpace(raw)
+	if len(b) == 0 || len(b) > maxAskStateBytes || b[0] != '{' || !json.Valid(b) {
+		return nil
+	}
+	return append(json.RawMessage(nil), b...)
+}
+
 type ChatMessage struct {
 	Role    string            `json:"role"`
 	Content string            `json:"content"`
@@ -1587,6 +1602,15 @@ type ChatMessage struct {
 	// re-edit on replayed sessions can rehydrate the form with the
 	// original values instead of degrading to text editing.
 	IntakeValues map[string]string `json:"intake_values,omitempty"`
+	// AskState marks a user message as the answer to the ask card just
+	// before it: what was picked and typed on the card, in the card's own
+	// shape. The card is the answer on screen, so a page that redraws the
+	// thread fills the card in from this and does not draw the message as
+	// a bubble of its own. Content still carries the answer as text, which
+	// is what the model reads. Kept as the JSON the page sent, never decoded:
+	// the session is saved with gob, which refuses the nested interface
+	// values a decoded object holds.
+	AskState json.RawMessage `json:"ask_state,omitempty"`
 	// ReportFrom, when set, marks this assistant message as an automated
 	// report from a producer (a standing agent, a monitor) rather than a turn
 	// in the back-and-forth. It carries the producer's display name; the UI

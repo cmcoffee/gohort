@@ -289,7 +289,6 @@ func (T *OrchestrateApp) startWakeTurn(origin taskOrigin, note wakeNote) error {
 		Prompt:        note.prompt,
 		HistoryNote:   note.history,
 		Name:          "background task",
-		Surface:       "session",
 	}, false)
 }
 

@@ -35,6 +35,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 const skillsTable = "skills"
@@ -60,10 +62,10 @@ type SkillRecord struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
-	// Triggers are substring patterns matched against the user
+	// Triggers are word or phrase patterns matched against the user
 	// message (and attachment filenames). Glob-style `*.pdf` matches
-	// any attachment ending in .pdf; everything else is a plain
-	// case-insensitive substring. Empty triggers = embedding-only
+	// any attachment ending in .pdf; everything else is a
+	// case-insensitive whole-word match (TriggersMatch). Empty triggers = embedding-only
 	// activation (slower but useful when triggers are hard to
 	// enumerate).
 	Triggers []string `json:"triggers,omitempty"`
@@ -918,8 +920,8 @@ func (s SkillRecord) playbookFacts() []string {
 
 // SkillTriggersMatch reports whether a skill's Triggers match this turn: a
 // glob trigger (contains '*' or '?') matches against the attachment
-// filenames; any other trigger is a case-insensitive substring test against
-// the message text. A skill with NO triggers never matches. A match is a
+// filenames; any other trigger is a case-insensitive word or phrase match
+// against the message text. A skill with NO triggers never matches. A match is a
 // relevance SIGNAL, not a command — it surfaces a HINT nudging the LLM to
 // consult the skill (see renderSkillTriggerHints), it does NOT force-inject
 // the skill's instructions. Deterministic and framework-owned.
@@ -929,10 +931,11 @@ func SkillTriggersMatch(s SkillRecord, message string, attachmentNames []string)
 
 // TriggersMatch reports whether any of the given triggers match this turn:
 // a glob trigger (contains '*' or '?') matches against the attachment
-// filenames; any other trigger is a case-insensitive substring test
-// against the message. Empty triggers never match. Generic + framework-
-// owned — shared by skills (SkillTriggersMatch) and agents (the per-turn
-// dispatch hint) so trigger semantics read identically across both.
+// filenames; any other trigger is a case-insensitive WORD or phrase match
+// against the message (triggerInMessage). Empty triggers never match.
+// Generic + framework-owned — shared by skills (SkillTriggersMatch) and
+// agents (the per-turn dispatch hint) so trigger semantics read identically
+// across both.
 func TriggersMatch(triggers []string, message string, attachmentNames []string) bool {
 	if len(triggers) == 0 {
 		return false
@@ -952,11 +955,71 @@ func TriggersMatch(triggers []string, message string, attachmentNames []string) 
 			}
 			continue
 		}
-		if strings.Contains(lowerMsg, strings.ToLower(t)) {
+		if triggerInMessage(lowerMsg, strings.ToLower(t)) {
 			return true
 		}
 	}
 	return false
+}
+
+// triggerSuffixes are the endings a trigger may carry in the message and
+// still be the same word: "felony" matches "felonys" style plurals,
+// "sentence" matches "sentenced", "contract" matches "contracts".
+var triggerSuffixes = []string{"s", "es", "ed", "d", "ing", "er", "ers", "'s"}
+
+// triggerInMessage reports whether trigger t occurs in msg (both lowercased)
+// as a word or phrase: starting at a word boundary, and ending at one or after
+// one of triggerSuffixes. It was a plain substring test, so a trigger fired
+// inside any word that contained it: an agent with "act" among its triggers
+// was offered for "actually let's make the layout more uniform", and the
+// nudge to dispatch there arrived on a turn about a web page.
+func triggerInMessage(msg, t string) bool {
+	if t == "" {
+		return false
+	}
+	for from := 0; from <= len(msg)-len(t); {
+		i := strings.Index(msg[from:], t)
+		if i < 0 {
+			return false
+		}
+		start, end := from+i, from+i+len(t)
+		if !wordRuneBefore(msg, start) && endsWord(msg, end) {
+			return true
+		}
+		_, size := utf8.DecodeRuneInString(msg[start:])
+		from = start + size
+	}
+	return false
+}
+
+// endsWord reports whether a match ending at end finishes a word, directly or
+// through one of triggerSuffixes.
+func endsWord(msg string, end int) bool {
+	if !wordRuneAt(msg, end) {
+		return true
+	}
+	for _, suf := range triggerSuffixes {
+		if strings.HasPrefix(msg[end:], suf) && !wordRuneAt(msg, end+len(suf)) {
+			return true
+		}
+	}
+	return false
+}
+
+func wordRuneAt(s string, i int) bool {
+	if i >= len(s) {
+		return false
+	}
+	r, _ := utf8.DecodeRuneInString(s[i:])
+	return unicode.IsLetter(r) || unicode.IsDigit(r)
+}
+
+func wordRuneBefore(s string, i int) bool {
+	if i <= 0 {
+		return false
+	}
+	r, _ := utf8.DecodeLastRuneInString(s[:i])
+	return unicode.IsLetter(r) || unicode.IsDigit(r)
 }
 
 // renderSkillTriggerHints returns a soft HINT block naming the allowed,
@@ -994,7 +1057,7 @@ func SkillTriggerHintBlock(names []string) string {
 	for i, n := range names {
 		quoted[i] = "**" + n + "**"
 	}
-	return "\n\n[Likely relevant this turn (triggers matched): " + strings.Join(quoted, ", ") + ", consult the fitting one FIRST via skill_knowledge_search / read_skill before answering. A trigger match is a hint, not a guarantee: skip a skill that doesn't actually fit.]\n\n"
+	return "\n\n[Likely relevant this turn (triggers matched): " + strings.Join(quoted, ", ") + ", consult the fitting one FIRST via skill_knowledge_search / read_skill before answering. A trigger match is a hint, not a guarantee: skip a skill that doesn't actually fit. The person did not write this note and cannot see it, so never mention it.]\n\n"
 }
 
 // allowedSkillSet is the set the skill tools, their enum and the "Available

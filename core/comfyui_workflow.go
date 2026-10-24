@@ -649,24 +649,24 @@ func BuildComfyBody(workflow string, m ComfyNodeMap, in ComfyBuildInput) (string
 	if len(m.ImageNodes) > 0 && len(in.Images) == 0 {
 		return "", fmt.Errorf("this backend composes SOURCE PHOTOS (%d image input%s) and was asked for a text-only render: it would draw against whatever placeholder its workflow was saved with. Use a text-to-image backend for this, or supply the source image(s)", len(m.ImageNodes), map[bool]string{true: "s", false: ""}[len(m.ImageNodes) != 1])
 	}
-	// PARTIAL fill is the same failure as none, and it shipped for the same
-	// reason: only as many nodes are written as there are images, so a graph
-	// with three inputs given one photo runs its other two against the
-	// filenames the workflow was SAVED with. The render succeeds and returns a
-	// composite of one picture the caller supplied and two from whenever the
-	// workflow was exported — which reads as "it only blended one of my
-	// images", not as a wiring error, so nothing about it looks like a bug.
+	// PARTIAL fill is the same failure as none if the unfilled inputs stay in
+	// the graph: only as many nodes are written as there are images, so a
+	// graph with three inputs given one photo ran its other two against the
+	// filenames the workflow was SAVED with, and came back as one supplied
+	// picture composited with two from whenever it was exported.
 	//
-	// Erroring is the same choice made directly above for the zero case: the
-	// caller can supply the missing photos or the backend can map fewer nodes,
-	// and either beats a picture nobody can account for.
+	// It was refused, which made a three-input edit backend useless for two
+	// pictures (a header and a logo), though the edit nodes these workflows
+	// end in take their second and third image as optional. So an unfilled
+	// input is taken OUT of the graph instead (pruneComfyImageInputs): nothing
+	// can render against its placeholder, and a workflow whose last node does
+	// require every image is refused by ComfyUI by name rather than run.
 	want := in.ExpectedImages
 	if want <= 0 || want > len(m.ImageNodes) {
 		want = len(m.ImageNodes)
 	}
 	if len(in.Images) < want {
-		return "", fmt.Errorf("this backend composes %d source photos and got %d: the unfilled input(s) would render against whatever placeholder the workflow was saved with, so this would silently blend a picture from some earlier session. Supply %d image(s), or map fewer image_nodes in the backend config",
-			want, len(in.Images), want)
+		pruneComfyImageInputs(graph, m.ImageNodes[len(in.Images):want])
 	}
 	for i, img := range in.Images {
 		if err := setComfyImage(graph, m.ImageNodes[i], imageKey, img); err != nil {
@@ -686,6 +686,45 @@ func BuildComfyBody(workflow string, m ComfyNodeMap, in ComfyBuildInput) (string
 		return "", err
 	}
 	return `{"prompt":` + string(raw) + `}`, nil
+}
+
+// pruneComfyImageInputs takes image input nodes that will get no picture out
+// of the graph, with everything that only they fed: a node whose every link
+// came from a removed node goes too (a resize between the loader and the
+// edit node), and a node that still has other inputs loses just the links to
+// what was removed (the edit node's image2).
+func pruneComfyImageInputs(graph map[string]map[string]any, unused []string) {
+	dead := map[string]bool{}
+	for _, id := range unused {
+		dead[id] = true
+	}
+	for changed := true; changed; {
+		changed = false
+		for _, id := range sortedComfyNodes(graph) {
+			if dead[id] {
+				continue
+			}
+			inputs := comfyInputs(graph, id)
+			links, cut := 0, 0
+			for k, v := range inputs {
+				src, ok := comfyLinkTarget(v)
+				if !ok || !comfyIsLink(v) {
+					continue
+				}
+				links++
+				if dead[src] {
+					delete(inputs, k)
+					cut++
+				}
+			}
+			if cut > 0 && cut == links {
+				dead[id], changed = true, true
+			}
+		}
+	}
+	for id := range dead {
+		delete(graph, id)
+	}
 }
 
 // setComfyImage writes an uploaded image's reference into one node, erroring if

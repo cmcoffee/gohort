@@ -79,7 +79,7 @@ func consoleRecurringRows(user, agentID string) []consoleRecurringRow {
 		}
 		row := consoleRecurringRow{
 			Name:    label,
-			Cadence: recurringDetail(rt.Payload) + surfaceSuffix(rt.Payload.Surface),
+			Cadence: recurringDetail(rt.Payload),
 			Fires:   fires,
 			Runs:    subAgentRunsLabel(rt.Payload.Prompt),
 			NextRun: rt.RunAt,
@@ -280,43 +280,6 @@ func (T *OrchestrateApp) handleConsoleRecurringDelete(w http.ResponseWriter, r *
 		}
 	}
 	http.Error(w, "recurring task not found", http.StatusNotFound)
-}
-
-// handleConsoleRecurringMove sets a recurring task's Surface in place. Recurring
-// lives only as a scheduler entry, so this re-arms it with the updated payload
-// (mirrors relink). The home session (SessionID) is left intact.
-func (T *OrchestrateApp) handleConsoleRecurringMove(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	id := strings.TrimSpace(r.URL.Query().Get("id"))
-	surface, valid := normalizeSurface(r.URL.Query().Get("value"))
-	if !valid {
-		http.Error(w, "move target must be cortex, session, or background", http.StatusBadRequest)
-		return
-	}
-	for _, rt := range listAgentRecurringTasks(user, "") {
-		if rt.TaskID != id {
-			continue
-		}
-		UnscheduleTask(id)
-		p := rt.Payload
-		p.Surface = surface
-		p.LastActive = time.Now().Format(time.RFC3339)
-		next, err := computeNextFire(&p, time.Now().In(UserLocation(user)))
-		if err != nil {
-			http.Error(w, "moved but couldn't reschedule: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if _, err := ScheduleTask(OrchestrateScheduledUpdateKind, p, next); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	http.NotFound(w, r)
 }
 
 // handleConsoleRecurringRelink re-points a parked (broken) recurring task at a
@@ -535,11 +498,6 @@ func (T *OrchestrateApp) handleConsoleRecurringUpdate(w http.ResponseWriter, r *
 		Username:  found.Username,
 		Prompt:    prompt,
 		Name:      name,
-		// An edit re-schedules the task, so the destination has to travel with
-		// it or a retime would silently send the reports somewhere else. A
-		// surface the user actually chose is preserved verbatim; an unchosen one
-		// takes the agent's default (its cortex, when it has one).
-		Surface:   scheduleSurfaceDefault(found.Surface, hasCortexThread(user, found.AgentID)),
 		FireCount: found.FireCount,          // preserve run history across an edit (don't reset the budget)
 		CreatedAt: found.CreatedAt,          // keep the original creation time, not "now"
 		UID:       recurringTaskUID(*found), // the task's identity, so its notes survive the edit
@@ -666,11 +624,6 @@ func (T *OrchestrateApp) handleConsoleRecurringCreate(w http.ResponseWriter, r *
 		Timing *timing.Spec `json:"timing"`
 		// Until, when sent, is the dialog's Until section (schedule_until.go).
 		Until *untilBody `json:"until"`
-		// Where its fires report — "" (let the agent decide), "session",
-		// "cortex", or "background". The modal doesn't offer it today; the
-		// field is here so a client that wants to choose can, and so the
-		// default below is the only thing an omission relies on.
-		Surface string `json:"surface"`
 		// For is the "Who does it" picker: a sub-agent of agent_id that the
 		// task is handed to, or "" for agent_id itself.
 		For string `json:"for"`
@@ -694,8 +647,7 @@ func (T *OrchestrateApp) handleConsoleRecurringCreate(w http.ResponseWriter, r *
 		return
 	}
 	// Made for a sub-agent: the task is agent_id's, with the line that hands
-	// it on, so it reports in the thread it was made from rather than being
-	// moved to the parent's Cortex as a schedule naming the sub-agent is.
+	// it on, and reports in agent_id's cortex.
 	if forID := strings.TrimSpace(body.For); forID != "" && forID != topAgentOf(udb, agentID) {
 		sub, err := scheduleForName(udb, user, agentID, forID)
 		if err != nil {
@@ -708,17 +660,8 @@ func (T *OrchestrateApp) handleConsoleRecurringCreate(w http.ResponseWriter, r *
 	if sessionID == "" {
 		sessionID = cortexSessionID(agentID) // no open thread → attach to the agent's home thread
 	}
-	surface, valid := normalizeSurface(body.Surface)
-	if !valid {
-		http.Error(w, "surface must be cortex, session, or background", http.StatusBadRequest)
-		return
-	}
-	// Unchosen → the agent's default: its cortex when it has one. The home
-	// session stays the open thread either way, so Move-to → Session returns it.
-	surface = scheduleSurfaceDefault(surface, hasCortexThread(user, agentID))
 	spec := RecurringSpec{
 		SessionID:       sessionID,
-		Surface:         surface,
 		AgentID:         agentID,
 		Username:        user,
 		Prompt:          strings.TrimSpace(body.Prompt),

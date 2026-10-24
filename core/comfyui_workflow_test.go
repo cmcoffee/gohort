@@ -8,13 +8,11 @@ import (
 	"testing"
 )
 
-// An underfilled compose graph renders somebody else's photo.
+// An underfilled compose graph must not render somebody else's photo.
 //
-// Only as many image nodes were written as there were images, so a three-input
+// Only as many image nodes are written as there are images, so a three-input
 // blend given one picture ran its other two against the filenames the workflow
-// was SAVED with. The render succeeded and came back as one supplied picture
-// composited with two from whenever that workflow was exported — which reads as
-// "it only blended one of my three images", not as a wiring error.
+// was SAVED with. The unfilled inputs are now taken out of the graph.
 // threeInputGraph is a minimal compose workflow: three LoadImage nodes, each
 // with the placeholder filename an export would bake in.
 const threeInputGraph = `{
@@ -36,15 +34,70 @@ func uploaded(names ...string) []ComfyUploadedImage {
 	return out
 }
 
-func TestPartialFillIsRefused(t *testing.T) {
-	_, err := BuildComfyBody(threeInputGraph, threeInputMap(), ComfyBuildInput{
+func TestPartialFillTakesTheUnusedInputsOut(t *testing.T) {
+	body, err := BuildComfyBody(threeInputGraph, threeInputMap(), ComfyBuildInput{
 		Prompt: "blend these", Images: uploaded("mine.png"),
 	})
-	if err == nil {
-		t.Fatal("one image into a three-input compose graph must not render — the other two would be placeholders")
+	if err != nil {
+		t.Fatalf("one image into a three-input graph should render with the other inputs removed: %v", err)
 	}
-	if !strings.Contains(err.Error(), "composes 3 source photos and got 1") {
-		t.Errorf("the error should name both counts, got %q", err)
+	if strings.Contains(body, "stale-two.png") || strings.Contains(body, "stale-three.png") || !strings.Contains(body, "mine.png") {
+		t.Errorf("an unfilled input stayed in the graph on its placeholder:\n%s", body)
+	}
+}
+
+// The shape these workflows actually have: each loader feeds a resize, and
+// the resizes feed one edit node's image1..image3. Two pictures in a
+// three-input graph take the third loader, its resize, and the edit node's
+// image3 out, and leave the rest of the edit node as it was.
+func TestTwoPicturesInAThreeInputEditGraph(t *testing.T) {
+	const graph = `{
+  "1": {"class_type": "LoadImage", "inputs": {"image": "stale-one.png"}},
+  "2": {"class_type": "LoadImage", "inputs": {"image": "stale-two.png"}},
+  "3": {"class_type": "LoadImage", "inputs": {"image": "stale-three.png"}},
+  "11": {"class_type": "ImageScaleToTotalPixels", "inputs": {"image": ["1", 0], "megapixels": 1}},
+  "12": {"class_type": "ImageScaleToTotalPixels", "inputs": {"image": ["2", 0], "megapixels": 1}},
+  "13": {"class_type": "ImageScaleToTotalPixels", "inputs": {"image": ["3", 0], "megapixels": 1}},
+  "20": {"class_type": "CLIPLoader", "inputs": {"clip_name": "qwen.safetensors"}},
+  "21": {"class_type": "TextEncodeQwenImageEditPlus", "inputs": {"clip": ["20", 0], "prompt": "x", "image1": ["11", 0], "image2": ["12", 0], "image3": ["13", 0]}},
+  "9": {"class_type": "SaveImage", "inputs": {"images": ["21", 0]}}
+}`
+	body, err := BuildComfyBody(graph, threeInputMap(), ComfyBuildInput{Prompt: "put the logo in", Images: uploaded("header.png", "logo.png")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out struct {
+		Prompt map[string]map[string]any `json:"prompt"`
+	}
+	if err := json.Unmarshal([]byte(body), &out); err != nil {
+		t.Fatal(err)
+	}
+	for _, gone := range []string{"3", "13"} {
+		if _, ok := out.Prompt[gone]; ok {
+			t.Errorf("node %s fed only the unused input and should be gone", gone)
+		}
+	}
+	edit := out.Prompt["21"]["inputs"].(map[string]any)
+	if _, ok := edit["image3"]; ok {
+		t.Error("the edit node still links the removed image3")
+	}
+	for _, kept := range []string{"clip", "prompt", "image1", "image2"} {
+		if _, ok := edit[kept]; !ok {
+			t.Errorf("the edit node lost %s", kept)
+		}
+	}
+	if out.Prompt["1"]["inputs"].(map[string]any)["image"] != "header.png" || out.Prompt["2"]["inputs"].(map[string]any)["image"] != "logo.png" {
+		t.Error("the two pictures did not go to the first two inputs, in order")
+	}
+	if strings.Contains(body, "stale-") {
+		t.Errorf("a placeholder is still in the graph:\n%s", body)
+	}
+}
+
+// Zero pictures is still refused: an edit graph has nothing to work from.
+func TestNoPicturesStillRefused(t *testing.T) {
+	if _, err := BuildComfyBody(threeInputGraph, threeInputMap(), ComfyBuildInput{Prompt: "anything"}); err == nil {
+		t.Error("a source-photo backend asked for a text-only render must refuse")
 	}
 }
 

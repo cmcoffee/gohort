@@ -552,7 +552,7 @@ func (pr *planRun) askUserToolDef() AgentToolDef {
 				},
 				"options": {
 					Type:        "array",
-					Description: "**STRONGLY PREFERRED whenever the answer has natural choices.** Array of STRINGS, one label each (options=[\"yes\", \"edit\", \"no\"]), not a count, not a number, not a JSON-encoded string. Renders radios (checkboxes when multi=true) plus a free-text fallback. Labels 1-4 words, 8 max. Omit only for genuinely open-ended typed answers.",
+					Description: "**STRONGLY PREFERRED whenever the answer has natural choices.** Array of STRINGS, one label each (options=[\"yes\", \"edit\", \"no\"]), not a count, not a number, not a JSON-encoded string. Renders radios (checkboxes when multi=true) plus an Other row the user can type in, added for you: never write an \"Other\" option yourself. Labels 1-4 words, 8 max. Omit only for genuinely open-ended typed answers.",
 					Items:       &ToolParam{Type: "string"},
 				},
 				"multi": {
@@ -644,7 +644,7 @@ func (pr *planRun) askUserFormToolDef() AgentToolDef {
 							},
 							"options": {
 								Type:        "array",
-								Description: "Choices for this step. For a choice step the user sees checkboxes (multi) or radios (single) plus a free-text input; for a type=select step these are the dropdown values. Array of strings.",
+								Description: "Choices for this step. For a choice step the user sees checkboxes (multi) or radios (single) plus an Other row to type in, added for you (never write an \"Other\" option yourself); for a type=select step these are the dropdown values. Array of strings.",
 								Items:       &ToolParam{Type: "string"},
 							},
 							"placeholder": {Type: "string", Description: "Optional hint text inside an entry field (type=text/number/textarea/password), e.g. \"https://api.example.com\"."},

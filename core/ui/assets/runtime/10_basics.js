@@ -5002,7 +5002,9 @@
       statusView.scrollTop = statusView.scrollHeight;
     }
 
+    var lastArticle = {title: '', content: ''};
     function showArticle(title, content) {
+      lastArticle = {title: title || '', content: content || ''};
       statusView.style.display = 'none';
       articleView.style.display = '';
       articleTitle.textContent = title || '';
@@ -5014,10 +5016,20 @@
       doneActions.innerHTML = '';
       doneActions.style.display = '';
       cfg.on_done_actions.forEach(function(act) {
+        if (act.show_if_field && !(lastEvent || {})[act.show_if_field]) return;
         var url = substitute(act.url, lastEvent || {});
         var classes = 'ui-watch-action';
         if (act.variant) classes += ' ' + act.variant;
-        if ((act.method || 'GET').toUpperCase() === 'POST') {
+        var method = (act.method || 'GET').toUpperCase();
+        if (method === 'CLIENT') {
+          var cbtn = el('button', {class: classes}, [act.label || 'Action']);
+          cbtn.addEventListener('click', function() {
+            var fn = window.UIClientActions && window.UIClientActions[act.url];
+            if (typeof fn !== 'function') { showToast('No handler for ' + act.url); return; }
+            fn({event: lastEvent || {}, article: lastArticle, button: cbtn});
+          });
+          doneActions.appendChild(cbtn);
+        } else if (method === 'POST') {
           var btn = el('button', {class: classes}, [act.label || 'Action']);
           btn.addEventListener('click', function() {
             fetch(url, {method: 'POST'}).then(function(r) {

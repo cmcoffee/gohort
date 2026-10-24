@@ -112,29 +112,6 @@ func (T *OrchestrateApp) handleConsoleAgentOptions(w http.ResponseWriter, r *htt
 	writeJSON(w, opts)
 }
 
-// handleConsoleStandingMove sets a standing agent's Surface in place — same
-// Cortex/Session/Background modes as monitors; its per-run report follows.
-func (T *OrchestrateApp) handleConsoleStandingMove(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	name := strings.TrimSpace(r.URL.Query().Get("id"))
-	surface, valid := normalizeSurface(r.URL.Query().Get("value"))
-	if !valid {
-		http.Error(w, "move target must be cortex, session, or background", http.StatusBadRequest)
-		return
-	}
-	sa, found := GetStandingAgent(RootDB, user, name)
-	if !found {
-		http.Error(w, "no such standing agent", http.StatusNotFound)
-		return
-	}
-	sa.Surface = surface
-	SaveStandingAgent(RootDB, sa)
-	w.WriteHeader(http.StatusNoContent)
-}
-
 // handleConsoleAgentRelink re-points a broken standing agent at a live target
 // agent and clears broken (leaves paused — an explicit Resume finishes recovery).
 func (T *OrchestrateApp) handleConsoleAgentRelink(w http.ResponseWriter, r *http.Request) {
@@ -313,10 +290,6 @@ func (T *OrchestrateApp) handleConsoleAgentUpdate(w http.ResponseWriter, r *http
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	// A destination nobody chose takes the agent's default on edit, same as on
-	// create: a cortex controller reads its scheduled runs in its cortex. An
-	// explicit choice (stored, including "session") is left alone.
-	sa.Surface = scheduleSurfaceDefault(sa.Surface, hasCortexThread(user, sa.ReportAgentID))
 	if sa.Paused || !standingNeedsRearm(before, sa) {
 		SaveStandingAgent(RootDB, sa)
 	} else {
@@ -479,14 +452,67 @@ func (T *OrchestrateApp) handleConsoleAgents(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	agentID := strings.TrimSpace(r.URL.Query().Get("agent"))
-	writeJSON(w, consoleAgentRows(user, udb, agentID))
+	writeJSON(w, consoleAgentRows(user, udb, agentID, nil))
+}
+
+// standingRunIndex is the owner's run ledger, read once for every standing
+// row a request builds. Each row asked the ledger itself, for its latest run
+// and again for a legacy name check, and a ledger read decodes every run the
+// owner has before a limit applies: a Scheduler build read it several times
+// per standing agent, more for a family, and again for the link groups.
+type standingRunIndex struct {
+	user   string
+	loaded bool
+	runs   []RunRecord // newest first, as ListRuns returns them
+}
+
+func newStandingRunIndex(user string) *standingRunIndex {
+	return &standingRunIndex{user: user}
+}
+
+func (ix *standingRunIndex) all() []RunRecord {
+	if !ix.loaded {
+		ix.runs, ix.loaded = ListRuns(RootDB, ix.user, RunFilter{}), true
+	}
+	return ix.runs
+}
+
+// latestStatus is the status of the standing agent's most recent run, or "".
+func (ix *standingRunIndex) latestStatus(name string) string {
+	f := RunFilter{}.AboutStanding(name)
+	for _, r := range ix.all() {
+		if f.Matches(r) {
+			return string(r.Status)
+		}
+	}
+	return ""
+}
+
+// hasLegacyRunsNamed reports whether any run filed under this display name
+// predates RunRecord.Subject, the only runs a name collision can still cross.
+// Every run written since carries an identity, so the ambiguity is bounded and
+// drains as pruneRuns ages those rows out.
+func (ix *standingRunIndex) hasLegacyRunsNamed(name string) bool {
+	f := RunFilter{Agent: name}
+	for _, r := range ix.all() {
+		if f.Matches(r) && r.Subject == "" {
+			return true
+		}
+	}
+	return false
 }
 
 // consoleAgentRows builds the rows for this view. Split off the handler so the
 // merged Scheduler page (console_scheduler.go) renders THESE rows rather than
 // its own copy of the same logic — a second builder is how the two views
 // come to disagree about what is scheduled.
-func consoleAgentRows(user string, udb Database, agentID string) []consoleAgentRow {
+//
+// ix is the request's read of the run ledger, shared by every call it makes;
+// nil reads it once for this call.
+func consoleAgentRows(user string, udb Database, agentID string, ix *standingRunIndex) []consoleAgentRow {
+	if ix == nil {
+		ix = newStandingRunIndex(user)
+	}
 	rows := []consoleAgentRow{}
 	for _, sa := range ListStandingAgents(RootDB, user) {
 		// Both the agent that runs it and the one that manages it — see
@@ -523,14 +549,12 @@ func consoleAgentRows(user string, udb Database, agentID string) []consoleAgentR
 		row.Failing = scheduleFailingLabel(sa.ConsecutiveFailures, 0, sa.NextAttemptAt, UserLocation(user))
 		// By identity, with the display name as the legacy fallback for runs
 		// recorded before subjects existed (see RunFilter.Subject).
-		if latest := ListRuns(RootDB, user, RunFilter{Limit: 1}.AboutStanding(sa.Name)); len(latest) > 0 {
-			row.Status = string(latest[0].Status)
-		}
+		row.Status = ix.latestStatus(sa.Name)
 		// Warn only while a subject-less run could actually be crossing the two.
 		// New runs carry a subject and cannot; saying otherwise would send
 		// someone renaming a pair that is already fine, and the warning would
 		// never go away.
-		if clash, ok := standingNameCollision(udb, user, sa); ok && hasLegacyRunsNamed(user, sa.Name) {
+		if clash, ok := standingNameCollision(udb, user, sa); ok && ix.hasLegacyRunsNamed(sa.Name) {
 			row.State = "⚠ shares a name with the agent " + chFirst(clash.Name, clash.ID) +
 				", and runs recorded before this release cannot tell them apart: rename one, or wait for those runs to age out"
 		}
@@ -560,19 +584,6 @@ func consoleAgentRows(user string, udb Database, agentID string) []consoleAgentR
 // never see it. Matching is case-insensitive and trims, because the ledger
 // lookup is exact — a pair that differs only in case does NOT actually cross,
 // and flagging it would be a false alarm. Those are excluded below.
-// hasLegacyRunsNamed reports whether any run filed under this display name
-// predates RunRecord.Subject — the only runs a name collision can still cross.
-// Every run written since carries an identity, so the ambiguity is bounded and
-// drains as pruneRuns ages those rows out.
-func hasLegacyRunsNamed(owner, name string) bool {
-	for _, r := range ListRuns(RootDB, owner, RunFilter{Agent: name}) {
-		if r.Subject == "" {
-			return true
-		}
-	}
-	return false
-}
-
 func standingNameCollision(udb Database, owner string, sa StandingAgent) (AgentRecord, bool) {
 	name := strings.TrimSpace(sa.Name)
 	if udb == nil || name == "" {

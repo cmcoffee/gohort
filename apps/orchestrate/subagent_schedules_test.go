@@ -59,7 +59,7 @@ func TestAScheduleMadeForASubAgentWakesItsParent(t *testing.T) {
 	}
 
 	// The Scheduler says whose work each one is.
-	for _, row := range consoleAgentRows("w", UserDB(RootDB, "w"), "p") {
+	for _, row := range consoleAgentRows("w", UserDB(RootDB, "w"), "p", nil) {
 		if row.Name == "sweep" && row.Runs != "for sub-agent Scout" {
 			t.Errorf("scheduled agent row runs = %q", row.Runs)
 		}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -3764,7 +3765,7 @@ func (lr *loopRun) toolRoundPlanCalls() loopAction {
 			}
 		}
 
-		if lr.needsConfirm[tc.Name] || lr.asksFirst(tc.Name) {
+		if (lr.needsConfirm[tc.Name] || lr.asksFirst(tc.Name)) && !lr.droppedLaterThisRound(tc.Name) {
 			if !lr.confirmFn(tc.Name, formatArgs(tc.Args)) {
 				Debug("[agent_loop] tool call denied by user: %s", tc.Name)
 				// The bare "denied by user" line TAUGHT a workaround:
@@ -3933,6 +3934,41 @@ func (lr *loopRun) toolRoundAbort() loopAction {
 		}
 	}
 	return actNone
+}
+
+// droppedLaterThisRound reports whether a call already planned this round
+// means a later pass will drop this one: the round's control tool, a sibling
+// from the same single-fire group, or SerialTools. Asking about such a call
+// asks for nothing. Observed: five deletes in one batch put five cards in
+// front of the person, all approved, and then four were dropped as excess and
+// sent again one per round, each asking again. Only a call ALREADY in the
+// work list counts, so a first call that was denied or blocked leaves the
+// next one to be asked about as the one that runs.
+func (lr *loopRun) droppedLaterThisRound(name string) bool {
+	for _, n := range lr.cfg.RoundAbortTools {
+		if n == name {
+			return false // the abort pass may keep this one, so it is asked
+		}
+	}
+	if lr.cfg.SerialTools && len(lr.rs.work) > 0 {
+		return true
+	}
+	for _, w := range lr.rs.work {
+		for _, n := range lr.cfg.RoundAbortTools {
+			if w.tc.Name == n {
+				return true
+			}
+		}
+		if w.tc.Name == name && lr.singleFireTools[name] {
+			return true
+		}
+		for _, g := range lr.cfg.SingleFireGroups {
+			if slices.Contains(g, name) && slices.Contains(g, w.tc.Name) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (lr *loopRun) toolRoundSingleFire() loopAction {

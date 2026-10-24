@@ -452,7 +452,7 @@ func agentTriggerHintBlock(names []string) string {
 	for i, n := range names {
 		quoted[i] = "**" + n + "**"
 	}
-	return "\n\n[Likely this turn (agent triggers matched): the question lands in " + strings.Join(quoted, ", ") + "'s domain: dispatch to it via agents(action=\"run\", agent=\"<name>\", message=\"<brief>\") as your FIRST move, before web_search or answering from memory. A trigger match is a strong nudge, not a command: skip it only if it plainly doesn't fit.]\n\n"
+	return "\n\n[Likely this turn (agent triggers matched): the question lands in " + strings.Join(quoted, ", ") + "'s domain: dispatch to it via agents(action=\"run\", agent=\"<name>\", message=\"<brief>\") as your FIRST move, before web_search or answering from memory. A trigger match is a strong nudge, not a command: skip it only if it plainly doesn't fit. The person did not write this note and cannot see it, so never mention it: when it doesn't fit, just answer their message.]\n\n"
 }
 
 // renderActiveDispatchThreads surfaces the agents this session has ALREADY

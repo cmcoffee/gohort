@@ -62,7 +62,6 @@ type recurringImpl interface {
 	recurringSchedule(args map[string]any) (string, error)
 	recurringList(args map[string]any) (string, error)
 	recurringCancel(args map[string]any) (string, error)
-	recurringMove(args map[string]any) (string, error)
 	recurringTasks() []recurringTaskRow
 }
 
@@ -151,16 +150,11 @@ func scheduleToolDef(sess *ToolSession, owner, controllerAgentID string, impl ma
 		b.WriteString("run_now / ")
 	}
 	b.WriteString("delete (by name)")
-	if hasRec {
-		b.WriteString(", move (a task of your own: to=\"cortex\" / \"session\" / \"background\")")
-	}
 	b.WriteString(", relink (a schedule parked because the agent it ran as was deleted: name + run_by, the agent replacing it; it keeps its mission, timing, goal and notes, so relink rather than create it again)")
 	b.WriteString(", get (name: one scheduled run or monitor with what it does IN FULL; list shortens long ones), edit (name + one of: then, the whole new text; find + replace, one passage changed in place; append, a line added at the end. Changes only WHAT an existing scheduled run or monitor does; its timing, link group and goal stay as they are. To add a rule, append it: never retype a long mission you have only seen shortened)")
 	b.WriteString(". Before you suggest a schedule or create one, call list: when one already does the job, tell the user it exists and offer to change it, rather than proposing a second.")
 	b.WriteString(" Re-issuing create with the SAME name edits that schedule in place, timing included. To run something once right now, don't schedule it: agents(action=\"run\") or machine(action=\"run\"), or do it yourself.")
-	if hasRec {
-		b.WriteString(" Tell the user which thread a recurring task of yours will report in.")
-	}
+	b.WriteString(" Everything scheduled reports into the cortex, not into this conversation, and runs without it: write `then` to stand on its own, naming what it acts on (which repo, which build, whose order) rather than \"this\" or \"it\".")
 
 	params := map[string]ToolParam{
 		"action":       {Type: "string", Enum: []string{"create", "list", "get", "edit", "pause", "resume", "run_now", "delete", "relink"}, Description: "create | list | get | edit | pause | resume | run_now | delete | relink."},
@@ -172,7 +166,7 @@ func scheduleToolDef(sess *ToolSession, owner, controllerAgentID string, impl ma
 		"then":         {Type: "string", Description: "(create, edit) What to do when it fires, in plain words. edit with then replaces the WHOLE of what it does: use find/replace or append for a change to part of it. every: the mission run each time (\"fetch the forecast and post it to the family chat\"). at / monitors: handed to you on wake (\"tell the user it's 1:10pm, as they asked\")."},
 		"time":         {Type: "string", Description: "(create) When, as the user said it, in their own zone (the one time_in_zone reports; never convert to UTC). at: \"13:10\", \"1:10pm\", \"in 20 minutes\", or ISO8601. every: \"daily 08:00\", \"weekdays 17:00\", \"FRI 21:30\", \"every 15 minutes\", \"hourly\", set times \"09:00,13:00\", once a month \"monthly on the 28th at 9am\" / \"monthly on the last day at 9am\" / \"monthly on the 2nd to last day at 9am\" (a day a month lacks runs on its last day), or once a year \"DEC-25 09:00\" / \"every year on Dec 25 at 9am\". Monitors: optional set times of day to check, \"08:00\" or \"08:00,18:00\", instead of check_every."},
 		"name":         {Type: "string", Description: "(create: optional, one is made up; pause/resume/run_now/delete: required) Short name, e.g. \"daily-weather\", \"nvda-below\"."},
-		"agent":        {Type: "string", Description: "(at: who is woken to do it, default you; every: who runs it, default you; agent_says: who checks, default you; list / delete / move: WHOSE schedules to act on, another of your own agents by name or id, or \"all\" for every agent you own, list only) Name or id of an existing agent."},
+		"agent":        {Type: "string", Description: "(at: who is woken to do it, default you; every: who runs it, default you; agent_says: who checks, default you; list / delete: WHOSE schedules to act on, another of your own agents by name or id, or \"all\" for every agent you own, list only) Name or id of an existing agent."},
 		"pipeline":     {Type: "string", Description: "(every, instead of agent) A stored pipeline to run; `then` becomes its input."},
 		"machine":      {Type: "string", Description: "(every, instead of agent) A stored machine to run; `then` becomes its input."},
 		"start_at":     {Type: "string", Description: "(every with an interval, optional) ISO8601 first run, e.g. 2026-06-10T08:00:00-07:00; then the interval from there."},
@@ -199,14 +193,13 @@ func scheduleToolDef(sess *ToolSession, owner, controllerAgentID string, impl ma
 			"deliver_to":     {Type: "string", Description: "(monitors, optional) A chat_id from list_chats: the alert is posted straight to THAT conversation with no LLM instead of waking you."},
 			"bulletin":       {Type: "string", Description: "(monitors, optional) A bulletin board name: each change is posted there with no LLM for every following agent to read."},
 			"wake_agent":     {Type: "string", Description: "(monitors, optional) Another agent to wake instead of you, so the alert lands in its thread. Only when wiring a watch for a different agent."},
-			"surface":        {Type: "string", Enum: []string{"session", "cortex", "background"}, Description: "(monitors, optional) Where the fire surfaces for the agent. Omit for the default (this session)."},
 		} {
 			params[k] = v
 		}
 	} else {
 		params["when"] = ToolParam{Type: "string", Enum: []string{"at", "every"}, Description: "(create) The trigger: at (once, at a time or after a delay) | every (on a clock, repeatedly)."}
-		params["action"] = ToolParam{Type: "string", Enum: []string{"create", "list", "get", "edit", "delete", "move", "relink"}, Description: "create | list | get | edit | delete | move | relink."}
-		params["agent"] = ToolParam{Type: "string", Description: "(list / delete / move, optional) WHOSE schedules to act on: another of your own agents, by name or id, or \"all\" (list only) for every agent you own. Omit for yourself."}
+		params["action"] = ToolParam{Type: "string", Enum: []string{"create", "list", "get", "edit", "delete", "relink"}, Description: "create | list | get | edit | delete | relink."}
+		params["agent"] = ToolParam{Type: "string", Description: "(list / delete, optional) WHOSE schedules to act on: another of your own agents, by name or id, or \"all\" (list only) for every agent you own. Omit for yourself."}
 		delete(params, "pipeline")
 		delete(params, "machine")
 		delete(params, "start_at")
@@ -214,8 +207,6 @@ func scheduleToolDef(sess *ToolSession, owner, controllerAgentID string, impl ma
 	}
 	if hasRec {
 		for k, v := range map[string]ToolParam{
-			"to":              {Type: "string", Enum: []string{"cortex", "session", "background"}, Description: "(every as you / move) Where a task of your own posts its reports: cortex = your standing mind thread (needs one); session = this conversation, or the one in session_id; background = runs, posts nowhere. Omit for your default (cortex when you have one, else here)."},
-			"session_id":      {Type: "string", Description: "(move, optional, with to=\"session\") A specific session of yours to report into, e.g. one from open_session."},
 			"random":          {Type: "boolean", Description: "(every, optional) Fire at RANDOM moments instead of a fixed cadence: random gaps between min_gap_minutes and max_gap_minutes, or times_per_day moments a day inside the active_from/active_to window."},
 			"times_per_day":   {Type: "integer", Description: "(every, random) Random fires per day inside the window (1-96)."},
 			"min_gap_minutes": {Type: "integer", Description: "(every, random) Minimum minutes between fires."},
@@ -226,7 +217,7 @@ func scheduleToolDef(sess *ToolSession, owner, controllerAgentID string, impl ma
 			params[k] = v
 		}
 		if hasOp {
-			params["action"] = ToolParam{Type: "string", Enum: []string{"create", "list", "get", "edit", "pause", "resume", "run_now", "delete", "move", "relink"}, Description: "create | list | get | edit | pause | resume | run_now | delete | move | relink."}
+			params["action"] = ToolParam{Type: "string", Enum: []string{"create", "list", "get", "edit", "pause", "resume", "run_now", "delete", "relink"}, Description: "create | list | get | edit | pause | resume | run_now | delete | relink."}
 		}
 	}
 	tool := Tool{Name: "schedule", Description: b.String(), Parameters: params, Required: []string{"action"}}
@@ -277,7 +268,7 @@ func scheduleToolDef(sess *ToolSession, owner, controllerAgentID string, impl ma
 					return msg, nil
 				}
 				return scheduleRelink(owner, name, oArgStr(args, "run_by"))
-			case "pause", "resume", "run_now", "run", "delete", "cancel", "remove", "move":
+			case "pause", "resume", "run_now", "run", "delete", "cancel", "remove":
 				if name == "" {
 					return "", fmt.Errorf("%s needs the name of what to %s: schedule(action=\"list\") shows them", action, action)
 				}
@@ -436,7 +427,7 @@ func scheduleCreate(ctx context.Context, owner, controllerAgentID string, impl m
 	// The four monitor kinds.
 	kind := map[string]string{"value_crosses": EventKindHTTP, "output_changes": EventKindWatch, "posted": EventKindWebhook, "agent_says": EventKindPoll}[when]
 	m := map[string]any{"name": name, "kind": kind, "wake_brief": then}
-	pass(m, "notify", "notify", "deliver_to", "deliver_to", "bulletin", "bulletin", "wake_agent", "wake_agent", "surface", "surface",
+	pass(m, "notify", "notify", "deliver_to", "deliver_to", "bulletin", "bulletin", "wake_agent", "wake_agent",
 		"stop_after", "stop_after", "until", "until",
 		"url", "url", "json_path", "json_path", "regex", "regex", "compare_op", "compare_op", "threshold", "threshold",
 		"tool_name", "tool_name", "tool_args", "tool_args", "format_script", "format_script",
@@ -597,20 +588,13 @@ func scheduleControl(ctx context.Context, owner, controllerAgentID string, impl 
 		switch action {
 		case "delete", "cancel", "remove":
 			return rec.recurringCancel(m)
-		case "move":
-			for _, k := range []string{"to", "session_id"} {
-				if v := strings.TrimSpace(oArgStr(args, k)); v != "" {
-					m[k] = v
-				}
-			}
-			return rec.recurringMove(m)
 		case "pause", "resume":
 			if hits := recurringOfAgent(owner, agentKey, userRecurringMatches(owner, id)); len(hits) == 1 {
 				return setRecurringPaused(owner, hits[0].TaskID, action == "pause")
 			}
 			return "", fmt.Errorf("no recurring task %q on that agent: schedule(action=\"list\", agent=%q) shows them", name, agentKey)
 		}
-		return "", fmt.Errorf("a recurring task cannot be %sd, only paused, resumed, deleted or moved: schedule(action=\"delete\", name=%q)", action, id)
+		return "", fmt.Errorf("a recurring task cannot be %sd, only paused, resumed or deleted: schedule(action=\"delete\", name=%q)", action, id)
 	}
 	if rec != nil {
 		for _, rt := range rec.recurringTasks() {
@@ -654,27 +638,16 @@ func scheduleControl(ctx context.Context, owner, controllerAgentID string, impl 
 		case "pause", "resume":
 			return setRecurringPaused(owner, others[0].TaskID, action == "pause")
 		}
-		return "", fmt.Errorf("a recurring task cannot be %sd, only paused, resumed, deleted or moved: schedule(action=\"delete\", name=%q)", action, others[0].TaskID)
+		return "", fmt.Errorf("a recurring task cannot be %sd, only paused, resumed or deleted: schedule(action=\"delete\", name=%q)", action, others[0].TaskID)
 	}
 	if ownTaskID != "" {
 		switch action {
 		case "delete", "cancel", "remove":
 			return rec.recurringCancel(map[string]any{"id": ownTaskID})
-		case "move":
-			m := map[string]any{"id": ownTaskID}
-			for _, k := range []string{"to", "session_id"} {
-				if v := strings.TrimSpace(oArgStr(args, k)); v != "" {
-					m[k] = v
-				}
-			}
-			return rec.recurringMove(m)
 		case "pause", "resume":
 			return setRecurringPaused(owner, ownTaskID, action == "pause")
 		}
-		return "", fmt.Errorf("a recurring task of your own has no %s: pause, resume, delete or move it", action)
-	}
-	if action == "move" {
-		return "", fmt.Errorf("only a recurring task of your own moves; %q is relocated from the console's Move-to control", name)
+		return "", fmt.Errorf("a recurring task of your own has no %s: pause, resume or delete it", action)
 	}
 	call := func(tool string, m map[string]any) (string, error) {
 		h, ok := impl[tool]
@@ -748,9 +721,6 @@ func scheduleOwnTimer(owner string, rec recurringImpl, timeSpec, then, name stri
 		name = "timer-" + at.Format("0304pm")
 	}
 	m := map[string]any{"prompt": then, "name": name, "pattern": RecurringFixed, "interval_minutes": mins, "max_fires": 1}
-	if v := strings.TrimSpace(oArgStr(args, "to")); v != "" {
-		m["to"] = v
-	}
 	out, err := rec.recurringSchedule(m)
 	if err != nil {
 		return "", err
@@ -809,7 +779,7 @@ func scheduleOwnRecurring(rec recurringImpl, cron string, interval int, then, na
 	default:
 		return "", fmt.Errorf("a task of your own repeats at an interval or daily at set times; %q is a weekday pattern it cannot keep. Say so, or offer the daily version", cron)
 	}
-	for _, k := range []string{"to", "until", "active_from", "active_to"} {
+	for _, k := range []string{"until", "active_from", "active_to"} {
 		if v := strings.TrimSpace(oArgStr(args, k)); v != "" {
 			m[k] = v
 		}
@@ -1187,7 +1157,6 @@ func scheduleChangeApproval(sess *ToolSession, owner, actingAgent, action, name 
 	verb := map[string]string{
 		"pause": "Pause it.", "resume": "Resume it.",
 		"delete": "Delete it and cancel its schedule.", "cancel": "Delete it and cancel its schedule.", "remove": "Delete it and cancel its schedule.",
-		"move":   "Change where it reports.",
 		"edit":   missionChangeFromArgs(args).describe(),
 		"relink": "Hand it to " + chFirst(strings.TrimSpace(oArgStr(args, "run_by")), "another agent") + " to run.",
 	}[action]

@@ -65,35 +65,6 @@ func TestRecurringScopeReachesAnotherAgent(t *testing.T) {
 	}
 }
 
-// TestRecurringMoveRefusesTheAmbiguousCrossAgentCases. Move is the one action
-// whose destination is expressed relative to the caller, so the two cases that
-// cannot mean anything across agents are refused rather than guessed.
-func TestRecurringMoveRefusesTheAmbiguousCrossAgentCases(t *testing.T) {
-	turn, other := scopeTestTurn(t)
-
-	// A session move re-homes into a thread of the agent being talked to.
-	_, err := turn.recurringMove(map[string]any{"id": "task-1", "agent": other.Name, "to": "session"})
-	if err == nil || !strings.Contains(err.Error(), "another agent's task") {
-		t.Errorf(`to="session" across agents must be refused, got %v`, err)
-	}
-
-	// "all" names no single destination owner.
-	_, err = turn.recurringMove(map[string]any{"id": "task-1", "agent": "all", "to": "cortex"})
-	if err == nil || !strings.Contains(err.Error(), "one agent") {
-		t.Errorf(`agent="all" must be refused for move, got %v`, err)
-	}
-
-	// And the cortex it checks is the DESTINATION agent's, not the caller's:
-	// this caller has one and the target does not, so a cortex move is refused.
-	if turn.agent.Cortex == other.Cortex {
-		t.Fatal("fixture no longer distinguishes the two agents' cortex flags")
-	}
-	_, err = turn.recurringMove(map[string]any{"id": "task-1", "agent": other.Name, "to": "cortex"})
-	if err == nil {
-		t.Error("a cortex move must be judged against the target agent's cortex, not the caller's")
-	}
-}
-
 // TestRecurringToolDeclaresTheAgentScope: the parameter is the whole fix, so
 // its absence is the whole fix missing.
 func TestRecurringToolDeclaresTheAgentScope(t *testing.T) {

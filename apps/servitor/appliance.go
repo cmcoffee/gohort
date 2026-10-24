@@ -68,7 +68,12 @@ type Appliance struct {
 	// Repo fields (Type == "repo") — the code is cloned into tmpfs and ingested
 	// into the encrypted RepoFilesDB; nothing but derived, encrypted content
 	// persists. RepoFiles/RepoCloned track ingest status.
-	RepoURL    string `json:"repo_url"`              // git remote (https://github.com/owner/repo)
+	RepoURL string `json:"repo_url"` // git remote (https://github.com/owner/repo)
+	// RepoPath, set in place of RepoURL, is a folder on the gohort server,
+	// read where it is rather than cloned (repoLocalRoot). It need not be a
+	// git checkout. Admin only, as the local command system is: it reads the
+	// server's own disk.
+	RepoPath   string `json:"repo_path,omitempty"`
 	RepoBranch string `json:"repo_branch,omitempty"` // branch to clone; "" = remote default
 	RepoToken  string `json:"repo_token,omitempty"`  // access token for private repos; blanked on list
 	RepoFiles  int    `json:"repo_files,omitempty"`  // ingested file count

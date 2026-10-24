@@ -5736,6 +5736,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 }
 .ui-ask-card.submitted { opacity: 0.72; }
 .ui-ask-q { color: var(--text-hi); font-weight: 600; margin: 0 0 0.6rem; line-height: 1.45; }
+.ui-ask-lead { color: var(--text); margin: 0 0 0.8rem; line-height: 1.45; }
 .ui-ask-field { margin: 0 0 0.8rem; }
 .ui-ask-field .ui-ask-q { font-weight: 500; }
 .ui-ask-opts { display: flex; flex-direction: column; gap: 0.35rem; margin: 0 0 0.6rem; }
@@ -5752,6 +5753,24 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 }
 .ui-ask-extra { resize: vertical; }
 .ui-ask-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0.5rem; margin-top: 0.6rem; }
+/* The Other row: its own box, then a line to type in that fills the row. */
+.ui-ask-other { align-items: center; }
+.ui-ask-other-lbl { display: flex; align-items: center; gap: 0.5rem; flex: 0 0 auto; cursor: pointer; }
+.ui-ask-other-lbl input { margin-top: 0; }
+.ui-ask-other-text { flex: 1 1 auto; min-width: 0; min-height: 2rem; }
+/* Answered: the card is the answer. It shows what was chosen and nothing
+ * else (when it knows: an older thread's card was answered by a message and
+ * keeps all its rows), and Submit gives way to Change answer. */
+.ui-ask-card .ui-ask-change, .ui-ask-card .ui-ask-cancel { display: none; }
+.ui-ask-card.submitted .ui-ask-submit { display: none; }
+.ui-ask-card.submitted.ui-ask-editable .ui-ask-change { display: inline-flex; }
+.ui-ask-card.ui-ask-editing .ui-ask-cancel { display: inline-flex; }
+.ui-ask-card.submitted.ui-ask-filled .ui-ask-opt:not(:has(input:checked)) { display: none; }
+.ui-ask-card.submitted.ui-ask-filled .ui-ask-other-text { border-color: transparent; background: transparent; resize: none; }
+.ui-ask-card.submitted .ui-ask-other-text:placeholder-shown { visibility: hidden; }
+/* The message an ask card was answered with: still the turn's place in the
+ * thread, drawn as the card above it (linkAskAnswer). */
+.ui-agent-msg.ui-agent-ask-answer { display: none; }
 /* Legacy .ui-agent-spinner — kept for any app that still wires it
  * up directly. Any chat-style panel now
  * uses .ui-agent-status-pill in the top bar instead (see below).

@@ -512,6 +512,21 @@ func (T *OrchestrateApp) trimStoredHistory(udb Database, agent AgentRecord, sess
 	return msgs[drop:]
 }
 
+// appendToThread appends cards a scheduled thing (or a background job coming
+// back) produced to agentID's thread and bounds its storage the way a turn's
+// save does (trimStoredHistory). Fires append without taking a turn there, and the cortex
+// takes no web turns, so a cortex fed by recurring tasks and standing reports
+// folded its old messages into the summary and archive and still kept every
+// one of them in storage, loaded whole on every fire.
+func (T *OrchestrateApp) appendToThread(udb Database, agentID, sid string, fallback ChatSession, msgs ...ChatMessage) error {
+	agent, ok := loadAgent(udb, agentID)
+	var bound func([]ChatMessage) []ChatMessage
+	if ok {
+		bound = func(m []ChatMessage) []ChatMessage { return T.trimStoredHistory(udb, agent, sid, m) }
+	}
+	return appendStoredBounded(udb, agentID, sid, fallback, bound, msgs...)
+}
+
 // monitorWakePrefix marks a turn injected by an event-monitor wake (see the
 // waker in operator_wake.go). A frequently-firing monitor would otherwise
 // flood the verbatim tail with near-identical wake turns, which trains the

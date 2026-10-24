@@ -157,10 +157,9 @@ type StandingAgent struct {
 	// the reporter then falls back to the target agent's channel home thread.
 	ReportAgentID   string `json:"report_agent_id,omitempty"`
 	ReportSessionID string `json:"report_session_id,omitempty"`
-	// Surface — same mode as EventMonitor.Surface, resolved at run time against
-	// ReportSessionID (the home): "" / "session" reports into the creating
-	// session, "cortex" into the agent's cortex home thread, "background" not at
-	// all (the run still happens; its result just isn't posted to a thread).
+	// Surface was where the run reported, as EventMonitor.Surface. No longer
+	// read: every run reports into its agent's cortex, linking
+	// ReportSessionID. Kept so records and bundles made before still decode.
 	Surface string `json:"surface,omitempty"`
 	// DispatchedBy carries the live dispatch chain when this record is a
 	// TRANSIENT one built for a runtime dispatch (RunDelegation) rather than a

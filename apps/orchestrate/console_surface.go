@@ -1,7 +1,7 @@
 package orchestrate
 
 import (
-	"net/http"
+	"net/url"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -53,145 +53,60 @@ func awaitsAnswer(sess ChatSession) bool {
 	return false
 }
 
-// resolveSurface maps a scheduled thing's Surface mode to the session its fire
-// should land in, plus whether to surface it at all. `home` is the record's own
-// home session — a monitor's WakeSession, a standing agent's ReportSessionID, or
-// a recurring task's SessionID. Shared by monitors / standing / recurring so all
-// three behave identically:
+// Every scheduled thing reports into its agent's cortex: a monitor's fire, a
+// standing agent's per-run report, a recurring task's conversation.
 //
-//	"" / "session" → the home session (or the cortex home thread if home is
-//	                 empty — the legacy fallback so a fire still surfaces).
-//	"cortex"       → the agent's cortex home thread.
-//	"background"   → record=false: NO agent visibility (external delivery only).
+// There was a choice per schedule, "Where" on the Scheduler row and a surface
+// argument on the tools: the cortex, the session the schedule was made in, or
+// nowhere. The session's only use was the context of the conversation that
+// made the schedule, and a schedule outlives it: weeks later a recurring task
+// was running on a stale chat and burying it in fires. The schedule's own
+// message is what carries what it needs. Nowhere left a schedule that texted
+// out at 9am with no record of what it sent.
 //
-// The home is never overwritten by a move, so switching back to "session" works.
-func resolveSurface(surface, home, agentID string) (session string, record bool) {
-	switch strings.TrimSpace(surface) {
-	case "background":
-		return "", false
-	case "cortex":
-		return cortexSessionID(agentID), true
-	default: // "" / "session"
-		if strings.TrimSpace(home) == "" {
-			return cortexSessionID(agentID), true
-		}
-		return home, true
-	}
-}
+// The stored Surface field is no longer read, so a schedule made under any
+// choice reports into the cortex from its next fire. An agent without a
+// cortex gets one at its first fire (ensureScheduleCortex), the way attaching
+// a channel gives it one.
 
-// surfaceOptionsFor returns the "Move to…" picker options for an agent, gated on
-// whether it has a cortex: Cortex is offered only when the agent has one. Shared
-// by the monitor / standing / recurring move pickers.
-func surfaceOptions(agentHasCortex bool) []struct {
-	Value string `json:"value"`
-	Label string `json:"label"`
-} {
-	type opt = struct {
-		Value string `json:"value"`
-		Label string `json:"label"`
-	}
-	var out []opt
-	if agentHasCortex {
-		out = append(out, opt{Value: "cortex", Label: "Cortex home thread"})
-	}
-	out = append(out,
-		opt{Value: "session", Label: "Session (where it was created)"},
-		opt{Value: "background", Label: "Background (No Agent Visibility)"},
-	)
-	return out
-}
-
-// scheduleSurfaceDefault picks where a schedule REPORTS when nobody chose. An
-// agent with a cortex has a standing thread built for exactly this — background
-// work the user reads when they choose to, instead of fires interleaved into
-// whatever conversation happened to author them — so a cortex agent defaults to
-// "cortex" and everything else keeps the creating session. Applied on create AND
-// on edit, which is why an explicit choice must be STORED rather than left empty:
-// normalizeSurface keeps "session" as "session" so a deliberate move back is not
-// re-defaulted to cortex by the next timing edit.
-func scheduleSurfaceDefault(chosen string, hasCortex bool) string {
-	if c := strings.TrimSpace(chosen); c != "" {
-		return c
-	}
-	if hasCortex {
-		return "cortex"
-	}
-	return ""
-}
-
-// surfaceDestLabel names a stored Surface mode in a sentence, for the confirmation
-// the tool hands back and the model repeats to the user. Where a schedule reports
-// is the one thing they need told, and "" (defaulted to the session) reads the
-// same as an explicit "session".
-func surfaceDestLabel(surface string) string {
-	switch strings.TrimSpace(surface) {
-	case "cortex":
-		return "this agent's Cortex mind thread"
-	case "background":
-		return "no thread (background: the run happens, nothing is posted)"
-	default:
-		return "this session"
-	}
-}
-
-// surfaceSuffix is the one-clause tail a console row adds so WHERE a schedule
-// reports is visible without opening it — the destination is now defaulted per
-// agent, so a row that says only its cadence hides the difference. Empty for the
-// session, which is what the row's own context already implies.
-func surfaceSuffix(surface string) string {
-	switch strings.TrimSpace(surface) {
-	case "cortex":
-		return " - reports to cortex"
-	case "background":
-		return " - background (no agent visibility)"
-	}
-	return ""
-}
-
-// hasCortexThread reports whether this user's agent maintains a cortex thread.
-// Tolerant by design: an unknown agent is simply "no cortex", so a caller
-// defaulting a surface degrades to the session rather than erroring.
-func hasCortexThread(user, agentID string) bool {
+// scheduleSession is the session a scheduled thing's fire lands in: the
+// agent's cortex. home, the session it was made in, stands in only for a
+// record that names no agent.
+func scheduleSession(agentID, home string) string {
 	if strings.TrimSpace(agentID) == "" {
-		return false
+		return home
 	}
-	a, ok := loadAgent(agentUserDB(RootDB, user), agentID)
-	return ok && a.Cortex
+	return cortexSessionID(agentID)
 }
 
-// handleConsoleSurfaceOptions is the SHARED "Move to…" picker source for
-// monitors / standing agents / recurring: it returns Cortex/Session/Background,
-// with Cortex offered only when the pane's agent has a cortex (?agent=<id>).
-func (T *OrchestrateApp) handleConsoleSurfaceOptions(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
+// ensureScheduleCortex gives a top-level agent a cortex for its schedules to
+// report into. A sub-agent has none of its own: its schedules are folded onto
+// its parent (agent_family.go).
+func (T *OrchestrateApp) ensureScheduleCortex(owner, agentID string) {
+	if strings.TrimSpace(agentID) == "" {
 		return
 	}
-	agentID := strings.TrimSpace(r.URL.Query().Get("agent"))
-	hasCortex := false
-	if a, ok := loadAgent(agentUserDB(RootDB, user), agentID); ok && a.Cortex {
-		hasCortex = true
+	if udb := UserDB(T.DB, owner); udb != nil && topAgentOf(udb, agentID) == agentID {
+		T.ensureAgentCortex(owner, agentID)
 	}
-	writeJSON(w, surfaceOptions(hasCortex))
 }
 
-// normalizeSurface maps a picker value to a stored Surface mode. "session"
-// stores as "session" — NOT as "" — even though resolveSurface treats the two
-// identically at fire time: empty means "nobody chose", which is what
-// scheduleSurfaceDefault fills in with the cortex on a cortex agent. Storing the
-// word is what makes a deliberate move back to the session survive the next
-// edit. An empty picker value is still accepted (a client sending nothing means
-// the default) and stays empty.
-func normalizeSurface(val string) (string, bool) {
-	switch strings.ToLower(strings.TrimSpace(val)) {
-	case "":
-		return "", true
-	case "session":
-		return "session", true
-	case "cortex":
-		return "cortex", true
-	case "background":
-		return "background", true
+// scheduleSourceNote is the line a fire carries linking the session its
+// schedule was made in, so the cortex reads back to the conversation that
+// asked for it. "" when it was made outside a session or in the cortex.
+func (T *OrchestrateApp) scheduleSourceNote(udb Database, agentID, home string) string {
+	home = strings.TrimSpace(home)
+	if udb == nil || home == "" || strings.TrimSpace(agentID) == "" || home == cortexSessionID(agentID) {
+		return ""
 	}
-	return "", false
+	s, ok := loadChatSession(udb, agentID, home)
+	if !ok {
+		return ""
+	}
+	title := strings.NewReplacer("[", "(", "]", ")", "\n", " ").Replace(strings.TrimSpace(s.Title))
+	if title == "" {
+		title = "the conversation it was made in"
+	}
+	link := strings.TrimSuffix(T.WebPath(), "/") + "/?agent=" + url.QueryEscape(agentID) + "&session=" + url.QueryEscape(home)
+	return "Scheduled from [" + title + "](" + link + ")."
 }

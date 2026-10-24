@@ -218,10 +218,10 @@ func (a imageActions) backendParamDesc() string {
 		if c.Edits {
 			note += "works from pictures you pass in images"
 			if c.MaxImages > 1 {
-				// "up to" invited passing fewer, which a compose graph refuses:
-				// every mapped input has to be filled or it renders the
-				// placeholder its workflow was saved with.
-				note += ", composes " + strconv.Itoa(c.MaxImages) + " images and needs all " + strconv.Itoa(c.MaxImages)
+				// Fewer is fine: the unused inputs are taken out of the graph
+				// (core BuildComfyBody). It said "needs all", which was true
+				// while an unfilled input rendered the workflow's placeholder.
+				note += ", composes up to " + strconv.Itoa(c.MaxImages) + " images"
 				// More than that is not a refusal any more — it runs as staged
 				// calls, each folding the running result into the next batch.
 				// Worth saying, or the model caps itself at the per-call number

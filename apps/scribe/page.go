@@ -283,7 +283,9 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 			JS(ArtifactClientJS).
 			ClientAction("scribe_export_bundle", scribeExportBundleAction).
 			ClientAction("scribe_import_bundle", scribeImportBundleAction).
-			ClientAction("scribe_image", scribeImageAction),
+			ClientAction("scribe_image", scribeImageAction).
+			CSS(scribeChangesCSS).
+			BlockRenderer(turnChangesBlock, scribeChangesBlockJS),
 	}
 	page.ServeHTTP(w, r)
 }
@@ -428,7 +430,9 @@ const scribeImportBundleAction = `function(ctx){
 }`
 
 // scribeImageAction manages a guide's header image in a modal: show the
-// current one, generate one from the title, paste a URL, or remove it.
+// current one, generate one, paste a URL, or remove it. Two pictures of the
+// owner's own can go with a generated one (header_image.go), handed to the
+// generator: a logo it works into the header, and a picture to start from.
 const scribeImageAction = `function(ctx){
       var gid = ctx.recordId;
       if (!gid || !window.uiOpenSimpleModal) return;
@@ -452,8 +456,10 @@ const scribeImageAction = `function(ctx){
           // a while and a static word cannot be told from a stall.
           function busy(label){ status.textContent = ''; status.appendChild(window.uiLoading ? window.uiLoading(label) : document.createTextNode(label + '…')); }
           var row = el('div', {class:'guide-edit-actions scribe-img-actions'});
-          var gen = el('button', {class:'ui-row-btn primary', text:'Generate from title'});
+          var gen = el('button', {class:'ui-row-btn primary', text:'Generate'});
           if (!d.can_generate) { gen.disabled = true; gen.title = 'Image generation is not configured on this deployment'; }
+          function genLabel(){ gen.textContent = d.from_url ? 'Generate from picture' : 'Generate from title'; }
+          genLabel();
           var urlIn = el('input', {type:'text', placeholder:'…or paste an image URL, or a screenshot'});
           var use = el('button', {class:'ui-row-btn', text:'Use URL'});
           var rm = el('button', {class:'ui-row-btn', text:'Remove'});
@@ -505,10 +511,146 @@ const scribeImageAction = `function(ctx){
           row.appendChild(gen); row.appendChild(up); row.appendChild(rm);
           body.appendChild(row);
           body.appendChild(el('div', {class:'scribe-img-url'}, [urlIn, use]));
+          // Pictures of your own that go with a generated header. Each is
+          // uploaded with the guide and named to it; the next Generate uses it.
+          var withBox = el('div', {class:'scribe-img-with'}, [el('div', {class:'guide-kn-intro', text:'Generate with pictures of your own'})]);
+          function slot(key, label, help, why){
+            var thumb = el('span', {class:'scribe-img-thumb'});
+            var add = el('button', {class:'ui-row-btn', text:'Upload'});
+            var clear = el('button', {class:'ui-row-btn', text:'Remove'});
+            function show(url){
+              thumb.innerHTML = '';
+              if (url) { var i = el('img', {alt: label}); i.src = url; thumb.appendChild(i); }
+              clear.style.display = url ? '' : 'none';
+              add.textContent = url ? 'Replace' : 'Upload';
+            }
+            function set(url){
+              busy('Saving');
+              var payload = {}; payload[key] = url;
+              fetch('image?' + qp, {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)})
+                .then(function(r){ return r.text().then(function(t){ if (!r.ok) throw new Error(t || ('HTTP ' + r.status)); return JSON.parse(t); }); })
+                .then(function(res){ status.textContent = ''; d[key + '_url'] = res[key + '_url'] || ''; show(d[key + '_url']); genLabel(); })
+                .catch(function(err){ status.textContent = ''; window.uiAlert('Could not save the ' + label.toLowerCase() + ': ' + (err && err.message || err)); });
+            }
+            if (why) { add.disabled = true; add.title = why; }
+            add.addEventListener('click', function(){
+              var input = document.createElement('input');
+              input.type = 'file';
+              input.accept = 'image/png,image/jpeg,image/gif,image/webp';
+              input.addEventListener('change', function(){
+                var f = input.files && input.files[0];
+                if (!f) return;
+                var fd = new FormData();
+                fd.append('file', f, f.name || 'image.png');
+                busy('Uploading');
+                fetch('images?' + qp, {method:'POST', credentials:'same-origin', body: fd})
+                  .then(function(r){ return r.text().then(function(t){ if (!r.ok) throw new Error(t || ('HTTP ' + r.status)); return JSON.parse(t); }); })
+                  .then(function(res){ set(res.url); })
+                  .catch(function(err){ status.textContent = ''; window.uiAlert('Could not upload the ' + label.toLowerCase() + ': ' + (err && err.message || err)); });
+              });
+              input.click();
+            });
+            clear.addEventListener('click', function(){ set(''); });
+            show(d[key + '_url']);
+            withBox.appendChild(el('div', {class:'scribe-img-slot'}, [thumb,
+              el('div', {class:'scribe-img-slot-text'}, [el('strong', {text: label}), el('span', {class:'guide-pub-mute', text: help})]),
+              el('div', {class:'scribe-img-slot-btns'}, [add, clear])]));
+          }
+          slot('logo', 'Logo', d.can_blend_logo
+            ? 'Handed to the image generator with the header, which works it into the scene.'
+            : 'Placed on the generated header as uploaded, in the bottom corner: the image generator here cannot take a picture to work in. Use one with a transparent background.', '');
+          slot('from', 'Start from a picture', 'The generator works from this picture instead of from the title alone.',
+            d.can_generate_from ? '' : 'This deployment has no image backend that works from a picture');
+          if (d.can_generate) body.appendChild(withBox);
           body.appendChild(status);
         }});
       });
 }`
+
+// scribeChangesBlockJS draws a turn's "Changes this turn" card
+// (turn_changes.go): what the Author changed, in order, growing as the turn
+// works, and one Undo that restores the guide as the turn found it. An undone
+// card is settled on the server too, so a reload does not offer it again.
+const scribeChangesBlockJS = `function(d) {
+  var data = d.data || {};
+  var wrap = document.createElement('div');
+  wrap.className = 'scribe-changes';
+  var head = document.createElement('div');
+  head.className = 'scribe-changes-head';
+  var title = document.createElement('span');
+  title.className = 'scribe-changes-title';
+  title.textContent = d.title || 'Changes this turn';
+  var count = document.createElement('span');
+  count.className = 'scribe-changes-count';
+  head.appendChild(title);
+  head.appendChild(count);
+  var list = document.createElement('ul');
+  list.className = 'scribe-changes-list';
+  var foot = document.createElement('div');
+  foot.className = 'scribe-changes-foot';
+  var undo = document.createElement('button');
+  undo.type = 'button';
+  undo.className = 'ui-row-btn scribe-changes-undo';
+  undo.textContent = 'Undo these';
+  undo.title = 'Put the guide back the way it was before this turn';
+  var note = document.createElement('span');
+  note.className = 'scribe-changes-note';
+  foot.appendChild(undo);
+  foot.appendChild(note);
+  function paint(dd) {
+    data = dd.data || {};
+    list.innerHTML = '';
+    String(data.changes || '').split('\n').forEach(function(line) {
+      if (!line.trim()) return;
+      var li = document.createElement('li');
+      li.textContent = line;
+      list.appendChild(li);
+    });
+    count.textContent = dd.text || '';
+  }
+  function settle(text) {
+    undo.remove();
+    note.textContent = text;
+    wrap.classList.add('scribe-changes-settled');
+  }
+  paint(d);
+  if (d.resolved) settle(d.resolved);
+  undo.addEventListener('click', function() {
+    window.uiConfirm('Put the guide back the way it was before this turn? Anything changed in it since is undone too. The undo is saved in History, so it can be reversed.').then(function(ok) {
+      if (!ok) return;
+      undo.disabled = true;
+      note.textContent = '';
+      if (window.uiLoading) note.appendChild(window.uiLoading('Undoing'));
+      fetch('restore?id=' + encodeURIComponent(data.guide || '') + '&rev=' + encodeURIComponent(data.rev || ''), {method: 'POST', credentials: 'same-origin'})
+        .then(function(r) { if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); }); })
+        .then(function() {
+          var msg = 'Undone: the guide is back the way this turn found it.';
+          settle(msg);
+          if (window.uiResolveBlock) { try { window.uiResolveBlock(d.id, msg); } catch (e) {} }
+          if (window.uiInvalidate) window.uiInvalidate(['guides']);
+        })
+        .catch(function(err) {
+          undo.disabled = false;
+          note.textContent = '';
+          window.uiAlert('Could not undo: ' + (err && err.message || err));
+        });
+    });
+  });
+  wrap.appendChild(head);
+  wrap.appendChild(list);
+  wrap.appendChild(foot);
+  return {wrap: wrap, onUpdate: paint};
+}`
+
+const scribeChangesCSS = `.scribe-changes { border: 1px solid var(--border); border-radius: 8px; background: var(--bg-2); padding: 0.55rem 0.75rem; margin: 0.4rem 0; font-size: var(--fs-sm, 0.85rem); }
+.scribe-changes-head { display: flex; gap: 0.5rem; align-items: baseline; }
+.scribe-changes-title { font-weight: 600; }
+.scribe-changes-count { color: var(--text-mute); }
+.scribe-changes-list { margin: 0.35rem 0 0.45rem; padding-left: 1.2rem; }
+.scribe-changes-list li { margin: 0.1rem 0; overflow-wrap: anywhere; }
+.scribe-changes-foot { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; }
+.scribe-changes-note { color: var(--text-mute); }
+.scribe-changes-settled .scribe-changes-list { opacity: 0.6; }`
 
 // scribeImageCSS styles a guide's header image and the image modal. Scoped
 // under .guide-doc / .scribe-img-* so nothing leaks.
@@ -517,6 +659,12 @@ const scribeImageCSS = `.guide-doc-image { display: block; width: 100%; max-heig
 .scribe-img-preview img { width: 100%; max-height: 220px; object-fit: cover; display: block; }
 .scribe-img-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.6rem; }
 .scribe-img-url { display: flex; gap: 0.5rem; }
+.scribe-img-with { margin-top: 0.9rem; border-top: 1px solid var(--border); padding-top: 0.7rem; }
+.scribe-img-slot { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; margin-top: 0.5rem; }
+.scribe-img-thumb { flex: 0 0 3rem; height: 3rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-2); overflow: hidden; display: flex; align-items: center; justify-content: center; }
+.scribe-img-thumb img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.scribe-img-slot-text { flex: 1 1 12rem; min-width: 0; display: flex; flex-direction: column; gap: 0.1rem; }
+.scribe-img-slot-btns { display: flex; gap: 0.4rem; flex-wrap: wrap; }
 .scribe-img-url input { flex: 1; padding: 0.45rem 0.6rem; background: var(--bg-0); color: var(--text); border: 1px solid var(--border); border-radius: 6px; }`
 
 // guideDocCSS styles the rendered guide so it reads like a formatted document:

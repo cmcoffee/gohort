@@ -149,11 +149,8 @@ func (T *OrchestrateApp) handleSessionList(w http.ResponseWriter, r *http.Reques
 		if m.Paused {
 			continue
 		}
-		// Count where the monitor SURFACES (Surface: session/cortex/background), so
-		// the badge follows a move and a Background monitor (no visibility) counts
-		// nowhere.
-		sess, rec := resolveSurface(m.Surface, m.WakeSession, m.WakeAgent)
-		if rec && sess != "" {
+		// Counted where the monitor surfaces: its agent's cortex.
+		if sess := scheduleSession(m.WakeAgent, m.WakeSession); sess != "" {
 			watcherCounts[sess]++
 		}
 	}

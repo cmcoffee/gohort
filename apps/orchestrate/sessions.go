@@ -52,6 +52,13 @@ func loadChatSession(db Database, agentID, sessionID string) (ChatSession, bool)
 // the caller's run, so concurrent runs on one thread still interleave, they just
 // stop losing each other's output.
 func appendToStoredSession(db Database, agentID, sessionID string, fallback ChatSession, msgs ...ChatMessage) error {
+	return appendStoredBounded(db, agentID, sessionID, fallback, nil, msgs...)
+}
+
+// appendStoredBounded is appendToStoredSession with bound applied to the
+// thread before it is saved, inside the same lock, so a trim never races an
+// append. nil leaves the thread as it is.
+func appendStoredBounded(db Database, agentID, sessionID string, fallback ChatSession, bound func([]ChatMessage) []ChatMessage, msgs ...ChatMessage) error {
 	if db == nil {
 		return fmt.Errorf("db not initialized")
 	}
@@ -71,6 +78,9 @@ func appendToStoredSession(db Database, agentID, sessionID string, fallback Chat
 			sess.Title = reportThreadTitle(msgs)
 		}
 		sess.Messages = append(sess.Messages, msgs...)
+		if bound != nil {
+			sess.Messages = bound(sess.Messages)
+		}
 		sess.LastAt = time.Now()
 		_, err = saveChatSession(db, sess)
 	})

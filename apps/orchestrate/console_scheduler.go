@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/ui"
@@ -51,9 +52,13 @@ func (T *OrchestrateApp) handleConsoleScheduler(w http.ResponseWriter, r *http.R
 	// its sub-agents run, and a sub-agent's shows the family it belongs to
 	// (agent_family.go). One pass per member, each row once.
 	family := schedulerFamily(udb, user, agentID)
+	// Where a build's time goes, logged for a slow one: the Scheduler opened
+	// in about a second and the first guess at why was wrong.
+	start := time.Now()
+	ix := newStandingRunIndex(user)
 	out := []map[string]any{}
 	for _, id := range family {
-		for _, row := range consoleAgentRows(user, udb, id) {
+		for _, row := range consoleAgentRows(user, udb, id, ix) {
 			out = appendSchedulerRow(out, row, schedSectionStanding, schedKindStanding)
 		}
 		for _, row := range consoleRecurringRows(user, id) {
@@ -63,6 +68,7 @@ func (T *OrchestrateApp) handleConsoleScheduler(w http.ResponseWriter, r *http.R
 			out = appendSchedulerRow(out, row, schedSectionMonitors, schedKindMonitor)
 		}
 	}
+	rowsDone := time.Now()
 	out = uniqueSchedulerRows(out)
 	sortSchedulerRows(out)
 	// The fleet view is every agent's schedules in one list, so each row says
@@ -83,7 +89,7 @@ func (T *OrchestrateApp) handleConsoleScheduler(w http.ResponseWriter, r *http.R
 	var groups []map[string]any
 	placed := map[string]bool{}
 	for _, id := range family {
-		g, p := appendLinkGroupRows(nil, user, udb, id)
+		g, p := appendLinkGroupRows(nil, user, udb, id, ix)
 		groups = append(groups, g...)
 		for k, v := range p {
 			placed[k] = placed[k] || v
@@ -98,6 +104,11 @@ func (T *OrchestrateApp) handleConsoleScheduler(w http.ResponseWriter, r *http.R
 			}
 		}
 		out = append(groups, rest...)
+	}
+	if took := time.Since(start); took > 300*time.Millisecond {
+		Debug("[console.scheduler] agent=%q family=%d rows=%d took %s (rows %s, ledger %d runs, groups %s)",
+			agentID, len(family), len(out), took.Round(time.Millisecond), rowsDone.Sub(start).Round(time.Millisecond),
+			len(ix.runs), time.Since(rowsDone).Round(time.Millisecond))
 	}
 	writeJSON(w, out)
 }
@@ -258,7 +269,6 @@ func addSchedulerActionFlags(m map[string]any, kind string) {
 		m["_pause_standing"] = !paused
 		m["_resume_standing"] = paused
 		m["_relink_standing"] = relinkable
-		m["_move_standing"] = true
 		m["_del_standing"] = true
 	case schedKindRecurring:
 		// A parked payload short-circuits at the top of the fire, so Run now
@@ -270,7 +280,6 @@ func addSchedulerActionFlags(m map[string]any, kind string) {
 		m["_pause_recurring"] = !broken && !paused
 		m["_resume_recurring"] = broken
 		m["_unpause_recurring"] = paused && !broken
-		m["_move_recurring"] = true
 		m["_del_recurring"] = true
 	case schedKindMonitor:
 		// Only poll / http_poll / watch have a check to run on demand — a
@@ -288,7 +297,6 @@ func addSchedulerActionFlags(m map[string]any, kind string) {
 		m["_pause_monitor"] = !paused
 		m["_resume_monitor"] = paused
 		m["_relink_monitor"] = relinkable
-		m["_move_monitor"] = true
 		m["_del_monitor"] = true
 	}
 }

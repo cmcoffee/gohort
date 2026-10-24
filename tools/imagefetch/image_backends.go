@@ -18,16 +18,18 @@ import (
 // pictures.
 //
 // ROUTED BY COUNT, because a compose graph IS its input count: two LoadImage
-// nodes is a different workflow from three, and since a graph must be filled
-// completely (see the partial-fill guard), a two-image backend simply cannot
+// nodes is a different workflow from three, and a two-image backend cannot
 // serve a three-image request. Making the model choose meant it had to know
 // which connector had how many inputs — a fact about someone's ComfyUI wiring
 // that no prompt should be teaching it.
 //
-// Exact match first, then the configured default, then the first editor. The
-// last two are how a single-editor deployment keeps working without anyone
-// declaring counts, and how a mismatch still lands somewhere that can produce
-// a specific error rather than a silent nil.
+// Exact match first: the workflow built for that many pictures. Then the
+// backend with the fewest inputs that still takes them all, since a call with
+// fewer pictures than inputs renders with the unused ones taken out of the
+// graph (core BuildComfyBody); a deployment with only a three-input backend
+// was refused two pictures. Then the configured default, then the first
+// editor, which is how a mismatch still lands somewhere that can produce a
+// specific error rather than a silent nil.
 func defaultEditBackend(a imageActions, n int) string {
 	if n > 0 {
 		// Default wins among equals, so two connectors with the same count
@@ -46,6 +48,19 @@ func defaultEditBackend(a imageActions, n int) string {
 		}
 		if match != "" {
 			return match
+		}
+		// The fewest inputs that take n, the default winning a tie.
+		fit := -1
+		for i, e := range a.editors {
+			if e.MaxImages < n {
+				continue
+			}
+			if f := fit; f < 0 || e.MaxImages < a.editors[f].MaxImages || (e.MaxImages == a.editors[f].MaxImages && e.Default && !a.editors[f].Default) {
+				fit = i
+			}
+		}
+		if fit >= 0 {
+			return a.editors[fit].Name
 		}
 	}
 	for _, e := range a.editors {

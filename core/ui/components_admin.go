@@ -211,12 +211,20 @@ type WatchStage struct {
 }
 
 // WatchAction is one button shown after the pipeline completes.
+//
+// Method "client" runs the client action registered under URL
+// (window.uiRegisterClientAction) with {event, article, button}: the final
+// event's data, the article as shown ({title, content}), and the button. For
+// a finish step that needs more than a link or a bare POST, such as a picker.
 type WatchAction struct {
 	Label   string `json:"label"`
 	URL     string `json:"url"`
-	Method  string `json:"method,omitempty"`  // "GET" (default, renders as link), "POST"
+	Method  string `json:"method,omitempty"`  // "GET" (default, renders as link), "POST", "client"
 	Variant string `json:"variant,omitempty"` // "primary", "danger", or empty
 	NewTab  bool   `json:"new_tab,omitempty"` // GET-mode only; opens in new tab
+	// ShowIfField shows the button only when the final event carries a
+	// non-empty value under this name.
+	ShowIfField string `json:"show_if_field,omitempty"`
 }
 
 func (PipelineWatchPanel) componentType() string { return "pipeline_watch_panel" }
