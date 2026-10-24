@@ -46,6 +46,7 @@ var (
 	_ DetachableTool     = (*ImageTool)(nil)
 	_ EstimatingTool     = (*ImageTool)(nil)
 	_ PreflightTool      = (*ImageTool)(nil)
+	_ InputImagesTool    = (*ImageTool)(nil)
 	_ SeriesTool         = (*ImageTool)(nil)
 	_ AlwaysDetachTool   = (*ImageTool)(nil)
 	_ DetachIdentityTool = (*ImageTool)(nil)
@@ -161,6 +162,27 @@ func (t *ImageTool) Preflight(args map[string]any, sess *ToolSession) error {
 		return CheckImageInputs(sess, p.backend, p.refs, p.mask)
 	}
 	return nil
+}
+
+// InputImages is the pictures a render was given. See core.InputImagesTool.
+// A reference that does not resolve is still named: Preflight has already
+// refused a call with one.
+func (t *ImageTool) InputImages(args map[string]any, sess *ToolSession) (refs []string, data [][]byte) {
+	switch effectiveImageAction(args) {
+	case "generate", "edit":
+	default:
+		return nil, nil
+	}
+	for _, ref := range stringsArg(args, "images") {
+		if ref = strings.TrimSpace(ref); ref == "" {
+			continue
+		}
+		refs = append(refs, ref)
+		if b, _, err := sess.ResolveImageRef(ref); err == nil {
+			data = append(data, b)
+		}
+	}
+	return refs, data
 }
 
 // TypicalDuration is what this backend has actually been taking, which is a

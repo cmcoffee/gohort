@@ -177,6 +177,20 @@ type PreflightTool interface {
 	Preflight(args map[string]any, sess *ToolSession) error
 }
 
+// InputImagesTool is a tool whose call builds on pictures: the references it
+// was given, as the model wrote them, and the bytes behind each one it could
+// resolve. Asked on the detach path only, so it must be cheap and side-effect
+// free like Preflight.
+//
+// Two things hang on it. A picture the turn was about to send that the job
+// builds on is a step toward the job's result, so it is kept back rather than
+// sent ahead of it. And the result says which pictures went into it, so the
+// turn delivering it can see what a chain of passes has not used yet.
+type InputImagesTool interface {
+	ChatTool
+	InputImages(args map[string]any, sess *ToolSession) (refs []string, data [][]byte)
+}
+
 // TaskRun is a detached call the framework is tracking.
 type TaskRun struct {
 	ID     string // handle the model can name to ask about or cancel it
@@ -213,6 +227,15 @@ type TaskProduct struct {
 	// because it is a step toward a later pass (ToolSession.HoldImage). The
 	// host sends them only when the turn the result wakes starts nothing more.
 	Held []string
+
+	// Inputs are the pictures the call was given, as the model referred to
+	// them (InputImagesTool).
+	Inputs []string
+
+	// Carried are pictures (base64) the turn that started the call was about
+	// to send and the call builds on, kept back from that turn. Superseded by
+	// what the call makes; sent in its place when the call fails.
+	Carried []string
 }
 
 // HeldStepMarker opens the instruction a held step's result carries, so the

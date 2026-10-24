@@ -279,3 +279,30 @@ func TestAHeldStepIsSentOnlyWhenTheChainStops(t *testing.T) {
 		t.Error("a wake with nothing held is not a held step")
 	}
 }
+
+// The wake says which pictures went into the result. Observed 2026-10-24: a
+// four-photo blend stopped after two passes, and its reply described the
+// fourth photo as being in the picture.
+func TestAWakeSaysWhatThePictureWasMadeFrom(t *testing.T) {
+	note := buildWakeNote("sess-note-inputs", "image edit", TaskProduct{
+		Text:   "The finished picture IS ATTACHED.",
+		Inputs: []string{"image#r.66c18084", "find-jelly.jpg"},
+	}, nil)
+	if !strings.Contains(note.history, "made from 2 picture(s): image#r.66c18084, find-jelly.jpg") {
+		t.Errorf("the wake should name the inputs:\n%s", note.prompt)
+	}
+}
+
+// A picture kept back because a pass built on it is superseded by that pass's
+// result, and sent in its place when the pass fails.
+func TestAKeptBackPictureGoesOutOnlyWhenThePassFails(t *testing.T) {
+	buildWakeNote("sess-carry-ok", "image edit", TaskProduct{Images: []string{"ZmluYWw="}, Carried: []string{"c3RlcA=="}}, nil)
+	if held := claimHeldImages("sess-carry-ok"); len(held) != 0 {
+		t.Errorf("a finished pass supersedes the step it built on: %q", held)
+	}
+	claimTaskAttachments("sess-carry-ok", &ToolSession{})
+	buildWakeNote("sess-carry-fail", "image edit", TaskProduct{Carried: []string{"c3RlcA=="}}, errTestTaskFailed)
+	if held := claimHeldImages("sess-carry-fail"); len(held) != 1 || held[0] != "c3RlcA==" {
+		t.Errorf("a failed pass should send the step it built on: %q", held)
+	}
+}

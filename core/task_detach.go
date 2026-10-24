@@ -63,6 +63,9 @@ type DetachPolicy struct {
 	// to fix it in.
 	Preflight func(args map[string]any, sess *ToolSession) error
 
+	// Inputs mirrors InputImagesTool: the pictures the call builds on.
+	Inputs func(args map[string]any, sess *ToolSession) (refs []string, data [][]byte)
+
 	// Series mirrors SeriesTool.SeriesCapable — whether a refused second call
 	// this turn should be booked as a set rather than simply refused.
 	Series bool
@@ -162,6 +165,18 @@ func WrapDetachable(p DetachPolicy, sess *ToolSession, inline ToolHandlerFunc) T
 		if request == "" {
 			request = TaskSeriesRequest(sess.DeliverySession(), p.key())
 		}
+		// A picture this turn was about to send that the job builds on is a
+		// step toward the job's result: a four-photo blend sent the person
+		// its first pass with "the next pass is running". Kept back, it goes
+		// out only if the job fails. See TaskProduct.Carried.
+		var inputs, carried []string
+		if p.Inputs != nil {
+			var data [][]byte
+			inputs, data = p.Inputs(args, sess)
+			if carried = sess.WithdrawImages(data); len(carried) > 0 {
+				Debug("[task] %s builds on %d picture(s) this turn was sending: kept back for its result", p.Tool, len(carried))
+			}
+		}
 		run, err := TaskRunnerFunc(sess, label, func(taskCtx context.Context) (TaskProduct, error) {
 			// A session built for work that outlives the turn. Reusing the
 			// turn's is what killed the call the moment the turn ended: its
@@ -185,6 +200,8 @@ func WrapDetachable(p DetachPolicy, sess *ToolSession, inline ToolHandlerFunc) T
 				Continuation: cont,
 				Request:      request,
 				Held:         held,
+				Inputs:       inputs,
+				Carried:      carried,
 			}, rerr
 		})
 		if err != nil {
@@ -192,6 +209,9 @@ func WrapDetachable(p DetachPolicy, sess *ToolSession, inline ToolHandlerFunc) T
 			// slot back first: no job exists to hold it, and keeping it would
 			// refuse the next call over nothing.
 			sess.ReleaseDetachSlot(p.key())
+			for _, b64 := range carried {
+				sess.AppendImage(b64)
+			}
 			Debug("[task] %s stayed inline: %v", p.Tool, err)
 			return inline(ctx, args)
 		}
@@ -239,6 +259,9 @@ func detachPolicyForChatTool(ct ChatTool, sess *ToolSession) DetachPolicy {
 	}
 	if pt, ok := ct.(PreflightTool); ok {
 		p.Preflight = pt.Preflight
+	}
+	if it, ok := ct.(InputImagesTool); ok {
+		p.Inputs = it.InputImages
 	}
 	if st, ok := ct.(SeriesTool); ok {
 		p.Series = st.SeriesCapable()

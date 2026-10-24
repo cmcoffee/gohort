@@ -7,6 +7,7 @@ package core
 
 import (
 	"context"
+	"encoding/base64"
 	"strings"
 	"testing"
 	"time"
@@ -126,3 +127,37 @@ func TestAHandBuiltToolPreflightsBeforeClaimingTheSlot(t *testing.T) {
 }
 
 var errTestPreflight = Error("no agent by that name")
+
+// A picture this turn was about to send that the job builds on is a step
+// toward the job's result. Observed 2026-10-24: a four-photo blend sent its
+// first pass with "the next pass is running", then its second with the same.
+func TestAPictureTheJobBuildsOnIsKeptBackForIt(t *testing.T) {
+	product := stubTaskRunner(t)
+	sess := &ToolSession{ChatSessionID: "sess-carry"}
+	step := []byte("first pass")
+	sess.AppendImage(base64.StdEncoding.EncodeToString([]byte("delivered earlier")))
+	sess.ClaimUnflushedImages()
+	sess.AppendImage(base64.StdEncoding.EncodeToString(step))
+	sess.AppendImage(base64.StdEncoding.EncodeToString([]byte("something else")))
+
+	h := WrapDetachable(DetachPolicy{
+		Tool:   "image",
+		Always: func(map[string]any, *ToolSession) bool { return true },
+		Inputs: func(map[string]any, *ToolSession) ([]string, [][]byte) {
+			return []string{"image#r.0001", "find-jelly.jpg"}, [][]byte{step, []byte("jelly"), []byte("delivered earlier")}
+		},
+		Detached: func(map[string]any, *ToolSession) (string, error) { return "done", nil },
+	}, sess, func(context.Context, map[string]any) (string, error) { return "", nil })
+	if _, err := h(context.Background(), map[string]any{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(sess.Images) != 2 || sess.Images[1] != base64.StdEncoding.EncodeToString([]byte("something else")) {
+		t.Errorf("the step should leave this turn's pictures, the rest stay: %q", sess.Images)
+	}
+	if len(product.Carried) != 1 || product.Carried[0] != base64.StdEncoding.EncodeToString(step) {
+		t.Errorf("the step should ride with the job: %q", product.Carried)
+	}
+	if strings.Join(product.Inputs, ",") != "image#r.0001,find-jelly.jpg" {
+		t.Errorf("the result should name what went in: %q", product.Inputs)
+	}
+}

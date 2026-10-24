@@ -42,6 +42,34 @@ func (s *ToolSession) AppendImage(b64 string) {
 	Debug("[sess.AppendImage] now %d image(s); size=%dB; md5_8=%s; caller=%s", n, len(b64), fp, callerSummary(2))
 }
 
+// WithdrawImages takes back the pictures this turn was going to send that
+// match any of data, and returns them. Only those not yet delivered: a picture
+// already flushed to the person is theirs.
+func (s *ToolSession) WithdrawImages(data [][]byte) []string {
+	if s == nil || len(data) == 0 {
+		return nil
+	}
+	want := map[string]bool{}
+	for _, d := range data {
+		if len(d) > 0 {
+			want[base64.StdEncoding.EncodeToString(d)] = true
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []string
+	keep := append([]string(nil), s.Images[:s.flushedImages]...)
+	for _, b64 := range s.Images[s.flushedImages:] {
+		if want[b64] {
+			out = append(out, b64)
+			continue
+		}
+		keep = append(keep, b64)
+	}
+	s.Images = keep
+	return out
+}
+
 // callerSummary returns a short "file:line func" string from N frames
 // up the stack. Used by sess.AppendImage's debug log to point at
 // what tool / handler actually appended an image, so duplicate

@@ -119,8 +119,17 @@ func collectMessageMedia(sess *ToolSession, text string) (images, videos []strin
 // So the candidates are exactly the files the turn's own tool calls created —
 // the framework records them per call (ToolSession.StagedFiles) rather than
 // inferring them from a clock. Staged nothing, recover nothing.
+//
+// A turn that started background work is saying the picture is still coming:
+// what it staged is what the job builds from. "First pass is running" after
+// four photo searches went out with the fourth photo attached, which is a
+// source of the blend, not the blend. Only the model's own marker recovers
+// there.
 func recoverStagedDeliverable(sess *ToolSession, reply string, produced bool) string {
 	if sess == nil || strings.TrimSpace(sess.WorkspaceDir) == "" || !deliveryIntended(reply, produced) {
+		return ""
+	}
+	if sess.Detach.Any() && !operatorAttachMarkerRe.MatchString(reply) {
 		return ""
 	}
 	var newest string

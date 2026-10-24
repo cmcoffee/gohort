@@ -144,3 +144,19 @@ func TestProducersAreDistinguishedFromInspectionTools(t *testing.T) {
 		t.Error("no calls, nothing produced")
 	}
 }
+
+// A turn that started background work has not made its picture yet: what it
+// staged is what the job builds from. Observed 2026-10-24: "First pass is
+// running" after four photo searches went out with the fourth photo, a source
+// of the blend still rendering.
+func TestAReplyWhileAPassRunsShipsNoSourcePhoto(t *testing.T) {
+	sess := stagedSession(t, "find-temple.jpg")
+	sess.ClaimDetachSlot("image")
+	if got := recoverStagedDeliverable(sess, "Here's the plan: first pass is running", true); got != "" {
+		t.Errorf("a source of the running pass went out as the delivery: %q", got)
+	}
+	// The model's own send instruction still counts.
+	if got := recoverStagedDeliverable(sess, "[ATTACH: gone.jpg]", true); got != "find-temple.jpg" {
+		t.Errorf("a marker should still recover, got %q", got)
+	}
+}

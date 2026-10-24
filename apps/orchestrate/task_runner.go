@@ -227,8 +227,19 @@ func buildWakeNote(sessionID, label string, out TaskProduct, taskErr error) wake
 	if taskErr != nil {
 		fact.WriteString("It FAILED: " + taskErr.Error() + "\n")
 		act = "Tell the user it failed and what went wrong. Do not silently retry it."
+		// The picture this turn kept back because the job built on it is
+		// the furthest the work got: it goes out with the reply.
+		stageHeldImages(sessionID, out.Carried)
 	} else {
 		fact.WriteString(strings.TrimSpace(out.Text) + "\n")
+		// What went into it, by the names the agent gave. A four-photo
+		// blend stopped after two passes and its reply described the fourth
+		// photo in the picture: nothing told the turn delivering it which
+		// photos it was made from.
+		if len(out.Inputs) > 0 {
+			fmt.Fprintf(&fact, "It was made from %d picture(s): %s. Nothing else went into it: a picture the request asked for that is not among these is not in it.\n",
+				len(out.Inputs), strings.Join(out.Inputs, ", "))
+		}
 		stageHeldImages(sessionID, out.Held)
 		if n := stageTaskAttachments(sessionID, out); n > 0 {
 			fmt.Fprintf(&fact, "The %d file(s) it produced are ATTACHED to the message you are about to send: they go out with it automatically. Do not attach them again and do not describe how to find them.\n", n)
