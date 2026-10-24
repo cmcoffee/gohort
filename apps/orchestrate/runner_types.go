@@ -211,6 +211,9 @@ type chatTurn struct {
 	// Its own mutex: toolMu is held across parts of the tool-call path.
 	givenMu        sync.Mutex
 	givenBulletins []string
+	// request is the person's message this turn answers, "" on a wake; every
+	// session the turn mints carries it (ToolSession.Request).
+	request string
 	// detach is this TURN's background-job ledger, shared by every session the
 	// turn mints. It has to live here rather than on a session because a plan
 	// runs each step on its OWN session (runWorkerStep), so a per-session cap

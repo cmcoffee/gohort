@@ -214,7 +214,16 @@ func (T *OrchestrateApp) deliverTaskResult(origin taskOrigin, label string, out 
 func buildWakeNote(sessionID, label string, out TaskProduct, taskErr error) wakeNote {
 	var fact strings.Builder
 	fact.WriteString(taskWakeMarker + " The work you started earlier is done: " + label + ".\n")
+	// The message that asked for it, quoted. With several jobs out at once
+	// the label alone could not say which request this answers: two blends of
+	// the same three people read "All three men from the three reference
+	// pictures, together in…" and "…standing sid…", and the reply named the
+	// wrong one.
 	act := "Deliver this to the user now, and say what it was for: several messages may have passed since they asked, so name the request rather than assuming they are still looking at it."
+	if req := wakeRequestQuote(out.Request); req != "" {
+		fact.WriteString("They asked for it with: " + req + "\n")
+		act = "Deliver this to the user now, as the answer to the message quoted above and to no other: several messages, and other work, may have passed since they asked, so say which request it answers."
+	}
 	if taskErr != nil {
 		fact.WriteString("It FAILED: " + taskErr.Error() + "\n")
 		act = "Tell the user it failed and what went wrong. Do not silently retry it."
@@ -233,6 +242,19 @@ func buildWakeNote(sessionID, label string, out TaskProduct, taskErr error) wake
 		}
 	}
 	return wakeNote{prompt: fact.String() + act, history: strings.TrimSpace(fact.String())}
+}
+
+// wakeRequestQuote is the person's request as the wake quotes it: on one line,
+// clipped, in quote marks, or "" when there is none.
+func wakeRequestQuote(request string) string {
+	request = strings.Join(strings.Fields(request), " ")
+	if request == "" {
+		return ""
+	}
+	if r := []rune(request); len(r) > 300 {
+		request = string(r[:300]) + "…"
+	}
+	return "\"" + request + "\""
 }
 
 // wakeNote is one finished task's result in its two forms: what the delivering

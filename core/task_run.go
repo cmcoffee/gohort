@@ -203,6 +203,11 @@ type TaskProduct struct {
 	// Unlike Text it is an instruction for that one turn, so the host must keep
 	// it out of the thread's record. Empty for the ordinary one-and-done call.
 	Continuation string
+
+	// Request is the person's message that asked for this work
+	// (ToolSession.Request), or, for a piece of a set started by a later
+	// wake, the message that asked for the set. Empty when there is none.
+	Request string
 }
 
 // TaskRunnerFunc starts fn in the background and returns a handle. The host
@@ -478,6 +483,7 @@ func (s *ToolSession) ForDetachedTask(ctx context.Context) *ToolSession {
 		AgentID:           s.AgentID,
 		ChatSessionID:     s.ChatSessionID,
 		DeliverySessionID: s.DeliverySessionID,
+		Request:           s.Request,
 		DB:                s.DB,
 		WorkspaceDir:      s.WorkspaceDir,
 		WorkspaceID:       s.WorkspaceID,

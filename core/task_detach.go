@@ -143,7 +143,7 @@ func WrapDetachable(p DetachPolicy, sess *ToolSession, inline ToolHandlerFunc) T
 			// core/task_series.go.
 			of := 0
 			if p.Series {
-				of = ExtendTaskSeries(sess.DeliverySession(), p.key())
+				of = ExtendTaskSeries(sess.DeliverySession(), p.key(), sess.Request, BookedCall(sess, p.Tool, args))
 			}
 			Debug("[task] %s refused a second detach this turn; task %q is already running (set of %d)", p.Tool, prior.ID, of)
 			return MarkFrameworkResult(secondDetachNotice(p.Tool, prior, of)), nil
@@ -154,6 +154,13 @@ func WrapDetachable(p DetachPolicy, sess *ToolSession, inline ToolHandlerFunc) T
 		}
 		if label == "" {
 			label = p.Tool
+		}
+		// The message this job answers, for the one that delivers it. A turn
+		// a finished piece woke answers none of the person's, so a piece of a
+		// set started there goes out under the message that asked for the set.
+		request := sess.Request
+		if request == "" {
+			request = TaskSeriesRequest(sess.DeliverySession(), p.key())
 		}
 		run, err := TaskRunnerFunc(sess, label, func(taskCtx context.Context) (TaskProduct, error) {
 			// A session built for work that outlives the turn. Reusing the
@@ -171,6 +178,7 @@ func WrapDetachable(p DetachPolicy, sess *ToolSession, inline ToolHandlerFunc) T
 				Videos:       detached.ClaimUnflushedVideos(),
 				Files:        detached.ClaimUnflushedFiles(),
 				Continuation: detached.TakeTaskContinuation(),
+				Request:      request,
 			}, rerr
 		})
 		if err != nil {

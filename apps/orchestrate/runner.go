@@ -276,6 +276,12 @@ func (pr *planRun) assemblePrompt() {
 			break
 		}
 	}
+	// What a job this turn starts answers (ToolSession.Request). A wake's
+	// message is the framework's note, not anything the person asked.
+	t.request = pr.triggerMsg
+	if isTaskWake(t.request) {
+		t.request = ""
+	}
 	// Session-resident phase machine (machine.go, docs/design/agent-machines.md).
 	// Walks any transient phases at the head of this turn and returns the
 	// phase that owns the reply. Inert — and free — for an agent with no

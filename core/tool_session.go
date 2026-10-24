@@ -98,6 +98,13 @@ type ToolSession struct {
 	// a chat id and a bare handle differently. Empty on web and dispatch runs.
 	ChannelChatID string
 	ChannelHandle string
+	// Request is the person's message this turn answers, as they wrote it.
+	// A background job carries it to the message that delivers its result, so
+	// that message can say which request the result is for: with several jobs
+	// out at once, a label read off the tool's own arguments was too alike to
+	// tell them apart. Empty on a turn a finished job woke, which answers no
+	// message of theirs.
+	Request string
 	// SpeakerName and SpeakerHandle are WHO this turn is answering — the
 	// display name they chose, and the transport's own attribution of them.
 	// Kept apart on purpose, and never collapsed: the name is what the agent

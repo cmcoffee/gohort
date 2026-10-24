@@ -481,6 +481,7 @@ func (t *chatTurn) newToolSession() *ToolSession {
 	// plan step gets its own session; it does not get its own right to start
 	// another render.
 	sess.Detach = t.detachLedger()
+	sess.Request = t.request
 	sess.DeniedCredentials = credentialDenySet(t.agent, sess.Username)
 	sess.DirectCredentialRefusal = directCredentialRefusal(t.agent, sess)
 	sess.ToolFailureAdvice = toolFailureAdvice(t.agent, t.sse != nil, func() bool { return nonOwnerRequester(t.ctx) })

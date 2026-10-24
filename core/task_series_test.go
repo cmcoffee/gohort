@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -152,11 +153,11 @@ func TestARefusedSecondCallBecomesASet(t *testing.T) {
 	const sess, tool = "sess-series-7", "image"
 	t.Cleanup(func() { CloseTaskSeries(sess, tool) })
 
-	if of := ExtendTaskSeries(sess, tool); of != 2 {
+	if of := ExtendTaskSeries(sess, tool, "", ""); of != 2 {
 		t.Fatalf("a refused second call = set of %d, want 2 (the one running, and this one)", of)
 	}
 	// A third attempt in the same turn wanted three.
-	if of := ExtendTaskSeries(sess, tool); of != 3 {
+	if of := ExtendTaskSeries(sess, tool, "", ""); of != 3 {
 		t.Fatalf("a refused third call = set of %d, want 3", of)
 	}
 	// The piece already in flight then books itself as the first of them and
@@ -176,7 +177,7 @@ func TestALandedPieceStopsTheSetFromGrowing(t *testing.T) {
 	const sess, tool = "sess-series-8", "image"
 	t.Cleanup(func() { CloseTaskSeries(sess, tool) })
 	advanceTaskSeries(sess, tool, 3) // piece 1 of 3 lands
-	if of := ExtendTaskSeries(sess, tool); of != 3 {
+	if of := ExtendTaskSeries(sess, tool, "", ""); of != 3 {
 		t.Errorf("set grew to %d after a piece landed; three variations must not become nine", of)
 	}
 }
@@ -185,9 +186,9 @@ func TestRefusalsCannotGrowASetPastTheCap(t *testing.T) {
 	const sess, tool = "sess-series-9", "image"
 	t.Cleanup(func() { CloseTaskSeries(sess, tool) })
 	for i := 0; i < 50; i++ {
-		ExtendTaskSeries(sess, tool)
+		ExtendTaskSeries(sess, tool, "", "")
 	}
-	if of := ExtendTaskSeries(sess, tool); of != taskSeriesMax() {
+	if of := ExtendTaskSeries(sess, tool, "", ""); of != taskSeriesMax() {
 		t.Errorf("set = %d, want it capped at %d", of, taskSeriesMax())
 	}
 }
@@ -304,7 +305,7 @@ func TestRenderToolsShareOneSlotAndOneSet(t *testing.T) {
 	}
 	// And the set they build is one set: begun under one name, continued under
 	// the other, still counting to the same total.
-	if of := ExtendTaskSeries(sess.ChatSessionID, twin.key()); of != 2 {
+	if of := ExtendTaskSeries(sess.ChatSessionID, twin.key(), "", ""); of != 2 {
 		t.Fatalf("set = %d, want 2", of)
 	}
 	if piece, of := advanceTaskSeries(sess.ChatSessionID, grouped.key(), 0); piece != 1 || of != 2 {
@@ -428,5 +429,72 @@ func TestCancellingClosesEverySetInTheConversation(t *testing.T) {
 	}
 	if n := CloseTaskSeriesForSession(""); n != 0 {
 		t.Errorf("empty session closed %d sets, want 0", n)
+	}
+}
+
+// Two different requests in one message: the second call is refused while the
+// first runs, booked, and made again AS IT WAS when the first lands, rather
+// than as another take on the first. Each piece delivers under the message
+// that asked for it, including the one a later wake starts. Observed
+// 2026-10-23: told only to start "the next one", the wake rebuilt it from
+// memory, and results went back under the wrong request.
+func TestABookedCallIsMadeAgainAsItWas(t *testing.T) {
+	const sessID = "sess-booked"
+	t.Cleanup(func() { CloseTaskSeries(sessID, RenderDetachIdentity) })
+	var jobs []func(context.Context) (TaskProduct, error)
+	saved := TaskRunnerFunc
+	TaskRunnerFunc = func(_ *ToolSession, _ string, fn func(context.Context) (TaskProduct, error)) (TaskRun, error) {
+		jobs = append(jobs, fn)
+		return TaskRun{ID: fmt.Sprintf("t%d", len(jobs))}, nil
+	}
+	t.Cleanup(func() { TaskRunnerFunc = saved })
+	p := DetachPolicy{
+		Tool: "image", Key: RenderDetachIdentity, Series: true,
+		Always: func(map[string]any, *ToolSession) bool { return true },
+		Detached: func(args map[string]any, ds *ToolSession) (string, error) {
+			BookSeriesPiece(ds, RenderDetachIdentity, 0, "another take on: "+StringArg(args, "prompt"))
+			return "rendered", nil
+		},
+	}
+	inline := func(context.Context, map[string]any) (string, error) { return "inline", nil }
+	const asked = "blend the two of us, and also put the dog on a beach"
+	turn := WrapDetachable(p, &ToolSession{ChatSessionID: sessID, Request: asked}, inline)
+	first := map[string]any{"prompt": "the two men together", "images": []any{"image#rory_ref", "image#leo_ref"}}
+	second := map[string]any{"prompt": "the dog on a beach", "images": []any{"image#dog_ref"}}
+	if _, err := turn(context.Background(), first); err != nil || len(jobs) != 1 {
+		t.Fatalf("the first call should start a job: %v, %d job(s)", err, len(jobs))
+	}
+	if out, _ := turn(context.Background(), second); len(jobs) != 1 || !strings.Contains(out, "set of 2") {
+		t.Fatalf("the second call should wait as the next of a set: %d job(s), %q", len(jobs), out)
+	}
+
+	got, err := jobs[0](context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Request != asked {
+		t.Errorf("the first piece delivers under %q, want the message that asked", got.Request)
+	}
+	if !strings.Contains(got.Continuation, `image {"images":["image#dog_ref"],"prompt":"the dog on a beach"}`) {
+		t.Errorf("the next piece should be the booked call as it was made:\n%s", got.Continuation)
+	}
+	if strings.Contains(got.Continuation, "genuine variation") {
+		t.Errorf("a booked call is its own request, not a take on the first:\n%s", got.Continuation)
+	}
+
+	// The wake answers no message of the person's, so the piece it starts
+	// delivers under the one that asked for the set.
+	wake := WrapDetachable(p, &ToolSession{ChatSessionID: sessID}, inline)
+	if _, err := wake(context.Background(), second); err != nil || len(jobs) != 2 {
+		t.Fatalf("the wake should start the booked piece: %v, %d job(s)", err, len(jobs))
+	}
+	if got, _ := jobs[1](context.Background()); got.Request != asked {
+		t.Errorf("the booked piece delivers under %q, want %q", got.Request, asked)
+	}
+
+	// A set from a declared count has nothing booked: its next piece is still
+	// a variation.
+	if c := seriesContinuation(1, 3, "another take on: a red bicycle", ""); !strings.Contains(c, "genuine variation") {
+		t.Errorf("a declared set should still ask for a variation:\n%s", c)
 	}
 }

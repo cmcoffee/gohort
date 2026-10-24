@@ -27,6 +27,7 @@
 package core
 
 import (
+	"encoding/json"
 	"strconv"
 	"strings"
 	"sync"
@@ -53,6 +54,15 @@ type taskSeries struct {
 	total int
 	step  int // pieces claimed so far, 1-based once claimed
 	at    time.Time
+	// request is the person's message that asked for the set. A piece started
+	// by a later wake answers no message of its own, so it delivers under this.
+	request string
+	// booked are the calls refused while the first piece ran, in order, each
+	// the tool and its arguments as the model made it. Piece N+1 is booked[N-1].
+	// Without them the next piece was told only to start "the next one", and
+	// rebuilt it from memory: a second, different request in the same message
+	// came back as another take on the first.
+	booked []string
 }
 
 var (
@@ -75,8 +85,16 @@ func taskSeriesKey(sessionID, tool string) string {
 // call is bookkeeping it would get wrong, and omitting it must not silently end
 // the series it is halfway through.
 func advanceTaskSeries(sessionID, tool string, want int) (piece, of int) {
+	piece, of, _ = claimSeriesPiece(sessionID, tool, want, "")
+	return piece, of
+}
+
+// claimSeriesPiece is advanceTaskSeries that also reports the booked call piece
+// N+1 is, when the set came from refused calls rather than a declared count
+// ("" otherwise), and keeps request as the set's when it opens one.
+func claimSeriesPiece(sessionID, tool string, want int, request string) (piece, of int, next string) {
 	if strings.TrimSpace(sessionID) == "" || strings.TrimSpace(tool) == "" {
-		return 0, 0
+		return 0, 0, ""
 	}
 	key := taskSeriesKey(sessionID, tool)
 
@@ -87,7 +105,7 @@ func advanceTaskSeries(sessionID, tool string, want int) (piece, of int) {
 	s := taskSeriesLedger[key]
 	if s == nil {
 		if want < 2 {
-			return 0, 0
+			return 0, 0, ""
 		}
 		if max := taskSeriesMax(); want > max {
 			// Clamped rather than refused. The number is the model's reading of
@@ -96,16 +114,19 @@ func advanceTaskSeries(sessionID, tool string, want int) (piece, of int) {
 			Log("[task] %s asked for a series of %d; clamped to %d", tool, want, max)
 			want = max
 		}
-		s = &taskSeries{total: want}
+		s = &taskSeries{total: want, request: strings.TrimSpace(request)}
 		taskSeriesLedger[key] = s
 	}
 	s.step++
 	s.at = time.Now()
 	piece, of = s.step, s.total
+	if piece-1 < len(s.booked) {
+		next = s.booked[piece-1]
+	}
 	if piece >= of {
 		delete(taskSeriesLedger, key) // finished — the last piece closes it
 	}
-	return piece, of
+	return piece, of, next
 }
 
 // ExtendTaskSeries records that a REFUSED second call was a set rather than a
@@ -124,7 +145,10 @@ func advanceTaskSeries(sessionID, tool string, want int) (piece, of int) {
 // the same turn is a model mis-sequencing a set it already has, not asking for
 // a bigger one, and growing the set every time it does that is how three
 // variations become nine.
-func ExtendTaskSeries(sessionID, tool string) (total int) {
+//
+// request is the message the refused call answers, and booked the call itself
+// (BookedCall), kept so the piece it becomes is that call and not a guess.
+func ExtendTaskSeries(sessionID, tool, request, booked string) (total int) {
 	if strings.TrimSpace(sessionID) == "" || strings.TrimSpace(tool) == "" {
 		return 0
 	}
@@ -137,15 +161,69 @@ func ExtendTaskSeries(sessionID, tool string) (total int) {
 	s := taskSeriesLedger[key]
 	if s == nil {
 		// Two: the piece already running, and the one just refused.
-		s = &taskSeries{total: 2, at: time.Now()}
+		s = &taskSeries{total: 2, at: time.Now(), request: strings.TrimSpace(request), booked: []string{booked}}
 		taskSeriesLedger[key] = s
 		return s.total
 	}
 	if s.step == 0 && s.total < taskSeriesMax() {
 		s.total++
+		s.booked = append(s.booked, booked)
 	}
 	s.at = time.Now()
 	return s.total
+}
+
+// TaskSeriesRequest is the message that asked for the set running in this
+// conversation for tool, or "" when none is open.
+func TaskSeriesRequest(sessionID, tool string) string {
+	taskSeriesMu.Lock()
+	defer taskSeriesMu.Unlock()
+	if s := taskSeriesLedger[taskSeriesKey(sessionID, tool)]; s != nil {
+		return s.request
+	}
+	return ""
+}
+
+// BookedCall is a refused call written down to be made again later: the tool
+// and its arguments as JSON. A positional picture reference (image#2) is
+// frozen to the picture it meant now, since by the time the call is made again
+// newer pictures will have moved every position.
+func BookedCall(sess *ToolSession, tool string, args map[string]any) string {
+	frozen := make(map[string]any, len(args))
+	for k, v := range args {
+		switch x := v.(type) {
+		case string:
+			if ref, ok := FrozenImageRef(sess, x); ok {
+				v = ref
+			}
+		case []any:
+			refs := make([]any, len(x))
+			for i, e := range x {
+				refs[i] = e
+				if s, ok := e.(string); ok {
+					if ref, ok := FrozenImageRef(sess, s); ok {
+						refs[i] = ref
+					}
+				}
+			}
+			v = refs
+		case []string:
+			refs := make([]string, len(x))
+			for i, s := range x {
+				refs[i] = s
+				if ref, ok := FrozenImageRef(sess, s); ok {
+					refs[i] = ref
+				}
+			}
+			v = refs
+		}
+		frozen[k] = v
+	}
+	raw, err := json.Marshal(frozen)
+	if err != nil {
+		return tool
+	}
+	return tool + " " + string(raw)
 }
 
 // CloseTaskSeries ends a series early: a piece failed, or the work was
@@ -197,8 +275,8 @@ func BookSeriesPiece(sess *ToolSession, key string, want int, what string) (piec
 	if sess == nil || !sess.Detached {
 		return 0, 0
 	}
-	piece, of = advanceTaskSeries(sess.DeliverySession(), key, want)
-	if c := SeriesContinuation(piece, of, what); c != "" {
+	piece, of, next := claimSeriesPiece(sess.DeliverySession(), key, want, sess.Request)
+	if c := seriesContinuation(piece, of, what, next); c != "" {
 		sess.SetTaskContinuation(c)
 	}
 	return piece, of
@@ -224,6 +302,12 @@ const SeriesContinuationMarker = "[SET IN PROGRESS]"
 // the machinery — because those were addressed to a turn that has since ended,
 // and a wake turn that has not been told them will happily explain queues.
 func SeriesContinuation(piece, of int, what string) string {
+	return seriesContinuation(piece, of, what, "")
+}
+
+// seriesContinuation is SeriesContinuation for a set whose next piece may be a
+// booked call (next), which is made again as it was rather than varied.
+func seriesContinuation(piece, of int, what, next string) string {
 	if of <= 1 || piece >= of {
 		return ""
 	}
@@ -238,11 +322,18 @@ func SeriesContinuation(piece, of int, what string) string {
 	// write and then act writes, and a turn that has produced its reply is over.
 	// Asking for the act first costs nothing and is the difference between a set
 	// that finishes and a promise in prose.
-	b.WriteString("FIRST, before you write a single word of your reply: call the same tool again to start the next one")
-	if w := strings.TrimSpace(what); w != "" {
-		b.WriteString(" (" + w + ")")
+	if next = strings.TrimSpace(next); next != "" {
+		// A booked call is its own request, not a take on this one. Told to
+		// vary what just finished, the model made a second version of the
+		// first picture and the second request never happened.
+		b.WriteString("FIRST, before you write a single word of your reply: make the call that waited for this one, exactly as you made it then, the same tool and the same arguments:\n" + next + "\n")
+	} else {
+		b.WriteString("FIRST, before you write a single word of your reply: call the same tool again to start the next one")
+		if w := strings.TrimSpace(what); w != "" {
+			b.WriteString(" (" + w + ")")
+		}
+		b.WriteString(", with a prompt that is a genuine variation on the idea rather than a repeat of the one you just used: a different angle, palette, composition, or mood, whichever the request was about.\n")
 	}
-	b.WriteString(", with a prompt that is a genuine variation on the idea rather than a repeat of the one you just used: a different angle, palette, composition, or mood, whichever the request was about.\n")
 	b.WriteString("THEN, in the same turn, write one line delivering the piece that just finished. Both, in that order. A turn that only writes the line is a turn that abandoned the set: the words \"starting the next one\" are not starting it.\n")
 	// The failure this line exists for: the model reads "start the next one",
 	// starts it, and then tells the user about the mechanism — "the second

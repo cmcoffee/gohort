@@ -218,3 +218,32 @@ func TestAFailedPieceCarriesNoContinuation(t *testing.T) {
 		t.Errorf("a failure must not start the next piece:\n%s", note.prompt)
 	}
 }
+
+// A result says which request it answers by quoting the message that asked:
+// with several jobs out, labels read off the image prompt were too alike to
+// tell apart. The quote is kept in the thread's record, since "which one was
+// that" is a question a later turn has to answer too, and a failure carries it
+// as well.
+func TestAWakeQuotesTheMessageThatAskedForIt(t *testing.T) {
+	asked := "put the dog\non a beach"
+	note := buildWakeNote("sess-note-req", "image edit: All three men from the three reference pictures", TaskProduct{
+		Text: "image#4 is its lasting handle.", Request: asked,
+	}, nil)
+	const quoted = `They asked for it with: "put the dog on a beach"`
+	if !strings.Contains(note.prompt, quoted) || !strings.Contains(note.history, quoted) {
+		t.Errorf("the note should quote the request on one line:\n%s", note.prompt)
+	}
+	if !strings.Contains(note.prompt, "as the answer to the message quoted above and to no other") {
+		t.Errorf("the delivering turn should be told to answer that message:\n%s", note.prompt)
+	}
+	failed := buildWakeNote("sess-note-req2", "image edit", TaskProduct{Request: asked}, errTestTaskFailed)
+	if !strings.Contains(failed.prompt, quoted) || !strings.Contains(failed.prompt, "Do not silently retry") {
+		t.Errorf("a failure should name its request and still not retry:\n%s", failed.prompt)
+	}
+	if long := wakeRequestQuote(strings.Repeat("a", 400)); len([]rune(long)) != 303 {
+		t.Errorf("a long request should be clipped to 300 characters: %d", len([]rune(long)))
+	}
+	if wakeRequestQuote("  \n ") != "" {
+		t.Error("no request, no quote")
+	}
+}
