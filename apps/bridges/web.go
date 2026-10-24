@@ -54,6 +54,7 @@ func (T *Bridges) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	// so mark them public to bypass the login redirect.
 	RegisterPublicPath(prefix + "/api/hook")
 	RegisterPublicPath(prefix + "/api/poll")
+	RegisterPublicPath(prefix + "/api/relay-log") // the relay's own log lines, by key (relay_log.go)
 	// Provider-native webhook receiver — a public, per-connector inbound route
 	// (trailing "/" = prefix match). It authenticates each request itself via the
 	// provider's signature scheme against the connector's stored signing secret.
@@ -68,6 +69,8 @@ func (T *Bridges) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	sub.HandleFunc("/", T.handleDashboard)
 	sub.HandleFunc("/api/hook", T.handleHook)
 	sub.HandleFunc("/api/poll", T.handlePoll)
+	sub.HandleFunc("/api/relay-log", T.handleRelayLogPost)
+	sub.HandleFunc("/api/relay-tail", T.handleRelayLogView)
 	sub.HandleFunc("/api/webhook/", T.handleWebhook)
 	sub.HandleFunc("/api/bot/", T.handleBotActivity)
 	sub.HandleFunc("/api/webhook-secret", T.handleWebhookSecret)

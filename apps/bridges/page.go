@@ -74,6 +74,19 @@ func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
 						{Type: "button", Label: "Revoke", Method: "DELETE",
 							PostTo:  "/bridges/api/keys/{id}",
 							Confirm: "Revoke this bridge key? Its connector will stop authenticating.", Compact: true},
+						// What the connector itself logged: what it read, sent and
+						// skipped on its own machine. Sent on each poll by a
+						// connector that does (the iMessage relay); kept briefly.
+						ui.Expand("📜 Relay log", ui.Table{
+							Source:        "/bridges/api/relay-tail?id={id}",
+							RowKey:        "id",
+							AutoRefreshMS: 5000,
+							Columns: []ui.Col{
+								{Field: "at", Label: "When", Mute: true},
+								{Field: "line", Label: "Line", Flex: 4},
+							},
+							EmptyText: "Nothing from this connector yet. The iMessage relay sends what it logs on each poll, newest first here; the last few hundred lines are kept until the server restarts.",
+						}),
 					},
 					EmptyText: "No message bridges yet. The gohort-desktop daemon registers itself automatically the first time it connects to /bridges/api/hook.",
 				},

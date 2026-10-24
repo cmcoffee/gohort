@@ -94,7 +94,7 @@ func Run(cfg Config, fromStart, verbose bool, stop <-chan struct{}) {
 		cur.date = latestMessageDate(dbPath)
 	}
 	hasBody := hasColumn(db, "message", "attributedBody")
-	nfo.Log("imsg relay started. db=%s server=%s poll=%s last_rowid=%d date_floor=%s attributedBody=%v",
+	logf("imsg relay started. db=%s server=%s poll=%s last_rowid=%d date_floor=%s attributedBody=%v",
 		dbPath, cfg.ServerURL, interval, cur.rowID, cur.dateLabel(), hasBody)
 
 	ticker := time.NewTicker(interval)
@@ -102,15 +102,16 @@ func Run(cfg Config, fromStart, verbose bool, stop <-chan struct{}) {
 	for {
 		select {
 		case <-stop:
-			nfo.Log("imsg relay stopped")
+			logf("imsg relay stopped")
 			return
 		case <-ticker.C:
 			prev := cur.rowID
 			cur = processNewMessages(cfg, db, hasBody, cur, verbose)
 			if verbose && cur.rowID == prev {
-				nfo.Log("poll: no new messages (watermark=%d)", cur.rowID)
+				logf("poll: no new messages (watermark=%d)", cur.rowID)
 			}
 			deliverOutbox(cfg, db)
+			shipRelayLog(cfg.ServerURL, cfg.APIKey)
 		}
 	}
 }
@@ -135,7 +136,7 @@ func waitOrStop(stop <-chan struct{}, d time.Duration) bool {
 func openChatDB(dbPath string, interval time.Duration, stop <-chan struct{}) *sql.DB {
 	for {
 		if _, err := os.Stat(dbPath); err != nil {
-			nfo.Log("chat.db not accessible (%v): retrying in %s\n"+
+			logf("chat.db not accessible (%v): retrying in %s\n"+
 				"Make sure the bridge has Full Disk Access:\n"+
 				"System Settings → Privacy & Security → Full Disk Access", err, interval)
 			if !waitOrStop(stop, interval) {
@@ -145,7 +146,7 @@ func openChatDB(dbPath string, interval time.Duration, stop <-chan struct{}) *sq
 		}
 		d, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_busy_timeout=5000")
 		if err != nil {
-			nfo.Log("open chat.db: %v, retrying in %s", err, interval)
+			logf("open chat.db: %v, retrying in %s", err, interval)
 			if !waitOrStop(stop, interval) {
 				return nil
 			}
@@ -154,7 +155,7 @@ func openChatDB(dbPath string, interval time.Duration, stop <-chan struct{}) *sq
 		d.SetMaxOpenConns(3)
 		if err := d.Ping(); err != nil {
 			d.Close()
-			nfo.Log("chat.db ping failed (%v): retrying in %s\n"+
+			logf("chat.db ping failed (%v): retrying in %s\n"+
 				"Make sure the bridge has Full Disk Access:\n"+
 				"System Settings → Privacy & Security → Full Disk Access", err, interval)
 			if !waitOrStop(stop, interval) {
@@ -435,7 +436,7 @@ func runTest(dbPath string) {
 		var sender, text string
 		var body []byte
 		if err := rows.Scan(&rowID, &sender, &text, &appleDate, &body, &imgCount); err != nil {
-			nfo.Log("scan: %v", err)
+			logf("scan: %v", err)
 			continue
 		}
 		if text == "" && len(body) > 0 {
@@ -471,12 +472,12 @@ func processNewMessages(cfg Config, db *sql.DB, hasBody bool, cur relayCursor, v
 	var dbMax int64
 	db.QueryRow(`SELECT IFNULL(MAX(ROWID),0) FROM message`).Scan(&dbMax)
 	if verbose {
-		nfo.Log("poll: watermark=%d db_max=%d date_floor=%s", cur.rowID, dbMax, cur.dateLabel())
+		logf("poll: watermark=%d db_max=%d date_floor=%s", cur.rowID, dbMax, cur.dateLabel())
 	}
 
 	rows, err := db.Query(messageTextQuery(hasBody), cur.rowID)
 	if err != nil {
-		nfo.Log("query: %v", err)
+		logf("query: %v", err)
 		return cur
 	}
 	defer rows.Close()
@@ -490,7 +491,7 @@ func processNewMessages(cfg Config, db *sql.DB, hasBody bool, cur relayCursor, v
 		var appleDate int64
 		var body []byte
 		if err := rows.Scan(&rowID, &isFromMe, &text, &appleDate, &handle, &service, &chatID, &chatDisplayName, &body); err != nil {
-			nfo.Log("scan error rowid=%d: %v", rowID, err)
+			logf("scan error rowid=%d: %v", rowID, err)
 			continue
 		}
 		rowCount++
@@ -500,7 +501,7 @@ func processNewMessages(cfg Config, db *sql.DB, hasBody bool, cur relayCursor, v
 		// past it so it isn't rescanned every poll, and leave the date floor
 		// where it is — this row is behind it by definition.
 		if out.backfilled(sent) {
-			nfo.Log("rowid=%d: skipping backfilled history (sent %s, floor %s)",
+			logf("rowid=%d: skipping backfilled history (sent %s, floor %s)",
 				rowID, sent.UTC().Format(time.RFC3339), out.dateLabel())
 			out.rowID = rowID
 			continue
@@ -511,7 +512,7 @@ func processNewMessages(cfg Config, db *sql.DB, hasBody bool, cur relayCursor, v
 			text = extractTextFromBody(body)
 		}
 		if verbose {
-			nfo.Log("found rowid=%d is_from_me=%d handle=%q chatID=%q text=%q body_bytes=%d", rowID, isFromMe, handle, chatID, truncate(text, 40), len(body))
+			logf("found rowid=%d is_from_me=%d handle=%q chatID=%q text=%q body_bytes=%d", rowID, isFromMe, handle, chatID, truncate(text, 40), len(body))
 		}
 
 		// Skip is_from_me=1 rows that we know we sent. Two skip paths:
@@ -526,12 +527,12 @@ func processNewMessages(cfg Config, db *sql.DB, hasBody bool, cur relayCursor, v
 			_, skipByID := sentROWIDs[rowID]
 			sentROWIDMu.Unlock()
 			if skipByID {
-				nfo.Log("rowid=%d: skipping our own outgoing reply (matched by ROWID)", rowID)
+				logf("rowid=%d: skipping our own outgoing reply (matched by ROWID)", rowID)
 				out.rowID = rowID
 				continue
 			}
 			if matchesRecentSentText(chatID, handle, text) {
-				nfo.Log("rowid=%d: skipping our own outgoing reply (matched by text)", rowID)
+				logf("rowid=%d: skipping our own outgoing reply (matched by text)", rowID)
 				// Record the ROWID so subsequent passes use the fast path
 				// even if the same row reappears.
 				sentROWIDMu.Lock()
@@ -550,7 +551,7 @@ func processNewMessages(cfg Config, db *sql.DB, hasBody bool, cur relayCursor, v
 			// as an ordinary inbound carrying a fresh ROWID, so nothing
 			// downstream could recognize it, and the agent answered its own
 			// reply for as long as the thread stayed open.
-			nfo.Log("rowid=%d: skipping the received copy of our own message (self-thread echo)", rowID)
+			logf("rowid=%d: skipping the received copy of our own message (self-thread echo)", rowID)
 			sentROWIDMu.Lock()
 			sentROWIDs[rowID] = struct{}{}
 			sentROWIDMu.Unlock()
@@ -571,10 +572,10 @@ func processNewMessages(cfg Config, db *sql.DB, hasBody bool, cur relayCursor, v
 			polls := emptyRowSeen[rowID]
 			emptyRowMu.Unlock()
 			if polls < maxEmptyPolls {
-				nfo.Log("rowid=%d: no chat_id yet (poll %d/%d), rechecking", rowID, polls, maxEmptyPolls)
+				logf("rowid=%d: no chat_id yet (poll %d/%d), rechecking", rowID, polls, maxEmptyPolls)
 				break
 			}
-			nfo.Log("rowid=%d: no chat_id after %d polls, falling back to handle %q", rowID, maxEmptyPolls, handle)
+			logf("rowid=%d: no chat_id after %d polls, falling back to handle %q", rowID, maxEmptyPolls, handle)
 			chatID = handle
 			emptyRowMu.Lock()
 			delete(emptyRowSeen, rowID)
@@ -593,7 +594,7 @@ func processNewMessages(cfg Config, db *sql.DB, hasBody bool, cur relayCursor, v
 				// e.g. a pdf or vcard). Send a NEUTRAL placeholder, never "[Image]":
 				// claiming a picture when none was sent makes the agent hallucinate
 				// one. The server-side note tells the agent it can't inspect it.
-				nfo.Log("rowid=%d: %d attachment(s), none processable, using [Attachment] placeholder", rowID, attachCount)
+				logf("rowid=%d: %d attachment(s), none processable, using [Attachment] placeholder", rowID, attachCount)
 				text = "[Attachment]"
 			} else {
 				// Row exists but content not yet written — iMessage fills text
@@ -603,7 +604,7 @@ func processNewMessages(cfg Config, db *sql.DB, hasBody bool, cur relayCursor, v
 				polls := emptyRowSeen[rowID]
 				emptyRowMu.Unlock()
 				if polls < maxEmptyPolls {
-					nfo.Log("rowid=%d handle=%q: no content yet (poll %d/%d), rechecking", rowID, handle, polls, maxEmptyPolls)
+					logf("rowid=%d handle=%q: no content yet (poll %d/%d), rechecking", rowID, handle, polls, maxEmptyPolls)
 					break
 				}
 				// Log the raw attributedBody (hex, capped) so a message that
@@ -613,7 +614,7 @@ func processNewMessages(cfg Config, db *sql.DB, hasBody bool, cur relayCursor, v
 				if len(hexBody) > 256 {
 					hexBody = hexBody[:256]
 				}
-				nfo.Log("rowid=%d handle=%q: still empty after %d polls, skipping, body[%d]=%x", rowID, handle, polls, len(body), hexBody)
+				logf("rowid=%d handle=%q: still empty after %d polls, skipping, body[%d]=%x", rowID, handle, polls, len(body), hexBody)
 				emptyRowMu.Lock()
 				delete(emptyRowSeen, rowID)
 				emptyRowMu.Unlock()
@@ -648,11 +649,11 @@ func processNewMessages(cfg Config, db *sql.DB, hasBody bool, cur relayCursor, v
 		}
 		if err := postHook(cfg, payload); err != nil {
 			if he, ok := err.(*hookErr); ok && he.skip {
-				nfo.Log("hook rejected rowid=%d handle=%s: %v, skipping row", rowID, handle, err)
+				logf("hook rejected rowid=%d handle=%s: %v, skipping row", rowID, handle, err)
 				out.rowID = rowID
 				continue
 			}
-			nfo.Log("hook FAILED rowid=%d handle=%s: %v, will retry next poll", rowID, handle, err)
+			logf("hook FAILED rowid=%d handle=%s: %v, will retry next poll", rowID, handle, err)
 			break
 		}
 		// Relayed. This is the only site that carries the date floor forward —
@@ -664,13 +665,13 @@ func processNewMessages(cfg Config, db *sql.DB, hasBody bool, cur relayCursor, v
 		emptyRowMu.Unlock()
 		switch {
 		case len(images) > 0 || len(videos) > 0 || len(audios) > 0:
-			nfo.Log("relayed [%d] from %s: %q [%d image(s), %d video(s), %d audio(s)]", rowID, handle, truncate(text, 60), len(images), len(videos), len(audios))
+			logf("relayed [%d] from %s: %q [%d image(s), %d video(s), %d audio(s)]", rowID, handle, truncate(text, 60), len(images), len(videos), len(audios))
 		default:
-			nfo.Log("relayed [%d] from %s: %q", rowID, handle, truncate(text, 60))
+			logf("relayed [%d] from %s: %q", rowID, handle, truncate(text, 60))
 		}
 	}
 	if rowCount > 0 {
-		nfo.Log("poll done: scanned %d row(s), watermark now %d, date floor %s", rowCount, out.rowID, out.dateLabel())
+		logf("poll done: scanned %d row(s), watermark now %d, date floor %s", rowCount, out.rowID, out.dateLabel())
 	}
 	return out
 }
@@ -1052,7 +1053,7 @@ func readImageAttachments(db *sql.DB, messageID int64) []string {
 		if rows.Scan(&filename, &mimeType, &transferState) != nil {
 			continue
 		}
-		nfo.Log("attachment candidate: state=%d mime=%q path=%s", transferState, mimeType, filename)
+		logf("attachment candidate: state=%d mime=%q path=%s", transferState, mimeType, filename)
 
 		// Only process image MIME types, or files with image extensions.
 		lower := strings.ToLower(filename)
@@ -1068,17 +1069,17 @@ func readImageAttachments(db *sql.DB, messageID int64) []string {
 		path := expandHome(filename)
 		info, err := os.Stat(path)
 		if err != nil {
-			nfo.Log("attachment not found: %s: %v", filepath.Base(path), err)
+			logf("attachment not found: %s: %v", filepath.Base(path), err)
 			continue
 		}
 		if info.Size() < 512 {
-			nfo.Log("attachment too small (%d bytes), placeholder: %s", info.Size(), filepath.Base(path))
+			logf("attachment too small (%d bytes), placeholder: %s", info.Size(), filepath.Base(path))
 			continue
 		}
 
 		data, err := os.ReadFile(path)
 		if err != nil {
-			nfo.Log("read attachment %s: %v", filepath.Base(path), err)
+			logf("read attachment %s: %v", filepath.Base(path), err)
 			continue
 		}
 
@@ -1097,20 +1098,20 @@ func readImageAttachments(db *sql.DB, messageID int64) []string {
 		case isJPEG:
 			// already vision-ready — send raw
 		case isGIF && info.Size() <= maxInboundGifBytes:
-			nfo.Log("gif passthrough (raw, %d bytes): %s, server frame-samples", len(data), filepath.Base(path))
+			logf("gif passthrough (raw, %d bytes): %s, server frame-samples", len(data), filepath.Base(path))
 		default:
 			converted := toJPEG(path)
 			if converted != nil {
 				data = converted
-				nfo.Log("converted→JPEG for %s (%d bytes)", filepath.Base(path), len(data))
+				logf("converted→JPEG for %s (%d bytes)", filepath.Base(path), len(data))
 			} else {
-				nfo.Log("skipping non-JPEG (sips conversion failed): %s", filepath.Base(path))
+				logf("skipping non-JPEG (sips conversion failed): %s", filepath.Base(path))
 				continue
 			}
 		}
 
 		out = append(out, base64.StdEncoding.EncodeToString(data))
-		nfo.Log("attached image %s (%d bytes, mime=%s)", filepath.Base(path), len(data), mimeType)
+		logf("attached image %s (%d bytes, mime=%s)", filepath.Base(path), len(data), mimeType)
 		if len(out) >= 3 {
 			break
 		}
@@ -1160,26 +1161,26 @@ func readVideoAttachments(db *sql.DB, messageID int64) []string {
 		path := expandHome(filename)
 		info, err := os.Stat(path)
 		if err != nil {
-			nfo.Log("video attachment not found: %s: %v", filepath.Base(path), err)
+			logf("video attachment not found: %s: %v", filepath.Base(path), err)
 			continue
 		}
 		if info.Size() > maxVideoBytes {
-			nfo.Log("video too large (%d bytes), skipping: %s", info.Size(), filepath.Base(path))
+			logf("video too large (%d bytes), skipping: %s", info.Size(), filepath.Base(path))
 			continue
 		}
 		if info.Size() < 512 {
-			nfo.Log("video too small (%d bytes), placeholder: %s", info.Size(), filepath.Base(path))
+			logf("video too small (%d bytes), placeholder: %s", info.Size(), filepath.Base(path))
 			continue
 		}
 
 		data, err := os.ReadFile(path)
 		if err != nil {
-			nfo.Log("read video %s: %v", filepath.Base(path), err)
+			logf("read video %s: %v", filepath.Base(path), err)
 			continue
 		}
 
 		out = append(out, base64.StdEncoding.EncodeToString(data))
-		nfo.Log("attached video %s (%d bytes, mime=%s)", filepath.Base(path), len(data), mimeType)
+		logf("attached video %s (%d bytes, mime=%s)", filepath.Base(path), len(data), mimeType)
 		if len(out) >= 1 {
 			break
 		}
@@ -1230,26 +1231,26 @@ func readAudioAttachments(db *sql.DB, messageID int64) []string {
 		path := expandHome(filename)
 		info, err := os.Stat(path)
 		if err != nil {
-			nfo.Log("audio attachment not found: %s: %v", filepath.Base(path), err)
+			logf("audio attachment not found: %s: %v", filepath.Base(path), err)
 			continue
 		}
 		if info.Size() > maxAudioBytes {
-			nfo.Log("audio too large (%d bytes), skipping: %s", info.Size(), filepath.Base(path))
+			logf("audio too large (%d bytes), skipping: %s", info.Size(), filepath.Base(path))
 			continue
 		}
 		if info.Size() < 256 {
-			nfo.Log("audio too small (%d bytes), skipping: %s", info.Size(), filepath.Base(path))
+			logf("audio too small (%d bytes), skipping: %s", info.Size(), filepath.Base(path))
 			continue
 		}
 
 		data, err := os.ReadFile(path)
 		if err != nil {
-			nfo.Log("read audio %s: %v", filepath.Base(path), err)
+			logf("read audio %s: %v", filepath.Base(path), err)
 			continue
 		}
 
 		out = append(out, base64.StdEncoding.EncodeToString(data))
-		nfo.Log("attached audio %s (%d bytes, mime=%s)", filepath.Base(path), len(data), mimeType)
+		logf("attached audio %s (%d bytes, mime=%s)", filepath.Base(path), len(data), mimeType)
 		if len(out) >= 1 {
 			break
 		}
@@ -1268,7 +1269,7 @@ func toJPEG(srcPath string) []byte {
 
 	sipsOut, err := exec.Command("sips", "-s", "format", "jpeg", srcPath, "--out", tmp.Name()).CombinedOutput()
 	if err != nil {
-		nfo.Log("sips failed for %s: %v: %s", filepath.Base(srcPath), err, strings.TrimSpace(string(sipsOut)))
+		logf("sips failed for %s: %v: %s", filepath.Base(srcPath), err, strings.TrimSpace(string(sipsOut)))
 		return nil
 	}
 	data, err := os.ReadFile(tmp.Name())
@@ -1288,7 +1289,7 @@ func deliverOutbox(cfg Config, db *sql.DB) {
 	req.Header.Set("X-API-Key", cfg.APIKey())
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		nfo.Log("poll: %v", err)
+		logf("poll: %v", err)
 		return
 	}
 	defer resp.Body.Close()
@@ -1300,7 +1301,7 @@ func deliverOutbox(cfg Config, db *sql.DB) {
 		return
 	}
 	if len(items) > 0 {
-		nfo.Log("poll: %d item(s)", len(items))
+		logf("poll: %d item(s)", len(items))
 	}
 	for _, item := range items {
 		tryDeliver(cfg, db, item, 1)
@@ -1316,7 +1317,7 @@ func tryDeliver(cfg Config, db *sql.DB, item OutboxItem, attempt int) {
 	// the Messages database so the Messages app can resolve them.
 	item.ChatID = resolveChatID(cfg.DBPath, item.ChatID)
 
-	nfo.Log("delivering [attempt %d] %s to %s: %q", attempt, item.Type, item.Handle, truncate(item.Text, 60))
+	logf("delivering [attempt %d] %s to %s: %q", attempt, item.Type, item.Handle, truncate(item.Text, 60))
 
 	// Snapshot max ROWID before sending so we can find the new row afterwards.
 	var preROWID int64
@@ -1328,7 +1329,7 @@ func tryDeliver(cfg Config, db *sql.DB, item OutboxItem, attempt int) {
 	for i, b64 := range item.Images {
 		data, err := base64.StdEncoding.DecodeString(b64)
 		if err != nil {
-			nfo.Log("image %d decode error: %v", i, err)
+			logf("image %d decode error: %v", i, err)
 			continue
 		}
 		// An audio file sent on the image list (a server from before audio rode
@@ -1340,14 +1341,14 @@ func tryDeliver(cfg Config, db *sql.DB, item OutboxItem, attempt int) {
 		}
 		tmp, err := os.CreateTemp("", prefix+ext)
 		if err != nil {
-			nfo.Log("image %d temp file error: %v", i, err)
+			logf("image %d temp file error: %v", i, err)
 			continue
 		}
 		tmpPath := tmp.Name()
 		_, err = tmp.Write(data)
 		tmp.Close()
 		if err != nil {
-			nfo.Log("image %d write error: %v", i, err)
+			logf("image %d write error: %v", i, err)
 			os.Remove(tmpPath)
 			continue
 		}
@@ -1372,7 +1373,7 @@ func tryDeliver(cfg Config, db *sql.DB, item OutboxItem, attempt int) {
 			if converted, err := convertToJPEG(tmpPath); err == nil {
 				sendPath = converted
 			} else {
-				nfo.Log("image %d webp convert warning: %v, sending original", i, err)
+				logf("image %d webp convert warning: %v, sending original", i, err)
 			}
 		case ".gif":
 			fi, _ := os.Stat(tmpPath)
@@ -1381,31 +1382,31 @@ func tryDeliver(cfg Config, db *sql.DB, item OutboxItem, attempt int) {
 				size = fi.Size()
 			}
 			if size > 0 && size <= iMessageImageMaxBytes {
-				nfo.Log("image %d: gif under cap (%d bytes), sending animated", i, size)
+				logf("image %d: gif under cap (%d bytes), sending animated", i, size)
 				// sendPath stays tmpPath — animated GIF passes through.
 			} else if mp4Path, err := convertGIFToMP4(tmpPath); err == nil {
 				sendPath = mp4Path
-				nfo.Log("image %d: gif %d bytes over cap, transcoded to mp4: %s", i, size, mp4Path)
+				logf("image %d: gif %d bytes over cap, transcoded to mp4: %s", i, size, mp4Path)
 			} else {
-				nfo.Log("image %d: gif transcode failed (%v), falling back to JPEG flatten", i, err)
+				logf("image %d: gif transcode failed (%v), falling back to JPEG flatten", i, err)
 				if converted, jerr := convertToJPEG(tmpPath); jerr == nil {
 					sendPath = converted
 				} else {
-					nfo.Log("image %d: jpeg fallback also failed (%v), sending original gif", i, jerr)
+					logf("image %d: jpeg fallback also failed (%v), sending original gif", i, jerr)
 				}
 			}
 		}
 		if fi, err := os.Stat(sendPath); err == nil {
-			nfo.Log("image %d sending: %s (%d bytes)", i, filepath.Ext(sendPath), fi.Size())
+			logf("image %d sending: %s (%d bytes)", i, filepath.Ext(sendPath), fi.Size())
 		}
 		if err := sendFileViaMessages(item.Handle, item.ChatID, sendPath); err != nil {
-			nfo.Log("image %d send error to %s: %v", i, item.Handle, err)
+			logf("image %d send error to %s: %v", i, item.Handle, err)
 			os.Remove(tmpPath)
 			if sendPath != tmpPath {
 				os.Remove(sendPath)
 			}
 		} else {
-			nfo.Log("image %d sent to %s (%s)", i, item.Handle, filepath.Ext(sendPath))
+			logf("image %d sent to %s (%s)", i, item.Handle, filepath.Ext(sendPath))
 			// Delay removal — Messages.app reads the file asynchronously after
 			// osascript returns, so removing immediately can cause a broken attachment.
 			go func(orig, sent string) {
@@ -1428,31 +1429,31 @@ func tryDeliver(cfg Config, db *sql.DB, item OutboxItem, attempt int) {
 	for i, b64 := range item.Videos {
 		data, err := base64.StdEncoding.DecodeString(b64)
 		if err != nil {
-			nfo.Log("video %d decode error: %v", i, err)
+			logf("video %d decode error: %v", i, err)
 			continue
 		}
 		ext := videoExt(data)
 		tmp, err := os.CreateTemp("", "phantom-vid-*"+ext)
 		if err != nil {
-			nfo.Log("video %d temp file error: %v", i, err)
+			logf("video %d temp file error: %v", i, err)
 			continue
 		}
 		tmpPath := tmp.Name()
 		_, err = tmp.Write(data)
 		tmp.Close()
 		if err != nil {
-			nfo.Log("video %d write error: %v", i, err)
+			logf("video %d write error: %v", i, err)
 			os.Remove(tmpPath)
 			continue
 		}
 		if fi, err := os.Stat(tmpPath); err == nil {
-			nfo.Log("video %d sending: %s (%d bytes)", i, filepath.Ext(tmpPath), fi.Size())
+			logf("video %d sending: %s (%d bytes)", i, filepath.Ext(tmpPath), fi.Size())
 		}
 		if err := sendFileViaMessages(item.Handle, item.ChatID, tmpPath); err != nil {
-			nfo.Log("video %d send error to %s: %v", i, item.Handle, err)
+			logf("video %d send error to %s: %v", i, item.Handle, err)
 			os.Remove(tmpPath)
 		} else {
-			nfo.Log("video %d sent to %s (%s)", i, item.Handle, filepath.Ext(tmpPath))
+			logf("video %d sent to %s (%s)", i, item.Handle, filepath.Ext(tmpPath))
 			videoBytesSent += int64(len(data))
 			go func(p string) {
 				time.Sleep(15 * time.Second) // longer than images — videos take Messages.app a moment to ingest
@@ -1473,7 +1474,7 @@ func tryDeliver(cfg Config, db *sql.DB, item OutboxItem, attempt int) {
 		if delay > 15*time.Second {
 			delay = 15 * time.Second
 		}
-		nfo.Log("sleeping %s before text reply so video lands first (%d bytes sent)", delay, videoBytesSent)
+		logf("sleeping %s before text reply so video lands first (%d bytes sent)", delay, videoBytesSent)
 		time.Sleep(delay)
 	}
 
@@ -1489,7 +1490,7 @@ func tryDeliver(cfg Config, db *sql.DB, item OutboxItem, attempt int) {
 	// and falls back to the secondScreen buddy "Me" service if that fails.
 	// Only bail out when there is nothing at all to route on.
 	if item.Handle == "" && item.ChatID == "" {
-		nfo.Log("no handle or chat id, skipping: %q", truncate(item.Text, 80))
+		logf("no handle or chat id, skipping: %q", truncate(item.Text, 80))
 		if db != nil {
 			recordSentROWIDs(db, preROWID)
 		}
@@ -1497,10 +1498,10 @@ func tryDeliver(cfg Config, db *sql.DB, item OutboxItem, attempt int) {
 	}
 
 	if err := sendViaMessages(item.Handle, item.ChatID, item.Text); err != nil {
-		nfo.Log("send FAILED to %s: %v", item.Handle, err)
+		logf("send FAILED to %s: %v", item.Handle, err)
 		if attempt < maxDeliveryAttempts {
 			backoff := time.Duration(1<<uint(attempt)) * 15 * time.Second
-			nfo.Log("will retry in %s (attempt %d/%d)", backoff, attempt+1, maxDeliveryAttempts)
+			logf("will retry in %s (attempt %d/%d)", backoff, attempt+1, maxDeliveryAttempts)
 			retryMu.Lock()
 			retryQueue = append(retryQueue, &retryEntry{
 				item:      item,
@@ -1509,11 +1510,11 @@ func tryDeliver(cfg Config, db *sql.DB, item OutboxItem, attempt int) {
 			})
 			retryMu.Unlock()
 		} else {
-			nfo.Log("giving up on %s after %d attempts", item.ID, attempt)
+			logf("giving up on %s after %d attempts", item.ID, attempt)
 		}
 		return
 	}
-	nfo.Log("send OK to %s", item.Handle)
+	logf("send OK to %s", item.Handle)
 
 	// Remember the sent text so a fallback skip path can identify our own
 	// outbound even if recordSentROWIDs misses the row (slow chat.db
@@ -1558,14 +1559,14 @@ func recordSentROWIDsBlocking(db *sql.DB, preROWID int64) {
 			sentROWIDMu.Lock()
 			for _, id := range found {
 				sentROWIDs[id] = struct{}{}
-				nfo.Log("recorded sent ROWID %d (will skip on next poll)", id)
+				logf("recorded sent ROWID %d (will skip on next poll)", id)
 			}
 			sentROWIDMu.Unlock()
 			return
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	nfo.Log("warning: could not find sent ROWID after delivery (pre=%d)", preROWID)
+	logf("warning: could not find sent ROWID after delivery (pre=%d)", preROWID)
 }
 
 // flushRetryQueue retries any queued items whose backoff has elapsed.
@@ -1626,7 +1627,7 @@ func postHook(cfg Config, payload HookPayload) error {
 // database for an "any;-;..." chat ID. Returns the original if already
 // resolvable or not an "any" service.
 func resolveChatID(dbPath, chatID string) string {
-	nfo.Log("resolveChatID: called with chatID=%q dbPath=%q", chatID, dbPath)
+	logf("resolveChatID: called with chatID=%q dbPath=%q", chatID, dbPath)
 	// The DB stores "any;-;..." GUIDs the same as the incoming chat ID,
 	// so there's nothing to resolve — just return the original.
 	return chatID
@@ -1652,7 +1653,7 @@ end run`
 		if err := cmd.Run(); err == nil {
 			return nil
 		} else {
-			nfo.Log("sendViaMessages: chat GUID %q failed: %v, trying fallbacks", chatGUID, err)
+			logf("sendViaMessages: chat GUID %q failed: %v, trying fallbacks", chatGUID, err)
 		}
 	}
 
@@ -1679,7 +1680,7 @@ end run`
 		if err := cmd.Run(); err == nil {
 			return nil
 		} else {
-			nfo.Log("sendViaMessages: iMessage buddy %q failed: %v", target, err)
+			logf("sendViaMessages: iMessage buddy %q failed: %v", target, err)
 		}
 	}
 
@@ -1697,7 +1698,7 @@ end run`
 		if err := cmd.Run(); err == nil {
 			return nil
 		} else {
-			nfo.Log("sendViaMessages: secondScreen fallback failed: %v, giving up", err)
+			logf("sendViaMessages: secondScreen fallback failed: %v, giving up", err)
 			return err
 		}
 	}
@@ -1855,7 +1856,7 @@ end run`
 		if out, err := cmd.CombinedOutput(); err == nil {
 			return nil
 		} else {
-			nfo.Log("sendFile chatGUID failed (%v): %s, trying handle", err, strings.TrimSpace(string(out)))
+			logf("sendFile chatGUID failed (%v): %s, trying handle", err, strings.TrimSpace(string(out)))
 		}
 	}
 	// If handle is empty, try the address parsed from the chat GUID (e.g. email).
