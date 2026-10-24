@@ -10,9 +10,12 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cmcoffee/gohort/core/textutil"
@@ -1345,6 +1348,11 @@ type retryLLM struct {
 	// noImages: this model is not shown images; they are described in their
 	// place (LLMProviderConfig.NoImages, the image gate in llm.go).
 	noImages bool
+	// imageLimit is how many pictures this model takes in one request, 0 for
+	// not known. Learned from its own refusal (learnImageLimit) and applied
+	// before every call after (withinImageLimit). A lower limit is learned
+	// again from the next refusal; a raised one is used after a restart.
+	imageLimit atomic.Int32
 }
 
 // peerRefused reports a peer answering 401 to a model call, and drops the
@@ -1513,12 +1521,18 @@ func isTransientError(err error) bool {
 }
 
 func (r *retryLLM) Chat(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error) {
-	messages = r.withoutImages(ctx, messages)
+	messages = r.withinImageLimit(ctx, r.withoutImages(ctx, messages))
 	return doWithRetry(ctx, LLMMaxRetries(), opts, func() (*Response, error) {
 		// First attempt: original opts, original messages.
 		resp, err := r.inner.Chat(ctx, messages, opts...)
 		if r.peerRefused(err) {
 			// The credential is gone; this attempt resolves a new one.
+			resp, err = r.inner.Chat(ctx, messages, opts...)
+		}
+		if r.learnImageLimit(err, messages) {
+			// Too many pictures for this model: the same request, within its
+			// limit.
+			messages = r.withinImageLimit(ctx, messages)
 			resp, err = r.inner.Chat(ctx, messages, opts...)
 		}
 		if !shouldRetryEmpty(resp, err) {
@@ -1556,7 +1570,7 @@ func (r *retryLLM) Chat(ctx context.Context, messages []Message, opts ...ChatOpt
 }
 
 func (r *retryLLM) ChatStream(ctx context.Context, messages []Message, handler StreamHandler, opts ...ChatOption) (*Response, error) {
-	messages = r.withoutImages(ctx, messages)
+	messages = r.withinImageLimit(ctx, r.withoutImages(ctx, messages))
 	var handlerCalled bool
 	var chunks int
 	wrappedHandler := func(chunk string) {
@@ -1597,6 +1611,12 @@ func (r *retryLLM) ChatStream(ctx context.Context, messages []Message, handler S
 		// that cannot be retried here still leaves the peer healthy for the
 		// next one.
 		if r.peerRefused(err) && !handlerCalled {
+			resp, err = r.inner.ChatStream(ctx, messages, wrappedHandler, opts...)
+		}
+		// The same for a request with more pictures than the model takes: a
+		// refusal streams nothing, so the retry within the limit is safe.
+		if !handlerCalled && r.learnImageLimit(err, messages) {
+			messages = r.withinImageLimit(ctx, messages)
 			resp, err = r.inner.ChatStream(ctx, messages, wrappedHandler, opts...)
 		}
 		if err != nil && handlerCalled {
@@ -2470,6 +2490,97 @@ func (r *retryLLM) withoutImages(ctx context.Context, messages []Message) []Mess
 		out[i] = m
 	}
 	Debug("[llm] images held back from a model that does not read them (describer available: %v)", describer != nil)
+	return out
+}
+
+// A model can read pictures and still take only so many in one request: vLLM
+// refuses a prompt over its --limit-mm-per-prompt, and counts every picture
+// in the history, not only the new ones. Observed: four parallel image finds
+// queued four pictures for the next round, the worker refused the request
+// with "At most 2 image(s) may be provided in one prompt", and the turn
+// failed outright.
+//
+// So the limit is learned from that refusal and kept: the request is retried
+// with the newest pictures that fit, and every older one is described by the
+// same model, one picture at a time, so it stays on the machine it was
+// already going to. Every call after is trimmed before it is sent.
+
+// imageLimitRE reads a provider refusing a request for carrying too many
+// pictures, in vLLM's words.
+var imageLimitRE = regexp.MustCompile(`(?i)at most (\d+) image(?:\(s\)|s)? may be provided`)
+
+// imageLimitFrom is the per-request picture limit err reports, or 0.
+func imageLimitFrom(err error) int {
+	if err == nil {
+		return 0
+	}
+	m := imageLimitRE.FindStringSubmatch(err.Error())
+	if m == nil {
+		return 0
+	}
+	n, _ := strconv.Atoi(m[1])
+	return n
+}
+
+// countImages is how many pictures messages carry.
+func countImages(messages []Message) (n int) {
+	for _, m := range messages {
+		n += len(m.Images)
+	}
+	return n
+}
+
+// learnImageLimit keeps the limit err reports and says whether messages can
+// be retried within it. A limit of none is not learned: a model that reads no
+// pictures is the NoImages setting.
+func (r *retryLLM) learnImageLimit(err error, messages []Message) bool {
+	n, have := imageLimitFrom(err), countImages(messages)
+	if n < 1 || have <= n {
+		return false
+	}
+	if int(r.imageLimit.Swap(int32(n))) != n {
+		Log("[llm] the model refused %d pictures in one request and takes at most %d: requests now carry the newest %d, and older ones as descriptions", have, n, n)
+	}
+	return true
+}
+
+// withinImageLimit returns messages carrying at most the model's limit of
+// pictures, the newest kept and each older one replaced by its description.
+// The caller's slice is never changed.
+func (r *retryLLM) withinImageLimit(ctx context.Context, messages []Message) []Message {
+	n := int(r.imageLimit.Load())
+	if n < 1 || countImages(messages) <= n {
+		return messages
+	}
+	out := make([]Message, len(messages))
+	copy(out, messages)
+	keep := n
+	for i := len(out) - 1; i >= 0; i-- {
+		m := out[i]
+		if len(m.Images) == 0 {
+			continue
+		}
+		if keep >= len(m.Images) {
+			keep -= len(m.Images)
+			continue
+		}
+		held := m.Images[:len(m.Images)-keep]
+		m.Images = append([][]byte(nil), m.Images[len(m.Images)-keep:]...)
+		if len(m.Images) == 0 {
+			m.Images = nil
+		}
+		keep = 0
+		var notes []string
+		if text := strings.TrimSpace(m.Content); text != "" {
+			notes = append(notes, text)
+		}
+		for _, img := range held {
+			notes = append(notes, fmt.Sprintf("[A picture here is not shown, because this model reads at most %d in one request. What it shows: %s]", n, describeImage(ctx, r, img)))
+		}
+		m.Content = strings.Join(notes, "\n\n")
+		out[i] = m
+	}
+	Debug("[llm] %d picture(s) in the request, %d kept for a model that takes %d", countImages(messages), n, n)
 	return out
 }
 
