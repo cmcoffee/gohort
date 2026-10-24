@@ -432,7 +432,8 @@ const scribeImportBundleAction = `function(ctx){
 // scribeImageAction manages a guide's header image in a modal: show the
 // current one, generate one, paste a URL, or remove it. Two pictures of the
 // owner's own can go with a generated one (header_image.go), handed to the
-// generator: a logo it works into the header, and a picture to start from.
+// generator: a logo it works into the header, and a picture whose subject it
+// places in the scene.
 const scribeImageAction = `function(ctx){
       var gid = ctx.recordId;
       if (!gid || !window.uiOpenSimpleModal) return;
@@ -458,7 +459,7 @@ const scribeImageAction = `function(ctx){
           var row = el('div', {class:'guide-edit-actions scribe-img-actions'});
           var gen = el('button', {class:'ui-row-btn primary', text:'Generate'});
           if (!d.can_generate) { gen.disabled = true; gen.title = 'Image generation is not configured on this deployment'; }
-          function genLabel(){ gen.textContent = d.from_url ? 'Generate from picture' : 'Generate from title'; }
+          function genLabel(){ gen.textContent = d.from_url ? 'Generate with picture' : 'Generate from title'; }
           genLabel();
           var urlIn = el('input', {type:'text', placeholder:'…or paste an image URL, or a screenshot'});
           var use = el('button', {class:'ui-row-btn', text:'Use URL'});
@@ -559,7 +560,9 @@ const scribeImageAction = `function(ctx){
           slot('logo', 'Logo', d.can_blend_logo
             ? 'Handed to the image generator with the header, which works it into the scene.'
             : 'Placed on the generated header as uploaded, in the bottom corner: the image generator here cannot take a picture to work in. Use one with a transparent background.', '');
-          slot('from', 'Start from a picture', 'The generator works from this picture instead of from the title alone.',
+          slot('from', 'A picture to include', d.can_place_from
+            ? 'Its main subject is placed into the generated scene.'
+            : 'Made into the header itself: the image generator here cannot take a second picture to place it in a scene.',
             d.can_generate_from ? '' : 'This deployment has no image backend that works from a picture');
           if (d.can_generate) body.appendChild(withBox);
           body.appendChild(status);

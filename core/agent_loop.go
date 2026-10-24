@@ -3006,7 +3006,15 @@ func (lr *loopRun) finalRoundStallGuards() loopAction {
 	// THIS turn, which no earlier call can have done; the after-work replies
 	// the carve-out exists for say "I'll" or "On it". So a "let me" ending is
 	// a stall whatever ran before it, unless a background job is running.
-	stalledOnErrors := lr.cumulativeToolErrors > 0 && (len(trimmedContent) < 30 || promised)
+	//
+	// An error the turn already recovered from is not pending. Observed: an
+	// image call refused before it rendered, the retry started the job in the
+	// background, and the reply "drop it here the second it's done" was
+	// corrected as giving up on the refusal, so the next reply announced an
+	// error while the picture arrived anyway. The last tool round succeeding
+	// and a detached job running is the work, whatever failed before it.
+	recovered := lr.failureStreak == 0 && lr.cfg.backgrounded()
+	stalledOnErrors := lr.cumulativeToolErrors > 0 && !recovered && (len(trimmedContent) < 30 || promised)
 	stalledOnNothing := promised && (!lr.toolFiredThisTurn || (promiseIsForNow(trimmedContent) && !lr.cfg.backgrounded()))
 	gaveUp := roundsLeft >= 5 && (stalledOnErrors || stalledOnNothing)
 	// Two guards, not one. With errors pending it is the give-up guard; a

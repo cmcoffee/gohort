@@ -11,6 +11,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -406,5 +407,47 @@ func TestPromiseIsForNow(t *testing.T) {
 		if got := promiseIsForNow(in); got != want {
 			t.Errorf("promiseIsForNow(%q) = %v, want %v", in, got, want)
 		}
+	}
+}
+
+// A refused call, a retry that started the job in the background, and the
+// reply that says the result is coming. Observed 2026-10-23: the give-up guard
+// read the refusal as an error left unaddressed and re-prompted, and the next
+// reply announced an error while the picture was already rendering. With no
+// job running the same turn is still a give-up.
+func TestAnErrorTheTurnRecoveredFromIsNotPending(t *testing.T) {
+	replyguard.SetStore(guardStore{})
+	defer replyguard.SetStore(nil)
+	run := func(detaches bool) int {
+		started, call := false, 0
+		stub := &FakeLLM{Turns: []FakeTurn{
+			{ToolCalls: []ToolCall{{ID: "c1", Name: "image", Args: map[string]any{}}}},
+			{ToolCalls: []ToolCall{{ID: "c2", Name: "image", Args: map[string]any{"n": 2}}}},
+			{Content: "On it, eyes-shut version, drop it here the second it's done."},
+			{Content: "There was an error with the first try.", Repeat: true},
+		}}
+		app := &AppCore{LLM: stub, LeadLLM: stub}
+		cfg := AgentLoopConfig{MaxRounds: 15,
+			Backgrounded: func() bool { return started },
+			Tools: []AgentToolDef{{
+				Tool: Tool{Name: "image", Description: "render a picture"},
+				Handler: func(context.Context, map[string]any) (string, error) {
+					if call++; call == 1 {
+						return "", fmt.Errorf("nothing was rendered: pass a picture you were given")
+					}
+					started = detaches
+					return "started in the background", nil
+				},
+			}}}
+		if _, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "blend them"}}, cfg); err != nil {
+			t.Fatal(err)
+		}
+		return stub.Calls()
+	}
+	if calls := run(true); calls != 3 {
+		t.Errorf("a promise backed by a running job was corrected over a recovered error: calls=%d, want 3", calls)
+	}
+	if calls := run(false); calls != 4 {
+		t.Errorf("with no job running the error is still pending: calls=%d, want 4", calls)
 	}
 }

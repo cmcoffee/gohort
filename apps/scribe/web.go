@@ -338,6 +338,7 @@ func (T *Scribe) handleImage(w http.ResponseWriter, r *http.Request, udb Databas
 			"from_url":          g.HeaderFrom,
 			"can_generate_from": headerEditor(1).Name != "",
 			"can_blend_logo":    headerEditor(2).Name != "",
+			"can_place_from":    headerEditor(2).Name != "",
 		})
 		return
 	case http.MethodPost, http.MethodDelete:
@@ -368,7 +369,7 @@ func (T *Scribe) handleImage(w http.ResponseWriter, r *http.Request, udb Databas
 			in    *string
 			field *string
 			what  string
-		}{{body.Logo, &g.HeaderLogo, "logo"}, {body.From, &g.HeaderFrom, "starting picture"}} {
+		}{{body.Logo, &g.HeaderLogo, "logo"}, {body.From, &g.HeaderFrom, "picture to include"}} {
 			if p.in == nil {
 				continue
 			}

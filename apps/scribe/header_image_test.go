@@ -201,8 +201,8 @@ func withFakeEdit(t *testing.T) *[]editCall {
 
 // With a generator that takes pictures, the logo is HANDED to it: the header
 // is generated, then given to the editor with the logo, and what comes back
-// is the header, with nothing pasted over it. A starting picture goes in
-// first, the logo beside it.
+// is the header, with nothing pasted over it. A picture to include is its own
+// pass before the logo's, each pass the header so far and one picture.
 func TestTheLogoIsHandedToTheGenerator(t *testing.T) {
 	dir := t.TempDir()
 	banner := solidPNG(t, 300, 100, red)
@@ -245,21 +245,46 @@ func TestTheLogoIsHandedToTheGenerator(t *testing.T) {
 		t.Error("the logo was pasted over the generator's own result")
 	}
 
-	// From a picture: the picture first, the logo second, in one render.
+	// With a picture too: the generated header and the picture, then that
+	// result and the logo. Handed both in one render, with the scene written
+	// out beside them, the editor kept one picture and dropped the other.
 	g.HeaderFrom = T.guideImagePath("g1", "photo1")
 	if _, err := T.generateHeader(context.Background(), g, udb); err != nil {
 		t.Fatal(err)
 	}
-	c = (*calls)[1]
-	if len(c.images) != 2 || !bytes.Equal(c.images[0], photo) || !bytes.Equal(c.images[1], logo) || !strings.Contains(c.prompt, headerLogoBlend) {
-		t.Errorf("from a picture: %d image(s), %q", len(c.images), c.prompt)
+	if len(*calls) != 3 {
+		t.Fatalf("a picture and a logo should be two passes: %d call(s) in all", len(*calls))
+	}
+	edited := solidPNG(t, 300, 100, color.RGBA{0, 255, 0, 255})
+	for i, want := range []struct {
+		first, second []byte
+		prompt        string
+	}{{banner, photo, headerPlacePicture}, {edited, logo, headerLogoBlend}} {
+		c := (*calls)[1+i]
+		if len(c.images) != 2 || !bytes.Equal(c.images[0], want.first) || !bytes.Equal(c.images[1], want.second) || c.prompt != want.prompt {
+			t.Errorf("pass %d: %d image(s), %q", i+1, len(c.images), c.prompt)
+		}
+	}
+	// An edit prompt points at its pictures. The scene in words goes only to
+	// the render that has no picture to compete with.
+	for _, c := range *calls {
+		if strings.Contains(c.prompt, "Field guide") || strings.Contains(c.prompt, "editorial scene") {
+			t.Errorf("an edit prompt carries the scene: %q", c.prompt)
+		}
 	}
 
-	// An editor that takes one picture at a time cannot be handed both, so
-	// the logo is placed as uploaded.
+	// An editor that takes one picture at a time cannot be handed two: the
+	// picture is made into the header itself, and the logo is placed on it as
+	// uploaded.
 	withEditors(t, []ImageBackendChoice{{Name: "editor", Edits: true, MaxImages: 1, Default: true}})
+	if _, err := T.generateHeader(context.Background(), g, udb); err != nil || len(*calls) != 4 {
+		t.Fatalf("a one-picture editor: %v, %d call(s)", err, len(*calls))
+	}
+	if c := (*calls)[3]; len(c.images) != 1 || !bytes.Equal(c.images[0], photo) {
+		t.Errorf("a one-picture editor should be handed the picture alone: %d image(s)", len(c.images))
+	}
 	g.HeaderFrom = ""
-	if _, err := T.generateHeader(context.Background(), g, udb); err != nil || len(*calls) != 2 {
+	if _, err := T.generateHeader(context.Background(), g, udb); err != nil || len(*calls) != 4 {
 		t.Errorf("a one-picture editor should not be handed the logo: %v, %d call(s)", err, len(*calls))
 	}
 }

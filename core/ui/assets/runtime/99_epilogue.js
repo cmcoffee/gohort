@@ -907,7 +907,7 @@
           var n = items.length;
           if (n === 0) {
             liveBtn.style.visibility = 'hidden';
-            liveMenu.style.display = 'none';
+            closeLiveMenu();
             return;
           }
           liveBtn.style.visibility = 'visible';
@@ -938,18 +938,31 @@
           if (liveMenu.style.display !== 'none') renderLiveMenu();
         }).catch(function(){});
       }
+      // An open menu re-reads the set every 2s. The change feed moves only
+      // when work starts, ends or changes kind, and a row's seconds, round,
+      // tool and latest line are none of those, so the menu sat on the moment
+      // it opened. Only while it is open and the tab is shown: that is one
+      // person watching.
+      var liveMenuTimer = null;
+      function openLiveMenu() {
+        renderLiveMenu();
+        liveMenu.style.display = '';
+        if (!liveMenuTimer) {
+          liveMenuTimer = setInterval(function() { if (!document.hidden) refreshLive(); }, 2000);
+        }
+      }
+      function closeLiveMenu() {
+        liveMenu.style.display = 'none';
+        if (liveMenuTimer) { clearInterval(liveMenuTimer); liveMenuTimer = null; }
+      }
       liveBtn.addEventListener('click', function(ev) {
         ev.stopPropagation();
-        if (liveMenu.style.display === 'none') {
-          renderLiveMenu();
-          liveMenu.style.display = '';
-        } else {
-          liveMenu.style.display = 'none';
-        }
+        if (liveMenu.style.display === 'none') openLiveMenu();
+        else closeLiveMenu();
       });
       document.addEventListener('click', function(ev) {
         if (liveMenu.style.display === 'none') return;
-        if (!liveWrap.contains(ev.target)) liveMenu.style.display = 'none';
+        if (!liveWrap.contains(ev.target)) closeLiveMenu();
       });
       refreshLive();
       // The change feed (/api/changes, core/changes): one long poll per page,

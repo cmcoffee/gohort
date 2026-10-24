@@ -12,14 +12,19 @@ package scribe
 //
 // Two pictures of the owner's own can go with it, each HANDED to the image
 // generator as an input picture, so it works them into the image rather than
-// having them stuck on top:
-//   - a logo. The header is generated wide first, then the generator is
-//     given that header and the logo and told to work the logo into the
-//     scene, copied as it is. Where the generator cannot take two pictures,
-//     the logo is placed in the corner as uploaded instead, which is the
-//     only fallback that keeps it intact.
-//   - a picture to start from, which the generator works from instead of
-//     the title alone, with the logo beside it when there is one.
+// having them stuck on top. The header is generated wide from the scene first,
+// then each picture is its own pass on an editor that takes two, the header so
+// far and the one picture to add:
+//   - a picture to include, whose main subject is placed into the scene.
+//   - a logo, worked into the scene and copied as it is. Where no editor
+//     takes two pictures, the logo is placed in the corner as uploaded
+//     instead, which is the only fallback that keeps it intact.
+//
+// One pass used to be handed the picture and the logo together, with the
+// scene written out beside them, and it kept whichever picture fitted the
+// words and dropped the other. An edit prompt points at the pictures and asks
+// for one change; the scene in words goes only to the render with no picture
+// to compete with.
 
 import (
 	"bytes"
@@ -49,10 +54,19 @@ const headerSceneSystem = "You describe one picture for the banner at the top of
 // headerPictureRule closes every header prompt.
 const headerPictureRule = " Purely pictorial: plain surfaces, with no writing, lettering, numbers, signage or logos anywhere in the image."
 
+// headerOneResult closes every edit prompt: a renderer handed two pictures
+// will otherwise sometimes show the second one inside the first.
+const headerOneResult = " Produce one finished picture: the second picture is never shown inside it as an inset, thumbnail, corner overlay, side-by-side panel or collage."
+
+// headerPlacePicture asks for the owner's picture in the second picture to be
+// placed into the header in the first. It points at the pictures rather than
+// describing them.
+const headerPlacePicture = "Put the main subject of the second picture into the first picture, at a natural size and place in the scene, lit and shaded like the rest of it. Keep the rest of the first picture as it is, and add no writing anywhere." + headerOneResult
+
 // headerLogoBlend asks for the logo in the second picture to be worked into
 // the first. It points at the pictures rather than describing them, and asks
 // for the logo copied, since a generator that redraws one misspells it.
-const headerLogoBlend = "Put the logo from the second picture into the first picture so it belongs to the scene: on a surface, object or sign that fits, at a modest size, lit and shaded like the rest of the scene. Copy the logo exactly as it appears in the second picture, its shapes, colours and any lettering unchanged. Add no other writing anywhere."
+const headerLogoBlend = "Put the logo from the second picture into the first picture so it belongs to the scene: on a surface, object or sign that fits, at a modest size, lit and shaded like the rest of the scene. Copy the logo exactly as it appears in the second picture, its shapes, colours and any lettering unchanged. Add no other writing anywhere." + headerOneResult
 
 // headerEditors and editHeaderImage are the editing backends and the edit
 // call, seams so a test can stand in for a connector.
@@ -69,8 +83,8 @@ const maxHeaderPixels = 40_000_000
 // pictures that go with it.
 type headerJob struct {
 	guide Guide
-	logo  []byte // placed on the result exactly as given
-	from  []byte // worked from by an editing backend
+	logo  []byte // worked into the header, or placed on it as given
+	from  []byte // a picture whose subject is placed into the header
 	scene string
 }
 
@@ -82,37 +96,33 @@ func (T *Scribe) generateHeader(ctx context.Context, g Guide, udb Database) (str
 		return "", fmt.Errorf("the logo is no longer stored with this guide: upload it again")
 	}
 	if g.HeaderFrom != "" && job.from == nil {
-		return "", fmt.Errorf("the starting picture is no longer stored with this guide: upload it again")
+		return "", fmt.Errorf("the picture to include is no longer stored with this guide: upload it again")
 	}
 	job.scene = T.headerScene(ctx, g)
-	// The logo goes in as a second picture when an editor takes two; the
-	// backend is the one that fits the count (headerEditor).
-	blend := job.logo != nil && headerEditor(2).Name != ""
-	editor := headerEditor(1)
-	if blend {
-		editor = headerEditor(2)
-	}
+	// Every pass after the first hands the editor two pictures: the header so
+	// far and the one to add (headerEditor picks the backend that fits).
+	two := headerEditor(2)
 
 	var res *ImageGenResult
 	var err error
-	switch {
-	case job.from != nil:
-		if editor.Name == "" {
-			return "", fmt.Errorf("this deployment has no image backend that works from a picture: remove the starting picture, or ask an administrator to set one up")
+	if job.from != nil && two.Name == "" {
+		// No editor here takes two pictures, so the owner's picture cannot be
+		// placed into a generated scene: it is made into the header instead.
+		one := headerEditor(1)
+		if one.Name == "" {
+			return "", fmt.Errorf("this deployment has no image backend that works from a picture: remove the picture, or ask an administrator to set one up")
 		}
-		images := [][]byte{job.from}
-		if blend {
-			images = append(images, job.logo)
-		}
-		res, err = job.edit(ctx, editor.Name, job.editPrompt(blend), images)
-	default:
+		res, err = job.edit(ctx, "picture as the header", one.Name, job.editPrompt(), [][]byte{job.from})
+	} else {
+		Log("[scribe.header] guide %s: generating the header from the scene", g.ID)
 		res, err = GenerateImageLandscape(ctx, "", job.prompt())
-		if err == nil && blend {
-			var banner []byte
-			if banner, _, err = headerBytes(ctx, res.URL, isRemote(res.URL)); err == nil {
-				res, err = job.edit(ctx, editor.Name, headerLogoBlend, [][]byte{banner, job.logo})
-			}
+		if err == nil && job.from != nil {
+			res, err = job.add(ctx, res, "picture", two.Name, headerPlacePicture, job.from)
 		}
+	}
+	blend := job.logo != nil && two.Name != ""
+	if err == nil && blend {
+		res, err = job.add(ctx, res, "logo", two.Name, headerLogoBlend, job.logo)
 	}
 	if err != nil {
 		return "", err
@@ -134,9 +144,21 @@ func (T *Scribe) generateHeader(ctx context.Context, g Guide, udb Database) (str
 	return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data), nil
 }
 
+// add is one pass: the header so far as the first picture and pic as the
+// second, the order prompt points at.
+func (j headerJob) add(ctx context.Context, so *ImageGenResult, step, backend, prompt string, pic []byte) (*ImageGenResult, error) {
+	base, _, err := headerBytes(ctx, so.URL, isRemote(so.URL))
+	if err != nil {
+		return nil, err
+	}
+	return j.edit(ctx, step, backend, prompt, [][]byte{base, pic})
+}
+
 // edit hands pictures to the editing backend, in order, as the first, second
-// and so on that its prompt points at.
-func (j headerJob) edit(ctx context.Context, backend, prompt string, images [][]byte) (*ImageGenResult, error) {
+// and so on that its prompt points at. Each pass is logged, so a header that
+// came out without one of its pictures can be traced to the pass.
+func (j headerJob) edit(ctx context.Context, step, backend, prompt string, images [][]byte) (*ImageGenResult, error) {
+	Log("[scribe.header] guide %s: %s pass via %q with %d picture(s)", j.guide.ID, step, backend, len(images))
 	sess := &ToolSession{Ctx: ctx, Username: j.guide.Owner}
 	var refs []string
 	for _, img := range images {
@@ -198,13 +220,11 @@ func (j headerJob) prompt() string {
 	return "A wide banner image, about 3:1, clean editorial quality. " + j.scene + headerPictureRule
 }
 
-// editPrompt is for a header made from the owner's picture, with the logo as
-// the second picture when blend is set.
-func (j headerJob) editPrompt(blend bool) string {
-	if !blend {
-		return "Make this picture into a wide editorial banner, keeping what it shows, set in this scene: " + j.scene + headerPictureRule
-	}
-	return "Make the first picture into a wide editorial banner, keeping what it shows, set in this scene: " + j.scene + " " + headerLogoBlend
+// editPrompt is for a header made from the owner's picture itself, where no
+// editor takes a second picture to place it into a generated scene. One
+// picture, so the scene in words has nothing to compete with.
+func (j headerJob) editPrompt() string {
+	return "Make this picture into a wide editorial banner, keeping what it shows, set in this scene: " + j.scene + headerPictureRule
 }
 
 // headerEditor is the editing backend that fits n pictures in one render:

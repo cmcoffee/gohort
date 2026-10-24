@@ -116,3 +116,36 @@ func TestLiveMenuFitsANarrowViewport(t *testing.T) {
 		t.Error("both width bounds must be measured against the viewport, not just one")
 	}
 }
+
+// The change feed moves only when live work starts, ends or changes kind, so
+// a row's seconds, round, tool and latest line never move it, and the menu
+// sat on the moment it opened. Open, it re-reads the set on a 2s tick; closed,
+// by any of its three ways, the tick stops.
+func TestAnOpenLiveMenuKeepsItsRowsMoving(t *testing.T) {
+	src := readRuntimeFile(t, "99_epilogue.js")
+	body := func(name string) string {
+		i := strings.Index(src, "function "+name+"(")
+		if i < 0 {
+			t.Fatalf("%s is gone", name)
+		}
+		j := strings.Index(src[i:], "\n      }\n")
+		if j < 0 {
+			t.Fatalf("%s has no end", name)
+		}
+		return src[i : i+j]
+	}
+	open := body("openLiveMenu")
+	for _, want := range []string{"setInterval(", "refreshLive()", "2000", "document.hidden"} {
+		if !strings.Contains(open, want) {
+			t.Errorf("opening the menu should start a 2s re-read while the tab is shown; missing %q", want)
+		}
+	}
+	if !strings.Contains(body("closeLiveMenu"), "clearInterval(liveMenuTimer)") {
+		t.Error("closing the menu should stop the re-read")
+	}
+	// Every way the menu closes goes through closeLiveMenu: a hide written
+	// anywhere else leaves the tick running behind a closed menu.
+	if n := strings.Count(src, "liveMenu.style.display = 'none'"); n != 1 {
+		t.Errorf("the menu is hidden in %d places; only closeLiveMenu should hide it", n)
+	}
+}
