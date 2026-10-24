@@ -41,6 +41,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -526,18 +527,23 @@ func (T *OpenAIAPI) serveAgent(w http.ResponseWriter, r *http.Request, user, age
 		writeErr(w, http.StatusBadRequest, "no user message to answer")
 		return
 	}
+	// Per-caller thread: without a stable key every utterance would start a
+	// new conversation and the agent would forget what it just said.
+	session, rolling := sessionKey(r, req)
+	if rolling {
+		session = conversationThread(orch, user, resolved, session)
+	}
 	T.runAgentTurn(w, r, agentTurn{
-		orch:  orch,
-		owner: user,
-		agent: resolved,
-		// Per-caller thread: without a stable key every utterance would start a
-		// new conversation and the agent would forget what it just said.
-		session: sessionKey(r, req),
-		sender:  callerName(r, req),
-		input:   input,
-		system:  system,
-		model:   req.Model,
-		stream:  req.Stream,
+		orch:      orch,
+		owner:     user,
+		agent:     resolved,
+		session:   session,
+		autoTitle: true,
+		sender:    callerName(r, req),
+		input:     input,
+		system:    system,
+		model:     req.Model,
+		stream:    req.Stream,
 	})
 }
 
@@ -649,6 +655,9 @@ type agentTurn struct {
 	owner, agent, session, title, sender string
 	input, system, model                 string
 	stream                               bool
+	// autoTitle names a thread from its conversation (AgentSyncRun.AutoTitle):
+	// the agent route's threads have no room name to take.
+	autoTitle bool
 }
 
 // runAgentTurn is the shared body behind the agent: and channel: routes.
@@ -692,6 +701,7 @@ func (T *OpenAIAPI) runAgentTurn(w http.ResponseWriter, r *http.Request, t agent
 		Kind:          "openai", // labels the turn in the live ribbon / "Active now"
 		Message:       t.input,
 		Title:         t.title,
+		AutoTitle:     t.autoTitle,
 		MessageSender: t.sender,
 		// A real person is on the other end, so this is not a headless
 		// agent-to-agent dispatch: no DELEGATED-INVOCATION preamble, and
@@ -772,28 +782,46 @@ func (T *OpenAIAPI) runAgentTurn(w http.ResponseWriter, r *http.Request, t agent
 const agentTurnTimeout = 3 * time.Minute
 
 // sessionKey picks the conversation thread for an agent run. A caller that
-// supplies its own call id gets one continuing thread for that call; without
-// one, every request would start fresh and the agent would have no memory of
-// what it just said.
+// supplies its own session or call id gets one continuing thread for it.
+// One that names none (a phone Shortcut, a client sending only "user") gets
+// a PREFIX instead, rolling=true: its conversations share it, and which one a
+// request joins is decided by when it was last used (conversationThread).
+// Without that, such a caller had one thread forever, a second cortex in the
+// form of a very long session.
 //
 // Under the KEY that made the call: two integrations of one owner each keep
 // their own threads, and one key cannot name its way into another's by
 // sending the same session id.
-func sessionKey(r *http.Request, req chatReq) string {
+func sessionKey(r *http.Request, req chatReq) (key string, rolling bool) {
 	ns := "ext:"
 	if tok := AccountTokenFromRequest(r); tok != nil && tok.ID != "" {
 		ns = "ext:" + tok.ID + ":"
 	}
 	if h := strings.TrimSpace(r.Header.Get("X-Session-Id")); h != "" {
-		return ns + h
+		return ns + h, false
 	}
 	if req.Call.ID != "" {
-		return ns + req.Call.ID
+		return ns + req.Call.ID, false
 	}
 	if req.User != "" {
-		return ns + req.User
+		return ns + "conv:" + req.User + ":", true
 	}
-	return ns + "default"
+	return ns + "conv:", true
+}
+
+// conversationIdle is how long a caller with no thread of its own can pause
+// and still continue the same conversation. Longer, and its next request
+// starts a new one.
+const conversationIdle = 30 * time.Minute
+
+// conversationThread resolves a rolling prefix to a thread: the caller's
+// latest conversation when it was used within conversationIdle, else a new
+// one.
+func conversationThread(orch *orchestrate.OrchestrateApp, owner, agentID, prefix string) string {
+	if id := orch.RecentThread(owner, agentID, prefix, conversationIdle); id != "" {
+		return id
+	}
+	return prefix + strconv.FormatInt(time.Now().UnixNano(), 36)
 }
 
 // sentences splits a reply into TTS-friendly chunks. Deliberately crude: the

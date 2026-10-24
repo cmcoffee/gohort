@@ -62,7 +62,8 @@ func TestV1ThreadsArePerKey(t *testing.T) {
 		r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 		r.Header.Set("X-API-Key", secret)
 		r.Header.Set("X-Session-Id", "same")
-		return sessionKey(r, chatReq{})
+		k, _ := sessionKey(r, chatReq{})
+		return k
 	}
 	if key(a.Token) == key(b.Token) {
 		t.Error("two keys share a thread by naming the same session id")

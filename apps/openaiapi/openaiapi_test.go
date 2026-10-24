@@ -36,28 +36,24 @@ func TestTextContentShapes(t *testing.T) {
 	}
 }
 
-// TestSessionKeyPrecedence: without a stable conversation key every request
-// starts a fresh thread and the agent forgets what it just said mid-call.
+// TestSessionKeyPrecedence: a caller's own session or call id is its thread;
+// one that names none gets the prefix its conversations share, so it is not
+// held in one thread forever.
 func TestSessionKeyPrecedence(t *testing.T) {
 	req := chatReq{User: "u1"}
 	req.Call.ID = "call-abc"
-
-	r := newReq(map[string]string{"X-Session-Id": "hdr-1"})
-	if got := sessionKey(r, req); got != "ext:hdr-1" {
-		t.Errorf("header wins: %q", got)
+	check := func(r *http.Request, want string, wantRolling bool, what string) {
+		t.Helper()
+		if got, rolling := sessionKey(r, req); got != want || rolling != wantRolling {
+			t.Errorf("%s: got %q rolling=%v, want %q rolling=%v", what, got, rolling, want, wantRolling)
+		}
 	}
-	r = newReq(nil)
-	if got := sessionKey(r, req); got != "ext:call-abc" {
-		t.Errorf("call id next: %q", got)
-	}
+	check(newReq(map[string]string{"X-Session-Id": "hdr-1"}), "ext:hdr-1", false, "header wins")
+	check(newReq(nil), "ext:call-abc", false, "call id next")
 	req.Call.ID = ""
-	if got := sessionKey(r, req); got != "ext:u1" {
-		t.Errorf("user field next: %q", got)
-	}
+	check(newReq(nil), "ext:conv:u1:", true, "user field names whose conversations")
 	req.User = ""
-	if got := sessionKey(r, req); got != "ext:default" {
-		t.Errorf("fallback: %q", got)
-	}
+	check(newReq(nil), "ext:conv:", true, "fallback")
 }
 
 // TestSentencesSplitsForTTS: the agent path has no token stream, so the reply

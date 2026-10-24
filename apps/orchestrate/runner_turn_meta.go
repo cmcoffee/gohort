@@ -96,17 +96,21 @@ func (t *chatTurn) retitleIfDue() {
 	if t == nil || t.app == nil || t.app.LLM == nil || t.session == nil || !titleDue(*t.session) {
 		return
 	}
-	// Snapshot what the goroutine needs — the request's chatTurn /
-	// session pointer don't outlive handleSend.
-	llm := t.app.LLM
-	udb := t.udb
-	agentID := t.agent.ID
-	sessID := t.session.ID
 	// A web conversation is NOT recorded in the cortex. It used to be, by its
 	// title, on every new session, and the owner read the cortex as a copy of
 	// the session list. The cortex is for what ARRIVES: channel messages,
 	// scheduled runs, wakes. A conversation reaches it only when the agent
 	// judges something worth keeping and says so with note_to_cortex.
+	retitleSession(t.app.LLM, t.udb, t.agent.ID, t.session.ID)
+}
+
+// retitleSession writes a session's title in the background, from its stored
+// exchanges. The caller decides it is due (titleDue); a title the person set
+// in the meantime is left alone.
+func retitleSession(llm LLM, udb Database, agentID, sessID string) {
+	if llm == nil || udb == nil {
+		return
+	}
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {

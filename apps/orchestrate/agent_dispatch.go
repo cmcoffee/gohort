@@ -1381,6 +1381,11 @@ type AgentSyncRun struct {
 	// yet). Channel rooms pass the contact's display name so the rail row and
 	// transcript read as the conversation partner rather than the raw id.
 	Title string
+	// AutoTitle names the thread from its conversation, as web chat names
+	// its sessions: the first message at once, then a written title from the
+	// first exchanges. For a caller whose threads have no name to borrow (the
+	// external API), so the rail reads as conversations, not raw ids.
+	AutoTitle bool
 	// SenderHandle, when set, is the TRANSPORT's attribution of who sent this
 	// message — a phone number or email, as the carrier reported it. Distinct from
 	// MessageSender, which is a display name the sender chose for themselves.
@@ -1796,6 +1801,9 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	}
 	cr.shapeReply()
 	cr.saveExchange()
+	if cr.run.AutoTitle && titleDue(cr.priorSession) {
+		retitleSession(T.LLM, cr.runtimeDB, cr.target.ID, cr.subSessionID)
+	}
 	cr.collectMedia()
 	res := AgentSyncResult{Text: cr.cleanReply, Parts: cr.replyParts, Images: cr.imgs, Videos: cr.vids, Made: madeFiles(cr.subSess), HitRoundCap: cr.resp.HitRoundCap, PhantomDelivery: cr.phantomDelivery, ToolCalls: cr.turnToolCalls, Silenced: cr.subSess != nil && cr.subSess.Silenced}
 	if cr.ask != nil && cr.ask.direct && cr.ask.asked() {
@@ -2259,6 +2267,10 @@ func (cr *continuingRun) loadThread() {
 	// contact's display name), so the rail labels it by conversation partner.
 	if cr.priorSession.Title == "" && run.Title != "" {
 		cr.priorSession.Title = run.Title
+	}
+	if cr.priorSession.Title == "" && run.AutoTitle {
+		t := titleFromFirstMessage(run.Message)
+		cr.priorSession.Title, cr.priorSession.AutoTitle = t, t
 	}
 	// A wake, a scheduled fire or a report into a thread nobody named (or one
 	// deleted since it was set up) takes the name of what sent it.

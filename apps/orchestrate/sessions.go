@@ -165,6 +165,32 @@ func ListChatSessions(db Database, agentID string) []ChatSession {
 	return listChatSessions(db, agentID)
 }
 
+// RecentThread returns the most recently used of an agent's threads whose id
+// starts with prefix, when it was used within idle; "" when there is none.
+// An external caller that names no thread of its own continues the
+// conversation it is in, and a pause longer than idle starts another.
+func (T *OrchestrateApp) RecentThread(owner, agentID, prefix string, idle time.Duration) string {
+	udb := UserDB(T.DB, owner)
+	if udb == nil || prefix == "" {
+		return ""
+	}
+	tbl := sessionTable(agentID)
+	var best ChatSession
+	for _, k := range udb.Keys(tbl) {
+		if !strings.HasPrefix(k, prefix) {
+			continue
+		}
+		var s ChatSession
+		if udb.Get(tbl, k, &s) && s.LastAt.After(best.LastAt) {
+			best = s
+		}
+	}
+	if best.ID == "" || time.Since(best.LastAt) > idle {
+		return ""
+	}
+	return best.ID
+}
+
 // LoadChatSession is the exported variant of loadChatSession so
 // external session sources (phantom) can resolve a session row
 // back into a full transcript for Agency's load handler.
