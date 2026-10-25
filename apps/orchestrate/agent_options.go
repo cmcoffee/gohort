@@ -91,7 +91,12 @@ func agentPickerOptions(agents []AgentRecord) (opts []ui.SelectOption, cortex ma
 			appAgents = append(appAgents, agentPickerRow{ID: a.ID, Name: a.Name, App: strings.TrimPrefix(g, "App agents: ")})
 		} else if ord, ok := agentPickerBuiltInOrder[a.ID]; ok {
 			builtIns = append(builtIns, agentPickerRow{ID: a.ID, Name: a.Name, Order: ord})
-		} else if a.Cortex {
+		} else if memoryForPeople(a.MemoryMode) {
+			// Conversational is the agent's kind, its memory set for the
+			// people it talks with, not whether it reads its Cortex. Filed by
+			// Cortex, an agent changed group whenever something switched the
+			// reading on, and a specialist that reads its reports looked like
+			// a chat assistant. A mode nobody chose files as Specialized.
 			conversation = append(conversation, agentPickerRow{ID: a.ID, Name: a.Name})
 		} else {
 			customs = append(customs, agentPickerRow{ID: a.ID, Name: a.Name})
