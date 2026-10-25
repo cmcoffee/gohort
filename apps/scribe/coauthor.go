@@ -12,6 +12,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 
 	"github.com/cmcoffee/gohort/apps/orchestrate"
 )
@@ -888,7 +889,7 @@ func (T *Scribe) runIncorporate(ctx context.Context, udb Database, orch *orchest
 		ctx = WithNetworkConnector(ctx, NewNetworkConnector(true))
 		tools = withoutTools(tools, "research")
 	}
-	res, err := orch.RunAgentSyncContinuingRich(ctx, orchestrate.AgentSyncRun{
+	res, err := orch.RunAgentSyncContinuingRich(ctx, agenthost.Run{
 		AgentOwner:   user,
 		RuntimeUser:  user,
 		AgentKey:     guideAgentID,

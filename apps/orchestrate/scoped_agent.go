@@ -8,39 +8,11 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 )
 
-// AgentScope instantiates an agent TEMPLATE against a caller-supplied state
-// namespace. The agent's persona / prompt / tools come from the template
-// (TemplateOwner + AgentID — the single source of truth, edited in one place);
-// its sessions, Explicit Memory, and Knowledge/RAG live under ScopeUser — a
-// synthetic runtime identity (e.g. "app:servitor:appliance-123") isolated from
-// the template owner's own state. Two scopes never share any state.
-//
-// This is the app-facing seam for "use an orchestrate agent as a reusable
-// template with LOCAL state". It's the same mechanism phantom already uses to run
-// an agent under "phantom:<contact>" — formalized so any app can adopt it (e.g.
-// to run a per-appliance lead/worker pair off shared agent definitions). The
-// underlying run goes through RunAgentSyncContinuingRich, which already resolves
-// config (AgentOwner) and state (RuntimeUser) from separate stores.
-type AgentScope struct {
-	// AgentID is the template agent's id (or name). For an app-registered agent
-	// (appagents.RegisterAppAgent) leave TemplateOwner blank — app + built-in
-	// agents resolve from the seed store.
-	AgentID string
-	// ScopeUser is the synthetic runtime identity = the state namespace. REQUIRED.
-	// Use a stable, app-prefixed string, e.g. "app:<app>:<instance>", so an app's
-	// instances can't collide with each other or with a real user's email-keyed
-	// store. (Avoid "/", "\\", ".." — it also names a workspace dir.)
-	ScopeUser string
-	// TemplateOwner is the owner whose store holds the template AgentRecord. Blank
-	// ⇒ the seed store ("system"), where app-registered + built-in agents live.
-	// Set it to run a specific user's own agent as a template.
-	TemplateOwner string
-	// SessionID names the conversation thread WITHIN the scope. Blank ⇒ a
-	// deterministic per-(scope, agent) id — one continuing thread.
-	SessionID string
-}
+// AgentScope is agenthost.Scope, which apps outside orchestrate use to reach it.
+type AgentScope = agenthost.Scope
 
 // RunScopedAgent runs the scope's template agent on one message and returns its
 // reply (+ any attachments it produced). A thin, intention-revealing wrapper over

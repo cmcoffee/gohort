@@ -31,6 +31,7 @@ import (
 
 	"github.com/cmcoffee/gohort/apps/orchestrate"
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 )
 
 const (
@@ -46,12 +47,12 @@ const (
 )
 
 // mapScope resolves the graph scope for one appliance.
-func mapScope(applianceID string) (*orchestrate.OrchestrateApp, orchestrate.AgentScope, bool) {
+func mapScope(applianceID string) (*orchestrate.OrchestrateApp, agenthost.Scope, bool) {
 	orch := servitorOrch()
 	if orch == nil || strings.TrimSpace(applianceID) == "" {
-		return nil, orchestrate.AgentScope{}, false
+		return nil, agenthost.Scope{}, false
 	}
-	scope := orchestrate.AgentScope{
+	scope := agenthost.Scope{
 		AgentID:   servitorInvestigatorAgentID,
 		ScopeUser: applianceMemScope(applianceID),
 	}
@@ -60,7 +61,7 @@ func mapScope(applianceID string) (*orchestrate.OrchestrateApp, orchestrate.Agen
 	// store answers every lookup with "not recorded", which reports not knowing
 	// as knowing the thing is absent.
 	if !orch.ScopedGraphAvailable(scope) {
-		return nil, orchestrate.AgentScope{}, false
+		return nil, agenthost.Scope{}, false
 	}
 	return orch, scope, true
 }
@@ -320,7 +321,7 @@ func renderMapEntity(e GraphEntity) string {
 
 // mapName resolves an entity ID to its display name, falling back to the ID so
 // an edge pointing at a deleted entity still reads as something.
-func mapName(orch *orchestrate.OrchestrateApp, scope orchestrate.AgentScope, id string) string {
+func mapName(orch *orchestrate.OrchestrateApp, scope agenthost.Scope, id string) string {
 	if e, ok := orch.ScopedGraphEntityByID(scope, id); ok && strings.TrimSpace(e.Name) != "" {
 		return e.Name
 	}

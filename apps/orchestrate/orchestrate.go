@@ -37,6 +37,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/appagents"
 	"github.com/cmcoffee/gohort/core/messaging"
 )
@@ -885,6 +886,10 @@ func (T *OrchestrateApp) registerExternalAgentHooks() {
 			return prevTargets(T.DB, user)
 		}
 	}
+	// And the agent host itself: other apps run agents and look them up
+	// through agenthost rather than by importing this package, which they
+	// reach here, with T.DB open (agent_host.go).
+	agenthost.Register(T)
 }
 
 // stateChangingOnly is adminGatedWrite's method guard WITHOUT the admin check.

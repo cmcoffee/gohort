@@ -14,6 +14,7 @@ import (
 
 	"github.com/cmcoffee/gohort/apps/orchestrate"
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/bundle"
 	"github.com/cmcoffee/gohort/core/textutil"
 	"golang.org/x/crypto/ssh"
@@ -2617,11 +2618,11 @@ type chatState struct {
 	err                  error
 	chatPlan             planToolSet
 	docInvestigatorTools []AgentToolDef
-	orch                 *orchestrate.OrchestrateApp
+	orch                 agenthost.Host
 	leadImages           [][]byte
-	leadScope            orchestrate.AgentScope
-	leadLoop             *orchestrate.AgentLoopOverrides
-	res                  orchestrate.AgentSyncResult
+	leadScope            agenthost.Scope
+	leadLoop             *agenthost.LoopOverrides
+	res                  agenthost.Result
 }
 
 // chatMode answers a question about the appliance: the document tools, the
@@ -2882,7 +2883,7 @@ func (pr *probeRun) chatInvestigate() probeAction {
 	// mid-flight injection drain (with the notes_consumed UI signal) rides
 	// Loop.OnRoundStart. All per-appliance context is in the system prompt, so
 	// the run message is just the conversation.
-	pr.c.orch = servitorOrch()
+	pr.c.orch = agenthost.Get()
 	if pr.c.orch == nil {
 		emit(pr.id, probeEvent{Kind: "error", Text: "orchestrate runtime unavailable"})
 		return actReturn
@@ -2893,12 +2894,12 @@ func (pr *probeRun) chatInvestigate() probeAction {
 			break
 		}
 	}
-	pr.c.leadScope = orchestrate.AgentScope{
+	pr.c.leadScope = agenthost.Scope{
 		AgentID:   servitorInvestigatorAgentID,
 		ScopeUser: applianceMemScope(pr.appliance.ID),
 		SessionID: pr.id,
 	}
-	pr.c.leadLoop = &orchestrate.AgentLoopOverrides{
+	pr.c.leadLoop = &agenthost.LoopOverrides{
 		MaxRounds:   75,
 		SerialTools: true,
 		// The appliance's own tier, on THIS path too. The map/probe branch
@@ -2912,7 +2913,7 @@ func (pr *probeRun) chatInvestigate() probeAction {
 		OnRoundStart: pr.drainInjections,
 	}
 	withHeartbeat(pr.ctx, pr.id, "Investigator: working", func() {
-		pr.c.res, pr.c.err = pr.c.orch.RunScopedAgentRich(pr.ctx, pr.c.leadScope, orchestrate.AgentSyncRun{
+		pr.c.res, pr.c.err = pr.c.orch.RunScopedAgentRich(pr.ctx, pr.c.leadScope, agenthost.Run{
 			SubSessionID:         pr.id,
 			Message:              buildScopedLeadMessage(pr.messages),
 			Images:               pr.c.leadImages,
@@ -2941,7 +2942,7 @@ func (pr *probeRun) chatInvestigate() probeAction {
 			emit(pr.id, probeEvent{Kind: "status", Text: "Investigator reached its round budget: continuing the investigation…"})
 		}
 		withHeartbeat(pr.ctx, pr.id, "Investigator: working (continued)", func() {
-			pr.c.res, pr.c.err = pr.c.orch.RunScopedAgentRich(pr.ctx, pr.c.leadScope, orchestrate.AgentSyncRun{
+			pr.c.res, pr.c.err = pr.c.orch.RunScopedAgentRich(pr.ctx, pr.c.leadScope, agenthost.Run{
 				SubSessionID:         pr.id,
 				Message:              "Continue the investigation from where you left off and finish answering the user's question.",
 				SystemPromptOverride: pr.c.leadPrompt,

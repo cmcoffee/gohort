@@ -26,7 +26,7 @@ func TestBothInvestigatorPathsCarryTheApplianceTier(t *testing.T) {
 		t.Fatal("the investigator's route stage has moved")
 	}
 	// The chat path: the scoped-agent overrides.
-	i := strings.Index(body, "pr.c.leadLoop = &orchestrate.AgentLoopOverrides{")
+	i := strings.Index(body, "pr.c.leadLoop = &agenthost.LoopOverrides{")
 	if i < 0 {
 		t.Fatal("the chat investigator's loop overrides have moved")
 	}

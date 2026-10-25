@@ -11,6 +11,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 )
 
 // AgentRecord is the single first-class concept — the persona AND the
@@ -1684,32 +1685,8 @@ type foldMark struct {
 // conversation was lost before its answer arrived.
 func init() { gob.Register([]map[string]any{}) }
 
-// PersistedToolCall is one tool invocation persisted alongside the
-// assistant message that owns it. Args is the LLM-supplied argument
-// map (raw, not normalized); Result is what the handler returned (or
-// Err when the call failed). Used by the session export and any
-// future "show me what happened" UI affordance.
-type PersistedToolCall struct {
-	Name   string         `json:"name"`
-	Args   map[string]any `json:"args,omitempty"`
-	Result string         `json:"result,omitempty"`
-	Err    string         `json:"err,omitempty"`
-	Cached bool           `json:"cached,omitempty"` // true = wrapper returned cached body (no fresh dispatch)
-	// Framework marks a record the FRAMEWORK wrote, not a call the model made:
-	// a machine step the turn walked before the model saw the message. Shown
-	// with the turn's other tool runs, never replayed to the model as a call it
-	// made (toLLMMessages), since a name like machine_step is not a tool it has
-	// and history that says it called one invites it to try again.
-	Framework bool `json:"framework,omitempty"`
-	// Label is what the tool-runs list shows in place of Name, for a record
-	// whose name alone says little ("machine_step" versus the step it was).
-	Label string `json:"label,omitempty"`
-	// ID is the call's card id, and Parent the id of the call it ran beneath
-	// (a dispatched agent's call under the dispatch). The page nests a call
-	// under its parent on reload, as it did live; empty for a top-level call.
-	ID     string `json:"id,omitempty"`
-	Parent string `json:"parent,omitempty"`
-}
+// PersistedToolCall is agenthost.ToolCall, which apps outside orchestrate use to reach it.
+type PersistedToolCall = agenthost.ToolCall
 
 // ChatMessageUsage is the per-assistant-message token / throughput
 // snapshot. Field names match the SSE stats event so the UI's

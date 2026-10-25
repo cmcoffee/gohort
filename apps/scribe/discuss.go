@@ -33,9 +33,8 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/textutil"
-
-	"github.com/cmcoffee/gohort/apps/orchestrate"
 )
 
 // discussTurn is one message of a discussion about a section or the brief.
@@ -224,7 +223,7 @@ func (T *Scribe) runDiscussTurn(w http.ResponseWriter, r *http.Request, udb Data
 	if session == "" {
 		session = "default"
 	}
-	res, err := orch.RunAgentSyncContinuingRich(ctx, orchestrate.AgentSyncRun{
+	res, err := orch.RunAgentSyncContinuingRich(ctx, agenthost.Run{
 		AgentOwner:   user,
 		RuntimeUser:  user,
 		AgentKey:     guideAgentID,

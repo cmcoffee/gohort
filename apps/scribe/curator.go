@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/appagents"
 
 	"github.com/cmcoffee/gohort/apps/orchestrate"
@@ -585,7 +586,7 @@ func (T *Scribe) RunCurator(ctx context.Context, user string) (CuratorRun, error
 		}
 	}()
 
-	res, err := orch.RunAgentSyncContinuingRich(ctx, orchestrate.AgentSyncRun{
+	res, err := orch.RunAgentSyncContinuingRich(ctx, agenthost.Run{
 		AgentOwner:   user,
 		RuntimeUser:  user,
 		AgentKey:     curatorAgentID,
@@ -705,7 +706,7 @@ func (T *Scribe) runSupersede(ctx context.Context, udb Database, orch *orchestra
 		ctx = WithNetworkConnector(ctx, NewNetworkConnector(true))
 		tools = withoutTools(tools, "research")
 	}
-	res, err := orch.RunAgentSyncContinuingRich(ctx, orchestrate.AgentSyncRun{
+	res, err := orch.RunAgentSyncContinuingRich(ctx, agenthost.Run{
 		AgentOwner:   user,
 		RuntimeUser:  user,
 		AgentKey:     guideAgentID,

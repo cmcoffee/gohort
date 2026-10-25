@@ -10,22 +10,16 @@ package orchestrate
 // thinking. The quick checks around a run (the warden, the judges) keep their
 // own settings: they are guards, not the work.
 
-import "context"
+import (
+	"context"
 
-type noThinkingKey struct{}
+	"github.com/cmcoffee/gohort/core/agenthost"
+)
 
-// WithoutThinking marks ctx so that no agent run under it thinks: the run it
-// starts, and every hand-off from there.
-func WithoutThinking(ctx context.Context) context.Context {
-	return context.WithValue(ctx, noThinkingKey{}, true)
-}
-
-// chainThink is think, unless ctx carries WithoutThinking.
+// chainThink is think, unless ctx carries agenthost.WithoutThinking. The mark
+// lives in agenthost because the caller that sets it (the API) is another app.
 func chainThink(ctx context.Context, think bool) bool {
-	if ctx == nil {
-		return think
-	}
-	if off, _ := ctx.Value(noThinkingKey{}).(bool); off {
+	if agenthost.ThinkingOff(ctx) {
 		return false
 	}
 	return think

@@ -21,6 +21,7 @@ import (
 	"fmt"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 )
 
 type dispatchLineageKey struct{}
@@ -53,7 +54,7 @@ func dispatchLineageFrom(ctx context.Context) ([]string, *dispatchAuthority) {
 // A chain that may not think (no_thinking.go) stays that way too.
 func carryDispatchLineage(from, to context.Context) context.Context {
 	if !chainThink(from, true) {
-		to = WithoutThinking(to)
+		to = agenthost.WithoutThinking(to)
 	}
 	chain, origin := dispatchLineageFrom(from)
 	if len(chain) == 0 {

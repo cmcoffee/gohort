@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cmcoffee/gohort/apps/orchestrate"
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 )
 
 // TestTextContentShapes: clients send message content either as a plain string
@@ -306,12 +306,12 @@ func TestPassthroughThinksOnlyWhenAsked(t *testing.T) {
 // context, so the agents it hands work to stay quiet too; one with a level
 // thinks at it and leaves the agents below to their own.
 func TestAnAgentTurnThinksOnlyWhenAsked(t *testing.T) {
-	var run orchestrate.AgentSyncRun
+	var run agenthost.Run
 	ctx := agentTurn{}.thinking(context.Background(), &run)
 	if run.Think == nil || *run.Think || ctx == context.Background() {
 		t.Errorf("no reasoning_effort should mean no thinking on the chain, got think=%v marked=%v", run.Think != nil && *run.Think, ctx != context.Background())
 	}
-	run = orchestrate.AgentSyncRun{}
+	run = agenthost.Run{}
 	ctx = agentTurn{effort: "high"}.thinking(context.Background(), &run)
 	if run.Think == nil || !*run.Think || run.Effort != "high" || ctx != context.Background() {
 		t.Errorf("a caller that asked for high should get it, unmarked, got %+v", run)

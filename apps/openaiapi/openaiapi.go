@@ -52,8 +52,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cmcoffee/gohort/apps/orchestrate"
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/netgate"
 )
 
@@ -286,7 +286,11 @@ func (T *OpenAIAPI) handleModels(w http.ResponseWriter, r *http.Request) {
 	if allow("lead") {
 		data = append(data, map[string]any{"id": "lead", "object": "model", "owned_by": "gohort"})
 	}
-	for _, a := range orchestrate.ExternalAgents(T.agentStore(), user) {
+	var agents []ExternalAgentInfo
+	if host := agenthost.Get(); host != nil {
+		agents = host.ExternalAgents(user)
+	}
+	for _, a := range agents {
 		// App-owned agents live behind their app's FEATURE checkbox, not the
 		// per-target scope: list them on the feature alone (denied ones drop),
 		// mirroring gateTarget's app bypass.
@@ -307,8 +311,8 @@ func (T *OpenAIAPI) handleModels(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// Live conversations, so a config UI can offer "join THIS room" directly.
-	if orch := findOrchestrate(); orch != nil {
-		for _, c := range orch.ExternalChannels(user) {
+	if host := agenthost.Get(); host != nil {
+		for _, c := range host.ExternalChannels(user) {
 			if allow("channel:" + c.ChatID) {
 				data = append(data, map[string]any{
 					"id": "channel:" + c.ChatID, "object": "model", "owned_by": "gohort",
@@ -381,8 +385,8 @@ func (T *OpenAIAPI) handleChatCompletions(w http.ResponseWriter, r *http.Request
 	if chatKey, isChan := strings.CutPrefix(target, "channel:"); isChan {
 		chatKey = strings.TrimSpace(chatKey)
 		canon := "channel:" + chatKey
-		if orch := findOrchestrate(); orch != nil {
-			if tgt, ok := orch.ResolveExternalChannel(user, chatKey); ok {
+		if host := agenthost.Get(); host != nil {
+			if tgt, ok := host.ResolveExternalChannel(user, chatKey); ok {
 				canon = "channel:" + tgt.ChatID
 			}
 		}
@@ -398,7 +402,7 @@ func (T *OpenAIAPI) handleChatCompletions(w http.ResponseWriter, r *http.Request
 	if agentKey, isAgent := strings.CutPrefix(target, "agent:"); isAgent {
 		agentKey = strings.TrimSpace(agentKey)
 		canon := "agent:" + agentKey
-		if id, ok := orchestrate.ResolveExternalAgentGranted(T.agentStore(), user, agentKey, tokenGrant(token)); ok {
+		if id, ok := resolveAgent(user, agentKey, tokenGrant(token)); ok {
 			canon = "agent:" + id
 		}
 		if !gateTarget(w, user, token, canon) {
@@ -418,8 +422,8 @@ func (T *OpenAIAPI) handleChatCompletions(w http.ResponseWriter, r *http.Request
 	// whole conversation against the bare model.) Resolve it before falling
 	// back, and log the fallback so the next one is visible.
 	if target != "" && !isTierName(target) {
-		if orch := findOrchestrate(); orch != nil {
-			if tgt, ok := orch.ResolveExternalChannel(user, target); ok {
+		if host := agenthost.Get(); host != nil {
+			if tgt, ok := host.ResolveExternalChannel(user, target); ok {
 				if !gateTarget(w, user, token, "channel:"+tgt.ChatID) {
 					return
 				}
@@ -428,7 +432,7 @@ func (T *OpenAIAPI) handleChatCompletions(w http.ResponseWriter, r *http.Request
 				return
 			}
 		}
-		if id, ok := orchestrate.ResolveExternalAgentGranted(T.agentStore(), user, target, tokenGrant(token)); ok {
+		if id, ok := resolveAgent(user, target, tokenGrant(token)); ok {
 			if !gateTarget(w, user, token, "agent:"+id) {
 				return
 			}
@@ -532,12 +536,12 @@ func (T *OpenAIAPI) serveAgent(w http.ResponseWriter, r *http.Request, user, age
 		writeErr(w, http.StatusBadRequest, "model \"agent:\" needs an agent id, e.g. agent:seed-chat")
 		return
 	}
-	orch := findOrchestrate()
+	orch := agenthost.Get()
 	if orch == nil {
 		writeErr(w, http.StatusServiceUnavailable, "the orchestrate app is not mounted, so agents can't be reached")
 		return
 	}
-	resolved, ok := orchestrate.ResolveExternalAgentGranted(T.agentStore(), user, agentKey, tokenGrant(AccountTokenFromRequest(r)))
+	resolved, ok := resolveAgent(user, agentKey, tokenGrant(AccountTokenFromRequest(r)))
 	if !ok {
 		writeErr(w, http.StatusNotFound, fmt.Sprintf("no agent %q reachable for this account: check the id, and turn on \"Reachable over MCP\" on that agent (the same switch governs this endpoint)", agentKey))
 		return
@@ -584,7 +588,7 @@ func (T *OpenAIAPI) serveChannel(w http.ResponseWriter, r *http.Request, user, c
 		writeErr(w, http.StatusBadRequest, "model \"channel:\" needs a chat id, handle, or room name, GET /v1/models lists the reachable ones")
 		return
 	}
-	orch := findOrchestrate()
+	orch := agenthost.Get()
 	if orch == nil {
 		writeErr(w, http.StatusServiceUnavailable, "the orchestrate app is not mounted, so channels can't be reached")
 		return
@@ -673,7 +677,7 @@ func turnInput(req chatReq) (input, system string) {
 
 // agentTurn is one dispatch into an agent, however it was addressed.
 type agentTurn struct {
-	orch                                 *orchestrate.OrchestrateApp
+	orch                                 agenthost.Host
 	owner, agent, session, title, sender string
 	input, system, model                 string
 	stream                               bool
@@ -688,12 +692,12 @@ type agentTurn struct {
 // the context to run it on. With none, nothing thinks, on this agent or on any
 // agent it hands the work to, or the silence comes back one hop down. With a
 // level, this agent thinks at it and the agents below at their own levels.
-func (t agentTurn) thinking(ctx context.Context, run *orchestrate.AgentSyncRun) context.Context {
+func (t agentTurn) thinking(ctx context.Context, run *agenthost.Run) context.Context {
 	think := t.effort != ""
 	run.Think = &think
 	run.Effort = t.effort
 	if !think {
-		ctx = orchestrate.WithoutThinking(ctx)
+		ctx = agenthost.WithoutThinking(ctx)
 	}
 	return ctx
 }
@@ -750,7 +754,7 @@ func (T *OpenAIAPI) runAgentTurn(w http.ResponseWriter, r *http.Request, t agent
 		sse.chunk(id, t.model, delta, "")
 	}
 
-	run := orchestrate.AgentSyncRun{
+	run := agenthost.Run{
 		AgentOwner:    t.owner,
 		RuntimeUser:   t.owner,
 		AgentKey:      t.agent,
@@ -874,7 +878,7 @@ const conversationIdle = 30 * time.Minute
 // conversationThread resolves a rolling prefix to a thread: the caller's
 // latest conversation when it was used within conversationIdle, else a new
 // one.
-func conversationThread(orch *orchestrate.OrchestrateApp, owner, agentID, prefix string) string {
+func conversationThread(orch agenthost.Host, owner, agentID, prefix string) string {
 	if id := orch.RecentThread(owner, agentID, prefix, conversationIdle); id != "" {
 		return id
 	}
@@ -1009,17 +1013,13 @@ func writeErr(w http.ResponseWriter, code int, msg string) {
 	})
 }
 
-// agentStore is where agents live: orchestrate's store, not this app's own
-// bucket, which holds none, so an owner's own agents never resolved here.
-func (T *OpenAIAPI) agentStore() Database {
-	if o := findOrchestrate(); o != nil && o.DB != nil {
-		return o.DB
+// resolveAgent maps an agent id or name to the agent it names, when owner's
+// agent is reachable from outside (or this key grants it). The agents live in
+// the agent host's store, which ResolveExternalAgentFn reads for itself; no
+// host running means no agent resolves.
+func resolveAgent(owner, key string, granted func(canonical string) bool) (string, bool) {
+	if ResolveExternalAgentFn == nil {
+		return "", false
 	}
-	return T.DB
-}
-
-// findOrchestrate is the registered orchestrate app, or nil when it is not running.
-func findOrchestrate() *orchestrate.OrchestrateApp {
-	o, _ := FindAgentAs[*orchestrate.OrchestrateApp]("orchestrate")
-	return o
+	return ResolveExternalAgentFn(nil, owner, key, granted)
 }

@@ -29,6 +29,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/netgate"
 	"github.com/cmcoffee/gohort/core/textutil"
 )
@@ -1279,284 +1280,14 @@ func (sd *syncDispatch) spent() UsageDiff {
 	return UsageDiff{}
 }
 
-// RunAgentSyncContinuing is RunAgentSync's continuation variant —
-// loads prior messages from the named sub-session before running so
-// the target picks up where it left off, and persists the new
-// (user, assistant) exchange back so subsequent calls see it too.
-//
-// Used by callers that promote a previously-dispatched agent into
-// a side-conversation (phantom's processMessage promotion path,
-// orchestrate's handleSend promotion path). The subSessionID picks
-// the storage slot; pass the same ID across promotion turns to get
-// continuity, or a fresh ID for an isolated thread.
-//
-// Optional injectionQueueID — when non-empty, the agent loop drains
-// the named injection queue between rounds (mid-flight user notes
-// arriving while this dispatch is in flight). Pass "" to disable.
-//
-// freshSession=true wipes the prior session at the deterministic ID
-// before loading — the new dispatch runs without any inherited
-// history. Used by callers (phantom's dispatch_agent fresh_session
-// flag) that have semantic evidence the user is on a new thread and
-// don't want compounding context-contamination from accumulated old
-// turns. The wipe is irreversible — older turns are gone, not just
-// hidden from the LLM. Default false preserves the continuity model.
-// AgentSyncRun carries the inputs for RunAgentSyncContinuingRich. The channel
-// path uses StatusCallback (mid-turn pings) and reads AgentSyncResult.Images
-// (the agent's produced attachments); the legacy text-only callers go through
-// the RunAgentSyncContinuing wrapper.
-type AgentSyncRun struct {
-	AgentOwner       string
-	RuntimeUser      string
-	AgentKey         string
-	SubSessionID     string
-	InjectionQueueID string
-	// InputReportFrom / InputReportKind mark the STORED input as something that
-	// HAPPENED rather than something the user typed — a monitor firing, a
-	// scheduled fire — naming the producer and its card kind.
-	//
-	// The live turn is unaffected: the message is still the user turn this run
-	// answers, because that is what it is. What changes is the record left
-	// behind. Without these, a monitor wake sat in the owner's cortex as their
-	// own message — the whole "[EVENT — monitor "x" fired] …" prompt, diff
-	// payload and closing instruction included, in a user bubble, as though
-	// they had typed it. It also read back to the model that way on the next
-	// turn, where an assistant-role card gets a fenced origin marker
-	// (llmHistoryContent) saying where it came from.
-	//
-	// Empty leaves every other caller exactly as it was: a channel inbound and
-	// a dispatch really are somebody's message.
-	InputReportFrom string
-	InputReportKind string
-	// InputCardText, when set with InputReportFrom, is what the stored card
-	// SAYS, in place of the message. The message is still the turn the model
-	// answers — a watch wake needs its diff and payload — but a thread is read
-	// by a person, and the same text there was a wall of JSON. Empty keeps the
-	// message as the card, which is right for an event that has no separate
-	// readable form.
-	InputCardText string
-	// DeliverySessionID is the CONVERSATION anything this run starts in the
-	// background must come home to. A dispatch runs under its own sub-session
-	// id so its ephemeral state stays off the caller's thread; a picture
-	// started inside it belongs to the thread all the same. Empty means the
-	// sub-session id is also the conversation, which is true for a dispatch
-	// with no parent thread. See ToolSession.DeliverySessionID.
-	DeliverySessionID string
-	Message           string
-	FreshSession      bool
-	// DelegatorAgentID names the agent that handed this run over, when one did.
-	// Its rules ride into the run (inheritDelegatorGuardrails): a restriction the
-	// owner wrote on the delegator is not something the delegate should be able
-	// to step around by having none of its own. Empty for a run with no
-	// delegator — a schedule, a channel inbound, a monitor wake — where there is
-	// nobody's policy to inherit.
-	DelegatorAgentID string
-	// Kind labels this run in the live-activity ribbon / "Active now" pane
-	// ("channel" for an inbound channel/iMessage turn, else it defaults to
-	// "dispatch"). Cosmetic only — how the run is described, not how it runs.
-	Kind           string
-	StatusCallback func(string) // optional: wired to the sub-session's StatusCallback
-	// Stream, when set, receives assistant text deltas AS THEY GENERATE, wired
-	// straight to the agent loop's stream handler. Without it a caller only
-	// gets AgentSyncResult.Text when the whole turn is done — fine for a
-	// scheduled run, fatal for anything a person is waiting on out loud, where
-	// time-to-first-word is the entire experience.
-	//
-	// It fires for EVERY round, so a turn that calls tools streams the model's
-	// interim prose before the final answer. For a voice caller that reads as
-	// natural filler ("let me check that…"); for a caller that wants only the
-	// settled answer, leave this nil and use the returned Text.
-	Stream func(string)
-	// Think overrides the agent's own thinking setting for this run. nil keeps
-	// the agent's default.
-	//
-	// It exists because thinking and a waiting caller are in direct conflict:
-	// the model can spend its whole reasoning budget before emitting one word
-	// of CONTENT, and a stream callback only ever sees content. Measured live:
-	// a voice turn held an open stream for 19.75s producing nothing visible,
-	// with think=true and thinking_budget=4096, until the caller hung up. For
-	// anything with a human waiting on audio, set this false.
-	Think *bool
-	// Effort overrides the agent's own reasoning level for this run ("low",
-	// "medium", "high"), for a caller that asked to wait for thinking. Empty
-	// keeps the agent's.
-	Effort string
-	// Title, when set, names a FRESH session (used only if it has no title
-	// yet). Channel rooms pass the contact's display name so the rail row and
-	// transcript read as the conversation partner rather than the raw id.
-	Title string
-	// AutoTitle names the thread from its conversation, as web chat names
-	// its sessions: the first message at once, then a written title from the
-	// first exchanges. For a caller whose threads have no name to borrow (the
-	// external API), so the rail reads as conversations, not raw ids.
-	AutoTitle bool
-	// SenderHandle, when set, is the TRANSPORT's attribution of who sent this
-	// message — a phone number or email, as the carrier reported it. Distinct from
-	// MessageSender, which is a display name the sender chose for themselves.
-	//
-	// Used to recognize the OWNER messaging their own agent from their own phone.
-	// That case is otherwise indistinguishable from a stranger messaging in (both
-	// run as the synthetic phantom:<chatID> user), which left the owner classed as
-	// an outside party on their own device — so every audience-scoped guardrail
-	// ("don't discuss pay with anyone but me") refused them there. Empty for
-	// dispatch / web / scheduled runs.
-	SenderHandle string
-	// SenderIsOwner is the bridge's verdict that the channel owner sent this
-	// (ChannelInbound.FromOwner). A channel run's owner check reads it, and
-	// nothing else: the run executes as the owner's account whoever sent it.
-	SenderIsOwner bool
-	// MessageSender, when set, is stored as THIS message's author (ChatMessage
-	// .Sender). Channel rooms pass the inbound contact's display name so a
-	// GROUP thread renders real who-said-what — each inbound carries its own
-	// sender, unlike Title which only names the session once.
-	MessageSender string
-	// Images carries decoded inbound image bytes (a contact's photo on a
-	// channel) to ride on the user message as multimodal content the vision
-	// model sees this turn. Empty for text-only callers.
-	Images [][]byte
-	// DispatchedBy carries the live dispatch chain when this run was delegated
-	// by another agent, so the target can reach the channels its delegator
-	// reaches. Empty for a schedule, a monitor wake, or a channel inbound —
-	// none of those has a dispatching parent.
-	DispatchedBy []string
-	// Interactive marks this as a real person's message (a channel inbound),
-	// NOT an agent-to-agent dispatch. When set, the delegated-invocation marker
-	// is skipped — there IS a human, follow-up questions can be answered, and
-	// the "[DELEGATED INVOCATION] no human is listening…" preamble must not leak
-	// into the message. Default false (dispatch behavior unchanged).
-	Interactive bool
-	// ReplyAuthorizedKey, when set, is the recipient key of the conversation this
-	// run replies to (a channel inbound). The messaging tools deliver back to it
-	// without the approval gate — replying to whoever just messaged you is not a
-	// proactive reach-out. Empty for dispatch / web runs. See ToolSession.
-	ReplyAuthorizedKey string
-	// ChannelChatID / ChannelHandle name the conversation this run is answering,
-	// carried separately from ReplyAuthorizedKey (which fuses them into one
-	// authorization key). Delivery of work that outlives the turn needs them
-	// apart: the transport treats a chat id and a bare handle differently.
-	ChannelChatID string
-	ChannelHandle string
-	// SurfaceContext, when set, is a one-line provenance note appended to the
-	// LLM's copy of THIS user message only (NOT persisted to the transcript, so
-	// it doesn't bloat a long thread on replay). A channel inbound passes it so
-	// the agent knows which transport / conversation the message arrived on and
-	// that its reply goes straight back there — preventing it from confabulating
-	// a destination or offering to "send it to" the channel it's already on.
-	SurfaceContext string
-	// AppTools are extra, caller-built tools injected into THIS run's catalog —
-	// the same mechanism the web path uses (chatTurn.appTools) but for a dispatched
-	// / scoped run. An app instantiating a template (see RunScopedAgent) passes
-	// per-instance closure tools here, e.g. servitor handing its worker the SSH
-	// command tools bound to one appliance's connection. Empty for ordinary runs.
-	AppTools []AgentToolDef
-	// AskUser marks a run whose caller has a person watching who can answer a
-	// question: an app's own window, such as an assist workbench. The run gets
-	// ask_user, a call ends it, and the result carries Question and Options for
-	// the caller to put to them; their answer is the next message in the
-	// thread.
-	AskUser bool
-	// Loop, when set, supplies rich agent-loop knobs (pacing callbacks, chat
-	// options, round budget) a sophisticated instance needs that the default
-	// dispatch run doesn't — so e.g. servitor's investigator runs through the
-	// scoped path with FULL behavior parity (step pacing, stuck detection,
-	// plan-aware wrap-up) instead of a generic loop. nil ⇒ dispatch defaults.
-	Loop *AgentLoopOverrides
-	// SystemPromptOverride, when set, REPLACES the prompt the dispatch normally
-	// assembles from the template record (+ facts + available blocks). An app
-	// whose instance builds its own complete, per-run system prompt (servitor's
-	// investigator via buildLeadSystemPrompt) passes it here so the scoped run
-	// uses that prompt verbatim — gaining scoped sessions + recording-to-scope
-	// without changing the prompt content. Empty ⇒ the assembled prompt.
-	SystemPromptOverride string
-	// CallerContext is a system message an EXTERNAL caller sent with its
-	// request (/v1). Appended to the agent's own prompt as the caller's
-	// context, never in place of it: an override drops the persona, the rules
-	// and the agent's machine (which narrows tools step by step), and a key
-	// holder must not be able to take those off by sending a system message.
-	CallerContext string
-}
+// AgentSyncRun is agenthost.Run, which apps outside orchestrate use to reach it.
+type AgentSyncRun = agenthost.Run
 
-// AgentLoopOverrides carries the subset of AgentLoopConfig a scoped/template run
-// may override. Zero fields inherit the dispatch defaults; set only what the
-// instance's loop needs. See AgentSyncRun.Loop.
-type AgentLoopOverrides struct {
-	MaxRounds   int  // >0 overrides the resolved default
-	SerialTools bool // run tool calls one-at-a-time
-	// TierOverride pins this run to a model tier regardless of the agent's own
-	// LeadModel setting. TierUnset (the zero value) inherits, so every existing
-	// caller is unchanged.
-	//
-	// It exists because a scoped run can belong to something that has its OWN
-	// opinion about which model should serve it. Servitor's per-appliance tier
-	// reached the map/probe path — which builds an AgentLoopConfig directly —
-	// and stopped dead at the chat path, which comes through here: the setting
-	// saved, read back correctly, and did nothing on the surface an operator is
-	// most likely to be looking at.
-	//
-	// It cannot escalate past the privacy pin. The loop gates every tier
-	// decision on LeadDenied(), so a LEAD override on a ForcePrivate agent still
-	// serves from the worker.
-	TierOverride  LLMTier
-	ChatOptions   []ChatOption     // APPENDED to the dispatch defaults (last wins per option)
-	OnRoundReset  func() bool      // per-step pacing reset
-	OnRoundStart  func() []Message // pre-round injection (stuck nudges, etc.)
-	PendingWorkFn func() int       // remaining-work count for the wrap-up nudge
-}
+// AgentLoopOverrides is agenthost.LoopOverrides, which apps outside orchestrate use to reach it.
+type AgentLoopOverrides = agenthost.LoopOverrides
 
-// AgentSyncResult is the bound agent's output: reply text plus any attachments
-// it produced this turn (base64).
-type AgentSyncResult struct {
-	Text string
-	// Parts is Text as the separate messages the turn deliberately sent to its
-	// own conversation (send_message with parts), when it sent more than one.
-	// Text is them joined, for the stored thread and every caller that takes
-	// one reply; a channel delivers Parts one message each.
-	Parts  []string
-	Images []string
-	// Videos are base64 video attachments the turn produced (video tools via
-	// sess.Videos, or a [ATTACH: file.mp4] marker). Kept SEPARATE from Images so
-	// they ride out as videos, not mislabeled images — restoring the outbound
-	// video channel phantom had before the bridges migration dropped it.
-	Videos []string
-	// Made is the files the turn's tools created, by absolute path, so the
-	// agent that ran it can be handed them (agent_media.go, handBackFiles).
-	Made []string
-	// HitRoundCap reports that the loop stopped because it exhausted its round
-	// budget (not a natural finish). A caller driving a multi-pass loop (e.g.
-	// servitor's investigator continuing while plan steps remain) re-runs with the
-	// same SubSessionID while this is true.
-	HitRoundCap bool
-	// PhantomDelivery reports that the reply named a file it was sending, no
-	// such file exists, and nothing was recovered to stand in for it. The turn
-	// promised a picture it never made. Callers substituting a fallback for
-	// empty output use this to say something TRUE about why — the generic
-	// "could you rephrase it" blames the request, and the request was fine.
-	PhantomDelivery bool
-	// ToolCalls is every tool the turn ran, paired call-to-result. A channel
-	// turn's whole record in the standing thread was its inbound text and its
-	// reply, so anything it DID on the owner's behalf — searched, edited a
-	// picture, messaged someone, armed a monitor — left no trace there at all.
-	//
-	// Structured rather than the names-only list this replaced, because the
-	// names were being formatted into the card's BODY as prose. That is the one
-	// shape the thread cannot use: the panel renders a persisted trace as the
-	// same expandable tool-runs section every other surface has, and
-	// toLLMMessages rebuilds it into proper call-and-result protocol — so a
-	// later turn reading its own thread gets the outcomes, not a truncated
-	// bullet list, and the reader gets chips instead of a paragraph.
-	ToolCalls []PersistedToolCall
-	// Silenced reports that the model DELIBERATELY chose to say nothing —
-	// stay_silent fired. Distinct from Text being empty by accident, which is a
-	// failure. Callers that substitute a fallback for empty output must not do
-	// so here: on a messaging channel, "don't reply to this" produced the
-	// agent's "I wasn't able to put together a response" line, which is the
-	// framework overriding an instruction the user gave and the model obeyed.
-	Silenced bool
-	// Question and Options are what the run asked with ask_user when it was
-	// run with AskUser; Text is the question as the thread keeps it.
-	Question string
-	Options  []string
-}
+// AgentSyncResult is agenthost.Result, which apps outside orchestrate use to reach it.
+type AgentSyncResult = agenthost.Result
 
 // buildInboundMediaManifest individuates the media that arrived on THIS turn,
 // giving the model a stable, referenceable handle per item (media#1, media#2, …)
@@ -1760,6 +1491,28 @@ func cappedEventText(text string) string {
 		"\n\n…(the rest of this event went to the agent when it fired; see its reply below)"
 }
 
+// RunAgentSyncContinuing is RunAgentSync's continuation variant —
+// loads prior messages from the named sub-session before running so
+// the target picks up where it left off, and persists the new
+// (user, assistant) exchange back so subsequent calls see it too.
+//
+// Used by callers that promote a previously-dispatched agent into
+// a side-conversation (phantom's processMessage promotion path,
+// orchestrate's handleSend promotion path). The subSessionID picks
+// the storage slot; pass the same ID across promotion turns to get
+// continuity, or a fresh ID for an isolated thread.
+//
+// Optional injectionQueueID — when non-empty, the agent loop drains
+// the named injection queue between rounds (mid-flight user notes
+// arriving while this dispatch is in flight). Pass "" to disable.
+//
+// freshSession=true wipes the prior session at the deterministic ID
+// before loading — the new dispatch runs without any inherited
+// history. Used by callers (phantom's dispatch_agent fresh_session
+// flag) that have semantic evidence the user is on a new thread and
+// don't want compounding context-contamination from accumulated old
+// turns. The wipe is irreversible — older turns are gone, not just
+// hidden from the LLM. Default false preserves the continuity model.
 func (T *OrchestrateApp) RunAgentSyncContinuing(ctx context.Context, agentOwner, runtimeUser, agentKey, subSessionID, injectionQueueID, message string, freshSession bool) (string, error) {
 	res, err := T.RunAgentSyncContinuingRich(ctx, AgentSyncRun{
 		AgentOwner: agentOwner, RuntimeUser: runtimeUser, AgentKey: agentKey,

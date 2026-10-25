@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -34,6 +35,8 @@ func TestCrossAppHooksIgnoreTheCallersStore(t *testing.T) {
 
 	app := &OrchestrateApp{}
 	app.DB = orchStore
+	prevHost := agenthost.Get()
+	t.Cleanup(func() { agenthost.Register(prevHost) })
 	app.registerExternalAgentHooks()
 
 	// Called the way an external app calls it: with ITS store, not orchestrate's.
@@ -51,5 +54,21 @@ func TestCrossAppHooksIgnoreTheCallersStore(t *testing.T) {
 	// And the resolver has to agree, or the list shows what a call refuses.
 	if id, ok := ResolveExternalAgentFn(callerStore, user, "Wren", nil); !ok || id != "wren-1" {
 		t.Errorf("resolver returned (%q, %v) for a listed agent", id, ok)
+	}
+
+	// The same app is the agent host other apps reach, reading the same store.
+	host := agenthost.Get()
+	if host != agenthost.Host(app) {
+		t.Fatalf("the app did not register itself as the agent host: %v", host)
+	}
+	if name := host.AgentNames(user)["wren-1"]; name != "Wren" {
+		t.Errorf("AgentNames has %q for the user's agent", name)
+	}
+	var listed bool
+	for _, a := range host.ExternalAgents(user) {
+		listed = listed || a.ID == "wren-1"
+	}
+	if !listed {
+		t.Errorf("ExternalAgents is missing the user's exposed agent: %+v", host.ExternalAgents(user))
 	}
 }

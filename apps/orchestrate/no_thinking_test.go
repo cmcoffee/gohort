@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 )
 
 // thinkOf is whether the call that carried want as its live message asked to
@@ -45,7 +46,7 @@ func TestACallerOnTheLineStopsThinkingDownTheChain(t *testing.T) {
 	}
 
 	// Under the mark it does not, even asked to.
-	quiet := WithoutThinking(t.Context())
+	quiet := agenthost.WithoutThinking(t.Context())
 	if _, err := df.app.RunAgentSyncContinuingRich(quiet, AgentSyncRun{AgentOwner: "u", AgentKey: df.agent.ID, SubSessionID: "s2", Message: "second question", Think: &on}); err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +78,7 @@ func TestACallerOnTheLineStopsThinkingDownTheChain(t *testing.T) {
 // A hand-off that builds its context from a session's, not the call's, keeps
 // the mark with the lineage.
 func TestTheNoThinkingMarkCrossesAHandOff(t *testing.T) {
-	from := WithoutThinking(context.Background())
+	from := agenthost.WithoutThinking(context.Background())
 	if chainThink(carryDispatchLineage(from, context.Background()), true) {
 		t.Error("the mark was lost on a hand-off")
 	}

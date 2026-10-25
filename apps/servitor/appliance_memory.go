@@ -23,6 +23,7 @@ import (
 
 	"github.com/cmcoffee/gohort/apps/orchestrate"
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/appagents"
 )
 
@@ -122,7 +123,7 @@ func clearApplianceScopedMemory(udb Database, applianceID string) {
 	}
 	udb.Unset(factsSeededTable, applianceID) // let a future Memory open re-seed
 	if orch := servitorOrch(); orch != nil {
-		_ = orch.WipeScopedMemory(orchestrate.AgentScope{
+		_ = orch.WipeScopedMemory(agenthost.Scope{
 			AgentID:   servitorInvestigatorAgentID,
 			ScopeUser: applianceMemScope(applianceID),
 		})
@@ -174,7 +175,7 @@ func scopedApplianceFacts(udb Database, a Appliance) map[string]string {
 	if orch == nil {
 		return nil
 	}
-	scope := orchestrate.AgentScope{AgentID: servitorInvestigatorAgentID, ScopeUser: applianceMemScope(a.ID)}
+	scope := agenthost.Scope{AgentID: servitorInvestigatorAgentID, ScopeUser: applianceMemScope(a.ID)}
 	e, ok := orch.ScopedGraphEntity(scope, a.ID)
 	if !ok {
 		return nil
@@ -194,7 +195,7 @@ func scopedGraphBlock(a Appliance) string {
 	if orch == nil {
 		return ""
 	}
-	scope := orchestrate.AgentScope{AgentID: servitorInvestigatorAgentID, ScopeUser: applianceMemScope(a.ID)}
+	scope := agenthost.Scope{AgentID: servitorInvestigatorAgentID, ScopeUser: applianceMemScope(a.ID)}
 	return orch.ScopedGraphSummary(scope)
 }
 
@@ -239,7 +240,7 @@ func recordScopedApplianceFact(a Appliance, key, value, ttl string) {
 	if name == "" {
 		name = a.ID
 	}
-	scope := orchestrate.AgentScope{AgentID: servitorInvestigatorAgentID, ScopeUser: applianceMemScope(a.ID)}
+	scope := agenthost.Scope{AgentID: servitorInvestigatorAgentID, ScopeUser: applianceMemScope(a.ID)}
 	_ = orch.SeedScopedGraphEntity(scope, "appliance", name, []string{a.ID}, map[string]string{key: value})
 }
 
@@ -256,7 +257,7 @@ func RemoveScopedApplianceFact(a Appliance, key string) bool {
 	if orch == nil {
 		return false
 	}
-	scope := orchestrate.AgentScope{AgentID: servitorInvestigatorAgentID, ScopeUser: applianceMemScope(a.ID)}
+	scope := agenthost.Scope{AgentID: servitorInvestigatorAgentID, ScopeUser: applianceMemScope(a.ID)}
 	return orch.RemoveScopedGraphEntityAttr(scope, a.ID, key)
 }
 
@@ -272,7 +273,7 @@ func recordScopedLink(a Appliance, subjectKind, subject string, subjectAttrs map
 	if orch == nil {
 		return nil
 	}
-	scope := orchestrate.AgentScope{AgentID: servitorInvestigatorAgentID, ScopeUser: applianceMemScope(a.ID)}
+	scope := agenthost.Scope{AgentID: servitorInvestigatorAgentID, ScopeUser: applianceMemScope(a.ID)}
 	return orch.SeedScopedGraphLink(scope, subjectKind, subject, subjectAttrs, relation, objectKind, object, note, replace)
 }
 
@@ -290,7 +291,7 @@ func recordScopedExplicit(a Appliance, note string) {
 	if orch == nil {
 		return
 	}
-	scope := orchestrate.AgentScope{AgentID: servitorInvestigatorAgentID, ScopeUser: applianceMemScope(a.ID)}
+	scope := agenthost.Scope{AgentID: servitorInvestigatorAgentID, ScopeUser: applianceMemScope(a.ID)}
 	_ = orch.SeedScopedMemory(scope, note)
 }
 
@@ -309,7 +310,7 @@ func recordScopedReference(ctx context.Context, a Appliance, topic, title, body 
 	if orch == nil {
 		return
 	}
-	scope := orchestrate.AgentScope{AgentID: servitorInvestigatorAgentID, ScopeUser: applianceMemScope(a.ID)}
+	scope := agenthost.Scope{AgentID: servitorInvestigatorAgentID, ScopeUser: applianceMemScope(a.ID)}
 	_ = orch.SeedScopedKnowledge(ctx, scope, topic, title, body)
 }
 
@@ -358,7 +359,7 @@ func seedApplianceMemoryFromFacts(udb Database, a Appliance) {
 	if name == "" {
 		name = a.ID
 	}
-	scope := orchestrate.AgentScope{AgentID: servitorInvestigatorAgentID, ScopeUser: applianceMemScope(a.ID)}
+	scope := agenthost.Scope{AgentID: servitorInvestigatorAgentID, ScopeUser: applianceMemScope(a.ID)}
 	if err := orch.SeedScopedGraphEntity(scope, "appliance", name, []string{a.ID}, attrs); err != nil {
 		return // leave unmarked so a later open retries
 	}

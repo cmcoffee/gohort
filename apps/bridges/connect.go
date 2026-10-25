@@ -5,20 +5,14 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/cmcoffee/gohort/apps/orchestrate"
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 )
 
 // Connecting a conversation to an agent's channel — the "hook a source" control
 // lifted from phantom. A Channel (core) is the interface to an agent; connecting
 // a chat stamps the channel's source (service + the chat's address) so inbound
 // over a bridge routes to that channel's bound agent.
-
-// findOrchestrate is the registered orchestrate app, or nil when it is not running.
-func findOrchestrate() *orchestrate.OrchestrateApp {
-	o, _ := FindAgentAs[*orchestrate.OrchestrateApp]("orchestrate")
-	return o
-}
 
 // handleConversations lists the caller's chats, with which channel (if any)
 // each is currently connected to.
@@ -195,10 +189,8 @@ func (T *Bridges) handleAgentChannels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	agentName := map[string]string{}
-	if orch := findOrchestrate(); orch != nil {
-		for _, a := range orch.AgentsForUser(user) {
-			agentName[a.ID] = a.Name
-		}
+	if host := agenthost.Get(); host != nil {
+		agentName = host.AgentNames(user)
 	}
 	type row struct {
 		ID    string `json:"id"`

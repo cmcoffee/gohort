@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/appagents"
 )
 
@@ -125,15 +126,8 @@ func ownAgentFor(a AgentRecord, owner string) bool {
 	return o == "" || o == owner || o == seedOwner
 }
 
-// ExternalChannelTarget is a live conversation an external caller can join: the
-// agent that serves it and the session that IS its thread.
-type ExternalChannelTarget struct {
-	AgentID   string
-	AgentName string
-	SessionID string
-	ChatID    string
-	Name      string // conversation/room display name, when the transport knows one
-}
+// ExternalChannelTarget is agenthost.ChannelTarget, which apps outside orchestrate use to reach it.
+type ExternalChannelTarget = agenthost.ChannelTarget
 
 // ResolveExternalChannel maps a chat identifier — chat id, handle, or the room's
 // display name — to the agent and THREAD that already serve it.
