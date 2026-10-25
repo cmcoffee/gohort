@@ -308,7 +308,6 @@ func registerOperatorWake(app *OrchestrateApp) {
 		// The fire surfaces in the wake agent's cortex (console_surface.go): the
 		// trace card and the channel wake both land there, with a line linking
 		// the session the monitor was made in.
-		app.ensureScheduleCortex(owner, wakeAgent)
 		surfSession := scheduleSession(wakeAgent, wakeSession)
 		cardSession := surfSession
 		source := app.scheduleSourceNote(UserDB(app.DB, owner), wakeAgent, wakeSession)

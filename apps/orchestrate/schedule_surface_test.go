@@ -23,28 +23,32 @@ func TestAScheduleReportsIntoItsAgentsCortex(t *testing.T) {
 	}
 }
 
-// An agent without a cortex gets one at its first fire, as attaching a
-// channel gives it one. A sub-agent does not: what reaches it is its
-// parent's.
-func TestAFireGivesATopLevelAgentACortex(t *testing.T) {
+// A fire leaves the agent's Cortex setting alone. Every agent keeps the
+// thread; the setting is only whether it reads it. Switching it on at the
+// first fire (shipped 2026-10-23) put the agent's reports into every prompt it
+// ran and moved it into the picker's conversational group, against what its
+// owner had set. The thread still takes the fire, and the agent that does not
+// read it still shows it, as a read-only record row.
+func TestAFireLeavesTheAgentsCortexSettingAlone(t *testing.T) {
 	root := &DBase{Store: kvlite.MemStore()}
 	T := &OrchestrateApp{AppCore: AppCore{DB: root}}
 	udb := UserDB(root, "u")
-	parent, err := saveAgent(udb, AgentRecord{Name: "Parent", Owner: "u", OrchestratorPrompt: "You plan."})
+	a, err := saveAgent(udb, AgentRecord{Name: "Reporter", Owner: "u", OrchestratorPrompt: "You report.", Cortex: false})
 	if err != nil {
 		t.Fatal(err)
 	}
-	sub, err := saveAgent(udb, AgentRecord{Name: "Helper", Owner: "u", OwnedBy: parent.ID, OrchestratorPrompt: "You help."})
-	if err != nil {
-		t.Fatal(err)
+	fr := &fireRun{app: T, udb: udb, p: orchUpdatePayload{AgentID: a.ID, Username: "u", SessionID: "s1", Prompt: "check the queue"}}
+	fr.loadThread()
+	if fr.loadSession != cortexSessionID(a.ID) {
+		t.Fatalf("the fire ran in %q, want the cortex thread", fr.loadSession)
 	}
-	T.ensureScheduleCortex("u", parent.ID)
-	T.ensureScheduleCortex("u", sub.ID)
-	if a, _ := loadAgent(udb, parent.ID); !a.Cortex {
-		t.Error("the agent was not given a cortex for its schedule to report into")
+	got, _ := loadAgent(udb, a.ID)
+	if got.Cortex {
+		t.Fatal("a schedule's fire switched on the agent's Cortex reading")
 	}
-	if a, _ := loadAgent(udb, sub.ID); a.Cortex {
-		t.Error("a sub-agent was given a cortex of its own")
+	_, cortex, _ := agentPickerOptions([]AgentRecord{got})
+	if rec := recordAgentsFor([]AgentRecord{got}, cortex); rec[a.ID] != cortexSessionID(a.ID) {
+		t.Errorf("an agent that does not read its cortex lost the record row its fires land in: %v", rec)
 	}
 }
 

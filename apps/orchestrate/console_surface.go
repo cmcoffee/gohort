@@ -65,9 +65,15 @@ func awaitsAnswer(sess ChatSession) bool {
 // out at 9am with no record of what it sent.
 //
 // The stored Surface field is no longer read, so a schedule made under any
-// choice reports into the cortex from its next fire. An agent without a
-// cortex gets one at its first fire (ensureScheduleCortex), the way attaching
-// a channel gives it one.
+// choice reports into the cortex from its next fire.
+//
+// Every agent keeps a cortex thread; Cortex on the record is only whether the
+// agent READS it. A fire lands in the thread either way, and an agent that
+// does not read it shows the thread as a read-only record row
+// (recordAgentsFor), so a schedule never switches the setting. It used to, at
+// the first fire: that put the agent's reports into every prompt it ran and
+// moved it into the picker's conversational group, against a setting its
+// owner had chosen.
 
 // scheduleSession is the session a scheduled thing's fire lands in: the
 // agent's cortex. home, the session it was made in, stands in only for a
@@ -77,18 +83,6 @@ func scheduleSession(agentID, home string) string {
 		return home
 	}
 	return cortexSessionID(agentID)
-}
-
-// ensureScheduleCortex gives a top-level agent a cortex for its schedules to
-// report into. A sub-agent has none of its own: its schedules are folded onto
-// its parent (agent_family.go).
-func (T *OrchestrateApp) ensureScheduleCortex(owner, agentID string) {
-	if strings.TrimSpace(agentID) == "" {
-		return
-	}
-	if udb := UserDB(T.DB, owner); udb != nil && topAgentOf(udb, agentID) == agentID {
-		T.ensureAgentCortex(owner, agentID)
-	}
 }
 
 // scheduleSourceNote is the line a fire carries linking the session its

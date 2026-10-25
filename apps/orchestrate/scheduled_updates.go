@@ -663,7 +663,6 @@ func (fr *fireRun) loadThread() {
 	// it, and it stays there.
 	fr.loadSession = p.SessionID
 	if !isTaskWake(p.Prompt) {
-		fr.app.ensureScheduleCortex(p.Username, p.AgentID)
 		fr.loadSession = scheduleSession(p.AgentID, p.SessionID)
 	}
 	fr.sess, fr.ok = loadChatSession(fr.udb, p.AgentID, fr.loadSession)
