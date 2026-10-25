@@ -32,7 +32,7 @@ func markDone(t *testing.T, turn *chatTurn, step int) {
 func TestPlanCardIsKeptWhereItWasDrawn(t *testing.T) {
 	turn := &chatTurn{sse: &sseWriter{live: &syncBuf{}}, session: &ChatSession{ID: "s1"}, agent: AgentRecord{ID: "builder"}}
 	presentPlan(t, turn, "one", "two")
-	first := turn.session.BuildPlan.ID
+	first := turn.session.BuildPlanCard
 	kept := turn.session.keptPlanCard(first)
 	if kept == nil || kept.At.IsZero() || len(kept.Plan) != 2 {
 		t.Fatalf("plan card not kept with a time: %+v", kept)
@@ -51,7 +51,7 @@ func TestPlanCardIsKeptWhereItWasDrawn(t *testing.T) {
 
 	// The next plan gets a card of its own; the finished one stays as it was.
 	presentPlan(t, turn, "three")
-	if turn.session.BuildPlan.ID == first {
+	if turn.session.BuildPlanCard == first {
 		t.Fatalf("a plan after a finished one rewrote its card")
 	}
 	if old := turn.session.keptPlanCard(first); old == nil || len(old.Plan) != 2 {
@@ -59,9 +59,9 @@ func TestPlanCardIsKeptWhereItWasDrawn(t *testing.T) {
 	}
 
 	// Replaced midway, a plan keeps its card: it is the same piece of work.
-	second := turn.session.BuildPlan.ID
+	second := turn.session.BuildPlanCard
 	presentPlan(t, turn, "three", "four")
-	if turn.session.BuildPlan.ID != second {
+	if turn.session.BuildPlanCard != second {
 		t.Fatalf("a plan replaced midway got a new card")
 	}
 }

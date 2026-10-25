@@ -68,7 +68,7 @@ func (t *chatTurn) workPlanChanged(c WorkPlanChange) {
 		card = t.nextPlanCard(card, open, "workplan:")
 	}
 	t.session.WorkPlanCard = card
-	t.paintPlanCard(card, workPlanSteps(c.Steps), c.Reason)
+	t.paintPlanCard(card, planCardSteps(c.Steps), c.Reason)
 	t.saveSession()
 }
 
@@ -89,5 +89,5 @@ func (t *chatTurn) restoreWorkPlanCard() {
 		card = "workplan:" + t.session.ID
 		t.session.WorkPlanCard = card
 	}
-	t.paintPlanCard(card, workPlanSteps(t.session.WorkPlan.Snapshot()), "")
+	t.paintPlanCard(card, planCardSteps(t.session.WorkPlan.Snapshot()), "")
 }

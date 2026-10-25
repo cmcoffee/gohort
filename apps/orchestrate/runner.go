@@ -605,22 +605,13 @@ func (pr *planRun) askUserToolDef() AgentToolDef {
 			// two (present_build_plan + ask_user) — the failure mode
 			// where Builder skipped present_build_plan and then
 			// mark_step_done called against nothing.
-			if raw, ok := args["plan"]; ok && raw != nil {
-				if planSteps := buildPlanStepsFromArg(raw); len(planSteps) > 0 && t.session != nil {
-					t.session.BuildPlan = &BuildPlanState{
-						ID:    t.buildPlanCard(),
-						Steps: planSteps,
-					}
-					t.paintBuildPlan(t.session.BuildPlan)
-					// Same execution-budget grant present_build_plan gives:
-					// this path is the canonical one-call Phase-2 shape, and
-					// without the grant the build competes with whatever
-					// exploration already spent the round cap.
-					if grant := t.currentRound + buildPlanRoundsPerStep*len(planSteps); grant > t.planBudgetCap {
-						t.planBudgetCap = grant
-						Log("[orchestrate.build_plan] plan presented via ask_user: %d step(s), round budget lifted to %d (at round %d)",
-							len(planSteps), t.planBudgetCap, t.currentRound)
-					}
+			// It gets the same execution-budget grant present_build_plan
+			// gives (startBuildPlan): this path is the canonical one-call
+			// Phase-2 shape, and without the grant the build competes with
+			// whatever exploration already spent the round cap.
+			if raw, ok := args["plan"]; ok && raw != nil && t.session != nil {
+				if titles, details, _ := buildPlanArg(raw); len(titles) > 0 {
+					t.startBuildPlan(titles, details, " via ask_user")
 				}
 			}
 			pr.cancelOrch()

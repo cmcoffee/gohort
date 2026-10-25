@@ -70,13 +70,8 @@ func TestReportBuildGapsFlagsUnverifiedToolOnDoneSteps(t *testing.T) {
 	turn := &chatTurn{
 		udb: db,
 		session: &ChatSession{
-			ID: sid,
-			BuildPlan: &BuildPlanState{
-				Steps: []BuildPlanStep{
-					{Number: 1, Title: "Create sub-agent", Status: "done"},
-					{Number: 2, Title: "Create tool", Status: "done"},
-				},
-			},
+			ID:            sid,
+			BuildWorkPlan: buildPlanWith([]string{"done", "done"}, "Create sub-agent", "Create tool"),
 		},
 	}
 

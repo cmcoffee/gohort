@@ -1,0 +1,153 @@
+mark_step_done {"step":1,"summary":"x"}
+  -> No active build plan, so there's nothing to mark: the checklist is optional. Just keep doing the actual work.
+mark_step_in_progress {"step":1}
+  -> No active build plan, so there's nothing to mark: the checklist is optional. Just keep doing the actual work.
+mark_step_blocked {"reason":"x","step":1}
+  -> No active build plan, so there's nothing to mark: the checklist is optional. Just keep doing the actual work.
+revise_build_plan {"action":"add","steps":[{"detail":"","title":"x"}]}
+  ERR revise_build_plan: no active build plan, call present_build_plan first
+report_build_gaps {}
+  -> No build plan is active, and every tool you touched this session stands verified: no gaps to report. You may write the final reply.
+mismatch_warning fired=false
+skipped_gap_warning fired=false
+present_build_plan {"steps":[{"detail":"create_agent","title":"Create agent shell"},{"detail":"add_tool(api)","title":"  Add search tool  "},{"detail":"skipped, no title","title":""},{"detail":"","title":"Verify"}]}
+  -> Build plan presented (3 steps): round budget extended to 12 for execution. The user sees the checklist; each step will flip to ✓ as you call mark_step_done during execution.
+  card#1 [{"number":1,"title":"Create agent shell","what_to_find":"create_agent","status":"pending"},{"number":2,"title":"Add search tool","what_to_find":"add_tool(api)","status":"pending"},{"number":3,"title":"Verify","status":"pending"}]
+  budget=12
+mark_step_in_progress {"step":1}
+  -> Step 1 ("Create agent shell") marked in_progress.
+  card#1 [{"number":1,"title":"Create agent shell","what_to_find":"create_agent","status":"in_progress"},{"number":2,"title":"Add search tool","what_to_find":"add_tool(api)","status":"pending"},{"number":3,"title":"Verify","status":"pending"}]
+mark_step_in_progress {"step":2}
+  -> Step 2 ("Add search tool") marked in_progress (auto-completed the previously open step). Continue.
+  card#1 [{"number":1,"title":"Create agent shell","what_to_find":"create_agent","status":"done"},{"number":2,"title":"Add search tool","what_to_find":"add_tool(api)","status":"in_progress"},{"number":3,"title":"Verify","status":"pending"}]
+mark_step_done {"step":2,"summary":"Tool search attached"}
+  -> Step 2 marked done (1 remaining). Continue executing the next step.
+  card#1 [{"number":1,"title":"Create agent shell","what_to_find":"create_agent","status":"done"},{"number":2,"title":"Add search tool","what_to_find":"add_tool(api)","status":"done","findings":"Tool search attached"},{"number":3,"title":"Verify","status":"pending"}]
+mark_step_done {"step":9,"summary":"x"}
+  -> There's no step 9 (the plan has 3 step(s)): nothing to update. The checklist is cosmetic; don't re-plan to fix numbering, just continue the real work.
+  card#1 [{"number":1,"title":"Create agent shell","what_to_find":"create_agent","status":"done"},{"number":2,"title":"Add search tool","what_to_find":"add_tool(api)","status":"done","findings":"Tool search attached"},{"number":3,"title":"Verify","status":"pending"}]
+mark_step_in_progress {"step":0}
+  -> There's no step 0 (the plan has 3 step(s)): nothing to update. The checklist is cosmetic; don't re-plan to fix numbering, just continue the real work.
+  card#1 [{"number":1,"title":"Create agent shell","what_to_find":"create_agent","status":"done"},{"number":2,"title":"Add search tool","what_to_find":"add_tool(api)","status":"done","findings":"Tool search attached"},{"number":3,"title":"Verify","status":"pending"}]
+mark_step_blocked {"reason":"","step":3}
+  ERR reason is required: describe what blocked the step in one line
+  card#1 [{"number":1,"title":"Create agent shell","what_to_find":"create_agent","status":"done"},{"number":2,"title":"Add search tool","what_to_find":"add_tool(api)","status":"done","findings":"Tool search attached"},{"number":3,"title":"Verify","status":"pending"}]
+mismatch_warning fired=true
+  note: FRAMEWORK NOTICE: your previous reply described authoring work but no add_tool / create_agent / update_agent call fired during that turn. The build plan still has 1 pending step. Do not describe work you haven't done. Re-do the next pending step by ACTUALLY calling the right authoring tool with concrete arguments. One tool call per turn, that is the only path that advances the plan.
+mismatch_warning_after_authoring fired=false
+mark_step_blocked {"reason":"credential not registered","step":3}
+  -> Step 3 ("Verify") marked blocked. Reason recorded for the gap report.
+  card#1 [{"number":1,"title":"Create agent shell","what_to_find":"create_agent","status":"done"},{"number":2,"title":"Add search tool","what_to_find":"add_tool(api)","status":"done","findings":"Tool search attached"},{"number":3,"title":"Verify","status":"blocked","blocked_reason":"credential not registered"}]
+revise_build_plan {"action":"add","steps":[{"detail":"tool_def test","title":"Retry verify"}]}
+  -> Plan revised (add). 1 of 3 revisions used (2 remaining).
+  card#1 [{"number":1,"title":"Create agent shell","what_to_find":"create_agent","status":"done"},{"number":2,"title":"Add search tool","what_to_find":"add_tool(api)","status":"done","findings":"Tool search attached"},{"number":3,"title":"Verify","status":"blocked","blocked_reason":"credential not registered"},{"number":4,"title":"Retry verify","what_to_find":"tool_def test","status":"pending"}]
+revise_build_plan {"action":"remove","step_numbers":[3]}
+  ERR revise_build_plan(remove): refused step(s) [3], only pending steps can be removed (done / blocked steps stay as durable history)
+  card#1 [{"number":1,"title":"Create agent shell","what_to_find":"create_agent","status":"done"},{"number":2,"title":"Add search tool","what_to_find":"add_tool(api)","status":"done","findings":"Tool search attached"},{"number":3,"title":"Verify","status":"blocked","blocked_reason":"credential not registered"},{"number":4,"title":"Retry verify","what_to_find":"tool_def test","status":"pending"}]
+revise_build_plan {"action":"remove"}
+  ERR revise_build_plan(remove): step_numbers is required
+  card#1 [{"number":1,"title":"Create agent shell","what_to_find":"create_agent","status":"done"},{"number":2,"title":"Add search tool","what_to_find":"add_tool(api)","status":"done","findings":"Tool search attached"},{"number":3,"title":"Verify","status":"blocked","blocked_reason":"credential not registered"},{"number":4,"title":"Retry verify","what_to_find":"tool_def test","status":"pending"}]
+auto_advance "AGENT_CREATED ok. id=a1" -> 3
+  card#1 [{"number":1,"title":"Create agent shell","what_to_find":"create_agent","status":"done"},{"number":2,"title":"Add search tool","what_to_find":"add_tool(api)","status":"done","findings":"Tool search attached"},{"number":3,"title":"Verify","status":"done","findings":"AGENT_CREATED ok. id=a1","blocked_reason":"credential not registered"},{"number":4,"title":"Retry verify","what_to_find":"tool_def test","status":"pending"}]
+auto_advance "" -> 4
+  card#1 [{"number":1,"title":"Create agent shell","what_to_find":"create_agent","status":"done"},{"number":2,"title":"Add search tool","what_to_find":"add_tool(api)","status":"done","findings":"Tool search attached"},{"number":3,"title":"Verify","status":"done","findings":"AGENT_CREATED ok. id=a1","blocked_reason":"credential not registered"},{"number":4,"title":"Retry verify","what_to_find":"tool_def test","status":"done"}]
+auto_advance "nothing left" -> 0
+  card#1 [{"number":1,"title":"Create agent shell","what_to_find":"create_agent","status":"done"},{"number":2,"title":"Add search tool","what_to_find":"add_tool(api)","status":"done","findings":"Tool search attached"},{"number":3,"title":"Verify","status":"done","findings":"AGENT_CREATED ok. id=a1","blocked_reason":"credential not registered"},{"number":4,"title":"Retry verify","what_to_find":"tool_def test","status":"done"}]
+revise_build_plan {"action":"reorder","order":[4,1,"2",3]}
+  -> Plan revised (reorder). 2 of 3 revisions used (1 remaining).
+  card#1 [{"number":4,"title":"Retry verify","what_to_find":"tool_def test","status":"done"},{"number":1,"title":"Create agent shell","what_to_find":"create_agent","status":"done"},{"number":2,"title":"Add search tool","what_to_find":"add_tool(api)","status":"done","findings":"Tool search attached"},{"number":3,"title":"Verify","status":"done","findings":"AGENT_CREATED ok. id=a1","blocked_reason":"credential not registered"}]
+revise_build_plan {"action":"reorder","order":[1,2]}
+  ERR revise_build_plan(reorder): reorder must list all 4 step IDs; got 2
+  card#1 [{"number":4,"title":"Retry verify","what_to_find":"tool_def test","status":"done"},{"number":1,"title":"Create agent shell","what_to_find":"create_agent","status":"done"},{"number":2,"title":"Add search tool","what_to_find":"add_tool(api)","status":"done","findings":"Tool search attached"},{"number":3,"title":"Verify","status":"done","findings":"AGENT_CREATED ok. id=a1","blocked_reason":"credential not registered"}]
+revise_build_plan {"action":"reorder","order":[1,2,3,9]}
+  ERR revise_build_plan(reorder): reorder includes unknown step id 9
+  card#1 [{"number":4,"title":"Retry verify","what_to_find":"tool_def test","status":"done"},{"number":1,"title":"Create agent shell","what_to_find":"create_agent","status":"done"},{"number":2,"title":"Add search tool","what_to_find":"add_tool(api)","status":"done","findings":"Tool search attached"},{"number":3,"title":"Verify","status":"done","findings":"AGENT_CREATED ok. id=a1","blocked_reason":"credential not registered"}]
+revise_build_plan {"action":"reorder","order":[1,1,2,3]}
+  ERR revise_build_plan(reorder): reorder lists step id 1 more than once
+  card#1 [{"number":4,"title":"Retry verify","what_to_find":"tool_def test","status":"done"},{"number":1,"title":"Create agent shell","what_to_find":"create_agent","status":"done"},{"number":2,"title":"Add search tool","what_to_find":"add_tool(api)","status":"done","findings":"Tool search attached"},{"number":3,"title":"Verify","status":"done","findings":"AGENT_CREATED ok. id=a1","blocked_reason":"credential not registered"}]
+revise_build_plan {"action":"bogus"}
+  ERR revise_build_plan: action must be "add" | "remove" | "reorder" (got "bogus")
+  card#1 [{"number":4,"title":"Retry verify","what_to_find":"tool_def test","status":"done"},{"number":1,"title":"Create agent shell","what_to_find":"create_agent","status":"done"},{"number":2,"title":"Add search tool","what_to_find":"add_tool(api)","status":"done","findings":"Tool search attached"},{"number":3,"title":"Verify","status":"done","findings":"AGENT_CREATED ok. id=a1","blocked_reason":"credential not registered"}]
+revise_build_plan {"action":"add","steps":[{"title":"  "}]}
+  ERR revise_build_plan(add): steps is required and must contain at least one valid {title, detail?} object
+  card#1 [{"number":4,"title":"Retry verify","what_to_find":"tool_def test","status":"done"},{"number":1,"title":"Create agent shell","what_to_find":"create_agent","status":"done"},{"number":2,"title":"Add search tool","what_to_find":"add_tool(api)","status":"done","findings":"Tool search attached"},{"number":3,"title":"Verify","status":"done","findings":"AGENT_CREATED ok. id=a1","blocked_reason":"credential not registered"}]
+revise_build_plan {"action":"add","steps":[{"detail":"dispatch","title":"Smoke test"}]}
+  -> Plan revised (add). 3 of 3 revisions used (0 remaining).
+  card#1 [{"number":4,"title":"Retry verify","what_to_find":"tool_def test","status":"done"},{"number":1,"title":"Create agent shell","what_to_find":"create_agent","status":"done"},{"number":2,"title":"Add search tool","what_to_find":"add_tool(api)","status":"done","findings":"Tool search attached"},{"number":3,"title":"Verify","status":"done","findings":"AGENT_CREATED ok. id=a1","blocked_reason":"credential not registered"},{"number":5,"title":"Smoke test","what_to_find":"dispatch","status":"pending"}]
+revise_build_plan {"action":"add","steps":[{"detail":"","title":"One too many"}]}
+  ERR revise_build_plan: revision cap reached (3), execute the plan you have rather than re-shuffling
+  card#1 [{"number":4,"title":"Retry verify","what_to_find":"tool_def test","status":"done"},{"number":1,"title":"Create agent shell","what_to_find":"create_agent","status":"done"},{"number":2,"title":"Add search tool","what_to_find":"add_tool(api)","status":"done","findings":"Tool search attached"},{"number":3,"title":"Verify","status":"done","findings":"AGENT_CREATED ok. id=a1","blocked_reason":"credential not registered"},{"number":5,"title":"Smoke test","what_to_find":"dispatch","status":"pending"}]
+skipped_gap_warning fired=false
+mark_step_done {"step":5,"summary":"smoke passed"}
+  -> Step 5 marked done. All 5 steps complete: end the turn with a one-line summary; no more tool calls.
+  card#1 [{"number":4,"title":"Retry verify","what_to_find":"tool_def test","status":"done"},{"number":1,"title":"Create agent shell","what_to_find":"create_agent","status":"done"},{"number":2,"title":"Add search tool","what_to_find":"add_tool(api)","status":"done","findings":"Tool search attached"},{"number":3,"title":"Verify","status":"done","findings":"AGENT_CREATED ok. id=a1","blocked_reason":"credential not registered"},{"number":5,"title":"Smoke test","what_to_find":"dispatch","status":"done","findings":"smoke passed"}]
+mismatch_warning fired=false
+skipped_gap_warning fired=true
+  note: FRAMEWORK NOTICE: your previous reply closed out the build plan without calling report_build_gaps. That call is required before any reply that presents the build as finished: it is what surfaces blocked steps and tools that are not verified. Marking a step done is your OWN claim and is not evidence the tool works. Call it now and address whatever it returns before restating that the work is done.
+finish_check clean notice="" strike=""
+skipped_gap_warning fired=false
+report_build_gaps {}
+  -> {"unverified":[{"tool":"search_tool","reason":"never tested"}]}
+
+Incorporate each gap into your final reply: explain what couldn't be built and why, OR call revise_build_plan to address it (within the revision cap).
+
+The `unverified` tools above were authored but do NOT currently stand verified. Do NOT tell the user they are working. Either verify each one now (add_tool with test_args, or tool_def(action="test")) and re-call this, or state plainly in your reply which tools are unverified and why.
+  card#1 [{"number":4,"title":"Retry verify","what_to_find":"tool_def test","status":"done"},{"number":1,"title":"Create agent shell","what_to_find":"create_agent","status":"done"},{"number":2,"title":"Add search tool","what_to_find":"add_tool(api)","status":"done","findings":"Tool search attached"},{"number":3,"title":"Verify","status":"done","findings":"AGENT_CREATED ok. id=a1","blocked_reason":"credential not registered"},{"number":5,"title":"Smoke test","what_to_find":"dispatch","status":"done","findings":"smoke passed"}]
+finish_check unverified notice="" strike=""
+present_build_plan {"steps":[{"detail":"update_agent","title":"Draft persona"},{"detail":"add_tool","title":"Attach tool"}]}
+  -> Build plan presented (2 steps): round budget extended to 12 for execution. The user sees the checklist; each step will flip to ✓ as you call mark_step_done during execution.
+  card#1 [{"number":4,"title":"Retry verify","what_to_find":"tool_def test","status":"done"},{"number":1,"title":"Create agent shell","what_to_find":"create_agent","status":"done"},{"number":2,"title":"Add search tool","what_to_find":"add_tool(api)","status":"done","findings":"Tool search attached"},{"number":3,"title":"Verify","status":"done","findings":"AGENT_CREATED ok. id=a1","blocked_reason":"credential not registered"},{"number":5,"title":"Smoke test","what_to_find":"dispatch","status":"done","findings":"smoke passed"}]
+  card#2 [{"number":1,"title":"Draft persona","what_to_find":"update_agent","status":"pending"},{"number":2,"title":"Attach tool","what_to_find":"add_tool","status":"pending"}]
+  budget=12
+revise_build_plan {"action":"add","steps":[{"detail":"dispatch","title":"Verify"}]}
+  -> Plan revised (add). 1 of 3 revisions used (2 remaining).
+  card#1 [{"number":4,"title":"Retry verify","what_to_find":"tool_def test","status":"done"},{"number":1,"title":"Create agent shell","what_to_find":"create_agent","status":"done"},{"number":2,"title":"Add search tool","what_to_find":"add_tool(api)","status":"done","findings":"Tool search attached"},{"number":3,"title":"Verify","status":"done","findings":"AGENT_CREATED ok. id=a1","blocked_reason":"credential not registered"},{"number":5,"title":"Smoke test","what_to_find":"dispatch","status":"done","findings":"smoke passed"}]
+  card#2 [{"number":1,"title":"Draft persona","what_to_find":"update_agent","status":"pending"},{"number":2,"title":"Attach tool","what_to_find":"add_tool","status":"pending"},{"number":3,"title":"Verify","what_to_find":"dispatch","status":"pending"}]
+present_build_plan {"steps":[{"detail":"update_agent","title":"Draft persona"},{"detail":"add_tool","title":"Attach tool"},{"detail":"dispatch","title":"Verify"}]}
+  -> Build plan presented (3 steps): round budget extended to 12 for execution. The user sees the checklist; each step will flip to ✓ as you call mark_step_done during execution.
+  card#1 [{"number":4,"title":"Retry verify","what_to_find":"tool_def test","status":"done"},{"number":1,"title":"Create agent shell","what_to_find":"create_agent","status":"done"},{"number":2,"title":"Add search tool","what_to_find":"add_tool(api)","status":"done","findings":"Tool search attached"},{"number":3,"title":"Verify","status":"done","findings":"AGENT_CREATED ok. id=a1","blocked_reason":"credential not registered"},{"number":5,"title":"Smoke test","what_to_find":"dispatch","status":"done","findings":"smoke passed"}]
+  card#2 [{"number":1,"title":"Draft persona","what_to_find":"update_agent","status":"pending"},{"number":2,"title":"Attach tool","what_to_find":"add_tool","status":"pending"},{"number":3,"title":"Verify","what_to_find":"dispatch","status":"pending"}]
+  budget=12
+mark_step_blocked {"reason":"user declined","step":1}
+  -> Step 1 ("Draft persona") marked blocked. Reason recorded for the gap report.
+  card#1 [{"number":4,"title":"Retry verify","what_to_find":"tool_def test","status":"done"},{"number":1,"title":"Create agent shell","what_to_find":"create_agent","status":"done"},{"number":2,"title":"Add search tool","what_to_find":"add_tool(api)","status":"done","findings":"Tool search attached"},{"number":3,"title":"Verify","status":"done","findings":"AGENT_CREATED ok. id=a1","blocked_reason":"credential not registered"},{"number":5,"title":"Smoke test","what_to_find":"dispatch","status":"done","findings":"smoke passed"}]
+  card#2 [{"number":1,"title":"Draft persona","what_to_find":"update_agent","status":"blocked","blocked_reason":"user declined"},{"number":2,"title":"Attach tool","what_to_find":"add_tool","status":"pending"},{"number":3,"title":"Verify","what_to_find":"dispatch","status":"pending"}]
+report_build_gaps {}
+  -> {"blocked":[{"step":1,"title":"Draft persona","reason":"user declined"}],"skipped":[{"step":2,"title":"Attach tool","reason":"step never completed"},{"step":3,"title":"Verify","reason":"step never completed"}],"unverified":[{"tool":"search_tool","reason":"never tested"}]}
+
+Incorporate each gap into your final reply: explain what couldn't be built and why, OR call revise_build_plan to address it (within the revision cap).
+
+The `unverified` tools above were authored but do NOT currently stand verified. Do NOT tell the user they are working. Either verify each one now (add_tool with test_args, or tool_def(action="test")) and re-call this, or state plainly in your reply which tools are unverified and why.
+  card#1 [{"number":4,"title":"Retry verify","what_to_find":"tool_def test","status":"done"},{"number":1,"title":"Create agent shell","what_to_find":"create_agent","status":"done"},{"number":2,"title":"Add search tool","what_to_find":"add_tool(api)","status":"done","findings":"Tool search attached"},{"number":3,"title":"Verify","status":"done","findings":"AGENT_CREATED ok. id=a1","blocked_reason":"credential not registered"},{"number":5,"title":"Smoke test","what_to_find":"dispatch","status":"done","findings":"smoke passed"}]
+  card#2 [{"number":1,"title":"Draft persona","what_to_find":"update_agent","status":"blocked","blocked_reason":"user declined"},{"number":2,"title":"Attach tool","what_to_find":"add_tool","status":"pending"},{"number":3,"title":"Verify","what_to_find":"dispatch","status":"pending"}]
+ask_user {"plan":[{"detail":"create_agent","title":"Create agent"},{"detail":"","title":"Verify"}],"question":"Approve this plan?"}
+  -> Question relayed to the user; the framework will wait for their reply.
+  card#1 [{"number":1,"title":"Create agent","what_to_find":"create_agent","status":"pending"},{"number":2,"title":"Verify","status":"pending"}]
+  budget=12
+ask_user {"plan":[],"question":"Anything else?"}
+  -> Question relayed to the user; the framework will wait for their reply.
+  card#1 [{"number":1,"title":"Create agent","what_to_find":"create_agent","status":"pending"},{"number":2,"title":"Verify","status":"pending"}]
+mark_step_in_progress {"step":2}
+  -> Step 2 ("Verify") marked in_progress.
+  card#1 [{"number":1,"title":"Create agent","what_to_find":"create_agent","status":"pending"},{"number":2,"title":"Verify","status":"in_progress"}]
+report_build_gaps {}
+  -> {"skipped":[{"step":1,"title":"Create agent","reason":"step never completed"},{"step":2,"title":"Verify","reason":"step never completed"}],"unverified":[{"tool":"search_tool","reason":"never tested"}]}
+
+Incorporate each gap into your final reply: explain what couldn't be built and why, OR call revise_build_plan to address it (within the revision cap).
+
+The `unverified` tools above were authored but do NOT currently stand verified. Do NOT tell the user they are working. Either verify each one now (add_tool with test_args, or tool_def(action="test")) and re-call this, or state plainly in your reply which tools are unverified and why.
+  card#1 [{"number":1,"title":"Create agent","what_to_find":"create_agent","status":"pending"},{"number":2,"title":"Verify","status":"in_progress"}]
+mark_step_done {"step":1,"summary":"agent created"}
+  -> Step 1 marked done (1 remaining). Continue executing the next step.
+  card#1 [{"number":1,"title":"Create agent","what_to_find":"create_agent","status":"done","findings":"agent created"},{"number":2,"title":"Verify","status":"in_progress"}]
+mark_step_done {"step":2,"summary":"verified"}
+  -> Step 2 marked done. All 2 steps complete: end the turn with a one-line summary; no more tool calls.
+  card#1 [{"number":1,"title":"Create agent","what_to_find":"create_agent","status":"done","findings":"agent created"},{"number":2,"title":"Verify","status":"done","findings":"verified"}]
+report_build_gaps {}
+  -> {"unverified":[{"tool":"search_tool","reason":"never tested"}]}
+
+Incorporate each gap into your final reply: explain what couldn't be built and why, OR call revise_build_plan to address it (within the revision cap).
+
+The `unverified` tools above were authored but do NOT currently stand verified. Do NOT tell the user they are working. Either verify each one now (add_tool with test_args, or tool_def(action="test")) and re-call this, or state plainly in your reply which tools are unverified and why.
+  card#1 [{"number":1,"title":"Create agent","what_to_find":"create_agent","status":"done","findings":"agent created"},{"number":2,"title":"Verify","status":"done","findings":"verified"}]
+skipped_gap_warning fired=false

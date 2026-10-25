@@ -140,12 +140,12 @@ func falselyClaimedUnavailable(reply string) string {
 // was injected so the caller can flush the session save and emit a
 // visible SSE warning.
 func injectAuthoringMismatchWarning(sess *ChatSession, turnToolCalls []PersistedToolCall, reply string) bool {
-	if sess == nil || sess.BuildPlan == nil {
+	if sess == nil || sess.BuildWorkPlan == nil {
 		return false
 	}
 	pending := 0
-	for _, s := range sess.BuildPlan.Steps {
-		if s.Status != "done" && s.Status != "blocked" {
+	for _, s := range sess.BuildWorkPlan.Snapshot() {
+		if s.Status != WorkStepDone && s.Status != WorkStepBlocked {
 			pending++
 		}
 	}
@@ -177,7 +177,7 @@ func injectAuthoringMismatchWarning(sess *ChatSession, turnToolCalls []Persisted
 
 // injectSkippedGapReportWarning is the enforcement half of report_build_gaps.
 // The tool's contract — "call this BEFORE your final reply" — lived only in the
-// prompt and the tool description: BuildPlanState.GapsReported was set and
+// prompt and the tool description: the plan's gaps-reported mark was set and
 // never read, so a model that simply never called it wrapped up unchecked, and
 // every unverified tool it authored went unmentioned.
 //
@@ -192,14 +192,14 @@ func injectAuthoringMismatchWarning(sess *ChatSession, turnToolCalls []Persisted
 // their standing stays invisible — the correction has to carry the payload the
 // skipped tool would have delivered, or the next turn just re-runs blind.
 func injectSkippedGapReportWarning(sess *ChatSession, udb Database, reply string) bool {
-	if sess == nil || sess.BuildPlan == nil || len(sess.BuildPlan.Steps) == 0 {
+	if sess == nil || sess.BuildWorkPlan == nil || !sess.BuildWorkPlan.IsSet() {
 		return false
 	}
-	if sess.BuildPlan.GapsReported || strings.TrimSpace(reply) == "" {
+	if sess.BuildWorkPlan.GapsReported() || strings.TrimSpace(reply) == "" {
 		return false
 	}
-	for _, s := range sess.BuildPlan.Steps {
-		if s.Status != "done" && s.Status != "blocked" {
+	for _, s := range sess.BuildWorkPlan.Snapshot() {
+		if s.Status != WorkStepDone && s.Status != WorkStepBlocked {
 			return false // still executing — a reply here is legitimate
 		}
 	}

@@ -1,23 +1,22 @@
-// Build-plan UI surface for Builder. Two LLM-facing control tools
-// emit + update the orchestrate_plan SSE block so the user sees a
-// live checklist of Builder's multi-step authoring flow:
+// Builder's build plan: the checklist it presents at the end of Phase 2 and
+// works through in Phase 4, drawn as a live orchestrate_plan card.
 //
-//   present_build_plan(steps[])
-//     → Called at the end of Phase 2 alongside ask_user.
-//     → Emits orchestrate_plan with all steps in "pending" status.
-//     → Stores BuildPlanState on the session so subsequent updates
-//       can target the same block id.
+// The plan itself is core's WorkPlan (core/plan.go), the same state a tracked
+// plan keeps (work_plan.go): step ids, the lifecycle, removing only pending
+// steps, the revision cap, the gaps-reported mark. What stays here is Builder's
+// own surface over it, and it differs from core's WorkPlanTools on purpose:
 //
-//   mark_step_done(step, summary)
-//     → Called after each Phase 4 tool call completes successfully.
-//     → Flips that step's status to "done" and writes the summary
-//       as findings. Re-emits orchestrate_plan with the same id;
-//       the renderer's onUpdate hook re-renders the card in place.
+//   - The names and words are the ones Builder's prompts teach
+//     (present_build_plan, mark_step_done, revise_build_plan,
+//     report_build_gaps), and ask_user can carry the plan in the same call.
+//   - The step tools are TOLERANT. The checklist is cosmetic, so a stale step
+//     number is a soft note rather than an error, and starting a step finishes
+//     the one left open; hard errors here drove the model into apology loops.
+//   - report_build_gaps grades the verification ledger as well as the steps,
+//     because a step marked done is the model's own claim.
 //
-// Both tools are closure-bound to chatTurn so they can read t.sse
-// + t.session without arg plumbing. State persists on ChatSession
-// so the plan survives turn boundaries across the (typical 5-step)
-// Phase 4 execution.
+// The plan lives on the session (ChatSession.BuildWorkPlan), so it survives
+// the turn boundaries a five-step build crosses.
 
 package orchestrate
 
@@ -65,56 +64,87 @@ func (t *chatTurn) presentBuildPlanToolDef() AgentToolDef {
 			if !ok || raw == nil {
 				return "", errors.New("steps is required")
 			}
-			data, err := json.Marshal(raw)
+			titles, details, err := buildPlanArg(raw)
 			if err != nil {
-				return "", fmt.Errorf("steps marshal: %v", err)
+				return "", err
 			}
-			var input []struct {
-				Title  string `json:"title"`
-				Detail string `json:"detail"`
-			}
-			if err := json.Unmarshal(data, &input); err != nil {
-				return "", fmt.Errorf("steps shape: %v", err)
-			}
-			if len(input) == 0 {
-				return "", errors.New("steps must include at least one entry")
-			}
-			// Build / overwrite the plan state. The id is the card's: a plan
-			// replacing one still under way keeps its card, a plan after a
-			// finished one gets a card of its own (plan_card.go).
-			id := t.buildPlanCard()
-			steps := make([]BuildPlanStep, 0, len(input))
-			for i, s := range input {
-				title := strings.TrimSpace(s.Title)
-				if title == "" {
-					continue
-				}
-				steps = append(steps, BuildPlanStep{
-					Number:     i + 1,
-					Title:      title,
-					WhatToFind: strings.TrimSpace(s.Detail),
-					Status:     "pending",
-				})
-			}
-			if len(steps) == 0 {
+			if len(titles) == 0 {
 				return "", errors.New("steps had no usable titles")
 			}
-			t.session.BuildPlan = &BuildPlanState{ID: id, Steps: steps}
-			t.paintBuildPlan(t.session.BuildPlan)
-			// Grant the execution budget: lift the round cap to where we
-			// are now + buildPlanRoundsPerStep per step, so building +
-			// verifying the plan doesn't compete with whatever exploration
-			// already cost. max() — never lowers an existing grant.
-			if grant := t.currentRound + buildPlanRoundsPerStep*len(steps); grant > t.planBudgetCap {
-				t.planBudgetCap = grant
+			if err := t.startBuildPlan(titles, details, ""); err != nil {
+				return "", err
 			}
-			Log("[orchestrate.build_plan] plan presented: %d step(s), round budget lifted to %d (at round %d)",
-				len(steps), t.planBudgetCap, t.currentRound)
 			return fmt.Sprintf("Build plan presented (%d step%s): round budget extended to %d for execution. The user sees the checklist; each step will flip to ✓ as you call mark_step_done during execution.",
-				len(steps), plural(len(steps)), t.planBudgetCap), nil
+				len(titles), plural(len(titles)), t.planBudgetCap), nil
 		},
 	}
 }
+
+// startBuildPlan commits a new build plan, wholesale: fresh steps, a fresh
+// revision count, no gap report yet. It is drawn on the current card while
+// that plan still has steps open, since a plan replaced midway is the same
+// piece of work, and on a card of its own after a finished one (plan_card.go).
+//
+// It also grants the execution budget: the round cap is lifted to where the
+// turn is now plus buildPlanRoundsPerStep per step, so building and verifying
+// the plan does not compete with whatever exploration already cost, and it is
+// never lowered. present_build_plan and ask_user's plan both start one here.
+func (t *chatTurn) startBuildPlan(titles, details []string, via string) error {
+	plan := &WorkPlan{}
+	if err := plan.SetSteps(titles, details); err != nil {
+		return err
+	}
+	t.session.BuildPlanCard = t.buildPlanCard()
+	t.session.BuildWorkPlan = plan
+	t.paintBuildPlan()
+	if grant := t.currentRound + buildPlanRoundsPerStep*len(titles); grant > t.planBudgetCap {
+		t.planBudgetCap = grant
+	}
+	Log("[orchestrate.build_plan] plan presented%s: %d step(s), round budget lifted to %d (at round %d)",
+		via, len(titles), t.planBudgetCap, t.currentRound)
+	return nil
+}
+
+// buildPlanArg reads the {title, detail?} steps that present_build_plan,
+// ask_user's plan and revise_build_plan(add) take, tolerating the loose shapes
+// models produce (untyped maps, a missing detail, extra fields). A step with
+// no title is dropped.
+func buildPlanArg(raw any) (titles, details []string, err error) {
+	data, err := json.Marshal(raw)
+	if err != nil {
+		return nil, nil, fmt.Errorf("steps marshal: %v", err)
+	}
+	var input []struct {
+		Title  string `json:"title"`
+		Detail string `json:"detail"`
+	}
+	if err := json.Unmarshal(data, &input); err != nil {
+		return nil, nil, fmt.Errorf("steps shape: %v", err)
+	}
+	for _, s := range input {
+		title := sanitizePlanText(s.Title)
+		if title == "" {
+			continue
+		}
+		titles = append(titles, title)
+		details = append(details, sanitizePlanText(s.Detail))
+	}
+	return titles, details, nil
+}
+
+// buildPlanStep is one step of the session's build plan by id, and whether
+// the plan has it.
+func buildPlanStep(plan *WorkPlan, id int) (WorkPlanStep, bool) {
+	for _, s := range plan.Snapshot() {
+		if s.ID == id {
+			return s, true
+		}
+	}
+	return WorkPlanStep{}, false
+}
+
+// noBuildPlanNote is what a step tool says with no plan to mark.
+const noBuildPlanNote = "No active build plan, so there's nothing to mark: the checklist is optional. Just keep doing the actual work."
 
 // markStepDoneToolDef — Builder's "step finished" tool. Called after
 // each Phase 4 tool call completes so the UI checklist updates in
@@ -142,91 +172,59 @@ func (t *chatTurn) markStepDoneToolDef() AgentToolDef {
 			// This is a COSMETIC checklist update — never hard-error on a
 			// stale/out-of-range step number, or the model burns the turn in an
 			// apology loop instead of doing the actual work. Soft-note and move on.
-			if t.session == nil || t.session.BuildPlan == nil {
-				return "No active build plan, so there's nothing to mark: the checklist is optional. Just keep doing the actual work.", nil
+			if t.session == nil || t.session.BuildWorkPlan == nil {
+				return noBuildPlanNote, nil
 			}
+			plan := t.session.BuildWorkPlan
 			step := intFromArgs(args, "step")
 			summary := strings.TrimSpace(stringArg(args, "summary"))
-			plan := t.session.BuildPlan
-			idx := step - 1
-			if step < 1 || idx >= len(plan.Steps) {
-				return fmt.Sprintf("There's no step %d (the plan has %d step(s)): nothing to update. The checklist is cosmetic; don't re-plan to fix numbering, just continue the real work.", step, len(plan.Steps)), nil
+			if _, ok := buildPlanStep(plan, step); !ok {
+				return fmt.Sprintf("There's no step %d (the plan has %d step(s)): nothing to update. The checklist is cosmetic; don't re-plan to fix numbering, just continue the real work.", step, len(plan.Snapshot())), nil
 			}
-			plan.Steps[idx].Status = "done"
-			plan.Steps[idx].Findings = summary
-			t.paintBuildPlan(plan)
+			plan.RecordFindings(step, summary)
+			t.paintBuildPlan()
+			steps := plan.Snapshot()
 			remaining := 0
-			for _, s := range plan.Steps {
-				if s.Status != "done" {
+			for _, s := range steps {
+				if s.Status != WorkStepDone {
 					remaining++
 				}
 			}
 			if remaining == 0 {
 				return fmt.Sprintf("Step %d marked done. All %d steps complete: end the turn with a one-line summary; no more tool calls.",
-					step, len(plan.Steps)), nil
+					step, len(steps)), nil
 			}
 			return fmt.Sprintf("Step %d marked done (%d remaining). Continue executing the next step.", step, remaining), nil
 		},
 	}
 }
 
-// buildPlanStepsFromArg normalizes an LLM-supplied plan array into
-// []BuildPlanStep. Tolerates the loose shapes models produce
-// (untyped maps, missing detail field, extra fields). Used by the
-// extended ask_user tool when the `plan` parameter is provided.
-func buildPlanStepsFromArg(raw any) []BuildPlanStep {
-	data, err := json.Marshal(raw)
-	if err != nil {
-		return nil
-	}
-	var input []struct {
-		Title  string `json:"title"`
-		Detail string `json:"detail"`
-	}
-	if err := json.Unmarshal(data, &input); err != nil {
-		return nil
-	}
-	out := make([]BuildPlanStep, 0, len(input))
-	for i, s := range input {
-		title := sanitizePlanText(s.Title)
-		if title == "" {
-			continue
-		}
-		out = append(out, BuildPlanStep{
-			Number:     i + 1,
-			Title:      title,
-			WhatToFind: sanitizePlanText(s.Detail),
-			Status:     "pending",
-		})
-	}
-	return out
-}
-
-// autoAdvanceBuildPlan flips the next pending step to "done" with
+// autoAdvanceBuildPlan flips the next step not yet done to "done" with
 // the supplied summary, then re-emits the orchestrate_plan SSE block.
 // Called from wrapped authoring-tool handlers so the user's visible
 // checklist updates even when the LLM forgets to call mark_step_done
-// in its response. No-op when there's no active plan, no pending
-// steps, or the session lacks an SSE writer (background paths).
+// in its response. No-op when there's no active plan, no step left
+// to do, or the session lacks an SSE writer (background paths).
 //
-// Returns the step number that was advanced (1-indexed) or 0 when
-// no advance happened. Callers can use the return value to log /
-// nudge but otherwise treat as best-effort.
+// Returns the step id that was advanced, or 0 when no advance
+// happened. Callers can use the return value to log / nudge but
+// otherwise treat as best-effort.
 func (t *chatTurn) autoAdvanceBuildPlan(summary string) int {
-	if t == nil || t.session == nil || t.session.BuildPlan == nil || t.sse == nil {
+	if t == nil || t.session == nil || t.session.BuildWorkPlan == nil || t.sse == nil {
 		return 0
 	}
-	plan := t.session.BuildPlan
-	for i := range plan.Steps {
-		if plan.Steps[i].Status == "done" {
+	plan := t.session.BuildWorkPlan
+	for _, s := range plan.Snapshot() {
+		if s.Status == WorkStepDone {
 			continue
 		}
-		plan.Steps[i].Status = "done"
 		if summary != "" {
-			plan.Steps[i].Findings = summary
+			plan.RecordFindings(s.ID, summary)
+		} else {
+			plan.SetStatus(s.ID, WorkStepDone)
 		}
-		t.paintBuildPlan(plan)
-		return plan.Steps[i].Number
+		t.paintBuildPlan()
+		return s.ID
 	}
 	return 0
 }
@@ -235,9 +233,9 @@ func (t *chatTurn) autoAdvanceBuildPlan(summary string) int {
 // Servitor's investigator calls mark_step_in_progress before every
 // probe so the UI shows which step the worker is currently driving;
 // Builder mirrors the shape so the plan card surfaces the live focus
-// during Phase 4 execution. Refuses if another step is already
-// in_progress — keeping the lifecycle clean (one step at a time
-// reflects the actual rhythm of plan_set's sequential worker pipeline).
+// during Phase 4 execution. A step left in_progress is completed rather
+// than refused, keeping the lifecycle clean (one step at a time reflects
+// the actual rhythm of plan_set's sequential worker pipeline).
 func (t *chatTurn) markStepInProgressToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
@@ -251,32 +249,32 @@ func (t *chatTurn) markStepInProgressToolDef() AgentToolDef {
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			// Cosmetic checklist update — tolerant by design (see mark_step_done).
-			if t.session == nil || t.session.BuildPlan == nil {
-				return "No active build plan, so there's nothing to mark: the checklist is optional. Just keep doing the actual work.", nil
+			if t.session == nil || t.session.BuildWorkPlan == nil {
+				return noBuildPlanNote, nil
 			}
+			plan := t.session.BuildWorkPlan
 			step := intFromArgs(args, "step")
-			plan := t.session.BuildPlan
-			idx := step - 1
-			if step < 1 || idx >= len(plan.Steps) {
-				return fmt.Sprintf("There's no step %d (the plan has %d step(s)): nothing to update. The checklist is cosmetic; don't re-plan to fix numbering, just continue the real work.", step, len(plan.Steps)), nil
+			target, ok := buildPlanStep(plan, step)
+			if !ok {
+				return fmt.Sprintf("There's no step %d (the plan has %d step(s)): nothing to update. The checklist is cosmetic; don't re-plan to fix numbering, just continue the real work.", step, len(plan.Snapshot())), nil
 			}
 			// Auto-advance a stale in_progress step instead of refusing: the model
 			// has clearly moved on, and the old "close it first" error was the
 			// single biggest source of turn-wasting apology loops. Forward
 			// progress → mark any other in_progress step done.
 			advanced := false
-			for i, s := range plan.Steps {
-				if i != idx && s.Status == "in_progress" {
-					plan.Steps[i].Status = "done"
+			for _, s := range plan.Snapshot() {
+				if s.ID != step && s.Status == WorkStepInProgress {
+					plan.SetStatus(s.ID, WorkStepDone)
 					advanced = true
 				}
 			}
-			plan.Steps[idx].Status = "in_progress"
-			t.paintBuildPlan(plan)
+			plan.SetStatus(step, WorkStepInProgress)
+			t.paintBuildPlan()
 			if advanced {
-				return fmt.Sprintf("Step %d (%q) marked in_progress (auto-completed the previously open step). Continue.", step, plan.Steps[idx].Title), nil
+				return fmt.Sprintf("Step %d (%q) marked in_progress (auto-completed the previously open step). Continue.", step, target.Title), nil
 			}
-			return fmt.Sprintf("Step %d (%q) marked in_progress.", step, plan.Steps[idx].Title), nil
+			return fmt.Sprintf("Step %d (%q) marked in_progress.", step, target.Title), nil
 		},
 	}
 }
@@ -299,23 +297,22 @@ func (t *chatTurn) markStepBlockedToolDef() AgentToolDef {
 			Caps:     []Capability{CapRead},
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
-			if t.session == nil || t.session.BuildPlan == nil {
-				return "No active build plan, so there's nothing to mark: the checklist is optional. Just keep doing the actual work.", nil
+			if t.session == nil || t.session.BuildWorkPlan == nil {
+				return noBuildPlanNote, nil
 			}
+			plan := t.session.BuildWorkPlan
 			step := intFromArgs(args, "step")
 			reason := strings.TrimSpace(stringArg(args, "reason"))
 			if reason == "" {
 				return "", errors.New("reason is required: describe what blocked the step in one line")
 			}
-			plan := t.session.BuildPlan
-			idx := step - 1
-			if step < 1 || idx >= len(plan.Steps) {
-				return fmt.Sprintf("There's no step %d (the plan has %d step(s)): nothing to update. The checklist is cosmetic; note the blocker in your reply instead of re-planning.", step, len(plan.Steps)), nil
+			target, ok := buildPlanStep(plan, step)
+			if !ok {
+				return fmt.Sprintf("There's no step %d (the plan has %d step(s)): nothing to update. The checklist is cosmetic; note the blocker in your reply instead of re-planning.", step, len(plan.Snapshot())), nil
 			}
-			plan.Steps[idx].Status = "blocked"
-			plan.Steps[idx].BlockedReason = reason
-			t.paintBuildPlan(plan)
-			return fmt.Sprintf("Step %d (%q) marked blocked. Reason recorded for the gap report.", step, plan.Steps[idx].Title), nil
+			plan.MarkBlocked(step, reason)
+			t.paintBuildPlan()
+			return fmt.Sprintf("Step %d (%q) marked blocked. Reason recorded for the gap report.", step, target.Title), nil
 		},
 	}
 }
@@ -323,13 +320,14 @@ func (t *chatTurn) markStepBlockedToolDef() AgentToolDef {
 // reviseBuildPlanToolDef — Builder's plan-revision tool. Single
 // action verb to add / remove / reorder steps when execution reveals
 // something the original plan didn't anticipate. Capped at
-// BuildPlanRevisionLimit (3) calls per session — mirrors servitor's
-// guard against the "reshuffle instead of execute" failure mode.
+// WorkPlanRevisionLimit calls per plan — the guard against the
+// "reshuffle instead of execute" failure mode. A refused revision
+// does not count against the cap.
 func (t *chatTurn) reviseBuildPlanToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "revise_build_plan",
-			Description: fmt.Sprintf("Revise the current build plan when findings reveal something the original plan missed. action=\"add\" appends new pending steps, action=\"remove\" drops pending steps by step number (done / blocked steps refuse removal: they're durable history), action=\"reorder\" rearranges the full step list. Capped at %d revisions per session: use deliberately, not reflexively. Re-emits the plan card so the user sees the updated checklist.", BuildPlanRevisionLimit),
+			Description: fmt.Sprintf("Revise the current build plan when findings reveal something the original plan missed. action=\"add\" appends new pending steps, action=\"remove\" drops pending steps by step number (done / blocked steps refuse removal: they're durable history), action=\"reorder\" rearranges the full step list. Capped at %d revisions per session: use deliberately, not reflexively. Re-emits the plan card so the user sees the updated checklist.", WorkPlanRevisionLimit),
 			Parameters: map[string]ToolParam{
 				"action": {Type: "string", Description: "One of \"add\" | \"remove\" | \"reorder\"."},
 				"steps": {
@@ -359,101 +357,57 @@ func (t *chatTurn) reviseBuildPlanToolDef() AgentToolDef {
 			Caps:     []Capability{CapRead},
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
-			if t.session == nil || t.session.BuildPlan == nil {
+			if t.session == nil || t.session.BuildWorkPlan == nil {
 				return "", errors.New("revise_build_plan: no active build plan, call present_build_plan first")
 			}
-			plan := t.session.BuildPlan
-			if plan.RevisionCount >= BuildPlanRevisionLimit {
-				return "", fmt.Errorf("revise_build_plan: revision cap reached (%d), execute the plan you have rather than re-shuffling", BuildPlanRevisionLimit)
+			plan := t.session.BuildWorkPlan
+			if plan.RevisionCount() >= WorkPlanRevisionLimit {
+				return "", fmt.Errorf("revise_build_plan: revision cap reached (%d), execute the plan you have rather than re-shuffling", WorkPlanRevisionLimit)
 			}
 			action := strings.TrimSpace(stringArg(args, "action"))
 			switch action {
 			case "add":
-				added := buildPlanStepsFromArg(args["steps"])
-				if len(added) == 0 {
+				titles, details, _ := buildPlanArg(args["steps"])
+				if len(titles) == 0 {
 					return "", errors.New("revise_build_plan(add): steps is required and must contain at least one valid {title, detail?} object")
 				}
-				// Re-number the appended steps to follow the existing
-				// max — keeps the user-facing numbering monotonic
-				// across revisions.
-				next := 0
-				for _, s := range plan.Steps {
-					if s.Number > next {
-						next = s.Number
-					}
+				if _, err := plan.AddSteps(titles, details); err != nil {
+					return "", fmt.Errorf("revise_build_plan(add): %v", err)
 				}
-				for i := range added {
-					next++
-					added[i].Number = next
-				}
-				plan.Steps = append(plan.Steps, added...)
 			case "remove":
-				raw, _ := args["step_numbers"].([]any)
-				if len(raw) == 0 {
+				ids := stepNumbersArg(args["step_numbers"])
+				if len(ids) == 0 {
 					return "", errors.New("revise_build_plan(remove): step_numbers is required")
 				}
-				want := make(map[int]bool, len(raw))
-				for _, v := range raw {
-					if n, ok := toInt(v); ok {
-						want[n] = true
-					}
-				}
-				var refused []int
-				out := plan.Steps[:0]
-				for _, s := range plan.Steps {
-					if !want[s.Number] {
-						out = append(out, s)
-						continue
-					}
-					if s.Status != "pending" {
-						out = append(out, s)
-						refused = append(refused, s.Number)
-						continue
-					}
-					// dropped
-				}
-				plan.Steps = out
-				if len(refused) > 0 {
+				if _, refused := plan.RemoveSteps(ids); len(refused) > 0 {
 					return "", fmt.Errorf("revise_build_plan(remove): refused step(s) %v, only pending steps can be removed (done / blocked steps stay as durable history)", refused)
 				}
 			case "reorder":
-				raw, _ := args["order"].([]any)
-				if len(raw) != len(plan.Steps) {
-					return "", fmt.Errorf("revise_build_plan(reorder): order must list all %d step numbers; got %d", len(plan.Steps), len(raw))
+				if err := plan.ReorderSteps(stepNumbersArg(args["order"])); err != nil {
+					return "", fmt.Errorf("revise_build_plan(reorder): %v", err)
 				}
-				want := make([]int, 0, len(raw))
-				for _, v := range raw {
-					if n, ok := toInt(v); ok {
-						want = append(want, n)
-					}
-				}
-				byNum := make(map[int]BuildPlanStep, len(plan.Steps))
-				for _, s := range plan.Steps {
-					byNum[s.Number] = s
-				}
-				seen := make(map[int]bool, len(want))
-				newSteps := make([]BuildPlanStep, 0, len(want))
-				for _, n := range want {
-					s, ok := byNum[n]
-					if !ok {
-						return "", fmt.Errorf("revise_build_plan(reorder): unknown step number %d", n)
-					}
-					if seen[n] {
-						return "", fmt.Errorf("revise_build_plan(reorder): step number %d listed more than once", n)
-					}
-					seen[n] = true
-					newSteps = append(newSteps, s)
-				}
-				plan.Steps = newSteps
 			default:
 				return "", fmt.Errorf("revise_build_plan: action must be \"add\" | \"remove\" | \"reorder\" (got %q)", action)
 			}
-			plan.RevisionCount++
-			t.paintBuildPlan(plan)
+			count, _ := plan.IncrRevision()
+			t.paintBuildPlan()
 			return fmt.Sprintf("Plan revised (%s). %d of %d revisions used (%d remaining).",
-				action, plan.RevisionCount, BuildPlanRevisionLimit, BuildPlanRevisionLimit-plan.RevisionCount), nil
+				action, count, WorkPlanRevisionLimit, WorkPlanRevisionLimit-count), nil
 		},
 	}
+}
+
+// stepNumbersArg reads revise_build_plan's array of step numbers, skipping an
+// entry it cannot read as one.
+func stepNumbersArg(v any) []int {
+	raw, _ := v.([]any)
+	out := make([]int, 0, len(raw))
+	for _, item := range raw {
+		if n, ok := toInt(item); ok {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 // reportBuildGapsToolDef — Builder's "what didn't get done" tool.
@@ -461,7 +415,7 @@ func (t *chatTurn) reviseBuildPlanToolDef() AgentToolDef {
 // blocked or still pending. Returns a structured summary that the
 // model must address in its Phase 5 synthesis (either explicitly
 // surfacing the gap to the user, or revising the plan to fill it).
-// Sets BuildPlanState.GapsReported, which injectSkippedGapReportWarning
+// Marks the plan's gaps reported, which injectSkippedGapReportWarning
 // reads at turn end: a reply that closes out the plan without this call
 // gets a corrective note + a visible warning. Enforcement is post-hoc
 // rather than a mid-turn block because the reply has already streamed by
@@ -492,14 +446,14 @@ func (t *chatTurn) reportBuildGapsToolDef() AgentToolDef {
 			// The plan half simply has nothing to say without a plan; the
 			// verification-ledger half is about tools this session touched and
 			// stands on its own.
-			plan := t.session.BuildPlan
+			plan := t.session.BuildWorkPlan
 			if plan != nil {
-				plan.GapsReported = true
+				plan.MarkGapsReported()
 			}
 			rep := currentBuildGaps(plan, t.udb, t.session.ID)
 			t.gapsShown = rep.key()
 			if plan != nil {
-				t.paintBuildPlan(plan)
+				t.paintBuildPlan()
 			}
 			if rep.empty() {
 				if plan == nil {
@@ -546,15 +500,15 @@ type buildGapTool struct {
 // precisely what happened, and report_build_gaps said "All steps completed
 // successfully" on top of it. The tools are graded from the ledger, which
 // records the outcome where it was actually known.
-func currentBuildGaps(plan *BuildPlanState, udb Database, sessionID string) buildGaps {
+func currentBuildGaps(plan *WorkPlan, udb Database, sessionID string) buildGaps {
 	var rep buildGaps
 	if plan != nil {
-		for _, st := range plan.Steps {
+		for _, st := range plan.Snapshot() {
 			switch st.Status {
-			case "blocked":
-				rep.Blocked = append(rep.Blocked, buildGapStep{Step: st.Number, Title: st.Title, Reason: st.BlockedReason})
-			case "pending", "in_progress":
-				rep.Skipped = append(rep.Skipped, buildGapStep{Step: st.Number, Title: st.Title, Reason: "step never completed"})
+			case WorkStepBlocked:
+				rep.Blocked = append(rep.Blocked, buildGapStep{Step: st.ID, Title: st.Title, Reason: st.BlockedReason})
+			case WorkStepPending, WorkStepInProgress:
+				rep.Skipped = append(rep.Skipped, buildGapStep{Step: st.ID, Title: st.Title, Reason: "step never completed"})
 			}
 		}
 	}
@@ -592,9 +546,9 @@ func (g buildGaps) key() string {
 //
 // plan reads the live plan (nil when there is none, as on a delegated run);
 // sessionID is the key the verification ledger records this run's tools under.
-func buildGapsFinishCheck(plan func() *BuildPlanState, udb Database, sessionID string, shown *string) func(string) (string, string) {
+func buildGapsFinishCheck(plan func() *WorkPlan, udb Database, sessionID string, shown *string) func(string) (string, string) {
 	return func(string) (string, string) {
-		var p *BuildPlanState
+		var p *WorkPlan
 		if plan != nil {
 			p = plan()
 		}
@@ -606,7 +560,7 @@ func buildGapsFinishCheck(plan func() *BuildPlanState, udb Database, sessionID s
 			// Checked on its behalf and clean: the after-turn warning about a
 			// skipped report has nothing left to say.
 			if p != nil {
-				p.GapsReported = true
+				p.MarkGapsReported()
 			}
 			return "", ""
 		}
@@ -618,7 +572,7 @@ func buildGapsFinishCheck(plan func() *BuildPlanState, udb Database, sessionID s
 			*shown = key
 		}
 		if p != nil {
-			p.GapsReported = true
+			p.MarkGapsReported()
 		}
 		return rep.finishNotice(), rep.strikeReason()
 	}
@@ -654,14 +608,14 @@ func (t *chatTurn) buildGapsFinishCheck() func(string) (string, string) {
 	if !agentCanAuthor(t.agent) || t.session == nil {
 		return nil
 	}
-	return buildGapsFinishCheck(func() *BuildPlanState { return t.session.BuildPlan }, t.udb, t.session.ID, &t.gapsShown)
+	return buildGapsFinishCheck(func() *WorkPlan { return t.session.BuildWorkPlan }, t.udb, t.session.ID, &t.gapsShown)
 }
 
 // buildGapsNote is what an authoring turn adds when it ends with the check's
 // corrections spent and gaps still standing: a labelled line naming them, so a
 // reply calling them working does not stand alone. "" when nothing is unmet,
 // or when steps are still pending, which is not a finish.
-func buildGapsNote(plan *BuildPlanState, udb Database, sessionID string) string {
+func buildGapsNote(plan *WorkPlan, udb Database, sessionID string) string {
 	rep := currentBuildGaps(plan, udb, sessionID)
 	if len(rep.Skipped) > 0 || rep.empty() {
 		return ""
@@ -688,7 +642,7 @@ func (t *chatTurn) buildGapsUnmet() func() {
 		return nil
 	}
 	return func() {
-		if note := buildGapsNote(t.session.BuildPlan, t.udb, t.session.ID); note != "" {
+		if note := buildGapsNote(t.session.BuildWorkPlan, t.udb, t.session.ID); note != "" {
 			t.turnDiag("build-check-unmet", note)
 		}
 	}
@@ -763,7 +717,7 @@ func (g buildGaps) strikeReason() string {
 }
 
 // toInt is a small JSON-tolerant int coercion for revise_build_plan's
-// array args. The LLM may emit step numbers as float64 (JSON number),
+// array args (stepNumbersArg). The LLM may emit step numbers as float64 (JSON number),
 // int, or string-of-digits; we accept all three.
 func toInt(v any) (int, bool) {
 	switch x := v.(type) {
@@ -784,17 +738,17 @@ func toInt(v any) (int, bool) {
 // paintBuildPlan sends the build plan's card and keeps it with the thread.
 // Reused for the initial paint AND for every update: the renderer's onUpdate
 // hook re-renders the card already showing under the same id.
-func (t *chatTurn) paintBuildPlan(plan *BuildPlanState) {
-	if plan == nil {
+func (t *chatTurn) paintBuildPlan() {
+	if t.session == nil || t.session.BuildWorkPlan == nil {
 		return
 	}
-	t.paintPlanCard(plan.ID, plan.Steps, "")
+	t.paintPlanCard(t.session.BuildPlanCard, planCardSteps(t.session.BuildWorkPlan.Snapshot()), "")
 }
 
 // buildPlanCard is the card a newly presented build plan is drawn on.
 func (t *chatTurn) buildPlanCard() string {
-	if p := t.session.BuildPlan; p != nil {
-		return t.nextPlanCard(p.ID, planStepsOpen(p.Steps), "build-plan-")
+	if p := t.session.BuildWorkPlan; p != nil {
+		return t.nextPlanCard(t.session.BuildPlanCard, p.Pending() > 0, "build-plan-")
 	}
 	return t.nextPlanCard("", false, "build-plan-")
 }

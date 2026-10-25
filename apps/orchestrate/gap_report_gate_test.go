@@ -8,12 +8,27 @@ import (
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
-func gateSession(sid string, statuses ...string) *ChatSession {
-	steps := make([]BuildPlanStep, 0, len(statuses))
-	for i, st := range statuses {
-		steps = append(steps, BuildPlanStep{Number: i + 1, Title: "step", Status: st})
+// buildPlanWith is a build plan whose steps stand at statuses, titled title1,
+// title2... or "step" when there are fewer titles than steps.
+func buildPlanWith(statuses []string, titles ...string) *WorkPlan {
+	names := make([]string, len(statuses))
+	finds := make([]string, len(statuses))
+	for i := range statuses {
+		names[i] = "step"
+		if i < len(titles) {
+			names[i] = titles[i]
+		}
 	}
-	return &ChatSession{ID: sid, BuildPlan: &BuildPlanState{Steps: steps}}
+	plan := &WorkPlan{}
+	plan.SetSteps(names, finds)
+	for i, st := range statuses {
+		plan.SetStatus(i+1, WorkStepStatus(st))
+	}
+	return plan
+}
+
+func gateSession(sid string, statuses ...string) *ChatSession {
+	return &ChatSession{ID: sid, BuildWorkPlan: buildPlanWith(statuses)}
 }
 
 // TestGapGateFiresWhenPlanClosedWithoutReport — the enforcement this adds:
@@ -73,7 +88,7 @@ func TestGapGateQuietOnLegitimateReplies(t *testing.T) {
 		// No plan at all — an ordinary agent turn.
 		{"no build plan", &ChatSession{ID: "s1"}, "Here you go."},
 		// No steps — a plan shell with nothing in it.
-		{"empty plan", &ChatSession{ID: "s1", BuildPlan: &BuildPlanState{}}, "Here you go."},
+		{"empty plan", &ChatSession{ID: "s1", BuildWorkPlan: &WorkPlan{}}, "Here you go."},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -90,7 +105,7 @@ func TestGapGateQuietOnceReported(t *testing.T) {
 	db := &DBase{Store: kvlite.MemStore()}
 
 	reported := gateSession("s1", "done", "done")
-	reported.BuildPlan.GapsReported = true
+	reported.BuildWorkPlan.MarkGapsReported()
 	if injectSkippedGapReportWarning(reported, db, "All done.") {
 		t.Fatal("gate fired even though report_build_gaps was called — it must be satisfiable")
 	}
@@ -110,14 +125,14 @@ func TestGapGateQuietOnceReported(t *testing.T) {
 func TestTheBuildCheckRunsBeforeTheReplyGoesOut(t *testing.T) {
 	db := &DBase{Store: kvlite.MemStore()}
 	sess := gateSession("s1", "done")
-	plan := func() *BuildPlanState { return sess.BuildPlan }
+	plan := func() *WorkPlan { return sess.BuildWorkPlan }
 	var shown string
 	check := buildGapsFinishCheck(plan, db, "s1", &shown)
 
 	if notice, _ := check("All done."); notice != "" {
 		t.Fatalf("nothing unverified, nothing blocked: the reply stands, got %q", notice)
 	}
-	if !sess.BuildPlan.GapsReported {
+	if !sess.BuildWorkPlan.GapsReported() {
 		t.Error("a clean check made on the model's behalf counts as the report")
 	}
 
@@ -147,7 +162,7 @@ func TestTheBuildCheckLeavesAnUnfinishedPlanAndAnAnsweredReportAlone(t *testing.
 	recordToolVerify(db, "s2", "draft_tool", false, "never tested")
 	pending := gateSession("s2", "done", "pending")
 	var shown string
-	check := buildGapsFinishCheck(func() *BuildPlanState { return pending.BuildPlan }, db, "s2", &shown)
+	check := buildGapsFinishCheck(func() *WorkPlan { return pending.BuildWorkPlan }, db, "s2", &shown)
 	if notice, _ := check("Here is the plan. Shall I go ahead?"); notice != "" {
 		t.Errorf("a plan still pending is not a finish: %q", notice)
 	}
@@ -197,7 +212,7 @@ func TestADelegatedReplyCarriesWhatIsStillUnverified(t *testing.T) {
 	if resp.Content != "Done." {
 		t.Errorf("nothing unmet, nothing added: %q", resp.Content)
 	}
-	if note := buildGapsNote(gateSession("d2", "done", "pending").BuildPlan, db, "d2"); note != "" {
+	if note := buildGapsNote(gateSession("d2", "done", "pending").BuildWorkPlan, db, "d2"); note != "" {
 		t.Errorf("a plan still pending is not a finish: %q", note)
 	}
 }

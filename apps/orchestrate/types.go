@@ -1420,12 +1420,16 @@ type ChatSession struct {
 	// "end authoring" — the next session is the natural reset.
 	AuthoringAgentID string `json:"AuthoringAgentID,omitempty"`
 
-	// BuildPlan holds the visible plan card state when Builder is
-	// walking the user through a multi-step authoring flow. Set by
-	// present_build_plan; updated by mark_step_done. Drives the
-	// orchestrate_plan SSE block so the user sees a live checklist
-	// updating as each step's tool fires.
-	BuildPlan *BuildPlanState `json:"BuildPlan,omitempty"`
+	// BuildWorkPlan is Builder's build plan while it walks the user
+	// through a multi-step authoring flow: set by present_build_plan or
+	// ask_user's plan, worked by the mark_step_* tools, graded by
+	// report_build_gaps (build_plan_tools.go). The same WorkPlan a
+	// tracked plan keeps. Replaced the BuildPlan field, whose own type
+	// was dropped; a plan stored under that name is no longer read.
+	BuildWorkPlan *WorkPlan `json:"build_work_plan,omitempty"`
+	// BuildPlanCard is the card the build plan is drawn on. A plan
+	// presented after the last one finished gets a new card (plan_card.go).
+	BuildPlanCard string `json:"build_plan_card,omitempty"`
 
 	// AppFolder is the app folder this session last named to app_def
 	// ("weather.app"), so run and publish without a dir mean that folder. A
@@ -1498,47 +1502,19 @@ type UIBlock struct {
 	// settleResolvedBlocks).
 	Resolved string `json:"resolved,omitempty"`
 	// Plan is a plan card's steps, as last painted (plan_card.go).
-	Plan []BuildPlanStep `json:"plan,omitempty"`
+	Plan []PlanCardStep `json:"plan,omitempty"`
 	// At is when the card was first drawn. A replayed block that has one is
 	// put back among the messages at that time instead of after them all.
 	At time.Time `json:"at,omitzero"`
 }
 
-// BuildPlanState is the persisted plan-card state for Builder's
-// multi-step execution flow. ID stays stable across emissions so
-// the renderer's onUpdate hook re-renders the same card rather than
-// stacking new ones. Steps are 1-indexed in user-facing land but
-// stored 0-indexed in the slice.
-type BuildPlanState struct {
-	ID    string          `json:"id"`
-	Steps []BuildPlanStep `json:"steps"`
-
-	// RevisionCount tracks how many times revise_build_plan has been
-	// called this session. Capped at BuildPlanRevisionLimit (3) to
-	// prevent the model from re-shuffling instead of executing — same
-	// guard servitor's Plan.IncrRevision enforces. Reset to zero when
-	// present_build_plan replaces the plan wholesale.
-	RevisionCount int `json:"revision_count,omitempty"`
-
-	// GapsReported flips when report_build_gaps has been called.
-	// Builder's Phase 4 → Phase 5 transition demands an explicit gap
-	// report before the final user-facing reply, so the model is
-	// honest about blocked or skipped steps. Set once per plan;
-	// re-presenting the plan resets it.
-	GapsReported bool `json:"gaps_reported,omitempty"`
-}
-
-// BuildPlanRevisionLimit caps how many times revise_build_plan can
-// fire per session. Mirrors servitor's PlanRevisionLimit = 3 — a
-// hard ceiling that keeps the model from reshuffling indefinitely
-// instead of executing the plan it already has.
-const BuildPlanRevisionLimit = 3
-
-// BuildPlanStep mirrors the fields the orchestrate_plan renderer
-// consumes: title (line text), status (pending / in_progress / done
-// / blocked), what_to_find (sub-line detail), findings (one-line
-// result after step done).
-type BuildPlanStep struct {
+// PlanCardStep is one row of a plan card, in the fields the
+// orchestrate_plan renderer consumes: number (the step's id), title
+// (line text), status (pending / in_progress / done / blocked),
+// what_to_find (sub-line detail), findings (one-line result after
+// step done). A WorkPlan's snapshot is drawn in this shape
+// (planCardSteps).
+type PlanCardStep struct {
 	Number        int    `json:"number"`
 	Title         string `json:"title"`
 	WhatToFind    string `json:"what_to_find,omitempty"`

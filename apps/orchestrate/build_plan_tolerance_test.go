@@ -14,13 +14,7 @@ import (
 // keep working, and mark_step_in_progress must auto-advance instead of refusing.
 func TestBuildPlanStepsAreTolerant(t *testing.T) {
 	newTurn := func() *chatTurn {
-		return &chatTurn{session: &ChatSession{BuildPlan: &BuildPlanState{
-			ID: "p1",
-			Steps: []BuildPlanStep{
-				{Number: 1, Title: "one", Status: "pending"},
-				{Number: 2, Title: "two", Status: "pending"},
-			},
-		}}}
+		return &chatTurn{session: &ChatSession{BuildWorkPlan: buildPlanWith([]string{"pending", "pending"}, "one", "two")}}
 	}
 
 	// Out-of-range mark_step_done: no error, soft note, work continues.
@@ -45,7 +39,7 @@ func TestBuildPlanStepsAreTolerant(t *testing.T) {
 	if !strings.Contains(out, "auto-completed") {
 		t.Fatalf("expected auto-advance note; got %q", out)
 	}
-	steps := turn.session.BuildPlan.Steps
+	steps := turn.session.BuildWorkPlan.Snapshot()
 	if steps[0].Status != "done" || steps[1].Status != "in_progress" {
 		t.Fatalf("stale step should be done, new one in_progress; got %q / %q", steps[0].Status, steps[1].Status)
 	}
@@ -54,5 +48,22 @@ func TestBuildPlanStepsAreTolerant(t *testing.T) {
 	empty := &chatTurn{session: &ChatSession{}}
 	if out, err := empty.markStepDoneToolDef().Handler(context.Background(), map[string]any{"step": 1, "summary": "x"}); err != nil || !strings.Contains(out, "No active build plan") {
 		t.Fatalf("no-plan mark_step_done should soft-note; got %q, %v", out, err)
+	}
+}
+
+// A step is found by its number wherever a revision has moved it. The step
+// tools used to count positions, so after a reorder mark_step_done(step=1)
+// marked whichever step had landed first.
+func TestBuildPlanStepsGoByNumberAfterAReorder(t *testing.T) {
+	turn := &chatTurn{session: &ChatSession{ID: "s1"}}
+	presentPlan(t, turn, "one", "two", "three")
+	if _, err := turn.reviseBuildPlanToolDef().Handler(context.Background(), map[string]any{"action": "reorder", "order": []any{float64(3), float64(1), float64(2)}}); err != nil {
+		t.Fatalf("reorder: %v", err)
+	}
+	markDone(t, turn, 1)
+	for _, s := range turn.session.BuildWorkPlan.Snapshot() {
+		if want := s.ID == 1; (s.Status == "done") != want {
+			t.Errorf("step %d (%s) is %s after marking step 1 done", s.ID, s.Title, s.Status)
+		}
 	}
 }

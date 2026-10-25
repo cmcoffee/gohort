@@ -21,7 +21,7 @@ import (
 )
 
 // planStepsOpen reports whether any step is still to do.
-func planStepsOpen(steps []BuildPlanStep) bool {
+func planStepsOpen(steps []PlanCardStep) bool {
 	for _, s := range steps {
 		if s.Status == "pending" || s.Status == "in_progress" {
 			return true
@@ -43,7 +43,7 @@ func (t *chatTurn) nextPlanCard(current string, open bool, prefix string) string
 
 // paintPlanCard sends one movement of a plan to the page and keeps it on the
 // session, so the card survives a reload in the place it was first drawn.
-func (t *chatTurn) paintPlanCard(id string, steps []BuildPlanStep, reason string) {
+func (t *chatTurn) paintPlanCard(id string, steps []PlanCardStep, reason string) {
 	if t == nil || id == "" {
 		return
 	}
@@ -67,7 +67,7 @@ func (t *chatTurn) paintPlanCard(id string, steps []BuildPlanStep, reason string
 	if t.session == nil {
 		return
 	}
-	kept := append([]BuildPlanStep(nil), steps...)
+	kept := append([]PlanCardStep(nil), steps...)
 	t.toolMu.Lock()
 	defer t.toolMu.Unlock()
 	at := time.Now()
@@ -87,11 +87,12 @@ func (s *ChatSession) keptPlanCard(id string) *UIBlock {
 	return nil
 }
 
-// workPlanSteps is a tracked plan's snapshot in the card's shape.
-func workPlanSteps(steps []WorkPlanStep) []BuildPlanStep {
-	out := make([]BuildPlanStep, 0, len(steps))
+// planCardSteps is a plan's snapshot in the card's shape: a tracked plan's
+// and a build plan's alike.
+func planCardSteps(steps []WorkPlanStep) []PlanCardStep {
+	out := make([]PlanCardStep, 0, len(steps))
 	for _, s := range steps {
-		out = append(out, BuildPlanStep{
+		out = append(out, PlanCardStep{
 			Number:        s.ID,
 			Title:         s.Title,
 			WhatToFind:    s.WhatToFind,
