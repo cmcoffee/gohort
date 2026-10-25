@@ -31,6 +31,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 )
 
 type guideSource struct{ app *Scribe }
@@ -247,7 +248,7 @@ func (s guideSource) ItemToolsWithSession(sess *ToolSession, user, itemID string
 
 // agentName is the reporting agent's name for the digest, or its id.
 func (s guideSource) agentName(user, agentID string) string {
-	if orch := findOrchestrate(); orch != nil {
+	if orch := agenthost.Get(); orch != nil {
 		if a, ok := orch.LookupAppAgent(user, agentID); ok && strings.TrimSpace(a.Name) != "" {
 			return a.Name
 		}

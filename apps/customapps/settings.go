@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/ui"
 	"github.com/cmcoffee/gohort/tools/appscript"
 )
@@ -378,7 +379,7 @@ func (T *CustomApps) applySettings(args map[string]any, spec AppSpec, uid string
 // its owner. True when orchestrate is not running here, so nothing claims an
 // agent is gone without having looked.
 func (T *CustomApps) appAgentExists(spec AppSpec) bool {
-	orch := findOrchestrate()
+	orch := agenthost.Get()
 	if orch == nil || strings.TrimSpace(spec.AgentID) == "" {
 		return true
 	}
@@ -394,7 +395,7 @@ func (T *CustomApps) handleSettingsAgent(w http.ResponseWriter, r *http.Request,
 		http.Error(w, "only the app's owner can change its agent", http.StatusForbidden)
 		return
 	}
-	orch := findOrchestrate()
+	orch := agenthost.Get()
 	if orch == nil {
 		http.Error(w, "agents are not available here", http.StatusServiceUnavailable)
 		return

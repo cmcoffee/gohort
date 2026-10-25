@@ -209,7 +209,7 @@ func (T *Scribe) handleBriefDiscuss(w http.ResponseWriter, r *http.Request, udb 
 // value}.
 func (T *Scribe) runDiscussTurn(w http.ResponseWriter, r *http.Request, udb Database, user string, turn discussTurn, sessionKey string) {
 	g := turn.guide
-	orch := findOrchestrate()
+	orch := agenthost.Get()
 	if orch == nil {
 		http.Error(w, "orchestrate not initialized", http.StatusServiceUnavailable)
 		return

@@ -1454,11 +1454,6 @@ type ChatSession struct {
 	UIBlocks []UIBlock `json:"ui_blocks,omitempty"`
 }
 
-// UIBlock is one persisted UI artifact on a session — the durable half
-// of a {kind:"block"} SSE emission. Type names the client-side renderer
-// (e.g. "html_artifact"); ID is the block identity used for upserts;
-// Title plus ONE of HTML (authored document, sandboxed render) or URL
-// (same-origin page preview) are that renderer's payload.
 // MessageMark is the badge described on ChatMessage.Mark.
 type MessageMark struct {
 	Glyph  string            `json:"glyph"`
@@ -1467,6 +1462,11 @@ type MessageMark struct {
 	Data   map[string]string `json:"data,omitempty"`
 }
 
+// UIBlock is one persisted UI artifact on a session — the durable half
+// of a {kind:"block"} SSE emission. Type names the client-side renderer
+// (e.g. "html_artifact"); ID is the block identity used for upserts;
+// Title plus ONE of HTML (authored document, sandboxed render) or URL
+// (same-origin page preview) are that renderer's payload.
 type UIBlock struct {
 	Type  string `json:"type"`
 	ID    string `json:"id"`

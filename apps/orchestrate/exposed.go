@@ -35,6 +35,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/appagents"
 )
 
@@ -500,15 +501,19 @@ func (e exposedPoolEntry) matchesSlugFragment(slug string) bool {
 // NOT require Exposed=true — an app's agent is reached through the app, not
 // published on its own. Returns (zero, false) when the owner or agent doesn't
 // resolve.
-func (T *OrchestrateApp) LookupAppAgent(owner, agentID string) (AgentRecord, bool) {
+func (T *OrchestrateApp) LookupAppAgent(owner, agentID string) (agenthost.Agent, bool) {
 	if T.DB == nil || owner == "" || agentID == "" {
-		return AgentRecord{}, false
+		return agenthost.Agent{}, false
 	}
 	udb := UserDB(T.DB, owner)
 	if udb == nil {
-		return AgentRecord{}, false
+		return agenthost.Agent{}, false
 	}
-	return findAgentByNameOrID(udb, owner, agentID)
+	rec, ok := findAgentByNameOrID(udb, owner, agentID)
+	if !ok {
+		return agenthost.Agent{}, false
+	}
+	return AppAgentOf(rec), true
 }
 
 // LookupAppPipeline resolves a pipeline by ID or name within an owner's store,
@@ -566,10 +571,8 @@ func (T *OrchestrateApp) PublicHandlePipelineLive(w http.ResponseWriter, r *http
 	T.ServePipelineRuns(w, r, surface, sub)
 }
 
-// AppPipelineRunKind is the restore kind an app's pipeline section runs under:
-// its host (customapps) registers the restorer, because only it can find the
-// app again from a key.
-const AppPipelineRunKind = "app_pipeline"
+// AppPipelineRunKind is agenthost.AppPipelineRunKind.
+const AppPipelineRunKind = agenthost.AppPipelineRunKind
 
 // PublicHandleAppPipeline is PublicHandlePipelineLive for an app's pipeline
 // section: its runs resume after a restart, found again through key (the
@@ -747,12 +750,12 @@ func (T *OrchestrateApp) memoryAgent(r *http.Request, udb Database, user, agentI
 // sessions/memory/knowledge live in their own per-(user, agent)
 // scope — admin builds the agent, end-users accumulate their own
 // timeline against it.
-func (T *OrchestrateApp) PublicHandleSend(w http.ResponseWriter, r *http.Request, agent AgentRecord) {
+func (T *OrchestrateApp) PublicHandleSend(w http.ResponseWriter, r *http.Request, agent agenthost.Agent) {
 	user, udb, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return
 	}
-	T.handleSend(w, r, udb, user, agent)
+	T.handleSend(w, r, udb, user, appRecord(agent))
 }
 
 // PublicHandleSendWithAppTools is PublicHandleSend plus host-app tools injected
@@ -760,21 +763,21 @@ func (T *OrchestrateApp) PublicHandleSend(w http.ResponseWriter, r *http.Request
 // co-author tool — a closure over its own record store — so the bound agent can
 // write into the open document. The tools are built by the caller (with its own
 // data access); orchestrate just runs them, staying ignorant of app storage.
-func (T *OrchestrateApp) PublicHandleSendWithAppTools(w http.ResponseWriter, r *http.Request, agent AgentRecord, appTools []AgentToolDef) {
+func (T *OrchestrateApp) PublicHandleSendWithAppTools(w http.ResponseWriter, r *http.Request, agent agenthost.Agent, appTools []AgentToolDef) {
 	user, udb, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return
 	}
-	T.handleSendWithAppTools(w, r, udb, user, agent, appTools)
+	T.handleSendWithAppTools(w, r, udb, user, appRecord(agent), appTools)
 }
 
 // PublicHandleCancel mirrors PublicHandleSend's bypass for cancel.
-func (T *OrchestrateApp) PublicHandleCancel(w http.ResponseWriter, r *http.Request, agent AgentRecord) {
+func (T *OrchestrateApp) PublicHandleCancel(w http.ResponseWriter, r *http.Request, agent agenthost.Agent) {
 	user, _, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return
 	}
-	T.handleCancel(w, r, user, agent)
+	T.handleCancel(w, r, user, appRecord(agent))
 }
 
 // PublicHandleRunsActive / PublicHandleRunsDispatch expose the run-stream

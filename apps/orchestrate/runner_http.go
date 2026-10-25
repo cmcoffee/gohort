@@ -753,7 +753,7 @@ func (sr *sendRun) buildTurn() {
 	}
 	// Bound before anything can run, so a card emitted by the very first
 	// tool call still has somewhere to go.
-	sr.appBlockPub.bind(sr.turn)
+	bindPublisher(sr.appBlockPub, sr.turn)
 	for _, d := range sr.req.Documents {
 		if n := strings.TrimSpace(d.Name); n != "" {
 			sr.turn.docNames = append(sr.turn.docNames, n)

@@ -40,11 +40,11 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/appadmin"
 	"github.com/cmcoffee/gohort/core/promotion"
 	"github.com/cmcoffee/gohort/core/ui"
 
-	"github.com/cmcoffee/gohort/apps/orchestrate"
 	"github.com/cmcoffee/gohort/tools/appscript"
 )
 
@@ -334,7 +334,7 @@ func (T *CustomApps) latestRunForApp(spec AppSpec, r *http.Request) (string, str
 	if strings.TrimSpace(spec.PipelineID) == "" {
 		return "", ""
 	}
-	orch := findOrchestrate()
+	orch := agenthost.Get()
 	if orch == nil {
 		return "", ""
 	}
@@ -372,7 +372,7 @@ func (T *CustomApps) handlePipeline(w http.ResponseWriter, r *http.Request, spec
 		http.Error(w, "this app has no pipeline bound", http.StatusNotFound)
 		return
 	}
-	orch := findOrchestrate()
+	orch := agenthost.Get()
 	if orch == nil {
 		http.Error(w, "orchestrate not initialized", http.StatusServiceUnavailable)
 		return
@@ -409,13 +409,13 @@ func appRunKey(spec AppSpec) string { return spec.Owner + "/" + spec.Slug }
 // orchestrate is looked up when a run is restored, not now, so the order apps
 // start in does not matter.
 func (T *CustomApps) registerPipelineRestore() {
-	T.RegisterRunRestore(orchestrate.AppPipelineRunKind, func(user, _, key string) (RunSurface, bool) {
+	T.RegisterRunRestore(agenthost.AppPipelineRunKind, func(user, _, key string) (RunSurface, bool) {
 		owner, slug, ok := strings.Cut(key, "/")
 		if !ok {
 			return RunSurface{}, false
 		}
 		spec, found := loadSpec(owner, slug)
-		orch := findOrchestrate()
+		orch := agenthost.Get()
 		if !found || orch == nil || strings.TrimSpace(spec.PipelineID) == "" {
 			return RunSurface{}, false
 		}
@@ -448,13 +448,6 @@ func recordsInvalidationBridge(spec AppSpec) string {
 	return `<script>(function(){var U=` + string(b) + `;window.addEventListener('ui-data-changed',function(e){var s=e&&e.detail&&e.detail.sources;if(!s||s.indexOf('records')<0)return;var m=U.filter(function(u){return s.indexOf(u)<0;});if(m.length&&window.uiInvalidate)window.uiInvalidate(m);});})();</script>`
 }
 
-// findOrchestrate is the registered orchestrate app, or nil when it is not running.
-// A var so a test can stand one in without registering it.
-var findOrchestrate = func() *orchestrate.OrchestrateApp {
-	o, _ := FindAgentAs[*orchestrate.OrchestrateApp]("orchestrate")
-	return o
-}
-
 // handleChat dispatches the app's chat sub-routes to orchestrate. sub is the
 // path after "chat/" ("" | "send" | "cancel" | "active" | "sessions" |
 // "sessions/<sid>"). The agent is resolved from the app's bound AgentID; session
@@ -473,7 +466,7 @@ func (T *CustomApps) handleChat(w http.ResponseWriter, r *http.Request, owner, u
 		T.handleSetActiveRecord(w, r, udb, spec)
 		return
 	}
-	orch := findOrchestrate()
+	orch := agenthost.Get()
 	if orch == nil {
 		http.Error(w, "orchestrate not initialized", http.StatusServiceUnavailable)
 		return
@@ -525,7 +518,7 @@ var liveAppWorkOnce sync.Once
 // what to do to them; slug "{slug}" leaves the placeholder for a row action
 // to fill. "" when no Builder is running here.
 func builderChangeURL(slug string) string {
-	orch := findOrchestrate()
+	orch := agenthost.Get()
 	if orch == nil {
 		return ""
 	}

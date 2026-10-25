@@ -25,8 +25,7 @@ import (
 	"sync"
 
 	. "github.com/cmcoffee/gohort/core"
-
-	"github.com/cmcoffee/gohort/apps/orchestrate"
+	"github.com/cmcoffee/gohort/core/agenthost"
 )
 
 // guideWriteTools are the co-author tools that change the open guide. Each
@@ -41,7 +40,7 @@ const turnChangesBlock = "scribe_changes"
 
 // turnChanges follows one turn's changes to its guide.
 type turnChanges struct {
-	pub *orchestrate.AppBlockPublisher
+	pub *agenthost.Publisher
 	// open is the turn's guide and its owner's store, read fresh each call.
 	open func() (Guide, Database, bool)
 	id   string // the card's block id, one per turn
@@ -53,7 +52,7 @@ type turnChanges struct {
 	notes  []string
 }
 
-func newTurnChanges(pub *orchestrate.AppBlockPublisher, open func() (Guide, Database, bool)) *turnChanges {
+func newTurnChanges(pub *agenthost.Publisher, open func() (Guide, Database, bool)) *turnChanges {
 	return &turnChanges{pub: pub, open: open, id: "scribe-changes-" + newID()}
 }
 
@@ -135,13 +134,13 @@ func (tc *turnChanges) record() {
 
 // block is the card as it stands: the changes in order, and what Undo
 // restores.
-func (tc *turnChanges) block() orchestrate.UIBlock {
+func (tc *turnChanges) block() agenthost.Block {
 	n := len(tc.notes)
 	text := "1 change"
 	if n != 1 {
 		text = strconv.Itoa(n) + " changes"
 	}
-	return orchestrate.UIBlock{
+	return agenthost.Block{
 		Type:  turnChangesBlock,
 		ID:    tc.id,
 		Title: "Changes this turn",

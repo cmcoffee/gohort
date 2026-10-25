@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/docs"
 )
 
@@ -124,7 +125,7 @@ func (g *guideTarget) Append(ctx context.Context, user, docID, newDocTitle, sect
 	if !(CanManageShared(user, owner, false) || resolved.editableBy(owner, user)) {
 		return "", fmt.Errorf("you don't have edit access to that guide")
 	}
-	if orch := findOrchestrate(); orch != nil {
+	if orch := agenthost.Get(); orch != nil {
 		if _, err := g.app.runIncorporate(ctx, udb, orch, user, docID, sectionTitle, markdown, resolved.Private); err != nil {
 			return "", err
 		}

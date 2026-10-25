@@ -6,17 +6,18 @@ import (
 	"testing"
 
 	"github.com/cmcoffee/gohort/apps/orchestrate"
+	"github.com/cmcoffee/gohort/core/agenthost"
 )
 
 // The owner's app page carries a way to change it: Builder, its starting form
 // already pointed at this app.
 func TestAnAppPageLinksToBuilderForItsOwner(t *testing.T) {
-	prev := findOrchestrate
-	t.Cleanup(func() { findOrchestrate = prev })
+	prev := agenthost.Get()
+	t.Cleanup(func() { agenthost.Register(prev) })
 	page := json.RawMessage(`{"title":"Swing","nav":[{"label":"Settings","url":"_settings"}],"sections":[]}`)
 
 	orch := &orchestrate.OrchestrateApp{}
-	findOrchestrate = func() *orchestrate.OrchestrateApp { return orch }
+	agenthost.Register(orch)
 	var m struct {
 		Nav []struct{ Label, URL string } `json:"nav"`
 	}

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/appagents"
 	"github.com/cmcoffee/gohort/core/mcppersonal"
 )
@@ -56,10 +57,8 @@ const (
 	DispatchNone   = dispatchNone
 )
 
-// AgentReferenceKind is the ReferenceSource kind an AGENT is attached under, so
-// a consumer can tell an attached agent apart from an attached system or file
-// store without hardcoding the string.
-const AgentReferenceKind = "agent"
+// AgentReferenceKind is agenthost.AgentReferenceKind.
+const AgentReferenceKind = agenthost.AgentReferenceKind
 
 // effectiveDispatchMode resolves an agent's dispatch policy, applying back-
 // compat: a blank DispatchMode with a non-empty AllowedDispatchTargets is the

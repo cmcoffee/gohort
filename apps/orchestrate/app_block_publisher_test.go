@@ -3,6 +3,8 @@ package orchestrate
 import (
 	"strings"
 	"testing"
+
+	"github.com/cmcoffee/gohort/core/agenthost"
 )
 
 // The publisher's contract is "safe to call, always" — an app builds its tools
@@ -11,14 +13,14 @@ import (
 // a quiet no-op rather than a panic in a tool handler goroutine.
 func TestPublisherIsInertUntilBound(t *testing.T) {
 	var nilPub *AppBlockPublisher
-	nilPub.Publish(UIBlock{Type: "demo_card", ID: "1"}) // nil receiver
+	nilPub.Publish(agenthost.Block{Type: "demo_card", ID: "1"}) // nil receiver
 
 	unbound := &AppBlockPublisher{}
-	unbound.Publish(UIBlock{Type: "demo_card", ID: "1"}) // never bound
+	unbound.Publish(agenthost.Block{Type: "demo_card", ID: "1"}) // never bound
 
 	bound := &AppBlockPublisher{}
-	bound.bind(&chatTurn{}) // bound to a turn with no sse and no session
-	bound.Publish(UIBlock{Type: "demo_card", ID: "1"})
+	bindPublisher(bound, &chatTurn{}) // bound to a turn with no sse and no session
+	bound.Publish(agenthost.Block{Type: "demo_card", ID: "1"})
 
 	// Reaching here without a panic IS the assertion.
 }
@@ -28,9 +30,9 @@ func TestPublisherIsInertUntilBound(t *testing.T) {
 func TestPublisherDropsTypelessBlocks(t *testing.T) {
 	buf := &syncBuf{}
 	pub := &AppBlockPublisher{}
-	pub.bind(&chatTurn{sse: &sseWriter{live: buf}})
+	bindPublisher(pub, &chatTurn{sse: &sseWriter{live: buf}})
 
-	pub.Publish(UIBlock{ID: "1", Title: "no type"})
+	pub.Publish(agenthost.Block{ID: "1", Title: "no type"})
 	if buf.String() != "" {
 		t.Fatalf("a typeless block was emitted: %s", buf.String())
 	}
@@ -42,9 +44,9 @@ func TestPublisherDropsTypelessBlocks(t *testing.T) {
 func TestPublishEmitsABlockFrame(t *testing.T) {
 	buf := &syncBuf{}
 	pub := &AppBlockPublisher{}
-	pub.bind(&chatTurn{sse: &sseWriter{live: buf}})
+	bindPublisher(pub, &chatTurn{sse: &sseWriter{live: buf}})
 
-	pub.Publish(UIBlock{
+	pub.Publish(agenthost.Block{
 		Type:  "anvil_edit",
 		ID:    "edit-1",
 		Title: "main.go",
@@ -70,11 +72,11 @@ func TestPublishEmitsABlockFrame(t *testing.T) {
 func TestPublishPersistsAndUpsertsByID(t *testing.T) {
 	sess := &ChatSession{}
 	pub := &AppBlockPublisher{}
-	pub.bind(&chatTurn{session: sess})
+	bindPublisher(pub, &chatTurn{session: sess})
 
-	pub.Publish(UIBlock{Type: "demo_card", ID: "a", Title: "first"})
-	pub.Publish(UIBlock{Type: "demo_card", ID: "b", Title: "other"})
-	pub.Publish(UIBlock{Type: "demo_card", ID: "a", Title: "revised"})
+	pub.Publish(agenthost.Block{Type: "demo_card", ID: "a", Title: "first"})
+	pub.Publish(agenthost.Block{Type: "demo_card", ID: "b", Title: "other"})
+	pub.Publish(agenthost.Block{Type: "demo_card", ID: "a", Title: "revised"})
 
 	if len(sess.UIBlocks) != 2 {
 		t.Fatalf("re-publishing an id stacked a card: %d blocks, want 2", len(sess.UIBlocks))

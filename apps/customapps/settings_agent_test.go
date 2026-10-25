@@ -8,17 +8,18 @@ import (
 
 	"github.com/cmcoffee/gohort/apps/orchestrate"
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
 // An app whose agent was deleted says so to its owner, on the page and in
 // Settings, and Settings will not bind it to something that is not an agent.
 func TestAnAppWhoseAgentIsGoneSaysSo(t *testing.T) {
-	prev := findOrchestrate
-	t.Cleanup(func() { findOrchestrate = prev })
+	prev := agenthost.Get()
+	t.Cleanup(func() { agenthost.Register(prev) })
 	o := &orchestrate.OrchestrateApp{}
 	o.DB = &DBase{Store: kvlite.MemStore()}
-	findOrchestrate = func() *orchestrate.OrchestrateApp { return o }
+	agenthost.Register(o)
 
 	app := &CustomApps{}
 	spec := AppSpec{Slug: "swing", Name: "Swing", Owner: "u", AgentID: "a-deleted"}

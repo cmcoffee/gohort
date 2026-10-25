@@ -20,8 +20,6 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/appagents"
 	"github.com/cmcoffee/gohort/core/docs"
-
-	"github.com/cmcoffee/gohort/apps/orchestrate"
 )
 
 // guideAgentID is the curated Guide Author agent this app binds its chat to.
@@ -169,12 +167,6 @@ func (T *Scribe) installSaveArticleHook() {
 		saveGuideRev(udb, g, "Saved from another app")
 		return g.ID, nil
 	}
-}
-
-// findOrchestrate is the registered orchestrate app, or nil when it is not running.
-func findOrchestrate() *orchestrate.OrchestrateApp {
-	o, _ := FindAgentAs[*orchestrate.OrchestrateApp]("orchestrate")
-	return o
 }
 
 var errNoUserStore = errors.New("no user store for that user")

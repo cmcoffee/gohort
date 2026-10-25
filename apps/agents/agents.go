@@ -141,9 +141,9 @@ func (T *AgentsApp) dispatch(w http.ResponseWriter, r *http.Request) {
 	case rest == "" || rest == "/":
 		T.handleChatPage(w, r, agent)
 	case rest == "api/send":
-		orch.PublicHandleSend(w, r, agent)
+		orch.PublicHandleSend(w, r, orchestrate.AppAgentOf(agent))
 	case rest == "api/cancel":
-		orch.PublicHandleCancel(w, r, agent)
+		orch.PublicHandleCancel(w, r, orchestrate.AppAgentOf(agent))
 	case rest == "api/inject":
 		// A message typed while a turn is running joins it. Without this the
 		// panel falls back to an ordinary send, which tears the running stream

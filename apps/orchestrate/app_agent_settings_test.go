@@ -36,7 +36,7 @@ func TestAppAgentSettingsPage(t *testing.T) {
 		rec := httptest.NewRecorder()
 		req := asUser(httptest.NewRequest(method, "/"+path, strings.NewReader(body)), "alice")
 		route, _, _ := strings.Cut(path, "?") // an app routes on the path alone
-		if !T.ServeAppChat(rec, req, agent, c, route, "") {
+		if !T.ServeAppChat(rec, req, AppAgentOf(agent), c, route, "") {
 			t.Fatalf("%s %s was not answered", method, path)
 		}
 		return rec
@@ -90,10 +90,10 @@ func TestAppAgentSettingsPage(t *testing.T) {
 		t.Fatalf("an agent outside the page was saved: %d", rec.Code)
 	}
 	// Not an app agent, or an app that did not ask for it: no settings here.
-	if rec := httptest.NewRecorder(); T.ServeAppChat(rec, asUser(httptest.NewRequest("GET", "/chat/settings", nil), "alice"), AgentRecord{ID: "mine"}, c, "chat/settings", "") && rec.Code != 404 {
+	if rec := httptest.NewRecorder(); T.ServeAppChat(rec, asUser(httptest.NewRequest("GET", "/chat/settings", nil), "alice"), AppAgentOf(AgentRecord{ID: "mine"}), c, "chat/settings", "") && rec.Code != 404 {
 		t.Fatalf("an ordinary agent got a settings page: %d", rec.Code)
 	}
-	if rec := httptest.NewRecorder(); T.ServeAppChat(rec, asUser(httptest.NewRequest("GET", "/chat/settings", nil), "alice"), agent, AppChat{Prefix: "chat/"}, "chat/settings", "") && rec.Code != 404 {
+	if rec := httptest.NewRecorder(); T.ServeAppChat(rec, asUser(httptest.NewRequest("GET", "/chat/settings", nil), "alice"), AppAgentOf(agent), AppChat{Prefix: "chat/"}, "chat/settings", "") && rec.Code != 404 {
 		t.Fatalf("settings served without Settings: %d", rec.Code)
 	}
 	// The chat's toolbar links to it, relative to the app.

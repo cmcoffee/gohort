@@ -26,8 +26,6 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/appagents"
-
-	"github.com/cmcoffee/gohort/apps/orchestrate"
 )
 
 // curatorAgentID is the curated Curator agent.
@@ -84,7 +82,7 @@ func init() {
 // curatorDecision is one tool call's outcome, collected during a run.
 type curatorSession struct {
 	app     *Scribe
-	orch    *orchestrate.OrchestrateApp
+	orch    agenthost.Host
 	user    string
 	udb     Database
 	ctx     context.Context
@@ -558,7 +556,7 @@ func (T *Scribe) RunCurator(ctx context.Context, user string) (CuratorRun, error
 	if len(pending) > curatorMaxBatch {
 		pending = pending[:curatorMaxBatch]
 	}
-	orch := findOrchestrate()
+	orch := agenthost.Get()
 	if orch == nil {
 		return CuratorRun{}, fmt.Errorf("orchestrate is unavailable; the curator cannot run")
 	}
@@ -688,7 +686,7 @@ func curatorBatchPrompt(udb Database, pending []DocFinding) string {
 // than merge into it (which is what runIncorporate does). Separate prompt, same
 // tools: the curator decides which of the two it wants and the Author writes
 // either one.
-func (T *Scribe) runSupersede(ctx context.Context, udb Database, orch *orchestrate.OrchestrateApp, user, guideID, sectionTitle, content string, private bool) (string, error) {
+func (T *Scribe) runSupersede(ctx context.Context, udb Database, orch agenthost.Host, user, guideID, sectionTitle, content string, private bool) (string, error) {
 	udb.Set(activeTable, "current", guideID)
 	prompt := "A newer finding REPLACES what one section of this guide currently says.\n\n"
 	if c := T.authorBackgroundContext(udb, user, guideID); c != "" {

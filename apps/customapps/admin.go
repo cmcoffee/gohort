@@ -23,6 +23,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/appadmin"
 	"github.com/cmcoffee/gohort/core/ui"
 )
@@ -299,7 +300,7 @@ func RegisterCustomAppReviewControl(base string) {
 // lookupAdminPipeline resolves an app's bound pipeline against its OWNER, the
 // same way serving it does.
 func lookupAdminPipeline(owner, pipelineID string) (PipelineDef, bool) {
-	orch := findOrchestrate()
+	orch := agenthost.Get()
 	if orch == nil {
 		return PipelineDef{}, false
 	}

@@ -14,6 +14,7 @@ package agenthost
 
 import (
 	"context"
+	"net/http"
 	"sync"
 	"time"
 
@@ -48,6 +49,49 @@ type Host interface {
 	MachineStore(owner string) core.Database
 	// PublicRunMachine runs def as user on input.
 	PublicRunMachine(ctx context.Context, def core.MachineDef, user, input string) (string, error)
+
+	// An app's chat (chat.go). The handlers answer the request themselves,
+	// checking the caller as the host's own routes do.
+
+	// WebPath is where the host's own pages live.
+	WebPath() string
+	// LookupAppAgent is the agent agentID (an id or a name) in owner's store,
+	// as an app holds it for a turn.
+	LookupAppAgent(owner, agentID string) (Agent, bool)
+	// AgentStateNamespace is the namespace agentID's facts and memory are
+	// kept under.
+	AgentStateNamespace(agentID string) string
+	// ServeAppChat answers one of the endpoints Chat.Panel names, for agent.
+	// It reports false for a path that is not one of them.
+	ServeAppChat(w http.ResponseWriter, r *http.Request, agent Agent, c Chat, sub, listScope string) bool
+	PublicHandleSend(w http.ResponseWriter, r *http.Request, agent Agent)
+	PublicHandleSendWithAppTools(w http.ResponseWriter, r *http.Request, agent Agent, appTools []core.AgentToolDef)
+	PublicHandleSendWithAppToolsPublishing(w http.ResponseWriter, r *http.Request, agent Agent, appTools []core.AgentToolDef, pub *Publisher)
+	PublicHandleCancel(w http.ResponseWriter, r *http.Request, agent Agent)
+	PublicHandleInject(w http.ResponseWriter, r *http.Request)
+	PublicHandleConfirm(w http.ResponseWriter, r *http.Request)
+	PublicHandleGrants(w http.ResponseWriter, r *http.Request, scope, grantID string)
+	PublicHandleSessionList(w http.ResponseWriter, r *http.Request, agentID string)
+	PublicHandleSessionListOnly(w http.ResponseWriter, r *http.Request, agentID, appContext string)
+	PublicHandleSessionOne(w http.ResponseWriter, r *http.Request, agentID, sid string)
+	PublicHandleSessionRename(w http.ResponseWriter, r *http.Request, agentID string)
+	PublicHandleSessionDiag(w http.ResponseWriter, r *http.Request, agentID, sessionID string)
+	PublicHandleBlockResolve(w http.ResponseWriter, r *http.Request, agentID, sid, blockID string)
+	PublicHandleRunsActive(w http.ResponseWriter, r *http.Request)
+	PublicHandleRunsDispatch(w http.ResponseWriter, r *http.Request)
+
+	// An app's own runs, from its scripts and actions: the agent asked one
+	// question with no tools, the agent run on a prompt, and the pipeline
+	// run on an input. Each returns the reply and what it cost.
+	AppAgentAsk(ctx context.Context, owner, user, agentID, prompt string, jsonMode bool) (string, float64, error)
+	AppAgentRun(ctx context.Context, owner, user, slug, agentID, agentKey, prompt string) (string, float64, error)
+	AppPipelineRun(ctx context.Context, owner, user, slug, pipelineID, pipelineKey, input string) (string, float64, error)
+
+	// An app's pipeline.
+	LookupAppPipeline(owner, pipelineID string) (core.PipelineDef, bool)
+	PublicHandleAppPipeline(w http.ResponseWriter, r *http.Request, def core.PipelineDef, sub string, live core.RunLiveInfo, key string)
+	AppPipelineRunSurface(user string, def core.PipelineDef, live core.RunLiveInfo, key string) core.RunSurface
+	PublicLatestPipelineRun(user, pipelineID string) (core.PipelineRun, bool)
 }
 
 var (

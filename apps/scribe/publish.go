@@ -18,9 +18,10 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
+	"github.com/cmcoffee/gohort/core/appagents"
 	"github.com/cmcoffee/gohort/core/docs"
 
-	"github.com/cmcoffee/gohort/apps/orchestrate"
 	"github.com/cmcoffee/gohort/apps/publish"
 )
 
@@ -86,7 +87,7 @@ func (T *Scribe) openPublishDocument(r *http.Request, udb Database, user string)
 // handlePublishChat dispatches the Publish modal's chat to the Publisher agent
 // with this guide's publish tools injected.
 func (T *Scribe) handlePublishChat(w http.ResponseWriter, r *http.Request, udb Database, user string) {
-	orch := findOrchestrate()
+	orch := agenthost.Get()
 	if orch == nil {
 		http.Error(w, "orchestrate not initialized", http.StatusServiceUnavailable)
 		return
@@ -100,7 +101,7 @@ func (T *Scribe) handlePublishChat(w http.ResponseWriter, r *http.Request, udb D
 	// don't reach dispatch (the `agents` grouped tool is a framework tool
 	// appended regardless), so the policy is set here for the same reason the
 	// Guide Author sets it — an unset mode resolves to "every agent you own".
-	agent.DispatchMode, agent.AllowedDispatchTargets = orchestrate.DispatchNone, nil
+	agent.DispatchMode, agent.AllowedDispatchTargets = appagents.DispatchNone, nil
 
 	// The turn's lifetime, not the page's: same reason as handleChatSend.
 	turnCtx, endTurn := turnContext(r)

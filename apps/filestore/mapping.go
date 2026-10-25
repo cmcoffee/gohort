@@ -32,8 +32,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
-
-	"github.com/cmcoffee/gohort/apps/orchestrate"
+	"github.com/cmcoffee/gohort/core/agenthost"
 )
 
 // mapAgentID is the agent that maps. Builder, because this IS authoring — it
@@ -63,7 +62,7 @@ func (T *FileStoreApp) handleMapChat(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "that command is not registered against this folder", http.StatusNotFound)
 		return
 	}
-	orch := findOrchestrate()
+	orch := agenthost.Get()
 	if orch == nil {
 		http.Error(w, "the agent runtime is not available", http.StatusServiceUnavailable)
 		return
@@ -84,8 +83,8 @@ func mapContext(cmd StoreCommand) string { return "filestore-map:" + commandKey(
 
 // mapAgentFor resolves the command named by the id query value and Builder,
 // for the mapping conversation's other endpoints. Writes the error itself.
-func (T *FileStoreApp) mapAgentFor(w http.ResponseWriter, r *http.Request, id string) (StoreCommand, *orchestrate.OrchestrateApp, orchestrate.AgentRecord, bool) {
-	var none orchestrate.AgentRecord
+func (T *FileStoreApp) mapAgentFor(w http.ResponseWriter, r *http.Request, id string) (StoreCommand, agenthost.Host, agenthost.Agent, bool) {
+	var none agenthost.Agent
 	if !adminOnly(w, r) {
 		return StoreCommand{}, nil, none, false
 	}
@@ -95,7 +94,7 @@ func (T *FileStoreApp) mapAgentFor(w http.ResponseWriter, r *http.Request, id st
 		http.Error(w, "that command is not registered against this folder", http.StatusNotFound)
 		return StoreCommand{}, nil, none, false
 	}
-	orch := findOrchestrate()
+	orch := agenthost.Get()
 	if orch == nil {
 		http.Error(w, "the agent runtime is not available", http.StatusServiceUnavailable)
 		return StoreCommand{}, nil, none, false
@@ -337,12 +336,6 @@ func templatePlaceholders(tpl string) []string {
 		}
 		tpl = tpl[i+1:]
 	}
-}
-
-// findOrchestrate is the registered orchestrate app, or nil when it is not running.
-func findOrchestrate() *orchestrate.OrchestrateApp {
-	o, _ := FindAgentAs[*orchestrate.OrchestrateApp]("orchestrate")
-	return o
 }
 
 // placeholderName reports whether s is a placeholder's name: letters, digits,

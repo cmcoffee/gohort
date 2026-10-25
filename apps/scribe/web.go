@@ -15,9 +15,10 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
+	"github.com/cmcoffee/gohort/core/appagents"
 	"github.com/cmcoffee/gohort/core/promotion"
 
-	"github.com/cmcoffee/gohort/apps/orchestrate"
 	"github.com/cmcoffee/gohort/apps/publish"
 )
 
@@ -792,7 +793,7 @@ func (T *Scribe) handleAudit(w http.ResponseWriter, r *http.Request, udb Databas
 		g = saveGuideRev(ownerUDB, g, "Audit: removed stray markup")
 		cleanupNote = fmt.Sprintf("**Cleanup:** removed stray non-content markup (reasoning / tool-call / attach artifacts) from %d section(s): %s. A revision was saved: restore from History if any real content was affected.\n\n---\n\n", len(cleaned), strings.Join(cleaned, ", "))
 	}
-	orch := findOrchestrate()
+	orch := agenthost.Get()
 	if orch == nil {
 		http.Error(w, "orchestrate not initialized", http.StatusServiceUnavailable)
 		return
@@ -1221,7 +1222,7 @@ func activeGuideID(udb Database) string {
 // co-author tools injected, so add_section / edit_section write into this app's
 // guide store (the same store the viewer renders).
 func (T *Scribe) handleChatSend(w http.ResponseWriter, r *http.Request, udb Database, user string) {
-	orch := findOrchestrate()
+	orch := agenthost.Get()
 	if orch == nil {
 		http.Error(w, "orchestrate not initialized", http.StatusServiceUnavailable)
 		return
@@ -1263,7 +1264,7 @@ func (T *Scribe) handleChatSend(w http.ResponseWriter, r *http.Request, udb Data
 
 	var tools []AgentToolDef
 	// The turn's changes go on one card in the conversation (turn_changes.go).
-	pub := &orchestrate.AppBlockPublisher{}
+	pub := &agenthost.Publisher{}
 	if g, _, _, canEdit, found := T.resolve(r, udb, user, guideID); found {
 		agent.DispatchMode, agent.AllowedDispatchTargets = guideDispatchPolicy(g)
 		agent.OrchestratorPrompt += guideBriefSection(g)
@@ -1423,7 +1424,7 @@ func stampAppContext(r *http.Request, guideID string) {
 // Guide Author attaches no pipelines, so today that costs it nothing.
 func guideDispatchPolicy(g Guide) (mode string, targets []string) {
 	for _, ref := range g.References {
-		if ref.Kind != orchestrate.AgentReferenceKind {
+		if ref.Kind != agenthost.AgentReferenceKind {
 			continue
 		}
 		if id := strings.TrimSpace(ref.ItemID); id != "" {
@@ -1431,9 +1432,9 @@ func guideDispatchPolicy(g Guide) (mode string, targets []string) {
 		}
 	}
 	if len(targets) == 0 {
-		return orchestrate.DispatchNone, nil
+		return appagents.DispatchNone, nil
 	}
-	return orchestrate.DispatchOnly, targets
+	return appagents.DispatchOnly, targets
 }
 
 // readOnlyGuideToolNames are the co-author tools safe to hand a READER of a
@@ -1500,12 +1501,12 @@ func withoutToolNames(names []string, drop ...string) []string {
 // dispatchChat forwards cancel / session routes to orchestrate's PublicHandle*.
 // scribeChat is where the Guide Author chat is routed: orchestrate's own chat
 // endpoints, under chat/, with the open document as the session scope.
-var scribeChat = orchestrate.AppChat{Prefix: "chat/", Query: "guide={scope}", Settings: true, Back: "/scribe",
+var scribeChat = agenthost.Chat{Prefix: "chat/", Query: "guide={scope}", Settings: true, Back: "/scribe",
 	// Its Publish button runs the Publishing app's Publisher.
 	Agents: []string{publish.PublisherAgentID}}
 
 func (T *Scribe) dispatchChat(w http.ResponseWriter, r *http.Request, path string) {
-	orch := findOrchestrate()
+	orch := agenthost.Get()
 	if orch == nil {
 		http.Error(w, "orchestrate not initialized", http.StatusServiceUnavailable)
 		return

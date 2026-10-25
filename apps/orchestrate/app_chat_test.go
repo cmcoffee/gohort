@@ -37,13 +37,13 @@ func TestServeAppChatRoutesOnlyItsOwn(t *testing.T) {
 	T := &OrchestrateApp{AppCore: AppCore{DB: &DBase{Store: kvlite.MemStore()}}}
 	c := AppChat{Prefix: "chat/"}
 	for _, path := range []string{"chat/send", "chat/active", "guides", "chat/unknown"} {
-		if T.ServeAppChat(httptest.NewRecorder(), httptest.NewRequest("GET", "/"+path, nil), AgentRecord{ID: "a"}, c, path, "") {
+		if T.ServeAppChat(httptest.NewRecorder(), httptest.NewRequest("GET", "/"+path, nil), AppAgentOf(AgentRecord{ID: "a"}), c, path, "") {
 			t.Errorf("%s was taken", path)
 		}
 	}
 	for _, path := range []string{"chat/cancel", "chat/inject", "chat/confirm", "chat/sessions", "chat/sessions/s1", "chat/sessions/s1/rename",
 		"chat/sessions/s1/diagnostics", "chat/sessions/s1/blocks/b1/resolve", "api/runs/active", "api/runs/r1/stream"} {
-		if !T.ServeAppChat(httptest.NewRecorder(), httptest.NewRequest("GET", "/"+path, nil), AgentRecord{ID: "a"}, c, path, "") {
+		if !T.ServeAppChat(httptest.NewRecorder(), httptest.NewRequest("GET", "/"+path, nil), AppAgentOf(AgentRecord{ID: "a"}), c, path, "") {
 			t.Errorf("%s was not answered", path)
 		}
 	}

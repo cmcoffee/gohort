@@ -13,8 +13,6 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/agenthost"
-
-	"github.com/cmcoffee/gohort/apps/orchestrate"
 )
 
 // coauthorTools builds the Guide Author's tool kit for one chat turn. canEdit
@@ -41,7 +39,7 @@ type coauthorScope struct {
 	// Ctx is the TURN's context (see the note above on why it is threaded).
 	Ctx  context.Context
 	UDB  Database
-	Orch *orchestrate.OrchestrateApp
+	Orch agenthost.Host
 	User string
 	// CanEdit decides between the full co-author kit and the read-only subset.
 	CanEdit bool
@@ -867,7 +865,7 @@ func draftBriefRule(g Guide) string {
 // guide's voice — rather than blind-appending a raw block. Used by the
 // document-target push path (servitor's ↗ Guide button + push_to_guide tool) so
 // pushed content lands coherently. Honors the guide's Private (no-internet) flag.
-func (T *Scribe) runIncorporate(ctx context.Context, udb Database, orch *orchestrate.OrchestrateApp, user, guideID, suggestedTitle, content string, private bool) (string, error) {
+func (T *Scribe) runIncorporate(ctx context.Context, udb Database, orch agenthost.Host, user, guideID, suggestedTitle, content string, private bool) (string, error) {
 	udb.Set(activeTable, "current", guideID)
 	prompt := "A new finding has been pushed to this guide. Incorporate it CORRECTLY into the document: do NOT just paste it in as a raw block.\n\n"
 	if c := T.authorBackgroundContext(udb, user, guideID); c != "" {

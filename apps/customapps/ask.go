@@ -19,6 +19,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/tools/appscript"
 )
 
@@ -40,7 +41,7 @@ var askMu sync.Mutex
 
 // appAgentAsk asks the app's agent; a test replaces it.
 var appAgentAsk = func(ctx context.Context, owner, user, agentID, prompt string, jsonMode bool) (string, float64, error) {
-	orch := findOrchestrate()
+	orch := agenthost.Get()
 	if orch == nil {
 		return "", 0, fmt.Errorf("agents are not available on this deployment")
 	}
@@ -209,7 +210,7 @@ const runMaxPrompt = 32000
 // appAgentRun and appPipelineRun run the app's agent with its tools, or its
 // pipeline; tests replace them.
 var appAgentRun = func(ctx context.Context, spec AppSpec, caller, agent, prompt string) (string, float64, error) {
-	orch := findOrchestrate()
+	orch := agenthost.Get()
 	if orch == nil {
 		return "", 0, fmt.Errorf("agents are not available on this deployment")
 	}
@@ -217,7 +218,7 @@ var appAgentRun = func(ctx context.Context, spec AppSpec, caller, agent, prompt 
 }
 
 var appPipelineRun = func(ctx context.Context, spec AppSpec, caller, pipeline, input string) (string, float64, error) {
-	orch := findOrchestrate()
+	orch := agenthost.Get()
 	if orch == nil {
 		return "", 0, fmt.Errorf("pipelines are not available on this deployment")
 	}
