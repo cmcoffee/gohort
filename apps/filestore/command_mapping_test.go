@@ -57,7 +57,7 @@ func mappingPayload(t *testing.T, app *FileStoreApp, st Store) map[string]any {
 	t.Helper()
 	r := httptest.NewRequest("GET", "/api/commands/mapping?id="+st.Slug+"/cap", nil)
 	w := httptest.NewRecorder()
-	app.handleCommandMapping(w, realAdmin(t, r))
+	routed(app)(w, realAdmin(t, r))
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", w.Code, w.Body.String())
 	}
@@ -127,7 +127,7 @@ func TestMappingOverviewOnAnUnmappedCommand(t *testing.T) {
 	}
 	r := httptest.NewRequest("GET", "/api/commands/mapping?id="+st.Slug+"/raw", nil)
 	w := httptest.NewRecorder()
-	app.handleCommandMapping(w, realAdmin(t, r))
+	routed(app)(w, realAdmin(t, r))
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d", w.Code)
 	}

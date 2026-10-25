@@ -1,0 +1,202 @@
+(signed out) GET /api/store-options ""
+  401 unauthorized
+alice GET /api/store-options ""
+  403 File stores are admin-only: these paths name and read directories on the server, so the list of them is a deployment decision.
+root GET /api/store-options ""
+  200 [{"label":"(none)","value":""},{"label":"Archive","value":"archive"},{"label":"Bundles","value":"bundles"}]
+root POST /api/store-options "{}"
+  405 method not allowed
+(signed out) GET /api/app-options ""
+  401 unauthorized
+alice GET /api/app-options ""
+  403 File stores are admin-only: these paths name and read directories on the server, so the list of them is a deployment decision.
+root GET /api/app-options ""
+  200 []
+root POST /api/app-options "{}"
+  405 method not allowed
+(signed out) GET /api/access-candidates ""
+  401 unauthorized
+alice GET /api/access-candidates ""
+  403 File stores are admin-only: these paths name and read directories on the server, so the list of them is a deployment decision.
+root GET /api/access-candidates ""
+  200 [{"desc":"every account on this server","help":"every account on this server","label":"Everyone","value":"*"},{"full_default":true,"label":"alice","value":"alice"},{"full_default":true,"label":"root (your account)","value":"root"}]
+root POST /api/access-candidates "{}"
+  405 method not allowed
+alice GET /api/folders?slug=bundles ""
+  200 [{"bytes":0,"files":0,"modified":"<time>","name":"bundle-1","size":"0.0Bytes"}]
+alice GET /api/folders?slug=nope ""
+  404 no such file store you can reach
+root POST /api/folders?slug=bundles "{}"
+  405 method not allowed
+alice GET /api/stores ""
+  403 File stores are admin-only: these paths name and read directories on the server, so the list of them is a deployment decision.
+root GET /api/stores ""
+  200 [{"assigned":"alice (Read Only / No Commands)","carries":"-","connected":"","description":"","folders":"0","keeps":"forever","name":"Archive","path":"<readonly>","retention":"keep forever","slug":"archive","tools":"list_archive, search_archive, read_archive, list_archive_commands","unreachable":false},{"assigned":"everyone (Full Access)","carries":"-","connected":"","description":"","folders":"1","keeps":"forever","name":"Bundles","path":"<full>","retention":"keep forever","slug":"bundles","tools":"list_bundles, search_bundles, read_bundles, list_bundles_commands","unreachable":false}]
+root GET /api/stores?slug=bundles ""
+  200 {"slug":"bundles","name":"Bundles","path":"<full>","members":["*"],"full_access":["*"]}
+root GET /api/stores?slug=bundles&view=form ""
+  200 {"name":"Bundles","path":"<full>","slug":"bundles"}
+root GET /api/stores?slug=bundles&view=reach ""
+  200 {"html":""}
+root GET /api/stores?slug=bundles&view=about ""
+  200 {"apps":"none","assigned":"everyone (Full Access)","carries":"-","connected":"none","retention":"keep forever","tools":"list_bundles, search_bundles, read_bundles, list_bundles_commands"}
+root GET /api/stores?slug=nope ""
+  404 no such store
+root POST /api/stores "{\"name\":\"Fresh\",\"path\":\"<new>\",\"members\":[\"alice\"]}"
+  200 {"slug":"fresh","name":"Fresh","path":"<new>","members":["alice"],"full_access":["alice"]}
+root POST /api/stores "{\"name\":"
+  400 invalid JSON: unexpected EOF
+root POST /api/stores ""
+  400 invalid JSON: EOF
+root POST /api/stores "{\"name\":\"Nowhere\",\"path\":\"/no/such/dir\"}"
+  400 that path cannot be read: stat /no/such/dir: no such file or directory
+root PATCH /api/stores?slug=nope "{\"slug\":\"nope\",\"name\":\"x\"}"
+  404 no such store
+root PATCH /api/stores?slug=fresh "{\"slug\":\"fresh\",\"name\":\"Fresher\"}"
+  200 {"slug":"fresh","name":"Fresher","path":"<new>","members":["alice"],"full_access":["alice"]}
+alice POST /api/stores "{\"name\":\"Mine\",\"path\":\"<new>\"}"
+  403 File stores are admin-only: these paths name and read directories on the server, so the list of them is a deployment decision.
+root PUT /api/stores?slug=fresh "{}"
+  405 method not allowed
+root DELETE /api/stores?slug=fresh ""
+  200 {"deleted":"fresh"}
+alice GET /api/commands ""
+  200 [{"approved":false,"background":"","background_on":false,"cmd":"archive/decrypt","command":"<bin>","help":"","input_label":"Response key","label":"Decrypt","mapped":"Not mapped: show it how, or map it with Builder","mapped_ok":false,"name":"decrypt","phases":"Response key","slug":"archive","store":"Archive","two_phase":true,"uses":"only as specified: none yet (Builder adds the lines it maps)"},{"approved":false,"background":"","background_on":false,"cmd":"bundles/decrypt","command":"<bin>","help":"","input_label":"Response key","label":"Decrypt","mapped":"Not mapped: show it how, or map it with Builder","mapped_ok":false,"name":"decrypt","phases":"Response key","slug":"bundles","store":"Bundles","two_phase":true,"uses":"only as specified: none yet (Builder adds the lines it maps)"}]
+alice GET /api/commands?slug=archive ""
+  200 [{"approved":false,"background":"","background_on":false,"cmd":"archive/decrypt","command":"<bin>","help":"","input_label":"Response key","label":"Decrypt","mapped":"Not mapped: show it how, or map it with Builder","mapped_ok":false,"name":"decrypt","phases":"Response key","slug":"archive","store":"Archive","two_phase":true,"uses":"only as specified: none yet (Builder adds the lines it maps)"}]
+alice POST /api/commands?slug=bundles "{\"name\":\"x\",\"command\":\"<bin>\"}"
+  403 File stores are admin-only: these paths name and read directories on the server, so the list of them is a deployment decision.
+root POST /api/commands?slug=bundles "{\"name\":\"inspect\",\"command\":\"<bin>\",\"allowed_uses\":\"list\\nshow\"}"
+  200 {"slug":"bundles","name":"inspect","label":"Inspect","command":"<bin>","usage":"specified","allowed_uses":["list","show"]}
+root POST /api/commands?slug=bundles "{\"name\":"
+  400 invalid JSON: unexpected EOF
+root POST /api/commands?slug=bundles "{\"name\":\"bad\"}"
+  400 give the absolute path of the command to run
+root DELETE /api/commands?id=bundles/inspect ""
+  200 {"deleted":"bundles/inspect"}
+root PUT /api/commands "{}"
+  405 method not allowed
+alice POST /api/commands/run?slug=bundles&command=decrypt&within=bundle-1 ""
+  200 {"challenge":"CHALLENGE ab12-cd34","command":"decrypt","input_label":"Response key"}
+alice POST /api/commands/run?slug=bundles&command=decrypt&within=bundle-1 "{\"input\":\"ab12\"}"
+  200 {"command":"decrypt","output":"processed 3 file(s)"}
+alice POST /api/commands/run?slug=bundles&command=decrypt&within=bundle-1 "{\"input\":\"-x\"}"
+  400 the response starts with '-', which the command would read as an option rather than a value
+alice POST /api/commands/run?slug=bundles&command=decrypt&within=bundle-1 "{\"input\":"
+  400 invalid JSON: unexpected EOF
+alice POST /api/commands/run?slug=bundles&command=nope ""
+  404 no command called "nope" on Bundles (registered here: decrypt). An admin registers commands under Admin → Files.
+alice POST /api/commands/run?slug=archive&command=decrypt ""
+  403 you have Read Only / No Commands access to Archive, and running its commands takes Full Access.
+alice POST /api/commands/run?slug=nope&command=decrypt ""
+  404 no such file store you can reach
+alice POST /api/commands/run?slug=bundles&command=decrypt&within=../.. ""
+  400 that path resolves outside the store
+alice GET /api/commands/run?slug=bundles&command=decrypt ""
+  405 method not allowed
+alice POST /api/commands/approve?id=bundles/decrypt "{}"
+  403 File stores are admin-only: these paths name and read directories on the server, so the list of them is a deployment decision.
+root GET /api/commands/approve?id=bundles/decrypt ""
+  405 method not allowed
+root POST /api/commands/approve?id=bundles/decrypt "{\"approved\":true,\"background_on\":true}"
+  400 map this command first: there is nothing for an agent to call yet
+root POST /api/commands/approve?id=bundles/nope "{}"
+  400 that command is not registered against this folder
+root POST /api/commands/approve?id=bundles/decrypt "{\"approved\":"
+  400 invalid JSON: unexpected EOF
+alice POST /api/commands/background?id=bundles/decrypt "{}"
+  403 File stores are admin-only: these paths name and read directories on the server, so the list of them is a deployment decision.
+root GET /api/commands/background?id=bundles/decrypt ""
+  405 method not allowed
+root POST /api/commands/background?id=bundles/decrypt "{\"approved\":true,\"background_on\":true}"
+  200 {"slug":"bundles","name":"decrypt","label":"Decrypt","command":"<bin>","two_phase":true,"input_label":"Response key","usage":"specified","background":"always"}
+root POST /api/commands/background?id=bundles/nope "{}"
+  404 no such command
+root POST /api/commands/background?id=bundles/decrypt "{\"approved\":"
+  400 invalid JSON: unexpected EOF
+alice GET /api/commands/uses?id=bundles/decrypt ""
+  403 File stores are admin-only: these paths name and read directories on the server, so the list of them is a deployment decision.
+root GET /api/commands/uses?id=bundles/decrypt ""
+  200 {"allowed_uses":"","background":"always","guide":""}
+root GET /api/commands/uses?id=bundles/nope ""
+  404 no such command
+root POST /api/commands/uses?id=bundles/decrypt "{\"allowed_uses\":\"list\\nshow\",\"guide\":\"how\",\"background\":\"always\"}"
+  200 {"message":"Saved. Agents is off for this command until you approve it again.","ok":true}
+root POST /api/commands/uses?id=bundles/decrypt "{\"allowed_uses\":\"list; rm -rf\"}"
+  400 an allowed use is arguments only: no ; | & ` < > or $ in "list; rm -rf"
+root POST /api/commands/uses?id=bundles/decrypt "{\"allowed_uses\":"
+  400 invalid JSON: unexpected EOF
+root PUT /api/commands/uses?id=bundles/decrypt "{}"
+  405 method not allowed
+alice GET /api/map/try-args?id=bundles/decrypt ""
+  403 File stores are admin-only: these paths name and read directories on the server, so the list of them is a deployment decision.
+root GET /api/map/try-args?id=bundles/decrypt ""
+  200 {"args":""}
+root GET /api/map/try-args?id=bundles/nope ""
+  404 no such command
+alice GET /api/commands/mapping?id=bundles/decrypt ""
+  403 File stores are admin-only: these paths name and read directories on the server, so the list of them is a deployment decision.
+root GET /api/commands/mapping?id=bundles/decrypt ""
+  200 {"actions":[],"binary":"<bin>","state":"Not mapped yet","state_status":"warn","tool_desc":"","tool_name":"decrypt_bundles"}
+root GET /api/commands/mapping?id=bundles/nope ""
+  404 no such command
+alice GET /api/map/examples?id=bundles/decrypt ""
+  403 File stores are admin-only: these paths name and read directories on the server, so the list of them is a deployment decision.
+root GET /api/map/examples?id=bundles/decrypt ""
+  200 []
+root GET /api/map/examples?id=bundles/nope ""
+  404 no such command
+root GET /api/map/examples?id=bundles/decrypt&eid=nope ""
+  404 no such example run
+root PATCH /api/map/examples?id=bundles/decrypt&eid=nope "{\"note\":\"x\"}"
+  404 no such example run
+root DELETE /api/map/examples?id=bundles/decrypt&eid=nope ""
+  404 no such example run
+root PUT /api/map/examples?id=bundles/decrypt "{}"
+  405 method not allowed
+alice GET /api/pull/items?slug=bundles ""
+  403 File stores are admin-only: these paths name and read directories on the server, so the list of them is a deployment decision.
+root GET /api/pull/items?slug=bundles ""
+  200 []
+root GET /api/pull/items?slug=nope ""
+  404 no such store
+root GET /api/pull/progress?slug=bundles&item=bundle-1 ""
+  200 {}
+root POST /api/pull/cancel?slug=bundles&item=bundle-1 ""
+  200 {"ok":true}
+root POST /api/pull?slug=bundles&item=nothing-here ""
+  400 Bundles has no store to pull from: set one in its Settings (Pull from another store)
+root GET /api/pull?slug=bundles&item=bundle-1 ""
+  405 method not allowed
+alice GET /api/evidence/items?slug=bundles ""
+  403 File stores are admin-only: these paths name and read directories on the server, so the list of them is a deployment decision.
+root GET /api/evidence/items?slug=bundles ""
+  200 []
+root GET /api/evidence/items?slug=nope ""
+  404 no such store
+root GET /api/evidence/progress?slug=bundles&item=bundle-1 ""
+  200 {}
+root POST /api/evidence/cancel?slug=bundles&item=bundle-1 ""
+  200 {"ok":true}
+root POST /api/evidence/?slug=bundles&item=nothing-here ""
+  400 Bundles does not index folders as evidence: turn it on in its Settings first
+root GET /api/evidence/?slug=bundles&item=bundle-1 ""
+  405 method not allowed
+alice GET /api/app-grants?slug=bundles ""
+  403 File stores are admin-only: these paths name and read directories on the server, so the list of them is a deployment decision.
+root GET /api/app-grants?slug=bundles ""
+  200 []
+root GET /api/app-grants?slug=nope ""
+  404 no such store
+root POST /api/app-grants?slug=bundles "{\"app\":\"alice/swing\",\"read\":true}"
+  200 {"ok":true}
+root POST /api/app-grants?slug=bundles "{\"app\":\"no-owner\"}"
+  400 pick an app
+root POST /api/app-grants?slug=bundles "{\"app\":"
+  400 invalid JSON: unexpected EOF
+root GET /api/app-grants?slug=bundles ""
+  200 [{"app":"alice/swing","label":"alice/swing (no longer exists)","rights":"read"}]
+root DELETE /api/app-grants?slug=bundles&app=alice/swing ""
+  200 {"ok":true}
+root PUT /api/app-grants?slug=bundles "{}"
+  405 method not allowed

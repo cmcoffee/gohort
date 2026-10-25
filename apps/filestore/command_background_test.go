@@ -62,7 +62,7 @@ func TestTheBackgroundSwitch(t *testing.T) {
 		r := asAdmin(t, httptest.NewRequest(http.MethodPost, "/filestore/api/commands/background?id="+st.Slug+"/"+cmd.Name, strings.NewReader(`{"background_on":`+on+`}`)), "admin")
 		AuthDB().Set(AuthTable, "user:admin", AuthUser{Username: "admin", Admin: true})
 		w := httptest.NewRecorder()
-		app.handleCommandBackground(w, r)
+		routed(app)(w, r)
 		return w
 	}
 	if w := flip("true"); w.Code != 200 {

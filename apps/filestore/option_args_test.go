@@ -14,7 +14,7 @@ func TestCommandInputCannotBeAnOption(t *testing.T) {
 	r := httptest.NewRequest("POST", "/api/commands/run?slug="+st.Slug+"&within=bundle-1&command=decrypt",
 		strings.NewReader(`{"input":"--output=/tmp/elsewhere"}`))
 	w := httptest.NewRecorder()
-	app.handleCommand(w, asAdmin(t, r, "user1"))
+	routed(app)(w, asAdmin(t, r, "user1"))
 	if w.Code != 400 {
 		t.Fatalf("a leading-dash response should be refused, got %d %s", w.Code, w.Body.String())
 	}

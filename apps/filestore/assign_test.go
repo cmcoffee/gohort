@@ -53,7 +53,7 @@ func TestSavingTheFormKeepsAnAssignmentItDoesNotCarry(t *testing.T) {
 	})
 	r := httptest.NewRequest("POST", "/filestore/api/stores", strings.NewReader(string(body)))
 	w := httptest.NewRecorder()
-	app.handleStores(w, asStoreAdmin(t, r))
+	routed(app)(w, asStoreAdmin(t, r))
 	if w.Code != http.StatusOK {
 		t.Fatalf("save failed: %d %s", w.Code, w.Body.String())
 	}
@@ -76,7 +76,7 @@ func TestTheAssignmentPickerChangesOnlyTheAssignment(t *testing.T) {
 	body, _ := json.Marshal(st)
 
 	r := httptest.NewRequest("POST", "/filestore/api/stores", strings.NewReader(string(body)))
-	app.handleStores(httptest.NewRecorder(), asStoreAdmin(t, r))
+	routed(app)(httptest.NewRecorder(), asStoreAdmin(t, r))
 
 	after, _ := LoadStore(app.DB, "support_bundles")
 	if strings.Join(after.FullAccess, ",") != "ana" {
@@ -96,7 +96,7 @@ func TestUntickingTheLastUserClearsTheList(t *testing.T) {
 		"slug": st.Slug, "name": st.Name, "path": st.Path, "members": []string{}, "full_access": []string{},
 	})
 	r := httptest.NewRequest("POST", "/filestore/api/stores", strings.NewReader(string(body)))
-	app.handleStores(httptest.NewRecorder(), asStoreAdmin(t, r))
+	routed(app)(httptest.NewRecorder(), asStoreAdmin(t, r))
 
 	after, _ := LoadStore(app.DB, "support_bundles")
 	if len(after.Members) != 0 || len(after.FullAccess) != 0 {
@@ -118,7 +118,7 @@ func TestAnActionTakesItsStoreFromTheURL(t *testing.T) {
 	})
 	r := httptest.NewRequest("POST", "/filestore/api/commands?slug=support_bundles", strings.NewReader(string(body)))
 	w := httptest.NewRecorder()
-	app.handleCommands(w, asStoreAdmin(t, r))
+	routed(app)(w, asStoreAdmin(t, r))
 	if w.Code != http.StatusOK {
 		t.Fatalf("save failed: %d %s", w.Code, w.Body.String())
 	}
@@ -133,7 +133,7 @@ func TestAnActionTakesItsStoreFromTheURL(t *testing.T) {
 		"slug": "somewhere_else", "name": "redact", "label": "Redact", "command": "/bin/true",
 	})
 	r2 := httptest.NewRequest("POST", "/filestore/api/commands?slug=support_bundles", strings.NewReader(string(other)))
-	app.handleCommands(httptest.NewRecorder(), asStoreAdmin(t, r2))
+	routed(app)(httptest.NewRecorder(), asStoreAdmin(t, r2))
 	if got := actionsOf(app, "support_bundles"); len(got) != 2 {
 		t.Errorf("the URL's store should have taken it, got %d action(s)", len(got))
 	}
@@ -158,7 +158,7 @@ func TestTheSettingsFormAndThePickerDoNotUndoEachOther(t *testing.T) {
 	call := func(method, path, body string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, path, strings.NewReader(body))
 		w := httptest.NewRecorder()
-		app.handleStores(w, asStoreAdmin(t, r))
+		routed(app)(w, asStoreAdmin(t, r))
 		return w
 	}
 	w := call("GET", "/filestore/api/stores?slug=support_bundles&view=form", "")
@@ -199,7 +199,7 @@ func TestTheAccessPickerOffersEveryoneThenYourAccount(t *testing.T) {
 	app := assignFixture(t)
 	r := asStoreAdmin(t, httptest.NewRequest("GET", "/filestore/api/access-candidates", nil))
 	w := httptest.NewRecorder()
-	app.handleAccessCandidates(w, r)
+	routed(app)(w, r)
 	var got []map[string]any
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || len(got) < 2 {
 		t.Fatalf("candidates: %d %s", w.Code, w.Body.String())
@@ -213,7 +213,7 @@ func TestTheAccessPickerOffersEveryoneThenYourAccount(t *testing.T) {
 	}
 	call := func(body string) {
 		w := httptest.NewRecorder()
-		app.handleStores(w, asStoreAdmin(t, httptest.NewRequest("PATCH", "/filestore/api/stores?slug=support_bundles", strings.NewReader(body))))
+		routed(app)(w, asStoreAdmin(t, httptest.NewRequest("PATCH", "/filestore/api/stores?slug=support_bundles", strings.NewReader(body))))
 		if w.Code != http.StatusOK {
 			t.Fatalf("patch: %d %s", w.Code, w.Body.String())
 		}
@@ -236,7 +236,7 @@ func TestAStoreNobodyCanReachIsMarked(t *testing.T) {
 	app := assignFixture(t)
 	get := func(path string) string {
 		w := httptest.NewRecorder()
-		app.handleStores(w, asStoreAdmin(t, httptest.NewRequest("GET", path, nil)))
+		routed(app)(w, asStoreAdmin(t, httptest.NewRequest("GET", path, nil)))
 		return w.Body.String()
 	}
 	if body := get("/filestore/api/stores?slug=support_bundles&view=reach"); strings.Contains(body, "Nobody") {

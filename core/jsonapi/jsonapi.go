@@ -25,6 +25,7 @@ package jsonapi
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 
@@ -74,7 +75,7 @@ func Get[Out any](base core.Database, fn func(c *Call) (Out, error)) http.Handle
 			return
 		}
 		out, err := fn(c)
-		finish(w, out, err)
+		finish(w, r, out, err)
 	}
 }
 
@@ -84,13 +85,15 @@ func Get[Out any](base core.Database, fn func(c *Call) (Out, error)) http.Handle
 //
 // An In of struct{} reads no body, for an action the URL says everything
 // about (a delete, a switch thrown). By default a missing body is a 400, as a
-// malformed one is; EmptyBodyOK takes it as the zero In instead.
+// malformed one is; EmptyBodyOK takes it as the zero In instead. A body over
+// DefaultMaxBody is a 413; MaxBody raises the limit for an endpoint that takes
+// more.
 //
 // Methods picks between Get and Post on a path that answers both.
 func Post[In, Out any](base core.Database, fn func(c *Call, in In) (Out, error), opts ...Option) http.HandlerFunc {
-	emptyOK := false
+	cfg := postConfig{maxBody: DefaultMaxBody}
 	for _, o := range opts {
-		emptyOK = emptyOK || o == EmptyBodyOK
+		o(&cfg)
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !core.IsStateChangingMethod(r.Method) {
@@ -103,24 +106,43 @@ func Post[In, Out any](base core.Database, fn func(c *Call, in In) (Out, error),
 		}
 		var in In
 		if _, none := any(&in).(*struct{}); !none {
-			err := json.NewDecoder(r.Body).Decode(&in)
-			if err != nil && !(emptyOK && errors.Is(err, io.EOF)) {
+			err := json.NewDecoder(http.MaxBytesReader(w, r.Body, cfg.maxBody)).Decode(&in)
+			var tooBig *http.MaxBytesError
+			switch {
+			case errors.As(err, &tooBig):
+				http.Error(w, fmt.Sprintf("request body is over %d bytes", tooBig.Limit), http.StatusRequestEntityTooLarge)
+				return
+			case err != nil && !(cfg.emptyOK && errors.Is(err, io.EOF)):
 				http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 				return
 			}
 		}
 		out, err := fn(c, in)
-		finish(w, out, err)
+		finish(w, r, out, err)
 	}
 }
 
 // Option changes how Post reads its body.
-type Option int
+type Option func(*postConfig)
+
+type postConfig struct {
+	emptyOK bool
+	maxBody int64
+}
+
+// DefaultMaxBody is the most a Post reads unless MaxBody says otherwise: room
+// for any form or record, and a ceiling on what a caller can make the server
+// hold.
+const DefaultMaxBody = 1 << 20
 
 // EmptyBodyOK takes a request with no body as the zero In rather than a 400:
 // for an endpoint whose callers leave the body off when the query string
 // carries what they mean. A body that is there and malformed is still a 400.
-const EmptyBodyOK Option = 1
+var EmptyBodyOK Option = func(c *postConfig) { c.emptyOK = true }
+
+// MaxBody lets a Post read up to n bytes, for an endpoint whose body is a
+// document rather than a form.
+func MaxBody(n int64) Option { return func(c *postConfig) { c.maxBody = n } }
 
 // Methods routes one path by method, for an endpoint that answers more than
 // one: Methods{"GET": jsonapi.Get(...), "POST": jsonapi.Post(...)}.Serve. Any
@@ -159,15 +181,19 @@ func start(w http.ResponseWriter, r *http.Request, base core.Database) (*Call, b
 }
 
 // finish answers with the work's result, or with its failure's status: an
-// Error's own, and a 500 for anything else.
-func finish[Out any](w http.ResponseWriter, out Out, err error) {
+// Error's own, with its message, and a 500 for anything else. A plain error's
+// text goes to the log, not the browser: it can carry a path, a store's
+// complaint or a peer's reply, and a handler that means a message for the
+// person returns it as an Error.
+func finish[Out any](w http.ResponseWriter, r *http.Request, out Out, err error) {
 	if err != nil {
 		var e *Error
 		if errors.As(err, &e) {
 			http.Error(w, e.Msg, e.Code)
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		core.Err("[jsonapi] %s %s: %v", r.Method, r.URL.Path, err)
+		http.Error(w, "something went wrong on the server; the details are in its log", http.StatusInternalServerError)
 		return
 	}
 	Write(w, out)

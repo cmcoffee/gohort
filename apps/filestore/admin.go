@@ -9,7 +9,6 @@ package filestore
 
 import (
 	"encoding/json"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -536,32 +535,59 @@ func (T *FileStoreApp) Routes() {
 	go T.sweepTemporaryStores()
 	// Evidence indexes follow their folders; see evidence.go.
 	go T.sweepEvidenceLoop()
-	T.HandleFunc("/api/stores", T.handleStores)
+	T.registerRoutes()
+	// App scripts reach the stores they were granted through this.
+	appstores.Provider = storeHost{T}
+	registerGrantRequests(T)
+}
+
+// registerRoutes mounts the HTTP surface on the app's mux: everything Routes
+// does that a test needs, without its migrations and background sweeps.
+func (T *FileStoreApp) registerRoutes() {
+	T.HandleFunc("/api/stores", jsonapi.Methods{
+		"GET":    jsonapi.Get(T.DB, T.handleStores),
+		"POST":   jsonapi.Post(T.DB, T.handleStoreSave, jsonapi.MaxBody(maxStoreBodyBytes)),
+		"PATCH":  jsonapi.Post(T.DB, T.handleStoreSave, jsonapi.MaxBody(maxStoreBodyBytes)),
+		"DELETE": jsonapi.Post(T.DB, T.handleStoreDelete),
+	}.Serve)
 	T.HandleFunc("/api/upload", T.handleUpload)
-	T.HandleFunc("/api/commands/run", T.handleCommand)
-	T.HandleFunc("/api/commands", T.handleCommands)
+	T.HandleFunc("/api/commands/run", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleCommand, jsonapi.EmptyBodyOK)}.Serve)
+	T.HandleFunc("/api/commands", jsonapi.Methods{
+		"GET":    jsonapi.Get(T.DB, T.handleCommands),
+		"POST":   jsonapi.Post(T.DB, T.handleCommandSave),
+		"DELETE": jsonapi.Post(T.DB, T.handleCommandDelete),
+	}.Serve)
 	T.HandleFunc("/api/map/chat/send", T.handleMapChat)
 	T.HandleFunc("/api/map/chat/sessions", T.handleMapSessions)
 	T.HandleFunc("/api/map/chat/sessions/", T.handleMapSessions)
 	T.HandleFunc("/api/map/chat/cancel", T.handleMapCancel)
-	T.HandleFunc("/api/commands/approve", T.handleCommandApprove)
-	T.HandleFunc("/api/commands/background", T.handleCommandBackground)
-	T.HandleFunc("/api/commands/uses", T.handleCommandUses)
+	T.HandleFunc("/api/commands/approve", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleCommandApprove)}.Serve)
+	T.HandleFunc("/api/commands/background", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleCommandBackground)}.Serve)
+	T.HandleFunc("/api/commands/uses", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, T.handleCommandUses),
+		"POST": jsonapi.Post(T.DB, T.handleCommandUsesSave, jsonapi.MaxBody(1<<16)),
+	}.Serve)
 	T.HandleFunc("/api/map/try", T.handleTryCommand)
-	T.HandleFunc("/api/map/try-args", T.handleTryArgs)
-	T.HandleFunc("/api/map/examples", T.handleExamples)
-	T.HandleFunc("/api/commands/mapping", T.handleCommandMapping)
-	T.HandleFunc("/api/folders", T.handleFolders)
-	T.HandleFunc("/api/pull", T.handlePull)
-	T.HandleFunc("/api/evidence/", T.handleEvidence)
-	T.HandleFunc("/api/store-options", T.handleStoreOptions)
-	T.HandleFunc("/api/access-candidates", T.handleAccessCandidates)
-	T.HandleFunc("/api/app-grants", T.handleAppGrants)
-	T.HandleFunc("/api/app-options", T.handleAppOptions)
-	// App scripts reach the stores they were granted through this.
-	appstores.Provider = storeHost{T}
-	registerGrantRequests(T)
-	T.HandleFunc("/api/pull/", T.handlePull)
+	T.HandleFunc("/api/map/try-args", jsonapi.Get(T.DB, T.handleTryArgs))
+	T.HandleFunc("/api/map/examples", jsonapi.Methods{
+		"GET":    jsonapi.Get(T.DB, T.handleExamples),
+		"POST":   jsonapi.Post(T.DB, T.handleExampleSave, jsonapi.MaxBody(1<<16)),
+		"PATCH":  jsonapi.Post(T.DB, T.handleExampleSave, jsonapi.MaxBody(1<<16)),
+		"DELETE": jsonapi.Post(T.DB, T.handleExampleDelete),
+	}.Serve)
+	T.HandleFunc("/api/commands/mapping", jsonapi.Get(T.DB, T.handleCommandMapping))
+	T.HandleFunc("/api/folders", jsonapi.Get(T.DB, T.handleFolders))
+	T.HandleFunc("/api/pull", T.handlePull())
+	T.HandleFunc("/api/evidence/", T.handleEvidence())
+	T.HandleFunc("/api/store-options", jsonapi.Get(T.DB, T.handleStoreOptions))
+	T.HandleFunc("/api/access-candidates", jsonapi.Get(T.DB, T.handleAccessCandidates))
+	T.HandleFunc("/api/app-grants", jsonapi.Methods{
+		"GET":    jsonapi.Get(T.DB, T.handleAppGrants),
+		"POST":   jsonapi.Post(T.DB, T.handleAppGrantSave, jsonapi.MaxBody(1<<16)),
+		"DELETE": jsonapi.Post(T.DB, T.handleAppGrantDelete),
+	}.Serve)
+	T.HandleFunc("/api/app-options", jsonapi.Get(T.DB, T.handleAppOptions))
+	T.HandleFunc("/api/pull/", T.handlePull())
 }
 
 // handleStoreOptions lists the stores for the Pull from another store picker, with a
@@ -572,15 +598,14 @@ func (T *FileStoreApp) Routes() {
 //
 // The admin's own account says so: reaching the files takes an entry, admins
 // included, so the one they most often need to add is themselves.
-func (T *FileStoreApp) handleAccessCandidates(w http.ResponseWriter, r *http.Request) {
-	me, _, ok := RequireUser(w, r, T.DB)
-	if !ok || !adminOnly(w, r) {
-		return
+func (T *FileStoreApp) handleAccessCandidates(c *jsonapi.Call) (any, error) {
+	if err := requireAdmin(c); err != nil {
+		return nil, err
 	}
+	me := c.User
 	out := []map[string]any{{"value": accessEveryone, "label": "Everyone", "desc": "every account on this server", "help": "every account on this server"}}
 	if AuthDB == nil {
-		jsonapi.Write(w, out)
-		return
+		return out, nil
 	}
 	var people []map[string]any
 	json.Unmarshal(UserCandidatesJSON(AuthDB(), ""), &people)
@@ -604,12 +629,12 @@ func (T *FileStoreApp) handleAccessCandidates(w http.ResponseWriter, r *http.Req
 			out = append(out, map[string]any{"value": "group:" + g.ID, "label": "Team: " + g.Name, "full_default": true})
 		}
 	}
-	jsonapi.Write(w, out)
+	return out, nil
 }
 
-func (T *FileStoreApp) handleStoreOptions(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok || !adminOnly(w, r) {
-		return
+func (T *FileStoreApp) handleStoreOptions(c *jsonapi.Call) (any, error) {
+	if err := requireAdmin(c); err != nil {
+		return nil, err
 	}
 	out := []map[string]any{{"value": "", "label": "(none)"}}
 	for _, st := range ListStores(T.DB) {
@@ -619,7 +644,7 @@ func (T *FileStoreApp) handleStoreOptions(w http.ResponseWriter, r *http.Request
 		}
 		out = append(out, map[string]any{"value": st.Slug, "label": label})
 	}
-	jsonapi.Write(w, out)
+	return out, nil
 }
 
 // handleStores serves the table (GET), the editor (GET with slug),
@@ -627,114 +652,105 @@ func (T *FileStoreApp) handleStoreOptions(w http.ResponseWriter, r *http.Request
 //
 // Admin-only: these paths name and read arbitrary server directories, so
 // the gate is the same one the admin page itself uses.
-func (T *FileStoreApp) handleStores(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
+func (T *FileStoreApp) handleStores(c *jsonapi.Call) (any, error) {
+	if err := requireAdmin(c); err != nil {
+		return nil, err
 	}
-	if !adminOnly(w, r) {
-		return
+	q := c.R.URL.Query()
+	slug := strings.TrimSpace(q.Get("slug"))
+	if slug == "" {
+		return T.storeRows(), nil
 	}
-	slug := strings.TrimSpace(r.URL.Query().Get("slug"))
+	st, found := LoadStore(T.DB, slug)
+	if !found {
+		return nil, jsonapi.NotFound("no such store")
+	}
+	switch q.Get("view") {
+	case "reach":
+		return map[string]any{"html": reachWarning(st)}, nil
+	case "about":
+		return T.storeAbout(st), nil
+	case "form":
+		// The settings form's load, without the list the picker
+		// beside it owns (see the form's Source).
+		var out map[string]any
+		raw, _ := json.Marshal(st)
+		_ = json.Unmarshal(raw, &out)
+		delete(out, "members")
+		delete(out, "full_access")
+		delete(out, "app_grants") // the grants section owns these
+		return out, nil
+	}
+	return st, nil
+}
 
-	switch r.Method {
-	case http.MethodGet:
-		if slug != "" {
-			st, found := LoadStore(T.DB, slug)
-			if !found {
-				http.NotFound(w, r)
-				return
-			}
-			if r.URL.Query().Get("view") == "reach" {
-				jsonapi.Write(w, map[string]any{"html": reachWarning(st)})
-				return
-			}
-			if r.URL.Query().Get("view") == "about" {
-				jsonapi.Write(w, T.storeAbout(st))
-				return
-			}
-			if r.URL.Query().Get("view") == "form" {
-				// The settings form's load, without the list the picker
-				// beside it owns (see the form's Source).
-				var out map[string]any
-				raw, _ := json.Marshal(st)
-				_ = json.Unmarshal(raw, &out)
-				delete(out, "members")
-				delete(out, "full_access")
-				delete(out, "app_grants") // the grants section owns these
-				jsonapi.Write(w, out)
-				return
-			}
-			jsonapi.Write(w, st)
-			return
-		}
-		jsonapi.Write(w, T.storeRows())
-	case http.MethodPost, http.MethodPatch:
-		// Decoded ONTO the stored record, not into a blank one. Two editors
-		// now write this record — the form (name, path, retention…) and the
-		// access picker (members, full_access) — and neither sends the other's
-		// fields. Into a blank Store, whichever saved second would silently
-		// erase what the first had just set: json.Unmarshal leaves absent
-		// keys alone, so starting from what is stored makes a partial save
-		// mean "change these", which is what both callers intend.
-		//
-		// A key that IS present still wins, empty included, so unticking the
-		// last user clears the list rather than being read as "unchanged".
-		raw, err := io.ReadAll(io.LimitReader(r.Body, maxStoreBodyBytes))
-		if err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		st := Store{}
-		found := false
-		if s := storeSlugOf(raw, slug); s != "" {
-			st, found = LoadStore(T.DB, s)
-		}
-		// A PATCH changes a store that exists; it never creates one.
-		if r.Method == http.MethodPatch && !found {
-			http.NotFound(w, r)
-			return
-		}
-		wasEvidence := st.Evidence
-		if err := json.Unmarshal(raw, &st); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		// A new store's members, ticked on the Add form, start at the
-		// level the access picker would give them: Full Access, but
-		// Everyone at Read Only / No Commands.
-		if !found && st.FullAccess == nil {
-			for _, e := range st.Members {
-				if e != accessEveryone {
-					st.FullAccess = append(st.FullAccess, e)
-				}
-			}
-		}
-		saved, err := SaveStore(T.DB, st)
-		if err != nil {
-			// The validator's sentence IS the message: "that path is a
-			// file, not a folder of bundles" is what fixes the mistake,
-			// and a 400 with no body is what makes someone guess.
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		Log("[filestore] %s saved store %q (%s)", user, saved.Name, saved.Path)
-		// The index is a second copy of the folder: with the switch off it
-		// goes, rather than lingering encrypted where nothing reads it.
-		if wasEvidence && !saved.Evidence {
-			if n := wipeStoreEvidence(T.DB, saved.Slug); n > 0 {
-				Log("[filestore] %s: evidence indexing off, %d folder index(es) wiped", saved.Slug, n)
-			}
-		}
-		jsonapi.Write(w, saved)
-	case http.MethodDelete:
-		DeleteStore(T.DB, slug)
-		wipeStoreEvidence(T.DB, slug)
-		Log("[filestore] %s removed store %q", user, slug)
-		jsonapi.Write(w, map[string]any{"deleted": slug})
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+// handleStoreSave adds a store (POST) or changes one (PATCH).
+//
+// Decoded ONTO the stored record, not into a blank one. Two editors
+// now write this record — the form (name, path, retention…) and the
+// access picker (members, full_access) — and neither sends the other's
+// fields. Into a blank Store, whichever saved second would silently
+// erase what the first had just set: json.Unmarshal leaves absent
+// keys alone, so starting from what is stored makes a partial save
+// mean "change these", which is what both callers intend.
+//
+// A key that IS present still wins, empty included, so unticking the
+// last user clears the list rather than being read as "unchanged".
+func (T *FileStoreApp) handleStoreSave(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+	if err := requireAdmin(c); err != nil {
+		return nil, err
 	}
+	st := Store{}
+	found := false
+	if s := storeSlugOf(raw, strings.TrimSpace(c.R.URL.Query().Get("slug"))); s != "" {
+		st, found = LoadStore(T.DB, s)
+	}
+	// A PATCH changes a store that exists; it never creates one.
+	if c.R.Method == http.MethodPatch && !found {
+		return nil, jsonapi.NotFound("no such store")
+	}
+	wasEvidence := st.Evidence
+	if err := json.Unmarshal(raw, &st); err != nil {
+		return nil, jsonapi.BadRequest("invalid JSON: " + err.Error())
+	}
+	// A new store's members, ticked on the Add form, start at the
+	// level the access picker would give them: Full Access, but
+	// Everyone at Read Only / No Commands.
+	if !found && st.FullAccess == nil {
+		for _, e := range st.Members {
+			if e != accessEveryone {
+				st.FullAccess = append(st.FullAccess, e)
+			}
+		}
+	}
+	saved, err := SaveStore(T.DB, st)
+	if err != nil {
+		// The validator's sentence IS the message: "that path is a
+		// file, not a folder of bundles" is what fixes the mistake,
+		// and a 400 with no body is what makes someone guess.
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	Log("[filestore] %s saved store %q (%s)", c.User, saved.Name, saved.Path)
+	// The index is a second copy of the folder: with the switch off it
+	// goes, rather than lingering encrypted where nothing reads it.
+	if wasEvidence && !saved.Evidence {
+		if n := wipeStoreEvidence(T.DB, saved.Slug); n > 0 {
+			Log("[filestore] %s: evidence indexing off, %d folder index(es) wiped", saved.Slug, n)
+		}
+	}
+	return saved, nil
+}
+
+// handleStoreDelete removes a store and its evidence index.
+func (T *FileStoreApp) handleStoreDelete(c *jsonapi.Call, _ struct{}) (any, error) {
+	if err := requireAdmin(c); err != nil {
+		return nil, err
+	}
+	slug := strings.TrimSpace(c.R.URL.Query().Get("slug"))
+	DeleteStore(T.DB, slug)
+	wipeStoreEvidence(T.DB, slug)
+	Log("[filestore] %s removed store %q", c.User, slug)
+	return map[string]any{"deleted": slug}, nil
 }
 
 // maxStoreBodyBytes caps a store save. A store is a handful of short fields;
@@ -902,96 +918,90 @@ func retentionLabel(st Store) string {
 // BINARY the server will execute. Registering one is the same decision
 // as registering the directory it runs against, and neither is a user's
 // to make.
-func (T *FileStoreApp) handleCommands(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *FileStoreApp) handleCommands(c *jsonapi.Call) (any, error) {
 	// READING the list is not an admin act. A page that offers a user the
 	// buttons for a store has to know which buttons exist, and the answer
 	// is a name and a label — the same thing they are about to click.
-	// WRITING one names a binary the server will execute, which is.
-	if r.Method != http.MethodGet && !adminOnly(w, r) {
-		return
+	// WRITING one names a binary the server will execute, which is
+	// (handleCommandSave, handleCommandDelete).
+	// Filtered to what the caller can reach, and to one store when
+	// asked. An admin listing everything is the same call with no
+	// filter, because being an admin already means reaching every
+	// store they are assigned to.
+	only := strings.TrimSpace(c.R.URL.Query().Get("slug"))
+	rows := make([]map[string]any, 0)
+	for _, a := range ListStoreCommands(T.DB) {
+		if only != "" && a.Slug != only {
+			continue
+		}
+		st, found := LoadStore(T.DB, a.Slug)
+		if !found || !st.AllowsUser(c.User) {
+			continue
+		}
+		store := st.Name
+		phases := "no"
+		if a.TwoPhase {
+			phases = chFirstNonEmpty(a.InputLabel, "yes")
+		}
+		// What mapping produced, on the command's own row — and whether
+		// it is switched on. Mapped-but-off is the state worth naming:
+		// the work is done and nothing can use it, which looks identical
+		// to unmapped from any distance.
+		mapped := mappingState(a)
+		rows = append(rows, map[string]any{
+			"cmd": commandKey(a.Slug, a.Name), "store": store, "slug": a.Slug,
+			"name": a.Name, "label": a.Label, "command": a.Command,
+			"phases": phases, "two_phase": a.TwoPhase, "mapped": mapped,
+			// mapped_ok gates the Agents switch: a toggle offering to
+			// enable nothing is a question the reader cannot answer.
+			"mapped_ok": a.Mapped(), "approved": a.Approved,
+			"background": a.Background, "background_on": a.Background == "always",
+			"input_label": a.InputLabel, "help": a.Help, "uses": a.usesLabel(),
+		})
 	}
-	switch r.Method {
-	case http.MethodGet:
-		// Filtered to what the caller can reach, and to one store when
-		// asked. An admin listing everything is the same call with no
-		// filter, because being an admin already means reaching every
-		// store they are assigned to.
-		only := strings.TrimSpace(r.URL.Query().Get("slug"))
-		rows := make([]map[string]any, 0)
-		for _, a := range ListStoreCommands(T.DB) {
-			if only != "" && a.Slug != only {
-				continue
-			}
-			st, found := LoadStore(T.DB, a.Slug)
-			if !found || !st.AllowsUser(user) {
-				continue
-			}
-			store := st.Name
-			phases := "no"
-			if a.TwoPhase {
-				phases = chFirstNonEmpty(a.InputLabel, "yes")
-			}
-			// What mapping produced, on the command's own row — and whether
-			// it is switched on. Mapped-but-off is the state worth naming:
-			// the work is done and nothing can use it, which looks identical
-			// to unmapped from any distance.
-			mapped := mappingState(a)
-			rows = append(rows, map[string]any{
-				"cmd": commandKey(a.Slug, a.Name), "store": store, "slug": a.Slug,
-				"name": a.Name, "label": a.Label, "command": a.Command,
-				"phases": phases, "two_phase": a.TwoPhase, "mapped": mapped,
-				// mapped_ok gates the Agents switch: a toggle offering to
-				// enable nothing is a question the reader cannot answer.
-				"mapped_ok": a.Mapped(), "approved": a.Approved,
-				"background": a.Background, "background_on": a.Background == "always",
-				"input_label": a.InputLabel, "help": a.Help, "uses": a.usesLabel(),
-			})
-		}
-		jsonapi.Write(w, rows)
-	case http.MethodPost:
-		// The form sends allowed_uses as one block of lines; the record keeps
-		// a list. Either arrives here.
-		var raw map[string]any
-		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&raw); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		if lines, ok := raw["allowed_uses"].(string); ok {
-			raw["allowed_uses"] = strings.Split(lines, "\n")
-		}
-		var a StoreCommand
-		if b, err := json.Marshal(raw); err != nil || json.Unmarshal(b, &a) != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		// The store comes from the ROW the action is being added on, so
-		// nobody types a handle. A body slug still works — the API is
-		// addressable on its own — but the URL wins, because a caller that
-		// named a store in the path has said which one more explicitly than
-		// a field carried along inside the payload.
-		if s := strings.TrimSpace(r.URL.Query().Get("slug")); s != "" {
-			a.Slug = s
-		}
-		saved, err := SaveStoreCommand(T.DB, a)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		Log("[filestore] %s registered action %q on %s → %s", user, saved.Name, saved.Slug, saved.Command)
-		jsonapi.Write(w, saved)
-	case http.MethodDelete:
-		id := strings.TrimSpace(r.URL.Query().Get("id"))
-		slug, name, _ := strings.Cut(id, "/")
-		DeleteStoreCommand(T.DB, slug, name)
-		Log("[filestore] %s removed action %q from %s", user, name, slug)
-		jsonapi.Write(w, map[string]any{"deleted": id})
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	return rows, nil
+}
+
+// handleCommandSave registers a command against a store. The form sends
+// allowed_uses as one block of lines; the record keeps a list. Either arrives
+// here.
+func (T *FileStoreApp) handleCommandSave(c *jsonapi.Call, raw map[string]any) (any, error) {
+	if err := requireAdmin(c); err != nil {
+		return nil, err
 	}
+	if lines, ok := raw["allowed_uses"].(string); ok {
+		raw["allowed_uses"] = strings.Split(lines, "\n")
+	}
+	var a StoreCommand
+	if b, err := json.Marshal(raw); err != nil || json.Unmarshal(b, &a) != nil {
+		return nil, jsonapi.BadRequest("that is not a command record")
+	}
+	// The store comes from the ROW the action is being added on, so
+	// nobody types a handle. A body slug still works — the API is
+	// addressable on its own — but the URL wins, because a caller that
+	// named a store in the path has said which one more explicitly than
+	// a field carried along inside the payload.
+	if s := strings.TrimSpace(c.R.URL.Query().Get("slug")); s != "" {
+		a.Slug = s
+	}
+	saved, err := SaveStoreCommand(T.DB, a)
+	if err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	Log("[filestore] %s registered action %q on %s → %s", c.User, saved.Name, saved.Slug, saved.Command)
+	return saved, nil
+}
+
+// handleCommandDelete removes a registered command.
+func (T *FileStoreApp) handleCommandDelete(c *jsonapi.Call, _ struct{}) (any, error) {
+	if err := requireAdmin(c); err != nil {
+		return nil, err
+	}
+	id := strings.TrimSpace(c.R.URL.Query().Get("id"))
+	slug, name, _ := strings.Cut(id, "/")
+	DeleteStoreCommand(T.DB, slug, name)
+	Log("[filestore] %s removed action %q from %s", c.User, name, slug)
+	return map[string]any{"deleted": id}, nil
 }
 
 // adminOnly gates a handler on the caller being an admin, and answers
@@ -1010,8 +1020,49 @@ func adminOnly(w http.ResponseWriter, r *http.Request) bool {
 	if RequestIsAdmin(r) {
 		return true
 	}
-	http.Error(w, "File stores are admin-only: these paths name and read directories on the server, so the list of them is a deployment decision.", http.StatusForbidden)
+	http.Error(w, errAdminOnly.Error(), http.StatusForbidden)
 	return false
+}
+
+// errAdminOnly is adminOnly's refusal, for a handler that returns its errors.
+var errAdminOnly = jsonapi.Forbidden("File stores are admin-only: these paths name and read directories on the server, so the list of them is a deployment decision.")
+
+// requireAdmin is adminOnly for a jsonapi handler.
+func requireAdmin(c *jsonapi.Call) error {
+	if RequestIsAdmin(c.R) {
+		return nil
+	}
+	return errAdminOnly
+}
+
+// adminStore is the store ?slug= names, for an administrator.
+func (T *FileStoreApp) adminStore(c *jsonapi.Call) (Store, error) {
+	if err := requireAdmin(c); err != nil {
+		return Store{}, err
+	}
+	st, ok := LoadStore(T.DB, c.R.URL.Query().Get("slug"))
+	if !ok {
+		return Store{}, jsonapi.NotFound("no such store")
+	}
+	return st, nil
+}
+
+// adminCommand is the command ?id=<slug>/<name> names, for an administrator.
+// ref reads the name as a tool reference (RefToolSlug), as the handlers that
+// take one from a tool's id do.
+func (T *FileStoreApp) adminCommand(c *jsonapi.Call, ref bool) (StoreCommand, error) {
+	if err := requireAdmin(c); err != nil {
+		return StoreCommand{}, err
+	}
+	slug, name, _ := strings.Cut(strings.TrimSpace(c.R.URL.Query().Get("id")), "/")
+	if ref {
+		name = RefToolSlug(name)
+	}
+	cmd, ok := LoadStoreCommand(T.DB, slug, name)
+	if !ok {
+		return StoreCommand{}, jsonapi.NotFound("no such command")
+	}
+	return cmd, nil
 }
 
 // folderPanelHeading renders a section heading inside the folder panel. The

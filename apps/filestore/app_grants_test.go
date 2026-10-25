@@ -108,9 +108,9 @@ func TestAnAdminGrantsAnAppOnTheStoresPage(t *testing.T) {
 		r.AddCookie(&http.Cookie{Name: "gohort_session", Value: token})
 		w := httptest.NewRecorder()
 		if strings.Contains(path, "app-grants") {
-			app.handleAppGrants(w, r)
+			routed(app)(w, r)
 		} else {
-			app.handleStores(w, r)
+			routed(app)(w, r)
 		}
 		return w
 	}

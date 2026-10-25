@@ -27,9 +27,7 @@
 package filestore
 
 import (
-	"encoding/json"
 	"fmt"
-	"net/http"
 	"regexp"
 	"slices"
 	"sort"
@@ -298,18 +296,10 @@ func firstLine(s string) string {
 // Read-only and derived: every field here is a field of the StoreCommand, so
 // there is nothing to keep in sync and no second place a mapping can be
 // changed.
-func (T *FileStoreApp) handleCommandMapping(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok {
-		return
-	}
-	if !adminOnly(w, r) {
-		return
-	}
-	slug, name, _ := strings.Cut(strings.TrimSpace(r.URL.Query().Get("id")), "/")
-	cmd, ok := LoadStoreCommand(T.DB, slug, RefToolSlug(name))
-	if !ok {
-		http.NotFound(w, r)
-		return
+func (T *FileStoreApp) handleCommandMapping(c *jsonapi.Call) (any, error) {
+	cmd, err := T.adminCommand(c, true)
+	if err != nil {
+		return nil, err
 	}
 	acts := make([]map[string]any, 0, len(cmd.Tools))
 	for _, a := range cmd.Tools {
@@ -363,40 +353,30 @@ func (T *FileStoreApp) handleCommandMapping(w http.ResponseWriter, r *http.Reque
 	case cmd.Approved:
 		state, status = "Live: agents that reach this folder can call it", "ok"
 	}
-	jsonapi.Write(w, map[string]any{
+	return map[string]any{
 		"tool_name": cmd.ToolName(), "tool_desc": cmd.ToolDesc,
 		"binary": cmd.Command, "state": state, "state_status": status,
 		"actions": acts,
-	})
+	}, nil
 }
 
-func (T *FileStoreApp) handleCommandApprove(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok {
-		return
+func (T *FileStoreApp) handleCommandApprove(c *jsonapi.Call, body approveReq) (any, error) {
+	if err := requireAdmin(c); err != nil {
+		return nil, err
 	}
-	if !adminOnly(w, r) {
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	slug, name, _ := strings.Cut(strings.TrimSpace(r.URL.Query().Get("id")), "/")
-	var body struct {
-		Approved bool `json:"approved"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
+	slug, name, _ := strings.Cut(strings.TrimSpace(c.R.URL.Query().Get("id")), "/")
 	cmd, err := SetCommandApproved(T.DB, slug, RefToolSlug(name), body.Approved)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest(err.Error())
 	}
-	Log("[filestore] %s %s %s on %s for agents", AuthCurrentUser(r),
+	Log("[filestore] %s %s %s on %s for agents", c.User,
 		map[bool]string{true: "approved", false: "withdrew"}[body.Approved], cmd.Name, cmd.Slug)
-	jsonapi.Write(w, cmd)
+	return cmd, nil
+}
+
+// approveReq is what handleCommandApprove is posted.
+type approveReq struct {
+	Approved bool `json:"approved"`
 }
 
 // handleCommandBackground switches whether an agent's run of the command goes
@@ -404,35 +384,21 @@ func (T *FileStoreApp) handleCommandApprove(w http.ResponseWriter, r *http.Reque
 // not an approval: Agents stays as it was.
 //
 //	POST /filestore/api/commands/background?id=<slug>/<name>  {"background_on": bool}
-func (T *FileStoreApp) handleCommandBackground(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok {
-		return
-	}
-	if !adminOnly(w, r) {
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	slug, name, _ := strings.Cut(strings.TrimSpace(r.URL.Query().Get("id")), "/")
-	var body struct {
-		On bool `json:"background_on"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-	cmd, ok := LoadStoreCommand(T.DB, slug, RefToolSlug(name))
-	if !ok {
-		http.NotFound(w, r)
-		return
+func (T *FileStoreApp) handleCommandBackground(c *jsonapi.Call, body backgroundReq) (any, error) {
+	cmd, err := T.adminCommand(c, true)
+	if err != nil {
+		return nil, err
 	}
 	cmd.Background = ""
 	if body.On {
 		cmd.Background = "always"
 	}
 	T.DB.Set(commandsTable, commandKey(cmd.Slug, cmd.Name), cmd)
-	Log("[filestore] %s set %s on %s to run in the background: %v", AuthCurrentUser(r), cmd.Name, cmd.Slug, body.On)
-	jsonapi.Write(w, cmd)
+	Log("[filestore] %s set %s on %s to run in the background: %v", c.User, cmd.Name, cmd.Slug, body.On)
+	return cmd, nil
+}
+
+// backgroundReq is what handleCommandBackground is posted.
+type backgroundReq struct {
+	On bool `json:"background_on"`
 }

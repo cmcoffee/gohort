@@ -99,43 +99,58 @@ func fileSize(e os.DirEntry) int64 {
 //	POST /filestore/api/pull/cancel?slug=<dest>&item=     stop it
 //
 // Admin-only, like the rest of the store's panel.
-func (T *FileStoreApp) handlePull(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok || !adminOnly(w, r) {
-		return
-	}
-	dest, ok := LoadStore(T.DB, r.URL.Query().Get("slug"))
-	if !ok {
-		http.Error(w, "no such store", http.StatusNotFound)
-		return
-	}
-	item := strings.TrimSpace(r.URL.Query().Get("item"))
-	switch {
-	case strings.HasSuffix(r.URL.Path, "/items"):
-		jsonapi.Write(w, T.pullItems(dest))
-	case strings.HasSuffix(r.URL.Path, "/progress"):
-		if run, ok := pulls.get(dest.Slug + "/" + item); ok {
-			jsonapi.Write(w, run.status())
-			return
+func (T *FileStoreApp) handlePull() http.HandlerFunc {
+	items := jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) {
+		dest, err := T.adminStore(c)
+		if err != nil {
+			return nil, err
 		}
-		jsonapi.Write(w, map[string]any{})
-	case strings.HasSuffix(r.URL.Path, "/cancel"):
-		if run, ok := pulls.get(dest.Slug + "/" + item); ok {
+		return T.pullItems(dest), nil
+	})
+	progress := jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) {
+		dest, err := T.adminStore(c)
+		if err != nil {
+			return nil, err
+		}
+		if run, ok := pulls.get(dest.Slug + "/" + strings.TrimSpace(c.R.URL.Query().Get("item"))); ok {
+			return run.status(), nil
+		}
+		return map[string]any{}, nil
+	})
+	cancel := jsonapi.Post(T.DB, func(c *jsonapi.Call, _ struct{}) (any, error) {
+		dest, err := T.adminStore(c)
+		if err != nil {
+			return nil, err
+		}
+		if run, ok := pulls.get(dest.Slug + "/" + strings.TrimSpace(c.R.URL.Query().Get("item"))); ok {
 			run.cancel()
 		}
-		jsonapi.Write(w, map[string]any{"ok": true})
-	default:
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		job, err := T.pullJobFor(dest, item, user, false)
+		return map[string]any{"ok": true}, nil
+	})
+	start := jsonapi.Post(T.DB, func(c *jsonapi.Call, _ struct{}) (any, error) {
+		dest, err := T.adminStore(c)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+			return nil, err
+		}
+		item := strings.TrimSpace(c.R.URL.Query().Get("item"))
+		job, err := T.pullJobFor(dest, item, c.User, false)
+		if err != nil {
+			return nil, jsonapi.BadRequest(err.Error())
 		}
 		pulls.start(job)
-		jsonapi.Write(w, map[string]any{"running": true, "message": "Copying " + item + " into " + dest.Name})
+		return map[string]any{"running": true, "message": "Copying " + item + " into " + dest.Name}, nil
+	})
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/items"):
+			items(w, r)
+		case strings.HasSuffix(r.URL.Path, "/progress"):
+			progress(w, r)
+		case strings.HasSuffix(r.URL.Path, "/cancel"):
+			cancel(w, r)
+		default:
+			start(w, r)
+		}
 	}
 }
 

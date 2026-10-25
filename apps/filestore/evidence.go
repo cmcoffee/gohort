@@ -493,46 +493,62 @@ func (T *FileStoreApp) evidenceItems(st Store) []map[string]any {
 
 // handleEvidence serves the store page's evidence list: the folders, Index
 // now, its progress and Stop. Admin only, like the rest of the store page.
-func (T *FileStoreApp) handleEvidence(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok || !adminOnly(w, r) {
-		return
+func (T *FileStoreApp) handleEvidence() http.HandlerFunc {
+	key := func(c *jsonapi.Call, st Store) string {
+		return evidenceKey(st.Slug, strings.TrimSpace(c.R.URL.Query().Get("item")))
 	}
-	st, ok := LoadStore(T.DB, r.URL.Query().Get("slug"))
-	if !ok {
-		http.Error(w, "no such store", http.StatusNotFound)
-		return
-	}
-	item := strings.TrimSpace(r.URL.Query().Get("item"))
-	key := evidenceKey(st.Slug, item)
-	switch {
-	case strings.HasSuffix(r.URL.Path, "/items"):
-		jsonapi.Write(w, T.evidenceItems(st))
-	case strings.HasSuffix(r.URL.Path, "/progress"):
-		if run, ok := evidenceRuns.get(key); ok {
-			jsonapi.Write(w, run.status())
-			return
+	items := jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) {
+		st, err := T.adminStore(c)
+		if err != nil {
+			return nil, err
 		}
-		jsonapi.Write(w, map[string]any{})
-	case strings.HasSuffix(r.URL.Path, "/cancel"):
-		if run, ok := evidenceRuns.get(key); ok {
+		return T.evidenceItems(st), nil
+	})
+	progress := jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) {
+		st, err := T.adminStore(c)
+		if err != nil {
+			return nil, err
+		}
+		if run, ok := evidenceRuns.get(key(c, st)); ok {
+			return run.status(), nil
+		}
+		return map[string]any{}, nil
+	})
+	cancel := jsonapi.Post(T.DB, func(c *jsonapi.Call, _ struct{}) (any, error) {
+		st, err := T.adminStore(c)
+		if err != nil {
+			return nil, err
+		}
+		if run, ok := evidenceRuns.get(key(c, st)); ok {
 			run.cancel()
 		}
-		jsonapi.Write(w, map[string]any{"ok": true})
-	default:
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
+		return map[string]any{"ok": true}, nil
+	})
+	start := jsonapi.Post(T.DB, func(c *jsonapi.Call, _ struct{}) (any, error) {
+		st, err := T.adminStore(c)
+		if err != nil {
+			return nil, err
 		}
 		if !st.Evidence {
-			http.Error(w, st.Name+" does not index folders as evidence: turn it on in its Settings first", http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest(st.Name + " does not index folders as evidence: turn it on in its Settings first")
 		}
-		folder, dir, err := evidenceFolder(st, item)
+		folder, dir, err := evidenceFolder(st, strings.TrimSpace(c.R.URL.Query().Get("item")))
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest(err.Error())
 		}
 		evidenceRuns.start(T.DB, st, folder, dir)
-		jsonapi.Write(w, map[string]any{"running": true, "message": "Indexing " + folder})
+		return map[string]any{"running": true, "message": "Indexing " + folder}, nil
+	})
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/items"):
+			items(w, r)
+		case strings.HasSuffix(r.URL.Path, "/progress"):
+			progress(w, r)
+		case strings.HasSuffix(r.URL.Path, "/cancel"):
+			cancel(w, r)
+		default:
+			start(w, r)
+		}
 	}
 }

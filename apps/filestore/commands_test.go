@@ -54,6 +54,21 @@ func actionFixture(t *testing.T, twoPhase bool) (*FileStoreApp, Store, string, s
 	return app, st, argvLog, bin
 }
 
+// routed is app's real routes, for a request that names the app's prefix
+// (/filestore/api/...) or does not (/api/...): what a browser's request reaches,
+// with its method rules and its JSON frame.
+func routed(app *FileStoreApp) http.HandlerFunc {
+	mux := http.NewServeMux()
+	app.SetWebMux(mux, "")
+	app.registerRoutes()
+	return func(w http.ResponseWriter, r *http.Request) {
+		if p, ok := strings.CutPrefix(r.URL.Path, "/filestore"); ok {
+			r.URL.Path = p
+		}
+		mux.ServeHTTP(w, r)
+	}
+}
+
 func asAdmin(t *testing.T, r *http.Request, user string) *http.Request {
 	t.Helper()
 	adb := &DBase{Store: kvlite.MemStore()}
@@ -70,7 +85,7 @@ func TestTwoPhaseActionAsksThenRuns(t *testing.T) {
 	post := func(body string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest("POST", "/api/commands/run?slug="+st.Slug+"&within=bundle-1&command=decrypt", strings.NewReader(body))
 		w := httptest.NewRecorder()
-		app.handleCommand(w, asAdmin(t, r, "alice"))
+		routed(app)(w, asAdmin(t, r, "alice"))
 		return w
 	}
 
@@ -117,7 +132,7 @@ func TestOnePhaseActionJustRuns(t *testing.T) {
 	app, st, _, _ := actionFixture(t, false)
 	r := httptest.NewRequest("POST", "/api/commands/run?slug="+st.Slug+"&within=bundle-1&command=decrypt", nil)
 	w := httptest.NewRecorder()
-	app.handleCommand(w, asAdmin(t, r, "alice"))
+	routed(app)(w, asAdmin(t, r, "alice"))
 	if w.Code != 200 {
 		t.Fatalf("%d %s", w.Code, w.Body.String())
 	}
@@ -137,7 +152,7 @@ func TestActionRefusals(t *testing.T) {
 	call := func(slug, within, action string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest("POST", "/api/commands/run?slug="+slug+"&within="+within+"&command="+action, nil)
 		w := httptest.NewRecorder()
-		app.handleCommand(w, asAdmin(t, r, "bob"))
+		routed(app)(w, asAdmin(t, r, "bob"))
 		return w
 	}
 	if w := call(st.Slug, "../..", "decrypt"); w.Code == 200 {
@@ -196,7 +211,7 @@ func TestActionListIsReadableByAnAssignedUser(t *testing.T) {
 
 	r := httptest.NewRequest("GET", "/api/commands", nil)
 	w := httptest.NewRecorder()
-	app.handleCommands(w, asAdmin(t, r, "alice"))
+	routed(app)(w, asAdmin(t, r, "alice"))
 	if w.Code != 200 {
 		t.Fatalf("%d %s", w.Code, w.Body.String())
 	}
@@ -214,7 +229,7 @@ func TestActionListIsReadableByAnAssignedUser(t *testing.T) {
 	// Filtering to one store is what a page actually asks for.
 	r = httptest.NewRequest("GET", "/api/commands?slug="+st.Slug, nil)
 	w = httptest.NewRecorder()
-	app.handleCommands(w, asAdmin(t, r, "alice"))
+	routed(app)(w, asAdmin(t, r, "alice"))
 	rows = nil
 	_ = json.Unmarshal(w.Body.Bytes(), &rows)
 	if len(rows) != 1 {
@@ -230,7 +245,7 @@ func TestFolderListing(t *testing.T) {
 	app, st, _, _ := actionFixture(t, false)
 	r := httptest.NewRequest("GET", "/api/folders?slug="+st.Slug, nil)
 	w := httptest.NewRecorder()
-	app.handleFolders(w, asAdmin(t, r, "alice"))
+	routed(app)(w, asAdmin(t, r, "alice"))
 	if w.Code != 200 {
 		t.Fatalf("%d %s", w.Code, w.Body.String())
 	}
@@ -244,7 +259,7 @@ func TestFolderListing(t *testing.T) {
 	priv, _ := SaveStore(app.DB, Store{Name: "Private", Path: t.TempDir(), Members: []string{"nobody"}, FullAccess: []string{"nobody"}})
 	r = httptest.NewRequest("GET", "/api/folders?slug="+priv.Slug, nil)
 	w = httptest.NewRecorder()
-	app.handleFolders(w, asAdmin(t, r, "alice"))
+	routed(app)(w, asAdmin(t, r, "alice"))
 	if w.Code != 404 {
 		t.Errorf("expected 404 for an unreachable store, got %d", w.Code)
 	}

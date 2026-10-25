@@ -148,7 +148,7 @@ func TestTheAdminReviewsTheRuns(t *testing.T) {
 		r := httptest.NewRequest(method, "/filestore/api/map/examples?id="+st.Slug+"/unpack"+q, bytes.NewBufferString(body))
 		r.AddCookie(&http.Cookie{Name: "gohort_session", Value: token})
 		w := httptest.NewRecorder()
-		app.handleExamples(w, r)
+		routed(app)(w, r)
 		return w
 	}
 	if w := do(http.MethodGet, "", ""); !strings.Contains(w.Body.String(), `"where":"use 2, step 1"`) || !strings.Contains(w.Body.String(), `"exit":"exit status 2"`) {
@@ -302,7 +302,7 @@ func TestTheAdminsGuideReachesBuilderAndAgents(t *testing.T) {
 		r := httptest.NewRequest(http.MethodPost, "/filestore/api/commands/uses?id="+st.Slug+"/extract", bytes.NewBufferString(body))
 		r.AddCookie(&http.Cookie{Name: "gohort_session", Value: token})
 		w := httptest.NewRecorder()
-		app.handleCommandUses(w, r)
+		routed(app)(w, r)
 	}
 	post(`{"usage":"specified","allowed_uses":"{bundle}","guide":"A better guide."}`)
 	if c, _ := LoadStoreCommand(app.DB, st.Slug, "extract"); !c.Approved || c.Guide != "A better guide." {

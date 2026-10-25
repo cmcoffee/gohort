@@ -25,8 +25,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -211,33 +209,19 @@ func runSpecified(ctx context.Context, who string, st Store, cmd StoreCommand, a
 // handleCommandUses reads and sets how a command may be used: GET its uses and
 // guide, POST new ones. Admin-only. A change switches Agents off, since what
 // agents could do is what changed.
-func (T *FileStoreApp) handleCommandUses(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok || !adminOnly(w, r) {
-		return
+func (T *FileStoreApp) handleCommandUses(c *jsonapi.Call) (any, error) {
+	cmd, err := T.adminCommand(c, false)
+	if err != nil {
+		return nil, err
 	}
-	slug, name, _ := strings.Cut(strings.TrimSpace(r.URL.Query().Get("id")), "/")
-	cmd, ok := LoadStoreCommand(T.DB, slug, name)
-	if !ok {
-		http.NotFound(w, r)
-		return
-	}
-	if r.Method == http.MethodGet {
-		jsonapi.Write(w, map[string]any{"allowed_uses": strings.Join(cmd.allowedLines(), "\n"), "guide": cmd.Guide, "background": cmd.Background})
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	var body struct {
-		AllowedUses string `json:"allowed_uses"`
-		Guide       string `json:"guide"`
-		Background  string `json:"background"`
-	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
+	return map[string]any{"allowed_uses": strings.Join(cmd.allowedLines(), "\n"), "guide": cmd.Guide, "background": cmd.Background}, nil
+}
+
+// handleCommandUsesSave sets what agents may run a command with, and how.
+func (T *FileStoreApp) handleCommandUsesSave(c *jsonapi.Call, body usesReq) (any, error) {
+	cmd, err := T.adminCommand(c, false)
+	if err != nil {
+		return nil, err
 	}
 	before := cmd.usesLabel()
 	cmd.Guide = strings.TrimSpace(body.Guide)
@@ -247,8 +231,7 @@ func (T *FileStoreApp) handleCommandUses(w http.ResponseWriter, r *http.Request)
 	cmd.AllowedUses = cmd.allowedLines()
 	for _, l := range cmd.AllowedUses {
 		if strings.ContainsAny(l, ";|&`<>$") {
-			http.Error(w, "an allowed use is arguments only: no ; | & ` < > or $ in "+strconv.Quote(l), http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest("an allowed use is arguments only: no ; | & ` < > or $ in " + strconv.Quote(l))
 		}
 	}
 	// What agents may RUN changed: approval again. Only the guide changed:
@@ -259,8 +242,15 @@ func (T *FileStoreApp) handleCommandUses(w http.ResponseWriter, r *http.Request)
 		msg = "Saved. Agents is off for this command until you approve it again."
 	}
 	T.DB.Set(commandsTable, commandKey(cmd.Slug, cmd.Name), cmd)
-	Log("[filestore] %s set %s/%s uses: %s", user, cmd.Slug, cmd.Name, cmd.usesLabel())
-	jsonapi.Write(w, map[string]any{"ok": true, "message": msg})
+	Log("[filestore] %s set %s/%s uses: %s", c.User, cmd.Slug, cmd.Name, cmd.usesLabel())
+	return map[string]any{"ok": true, "message": msg}, nil
+}
+
+// usesReq is what handleCommandUsesSave is posted.
+type usesReq struct {
+	AllowedUses string `json:"allowed_uses"`
+	Guide       string `json:"guide"`
+	Background  string `json:"background"`
 }
 
 // MigrateCommandUses brings commands from before there was one way to run

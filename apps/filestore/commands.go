@@ -39,7 +39,6 @@ package filestore
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -385,27 +384,18 @@ func runRegisteredCommand(ctx context.Context, dir, bin string, args ...string) 
 // Output is passed through VERBATIM in both directions. Nothing here
 // parses it: the format belongs to the registered binary, and a parser
 // guessing at it is how the first real bundle breaks.
-func (T *FileStoreApp) handleCommand(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	st, found := LoadStore(T.DB, strings.TrimSpace(r.URL.Query().Get("slug")))
+func (T *FileStoreApp) handleCommand(c *jsonapi.Call, body runReq) (any, error) {
+	user, q := c.User, c.R.URL.Query()
+	st, found := LoadStore(T.DB, strings.TrimSpace(q.Get("slug")))
 	if !found || !st.AllowsUser(user) {
-		http.Error(w, "no such file store you can reach", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("no such file store you can reach")
 	}
 	// An action REWRITES the folder, so it takes the write grant rather
 	// than the read one — the same gate as upload, for the same reason.
 	if !st.FullAccessFor(user) {
-		http.Error(w, "you have Read Only / No Commands access to "+st.Name+", and running its commands takes Full Access.", http.StatusForbidden)
-		return
+		return nil, jsonapi.Forbidden("you have Read Only / No Commands access to " + st.Name + ", and running its commands takes Full Access.")
 	}
-	name := strings.TrimSpace(r.URL.Query().Get("command"))
+	name := strings.TrimSpace(q.Get("command"))
 	act, ok := LoadStoreCommand(T.DB, st.Slug, name)
 	if !ok {
 		avail := "none are registered"
@@ -416,33 +406,19 @@ func (T *FileStoreApp) handleCommand(w http.ResponseWriter, r *http.Request) {
 			}
 			avail = "registered here: " + strings.Join(names, ", ")
 		}
-		http.Error(w, "no command called "+strconv.Quote(name)+" on "+st.Name+" ("+avail+
-			"). An admin registers commands under Admin → Files.", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("no command called " + strconv.Quote(name) + " on " + st.Name + " (" + avail +
+			"). An admin registers commands under Admin → Files.")
 	}
-	dir, err := SubRoot(st.Path, r.URL.Query().Get("within"))
+	dir, err := SubRoot(st.Path, q.Get("within"))
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	var body struct {
-		Input string `json:"input"`
-	}
-	// An empty body is the first phase, so a decode failure is only fatal
-	// when there was something to decode.
-	if r.ContentLength > 0 {
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
+		return nil, jsonapi.BadRequest(err.Error())
 	}
 	input := strings.TrimSpace(body.Input)
 	// The input is a whole argv element of an admin's fixed binary. Leading
 	// with '-' it would be read as an option ("--output=...") rather than as
 	// the value the person was asked for.
 	if strings.HasPrefix(input, "-") {
-		http.Error(w, "the response starts with '-', which the command would read as an option rather than a value", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("the response starts with '-', which the command would read as an option rather than a value")
 	}
 
 	args := []string{dir}
@@ -456,33 +432,36 @@ func (T *FileStoreApp) handleCommand(w http.ResponseWriter, r *http.Request) {
 	// place), so it needs room under the disk floor and the store's cap, and
 	// the folder is in use while it runs.
 	if err := st.roomFor(0); err != nil {
-		http.Error(w, err.Error(), http.StatusInsufficientStorage)
-		return
+		return nil, jsonapi.Status(http.StatusInsufficientStorage, err.Error())
 	}
 	release := pathhold.Hold(dir)
-	out, err := runRegisteredCommand(r.Context(), dir, act.Command, args...)
+	out, err := runRegisteredCommand(c.R.Context(), dir, act.Command, args...)
 	release()
 	st.wrote()
 	if err != nil {
 		Log("[filestore.command] %s: %s on %s/%s failed: %v", user, act.Name, st.Name, dir, err)
 		// The tool's own words first: "exit status 1" tells a person
 		// nothing and the line above it usually tells them everything.
-		http.Error(w, chFirstNonEmpty(out, err.Error()), http.StatusBadGateway)
-		return
+		return nil, jsonapi.Status(http.StatusBadGateway, chFirstNonEmpty(out, err.Error()))
 	}
 	Log("[filestore.command] %s ran %s on %s/%s", user, act.Name, st.Name, dir)
 	// A two-phase action with nothing supplied yet returns a CHALLENGE,
 	// which the caller shows to a person. Same bytes either way; the key
 	// name is what tells the UI whether to ask for something.
 	if act.TwoPhase && input == "" {
-		jsonapi.Write(w, map[string]any{
+		return map[string]any{
 			"challenge":   out,
 			"input_label": chFirstNonEmpty(act.InputLabel, "Response"),
 			"command":     act.Name,
-		})
-		return
+		}, nil
 	}
-	jsonapi.Write(w, map[string]any{"output": out, "command": act.Name})
+	return map[string]any{"output": out, "command": act.Name}, nil
+}
+
+// runReq is what handleCommand is posted. An empty body is the first phase of
+// a two-phase command (the route takes it with jsonapi.EmptyBodyOK).
+type runReq struct {
+	Input string `json:"input"`
 }
 
 // chFirstNonEmpty returns the first non-blank string.
@@ -506,20 +485,14 @@ func chFirstNonEmpty(ss ...string) string {
 // read of each folder rather than a walk: this is a picker, and a picker
 // that stats ten thousand files to draw a row is a picker nobody waits
 // for.
-func (T *FileStoreApp) handleFolders(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	st, found := LoadStore(T.DB, strings.TrimSpace(r.URL.Query().Get("slug")))
-	if !found || !st.AllowsUser(user) {
-		http.Error(w, "no such file store you can reach", http.StatusNotFound)
-		return
+func (T *FileStoreApp) handleFolders(c *jsonapi.Call) (any, error) {
+	st, found := LoadStore(T.DB, strings.TrimSpace(c.R.URL.Query().Get("slug")))
+	if !found || !st.AllowsUser(c.User) {
+		return nil, jsonapi.NotFound("no such file store you can reach")
 	}
 	folders, err := ListFolders(st.Path)
 	if err != nil {
-		http.Error(w, "that store's folder is unreadable: "+err.Error(), http.StatusBadGateway)
-		return
+		return nil, jsonapi.Status(http.StatusBadGateway, "that store's folder is unreadable: "+err.Error())
 	}
 	rows := make([]map[string]any, 0, len(folders))
 	for _, f := range folders {
@@ -528,7 +501,7 @@ func (T *FileStoreApp) handleFolders(w http.ResponseWriter, r *http.Request) {
 			"size": HumanSize(f.Bytes), "modified": f.Modified,
 		})
 	}
-	jsonapi.Write(w, rows)
+	return rows, nil
 }
 
 // describeStoreCommands renders a store's registered commands for an agent.

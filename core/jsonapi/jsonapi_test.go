@@ -73,13 +73,18 @@ func TestPostDoesTheFrameSoTheHandlerIsTheWork(t *testing.T) {
 		{"the work refuses it", "POST", `{}`, cookie, 400, "agent_id is required"},
 		{"not found", "POST", `{"agent_id":"gone"}`, cookie, 404, "no such agent"},
 		{"forbidden", "POST", `{"agent_id":"theirs"}`, cookie, 403, "not your agent"},
-		{"any other error", "POST", `{"agent_id":"broken"}`, cookie, 500, "the store is down"},
+		{"any other error", "POST", `{"agent_id":"broken"}`, cookie, 500, "details are in its log"},
 		{"the work's answer", "POST", `{"agent_id":"a","off":true}`, cookie, 200, `{"agent":"a","off":true}`},
 	} {
 		w := call(h, tc.method, tc.body, tc.cookie)
 		if w.Code != tc.code || !strings.Contains(w.Body.String(), tc.has) {
 			t.Errorf("%s: %d %q, want %d containing %q", tc.name, w.Code, w.Body.String(), tc.code, tc.has)
 		}
+	}
+	// An ordinary error's text stays in the log: it can name a path or carry a
+	// store's complaint, and a message meant for the person is an Error.
+	if w := call(h, "POST", `{"agent_id":"broken"}`, cookie); strings.Contains(w.Body.String(), "store is down") {
+		t.Errorf("an internal error's text reached the browser: %q", w.Body.String())
 	}
 	if w := call(h, "POST", `{"agent_id":"a"}`, cookie); w.Header().Get("Content-Type") != "application/json" {
 		t.Errorf("answer is %q, not JSON", w.Header().Get("Content-Type"))
@@ -141,5 +146,20 @@ func TestABodyCanBeLeftOffWhereThatIsMeant(t *testing.T) {
 	}
 	if thrown != 2 {
 		t.Errorf("the action ran %d times, want 2", thrown)
+	}
+}
+
+// A body is read up to a limit, so a caller cannot make the server hold
+// whatever it sends.
+func TestABodyOverTheLimitIsRefused(t *testing.T) {
+	cookie := signIn(t)
+	base := &core.DBase{Store: kvlite.MemStore()}
+	echo := func(c *Call, in map[string]string) (int, error) { return len(in["text"]), nil }
+	big := `{"text":"` + strings.Repeat("x", DefaultMaxBody) + `"}`
+	if w := call(Post(base, echo), "POST", big, cookie); w.Code != http.StatusRequestEntityTooLarge || !strings.Contains(w.Body.String(), "over") {
+		t.Errorf("a body over the default limit: %d %q", w.Code, w.Body.String())
+	}
+	if w := call(Post(base, echo, MaxBody(2*DefaultMaxBody)), "POST", big, cookie); w.Code != 200 {
+		t.Errorf("MaxBody did not raise the limit: %d %q", w.Code, w.Body.String()[:min(80, w.Body.Len())])
 	}
 }

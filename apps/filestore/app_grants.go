@@ -17,10 +17,7 @@ package filestore
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"slices"
 	"sort"
 	"strings"
@@ -310,60 +307,60 @@ func keepAlive(ctx context.Context, line, dir string) (stop func()) {
 //	GET    /filestore/api/app-grants?slug=<store>           the grants
 //	POST   /filestore/api/app-grants?slug=<store>           add or change one {app, write, commands, pull}
 //	DELETE /filestore/api/app-grants?slug=<store>&app=<k>   remove one
-func (T *FileStoreApp) handleAppGrants(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok || !adminOnly(w, r) {
-		return
+func (T *FileStoreApp) handleAppGrants(c *jsonapi.Call) (any, error) {
+	st, err := T.adminStore(c)
+	if err != nil {
+		return nil, err
 	}
-	st, ok := LoadStore(T.DB, r.URL.Query().Get("slug"))
-	if !ok {
-		http.Error(w, "no such store", http.StatusNotFound)
-		return
+	rows := []map[string]any{}
+	for _, g := range st.AppGrants {
+		rows = append(rows, map[string]any{"app": g.App, "label": appLabel(g.App), "rights": g.rights()})
 	}
-	switch r.Method {
-	case http.MethodGet:
-		rows := []map[string]any{}
-		for _, g := range st.AppGrants {
-			rows = append(rows, map[string]any{"app": g.App, "label": appLabel(g.App), "rights": g.rights()})
-		}
-		jsonapi.Write(w, rows)
-	case http.MethodPost:
-		var g AppGrant
-		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&g); err != nil || strings.Count(g.App, "/") != 1 {
-			http.Error(w, "pick an app", http.StatusBadRequest)
-			return
-		}
-		kept := st.AppGrants[:0:0]
-		for _, old := range st.AppGrants {
-			if old.App != g.App {
-				kept = append(kept, old)
-			}
-		}
-		st.AppGrants = append(kept, g)
-		if _, err := SaveStore(T.DB, st); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		Log("[filestore] %s granted app %s on %s: %s", user, g.App, st.Name, g.rights())
-		jsonapi.Write(w, map[string]any{"ok": true})
-	case http.MethodDelete:
-		app := r.URL.Query().Get("app")
-		kept := st.AppGrants[:0:0]
-		for _, g := range st.AppGrants {
-			if g.App != app {
-				kept = append(kept, g)
-			}
-		}
-		st.AppGrants = kept
-		if _, err := SaveStore(T.DB, st); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		Log("[filestore] %s removed app %s's grant on %s", user, app, st.Name)
-		jsonapi.Write(w, map[string]any{"ok": true})
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	return rows, nil
+}
+
+// handleAppGrantSave gives an app rights on the store, replacing any it had.
+func (T *FileStoreApp) handleAppGrantSave(c *jsonapi.Call, g AppGrant) (any, error) {
+	st, err := T.adminStore(c)
+	if err != nil {
+		return nil, err
 	}
+	if strings.Count(g.App, "/") != 1 {
+		return nil, jsonapi.BadRequest("pick an app")
+	}
+	kept := st.AppGrants[:0:0]
+	for _, old := range st.AppGrants {
+		if old.App != g.App {
+			kept = append(kept, old)
+		}
+	}
+	st.AppGrants = append(kept, g)
+	if _, err := SaveStore(T.DB, st); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	Log("[filestore] %s granted app %s on %s: %s", c.User, g.App, st.Name, g.rights())
+	return map[string]any{"ok": true}, nil
+}
+
+// handleAppGrantDelete takes an app's rights on the store away.
+func (T *FileStoreApp) handleAppGrantDelete(c *jsonapi.Call, _ struct{}) (any, error) {
+	st, err := T.adminStore(c)
+	if err != nil {
+		return nil, err
+	}
+	app := c.R.URL.Query().Get("app")
+	kept := st.AppGrants[:0:0]
+	for _, g := range st.AppGrants {
+		if g.App != app {
+			kept = append(kept, g)
+		}
+	}
+	st.AppGrants = kept
+	if _, err := SaveStore(T.DB, st); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	Log("[filestore] %s removed app %s's grant on %s", c.User, app, st.Name)
+	return map[string]any{"ok": true}, nil
 }
 
 // appLabel names an app for a person: its name and its owner.
@@ -376,9 +373,9 @@ func appLabel(key string) string {
 }
 
 // handleAppOptions lists every app, for the grant picker.
-func (T *FileStoreApp) handleAppOptions(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok || !adminOnly(w, r) {
-		return
+func (T *FileStoreApp) handleAppOptions(c *jsonapi.Call) (any, error) {
+	if err := requireAdmin(c); err != nil {
+		return nil, err
 	}
 	out := []map[string]any{}
 	if AuthDB != nil {
@@ -393,5 +390,5 @@ func (T *FileStoreApp) handleAppOptions(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i]["label"].(string) < out[j]["label"].(string) })
-	jsonapi.Write(w, out)
+	return out, nil
 }

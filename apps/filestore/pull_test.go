@@ -228,7 +228,7 @@ func TestThePanelPullsAndReportsTheOutcome(t *testing.T) {
 		r := httptest.NewRequest(method, path, nil)
 		r.AddCookie(&http.Cookie{Name: "gohort_session", Value: token})
 		w := httptest.NewRecorder()
-		app.handlePull(w, r)
+		routed(app)(w, r)
 		return w
 	}
 	list := withCookie(http.MethodGet, "/filestore/api/pull/items?slug="+analysis.Slug)

@@ -261,21 +261,16 @@ func (a StoreCommand) examplesText() string {
 // handleTryArgs fills the box with the last example's line when the row is
 // opened, so a second run starts from the first. The form's per-field saves
 // land here too and are answered the same way: nothing is stored but runs.
-func (T *FileStoreApp) handleTryArgs(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok || !adminOnly(w, r) {
-		return
-	}
-	slug, name, _ := strings.Cut(strings.TrimSpace(r.URL.Query().Get("id")), "/")
-	cmd, ok := LoadStoreCommand(T.DB, slug, name)
-	if !ok {
-		http.NotFound(w, r)
-		return
+func (T *FileStoreApp) handleTryArgs(c *jsonapi.Call) (any, error) {
+	cmd, err := T.adminCommand(c, false)
+	if err != nil {
+		return nil, err
 	}
 	last := ""
 	if n := len(cmd.Examples); n > 0 {
 		last = cmd.Examples[n-1].Args
 	}
-	jsonapi.Write(w, map[string]any{"args": last})
+	return map[string]any{"args": last}, nil
 }
 
 func newExampleID() string { return strings.ReplaceAll(UUIDv4(), "-", "")[:12] }
@@ -288,16 +283,81 @@ func newExampleID() string { return strings.ReplaceAll(UUIDv4(), "-", "")[:12] }
 //	GET    /filestore/api/map/examples?id=...&eid=<run>          one run, for its edit form
 //	POST   /filestore/api/map/examples?id=...&eid=<run>          {note, use} change one
 //	DELETE /filestore/api/map/examples?id=...&eid=<run>          remove one
-func (T *FileStoreApp) handleExamples(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok || !adminOnly(w, r) {
-		return
+func (T *FileStoreApp) handleExamples(c *jsonapi.Call) (any, error) {
+	cmd, idx, eid, err := T.exampleFor(c)
+	if err != nil {
+		return nil, err
 	}
-	slug, name, _ := strings.Cut(strings.TrimSpace(r.URL.Query().Get("id")), "/")
-	cmd, ok := LoadStoreCommand(T.DB, slug, name)
-	if !ok {
-		http.NotFound(w, r)
-		return
+	if eid != "" {
+		if idx < 0 {
+			return nil, jsonapi.NotFound("no such example run")
+		}
+		e := cmd.Examples[idx]
+		return map[string]any{"note": e.Note, "use": e.Use}, nil
+	}
+	rows := []map[string]any{}
+	use, step := -1, 0
+	for _, e := range cmd.Examples {
+		if e.Use != use {
+			use, step = e.Use, 0
+		}
+		step++
+		exit := "ok"
+		if e.Exit != "0" {
+			exit = e.Exit
+		}
+		rows = append(rows, map[string]any{
+			"eid": e.ID, "where": fmt.Sprintf("use %d, step %d", e.Use, step),
+			"args": e.Args, "exit": exit, "note": e.Note,
+			"output": lastLines(e.Output, 3),
+		})
+	}
+	return rows, nil
+}
+
+// handleExampleSave sets an example run's note or which use it belongs to.
+func (T *FileStoreApp) handleExampleSave(c *jsonapi.Call, body map[string]any) (any, error) {
+	cmd, idx, _, err := T.exampleFor(c)
+	if err != nil {
+		return nil, err
+	}
+	if idx < 0 {
+		return nil, jsonapi.NotFound("no such example run")
+	}
+	if v, ok := body["note"]; ok && v != nil {
+		cmd.Examples[idx].Note = strings.TrimSpace(fmt.Sprint(v))
+	}
+	if v, ok := body["use"]; ok && v != nil {
+		if n, err := strconv.Atoi(strings.TrimSpace(fmt.Sprint(v))); err == nil && n > 0 {
+			cmd.Examples[idx].Use = n
+			sortExamplesByUse(cmd.Examples)
+		}
+	}
+	T.DB.Set(commandsTable, commandKey(cmd.Slug, cmd.Name), cmd)
+	return map[string]any{"ok": true}, nil
+}
+
+// handleExampleDelete removes an example run.
+func (T *FileStoreApp) handleExampleDelete(c *jsonapi.Call, _ struct{}) (any, error) {
+	cmd, idx, _, err := T.exampleFor(c)
+	if err != nil {
+		return nil, err
+	}
+	if idx < 0 {
+		return nil, jsonapi.NotFound("no such example run")
+	}
+	cmd.Examples = append(cmd.Examples[:idx], cmd.Examples[idx+1:]...)
+	T.DB.Set(commandsTable, commandKey(cmd.Slug, cmd.Name), cmd)
+	Log("[filestore] %s removed an example run of %s/%s", c.User, cmd.Slug, cmd.Name)
+	return map[string]any{"ok": true}, nil
+}
+
+// exampleFor is the command ?id= names, with the index of the example run
+// ?eid= names (-1 when there is none by that id) and the eid itself.
+func (T *FileStoreApp) exampleFor(c *jsonapi.Call) (StoreCommand, int, string, error) {
+	cmd, err := T.adminCommand(c, false)
+	if err != nil {
+		return StoreCommand{}, -1, "", err
 	}
 	// Runs kept before they had handles get one now.
 	changed := false
@@ -310,75 +370,14 @@ func (T *FileStoreApp) handleExamples(w http.ResponseWriter, r *http.Request) {
 	if changed {
 		T.DB.Set(commandsTable, commandKey(cmd.Slug, cmd.Name), cmd)
 	}
-	eid := strings.TrimSpace(r.URL.Query().Get("eid"))
+	eid := strings.TrimSpace(c.R.URL.Query().Get("eid"))
 	idx := -1
 	for i, e := range cmd.Examples {
 		if eid != "" && e.ID == eid {
 			idx = i
 		}
 	}
-	switch r.Method {
-	case http.MethodGet:
-		if eid != "" {
-			if idx < 0 {
-				http.NotFound(w, r)
-				return
-			}
-			e := cmd.Examples[idx]
-			jsonapi.Write(w, map[string]any{"note": e.Note, "use": e.Use})
-			return
-		}
-		rows := []map[string]any{}
-		use, step := -1, 0
-		for _, e := range cmd.Examples {
-			if e.Use != use {
-				use, step = e.Use, 0
-			}
-			step++
-			exit := "ok"
-			if e.Exit != "0" {
-				exit = e.Exit
-			}
-			rows = append(rows, map[string]any{
-				"eid": e.ID, "where": fmt.Sprintf("use %d, step %d", e.Use, step),
-				"args": e.Args, "exit": exit, "note": e.Note,
-				"output": lastLines(e.Output, 3),
-			})
-		}
-		jsonapi.Write(w, rows)
-	case http.MethodPost, http.MethodPatch:
-		if idx < 0 {
-			http.NotFound(w, r)
-			return
-		}
-		var body map[string]any
-		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		if v, ok := body["note"]; ok && v != nil {
-			cmd.Examples[idx].Note = strings.TrimSpace(fmt.Sprint(v))
-		}
-		if v, ok := body["use"]; ok && v != nil {
-			if n, err := strconv.Atoi(strings.TrimSpace(fmt.Sprint(v))); err == nil && n > 0 {
-				cmd.Examples[idx].Use = n
-				sortExamplesByUse(cmd.Examples)
-			}
-		}
-		T.DB.Set(commandsTable, commandKey(cmd.Slug, cmd.Name), cmd)
-		jsonapi.Write(w, map[string]any{"ok": true})
-	case http.MethodDelete:
-		if idx < 0 {
-			http.NotFound(w, r)
-			return
-		}
-		cmd.Examples = append(cmd.Examples[:idx], cmd.Examples[idx+1:]...)
-		T.DB.Set(commandsTable, commandKey(cmd.Slug, cmd.Name), cmd)
-		Log("[filestore] %s removed an example run of %s/%s", user, cmd.Slug, cmd.Name)
-		jsonapi.Write(w, map[string]any{"ok": true})
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
+	return cmd, idx, eid, nil
 }
 
 // sortExamplesByUse keeps each use's steps together, in the order they were
