@@ -352,7 +352,7 @@ func (ed *agentEditor) formFields() {
 			// Explorer mode and its ceiling moved with the other limits, to
 			// Security -> Limits. A budget the agent may lift is a ceiling
 			// somebody sets on it, not a description of what it is.
-			ui.FormField{Type: "header", Label: "Memory", Collapsed: true,
+			ui.FormField{Type: "header", Label: "Memory",
 				Help: "What the agent remembers across turns. Knowledge (uploaded files) is always available."},
 			// Only shapes Explicit Memory, so it steps aside when that is off.
 			ui.FormField{Field: "memory_mode", Type: "select", Label: "Memory mode", ShowWhen: "!disable_explicit",
@@ -362,6 +362,13 @@ func (ed *agentEditor) formFields() {
 				},
 				Help:   "Shapes what the agent pins with remember (pin=true).",
 				Detail: "Agent, the default, pins generalized lessons only; specifics go to remember (pin=false), which is searchable rather than always in prompt. Chatbot pins the same, plus user personalization and conversation notes."},
+			// Beside the mode it defaults from: reading the Cortex is what the
+			// agent knows of what reached it outside the conversation, so it is
+			// memory, not a capability grant. Its own setting all the same (a
+			// specialist may read its reports, an assistant may start clean).
+			ui.FormField{Field: "channel", Type: "toggle", Label: "Reads its Cortex",
+				Help:   "Every agent keeps a Cortex, the record of what reached it. On, the agent also reads it: its recent lines ride into every session, and the thread becomes its own standing home.",
+				Detail: "Off, the Cortex is a record for you: the 📋 row pinned at the top of the rail, read-only, listing messages, requests from other agents, scheduled runs, monitor fires and new conversations. The agent never sees it and it costs nothing per turn.\n\nOn, it becomes the agent's mind: the 🧠 row, which the agent resumes and where event-monitor wakes and standing-agent reports land by default, kept bounded by a rolling summary. Its recent lines go into every other session's prompt, so the agent arrives aware of what has been happening. It also surfaces the Permissions queue and the Manage menu in the topbar, and is reached only from Agents.\n\nWhen the agent is published to the dashboard, granted users do not see the Cortex thread. They get ordinary chat sessions, each seeded read-only from the agent's standing awareness, so it shows up already aware; publishing and granting access is the consent to share that. Publishable as long as the delegation and management tools below are off."},
 			ui.FormField{Field: "session_recall", Type: "select", Label: "Session recall",
 				Options: []ui.SelectOption{
 					{Value: "", Label: "Default: on in Chatbot mode, off in Agent mode"},
@@ -387,7 +394,7 @@ func (ed *agentEditor) formFields() {
 			// per-turn Clean toggle covers ad-hoc suppression. Field kept for the
 			// CRUD tools.)
 
-			ui.FormField{Type: "header", Label: "Context", Collapsed: true,
+			ui.FormField{Type: "header", Label: "Context",
 				Help:   "How much of a persistent thread the agent carries into the prompt.",
 				Detail: "A persistent thread is the Cortex home thread, or each Channel room. Storage always keeps the full thread; these only bound the run-view."},
 			ui.FormField{Field: "context_depth", Type: "number", Label: "Context depth (recent messages)", Min: 0, Max: 200,
@@ -398,12 +405,9 @@ func (ed *agentEditor) formFields() {
 				Help:   "Whether older messages are summarized or simply dropped.",
 				Detail: "Off, the default, summarizes older messages into a running summary. On drops them to the context-depth tail instead. Both stay bounded; this only chooses summarize-old over forget-old."},
 
-			ui.FormField{Type: "header", Label: "Cortex & capability", Collapsed: true,
-				Help:   "Standing behaviors and capability grants.",
-				Detail: "Whether the agent reads its Cortex, plus the conductor toolset (scheduling, monitors, delegate). Building is not a toolset any more: an agent hands it to Builder.\n\nThese add TOOLS; they do not govern who the agent may call. That is Delegation, on the agent's Security page." + appGrantHelp(user, id)},
-			ui.FormField{Field: "channel", Type: "toggle", Label: "Reads its Cortex",
-				Help:   "Every agent keeps a Cortex, the record of what reached it. On, the agent also reads it: its recent lines ride into every session, and the thread becomes its own standing home.",
-				Detail: "Off, the Cortex is a record for you: the 📋 row pinned at the top of the rail, read-only, listing messages, requests from other agents, scheduled runs, monitor fires and new conversations. The agent never sees it and it costs nothing per turn.\n\nOn, it becomes the agent's mind: the 🧠 row, which the agent resumes and where event-monitor wakes and standing-agent reports land by default, kept bounded by a rolling summary. Its recent lines go into every other session's prompt, so the agent arrives aware of what has been happening. It also surfaces the Permissions queue and the Manage menu in the topbar, and is reached only from Agents.\n\nWhen the agent is published to the dashboard, granted users do not see the Cortex thread. They get ordinary chat sessions, each seeded read-only from the agent's standing awareness, so it shows up already aware; publishing and granting access is the consent to share that. Publishable as long as the delegation and management tools below are off."},
+			ui.FormField{Type: "header", Label: "Capability",
+				Help:   "Tools the agent is granted beyond its own.",
+				Detail: "The conductor toolset (scheduling, monitors, delegate). Building is not a toolset any more: an agent hands it to Builder.\n\nThese add TOOLS; they do not govern who the agent may call. That is Delegation, on the agent's Security page." + appGrantHelp(user, id)},
 			ui.FormField{Field: "fleet", Type: "toggle", Label: "Conductor tools (scheduling, monitors, delegate)",
 				Help:   "Grants the conductor toolset: delegate, scheduling, monitors, run-ledger, history-recall.",
 				Detail: "This is DISTINCT from \"the fleet\", the collection of all your agents, which every agent is in. It is also NOT the master switch for agent-to-agent calls: every non-sub agent can call peers via agents(action=\"run\") regardless, governed by the Dispatch policy below. Set that to \"Allow none\" to fully ground this agent.\n\nIt does not stop the agent doing work itself, it just adds the tools. An agent carrying these tools is never published publicly, since they reach owner-only management endpoints."},

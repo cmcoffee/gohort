@@ -9,6 +9,7 @@ package orchestrate
 // here.
 
 import (
+	"encoding/json"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -72,6 +73,52 @@ func TestTheAgentEditorDrawsTheSectionsEachKindHas(t *testing.T) {
 			if strings.Contains(page, not) {
 				t.Errorf("%s: the editor should not have %s", c.url, not)
 			}
+		}
+	}
+}
+
+// Reading the Cortex sits in Memory, beside the mode it defaults from, and the
+// section it left is Capability. On a new agent's form, where these are form
+// headers rather than page sections, none of the three starts folded.
+func TestTheCortexToggleSitsInMemory(t *testing.T) {
+	app, udb := accessFixture(t, AgentRecord{ID: "a-main", Name: "Main"})
+	render := func(url, id string) string {
+		w := httptest.NewRecorder()
+		app.renderAgentEditor(w, asUser(httptest.NewRequest("GET", url, nil), "alice"), "alice", udb, id)
+		return w.Body.String()
+	}
+	// An existing agent: each header is a page section of its own.
+	page := render("/agent/a-main", "a-main")
+	at := func(marker string) int {
+		i := strings.Index(page, marker)
+		if i < 0 {
+			t.Fatalf("no %s on the editor", marker)
+		}
+		return i
+	}
+	memory, mode := at(`{"title":"Memory"`), at(`"field":"memory_mode"`)
+	cortex := at(`"field":"channel","label":"Reads its Cortex"`)
+	context, capability := at(`{"title":"Context"`), at(`{"title":"Capability"`)
+	if !(memory < mode && mode < cortex && cortex < context && context < capability) {
+		t.Errorf("order memory=%d mode=%d cortex=%d context=%d capability=%d, want the Cortex toggle in Memory after the mode", memory, mode, cortex, context, capability)
+	}
+	if strings.Contains(page, "Cortex & capability") {
+		t.Error("the old section name is still on the page")
+	}
+
+	// A new agent: one form, so they are form headers, and fold if told to.
+	page = render("/agent/new", "")
+	for _, label := range []string{"Memory", "Context", "Capability"} {
+		i := strings.Index(page, `{"field":"","label":"`+label+`"`)
+		if i < 0 {
+			t.Fatalf("no %q header on the new-agent form", label)
+		}
+		var h map[string]any
+		if err := json.NewDecoder(strings.NewReader(page[i:])).Decode(&h); err != nil {
+			t.Fatalf("%q header: %v", label, err)
+		}
+		if h["collapsed"] == true {
+			t.Errorf("the %s header starts folded on the new-agent form", label)
 		}
 	}
 }

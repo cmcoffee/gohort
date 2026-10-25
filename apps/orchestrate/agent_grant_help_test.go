@@ -1,6 +1,6 @@
 // What the agent editor says about access other apps have granted.
 //
-// This lands in the "Cortex & capability" section's HELP rather than as its own
+// This lands in the "Capability" section's HELP rather than as its own
 // field, because a header field starts a new page section — a row here would
 // have cut that section in two and stranded the toggles below it.
 package orchestrate
