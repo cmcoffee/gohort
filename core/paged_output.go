@@ -156,6 +156,16 @@ func SpillOutput(text string, max int, tool string) string {
 	return window + spillNote(tool, fmt.Sprintf("output_id=%q", id), 0, end, len(kept), kept) + clipped
 }
 
+// KeepOutput keeps text for read_output and returns its id, for a caller
+// that writes its own short preview instead of SpillOutput's first window.
+// Text over the per-capture bound keeps its head, as SpillOutput does.
+func KeepOutput(text string) string {
+	if len(text) > spilledOutputEntryBytes {
+		text, _ = WindowText(text, 0, spilledOutputEntryBytes)
+	}
+	return keepSpilled(text)
+}
+
 // OutputPage is one read of a large text the agent is working through: a
 // window by offset, or — with Grep set — the lines matching a pattern, each
 // with its line number and the character offset its line starts at, so the

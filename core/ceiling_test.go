@@ -345,7 +345,9 @@ const (
 	// with its three values: ToolSession.ApproveChange tells a deletion from a
 	// change, so the item the owner picked in Builder's form is approved for
 	// changes while deleting it still asks.
-	coreExportCeiling = 2332
+	// 2333: KeepOutput, so a caller with its own one-line preview (app_def's
+	// script checks) can hand the rest to read_output instead of cutting it.
+	coreExportCeiling = 2333
 
 	// coreExportSlack is a small band on the export count only. A file here
 	// legitimately grows an exported helper or two during ordinary work, and a

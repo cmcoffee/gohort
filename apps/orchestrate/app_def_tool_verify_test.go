@@ -2,6 +2,7 @@ package orchestrate
 
 import (
 	"encoding/json"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -47,11 +48,50 @@ func TestOutputPreviewIsOneCappedLine(t *testing.T) {
 	}
 	long := `{"scene":"` + strings.Repeat("a", 700) + `"}`
 	got := appOutputPreview(long, 600)
-	if !strings.HasPrefix(got, `{"scene":"aaa`) || !strings.Contains(got, "... (112 more chars)") {
+	if !strings.HasPrefix(got, `{"scene":"aaa`) || !strings.Contains(got, "... (112 more chars;") {
 		t.Errorf("a long output is capped and says how much was cut: %q", got[len(got)-40:])
 	}
 	if got := appOutputPreview("not\n  json\tat all", 600); got != "not json at all" {
 		t.Errorf("non-JSON folds its whitespace: %q", got)
+	}
+}
+
+// Past the cap the rest is reachable: a build needing the counts at the end
+// of a feed's JSON edited the live script four times to move them forward.
+func TestOutputPreviewKeepsTheRestForReadOutput(t *testing.T) {
+	long := `{"stories":["` + strings.Repeat("s", 700) + `"],"source_counts":{"Al Jazeera":7}}`
+	got := appOutputPreview(long, 600)
+	m := regexp.MustCompile(`output_id="([^"]+)"`).FindStringSubmatch(got)
+	if m == nil {
+		t.Fatalf("a capped preview names an output_id: %q", got[len(got)-200:])
+	}
+	hit, err := OutputPage{ID: m[1], Tool: "read_output", Grep: "Al Jazeera"}.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(hit, `"Al Jazeera": 7`) || strings.Contains(hit, strings.Repeat("s", 50)) {
+		t.Errorf("the kept output is indented, so grep lands on the one field: %q", hit)
+	}
+}
+
+func TestJSONBreakNoteNamesTheStrayLine(t *testing.T) {
+	out := `{"stories":[]}` + "\nSUMMARY count=15"
+	got := jsonBreakNote(out)
+	if !strings.Contains(got, "SUMMARY count=15") || !strings.Contains(got, "char 15") {
+		t.Errorf("the note names where the JSON stops and what follows: %q", got)
+	}
+	if jsonBreakNote("Traceback (most recent call last):") != "" {
+		t.Error("output that never started as JSON gets no break note")
+	}
+}
+
+func TestScriptFailureHintStagedAlone(t *testing.T) {
+	tb := "Traceback (most recent call last):\nFileNotFoundError: [Errno 2] No such file or directory: 'headlines.py'"
+	if h := scriptFailureHint(tb); !strings.Contains(h, "staged ALONE") || !strings.Contains(h, "lib/") {
+		t.Errorf("a sibling-file miss says the script runs alone and points at lib/: %q", h)
+	}
+	if h := scriptFailureHint("ModuleNotFoundError: No module named 'requests'"); strings.Contains(h, "staged ALONE") {
+		t.Errorf("a missing package is not a sibling-file miss: %q", h)
 	}
 }
 

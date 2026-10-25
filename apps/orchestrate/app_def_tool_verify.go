@@ -12,6 +12,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/buildledger"
+	"github.com/cmcoffee/gohort/core/textutil"
 	"github.com/cmcoffee/gohort/tools/appscript"
 )
 
@@ -55,6 +56,12 @@ func uncalledHint(names []string) string {
 // — three rounds against a message that names the missing symbol and nothing
 // about what IS available.
 func scriptFailureHint(output string) string {
+	if strings.Contains(output, "FileNotFoundError") {
+		// A build wrote a helper beside the data source and imported it by
+		// path, three ways, each a FileNotFoundError; then had the script
+		// write a file and went looking for it in its own workspace.
+		return "HINT: a script runs staged ALONE, as one file in the app owner's workspace, not inside the app folder: a file beside it in data/ or actions/ is not there to open or import, and a file it writes does not land in your workspace. Code shared between scripts goes in lib/ and is imported by module name; a value you want to see goes into what the script prints."
+	}
 	if !strings.Contains(output, "ImportError") || !strings.Contains(output, "gohort") {
 		return ""
 	}
@@ -688,7 +695,7 @@ func (t *chatTurn) runScriptChecks(spec AppSpec, opt appScriptRun) (report strin
 		}
 		if !json.Valid([]byte(trimmed)) {
 			fail++
-			fmt.Fprintf(&b, "FAIL %s: did not print valid JSON. Output:\n%s\n", label, truncate(trimmed, 800))
+			fmt.Fprintf(&b, "FAIL %s: did not print valid JSON.%s Output:\n%s\n", label, jsonBreakNote(trimmed), SpillOutput(trimmed, 800, "read_output"))
 			if hint := scriptFailureHint(trimmed); hint != "" {
 				fmt.Fprintf(&b, "     %s\n", hint)
 			}
@@ -905,18 +912,50 @@ func appScriptArgs(spec AppSpec, records string, params map[string]any, fixed ma
 // appOutputPreview is one line of what a script printed, capped at max
 // characters: JSON compacted so a pretty-printed object does not spend the
 // budget on indentation, anything else with its whitespace folded.
+//
+// Past the cap the whole output is kept for read_output, indented so a grep
+// lands on one field rather than the single compacted line. Without it the
+// rest was unreachable: a build that needed the per-source counts at the end
+// of a feed's JSON edited the live script four times to move them into the
+// first 600 characters, then had to take the edits back out.
 func appOutputPreview(out string, max int) string {
 	var buf bytes.Buffer
 	s := out
+	kept := out
 	if json.Compact(&buf, []byte(out)) == nil {
 		s = buf.String()
+		var ind bytes.Buffer
+		if json.Indent(&ind, []byte(out), "", " ") == nil {
+			kept = ind.String()
+		}
 	} else {
 		s = strings.Join(strings.Fields(out), " ")
 	}
 	if len(s) <= max {
 		return s
 	}
-	return fmt.Sprintf("%s... (%d more chars)", s[:max], len(s)-max)
+	head := textutil.Clip(s, max)
+	head = strings.TrimSuffix(head, "…")
+	return fmt.Sprintf("%s... (%d more chars; the whole output is kept, one JSON field per line: read_output(output_id=%q, grep=\"PATTERN\") finds a field in it, offset=N pages it, nothing re-runs)",
+		head, len(s)-len(head), KeepOutput(kept))
+}
+
+// jsonBreakNote names where output that starts as JSON stops parsing, and
+// what is there. A line printed to stderr lands in the output after the
+// object, past the shown head, so the FAIL named no cause the build could
+// see. "" when the output does not start as JSON at all.
+func jsonBreakNote(out string) string {
+	if !strings.HasPrefix(out, "{") && !strings.HasPrefix(out, "[") {
+		return ""
+	}
+	var v any
+	se, ok := json.Unmarshal([]byte(out), &v).(*json.SyntaxError)
+	if !ok || se.Offset <= 0 || int(se.Offset) > len(out) {
+		return ""
+	}
+	at := int(se.Offset) - 1
+	return fmt.Sprintf(" It parses as JSON up to char %d of %d, then: %q (%s). Anything printed besides the JSON, stderr included, counts as output: a value you want to see goes inside the JSON as a field.",
+		at, len(out), textutil.Clip(out[at:], 80), se.Error())
 }
 
 // boolArg coerces a section-map field to bool: native bool, or the strings
