@@ -2411,6 +2411,11 @@
     // paperclip and a paste both come here.
     function queueAttachment(file) {
       var reader = new FileReader();
+      attachmentsLoading++;
+      reader.onerror = function() {
+        showToast('Could not read ' + (file.name || 'that file') + '.');
+        attachmentLoaded();
+      };
       reader.onload = function() {
         var mime = file.type || '';
         pendingAttachments.push({
@@ -2422,8 +2427,19 @@
           kind: mime.indexOf('image/') === 0 ? 'image' : 'document',
         });
         renderAttachments();
+        attachmentLoaded();
       };
       reader.readAsDataURL(file);
+    }
+    // A file is read in the background, and a large screenshot takes a moment.
+    // A Send pressed meanwhile went without it, or with no text did nothing at
+    // all, so the send waits for the reads and goes when the last one lands.
+    var attachmentsLoading = 0, sendWhenLoaded = false;
+    function attachmentLoaded() {
+      attachmentsLoading--;
+      if (attachmentsLoading || !sendWhenLoaded) return;
+      sendWhenLoaded = false;
+      sendMessage();
     }
     // pastedFiles is the files a paste carries: the list itself, or the file
     // items, which is where some browsers put a pasted screenshot.
@@ -5938,6 +5954,11 @@
       askPending = null;
       if (recordLocked && !answerPass) return;
       if (userEdit) { commitComposerEdit(); return; }
+      if (attachmentsLoading && !answerPass && !sendingNotes) {
+        if (!sendWhenLoaded) showToast('Sending once the attachment finishes loading.');
+        sendWhenLoaded = true;
+        return;
+      }
       var text = inputArea.value.trim();
       if (!text && !pendingAttachments.length) return;
       // Paste-marker substitution: expand any "[Pasted text #N - X
@@ -6036,6 +6057,9 @@
       // documents render as file pills (server extracts text + folds
       // into the message via .documents[]).
       var userBubble = !suppressBubble && msgEls[localMsgId] && msgEls[localMsgId].bubble;
+      // What goes back in the composer if the server never takes this send.
+      var unsent = sendingNotes ? null :
+        {text: text, attachments: pendingAttachments, msgId: suppressBubble ? '' : localMsgId};
       var images = [];
       var documents = [];
       pendingAttachments.forEach(function(a) {
@@ -6124,7 +6148,25 @@
         body: JSON.stringify(body),
         signal: activeStream.signal,
       });
-      dispatchResponse(resp);
+      dispatchResponse(resp, unsent);
+    }
+
+    // restoreUnsent puts a message the server never took back in the composer,
+    // its text and attachments both, and takes away its bubble: a new thread
+    // has no id until the server answers, so nothing would show it after a
+    // reload, and the person would have to write it and paste it again.
+    function restoreUnsent(u, err) {
+      var sent = u.msgId && msgEls[u.msgId];
+      if (sent && sent.bubble && sent.bubble.parentNode) sent.bubble.remove();
+      if (u.msgId) delete msgEls[u.msgId];
+      if (u.text) inputArea.value = inputArea.value ? u.text + '\n\n' + inputArea.value : u.text;
+      pendingAttachments = u.attachments.concat(pendingAttachments);
+      renderAttachments();
+      inputArea.dispatchEvent(new Event('input'));
+      // A fetch that never reached the server rejects with a TypeError whose
+      // text is the browser's ("Load failed", "Failed to fetch").
+      var why = err instanceof TypeError ? 'could not reach the server' : (err && err.message || String(err));
+      addActivity('error', '', 'Not sent: ' + why + '. Your message is back in the box.');
     }
 
     // dispatchResponse branches based on the SendURL response shape:
@@ -6133,11 +6175,13 @@
     // The JSON pattern fits apps with a queue-backed session store —
     // it lets the client reconnect to the same event stream after a
     // page reload.
-    function dispatchResponse(respPromise) {
+    function dispatchResponse(respPromise, unsent) {
       respPromise.then(function(resp) {
         if (!resp.ok) {
           return resp.text().then(function(t) { throw new Error(t || resp.statusText); });
         }
+        unsent = null; // the server has it
+
         var ct = (resp.headers.get('Content-Type') || '').toLowerCase();
         if (ct.indexOf('application/json') >= 0 && cfg.events_url) {
           return resp.json().then(function(d) {
@@ -6155,6 +6199,7 @@
         return streamSSE(resp);
       }).catch(function(err) {
         if (err.name === 'AbortError') return;
+        if (unsent) { restoreUnsent(unsent, err); enableInput(); return; }
         // Dropped mid-turn (the run had started): rejoin it rather than
         // going idle over a turn that is still running.
         if (activeRunId && !sawTurnEnd && cfg.runs_url_base) { streamLost(); return; }
