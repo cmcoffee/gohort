@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/prompts"
@@ -412,7 +413,18 @@ func normalizeForDedup(s string) string {
 	if s == "" {
 		return ""
 	}
-	return strings.Join(strings.Fields(strings.ToLower(s)), " ")
+	// Punctuation goes too. A retry that only swaps a dash for a comma is the
+	// same reply, and the agent loop already judged it so (SameReply), then
+	// retracted its stream on the promise the host would match it to the
+	// bubble on screen. The prefix test stopped at the dash and showed the
+	// goodnight twice.
+	s = strings.Map(func(r rune) rune {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return unicode.ToLower(r)
+		}
+		return ' '
+	}, s)
+	return strings.Join(strings.Fields(s), " ")
 }
 
 // persistedToolCalls converts the per-turn tool-call log into the

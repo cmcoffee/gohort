@@ -115,6 +115,29 @@ func TestABehavioralPromiseIsNotStalledWork(t *testing.T) {
 	}
 }
 
+// Being there is not work: no tool performs "I'll be here". The first line is
+// the exact goodnight from the 2026-10-25 session.
+func TestAPromiseToBeThereIsNotStalledWork(t *testing.T) {
+	for _, presence := range []string{
+		"Night. Lights out, I'll be here when you wake up.",
+		"Night. Lights out — I'll be here when you wake up.",
+		"Sleep well. I'll be around tomorrow.",
+		"Good luck with the interview! I will be waiting to hear how it went.",
+	} {
+		if replyStalledOnAPromise(presence) {
+			t.Errorf("re-prompted a promise to be there:\n  %s", presence)
+		}
+	}
+	for _, stall := range []string{
+		"I'll be here a sec. Let me check the logs.",
+		"I'll be right back with the numbers. I'll look them up now.",
+	} {
+		if !replyStalledOnAPromise(stall) {
+			t.Errorf("a promise to act after a presence line is still a stall:\n  %s", stall)
+		}
+	}
+}
+
 // The tightening must not blunt the guard on real work. A promise to ACT still
 // has to be caught, including when the same reply apologises first, which is
 // the shape that makes the two easy to conflate.

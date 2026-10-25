@@ -45,3 +45,18 @@ func TestNearDuplicateCatchesAPrefixLeadIn(t *testing.T) {
 		t.Skip("isNearDuplicate no longer scores a streamed lead-in as a duplicate of the ask that repeats it; the ask path's guard-free emit is now belt-and-braces")
 	}
 }
+
+// A retry that changes only punctuation is the reply already on screen. The
+// loop retracted the retry's stream as the same reply, and the host showed it
+// anyway: its prefix test stopped at the dash. The pair is the 2026-10-25
+// goodnight, word for word.
+func TestARetryThatOnlyChangesPunctuationIsTheShownReply(t *testing.T) {
+	shown := "Night. Lights out — I'll be here when you wake up."
+	retry := "Night. Lights out, I'll be here when you wake up."
+	if !repeatsWithoutAdding(retry, shown) {
+		t.Errorf("a dash-for-comma retry was shown as a second bubble")
+	}
+	if repeatsWithoutAdding("Night. Lights out, I'll be here when you wake up. One thing before you go: your 9am with the dentist moved to 10:30, and the reminder is set for 9:45.", shown) {
+		t.Errorf("a retry that says more must still be shown")
+	}
+}

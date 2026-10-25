@@ -615,8 +615,39 @@ func replyStalledOnAPromise(content string) bool {
 	if conditionalOfferRe.MatchString(lower) || promiseWaitsOnTheUser(lower) {
 		return false
 	}
+	if lastPromiseIsPresence(lower) {
+		return false
+	}
 	return promiseEndsTheReply(lower)
 }
+
+// lastPromiseIsPresence reports a reply whose final promise is to be there,
+// not to do something: "I'll be here when you wake up". Being reachable is
+// not work, and no tool performs it. Only the LAST promise counts, so "I'll
+// be right back, let me check" is still a promise to check.
+//
+// Observed 2026-10-25: "Need to go to sleep" was answered "Night. Lights out,
+// I'll be here when you wake up.", the guard pushed it to act, and the retry
+// sent the same goodnight a second time.
+func lastPromiseIsPresence(lower string) bool {
+	var last []int
+	for _, m := range futureCommitmentRe.FindAllStringIndex(lower, -1) {
+		last = m
+	}
+	if last == nil {
+		return false
+	}
+	for _, m := range onItRe.FindAllStringIndex(lower, -1) {
+		if m[1] > last[1] {
+			return false
+		}
+	}
+	m := presenceRe.FindStringIndex(lower[last[0]:])
+	return m != nil && m[0] == 0
+}
+
+// presenceRe is a promise to be available: here, around, waiting.
+var presenceRe = regexp.MustCompile(`^(?:i'll|i will) (?:still )?be (?:right )?(?:here|around|waiting|standing by|available|on call|on standby|up)\b`)
 
 // promiseWaitsOnTheUser reports a final promise whose own sentence hangs it
 // on the person: a condition about them ("if ... you want", "unless you") or
