@@ -12,7 +12,6 @@
 package servitor
 
 import (
-	"encoding/json"
 	"net/http"
 	"sort"
 	"strings"
@@ -20,6 +19,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/changes"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/textutil"
 )
 
@@ -202,117 +202,129 @@ func deleteSession(udb Database, applianceID, id string) {
 // handleServitorSessionList → GET /api/sessions?appliance_id=<id>.
 // Returns [] (not an error) when appliance_id is blank so the rail's
 // first fetch renders cleanly before a pick.
-func (T *Servitor) handleServitorSessionList(w http.ResponseWriter, r *http.Request) {
-	_, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	appID := strings.TrimSpace(r.URL.Query().Get("appliance_id"))
+func (T *Servitor) handleServitorSessionList(c *jsonapi.Call) (any, error) {
+	appID := strings.TrimSpace(c.R.URL.Query().Get("appliance_id"))
 	if appID == "" {
-		_ = json.NewEncoder(w).Encode([]chatSession{})
-		return
+		return []chatSession{}, nil
 	}
-	_ = json.NewEncoder(w).Encode(listSessions(udb, appID))
+	return listSessions(c.UDB, appID), nil
 }
 
 // handleServitorSessionOne → GET (load transcript) / DELETE one session
 // at /api/sessions/{id}?appliance_id=<id>.
-func (T *Servitor) handleServitorSessionOne(w http.ResponseWriter, r *http.Request) {
-	_, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	id := strings.TrimPrefix(r.URL.Path, "/api/sessions/")
-	appID := strings.TrimSpace(r.URL.Query().Get("appliance_id"))
-	// /api/sessions/{id}/export — the "Copy session" action's source.
-	// Returns the transcript as markdown.
-	if strings.HasSuffix(id, "/export") {
-		id = strings.TrimSuffix(id, "/export")
-		if id == "" || strings.Contains(id, "/") || appID == "" {
-			http.NotFound(w, r)
-			return
-		}
-		s, found := loadSession(udb, appID, id)
-		if !found {
-			http.NotFound(w, r)
-			return
-		}
-		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
-		_, _ = w.Write([]byte(sessionMarkdown(s)))
-		return
-	}
-	if id == "" || strings.Contains(id, "/") || appID == "" {
-		http.NotFound(w, r)
-		return
-	}
-	switch r.Method {
-	case http.MethodGet:
-		s, found := loadSession(udb, appID, id)
-		if !found {
-			http.NotFound(w, r)
-			return
-		}
-		// Decorated at read time rather than stored on the record: the guides an
-		// investigation wrote are a relationship, and keeping a copy on the
-		// session would go stale the moment one was renamed. The link table is
-		// the source; this is a join.
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(struct {
-			chatSession
-			Guides []SessionGuide `json:"guides,omitempty"`
-		}{chatSession: s, Guides: SessionGuides(udb, id)})
-	case http.MethodDelete:
-		deleteSession(udb, appID, id)
-		// The links go with the session, never with the guide: a guide is the
-		// durable artifact and outlives the investigation that produced it.
-		forgetSessionGuides(udb, id)
-		w.WriteHeader(http.StatusNoContent)
-	case http.MethodPatch:
+func (T *Servitor) handleServitorSessionOne() http.HandlerFunc {
+	one := jsonapi.Methods{
+		"GET": jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) {
+			id, appID, err := sessionPath(c.R)
+			if err != nil {
+				return nil, err
+			}
+			s, found := loadSession(c.UDB, appID, id)
+			if !found {
+				return nil, jsonapi.NotFound("no such session")
+			}
+			// Decorated at read time rather than stored on the record: the guides an
+			// investigation wrote are a relationship, and keeping a copy on the
+			// session would go stale the moment one was renamed. The link table is
+			// the source; this is a join.
+			return struct {
+				chatSession
+				Guides []SessionGuide `json:"guides,omitempty"`
+			}{chatSession: s, Guides: SessionGuides(c.UDB, id)}, nil
+		}),
+		"DELETE": jsonapi.Post(T.DB, func(c *jsonapi.Call, _ struct{}) (any, error) {
+			id, appID, err := sessionPath(c.R)
+			if err != nil {
+				return nil, err
+			}
+			deleteSession(c.UDB, appID, id)
+			// The links go with the session, never with the guide: a guide is the
+			// durable artifact and outlives the investigation that produced it.
+			forgetSessionGuides(c.UDB, id)
+			return jsonapi.Empty(http.StatusNoContent), nil
+		}),
 		// The chat's Edit and Delete on a message, the contract orchestrate's
 		// sessions follow: {at: N} drops messages from index N on (Edit then
 		// resends the changed text), {delete_at: N} drops just that one. The
 		// next turn's history comes from the page, which drops the same rows.
-		var body struct {
-			At       int  `json:"at"`
-			DeleteAt *int `json:"delete_at"`
-		}
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
+		"PATCH": jsonapi.Post(T.DB, func(c *jsonapi.Call, body sessionCutReq) (any, error) {
+			id, appID, err := sessionPath(c.R)
+			if err != nil {
+				return nil, err
+			}
+			s, found := loadSession(c.UDB, appID, id)
+			if !found {
+				return nil, jsonapi.NotFound("no such session")
+			}
+			out := map[string]any{}
+			if body.DeleteAt != nil {
+				if di := *body.DeleteAt; di >= 0 && di < len(s.Messages) {
+					s.Messages = append(s.Messages[:di], s.Messages[di+1:]...)
+					s = saveSession(c.UDB, appID, s)
+				}
+				out["deleted_at"] = *body.DeleteAt
+			} else {
+				at := body.At
+				if at < 0 {
+					at = 0
+				}
+				if at > len(s.Messages) {
+					at = len(s.Messages)
+				}
+				s.Messages = s.Messages[:at]
+				s = saveSession(c.UDB, appID, s)
+				out["at"] = at
+			}
+			out["messages_remaining"] = len(s.Messages)
+			return out, nil
+		}, jsonapi.MaxBody(1<<16)),
+	}.Serve
+	return func(w http.ResponseWriter, r *http.Request) {
+		// /api/sessions/{id}/export — the "Copy session" action's source:
+		// the transcript as markdown, not JSON.
+		if strings.HasSuffix(r.URL.Path, "/export") {
+			T.handleSessionExport(w, r)
 			return
 		}
-		s, found := loadSession(udb, appID, id)
-		if !found {
-			http.NotFound(w, r)
-			return
-		}
-		out := map[string]any{}
-		if body.DeleteAt != nil {
-			if di := *body.DeleteAt; di >= 0 && di < len(s.Messages) {
-				s.Messages = append(s.Messages[:di], s.Messages[di+1:]...)
-				s = saveSession(udb, appID, s)
-			}
-			out["deleted_at"] = *body.DeleteAt
-		} else {
-			at := body.At
-			if at < 0 {
-				at = 0
-			}
-			if at > len(s.Messages) {
-				at = len(s.Messages)
-			}
-			s.Messages = s.Messages[:at]
-			s = saveSession(udb, appID, s)
-			out["at"] = at
-		}
-		out["messages_remaining"] = len(s.Messages)
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(out)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		one(w, r)
 	}
+}
+
+// sessionPath is the session id and appliance a /api/sessions/{id} request
+// names: a 404 for one that names neither.
+func sessionPath(r *http.Request) (id, appID string, err error) {
+	id = strings.TrimPrefix(r.URL.Path, "/api/sessions/")
+	appID = strings.TrimSpace(r.URL.Query().Get("appliance_id"))
+	if id == "" || strings.Contains(id, "/") || appID == "" {
+		return "", "", jsonapi.NotFound("no such session")
+	}
+	return id, appID, nil
+}
+
+// sessionCutReq is what a session's PATCH is sent.
+type sessionCutReq struct {
+	At       int  `json:"at"`
+	DeleteAt *int `json:"delete_at"`
+}
+
+// handleSessionExport answers /api/sessions/{id}/export with the transcript as
+// markdown.
+func (T *Servitor) handleSessionExport(w http.ResponseWriter, r *http.Request) {
+	_, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/sessions/"), "/export")
+	appID := strings.TrimSpace(r.URL.Query().Get("appliance_id"))
+	if id == "" || strings.Contains(id, "/") || appID == "" {
+		http.NotFound(w, r)
+		return
+	}
+	s, found := loadSession(udb, appID, id)
+	if !found {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+	_, _ = w.Write([]byte(sessionMarkdown(s)))
 }

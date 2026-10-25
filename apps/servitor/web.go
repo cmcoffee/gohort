@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 func init() {
@@ -170,69 +171,12 @@ func (T *Servitor) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	go T.moveGrantsToSources()
 
 	sub := NewWebUI(T, prefix, AppUIAssets{})
-	sub.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
-			http.NotFound(w, r)
-			return
-		}
-		T.handleChatPage(w, r)
-	})
-	// AgentLoopPanel-facing endpoints — translator on top of the
-	// existing probeSessions queue. See chat_bridge.go / chat_page.go.
-	sub.HandleFunc("/api/chat/v2/events", T.handleChatEvents)
-	sub.HandleFunc("/api/chat/v2/confirm", T.handleChatConfirm)
-	sub.HandleFunc("/api/profile", T.handleProfile)
-	sub.HandleFunc("/api/appliances", T.handleAppliances)
-	sub.HandleFunc("/api/appliances/", T.handleApplianceMemory) // /api/appliances/<id>/{facts,graph,inferred,...} — shared agent-memory surface
-	sub.HandleFunc("/api/appliance/", T.handleAppliance)
-	sub.HandleFunc("/api/user-candidates", T.handleUserCandidates)
-	// Capability proposals: the list the owner reviews, and the decision on one.
-	sub.HandleFunc("/api/appliance-tools", T.handleApplianceTools)
-	sub.HandleFunc("/api/appliance-tool", T.handleApplianceTool)
-	// Which agents may work with which machines — the first link in the chain.
-	sub.HandleFunc("/api/command-grants", T.handleCommandGrants)
-	sub.HandleFunc("/api/access-agents", T.handleAccessAgents)
-	sub.HandleFunc("/api/chat", T.handleChat)
-	// Persisted chat sessions back the left rail (see sessions.go).
-	sub.HandleFunc("/api/sessions", T.handleServitorSessionList)
-	sub.HandleFunc("/api/sessions/", T.handleServitorSessionOne)
-	sub.HandleFunc("/api/push-to-guide", T.handlePushToGuide)
-	sub.HandleFunc("/api/inject", T.handleInject)
-	sub.HandleFunc("/api/map", T.handleMap)
-	sub.HandleFunc("/api/mapapp", T.handleMapApp)
-	sub.HandleFunc("/api/terminal", T.handleTerminal)
-	sub.HandleFunc("/api/facts", T.handleFacts)
-	sub.HandleFunc("/api/knowledge/export", T.handleKnowledgeExport)
-	sub.HandleFunc("/api/memory/clear", T.handleMemoryClear)
-	sub.HandleFunc("/api/repo/refresh", T.handleRepoRefresh)
-	// Evidence bundles: staging one file per request, then a single ingest
-	// over everything staged — which doubles as the retry path after a failed
-	// ingest, without re-sending a gigabyte. See bundle_upload.go.
-	// Tools bindable to a toolset appliance — the owner's own pool.
-	sub.HandleFunc("/api/bindable-tools", T.handleBindableTools)
 	// Serve commands to other instances (a wire to a system only this machine
 	// reaches), and list what registered peers let US reach. Wired here
 	// rather than in init because it needs T.DB.
 	T.registerPeerSystems()
 	T.registerPeerExec()
-	sub.HandleFunc("/api/peer-appliances", T.handlePeerAppliances)
-	sub.HandleFunc("/api/appliance-peers", T.handleAppliancePeers)
-	sub.HandleFunc("/api/bundle/upload", T.handleBundleUpload)
-	sub.HandleFunc("/api/bundle/ingest", T.handleBundleIngest)
-	// Out of Servitor: a bundle into a file store, a workspace into an agent
-	// (bundle_move.go, workspace_agent.go).
-	sub.HandleFunc("/api/bundle/move", T.handleBundleMove)
-	sub.HandleFunc("/api/bundle/move-targets", T.handleBundleMoveTargets)
-	sub.HandleFunc("/api/workspace/agent", T.handleWorkspaceAgent)
-	sub.HandleFunc("/api/collections", T.handleCollectionsList)
-	sub.HandleFunc("/api/cancel", probeSessions.HandleCancel("servitor"))
-	sub.HandleFunc("/api/save_destinations", T.handleSaveDestinations)
-	sub.HandleFunc("/api/save_article", T.handleSaveArticle)
-	sub.HandleFunc("/api/save_snippet", T.handleSaveSnippet)
-	sub.HandleFunc("/api/rules", T.handleRules)
-	sub.HandleFunc("/api/rules/", T.handleRuleDelete)
-	sub.HandleFunc("/api/permissions", T.handlePermissions)
-	sub.HandleFunc("/api/permissions/always", T.handleAlwaysAllowed)
+	T.routes(sub)
 	MountSubMux(mux, prefix, sub)
 	go T.runWatchLoop(AppContext())
 	RegisterLiveProvider(func() []LiveEntry {
@@ -250,6 +194,102 @@ func (T *Servitor) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		}
 		return entries
 	})
+}
+
+// routes mounts the HTTP surface on sub: everything RegisterRoutes does that a
+// test needs, without its migrations, hooks and background loops.
+func (T *Servitor) routes(sub *http.ServeMux) {
+	sub.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		T.handleChatPage(w, r)
+	})
+	// AgentLoopPanel-facing endpoints — translator on top of the
+	// existing probeSessions queue. See chat_bridge.go / chat_page.go.
+	sub.HandleFunc("/api/chat/v2/events", T.handleChatEvents)
+	sub.HandleFunc("/api/chat/v2/confirm", T.handleChatConfirm)
+	sub.HandleFunc("/api/profile", jsonapi.Get(T.DB, T.handleProfile))
+	sub.HandleFunc("/api/appliances", T.handleAppliances)
+	sub.HandleFunc("/api/appliances/", T.handleApplianceMemory) // /api/appliances/<id>/{facts,graph,inferred,...} — shared agent-memory surface
+	sub.HandleFunc("/api/appliance/", jsonapi.Methods{
+		"GET":    jsonapi.Get(T.DB, T.handleAppliance),
+		"DELETE": jsonapi.Post(T.DB, T.handleApplianceDelete),
+	}.Serve)
+	sub.HandleFunc("/api/user-candidates", jsonapi.Get(T.DB, T.handleUserCandidates))
+	// Capability proposals: the list the owner reviews, and the decision on one.
+	sub.HandleFunc("/api/appliance-tools", jsonapi.Get(T.DB, T.handleApplianceTools))
+	sub.HandleFunc("/api/appliance-tool", jsonapi.Methods{
+		"POST":   jsonapi.Post(T.DB, T.handleApplianceTool),
+		"DELETE": jsonapi.Post(T.DB, T.handleApplianceTool),
+	}.Serve)
+	// Which agents may work with which machines — the first link in the chain.
+	sub.HandleFunc("/api/command-grants", jsonapi.Methods{
+		"GET":    jsonapi.Get(T.DB, T.handleCommandGrants),
+		"POST":   jsonapi.Post(T.DB, T.handleCommandGrantAdd),
+		"DELETE": jsonapi.Post(T.DB, T.handleCommandGrantRemove),
+	}.Serve)
+	sub.HandleFunc("/api/access-agents", jsonapi.Get(T.DB, T.handleAccessAgents))
+	sub.HandleFunc("/api/chat", T.handleChat)
+	// Persisted chat sessions back the left rail (see sessions.go).
+	sub.HandleFunc("/api/sessions", jsonapi.Get(T.DB, T.handleServitorSessionList))
+	sub.HandleFunc("/api/sessions/", T.handleServitorSessionOne())
+	sub.HandleFunc("/api/push-to-guide", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, T.handlePushToGuide),
+		"POST": jsonapi.Post(T.DB, T.handlePushToGuideSave),
+	}.Serve)
+	sub.HandleFunc("/api/inject", T.handleInject)
+	sub.HandleFunc("/api/map", T.handleMap)
+	sub.HandleFunc("/api/mapapp", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleMapApp)}.Serve)
+	sub.HandleFunc("/api/terminal", T.handleTerminal)
+	sub.HandleFunc("/api/facts", jsonapi.Methods{
+		"GET":    jsonapi.Get(T.DB, T.handleFacts),
+		"POST":   jsonapi.Post(T.DB, T.handleFactSave),
+		"DELETE": jsonapi.Post(T.DB, T.handleFactDelete),
+	}.Serve)
+	sub.HandleFunc("/api/knowledge/export", T.handleKnowledgeExport)
+	sub.HandleFunc("/api/memory/clear", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleMemoryClear)}.Serve)
+	sub.HandleFunc("/api/repo/refresh", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleRepoRefresh)}.Serve)
+	// Evidence bundles: staging one file per request, then a single ingest
+	// over everything staged — which doubles as the retry path after a failed
+	// ingest, without re-sending a gigabyte. See bundle_upload.go.
+	// Tools bindable to a toolset appliance — the owner's own pool.
+	sub.HandleFunc("/api/bindable-tools", jsonapi.Get(T.DB, T.handleBindableTools))
+	sub.HandleFunc("/api/peer-appliances", jsonapi.Get(T.DB, T.handlePeerAppliances))
+	sub.HandleFunc("/api/appliance-peers", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, T.handleAppliancePeers),
+		"POST": jsonapi.Post(T.DB, T.handleAppliancePeerGrant),
+		"PUT":  jsonapi.Post(T.DB, T.handleAppliancePeerGrant),
+	}.Serve)
+	sub.HandleFunc("/api/bundle/upload", T.handleBundleUpload)
+	sub.HandleFunc("/api/bundle/ingest", jsonapi.Post(T.DB, T.handleBundleIngest))
+	// Out of Servitor: a bundle into a file store, a workspace into an agent
+	// (bundle_move.go, workspace_agent.go).
+	sub.HandleFunc("/api/bundle/move", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, T.handleBundleMove),
+		"POST": jsonapi.Post(T.DB, T.handleBundleMoveStart),
+	}.Serve)
+	sub.HandleFunc("/api/bundle/move-targets", jsonapi.Get(T.DB, T.handleBundleMoveTargets))
+	sub.HandleFunc("/api/workspace/agent", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleWorkspaceAgent)}.Serve)
+	sub.HandleFunc("/api/collections", jsonapi.Get(T.DB, T.handleCollectionsList))
+	sub.HandleFunc("/api/cancel", probeSessions.HandleCancel("servitor"))
+	sub.HandleFunc("/api/save_destinations", jsonapi.Get(T.DB, T.handleSaveDestinations))
+	sub.HandleFunc("/api/save_article", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleSaveArticle)}.Serve)
+	sub.HandleFunc("/api/save_snippet", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleSaveSnippet)}.Serve)
+	sub.HandleFunc("/api/rules", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, T.handleRules),
+		"POST": jsonapi.Post(T.DB, T.handleRuleAdd),
+	}.Serve)
+	sub.HandleFunc("/api/rules/", jsonapi.Methods{"DELETE": jsonapi.Post(T.DB, T.handleRuleDelete)}.Serve)
+	sub.HandleFunc("/api/permissions", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, T.handlePermissions),
+		"POST": jsonapi.Post(T.DB, T.handlePermissionsSave),
+	}.Serve)
+	sub.HandleFunc("/api/permissions/always", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, T.handleAlwaysAllowed),
+		"POST": jsonapi.Post(T.DB, T.handleAlwaysAllowedSave, jsonapi.MaxBody(1<<16)),
+	}.Serve)
 }
 
 // emit adds an event to a session's buffer.

@@ -14,43 +14,29 @@ package servitor
 //	  -> {"agent_id", "name", "url", "attached": [names], "skipped": [names]}
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/appagents"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
-func (T *Servitor) handleWorkspaceAgent(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	userID, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	var req struct {
-		ApplianceID string `json:"appliance_id"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.ApplianceID) == "" {
-		http.Error(w, "appliance_id required", http.StatusBadRequest)
-		return
+func (T *Servitor) handleWorkspaceAgent(c *jsonapi.Call, req applianceReq) (any, error) {
+	userID, udb := c.User, c.UDB
+	if strings.TrimSpace(req.ApplianceID) == "" {
+		return nil, jsonapi.BadRequest("appliance_id required")
 	}
 	ws, _, _, found := T.resolveAppliance(userID, udb, req.ApplianceID)
 	if !found {
-		http.Error(w, "system not found", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("system not found")
 	}
 	if ws.Type != "workspace" {
-		http.Error(w, "not a workspace", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("not a workspace")
 	}
 	if appagents.CreateUserAgent == nil || SetAgentSource == nil {
-		http.Error(w, "agents are not available on this server", http.StatusServiceUnavailable)
-		return
+		return nil, jsonapi.Status(http.StatusServiceUnavailable, "agents are not available on this server")
 	}
 	// Only members this person can reach: the agent is theirs, and a Source
 	// they cannot open gives it nothing.
@@ -64,8 +50,7 @@ func (T *Servitor) handleWorkspaceAgent(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	if len(members) == 0 {
-		http.Error(w, "none of this workspace's systems is one you can reach, so an agent made from it would have nothing to investigate", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("none of this workspace's systems is one you can reach, so an agent made from it would have nothing to investigate")
 	}
 	agentID, name, err := appagents.CreateUserAgent(userID, appagents.UserAgent{
 		Name:        ws.Name,
@@ -74,8 +59,7 @@ func (T *Servitor) handleWorkspaceAgent(w http.ResponseWriter, r *http.Request) 
 		MemoryMode:  "agent",
 	})
 	if err != nil {
-		http.Error(w, "could not make the agent: "+err.Error(), http.StatusInternalServerError)
-		return
+		return nil, jsonapi.Status(http.StatusInternalServerError, "could not make the agent: "+err.Error())
 	}
 	var attached []string
 	for _, m := range members {
@@ -87,11 +71,10 @@ func (T *Servitor) handleWorkspaceAgent(w http.ResponseWriter, r *http.Request) 
 		attached = append(attached, m.Name)
 	}
 	Log("[servitor] %s made agent %q from workspace %s, %d system(s) attached", userID, name, ws.ID, len(attached))
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	return map[string]any{
 		"agent_id": agentID, "name": name, "url": "/orchestrate/agent/" + agentID,
 		"attached": attached, "skipped": skipped,
-	})
+	}, nil
 }
 
 // workspaceAgentPrompt is the instructions an agent made from ws starts with:

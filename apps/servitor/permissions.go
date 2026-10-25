@@ -7,12 +7,12 @@ package servitor
 // category left unchecked still prompts before every matching command.
 
 import (
-	"encoding/json"
 	"net/http"
 	"sort"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 const (
@@ -56,31 +56,19 @@ func saveAllowedCategories(udb Database, in map[string]bool) {
 // handlePermissions is GET (read the auto-run set) / POST (replace it). The
 // response/request body is a flat {category: bool} map over every risk
 // category, so the browser toggle UI round-trips it directly.
-func (T *Servitor) handlePermissions(w http.ResponseWriter, r *http.Request) {
-	_, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
+func (T *Servitor) handlePermissions(c *jsonapi.Call) (any, error) {
+	cats := loadAllowedCategories(c.UDB)
+	out := map[string]bool{}
+	for _, cat := range AllRiskCategories {
+		out[string(cat)] = cats[cat]
 	}
-	switch r.Method {
-	case http.MethodGet:
-		cats := loadAllowedCategories(udb)
-		out := map[string]bool{}
-		for _, c := range AllRiskCategories {
-			out[string(c)] = cats[c]
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(out)
-	case http.MethodPost:
-		var body map[string]bool
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		saveAllowedCategories(udb, body)
-		w.WriteHeader(http.StatusNoContent)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
+	return out, nil
+}
+
+// handlePermissionsSave sets which risk categories run without asking.
+func (T *Servitor) handlePermissionsSave(c *jsonapi.Call, body map[string]bool) (any, error) {
+	saveAllowedCategories(c.UDB, body)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // alwaysAllowed is one command an operator answered Always for, as the
@@ -127,51 +115,46 @@ func (T *Servitor) listAlwaysAllowed(user string, udb Database) []alwaysAllowed 
 
 // handleAlwaysAllowed is GET (the user's Always answers) / POST {appliance_id,
 // command} (remove one, so that command asks again on that appliance).
-func (T *Servitor) handleAlwaysAllowed(w http.ResponseWriter, r *http.Request) {
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
+func (T *Servitor) handleAlwaysAllowed(c *jsonapi.Call) (any, error) {
+	if c.UDB == nil {
+		return nil, jsonapi.Status(http.StatusInternalServerError, "no store for this user")
 	}
+	return map[string]any{"commands": T.listAlwaysAllowed(c.User, c.UDB)}, nil
+}
+
+// handleAlwaysAllowedSave removes an always-allow rule, or replaces it with
+// an edited one.
+func (T *Servitor) handleAlwaysAllowedSave(c *jsonapi.Call, body alwaysAllowedReq) (any, error) {
+	user, udb := c.User, c.UDB
 	if udb == nil {
-		http.Error(w, "no store for this user", http.StatusInternalServerError)
-		return
+		return nil, jsonapi.Status(http.StatusInternalServerError, "no store for this user")
 	}
-	switch r.Method {
-	case http.MethodGet:
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"commands": T.listAlwaysAllowed(user, udb)})
-	case http.MethodPost:
-		var body struct {
-			ApplianceID string `json:"appliance_id"`
-			Command     string `json:"command"`
-			// Rule, when set, replaces the saved one (an edit) rather than
-			// removing it.
-			Rule string `json:"rule"`
+	if body.ApplianceID == "" || body.Command == "" {
+		return nil, jsonapi.BadRequest("appliance_id and command are required")
+	}
+	if rule := strings.TrimSpace(body.Rule); rule != "" {
+		var on bool
+		if !udb.Get(alwaysAllowTable, alwaysAllowKey(body.ApplianceID, body.Command), &on) || !on {
+			return nil, jsonapi.NotFound("that rule is no longer saved")
 		}
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&body); err != nil || body.ApplianceID == "" || body.Command == "" {
-			http.Error(w, "appliance_id and command are required", http.StatusBadRequest)
-			return
-		}
-		if rule := strings.TrimSpace(body.Rule); rule != "" {
-			var on bool
-			if !udb.Get(alwaysAllowTable, alwaysAllowKey(body.ApplianceID, body.Command), &on) || !on {
-				http.Error(w, "that rule is no longer saved", http.StatusNotFound)
-				return
-			}
-			if err := validEditedRule(body.Command, rule); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			udb.Unset(alwaysAllowTable, alwaysAllowKey(body.ApplianceID, body.Command))
-			udb.Set(alwaysAllowTable, alwaysAllowKey(body.ApplianceID, rule), true)
-			Log("[servitor] %s changed an always-allow rule on %s: %s -> %s", user, body.ApplianceID, body.Command, rule)
-			w.WriteHeader(http.StatusNoContent)
-			return
+		if err := validEditedRule(body.Command, rule); err != nil {
+			return nil, jsonapi.BadRequest(err.Error())
 		}
 		udb.Unset(alwaysAllowTable, alwaysAllowKey(body.ApplianceID, body.Command))
-		Log("[servitor] %s removed always-allow on %s for: %s", user, body.ApplianceID, body.Command)
-		w.WriteHeader(http.StatusNoContent)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		udb.Set(alwaysAllowTable, alwaysAllowKey(body.ApplianceID, rule), true)
+		Log("[servitor] %s changed an always-allow rule on %s: %s -> %s", user, body.ApplianceID, body.Command, rule)
+		return jsonapi.Empty(http.StatusNoContent), nil
 	}
+	udb.Unset(alwaysAllowTable, alwaysAllowKey(body.ApplianceID, body.Command))
+	Log("[servitor] %s removed always-allow on %s for: %s", user, body.ApplianceID, body.Command)
+	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// alwaysAllowedReq is what handleAlwaysAllowedSave is posted.
+type alwaysAllowedReq struct {
+	ApplianceID string `json:"appliance_id"`
+	Command     string `json:"command"`
+	// Rule, when set, replaces the saved one (an edit) rather than
+	// removing it.
+	Rule string `json:"rule"`
 }

@@ -24,7 +24,7 @@ func TestASessionMessageCanBeEditedOrDeleted(t *testing.T) {
 	}})
 	patch := func(user, body string) int {
 		w := httptest.NewRecorder()
-		app.handleServitorSessionOne(w, reqAs(t, http.MethodPatch, "/api/sessions/s1?appliance_id=box-1", user, body))
+		routed(app)(w, reqAs(t, http.MethodPatch, "/api/sessions/s1?appliance_id=box-1", user, body))
 		return w.Code
 	}
 	contents := func() []string {

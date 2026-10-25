@@ -60,7 +60,7 @@ func TestAWorkspaceBecomesAnAgentWithItsMembersAsSources(t *testing.T) {
 
 	post := func(body string) (int, string) {
 		w := httptest.NewRecorder()
-		app.handleWorkspaceAgent(w, reqAs(t, http.MethodPost, "/api/workspace/agent", "alice", body))
+		routed(app)(w, reqAs(t, http.MethodPost, "/api/workspace/agent", "alice", body))
 		return w.Code, w.Body.String()
 	}
 	code, body := post(`{"appliance_id":"w1"}`)
@@ -98,7 +98,7 @@ func TestAWorkspaceBecomesAnAgentWithItsMembersAsSources(t *testing.T) {
 		t.Errorf("an agent was made from an ssh system: %d", code)
 	}
 	w := httptest.NewRecorder()
-	app.handleWorkspaceAgent(w, reqAs(t, http.MethodPost, "/api/workspace/agent", "bob", `{"appliance_id":"w1"}`))
+	routed(app)(w, reqAs(t, http.MethodPost, "/api/workspace/agent", "bob", `{"appliance_id":"w1"}`))
 	if w.Code != http.StatusNotFound {
 		t.Errorf("someone else's workspace was turned into their agent: %d", w.Code)
 	}
@@ -143,9 +143,9 @@ func TestABundleIsCopiedIntoAFileStore(t *testing.T) {
 
 	call := func(method, target, user string) (int, string) {
 		w := httptest.NewRecorder()
-		h := app.handleBundleMove
+		h := routed(app)
 		if strings.Contains(target, "move-targets") {
-			h = app.handleBundleMoveTargets
+			h = routed(app)
 		}
 		h(w, reqAs(t, method, target, user, ""))
 		return w.Code, w.Body.String()

@@ -12,11 +12,11 @@
 package servitor
 
 import (
-	"encoding/json"
 	"net/http"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -54,11 +54,8 @@ type applianceToolRow struct {
 
 // handleApplianceTools lists every proposal, pending first — the ones needing a
 // decision are the reason anyone opens this.
-func (T *Servitor) handleApplianceTools(w http.ResponseWriter, r *http.Request) {
-	_, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *Servitor) handleApplianceTools(c *jsonapi.Call) (any, error) {
+	udb := c.UDB
 	names := map[string]string{}
 	for _, k := range udb.Keys(applianceTable) {
 		var a Appliance
@@ -96,8 +93,7 @@ func (T *Servitor) handleApplianceTools(w http.ResponseWriter, r *http.Request) 
 	// Pending first, then by machine and name, so the decisions are at the top
 	// and the rest reads as an inventory.
 	sortRows(rows)
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(rows)
+	return rows, nil
 }
 
 func sortRows(rows []applianceToolRow) {
@@ -120,37 +116,28 @@ func rowLess(a, b applianceToolRow) bool {
 
 // handleApplianceTool is the decision endpoint: POST sets approval, DELETE
 // removes the proposal entirely.
-func (T *Servitor) handleApplianceTool(w http.ResponseWriter, r *http.Request) {
-	_, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	appliance := strings.TrimSpace(r.URL.Query().Get("appliance"))
-	name := strings.TrimSpace(r.URL.Query().Get("name"))
+func (T *Servitor) handleApplianceTool(c *jsonapi.Call, _ struct{}) (any, error) {
+	q := c.R.URL.Query()
+	appliance := strings.TrimSpace(q.Get("appliance"))
+	name := strings.TrimSpace(q.Get("name"))
 	if appliance == "" || name == "" {
-		http.Error(w, "system and name are required", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("system and name are required")
 	}
-	switch r.Method {
-	case http.MethodPost:
-		approved := r.URL.Query().Get("approved") == "1"
-		if !ApproveApplianceTool(udb, appliance, name, approved) {
-			http.Error(w, "no such capability", http.StatusNotFound)
-			return
-		}
-		// Logged either way. An approval is the moment a machine becomes
-		// reachable by something that is not a person, and a revocation is the
-		// moment someone decided it should not be — both are worth being able
-		// to find later.
-		Log("[servitor] capability %q on %s set approved=%v by the owner", name, appliance, approved)
-		w.WriteHeader(http.StatusNoContent)
-	case http.MethodDelete:
-		DeleteApplianceTool(udb, appliance, name)
+	if c.R.Method == http.MethodDelete {
+		DeleteApplianceTool(c.UDB, appliance, name)
 		Log("[servitor] capability %q on %s deleted by the owner", name, appliance)
-		w.WriteHeader(http.StatusNoContent)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return jsonapi.Empty(http.StatusNoContent), nil
 	}
+	approved := q.Get("approved") == "1"
+	if !ApproveApplianceTool(c.UDB, appliance, name, approved) {
+		return nil, jsonapi.NotFound("no such capability")
+	}
+	// Logged either way. An approval is the moment a machine becomes
+	// reachable by something that is not a person, and a revocation is the
+	// moment someone decided it should not be — both are worth being able
+	// to find later.
+	Log("[servitor] capability %q on %s set approved=%v by the owner", name, appliance, approved)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // capabilitiesSectionActions exposes the row actions for assertion. The

@@ -8,12 +8,12 @@ package servitor
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/docs"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/textutil"
 )
 
@@ -23,114 +23,94 @@ import (
 // POST {appliance_id, guide_id, section_title, text, link, new_title} → {ok, guide_id}
 // link=true attaches the system to guide_id's Sources first; an empty
 // guide_id with new_title makes a new guide for it.
-func (T *Servitor) handlePushToGuide(w http.ResponseWriter, r *http.Request) {
-	userID, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
+func (T *Servitor) handlePushToGuide(c *jsonapi.Call) (any, error) {
+	userID := c.User
+	aid := strings.TrimSpace(c.R.URL.Query().Get("appliance_id"))
+	// Guides that list this appliance/repo as a source (kind "system").
+	guides := ListDocumentsReferencing(userID, "guide", "system", aid)
+	if guides == nil {
+		guides = []DocItem{}
 	}
-	switch r.Method {
-	case http.MethodGet:
-		aid := strings.TrimSpace(r.URL.Query().Get("appliance_id"))
-		// Guides that list this appliance/repo as a source (kind "system").
-		guides := ListDocumentsReferencing(userID, "guide", "system", aid)
-		if guides == nil {
-			guides = []DocItem{}
-		}
-		linked := map[string]bool{}
-		for _, g := range guides {
-			linked[g.ID] = true
-		}
-		others := []DocItem{}
-		for _, g := range ListDocuments(userID, "guide") {
-			if !linked[g.ID] {
-				others = append(others, g)
-			}
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"guides": guides, "others": others})
-
-	case http.MethodPost:
-		var body struct {
-			ApplianceID  string `json:"appliance_id"`
-			GuideID      string `json:"guide_id"`
-			SectionTitle string `json:"section_title"`
-			Text         string `json:"text"`
-			// Link attaches this system to guide_id's Sources before writing.
-			Link bool `json:"link"`
-			// NewTitle, with no guide_id, makes a new guide for this system.
-			NewTitle string `json:"new_title"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		text := strings.TrimSpace(body.Text)
-		if text == "" {
-			http.Error(w, "text is required", http.StatusBadRequest)
-			return
-		}
-		aid := strings.TrimSpace(body.ApplianceID)
-		gid := strings.TrimSpace(body.GuideID)
-		newTitle := strings.TrimSpace(body.NewTitle)
-		if gid == "" && newTitle == "" {
-			http.Error(w, "guide_id is required", http.StatusBadRequest)
-			return
-		}
-		// Linking names this system on a guide, so it has to be one this
-		// person can reach, as the guide's own Sources picker lists.
-		if body.Link || gid == "" {
-			if a, _, _, ok := T.resolveAppliance(userID, udb, aid); !ok || a.ID == "" {
-				http.Error(w, "that system is not one of yours", http.StatusNotFound)
-				return
-			}
-		}
-		section := strings.TrimSpace(body.SectionTitle)
-		if section == "" {
-			section = deriveSectionTitle(text)
-		}
-		if gid == "" {
-			// A new guide for this system: the reply is its first section,
-			// and the system its first source.
-			id, err := AppendToDocument(context.Background(), userID, "guide", "", newTitle, section, text)
-			if err != nil {
-				http.Error(w, "could not make the guide: "+err.Error(), http.StatusInternalServerError)
-				return
-			}
-			if err := docs.AttachDocumentReference(userID, "guide", id, "system", aid); err != nil {
-				http.Error(w, "made the guide, but could not link this system to it: "+err.Error(), http.StatusInternalServerError)
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "guide_id": id})
-			return
-		}
-		// Guard: the chosen guide must reference this appliance, or be linked
-		// to it now, which only the person's own guides can be.
-		if !docInList(ListDocumentsReferencing(userID, "guide", "system", aid), gid) {
-			if !body.Link {
-				http.Error(w, "that guide doesn't list this system as a source", http.StatusBadRequest)
-				return
-			}
-			if !docInList(ListDocuments(userID, "guide"), gid) {
-				http.Error(w, "that guide is not one of yours", http.StatusNotFound)
-				return
-			}
-			if err := docs.AttachDocumentReference(userID, "guide", gid, "system", aid); err != nil {
-				http.Error(w, "could not link this system to the guide: "+err.Error(), http.StatusInternalServerError)
-				return
-			}
-			Log("[servitor] %s linked system %s to guide %s", userID, aid, gid)
-		}
-		if _, err := AppendToDocument(context.Background(), userID, "guide", gid, "", section, text); err != nil {
-			http.Error(w, "push failed: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "guide_id": gid})
-
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	linked := map[string]bool{}
+	for _, g := range guides {
+		linked[g.ID] = true
 	}
+	others := []DocItem{}
+	for _, g := range ListDocuments(userID, "guide") {
+		if !linked[g.ID] {
+			others = append(others, g)
+		}
+	}
+	return map[string]any{"guides": guides, "others": others}, nil
+}
+
+// handlePushToGuideSave writes a reply into a guide, linking this system to it
+// or making a new guide for it first when asked.
+func (T *Servitor) handlePushToGuideSave(c *jsonapi.Call, body pushToGuideReq) (any, error) {
+	userID, udb := c.User, c.UDB
+	text := strings.TrimSpace(body.Text)
+	if text == "" {
+		return nil, jsonapi.BadRequest("text is required")
+	}
+	aid := strings.TrimSpace(body.ApplianceID)
+	gid := strings.TrimSpace(body.GuideID)
+	newTitle := strings.TrimSpace(body.NewTitle)
+	if gid == "" && newTitle == "" {
+		return nil, jsonapi.BadRequest("guide_id is required")
+	}
+	// Linking names this system on a guide, so it has to be one this
+	// person can reach, as the guide's own Sources picker lists.
+	if body.Link || gid == "" {
+		if a, _, _, ok := T.resolveAppliance(userID, udb, aid); !ok || a.ID == "" {
+			return nil, jsonapi.NotFound("that system is not one of yours")
+		}
+	}
+	section := strings.TrimSpace(body.SectionTitle)
+	if section == "" {
+		section = deriveSectionTitle(text)
+	}
+	if gid == "" {
+		// A new guide for this system: the reply is its first section,
+		// and the system its first source.
+		id, err := AppendToDocument(context.Background(), userID, "guide", "", newTitle, section, text)
+		if err != nil {
+			return nil, jsonapi.Status(http.StatusInternalServerError, "could not make the guide: "+err.Error())
+		}
+		if err := docs.AttachDocumentReference(userID, "guide", id, "system", aid); err != nil {
+			return nil, jsonapi.Status(http.StatusInternalServerError, "made the guide, but could not link this system to it: "+err.Error())
+		}
+		return map[string]any{"ok": true, "guide_id": id}, nil
+	}
+	// Guard: the chosen guide must reference this appliance, or be linked
+	// to it now, which only the person's own guides can be.
+	if !docInList(ListDocumentsReferencing(userID, "guide", "system", aid), gid) {
+		if !body.Link {
+			return nil, jsonapi.BadRequest("that guide doesn't list this system as a source")
+		}
+		if !docInList(ListDocuments(userID, "guide"), gid) {
+			return nil, jsonapi.NotFound("that guide is not one of yours")
+		}
+		if err := docs.AttachDocumentReference(userID, "guide", gid, "system", aid); err != nil {
+			return nil, jsonapi.Status(http.StatusInternalServerError, "could not link this system to the guide: "+err.Error())
+		}
+		Log("[servitor] %s linked system %s to guide %s", userID, aid, gid)
+	}
+	if _, err := AppendToDocument(context.Background(), userID, "guide", gid, "", section, text); err != nil {
+		return nil, jsonapi.Status(http.StatusInternalServerError, "push failed: "+err.Error())
+	}
+	return map[string]any{"ok": true, "guide_id": gid}, nil
+}
+
+// pushToGuideReq is what handlePushToGuideSave is posted.
+type pushToGuideReq struct {
+	ApplianceID  string `json:"appliance_id"`
+	GuideID      string `json:"guide_id"`
+	SectionTitle string `json:"section_title"`
+	Text         string `json:"text"`
+	// Link attaches this system to guide_id's Sources before writing.
+	Link bool `json:"link"`
+	// NewTitle, with no guide_id, makes a new guide for this system.
+	NewTitle string `json:"new_title"`
 }
 
 // docInList reports whether id is among items.

@@ -8,11 +8,13 @@
 package servitor
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/peershare"
 )
 
@@ -288,11 +290,6 @@ func keepReached(list, reach []string) []string {
 
 // handleUserCandidates serves the share picker's people and teams. Never
 // Everyone: see keptEveryone.
-func (T *Servitor) handleUserCandidates(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(ShareCandidatesJSON(user, r.URL.Query().Get("groups") == "1", false))
+func (T *Servitor) handleUserCandidates(c *jsonapi.Call) (any, error) {
+	return json.RawMessage(ShareCandidatesJSON(c.User, c.R.URL.Query().Get("groups") == "1", false)), nil
 }

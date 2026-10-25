@@ -30,15 +30,14 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
-	"net/http"
 	"sort"
 	"strings"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/agenthost"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/textutil"
 	"github.com/cmcoffee/gohort/tools/temptool"
 )
@@ -476,18 +475,11 @@ func firstToolset(rt []resolvedToolset) resolvedToolset {
 // save (see the appliance POST handler) and any value the client sends back is
 // discarded — a caller-supplied fingerprint would let it bless a body nobody
 // approved, which is the whole thing the pin exists to prevent.
-func (T *Servitor) handleBindableTools(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	userID, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *Servitor) handleBindableTools(c *jsonapi.Call) (any, error) {
+	userID, udb := c.User, c.UDB
 	owner := userID
 	bound := map[string]ToolBinding{}
-	if id := strings.TrimSpace(r.URL.Query().Get("appliance_id")); id != "" && udb != nil {
+	if id := strings.TrimSpace(c.R.URL.Query().Get("appliance_id")); id != "" && udb != nil {
 		if a, o, _, found := T.resolveAppliance(userID, udb, id); found {
 			owner = o
 			for _, b := range a.Toolset {
@@ -533,8 +525,7 @@ func (T *Servitor) handleBindableTools(w http.ResponseWriter, r *http.Request) {
 			Changed: isBound && b.BodyHash != "" && b.BodyHash != toolBodyHash(t),
 		})
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(out)
+	return out, nil
 }
 
 // drillReadOnlyKey marks a run dispatched by a workspace coordinator, where

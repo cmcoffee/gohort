@@ -40,7 +40,7 @@ func TestSharedApplianceEnvValuesStayWithTheOwner(t *testing.T) {
 		call func(w http.ResponseWriter, r *http.Request)
 		path string
 	}{
-		{"one record", app.handleAppliance, "/api/appliance/cmd-1"},
+		{"one record", routed(app), "/api/appliance/cmd-1"},
 		{"the list", app.handleAppliances, "/api/appliances"},
 	} {
 		w := httptest.NewRecorder()
@@ -58,7 +58,7 @@ func TestSharedApplianceEnvValuesStayWithTheOwner(t *testing.T) {
 	}
 
 	w := httptest.NewRecorder()
-	app.handleAppliance(w, reqAs(t, http.MethodGet, "/api/appliance/cmd-1", "alice", ""))
+	routed(app)(w, reqAs(t, http.MethodGet, "/api/appliance/cmd-1", "alice", ""))
 	if !strings.Contains(w.Body.String(), "tok-0123456789") {
 		t.Error("the owner must still see their own values to edit them")
 	}

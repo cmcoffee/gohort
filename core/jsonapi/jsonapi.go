@@ -164,6 +164,13 @@ func (m Methods) Serve(w http.ResponseWriter, r *http.Request) {
 	h(w, r)
 }
 
+// Empty is a reply of code and no body, for a handler whose answer is the
+// status: a 204 for a change with nothing to report, a 202 for work started in
+// the background. Return it as the handler's result.
+func Empty(code int) any { return emptyReply(code) }
+
+type emptyReply int
+
 // Write answers with v as JSON.
 func Write(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -194,6 +201,10 @@ func finish[Out any](w http.ResponseWriter, r *http.Request, out Out, err error)
 		}
 		core.Err("[jsonapi] %s %s: %v", r.Method, r.URL.Path, err)
 		http.Error(w, "something went wrong on the server; the details are in its log", http.StatusInternalServerError)
+		return
+	}
+	if code, ok := any(out).(emptyReply); ok {
+		w.WriteHeader(int(code))
 		return
 	}
 	Write(w, out)

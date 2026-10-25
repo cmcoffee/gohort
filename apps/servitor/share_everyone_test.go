@@ -70,7 +70,7 @@ func TestASystemIsNeverNewlySharedWithEveryone(t *testing.T) {
 
 	// The picker does not offer it.
 	w := httptest.NewRecorder()
-	app.handleUserCandidates(w, reqAs(t, http.MethodGet, "/api/user-candidates?groups=1&everyone=1", "alice", ""))
+	routed(app)(w, reqAs(t, http.MethodGet, "/api/user-candidates?groups=1&everyone=1", "alice", ""))
 	if strings.Contains(w.Body.String(), `"value":"*"`) {
 		t.Errorf("the picker offers Everyone: %s", w.Body.String())
 	}

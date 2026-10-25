@@ -1,0 +1,312 @@
+(signed out) GET /api/user-candidates ""
+  401 unauthorized
+alice GET /api/user-candidates ""
+  200 [{"value":"bob","label":"bob","named":true},{"value":"dana","label":"dana","named":true},{"value":"root","label":"root","named":true}]
+alice PUT /api/user-candidates "{}"
+  405 method not allowed
+(signed out) GET /api/access-agents ""
+  401 unauthorized
+alice GET /api/access-agents ""
+  200 []
+alice PUT /api/access-agents "{}"
+  405 method not allowed
+(signed out) GET /api/appliance-tools ""
+  401 unauthorized
+alice GET /api/appliance-tools ""
+  200 []
+alice PUT /api/appliance-tools "{}"
+  405 method not allowed
+(signed out) GET /api/collections ""
+  401 unauthorized
+alice GET /api/collections ""
+  200 []
+alice PUT /api/collections "{}"
+  405 method not allowed
+(signed out) GET /api/save_destinations ""
+  401 unauthorized
+alice GET /api/save_destinations ""
+  200 {"codewriter":false,"guide":<registered>,"scribe":false}
+alice PUT /api/save_destinations "{}"
+  405 method not allowed
+(signed out) GET /api/peer-appliances ""
+  401 unauthorized
+alice GET /api/peer-appliances ""
+  200 []
+alice PUT /api/peer-appliances "{}"
+  405 method not allowed
+(signed out) GET /api/permissions/always ""
+  401 unauthorized
+alice GET /api/permissions/always ""
+  200 {"commands":[]}
+alice PUT /api/permissions/always "{}"
+  405 method not allowed
+(signed out) GET /api/command-grants ""
+  401 unauthorized
+alice GET /api/command-grants ""
+  200 []
+alice PUT /api/command-grants "{}"
+  405 method not allowed
+alice GET /api/profile?appliance_id=box ""
+  200 {"name":"Lab Box","profile":"a lab machine","scanned":""}
+alice GET /api/appliance/box ""
+  200 {"id":"box","type":"ssh","name":"Lab Box","host":"","port":0,"user":"","password":"","command":"","work_dir":"","env_vars":["TOKEN=tok-secret"],"repo_url":"","owner":"alice","allowed_users":["bob"],"instructions":"","persona_name":"","persona_prompt":"","profile":"a lab machine","log_map":null,"scanned":""}
+alice GET /api/rules?appliance_id=box ""
+  200 []
+alice GET /api/appliance-peers?appliance_id=box ""
+  200 {"can_manage":true,"keys":[]}
+alice GET /api/bindable-tools?appliance_id=box ""
+  200 []
+alice GET /api/bundle/move-targets?appliance_id=box ""
+  400 not an evidence bundle
+alice GET /api/push-to-guide?appliance_id=box ""
+  200 {"guides":[],"others":[]}
+bob GET /api/profile?appliance_id=box ""
+  200 {"name":"Lab Box","profile":"a lab machine","scanned":""}
+bob GET /api/appliance/box ""
+  200 {"id":"box","type":"ssh","name":"Lab Box","host":"","port":0,"user":"","password":"","command":"","work_dir":"","env_vars":["TOKEN"],"repo_url":"","owner":"alice","allowed_users":["bob"],"instructions":"","persona_name":"","persona_prompt":"","profile":"a lab machine","log_map":null,"scanned":""}
+bob GET /api/rules?appliance_id=box ""
+  200 []
+bob GET /api/appliance-peers?appliance_id=box ""
+  200 {"can_manage":false,"keys":[]}
+bob GET /api/bindable-tools?appliance_id=box ""
+  200 []
+bob GET /api/bundle/move-targets?appliance_id=box ""
+  400 not an evidence bundle
+bob GET /api/push-to-guide?appliance_id=box ""
+  200 {"guides":[],"others":[]}
+dana GET /api/profile?appliance_id=box ""
+  404 system not found
+dana GET /api/appliance/box ""
+  404 not found
+dana GET /api/rules?appliance_id=box ""
+  200 []
+dana GET /api/appliance-peers?appliance_id=box ""
+  404 system not found
+dana GET /api/bindable-tools?appliance_id=box ""
+  200 []
+dana GET /api/bundle/move-targets?appliance_id=box ""
+  404 system not found
+dana GET /api/push-to-guide?appliance_id=box ""
+  200 {"guides":[],"others":[]}
+alice GET /api/profile ""
+  400 appliance_id required
+alice GET /api/appliance/ ""
+  404 not found
+alice GET /api/rules ""
+  400 appliance_id required
+alice PUT /api/appliance/box "{}"
+  405 method not allowed
+alice POST /api/bindable-tools?appliance_id=box "{}"
+  405 method not allowed
+alice GET /api/facts ""
+  400 id required
+alice GET /api/facts?id=box ""
+  200 []
+alice POST /api/facts "{\"appliance_id\":\"box\",\"key\":\"os\",\"value\":\"linux\"}"
+  204 
+alice POST /api/facts "{\"appliance_id\":\"nope\",\"key\":\"os\",\"value\":\"linux\"}"
+  404 system not found
+alice POST /api/facts "{\"appliance_id\":\"box\"}"
+  400 appliance_id, key, and value required
+alice POST /api/facts "{\"appliance_id\":"
+  400 invalid JSON: unexpected EOF
+alice GET /api/facts?id=box ""
+  200 [{"id":"box:os","appliance_id":"box","appliance_name":"Lab Box","key":"os","value":"linux","updated":"<time>","ttl":"long"}]
+alice DELETE /api/facts ""
+  400 key required
+alice DELETE /api/facts?key=nope ""
+  204 
+alice PUT /api/facts "{}"
+  405 method not allowed
+alice POST /api/rules?appliance_id=box "{\"appliance_id\":\"box\",\"rule\":\"never reboot\"}"
+  200 {"id":"box:<uuid>"}
+bob POST /api/rules "{\"appliance_id\":\"box\",\"rule\":\"mine now\"}"
+  403 only the owner or an admin can set rules on a shared system
+dana POST /api/rules "{\"appliance_id\":\"box\",\"rule\":\"x\"}"
+  404 system not found
+root POST /api/rules "{\"appliance_id\":\"box\",\"rule\":\"admin rule\"}"
+  404 system not found
+alice POST /api/rules "{\"appliance_id\":\"box\"}"
+  400 appliance_id and rule required
+alice POST /api/rules "{\"appliance_id\":"
+  400 invalid JSON: unexpected EOF
+alice PUT /api/rules "{}"
+  405 method not allowed
+bob DELETE /api/rules/box:nope ""
+  403 only the owner or an admin can delete rules on a shared system
+dana DELETE /api/rules/box:nope ""
+  404 not found
+alice DELETE /api/rules/box:nope ""
+  204 
+alice DELETE /api/rules/ ""
+  400 id required
+alice GET /api/rules/box:nope ""
+  405 method not allowed
+alice GET /api/permissions ""
+  200 {"data_mutate":false,"file_delete":false,"net_egress":false,"pkg_install":false,"sys_control":false,"unverified":false}
+alice POST /api/permissions "{}"
+  204 
+alice POST /api/permissions "{\"read\":"
+  400 invalid JSON: unexpected EOF
+alice PUT /api/permissions "{}"
+  405 method not allowed
+alice POST /api/permissions/always "{\"appliance_id\":\"box\"}"
+  400 appliance_id and command are required
+alice POST /api/permissions/always "{\"appliance_id\":\"box\",\"command\":\"ls\",\"rule\":\"ls -l\"}"
+  404 that rule is no longer saved
+alice POST /api/permissions/always "{\"appliance_id\":\"box\",\"command\":\"ls\"}"
+  204 
+alice POST /api/permissions/always "{\"appliance_id\":"
+  400 invalid JSON: unexpected EOF
+alice POST /api/command-grants "{}"
+  400 an agent is required
+alice POST /api/command-grants "{\"agent_id\":\"a1\"}"
+  400 a machine is required: a grant names one agent and one machine
+alice POST /api/command-grants "{\"agent_id\":\"a1\",\"appliance_id\":\"box\"}"
+  204 
+alice GET /api/command-grants ""
+  200 [{"id":"a1/box","agent_id":"a1","agent":"a1 (removed)","appliance_id":"box","appliance":"Lab Box","allows":"nothing without asking","categories":null}]
+alice DELETE /api/command-grants ""
+  400 agent_id and appliance_id are required
+alice DELETE /api/command-grants?agent_id=a1&appliance_id=box ""
+  204 
+alice POST /api/command-grants "{\"agent_id\":"
+  400 invalid JSON: unexpected EOF
+alice POST /api/appliance-tool ""
+  400 system and name are required
+alice POST /api/appliance-tool?appliance=box&name=x&approved=1 ""
+  404 no such capability
+alice DELETE /api/appliance-tool?appliance=box&name=x ""
+  204 
+alice GET /api/appliance-tool?appliance=box&name=x ""
+  405 method not allowed
+alice GET /api/sessions ""
+  200 []
+alice GET /api/sessions?appliance_id=box ""
+  200 null
+alice POST /api/sessions?appliance_id=box "{}"
+  405 method not allowed
+alice GET /api/sessions/s1?appliance_id=box ""
+  404 no such session
+alice GET /api/sessions/s1/export?appliance_id=box ""
+  404 404 page not found
+alice PATCH /api/sessions/s1?appliance_id=box "{\"at\":0}"
+  404 no such session
+alice PATCH /api/sessions/s1?appliance_id=box "{\"at\":"
+  400 invalid JSON: unexpected EOF
+alice DELETE /api/sessions/s1?appliance_id=box ""
+  204 
+alice GET /api/sessions/s1 ""
+  404 no such session
+alice PUT /api/sessions/s1?appliance_id=box "{}"
+  405 method not allowed
+bob POST /api/appliance-peers "{\"appliance_id\":\"box\",\"key_id\":\"k1\",\"granted\":true}"
+  403 not allowed to change this system's sharing
+dana POST /api/appliance-peers "{\"appliance_id\":\"box\",\"key_id\":\"k1\",\"granted\":true}"
+  404 system not found
+alice POST /api/appliance-peers "{\"appliance_id\":\"box\",\"key_id\":\"k1\",\"granted\":true}"
+  404 no such peer key
+alice POST /api/appliance-peers "{\"appliance_id\":"
+  400 invalid JSON: unexpected EOF
+alice DELETE /api/appliance-peers ""
+  405 method not allowed
+alice POST /api/save_article "{\"text\":\"# Findings\\nall good\"}"
+  503 Scribe not available
+alice POST /api/save_article "{}"
+  503 Scribe not available
+alice GET /api/save_article ""
+  405 method not allowed
+alice POST /api/save_snippet "{\"text\":\"ls -l\"}"
+  503 CodeWriter not available
+alice GET /api/save_snippet ""
+  405 method not allowed
+alice POST /api/push-to-guide "{}"
+  400 text is required
+alice POST /api/push-to-guide "{\"text\":\"x\"}"
+  400 guide_id is required
+alice POST /api/push-to-guide "{\"text\":\"x\",\"guide_id\":\"g1\",\"appliance_id\":\"box\"}"
+  400 that guide doesn't list this system as a source
+alice POST /api/push-to-guide "{\"text\":\"x\",\"guide_id\":\"g1\",\"appliance_id\":\"box\",\"link\":true}"
+  404 that guide is not one of yours
+dana POST /api/push-to-guide "{\"text\":\"x\",\"new_title\":\"Mine\",\"appliance_id\":\"box\"}"
+  404 that system is not one of yours
+alice POST /api/push-to-guide "{\"text\":"
+  400 invalid JSON: unexpected EOF
+alice PUT /api/push-to-guide "{}"
+  405 method not allowed
+alice GET /api/repo/refresh ""
+  405 method not allowed
+alice POST /api/repo/refresh "{}"
+  400 appliance_id required
+alice POST /api/repo/refresh "{\"appliance_id\":"
+  400 invalid JSON: unexpected EOF
+dana POST /api/repo/refresh "{\"appliance_id\":\"box\",\"command\":\"ls\"}"
+  404 system not found
+bob POST /api/repo/refresh "{\"appliance_id\":\"box\",\"command\":\"ls\"}"
+  400 not a repository system
+alice POST /api/repo/refresh "{\"appliance_id\":\"nope\",\"command\":\"ls\"}"
+  404 system not found
+alice GET /api/bundle/ingest ""
+  405 method not allowed
+alice POST /api/bundle/ingest "{}"
+  400 appliance_id required
+alice POST /api/bundle/ingest "{\"appliance_id\":"
+  400 invalid JSON: unexpected EOF
+dana POST /api/bundle/ingest "{\"appliance_id\":\"box\",\"command\":\"ls\"}"
+  404 system not found
+bob POST /api/bundle/ingest "{\"appliance_id\":\"box\",\"command\":\"ls\"}"
+  400 not an evidence-bundle system
+alice POST /api/bundle/ingest "{\"appliance_id\":\"nope\",\"command\":\"ls\"}"
+  404 system not found
+alice GET /api/workspace/agent ""
+  405 method not allowed
+alice POST /api/workspace/agent "{}"
+  400 appliance_id required
+alice POST /api/workspace/agent "{\"appliance_id\":"
+  400 invalid JSON: unexpected EOF
+dana POST /api/workspace/agent "{\"appliance_id\":\"box\",\"command\":\"ls\"}"
+  404 system not found
+bob POST /api/workspace/agent "{\"appliance_id\":\"box\",\"command\":\"ls\"}"
+  400 not a workspace
+alice POST /api/workspace/agent "{\"appliance_id\":\"nope\",\"command\":\"ls\"}"
+  404 system not found
+alice GET /api/mapapp ""
+  405 method not allowed
+alice POST /api/mapapp "{}"
+  400 appliance_id and command required
+alice POST /api/mapapp "{\"appliance_id\":"
+  400 invalid JSON: unexpected EOF
+dana POST /api/mapapp "{\"appliance_id\":\"box\",\"command\":\"ls\"}"
+  404 system not found
+alice POST /api/mapapp "{\"appliance_id\":\"nope\",\"command\":\"ls\"}"
+  404 system not found
+alice POST /api/repo/refresh "{\"appliance_id\":\"box\"}"
+  400 not a repository system
+alice POST /api/bundle/ingest "{\"appliance_id\":\"box\"}"
+  400 not an evidence-bundle system
+alice POST /api/workspace/agent "{\"appliance_id\":\"box\"}"
+  400 not a workspace
+alice GET /api/bundle/move?appliance_id=box ""
+  400 not an evidence bundle
+dana GET /api/bundle/move?appliance_id=box ""
+  404 system not found
+bob POST /api/memory/clear "{\"appliance_id\":\"box\"}"
+  403 not allowed to clear this system's memory
+dana POST /api/memory/clear "{\"appliance_id\":\"box\"}"
+  404 system not found
+alice POST /api/memory/clear "{}"
+  400 appliance_id required
+alice POST /api/memory/clear "{\"appliance_id\":"
+  400 invalid JSON: unexpected EOF
+alice GET /api/memory/clear ""
+  405 method not allowed
+alice POST /api/memory/clear "{\"appliance_id\":\"box\"}"
+  200 
+bob DELETE /api/appliance/box ""
+  403 not allowed to delete this system
+dana DELETE /api/appliance/box ""
+  404 not found
+alice DELETE /api/appliance/box ""
+  200 
+alice GET /api/appliance/box ""
+  404 not found

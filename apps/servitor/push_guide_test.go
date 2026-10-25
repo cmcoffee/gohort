@@ -69,12 +69,12 @@ func TestAReplyCanLinkItsSystemToAGuide(t *testing.T) {
 
 	post := func(body string) *httptest.ResponseRecorder {
 		w := httptest.NewRecorder()
-		app.handlePushToGuide(w, reqAs(t, http.MethodPost, "/api/push-to-guide", "craig", body))
+		routed(app)(w, reqAs(t, http.MethodPost, "/api/push-to-guide", "craig", body))
 		return w
 	}
 
 	w := httptest.NewRecorder()
-	app.handlePushToGuide(w, reqAs(t, http.MethodGet, "/api/push-to-guide?appliance_id=box-1", "craig", ""))
+	routed(app)(w, reqAs(t, http.MethodGet, "/api/push-to-guide?appliance_id=box-1", "craig", ""))
 	var got struct{ Guides, Others []DocItem }
 	_ = json.Unmarshal(w.Body.Bytes(), &got)
 	if len(got.Guides) != 0 || len(got.Others) != 1 || got.Others[0].ID != "g-a" {

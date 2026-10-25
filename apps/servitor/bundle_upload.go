@@ -18,6 +18,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/bundle"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/netgate"
 )
 
@@ -184,51 +185,40 @@ func (T *Servitor) markBundleFailed(ownerUDB Database, applianceID, reason strin
 // by the client once the last file of a batch has uploaded, and again by hand
 // as the way back from a failed ingest — a cap raised, a disk freed — without
 // making the user re-send a gigabyte.
-func (T *Servitor) handleBundleIngest(w http.ResponseWriter, r *http.Request) {
-	if !IsStateChangingMethod(r.Method) {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	userID, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	var req struct {
-		ApplianceID string `json:"appliance_id"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ApplianceID == "" {
-		http.Error(w, "appliance_id required", http.StatusBadRequest)
-		return
+func (T *Servitor) handleBundleIngest(c *jsonapi.Call, req applianceReq) (any, error) {
+	userID, udb := c.User, c.UDB
+	if req.ApplianceID == "" {
+		return nil, jsonapi.BadRequest("appliance_id required")
 	}
 	if udb == nil {
-		http.Error(w, "no database", http.StatusInternalServerError)
-		return
+		return nil, jsonapi.Status(http.StatusInternalServerError, "no database")
 	}
 	rec, owner, ownerUDB, found := T.resolveAppliance(userID, udb, req.ApplianceID)
 	if !found {
-		http.Error(w, "system not found", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("system not found")
 	}
 	if rec.Type != "bundle" {
-		http.Error(w, "not an evidence-bundle system", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("not an evidence-bundle system")
 	}
-	if !canManageAppliance(userID, rec, servitorIsAdmin(r)) {
-		http.Error(w, "not allowed to ingest this bundle", http.StatusForbidden)
-		return
+	if !canManageAppliance(userID, rec, servitorIsAdmin(c.R)) {
+		return nil, jsonapi.Forbidden("not allowed to ingest this bundle")
 	}
 	stage, err := bundle.StagingRoot(owner, req.ApplianceID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusServiceUnavailable)
-		return
+		return nil, jsonapi.Status(http.StatusServiceUnavailable, err.Error())
 	}
 	if entries, derr := os.ReadDir(stage); derr != nil || len(entries) == 0 {
-		http.Error(w, "nothing is staged for this bundle: the uploaded files were consumed by a previous ingest. Upload them again.", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("nothing is staged for this bundle: the uploaded files were consumed by a previous ingest. Upload them again.")
 	}
 	rec.BundleState = bundleStateIngesting
 	rec.BundleError = ""
 	ownerUDB.Set(applianceTable, req.ApplianceID, rec)
 	go T.ingestBundle(AppContext(), owner, ownerUDB, req.ApplianceID)
-	w.WriteHeader(http.StatusAccepted)
+	return jsonapi.Empty(http.StatusAccepted), nil
+}
+
+// applianceReq is a body that names one system: the ingest, the memory clear,
+// the repository refresh and the workspace agent are each posted one.
+type applianceReq struct {
+	ApplianceID string `json:"appliance_id"`
 }

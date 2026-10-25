@@ -14,12 +14,12 @@
 package servitor
 
 import (
-	"encoding/json"
 	"net/http"
 	"sort"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -39,62 +39,51 @@ type grantRow struct {
 }
 
 // handleCommandGrants lists connections; POST creates or updates one.
-func (T *Servitor) handleCommandGrants(w http.ResponseWriter, r *http.Request) {
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
+func (T *Servitor) handleCommandGrants(c *jsonapi.Call) (any, error) {
+	return T.grantRows(c.User, c.UDB), nil
+}
+
+// handleCommandGrantAdd connects an agent to a machine.
+func (T *Servitor) handleCommandGrantAdd(c *jsonapi.Call, body map[string]any) (any, error) {
+	user, udb := c.User, c.UDB
+	agentID, _ := body["agent_id"].(string)
+	if strings.TrimSpace(agentID) == "" {
+		return nil, jsonapi.BadRequest("an agent is required")
 	}
-	switch r.Method {
-	case http.MethodGet:
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(T.grantRows(user, udb))
-	case http.MethodPost:
-		var body map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		agentID, _ := body["agent_id"].(string)
-		if strings.TrimSpace(agentID) == "" {
-			http.Error(w, "an agent is required", http.StatusBadRequest)
-			return
-		}
-		appliance, _ := body["appliance_id"].(string)
-		if appliance = strings.TrimSpace(appliance); appliance == "" {
-			http.Error(w, "a machine is required: a grant names one agent and one machine", http.StatusBadRequest)
-			return
-		}
-		// The connection is the agent's Source, the switch its own page
-		// shows and removes. Without the agent runtime (no Sources hook) the
-		// grant record is the connection, as it was before Sources.
-		if SetAgentSource == nil {
-			SaveCommandGrant(udb, agentID, appliance, nil)
-		} else if err := SetAgentSource(user, normalizeAgentID(agentID), ReferenceSelection{Kind: "system", ItemID: appliance}, true); err != nil {
-			http.Error(w, "could not add it to the agent's Sources: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		// Logged because this is the moment a machine becomes reachable by
-		// something that is not a person.
-		Log("[servitor] agent %q connected to %s, under %s's own auto-run settings", normalizeAgentID(agentID), appliance, user)
-		w.WriteHeader(http.StatusNoContent)
-	case http.MethodDelete:
-		agent := strings.TrimSpace(r.URL.Query().Get("agent_id"))
-		appliance := strings.TrimSpace(r.URL.Query().Get("appliance_id"))
-		if agent == "" || appliance == "" {
-			http.Error(w, "agent_id and appliance_id are required", http.StatusBadRequest)
-			return
-		}
-		DeleteCommandGrant(udb, agent, appliance)
-		if SetAgentSource != nil {
-			if err := SetAgentSource(user, normalizeAgentID(agent), ReferenceSelection{Kind: "system", ItemID: appliance}, false); err != nil {
-				Log("[servitor] disconnecting %q from %s: could not remove it from the agent's Sources: %v", agent, appliance, err)
-			}
-		}
-		Log("[servitor] agent %q disconnected from %s", agent, appliance)
-		w.WriteHeader(http.StatusNoContent)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	appliance, _ := body["appliance_id"].(string)
+	if appliance = strings.TrimSpace(appliance); appliance == "" {
+		return nil, jsonapi.BadRequest("a machine is required: a grant names one agent and one machine")
 	}
+	// The connection is the agent's Source, the switch its own page
+	// shows and removes. Without the agent runtime (no Sources hook) the
+	// grant record is the connection, as it was before Sources.
+	if SetAgentSource == nil {
+		SaveCommandGrant(udb, agentID, appliance, nil)
+	} else if err := SetAgentSource(user, normalizeAgentID(agentID), ReferenceSelection{Kind: "system", ItemID: appliance}, true); err != nil {
+		return nil, jsonapi.Status(http.StatusInternalServerError, "could not add it to the agent's Sources: "+err.Error())
+	}
+	// Logged because this is the moment a machine becomes reachable by
+	// something that is not a person.
+	Log("[servitor] agent %q connected to %s, under %s's own auto-run settings", normalizeAgentID(agentID), appliance, user)
+	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// handleCommandGrantRemove disconnects an agent from a machine.
+func (T *Servitor) handleCommandGrantRemove(c *jsonapi.Call, _ struct{}) (any, error) {
+	q := c.R.URL.Query()
+	agent := strings.TrimSpace(q.Get("agent_id"))
+	appliance := strings.TrimSpace(q.Get("appliance_id"))
+	if agent == "" || appliance == "" {
+		return nil, jsonapi.BadRequest("agent_id and appliance_id are required")
+	}
+	DeleteCommandGrant(c.UDB, agent, appliance)
+	if SetAgentSource != nil {
+		if err := SetAgentSource(c.User, normalizeAgentID(agent), ReferenceSelection{Kind: "system", ItemID: appliance}, false); err != nil {
+			Log("[servitor] disconnecting %q from %s: could not remove it from the agent's Sources: %v", agent, appliance, err)
+		}
+	}
+	Log("[servitor] agent %q disconnected from %s", agent, appliance)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // grantRows renders every connection with names rather than ids, since an id is
@@ -198,17 +187,12 @@ func agentAccessOptions(user string) []ui.SelectOption {
 // handleAccessAgents lists the user's agents for the per-appliance access
 // modal. Its own endpoint because the modal is hand-written JS on the chat
 // page, which has no server-rendered form to bake options into.
-func (T *Servitor) handleAccessAgents(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *Servitor) handleAccessAgents(c *jsonapi.Call) (any, error) {
 	out := []ui.SelectOption{}
-	for _, t := range ListExternalTargets(RootDB, user) {
+	for _, t := range ListExternalTargets(RootDB, c.User) {
 		if t.Group == "Agents" {
 			out = append(out, ui.SelectOption{Value: normalizeAgentID(t.Value), Label: t.Label})
 		}
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(out)
+	return out, nil
 }

@@ -28,7 +28,7 @@ func TestClearMemoryDoesNotResurrectTheProfile(t *testing.T) {
 			Profile: "# old profile", Scanned: "2026-01-01T00:00:00Z",
 		})
 		w := httptest.NewRecorder()
-		app.handleMemoryClear(w, reqAs(t, http.MethodPost, "/api/memory/clear", "alice", `{"appliance_id":"a-`+typ+`"}`))
+		routed(app)(w, reqAs(t, http.MethodPost, "/api/memory/clear", "alice", `{"appliance_id":"a-`+typ+`"}`))
 		if w.Code != http.StatusOK {
 			t.Fatalf("%s: clear returned %d: %s", typ, w.Code, w.Body.String())
 		}

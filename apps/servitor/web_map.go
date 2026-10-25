@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // --- Map (full scan) ---
@@ -98,35 +99,20 @@ func (T *Servitor) handleMap(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"session_id": sid})
 }
 
-func (T *Servitor) handleMapApp(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	userID, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	var req struct {
-		ApplianceID string `json:"appliance_id"`
-		Command     string `json:"command"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ApplianceID == "" || req.Command == "" {
-		http.Error(w, "appliance_id and command required", http.StatusBadRequest)
-		return
+func (T *Servitor) handleMapApp(c *jsonapi.Call, req mapAppReq) (any, error) {
+	userID, udb := c.User, c.UDB
+	if req.ApplianceID == "" || req.Command == "" {
+		return nil, jsonapi.BadRequest("appliance_id and command required")
 	}
 	if udb == nil {
-		http.Error(w, "no database", http.StatusInternalServerError)
-		return
+		return nil, jsonapi.Status(http.StatusInternalServerError, "no database")
 	}
 	appliance, ownerUser, _, found := T.resolveAppliance(userID, udb, req.ApplianceID)
 	if !found {
-		http.Error(w, "system not found", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("system not found")
 	}
 	if why := readOnlyRefusal(appliance, ownerUser, userID); why != "" {
-		http.Error(w, why, http.StatusForbidden)
-		return
+		return nil, jsonapi.Forbidden(why)
 	}
 
 	sid := UUIDv4()
@@ -140,6 +126,11 @@ func (T *Servitor) handleMapApp(w http.ResponseWriter, r *http.Request) {
 	// reconnaissance — a single CLI's reference must not replace it.
 	go T.runMapAppSession(ctx, sid, userID, "", appliance, req.Command, ch, udb, false)
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"session_id": sid})
+	return map[string]string{"session_id": sid}, nil
+}
+
+// mapAppReq is what handleMapApp is posted.
+type mapAppReq struct {
+	ApplianceID string `json:"appliance_id"`
+	Command     string `json:"command"`
 }

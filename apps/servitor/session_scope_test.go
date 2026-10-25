@@ -31,6 +31,20 @@ func twoUserAuth(t *testing.T) Database {
 }
 
 // reqAs builds a request carrying a valid session cookie for username.
+// routed is app's real routes, for a request that names the app's prefix
+// (/servitor/api/...) or does not (/api/...): what a browser's request
+// reaches, with its method rules and its JSON frame.
+func routed(app *Servitor) http.HandlerFunc {
+	mux := http.NewServeMux()
+	app.routes(mux)
+	return func(w http.ResponseWriter, r *http.Request) {
+		if p, ok := strings.CutPrefix(r.URL.Path, "/servitor"); ok {
+			r.URL.Path = p
+		}
+		mux.ServeHTTP(w, r)
+	}
+}
+
 func reqAs(t *testing.T, method, target, username, body string) *http.Request {
 	t.Helper()
 	var r *http.Request

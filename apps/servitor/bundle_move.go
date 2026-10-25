@@ -25,9 +25,7 @@ package servitor
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -37,6 +35,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/appstores"
 	"github.com/cmcoffee/gohort/core/bundle"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // bundleMoveKept is how long a finished move's outcome stays to read.
@@ -109,36 +108,30 @@ func evidenceDrop() (appstores.EvidenceDrop, bool) {
 }
 
 // movableBundle resolves the request's bundle for someone who may move it.
-func (T *Servitor) movableBundle(w http.ResponseWriter, r *http.Request) (rec Appliance, owner, userID string, ok bool) {
-	userID, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return rec, "", "", false
-	}
-	rec, owner, _, found := T.resolveAppliance(userID, udb, strings.TrimSpace(r.URL.Query().Get("appliance_id")))
+func (T *Servitor) movableBundle(c *jsonapi.Call) (rec Appliance, owner string, err error) {
+	rec, owner, _, found := T.resolveAppliance(c.User, c.UDB, strings.TrimSpace(c.R.URL.Query().Get("appliance_id")))
 	switch {
 	case !found:
-		http.Error(w, "system not found", http.StatusNotFound)
+		return rec, "", jsonapi.NotFound("system not found")
 	case rec.Type != "bundle":
-		http.Error(w, "not an evidence bundle", http.StatusBadRequest)
-	case !canManageAppliance(userID, rec, servitorIsAdmin(r)):
-		http.Error(w, "only the bundle's owner can move it", http.StatusForbidden)
-	default:
-		return rec, owner, userID, true
+		return rec, "", jsonapi.BadRequest("not an evidence bundle")
+	case !canManageAppliance(c.User, rec, servitorIsAdmin(c.R)):
+		return rec, "", jsonapi.Forbidden("only the bundle's owner can move it")
 	}
-	return rec, "", "", false
+	return rec, owner, nil
 }
 
 // handleBundleMoveTargets lists the stores a bundle can be moved to (evidence
 // on, and Full Access for its owner), one row
 // each, for the page's ActionList.
-func (T *Servitor) handleBundleMoveTargets(w http.ResponseWriter, r *http.Request) {
-	rec, _, userID, ok := T.movableBundle(w, r)
-	if !ok {
-		return
+func (T *Servitor) handleBundleMoveTargets(c *jsonapi.Call) (any, error) {
+	rec, _, err := T.movableBundle(c)
+	if err != nil {
+		return nil, err
 	}
 	rows := []map[string]any{}
 	if drop, ok := evidenceDrop(); ok {
-		for _, st := range drop.EvidenceStores(userID) {
+		for _, st := range drop.EvidenceStores(c.User) {
 			desc := "Copies this bundle's files into a new folder of " + st.Name + ", which indexes it. Anyone who can reach " + st.Name + " can read the folder."
 			if about := strings.TrimSpace(st.About); about != "" {
 				desc = about + " " + desc
@@ -146,42 +139,43 @@ func (T *Servitor) handleBundleMoveTargets(w http.ResponseWriter, r *http.Reques
 			rows = append(rows, map[string]any{"Label": st.Name, "Desc": desc, "store": st.Store, "bundle": rec.ID})
 		}
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(rows)
+	return rows, nil
 }
 
-func (T *Servitor) handleBundleMove(w http.ResponseWriter, r *http.Request) {
-	rec, owner, userID, ok := T.movableBundle(w, r)
-	if !ok {
-		return
+func (T *Servitor) handleBundleMove(c *jsonapi.Call) (any, error) {
+	rec, owner, err := T.movableBundle(c)
+	if err != nil {
+		return nil, err
+	}
+	// A row answers only for its own store, so the other rows stay idle.
+	store := strings.TrimSpace(c.R.URL.Query().Get("store"))
+	m, ok := currentBundleMove(bundleMoveKey(owner, rec.ID))
+	if !ok || (store != "" && m.store != store) {
+		return map[string]any{}, nil
+	}
+	return m.status(), nil
+}
+
+// handleBundleMoveStart starts moving a bundle into a store, or with ?cancel=
+// stops the move under way.
+func (T *Servitor) handleBundleMoveStart(c *jsonapi.Call, _ struct{}) (any, error) {
+	rec, owner, err := T.movableBundle(c)
+	if err != nil {
+		return nil, err
 	}
 	key := bundleMoveKey(owner, rec.ID)
-	store := strings.TrimSpace(r.URL.Query().Get("store"))
-	w.Header().Set("Content-Type", "application/json")
-	switch {
-	case r.Method == http.MethodGet:
-		// A row answers only for its own store, so the other rows stay idle.
-		m, ok := currentBundleMove(key)
-		if !ok || (store != "" && m.store != store) {
-			json.NewEncoder(w).Encode(map[string]any{})
-			return
-		}
-		json.NewEncoder(w).Encode(m.status())
-	case r.Method != http.MethodPost:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	case r.URL.Query().Get("cancel") != "":
+	q := c.R.URL.Query()
+	if q.Get("cancel") != "" {
 		if m, ok := currentBundleMove(key); ok {
 			m.cancel()
 		}
-		json.NewEncoder(w).Encode(map[string]any{"ok": true})
-	default:
-		msg, err := T.startBundleMove(key, owner, userID, rec, store)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		json.NewEncoder(w).Encode(map[string]any{"running": true, "message": msg})
+		return map[string]any{"ok": true}, nil
 	}
+	msg, err := T.startBundleMove(key, owner, c.User, rec, strings.TrimSpace(q.Get("store")))
+	if err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	return map[string]any{"running": true, "message": msg}, nil
 }
 
 // startBundleMove checks the move can start and starts it in the background.

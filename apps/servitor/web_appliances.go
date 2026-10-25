@@ -9,6 +9,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/bundle"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // --- Appliance CRUD ---
@@ -436,55 +437,50 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (T *Servitor) handleAppliance(w http.ResponseWriter, r *http.Request) {
-	userID, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
+func (T *Servitor) handleAppliance(c *jsonapi.Call) (any, error) {
+	userID := c.User
+	id := strings.TrimPrefix(c.R.URL.Path, "/api/appliance/")
+	if id == "" || c.UDB == nil {
+		return nil, jsonapi.NotFound("not found")
 	}
-	id := strings.TrimPrefix(r.URL.Path, "/api/appliance/")
-	if id == "" || udb == nil {
-		http.Error(w, "not found", http.StatusNotFound)
-		return
+	// Resolve own OR shared so a non-owner can load a shared appliance's
+	// record (read-only; the UI gates edit/delete on can_manage).
+	a, owner, _, found := T.resolveAppliance(userID, c.UDB, id)
+	if !found {
+		return nil, jsonapi.NotFound("not found")
 	}
-	switch r.Method {
-	case http.MethodGet:
-		// Resolve own OR shared so a non-owner can load a shared appliance's
-		// record (read-only; the UI gates edit/delete on can_manage).
-		a, owner, _, found := T.resolveAppliance(userID, udb, id)
-		if !found {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
-		}
-		a.Owner = owner
-		a.Password = ""
-		a.RepoToken = "" // never send the stored token back to the edit form
-		a.HasKey, a.PrivateKey = a.PrivateKey != "", ""
-		// EnvVars values are the owner's secrets: a user it is merely shared
-		// with sees the names (see redactEnvVars).
-		if !canManageAppliance(userID, a, servitorIsAdmin(r)) {
-			a.EnvVars = redactEnvVars(a.EnvVars)
-		}
-		a.LeadTierAvailable = AllLLMsPrivate()
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(a)
-	case http.MethodDelete:
-		a, owner, ownerUDB, found := T.resolveAppliance(userID, udb, id)
-		if !found {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
-		}
-		// Only the owner or an admin may delete.
-		if !canManageAppliance(userID, a, servitorIsAdmin(r)) {
-			http.Error(w, "not allowed to delete this system", http.StatusForbidden)
-			return
-		}
-		T.setApplianceShared(id, owner, false) // drop from the shared index first
-		T.indexNamedShares(owner, id, nil)
-		purgeAppliance(owner, ownerUDB, id)
-		w.WriteHeader(http.StatusOK)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	a.Owner = owner
+	a.Password = ""
+	a.RepoToken = "" // never send the stored token back to the edit form
+	a.HasKey, a.PrivateKey = a.PrivateKey != "", ""
+	// EnvVars values are the owner's secrets: a user it is merely shared
+	// with sees the names (see redactEnvVars).
+	if !canManageAppliance(userID, a, servitorIsAdmin(c.R)) {
+		a.EnvVars = redactEnvVars(a.EnvVars)
 	}
+	a.LeadTierAvailable = AllLLMsPrivate()
+	return a, nil
+}
+
+// handleApplianceDelete removes a system: the owner or an admin only.
+func (T *Servitor) handleApplianceDelete(c *jsonapi.Call, _ struct{}) (any, error) {
+	userID := c.User
+	id := strings.TrimPrefix(c.R.URL.Path, "/api/appliance/")
+	if id == "" || c.UDB == nil {
+		return nil, jsonapi.NotFound("not found")
+	}
+	a, owner, ownerUDB, found := T.resolveAppliance(userID, c.UDB, id)
+	if !found {
+		return nil, jsonapi.NotFound("not found")
+	}
+	// Only the owner or an admin may delete.
+	if !canManageAppliance(userID, a, servitorIsAdmin(c.R)) {
+		return nil, jsonapi.Forbidden("not allowed to delete this system")
+	}
+	T.setApplianceShared(id, owner, false) // drop from the shared index first
+	T.indexNamedShares(owner, id, nil)
+	purgeAppliance(owner, ownerUDB, id)
+	return jsonapi.Empty(http.StatusOK), nil
 }
 
 // cleanDanglingRecords removes facts, knowledge docs, notes, and techniques that

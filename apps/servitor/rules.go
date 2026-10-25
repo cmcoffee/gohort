@@ -4,8 +4,8 @@ import (
 	"strings"
 	"time"
 
-	"encoding/json"
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"net/http"
 )
 
@@ -83,72 +83,53 @@ func formatRules(rules []ApplianceRule) string {
 }
 
 // handleRules handles GET (list) and POST (create) for appliance rules.
-func (T *Servitor) handleRules(w http.ResponseWriter, r *http.Request) {
-	userID, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
+func (T *Servitor) handleRules(c *jsonapi.Call) (any, error) {
+	applianceID := c.R.URL.Query().Get("appliance_id")
+	if applianceID == "" {
+		return nil, jsonapi.BadRequest("appliance_id required")
 	}
-	applianceID := r.URL.Query().Get("appliance_id")
-	switch r.Method {
-	case http.MethodGet:
-		if applianceID == "" {
-			http.Error(w, "appliance_id required", http.StatusBadRequest)
-			return
-		}
-		// Rules are the owner's directives — read from the owner's store so a
-		// non-owner viewing a shared appliance sees the same rules (read-only).
-		src := udb
-		if _, _, ownerUDB, found := T.resolveAppliance(userID, udb, applianceID); found {
-			src = ownerUDB
-		}
-		rules := rulesForAppliance(src, applianceID)
-		if rules == nil {
-			rules = []ApplianceRule{}
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(rules)
-	case http.MethodPost:
-		var req struct {
-			ApplianceID string `json:"appliance_id"`
-			Rule        string `json:"rule"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ApplianceID == "" || strings.TrimSpace(req.Rule) == "" {
-			http.Error(w, "appliance_id and rule required", http.StatusBadRequest)
-			return
-		}
-		a, _, ownerUDB, found := T.resolveAppliance(userID, udb, req.ApplianceID)
-		if !found {
-			http.Error(w, "system not found", http.StatusNotFound)
-			return
-		}
-		// Only the owner or an admin sets rules — a shared appliance's rules are
-		// the owner's, applied to everyone; a non-owner can't change them.
-		if !canManageAppliance(userID, a, servitorIsAdmin(r)) {
-			http.Error(w, "only the owner or an admin can set rules on a shared system", http.StatusForbidden)
-			return
-		}
-		id := storeRule(ownerUDB, req.ApplianceID, req.Rule)
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"id": id})
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	// Rules are the owner's directives — read from the owner's store so a
+	// non-owner viewing a shared appliance sees the same rules (read-only).
+	src := c.UDB
+	if _, _, ownerUDB, found := T.resolveAppliance(c.User, c.UDB, applianceID); found {
+		src = ownerUDB
 	}
+	rules := rulesForAppliance(src, applianceID)
+	if rules == nil {
+		rules = []ApplianceRule{}
+	}
+	return rules, nil
+}
+
+// handleRuleAdd sets a rule on a system.
+func (T *Servitor) handleRuleAdd(c *jsonapi.Call, req ruleReq) (any, error) {
+	if req.ApplianceID == "" || strings.TrimSpace(req.Rule) == "" {
+		return nil, jsonapi.BadRequest("appliance_id and rule required")
+	}
+	a, _, ownerUDB, found := T.resolveAppliance(c.User, c.UDB, req.ApplianceID)
+	if !found {
+		return nil, jsonapi.NotFound("system not found")
+	}
+	// Only the owner or an admin sets rules — a shared appliance's rules are
+	// the owner's, applied to everyone; a non-owner can't change them.
+	if !canManageAppliance(c.User, a, servitorIsAdmin(c.R)) {
+		return nil, jsonapi.Forbidden("only the owner or an admin can set rules on a shared system")
+	}
+	id := storeRule(ownerUDB, req.ApplianceID, req.Rule)
+	return map[string]string{"id": id}, nil
+}
+
+// ruleReq is what handleRuleAdd is posted.
+type ruleReq struct {
+	ApplianceID string `json:"appliance_id"`
+	Rule        string `json:"rule"`
 }
 
 // handleRuleDelete handles DELETE /api/rules/<id>.
-func (T *Servitor) handleRuleDelete(w http.ResponseWriter, r *http.Request) {
-	userID, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	if r.Method != http.MethodDelete {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	id := strings.TrimPrefix(r.URL.Path, "/api/rules/")
+func (T *Servitor) handleRuleDelete(c *jsonapi.Call, _ struct{}) (any, error) {
+	id := strings.TrimPrefix(c.R.URL.Path, "/api/rules/")
 	if id == "" {
-		http.Error(w, "id required", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("id required")
 	}
 	// The rule id is "<applianceID>:<uuid>", so resolve the owning appliance
 	// from it — a shared appliance's rules live in the owner's store, and only
@@ -157,15 +138,13 @@ func (T *Servitor) handleRuleDelete(w http.ResponseWriter, r *http.Request) {
 	if i := strings.Index(id, ":"); i >= 0 {
 		applianceID = id[:i]
 	}
-	a, _, ownerUDB, found := T.resolveAppliance(userID, udb, applianceID)
+	a, _, ownerUDB, found := T.resolveAppliance(c.User, c.UDB, applianceID)
 	if !found {
-		http.Error(w, "not found", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("not found")
 	}
-	if !canManageAppliance(userID, a, servitorIsAdmin(r)) {
-		http.Error(w, "only the owner or an admin can delete rules on a shared system", http.StatusForbidden)
-		return
+	if !canManageAppliance(c.User, a, servitorIsAdmin(c.R)) {
+		return nil, jsonapi.Forbidden("only the owner or an admin can delete rules on a shared system")
 	}
 	deleteRule(ownerUDB, id)
-	w.WriteHeader(http.StatusNoContent)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }

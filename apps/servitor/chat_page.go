@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -411,25 +412,18 @@ func deliverConfirmWith(user, cardID string, allow bool, remember func(sid, cmd 
 // handleProfile returns the saved system profile for an appliance
 // (a markdown blob produced by the most recent Map run). Used by
 // the Profile toolbar action.
-func (T *Servitor) handleProfile(w http.ResponseWriter, r *http.Request) {
-	userID, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	id := r.URL.Query().Get("appliance_id")
+func (T *Servitor) handleProfile(c *jsonapi.Call) (any, error) {
+	id := c.R.URL.Query().Get("appliance_id")
 	if id == "" {
-		http.Error(w, "appliance_id required", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("appliance_id required")
 	}
-	a, _, _, found := T.resolveAppliance(userID, udb, id)
+	a, _, _, found := T.resolveAppliance(c.User, c.UDB, id)
 	if !found {
-		http.Error(w, "system not found", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("system not found")
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	return map[string]any{
 		"name":    a.Name,
 		"profile": a.Profile,
 		"scanned": a.Scanned,
-	})
+	}, nil
 }

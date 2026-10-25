@@ -244,7 +244,7 @@ func TestAddingAnAgentFromServitorWritesNoGrant(t *testing.T) {
 	udb := UserDB(app.DB, "craig")
 
 	w := httptest.NewRecorder()
-	app.handleCommandGrants(w, reqAs(t, http.MethodPost, "/servitor/api/command-grants", "craig",
+	routed(app)(w, reqAs(t, http.MethodPost, "/servitor/api/command-grants", "craig",
 		`{"agent_id":"agent:wren","appliance_id":"lab-box"}`))
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("add: %d %s", w.Code, w.Body.String())

@@ -163,3 +163,15 @@ func TestABodyOverTheLimitIsRefused(t *testing.T) {
 		t.Errorf("MaxBody did not raise the limit: %d %q", w.Code, w.Body.String()[:min(80, w.Body.Len())])
 	}
 }
+
+// A handler whose answer is a status says so, and nothing follows it.
+func TestEmptyAnswersWithTheStatusAlone(t *testing.T) {
+	cookie := signIn(t)
+	base := &core.DBase{Store: kvlite.MemStore()}
+	for _, code := range []int{http.StatusNoContent, http.StatusAccepted, http.StatusOK} {
+		h := Post(base, func(c *Call, _ struct{}) (any, error) { return Empty(code), nil })
+		if w := call(h, "POST", "", cookie); w.Code != code || w.Body.Len() != 0 {
+			t.Errorf("Empty(%d) answered %d with %q", code, w.Code, w.Body.String())
+		}
+	}
+}

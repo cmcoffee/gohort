@@ -19,7 +19,6 @@ package servitor
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"path/filepath"
@@ -27,6 +26,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // registerPeerSystems wires servitor into core's peer surface: the systems a
@@ -160,14 +160,7 @@ func peerApplianceOptions() map[string][]PeerInvestigable {
 
 // handlePeerAppliances GETs what each registered peer says this instance may
 // reach, the source for the "add a remote system" picker.
-func (T *Servitor) handlePeerAppliances(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if _, _, ok := RequireUser(w, r, T.DB); !ok {
-		return
-	}
+func (T *Servitor) handlePeerAppliances(c *jsonapi.Call) (any, error) {
 	type row struct {
 		Peer string `json:"peer"`
 		ID   string `json:"id"`
@@ -187,8 +180,7 @@ func (T *Servitor) handlePeerAppliances(w http.ResponseWriter, r *http.Request) 
 			out = append(out, row{Peer: name, ID: it.ID, Name: it.Name, Kind: it.Kind, Desc: it.Desc})
 		}
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(out)
+	return out, nil
 }
 
 // --- sharing one appliance TO a peer, from the appliance's own page ----------
@@ -208,125 +200,112 @@ func (T *Servitor) handlePeerAppliances(w http.ResponseWriter, r *http.Request) 
 
 // handleAppliancePeers lists the peer keys that could reach one appliance
 // and which of them currently may, and toggles that membership.
-func (T *Servitor) handleAppliancePeers(w http.ResponseWriter, r *http.Request) {
-	userID, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *Servitor) handleAppliancePeers(c *jsonapi.Call) (any, error) {
+	userID, udb := c.User, c.UDB
 	if udb == nil {
-		http.Error(w, "no database", http.StatusInternalServerError)
-		return
+		return nil, jsonapi.Status(http.StatusInternalServerError, "no database")
 	}
-
-	switch r.Method {
-	case http.MethodGet:
-		id := strings.TrimSpace(r.URL.Query().Get("appliance_id"))
-		a, owner, _, found := T.resolveAppliance(userID, udb, id)
-		if !found {
-			http.Error(w, "system not found", http.StatusNotFound)
-			return
+	id := strings.TrimSpace(c.R.URL.Query().Get("appliance_id"))
+	a, owner, _, found := T.resolveAppliance(userID, udb, id)
+	if !found {
+		return nil, jsonapi.NotFound("system not found")
+	}
+	type row struct {
+		KeyID   string `json:"key_id"`
+		Label   string `json:"label"`
+		Owner   string `json:"owner,omitempty"`
+		Granted bool   `json:"granted"`
+		// Why this key cannot be offered, when it cannot. Shown rather than
+		// filtered out: a key missing from the list with no explanation
+		// reads as "there are no peers", which is a different problem with
+		// a different fix.
+		Blocked string `json:"blocked,omitempty"`
+	}
+	out := []row{}
+	for _, k := range ListPeerKeys() {
+		if !k.Allows(PeerCapExec) {
+			continue
 		}
-		type row struct {
-			KeyID   string `json:"key_id"`
-			Label   string `json:"label"`
-			Owner   string `json:"owner,omitempty"`
-			Granted bool   `json:"granted"`
-			// Why this key cannot be offered, when it cannot. Shown rather than
-			// filtered out: a key missing from the list with no explanation
-			// reads as "there are no peers", which is a different problem with
-			// a different fix.
-			Blocked string `json:"blocked,omitempty"`
-		}
-		out := []row{}
-		for _, k := range ListPeerKeys() {
-			if !k.Allows(PeerCapExec) {
-				continue
-			}
-			rw := row{KeyID: k.ID, Label: k.Label, Owner: k.Owner}
-			for _, granted := range k.Appliances {
-				if granted == a.ID {
-					rw.Granted = true
-					break
-				}
-			}
-			switch {
-			case k.Owner != "" && k.Owner != owner && !T.reaches(k.Owner, a.ID):
-				rw.Blocked = "this key runs as " + k.Owner + ", who cannot reach this system: share the system with " + k.Owner + " first, or use a key owned by " + owner
-			case k.Disabled:
-				rw.Blocked = "this key is disabled"
-			}
-			out = append(out, rw)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
-			"can_manage": canManageAppliance(userID, a, servitorIsAdmin(r)),
-			"keys":       out,
-		})
-
-	case http.MethodPost, http.MethodPut:
-		var body struct {
-			ApplianceID string `json:"appliance_id"`
-			KeyID       string `json:"key_id"`
-			Granted     bool   `json:"granted"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		a, owner, _, found := T.resolveAppliance(userID, udb, strings.TrimSpace(body.ApplianceID))
-		if !found {
-			http.Error(w, "system not found", http.StatusNotFound)
-			return
-		}
-		if !canManageAppliance(userID, a, servitorIsAdmin(r)) {
-			http.Error(w, "not allowed to change this system's sharing", http.StatusForbidden)
-			return
-		}
-		var key PeerKey
-		for _, k := range ListPeerKeys() {
-			if k.ID == strings.TrimSpace(body.KeyID) {
-				key = k
+		rw := row{KeyID: k.ID, Label: k.Label, Owner: k.Owner}
+		for _, granted := range k.Appliances {
+			if granted == a.ID {
+				rw.Granted = true
 				break
 			}
 		}
-		if key.ID == "" {
-			http.Error(w, "no such peer key", http.StatusNotFound)
-			return
+		switch {
+		case k.Owner != "" && k.Owner != owner && !T.reaches(k.Owner, a.ID):
+			rw.Blocked = "this key runs as " + k.Owner + ", who cannot reach this system: share the system with " + k.Owner + " first, or use a key owned by " + owner
+		case k.Disabled:
+			rw.Blocked = "this key is disabled"
 		}
-		if !key.Allows(PeerCapExec) {
-			http.Error(w, "that key is not granted the exec capability: an admin sets that under Resource Sharing", http.StatusBadRequest)
-			return
-		}
-		// A key that has never been scoped adopts this appliance's owner. It
-		// reached nothing before, so this widens nothing; it just saves an
-		// admin round trip to set a field whose only correct value here is the
-		// owner of the system being granted.
-		keyOwner := key.Owner
-		if keyOwner == "" {
-			keyOwner = owner
-		}
-		next := make([]string, 0, len(key.Appliances)+1)
-		for _, id := range key.Appliances {
-			if id != a.ID {
-				next = append(next, id)
-			}
-		}
-		if body.Granted {
-			next = append(next, a.ID)
-		}
-		// SetPeerKeyScope re-validates every id against the owner, so removing
-		// one from a key whose OTHER entries have gone stale surfaces that here
-		// rather than silently rewriting a broken grant.
-		if _, err := SetPeerKeyScope(key.ID, keyOwner, next); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		Log("[servitor.peer] user=%q set appliance %q on key %q to granted=%v", userID, a.ID, key.Label, body.Granted)
-		w.WriteHeader(http.StatusOK)
-
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		out = append(out, rw)
 	}
+	return map[string]any{
+		"can_manage": canManageAppliance(userID, a, servitorIsAdmin(c.R)),
+		"keys":       out,
+	}, nil
+}
+
+// handleAppliancePeerGrant grants (or takes back) a peer key's reach to a
+// system: the owner or an admin only.
+func (T *Servitor) handleAppliancePeerGrant(c *jsonapi.Call, body peerGrantReq) (any, error) {
+	userID, udb := c.User, c.UDB
+	if udb == nil {
+		return nil, jsonapi.Status(http.StatusInternalServerError, "no database")
+	}
+	a, owner, _, found := T.resolveAppliance(userID, udb, strings.TrimSpace(body.ApplianceID))
+	if !found {
+		return nil, jsonapi.NotFound("system not found")
+	}
+	if !canManageAppliance(userID, a, servitorIsAdmin(c.R)) {
+		return nil, jsonapi.Forbidden("not allowed to change this system's sharing")
+	}
+	var key PeerKey
+	for _, k := range ListPeerKeys() {
+		if k.ID == strings.TrimSpace(body.KeyID) {
+			key = k
+			break
+		}
+	}
+	if key.ID == "" {
+		return nil, jsonapi.NotFound("no such peer key")
+	}
+	if !key.Allows(PeerCapExec) {
+		return nil, jsonapi.BadRequest("that key is not granted the exec capability: an admin sets that under Resource Sharing")
+	}
+	// A key that has never been scoped adopts this appliance's owner. It
+	// reached nothing before, so this widens nothing; it just saves an
+	// admin round trip to set a field whose only correct value here is the
+	// owner of the system being granted.
+	keyOwner := key.Owner
+	if keyOwner == "" {
+		keyOwner = owner
+	}
+	next := make([]string, 0, len(key.Appliances)+1)
+	for _, id := range key.Appliances {
+		if id != a.ID {
+			next = append(next, id)
+		}
+	}
+	if body.Granted {
+		next = append(next, a.ID)
+	}
+	// SetPeerKeyScope re-validates every id against the owner, so removing
+	// one from a key whose OTHER entries have gone stale surfaces that here
+	// rather than silently rewriting a broken grant.
+	if _, err := SetPeerKeyScope(key.ID, keyOwner, next); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	Log("[servitor.peer] user=%q set appliance %q on key %q to granted=%v", userID, a.ID, key.Label, body.Granted)
+	return jsonapi.Empty(http.StatusOK), nil
+}
+
+// peerGrantReq is what handleAppliancePeerGrant is sent.
+type peerGrantReq struct {
+	ApplianceID string `json:"appliance_id"`
+	KeyID       string `json:"key_id"`
+	Granted     bool   `json:"granted"`
 }
 
 // registerPeerExec serves the command transport: run one command against a
