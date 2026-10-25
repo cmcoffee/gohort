@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/appagents"
 	"github.com/cmcoffee/snugforge/kvlite"
 	"net/http"
@@ -181,7 +182,7 @@ func TestNotesAreNotCrossUserReadable(t *testing.T) {
 
 // The modal has to actually fetch the endpoint, or the handler is dead code.
 func TestTheModalWiresTheNotesPanel(t *testing.T) {
-	js := AgentMemoryModalScript("agents_memory_modal", "'api/'")
+	js := agenthost.AgentMemoryModalScript("agents_memory_modal", "'api/'")
 	for _, want := range []string{"Working notes", "MEMBASE + 'notes'", "from_seed"} {
 		if !strings.Contains(js, want) {
 			t.Errorf("the modal must carry %q", want)

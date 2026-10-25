@@ -29,6 +29,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 )
 
 // Aliases keep existing call sites in this package terse. The
@@ -69,7 +70,7 @@ func (T *OrchestrateApp) handleInject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodGet {
-		ServeWaitingNotes(w, r, user)
+		agenthost.ServeWaitingNotes(w, r, user)
 		return
 	}
 	var req struct {
@@ -188,30 +189,6 @@ func (T *OrchestrateApp) handleInject(w http.ResponseWriter, r *http.Request) {
 // turn in progress" when there is no turn in progress.
 func (T *OrchestrateApp) PublicHandleInject(w http.ResponseWriter, r *http.Request) {
 	T.handleInject(w, r)
-}
-
-// ServeWaitingNotes answers GET ?id=<session> on an inject endpoint: the notes
-// still waiting in that session's running turn, {notes: [{id, text}]}, for a
-// page that joins the turn after they were written. Only the caller's own run;
-// anything else (no run, finished, somebody else's) is an empty list, the
-// same answer as nothing waiting. Shared by every app on the inject contract.
-func ServeWaitingNotes(w http.ResponseWriter, r *http.Request, user string) {
-	type note struct {
-		ID   string `json:"id"`
-		Text string `json:"text"`
-	}
-	out := []note{}
-	if q := LookupInjectionQueue(strings.TrimSpace(r.URL.Query().Get("id"))); q != nil && q.Owner != "" && q.Owner == user {
-		for _, n := range q.Pending() {
-			if n.Framework {
-				continue // the framework's, not a note the person wrote
-			}
-			out = append(out, note{ID: n.ID, Text: n.Text})
-		}
-	}
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"notes": out})
 }
 
 // leftoverNotesWait bounds how long a send of unread notes waits for the turn

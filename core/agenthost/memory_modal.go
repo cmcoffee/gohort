@@ -1,14 +1,14 @@
-// agent_memory_modal.go — the editable Memory surface (Saved facts,
-// Reference Memory, Graph Memory) lifted out of apps/agents so every
-// surface that fronts an orchestrate agent renders the SAME modal. The
-// admin per-agent page, the public /agents app, and per-appliance app
-// surfaces (servitor) all call AgentMemoryModalScript; the script is
-// defined exactly once and parameterized at the two seams that differ.
+// memory_modal.go: the editable Memory surface (Saved facts, Reference
+// Memory, Graph Memory) every app that fronts a hosted agent renders: the
+// /agents app, the admin per-agent page, and per-appliance surfaces
+// (servitor) all call AgentMemoryModalScript; the script is defined exactly
+// once and parameterized at the two seams that differ.
 //
-// core/ui stays domain-agnostic (CLAUDE.md), so this agent-domain JS
-// lives in orchestrate — the package both apps/agents and apps/servitor
-// already import — not in core/ui.
-package orchestrate
+// core/ui stays domain-agnostic (CLAUDE.md), so this agent-domain JS lives
+// here, with the rest of what an app needs to front a hosted agent, and not in
+// core/ui. It is a plain function: an app builds its page script from it at
+// startup, before any host has registered.
+package agenthost
 
 import "strings"
 

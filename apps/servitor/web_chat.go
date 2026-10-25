@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/cmcoffee/gohort/apps/orchestrate"
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 )
 
 // --- Chat ---
@@ -144,7 +144,7 @@ func (T *Servitor) handleInject(w http.ResponseWriter, r *http.Request) {
 	}
 	// GET ?id=: the notes still waiting, for a page joining the run.
 	if r.Method == http.MethodGet {
-		orchestrate.ServeWaitingNotes(w, r, user)
+		agenthost.ServeWaitingNotes(w, r, user)
 		return
 	}
 	var req struct {

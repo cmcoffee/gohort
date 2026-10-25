@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -43,7 +44,7 @@ func TestWaitingNotesAreServedToTheirOwnerOnly(t *testing.T) {
 	q.Push("check the disk too")
 	get := func(user string) string {
 		w := httptest.NewRecorder()
-		ServeWaitingNotes(w, httptest.NewRequest("GET", "/api/inject?id=waiting-notes-test", nil), user)
+		agenthost.ServeWaitingNotes(w, httptest.NewRequest("GET", "/api/inject?id=waiting-notes-test", nil), user)
 		return w.Body.String()
 	}
 	if got := get("alice"); !strings.Contains(got, `"text":"check the disk too"`) {
@@ -73,7 +74,7 @@ func TestABackgroundResultIsNotShownAsTheUsersNote(t *testing.T) {
 	id, _ := q.PushFramework(full, taskWakeMarker+" render done: image#3")
 
 	w := httptest.NewRecorder()
-	ServeWaitingNotes(w, httptest.NewRequest("GET", "/api/inject?id="+key, nil), "u")
+	agenthost.ServeWaitingNotes(w, httptest.NewRequest("GET", "/api/inject?id="+key, nil), "u")
 	if strings.Contains(w.Body.String(), "line one") {
 		t.Errorf("a background result was listed as the person's waiting note: %s", w.Body.String())
 	}

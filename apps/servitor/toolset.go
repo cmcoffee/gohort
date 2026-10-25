@@ -38,6 +38,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/textutil"
 	"github.com/cmcoffee/gohort/tools/temptool"
 )
@@ -253,7 +254,7 @@ func resolveToolset(ctx context.Context, owner, caller string, a Appliance) reso
 		if who == "" {
 			who = owner
 		}
-		if orch := servitorOrch(); orch != nil {
+		if orch := agenthost.Get(); orch != nil {
 			sess.DeniedCredentials = orch.AgentCredentialDeny(who, agent)
 		}
 	}

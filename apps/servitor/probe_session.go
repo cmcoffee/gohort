@@ -12,7 +12,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cmcoffee/gohort/apps/orchestrate"
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/bundle"
@@ -143,7 +142,7 @@ type probeRun struct {
 	scratchCleanup   func()
 	ownerUDB         Database
 	a                *Servitor
-	guard            *orchestrate.AppLoopGuard // orchestrate's guardrails, on every loop this run makes (servitorGuard)
+	guard            *agenthost.LoopGuard // orchestrate's guardrails, on every loop this run makes (servitorGuard)
 	termPrompt       string
 	sessionFailures  []sessionFailure
 	cmdCount         map[string]int

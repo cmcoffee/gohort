@@ -22,13 +22,12 @@ import (
 	"context"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 )
 
-// AppLoopGuard is orchestrate's guardrails for one run of an app agent.
-// A nil guard applies nothing.
-type AppLoopGuard struct {
-	t *chatTurn
-}
+// AppLoopGuard is agenthost.LoopGuard: orchestrate's guardrails for one run
+// of an app agent. A nil guard applies nothing.
+type AppLoopGuard = agenthost.LoopGuard
 
 // AppLoopGuard builds the guard for one run of agentID for user: their copy of
 // the agent, with its rules, on ctx. Nil when the agent cannot be resolved;
@@ -43,10 +42,11 @@ func (T *OrchestrateApp) AppLoopGuard(ctx context.Context, user, agentID string)
 		Log("[orchestrate.app-guard] %s has no agent %q: its loops run without orchestrate's guardrails", user, agentID)
 		return nil
 	}
-	return &AppLoopGuard{t: &chatTurn{
+	t := &chatTurn{
 		app: T, agent: rec, user: user, ownerUser: user, udb: udb, ctx: ctx,
 		privateMode: agentForcesPrivate(rec) && !AllLLMsPrivate(),
-	}}
+	}
+	return agenthost.NewLoopGuard(func(cfg AgentLoopConfig) AgentLoopConfig { return applyAppGuard(t, cfg) })
 }
 
 // AgentCredentialDeny is the credentials agentID, one of owner's agents, has
@@ -63,24 +63,22 @@ func (T *OrchestrateApp) AgentCredentialDeny(owner, agentID string) map[string]b
 	return credentialDenySet(a, owner)
 }
 
-// Apply returns cfg with the guardrail hooks set and every tool wrapped in the
-// agent's tool-result policy (the untrusted-content fence and the injection
-// scan, by what each tool declares). cfg.Tools is copied, not mutated.
-func (g *AppLoopGuard) Apply(cfg AgentLoopConfig) AgentLoopConfig {
-	if g == nil || g.t == nil {
-		return cfg
-	}
-	e := g.t.guardrailEnforcer()
+// applyAppGuard is what an AppLoopGuard applies: cfg with the guardrail hooks
+// set and every tool wrapped in the agent's tool-result policy (the
+// untrusted-content fence and the injection scan, by what each tool
+// declares). cfg.Tools is copied, not mutated.
+func applyAppGuard(t *chatTurn, cfg AgentLoopConfig) AgentLoopConfig {
+	e := t.guardrailEnforcer()
 	cfg.GuardrailCheck = e.Check
 	cfg.GuardrailActionGate = e.ActionGate
 	cfg.GuardrailHalted = e.Halted
 	cfg.GuardrailReject = e.Reject
-	cfg.GuardrailDeclines = g.t.agent.GuardrailDeclines
+	cfg.GuardrailDeclines = t.agent.GuardrailDeclines
 	tools := make([]AgentToolDef, len(cfg.Tools))
 	copy(tools, cfg.Tools)
 	for i := range tools {
 		if tools[i].Handler != nil {
-			tools[i].Handler = g.t.withToolResultPolicy(g.t.agent, tools[i].Tool, tools[i].Handler)
+			tools[i].Handler = t.withToolResultPolicy(t.agent, tools[i].Tool, tools[i].Handler)
 		}
 	}
 	cfg.Tools = tools

@@ -80,6 +80,39 @@ type Host interface {
 	PublicHandleRunsActive(w http.ResponseWriter, r *http.Request)
 	PublicHandleRunsDispatch(w http.ResponseWriter, r *http.Request)
 
+	// An app that runs its own agent loops, and keeps an agent's state under a
+	// scope of its own (Scope): the guardrails for its loops, the credentials
+	// the agent may not use, and the agent's memory, knowledge and graph
+	// under that scope, read and seeded by the app and edited through the
+	// per-scope handlers its memory page calls.
+	AppLoopGuard(ctx context.Context, user, agentID string) *LoopGuard
+	AgentCredentialDeny(owner, agentID string) map[string]bool
+	WipeScopedMemory(scope Scope) error
+	SeedScopedMemory(scope Scope, notes ...string) error
+	SeedScopedKnowledge(ctx context.Context, scope Scope, topic, title, body string) error
+	SeedScopedGraphEntity(scope Scope, kind, name string, aliases []string, attrs map[string]string) error
+	SeedScopedGraphLink(scope Scope, subjectKind, subject string, subjectAttrs map[string]string, relation, objectKind, object, note string, replace bool) error
+	RemoveScopedGraphEntityAttr(scope Scope, nameOrAlias, key string) bool
+	ScopedGraphAvailable(scope Scope) bool
+	ScopedGraphCounts(scope Scope) (entities, edges int)
+	ScopedGraphSummary(scope Scope) string
+	ScopedGraphEntity(scope Scope, nameOrAlias string) (core.GraphEntity, bool)
+	ScopedGraphEntityByID(scope Scope, id string) (core.GraphEntity, bool)
+	ScopedGraphEdges(scope Scope, id string) (out, in []core.GraphEdge)
+	PublicHandleAgentRecordForScope(w http.ResponseWriter, r *http.Request, scopeUser, agentID string)
+	PublicHandleAgentFactsForScope(w http.ResponseWriter, r *http.Request, scopeUser, agentID string)
+	PublicHandleAgentNotesForScope(w http.ResponseWriter, r *http.Request, scopeUser, agentID string)
+	PublicHandleAgentMemorySearchForScope(w http.ResponseWriter, r *http.Request, scopeUser, agentID string)
+	PublicHandleAgentMemoryAuditForScope(w http.ResponseWriter, r *http.Request, scopeUser, agentID string)
+	PublicHandleAgentInferredListForScope(w http.ResponseWriter, r *http.Request, scopeUser, agentID string)
+	PublicHandleAgentInferredDeleteForScope(w http.ResponseWriter, r *http.Request, scopeUser, agentID, chunkID string)
+	PublicHandleAgentKnowledgeAutoInferredWipeForScope(w http.ResponseWriter, r *http.Request, scopeUser, agentID string)
+	PublicHandleAgentGraphForScope(w http.ResponseWriter, r *http.Request, scopeUser, agentID string)
+	PublicHandleAgentGraphEntityDeleteForScope(w http.ResponseWriter, r *http.Request, scopeUser, agentID, entityID string)
+	PublicHandleAgentGraphAliasDeleteForScope(w http.ResponseWriter, r *http.Request, scopeUser, agentID, entityID string)
+	PublicHandleAgentGraphAttrDeleteForScope(w http.ResponseWriter, r *http.Request, scopeUser, agentID, entityID string)
+	PublicHandleAgentGraphEdgeDeleteForScope(w http.ResponseWriter, r *http.Request, scopeUser, agentID string)
+
 	// An app's own runs, from its scripts and actions: the agent asked one
 	// question with no tools, the agent run on a prompt, and the pipeline
 	// run on an input. Each returns the reply and what it cost.
@@ -113,6 +146,29 @@ func Get() Host {
 	hostMu.RLock()
 	defer hostMu.RUnlock()
 	return host
+}
+
+// LoopGuard is the host's guardrails on an agent loop an app runs itself
+// rather than through the host's own runner: the deployment's rules, the
+// agent's own rules, the tool-result fence and scan, and the tainted-action
+// check. Built once per run (Host.AppLoopGuard) and applied to each loop
+// config the run makes. A nil LoopGuard applies nothing, so a caller need not
+// check.
+type LoopGuard struct {
+	apply func(core.AgentLoopConfig) core.AgentLoopConfig
+}
+
+// NewLoopGuard is the host's half: a guard that applies by apply.
+func NewLoopGuard(apply func(core.AgentLoopConfig) core.AgentLoopConfig) *LoopGuard {
+	return &LoopGuard{apply: apply}
+}
+
+// Apply returns cfg with the guardrails on it.
+func (g *LoopGuard) Apply(cfg core.AgentLoopConfig) core.AgentLoopConfig {
+	if g == nil || g.apply == nil {
+		return cfg
+	}
+	return g.apply(cfg)
 }
 
 type noThinkingKey struct{}

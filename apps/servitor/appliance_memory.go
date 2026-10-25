@@ -6,7 +6,7 @@
 // Memory therefore live in orchestrate's stores keyed by (scope, agentID) —
 // the same layered model orchestrate agents use — instead of servitor's flat
 // ssh_facts. This file mounts the SAME editable Memory modal apps/agents
-// uses (orchestrate.AgentMemoryModalScript) pointed at a per-appliance scope,
+// uses (agenthost.AgentMemoryModalScript) pointed at a per-appliance scope,
 // and routes its data endpoints to orchestrate's …ForScope handlers.
 //
 // Scope only — no runtime swap. Servitor still runs its own RunAgentLoop for
@@ -21,7 +21,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/cmcoffee/gohort/apps/orchestrate"
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/appagents"
@@ -85,26 +84,20 @@ func investigatorTemplatePrompt() string {
 // servitor's own client action. The base resolver runs at open: servitorMemBase()
 // (web_assets.go) returns the selected appliance's relative endpoint prefix, or
 // null (nothing picked → alert + abort).
-var applianceMemoryModalScript = orchestrate.AgentMemoryModalScript("servitor_appliance_memory", "servitorMemBase()")
+var applianceMemoryModalScript = agenthost.AgentMemoryModalScript("servitor_appliance_memory", "servitorMemBase()")
 
 // servitorGuard is orchestrate's guardrails for one Servitor run by user: the
 // deployment's Always rules, the investigator's own rules, the tool-result
-// fence and scan, and the tainted-action check (orchestrate.AppLoopGuard).
+// fence and scan, and the tainted-action check (agenthost.LoopGuard).
 // Servitor runs its own loops rather than orchestrate's runner, so without
 // this none of those saw an investigation. One per run, on that run's
 // context; nil (applying nothing) when orchestrate is not running.
-func servitorGuard(ctx context.Context, user string) *orchestrate.AppLoopGuard {
-	orch := servitorOrch()
+func servitorGuard(ctx context.Context, user string) *agenthost.LoopGuard {
+	orch := agenthost.Get()
 	if orch == nil {
 		return nil
 	}
 	return orch.AppLoopGuard(ctx, user, servitorInvestigatorAgentID)
-}
-
-// servitorOrch is the registered orchestrate app, or nil when it is not running.
-func servitorOrch() *orchestrate.OrchestrateApp {
-	o, _ := FindAgentAs[*orchestrate.OrchestrateApp]("orchestrate")
-	return o
 }
 
 // applianceMemScope maps an appliance to its synthetic scope user.
@@ -122,7 +115,7 @@ func clearApplianceScopedMemory(udb Database, applianceID string) {
 		return
 	}
 	udb.Unset(factsSeededTable, applianceID) // let a future Memory open re-seed
-	if orch := servitorOrch(); orch != nil {
+	if orch := agenthost.Get(); orch != nil {
 		_ = orch.WipeScopedMemory(agenthost.Scope{
 			AgentID:   servitorInvestigatorAgentID,
 			ScopeUser: applianceMemScope(applianceID),
@@ -171,7 +164,7 @@ func scopedApplianceFacts(udb Database, a Appliance) map[string]string {
 		return nil
 	}
 	seedApplianceMemoryFromFacts(udb, a) // idempotent; ensures pre-cutover facts are present
-	orch := servitorOrch()
+	orch := agenthost.Get()
 	if orch == nil {
 		return nil
 	}
@@ -191,7 +184,7 @@ func scopedGraphBlock(a Appliance) string {
 	if a.ID == "" {
 		return ""
 	}
-	orch := servitorOrch()
+	orch := agenthost.Get()
 	if orch == nil {
 		return ""
 	}
@@ -232,7 +225,7 @@ func recordScopedApplianceFact(a Appliance, key, value, ttl string) {
 	if a.ID == "" || key == "" || ttl == "short" || strings.TrimSpace(value) == "" {
 		return
 	}
-	orch := servitorOrch()
+	orch := agenthost.Get()
 	if orch == nil {
 		return
 	}
@@ -253,7 +246,7 @@ func RemoveScopedApplianceFact(a Appliance, key string) bool {
 	if a.ID == "" || strings.TrimSpace(key) == "" {
 		return false
 	}
-	orch := servitorOrch()
+	orch := agenthost.Get()
 	if orch == nil {
 		return false
 	}
@@ -269,7 +262,7 @@ func recordScopedLink(a Appliance, subjectKind, subject string, subjectAttrs map
 	if a.ID == "" {
 		return nil
 	}
-	orch := servitorOrch()
+	orch := agenthost.Get()
 	if orch == nil {
 		return nil
 	}
@@ -287,7 +280,7 @@ func recordScopedExplicit(a Appliance, note string) {
 	if a.ID == "" || strings.TrimSpace(note) == "" {
 		return
 	}
-	orch := servitorOrch()
+	orch := agenthost.Get()
 	if orch == nil {
 		return
 	}
@@ -306,7 +299,7 @@ func recordScopedReference(ctx context.Context, a Appliance, topic, title, body 
 	if a.ID == "" || strings.TrimSpace(body) == "" {
 		return
 	}
-	orch := servitorOrch()
+	orch := agenthost.Get()
 	if orch == nil {
 		return
 	}
@@ -337,7 +330,7 @@ func seedApplianceMemoryFromFacts(udb Database, a Appliance) {
 	if udb.Get(factsSeededTable, a.ID, &seeded) {
 		return // already bridged once
 	}
-	orch := servitorOrch()
+	orch := agenthost.Get()
 	if orch == nil {
 		return
 	}
@@ -395,7 +388,7 @@ func (T *Servitor) handleApplianceMemory(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	udb = ownerUDB
-	orch := servitorOrch()
+	orch := agenthost.Get()
 	if orch == nil {
 		http.Error(w, "orchestrate unavailable", http.StatusInternalServerError)
 		return

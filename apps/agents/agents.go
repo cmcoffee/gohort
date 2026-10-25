@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/ui"
 
 	"github.com/cmcoffee/gohort/apps/orchestrate"
@@ -1004,7 +1005,7 @@ const blockedMarkScript = `<script>
 })();
 </script>`
 
-var memoryModalScript = orchestrate.AgentMemoryModalScript("agents_memory_modal", "'api/'")
+var memoryModalScript = agenthost.AgentMemoryModalScript("agents_memory_modal", "'api/'")
 
 // askOwnerScript powers the "Ask the owner" toolbar action, which is added only
 // on an agent somebody else owns.

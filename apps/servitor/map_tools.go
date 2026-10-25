@@ -29,7 +29,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/cmcoffee/gohort/apps/orchestrate"
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/agenthost"
 )
@@ -47,8 +46,8 @@ const (
 )
 
 // mapScope resolves the graph scope for one appliance.
-func mapScope(applianceID string) (*orchestrate.OrchestrateApp, agenthost.Scope, bool) {
-	orch := servitorOrch()
+func mapScope(applianceID string) (agenthost.Host, agenthost.Scope, bool) {
+	orch := agenthost.Get()
 	if orch == nil || strings.TrimSpace(applianceID) == "" {
 		return nil, agenthost.Scope{}, false
 	}
@@ -321,7 +320,7 @@ func renderMapEntity(e GraphEntity) string {
 
 // mapName resolves an entity ID to its display name, falling back to the ID so
 // an edge pointing at a deleted entity still reads as something.
-func mapName(orch *orchestrate.OrchestrateApp, scope agenthost.Scope, id string) string {
+func mapName(orch agenthost.Host, scope agenthost.Scope, id string) string {
 	if e, ok := orch.ScopedGraphEntityByID(scope, id); ok && strings.TrimSpace(e.Name) != "" {
 		return e.Name
 	}
