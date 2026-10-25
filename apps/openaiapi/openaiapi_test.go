@@ -317,3 +317,33 @@ func TestAnAgentTurnThinksOnlyWhenAsked(t *testing.T) {
 		t.Errorf("a caller that asked for high should get it, unmarked, got %+v", run)
 	}
 }
+
+// /v1/models offers the agents MCP's list_agents offers for the same key: one
+// list, with the key's explicit grants. It used to list every exposed agent by
+// a rule of its own, which showed an app's hidden agent by its internal id and
+// left out an agent the key was granted but that was not exposed, though the
+// resolver accepted it.
+func TestModelsListTheAgentsMCPLists(t *testing.T) {
+	saved := ListExternalReachableAgentsFn
+	t.Cleanup(func() { ListExternalReachableAgentsFn = saved })
+	var gotOwner string
+	var gotGrant func(string) bool
+	ListExternalReachableAgentsFn = func(db Database, owner string, granted func(string) bool) []ExternalAgentInfo {
+		gotOwner, gotGrant = owner, granted
+		return []ExternalAgentInfo{{ID: "wren-1", Name: "Wren"}}
+	}
+
+	token := &AccountToken{Scope: &TokenScope{Targets: []string{"agent:granted-1"}}}
+	got := modelAgents("alice", token)
+	if len(got) != 1 || got[0].ID != "wren-1" || gotOwner != "alice" {
+		t.Fatalf("modelAgents = %+v for %q, want the hook's list for alice", got, gotOwner)
+	}
+	if gotGrant == nil || !gotGrant("agent:granted-1") || gotGrant("agent:other") {
+		t.Error("the key's explicit grants did not reach the list")
+	}
+
+	ListExternalReachableAgentsFn = nil
+	if got := modelAgents("alice", token); got != nil {
+		t.Errorf("no agent host, no agents: %+v", got)
+	}
+}

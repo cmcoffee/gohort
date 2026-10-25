@@ -261,8 +261,8 @@ func (T *OpenAIAPI) gateAppTarget(w http.ResponseWriter, user string, token *Acc
 // --- handlers ----------------------------------------------------------------
 
 // handleModels answers the catalog probe most OpenAI clients make before their
-// first call. It lists the two tiers plus every agent the user has exposed, so
-// a config UI that offers a model dropdown shows real, working choices.
+// first call. It lists the two tiers plus the agents this key can reach, so a
+// config UI that offers a model dropdown shows real, working choices.
 func (T *OpenAIAPI) handleModels(w http.ResponseWriter, r *http.Request) {
 	user := APIKeyUser(r)
 	if user == "" {
@@ -286,11 +286,7 @@ func (T *OpenAIAPI) handleModels(w http.ResponseWriter, r *http.Request) {
 	if allow("lead") {
 		data = append(data, map[string]any{"id": "lead", "object": "model", "owned_by": "gohort"})
 	}
-	var agents []ExternalAgentInfo
-	if host := agenthost.Get(); host != nil {
-		agents = host.ExternalAgents(user)
-	}
-	for _, a := range agents {
+	for _, a := range modelAgents(user, token) {
 		// App-owned agents live behind their app's FEATURE checkbox, not the
 		// per-target scope: list them on the feature alone (denied ones drop),
 		// mirroring gateTarget's app bypass.
@@ -1011,6 +1007,20 @@ func writeErr(w http.ResponseWriter, code int, msg string) {
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"error": map[string]any{"message": msg, "type": "invalid_request_error"},
 	})
+}
+
+// modelAgents is the agents /v1/models offers: the list the MCP server gives
+// for the same key (ListExternalReachableAgentsFn), so the two surfaces show
+// one set, and that set is what the resolver accepts. It takes in an agent
+// this key was explicitly granted even when the agent is not exposed, as the
+// resolver does, and it leaves out an app's hidden agent, which is reached by
+// the app's name and whose internal id is not shown. No agent host running
+// means no agents.
+func modelAgents(owner string, token *AccountToken) []ExternalAgentInfo {
+	if ListExternalReachableAgentsFn == nil {
+		return nil
+	}
+	return ListExternalReachableAgentsFn(nil, owner, tokenGrant(token))
 }
 
 // resolveAgent maps an agent id or name to the agent it names, when owner's

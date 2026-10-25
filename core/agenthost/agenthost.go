@@ -34,8 +34,6 @@ type Host interface {
 
 	// AgentNames maps each agent visible to user, by id, to its name.
 	AgentNames(user string) map[string]string
-	// ExternalAgents lists owner's agents reachable from outside gohort.
-	ExternalAgents(owner string) []core.ExternalAgentInfo
 	// ExternalChannels lists owner's live conversations an external caller
 	// can join.
 	ExternalChannels(owner string) []ChannelTarget

@@ -22,16 +22,6 @@ func (T *OrchestrateApp) AgentNames(user string) map[string]string {
 	return out
 }
 
-// ExternalAgents lists owner's agents reachable from outside gohort, by id and
-// name (the package function ExternalAgents, over this app's store).
-func (T *OrchestrateApp) ExternalAgents(owner string) []ExternalAgentInfo {
-	var out []ExternalAgentInfo
-	for _, a := range ExternalAgents(T.DB, owner) {
-		out = append(out, ExternalAgentInfo{ID: a.ID, Name: a.Name})
-	}
-	return out
-}
-
 // MachineStore is the store owner's machines are kept in.
 func (T *OrchestrateApp) MachineStore(owner string) Database {
 	return PublicMachineStore(owner)

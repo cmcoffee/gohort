@@ -22,16 +22,6 @@ import (
 	"github.com/cmcoffee/gohort/core/appagents"
 )
 
-// ExternalAgent is the minimal public view of an externally-reachable agent:
-// enough to populate a caller's model/agent picker, and nothing more.
-type ExternalAgent struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-}
-
-// ExternalAgents lists the owner's agents that are reachable from outside
-// gohort. db is the app's base store; the per-user store is resolved here so
-// callers don't have to know the layering.
 // externallyReachable answers "may external key-authenticated surfaces (/v1,
 // MCP) see and resolve this agent at all". For USER agents that consent is the
 // per-agent MCPExposed toggle (agent editor → Access & visibility). APP agents
@@ -66,20 +56,6 @@ func resolveAppByLabel(key string) (AgentRecord, bool) {
 		}
 	}
 	return AgentRecord{}, false
-}
-
-func ExternalAgents(db Database, owner string) []ExternalAgent {
-	if db == nil || strings.TrimSpace(owner) == "" {
-		return nil
-	}
-	udb := UserDB(db, owner)
-	var out []ExternalAgent
-	for _, a := range listAgents(udb, owner) {
-		if externallyReachable(a, owner) {
-			out = append(out, ExternalAgent{ID: a.ID, Name: a.Name})
-		}
-	}
-	return out
 }
 
 // ResolveExternalAgent maps a caller-supplied key (agent id OR name) to a

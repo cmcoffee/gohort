@@ -64,11 +64,4 @@ func TestCrossAppHooksIgnoreTheCallersStore(t *testing.T) {
 	if name := host.AgentNames(user)["wren-1"]; name != "Wren" {
 		t.Errorf("AgentNames has %q for the user's agent", name)
 	}
-	var listed bool
-	for _, a := range host.ExternalAgents(user) {
-		listed = listed || a.ID == "wren-1"
-	}
-	if !listed {
-		t.Errorf("ExternalAgents is missing the user's exposed agent: %+v", host.ExternalAgents(user))
-	}
 }
