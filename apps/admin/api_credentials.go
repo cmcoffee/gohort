@@ -1,13 +1,13 @@
 package admin
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/activity"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // registerCredentialsRoutes wires the credentials API under the admin sub-mux.
@@ -15,7 +15,11 @@ func (a *AdminApp) registerCredentialsRoutes(sub *http.ServeMux) {
 	// Secure API credentials. GET lists metadata (no secrets). POST
 	// upserts a credential (consumes the secret). DELETE removes one.
 	// GET ?audit=NAME returns recent calls for that credential.
-	sub.HandleFunc("/api/secure-api", a.handleSecureAPI)
+	sub.HandleFunc("/api/secure-api", jsonapi.Methods{
+		"GET":    jsonapi.Get(a.db, a.readCredentials, a.gate()),
+		"POST":   a.credentialPost(),
+		"DELETE": jsonapi.Post(a.db, a.deleteCredential, a.gate()),
+	}.Serve)
 
 	// Inline "Test token" for an oauth2 credential. The declarative form's
 	// TestURL POSTs its current working state (the full record + secret);
@@ -23,81 +27,67 @@ func (a *AdminApp) registerCredentialsRoutes(sub *http.ServeMux) {
 	// so the operator can verify the config before relying on it. Works
 	// pre-save (uses the typed secret) and on edit (falls back to the stored
 	// secret when the password field is left blank).
-	sub.HandleFunc("/api/secure-api/test", a.handleSecureAPITest)
+	sub.HandleFunc("/api/secure-api/test", jsonapi.Post(a.db, a.handleSecureAPITest, a.gate()))
 
 }
 
-// handleSecureAPI serves /api/secure-api; registerCredentialsRoutes says what it is for.
-func (a *AdminApp) handleSecureAPI(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
-		return
-	}
-	switch r.Method {
-	case http.MethodGet:
-		a.readCredentials(w, r)
-	case http.MethodPost:
-		// Two POST shapes: the upsert body (full credential) and the
-		// toggle action (?action=enable|disable&name=X). Distinguish
-		// by query param.
-		if action := r.URL.Query().Get("action"); action != "" {
-			a.credentialAction(w, r, action)
+// credentialPost tells /api/secure-api's two POST shapes apart: a toggle
+// names ?action= (and only the access pill sends a body), the upsert sends the
+// whole record.
+func (a *AdminApp) credentialPost() http.HandlerFunc {
+	toggle := jsonapi.Post(a.db, a.credentialAction, a.gate(), jsonapi.EmptyBodyOK)
+	save := jsonapi.Post(a.db, a.saveCredential, a.gate())
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("action") != "" {
+			toggle(w, r)
 			return
 		}
-		a.saveCredential(w, r)
-	case http.MethodDelete:
-		a.deleteCredential(w, r)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		save(w, r)
 	}
 }
 
 // readCredentials answers GET: what one of four queries names (a
 // credential's audit, its declaring tools, its bindings, or its record),
 // else the list.
-func (a *AdminApp) readCredentials(w http.ResponseWriter, r *http.Request) {
-	if name := r.URL.Query().Get("audit"); name != "" {
-		a.credentialAudit(w, r, name)
-		return
+func (a *AdminApp) readCredentials(c *jsonapi.Call) (any, error) {
+	q := c.R.URL.Query()
+	if name := q.Get("audit"); name != "" {
+		return a.credentialAudit(c, name), nil
 	}
-	if name := strings.TrimSpace(r.URL.Query().Get("tools")); name != "" {
-		a.credentialTools(w, name)
-		return
+	if name := strings.TrimSpace(q.Get("tools")); name != "" {
+		return a.credentialTools(name), nil
 	}
-	if name := strings.TrimSpace(r.URL.Query().Get("bindings")); name != "" {
-		a.credentialBindings(w, name)
-		return
+	if name := strings.TrimSpace(q.Get("bindings")); name != "" {
+		return a.credentialBindings(name), nil
 	}
-	if name := strings.TrimSpace(r.URL.Query().Get("name")); name != "" {
-		a.credentialRecord(w, name)
-		return
+	if name := strings.TrimSpace(q.Get("name")); name != "" {
+		return a.credentialRecord(name)
 	}
-	a.credentialList(w)
+	return a.credentialList(), nil
 }
 
 // credentialAudit answers ?audit=: the recent calls through one credential.
-func (a *AdminApp) credentialAudit(w http.ResponseWriter, r *http.Request, name string) {
+func (a *AdminApp) credentialAudit(c *jsonapi.Call, name string) any {
 	// owner selects the namespace: empty = the global credential of
 	// that name (the admin page's usual subject), a username = that
 	// user's own credential. Without it the audit view could only
 	// ever read the global ring, which is the bare-name collision
 	// this keying fixes — a per-user audit view passes owner here.
-	owner := strings.TrimSpace(r.URL.Query().Get("owner"))
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(Secure().LoadAudit(owner, name))
+	owner := strings.TrimSpace(c.R.URL.Query().Get("owner"))
+	return Secure().LoadAudit(owner, name)
 }
 
 // credentialTools answers ?tools=.
 // Declaring-tools list for a credential — what a secured cred is
 // locked to, and what a scoped one dispatches through.
-func (a *AdminApp) credentialTools(w http.ResponseWriter, name string) {
+func (a *AdminApp) credentialTools(name string) any {
 	refs := []CredentialToolRef{}
 	if CredentialToolsResolver != nil {
 		if r := CredentialToolsResolver(name); r != nil {
 			refs = r
 		}
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(refs)
+	return refs
 }
 
 // credentialBindings answers ?bindings=.
@@ -106,7 +96,7 @@ func (a *AdminApp) credentialTools(w http.ResponseWriter, name string) {
 // (a durable deny). Drives the Bindings expand + its Approve/Revoke
 // actions. Each row carries the credential name so a row action can
 // address both cred + tool.
-func (a *AdminApp) credentialBindings(w http.ResponseWriter, name string) {
+func (a *AdminApp) credentialBindings(name string) any {
 	type bindingRow struct {
 		Cred     string `json:"cred"`
 		Tool     string `json:"tool"`
@@ -123,8 +113,7 @@ func (a *AdminApp) credentialBindings(w http.ResponseWriter, name string) {
 			rows = append(rows, bindingRow{Cred: name, Tool: t, Status: "revoked", Revoked: true})
 		}
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(rows)
+	return rows
 }
 
 // credentialRecord answers ?name=.
@@ -132,22 +121,19 @@ func (a *AdminApp) credentialBindings(w http.ResponseWriter, name string) {
 // Returns one credential as an object (secret never included —
 // the password field stays blank on edit, which keeps the
 // stored secret unchanged unless the admin types a new one).
-func (a *AdminApp) credentialRecord(w http.ResponseWriter, name string) {
-	w.Header().Set("Content-Type", "application/json")
+func (a *AdminApp) credentialRecord(name string) (any, error) {
 	for _, c := range Secure().ListWithPending() {
 		if c.Name == name {
-			json.NewEncoder(w).Encode(c)
-			return
+			return c, nil
 		}
 	}
-	http.Error(w, "not found", http.StatusNotFound)
-	return
+	return nil, jsonapi.NotFound("not found")
 }
 
 // credentialList answers a bare GET.
 // List — enrich each SECURED credential with whether it's orphaned
 // (locked but no tool uses it → unreachable), for the dead-cred badge.
-func (a *AdminApp) credentialList(w http.ResponseWriter) {
+func (a *AdminApp) credentialList() any {
 	type credRow struct {
 		SecureCredential
 		Orphaned bool `json:"orphaned,omitempty"`
@@ -184,27 +170,27 @@ func (a *AdminApp) credentialList(w http.ResponseWriter) {
 		}
 		rows[i] = credRow{SecureCredential: c, Orphaned: orphaned, AccessLevel: level, Namespace: ns}
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(rows)
+	return rows
 }
 
 // credentialAction answers POST ?action=: one toggle on one credential.
-func (a *AdminApp) credentialAction(w http.ResponseWriter, r *http.Request, action string) {
+func (a *AdminApp) credentialAction(c *jsonapi.Call, body struct {
+	AccessLevel string `json:"access_level"` // the access pill's pick
+}) (any, error) {
+	r := c.R
+	action := r.URL.Query().Get("action")
 	name := strings.TrimSpace(r.URL.Query().Get("name"))
 	if name == "" {
-		http.Error(w, "missing name", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("missing name")
 	}
 	switch action {
 	case "enable":
 		if err := Secure().SetDisabled(name, false); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest(err.Error())
 		}
 	case "disable":
 		if err := Secure().SetDisabled(name, true); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest(err.Error())
 		}
 	case "secure":
 		// Tool-lock: reachable only through the tools that already
@@ -212,23 +198,17 @@ func (a *AdminApp) credentialAction(w http.ResponseWriter, r *http.Request, acti
 		// tool may declare it. Access follows those tools' scope, so
 		// the per-agent scope surface no longer applies.
 		if err := Secure().SetSecured(name, true); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest(err.Error())
 		}
 	case "unsecure":
 		// Release the tool-lock — the credential goes back to the
 		// normal (Open) scoped/auto-routable model.
 		if err := Secure().SetSecured(name, false); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest(err.Error())
 		}
 	case "access":
 		// One idempotent "set lockdown level" from the segmented pill:
 		// "open" (unlocked) or "secured" (tool-locked).
-		var body struct {
-			AccessLevel string `json:"access_level"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&body)
 		var secure bool
 		switch strings.TrimSpace(body.AccessLevel) {
 		case "open":
@@ -236,12 +216,10 @@ func (a *AdminApp) credentialAction(w http.ResponseWriter, r *http.Request, acti
 		case "secured":
 			secure = true
 		default:
-			http.Error(w, "access_level must be open|secured", http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest("access_level must be open|secured")
 		}
 		if err := Secure().SetSecured(name, secure); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest(err.Error())
 		}
 	case "approve_binding":
 		// Admin approves a tool's request to bind this secured cred —
@@ -249,24 +227,20 @@ func (a *AdminApp) credentialAction(w http.ResponseWriter, r *http.Request, acti
 		// access follows the tool's own scope. Clears any revoke tombstone.
 		tool := strings.TrimSpace(r.URL.Query().Get("tool"))
 		if tool == "" {
-			http.Error(w, "missing tool", http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest("missing tool")
 		}
 		if err := Secure().ApproveToolBinding(name, tool); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest(err.Error())
 		}
 	case "revoke_binding":
 		// Admin revokes a binding — tombstoned, so dispatch refuses it
 		// (the tool stays, but can't reach the cred until re-approved).
 		tool := strings.TrimSpace(r.URL.Query().Get("tool"))
 		if tool == "" {
-			http.Error(w, "missing tool", http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest("missing tool")
 		}
 		if err := Secure().RevokeToolBinding(name, tool); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest(err.Error())
 		}
 	case "test":
 		// Mint-and-discard an OAuth token to verify the config +
@@ -274,59 +248,53 @@ func (a *AdminApp) credentialAction(w http.ResponseWriter, r *http.Request, acti
 		// outcome (incl. the provider's error on failure) so the
 		// admin / LLM-assisted setup can iterate.
 		msg, terr := Secure().TestMintToken(r.Context(), name)
-		w.Header().Set("Content-Type", "application/json")
 		if terr != nil {
-			json.NewEncoder(w).Encode(map[string]any{"ok": false, "message": terr.Error()})
-			return
+			return map[string]any{"ok": false, "message": terr.Error()}, nil
 		}
-		json.NewEncoder(w).Encode(map[string]any{"ok": true, "message": msg})
-		return
+		return map[string]any{"ok": true, "message": msg}, nil
 	default:
-		http.Error(w, "action must be enable|disable|secure|unsecure|access|approve_binding|revoke_binding|test", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("action must be enable|disable|secure|unsecure|access|approve_binding|revoke_binding|test")
 	}
-	RecordActivity(r, activity.Credential, AuthCurrentUser(r), credentialActionDetail(action, name, r.URL.Query().Get("tool")))
-	w.WriteHeader(http.StatusNoContent)
+	RecordActivity(r, activity.Credential, c.User, credentialActionDetail(action, name, r.URL.Query().Get("tool")))
+	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// credentialSave is the record the credential form posts, secrets with it.
+type credentialSave struct {
+	Name              string   `json:"name"`
+	Type              string   `json:"type"`
+	AllowedURLPattern string   `json:"allowed_url_pattern"`
+	BaseURL           string   `json:"base_url"`
+	AllowedEndpoints  []string `json:"allowed_endpoints"`
+	AllowedUsers      []string `json:"allowed_users"`
+	ParamName         string   `json:"param_name"`
+	Description       string   `json:"description"`
+	CredScope         string   `json:"cred_scope"`
+	RequiresConfirm   bool     `json:"requires_confirm"`
+	ConfirmWrites     bool     `json:"confirm_writes"`
+	InsecureSkipTLS   bool     `json:"insecure_skip_tls"`
+	Secret            string   `json:"secret"`
+	Password          string   `json:"password"` // password-grant resource-owner password (the 2nd secret)
+	AllowedMethods    []string `json:"allowed_methods"`
+	DeniedURLPatterns []string `json:"denied_url_patterns"`
+	MaxCallsPerDay    int      `json:"max_calls_per_day"`
+	CostPerCall       float64  `json:"cost_per_call"`
+	// OAuth2 (type == "oauth2").
+	Grant        string `json:"grant"`
+	TokenURL     string `json:"token_url"`
+	AuthorizeURL string `json:"authorize_url"`
+	ClientID     string `json:"client_id"`
+	Username     string `json:"username"` // password grant: resource-owner username
+	Scope        string `json:"scope"`
+	JWTIssuer    string `json:"jwt_issuer"`
+	JWTSubject   string `json:"jwt_subject"`
+	JWTAudience  string `json:"jwt_audience"`
+	JWTKeyID     string `json:"jwt_key_id"`
 }
 
 // saveCredential answers a POST of the whole record: create or edit.
-func (a *AdminApp) saveCredential(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Name              string   `json:"name"`
-		Type              string   `json:"type"`
-		AllowedURLPattern string   `json:"allowed_url_pattern"`
-		BaseURL           string   `json:"base_url"`
-		AllowedEndpoints  []string `json:"allowed_endpoints"`
-		AllowedUsers      []string `json:"allowed_users"`
-		ParamName         string   `json:"param_name"`
-		Description       string   `json:"description"`
-		CredScope         string   `json:"cred_scope"`
-		RequiresConfirm   bool     `json:"requires_confirm"`
-		ConfirmWrites     bool     `json:"confirm_writes"`
-		InsecureSkipTLS   bool     `json:"insecure_skip_tls"`
-		Secret            string   `json:"secret"`
-		Password          string   `json:"password"` // password-grant resource-owner password (the 2nd secret)
-		AllowedMethods    []string `json:"allowed_methods"`
-		DeniedURLPatterns []string `json:"denied_url_patterns"`
-		MaxCallsPerDay    int      `json:"max_calls_per_day"`
-		CostPerCall       float64  `json:"cost_per_call"`
-		// OAuth2 (type == "oauth2").
-		Grant        string `json:"grant"`
-		TokenURL     string `json:"token_url"`
-		AuthorizeURL string `json:"authorize_url"`
-		ClientID     string `json:"client_id"`
-		Username     string `json:"username"` // password grant: resource-owner username
-		Scope        string `json:"scope"`
-		JWTIssuer    string `json:"jwt_issuer"`
-		JWTSubject   string `json:"jwt_subject"`
-		JWTAudience  string `json:"jwt_audience"`
-		JWTKeyID     string `json:"jwt_key_id"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	c := SecureCredential{
+func (a *AdminApp) saveCredential(c *jsonapi.Call, req credentialSave) (any, error) {
+	cred := SecureCredential{
 		Name:              strings.TrimSpace(req.Name),
 		Type:              strings.TrimSpace(req.Type),
 		AllowedURLPattern: strings.TrimSpace(req.AllowedURLPattern),
@@ -354,14 +322,13 @@ func (a *AdminApp) saveCredential(w http.ResponseWriter, r *http.Request) {
 		JWTAudience:       strings.TrimSpace(req.JWTAudience),
 		JWTKeyID:          strings.TrimSpace(req.JWTKeyID),
 	}
-	keepOAuthConfig(&c)
-	if err := saveCredWithPassword(c, req.Secret, req.Password); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+	keepOAuthConfig(&cred)
+	if err := saveCredWithPassword(cred, req.Secret, req.Password); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
 	}
 	// By name only: the log is read by every administrator.
-	RecordActivity(r, activity.Credential, AuthCurrentUser(r), "saved the credential "+c.Name)
-	w.WriteHeader(http.StatusNoContent)
+	RecordActivity(c.R, activity.Credential, c.User, "saved the credential "+cred.Name)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // Preserve the OAuth config of an existing credential when the
@@ -406,48 +373,33 @@ func keepOAuthConfig(c *SecureCredential) {
 }
 
 // deleteCredential answers DELETE: removes one credential.
-func (a *AdminApp) deleteCredential(w http.ResponseWriter, r *http.Request) {
-	name := strings.TrimSpace(r.URL.Query().Get("name"))
+func (a *AdminApp) deleteCredential(c *jsonapi.Call, _ struct{}) (any, error) {
+	name := strings.TrimSpace(c.R.URL.Query().Get("name"))
 	if name == "" {
-		http.Error(w, "missing name", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("missing name")
 	}
 	if err := Secure().Delete(name); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest(err.Error())
 	}
-	RecordActivity(r, activity.Credential, AuthCurrentUser(r), "deleted the credential "+name)
-	w.WriteHeader(http.StatusNoContent)
+	RecordActivity(c.R, activity.Credential, c.User, "deleted the credential "+name)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // handleSecureAPITest serves /api/secure-api/test; registerCredentialsRoutes says what it is for.
-func (a *AdminApp) handleSecureAPITest(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	var body struct {
-		SecureCredential
-		Secret string `json:"secret"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
+func (a *AdminApp) handleSecureAPITest(c *jsonapi.Call, body struct {
+	SecureCredential
+	Secret string `json:"secret"`
+}) (any, error) {
 	// Under the request's context, so Cancel ends the token request.
-	msg, err := Secure().TestMintFromPosted(r.Context(), body.SecureCredential, body.Secret)
+	ctx := c.R.Context()
+	msg, err := Secure().TestMintFromPosted(ctx, body.SecureCredential, body.Secret)
 	if err != nil {
-		if r.Context().Err() != nil {
+		if ctx.Err() != nil {
 			err = errors.New("cancelled before the token endpoint answered")
 		}
-		json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": err.Error()})
-		return
+		return map[string]any{"ok": false, "error": err.Error()}, nil
 	}
-	json.NewEncoder(w).Encode(map[string]any{"ok": true, "message": msg})
+	return map[string]any{"ok": true, "message": msg}, nil
 }
 
 // RegisterRoutes configures the administrative web interface and API endpoints.

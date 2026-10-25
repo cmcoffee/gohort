@@ -183,11 +183,11 @@ func TestTheAPIsPageRefusesWhatItCannotDo(t *testing.T) {
 		{"POST", "/api/secure-api?action=access&name=x", `{"access_level":"wide"}`, 400, "access_level must be open|secured"},
 		{"POST", "/api/secure-api?action=approve_binding&name=x", "", 400, "missing tool"},
 		{"POST", "/api/secure-api?action=revoke_binding&name=x", "", 400, "missing tool"},
-		{"POST", "/api/secure-api", "not json", 400, "bad json"},
+		{"POST", "/api/secure-api", "not json", 400, "invalid JSON"},
 		{"DELETE", "/api/secure-api", "", 400, "missing name"},
 		{"PUT", "/api/secure-api", "", 405, "method not allowed"},
 		{"GET", "/api/secure-api/test", "", 405, "method not allowed"},
-		{"POST", "/api/secure-api/test", "not json", 400, "bad json"},
+		{"POST", "/api/secure-api/test", "not json", 400, "invalid JSON"},
 		{"POST", "/api/secure-api/test", `{"name":"zz_unsaved","type":"oauth2"}`, 200, `"ok":false`},
 	} {
 		w := f.do(t, tc.method, tc.path, tc.body)

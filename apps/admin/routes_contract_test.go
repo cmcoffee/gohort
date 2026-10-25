@@ -98,6 +98,16 @@ func TestRoutesContract(t *testing.T) {
 // a digest.
 type contract struct {
 	log strings.Builder
+	// keep, when set, is which rows of a list reply are recorded: a store
+	// other tests share holds rows that are not this test's.
+	keep func(row string) bool
+	// t and secrets, when set, fail the test on any reply that carries one
+	// of the secrets, wherever in the reply it sits.
+	t       *testing.T
+	secrets []string
+	// rewrite, when set, masks what differs run to run (a test server's
+	// address) in the request and its reply.
+	rewrite *strings.Replacer
 }
 
 var (
@@ -114,14 +124,24 @@ func (ct *contract) run(mux *http.ServeMux, db Database, user, method, path, bod
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, r)
 	out := strings.TrimSpace(w.Body.String())
+	for _, sec := range ct.secrets {
+		if strings.Contains(out, sec) {
+			ct.t.Errorf("%s %s as %q answered with a secret: %s", method, path, user, out)
+		}
+	}
 	var items []json.RawMessage
 	if strings.HasPrefix(out, "[") && json.Unmarshal([]byte(out), &items) == nil {
-		rows := make([]string, len(items))
-		for i, it := range items {
-			rows[i] = string(it)
+		rows := make([]string, 0, len(items))
+		for _, it := range items {
+			if ct.keep == nil || ct.keep(string(it)) {
+				rows = append(rows, string(it))
+			}
 		}
 		sort.Strings(rows)
 		out = "[" + strings.Join(rows, ",") + "]"
+	}
+	if ct.rewrite != nil {
+		out, path, body = ct.rewrite.Replace(out), ct.rewrite.Replace(path), ct.rewrite.Replace(body)
 	}
 	out = contractHex.ReplaceAllString(out, "<hex>")
 	out = contractStamp.ReplaceAllString(out, "<time>")
