@@ -312,6 +312,12 @@ func WatchWorkspaceWrites(sess *ToolSession) func() []string {
 	return func() []string { return diffWorkspaceFiles(sess, before) }
 }
 
+// unusedArgsNoter is a tool that can name the keys of a call it ignored
+// (GroupedTool).
+type unusedArgsNoter interface {
+	unusedArgsNote(args map[string]any) string
+}
+
 // chatToolHandler adapts a plain ChatTool to the handler signature.
 //
 // The context is dropped, and that is the honest shape: a ChatTool's Run takes
@@ -439,6 +445,21 @@ func ChatToolToAgentToolDefWithSession(ct ChatTool, sess *ToolSession) AgentTool
 				}
 				notice.WriteString("Use workspace(action=\"attach\", path=\"<filename>\", cleanup=true) to deliver any of these to the user.")
 				out = out + notice.String()
+			}
+			return out, err
+		}
+	}
+	// Say which keys a call sent that did nothing. Here rather than in the
+	// tool's own dispatch, so it reaches the model and never the internal
+	// callers that run a grouped tool and parse what it returns. A success
+	// only: a refused call already names what was wrong with its keys.
+	if n, ok := ct.(unusedArgsNoter); ok {
+		inner := handler
+		handler = func(ctx context.Context, args map[string]any) (string, error) {
+			note := n.unusedArgsNote(args)
+			out, err := inner(ctx, args)
+			if err == nil && note != "" {
+				out += "\n\n" + note
 			}
 			return out, err
 		}

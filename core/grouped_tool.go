@@ -41,9 +41,16 @@ import (
 // can pick fields freely; required-param validation runs before the
 // handler is called.
 type GroupedToolAction struct {
-	Description  string
-	Params       map[string]ToolParam
-	Required     []string
+	Description string
+	Params      map[string]ToolParam
+	Required    []string
+	// Accepts names keys the Handler reads that Params does not offer: ones
+	// the framework passes itself (a tool folder's publish, an update's
+	// round-trip) and ones a tool it forwards to still honors. A call's key
+	// in neither is reported back as unused, so a key listed in neither but
+	// read anyway would be reported as doing nothing when it did.
+	// TestGroupedActionsDeclareWhatTheyRead holds the line.
+	Accepts      []string
 	Caps         []Capability
 	NeedsConfirm bool
 	// OwnModelReach marks an action whose network reach is the
@@ -222,6 +229,57 @@ func (g *GroupedTool) siblingAction(self, key string) string {
 		}
 	}
 	return ""
+}
+
+// unusedArgsNote names the keys a call sent that its action neither offers
+// nor reads, or "" when there are none. A handler reads the keys it knows and
+// passes over the rest without a word, so a key the action does not take used
+// to vanish: an agent paged a spilled file with workspace grep, offset=200,
+// lines=100, got the first matches back as a success each time, and never
+// learned that grep has no offset. Keys starting with "_" are the framework's
+// own and are never named. Case is ignored, as an authored tool's dispatch
+// ignores it ("URL" reaches a url param), so a near-miss on case errs toward
+// saying nothing.
+func (g *GroupedTool) unusedArgsNote(args map[string]any) string {
+	action := strings.TrimSpace(StringArg(args, "action"))
+	def, ok := g.actions[action]
+	if !ok {
+		return ""
+	}
+	used := map[string]bool{"action": true}
+	for k := range def.Params {
+		used[strings.ToLower(k)] = true
+	}
+	for _, k := range def.Accepts {
+		used[strings.ToLower(k)] = true
+	}
+	unused := map[string]any{}
+	var names []string
+	for k, v := range args {
+		if used[strings.ToLower(k)] || strings.HasPrefix(k, "_") {
+			continue
+		}
+		unused[k] = v
+		names = append(names, strconv.Quote(k))
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	sort.Strings(names)
+	note := fmt.Sprintf("[PARAMS NOT USED] %s action=%q does not take %s, so it ran without them.",
+		g.name, action, strings.Join(names, ", "))
+	if hint := def.typoHint(action, unused, func(k string) string { return g.siblingAction(action, k) }); hint != "" {
+		note += " " + hint + "."
+	}
+	params := make([]string, 0, len(def.Params))
+	for k := range def.Params {
+		params = append(params, k)
+	}
+	sort.Strings(params)
+	if len(params) == 0 {
+		return note + " It takes no params."
+	}
+	return note + " Its params: " + strings.Join(params, ", ") + "."
 }
 
 // GroupedTool implements ChatTool + SessionChatTool. Build via

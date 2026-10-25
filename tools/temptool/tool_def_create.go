@@ -227,9 +227,6 @@ func createGroupedMode(args map[string]any, sess *ToolSession) (string, error) {
 		if r, ok := args["required"]; ok {
 			shellArgs["required"] = r
 		}
-		if p, ok := args["persist"]; ok {
-			shellArgs["persist"] = p
-		}
 		if v, ok := args["state_path"]; ok {
 			shellArgs["state_path"] = v
 		}
@@ -303,9 +300,6 @@ func createGroupedMode(args map[string]any, sess *ToolSession) (string, error) {
 		}
 		if v, ok := args["required"]; ok {
 			apiArgs["required"] = v
-		}
-		if v, ok := args["persist"]; ok {
-			apiArgs["persist"] = v
 		}
 		t := &CreateAPIToolTool{}
 		res, err := t.RunWithSession(apiArgs, sess)
@@ -566,7 +560,6 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 	}
 	// Durable home for the unapproved toolbox — see persistUnapprovedTool.
 	persistUnapprovedTool(sess, tool)
-	_ = BoolArg(args, "persist") // ignored — same as other modes
 	msg := fmt.Sprintf("Created toolbox tool %q with %d action(s): %v. Call as %s(action=\"<sub-action>\", ...).",
 		name, len(actions), actionNames(actions), name)
 	if BoolArg(args, updatingArg) {

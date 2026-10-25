@@ -151,6 +151,9 @@ func BuildToolDef() *GroupedTool {
 		// that has descriptions only inside its actions can be told why those
 		// do not count (missingDescription).
 		Required: []string{"name", "mode"},
+		// A tool folder's publish and an update's re-create pass these; the
+		// schema does not offer them.
+		Accepts: []string{"cache", "workspace_files"},
 		// Creating a tool is registry CRUD — it does not execute anything.
 		// The created tool, when invoked, carries its own caps (CapExecute
 		// for shell mode, CapNetwork for api mode) and is filtered at
@@ -267,7 +270,12 @@ func BuildToolDef() *GroupedTool {
 
 			"follow_ups_from_any": {Type: "array", Items: &ToolParam{Type: "string"}, Description: "(toolbox) Actions any reply may ask for next."},
 		},
-		Required:     []string{"name"},
+		Required: []string{"name"},
+		// Read to refuse a mode change or a top-level field a toolbox keeps
+		// per action, or passed by a tool folder's publish; the schema does
+		// not offer them.
+		Accepts: []string{"mode", "script_name", "state_path", "raw_network", "confirm_in_chat", "workspace_files",
+			"pipeline_prompt", "pipeline_steps", "pipeline_tools", "pipeline_max_rounds"},
 		Caps:         nil,
 		NeedsConfirm: false,
 		Handler: func(args map[string]any, sess *ToolSession) (string, error) {
@@ -313,6 +321,8 @@ func BuildToolDef() *GroupedTool {
 			"cases": {Type: "array", Description: "Sample inputs to exercise. Array of objects: {action?: \"<sub-action>\" (toolbox only, omit for a single api tool), args: {param: value...}}. Provide one per endpoint you want live-probed or body-validated; give real values (a genuine id, a valid query) so read probes hit 2xx. Endpoints with no case still get offline checks (pipe compile-check, and body render when they need no required args).", Items: &ToolParam{Type: "object"}},
 		},
 		Required: []string{"name"},
+		// create's and update's test_args run through here.
+		Accepts: []string{"test_args"},
 		// Live read-probes reach the network; response_pipe compile-checks
 		// run in the exec sandbox. Same caps an api/toolbox dispatch needs.
 		Caps:         []Capability{CapNetwork, CapExecute},

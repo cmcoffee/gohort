@@ -238,7 +238,10 @@ func init() {
 			"path":    {Type: "string", Description: "Workspace-relative path."},
 			"content": {Type: "string", Description: "Bytes to write."},
 		},
-		Required:     []string{"path", "content"},
+		Required: []string{"path", "content"},
+		// The file tool this forwards to still honors its mode
+		// (create / overwrite / append).
+		Accepts:      []string{"mode"},
 		Caps:         []Capability{CapWrite},
 		NeedsConfirm: true,
 		Handler: func(args map[string]any, sess *ToolSession) (string, error) {
