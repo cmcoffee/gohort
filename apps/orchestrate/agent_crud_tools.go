@@ -666,6 +666,20 @@ func (updateAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	if msg := agentFamilyRefusal(&existing, sess); msg != "" {
 		return "", errors.New(msg)
 	}
+	// A new parent is a MOVE, the same one the agent menu makes
+	// (agent_move.go). Checked here, before anything is written, so a shared
+	// agent or one with sub-agents of its own is refused rather than half
+	// moved; applied at the save, so its schedules, channels and memory
+	// follow it then and not at the next start-up.
+	var move *agentMove
+	if strings.TrimSpace(parentID) != strings.TrimSpace(existing.OwnedBy) {
+		m, err := newAgentMove(sess.DB, sess.Username, existing.ID, parentID)
+		if err != nil {
+			return "", fmt.Errorf("owned_by: %v. Nothing was saved", err)
+		}
+		_, m.memorySet = args["keeps_memory"].(bool)
+		move = m
+	}
 	// A change to an agent that already exists asks the owner first, once per
 	// agent per session (change_approval.go).
 	if sess.ApproveChange != nil {
@@ -684,6 +698,10 @@ func (updateAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	priorLimits.ActionQuotas = maps.Clone(existing.ActionQuotas)
 	priorFields := agentFieldValues(existing)
 	mergeAgentArgs(&existing, args)
+	if move != nil {
+		// The move sets the parent when it saves.
+		existing.OwnedBy = move.agent.OwnedBy
+	}
 	if _, ok := args["allowed_dispatch_targets"]; ok {
 		pinned, err := pinDispatchAgentNames(sess.DB, sess.Username, existing.AllowedDispatchTargets)
 		if err != nil {
@@ -729,11 +747,22 @@ func (updateAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	// stopped, and told the user a description and prompt had changed that
 	// were never sent.
 	changed := changedAgentFields(priorFields, agentFieldValues(existing))
+	if move != nil {
+		changed = append(changed, "owned_by")
+		sort.Strings(changed)
+	}
 	if len(changed) == 0 && len(inlineTools) == 0 && copied == 0 && len(raised) == 0 {
 		return fmt.Sprintf("NOTHING CHANGED on %q (id=%s): every field this call set already had that value (it set: %s). To change the agent, pass the fields you want changed with their NEW values in the same call, e.g. description, orchestrator_prompt, rules. Nothing was saved, so the edit you meant to make has NOT happened yet; do not report it as done.",
 			existing.Name, existing.ID, chFirst(strings.Join(sortedArgKeys(args, "id", "agent"), ", "), "no fields")), nil
 	}
-	saved, err := saveAgent(sess.DB, existing)
+	var saved AgentRecord
+	moveNote := ""
+	if move != nil {
+		move.agent = existing
+		saved, moveNote, err = move.apply()
+	} else {
+		saved, err = saveAgent(sess.DB, existing)
+	}
 	if err != nil {
 		return "", err
 	}
@@ -763,6 +792,9 @@ func (updateAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	}
 	if copied > 0 {
 		verifyHint += fmt.Sprintf(" Auto-copied %d session tool(s) into the agent so it owns its tool dependencies.", copied)
+	}
+	if moveNote != "" {
+		verifyHint += " Moved: " + moveNote
 	}
 	verifyHint += unresolvedToolsWarning(sess, &saved)
 	verifyHint += enforcementNote(raised)
@@ -974,6 +1006,16 @@ func orchestratorPromptParam(update bool) string {
 // agentMutationParams returns the ToolParam schema shared by
 // create_agent and update_agent. The includeID flag adds the id
 // parameter (required for update, omitted for create).
+// ownedByParam describes owned_by. Only an update can move an agent, so only
+// update_agent pays for saying what a move does.
+func ownedByParam(update bool) string {
+	d := "Parent agent ID, making this a sub-agent: deleting the parent cascade-deletes it, and the parent may dispatch to it with no allowed_dispatch_targets entry."
+	if update {
+		d += " Changing it MOVES the agent (\"\" = top-level again): its schedules and channels go to the parent, and memory it had stays on."
+	}
+	return d
+}
+
 func agentMutationParams(includeID bool) map[string]ToolParam {
 	params := map[string]ToolParam{
 		"name":                {Type: "string", Description: "Human-readable agent name."},
@@ -1012,7 +1054,7 @@ func agentMutationParams(includeID bool) map[string]ToolParam {
 		"recall_hints":             {Type: "boolean", Description: "Each turn surfaces a short scored list of the agent's OWN knowledge relevant to the message: pointers (title + doc_id for fetch_knowledge_doc), not content. Needs a real corpus. Default false."},
 		"triggers":                 {Type: "array", Description: "Words or phrases matched as whole words against each user message (plurals and -ed/-ing endings count), or a glob like *.pdf against attachment names. On a match the host agent gets a per-turn nudge to dispatch HERE first. Author SPECIFIC patterns the domain's questions actually contain (criminal law: \"penal code\", \"felony\", \"sentencing\"), loose ones over-fire and train the host to ignore the hint. Empty = in the catalog, no nudge.", Items: &ToolParam{Type: "string"}},
 		"owning_app":               {Type: "string", Description: "The slug of the custom app this agent is written for (its brain): it is listed under \"App agents: <app>\" instead of among the owner's agents, and offered for deletion with the app. Set it for an agent created for an app; leave it empty for one meant for general use. Before creating an agent for an app, check agents(action=\"list\"): an existing agent that fits should be bound with app_def's agent_id instead."},
-		"owned_by":                 {Type: "string", Description: "Parent agent ID, making this a sub-agent: deleting the parent cascade-deletes this agent (sessions/memory/knowledge included), and the parent may dispatch to it without an allowed_dispatch_targets entry, ownership IS the dispatch link. Pair with hidden=true to keep it out of the global fleet menu."},
+		"owned_by":                 {Type: "string", Description: ownedByParam(includeID)},
 		"ingest_attachments":       {Type: "boolean", Description: "Extracted text from uploaded documents (PDF/DOCX/text) is ALSO ingested into the agent's knowledge store under topic=\"attachments\", searchable in later sessions. For document-Q&A agents whose uploads are referenced repeatedly. Default false."},
 		"think":                    {Type: "string", Description: "Reasoning override: \"on\", \"off\", or \"auto\" (the route decides). Create defaults: top-level \"on\", sub-agents (owned_by set) \"off\"; update keeps the stored value when omitted. \"on\" for planners/synthesizers, \"off\" for lookups, transformers, routers. When effort is set, effort takes precedence and this is ignored."},
 		"effort":                   {Type: "string", Description: "Reasoning effort: \"off\", \"low\", \"medium\" or \"high\"; \"default\" follows the deployment's setting for the model tier. The everyday reasoning control: each model gets its own dial. Takes precedence over think (\"off\" = no reasoning, any other level = reasoning on); an explicit think_budget still wins over it. \"low\" for lookups and routers, \"high\" for hard planning or analysis. Update keeps the stored value when omitted."},

@@ -2138,6 +2138,39 @@ select.ui-orch-intake-input {
           });
       });
 
+      // Move: the same agent in a new place (agent_move.go). The server lists
+      // only the places it can go, each already checked, or says why there
+      // are none, so a choice here does not fail on the click.
+      window.uiRegisterClientAction('orchestrate_move_agent', function() {
+        var id = getAgentID();
+        if (!id) { window.uiAlert('Pick an agent first.'); return; }
+        fetch('api/agents/' + encodeURIComponent(id) + '/move')
+          .then(function(r) {
+            if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
+            return r.json();
+          })
+          .then(async function(d) {
+            if (!d || !d.options || !d.options.length) {
+              window.uiAlert((d && d.why) || 'There is nowhere to move this agent.');
+              return;
+            }
+            var to = await window.uiChoose('Move ' + (d.name || getAgentLabel() || id) + ' to', d.options);
+            if (to === null) return;
+            var r = await fetch('api/agents/' + encodeURIComponent(id) + '/move', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({owned_by: to}),
+            });
+            if (!r.ok) throw new Error((await r.text()) || ('HTTP ' + r.status));
+            var res = await r.json();
+            await window.uiAlert(res.message || 'Moved.');
+            window.location.reload();
+          })
+          .catch(function(err) {
+            window.uiAlert('Move failed: ' + (err && err.message || err));
+          });
+      });
+
       window.uiRegisterClientAction('orchestrate_export_agent', function() {
         var id = getAgentID();
         if (!id) { window.uiAlert('Pick an agent first.'); return; }

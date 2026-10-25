@@ -856,6 +856,8 @@ func chatToolbar() []ui.ToolbarAction {
 			Method: "client", URL: "orchestrate_create_agent"},
 		{Group: "Agent", Label: "Clone", Title: "Clone the active agent into a new draft",
 			Method: "client", URL: "orchestrate_clone_agent"},
+		{Group: "Agent", Label: "Move", Title: "Make the active agent a sub-agent of another of your agents, or a sub-agent top-level again. It stays the same agent, with its sessions, knowledge and memory.",
+			Method: "client", URL: "orchestrate_move_agent"},
 		{Group: "Agent", Label: "Import", Title: "Import an agent recipe from a JSON file",
 			Method: "client", URL: "orchestrate_import_agent"},
 		{Group: "Agent", Label: "Export", Title: "Download the active agent, choosing which of its tools, skills and knowledge go with it",

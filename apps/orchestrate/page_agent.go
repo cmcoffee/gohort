@@ -688,9 +688,8 @@ func (ed *agentEditor) usedBySection() {
 	id := ed.id
 	if id != "" {
 		if rec, ok := loadAgent(udb, id); ok {
-			if sec, ok := agentMoveSection(udb, user, rec); ok {
-				ed.sections = append(ed.sections, sec)
-			}
+			// Moving the agent is on the chat page's Agent menu (Move),
+			// beside Clone and Delete, not here.
 			// Used by: what runs through this agent, so it is plain before
 			// anyone changes or deletes it (agent_used_by.go). Only when
 			// something does.

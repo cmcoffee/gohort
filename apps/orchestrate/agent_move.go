@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/ui"
 )
 
 // Moving an agent is a change of PLACE, not a copy: the record keeps its id,
@@ -27,6 +26,9 @@ type agentMove struct {
 	owner  string
 	agent  AgentRecord
 	parent AgentRecord // zero when the move makes the agent top-level
+	// memorySet: the caller decided KeepsMemory itself (update_agent passing
+	// keeps_memory), so under leaves it as given.
+	memorySet bool
 }
 
 // agentMovable reports why an agent cannot be moved at all, "" when it can.
@@ -137,6 +139,15 @@ func (m *agentMove) apply() (AgentRecord, string, error) {
 // from what every reader sees.
 func (m *agentMove) under() (AgentRecord, string, error) {
 	a := m.agent
+	// A top-level agent that has been remembering goes on remembering: what it
+	// learned is its own and still useful where it now works. Without this
+	// enforceSubAgentPosture turns its memory off, so an agent folded into a
+	// family stopped reading everything it knew. Nothing is lost either way
+	// (memory is keyed by its id); this keeps it in use.
+	keptMemory := false
+	if strings.TrimSpace(a.OwnedBy) == "" && !m.memorySet && !a.KeepsMemory && (!a.DisableExplicit || !a.DisableInferred) {
+		a.KeepsMemory, keptMemory = true, true
+	}
 	a.OwnedBy = m.parent.ID
 	a = enforceSubAgentPosture(a)
 	saved, err := saveAgentAs(m.db, a, "moved under "+m.parent.Name)
@@ -145,6 +156,9 @@ func (m *agentMove) under() (AgentRecord, string, error) {
 	}
 	Log("[orchestrate.agents] moved %q under %q", saved.Name, m.parent.Name)
 	notes := []string{fmt.Sprintf("%s is now a sub-agent of %s. Only %s can call it.", saved.Name, m.parent.Name, m.parent.Name)}
+	if keptMemory {
+		notes = append(notes, "It keeps its own memory, as it did at the top level; switch off Keeps its own memory on its page to make it start every run fresh.")
+	}
 	// A sub-agent has no way in of its own: its schedules now wake the
 	// parent, which hands their work to it (scheduleAgentFor).
 	if n := foldSubAgentSchedules(m.owner, saved.ID); n > 0 {
@@ -213,8 +227,14 @@ func (m *agentMove) out() (AgentRecord, string, error) {
 	return saved, strings.Join(notes, " "), nil
 }
 
-// handleAgentMove is POST /api/agents/<id>/move {owned_by: "<parent id>" | ""}.
+// handleAgentMove is POST /api/agents/<id>/move {owned_by: "<parent id>" | ""},
+// and GET for the places the agent menu's Move offers.
 func (T *OrchestrateApp) handleAgentMove(w http.ResponseWriter, r *http.Request, user string, udb Database, id string) {
+	if r.Method == http.MethodGet {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(agentMoveChoices(udb, user, id))
+		return
+	}
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -240,49 +260,63 @@ func (T *OrchestrateApp) handleAgentMove(w http.ResponseWriter, r *http.Request,
 	_ = json.NewEncoder(w).Encode(map[string]any{"id": saved.ID, "owned_by": saved.OwnedBy, "message": note})
 }
 
-// agentMoveSection is the editor's Move control, or false when the agent has no
-// other place to go.
-func agentMoveSection(db Database, owner string, a AgentRecord) (ui.Section, bool) {
-	if agentMovable(a) != "" || a.Owner != owner {
-		return ui.Section{}, false
+// moveChoice is one place the agent menu's Move offers.
+type moveChoice struct {
+	Value  string `json:"value"`
+	Label  string `json:"label"`
+	Detail string `json:"detail"`
+}
+
+// agentMoveChoices is what the agent menu's Move shows: every place the agent
+// can go, each already checked, or why it can go nowhere. Checked per place
+// rather than listed and refused on the click, so a shared agent says "stop
+// sharing first" instead of offering a list where every choice fails.
+func agentMoveChoices(db Database, owner, id string) map[string]any {
+	a, ok := loadAgent(db, id)
+	if !ok {
+		return map[string]any{"options": []moveChoice{}, "why": "Pick one of your own agents first."}
 	}
-	var opts []ui.SelectOption
+	// Before ownership: a built-in is nobody's, and saying how to move a copy
+	// helps more than "not yours".
+	if why := agentMovable(a); why != "" {
+		return map[string]any{"options": []moveChoice{}, "why": strings.ToUpper(why[:1]) + why[1:] + "."}
+	}
+	if a.Owner != owner {
+		return map[string]any{"options": []moveChoice{}, "why": "Pick one of your own agents first."}
+	}
+	var places []moveChoice
 	if a.OwnedBy != "" {
-		opts = append(opts, ui.SelectOption{Value: "", Label: "Top level (its own agent)"})
+		places = append(places, moveChoice{Value: "", Label: "Top level (its own agent)",
+			Detail: "It shows in your agent list and other agents can call it. Its old parent can still call it, unless that parent is set to Allow none."})
 	}
 	for _, p := range agentMoveDestinations(db, owner, a) {
-		if p.ID != a.OwnedBy {
-			opts = append(opts, ui.SelectOption{Value: p.ID, Label: "Sub-agent of " + p.Name})
+		if p.ID == a.OwnedBy {
+			continue
 		}
+		detail := "Only " + p.Name + " can call it. Its schedules and channels go to " + p.Name + ", which hands their work on."
+		if a.OwnedBy == "" && (!a.DisableExplicit || !a.DisableInferred) {
+			detail += " It keeps its own memory."
+		}
+		places = append(places, moveChoice{Value: p.ID, Label: "Sub-agent of " + p.Name, Detail: detail})
 	}
-	if len(opts) == 0 {
-		return ui.Section{}, false
+	var options []moveChoice
+	why := ""
+	for _, c := range places {
+		if _, err := newAgentMove(db, owner, id, c.Value); err != nil {
+			if why == "" {
+				why = err.Error()
+			}
+			continue
+		}
+		options = append(options, c)
 	}
-	sub := "Make it a sub-agent of another of your agents."
-	detail := "It keeps its sessions, knowledge and history: the same agent, in a new place. As a sub-agent only its parent can call it, and it has no dashboard card, intake form, memory or sharing. An agent that is shared, or has sub-agents of its own, has to stop being either first."
-	if a.OwnedBy != "" {
-		sub = "Make it a top-level agent, or move it under a different parent."
-		detail = "It keeps its sessions, knowledge and history: the same agent, in a new place. As a top-level agent it shows in your agent list and other agents can call it. Its old parent can still call it (if that parent calls from a list, the agent is added to the list), unless the parent is set to Allow none."
+	if len(options) == 0 && why == "" {
+		why = "There is nowhere to move " + a.Name + ": it can only go under one of your own top-level agents, and you have no other."
 	}
-	return ui.Section{
-		Title:    "Move",
-		Subtitle: sub,
-		Detail:   detail,
-		// No Source: the form sends only the choice, defaulting to the first
-		// one listed, never the agent's current place echoed back.
-		Body: ui.FormPanel{
-			PostURL:     "../api/agents/" + a.ID + "/move",
-			Method:      "POST",
-			SubmitLabel: "Move agent",
-			// The editor's shape follows where the agent lives, so the page
-			// reloads into the right one.
-			RedirectURL:    "../agent/" + a.ID,
-			RedirectTarget: "_self",
-			Fields: []ui.FormField{
-				{Field: "owned_by", Type: "select", Label: "Move to", Options: opts, Default: opts[0].Value},
-			},
-		},
-	}, true
+	if options == nil {
+		options = []moveChoice{}
+	}
+	return map[string]any{"name": a.Name, "options": options, "why": why}
 }
 
 // checkOwnedByChain refuses a parent link that loops: an agent owning itself,

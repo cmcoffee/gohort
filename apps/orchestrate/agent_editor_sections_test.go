@@ -4,8 +4,9 @@ package orchestrate
 // gets the type presets and one form, a sub-agent drops what it cannot have
 // (intake, publishing, sharing), and an existing agent gets the sections that
 // only make sense once it exists: its pictures, what it reaches, where it
-// came from, moving it, deleting it. A seed is framework-owned, so it is
-// neither shared nor deleted from here.
+// came from, deleting it. Moving it is on the chat page's Agent menu, not
+// here. A seed is framework-owned, so it is neither shared nor deleted from
+// here.
 
 import (
 	"net/http/httptest"
@@ -28,7 +29,7 @@ func TestTheAgentEditorDrawsTheSectionsEachKindHas(t *testing.T) {
 	app, udb := accessFixture(t, AgentRecord{ID: "a-main", Name: "Main", ShapeID: shape})
 	for _, a := range []AgentRecord{
 		{ID: "a-child", Name: "Child", Owner: "alice", OrchestratorPrompt: "p", OwnedBy: "a-main"},
-		// Somewhere for the others to move to.
+		// Somewhere it could move to, so a missing Move is not for want of one.
 		{ID: "a-other", Name: "Other", Owner: "alice", OrchestratorPrompt: "p"},
 	} {
 		if _, err := saveAgent(udb, a); err != nil {
@@ -53,9 +54,9 @@ func TestTheAgentEditorDrawsTheSectionsEachKindHas(t *testing.T) {
 		{"/agent/new?owned_by=a-main", "", []string{title("New sub-agent"), title("Sub-agent"), `"field":"owned_by","type":"hidden","default":"a-main"`},
 			[]string{title("Intake form"), `"templates":`}},
 		{"/agent/a-main", "a-main", []string{title("Edit agent"), title("Intake form"), title("Picture library"),
-			title("What it reaches"), "Built from the ", title("Move"), title("Delete agent"),
+			title("What it reaches"), "Built from the ", title("Delete agent"),
 			`"back_url":"..?agent=a-main"`},
-			[]string{`"templates":`}},
+			[]string{`"templates":`, title("Move")}},
 		{"/agent/a-child", "a-child", []string{title("Edit sub-agent"), title("Picture library"), title("Delete agent")},
 			[]string{title("Intake form"), title("What it reaches")}},
 		{"/agent/seed-builder", "seed-builder", []string{title("Edit agent")},
