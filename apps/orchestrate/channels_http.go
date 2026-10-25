@@ -115,7 +115,6 @@ func (T *OrchestrateApp) handleChannels(w http.ResponseWriter, r *http.Request) 
 					return
 				}
 				ch.AgentID = a
-				T.ensureAgentCortex(user, a) // re-pointed: the new agent gets a cortex too
 			}
 			SaveChannel(RootDB, ch)
 			w.Header().Set("Content-Type", "application/json")
@@ -153,9 +152,14 @@ func (T *OrchestrateApp) handleChannels(w http.ResponseWriter, r *http.Request) 
 		}
 		applyChannelSenders(&ch, req.Senders, req.AllowedHandles)
 		SaveChannel(RootDB, ch)
-		// A channel relays into its agent's cortex (the conversation thread), so
-		// attaching one implies cortex — turn it on if it isn't already.
-		T.ensureAgentCortex(user, agentID)
+		// Attaching a channel leaves the agent's Cortex setting alone, as a
+		// schedule does (console_surface.go). The setting is whether the agent
+		// READS its cortex, and a channel works either way: with it on and one
+		// channel the conversation lives in the cortex thread
+		// (effectiveChannelSession), with it off each contact gets a channel
+		// thread of its own. Switching it on here changed the agent's character
+		// (its reports in every prompt, the conversational group in the picker)
+		// as a side effect of wiring it up.
 		Log("[orchestrate.channels] user=%q attached channel %q (service=%s scope=%q) to agent=%s",
 			user, ch.Name, ch.Service, ch.Address, agentID)
 		w.Header().Set("Content-Type", "application/json")
@@ -192,29 +196,5 @@ func applyChannelSenders(ch *Channel, senders *string, handles *[]string) {
 			}
 		}
 		ch.AllowedHandles = kept
-	}
-}
-
-// ensureAgentCortex turns Cortex ON for the agent a channel was just attached to.
-// A channel is a relay into its agent's cortex (the conversation thread) — a
-// channel on a cortex-less agent has nowhere to relay, so attaching one implies
-// cortex. Idempotent: no-op when already on or the agent can't be loaded. For a
-// seed agent this writes the per-user shadow the same way any editor save does.
-func (T *OrchestrateApp) ensureAgentCortex(user, agentID string) {
-	agentID = strings.TrimSpace(agentID)
-	if agentID == "" {
-		return
-	}
-	udb := UserDB(T.DB, user)
-	if udb == nil {
-		return
-	}
-	a, ok := loadAgent(udb, agentID)
-	if !ok || a.Cortex {
-		return
-	}
-	a.Cortex = true
-	if _, err := saveAgent(udb, a); err != nil {
-		Log("[orchestrate.channels] enable cortex on agent %s failed: %v", agentID, err)
 	}
 }

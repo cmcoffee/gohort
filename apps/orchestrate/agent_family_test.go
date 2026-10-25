@@ -761,3 +761,32 @@ func TestScheduledAgentsAndMonitorsCanBeForASubAgent(t *testing.T) {
 		t.Errorf("the monitor's editor got %+v", v)
 	}
 }
+
+// Attaching a channel, or re-pointing one at another agent, leaves the
+// agent's Cortex setting as its owner set it (channels_http.go).
+func TestAttachingAChannelLeavesTheCortexSettingAlone(t *testing.T) {
+	app, udb := familyFixture(t)
+	if _, err := saveAgent(udb, AgentRecord{ID: "a-other", Name: "Other", Owner: "alice", OrchestratorPrompt: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	post := func(url, body string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		app.handleChannels(w, asUser(httptest.NewRequest(http.MethodPost, url, strings.NewReader(body)), "alice"))
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s %s: %d %s", url, body, w.Code, w.Body.String())
+		}
+		return w
+	}
+	w := post("/api/channels?agent_id=a-writer", `{"name":"Team"}`)
+	var ch Channel
+	if err := json.Unmarshal(w.Body.Bytes(), &ch); err != nil || ch.ID == "" {
+		t.Fatalf("created channel: %v %s", err, w.Body.String())
+	}
+	if a, _ := loadAgent(udb, "a-writer"); a.Cortex {
+		t.Error("attaching a channel switched on the agent's Cortex reading")
+	}
+	post("/api/channels", fmt.Sprintf(`{"id":%q,"name":"Team","agent_id":"a-other"}`, ch.ID))
+	if a, _ := loadAgent(udb, "a-other"); a.Cortex {
+		t.Error("re-pointing a channel switched on the new agent's Cortex reading")
+	}
+}
