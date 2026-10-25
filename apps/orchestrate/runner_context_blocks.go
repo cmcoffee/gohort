@@ -2,7 +2,9 @@ package orchestrate
 
 import (
 	"fmt"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -347,7 +349,10 @@ func (t *chatTurn) renderAvailableAgentsBlock() string {
 	if len(col) > 0 {
 		b.WriteString("Where an entry below shows an id, two agents share that name: pass the id as agent=, not the name.\n\n")
 	}
+	preamble := b.Len()
+	var entries []agentBlockEntry
 	for _, a := range available {
+		before := b.Len()
 		// Full description — it's the routing cue (descriptions are
 		// model-facing, per the Builder guidance), shown un-truncated so
 		// no part of the cue is hidden from the dispatch decision.
@@ -368,8 +373,65 @@ func (t *chatTurn) renderAvailableAgentsBlock() string {
 		// agent's CURRENT spec — nothing stored, never stale.
 		b.WriteString(dispatchBriefHint(a))
 		b.WriteString("\n")
+		entries = append(entries, agentBlockEntry{name: a.Name, category: a.Category, bytes: b.Len() - before})
 	}
+	logAgentBlockSize(t.agent.ID, preamble, entries)
 	return b.String()
+}
+
+// agentBlockEntry is one agent's line in the Available agents block, for
+// logAgentBlockSize.
+type agentBlockEntry struct {
+	name, category string
+	bytes          int
+}
+
+// agentBlockSizes is the last size logged per agent, so the line is written
+// when the block changes rather than on every turn.
+var agentBlockSizes sync.Map // agent id -> int
+
+// logAgentBlockSize writes what the Available agents block costs an agent's
+// prompt: the fixed instructions, the per-agent lines, the largest of them,
+// and how much sits in agents that share a category (what collapsing the
+// block by category would act on). Once per agent per distinct size.
+func logAgentBlockSize(agentID string, preamble int, entries []agentBlockEntry) {
+	if line, changed := agentBlockSizeLine(agentID, preamble, entries); changed {
+		Log("%s", line)
+	}
+}
+
+// agentBlockSizeLine is logAgentBlockSize's line, and whether the size moved
+// since the last one written for this agent.
+func agentBlockSizeLine(agentID string, preamble int, entries []agentBlockEntry) (string, bool) {
+	total := preamble
+	for _, e := range entries {
+		total += e.bytes
+	}
+	if prev, ok := agentBlockSizes.Load(agentID); ok && prev.(int) == total {
+		return "", false
+	}
+	agentBlockSizes.Store(agentID, total)
+	sorted := slices.Clone(entries)
+	slices.SortFunc(sorted, func(a, b agentBlockEntry) int { return b.bytes - a.bytes })
+	var top []string
+	for _, e := range sorted[:min(5, len(sorted))] {
+		top = append(top, fmt.Sprintf("%s %d", e.name, e.bytes))
+	}
+	inCategories, categorized := 0, 0
+	byCat := map[string]int{}
+	for _, e := range entries {
+		if k := categoryKey(e.category); k != "" {
+			byCat[k]++
+		}
+	}
+	for _, e := range entries {
+		if k := categoryKey(e.category); k != "" && byCat[k] > 1 {
+			inCategories += e.bytes
+			categorized++
+		}
+	}
+	return fmt.Sprintf("[orchestrate.prompt] agent=%s available-agents block: %d bytes (~%d tokens) = %d fixed + %d agents in %d bytes; %d of them share a category (%d bytes); largest: %s",
+		agentID, total, total/4, preamble, len(entries), total-preamble, categorized, inCategories, strings.Join(top, ", ")), true
 }
 
 // dispatchBriefHint returns a one-line "put this in the brief" cue built from an
