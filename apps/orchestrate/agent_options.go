@@ -17,6 +17,7 @@ type agentPickerRow struct {
 	Name  string
 	Order int
 	App   string // owning app, for App Agents grouping/sort
+	Cat   string // the shown spelling of its category, for category grouping/sort
 }
 
 // agentPickerBuiltInOrder pins the built-in seeds' order in the picker.
@@ -59,7 +60,8 @@ func pickerAgents(agents []AgentRecord) []AgentRecord {
 }
 
 // agentPickerOptions builds the Agency agent-picker's GROUPED options — Built-in
-// / Conversation Agents / Specialized Agents / one group per owning app — plus
+// / one group per category the owner set / Conversation Agents / Specialized
+// Agents / one group per owning app — plus
 // the cortex-session map and the sub-agents-by-parent map. The "— select agent —"
 // placeholder is NOT included; callers prepend their own.
 //
@@ -70,7 +72,8 @@ func pickerAgents(agents []AgentRecord) []AgentRecord {
 func agentPickerOptions(agents []AgentRecord) (opts []ui.SelectOption, cortex map[string]string, subs map[string][]map[string]string) {
 	cortex = map[string]string{}
 	subs = map[string][]map[string]string{}
-	var builtIns, conversation, customs, appAgents []agentPickerRow
+	var builtIns, categorized, conversation, customs, appAgents []agentPickerRow
+	cats := agentCategories(agents)
 	for _, a := range agents {
 		if a.Cortex {
 			cortex[a.ID] = cortexSessionID(a.ID)
@@ -91,6 +94,10 @@ func agentPickerOptions(agents []AgentRecord) (opts []ui.SelectOption, cortex ma
 			appAgents = append(appAgents, agentPickerRow{ID: a.ID, Name: a.Name, App: strings.TrimPrefix(g, "App agents: ")})
 		} else if ord, ok := agentPickerBuiltInOrder[a.ID]; ok {
 			builtIns = append(builtIns, agentPickerRow{ID: a.ID, Name: a.Name, Order: ord})
+		} else if cat := cats[categoryKey(a.Category)]; cat != "" {
+			// The owner's own grouping wins over the kind: it is the one
+			// they chose to find it by.
+			categorized = append(categorized, agentPickerRow{ID: a.ID, Name: a.Name, Cat: cat})
 		} else if memoryForPeople(a.MemoryMode) {
 			// Conversational is the agent's kind, its memory set for the
 			// people it talks with, not whether it reads its Cortex. Filed by
@@ -103,6 +110,12 @@ func agentPickerOptions(agents []AgentRecord) (opts []ui.SelectOption, cortex ma
 		}
 	}
 	sort.Slice(builtIns, func(i, j int) bool { return builtIns[i].Order < builtIns[j].Order })
+	sort.Slice(categorized, func(i, j int) bool {
+		if ci, cj := strings.ToLower(categorized[i].Cat), strings.ToLower(categorized[j].Cat); ci != cj {
+			return ci < cj
+		}
+		return categorized[i].Name < categorized[j].Name
+	})
 	sort.Slice(conversation, func(i, j int) bool { return conversation[i].Name < conversation[j].Name })
 	sort.Slice(customs, func(i, j int) bool { return customs[i].Name < customs[j].Name })
 	sort.Slice(appAgents, func(i, j int) bool {
@@ -113,6 +126,9 @@ func agentPickerOptions(agents []AgentRecord) (opts []ui.SelectOption, cortex ma
 	})
 	for _, a := range builtIns {
 		opts = append(opts, ui.SelectOption{Value: a.ID, Label: a.Name, Group: "Built-in"})
+	}
+	for _, a := range categorized {
+		opts = append(opts, ui.SelectOption{Value: a.ID, Label: a.Name, Group: a.Cat})
 	}
 	for _, a := range conversation {
 		opts = append(opts, ui.SelectOption{Value: a.ID, Label: a.Name, Group: "Conversation Agents"})

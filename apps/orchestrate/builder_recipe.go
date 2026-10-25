@@ -365,6 +365,9 @@ func recipeAgentSummary(rec AgentRecord, prefix string) string {
 		kind = "assistant"
 	}
 	fmt.Fprintf(&b, "- %s%s (%s)", prefix, rec.Name, kind)
+	if c := strings.TrimSpace(rec.Category); c != "" && rec.OwnedBy == "" {
+		fmt.Fprintf(&b, " [category: %s]", c)
+	}
 	if d := strings.TrimSpace(rec.Description); d != "" {
 		fmt.Fprintf(&b, ": %s", truncateObs(d, 300))
 	}

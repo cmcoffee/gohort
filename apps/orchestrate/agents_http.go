@@ -317,7 +317,7 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 //   - owned_by — moving an agent is /api/agents/<id>/move, which checks where
 //   - id / owner / created — identity, not settings
 var patchAgentFields = map[string]bool{
-	"name": true, "description": true, "orchestrator_prompt": true,
+	"name": true, "description": true, "category": true, "orchestrator_prompt": true,
 	"plan_guidance": true, "rules": true, "triggers": true,
 	"allowed_tools": true, "auto_approve_tools": true, "allowed_skills": true,
 	"attached_collections": true, "attached_pipelines": true,

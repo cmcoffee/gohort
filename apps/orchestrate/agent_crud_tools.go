@@ -1074,7 +1074,7 @@ func agentMutationParams(includeID bool) map[string]ToolParam {
 		"disable_skills":           {Type: "boolean", Description: "Fully suppresses skills: no activation, no prompt addendum, no skill_knowledge chunks, no skill-attached tools. For agents that must faithfully report one source. The per-turn Clean toggle also suppresses skills. Default false."},
 		"allowed_skills":           {Type: "array", Description: "Strict allowlist of skill IDs the classifier may consider. Skills are opt-in per agent; empty (default) = none active. IDs from skill_def(action=list).", Items: &ToolParam{Type: "string"}},
 		"hidden":                   {Type: "boolean", Description: "When true, hidden from other agents' \"Available agents\" block and refused by agents(run), unless a caller lists it in allowed_dispatch_targets. Default false."},
-		"cortex":                   {Type: "boolean", Description: "Reads its Cortex: the agent keeps a standing home thread it resumes across sessions, where monitor wakes and reports from other agents land, and reads it on every turn. Default ON for a chat assistant (a top-level conversational agent with no intake form and memory_mode other than \"agent\"), OFF for a specialist, a sub-agent (owned_by) or an agent with an intake form. Pass false for a conversational agent that should start every session clean."},
+		"cortex":                   {Type: "boolean", Description: "Reads its Cortex: what reached it outside the conversation (schedule reports, monitor wakes, other contacts) rides into every session. Default ON for a top-level agent with no intake form and memory_mode other than \"agent\", OFF otherwise. Pass false for an assistant that should start every session clean."},
 		"allowed_dispatch_targets": {Type: "array", Description: "Dispatch allowlist of TARGETS: agent IDs, and pipeline IDs or names. Empty (default) = may call any non-hidden agent and any of the owner's pipelines. Non-empty = ONLY these, hidden or not (the explicit pick wins, so it reaches hidden specialists), and a pipeline not listed is not reachable either.", Items: &ToolParam{Type: "string"}},
 		"attached_collections":     {Type: "array", Description: "Document Collection IDs merged into this agent's RAG recall: a curated reference corpus without authoring a skill. Bound at the agent layer, no activation needed. IDs from the Collections surface. Default empty.", Items: &ToolParam{Type: "string"}},
 		"attached_sources":         {Type: "array", Description: "Cross-app REFERENCE SOURCES this agent may draw on, each as \"<kind>:<item_id>\". Each attachment mints its own NAMED tools on the agent, shaped by what the source is. \"system:<appliance-id>\", a servitor system, evidence bundle, tool-backed service, or a whole WORKSPACE spanning several: gives search_<name>_knowledge (instant, already-gathered), get_<name>_facts, investigate_<name> (live read-only investigation, slow). \"files:<store-slug>\", a registered FOLDER on this host (log bundles, captures, exports): gives list_<slug> (subfolders/files, newest first), search_<slug> (regex over raw lines, reads .gz, takes an optional subfolder), read_<slug> (a bounded line window around a hit); read-only, so a Private agent keeps them. \"guide:<guide-id>\", a Scribe guide: gives read_<slug>_guide and search_<slug>_guide, plus report_to_<slug>_guide (files what the agent learns into the guide) once Can make changes is on. Any other source gets a named search over its content. Use list_reference_sources for the valid kinds and ids and the tools each item actually mints. A source attached here is READ-ONLY: its tools that make changes (list_reference_sources names them \"with Can make changes\") reach the agent only after the person switches Can make changes on that source's pill in the agent's Sources, which you cannot do. When the agent needs them, tell the person to switch it, and do not tell them the agent can change the source until they have; a source you keep attached keeps the setting they chose. Attach a workspace when the agent needs answers that span code, live state, evidence and services at once; attach a file store when it must ground answers in files somebody else drops there. Default empty.", Items: &ToolParam{Type: "string"}},
@@ -1083,7 +1083,7 @@ func agentMutationParams(includeID bool) map[string]ToolParam {
 		"triggers":                 {Type: "array", Description: "Words or phrases matched as whole words against each user message (plurals and -ed/-ing endings count), or a glob like *.pdf against attachment names. On a match the host agent gets a per-turn nudge to dispatch HERE first. Author SPECIFIC patterns the domain's questions actually contain (criminal law: \"penal code\", \"felony\", \"sentencing\"), loose ones over-fire and train the host to ignore the hint. Empty = in the catalog, no nudge.", Items: &ToolParam{Type: "string"}},
 		"owning_app":               {Type: "string", Description: "The slug of the custom app this agent is written for (its brain): it is listed under \"App agents: <app>\" instead of among the owner's agents, and offered for deletion with the app. Set it for an agent created for an app; leave it empty for one meant for general use. Before creating an agent for an app, check agents(action=\"list\"): an existing agent that fits should be bound with app_def's agent_id instead."},
 		"owned_by":                 {Type: "string", Description: ownedByParam(includeID)},
-		"build_notes":              {Type: "string", Description: "Top-level only: notes for whoever changes this family next: purpose, decisions binding every sub-agent and why, open items. Never shown to the agent; read them before changing a sub-agent. Rewrite whole; max 3000 chars."},
+		"build_notes":              {Type: "string", Description: "Top-level only: notes for whoever changes this family next (purpose, binding decisions and why, open items). Never shown to the agent. Rewrite whole; max 3000 chars."},
 		"ingest_attachments":       {Type: "boolean", Description: "Extracted text from uploaded documents (PDF/DOCX/text) is ALSO ingested into the agent's knowledge store under topic=\"attachments\", searchable in later sessions. For document-Q&A agents whose uploads are referenced repeatedly. Default false."},
 		"think":                    {Type: "string", Description: "Reasoning override: \"on\", \"off\", or \"auto\" (the route decides). Create defaults: top-level \"on\", sub-agents (owned_by set) \"off\"; update keeps the stored value when omitted. \"on\" for planners/synthesizers, \"off\" for lookups, transformers, routers. When effort is set, effort takes precedence and this is ignored."},
 		"effort":                   {Type: "string", Description: "Reasoning effort: \"off\", \"low\", \"medium\" or \"high\"; \"default\" follows the deployment's setting for the model tier. The everyday reasoning control: each model gets its own dial. Takes precedence over think (\"off\" = no reasoning, any other level = reasoning on); an explicit think_budget still wins over it. \"low\" for lookups and routers, \"high\" for hard planning or analysis. Update keeps the stored value when omitted."},
@@ -1104,6 +1104,9 @@ func agentMutationParams(includeID bool) map[string]ToolParam {
 	}
 	if includeID {
 		params["id"] = ToolParam{Type: "string", Description: "Agent id or name (from agents(action=\"list\"))."}
+		// Update only: the catalog's budget is tight, and filing an agent is
+		// a second step after it exists.
+		params["category"] = ToolParam{Type: "string", Description: "Top-level only: picker heading shared with related agents (\"Medical\"); \"\" clears."}
 	}
 	return params
 }
@@ -1253,6 +1256,9 @@ func agentRecordFromArgs(args map[string]any) AgentRecord {
 	}
 	if v, ok := args["build_notes"]; ok && v != nil {
 		rec.BuildNotes = strings.TrimSpace(fmt.Sprint(v))
+	}
+	if v, ok := args["category"]; ok && v != nil {
+		rec.Category = strings.Join(strings.Fields(fmt.Sprint(v)), " ")
 	}
 	if v, ok := args["owning_app"]; ok && v != nil {
 		rec.OwningApp = slugify(fmt.Sprint(v))
@@ -1448,6 +1454,9 @@ func mergeAgentArgs(rec *AgentRecord, args map[string]any) {
 	}
 	if v, ok := args["build_notes"]; ok && v != nil {
 		rec.BuildNotes = strings.TrimSpace(fmt.Sprint(v))
+	}
+	if v, ok := args["category"]; ok && v != nil {
+		rec.Category = strings.Join(strings.Fields(fmt.Sprint(v)), " ")
 	}
 	if v, ok := args["owning_app"]; ok && v != nil {
 		rec.OwningApp = slugify(fmt.Sprint(v))
