@@ -134,6 +134,34 @@ func TestRunExecutesOneFolderFile(t *testing.T) {
 	}
 }
 
+// What a script logs shows in the check, and log works for a script that
+// declared only ["fetch"]: the hints tell the author to log what an API
+// returned, and that advice used to raise there, or vanish into the server log.
+func TestRunShowsWhatTheScriptLogged(t *testing.T) {
+	turn, ws := folderTestTurn(t)
+	if _, err := turn.appDefCheckout(map[string]any{"name": "Wx"}); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(ws, "wx.app")
+	os.MkdirAll(filepath.Join(dir, "data"), 0o755)
+	os.WriteFile(filepath.Join(dir, "data", "now.py"), []byte("import json\nfrom gohort import log\nlog('raw keys: temp_f, city')\nprint(json.dumps({'temp': 71}))\n"), 0o644)
+	manifest := `{"name":"Wx","slug":"wx","sections":[{"id":"page","kind":"html","html_file":"page.html"}],"data_sources":[{"name":"now","file":"data/now.py","capabilities":["fetch"]}]}`
+	os.WriteFile(filepath.Join(dir, "app.json"), []byte(manifest), 0o644)
+	if root, err := EnsureWorkspaceDir("u"); err == nil {
+		os.MkdirAll(root, 0o755)
+	}
+	out, err := turn.appDefRun(map[string]any{"dir": "wx.app", "file": "data/now.py"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "could not run") || strings.Contains(out, "workspace:") || strings.Contains(out, "bwrap:") {
+		t.Skipf("sandbox unavailable: %s", out)
+	}
+	if !strings.Contains(out, "logged (1): raw keys: temp_f, city") || !strings.Contains(out, "It ran clean") {
+		t.Fatalf("run said:\n%s", out)
+	}
+}
+
 // Code the scripts share travels as lib/: out on checkout, back on publish,
 // and a module deleted from the folder is gone from the app.
 func TestLibrariesTravelWithTheFolder(t *testing.T) {

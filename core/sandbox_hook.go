@@ -379,7 +379,7 @@ func (h *SandboxHook) handleConn(conn net.Conn) {
 	case "fetch":
 		h.handleFetch(conn, req.Params)
 	case "log":
-		handleHookLog(conn, req.Params)
+		handleHookLog(conn, req.Params, h.Sess)
 	case "secret":
 		h.handleSecret(conn, req.Params)
 	case "fetch_via":
@@ -1169,7 +1169,7 @@ func (h *SandboxHook) handleBrowsePage(conn net.Conn, params map[string]interfac
 // handleHookLog routes script-side log messages through gohort's log
 // stream. Level maps to Debug / Log / Err so a misbehaving script
 // surfaces in the right channel.
-func handleHookLog(conn net.Conn, params map[string]interface{}) {
+func handleHookLog(conn net.Conn, params map[string]interface{}, sess *ToolSession) {
 	msg, _ := params["msg"].(string)
 	if msg == "" {
 		writeHookError(conn, "log requires msg")
@@ -1185,6 +1185,9 @@ func handleHookLog(conn net.Conn, params map[string]interface{}) {
 		Debug("[hook/script] %s", msg)
 	default:
 		Log("[hook/script] %s", msg)
+	}
+	if sess != nil && sess.ScriptLog != nil {
+		sess.ScriptLog(level, msg)
 	}
 	writeHookResult(conn, map[string]bool{"ok": true})
 }

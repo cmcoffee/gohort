@@ -228,6 +228,32 @@ func TestTheHookCountsTheScriptsCalls(t *testing.T) {
 	}
 }
 
+// A script's log reaches the session's ScriptLog as well as the server log,
+// which is how a check shows it to an author who cannot read the server log.
+func TestHookLogReachesTheSessionsScriptLog(t *testing.T) {
+	var got []string
+	sess := &ToolSession{ScriptLog: func(level, msg string) { got = append(got, level+"|"+msg) }}
+	h, err := NewSandboxHook(t.TempDir(), []string{"log"}, sess)
+	if err != nil || h == nil {
+		t.Fatalf("hook: %v", err)
+	}
+	defer h.Close()
+	conn, err := net.Dial("unix", h.SocketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err := conn.Write([]byte(`{"method":"log","params":{"msg":"raw keys: a, b","level":"warn"}}` + "\n")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bufio.NewReader(conn).ReadString('\n'); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != "warn|raw keys: a, b" {
+		t.Errorf("the script's log line reaches ScriptLog: %v", got)
+	}
+}
+
 // call_tool runs only a tool the script names in an exact tool:<name>
 // capability, and hands back the tool's output.
 func TestHookCallsOnlyDeclaredTools(t *testing.T) {

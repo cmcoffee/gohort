@@ -75,6 +75,11 @@ type ToolSession struct {
 	// action ran for. Set only on an action's run; nil, and refused.
 	Notify func(title, body string) (string, error)
 
+	// ScriptLog hears what a script sends to gohort.log, besides the server
+	// log it always goes to: an app check shows it to the author, who cannot
+	// read the server log. Nil, and only the server log has it.
+	ScriptLog func(level, msg string)
+
 	// imageBackends memoizes ReachableImageBackends for this turn. Resolving it
 	// reads the connector table, and the grouped `image` tool's schema is
 	// rebuilt on every catalog assembly — the DynamicChatTool cheapness contract

@@ -69,6 +69,9 @@ type Job struct {
 	Long       bool
 	Ctx        context.Context
 	OnProgress func(line string)
+	// OnLog hears each gohort.log the script makes (level, message), which
+	// otherwise reaches only the server log: a check hands it to the author.
+	OnLog func(level, msg string)
 }
 
 // AppRunAgent and AppRunPipeline answer a script's gohort.run_agent and
@@ -133,6 +136,10 @@ func (j Job) Run() (string, error) {
 	if kind == "action" {
 		caps = mergeCaps(caps, []string{"notify"})
 	}
+	// log reaches no network and no data, and every check hint tells the
+	// author to log what an API returned: a script that declared only
+	// ["fetch"] lost it with the defaults, and that advice then raised.
+	caps = mergeCaps(caps, []string{"log"})
 	if len(grants) > 0 {
 		caps = mergeCaps(caps, []string{"store_command", "store_action", "store_pull"})
 		byStore := map[string]appstores.Grant{}
@@ -252,6 +259,7 @@ func (j Job) Run() (string, error) {
 	if kind == "action" {
 		sess.Notify = notifier(caller, user, slug)
 	}
+	sess.ScriptLog = j.OnLog
 	var out string
 	if j.Long {
 		out, err = j.runLong(sess, tt, args, bindModel)
@@ -308,6 +316,7 @@ func (j Job) runLong(sess *ToolSession, tt *TempTool, args map[string]any, bindM
 		}
 		bindModel(work)
 		work.Notify = sess.Notify
+		work.ScriptLog = sess.ScriptLog
 		storeFuncs(work, j.Owner, j.Slug)
 		if j.OnProgress != nil {
 			if act := bgrun.RunActivityFrom(work.Context()); act != nil {

@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/buildledger"
@@ -60,7 +61,7 @@ func scriptFailureHint(output string) string {
 		// A build wrote a helper beside the data source and imported it by
 		// path, three ways, each a FileNotFoundError; then had the script
 		// write a file and went looking for it in its own workspace.
-		return "HINT: a script runs staged ALONE, as one file in the app owner's workspace, not inside the app folder: a file beside it in data/ or actions/ is not there to open or import, and a file it writes does not land in your workspace. Code shared between scripts goes in lib/ and is imported by module name; a value you want to see goes into what the script prints."
+		return "HINT: a script runs staged ALONE, as one file in the app owner's workspace, not inside the app folder: a file beside it in data/ or actions/ is not there to open or import, and a file it writes does not land in your workspace. Code shared between scripts goes in lib/ and is imported by module name; a value you want to see goes to log() (from gohort import log), which a check shows."
 	}
 	if !strings.Contains(output, "ImportError") || !strings.Contains(output, "gohort") {
 		return ""
@@ -617,6 +618,10 @@ const (
 	verifyOutputPreview = 160
 )
 
+// appLoggedShown is how much of what a script logged a check shows before
+// the rest goes to read_output.
+const appLoggedShown = 1500
+
 // runScriptChecks is checkScripts with the run's options spelled out.
 func (t *chatTurn) runScriptChecks(spec AppSpec, opt appScriptRun) (report string, records, pass, fail int) {
 	// The store the host hands a live script: the owner's part of the app's
@@ -669,7 +674,28 @@ func (t *chatTurn) runScriptChecks(spec AppSpec, opt appScriptRun) (report strin
 		for k, v := range baseArgs {
 			scriptArgs[k] = v
 		}
-		out, err := appscript.Job{Owner: t.user, DB: db, Slug: spec.Slug, Kind: kind, Name: name, Language: lang, Script: script, Caps: caps, Args: scriptArgs, Libs: spec.Libraries, Spec: &spec, Interactive: t.inPersonsLane()}.Run()
+		// What the script logged, under its verdict: gohort.log otherwise
+		// reaches only the server log, and every hint below that says to
+		// log what an API returned sent the author to read something it
+		// could not see.
+		var logged []string
+		var logMu sync.Mutex
+		onLog := func(level, msg string) {
+			logMu.Lock()
+			defer logMu.Unlock()
+			if level != "" && level != "info" {
+				msg = level + ": " + msg
+			}
+			logged = append(logged, msg)
+		}
+		defer func() {
+			logMu.Lock()
+			defer logMu.Unlock()
+			if len(logged) > 0 {
+				fmt.Fprintf(&b, "     logged (%d): %s\n", len(logged), SpillOutput(strings.Join(logged, "\n"), appLoggedShown, "read_output"))
+			}
+		}()
+		out, err := appscript.Job{Owner: t.user, DB: db, Slug: spec.Slug, Kind: kind, Name: name, Language: lang, Script: script, Caps: caps, Args: scriptArgs, Libs: spec.Libraries, Spec: &spec, Interactive: t.inPersonsLane(), OnLog: onLog}.Run()
 		if err != nil {
 			fail++
 			fmt.Fprintf(&b, "FAIL %s, could not run: %v\n", label, err)
@@ -753,7 +779,7 @@ func (t *chatTurn) runScriptChecks(spec AppSpec, opt appScriptRun) (report strin
 					// It reads a tool or an API: the empty list is far more often
 					// a key the response does not have than a query param, and
 					// the query-param hint sent a build looking in the wrong place.
-					fmt.Fprintf(&b, "WARN %s: printed an EMPTY array though the app has %d saved record(s). It reads a tool or an API, so the likely cause is a key the response does not have: log what it returns (from gohort import log; log(raw)) and read the keys it actually has.\n", label, len(recs))
+					fmt.Fprintf(&b, "WARN %s: printed an EMPTY array though the app has %d saved record(s). It reads a tool or an API, so the likely cause is a key the response does not have: log what it returns (from gohort import log; log(raw)): the check shows what it logged; then read the keys it actually has.\n", label, len(recs))
 				} else if len(arr) == 0 && len(recs) > 0 {
 					// Valid JSON, but empty output while the app HAS records is the
 					// signature of a script that reads a query param nothing supplies
@@ -794,13 +820,13 @@ func (t *chatTurn) runScriptChecks(spec AppSpec, opt appScriptRun) (report strin
 				// N/A°F" in a markdown block a display shows, which the per-value
 				// count above cannot see.
 				fail++
-				fmt.Fprintf(&b, "FAIL %s: shows %d placeholder(s) (N/A, None, null) where values belong, on the real path: the script reads fields its input does not have. Log what the tool or API returns (from gohort import log; log(raw)) and read the keys it has.%s\n", label, hits, shown)
+				fmt.Fprintf(&b, "FAIL %s: shows %d placeholder(s) (N/A, None, null) where values belong, on the real path: the script reads fields its input does not have. Log what the tool or API returns (from gohort import log; log(raw)): the check shows what it logged; then read the keys it has.%s\n", label, hits, shown)
 			} else if empty, total := appEmptyValues(v); len(recs) > 0 && total >= 3 && empty*2 >= total {
 				// The real path ran and the values came back empty: None°F,
 				// null, "". A build read keys a tool's output does not have
 				// and passed verify on {"temperature": "None°F", ...}.
 				fail++
-				fmt.Fprintf(&b, "FAIL %s: %d of its %d values are empty (null, None, \"\") on the real path: the script reads fields its input does not have. Log what the tool or API actually returns (from gohort import log; log(raw)) and read the keys it has.%s\n", label, empty, total, shown)
+				fmt.Fprintf(&b, "FAIL %s: %d of its %d values are empty (null, None, \"\") on the real path: the script reads fields its input does not have. Log what the tool or API actually returns (from gohort import log; log(raw)): the check shows what it logged; then read the keys it has.%s\n", label, empty, total, shown)
 			} else {
 				pass++
 				fmt.Fprintf(&b, "OK   %s: printed a JSON object; good for a display (a table section needs a JSON array).%s%s\n", label, emptyStoreNote(recs), shown)
@@ -954,7 +980,7 @@ func jsonBreakNote(out string) string {
 		return ""
 	}
 	at := int(se.Offset) - 1
-	return fmt.Sprintf(" It parses as JSON up to char %d of %d, then: %q (%s). Anything printed besides the JSON, stderr included, counts as output: a value you want to see goes inside the JSON as a field.",
+	return fmt.Sprintf(" It parses as JSON up to char %d of %d, then: %q (%s). Anything printed besides the JSON, stderr included, counts as output: send a value you want to see to log() (from gohort import log), which a check shows and the page never gets.",
 		at, len(out), textutil.Clip(out[at:], 80), se.Error())
 }
 
