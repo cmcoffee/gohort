@@ -36,6 +36,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 // guardrailAppealOffer is a live invitation to dispute one block.
@@ -123,9 +124,7 @@ func (t *chatTurn) countUserQuote(quote string) (int, string) {
 		n++
 		if excerpt == "" {
 			excerpt = strings.TrimSpace(m.Content)
-			if len(excerpt) > 300 {
-				excerpt = excerpt[:300] + "…"
-			}
+			excerpt = textutil.Clip(excerpt, 300)
 		}
 	}
 	return n, excerpt

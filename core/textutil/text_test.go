@@ -3,6 +3,7 @@ package textutil
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // NormalizeHeadingLinks rewrites internal anchors from their link text so
@@ -127,5 +128,33 @@ func TestMarkdownLinks_BareURLStillAutolinks(t *testing.T) {
 	html := MarkdownToHTML("See https://example.com for details.")
 	if !strings.Contains(html, `<a href="https://example.com"`) {
 		t.Errorf("bare URL not autolinked:\n%s", html)
+	}
+}
+
+func TestClip(t *testing.T) {
+	cases := []struct {
+		in   string
+		n    int
+		want string
+	}{
+		{"short", 10, "short"},
+		{"exactly10!", 10, "exactly10!"},
+		{"hello world", 5, "hello…"},
+		{"", 3, ""},
+		{"abc", 0, "…"},
+		// "é" is two bytes; a limit landing inside it drops the whole rune.
+		{"café au lait", 4, "caf…"},
+		{"café au lait", 5, "café…"},
+		// A four-byte emoji straddling the limit.
+		{"ok \U0001F3DA end", 5, "ok …"},
+	}
+	for _, c := range cases {
+		got := Clip(c.in, c.n)
+		if got != c.want {
+			t.Errorf("Clip(%q, %d) = %q, want %q", c.in, c.n, got, c.want)
+		}
+		if !utf8.ValidString(got) {
+			t.Errorf("Clip(%q, %d) = %q is not valid UTF-8", c.in, c.n, got)
+		}
 	}
 }

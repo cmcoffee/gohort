@@ -21,6 +21,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/governance"
 	"github.com/cmcoffee/gohort/core/promotion"
+	"github.com/cmcoffee/gohort/core/textutil"
 	"github.com/cmcoffee/gohort/core/toolcat"
 	"github.com/cmcoffee/gohort/core/ui"
 )
@@ -3011,7 +3012,7 @@ func firstLineOf(s string) string {
 	for _, ln := range strings.Split(s, "\n") {
 		if ln = strings.TrimSpace(ln); ln != "" {
 			if len(ln) > 120 {
-				return ln[:120] + "…"
+				return textutil.Clip(ln, 120)
 			}
 			return ln
 		}

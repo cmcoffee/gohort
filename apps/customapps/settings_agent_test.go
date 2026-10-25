@@ -14,11 +14,11 @@ import (
 // An app whose agent was deleted says so to its owner, on the page and in
 // Settings, and Settings will not bind it to something that is not an agent.
 func TestAnAppWhoseAgentIsGoneSaysSo(t *testing.T) {
-	prev := cachedOrch
-	t.Cleanup(func() { cachedOrch = prev })
+	prev := findOrchestrate
+	t.Cleanup(func() { findOrchestrate = prev })
 	o := &orchestrate.OrchestrateApp{}
 	o.DB = &DBase{Store: kvlite.MemStore()}
-	cachedOrch = o
+	findOrchestrate = func() *orchestrate.OrchestrateApp { return o }
 
 	app := &CustomApps{}
 	spec := AppSpec{Slug: "swing", Name: "Swing", Owner: "u", AgentID: "a-deleted"}

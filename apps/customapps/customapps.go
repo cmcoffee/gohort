@@ -448,25 +448,11 @@ func recordsInvalidationBridge(spec AppSpec) string {
 	return `<script>(function(){var U=` + string(b) + `;window.addEventListener('ui-data-changed',function(e){var s=e&&e.detail&&e.detail.sources;if(!s||s.indexOf('records')<0)return;var m=U.filter(function(u){return s.indexOf(u)<0;});if(m.length&&window.uiInvalidate)window.uiInvalidate(m);});})();</script>`
 }
 
-// findOrchestrate locates the registered OrchestrateApp so the chat routes can
-// call its exported PublicHandle* methods. Cached after first hit (the registry
-// is fixed at runtime). Mirrors apps/agents' accessor.
-var cachedOrch *orchestrate.OrchestrateApp
-
-func findOrchestrate() *orchestrate.OrchestrateApp {
-	if cachedOrch != nil {
-		return cachedOrch
-	}
-	a, ok := FindAgent("orchestrate")
-	if !ok {
-		return nil
-	}
-	o, ok := a.(*orchestrate.OrchestrateApp)
-	if !ok {
-		return nil
-	}
-	cachedOrch = o
-	return cachedOrch
+// findOrchestrate is the registered orchestrate app, or nil when it is not running.
+// A var so a test can stand one in without registering it.
+var findOrchestrate = func() *orchestrate.OrchestrateApp {
+	o, _ := FindAgentAs[*orchestrate.OrchestrateApp]("orchestrate")
+	return o
 }
 
 // handleChat dispatches the app's chat sub-routes to orchestrate. sub is the

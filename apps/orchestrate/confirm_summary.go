@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 // reachWords turns a tool's capabilities into what they mean for the reader.
@@ -196,7 +197,7 @@ func clipArgValue(v any) string {
 	s = strings.TrimSpace(s)
 	const max = 300
 	if len(s) > max {
-		return s[:max] + "… (" + fmt.Sprintf("%d", len(s)) + " chars)"
+		return textutil.Clip(s, max) + " (" + fmt.Sprintf("%d", len(s)) + " chars)"
 	}
 	return s
 }

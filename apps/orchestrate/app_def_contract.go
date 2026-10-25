@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 var (
@@ -183,9 +184,7 @@ func appLooksLikeRecord(v any) bool {
 
 func appSnippet(t string, i int) string {
 	s := strings.Join(strings.Fields(t[i:]), " ")
-	if len(s) > 120 {
-		s = s[:120] + "…"
-	}
+	s = textutil.Clip(s, 120)
 	return s
 }
 

@@ -38,6 +38,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/textutil"
 	"github.com/cmcoffee/gohort/tools/temptool"
 )
 
@@ -517,9 +518,7 @@ func (T *Servitor) handleBindableTools(w http.ResponseWriter, r *http.Request) {
 		if i := strings.IndexByte(desc, '\n'); i > 0 {
 			desc = desc[:i]
 		}
-		if len(desc) > 160 {
-			desc = desc[:160] + "…"
-		}
+		desc = textutil.Clip(desc, 160)
 		b, isBound := bound[t.Name]
 		group := strings.TrimSpace(t.Category)
 		if group == "" {

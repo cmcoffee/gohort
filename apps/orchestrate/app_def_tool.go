@@ -33,6 +33,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 func (t *chatTurn) appDefToolDef() AgentToolDef {
@@ -394,9 +395,7 @@ func appChangeDetail(action string, args map[string]any) string {
 	var parts []string
 	for _, k := range []string{"function", "section_id", "script", "find", "to", "note"} {
 		if v := strings.TrimSpace(stringArg(args, k)); v != "" {
-			if len(v) > 80 {
-				v = v[:80] + "…"
-			}
+			v = textutil.Clip(v, 80)
 			parts = append(parts, k+": "+v)
 		}
 	}

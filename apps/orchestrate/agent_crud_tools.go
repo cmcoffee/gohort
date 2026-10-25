@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 func init() {
@@ -1490,9 +1491,7 @@ func intakeFormFromArgs(args map[string]any) IntakeFormSpec {
 	var spec IntakeFormSpec
 	if err := json.Unmarshal(data, &spec); err != nil {
 		preview := string(data)
-		if len(preview) > 200 {
-			preview = preview[:200] + "…"
-		}
+		preview = textutil.Clip(preview, 200)
 		Log("[orchestrate.agent_crud] intake_form unmarshal failed: %v (raw=%s)", err, preview)
 		return nil
 	}

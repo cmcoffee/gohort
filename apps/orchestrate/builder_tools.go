@@ -34,6 +34,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/appstores"
 	"github.com/cmcoffee/gohort/core/governance"
+	"github.com/cmcoffee/gohort/core/textutil"
 	"github.com/cmcoffee/gohort/tools/temptool"
 )
 
@@ -1014,7 +1015,7 @@ func oneLine(s string, max int) string {
 		return "(no description)"
 	}
 	if len(s) > max {
-		return s[:max] + "…"
+		return textutil.Clip(s, max)
 	}
 	return s
 }

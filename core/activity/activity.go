@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 // Store is the part of a database the log uses.
@@ -161,19 +163,7 @@ func maybePrune(db Store, now time.Time) {
 	Prune(db, now)
 }
 
-func clip(s string, n int) string {
-	s = strings.TrimSpace(s)
-	if len(s) <= n {
-		return s
-	}
-	// Cut on a rune boundary.
-	for n > 0 && !isRuneStart(s[n]) {
-		n--
-	}
-	return s[:n] + "…"
-}
-
-func isRuneStart(b byte) bool { return b&0xC0 != 0x80 }
+func clip(s string, n int) string { return textutil.Clip(strings.TrimSpace(s), n) }
 
 func randomSuffix() string {
 	var b [4]byte

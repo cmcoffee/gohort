@@ -25,6 +25,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/flows"
 	"github.com/cmcoffee/gohort/core/sandbox"
+	"github.com/cmcoffee/gohort/core/textutil"
 	"github.com/cmcoffee/gohort/core/ui"
 	"github.com/cmcoffee/gohort/tools/systemhook"
 )
@@ -799,9 +800,7 @@ func (a *AdminApp) registerSystemDepsRoutes(sub *http.ServeMux) {
 			out["preview"] = "data:" + ct + ";base64," + base64.StdEncoding.EncodeToString(res.Out)
 		} else if strings.HasPrefix(ct, "text/") {
 			text := string(res.Out)
-			if len(text) > 2000 {
-				text = text[:2000] + "..."
-			}
+			text = textutil.Clip(text, 2000)
 			out["text"] = text
 		}
 		writeJSONOut(w, out)

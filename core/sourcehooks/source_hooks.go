@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/cmcoffee/gohort/core/textutil"
 	"github.com/cmcoffee/snugforge/apiclient"
 	"github.com/cmcoffee/snugforge/iotimeout"
 
@@ -651,9 +652,7 @@ func queryOpenAlex(hook SourceHook, query string) (string, error) {
 				}
 			}
 			abstract = strings.Join(parts, " ")
-			if len(abstract) > 300 {
-				abstract = abstract[:300] + "..."
-			}
+			abstract = textutil.Clip(abstract, 300)
 		}
 
 		fmt.Fprintf(&sb, "%d. %s", i+1, work.Title)
@@ -1358,9 +1357,7 @@ func parseHookResults(hook SourceHook, body []byte) (string, error) {
 			fmt.Fprintf(&sb, "   %s\n", snippet)
 		} else if content != "" {
 			// Use content as snippet, truncated.
-			if len(content) > 300 {
-				content = content[:300] + "..."
-			}
+			content = textutil.Clip(content, 300)
 			fmt.Fprintf(&sb, "   %s\n", content)
 		}
 		sb.WriteString("\n")

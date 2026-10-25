@@ -28,6 +28,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 // bridgeToolName is the catalog name + the call_<cred> watch-tool prefix used
@@ -204,7 +205,7 @@ func watchProbeHTTPError(out string) string {
 func truncateForError(s string, max int) string {
 	s = strings.TrimSpace(strings.Join(strings.Fields(s), " "))
 	if len(s) > max {
-		return s[:max] + "…"
+		return textutil.Clip(s, max)
 	}
 	return s
 }

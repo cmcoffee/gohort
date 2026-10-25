@@ -5,6 +5,7 @@ import (
 
 	"fmt"
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 // Framework prompt blocks — capability-gated orchestration guidance the
@@ -366,9 +367,7 @@ func renderDirectiveTemplate(tpl string, tools []AgentToolDef) string {
 		var b strings.Builder
 		for _, t := range tools {
 			desc := strings.SplitN(t.Tool.Description, "\n", 2)[0]
-			if len(desc) > 200 {
-				desc = desc[:200] + "…"
-			}
+			desc = textutil.Clip(desc, 200)
 			fmt.Fprintf(&b, "- **%s**: %s\n", t.Tool.Name, desc)
 		}
 		tpl = strings.ReplaceAll(tpl, "{tool_list}", b.String())

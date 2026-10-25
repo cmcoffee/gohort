@@ -25,6 +25,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 const toolOutcomeTable = "orchestrate_tool_outcomes"
@@ -206,7 +207,7 @@ func loadToolOutcomes(db Database, user string) []toolOutcomeRecord {
 func oneLineError(s string, max int) string {
 	s = strings.TrimSpace(strings.Join(strings.Fields(s), " "))
 	if len(s) > max {
-		return s[:max] + "…"
+		return textutil.Clip(s, max)
 	}
 	return s
 }

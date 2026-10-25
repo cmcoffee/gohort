@@ -13,6 +13,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/activity"
 	"github.com/cmcoffee/gohort/core/sourcehooks"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 // secretUnchanged is what a stored secret reads as on a GET. The admin forms
@@ -225,9 +226,7 @@ func (a *AdminApp) registerNetConfigRoutes(sub *http.ServeMux) {
 		// Trim the result to a short preview so the inline UI doesn't
 		// overflow with a wall of links.
 		preview := strings.TrimSpace(out)
-		if len(preview) > 80 {
-			preview = preview[:80] + "…"
-		}
+		preview = textutil.Clip(preview, 80)
 		writeTestResult(w, true, fmt.Sprintf("OK via %s: %d chars returned", req.Provider, len(out)), "")
 	})
 

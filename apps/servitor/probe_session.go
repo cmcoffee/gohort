@@ -15,6 +15,7 @@ import (
 	"github.com/cmcoffee/gohort/apps/orchestrate"
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/bundle"
+	"github.com/cmcoffee/gohort/core/textutil"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -678,9 +679,7 @@ func (pr *probeRun) newRunTool() AgentToolDef {
 				if nl := strings.Index(reason, "\n"); nl > 0 {
 					reason = reason[:nl]
 				}
-				if len(reason) > 120 {
-					reason = reason[:120] + "…"
-				}
+				reason = textutil.Clip(reason, 120)
 				pr.failMu.Lock()
 				pr.sessionFailures = append(pr.sessionFailures, sessionFailure{Cmd: cmd, Reason: reason})
 				pr.failCount[bin]++
@@ -1243,9 +1242,7 @@ func (pr *probeRun) memoryTools() {
 			// using the appliance (see the rules read above).
 			storeRule(pr.ownerUDB, pr.appliance.ID, rule)
 			preview := rule
-			if len(preview) > 80 {
-				preview = preview[:80] + "…"
-			}
+			preview = textutil.Clip(preview, 80)
 			emit(pr.id, probeEvent{Kind: "status", Text: "Rule saved: " + preview})
 			return "rule saved", nil
 		},
@@ -2125,9 +2122,7 @@ func (pr *probeRun) mapProbeTool() probeAction {
 			msg.WriteString("## Task\n\n")
 			msg.WriteString(task)
 			short := task
-			if len(short) > 80 {
-				short = short[:80] + "…"
-			}
+			short = textutil.Clip(short, 80)
 			emit(pr.id, probeEvent{Kind: "intent", Text: task, Reason: context})
 			var workerResp *Response
 			var workerErr error

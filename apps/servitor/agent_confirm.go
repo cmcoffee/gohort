@@ -27,6 +27,8 @@ package servitor
 import (
 	"fmt"
 	"strings"
+
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 // agentCommandRefusal is what an acting agent is told instead of being made to
@@ -68,10 +70,7 @@ func applianceLabel(name, id string) string {
 // The head is what identifies it; the tail is usually arguments.
 func truncateCmd(s string, max int) string {
 	s = strings.TrimSpace(s)
-	if len(s) <= max {
-		return s
-	}
-	return s[:max] + "…"
+	return textutil.Clip(s, max)
 }
 
 // readOnlyDecline is what an investigation that nobody can answer is told

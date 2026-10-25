@@ -11,11 +11,12 @@ import (
 // The owner's app page carries a way to change it: Builder, its starting form
 // already pointed at this app.
 func TestAnAppPageLinksToBuilderForItsOwner(t *testing.T) {
-	prev := cachedOrch
-	t.Cleanup(func() { cachedOrch = prev })
+	prev := findOrchestrate
+	t.Cleanup(func() { findOrchestrate = prev })
 	page := json.RawMessage(`{"title":"Swing","nav":[{"label":"Settings","url":"_settings"}],"sections":[]}`)
 
-	cachedOrch = &orchestrate.OrchestrateApp{}
+	orch := &orchestrate.OrchestrateApp{}
+	findOrchestrate = func() *orchestrate.OrchestrateApp { return orch }
 	var m struct {
 		Nav []struct{ Label, URL string } `json:"nav"`
 	}

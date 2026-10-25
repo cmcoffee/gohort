@@ -37,6 +37,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 // SaveCommandTools records what a mapping conversation worked out, onto the
@@ -275,7 +276,7 @@ func firstLine(s string) string {
 		s = s[:i]
 	}
 	if len(s) > 120 {
-		s = s[:117] + "…"
+		s = textutil.Clip(s, 117)
 	}
 	return s
 }

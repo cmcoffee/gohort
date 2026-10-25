@@ -108,6 +108,21 @@ func LookupChatTool(name string) (ChatTool, bool) {
 	return nil, false
 }
 
+// FindAgentAs is FindAgent for a caller that needs the agent's concrete type,
+// to reach another app's exported surface. ok is false when nothing by that
+// name is registered or what is registered is not a T. Not cached: the lookup
+// is cheap, and a cache taken before web init would hold the DB-less fallback
+// FindAgent hands out then.
+func FindAgentAs[T Agent](name string) (T, bool) {
+	a, ok := FindAgent(name)
+	if !ok {
+		var zero T
+		return zero, false
+	}
+	t, ok := a.(T)
+	return t, ok
+}
+
 // FindAgent looks up a registered agent or app by name.
 // Prefers agents that have a DB set (web mode initializes web app DBs, not CLI app DBs).
 func FindAgent(name string) (Agent, bool) {

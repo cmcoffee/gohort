@@ -31,6 +31,7 @@ import (
 
 	"github.com/cmcoffee/gohort/core/factcheck"
 	"github.com/cmcoffee/gohort/core/sources"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 // PipelineDispatch runs a single agent stage: dispatch `input` to the
@@ -918,9 +919,7 @@ func (r *pipelineRun) runStage(ctx context.Context, stage PipelineStage, prev, s
 			// produced a question list, investigate produced bullet
 			// points, etc.) without spamming the activity pane.
 			preview := strings.Join(strings.Fields(out), " ")
-			if len(preview) > 120 {
-				preview = preview[:120] + "…"
-			}
+			preview = textutil.Clip(preview, 120)
 			if preview == "" {
 				preview = "(empty)"
 			}
@@ -1024,7 +1023,7 @@ const restateReplyMax = 24000
 func restatePrompt(task, reply string, derr error) string {
 	reply = strings.TrimSpace(reply)
 	if len(reply) > restateReplyMax {
-		reply = reply[:restateReplyMax] + "…(truncated)"
+		reply = textutil.Clip(reply, restateReplyMax) + "(truncated)"
 	}
 	return "A step was given this task:\n\n" + task +
 		"\n\nIts reply is below. The work in it is done, but the reply is not in the shape the next step needs (" + derr.Error() + ")." +
@@ -1041,7 +1040,7 @@ func previewForRepair(s string) string {
 	if len(s) <= max {
 		return s
 	}
-	return s[:max] + "…(truncated)"
+	return textutil.Clip(s, max) + "(truncated)"
 }
 
 // outputContractLead opens every rendered output contract, so a runner that

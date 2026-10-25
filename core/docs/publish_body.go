@@ -353,9 +353,7 @@ func docLead(md string, max int) string {
 		}
 	}
 	s := strings.Join(parts, " ")
-	if len(s) > max {
-		s = s[:max] + "..."
-	}
+	s = textutil.Clip(s, max)
 	return s
 }
 

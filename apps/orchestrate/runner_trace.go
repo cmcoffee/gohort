@@ -8,6 +8,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/prompts"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 // (The auto-classifier — activeSkillsForTurn + ActiveSkillsWithScores
@@ -537,7 +538,7 @@ func snippetOneLine(s string, max int) string {
 		if sp := strings.LastIndexByte(s[:max], ' '); sp > max/2 {
 			cut = sp
 		}
-		s = s[:cut] + "…"
+		s = textutil.Clip(s, cut)
 	}
 	return s
 }

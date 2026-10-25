@@ -11,6 +11,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/mcppersonal"
+	"github.com/cmcoffee/gohort/core/textutil"
 	"github.com/cmcoffee/gohort/tools/temptool"
 )
 
@@ -743,9 +744,7 @@ func firstLineSnippet(s string, max int) string {
 		s = s[:nl]
 	}
 	s = strings.TrimSpace(s)
-	if len(s) > max {
-		s = s[:max] + "…"
-	}
+	s = textutil.Clip(s, max)
 	return s
 }
 

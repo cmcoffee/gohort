@@ -24,6 +24,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 // httpMethods are the keys of a path item that denote operations. Anything else
@@ -371,8 +373,6 @@ func refName(ref string) string {
 // oneLine flattens a description so it cannot break the list item it sits in.
 func oneLine(s string) string {
 	s = strings.Join(strings.Fields(s), " ")
-	if len(s) > 400 {
-		s = s[:400] + "…"
-	}
+	s = textutil.Clip(s, 400)
 	return s
 }

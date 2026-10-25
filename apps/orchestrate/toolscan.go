@@ -25,6 +25,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/textutil"
 	"github.com/cmcoffee/gohort/core/toolnote"
 )
 
@@ -1139,7 +1140,7 @@ func (t *chatTurn) lastUserRequestText() string {
 func truncateRequestText(txt string) string {
 	const max = 2000
 	if len(txt) > max {
-		return txt[:max] + "…"
+		return textutil.Clip(txt, max)
 	}
 	return txt
 }

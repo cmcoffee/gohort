@@ -34,6 +34,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/media"
 	"github.com/cmcoffee/gohort/core/netgate"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 // (Collection data layer moved to core/collections.go — Collection
@@ -889,9 +890,7 @@ func (T *OrchestrateApp) handleCollectionSearch(w http.ResponseWriter, r *http.R
 	out := make([]hitOut, 0, len(hits))
 	for _, h := range hits {
 		text := h.Text
-		if len(text) > 600 {
-			text = text[:600] + "…"
-		}
+		text = textutil.Clip(text, 600)
 		out = append(out, hitOut{Title: h.Title, Section: h.Section, DocID: h.ReportID, Locator: h.Locator, Kind: h.Kind, Text: text, Score: float64(h.Score)})
 	}
 	w.Header().Set("Content-Type", "application/json")

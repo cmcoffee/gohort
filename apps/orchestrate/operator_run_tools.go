@@ -13,6 +13,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 func delegateToolDef(sess *ToolSession, owner, controllerAgentID string) AgentToolDef {
@@ -183,9 +184,7 @@ func listRunsToolDef(owner string) AgentToolDef {
 			var b strings.Builder
 			for _, rr := range runs {
 				sum := rr.Summary
-				if len(sum) > 120 {
-					sum = sum[:120] + "…"
-				}
+				sum = textutil.Clip(sum, 120)
 				// The task name when the run came from a named schedule:
 				// without it every recurring fire prints under its agent's
 				// label and nothing on the line says which task ran.

@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"sort"
 	"sync"
+
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 const pqueueTable = "persistent_queue"
@@ -259,7 +261,7 @@ func UnmarshalQueueParams(entry QueueEntry, target interface{}) error {
 
 func truncLabel(s string) string {
 	if len(s) > 80 {
-		return s[:80] + "..."
+		return textutil.Clip(s, 80)
 	}
 	return s
 }

@@ -8,7 +8,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"unicode/utf8"
+
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 // PromptDigest is what one turn's prompt was made of, recorded per turn.
@@ -252,20 +253,7 @@ func noToolDiagLine(round int, asked, reply string, masked bool) string {
 }
 
 func truncForLog(s string, n int) string {
-	s = strings.ReplaceAll(s, "\n", " ")
-	if len(s) <= n {
-		return s
-	}
-	// Cut on a RUNE boundary. Slicing bytes splits any multi-byte character
-	// straddling the limit and writes invalid UTF-8 into the log — which used to
-	// be theoretical, when this only ever truncated tool names and short
-	// snippets, and stopped being when it started carrying reply text. The
-	// replies that prompted it end in "🏚️👔".
-	cut := n
-	for cut > 0 && !utf8.RuneStart(s[cut]) {
-		cut--
-	}
-	return s[:cut] + "…"
+	return textutil.Clip(strings.ReplaceAll(s, "\n", " "), n)
 }
 
 // logPromptFloor breaks the first round's prompt into its parts.

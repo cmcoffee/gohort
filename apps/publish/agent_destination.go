@@ -27,6 +27,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/docs"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 // AgentKindPrefix namespaces the kinds these destinations register under, so a
@@ -167,7 +168,7 @@ func clipToLabel(s string) string {
 	s = firstLine(s)
 	const max = 160
 	if len(s) > max {
-		return s[:max] + "…"
+		return textutil.Clip(s, max)
 	}
 	return s
 }

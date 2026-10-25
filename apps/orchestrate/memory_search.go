@@ -29,6 +29,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 // memSearchItem is one search hit, shaped for the Memory modal's list.
@@ -355,9 +356,7 @@ func tombstoneCortexObservation(udb Database, agentID, nanoRef string) bool {
 
 func memSnippet(s string) string {
 	s = strings.TrimSpace(s)
-	if len(s) > 300 {
-		s = s[:300] + "…"
-	}
+	s = textutil.Clip(s, 300)
 	return s
 }
 

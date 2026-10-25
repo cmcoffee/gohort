@@ -7,6 +7,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 const watchTable = "ssh_watches"
@@ -182,9 +183,7 @@ func (T *Servitor) recordWatchResult(udb Database, w ScheduledWatch, appliance A
 		summary = fmt.Sprintf("[Watch expired] %s: condition '%s' never matched. Command: %s", w.Task, w.Pattern, w.Command)
 	} else {
 		short := output
-		if len(short) > 400 {
-			short = short[:400] + "..."
-		}
+		short = textutil.Clip(short, 400)
 		summary = fmt.Sprintf("[Watch triggered] %s\nCommand: %s\nOutput: %s", w.Task, w.Command, short)
 	}
 

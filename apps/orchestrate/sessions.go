@@ -10,6 +10,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/changes"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 // sessionTable returns the per-agent session table name. One bucket
@@ -399,9 +400,7 @@ func dropChatSessionBucket(db Database, agentID string) {
 // the first turn completes (see generateSessionTitle below).
 func titleFromFirstMessage(msg string) string {
 	t := strings.TrimSpace(msg)
-	if len(t) > 60 {
-		t = t[:60] + "…"
-	}
+	t = textutil.Clip(t, 60)
 	if t == "" {
 		t = "New session"
 	}

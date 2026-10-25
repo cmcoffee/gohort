@@ -9,6 +9,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 // activityCheapID returns a monotonic short id for an activity row.
@@ -56,9 +57,7 @@ func formatToolCall(name string, args map[string]any) string {
 			s = fmt.Sprintf("%v", vv)
 		}
 		s = strings.ReplaceAll(s, "\n", " ")
-		if len(s) > 80 {
-			s = s[:80] + "…"
-		}
+		s = textutil.Clip(s, 80)
 		parts = append(parts, fmt.Sprintf("%s=%q", k, s))
 	}
 	return "🔧 " + name + "(" + strings.Join(parts, ", ") + ")"
@@ -93,7 +92,7 @@ func deriveFindings(s string) string {
 		if sp := strings.LastIndexByte(s[:cap], ' '); sp > cap/2 {
 			cut = sp
 		}
-		s = s[:cut] + "…"
+		s = textutil.Clip(s, cut)
 	}
 	return strings.TrimSpace(s)
 }

@@ -49,6 +49,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 // RestImageConnectorKind is the Kind value for a spec-declared image backend.
@@ -2104,7 +2106,7 @@ func httpGetImageBytes(url string) ([]byte, error) {
 func truncateForError(s string) string {
 	s = strings.TrimSpace(s)
 	if len(s) > 300 {
-		return s[:300] + "…"
+		return textutil.Clip(s, 300)
 	}
 	return s
 }

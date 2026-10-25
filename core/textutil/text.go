@@ -5,6 +5,7 @@ import (
 	"html"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 // Precompiled regex patterns for URL/citation extraction.
@@ -48,6 +49,23 @@ func safeInlineImageURL(url string) bool {
 		return true
 	}
 	return inlineImageDataRE.MatchString(url)
+}
+
+// Clip shortens s to at most n bytes followed by "…", and returns s as is
+// when it already fits. The cut lands on a rune boundary: slicing bytes
+// splits any multi-byte character straddling the limit and leaves invalid
+// UTF-8 behind, which shows as a replacement glyph in a title or a log line.
+func Clip(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	if n < 0 {
+		n = 0
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n] + "…"
 }
 
 // HTMLEscape escapes special HTML characters.

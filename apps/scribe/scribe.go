@@ -171,24 +171,10 @@ func (T *Scribe) installSaveArticleHook() {
 	}
 }
 
-// findOrchestrate resolves the registered OrchestrateApp so the chat routes can
-// dispatch to its PublicHandle* methods. Cached after first hit.
-var cachedOrch *orchestrate.OrchestrateApp
-
+// findOrchestrate is the registered orchestrate app, or nil when it is not running.
 func findOrchestrate() *orchestrate.OrchestrateApp {
-	if cachedOrch != nil {
-		return cachedOrch
-	}
-	a, ok := FindAgent("orchestrate")
-	if !ok {
-		return nil
-	}
-	o, ok := a.(*orchestrate.OrchestrateApp)
-	if !ok {
-		return nil
-	}
-	cachedOrch = o
-	return cachedOrch
+	o, _ := FindAgentAs[*orchestrate.OrchestrateApp]("orchestrate")
+	return o
 }
 
 var errNoUserStore = errors.New("no user store for that user")

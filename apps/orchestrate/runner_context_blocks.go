@@ -6,6 +6,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 // (turnHasFreshExternalContent retired alongside the synthesis
@@ -563,9 +564,7 @@ func (t *chatTurn) builderExistingToolsBlockFor(db Database, user string) string
 	b.WriteString("Tools the user already authored + an admin approved. **These are NOT in your executable catalog, you cannot dispatch them.** They're listed here so you can: (a) check for name collisions before authoring (re-authoring with an existing name OVERWRITES the active entry, no admin re-approval needed, that's the canonical iteration path); (b) reference one in pipeline_tools when composing (pipeline mode resolves by name at dispatch, doesn't need the tool in your callable catalog).\n\nFormat: **name** (mode), one-line description.\n\n")
 	for _, p := range persistent {
 		desc := strings.TrimSpace(p.Tool.Description)
-		if len(desc) > 140 {
-			desc = desc[:140] + "…"
-		}
+		desc = textutil.Clip(desc, 140)
 		if desc == "" {
 			desc = "(no description)"
 		}

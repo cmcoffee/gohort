@@ -140,9 +140,9 @@ func UsageReportMiddleware(label string) func(http.Handler) http.Handler {
 // Set by ServeDashboard so other packages can make internal HTTP calls.
 var WebListenAddr string
 
-// InternalURL builds a URL for internal inter-app HTTP calls,
+// internalURL builds a URL for internal inter-app HTTP calls,
 // using the correct scheme (http/https) based on TLS configuration.
-func InternalURL(path string) string {
+func internalURL(path string) string {
 	scheme := "http"
 	if TLSEnabled() {
 		scheme = "https"
@@ -196,7 +196,7 @@ var internalAuthToken = func() string {
 // call; a request built by hand reaches the same endpoint as an anonymous
 // stranger and is refused.
 func NewInternalRequest(ctx context.Context, method, path string, body io.Reader) (*http.Request, error) {
-	req, err := http.NewRequestWithContext(ctx, method, InternalURL(path), body)
+	req, err := http.NewRequestWithContext(ctx, method, internalURL(path), body)
 	if err != nil {
 		return nil, err
 	}

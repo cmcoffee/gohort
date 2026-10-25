@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/cmcoffee/gohort/core/textutil"
 	"github.com/cmcoffee/snugforge/nfo"
 
 	"github.com/cmcoffee/gohort/core/prompts"
@@ -203,9 +204,7 @@ func formatArgs(args map[string]any) string {
 	var lines []string
 	for _, k := range keys {
 		display := stringify(args[k])
-		if len(display) > 200 {
-			display = display[:200] + "..."
-		}
+		display = textutil.Clip(display, 200)
 		lines = append(lines, fmt.Sprintf("%s: %s", k, display))
 	}
 	return strings.Join(lines, "\n")

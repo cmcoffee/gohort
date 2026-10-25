@@ -29,6 +29,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 // BuilderTriage is a handed-off session's triage state: what could be at
@@ -165,9 +166,7 @@ func triageCallFailed(tc PersistedToolCall) (bool, string) {
 
 func triageSnippet(s string) string {
 	s = strings.Join(strings.Fields(s), " ")
-	if len(s) > 160 {
-		s = s[:160] + "…"
-	}
+	s = textutil.Clip(s, 160)
 	return s
 }
 

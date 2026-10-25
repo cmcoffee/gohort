@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 // truncationMarker is what dispatch appends when a response exceeded its read
@@ -100,7 +101,7 @@ func firstLine(s string) string {
 func trimForError(s string) string {
 	s = strings.TrimSpace(s)
 	if len(s) > 600 {
-		return s[:600] + "…"
+		return textutil.Clip(s, 600)
 	}
 	if s == "" {
 		return "(no response body)"

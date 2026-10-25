@@ -13,6 +13,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 // Save-time syntax check for an html section's inline JavaScript.
@@ -311,8 +312,6 @@ func appShellQuote(s string) string {
 // appOneLine flattens and caps a multi-line checker report.
 func appOneLine(s string, max int) string {
 	s = strings.Join(strings.Fields(strings.ReplaceAll(s, "\n", " ")), " ")
-	if len(s) > max {
-		s = s[:max] + "…"
-	}
+	s = textutil.Clip(s, max)
 	return s
 }

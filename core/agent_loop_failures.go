@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 // FirstToolOrderViolation returns the index of the first message carrying tool
@@ -267,7 +269,7 @@ func retireResolvedFailureResults(history []Message, shapes map[string]bool, too
 // oneLineShape renders a failure shape for a log line or a directive.
 func oneLineShape(shape string) string {
 	if len(shape) > 120 {
-		return shape[:120] + "…"
+		return textutil.Clip(shape, 120)
 	}
 	return shape
 }

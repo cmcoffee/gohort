@@ -22,6 +22,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/textutil"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -327,9 +328,7 @@ func (T *HelloAgent) handleAgentSend(w http.ResponseWriter, r *http.Request) {
 	s := demoSessions.GetOrCreate(user, req.SessionID)
 	if (s.Title == "" || s.Title == "New conversation") && req.Message != "" {
 		t := req.Message
-		if len(t) > 60 {
-			t = t[:60] + "…"
-		}
+		t = textutil.Clip(t, 60)
 		s.Title = t
 	}
 	s.LastAt = time.Now().UTC().Format(time.RFC3339)

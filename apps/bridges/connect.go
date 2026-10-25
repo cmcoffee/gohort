@@ -14,21 +14,9 @@ import (
 // a chat stamps the channel's source (service + the chat's address) so inbound
 // over a bridge routes to that channel's bound agent.
 
-var cachedOrch *orchestrate.OrchestrateApp
-
+// findOrchestrate is the registered orchestrate app, or nil when it is not running.
 func findOrchestrate() *orchestrate.OrchestrateApp {
-	if cachedOrch != nil {
-		return cachedOrch
-	}
-	a, ok := FindAgent("orchestrate")
-	if !ok {
-		return nil
-	}
-	o, ok := a.(*orchestrate.OrchestrateApp)
-	if !ok {
-		return nil
-	}
-	cachedOrch = o
+	o, _ := FindAgentAs[*orchestrate.OrchestrateApp]("orchestrate")
 	return o
 }
 

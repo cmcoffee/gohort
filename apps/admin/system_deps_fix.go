@@ -30,6 +30,7 @@ import (
 	"github.com/cmcoffee/gohort/core/assist"
 	"github.com/cmcoffee/gohort/core/flows"
 	"github.com/cmcoffee/gohort/core/media"
+	"github.com/cmcoffee/gohort/core/textutil"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -391,9 +392,7 @@ func describeRun(res flows.Result, err error, what string, output, link bool) st
 		bd := img.Bounds()
 		out += fmt.Sprintf(" The image is %dx%d.", bd.Dx(), bd.Dy())
 	} else if text := strings.TrimSpace(string(res.Out)); text != "" && flows.Readable(res.Out, flows.KindText) {
-		if len(text) > 300 {
-			text = text[:300] + "..."
-		}
+		text = textutil.Clip(text, 300)
 		out += " It begins: " + text
 	}
 	return out

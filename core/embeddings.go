@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 // EmbeddingConfig holds the endpoint + model for the ollama-compatible
@@ -338,9 +340,7 @@ func embedTexts(ctx context.Context, cfg EmbeddingConfig, texts []string) ([][]f
 		// reached the intended endpoint, or accidentally landed on
 		// a different HTTP server (e.g., gohort itself, a proxy).
 		bodySnip := strings.TrimSpace(string(body))
-		if len(bodySnip) > 160 {
-			bodySnip = bodySnip[:160] + "..."
-		}
+		bodySnip = textutil.Clip(bodySnip, 160)
 		return nil, fmt.Errorf("embed HTTP %d from %s: %s", resp.StatusCode, url, bodySnip)
 	}
 

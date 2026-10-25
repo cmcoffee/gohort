@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 // Settling an actionable card, durably.
@@ -59,9 +60,7 @@ func (T *OrchestrateApp) handleSessionBlockResolve(w http.ResponseWriter, r *htt
 	if note == "" {
 		note = "Answered."
 	}
-	if len(note) > 240 {
-		note = note[:240] + "…"
-	}
+	note = textutil.Clip(note, 240)
 	s, ok := loadChatSession(udb, agentID, sid)
 	if !ok {
 		http.Error(w, "no such session", http.StatusNotFound)

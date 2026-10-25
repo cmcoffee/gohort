@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/textutil"
 	"github.com/cmcoffee/gohort/tools/temptool"
 )
 
@@ -144,9 +145,7 @@ func toolTemplateCreate(args map[string]any, sess *ToolSession) (string, error) 
 			return msg + fmt.Sprintf(" Verification FAILED: %v. Re-call create with corrected values.", derr), nil
 		}
 		trimmed := res
-		if len(trimmed) > 1200 {
-			trimmed = trimmed[:1200] + "…"
-		}
+		trimmed = textutil.Clip(trimmed, 1200)
 		return msg + "\nVerification succeeded:\n\n" + trimmed, nil
 	}
 	return msg + " No test_args given: call create again with the same fields plus test_args to verify it against the real endpoint.", nil

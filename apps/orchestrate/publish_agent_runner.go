@@ -19,6 +19,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/docs"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 // registerAgentPublisher installs the closure core/docs calls when a publish is
@@ -346,7 +347,7 @@ func publishStepReported(ctx context.Context, td AgentToolDef) AgentToolDef {
 		docs.PublishStep(ctx, "%s", line)
 		out, err := h(c, args)
 		if err != nil {
-			docs.PublishStep(ctx, "  failed: %s", clipStep(firstLineOf(err.Error()), 200))
+			docs.PublishStep(ctx, "  failed: %s", textutil.Clip(firstLineOf(err.Error()), 200))
 		}
 		return out, err
 	}
@@ -366,7 +367,7 @@ func publishStepLabel(t Tool) string {
 	if d == "" {
 		return t.Name
 	}
-	return clipStep(d, 80)
+	return textutil.Clip(d, 80)
 }
 
 // publishStepTargetKeys are the arguments that name what a call acts on, in
@@ -420,13 +421,6 @@ func firstLineOf(s string) string {
 		s = s[:i]
 	}
 	return s
-}
-
-func clipStep(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "..."
 }
 
 // publishLive reports a publish run that has no card to draw on: each round

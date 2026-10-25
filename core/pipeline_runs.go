@@ -30,6 +30,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 // PipelineRunsTable stores one PipelineRun per execution, keyed
@@ -186,9 +188,7 @@ func LatestPipelineRun(db Database, user, pipelineID string) (PipelineRun, bool)
 // and asking a model to name it would cost a call per run for a label.
 func PipelineRunTitle(input string) string {
 	title := strings.Join(strings.Fields(input), " ")
-	if len(title) > 90 {
-		title = title[:90] + "…"
-	}
+	title = textutil.Clip(title, 90)
 	return title
 }
 

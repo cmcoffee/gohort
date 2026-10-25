@@ -29,6 +29,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 const pollCursorTable = "bridges_poll_cursor" // connector name → pollCursor
@@ -548,7 +549,7 @@ func stripHTML(s string) string {
 func snippet(b string) string {
 	s := strings.TrimSpace(b)
 	if len(s) > 200 {
-		return s[:200] + "…"
+		return textutil.Clip(s, 200)
 	}
 	return s
 }

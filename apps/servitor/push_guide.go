@@ -14,6 +14,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/docs"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 // GET  ?appliance_id=<id>  → {guides:[{id,title}], others:[{id,title}]}:
@@ -151,9 +152,7 @@ func deriveSectionTitle(text string) string {
 		if line == "" {
 			continue
 		}
-		if len(line) > 70 {
-			line = line[:70] + "…"
-		}
+		line = textutil.Clip(line, 70)
 		return line
 	}
 	return "Finding"

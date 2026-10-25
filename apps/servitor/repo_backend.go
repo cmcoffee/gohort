@@ -21,6 +21,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 const (
@@ -511,9 +512,7 @@ func searchRepo(user, applianceID, query string, maxHits int) []repoSearchHit {
 		for i, line := range strings.Split(content, "\n") {
 			if strings.Contains(strings.ToLower(line), q) {
 				t := strings.TrimSpace(line)
-				if len(t) > 240 {
-					t = t[:240] + "…"
-				}
+				t = textutil.Clip(t, 240)
 				hits = append(hits, repoSearchHit{Path: path, Line: i + 1, Text: t})
 				if len(hits) >= maxHits {
 					return hits

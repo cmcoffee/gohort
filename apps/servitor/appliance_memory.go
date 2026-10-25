@@ -86,10 +86,6 @@ func investigatorTemplatePrompt() string {
 // null (nothing picked → alert + abort).
 var applianceMemoryModalScript = orchestrate.AgentMemoryModalScript("servitor_appliance_memory", "servitorMemBase()")
 
-// cachedServitorOrch holds the registered orchestrate app (registry is fixed
-// at runtime, so cache after first hit).
-var cachedServitorOrch *orchestrate.OrchestrateApp
-
 // servitorGuard is orchestrate's guardrails for one Servitor run by user: the
 // deployment's Always rules, the investigator's own rules, the tool-result
 // fence and scan, and the tainted-action check (orchestrate.AppLoopGuard).
@@ -104,20 +100,10 @@ func servitorGuard(ctx context.Context, user string) *orchestrate.AppLoopGuard {
 	return orch.AppLoopGuard(ctx, user, servitorInvestigatorAgentID)
 }
 
+// servitorOrch is the registered orchestrate app, or nil when it is not running.
 func servitorOrch() *orchestrate.OrchestrateApp {
-	if cachedServitorOrch != nil {
-		return cachedServitorOrch
-	}
-	a, ok := FindAgent("orchestrate")
-	if !ok {
-		return nil
-	}
-	o, ok := a.(*orchestrate.OrchestrateApp)
-	if !ok {
-		return nil
-	}
-	cachedServitorOrch = o
-	return cachedServitorOrch
+	o, _ := FindAgentAs[*orchestrate.OrchestrateApp]("orchestrate")
+	return o
 }
 
 // applianceMemScope maps an appliance to its synthetic scope user.

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/textutil"
 	"github.com/cmcoffee/gohort/tools/temptool"
 
 	"github.com/cmcoffee/gohort/core/prompts"
@@ -382,9 +383,7 @@ func (ws *workerStep) buildPrompt() {
 	if ws.workerLabel == "" {
 		ws.workerLabel = "step"
 	}
-	if len(ws.workerLabel) > 32 {
-		ws.workerLabel = ws.workerLabel[:32] + "…"
-	}
+	ws.workerLabel = textutil.Clip(ws.workerLabel, 32)
 	t.wrapToolsForActivity(ws.sess, ws.tools, t.agent, "↳ [worker: "+ws.workerLabel+"] ")
 
 	// Collapse admin-curated tool groups. Workers may have a totally

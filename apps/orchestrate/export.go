@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/cmcoffee/gohort/core/prompts"
+	"github.com/cmcoffee/gohort/core/textutil"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -381,7 +382,7 @@ func renderSessionMarkdownWithDiag(agent AgentRecord, sess ChatSession, udb Data
 					if st.Output != "" {
 						out := st.Output
 						if len(out) > 800 {
-							out = out[:800] + "… [truncated]"
+							out = textutil.Clip(out, 800) + " [truncated]"
 						}
 						fmt.Fprintf(&b, "     _output:_ %s\n", strings.ReplaceAll(out, "\n", " "))
 					}
@@ -394,7 +395,7 @@ func renderSessionMarkdownWithDiag(agent AgentRecord, sess ChatSession, udb Data
 					argsJSON, _ := json.Marshal(tc.Args)
 					argsStr := string(argsJSON)
 					if len(argsStr) > 400 {
-						argsStr = argsStr[:400] + "… [truncated]"
+						argsStr = textutil.Clip(argsStr, 400) + " [truncated]"
 					}
 					marker := ""
 					if tc.Cached {
@@ -418,7 +419,7 @@ func renderSessionMarkdownWithDiag(agent AgentRecord, sess ChatSession, udb Data
 						} else {
 							res := tc.Result
 							if len(res) > 800 {
-								res = res[:800] + "… [truncated]"
+								res = textutil.Clip(res, 800) + " [truncated]"
 							}
 							fmt.Fprintf(&b, "  ↳ %s\n", strings.ReplaceAll(res, "\n", " "))
 						}

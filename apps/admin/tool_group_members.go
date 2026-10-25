@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 // handleToolGroupMembers serves GET/POST /api/tool-groups/{id}/members.
@@ -151,9 +152,7 @@ func (a *AdminApp) handleToolGroupMembers(w http.ResponseWriter, r *http.Request
 func firstDescLine(s string) string {
 	for _, ln := range strings.Split(s, "\n") {
 		if ln = strings.TrimSpace(ln); ln != "" {
-			if len(ln) > 140 {
-				ln = ln[:140] + "…"
-			}
+			ln = textutil.Clip(ln, 140)
 			return ln
 		}
 	}

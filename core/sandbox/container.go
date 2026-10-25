@@ -47,6 +47,7 @@ import (
 	"time"
 
 	"github.com/cmcoffee/gohort/core/deps"
+	"github.com/cmcoffee/gohort/core/textutil"
 	"github.com/cmcoffee/snugforge/nfo"
 )
 
@@ -351,9 +352,7 @@ func firstLine(s string) string {
 	if i := strings.IndexByte(s, '\n'); i >= 0 {
 		s = s[:i]
 	}
-	if len(s) > 200 {
-		s = s[:200] + "…"
-	}
+	s = textutil.Clip(s, 200)
 	return s
 }
 

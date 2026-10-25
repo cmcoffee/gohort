@@ -40,6 +40,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/provenance"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 // --- mode-aware tool-name phrases -----------------------------------------
@@ -678,9 +679,7 @@ func renderRecallChunks(tag, idPrefix string, hits []SearchHit) string {
 // recallSnippet trims a history passage for the search view.
 func recallSnippet(text string) string {
 	s := strings.TrimSpace(text)
-	if len(s) > 300 {
-		s = s[:300] + "…"
-	}
+	s = textutil.Clip(s, 300)
 	return strings.ReplaceAll(s, "\n", "\n  ")
 }
 

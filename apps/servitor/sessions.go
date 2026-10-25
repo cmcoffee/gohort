@@ -20,6 +20,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/changes"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 // sessionTable scopes sessions per appliance — switching the appliance
@@ -50,9 +51,7 @@ type chatSession struct {
 // sessionTitle derives a short rail label from the first user message.
 func sessionTitle(msg string) string {
 	t := strings.TrimSpace(msg)
-	if len(t) > 80 {
-		t = t[:80] + "…"
-	}
+	t = textutil.Clip(t, 80)
 	if t == "" {
 		t = "New session"
 	}

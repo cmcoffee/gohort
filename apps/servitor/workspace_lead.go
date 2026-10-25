@@ -8,6 +8,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/bundle"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 // The workspace lead. It has no transport of its own — every fact it reports
@@ -561,7 +562,7 @@ func firstLine(s string) string {
 	}
 	s = strings.TrimSpace(s)
 	if len(s) > 80 {
-		return s[:80] + "…"
+		return textutil.Clip(s, 80)
 	}
 	return s
 }

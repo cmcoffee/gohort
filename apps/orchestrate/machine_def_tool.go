@@ -33,6 +33,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 func (t *chatTurn) machineGroupedToolDef() AgentToolDef {
@@ -1413,7 +1414,7 @@ func previewText(s string, max int) string {
 	if len(s) <= max {
 		return s
 	}
-	return s[:max] + "… (" + strconv.Itoa(len(s)) + " chars)"
+	return textutil.Clip(s, max) + " (" + strconv.Itoa(len(s)) + " chars)"
 }
 
 // updatePhaseFieldNames is what update_phase writes, in the order it says so.

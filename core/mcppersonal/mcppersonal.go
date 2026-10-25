@@ -33,6 +33,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/internal/mcpclient"
 	"github.com/cmcoffee/gohort/core/sourcehooks"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 const table = "mcp_personal_servers"
@@ -767,7 +768,7 @@ func toolRun(sess *ToolSession, owner string, n named) func(ctx context.Context,
 				return "", fmt.Errorf("not run: %s changes something on %s, and nobody is watching this run to approve it", label, srvName)
 			}
 			brief, _ := json.Marshal(args)
-			if sess.AskInChat(fmt.Sprintf("Run %s on %s, your own MCP server? Its name says it changes something.", raw, srvName), clip(string(brief), 600), []string{"Run it"}) == "" {
+			if sess.AskInChat(fmt.Sprintf("Run %s on %s, your own MCP server? Its name says it changes something.", raw, srvName), textutil.Clip(string(brief), 600), []string{"Run it"}) == "" {
 				return fmt.Sprintf("Not run: %s was not approved.", label), nil
 			}
 		}
@@ -776,11 +777,4 @@ func toolRun(sess *ToolSession, owner string, n named) func(ctx context.Context,
 		}
 		return call(ctx, cur, raw, args)
 	}
-}
-
-func clip(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "..."
 }

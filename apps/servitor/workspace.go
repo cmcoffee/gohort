@@ -10,6 +10,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/bundle"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 // A workspace is a master appliance whose configuration is a list of OTHER
@@ -221,9 +222,7 @@ func extract_capability_lines(content string) []string {
 		if line == "" || strings.HasPrefix(line, "[Last updated:") {
 			continue
 		}
-		if len(line) > 110 {
-			line = line[:110] + "…"
-		}
+		line = textutil.Clip(line, 110)
 		picked = append(picked, line)
 		if len(picked) >= capability_lines {
 			break

@@ -216,25 +216,10 @@ func (T *AgentsApp) dispatch(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// findOrchestrate locates the registered OrchestrateApp instance so
-// we can call its PublicHandle* methods. Cached after first hit since
-// the registry doesn't change at runtime.
-var cachedOrch *orchestrate.OrchestrateApp
-
+// findOrchestrate is the registered orchestrate app, or nil when it is not running.
 func findOrchestrate() *orchestrate.OrchestrateApp {
-	if cachedOrch != nil {
-		return cachedOrch
-	}
-	a, ok := FindAgent("orchestrate")
-	if !ok {
-		return nil
-	}
-	o, ok := a.(*orchestrate.OrchestrateApp)
-	if !ok {
-		return nil
-	}
-	cachedOrch = o
-	return cachedOrch
+	o, _ := FindAgentAs[*orchestrate.OrchestrateApp]("orchestrate")
+	return o
 }
 
 // handleDirectory used to render a per-agent grid here; that's been

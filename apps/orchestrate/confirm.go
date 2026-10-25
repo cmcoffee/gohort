@@ -47,6 +47,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 // toolConfirmTimeout is how long an escalated call waits for the owner's
@@ -557,9 +558,7 @@ func (t *chatTurn) parkConfirm(req toolConfirmRequest, actions []map[string]any,
 		return "", false
 	}
 	detail := req.detail
-	if len(detail) > 600 {
-		detail = detail[:600] + "…"
-	}
+	detail = textutil.Clip(detail, 600)
 	id := "toolconfirm-" + UUIDv4()[:8]
 	p := &pendingToolConfirm{user: t.user, ch: make(chan bool, 1), answer: make(chan string, 1), allows: allows}
 	toolConfirms.Store(id, p)

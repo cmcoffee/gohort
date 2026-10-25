@@ -28,6 +28,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/pathhold"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 // CommandExample is one run an admin made to show how the command is used.
@@ -169,7 +170,7 @@ func (T *FileStoreApp) handleTryCommand(w http.ResponseWriter, r *http.Request) 
 			line := sc.Text()
 			all.WriteString(line + "\n")
 			if time.Since(last) > 200*time.Millisecond && strings.TrimSpace(line) != "" {
-				send(map[string]any{"progress": truncateLine(line, 200)})
+				send(map[string]any{"progress": textutil.Clip(line, 200)})
 				last = time.Now()
 			}
 		}
@@ -220,13 +221,6 @@ func (T *FileStoreApp) handleTryCommand(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	send(map[string]any{"ok": true, "message": msg})
-}
-
-func truncateLine(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "…"
 }
 
 // examplesText is the command's examples as the mapping reads them: each use

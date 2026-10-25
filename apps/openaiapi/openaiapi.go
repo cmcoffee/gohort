@@ -1009,10 +1009,6 @@ func writeErr(w http.ResponseWriter, code int, msg string) {
 	})
 }
 
-// findOrchestrate resolves the registered OrchestrateApp so agent-routed
-// requests can dispatch. Cached after first hit.
-var cachedOrch *orchestrate.OrchestrateApp
-
 // agentStore is where agents live: orchestrate's store, not this app's own
 // bucket, which holds none, so an owner's own agents never resolved here.
 func (T *OpenAIAPI) agentStore() Database {
@@ -1022,18 +1018,8 @@ func (T *OpenAIAPI) agentStore() Database {
 	return T.DB
 }
 
+// findOrchestrate is the registered orchestrate app, or nil when it is not running.
 func findOrchestrate() *orchestrate.OrchestrateApp {
-	if cachedOrch != nil {
-		return cachedOrch
-	}
-	a, ok := FindAgent("orchestrate")
-	if !ok {
-		return nil
-	}
-	o, ok := a.(*orchestrate.OrchestrateApp)
-	if !ok {
-		return nil
-	}
-	cachedOrch = o
-	return cachedOrch
+	o, _ := FindAgentAs[*orchestrate.OrchestrateApp]("orchestrate")
+	return o
 }

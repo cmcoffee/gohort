@@ -339,24 +339,9 @@ func templatePlaceholders(tpl string) []string {
 	}
 }
 
-// cachedOrch memoizes the orchestrate app. Looked up rather than held as a field
-// because neither app should depend on the other's registration order — the same
-// seam guides uses.
-var cachedOrch *orchestrate.OrchestrateApp
-
+// findOrchestrate is the registered orchestrate app, or nil when it is not running.
 func findOrchestrate() *orchestrate.OrchestrateApp {
-	if cachedOrch != nil {
-		return cachedOrch
-	}
-	a, ok := FindAgent("orchestrate")
-	if !ok {
-		return nil
-	}
-	o, ok := a.(*orchestrate.OrchestrateApp)
-	if !ok {
-		return nil
-	}
-	cachedOrch = o
+	o, _ := FindAgentAs[*orchestrate.OrchestrateApp]("orchestrate")
 	return o
 }
 

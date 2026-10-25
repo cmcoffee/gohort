@@ -8,6 +8,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 // agentMutationTools is the set of agent-CRUD tools whose successful
@@ -400,9 +401,7 @@ func summarizeToolArgs(args map[string]any) string {
 			s = fmt.Sprintf("%v", vv)
 		}
 		s = strings.ReplaceAll(s, "\n", " ")
-		if len(s) > 60 {
-			s = s[:60] + "…"
-		}
+		s = textutil.Clip(s, 60)
 		parts = append(parts, fmt.Sprintf("%s=%q", k, s))
 	}
 	return strings.Join(parts, ", ")

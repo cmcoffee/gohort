@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/cmcoffee/gohort/core/media"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 // mediaUploadCredential is the credential the media package's uploads ride.
@@ -166,7 +167,7 @@ func mediaUploadBody(out string) (string, error) {
 func truncateUploadError(s string) string {
 	s = strings.TrimSpace(s)
 	if len(s) > 300 {
-		return s[:300] + "…"
+		return textutil.Clip(s, 300)
 	}
 	return s
 }

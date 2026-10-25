@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/textutil"
 	"github.com/cmcoffee/gohort/core/toolcat"
 	"github.com/cmcoffee/gohort/core/ui"
 )
@@ -326,9 +327,7 @@ func firstLine(s string) string {
 		if ln == "" {
 			continue
 		}
-		if len(ln) > 140 {
-			ln = ln[:140] + "…"
-		}
+		ln = textutil.Clip(ln, 140)
 		return ln
 	}
 	return ""

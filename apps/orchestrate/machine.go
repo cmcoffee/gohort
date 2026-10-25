@@ -23,6 +23,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/textutil"
 
 	"github.com/cmcoffee/gohort/core/toolrules"
 )
@@ -1036,7 +1037,7 @@ func judgeFirstLine(s string, max int) string {
 		s = strings.TrimSpace(s[:i])
 	}
 	if len(s) > max {
-		s = s[:max-1] + "…"
+		s = textutil.Clip(s, max-1)
 	}
 	return s
 }
