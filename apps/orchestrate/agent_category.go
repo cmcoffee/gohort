@@ -6,8 +6,8 @@ package orchestrate
 // reachable; a category changes where they are listed, not what they are.
 //
 // Every reader goes through categoryKey and agentCategories, so the picker and
-// anything that later collapses a delegation catalog by category ("Medical:
-// Nurse, Pharmacist") agree on which agents share one, however each was typed.
+// anything that later collapses a delegation catalog by category ("Markets:
+// Stocks, Crypto") agree on which agents share one, however each was typed.
 
 import (
 	"sort"
@@ -15,7 +15,7 @@ import (
 )
 
 // categoryKey is a category's identity: case and runs of spaces ignored, so
-// "Medical", "medical" and "Medical " are one category.
+// "Gaming", "gaming" and "Gaming " are one category.
 func categoryKey(s string) string {
 	return strings.ToLower(strings.Join(strings.Fields(s), " "))
 }

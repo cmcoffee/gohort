@@ -267,9 +267,9 @@ func (ed *agentEditor) formFields() {
 		{Field: "triggers", Type: "tags", Label: "Dispatch triggers (optional)",
 			Help:   "Words in a message that push this agent to the front of the queue that turn.",
 			Detail: "A pattern with * or ? matches attachment filenames; anything else is a case-insensitive substring of the message. It is a per-turn hint, stronger than the description alone for domains the host already has priors in (law, medicine, finance).\n\nAuthor SPECIFIC patterns the domain's questions actually contain. A criminal-law agent wants \"penal code\", \"PC \", \"felony\", \"misdemeanor\", \"charged with\". Loose ones over-fire and get tuned out. Empty means no per-turn nudge; the agent is still in the catalog."},
-		{Field: "category", Type: "text", Label: "Category (optional)", Placeholder: "Medical",
+		{Field: "category", Type: "text", Label: "Category (optional)", Placeholder: "Markets",
 			Suggestions: ed.categorySuggestions(),
-			Help:        "Lists it with related agents under this heading in the agent picker.",
+			Help:        "Lists it with related agents under this heading in the agent picker, such as Markets, Shopping, Gaming or Medical.",
 			Detail:      "Agents with the same category are listed together, whatever the case or spacing they were typed with. One with none is listed by its kind: Conversation Agents for a chatbot memory mode, Specialized Agents otherwise. A sub-agent is listed under its parent instead, so this is ignored on one.\n\nIt only changes where the agent is listed. It stays a top-level agent, reachable by your other agents and with its own channels and schedules."},
 		{Type: "header", Label: "Persona",
 			Help: "How the agent thinks and decomposes work."},
@@ -462,7 +462,7 @@ func (ed *agentEditor) formFields() {
 }
 
 // categorySuggestions is the categories the owner's agents already use, so
-// the field offers "Medical" rather than letting a second spelling start a
+// the field offers "Markets" rather than letting a second spelling start a
 // second group.
 func (ed *agentEditor) categorySuggestions() []string {
 	if ed.udb == nil {

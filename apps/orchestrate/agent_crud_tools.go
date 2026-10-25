@@ -1106,7 +1106,7 @@ func agentMutationParams(includeID bool) map[string]ToolParam {
 		params["id"] = ToolParam{Type: "string", Description: "Agent id or name (from agents(action=\"list\"))."}
 		// Update only: the catalog's budget is tight, and filing an agent is
 		// a second step after it exists.
-		params["category"] = ToolParam{Type: "string", Description: "Top-level only: picker heading shared with related agents (\"Medical\"); \"\" clears."}
+		params["category"] = ToolParam{Type: "string", Description: "Top-level only: picker heading shared with related agents (\"Markets\", \"Shopping\", \"Gaming\", \"Medical\"); \"\" clears."}
 	}
 	return params
 }

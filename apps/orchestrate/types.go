@@ -59,9 +59,10 @@ type AgentRecord struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 	// Category is the owner's label for a group of related top-level agents
-	// ("Medical"): the picker lists them together under it. Matched without
-	// regard to case or spacing (agent_category.go). Display only today; it is
-	// the unit a delegation catalog would collapse to.
+	// ("Markets", "Shopping", "Gaming"): the picker lists them together under
+	// it. Matched without regard to case or spacing (agent_category.go).
+	// Display only today; it is the unit a delegation catalog would collapse
+	// to.
 	Category string `json:"category,omitempty"`
 
 	// Mode selects how the agent is presented. Empty / "chat" (default) =
