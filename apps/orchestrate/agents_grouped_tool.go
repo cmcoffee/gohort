@@ -1649,7 +1649,7 @@ func (ar *agentsRun) prepareInput() {
 	ar.subTurn.machineToolList = machineToolNotes(ar.subSess)
 	ar.subTurn.noteAgentAttachments(ar.subSess)
 	ar.subTurn.enterDispatchMachine(&ar.prior, false, ar.msg, &ar.sysPrompt, &ar.tools, "agents-run")
-	ar.think = ar.subTurn.machine.Think(resolveDispatchThink(ar.target))
+	ar.think = chainThink(ar.ctx, ar.subTurn.machine.Think(resolveDispatchThink(ar.target)))
 	// The warden judges the agent that is RUNNING, so a sub-agent answers to its
 	// OWN rules — the same wiring RunAgentSyncContinuing and the channel dispatch
 	// use. This path had neither hook: an inline agents(run) executed completely

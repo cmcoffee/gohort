@@ -1,12 +1,14 @@
 package openaiapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/cmcoffee/gohort/apps/orchestrate"
 	. "github.com/cmcoffee/gohort/core"
 )
 
@@ -257,5 +259,61 @@ func TestGateTarget(t *testing.T) {
 	}
 	if c := check(nil, "agent:anything"); c != 200 {
 		t.Errorf("nil token (non-account auth) skips per-key gate, got %d", c)
+	}
+}
+
+// reasoning_effort: unset is no thinking, a known level is that level, and a
+// value nobody defined is refused rather than guessed.
+func TestReasoningEffortLevels(t *testing.T) {
+	for in, want := range map[string]string{"": "", "none": "", "minimal": "", "low": "low", "Medium": "medium", "high": "high", "xhigh": "high"} {
+		got, ok := reasoningEffort(in)
+		if !ok || got != want {
+			t.Errorf("reasoningEffort(%q) = %q, %v; want %q", in, got, ok, want)
+		}
+	}
+	if _, ok := reasoningEffort("max"); ok {
+		t.Error("an unknown level should be refused")
+	}
+}
+
+// A passthrough call thinks only when the caller asked for it.
+func TestPassthroughThinksOnlyWhenAsked(t *testing.T) {
+	ask := func(effort string) ChatConfig {
+		llm := &FakeLLM{Turns: []FakeTurn{{Content: "hi"}}}
+		api := &OpenAIAPI{}
+		api.LLM = llm
+		req := chatReq{Model: "worker", ReasoningEffort: effort}
+		req.Messages = append(req.Messages, struct {
+			Role    string `json:"role"`
+			Content any    `json:"content"`
+		}{Role: "user", Content: "hello"})
+		w := httptest.NewRecorder()
+		api.servePassthrough(w, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil), "u", req)
+		if w.Code != http.StatusOK || llm.Calls() != 1 {
+			t.Fatalf("passthrough did not answer: %d %s", w.Code, w.Body.String())
+		}
+		return llm.Config(0)
+	}
+	if cfg := ask(""); cfg.Think == nil || *cfg.Think {
+		t.Error("a caller that asked for nothing should get no thinking")
+	}
+	if cfg := ask("medium"); cfg.Think == nil || !*cfg.Think || cfg.Effort != "medium" {
+		t.Errorf("a caller that asked for medium should get it, got %+v", cfg)
+	}
+}
+
+// An agent turn with no reasoning_effort runs with thinking off and marks its
+// context, so the agents it hands work to stay quiet too; one with a level
+// thinks at it and leaves the agents below to their own.
+func TestAnAgentTurnThinksOnlyWhenAsked(t *testing.T) {
+	var run orchestrate.AgentSyncRun
+	ctx := agentTurn{}.thinking(context.Background(), &run)
+	if run.Think == nil || *run.Think || ctx == context.Background() {
+		t.Errorf("no reasoning_effort should mean no thinking on the chain, got think=%v marked=%v", run.Think != nil && *run.Think, ctx != context.Background())
+	}
+	run = orchestrate.AgentSyncRun{}
+	ctx = agentTurn{effort: "high"}.thinking(context.Background(), &run)
+	if run.Think == nil || !*run.Think || run.Effort != "high" || ctx != context.Background() {
+		t.Errorf("a caller that asked for high should get it, unmarked, got %+v", run)
 	}
 }

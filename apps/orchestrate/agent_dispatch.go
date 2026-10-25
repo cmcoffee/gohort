@@ -1082,7 +1082,7 @@ func (sd *syncDispatch) enterMachine() {
 	sd.subTurn.machineToolList = machineToolNotes(sd.subSess)
 	sd.subTurn.noteAgentAttachments(sd.subSess)
 	sd.subTurn.enterDispatchMachine(machThread, ephemeral, message, &sd.sysPrompt, &sd.tools, "delegation")
-	sd.think = sd.subTurn.machine.Think(resolveDispatchThink(sd.target))
+	sd.think = chainThink(sd.ctx, sd.subTurn.machine.Think(resolveDispatchThink(sd.target)))
 }
 
 func (sd *syncDispatch) prepareInput() {
@@ -1377,6 +1377,10 @@ type AgentSyncRun struct {
 	// with think=true and thinking_budget=4096, until the caller hung up. For
 	// anything with a human waiting on audio, set this false.
 	Think *bool
+	// Effort overrides the agent's own reasoning level for this run ("low",
+	// "medium", "high"), for a caller that asked to wait for thinking. Empty
+	// keeps the agent's.
+	Effort string
 	// Title, when set, names a FRESH session (used only if it has no title
 	// yet). Channel rooms pass the contact's display name so the rail row and
 	// transcript read as the conversation partner rather than the raw id.
@@ -2453,6 +2457,7 @@ func (cr *continuingRun) configureLoop() {
 		think = *run.Think
 	}
 	think = cr.subTurn.machine.Think(think) // the step is the most specific setting
+	think = chainThink(cr.ctx, think)       // ...unless a caller is waiting on the line
 	cr.subTurn.noteMountedTools(cr.tools)
 	dispatchPin, dispatchRoute := dispatchRouting(cr.ctx, cr.subTurn)
 	cr.loopCfg = AgentLoopConfig{
@@ -2461,8 +2466,8 @@ func (cr *continuingRun) configureLoop() {
 		SystemPrompt:  cr.sysPrompt,
 		Tools:         cr.tools,
 		MaxRounds:     resolveMaxWorkerRounds(cr.target),
-		ThinkBudget:   cr.target.ThinkBudget, // per-agent override; 0 = inherit route/global
-		Effort:        cr.target.Effort,      // per-agent level; a budget above wins
+		ThinkBudget:   cr.target.ThinkBudget,                 // per-agent override; 0 = inherit route/global
+		Effort:        chFirst(run.Effort, cr.target.Effort), // the caller's level, else the agent's; a budget above wins
 		ActionQuotas:  cr.target.ActionQuotas,
 		BudgetKey:     cr.target.ID,
 		DailySpendUSD: cr.target.DailySpendUSD,

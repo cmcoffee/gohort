@@ -451,6 +451,7 @@ func (ws *workerStep) runLoop() bool {
 	if cur.appCoder {
 		ws.f = true
 	}
+	ws.f = chainThink(t.ctx, ws.f)
 	// Reset explorer state per worker step so a step starts at the
 	// soft cap; the LLM must opt back into explorer mode if it
 	// still needs more rounds.
@@ -691,6 +692,7 @@ func (t *chatTurn) runSynthesis(userMsg string, steps []PlanStep, notes []inject
 	case "off":
 		think = false
 	}
+	think = chainThink(t.ctx, think)
 	synthStart := time.Now()
 	// Same skill injection the orchestrator round saw — synthesis
 	// IS the user-facing voice, so any skill the LLM activated this

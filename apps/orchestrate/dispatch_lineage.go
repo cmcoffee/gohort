@@ -50,7 +50,11 @@ func dispatchLineageFrom(ctx context.Context) ([]string, *dispatchAuthority) {
 
 // carryDispatchLineage puts from's lineage on to, for a hand-off that builds
 // its context from somewhere else (a session's) rather than from the call's.
+// A chain that may not think (no_thinking.go) stays that way too.
 func carryDispatchLineage(from, to context.Context) context.Context {
+	if !chainThink(from, true) {
+		to = WithoutThinking(to)
+	}
 	chain, origin := dispatchLineageFrom(from)
 	if len(chain) == 0 {
 		return to

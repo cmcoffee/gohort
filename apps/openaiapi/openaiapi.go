@@ -26,6 +26,12 @@
 // per tool — so keep a voice-facing agent's tool set small and budget for the
 // caller's response timeout.
 //
+// Nothing thinks by default: a caller here is usually waiting out loud, and a
+// model thinking is silence on the line. That holds for every agent an agent
+// turn hands work to. A caller that would rather wait for a considered answer
+// sends OpenAI's reasoning_effort ("low", "medium", "high"; "none" and
+// "minimal" are the default).
+//
 // Which agents are reachable is governed by the SAME "Reachable over MCP"
 // toggle that gates the MCP server, so external exposure stays one switch per
 // agent instead of two that can disagree.
@@ -116,6 +122,9 @@ type chatReq struct {
 	Stream      bool    `json:"stream"`
 	Temperature float64 `json:"temperature,omitempty"`
 	User        string  `json:"user,omitempty"`
+	// ReasoningEffort is OpenAI's field for how long the model may think
+	// (reasoningEffort). Unset is no thinking, on every agent the turn reaches.
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 	// Call is Vapi's per-call envelope. Only the id is used, as a stable
 	// conversation key so an agent threads the whole call instead of treating
 	// every utterance as a new conversation.
@@ -357,6 +366,12 @@ func (T *OpenAIAPI) handleChatCompletions(w http.ResponseWriter, r *http.Request
 		writeErr(w, http.StatusBadRequest, "messages is required")
 		return
 	}
+	effort, ok := reasoningEffort(req.ReasoningEffort)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, fmt.Sprintf("reasoning_effort %q is not one of none, minimal, low, medium, high", req.ReasoningEffort))
+		return
+	}
+	req.ReasoningEffort = effort
 
 	target := strings.TrimSpace(req.Model)
 	Log("[openai_api] %s model=%q stream=%v msgs=%d", user, target, req.Stream, len(req.Messages))
@@ -447,8 +462,13 @@ func (T *OpenAIAPI) servePassthrough(w http.ResponseWriter, r *http.Request, use
 		opts = append(opts, WithTemperature(req.Temperature))
 	}
 	// Thinking off: a voice caller wants the answer, not a reasoning preamble,
-	// and the tokens cost latency the caller pays for in dead air.
-	opts = append(opts, WithThink(false))
+	// and the tokens cost latency the caller pays for in dead air. A caller
+	// that asked for reasoning_effort waits for it.
+	if req.ReasoningEffort != "" {
+		opts = append(opts, WithThink(true), WithEffort(req.ReasoningEffort))
+	} else {
+		opts = append(opts, WithThink(false))
+	}
 
 	lead := strings.EqualFold(req.Model, "lead")
 	call := T.WorkerChat
@@ -544,6 +564,7 @@ func (T *OpenAIAPI) serveAgent(w http.ResponseWriter, r *http.Request, user, age
 		system:    system,
 		model:     req.Model,
 		stream:    req.Stream,
+		effort:    req.ReasoningEffort,
 	})
 }
 
@@ -594,6 +615,7 @@ func (T *OpenAIAPI) serveChannel(w http.ResponseWriter, r *http.Request, user, c
 		system: system,
 		model:  req.Model,
 		stream: req.Stream,
+		effort: req.ReasoningEffort,
 	})
 }
 
@@ -658,6 +680,41 @@ type agentTurn struct {
 	// autoTitle names a thread from its conversation (AgentSyncRun.AutoTitle):
 	// the agent route's threads have no room name to take.
 	autoTitle bool
+	// effort is the caller's reasoning_effort level, "" for no thinking.
+	effort string
+}
+
+// thinking sets run's thinking from the caller's reasoning_effort and returns
+// the context to run it on. With none, nothing thinks, on this agent or on any
+// agent it hands the work to, or the silence comes back one hop down. With a
+// level, this agent thinks at it and the agents below at their own levels.
+func (t agentTurn) thinking(ctx context.Context, run *orchestrate.AgentSyncRun) context.Context {
+	think := t.effort != ""
+	run.Think = &think
+	run.Effort = t.effort
+	if !think {
+		ctx = orchestrate.WithoutThinking(ctx)
+	}
+	return ctx
+}
+
+// reasoningEffort reads a request's reasoning_effort. Unset, "none" and
+// "minimal" are no thinking (""), the default here, since a caller on this
+// endpoint is usually waiting out loud; "low", "medium" and "high" are that
+// level, and "xhigh" is high, the top one there is. Anything else is refused
+// rather than guessed.
+func reasoningEffort(v string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "", "none", "minimal":
+		return "", true
+	case "low":
+		return "low", true
+	case "medium":
+		return "medium", true
+	case "high", "xhigh":
+		return "high", true
+	}
+	return "", false
 }
 
 // runAgentTurn is the shared body behind the agent: and channel: routes.
@@ -713,15 +770,15 @@ func (T *OpenAIAPI) runAgentTurn(w http.ResponseWriter, r *http.Request, t agent
 	// out loud — and reasoning tokens are invisible to them: the stream stays
 	// open, nothing audible arrives, and the platform hangs up. Measured: a
 	// 19.75s silent stream against a 4096-token budget, killed by the caller.
-	// The passthrough route has always done this; the agent routes now match.
-	noThink := false
-	run.Think = &noThink
+	// The passthrough route has always done this; the agent routes now match,
+	// unless the caller asked to wait (thinking).
 	if t.stream {
 		run.Stream = emit
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), agentTurnTimeout)
 	defer cancel()
+	ctx = t.thinking(ctx, &run)
 	res, err := t.orch.RunAgentSyncContinuingRich(ctx, run)
 
 	mu.Lock()

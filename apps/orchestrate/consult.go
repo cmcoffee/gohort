@@ -133,7 +133,12 @@ func (t *chatTurn) consult(question, evidence string) (string, error) {
 	// routing menu exists to express. RouteThink returns nil for a lead-routed
 	// stage, so this adds nothing in that case and the provider default stands.
 	opts := []ChatOption{WithRouteKey(ConsultRouteKey)}
-	if think := RouteThink(ConsultRouteKey); think != nil {
+	think := RouteThink(ConsultRouteKey)
+	if !chainThink(t.ctx, true) {
+		off := false
+		think = &off
+	}
+	if think != nil {
 		opts = append(opts, WithThink(*think))
 		if *think {
 			if budget := RouteThinkBudget(ConsultRouteKey); budget != nil {
