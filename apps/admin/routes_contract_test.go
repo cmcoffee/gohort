@@ -32,38 +32,8 @@ func TestRoutesContract(t *testing.T) {
 	AuthDB = func() Database { return adb }
 	t.Cleanup(func() { AuthDB = prevAuth })
 
-	var log strings.Builder
-	hex := regexp.MustCompile(`\b[0-9a-f]{16,64}\b`)
-	stamp := regexp.MustCompile(`\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?(Z|[+-]\d\d:\d\d)`)
-	run := func(mux *http.ServeMux, db Database, user, method, path, body string) {
-		r := httptest.NewRequest(method, path, strings.NewReader(body))
-		if user != "" {
-			r.AddCookie(&http.Cookie{Name: "gohort_session", Value: AuthCreateSession(db, user)})
-		}
-		w := httptest.NewRecorder()
-		mux.ServeHTTP(w, r)
-		out := strings.TrimSpace(w.Body.String())
-		var items []json.RawMessage
-		if strings.HasPrefix(out, "[") && json.Unmarshal([]byte(out), &items) == nil {
-			rows := make([]string, len(items))
-			for i, it := range items {
-				rows[i] = string(it)
-			}
-			sort.Strings(rows)
-			out = "[" + strings.Join(rows, ",") + "]"
-		}
-		out = hex.ReplaceAllString(out, "<hex>")
-		out = stamp.ReplaceAllString(out, "<time>")
-		// A long reply (a template catalog) is kept as its head and a digest.
-		if len(out) > 400 {
-			out = fmt.Sprintf("%s… (%d bytes, sha1 %x)", out[:200], len(out), sha1.Sum([]byte(out)))
-		}
-		who := user
-		if who == "" {
-			who = "(signed out)"
-		}
-		fmt.Fprintf(&log, "%s %s %s %q\n  %d %s\n", who, method, path, body, w.Code, out)
-	}
+	ct := &contract{}
+	run := ct.run
 
 	app := &AdminApp{}
 	mux := http.NewServeMux()
@@ -119,8 +89,78 @@ func TestRoutesContract(t *testing.T) {
 	}
 	run(mux2, fresh, "", "POST", "/api/user-agents?owner=bob&id=x&action=revoke_share", "")
 
-	got := log.String()
-	const golden = "testdata/routes_contract.golden"
+	ct.check(t, "testdata/routes_contract.golden")
+}
+
+// contract records what each request through the real routes answered, one
+// request and its reply per entry, normalized so a run compares equal to the
+// last: ids and times masked, lists sorted, a long reply kept as its head and
+// a digest.
+type contract struct {
+	log strings.Builder
+}
+
+var (
+	contractHex   = regexp.MustCompile(`\b[0-9a-f]{16,64}\b`)
+	contractStamp = regexp.MustCompile(`\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?(Z|[+-]\d\d:\d\d)`)
+)
+
+// run sends one request as user ("" for signed out) and records the reply.
+func (ct *contract) run(mux *http.ServeMux, db Database, user, method, path, body string) {
+	r := httptest.NewRequest(method, path, strings.NewReader(body))
+	if user != "" {
+		r.AddCookie(&http.Cookie{Name: "gohort_session", Value: AuthCreateSession(db, user)})
+	}
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+	out := strings.TrimSpace(w.Body.String())
+	var items []json.RawMessage
+	if strings.HasPrefix(out, "[") && json.Unmarshal([]byte(out), &items) == nil {
+		rows := make([]string, len(items))
+		for i, it := range items {
+			rows[i] = string(it)
+		}
+		sort.Strings(rows)
+		out = "[" + strings.Join(rows, ",") + "]"
+	}
+	out = contractHex.ReplaceAllString(out, "<hex>")
+	out = contractStamp.ReplaceAllString(out, "<time>")
+	if len(out) > 400 {
+		out = fmt.Sprintf("%s… (%d bytes, sha1 %x)", out[:200], len(out), sha1.Sum([]byte(out)))
+	}
+	who := user
+	if who == "" {
+		who = "(signed out)"
+	}
+	fmt.Fprintf(&ct.log, "%s %s %s %q\n  %d %s\n", who, method, path, body, w.Code, out)
+}
+
+// activity records what the activity log holds, one "kind user: detail"
+// line per entry, sorted: what each change wrote there, without the ids and
+// times that differ run to run.
+func (ct *contract) activity(mux *http.ServeMux, db Database, user string) {
+	r := httptest.NewRequest("GET", "/api/activity?limit=500", nil)
+	r.AddCookie(&http.Cookie{Name: "gohort_session", Value: AuthCreateSession(db, user)})
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+	var rows []struct{ Kind, User, Detail string }
+	if err := json.Unmarshal(w.Body.Bytes(), &rows); err != nil {
+		fmt.Fprintf(&ct.log, "activity: %d %s\n", w.Code, w.Body.String())
+		return
+	}
+	lines := make([]string, len(rows))
+	for i, e := range rows {
+		lines[i] = fmt.Sprintf("  %s %s: %s\n", e.Kind, e.User, e.Detail)
+	}
+	sort.Strings(lines)
+	fmt.Fprintf(&ct.log, "activity log, %d entries:\n%s", len(rows), strings.Join(lines, ""))
+}
+
+// check compares the record with golden, or rewrites golden when
+// UPDATE_GOLDEN is set.
+func (ct *contract) check(t *testing.T, golden string) {
+	t.Helper()
+	got := ct.log.String()
 	if os.Getenv("UPDATE_GOLDEN") != "" {
 		if err := os.MkdirAll("testdata", 0o755); err != nil {
 			t.Fatal(err)

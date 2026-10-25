@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -40,7 +41,9 @@ func TestAMoveThatWouldClashMovesNothing(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/api/users/bob/data-action",
 		strings.NewReader(`{"app":"`+app+`","action":"reassign","target":"carol"}`))
-	a.handleUserDataAction(w, r, "bob")
+	// The handler alone, past the admin gate: what is under test is the move.
+	admit := jsonapi.Authorize(func(http.ResponseWriter, *http.Request) bool { return true })
+	jsonapi.Post(adb, a.handleUserDataAction, admit)(w, r)
 	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "nothing was moved") || !strings.Contains(w.Body.String(), "weather") {
 		t.Fatalf("%s: %d %s", app, w.Code, w.Body.String())
 	}

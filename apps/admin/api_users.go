@@ -16,7 +16,10 @@ import (
 // registerUsersRoutes wires the users API under the admin sub-mux.
 func (a *AdminApp) registerUsersRoutes(sub *http.ServeMux) {
 	// API: list users.
-	sub.HandleFunc("/api/users", a.handleUsersAPI)
+	sub.HandleFunc("/api/users", jsonapi.Methods{
+		"GET":  jsonapi.Get(a.db, a.handleUsersAPI, a.gate()),
+		"POST": jsonapi.Post(a.db, a.handleAddUser, a.gate()),
+	}.Serve)
 
 	// API: user candidates for ACL pickers ([{value,label}], approved users only).
 	// Shared source for every ui.ACLPicker on this page (credential + tool access).
@@ -29,7 +32,10 @@ func (a *AdminApp) registerUsersRoutes(sub *http.ServeMux) {
 	// for the ACLPicker; POST ?feature= sets its allowed_users. Generic over the
 	// registry — an app declares a feature, this renders and stores it, with no
 	// per-feature code here.
-	sub.HandleFunc("/api/feature-access", a.handleFeatureAccess)
+	sub.HandleFunc("/api/feature-access", jsonapi.Methods{
+		"GET":  jsonapi.Get(a.db, a.handleFeatureAccess, a.gate()),
+		"POST": jsonapi.Post(a.db, a.handleFeatureAccessSave, a.gate()),
+	}.Serve)
 
 	// API: user-owned credentials — the governance view over the user plane. The
 	// admin API Credentials page shows only GLOBAL creds; this surfaces the ones
@@ -96,24 +102,13 @@ func (a *AdminApp) registerUsersRoutes(sub *http.ServeMux) {
 	sub.HandleFunc("/api/global-tools", a.handleGlobalTools)
 
 	// API: user operations (update/delete/apps).
-	sub.HandleFunc("/api/users/", a.handleUserOne)
+	sub.HandleFunc("/api/users/", a.userRoutes())
 
 }
 
 // handleUsersAPI serves /api/users; registerUsersRoutes says what it is for.
-func (a *AdminApp) handleUsersAPI(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
-		return
-	}
-	switch r.Method {
-	case http.MethodGet:
-		w.Header().Set("Content-Type", "application/json")
-		w.Write(UserListJSON(a.db))
-	case http.MethodPost:
-		a.handleAddUser(w, r)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
+func (a *AdminApp) handleUsersAPI(c *jsonapi.Call) (any, error) {
+	return json.RawMessage(UserListJSON(a.db)), nil
 }
 
 // handleUserCandidates serves /api/user-candidates; registerUsersRoutes says what it is for.
@@ -124,54 +119,40 @@ func (a *AdminApp) handleUserCandidates(c *jsonapi.Call) (any, error) {
 }
 
 // handleFeatureAccess serves /api/feature-access; registerUsersRoutes says what it is for.
-func (a *AdminApp) handleFeatureAccess(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
-		return
+func (a *AdminApp) handleFeatureAccess(c *jsonapi.Call) (any, error) {
+	if feature := strings.TrimSpace(c.R.URL.Query().Get("feature")); feature != "" {
+		p := LoadFeaturePolicy(a.db, feature)
+		return map[string]any{"feature": feature, "allowed_users": p.AllowedUsers}, nil
 	}
-	feature := strings.TrimSpace(r.URL.Query().Get("feature"))
-	switch r.Method {
-	case http.MethodGet:
-		if feature != "" {
-			p := LoadFeaturePolicy(a.db, feature)
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]any{"feature": feature, "allowed_users": p.AllowedUsers})
-			return
-		}
-		type row struct {
-			Feature      string   `json:"feature"` // RowKey
-			Label        string   `json:"label"`
-			Desc         string   `json:"desc"`
-			AllowedUsers []string `json:"allowed_users,omitempty"`
-			Access       string   `json:"access"` // human summary for the table
-		}
-		rows := []row{}
-		for _, f := range ShareableFeatures() {
-			p := LoadFeaturePolicy(a.db, f.Key)
-			access := "All users"
-			if len(p.AllowedUsers) > 0 {
-				access = fmt.Sprintf("%d user(s)", len(p.AllowedUsers))
-			}
-			rows = append(rows, row{Feature: f.Key, Label: f.Label, Desc: f.Desc, AllowedUsers: p.AllowedUsers, Access: access})
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(rows)
-	case http.MethodPost:
-		if feature == "" || !IsShareableFeature(feature) {
-			http.Error(w, "unknown feature", http.StatusBadRequest)
-			return
-		}
-		var body struct {
-			AllowedUsers []string `json:"allowed_users"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		SetFeatureAllowedUsers(a.db, feature, body.AllowedUsers)
-		w.WriteHeader(http.StatusNoContent)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	type row struct {
+		Feature      string   `json:"feature"` // RowKey
+		Label        string   `json:"label"`
+		Desc         string   `json:"desc"`
+		AllowedUsers []string `json:"allowed_users,omitempty"`
+		Access       string   `json:"access"` // human summary for the table
 	}
+	rows := []row{}
+	for _, f := range ShareableFeatures() {
+		p := LoadFeaturePolicy(a.db, f.Key)
+		access := "All users"
+		if len(p.AllowedUsers) > 0 {
+			access = fmt.Sprintf("%d user(s)", len(p.AllowedUsers))
+		}
+		rows = append(rows, row{Feature: f.Key, Label: f.Label, Desc: f.Desc, AllowedUsers: p.AllowedUsers, Access: access})
+	}
+	return rows, nil
+}
+
+// handleFeatureAccessSave sets who may use the ?feature= named.
+func (a *AdminApp) handleFeatureAccessSave(c *jsonapi.Call, body struct {
+	AllowedUsers []string `json:"allowed_users"`
+}) (any, error) {
+	feature := strings.TrimSpace(c.R.URL.Query().Get("feature"))
+	if feature == "" || !IsShareableFeature(feature) {
+		return nil, jsonapi.BadRequest("unknown feature")
+	}
+	SetFeatureAllowedUsers(a.db, feature, body.AllowedUsers)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // handleUserCredentials serves /api/user-credentials; registerUsersRoutes says what it is for.
@@ -548,131 +529,117 @@ func (a *AdminApp) handleGlobalTools(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleUserOne serves /api/users/; registerUsersRoutes says what it is for.
-func (a *AdminApp) handleUserOne(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
-		return
+// userRoutes serves /api/users/{user} and /api/users/{user}/{action}. Every
+// change it makes that succeeds is written to the activity log.
+func (a *AdminApp) userRoutes() http.HandlerFunc {
+	one := jsonapi.Methods{
+		"GET":    jsonapi.Get(a.db, a.handleUserOne, a.gate()),
+		"PUT":    jsonapi.Post(a.db, audit("changed the account", a.handleUpdateUser), a.gate()),
+		"DELETE": jsonapi.Post(a.db, audit("deleted the account", a.handleDeleteUser), a.gate()),
 	}
-	rest := strings.TrimPrefix(r.URL.Path, "/api/users/")
-	// Check for /api/users/{user}/{action}
-	if parts := strings.SplitN(rest, "/", 2); len(parts) == 2 {
-		username := parts[0]
-		action := parts[1]
-		switch action {
-		case "apps":
-			if r.Method == http.MethodPut {
-				audited(w, r, activity.Account, "changed the apps of "+username, func(w http.ResponseWriter) { a.handleUpdateUserApps(w, r, username) })
-			} else {
-				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			}
-		case "groups":
-			if r.Method == http.MethodPut {
-				audited(w, r, activity.Account, "changed the groups of "+username, func(w http.ResponseWriter) { a.handleUpdateUserGroups(w, r, username) })
-			} else {
-				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			}
-		case "approve":
-			if r.Method == http.MethodPost {
-				audited(w, r, activity.Account, "approved the account "+username, func(w http.ResponseWriter) { a.handleApproveUser(w, r, username) })
-			} else {
-				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			}
-		case "reject":
-			if r.Method == http.MethodPost {
-				audited(w, r, activity.Account, "rejected the account "+username, func(w http.ResponseWriter) { a.handleRejectUser(w, r, username) })
-			} else {
-				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			}
-		case "reset-password":
-			if r.Method == http.MethodPost {
-				audited(w, r, activity.Account, "reset the password of "+username, func(w http.ResponseWriter) { a.handleResetPassword(w, r, username) })
-			} else {
-				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			}
-		case "data":
-			if r.Method == http.MethodGet {
-				a.handleUserDataSummary(w, r, username)
-			} else {
-				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			}
-		case "data-action":
-			if r.Method == http.MethodPost {
-				audited(w, r, activity.Account, "moved or deleted the data of "+username, func(w http.ResponseWriter) { a.handleUserDataAction(w, r, username) })
-			} else {
-				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			}
-		case "revoke-sessions":
-			if r.Method == http.MethodPost {
-				audited(w, r, activity.Account, "signed "+username+" out everywhere", func(w http.ResponseWriter) { a.handleRevokeSessions(w, r, username) })
-			} else {
-				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			}
-		default:
-			http.NotFound(w, r)
-		}
-		return
+	actions := map[string]jsonapi.Methods{
+		"apps":            {"PUT": jsonapi.Post(a.db, audit("changed the apps of", a.handleUpdateUserApps), a.gate())},
+		"groups":          {"PUT": jsonapi.Post(a.db, audit("changed the groups of", a.handleUpdateUserGroups), a.gate())},
+		"approve":         {"POST": jsonapi.Post(a.db, audit("approved the account", a.handleApproveUser), a.gate())},
+		"reject":          {"POST": jsonapi.Post(a.db, audit("rejected the account", a.handleRejectUser), a.gate())},
+		"reset-password":  {"POST": jsonapi.Post(a.db, audit("reset the password of", a.handleResetPassword), a.gate(), jsonapi.EmptyBodyOK)},
+		"data":            {"GET": jsonapi.Get(a.db, a.handleUserDataSummary, a.gate())},
+		"data-action":     {"POST": jsonapi.Post(a.db, audit("moved or deleted the data of", a.handleUserDataAction), a.gate())},
+		"revoke-sessions": {"POST": jsonapi.Post(a.db, audit("signed %s out everywhere", a.handleRevokeSessions), a.gate())},
 	}
-	username := rest
-	if username == "" {
-		http.Error(w, "username required", http.StatusBadRequest)
-		return
-	}
-	switch r.Method {
-	case http.MethodGet:
-		// Return the single-user summary so the framework's
-		// ChipPicker (apps) and any other per-user component can
-		// fetch the current state without scanning the full list.
-		user, ok := AuthGetUser(a.db, username)
+	return func(w http.ResponseWriter, r *http.Request) {
+		_, action, ok := strings.Cut(strings.TrimPrefix(r.URL.Path, "/api/users/"), "/")
 		if !ok {
-			http.Error(w, "user not found", http.StatusNotFound)
+			one.Serve(w, r)
 			return
 		}
-		apps := user.Apps
-		if apps == nil {
-			apps = []string{}
+		m, ok := actions[action]
+		if !ok {
+			http.NotFound(w, r)
+			return
 		}
-		groups := user.Groups
-		if groups == nil {
-			groups = []string{}
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
-			"username": user.Username,
-			"admin":    user.Admin,
-			"pending":  user.Pending,
-			"apps":     apps,
-			"groups":   groups,
-		})
-	case http.MethodPut:
-		audited(w, r, activity.Account, "changed the account "+username, func(w http.ResponseWriter) { a.handleUpdateUser(w, r, username) })
-	case http.MethodDelete:
-		audited(w, r, activity.Account, "deleted the account "+username, func(w http.ResponseWriter) { a.handleDeleteUser(w, r, username) })
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		m.Serve(w, r)
 	}
 }
 
-func (a *AdminApp) handleAddUser(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
-		Admin    bool   `json:"admin"`
-		Invite   bool   `json:"invite"` // send a registration link instead of setting a password
+// userInPath is the account /api/users/{user}/... names.
+func userInPath(r *http.Request) string {
+	name, _, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/api/users/"), "/")
+	return name
+}
+
+// oneUser is the account /api/users/{user} names, which it must.
+func oneUser(c *jsonapi.Call) (string, error) {
+	name := userInPath(c.R)
+	if name == "" {
+		return "", jsonapi.BadRequest("username required")
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request", http.StatusBadRequest)
-		return
+	return name, nil
+}
+
+// audit is fn, writing what it did to an account to the activity log when it
+// succeeds. says is the change, the account's name following it, or standing
+// at its %s. A refused or failed request is not a change, and logging it as
+// one would put something in the record that never happened.
+func audit[In any](says string, fn func(c *jsonapi.Call, in In) (any, error)) func(*jsonapi.Call, In) (any, error) {
+	return func(c *jsonapi.Call, in In) (any, error) {
+		out, err := fn(c, in)
+		if err != nil {
+			return out, err
+		}
+		detail := says + " " + userInPath(c.R)
+		if strings.Contains(says, "%s") {
+			detail = fmt.Sprintf(says, userInPath(c.R))
+		}
+		RecordActivity(c.R, activity.Account, c.User, detail)
+		return out, nil
 	}
+}
+
+// handleUserOne is one account's summary, so the framework's ChipPicker (apps)
+// and any other per-user component can fetch the current state without
+// scanning the full list.
+func (a *AdminApp) handleUserOne(c *jsonapi.Call) (any, error) {
+	username, err := oneUser(c)
+	if err != nil {
+		return nil, err
+	}
+	user, ok := AuthGetUser(a.db, username)
+	if !ok {
+		return nil, jsonapi.NotFound("user not found")
+	}
+	apps := user.Apps
+	if apps == nil {
+		apps = []string{}
+	}
+	groups := user.Groups
+	if groups == nil {
+		groups = []string{}
+	}
+	return map[string]any{
+		"username": user.Username,
+		"admin":    user.Admin,
+		"pending":  user.Pending,
+		"apps":     apps,
+		"groups":   groups,
+	}, nil
+}
+
+// handleAddUser adds an account, with a password or by invitation.
+func (a *AdminApp) handleAddUser(c *jsonapi.Call, req struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+	Admin    bool   `json:"admin"`
+	Invite   bool   `json:"invite"` // send a registration link instead of setting a password
+}) (any, error) {
 	req.Username = strings.TrimSpace(req.Username)
 	if req.Username == "" {
-		http.Error(w, "email required", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("email required")
 	}
 	if _, exists := AuthGetUser(a.db, req.Username); exists {
-		http.Error(w, "user already exists", http.StatusConflict)
-		return
+		return nil, jsonapi.Status(http.StatusConflict, "user already exists")
 	}
-	current := AuthCurrentUser(r)
+	current := c.User
 
 	// Invite: create the account with no password and hand back a one-time link
 	// the user clicks to set their own. Emailed when mail is configured; always
@@ -680,8 +647,7 @@ func (a *AdminApp) handleAddUser(w http.ResponseWriter, r *http.Request) {
 	if req.Invite {
 		link, err := AuthCreateInvite(a.db, req.Username, req.Admin)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest(err.Error())
 		}
 		emailed := false
 		if EmailConfigured() {
@@ -691,57 +657,46 @@ func (a *AdminApp) handleAddUser(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		Log("[admin] user %q invited %q (admin=%v, emailed=%v)", current, req.Username, req.Admin, emailed)
-		RecordActivity(r, activity.Account, current, "invited "+req.Username+asAdmin(req.Admin))
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"status": "invited", "link": link, "emailed": emailed})
-		return
+		RecordActivity(c.R, activity.Account, current, "invited "+req.Username+asAdmin(req.Admin))
+		return map[string]any{"status": "invited", "link": link, "emailed": emailed}, nil
 	}
 
 	// Direct: set a password now.
 	if req.Password == "" {
-		http.Error(w, "password required (or choose to send an invite link)", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("password required (or choose to send an invite link)")
 	}
 	AuthSetUser(a.db, req.Username, req.Password, req.Admin)
 	Log("[admin] user %q created user %q (admin=%v)", current, req.Username, req.Admin)
-	RecordActivity(r, activity.Account, current, "added the account "+req.Username+asAdmin(req.Admin))
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"status": "created"})
+	RecordActivity(c.R, activity.Account, current, "added the account "+req.Username+asAdmin(req.Admin))
+	return map[string]any{"status": "created"}, nil
 }
 
 // handleResetPassword resets a user's password: mode "set" (admin types a new
-// one) or "link" (default — email/return a one-time reset link). Owner-of-the-
-// deployment authority (admin-gated by the router).
-func (a *AdminApp) handleResetPassword(w http.ResponseWriter, r *http.Request, username string) {
-	var req struct {
-		Mode     string `json:"mode"`
-		Password string `json:"password"`
-	}
-	_ = json.NewDecoder(r.Body).Decode(&req) // empty body → default to link
+// one) or "link" (default, and what no body means: email/return a one-time
+// reset link). Owner-of-the-deployment authority (admin-gated by the router).
+func (a *AdminApp) handleResetPassword(c *jsonapi.Call, req struct {
+	Mode     string `json:"mode"`
+	Password string `json:"password"`
+}) (any, error) {
+	username := userInPath(c.R)
 	if _, ok := AuthGetUser(a.db, username); !ok {
-		http.Error(w, "user not found", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("user not found")
 	}
-	current := AuthCurrentUser(r)
+	current := c.User
 	if req.Mode == "set" {
 		if len(req.Password) < 6 || len(req.Password) > 128 {
-			http.Error(w, "Password must be 6–128 characters.", http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest("Password must be 6–128 characters.")
 		}
 		if !AuthAdminSetPassword(a.db, username, req.Password) {
-			http.Error(w, "could not set password", http.StatusInternalServerError)
-			return
+			return nil, jsonapi.Status(http.StatusInternalServerError, "could not set password")
 		}
 		Log("[admin] user %q set password for %q", current, username)
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"status": "password_set"})
-		return
+		return map[string]any{"status": "password_set"}, nil
 	}
 	// Link mode.
 	link, ok := AuthIssueResetLink(a.db, username)
 	if !ok {
-		http.Error(w, "user not found", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("user not found")
 	}
 	emailed := false
 	if EmailConfigured() {
@@ -751,23 +706,21 @@ func (a *AdminApp) handleResetPassword(w http.ResponseWriter, r *http.Request, u
 		}
 	}
 	Log("[admin] user %q issued reset link for %q (emailed=%v)", current, username, emailed)
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"status": "link_sent", "link": link, "emailed": emailed})
+	return map[string]any{"status": "link_sent", "link": link, "emailed": emailed}, nil
 }
 
-func (a *AdminApp) handleUpdateUser(w http.ResponseWriter, r *http.Request, username string) {
-	var req struct {
-		Password string `json:"password,omitempty"`
-		Admin    *bool  `json:"admin,omitempty"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request", http.StatusBadRequest)
-		return
+// handleUpdateUser sets an account's password, its admin flag, or both.
+func (a *AdminApp) handleUpdateUser(c *jsonapi.Call, req struct {
+	Password string `json:"password,omitempty"`
+	Admin    *bool  `json:"admin,omitempty"`
+}) (any, error) {
+	username, err := oneUser(c)
+	if err != nil {
+		return nil, err
 	}
 	user, ok := AuthGetUser(a.db, username)
 	if !ok {
-		http.Error(w, "user not found", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("user not found")
 	}
 
 	admin := user.Admin
@@ -776,51 +729,44 @@ func (a *AdminApp) handleUpdateUser(w http.ResponseWriter, r *http.Request, user
 	}
 
 	// Prevent removing admin from yourself.
-	current := AuthCurrentUser(r)
+	current := c.User
 	if current == username && !admin {
-		http.Error(w, "cannot remove admin from yourself", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("cannot remove admin from yourself")
 	}
 
 	AuthSetUser(a.db, username, req.Password, admin)
 	Log("[admin] user %q updated user %q", current, username)
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
+	return map[string]string{"status": "updated"}, nil
 }
 
-func (a *AdminApp) handleApproveUser(w http.ResponseWriter, r *http.Request, username string) {
+// handleApproveUser approves an account awaiting approval.
+func (a *AdminApp) handleApproveUser(c *jsonapi.Call, _ struct{}) (any, error) {
+	username := userInPath(c.R)
 	user, ok := AuthGetUser(a.db, username)
 	if !ok {
-		http.Error(w, "user not found", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("user not found")
 	}
 	if !user.Pending {
-		http.Error(w, "user is not pending", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("user is not pending")
 	}
 	AuthApproveUser(a.db, username)
-	current := AuthCurrentUser(r)
-	Log("[admin] user %q approved %q", current, username)
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "approved"})
+	Log("[admin] user %q approved %q", c.User, username)
+	return map[string]string{"status": "approved"}, nil
 }
 
-func (a *AdminApp) handleRejectUser(w http.ResponseWriter, r *http.Request, username string) {
+// handleRejectUser rejects an account awaiting approval.
+func (a *AdminApp) handleRejectUser(c *jsonapi.Call, _ struct{}) (any, error) {
+	username := userInPath(c.R)
 	user, ok := AuthGetUser(a.db, username)
 	if !ok {
-		http.Error(w, "user not found", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("user not found")
 	}
 	if !user.Pending {
-		http.Error(w, "user is not pending", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("user is not pending")
 	}
 	AuthRejectUser(a.db, username)
-	current := AuthCurrentUser(r)
-	Log("[admin] user %q rejected %q", current, username)
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "rejected"})
+	Log("[admin] user %q rejected %q", c.User, username)
+	return map[string]string{"status": "rejected"}, nil
 }
 
 // handleRevokeSessions signs a user out of every browser they are logged into,
@@ -831,39 +777,40 @@ func (a *AdminApp) handleRejectUser(w http.ResponseWriter, r *http.Request, user
 // answer short of deleting the account and making a new one. Sliding renewal
 // makes waiting for expiry a non-answer too, since a session in use keeps
 // pushing its own expiry out.
-func (a *AdminApp) handleRevokeSessions(w http.ResponseWriter, r *http.Request, username string) {
+func (a *AdminApp) handleRevokeSessions(c *jsonapi.Call, _ struct{}) (any, error) {
+	username := userInPath(c.R)
 	if _, ok := AuthGetUser(a.db, username); !ok {
-		http.Error(w, "user not found", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("user not found")
 	}
 	n := AuthRevokeUserSessions(a.db, username)
-	Log("[admin] user %q signed %q out of %d session(s)", AuthCurrentUser(r), username, n)
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"revoked": n})
+	Log("[admin] user %q signed %q out of %d session(s)", c.User, username, n)
+	return map[string]any{"revoked": n}, nil
 }
 
-func (a *AdminApp) handleDeleteUser(w http.ResponseWriter, r *http.Request, username string) {
+// handleDeleteUser deletes an account, once no app holds data of theirs.
+func (a *AdminApp) handleDeleteUser(c *jsonapi.Call, _ struct{}) (any, error) {
+	username, err := oneUser(c)
+	if err != nil {
+		return nil, err
+	}
 	// Prevent deleting yourself.
-	current := AuthCurrentUser(r)
+	current := c.User
 	if current == username {
-		http.Error(w, "cannot delete yourself", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("cannot delete yourself")
 	}
 	if _, ok := AuthGetUser(a.db, username); !ok {
-		http.Error(w, "user not found", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("user not found")
 	}
 
 	// Refuse to delete if any registered app still has data for this user
 	// unless the caller confirms. The admin UI pre-runs reassign/purge
 	// via /data-action before this call.
-	if r.URL.Query().Get("force") != "1" {
+	if c.R.URL.Query().Get("force") != "1" {
 		for _, h := range RegisteredUserDataHandlers() {
 			sum := h.Describe(username)
 			for _, n := range sum.Counts {
 				if n > 0 {
-					http.Error(w, "user still has app data; resolve via data-action or pass ?force=1", http.StatusConflict)
-					return
+					return nil, jsonapi.Status(http.StatusConflict, "user still has app data; resolve via data-action or pass ?force=1")
 				}
 			}
 		}
@@ -871,33 +818,31 @@ func (a *AdminApp) handleDeleteUser(w http.ResponseWriter, r *http.Request, user
 
 	AuthDeleteUser(a.db, username)
 	Log("[admin] user %q deleted user %q", current, username)
-
-	w.WriteHeader(http.StatusNoContent)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // handleUserDataSummary returns the per-app data footprint for a user so
 // the admin UI can offer reassign/purge before deletion.
-func (a *AdminApp) handleUserDataSummary(w http.ResponseWriter, r *http.Request, username string) {
+func (a *AdminApp) handleUserDataSummary(c *jsonapi.Call) (any, error) {
+	username := userInPath(c.R)
 	handlers := RegisteredUserDataHandlers()
 	out := make([]UserDataSummary, 0, len(handlers))
 	for _, h := range handlers {
 		out = append(out, h.Describe(username))
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(out)
+	return out, nil
 }
 
 // handleUserDataAction runs reassign/anonymize/purge on a single app's
 // data for a single user. Body: {"app":"codewriter","action":"reassign","target":"other@example.com"}.
-func (a *AdminApp) handleUserDataAction(w http.ResponseWriter, r *http.Request, username string) {
-	var req struct {
-		App    string `json:"app"`
-		Action string `json:"action"`
-		Target string `json:"target"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.App == "" || req.Action == "" {
-		http.Error(w, "app and action required", http.StatusBadRequest)
-		return
+func (a *AdminApp) handleUserDataAction(c *jsonapi.Call, req struct {
+	App    string `json:"app"`
+	Action string `json:"action"`
+	Target string `json:"target"`
+}) (any, error) {
+	username := userInPath(c.R)
+	if req.App == "" || req.Action == "" {
+		return nil, jsonapi.BadRequest("app and action required")
 	}
 	var handler UserDataHandler
 	for _, h := range RegisteredUserDataHandlers() {
@@ -907,26 +852,22 @@ func (a *AdminApp) handleUserDataAction(w http.ResponseWriter, r *http.Request, 
 		}
 	}
 	if handler == nil {
-		http.Error(w, "unknown app", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("unknown app")
 	}
 	var err error
 	switch req.Action {
 	case "reassign":
 		if req.Target == "" {
-			http.Error(w, "target required for reassign", http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest("target required for reassign")
 		}
 		if _, ok := AuthGetUser(a.db, req.Target); !ok {
-			http.Error(w, "target user not found", http.StatusNotFound)
-			return
+			return nil, jsonapi.NotFound("target user not found")
 		}
 		// Every app's refusal first, whichever app this call moves: moves
 		// run one app at a time, and a refusal met only on a later app's
 		// turn left the earlier ones moved and the rest not.
 		if problems := CheckUserDataReassign(username, req.Target); len(problems) > 0 {
-			http.Error(w, "nothing was moved: "+strings.Join(problems, "; "), http.StatusConflict)
-			return
+			return nil, jsonapi.Status(http.StatusConflict, "nothing was moved: "+strings.Join(problems, "; "))
 		}
 		err = handler.Reassign(username, req.Target)
 	case "anonymize":
@@ -934,57 +875,41 @@ func (a *AdminApp) handleUserDataAction(w http.ResponseWriter, r *http.Request, 
 	case "purge":
 		err = handler.Purge(username)
 	default:
-		http.Error(w, "unknown action", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("unknown action")
 	}
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		// The administrator running it is the one who needs to know why.
+		return nil, jsonapi.Status(http.StatusInternalServerError, err.Error())
 	}
-	current := AuthCurrentUser(r)
-	Log("[admin] user %q ran %s/%s on %q", current, req.App, req.Action, username)
-	w.WriteHeader(http.StatusNoContent)
+	Log("[admin] user %q ran %s/%s on %q", c.User, req.App, req.Action, username)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // handleUpdateUserApps sets the allowed apps for a specific user.
-func (a *AdminApp) handleUpdateUserApps(w http.ResponseWriter, r *http.Request, username string) {
-	var req struct {
-		Apps []string `json:"apps"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request", http.StatusBadRequest)
-		return
-	}
+func (a *AdminApp) handleUpdateUserApps(c *jsonapi.Call, req struct {
+	Apps []string `json:"apps"`
+}) (any, error) {
+	username := userInPath(c.R)
 	if _, ok := AuthGetUser(a.db, username); !ok {
-		http.Error(w, "user not found", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("user not found")
 	}
 	AuthSetUserApps(a.db, username, req.Apps)
-	current := AuthCurrentUser(r)
-	Log("[admin] user %q set apps for %q: %v", current, username, req.Apps)
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
+	Log("[admin] user %q set apps for %q: %v", c.User, username, req.Apps)
+	return map[string]string{"status": "updated"}, nil
 }
 
 // handleUpdateUserGroups sets the assigned app-group IDs for a specific user.
 // Each group expands to its member apps at access-check time.
-func (a *AdminApp) handleUpdateUserGroups(w http.ResponseWriter, r *http.Request, username string) {
-	var req struct {
-		Groups []string `json:"groups"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request", http.StatusBadRequest)
-		return
-	}
+func (a *AdminApp) handleUpdateUserGroups(c *jsonapi.Call, req struct {
+	Groups []string `json:"groups"`
+}) (any, error) {
+	username := userInPath(c.R)
 	if _, ok := AuthGetUser(a.db, username); !ok {
-		http.Error(w, "user not found", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("user not found")
 	}
 	AuthSetUserGroups(a.db, username, req.Groups)
-	current := AuthCurrentUser(r)
-	Log("[admin] user %q set groups for %q: %v", current, username, req.Groups)
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
+	Log("[admin] user %q set groups for %q: %v", c.User, username, req.Groups)
+	return map[string]string{"status": "updated"}, nil
 }
 
 // describeLend says who a user-owned credential reaches, phrased so a read lend

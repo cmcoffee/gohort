@@ -1,0 +1,207 @@
+(signed out) GET /api/users ""
+  403 forbidden
+alice GET /api/users ""
+  403 forbidden
+root GET /api/users ""
+  200 [{"username":"alice","admin":false,"pending":false,"apps":[]},{"username":"pat","admin":false,"pending":true,"apps":[]},{"username":"quinn","admin":false,"pending":true,"apps":[]},{"username":"root","admin":true,"pending":false,"apps":[]}]
+root PATCH /api/users "{}"
+  405 method not allowed
+(signed out) GET /api/feature-access ""
+  403 forbidden
+alice GET /api/feature-access ""
+  403 forbidden
+root GET /api/feature-access ""
+  200 [{"feature":"desktop","label":"Desktop bridge","desc":"Let a user's personal access tokens connect gohort-desktop, whose tools then run on that machine for the user's agents.","access":"All users"}]
+root PATCH /api/feature-access "{}"
+  405 method not allowed
+(signed out) GET /api/feature-access?feature=desktop ""
+  403 forbidden
+alice GET /api/feature-access?feature=desktop ""
+  403 forbidden
+root GET /api/feature-access?feature=desktop ""
+  200 {"allowed_users":null,"feature":"desktop"}
+root PATCH /api/feature-access?feature=desktop "{}"
+  405 method not allowed
+(signed out) GET /api/users/alice ""
+  403 forbidden
+alice GET /api/users/alice ""
+  403 forbidden
+root GET /api/users/alice ""
+  200 {"admin":false,"apps":[],"groups":[],"pending":false,"username":"alice"}
+root PATCH /api/users/alice "{}"
+  405 method not allowed
+(signed out) GET /api/users/alice/data ""
+  403 forbidden
+alice GET /api/users/alice/data ""
+  403 forbidden
+root GET /api/users/alice/data ""
+  200 [{"app":"tools, skills and collections","counts":{},"actions":["reassign","purge"]}]
+root PATCH /api/users/alice/data "{}"
+  405 method not allowed
+alice POST /api/users "{\"username\":\"mallory\",\"password\":\"pw-123456\",\"admin\":true}"
+  403 forbidden
+root POST /api/users "{\"username\":\"carol\",\"password\":\"pw-123456\"}"
+  200 {"status":"created"}
+root POST /api/users "{\"username\":\"carol\",\"password\":\"pw-123456\"}"
+  409 user already exists
+root POST /api/users "{\"username\":\"  \",\"password\":\"pw-123456\"}"
+  400 email required
+root POST /api/users "{\"username\":\"dave\"}"
+  400 password required (or choose to send an invite link)
+root POST /api/users "{\"username\":\"erin\",\"invite\":true}"
+  200 {"emailed":false,"link":"http:///reset?token=<hex>","status":"invited"}
+root POST /api/users "{\"username\":"
+  400 invalid JSON: unexpected EOF
+root POST /api/users ""
+  400 invalid JSON: EOF
+alice POST /api/feature-access?feature=desktop "{\"allowed_users\":[\"alice\"]}"
+  403 forbidden
+root POST /api/feature-access?feature=desktop "{\"allowed_users\":[\"alice\"]}"
+  204 
+root POST /api/feature-access?feature=nope "{\"allowed_users\":[\"alice\"]}"
+  400 unknown feature
+root POST /api/feature-access "{}"
+  400 unknown feature
+root POST /api/feature-access?feature=desktop "{\"allowed_users\":"
+  400 invalid JSON: unexpected EOF
+root POST /api/feature-access?feature=desktop ""
+  400 invalid JSON: EOF
+root GET /api/feature-access ""
+  200 [{"feature":"desktop","label":"Desktop bridge","desc":"Let a user's personal access tokens connect gohort-desktop, whose tools then run on that machine for the user's agents.","allowed_users":["alice"],"access":"1 user(s)"}]
+root GET /api/users/nobody ""
+  404 user not found
+root GET /api/users/ ""
+  400 username required
+root PUT /api/users/carol "{\"admin\":true}"
+  200 {"status":"updated"}
+root PUT /api/users/carol "{\"admin\":false,\"password\":\"pw-654321\"}"
+  200 {"status":"updated"}
+root PUT /api/users/root "{\"admin\":false}"
+  400 cannot remove admin from yourself
+root PUT /api/users/nobody "{\"admin\":true}"
+  404 user not found
+root PUT /api/users/carol "{\"admin\":"
+  400 invalid JSON: unexpected EOF
+alice PUT /api/users/alice "{\"admin\":true}"
+  403 forbidden
+alice PUT /api/users/carol/apps "{\"apps\":[\"/chat\"]}"
+  403 forbidden
+root GET /api/users/carol/apps ""
+  405 method not allowed
+root PUT /api/users/nobody/apps "{\"apps\":[\"/chat\"]}"
+  404 user not found
+alice PUT /api/users/carol/groups "{\"groups\":[\"g1\"]}"
+  403 forbidden
+root GET /api/users/carol/groups ""
+  405 method not allowed
+root PUT /api/users/nobody/groups "{\"groups\":[\"g1\"]}"
+  404 user not found
+alice POST /api/users/carol/approve ""
+  403 forbidden
+root GET /api/users/carol/approve ""
+  405 method not allowed
+root POST /api/users/nobody/approve ""
+  404 user not found
+alice POST /api/users/carol/reject ""
+  403 forbidden
+root GET /api/users/carol/reject ""
+  405 method not allowed
+root POST /api/users/nobody/reject ""
+  404 user not found
+alice POST /api/users/carol/reset-password ""
+  403 forbidden
+root GET /api/users/carol/reset-password ""
+  405 method not allowed
+root POST /api/users/nobody/reset-password ""
+  404 user not found
+alice POST /api/users/carol/revoke-sessions ""
+  403 forbidden
+root GET /api/users/carol/revoke-sessions ""
+  405 method not allowed
+root POST /api/users/nobody/revoke-sessions ""
+  404 user not found
+alice POST /api/users/carol/data-action "{\"app\":\"nope\",\"action\":\"purge\"}"
+  403 forbidden
+root GET /api/users/carol/data-action ""
+  405 method not allowed
+root POST /api/users/nobody/data-action "{\"app\":\"nope\",\"action\":\"purge\"}"
+  404 unknown app
+alice GET /api/users/carol/data ""
+  403 forbidden
+root POST /api/users/carol/data ""
+  405 method not allowed
+root GET /api/users/carol/nope ""
+  404 404 page not found
+root GET /api/users/carol/ ""
+  404 404 page not found
+root PUT /api/users/carol/apps "{\"apps\":[\"/chat\"]}"
+  200 {"status":"updated"}
+root PUT /api/users/carol/apps "{\"apps\":"
+  400 invalid JSON: unexpected EOF
+root PUT /api/users/carol/groups "{\"groups\":[\"g1\"]}"
+  200 {"status":"updated"}
+root PUT /api/users/carol/groups ""
+  400 invalid JSON: EOF
+root GET /api/users/carol ""
+  200 {"admin":false,"apps":["/chat"],"groups":["g1"],"pending":false,"username":"carol"}
+root POST /api/users/pat/approve ""
+  200 {"status":"approved"}
+root POST /api/users/pat/approve ""
+  400 user is not pending
+root POST /api/users/quinn/reject ""
+  200 {"status":"rejected"}
+root POST /api/users/alice/reject ""
+  400 user is not pending
+root POST /api/users/carol/reset-password ""
+  200 {"emailed":false,"link":"http:///reset?token=<hex>","status":"link_sent"}
+root POST /api/users/carol/reset-password "{\"mode\":\"set\",\"password\":\"short\"}"
+  400 Password must be 6–128 characters.
+root POST /api/users/carol/reset-password "{\"mode\":\"set\",\"password\":\"pw-777777\"}"
+  200 {"status":"password_set"}
+root POST /api/users/carol/reset-password "{\"mode\":\"set\",\"password\":"
+  400 invalid JSON: unexpected EOF
+root POST /api/users/alice/revoke-sessions ""
+  200 {"revoked":16}
+root POST /api/users/carol/data-action "{}"
+  400 app and action required
+root POST /api/users/carol/data-action "{\"app\":\"nope\",\"action\":\"purge\"}"
+  404 unknown app
+root POST /api/users/carol/data-action "{\"app\":"
+  400 invalid JSON: unexpected EOF
+root POST /api/users/carol/data-action "{\"app\":\"tools, skills and collections\",\"action\":\"reassign\"}"
+  400 target required for reassign
+root POST /api/users/carol/data-action "{\"app\":\"tools, skills and collections\",\"action\":\"reassign\",\"target\":\"nobody\"}"
+  404 target user not found
+root POST /api/users/carol/data-action "{\"app\":\"tools, skills and collections\",\"action\":\"bogus\"}"
+  400 unknown action
+root POST /api/users/carol/data-action "{\"app\":\"tools, skills and collections\",\"action\":\"reassign\",\"target\":\"alice\"}"
+  204 
+root POST /api/users/carol/data-action "{\"app\":\"tools, skills and collections\",\"action\":\"purge\"}"
+  204 
+alice DELETE /api/users/carol ""
+  403 forbidden
+root DELETE /api/users/root ""
+  400 cannot delete yourself
+root DELETE /api/users/nobody ""
+  404 user not found
+root DELETE /api/users/carol ""
+  204 
+root DELETE /api/users/carol ""
+  404 user not found
+root GET /api/users ""
+  200 [{"username":"alice","admin":false,"pending":false,"apps":[]},{"username":"erin","admin":false,"pending":false,"apps":[]},{"username":"pat","admin":false,"pending":false,"apps":[]},{"username":"root","admin":true,"pending":false,"apps":[]}]
+activity log, 14 entries:
+  account root: added the account carol
+  account root: approved the account pat
+  account root: changed the account carol
+  account root: changed the account carol
+  account root: changed the apps of carol
+  account root: changed the groups of carol
+  account root: deleted the account carol
+  account root: invited erin
+  account root: moved or deleted the data of carol
+  account root: moved or deleted the data of carol
+  account root: rejected the account quinn
+  account root: reset the password of carol
+  account root: reset the password of carol
+  account root: signed alice out everywhere

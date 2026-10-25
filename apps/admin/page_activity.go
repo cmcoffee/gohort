@@ -96,17 +96,6 @@ func (a *AdminApp) activityStore() activity.Store {
 	return nil
 }
 
-// audited runs h and, when it answered with success, records what it did. A
-// refused or failed request is not a change, and logging it as one would put
-// something in the record that never happened.
-func audited(w http.ResponseWriter, r *http.Request, kind, detail string, h func(http.ResponseWriter)) {
-	sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
-	h(sw)
-	if sw.status < 400 {
-		RecordActivity(r, kind, AuthCurrentUser(r), detail)
-	}
-}
-
 // adminChange records an administrator's change in the server log and the
 // activity log, in the same words: "set session_days=7", "updated embeddings
 // config (...)". The two said different things before only because the
@@ -117,15 +106,4 @@ func adminChange(r *http.Request, kind, format string, args ...any) {
 	detail := fmt.Sprintf(format, args...)
 	Log("[admin] user %q %s", user, detail)
 	RecordActivity(r, kind, user, detail)
-}
-
-// statusWriter remembers the status a handler answered with.
-type statusWriter struct {
-	http.ResponseWriter
-	status int
-}
-
-func (s *statusWriter) WriteHeader(code int) {
-	s.status = code
-	s.ResponseWriter.WriteHeader(code)
 }
