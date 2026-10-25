@@ -5,15 +5,14 @@ package admin
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/cmcoffee/gohort/core/activity"
 	"github.com/cmcoffee/gohort/core/governance"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/mcppersonal"
 	"github.com/cmcoffee/gohort/core/ui"
 )
@@ -21,44 +20,28 @@ import (
 // handlePersonalIntegrations is GET / POST /api/personal-integrations: the
 // policy for each kind, {"credentials": "allowed", "mcp_servers": "approval"}.
 // A POST may carry either or both.
-func (a *AdminApp) handlePersonalIntegrations(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
-		return
-	}
-	switch r.Method {
-	case http.MethodGet:
-	case http.MethodPost, http.MethodPut, http.MethodPatch:
-		raw, err := io.ReadAll(io.LimitReader(r.Body, 1<<16))
-		if err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		var body map[string]any
-		if err := json.Unmarshal(raw, &body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		for _, k := range governance.Kinds {
-			v, ok := body[string(k)].(string)
-			if !ok || governance.Policy(v) == governance.Of(k) {
-				continue
-			}
-			if err := governance.Set(k, v); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			adminChange(r, activity.Settings, "set personal %s policy=%s", k, v)
-		}
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+func (a *AdminApp) handlePersonalIntegrations(c *jsonapi.Call) (any, error) {
 	out := map[string]string{}
 	for _, k := range governance.Kinds {
 		out[string(k)] = string(governance.Of(k))
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(out)
+	return out, nil
+}
+
+// handlePersonalIntegrationsSave sets the policies the body names, and
+// answers with every one.
+func (a *AdminApp) handlePersonalIntegrationsSave(c *jsonapi.Call, body map[string]any) (any, error) {
+	for _, k := range governance.Kinds {
+		v, ok := body[string(k)].(string)
+		if !ok || governance.Policy(v) == governance.Of(k) {
+			continue
+		}
+		if err := governance.Set(k, v); err != nil {
+			return nil, jsonapi.BadRequest(err.Error())
+		}
+		adminChange(c.R, activity.Settings, "set personal %s policy=%s", k, v)
+	}
+	return a.handlePersonalIntegrations(c)
 }
 
 // policyOptions are a policy select's choices, with what each means for kind.
@@ -111,59 +94,56 @@ type personalMCPRow struct {
 //	POST ?action=enable|disable&owner=&name=  enable approves one that waits
 //	POST ?action=check&owner=&name=           ask it what it offers
 //	DELETE ?owner=&name=
-func (a *AdminApp) handlePersonalMCPServers(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
-		return
+func (a *AdminApp) handlePersonalMCPServers(c *jsonapi.Call) (any, error) {
+	rows := []personalMCPRow{}
+	for _, s := range mcppersonal.All() {
+		tools := "not checked yet"
+		if !s.CheckedAt.IsZero() {
+			names := make([]string, 0, len(s.Tools))
+			for _, t := range s.Tools {
+				names = append(names, t.Name)
+			}
+			tools = fmt.Sprintf("%d: %s", len(s.Tools), strings.Join(names, ", "))
+		}
+		rows = append(rows, personalMCPRow{ID: s.Owner + "/" + s.Name, Owner: s.Owner, Name: s.Name, URL: s.URL, SignIn: s.SignIn(),
+			Tools: tools, Awaiting: s.AwaitingApproval, Disabled: !s.Usable(), Problem: s.CheckErr})
 	}
-	owner := strings.TrimSpace(r.URL.Query().Get("owner"))
-	name := strings.TrimSpace(r.URL.Query().Get("name"))
-	switch r.Method {
-	case http.MethodGet:
-		rows := []personalMCPRow{}
-		for _, s := range mcppersonal.All() {
-			tools := "not checked yet"
-			if !s.CheckedAt.IsZero() {
-				names := make([]string, 0, len(s.Tools))
-				for _, t := range s.Tools {
-					names = append(names, t.Name)
-				}
-				tools = fmt.Sprintf("%d: %s", len(s.Tools), strings.Join(names, ", "))
-			}
-			rows = append(rows, personalMCPRow{ID: s.Owner + "/" + s.Name, Owner: s.Owner, Name: s.Name, URL: s.URL, SignIn: s.SignIn(),
-				Tools: tools, Awaiting: s.AwaitingApproval, Disabled: !s.Usable(), Problem: s.CheckErr})
+	return rows, nil
+}
+
+// handlePersonalMCPServerAction switches one user's MCP server on or off, or
+// checks it now.
+func (a *AdminApp) handlePersonalMCPServerAction(c *jsonapi.Call, _ struct{}) (any, error) {
+	q := c.R.URL.Query()
+	owner, name := strings.TrimSpace(q.Get("owner")), strings.TrimSpace(q.Get("name"))
+	var err error
+	switch action := q.Get("action"); action {
+	case "enable", "disable":
+		if err = mcppersonal.AdminSetDisabled(owner, name, action == "disable"); err == nil {
+			adminChange(c.R, activity.Settings, "%s personal MCP server %s/%s", action, owner, name)
 		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(rows)
-	case http.MethodPost:
-		var err error
-		switch action := r.URL.Query().Get("action"); action {
-		case "enable", "disable":
-			if err = mcppersonal.AdminSetDisabled(owner, name, action == "disable"); err == nil {
-				adminChange(r, activity.Settings, "%s personal MCP server %s/%s", action, owner, name)
-			}
-		case "check":
-			ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
-			defer cancel()
-			_, err = mcppersonal.Check(ctx, owner, name)
-		default:
-			http.Error(w, "action must be enable, disable or check", http.StatusBadRequest)
-			return
-		}
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	case http.MethodDelete:
-		if err := mcppersonal.Remove(owner, name); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		adminChange(r, activity.Settings, "deleted personal MCP server %s/%s", owner, name)
-		w.WriteHeader(http.StatusNoContent)
+	case "check":
+		ctx, cancel := context.WithTimeout(c.R.Context(), 45*time.Second)
+		defer cancel()
+		_, err = mcppersonal.Check(ctx, owner, name)
 	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return nil, jsonapi.BadRequest("action must be enable, disable or check")
 	}
+	if err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// handlePersonalMCPServerDelete removes one user's MCP server.
+func (a *AdminApp) handlePersonalMCPServerDelete(c *jsonapi.Call, _ struct{}) (any, error) {
+	q := c.R.URL.Query()
+	owner, name := strings.TrimSpace(q.Get("owner")), strings.TrimSpace(q.Get("name"))
+	if err := mcppersonal.Remove(owner, name); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	adminChange(c.R, activity.Settings, "deleted personal MCP server %s/%s", owner, name)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // personalMCPServersSection is the Governance list of them.

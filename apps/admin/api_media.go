@@ -10,6 +10,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/activity"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // registerMediaRoutes wires the media API under the admin sub-mux.
@@ -31,7 +32,7 @@ func (a *AdminApp) registerMediaRoutes(sub *http.ServeMux) {
 	// vLLM, llama.cpp, hf-tei), falls back to Ollama's /api/tags by
 	// transforming the endpoint base. Empty array on either reach
 	// failure — the field stays manually editable, no UI error.
-	sub.HandleFunc("/api/embeddings/models", a.handleEmbeddingModels)
+	sub.HandleFunc("/api/embeddings/models", jsonapi.Get(a.db, a.handleEmbeddingModels, a.gate()))
 
 	// Audio transcription (STT) — GET/POST. POST persists + reinstalls
 	// the live TranscribeConfig so the next Transcribe() call picks up
@@ -170,18 +171,14 @@ func (a *AdminApp) handleEmbeddingsTest(w http.ResponseWriter, r *http.Request) 
 }
 
 // handleEmbeddingModels serves /api/embeddings/models; registerMediaRoutes says what it is for.
-func (a *AdminApp) handleEmbeddingModels(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
-		return
-	}
+func (a *AdminApp) handleEmbeddingModels(c *jsonapi.Call) (any, error) {
+	r := c.R
 	var cfg EmbeddingConfig
 	if a.db != nil {
 		a.db.Get(EmbeddingTable, "current", &cfg)
 	}
-	w.Header().Set("Content-Type", "application/json")
 	if cfg.Endpoint == "" {
-		_, _ = w.Write([]byte("[]"))
-		return
+		return []map[string]string{}, nil
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
@@ -200,7 +197,7 @@ func (a *AdminApp) handleEmbeddingModels(w http.ResponseWriter, r *http.Request)
 	for _, n := range names {
 		out = append(out, map[string]string{"id": n, "name": n, "value": n})
 	}
-	_ = json.NewEncoder(w).Encode(out)
+	return out, nil
 }
 
 // handleTranscribe serves /api/transcribe; registerMediaRoutes says what it is for.

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // registerMaintenanceRoutes wires the maintenance API under the admin sub-mux.
@@ -219,9 +220,9 @@ func (a *AdminApp) registerMaintenanceRoutes(sub *http.ServeMux) {
 	})
 
 	// API: database browser.
-	sub.HandleFunc("/api/db/tables", a.handleDBTables)
+	sub.HandleFunc("/api/db/tables", jsonapi.Get(a.db, a.handleDBTables, a.gate()))
 
-	sub.HandleFunc("/api/db/keys", a.handleDBKeys)
+	sub.HandleFunc("/api/db/keys", jsonapi.Get(a.db, a.handleDBKeys, a.gate()))
 
 	sub.HandleFunc("/api/db/record", a.handleDBRecord)
 
@@ -344,37 +345,21 @@ func vectorKindLabel(kind string) string {
 	return kind
 }
 
-func (a *AdminApp) handleDBTables(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
-		return
-	}
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+func (a *AdminApp) handleDBTables(c *jsonapi.Call) (any, error) {
 	tables := a.db.Tables()
 	sort.Strings(tables)
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(tables)
+	return tables, nil
 }
 
-func (a *AdminApp) handleDBKeys(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
-		return
-	}
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+func (a *AdminApp) handleDBKeys(c *jsonapi.Call) (any, error) {
+	r := c.R
 	table := r.URL.Query().Get("table")
 	if table == "" {
-		http.Error(w, "table required", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("table required")
 	}
 	keys := a.db.Keys(table)
 	sort.Strings(keys)
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(keys)
+	return keys, nil
 }
 
 func (a *AdminApp) handleDBRecord(w http.ResponseWriter, r *http.Request) {

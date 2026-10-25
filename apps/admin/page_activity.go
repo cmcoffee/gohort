@@ -6,7 +6,6 @@ package admin
 // and when, afterwards.
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -15,6 +14,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/activity"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -58,19 +58,13 @@ func (a *AdminApp) activitySections() []ui.Section {
 }
 
 func (a *AdminApp) registerActivityRoutes(sub *http.ServeMux) {
-	sub.HandleFunc("/api/activity", a.handleActivity)
+	sub.HandleFunc("/api/activity", jsonapi.Get(a.db, a.handleActivity, a.gate()))
 }
 
 // handleActivity lists the log, newest first: ?kind= and ?user= narrow it,
 // ?limit= caps it (activityListLimit when unset).
-func (a *AdminApp) handleActivity(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
-		return
-	}
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+func (a *AdminApp) handleActivity(c *jsonapi.Call) (any, error) {
+	r := c.R
 	limit := activityListLimit
 	if n, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && n > 0 && n < limit {
 		limit = n
@@ -88,8 +82,7 @@ func (a *AdminApp) handleActivity(w http.ResponseWriter, r *http.Request) {
 	for _, e := range events {
 		out = append(out, row{Event: e, At: e.At.Format(time.RFC3339)})
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(out)
+	return out, nil
 }
 
 // activityStore is where the log is kept: the auth store, beside the accounts

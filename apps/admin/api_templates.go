@@ -7,6 +7,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/activity"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // registerTemplatesRoutes wires the templates API under the admin sub-mux.
@@ -18,10 +19,10 @@ func (a *AdminApp) registerTemplatesRoutes(sub *http.ServeMux) {
 	// per-backend admin code (that's the point).
 
 	// List templates for the Add menu (optional ?category=).
-	sub.HandleFunc("/api/connector-templates", a.handleConnectorTemplates)
+	sub.HandleFunc("/api/connector-templates", jsonapi.Get(a.db, a.handleConnectorTemplates, a.gate()))
 
 	// Field schema for one template (Add mode — no values).
-	sub.HandleFunc("/api/connector-template", a.handleConnectorTemplate)
+	sub.HandleFunc("/api/connector-template", jsonapi.Get(a.db, a.handleConnectorTemplate, a.gate()))
 
 	// Auto-detect (Detect hook) — powers the panel's Detect button.
 	sub.HandleFunc("/api/connector-detect", a.handleConnectorDetect)
@@ -38,11 +39,11 @@ func (a *AdminApp) registerTemplatesRoutes(sub *http.ServeMux) {
 	// the generic renderer POSTs to api/connector-config or api/tool-config
 	// accordingly. Discovery is unified here; governance stays split.
 
-	sub.HandleFunc("/api/extensions", a.handleExtensionTemplates)
+	sub.HandleFunc("/api/extensions", jsonapi.Get(a.db, a.handleExtensionTemplates, a.gate()))
 
 	// Field schema for one extension template (Add mode). Takes ?target= &name=
 	// so a single client action can open the Add form for either target.
-	sub.HandleFunc("/api/extension-template", a.handleExtensionTemplate)
+	sub.HandleFunc("/api/extension-template", jsonapi.Get(a.db, a.handleExtensionTemplate, a.gate()))
 
 	// --- tool templates (same generic renderer, tool target) ----------------
 	//
@@ -50,9 +51,9 @@ func (a *AdminApp) registerTemplatesRoutes(sub *http.ServeMux) {
 	// (AdminPersistTempTool), NOT SaveConnector — a template eases authoring, it
 	// grants no new power.
 
-	sub.HandleFunc("/api/tool-templates", a.handleToolTemplates)
+	sub.HandleFunc("/api/tool-templates", jsonapi.Get(a.db, a.handleToolTemplates, a.gate()))
 
-	sub.HandleFunc("/api/tool-template", a.handleToolTemplate)
+	sub.HandleFunc("/api/tool-template", jsonapi.Get(a.db, a.handleToolTemplate, a.gate()))
 
 	sub.HandleFunc("/api/tool-detect", a.handleToolDetect)
 
@@ -65,10 +66,8 @@ func (a *AdminApp) registerTemplatesRoutes(sub *http.ServeMux) {
 }
 
 // handleConnectorTemplates serves /api/connector-templates; registerTemplatesRoutes says what it is for.
-func (a *AdminApp) handleConnectorTemplates(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
-		return
-	}
+func (a *AdminApp) handleConnectorTemplates(c *jsonapi.Call) (any, error) {
+	r := c.R
 	cat := strings.TrimSpace(r.URL.Query().Get("category"))
 	type row struct {
 		Name        string `json:"name"`
@@ -83,22 +82,17 @@ func (a *AdminApp) handleConnectorTemplates(w http.ResponseWriter, r *http.Reque
 		}
 		out = append(out, row{t.Name, t.Label, t.Category, t.Description})
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(out)
+	return out, nil
 }
 
 // handleConnectorTemplate serves /api/connector-template; registerTemplatesRoutes says what it is for.
-func (a *AdminApp) handleConnectorTemplate(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
-		return
-	}
+func (a *AdminApp) handleConnectorTemplate(c *jsonapi.Call) (any, error) {
+	r := c.R
 	t, ok := GetConnectorTemplate(r.URL.Query().Get("name"))
 	if !ok {
-		http.Error(w, "no such template", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("no such template")
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(templateSchemaMap(t, nil, "", true))
+	return templateSchemaMap(t, nil, "", true), nil
 }
 
 // handleConnectorDetect serves /api/connector-detect; registerTemplatesRoutes says what it is for.
@@ -213,10 +207,8 @@ func (a *AdminApp) handleConnectorConfig(w http.ResponseWriter, r *http.Request)
 }
 
 // handleExtensionTemplates serves /api/extensions; registerTemplatesRoutes says what it is for.
-func (a *AdminApp) handleExtensionTemplates(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
-		return
-	}
+func (a *AdminApp) handleExtensionTemplates(c *jsonapi.Call) (any, error) {
+	r := c.R
 	cat := strings.TrimSpace(r.URL.Query().Get("category"))
 	type row struct {
 		Name        string `json:"name"`
@@ -232,33 +224,25 @@ func (a *AdminApp) handleExtensionTemplates(w http.ResponseWriter, r *http.Reque
 		}
 		out = append(out, row{t.Name, t.Label, t.Target, t.Category, t.Description})
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(out)
+	return out, nil
 }
 
 // handleExtensionTemplate serves /api/extension-template; registerTemplatesRoutes says what it is for.
-func (a *AdminApp) handleExtensionTemplate(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
-		return
-	}
+func (a *AdminApp) handleExtensionTemplate(c *jsonapi.Call) (any, error) {
+	r := c.R
 	target := strings.TrimSpace(r.URL.Query().Get("target"))
 	if target == "" {
 		target = TargetConnector
 	}
 	t, ok := GetTemplate(target, r.URL.Query().Get("name"))
 	if !ok {
-		http.Error(w, "no such template", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("no such template")
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(templateSchemaMap(t, nil, "", true))
+	return templateSchemaMap(t, nil, "", true), nil
 }
 
 // handleToolTemplates serves /api/tool-templates; registerTemplatesRoutes says what it is for.
-func (a *AdminApp) handleToolTemplates(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
-		return
-	}
+func (a *AdminApp) handleToolTemplates(c *jsonapi.Call) (any, error) {
 	type row struct {
 		Name        string `json:"name"`
 		Label       string `json:"label"`
@@ -269,22 +253,17 @@ func (a *AdminApp) handleToolTemplates(w http.ResponseWriter, r *http.Request) {
 	for _, t := range Templates(TargetTool) {
 		out = append(out, row{t.Name, t.Label, t.Category, t.Description})
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(out)
+	return out, nil
 }
 
 // handleToolTemplate serves /api/tool-template; registerTemplatesRoutes says what it is for.
-func (a *AdminApp) handleToolTemplate(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
-		return
-	}
+func (a *AdminApp) handleToolTemplate(c *jsonapi.Call) (any, error) {
+	r := c.R
 	t, ok := GetTemplate(TargetTool, r.URL.Query().Get("name"))
 	if !ok {
-		http.Error(w, "no such tool template", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("no such tool template")
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(templateSchemaMap(t, nil, "", true))
+	return templateSchemaMap(t, nil, "", true), nil
 }
 
 // handleToolDetect serves /api/tool-detect; registerTemplatesRoutes says what it is for.

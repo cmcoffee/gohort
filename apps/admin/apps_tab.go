@@ -28,6 +28,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -411,18 +412,14 @@ func isListableApp(path string) bool {
 // Live rather than baked into the section, so the access line is true when it
 // is read rather than when the page was assembled — grants move, and a stale
 // answer to "who can open this" is worse than no answer.
-func (a *AdminApp) handleAppSummary(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
-		return
-	}
+func (a *AdminApp) handleAppSummary(c *jsonapi.Call) (any, error) {
+	r := c.R
 	path := strings.TrimSpace(r.URL.Query().Get("path"))
 	p := newPanes(r)
 	app := p.find(path)
 	if app == nil {
-		http.NotFound(w, r)
-		return
+		return nil, jsonapi.NotFound("no such app")
 	}
-	w.Header().Set("Content-Type", "application/json")
 	// state_severity colours the state line: core/ui has no way to know which
 	// of two words is the bad news, so the server says.
 	state, severity := "Enabled", "ok"
@@ -433,14 +430,14 @@ func (a *AdminApp) handleAppSummary(w http.ResponseWriter, r *http.Request) {
 	case !AppEnabled(a.db, path):
 		state, severity = "Disabled: its pages and API answer 503", "bad"
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	return map[string]any{
 		"path":           path,
 		"desc":           app.WebDesc(),
 		"state":          state,
 		"state_severity": severity,
 		"access":         describeAppAccess(a.db, path),
 		"controls":       p.controls(path),
-	})
+	}, nil
 }
 
 // describeAppAccess says who can open an app, in a sentence rather than a list
@@ -586,10 +583,8 @@ func appPanelsSource(path string) string {
 // another. The link names the tab as well as the section (ui.SectionOnTab):
 // an app's pane and its panel usually share the app's name, and a bare slug
 // would resolve to the pane the link is on.
-func (a *AdminApp) handleAppPanels(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
-		return
-	}
+func (a *AdminApp) handleAppPanels(c *jsonapi.Call) (any, error) {
+	r := c.R
 	path := strings.TrimSpace(r.URL.Query().Get("path"))
 	type panel struct {
 		Title string `json:"title"`
@@ -611,8 +606,7 @@ func (a *AdminApp) handleAppPanels(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, panel{Title: title, Tab: tab, Href: ui.SectionOnTab(tab, e.Section.Title)})
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(out)
+	return out, nil
 }
 
 // panelsElsewhere is the admin sections an app has claimed that live on some

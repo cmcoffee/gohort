@@ -9,6 +9,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/activity"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/promotion"
 )
 
@@ -19,7 +20,7 @@ func (a *AdminApp) registerUsersRoutes(sub *http.ServeMux) {
 
 	// API: user candidates for ACL pickers ([{value,label}], approved users only).
 	// Shared source for every ui.ACLPicker on this page (credential + tool access).
-	sub.HandleFunc("/api/user-candidates", a.handleUserCandidates)
+	sub.HandleFunc("/api/user-candidates", jsonapi.Get(a.db, a.handleUserCandidates, a.gate()))
 
 	// API: feature access — the admin gate on outward-facing surfaces a user can
 	// expose through their own keys (the OpenAI /v1 endpoint is the first). Reads
@@ -33,25 +34,47 @@ func (a *AdminApp) registerUsersRoutes(sub *http.ServeMux) {
 	// API: user-owned credentials — the governance view over the user plane. The
 	// admin API Credentials page shows only GLOBAL creds; this surfaces the ones
 	// users create for themselves, with owner-aware revoke (disable) + delete.
-	sub.HandleFunc("/api/user-credentials", a.handleUserCredentials)
+	sub.HandleFunc("/api/user-credentials", jsonapi.Methods{
+		"GET":    jsonapi.Get(a.db, a.handleUserCredentials, a.gate()),
+		"POST":   jsonapi.Post(a.db, a.handleUserCredentialAction, a.gate()),
+		"DELETE": jsonapi.Post(a.db, a.handleUserCredentialDelete, a.gate()),
+	}.Serve)
 	// Whether people add their own credentials and MCP servers at all.
-	sub.HandleFunc("/api/personal-integrations", a.handlePersonalIntegrations)
-	sub.HandleFunc("/api/personal-mcp-servers", a.handlePersonalMCPServers)
+	sub.HandleFunc("/api/personal-integrations", jsonapi.Methods{
+		"GET":   jsonapi.Get(a.db, a.handlePersonalIntegrations, a.gate()),
+		"POST":  jsonapi.Post(a.db, a.handlePersonalIntegrationsSave, a.gate(), jsonapi.MaxBody(1<<16)),
+		"PUT":   jsonapi.Post(a.db, a.handlePersonalIntegrationsSave, a.gate(), jsonapi.MaxBody(1<<16)),
+		"PATCH": jsonapi.Post(a.db, a.handlePersonalIntegrationsSave, a.gate(), jsonapi.MaxBody(1<<16)),
+	}.Serve)
+	sub.HandleFunc("/api/personal-mcp-servers", jsonapi.Methods{
+		"GET":    jsonapi.Get(a.db, a.handlePersonalMCPServers, a.gate()),
+		"POST":   jsonapi.Post(a.db, a.handlePersonalMCPServerAction, a.gate()),
+		"DELETE": jsonapi.Post(a.db, a.handlePersonalMCPServerDelete, a.gate()),
+	}.Serve)
 
 	// API: user-owned agents — the governance view over peer-shared agents. Agents
 	// live in per-user UDBs, so the admin app enumerates them through an orchestrate
 	// hook (nil until orchestrate's init runs). Revoke clears an agent's recipient
 	// list without deleting the agent.
-	sub.HandleFunc("/api/user-agents", a.handleUserAgents)
+	sub.HandleFunc("/api/user-agents", jsonapi.Methods{
+		"GET":  jsonapi.Get(a.db, a.handleUserAgents, a.gate()),
+		"POST": jsonapi.Post(a.db, a.handleUserAgentsAction, a.gate()),
+	}.Serve)
 
 	// The pipeline twin of /api/user-pipelines' agent sibling above. Same
 	// enumerate-and-revoke, minus publish: a pipeline has no app surface to
 	// flip on, so there is no second action to offer.
-	sub.HandleFunc("/api/user-pipelines", a.handleUserPipelines)
+	sub.HandleFunc("/api/user-pipelines", jsonapi.Methods{
+		"GET":  jsonapi.Get(a.db, a.handleUserPipelines, a.gate()),
+		"POST": jsonapi.Post(a.db, a.handleUserPipelinesAction, a.gate()),
+	}.Serve)
 
 	// The machine twin of the two above. Same enumerate-and-revoke; no publish,
 	// for the reason the pipeline route states.
-	sub.HandleFunc("/api/user-machines", a.handleUserMachines)
+	sub.HandleFunc("/api/user-machines", jsonapi.Methods{
+		"GET":  jsonapi.Get(a.db, a.handleUserMachines, a.gate()),
+		"POST": jsonapi.Post(a.db, a.handleUserMachinesAction, a.gate()),
+	}.Serve)
 
 	// API: promotion requests — the bottom-up publish queue. Users request that
 	// their own resource be published deployment-wide; the admin approves (runs the
@@ -94,14 +117,10 @@ func (a *AdminApp) handleUsersAPI(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleUserCandidates serves /api/user-candidates; registerUsersRoutes says what it is for.
-func (a *AdminApp) handleUserCandidates(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
+func (a *AdminApp) handleUserCandidates(c *jsonapi.Call) (any, error) {
 	// No exclusion: an admin granting access to a deployment resource may
 	// legitimately be one of the people granted it.
-	w.Write(UserCandidatesJSON(a.db, ""))
+	return json.RawMessage(UserCandidatesJSON(a.db, "")), nil
 }
 
 // handleFeatureAccess serves /api/feature-access; registerUsersRoutes says what it is for.
@@ -156,216 +175,188 @@ func (a *AdminApp) handleFeatureAccess(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleUserCredentials serves /api/user-credentials; registerUsersRoutes says what it is for.
-func (a *AdminApp) handleUserCredentials(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
-		return
+func (a *AdminApp) handleUserCredentials(c *jsonapi.Call) (any, error) {
+	type row struct {
+		ID       string `json:"id"` // owner/name — unique across users (RowKey)
+		Owner    string `json:"owner"`
+		Name     string `json:"name"`
+		Type     string `json:"type"`
+		Disabled bool   `json:"disabled"`
+		Secured  bool   `json:"secured"`
+		// Who else can use this key, and whether any of them can write
+		// with it. A share the admin cannot see is a share they cannot
+		// govern, and a write lend is the one that arrives at the far
+		// end wearing the owner's name.
+		LentTo      string `json:"lent_to,omitempty"`
+		Lent        bool   `json:"lent"`
+		LendsWrites bool   `json:"lends_writes"`
+		LendLocked  bool   `json:"lend_locked"`
+		// Added while personal credentials need approval, and not yet
+		// approved: Enable approves it.
+		Awaiting bool `json:"awaiting"`
 	}
-	switch r.Method {
-	case http.MethodGet:
-		type row struct {
-			ID       string `json:"id"` // owner/name — unique across users (RowKey)
-			Owner    string `json:"owner"`
-			Name     string `json:"name"`
-			Type     string `json:"type"`
-			Disabled bool   `json:"disabled"`
-			Secured  bool   `json:"secured"`
-			// Who else can use this key, and whether any of them can write
-			// with it. A share the admin cannot see is a share they cannot
-			// govern, and a write lend is the one that arrives at the far
-			// end wearing the owner's name.
-			LentTo      string `json:"lent_to,omitempty"`
-			Lent        bool   `json:"lent"`
-			LendsWrites bool   `json:"lends_writes"`
-			LendLocked  bool   `json:"lend_locked"`
-			// Added while personal credentials need approval, and not yet
-			// approved: Enable approves it.
-			Awaiting bool `json:"awaiting"`
+	rows := []row{}
+	for _, cr := range Secure().ListAllUserOwned() {
+		rows = append(rows, row{ID: cr.Owner + "/" + cr.Name, Owner: cr.Owner, Name: cr.Name, Type: cr.Type, Disabled: cr.Disabled, Secured: cr.Secured,
+			LentTo:      describeLend(cr),
+			Lent:        len(cr.SharedReadOnly)+len(cr.SharedReadWrite) > 0,
+			LendsWrites: len(cr.SharedReadWrite) > 0,
+			LendLocked:  cr.AdminLendLocked,
+			Awaiting:    cr.AwaitingApproval})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].Owner != rows[j].Owner {
+			return rows[i].Owner < rows[j].Owner
 		}
-		rows := []row{}
-		for _, c := range Secure().ListAllUserOwned() {
-			rows = append(rows, row{ID: c.Owner + "/" + c.Name, Owner: c.Owner, Name: c.Name, Type: c.Type, Disabled: c.Disabled, Secured: c.Secured,
-				LentTo:      describeLend(c),
-				Lent:        len(c.SharedReadOnly)+len(c.SharedReadWrite) > 0,
-				LendsWrites: len(c.SharedReadWrite) > 0,
-				LendLocked:  c.AdminLendLocked,
-				Awaiting:    c.AwaitingApproval})
-		}
-		sort.Slice(rows, func(i, j int) bool {
-			if rows[i].Owner != rows[j].Owner {
-				return rows[i].Owner < rows[j].Owner
-			}
-			return rows[i].Name < rows[j].Name
-		})
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(rows)
-	case http.MethodPost:
-		owner := strings.TrimSpace(r.URL.Query().Get("owner"))
-		name := strings.TrimSpace(r.URL.Query().Get("name"))
-		if owner == "" || name == "" {
-			http.Error(w, "owner and name required", http.StatusBadRequest)
-			return
-		}
-		var err error
-		switch r.URL.Query().Get("action") {
-		// The admin's actions HOLD: the owner's own switch cannot undo them
-		// (AdminDisabled / AdminLendLocked); only an admin action here can.
-		case "disable":
-			err = Secure().AdminSetDisabledOwned(owner, name, true)
-		case "enable":
-			err = Secure().AdminSetDisabledOwned(owner, name, false)
-		case "revoke_share":
-			// Both lists at once. An admin either accepts a lend or stops
-			// it; narrowing somebody's grant from writes to reads on their
-			// behalf would leave the owner believing they gave one thing
-			// and the borrower holding another.
-			err = Secure().AdminRevokeShares(owner, name)
-		case "allow_share":
-			err = Secure().AdminAllowLending(owner, name)
-		default:
-			http.Error(w, "action must be enable|disable|revoke_share|allow_share", http.StatusBadRequest)
-			return
-		}
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	case http.MethodDelete:
-		owner := strings.TrimSpace(r.URL.Query().Get("owner"))
-		name := strings.TrimSpace(r.URL.Query().Get("name"))
-		if owner == "" || name == "" {
-			http.Error(w, "owner and name required", http.StatusBadRequest)
-			return
-		}
-		if err := Secure().DeleteUser(owner, name); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
+		return rows[i].Name < rows[j].Name
+	})
+	return rows, nil
+}
+
+// handleUserCredentialAction holds an admin's decision on one user's
+// credential.
+func (a *AdminApp) handleUserCredentialAction(c *jsonapi.Call, _ struct{}) (any, error) {
+	owner, name, err := ownedCredentialArgs(c)
+	if err != nil {
+		return nil, err
+	}
+	switch c.R.URL.Query().Get("action") {
+	// The admin's actions HOLD: the owner's own switch cannot undo them
+	// (AdminDisabled / AdminLendLocked); only an admin action here can.
+	case "disable":
+		err = Secure().AdminSetDisabledOwned(owner, name, true)
+	case "enable":
+		err = Secure().AdminSetDisabledOwned(owner, name, false)
+	case "revoke_share":
+		// Both lists at once. An admin either accepts a lend or stops
+		// it; narrowing somebody's grant from writes to reads on their
+		// behalf would leave the owner believing they gave one thing
+		// and the borrower holding another.
+		err = Secure().AdminRevokeShares(owner, name)
+	case "allow_share":
+		err = Secure().AdminAllowLending(owner, name)
 	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return nil, jsonapi.BadRequest("action must be enable|disable|revoke_share|allow_share")
 	}
+	if err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// handleUserCredentialDelete removes one user's credential.
+func (a *AdminApp) handleUserCredentialDelete(c *jsonapi.Call, _ struct{}) (any, error) {
+	owner, name, err := ownedCredentialArgs(c)
+	if err != nil {
+		return nil, err
+	}
+	if err = Secure().DeleteUser(owner, name); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// ownedCredentialArgs is the ?owner=&name= a credential action names.
+func ownedCredentialArgs(c *jsonapi.Call) (owner, name string, err error) {
+	q := c.R.URL.Query()
+	owner, name = strings.TrimSpace(q.Get("owner")), strings.TrimSpace(q.Get("name"))
+	if owner == "" || name == "" {
+		return "", "", jsonapi.BadRequest("owner and name required")
+	}
+	return owner, name, nil
 }
 
 // handleUserAgents serves /api/user-agents; registerUsersRoutes says what it is for.
-func (a *AdminApp) handleUserAgents(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
-		return
+func (a *AdminApp) handleUserAgents(c *jsonapi.Call) (any, error) {
+	rows := []UserOwnedAgentRow{}
+	if AdminListUserOwnedAgents != nil {
+		rows = AdminListUserOwnedAgents(a.db)
 	}
-	switch r.Method {
-	case http.MethodGet:
-		rows := []UserOwnedAgentRow{}
-		if AdminListUserOwnedAgents != nil {
-			rows = AdminListUserOwnedAgents(a.db)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(rows)
-	case http.MethodPost:
-		action := r.URL.Query().Get("action")
-		owner := strings.TrimSpace(r.URL.Query().Get("owner"))
-		id := strings.TrimSpace(r.URL.Query().Get("id"))
-		if owner == "" || id == "" {
-			http.Error(w, "owner and id required", http.StatusBadRequest)
-			return
-		}
-		var hook func(Database, string, string) error
-		switch action {
-		case "revoke_share":
-			hook = AdminRevokeAgentShare
-		case "publish": // admin "delegate to users" — flip Exposed on
-			hook = AdminPublishAgent
-		default:
-			http.Error(w, "action must be revoke_share|publish", http.StatusBadRequest)
-			return
-		}
-		if hook == nil {
-			http.Error(w, "unavailable (orchestrate not wired)", http.StatusServiceUnavailable)
-			return
-		}
-		if err := hook(a.db, owner, id); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
+	return rows, nil
+}
+
+// handleUserAgentsAction acts on one row of handleUserAgents.
+func (a *AdminApp) handleUserAgentsAction(c *jsonapi.Call, _ struct{}) (any, error) {
+	q := c.R.URL.Query()
+	owner := strings.TrimSpace(q.Get("owner"))
+	id := strings.TrimSpace(q.Get("id"))
+	if owner == "" || id == "" {
+		return nil, jsonapi.BadRequest("owner and id required")
+	}
+	var hook func(Database, string, string) error
+	switch q.Get("action") {
+	case "revoke_share":
+		hook = AdminRevokeAgentShare
+	case "publish": // admin "delegate to users" — flip Exposed on
+		hook = AdminPublishAgent
 	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return nil, jsonapi.BadRequest("action must be revoke_share|publish")
 	}
+	if hook == nil {
+		return nil, jsonapi.Status(http.StatusServiceUnavailable, "unavailable (orchestrate not wired)")
+	}
+	if err := hook(a.db, owner, id); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // handleUserPipelines serves /api/user-pipelines; registerUsersRoutes says what it is for.
-func (a *AdminApp) handleUserPipelines(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
-		return
+func (a *AdminApp) handleUserPipelines(c *jsonapi.Call) (any, error) {
+	rows := []UserOwnedPipelineRow{}
+	if AdminListUserOwnedPipelines != nil {
+		rows = AdminListUserOwnedPipelines(a.db)
 	}
-	switch r.Method {
-	case http.MethodGet:
-		rows := []UserOwnedPipelineRow{}
-		if AdminListUserOwnedPipelines != nil {
-			rows = AdminListUserOwnedPipelines(a.db)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(rows)
-	case http.MethodPost:
-		owner := strings.TrimSpace(r.URL.Query().Get("owner"))
-		id := strings.TrimSpace(r.URL.Query().Get("id"))
-		if owner == "" || id == "" {
-			http.Error(w, "owner and id required", http.StatusBadRequest)
-			return
-		}
-		if r.URL.Query().Get("action") != "revoke_share" {
-			http.Error(w, "action must be revoke_share", http.StatusBadRequest)
-			return
-		}
-		if AdminRevokePipelineShare == nil {
-			http.Error(w, "unavailable (orchestrate not wired)", http.StatusServiceUnavailable)
-			return
-		}
-		if err := AdminRevokePipelineShare(a.db, owner, id); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	return rows, nil
+}
+
+// handleUserPipelinesAction acts on one row of handleUserPipelines.
+func (a *AdminApp) handleUserPipelinesAction(c *jsonapi.Call, _ struct{}) (any, error) {
+	q := c.R.URL.Query()
+	owner := strings.TrimSpace(q.Get("owner"))
+	id := strings.TrimSpace(q.Get("id"))
+	if owner == "" || id == "" {
+		return nil, jsonapi.BadRequest("owner and id required")
 	}
+	if q.Get("action") != "revoke_share" {
+		return nil, jsonapi.BadRequest("action must be revoke_share")
+	}
+	if AdminRevokePipelineShare == nil {
+		return nil, jsonapi.Status(http.StatusServiceUnavailable, "unavailable (orchestrate not wired)")
+	}
+	if err := AdminRevokePipelineShare(a.db, owner, id); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // handleUserMachines serves /api/user-machines; registerUsersRoutes says what it is for.
-func (a *AdminApp) handleUserMachines(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
-		return
+func (a *AdminApp) handleUserMachines(c *jsonapi.Call) (any, error) {
+	rows := []UserOwnedMachineRow{}
+	if AdminListUserOwnedMachines != nil {
+		rows = AdminListUserOwnedMachines(a.db)
 	}
-	switch r.Method {
-	case http.MethodGet:
-		rows := []UserOwnedMachineRow{}
-		if AdminListUserOwnedMachines != nil {
-			rows = AdminListUserOwnedMachines(a.db)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(rows)
-	case http.MethodPost:
-		owner := strings.TrimSpace(r.URL.Query().Get("owner"))
-		id := strings.TrimSpace(r.URL.Query().Get("id"))
-		if owner == "" || id == "" {
-			http.Error(w, "owner and id required", http.StatusBadRequest)
-			return
-		}
-		if r.URL.Query().Get("action") != "revoke_share" {
-			http.Error(w, "action must be revoke_share", http.StatusBadRequest)
-			return
-		}
-		if AdminRevokeMachineShare == nil {
-			http.Error(w, "unavailable (orchestrate not wired)", http.StatusServiceUnavailable)
-			return
-		}
-		if err := AdminRevokeMachineShare(a.db, owner, id); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	return rows, nil
+}
+
+// handleUserMachinesAction acts on one row of handleUserMachines.
+func (a *AdminApp) handleUserMachinesAction(c *jsonapi.Call, _ struct{}) (any, error) {
+	q := c.R.URL.Query()
+	owner := strings.TrimSpace(q.Get("owner"))
+	id := strings.TrimSpace(q.Get("id"))
+	if owner == "" || id == "" {
+		return nil, jsonapi.BadRequest("owner and id required")
 	}
+	if q.Get("action") != "revoke_share" {
+		return nil, jsonapi.BadRequest("action must be revoke_share")
+	}
+	if AdminRevokeMachineShare == nil {
+		return nil, jsonapi.Status(http.StatusServiceUnavailable, "unavailable (orchestrate not wired)")
+	}
+	if err := AdminRevokeMachineShare(a.db, owner, id); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // handlePromotions serves /api/promotions; registerUsersRoutes says what it is for.

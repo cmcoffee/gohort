@@ -175,3 +175,38 @@ func TestEmptyAnswersWithTheStatusAlone(t *testing.T) {
 		}
 	}
 }
+
+// A surface with a gate of its own admits by that gate, not by a signed-in
+// user: the gate's refusal stands, and what it lets through runs even with
+// nobody signed in (an install with no accounts yet).
+func TestAuthorizeAdmitsByTheGivenGate(t *testing.T) {
+	cookie := signIn(t)
+	base := &core.DBase{Store: kvlite.MemStore()}
+	open := true
+	gate := func(w http.ResponseWriter, r *http.Request) bool {
+		if !open {
+			http.Error(w, "forbidden", http.StatusForbidden)
+		}
+		return open
+	}
+	ran := 0
+	h := Get(base, func(c *Call) (string, error) {
+		ran++
+		return "as " + c.User, nil
+	}, Authorize(gate))
+
+	if w := call(h, "GET", "", nil); w.Code != 200 || !strings.Contains(w.Body.String(), `"as "`) {
+		t.Errorf("the gate let a caller with no session through, and the handler did not run: %d %q", w.Code, w.Body.String())
+	}
+	if w := call(h, "GET", "", cookie); w.Code != 200 || !strings.Contains(w.Body.String(), `"as alice"`) {
+		t.Errorf("a signed-in caller is not named: %d %q", w.Code, w.Body.String())
+	}
+	open = false
+	before := ran
+	if w := call(h, "GET", "", cookie); w.Code != 403 || ran != before {
+		t.Errorf("the gate refused and the handler ran anyway: %d, ran %d", w.Code, ran-before)
+	}
+	if w := call(Post(base, func(c *Call, _ struct{}) (string, error) { return "x", nil }, Authorize(gate)), "POST", "", cookie); w.Code != 403 {
+		t.Errorf("Post ignored the gate: %d", w.Code)
+	}
+}

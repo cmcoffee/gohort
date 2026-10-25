@@ -1,0 +1,244 @@
+(signed out) GET /api/app-panels?path=/servitor ""
+  403 forbidden
+alice GET /api/app-panels?path=/servitor ""
+  403 forbidden
+root GET /api/app-panels?path=/servitor ""
+  200 []
+root PUT /api/app-panels?path=/servitor "{}"
+  405 method not allowed
+(signed out) GET /api/app-summary?path=/nope ""
+  403 forbidden
+alice GET /api/app-summary?path=/nope ""
+  403 forbidden
+root GET /api/app-summary?path=/nope ""
+  404 no such app
+root PUT /api/app-summary?path=/nope "{}"
+  405 method not allowed
+(signed out) GET /api/tool-templates ""
+  403 forbidden
+alice GET /api/tool-templates ""
+  403 forbidden
+root GET /api/tool-templates ""
+  200 [{"name":"github_issue","label":"GitHub: create issue","category":"Tools","description":"Open an issue on a GitHub repo. Needs a SecureAPI credential holding a GitHub token."},{"name":"openapi_tool","… (605 bytes, sha1 d68e30672557f075353278906cd877938cbda5cc)
+root PUT /api/tool-templates "{}"
+  405 method not allowed
+(signed out) GET /api/embeddings/models ""
+  403 forbidden
+alice GET /api/embeddings/models ""
+  403 forbidden
+root GET /api/embeddings/models ""
+  200 []
+root PUT /api/embeddings/models "{}"
+  405 method not allowed
+(signed out) GET /api/connector-templates ""
+  403 forbidden
+alice GET /api/connector-templates ""
+  403 forbidden
+root GET /api/connector-templates ""
+  200 [{"name":"a1111","label":"Automatic1111","category":"Image generation","description":"A local or self-hosted Automatic1111 (stable-diffusion-webui) server. Synchronous txt2img: no workflow needed."},{… (698 bytes, sha1 228fa8c431955d7615a7f916df6f28398468f035)
+root PUT /api/connector-templates "{}"
+  405 method not allowed
+(signed out) GET /api/connector-templates?category=none ""
+  403 forbidden
+alice GET /api/connector-templates?category=none ""
+  403 forbidden
+root GET /api/connector-templates?category=none ""
+  200 null
+root PUT /api/connector-templates?category=none "{}"
+  405 method not allowed
+(signed out) GET /api/extensions ""
+  403 forbidden
+alice GET /api/extensions ""
+  403 forbidden
+root GET /api/extensions ""
+  200 [{"name":"a1111","label":"Automatic1111","target":"connector","category":"Image generation","description":"A local or self-hosted Automatic1111 (stable-diffusion-webui) server. Synchronous txt2img: no… (1413 bytes, sha1 34fb5a899e89b378aa15b3892a75ba42a04b932d)
+root PUT /api/extensions "{}"
+  405 method not allowed
+(signed out) GET /api/tool-template?name=nope ""
+  403 forbidden
+alice GET /api/tool-template?name=nope ""
+  403 forbidden
+root GET /api/tool-template?name=nope ""
+  404 no such tool template
+root PUT /api/tool-template?name=nope "{}"
+  405 method not allowed
+(signed out) GET /api/connector-template?name=nope ""
+  403 forbidden
+alice GET /api/connector-template?name=nope ""
+  403 forbidden
+root GET /api/connector-template?name=nope ""
+  404 no such template
+root PUT /api/connector-template?name=nope "{}"
+  405 method not allowed
+(signed out) GET /api/extension-template?name=nope ""
+  403 forbidden
+alice GET /api/extension-template?name=nope ""
+  403 forbidden
+root GET /api/extension-template?name=nope ""
+  404 no such template
+root PUT /api/extension-template?name=nope "{}"
+  405 method not allowed
+(signed out) GET /api/db/tables ""
+  403 forbidden
+alice GET /api/db/tables ""
+  403 forbidden
+root GET /api/db/tables ""
+  200 ["auth_config","auth_sessions"]
+root PUT /api/db/tables "{}"
+  405 method not allowed
+(signed out) GET /api/db/keys?table=auth ""
+  403 forbidden
+alice GET /api/db/keys?table=auth ""
+  403 forbidden
+root GET /api/db/keys?table=auth ""
+  200 null
+root PUT /api/db/keys?table=auth "{}"
+  405 method not allowed
+(signed out) GET /api/db/keys ""
+  403 forbidden
+alice GET /api/db/keys ""
+  403 forbidden
+root GET /api/db/keys ""
+  400 table required
+root PUT /api/db/keys "{}"
+  405 method not allowed
+(signed out) GET /api/activity ""
+  403 forbidden
+alice GET /api/activity ""
+  403 forbidden
+root GET /api/activity ""
+  200 []
+root PUT /api/activity "{}"
+  405 method not allowed
+(signed out) GET /api/activity?limit=2 ""
+  403 forbidden
+alice GET /api/activity?limit=2 ""
+  403 forbidden
+root GET /api/activity?limit=2 ""
+  200 []
+root PUT /api/activity?limit=2 "{}"
+  405 method not allowed
+(signed out) GET /api/user-agents ""
+  403 forbidden
+alice GET /api/user-agents ""
+  403 forbidden
+root GET /api/user-agents ""
+  200 []
+root PUT /api/user-agents "{}"
+  405 method not allowed
+(signed out) GET /api/user-machines ""
+  403 forbidden
+alice GET /api/user-machines ""
+  403 forbidden
+root GET /api/user-machines ""
+  200 []
+root PUT /api/user-machines "{}"
+  405 method not allowed
+(signed out) GET /api/user-pipelines ""
+  403 forbidden
+alice GET /api/user-pipelines ""
+  403 forbidden
+root GET /api/user-pipelines ""
+  200 []
+root PUT /api/user-pipelines "{}"
+  405 method not allowed
+(signed out) GET /api/user-credentials ""
+  403 forbidden
+alice GET /api/user-credentials ""
+  403 forbidden
+root GET /api/user-credentials ""
+  200 []
+root PUT /api/user-credentials "{}"
+  405 method not allowed
+(signed out) GET /api/personal-mcp-servers ""
+  403 forbidden
+alice GET /api/personal-mcp-servers ""
+  403 forbidden
+root GET /api/personal-mcp-servers ""
+  200 []
+root PUT /api/personal-mcp-servers "{}"
+  405 method not allowed
+(signed out) GET /api/personal-integrations ""
+  403 forbidden
+alice GET /api/personal-integrations ""
+  403 forbidden
+root GET /api/personal-integrations ""
+  200 {"credentials":"allowed","mcp_servers":"approval"}
+root PUT /api/personal-integrations "{}"
+  200 {"credentials":"allowed","mcp_servers":"approval"}
+(signed out) GET /api/user-candidates ""
+  403 forbidden
+alice GET /api/user-candidates ""
+  403 forbidden
+root GET /api/user-candidates ""
+  200 [{"value":"alice","label":"alice"},{"value":"root","label":"root"}]
+root PUT /api/user-candidates "{}"
+  405 method not allowed
+alice POST /api/user-agents?owner=bob&id=x&action=revoke_share ""
+  403 forbidden
+root POST /api/user-agents ""
+  400 owner and id required
+root POST /api/user-agents?owner=bob&id=x&action=bogus ""
+  400 action must be revoke_share|publish
+root POST /api/user-agents?owner=bob&id=x&action=revoke_share ""
+  503 unavailable (orchestrate not wired)
+alice POST /api/user-machines?owner=bob&id=x&action=revoke_share ""
+  403 forbidden
+root POST /api/user-machines ""
+  400 owner and id required
+root POST /api/user-machines?owner=bob&id=x&action=bogus ""
+  400 action must be revoke_share
+root POST /api/user-machines?owner=bob&id=x&action=revoke_share ""
+  503 unavailable (orchestrate not wired)
+alice POST /api/user-pipelines?owner=bob&id=x&action=revoke_share ""
+  403 forbidden
+root POST /api/user-pipelines ""
+  400 owner and id required
+root POST /api/user-pipelines?owner=bob&id=x&action=bogus ""
+  400 action must be revoke_share
+root POST /api/user-pipelines?owner=bob&id=x&action=revoke_share ""
+  503 unavailable (orchestrate not wired)
+root POST /api/user-agents?owner=bob&id=x&action=publish ""
+  503 unavailable (orchestrate not wired)
+alice POST /api/user-credentials?owner=bob&name=k&action=disable ""
+  403 forbidden
+root POST /api/user-credentials ""
+  400 owner and name required
+root POST /api/user-credentials?owner=bob&name=k&action=bogus ""
+  400 action must be enable|disable|revoke_share|allow_share
+root POST /api/user-credentials?owner=bob&name=k&action=disable ""
+  400 credential "k" not found
+root DELETE /api/user-credentials ""
+  400 owner and name required
+alice DELETE /api/user-credentials?owner=bob&name=k ""
+  403 forbidden
+root POST /api/personal-mcp-servers?owner=bob&name=s&action=bogus ""
+  400 action must be enable, disable or check
+root POST /api/personal-mcp-servers?owner=bob&name=s&action=enable ""
+  400 no server "s"
+root DELETE /api/personal-mcp-servers?owner=bob&name=s ""
+  400 no server "s"
+alice POST /api/personal-mcp-servers?owner=bob&name=s&action=enable ""
+  403 forbidden
+root POST /api/personal-integrations "{}"
+  200 {"credentials":"allowed","mcp_servers":"approval"}
+root PATCH /api/personal-integrations "{\"mcp\":\"nonsense\"}"
+  200 {"credentials":"allowed","mcp_servers":"approval"}
+root POST /api/personal-integrations "{\"mcp\":"
+  400 invalid JSON: unexpected EOF
+root POST /api/personal-integrations ""
+  400 invalid JSON: EOF
+alice POST /api/personal-integrations "{}"
+  403 forbidden
+(signed out) GET /api/db/tables ""
+  200 null
+(signed out) GET /api/tool-templates ""
+  200 [{"name":"github_issue","label":"GitHub: create issue","category":"Tools","description":"Open an issue on a GitHub repo. Needs a SecureAPI credential holding a GitHub token."},{"name":"openapi_tool","… (605 bytes, sha1 d68e30672557f075353278906cd877938cbda5cc)
+(signed out) GET /api/user-candidates ""
+  200 []
+(signed out) GET /api/personal-integrations ""
+  200 {"credentials":"allowed","mcp_servers":"approval"}
+(signed out) GET /api/user-agents ""
+  200 []
+(signed out) POST /api/user-agents?owner=bob&id=x&action=revoke_share ""
+  503 unavailable (orchestrate not wired)

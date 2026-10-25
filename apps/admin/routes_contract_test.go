@@ -1,0 +1,152 @@
+package admin
+
+import (
+	"crypto/sha1"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"regexp"
+	"sort"
+	"strings"
+	"testing"
+
+	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/snugforge/kvlite"
+)
+
+// What the admin pages get back from the JSON endpoints built on jsonapi,
+// through the real routes and the gate in front of them: signed out, as a user
+// who is not an administrator, as one who is, by the wrong method and with a
+// missing field; and on an install with no accounts yet, which the gate opens
+// to whoever reaches it. Compared with testdata/routes_contract.golden, so a
+// change that moves who reaches an admin endpoint shows up as a diff.
+//
+// Run with UPDATE_GOLDEN=1 to rewrite the golden after a change that is meant.
+func TestRoutesContract(t *testing.T) {
+	adb := &DBase{Store: kvlite.MemStore()}
+	adb.Set(AuthTable, "user:alice", AuthUser{Username: "alice"})
+	adb.Set(AuthTable, "user:root", AuthUser{Username: "root", Admin: true})
+	prevAuth := AuthDB
+	AuthDB = func() Database { return adb }
+	t.Cleanup(func() { AuthDB = prevAuth })
+
+	var log strings.Builder
+	hex := regexp.MustCompile(`\b[0-9a-f]{16,64}\b`)
+	stamp := regexp.MustCompile(`\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?(Z|[+-]\d\d:\d\d)`)
+	run := func(mux *http.ServeMux, db Database, user, method, path, body string) {
+		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		if user != "" {
+			r.AddCookie(&http.Cookie{Name: "gohort_session", Value: AuthCreateSession(db, user)})
+		}
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, r)
+		out := strings.TrimSpace(w.Body.String())
+		var items []json.RawMessage
+		if strings.HasPrefix(out, "[") && json.Unmarshal([]byte(out), &items) == nil {
+			rows := make([]string, len(items))
+			for i, it := range items {
+				rows[i] = string(it)
+			}
+			sort.Strings(rows)
+			out = "[" + strings.Join(rows, ",") + "]"
+		}
+		out = hex.ReplaceAllString(out, "<hex>")
+		out = stamp.ReplaceAllString(out, "<time>")
+		// A long reply (a template catalog) is kept as its head and a digest.
+		if len(out) > 400 {
+			out = fmt.Sprintf("%s… (%d bytes, sha1 %x)", out[:200], len(out), sha1.Sum([]byte(out)))
+		}
+		who := user
+		if who == "" {
+			who = "(signed out)"
+		}
+		fmt.Fprintf(&log, "%s %s %s %q\n  %d %s\n", who, method, path, body, w.Code, out)
+	}
+
+	app := &AdminApp{}
+	mux := http.NewServeMux()
+	app.RegisterRoutes(mux, "")
+	do := func(user, method, path, body string) { run(mux, adb, user, method, path, body) }
+
+	reads := []string{
+		"/api/app-panels?path=/servitor", "/api/app-summary?path=/nope", "/api/tool-templates",
+		"/api/embeddings/models", "/api/connector-templates", "/api/connector-templates?category=none",
+		"/api/extensions", "/api/tool-template?name=nope", "/api/connector-template?name=nope",
+		"/api/extension-template?name=nope", "/api/db/tables", "/api/db/keys?table=auth", "/api/db/keys",
+		"/api/activity", "/api/activity?limit=2", "/api/user-agents", "/api/user-machines", "/api/user-pipelines",
+		"/api/user-credentials", "/api/personal-mcp-servers", "/api/personal-integrations", "/api/user-candidates",
+	}
+	for _, p := range reads {
+		do("", "GET", p, "")
+		do("alice", "GET", p, "")
+		do("root", "GET", p, "")
+		do("root", "PUT", p, "{}")
+	}
+
+	for _, p := range []string{"/api/user-agents", "/api/user-machines", "/api/user-pipelines"} {
+		do("alice", "POST", p+"?owner=bob&id=x&action=revoke_share", "")
+		do("root", "POST", p, "")
+		do("root", "POST", p+"?owner=bob&id=x&action=bogus", "")
+		do("root", "POST", p+"?owner=bob&id=x&action=revoke_share", "")
+	}
+	do("root", "POST", "/api/user-agents?owner=bob&id=x&action=publish", "")
+	do("alice", "POST", "/api/user-credentials?owner=bob&name=k&action=disable", "")
+	do("root", "POST", "/api/user-credentials", "")
+	do("root", "POST", "/api/user-credentials?owner=bob&name=k&action=bogus", "")
+	do("root", "POST", "/api/user-credentials?owner=bob&name=k&action=disable", "")
+	do("root", "DELETE", "/api/user-credentials", "")
+	do("alice", "DELETE", "/api/user-credentials?owner=bob&name=k", "")
+	do("root", "POST", "/api/personal-mcp-servers?owner=bob&name=s&action=bogus", "")
+	do("root", "POST", "/api/personal-mcp-servers?owner=bob&name=s&action=enable", "")
+	do("root", "DELETE", "/api/personal-mcp-servers?owner=bob&name=s", "")
+	do("alice", "POST", "/api/personal-mcp-servers?owner=bob&name=s&action=enable", "")
+	do("root", "POST", "/api/personal-integrations", `{}`)
+	do("root", "PATCH", "/api/personal-integrations", `{"mcp":"nonsense"}`)
+	do("root", "POST", "/api/personal-integrations", `{"mcp":`)
+	do("root", "POST", "/api/personal-integrations", ``)
+	do("alice", "POST", "/api/personal-integrations", `{}`)
+
+	// An install with no accounts yet: the gate admits whoever reaches it.
+	fresh := &DBase{Store: kvlite.MemStore()}
+	AuthDB = func() Database { return fresh }
+	app2 := &AdminApp{}
+	mux2 := http.NewServeMux()
+	app2.RegisterRoutes(mux2, "")
+	for _, p := range []string{"/api/db/tables", "/api/tool-templates", "/api/user-candidates", "/api/personal-integrations", "/api/user-agents"} {
+		run(mux2, fresh, "", "GET", p, "")
+	}
+	run(mux2, fresh, "", "POST", "/api/user-agents?owner=bob&id=x&action=revoke_share", "")
+
+	got := log.String()
+	const golden = "testdata/routes_contract.golden"
+	if os.Getenv("UPDATE_GOLDEN") != "" {
+		if err := os.MkdirAll("testdata", 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(golden, []byte(got), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	want, err := os.ReadFile(golden)
+	if err != nil {
+		t.Fatalf("read %s: %v (run with UPDATE_GOLDEN=1 to create it)", golden, err)
+	}
+	if got != string(want) {
+		gl, wl := strings.Split(got, "\n"), strings.Split(string(want), "\n")
+		for i := 0; i < len(gl) || i < len(wl); i++ {
+			var g, w string
+			if i < len(gl) {
+				g = gl[i]
+			}
+			if i < len(wl) {
+				w = wl[i]
+			}
+			if g != w {
+				t.Fatalf("reply differs from %s at line %d:\n got: %s\nwant: %s", golden, i+1, g, w)
+			}
+		}
+	}
+}

@@ -17,9 +17,9 @@
 // What it does not cover stays a plain http.HandlerFunc: a stream, an upload,
 // a page, a call authenticated by a key rather than the browser session.
 //
-// Every handler here requires a signed-in user. Same-origin is already
-// enforced for every state-changing request by the auth middleware, so it is
-// not checked again.
+// Every handler here requires a signed-in user, unless it names a gate of its
+// own with Authorize. Same-origin is already enforced for every state-changing
+// request by the auth middleware, so it is not checked again.
 package jsonapi
 
 import (
@@ -64,13 +64,14 @@ func NotFound(msg string) error { return Status(http.StatusNotFound, msg) }
 func Forbidden(msg string) error { return Status(http.StatusForbidden, msg) }
 
 // Get answers a GET with what fn returns. Any other method is a 405.
-func Get[Out any](base core.Database, fn func(c *Call) (Out, error)) http.HandlerFunc {
+func Get[Out any](base core.Database, fn func(c *Call) (Out, error), opts ...Option) http.HandlerFunc {
+	cfg := configure(opts)
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		c, ok := start(w, r, base)
+		c, ok := start(w, r, base, cfg)
 		if !ok {
 			return
 		}
@@ -91,16 +92,13 @@ func Get[Out any](base core.Database, fn func(c *Call) (Out, error)) http.Handle
 //
 // Methods picks between Get and Post on a path that answers both.
 func Post[In, Out any](base core.Database, fn func(c *Call, in In) (Out, error), opts ...Option) http.HandlerFunc {
-	cfg := postConfig{maxBody: DefaultMaxBody}
-	for _, o := range opts {
-		o(&cfg)
-	}
+	cfg := configure(opts)
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !core.IsStateChangingMethod(r.Method) {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		c, ok := start(w, r, base)
+		c, ok := start(w, r, base, cfg)
 		if !ok {
 			return
 		}
@@ -122,12 +120,30 @@ func Post[In, Out any](base core.Database, fn func(c *Call, in In) (Out, error),
 	}
 }
 
-// Option changes how Post reads its body.
-type Option func(*postConfig)
+// Option changes how a handler admits its caller or reads its body.
+type Option func(*config)
 
-type postConfig struct {
-	emptyOK bool
-	maxBody int64
+type config struct {
+	authorize func(http.ResponseWriter, *http.Request) bool
+	emptyOK   bool
+	maxBody   int64
+}
+
+func configure(opts []Option) config {
+	cfg := config{maxBody: DefaultMaxBody}
+	for _, o := range opts {
+		o(&cfg)
+	}
+	return cfg
+}
+
+// Authorize admits the caller by check instead of by a signed-in user: for a
+// surface with a gate of its own, such as the admin pages, which an install
+// with no accounts yet opens to whoever reaches it on a safe address. check
+// answers the request itself when it refuses (a 403, a 404). The Call's User
+// is whoever is signed in, "" when nobody is, and its UDB is then nil.
+func Authorize(check func(http.ResponseWriter, *http.Request) bool) Option {
+	return func(c *config) { c.authorize = check }
 }
 
 // DefaultMaxBody is the most a Post reads unless MaxBody says otherwise: room
@@ -138,11 +154,11 @@ const DefaultMaxBody = 1 << 20
 // EmptyBodyOK takes a request with no body as the zero In rather than a 400:
 // for an endpoint whose callers leave the body off when the query string
 // carries what they mean. A body that is there and malformed is still a 400.
-var EmptyBodyOK Option = func(c *postConfig) { c.emptyOK = true }
+var EmptyBodyOK Option = func(c *config) { c.emptyOK = true }
 
 // MaxBody lets a Post read up to n bytes, for an endpoint whose body is a
 // document rather than a form.
-func MaxBody(n int64) Option { return func(c *postConfig) { c.maxBody = n } }
+func MaxBody(n int64) Option { return func(c *config) { c.maxBody = n } }
 
 // Methods routes one path by method, for an endpoint that answers more than
 // one: Methods{"GET": jsonapi.Get(...), "POST": jsonapi.Post(...)}.Serve. Any
@@ -177,9 +193,20 @@ func Write(w http.ResponseWriter, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-// start is the part every handler shares before its work: the signed-in user
-// (core.RequireUser answers 401 itself when there is none).
-func start(w http.ResponseWriter, r *http.Request, base core.Database) (*Call, bool) {
+// start is the part every handler shares before its work: the caller's gate,
+// Authorize's check or else a signed-in user (core.RequireUser answers 401
+// itself when there is none).
+func start(w http.ResponseWriter, r *http.Request, base core.Database, cfg config) (*Call, bool) {
+	if cfg.authorize != nil {
+		if !cfg.authorize(w, r) {
+			return nil, false
+		}
+		c := &Call{W: w, R: r, User: core.AuthCurrentUser(r)}
+		if c.User != "" {
+			c.UDB = core.UserDB(base, c.User)
+		}
+		return c, true
+	}
 	user, udb, ok := core.RequireUser(w, r, base)
 	if !ok {
 		return nil, false

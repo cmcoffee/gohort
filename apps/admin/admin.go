@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -150,8 +151,8 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	// and the switchboard cannot toggle. Both on one path is a duplicate
 	// registration, which ServeMux answers with a panic at startup.
 	sub.HandleFunc("/api/app-switches", a.handleApps)
-	sub.HandleFunc("/api/app-summary", a.handleAppSummary)
-	sub.HandleFunc("/api/app-panels", a.handleAppPanels)
+	sub.HandleFunc("/api/app-summary", jsonapi.Get(a.db, a.handleAppSummary, a.gate()))
+	sub.HandleFunc("/api/app-panels", jsonapi.Get(a.db, a.handleAppPanels, a.gate()))
 	// One app's own page, opened from its row in the table.
 	sub.HandleFunc("/app", a.handleAppPage)
 
@@ -199,6 +200,11 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		mux.Handle("/", gated)
 	}
 }
+
+// gate is requireAdmin as a jsonapi option: every admin endpoint built on
+// jsonapi checks it for itself, behind the gate the whole surface sits behind,
+// and an install with no accounts yet is admitted as requireAdmin admits it.
+func (a *AdminApp) gate() jsonapi.Option { return jsonapi.Authorize(a.requireAdmin) }
 
 // requireAdmin checks admin status and returns 403 if not.
 func (a *AdminApp) requireAdmin(w http.ResponseWriter, r *http.Request) bool {

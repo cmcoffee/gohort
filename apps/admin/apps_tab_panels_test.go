@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/ui"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
@@ -73,7 +74,7 @@ func TestHiddenAppWithClaimsGetsAPaneButNoSwitch(t *testing.T) {
 func TestHiddenAppSummarySaysWhyThereIsNoSwitch(t *testing.T) {
 	a := &AdminApp{db: &DBase{Store: kvlite.MemStore()}}
 	w := httptest.NewRecorder()
-	a.handleAppSummary(w, httptest.NewRequest("GET", "/api/app-summary?path=/hiddenpanetest", nil))
+	jsonapi.Get(a.db, a.handleAppSummary, a.gate())(w, httptest.NewRequest("GET", "/api/app-summary?path=/hiddenpanetest", nil))
 	var got map[string]any
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 		t.Fatalf("%v: %s", err, w.Body.String())
@@ -86,7 +87,7 @@ func TestHiddenAppSummarySaysWhyThereIsNoSwitch(t *testing.T) {
 func TestPanelLinksNameTheTabTheSectionIsOn(t *testing.T) {
 	a := &AdminApp{db: &DBase{Store: kvlite.MemStore()}}
 	w := httptest.NewRecorder()
-	a.handleAppPanels(w, httptest.NewRequest("GET", "/api/app-panels?path=/hiddenpanetest", nil))
+	jsonapi.Get(a.db, a.handleAppPanels, a.gate())(w, httptest.NewRequest("GET", "/api/app-panels?path=/hiddenpanetest", nil))
 	var rows []map[string]string
 	if err := json.Unmarshal(w.Body.Bytes(), &rows); err != nil {
 		t.Fatalf("%v: %s", err, w.Body.String())
@@ -171,7 +172,7 @@ func TestASectionFiledUnderAppsIsOnItsAppsPage(t *testing.T) {
 func TestAnUntitledPanelLinksToItsTab(t *testing.T) {
 	a := &AdminApp{db: &DBase{Store: kvlite.MemStore()}}
 	w := httptest.NewRecorder()
-	a.handleAppPanels(w, httptest.NewRequest("GET", "/api/app-panels?path=/hiddenuntitled", nil))
+	jsonapi.Get(a.db, a.handleAppPanels, a.gate())(w, httptest.NewRequest("GET", "/api/app-panels?path=/hiddenuntitled", nil))
 	var rows []map[string]string
 	if err := json.Unmarshal(w.Body.Bytes(), &rows); err != nil {
 		t.Fatalf("%v: %s", err, w.Body.String())
