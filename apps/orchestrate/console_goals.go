@@ -25,6 +25,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -164,7 +165,7 @@ func (T *OrchestrateApp) handleConsoleGoals(w http.ResponseWriter, r *http.Reque
 	}
 
 	ui.SortRowsBySection(out, []string{goalSectionStalled, goalSectionInFlight, goalSectionMet})
-	writeJSON(w, out)
+	jsonapi.Write(w, out)
 }
 
 // rfc3339 is the one stamp format every scheduled surface reports a next fire

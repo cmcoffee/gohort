@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // Agent capability governance — the OUTWARD / SPENDING tier (slice 1).
@@ -170,5 +171,5 @@ func (T *OrchestrateApp) handleAgentCapabilities(w http.ResponseWriter, r *http.
 			out = append(out, c)
 		}
 	}
-	writeJSON(w, out)
+	jsonapi.Write(w, out)
 }

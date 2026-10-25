@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // maxDraftDescription bounds the request. A description is a paragraph;
@@ -92,7 +93,7 @@ func (T *OrchestrateApp) handleMachineDraft(w http.ResponseWriter, r *http.Reque
 	saved := SaveMachineDef(udb, def)
 	Log("[orchestrate.machines] user=%q drafted machine %q (id=%s, %d steps, %d problems left)",
 		user, saved.Name, saved.ID, len(saved.Phases), len(saved.Problems()))
-	writeJSON(w, map[string]any{"id": saved.ID, "name": saved.Name, "checklist": saved.Problems()})
+	jsonapi.Write(w, map[string]any{"id": saved.ID, "name": saved.Name, "checklist": saved.Problems()})
 }
 
 // draftMachineOnce makes one authoring call and decodes it through the

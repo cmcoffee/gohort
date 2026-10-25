@@ -34,6 +34,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/sandbox"
 )
 
@@ -231,16 +232,16 @@ func (T *OrchestrateApp) handleAgentAccess(w http.ResponseWriter, r *http.Reques
 		if rows == nil {
 			rows = []agentReachRow{}
 		}
-		writeJSON(w, rows)
+		jsonapi.Write(w, rows)
 		return
 	case "workspace":
-		writeJSON(w, T.accessWorkspaceRows(rec))
+		jsonapi.Write(w, T.accessWorkspaceRows(rec))
 		return
 	case "knowledge":
-		writeJSON(w, accessKnowledgeRows(rec))
+		jsonapi.Write(w, accessKnowledgeRows(rec))
 		return
 	case "subagents":
-		writeJSON(w, agentSubAgents(udb, user, rec))
+		jsonapi.Write(w, agentSubAgents(udb, user, rec))
 		return
 	}
 	// The tools this agent's worker would actually be handed, resolved through
@@ -256,12 +257,12 @@ func (T *OrchestrateApp) handleAgentAccess(w http.ResponseWriter, r *http.Reques
 	// page is only worth having if it never confuses them.
 	rows, err := T.resolvedAgentTools(r.Context(), udb, user, rec)
 	if err != nil {
-		writeJSON(w, map[string]any{
+		jsonapi.Write(w, map[string]any{
 			"error": "This agent's toolset could not be resolved, so nothing below is the full picture: " + err.Error(),
 		})
 		return
 	}
-	writeJSON(w, rows)
+	jsonapi.Write(w, rows)
 }
 
 // accessSideRow is a row in the two groups that are not a tool list: a fact,

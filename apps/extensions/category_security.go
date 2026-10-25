@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // categoryMembers is the tools in a category, as the Categories list shows
@@ -76,7 +77,7 @@ func categoryRunSection(w http.ResponseWriter, r *http.Request, db Database, use
 		if uPart || aPart {
 			note += " A dashed one is on for some of them and not others; clicking it turns it on for all."
 		}
-		writeJSON(w, map[string]any{"note": note, "items": []pill{
+		jsonapi.Write(w, map[string]any{"note": note, "items": []pill{
 			{Key: "never_unattended", Label: "Never run unattended", On: uOn, Partial: uPart},
 			{Key: "ask_first", Label: "Ask me before every call", On: aOn, Partial: aPart},
 		}})
@@ -200,7 +201,7 @@ func categoryWhoSection(w http.ResponseWriter, r *http.Request, db Database, use
 		} else if !sameMode {
 			mode = ""
 		}
-		writeJSON(w, map[string]any{"mode": mode, "agents": rows, "count": len(members), "differ": differs})
+		jsonapi.Write(w, map[string]any{"mode": mode, "agents": rows, "count": len(members), "differ": differs})
 	case http.MethodPost:
 		var body struct {
 			Mode   string   `json:"mode"`
@@ -238,7 +239,7 @@ func categoryWhoSection(w http.ResponseWriter, r *http.Request, db Database, use
 			http.Error(w, "set for the others, but not: "+strings.Join(failed, "; "), http.StatusBadRequest)
 			return
 		}
-		writeJSON(w, map[string]any{"ok": true, "message": "Set for all " + countTools(len(members)) + "."})
+		jsonapi.Write(w, map[string]any{"ok": true, "message": "Set for all " + countTools(len(members)) + "."})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}

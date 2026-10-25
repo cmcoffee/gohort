@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // maxImportBytes bounds a pasted or uploaded recipe or bundle. A bundle can
@@ -100,7 +101,7 @@ func importBundleAtDoor(w http.ResponseWriter, user string, body []byte, typ str
 		if len(res.Checklist) > 0 {
 			out["checklist"] = res.Checklist
 		}
-		writeJSON(w, out)
+		jsonapi.Write(w, out)
 		return true
 	}
 	// The bundle's own item of this type did not land (a same-named one

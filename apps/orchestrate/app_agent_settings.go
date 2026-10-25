@@ -29,6 +29,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/appagents"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -185,13 +186,13 @@ func (T *OrchestrateApp) serveAppAgentSettings(w http.ResponseWriter, r *http.Re
 					out[k] = view[k]
 				}
 			}
-			writeJSON(w, out)
+			jsonapi.Write(w, out)
 		case http.MethodPatch, http.MethodPost:
 			if err := saveAppAgentSettings(udb, user, rec, allowed, r); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
-			writeJSON(w, map[string]any{"ok": true})
+			jsonapi.Write(w, map[string]any{"ok": true})
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
@@ -204,7 +205,7 @@ func (T *OrchestrateApp) serveAppAgentSettings(w http.ResponseWriter, r *http.Re
 			http.Error(w, "Not reset: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		writeJSON(w, map[string]any{"ok": true})
+		jsonapi.Write(w, map[string]any{"ok": true})
 	default:
 		http.NotFound(w, r)
 	}

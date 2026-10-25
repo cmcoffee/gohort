@@ -15,6 +15,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/docs"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -135,10 +136,10 @@ func (T *PublishApp) handleConfig(w http.ResponseWriter, r *http.Request) {
 		// dialog without a restart. Registration is keyed by kind and replaces,
 		// so re-running it is how an edit lands rather than a duplicate.
 		T.registerAgentDestinations()
-		writeJSON(w, map[string]any{"ok": true})
+		jsonapi.Write(w, map[string]any{"ok": true})
 		return
 	}
-	writeJSON(w, T.config())
+	jsonapi.Write(w, T.config())
 }
 
 // handleDestinations lists the registered destinations with THIS user's
@@ -149,12 +150,7 @@ func (T *PublishApp) handleDestinations(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	writeJSON(w, map[string]any{"destinations": docs.PublishDestinations(user)})
-}
-
-func writeJSON(w http.ResponseWriter, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(v)
+	jsonapi.Write(w, map[string]any{"destinations": docs.PublishDestinations(user)})
 }
 
 // --- admin section -----------------------------------------------------------

@@ -17,6 +17,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/appagents"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/promotion"
 
 	"github.com/cmcoffee/gohort/apps/publish"
@@ -197,7 +198,7 @@ func (T *Scribe) handleList(w http.ResponseWriter, r *http.Request, udb Database
 			}
 		}
 	}
-	writeJSON(w, out)
+	jsonapi.Write(w, out)
 }
 
 // handleGuide GETs one guide rendered for the viewer ({id, title, html, own,
@@ -223,7 +224,7 @@ func (T *Scribe) handleGuide(w http.ResponseWriter, r *http.Request, udb Databas
 		if canEdit {
 			rec["markdown"] = guideMarkdown(g)
 		}
-		writeJSON(w, rec)
+		jsonapi.Write(w, rec)
 	case http.MethodDelete:
 		if !canManage {
 			http.Error(w, "only the owner can delete this guide", http.StatusForbidden)
@@ -237,7 +238,7 @@ func (T *Scribe) handleGuide(w http.ResponseWriter, r *http.Request, udb Databas
 		_, owner, _, _ := resolveGuide(T.DB, udb, user, id)
 		deleteGuide(ownerUDB, owner, id)
 		indexGuideShares(T.DB, owner, id, false, nil) // drop from both shared indexes
-		writeJSON(w, map[string]bool{"ok": true})
+		jsonapi.Write(w, map[string]bool{"ok": true})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -259,7 +260,7 @@ func (T *Scribe) handleNew(w http.ResponseWriter, r *http.Request, udb Database,
 	g := newDocument(user, body.Title, templateBody(body.Template), false)
 	g.Subtitle = strings.TrimSpace(body.Subtitle)
 	g = saveGuideRev(udb, g, "Created guide")
-	writeJSON(w, map[string]string{"id": g.ID, "title": g.Title})
+	jsonapi.Write(w, map[string]string{"id": g.ID, "title": g.Title})
 }
 
 // templateBody returns the starting body for a named shared document template
@@ -311,7 +312,7 @@ func (T *Scribe) handleBody(w http.ResponseWriter, r *http.Request, udb Database
 	g.Sections = sectionsFromMarkdown(body.Markdown, g.Sections)
 	T.storeEmbeddedImages(&g, ownerUDB)
 	saveGuideRev(ownerUDB, g, "Edited as one page")
-	writeJSON(w, map[string]bool{"ok": true})
+	jsonapi.Write(w, map[string]bool{"ok": true})
 }
 
 // handleImage manages a guide's header image. GET ?id= → {image_url,
@@ -331,7 +332,7 @@ func (T *Scribe) handleImage(w http.ResponseWriter, r *http.Request, udb Databas
 	}
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, map[string]any{
+		jsonapi.Write(w, map[string]any{
 			"image_url":         g.ImageURL,
 			"can_edit":          canEdit,
 			"can_generate":      ImageProfileAvailable("blog") || ImageGenerationAvailable(),
@@ -354,7 +355,7 @@ func (T *Scribe) handleImage(w http.ResponseWriter, r *http.Request, udb Databas
 	if r.Method == http.MethodDelete {
 		g.ImageURL = ""
 		saveGuideRev(ownerUDB, g, "Removed header image")
-		writeJSON(w, map[string]bool{"ok": true})
+		jsonapi.Write(w, map[string]bool{"ok": true})
 		return
 	}
 	var body struct {
@@ -387,7 +388,7 @@ func (T *Scribe) handleImage(w http.ResponseWriter, r *http.Request, udb Databas
 			}
 		}
 		saveGuideRev(ownerUDB, g, note)
-		writeJSON(w, map[string]string{"logo_url": g.HeaderLogo, "from_url": g.HeaderFrom})
+		jsonapi.Write(w, map[string]string{"logo_url": g.HeaderLogo, "from_url": g.HeaderFrom})
 		return
 	}
 	url := strings.TrimSpace(body.URL)
@@ -413,7 +414,7 @@ func (T *Scribe) handleImage(w http.ResponseWriter, r *http.Request, udb Databas
 	}
 	g.ImageURL = url
 	saveGuideRev(ownerUDB, g, "Set header image")
-	writeJSON(w, map[string]string{"image_url": url})
+	jsonapi.Write(w, map[string]string{"image_url": url})
 }
 
 // handleImport creates a guide from an HTML page exported earlier (Scribe's
@@ -442,7 +443,7 @@ func (T *Scribe) handleImport(w http.ResponseWriter, r *http.Request, udb Databa
 	// An HTML export carries its pictures embedded; store them as pictures.
 	T.storeEmbeddedImages(&g, udb)
 	g = saveGuideRev(udb, g, "Imported from HTML")
-	writeJSON(w, map[string]string{"id": g.ID, "title": g.Title})
+	jsonapi.Write(w, map[string]string{"id": g.ID, "title": g.Title})
 }
 
 // handleSettings drives the guide Settings modal: its name/subtitle, the
@@ -459,7 +460,7 @@ func (T *Scribe) handleSettings(w http.ResponseWriter, r *http.Request, udb Data
 	}
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, map[string]any{
+		jsonapi.Write(w, map[string]any{
 			"title": g.Title, "subtitle": g.Subtitle, "private": g.Private,
 			"owner": g.Owner, "can_manage": canManage, "curate_on_report": g.CurateOnReport, "brief": g.Brief,
 		})
@@ -497,7 +498,7 @@ func (T *Scribe) handleSettings(w http.ResponseWriter, r *http.Request, udb Data
 			g.Brief = brief
 		}
 		saveGuide(ownerUDB, g) // metadata, not a content change — no revision snapshot
-		writeJSON(w, map[string]bool{"ok": true})
+		jsonapi.Write(w, map[string]bool{"ok": true})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -522,7 +523,7 @@ func (T *Scribe) handleShare(w http.ResponseWriter, r *http.Request, udb Databas
 	ask := guideEveryoneAsk(owner, g, RequestIsAdmin(r))
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, guideShareOf(g, promotion.EveryonePending(AuthDB(), ask)))
+		jsonapi.Write(w, guideShareOf(g, promotion.EveryonePending(AuthDB(), ask)))
 	case http.MethodPatch, http.MethodPost:
 		var body struct {
 			AllowedUsers *[]string `json:"allowed_users"`
@@ -552,7 +553,7 @@ func (T *Scribe) handleShare(w http.ResponseWriter, r *http.Request, udb Databas
 		g.setEveryoneLevel(level)
 		saveGuide(ownerUDB, g) // who it reaches, not what it says: no revision
 		indexGuideShares(T.DB, owner, id, g.Shared, g.AllowedUsers)
-		writeJSON(w, guideShareOf(g, promotion.EveryonePending(AuthDB(), ask)))
+		jsonapi.Write(w, guideShareOf(g, promotion.EveryonePending(AuthDB(), ask)))
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -628,7 +629,7 @@ func (T *Scribe) handleRevisions(w http.ResponseWriter, r *http.Request, udb Dat
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
 	_, ownerUDB, _, _, found := T.resolve(r, udb, user, id)
 	if !found {
-		writeJSON(w, []any{})
+		jsonapi.Write(w, []any{})
 		return
 	}
 	revs := listRevisions(ownerUDB, id)
@@ -641,7 +642,7 @@ func (T *Scribe) handleRevisions(w http.ResponseWriter, r *http.Request, udb Dat
 	for i := len(revs) - 1; i >= 0; i-- { // newest first
 		out = append(out, row{ID: revs[i].ID, At: revs[i].At, Note: revs[i].Note})
 	}
-	writeJSON(w, out)
+	jsonapi.Write(w, out)
 }
 
 // handleRevisionPreview renders one revision read-only, marking the sections it
@@ -666,7 +667,7 @@ func (T *Scribe) handleRevisionPreview(w http.ResponseWriter, r *http.Request, u
 	if note := strings.TrimSpace(rev.Note); note != "" {
 		title = note + " - " + rev.At
 	}
-	writeJSON(w, map[string]string{
+	jsonapi.Write(w, map[string]string{
 		"title": title,
 		"html":  renderRevisionHTML(rev.Guide, cur, rev.At),
 	})
@@ -702,7 +703,7 @@ func (T *Scribe) handleRestore(w http.ResponseWriter, r *http.Request, udb Datab
 	g.ShareMode = cur.ShareMode
 	g.AllowedUsers, g.Editors = cur.AllowedUsers, cur.Editors
 	saveGuideRev(ownerUDB, g, "Restored revision from "+rev.At)
-	writeJSON(w, map[string]bool{"ok": true})
+	jsonapi.Write(w, map[string]bool{"ok": true})
 }
 
 // applyAction is the optional follow-up button a "report" action can return so a
@@ -772,7 +773,7 @@ func (T *Scribe) handleAudit(w http.ResponseWriter, r *http.Request, udb Databas
 		return
 	}
 	if len(g.Sections) == 0 {
-		writeJSON(w, map[string]string{"report": "_This guide has no sections yet: nothing to audit._"})
+		jsonapi.Write(w, map[string]string{"report": "_This guide has no sections yet: nothing to audit._"})
 		return
 	}
 	// Housekeeping cleanup: strip stray LLM artifacts (reasoning delimiters,
@@ -810,7 +811,7 @@ func (T *Scribe) handleAudit(w http.ResponseWriter, r *http.Request, udb Databas
 		// linked sources — no web-currency check.
 		auditCtx = WithNetworkConnector(auditCtx, NewNetworkConnector(true))
 		if snapshot == "" {
-			writeJSON(w, map[string]string{"report": cleanupNote + "_This is a private guide with no linked sources: nothing to audit against (web research is disabled)._"})
+			jsonapi.Write(w, map[string]string{"report": cleanupNote + "_This is a private guide with no linked sources: nothing to audit against (web research is disabled)._"})
 			return
 		}
 		prompt = "This is a PRIVATE guide: you have NO internet access; do NOT attempt web research. Audit it ONLY against its linked sources (a current snapshot is below). Report:\n" +
@@ -864,7 +865,7 @@ func (T *Scribe) handleAudit(w http.ResponseWriter, r *http.Request, udb Databas
 	// asked for. Private is enforced by handleChatSend on the send itself
 	// (ForcePrivate + web tools stripped + source tools filtered by cap), which
 	// is stricter than this path could be from here.
-	writeJSON(w, reportResp{
+	jsonapi.Write(w, reportResp{
 		Report: cleanupNote + report,
 		Apply: &applyAction{
 			Label: "Apply these fixes",
@@ -915,7 +916,7 @@ func (T *Scribe) handleSection(w http.ResponseWriter, r *http.Request, udb Datab
 	switch r.Method {
 	case http.MethodGet:
 		s := g.Sections[idx]
-		writeJSON(w, map[string]string{"id": s.ID, "title": s.Title, "markdown": s.Markdown})
+		jsonapi.Write(w, map[string]string{"id": s.ID, "title": s.Title, "markdown": s.Markdown})
 	case http.MethodPost:
 		var body struct {
 			Title    string `json:"title"`
@@ -928,13 +929,13 @@ func (T *Scribe) handleSection(w http.ResponseWriter, r *http.Request, udb Datab
 		g.Sections[idx].Title = strings.TrimSpace(body.Title)
 		g.Sections[idx].Markdown = strings.TrimSpace(body.Markdown)
 		saveGuideRev(ownerUDB, g, "Edited section: "+g.Sections[idx].Title)
-		writeJSON(w, map[string]bool{"ok": true})
+		jsonapi.Write(w, map[string]bool{"ok": true})
 	case http.MethodDelete:
 		removed := g.Sections[idx].Title
 		g.Sections = append(g.Sections[:idx], g.Sections[idx+1:]...)
 		normalizeOrder(&g)
 		saveGuideRev(ownerUDB, g, "Removed section: "+removed)
-		writeJSON(w, map[string]bool{"ok": true})
+		jsonapi.Write(w, map[string]bool{"ok": true})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -977,7 +978,7 @@ func (T *Scribe) handleSectionMove(w http.ResponseWriter, r *http.Request, udb D
 	reordered, _ := reorderSections(secs, idx, target)
 	g.Sections = reordered
 	saveGuideRev(ownerUDB, g, "Moved section: "+sectionHeading(secs[idx], idx))
-	writeJSON(w, map[string]bool{"ok": true})
+	jsonapi.Write(w, map[string]bool{"ok": true})
 }
 
 // handleSectionAdd appends a new section. POST ?guide= with {title, markdown}.
@@ -1004,7 +1005,7 @@ func (T *Scribe) handleSectionAdd(w http.ResponseWriter, r *http.Request, udb Da
 	title := firstNonEmpty(strings.TrimSpace(body.Title), "New section")
 	g.Sections = append(g.Sections, Section{ID: newID(), Title: title, Markdown: strings.TrimSpace(body.Markdown), Order: g.nextOrder()})
 	saveGuideRev(ownerUDB, g, "Added section: "+title)
-	writeJSON(w, map[string]bool{"ok": true})
+	jsonapi.Write(w, map[string]bool{"ok": true})
 }
 
 // handleCollections drives the per-guide knowledge picker. GET ?guide=<id>
@@ -1030,7 +1031,7 @@ func (T *Scribe) handleCollections(w http.ResponseWriter, r *http.Request, udb D
 		if g, _, _, _, ok := T.resolve(r, udb, user, gid); ok && g.Collections != nil {
 			attached = g.Collections
 		}
-		writeJSON(w, map[string]any{"available": available, "attached": attached})
+		jsonapi.Write(w, map[string]any{"available": available, "attached": attached})
 	case http.MethodPost:
 		g, ownerUDB, canManage, _, found := T.resolve(r, udb, user, gid)
 		if !found {
@@ -1050,7 +1051,7 @@ func (T *Scribe) handleCollections(w http.ResponseWriter, r *http.Request, udb D
 		}
 		g.Collections = body.Collections
 		saveGuide(ownerUDB, g) // not a content change — no revision snapshot
-		writeJSON(w, map[string]bool{"ok": true})
+		jsonapi.Write(w, map[string]bool{"ok": true})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -1100,7 +1101,7 @@ func (T *Scribe) handleReferences(w http.ResponseWriter, r *http.Request, udb Da
 				distill = append(distill, ReferenceSelection{Kind: guideSourceKind, ItemID: id}.Ref())
 			}
 		}
-		writeJSON(w, map[string]any{"items": items, "attached": attached, "distill": distill})
+		jsonapi.Write(w, map[string]any{"items": items, "attached": attached, "distill": distill})
 	case http.MethodPost:
 		g, ownerUDB, canManage, _, found := T.resolve(r, udb, user, gid)
 		if !found {
@@ -1169,7 +1170,7 @@ func (T *Scribe) handleReferences(w http.ResponseWriter, r *http.Request, udb Da
 			g.DistillFrom = kept
 		}
 		saveGuide(ownerUDB, g) // attachment is not a content change — no revision snapshot
-		writeJSON(w, map[string]bool{"ok": true})
+		jsonapi.Write(w, map[string]bool{"ok": true})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -1544,11 +1545,6 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
-}
-
-func writeJSON(w http.ResponseWriter, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(v)
 }
 
 var _ = fmt.Sprint

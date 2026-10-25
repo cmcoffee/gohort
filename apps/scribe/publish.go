@@ -21,6 +21,7 @@ import (
 	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/appagents"
 	"github.com/cmcoffee/gohort/core/docs"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 
 	"github.com/cmcoffee/gohort/apps/publish"
 )
@@ -153,7 +154,7 @@ func (T *Scribe) handlePublishState(w http.ResponseWriter, r *http.Request, udb 
 		}
 	}
 	job, _ := currentPublishJob(id)
-	writeJSON(w, map[string]any{
+	jsonapi.Write(w, map[string]any{
 		"configured":   docs.HasPublishDestinations(),
 		"can_publish":  canEdit,
 		"destinations": docs.PublishDestinations(user),
@@ -201,5 +202,5 @@ func (T *Scribe) handleRepublish(w http.ResponseWriter, r *http.Request, udb Dat
 	p := republishOf(g, ownerUDB, user, prev)
 	job, ctx := p.start(context.WithoutCancel(r.Context()))
 	go p.do(ctx, job)
-	writeJSON(w, map[string]any{"started": true, "target": p.where})
+	jsonapi.Write(w, map[string]any{"started": true, "target": p.where})
 }

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // pendingApprovalTable keeps the cards waiting on an answer, by card id.
@@ -156,7 +157,7 @@ func (T *OrchestrateApp) handleApprovalAnswer(w http.ResponseWriter, r *http.Req
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	writeJSON(w, map[string]any{"ok": true, "answer": p.Answer})
+	jsonapi.Write(w, map[string]any{"ok": true, "answer": p.Answer})
 }
 
 // answerPendingApproval records the answer and wakes the agent in the

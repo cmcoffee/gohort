@@ -39,6 +39,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/sections"
 	"github.com/cmcoffee/gohort/core/ui"
 )
@@ -194,7 +195,7 @@ func (T *OrchestrateApp) handleDeploymentSettings(w http.ResponseWriter, r *http
 			out[setting] = effectiveDeploymentDefault(RootDB, setting)
 			out[setting+"_max"] = effectiveDeploymentMaximum(RootDB, setting)
 		}
-		writeJSON(w, out)
+		jsonapi.Write(w, out)
 	case http.MethodPatch, http.MethodPost:
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {

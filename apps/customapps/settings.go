@@ -22,6 +22,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/agenthost"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/ui"
 	"github.com/cmcoffee/gohort/tools/appscript"
 )
@@ -259,7 +260,7 @@ func (T *CustomApps) handleSettingsValues(w http.ResponseWriter, r *http.Request
 			}
 			out[s.Name] = typedSetting(s, v)
 		}
-		writeJSON(w, out)
+		jsonapi.Write(w, out)
 	case http.MethodPost:
 		var in map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
@@ -294,7 +295,7 @@ func (T *CustomApps) handleSettingsValues(w http.ResponseWriter, r *http.Request
 		if retime && owner {
 			T.reconcileAppSchedules(spec)
 		}
-		writeJSON(w, map[string]bool{"ok": true})
+		jsonapi.Write(w, map[string]bool{"ok": true})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -320,7 +321,7 @@ func (T *CustomApps) handleSettingsReset(w http.ResponseWriter, r *http.Request,
 	if owner && len(scheduleSettings(spec)) > 0 {
 		T.reconcileAppSchedules(spec)
 	}
-	writeJSON(w, map[string]bool{"ok": true})
+	jsonapi.Write(w, map[string]bool{"ok": true})
 }
 
 // settingsFor resolves the values an app's scripts see when run for one
@@ -407,7 +408,7 @@ func (T *CustomApps) handleSettingsAgent(w http.ResponseWriter, r *http.Request,
 			id = a.ID
 		}
 		w.Header().Set("Cache-Control", "no-store")
-		writeJSON(w, map[string]any{"agent": id})
+		jsonapi.Write(w, map[string]any{"agent": id})
 	case http.MethodPost:
 		var body struct {
 			Agent string `json:"agent"`
@@ -429,7 +430,7 @@ func (T *CustomApps) handleSettingsAgent(w http.ResponseWriter, r *http.Request,
 		if name == "" {
 			name = a.ID
 		}
-		writeJSON(w, map[string]any{"ok": true, "message": "This app now asks " + name + "."})
+		jsonapi.Write(w, map[string]any{"ok": true, "message": "This app now asks " + name + "."})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}

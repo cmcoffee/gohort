@@ -31,6 +31,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/ui"
 	"io"
 )
@@ -415,7 +416,7 @@ func (T *OrchestrateApp) handlePipelineStages(w http.ResponseWriter, r *http.Req
 			http.NotFound(w, r)
 			return
 		}
-		writeJSON(w, stageRecord(slot.stage()))
+		jsonapi.Write(w, stageRecord(slot.stage()))
 
 	case http.MethodPost, http.MethodPut, http.MethodPatch:
 		var body map[string]any
@@ -492,7 +493,7 @@ func (T *OrchestrateApp) handlePipelineStages(w http.ResponseWriter, r *http.Req
 		}
 		saved := SavePipelineDef(udb, def)
 		Log("[orchestrate.pipelines] user=%q edited stage %q of %q", user, stage.Name, saved.Name)
-		writeJSON(w, map[string]any{"ok": true, "id": saved.ID, "name": stage.Name,
+		jsonapi.Write(w, map[string]any{"ok": true, "id": saved.ID, "name": stage.Name,
 			"slug": ui.SectionSlug(stageSectionTitle(indexOfStage(saved, stage.Name), stage.Name))})
 
 	case http.MethodDelete:
@@ -514,7 +515,7 @@ func (T *OrchestrateApp) handlePipelineStages(w http.ResponseWriter, r *http.Req
 			}
 			saved := SavePipelineDef(udb, def)
 			Log("[orchestrate.pipelines] user=%q removed body stage %q from %q", user, name, saved.Name)
-			writeJSON(w, map[string]any{"deleted": name, "id": saved.ID})
+			jsonapi.Write(w, map[string]any{"deleted": name, "id": saved.ID})
 			return
 		}
 		if err := def.RemoveStage(name); err != nil {
@@ -527,7 +528,7 @@ func (T *OrchestrateApp) handlePipelineStages(w http.ResponseWriter, r *http.Req
 		}
 		saved := SavePipelineDef(udb, def)
 		Log("[orchestrate.pipelines] user=%q removed stage %q from %q", user, name, saved.Name)
-		writeJSON(w, map[string]any{"deleted": name, "id": saved.ID})
+		jsonapi.Write(w, map[string]any{"deleted": name, "id": saved.ID})
 
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -559,7 +560,7 @@ func (T *OrchestrateApp) handlePipelineAgents(w http.ResponseWriter, r *http.Req
 		// can be handed to an agent from the LIST as well as from its
 		// own page.
 		if r.URL.Query().Get("pills") == "1" {
-			writeJSON(w, pipelineAgentPills(udb, user, def))
+			jsonapi.Write(w, pipelineAgentPills(udb, user, def))
 			return
 		}
 		var ids []string
@@ -571,7 +572,7 @@ func (T *OrchestrateApp) handlePipelineAgents(w http.ResponseWriter, r *http.Req
 				}
 			}
 		}
-		writeJSON(w, map[string]any{"agents": ids})
+		jsonapi.Write(w, map[string]any{"agents": ids})
 
 	case http.MethodPost, http.MethodPut:
 		// A single toggle, as the pills send it.
@@ -602,7 +603,7 @@ func (T *OrchestrateApp) handlePipelineAgents(w http.ResponseWriter, r *http.Req
 			}
 			Log("[orchestrate.pipelines] user=%q pipeline %q: %s %q", user, def.Name,
 				chIf(*one.On, "attached to", "detached from"), chFirst(ag.Name, ag.ID))
-			writeJSON(w, map[string]any{"ok": true})
+			jsonapi.Write(w, map[string]any{"ok": true})
 			return
 		}
 		var body struct {
@@ -654,7 +655,7 @@ func (T *OrchestrateApp) handlePipelineAgents(w http.ResponseWriter, r *http.Req
 			Log("[orchestrate.pipelines] user=%q pipeline %q: attached %v, detached %v",
 				user, def.Name, attached, detached)
 		}
-		writeJSON(w, map[string]any{"ok": true, "attached": attached, "detached": detached})
+		jsonapi.Write(w, map[string]any{"ok": true, "attached": attached, "detached": detached})
 
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

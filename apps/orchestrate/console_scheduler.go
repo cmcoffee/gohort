@@ -27,6 +27,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -110,7 +111,7 @@ func (T *OrchestrateApp) handleConsoleScheduler(w http.ResponseWriter, r *http.R
 			agentID, len(family), len(out), took.Round(time.Millisecond), rowsDone.Sub(start).Round(time.Millisecond),
 			len(ix.runs), time.Since(rowsDone).Round(time.Millisecond))
 	}
-	writeJSON(w, out)
+	jsonapi.Write(w, out)
 }
 
 // agentRowLabel is a fleet Scheduler row's title, led by the name of the agent

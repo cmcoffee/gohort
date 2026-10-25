@@ -1,0 +1,138 @@
+(signed out) GET /bridges/api/bridges ""
+  401 unauthorized
+alice GET /bridges/api/bridges ""
+  200 [{"id":"key-alice","bridge":"laptop (api)","reach":"0 channels","status":"never connected","enabled":true}]
+alice POST /bridges/api/bridges "{}"
+  405 method not allowed
+(signed out) GET /bridges/api/conversations ""
+  401 unauthorized
+alice GET /bridges/api/conversations ""
+  200 [{"chat_id":"chat-alice","name":"Alice's friend","service":"imessage","service_label":"iMessage","connected":"","auto_reply":false}]
+alice POST /bridges/api/conversations "{}"
+  405 method not allowed
+(signed out) GET /bridges/api/incoming-convos ""
+  401 unauthorized
+alice GET /bridges/api/incoming-convos ""
+  200 []
+alice POST /bridges/api/incoming-convos "{}"
+  405 method not allowed
+(signed out) GET /bridges/api/agent-channels ""
+  401 unauthorized
+alice GET /bridges/api/agent-channels ""
+  200 [{"id":"ch-alice","label":"Alice's line","desc":"Agent: "}]
+alice POST /bridges/api/agent-channels "{}"
+  405 method not allowed
+alice GET /bridges/api/relay-tail?id=key-alice ""
+  200 []
+bob GET /bridges/api/relay-tail?id=key-alice ""
+  404 no such bridge key
+alice GET /bridges/api/conv-info/chat-alice ""
+  200 {"chat_id":"chat-alice","service":"imessage","display_name":"Alice's friend","added":true,"owner":"alice"}
+bob GET /bridges/api/conv-info/chat-alice ""
+  404 conversation not found
+alice GET /bridges/api/conv-info/ ""
+  400 chat_id required
+alice GET /bridges/api/messages/chat-alice ""
+  200 [{"id":"m1","chat_id":"chat-alice","role":"user","text":"alice's secret","timestamp":"<time>"}]
+bob GET /bridges/api/messages/chat-alice ""
+  404 conversation not found
+alice GET /bridges/api/messages/ ""
+  400 chat_id required
+alice GET /bridges/api/keys ""
+  200 [{"id":"key-alice","name":"laptop","service":"api","enabled":true,"created":"<time>"}]
+alice POST /bridges/api/keys "{\"name\":\"phone\"}"
+  200 {"id":"<hex>","name":"phone","key":"<hex>","owner":"alice","service":"api","enabled":true,"created":"<time>"}
+alice POST /bridges/api/keys ""
+  200 {"id":"<hex>","name":"","key":"<hex>","owner":"alice","service":"api","enabled":true,"created":"<time>"}
+alice POST /bridges/api/keys "{\"name\":"
+  400 invalid JSON: unexpected EOF
+alice POST /bridges/api/keys "{\"service\":\"imessage\"}"
+  403 only an administrator can create a key for the imessage bridge
+root POST /bridges/api/keys "{\"service\":\"imessage\",\"name\":\"relay\"}"
+  200 {"id":"<hex>","name":"relay","key":"<hex>","owner":"root","service":"imessage","enabled":true,"created":"<time>"}
+alice DELETE /bridges/api/keys ""
+  405 method not allowed
+alice GET /bridges/api/config ""
+  200 {"enabled":true}
+alice PATCH /bridges/api/config "{\"self_name\":\"Alice\"}"
+  403 only an administrator can change the bridge's settings
+root PATCH /bridges/api/config "{\"self_name\":\"Root\"}"
+  200 {"enabled":true,"self_name":"Root"}
+root PATCH /bridges/api/config ""
+  200 {"enabled":true,"self_name":"Root"}
+root PATCH /bridges/api/config "{\"self_name\":"
+  400 invalid JSON: unexpected EOF
+root DELETE /bridges/api/config ""
+  405 method not allowed
+alice POST /bridges/api/panic ""
+  403 only an administrator can stop the bridge
+root GET /bridges/api/panic ""
+  405 method not allowed
+root POST /bridges/api/panic ""
+  200 {"enabled":false,"message":"Bridges disabled. Re-enable from Master switches."}
+root GET /bridges/api/config ""
+  200 {"enabled":false,"self_name":"Root"}
+alice GET /bridges/api/add-convo ""
+  200 {"handle":"","service":"imessage"}
+alice POST /bridges/api/add-convo?chat_id=chat-alice ""
+  200 {"added":true,"chat_id":"chat-alice"}
+alice POST /bridges/api/add-convo "{\"handle\":\"+15550100\"}"
+  200 {"added":true,"chat_id":"+15550100"}
+alice POST /bridges/api/add-convo "{}"
+  400 chat_id or handle is required
+alice POST /bridges/api/add-convo "{\"handle\":"
+  400 invalid JSON: unexpected EOF
+bob POST /bridges/api/add-convo?chat_id=chat-alice ""
+  404 conversation not found
+alice DELETE /bridges/api/add-convo ""
+  405 method not allowed
+alice POST /bridges/api/connect-channel?chat_id=chat-alice&channel_id=ch-alice ""
+  200 {"address":"chat-alice","channel_id":"ch-alice","connected":true}
+alice GET /bridges/api/agent-channels ""
+  200 []
+alice PATCH /bridges/api/set-autoreply?id=ch-alice "{\"auto_reply\":false}"
+  200 {"auto_reply":false,"id":"ch-alice"}
+alice PATCH /bridges/api/set-autoreply?id=ch-alice ""
+  200 {"auto_reply":false,"id":"ch-alice"}
+alice PATCH /bridges/api/set-autoreply?id=ch-alice "{\"auto_reply\":"
+  400 invalid JSON: unexpected EOF
+alice GET /bridges/api/set-autoreply?id=ch-alice ""
+  405 method not allowed
+alice PATCH /bridges/api/set-autoreply?id=nope "{\"auto_reply\":true}"
+  404 channel not found
+alice GET /bridges/api/conversations ""
+  200 [{"chat_id":"+15550100","name":"+15550100","service":"imessage","service_label":"iMessage","connected":"","auto_reply":false},{"chat_id":"chat-alice","name":"Alice's friend","service":"imessage","service_label":"iMessage","connected":"Alice's line","channel_id":"ch-alice","auto_reply":false}]
+alice POST /bridges/api/connect-channel?chat_id=chat-alice ""
+  200 {"connected":false}
+alice POST /bridges/api/connect-channel "{}"
+  400 chat_id is required
+alice POST /bridges/api/connect-channel "{\"chat_id\":"
+  400 invalid JSON: unexpected EOF
+alice GET /bridges/api/connect-channel?chat_id=chat-alice ""
+  405 method not allowed
+bob POST /bridges/api/connect-channel?chat_id=chat-alice ""
+  404 conversation not found
+alice POST /bridges/api/connect-channel?chat_id=chat-alice&channel_id=nope ""
+  404 channel not found
+alice POST /bridges/api/webhook-secret "{\"connector\":\"nope\",\"secret\":\"x\"}"
+  404 no such connector
+alice POST /bridges/api/webhook-secret "{\"connector\":"
+  400 invalid JSON: unexpected EOF
+alice GET /bridges/api/webhook-secret ""
+  405 method not allowed
+alice PATCH /bridges/api/conversation/chat-alice "{\"display_name\":\"Renamed\"}"
+  200 {"chat_id":"chat-alice","service":"imessage","display_name":"Renamed","added":true,"owner":"alice"}
+alice PATCH /bridges/api/conversation/chat-alice "{\"display_name\":"
+  400 invalid JSON: unexpected EOF
+alice PATCH /bridges/api/conversation/chat-alice ""
+  400 invalid JSON: EOF
+bob PATCH /bridges/api/conversation/chat-alice "{\"display_name\":\"mine\"}"
+  404 conversation not found
+alice PATCH /bridges/api/conversation/ "{}"
+  400 chat_id required
+alice GET /bridges/api/conversation/chat-alice ""
+  405 method not allowed
+alice DELETE /bridges/api/conversation/chat-alice ""
+  200 {"removed":true}
+alice GET /bridges/api/conversations ""
+  200 [{"chat_id":"+15550100","name":"+15550100","service":"imessage","service_label":"iMessage","connected":"","auto_reply":false}]

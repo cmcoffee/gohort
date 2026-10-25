@@ -54,6 +54,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/agenthost"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/netgate"
 )
 
@@ -317,7 +318,7 @@ func (T *OpenAIAPI) handleModels(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	writeJSON(w, map[string]any{"object": "list", "data": data})
+	jsonapi.Write(w, map[string]any{"object": "list", "data": data})
 }
 
 // Per-user ceilings on chat completions: generous for an integration and a
@@ -482,7 +483,7 @@ func (T *OpenAIAPI) servePassthrough(w http.ResponseWriter, r *http.Request, use
 			writeErr(w, http.StatusBadGateway, "llm call failed: "+err.Error())
 			return
 		}
-		writeJSON(w, completionEnvelope(req.Model, resp.Content, resp))
+		jsonapi.Write(w, completionEnvelope(req.Model, resp.Content, resp))
 		return
 	}
 
@@ -804,7 +805,7 @@ func (T *OpenAIAPI) runAgentTurn(w http.ResponseWriter, r *http.Request, t agent
 			text = "(the agent produced no reply)"
 		}
 		if !t.stream {
-			writeJSON(w, completionEnvelope(t.model, text, nil))
+			jsonapi.Write(w, completionEnvelope(t.model, text, nil))
 			return
 		}
 		if sse = newSSE(w); sse == nil {
@@ -992,11 +993,6 @@ func (s *sseWriter) emit(v map[string]any) {
 func (s *sseWriter) done() {
 	fmt.Fprint(s.w, "data: [DONE]\n\n")
 	s.fl.Flush()
-}
-
-func writeJSON(w http.ResponseWriter, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(v)
 }
 
 // writeErr answers in the OpenAI error shape, which is what a client library

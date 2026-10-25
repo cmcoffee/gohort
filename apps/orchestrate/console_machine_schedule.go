@@ -23,6 +23,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/timing"
 )
 
@@ -66,7 +67,7 @@ func (T *OrchestrateApp) handleConsoleMachineOptions(w http.ResponseWriter, r *h
 		}
 		opts = append(opts, opt{Value: sm.Def.ID, Label: label + " (shared by " + sm.Owner + ")"})
 	}
-	writeJSON(w, opts)
+	jsonapi.Write(w, opts)
 }
 
 // handleConsoleMachineScheduleCreate arms a machine to run on a timetable.
@@ -157,7 +158,7 @@ func (T *OrchestrateApp) handleConsoleMachineScheduleCreate(w http.ResponseWrite
 	}
 	got, _ := GetStandingAgent(RootDB, user, name)
 	Log("[orchestrate.standing] user=%q scheduled machine %q as %q (%s)", user, def.Name, name, StandingScheduleLabel(got))
-	writeJSON(w, map[string]any{
+	jsonapi.Write(w, map[string]any{
 		"ok": true, "name": name, "schedule": StandingScheduleLabel(got),
 		"next_run": got.NextRun,
 	})

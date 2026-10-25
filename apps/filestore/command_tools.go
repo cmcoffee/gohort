@@ -37,6 +37,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/textutil"
 )
 
@@ -362,7 +363,7 @@ func (T *FileStoreApp) handleCommandMapping(w http.ResponseWriter, r *http.Reque
 	case cmd.Approved:
 		state, status = "Live: agents that reach this folder can call it", "ok"
 	}
-	writeJSON(w, map[string]any{
+	jsonapi.Write(w, map[string]any{
 		"tool_name": cmd.ToolName(), "tool_desc": cmd.ToolDesc,
 		"binary": cmd.Command, "state": state, "state_status": status,
 		"actions": acts,
@@ -395,7 +396,7 @@ func (T *FileStoreApp) handleCommandApprove(w http.ResponseWriter, r *http.Reque
 	}
 	Log("[filestore] %s %s %s on %s for agents", AuthCurrentUser(r),
 		map[bool]string{true: "approved", false: "withdrew"}[body.Approved], cmd.Name, cmd.Slug)
-	writeJSON(w, cmd)
+	jsonapi.Write(w, cmd)
 }
 
 // handleCommandBackground switches whether an agent's run of the command goes
@@ -433,5 +434,5 @@ func (T *FileStoreApp) handleCommandBackground(w http.ResponseWriter, r *http.Re
 	}
 	T.DB.Set(commandsTable, commandKey(cmd.Slug, cmd.Name), cmd)
 	Log("[filestore] %s set %s on %s to run in the background: %v", AuthCurrentUser(r), cmd.Name, cmd.Slug, body.On)
-	writeJSON(w, cmd)
+	jsonapi.Write(w, cmd)
 }

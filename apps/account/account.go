@@ -14,6 +14,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/mcppersonal"
 	"github.com/cmcoffee/gohort/core/ui"
 	"strconv"
@@ -281,7 +282,7 @@ func (T *Account) handleConnections(w http.ResponseWriter, r *http.Request) {
 		if conns == nil {
 			conns = []PerUserConnection{}
 		}
-		writeJSON(w, conns)
+		jsonapi.Write(w, conns)
 	case http.MethodPost:
 		var body struct {
 			Name       string `json:"name"`
@@ -403,7 +404,7 @@ func (T *Account) handlePrefs(w http.ResponseWriter, r *http.Request) {
 	db := AuthDB()
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, map[string]any{
+		jsonapi.Write(w, map[string]any{
 			"notify":            AuthGetNotifyDefault(db, user),
 			"private_mode":      AuthGetPrivateMode(db, user),
 			"inferred_disabled": AuthGetInferredDisabled(db, user),
@@ -596,7 +597,7 @@ func (T *Account) handleTokens(w http.ResponseWriter, r *http.Request) {
 		// rows are read, so it is the moment the cleanup is owed, and it keeps
 		// this file free of a goroutine whose failure mode is silent.
 		SweepExpiredAccountTokens()
-		writeJSON(w, ListAccountTokens(user))
+		jsonapi.Write(w, ListAccountTokens(user))
 	case http.MethodPost:
 		// action=scope rescopes an existing key; default POST mints a new one.
 		// How long a key lives is not the owner's to choose: it is the admin's
@@ -630,7 +631,7 @@ func (T *Account) handleTokens(w http.ResponseWriter, r *http.Request) {
 			scope = &TokenScope{}
 		}
 		scope = T.grantableScope(user, scope)
-		writeJSON(w, MintAccountTokenScoped(user, req.Name, scope)) // secret returned once
+		jsonapi.Write(w, MintAccountTokenScoped(user, req.Name, scope)) // secret returned once
 	case http.MethodDelete:
 		id := strings.TrimSpace(r.URL.Query().Get("id"))
 		if id == "" {
@@ -719,7 +720,7 @@ func (T *Account) handleTokenTargets(w http.ResponseWriter, r *http.Request) {
 			tools = append(tools, mcpTool{Name: st.Name, Label: st.Name})
 		}
 	}
-	writeJSON(w, map[string]any{
+	jsonapi.Write(w, map[string]any{
 		"features": feats,
 		"targets":  ListExternalTargets(T.DB, user),
 		"tools":    tools,
@@ -735,11 +736,6 @@ func featureKind(key string) string {
 		return "lends"
 	}
 	return "door"
-}
-
-func writeJSON(w http.ResponseWriter, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(v)
 }
 
 // passwordHTML is the change-password panel: current + new + confirm fields with

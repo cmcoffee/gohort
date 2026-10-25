@@ -3,84 +3,73 @@ package bridges
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // handleKeys lists / creates bridge keys (a connector's credential + service).
 //
 //	GET  /bridges/api/keys           → [{id, name, service, created, last_seen}]  (secret masked)
 //	POST /bridges/api/keys {name, service} → the created key, secret shown ONCE
-func (T *Bridges) handleKeys(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
+func (T *Bridges) handleKeys(c *jsonapi.Call) (any, error) {
+	type keyView struct {
+		ID       string `json:"id"`
+		Name     string `json:"name"`
+		Service  string `json:"service"`
+		Enabled  bool   `json:"enabled"`
+		Created  string `json:"created"`
+		LastSeen string `json:"last_seen,omitempty"`
 	}
-	switch r.Method {
-	case http.MethodGet:
-		type keyView struct {
-			ID       string `json:"id"`
-			Name     string `json:"name"`
-			Service  string `json:"service"`
-			Enabled  bool   `json:"enabled"`
-			Created  string `json:"created"`
-			LastSeen string `json:"last_seen,omitempty"`
-		}
-		out := []keyView{}
-		for _, k := range T.listBridgeKeys(user) {
-			out = append(out, keyView{
-				ID: k.ID, Name: k.Name, Service: k.Service,
-				Enabled: k.Enabled, Created: k.Created, LastSeen: k.LastSeen,
-			})
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(out)
-	case http.MethodPost:
-		var req struct{ Name, Service string }
-		// An empty body (io.EOF) is fine — it mints a generic "api" key below.
-		// A non-empty but malformed body is a client bug: reject it instead of
-		// silently creating an unnamed generic key the caller never asked for.
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		svc := strings.TrimSpace(req.Service)
-		// A key for a messaging service (imessage, …) polls and drains that
-		// service's outbox, which is the deployment owner's outgoing
-		// messages: an administrator's to mint. Anybody may mint a generic
-		// API key for their own clients.
-		if svc != "" && svc != "api" && !RequestIsAdmin(r) {
-			http.Error(w, "only an administrator can create a key for the "+svc+" bridge", http.StatusForbidden)
-			return
-		}
-		if svc == "" {
-			// A MANUALLY minted key is for the MCP server or a server-side
-			// connector — never iMessage, whose key the gohort-bridge daemon
-			// auto-registers (with Service:"imessage" set explicitly). So an
-			// unspecified service here means a generic API key, not iMessage.
-			svc = "api"
-		}
-		k := BridgeKey{
-			ID:      newToken()[:12],
-			Name:    strings.TrimSpace(req.Name),
-			Key:     newToken(),
-			Owner:   user,
-			Service: svc,
-			Enabled: true, // bridges start on
-			Created: now(),
-		}
-		T.saveBridgeKey(k)
-		Log("[bridges] created bridge key %q for service %s", k.Name, k.Service)
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(k) // secret returned once
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	out := []keyView{}
+	for _, k := range T.listBridgeKeys(c.User) {
+		out = append(out, keyView{
+			ID: k.ID, Name: k.Name, Service: k.Service,
+			Enabled: k.Enabled, Created: k.Created, LastSeen: k.LastSeen,
+		})
 	}
+	return out, nil
 }
+
+// handleKeyMint creates a key. An empty body is fine: it mints a generic "api"
+// key (the route takes it with jsonapi.EmptyBodyOK). A non-empty but malformed
+// body is a client bug, rejected rather than silently creating an unnamed
+// generic key the caller never asked for.
+func (T *Bridges) handleKeyMint(c *jsonapi.Call, req keyMintReq) (any, error) {
+	svc := strings.TrimSpace(req.Service)
+	// A key for a messaging service (imessage, …) polls and drains that
+	// service's outbox, which is the deployment owner's outgoing
+	// messages: an administrator's to mint. Anybody may mint a generic
+	// API key for their own clients.
+	if svc != "" && svc != "api" && !RequestIsAdmin(c.R) {
+		return nil, jsonapi.Forbidden("only an administrator can create a key for the " + svc + " bridge")
+	}
+	if svc == "" {
+		// A MANUALLY minted key is for the MCP server or a server-side
+		// connector — never iMessage, whose key the gohort-bridge daemon
+		// auto-registers (with Service:"imessage" set explicitly). So an
+		// unspecified service here means a generic API key, not iMessage.
+		svc = "api"
+	}
+	k := BridgeKey{
+		ID:      newToken()[:12],
+		Name:    strings.TrimSpace(req.Name),
+		Key:     newToken(),
+		Owner:   c.User,
+		Service: svc,
+		Enabled: true, // bridges start on
+		Created: now(),
+	}
+	T.saveBridgeKey(k)
+	Log("[bridges] created bridge key %q for service %s", k.Name, k.Service)
+	return k, nil // secret returned once
+}
+
+// keyMintReq is what handleKeyMint is posted.
+type keyMintReq struct{ Name, Service string }
 
 // handleKeyOne toggles (PATCH) or revokes (DELETE) one bridge key — the
 // per-bridge enable switch and the revoke action.
@@ -122,14 +111,10 @@ func (T *Bridges) handleKeyOne(w http.ResponseWriter, r *http.Request) {
 // its service.
 //
 //	GET /bridges/api/bridges → [{label, desc, status}]  (ActionList-shaped)
-func (T *Bridges) handleBridgeList(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *Bridges) handleBridgeList(c *jsonapi.Call) (any, error) {
 	// Count channels per service so a bridge can show its reach.
 	chanCount := map[string]int{}
-	for _, ch := range ListChannels(RootDB, user) {
+	for _, ch := range ListChannels(RootDB, c.User) {
 		if ch.Service != "" {
 			chanCount[ch.Service]++
 		}
@@ -142,7 +127,7 @@ func (T *Bridges) handleBridgeList(w http.ResponseWriter, r *http.Request) {
 		Enabled bool   `json:"enabled"` // per-bridge switch
 	}
 	out := []row{}
-	for _, k := range T.listBridgeKeys(user) {
+	for _, k := range T.listBridgeKeys(c.User) {
 		status := "never connected"
 		if k.LastSeen != "" {
 			if t, err := time.Parse(time.RFC3339, k.LastSeen); err == nil {
@@ -161,8 +146,7 @@ func (T *Bridges) handleBridgeList(w http.ResponseWriter, r *http.Request) {
 			Enabled: k.Enabled,
 		})
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(out)
+	return out, nil
 }
 
 func humanAgo(d time.Duration) string {

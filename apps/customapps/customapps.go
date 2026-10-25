@@ -42,6 +42,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/appadmin"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/promotion"
 	"github.com/cmcoffee/gohort/core/ui"
 
@@ -817,7 +818,7 @@ func (T *CustomApps) handleDeleteApp(w http.ResponseWriter, r *http.Request, use
 		return
 	}
 	T.deleteApp(user, slug)
-	writeJSON(w, map[string]bool{"ok": true})
+	jsonapi.Write(w, map[string]bool{"ok": true})
 }
 
 // deleteApp removes one of owner's apps and what it leaves behind: its spec,
@@ -1043,7 +1044,7 @@ func (T *CustomApps) handleAppsList(w http.ResponseWriter, r *http.Request, owne
 	// shared apps came back in a different one on every load.
 	sort.SliceStable(out, func(i, j int) bool { return out[i]["name"] < out[j]["name"] })
 	sort.SliceStable(shared, func(i, j int) bool { return shared[i]["name"] < shared[j]["name"] })
-	writeJSON(w, append(inDashboardOrder(owner, out), inDashboardOrder(owner, shared)...))
+	jsonapi.Write(w, append(inDashboardOrder(owner, out), inDashboardOrder(owner, shared)...))
 }
 
 // inDashboardOrder puts rows in the order the person keeps these apps in. There
@@ -1119,7 +1120,7 @@ func (T *CustomApps) handleScheduleToggle(w http.ResponseWriter, r *http.Request
 	}
 	resume := r.URL.Query().Get("on") == "true"
 	changed := setAppSchedulesPaused(user, slug, !resume)
-	writeJSON(w, map[string]any{"ok": true, "changed": changed})
+	jsonapi.Write(w, map[string]any{"ok": true, "changed": changed})
 }
 
 // handleEnableApp flips an imported (disabled) app live: POST ?slug=…. This is
@@ -1145,7 +1146,7 @@ func (T *CustomApps) handleEnableApp(w http.ResponseWriter, r *http.Request, use
 		spec.Disabled = false
 		SaveAppSpec(spec)
 	}
-	writeJSON(w, map[string]bool{"ok": true})
+	jsonapi.Write(w, map[string]bool{"ok": true})
 }
 
 // --- script-backed data sources (the "logic" seam) ---------------------------
@@ -1419,7 +1420,7 @@ func (T *CustomApps) handleActionsList(w http.ResponseWriter, r *http.Request, s
 		}
 		out = append(out, item{Name: a.Name, Button: label, Desc: a.Desc, Confirm: a.Confirm})
 	}
-	writeJSON(w, out)
+	jsonapi.Write(w, out)
 }
 
 // handleAction runs a named action script: POST /apps/<slug>/action/<name>.
@@ -1490,7 +1491,7 @@ func (T *CustomApps) handleAction(w http.ResponseWriter, r *http.Request, owner,
 	select {
 	case <-job.done:
 	case <-time.After(actionInlineWait):
-		writeJSON(w, job.status())
+		jsonapi.Write(w, job.status())
 		return
 	case <-r.Context().Done():
 		return // the person left; the job carries on and keeps its outcome
@@ -1507,7 +1508,7 @@ func (T *CustomApps) handleAction(w http.ResponseWriter, r *http.Request, owner,
 	if res.Result != nil {
 		reply["result"] = res.Result
 	}
-	writeJSON(w, reply)
+	jsonapi.Write(w, reply)
 }
 
 // scriptRun is how an action's script runs: whether a person is waiting on
@@ -1655,7 +1656,7 @@ func (T *CustomApps) handleRecords(w http.ResponseWriter, r *http.Request, udb D
 	case http.MethodGet:
 		// Oldest first, as scripts get them: in key order (random hex) a page
 		// listing "my entries" showed them shuffled.
-		writeJSON(w, appscript.ReadRecords(udb, spec.Slug))
+		jsonapi.Write(w, appscript.ReadRecords(udb, spec.Slug))
 	case http.MethodPost:
 		var rec map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&rec); err != nil {
@@ -1675,7 +1676,7 @@ func (T *CustomApps) handleRecords(w http.ResponseWriter, r *http.Request, udb D
 			rec["created"] = time.Now().UTC().Format(time.RFC3339)
 		}
 		udb.Set(tbl, id, rec)
-		writeJSON(w, rec)
+		jsonapi.Write(w, rec)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -1695,10 +1696,10 @@ func (T *CustomApps) handleRecord(w http.ResponseWriter, r *http.Request, udb Da
 			http.NotFound(w, r)
 			return
 		}
-		writeJSON(w, rec)
+		jsonapi.Write(w, rec)
 	case http.MethodDelete:
 		udb.Unset(tbl, id)
-		writeJSON(w, map[string]bool{"ok": true})
+		jsonapi.Write(w, map[string]bool{"ok": true})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -1780,7 +1781,7 @@ func (T *CustomApps) handleShareApp(w http.ResponseWriter, r *http.Request, user
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		writeJSON(w, map[string]any{"ok": true, "shared": false, "requested": true})
+		jsonapi.Write(w, map[string]any{"ok": true, "shared": false, "requested": true})
 		return
 	}
 	if !on && promotion.WithdrawPromotionRequest(AuthDB(), user, "app", slug) {
@@ -1792,7 +1793,7 @@ func (T *CustomApps) handleShareApp(w http.ResponseWriter, r *http.Request, user
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}
-	writeJSON(w, map[string]any{"ok": true, "shared": on})
+	jsonapi.Write(w, map[string]any{"ok": true, "shared": on})
 }
 
 // requestIsAdmin decides who may share an app directly. A var so a test can
@@ -1880,11 +1881,6 @@ func newID() string {
 	return hex.EncodeToString(b[:])
 }
 
-func writeJSON(w http.ResponseWriter, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(v)
-}
-
 // handleAsset serves one of an app's static assets.
 //
 // Resolution is scoped to the app's OWNER, not the requester, so a shared app
@@ -1934,7 +1930,7 @@ func (T *CustomApps) handleAssetList(w http.ResponseWriter, user, owner, slug st
 	if err != nil || names == nil {
 		names = []string{}
 	}
-	writeJSON(w, map[string]any{"assets": names, "can_write": user != "" && user == owner})
+	jsonapi.Write(w, map[string]any{"assets": names, "can_write": user != "" && user == owner})
 }
 
 // handleAssetWrite is PUT/POST (the raw bytes, the name in the path) or
@@ -1956,7 +1952,7 @@ func (T *CustomApps) handleAssetWrite(w http.ResponseWriter, r *http.Request, us
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return
 		}
-		writeJSON(w, map[string]any{"deleted": name})
+		jsonapi.Write(w, map[string]any{"deleted": name})
 		return
 	}
 	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, MaxAppAssetBytes+1))
@@ -1969,7 +1965,7 @@ func (T *CustomApps) handleAssetWrite(w http.ResponseWriter, r *http.Request, us
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	writeJSON(w, map[string]any{"saved": name, "url": path})
+	jsonapi.Write(w, map[string]any{"saved": name, "url": path})
 }
 
 // appOwnPaths are the relative endpoints an app's own page HTML may still

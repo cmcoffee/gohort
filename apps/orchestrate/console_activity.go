@@ -8,6 +8,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // consoleRunRow is one card in the Runs pane: the ledger's metadata for a run
@@ -80,7 +81,7 @@ func (T *OrchestrateApp) handleConsoleRuns(w http.ResponseWriter, r *http.Reques
 			ID:      rec.ID,
 		})
 	}
-	writeJSON(w, rows)
+	jsonapi.Write(w, rows)
 }
 
 // consoleRunTitle names a run the way its owner thinks of it: the schedule
@@ -164,10 +165,10 @@ func (T *OrchestrateApp) handleConsoleRunDetail(w http.ResponseWriter, r *http.R
 	}
 	rec, found := GetRun(RootDB, user, r.URL.Query().Get("id"))
 	if !found {
-		writeJSON(w, map[string]any{})
+		jsonapi.Write(w, map[string]any{})
 		return
 	}
-	writeJSON(w, consoleRunDetailOf(rec, UserLocation(user)))
+	jsonapi.Write(w, consoleRunDetailOf(rec, UserLocation(user)))
 }
 
 func consoleRunDetailOf(rec RunRecord, loc *time.Location) consoleRunDetail {
@@ -294,7 +295,7 @@ func (T *OrchestrateApp) handleConsoleActivity(w http.ResponseWriter, r *http.Re
 			Cancellable: s.Status == RunStatusRunning && s.Cancellable,
 		})
 	}
-	writeJSON(w, rows)
+	jsonapi.Write(w, rows)
 }
 
 // handleConsoleActivityCancel cancels one in-flight run from the Active-now

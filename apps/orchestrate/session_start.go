@@ -35,6 +35,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // maxOpeningPrompt bounds what a caller may pre-fill. Generous enough
@@ -94,7 +95,7 @@ func (T *OrchestrateApp) handleSessionStart(w http.ResponseWriter, r *http.Reque
 	Log("[orchestrate.sessions] %s opened session %s on %s%s", user, sess.ID, chFirst(agent.Name, agent.ID),
 		chOpeningNote(msg))
 
-	writeJSON(w, map[string]any{
+	jsonapi.Write(w, map[string]any{
 		"session": sess.ID,
 		"agent":   agent.ID,
 		// A ready-made link, because every caller of this would otherwise

@@ -30,6 +30,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // distillJobPrefix keys a distill in the job table, by its source guide.
@@ -249,5 +250,5 @@ func (T *Scribe) handleDistillStop(w http.ResponseWriter, r *http.Request, user 
 		j.Stopped, j.Now = true, "stopping"
 		j.cancel()
 	}
-	writeJSON(w, map[string]any{"stopping": stopping})
+	jsonapi.Write(w, map[string]any{"stopping": stopping})
 }

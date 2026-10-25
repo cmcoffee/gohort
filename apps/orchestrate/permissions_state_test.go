@@ -137,7 +137,7 @@ func TestAGrantWithNoRecordIsStillListed(t *testing.T) {
 		t.Fatal("the tool rows are gone")
 	}
 	zone := src[i:]
-	if j := strings.Index(zone, "writeJSON(w, out)"); j > 0 {
+	if j := strings.Index(zone, "jsonapi.Write(w, out)"); j > 0 {
 		zone = zone[:j]
 	}
 	if !strings.Contains(zone, "AutoApproveTools") {

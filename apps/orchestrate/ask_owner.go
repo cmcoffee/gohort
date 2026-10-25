@@ -27,6 +27,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/notices"
 )
 
@@ -207,7 +208,7 @@ func (T *OrchestrateApp) askOwnerRequest(w http.ResponseWriter, r *http.Request,
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	writeJSON(w, map[string]string{"result": out})
+	jsonapi.Write(w, map[string]string{"result": out})
 }
 
 // hasSomeoneElsesAgent reports whether this user's picker can land on an agent

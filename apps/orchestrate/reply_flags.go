@@ -27,6 +27,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/replyguard"
 	"github.com/cmcoffee/gohort/core/sections"
 	"github.com/cmcoffee/gohort/core/ui"
@@ -188,7 +189,7 @@ func (T *OrchestrateApp) handleReplyFlag(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		unflag(T.DB, f)
-		writeJSON(w, map[string]any{"ok": true, "message": "Taken back."})
+		jsonapi.Write(w, map[string]any{"ok": true, "message": "Taken back."})
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -259,7 +260,7 @@ func (T *OrchestrateApp) handleReplyFlag(w http.ResponseWriter, r *http.Request)
 	if f.Verdict == flagDown {
 		msg = "Sent to the admin for review."
 	}
-	writeJSON(w, map[string]any{"ok": true, "message": msg, "id": f.ID, "verdict": f.Verdict})
+	jsonapi.Write(w, map[string]any{"ok": true, "message": msg, "id": f.ID, "verdict": f.Verdict})
 }
 
 // findFlaggedReply finds the assistant message a flag is about, newest first:
@@ -356,7 +357,7 @@ func (T *OrchestrateApp) handleReplyFlags(w http.ResponseWriter, r *http.Request
 		return review[i].At.After(review[j].At)
 	})
 	sort.Slice(good, func(i, j int) bool { return good[i].At.After(good[j].At) })
-	writeJSON(w, map[string]any{"review": review, "good": good})
+	jsonapi.Write(w, map[string]any{"review": review, "good": good})
 }
 
 // handleReplyFlagStatus sets a flag's review state, or deletes it. POST
@@ -386,7 +387,7 @@ func (T *OrchestrateApp) handleReplyFlagStatus(w http.ResponseWriter, r *http.Re
 		http.Error(w, "status must be kept, dismissed, new or delete", http.StatusBadRequest)
 		return
 	}
-	writeJSON(w, map[string]any{"ok": true})
+	jsonapi.Write(w, map[string]any{"ok": true})
 }
 
 // replyGuardRow is one line of the guard table: a guard for all tiers, or on
@@ -555,7 +556,7 @@ func (T *OrchestrateApp) handleReplyGuards(w http.ResponseWriter, r *http.Reques
 			rows = append(rows, row)
 		}
 	}
-	writeJSON(w, map[string]any{"records": rows})
+	jsonapi.Write(w, map[string]any{"records": rows})
 }
 
 // guardScope reads "<guard>|<scope>" from ?id=.
@@ -581,7 +582,7 @@ func (T *OrchestrateApp) handleReplyGuardMode(w http.ResponseWriter, r *http.Req
 		return
 	}
 	Log("[orchestrate.replyguard] %s on %s set to %q", id, scope, body["_mode"])
-	writeJSON(w, map[string]any{"ok": true})
+	jsonapi.Write(w, map[string]any{"ok": true})
 }
 
 // handleReplyGuardSetting edits a scope's note, retries and, for a drafted
@@ -641,7 +642,7 @@ func (T *OrchestrateApp) handleReplyGuardSetting(w http.ResponseWriter, r *http.
 		replyguard.ClearPart(id, scope, "checks")
 	}
 	Log("[orchestrate.replyguard] %s on %s edited", id, scope)
-	writeJSON(w, map[string]any{"ok": true})
+	jsonapi.Write(w, map[string]any{"ok": true})
 }
 
 func mustJSON(v any) string {
@@ -672,7 +673,7 @@ func (T *OrchestrateApp) handleReplyGuardClear(w http.ResponseWriter, r *http.Re
 		replyguard.Clear(id, scope)
 		Log("[orchestrate.replyguard] %s on %s cleared", id, scope)
 	}
-	writeJSON(w, map[string]any{"ok": true})
+	jsonapi.Write(w, map[string]any{"ok": true})
 }
 
 // replyGuardModeOptions is the three-way control on each row.

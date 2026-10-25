@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // monitorCheckLines is m's recent checks, newest first, at most n, one line
@@ -57,5 +58,5 @@ func (T *OrchestrateApp) handleConsoleMonitorChecks(w http.ResponseWriter, r *ht
 	} else {
 		out["recent checks"] = lines
 	}
-	writeJSON(w, out)
+	jsonapi.Write(w, out)
 }

@@ -7,6 +7,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/appagents"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -133,7 +134,7 @@ func (T *OrchestrateApp) handleAgentPickerOptions(w http.ResponseWriter, r *http
 	// The two Cortex maps ride along, so an agent Builder just created gets
 	// its Cortex row without a reload. They were only ever written into the
 	// page when it loaded, which left a new agent without one.
-	writeJSON(w, map[string]any{"options": opts, "sub_agents": subs, "sub_agent_of": subAgentParentsFor(agents),
+	jsonapi.Write(w, map[string]any{"options": opts, "sub_agents": subs, "sub_agent_of": subAgentParentsFor(agents),
 		"cortex_agents": cortex, "record_agents": recordAgentsFor(agents, cortex)})
 }
 

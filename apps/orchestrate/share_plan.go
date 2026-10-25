@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/shareledger"
 )
 
@@ -312,5 +313,5 @@ func (T *OrchestrateApp) handleAgentCredentialDecision(w http.ResponseWriter, r 
 	}
 	it := credentialReach(user, name, namedIn(a.DisabledCredentials, name))
 	msg := applyCredentialAnswer(user, agentID, it, a.AllowedUsers, body.Lend)
-	writeJSON(w, map[string]string{"result": msg})
+	jsonapi.Write(w, map[string]string{"result": msg})
 }

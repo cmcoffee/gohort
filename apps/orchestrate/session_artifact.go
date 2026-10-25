@@ -30,6 +30,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // ImportedSession marks a session that came in from a file: read-only, and
@@ -383,5 +384,5 @@ func (T *OrchestrateApp) handleSessionContinue(w http.ResponseWriter, r *http.Re
 		http.Error(w, "save: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, map[string]string{"id": saved.ID, "title": saved.Title})
+	jsonapi.Write(w, map[string]string{"id": saved.ID, "title": saved.Title})
 }

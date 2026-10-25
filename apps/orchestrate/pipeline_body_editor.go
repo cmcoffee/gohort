@@ -25,6 +25,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -187,7 +188,7 @@ func (T *OrchestrateApp) savePipelineBodyStage(w http.ResponseWriter, udb Databa
 	saved := SavePipelineDef(udb, def)
 	path := strings.TrimSpace(parent.Name) + "." + strings.TrimSpace(stage.Name)
 	Log("[orchestrate.pipelines] user=%q edited body stage %q of %q", user, path, saved.Name)
-	writeJSON(w, map[string]any{"ok": true, "id": saved.ID, "name": path,
+	jsonapi.Write(w, map[string]any{"ok": true, "id": saved.ID, "name": path,
 		"slug": ui.SectionSlug(bodyStageSectionTitle(parent.Name, stage.Name))})
 	return nil
 }

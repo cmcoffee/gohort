@@ -23,6 +23,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/docs"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // importJobPrefix keys an import in the publish job table, apart from the
@@ -59,7 +60,7 @@ func importPlaces(ctx context.Context, user string) []importPlace {
 func (T *Scribe) handleImportPage(w http.ResponseWriter, r *http.Request, udb Database, user string) {
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, map[string]any{"places": importPlaces(r.Context(), user)})
+		jsonapi.Write(w, map[string]any{"places": importPlaces(r.Context(), user)})
 	case http.MethodPost:
 		var body struct {
 			Kind          string `json:"kind"`
@@ -98,7 +99,7 @@ func (T *Scribe) handleImportPage(w http.ResponseWriter, r *http.Request, udb Da
 		publishJobsMu.Unlock()
 		brief := body.WriteBrief == nil || *body.WriteBrief
 		go T.importPage(ctx, udb, user, where, body.Kind, body.Target, body.Link, body.KeepPublished, brief, job)
-		writeJSON(w, map[string]any{"job": id})
+		jsonapi.Write(w, map[string]any{"job": id})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -196,7 +197,7 @@ func (T *Scribe) handleImportPageJob(w http.ResponseWriter, r *http.Request, use
 		http.NotFound(w, r)
 		return
 	}
-	writeJSON(w, map[string]any{
+	jsonapi.Write(w, map[string]any{
 		"target": snap.Target, "done": snap.Done, "ok": snap.OK, "message": snap.Message,
 		"guide_id": snap.GuideID, "steps": snap.Steps, "now": snap.Now, "stopped": snap.Stopped,
 		"elapsed": int(time.Since(snap.Started).Seconds()),
@@ -221,7 +222,7 @@ func (T *Scribe) handleImportPageStop(w http.ResponseWriter, r *http.Request, us
 		j.Stopped, j.Now = true, "stopping"
 		j.cancel()
 	}
-	writeJSON(w, map[string]any{"stopping": stopping})
+	jsonapi.Write(w, map[string]any{"stopping": stopping})
 }
 
 // countOf is "1 section" or "3 sections".
@@ -287,7 +288,7 @@ func (T *Scribe) handlePublishLink(w http.ResponseWriter, r *http.Request, udb D
 	publishJobs[g.ID] = job
 	publishJobsMu.Unlock()
 	go T.linkGuide(ctx, ownerUDB, user, g.ID, where, body.Kind, body.Target, body.Link, job)
-	writeJSON(w, map[string]any{"started": true, "target": where})
+	jsonapi.Write(w, map[string]any{"started": true, "target": where})
 }
 
 // linkGuide reads the page and records it as the guide's copy there.

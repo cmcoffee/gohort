@@ -21,6 +21,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/tools/appscript"
 )
 
@@ -157,5 +158,5 @@ func (T *CustomApps) handleShared(w http.ResponseWriter, r *http.Request, ownerD
 		http.NotFound(w, r)
 		return
 	}
-	writeJSON(w, readShared(ownerDB, spec, name))
+	jsonapi.Write(w, readShared(ownerDB, spec, name))
 }

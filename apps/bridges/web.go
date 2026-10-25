@@ -10,6 +10,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/messaging"
 )
 
@@ -70,24 +71,40 @@ func (T *Bridges) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	sub.HandleFunc("/api/hook", T.handleHook)
 	sub.HandleFunc("/api/poll", T.handlePoll)
 	sub.HandleFunc("/api/relay-log", T.handleRelayLogPost)
-	sub.HandleFunc("/api/relay-tail", T.handleRelayLogView)
+	sub.HandleFunc("/api/relay-tail", jsonapi.Get(T.DB, T.handleRelayLogView))
 	sub.HandleFunc("/api/webhook/", T.handleWebhook)
 	sub.HandleFunc("/api/bot/", T.handleBotActivity)
-	sub.HandleFunc("/api/webhook-secret", T.handleWebhookSecret)
-	sub.HandleFunc("/api/keys", T.handleKeys)
+	sub.HandleFunc("/api/webhook-secret", jsonapi.Post(T.DB, T.handleWebhookSecret))
+	sub.HandleFunc("/api/keys", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, T.handleKeys),
+		"POST": jsonapi.Post(T.DB, T.handleKeyMint, jsonapi.EmptyBodyOK),
+	}.Serve)
 	sub.HandleFunc("/api/keys/", T.handleKeyOne)
-	sub.HandleFunc("/api/bridges", T.handleBridgeList)
-	sub.HandleFunc("/api/panic", T.handlePanic)
-	sub.HandleFunc("/api/config", T.handleConfig)
-	sub.HandleFunc("/api/conversations", T.handleConversations)
-	sub.HandleFunc("/api/incoming-convos", T.handleIncomingConvos)
-	sub.HandleFunc("/api/add-convo", T.handleAddConvo)
-	sub.HandleFunc("/api/agent-channels", T.handleAgentChannels)
-	sub.HandleFunc("/api/connect-channel", T.handleConnectChannel)
-	sub.HandleFunc("/api/set-autoreply", T.handleSetAutoReply)
-	sub.HandleFunc("/api/conv-info/", T.handleConvInfo)
-	sub.HandleFunc("/api/conversation/", T.handleConvUpdate)
-	sub.HandleFunc("/api/messages/", T.handleMessages)
+	sub.HandleFunc("/api/bridges", jsonapi.Get(T.DB, T.handleBridgeList))
+	sub.HandleFunc("/api/panic", jsonapi.Post(T.DB, T.handlePanic))
+	sub.HandleFunc("/api/config", jsonapi.Methods{
+		"GET":   jsonapi.Get(T.DB, T.handleConfig),
+		"POST":  jsonapi.Post(T.DB, T.handleConfigSet, jsonapi.EmptyBodyOK),
+		"PATCH": jsonapi.Post(T.DB, T.handleConfigSet, jsonapi.EmptyBodyOK),
+	}.Serve)
+	sub.HandleFunc("/api/conversations", jsonapi.Get(T.DB, T.handleConversations))
+	sub.HandleFunc("/api/incoming-convos", jsonapi.Get(T.DB, T.handleIncomingConvos))
+	sub.HandleFunc("/api/add-convo", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, T.handleAddConvoForm),
+		"POST": jsonapi.Post(T.DB, T.handleAddConvo, jsonapi.EmptyBodyOK),
+	}.Serve)
+	sub.HandleFunc("/api/agent-channels", jsonapi.Get(T.DB, T.handleAgentChannels))
+	sub.HandleFunc("/api/connect-channel", jsonapi.Methods{
+		"POST": jsonapi.Post(T.DB, T.handleConnectChannel, jsonapi.EmptyBodyOK),
+	}.Serve)
+	sub.HandleFunc("/api/set-autoreply", jsonapi.Post(T.DB, T.handleSetAutoReply, jsonapi.EmptyBodyOK))
+	sub.HandleFunc("/api/conv-info/", jsonapi.Get(T.DB, T.handleConvInfo))
+	sub.HandleFunc("/api/conversation/", jsonapi.Methods{
+		"PATCH":  jsonapi.Post(T.DB, T.handleConvUpdate),
+		"POST":   jsonapi.Post(T.DB, T.handleConvUpdate),
+		"DELETE": jsonapi.Post(T.DB, T.handleConvDelete),
+	}.Serve)
+	sub.HandleFunc("/api/messages/", jsonapi.Get(T.DB, T.handleMessages))
 	MountSubMux(mux, prefix, sub)
 
 	// Expose Bridges' stored threads + outbound to orchestrate's channel-scoped
@@ -204,33 +221,31 @@ func (T *Bridges) ensureServiceBridge(owner, service string, enabled bool) error
 
 // handleConfig gets/sets the transport switch (so the panic state can be turned
 // back on from the dashboard toggle).
-func (T *Bridges) handleConfig(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok {
-		return
+func (T *Bridges) handleConfig(c *jsonapi.Call) (any, error) {
+	return T.config(), nil
+}
+
+// handleConfigSet changes the transport settings. The bridge is the
+// deployment's (one bridge, one messaging account), so changing where its
+// messages go, or turning it off, is an administrator's. Any user with the
+// Bridges grant could point SelfHandle at their own number and receive the
+// owner's notices.
+//
+// The body is merged into the existing config so a partial save (the master
+// toggle posts only {enabled}; the name field only {self_name}) doesn't reset
+// the other field — e.g. saving your name must not flip on panic mode.
+func (T *Bridges) handleConfigSet(c *jsonapi.Call, patch json.RawMessage) (any, error) {
+	if !RequestIsAdmin(c.R) {
+		return nil, jsonapi.Forbidden("only an administrator can change the bridge's settings")
 	}
-	w.Header().Set("Content-Type", "application/json")
-	switch r.Method {
-	case http.MethodGet:
-		_ = json.NewEncoder(w).Encode(T.config())
-	case http.MethodPost, http.MethodPatch:
-		// The bridge is the deployment's (one bridge, one messaging account),
-		// so changing where its messages go, or turning it off, is an
-		// administrator's. Any user with the Bridges grant could point
-		// SelfHandle at their own number and receive the owner's notices.
-		if !RequestIsAdmin(r) {
-			http.Error(w, "only an administrator can change the bridge's settings", http.StatusForbidden)
-			return
+	cfg := T.config()
+	if len(patch) > 0 {
+		if err := json.Unmarshal(patch, &cfg); err != nil {
+			return nil, jsonapi.BadRequest("invalid JSON: " + err.Error())
 		}
-		// Merge into the existing config so a partial save (the master toggle
-		// posts only {enabled}; the name field only {self_name}) doesn't reset
-		// the other field — e.g. saving your name must not flip on panic mode.
-		c := T.config()
-		_ = json.NewDecoder(r.Body).Decode(&c)
-		T.setConfig(c)
-		_ = json.NewEncoder(w).Encode(c)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+	T.setConfig(cfg)
+	return cfg, nil
 }
 
 // hookRequest is the inbound contract a connector POSTs. Mirrors the existing
@@ -732,26 +747,17 @@ func (T *Bridges) handlePoll(w http.ResponseWriter, r *http.Request) {
 
 // handlePanic flips the transport off — the kill switch. Inbound keeps being
 // recorded/deduped, but nothing routes to an agent and nothing is delivered.
-func (T *Bridges) handlePanic(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok {
-		return
-	}
+func (T *Bridges) handlePanic(c *jsonapi.Call, _ struct{}) (any, error) {
 	// Turns the transport off for everyone: an administrator's switch.
-	if !RequestIsAdmin(r) {
-		http.Error(w, "only an administrator can stop the bridge", http.StatusForbidden)
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST required", http.StatusMethodNotAllowed)
-		return
+	if !RequestIsAdmin(c.R) {
+		return nil, jsonapi.Forbidden("only an administrator can stop the bridge")
 	}
 	// Toggle only Enabled — a whole-struct replace here wiped SelfName/SelfHandle,
 	// so after re-enable the owner attributed as "Owner" instead of the configured
 	// name (and "me" recipient resolution broke).
-	c := T.config()
-	c.Enabled = false
-	T.setConfig(c)
+	cfg := T.config()
+	cfg.Enabled = false
+	T.setConfig(cfg)
 	Log("[bridges] PANIC: transport disabled; no inbound routes, no outbound delivers")
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"enabled": false, "message": "Bridges disabled. Re-enable from Master switches."})
+	return map[string]any{"enabled": false, "message": "Bridges disabled. Re-enable from Master switches."}, nil
 }

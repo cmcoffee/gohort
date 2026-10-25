@@ -37,6 +37,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // handleSessionStatus feeds the chat toolbar's status pill
@@ -57,19 +58,19 @@ func (T *OrchestrateApp) handleSessionStatus(w http.ResponseWriter, r *http.Requ
 	agentID := strings.TrimSpace(r.URL.Query().Get("agent"))
 	sessionID := strings.TrimSpace(r.URL.Query().Get("session"))
 	if agentID == "" || sessionID == "" {
-		writeJSON(w, map[string]any{})
+		jsonapi.Write(w, map[string]any{})
 		return
 	}
 	sess, ok := loadChatSession(udb, agentID, sessionID)
 	if !ok {
-		writeJSON(w, map[string]any{})
+		jsonapi.Write(w, map[string]any{})
 		return
 	}
 	if sess.Phase == "" || sess.MachineID == "" {
 		// No machine: the pill is the thread's CONTEXT readout instead, when
 		// the thread has folded — the one moment its shape changed under the
 		// owner (session_context.go). Silent until then.
-		writeJSON(w, contextStatus(udb, sess))
+		jsonapi.Write(w, contextStatus(udb, sess))
 		return
 	}
 	def, ok := LoadMachineDef(udb, user, sess.MachineID)
@@ -78,7 +79,7 @@ func (T *OrchestrateApp) handleSessionStatus(w http.ResponseWriter, r *http.Requ
 		// showing a phase name from a workflow that no longer exists —
 		// the next turn will run as an ordinary agent turn, and the pill
 		// is where someone would look to understand why.
-		writeJSON(w, map[string]any{
+		jsonapi.Write(w, map[string]any{
 			"label": "phase: " + sess.Phase + " (machine gone)",
 			"title": "The machine this conversation was running has been deleted. Turns now run as ordinary agent turns.",
 		})
@@ -95,7 +96,7 @@ func (T *OrchestrateApp) handleSessionStatus(w http.ResponseWriter, r *http.Requ
 	// opening message, transition log) and actions are the owner's two
 	// levers. See machine_session_state.go.
 	detail, actions := machineStatusActions(agentID, sessionID)
-	writeJSON(w, map[string]any{"label": sess.Phase, "title": title + " Click for the blackboard and transitions.", "tone": "active",
+	jsonapi.Write(w, map[string]any{"label": sess.Phase, "title": title + " Click for the blackboard and transitions.", "tone": "active",
 		"detail_url": detail, "actions": actions})
 }
 
@@ -147,7 +148,7 @@ func (T *OrchestrateApp) handleMachines(w http.ResponseWriter, r *http.Request) 
 		// that gets rejected on first save teaches the wrong lesson about
 		// the whole feature.
 		if r.URL.Query().Get("starter") == "1" {
-			writeJSON(w, StarterMachine())
+			jsonapi.Write(w, StarterMachine())
 			return
 		}
 		defs := ListMachineDefs(udb, user)
@@ -186,7 +187,7 @@ func (T *OrchestrateApp) handleMachines(w http.ResponseWriter, r *http.Request) 
 				Owner:   sm.Owner,
 			})
 		}
-		writeJSON(w, map[string]any{"machines": rows})
+		jsonapi.Write(w, map[string]any{"machines": rows})
 	case http.MethodPost:
 		var def MachineDef
 		if err := json.NewDecoder(r.Body).Decode(&def); err != nil {
@@ -209,7 +210,7 @@ func (T *OrchestrateApp) handleMachines(w http.ResponseWriter, r *http.Request) 
 		}
 		saved := SaveMachineDef(udb, def)
 		Log("[orchestrate.machines] user=%q created machine %q (id=%s, %d phases)", user, saved.Name, saved.ID, len(saved.Phases))
-		writeJSON(w, saved)
+		jsonapi.Write(w, saved)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -247,7 +248,7 @@ func (T *OrchestrateApp) handleMachineImport(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	Log("[orchestrate.machines] user=%q imported machine %q (id=%s)", user, saved.Name, saved.ID)
-	writeJSON(w, saved)
+	jsonapi.Write(w, saved)
 }
 
 // handleMachineOne serves per-machine routes: GET / PUT / DELETE plus
@@ -305,7 +306,7 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 	case "":
 		switch r.Method {
 		case http.MethodGet:
-			writeJSON(w, def)
+			jsonapi.Write(w, def)
 		case http.MethodPut:
 			if !recipeEditorOnly(w, ed, "machine", defOwner, "edit") {
 				return
@@ -334,7 +335,7 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 			}
 			saved := SaveMachineDef(ed.db, body)
 			Log("[orchestrate.machines] user=%q updated machine %q (id=%s, owner %q)", user, saved.Name, saved.ID, ed.owner)
-			writeJSON(w, saved)
+			jsonapi.Write(w, saved)
 		case http.MethodDelete:
 			if !machineOwnerOnly(w, mine, defOwner, "delete") {
 				return
@@ -352,7 +353,7 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 			detached := detachMachineFromAgents(udb, user, def.ID)
 			DeleteMachineDef(udb, def.ID)
 			Log("[orchestrate.machines] user=%q deleted machine %q (id=%s, detached from %d agent(s))", user, def.Name, def.ID, len(detached))
-			writeJSON(w, map[string]any{"deleted": def.ID, "detached": detached})
+			jsonapi.Write(w, map[string]any{"deleted": def.ID, "detached": detached})
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
@@ -396,7 +397,7 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 		dup.Name = copyName(def.Name, machineNames(ListMachineDefs(udb, user)))
 		saved := SaveMachineDef(udb, dup)
 		Log("[orchestrate.machines] user=%q duplicated machine %q as %q (id=%s)", user, def.Name, saved.Name, saved.ID)
-		writeJSON(w, map[string]any{"id": saved.ID, "name": saved.Name})
+		jsonapi.Write(w, map[string]any{"id": saved.ID, "name": saved.Name})
 	case "revise":
 		// Describe a change against the machine already on screen
 		// (machine_revise.go). Undoable, because a revision can rewrite
@@ -436,13 +437,13 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 		}
 		fixed := def.Repair(kind)
 		if len(fixed) == 0 {
-			writeJSON(w, map[string]any{"fixed": []string{}})
+			jsonapi.Write(w, map[string]any{"fixed": []string{}})
 			return
 		}
 		saved := SaveMachineDef(ed.db, def)
 		Log("[orchestrate.machines] user=%q repaired machine %q: %s", user, saved.Name,
 			strings.Join(RepairLines(fixed), "; "))
-		writeJSON(w, map[string]any{"fixed": RepairLines(fixed), "id": saved.ID})
+		jsonapi.Write(w, map[string]any{"fixed": RepairLines(fixed), "id": saved.ID})
 	case "move":
 		// Reordering is cosmetic to the DRIVER (routing is by name) but
 		// not to the person: the order is the rail, the reading order,
@@ -488,7 +489,7 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 		}
 		def.Phases[idx], def.Phases[to] = def.Phases[to], def.Phases[idx]
 		SaveMachineDef(ed.db, def)
-		writeJSON(w, map[string]any{"ok": true, "start": def.Start})
+		jsonapi.Write(w, map[string]any{"ok": true, "start": def.Start})
 	case "agents":
 		// Who runs this machine — readable and settable from the editor,
 		// which is where you are standing when the question comes up. An
@@ -544,7 +545,7 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 			return saved
 		}
 		if r.Method == http.MethodGet {
-			writeJSON(w, rs.list())
+			jsonapi.Write(w, rs.list())
 			return
 		}
 		var body struct {
@@ -560,7 +561,7 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		writeJSON(w, out)
+		jsonapi.Write(w, out)
 	case "publish":
 		// The third rung: ask an administrator to let EVERY user of the
 		// deployment run this. The narrower grant beside it is the owner's own
@@ -727,7 +728,7 @@ func (T *OrchestrateApp) handleMachineAgents(w http.ResponseWriter, r *http.Requ
 		// them at once, and opening each machine to answer that is the
 		// navigation the tools table already avoids.
 		if r.URL.Query().Get("pills") == "1" {
-			writeJSON(w, machineAgentPills(udb, user, def))
+			jsonapi.Write(w, machineAgentPills(udb, user, def))
 			return
 		}
 		var ids []string
@@ -736,7 +737,7 @@ func (T *OrchestrateApp) handleMachineAgents(w http.ResponseWriter, r *http.Requ
 				ids = append(ids, ag.ID)
 			}
 		}
-		writeJSON(w, map[string]any{"agents": ids})
+		jsonapi.Write(w, map[string]any{"agents": ids})
 	case http.MethodPost, http.MethodPut:
 		// A single toggle, as the pills send it. The whole-set form
 		// below is the page's checklist and stays exactly as it was.
@@ -773,7 +774,7 @@ func (T *OrchestrateApp) handleMachineAgents(w http.ResponseWriter, r *http.Requ
 					Log("[orchestrate.machines] preflight: %s", g)
 				}
 			}
-			writeJSON(w, map[string]any{"ok": true, "gaps": gaps})
+			jsonapi.Write(w, map[string]any{"ok": true, "gaps": gaps})
 			return
 		}
 		var body struct {
@@ -813,7 +814,7 @@ func (T *OrchestrateApp) handleMachineAgents(w http.ResponseWriter, r *http.Requ
 		if len(attached)+len(detached) > 0 {
 			Log("[orchestrate.machines] user=%q machine %q attached=%v detached=%v", user, def.Name, attached, detached)
 		}
-		writeJSON(w, map[string]any{"ok": true, "attached": attached, "detached": detached})
+		jsonapi.Write(w, map[string]any{"ok": true, "attached": attached, "detached": detached})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}

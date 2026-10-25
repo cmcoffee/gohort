@@ -20,6 +20,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/agenthost"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/tools/appscript"
 )
 
@@ -99,7 +100,7 @@ func (T *CustomApps) handleAsk(w http.ResponseWriter, r *http.Request, ownerDB D
 		http.Error(w, err.Error(), status)
 		return
 	}
-	writeJSON(w, map[string]any{"text": text})
+	jsonapi.Write(w, map[string]any{"text": text})
 }
 
 // askAppAgent asks spec's agent prompt on user's behalf, under the app's and

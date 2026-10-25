@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // guideImagesTable holds a guide's pictures, keyed "<guide id>/<image id>".
@@ -111,10 +112,10 @@ func (T *Scribe) handleImageUpload(w http.ResponseWriter, r *http.Request, udb D
 			return
 		}
 		saveGuideRev(ownerUDB, g, "Added a picture to "+title)
-		writeJSON(w, map[string]any{"url": path, "markdown": md, "placed": true, "section": title})
+		jsonapi.Write(w, map[string]any{"url": path, "markdown": md, "placed": true, "section": title})
 		return
 	}
-	writeJSON(w, map[string]string{"url": path, "markdown": md})
+	jsonapi.Write(w, map[string]string{"url": path, "markdown": md})
 }
 
 // placeImageInSection appends an image's markdown to the section with that

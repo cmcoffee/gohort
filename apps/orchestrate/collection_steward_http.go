@@ -12,12 +12,13 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 func (T *OrchestrateApp) handleCollectionSteward(w http.ResponseWriter, r *http.Request, user string, c Collection) {
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, map[string]any{
+		jsonapi.Write(w, map[string]any{
 			"curator_agent": c.CuratorAgent,
 			"status":        T.stewardStatusLine(user, c),
 		})
@@ -45,7 +46,7 @@ func (T *OrchestrateApp) handleCollectionSteward(w http.ResponseWriter, r *http.
 			}
 		}
 		saveCollection(UserDB(T.DB, user), c)
-		writeJSON(w, map[string]any{"ok": true})
+		jsonapi.Write(w, map[string]any{"ok": true})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}

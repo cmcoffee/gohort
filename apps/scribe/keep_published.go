@@ -27,6 +27,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // keepPublishedWait is how long a pass waits for a publish already running
@@ -185,5 +186,5 @@ func (T *Scribe) handleKeepPublished(w http.ResponseWriter, r *http.Request, udb
 	}
 	g.KeepPublished = body.On
 	saveGuide(ownerUDB, g)
-	writeJSON(w, map[string]any{"keep_published": g.KeepPublished})
+	jsonapi.Write(w, map[string]any{"keep_published": g.KeepPublished})
 }

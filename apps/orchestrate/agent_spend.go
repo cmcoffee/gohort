@@ -27,6 +27,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 const (
@@ -248,5 +249,5 @@ func (T *OrchestrateApp) handleConsoleSpend(w http.ResponseWriter, r *http.Reque
 	if rows == nil {
 		rows = []agentSpendRow{}
 	}
-	writeJSON(w, rows)
+	jsonapi.Write(w, rows)
 }

@@ -21,6 +21,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // overviewCard is one card in either pane. The card renderer shows values,
@@ -76,7 +77,7 @@ func (T *OrchestrateApp) handleConsoleOverview(w http.ResponseWriter, r *http.Re
 	}
 	agentID := strings.TrimSpace(r.URL.Query().Get("agent"))
 	if agentID == "" {
-		writeJSON(w, []overviewCard{{Title: "No agent selected", Detail: "Open an agent to see what it has been doing.", Section: secGlance}})
+		jsonapi.Write(w, []overviewCard{{Title: "No agent selected", Detail: "Open an agent to see what it has been doing.", Section: secGlance}})
 		return
 	}
 	loc := UserLocation(user)
@@ -180,7 +181,7 @@ func (T *OrchestrateApp) handleConsoleOverview(w http.ResponseWriter, r *http.Re
 		})
 	}
 
-	writeJSON(w, cards)
+	jsonapi.Write(w, cards)
 }
 
 // handleConsoleFleet answers "what is my whole fleet doing on my behalf".
@@ -300,7 +301,7 @@ func (T *OrchestrateApp) handleConsoleFleet(w http.ResponseWriter, r *http.Reque
 	if len(cards) == 0 {
 		cards = append(cards, overviewCard{Title: "Nothing has run yet", Detail: "Schedules, monitors and dispatched work show up here once they do.", Section: secGlance})
 	}
-	writeJSON(w, cards)
+	jsonapi.Write(w, cards)
 }
 
 // --- gathering ---------------------------------------------------------------

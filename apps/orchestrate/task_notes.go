@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/notes"
 )
 
@@ -309,7 +310,7 @@ func (T *OrchestrateApp) handleTaskNotes(w http.ResponseWriter, r *http.Request)
 	switch r.Method {
 	case http.MethodGet:
 		n := tn.load()
-		writeJSON(w, map[string]any{
+		jsonapi.Write(w, map[string]any{
 			"text":       n.Text,
 			"cap":        tn.cap(),
 			"updated_at": n.UpdatedAt,
@@ -339,7 +340,7 @@ func (T *OrchestrateApp) handleTaskNotes(w http.ResponseWriter, r *http.Request)
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		writeJSON(w, map[string]any{"ok": true, "message": msg})
+		jsonapi.Write(w, map[string]any{"ok": true, "message": msg})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}

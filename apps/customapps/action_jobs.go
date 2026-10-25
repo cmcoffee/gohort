@@ -25,6 +25,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // actionInlineWait is how long a request waits for its action before answering
@@ -204,7 +205,7 @@ func handleJobCancel(w http.ResponseWriter, r *http.Request, user string) {
 		return
 	}
 	j.cancel()
-	writeJSON(w, map[string]any{"ok": true})
+	jsonapi.Write(w, map[string]any{"ok": true})
 }
 
 // pruneActionJobs drops outcomes past their keeping time. Called with the lock
@@ -243,10 +244,10 @@ func findActionJob(r *http.Request, key string) *actionJob {
 func (T *CustomApps) handleActionProgress(w http.ResponseWriter, r *http.Request, owner, uid string, spec AppSpec, name string) {
 	j := findActionJob(r, actionJobKey(owner, spec.Slug, uid, name))
 	if j == nil {
-		writeJSON(w, map[string]any{})
+		jsonapi.Write(w, map[string]any{})
 		return
 	}
-	writeJSON(w, j.status())
+	jsonapi.Write(w, j.status())
 }
 
 // handleActionCancel answers action-cancel/<name>: stops the person's job.
@@ -258,5 +259,5 @@ func (T *CustomApps) handleActionCancel(w http.ResponseWriter, r *http.Request, 
 	if j := findActionJob(r, actionJobKey(owner, spec.Slug, uid, name)); j != nil {
 		j.cancel()
 	}
-	writeJSON(w, map[string]any{"ok": true})
+	jsonapi.Write(w, map[string]any{"ok": true})
 }

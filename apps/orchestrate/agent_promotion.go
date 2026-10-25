@@ -25,6 +25,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/promotion"
 )
 
@@ -170,7 +171,7 @@ func (T *OrchestrateApp) handleAgentShare(w http.ResponseWriter, r *http.Request
 	}
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, list(rec))
+		jsonapi.Write(w, list(rec))
 	case http.MethodPost, http.MethodPatch:
 		var body struct {
 			AllowedUsers []string `json:"allowed_users"`
@@ -203,7 +204,7 @@ func (T *OrchestrateApp) handleAgentShare(w http.ResponseWriter, r *http.Request
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		writeJSON(w, list(saved))
+		jsonapi.Write(w, list(saved))
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}

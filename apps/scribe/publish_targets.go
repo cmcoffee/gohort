@@ -23,6 +23,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/docs"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // publishJob is one guide's publish in flight, or its outcome.
@@ -298,7 +299,7 @@ func (T *Scribe) handlePublishTo(w http.ResponseWriter, r *http.Request, udb Dat
 			NavLinks: prev.NavLinks, NavContents: prev.NavContents,
 		},
 		docs.PublishRecord{Kind: spec.Kind, Target: spec.Target.ID, TargetTitle: spec.Target.Title, Title: title, Answers: body.Answers})
-	writeJSON(w, map[string]any{"started": true, "target": spec.Target.Title})
+	jsonapi.Write(w, map[string]any{"started": true, "target": spec.Target.Title})
 }
 
 // handlePublishJob reports a guide's publish: running (with its elapsed
@@ -311,10 +312,10 @@ func (T *Scribe) handlePublishJob(w http.ResponseWriter, r *http.Request, udb Da
 	}
 	j, ok := currentPublishJob(id)
 	if !ok {
-		writeJSON(w, map[string]any{"none": true})
+		jsonapi.Write(w, map[string]any{"none": true})
 		return
 	}
-	writeJSON(w, map[string]any{
+	jsonapi.Write(w, map[string]any{
 		"target": j.Target, "done": j.Done, "ok": j.OK, "message": j.Message, "url": j.URL,
 		"elapsed": int(time.Since(j.Started).Seconds()),
 		"took":    fmt.Sprintf("%ds", int(j.Ended.Sub(j.Started).Seconds())),
@@ -342,7 +343,7 @@ func (T *Scribe) handlePublishStop(w http.ResponseWriter, r *http.Request, udb D
 		http.Error(w, "You need edit access to this guide to stop its publish.", http.StatusForbidden)
 		return
 	}
-	writeJSON(w, map[string]any{"stopping": stopPublishJob(id)})
+	jsonapi.Write(w, map[string]any{"stopping": stopPublishJob(id)})
 }
 
 func chFirst(a, b string) string {

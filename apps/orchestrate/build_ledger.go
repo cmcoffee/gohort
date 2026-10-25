@@ -17,6 +17,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/buildledger"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/sections"
 	"github.com/cmcoffee/gohort/core/ui"
 )
@@ -102,7 +103,7 @@ func (T *OrchestrateApp) handleBuildOutcomes(w http.ResponseWriter, r *http.Requ
 	if rep.Green > 0 {
 		median = fmt.Sprintf("%d (mean %.1f)", rep.MedianToGreen, rep.MeanToGreen)
 	}
-	writeJSON(w, map[string]any{
+	jsonapi.Write(w, map[string]any{
 		"window":        fmt.Sprintf("last %d days", days),
 		"verifications": fmt.Sprintf("%d (%d passed, %d failed, %d unproven)", rep.Verifications, rep.Passes, rep.Fails, rep.Unproven),
 		"builds":        fmt.Sprintf("%d (%d green, %d still open)", rep.Episodes, rep.Green, rep.Open),

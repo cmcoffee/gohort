@@ -19,6 +19,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // consoleGuardrailRow is one block, flattened for the card layout.
@@ -93,7 +94,7 @@ func (T *OrchestrateApp) handleConsoleGuardrails(w http.ResponseWriter, r *http.
 		}
 		rows = append(rows, row)
 	}
-	writeJSON(w, rows)
+	jsonapi.Write(w, rows)
 }
 
 // guardrailRowTitle renders the rule as a card title, trimmed so one long rule

@@ -29,7 +29,7 @@ func TestARelaysLogIsKeptForItsOwner(t *testing.T) {
 	}
 
 	view := func(user string) (int, []map[string]string) {
-		w := f.call(user, http.MethodGet, "/bridges/api/relay-tail?id=k-relay", "", f.T.handleRelayLogView)
+		w := f.call(user, http.MethodGet, "/api/relay-tail?id=k-relay", "", f.routes())
 		var rows []map[string]string
 		json.Unmarshal(w.Body.Bytes(), &rows)
 		return w.Code, rows

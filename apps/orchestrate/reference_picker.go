@@ -38,6 +38,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/appagents"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // handleReferenceSources drives the Sources modal.
@@ -106,7 +107,7 @@ func (T *OrchestrateApp) handleReferenceSources(w http.ResponseWriter, r *http.R
 				writes = append(writes, s.Ref())
 			}
 		}
-		writeJSON(w, map[string]any{"items": items, "attached": attached, "writes": writes})
+		jsonapi.Write(w, map[string]any{"items": items, "attached": attached, "writes": writes})
 	case http.MethodPost:
 		var body struct {
 			References []string `json:"references"`
@@ -146,7 +147,7 @@ func (T *OrchestrateApp) handleReferenceSources(w http.ResponseWriter, r *http.R
 			return
 		}
 		Log("[orchestrate.sources] user=%q agent=%q now attached to %d source(s)", user, rec.ID, len(sel))
-		writeJSON(w, map[string]bool{"ok": true})
+		jsonapi.Write(w, map[string]bool{"ok": true})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}

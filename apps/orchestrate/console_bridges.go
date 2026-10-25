@@ -8,6 +8,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // channelLabelForRow returns the friendly name of a bridge's target channel
@@ -80,7 +81,7 @@ func (T *OrchestrateApp) handleConsoleBridgeChannels(w http.ResponseWriter, r *h
 			"desc":  "Agent: " + agentName,
 		})
 	}
-	writeJSON(w, rows)
+	jsonapi.Write(w, rows)
 }
 
 // handleConsoleBridges lists every owner's bridges (watch-kind event
@@ -123,7 +124,7 @@ func (T *OrchestrateApp) handleConsoleBridges(w http.ResponseWriter, r *http.Req
 			"channel_name": channelLabelForRow(m),
 		})
 	}
-	writeJSON(w, rows)
+	jsonapi.Write(w, rows)
 }
 
 // handleConsoleBridgeThread returns the recent messages of the channel a poll
@@ -148,7 +149,7 @@ func (T *OrchestrateApp) handleConsoleBridgeThread(w http.ResponseWriter, r *htt
 			}
 		}
 	}
-	writeJSON(w, out)
+	jsonapi.Write(w, out)
 }
 
 // channelLinesFromMessages projects a session's stored turns into the

@@ -35,6 +35,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/bgrun"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/pathhold"
 )
 
@@ -222,7 +223,7 @@ func (T *FileStoreApp) handleCommandUses(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if r.Method == http.MethodGet {
-		writeJSON(w, map[string]any{"allowed_uses": strings.Join(cmd.allowedLines(), "\n"), "guide": cmd.Guide, "background": cmd.Background})
+		jsonapi.Write(w, map[string]any{"allowed_uses": strings.Join(cmd.allowedLines(), "\n"), "guide": cmd.Guide, "background": cmd.Background})
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -259,7 +260,7 @@ func (T *FileStoreApp) handleCommandUses(w http.ResponseWriter, r *http.Request)
 	}
 	T.DB.Set(commandsTable, commandKey(cmd.Slug, cmd.Name), cmd)
 	Log("[filestore] %s set %s/%s uses: %s", user, cmd.Slug, cmd.Name, cmd.usesLabel())
-	writeJSON(w, map[string]any{"ok": true, "message": msg})
+	jsonapi.Write(w, map[string]any{"ok": true, "message": msg})
 }
 
 // MigrateCommandUses brings commands from before there was one way to run

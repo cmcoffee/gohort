@@ -32,6 +32,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/archive"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/netgate"
 	"github.com/cmcoffee/gohort/core/pathhold"
 )
@@ -204,7 +205,7 @@ func (T *FileStoreApp) handleUpload(w http.ResponseWriter, r *http.Request) {
 		out["unopened"] = exp.Unopened
 		out["refused_members"] = exp.Skipped
 	}
-	writeJSON(w, out)
+	jsonapi.Write(w, out)
 }
 
 // saveUploadPart streams one part to disk under dest.

@@ -25,6 +25,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/appadmin"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -337,7 +338,7 @@ func (T *CustomApps) handleAdmin(w http.ResponseWriter, r *http.Request, user st
 			SaveAppSpec(spec)
 			Log("[customapps] admin %q cleared a leftover public token on %q/%q", user, owner, slug)
 		}
-		writeJSON(w, map[string]any{"ok": true, "message": "Link revoked."})
+		jsonapi.Write(w, map[string]any{"ok": true, "message": "Link revoked."})
 	case "reach":
 		st := appadmin.Load(RootDB, owner, slug)
 		if r.Method == http.MethodGet {
@@ -355,7 +356,7 @@ func (T *CustomApps) handleAdmin(w http.ResponseWriter, r *http.Request, user st
 			if allowed == nil {
 				allowed = []string{}
 			}
-			writeJSON(w, map[string]any{"users": users, "allowed": allowed})
+			jsonapi.Write(w, map[string]any{"users": users, "allowed": allowed})
 			return
 		}
 		var in struct {
@@ -370,7 +371,7 @@ func (T *CustomApps) handleAdmin(w http.ResponseWriter, r *http.Request, user st
 		st.Updated = time.Now().UTC().Format(time.RFC3339)
 		appadmin.Save(RootDB, owner, slug, st)
 		Log("[customapps] admin %q set the allowlist on %q/%q to %d user(s)", user, owner, slug, len(st.AllowedUsers))
-		writeJSON(w, map[string]any{"ok": true, "message": "Saved."})
+		jsonapi.Write(w, map[string]any{"ok": true, "message": "Saved."})
 	case "tiers":
 		def, ok := lookupAdminPipeline(owner, spec.PipelineID)
 		if !ok {
@@ -386,7 +387,7 @@ func (T *CustomApps) handleAdmin(w http.ResponseWriter, r *http.Request, user st
 			for _, st := range def.Stages {
 				out[st.Name] = RouteOverride(PipelineStageRouteKey(def.ID, st.Name))
 			}
-			writeJSON(w, out)
+			jsonapi.Write(w, out)
 			return
 		}
 		var in map[string]any
@@ -419,7 +420,7 @@ func (T *CustomApps) handleAdmin(w http.ResponseWriter, r *http.Request, user st
 			RootDB.Set(RoutingTable, key, val)
 		}
 		Log("[customapps] admin %q set stage tiers on %q/%q", user, owner, slug)
-		writeJSON(w, map[string]any{"ok": true, "message": "Saved."})
+		jsonapi.Write(w, map[string]any{"ok": true, "message": "Saved."})
 	case "review":
 		caps := map[string]bool{}
 		for _, d := range spec.DataSources {
@@ -449,7 +450,7 @@ func (T *CustomApps) handleAdmin(w http.ResponseWriter, r *http.Request, user st
 		if n := len(pageBrowserCode(spec)); n > 0 {
 			pageCode = fmt.Sprintf("%d block(s) of HTML or script that run in each viewer's browser, isolated (no gohort session, only this app's own endpoints): read them under Show scripts", n)
 		}
-		writeJSON(w, map[string]any{
+		jsonapi.Write(w, map[string]any{
 			"sources":      len(spec.DataSources),
 			"actions":      len(spec.Actions),
 			"page_code":    pageCode,

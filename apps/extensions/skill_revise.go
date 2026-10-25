@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // skillRevisable is the part of a skill a description can change.
@@ -94,7 +95,7 @@ func (T *Extensions) handleSkillRevise(w http.ResponseWriter, r *http.Request, o
 		changed = append(changed, "instructions")
 	}
 	if len(changed) == 0 {
-		writeJSON(w, map[string]any{"changed": []string{}, "message": "Nothing needed to change."})
+		jsonapi.Write(w, map[string]any{"changed": []string{}, "message": "Nothing needed to change."})
 		return
 	}
 	rec := own.SkillRecord
@@ -104,7 +105,7 @@ func (T *Extensions) handleSkillRevise(w http.ResponseWriter, r *http.Request, o
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, map[string]any{"changed": changed,
+	jsonapi.Write(w, map[string]any{"changed": changed,
 		"message": "Changed " + strings.Join(changed, ", ") + ". The version before is in Version history."})
 }
 

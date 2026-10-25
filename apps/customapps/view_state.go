@@ -25,6 +25,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 const (
@@ -67,7 +68,7 @@ type viewStateChange struct {
 func (T *CustomApps) handleViewState(w http.ResponseWriter, r *http.Request, appdb Database, spec AppSpec) {
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, loadViewState(appdb, spec.Slug))
+		jsonapi.Write(w, loadViewState(appdb, spec.Slug))
 		return
 	case http.MethodPost:
 	default:

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // consoleBrokenToolRow is one card. Field order is display order: the action
@@ -60,7 +61,7 @@ func (T *OrchestrateApp) handleConsoleBrokenTools(w http.ResponseWriter, r *http
 			ID:       rec.key(),
 		})
 	}
-	writeJSON(w, rows)
+	jsonapi.Write(w, rows)
 }
 
 // brokenToolSince renders the window the failures span, in the owner's zone.
@@ -96,5 +97,5 @@ func (T *OrchestrateApp) handleConsoleBrokenToolForget(w http.ResponseWriter, r 
 		http.Error(w, "no tally for that action (it may already have cleared itself with a success)", http.StatusNotFound)
 		return
 	}
-	writeJSON(w, map[string]any{"ok": true, "forgot": key})
+	jsonapi.Write(w, map[string]any{"ok": true, "forgot": key})
 }

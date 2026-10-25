@@ -31,6 +31,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/replyguard"
 	"github.com/cmcoffee/gohort/core/sections"
 	"github.com/cmcoffee/gohort/core/ui"
@@ -351,7 +352,7 @@ func (T *OrchestrateApp) handleGuardDraft(w http.ResponseWriter, r *http.Request
 		T.DB.Set(replyFlagTable, f.ID, f)
 	}
 	go T.runDraft(a.ID)
-	writeJSON(w, map[string]any{"ok": true, "id": a.ID})
+	jsonapi.Write(w, map[string]any{"ok": true, "id": a.ID})
 }
 
 // handleAuthoredGuard acts on one drafted guard. POST ?id=&action=
@@ -421,7 +422,7 @@ func (T *OrchestrateApp) handleAuthoredGuard(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "action must be redraft, test, enable, disable or delete", http.StatusBadRequest)
 		return
 	}
-	writeJSON(w, map[string]any{"ok": true})
+	jsonapi.Write(w, map[string]any{"ok": true})
 }
 
 var spinFrames = []rune("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
@@ -486,7 +487,7 @@ func (T *OrchestrateApp) handleAuthoredGuards(w http.ResponseWriter, r *http.Req
 		rw.Active = a.Status == replyguard.StatusActive
 		rows = append(rows, rw)
 	}
-	writeJSON(w, map[string]any{"records": rows})
+	jsonapi.Write(w, map[string]any{"records": rows})
 }
 
 func init() {

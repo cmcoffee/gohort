@@ -53,6 +53,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/bgrun"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/pathhold"
 )
 
@@ -474,14 +475,14 @@ func (T *FileStoreApp) handleCommand(w http.ResponseWriter, r *http.Request) {
 	// which the caller shows to a person. Same bytes either way; the key
 	// name is what tells the UI whether to ask for something.
 	if act.TwoPhase && input == "" {
-		writeJSON(w, map[string]any{
+		jsonapi.Write(w, map[string]any{
 			"challenge":   out,
 			"input_label": chFirstNonEmpty(act.InputLabel, "Response"),
 			"command":     act.Name,
 		})
 		return
 	}
-	writeJSON(w, map[string]any{"output": out, "command": act.Name})
+	jsonapi.Write(w, map[string]any{"output": out, "command": act.Name})
 }
 
 // chFirstNonEmpty returns the first non-blank string.
@@ -527,7 +528,7 @@ func (T *FileStoreApp) handleFolders(w http.ResponseWriter, r *http.Request) {
 			"size": HumanSize(f.Bytes), "modified": f.Modified,
 		})
 	}
-	writeJSON(w, rows)
+	jsonapi.Write(w, rows)
 }
 
 // describeStoreCommands renders a store's registered commands for an agent.

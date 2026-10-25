@@ -14,6 +14,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/governance"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/mcppersonal"
 	"github.com/cmcoffee/gohort/core/ui"
 )
@@ -67,14 +68,14 @@ func (T *Extensions) handleMCPServers(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		if r.URL.Query().Get("options") == "credentials" {
-			writeJSON(w, credentialOptions(user))
+			jsonapi.Write(w, credentialOptions(user))
 			return
 		}
 		rows := []mcpServerRow{}
 		for _, s := range mcppersonal.List(user) {
 			rows = append(rows, mcpRow(s))
 		}
-		writeJSON(w, rows)
+		jsonapi.Write(w, rows)
 	case http.MethodPost:
 		switch action := strings.TrimSpace(r.URL.Query().Get("action")); action {
 		case "check":
@@ -85,7 +86,7 @@ func (T *Extensions) handleMCPServers(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "could not reach it: "+err.Error(), http.StatusBadGateway)
 				return
 			}
-			writeJSON(w, map[string]string{"message": fmt.Sprintf("%s answered with %d tool(s).", s.Name, len(s.Tools))})
+			jsonapi.Write(w, map[string]string{"message": fmt.Sprintf("%s answered with %d tool(s).", s.Name, len(s.Tools))})
 			return
 		case "enable", "disable":
 			if err := mcppersonal.SetDisabled(user, name, action == "disable"); err != nil {
@@ -153,7 +154,7 @@ func (T *Extensions) handleMCPServers(w http.ResponseWriter, r *http.Request) {
 			if s, _ := mcppersonal.Load(user, body.Name); s.AwaitingApproval {
 				msg += " Personal MCP servers need an administrator's approval here, too."
 			}
-			writeJSON(w, map[string]string{"message": msg})
+			jsonapi.Write(w, map[string]string{"message": msg})
 			return
 		}
 		s, err := mcppersonal.Check(ctx, user, body.Name)
@@ -164,7 +165,7 @@ func (T *Extensions) handleMCPServers(w http.ResponseWriter, r *http.Request) {
 		if s.AwaitingApproval {
 			msg += " Personal MCP servers need an administrator's approval here: its tools reach your agents once one approves it."
 		}
-		writeJSON(w, map[string]string{"message": msg})
+		jsonapi.Write(w, map[string]string{"message": msg})
 	case http.MethodDelete:
 		if err := mcppersonal.Remove(user, name); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)

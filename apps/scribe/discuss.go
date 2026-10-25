@@ -34,6 +34,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/agenthost"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/textutil"
 )
 
@@ -240,11 +241,11 @@ func (T *Scribe) runDiscussTurn(w http.ResponseWriter, r *http.Request, udb Data
 	// A question asked with ask_user comes back with its choices, which the
 	// window shows as buttons; an answer is the next message.
 	if res.Question != "" {
-		writeJSON(w, map[string]any{"reply": res.Question, "options": res.Options})
+		jsonapi.Write(w, map[string]any{"reply": res.Question, "options": res.Options})
 		return
 	}
 	reply, value := SplitDraftReply(res.Text)
-	writeJSON(w, map[string]any{"reply": reply, "value": value})
+	jsonapi.Write(w, map[string]any{"reply": reply, "value": value})
 }
 
 // discussTools is the Author's kit for a discussion: everything but the tools

@@ -34,6 +34,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -81,7 +82,7 @@ func (T *OrchestrateApp) handleMachineTry(w http.ResponseWriter, r *http.Request
 	// A machine that cannot run should say why HERE rather than failing
 	// somewhere downstream with the same information in a worse place.
 	if probs := def.Problems(); len(probs) > 0 {
-		writeJSON(w, map[string]any{
+		jsonapi.Write(w, map[string]any{
 			"blocked":   true,
 			"checklist": probs,
 			"note":      "This machine will not run yet. Fix the list above and try again.",
@@ -112,7 +113,7 @@ func (T *OrchestrateApp) handleMachineTry(w http.ResponseWriter, r *http.Request
 	}, T.PhaseWorker(nil),
 		func(kind, detail string) { notes = append(notes, kind+": "+detail) })
 	if err != nil {
-		writeJSON(w, map[string]any{
+		jsonapi.Write(w, map[string]any{
 			"failed": err.Error(),
 			"path":   tryPath(cur, priorHops),
 			"notes":  notes,
@@ -124,7 +125,7 @@ func (T *OrchestrateApp) handleMachineTry(w http.ResponseWriter, r *http.Request
 		user, def.Name, landed.Name, len(cur.Log))
 
 	reach, reachNote := tryReach(udb, user, def, cur, landed, priorHops)
-	writeJSON(w, map[string]any{
+	jsonapi.Write(w, map[string]any{
 		"landed":      landed.Name,
 		"landed_desc": strings.TrimSpace(landed.Desc),
 		"path":        tryPath(cur, priorHops),

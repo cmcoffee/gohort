@@ -21,6 +21,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // relayLogKeep is how many lines are kept per bridge.
@@ -78,12 +79,9 @@ func (T *Bridges) handleRelayLogPost(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleRelayLogView lists a bridge's kept lines, newest first, to its owner.
-func (T *Bridges) handleRelayLogView(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	id := strings.TrimSpace(r.URL.Query().Get("id"))
+func (T *Bridges) handleRelayLogView(c *jsonapi.Call) (any, error) {
+	user := c.User
+	id := strings.TrimSpace(c.R.URL.Query().Get("id"))
 	owned := false
 	for _, k := range T.listBridgeKeys(user) {
 		if k.ID == id {
@@ -92,8 +90,7 @@ func (T *Bridges) handleRelayLogView(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !owned {
-		http.NotFound(w, r)
-		return
+		return nil, jsonapi.NotFound("no such bridge key")
 	}
 	relayLogs.Lock()
 	lines := append([]relayLogLine(nil), relayLogs.m[id]...)
@@ -112,8 +109,7 @@ func (T *Bridges) handleRelayLogView(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, row{ID: fmt.Sprint(i), At: at, Line: lines[i].Text})
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(out)
+	return out, nil
 }
 
 // clipRelayLine keeps a line on one line and within relayLogLineMax.

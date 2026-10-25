@@ -43,6 +43,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 const webhookSecretTable = "bridges_webhook_secrets" // connector name → signing secret (encrypted)
@@ -153,44 +154,30 @@ func (T *Bridges) handleWebhook(w http.ResponseWriter, r *http.Request) {
 // signing secret / a manual Graph clientState). Stored encrypted, out of the Spec.
 //
 //	POST /bridges/api/webhook-secret {"connector":"...","secret":"..."}
-func (T *Bridges) handleWebhookSecret(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST required", http.StatusMethodNotAllowed)
-		return
-	}
-	var req struct{ Connector, Secret string }
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
+func (T *Bridges) handleWebhookSecret(c *jsonapi.Call, req webhookSecretReq) (any, error) {
 	name := strings.TrimSpace(req.Connector)
-	c, ok := GetConnector(RootDB, name)
+	conn, ok := GetConnector(RootDB, name)
 	if !ok {
-		http.Error(w, "no such connector", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("no such connector")
 	}
 	// The owner, or an admin. IsAdminAllowed used to stand in for the admin
 	// half, but it is the admin IP ALLOWLIST (true for everyone when none is
 	// set), so any signed-in user could reset another user's signing secret
 	// and then send validly signed events into their agent. A connector with
 	// no recorded owner is an admin's.
-	if !(c.Owner != "" && c.Owner == user) && !RequestIsAdmin(r) {
-		http.Error(w, "not your connector", http.StatusForbidden)
-		return
+	if !(conn.Owner != "" && conn.Owner == c.User) && !RequestIsAdmin(c.R) {
+		return nil, jsonapi.Forbidden("not your connector")
 	}
 	if strings.TrimSpace(req.Secret) == "" {
-		http.Error(w, "secret required", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("secret required")
 	}
 	T.setWebhookSecret(name, strings.TrimSpace(req.Secret))
-	Log("[bridges] webhook signing secret set for %q by %s", name, user)
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	Log("[bridges] webhook signing secret set for %q by %s", name, c.User)
+	return map[string]any{"ok": true}, nil
 }
+
+// webhookSecretReq is what handleWebhookSecret is posted.
+type webhookSecretReq struct{ Connector, Secret string }
 
 func (T *Bridges) getWebhookSecret(name string) string {
 	var s string

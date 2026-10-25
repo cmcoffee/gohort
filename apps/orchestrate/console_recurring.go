@@ -10,6 +10,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/timing"
 )
 
@@ -57,7 +58,7 @@ func (T *OrchestrateApp) handleConsoleRecurring(w http.ResponseWriter, r *http.R
 		return
 	}
 	agentID := strings.TrimSpace(r.URL.Query().Get("agent"))
-	writeJSON(w, consoleRecurringRows(user, agentID))
+	jsonapi.Write(w, consoleRecurringRows(user, agentID))
 }
 
 // consoleRecurringRows builds the rows for this view. Split off the handler so the
@@ -373,7 +374,7 @@ func (T *OrchestrateApp) handleConsoleRecurringGet(w http.ResponseWriter, r *htt
 		if !isTaskWake(p.Prompt) {
 			prompt, forID, forOptions = scheduleHandoffView(udb, user, p.AgentID, p.Prompt)
 		}
-		writeJSON(w, map[string]any{
+		jsonapi.Write(w, map[string]any{
 			"id": rt.TaskID,
 			// The STORED name, not the derived one. recurringName falls back
 			// to the directive's first line, and handing that to the editor's
@@ -571,7 +572,7 @@ func (T *OrchestrateApp) handleConsoleRecurringUpdate(w http.ResponseWriter, r *
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	writeJSON(w, map[string]any{"id": newID})
+	jsonapi.Write(w, map[string]any{"id": newID})
 }
 
 // handleConsoleRecurringForOptions is the "Who does it" picker for the New
@@ -586,7 +587,7 @@ func (T *OrchestrateApp) handleConsoleRecurringForOptions(w http.ResponseWriter,
 	if opts == nil {
 		opts = []scheduleForOption{}
 	}
-	writeJSON(w, opts)
+	jsonapi.Write(w, opts)
 }
 
 // handleConsoleRecurringCreate creates a NEW recurring task from the Scheduler
@@ -727,5 +728,5 @@ func (T *OrchestrateApp) handleConsoleRecurringCreate(w http.ResponseWriter, r *
 		resp["warnings"] = findings
 		resp["warning"] = PreflightSummary(findings)
 	}
-	writeJSON(w, resp)
+	jsonapi.Write(w, resp)
 }

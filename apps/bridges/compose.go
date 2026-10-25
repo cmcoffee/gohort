@@ -1,11 +1,10 @@
 package bridges
 
 import (
-	"encoding/json"
-	"net/http"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // Group composition — thread view + participant naming + aliases, lifted from
@@ -20,26 +19,29 @@ import (
 // the member editor.
 //
 //	GET /bridges/api/conv-info/{chat_id} → Convo
-func (T *Bridges) handleConvInfo(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	chatID := strings.TrimPrefix(r.URL.Path, "/api/conv-info/")
-	if chatID == "" {
-		http.Error(w, "chat_id required", http.StatusBadRequest)
-		return
-	}
-	found, ok := T.convoFor(chatID, user, RequestIsAdmin(r))
-	if !ok {
-		http.Error(w, "conversation not found", http.StatusNotFound)
-		return
+func (T *Bridges) handleConvInfo(c *jsonapi.Call) (any, error) {
+	found, _, err := T.ownConvo(c, "/api/conv-info/")
+	if err != nil {
+		return nil, err
 	}
 	// Harvest participants from the thread so the roster is complete even for
 	// senders we didn't learn live (derive-on-read, like phantom).
-	c := T.syncMembersFromHistory(found.Owner, chatID)
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(c)
+	return T.syncMembersFromHistory(found.Owner, found.ChatID), nil
+}
+
+// ownConvo is the conversation the request's path names after prefix, when it
+// is the caller's: a 400 with no chat id, a 404 for a missing one and for
+// another user's alike.
+func (T *Bridges) ownConvo(c *jsonapi.Call, prefix string) (Convo, string, error) {
+	chatID := strings.TrimPrefix(c.R.URL.Path, prefix)
+	if chatID == "" {
+		return Convo{}, "", jsonapi.BadRequest("chat_id required")
+	}
+	cv, ok := T.convoFor(chatID, c.User, RequestIsAdmin(c.R))
+	if !ok {
+		return Convo{}, "", jsonapi.NotFound("conversation not found")
+	}
+	return cv, chatID, nil
 }
 
 // handleConvUpdate applies edits to a conversation — renamed participants,
@@ -47,43 +49,16 @@ func (T *Bridges) handleConvInfo(w http.ResponseWriter, r *http.Request) {
 // its display name.
 //
 //	PATCH /bridges/api/conversation/{chat_id}  {members, alias_handles, display_name}
-func (T *Bridges) handleConvUpdate(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	chatID := strings.TrimPrefix(r.URL.Path, "/api/conversation/")
-	if chatID == "" {
-		http.Error(w, "chat_id required", http.StatusBadRequest)
-		return
-	}
+func (T *Bridges) handleConvUpdate(c *jsonapi.Call, req convUpdateReq) (any, error) {
 	// Edits apply to a conversation that exists and is the caller's; this no
 	// longer creates one from a bare id, which would let a user claim a chat id
 	// before its real owner's first message arrives.
-	c, found := T.convoFor(chatID, user, RequestIsAdmin(r))
-	if !found {
-		http.Error(w, "conversation not found", http.StatusNotFound)
-		return
-	}
-	// DELETE removes the conversation (and its thread) — used when folding a
-	// duplicate into another chat via an alias handle.
-	if r.Method == http.MethodDelete {
-		T.deleteConvo(c.Owner, chatID)
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"removed": true})
-		return
-	}
-	var req struct {
-		Members      *[]ConvMember `json:"members"`
-		AliasHandles *[]string     `json:"alias_handles"`
-		DisplayName  *string       `json:"display_name"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
+	cv, _, err := T.ownConvo(c, "/api/conversation/")
+	if err != nil {
+		return nil, err
 	}
 	if req.Members != nil {
-		c.Members = *req.Members
+		cv.Members = *req.Members
 	}
 	if req.AliasHandles != nil {
 		clean := (*req.AliasHandles)[:0:len(*req.AliasHandles)]
@@ -92,38 +67,45 @@ func (T *Bridges) handleConvUpdate(w http.ResponseWriter, r *http.Request) {
 				clean = append(clean, h)
 			}
 		}
-		c.AliasHandles = clean
+		cv.AliasHandles = clean
 	}
 	if req.DisplayName != nil {
-		c.DisplayName = strings.TrimSpace(*req.DisplayName)
+		cv.DisplayName = strings.TrimSpace(*req.DisplayName)
 	}
-	T.saveConvo(c)
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(c)
+	T.saveConvo(cv)
+	return cv, nil
+}
+
+// handleConvDelete removes the conversation (and its thread) — used when
+// folding a duplicate into another chat via an alias handle.
+func (T *Bridges) handleConvDelete(c *jsonapi.Call, _ struct{}) (any, error) {
+	cv, chatID, err := T.ownConvo(c, "/api/conversation/")
+	if err != nil {
+		return nil, err
+	}
+	T.deleteConvo(cv.Owner, chatID)
+	return map[string]any{"removed": true}, nil
+}
+
+// convUpdateReq is what handleConvUpdate is sent: each field present is set,
+// each one left out is kept.
+type convUpdateReq struct {
+	Members      *[]ConvMember `json:"members"`
+	AliasHandles *[]string     `json:"alias_handles"`
+	DisplayName  *string       `json:"display_name"`
 }
 
 // handleMessages returns a conversation's recent thread for the history view.
 //
 //	GET /bridges/api/messages/{chat_id} → [{role, display_name, text, timestamp}]
-func (T *Bridges) handleMessages(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
+func (T *Bridges) handleMessages(c *jsonapi.Call) (any, error) {
+	cv, chatID, err := T.ownConvo(c, "/api/messages/")
+	if err != nil {
+		return nil, err
 	}
-	chatID := strings.TrimPrefix(r.URL.Path, "/api/messages/")
-	if chatID == "" {
-		http.Error(w, "chat_id required", http.StatusBadRequest)
-		return
-	}
-	c, ok := T.convoFor(chatID, user, RequestIsAdmin(r))
-	if !ok {
-		http.Error(w, "conversation not found", http.StatusNotFound)
-		return
-	}
-	msgs := T.recentMessages(c.Owner, chatID, 50)
+	msgs := T.recentMessages(cv.Owner, chatID, 50)
 	if msgs == nil {
 		msgs = []StoredMessage{}
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(msgs)
+	return msgs, nil
 }

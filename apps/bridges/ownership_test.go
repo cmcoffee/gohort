@@ -38,6 +38,15 @@ func newOwnershipFixture(t *testing.T) *ownershipFixture {
 	return &ownershipFixture{T: T, adb: adb}
 }
 
+// routes is the app's real routing, mounted at the root so a test's "/api/..."
+// path reaches the handler a browser's request would, with its method rules
+// and its JSON frame.
+func (f *ownershipFixture) routes() http.HandlerFunc {
+	mux := http.NewServeMux()
+	f.T.RegisterRoutes(mux, "")
+	return mux.ServeHTTP
+}
+
 // call runs one handler as user and returns the recorder.
 func (f *ownershipFixture) call(user, method, path, body string, h http.HandlerFunc) *httptest.ResponseRecorder {
 	r := httptest.NewRequest(method, path, strings.NewReader(body))
@@ -50,7 +59,7 @@ func (f *ownershipFixture) call(user, method, path, body string, h http.HandlerF
 // listed reports whether the conversation list handed user contains chatID.
 func (f *ownershipFixture) listed(t *testing.T, user, chatID string) bool {
 	t.Helper()
-	w := f.call(user, http.MethodGet, "/api/conversations", "", f.T.handleConversations)
+	w := f.call(user, http.MethodGet, "/api/conversations", "", f.routes())
 	var rows []struct {
 		ChatID string `json:"chat_id"`
 	}
@@ -71,7 +80,7 @@ func (f *ownershipFixture) listed(t *testing.T, user, chatID string) bool {
 func TestBobCannotReachAlicesConversation(t *testing.T) {
 	f := newOwnershipFixture(t)
 
-	if w := f.call("alice", http.MethodGet, "/api/messages/chat-alice", "", f.T.handleMessages); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "alice's secret") {
+	if w := f.call("alice", http.MethodGet, "/api/messages/chat-alice", "", f.routes()); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "alice's secret") {
 		t.Fatalf("alice reading her own thread: %d %s", w.Code, w.Body.String())
 	}
 	if !f.listed(t, "alice", "chat-alice") {
@@ -85,12 +94,12 @@ func TestBobCannotReachAlicesConversation(t *testing.T) {
 		body   string
 		h      http.HandlerFunc
 	}{
-		{"messages", http.MethodGet, "/api/messages/chat-alice", "", f.T.handleMessages},
-		{"conv-info", http.MethodGet, "/api/conv-info/chat-alice", "", f.T.handleConvInfo},
-		{"rename", http.MethodPatch, "/api/conversation/chat-alice", `{"display_name":"mine now"}`, f.T.handleConvUpdate},
-		{"delete", http.MethodDelete, "/api/conversation/chat-alice", "", f.T.handleConvUpdate},
-		{"add", http.MethodPost, "/api/add-convo?chat_id=chat-alice", "", f.T.handleAddConvo},
-		{"connect", http.MethodPost, "/api/connect-channel?chat_id=chat-alice", "", f.T.handleConnectChannel},
+		{"messages", http.MethodGet, "/api/messages/chat-alice", "", f.routes()},
+		{"conv-info", http.MethodGet, "/api/conv-info/chat-alice", "", f.routes()},
+		{"rename", http.MethodPatch, "/api/conversation/chat-alice", `{"display_name":"mine now"}`, f.routes()},
+		{"delete", http.MethodDelete, "/api/conversation/chat-alice", "", f.routes()},
+		{"add", http.MethodPost, "/api/add-convo?chat_id=chat-alice", "", f.routes()},
+		{"connect", http.MethodPost, "/api/connect-channel?chat_id=chat-alice", "", f.routes()},
 	}
 	for _, d := range denied {
 		w := f.call("bob", d.method, d.path, d.body, d.h)
@@ -107,10 +116,10 @@ func TestBobCannotReachAlicesConversation(t *testing.T) {
 
 	// Adding the same id by hand starts bob's OWN thread under it: a chat id
 	// is not unique across users. It is a separate record, empty of hers.
-	if w := f.call("bob", http.MethodPost, "/api/add-convo", `{"handle":"chat-alice"}`, f.T.handleAddConvo); w.Code != http.StatusOK {
+	if w := f.call("bob", http.MethodPost, "/api/add-convo", `{"handle":"chat-alice"}`, f.routes()); w.Code != http.StatusOK {
 		t.Errorf("bob adding his own copy of the id: %d %s", w.Code, w.Body.String())
 	}
-	if w := f.call("bob", http.MethodGet, "/api/messages/chat-alice", "", f.T.handleMessages); strings.Contains(w.Body.String(), "secret") {
+	if w := f.call("bob", http.MethodGet, "/api/messages/chat-alice", "", f.routes()); strings.Contains(w.Body.String(), "secret") {
 		t.Errorf("bob's copy of the id shows alice's thread: %s", w.Body.String())
 	}
 	c, ok := f.T.getConvo("", "chat-alice")
@@ -137,20 +146,20 @@ func TestBobCannotReachAlicesConversation(t *testing.T) {
 func TestLegacyOwnerlessConversationIsAdminOnly(t *testing.T) {
 	f := newOwnershipFixture(t)
 
-	if w := f.call("bob", http.MethodGet, "/api/messages/chat-legacy", "", f.T.handleMessages); w.Code != http.StatusNotFound {
+	if w := f.call("bob", http.MethodGet, "/api/messages/chat-legacy", "", f.routes()); w.Code != http.StatusNotFound {
 		t.Errorf("non-admin read a legacy conversation: %d", w.Code)
 	}
 	if f.listed(t, "bob", "chat-legacy") {
 		t.Error("legacy conversation listed for a non-admin")
 	}
-	if w := f.call("root", http.MethodGet, "/api/messages/chat-legacy", "", f.T.handleMessages); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "old thread") {
+	if w := f.call("root", http.MethodGet, "/api/messages/chat-legacy", "", f.routes()); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "old thread") {
 		t.Errorf("admin could not read a legacy conversation: %d %s", w.Code, w.Body.String())
 	}
 	if !f.listed(t, "root", "chat-legacy") {
 		t.Error("legacy conversation missing from the admin's list")
 	}
 	// Admin standing reaches the legacy record, not another user's owned one.
-	if w := f.call("root", http.MethodGet, "/api/messages/chat-alice", "", f.T.handleMessages); w.Code != http.StatusNotFound {
+	if w := f.call("root", http.MethodGet, "/api/messages/chat-alice", "", f.routes()); w.Code != http.StatusNotFound {
 		t.Errorf("admin read alice's owned conversation: %d", w.Code)
 	}
 	// Viewing does not rewrite the legacy record's owner.
@@ -256,7 +265,7 @@ func TestTwoUsersShareAChatIDWithoutSharingAThread(t *testing.T) {
 	if c, ok := f.T.getConvo("", "any;-;+15550100"); !ok || c.Owner != "alice" {
 		t.Errorf("the first recorder's thread moved: %+v", c)
 	}
-	if w := f.call("bob", http.MethodGet, "/api/messages/any;-;+15550100", "", f.T.handleMessages); w.Code != http.StatusOK || strings.Contains(w.Body.String(), "to alice") {
+	if w := f.call("bob", http.MethodGet, "/api/messages/any;-;+15550100", "", f.routes()); w.Code != http.StatusOK || strings.Contains(w.Body.String(), "to alice") {
 		t.Errorf("bob's view of the chat: %d %s", w.Code, w.Body.String())
 	}
 

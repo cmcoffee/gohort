@@ -29,6 +29,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/appstores"
 	"github.com/cmcoffee/gohort/core/bgrun"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/pathhold"
 )
 
@@ -325,7 +326,7 @@ func (T *FileStoreApp) handleAppGrants(w http.ResponseWriter, r *http.Request) {
 		for _, g := range st.AppGrants {
 			rows = append(rows, map[string]any{"app": g.App, "label": appLabel(g.App), "rights": g.rights()})
 		}
-		writeJSON(w, rows)
+		jsonapi.Write(w, rows)
 	case http.MethodPost:
 		var g AppGrant
 		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&g); err != nil || strings.Count(g.App, "/") != 1 {
@@ -344,7 +345,7 @@ func (T *FileStoreApp) handleAppGrants(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		Log("[filestore] %s granted app %s on %s: %s", user, g.App, st.Name, g.rights())
-		writeJSON(w, map[string]any{"ok": true})
+		jsonapi.Write(w, map[string]any{"ok": true})
 	case http.MethodDelete:
 		app := r.URL.Query().Get("app")
 		kept := st.AppGrants[:0:0]
@@ -359,7 +360,7 @@ func (T *FileStoreApp) handleAppGrants(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		Log("[filestore] %s removed app %s's grant on %s", user, app, st.Name)
-		writeJSON(w, map[string]any{"ok": true})
+		jsonapi.Write(w, map[string]any{"ok": true})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -392,5 +393,5 @@ func (T *FileStoreApp) handleAppOptions(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i]["label"].(string) < out[j]["label"].(string) })
-	writeJSON(w, out)
+	jsonapi.Write(w, out)
 }

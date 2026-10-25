@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // handleConsoleApprovals lists pending delegations awaiting the user's
@@ -31,7 +32,7 @@ func (T *OrchestrateApp) handleConsoleApprovals(w http.ResponseWriter, r *http.R
 			ID:        a.ID,
 		})
 	}
-	writeJSON(w, out)
+	jsonapi.Write(w, out)
 }
 
 // approvalDisplay maps a pending Authorization to its (who, detail) display
@@ -453,7 +454,7 @@ func (T *OrchestrateApp) handleConsolePermissions(w http.ResponseWriter, r *http
 		}
 		kept = append(kept, row)
 	}
-	writeJSON(w, kept)
+	jsonapi.Write(w, kept)
 }
 
 // permRowKind sorts a row under one of the tabs along the top of the window.
@@ -644,7 +645,7 @@ func (T *OrchestrateApp) handleConsolePrivileges(w http.ResponseWriter, r *http.
 		// A body rather than 204, because "requested" and "done" are different
 		// outcomes and a caller that cannot tell them apart will show the
 		// capability as live when an administrator has not looked at it yet.
-		writeJSON(w, map[string]any{"ok": true, "requested": requested})
+		jsonapi.Write(w, map[string]any{"ok": true, "requested": requested})
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -1072,7 +1073,7 @@ func (T *OrchestrateApp) handleConsolePermissionAudience(w http.ResponseWriter, 
 		// A body rather than 204: "requested" and "done" are different
 		// outcomes, and a caller that cannot tell them apart shows the agent
 		// as published while an administrator has not looked at it yet.
-		writeJSON(w, map[string]any{"ok": true, "requested": []string{field}})
+		jsonapi.Write(w, map[string]any{"ok": true, "requested": []string{field}})
 		return
 	}
 	if field == "mcp_exposed" {

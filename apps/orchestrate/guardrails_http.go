@@ -10,6 +10,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/prompts"
 	"github.com/cmcoffee/gohort/core/textutil"
 )
@@ -33,7 +34,7 @@ func (T *OrchestrateApp) handleAgentGuardrails(w http.ResponseWriter, r *http.Re
 	}
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, map[string]any{
+		jsonapi.Write(w, map[string]any{
 			"guardrails":  agent.Guardrails,
 			"hooks":       agent.GuardrailHooks,
 			"fail_closed": agent.GuardrailFailClosed,
@@ -233,7 +234,7 @@ func (T *OrchestrateApp) handleAgentGuardrails(w http.ResponseWriter, r *http.Re
 		// which is the difference between an entry the server declined to keep
 		// being visible immediately and it being reported days later as "it
 		// won't save".
-		writeJSON(w, map[string]any{
+		jsonapi.Write(w, map[string]any{
 			"authorized": agent.AuthorizedIdentities,
 			"exceptions": agent.GuardrailExceptions,
 			"declines":   agent.GuardrailDeclines,
@@ -282,7 +283,7 @@ func (T *OrchestrateApp) handleAgentGuardrailTest(w http.ResponseWriter, r *http
 		return
 	}
 	if len(guardrailRules(agent)) == 0 {
-		writeJSON(w, map[string]any{"status": guardComply, "verdicts": []guardrailVerdict{},
+		jsonapi.Write(w, map[string]any{"status": guardComply, "verdicts": []guardrailVerdict{},
 			"note": "This agent has no guardrails authored yet: add a rule to enable the check."})
 		return
 	}
@@ -342,7 +343,7 @@ func (T *OrchestrateApp) handleAgentGuardrailTest(w http.ResponseWriter, r *http
 			"A message that violates a rule but produces a prose answer with no such tool call is not judged. " +
 			"Add pre_input or pre_output to cover conversation."
 	}
-	writeJSON(w, resp)
+	jsonapi.Write(w, resp)
 }
 
 // sortedHookList renders an active-hook set in a stable order for the UI.
@@ -455,7 +456,7 @@ func (T *OrchestrateApp) handleAgentDeclineSuggest(w http.ResponseWriter, r *htt
 	}
 	clean := sanitizeDeclines(lines)
 	Log("[orchestrate.guardrails] agent=%s decline suggest: %d returned, %d kept after leak filter", agentID, len(lines), len(clean))
-	writeJSON(w, map[string]any{"declines": clean})
+	jsonapi.Write(w, map[string]any{"declines": clean})
 }
 
 // handleAgentGuardrailDepth reads and sets how carefully this agent's own
@@ -492,5 +493,5 @@ func (T *OrchestrateApp) handleAgentGuardrailDepth(w http.ResponseWriter, r *htt
 		}
 		Log("[orchestrate.guardrail] agent=%s check depth set to %q by owner", agent.ID, depth)
 	}
-	writeJSON(w, map[string]any{"guardrail_depth": agent.GuardrailDepth})
+	jsonapi.Write(w, map[string]any{"guardrail_depth": agent.GuardrailDepth})
 }

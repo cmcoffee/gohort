@@ -27,6 +27,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // handleMachineRevise redrafts an existing machine from a description of
@@ -107,7 +108,7 @@ func (T *OrchestrateApp) handleMachineRevise(w http.ResponseWriter, r *http.Requ
 	changed := describeMachineChange(before, saved)
 	Log("[orchestrate.machines] user=%q revised machine %q (id=%s): %s", user, saved.Name, saved.ID,
 		strings.Join(changed, "; "))
-	writeJSON(w, map[string]any{
+	jsonapi.Write(w, map[string]any{
 		"id": saved.ID, "name": saved.Name,
 		"changed":   changed,
 		"checklist": saved.Problems(),
@@ -135,7 +136,7 @@ func (T *OrchestrateApp) handleMachineUndo(w http.ResponseWriter, r *http.Reques
 	back.Previous = nil
 	saved := SaveMachineDef(udb, back)
 	Log("[orchestrate.machines] user=%q undid the last revision of machine %q (id=%s)", user, saved.Name, saved.ID)
-	writeJSON(w, map[string]any{"id": saved.ID, "name": saved.Name, "checklist": saved.Problems()})
+	jsonapi.Write(w, map[string]any{"id": saved.ID, "name": saved.Name, "checklist": saved.Problems()})
 }
 
 // describeMachineChange says what a revision actually did, in steps.

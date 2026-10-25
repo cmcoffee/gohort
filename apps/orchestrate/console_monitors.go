@@ -10,6 +10,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/timing"
 )
 
@@ -76,7 +77,7 @@ func (T *OrchestrateApp) handleConsoleMonitorGet(w http.ResponseWriter, r *http.
 	if monitorWakesAgent(m) {
 		brief, forID, forOptions = scheduleHandoffView(UserDB(T.DB, user), user, m.WakeAgent, m.WakeBrief)
 	}
-	writeJSON(w, map[string]any{
+	jsonapi.Write(w, map[string]any{
 		"name":             m.Name,
 		"kind":             m.Kind,
 		"interval_seconds": m.IntervalSeconds,
@@ -484,7 +485,7 @@ func (T *OrchestrateApp) handleConsoleMonitors(w http.ResponseWriter, r *http.Re
 		return
 	}
 	agentID := strings.TrimSpace(r.URL.Query().Get("agent"))
-	writeJSON(w, consoleMonitorRows(user, agentID))
+	jsonapi.Write(w, consoleMonitorRows(user, agentID))
 }
 
 // consoleMonitorRows builds the rows for this view. Split off the handler so the

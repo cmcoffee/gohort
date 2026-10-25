@@ -29,6 +29,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/timing"
 )
 
@@ -945,7 +946,7 @@ func (T *OrchestrateApp) handleConsoleLinkOptions(w http.ResponseWriter, r *http
 		return
 	}
 	q := r.URL.Query()
-	writeJSON(w, linkOptions(user, agentNames(udb, user), strings.TrimSpace(q.Get("ref")), strings.TrimSpace(q.Get("agent"))))
+	jsonapi.Write(w, linkOptions(user, agentNames(udb, user), strings.TrimSpace(q.Get("ref")), strings.TrimSpace(q.Get("agent"))))
 }
 
 // handleConsoleLink serves the row verbs: POST /api/console/links/<verb>?id=
@@ -1029,7 +1030,7 @@ func (T *OrchestrateApp) handleConsoleLinkGet(w http.ResponseWriter, user, id st
 			members = append(members, fmt.Sprintf("%d. %s", i+1, t.name))
 		}
 	}
-	writeJSON(w, map[string]any{
+	jsonapi.Write(w, map[string]any{
 		"cron":                 g.Cron,
 		"interval_minutes":     g.IntervalSeconds / 60,
 		"max_interval_minutes": g.MaxIntervalSeconds / 60,

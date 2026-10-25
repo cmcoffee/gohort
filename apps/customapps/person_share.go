@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // personShareReaches says whether the owner shared spec with user by name.
@@ -100,7 +101,7 @@ func (T *CustomApps) handleSharePerson(w http.ResponseWriter, r *http.Request, u
 		return
 	}
 	Log("[customapps] %s %s app %q with %q", user, map[bool]string{true: "shared", false: "unshared"}[on], slug, person)
-	writeJSON(w, map[string]any{"ok": true, "on": on})
+	jsonapi.Write(w, map[string]any{"ok": true, "on": on})
 }
 
 // sharePeopleJSON is the Share dialog's people section for one app: who it

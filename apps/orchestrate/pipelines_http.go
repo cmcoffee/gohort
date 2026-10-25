@@ -29,6 +29,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"strconv"
 )
 
@@ -145,7 +146,7 @@ func (T *OrchestrateApp) handlePipelines(w http.ResponseWriter, r *http.Request)
 				Owner:      sp.Owner,
 			})
 		}
-		writeJSON(w, map[string]any{"pipelines": rows})
+		jsonapi.Write(w, map[string]any{"pipelines": rows})
 	case http.MethodPost:
 		var def PipelineDef
 		if err := json.NewDecoder(r.Body).Decode(&def); err != nil {
@@ -168,7 +169,7 @@ func (T *OrchestrateApp) handlePipelines(w http.ResponseWriter, r *http.Request)
 		}
 		saved := SavePipelineDef(udb, def)
 		Log("[orchestrate.pipelines] user=%q created pipeline %q (id=%s, %d stages)", user, saved.Name, saved.ID, len(saved.Stages))
-		writeJSON(w, saved)
+		jsonapi.Write(w, saved)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -210,7 +211,7 @@ func (T *OrchestrateApp) handlePipelineImport(w http.ResponseWriter, r *http.Req
 		return
 	}
 	Log("[orchestrate.pipelines] user=%q imported pipeline %q (id=%s)", user, saved.Name, saved.ID)
-	writeJSON(w, saved)
+	jsonapi.Write(w, saved)
 }
 
 // handlePipelineOne serves per-pipeline routes: GET / PUT / DELETE, plus
@@ -260,7 +261,7 @@ func (T *OrchestrateApp) handlePipelineOne(w http.ResponseWriter, r *http.Reques
 	case "":
 		switch r.Method {
 		case http.MethodGet:
-			writeJSON(w, def)
+			jsonapi.Write(w, def)
 		case http.MethodPut:
 			if !recipeEditorOnly(w, ed, "pipeline", defOwner, "edit") {
 				return
@@ -289,14 +290,14 @@ func (T *OrchestrateApp) handlePipelineOne(w http.ResponseWriter, r *http.Reques
 			}
 			saved := SavePipelineDef(ed.db, body)
 			Log("[orchestrate.pipelines] user=%q updated pipeline %q (id=%s, owner %q)", user, saved.Name, saved.ID, ed.owner)
-			writeJSON(w, saved)
+			jsonapi.Write(w, saved)
 		case http.MethodDelete:
 			if !pipelineOwnerOnly(w, mine, defOwner, "delete") {
 				return
 			}
 			DeletePipelineDef(udb, def.ID)
 			Log("[orchestrate.pipelines] user=%q deleted pipeline %q (id=%s)", user, def.Name, def.ID)
-			writeJSON(w, map[string]any{"deleted": def.ID})
+			jsonapi.Write(w, map[string]any{"deleted": def.ID})
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
@@ -337,7 +338,7 @@ func (T *OrchestrateApp) handlePipelineOne(w http.ResponseWriter, r *http.Reques
 		dup.Name = copyName(def.Name, pipelineNames(ListPipelineDefs(udb, user)))
 		saved := SavePipelineDef(udb, dup)
 		Log("[orchestrate.pipelines] user=%q duplicated pipeline %q as %q", user, def.Name, saved.Name)
-		writeJSON(w, map[string]any{"id": saved.ID, "name": saved.Name})
+		jsonapi.Write(w, map[string]any{"id": saved.ID, "name": saved.Name})
 	case "revise":
 		// Say what should change, against the pipeline on screen
 		// (pipeline_revise.go). Undoable, because it can rewrite every
@@ -398,7 +399,7 @@ func (T *OrchestrateApp) handlePipelineOne(w http.ResponseWriter, r *http.Reques
 			return saved
 		}
 		if r.Method == http.MethodGet {
-			writeJSON(w, rs.list())
+			jsonapi.Write(w, rs.list())
 			return
 		}
 		var body struct {
@@ -414,7 +415,7 @@ func (T *OrchestrateApp) handlePipelineOne(w http.ResponseWriter, r *http.Reques
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		writeJSON(w, out)
+		jsonapi.Write(w, out)
 	case "publish":
 		// The third rung: ask an administrator to let EVERY user of the
 		// deployment run this. The narrower grant beside it is the owner's own
@@ -570,7 +571,7 @@ func (T *OrchestrateApp) runPipelineHTTP(w http.ResponseWriter, r *http.Request,
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, map[string]any{"output": out})
+	jsonapi.Write(w, map[string]any{"output": out})
 }
 
 // pipelineOwnerOnly refuses a write on a pipeline the requester does not own,
@@ -585,10 +586,4 @@ func pipelineOwnerOnly(w http.ResponseWriter, mine bool, owner, verb string) boo
 	}
 	http.Error(w, "this pipeline is shared with you by "+owner+", so you can run and copy it but not "+verb+" it: ask "+owner+" to make the change, or duplicate it and edit your copy", http.StatusForbidden)
 	return false
-}
-
-// writeJSON is the small response helper these handlers share.
-func writeJSON(w http.ResponseWriter, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(v)
 }

@@ -32,6 +32,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/media"
 	"github.com/cmcoffee/gohort/core/netgate"
 	"github.com/cmcoffee/gohort/core/textutil"
@@ -366,7 +367,7 @@ func (T *OrchestrateApp) handleCollectionOne(w http.ResponseWriter, r *http.Requ
 						http.Error(w, err.Error(), http.StatusBadRequest)
 						return
 					}
-					writeJSON(w, map[string]any{"ok": true, "requested": !RequestIsAdmin(r)})
+					jsonapi.Write(w, map[string]any{"ok": true, "requested": !RequestIsAdmin(r)})
 					return
 				case CollectionScopeUser, "":
 					if IsDeploymentScope(c) {
@@ -374,7 +375,7 @@ func (T *OrchestrateApp) handleCollectionOne(w http.ResponseWriter, r *http.Requ
 							http.Error(w, err.Error(), http.StatusBadRequest)
 							return
 						}
-						writeJSON(w, map[string]any{"ok": true})
+						jsonapi.Write(w, map[string]any{"ok": true})
 						return
 					}
 				default:

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/timing"
 )
 
@@ -61,7 +62,7 @@ func (T *OrchestrateApp) handleConsoleAgentOptions(w http.ResponseWriter, r *htt
 				}
 				opts = append(opts, opt{Value: sm.Def.ID, Label: label + " (shared by " + sm.Owner + ")"})
 			}
-			writeJSON(w, opts)
+			jsonapi.Write(w, opts)
 			return
 		}
 		if sa, found := GetStandingAgent(RootDB, user, row); found && sa.TargetsPipeline() {
@@ -83,7 +84,7 @@ func (T *OrchestrateApp) handleConsoleAgentOptions(w http.ResponseWriter, r *htt
 				}
 				opts = append(opts, opt{Value: sp.Def.ID, Label: label + " (shared by " + sp.Owner + ")"})
 			}
-			writeJSON(w, opts)
+			jsonapi.Write(w, opts)
 			return
 		}
 	}
@@ -109,7 +110,7 @@ func (T *OrchestrateApp) handleConsoleAgentOptions(w http.ResponseWriter, r *htt
 	// Your own agents first, then each app's: the picker draws a heading
 	// where the group changes.
 	sort.SliceStable(opts, func(i, j int) bool { return appGroupsLast(opts[i].Group, opts[j].Group) })
-	writeJSON(w, opts)
+	jsonapi.Write(w, opts)
 }
 
 // handleConsoleAgentRelink re-points a broken standing agent at a live target
@@ -215,7 +216,7 @@ func (T *OrchestrateApp) handleConsoleAgentGet(w http.ResponseWriter, r *http.Re
 	// and the sub-agent in the "Who does it" picker. A pipeline or machine
 	// schedule runs no agent, so it has neither.
 	mission, forID, forOptions := scheduleHandoffView(UserDB(T.DB, user), user, sa.AgentID, sa.Mission)
-	writeJSON(w, map[string]any{
+	jsonapi.Write(w, map[string]any{
 		"name":             sa.Name,
 		"mission":          mission,
 		"for":              forID,
@@ -452,7 +453,7 @@ func (T *OrchestrateApp) handleConsoleAgents(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	agentID := strings.TrimSpace(r.URL.Query().Get("agent"))
-	writeJSON(w, consoleAgentRows(user, udb, agentID, nil))
+	jsonapi.Write(w, consoleAgentRows(user, udb, agentID, nil))
 }
 
 // standingRunIndex is the owner's run ledger, read once for every standing

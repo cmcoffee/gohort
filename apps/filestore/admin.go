@@ -16,6 +16,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/appstores"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -578,7 +579,7 @@ func (T *FileStoreApp) handleAccessCandidates(w http.ResponseWriter, r *http.Req
 	}
 	out := []map[string]any{{"value": accessEveryone, "label": "Everyone", "desc": "every account on this server", "help": "every account on this server"}}
 	if AuthDB == nil {
-		writeJSON(w, out)
+		jsonapi.Write(w, out)
 		return
 	}
 	var people []map[string]any
@@ -603,7 +604,7 @@ func (T *FileStoreApp) handleAccessCandidates(w http.ResponseWriter, r *http.Req
 			out = append(out, map[string]any{"value": "group:" + g.ID, "label": "Team: " + g.Name, "full_default": true})
 		}
 	}
-	writeJSON(w, out)
+	jsonapi.Write(w, out)
 }
 
 func (T *FileStoreApp) handleStoreOptions(w http.ResponseWriter, r *http.Request) {
@@ -618,7 +619,7 @@ func (T *FileStoreApp) handleStoreOptions(w http.ResponseWriter, r *http.Request
 		}
 		out = append(out, map[string]any{"value": st.Slug, "label": label})
 	}
-	writeJSON(w, out)
+	jsonapi.Write(w, out)
 }
 
 // handleStores serves the table (GET), the editor (GET with slug),
@@ -645,11 +646,11 @@ func (T *FileStoreApp) handleStores(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if r.URL.Query().Get("view") == "reach" {
-				writeJSON(w, map[string]any{"html": reachWarning(st)})
+				jsonapi.Write(w, map[string]any{"html": reachWarning(st)})
 				return
 			}
 			if r.URL.Query().Get("view") == "about" {
-				writeJSON(w, T.storeAbout(st))
+				jsonapi.Write(w, T.storeAbout(st))
 				return
 			}
 			if r.URL.Query().Get("view") == "form" {
@@ -661,13 +662,13 @@ func (T *FileStoreApp) handleStores(w http.ResponseWriter, r *http.Request) {
 				delete(out, "members")
 				delete(out, "full_access")
 				delete(out, "app_grants") // the grants section owns these
-				writeJSON(w, out)
+				jsonapi.Write(w, out)
 				return
 			}
-			writeJSON(w, st)
+			jsonapi.Write(w, st)
 			return
 		}
-		writeJSON(w, T.storeRows())
+		jsonapi.Write(w, T.storeRows())
 	case http.MethodPost, http.MethodPatch:
 		// Decoded ONTO the stored record, not into a blank one. Two editors
 		// now write this record — the form (name, path, retention…) and the
@@ -725,12 +726,12 @@ func (T *FileStoreApp) handleStores(w http.ResponseWriter, r *http.Request) {
 				Log("[filestore] %s: evidence indexing off, %d folder index(es) wiped", saved.Slug, n)
 			}
 		}
-		writeJSON(w, saved)
+		jsonapi.Write(w, saved)
 	case http.MethodDelete:
 		DeleteStore(T.DB, slug)
 		wipeStoreEvidence(T.DB, slug)
 		Log("[filestore] %s removed store %q", user, slug)
-		writeJSON(w, map[string]any{"deleted": slug})
+		jsonapi.Write(w, map[string]any{"deleted": slug})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -950,7 +951,7 @@ func (T *FileStoreApp) handleCommands(w http.ResponseWriter, r *http.Request) {
 				"input_label": a.InputLabel, "help": a.Help, "uses": a.usesLabel(),
 			})
 		}
-		writeJSON(w, rows)
+		jsonapi.Write(w, rows)
 	case http.MethodPost:
 		// The form sends allowed_uses as one block of lines; the record keeps
 		// a list. Either arrives here.
@@ -981,21 +982,16 @@ func (T *FileStoreApp) handleCommands(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		Log("[filestore] %s registered action %q on %s → %s", user, saved.Name, saved.Slug, saved.Command)
-		writeJSON(w, saved)
+		jsonapi.Write(w, saved)
 	case http.MethodDelete:
 		id := strings.TrimSpace(r.URL.Query().Get("id"))
 		slug, name, _ := strings.Cut(id, "/")
 		DeleteStoreCommand(T.DB, slug, name)
 		Log("[filestore] %s removed action %q from %s", user, name, slug)
-		writeJSON(w, map[string]any{"deleted": id})
+		jsonapi.Write(w, map[string]any{"deleted": id})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
-}
-
-func writeJSON(w http.ResponseWriter, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(v)
 }
 
 // adminOnly gates a handler on the caller being an admin, and answers

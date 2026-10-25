@@ -1,12 +1,11 @@
 package bridges
 
 import (
-	"encoding/json"
-	"net/http"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/agenthost"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // Connecting a conversation to an agent's channel — the "hook a source" control
@@ -16,11 +15,8 @@ import (
 
 // handleConversations lists the caller's chats, with which channel (if any)
 // each is currently connected to.
-func (T *Bridges) handleConversations(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *Bridges) handleConversations(c *jsonapi.Call) (any, error) {
+	user := c.User
 	chans := ListChannels(RootDB, user)
 	type row struct {
 		ChatID       string `json:"chat_id"`
@@ -33,7 +29,7 @@ func (T *Bridges) handleConversations(w http.ResponseWriter, r *http.Request) {
 		LastAt       string `json:"last_at,omitempty"`
 	}
 	out := []row{}
-	for _, c := range T.convosFor(user, RequestIsAdmin(r)) {
+	for _, c := range T.convosFor(user, RequestIsAdmin(c.R)) {
 		connected, channelID, autoReply := "", "", false
 		for _, ch := range chans {
 			if ch.Service == c.Service && ch.Address != "" && (ch.Address == c.Handle || ch.Address == c.ChatID) {
@@ -54,8 +50,7 @@ func (T *Bridges) handleConversations(w http.ResponseWriter, r *http.Request) {
 			Connected: connected, ChannelID: channelID, AutoReply: autoReply, LastAt: c.LastAt,
 		})
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(out)
+	return out, nil
 }
 
 // truncateText shortens a string to n runes, appending an ellipsis when cut.
@@ -72,11 +67,8 @@ func truncateText(s string, n int) string {
 // affordance. Already-added chats drop off (they're in the managed list).
 //
 //	GET /bridges/api/incoming-convos → [{id(chat_id), label, desc}]
-func (T *Bridges) handleIncomingConvos(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *Bridges) handleIncomingConvos(c *jsonapi.Call) (any, error) {
+	user := c.User
 	chans := ListChannels(RootDB, user)
 	connected := func(c Convo) bool {
 		for _, ch := range chans {
@@ -92,7 +84,7 @@ func (T *Bridges) handleIncomingConvos(w http.ResponseWriter, r *http.Request) {
 		Desc  string `json:"desc"`
 	}
 	out := []row{}
-	for _, c := range T.convosFor(user, RequestIsAdmin(r)) {
+	for _, c := range T.convosFor(user, RequestIsAdmin(c.R)) {
 		// Curated or already-connected chats are in the managed list, not here.
 		if c.Added || connected(c) {
 			continue
@@ -107,8 +99,7 @@ func (T *Bridges) handleIncomingConvos(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, row{ID: c.ChatID, Label: firstNonEmpty(c.DisplayName, c.Handle, c.ChatID), Desc: desc})
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(out)
+	return out, nil
 }
 
 // handleAddConvo curates a conversation into the managed list — either an
@@ -118,30 +109,10 @@ func (T *Bridges) handleIncomingConvos(w http.ResponseWriter, r *http.Request) {
 //
 //	POST /bridges/api/add-convo?chat_id=<id>   (pick an incoming chat)
 //	POST /bridges/api/add-convo  {handle, service}   (manual number)
-func (T *Bridges) handleAddConvo(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	admin := RequestIsAdmin(r)
-	// The manual-entry form GETs this for prefill — hand back a blank record.
-	if r.Method == http.MethodGet {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"handle": "", "service": "imessage"})
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	var req struct {
-		ChatID  string `json:"chat_id"`
-		Handle  string `json:"handle"`
-		Service string `json:"service"`
-	}
-	_ = json.NewDecoder(r.Body).Decode(&req)
+func (T *Bridges) handleAddConvo(c *jsonapi.Call, req addConvoReq) (any, error) {
+	user, admin := c.User, RequestIsAdmin(c.R)
 	if req.ChatID == "" {
-		req.ChatID = r.URL.Query().Get("chat_id")
+		req.ChatID = c.R.URL.Query().Get("chat_id")
 	}
 
 	// Manual entry: no chat_id, just a number/handle — synthesize a Convo keyed
@@ -149,45 +120,50 @@ func (T *Bridges) handleAddConvo(w http.ResponseWriter, r *http.Request) {
 	if req.ChatID == "" {
 		handle := strings.TrimSpace(req.Handle)
 		if handle == "" {
-			http.Error(w, "chat_id or handle is required", http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest("chat_id or handle is required")
 		}
 		svc := firstNonEmpty(strings.TrimSpace(req.Service), "imessage")
 		// A new entry is the caller's. One already on record must be theirs
 		// too; another user's reads as not found, same as every chat_id path.
-		c, exists := T.getConvo(user, handle)
+		cv, exists := T.getConvo(user, handle)
 		if !exists {
-			c.Owner = user
+			cv.Owner = user
 		}
-		c.ChatID = handle
-		c.Service = svc
-		c.Handle = handle
-		c.Added = true
-		T.saveConvo(c)
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"added": true, "chat_id": handle})
-		return
+		cv.ChatID = handle
+		cv.Service = svc
+		cv.Handle = handle
+		cv.Added = true
+		T.saveConvo(cv)
+		return map[string]any{"added": true, "chat_id": handle}, nil
 	}
 
-	c, found := T.convoFor(req.ChatID, user, admin)
+	cv, found := T.convoFor(req.ChatID, user, admin)
 	if !found {
-		http.Error(w, "conversation not found", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("conversation not found")
 	}
-	c.Added = true
-	T.saveConvo(c)
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"added": true, "chat_id": c.ChatID})
+	cv.Added = true
+	T.saveConvo(cv)
+	return map[string]any{"added": true, "chat_id": cv.ChatID}, nil
+}
+
+// handleAddConvoForm is the manual-entry form's prefill: a blank record.
+func (T *Bridges) handleAddConvoForm(c *jsonapi.Call) (any, error) {
+	return map[string]any{"handle": "", "service": "imessage"}, nil
+}
+
+// addConvoReq is what handleAddConvo is posted. The picker posts no body and
+// names the chat in the query string instead.
+type addConvoReq struct {
+	ChatID  string `json:"chat_id"`
+	Handle  string `json:"handle"`
+	Service string `json:"service"`
 }
 
 // handleAgentChannels lists the owner's CHANNELS available to connect — a
 // channel is the interface to an agent, and only an unbound (free) one is
 // offered so connecting can't steal a channel already serving another chat.
-func (T *Bridges) handleAgentChannels(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *Bridges) handleAgentChannels(c *jsonapi.Call) (any, error) {
+	user := c.User
 	agentName := map[string]string{}
 	if host := agenthost.Get(); host != nil {
 		agentName = host.AgentNames(user)
@@ -206,60 +182,37 @@ func (T *Bridges) handleAgentChannels(w http.ResponseWriter, r *http.Request) {
 		desc := "Agent: " + agentName[ch.AgentID]
 		out = append(out, row{ID: ch.ID, Label: label, Desc: desc})
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(out)
+	return out, nil
 }
 
 // handleSetAutoReply flips a channel's per-channel auto-reply switch (like
 // phantom's per-conversation toggle). Off = inbound recorded, agent not run.
 //
 //	PATCH /bridges/api/set-autoreply?id=<channel_id>  {auto_reply}
-func (T *Bridges) handleSetAutoReply(w http.ResponseWriter, r *http.Request) {
-	// Must not be GET-reachable: the body decode is best-effort, so a bodyless
-	// cross-site GET would flip auto_reply to false. The UI calls this via POST.
-	if !IsStateChangingMethod(r.Method) {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	id := r.URL.Query().Get("id")
-	ch, found := GetChannel(RootDB, user, id)
+func (T *Bridges) handleSetAutoReply(c *jsonapi.Call, req autoReplyReq) (any, error) {
+	ch, found := GetChannel(RootDB, c.User, c.R.URL.Query().Get("id"))
 	if !found {
-		http.Error(w, "channel not found", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("channel not found")
 	}
-	var req struct {
-		AutoReply bool `json:"auto_reply"`
-	}
-	_ = json.NewDecoder(r.Body).Decode(&req)
 	ch.AutoReply = req.AutoReply
 	SaveChannel(RootDB, ch)
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"id": ch.ID, "auto_reply": ch.AutoReply})
+	return map[string]any{"id": ch.ID, "auto_reply": ch.AutoReply}, nil
+}
+
+// autoReplyReq is what handleSetAutoReply is sent. No body turns auto-reply
+// off; a cross-site request cannot do that, because the route answers only a
+// state-changing method and those are held to the same origin.
+type autoReplyReq struct {
+	AutoReply bool `json:"auto_reply"`
 }
 
 // handleConnectChannel binds a conversation to an AGENT. The picker passes an
 // agent id; we reuse a free channel for that agent or create one, then stamp
 // this chat's source onto it. agent_id="" (or legacy channel_id="") disconnects.
 // Accepts query params (the ActionList posts via PostTo substitution) or a body.
-func (T *Bridges) handleConnectChannel(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	var req struct {
-		ChatID    string `json:"chat_id"`
-		ChannelID string `json:"channel_id"`
-	}
-	_ = json.NewDecoder(r.Body).Decode(&req)
-	q := r.URL.Query()
+func (T *Bridges) handleConnectChannel(c *jsonapi.Call, req connectChannelReq) (any, error) {
+	user := c.User
+	q := c.R.URL.Query()
 	if req.ChatID == "" {
 		req.ChatID = q.Get("chat_id")
 	}
@@ -267,28 +220,26 @@ func (T *Bridges) handleConnectChannel(w http.ResponseWriter, r *http.Request) {
 		req.ChannelID = q.Get("channel_id")
 	}
 	if req.ChatID == "" {
-		http.Error(w, "chat_id is required", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("chat_id is required")
 	}
 	// Only the caller's own conversation connects: binding another user's chat
 	// to your channel would route their contact's messages to your agent.
-	c, found := T.convoFor(req.ChatID, user, RequestIsAdmin(r))
+	cv, found := T.convoFor(req.ChatID, user, RequestIsAdmin(c.R))
 	if !found {
-		http.Error(w, "conversation not found", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("conversation not found")
 	}
-	svc := firstNonEmpty(c.Service, "imessage")
+	svc := firstNonEmpty(cv.Service, "imessage")
 	// A group binds to its stable chat id (no single member owns the room); a
 	// 1:1 binds to the contact's handle so it routes even if the chat id varies.
-	addr := firstNonEmpty(c.Handle, req.ChatID)
+	addr := firstNonEmpty(cv.Handle, req.ChatID)
 	if isGroupChat(req.ChatID) {
 		addr = req.ChatID
 	}
 	// Connecting curates the chat into the managed list (in case it was added
 	// straight from the incoming picker's Connect path).
-	if !c.Added {
-		c.Added = true
-		T.saveConvo(c)
+	if !cv.Added {
+		cv.Added = true
+		T.saveConvo(cv)
 	}
 
 	// Free any channel currently bound to this conversation (exclusive routing);
@@ -307,14 +258,11 @@ func (T *Bridges) handleConnectChannel(w http.ResponseWriter, r *http.Request) {
 
 	if req.ChannelID == "" {
 		clearSiblings("")
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"connected": false})
-		return
+		return map[string]any{"connected": false}, nil
 	}
 	ch, found := GetChannel(RootDB, user, req.ChannelID)
 	if !found {
-		http.Error(w, "channel not found", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("channel not found")
 	}
 	ch.Service, ch.Address = svc, addr
 	ch.AutoReply = true // connect = it answers; the per-channel toggle pauses it
@@ -328,6 +276,12 @@ func (T *Bridges) handleConnectChannel(w http.ResponseWriter, r *http.Request) {
 	SaveChannel(RootDB, ch)
 	clearSiblings(ch.ID)
 	Log("[bridges] connected chat %s (addr=%s) to channel %q (agent=%s)", req.ChatID, addr, ch.Name, ch.AgentID)
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"connected": true, "channel_id": ch.ID, "address": addr})
+	return map[string]any{"connected": true, "channel_id": ch.ID, "address": addr}, nil
+}
+
+// connectChannelReq is what handleConnectChannel is posted. The table's row
+// actions post no body and name the chat and channel in the query string.
+type connectChannelReq struct {
+	ChatID    string `json:"chat_id"`
+	ChannelID string `json:"channel_id"`
 }

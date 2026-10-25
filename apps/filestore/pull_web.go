@@ -11,6 +11,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/bgrun"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // The two ways a pull is started: an admin's click on the destination store's
@@ -111,18 +112,18 @@ func (T *FileStoreApp) handlePull(w http.ResponseWriter, r *http.Request) {
 	item := strings.TrimSpace(r.URL.Query().Get("item"))
 	switch {
 	case strings.HasSuffix(r.URL.Path, "/items"):
-		writeJSON(w, T.pullItems(dest))
+		jsonapi.Write(w, T.pullItems(dest))
 	case strings.HasSuffix(r.URL.Path, "/progress"):
 		if run, ok := pulls.get(dest.Slug + "/" + item); ok {
-			writeJSON(w, run.status())
+			jsonapi.Write(w, run.status())
 			return
 		}
-		writeJSON(w, map[string]any{})
+		jsonapi.Write(w, map[string]any{})
 	case strings.HasSuffix(r.URL.Path, "/cancel"):
 		if run, ok := pulls.get(dest.Slug + "/" + item); ok {
 			run.cancel()
 		}
-		writeJSON(w, map[string]any{"ok": true})
+		jsonapi.Write(w, map[string]any{"ok": true})
 	default:
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -134,7 +135,7 @@ func (T *FileStoreApp) handlePull(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		pulls.start(job)
-		writeJSON(w, map[string]any{"running": true, "message": "Copying " + item + " into " + dest.Name})
+		jsonapi.Write(w, map[string]any{"running": true, "message": "Copying " + item + " into " + dest.Name})
 	}
 }
 

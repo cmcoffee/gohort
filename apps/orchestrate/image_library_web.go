@@ -29,6 +29,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // urlQ escapes a value for a query string. An agent id is a uuid and a kept
@@ -71,7 +72,7 @@ func (T *OrchestrateApp) handleAgentImages(w http.ResponseWriter, r *http.Reques
 	}
 	agentID := strings.TrimSpace(r.URL.Query().Get("id"))
 	if agentID == "" {
-		writeJSON(w, []imageLibraryRow{})
+		jsonapi.Write(w, []imageLibraryRow{})
 		return
 	}
 	sess := &ToolSession{Username: user, AgentID: agentID}
@@ -96,7 +97,7 @@ func (T *OrchestrateApp) handleAgentImages(w http.ResponseWriter, r *http.Reques
 			HasDupe:   dupe != "",
 		})
 	}
-	writeJSON(w, rows)
+	jsonapi.Write(w, rows)
 }
 
 // librarySubject says who the picture is of, and says so plainly when nobody

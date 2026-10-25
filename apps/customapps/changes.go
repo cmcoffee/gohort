@@ -22,6 +22,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // changesWait is how long a request waits for a change before answering with
@@ -96,5 +98,5 @@ func (T *CustomApps) handleChanges(w http.ResponseWriter, r *http.Request, owner
 		rv, _ = changeVersion(rk)
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, map[string]any{"shared": sv, "records": rv})
+	jsonapi.Write(w, map[string]any{"shared": sv, "records": rv})
 }

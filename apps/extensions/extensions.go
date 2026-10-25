@@ -20,6 +20,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/governance"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/promotion"
 	"github.com/cmcoffee/gohort/core/textutil"
 	"github.com/cmcoffee/gohort/core/toolcat"
@@ -99,11 +100,6 @@ func (T *Extensions) Routes() {
 	T.HandleFunc("/", T.servePage)
 }
 
-func writeJSON(w http.ResponseWriter, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(v)
-}
-
 // handleCredentials is the user's OWN API-credential CRUD — the per-user
 // counterpart to the admin credential list. Every op is scoped to
 // Owner == currentUser: the store keys user-owned creds by (owner, name)
@@ -178,14 +174,14 @@ func (T *Extensions) handleCredentials(w http.ResponseWriter, r *http.Request) {
 		// end's attribution and cannot read the one record that says who
 		// actually made each call.
 		if name := strings.TrimSpace(r.URL.Query().Get("audit")); name != "" {
-			writeJSON(w, credentialLedgerRows(user, name))
+			jsonapi.Write(w, credentialLedgerRows(user, name))
 			return
 		}
 		// ?lent=1 is the other side of the share: what other people gave THIS
 		// user. A share nobody can see is one they cannot use and cannot reason
 		// about when a call goes out under somebody else's name.
 		if strings.TrimSpace(r.URL.Query().Get("lent")) != "" {
-			writeJSON(w, lentCredentialRows(user))
+			jsonapi.Write(w, lentCredentialRows(user))
 			return
 		}
 		// ?name=<name> returns the SINGLE record — the edit form's Source. The
@@ -199,17 +195,17 @@ func (T *Extensions) handleCredentials(w http.ResponseWriter, r *http.Request) {
 			}
 			// view=security is the Security panel's record (api_security.go).
 			if r.URL.Query().Get("view") == "security" {
-				writeJSON(w, apiSecurityOf(c))
+				jsonapi.Write(w, apiSecurityOf(c))
 				return
 			}
-			writeJSON(w, toRow(c))
+			jsonapi.Write(w, toRow(c))
 			return
 		}
 		rows := []row{}
 		for _, c := range Secure().ListUser(user) {
 			rows = append(rows, toRow(c))
 		}
-		writeJSON(w, rows)
+		jsonapi.Write(w, rows)
 	case http.MethodPost:
 		// enable/disable — mute/unmute a credential without editing it. A
 		// disabled credential drops out of the agent tool catalog until re-
@@ -556,17 +552,17 @@ func (lt *toolList) answerOne() bool {
 	if want := strings.TrimSpace(r.URL.Query().Get("share")); want != "" {
 		for _, p := range LoadPersistentTempTools(AuthDB(), user) {
 			if p.Tool.Name == want {
-				writeJSON(w, map[string]any{"shared_with": nonNilList(p.SharedWith)})
+				jsonapi.Write(w, map[string]any{"shared_with": nonNilList(p.SharedWith)})
 				return false
 			}
 		}
-		writeJSON(w, map[string]any{"shared_with": []string{}})
+		jsonapi.Write(w, map[string]any{"shared_with": []string{}})
 		return false
 	}
 	if name != "" {
 		for _, p := range LoadPersistentTempTools(AuthDB(), user) {
 			if p.Tool.Name == name {
-				writeJSON(w, p.Tool)
+				jsonapi.Write(w, p.Tool)
 				return false
 			}
 		}
@@ -575,7 +571,7 @@ func (lt *toolList) answerOne() bool {
 				continue
 			}
 			if st.Tool.Name == name {
-				writeJSON(w, st.Tool)
+				jsonapi.Write(w, st.Tool)
 				return false
 			}
 		}
@@ -584,7 +580,7 @@ func (lt *toolList) answerOne() bool {
 				continue
 			}
 			if d.Tool.Name == name {
-				writeJSON(w, d.Tool)
+				jsonapi.Write(w, d.Tool)
 				return false
 			}
 		}
@@ -867,7 +863,7 @@ func (lt *toolList) twinsAndOrder() {
 		}
 		return strings.ToLower(lt.rows[i].Name) < strings.ToLower(lt.rows[j].Name)
 	})
-	writeJSON(w, lt.rows)
+	jsonapi.Write(w, lt.rows)
 }
 
 // changeUserTool is handleUserTools' POST: one change to a tool, named by ?action.
@@ -1164,7 +1160,7 @@ func (T *Extensions) handleUserSkills(w http.ResponseWriter, r *http.Request) {
 					// save silently clears the share.
 					out["allowed_users"] = nonNilStrings(s.AllowedUsers)
 				}
-				writeJSON(w, out)
+				jsonapi.Write(w, out)
 				return
 			}
 			http.Error(w, "not found", http.StatusNotFound)
@@ -1212,7 +1208,7 @@ func (T *Extensions) handleUserSkills(w http.ResponseWriter, r *http.Request) {
 			for _, s := range DeploymentSkills(AuthDB()) {
 				rows = append(rows, toSkillRow(s, true))
 			}
-			writeJSON(w, rows)
+			jsonapi.Write(w, rows)
 			return
 		}
 		rows := []row{}
@@ -1226,7 +1222,7 @@ func (T *Extensions) handleUserSkills(w http.ResponseWriter, r *http.Request) {
 		for _, s := range PublishedSkillsBy(AuthDB(), user) {
 			rows = append(rows, toSkillRow(s, true))
 		}
-		writeJSON(w, rows)
+		jsonapi.Write(w, rows)
 	case http.MethodPost:
 		id := strings.TrimSpace(r.URL.Query().Get("id"))
 		action := strings.TrimSpace(r.URL.Query().Get("action"))
@@ -1658,7 +1654,7 @@ func (T *Extensions) handleGlobalTools(w http.ResponseWriter, r *http.Request) {
 				Version: "v" + strconv.Itoa(versions[p.Tool.Name]),
 			})
 		}
-		writeJSON(w, rows)
+		jsonapi.Write(w, rows)
 	case http.MethodPost:
 		// Accept the toggle either as a JSON body ({name, adopt}) or as query
 		// params (?name=&adopt=true) — the latter lets a declarative table
@@ -3161,14 +3157,14 @@ func (T *Extensions) handleUserToolCategories(w http.ResponseWriter, r *http.Req
 			for _, t := range userPickableTools(user, name) {
 				opts = append(opts, opt{Value: t.Name, Label: t.Name, Desc: t.Desc})
 			}
-			writeJSON(w, opts)
+			jsonapi.Write(w, opts)
 			return
 		}
 		cats := userToolCategories(user)
 		if name != "" {
 			// Record mode: the picker reads its current selection from here.
 			// An unknown name is a category being created — empty, not 404.
-			writeJSON(w, map[string]any{"name": name, "tools": cats[name]})
+			jsonapi.Write(w, map[string]any{"name": name, "tools": cats[name]})
 			return
 		}
 		type catRow struct {
@@ -3184,7 +3180,7 @@ func (T *Extensions) handleUserToolCategories(w http.ResponseWriter, r *http.Req
 		sort.Slice(rows, func(i, j int) bool {
 			return strings.ToLower(rows[i].Name) < strings.ToLower(rows[j].Name)
 		})
-		writeJSON(w, rows)
+		jsonapi.Write(w, rows)
 	case http.MethodPost:
 		var body struct {
 			Name  string   `json:"name"`
@@ -3287,7 +3283,7 @@ func (T *Extensions) handleSkillToolOptions(w http.ResponseWriter, r *http.Reque
 	for _, t := range LoadPersistentTempTools(AuthDB(), user) {
 		add(t.Tool.Name, t.Tool.Description, "yours")
 	}
-	writeJSON(w, out)
+	jsonapi.Write(w, out)
 }
 
 // handleSkillCollectionOptions lists the document collections the caller can
@@ -3306,7 +3302,7 @@ func (T *Extensions) handleSkillCollectionOptions(w http.ResponseWriter, r *http
 	for _, c := range ListCollections(UserDB(CollectionsDB(), user), user) {
 		out = append(out, entry{ID: c.ID, Name: c.Name, Description: c.Description})
 	}
-	writeJSON(w, out)
+	jsonapi.Write(w, out)
 }
 
 // handleUserCandidates serves the ACL-picker candidate list ([{value,label}])

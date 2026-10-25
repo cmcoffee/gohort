@@ -18,6 +18,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/prompts"
 )
 
@@ -468,7 +469,7 @@ func (T *OrchestrateApp) handleSessionDiag(w http.ResponseWriter, r *http.Reques
 	for i := len(list) - 1; i >= 0; i-- {
 		out = append(out, list[i])
 	}
-	writeJSON(w, out)
+	jsonapi.Write(w, out)
 }
 
 // PublicHandleSessionDiag is the landing an app routes its AgentLoopPanel's

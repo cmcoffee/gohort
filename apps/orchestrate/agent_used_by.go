@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // agentUse is one thing that runs through the agent.
@@ -105,7 +106,7 @@ func (T *OrchestrateApp) handleAgentUsedBy(w http.ResponseWriter, udb Database, 
 	if uses == nil {
 		uses = []agentUse{}
 	}
-	writeJSON(w, map[string]any{
+	jsonapi.Write(w, map[string]any{
 		"uses":      uses,
 		"apps":      usedByKind(uses, "app"),
 		"pipelines": usedByKind(uses, "pipeline"),

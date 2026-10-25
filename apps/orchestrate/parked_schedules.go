@@ -28,6 +28,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 const (
@@ -342,7 +343,7 @@ func (T *OrchestrateApp) handleAgentSchedules(w http.ResponseWriter, udb Databas
 			usedBy = append(usedBy, u.Name+" ("+u.Kind+")")
 		}
 	}
-	writeJSON(w, map[string]any{"names": names, "keep_days": int(parkedExpiry.Hours() / 24), "used_by": usedBy})
+	jsonapi.Write(w, map[string]any{"names": names, "keep_days": int(parkedExpiry.Hours() / 24), "used_by": usedBy})
 }
 
 // agentDeleteData is the editor Delete button's data for the client action.

@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // handlePipelineRevise redrafts an existing pipeline from a description
@@ -108,7 +109,7 @@ func (T *OrchestrateApp) handlePipelineRevise(w http.ResponseWriter, r *http.Req
 	changed := describePipelineChange(before, saved)
 	Log("[orchestrate.pipelines] user=%q revised pipeline %q (id=%s): %s", user, saved.Name, saved.ID,
 		strings.Join(changed, "; "))
-	writeJSON(w, map[string]any{"id": saved.ID, "name": saved.Name, "changed": changed})
+	jsonapi.Write(w, map[string]any{"id": saved.ID, "name": saved.Name, "changed": changed})
 }
 
 // handlePipelineUndo puts back the definition a revision replaced.
@@ -129,7 +130,7 @@ func (T *OrchestrateApp) handlePipelineUndo(w http.ResponseWriter, r *http.Reque
 	back.Previous = nil
 	saved := SavePipelineDef(udb, back)
 	Log("[orchestrate.pipelines] user=%q undid the last revision of pipeline %q", user, saved.Name)
-	writeJSON(w, map[string]any{"id": saved.ID, "name": saved.Name})
+	jsonapi.Write(w, map[string]any{"id": saved.ID, "name": saved.Name})
 }
 
 // draftPipelineOnce makes one authoring call and decodes it through the
@@ -326,5 +327,5 @@ func (T *OrchestrateApp) handlePipelineDraft(w http.ResponseWriter, r *http.Requ
 	saved := SavePipelineDef(udb, def)
 	Log("[orchestrate.pipelines] user=%q drafted pipeline %q (id=%s, %d stages)",
 		user, saved.Name, saved.ID, len(saved.Stages))
-	writeJSON(w, map[string]any{"id": saved.ID, "name": saved.Name, "stages": len(saved.Stages)})
+	jsonapi.Write(w, map[string]any{"id": saved.ID, "name": saved.Name, "stages": len(saved.Stages)})
 }

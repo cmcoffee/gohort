@@ -38,6 +38,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/bgrun"
 	"github.com/cmcoffee/gohort/core/bundle"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 const (
@@ -505,18 +506,18 @@ func (T *FileStoreApp) handleEvidence(w http.ResponseWriter, r *http.Request) {
 	key := evidenceKey(st.Slug, item)
 	switch {
 	case strings.HasSuffix(r.URL.Path, "/items"):
-		writeJSON(w, T.evidenceItems(st))
+		jsonapi.Write(w, T.evidenceItems(st))
 	case strings.HasSuffix(r.URL.Path, "/progress"):
 		if run, ok := evidenceRuns.get(key); ok {
-			writeJSON(w, run.status())
+			jsonapi.Write(w, run.status())
 			return
 		}
-		writeJSON(w, map[string]any{})
+		jsonapi.Write(w, map[string]any{})
 	case strings.HasSuffix(r.URL.Path, "/cancel"):
 		if run, ok := evidenceRuns.get(key); ok {
 			run.cancel()
 		}
-		writeJSON(w, map[string]any{"ok": true})
+		jsonapi.Write(w, map[string]any{"ok": true})
 	default:
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -532,6 +533,6 @@ func (T *FileStoreApp) handleEvidence(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		evidenceRuns.start(T.DB, st, folder, dir)
-		writeJSON(w, map[string]any{"running": true, "message": "Indexing " + folder})
+		jsonapi.Write(w, map[string]any{"running": true, "message": "Indexing " + folder})
 	}
 }

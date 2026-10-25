@@ -34,6 +34,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -1241,7 +1242,7 @@ func (T *OrchestrateApp) handleMachineEditor(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	writeJSON(w, machineEditorSpec(def, editorCatalog{
+	jsonapi.Write(w, machineEditorSpec(def, editorCatalog{
 		agents: agentOptions(udb, user), tools: phaseToolOptions(user),
 		pipelines: pipelineOptions(udb, user), machines: childMachineOptions(udb, user, def),
 		checklist: machineChecklist(udb, user, def),
@@ -1257,7 +1258,7 @@ func (T *OrchestrateApp) handleMachineEditor(w http.ResponseWriter, r *http.Requ
 func (T *OrchestrateApp) handleMachineMeta(w http.ResponseWriter, r *http.Request, udb Database, user string, def MachineDef) {
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, map[string]any{
+		jsonapi.Write(w, map[string]any{
 			"name": def.Name, "description": def.Description,
 			"start": def.StartPhase(), "unattended": def.Unattended,
 			"route_each_message": def.RouteEachMessage,
@@ -1294,7 +1295,7 @@ func (T *OrchestrateApp) handleMachineMeta(w http.ResponseWriter, r *http.Reques
 		// says what is still wrong, and enterMachine already degrades to
 		// an ordinary turn rather than breaking a conversation.
 		saved := SaveMachineDef(udb, def)
-		writeJSON(w, map[string]any{"ok": true, "checklist": machineChecklist(udb, user, saved)})
+		jsonapi.Write(w, map[string]any{"ok": true, "checklist": machineChecklist(udb, user, saved)})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -1317,19 +1318,19 @@ func (T *OrchestrateApp) handleMachinePhases(w http.ResponseWriter, r *http.Requ
 			// renders from, so the two cannot drift.
 			if r.URL.Query().Get("preview") == "1" {
 				block, note := phasePreviewParts(def, ph)
-				writeJSON(w, map[string]any{"block": block, "note": note})
+				jsonapi.Write(w, map[string]any{"block": block, "note": note})
 				return
 			}
 			rec := phaseRecord(ph)
 			rec["reply_with"] = replyWithChoice(def, ph.ReplyWith) // the picker holds a step's name
-			writeJSON(w, rec)
+			jsonapi.Write(w, rec)
 			return
 		}
 		rows := make([]map[string]any, 0, len(def.Phases))
 		for _, p := range def.Phases {
 			rows = append(rows, phaseRow(p))
 		}
-		writeJSON(w, rows)
+		jsonapi.Write(w, rows)
 
 	case http.MethodPost, http.MethodPut, http.MethodPatch:
 		var body map[string]any
@@ -1417,7 +1418,7 @@ func (T *OrchestrateApp) handleMachinePhases(w http.ResponseWriter, r *http.Requ
 		// id/name/slug are what the ADD form's redirect substitutes to
 		// reopen the editor on the step just created. The per-step
 		// panels post here too and ignore them.
-		writeJSON(w, map[string]any{
+		jsonapi.Write(w, map[string]any{
 			"ok": true, "checklist": machineChecklist(udb, user, saved),
 			"id": saved.ID, "name": ph.Name, "slug": ui.SectionSlug(ph.Name),
 		})
@@ -1430,7 +1431,7 @@ func (T *OrchestrateApp) handleMachinePhases(w http.ResponseWriter, r *http.Requ
 		rewritten := def.RemoveStep(name)
 		saved := SaveMachineDef(udb, def)
 		Log("[orchestrate.machines] user=%q removed phase %q from %q (rewrote %v)", user, name, def.Name, rewritten)
-		writeJSON(w, map[string]any{"deleted": name, "rewritten": rewritten, "checklist": machineChecklist(udb, user, saved)})
+		jsonapi.Write(w, map[string]any{"deleted": name, "rewritten": rewritten, "checklist": machineChecklist(udb, user, saved)})
 
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

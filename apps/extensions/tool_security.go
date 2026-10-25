@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -45,7 +46,7 @@ func toolRunSection(w http.ResponseWriter, r *http.Request, db Database, user, n
 			"Ask me before every call: every agent asks you first, in the chat or your approval queue. " +
 			"Changes to it by Builder or an agent always ask you first."
 		w.Header().Set("Cache-Control", "no-store")
-		writeJSON(w, map[string]any{"items": items, "note": note})
+		jsonapi.Write(w, map[string]any{"items": items, "note": note})
 	case http.MethodPost:
 		var body struct {
 			Target string `json:"target"`
@@ -193,7 +194,7 @@ func toolWhoSection(w http.ResponseWriter, r *http.Request, db Database, user, n
 	}
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, toolWhoState(prov, db, user, name))
+		jsonapi.Write(w, toolWhoState(prov, db, user, name))
 	case http.MethodPost:
 		var body struct {
 			Mode  string `json:"mode"`
@@ -483,7 +484,7 @@ func toolStepsSection(w http.ResponseWriter, r *http.Request, db Database, user,
 			}
 		}
 		w.Header().Set("Cache-Control", "no-store")
-		writeJSON(w, map[string]any{"actions": actions, "steps": steps,
+		jsonapi.Write(w, map[string]any{"actions": actions, "steps": steps,
 			"note": "A step the service asks for in its own reply, such as a post it answers with a verification challenge to send back. " +
 				"When a reply to the first action asks for the second, the injection check treats it as the service's next step rather than an attack. " +
 				"Pick the step, then which actions' replies may ask for it. Only those replies count, and only this tool's own actions can be asked for, so text in anything else the agent reads never does. " +

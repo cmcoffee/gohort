@@ -26,6 +26,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/assist"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // maxAssistPrompt bounds the field framing a client may send. Advisory
@@ -101,7 +102,7 @@ func (T *OrchestrateApp) handleMachineSuggest(w http.ResponseWriter, r *http.Req
 				return
 			}
 			Log("[orchestrate.machines] user=%q drafted instructions for %s/%s", user, def.Name, ph.Name)
-			writeJSON(w, map[string]any{"value": strings.TrimSpace(resp.Content)})
+			jsonapi.Write(w, map[string]any{"value": strings.TrimSpace(resp.Content)})
 		},
 	})(w, r)
 }

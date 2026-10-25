@@ -27,6 +27,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // sessionStateQuery is what every route here takes.
@@ -168,7 +169,7 @@ func (T *OrchestrateApp) handleSessionState(w http.ResponseWriter, r *http.Reque
 	if cv := sessionContextOf(udb, sess); cv != nil {
 		view.Context = cv
 	}
-	writeJSON(w, view)
+	jsonapi.Write(w, view)
 }
 
 // machinePathLine renders the machine's phases in order with the current
@@ -208,7 +209,7 @@ func (T *OrchestrateApp) handleSessionPhases(w http.ResponseWriter, r *http.Requ
 		}
 		out = append(out, map[string]any{"value": ph.Name, "label": label})
 	}
-	writeJSON(w, out)
+	jsonapi.Write(w, out)
 }
 
 // handleSessionPhase moves the cursor.
@@ -229,7 +230,7 @@ func (T *OrchestrateApp) handleSessionPhase(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if to == sess.Phase {
-		writeJSON(w, map[string]any{"ok": true, "phase": sess.Phase, "note": "already there"})
+		jsonapi.Write(w, map[string]any{"ok": true, "phase": sess.Phase, "note": "already there"})
 		return
 	}
 	cur := &MachineCursor{Phase: sess.Phase, State: sess.MachineState, Log: sess.MachineLog, Opening: sess.MachineOpening}
@@ -249,7 +250,7 @@ func (T *OrchestrateApp) handleSessionPhase(w http.ResponseWriter, r *http.Reque
 	}
 	appendSessionDiag(udb, sess.AgentID, sess.ID, "machine_phase_moved_by_owner",
 		"the owner moved this conversation from step "+from+" to "+ph.Name+" from the console; the next turn runs there")
-	writeJSON(w, map[string]any{"ok": true, "phase": ph.Name})
+	jsonapi.Write(w, map[string]any{"ok": true, "phase": ph.Name})
 }
 
 // handleSessionStateClear forgets the blackboard.
@@ -272,5 +273,5 @@ func (T *OrchestrateApp) handleSessionStateClear(w http.ResponseWriter, r *http.
 	}
 	appendSessionDiag(udb, sess.AgentID, sess.ID, "machine_state_cleared_by_owner",
 		"the owner cleared the blackboard from the console ("+strconv.Itoa(n)+" phase result(s) forgotten); the phase is unchanged at "+sess.Phase)
-	writeJSON(w, map[string]any{"ok": true, "cleared": n, "at": time.Now().UTC().Format(time.RFC3339)})
+	jsonapi.Write(w, map[string]any{"ok": true, "cleared": n, "at": time.Now().UTC().Format(time.RFC3339)})
 }

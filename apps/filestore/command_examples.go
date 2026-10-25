@@ -27,6 +27,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/pathhold"
 	"github.com/cmcoffee/gohort/core/textutil"
 )
@@ -128,16 +129,16 @@ func (T *FileStoreApp) handleTryCommand(w http.ResponseWriter, r *http.Request) 
 	}
 	argv, err := splitArgs(body.Args)
 	if err != nil {
-		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+		jsonapi.Write(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
 	dir, err := SubRoot(st.Path, "")
 	if err != nil {
-		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+		jsonapi.Write(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
 	if err := st.roomFor(0); err != nil {
-		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+		jsonapi.Write(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
 	w.Header().Set("Content-Type", "application/x-ndjson")
@@ -274,7 +275,7 @@ func (T *FileStoreApp) handleTryArgs(w http.ResponseWriter, r *http.Request) {
 	if n := len(cmd.Examples); n > 0 {
 		last = cmd.Examples[n-1].Args
 	}
-	writeJSON(w, map[string]any{"args": last})
+	jsonapi.Write(w, map[string]any{"args": last})
 }
 
 func newExampleID() string { return strings.ReplaceAll(UUIDv4(), "-", "")[:12] }
@@ -324,7 +325,7 @@ func (T *FileStoreApp) handleExamples(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			e := cmd.Examples[idx]
-			writeJSON(w, map[string]any{"note": e.Note, "use": e.Use})
+			jsonapi.Write(w, map[string]any{"note": e.Note, "use": e.Use})
 			return
 		}
 		rows := []map[string]any{}
@@ -344,7 +345,7 @@ func (T *FileStoreApp) handleExamples(w http.ResponseWriter, r *http.Request) {
 				"output": lastLines(e.Output, 3),
 			})
 		}
-		writeJSON(w, rows)
+		jsonapi.Write(w, rows)
 	case http.MethodPost, http.MethodPatch:
 		if idx < 0 {
 			http.NotFound(w, r)
@@ -365,7 +366,7 @@ func (T *FileStoreApp) handleExamples(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		T.DB.Set(commandsTable, commandKey(cmd.Slug, cmd.Name), cmd)
-		writeJSON(w, map[string]any{"ok": true})
+		jsonapi.Write(w, map[string]any{"ok": true})
 	case http.MethodDelete:
 		if idx < 0 {
 			http.NotFound(w, r)
@@ -374,7 +375,7 @@ func (T *FileStoreApp) handleExamples(w http.ResponseWriter, r *http.Request) {
 		cmd.Examples = append(cmd.Examples[:idx], cmd.Examples[idx+1:]...)
 		T.DB.Set(commandsTable, commandKey(cmd.Slug, cmd.Name), cmd)
 		Log("[filestore] %s removed an example run of %s/%s", user, cmd.Slug, cmd.Name)
-		writeJSON(w, map[string]any{"ok": true})
+		jsonapi.Write(w, map[string]any{"ok": true})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}

@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // sessionContextView is the drawer's content: numbers first, the summary
@@ -111,8 +112,8 @@ func (T *OrchestrateApp) handleSessionContext(w http.ResponseWriter, r *http.Req
 	}
 	v := sessionContextOf(udb, sess)
 	if v == nil {
-		writeJSON(w, map[string]any{"Note": "This thread has not folded: the model still sees every message verbatim."})
+		jsonapi.Write(w, map[string]any{"Note": "This thread has not folded: the model still sees every message verbatim."})
 		return
 	}
-	writeJSON(w, v)
+	jsonapi.Write(w, v)
 }

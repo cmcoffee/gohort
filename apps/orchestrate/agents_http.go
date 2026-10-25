@@ -11,6 +11,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request) {
@@ -730,7 +731,7 @@ func (T *OrchestrateApp) handleAgentOne(w http.ResponseWriter, r *http.Request) 
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		writeJSON(w, agentReachOf(udb, user, agent).Items)
+		jsonapi.Write(w, agentReachOf(udb, user, agent).Items)
 		return
 	}
 	if action == "reach/credential" {

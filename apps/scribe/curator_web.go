@@ -16,6 +16,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // handleCuratorRuns GETs the digest list: recent runs, newest first, with their
@@ -76,7 +77,7 @@ func (T *Scribe) handleCuratorRuns(w http.ResponseWriter, r *http.Request, udb D
 		}
 		out = append(out, row)
 	}
-	writeJSON(w, map[string]any{
+	jsonapi.Write(w, map[string]any{
 		"runs":    out,
 		"pending": len(udb.Keys(findingsTable)),
 	})
@@ -138,7 +139,7 @@ func (T *Scribe) handleCuratorRunNow(w http.ResponseWriter, r *http.Request, udb
 		return
 	}
 	if len(udb.Keys(findingsTable)) == 0 {
-		writeJSON(w, map[string]any{"ran": false, "reason": "nothing is waiting to be curated"})
+		jsonapi.Write(w, map[string]any{"ran": false, "reason": "nothing is waiting to be curated"})
 		return
 	}
 	// Under the same per-user lock the automatic firings take. Without it a
@@ -146,7 +147,7 @@ func (T *Scribe) handleCuratorRunNow(w http.ResponseWriter, r *http.Request, udb
 	// same pending findings and filed them a second time.
 	mu := curatorLock(user)
 	if !mu.TryLock() {
-		writeJSON(w, map[string]any{"ran": false, "reason": "the curator is already working through your queue"})
+		jsonapi.Write(w, map[string]any{"ran": false, "reason": "the curator is already working through your queue"})
 		return
 	}
 	defer mu.Unlock()
@@ -159,7 +160,7 @@ func (T *Scribe) handleCuratorRunNow(w http.ResponseWriter, r *http.Request, udb
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, map[string]any{"ran": true, "run_id": run.ID, "entries": len(run.Entries)})
+	jsonapi.Write(w, map[string]any{"ran": true, "run_id": run.ID, "entries": len(run.Entries)})
 }
 
 // handlePendingFindings GETs the queue itself — what is waiting and has not been
@@ -197,5 +198,5 @@ func (T *Scribe) handlePendingFindings(w http.ResponseWriter, r *http.Request, u
 		}
 		out = append(out, r)
 	}
-	writeJSON(w, out)
+	jsonapi.Write(w, out)
 }

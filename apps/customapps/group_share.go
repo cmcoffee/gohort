@@ -26,6 +26,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/appadmin"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // userGroupIDs is the groups a user is assigned.
@@ -209,5 +210,5 @@ func (T *CustomApps) handleShareGroup(w http.ResponseWriter, r *http.Request, us
 		return
 	}
 	Log("[customapps] %s %s app %q with group %q", user, map[bool]string{true: "shared", false: "unshared"}[on], slug, group)
-	writeJSON(w, map[string]any{"ok": true, "on": on})
+	jsonapi.Write(w, map[string]any{"ok": true, "on": on})
 }

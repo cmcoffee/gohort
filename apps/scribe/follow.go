@@ -29,6 +29,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // follows reports whether g keeps itself up to date from srcID: srcID is one
@@ -313,7 +314,7 @@ func (T *Scribe) handleUpdateFromSources(w http.ResponseWriter, r *http.Request,
 			consult++
 		}
 	}
-	writeJSON(w, map[string]any{"distilling": distilling, "consult": consult})
+	jsonapi.Write(w, map[string]any{"distilling": distilling, "consult": consult})
 }
 
 // What the Author is asked to do with the Sources left on Consult. Guides set

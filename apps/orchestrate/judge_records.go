@@ -36,6 +36,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/sections"
 	"github.com/cmcoffee/gohort/core/ui"
 )
@@ -909,7 +910,7 @@ func (T *OrchestrateApp) handleConsoleFirings(w http.ResponseWriter, r *http.Req
 	limit, _ := strconv.Atoi(q.Get("limit"))
 	f := firingFilter{Kind: q.Get("kind"), Arm: q.Get("arm"), Overturned: q.Get("overturned"), Limit: limit}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, summarizeFirings(loadFirings(T.DB, time.Now()), f))
+	jsonapi.Write(w, summarizeFirings(loadFirings(T.DB, time.Now()), f))
 }
 
 // firingTestCase is a record exported as the start of a regression test: the

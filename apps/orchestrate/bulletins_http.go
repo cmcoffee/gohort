@@ -20,6 +20,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // bulletinRow is one board as the table shows it.
@@ -97,7 +98,7 @@ func (T *OrchestrateApp) handleBulletins(w http.ResponseWriter, r *http.Request)
 		for _, b := range listBulletins(udb) {
 			rows = append(rows, bulletinRow(b, agents, UserLocation(user)))
 		}
-		writeJSON(w, rows)
+		jsonapi.Write(w, rows)
 	case http.MethodPost:
 		var body struct {
 			Name     string `json:"name"`
@@ -123,7 +124,7 @@ func (T *OrchestrateApp) handleBulletins(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		Log("[orchestrate.bulletins] user=%q created board %q", user, name)
-		writeJSON(w, map[string]any{"name": name})
+		jsonapi.Write(w, map[string]any{"name": name})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -160,7 +161,7 @@ func (T *OrchestrateApp) handleBulletinOne(w http.ResponseWriter, r *http.Reques
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		writeJSON(w, map[string]any{"name": b.Name})
+		jsonapi.Write(w, map[string]any{"name": b.Name})
 	case "clear":
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -171,7 +172,7 @@ func (T *OrchestrateApp) handleBulletinOne(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		Log("[orchestrate.bulletins] user=%q cleared board %q", user, b.Name)
-		writeJSON(w, map[string]any{"name": b.Name})
+		jsonapi.Write(w, map[string]any{"name": b.Name})
 	case "followers", "posters":
 		T.bulletinPills(w, r, udb, user, b, action == "followers")
 	default:
@@ -183,7 +184,7 @@ func (T *OrchestrateApp) handleBulletinOne(w http.ResponseWriter, r *http.Reques
 func (T *OrchestrateApp) bulletinRecord(w http.ResponseWriter, r *http.Request, udb Database, user string, b bulletinBoard) {
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, map[string]any{"name": b.Name, "desc": b.Desc, "ttl_hours": b.TTLHours, "text": b.Text})
+		jsonapi.Write(w, map[string]any{"name": b.Name, "desc": b.Desc, "ttl_hours": b.TTLHours, "text": b.Text})
 	case http.MethodPost, http.MethodPut:
 		var body struct {
 			Desc     *string `json:"desc"`
@@ -203,7 +204,7 @@ func (T *OrchestrateApp) bulletinRecord(w http.ResponseWriter, r *http.Request, 
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		writeJSON(w, map[string]any{"name": b.Name})
+		jsonapi.Write(w, map[string]any{"name": b.Name})
 	case http.MethodDelete:
 		// Unfollowed everywhere as it goes, so no agent keeps a name that
 		// points at nothing.
@@ -242,7 +243,7 @@ func (T *OrchestrateApp) bulletinPills(w http.ResponseWriter, r *http.Request, u
 		} else {
 			out["note"] = "Agents allowed to post here get a bulletin_board tool naming this board, which posts and clears. Anyone may read a board they follow; only these may write to it."
 		}
-		writeJSON(w, out)
+		jsonapi.Write(w, out)
 	case http.MethodPost:
 		var one struct {
 			Target string `json:"target"`
