@@ -418,7 +418,8 @@ func TestTheKeyIsNeverInTheKeysList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}
-	body := string(peerKeysJSON())
+	b, _ := json.Marshal(peerKeyRows())
+	body := string(b)
 	if strings.Contains(body, pk.Key) {
 		t.Error("the keys list carries the secret — it is shown once, at issue, and never again")
 	}

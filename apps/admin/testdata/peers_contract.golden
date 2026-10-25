@@ -1,0 +1,173 @@
+(signed out) GET /api/peer-keys ""
+  403 forbidden
+alice GET /api/peer-keys ""
+  403 forbidden
+root GET /api/peer-keys ""
+  200 []
+(signed out) GET /api/peer-keys/mint ""
+  403 forbidden
+alice GET /api/peer-keys/mint ""
+  403 forbidden
+root GET /api/peer-keys/mint ""
+  200 {"label":"","caps":[],"rate_per_min":0}
+(signed out) GET /api/peers ""
+  403 forbidden
+alice GET /api/peers ""
+  403 forbidden
+root GET /api/peers ""
+  200 []
+(signed out) GET /api/peers/add ""
+  403 forbidden
+alice GET /api/peers/add ""
+  403 forbidden
+root GET /api/peers/add ""
+  200 {"name":"","base_url":"","key":""}
+root POST /api/peer-keys "{\"label\":\"x\"}"
+  405 method not allowed
+root POST /api/peers "{\"name\":\"x\"}"
+  405 method not allowed
+alice POST /api/peer-keys/mint "{\"label\":\"mallory\",\"caps\":[\"embeddings\"]}"
+  403 forbidden
+root POST /api/peer-keys/mint "{\"label\":\"consumer\",\"caps\":[\"embeddings\"],\"rate_per_min\":30}"
+  200 {"id":"<k1>","key":"<hex>","label":"consumer","message":"Key minted for consumer. This is the only time it is shown.","ok":true}
+root POST /api/peer-keys/mint "{\"label\":\"listed\",\"caps\":\"embeddings, transcribe\"}"
+  200 {"id":"<k2>","key":"<hex>","label":"listed","message":"Key minted for listed. This is the only time it is shown.","ok":true}
+root POST /api/peer-keys/mint "{\"label\":\"quoted\",\"caps\":\"[\\\"embeddings\\\"]\"}"
+  200 {"id":"<k3>","key":"<hex>","label":"quoted","message":"Key minted for quoted. This is the only time it is shown.","ok":true}
+root POST /api/peer-keys/mint "{\"label\":\"\",\"caps\":[\"embeddings\"]}"
+  400 a label is required: it is how you will recognize this peer later
+root POST /api/peer-keys/mint "{\"label\":\"odd\",\"caps\":[\"nonsense\"]}"
+  400 unknown capability "nonsense" (known: embeddings, images, transcribe, search, browse, models, exec)
+root POST /api/peer-keys/mint "{\"label\":"
+  400 invalid JSON: unexpected EOF
+root POST /api/peer-keys/mint ""
+  400 invalid JSON: EOF
+root PUT /api/peer-keys/mint "{}"
+  405 method not allowed
+root GET /api/peer-keys ""
+  200 [{"id":"<k1>","label":"consumer","caps":["Embeddings"],"enabled":true,"rate_per_min":30,"created":"<time>","last_seen":"","calls":0,"paired":"","status":"Not connected yet: the code is still unspent"}… (611 bytes, sha1 a7eb663819044b72b9b092d071276efe5ed03568)
+alice GET /api/peer-keys/<k1> ""
+  403 forbidden
+root GET /api/peer-keys/<k1> ""
+  200 {"appliances":null,"caps":["embeddings"],"id":"<k1>","label":"consumer"}
+alice GET /api/peer-keys/nope ""
+  403 forbidden
+root GET /api/peer-keys/nope ""
+  404 no such key
+root GET /api/peer-keys/ ""
+  400 missing key id
+alice PUT /api/peer-keys/<k2> "{\"enabled\":false}"
+  403 forbidden
+root PUT /api/peer-keys/<k2> "{\"enabled\":false}"
+  200 {"ok":true}
+root PATCH /api/peer-keys/<k2> "{\"enabled\":true}"
+  200 {"ok":true}
+root POST /api/peer-keys/<k2> "{\"caps\":[\"embeddings\",\"transcribe\"]}"
+  200 {"ok":true}
+root PUT /api/peer-keys/<k2> "{\"caps\":[\"nonsense\"]}"
+  400 unknown capability "nonsense" (known: embeddings, images, transcribe, search, browse, models, exec)
+root PUT /api/peer-keys/<k2> "{\"owner\":\"alice\",\"appliances\":[]}"
+  200 {"ok":true}
+root PUT /api/peer-keys/<k2> "{\"appliances\":[\"alice:a1\",\"bob:b1\"]}"
+  400 a key can reach one user's systems, not several: "alice" and "bob" were both selected
+root PUT /api/peer-keys/<k2> "{}"
+  400 expected {"enabled": bool}, {"caps": [...]}, or {"owner", "appliances"}
+root PUT /api/peer-keys/<k2> "{\"enabled\":"
+  400 invalid JSON: unexpected EOF
+root PUT /api/peer-keys/<k2> ""
+  400 expected {"enabled": bool}, {"caps": [...]}, or {"owner", "appliances"}
+root PUT /api/peer-keys/nope "{\"enabled\":true}"
+  404 no such key
+root PUT /api/peer-keys/nope "{\"caps\":[\"embeddings\"]}"
+  400 no such key
+root GET /api/peer-keys/<k2> ""
+  200 {"appliances":[],"caps":["embeddings","transcribe"],"id":"<k2>","label":"listed"}
+root GET /api/peer-keys/<k3>/repair ""
+  405 method not allowed
+root POST /api/peer-keys/<k3>/bogus ""
+  404 unknown action bogus
+root POST /api/peer-keys/nope/repair ""
+  400 no peer key with id "nope"
+alice POST /api/peer-keys/<k3>/repair ""
+  403 forbidden
+root POST /api/peer-keys/<k3>/repair ""
+  200 {"key":"<hex>","ok":true}
+alice POST /api/peers/add "{\"name\":\"gpu-box\",\"base_url\":\"<peer>\",\"key\":\"<k1>.key\"}"
+  403 forbidden
+root POST /api/peers/add "{\"name\":\"gpu-box\",\"base_url\":\"<peer>\",\"key\":\"0000000000000000000000000000000000000000000000000000000000000000\"}"
+  400 <peer> refused that key: unrecognized or disabled peer key
+root POST /api/peers/add "{\"name\":\"gpu-box\",\"base_url\":\"http://127.0.0.1:1\",\"key\":\"<k1>.key\"}"
+  400 could not reach http://127.0.0.1:1: Get "http://127.0.0.1:1/api/peer/manifest": dial tcp 127.0.0.1:1: connect: connection refused
+root POST /api/peers/add "{\"name\":\"gpu-box\",\"base_url\":\"<peer>\",\"key\":\"<k1>.key\"}"
+  200 {"message":"Connected to <this host>. It offers: embeddings. Pick it as a provider in the relevant capability's settings.","ok":true}
+root POST /api/peers/add "{\"name\":"
+  400 invalid JSON: unexpected EOF
+root POST /api/peers/add ""
+  400 invalid JSON: EOF
+root PUT /api/peers/add "{}"
+  405 method not allowed
+root GET /api/peers ""
+  200 [{"name":"gpu-box","instance":"<this host>","base_url":"<peer>","caps":["Embeddings"],"embed_model":"nomic-embed-text","backends":0,"status":"ok","last_checked":"<time>"}]
+root GET /api/peer-keys ""
+  200 [{"id":"<k1>","label":"consumer","caps":["Embeddings"],"enabled":true,"rate_per_min":30,"created":"<time>","last_seen":"<time>","calls":2,"paired":"<time>","status":"Paired: running on rotating tokens… (613 bytes, sha1 cc97d653209804f925e4a2fdf2f0abd9ab331506)
+alice POST /api/peers/gpu-box/refresh ""
+  403 forbidden
+root POST /api/peers/gpu-box/refresh ""
+  200 {"ok":true}
+root POST /api/peers/nope/refresh ""
+  502 no peer named "nope"
+root GET /api/peers/gpu-box/refresh ""
+  405 method not allowed
+root GET /api/peers/gpu-box/key ""
+  200 {"key":""}
+alice GET /api/peers/gpu-box/key ""
+  403 forbidden
+root POST /api/peers/gpu-box/key "{\"key\":\"<k3>.repaired-key\"}"
+  200 {"message":"Re-paired with <this host>. It offers: embeddings.","ok":true}
+root POST /api/peers/gpu-box/key "{\"key\":"
+  400 invalid JSON: unexpected EOF
+root POST /api/peers/nope/key "{\"key\":\"<k3>.repaired-key\"}"
+  502 no peer named "nope" is registered
+root GET /api/peers/gpu-box ""
+  405 method not allowed
+root PUT /api/peers/gpu-box "{}"
+  405 method not allowed
+root GET /api/peers/ ""
+  405 method not allowed
+root GET /api/peers ""
+  200 [{"name":"gpu-box","instance":"<this host>","base_url":"<peer>","caps":["Embeddings"],"embed_model":"nomic-embed-text","backends":0,"status":"ok","last_checked":"<time>"}]
+alice DELETE /api/peers/gpu-box ""
+  403 forbidden
+root DELETE /api/peers/gpu-box ""
+  200 {"ok":true}
+root DELETE /api/peers/gpu-box ""
+  404 no such peer
+root DELETE /api/peers/ ""
+  400 missing peer name
+alice DELETE /api/peer-keys/<k1> ""
+  403 forbidden
+root DELETE /api/peer-keys/<k1> ""
+  200 {"ok":true}
+root DELETE /api/peer-keys/<k1> ""
+  404 no such key
+root DELETE /api/peer-keys/ ""
+  400 missing key id
+root GET /api/peer-keys ""
+  200 [{"id":"<k2>","label":"listed","caps":["Embeddings","Transcription"],"enabled":true,"rate_per_min":0,"created":"<time>","last_seen":"","calls":0,"paired":"","status":"Not connected yet: the code is st… (413 bytes, sha1 c9df86022a8e92c52f2ced0475bde542c3bec4fc)
+root GET /api/peers ""
+  200 []
+activity log, 14 entries:
+  peer : the peer consumer paired with this machine
+  peer : the peer quoted paired with this machine
+  peer root: connected to the peer gpu-box (<this host>)
+  peer root: disabled the peer key <k2>
+  peer root: enabled the peer key <k2>
+  peer root: issued a peer key for consumer
+  peer root: issued a peer key for listed
+  peer root: issued a peer key for quoted
+  peer root: re-granted peer key "listed": embeddings, transcribe
+  peer root: re-paired peer "gpu-box" with a new key
+  peer root: re-paired peer key "quoted"
+  peer root: removed the peer gpu-box
+  peer root: removed the peer key <k1>
+  peer root: scoped peer key "listed" to owner="alice" over 0 appliance(s)

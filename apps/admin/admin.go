@@ -132,15 +132,21 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	// served by core at /api/peer/* and never touches this app. The exact
 	// /mint pattern wins over the /api/peer-keys/ subtree that serves {id}:
 	// net/http picks the LONGEST matching pattern, so order is cosmetic.
-	sub.HandleFunc("/api/peer-keys", a.handlePeerKeys)
-	sub.HandleFunc("/api/peer-keys/mint", a.handlePeerKeyMint)
-	sub.HandleFunc("/api/peer-keys/", a.handlePeerKeyItem)
+	sub.HandleFunc("/api/peer-keys", jsonapi.Get(a.db, a.handlePeerKeys, a.gate()))
+	sub.HandleFunc("/api/peer-keys/mint", jsonapi.Methods{
+		"GET":  jsonapi.Get(a.db, a.peerKeyMintForm, a.gate()),
+		"POST": jsonapi.Post(a.db, a.handlePeerKeyMint, a.gate()),
+	}.Serve)
+	sub.HandleFunc("/api/peer-keys/", a.peerKeyRoutes())
 
 	// API: peers this instance borrows FROM — the consuming side. Adding one
 	// probes it immediately, so a peer in the table is a peer that answered.
-	sub.HandleFunc("/api/peers", a.handlePeers)
-	sub.HandleFunc("/api/peers/add", a.handlePeerAdd)
-	sub.HandleFunc("/api/peers/", a.handlePeerItem)
+	sub.HandleFunc("/api/peers", jsonapi.Get(a.db, a.handlePeers, a.gate()))
+	sub.HandleFunc("/api/peers/add", jsonapi.Methods{
+		"GET":  jsonapi.Get(a.db, a.peerAddForm, a.gate()),
+		"POST": jsonapi.Post(a.db, a.handlePeerAdd, a.gate()),
+	}.Serve)
+	sub.HandleFunc("/api/peers/", a.peerRoutes())
 
 	// Apps tab: the table of apps with its switches, and each app's page
 	// (apps_tab.go).

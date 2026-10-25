@@ -17,6 +17,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/activity"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -50,8 +51,8 @@ type peerKeyRow struct {
 	Status string `json:"status"`
 }
 
-// peerKeysJSON renders the issued keys for the table.
-func peerKeysJSON() []byte {
+// peerKeyRows renders the issued keys for the table.
+func peerKeyRows() []peerKeyRow {
 	keys := ListPeerKeys()
 	rows := make([]peerKeyRow, 0, len(keys))
 	for _, k := range keys {
@@ -69,8 +70,7 @@ func peerKeysJSON() []byte {
 			Paired: k.Paired, Status: status,
 		})
 	}
-	b, _ := json.Marshal(rows)
-	return b
+	return rows
 }
 
 // handlePeerKeys serves the collection listing that backs the table.
@@ -80,62 +80,40 @@ func peerKeysJSON() []byte {
 // form here made it load the LIST — an array — and post the array as the new
 // key. The save failed with a decode error naming a struct the operator never
 // saw. A read endpoint whose shape is a list cannot also be a form's source.
-func (a *AdminApp) handlePeerKeys(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
-		return
-	}
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed: mint at /api/peer-keys/mint", http.StatusMethodNotAllowed)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(peerKeysJSON())
+func (a *AdminApp) handlePeerKeys(c *jsonapi.Call) (any, error) {
+	return peerKeyRows(), nil
 }
 
-// handlePeerKeyMint backs the mint form. GET returns an empty record so the
-// form loads blank; POST issues the key.
-func (a *AdminApp) handlePeerKeyMint(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
-		return
+// peerKeyMintForm is the blank record the mint form loads, not the key list.
+// The form posts back whatever it loaded, so what it loads has to be the shape
+// it saves.
+func (a *AdminApp) peerKeyMintForm(c *jsonapi.Call) (any, error) {
+	return json.RawMessage(`{"label":"","caps":[],"rate_per_min":0}`), nil
+}
+
+// handlePeerKeyMint issues a key from the mint form.
+func (a *AdminApp) handlePeerKeyMint(c *jsonapi.Call, req struct {
+	Label    string          `json:"label"`
+	Caps     json.RawMessage `json:"caps"`
+	RatePerM int             `json:"rate_per_min"`
+}) (any, error) {
+	// A "checklist" field saves as a JSON array, but a form that has never
+	// been touched can send a string or nothing at all. Accept every shape
+	// rather than rejecting a mint over the encoding of an empty list.
+	caps := decodeCapsField(req.Caps)
+	pk, err := MintPeerKey(req.Label, caps, req.RatePerM)
+	if err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
 	}
-	switch r.Method {
-	case http.MethodGet:
-		// A blank record, not the key list. The form posts back whatever it
-		// loaded, so what it loads has to be the shape it saves.
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"label":"","caps":[],"rate_per_min":0}`))
-	case http.MethodPost:
-		var req struct {
-			Label    string          `json:"label"`
-			Caps     json.RawMessage `json:"caps"`
-			RatePerM int             `json:"rate_per_min"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
-			return
-		}
-		// A "checklist" field saves as a JSON array, but a form that has never
-		// been touched can send a string or nothing at all. Accept every shape
-		// rather than rejecting a mint over the encoding of an empty list.
-		caps := decodeCapsField(req.Caps)
-		pk, err := MintPeerKey(req.Label, caps, req.RatePerM)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		// Never the key: the log is read by every administrator.
-		RecordActivity(r, activity.Peer, AuthCurrentUser(r), "issued a peer key for "+pk.Label)
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
-			"ok":      true,
-			"id":      pk.ID,
-			"key":     pk.Key,
-			"label":   pk.Label,
-			"message": "Key minted for " + pk.Label + ". This is the only time it is shown.",
-		})
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
+	// Never the key: the log is read by every administrator.
+	RecordActivity(c.R, activity.Peer, c.User, "issued a peer key for "+pk.Label)
+	return map[string]any{
+		"ok":      true,
+		"id":      pk.ID,
+		"key":     pk.Key,
+		"label":   pk.Label,
+		"message": "Key minted for " + pk.Label + ". This is the only time it is shown.",
+	}, nil
 }
 
 // decodeCapsField normalizes the capability list out of a checklist field,
@@ -169,134 +147,161 @@ func decodeCapsField(raw json.RawMessage) []string {
 	return nil
 }
 
-// handlePeerKeyItem serves one key: GET returns it (for the Grants modal to
+// peerKeyRoutes serves one key: GET returns it (for the Grants modal to
 // prefill), PUT toggles enabled OR re-grants capabilities, DELETE removes it.
-func (a *AdminApp) handlePeerKeyItem(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
-		return
+//
+// A trailing segment names an ACTION on the key rather than a field of it.
+// Re-pairing is not an edit to a value the table shows — it replaces the
+// secret and revokes what was issued against it — so it gets a verb of its
+// own instead of another optional field on the PUT body.
+func (a *AdminApp) peerKeyRoutes() http.HandlerFunc {
+	edit := jsonapi.Post(a.db, a.handlePeerKeyEdit, a.gate(), jsonapi.EmptyBodyOK)
+	one := jsonapi.Methods{
+		"GET":    jsonapi.Get(a.db, a.handlePeerKeyOne, a.gate()),
+		"PUT":    edit,
+		"PATCH":  edit,
+		"POST":   edit,
+		"DELETE": jsonapi.Post(a.db, a.handlePeerKeyDelete, a.gate()),
 	}
-	id := strings.TrimPrefix(r.URL.Path, "/api/peer-keys/")
-	// A trailing segment names an ACTION on the key rather than a field of it.
-	// Re-pairing is not an edit to a value the table shows — it replaces the
-	// secret and revokes what was issued against it — so it gets a verb of its
-	// own instead of another optional field on the PUT body.
-	action := ""
+	repair := jsonapi.Post(a.db, a.handlePeerKeyRepair, a.gate())
+	repairs := jsonapi.Methods{"POST": repair, "PUT": repair}
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch _, action := peerKeyInPath(r); action {
+		case "":
+			one.Serve(w, r)
+		case "repair":
+			repairs.Serve(w, r)
+		default:
+			http.Error(w, "unknown action "+action, http.StatusNotFound)
+		}
+	}
+}
+
+// peerKeyInPath is the key id /api/peer-keys/{id}[/{action}] names, and the
+// action.
+func peerKeyInPath(r *http.Request) (id, action string) {
+	id = strings.TrimPrefix(r.URL.Path, "/api/peer-keys/")
 	if i := strings.IndexByte(id, '/'); i >= 0 {
 		id, action = id[:i], strings.Trim(id[i+1:], "/")
 	}
+	return id, action
+}
+
+// peerKeyID is the key id the path names, which it must.
+func peerKeyID(c *jsonapi.Call) (string, error) {
+	id, _ := peerKeyInPath(c.R)
 	if id == "" {
-		http.Error(w, "missing key id", http.StatusBadRequest)
-		return
+		return "", jsonapi.BadRequest("missing key id")
 	}
-	if action != "" {
-		if action != "repair" {
-			http.Error(w, "unknown action "+action, http.StatusNotFound)
-			return
-		}
-		if r.Method != http.MethodPost && r.Method != http.MethodPut {
-			http.Error(w, "POST to re-pair", http.StatusMethodNotAllowed)
-			return
-		}
-		pk, rerr := RepairPeerKey(id)
-		if rerr != nil {
-			http.Error(w, rerr.Error(), http.StatusBadRequest)
-			return
-		}
-		adminChange(r, activity.Peer, "re-paired peer key %q", pk.Label)
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"ok": true, "key": pk.Key})
-		return
+	return id, nil
+}
+
+// handlePeerKeyOne is one key, for the Grants modal to prefill from: the
+// same shape the PUT accepts.
+func (a *AdminApp) handlePeerKeyOne(c *jsonapi.Call) (any, error) {
+	id, err := peerKeyID(c)
+	if err != nil {
+		return nil, err
 	}
-	switch r.Method {
-	case http.MethodGet:
-		// Per-record GET, for the Grants modal to prefill from. Returns the
-		// same shape the PUT accepts.
-		for _, k := range ListPeerKeys() {
-			if k.ID == id {
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(map[string]any{
-					"id": k.ID, "label": k.Label, "caps": k.Caps,
-					"appliances": peerKeyScopeValues(k),
-				})
-				return
-			}
+	for _, k := range ListPeerKeys() {
+		if k.ID == id {
+			return map[string]any{
+				"id": k.ID, "label": k.Label, "caps": k.Caps,
+				"appliances": peerKeyScopeValues(k),
+			}, nil
 		}
-		http.Error(w, "no such key", http.StatusNotFound)
-		return
-	case http.MethodPut, http.MethodPatch, http.MethodPost:
-		// Two different edits share this verb: the row toggle sends
-		// {"enabled":bool}, the Grants modal sends {"caps":[...]}. Dispatch on
-		// which one is present rather than on the method, so neither has to
-		// know about the other.
-		var req struct {
-			Enabled    *bool     `json:"enabled"`
-			Caps       *[]string `json:"caps"`
-			Owner      *string   `json:"owner"`
-			Appliances *[]string `json:"appliances"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil ||
-			(req.Enabled == nil && req.Caps == nil && req.Owner == nil && req.Appliances == nil) {
-			http.Error(w, "expected {\"enabled\": bool}, {\"caps\": [...]}, or {\"owner\", \"appliances\"}", http.StatusBadRequest)
-			return
-		}
-		if req.Caps != nil {
-			pk, cerr := SetPeerKeyCaps(id, *req.Caps)
-			if cerr != nil {
-				http.Error(w, cerr.Error(), http.StatusBadRequest)
-				return
-			}
-			adminChange(r, activity.Peer, "re-granted peer key %q: %s",
-				pk.Label, strings.Join(pk.Caps, ", "))
-		}
-		// Scope — whose appliances, and which. Sent together by the Grants
-		// modal: setting one without the other would leave a key naming
-		// machines with nobody to run as, or an owner reaching nothing.
-		if req.Owner != nil || req.Appliances != nil {
-			owner, apps := "", []string{}
-			if req.Owner != nil {
-				owner = *req.Owner
-			}
-			if req.Appliances != nil {
-				// The checklist carries "<user>:<id>" values, so the owner
-				// comes out of the selection rather than being asked for
-				// separately — see peerApplianceScopeOptions.
-				derived, ids, derr := splitPeerApplianceScope(*req.Appliances)
-				if derr != nil {
-					http.Error(w, derr.Error(), http.StatusBadRequest)
-					return
-				}
-				apps = ids
-				if derived != "" {
-					owner = derived
-				}
-			}
-			pk, serr := SetPeerKeyScope(id, owner, apps)
-			if serr != nil {
-				http.Error(w, serr.Error(), http.StatusBadRequest)
-				return
-			}
-			adminChange(r, activity.Peer, "scoped peer key %q to owner=%q over %d appliance(s)",
-				pk.Label, pk.Owner, len(pk.Appliances))
-		}
-		if req.Enabled != nil && !SetPeerKeyDisabled(id, !*req.Enabled) {
-			http.Error(w, "no such key", http.StatusNotFound)
-			return
-		}
-		if req.Enabled != nil {
-			RecordActivity(r, activity.Peer, AuthCurrentUser(r), map[bool]string{true: "enabled", false: "disabled"}[*req.Enabled]+" the peer key "+id)
-		}
-	case http.MethodDelete:
-		if !DeletePeerKey(id) {
-			http.Error(w, "no such key", http.StatusNotFound)
-			return
-		}
-		RecordActivity(r, activity.Peer, AuthCurrentUser(r), "removed the peer key "+id)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{"ok":true}`))
+	return nil, jsonapi.NotFound("no such key")
+}
+
+// handlePeerKeyEdit changes one key. Two different edits share this verb: the
+// row toggle sends {"enabled":bool}, the Grants modal sends {"caps":[...]}.
+// Dispatch on which one is present rather than on the method, so neither has
+// to know about the other.
+func (a *AdminApp) handlePeerKeyEdit(c *jsonapi.Call, req struct {
+	Enabled    *bool     `json:"enabled"`
+	Caps       *[]string `json:"caps"`
+	Owner      *string   `json:"owner"`
+	Appliances *[]string `json:"appliances"`
+}) (any, error) {
+	id, err := peerKeyID(c)
+	if err != nil {
+		return nil, err
+	}
+	if req.Enabled == nil && req.Caps == nil && req.Owner == nil && req.Appliances == nil {
+		return nil, jsonapi.BadRequest("expected {\"enabled\": bool}, {\"caps\": [...]}, or {\"owner\", \"appliances\"}")
+	}
+	if req.Caps != nil {
+		pk, cerr := SetPeerKeyCaps(id, *req.Caps)
+		if cerr != nil {
+			return nil, jsonapi.BadRequest(cerr.Error())
+		}
+		adminChange(c.R, activity.Peer, "re-granted peer key %q: %s",
+			pk.Label, strings.Join(pk.Caps, ", "))
+	}
+	// Scope — whose appliances, and which. Sent together by the Grants
+	// modal: setting one without the other would leave a key naming
+	// machines with nobody to run as, or an owner reaching nothing.
+	if req.Owner != nil || req.Appliances != nil {
+		owner, apps := "", []string{}
+		if req.Owner != nil {
+			owner = *req.Owner
+		}
+		if req.Appliances != nil {
+			// The checklist carries "<user>:<id>" values, so the owner
+			// comes out of the selection rather than being asked for
+			// separately — see peerApplianceScopeOptions.
+			derived, ids, derr := splitPeerApplianceScope(*req.Appliances)
+			if derr != nil {
+				return nil, jsonapi.BadRequest(derr.Error())
+			}
+			apps = ids
+			if derived != "" {
+				owner = derived
+			}
+		}
+		pk, serr := SetPeerKeyScope(id, owner, apps)
+		if serr != nil {
+			return nil, jsonapi.BadRequest(serr.Error())
+		}
+		adminChange(c.R, activity.Peer, "scoped peer key %q to owner=%q over %d appliance(s)",
+			pk.Label, pk.Owner, len(pk.Appliances))
+	}
+	if req.Enabled != nil {
+		if !SetPeerKeyDisabled(id, !*req.Enabled) {
+			return nil, jsonapi.NotFound("no such key")
+		}
+		RecordActivity(c.R, activity.Peer, c.User, map[bool]string{true: "enabled", false: "disabled"}[*req.Enabled]+" the peer key "+id)
+	}
+	return map[string]bool{"ok": true}, nil
+}
+
+// handlePeerKeyDelete removes one key.
+func (a *AdminApp) handlePeerKeyDelete(c *jsonapi.Call, _ struct{}) (any, error) {
+	id, err := peerKeyID(c)
+	if err != nil {
+		return nil, err
+	}
+	if !DeletePeerKey(id) {
+		return nil, jsonapi.NotFound("no such key")
+	}
+	RecordActivity(c.R, activity.Peer, c.User, "removed the peer key "+id)
+	return map[string]bool{"ok": true}, nil
+}
+
+// handlePeerKeyRepair replaces one key's secret, revoking what was issued
+// against the old one, and shows the new secret this once.
+func (a *AdminApp) handlePeerKeyRepair(c *jsonapi.Call, _ struct{}) (any, error) {
+	id, err := peerKeyID(c)
+	if err != nil {
+		return nil, err
+	}
+	pk, rerr := RepairPeerKey(id)
+	if rerr != nil {
+		return nil, jsonapi.BadRequest(rerr.Error())
+	}
+	adminChange(c.R, activity.Peer, "re-paired peer key %q", pk.Label)
+	return map[string]any{"ok": true, "key": pk.Key}, nil
 }
 
 // --- consuming side: peers this instance borrows FROM -----------------------
@@ -313,8 +318,8 @@ type peerRow struct {
 	LastChecked string   `json:"last_checked"`
 }
 
-// peersJSON renders registered peers for the table.
-func peersJSON() []byte {
+// peerRows renders registered peers for the table.
+func peerRows() []peerRow {
 	peers := ListRemotePeers()
 	rows := make([]peerRow, 0, len(peers))
 	for _, p := range peers {
@@ -330,123 +335,136 @@ func peersJSON() []byte {
 			Status: status, LastChecked: p.LastChecked,
 		})
 	}
-	b, _ := json.Marshal(rows)
-	return b
+	return rows
 }
 
 // handlePeers lists registered peers (GET) — the table's source.
-func (a *AdminApp) handlePeers(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
-		return
-	}
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed: add a peer at /api/peers/add", http.StatusMethodNotAllowed)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(peersJSON())
+func (a *AdminApp) handlePeers(c *jsonapi.Call) (any, error) {
+	return peerRows(), nil
 }
 
-// handlePeerAdd backs the add-peer form. Same split as the mint form: a form's
-// Source must return the shape it saves, never a list.
-func (a *AdminApp) handlePeerAdd(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
-		return
+// peerAddForm is the blank record the add-peer form loads. Same split as the
+// mint form: a form's Source must return the shape it saves, never a list.
+func (a *AdminApp) peerAddForm(c *jsonapi.Call) (any, error) {
+	return json.RawMessage(`{"name":"","base_url":"","key":""}`), nil
+}
+
+// handlePeerAdd connects to a peer from the add-peer form.
+func (a *AdminApp) handlePeerAdd(c *jsonapi.Call, req struct {
+	Name    string `json:"name"`
+	BaseURL string `json:"base_url"`
+	Key     string `json:"key"`
+}) (any, error) {
+	p, err := SaveRemotePeer(c.R.Context(), req.Name, req.BaseURL, req.Key)
+	if err != nil {
+		// The probe's message is the useful one — it distinguishes an
+		// unreachable host from a revoked key from a key that grants
+		// nothing. Pass it through verbatim.
+		return nil, jsonapi.BadRequest(err.Error())
 	}
-	switch r.Method {
-	case http.MethodGet:
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"name":"","base_url":"","key":""}`))
-	case http.MethodPost:
-		var req struct {
-			Name    string `json:"name"`
-			BaseURL string `json:"base_url"`
-			Key     string `json:"key"`
+	RecordActivity(c.R, activity.Peer, c.User, "connected to the peer "+req.Name+" ("+p.Instance+")")
+	return map[string]any{
+		"ok": true,
+		"message": "Connected to " + p.Instance + ". It offers: " + strings.Join(p.Caps, ", ") +
+			". Pick it as a provider in the relevant capability's settings.",
+	}, nil
+}
+
+// peerRoutes serves one peer: POST {name}/refresh re-probes it, {name}/key
+// re-pairs it with a new key, and DELETE forgets it.
+func (a *AdminApp) peerRoutes() http.HandlerFunc {
+	forget := jsonapi.Post(a.db, a.handlePeerForget, a.gate())
+	refresh := jsonapi.Post(a.db, a.handlePeerRefresh, a.gate())
+	key := jsonapi.Methods{
+		"GET":  jsonapi.Get(a.db, a.peerKeyForm, a.gate()),
+		"POST": jsonapi.Post(a.db, a.handlePeerKeyUpdate, a.gate()),
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		_, action := peerInPath(r)
+		switch {
+		case r.Method == http.MethodDelete:
+			forget(w, r)
+		case action == "refresh" && r.Method == http.MethodPost:
+			refresh(w, r)
+		case action == "key":
+			key.Serve(w, r)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
-			return
-		}
-		p, err := SaveRemotePeer(r.Context(), req.Name, req.BaseURL, req.Key)
-		if err != nil {
-			// The probe's message is the useful one — it distinguishes an
-			// unreachable host from a revoked key from a key that grants
-			// nothing. Pass it through verbatim.
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		RecordActivity(r, activity.Peer, AuthCurrentUser(r), "connected to the peer "+req.Name+" ("+p.Instance+")")
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
-			"ok": true,
-			"message": "Connected to " + p.Instance + ". It offers: " + strings.Join(p.Caps, ", ") +
-				". Pick it as a provider in the relevant capability's settings.",
-		})
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
-// handlePeerItem serves one peer: POST re-probes it, DELETE forgets it.
-func (a *AdminApp) handlePeerItem(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
-		return
-	}
-	name := strings.TrimPrefix(r.URL.Path, "/api/peers/")
-	action := ""
+// peerInPath is the peer /api/peers/{name}[/{action}] names, and the action.
+func peerInPath(r *http.Request) (name, action string) {
+	name = strings.TrimPrefix(r.URL.Path, "/api/peers/")
 	if i := strings.IndexByte(name, '/'); i >= 0 {
 		name, action = name[:i], name[i+1:]
 	}
+	return name, action
+}
+
+// peerName is the peer the path names, which it must.
+func peerName(c *jsonapi.Call) (string, error) {
+	name, _ := peerInPath(c.R)
 	if name == "" {
-		http.Error(w, "missing peer name", http.StatusBadRequest)
-		return
+		return "", jsonapi.BadRequest("missing peer name")
 	}
-	switch {
-	case r.Method == http.MethodDelete:
-		if !DeleteRemotePeer(name) {
-			http.Error(w, "no such peer", http.StatusNotFound)
-			return
-		}
-		RecordActivity(r, activity.Peer, AuthCurrentUser(r), "removed the peer "+name)
-	case r.Method == http.MethodPost && action == "refresh":
-		if _, err := RefreshRemotePeer(r.Context(), name); err != nil {
-			http.Error(w, err.Error(), http.StatusBadGateway)
-			return
-		}
-	case r.Method == http.MethodGet && action == "key":
-		// The blank record the update form loads. A FormPanel posts back what
-		// it loaded, so what it loads has to be the shape it saves — and it
-		// must never be the CURRENT key, which is a secret this side holds and
-		// has no reason to redisplay.
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"key":""}`))
-		return
-	case r.Method == http.MethodPost && action == "key":
-		var body struct {
-			Key string `json:"key"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
-			return
-		}
-		p, err := UpdateRemotePeerKey(r.Context(), name, body.Key)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadGateway)
-			return
-		}
-		adminChange(r, activity.Peer, "re-paired peer %q with a new key", name)
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
-			"ok":      true,
-			"message": "Re-paired with " + p.Instance + ". It offers: " + strings.Join(p.Caps, ", ") + ".",
-		})
-		return
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
+	return name, nil
+}
+
+// handlePeerForget forgets one peer.
+func (a *AdminApp) handlePeerForget(c *jsonapi.Call, _ struct{}) (any, error) {
+	name, err := peerName(c)
+	if err != nil {
+		return nil, err
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{"ok":true}`))
+	if !DeleteRemotePeer(name) {
+		return nil, jsonapi.NotFound("no such peer")
+	}
+	RecordActivity(c.R, activity.Peer, c.User, "removed the peer "+name)
+	return map[string]bool{"ok": true}, nil
+}
+
+// handlePeerRefresh re-probes one peer.
+func (a *AdminApp) handlePeerRefresh(c *jsonapi.Call, _ struct{}) (any, error) {
+	name, err := peerName(c)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := RefreshRemotePeer(c.R.Context(), name); err != nil {
+		return nil, jsonapi.Status(http.StatusBadGateway, err.Error())
+	}
+	return map[string]bool{"ok": true}, nil
+}
+
+// peerKeyForm is the blank record the update form loads. A FormPanel posts
+// back what it loaded, so what it loads has to be the shape it saves — and it
+// must never be the CURRENT key, which is a secret this side holds and has no
+// reason to redisplay.
+func (a *AdminApp) peerKeyForm(c *jsonapi.Call) (any, error) {
+	if _, err := peerName(c); err != nil {
+		return nil, err
+	}
+	return json.RawMessage(`{"key":""}`), nil
+}
+
+// handlePeerKeyUpdate re-pairs one peer with a new key.
+func (a *AdminApp) handlePeerKeyUpdate(c *jsonapi.Call, body struct {
+	Key string `json:"key"`
+}) (any, error) {
+	name, err := peerName(c)
+	if err != nil {
+		return nil, err
+	}
+	p, err := UpdateRemotePeerKey(c.R.Context(), name, body.Key)
+	if err != nil {
+		return nil, jsonapi.Status(http.StatusBadGateway, err.Error())
+	}
+	adminChange(c.R, activity.Peer, "re-paired peer %q with a new key", name)
+	return map[string]any{
+		"ok":      true,
+		"message": "Re-paired with " + p.Instance + ". It offers: " + strings.Join(p.Caps, ", ") + ".",
+	}, nil
 }
 
 // EmbeddingProviderOptions builds the provider dropdown for the Embeddings

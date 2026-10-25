@@ -115,19 +115,25 @@ var (
 	contractStamp = regexp.MustCompile(`\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?(Z|[+-]\d\d:\d\d)`)
 )
 
-// run sends one request as user ("" for signed out) and records the reply.
-func (ct *contract) run(mux *http.ServeMux, db Database, user, method, path, body string) {
+// run sends one request as user ("" for signed out), records the reply, and
+// returns it as it came.
+func (ct *contract) run(mux *http.ServeMux, db Database, user, method, path, body string) string {
 	r := httptest.NewRequest(method, path, strings.NewReader(body))
 	if user != "" {
 		r.AddCookie(&http.Cookie{Name: "gohort_session", Value: AuthCreateSession(db, user)})
 	}
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, r)
-	out := strings.TrimSpace(w.Body.String())
+	raw := w.Body.String()
+	out := strings.TrimSpace(raw)
 	for _, sec := range ct.secrets {
 		if strings.Contains(out, sec) {
 			ct.t.Errorf("%s %s as %q answered with a secret: %s", method, path, user, out)
 		}
+	}
+	if ct.rewrite != nil {
+		// Before the sort, so a list's order does not follow its random ids.
+		out, path, body = ct.rewrite.Replace(out), ct.rewrite.Replace(path), ct.rewrite.Replace(body)
 	}
 	var items []json.RawMessage
 	if strings.HasPrefix(out, "[") && json.Unmarshal([]byte(out), &items) == nil {
@@ -140,9 +146,6 @@ func (ct *contract) run(mux *http.ServeMux, db Database, user, method, path, bod
 		sort.Strings(rows)
 		out = "[" + strings.Join(rows, ",") + "]"
 	}
-	if ct.rewrite != nil {
-		out, path, body = ct.rewrite.Replace(out), ct.rewrite.Replace(path), ct.rewrite.Replace(body)
-	}
 	out = contractHex.ReplaceAllString(out, "<hex>")
 	out = contractStamp.ReplaceAllString(out, "<time>")
 	if len(out) > 400 {
@@ -153,6 +156,7 @@ func (ct *contract) run(mux *http.ServeMux, db Database, user, method, path, bod
 		who = "(signed out)"
 	}
 	fmt.Fprintf(&ct.log, "%s %s %s %q\n  %d %s\n", who, method, path, body, w.Code, out)
+	return raw
 }
 
 // activity records what the activity log holds, one "kind user: detail"
@@ -171,6 +175,9 @@ func (ct *contract) activity(mux *http.ServeMux, db Database, user string) {
 	lines := make([]string, len(rows))
 	for i, e := range rows {
 		lines[i] = fmt.Sprintf("  %s %s: %s\n", e.Kind, e.User, e.Detail)
+		if ct.rewrite != nil {
+			lines[i] = ct.rewrite.Replace(lines[i])
+		}
 	}
 	sort.Strings(lines)
 	fmt.Fprintf(&ct.log, "activity log, %d entries:\n%s", len(rows), strings.Join(lines, ""))
@@ -181,6 +188,11 @@ func (ct *contract) activity(mux *http.ServeMux, db Database, user string) {
 func (ct *contract) check(t *testing.T, golden string) {
 	t.Helper()
 	got := ct.log.String()
+	if ct.rewrite != nil {
+		// Again over the whole record: a mask learned from a reply (a minted
+		// id) also covers the lines recorded before it was known.
+		got = ct.rewrite.Replace(got)
+	}
 	if os.Getenv("UPDATE_GOLDEN") != "" {
 		if err := os.MkdirAll("testdata", 0o755); err != nil {
 			t.Fatal(err)
