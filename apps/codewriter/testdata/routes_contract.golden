@@ -1,0 +1,212 @@
+(signed out) GET /api/snippets ""
+  401 unauthorized
+alice GET /api/snippets ""
+  200 [{"id":"snip-1","name":"hello","lang":"go","code":"package main","vars":null,"date":"<time>"}]
+bob GET /api/snippets ""
+  200 []
+alice PUT /api/snippets "{}"
+  405 method not allowed
+(signed out) GET /api/values ""
+  401 unauthorized
+alice GET /api/values ""
+  200 [{"id":"val-1","name":"token","desc":"","value":"abc","date":"<time>"}]
+bob GET /api/values ""
+  200 []
+alice PUT /api/values "{}"
+  405 method not allowed
+(signed out) GET /api/contexts ""
+  401 unauthorized
+alice GET /api/contexts ""
+  200 [{"id":"ctx-1","name":"style","body":"tabs","date":"<time>"}]
+bob GET /api/contexts ""
+  200 []
+alice PUT /api/contexts "{}"
+  405 method not allowed
+(signed out) GET /api/writers ""
+  401 unauthorized
+alice GET /api/writers ""
+  200 [{"id":"wr-1","name":"terse","date":"<time>"}]
+bob GET /api/writers ""
+  200 []
+alice PUT /api/writers "{}"
+  405 method not allowed
+(signed out) GET /api/templates ""
+  401 unauthorized
+alice GET /api/templates ""
+  200 [{"id":"tpl-1","name":"cli","description":"","body":"func main() {}","date":"<time>"}]
+bob GET /api/templates ""
+  200 []
+alice PUT /api/templates "{}"
+  405 method not allowed
+(signed out) GET /api/collections ""
+  401 unauthorized
+alice GET /api/collections ""
+  200 []
+bob GET /api/collections ""
+  200 []
+alice PUT /api/collections "{}"
+  405 method not allowed
+(signed out) GET /api/reference-sources ""
+  401 unauthorized
+alice GET /api/reference-sources ""
+  200 []
+bob GET /api/reference-sources ""
+  200 []
+alice PUT /api/reference-sources "{}"
+  405 method not allowed
+alice POST /api/collections "{}"
+  405 method not allowed
+alice POST /api/reference-sources "{}"
+  405 method not allowed
+(signed out) GET /api/snippet/snip-1 ""
+  401 unauthorized
+alice GET /api/snippet/snip-1 ""
+  200 {"id":"snip-1","name":"hello","lang":"go","code":"package main","vars":null,"date":"<time>"}
+bob GET /api/snippet/snip-1 ""
+  404 not found
+alice GET /api/snippet/nope ""
+  404 not found
+alice GET /api/snippet/ ""
+  404 not found
+alice PUT /api/snippet/snip-1 "{}"
+  405 method not allowed
+bob DELETE /api/snippet/snip-1 ""
+  200 {"deleted":"snip-1"}
+alice GET /api/snippet/snip-1 ""
+  200 {"id":"snip-1","name":"hello","lang":"go","code":"package main","vars":null,"date":"<time>"}
+alice DELETE /api/snippet/ ""
+  404 not found
+(signed out) GET /api/value/val-1 ""
+  401 unauthorized
+alice GET /api/value/val-1 ""
+  200 {"id":"val-1","name":"token","desc":"","value":"abc","date":"<time>"}
+bob GET /api/value/val-1 ""
+  404 not found
+alice GET /api/value/nope ""
+  404 not found
+alice GET /api/value/ ""
+  404 not found
+alice PUT /api/value/val-1 "{}"
+  405 method not allowed
+bob DELETE /api/value/val-1 ""
+  200 {"deleted":"val-1"}
+alice GET /api/value/val-1 ""
+  200 {"id":"val-1","name":"token","desc":"","value":"abc","date":"<time>"}
+alice DELETE /api/value/ ""
+  404 not found
+(signed out) GET /api/context/ctx-1 ""
+  401 unauthorized
+alice GET /api/context/ctx-1 ""
+  200 {"id":"ctx-1","name":"style","body":"tabs","date":"<time>"}
+bob GET /api/context/ctx-1 ""
+  404 not found
+alice GET /api/context/nope ""
+  404 not found
+alice GET /api/context/ ""
+  404 not found
+alice PUT /api/context/ctx-1 "{}"
+  405 method not allowed
+bob DELETE /api/context/ctx-1 ""
+  200 {"deleted":"ctx-1"}
+alice GET /api/context/ctx-1 ""
+  200 {"id":"ctx-1","name":"style","body":"tabs","date":"<time>"}
+alice DELETE /api/context/ ""
+  404 not found
+(signed out) GET /api/writer/wr-1 ""
+  401 unauthorized
+alice GET /api/writer/wr-1 ""
+  200 {"id":"wr-1","name":"terse","date":"<time>"}
+bob GET /api/writer/wr-1 ""
+  404 not found
+alice GET /api/writer/nope ""
+  404 not found
+alice GET /api/writer/ ""
+  404 not found
+alice PUT /api/writer/wr-1 "{}"
+  405 method not allowed
+bob DELETE /api/writer/wr-1 ""
+  404 not found
+alice GET /api/writer/wr-1 ""
+  200 {"id":"wr-1","name":"terse","date":"<time>"}
+alice DELETE /api/writer/ ""
+  404 not found
+(signed out) GET /api/template/tpl-1 ""
+  401 unauthorized
+alice GET /api/template/tpl-1 ""
+  200 {"id":"tpl-1","name":"cli","description":"","body":"func main() {}","date":"<time>"}
+bob GET /api/template/tpl-1 ""
+  404 not found
+alice GET /api/template/nope ""
+  404 not found
+alice GET /api/template/ ""
+  404 not found
+alice PUT /api/template/tpl-1 "{}"
+  405 method not allowed
+bob DELETE /api/template/tpl-1 ""
+  200 {"deleted":"tpl-1"}
+alice GET /api/template/tpl-1 ""
+  200 {"id":"tpl-1","name":"cli","description":"","body":"func main() {}","date":"<time>"}
+alice DELETE /api/template/ ""
+  404 not found
+alice POST /api/snippets "{\"id\":\"snip-1\",\"name\":\"hello\",\"lang\":\"go\",\"code\":\"package main // v2\"}"
+  200 {"id":"snip-1","lang":"go","name":"hello","rev_id":"<uuid>"}
+alice POST /api/snippets "{\"name\":\"fresh\",\"lang\":\"py\",\"code\":\"print(1)\"}"
+  200 {"id":"<uuid>","lang":"py","name":"fresh","rev_id":"<uuid>"}
+alice POST /api/snippets "{\"name\":\"no code\"}"
+  400 name and code required
+alice POST /api/snippets "{\"name\":"
+  400 invalid JSON: unexpected EOF
+alice POST /api/snippets ""
+  400 invalid JSON: EOF
+alice GET /api/revisions/snip-1 ""
+  200 [{"id":"<uuid>","date":"<time>"}]
+bob GET /api/revisions/snip-1 ""
+  200 []
+alice GET /api/revisions/ ""
+  200 []
+alice GET /api/revision/nope ""
+  404 not found
+alice GET /api/revision/ ""
+  404 not found
+alice POST /api/revisions/snip-1 "{}"
+  405 method not allowed
+alice POST /api/values "{\"name\":\"key\",\"value\":\"v\"}"
+  200 {"id":"<uuid>","name":"key","desc":"","value":"v","date":"<time>"}
+alice POST /api/values "{\"value\":\"v\"}"
+  400 name required
+alice POST /api/values "{\"name\":"
+  400 invalid JSON: unexpected EOF
+alice POST /api/contexts "{\"name\":\"tone\",\"body\":\"plain\"}"
+  200 {"id":"<uuid>","name":"tone","body":"plain","date":"<time>"}
+alice POST /api/contexts "{\"body\":\"plain\"}"
+  400 name required
+alice POST /api/contexts ""
+  400 invalid JSON: EOF
+alice POST /api/writers "{\"name\":\"wordy\"}"
+  200 {"id":"<uuid>","name":"wordy","date":"<time>"}
+alice POST /api/writers "{\"name\":\"  \"}"
+  400 name required
+alice POST /api/writers "{\"name\":"
+  400 invalid JSON: unexpected EOF
+alice POST /api/templates "{\"name\":\"cli\",\"body\":\"func main() { run() }\"}"
+  200 {"id":"tpl-1","name":"cli","description":"","body":"func main() { run() }","date":"<time>"}
+alice POST /api/templates "{\"name\":\"web\"}"
+  400 body required
+alice POST /api/templates "{\"body\":\"x\"}"
+  400 name required
+alice POST /api/templates "{\"name\":"
+  400 invalid JSON: unexpected EOF
+alice GET /api/templates ""
+  200 [{"id":"tpl-1","name":"cli","description":"","body":"func main() { run() }","date":"<time>"}]
+(signed out) POST /api/suggest-name "{\"code\":\"print(1)\",\"lang\":\"python\"}"
+  401 unauthorized
+alice POST /api/suggest-name "{\"code\":\"print(1)\",\"lang\":\"python\"}"
+  200 {"name":"hello_world"}
+alice POST /api/suggest-name "{\"code\":\"print(2)\"}"
+  500 something went wrong on the server; the details are in its log
+alice POST /api/suggest-name "{}"
+  400 code required
+alice POST /api/suggest-name "{\"code\":"
+  400 invalid JSON: unexpected EOF
+alice GET /api/suggest-name ""
+  405 method not allowed

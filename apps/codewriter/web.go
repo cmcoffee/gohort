@@ -10,6 +10,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/assist"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 const (
@@ -89,25 +90,55 @@ func (T *CodeWriterAgent) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	RegisterArtifactType(&writerArtifact{app: T})
 	sub.HandleFunc("/", T.handleCodeWriterPage)
 	sub.HandleFunc("/api/chat", T.handleChat)
-	sub.HandleFunc("/api/snippets", T.handleSnippets)
-	sub.HandleFunc("/api/snippet/", T.handleSnippet)
-	sub.HandleFunc("/api/values", T.handleValues)
-	sub.HandleFunc("/api/value/", T.handleValue)
-	sub.HandleFunc("/api/contexts", T.handleContexts)
-	sub.HandleFunc("/api/context/", T.handleContext)
-	sub.HandleFunc("/api/writers", T.handleWriters)
-	sub.HandleFunc("/api/writer/", T.handleWriter)
+	sub.HandleFunc("/api/snippets", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, listRecords[SnippetRecord](snippetTable)),
+		"POST": jsonapi.Post(T.DB, T.handleSaveSnippet),
+	}.Serve)
+	sub.HandleFunc("/api/snippet/", jsonapi.Methods{
+		"GET":    jsonapi.Get(T.DB, recordAt[SnippetRecord]("/api/snippet/", snippetTable)),
+		"DELETE": jsonapi.Post(T.DB, deleteRecordAt("/api/snippet/", snippetTable)),
+	}.Serve)
+	sub.HandleFunc("/api/values", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, listRecords[SavedValue](valueTable)),
+		"POST": jsonapi.Post(T.DB, T.handleValueSave),
+	}.Serve)
+	sub.HandleFunc("/api/value/", jsonapi.Methods{
+		"GET":    jsonapi.Get(T.DB, recordAt[SavedValue]("/api/value/", valueTable)),
+		"DELETE": jsonapi.Post(T.DB, deleteRecordAt("/api/value/", valueTable)),
+	}.Serve)
+	sub.HandleFunc("/api/contexts", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, listRecords[ContextRecord](contextTable)),
+		"POST": jsonapi.Post(T.DB, T.handleContextSave),
+	}.Serve)
+	sub.HandleFunc("/api/context/", jsonapi.Methods{
+		"GET":    jsonapi.Get(T.DB, recordAt[ContextRecord]("/api/context/", contextTable)),
+		"DELETE": jsonapi.Post(T.DB, deleteRecordAt("/api/context/", contextTable)),
+	}.Serve)
+	sub.HandleFunc("/api/writers", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, listRecords[WriterRecord](writerTable)),
+		"POST": jsonapi.Post(T.DB, T.handleWriterSave),
+	}.Serve)
+	sub.HandleFunc("/api/writer/", jsonapi.Methods{
+		"GET":    jsonapi.Get(T.DB, T.handleWriter),
+		"DELETE": jsonapi.Post(T.DB, T.handleWriterDelete),
+	}.Serve)
 	sub.HandleFunc("/api/assist", T.handleAssist)
 	sub.HandleFunc("/api/rules", func(w http.ResponseWriter, r *http.Request) {
 		HandleDocRules(w, r, T.DB, "codewriter")
 	})
-	sub.HandleFunc("/api/templates", T.handleTemplates)
-	sub.HandleFunc("/api/template/", T.handleTemplate)
-	sub.HandleFunc("/api/collections", T.handleCollectionsList)
-	sub.HandleFunc("/api/reference-sources", T.handleReferenceSources)
-	sub.HandleFunc("/api/revisions/", T.handleRevisions)
-	sub.HandleFunc("/api/revision/", T.handleRevision)
-	sub.HandleFunc("/api/suggest-name", T.handleSuggestName)
+	sub.HandleFunc("/api/templates", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, T.handleTemplates),
+		"POST": jsonapi.Post(T.DB, T.handleTemplateSave),
+	}.Serve)
+	sub.HandleFunc("/api/template/", jsonapi.Methods{
+		"GET":    jsonapi.Get(T.DB, recordAt[TemplateRecord]("/api/template/", templateTable)),
+		"DELETE": jsonapi.Post(T.DB, deleteRecordAt("/api/template/", templateTable)),
+	}.Serve)
+	sub.HandleFunc("/api/collections", jsonapi.Get(T.DB, T.handleCollectionsList))
+	sub.HandleFunc("/api/reference-sources", jsonapi.Get(T.DB, T.handleReferenceSources))
+	sub.HandleFunc("/api/revisions/", jsonapi.Get(T.DB, T.handleRevisions))
+	sub.HandleFunc("/api/revision/", jsonapi.Get(T.DB, recordAt[SnippetRevision]("/api/revision/", cwRevisionTable)))
+	sub.HandleFunc("/api/suggest-name", jsonapi.Post(T.DB, T.handleSuggestName))
 	MountSubMux(mux, prefix, sub)
 	RegisterUserDataHandler(&codeWriterUserData{agent: T})
 
@@ -399,12 +430,8 @@ func formatCollectionRefs(hits []SearchHit) string {
 // user (their own + deployment-scoped), as {id, name} for the picker.
 // Server-side via the core ListCollections primitive — codewriter never
 // reaches into orchestrate's HTTP surface for this.
-func (T *CodeWriterAgent) handleCollectionsList(w http.ResponseWriter, r *http.Request) {
-	uid := AuthCurrentUser(r)
-	if uid == "" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
+func (T *CodeWriterAgent) handleCollectionsList(c *jsonapi.Call) (any, error) {
+	uid := c.User
 	type item struct {
 		ID          string `json:"id"`
 		Name        string `json:"name"`
@@ -419,26 +446,19 @@ func (T *CodeWriterAgent) handleCollectionsList(w http.ResponseWriter, r *http.R
 	for _, c := range ListCollections(UserDB(CollectionsDB(), uid), uid) {
 		out = append(out, item{ID: c.ID, Name: c.Name, Description: c.Description})
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(out)
+	return out, nil
 }
 
 // handleReferenceSources feeds the chat-header reference picker: every
 // registered reference source's items available to this user, grouped. The
 // data is generic (core.ReferenceGroup) — codewriter doesn't know or care
 // which services contributed (servitor systems, MCP doc sources, …).
-func (T *CodeWriterAgent) handleReferenceSources(w http.ResponseWriter, r *http.Request) {
-	uid := AuthCurrentUser(r)
-	if uid == "" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	groups := ReferenceGroups(uid)
+func (T *CodeWriterAgent) handleReferenceSources(c *jsonapi.Call) (any, error) {
+	groups := ReferenceGroups(c.User)
 	if groups == nil {
 		groups = []ReferenceGroup{}
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(groups)
+	return groups, nil
 }
 
 // buildValuePrompt appends a note about placeholders to the system prompt.
@@ -446,59 +466,15 @@ func (T *CodeWriterAgent) buildValuePrompt() string {
 	return "\n\nWhen generating code, use {{PLACEHOLDER}} syntax for values the user would likely need to fill in, such as credentials, hostnames, paths, and environment-specific settings. Examples: {{PASSWORD}}, {{DB_HOST}}, {{OUTPUT_PATH}}. The user has a UI that detects these placeholders and lets them fill in values."
 }
 
-// handleSnippets handles list (GET) and create/update (POST).
-func (T *CodeWriterAgent) handleSnippets(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		T.handleListSnippets(w, r)
-	case http.MethodPost:
-		T.handleSaveSnippet(w, r)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
-}
-
-func (T *CodeWriterAgent) handleListSnippets(w http.ResponseWriter, r *http.Request) {
-	_, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+// handleSaveSnippet creates or updates a snippet and keeps a revision of it,
+// trimming the oldest past maxSnippetRevisions.
+func (T *CodeWriterAgent) handleSaveSnippet(c *jsonapi.Call, req SnippetRecord) (any, error) {
+	udb := c.UDB
 	if udb == nil {
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, "[]")
-		return
-	}
-	var items []SnippetRecord
-	for _, key := range udb.Keys(snippetTable) {
-		var rec SnippetRecord
-		if udb.Get(snippetTable, key, &rec) {
-			items = append(items, rec)
-		}
-	}
-	if items == nil {
-		items = []SnippetRecord{}
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(items)
-}
-
-func (T *CodeWriterAgent) handleSaveSnippet(w http.ResponseWriter, r *http.Request) {
-	_, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	if udb == nil {
-		http.Error(w, "no database", http.StatusInternalServerError)
-		return
-	}
-	var req SnippetRecord
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request", http.StatusBadRequest)
-		return
+		return nil, jsonapi.Status(http.StatusInternalServerError, "no database")
 	}
 	if req.Name == "" || req.Code == "" {
-		http.Error(w, "name and code required", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("name and code required")
 	}
 	if req.ID == "" {
 		req.ID = UUIDv4()
@@ -528,35 +504,57 @@ func (T *CodeWriterAgent) handleSaveSnippet(w http.ResponseWriter, r *http.Reque
 			udb.Unset(cwRevisionTable, kd.key)
 		}
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{"id": req.ID, "rev_id": revID, "name": req.Name, "lang": req.Lang})
+	return map[string]interface{}{"id": req.ID, "rev_id": revID, "name": req.Name, "lang": req.Lang}, nil
 }
 
-// handleSnippet handles GET (load) and DELETE for /api/snippet/{id}.
-func (T *CodeWriterAgent) handleSnippet(w http.ResponseWriter, r *http.Request) {
-	_, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
+// The panel's saved records (snippets, values, contexts, templates, writers)
+// all live one table each in the caller's own store, so listing, fetching and
+// deleting one is the same three steps for every kind. A record is reached
+// only through its owner's store: another user's id is simply not there.
+
+// records is every R in table in udb.
+func records[R any](udb Database, table string) []R {
+	items := []R{}
+	if udb == nil {
+		return items
 	}
-	id := strings.TrimPrefix(r.URL.Path, "/api/snippet/")
-	if id == "" || udb == nil {
-		http.Error(w, "not found", http.StatusNotFound)
-		return
-	}
-	switch r.Method {
-	case http.MethodGet:
-		var rec SnippetRecord
-		if !udb.Get(snippetTable, id, &rec) {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
+	for _, key := range udb.Keys(table) {
+		var rec R
+		if udb.Get(table, key, &rec) {
+			items = append(items, rec)
 		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(rec)
-	case http.MethodDelete:
-		udb.Unset(snippetTable, id)
-		w.WriteHeader(http.StatusOK)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+	return items
+}
+
+// listRecords answers with every R in the caller's table.
+func listRecords[R any](table string) func(*jsonapi.Call) (any, error) {
+	return func(c *jsonapi.Call) (any, error) { return records[R](c.UDB, table), nil }
+}
+
+// recordAt answers with the R in the caller's table whose id the path names
+// after prefix.
+func recordAt[R any](prefix, table string) func(*jsonapi.Call) (any, error) {
+	return func(c *jsonapi.Call) (any, error) {
+		id := strings.TrimPrefix(c.R.URL.Path, prefix)
+		var rec R
+		if id == "" || c.UDB == nil || !c.UDB.Get(table, id, &rec) {
+			return nil, jsonapi.NotFound("not found")
+		}
+		return rec, nil
+	}
+}
+
+// deleteRecordAt removes the record in the caller's table whose id the path
+// names after prefix.
+func deleteRecordAt(prefix, table string) func(*jsonapi.Call, struct{}) (any, error) {
+	return func(c *jsonapi.Call, _ struct{}) (any, error) {
+		id := strings.TrimPrefix(c.R.URL.Path, prefix)
+		if id == "" || c.UDB == nil {
+			return nil, jsonapi.NotFound("not found")
+		}
+		c.UDB.Unset(table, id)
+		return map[string]any{"deleted": id}, nil
 	}
 }
 
@@ -564,223 +562,62 @@ func (T *CodeWriterAgent) handleSnippet(w http.ResponseWriter, r *http.Request) 
 
 // --- Saved Values ---
 
-func (T *CodeWriterAgent) handleValues(w http.ResponseWriter, r *http.Request) {
-	_, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
+// handleValueSave creates or updates a saved value.
+func (T *CodeWriterAgent) handleValueSave(c *jsonapi.Call, req SavedValue) (any, error) {
+	if c.UDB == nil {
+		return nil, jsonapi.Status(http.StatusInternalServerError, "no database")
 	}
-	switch r.Method {
-	case http.MethodGet:
-		if udb == nil {
-			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprint(w, "[]")
-			return
-		}
-		var items []SavedValue
-		for _, key := range udb.Keys(valueTable) {
-			var rec SavedValue
-			if udb.Get(valueTable, key, &rec) {
-				items = append(items, rec)
-			}
-		}
-		if items == nil {
-			items = []SavedValue{}
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(items)
-
-	case http.MethodPost:
-		if udb == nil {
-			http.Error(w, "no database", http.StatusInternalServerError)
-			return
-		}
-		var req SavedValue
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "invalid request", http.StatusBadRequest)
-			return
-		}
-		if req.Name == "" {
-			http.Error(w, "name required", http.StatusBadRequest)
-			return
-		}
-		if req.ID == "" {
-			req.ID = UUIDv4()
-		}
-		req.Date = time.Now().Format(time.RFC3339)
-		udb.Set(valueTable, req.ID, req)
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(req)
-
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	if req.Name == "" {
+		return nil, jsonapi.BadRequest("name required")
 	}
-}
-
-func (T *CodeWriterAgent) handleValue(w http.ResponseWriter, r *http.Request) {
-	_, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
+	if req.ID == "" {
+		req.ID = UUIDv4()
 	}
-	id := strings.TrimPrefix(r.URL.Path, "/api/value/")
-	if id == "" || udb == nil {
-		http.Error(w, "not found", http.StatusNotFound)
-		return
-	}
-	switch r.Method {
-	case http.MethodGet:
-		var rec SavedValue
-		if !udb.Get(valueTable, id, &rec) {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(rec)
-	case http.MethodDelete:
-		udb.Unset(valueTable, id)
-		w.WriteHeader(http.StatusOK)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
+	req.Date = time.Now().Format(time.RFC3339)
+	c.UDB.Set(valueTable, req.ID, req)
+	return req, nil
 }
 
 // --- Saved Contexts ---
 
-func (T *CodeWriterAgent) handleContexts(w http.ResponseWriter, r *http.Request) {
-	_, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
+// handleContextSave creates or updates a context.
+func (T *CodeWriterAgent) handleContextSave(c *jsonapi.Call, req ContextRecord) (any, error) {
+	if c.UDB == nil {
+		return nil, jsonapi.Status(http.StatusInternalServerError, "no database")
 	}
-	switch r.Method {
-	case http.MethodGet:
-		if udb == nil {
-			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprint(w, "[]")
-			return
-		}
-		var items []ContextRecord
-		for _, key := range udb.Keys(contextTable) {
-			var rec ContextRecord
-			if udb.Get(contextTable, key, &rec) {
-				items = append(items, rec)
-			}
-		}
-		if items == nil {
-			items = []ContextRecord{}
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(items)
-
-	case http.MethodPost:
-		if udb == nil {
-			http.Error(w, "no database", http.StatusInternalServerError)
-			return
-		}
-		var req ContextRecord
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "invalid request", http.StatusBadRequest)
-			return
-		}
-		if req.Name == "" {
-			http.Error(w, "name required", http.StatusBadRequest)
-			return
-		}
-		if req.ID == "" {
-			req.ID = UUIDv4()
-		}
-		req.Date = time.Now().Format(time.RFC3339)
-		udb.Set(contextTable, req.ID, req)
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(req)
-
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	if req.Name == "" {
+		return nil, jsonapi.BadRequest("name required")
 	}
+	if req.ID == "" {
+		req.ID = UUIDv4()
+	}
+	req.Date = time.Now().Format(time.RFC3339)
+	c.UDB.Set(contextTable, req.ID, req)
+	return req, nil
 }
 
-func (T *CodeWriterAgent) handleContext(w http.ResponseWriter, r *http.Request) {
-	_, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	id := strings.TrimPrefix(r.URL.Path, "/api/context/")
-	if id == "" || udb == nil {
-		http.Error(w, "not found", http.StatusNotFound)
-		return
-	}
-	switch r.Method {
-	case http.MethodGet:
-		var rec ContextRecord
-		if !udb.Get(contextTable, id, &rec) {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(rec)
-	case http.MethodDelete:
-		udb.Unset(contextTable, id)
-		w.WriteHeader(http.StatusOK)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
-}
-
-func (T *CodeWriterAgent) handleRevisions(w http.ResponseWriter, r *http.Request) {
-	_, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	snippetID := strings.TrimPrefix(r.URL.Path, "/api/revisions/")
-	if snippetID == "" || udb == nil {
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, "[]")
-		return
-	}
+func (T *CodeWriterAgent) handleRevisions(c *jsonapi.Call) (any, error) {
 	type RevisionSummary struct {
 		ID   string `json:"id"`
 		Date string `json:"date"`
 	}
-	var summaries []RevisionSummary
-	for _, k := range udb.Keys(cwRevisionTable) {
-		var rev SnippetRevision
-		if udb.Get(cwRevisionTable, k, &rev) && rev.SnippetID == snippetID {
+	summaries := []RevisionSummary{}
+	snippetID := strings.TrimPrefix(c.R.URL.Path, "/api/revisions/")
+	if snippetID == "" || c.UDB == nil {
+		return summaries, nil
+	}
+	for _, rev := range records[SnippetRevision](c.UDB, cwRevisionTable) {
+		if rev.SnippetID == snippetID {
 			summaries = append(summaries, RevisionSummary{ID: rev.ID, Date: rev.Date})
 		}
 	}
 	sort.Slice(summaries, func(i, j int) bool { return summaries[i].Date < summaries[j].Date })
-	if summaries == nil {
-		summaries = []RevisionSummary{}
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(summaries)
+	return summaries, nil
 }
 
-func (T *CodeWriterAgent) handleRevision(w http.ResponseWriter, r *http.Request) {
-	_, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	revID := strings.TrimPrefix(r.URL.Path, "/api/revision/")
-	if revID == "" || udb == nil {
-		http.Error(w, "not found", http.StatusNotFound)
-		return
-	}
-	var rev SnippetRevision
-	if !udb.Get(cwRevisionTable, revID, &rev) {
-		http.Error(w, "not found", http.StatusNotFound)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(rev)
-}
-
-func (T *CodeWriterAgent) handleSuggestName(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Code string `json:"code"`
-		Lang string `json:"lang"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Code == "" {
-		http.Error(w, "code required", http.StatusBadRequest)
-		return
+func (T *CodeWriterAgent) handleSuggestName(c *jsonapi.Call, req suggestNameReq) (any, error) {
+	if req.Code == "" {
+		return nil, jsonapi.BadRequest("code required")
 	}
 	preview := req.Code
 	if len(preview) > 1000 {
@@ -792,120 +629,58 @@ func (T *CodeWriterAgent) handleSuggestName(w http.ResponseWriter, r *http.Reque
 	}
 	agent := &AppCore{LLM: T.AppCore.LLM}
 	session := agent.CreateSession(WORKER)
-	resp, err := session.Chat(r.Context(), []Message{
+	resp, err := session.Chat(c.R.Context(), []Message{
 		{Role: "user", Content: fmt.Sprintf("Suggest a concise snake_case filename (max 5 words, no extension) for this %s script:\n\n%s\n%s\n%s", lang, DocFence(preview), preview, DocFence(preview))},
 	}, WithSystemPrompt("Reply with ONLY the name in snake_case. No extension. No quotes."), WithMaxTokens(304), WorkerJudgeThink())
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return nil, err
 	}
 	name := strings.TrimSpace(ResponseText(resp))
 	name = strings.Trim(name, "`\"'")
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"name": name})
+	return map[string]string{"name": name}, nil
 }
 
-// handleTemplates lists and creates user-saved markdown templates.
-// Mirrors handleContexts — same per-user store, same shape.
-func (T *CodeWriterAgent) handleTemplates(w http.ResponseWriter, r *http.Request) {
-	_, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	switch r.Method {
-	case http.MethodGet:
-		if udb == nil {
-			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprint(w, "[]")
-			return
-		}
-		var items []TemplateRecord
-		for _, key := range udb.Keys(templateTable) {
-			var rec TemplateRecord
-			if udb.Get(templateTable, key, &rec) {
-				items = append(items, rec)
-			}
-		}
-		if items == nil {
-			items = []TemplateRecord{}
-		}
-		sort.Slice(items, func(i, j int) bool {
-			return strings.ToLower(items[i].Name) < strings.ToLower(items[j].Name)
-		})
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(items)
-
-	case http.MethodPost:
-		if udb == nil {
-			http.Error(w, "no database", http.StatusInternalServerError)
-			return
-		}
-		var req TemplateRecord
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "invalid request", http.StatusBadRequest)
-			return
-		}
-		req.Name = strings.TrimSpace(req.Name)
-		if req.Name == "" {
-			http.Error(w, "name required", http.StatusBadRequest)
-			return
-		}
-		if strings.TrimSpace(req.Body) == "" {
-			http.Error(w, "body required", http.StatusBadRequest)
-			return
-		}
-		// Saving under a name that already exists REPLACES it. Without
-		// this, "save as template" after an edit silently accumulates
-		// near-duplicate rows and the picker becomes a junk drawer.
-		if req.ID == "" {
-			var existing []TemplateRecord
-			for _, key := range udb.Keys(templateTable) {
-				var rec TemplateRecord
-				if udb.Get(templateTable, key, &rec) {
-					existing = append(existing, rec)
-				}
-			}
-			req.ID = resolveTemplateID(existing, req.Name)
-		}
-		if req.ID == "" {
-			req.ID = UUIDv4()
-		}
-		req.Date = time.Now().Format(time.RFC3339)
-		udb.Set(templateTable, req.ID, req)
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(req)
-
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
+// suggestNameReq is what handleSuggestName is posted.
+type suggestNameReq struct {
+	Code string `json:"code"`
+	Lang string `json:"lang"`
 }
 
-// handleTemplate fetches or deletes one saved template.
-func (T *CodeWriterAgent) handleTemplate(w http.ResponseWriter, r *http.Request) {
-	_, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
+// handleTemplates lists user-saved markdown templates, by name. Same per-user
+// store and shape as contexts.
+func (T *CodeWriterAgent) handleTemplates(c *jsonapi.Call) (any, error) {
+	items := records[TemplateRecord](c.UDB, templateTable)
+	sort.Slice(items, func(i, j int) bool {
+		return strings.ToLower(items[i].Name) < strings.ToLower(items[j].Name)
+	})
+	return items, nil
+}
+
+// handleTemplateSave creates or updates a template.
+func (T *CodeWriterAgent) handleTemplateSave(c *jsonapi.Call, req TemplateRecord) (any, error) {
+	udb := c.UDB
+	if udb == nil {
+		return nil, jsonapi.Status(http.StatusInternalServerError, "no database")
 	}
-	id := strings.TrimPrefix(r.URL.Path, "/api/template/")
-	if id == "" || udb == nil {
-		http.Error(w, "not found", http.StatusNotFound)
-		return
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Name == "" {
+		return nil, jsonapi.BadRequest("name required")
 	}
-	switch r.Method {
-	case http.MethodGet:
-		var rec TemplateRecord
-		if !udb.Get(templateTable, id, &rec) {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(rec)
-	case http.MethodDelete:
-		udb.Unset(templateTable, id)
-		w.WriteHeader(http.StatusOK)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	if strings.TrimSpace(req.Body) == "" {
+		return nil, jsonapi.BadRequest("body required")
 	}
+	// Saving under a name that already exists REPLACES it. Without
+	// this, "save as template" after an edit silently accumulates
+	// near-duplicate rows and the picker becomes a junk drawer.
+	if req.ID == "" {
+		req.ID = resolveTemplateID(records[TemplateRecord](udb, templateTable), req.Name)
+	}
+	if req.ID == "" {
+		req.ID = UUIDv4()
+	}
+	req.Date = time.Now().Format(time.RFC3339)
+	udb.Set(templateTable, req.ID, req)
+	return req, nil
 }
 
 // handleAssist powers the draft-with-me workbench over a markdown

@@ -25,13 +25,12 @@
 package codewriter
 
 import (
-	"encoding/json"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 const writerTable = "codewriter_writers"
@@ -98,86 +97,49 @@ func loadWriter(udb Database, id string) (WriterRecord, bool) {
 	return rec, ok
 }
 
-// handleWriters is the writer list + create/update endpoint.
-func (T *CodeWriterAgent) handleWriters(w http.ResponseWriter, r *http.Request) {
-	_, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
+// handleWriterSave creates or updates a writer.
+func (T *CodeWriterAgent) handleWriterSave(c *jsonapi.Call, req WriterRecord) (any, error) {
+	if c.UDB == nil {
+		return nil, jsonapi.Status(http.StatusInternalServerError, "no database")
 	}
-	switch r.Method {
-	case http.MethodGet:
-		if udb == nil {
-			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprint(w, "[]")
-			return
-		}
-		var items []WriterRecord
-		for _, key := range udb.Keys(writerTable) {
-			var rec WriterRecord
-			if udb.Get(writerTable, key, &rec) {
-				items = append(items, rec)
-			}
-		}
-		if items == nil {
-			items = []WriterRecord{}
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(items)
-
-	case http.MethodPost:
-		if udb == nil {
-			http.Error(w, "no database", http.StatusInternalServerError)
-			return
-		}
-		// Posted by the panel: its own control state, in its own shapes. No
-		// translation layer, because there is no form in between — you
-		// configure the panel and save what it is currently set to.
-		var req WriterRecord
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "invalid request", http.StatusBadRequest)
-			return
-		}
-		if strings.TrimSpace(req.Name) == "" {
-			http.Error(w, "name required", http.StatusBadRequest)
-			return
-		}
-		if req.ID == "" {
-			req.ID = UUIDv4()
-		}
-		req.Date = time.Now().Format(time.RFC3339)
-		udb.Set(writerTable, req.ID, req)
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(req)
-
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	// Posted by the panel: its own control state, in its own shapes. No
+	// translation layer, because there is no form in between — you
+	// configure the panel and save what it is currently set to.
+	if strings.TrimSpace(req.Name) == "" {
+		return nil, jsonapi.BadRequest("name required")
 	}
+	if req.ID == "" {
+		req.ID = UUIDv4()
+	}
+	req.Date = time.Now().Format(time.RFC3339)
+	c.UDB.Set(writerTable, req.ID, req)
+	return req, nil
 }
 
 // handleWriter serves one writer: GET or DELETE.
-func (T *CodeWriterAgent) handleWriter(w http.ResponseWriter, r *http.Request) {
-	_, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
+func (T *CodeWriterAgent) handleWriter(c *jsonapi.Call) (any, error) {
+	return T.writerAt(c)
+}
+
+// handleWriterDelete removes one writer.
+func (T *CodeWriterAgent) handleWriterDelete(c *jsonapi.Call, _ struct{}) (any, error) {
+	rec, err := T.writerAt(c)
+	if err != nil {
+		return nil, err
 	}
-	id := strings.TrimPrefix(r.URL.Path, "/api/writer/")
-	if id == "" || udb == nil {
-		http.Error(w, "not found", http.StatusNotFound)
-		return
+	c.UDB.Unset(writerTable, rec.ID)
+	return map[string]any{"deleted": rec.ID}, nil
+}
+
+// writerAt is the caller's writer the path names, through loadWriter.
+func (T *CodeWriterAgent) writerAt(c *jsonapi.Call) (WriterRecord, error) {
+	id := strings.TrimPrefix(c.R.URL.Path, "/api/writer/")
+	if id == "" || c.UDB == nil {
+		return WriterRecord{}, jsonapi.NotFound("not found")
 	}
-	rec, found := loadWriter(udb, id)
+	rec, found := loadWriter(c.UDB, id)
 	if !found {
-		http.Error(w, "not found", http.StatusNotFound)
-		return
+		return WriterRecord{}, jsonapi.NotFound("not found")
 	}
-	switch r.Method {
-	case http.MethodGet:
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(rec)
-	case http.MethodDelete:
-		udb.Unset(writerTable, id)
-		w.WriteHeader(http.StatusOK)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
+	return rec, nil
 }
