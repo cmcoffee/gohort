@@ -127,6 +127,9 @@ func (createAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	if msg := subAgentLimitsRefusal(sess.DB, rec.OwnedBy, args); msg != "" {
 		return "", errors.New(msg)
 	}
+	if msg := buildNotesRefusal(sess.DB, rec, args); msg != "" {
+		return "", errors.New(msg)
+	}
 	if _, explicit := args["cortex"].(bool); !explicit {
 		rec.Cortex = newAgentReadsCortex(rec)
 	}
@@ -236,9 +239,16 @@ func (createAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 		saved.Name,
 	)
 	unresolved := unresolvedToolNote(sess.DB, saved) + promptToolGapNote(sess.DB, saved)
+	// A new sub-agent is checked against the family's build notes, which the
+	// person wrote for exactly this: the next member added.
+	done := "DONE: reply with a short summary of what was saved and END THE TURN. Do NOT call ask_user, create_agent, or any other tool after this."
+	family := familyNotesHint(sess.DB, saved)
+	if family != "" {
+		done = familyNotesDone(saved)
+	}
 	return fmt.Sprintf(
-		"AGENT_CREATED ok. id=%s name=%q.%s%s%s DONE: reply with a short summary of what was saved and END THE TURN. Do NOT call ask_user, create_agent, or any other tool after this.\n\nSaved record: %s",
-		saved.ID, saved.Name, verifyHint, focusNote, unresolved, b,
+		"AGENT_CREATED ok. id=%s name=%q.%s%s%s %s\n\nSaved record: %s%s",
+		saved.ID, saved.Name, verifyHint, focusNote, unresolved, done, b, family,
 	), nil
 }
 
@@ -702,6 +712,15 @@ func (updateAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 		// The move sets the parent when it saves.
 		existing.OwnedBy = move.agent.OwnedBy
 	}
+	// Judged where the agent will stand once saved: notes on an agent moving
+	// out to the top level are its own, on one moving under a parent are not.
+	landing := existing
+	if move != nil {
+		landing.OwnedBy = move.parent.ID
+	}
+	if msg := buildNotesRefusal(sess.DB, landing, args); msg != "" {
+		return "", errors.New(msg)
+	}
 	if _, ok := args["allowed_dispatch_targets"]; ok {
 		pinned, err := pinDispatchAgentNames(sess.DB, sess.Username, existing.AllowedDispatchTargets)
 		if err != nil {
@@ -807,9 +826,18 @@ func (updateAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	// were authored somewhere else.
 	// Changed names the fields that actually moved, so the summary the model
 	// writes next is of this call and not of what it meant to send.
+	done := "DONE: reply with a short summary of what changed and END THE TURN. Do NOT call ask_user, update_agent, or any other tool after this."
+	family := ""
+	// Only where the update made the agent a sub-agent: a later edit of one
+	// already got the notes from agents(get) before it was written.
+	if move != nil {
+		if family = familyNotesHint(sess.DB, saved); family != "" {
+			done = familyNotesDone(saved)
+		}
+	}
 	return fmt.Sprintf(
-		"AGENT_UPDATED ok. id=%s name=%q. Changed: %s.%s%s DONE: reply with a short summary of what changed and END THE TURN. Do NOT call ask_user, update_agent, or any other tool after this.\n\nSaved record: %s",
-		saved.ID, saved.Name, chFirst(strings.Join(changed, ", "), "its tools only"), verifyHint, unresolvedToolNote(sess.DB, saved)+promptToolGapNote(sess.DB, saved), b,
+		"AGENT_UPDATED ok. id=%s name=%q. Changed: %s.%s%s %s\n\nSaved record: %s%s",
+		saved.ID, saved.Name, chFirst(strings.Join(changed, ", "), "its tools only"), verifyHint, unresolvedToolNote(sess.DB, saved)+promptToolGapNote(sess.DB, saved), done, b, family,
 	), nil
 }
 
@@ -1055,6 +1083,7 @@ func agentMutationParams(includeID bool) map[string]ToolParam {
 		"triggers":                 {Type: "array", Description: "Words or phrases matched as whole words against each user message (plurals and -ed/-ing endings count), or a glob like *.pdf against attachment names. On a match the host agent gets a per-turn nudge to dispatch HERE first. Author SPECIFIC patterns the domain's questions actually contain (criminal law: \"penal code\", \"felony\", \"sentencing\"), loose ones over-fire and train the host to ignore the hint. Empty = in the catalog, no nudge.", Items: &ToolParam{Type: "string"}},
 		"owning_app":               {Type: "string", Description: "The slug of the custom app this agent is written for (its brain): it is listed under \"App agents: <app>\" instead of among the owner's agents, and offered for deletion with the app. Set it for an agent created for an app; leave it empty for one meant for general use. Before creating an agent for an app, check agents(action=\"list\"): an existing agent that fits should be bound with app_def's agent_id instead."},
 		"owned_by":                 {Type: "string", Description: ownedByParam(includeID)},
+		"build_notes":              {Type: "string", Description: "Top-level only: notes for whoever changes this family next: purpose, decisions binding every sub-agent and why, open items. Never shown to the agent; read them before changing a sub-agent. Rewrite whole; max 3000 chars."},
 		"ingest_attachments":       {Type: "boolean", Description: "Extracted text from uploaded documents (PDF/DOCX/text) is ALSO ingested into the agent's knowledge store under topic=\"attachments\", searchable in later sessions. For document-Q&A agents whose uploads are referenced repeatedly. Default false."},
 		"think":                    {Type: "string", Description: "Reasoning override: \"on\", \"off\", or \"auto\" (the route decides). Create defaults: top-level \"on\", sub-agents (owned_by set) \"off\"; update keeps the stored value when omitted. \"on\" for planners/synthesizers, \"off\" for lookups, transformers, routers. When effort is set, effort takes precedence and this is ignored."},
 		"effort":                   {Type: "string", Description: "Reasoning effort: \"off\", \"low\", \"medium\" or \"high\"; \"default\" follows the deployment's setting for the model tier. The everyday reasoning control: each model gets its own dial. Takes precedence over think (\"off\" = no reasoning, any other level = reasoning on); an explicit think_budget still wins over it. \"low\" for lookups and routers, \"high\" for hard planning or analysis. Update keeps the stored value when omitted."},
@@ -1221,6 +1250,9 @@ func agentRecordFromArgs(args map[string]any) AgentRecord {
 	}
 	if v, ok := args["owned_by"]; ok && v != nil {
 		rec.OwnedBy = strings.TrimSpace(fmt.Sprint(v))
+	}
+	if v, ok := args["build_notes"]; ok && v != nil {
+		rec.BuildNotes = strings.TrimSpace(fmt.Sprint(v))
 	}
 	if v, ok := args["owning_app"]; ok && v != nil {
 		rec.OwningApp = slugify(fmt.Sprint(v))
@@ -1413,6 +1445,9 @@ func mergeAgentArgs(rec *AgentRecord, args map[string]any) {
 	}
 	if v, ok := args["owned_by"]; ok && v != nil {
 		rec.OwnedBy = strings.TrimSpace(fmt.Sprint(v))
+	}
+	if v, ok := args["build_notes"]; ok && v != nil {
+		rec.BuildNotes = strings.TrimSpace(fmt.Sprint(v))
 	}
 	if v, ok := args["owning_app"]; ok && v != nil {
 		rec.OwningApp = slugify(fmt.Sprint(v))

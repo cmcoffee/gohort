@@ -86,7 +86,15 @@ Facts that decide a recipe, the ones builds get wrong:
 - A specialist other agents are meant to hand work to gets triggers: 3-6 SPECIFIC phrases the questions in its domain actually contain (criminal law: "penal code", "felony", "sentencing"; never "law" or "question"). A message matching one tells the agent talking to the person to delegate HERE first, a far stronger nudge than being in the list of agents; loose phrases fire on everything and teach it to ignore the nudge. On a change to such a specialist that has none, propose them.
 - Cited web research has a tuned built-in, Research (seed-research): when a specialist is that, say to clone it (clone_agent) and change what differs.
 
-On a CHANGE you see the agent as it stands, with its sub-agents. Most changes leave the shape alone (a prompt, a rule, a setting, a tool that fits what it already does): answer exactly "No shape change." and one sentence saying why. Write a new recipe only when the change adds reach or a job that meets one of the three reasons, and say what moves where.
+CONSOLIDATING agents that already exist under one parent, so two related jobs share one way in:
+- The parent is a top-level agent: one of them, or a new one when neither should speak for both. The others move under it (update_agent owned_by); each keeps its sessions, knowledge and its own memory.
+- What a move takes away: a sub-agent has no way in of its own. Its chat, channels and schedules go to the parent, so whoever talked to it directly now talks to the parent, in the parent's voice. Ask the person which voice that is, and name each channel that changes hands.
+- The parent routes with a machine that judges every message (route_each_message): a first step that chooses where each message goes, a step per sub-agent that delegates to it, and that sub-agent's answer passed back unchanged (reply_with) rather than rewritten.
+- Sub-agents never call each other. When one's result feeds the other, the parent's machine chains them: one step delegates to the first, the next hands {prev} to the second.
+- An agent that is shared, published or reachable over MCP, or has sub-agents of its own, cannot move until that is undone: put it under Ask the person.
+- The parent gets build notes: what the family is for and the decisions that bind every member.
+
+On a CHANGE you see the agent as it stands, with its sub-agents, and the family's build notes when it has them; a recipe keeps to those notes or says which one it changes. Most changes leave the shape alone (a prompt, a rule, a setting, a tool that fits what it already does): answer exactly "No shape change." and one sentence saying why. Write a new recipe only when the change adds reach or a job that meets one of the three reasons, and say what moves where.
 
 Otherwise answer in this form, and keep it short:
 Recipe: <one sentence>
@@ -341,6 +349,9 @@ func recipeInput(sess *ToolSession, action, request, agentRef, buildOn string) s
 		if sub.OwnedBy == rec.ID {
 			b.WriteString(recipeAgentSummary(sub, "sub-agent "))
 		}
+	}
+	if top := familyTop(sess.DB, rec); strings.TrimSpace(top.BuildNotes) != "" {
+		fmt.Fprintf(&b, "\nTHE FAMILY'S BUILD NOTES (on %s):\n%s\n", top.Name, truncateObs(top.BuildNotes, agentBuildNotesCap))
 	}
 	return b.String()
 }

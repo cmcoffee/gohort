@@ -159,6 +159,9 @@ func (m *agentMove) under() (AgentRecord, string, error) {
 	if keptMemory {
 		notes = append(notes, "It keeps its own memory, as it did at the top level; switch off Keeps its own memory on its page to make it start every run fresh.")
 	}
+	if strings.TrimSpace(saved.BuildNotes) != "" {
+		notes = append(notes, fmt.Sprintf("Its build notes stay on it but go unread while it is a sub-agent: what still matters belongs in %s's build notes, which speak for the whole family.", m.parent.Name))
+	}
 	// A sub-agent has no way in of its own: its schedules now wake the
 	// parent, which hands their work to it (scheduleAgentFor).
 	if n := foldSubAgentSchedules(m.owner, saved.ID); n > 0 {

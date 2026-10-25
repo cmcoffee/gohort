@@ -1,7 +1,9 @@
 package orchestrate
 
 // Folding agents into a family: Builder's update_agent owned_by is the same
-// move the agent menu makes, and a moved agent keeps the memory it had.
+// move the agent menu makes, a moved agent keeps the memory it had, and the
+// family's build notes live on the top-level agent and reach whoever changes a
+// sub-agent next.
 
 import (
 	"encoding/json"
@@ -168,5 +170,68 @@ func TestUpdateAgentMoveHonorsAnExplicitKeepsMemory(t *testing.T) {
 	}
 	if got, _ := loadAgent(udb, "c1"); got.KeepsMemory {
 		t.Fatal("keeps_memory=false in the same call was overridden by the move")
+	}
+}
+
+func TestBuildNotesLiveOnTheTopLevelAgent(t *testing.T) {
+	_, udb, _ := newTestOrchestrate(t)
+	sess := consolidateSession(udb)
+	moveTestAgent(t, udb, AgentRecord{ID: "p1", Name: "Planner"})
+	moveTestAgent(t, udb, AgentRecord{ID: "kid", Name: "Kid", OwnedBy: "p1"})
+
+	const notes = "No sub-agent gets send_message: replies go out through Planner's channel."
+	if _, err := (updateAgentTool{}).RunWithSession(map[string]any{"id": "p1", "build_notes": notes}, sess); err != nil {
+		t.Fatalf("notes on the top-level agent: %v", err)
+	}
+	if got, _ := loadAgent(udb, "p1"); got.BuildNotes != notes {
+		t.Fatalf("notes not saved: %q", got.BuildNotes)
+	}
+	// On a sub-agent: refused, naming where they go.
+	if _, err := (updateAgentTool{}).RunWithSession(map[string]any{"id": "kid", "build_notes": "mine"}, sess); err == nil || !strings.Contains(err.Error(), "Planner") {
+		t.Fatalf("notes on a sub-agent: err=%v, want a refusal naming Planner", err)
+	}
+	// Over the cap: refused.
+	if _, err := (updateAgentTool{}).RunWithSession(map[string]any{"id": "p1", "build_notes": strings.Repeat("x", agentBuildNotesCap+1)}, sess); err == nil || !strings.Contains(err.Error(), "cap") {
+		t.Fatalf("notes over the cap: err=%v", err)
+	}
+
+	// A new sub-agent's create result carries them, and so does get.
+	out, err := (createAgentTool{}).RunWithSession(map[string]any{
+		"name": "Writer", "orchestrator_prompt": "writes", "allowed_tools": []any{"web_search"}, "owned_by": "p1",
+	}, sess)
+	if err != nil {
+		t.Fatalf("create sub-agent: %v", err)
+	}
+	if !strings.Contains(out, "BUILD NOTES") || !strings.Contains(out, notes) {
+		t.Errorf("a new sub-agent's result did not carry the family's notes: %s", out)
+	}
+	if strings.Contains(out, "Do NOT call ask_user, create_agent, or any other tool") {
+		t.Errorf("the result forbids the fix its notes ask for: %s", out)
+	}
+	kid, _ := loadAgent(udb, "kid")
+	if slim := string(slimAgentJSON(udb, "alice", kid)); !strings.Contains(slim, "family_build_notes") || !strings.Contains(slim, "send_message") {
+		t.Errorf("get of a sub-agent does not show the family's notes: %s", slim)
+	}
+	if in := recipeInput(sess, "change", "add a reviewer", "p1", ""); !strings.Contains(in, "BUILD NOTES") || !strings.Contains(in, notes) {
+		t.Errorf("the recipe does not see the family's notes:\n%s", in)
+	}
+
+	// A top-level agent with no family notes gets the plain DONE line.
+	out, err = (createAgentTool{}).RunWithSession(map[string]any{
+		"name": "Loner", "orchestrator_prompt": "alone", "allowed_tools": []any{"web_search"},
+	}, sess)
+	if err != nil || strings.Contains(out, "BUILD NOTES") {
+		t.Errorf("a top-level create carried notes: err=%v out=%s", err, out)
+	}
+}
+
+// A move under a parent says what becomes of notes the agent carried.
+func TestMoveSaysTheMovedAgentsNotesGoUnread(t *testing.T) {
+	app, udb, _ := newTestOrchestrate(t)
+	moveTestAgent(t, udb, AgentRecord{ID: "p1", Name: "Planner"})
+	moveTestAgent(t, udb, AgentRecord{ID: "c1", Name: "Scout", BuildNotes: "scout decisions"})
+	w := moveAgentReq(t, app, udb, "c1", `{"owned_by":"p1"}`)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "build notes") {
+		t.Fatalf("move: %d %s", w.Code, w.Body.String())
 	}
 }

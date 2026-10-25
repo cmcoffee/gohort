@@ -871,7 +871,14 @@ func slimAgentJSON(udb Database, user string, a AgentRecord) []byte {
 		"work_plan":                a.WorkPlan,
 		"knowledge_model":          a.KnowledgeModel,
 		"intake_form":              a.IntakeForm,
+		"owned_by":                 a.OwnedBy,
+		"build_notes":              a.BuildNotes,
 		"_note":                    "Compact view: orchestrator_prompt / plan_guidance / rules are previewed (full text omitted to save context); tools listed by name+mode. To change a prose field, send the complete new text via update_agent. If you need to READ the full prose you didn't write this session (e.g. to edit an inherited prompt after clone_agent), call agents(action=\"get\", id=…, full=true).",
+	}
+	// A sub-agent's family is described on its top-level agent: shown here
+	// so the notes it must keep to are read before it is changed.
+	if top := familyTop(udb, a); top.ID != a.ID && strings.TrimSpace(top.BuildNotes) != "" {
+		slim["family_build_notes"] = map[string]string{"on": top.Name, "id": top.ID, "notes": top.BuildNotes}
 	}
 	b, _ := json.Marshal(slim)
 	return b

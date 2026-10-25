@@ -845,6 +845,14 @@ type AgentRecord struct {
 	// Empty (default) = no parent, standard top-level agent.
 	OwnedBy string `json:"owned_by,omitempty"`
 
+	// BuildNotes is the author's standing account of a top-level agent and
+	// the sub-agents under it, for whoever changes the family next: what it
+	// is for, the decisions that bind every member and why, and what is not
+	// done yet. Builder reads it before adding or changing a sub-agent, and
+	// the agent itself never sees it (agent_build_notes.go). Held on the
+	// top-level agent only; capped at agentBuildNotesCap.
+	BuildNotes string `json:"build_notes,omitempty"`
+
 	// OwningApp is the slug of the owner's custom app this agent was written
 	// for: its brain, built with the app. A label, not a boundary: the agent
 	// is an ordinary agent of the owner's, with ordinary tools, shown in
