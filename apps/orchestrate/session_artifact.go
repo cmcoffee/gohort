@@ -352,22 +352,21 @@ func continueTranscript(sess ChatSession) string {
 		"<<<IMPORTED-TRANSCRIPT-" + nonce + "\n" + out + "IMPORTED-TRANSCRIPT-" + nonce + ">>>"
 }
 
-// handleSessionContinue starts a new session from an imported one, carrying
+// sessionContinue starts a new session from an imported one, carrying
 // the transcript as a single quoted user message plus a plain acknowledgement,
 // both hidden so the thread starts clean. POST /api/sessions/{id}/continue.
-func (T *OrchestrateApp) handleSessionContinue(w http.ResponseWriter, r *http.Request, udb Database, agent AgentRecord, sid string) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
+func (T *OrchestrateApp) sessionContinue(c *jsonapi.Call, _ struct{}) (any, error) {
+	agent, aerr := T.sessionAgent(c)
+	if aerr != nil {
+		return nil, aerr
 	}
+	udb, sid := c.UDB, c.R.PathValue("sid")
 	src, ok := loadChatSession(udb, agent.ID, sid)
 	if !ok {
-		http.NotFound(w, r)
-		return
+		return nil, errNotFound
 	}
 	if src.Imported == nil {
-		http.Error(w, "only an imported conversation needs continuing: this one can simply be replied to", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("only an imported conversation needs continuing: this one can simply be replied to")
 	}
 	next := ChatSession{
 		AgentID: agent.ID,
@@ -381,8 +380,7 @@ func (T *OrchestrateApp) handleSessionContinue(w http.ResponseWriter, r *http.Re
 	}
 	saved, err := saveChatSession(udb, next)
 	if err != nil {
-		http.Error(w, "save: "+err.Error(), http.StatusInternalServerError)
-		return
+		return nil, jsonapi.Status(http.StatusInternalServerError, "save: "+err.Error())
 	}
-	jsonapi.Write(w, map[string]string{"id": saved.ID, "title": saved.Title})
+	return map[string]string{"id": saved.ID, "title": saved.Title}, nil
 }

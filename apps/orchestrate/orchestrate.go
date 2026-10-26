@@ -797,7 +797,7 @@ func (T *OrchestrateApp) registerHandlers() {
 	// More specific than /api/sessions/, so it wins the mux's longest-prefix
 	// match and never reaches handleSessionOne as a session id.
 	T.HandleFunc("/api/sessions/start", jsonapi.Post(T.DB, T.handleSessionStart, jsonapi.EmptyBodyOK))
-	T.HandleFunc("/api/sessions/", T.handleSessionOne)
+	T.registerSessionRoutes()
 	// Live options for an intake form's select (IntakeField.OptionsFrom).
 	T.HandleFunc("/api/intake/options", jsonapi.Get(T.DB, T.handleIntakeOptions))
 	T.HandleFunc("/api/send", T.handleSendRouter)

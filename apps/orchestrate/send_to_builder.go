@@ -30,13 +30,12 @@
 package orchestrate
 
 import (
-	"encoding/json"
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // builderBriefTable holds staged improvement briefs keyed by a one-shot
@@ -57,36 +56,30 @@ type builderBriefRecord struct {
 	Candidates []TriageCandidate `json:"candidates,omitempty"`
 }
 
-// handleSendToBuilder stages a brief for the given session and returns
+// sessionSendToBuilder stages a brief for the given session and returns
 // its id. Reached from handleSessionOne when the path carries the
 // /send-to-builder sub-action. agent is the agent under review (the one
 // the user was just correcting); sessionID is the session to bundle.
-func (T *OrchestrateApp) handleSendToBuilder(w http.ResponseWriter, r *http.Request, agent AgentRecord, sessionID string) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST required", http.StatusMethodNotAllowed)
-		return
+func (T *OrchestrateApp) sessionSendToBuilder(c *jsonapi.Call, body struct {
+	Reason string `json:"reason"`
+}) (any, error) {
+	agent, aerr := T.sessionAgent(c)
+	if aerr != nil {
+		return nil, aerr
 	}
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+	sessionID := c.R.PathValue("sid")
+	user, udb := c.User, c.UDB
 	// Builder improves OTHER agents — handing it its own session would
 	// be a no-op loop. Send the agent you actually want to fix.
 	if agent.ID == "seed-builder" {
-		http.Error(w, "Builder improves other agents: open the agent you want to improve, then send its session to Builder.", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("Builder improves other agents: open the agent you want to improve, then send its session to Builder.")
 	}
 	sess, ok := loadChatSession(udb, agent.ID, sessionID)
 	if !ok || len(sess.Messages) == 0 {
-		http.Error(w, "no session to send: chat with the agent first", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("no session to send: chat with the agent first")
 	}
 	// Why the user is sending it. Optional, and best-effort to read: a body
 	// that will not parse costs the reason, not the handoff.
-	var body struct {
-		Reason string `json:"reason"`
-	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
 	cands := triageCandidates(agent, sess, udb, user)
 	brief := builderBriefRecord{
 		ID:            UUIDv4(),
@@ -96,11 +89,10 @@ func (T *OrchestrateApp) handleSendToBuilder(w http.ResponseWriter, r *http.Requ
 		Candidates:    cands,
 	}
 	udb.Set(builderBriefTable, brief.ID, brief)
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{
+	return map[string]string{
 		"brief_id":         brief.ID,
 		"builder_agent_id": "seed-builder",
-	})
+	}, nil
 }
 
 // maxBriefTranscript caps the transcript portion of a brief. Corrections

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/textutil"
 )
 
@@ -41,69 +42,64 @@ type blockResolveRequest struct {
 	Dismiss bool `json:"dismiss"`
 }
 
-// handleSessionBlockResolve stamps Resolved onto one persisted block.
+// blockResolveRoute stamps Resolved onto one persisted block.
 // Ownership is the session's: udb is the caller's own database and the block
 // must already exist on the session, so a caller can only settle their own
 // cards. Idempotent — re-resolving overwrites the note and answers 204, which
 // is what a double-click or a replayed-then-clicked card produces.
-func (T *OrchestrateApp) handleSessionBlockResolve(w http.ResponseWriter, r *http.Request, udb Database, user, agentID, sid, blockID string) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	var req blockResolveRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad request body", http.StatusBadRequest)
-		return
-	}
-	note := strings.TrimSpace(req.Note)
-	if note == "" {
-		note = "Answered."
-	}
-	note = textutil.Clip(note, 240)
-	s, ok := loadChatSession(udb, agentID, sid)
-	if !ok {
-		http.Error(w, "no such session", http.StatusNotFound)
-		return
-	}
-	found := false
-	if req.Dismiss {
-		kept := s.UIBlocks[:0]
-		for _, b := range s.UIBlocks {
-			if b.ID == blockID {
-				found = true
-				continue
-			}
-			kept = append(kept, b)
+func (T *OrchestrateApp) blockResolveRoute(at func(c *jsonapi.Call) (agentID, sid, blockID string, err error)) http.HandlerFunc {
+	return jsonapi.Post(T.DB, func(c *jsonapi.Call, req blockResolveRequest) (any, error) {
+		agentID, sid, blockID, err := at(c)
+		if err != nil {
+			return nil, err
 		}
-		s.UIBlocks = kept
-	} else {
-		for i := range s.UIBlocks {
-			if s.UIBlocks[i].ID == blockID {
-				s.UIBlocks[i].Resolved = note
-				found = true
+		user, udb := c.User, c.UDB
+		note := strings.TrimSpace(req.Note)
+		if note == "" {
+			note = "Answered."
+		}
+		note = textutil.Clip(note, 240)
+		s, ok := loadChatSession(udb, agentID, sid)
+		if !ok {
+			return nil, jsonapi.NotFound("no such session")
+		}
+		found := false
+		if req.Dismiss {
+			kept := s.UIBlocks[:0]
+			for _, b := range s.UIBlocks {
+				if b.ID == blockID {
+					found = true
+					continue
+				}
+				kept = append(kept, b)
+			}
+			s.UIBlocks = kept
+		} else {
+			for i := range s.UIBlocks {
+				if s.UIBlocks[i].ID == blockID {
+					s.UIBlocks[i].Resolved = note
+					found = true
+				}
 			}
 		}
-	}
-	if !found {
-		// Not an error worth surfacing: a card can legitimately outlive its
-		// stored block (a live emission the session never persisted, a block
-		// swept by an upsert). The user's click already did its real work at
-		// the endpoint the card posted to; there is simply nothing to stamp.
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	if _, err := saveChatSession(udb, s); err != nil {
-		Log("[orchestrate.blocks] resolve %s on session %s failed: %v", blockID, sid, err)
-		http.Error(w, "could not save", http.StatusInternalServerError)
-		return
-	}
-	verb := "resolved"
-	if req.Dismiss {
-		verb = "dismissed"
-	}
-	Log("[orchestrate.blocks] user %q %s block %s on session %s", user, verb, blockID, sid)
-	w.WriteHeader(http.StatusNoContent)
+		if !found {
+			// Not an error worth surfacing: a card can legitimately outlive its
+			// stored block (a live emission the session never persisted, a block
+			// swept by an upsert). The user's click already did its real work at
+			// the endpoint the card posted to; there is simply nothing to stamp.
+			return jsonapi.Empty(http.StatusNoContent), nil
+		}
+		if _, err := saveChatSession(udb, s); err != nil {
+			Log("[orchestrate.blocks] resolve %s on session %s failed: %v", blockID, sid, err)
+			return nil, jsonapi.Status(http.StatusInternalServerError, "could not save")
+		}
+		verb := "resolved"
+		if req.Dismiss {
+			verb = "dismissed"
+		}
+		Log("[orchestrate.blocks] user %q %s block %s on session %s", user, verb, blockID, sid)
+		return jsonapi.Empty(http.StatusNoContent), nil
+	})
 }
 
 // settleResolvedBlocks derives Resolved for cards whose subject can be settled
@@ -232,9 +228,5 @@ func refreshPrivilegeBlocks(udb Database, blocks []UIBlock) []UIBlock {
 // The agent id is the caller's, so a card can only be settled inside a
 // conversation the caller owns.
 func (T *OrchestrateApp) PublicHandleBlockResolve(w http.ResponseWriter, r *http.Request, agentID, sid, blockID string) {
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	T.handleSessionBlockResolve(w, r, udb, user, agentID, sid, blockID)
+	T.blockResolveRoute(func(*jsonapi.Call) (string, string, string, error) { return agentID, sid, blockID, nil })(w, r)
 }

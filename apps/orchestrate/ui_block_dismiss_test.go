@@ -11,8 +11,9 @@ import (
 // Dismissing a card takes it out of the stored conversation, so a reload does
 // not bring it back, and leaves the others where they were.
 func TestDismissRemovesTheCard(t *testing.T) {
-	db := &DBase{Store: kvlite.MemStore()}
-	T := &OrchestrateApp{AppCore: AppCore{DB: db}}
+	root := &DBase{Store: kvlite.MemStore()}
+	T := &OrchestrateApp{AppCore: AppCore{DB: root}}
+	db := UserDB(root, "u")
 	seedBlockSession(t, db, "ag", "s1",
 		UIBlock{Type: "link_hint", ID: "link-1", Title: "My app", URL: "/apps/x/"},
 		UIBlock{Type: "credential_setup", ID: "cred-1", Title: "acme"},

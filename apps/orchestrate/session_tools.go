@@ -10,15 +10,14 @@
 package orchestrate
 
 import (
-	"encoding/json"
 	"fmt"
-	"net/http"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
-// handleSessionToolsList returns the session-scoped temp tools for
+// sessionTools returns the session-scoped temp tools for
 // the given session as a JSON array. Used by the chat Tools modal to
 // render the "Session tools" section.
 //
@@ -30,11 +29,11 @@ import (
 // newToolSession when the next turn runs, but the chat Tools modal
 // can open between turns and see the stale draft. Filter (and clean
 // up on the fly) here too so the UI matches what's actually live.
-func (T *OrchestrateApp) handleSessionToolsList(w http.ResponseWriter, r *http.Request, udb Database, user, agentID, sid string) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
+func (T *OrchestrateApp) sessionTools(c *jsonapi.Call) (any, error) {
+	if _, err := T.sessionAgent(c); err != nil {
+		return nil, err
 	}
+	udb, user, sid := c.UDB, c.User, c.R.PathValue("sid")
 	drafts := LoadSessionTempTools(udb, sid)
 
 	// Build the "already committed" name set from the user's unified tool
@@ -55,11 +54,10 @@ func (T *OrchestrateApp) handleSessionToolsList(w http.ResponseWriter, r *http.R
 		}
 		out = append(out, t)
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(out)
+	return out, nil
 }
 
-// handleSessionToolAction processes a POST against a single named
+// sessionToolAction processes a POST against a single named
 // session tool. Two actions:
 //
 //	action=persist&global=true  → shared row in the user's unified tool store
@@ -68,15 +66,15 @@ func (T *OrchestrateApp) handleSessionToolsList(w http.ResponseWriter, r *http.R
 //
 // Persist actions also clear the session draft on success so the
 // promoted tool doesn't double-register on subsequent rounds.
-func (T *OrchestrateApp) handleSessionToolAction(w http.ResponseWriter, r *http.Request, udb Database, user, agentID, sid, name string) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
+func (T *OrchestrateApp) sessionToolAction(c *jsonapi.Call, _ struct{}) (any, error) {
+	agent, aerr := T.sessionAgent(c)
+	if aerr != nil {
+		return nil, aerr
 	}
+	r, udb, user, agentID, sid, name := c.R, c.UDB, c.User, agent.ID, c.R.PathValue("sid"), c.R.PathValue("name")
 	action := strings.TrimSpace(r.URL.Query().Get("action"))
 	if action == "" {
-		http.Error(w, "action query param required (persist or drop)", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("action query param required (persist or drop)")
 	}
 	tools := LoadSessionTempTools(udb, sid)
 	var found *TempTool
@@ -88,16 +86,14 @@ func (T *OrchestrateApp) handleSessionToolAction(w http.ResponseWriter, r *http.
 		}
 	}
 	if found == nil {
-		http.Error(w, fmt.Sprintf("no session tool named %q", name), http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound(fmt.Sprintf("no session tool named %q", name))
 	}
 
 	switch action {
 	case "drop":
 		RemoveSessionTempTool(udb, sid, name)
 		Log("[orchestrate.session_tools] user %q dropped session tool %q (session %s)", user, name, sid)
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{"status": "dropped", "name": name})
+		return map[string]string{"status": "dropped", "name": name}, nil
 
 	case "persist":
 		// Target: the user-wide pool, or the session's own agent. Both paths live
@@ -110,14 +106,12 @@ func (T *OrchestrateApp) handleSessionToolAction(w http.ResponseWriter, r *http.
 		}
 		scope, err := T.promoteSessionDraft(udb, user, agentID, sid, name, target)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest(err.Error())
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{"status": "persisted", "scope": scope, "name": name})
+		return map[string]string{"status": "persisted", "scope": scope, "name": name}, nil
 
 	default:
-		http.Error(w, fmt.Sprintf("unknown action %q (expected persist or drop)", action), http.StatusBadRequest)
+		return nil, jsonapi.BadRequest(fmt.Sprintf("unknown action %q (expected persist or drop)", action))
 	}
 }
 

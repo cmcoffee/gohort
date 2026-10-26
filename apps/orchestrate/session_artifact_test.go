@@ -77,7 +77,7 @@ func TestAnImportedConversationIsReadOnlyAndContinuesAsQuotedText(t *testing.T) 
 
 	// Continue: a new session, the transcript as ONE fenced user message.
 	w = httptest.NewRecorder()
-	T.handleSessionContinue(w, httptest.NewRequest(http.MethodPost, "/", nil), budb, ba, imported.ID)
+	routed(T)(w, as(t, httptest.NewRequest(http.MethodPost, "/api/sessions/"+imported.ID+"/continue?agent_id="+ba.ID, nil), "bob"))
 	var out map[string]string
 	_ = json.Unmarshal(w.Body.Bytes(), &out)
 	next, ok := loadChatSession(budb, ba.ID, out["id"])
@@ -95,7 +95,7 @@ func TestAnImportedConversationIsReadOnlyAndContinuesAsQuotedText(t *testing.T) 
 	}
 	// And Continue on an ordinary session is refused.
 	w = httptest.NewRecorder()
-	T.handleSessionContinue(w, httptest.NewRequest(http.MethodPost, "/", nil), budb, ba, next.ID)
+	routed(T)(w, as(t, httptest.NewRequest(http.MethodPost, "/api/sessions/"+next.ID+"/continue?agent_id="+ba.ID, nil), "bob"))
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("continue on an ordinary session: %d", w.Code)
 	}

@@ -26,13 +26,13 @@ package orchestrate
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // cardsPayload is what the poll gets back.
@@ -90,12 +90,17 @@ func observationCardsSince(msgs []ChatMessage, since string) []ChatMessage {
 
 // serveObservationCards writes the poll's response.
 func serveObservationCards(w http.ResponseWriter, msgs []ChatMessage, since string, bg *Run) {
+	jsonapi.Write(w, observationCards(msgs, since, bg))
+}
+
+// observationCards is the card poll's answer: the cards since `since`, and
+// the run working for the thread in the background, if any.
+func observationCards(msgs []ChatMessage, since string, bg *Run) cardsPayload {
 	out := cardsPayload{Messages: observationCardsSince(msgs, since)}
 	if bg != nil {
 		out.Background = &backgroundRun{ID: bg.ID, Label: bg.BackgroundLabel(), StartedMS: bg.StartedAt().UnixMilli()}
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(out)
+	return out
 }
 
 // Waiting for a card instead of asking every six seconds.

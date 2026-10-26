@@ -25,15 +25,16 @@ func resolveBlock(t *testing.T, T *OrchestrateApp, db Database, agentID, sessID,
 	t.Helper()
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("POST", "/api/sessions/"+sessID+"/blocks/"+blockID+"/resolve", strings.NewReader(body))
-	T.handleSessionBlockResolve(w, r, db, "u", agentID, sessID, blockID)
+	T.PublicHandleBlockResolve(w, as(t, r, "u"), agentID, sessID, blockID)
 	return w.Code
 }
 
 // TestBlockResolveSurvivesReload is the whole point: the answer is stamped on
 // the STORED block, so the next session load carries it.
 func TestBlockResolveSurvivesReload(t *testing.T) {
-	db := &DBase{Store: kvlite.MemStore()}
-	T := &OrchestrateApp{AppCore: AppCore{DB: db}}
+	root := &DBase{Store: kvlite.MemStore()}
+	T := &OrchestrateApp{AppCore: AppCore{DB: root}}
+	db := UserDB(root, "u")
 	seedBlockSession(t, db, "ag", "s1",
 		UIBlock{Type: "credential_update", ID: "credupdate-acme", Title: "acme"},
 		UIBlock{Type: "html_artifact", ID: "artifact-1", Title: "dashboard"},
@@ -62,8 +63,9 @@ func TestBlockResolveSurvivesReload(t *testing.T) {
 // TestBlockResolveIsIdempotent — a double-click, or a replayed card clicked
 // again, must not error.
 func TestBlockResolveIsIdempotent(t *testing.T) {
-	db := &DBase{Store: kvlite.MemStore()}
-	T := &OrchestrateApp{AppCore: AppCore{DB: db}}
+	root := &DBase{Store: kvlite.MemStore()}
+	T := &OrchestrateApp{AppCore: AppCore{DB: root}}
+	db := UserDB(root, "u")
 	seedBlockSession(t, db, "ag", "s1", UIBlock{Type: "credential_update", ID: "b1"})
 
 	resolveBlock(t, T, db, "ag", "s1", "b1", `{"note":"Applied."}`)
@@ -83,8 +85,9 @@ func TestBlockResolveIsIdempotent(t *testing.T) {
 // TestBlockResolveEmptyNoteStillSettles — the note is cosmetic; a card with no
 // note must still stop asking.
 func TestBlockResolveEmptyNoteStillSettles(t *testing.T) {
-	db := &DBase{Store: kvlite.MemStore()}
-	T := &OrchestrateApp{AppCore: AppCore{DB: db}}
+	root := &DBase{Store: kvlite.MemStore()}
+	T := &OrchestrateApp{AppCore: AppCore{DB: root}}
+	db := UserDB(root, "u")
 	seedBlockSession(t, db, "ag", "s1", UIBlock{Type: "credential_setup", ID: "b1", Title: "acme"})
 
 	resolveBlock(t, T, db, "ag", "s1", "b1", `{"note":"   "}`)

@@ -225,326 +225,248 @@ type servedSession struct {
 	ChunkSize int `json:"chunk_size,omitempty"`
 }
 
-func (T *OrchestrateApp) handleSessionOne(w http.ResponseWriter, r *http.Request) {
-	user, udb, ok := RequireUser(w, r, T.DB)
+func (T *OrchestrateApp) registerSessionRoutes() {
+	T.HandleFunc("/api/sessions/mark-all-read", jsonapi.Post(T.DB, T.sessionsMarkAllRead))
+	T.HandleFunc("/api/sessions/rename", jsonapi.Post(T.DB, T.sessionRename))
+	T.HandleFunc("/api/sessions/{sid}", jsonapi.Methods{
+		"GET":    jsonapi.Get(T.DB, T.sessionGet),
+		"DELETE": jsonapi.Delete(T.DB, T.sessionDelete),
+		"PATCH":  jsonapi.Patch(T.DB, T.sessionTruncate),
+	}.Serve)
+	T.HandleFunc("/api/sessions/{sid}/continue", jsonapi.Post(T.DB, T.sessionContinue))
+	T.HandleFunc("/api/sessions/{sid}/send-to-builder", jsonapi.Post(T.DB, T.sessionSendToBuilder, jsonapi.EmptyBodyOK))
+	T.HandleFunc("/api/sessions/{sid}/blocks/{block}/resolve", T.blockResolveRoute(func(c *jsonapi.Call) (string, string, string, error) {
+		agent, err := T.sessionAgent(c)
+		return agent.ID, c.R.PathValue("sid"), c.R.PathValue("block"), err
+	}))
+	T.HandleFunc("/api/sessions/{sid}/tools", jsonapi.Get(T.DB, T.sessionTools))
+	T.HandleFunc("/api/sessions/{sid}/tools/{name}", jsonapi.Post(T.DB, T.sessionToolAction))
+	// A download: the full session as JSON or markdown, for sharing and
+	// debugging.
+	T.HandleFunc("/api/sessions/{sid}/export", T.signedIn(func(w http.ResponseWriter, r *http.Request, user string, udb Database) {
+		agent, ok := T.resolveAgent(w, r, udb, user)
+		if !ok {
+			return
+		}
+		T.handleSessionExport(w, r, agent.ID, r.PathValue("sid"))
+	}))
+}
+
+// sessionAgent is the agent ?agent_id= names, the caller's own or a seed: a
+// session belongs to an agent, and a caller reaches only their own agent's.
+func (T *OrchestrateApp) sessionAgent(c *jsonapi.Call) (AgentRecord, error) {
+	id := strings.TrimSpace(c.R.URL.Query().Get("agent_id"))
+	if id == "" {
+		return AgentRecord{}, jsonapi.BadRequest("agent_id required")
+	}
+	agent, ok := loadAgent(c.UDB, id)
+	if !ok || (agent.Owner != c.User && agent.Owner != seedOwner) {
+		return AgentRecord{}, errNotFound
+	}
+	return agent, nil
+}
+
+// sessionsMarkAllRead clears the unread state on EVERY session of the agent
+// (the sidebar "Mark all read" action).
+func (T *OrchestrateApp) sessionsMarkAllRead(c *jsonapi.Call, _ struct{}) (any, error) {
+	agent, err := T.sessionAgent(c)
+	if err != nil {
+		return nil, err
+	}
+	markAllSessionsSeen(c.UDB, agent.ID)
+	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// sessionRename labels a thread, e.g. "Phantom Monitor", so the sessions where
+// monitor wakes land are identifiable in the rail. The id is in the body, not
+// the path, since core/ui's rename affordance POSTs it that way.
+func (T *OrchestrateApp) sessionRename(c *jsonapi.Call, body struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}) (any, error) {
+	agent, err := T.sessionAgent(c)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(body.ID) == "" {
+		return nil, jsonapi.BadRequest("bad request")
+	}
+	renameChatSession(c.UDB, agent.ID, body.ID, body.Name)
+	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// sessionGet serves one session: its tail, with the cards still awaiting a
+// decision, and with ?cards=1 only the cards the page has not seen.
+//
+// Channel agents no longer force every visit onto one thread — they have a
+// channel thread AND normal sessions. The channel thread is just a specific
+// session id (cortexSessionID) the client opens via the Channel row.
+func (T *OrchestrateApp) sessionGet(c *jsonapi.Call) (any, error) {
+	agent, err := T.sessionAgent(c)
+	if err != nil {
+		return nil, err
+	}
+	r, user, udb, sid := c.R, c.User, c.UDB, c.R.PathValue("sid")
+	// External-source row (e.g. ?source=phantom&chat_id=…)?
+	// Delegate to the registered source so it can resolve to
+	// the right per-source storage scope. Sources gate user
+	// permission internally; on a false result we serve the
+	// same 404 native misses get, so a leaked source name
+	// can't enumerate other users' rows.
+	if src := strings.TrimSpace(r.URL.Query().Get("source")); src != "" {
+		if source, found := LookupExtraSessionsSource(src); found {
+			if payload, ok := source.LoadSession(T.DB, agent.ID, user, sid, r.URL.Query().Get("chat_id")); ok {
+				return payload, nil
+			}
+		}
+		return nil, errNotFound
+	}
+	s, ok := loadChatSession(udb, agent.ID, sid)
 	if !ok {
-		return
+		// The channel thread doesn't exist until its first turn; when the
+		// Channel row opens it, return an empty session instead of 404 so
+		// the client opens a fresh thread rather than erroring. Ad-hoc
+		// sessions still 404 on a miss.
+		if agent.Cortex && sid == cortexSessionID(agent.ID) {
+			s = ChatSession{ID: sid}
+		} else {
+			return nil, errNotFound
+		}
 	}
-	sid := strings.TrimPrefix(r.URL.Path, "/api/sessions/")
-	// /api/sessions/mark-all-read — clear the unread state on EVERY session
-	// of the resolved agent (the sidebar "Mark all read" action). Agent-scoped,
-	// not session-scoped, so handle it before the {sid} sub-actions below.
-	if sid == "mark-all-read" {
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
+	// The live card poll, which wants only what it hasn't seen. Answered
+	// before everything below: it takes no read receipt (a timer firing is
+	// not a person reading), computes no blocks, and serializes no chat
+	// turns. See session_cards.go for why that matters on a long thread.
+	if r.URL.Query().Get("cards") == "1" {
+		since := r.URL.Query().Get("since")
+		// The run working for this thread in the background (a task's
+		// wake), so an open page shows it working, with Stop.
+		bg := func() *Run { return T.runsRegistry().BackgroundFor(user, sid) }
+		if r.URL.Query().Get("wait") == "1" {
+			s = waitForCards(r.Context(), udb, agent.ID, sid, s, since, r.URL.Query().Get("bg"), bg)
 		}
-		agent, ok := T.resolveAgent(w, r, udb, user)
-		if !ok {
-			return
-		}
-		markAllSessionsSeen(udb, agent.ID)
-		w.WriteHeader(http.StatusNoContent)
-		return
+		return observationCards(s.Messages, since, bg()), nil
 	}
-	// /api/sessions/rename — POST {id, name}: rename a session (the id is in
-	// the body, not the path, since core/ui's rename affordance POSTs it that
-	// way). Lets the user label a thread, e.g. "Phantom Monitor", so the
-	// sessions where monitor wakes land are identifiable in the rail.
-	if sid == "rename" {
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		agent, ok := T.resolveAgent(w, r, udb, user)
-		if !ok {
-			return
-		}
-		var body struct {
-			ID   string `json:"id"`
-			Name string `json:"name"`
-		}
-		if json.NewDecoder(r.Body).Decode(&body) != nil || strings.TrimSpace(body.ID) == "" {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		renameChatSession(udb, agent.ID, body.ID, body.Name)
-		w.WriteHeader(http.StatusNoContent)
-		return
+	// Opening a session clears its unread state (a background wake that
+	// landed here is now seen). Writes LastSeen only — not activity.
+	markSessionSeen(udb, agent.ID, sid)
+	// Anything still awaiting the owner's decision rides along as a card in
+	// the thread, so a run that stalled unattended says so where the user is
+	// rather than only as a count on the Permissions tile. Computed per load
+	// and NOT persisted — resolving one anywhere drops it from the next load,
+	// with no stale card to sweep.
+	// An actionable card the user already answered must not come back
+	// asking again. Cards answered IN the chat carry a stored Resolved
+	// stamp; cards whose subject was settled elsewhere (the admin typed
+	// the secret in Admin > APIs) get theirs derived here, on the copy
+	// being served — the stored record is left alone so a re-drafted
+	// credential gets a live card again.
+	s.UIBlocks = settleResolvedBlocks(s.UIBlocks, user)
+	// A card that VIEWS live permissions must not replay an authoring-time
+	// snapshot of them (see refreshPrivilegeBlocks).
+	s.UIBlocks = refreshPrivilegeBlocks(udb, s.UIBlocks)
+	s.UIBlocks = append(s.UIBlocks, pendingApprovalBlocks(udb, user, agent.ID)...)
+	// Only the tail is rendered. Blocks and plans are session-level and
+	// ride along whole — they are not indexed by message, so trimming
+	// messages cannot orphan one.
+	markFlaggedReplies(T.DB, user, agent.ID, sid, s.Messages)
+	hideFrameworkNotes(s.Messages)
+	var off int
+	isCortex := sid == cortexSessionID(agent.ID)
+	s.Messages, off = tailMessages(s.Messages, resolveTailLimitFor(r.URL.Query().Get("limit"), isCortex))
+	markFoldPoint(loadCompactState(udb, agent.ID, sid), s.Messages, off)
+	// The chunk is this thread's OWN default, not whatever the client just
+	// asked for: after a "show earlier" the request carries an accumulated
+	// limit, and echoing that back would make every press add as much as
+	// everything already loaded — the doubling this replaced.
+	out := servedSession{ChatSession: s, MessageOffset: off, ChunkSize: resolveTailLimitFor("", isCortex)}
+	if len(s.Messages) == 0 {
+		out.OpeningPrompt = s.OpeningPrompt
 	}
-	// /api/sessions/{sid}/continue — start a new conversation from an
-	// imported, read-only one (session_artifact.go).
-	if strings.HasSuffix(sid, "/continue") {
-		sid = strings.TrimSuffix(sid, "/continue")
-		if sid == "" || strings.Contains(sid, "/") {
-			http.NotFound(w, r)
-			return
-		}
-		agent, ok := T.resolveAgent(w, r, udb, user)
-		if !ok {
-			return
-		}
-		T.handleSessionContinue(w, r, udb, agent, sid)
-		return
+	return out, nil
+}
+
+// sessionDelete removes the session, tearing down any persistent shells it
+// opened (psql/redis-cli/ssh/etc.) so the bwrap processes don't leak. Scope
+// is sess.ChatSessionID — matches what the persistent_shell substrate uses as
+// its registry key prefix.
+func (T *OrchestrateApp) sessionDelete(c *jsonapi.Call, _ struct{}) (any, error) {
+	agent, err := T.sessionAgent(c)
+	if err != nil {
+		return nil, err
 	}
-	// Detect /api/sessions/{sid}/export — a sub-action that dumps
-	// the full session as JSON or markdown for sharing / debugging.
-	if strings.HasSuffix(sid, "/export") {
-		sid = strings.TrimSuffix(sid, "/export")
-		if sid == "" || strings.Contains(sid, "/") {
-			http.NotFound(w, r)
-			return
-		}
-		agent, ok := T.resolveAgent(w, r, udb, user)
-		if !ok {
-			return
-		}
-		T.handleSessionExport(w, r, agent.ID, sid)
-		return
+	sid := c.R.PathValue("sid")
+	temptool.TerminateSessionShellsByScope(sid)
+	deleteChatSession(c.UDB, agent.ID, sid)
+	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// sessionTruncate is PATCH: {at: N} drops messages from index N onward, and
+// {delete_at: N} scrubs exactly one. Used by the per-message Edit and Delete
+// affordances: the client drops the DOM rows, this drops the stored ones, and
+// a follow-up send (on Edit) appends a fresh exchange below the cut.
+func (T *OrchestrateApp) sessionTruncate(c *jsonapi.Call, body struct {
+	At int `json:"at"`
+	// DeleteAt (pointer = presence) scrubs EXACTLY ONE message at this
+	// raw storage index, keeping everything after it — the in-thread
+	// per-turn delete affordance. Distinct from At, which truncates from
+	// the index onward. Raw index (client carries it from the load
+	// payload, which includes hidden messages), so it lands precisely.
+	DeleteAt *int `json:"delete_at"`
+}) (any, error) {
+	agent, err := T.sessionAgent(c)
+	if err != nil {
+		return nil, err
 	}
-	// Detect /api/sessions/{sid}/send-to-builder — stage an improvement
-	// brief (framing + full transcript) and hand it to the Builder
-	// agent so it can diagnose where this agent fell short and fix it.
-	if strings.HasSuffix(sid, "/send-to-builder") {
-		sid = strings.TrimSuffix(sid, "/send-to-builder")
-		if sid == "" || strings.Contains(sid, "/") {
-			http.NotFound(w, r)
-			return
-		}
-		agent, ok := T.resolveAgent(w, r, udb, user)
-		if !ok {
-			return
-		}
-		T.handleSendToBuilder(w, r, agent, sid)
-		return
-	}
-	// Detect /api/sessions/{sid}/blocks/{block_id}/resolve — settle an
-	// actionable card durably, so an answered request stops replaying as
-	// pending on every session load.
-	if idx := strings.Index(sid, "/blocks/"); idx >= 0 {
-		actualSid := sid[:idx]
-		rest := strings.TrimSuffix(sid[idx+len("/blocks/"):], "/resolve")
-		if actualSid == "" || strings.Contains(actualSid, "/") || rest == "" || strings.Contains(rest, "/") {
-			http.NotFound(w, r)
-			return
-		}
-		agent, ok := T.resolveAgent(w, r, udb, user)
-		if !ok {
-			return
-		}
-		T.handleSessionBlockResolve(w, r, udb, user, agent.ID, actualSid, rest)
-		return
-	}
-	// Detect /api/sessions/{sid}/tools[/{name}] — visibility +
-	// admin-driven promotion of session-scoped temp tools out of the
-	// per-session draft pool into either the agent's bundled tools
-	// (global=false) or the user-wide persistent pool (global=true).
-	if idx := strings.Index(sid, "/tools"); idx >= 0 {
-		actualSid := sid[:idx]
-		rest := sid[idx+len("/tools"):]
-		if actualSid == "" || strings.Contains(actualSid, "/") {
-			http.NotFound(w, r)
-			return
-		}
-		agent, ok := T.resolveAgent(w, r, udb, user)
-		if !ok {
-			return
-		}
-		if rest == "" {
-			T.handleSessionToolsList(w, r, udb, user, agent.ID, actualSid)
-			return
-		}
-		toolName := strings.TrimPrefix(rest, "/")
-		if toolName == "" || strings.Contains(toolName, "/") {
-			http.NotFound(w, r)
-			return
-		}
-		T.handleSessionToolAction(w, r, udb, user, agent.ID, actualSid, toolName)
-		return
-	}
-	if sid == "" || strings.Contains(sid, "/") {
-		http.NotFound(w, r)
-		return
-	}
-	agent, ok := T.resolveAgent(w, r, udb, user)
+	udb, sid := c.UDB, c.R.PathValue("sid")
+	s, ok := loadChatSession(udb, agent.ID, sid)
 	if !ok {
-		return
+		return nil, errNotFound
 	}
-	// Channel agents no longer force every visit onto one thread — they have
-	// a channel thread AND normal sessions. The channel thread is just a
-	// specific session id (cortexSessionID) the client opens via the
-	// Channel row; ad-hoc sessions pass through with their own ids. So we
-	// don't rewrite sid here anymore.
-	switch r.Method {
-	case http.MethodGet:
-		// External-source row (e.g. ?source=phantom&chat_id=…)?
-		// Delegate to the registered source so it can resolve to
-		// the right per-source storage scope. Sources gate user
-		// permission internally; on a false result we serve the
-		// same 404 native misses get, so a leaked source name
-		// can't enumerate other users' rows.
-		if src := strings.TrimSpace(r.URL.Query().Get("source")); src != "" {
-			if source, found := LookupExtraSessionsSource(src); found {
-				if payload, ok := source.LoadSession(T.DB, agent.ID, user, sid, r.URL.Query().Get("chat_id")); ok {
-					w.Header().Set("Content-Type", "application/json")
-					_ = json.NewEncoder(w).Encode(payload)
-					return
+	if body.DeleteAt != nil {
+		di := *body.DeleteAt
+		if di >= 0 && di < len(s.Messages) {
+			s.Messages = append(s.Messages[:di], s.Messages[di+1:]...)
+			if _, err := saveChatSession(udb, s); err != nil {
+				return nil, jsonapi.Status(http.StatusInternalServerError, "save: "+err.Error())
+			}
+			// Keep the rolling-summary cursor aligned when scrubbing a turn
+			// already folded into the summary: when the cursor reaches zero
+			// the digest no longer reflects the thread, so clear it too.
+			if st := loadCompactState(udb, agent.ID, sid); di < st.SummarizedThrough {
+				st.SummarizedThrough--
+				if st.SummarizedThrough <= 0 {
+					st.SummarizedThrough = 0
+					st.Summary = ""
 				}
-			}
-			http.NotFound(w, r)
-			return
-		}
-		s, ok := loadChatSession(udb, agent.ID, sid)
-		if !ok {
-			// The channel thread doesn't exist until its first turn; when the
-			// Channel row opens it, return an empty session instead of 404 so
-			// the client opens a fresh thread rather than erroring. Ad-hoc
-			// sessions still 404 on a miss.
-			if agent.Cortex && sid == cortexSessionID(agent.ID) {
-				s = ChatSession{ID: sid}
-			} else {
-				http.NotFound(w, r)
-				return
+				saveCompactState(udb, agent.ID, sid, st)
 			}
 		}
-		// The live card poll, which wants only what it hasn't seen. Answered
-		// before everything below: it takes no read receipt (a timer firing is
-		// not a person reading), computes no blocks, and serializes no chat
-		// turns. See session_cards.go for why that matters on a long thread.
-		if r.URL.Query().Get("cards") == "1" {
-			since := r.URL.Query().Get("since")
-			// The run working for this thread in the background (a task's
-			// wake), so an open page shows it working, with Stop.
-			bg := func() *Run { return T.runsRegistry().BackgroundFor(user, sid) }
-			if r.URL.Query().Get("wait") == "1" {
-				s = waitForCards(r.Context(), udb, agent.ID, sid, s, since, r.URL.Query().Get("bg"), bg)
-			}
-			serveObservationCards(w, s.Messages, since, bg())
-			return
-		}
-		// Opening a session clears its unread state (a background wake that
-		// landed here is now seen). Writes LastSeen only — not activity.
-		markSessionSeen(udb, agent.ID, sid)
-		// Anything still awaiting the owner's decision rides along as a card in
-		// the thread, so a run that stalled unattended says so where the user is
-		// rather than only as a count on the Permissions tile. Computed per load
-		// and NOT persisted — resolving one anywhere drops it from the next load,
-		// with no stale card to sweep.
-		// An actionable card the user already answered must not come back
-		// asking again. Cards answered IN the chat carry a stored Resolved
-		// stamp; cards whose subject was settled elsewhere (the admin typed
-		// the secret in Admin > APIs) get theirs derived here, on the copy
-		// being served — the stored record is left alone so a re-drafted
-		// credential gets a live card again.
-		s.UIBlocks = settleResolvedBlocks(s.UIBlocks, user)
-		// A card that VIEWS live permissions must not replay an authoring-time
-		// snapshot of them (see refreshPrivilegeBlocks).
-		s.UIBlocks = refreshPrivilegeBlocks(udb, s.UIBlocks)
-		s.UIBlocks = append(s.UIBlocks, pendingApprovalBlocks(udb, user, agent.ID)...)
-		// Only the tail is rendered. Blocks and plans are session-level and
-		// ride along whole — they are not indexed by message, so trimming
-		// messages cannot orphan one.
-		markFlaggedReplies(T.DB, user, agent.ID, sid, s.Messages)
-		hideFrameworkNotes(s.Messages)
-		var off int
-		isCortex := sid == cortexSessionID(agent.ID)
-		s.Messages, off = tailMessages(s.Messages, resolveTailLimitFor(r.URL.Query().Get("limit"), isCortex))
-		markFoldPoint(loadCompactState(udb, agent.ID, sid), s.Messages, off)
-		w.Header().Set("Content-Type", "application/json")
-		// The chunk is this thread's OWN default, not whatever the client just
-		// asked for: after a "show earlier" the request carries an accumulated
-		// limit, and echoing that back would make every press add as much as
-		// everything already loaded — the doubling this replaced.
-		out := servedSession{ChatSession: s, MessageOffset: off, ChunkSize: resolveTailLimitFor("", isCortex)}
-		if len(s.Messages) == 0 {
-			out.OpeningPrompt = s.OpeningPrompt
-		}
-		_ = json.NewEncoder(w).Encode(out)
-	case http.MethodDelete:
-		// Tear down any persistent shells the session opened
-		// (psql/redis-cli/ssh/etc.) so the bwrap processes don't
-		// leak. Scope is sess.ChatSessionID — matches what the
-		// persistent_shell substrate uses as its registry key prefix.
-		temptool.TerminateSessionShellsByScope(sid)
-		deleteChatSession(udb, agent.ID, sid)
-		w.WriteHeader(http.StatusNoContent)
-	case http.MethodPatch:
-		// PATCH = truncate at a message index. Body: {at: N} drops
-		// messages from index N onward. Used by per-message Edit /
-		// Delete affordances in the chat surface: client drops the
-		// DOM rows, server drops the persisted rows, and a follow-up
-		// send (on Edit) appends a fresh user message + assistant
-		// response below the truncation point.
-		var body struct {
-			At int `json:"at"`
-			// DeleteAt (pointer = presence) scrubs EXACTLY ONE message at this
-			// raw storage index, keeping everything after it — the in-thread
-			// per-turn delete affordance. Distinct from At, which truncates from
-			// the index onward. Raw index (client carries it from the load
-			// payload, which includes hidden messages), so it lands precisely.
-			DeleteAt *int `json:"delete_at"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		s, ok := loadChatSession(udb, agent.ID, sid)
-		if !ok {
-			http.NotFound(w, r)
-			return
-		}
-		if body.DeleteAt != nil {
-			di := *body.DeleteAt
-			if di >= 0 && di < len(s.Messages) {
-				s.Messages = append(s.Messages[:di], s.Messages[di+1:]...)
-				if _, err := saveChatSession(udb, s); err != nil {
-					http.Error(w, "save: "+err.Error(), http.StatusInternalServerError)
-					return
-				}
-				// Keep the rolling-summary cursor aligned when scrubbing a turn
-				// already folded into the summary: when the cursor reaches zero
-				// the digest no longer reflects the thread, so clear it too.
-				if st := loadCompactState(udb, agent.ID, sid); di < st.SummarizedThrough {
-					st.SummarizedThrough--
-					if st.SummarizedThrough <= 0 {
-						st.SummarizedThrough = 0
-						st.Summary = ""
-					}
-					saveCompactState(udb, agent.ID, sid, st)
-				}
-			}
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{"deleted_at": body.DeleteAt, "messages_remaining": len(s.Messages)})
-			return
-		}
-		if body.At < 0 {
-			body.At = 0
-		}
-		if body.At > len(s.Messages) {
-			body.At = len(s.Messages)
-		}
-		// What the cut turns recorded about the tools they edited goes with
-		// them, or the build check holds the next turn to it.
-		if body.At < len(s.Messages) {
-			forgetToolVerificationsSince(udb, sid, s.Messages[body.At].Created)
-		}
-		s.Messages = s.Messages[:body.At]
-		if _, err := saveChatSession(udb, s); err != nil {
-			http.Error(w, "save: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		// Truncating the whole thread away (At==0) must also drop the rolling
-		// summary — otherwise the orchestrator's compaction digest survives the
-		// clear and re-primes every turn (the "stuck personality" trap). No-op
-		// for agents with no compact-state row.
-		if body.At == 0 {
-			deleteCompactState(udb, agent.ID, sid)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"at": body.At, "messages_remaining": len(s.Messages)})
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return map[string]any{"deleted_at": body.DeleteAt, "messages_remaining": len(s.Messages)}, nil
 	}
+	if body.At < 0 {
+		body.At = 0
+	}
+	if body.At > len(s.Messages) {
+		body.At = len(s.Messages)
+	}
+	// What the cut turns recorded about the tools they edited goes with
+	// them, or the build check holds the next turn to it.
+	if body.At < len(s.Messages) {
+		forgetToolVerificationsSince(udb, sid, s.Messages[body.At].Created)
+	}
+	s.Messages = s.Messages[:body.At]
+	if _, err := saveChatSession(udb, s); err != nil {
+		return nil, jsonapi.Status(http.StatusInternalServerError, "save: "+err.Error())
+	}
+	// Truncating the whole thread away (At==0) must also drop the rolling
+	// summary — otherwise the orchestrator's compaction digest survives the
+	// clear and re-primes every turn (the "stuck personality" trap). No-op
+	// for agents with no compact-state row.
+	if body.At == 0 {
+		deleteCompactState(udb, agent.ID, sid)
+	}
+	return map[string]any{"at": body.At, "messages_remaining": len(s.Messages)}, nil
 }
 
 // handleSendRouter is the flat-route wrapper around the runner. Reads

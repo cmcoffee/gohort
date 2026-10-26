@@ -72,7 +72,7 @@ func TestALoadedThreadCarriesTheFoldMark(t *testing.T) {
 	seedFoldSession(t, udb, "ag", "s1", 30)
 	saveCompactState(udb, "ag", "s1", CompactState{SummarizedThrough: 26, FoldSeq: 1})
 	w := httptest.NewRecorder()
-	app.handleSessionOne(w, req(http.MethodGet, "/api/sessions/s1?agent_id=ag", nil))
+	routed(app)(w, req(http.MethodGet, "/api/sessions/s1?agent_id=ag", nil))
 	if w.Code != 200 {
 		t.Fatalf("GET %d %s", w.Code, w.Body.String())
 	}
