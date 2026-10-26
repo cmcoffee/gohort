@@ -24,6 +24,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/flows"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/sandbox"
 	"github.com/cmcoffee/gohort/core/textutil"
 	"github.com/cmcoffee/gohort/core/ui"
@@ -600,143 +601,28 @@ func (a *AdminApp) registerSystemDepsRoutes(sub *http.ServeMux) {
 	// The table: GET lists it. POST saves an adapted flow, off: one that
 	// fills a job (?job=<id>), one that adds a format, or with ?edit=<name>
 	// a change to that one.
-	sub.HandleFunc("/api/system-deps", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		switch r.Method {
-		case http.MethodGet:
-			if r.URL.Query().Get("fix") != "" {
-				// The jobs that cannot run here, for the walk.
-				fix := []depRow{}
-				for _, row := range depRows(false) {
-					if row.FixJob {
-						fix = append(fix, row)
-					}
-				}
-				writeJSONOut(w, fix)
-				return
-			}
-			writeJSONOut(w, depRows(r.URL.Query().Get("custom") != ""))
-		case http.MethodPost:
-			var ff flowForm
-			if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&ff); err != nil {
-				http.Error(w, "bad request", http.StatusBadRequest)
-				return
-			}
-			name, job := strings.TrimSpace(ff.Name), strings.TrimSpace(r.URL.Query().Get("job"))
-			edit := strings.TrimSpace(r.URL.Query().Get("edit"))
-			if edit != "" {
-				name = edit
-				if c, ok := GetConnector(RootDB, edit); ok && c.Kind == flows.ConnectorKind {
-					prev, _ := adaptedFlowHandler{}.adapted(c)
-					job = prev.Job
-				}
-			}
-			if job != "" {
-				if _, ok := flows.JobByID(job); !ok {
-					http.Error(w, "there is no job "+job, http.StatusBadRequest)
-					return
-				}
-			}
-			ad := ff.adapted(job)
-			if job == "" && !ad.IsOutput() {
-				if err := checkCustomInput(ad); err != nil {
-					http.Error(w, err.Error(), http.StatusBadRequest)
-					return
-				}
-			}
-			if _, err := saveAdapted(AuthCurrentUser(r), name, ad, edit != "", "Adapted flow"); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			writeJSONOut(w, map[string]any{"ok": true, "message": "Saved, off. Test it, then turn it on."})
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		}
-	})
+	sub.HandleFunc("/api/system-deps", jsonapi.Methods{
+		"GET":  jsonapi.Get(a.db, a.handleSystemDeps, a.gate()),
+		"POST": jsonapi.Post(a.db, a.handleSystemDepsSave, a.gate(), jsonapi.MaxBody(1<<16)),
+	}.Serve)
 
 	// Agents on a row: POST ?id= {agents: bool} lets agents run that hook
 	// with the system_hook tool, or stops them.
-	sub.HandleFunc("/api/system-deps/agents", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		if r.Method != http.MethodPost {
-			http.Error(w, "POST required", http.StatusMethodNotAllowed)
-			return
-		}
-		id := strings.TrimSpace(r.URL.Query().Get("id"))
-		var body struct {
-			Agents bool `json:"agents"`
-		}
-		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<10)).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		if _, isJob := flows.JobByID(id); isJob {
-			http.Error(w, "gohort's own jobs reach agents through gohort's own tools (video, export, attachments): there is no switch for them", http.StatusBadRequest)
-			return
-		}
-		c, isConn := GetConnector(RootDB, id)
-		if !isConn || c.Kind != flows.ConnectorKind {
-			http.NotFound(w, r)
-			return
-		}
-		if a, _ := (adaptedFlowHandler{}).adapted(c); a.Job != "" {
-			http.Error(w, "this flow fills one of gohort's own jobs, which agents reach through gohort's own tools", http.StatusBadRequest)
-			return
-		}
-		systemhook.SetOffered(id, body.Agents)
-		msg := "Agents can no longer run it."
-		if body.Agents {
-			msg = "Agents can run it now, with the system_hook tool."
-		}
-		writeJSONOut(w, map[string]any{"agents": body.Agents, "message": msg})
-	})
+	sub.HandleFunc("/api/system-deps/agents", jsonapi.Methods{
+		"POST": jsonapi.Post(a.db, a.handleSystemDepsAgents, a.gate(), jsonapi.MaxBody(1<<10)),
+	}.Serve)
 
 	// Becomes's choices for a custom input, as the form renders.
-	sub.HandleFunc("/api/system-deps/becomes", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		writeJSONOut(w, becomesOptions())
-	})
+	sub.HandleFunc("/api/system-deps/becomes", jsonapi.Get(a.db, func(c *jsonapi.Call) (any, error) {
+		return becomesOptions(), nil
+	}, a.gate()))
 
 	// One adapted flow as its edit form fills from: GET ?name=.
-	sub.HandleFunc("/api/system-deps/one", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		c, ok := GetConnector(RootDB, strings.TrimSpace(r.URL.Query().Get("name")))
-		if !ok || c.Kind != flows.ConnectorKind {
-			http.NotFound(w, r)
-			return
-		}
-		ad, _ := adaptedFlowHandler{}.adapted(c)
-		writeJSONOut(w, formOf(c.Name, ad))
-	})
+	sub.HandleFunc("/api/system-deps/one", jsonapi.Get(a.db, a.handleSystemDepsOne, a.gate()))
 
 	// The Adapt form of a job's row: GET ?id=<job>. An export the app
 	// renders itself is adapted to be used first.
-	sub.HandleFunc("/api/system-deps/adapt", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		j, ok := flows.JobByID(r.URL.Query().Get("id"))
-		if !ok {
-			http.NotFound(w, r)
-			return
-		}
-		name := flowName(j.ID)
-		for n := 2; ; n++ {
-			if _, taken := GetConnector(RootDB, name); !taken {
-				break
-			}
-			name = fmt.Sprintf("%s-%d", flowName(j.ID), n)
-		}
-		writeJSONOut(w, flowForm{Name: name, Prefer: j.Builtin})
-	})
+	sub.HandleFunc("/api/system-deps/adapt", jsonapi.Get(a.db, a.handleSystemDepsAdapt, a.gate()))
 
 	// Test a row: POST ?id=, multipart "file" for one that reads a file; an
 	// export writes gohort's sample document. Runs exactly as gohort would,
@@ -805,6 +691,101 @@ func (a *AdminApp) registerSystemDepsRoutes(sub *http.ServeMux) {
 		}
 		writeJSONOut(w, out)
 	})
+}
+
+// handleSystemDeps is the table, or with ?fix= the jobs that cannot run here
+// (for the walk), or with ?custom= the formats the deployment added.
+func (a *AdminApp) handleSystemDeps(c *jsonapi.Call) (any, error) {
+	q := c.R.URL.Query()
+	if q.Get("fix") != "" {
+		fix := []depRow{}
+		for _, row := range depRows(false) {
+			if row.FixJob {
+				fix = append(fix, row)
+			}
+		}
+		return fix, nil
+	}
+	return depRows(q.Get("custom") != ""), nil
+}
+
+// handleSystemDepsSave saves an adapted flow, off.
+func (a *AdminApp) handleSystemDepsSave(c *jsonapi.Call, ff flowForm) (any, error) {
+	q := c.R.URL.Query()
+	name, job := strings.TrimSpace(ff.Name), strings.TrimSpace(q.Get("job"))
+	edit := strings.TrimSpace(q.Get("edit"))
+	if edit != "" {
+		name = edit
+		if conn, ok := GetConnector(RootDB, edit); ok && conn.Kind == flows.ConnectorKind {
+			prev, _ := adaptedFlowHandler{}.adapted(conn)
+			job = prev.Job
+		}
+	}
+	if job != "" {
+		if _, ok := flows.JobByID(job); !ok {
+			return nil, jsonapi.BadRequest("there is no job " + job)
+		}
+	}
+	ad := ff.adapted(job)
+	if job == "" && !ad.IsOutput() {
+		if err := checkCustomInput(ad); err != nil {
+			return nil, jsonapi.BadRequest(err.Error())
+		}
+	}
+	if _, err := saveAdapted(c.User, name, ad, edit != "", "Adapted flow"); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	return map[string]any{"ok": true, "message": "Saved, off. Test it, then turn it on."}, nil
+}
+
+// handleSystemDepsAgents lets agents run the ?id= hook with the system_hook
+// tool, or stops them.
+func (a *AdminApp) handleSystemDepsAgents(c *jsonapi.Call, body struct {
+	Agents bool `json:"agents"`
+}) (any, error) {
+	id := strings.TrimSpace(c.R.URL.Query().Get("id"))
+	if _, isJob := flows.JobByID(id); isJob {
+		return nil, jsonapi.BadRequest("gohort's own jobs reach agents through gohort's own tools (video, export, attachments): there is no switch for them")
+	}
+	conn, isConn := GetConnector(RootDB, id)
+	if !isConn || conn.Kind != flows.ConnectorKind {
+		return nil, jsonapi.NotFound("no such flow")
+	}
+	if ad, _ := (adaptedFlowHandler{}).adapted(conn); ad.Job != "" {
+		return nil, jsonapi.BadRequest("this flow fills one of gohort's own jobs, which agents reach through gohort's own tools")
+	}
+	systemhook.SetOffered(id, body.Agents)
+	msg := "Agents can no longer run it."
+	if body.Agents {
+		msg = "Agents can run it now, with the system_hook tool."
+	}
+	return map[string]any{"agents": body.Agents, "message": msg}, nil
+}
+
+// handleSystemDepsOne is the ?name= adapted flow as its edit form fills from.
+func (a *AdminApp) handleSystemDepsOne(c *jsonapi.Call) (any, error) {
+	conn, ok := GetConnector(RootDB, strings.TrimSpace(c.R.URL.Query().Get("name")))
+	if !ok || conn.Kind != flows.ConnectorKind {
+		return nil, jsonapi.NotFound("no such flow")
+	}
+	ad, _ := adaptedFlowHandler{}.adapted(conn)
+	return formOf(conn.Name, ad), nil
+}
+
+// handleSystemDepsAdapt is the ?id= job's Adapt form, under a name not taken.
+func (a *AdminApp) handleSystemDepsAdapt(c *jsonapi.Call) (any, error) {
+	j, ok := flows.JobByID(c.R.URL.Query().Get("id"))
+	if !ok {
+		return nil, jsonapi.NotFound("no such job")
+	}
+	name := flowName(j.ID)
+	for n := 2; ; n++ {
+		if _, taken := GetConnector(RootDB, name); !taken {
+			break
+		}
+		name = fmt.Sprintf("%s-%d", flowName(j.ID), n)
+	}
+	return flowForm{Name: name, Prefer: j.Builtin}, nil
 }
 
 // outputExt is the format an export row writes.

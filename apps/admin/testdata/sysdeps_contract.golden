@@ -1,0 +1,104 @@
+(signed out) GET /api/system-deps ""
+  403 forbidden
+alice GET /api/system-deps ""
+  403 forbidden
+root GET /api/system-deps ""
+  200 []
+root PUT /api/system-deps "{}"
+  405 method not allowed
+(signed out) GET /api/system-deps?custom=1 ""
+  403 forbidden
+alice GET /api/system-deps?custom=1 ""
+  403 forbidden
+root GET /api/system-deps?custom=1 ""
+  200 []
+root PUT /api/system-deps?custom=1 "{}"
+  405 method not allowed
+(signed out) GET /api/system-deps?fix=1 ""
+  403 forbidden
+alice GET /api/system-deps?fix=1 ""
+  403 forbidden
+root GET /api/system-deps?fix=1 ""
+  200 a list
+root PUT /api/system-deps?fix=1 "{}"
+  405 method not allowed
+(signed out) GET /api/system-deps/becomes ""
+  403 forbidden
+alice GET /api/system-deps/becomes ""
+  403 forbidden
+root GET /api/system-deps/becomes ""
+  200 a list
+root PUT /api/system-deps/becomes "{}"
+  405 method not allowed
+(signed out) GET /api/system-deps/one?name=ctstrip ""
+  403 forbidden
+alice GET /api/system-deps/one?name=ctstrip ""
+  403 forbidden
+root GET /api/system-deps/one?name=ctstrip ""
+  404 no such flow
+root PUT /api/system-deps/one?name=ctstrip "{}"
+  405 method not allowed
+(signed out) GET /api/system-deps/adapt?id=read.heic ""
+  403 forbidden
+alice GET /api/system-deps/adapt?id=read.heic ""
+  403 forbidden
+root GET /api/system-deps/adapt?id=read.heic ""
+  200 {"name":"read-heic-adapted","steps":null,"timeout_secs":0,"prefer":false}
+root PUT /api/system-deps/adapt?id=read.heic "{}"
+  405 method not allowed
+alice POST /api/system-deps "{\"name\":\"ctstrip\",\"direction\":\"input\",\"takes\":\"*\",\"becomes\":\"image\",\"steps\":\"dd if={in} of={out} bs=8 skip=1\"}"
+  403 forbidden
+root POST /api/system-deps "{\"name\":\"ctstrip\",\"direction\":\"input\",\"takes\":\"*\",\"becomes\":\"image\",\"steps\":\"dd if={in} of={out} bs=8 skip=1\"}"
+  200 {"message":"Saved, off. Test it, then turn it on.","ok":true}
+root POST /api/system-deps "{\"name\":\"ctstrip\",\"direction\":\"input\",\"takes\":\"*\",\"becomes\":\"image\",\"steps\":\"dd if={in} of={out} bs=8 skip=1\"}"
+  400 there is already a connector called ctstrip: pick another name
+root POST /api/system-deps "{\"name\":\"ctnoin\",\"direction\":\"input\",\"takes\":\"*\",\"becomes\":\"image\",\"steps\":\"dd of={out} bs=8 skip=1\"}"
+  400 the command needs {in}, the file it reads
+root POST /api/system-deps "{\"name\":\"ctheic\",\"direction\":\"input\",\"takes\":\"heic\",\"becomes\":\"image\",\"steps\":\"dd if={in} of={out}\"}"
+  400 gohort already reads iPhone photos (HEIC) (iPhone photos (HEIC), AVIF images, under Reading): to use another tool for it, adapt that row instead
+root POST /api/system-deps?job=no.such.job "{\"name\":\"ctjob\",\"steps\":\"true\"}"
+  400 there is no job no.such.job
+root POST /api/system-deps?job=read.heic "{\"name\":\"read-heic-adapted\",\"steps\":\"heif-convert {in} {out.png}\"}"
+  200 {"message":"Saved, off. Test it, then turn it on.","ok":true}
+root POST /api/system-deps "{\"name\":"
+  400 invalid JSON: unexpected EOF
+root POST /api/system-deps ""
+  400 invalid JSON: EOF
+root GET /api/system-deps?custom=1 ""
+  200 [{"id":"ctstrip","name":"ctstrip","group":"Reading what arrives","enables":"Reads anything else","by":"dd if={in} of={out} bs=8 skip=1","state":"off","detail":"Becomes an image the model can read.","j… (463 bytes, sha1 0d276f83059682f32738df356ca19cc39a9ab110)
+root GET /api/system-deps ""
+  200 [{"id":"read-heic-adapted","name":"read-heic-adapted","group":"Reading what arrives","enables":"↳ read-heic-adapted","by":"heif-convert {in} {out.png}","state":"off","detail":"Adapted, for iPhone ph… (493 bytes, sha1 9a9c787c440fac2920de1b10c4b9f16a4cd3b42e)
+root GET /api/system-deps/one?name=ctstrip ""
+  200 {"name":"ctstrip","direction":"input","takes":"*","becomes":"image","steps":[{"command":"dd if={in} of={out} bs=8 skip=1"}],"timeout_secs":0,"prefer":false}
+root GET /api/system-deps/one?name=read-heic-adapted ""
+  200 {"name":"read-heic-adapted","steps":[{"command":"heif-convert {in} {out.png}"}],"timeout_secs":0,"prefer":false}
+root GET /api/system-deps/one?name=nope ""
+  404 no such flow
+root POST /api/system-deps?edit=ctstrip "{\"name\":\"ctstrip\",\"direction\":\"input\",\"takes\":\"*\",\"becomes\":\"image\",\"steps\":\"dd if={in} of={out} bs=4 skip=2\"}"
+  200 {"message":"Saved, off. Test it, then turn it on.","ok":true}
+root GET /api/system-deps/one?name=ctstrip ""
+  200 {"name":"ctstrip","direction":"input","takes":"*","becomes":"image","steps":[{"command":"dd if={in} of={out} bs=4 skip=2"}],"timeout_secs":0,"prefer":false}
+root GET /api/system-deps/adapt?id=read.heic ""
+  200 {"name":"read-heic-adapted-2","steps":null,"timeout_secs":0,"prefer":false}
+root GET /api/system-deps/adapt?id=nope ""
+  404 no such job
+alice POST /api/system-deps/agents?id=ctstrip "{\"agents\":true}"
+  403 forbidden
+root GET /api/system-deps/agents?id=ctstrip ""
+  405 method not allowed
+root POST /api/system-deps/agents?id=ctstrip "{\"agents\":true}"
+  200 {"agents":true,"message":"Agents can run it now, with the system_hook tool."}
+root POST /api/system-deps/agents?id=read.heic "{\"agents\":true}"
+  400 gohort's own jobs reach agents through gohort's own tools (video, export, attachments): there is no switch for them
+root POST /api/system-deps/agents?id=read-heic-adapted "{\"agents\":true}"
+  400 this flow fills one of gohort's own jobs, which agents reach through gohort's own tools
+root POST /api/system-deps/agents?id=nope "{\"agents\":true}"
+  404 no such flow
+root POST /api/system-deps/agents?id=ctstrip "{\"agents\":"
+  400 invalid JSON: unexpected EOF
+root GET /api/system-deps?custom=1 ""
+  200 [{"id":"ctstrip","name":"ctstrip","group":"Reading what arrives","enables":"Reads anything else","by":"dd if={in} of={out} bs=4 skip=2","state":"off","detail":"Becomes an image the model can read.","j… (462 bytes, sha1 4288bea253014946cf7d8c46cde58dd95970e55f)
+root POST /api/system-deps/agents?id=ctstrip "{\"agents\":false}"
+  200 {"agents":false,"message":"Agents can no longer run it."}
+root GET /api/system-deps?custom=1 ""
+  200 [{"id":"ctstrip","name":"ctstrip","group":"Reading what arrives","enables":"Reads anything else","by":"dd if={in} of={out} bs=4 skip=2","state":"off","detail":"Becomes an image the model can read.","j… (463 bytes, sha1 a3d9f64268029474a685e6267362e38e62100e34)
