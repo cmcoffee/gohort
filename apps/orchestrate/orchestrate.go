@@ -738,7 +738,7 @@ func (T *OrchestrateApp) registerHandlers() {
 		"GET":  jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) { return T.handleCollections(c, nil) }),
 		"POST": jsonapi.Post(T.DB, T.handleCollections, jsonapi.EmptyBodyOK),
 	}.Serve)
-	T.HandleFunc("/api/collections/", T.handleCollectionOne)
+	T.registerCollectionRoutes()
 	// Runs interrupted by a restart resume (pipeline_runs.go); registered
 	// with the routes so they exist before the queue is restored.
 	T.registerRunRestores()

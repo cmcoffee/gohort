@@ -11,27 +11,24 @@ package orchestrate
 // underneath.
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
-	"regexp"
 	"strings"
 	"testing"
+
+	. "github.com/cmcoffee/gohort/core"
 )
 
 func TestTheCollectionRoutesAreNotAdminGated(t *testing.T) {
-	raw, err := os.ReadFile("orchestrate.go")
-	if err != nil {
-		t.Fatalf("reading the routes: %v", err)
-	}
-	src := string(raw)
-	// g is the admin gate. Any collections route wrapped in it is the bug.
-	bad := regexp.MustCompile(`HandleFunc\("/api/collections[^"]*",\s*g\(`)
-	if m := bad.FindAllString(src, -1); len(m) > 0 {
-		t.Errorf("collections routes are behind the admin gate again: %v", m)
-	}
-	// And they are still registered at all.
-	for _, route := range []string{`"/api/collections"`, `"/api/collections/"`} {
-		if !strings.Contains(src, "HandleFunc("+route) {
-			t.Errorf("route %s is gone", route)
+	// alice is an ordinary user, not an administrator.
+	app, udb, user := newTestOrchestrate(t)
+	saveCollection(udb, Collection{ID: "col-1", Owner: user, Name: "Notes"})
+	for _, path := range []string{"/api/collections", "/api/collections/col-1", "/api/collections/col-1/sources"} {
+		w := httptest.NewRecorder()
+		routed(app)(w, asUser(httptest.NewRequest(http.MethodGet, path, nil), user))
+		if w.Code != http.StatusOK {
+			t.Errorf("a non-admin's GET %s answered %d %s", path, w.Code, w.Body.String())
 		}
 	}
 	// The agent routes came out from behind the gate too, later and for the

@@ -214,7 +214,7 @@ func (T *OrchestrateApp) handleCollections(c *jsonapi.Call, raw json.RawMessage)
 	}
 }
 
-// handleCollectionOne serves per-collection routes:
+// registerCollectionRoutes mounts the per-collection routes:
 //
 //	GET    /api/collections/{id}                          → record + stats
 //	PATCH  /api/collections/{id}                          → rename / update description
@@ -223,260 +223,258 @@ func (T *OrchestrateApp) handleCollections(c *jsonapi.Call, raw json.RawMessage)
 //	GET    /api/collections/{id}/sources                  → list docs (reportID grouping)
 //	DELETE /api/collections/{id}/sources/{reportID}       → delete doc
 //	GET    /api/collections/{id}/search?q=...&k=N         → semantic search
-func (T *OrchestrateApp) handleCollectionOne(w http.ResponseWriter, r *http.Request) {
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	rest := strings.TrimPrefix(r.URL.Path, "/api/collections/")
-	if rest == "" {
-		http.NotFound(w, r)
-		return
-	}
-	var id, action string
-	if slash := strings.IndexByte(rest, '/'); slash >= 0 {
-		id = rest[:slash]
-		action = rest[slash+1:]
-	} else {
-		id = rest
-	}
-	if id == "" {
-		http.NotFound(w, r)
-		return
-	}
-	c, found := loadCollection(udb, user, id)
-	if !found {
-		http.NotFound(w, r)
-		return
-	}
-	// ONE gate, before the switch, rather than a check inside each handler.
-	//
-	// loadCollection admits the owner, anybody it was shared with, and every
-	// user when it is deployment-wide — which is right for reading and was
-	// being used for everything. Sharing a collection handed the recipient
-	// upload, paste, sources, autofill and research on it, and renaming or
-	// re-scoping it besides: nobody granted that, it was the absence of a
-	// check. Publishing one deployment-wide handed it to everybody.
-	//
-	// It matters more than "somebody added a file". An agent takes its
-	// collections as ground truth, so whoever can write to one decides what
-	// every agent reading it believes, and they will believe it confidently.
-	if why := collectionWriteRefusal(c, user, action, r.Method, RequestIsAdmin(r)); why != "" {
-		http.Error(w, why, http.StatusForbidden)
-		return
-	}
-
-	switch {
-	case action == "steward":
-		T.handleCollectionSteward(w, r, user, c)
-		return
-	case action == "":
-		switch r.Method {
-		case http.MethodGet:
-			docs, chunks := collectionStats(VectorDB, c.ID)
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"id":                   c.ID,
-				"owner":                c.Owner,
-				"name":                 c.Name,
-				"description":          c.Description,
-				"created":              c.Created,
-				"updated":              c.Updated,
-				"documents":            docs,
-				"chunks":               chunks,
-				"filter_rules":         c.FilterRules,
-				"classify_on_autofill": c.ClassifyOnAutofill,
-				// The share picker reads what it will patch back, so the field
-				// has to be on the wire or it opens empty and the first save
-				// silently clears the share.
-				"allowed_users": nonNilUsers(c.AllowedUsers),
-				"contributors":  nonNilUsers(c.Contributors),
-			})
-		case http.MethodPatch:
-			var body struct {
-				Name               *string `json:"name"`
-				Description        *string `json:"description"`
-				FilterRules        *string `json:"filter_rules"`
-				ClassifyOnAutofill *bool   `json:"classify_on_autofill"`
-				// Who else may attach and search this. Absent means unchanged,
-				// like every other field here, so a rename cannot clear a share
-				// it never showed.
-				AllowedUsers *[]string `json:"allowed_users"`
-				// Who may ADD to it. A subset of the above, and its own
-				// decision: reading a corpus tells you what somebody knows,
-				// writing to it decides what every agent reading it believes.
-				Contributors *[]string `json:"contributors"`
-				// "user" or "deployment". Widening is requested, narrowing is
-				// applied; both handled before the ordinary field edits below,
-				// because either one moves the record to a different pool and
-				// the edits would be written to the pool it just left.
-				Scope *string `json:"scope"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				http.Error(w, "bad request", http.StatusBadRequest)
-				return
-			}
-			if body.Name != nil {
-				if name := strings.TrimSpace(*body.Name); name != "" {
-					// A rename onto another of the owner's names makes the
-					// same pair a second create would.
-					if why := duplicateCollectionName(udb, c.Owner, name, c.ID); why != "" {
-						http.Error(w, why, http.StatusConflict)
-						return
-					}
-					c.Name = name
-				}
-			}
-			if body.Description != nil {
-				c.Description = strings.TrimSpace(*body.Description)
-			}
-			if body.FilterRules != nil {
-				c.FilterRules = strings.TrimSpace(*body.FilterRules)
-			}
-			if body.ClassifyOnAutofill != nil {
-				c.ClassifyOnAutofill = *body.ClassifyOnAutofill
-			}
-			if body.Scope != nil {
-				// Widening reaches every user's agents, so it is an
-				// administrator's decision and the owner asks: the same route
-				// tools, apps and agents take. Narrowing is the owner's and
-				// applies at once, because nobody needs permission to stop
-				// sharing. See core/collection_promotion.go.
-				if c.Owner != "" && c.Owner != user {
-					http.Error(w, "only the owner can change who this is shared with", http.StatusForbidden)
-					return
-				}
-				switch strings.ToLower(strings.TrimSpace(*body.Scope)) {
-				case CollectionScopeDeployment:
-					if IsDeploymentScope(c) {
-						break // already there; nothing to ask for
-					}
-					if RequestIsAdmin(r) {
-						if err := PromoteCollectionToDeployment(user, c.ID); err != nil {
-							http.Error(w, err.Error(), http.StatusBadRequest)
-							return
-						}
-					} else if err := CreatePromotionRequest(AuthDB(), user, CollectionPromotionKind, c.ID, ""); err != nil {
-						http.Error(w, err.Error(), http.StatusBadRequest)
-						return
-					}
-					jsonapi.Write(w, map[string]any{"ok": true, "requested": !RequestIsAdmin(r)})
-					return
-				case CollectionScopeUser, "":
-					if IsDeploymentScope(c) {
-						if err := NarrowCollectionToOwner(user, c.ID); err != nil {
-							http.Error(w, err.Error(), http.StatusBadRequest)
-							return
-						}
-						jsonapi.Write(w, map[string]any{"ok": true})
-						return
-					}
-				default:
-					http.Error(w, "scope must be user or deployment", http.StatusBadRequest)
-					return
-				}
-			}
-			if body.AllowedUsers != nil {
-				// Only the OWNER shares. A recipient resolves this collection
-				// through LoadCollection, so without this check a share would
-				// carry the right to re-share somebody else's documents.
-				if c.Owner != "" && c.Owner != user {
-					http.Error(w, "only the owner can change who this is shared with", http.StatusForbidden)
-					return
-				}
-				c.AllowedUsers = *body.AllowedUsers
-				// Somebody taken off the share cannot stay a contributor to it.
-				// A list that outlived the access it narrowed would be waiting
-				// to hand write back the day they were re-shared.
-				c.Contributors = keepOnly(c.Contributors, c.AllowedUsers)
-			}
-			if body.Contributors != nil {
-				if c.Owner != "" && c.Owner != user {
-					http.Error(w, "only the owner decides who may add to this", http.StatusForbidden)
-					return
-				}
-				// Contributors are a subset of the people it is shared with:
-				// somebody who cannot see what is already in a corpus would be
-				// writing into it blind.
-				c.Contributors = keepOnly(*body.Contributors, c.AllowedUsers)
-			}
-			saveCollection(udb, c)
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(c)
-		case http.MethodDelete:
-			removed := deleteCollection(udb, T.DB, user, c.ID)
-			Log("[orchestrate.collections] user=%q deleted collection %q (id=%s, %d chunks removed)", user, c.Name, c.ID, removed)
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]int{"removed": removed})
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+func (T *OrchestrateApp) registerCollectionRoutes() {
+	T.HandleFunc("/api/collections/{id}", jsonapi.Methods{
+		"GET":    jsonapi.Get(T.DB, T.collectionGet),
+		"PATCH":  jsonapi.Patch(T.DB, T.collectionPatch),
+		"DELETE": jsonapi.Delete(T.DB, T.collectionDelete),
+	}.Serve)
+	T.HandleFunc("/api/collections/{id}/steward", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, T.collectionSteward),
+		"POST": jsonapi.Post(T.DB, T.collectionStewardSave),
+	}.Serve)
+	T.HandleFunc("/api/collections/{id}/paste", jsonapi.Post(T.DB, T.collectionPaste))
+	T.HandleFunc("/api/collections/{id}/sources", jsonapi.Get(T.DB, T.collectionSources))
+	T.HandleFunc("/api/collections/{id}/sources/{doc}", jsonapi.Delete(T.DB, T.collectionSourceDelete))
+	T.HandleFunc("/api/collections/{id}/search", jsonapi.Get(T.DB, T.collectionSearch))
+	T.HandleFunc("/api/collections/{id}/autofill", jsonapi.Post(T.DB, T.collectionAutofill, jsonapi.EmptyBodyOK))
+	T.HandleFunc("/api/collections/{id}/research", jsonapi.Post(T.DB, T.collectionResearch, jsonapi.EmptyBodyOK))
+	T.HandleFunc("/api/collections/{id}/audit", jsonapi.Post(T.DB, T.collectionAudit))
+	T.HandleFunc("/api/collections/{id}/suggest-description", jsonapi.Post(T.DB, T.collectionSuggestDescription, jsonapi.EmptyBodyOK))
+	// An upload and a download: raw, behind the same gate.
+	T.HandleFunc("/api/collections/{id}/upload", T.signedIn(func(w http.ResponseWriter, r *http.Request, user string, udb Database) {
+		if c, err := T.collectionFor(r, user, udb, "upload"); err != nil {
+			jsonapi.Fail(w, r, err)
+		} else {
+			T.handleCollectionUpload(w, r, user, c)
 		}
-	case action == "upload":
-		T.handleCollectionUpload(w, r, user, c)
-	case action == "paste":
-		T.handleCollectionPaste(w, r, user, c)
-	case action == "sources":
-		T.handleCollectionSources(w, r, c)
-	case strings.HasPrefix(action, "sources/"):
-		reportID := strings.TrimPrefix(action, "sources/")
-		T.handleCollectionSourceDelete(w, r, c, reportID)
-	case action == "search":
-		T.handleCollectionSearch(w, r, user, c)
-	case action == "autofill":
-		T.handleCollectionAutofill(w, r, c)
-	case action == "research":
-		T.handleCollectionResearch(w, r, user, c)
-	case action == "audit":
-		T.handleCollectionAudit(w, r, user, c)
-	case action == "suggest-description":
-		T.handleCollectionSuggestDescription(w, r, udb, user, c)
-	case action == "export":
-		// Download this collection as a 1-item gohort.bundle/v1 — the same
-		// wire format the admin artifact surface uses, so the file imports
-		// anywhere bundles do. Owner-gated by the loadCollection above (a
-		// user can only reach collections they can see); addressed by ID so
-		// the export is unambiguous under renamed/duplicate display names.
-		// Chunk text travels, vectors don't (the importer re-embeds).
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
+	}))
+	T.HandleFunc("/api/collections/{id}/export", T.signedIn(func(w http.ResponseWriter, r *http.Request, user string, udb Database) {
+		if c, err := T.collectionFor(r, user, udb, "export"); err != nil {
+			jsonapi.Fail(w, r, err)
+		} else {
+			T.handleCollectionExport(w, r, user, c)
 		}
-		bundle, err := ExportArtifactBundle(RootDB, []ArtifactSel{{Type: "collection", Name: c.ID, Owner: user}})
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		filename := strings.ReplaceAll(strings.TrimSpace(c.Name), `"`, "") + ".gohort.json"
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
-		enc := json.NewEncoder(w)
-		enc.SetIndent("", "  ")
-		_ = enc.Encode(bundle)
-	default:
-		http.NotFound(w, r)
-	}
+	}))
 }
 
-// handleCollectionResearch runs the seed-research agent on one or more topics —
+// collectionAt is the collection the path names, for one action, behind the
+// one write gate every collection route shares: a 404 for one the caller
+// cannot see, a 403 for an action they may not take on it.
+//
+// One gate, rather than a check inside each handler. loadCollection admits
+// the owner, anybody it was shared with, and every user when it is
+// deployment-wide — which is right for reading and was being used for
+// everything. Sharing a collection handed the recipient upload, paste,
+// sources, autofill and research on it, and renaming or re-scoping it
+// besides: nobody granted that, it was the absence of a check. Publishing one
+// deployment-wide handed it to everybody.
+//
+// It matters more than "somebody added a file". An agent takes its
+// collections as ground truth, so whoever can write to one decides what every
+// agent reading it believes, and they will believe it confidently.
+func (T *OrchestrateApp) collectionAt(call *jsonapi.Call, action string) (Collection, error) {
+	return T.collectionFor(call.R, call.User, call.UDB, action)
+}
+
+// collectionFor is collectionAt for a raw route.
+func (T *OrchestrateApp) collectionFor(r *http.Request, user string, udb Database, action string) (Collection, error) {
+	c, found := loadCollection(udb, user, r.PathValue("id"))
+	if !found {
+		return Collection{}, errNotFound
+	}
+	if why := collectionWriteRefusal(c, user, action, r.Method, RequestIsAdmin(r)); why != "" {
+		return Collection{}, jsonapi.Forbidden(why)
+	}
+	return c, nil
+}
+
+// collectionGet is the record with its document and chunk counts.
+func (T *OrchestrateApp) collectionGet(call *jsonapi.Call) (any, error) {
+	c, cerr := T.collectionAt(call, "")
+	if cerr != nil {
+		return nil, cerr
+	}
+	docs, chunks := collectionStats(VectorDB, c.ID)
+	return map[string]any{
+		"id":                   c.ID,
+		"owner":                c.Owner,
+		"name":                 c.Name,
+		"description":          c.Description,
+		"created":              c.Created,
+		"updated":              c.Updated,
+		"documents":            docs,
+		"chunks":               chunks,
+		"filter_rules":         c.FilterRules,
+		"classify_on_autofill": c.ClassifyOnAutofill,
+		// The share picker reads what it will patch back, so the field
+		// has to be on the wire or it opens empty and the first save
+		// silently clears the share.
+		"allowed_users": nonNilUsers(c.AllowedUsers),
+		"contributors":  nonNilUsers(c.Contributors),
+	}, nil
+}
+
+// collectionPatch is what the collection editor and the share picker save:
+// every field optional, absent meaning unchanged.
+type collectionPatch struct {
+	Name               *string `json:"name"`
+	Description        *string `json:"description"`
+	FilterRules        *string `json:"filter_rules"`
+	ClassifyOnAutofill *bool   `json:"classify_on_autofill"`
+	// Who else may attach and search this. Absent means unchanged,
+	// like every other field here, so a rename cannot clear a share
+	// it never showed.
+	AllowedUsers *[]string `json:"allowed_users"`
+	// Who may ADD to it. A subset of the above, and its own
+	// decision: reading a corpus tells you what somebody knows,
+	// writing to it decides what every agent reading it believes.
+	Contributors *[]string `json:"contributors"`
+	// "user" or "deployment". Widening is requested, narrowing is
+	// applied; both handled before the ordinary field edits below,
+	// because either one moves the record to a different pool and
+	// the edits would be written to the pool it just left.
+	Scope *string `json:"scope"`
+}
+
+// collectionPatch applies a partial edit; widening the scope files a request.
+func (T *OrchestrateApp) collectionPatch(call *jsonapi.Call, body collectionPatch) (any, error) {
+	c, cerr := T.collectionAt(call, "")
+	if cerr != nil {
+		return nil, cerr
+	}
+	r, user, udb := call.R, call.User, call.UDB
+	if body.Name != nil {
+		if name := strings.TrimSpace(*body.Name); name != "" {
+			// A rename onto another of the owner's names makes the
+			// same pair a second create would.
+			if why := duplicateCollectionName(udb, c.Owner, name, c.ID); why != "" {
+				return nil, jsonapi.Status(http.StatusConflict, why)
+			}
+			c.Name = name
+		}
+	}
+	if body.Description != nil {
+		c.Description = strings.TrimSpace(*body.Description)
+	}
+	if body.FilterRules != nil {
+		c.FilterRules = strings.TrimSpace(*body.FilterRules)
+	}
+	if body.ClassifyOnAutofill != nil {
+		c.ClassifyOnAutofill = *body.ClassifyOnAutofill
+	}
+	if body.Scope != nil {
+		// Widening reaches every user's agents, so it is an
+		// administrator's decision and the owner asks: the same route
+		// tools, apps and agents take. Narrowing is the owner's and
+		// applies at once, because nobody needs permission to stop
+		// sharing. See core/collection_promotion.go.
+		if c.Owner != "" && c.Owner != user {
+			return nil, jsonapi.Forbidden("only the owner can change who this is shared with")
+		}
+		switch strings.ToLower(strings.TrimSpace(*body.Scope)) {
+		case CollectionScopeDeployment:
+			if IsDeploymentScope(c) {
+				break // already there; nothing to ask for
+			}
+			if RequestIsAdmin(r) {
+				if err := PromoteCollectionToDeployment(user, c.ID); err != nil {
+					return nil, jsonapi.BadRequest(err.Error())
+				}
+			} else if err := CreatePromotionRequest(AuthDB(), user, CollectionPromotionKind, c.ID, ""); err != nil {
+				return nil, jsonapi.BadRequest(err.Error())
+			}
+			return map[string]any{"ok": true, "requested": !RequestIsAdmin(r)}, nil
+		case CollectionScopeUser, "":
+			if IsDeploymentScope(c) {
+				if err := NarrowCollectionToOwner(user, c.ID); err != nil {
+					return nil, jsonapi.BadRequest(err.Error())
+				}
+				return map[string]any{"ok": true}, nil
+			}
+		default:
+			return nil, jsonapi.BadRequest("scope must be user or deployment")
+		}
+	}
+	if body.AllowedUsers != nil {
+		// Only the OWNER shares. A recipient resolves this collection
+		// through LoadCollection, so without this check a share would
+		// carry the right to re-share somebody else's documents.
+		if c.Owner != "" && c.Owner != user {
+			return nil, jsonapi.Forbidden("only the owner can change who this is shared with")
+		}
+		c.AllowedUsers = *body.AllowedUsers
+		// Somebody taken off the share cannot stay a contributor to it.
+		// A list that outlived the access it narrowed would be waiting
+		// to hand write back the day they were re-shared.
+		c.Contributors = keepOnly(c.Contributors, c.AllowedUsers)
+	}
+	if body.Contributors != nil {
+		if c.Owner != "" && c.Owner != user {
+			return nil, jsonapi.Forbidden("only the owner decides who may add to this")
+		}
+		// Contributors are a subset of the people it is shared with:
+		// somebody who cannot see what is already in a corpus would be
+		// writing into it blind.
+		c.Contributors = keepOnly(*body.Contributors, c.AllowedUsers)
+	}
+	saveCollection(udb, c)
+	return c, nil
+}
+
+// collectionDelete removes the collection and its chunks.
+func (T *OrchestrateApp) collectionDelete(call *jsonapi.Call, _ struct{}) (any, error) {
+	c, cerr := T.collectionAt(call, "")
+	if cerr != nil {
+		return nil, cerr
+	}
+	user, udb := call.User, call.UDB
+	removed := deleteCollection(udb, T.DB, user, c.ID)
+	Log("[orchestrate.collections] user=%q deleted collection %q (id=%s, %d chunks removed)", user, c.Name, c.ID, removed)
+	return map[string]int{"removed": removed}, nil
+}
+
+// handleCollectionExport downloads the collection as a 1-item
+// gohort.bundle/v1: the same wire format the admin artifact surface uses, so
+// the file imports anywhere bundles do. Addressed by ID so the export is
+// unambiguous under renamed or duplicate display names. Chunk text travels,
+// vectors don't (the importer re-embeds).
+func (T *OrchestrateApp) handleCollectionExport(w http.ResponseWriter, r *http.Request, user string, c Collection) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	bundle, err := ExportArtifactBundle(RootDB, []ArtifactSel{{Type: "collection", Name: c.ID, Owner: user}})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	filename := strings.ReplaceAll(strings.TrimSpace(c.Name), `"`, "") + ".gohort.json"
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(bundle)
+}
+
+// collectionResearch runs the seed-research agent on one or more topics —
 // web search + source fetch + cited synthesis — and ingests each synthesized,
 // cited report into the collection as a document. Distinct from autofill (which
 // ingests RAW source pages): this stores distilled, cited findings, the higher-
 // quality material for a knowledge base. Synchronous (research is an agent loop
 // of tens of seconds per topic); the caller shows a spinner.
-func (T *OrchestrateApp) handleCollectionResearch(w http.ResponseWriter, r *http.Request, user string, c Collection) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
+func (T *OrchestrateApp) collectionResearch(call *jsonapi.Call, body struct {
+	Topic  string   `json:"topic"`
+	Topics []string `json:"topics"`
+}) (any, error) {
+	c, cerr := T.collectionAt(call, "research")
+	if cerr != nil {
+		return nil, cerr
 	}
-	var body struct {
-		Topic  string   `json:"topic"`
-		Topics []string `json:"topics"`
-	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	r, user := call.R, call.User
 	topics := normalizeQueries(append(body.Topics, body.Topic))
 	if len(topics) == 0 {
-		http.Error(w, "a topic is required", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("a topic is required")
 	}
 	// Cap per request so one click can't fan out into an unbounded run.
 	if len(topics) > 5 {
@@ -497,11 +495,10 @@ func (T *OrchestrateApp) handleCollectionResearch(w http.ResponseWriter, r *http
 		IngestReportTitled(r.Context(), chunkDB, collectionSource(c.ID), reportID, topic, report, "research")
 		ingested++
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	return map[string]any{
 		"ingested": ingested,
 		"failed":   failures,
-	})
+	}, nil
 }
 
 // collectionAuditCap bounds how many documents one audit click checks. Each
@@ -509,7 +506,7 @@ func (T *OrchestrateApp) handleCollectionResearch(w http.ResponseWriter, r *http
 // and audit the OLDEST documents first — the ones most likely to be stale.
 const collectionAuditCap = 6
 
-// handleCollectionAudit checks a collection for staleness: it walks the
+// collectionAudit checks a collection for staleness: it walks the
 // collection's documents (oldest first), dispatches the seed-research agent over
 // each one's topic to find what has changed since it was ingested, and returns a
 // per-document markdown report with cited findings — the read-side counterpart to
@@ -517,11 +514,12 @@ const collectionAuditCap = 6
 // can't fan out into an unbounded (and expensive) run. Synchronous; the caller
 // shows a spinner. Symmetric with the guide Audit, but per-document because a
 // collection is a bag of documents, not one narrative.
-func (T *OrchestrateApp) handleCollectionAudit(w http.ResponseWriter, r *http.Request, user string, c Collection) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
+func (T *OrchestrateApp) collectionAudit(call *jsonapi.Call, _ struct{}) (any, error) {
+	c, cerr := T.collectionAt(call, "audit")
+	if cerr != nil {
+		return nil, cerr
 	}
+	r, user := call.R, call.User
 	// Enumerate documents (group chunks by reportID), capturing the topic Title
 	// and the most-recent ingest date per doc.
 	type doc struct {
@@ -548,9 +546,7 @@ func (T *OrchestrateApp) handleCollectionAudit(w http.ResponseWriter, r *http.Re
 	}
 	total := len(docs)
 	if total == 0 {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{"report": "_This collection has no documents yet: nothing to audit._"})
-		return
+		return map[string]string{"report": "_This collection has no documents yet: nothing to audit._"}, nil
 	}
 	ordered := make([]*doc, 0, total)
 	for _, d := range docs {
@@ -595,8 +591,7 @@ func (T *OrchestrateApp) handleCollectionAudit(w http.ResponseWriter, r *http.Re
 		}
 		b.WriteString(strings.TrimSpace(verdict) + "\n\n")
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{"report": b.String()})
+	return map[string]string{"report": b.String()}, nil
 }
 
 // documentUploadBodyBytes is how large a document upload's request may be. The
@@ -670,7 +665,7 @@ func (T *OrchestrateApp) handleCollectionUpload(w http.ResponseWriter, r *http.R
 	})
 }
 
-// handleCollectionPaste adds pasted text to the collection as one document.
+// collectionPaste adds pasted text to the collection as one document.
 //
 //	POST /api/collections/{id}/paste  {title, text}
 //	→ {id, name, chunks, format, replaced}
@@ -678,33 +673,27 @@ func (T *OrchestrateApp) handleCollectionUpload(w http.ResponseWriter, r *http.R
 // The paste box is how a user puts their OWN material in — a runbook, a
 // meeting note, a config dump — without saving a file first. See
 // pasteIntoCollection for the format rule and the replace-by-title rule.
-func (T *OrchestrateApp) handleCollectionPaste(w http.ResponseWriter, r *http.Request, user string, c Collection) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
+func (T *OrchestrateApp) collectionPaste(call *jsonapi.Call, body struct {
+	Title string `json:"title"`
+	Text  string `json:"text"`
+}) (any, error) {
+	c, cerr := T.collectionAt(call, "paste")
+	if cerr != nil {
+		return nil, cerr
 	}
-	var body struct {
-		Title string `json:"title"`
-		Text  string `json:"text"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
-		return
-	}
+	r, user := call.R, call.User
 	res, err := pasteIntoCollection(r.Context(), T.collectionDB(c), c, body.Title, body.Text)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest(err.Error())
 	}
-	if udb, ok := requireUDB(w, r, T.DB); ok {
+	if udb := call.UDB; udb != nil {
 		if fresh, found := loadCollection(udb, user, c.ID); found {
 			saveCollection(udb, fresh) // bump Updated so the list reorders
 		}
 	}
 	Log("[orchestrate.collections] user=%q pasted %q (%s) into %q (%d chars → %d chunks, replaced=%v)",
 		user, res.Name, res.Format, c.Name, len(body.Text), res.Chunks, res.Replaced)
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(res)
+	return res, nil
 }
 
 // pasteResult is what a paste reports back, to the page and to the Builder
@@ -779,12 +768,12 @@ func slugForReportID(title string) string {
 	return s
 }
 
-// handleCollectionSources lists documents in the collection, grouped
+// collectionSources lists documents in the collection, grouped
 // by reportID. Same shape as handleAgentKnowledgeSources.
-func (T *OrchestrateApp) handleCollectionSources(w http.ResponseWriter, r *http.Request, c Collection) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
+func (T *OrchestrateApp) collectionSources(call *jsonapi.Call) (any, error) {
+	c, cerr := T.collectionAt(call, "sources")
+	if cerr != nil {
+		return nil, cerr
 	}
 	prefix := collectionSource(c.ID)
 	type group struct {
@@ -825,29 +814,27 @@ func (T *OrchestrateApp) handleCollectionSources(w http.ResponseWriter, r *http.
 		out = append(out, sourceOut{ID: g.id, Name: g.name, Chunks: g.chunks, Latest: g.latest})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Latest > out[j].Latest })
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"sources": out})
+	return map[string]any{"sources": out}, nil
 }
 
-// handleCollectionSourceDelete removes a single document's chunks.
-func (T *OrchestrateApp) handleCollectionSourceDelete(w http.ResponseWriter, r *http.Request, c Collection, reportID string) {
-	if r.Method != http.MethodDelete {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
+// collectionSourceDelete removes a single document's chunks.
+func (T *OrchestrateApp) collectionSourceDelete(call *jsonapi.Call, _ struct{}) (any, error) {
+	c, cerr := T.collectionAt(call, "sources/"+call.R.PathValue("doc"))
+	if cerr != nil {
+		return nil, cerr
 	}
+	reportID := call.R.PathValue("doc")
 	if reportID == "" {
-		http.Error(w, "reportID required", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("reportID required")
 	}
 	prefix := collectionSource(c.ID)
 	removed := DeleteChunksWhere(T.collectionDB(c), func(x EmbeddedChunk) bool {
 		return x.ReportID == reportID && strings.HasPrefix(x.Source, prefix)
 	})
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]int{"removed": removed})
+	return map[string]int{"removed": removed}, nil
 }
 
-// handleCollectionSearch is the Knowledge page's test search over one
+// collectionSearch is the Knowledge page's test search over one
 // collection: THE retrieval primitive (SearchCollections — hybrid vector +
 // keyword, per-document diversification, the relevance floor), so what a
 // user sees while verifying a collection is what an agent searching it
@@ -855,15 +842,15 @@ func (T *OrchestrateApp) handleCollectionSourceDelete(w http.ResponseWriter, r *
 // which showed the user a different result set from the one their agents
 // were working with. Hits carry the title, page locator and provenance
 // kind so the page can label them the way a tool reply does.
-func (T *OrchestrateApp) handleCollectionSearch(w http.ResponseWriter, r *http.Request, user string, c Collection) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
+func (T *OrchestrateApp) collectionSearch(call *jsonapi.Call) (any, error) {
+	c, cerr := T.collectionAt(call, "search")
+	if cerr != nil {
+		return nil, cerr
 	}
+	r, user := call.R, call.User
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	if q == "" {
-		http.Error(w, "q required", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("q required")
 	}
 	k := 6
 	if kStr := r.URL.Query().Get("k"); kStr != "" {
@@ -887,8 +874,7 @@ func (T *OrchestrateApp) handleCollectionSearch(w http.ResponseWriter, r *http.R
 		text = textutil.Clip(text, 600)
 		out = append(out, hitOut{Title: h.Title, Section: h.Section, DocID: h.ReportID, Locator: h.Locator, Kind: h.Kind, Text: text, Score: float64(h.Score)})
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"hits": out})
+	return map[string]any{"hits": out}, nil
 }
 
 // --- helpers --------------------------------------------------------------
@@ -1003,7 +989,7 @@ func queriesForMaxDocs(maxDocs int) int {
 	return n
 }
 
-// handleCollectionAutofill seeds the collection from the web. Generates
+// collectionAutofill seeds the collection from the web. Generates
 // a handful of search queries via worker LLM from the collection's
 // name + description (override with explicit queries in the body),
 // runs each against the registered web_search tool, fetches the top
@@ -1019,28 +1005,23 @@ func queriesForMaxDocs(maxDocs int) int {
 //	body (all optional):
 //	  {queries: []string, max_docs: int}
 //	→ {added, skipped, failed, queries_used, results}
-func (T *OrchestrateApp) handleCollectionAutofill(w http.ResponseWriter, r *http.Request, c Collection) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
+func (T *OrchestrateApp) collectionAutofill(call *jsonapi.Call, body struct {
+	Queries []string `json:"queries"`
+	MaxDocs int      `json:"max_docs"`
+}) (any, error) {
+	c, cerr := T.collectionAt(call, "autofill")
+	if cerr != nil {
+		return nil, cerr
 	}
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+	r := call.R
+	user, udb := call.User, call.UDB
 	_ = user
-	var body struct {
-		Queries []string `json:"queries"`
-		MaxDocs int      `json:"max_docs"`
-	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
 	if maxDocs := autofillMaxDocs(); body.MaxDocs <= 0 || body.MaxDocs > maxDocs {
 		body.MaxDocs = maxDocs
 	}
 
 	if !WebSearchAvailable() {
-		http.Error(w, "web search is not configured for this deployment", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("web search is not configured for this deployment")
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), autofillTimeout())
@@ -1057,8 +1038,7 @@ func (T *OrchestrateApp) handleCollectionAutofill(w http.ResponseWriter, r *http
 		queries = generateAutofillQueries(ctx, T, c, wanted)
 	}
 	if len(queries) == 0 {
-		http.Error(w, "could not derive search queries: try filling in the collection description, or pass queries explicitly", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("could not derive search queries: try filling in the collection description, or pass queries explicitly")
 	}
 	if len(queries) > wanted {
 		queries = queries[:wanted]
@@ -1250,17 +1230,16 @@ func (T *OrchestrateApp) handleCollectionAutofill(w http.ResponseWriter, r *http
 
 	Log("[orchestrate.autofill] collection=%s queries=%d added=%d failed=%d (max=%d)",
 		c.ID, len(queries), added, failed, body.MaxDocs)
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	return map[string]any{
 		"added":        added,
 		"skipped":      skipped,
 		"failed":       failed,
 		"queries_used": queries,
 		"results":      results,
-	})
+	}, nil
 }
 
-// handleCollectionSuggestDescription drafts a description for the
+// collectionSuggestDescription drafts a description for the
 // collection using the worker LLM. Optionally takes a skill_id —
 // when provided, the skill's instructions get prepended to the system
 // prompt so the draft reads like that domain's expert wrote it
@@ -1270,21 +1249,20 @@ func (T *OrchestrateApp) handleCollectionAutofill(w http.ResponseWriter, r *http
 //	POST /api/collections/{id}/suggest-description
 //	body (optional): {skill_id: "..."}
 //	→ {description: "..."}
-func (T *OrchestrateApp) handleCollectionSuggestDescription(w http.ResponseWriter, r *http.Request, udb Database, user string, c Collection) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
+func (T *OrchestrateApp) collectionSuggestDescription(call *jsonapi.Call, body struct {
+	// Mode picks the expertise source:
+	//   ""         → default (treat as "attached")
+	//   "attached" → union every skill currently attached to this collection
+	//   "none"     → vanilla worker LLM, no expertise primer
+	//   "skill"    → single named skill, identified by SkillID
+	Mode    string `json:"mode"`
+	SkillID string `json:"skill_id"`
+}) (any, error) {
+	c, cerr := T.collectionAt(call, "suggest-description")
+	if cerr != nil {
+		return nil, cerr
 	}
-	var body struct {
-		// Mode picks the expertise source:
-		//   ""         → default (treat as "attached")
-		//   "attached" → union every skill currently attached to this collection
-		//   "none"     → vanilla worker LLM, no expertise primer
-		//   "skill"    → single named skill, identified by SkillID
-		Mode    string `json:"mode"`
-		SkillID string `json:"skill_id"`
-	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	r, user, udb := call.R, call.User, call.UDB
 	body.SkillID = strings.TrimSpace(body.SkillID)
 	if body.Mode == "" {
 		body.Mode = "attached"
@@ -1359,19 +1337,16 @@ Bias toward CONCRETE nouns and named sources: "Official Kubernetes API reference
 		WithSystemPrompt(sys), WithMaxTokens(200),
 	)
 	if err != nil || resp == nil {
-		http.Error(w, "worker LLM unavailable: "+errStr(err), http.StatusServiceUnavailable)
-		return
+		return nil, jsonapi.Status(http.StatusServiceUnavailable, "worker LLM unavailable: "+errStr(err))
 	}
 	out := strings.TrimSpace(resp.Content)
 	// Strip leading/trailing quote marks that some models add despite
 	// the prompt's "no quotes" instruction.
 	out = strings.Trim(out, "\"'")
 	if out == "" {
-		http.Error(w, "model returned empty description", http.StatusBadGateway)
-		return
+		return nil, jsonapi.Status(http.StatusBadGateway, "model returned empty description")
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{"description": out})
+	return map[string]string{"description": out}, nil
 }
 
 func errStr(err error) string {

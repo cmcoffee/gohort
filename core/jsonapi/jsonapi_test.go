@@ -276,3 +276,17 @@ func TestInternalOKAdmitsTheInstancesOwnCall(t *testing.T) {
 		t.Errorf("an internal call without InternalOK answered %d, want 401", w.Code)
 	}
 }
+
+// A raw route refuses the way a JSON one does.
+func TestFailAnswersAsAHandlerWould(t *testing.T) {
+	w := httptest.NewRecorder()
+	Fail(w, httptest.NewRequest("GET", "/x", nil), Forbidden("not yours"))
+	if w.Code != 403 || !strings.Contains(w.Body.String(), "not yours") {
+		t.Errorf("an Error: %d %q", w.Code, w.Body.String())
+	}
+	w = httptest.NewRecorder()
+	Fail(w, httptest.NewRequest("GET", "/x", nil), errors.New("disk at /secret is full"))
+	if w.Code != 500 || strings.Contains(w.Body.String(), "secret") {
+		t.Errorf("a plain error: %d %q", w.Code, w.Body.String())
+	}
+}

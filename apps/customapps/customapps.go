@@ -188,7 +188,7 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 	// sandboxed scripts run as.
 	spec, ownerUser, err := T.openApp(r, user, slug)
 	if err != nil {
-		writeRefusal(w, err)
+		jsonapi.Fail(w, r, err)
 		return
 	}
 	// appdb is the app's record store for THIS user: a dedicated per-app file when

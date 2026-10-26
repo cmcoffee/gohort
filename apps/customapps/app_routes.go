@@ -5,7 +5,6 @@ package customapps
 // they may reach it, and it is enabled.
 
 import (
-	"errors"
 	"net/http"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -119,14 +118,4 @@ func (T *CustomApps) appRoutes() {
 		"DELETE": appDelete(T, T.deleteRecord),
 	}.Serve)
 	T.HandleFunc("/{slug}/changes", jsonapi.Methods{"GET": T.appGet(T.changes)}.Serve)
-}
-
-// writeRefusal answers a raw route with one of openApp's refusals.
-func writeRefusal(w http.ResponseWriter, err error) {
-	var e *jsonapi.Error
-	if errors.As(err, &e) {
-		http.Error(w, e.Msg, e.Code)
-		return
-	}
-	http.Error(w, "internal error", http.StatusInternalServerError)
 }

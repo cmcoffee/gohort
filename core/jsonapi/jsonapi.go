@@ -255,13 +255,7 @@ func start(w http.ResponseWriter, r *http.Request, base core.Database, cfg confi
 // person returns it as an Error.
 func finish[Out any](w http.ResponseWriter, r *http.Request, out Out, err error) {
 	if err != nil {
-		var e *Error
-		if errors.As(err, &e) {
-			http.Error(w, e.Msg, e.Code)
-			return
-		}
-		core.Err("[jsonapi] %s %s: %v", r.Method, r.URL.Path, err)
-		http.Error(w, "something went wrong on the server; the details are in its log", http.StatusInternalServerError)
+		Fail(w, r, err)
 		return
 	}
 	if code, ok := any(out).(emptyReply); ok {
@@ -269,4 +263,18 @@ func finish[Out any](w http.ResponseWriter, r *http.Request, out Out, err error)
 		return
 	}
 	Write(w, out)
+}
+
+// Fail answers err the way a handler here would: an Error with its own status
+// and message, anything else logged and answered with a 500 that names
+// nothing. For a raw route (a download, an upload, a stream) that shares a
+// check with the JSON ones and has to refuse the same way.
+func Fail(w http.ResponseWriter, r *http.Request, err error) {
+	var e *Error
+	if errors.As(err, &e) {
+		http.Error(w, e.Msg, e.Code)
+		return
+	}
+	core.Err("[jsonapi] %s %s: %v", r.Method, r.URL.Path, err)
+	http.Error(w, "something went wrong on the server; the details are in its log", http.StatusInternalServerError)
 }
