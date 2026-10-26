@@ -18,13 +18,13 @@ import (
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
-// twoUsers points AuthDB at a store holding craig and dana.
+// twoUsers points AuthDB at a store holding alice and bob.
 func twoUsers(t *testing.T) Database {
 	t.Helper()
 	prev := AuthDB
 	db := &DBase{Store: kvlite.MemStore()}
-	AuthSetUser(db, "craig", "pw", false)
-	AuthSetUser(db, "dana", "pw", false)
+	AuthSetUser(db, "alice", "pw", false)
+	AuthSetUser(db, "bob", "pw", false)
 	AuthDB = func() Database { return db }
 	t.Cleanup(func() { AuthDB = prev })
 	return db
@@ -45,6 +45,14 @@ func as(t *testing.T, method, target, username, body string) *http.Request {
 	return r
 }
 
+// routed is the app's real routes, under its sub-mux.
+func routed(T *HelloAgent) http.HandlerFunc {
+	mux := http.NewServeMux()
+	T.SetWebMux(mux, "")
+	T.Routes()
+	return mux.ServeHTTP
+}
+
 // freshStore swaps in an empty store so tests do not see each other's state.
 func freshStore(t *testing.T) {
 	t.Helper()
@@ -60,21 +68,22 @@ func TestEveryAPIHandlerRequiresAUser(t *testing.T) {
 	T := &HelloAgent{}
 
 	cases := []struct {
-		name    string
-		method  string
-		target  string
-		handler http.HandlerFunc
+		name   string
+		method string
+		target string
 	}{
-		{"sessions", http.MethodGet, "/api/agent/sessions", T.handleAgentSessions},
-		{"session", http.MethodGet, "/api/agent/sessions/s-1", T.handleAgentSession},
-		{"send", http.MethodPost, "/api/agent/send", T.handleAgentSend},
-		{"confirm", http.MethodPost, "/api/agent/confirm", T.handleAgentConfirm},
-		{"cancel", http.MethodPost, "/api/agent/cancel", T.handleAgentCancel},
-		{"echo", http.MethodPost, "/api/echo", T.handleEcho},
+		{"sessions", http.MethodGet, "/api/agent/sessions"},
+		{"session", http.MethodGet, "/api/agent/sessions/s-1"},
+		{"session delete", http.MethodDelete, "/api/agent/sessions/s-1"},
+		{"send", http.MethodPost, "/api/agent/send"},
+		{"confirm", http.MethodPost, "/api/agent/confirm"},
+		{"cancel", http.MethodPost, "/api/agent/cancel"},
+		{"echo", http.MethodPost, "/api/echo"},
 	}
+	h := routed(T)
 	for _, c := range cases {
 		w := httptest.NewRecorder()
-		c.handler(w, httptest.NewRequest(c.method, c.target, strings.NewReader("{}")))
+		h(w, httptest.NewRequest(c.method, c.target, strings.NewReader("{}")))
 		if w.Code != http.StatusUnauthorized {
 			t.Errorf("%s: anonymous request got %d, want 401", c.name, w.Code)
 		}
@@ -84,47 +93,47 @@ func TestEveryAPIHandlerRequiresAUser(t *testing.T) {
 func TestSessionListIsPerUser(t *testing.T) {
 	twoUsers(t)
 	freshStore(t)
-	demoSessions.GetOrCreate("craig", "s-craig")
-	demoSessions.GetOrCreate("dana", "s-dana")
+	demoSessions.GetOrCreate("alice", "s-alice")
+	demoSessions.GetOrCreate("bob", "s-bob")
 	T := &HelloAgent{}
 
 	w := httptest.NewRecorder()
-	T.handleAgentSessions(w, as(t, http.MethodGet, "/api/agent/sessions", "dana", ""))
+	routed(T)(w, as(t, http.MethodGet, "/api/agent/sessions", "bob", ""))
 	body := w.Body.String()
-	if strings.Contains(body, "s-craig") {
-		t.Errorf("dana saw craig's session: %s", body)
+	if strings.Contains(body, "s-alice") {
+		t.Errorf("bob saw alice's session: %s", body)
 	}
-	if !strings.Contains(body, "s-dana") {
-		t.Errorf("dana did not see her own session: %s", body)
+	if !strings.Contains(body, "s-bob") {
+		t.Errorf("bob did not see their own session: %s", body)
 	}
 }
 
 func TestCannotLoadOrDeleteAnotherUsersSession(t *testing.T) {
 	twoUsers(t)
 	freshStore(t)
-	demoSessions.GetOrCreate("craig", "s-craig")
+	demoSessions.GetOrCreate("alice", "s-alice")
 	T := &HelloAgent{}
 
 	w := httptest.NewRecorder()
-	T.handleAgentSession(w, as(t, http.MethodGet, "/api/agent/sessions/s-craig", "dana", ""))
+	routed(T)(w, as(t, http.MethodGet, "/api/agent/sessions/s-alice", "bob", ""))
 	if w.Code != http.StatusNotFound {
-		t.Errorf("dana read craig's session (%d)", w.Code)
+		t.Errorf("bob read alice's session (%d)", w.Code)
 	}
 
 	w = httptest.NewRecorder()
-	T.handleAgentSession(w, as(t, http.MethodDelete, "/api/agent/sessions/s-craig", "dana", ""))
+	routed(T)(w, as(t, http.MethodDelete, "/api/agent/sessions/s-alice", "bob", ""))
 	if w.Code != http.StatusNotFound {
-		t.Errorf("dana's delete of craig's session got %d, want 404", w.Code)
+		t.Errorf("bob's delete of alice's session got %d, want 404", w.Code)
 	}
-	if _, ok := demoSessions.Get("craig", "s-craig"); !ok {
-		t.Fatal("dana deleted craig's session")
+	if _, ok := demoSessions.Get("alice", "s-alice"); !ok {
+		t.Fatal("bob deleted alice's session")
 	}
 
 	// The owner still reaches their own.
 	w = httptest.NewRecorder()
-	T.handleAgentSession(w, as(t, http.MethodGet, "/api/agent/sessions/s-craig", "craig", ""))
+	routed(T)(w, as(t, http.MethodGet, "/api/agent/sessions/s-alice", "alice", ""))
 	if w.Code != http.StatusOK {
-		t.Errorf("craig could not read his own session (%d)", w.Code)
+		t.Errorf("alice could not read their own session (%d)", w.Code)
 	}
 }
 
@@ -132,47 +141,47 @@ func TestSendWithAnotherUsersSessionIDStartsAFreshOne(t *testing.T) {
 	// Not an error, just not a way in: the id lands under the caller.
 	twoUsers(t)
 	freshStore(t)
-	craigs := demoSessions.GetOrCreate("craig", "s-craig")
-	craigs.Messages = append(craigs.Messages, demoMessage{Role: "user", Content: "private"})
+	alices := demoSessions.GetOrCreate("alice", "s-alice")
+	alices.Messages = append(alices.Messages, demoMessage{Role: "user", Content: "private"})
 
-	danas := demoSessions.GetOrCreate("dana", "s-craig")
-	if danas == craigs {
-		t.Fatal("dana reached craig's session by reusing its id")
+	bobs := demoSessions.GetOrCreate("bob", "s-alice")
+	if bobs == alices {
+		t.Fatal("bob reached alice's session by reusing its id")
 	}
-	if len(danas.Messages) != 0 {
-		t.Error("dana's new session inherited craig's messages")
+	if len(bobs.Messages) != 0 {
+		t.Error("bob's new session inherited alice's messages")
 	}
-	if got, _ := demoSessions.Get("craig", "s-craig"); len(got.Messages) != 1 {
-		t.Error("craig's session was overwritten")
+	if got, _ := demoSessions.Get("alice", "s-alice"); len(got.Messages) != 1 {
+		t.Error("alice's session was overwritten")
 	}
 }
 
 func TestConfirmOnlyAnswersYourOwnSession(t *testing.T) {
 	twoUsers(t)
 	freshStore(t)
-	craigs := demoSessions.GetOrCreate("craig", "s-craig")
+	alices := demoSessions.GetOrCreate("alice", "s-alice")
 	ch := make(chan string, 1)
-	craigs.confirmCh = ch
+	alices.confirmCh = ch
 	T := &HelloAgent{}
 
 	w := httptest.NewRecorder()
-	T.handleAgentConfirm(w, as(t, http.MethodPost, "/api/agent/confirm", "dana",
+	routed(T)(w, as(t, http.MethodPost, "/api/agent/confirm", "bob",
 		`{"id":"c-1","value":"allow"}`))
 	if w.Code != http.StatusConflict {
-		t.Fatalf("dana's answer got %d, want 409", w.Code)
+		t.Fatalf("bob's answer got %d, want 409", w.Code)
 	}
 	select {
 	case v := <-ch:
-		t.Fatalf("dana answered craig's confirm prompt (%q)", v)
+		t.Fatalf("bob answered alice's confirm prompt (%q)", v)
 	default:
 	}
 
 	// The owner's answer lands.
 	w = httptest.NewRecorder()
-	T.handleAgentConfirm(w, as(t, http.MethodPost, "/api/agent/confirm", "craig",
+	routed(T)(w, as(t, http.MethodPost, "/api/agent/confirm", "alice",
 		`{"id":"c-1","value":"allow"}`))
 	if w.Code != http.StatusNoContent {
-		t.Fatalf("craig's own answer got %d", w.Code)
+		t.Fatalf("alice's own answer got %d", w.Code)
 	}
 	select {
 	case v := <-ch:
@@ -180,7 +189,7 @@ func TestConfirmOnlyAnswersYourOwnSession(t *testing.T) {
 			t.Errorf("wrong value delivered: %q", v)
 		}
 	default:
-		t.Error("craig's answer never reached his session")
+		t.Error("alice's answer never reached their session")
 	}
 }
 
@@ -190,18 +199,37 @@ func TestStoreMethodsAllTakeAUser(t *testing.T) {
 	// fails to compile rather than serving everyone's data to everyone. If
 	// this ever stops being true, the scaffold is teaching the old shape again.
 	freshStore(t)
-	demoSessions.GetOrCreate("craig", "s-1")
+	demoSessions.GetOrCreate("alice", "s-1")
 
-	if got := demoSessions.List("dana"); len(got) != 0 {
+	if got := demoSessions.List("bob"); len(got) != 0 {
 		t.Errorf("List is not user-scoped: %v", got)
 	}
-	if _, ok := demoSessions.Get("dana", "s-1"); ok {
+	if _, ok := demoSessions.Get("bob", "s-1"); ok {
 		t.Error("Get is not user-scoped")
 	}
-	if demoSessions.Delete("dana", "s-1") {
+	if demoSessions.Delete("bob", "s-1") {
 		t.Error("Delete is not user-scoped")
 	}
-	if demoSessions.AnswerConfirm("dana", "allow") {
+	if demoSessions.AnswerConfirm("bob", "allow") {
 		t.Error("AnswerConfirm is not user-scoped")
+	}
+}
+
+// The echo endpoint answers with the name it was sent, or the world when it
+// was sent none, and refuses a method it does not take.
+func TestEchoAnswersWithTheName(t *testing.T) {
+	twoUsers(t)
+	h := routed(&HelloAgent{})
+	for body, want := range map[string]string{`{"name":"Alex"}`: `{"message":"hello, Alex"}`, `{}`: `{"message":"hello, world"}`} {
+		w := httptest.NewRecorder()
+		h(w, as(t, http.MethodPost, "/api/echo", "alice", body))
+		if w.Code != http.StatusOK || strings.TrimSpace(w.Body.String()) != want {
+			t.Errorf("echo %s: %d %s", body, w.Code, w.Body.String())
+		}
+	}
+	w := httptest.NewRecorder()
+	h(w, as(t, http.MethodGet, "/api/echo", "alice", ""))
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("a GET to echo answered %d, want 405", w.Code)
 	}
 }

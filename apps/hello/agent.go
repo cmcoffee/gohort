@@ -22,6 +22,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/textutil"
 	"github.com/cmcoffee/gohort/core/ui"
 )
@@ -160,11 +161,15 @@ func (d *demoStore) AnswerConfirm(user, value string) bool {
 func registerAgentRoutes(T *HelloAgent) {
 	T.HandleFunc("/agent", T.handleAgentPage)
 	T.HandleFunc("/agent/", T.handleAgentPage)
-	T.HandleFunc("/api/agent/sessions", T.handleAgentSessions)
-	T.HandleFunc("/api/agent/sessions/", T.handleAgentSession)
+	T.HandleFunc("/api/agent/sessions", jsonapi.Get(T.DB, T.handleAgentSessions))
+	T.HandleFunc("/api/agent/sessions/{id}", jsonapi.Methods{
+		"GET":    jsonapi.Get(T.DB, T.handleAgentSession),
+		"DELETE": jsonapi.Post(T.DB, T.handleAgentSessionDelete),
+	}.Serve)
+	// A stream is not JSON: the send handler resolves the caller itself.
 	T.HandleFunc("/api/agent/send", T.handleAgentSend)
-	T.HandleFunc("/api/agent/confirm", T.handleAgentConfirm)
-	T.HandleFunc("/api/agent/cancel", T.handleAgentCancel)
+	T.HandleFunc("/api/agent/confirm", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleAgentConfirm)}.Serve)
+	T.HandleFunc("/api/agent/cancel", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleAgentCancel)}.Serve)
 }
 
 func (T *HelloAgent) handleAgentPage(w http.ResponseWriter, r *http.Request) {
@@ -209,47 +214,30 @@ func (T *HelloAgent) handleAgentPage(w http.ResponseWriter, r *http.Request) {
 
 // --- session list / load / delete -------------------------------------------
 
-// Every handler below opens the same way: resolve the caller, then use that
-// identity as the KEY into the store, not merely as a gate in front of it.
-// Authenticating and then ignoring who it was is the mistake worth naming,
-// because it looks like a check and is not one.
-func (T *HelloAgent) handleAgentSessions(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(demoSessions.List(user))
+// jsonapi resolves the caller before each handler below runs. What matters is
+// what the handler does with it: c.User is the KEY into the store, not merely
+// a gate in front of it. Authenticating and then ignoring who it was is the
+// mistake worth naming, because it looks like a check and is not one.
+func (T *HelloAgent) handleAgentSessions(c *jsonapi.Call) (any, error) {
+	return demoSessions.List(c.User), nil
 }
 
-func (T *HelloAgent) handleAgentSession(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	id := strings.TrimPrefix(r.URL.Path, "/api/agent/sessions/")
-	if id == "" {
-		http.NotFound(w, r)
-		return
-	}
-	if r.Method == http.MethodDelete {
-		if !demoSessions.Delete(user, id) {
-			http.NotFound(w, r)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	s, found := demoSessions.Get(user, id)
+func (T *HelloAgent) handleAgentSession(c *jsonapi.Call) (any, error) {
+	s, found := demoSessions.Get(c.User, c.R.PathValue("id"))
 	if !found {
 		// 404 for "not yours" as well as "no such thing": the two are the
 		// same answer from outside, and distinguishing them would confirm
 		// that somebody else's session exists.
-		http.NotFound(w, r)
-		return
+		return nil, jsonapi.NotFound("no such session")
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(s)
+	return s, nil
+}
+
+func (T *HelloAgent) handleAgentSessionDelete(c *jsonapi.Call, _ struct{}) (any, error) {
+	if !demoSessions.Delete(c.User, c.R.PathValue("id")) {
+		return nil, jsonapi.NotFound("no such session")
+	}
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // --- demo tools --------------------------------------------------------------
@@ -468,45 +456,29 @@ func (T *HelloAgent) handleAgentSend(w http.ResponseWriter, r *http.Request) {
 
 // handleAgentConfirm receives the operator's choice from the
 // confirm card and unblocks the in-flight send.
-func (T *HelloAgent) handleAgentConfirm(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	var body struct {
-		ID    string `json:"id"`
-		Value string `json:"value"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
+func (T *HelloAgent) handleAgentConfirm(c *jsonapi.Call, body struct {
+	ID    string `json:"id"`
+	Value string `json:"value"`
+}) (any, error) {
 	// Routed within the CALLER'S OWN sessions. The confirm card's id is
 	// generated per prompt and does not name a session, so this picks one
 	// rather than addressing it — which is only safe once the candidates are
 	// limited to the person answering. A production app with several prompts
 	// in flight at once should carry the session id in the confirm event and
 	// address it directly.
-	if !demoSessions.AnswerConfirm(user, body.Value) {
-		http.Error(w, "no pending confirmation on any of your sessions", http.StatusConflict)
-		return
+	if !demoSessions.AnswerConfirm(c.User, body.Value) {
+		return nil, jsonapi.Status(http.StatusConflict, "no pending confirmation on any of your sessions")
 	}
-	w.WriteHeader(http.StatusNoContent)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // handleAgentCancel — minimal: just ack. The send handler honors
 // r.Context() cancellation; closing the SSE stream via the
 // AbortController on the client side closes that context.
-func (T *HelloAgent) handleAgentCancel(w http.ResponseWriter, r *http.Request) {
-	// Requires a user even though it does nothing. An endpoint that skips the
-	// check because it happens to be harmless today is one nobody re-examines
-	// when it stops being harmless.
-	if _, _, ok := RequireUser(w, r, T.DB); !ok {
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
+//
+// Behind jsonapi like the rest, so it requires a user even though it does
+// nothing. An endpoint that skips the check because it happens to be harmless
+// today is one nobody re-examines when it stops being harmless.
+func (T *HelloAgent) handleAgentCancel(c *jsonapi.Call, _ struct{}) (any, error) {
+	return jsonapi.Empty(http.StatusNoContent), nil
 }

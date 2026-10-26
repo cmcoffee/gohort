@@ -22,10 +22,10 @@
 package hello
 
 import (
-	"encoding/json"
 	"net/http"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -72,7 +72,11 @@ func (T *HelloAgent) Routes() {
 		}
 		T.handlePage(w, r)
 	})
-	T.HandleFunc("/api/echo", T.handleEcho)
+	// A JSON endpoint is a jsonapi handler: it gets the caller already
+	// resolved (c.User, c.UDB), its body already decoded, and returns what to
+	// send. A signed-out request, a wrong method and a broken body are
+	// answered before it runs.
+	T.HandleFunc("/api/echo", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleEcho)}.Serve)
 	T.HandleFunc("/chart", T.handleChartPage)
 	registerAgentRoutes(T)
 }
@@ -150,32 +154,13 @@ const helloGreetJS = `function(ctx){
 
 // --- endpoint ----------------------------------------------------------------
 
-func (T *HelloAgent) handleEcho(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	// Even an endpoint that only echoes resolves the caller first. This file is
-	// the scaffold, so the shape it shows is the shape that gets copied — and
-	// "it does not return anything sensitive" is a judgement about today's
-	// handler, not a property of the route.
-	if _, _, ok := RequireUser(w, r, T.DB); !ok {
-		return
-	}
-	var body struct {
-		Name string `json:"name"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
+func (T *HelloAgent) handleEcho(c *jsonapi.Call, body struct {
+	Name string `json:"name"`
+}) (any, error) {
 	if body.Name == "" {
 		body.Name = "world"
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"message": "hello, " + body.Name,
-	})
+	return map[string]string{"message": "hello, " + body.Name}, nil
 }
 
 // --- chart demo --------------------------------------------------------------

@@ -25,10 +25,10 @@ The framework handles routing, auth, sessions, SSE, LLM wiring, cost tracking, a
 package hello
 
 import (
-    "encoding/json"
     "net/http"
 
     . "github.com/cmcoffee/gohort/core"
+    "github.com/cmcoffee/gohort/core/jsonapi"
     "github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -63,7 +63,7 @@ func (T *HelloAgent) Routes() {
         }
         T.handlePage(w, r)
     })
-    T.HandleFunc("/api/echo", T.handleEcho)
+    T.HandleFunc("/api/echo", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleEcho)}.Serve)
 }
 
 func (T *HelloAgent) handlePage(w http.ResponseWriter, r *http.Request) {
@@ -92,23 +92,10 @@ func (T *HelloAgent) handlePage(w http.ResponseWriter, r *http.Request) {
     page.ServeHTTP(w, r)
 }
 
-func (T *HelloAgent) handleEcho(w http.ResponseWriter, r *http.Request) {
-    if r.Method != http.MethodPost {
-        http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-        return
-    }
-    if _, _, ok := RequireUser(w, r, T.DB); !ok {
-        return
-    }
-    var body struct{ Name string }
-    if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-        http.Error(w, err.Error(), http.StatusBadRequest)
-        return
-    }
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(map[string]string{
-        "message": "hello, " + body.Name,
-    })
+func (T *HelloAgent) handleEcho(c *jsonapi.Call, body struct {
+    Name string `json:"name"`
+}) (any, error) {
+    return map[string]string{"message": "hello, " + body.Name}, nil
 }
 ```
 
@@ -127,6 +114,7 @@ Run `gohort serve :8080`. The Hello page is live at `/hello/`.
 - The SimpleWebApp methods (`WebPath`/`WebName`/`WebDesc`/`Routes`) cover the dashboard. The framework creates a per-app sub-mux, calls `Routes()` against it, and mounts it at `prefix` with cost-tracking middleware: no explicit `NewWebUI`/`MountSubMux` plumbing.
 - `T.HandleFunc(pattern, handler)` registers against that pre-wired sub-mux. Patterns are relative to the prefix.
 - `ui.Page{...}.ServeHTTP(w, r)` renders the page from its declarative spec. You never write HTML in app code.
+- A JSON endpoint is a `core/jsonapi` handler. `jsonapi.Post` resolves the caller, refuses a signed-out request (401), decodes the body into the handler's second argument (a broken one is 400, one over 1 MiB is 413), and writes what the handler returns as JSON. `jsonapi.Methods` answers any other method with 405. The handler is only the part that is yours.
 - The form has no `Source` (read endpoint): it's a blank-state form. `PostURL` is the only write target. The field key is `Field` (not `Name`).
 
 If you need direct mux/prefix control (custom access wrappers, alternate mount semantics), implement the older `WebApp` interface with `RegisterRoutes(mux, prefix)` instead. SimpleWebApp is the default; WebApp is the escape hatch.
@@ -543,20 +531,30 @@ Every app gets a sub-mux scoped to its prefix (`/<app-name>/`). Inside `Routes()
 
 ### What the framework does NOT do: identify the caller
 
-The framework does not gate handlers behind `RequireUser`. `AuthMiddleware`
-answers *is this a logged-in user who may reach this app*: a question about the
-app, not about the request. **Every handler
-calls `RequireUser` itself**, and the answer is not a gate, it is a key:
+`AuthMiddleware` answers *is this a logged-in user who may reach this app*: a
+question about the app, not about the request. Who is asking is the handler's
+to resolve, and the answer is not a gate, it is a key.
+
+A JSON endpoint is a `core/jsonapi` handler, which resolves the caller before
+it runs: `c.User` is who is asking and `c.UDB` is their own store.
 
 ```go
-func (T *MyApp) handleRecord(w http.ResponseWriter, r *http.Request) {
+func (T *MyApp) handleRecord(c *jsonapi.Call) (any, error) {
+    rec, found := loadRecord(c.UDB, c.R.PathValue("id"))   // the caller's own store
+    if !found {
+        return nil, jsonapi.NotFound("no such record")   // "not yours" and "no such thing" get one answer
+    }
+    return rec, nil
+}
+```
+
+A handler that is not JSON (a page, a stream, a download) calls `RequireUser`
+itself, as the first thing it does:
+
+```go
+func (T *MyApp) handleSend(w http.ResponseWriter, r *http.Request) {
     user, udb, ok := RequireUser(w, r, T.DB)   // resolve the caller
     if !ok {
-        return
-    }
-    rec, found := loadRecord(udb, r.URL.Query().Get("id"))   // ...and USE them
-    if !found {
-        http.NotFound(w, r)   // "not yours" and "no such thing" get one answer
         return
     }
     // ...
@@ -567,23 +565,36 @@ The common mistake is resolving the caller and then looking the record up in a
 store that is not scoped to them. It looks like a check and serves every user's
 data to every user. If you take
 an id off a request (a session id, a record id, a run id), either load it from
-that user's own store (`udb`, which `RequireUser` hands you), or compare an
-owner field against `user` before you touch it. Answer 404 rather than 403 for
-someone else's id, so a probe cannot confirm it exists.
+that user's own store (`c.UDB`, or the `udb` `RequireUser` hands you), or
+compare an owner field against the user before you touch it. Answer 404 rather
+than 403 for someone else's id, so a probe cannot confirm it exists.
 
 `apps/hello/agent.go` is the worked example: `demoStore`'s methods all take a
 user, so a handler that forgets to resolve one does not compile.
 
-A typical `Routes()`:
+A typical `Routes()`, with a path pattern where an id is part of the URL:
 
 ```go
 func (T *MyApp) Routes() {
     T.HandleFunc("/", T.handlePage)
-    T.HandleFunc("/api/records", T.handleRecordsList)
-    T.HandleFunc("/api/records/", T.handleRecordSingle)
-    T.HandleFunc("/api/send", T.handleSend) // SSE pipeline
+    T.HandleFunc("/api/records", jsonapi.Methods{
+        "GET":  jsonapi.Get(T.DB, T.handleRecordsList),
+        "POST": jsonapi.Post(T.DB, T.handleRecordSave),
+    }.Serve)
+    T.HandleFunc("/api/records/{id}", jsonapi.Methods{
+        "GET":    jsonapi.Get(T.DB, T.handleRecord),
+        "DELETE": jsonapi.Post(T.DB, T.handleRecordDelete),
+    }.Serve)
+    T.HandleFunc("/api/send", T.handleSend) // SSE pipeline: not JSON, resolves the caller itself
 }
 ```
+
+A body the endpoint may go without is a pointer with `jsonapi.EmptyBodyOK`
+(nil when none was sent); one that takes no body at all is `struct{}`.
+`jsonapi.MaxBody(n)` raises or lowers the 1 MiB cap. Return
+`jsonapi.BadRequest`, `NotFound`, `Forbidden` or `Status(code, msg)` to refuse
+with a message the browser sees; any other error is logged and the browser is
+told only that something failed.
 
 An app on the `WebApp` escape hatch does the same in `RegisterRoutes(mux, prefix)`, building its sub-mux with `NewWebUI(T, prefix, AppUIAssets{})`.
 
