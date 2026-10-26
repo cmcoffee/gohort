@@ -244,7 +244,7 @@ func TestAgentSave_WholeRecordFormDoesNotClearTheMachine(t *testing.T) {
 	app, req, udb := authedApp(t)
 
 	w := httptest.NewRecorder()
-	app.handleAgentList(w, req(http.MethodPost, "/api/agents", map[string]any{
+	routed(app)(w, req(http.MethodPost, "/api/agents", map[string]any{
 		"name": "Wren", "orchestrator_prompt": "be helpful",
 	}))
 	if w.Code != http.StatusOK {
@@ -265,7 +265,7 @@ func TestAgentSave_WholeRecordFormDoesNotClearTheMachine(t *testing.T) {
 
 	// Now a whole-record save from the edit form, carrying no machine.
 	w = httptest.NewRecorder()
-	app.handleAgentList(w, req(http.MethodPost, "/api/agents", map[string]any{
+	routed(app)(w, req(http.MethodPost, "/api/agents", map[string]any{
 		"id": agent.ID, "name": "Wren", "orchestrator_prompt": "be helpful and brief",
 	}))
 	if w.Code != http.StatusOK {

@@ -57,7 +57,7 @@ func postGuardrails(t *testing.T, app *OrchestrateApp, agentID string) {
 		`"exceptions":[{"name":"confirmed","text":"the user has already confirmed"}]}`
 	r := httptest.NewRequest(http.MethodPost, "/api/agents/"+agentID+"/guardrails", bytes.NewBufferString(body))
 	w := httptest.NewRecorder()
-	app.handleAgentGuardrails(w, r, "u", agentID)
+	routed(app)(w, as(t, r, "u"))
 	if w.Code >= 300 {
 		t.Fatalf("POST guardrails returned %d: %s", w.Code, w.Body.String())
 	}
@@ -172,7 +172,7 @@ func TestModalSaveSequence(t *testing.T) {
 	r.Header.Set("Content-Type", "application/json")
 	r.AddCookie(cookie)
 	w := httptest.NewRecorder()
-	app.handleAgentList(w, r)
+	routed(app)(w, r)
 	if w.Code >= 300 {
 		t.Fatalf("whole-record POST returned %d: %s", w.Code, w.Body.String())
 	}
@@ -204,7 +204,7 @@ func TestModalSaveSequence(t *testing.T) {
 	r.Header.Set("Content-Type", "application/json")
 	r.AddCookie(cookie)
 	w = httptest.NewRecorder()
-	app.handleAgentList(w, r)
+	routed(app)(w, r)
 	if w.Code >= 300 {
 		t.Fatalf("second whole-record POST returned %d: %s", w.Code, w.Body.String())
 	}
@@ -230,7 +230,7 @@ func TestStalePageDoesNotWipeExceptions(t *testing.T) {
 	old := `{"guardrails":"never send money","hooks":["pre_output"],"declines":[]}`
 	r := httptest.NewRequest(http.MethodPost, "/api/agents/a1/guardrails", bytes.NewBufferString(old))
 	w := httptest.NewRecorder()
-	app.handleAgentGuardrails(w, r, "u", "a1")
+	routed(app)(w, as(t, r, "u"))
 	if w.Code >= 300 {
 		t.Fatalf("stale POST returned %d: %s", w.Code, w.Body.String())
 	}
@@ -246,7 +246,7 @@ func TestStalePageDoesNotWipeExceptions(t *testing.T) {
 	clear := `{"guardrails":"never send money","hooks":["pre_output"],"exceptions":[],"authorized":[]}`
 	r = httptest.NewRequest(http.MethodPost, "/api/agents/a1/guardrails", bytes.NewBufferString(clear))
 	w = httptest.NewRecorder()
-	app.handleAgentGuardrails(w, r, "u", "a1")
+	routed(app)(w, as(t, r, "u"))
 	got, _ = loadAgent(udb, "a1")
 	if len(got.GuardrailExceptions) != 0 || len(got.AuthorizedIdentities) != 0 {
 		t.Errorf("an explicit empty list must clear: %+v / %+v", got.GuardrailExceptions, got.AuthorizedIdentities)

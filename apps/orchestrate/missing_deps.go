@@ -20,7 +20,6 @@ package orchestrate
 // the runtime skips.
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"sort"
@@ -28,6 +27,7 @@ import (
 	"sync"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/shareledger"
 )
 
@@ -478,7 +478,7 @@ func agentDependents(kind, owner, id string, users []string) []shareledger.Depen
 // The editor: GET what is missing, POST to drop one reference
 // ----------------------------------------------------------------------
 
-// handleAgentMissing serves /api/agents/<id>/missing.
+// agentMissing serves GET /api/agents/<id>/missing, and agentMissingFix its POST.
 //
 // GET lists what the agent references and can no longer reach, with the last
 // known names, so the Tools, Skills and Knowledge modals can show a gone thing
@@ -486,66 +486,68 @@ func agentDependents(kind, owner, id string, users []string) []shareledger.Depen
 // one reference: from the agent's own list, and for a tool that was TAKEN and
 // no longer resolves, from the owner's adoption list too - that entry is what
 // every one of their agents was loading it through.
-func (T *OrchestrateApp) handleAgentMissing(w http.ResponseWriter, r *http.Request, user string, udb Database, id string) {
-	a, ok := loadAgent(udb, id)
-	if !ok || (a.Owner != "" && a.Owner != user && a.Owner != seedOwner) {
-		http.NotFound(w, r)
-		return
+func (T *OrchestrateApp) agentMissing(c *jsonapi.Call) (any, error) {
+	a, err := missingAgent(c)
+	if err != nil {
+		return nil, err
 	}
-	switch r.Method {
-	case http.MethodGet:
-		refs := agentMissingRefs(a, udb, user, nil, nil)
-		if refs == nil {
-			refs = []missingRef{}
+	refs := agentMissingRefs(a, c.UDB, c.User, nil, nil)
+	if refs == nil {
+		refs = []missingRef{}
+	}
+	for i := range refs {
+		if refs[i].Kind == "tool" {
+			_, err := RecreateLostTool(c.UDB, c.User, refs[i].ID, false)
+			refs[i].Recreatable = err == nil
 		}
-		for i := range refs {
-			if refs[i].Kind == "tool" {
-				_, err := RecreateLostTool(udb, user, refs[i].ID, false)
-				refs[i].Recreatable = err == nil
-			}
+	}
+	labels := map[string]string{}
+	for _, m := range refs {
+		labels[m.ID] = m.Name
+	}
+	return map[string]any{"items": refs, "labels": labels}, nil
+}
+
+// agentMissingFix drops one missing reference from the agent, or with
+// action=recreate takes a lost tool back as the caller's own.
+func (T *OrchestrateApp) agentMissingFix(c *jsonapi.Call, body struct {
+	Kind   string `json:"kind"`
+	ID     string `json:"id"`
+	Action string `json:"action"` // "" = remove the reference; "recreate" = take the tool back as one's own
+}) (any, error) {
+	a, err := missingAgent(c)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(body.ID) == "" {
+		return nil, jsonapi.BadRequest("kind and id are required")
+	}
+	if body.Action == "recreate" {
+		if strings.TrimSpace(body.Kind) != "tool" {
+			return nil, jsonapi.BadRequest("only a tool can be recreated")
 		}
-		labels := map[string]string{}
-		for _, m := range refs {
-			labels[m.ID] = m.Name
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"items": refs, "labels": labels})
-	case http.MethodPost:
-		var body struct {
-			Kind   string `json:"kind"`
-			ID     string `json:"id"`
-			Action string `json:"action"` // "" = remove the reference; "recreate" = take the tool back as one's own
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.ID) == "" {
-			http.Error(w, "kind and id are required", http.StatusBadRequest)
-			return
-		}
-		if body.Action == "recreate" {
-			if strings.TrimSpace(body.Kind) != "tool" {
-				http.Error(w, "only a tool can be recreated", http.StatusBadRequest)
-				return
-			}
-			// The agent keeps naming the tool; the user's own copy now answers
-			// to that name, so nothing on the agent changes.
-			def, err := RecreateLostTool(udb, user, strings.TrimSpace(body.ID), true)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusConflict)
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{"recreated": def.Name})
-			return
-		}
-		saved, err := dropAgentReference(udb, user, a, strings.TrimSpace(body.Kind), strings.TrimSpace(body.ID))
+		// The agent keeps naming the tool; the user's own copy now answers
+		// to that name, so nothing on the agent changes.
+		def, err := RecreateLostTool(c.UDB, c.User, strings.TrimSpace(body.ID), true)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+			return nil, jsonapi.Status(http.StatusConflict, err.Error())
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(saved)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return map[string]any{"recreated": def.Name}, nil
 	}
+	saved, err := dropAgentReference(c.UDB, c.User, a, strings.TrimSpace(body.Kind), strings.TrimSpace(body.ID))
+	if err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	return saved, nil
+}
+
+// missingAgent is the agent the path names, unless it is someone else's.
+func missingAgent(c *jsonapi.Call) (AgentRecord, error) {
+	a, ok := loadAgent(c.UDB, c.R.PathValue("id"))
+	if !ok || (a.Owner != "" && a.Owner != c.User && a.Owner != seedOwner) {
+		return AgentRecord{}, errNotFound
+	}
+	return a, nil
 }
 
 // dropAgentReference removes one reference from the agent and saves it.

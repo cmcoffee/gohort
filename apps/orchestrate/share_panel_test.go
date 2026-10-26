@@ -42,7 +42,7 @@ func TestMovingACredentialOffALendTakesItBack(t *testing.T) {
 		body, _ := json.Marshal(map[string]string{"name": "share_panel_wiki", "lend": lend})
 		r := httptest.NewRequest(http.MethodPost, "/api/agents/a1/reach/credential", strings.NewReader(string(body)))
 		w := httptest.NewRecorder()
-		app.handleAgentCredentialDecision(w, asUser(r, "alice"), "alice", "a1")
+		routed(app)(w, asUser(r, "alice"))
 		if w.Code != http.StatusOK {
 			t.Fatalf("lend=%s: %d %s", lend, w.Code, w.Body.String())
 		}
@@ -116,9 +116,9 @@ func TestLeavingOffReEnablesTheKey(t *testing.T) {
 	decide := func(lend string) {
 		t.Helper()
 		body, _ := json.Marshal(map[string]string{"name": "share_panel_off", "lend": lend})
-		r := httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(string(body)))
+		r := httptest.NewRequest(http.MethodPost, "/api/agents/a3/reach/credential", strings.NewReader(string(body)))
 		w := httptest.NewRecorder()
-		app.handleAgentCredentialDecision(w, asUser(r, "alice"), "alice", "a3")
+		routed(app)(w, asUser(r, "alice"))
 		if w.Code != http.StatusOK {
 			t.Fatalf("lend=%s: %d %s", lend, w.Code, w.Body.String())
 		}

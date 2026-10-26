@@ -1,14 +1,13 @@
 package orchestrate
 
 import (
-	"encoding/json"
 	"fmt"
-	"net/http"
 	"slices"
 	"sort"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // Moving an agent is a change of PLACE, not a copy: the record keeps its id,
@@ -230,37 +229,26 @@ func (m *agentMove) out() (AgentRecord, string, error) {
 	return saved, strings.Join(notes, " "), nil
 }
 
-// handleAgentMove is POST /api/agents/<id>/move {owned_by: "<parent id>" | ""},
-// and GET for the places the agent menu's Move offers.
-func (T *OrchestrateApp) handleAgentMove(w http.ResponseWriter, r *http.Request, user string, udb Database, id string) {
-	if r.Method == http.MethodGet {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(agentMoveChoices(udb, user, id))
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	var body struct {
-		OwnedBy string `json:"owned_by"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-	m, err := newAgentMove(udb, user, id, body.OwnedBy)
+// agentMoveOptions is GET /api/agents/<id>/move: the places the agent menu's
+// Move offers. POST {owned_by: "<parent id>" | ""} is agentMove.
+func (T *OrchestrateApp) agentMoveOptions(c *jsonapi.Call) (any, error) {
+	return agentMoveChoices(c.UDB, c.User, c.R.PathValue("id")), nil
+}
+
+// agentMove re-parents the agent under owned_by, after newAgentMove has
+// checked the destination.
+func (T *OrchestrateApp) agentMove(c *jsonapi.Call, body struct {
+	OwnedBy string `json:"owned_by"`
+}) (any, error) {
+	m, err := newAgentMove(c.UDB, c.User, c.R.PathValue("id"), body.OwnedBy)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest(err.Error())
 	}
 	saved, note, err := m.apply()
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest(err.Error())
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"id": saved.ID, "owned_by": saved.OwnedBy, "message": note})
+	return map[string]any{"id": saved.ID, "owned_by": saved.OwnedBy, "message": note}, nil
 }
 
 // moveChoice is one place the agent menu's Move offers.

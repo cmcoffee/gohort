@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -47,11 +48,11 @@ func TestAgentUsedByFindsAppsPipelinesAndMachines(t *testing.T) {
 
 // The delete confirmation names what stops working.
 func TestDeleteConfirmationNamesWhatBreaks(t *testing.T) {
-	udb, a := usedByFixture(t)
+	_, a := usedByFixture(t)
 	SaveAppSpec(AppSpec{Slug: "screener", Name: "Screener", Owner: "u", AgentID: a.ID})
-	app := &OrchestrateApp{}
+	app := &OrchestrateApp{AppCore: AppCore{DB: RootDB}}
 	w := httptest.NewRecorder()
-	app.handleAgentSchedules(w, udb, "u", a.ID)
+	routed(app)(w, as(t, httptest.NewRequest(http.MethodGet, "/api/agents/"+a.ID+"/schedules", nil), "u"))
 	if !strings.Contains(w.Body.String(), `"used_by":["Screener (app)"]`) {
 		t.Errorf("delete pre-check: %s", w.Body.String())
 	}

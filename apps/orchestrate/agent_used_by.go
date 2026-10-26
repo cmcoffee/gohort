@@ -14,7 +14,6 @@ package orchestrate
 // note that offers to delete an agent an app no longer uses.
 
 import (
-	"net/http"
 	"sort"
 	"strings"
 
@@ -94,23 +93,22 @@ func usedByKind(uses []agentUse, kind string) string {
 	return strings.Join(names, ", ")
 }
 
-// handleAgentUsedBy is GET /api/agents/<id>/used-by: {uses, apps, pipelines,
+// agentUses is GET /api/agents/<id>/used-by: {uses, apps, pipelines,
 // machines, text}, the agent page's Used by section.
-func (T *OrchestrateApp) handleAgentUsedBy(w http.ResponseWriter, udb Database, user, id string) {
-	a, ok := loadAgent(udb, id)
+func (T *OrchestrateApp) agentUses(c *jsonapi.Call) (any, error) {
+	a, ok := loadAgent(c.UDB, c.R.PathValue("id"))
 	if !ok {
-		http.Error(w, "agent not found", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("agent not found")
 	}
-	uses := agentUsedBy(udb, user, a)
+	uses := agentUsedBy(c.UDB, c.User, a)
 	if uses == nil {
 		uses = []agentUse{}
 	}
-	jsonapi.Write(w, map[string]any{
+	return map[string]any{
 		"uses":      uses,
 		"apps":      usedByKind(uses, "app"),
 		"pipelines": usedByKind(uses, "pipeline"),
 		"machines":  usedByKind(uses, "machine"),
 		"text":      agentUsesText(uses),
-	})
+	}, nil
 }

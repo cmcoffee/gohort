@@ -671,7 +671,7 @@ func (T *OrchestrateApp) registerHandlers() {
 	T.HandleFunc("/", T.handleRoot)
 	T.HandleFunc("/agent/", T.handleAgentPage)
 
-	T.HandleFunc("/api/agents", T.handleAgentList)
+	T.registerAgentRoutes()
 	// Candidate user list for the agent-page "Share with users" ACLPicker (peer
 	// sharing). Any authenticated user may share their own agent.
 	T.HandleFunc("/api/user-candidates", jsonapi.Get(T.DB, T.handleUserCandidates))
@@ -723,8 +723,6 @@ func (T *OrchestrateApp) registerHandlers() {
 	}.Serve)
 	// Per-session diagnostics trail (session_diag.go) — the ⚠ affordance.
 	T.HandleFunc("/api/session-diag", jsonapi.Get(T.DB, T.handleSessionDiag))
-	T.HandleFunc("/api/agents/", T.handleAgentOne)
-	T.registerMemoryRoutes()
 	// Collections are NOT admin-only, and were. A collection belongs to the
 	// user who made it, apps/knowledge is the surface ordinary people manage
 	// theirs from, and every one of these handlers already resolves by the

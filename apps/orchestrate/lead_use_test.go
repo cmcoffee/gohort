@@ -104,7 +104,7 @@ func TestTheLeadChoiceSavesThroughPATCH(t *testing.T) {
 		for _, choice := range []string{leadUsePlan, leadUseLead, leadUseReview, leadUseOff, leadUseReview, leadUsePlan} {
 			w := httptest.NewRecorder()
 			body := `{"id":"` + a.ID + `","lead_use":"` + choice + `"}`
-			T.patchAgent(w, httptest.NewRequest(http.MethodPatch, "/api/agents?id="+a.ID, strings.NewReader(body)), udb, user, a.ID)
+			routed(T)(w, as(t, httptest.NewRequest(http.MethodPatch, "/api/agents?id="+a.ID, strings.NewReader(body)), user))
 			if w.Code != http.StatusOK {
 				t.Fatalf("%s: lead_use=%s answered %d: %s", a.ID, choice, w.Code, w.Body.String())
 			}

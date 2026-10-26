@@ -90,7 +90,7 @@ func TestTheEditorAndBuilderSetACategory(t *testing.T) {
 	// The editor saves it by PATCH.
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPatch, "/api/agents?id=a-other", bytes.NewBufferString(`{"category":"Medical"}`))
-	app.patchAgent(w, r, udb, "alice", "")
+	routed(app)(w, as(t, r, "alice"))
 	if w.Code != http.StatusOK {
 		t.Fatalf("PATCH category: %d %s", w.Code, w.Body.String())
 	}

@@ -42,3 +42,18 @@ func withSession(r *http.Request, user string) *http.Request {
 	r.AddCookie(&http.Cookie{Name: "gohort_session", Value: AuthCreateSession(AuthDB(), user)})
 	return r
 }
+
+// as signs r in as user, for a test that calls a route rather than a
+// handler: against the AuthDB the test set up, or a fresh one when it set
+// none, with user added to it if it is not there.
+func as(t *testing.T, r *http.Request, user string) *http.Request {
+	t.Helper()
+	if AuthDB == nil || AuthDB() == nil {
+		signedUp(t)
+	}
+	var u AuthUser
+	if !AuthDB().Get(AuthTable, "user:"+user, &u) {
+		AuthSetUser(AuthDB(), user, "pw", false)
+	}
+	return withSession(r, user)
+}

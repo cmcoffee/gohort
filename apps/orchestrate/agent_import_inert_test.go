@@ -92,7 +92,7 @@ func TestAWholeRecordSaveCannotPublishAnAgent(t *testing.T) {
 		t.Helper()
 		body, _ := json.Marshal(rec)
 		w := httptest.NewRecorder()
-		T.handleAgentList(w, asUser(httptest.NewRequest(http.MethodPost, "/api/agents", bytes.NewReader(body)), user))
+		routed(T)(w, asUser(httptest.NewRequest(http.MethodPost, "/api/agents", bytes.NewReader(body)), user))
 		if w.Code != http.StatusOK {
 			t.Fatalf("save: %d %s", w.Code, w.Body.String())
 		}

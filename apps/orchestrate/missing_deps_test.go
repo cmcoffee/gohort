@@ -266,7 +266,7 @@ func TestToolsModalSaveKeepsADanglingToolName(t *testing.T) {
 	}
 	// Every catalog box unchecked: the modal posts the sentinel.
 	w := httptest.NewRecorder()
-	app.handleAgentList(w, req(http.MethodPost, "/api/agents?tools_modal=1", map[string]any{
+	routed(app)(w, req(http.MethodPost, "/api/agents?tools_modal=1", map[string]any{
 		"id": "agent-1", "owner": "alice", "name": "Helper", "orchestrator_prompt": "p", "allowed_tools": []string{"__none__"},
 	}))
 	if w.Code != http.StatusOK {

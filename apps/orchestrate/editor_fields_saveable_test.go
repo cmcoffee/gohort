@@ -150,7 +150,7 @@ func TestRunPrioritySavesThroughPatch(t *testing.T) {
 	}
 	send := func(body string) int {
 		w := httptest.NewRecorder()
-		T.patchAgent(w, httptest.NewRequest(http.MethodPatch, "/api/agents/a1", strings.NewReader(body)), udb, "alice", rec.ID)
+		routed(T)(w, as(t, httptest.NewRequest(http.MethodPatch, "/api/agents/a1", strings.NewReader(body)), "alice"))
 		return w.Code
 	}
 	if code := send(`{"run_priority":"lowest"}`); code != http.StatusOK {

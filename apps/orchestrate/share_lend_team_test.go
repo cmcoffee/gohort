@@ -44,7 +44,7 @@ func teamLendWorld(t *testing.T, cred string) (Database, func(agentID, lend stri
 		body, _ := json.Marshal(map[string]string{"name": cred, "lend": mode})
 		r := httptest.NewRequest(http.MethodPost, "/api/agents/"+agentID+"/reach/credential", strings.NewReader(string(body)))
 		w := httptest.NewRecorder()
-		app.handleAgentCredentialDecision(w, asUser(r, "alice"), "alice", agentID)
+		routed(app)(w, asUser(r, "alice"))
 		if w.Code != http.StatusOK {
 			t.Fatalf("lend %s on %s: %d %s", mode, agentID, w.Code, w.Body.String())
 		}

@@ -15,7 +15,7 @@ import (
 	"github.com/cmcoffee/gohort/core/textutil"
 )
 
-// handleAgentGuardrails is the DEDICATED owner-only surface for an agent's
+// agentGuardrails is the DEDICATED owner-only surface for an agent's
 // guardrails — the one path that may change them. GET returns the current
 // rules + hooks; POST replaces them. Kept separate from the whole-record
 // /api/agents POST (which PRESERVES these fields) so that no ordinary
@@ -25,267 +25,252 @@ import (
 //
 //	GET  /api/agents/{id}/guardrails → {guardrails, hooks: [...]}
 //	POST /api/agents/{id}/guardrails   {guardrails, hooks: [...]}
-func (T *OrchestrateApp) handleAgentGuardrails(w http.ResponseWriter, r *http.Request, user, agentID string) {
-	udb := UserDB(T.DB, user)
-	agent, ok := loadAgent(udb, agentID)
-	if !ok || (agent.Owner != user && agent.Owner != seedOwner) {
-		http.Error(w, "agent not found", http.StatusNotFound)
-		return
+func (T *OrchestrateApp) agentGuardrails(c *jsonapi.Call) (any, error) {
+	agent, err := T.ownedAgent(c)
+	if err != nil {
+		return nil, err
 	}
-	switch r.Method {
-	case http.MethodGet:
-		jsonapi.Write(w, map[string]any{
-			"guardrails":  agent.Guardrails,
-			"hooks":       agent.GuardrailHooks,
-			"fail_closed": agent.GuardrailFailClosed,
-			"declines":    agent.GuardrailDeclines,
-			"disabled":    agent.GuardrailsDisabled,
-			"recent":      listGuardrailBlocks(udb, agent.ID, 25),
-			// Tools this agent's rules took away, and which rule took each one.
-			// Listed because a withheld capability is otherwise indistinguishable
-			// from one that broke: the agent stops being able to do something and
-			// has no way to say why. Entries whose rule no longer exists are not
-			// applied (guardrailWithheldTools resolves against the rules in force)
-			// and are filtered out here too, so the list shows what is actually
-			// happening rather than what once did.
-			"tool_scopes": liveGuardrailToolScopes(udb, agent),
-			// The vocabulary a rule may be bound to (#tool). Resolved live
-			// against what this agent can actually call, never stored, for the
-			// same reason scan_covers is: a list written down at save time is
-			// wrong the day the agent's kit changes. It is also exactly what
-			// the save-time validator accepts, so the picker cannot offer a
-			// name the save will refuse.
-			"tool_choices": guardrailToolChoices(agent),
-			"authorized":   agent.AuthorizedIdentities,
-			"exceptions":   agent.GuardrailExceptions,
-			// Scan scope rides this endpoint because it is owner-only and
-			// protected the same way — NOT because it is a rule. It is not one:
-			// it needs no authored guardrail and "disabled" above does not
-			// suspend it. See docs/design/tool-result-scan.md.
-			"scan_tool_results": scansToolResults(agent),
-			"scan_tools_add":    agent.ScanToolsAdd,
-			"scan_tools_skip":   agent.ScanToolsSkip,
-			// Resolved live against the registered catalog, never stored: a
-			// list of covered tools written down at save time is wrong the day
-			// somebody adds a tool. Necessarily partial — see
-			// scanCoveredToolNames — which is why the modal words it as
-			// "including" rather than as the whole set.
-			"scan_covers": scanCoveredToolNames(agent),
-			// The network tools, exceptions included, so the modal can put a
-			// tool back on the scanned side when its exception is removed.
-			"scan_network":     scanNetworkToolNames(agent),
-			"scan_action":      scanActionOf(agent),
-			"scan_block_tools": agent.ScanBlockTools,
-			"scan_appealable":  agent.ScanAppealable,
-			// Sent as the POSITIVE, because that is what the control reads as.
-			// The record stores the suspend flag (see ScanTightenDisabled) so
-			// the zero value means on; the wire says what the box shows.
-			"scan_tighten":         !agent.ScanTightenDisabled,
-			"scan_trusted_sources": agent.ScanTrustedSources,
-		})
-	case http.MethodPost:
-		var body struct {
-			Guardrails string   `json:"guardrails"`
-			Hooks      []string `json:"hooks"`
-			FailClosed bool     `json:"fail_closed"`
-			Declines   []string `json:"declines"`
-			Disabled   bool     `json:"disabled"`
-			// POINTERS: absent means LEAVE UNCHANGED, empty array means CLEAR.
-			// A plain slice cannot tell those apart, so any client that does
-			// not know about these fields — a browser holding a cached copy of
-			// the page from before they existed — silently wiped them on every
-			// save. That is a data-destroying default for a field whose whole
-			// job is to be remembered, and it is indistinguishable from "it
-			// won't save" at the other end.
-			Authorized    *[]string             `json:"authorized"`
-			AuthorizedOff *[]string             `json:"authorized_off"`
-			Exceptions    *[]GuardrailException `json:"exceptions"`
-			// Same pointer rule, and the same reason — a client that predates
-			// these fields must not clear them. The pointer is WIRE-ONLY: the
-			// stored field is a plain bool, so this never meets the gob encoder
-			// that drops a *bool false.
-			Scan        *bool     `json:"scan_tool_results"`
-			ScanAdd     *[]string `json:"scan_tools_add"`
-			ScanSkip    *[]string `json:"scan_tools_skip"`
-			ScanAction  *string   `json:"scan_action"`
-			ScanBlock   *[]string `json:"scan_block_tools"`
-			ScanAppeal  *bool     `json:"scan_appealable"`
-			ScanTighten *bool     `json:"scan_tighten"`
-			ScanTrusted *[]string `json:"scan_trusted_sources"`
-			// Forget every recorded rule↔tool reading, so a tool withheld on a
-			// reading the owner disagrees with comes back. Not a setting: if the
-			// reading was right, the next block re-establishes it.
-			ClearToolScopes bool `json:"clear_tool_scopes"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		// Keep only recognized hook points — a stray value can't smuggle in.
-		var hooks []string
-		for _, h := range body.Hooks {
-			if validGuardHooks[strings.TrimSpace(h)] {
-				hooks = append(hooks, strings.TrimSpace(h))
-			}
-		}
-		if body.ClearToolScopes {
-			clearGuardrailToolScopes(udb, agent.ID)
-			Log("[orchestrate.guardrail] agent=%s rule/tool readings cleared by owner", agent.ID)
-		}
-		// Refused before anything is written. A rule bound to a tool this agent
-		// cannot call is judged nowhere, and storing it would leave a rule in
-		// the list that looks enforced and is not.
-		if err := validateGuardrailToolBindings(agent, body.Guardrails); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		agent.Guardrails = strings.TrimSpace(body.Guardrails)
-		agent.GuardrailHooks = hooks
-		agent.GuardrailFailClosed = body.FailClosed
-		agent.GuardrailDeclines = sanitizeDeclines(body.Declines)
-		agent.GuardrailsDisabled = body.Disabled
-		// The roster reaches the record ONLY here. Every other save path
-		// preserves it from the stored copy, so no agent-facing edit can add an
-		// identity to it — the same protection Guardrails itself has, and for
-		// the same reason: a roster the agent could write is a roster that
-		// exempts whoever talked it into an entry.
-		if body.Authorized != nil {
-			agent.AuthorizedIdentities = sanitizeAuthorizedIdentities(*body.Authorized)
-		}
-		if body.Exceptions != nil {
-			// Refused, not renamed. A rule links an exception by name, so two
-			// answering to one name means the link reaches whichever was stored
-			// first and the other looks just as live in the editor.
-			if dup := checkExceptionNames(*body.Exceptions); dup != "" {
-				http.Error(w, "Two exceptions are named \""+dup+"\". A rule links an exception by its name and can only reach one of them, so give each a name of its own.", http.StatusBadRequest)
-				return
-			}
-			agent.GuardrailExceptions = sanitizeGuardrailExceptions(*body.Exceptions)
-		}
-		if body.Scan != nil {
-			agent.ScanToolResults = *body.Scan
-		}
-		if body.ScanAdd != nil {
-			agent.ScanToolsAdd = sanitizeToolNameList(*body.ScanAdd)
-		}
-		if body.ScanSkip != nil {
-			agent.ScanToolsSkip = sanitizeToolNameList(*body.ScanSkip)
-		}
-		if body.ScanAction != nil {
-			// Normalized on the way IN, so an unrecognized value is rejected at
-			// the boundary rather than reinterpreted on every read. The reader
-			// still defaults defensively — a record written before this field
-			// existed has to mean something — but a client cannot store a value
-			// the reader has to guess about.
-			agent.ScanAction = normalizeScanAction(*body.ScanAction)
-		}
-		if body.ScanBlock != nil {
-			agent.ScanBlockTools = sanitizeToolNameList(*body.ScanBlock)
-		}
-		if body.ScanAppeal != nil {
-			agent.ScanAppealable = *body.ScanAppeal
-		}
-		if body.ScanTighten != nil {
-			// Inverted on the way in: the wire carries the box, the record
-			// carries the suspension, so an agent stored before this field
-			// existed reads as tightening ON.
-			agent.ScanTightenDisabled = !*body.ScanTighten
-		}
-		if body.ScanTrusted != nil {
-			agent.ScanTrustedSources = sanitizeScanSources(*body.ScanTrusted)
-		}
-		if _, err := saveAgent(udb, agent); err != nil {
-			http.Error(w, "save failed: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		// A newly-bound rule names its tool, so the "does this forbid the tool
-		// outright" question can be asked NOW instead of the first time the
-		// agent walks into it. Off the request — the owner does not wait on it,
-		// and nothing they can see is wrong until the next catalog is built.
-		T.scopeBoundGuardrailRules(r.Context(), udb, agent)
-		// Stated at Log level, not Debug: an agent carrying rules that are not being
-		// enforced is the kind of state an owner forgets they left behind.
-		if agent.GuardrailsDisabled {
-			// Count the agent's OWN lines, not guardrailRules: that now returns the
-			// deployment's globals for a suspended agent, and those ARE enforced.
-			// Reporting the combined figure as "not enforced" would say the exact
-			// opposite of what is true about half of it.
-			own := 0
-			for _, ln := range strings.Split(agent.Guardrails, "\n") {
-				if strings.TrimSpace(ln) != "" {
-					own++
-				}
-			}
-			if globals := len(prompts.EnabledGlobalRules()); own > 0 || globals > 0 {
-				Log("[orchestrate.guardrails] agent=%s guardrails SUSPENDED by owner: %d own rule(s) kept but NOT enforced; %d global rule(s) still apply", agentID, own, globals)
-			}
-		}
-		// Counts BOTH sides of each list — submitted and kept. A silent drop
-		// (an exception with no condition, a roster entry that could never
-		// match) is otherwise invisible to everyone: the owner sees a clean
-		// save and the thing they typed simply is not there afterwards.
-		Log("[orchestrate.guardrails] agent=%s guardrails updated (%d rule chars, hooks=%v, fail_closed=%v, disabled=%v, authorized=%d/%d kept, exceptions=%d/%d kept, tool_scan=%v +%d/-%d, action=%s, appealable=%v, tighten=%v, trusted=%d)",
-			agentID, len(agent.Guardrails), hooks, agent.GuardrailFailClosed, agent.GuardrailsDisabled,
-			len(agent.AuthorizedIdentities), lenOrNil(body.Authorized), len(agent.GuardrailExceptions), lenOrNil(body.Exceptions),
-			agent.ScanToolResults, len(agent.ScanToolsAdd), len(agent.ScanToolsSkip),
-			scanActionOf(agent), agent.ScanAppealable, scanTightens(agent), len(agent.ScanTrustedSources))
-		// Answer with what was actually STORED, not just "no content". The
-		// caller can then render the truth instead of its own optimistic copy —
-		// which is the difference between an entry the server declined to keep
-		// being visible immediately and it being reported days later as "it
-		// won't save".
-		jsonapi.Write(w, map[string]any{
-			"authorized": agent.AuthorizedIdentities,
-			"exceptions": agent.GuardrailExceptions,
-			"declines":   agent.GuardrailDeclines,
-		})
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
+	udb := c.UDB
+	return map[string]any{
+		"guardrails":  agent.Guardrails,
+		"hooks":       agent.GuardrailHooks,
+		"fail_closed": agent.GuardrailFailClosed,
+		"declines":    agent.GuardrailDeclines,
+		"disabled":    agent.GuardrailsDisabled,
+		"recent":      listGuardrailBlocks(udb, agent.ID, 25),
+		// Tools this agent's rules took away, and which rule took each one.
+		// Listed because a withheld capability is otherwise indistinguishable
+		// from one that broke: the agent stops being able to do something and
+		// has no way to say why. Entries whose rule no longer exists are not
+		// applied (guardrailWithheldTools resolves against the rules in force)
+		// and are filtered out here too, so the list shows what is actually
+		// happening rather than what once did.
+		"tool_scopes": liveGuardrailToolScopes(udb, agent),
+		// The vocabulary a rule may be bound to (#tool). Resolved live
+		// against what this agent can actually call, never stored, for the
+		// same reason scan_covers is: a list written down at save time is
+		// wrong the day the agent's kit changes. It is also exactly what
+		// the save-time validator accepts, so the picker cannot offer a
+		// name the save will refuse.
+		"tool_choices": guardrailToolChoices(agent),
+		"authorized":   agent.AuthorizedIdentities,
+		"exceptions":   agent.GuardrailExceptions,
+		// Scan scope rides this endpoint because it is owner-only and
+		// protected the same way — NOT because it is a rule. It is not one:
+		// it needs no authored guardrail and "disabled" above does not
+		// suspend it. See docs/design/tool-result-scan.md.
+		"scan_tool_results": scansToolResults(agent),
+		"scan_tools_add":    agent.ScanToolsAdd,
+		"scan_tools_skip":   agent.ScanToolsSkip,
+		// Resolved live against the registered catalog, never stored: a
+		// list of covered tools written down at save time is wrong the day
+		// somebody adds a tool. Necessarily partial — see
+		// scanCoveredToolNames — which is why the modal words it as
+		// "including" rather than as the whole set.
+		"scan_covers": scanCoveredToolNames(agent),
+		// The network tools, exceptions included, so the modal can put a
+		// tool back on the scanned side when its exception is removed.
+		"scan_network":     scanNetworkToolNames(agent),
+		"scan_action":      scanActionOf(agent),
+		"scan_block_tools": agent.ScanBlockTools,
+		"scan_appealable":  agent.ScanAppealable,
+		// Sent as the POSITIVE, because that is what the control reads as.
+		// The record stores the suspend flag (see ScanTightenDisabled) so
+		// the zero value means on; the wire says what the box shows.
+		"scan_tighten":         !agent.ScanTightenDisabled,
+		"scan_trusted_sources": agent.ScanTrustedSources,
+	}, nil
 }
 
-// handleAgentGuardrailTest is the owner-facing "feel it" seam: POST a
+// guardrailsBody is what the Rules modal saves.
+type guardrailsBody struct {
+	Guardrails string   `json:"guardrails"`
+	Hooks      []string `json:"hooks"`
+	FailClosed bool     `json:"fail_closed"`
+	Declines   []string `json:"declines"`
+	Disabled   bool     `json:"disabled"`
+	// POINTERS: absent means LEAVE UNCHANGED, empty array means CLEAR.
+	// A plain slice cannot tell those apart, so any client that does
+	// not know about these fields — a browser holding a cached copy of
+	// the page from before they existed — silently wiped them on every
+	// save. That is a data-destroying default for a field whose whole
+	// job is to be remembered, and it is indistinguishable from "it
+	// won't save" at the other end.
+	Authorized    *[]string             `json:"authorized"`
+	AuthorizedOff *[]string             `json:"authorized_off"`
+	Exceptions    *[]GuardrailException `json:"exceptions"`
+	// Same pointer rule, and the same reason — a client that predates
+	// these fields must not clear them. The pointer is WIRE-ONLY: the
+	// stored field is a plain bool, so this never meets the gob encoder
+	// that drops a *bool false.
+	Scan        *bool     `json:"scan_tool_results"`
+	ScanAdd     *[]string `json:"scan_tools_add"`
+	ScanSkip    *[]string `json:"scan_tools_skip"`
+	ScanAction  *string   `json:"scan_action"`
+	ScanBlock   *[]string `json:"scan_block_tools"`
+	ScanAppeal  *bool     `json:"scan_appealable"`
+	ScanTighten *bool     `json:"scan_tighten"`
+	ScanTrusted *[]string `json:"scan_trusted_sources"`
+	// Forget every recorded rule↔tool reading, so a tool withheld on a
+	// reading the owner disagrees with comes back. Not a setting: if the
+	// reading was right, the next block re-establishes it.
+	ClearToolScopes bool `json:"clear_tool_scopes"`
+}
+
+// agentGuardrailsSave stores the Rules modal's save and answers with what was
+// kept.
+func (T *OrchestrateApp) agentGuardrailsSave(c *jsonapi.Call, body guardrailsBody) (any, error) {
+	agent, err := T.ownedAgent(c)
+	if err != nil {
+		return nil, err
+	}
+	r, udb, agentID := c.R, c.UDB, agent.ID
+	// Keep only recognized hook points — a stray value can't smuggle in.
+	var hooks []string
+	for _, h := range body.Hooks {
+		if validGuardHooks[strings.TrimSpace(h)] {
+			hooks = append(hooks, strings.TrimSpace(h))
+		}
+	}
+	if body.ClearToolScopes {
+		clearGuardrailToolScopes(udb, agent.ID)
+		Log("[orchestrate.guardrail] agent=%s rule/tool readings cleared by owner", agent.ID)
+	}
+	// Refused before anything is written. A rule bound to a tool this agent
+	// cannot call is judged nowhere, and storing it would leave a rule in
+	// the list that looks enforced and is not.
+	if err := validateGuardrailToolBindings(agent, body.Guardrails); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	agent.Guardrails = strings.TrimSpace(body.Guardrails)
+	agent.GuardrailHooks = hooks
+	agent.GuardrailFailClosed = body.FailClosed
+	agent.GuardrailDeclines = sanitizeDeclines(body.Declines)
+	agent.GuardrailsDisabled = body.Disabled
+	// The roster reaches the record ONLY here. Every other save path
+	// preserves it from the stored copy, so no agent-facing edit can add an
+	// identity to it — the same protection Guardrails itself has, and for
+	// the same reason: a roster the agent could write is a roster that
+	// exempts whoever talked it into an entry.
+	if body.Authorized != nil {
+		agent.AuthorizedIdentities = sanitizeAuthorizedIdentities(*body.Authorized)
+	}
+	if body.Exceptions != nil {
+		// Refused, not renamed. A rule links an exception by name, so two
+		// answering to one name means the link reaches whichever was stored
+		// first and the other looks just as live in the editor.
+		if dup := checkExceptionNames(*body.Exceptions); dup != "" {
+			return nil, jsonapi.BadRequest("Two exceptions are named \"" + dup + "\". A rule links an exception by its name and can only reach one of them, so give each a name of its own.")
+		}
+		agent.GuardrailExceptions = sanitizeGuardrailExceptions(*body.Exceptions)
+	}
+	if body.Scan != nil {
+		agent.ScanToolResults = *body.Scan
+	}
+	if body.ScanAdd != nil {
+		agent.ScanToolsAdd = sanitizeToolNameList(*body.ScanAdd)
+	}
+	if body.ScanSkip != nil {
+		agent.ScanToolsSkip = sanitizeToolNameList(*body.ScanSkip)
+	}
+	if body.ScanAction != nil {
+		// Normalized on the way IN, so an unrecognized value is rejected at
+		// the boundary rather than reinterpreted on every read. The reader
+		// still defaults defensively — a record written before this field
+		// existed has to mean something — but a client cannot store a value
+		// the reader has to guess about.
+		agent.ScanAction = normalizeScanAction(*body.ScanAction)
+	}
+	if body.ScanBlock != nil {
+		agent.ScanBlockTools = sanitizeToolNameList(*body.ScanBlock)
+	}
+	if body.ScanAppeal != nil {
+		agent.ScanAppealable = *body.ScanAppeal
+	}
+	if body.ScanTighten != nil {
+		// Inverted on the way in: the wire carries the box, the record
+		// carries the suspension, so an agent stored before this field
+		// existed reads as tightening ON.
+		agent.ScanTightenDisabled = !*body.ScanTighten
+	}
+	if body.ScanTrusted != nil {
+		agent.ScanTrustedSources = sanitizeScanSources(*body.ScanTrusted)
+	}
+	if _, err := saveAgent(udb, agent); err != nil {
+		return nil, jsonapi.Status(http.StatusInternalServerError, "save failed: "+err.Error())
+	}
+	// A newly-bound rule names its tool, so the "does this forbid the tool
+	// outright" question can be asked NOW instead of the first time the
+	// agent walks into it. Off the request — the owner does not wait on it,
+	// and nothing they can see is wrong until the next catalog is built.
+	T.scopeBoundGuardrailRules(r.Context(), udb, agent)
+	// Stated at Log level, not Debug: an agent carrying rules that are not being
+	// enforced is the kind of state an owner forgets they left behind.
+	if agent.GuardrailsDisabled {
+		// Count the agent's OWN lines, not guardrailRules: that now returns the
+		// deployment's globals for a suspended agent, and those ARE enforced.
+		// Reporting the combined figure as "not enforced" would say the exact
+		// opposite of what is true about half of it.
+		own := 0
+		for _, ln := range strings.Split(agent.Guardrails, "\n") {
+			if strings.TrimSpace(ln) != "" {
+				own++
+			}
+		}
+		if globals := len(prompts.EnabledGlobalRules()); own > 0 || globals > 0 {
+			Log("[orchestrate.guardrails] agent=%s guardrails SUSPENDED by owner: %d own rule(s) kept but NOT enforced; %d global rule(s) still apply", agentID, own, globals)
+		}
+	}
+	// Counts BOTH sides of each list — submitted and kept. A silent drop
+	// (an exception with no condition, a roster entry that could never
+	// match) is otherwise invisible to everyone: the owner sees a clean
+	// save and the thing they typed simply is not there afterwards.
+	Log("[orchestrate.guardrails] agent=%s guardrails updated (%d rule chars, hooks=%v, fail_closed=%v, disabled=%v, authorized=%d/%d kept, exceptions=%d/%d kept, tool_scan=%v +%d/-%d, action=%s, appealable=%v, tighten=%v, trusted=%d)",
+		agentID, len(agent.Guardrails), hooks, agent.GuardrailFailClosed, agent.GuardrailsDisabled,
+		len(agent.AuthorizedIdentities), lenOrNil(body.Authorized), len(agent.GuardrailExceptions), lenOrNil(body.Exceptions),
+		agent.ScanToolResults, len(agent.ScanToolsAdd), len(agent.ScanToolsSkip),
+		scanActionOf(agent), agent.ScanAppealable, scanTightens(agent), len(agent.ScanTrustedSources))
+	// Answer with what was actually STORED, not just "no content". The
+	// caller can then render the truth instead of its own optimistic copy —
+	// which is the difference between an entry the server declined to keep
+	// being visible immediately and it being reported days later as "it
+	// won't save".
+	return map[string]any{
+		"authorized": agent.AuthorizedIdentities,
+		"exceptions": agent.GuardrailExceptions,
+		"declines":   agent.GuardrailDeclines,
+	}, nil
+}
+
+// ownedAgent is the agent the path names when the caller owns it or it is a
+// seed; another user's id reads like no id.
+func (T *OrchestrateApp) ownedAgent(c *jsonapi.Call) (AgentRecord, error) {
+	agent, ok := loadAgent(c.UDB, c.R.PathValue("id"))
+	if !ok || (agent.Owner != c.User && agent.Owner != seedOwner) {
+		return AgentRecord{}, jsonapi.NotFound("agent not found")
+	}
+	return agent, nil
+}
+
+// agentGuardrailTest is the owner-facing "feel it" seam: POST a
 // candidate action/output and get the warden's verdicts back, without wiring
 // any live interception. Lets an owner author a rule and watch it flag a
 // violating candidate before committing to a hook.
 //
 //	POST /api/agents/{id}/guardrail-test  {"candidate": "...", "hook": "pre_action"}
 //	→ {"status": "violate|unsure|comply", "verdicts": [...]}
-func (T *OrchestrateApp) handleAgentGuardrailTest(w http.ResponseWriter, r *http.Request, user, agentID string) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
+func (T *OrchestrateApp) agentGuardrailTest(c *jsonapi.Call, body guardrailTestBody) (any, error) {
+	agent, err := T.ownedAgent(c)
+	if err != nil {
+		return nil, err
 	}
-	udb := UserDB(T.DB, user)
-	agent, ok := loadAgent(udb, agentID)
-	if !ok || (agent.Owner != user && agent.Owner != seedOwner) {
-		http.Error(w, "agent not found", http.StatusNotFound)
-		return
-	}
-	var body struct {
-		Candidate string `json:"candidate"`
-		Hook      string `json:"hook"`
-		// Sender, when set, tests the rule as an OUTSIDE contact of that name
-		// rather than as the owner. An audience-scoped rule ("never discuss
-		// compensation with anyone but me") judges differently for the two, and
-		// the point of this endpoint is to feel the rule before trusting it — so
-		// the half that is easy to get wrong has to be reachable from here.
-		Sender string `json:"sender"`
-		// As names a PERSON item to stand in as, so a rule excepted for one
-		// person can be felt from their side. Without it the test could only be
-		// run as the owner or as a nobody, and person-linked rules — the whole
-		// reason exceptions exist — were untestable.
-		As string `json:"as"`
-	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	r := c.R
 	if strings.TrimSpace(body.Candidate) == "" {
-		http.Error(w, "candidate is required", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("candidate is required")
 	}
 	if len(guardrailRules(agent)) == 0 {
-		jsonapi.Write(w, map[string]any{"status": guardComply, "verdicts": []guardrailVerdict{},
-			"note": "This agent has no guardrails authored yet: add a rule to enable the check."})
-		return
+		return map[string]any{"status": guardComply, "verdicts": []guardrailVerdict{},
+			"note": "This agent has no guardrails authored yet: add a rule to enable the check."}, nil
 	}
 	// Owner unless the caller asked to stand in as someone else. This is the one
 	// place the flag is chosen rather than derived, and it is safe because the
@@ -313,8 +298,7 @@ func (T *OrchestrateApp) handleAgentGuardrailTest(w http.ResponseWriter, r *http
 
 	verdicts, err := T.runWarden(r.Context(), agent, body.Hook, body.Candidate, who)
 	if err != nil {
-		http.Error(w, "warden error: "+err.Error(), http.StatusBadGateway)
-		return
+		return nil, jsonapi.Status(http.StatusBadGateway, "warden error: "+err.Error())
 	}
 	resp := map[string]any{
 		"status": worstVerdict(verdicts), "verdicts": verdicts, "as_owner": who.Owner,
@@ -343,7 +327,24 @@ func (T *OrchestrateApp) handleAgentGuardrailTest(w http.ResponseWriter, r *http
 			"A message that violates a rule but produces a prose answer with no such tool call is not judged. " +
 			"Add pre_input or pre_output to cover conversation."
 	}
-	jsonapi.Write(w, resp)
+	return resp, nil
+}
+
+// guardrailTestBody is one dry run of the agent's rules.
+type guardrailTestBody struct {
+	Candidate string `json:"candidate"`
+	Hook      string `json:"hook"`
+	// Sender, when set, tests the rule as an OUTSIDE contact of that name
+	// rather than as the owner. An audience-scoped rule ("never discuss
+	// compensation with anyone but me") judges differently for the two, and
+	// the point of this endpoint is to feel the rule before trusting it — so
+	// the half that is easy to get wrong has to be reachable from here.
+	Sender string `json:"sender"`
+	// As names a PERSON item to stand in as, so a rule excepted for one
+	// person can be felt from their side. Without it the test could only be
+	// run as the owner or as a nobody, and person-linked rules — the whole
+	// reason exceptions exist — were untestable.
+	As string `json:"as"`
 }
 
 // sortedHookList renders an active-hook set in a stable order for the UI.
@@ -373,7 +374,7 @@ func guardrailNoVerdictMessage() string {
 	return "BLOCKED: this action could not be verified against the enforced guardrails, and this agent is configured to refuse unverified actions. The action did NOT happen. Do not retry it, and do not re-route around it: attempt a different approach, or tell the user plainly that you cannot complete this step."
 }
 
-// handleAgentDeclineSuggest writes a set of declines in the AGENT'S VOICE.
+// agentDeclineSuggest writes a set of declines in the AGENT'S VOICE.
 //
 // Generation happens HERE, at authoring time, not at block time. That is the
 // entire safety argument: this call runs in a clean context with no protected
@@ -385,16 +386,14 @@ func guardrailNoVerdictMessage() string {
 // The generator is NOT given the guardrail rules. A decline that paraphrases
 // its rule leaks it ("I can't discuss salary figures" tells you exactly what
 // "no salary figures" was protecting), so it sees only the agent's persona.
-func (T *OrchestrateApp) handleAgentDeclineSuggest(w http.ResponseWriter, r *http.Request, user, agentID string) {
-	udb := UserDB(T.DB, user)
-	agent, ok := loadAgent(udb, agentID)
-	if !ok || (agent.Owner != user && agent.Owner != seedOwner) {
-		http.Error(w, "agent not found", http.StatusNotFound)
-		return
+func (T *OrchestrateApp) agentDeclineSuggest(c *jsonapi.Call, _ struct{}) (any, error) {
+	agent, err := T.ownedAgent(c)
+	if err != nil {
+		return nil, err
 	}
+	r, agentID := c.R, agent.ID
 	if T.LLM == nil {
-		http.Error(w, "worker LLM not configured", http.StatusServiceUnavailable)
-		return
+		return nil, jsonapi.Status(http.StatusServiceUnavailable, "worker LLM not configured")
 	}
 	var b strings.Builder
 	b.WriteString("Write 8 short refusal lines for this assistant to use when it cannot help with a request.\n\n")
@@ -445,8 +444,7 @@ func (T *OrchestrateApp) handleAgentDeclineSuggest(w http.ResponseWriter, r *htt
 		WithTemperature(0.9), // variety is the point
 	)
 	if err != nil || resp == nil {
-		http.Error(w, "suggest failed", http.StatusBadGateway)
-		return
+		return nil, jsonapi.Status(http.StatusBadGateway, "suggest failed")
 	}
 	// Tolerate prose around the array — a non-JSON model wraps it.
 	var lines []string
@@ -456,42 +454,39 @@ func (T *OrchestrateApp) handleAgentDeclineSuggest(w http.ResponseWriter, r *htt
 	}
 	clean := sanitizeDeclines(lines)
 	Log("[orchestrate.guardrails] agent=%s decline suggest: %d returned, %d kept after leak filter", agentID, len(lines), len(clean))
-	jsonapi.Write(w, map[string]any{"declines": clean})
+	return map[string]any{"declines": clean}, nil
 }
 
-// handleAgentGuardrailDepth reads and sets how carefully this agent's own
+// agentGuardrailDepth reads and agentGuardrailDepthSave sets how carefully this agent's own
 // guardrails are checked. Its own endpoint, owner-only like the guardrails
 // themselves, rather than a field on the guardrails POST: that body replaces
 // the rules wholesale, so a one-field panel posting to it would clear them.
 //
 //	GET  /api/agents/{id}/guardrail-depth -> {guardrail_depth}
 //	POST /api/agents/{id}/guardrail-depth    {guardrail_depth: "quick"|"moderate"|"thorough"|""}
-func (T *OrchestrateApp) handleAgentGuardrailDepth(w http.ResponseWriter, r *http.Request, user, agentID string) {
-	udb := UserDB(T.DB, user)
-	agent, ok := loadAgent(udb, agentID)
-	if !ok || (agent.Owner != user && agent.Owner != seedOwner) {
-		http.Error(w, "agent not found", http.StatusNotFound)
-		return
+func (T *OrchestrateApp) agentGuardrailDepth(c *jsonapi.Call) (any, error) {
+	agent, err := T.ownedAgent(c)
+	if err != nil {
+		return nil, err
 	}
-	if r.Method == http.MethodPost {
-		var body struct {
-			Depth string `json:"guardrail_depth"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		depth := strings.TrimSpace(body.Depth)
-		if depth != "" && depthRank(depth) == 0 && depth != prompts.RuleDepthQuick {
-			http.Error(w, "depth must be quick, moderate or thorough", http.StatusBadRequest)
-			return
-		}
-		agent.GuardrailDepth = depth
-		if _, err := saveAgent(udb, agent); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		Log("[orchestrate.guardrail] agent=%s check depth set to %q by owner", agent.ID, depth)
+	return map[string]any{"guardrail_depth": agent.GuardrailDepth}, nil
+}
+
+func (T *OrchestrateApp) agentGuardrailDepthSave(c *jsonapi.Call, body struct {
+	Depth string `json:"guardrail_depth"`
+}) (any, error) {
+	agent, err := T.ownedAgent(c)
+	if err != nil {
+		return nil, err
 	}
-	jsonapi.Write(w, map[string]any{"guardrail_depth": agent.GuardrailDepth})
+	depth := strings.TrimSpace(body.Depth)
+	if depth != "" && depthRank(depth) == 0 && depth != prompts.RuleDepthQuick {
+		return nil, jsonapi.BadRequest("depth must be quick, moderate or thorough")
+	}
+	agent.GuardrailDepth = depth
+	if _, err := saveAgent(c.UDB, agent); err != nil {
+		return nil, err
+	}
+	Log("[orchestrate.guardrail] agent=%s check depth set to %q by owner", agent.ID, depth)
+	return map[string]any{"guardrail_depth": agent.GuardrailDepth}, nil
 }

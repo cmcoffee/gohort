@@ -62,7 +62,7 @@ func TestTheReasoningChoiceSavesThroughPATCH(t *testing.T) {
 	} {
 		w := httptest.NewRecorder()
 		body := `{"reasoning":"` + c.choice + `"}`
-		T.patchAgent(w, httptest.NewRequest(http.MethodPatch, "/api/agents?id="+a.ID, strings.NewReader(body)), udb, user, a.ID)
+		routed(T)(w, as(t, httptest.NewRequest(http.MethodPatch, "/api/agents?id="+a.ID, strings.NewReader(body)), user))
 		if w.Code != http.StatusOK {
 			t.Fatalf("reasoning=%q answered %d: %s", c.choice, w.Code, w.Body.String())
 		}

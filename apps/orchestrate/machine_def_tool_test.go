@@ -255,7 +255,7 @@ func TestAgentSave_PickerCanClearTheMachine(t *testing.T) {
 	app, req, udb := authedApp(t)
 
 	w := httptest.NewRecorder()
-	app.handleAgentList(w, req(http.MethodPost, "/api/agents", map[string]any{
+	routed(app)(w, req(http.MethodPost, "/api/agents", map[string]any{
 		"name": "Wren", "orchestrator_prompt": "hi", "machine": "m-123",
 	}))
 	if w.Code != http.StatusOK {
@@ -270,7 +270,7 @@ func TestAgentSave_PickerCanClearTheMachine(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	app.handleAgentList(w, req(http.MethodPost, "/api/agents", map[string]any{
+	routed(app)(w, req(http.MethodPost, "/api/agents", map[string]any{
 		"id": agent.ID, "name": "Wren", "orchestrator_prompt": "hi", "machine": "",
 	}))
 	if w.Code != http.StatusOK {

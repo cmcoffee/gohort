@@ -68,8 +68,7 @@ func (T *OrchestrateApp) memoryOf(c *jsonapi.Call, at memAt) (memCall, error) {
 }
 
 // registerMemoryRoutes mounts the Memory pane's routes under /api/agents/{id}.
-// They are more specific than handleAgentOne's /api/agents/, which serves
-// the agent's other actions.
+// registerAgentRoutes calls it beside the agent's other routes.
 func (T *OrchestrateApp) registerMemoryRoutes() {
 	at := ownAgent
 	T.HandleFunc("/api/agents/{id}/facts", T.factsRoute(at))

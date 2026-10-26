@@ -55,7 +55,7 @@ func TestMoveChoicesAreCheckedBeforeTheyAreOffered(t *testing.T) {
 
 	choices := func(id string) (opts []moveChoice, why string) {
 		w := httptest.NewRecorder()
-		app.handleAgentMove(w, httptest.NewRequest(http.MethodGet, "/api/agents/"+id+"/move", nil), "alice", udb, id)
+		routed(app)(w, as(t, httptest.NewRequest(http.MethodGet, "/api/agents/"+id+"/move", nil), "alice"))
 		var d struct {
 			Options []moveChoice `json:"options"`
 			Why     string       `json:"why"`

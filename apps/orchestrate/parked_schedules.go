@@ -23,7 +23,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
 
@@ -327,10 +326,11 @@ func deleteAgentSchedules(owner string, ids map[string]bool) int {
 	return n
 }
 
-// handleAgentSchedules answers the delete confirmation: GET
+// agentSchedules answers the delete confirmation: GET
 // /api/agents/<id>/schedules -> {names: [...]}, the schedules that deleting
 // this agent (and its sub-agents) would park.
-func (T *OrchestrateApp) handleAgentSchedules(w http.ResponseWriter, udb Database, user, id string) {
+func (T *OrchestrateApp) agentSchedules(c *jsonapi.Call) (any, error) {
+	user, udb, id := c.User, c.UDB, c.R.PathValue("id")
 	names := agentScheduleNames(user, agentFamilyIDs(udb, user, id))
 	if names == nil {
 		names = []string{}
@@ -343,7 +343,7 @@ func (T *OrchestrateApp) handleAgentSchedules(w http.ResponseWriter, udb Databas
 			usedBy = append(usedBy, u.Name+" ("+u.Kind+")")
 		}
 	}
-	jsonapi.Write(w, map[string]any{"names": names, "keep_days": int(parkedExpiry.Hours() / 24), "used_by": usedBy})
+	return map[string]any{"names": names, "keep_days": int(parkedExpiry.Hours() / 24), "used_by": usedBy}, nil
 }
 
 // agentDeleteData is the editor Delete button's data for the client action.

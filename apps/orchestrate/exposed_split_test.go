@@ -52,7 +52,7 @@ func TestPatchCannotPublishWithoutApproval(t *testing.T) {
 
 	r := httptest.NewRequest(http.MethodPatch, "/api/agents/a1",
 		strings.NewReader(`{"exposed":true}`))
-	T.patchAgent(httptest.NewRecorder(), r, udb, "alice", rec.ID)
+	routed(T)(httptest.NewRecorder(), as(t, r, "alice"))
 
 	got, _ := loadAgent(udb, rec.ID)
 	if got.Everyone {
@@ -62,7 +62,7 @@ func TestPatchCannotPublishWithoutApproval(t *testing.T) {
 	// nothing.
 	r = httptest.NewRequest(http.MethodPatch, "/api/agents/a1",
 		strings.NewReader(`{"show_on_dashboard":true}`))
-	T.patchAgent(httptest.NewRecorder(), r, udb, "alice", rec.ID)
+	routed(T)(httptest.NewRecorder(), as(t, r, "alice"))
 	if got, _ := loadAgent(udb, rec.ID); !got.ShowOnDashboard {
 		t.Error("a shortcut was refused; it grants nothing and needs nobody")
 	}

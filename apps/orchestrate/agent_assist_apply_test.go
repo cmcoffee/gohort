@@ -14,6 +14,7 @@ package orchestrate
 // spelling has to go through.
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -40,41 +41,58 @@ func TestApplyTargetsARouteThatServesItsVerb(t *testing.T) {
 		t.Fatal("Apply no longer PATCHes; this test is reading the wrong place")
 	}
 	// Whichever spelling it uses, the route behind it has to accept PATCH.
-	http := readFile(t, "agents_http.go")
-	one := funcBody(t, http, "func (T *OrchestrateApp) handleAgentOne")
-	list := funcBody(t, http, "func (T *OrchestrateApp) handleAgentList")
+	app, udb, user := newTestOrchestrate(t)
+	if _, err := saveAgent(udb, AgentRecord{ID: "a1", Owner: user, Name: "Ada", OrchestratorPrompt: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	var path string
 	switch {
 	case strings.Contains(block, "'../api/agents/'+id"):
-		if !strings.Contains(one, "case http.MethodPatch:") {
-			t.Error("Apply PATCHes /api/agents/<id>, which does not serve PATCH: every press is a 405")
-		}
+		path = "/api/agents/a1"
 	case strings.Contains(block, "'../api/agents?id='"):
-		if !strings.Contains(list, "case http.MethodPatch:") {
-			t.Error("Apply PATCHes /api/agents, which does not serve PATCH")
-		}
+		path = "/api/agents?id=a1"
 	default:
-		t.Errorf("Apply posts somewhere this test does not recognise; check the route serves PATCH:\n%s", block)
+		t.Fatalf("Apply posts somewhere this test does not recognise; check the route serves PATCH:\n%s", block)
+	}
+	if w := patchAs(app, user, path, `{"description":"applied"}`); w.Code != http.StatusOK {
+		t.Errorf("Apply PATCHes %s, which answers %d %s", path, w.Code, w.Body.String())
 	}
 }
 
-// Both spellings must reach the SAME merge, or a second way to do something is
+// patchAs sends one write to the app's routes as user.
+func patchAs(app *OrchestrateApp, user, path, body string) *httptest.ResponseRecorder {
+	return writeAs(app, user, http.MethodPatch, path, body)
+}
+
+func writeAs(app *OrchestrateApp, user, method, path, body string) *httptest.ResponseRecorder {
+	w := httptest.NewRecorder()
+	routed(app)(w, asUser(httptest.NewRequest(method, path, strings.NewReader(body)), user))
+	return w
+}
+
+// Every spelling must reach the SAME merge, or a second way to do something is
 // a second set of rules for it. patchAgentFields leaves guardrails and the
 // injection-scan settings out BY NAME so no partial save can weaken the rule it
 // is about to be judged against; a path that skipped it would undo that.
 func TestEverySpellingOfPatchGoesThroughTheAllowlist(t *testing.T) {
-	http := readFile(t, "agents_http.go")
-	one := funcBody(t, http, "func (T *OrchestrateApp) handleAgentOne")
-	list := funcBody(t, http, "func (T *OrchestrateApp) handleAgentList")
-	for name, body := range map[string]string{"handleAgentOne": one, "handleAgentList": list} {
-		if !strings.Contains(body, "case http.MethodPatch:") {
-			continue
+	app, udb, user := newTestOrchestrate(t)
+	if _, err := saveAgent(udb, AgentRecord{ID: "a1", Owner: user, Name: "Ada", OrchestratorPrompt: "p", Guardrails: "never curse"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, sp := range []struct{ method, path string }{
+		{http.MethodPatch, "/api/agents/a1"},
+		{http.MethodPost, "/api/agents/a1"},
+		{http.MethodPatch, "/api/agents?id=a1"},
+	} {
+		if w := writeAs(app, user, sp.method, sp.path, `{"guardrails":"anything goes"}`); w.Code != http.StatusBadRequest {
+			t.Errorf("%s %s changed a protected field: %d %s", sp.method, sp.path, w.Code, w.Body.String())
 		}
-		if !strings.Contains(body, "T.patchAgent(") {
-			t.Errorf("%s serves PATCH without going through patchAgent, so patchAgentFields does not apply to it", name)
+		if w := writeAs(app, user, sp.method, sp.path, `{"description":"`+sp.method+`"}`); w.Code != http.StatusOK {
+			t.Errorf("%s %s refused an allowed field: %d %s", sp.method, sp.path, w.Code, w.Body.String())
 		}
 	}
-	if !strings.Contains(funcBody(t, http, "func (T *OrchestrateApp) patchAgent"), "patchAgentFields[k]") {
-		t.Error("patchAgent no longer consults the allowlist")
+	if got, _ := loadAgent(udb, "a1"); got.Guardrails != "never curse" {
+		t.Errorf("the guardrails changed: %q", got.Guardrails)
 	}
 	// The fields the assistant may propose all have to be settable, or Apply
 	// succeeds on some changes and 400s on others with no warning beforehand.
@@ -89,25 +107,30 @@ func TestEverySpellingOfPatchGoesThroughTheAllowlist(t *testing.T) {
 	}
 }
 
-// The path id has to actually reach the merge; taking it only from the query
-// would make the RESTful spelling a 400 instead of a 405, which is a different
-// error with the same outcome.
+// The target is the path's id, else the query's, else the body's; with none
+// of them the PATCH is refused rather than guessed.
 func TestThePathIdReachesTheMerge(t *testing.T) {
-	http := readFile(t, "agents_http.go")
-	body := funcBody(t, http, "func (T *OrchestrateApp) patchAgent")
-	if !strings.Contains(body, "pathID") {
-		t.Fatal("patchAgent does not take a path id")
+	app, udb, user := newTestOrchestrate(t)
+	for _, id := range []string{"a1", "a2"} {
+		if _, err := saveAgent(udb, AgentRecord{ID: id, Owner: user, Name: id, OrchestratorPrompt: "p"}); err != nil {
+			t.Fatal(err)
+		}
 	}
-	flat := strings.Join(strings.Fields(body), " ")
-	if !strings.Contains(flat, "id := strings.TrimSpace(pathID)") {
-		t.Error("the path id is not the first source of the target")
+	for _, c := range []struct{ path, body, id string }{
+		{"/api/agents/a1", `{"description":"by path"}`, "a1"},
+		{"/api/agents?id=a2", `{"description":"by query"}`, "a2"},
+		{"/api/agents", `{"id":"a1","description":"by body"}`, "a1"},
+	} {
+		if w := patchAs(app, user, c.path, c.body); w.Code != http.StatusOK {
+			t.Fatalf("PATCH %s: %d %s", c.path, w.Code, w.Body.String())
+		}
+		got, _ := loadAgent(udb, c.id)
+		if !strings.Contains(c.body, got.Description) {
+			t.Errorf("PATCH %s landed elsewhere: %s has %q", c.path, c.id, got.Description)
+		}
 	}
-	// And the collection route still works without one.
-	if !strings.Contains(flat, `r.URL.Query().Get("id")`) || !strings.Contains(flat, `patch["id"]`) {
-		t.Error("the query and body fallbacks are gone, so a FormPanel PATCH has no target")
-	}
-	if !strings.Contains(funcBody(t, http, "func (T *OrchestrateApp) handleAgentList"), `T.patchAgent(w, r, udb, user, "")`) {
-		t.Error("the collection route no longer passes an empty path id")
+	if w := patchAs(app, user, "/api/agents", `{"description":"nowhere"}`); w.Code != http.StatusBadRequest {
+		t.Errorf("a PATCH naming no agent: %d %s", w.Code, w.Body.String())
 	}
 }
 

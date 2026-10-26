@@ -30,7 +30,7 @@ func moveAgentReq(t *testing.T, app *OrchestrateApp, udb Database, id, body stri
 	t.Helper()
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/api/agents/"+id+"/move", bytes.NewBufferString(body))
-	app.handleAgentMove(w, r, "alice", udb, id)
+	routed(app)(w, as(t, r, "alice"))
 	return w
 }
 
@@ -129,7 +129,7 @@ func TestEditPathsDoNotReparent(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPatch, "/api/agents?id=c1", bytes.NewBufferString(`{"owned_by":"p1"}`))
-	app.patchAgent(w, r, udb, "alice", "")
+	routed(app)(w, as(t, r, "alice"))
 	if w.Code == http.StatusOK {
 		t.Error("PATCH changed owned_by")
 	}
