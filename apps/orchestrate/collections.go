@@ -122,11 +122,9 @@ func (T *OrchestrateApp) collectionDB(c Collection) Database {
 //
 //	GET  /api/collections        → [{id, name, description, chunks, documents, updated}]
 //	POST /api/collections        → create (body: {name, description})
-func (T *OrchestrateApp) handleCollections(w http.ResponseWriter, r *http.Request) {
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleCollections(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+	r := c.R
+	user, udb := c.User, c.UDB
 	switch r.Method {
 	case http.MethodGet:
 		cols := listCollections(udb, user)
@@ -185,25 +183,21 @@ func (T *OrchestrateApp) handleCollections(w http.ResponseWriter, r *http.Reques
 				Chunks:     s.chunks,
 			})
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"collections": results})
+		return map[string]any{"collections": results}, nil
 	case http.MethodPost:
 		var body struct {
 			Name        string `json:"name"`
 			Description string `json:"description"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
+		if err := json.Unmarshal(raw, &body); err != nil {
+			return nil, jsonapi.BadRequest("bad request")
 		}
 		name := strings.TrimSpace(body.Name)
 		if name == "" {
-			http.Error(w, "name required", http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest("name required")
 		}
 		if why := duplicateCollectionName(udb, user, name, ""); why != "" {
-			http.Error(w, why, http.StatusConflict)
-			return
+			return nil, jsonapi.Status(http.StatusConflict, why)
 		}
 		c := Collection{
 			ID:          UUIDv4(),
@@ -214,10 +208,9 @@ func (T *OrchestrateApp) handleCollections(w http.ResponseWriter, r *http.Reques
 		}
 		saveCollection(udb, c)
 		Log("[orchestrate.collections] user=%q created collection %q (id=%s)", user, name, c.ID)
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(c)
+		return c, nil
 	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return nil, jsonapi.Status(http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 
@@ -923,15 +916,8 @@ func collectionStats(db Database, id string) (docs, chunks int) {
 // fields (embedding, instructions). Lives on the orchestrate side
 // because skills are stored in the per-user udb and Documents is a
 // thin shell over this app's APIs.
-func (T *OrchestrateApp) handleSkillsList(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleSkillsList(c *jsonapi.Call) (any, error) {
+	user, udb := c.User, c.UDB
 	type out struct {
 		ID          string `json:"id"`
 		Name        string `json:"name"`
@@ -959,8 +945,7 @@ func (T *OrchestrateApp) handleSkillsList(w http.ResponseWriter, r *http.Request
 			Disabled:    sk.Disabled,
 		})
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"skills": list})
+	return map[string]any{"skills": list}, nil
 }
 
 // requireUDB is a small helper that re-runs RequireUser to get udb

@@ -29,7 +29,6 @@ package orchestrate
 
 import (
 	"fmt"
-	"net/http"
 	"sort"
 	"strings"
 
@@ -216,15 +215,12 @@ func agentAccessSummary(rec AgentRecord, reach []agentReachRow) string {
 const accessCaveat = "The list is resolved through the same call a real turn makes, so your own tools, credential-backed ones and the tools an installed app contributes are all in it, each shown by what it reaches. A run can still add MCP tools that only exist once a session is open."
 
 // handleAgentAccess serves the two lists the access sections read.
-func (T *OrchestrateApp) handleAgentAccess(w http.ResponseWriter, r *http.Request) {
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleAgentAccess(c *jsonapi.Call) (any, error) {
+	r := c.R
+	user, udb := c.User, c.UDB
 	rec, found := findAgentByNameOrID(udb, user, strings.TrimSpace(r.URL.Query().Get("id")))
 	if !found {
-		http.NotFound(w, r)
-		return
+		return nil, errNotFound
 	}
 	switch strings.TrimSpace(r.URL.Query().Get("view")) {
 	case "reach":
@@ -232,17 +228,13 @@ func (T *OrchestrateApp) handleAgentAccess(w http.ResponseWriter, r *http.Reques
 		if rows == nil {
 			rows = []agentReachRow{}
 		}
-		jsonapi.Write(w, rows)
-		return
+		return rows, nil
 	case "workspace":
-		jsonapi.Write(w, T.accessWorkspaceRows(rec))
-		return
+		return T.accessWorkspaceRows(rec), nil
 	case "knowledge":
-		jsonapi.Write(w, accessKnowledgeRows(rec))
-		return
+		return accessKnowledgeRows(rec), nil
 	case "subagents":
-		jsonapi.Write(w, agentSubAgents(udb, user, rec))
-		return
+		return agentSubAgents(udb, user, rec), nil
 	}
 	// The tools this agent's worker would actually be handed, resolved through
 	// the same call the runner makes.
@@ -257,12 +249,11 @@ func (T *OrchestrateApp) handleAgentAccess(w http.ResponseWriter, r *http.Reques
 	// page is only worth having if it never confuses them.
 	rows, err := T.resolvedAgentTools(r.Context(), udb, user, rec)
 	if err != nil {
-		jsonapi.Write(w, map[string]any{
+		return map[string]any{
 			"error": "This agent's toolset could not be resolved, so nothing below is the full picture: " + err.Error(),
-		})
-		return
+		}, nil
 	}
-	jsonapi.Write(w, rows)
+	return rows, nil
 }
 
 // accessSideRow is a row in the two groups that are not a tool list: a fact,

@@ -59,7 +59,7 @@ func TestBindingAChannelToASubAgentNamesTheParent(t *testing.T) {
 	app, _ := familyFixture(t)
 	r := httptest.NewRequest(http.MethodPost, "/api/channels?agent_id=a-critic", strings.NewReader(`{"name":"Team"}`))
 	w := httptest.NewRecorder()
-	app.handleChannels(w, asUser(r, "alice"))
+	routed(app)(w, asUser(r, "alice"))
 	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "Writer") {
 		t.Errorf("binding to a sub-agent: %d %s", w.Code, w.Body.String())
 	}
@@ -206,7 +206,7 @@ func TestASubAgentsPageHidesSchedulerAndChannels(t *testing.T) {
 
 	r := httptest.NewRequest(http.MethodGet, "/api/agent-options", nil)
 	w := httptest.NewRecorder()
-	app.handleAgentPickerOptions(w, asUser(r, "alice"))
+	routed(app)(w, asUser(r, "alice"))
 	if !strings.Contains(w.Body.String(), `"sub_agent_of":{`) || !strings.Contains(w.Body.String(), `"a-critic":"a-writer"`) {
 		t.Errorf("the agent list refresh does not carry the map: %s", w.Body.String())
 	}
@@ -771,7 +771,7 @@ func TestAttachingAChannelLeavesTheCortexSettingAlone(t *testing.T) {
 	}
 	post := func(url, body string) *httptest.ResponseRecorder {
 		w := httptest.NewRecorder()
-		app.handleChannels(w, asUser(httptest.NewRequest(http.MethodPost, url, strings.NewReader(body)), "alice"))
+		routed(app)(w, asUser(httptest.NewRequest(http.MethodPost, url, strings.NewReader(body)), "alice"))
 		if w.Code != http.StatusOK {
 			t.Fatalf("%s %s: %d %s", url, body, w.Code, w.Body.String())
 		}

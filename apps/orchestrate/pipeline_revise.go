@@ -269,30 +269,21 @@ func samePipelineWiring(a, b PipelineStage) bool {
 // revision: a pipeline that would not run is not stored, because every
 // other pipeline door refuses too and a stored one that cannot run is
 // a tool an agent will call and be failed by.
-func (T *OrchestrateApp) handlePipelineDraft(w http.ResponseWriter, r *http.Request) {
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+func (T *OrchestrateApp) handlePipelineDraft(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+	r := c.R
+	user, udb := c.User, c.UDB
 	if T.LLM == nil {
-		http.Error(w, "worker LLM not configured", http.StatusServiceUnavailable)
-		return
+		return nil, jsonapi.Status(http.StatusServiceUnavailable, "worker LLM not configured")
 	}
 	var body struct {
 		Description string `json:"description"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return nil, jsonapi.BadRequest("bad request")
 	}
 	desc := strings.TrimSpace(body.Description)
 	if desc == "" {
-		http.Error(w, "describe what the pipeline should do", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("describe what the pipeline should do")
 	}
 	if len(desc) > maxDraftDescription {
 		desc = desc[:maxDraftDescription]
@@ -304,8 +295,7 @@ func (T *OrchestrateApp) handlePipelineDraft(w http.ResponseWriter, r *http.Requ
 		if def, derr = T.draftPipelineOnce(r.Context(), ask+
 			"\n\nYour previous reply could not be used: "+derr.Error()+
 			"\nReply with ONLY the JSON object."); derr != nil {
-			http.Error(w, "the draft could not be produced: "+derr.Error(), http.StatusBadGateway)
-			return
+			return nil, jsonapi.Status(http.StatusBadGateway, "the draft could not be produced: "+derr.Error())
 		}
 	}
 	if verr := def.Validate(); verr != nil {
@@ -313,9 +303,7 @@ func (T *OrchestrateApp) handlePipelineDraft(w http.ResponseWriter, r *http.Requ
 			"\n\nA previous attempt would not run:\n"+verr.Error()+
 			"\nReturn a corrected pipeline.")
 		if ferr != nil || fixed.Validate() != nil {
-			http.Error(w, "the draft would not run, and a second attempt did not fix it:\n"+verr.Error(),
-				http.StatusBadGateway)
-			return
+			return nil, jsonapi.Status(http.StatusBadGateway, "the draft would not run, and a second attempt did not fix it:\n"+verr.Error())
 		}
 		def = fixed
 	}
@@ -327,5 +315,5 @@ func (T *OrchestrateApp) handlePipelineDraft(w http.ResponseWriter, r *http.Requ
 	saved := SavePipelineDef(udb, def)
 	Log("[orchestrate.pipelines] user=%q drafted pipeline %q (id=%s, %d stages)",
 		user, saved.Name, saved.ID, len(saved.Stages))
-	jsonapi.Write(w, map[string]any{"id": saved.ID, "name": saved.Name, "stages": len(saved.Stages)})
+	return map[string]any{"id": saved.ID, "name": saved.Name, "stages": len(saved.Stages)}, nil
 }

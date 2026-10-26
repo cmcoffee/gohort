@@ -86,11 +86,9 @@ func bulletinTargets(udb Database, user string) []AgentRecord {
 	return out
 }
 
-func (T *OrchestrateApp) handleBulletins(w http.ResponseWriter, r *http.Request) {
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleBulletins(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+	r := c.R
+	user, udb := c.User, c.UDB
 	switch r.Method {
 	case http.MethodGet:
 		agents := bulletinTargets(udb, user)
@@ -98,35 +96,31 @@ func (T *OrchestrateApp) handleBulletins(w http.ResponseWriter, r *http.Request)
 		for _, b := range listBulletins(udb) {
 			rows = append(rows, bulletinRow(b, agents, UserLocation(user)))
 		}
-		jsonapi.Write(w, rows)
+		return rows, nil
 	case http.MethodPost:
 		var body struct {
 			Name     string `json:"name"`
 			Desc     string `json:"desc"`
 			TTLHours int    `json:"ttl_hours"`
 		}
-		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
+		if err := json.Unmarshal(raw, &body); err != nil {
+			return nil, jsonapi.BadRequest("bad request")
 		}
 		name := bulletinName(body.Name)
 		if name == "" {
-			http.Error(w, "a board needs a name: letters, digits, - or _", http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest("a board needs a name: letters, digits, - or _")
 		}
 		if _, exists := loadBulletin(udb, name); exists {
-			http.Error(w, fmt.Sprintf("a board named %q already exists", name), http.StatusConflict)
-			return
+			return nil, jsonapi.Status(http.StatusConflict, fmt.Sprintf("a board named %q already exists", name))
 		}
 		b := bulletinBoard{Name: name, Desc: strings.TrimSpace(body.Desc), TTLHours: body.TTLHours, Created: time.Now()}
 		if err := saveBulletin(udb, b); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest(err.Error())
 		}
 		Log("[orchestrate.bulletins] user=%q created board %q", user, name)
-		jsonapi.Write(w, map[string]any{"name": name})
+		return map[string]any{"name": name}, nil
 	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return nil, jsonapi.Status(http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 

@@ -25,7 +25,7 @@ func accessRowsFor(t *testing.T, app *OrchestrateApp, id, view string) []map[str
 	}
 	r := httptest.NewRequest(http.MethodGet, url, nil)
 	w := httptest.NewRecorder()
-	app.handleAgentAccess(w, asUser(r, "alice"))
+	routed(app)(w, asUser(r, "alice"))
 	if w.Code != http.StatusOK {
 		t.Fatalf("view %q: %d %s", view, w.Code, w.Body.String())
 	}

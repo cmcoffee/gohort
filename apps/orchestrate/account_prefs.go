@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -71,34 +72,29 @@ func (T *OrchestrateApp) accountSection(r *http.Request, user string) (ui.Sectio
 // account section's FormPanel: GET returns {default_agent}; POST saves
 // it after validating that a specific agent ID is one this user can see
 // (so a stale or forged value can't point the surface at nothing).
-func (T *OrchestrateApp) handleDefaultAgentPref(w http.ResponseWriter, r *http.Request) {
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleDefaultAgentPref(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+	r := c.R
+	user, udb := c.User, c.UDB
 	switch r.Method {
 	case http.MethodGet:
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
+		return map[string]any{
 			"default_agent": AuthGetDefaultAgent(AuthDB(), user),
-		})
+		}, nil
 	case http.MethodPost:
 		var req struct {
 			DefaultAgent string `json:"default_agent"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
+		if err := json.Unmarshal(raw, &req); err != nil {
+			return nil, jsonapi.BadRequest("bad request")
 		}
 		v := strings.TrimSpace(req.DefaultAgent)
 		if v != "" && v != lastAccessedSentinel && !userCanSeeAgent(udb, user, v) {
-			http.Error(w, "unknown agent", http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest("unknown agent")
 		}
 		AuthSetDefaultAgent(AuthDB(), user, v)
-		w.WriteHeader(http.StatusNoContent)
+		return jsonapi.Empty(http.StatusNoContent), nil
 	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return nil, jsonapi.Status(http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 

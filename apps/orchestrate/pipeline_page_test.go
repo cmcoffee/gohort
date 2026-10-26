@@ -43,9 +43,9 @@ func TestThePipelineListSaysWhatEachOneIsAndWhoCanCallIt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	r := httptest.NewRequest("GET", "/orchestrate/api/pipelines", nil)
+	r := httptest.NewRequest("GET", "/api/pipelines", nil)
 	w := httptest.NewRecorder()
-	app.handlePipelines(w, asUser(r, user))
+	routed(app)(w, asUser(r, user))
 	body := w.Body.String()
 
 	// An unattached pipeline is inert — a tool no agent can call — so
@@ -361,10 +361,10 @@ func TestThereAreThreeWaysToGetAPipeline(t *testing.T) {
 	// that cannot run is a tool an agent will call and be failed by.
 	app.LLM = &FakeLLM{Turns: []FakeTurn{{Content: `{"name":"Broken","stages":[
 		{"name":"a","kind":"worker","prompt":"read {stage:nowhere.thing}"}]}`, Repeat: true}}}
-	r = httptest.NewRequest("POST", "/orchestrate/api/pipelines/draft",
+	r = httptest.NewRequest("POST", "/api/pipelines/draft",
 		strings.NewReader(`{"description":"anything"}`))
 	w = httptest.NewRecorder()
-	app.handlePipelineDraft(w, asUser(r, user))
+	routed(app)(w, asUser(r, user))
 	if w.Code == 200 {
 		t.Errorf("a draft that would not run must be refused: %s", w.Body.String())
 	}
@@ -377,10 +377,10 @@ func TestThereAreThreeWaysToGetAPipeline(t *testing.T) {
 		{"name":"plan","kind":"worker","prompt":"break it up",
 		 "output":[{"name":"queries","type":"list","desc":"q"}]},
 		{"name":"answer","kind":"worker","prompt":"answer {stage:plan.queries}"}]}`, Repeat: true}}}
-	r = httptest.NewRequest("POST", "/orchestrate/api/pipelines/draft",
+	r = httptest.NewRequest("POST", "/api/pipelines/draft",
 		strings.NewReader(`{"description":"research things"}`))
 	w = httptest.NewRecorder()
-	app.handlePipelineDraft(w, asUser(r, user))
+	routed(app)(w, asUser(r, user))
 	if w.Code != 200 {
 		t.Fatalf("draft: %d %s", w.Code, w.Body.String())
 	}

@@ -29,6 +29,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // resolveAgentID picks an agent id from the query string or request
@@ -43,15 +44,9 @@ func resolveAgentID(r *http.Request, bodyAgentID string) string {
 	return strings.TrimSpace(r.URL.Query().Get("agent_id"))
 }
 
-func (T *OrchestrateApp) handlePrivateModeGet(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "GET required", http.StatusMethodNotAllowed)
-		return
-	}
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handlePrivateModeGet(c *jsonapi.Call) (any, error) {
+	r := c.R
+	user, udb := c.User, c.UDB
 	agentID := resolveAgentID(r, "")
 	mode := AuthGetPrivateModeForAgent(AuthDB(), user, agentID)
 	// When the agent has ForcePrivate=true, the toggle is locked ON
@@ -67,22 +62,21 @@ func (T *OrchestrateApp) handlePrivateModeGet(w http.ResponseWriter, r *http.Req
 		}
 	}
 	Log("[orchestrate/settings] GET private user=%q agent_id=%q → %v (locked=%v)", user, agentID, mode, locked)
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	return map[string]any{
 		"private_mode": mode,
 		"locked":       locked,
-	})
+	}, nil
 }
 
-func (T *OrchestrateApp) handlePrivateModeSet(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST required", http.StatusMethodNotAllowed)
-		return
-	}
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+// privateModeGetRoute is handlePrivateModeGet's route, for the registration and the Public wrapper
+// another app serves it through.
+func (T *OrchestrateApp) privateModeGetRoute() http.HandlerFunc {
+	return jsonapi.Get(T.DB, T.handlePrivateModeGet)
+}
+
+func (T *OrchestrateApp) handlePrivateModeSet(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+	r := c.R
+	user := c.User
 	var req struct {
 		PrivateMode bool   `json:"private_mode"`
 		AgentID     string `json:"agent_id"`
@@ -93,9 +87,8 @@ func (T *OrchestrateApp) handlePrivateModeSet(w http.ResponseWriter, r *http.Req
 		// user flips Private mid-turn for emergency cutoff.
 		SessionID string `json:"session_id"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
+	if err := json.Unmarshal(raw, &req); err != nil {
+		return nil, jsonapi.BadRequest("bad request")
 	}
 	agentID := resolveAgentID(r, req.AgentID)
 	Log("[orchestrate/settings] SET private user=%q agent_id=%q (body=%q query=%q) value=%v sid=%q",
@@ -115,11 +108,16 @@ func (T *OrchestrateApp) handlePrivateModeSet(w http.ResponseWriter, r *http.Req
 			}
 		}
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	return map[string]any{
 		"private_mode": req.PrivateMode,
 		"live_flipped": liveFlipped,
-	})
+	}, nil
+}
+
+// privateModeSetRoute is handlePrivateModeSet's route, for the registration and the Public wrapper
+// another app serves it through.
+func (T *OrchestrateApp) privateModeSetRoute() http.HandlerFunc {
+	return jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handlePrivateModeSet, jsonapi.EmptyBodyOK)}.Serve
 }
 
 // handleMemoryModeGet / Set expose the (per-(user, agent)) Inferred
@@ -133,15 +131,9 @@ func (T *OrchestrateApp) handlePrivateModeSet(w http.ResponseWriter, r *http.Req
 // to never use the Reference Memory layer, so the per-turn toggle is
 // moot. Composes with the runtime gate: t.inferredOff() returns true
 // if EITHER the per-turn toggle OR DisableInferred is set.
-func (T *OrchestrateApp) handleMemoryModeGet(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "GET required", http.StatusMethodNotAllowed)
-		return
-	}
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleMemoryModeGet(c *jsonapi.Call) (any, error) {
+	r := c.R
+	user, udb := c.User, c.UDB
 	agentID := resolveAgentID(r, "")
 	disabled := AuthGetInferredDisabledForAgent(AuthDB(), user, agentID)
 	locked := false
@@ -152,33 +144,36 @@ func (T *OrchestrateApp) handleMemoryModeGet(w http.ResponseWriter, r *http.Requ
 		}
 	}
 	Log("[orchestrate/settings] GET memory user=%q agent_id=%q → %v (locked=%v)", user, agentID, disabled, locked)
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	return map[string]any{
 		"inferred_disabled": disabled,
 		"locked":            locked,
-	})
+	}, nil
 }
 
-func (T *OrchestrateApp) handleMemoryModeSet(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST required", http.StatusMethodNotAllowed)
-		return
-	}
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+// memoryModeGetRoute is handleMemoryModeGet's route, for the registration and the Public wrapper
+// another app serves it through.
+func (T *OrchestrateApp) memoryModeGetRoute() http.HandlerFunc {
+	return jsonapi.Get(T.DB, T.handleMemoryModeGet)
+}
+
+func (T *OrchestrateApp) handleMemoryModeSet(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+	r := c.R
+	user := c.User
 	var req struct {
 		InferredDisabled bool   `json:"inferred_disabled"`
 		AgentID          string `json:"agent_id"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
+	if err := json.Unmarshal(raw, &req); err != nil {
+		return nil, jsonapi.BadRequest("bad request")
 	}
 	agentID := resolveAgentID(r, req.AgentID)
 	Log("[orchestrate/settings] SET memory user=%q agent_id=%q (body=%q query=%q) value=%v", user, agentID, req.AgentID, r.URL.Query().Get("agent_id"), req.InferredDisabled)
 	AuthSetInferredDisabledForAgent(AuthDB(), user, agentID, req.InferredDisabled)
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]bool{"inferred_disabled": req.InferredDisabled})
+	return map[string]bool{"inferred_disabled": req.InferredDisabled}, nil
+}
+
+// memoryModeSetRoute is handleMemoryModeSet's route, for the registration and the Public wrapper
+// another app serves it through.
+func (T *OrchestrateApp) memoryModeSetRoute() http.HandlerFunc {
+	return jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleMemoryModeSet, jsonapi.EmptyBodyOK)}.Serve
 }

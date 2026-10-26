@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // handleToolConfirm serves the Ask control in the Tools modal.
@@ -26,11 +27,9 @@ import (
 // not find here does not ask.
 //
 // POST {"name":…,"on":…} flips one.
-func (T *OrchestrateApp) handleToolConfirm(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleToolConfirm(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+	r := c.R
+	user := c.User
 	switch r.Method {
 	case http.MethodGet:
 		tools := map[string]bool{}
@@ -45,24 +44,21 @@ func (T *OrchestrateApp) handleToolConfirm(w http.ResponseWriter, r *http.Reques
 		for n := range asks {
 			tools[n] = true
 		}
-		w.Header().Set("Content-Type", "application/json")
 		// No caching, for the reason /api/tool-scope gives: the modal re-reads
 		// right after a write and a stale body snaps the control back.
-		w.Header().Set("Cache-Control", "no-store")
-		_ = json.NewEncoder(w).Encode(map[string]any{"tools": tools})
+		c.W.Header().Set("Cache-Control", "no-store")
+		return map[string]any{"tools": tools}, nil
 	case http.MethodPost:
 		var body struct {
 			Name string `json:"name"`
 			On   bool   `json:"on"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
+		if err := json.Unmarshal(raw, &body); err != nil {
+			return nil, jsonapi.BadRequest("bad request")
 		}
 		body.Name = strings.TrimSpace(body.Name)
 		if body.Name == "" {
-			http.Error(w, "name required", http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest("name required")
 		}
 		// Scoped to this user's own pool by construction: the setter is handed
 		// the requesting account, so a name belonging to somebody else simply
@@ -71,11 +67,10 @@ func (T *OrchestrateApp) handleToolConfirm(w http.ResponseWriter, r *http.Reques
 		// name so it needs no record, which is what lets a framework tool
 		// carry one too.
 		if !SetUserToolAsksInChat(AuthDB(), user, strings.TrimSpace(r.URL.Query().Get("agent")), body.Name, body.On) {
-			http.Error(w, "could not record that", http.StatusInternalServerError)
-			return
+			return nil, jsonapi.Status(http.StatusInternalServerError, "could not record that")
 		}
-		w.WriteHeader(http.StatusNoContent)
+		return jsonapi.Empty(http.StatusNoContent), nil
 	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return nil, jsonapi.Status(http.StatusMethodNotAllowed, "method not allowed")
 	}
 }

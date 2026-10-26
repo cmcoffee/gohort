@@ -1,11 +1,9 @@
 package orchestrate
 
 import (
-	"net/http"
 	"sort"
 	"strings"
 
-	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/appagents"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/ui"
@@ -145,18 +143,15 @@ func agentPickerOptions(agents []AgentRecord) (opts []ui.SelectOption, cortex ma
 // handleAgentPickerOptions returns the grouped agent-picker options + sub-agents
 // map so the client rebuilds the dropdown with the SAME grouping the initial
 // server paint used. GET /api/agent-options.
-func (T *OrchestrateApp) handleAgentPickerOptions(w http.ResponseWriter, r *http.Request) {
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleAgentPickerOptions(c *jsonapi.Call) (any, error) {
+	user, udb := c.User, c.UDB
 	agents := pickerAgents(listAgents(udb, user))
 	opts, cortex, subs := agentPickerOptions(agents)
 	// The two Cortex maps ride along, so an agent Builder just created gets
 	// its Cortex row without a reload. They were only ever written into the
 	// page when it loaded, which left a new agent without one.
-	jsonapi.Write(w, map[string]any{"options": opts, "sub_agents": subs, "sub_agent_of": subAgentParentsFor(agents),
-		"cortex_agents": cortex, "record_agents": recordAgentsFor(agents, cortex)})
+	return map[string]any{"options": opts, "sub_agents": subs, "sub_agent_of": subAgentParentsFor(agents),
+		"cortex_agents": cortex, "record_agents": recordAgentsFor(agents, cortex)}, nil
 }
 
 // subAgentParentsFor maps every sub-agent whose parent is still there to that

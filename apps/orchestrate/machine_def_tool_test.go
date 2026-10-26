@@ -211,7 +211,7 @@ func TestSessionStatus_ReportsThePhaseOnlyForAMachineSession(t *testing.T) {
 	// A plain session reports nothing, which is every session today.
 	sess, _ := saveChatSession(udb, ChatSession{ID: "s1", AgentID: "a1"})
 	w := httptest.NewRecorder()
-	app.handleSessionStatus(w, req(http.MethodGet, "/api/session-status?agent=a1&session=s1", nil))
+	routed(app)(w, req(http.MethodGet, "/api/session-status?agent=a1&session=s1", nil))
 	if body := strings.TrimSpace(w.Body.String()); body != "{}" {
 		t.Errorf("a session with no machine should report nothing, got %s", body)
 	}
@@ -226,7 +226,7 @@ func TestSessionStatus_ReportsThePhaseOnlyForAMachineSession(t *testing.T) {
 	_, _ = saveChatSession(udb, sess)
 
 	w = httptest.NewRecorder()
-	app.handleSessionStatus(w, req(http.MethodGet, "/api/session-status?agent=a1&session=s1", nil))
+	routed(app)(w, req(http.MethodGet, "/api/session-status?agent=a1&session=s1", nil))
 	body := w.Body.String()
 	if !strings.Contains(body, `"label":"answer"`) {
 		t.Errorf("expected the phase as the pill label, got %s", body)
@@ -239,7 +239,7 @@ func TestSessionStatus_ReportsThePhaseOnlyForAMachineSession(t *testing.T) {
 	// phase from a workflow that no longer exists.
 	DeleteMachineDef(udb, def.ID)
 	w = httptest.NewRecorder()
-	app.handleSessionStatus(w, req(http.MethodGet, "/api/session-status?agent=a1&session=s1", nil))
+	routed(app)(w, req(http.MethodGet, "/api/session-status?agent=a1&session=s1", nil))
 	if !strings.Contains(w.Body.String(), "machine gone") {
 		t.Errorf("expected the pill to flag the deleted machine, got %s", w.Body.String())
 	}
@@ -291,7 +291,7 @@ func TestMachinesList_ReportsWhoUsesEach(t *testing.T) {
 	})
 
 	w := httptest.NewRecorder()
-	app.handleMachines(w, req(http.MethodGet, "/api/machines", nil))
+	routed(app)(w, req(http.MethodGet, "/api/machines", nil))
 	if strings.Contains(w.Body.String(), `"used_by"`) {
 		t.Error("nothing points at it yet, so used_by should be absent")
 	}
@@ -301,7 +301,7 @@ func TestMachinesList_ReportsWhoUsesEach(t *testing.T) {
 		t.Fatalf("seed agent: %v", err)
 	}
 	w = httptest.NewRecorder()
-	app.handleMachines(w, req(http.MethodGet, "/api/machines", nil))
+	routed(app)(w, req(http.MethodGet, "/api/machines", nil))
 	body := w.Body.String()
 	if !strings.Contains(body, `"used_by":["Wren"]`) {
 		t.Errorf("the list should name who runs it: %s", body)

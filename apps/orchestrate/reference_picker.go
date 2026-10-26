@@ -42,20 +42,16 @@ import (
 )
 
 // handleReferenceSources drives the Sources modal.
-func (T *OrchestrateApp) handleReferenceSources(w http.ResponseWriter, r *http.Request) {
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleReferenceSources(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+	r := c.R
+	user, udb := c.User, c.UDB
 	agentID := strings.TrimSpace(r.URL.Query().Get("agent"))
 	if agentID == "" {
-		http.Error(w, "agent required", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("agent required")
 	}
 	rec, found := loadAgent(udb, agentID)
 	if !found {
-		http.NotFound(w, r)
-		return
+		return nil, errNotFound
 	}
 
 	switch r.Method {
@@ -107,16 +103,15 @@ func (T *OrchestrateApp) handleReferenceSources(w http.ResponseWriter, r *http.R
 				writes = append(writes, s.Ref())
 			}
 		}
-		jsonapi.Write(w, map[string]any{"items": items, "attached": attached, "writes": writes})
+		return map[string]any{"items": items, "attached": attached, "writes": writes}, nil
 	case http.MethodPost:
 		var body struct {
 			References []string `json:"references"`
 			// Writes is the attached sources whose "Can make changes" is on.
 			Writes []string `json:"writes"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
+		if err := json.Unmarshal(raw, &body); err != nil {
+			return nil, jsonapi.BadRequest("bad request")
 		}
 		writes := map[string]bool{}
 		for _, ref := range body.Writes {
@@ -143,13 +138,12 @@ func (T *OrchestrateApp) handleReferenceSources(w http.ResponseWriter, r *http.R
 			// CAN be refused here for a reason that has nothing to do with
 			// sources. Reporting ok on a refused write is the failure that
 			// looks exactly like a picker that does not persist.
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest(err.Error())
 		}
 		Log("[orchestrate.sources] user=%q agent=%q now attached to %d source(s)", user, rec.ID, len(sel))
-		jsonapi.Write(w, map[string]bool{"ok": true})
+		return map[string]bool{"ok": true}, nil
 	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return nil, jsonapi.Status(http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 

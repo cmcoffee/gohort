@@ -17,10 +17,10 @@ package orchestrate
 import (
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 func init() {
@@ -121,13 +121,10 @@ func publishAgentForAdmin(db Database, owner, id string) error {
 // the "Share with users" picker on the agent page. Any authenticated user may
 // share their own agent, so every approved user is a candidate — unlike the
 // admin-only api/user-candidates, this one is available to the whole fleet.
-func (T *OrchestrateApp) handleUserCandidates(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleUserCandidates(c *jsonapi.Call) (any, error) {
+	r := c.R
+	user := c.User
 	q := r.URL.Query()
-	w.Header().Set("Content-Type", "application/json")
 	// ?groups=1 from a picker whose kind can go to a group as well, and
 	// ?everyone=1 from one that offers Everyone: worded as the request it is
 	// for anybody but an administrator, and ?everyone=on once it is granted.
@@ -136,7 +133,7 @@ func (T *OrchestrateApp) handleUserCandidates(w http.ResponseWriter, r *http.Req
 	if everyone == "1" && !requestIsAdminAgent(r) {
 		out = relabelEveryone(out, "Everyone (an administrator approves)")
 	}
-	w.Write(out)
+	return json.RawMessage(out), nil
 }
 
 // relabelEveryone renames the Everyone choice in a candidate list.

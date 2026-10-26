@@ -44,36 +44,26 @@ import (
 // record that is read on every turn is a slow leak.
 const maxOpeningPrompt = 8000
 
-func (T *OrchestrateApp) handleSessionStart(w http.ResponseWriter, r *http.Request) {
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+func (T *OrchestrateApp) handleSessionStart(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+	user, udb := c.User, c.UDB
 	var body struct {
 		Agent   string `json:"agent"`
 		Message string `json:"message"`
 		Title   string `json:"title"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return nil, jsonapi.BadRequest("bad request")
 	}
 	ref := strings.TrimSpace(body.Agent)
 	if ref == "" {
-		http.Error(w, "name the agent to open a session on", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("name the agent to open a session on")
 	}
 	// Name OR id, matching every other surface that takes an agent from a
 	// caller: an app authoring a link knows the agent by the name its
 	// author typed, not by the id the store assigned.
 	agent, found := findAgentByNameOrID(udb, user, ref)
 	if !found {
-		http.Error(w, "no agent called "+strconv.Quote(ref)+" you can reach", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("no agent called " + strconv.Quote(ref) + " you can reach")
 	}
 
 	msg := strings.TrimSpace(body.Message)
@@ -89,20 +79,19 @@ func (T *OrchestrateApp) handleSessionStart(w http.ResponseWriter, r *http.Reque
 		OpeningPrompt: msg,
 	}
 	if _, err := saveChatSession(udb, sess); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return nil, jsonapi.Status(http.StatusInternalServerError, err.Error())
 	}
 	Log("[orchestrate.sessions] %s opened session %s on %s%s", user, sess.ID, chFirst(agent.Name, agent.ID),
 		chOpeningNote(msg))
 
-	jsonapi.Write(w, map[string]any{
+	return map[string]any{
 		"session": sess.ID,
 		"agent":   agent.ID,
 		// A ready-made link, because every caller of this would otherwise
 		// build the same string and one of them would get the escaping
 		// wrong.
 		"url": T.WebPath() + "/?agent=" + url.QueryEscape(agent.ID) + "&session=" + url.QueryEscape(sess.ID),
-	})
+	}, nil
 }
 
 // chOpeningNote keeps the opening prompt OUT of the log while still

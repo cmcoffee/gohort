@@ -173,7 +173,7 @@ func TestReferenceSourcesEndpointReadsAndWrites(t *testing.T) {
 
 	get := httptest.NewRequest("GET", "/api/reference-sources?agent=a1", nil)
 	w := httptest.NewRecorder()
-	app.handleReferenceSources(w, asUser(get, user))
+	routed(app)(w, asUser(get, user))
 	if w.Code != 200 {
 		t.Fatalf("GET: %d %s", w.Code, w.Body.String())
 	}
@@ -208,7 +208,7 @@ func TestReferenceSourcesEndpointReadsAndWrites(t *testing.T) {
 	post := httptest.NewRequest("POST", "/api/reference-sources?agent=a1",
 		strings.NewReader(`{"references":["testfiles:prod","junk"]}`))
 	w = httptest.NewRecorder()
-	app.handleReferenceSources(w, asUser(post, user))
+	routed(app)(w, asUser(post, user))
 	if w.Code != 200 {
 		t.Fatalf("POST: %d %s", w.Code, w.Body.String())
 	}
@@ -224,7 +224,7 @@ func TestReferenceSourcesEndpointReadsAndWrites(t *testing.T) {
 	// empty is worse than one that refuses, because it looks like the
 	// attachment did not take and invites a second one.
 	w = httptest.NewRecorder()
-	app.handleReferenceSources(w, asUser(httptest.NewRequest("GET", "/api/reference-sources?agent=a1", nil), user))
+	routed(app)(w, asUser(httptest.NewRequest("GET", "/api/reference-sources?agent=a1", nil), user))
 	_ = json.Unmarshal(w.Body.Bytes(), &out)
 	if len(out.Attached) != 1 || out.Attached[0] != "testfiles:prod" {
 		t.Fatalf("attached set did not survive the round trip: %v", out.Attached)
@@ -234,12 +234,12 @@ func TestReferenceSourcesEndpointReadsAndWrites(t *testing.T) {
 func TestReferenceSourcesRefusesWithoutAnAgent(t *testing.T) {
 	app, _, user := newTestOrchestrate(t)
 	w := httptest.NewRecorder()
-	app.handleReferenceSources(w, asUser(httptest.NewRequest("GET", "/api/reference-sources", nil), user))
+	routed(app)(w, asUser(httptest.NewRequest("GET", "/api/reference-sources", nil), user))
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("expected 400 without an agent, got %d", w.Code)
 	}
 	w = httptest.NewRecorder()
-	app.handleReferenceSources(w, asUser(httptest.NewRequest("GET", "/api/reference-sources?agent=nope", nil), user))
+	routed(app)(w, asUser(httptest.NewRequest("GET", "/api/reference-sources?agent=nope", nil), user))
 	if w.Code != http.StatusNotFound {
 		t.Errorf("expected 404 for an unknown agent, got %d", w.Code)
 	}
@@ -387,7 +387,7 @@ func TestAnAttachedSourceIsReadOnlyUntilSwitched(t *testing.T) {
 
 	get := func() (map[string]map[string]any, []string) {
 		w := httptest.NewRecorder()
-		app.handleReferenceSources(w, asUser(httptest.NewRequest("GET", "/api/reference-sources?agent=a1", nil), user))
+		routed(app)(w, asUser(httptest.NewRequest("GET", "/api/reference-sources?agent=a1", nil), user))
 		var out struct {
 			Items  []map[string]any `json:"items"`
 			Writes []string         `json:"writes"`
@@ -411,7 +411,7 @@ func TestAnAttachedSourceIsReadOnlyUntilSwitched(t *testing.T) {
 
 	post := func(body string) {
 		w := httptest.NewRecorder()
-		app.handleReferenceSources(w, asUser(httptest.NewRequest("POST", "/api/reference-sources?agent=a1", strings.NewReader(body)), user))
+		routed(app)(w, asUser(httptest.NewRequest("POST", "/api/reference-sources?agent=a1", strings.NewReader(body)), user))
 		if w.Code != 200 {
 			t.Fatalf("POST %s: %d %s", body, w.Code, w.Body.String())
 		}
@@ -489,7 +489,7 @@ func TestAnAgentsOwnSubAgentsAreOfferedAsSources(t *testing.T) {
 	saveAgent(udb, AgentRecord{ID: "lib", Name: "GitLab Librarian", OrchestratorPrompt: "p", OwnedBy: "parent", Hidden: true})
 	offered := func(agent string) map[string]string {
 		w := httptest.NewRecorder()
-		app.handleReferenceSources(w, asUser(httptest.NewRequest("GET", "/api/reference-sources?agent="+agent, nil), user))
+		routed(app)(w, asUser(httptest.NewRequest("GET", "/api/reference-sources?agent="+agent, nil), user))
 		var out struct {
 			Items []struct{ ID, Group string } `json:"items"`
 		}

@@ -21,7 +21,7 @@ func TestSessionStartStoresThePromptWithoutRunningATurn(t *testing.T) {
 	body := `{"agent":"Investigator","message":"What failed in bundle scan-2026-08-14?","title":"scan-2026-08-14"}`
 	r := httptest.NewRequest("POST", "/api/sessions/start", strings.NewReader(body))
 	w := httptest.NewRecorder()
-	app.handleSessionStart(w, asUser(r, user))
+	routed(app)(w, asUser(r, user))
 	if w.Code != 200 {
 		t.Fatalf("%d %s", w.Code, w.Body.String())
 	}
@@ -95,7 +95,7 @@ func TestSessionStartRefusals(t *testing.T) {
 	call := func(body string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest("POST", "/api/sessions/start", strings.NewReader(body))
 		w := httptest.NewRecorder()
-		app.handleSessionStart(w, asUser(r, user))
+		routed(app)(w, asUser(r, user))
 		return w
 	}
 	if w := call(`{"message":"hi"}`); w.Code != http.StatusBadRequest {

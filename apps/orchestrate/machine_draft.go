@@ -34,30 +34,21 @@ const maxDraftDescription = 4000
 // handleMachineDraft authors a machine from a plain-language description.
 //
 //	POST /api/machines/draft {"description": "..."} → {id, name, checklist}
-func (T *OrchestrateApp) handleMachineDraft(w http.ResponseWriter, r *http.Request) {
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+func (T *OrchestrateApp) handleMachineDraft(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+	r := c.R
+	user, udb := c.User, c.UDB
 	if T.LLM == nil {
-		http.Error(w, "worker LLM not configured", http.StatusServiceUnavailable)
-		return
+		return nil, jsonapi.Status(http.StatusServiceUnavailable, "worker LLM not configured")
 	}
 	var body struct {
 		Description string `json:"description"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return nil, jsonapi.BadRequest("bad request")
 	}
 	desc := strings.TrimSpace(body.Description)
 	if desc == "" {
-		http.Error(w, "describe what the machine should do", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("describe what the machine should do")
 	}
 	if len(desc) > maxDraftDescription {
 		desc = desc[:maxDraftDescription]
@@ -81,8 +72,7 @@ func (T *OrchestrateApp) handleMachineDraft(w http.ResponseWriter, r *http.Reque
 		if def, derr = T.draftMachineOnce(ctx, ask+
 			"\n\nYour previous reply could not be used: "+derr.Error()+
 			"\nReply with ONLY the JSON object."); derr != nil {
-			http.Error(w, "the draft could not be produced: "+derr.Error(), http.StatusBadGateway)
-			return
+			return nil, jsonapi.Status(http.StatusBadGateway, "the draft could not be produced: "+derr.Error())
 		}
 	}
 
@@ -93,7 +83,7 @@ func (T *OrchestrateApp) handleMachineDraft(w http.ResponseWriter, r *http.Reque
 	saved := SaveMachineDef(udb, def)
 	Log("[orchestrate.machines] user=%q drafted machine %q (id=%s, %d steps, %d problems left)",
 		user, saved.Name, saved.ID, len(saved.Phases), len(saved.Problems()))
-	jsonapi.Write(w, map[string]any{"id": saved.ID, "name": saved.Name, "checklist": saved.Problems()})
+	return map[string]any{"id": saved.ID, "name": saved.Name, "checklist": saved.Problems()}, nil
 }
 
 // draftMachineOnce makes one authoring call and decodes it through the

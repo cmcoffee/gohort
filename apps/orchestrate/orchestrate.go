@@ -674,39 +674,55 @@ func (T *OrchestrateApp) registerHandlers() {
 	T.HandleFunc("/api/agents", T.handleAgentList)
 	// Candidate user list for the agent-page "Share with users" ACLPicker (peer
 	// sharing). Any authenticated user may share their own agent.
-	T.HandleFunc("/api/user-candidates", T.handleUserCandidates)
+	T.HandleFunc("/api/user-candidates", jsonapi.Get(T.DB, T.handleUserCandidates))
 	// Agent-centric tier-2 credential scoping — which of the user's granted
 	// credentials this agent may use (writes AgentRecord.DisabledCredentials).
-	T.HandleFunc("/api/agent-access", T.handleAgentAccess)
+	T.HandleFunc("/api/agent-access", jsonapi.Get(T.DB, T.handleAgentAccess))
 	// One tool's standing decisions, written from the access page through the
 	// same setters the Permissions page uses. See agent_access_tools.go.
-	T.HandleFunc("/api/agent-access/tool", T.handleAgentAccessTool)
-	T.HandleFunc("/api/agent-access/handoff", T.handleAgentAccessHandoff)
-	T.HandleFunc("/api/agent-credentials", T.handleAgentCredentials)
+	T.HandleFunc("/api/agent-access/tool", jsonapi.Methods{"PATCH": jsonapi.Post(T.DB, T.handleAgentAccessTool, jsonapi.EmptyBodyOK), "POST": jsonapi.Post(T.DB, T.handleAgentAccessTool, jsonapi.EmptyBodyOK)}.Serve)
+	T.HandleFunc("/api/agent-access/handoff", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleAgentAccessHandoff)}.Serve)
+	T.HandleFunc("/api/agent-credentials", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) { return T.handleAgentCredentials(c, nil) }),
+		"POST": jsonapi.Post(T.DB, T.handleAgentCredentials, jsonapi.EmptyBodyOK),
+	}.Serve)
 	// Per-tool scope pills (Tools modal): Global + per-agent toggles.
-	T.HandleFunc("/api/tool-scope", T.handleToolScope)
+	T.HandleFunc("/api/tool-scope", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) { return T.handleToolScope(c, nil) }),
+		"POST": jsonapi.Post(T.DB, T.handleToolScope, jsonapi.EmptyBodyOK),
+	}.Serve)
 	// Per-tool ask-before-every-call flag, the other property of the tool
 	// record the Tools modal edits. See tool_confirm_http.go.
-	T.HandleFunc("/api/tool-confirm", T.handleToolConfirm)
+	T.HandleFunc("/api/tool-confirm", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) { return T.handleToolConfirm(c, nil) }),
+		"POST": jsonapi.Post(T.DB, T.handleToolConfirm, jsonapi.EmptyBodyOK),
+	}.Serve)
 	// Grouped agent-picker options (Built-in / Conversation Agents / Specialized
 	// Agents / per-app) so the client rebuilds the dropdown with the SAME
 	// separators the initial paint used — a group-less /api/agents rebuild
 	// collapsed them to Built-in/Custom after every Builder action.
-	T.HandleFunc("/api/agent-options", T.handleAgentPickerOptions)
-	T.HandleFunc("/api/capabilities", T.handleAgentCapabilities)
-	T.HandleFunc("/api/channels", T.handleChannels)
+	T.HandleFunc("/api/agent-options", jsonapi.Get(T.DB, T.handleAgentPickerOptions))
+	T.HandleFunc("/api/capabilities", jsonapi.Get(T.DB, T.handleAgentCapabilities))
+	T.HandleFunc("/api/channels", jsonapi.Methods{
+		"GET":    jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) { return T.handleChannels(c, nil) }),
+		"DELETE": jsonapi.Post(T.DB, T.handleChannels, jsonapi.EmptyBodyOK),
+		"POST":   jsonapi.Post(T.DB, T.handleChannels, jsonapi.EmptyBodyOK),
+	}.Serve)
 	T.HandleFunc("/api/agents/import", T.handleAgentImport)
 	T.HandleFunc("/api/agents/suggest", T.handleAgentSuggest)
 	// Guided create: drafts the prompt from the wizard brief, saves,
 	// and echoes the new record for the redirect into the editor.
-	T.HandleFunc("/api/agents/wizard", T.handleAgentWizard)
-	T.HandleFunc("/api/agents/propose", T.handleAgentPropose)
+	T.HandleFunc("/api/agents/wizard", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleAgentWizard, jsonapi.EmptyBodyOK)}.Serve)
+	T.HandleFunc("/api/agents/propose", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleAgentPropose, jsonapi.EmptyBodyOK)}.Serve)
 	// Per-user Default agent preference (surfaced on /account via the
 	// account-section registry — account_prefs.go).
 	T.HandleFunc("/api/ask-owner", T.handleAskOwner)
-	T.HandleFunc("/api/default-agent", T.handleDefaultAgentPref)
+	T.HandleFunc("/api/default-agent", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) { return T.handleDefaultAgentPref(c, nil) }),
+		"POST": jsonapi.Post(T.DB, T.handleDefaultAgentPref, jsonapi.EmptyBodyOK),
+	}.Serve)
 	// Per-session diagnostics trail (session_diag.go) — the ⚠ affordance.
-	T.HandleFunc("/api/session-diag", T.handleSessionDiag)
+	T.HandleFunc("/api/session-diag", jsonapi.Get(T.DB, T.handleSessionDiag))
 	T.HandleFunc("/api/agents/", T.handleAgentOne)
 	// Collections are NOT admin-only, and were. A collection belongs to the
 	// user who made it, apps/knowledge is the surface ordinary people manage
@@ -719,7 +735,10 @@ func (T *OrchestrateApp) registerHandlers() {
 	//
 	// The gate exists for the WORKBENCH beside these: agent CRUD, prompts,
 	// tool allowlists, memory pruning. Those keep it.
-	T.HandleFunc("/api/collections", T.handleCollections)
+	T.HandleFunc("/api/collections", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) { return T.handleCollections(c, nil) }),
+		"POST": jsonapi.Post(T.DB, T.handleCollections, jsonapi.EmptyBodyOK),
+	}.Serve)
 	T.HandleFunc("/api/collections/", T.handleCollectionOne)
 	// Runs interrupted by a restart resume (pipeline_runs.go); registered
 	// with the routes so they exist before the queue is restored.
@@ -727,12 +746,15 @@ func (T *OrchestrateApp) registerHandlers() {
 	// The pipeline as a page (pipeline_page.go): what it is made of,
 	// read in the order it runs.
 	T.HandleFunc("/pipeline", T.handlePipelinePage)
-	T.HandleFunc("/api/pipelines", T.handlePipelines)
+	T.HandleFunc("/api/pipelines", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) { return T.handlePipelines(c, nil) }),
+		"POST": jsonapi.Post(T.DB, T.handlePipelines, jsonapi.EmptyBodyOK),
+	}.Serve)
 	// More-specific path wins over /api/pipelines/ in Go's ServeMux, so
 	// import gets its own handler without colliding with the per-id
 	// routes (get/put/delete/export/run) in handlePipelineOne.
 	T.HandleFunc("/api/pipelines/import", T.handlePipelineImport)
-	T.HandleFunc("/api/pipelines/draft", T.handlePipelineDraft)
+	T.HandleFunc("/api/pipelines/draft", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handlePipelineDraft, jsonapi.EmptyBodyOK)}.Serve)
 	T.HandleFunc("/api/pipelines/", T.handlePipelineOne)
 	// Phase machines (machines_http.go, docs/design/agent-machines.md). Same
 	// route shape as pipelines, minus /run — a machine only runs inside a
@@ -741,43 +763,52 @@ func (T *OrchestrateApp) registerHandlers() {
 	// the /api routes for readability only — the mux matches on longest
 	// prefix, not on order.
 	T.HandleFunc("/machine", T.handleMachinePage)
-	T.HandleFunc("/api/bulletins", T.handleBulletins)
+	T.HandleFunc("/api/bulletins", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) { return T.handleBulletins(c, nil) }),
+		"POST": jsonapi.Post(T.DB, T.handleBulletins, jsonapi.EmptyBodyOK, jsonapi.MaxBody(1<<16)),
+	}.Serve)
 	T.HandleFunc("/api/bulletins/", T.handleBulletinOne)
-	T.HandleFunc("/api/machines", T.handleMachines)
+	T.HandleFunc("/api/machines", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) { return T.handleMachines(c, nil) }),
+		"POST": jsonapi.Post(T.DB, T.handleMachines, jsonapi.EmptyBodyOK),
+	}.Serve)
 	// Feeds the chat toolbar's status pill with the session's current phase.
-	T.HandleFunc("/api/session-status", T.handleSessionStatus)
+	T.HandleFunc("/api/session-status", jsonapi.Get(T.DB, T.handleSessionStatus))
 	// The pill's drawer: the cursor laid out for a reader, and the two owner
 	// levers (move the phase, clear the blackboard). machine_session_state.go.
-	T.HandleFunc("/api/session-state", T.handleSessionState)
-	T.HandleFunc("/api/session-phases", T.handleSessionPhases)
-	T.HandleFunc("/api/session-phase", T.handleSessionPhase)
-	T.HandleFunc("/api/session-state-clear", T.handleSessionStateClear)
+	T.HandleFunc("/api/session-state", jsonapi.Get(T.DB, T.handleSessionState))
+	T.HandleFunc("/api/session-phases", jsonapi.Get(T.DB, T.handleSessionPhases))
+	T.HandleFunc("/api/session-phase", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleSessionPhase)}.Serve)
+	T.HandleFunc("/api/session-state-clear", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleSessionStateClear)}.Serve)
 	// The context view for a thread that has folded (session_context.go).
-	T.HandleFunc("/api/session-context", T.handleSessionContext)
+	T.HandleFunc("/api/session-context", jsonapi.Get(T.DB, T.handleSessionContext))
 	T.HandleFunc("/api/machines/import", T.handleMachineImport)
-	T.HandleFunc("/api/machines/draft", T.handleMachineDraft)
+	T.HandleFunc("/api/machines/draft", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleMachineDraft, jsonapi.EmptyBodyOK)}.Serve)
 	T.HandleFunc("/api/machines/", T.handleMachineOne)
 	// The Sources picker (reference_picker.go) — cross-app reference
 	// sources attached to one agent. Its own endpoint rather than the
 	// agent record's field because the record stores objects and a chip
 	// picker submits scalars.
-	T.HandleFunc("/api/reference-sources", T.handleReferenceSources)
-	T.HandleFunc("/api/skills/list", T.handleSkillsList)
-	T.HandleFunc("/api/sessions", T.handleSessionList)
+	T.HandleFunc("/api/reference-sources", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) { return T.handleReferenceSources(c, nil) }),
+		"POST": jsonapi.Post(T.DB, T.handleReferenceSources, jsonapi.EmptyBodyOK),
+	}.Serve)
+	T.HandleFunc("/api/skills/list", jsonapi.Get(T.DB, T.handleSkillsList))
+	T.HandleFunc("/api/sessions", jsonapi.Get(T.DB, T.handleSessionList))
 	// More specific than /api/sessions/, so it wins the mux's longest-prefix
 	// match and never reaches handleSessionOne as a session id.
-	T.HandleFunc("/api/sessions/start", T.handleSessionStart)
+	T.HandleFunc("/api/sessions/start", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleSessionStart, jsonapi.EmptyBodyOK)}.Serve)
 	T.HandleFunc("/api/sessions/", T.handleSessionOne)
 	// Staged improvement-brief retrieval for the "Send to Builder"
 	// handoff (see send_to_builder.go). The brief is created by the
 	// /api/sessions/{sid}/send-to-builder sub-action and consumed here.
 	T.HandleFunc("/api/builder-brief/", T.handleBuilderBrief)
 	// Live options for an intake form's select (IntakeField.OptionsFrom).
-	T.HandleFunc("/api/intake/options", T.handleIntakeOptions)
+	T.HandleFunc("/api/intake/options", jsonapi.Get(T.DB, T.handleIntakeOptions))
 	T.HandleFunc("/api/send", T.handleSendRouter)
 	T.HandleFunc("/api/cancel", T.handleCancelRouter)
 	T.HandleFunc("/api/confirm", T.handleConfirmRouter)
-	T.HandleFunc("/api/approvals/answer", T.handleApprovalAnswer)
+	T.HandleFunc("/api/approvals/answer", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleApprovalAnswer, jsonapi.EmptyBodyOK)}.Serve)
 	T.HandleFunc("/api/inject", T.handleInject)
 	// Delivered attachments, so a reloaded thread still shows its pictures —
 	// and so a message posted with nobody watching can show one at all.
@@ -793,12 +824,12 @@ func (T *OrchestrateApp) registerHandlers() {
 	// Run-registry endpoints (see runs.go / runs_http.go) — let a
 	// reconnecting client discover and resume the in-flight stream
 	// for a session after disconnect.
-	T.HandleFunc("/api/runs/active", T.handleRunsActive)
+	T.HandleFunc("/api/runs/active", T.runsActiveRoute())
 	T.HandleFunc("/api/runs/", T.handleRunsDispatch)
-	T.HandleFunc("/api/settings/private", T.handlePrivateModeGet)
-	T.HandleFunc("/api/settings/private/set", T.handlePrivateModeSet)
-	T.HandleFunc("/api/settings/memory", T.handleMemoryModeGet)
-	T.HandleFunc("/api/settings/memory/set", T.handleMemoryModeSet)
+	T.HandleFunc("/api/settings/private", T.privateModeGetRoute())
+	T.HandleFunc("/api/settings/private/set", T.privateModeSetRoute())
+	T.HandleFunc("/api/settings/memory", T.memoryModeGetRoute())
+	T.HandleFunc("/api/settings/memory/set", T.memoryModeSetRoute())
 }
 
 // adminGated wraps an http.HandlerFunc so non-admin requests get a

@@ -12,44 +12,45 @@
 package orchestrate
 
 import (
-	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // handleRunsActive returns the active run ID for a session, or an
 // empty object if none. Frontend uses this on session-load to decide
 // whether to attach to an in-flight stream rather than rendering
 // stale state and missing the live tail.
-func (T *OrchestrateApp) handleRunsActive(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleRunsActive(c *jsonapi.Call) (any, error) {
+	r := c.R
+	user := c.User
 	sessionID := strings.TrimSpace(r.URL.Query().Get("session_id"))
 	if sessionID == "" {
-		http.Error(w, "session_id required", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("session_id required")
 	}
-	w.Header().Set("Content-Type", "application/json")
 	// now_ms is the server's clock, so a page rejoining a run can time a
 	// replayed thinking tick from when its span began (started_ms) rather
 	// than from when the replay reached it.
 	now := time.Now().UnixMilli()
 	run := T.runsRegistry().BySession(user, sessionID)
 	if run == nil {
-		json.NewEncoder(w).Encode(map[string]any{"now_ms": now})
-		return
+		return map[string]any{"now_ms": now}, nil
 	}
-	json.NewEncoder(w).Encode(map[string]any{
+	return map[string]any{
 		"run_id":     run.ID,
 		"session_id": sessionID,
 		"now_ms":     now,
-	})
+	}, nil
+}
+
+// runsActiveRoute is handleRunsActive's route, for the registration and the Public wrapper
+// another app serves it through.
+func (T *OrchestrateApp) runsActiveRoute() http.HandlerFunc {
+	return jsonapi.Get(T.DB, T.handleRunsActive)
 }
 
 // handleRunsStream tails a run's event buffer as SSE. The `since`

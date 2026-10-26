@@ -103,11 +103,9 @@ func pipelineStageNames(d PipelineDef) []string {
 
 // handlePipelines serves the collection-level routes: GET list, POST
 // create.
-func (T *OrchestrateApp) handlePipelines(w http.ResponseWriter, r *http.Request) {
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handlePipelines(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+	r := c.R
+	user, udb := c.User, c.UDB
 	switch r.Method {
 	case http.MethodGet:
 		defs := ListPipelineDefs(udb, user)
@@ -146,12 +144,11 @@ func (T *OrchestrateApp) handlePipelines(w http.ResponseWriter, r *http.Request)
 				Owner:      sp.Owner,
 			})
 		}
-		jsonapi.Write(w, map[string]any{"pipelines": rows})
+		return map[string]any{"pipelines": rows}, nil
 	case http.MethodPost:
 		var def PipelineDef
-		if err := json.NewDecoder(r.Body).Decode(&def); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
+		if err := json.Unmarshal(raw, &def); err != nil {
+			return nil, jsonapi.BadRequest("bad request")
 		}
 		// Force a fresh, user-owned record — the client doesn't get to
 		// assert id/owner on create.
@@ -164,14 +161,13 @@ func (T *OrchestrateApp) handlePipelines(w http.ResponseWriter, r *http.Request)
 		def.Editors = nil
 		def.Published = false
 		if err := def.Validate(); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest(err.Error())
 		}
 		saved := SavePipelineDef(udb, def)
 		Log("[orchestrate.pipelines] user=%q created pipeline %q (id=%s, %d stages)", user, saved.Name, saved.ID, len(saved.Stages))
-		jsonapi.Write(w, saved)
+		return saved, nil
 	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return nil, jsonapi.Status(http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 

@@ -32,10 +32,10 @@ func TestDraftMachineSavesAndReportsItsChecklist(t *testing.T) {
 			{"name": "answer", "desc": "Reply.", "prompt": "Answer plainly.", "resident": true}
 		]}`, Repeat: true}}}
 
-	r := httptest.NewRequest("POST", "/orchestrate/api/machines/draft",
+	r := httptest.NewRequest("POST", "/api/machines/draft",
 		strings.NewReader(`{"description": "triage support questions and dig into log bundles"}`))
 	w := httptest.NewRecorder()
-	app.handleMachineDraft(w, asUser(r, user))
+	routed(app)(w, asUser(r, user))
 	if w.Code != 200 {
 		t.Fatalf("draft failed: %d %s", w.Code, w.Body.String())
 	}

@@ -79,7 +79,7 @@ func TestAnEverywhereAskIsLockedOnTheAgent(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPatch,
 		"/api/agent-access/tool?agent=a11&name=web_search", strings.NewReader(`{"chat":"allow"}`))
 	w := httptest.NewRecorder()
-	app.handleAgentAccessTool(w, asUser(r, "alice"))
+	routed(app)(w, asUser(r, "alice"))
 	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "every agent") {
 		t.Errorf("turning off an everywhere ask on one agent: %d %s", w.Code, w.Body.String())
 	}

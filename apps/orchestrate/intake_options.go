@@ -8,13 +8,12 @@
 package orchestrate
 
 import (
-	"encoding/json"
-	"net/http"
 	"sort"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/appstores"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // intakeOption is one choice for a select.
@@ -30,11 +29,9 @@ type intakeOption struct {
 //	that kind, the targets Builder can change or fix.
 //	build_on&kind=...: what the thing being built could use, for "What should
 //	it build on?" (buildOnOptions).
-func (T *OrchestrateApp) handleIntakeOptions(w http.ResponseWriter, r *http.Request) {
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleIntakeOptions(c *jsonapi.Call) (any, error) {
+	r := c.R
+	user, udb := c.User, c.UDB
 	var opts []intakeOption
 	switch r.URL.Query().Get("source") {
 	case "authoring":
@@ -42,14 +39,12 @@ func (T *OrchestrateApp) handleIntakeOptions(w http.ResponseWriter, r *http.Requ
 	case "build_on":
 		opts = buildOnOptions(udb, user, r.URL.Query().Get("kind"))
 	default:
-		http.Error(w, "unknown option source", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("unknown option source")
 	}
 	if opts == nil {
 		opts = []intakeOption{}
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(opts)
+	return opts, nil
 }
 
 // authoringTargets lists what the user owns of one kind, for "Which one?".

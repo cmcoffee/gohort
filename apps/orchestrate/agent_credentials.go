@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // userScopableCredentials returns the credentials `user` may use and that make
@@ -63,22 +64,18 @@ func userScopableCredentials(user string) []SecureCredential {
 // credentials" picker. GET returns the candidate creds + the currently-enabled subset;
 // POST {enabled_credentials:[...]} rewrites the agent's opt-out for exactly those
 // candidates (opt-outs for creds NOT in the candidate set are preserved).
-func (T *OrchestrateApp) handleAgentCredentials(w http.ResponseWriter, r *http.Request) {
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleAgentCredentials(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+	r := c.R
+	user, udb := c.User, c.UDB
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
 	if id == "" {
-		http.Error(w, "missing id", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("missing id")
 	}
 	a, ok := loadAgent(udb, id)
 	// A user may only scope their OWN agent (seeds load with an empty Owner until
 	// first shadowed; treat that as the caller's).
 	if !ok || (a.Owner != "" && a.Owner != user && a.Owner != seedOwner) {
-		http.NotFound(w, r)
-		return
+		return nil, errNotFound
 	}
 	candidates := userScopableCredentials(user)
 
@@ -101,18 +98,16 @@ func (T *OrchestrateApp) handleAgentCredentials(w http.ResponseWriter, r *http.R
 				enabled = append(enabled, c.Name)
 			}
 		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		return map[string]any{
 			"credentials":         opts,
 			"enabled_credentials": enabled,
-		})
+		}, nil
 	case http.MethodPost:
 		var body struct {
 			EnabledCredentials []string `json:"enabled_credentials"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
+		if err := json.Unmarshal(raw, &body); err != nil {
+			return nil, jsonapi.BadRequest("bad request")
 		}
 		enabled := map[string]bool{}
 		for _, n := range body.EnabledCredentials {
@@ -143,11 +138,10 @@ func (T *OrchestrateApp) handleAgentCredentials(w http.ResponseWriter, r *http.R
 		a.DisabledCredentials = out
 		a.Owner = user
 		if _, err := saveAgent(udb, a); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest(err.Error())
 		}
-		w.WriteHeader(http.StatusNoContent)
+		return jsonapi.Empty(http.StatusNoContent), nil
 	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return nil, jsonapi.Status(http.StatusMethodNotAllowed, "method not allowed")
 	}
 }

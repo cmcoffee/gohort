@@ -786,7 +786,7 @@ func (T *OrchestrateApp) PublicHandleCancel(w http.ResponseWriter, r *http.Reque
 // resilience the admin console has. The underlying handlers already RequireUser
 // and refuse a run whose UserID != the caller, so a leaked run id stays private.
 func (T *OrchestrateApp) PublicHandleRunsActive(w http.ResponseWriter, r *http.Request) {
-	T.handleRunsActive(w, r)
+	T.runsActiveRoute()(w, r)
 }
 
 func (T *OrchestrateApp) PublicHandleRunsDispatch(w http.ResponseWriter, r *http.Request) {
@@ -824,10 +824,10 @@ func (T *OrchestrateApp) PublicHandleChannelClear(w http.ResponseWriter, r *http
 // user's toggle applies everywhere private-mode lands in send
 // body.
 func (T *OrchestrateApp) PublicHandlePrivateModeGet(w http.ResponseWriter, r *http.Request) {
-	T.handlePrivateModeGet(w, r)
+	T.privateModeGetRoute()(w, r)
 }
 func (T *OrchestrateApp) PublicHandlePrivateModeSet(w http.ResponseWriter, r *http.Request) {
-	T.handlePrivateModeSet(w, r)
+	T.privateModeSetRoute()(w, r)
 }
 
 // PublicHandleMemoryModeGet / Set expose the per-user Reference Memory
@@ -835,10 +835,10 @@ func (T *OrchestrateApp) PublicHandlePrivateModeSet(w http.ResponseWriter, r *ht
 // preference the admin orchestrate surface uses, so toggling either
 // flips the bit globally for that user.
 func (T *OrchestrateApp) PublicHandleMemoryModeGet(w http.ResponseWriter, r *http.Request) {
-	T.handleMemoryModeGet(w, r)
+	T.memoryModeGetRoute()(w, r)
 }
 func (T *OrchestrateApp) PublicHandleMemoryModeSet(w http.ResponseWriter, r *http.Request) {
-	T.handleMemoryModeSet(w, r)
+	T.memoryModeSetRoute()(w, r)
 }
 
 // PublicHandleAgentFacts exposes the per-(user, agent) facts list

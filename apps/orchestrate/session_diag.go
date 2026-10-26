@@ -450,16 +450,13 @@ func (t *chatTurn) mirrorDiagToParent(kind, detail string, at time.Time) {
 // handleSessionDiag serves the trail: GET /api/session-diag?agent=&session=
 // → [{at, kind, detail}], newest first. Scoped to the requesting user's own
 // store, so one user can never read another's trail.
-func (T *OrchestrateApp) handleSessionDiag(w http.ResponseWriter, r *http.Request) {
-	_, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleSessionDiag(c *jsonapi.Call) (any, error) {
+	r := c.R
+	udb := c.UDB
 	agent := strings.TrimSpace(r.URL.Query().Get("agent"))
 	session := strings.TrimSpace(r.URL.Query().Get("session"))
 	if agent == "" || session == "" {
-		http.Error(w, "agent and session required", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("agent and session required")
 	}
 	var list []SessionDiag
 	udb.Get(sessionDiagTable, agent+":"+session, &list)
@@ -469,7 +466,7 @@ func (T *OrchestrateApp) handleSessionDiag(w http.ResponseWriter, r *http.Reques
 	for i := len(list) - 1; i >= 0; i-- {
 		out = append(out, list[i])
 	}
-	jsonapi.Write(w, out)
+	return out, nil
 }
 
 // PublicHandleSessionDiag is the landing an app routes its AgentLoopPanel's

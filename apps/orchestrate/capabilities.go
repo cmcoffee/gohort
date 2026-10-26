@@ -2,7 +2,6 @@ package orchestrate
 
 import (
 	"fmt"
-	"net/http"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -160,16 +159,13 @@ func outwardCapabilities(owner string, a AgentRecord) OutwardCapability {
 // handleAgentCapabilities returns the outward/spending footprint for every one
 // of the owner's agents that carries any — the "blast radius across your agents"
 // overview. Admin-gated like the rest of Agency.
-func (T *OrchestrateApp) handleAgentCapabilities(w http.ResponseWriter, r *http.Request) {
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleAgentCapabilities(c *jsonapi.Call) (any, error) {
+	user, udb := c.User, c.UDB
 	out := []OutwardCapability{}
 	for _, a := range listAgents(udb, user) {
 		if c := outwardCapabilities(user, a); c.HasReach() {
 			out = append(out, c)
 		}
 	}
-	jsonapi.Write(w, out)
+	return out, nil
 }

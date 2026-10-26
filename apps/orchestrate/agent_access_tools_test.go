@@ -169,7 +169,7 @@ func TestTheAccessPageWritesThroughTheSameSetters(t *testing.T) {
 		r := httptest.NewRequest(http.MethodPatch,
 			"/api/agent-access/tool?agent=a9&name=shared_row_tool", strings.NewReader(body))
 		w := httptest.NewRecorder()
-		app.handleAgentAccessTool(w, asUser(r, "alice"))
+		routed(app)(w, asUser(r, "alice"))
 		return w.Code
 	}
 	if code := post(`{"chat":"ask"}`); code != http.StatusNoContent {
@@ -205,7 +205,7 @@ func TestAFrameworkToolCanBeSetToAsk(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPatch,
 		"/api/agent-access/tool?agent=a10&name=web_search", strings.NewReader(`{"chat":"ask"}`))
 	w := httptest.NewRecorder()
-	app.handleAgentAccessTool(w, asUser(r, "alice"))
+	routed(app)(w, asUser(r, "alice"))
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("marking a framework tool: %d %s", w.Code, w.Body.String())
 	}
@@ -226,7 +226,7 @@ func TestAnUnknownUnattendedValueIsRefused(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPatch,
 		"/api/agent-access/tool?agent=a11&name=web_search", strings.NewReader(`{"unattended":"sometimes"}`))
 	w := httptest.NewRecorder()
-	app.handleAgentAccessTool(w, asUser(r, "alice"))
+	routed(app)(w, asUser(r, "alice"))
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("want 400, got %d %s", w.Code, w.Body.String())
 	}
@@ -494,7 +494,7 @@ func TestTheInChatLadderRefusesNever(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPatch,
 		"/api/agent-access/tool?agent=a30&name=web_search", strings.NewReader(`{"chat":"block"}`))
 	w := httptest.NewRecorder()
-	app.handleAgentAccessTool(w, asUser(r, "alice"))
+	routed(app)(w, asUser(r, "alice"))
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("want 400 for a state this ladder cannot hold, got %d %s", w.Code, w.Body.String())
 	}

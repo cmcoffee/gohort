@@ -44,7 +44,7 @@ func TestTheAccessPageSaysWhichHandoffsAskFirst(t *testing.T) {
 		t.Helper()
 		r := httptest.NewRequest(http.MethodPost, "/api/agent-access/handoff?agent=a-wiwee&target=a-scout&allow="+allow, nil)
 		w := httptest.NewRecorder()
-		app.handleAgentAccessHandoff(w, asUser(r, "alice"))
+		routed(app)(w, asUser(r, "alice"))
 		if w.Code != http.StatusNoContent {
 			t.Fatalf("handoff %s answered %d %s", allow, w.Code, w.Body.String())
 		}

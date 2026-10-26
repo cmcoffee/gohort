@@ -13,7 +13,6 @@ package orchestrate
 
 import (
 	"encoding/json"
-	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -135,29 +134,20 @@ func takeResumePass(owner, agentID, tool, args string) bool {
 // --- answering a kept card ---------------------------------------------------
 
 // handleApprovalAnswer is POST /api/approvals/answer {id, answer: allow|deny}.
-func (T *OrchestrateApp) handleApprovalAnswer(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+func (T *OrchestrateApp) handleApprovalAnswer(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+	user := c.User
 	var body struct {
 		ID     string `json:"id"`
 		Answer string `json:"answer"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || (body.Answer != "allow" && body.Answer != "deny") {
-		http.Error(w, "send id and answer (allow or deny)", http.StatusBadRequest)
-		return
+	if err := json.Unmarshal(raw, &body); err != nil || (body.Answer != "allow" && body.Answer != "deny") {
+		return nil, jsonapi.BadRequest("send id and answer (allow or deny)")
 	}
 	p, err := T.answerPendingApproval(user, strings.TrimSpace(body.ID), body.Answer)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest(err.Error())
 	}
-	jsonapi.Write(w, map[string]any{"ok": true, "answer": p.Answer})
+	return map[string]any{"ok": true, "answer": p.Answer}, nil
 }
 
 // answerPendingApproval records the answer and wakes the agent in the

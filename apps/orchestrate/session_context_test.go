@@ -28,20 +28,20 @@ func TestContextPillAndViewFollowTheFoldState(t *testing.T) {
 	}
 
 	// Fresh: the pill says nothing.
-	w := call("/api/session-status"+q, T.handleSessionStatus)
+	w := call("/api/session-status"+q, routed(T))
 	if strings.TrimSpace(w.Body.String()) != "{}" {
 		t.Fatalf("fresh thread pill = %s", w.Body.String())
 	}
 
 	saveCompactState(udb, "agent-1", sess.ID, CompactState{Summary: "They discussed the Q3 plan.", SummarizedThrough: 18, FoldSeq: 2})
-	w = call("/api/session-status"+q, T.handleSessionStatus)
+	w = call("/api/session-status"+q, routed(T))
 	var pill map[string]any
 	json.Unmarshal(w.Body.Bytes(), &pill)
 	if pill["label"] != "context: 2 folds" || !strings.HasPrefix(pill["detail_url"].(string), "api/session-context?") {
 		t.Fatalf("pill = %v", pill)
 	}
 
-	w = call("/api/session-context"+q, T.handleSessionContext)
+	w = call("/api/session-context"+q, routed(T))
 	var view sessionContextView
 	if err := json.Unmarshal(w.Body.Bytes(), &view); err != nil {
 		t.Fatal(err)
@@ -75,7 +75,7 @@ func TestMachineDrawerCarriesContext(t *testing.T) {
 	saveCompactState(udb, "agent-1", sess.ID, CompactState{Summary: "earlier", SummarizedThrough: 1, FoldSeq: 1})
 	r := asUser(httptest.NewRequest(http.MethodGet, "/api/session-state?agent=agent-1&session="+sess.ID, nil), user)
 	w := httptest.NewRecorder()
-	T.handleSessionState(w, r)
+	routed(T)(w, r)
 	var view sessionStateView
 	if err := json.Unmarshal(w.Body.Bytes(), &view); err != nil {
 		t.Fatal(err)

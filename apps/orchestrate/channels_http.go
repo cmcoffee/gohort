@@ -7,6 +7,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/messaging"
 )
 
@@ -20,11 +21,9 @@ import (
 //	                                       to the agent when agent_id is set)
 //	POST   /api/channels?agent_id=<id>  → create a channel bound to the agent
 //	DELETE /api/channels?id=<id>        → detach (delete) a channel
-func (T *OrchestrateApp) handleChannels(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleChannels(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+	r := c.R
+	user := c.User
 	switch r.Method {
 	case http.MethodGet:
 		agentID := strings.TrimSpace(r.URL.Query().Get("agent_id"))
@@ -63,8 +62,7 @@ func (T *OrchestrateApp) handleChannels(w http.ResponseWriter, r *http.Request) 
 				State: channelRowState(ch, monitors),
 			})
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(out)
+		return out, nil
 
 	case http.MethodPost:
 		agentID := strings.TrimSpace(r.URL.Query().Get("agent_id"))
@@ -86,17 +84,15 @@ func (T *OrchestrateApp) handleChannels(w http.ResponseWriter, r *http.Request) 
 			Senders        *string   `json:"senders"`
 			AllowedHandles *[]string `json:"allowed_handles"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
+		if err := json.Unmarshal(raw, &req); err != nil {
+			return nil, jsonapi.BadRequest("bad request")
 		}
 		// Update in place when an id is given: preserve service/address/created,
 		// refresh the editable fields, allow re-pointing the bound agent.
 		if id := strings.TrimSpace(req.ID); id != "" {
 			ch, found := GetChannel(RootDB, user, id)
 			if !found {
-				http.Error(w, "channel not found", http.StatusNotFound)
-				return
+				return nil, jsonapi.NotFound("channel not found")
 			}
 			// Specifying a channel is just the interface fields; the connector
 			// (service + address) is attached separately, so it's preserved here
@@ -111,27 +107,22 @@ func (T *OrchestrateApp) handleChannels(w http.ResponseWriter, r *http.Request) 
 			applyChannelSenders(&ch, req.Senders, req.AllowedHandles)
 			if a := strings.TrimSpace(req.AgentID); a != "" {
 				if msg := subAgentChannelRefusal(udbFor(T, user), a); msg != "" {
-					http.Error(w, msg, http.StatusBadRequest)
-					return
+					return nil, jsonapi.BadRequest(msg)
 				}
 				ch.AgentID = a
 			}
 			SaveChannel(RootDB, ch)
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(ch)
-			return
+			return ch, nil
 		}
 		// Create — agent from the query (rail is agent-scoped) or the body.
 		if agentID == "" {
 			agentID = strings.TrimSpace(req.AgentID)
 		}
 		if agentID == "" {
-			http.Error(w, "agent_id is required", http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest("agent_id is required")
 		}
 		if msg := subAgentChannelRefusal(udbFor(T, user), agentID); msg != "" {
-			http.Error(w, msg, http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest(msg)
 		}
 		// Service may be blank: an inert channel — the interface is configured
 		// but no source is hooked in yet, so nothing routes until one is.
@@ -162,20 +153,18 @@ func (T *OrchestrateApp) handleChannels(w http.ResponseWriter, r *http.Request) 
 		// as a side effect of wiring it up.
 		Log("[orchestrate.channels] user=%q attached channel %q (service=%s scope=%q) to agent=%s",
 			user, ch.Name, ch.Service, ch.Address, agentID)
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(ch)
+		return ch, nil
 
 	case http.MethodDelete:
 		id := strings.TrimSpace(r.URL.Query().Get("id"))
 		if id == "" {
-			http.Error(w, "id is required", http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest("id is required")
 		}
 		DeleteChannel(RootDB, user, id)
-		w.WriteHeader(http.StatusNoContent)
+		return jsonapi.Empty(http.StatusNoContent), nil
 
 	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return nil, jsonapi.Status(http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 

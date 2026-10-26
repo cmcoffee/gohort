@@ -31,28 +31,22 @@ import (
 )
 
 // sessionStateQuery is what every route here takes.
-func (T *OrchestrateApp) sessionStateQuery(w http.ResponseWriter, r *http.Request) (user string, udb Database, sess ChatSession, def MachineDef, ok bool) {
-	user, udb, ok = RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	agentID := strings.TrimSpace(r.URL.Query().Get("agent"))
-	sessionID := strings.TrimSpace(r.URL.Query().Get("session"))
+func (T *OrchestrateApp) sessionStateQuery(c *jsonapi.Call) (user string, udb Database, sess ChatSession, def MachineDef, err error) {
+	user, udb = c.User, c.UDB
+	agentID := strings.TrimSpace(c.R.URL.Query().Get("agent"))
+	sessionID := strings.TrimSpace(c.R.URL.Query().Get("session"))
 	if agentID == "" || sessionID == "" {
-		http.Error(w, "agent and session are required", http.StatusBadRequest)
-		return user, udb, sess, def, false
+		return user, udb, sess, def, jsonapi.BadRequest("agent and session are required")
 	}
 	sess, found := loadChatSession(udb, agentID, sessionID)
 	if !found || strings.TrimSpace(sess.MachineID) == "" {
-		http.Error(w, "this conversation is not running a machine", http.StatusNotFound)
-		return user, udb, sess, def, false
+		return user, udb, sess, def, jsonapi.NotFound("this conversation is not running a machine")
 	}
 	def, found = LoadMachineDef(udb, user, sess.MachineID)
 	if !found {
-		http.Error(w, "the machine this conversation was running has been deleted", http.StatusNotFound)
-		return user, udb, sess, def, false
+		return user, udb, sess, def, jsonapi.NotFound("the machine this conversation was running has been deleted")
 	}
-	return user, udb, sess, def, true
+	return user, udb, sess, def, nil
 }
 
 // machineStatusActions is what the status pill carries beyond its label:
@@ -112,14 +106,10 @@ type sessionHopView struct {
 // handleSessionState serves the drawer.
 //
 //	GET /api/session-state?agent=<id>&session=<id>
-func (T *OrchestrateApp) handleSessionState(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	user, udb, sess, def, ok := T.sessionStateQuery(w, r)
-	if !ok {
-		return
+func (T *OrchestrateApp) handleSessionState(c *jsonapi.Call) (any, error) {
+	user, udb, sess, def, qErr := T.sessionStateQuery(c)
+	if qErr != nil {
+		return nil, qErr
 	}
 	loc := UserLocation(user)
 	view := sessionStateView{
@@ -169,7 +159,7 @@ func (T *OrchestrateApp) handleSessionState(w http.ResponseWriter, r *http.Reque
 	if cv := sessionContextOf(udb, sess); cv != nil {
 		view.Context = cv
 	}
-	jsonapi.Write(w, view)
+	return view, nil
 }
 
 // machinePathLine renders the machine's phases in order with the current
@@ -189,14 +179,10 @@ func machinePathLine(def MachineDef, current string) string {
 // handleSessionPhases lists the phases the owner may move to.
 //
 //	GET /api/session-phases?agent=<id>&session=<id> → [{value,label}]
-func (T *OrchestrateApp) handleSessionPhases(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	_, _, sess, def, ok := T.sessionStateQuery(w, r)
-	if !ok {
-		return
+func (T *OrchestrateApp) handleSessionPhases(c *jsonapi.Call) (any, error) {
+	_, _, sess, def, qErr := T.sessionStateQuery(c)
+	if qErr != nil {
+		return nil, qErr
 	}
 	out := make([]map[string]any, 0, len(def.Phases))
 	for _, ph := range def.Phases {
@@ -209,69 +195,57 @@ func (T *OrchestrateApp) handleSessionPhases(w http.ResponseWriter, r *http.Requ
 		}
 		out = append(out, map[string]any{"value": ph.Name, "label": label})
 	}
-	jsonapi.Write(w, out)
+	return out, nil
 }
 
 // handleSessionPhase moves the cursor.
 //
 //	POST /api/session-phase?agent=<id>&session=<id>&value=<phase>
-func (T *OrchestrateApp) handleSessionPhase(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	_, udb, sess, def, ok := T.sessionStateQuery(w, r)
-	if !ok {
-		return
+func (T *OrchestrateApp) handleSessionPhase(c *jsonapi.Call, _ struct{}) (any, error) {
+	r := c.R
+	_, udb, sess, def, qErr := T.sessionStateQuery(c)
+	if qErr != nil {
+		return nil, qErr
 	}
 	to := strings.TrimSpace(r.URL.Query().Get("value"))
 	if to == "" {
-		http.Error(w, "value (the phase to move to) is required", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("value (the phase to move to) is required")
 	}
 	if to == sess.Phase {
-		jsonapi.Write(w, map[string]any{"ok": true, "phase": sess.Phase, "note": "already there"})
-		return
+		return map[string]any{"ok": true, "phase": sess.Phase, "note": "already there"}, nil
 	}
 	cur := &MachineCursor{Phase: sess.Phase, State: sess.MachineState, Log: sess.MachineLog, Opening: sess.MachineOpening}
 	note := func(kind, detail string) { appendSessionDiag(udb, sess.AgentID, sess.ID, kind, detail) }
 	from := sess.Phase
 	ph, err := def.MoveCursor(cur, to, "moved by the owner from the console", note)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest(err.Error())
 	}
 	sess.Phase = cur.Phase
 	sess.MachineState = cur.State
 	sess.MachineLog = cur.Log
 	if _, err := saveChatSession(udb, sess); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return nil, jsonapi.Status(http.StatusInternalServerError, err.Error())
 	}
 	appendSessionDiag(udb, sess.AgentID, sess.ID, "machine_phase_moved_by_owner",
 		"the owner moved this conversation from step "+from+" to "+ph.Name+" from the console; the next turn runs there")
-	jsonapi.Write(w, map[string]any{"ok": true, "phase": ph.Name})
+	return map[string]any{"ok": true, "phase": ph.Name}, nil
 }
 
 // handleSessionStateClear forgets the blackboard.
 //
 //	POST /api/session-state-clear?agent=<id>&session=<id>
-func (T *OrchestrateApp) handleSessionStateClear(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	_, udb, sess, _, ok := T.sessionStateQuery(w, r)
-	if !ok {
-		return
+func (T *OrchestrateApp) handleSessionStateClear(c *jsonapi.Call, _ struct{}) (any, error) {
+	_, udb, sess, _, qErr := T.sessionStateQuery(c)
+	if qErr != nil {
+		return nil, qErr
 	}
 	n := len(sess.MachineState)
 	sess.MachineState = nil
 	if _, err := saveChatSession(udb, sess); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return nil, jsonapi.Status(http.StatusInternalServerError, err.Error())
 	}
 	appendSessionDiag(udb, sess.AgentID, sess.ID, "machine_state_cleared_by_owner",
 		"the owner cleared the blackboard from the console ("+strconv.Itoa(n)+" phase result(s) forgotten); the phase is unchanged at "+sess.Phase)
-	jsonapi.Write(w, map[string]any{"ok": true, "cleared": n, "at": time.Now().UTC().Format(time.RFC3339)})
+	return map[string]any{"ok": true, "cleared": n, "at": time.Now().UTC().Format(time.RFC3339)}, nil
 }

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -650,19 +651,12 @@ func wizardBaseRecord(kind string) AgentRecord {
 // the same worker-LLM path as the editor's ✨ Suggest, then the record
 // saves through the normal saveAgent path and the new record echoes
 // back so the form can redirect to agent/{id}.
-func (T *OrchestrateApp) handleAgentWizard(w http.ResponseWriter, r *http.Request) {
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+func (T *OrchestrateApp) handleAgentWizard(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+	r := c.R
+	user, udb := c.User, c.UDB
 	var req wizardRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
+	if err := json.Unmarshal(raw, &req); err != nil {
+		return nil, jsonapi.BadRequest("bad request")
 	}
 	req.Name = strings.TrimSpace(req.Name)
 	req.Purpose = strings.TrimSpace(req.Purpose)
@@ -679,29 +673,23 @@ func (T *OrchestrateApp) handleAgentWizard(w http.ResponseWriter, r *http.Reques
 	if shape := strings.TrimSpace(req.Shape); shape != "" {
 		saved, err := T.createFromShape(r, udb, user, shape, req)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest(err.Error())
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(saved)
-		return
+		return saved, nil
 	}
 
 	// Template path: clone the crafted seed record whole (prompt,
 	// budgets, tools) under the chosen name — no brief, no drafting.
 	if tpl := strings.TrimSpace(req.Template); tpl != "" {
 		if !isWizardTemplate(tpl) {
-			http.Error(w, "unknown template", http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest("unknown template")
 		}
 		if req.Name == "" {
-			http.Error(w, "name is required", http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest("name is required")
 		}
 		saved, err := cloneAgent(udb, tpl, user, req.Name, false)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest(err.Error())
 		}
 		if d := strings.TrimSpace(req.Description); d != "" && d != saved.Description {
 			saved.Description = d
@@ -709,9 +697,7 @@ func (T *OrchestrateApp) handleAgentWizard(w http.ResponseWriter, r *http.Reques
 				saved = updated
 			}
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(saved)
-		return
+		return saved, nil
 	}
 
 	kind, kindOK := wizard_kinds[req.Kind]
@@ -719,8 +705,7 @@ func (T *OrchestrateApp) handleAgentWizard(w http.ResponseWriter, r *http.Reques
 	// alone is enough to draft from, which is the point of offering the picks.
 	req.Purpose = strings.TrimSpace(joinWizardPurpose(decodeWizardPicks(req.PurposePicks), req.Purpose))
 	if !kindOK || req.Name == "" || req.Purpose == "" {
-		http.Error(w, "agent type, a name, and at least one thing for it to do are required", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("agent type, a name, and at least one thing for it to do are required")
 	}
 
 	rec := wizardBaseRecord(req.Kind)
@@ -732,8 +717,7 @@ func (T *OrchestrateApp) handleAgentWizard(w http.ResponseWriter, r *http.Reques
 	rec.MemoryMode = kind.memory_mode
 	rec.RecallHints = true
 	if !applyWizardMemory(&rec, req) {
-		http.Error(w, "unknown memory setting", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("unknown memory setting")
 	}
 	// Assistant personalization ("About you" step) lands as facts on the
 	// agent, so it knows the user from message one. Facts rather than notes:
@@ -776,14 +760,12 @@ func (T *OrchestrateApp) handleAgentWizard(w http.ResponseWriter, r *http.Reques
 
 	saved, err := saveAgent(udb, rec)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest(err.Error())
 	}
 	for _, f := range aboutYou {
 		StoreMemoryFact(udb, factsNamespace(saved.ID), f)
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(saved)
+	return saved, nil
 }
 
 // wizardRequest is the wizard's create brief — the POST body of
@@ -1285,30 +1267,20 @@ func shapeAnswerBrief(doc archetype, req wizardRequest) string {
 //
 // No model call: the shape match is deterministic and the shape already ships
 // the agent, so the first screen costs nothing and is the same every time.
-func (T *OrchestrateApp) handleAgentPropose(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok {
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+func (T *OrchestrateApp) handleAgentPropose(c *jsonapi.Call, raw json.RawMessage) (any, error) {
 	var req struct {
 		Request string `json:"request"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
+	if err := json.Unmarshal(raw, &req); err != nil {
+		return nil, jsonapi.BadRequest("bad request")
 	}
-	w.Header().Set("Content-Type", "application/json")
 	p, ok := proposeAgent(req.Request)
 	if !ok {
 		// Nothing fit well enough to open with. Saying so is an answer: the
 		// dialog asks a question instead of showing a guess.
-		_ = json.NewEncoder(w).Encode(map[string]any{"matched": false})
-		return
+		return map[string]any{"matched": false}, nil
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	return map[string]any{
 		"matched":         true,
 		"shape":           p.Shape,
 		"name":            p.Name,
@@ -1316,5 +1288,5 @@ func (T *OrchestrateApp) handleAgentPropose(w http.ResponseWriter, r *http.Reque
 		"points":          p.Points,
 		"asks":            p.Asks,
 		"needs_composing": p.NeedsComposing,
-	})
+	}, nil
 }

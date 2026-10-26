@@ -225,7 +225,7 @@ func TestTheToolsModalCanSeeWhichToolsAsk(t *testing.T) {
 	}
 	r := httptest.NewRequest(http.MethodGet, "/api/tool-confirm", nil)
 	w := httptest.NewRecorder()
-	app.handleToolConfirm(w, asUser(r, "alice"))
+	routed(app)(w, asUser(r, "alice"))
 	if w.Code != http.StatusOK {
 		t.Fatalf("GET: %d %s", w.Code, w.Body.String())
 	}
@@ -255,7 +255,7 @@ func TestTheToolsModalCanSeeWhichToolsAsk(t *testing.T) {
 		t.Fatal("could not mark web_search")
 	}
 	w = httptest.NewRecorder()
-	app.handleToolConfirm(w, asUser(httptest.NewRequest(http.MethodGet, "/api/tool-confirm", nil), "alice"))
+	routed(app)(w, asUser(httptest.NewRequest(http.MethodGet, "/api/tool-confirm", nil), "alice"))
 	got.Tools = nil
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
@@ -279,7 +279,7 @@ func TestTheToolsModalCanSetAndClearAsk(t *testing.T) {
 		body := strings.NewReader(fmt.Sprintf(`{"name":"modal_toggle","on":%t}`, on))
 		r := httptest.NewRequest(http.MethodPost, "/api/tool-confirm", body)
 		w := httptest.NewRecorder()
-		app.handleToolConfirm(w, asUser(r, "alice"))
+		routed(app)(w, asUser(r, "alice"))
 		if w.Code != http.StatusNoContent {
 			t.Fatalf("POST on=%t: %d %s", on, w.Code, w.Body.String())
 		}
@@ -304,7 +304,7 @@ func TestAToolWithNoRecordCanStillBeMarked(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "/api/tool-confirm",
 		strings.NewReader(`{"name":"no_such_tool_here","on":true}`))
 	w := httptest.NewRecorder()
-	app.handleToolConfirm(w, asUser(r, "alice"))
+	routed(app)(w, asUser(r, "alice"))
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("marking a tool with no record: %d %s", w.Code, w.Body.String())
 	}

@@ -33,7 +33,7 @@ func TestMachineStateDrawerAndOwnerMove(t *testing.T) {
 	}
 
 	// The pill now carries the door and the levers.
-	w := call(http.MethodGet, "/api/session-status"+q, T.handleSessionStatus)
+	w := call(http.MethodGet, "/api/session-status"+q, routed(T))
 	var pill map[string]any
 	json.Unmarshal(w.Body.Bytes(), &pill)
 	if pill["label"] != "decide" || !strings.HasPrefix(pill["detail_url"].(string), "api/session-state?") {
@@ -43,7 +43,7 @@ func TestMachineStateDrawerAndOwnerMove(t *testing.T) {
 		t.Fatalf("actions = %v", pill["actions"])
 	}
 
-	w = call(http.MethodGet, "/api/session-state"+q, T.handleSessionState)
+	w = call(http.MethodGet, "/api/session-state"+q, routed(T))
 	if w.Code != http.StatusOK {
 		t.Fatalf("state: %d %s", w.Code, w.Body.String())
 	}
@@ -61,7 +61,7 @@ func TestMachineStateDrawerAndOwnerMove(t *testing.T) {
 		t.Fatalf("transitions = %+v", view.Transitions)
 	}
 
-	w = call(http.MethodGet, "/api/session-phases"+q, T.handleSessionPhases)
+	w = call(http.MethodGet, "/api/session-phases"+q, routed(T))
 	var opts []map[string]any
 	json.Unmarshal(w.Body.Bytes(), &opts)
 	if len(opts) != 3 || opts[0]["label"] != "gather - Collect the facts" || !strings.HasSuffix(opts[1]["label"].(string), "(current)") {
@@ -70,7 +70,7 @@ func TestMachineStateDrawerAndOwnerMove(t *testing.T) {
 
 	// Move back to gather: a hop with the owner's reason, the breadcrumb, and
 	// the pill following.
-	w = call(http.MethodPost, "/api/session-phase"+q+"&value=gather", T.handleSessionPhase)
+	w = call(http.MethodPost, "/api/session-phase"+q+"&value=gather", routed(T))
 	if w.Code != http.StatusOK {
 		t.Fatalf("move: %d %s", w.Code, w.Body.String())
 	}
@@ -90,12 +90,12 @@ func TestMachineStateDrawerAndOwnerMove(t *testing.T) {
 		t.Fatalf("no breadcrumb for the owner's move: %+v", diags)
 	}
 	// An unknown phase is refused and nothing moves.
-	if w = call(http.MethodPost, "/api/session-phase"+q+"&value=nope", T.handleSessionPhase); w.Code != http.StatusBadRequest {
+	if w = call(http.MethodPost, "/api/session-phase"+q+"&value=nope", routed(T)); w.Code != http.StatusBadRequest {
 		t.Fatalf("unknown phase: %d", w.Code)
 	}
 
 	// Clearing the blackboard keeps the phase and leaves its own breadcrumb.
-	w = call(http.MethodPost, "/api/session-state-clear"+q, T.handleSessionStateClear)
+	w = call(http.MethodPost, "/api/session-state-clear"+q, routed(T))
 	if w.Code != http.StatusOK {
 		t.Fatalf("clear: %d %s", w.Code, w.Body.String())
 	}
@@ -111,7 +111,7 @@ func TestMachineStateRoutesRefuseAnOrdinarySession(t *testing.T) {
 	sess, _ := saveChatSession(udb, ChatSession{AgentID: "agent-1", Title: "plain"})
 	r := asUser(httptest.NewRequest(http.MethodGet, "/api/session-state?agent=agent-1&session="+sess.ID, nil), user)
 	w := httptest.NewRecorder()
-	T.handleSessionState(w, r)
+	routed(T)(w, r)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("plain session: %d", w.Code)
 	}

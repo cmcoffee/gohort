@@ -93,10 +93,10 @@ func TestTheBulletinControls(t *testing.T) {
 		h(w, r)
 		return w
 	}
-	if w := do(req("POST", "/api/bulletins", map[string]any{"name": "News", "ttl_hours": 24}), app.handleBulletins); w.Code != 200 {
+	if w := do(req("POST", "/api/bulletins", map[string]any{"name": "News", "ttl_hours": 24}), routed(app)); w.Code != 200 {
 		t.Fatalf("create: %d %s", w.Code, w.Body)
 	}
-	if w := do(req("POST", "/api/bulletins", map[string]any{"name": "news"}), app.handleBulletins); w.Code != http.StatusConflict {
+	if w := do(req("POST", "/api/bulletins", map[string]any{"name": "news"}), routed(app)); w.Code != http.StatusConflict {
 		t.Errorf("a taken name is refused, got %d", w.Code)
 	}
 	if w := do(req("POST", "/api/bulletins/news/followers", map[string]any{"target": helper.ID, "on": true}), app.handleBulletinOne); w.Code != http.StatusNoContent {
@@ -112,7 +112,7 @@ func TestTheBulletinControls(t *testing.T) {
 	if w := do(req("POST", "/api/bulletins/news/post", map[string]any{"text": "Fed holds rates"}), app.handleBulletinOne); w.Code != 200 {
 		t.Fatalf("post: %d %s", w.Code, w.Body)
 	}
-	w := do(req("GET", "/api/bulletins", nil), app.handleBulletins)
+	w := do(req("GET", "/api/bulletins", nil), routed(app))
 	var rows []map[string]any
 	json.Unmarshal(w.Body.Bytes(), &rows)
 	if len(rows) != 1 || rows[0]["latest"] != "Fed holds rates" || rows[0]["followers"] != "Helper" {

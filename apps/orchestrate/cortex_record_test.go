@@ -125,7 +125,7 @@ func TestAPickerRefreshCarriesEveryAgentsCortex(t *testing.T) {
 	reader, _ := saveAgent(udb, AgentRecord{Name: "Reader", Owner: "alice", OrchestratorPrompt: "p", Cortex: true})
 	fresh, _ := saveAgent(udb, AgentRecord{Name: "Fresh", Owner: "alice", OrchestratorPrompt: "p"})
 	w := httptest.NewRecorder()
-	app.handleAgentPickerOptions(w, req("GET", "/api/agent-options", nil))
+	routed(app)(w, req("GET", "/api/agent-options", nil))
 	var got struct {
 		Cortex  map[string]string `json:"cortex_agents"`
 		Records map[string]string `json:"record_agents"`

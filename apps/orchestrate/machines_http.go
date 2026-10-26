@@ -50,28 +50,23 @@ import (
 // running a machine — i.e. all of them until someone attaches one. The
 // panel contract is generic on purpose; this is orchestrate's answer to
 // it, and another app's would say something else entirely.
-func (T *OrchestrateApp) handleSessionStatus(w http.ResponseWriter, r *http.Request) {
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleSessionStatus(c *jsonapi.Call) (any, error) {
+	r := c.R
+	user, udb := c.User, c.UDB
 	agentID := strings.TrimSpace(r.URL.Query().Get("agent"))
 	sessionID := strings.TrimSpace(r.URL.Query().Get("session"))
 	if agentID == "" || sessionID == "" {
-		jsonapi.Write(w, map[string]any{})
-		return
+		return map[string]any{}, nil
 	}
 	sess, ok := loadChatSession(udb, agentID, sessionID)
 	if !ok {
-		jsonapi.Write(w, map[string]any{})
-		return
+		return map[string]any{}, nil
 	}
 	if sess.Phase == "" || sess.MachineID == "" {
 		// No machine: the pill is the thread's CONTEXT readout instead, when
 		// the thread has folded — the one moment its shape changed under the
 		// owner (session_context.go). Silent until then.
-		jsonapi.Write(w, contextStatus(udb, sess))
-		return
+		return contextStatus(udb, sess), nil
 	}
 	def, ok := LoadMachineDef(udb, user, sess.MachineID)
 	if !ok {
@@ -79,11 +74,10 @@ func (T *OrchestrateApp) handleSessionStatus(w http.ResponseWriter, r *http.Requ
 		// showing a phase name from a workflow that no longer exists —
 		// the next turn will run as an ordinary agent turn, and the pill
 		// is where someone would look to understand why.
-		jsonapi.Write(w, map[string]any{
+		return map[string]any{
 			"label": "phase: " + sess.Phase + " (machine gone)",
 			"title": "The machine this conversation was running has been deleted. Turns now run as ordinary agent turns.",
-		})
-		return
+		}, nil
 	}
 	title := "Phase " + sess.Phase + " of " + def.Name + "."
 	if ph, found := def.Phase(sess.Phase); found && strings.TrimSpace(ph.Desc) != "" {
@@ -96,8 +90,8 @@ func (T *OrchestrateApp) handleSessionStatus(w http.ResponseWriter, r *http.Requ
 	// opening message, transition log) and actions are the owner's two
 	// levers. See machine_session_state.go.
 	detail, actions := machineStatusActions(agentID, sessionID)
-	jsonapi.Write(w, map[string]any{"label": sess.Phase, "title": title + " Click for the blackboard and transitions.", "tone": "active",
-		"detail_url": detail, "actions": actions})
+	return map[string]any{"label": sess.Phase, "title": title + " Click for the blackboard and transitions.", "tone": "active",
+		"detail_url": detail, "actions": actions}, nil
 }
 
 // machineRow is the trimmed list shape: enough for a picker and a list
@@ -134,11 +128,9 @@ type machineRow struct {
 }
 
 // handleMachines serves the collection routes: GET list, POST create.
-func (T *OrchestrateApp) handleMachines(w http.ResponseWriter, r *http.Request) {
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleMachines(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+	r := c.R
+	user, udb := c.User, c.UDB
 	switch r.Method {
 	case http.MethodGet:
 		// ?starter=1 — a blank machine to edit, rather than an empty box.
@@ -148,8 +140,7 @@ func (T *OrchestrateApp) handleMachines(w http.ResponseWriter, r *http.Request) 
 		// that gets rejected on first save teaches the wrong lesson about
 		// the whole feature.
 		if r.URL.Query().Get("starter") == "1" {
-			jsonapi.Write(w, StarterMachine())
-			return
+			return StarterMachine(), nil
 		}
 		defs := ListMachineDefs(udb, user)
 		users := map[string][]string{}
@@ -187,12 +178,11 @@ func (T *OrchestrateApp) handleMachines(w http.ResponseWriter, r *http.Request) 
 				Owner:   sm.Owner,
 			})
 		}
-		jsonapi.Write(w, map[string]any{"machines": rows})
+		return map[string]any{"machines": rows}, nil
 	case http.MethodPost:
 		var def MachineDef
-		if err := json.NewDecoder(r.Body).Decode(&def); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
+		if err := json.Unmarshal(raw, &def); err != nil {
+			return nil, jsonapi.BadRequest("bad request")
 		}
 		// Force a fresh, user-owned record — the client doesn't get to
 		// assert id/owner on create.
@@ -205,14 +195,13 @@ func (T *OrchestrateApp) handleMachines(w http.ResponseWriter, r *http.Request) 
 		def.Editors = nil
 		def.Published = false
 		if err := def.Validate(); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest(err.Error())
 		}
 		saved := SaveMachineDef(udb, def)
 		Log("[orchestrate.machines] user=%q created machine %q (id=%s, %d phases)", user, saved.Name, saved.ID, len(saved.Phases))
-		jsonapi.Write(w, saved)
+		return saved, nil
 	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return nil, jsonapi.Status(http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 

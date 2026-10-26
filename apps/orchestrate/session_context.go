@@ -17,7 +17,6 @@ package orchestrate
 // edits either. Clearing a thread is the existing Clear channel action.
 
 import (
-	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -90,30 +89,21 @@ func contextStatus(udb Database, sess ChatSession) map[string]any {
 // handleSessionContext serves the view.
 //
 //	GET /api/session-context?agent=<id>&session=<id>
-func (T *OrchestrateApp) handleSessionContext(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	_, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleSessionContext(c *jsonapi.Call) (any, error) {
+	r := c.R
+	udb := c.UDB
 	agentID := strings.TrimSpace(r.URL.Query().Get("agent"))
 	sessionID := strings.TrimSpace(r.URL.Query().Get("session"))
 	if agentID == "" || sessionID == "" {
-		http.Error(w, "agent and session are required", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("agent and session are required")
 	}
 	sess, found := loadChatSession(udb, agentID, sessionID)
 	if !found {
-		http.NotFound(w, r)
-		return
+		return nil, errNotFound
 	}
 	v := sessionContextOf(udb, sess)
 	if v == nil {
-		jsonapi.Write(w, map[string]any{"Note": "This thread has not folded: the model still sees every message verbatim."})
-		return
+		return map[string]any{"Note": "This thread has not folded: the model still sees every message verbatim."}, nil
 	}
-	jsonapi.Write(w, v)
+	return v, nil
 }

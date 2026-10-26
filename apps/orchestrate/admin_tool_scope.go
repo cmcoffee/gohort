@@ -18,6 +18,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // handleToolScope serves the in-chat pill control (Tools modal). GET returns
@@ -25,15 +26,12 @@ import (
 // requesting user — they manage their own agents' tool scopes. Passes RootDB
 // (the process root) so the same agentUserDB derivation the admin path uses
 // resolves to this user's orchestrate store.
-func (T *OrchestrateApp) handleToolScope(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleToolScope(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+	r := c.R
+	user := c.User
 	name := strings.TrimSpace(r.URL.Query().Get("name"))
 	if name == "" {
-		http.Error(w, "missing name", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("missing name")
 	}
 	// kind selects the scope backend (tool | pipeline | credential); the
 	// in-chat control historically only manages tools, so default there.
@@ -43,42 +41,36 @@ func (T *OrchestrateApp) handleToolScope(w http.ResponseWriter, r *http.Request)
 	}
 	prov, ok := ScopeProviderFor(kind)
 	if !ok {
-		http.Error(w, "unknown scope kind: "+kind, http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("unknown scope kind: " + kind)
 	}
 	switch r.Method {
 	case http.MethodGet:
 		st, found := prov.State(RootDB, user, name)
 		if !found {
-			http.Error(w, kind+" not found", http.StatusNotFound)
-			return
+			return nil, jsonapi.NotFound(kind + " not found")
 		}
-		w.Header().Set("Content-Type", "application/json")
 		// No caching: the pill modal re-reads this immediately after each
 		// toggle POST, and a stale cached body snaps the pill back on.
-		w.Header().Set("Cache-Control", "no-store")
-		_ = json.NewEncoder(w).Encode(st)
+		c.W.Header().Set("Cache-Control", "no-store")
+		return st, nil
 	case http.MethodPost:
 		var body struct {
 			Target string `json:"target"`
 			On     bool   `json:"on"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
+		if err := json.Unmarshal(raw, &body); err != nil {
+			return nil, jsonapi.BadRequest("bad request")
 		}
 		body.Target = strings.TrimSpace(body.Target)
 		if body.Target == "" {
-			http.Error(w, "target required", http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest("target required")
 		}
 		if err := prov.Set(RootDB, user, name, body.Target, body.On); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest(err.Error())
 		}
-		w.WriteHeader(http.StatusNoContent)
+		return jsonapi.Empty(http.StatusNoContent), nil
 	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return nil, jsonapi.Status(http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 

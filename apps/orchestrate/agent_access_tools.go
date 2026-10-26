@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/netgate"
 	"github.com/cmcoffee/gohort/core/toolcat"
 	"github.com/cmcoffee/gohort/tools/temptool"
@@ -265,32 +266,23 @@ func (T *OrchestrateApp) resolvedAgentTools(ctx context.Context, udb Database, u
 // which is not an inconsistency: a tool's riskiness in chat is a property of
 // the tool, while whether it may run with nobody watching is a property of the
 // agent doing the running.
-func (T *OrchestrateApp) handleAgentAccessTool(w http.ResponseWriter, r *http.Request) {
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	if r.Method != http.MethodPost && r.Method != http.MethodPatch {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+func (T *OrchestrateApp) handleAgentAccessTool(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+	r := c.R
+	user, udb := c.User, c.UDB
 	rec, found := findAgentByNameOrID(udb, user, strings.TrimSpace(r.URL.Query().Get("agent")))
 	if !found {
-		http.NotFound(w, r)
-		return
+		return nil, errNotFound
 	}
 	name := strings.TrimSpace(r.URL.Query().Get("name"))
 	if name == "" {
-		http.Error(w, "name required", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("name required")
 	}
 	var body struct {
 		Chat       *string `json:"chat"`
 		Unattended *string `json:"unattended"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return nil, jsonapi.BadRequest("bad request")
 	}
 	switch {
 	case body.Chat != nil:
@@ -298,8 +290,7 @@ func (T *OrchestrateApp) handleAgentAccessTool(w http.ResponseWriter, r *http.Re
 		// Two values here, not three. A tool the agent must never call is not
 		// loaded at all, which the Tools modal decides.
 		if v != PolicyAllow && v != PolicyAsk {
-			http.Error(w, "in chat a tool either asks first or always runs", http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest("in chat a tool either asks first or always runs")
 		}
 		// Refused rather than silently ignored when the tool has no record to
 		// hold the flag. A control that accepts a click and stores nothing is
@@ -313,55 +304,43 @@ func (T *OrchestrateApp) handleAgentAccessTool(w http.ResponseWriter, r *http.Re
 		if v == PolicyAllow {
 			for _, n := range AskInChatTools(AuthDB(), user, "") {
 				if n == name {
-					http.Error(w, "this tool asks first for every agent (set in Extensions › Tools, its Security); change it there", http.StatusConflict)
-					return
+					return nil, jsonapi.Status(http.StatusConflict, "this tool asks first for every agent (set in Extensions › Tools, its Security); change it there")
 				}
 			}
 		}
 		if !SetUserToolAsksInChat(AuthDB(), user, rec.ID, name, v == PolicyAsk) {
-			http.Error(w, "could not record that", http.StatusInternalServerError)
-			return
+			return nil, jsonapi.Status(http.StatusInternalServerError, "could not record that")
 		}
 	case body.Unattended != nil:
 		v := strings.TrimSpace(*body.Unattended)
 		if v != PolicyAllow && v != PolicyAsk && v != PolicyBlock {
-			http.Error(w, "unattended must be allow, ask or block", http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest("unattended must be allow, ask or block")
 		}
 		setAutoToolPolicy(RootDB, udb, user, rec.ID, name, v)
 	default:
-		http.Error(w, "nothing to set", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("nothing to set")
 	}
-	w.WriteHeader(http.StatusNoContent)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // handleAgentAccessHandoff approves, or takes back, a narrowed agent handing
 // one target work, ahead of the first time it would ask (edgeApproval): the
 // grant the chat card's Always allow saves. allow=1 approves, anything else
 // takes it back.
-func (T *OrchestrateApp) handleAgentAccessHandoff(w http.ResponseWriter, r *http.Request) {
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+func (T *OrchestrateApp) handleAgentAccessHandoff(c *jsonapi.Call, _ struct{}) (any, error) {
+	r := c.R
+	user, udb := c.User, c.UDB
 	q := r.URL.Query()
 	caller, found := findAgentByNameOrID(udb, user, strings.TrimSpace(q.Get("agent")))
 	if !found {
-		http.NotFound(w, r)
-		return
+		return nil, errNotFound
 	}
 	target, found := findAgentByNameOrID(udb, user, strings.TrimSpace(q.Get("target")))
 	if !found {
-		http.NotFound(w, r)
-		return
+		return nil, errNotFound
 	}
 	setEdgeGrant(udb, caller, target, q.Get("allow") == "1")
-	w.WriteHeader(http.StatusNoContent)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // accessSubAgentRow is one sub-agent and how its parent's restrictions reach it.

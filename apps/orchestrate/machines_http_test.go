@@ -71,7 +71,7 @@ func TestMachinesHTTP_CreateListReadUpdateDelete(t *testing.T) {
 
 	// Create.
 	w := httptest.NewRecorder()
-	app.handleMachines(w, req(http.MethodPost, "/api/machines", machineBody()))
+	routed(app)(w, req(http.MethodPost, "/api/machines", machineBody()))
 	if w.Code != http.StatusOK {
 		t.Fatalf("create: %d %s", w.Code, w.Body.String())
 	}
@@ -85,7 +85,7 @@ func TestMachinesHTTP_CreateListReadUpdateDelete(t *testing.T) {
 
 	// List.
 	w = httptest.NewRecorder()
-	app.handleMachines(w, req(http.MethodGet, "/api/machines", nil))
+	routed(app)(w, req(http.MethodGet, "/api/machines", nil))
 	var list struct{ Machines []machineRow }
 	if err := json.Unmarshal(w.Body.Bytes(), &list); err != nil {
 		t.Fatalf("list decode: %v", err)
@@ -147,7 +147,7 @@ func TestMachinesHTTP_RejectsAnInvalidMachineWithTheRealReason(t *testing.T) {
 	bad["phases"].([]map[string]any)[1]["next"] = "decompose"
 
 	w := httptest.NewRecorder()
-	app.handleMachines(w, req(http.MethodPost, "/api/machines", bad))
+	routed(app)(w, req(http.MethodPost, "/api/machines", bad))
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d %s", w.Code, w.Body.String())
 	}
@@ -161,7 +161,7 @@ func TestMachinesHTTP_RejectsAnInvalidMachineWithTheRealReason(t *testing.T) {
 func TestMachinesHTTP_ImportRoundTrip(t *testing.T) {
 	app, req, _ := authedApp(t)
 	w := httptest.NewRecorder()
-	app.handleMachines(w, req(http.MethodPost, "/api/machines", machineBody()))
+	routed(app)(w, req(http.MethodPost, "/api/machines", machineBody()))
 	var created MachineDef
 	_ = json.Unmarshal(w.Body.Bytes(), &created)
 
@@ -224,7 +224,7 @@ func TestMachinesHTTP_TheDocumentedExampleValidates(t *testing.T) {
 		t.Fatalf("the documented example is not valid JSON: %v", err)
 	}
 	w := httptest.NewRecorder()
-	app.handleMachines(w, req(http.MethodPost, "/api/machines", body))
+	routed(app)(w, req(http.MethodPost, "/api/machines", body))
 	if w.Code != http.StatusOK {
 		t.Fatalf("the documented example was rejected: %d %s", w.Code, w.Body.String())
 	}
@@ -286,7 +286,7 @@ func TestAgentSave_WholeRecordFormDoesNotClearTheMachine(t *testing.T) {
 func TestMachinesHTTP_EditKeepsIdentityAndExplainsRejections(t *testing.T) {
 	app, req, udb := authedApp(t)
 	w := httptest.NewRecorder()
-	app.handleMachines(w, req(http.MethodPost, "/api/machines", machineBody()))
+	routed(app)(w, req(http.MethodPost, "/api/machines", machineBody()))
 	var created MachineDef
 	_ = json.Unmarshal(w.Body.Bytes(), &created)
 

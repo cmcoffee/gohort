@@ -17,6 +17,7 @@ import (
 	"github.com/cmcoffee/gohort/tools/temptool"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // resolveAgent loads the agent named by `agent_id` (query first, then
@@ -116,25 +117,16 @@ type sessionListItem struct {
 // contributed by any registered ExtraSessionsSource (phantom today).
 // External rows carry source + chat_id tags so the rail can render
 // per-source visual markers.
-func (T *OrchestrateApp) handleSessionList(w http.ResponseWriter, r *http.Request) {
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+func (T *OrchestrateApp) handleSessionList(c *jsonapi.Call) (any, error) {
+	r := c.R
+	user, udb := c.User, c.UDB
 	id := strings.TrimSpace(r.URL.Query().Get("agent_id"))
-	w.Header().Set("Content-Type", "application/json")
 	if id == "" {
-		_ = json.NewEncoder(w).Encode([]sessionListItem{})
-		return
+		return []sessionListItem{}, nil
 	}
 	agent, ok := loadAgent(udb, id)
 	if !ok || (agent.Owner != user && agent.Owner != seedOwner) {
-		_ = json.NewEncoder(w).Encode([]sessionListItem{})
-		return
+		return []sessionListItem{}, nil
 	}
 	native := listChatSessions(udb, agent.ID)
 	out := make([]sessionListItem, 0, len(native))
@@ -195,7 +187,7 @@ func (T *OrchestrateApp) handleSessionList(w http.ResponseWriter, r *http.Reques
 	// Channel bindings render in their OWN rail region (ChannelsURL), not in
 	// this session list — so the list stays chat-sessions only. The client
 	// filters out chan: rows defensively.
-	_ = json.NewEncoder(w).Encode(out)
+	return out, nil
 }
 
 // handleSessionOne loads or deletes a session in the active agent's
