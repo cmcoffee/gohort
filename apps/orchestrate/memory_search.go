@@ -22,13 +22,13 @@
 package orchestrate
 
 import (
-	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/textutil"
 )
 
@@ -45,44 +45,37 @@ type memSearchItem struct {
 
 const memSearchPerLayerCap = 20
 
-// handleAgentMemorySearch serves GET (search) and DELETE (remove one hit) for
-// one agent's memory. Registered under handleAgentOne's action switch, so the
-// caller is already authenticated as the owning user.
-func (T *OrchestrateApp) handleAgentMemorySearch(w http.ResponseWriter, r *http.Request, user, agentID string) {
-	udb := UserDB(T.DB, user)
-	if udb == nil {
-		http.Error(w, "no user store", http.StatusInternalServerError)
-		return
-	}
-	rec, ok := T.memoryAgent(r, udb, user, agentID)
-	if !ok {
-		http.Error(w, "agent not found", http.StatusNotFound)
-		return
-	}
-	switch r.Method {
-	case http.MethodDelete:
-		T.memSearchDelete(w, r, user, udb, rec)
-	case http.MethodGet:
-		q := strings.TrimSpace(r.URL.Query().Get("q"))
-		if q == "" {
-			http.Error(w, "q is required", http.StatusBadRequest)
-			return
-		}
-		mode := strings.TrimSpace(r.URL.Query().Get("mode"))
-		var items []memSearchItem
-		var note string
-		if mode == "recall" {
-			items, note = T.memSearchRecall(user, udb, rec, q)
-		} else {
-			items = T.memSearchGrep(user, udb, rec, q)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"mode": mode, "items": items, "note": note,
-		})
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
+// memorySearchRoute serves GET (search) and DELETE (remove one hit) for one
+// agent's memory.
+func (T *OrchestrateApp) memorySearchRoute(at memAt) http.HandlerFunc {
+	return jsonapi.Methods{
+		"GET": jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) {
+			m, err := T.memoryOf(c, at)
+			if err != nil {
+				return nil, err
+			}
+			q := strings.TrimSpace(c.R.URL.Query().Get("q"))
+			if q == "" {
+				return nil, jsonapi.BadRequest("q is required")
+			}
+			mode := strings.TrimSpace(c.R.URL.Query().Get("mode"))
+			var items []memSearchItem
+			var note string
+			if mode == "recall" {
+				items, note = T.memSearchRecall(m.user, m.udb, m.agent, q)
+			} else {
+				items = T.memSearchGrep(m.user, m.udb, m.agent, q)
+			}
+			return map[string]any{"mode": mode, "items": items, "note": note}, nil
+		}),
+		"DELETE": jsonapi.Delete(T.DB, func(c *jsonapi.Call, _ struct{}) (any, error) {
+			m, err := T.memoryOf(c, at)
+			if err != nil {
+				return nil, err
+			}
+			return T.memSearchDelete(c, m)
+		}),
+	}.Serve
 }
 
 // memSearchGrep sweeps every stored layer for a literal (case-insensitive)
@@ -278,16 +271,15 @@ func parseRecallRendered(rendered string) []memSearchItem {
 
 // memSearchDelete removes one hit by its id, dispatching on the kind prefix
 // to the same removal paths the forget tool / knowledge admin use.
-func (T *OrchestrateApp) memSearchDelete(w http.ResponseWriter, r *http.Request, user string, udb Database, rec AgentRecord) {
-	id := strings.TrimSpace(r.URL.Query().Get("id"))
+func (T *OrchestrateApp) memSearchDelete(c *jsonapi.Call, m memCall) (any, error) {
+	user, udb, rec := m.user, m.udb, m.agent
+	id := strings.TrimSpace(c.R.URL.Query().Get("id"))
 	if id == "" {
-		http.Error(w, "id is required", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("id is required")
 	}
 	i := strings.IndexByte(id, ':')
 	if i <= 0 {
-		http.Error(w, "unrecognized id", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("unrecognized id")
 	}
 	kind, ref := id[:i], id[i+1:]
 	ok := false
@@ -300,7 +292,7 @@ func (T *OrchestrateApp) memSearchDelete(w http.ResponseWriter, r *http.Request,
 		ok = err == nil && strings.HasPrefix(msg, "Forgot")
 	case "doc":
 		// Whole-document delete, scoped to this (user, agent) — mirrors
-		// handleAgentKnowledgeSourceDelete's sweep.
+		// knowledgeSourceDeleteRoute's sweep.
 		if VectorDB != nil {
 			prefix := agentKnowledgePrefix(user, rec.ID)
 			ok = DeleteChunksWhere(VectorDB, func(x EmbeddedChunk) bool {
@@ -313,15 +305,13 @@ func (T *OrchestrateApp) memSearchDelete(w http.ResponseWriter, r *http.Request,
 		_, over := SaveOperatingNotes(udb, factsNamespace(rec.ID), "")
 		ok = !over
 	default:
-		http.Error(w, "that layer is not deletable here", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("that layer is not deletable here")
 	}
 	if !ok {
-		http.Error(w, "not found (it may already be gone)", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("not found (it may already be gone)")
 	}
 	Log("[orchestrate.memsearch] user=%q agent=%s deleted %s", user, rec.ID, id)
-	w.WriteHeader(http.StatusNoContent)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // tombstoneCortexObservation blanks one observation card in the cortex

@@ -180,7 +180,7 @@ func TestAnEchoedProtectedFieldIsNotRefused(t *testing.T) {
 	body := `{"everyone":true,"owner":"alice","share_no_uploads":true}`
 	r := httptest.NewRequest(http.MethodPatch, "/api/agents/a40", strings.NewReader(body))
 	w := httptest.NewRecorder()
-	app.handleAgentOne(w, asUser(r, "alice"))
+	routed(app)(w, asUser(r, "alice"))
 	if w.Code != http.StatusOK && w.Code != http.StatusNoContent {
 		t.Fatalf("an echoed protected field was refused: %d %s", w.Code, w.Body.String())
 	}
@@ -196,7 +196,7 @@ func TestAnEchoedProtectedFieldIsNotRefused(t *testing.T) {
 	r2 := httptest.NewRequest(http.MethodPatch, "/api/agents/a40",
 		strings.NewReader(`{"everyone":false}`))
 	w2 := httptest.NewRecorder()
-	app.handleAgentOne(w2, asUser(r2, "alice"))
+	routed(app)(w2, asUser(r2, "alice"))
 	if w2.Code != http.StatusBadRequest {
 		t.Errorf("changing a protected field through PATCH was allowed: %d %s", w2.Code, w2.Body.String())
 	}

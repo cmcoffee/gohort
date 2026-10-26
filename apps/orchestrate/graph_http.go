@@ -10,11 +10,12 @@
 package orchestrate
 
 import (
-	"encoding/json"
 	"net/http"
+	"net/url"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 type graphEdgeView struct {
@@ -33,134 +34,99 @@ type graphEntityView struct {
 	Edges   []graphEdgeView   `json:"edges,omitempty"` // outbound only (each relationship listed once, under its subject)
 }
 
-// handleAgentGraph lists an agent's graph: every entity with its outbound
+// graphRoute lists an agent's graph: every entity with its outbound
 // relationships + the entity/edge counts.
-func (T *OrchestrateApp) handleAgentGraph(w http.ResponseWriter, r *http.Request, user, agentID string) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if T.DB == nil {
-		http.Error(w, "DB not initialized", http.StatusInternalServerError)
-		return
-	}
-	udb := UserDB(T.DB, user)
-	ns := factsNamespace(agentID)
-	ents := ListGraphEntities(udb, ns)
-	views := make([]graphEntityView, 0, len(ents))
-	for _, e := range ents {
-		ev := graphEntityView{ID: e.ID, Kind: e.Kind, Name: e.Name, Aliases: e.Aliases, Attrs: e.Attrs}
-		for _, ed := range GraphEdgesFrom(udb, ns, e.ID) {
-			ev.Edges = append(ev.Edges, graphEdgeView{
-				Rel:    strings.ReplaceAll(ed.Rel, "_", " "),
-				To:     ed.To,
-				ToName: graphEndName(udb, ns, ed.To),
-				Note:   ed.Note,
-			})
+func (T *OrchestrateApp) graphRoute(at memAt) http.HandlerFunc {
+	return jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) {
+		t := at(c)
+		udb := UserDB(T.DB, t.user)
+		ns := factsNamespace(t.agentID)
+		ents := ListGraphEntities(udb, ns)
+		views := make([]graphEntityView, 0, len(ents))
+		for _, e := range ents {
+			ev := graphEntityView{ID: e.ID, Kind: e.Kind, Name: e.Name, Aliases: e.Aliases, Attrs: e.Attrs}
+			for _, ed := range GraphEdgesFrom(udb, ns, e.ID) {
+				ev.Edges = append(ev.Edges, graphEdgeView{
+					Rel:    strings.ReplaceAll(ed.Rel, "_", " "),
+					To:     ed.To,
+					ToName: graphEndName(udb, ns, ed.To),
+					Note:   ed.Note,
+				})
+			}
+			views = append(views, ev)
 		}
-		views = append(views, ev)
-	}
-	ec, edc := GraphCounts(udb, ns)
-	// How big it may grow, beside how big it is, so a graph near its cap
-	// shows it.
-	capEnt, capEdge := GraphCaps()
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"counts":   map[string]int{"entities": ec, "edges": edc},
-		"caps":     map[string]int{"entities": capEnt, "edges": capEdge},
-		"entities": views,
+		ec, edc := GraphCounts(udb, ns)
+		// How big it may grow, beside how big it is, so a graph near its cap
+		// shows it.
+		capEnt, capEdge := GraphCaps()
+		return map[string]any{
+			"counts":   map[string]int{"entities": ec, "edges": edc},
+			"caps":     map[string]int{"entities": capEnt, "edges": capEdge},
+			"entities": views,
+		}, nil
 	})
 }
 
-// handleAgentGraphEntityDelete removes one entity and all its edges.
-func (T *OrchestrateApp) handleAgentGraphEntityDelete(w http.ResponseWriter, r *http.Request, user, agentID, entityID string) {
-	if r.Method != http.MethodDelete {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if T.DB == nil {
-		http.Error(w, "DB not initialized", http.StatusInternalServerError)
-		return
-	}
-	if strings.TrimSpace(entityID) == "" {
-		http.Error(w, "entity id required", http.StatusBadRequest)
-		return
-	}
-	if DeleteGraphEntity(UserDB(T.DB, user), factsNamespace(agentID), entityID) {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	http.NotFound(w, r)
+// graphEntityDeleteRoute removes one entity and all its edges.
+func (T *OrchestrateApp) graphEntityDeleteRoute(at memAt) http.HandlerFunc {
+	return T.graphDelete(at, func(udb Database, ns string, t memTarget, _ url.Values) (bool, error) {
+		if strings.TrimSpace(t.item) == "" {
+			return false, jsonapi.BadRequest("entity id required")
+		}
+		return DeleteGraphEntity(udb, ns, t.item), nil
+	})
 }
 
-// handleAgentGraphAttrDelete removes one attribute key from an entity.
+// graphDelete is a DELETE on the target's graph: 204 when del removed
+// something, 404 when there was nothing to remove.
+func (T *OrchestrateApp) graphDelete(at memAt, del func(udb Database, ns string, t memTarget, q url.Values) (bool, error)) http.HandlerFunc {
+	return jsonapi.Delete(T.DB, func(c *jsonapi.Call, _ struct{}) (any, error) {
+		t := at(c)
+		removed, err := del(UserDB(T.DB, t.user), factsNamespace(t.agentID), t, c.R.URL.Query())
+		if err != nil {
+			return nil, err
+		}
+		if !removed {
+			return nil, errNotFound
+		}
+		return jsonapi.Empty(http.StatusNoContent), nil
+	})
+}
+
+// graphAttrDeleteRoute removes one attribute key from an entity.
 //
 //	DELETE /api/agents/{id}/graph/entity/{entity_id}/attr?key=orientation → 204
-func (T *OrchestrateApp) handleAgentGraphAttrDelete(w http.ResponseWriter, r *http.Request, user, agentID, entityID string) {
-	if r.Method != http.MethodDelete {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if T.DB == nil {
-		http.Error(w, "DB not initialized", http.StatusInternalServerError)
-		return
-	}
-	key := r.URL.Query().Get("key")
-	if strings.TrimSpace(entityID) == "" || strings.TrimSpace(key) == "" {
-		http.Error(w, "entity id and key required", http.StatusBadRequest)
-		return
-	}
-	if DeleteGraphEntityAttr(UserDB(T.DB, user), factsNamespace(agentID), entityID, key) {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	http.NotFound(w, r)
+func (T *OrchestrateApp) graphAttrDeleteRoute(at memAt) http.HandlerFunc {
+	return T.graphDelete(at, func(udb Database, ns string, t memTarget, q url.Values) (bool, error) {
+		key := q.Get("key")
+		if strings.TrimSpace(t.item) == "" || strings.TrimSpace(key) == "" {
+			return false, jsonapi.BadRequest("entity id and key required")
+		}
+		return DeleteGraphEntityAttr(udb, ns, t.item, key), nil
+	})
 }
 
-// handleAgentGraphAliasDelete removes one alias from an entity.
+// graphAliasDeleteRoute removes one alias from an entity.
 //
 //	DELETE /api/agents/{id}/graph/entity/{entity_id}/alias?value=Robin → 204
-func (T *OrchestrateApp) handleAgentGraphAliasDelete(w http.ResponseWriter, r *http.Request, user, agentID, entityID string) {
-	if r.Method != http.MethodDelete {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if T.DB == nil {
-		http.Error(w, "DB not initialized", http.StatusInternalServerError)
-		return
-	}
-	val := r.URL.Query().Get("value")
-	if strings.TrimSpace(entityID) == "" || strings.TrimSpace(val) == "" {
-		http.Error(w, "entity id and value required", http.StatusBadRequest)
-		return
-	}
-	if DeleteGraphEntityAlias(UserDB(T.DB, user), factsNamespace(agentID), entityID, val) {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	http.NotFound(w, r)
+func (T *OrchestrateApp) graphAliasDeleteRoute(at memAt) http.HandlerFunc {
+	return T.graphDelete(at, func(udb Database, ns string, t memTarget, q url.Values) (bool, error) {
+		val := q.Get("value")
+		if strings.TrimSpace(t.item) == "" || strings.TrimSpace(val) == "" {
+			return false, jsonapi.BadRequest("entity id and value required")
+		}
+		return DeleteGraphEntityAlias(udb, ns, t.item, val), nil
+	})
 }
 
-// handleAgentGraphEdgeDelete removes one edge identified by from/rel/to query
+// graphEdgeDeleteRoute removes one edge identified by from/rel/to query
 // params (the values the GET view carries on each edge).
-func (T *OrchestrateApp) handleAgentGraphEdgeDelete(w http.ResponseWriter, r *http.Request, user, agentID string) {
-	if r.Method != http.MethodDelete {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if T.DB == nil {
-		http.Error(w, "DB not initialized", http.StatusInternalServerError)
-		return
-	}
-	q := r.URL.Query()
-	from, rel, to := q.Get("from"), q.Get("rel"), q.Get("to")
-	if from == "" || rel == "" || to == "" {
-		http.Error(w, "from, rel, and to required", http.StatusBadRequest)
-		return
-	}
-	if DeleteGraphEdge(UserDB(T.DB, user), factsNamespace(agentID), from, rel, to) {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	http.NotFound(w, r)
+func (T *OrchestrateApp) graphEdgeDeleteRoute(at memAt) http.HandlerFunc {
+	return T.graphDelete(at, func(udb Database, ns string, _ memTarget, q url.Values) (bool, error) {
+		from, rel, to := q.Get("from"), q.Get("rel"), q.Get("to")
+		if from == "" || rel == "" || to == "" {
+			return false, jsonapi.BadRequest("from, rel, and to required")
+		}
+		return DeleteGraphEdge(udb, ns, from, rel, to), nil
+	})
 }

@@ -1,11 +1,13 @@
 package orchestrate
 
-// The console reaches an agent's sub-resources as api/agents/<id>/<action>, and
-// handleAgentOne dispatches on <action> by name. A name that is renamed on one
-// side only fails quietly: the Memory button's count read /memory after the
-// endpoint had become /facts, got a 404, and simply never showed a number.
+// The console reaches an agent's sub-resources as api/agents/<id>/<action>:
+// most by a route of their own, the rest by handleAgentOne's dispatch on
+// <action> by name. A name that is renamed on one side only fails quietly:
+// the Memory button's count read /memory after the endpoint had become
+// /facts, got a 404, and simply never showed a number.
 
 import (
+	"net/http/httptest"
 	"regexp"
 	"strings"
 	"testing"
@@ -18,8 +20,14 @@ func TestEveryAgentSubRouteThePageCallsIsServed(t *testing.T) {
 	if len(calls) == 0 {
 		t.Fatal("found no agent sub-route calls; the test is reading the wrong thing")
 	}
+	mux := routeMux(&OrchestrateApp{})
 	for _, c := range calls {
 		action := c[1]
+		// A route of its own: the mux names a pattern other than the
+		// dispatcher's catch-all.
+		if _, pattern := mux.Handler(httptest.NewRequest("GET", "/api/agents/agent-1/"+action, nil)); pattern != "/api/agents/" && pattern != "" {
+			continue
+		}
 		if strings.Contains(one, `action == "`+action+`"`) ||
 			strings.Contains(one, `strings.HasPrefix(action, "`+action+`/")`) {
 			continue

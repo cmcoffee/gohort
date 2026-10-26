@@ -51,7 +51,8 @@ func notesPanelApp(t *testing.T) (*OrchestrateApp, AgentRecord, string) {
 	prev := RootDB
 	RootDB = root
 	t.Cleanup(func() { RootDB = prev })
-	const user = "craig@example.com"
+	const user = "owner@example.com"
+	signedUp(t, user, "someone@else.test")
 	udb := UserDB(root, user)
 	rec, err := saveAgent(udb, AgentRecord{
 		Name: "Wren", Owner: user, OrchestratorPrompt: "p", EnableNotes: true,
@@ -65,7 +66,7 @@ func notesPanelApp(t *testing.T) (*OrchestrateApp, AgentRecord, string) {
 func getNotes(t *testing.T, app *OrchestrateApp, user, id string) map[string]any {
 	t.Helper()
 	w := httptest.NewRecorder()
-	app.handleAgentNotes(w, httptest.NewRequest(http.MethodGet, "/api/notes", nil), user, id)
+	routed(app)(w, withSession(httptest.NewRequest(http.MethodGet, "/api/agents/"+id+"/notes", nil), user))
 	if w.Code != http.StatusOK {
 		t.Fatalf("GET notes = %d: %s", w.Code, w.Body.String())
 	}
@@ -80,7 +81,7 @@ func postNotes(t *testing.T, app *OrchestrateApp, user, id, text string) *httpte
 	t.Helper()
 	body := strings.NewReader(`{"text":` + strconv.Quote(text) + `}`)
 	w := httptest.NewRecorder()
-	app.handleAgentNotes(w, httptest.NewRequest(http.MethodPost, "/api/notes", body), user, id)
+	routed(app)(w, withSession(httptest.NewRequest(http.MethodPost, "/api/agents/"+id+"/notes", body), user))
 	return w
 }
 
@@ -174,7 +175,7 @@ func TestDisabledNotesAreStillVisibleAndFlagged(t *testing.T) {
 func TestNotesAreNotCrossUserReadable(t *testing.T) {
 	app, rec, _ := notesPanelApp(t)
 	w := httptest.NewRecorder()
-	app.handleAgentNotes(w, httptest.NewRequest(http.MethodGet, "/api/notes", nil), "someone@else.test", rec.ID)
+	routed(app)(w, withSession(httptest.NewRequest(http.MethodGet, "/api/agents/"+rec.ID+"/notes", nil), "someone@else.test"))
 	if w.Code != http.StatusNotFound {
 		t.Errorf("cross-user read = %d, want 404", w.Code)
 	}

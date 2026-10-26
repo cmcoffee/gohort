@@ -53,7 +53,7 @@ func TestAgentRevisionsListIsWhatTheHistoryButtonRenders(t *testing.T) {
 	a := seedEditedAgent(t, udb)
 
 	w := httptest.NewRecorder()
-	app.handleAgentOne(w, req("GET", "/api/agents/"+a.ID+"/revisions", nil))
+	routed(app)(w, req("GET", "/api/agents/"+a.ID+"/revisions", nil))
 	if w.Code != 200 {
 		t.Fatalf("status %d: %s", w.Code, w.Body.String())
 	}
@@ -105,7 +105,7 @@ func TestAgentRevisionsListIsEmptyBeforeAnyEdit(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 	w := httptest.NewRecorder()
-	app.handleAgentOne(w, req("GET", "/api/agents/"+a.ID+"/revisions", nil))
+	routed(app)(w, req("GET", "/api/agents/"+a.ID+"/revisions", nil))
 	var got histPayload
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -122,7 +122,7 @@ func TestAgentRevisionPreviewNamesWhatMovedAndChangesNothing(t *testing.T) {
 	a := seedEditedAgent(t, udb)
 
 	w := httptest.NewRecorder()
-	app.handleAgentOne(w, req("GET", "/api/agents/"+a.ID+"/revisions/preview?rev=1", nil))
+	routed(app)(w, req("GET", "/api/agents/"+a.ID+"/revisions/preview?rev=1", nil))
 	if w.Code != 200 {
 		t.Fatalf("status %d: %s", w.Code, w.Body.String())
 	}
@@ -151,7 +151,7 @@ func TestAgentRevisionRestoreGoesBackAndStaysReversible(t *testing.T) {
 	a := seedEditedAgent(t, udb)
 
 	w := httptest.NewRecorder()
-	app.handleAgentOne(w, req("POST", "/api/agents/"+a.ID+"/revisions/restore?rev=1", nil))
+	routed(app)(w, req("POST", "/api/agents/"+a.ID+"/revisions/restore?rev=1", nil))
 	if w.Code != 200 {
 		t.Fatalf("status %d: %s", w.Code, w.Body.String())
 	}
@@ -172,7 +172,7 @@ func TestAgentRevisionRestoreRefusesAnUnknownVersion(t *testing.T) {
 	app, req, udb := authedApp(t)
 	a := seedEditedAgent(t, udb)
 	w := httptest.NewRecorder()
-	app.handleAgentOne(w, req("POST", "/api/agents/"+a.ID+"/revisions/restore?rev=99", nil))
+	routed(app)(w, req("POST", "/api/agents/"+a.ID+"/revisions/restore?rev=99", nil))
 	if w.Code == 200 {
 		t.Error("an id that was never issued must not restore")
 	}
@@ -196,13 +196,13 @@ func TestAgentRevisionsRefuseSomebodyElsesAgent(t *testing.T) {
 		"/api/agents/" + a.ID + "/revisions/preview?rev=1",
 	} {
 		w := httptest.NewRecorder()
-		app.handleAgentOne(w, req("GET", path, nil))
+		routed(app)(w, req("GET", path, nil))
 		if w.Code == 200 {
 			t.Errorf("%s served another user's history", path)
 		}
 	}
 	w := httptest.NewRecorder()
-	app.handleAgentOne(w, req("POST", "/api/agents/"+a.ID+"/revisions/restore?rev=1", nil))
+	routed(app)(w, req("POST", "/api/agents/"+a.ID+"/revisions/restore?rev=1", nil))
 	if w.Code == 200 {
 		t.Error("another user's agent was restored")
 	}

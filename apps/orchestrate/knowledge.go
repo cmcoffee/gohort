@@ -35,6 +35,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/netgate"
 	"github.com/cmcoffee/gohort/core/provenance"
 )
@@ -158,39 +159,34 @@ func recordAgentTopic(db Database, user, agentID, topic string) {
 	db.Set(knowledgeTopicsTable, key, rec)
 }
 
-// handleAgentKnowledge serves GET (count) and DELETE (wipe) for the
+// knowledgeRoute serves GET (count) and DELETE (wipe) for the
 // per-(user, agent) vector knowledge bucket. The DELETE is the
 // "nuclear" wipe — removes uploads AND auto-inferred chunks. The UI
 // no longer surfaces this button directly; the Knowledge modal calls
-// handleAgentKnowledgeAutoInferredWipe instead (which preserves
+// autoInferredRoute instead (which preserves
 // uploads). Kept around for admin scripts and any legacy callers.
 //
 //	GET    /api/agents/{id}/knowledge → {chunks: N}
 //	DELETE /api/agents/{id}/knowledge → {removed: N}
-func (T *OrchestrateApp) handleAgentKnowledge(w http.ResponseWriter, r *http.Request, user, agentID string) {
-	if T.DB == nil {
-		http.Error(w, "DB not initialized", http.StatusInternalServerError)
-		return
-	}
+func (T *OrchestrateApp) knowledgeRoute(at memAt) http.HandlerFunc {
 	// Chunks live in the dedicated VectorDB now (consolidated shared
 	// store, scoped by Source tag); metadata still lives in T.DB.
-	switch r.Method {
-	case http.MethodGet:
-		n := countAgentKnowledgeChunks(VectorDB, user, agentID)
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]int{"chunks": n})
-	case http.MethodDelete:
-		removed := WipeChunksBySourcePrefix(VectorDB, agentKnowledgePrefix(user, agentID))
-		Log("[orchestrate.knowledge] user=%q wiped %d chunk(s) for agent=%s",
-			user, removed, agentID)
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]int{"removed": removed})
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
+	return jsonapi.Methods{
+		"GET": jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) {
+			t := at(c)
+			return map[string]int{"chunks": countAgentKnowledgeChunks(VectorDB, t.user, t.agentID)}, nil
+		}),
+		"DELETE": jsonapi.Delete(T.DB, func(c *jsonapi.Call, _ struct{}) (any, error) {
+			t := at(c)
+			removed := WipeChunksBySourcePrefix(VectorDB, agentKnowledgePrefix(t.user, t.agentID))
+			Log("[orchestrate.knowledge] user=%q wiped %d chunk(s) for agent=%s",
+				t.user, removed, t.agentID)
+			return map[string]int{"removed": removed}, nil
+		}),
+	}.Serve
 }
 
-// handleAgentKnowledgeAutoInferredWipe deletes only auto-inferred
+// autoInferredRoute deletes only auto-inferred
 // chunks — synthesis ingest, closer findings, knowledge_save calls.
 // Distinguishes by ReportID prefix:
 //
@@ -205,34 +201,30 @@ func (T *OrchestrateApp) handleAgentKnowledge(w http.ResponseWriter, r *http.Req
 //
 //	DELETE /api/agents/{id}/knowledge/auto-inferred → {removed: N}
 //	GET    same path → {chunks: N} (count of auto-inferred chunks only)
-func (T *OrchestrateApp) handleAgentKnowledgeAutoInferredWipe(w http.ResponseWriter, r *http.Request, user, agentID string) {
-	if T.DB == nil {
-		http.Error(w, "DB not initialized", http.StatusInternalServerError)
-		return
-	}
-	prefix := agentKnowledgePrefix(user, agentID)
-	scope := func(c EmbeddedChunk) bool {
-		if !sourceInScope(c.Source, prefix) {
-			return false
+func (T *OrchestrateApp) autoInferredRoute(at memAt) http.HandlerFunc {
+	scope := func(t memTarget) func(c EmbeddedChunk) bool {
+		prefix := agentKnowledgePrefix(t.user, t.agentID)
+		return func(c EmbeddedChunk) bool {
+			if !sourceInScope(c.Source, prefix) {
+				return false
+			}
+			// Only auto-inferred reportIDs. Uploads + (defensive) shared
+			// reportIDs are skipped.
+			return strings.HasPrefix(c.ReportID, "orch-know-")
 		}
-		// Only auto-inferred reportIDs. Uploads + (defensive) shared
-		// reportIDs are skipped.
-		return strings.HasPrefix(c.ReportID, "orch-know-")
 	}
-	switch r.Method {
-	case http.MethodGet:
-		n := len(ChunksWhere(VectorDB, scope))
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]int{"chunks": n})
-	case http.MethodDelete:
-		removed := DeleteChunksWhere(VectorDB, scope)
-		Log("[orchestrate.knowledge] user=%q wiped %d auto-inferred chunk(s) for agent=%s (uploads preserved)",
-			user, removed, agentID)
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]int{"removed": removed})
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
+	return jsonapi.Methods{
+		"GET": jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) {
+			return map[string]int{"chunks": len(ChunksWhere(VectorDB, scope(at(c))))}, nil
+		}),
+		"DELETE": jsonapi.Delete(T.DB, func(c *jsonapi.Call, _ struct{}) (any, error) {
+			t := at(c)
+			removed := DeleteChunksWhere(VectorDB, scope(t))
+			Log("[orchestrate.knowledge] user=%q wiped %d auto-inferred chunk(s) for agent=%s (uploads preserved)",
+				t.user, removed, t.agentID)
+			return map[string]int{"removed": removed}, nil
+		}),
+	}.Serve
 }
 
 // handleAgentKnowledgeScaffoldCollection creates an empty Document
@@ -244,57 +236,50 @@ func (T *OrchestrateApp) handleAgentKnowledgeAutoInferredWipe(w http.ResponseWri
 //
 //	POST /api/agents/{id}/knowledge/scaffold-collection
 //	→ {id, name, description}
-func (T *OrchestrateApp) handleAgentKnowledgeScaffoldCollection(w http.ResponseWriter, r *http.Request, user string, udb Database, agentID string) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+func (T *OrchestrateApp) handleAgentKnowledgeScaffoldCollection(c *jsonapi.Call, _ struct{}) (any, error) {
+	user, udb, agentID := c.User, c.UDB, c.R.PathValue("id")
 	a, ok := loadAgent(udb, agentID)
 	if !ok {
-		http.NotFound(w, r)
-		return
+		return nil, errNotFound
 	}
 	if a.Owner != user && a.Owner != seedOwner {
-		http.Error(w, "forbidden", http.StatusForbidden)
-		return
+		return nil, jsonapi.Forbidden("forbidden")
 	}
 	agentName := strings.TrimSpace(a.Name)
 	if agentName == "" {
-		http.Error(w, "agent has no name", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("agent has no name")
 	}
-	c := Collection{
+	col := Collection{
 		ID:          UUIDv4(),
 		Owner:       user,
 		Name:        agentName + " Knowledge",
 		Description: strings.TrimSpace(a.Description),
 		Created:     time.Now(),
 	}
-	saveCollection(udb, c)
+	saveCollection(udb, col)
 
 	already := false
 	for _, cid := range a.AttachedCollections {
-		if cid == c.ID {
+		if cid == col.ID {
 			already = true
 			break
 		}
 	}
 	if !already {
-		a.AttachedCollections = append(a.AttachedCollections, c.ID)
+		a.AttachedCollections = append(a.AttachedCollections, col.ID)
 		if _, serr := saveAgent(udb, a); serr != nil {
 			Log("[orchestrate.knowledge] scaffold-collection: saved collection but failed to attach to agent=%s: %v", agentID, serr)
 		}
 	}
-	Log("[orchestrate.knowledge] user=%q scaffolded collection %q (id=%s) for agent=%s", user, c.Name, c.ID, agentID)
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{
-		"id":          c.ID,
-		"name":        c.Name,
-		"description": c.Description,
-	})
+	Log("[orchestrate.knowledge] user=%q scaffolded collection %q (id=%s) for agent=%s", user, col.Name, col.ID, agentID)
+	return map[string]string{
+		"id":          col.ID,
+		"name":        col.Name,
+		"description": col.Description,
+	}, nil
 }
 
-// handleAgentInferredList returns the agent's Reference Memory entries
+// inferredListRoute returns the agent's Reference Memory entries
 // (derived chunks — chunkProvenance=="derived"). Used by the Memory
 // modal to render the prune-able list. Read-only listing; deletion
 // flows through handleAgentInferredDelete per-entry.
@@ -304,79 +289,65 @@ func (T *OrchestrateApp) handleAgentKnowledgeScaffoldCollection(w http.ResponseW
 // Capped at maxInferredList entries to keep the modal load tractable;
 // users with hundreds of derived chunks get the most recent slice
 // (sorted by ReportID prefix which is timestamp-ish).
-func (T *OrchestrateApp) handleAgentInferredList(w http.ResponseWriter, r *http.Request, user, agentID string) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if T.DB == nil {
-		http.Error(w, "DB not initialized", http.StatusInternalServerError)
-		return
-	}
-	prefix := agentKnowledgePrefix(user, agentID)
-	type row struct {
-		ID        string `json:"id"`
-		Topic     string `json:"topic,omitempty"`
-		Content   string `json:"content"`
-		SourceDoc string `json:"source_doc,omitempty"`
-	}
-	items := make([]row, 0, 32)
-	for _, c := range ChunksWhere(VectorDB, func(x EmbeddedChunk) bool {
-		return sourceInScope(x.Source, prefix) && chunkProvenance(x.Source, x.ReportID) == "derived"
-	}) {
-		items = append(items, row{
-			ID:        c.ID,
-			Topic:     c.Section,
-			Content:   c.Text,
-			SourceDoc: chunkDocName(c.Section),
-		})
-		if len(items) >= maxInferredList {
-			break
+func (T *OrchestrateApp) inferredListRoute(at memAt) http.HandlerFunc {
+	return jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) {
+		t := at(c)
+		prefix := agentKnowledgePrefix(t.user, t.agentID)
+		type row struct {
+			ID        string `json:"id"`
+			Topic     string `json:"topic,omitempty"`
+			Content   string `json:"content"`
+			SourceDoc string `json:"source_doc,omitempty"`
 		}
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"items": items})
+		items := make([]row, 0, 32)
+		for _, ch := range ChunksWhere(VectorDB, func(x EmbeddedChunk) bool {
+			return sourceInScope(x.Source, prefix) && chunkProvenance(x.Source, x.ReportID) == "derived"
+		}) {
+			items = append(items, row{
+				ID:        ch.ID,
+				Topic:     ch.Section,
+				Content:   ch.Text,
+				SourceDoc: chunkDocName(ch.Section),
+			})
+			if len(items) >= maxInferredList {
+				break
+			}
+		}
+		return map[string]any{"items": items}, nil
+	})
 }
 
-// handleAgentInferredDelete removes one Reference Memory chunk by id.
+// inferredDeleteRoute removes one Reference Memory chunk by id.
 // Scoped to the (user, agent) namespace + derived provenance — the
 // chunk's source prefix and ReportID must both match, defending
 // against a misrouted DELETE wiping curated content.
 //
 //	DELETE /api/agents/{id}/inferred/{chunk_id} → 204
-func (T *OrchestrateApp) handleAgentInferredDelete(w http.ResponseWriter, r *http.Request, user, agentID, chunkID string) {
-	if r.Method != http.MethodDelete {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if T.DB == nil {
-		http.Error(w, "DB not initialized", http.StatusInternalServerError)
-		return
-	}
-	if chunkID == "" {
-		http.Error(w, "chunk_id required", http.StatusBadRequest)
-		return
-	}
-	prefix := agentKnowledgePrefix(user, agentID)
-	match := ChunksWhere(VectorDB, func(x EmbeddedChunk) bool { return x.ID == chunkID })
-	if len(match) == 0 {
-		http.NotFound(w, r)
-		return
-	}
-	c := match[0]
-	// Scope checks — defend against deleting curated content via
-	// a misrouted chunk id.
-	if !sourceInScope(c.Source, prefix) {
-		http.Error(w, "chunk not owned by this agent", http.StatusForbidden)
-		return
-	}
-	if chunkProvenance(c.Source, c.ReportID) != "derived" {
-		http.Error(w, "chunk is not a derived Reference Memory entry", http.StatusForbidden)
-		return
-	}
-	DeleteChunksByIDs(VectorDB, []string{c.ID})
-	Log("[orchestrate.memory] user=%q deleted Reference Memory chunk %q for agent=%s", user, chunkID, agentID)
-	w.WriteHeader(http.StatusNoContent)
+func (T *OrchestrateApp) inferredDeleteRoute(at memAt) http.HandlerFunc {
+	return jsonapi.Delete(T.DB, func(c *jsonapi.Call, _ struct{}) (any, error) {
+		t := at(c)
+		chunkID := t.item
+		if chunkID == "" {
+			return nil, jsonapi.BadRequest("chunk_id required")
+		}
+		prefix := agentKnowledgePrefix(t.user, t.agentID)
+		match := ChunksWhere(VectorDB, func(x EmbeddedChunk) bool { return x.ID == chunkID })
+		if len(match) == 0 {
+			return nil, errNotFound
+		}
+		ch := match[0]
+		// Scope checks — defend against deleting curated content via
+		// a misrouted chunk id.
+		if !sourceInScope(ch.Source, prefix) {
+			return nil, jsonapi.Forbidden("chunk not owned by this agent")
+		}
+		if chunkProvenance(ch.Source, ch.ReportID) != "derived" {
+			return nil, jsonapi.Forbidden("chunk is not a derived Reference Memory entry")
+		}
+		DeleteChunksByIDs(VectorDB, []string{ch.ID})
+		Log("[orchestrate.memory] user=%q deleted Reference Memory chunk %q for agent=%s", t.user, chunkID, t.agentID)
+		return jsonapi.Empty(http.StatusNoContent), nil
+	})
 }
 
 // maxInferredList caps how many derived chunks the Memory modal
@@ -615,7 +586,7 @@ func (T *OrchestrateApp) handleAgentKnowledgeUpload(w http.ResponseWriter, r *ht
 	})
 }
 
-// handleAgentKnowledgeSources lists each USER-UPLOADED document
+// knowledgeSourcesRoute lists each USER-UPLOADED document
 // (grouped by reportID) under this agent's corpus. Returns one entry
 // per reportID with the source name, chunk count, and most-recent
 // date.
@@ -628,91 +599,79 @@ func (T *OrchestrateApp) handleAgentKnowledgeUpload(w http.ResponseWriter, r *ht
 //
 //	GET /api/agents/{id}/knowledge/sources
 //	→ {sources: [{id, name, chunks, latest}]}
-func (T *OrchestrateApp) handleAgentKnowledgeSources(w http.ResponseWriter, r *http.Request, user, agentID string) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if T.DB == nil {
-		http.Error(w, "DB not initialized", http.StatusInternalServerError)
-		return
-	}
-	prefix := agentKnowledgePrefix(user, agentID)
-	type group struct {
-		id     string
-		name   string
-		chunks int
-		latest string
-	}
-	groups := map[string]*group{}
-	// Uploads only — derived chunks appear in the modal's separate
-	// "Auto-inferred knowledge" section, not under "Your documents."
-	for _, c := range ChunksWhere(VectorDB, func(x EmbeddedChunk) bool {
-		return sourceInScope(x.Source, prefix) && strings.HasPrefix(x.ReportID, "orch-upload-")
-	}) {
-		g, ok := groups[c.ReportID]
-		if !ok {
-			g = &group{id: c.ReportID, name: c.Section}
-			groups[c.ReportID] = g
+func (T *OrchestrateApp) knowledgeSourcesRoute(at memAt) http.HandlerFunc {
+	return jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) {
+		t := at(c)
+		prefix := agentKnowledgePrefix(t.user, t.agentID)
+		type group struct {
+			id     string
+			name   string
+			chunks int
+			latest string
 		}
-		g.chunks++
-		if c.Date > g.latest {
-			g.latest = c.Date
+		groups := map[string]*group{}
+		// Uploads only — derived chunks appear in the modal's separate
+		// "Auto-inferred knowledge" section, not under "Your documents."
+		for _, ch := range ChunksWhere(VectorDB, func(x EmbeddedChunk) bool {
+			return sourceInScope(x.Source, prefix) && strings.HasPrefix(x.ReportID, "orch-upload-")
+		}) {
+			g, ok := groups[ch.ReportID]
+			if !ok {
+				g = &group{id: ch.ReportID, name: ch.Section}
+				groups[ch.ReportID] = g
+			}
+			g.chunks++
+			if ch.Date > g.latest {
+				g.latest = ch.Date
+			}
+			// Prefer the document Title (topic/question stamped at ingest);
+			// fall back to the SHORTEST section for legacy chunks with no
+			// Title (the first chunk's section is the document title
+			// "## <name>"; later chunks may be subsection titles within it).
+			if ch.Title != "" {
+				g.name = ch.Title
+			} else if ch.Section != "" && (g.name == "" || len(ch.Section) < len(g.name)) {
+				g.name = ch.Section
+			}
 		}
-		// Prefer the document Title (topic/question stamped at ingest);
-		// fall back to the SHORTEST section for legacy chunks with no
-		// Title (the first chunk's section is the document title
-		// "## <name>"; later chunks may be subsection titles within it).
-		if c.Title != "" {
-			g.name = c.Title
-		} else if c.Section != "" && (g.name == "" || len(c.Section) < len(g.name)) {
-			g.name = c.Section
+		type sourceOut struct {
+			ID     string `json:"id"`
+			Name   string `json:"name"`
+			Chunks int    `json:"chunks"`
+			Latest string `json:"latest,omitempty"`
 		}
-	}
-	type sourceOut struct {
-		ID     string `json:"id"`
-		Name   string `json:"name"`
-		Chunks int    `json:"chunks"`
-		Latest string `json:"latest,omitempty"`
-	}
-	out := make([]sourceOut, 0, len(groups))
-	for _, g := range groups {
-		out = append(out, sourceOut{ID: g.id, Name: g.name, Chunks: g.chunks, Latest: g.latest})
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Latest > out[j].Latest })
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"sources": out})
+		out := make([]sourceOut, 0, len(groups))
+		for _, g := range groups {
+			out = append(out, sourceOut{ID: g.id, Name: g.name, Chunks: g.chunks, Latest: g.latest})
+		}
+		sort.Slice(out, func(i, j int) bool { return out[i].Latest > out[j].Latest })
+		return map[string]any{"sources": out}, nil
+	})
 }
 
-// handleAgentKnowledgeSourceDelete removes every chunk for one
+// knowledgeSourceDeleteRoute removes every chunk for one
 // reportID, scoped to the (user, agent) namespace so a caller can't
 // nuke a reportID from a different agent.
 //
 //	DELETE /api/agents/{id}/knowledge/sources/{reportID}
 //	→ {removed: N}
-func (T *OrchestrateApp) handleAgentKnowledgeSourceDelete(w http.ResponseWriter, r *http.Request, user, agentID, reportID string) {
-	if r.Method != http.MethodDelete {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if T.DB == nil {
-		http.Error(w, "DB not initialized", http.StatusInternalServerError)
-		return
-	}
-	if reportID == "" {
-		http.Error(w, "reportID required", http.StatusBadRequest)
-		return
-	}
-	prefix := agentKnowledgePrefix(user, agentID)
-	// Scoped to this agent's corpus — another agent's chunk under the same
-	// report ID is refused, never a cross-scope delete.
-	removed := DeleteChunksWhere(VectorDB, func(x EmbeddedChunk) bool {
-		return x.ReportID == reportID && sourceInScope(x.Source, prefix)
+func (T *OrchestrateApp) knowledgeSourceDeleteRoute(at memAt) http.HandlerFunc {
+	return jsonapi.Delete(T.DB, func(c *jsonapi.Call, _ struct{}) (any, error) {
+		t := at(c)
+		reportID := t.item
+		if reportID == "" {
+			return nil, jsonapi.BadRequest("reportID required")
+		}
+		prefix := agentKnowledgePrefix(t.user, t.agentID)
+		// Scoped to this agent's corpus — another agent's chunk under the same
+		// report ID is refused, never a cross-scope delete.
+		removed := DeleteChunksWhere(VectorDB, func(x EmbeddedChunk) bool {
+			return x.ReportID == reportID && sourceInScope(x.Source, prefix)
+		})
+		Log("[orchestrate.knowledge] user=%q agent=%s removed %d chunk(s) for source=%s",
+			t.user, t.agentID, removed, reportID)
+		return map[string]int{"removed": removed}, nil
 	})
-	Log("[orchestrate.knowledge] user=%q agent=%s removed %d chunk(s) for source=%s",
-		user, agentID, removed, reportID)
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]int{"removed": removed})
 }
 
 // countReportChunks is a small helper for the upload endpoint to

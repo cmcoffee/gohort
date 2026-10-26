@@ -20,7 +20,6 @@
 package orchestrate
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -30,6 +29,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // staleNotesAfter is when working notes stop reading as "current state". Notes
@@ -494,72 +494,55 @@ const orphanMemoryRefAction = "orphan_memory_ref"
 
 // --- HTTP handler ------------------------------------------------------------
 
-// handleAgentMemoryAudit serves the findings the Memory pane shows as a
-// "Needs attention" block. GET only — this never mutates; every fix routes
+// memoryAuditRoute serves the findings the Memory pane shows as a
+// "Needs attention" block. GET never mutates; every fix routes
 // through the layer's own editor, which is where the owner can see what they
 // are removing.
-func (T *OrchestrateApp) handleAgentMemoryAudit(w http.ResponseWriter, r *http.Request, user, agentID string) {
-	if r.Method != http.MethodGet && r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	udb := UserDB(T.DB, user)
-	if udb == nil {
-		http.Error(w, "no store for user", http.StatusInternalServerError)
-		return
-	}
-	if agentID == "" || strings.Contains(agentID, "/") {
-		http.NotFound(w, r)
-		return
-	}
-	a, ok := T.memoryAgent(r, udb, user, agentID)
-	if !ok {
-		http.NotFound(w, r)
-		return
-	}
-	// POST acts: {undo} puts back a move the memory lifecycle made, and
-	// {action, id} removes, ignores or restores one finding.
-	if r.Method == http.MethodPost {
-		var body struct {
+func (T *OrchestrateApp) memoryAuditRoute(at memAt) http.HandlerFunc {
+	return jsonapi.Methods{
+		"GET": jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) {
+			m, err := T.memoryOf(c, at)
+			if err != nil {
+				return nil, err
+			}
+			findings, ignored := splitIgnoredFindings(m.udb, m.agentID, T.auditAgentMemory(m.udb, m.user, m.agentID, m.agent))
+			if ignored == nil {
+				ignored = []MemoryFinding{}
+			}
+			moves := listMemoryMoves(m.udb, m.agentID)
+			if moves == nil {
+				moves = []memoryMove{}
+			}
+			return map[string]any{
+				"findings": findings,
+				"count":    len(findings),
+				"ignored":  ignored,
+				"moves":    moves,
+			}, nil
+		}),
+		// POST acts: {undo} puts back a move the memory lifecycle made, and
+		// {action, id} removes, ignores or restores one finding.
+		"POST": jsonapi.Post(T.DB, func(c *jsonapi.Call, body struct {
 			Undo   string `json:"undo"`
 			Action string `json:"action"`
 			ID     string `json:"id"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		var err error
-		switch {
-		case strings.TrimSpace(body.Undo) != "":
-			err = undoMemoryMove(udb, agentID, strings.TrimSpace(body.Undo))
-		case strings.TrimSpace(body.Action) != "" && strings.TrimSpace(body.ID) != "":
-			err = T.actOnFinding(udb, user, a, strings.TrimSpace(body.Action), strings.TrimSpace(body.ID))
-		default:
-			http.Error(w, "undo, or action and id, is required", http.StatusBadRequest)
-			return
-		}
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusConflict)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
-		return
-	}
-	findings, ignored := splitIgnoredFindings(udb, agentID, T.auditAgentMemory(udb, user, agentID, a))
-	if ignored == nil {
-		ignored = []MemoryFinding{}
-	}
-	moves := listMemoryMoves(udb, agentID)
-	if moves == nil {
-		moves = []memoryMove{}
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"findings": findings,
-		"count":    len(findings),
-		"ignored":  ignored,
-		"moves":    moves,
-	})
+		}) (any, error) {
+			m, err := T.memoryOf(c, at)
+			if err != nil {
+				return nil, err
+			}
+			switch {
+			case strings.TrimSpace(body.Undo) != "":
+				err = undoMemoryMove(m.udb, m.agentID, strings.TrimSpace(body.Undo))
+			case strings.TrimSpace(body.Action) != "" && strings.TrimSpace(body.ID) != "":
+				err = T.actOnFinding(m.udb, m.user, m.agent, strings.TrimSpace(body.Action), strings.TrimSpace(body.ID))
+			default:
+				return nil, jsonapi.BadRequest("undo, or action and id, is required")
+			}
+			if err != nil {
+				return nil, jsonapi.Status(http.StatusConflict, err.Error())
+			}
+			return map[string]any{"ok": true}, nil
+		}),
+	}.Serve
 }

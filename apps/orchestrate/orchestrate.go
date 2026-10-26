@@ -724,6 +724,7 @@ func (T *OrchestrateApp) registerHandlers() {
 	// Per-session diagnostics trail (session_diag.go) — the ⚠ affordance.
 	T.HandleFunc("/api/session-diag", jsonapi.Get(T.DB, T.handleSessionDiag))
 	T.HandleFunc("/api/agents/", T.handleAgentOne)
+	T.registerMemoryRoutes()
 	// Collections are NOT admin-only, and were. A collection belongs to the
 	// user who made it, apps/knowledge is the surface ordinary people manage
 	// theirs from, and every one of these handlers already resolves by the

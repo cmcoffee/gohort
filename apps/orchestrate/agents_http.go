@@ -595,22 +595,6 @@ func (T *OrchestrateApp) handleAgentOne(w http.ResponseWriter, r *http.Request) 
 		_ = json.NewEncoder(w).Encode(rec)
 		return
 	}
-	if action == "facts" {
-		T.handleAgentFacts(w, r, user, id)
-		return
-	}
-	if action == "notes" {
-		T.handleAgentNotes(w, r, user, id)
-		return
-	}
-	if action == "memaudit" {
-		T.handleAgentMemoryAudit(w, r, user, id)
-		return
-	}
-	if action == "memsearch" {
-		T.handleAgentMemorySearch(w, r, user, id)
-		return
-	}
 	// Revisions: the list, one version read-only, and the way back.
 	if sub, isRev := revisionAction(action); isRev {
 		T.handleAgentRevisions(w, r, user, id, sub)
@@ -642,72 +626,8 @@ func (T *OrchestrateApp) handleAgentOne(w http.ResponseWriter, r *http.Request) 
 		T.handleAgentGuardrailTest(w, r, user, id)
 		return
 	}
-	if action == "inferred" {
-		T.handleAgentInferredList(w, r, user, id)
-		return
-	}
-	if strings.HasPrefix(action, "inferred/") {
-		chunkID := strings.TrimPrefix(action, "inferred/")
-		T.handleAgentInferredDelete(w, r, user, id, chunkID)
-		return
-	}
-	if action == "graph" {
-		T.handleAgentGraph(w, r, user, id)
-		return
-	}
-	if strings.HasPrefix(action, "graph/entity/") {
-		rest := strings.TrimPrefix(action, "graph/entity/")
-		// Entity IDs are "<kind>:<slug>" — never contain a slash — so a
-		// trailing /attr or /alias unambiguously selects the sub-action.
-		switch {
-		case strings.HasSuffix(rest, "/attr"):
-			T.handleAgentGraphAttrDelete(w, r, user, id, strings.TrimSuffix(rest, "/attr"))
-		case strings.HasSuffix(rest, "/alias"):
-			T.handleAgentGraphAliasDelete(w, r, user, id, strings.TrimSuffix(rest, "/alias"))
-		default:
-			T.handleAgentGraphEntityDelete(w, r, user, id, rest)
-		}
-		return
-	}
-	if action == "graph/edge" {
-		T.handleAgentGraphEdgeDelete(w, r, user, id)
-		return
-	}
-	if action == "knowledge" {
-		T.handleAgentKnowledge(w, r, user, id)
-		return
-	}
-	if action == "phantom-sessions" {
-		T.handleAgentPhantomSessions(w, r, user, id)
-		return
-	}
-	if strings.HasPrefix(action, "phantom-sessions/") {
-		// /api/agents/{id}/phantom-sessions/{session_id}?chat_id=<chatID>
-		// reads a single phantom-owned session out of the per-chat
-		// sub-store. Read-only; deletion can be added later if needed.
-		sid := strings.TrimPrefix(action, "phantom-sessions/")
-		T.handleAgentPhantomSessionOne(w, r, user, id, sid)
-		return
-	}
-	if action == "knowledge/auto-inferred" {
-		T.handleAgentKnowledgeAutoInferredWipe(w, r, user, id)
-		return
-	}
-	if action == "knowledge/scaffold-collection" {
-		T.handleAgentKnowledgeScaffoldCollection(w, r, user, udb, id)
-		return
-	}
 	if action == "knowledge/upload" {
 		T.handleAgentKnowledgeUpload(w, r, user, id)
-		return
-	}
-	if action == "knowledge/sources" {
-		T.handleAgentKnowledgeSources(w, r, user, id)
-		return
-	}
-	if strings.HasPrefix(action, "knowledge/sources/") {
-		reportID := strings.TrimPrefix(action, "knowledge/sources/")
-		T.handleAgentKnowledgeSourceDelete(w, r, user, id, reportID)
 		return
 	}
 	if action == "missing" {

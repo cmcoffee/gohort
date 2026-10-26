@@ -131,7 +131,7 @@ func TestTheMemoryPanelIgnoresAndRestoresThroughTheEndpoint(t *testing.T) {
 
 	post := func(body map[string]any) int {
 		w := httptest.NewRecorder()
-		app.handleAgentOne(w, req("POST", "/api/agents/agent-1/memaudit", body))
+		routed(app)(w, req("POST", "/api/agents/agent-1/memaudit", body))
 		return w.Code
 	}
 	if code := post(map[string]any{"action": "ignore", "id": f.ID}); code != 200 {
@@ -141,7 +141,7 @@ func TestTheMemoryPanelIgnoresAndRestoresThroughTheEndpoint(t *testing.T) {
 		t.Error("an id that names no finding must not act")
 	}
 	w := httptest.NewRecorder()
-	app.handleAgentOne(w, req("GET", "/api/agents/agent-1/memaudit", nil))
+	routed(app)(w, req("GET", "/api/agents/agent-1/memaudit", nil))
 	if !strings.Contains(w.Body.String(), `"ignored":[{`) || !strings.Contains(w.Body.String(), `"count":0`) {
 		t.Errorf("the ignored finding should be listed apart: %s", w.Body.String())
 	}

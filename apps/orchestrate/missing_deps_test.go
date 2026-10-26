@@ -280,7 +280,7 @@ func TestToolsModalSaveKeepsADanglingToolName(t *testing.T) {
 	// Remove is the explicit door, and it leaves an emptied list as "no
 	// tools", never as "every tool".
 	w = httptest.NewRecorder()
-	app.handleAgentOne(w, req(http.MethodPost, "/api/agents/agent-1/missing", map[string]any{"kind": "tool", "id": "wiki_read"}))
+	routed(app)(w, req(http.MethodPost, "/api/agents/agent-1/missing", map[string]any{"kind": "tool", "id": "wiki_read"}))
 	if w.Code != http.StatusOK {
 		t.Fatalf("remove: %d %s", w.Code, w.Body.String())
 	}
@@ -334,7 +334,7 @@ func TestTheEditorListsWhatIsMissing(t *testing.T) {
 		t.Fatal(err)
 	}
 	w := httptest.NewRecorder()
-	app.handleAgentOne(w, req(http.MethodGet, "/api/agents/agent-1/missing", nil))
+	routed(app)(w, req(http.MethodGet, "/api/agents/agent-1/missing", nil))
 	body := w.Body.String()
 	if w.Code != http.StatusOK || !strings.Contains(body, `"wiki_read"`) || !strings.Contains(body, `"skill-gone"`) {
 		t.Fatalf("want the withdrawn tool and the missing skill listed, got %d %s", w.Code, body)
@@ -342,7 +342,7 @@ func TestTheEditorListsWhatIsMissing(t *testing.T) {
 	// Removing a withdrawn TAKEN tool clears the adoption every agent loaded
 	// it through.
 	w = httptest.NewRecorder()
-	app.handleAgentOne(w, req(http.MethodPost, "/api/agents/agent-1/missing", map[string]any{"kind": "tool", "id": "wiki_read"}))
+	routed(app)(w, req(http.MethodPost, "/api/agents/agent-1/missing", map[string]any{"kind": "tool", "id": "wiki_read"}))
 	if w.Code != http.StatusOK {
 		t.Fatalf("remove: %d %s", w.Code, w.Body.String())
 	}
@@ -386,7 +386,7 @@ func TestTheEditorOffersToKeepAWithdrawnTool(t *testing.T) {
 	}
 
 	w := httptest.NewRecorder()
-	app.handleAgentOne(w, req(http.MethodGet, "/api/agents/agent-1/missing", nil))
+	routed(app)(w, req(http.MethodGet, "/api/agents/agent-1/missing", nil))
 	var got struct {
 		Items []missingRef `json:"items"`
 	}
@@ -402,12 +402,12 @@ func TestTheEditorOffersToKeepAWithdrawnTool(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	app.handleAgentOne(w, req(http.MethodPost, "/api/agents/agent-1/missing", map[string]any{"kind": "tool", "id": "ticket_read", "action": "recreate"}))
+	routed(app)(w, req(http.MethodPost, "/api/agents/agent-1/missing", map[string]any{"kind": "tool", "id": "ticket_read", "action": "recreate"}))
 	if w.Code == http.StatusOK {
 		t.Fatal("a revoked share was recreated")
 	}
 	w = httptest.NewRecorder()
-	app.handleAgentOne(w, req(http.MethodPost, "/api/agents/agent-1/missing", map[string]any{"kind": "tool", "id": "wiki_read", "action": "recreate"}))
+	routed(app)(w, req(http.MethodPost, "/api/agents/agent-1/missing", map[string]any{"kind": "tool", "id": "wiki_read", "action": "recreate"}))
 	if w.Code != http.StatusOK {
 		t.Fatalf("keep: %d %s", w.Code, w.Body.String())
 	}
@@ -419,7 +419,7 @@ func TestTheEditorOffersToKeepAWithdrawnTool(t *testing.T) {
 		t.Fatal("alice has no copy of the tool she kept")
 	}
 	w = httptest.NewRecorder()
-	app.handleAgentOne(w, req(http.MethodGet, "/api/agents/agent-1/missing", nil))
+	routed(app)(w, req(http.MethodGet, "/api/agents/agent-1/missing", nil))
 	if strings.Contains(w.Body.String(), `"wiki_read"`) {
 		t.Errorf("the kept tool is still listed missing: %s", w.Body.String())
 	}

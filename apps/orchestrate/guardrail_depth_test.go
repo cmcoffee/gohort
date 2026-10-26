@@ -98,7 +98,7 @@ func TestGuardrailDepthHasItsOwnOwnerOnlyEndpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	w := httptest.NewRecorder()
-	app.handleAgentOne(w, req(http.MethodPost, "/api/agents/agent-1/guardrail-depth", map[string]any{"guardrail_depth": "thorough"}))
+	routed(app)(w, req(http.MethodPost, "/api/agents/agent-1/guardrail-depth", map[string]any{"guardrail_depth": "thorough"}))
 	if w.Code != http.StatusOK {
 		t.Fatalf("set: %d %s", w.Code, w.Body.String())
 	}
@@ -107,7 +107,7 @@ func TestGuardrailDepthHasItsOwnOwnerOnlyEndpoint(t *testing.T) {
 		t.Fatalf("depth set, rules untouched: %+v", rec)
 	}
 	w = httptest.NewRecorder()
-	app.handleAgentOne(w, req(http.MethodPost, "/api/agents/agent-1/guardrail-depth", map[string]any{"guardrail_depth": "extreme"}))
+	routed(app)(w, req(http.MethodPost, "/api/agents/agent-1/guardrail-depth", map[string]any{"guardrail_depth": "extreme"}))
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("an unknown depth is refused, got %d", w.Code)
 	}

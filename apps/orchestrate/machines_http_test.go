@@ -255,7 +255,7 @@ func TestAgentSave_WholeRecordFormDoesNotClearTheMachine(t *testing.T) {
 
 	// Attach via the partial-update path, which is how you do it today.
 	w = httptest.NewRecorder()
-	app.handleAgentOne(w, req(http.MethodPost, "/api/agents/"+agent.ID, map[string]any{"machine": "m-123"}))
+	routed(app)(w, req(http.MethodPost, "/api/agents/"+agent.ID, map[string]any{"machine": "m-123"}))
 	if w.Code != http.StatusOK {
 		t.Fatalf("attach: %d %s", w.Code, w.Body.String())
 	}

@@ -12,7 +12,6 @@
 package orchestrate
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -22,6 +21,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // factsNamespace returns the MemoryFact namespace for one agent.
@@ -251,7 +251,7 @@ func applyFactListEdit(udb Database, ns string, notes []string, chat FactChatFun
 
 // --- HTTP handler ---------------------------------------------------------
 
-// handleAgentFacts serves the in-band memory layer for the admin UI.
+// factsRoute serves the in-band memory layer for the admin UI.
 //
 //	GET  → returns the current MemoryFact rows for (user, agent) plus
 //	       the agent's KnowledgeFraming so the modal can render the
@@ -268,49 +268,36 @@ func applyFactListEdit(udb Database, ns string, notes []string, chat FactChatFun
 // per-scope variant). loadAgent's seed fallback + the seedOwner allowance below
 // keep the ownership gate satisfied when agentID is a template the scope doesn't
 // own its own copy of.
-func (T *OrchestrateApp) handleAgentFacts(w http.ResponseWriter, r *http.Request, user, agentID string) {
-	udb := UserDB(T.DB, user)
-	if udb == nil {
-		http.Error(w, "no store for user", http.StatusInternalServerError)
-		return
-	}
-	if agentID == "" || strings.Contains(agentID, "/") {
-		http.NotFound(w, r)
-		return
-	}
-	a, ok := T.memoryAgent(r, udb, user, agentID)
-	if !ok {
-		http.NotFound(w, r)
-		return
-	}
-	ns := factsNamespace(agentID)
-	switch r.Method {
-	case http.MethodGet:
-		facts := ListMemoryFacts(udb, ns)
-		notes := make([]string, 0, len(facts))
-		for _, f := range facts {
-			notes = append(notes, f.Note)
-		}
-		c := memoryModeCopy(a.MemoryMode)
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"notes": notes,
-			"framing": map[string]string{
-				"block_header": c.Header,
-				"block_intro":  c.Intro,
-			},
-		})
-	case http.MethodPost:
-		var body struct {
+func (T *OrchestrateApp) factsRoute(at memAt) http.HandlerFunc {
+	return jsonapi.Methods{
+		"GET": jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) {
+			m, err := T.memoryOf(c, at)
+			if err != nil {
+				return nil, err
+			}
+			facts := ListMemoryFacts(m.udb, factsNamespace(m.agentID))
+			notes := make([]string, 0, len(facts))
+			for _, f := range facts {
+				notes = append(notes, f.Note)
+			}
+			framing := memoryModeCopy(m.agent.MemoryMode)
+			return map[string]any{
+				"notes": notes,
+				"framing": map[string]string{
+					"block_header": framing.Header,
+					"block_intro":  framing.Intro,
+				},
+			}, nil
+		}),
+		"POST": jsonapi.Post(T.DB, func(c *jsonapi.Call, body struct {
 			Notes []string `json:"notes"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		applyFactListEdit(udb, ns, body.Notes, T.WorkerChat)
-		w.WriteHeader(http.StatusNoContent)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
+		}) (any, error) {
+			m, err := T.memoryOf(c, at)
+			if err != nil {
+				return nil, err
+			}
+			applyFactListEdit(m.udb, factsNamespace(m.agentID), body.Notes, T.WorkerChat)
+			return jsonapi.Empty(http.StatusNoContent), nil
+		}),
+	}.Serve
 }

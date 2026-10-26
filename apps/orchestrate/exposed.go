@@ -845,42 +845,26 @@ func (T *OrchestrateApp) PublicHandleMemoryModeSet(w http.ResponseWriter, r *htt
 // (store_fact entries) without the admin gate. Mirrors
 // handleAgentFacts for the public surface.
 func (T *OrchestrateApp) PublicHandleAgentFacts(w http.ResponseWriter, r *http.Request, agentID string) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	T.handleAgentFacts(w, r, user, agentID)
+	T.factsRoute(callerAgent(agentID, ""))(w, r)
 }
 
 // PublicHandleAgentNotes exposes the Working notes block — the memory layer
 // the model rewrites on its own and the owner previously could not see.
 func (T *OrchestrateApp) PublicHandleAgentNotes(w http.ResponseWriter, r *http.Request, agentID string) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	T.handleAgentNotes(w, r, user, agentID)
+	T.notesRoute(callerAgent(agentID, ""))(w, r)
 }
 
 // PublicHandleAgentMemoryAudit exposes the Memory pane's "Needs attention"
 // findings — memory entries that reference something no longer there.
 func (T *OrchestrateApp) PublicHandleAgentMemoryAudit(w http.ResponseWriter, r *http.Request, agentID string) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	T.handleAgentMemoryAudit(w, r, user, agentID)
+	T.memoryAuditRoute(callerAgent(agentID, ""))(w, r)
 }
 
 // PublicHandleAgentMemorySearch exposes the Memory modal's search
 // (grep + recall-preview + per-hit delete) on the public agents surface,
 // scoped to the logged-in user like the facts handler above.
 func (T *OrchestrateApp) PublicHandleAgentMemorySearch(w http.ResponseWriter, r *http.Request, agentID string) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	T.handleAgentMemorySearch(w, r, user, agentID)
+	T.memorySearchRoute(callerAgent(agentID, ""))(w, r)
 }
 
 // --- per-SCOPE memory handlers (the agent-as-template display) ----------------
@@ -895,80 +879,47 @@ func (T *OrchestrateApp) PublicHandleAgentMemorySearch(w http.ResponseWriter, r 
 // id; loadAgent's seed fallback keeps the ownership gate satisfied for it.
 
 func (T *OrchestrateApp) PublicHandleAgentFactsForScope(w http.ResponseWriter, r *http.Request, scopeUser, agentID string) {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok {
-		return
-	}
-	T.handleAgentFacts(w, r, scopeUser, agentID)
+	T.factsRoute(scopeAgent(scopeUser, agentID, ""))(w, r)
 }
 
 func (T *OrchestrateApp) PublicHandleAgentNotesForScope(w http.ResponseWriter, r *http.Request, scopeUser, agentID string) {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok {
-		return
-	}
-	T.handleAgentNotes(w, r, scopeUser, agentID)
+	T.notesRoute(scopeAgent(scopeUser, agentID, ""))(w, r)
 }
 
 func (T *OrchestrateApp) PublicHandleAgentMemoryAuditForScope(w http.ResponseWriter, r *http.Request, scopeUser, agentID string) {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok {
-		return
-	}
-	T.handleAgentMemoryAudit(w, r, scopeUser, agentID)
+	T.memoryAuditRoute(scopeAgent(scopeUser, agentID, ""))(w, r)
 }
 
 func (T *OrchestrateApp) PublicHandleAgentGraphForScope(w http.ResponseWriter, r *http.Request, scopeUser, agentID string) {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok {
-		return
-	}
-	T.handleAgentGraph(w, r, scopeUser, agentID)
+	T.graphRoute(scopeAgent(scopeUser, agentID, ""))(w, r)
 }
 
 func (T *OrchestrateApp) PublicHandleAgentGraphEntityDeleteForScope(w http.ResponseWriter, r *http.Request, scopeUser, agentID, entityID string) {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok {
-		return
-	}
-	T.handleAgentGraphEntityDelete(w, r, scopeUser, agentID, entityID)
+	T.graphEntityDeleteRoute(scopeAgent(scopeUser, agentID, entityID))(w, r)
 }
 
 func (T *OrchestrateApp) PublicHandleAgentGraphAttrDeleteForScope(w http.ResponseWriter, r *http.Request, scopeUser, agentID, entityID string) {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok {
-		return
-	}
-	T.handleAgentGraphAttrDelete(w, r, scopeUser, agentID, entityID)
+	T.graphAttrDeleteRoute(scopeAgent(scopeUser, agentID, entityID))(w, r)
 }
 
 func (T *OrchestrateApp) PublicHandleAgentGraphAliasDeleteForScope(w http.ResponseWriter, r *http.Request, scopeUser, agentID, entityID string) {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok {
-		return
-	}
-	T.handleAgentGraphAliasDelete(w, r, scopeUser, agentID, entityID)
+	T.graphAliasDeleteRoute(scopeAgent(scopeUser, agentID, entityID))(w, r)
 }
 
 func (T *OrchestrateApp) PublicHandleAgentGraphEdgeDeleteForScope(w http.ResponseWriter, r *http.Request, scopeUser, agentID string) {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok {
-		return
-	}
-	T.handleAgentGraphEdgeDelete(w, r, scopeUser, agentID)
+	T.graphEdgeDeleteRoute(scopeAgent(scopeUser, agentID, ""))(w, r)
 }
 
 func (T *OrchestrateApp) PublicHandleAgentKnowledgeForScope(w http.ResponseWriter, r *http.Request, scopeUser, agentID string) {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok {
-		return
-	}
-	T.handleAgentKnowledge(w, r, scopeUser, agentID)
+	T.knowledgeRoute(scopeAgent(scopeUser, agentID, ""))(w, r)
 }
 
 func (T *OrchestrateApp) PublicHandleAgentInferredListForScope(w http.ResponseWriter, r *http.Request, scopeUser, agentID string) {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok {
-		return
-	}
-	T.handleAgentInferredList(w, r, scopeUser, agentID)
+	T.inferredListRoute(scopeAgent(scopeUser, agentID, ""))(w, r)
 }
 
 func (T *OrchestrateApp) PublicHandleAgentInferredDeleteForScope(w http.ResponseWriter, r *http.Request, scopeUser, agentID, chunkID string) {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok {
-		return
-	}
-	T.handleAgentInferredDelete(w, r, scopeUser, agentID, chunkID)
+	T.inferredDeleteRoute(scopeAgent(scopeUser, agentID, chunkID))(w, r)
 }
 
 // PublicHandleAgentMemorySearchForScope mounts the memory search on an
@@ -976,10 +927,7 @@ func (T *OrchestrateApp) PublicHandleAgentInferredDeleteForScope(w http.Response
 // logged-in user; the CALLER authorizes the scope, same contract as the
 // other ForScope handlers.
 func (T *OrchestrateApp) PublicHandleAgentMemorySearchForScope(w http.ResponseWriter, r *http.Request, scopeUser, agentID string) {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok {
-		return
-	}
-	T.handleAgentMemorySearch(w, r, scopeUser, agentID)
+	T.memorySearchRoute(scopeAgent(scopeUser, agentID, ""))(w, r)
 }
 
 // PublicHandleAgentKnowledgeAutoInferredWipeForScope is the "Wipe all"
@@ -987,10 +935,7 @@ func (T *OrchestrateApp) PublicHandleAgentMemorySearchForScope(w http.ResponseWr
 // chunk in the scope's namespace. Like the other ForScope handlers, the
 // session gate proves a logged-in user; the CALLER authorizes the scope.
 func (T *OrchestrateApp) PublicHandleAgentKnowledgeAutoInferredWipeForScope(w http.ResponseWriter, r *http.Request, scopeUser, agentID string) {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok {
-		return
-	}
-	T.handleAgentKnowledgeAutoInferredWipe(w, r, scopeUser, agentID)
+	T.autoInferredRoute(scopeAgent(scopeUser, agentID, ""))(w, r)
 }
 
 // PublicHandleAgentRecordForScope returns the template agent's record so
@@ -1022,81 +967,45 @@ func (T *OrchestrateApp) PublicHandleAgentRecordForScope(w http.ResponseWriter, 
 // data-hygiene posture as the Reference Memory wipe; the underlying handlers are
 // already per-user (UserDB + factsNamespace), so these just supply the visitor.
 func (T *OrchestrateApp) PublicHandleAgentGraph(w http.ResponseWriter, r *http.Request, agentID string) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	T.handleAgentGraph(w, r, user, agentID)
+	T.graphRoute(callerAgent(agentID, ""))(w, r)
 }
 func (T *OrchestrateApp) PublicHandleAgentGraphEntityDelete(w http.ResponseWriter, r *http.Request, agentID, entityID string) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	T.handleAgentGraphEntityDelete(w, r, user, agentID, entityID)
+	T.graphEntityDeleteRoute(callerAgent(agentID, entityID))(w, r)
 }
 func (T *OrchestrateApp) PublicHandleAgentGraphAttrDelete(w http.ResponseWriter, r *http.Request, agentID, entityID string) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	T.handleAgentGraphAttrDelete(w, r, user, agentID, entityID)
+	T.graphAttrDeleteRoute(callerAgent(agentID, entityID))(w, r)
 }
 func (T *OrchestrateApp) PublicHandleAgentGraphAliasDelete(w http.ResponseWriter, r *http.Request, agentID, entityID string) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	T.handleAgentGraphAliasDelete(w, r, user, agentID, entityID)
+	T.graphAliasDeleteRoute(callerAgent(agentID, entityID))(w, r)
 }
 func (T *OrchestrateApp) PublicHandleAgentGraphEdgeDelete(w http.ResponseWriter, r *http.Request, agentID string) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	T.handleAgentGraphEdgeDelete(w, r, user, agentID)
+	T.graphEdgeDeleteRoute(callerAgent(agentID, ""))(w, r)
 }
 
 // PublicHandleAgentKnowledge serves the per-(user, agent) vector
 // knowledge chunk count + wipe without the admin gate. Mirrors
 // handleAgentKnowledge.
 func (T *OrchestrateApp) PublicHandleAgentKnowledge(w http.ResponseWriter, r *http.Request, agentID string) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	T.handleAgentKnowledge(w, r, user, agentID)
+	T.knowledgeRoute(callerAgent(agentID, ""))(w, r)
 }
 
 // PublicHandleAgentKnowledgeAutoInferredWipe mirrors the admin
 // auto-inferred wipe for end-users on the public agent app.
 func (T *OrchestrateApp) PublicHandleAgentKnowledgeAutoInferredWipe(w http.ResponseWriter, r *http.Request, agentID string) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	T.handleAgentKnowledgeAutoInferredWipe(w, r, user, agentID)
+	T.autoInferredRoute(callerAgent(agentID, ""))(w, r)
 }
 
 // PublicHandleAgentInferredList exposes the per-(user, agent)
 // Reference Memory listing for the public agent app — same payload
 // as the admin /inferred endpoint.
 func (T *OrchestrateApp) PublicHandleAgentInferredList(w http.ResponseWriter, r *http.Request, agentID string) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	T.handleAgentInferredList(w, r, user, agentID)
+	T.inferredListRoute(callerAgent(agentID, ""))(w, r)
 }
 
 // PublicHandleAgentInferredDelete deletes one Reference Memory chunk
 // for the end-user under their per-(user, agent) namespace.
 func (T *OrchestrateApp) PublicHandleAgentInferredDelete(w http.ResponseWriter, r *http.Request, agentID, chunkID string) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	T.handleAgentInferredDelete(w, r, user, agentID, chunkID)
+	T.inferredDeleteRoute(callerAgent(agentID, chunkID))(w, r)
 }
 
 // PublicHandleAgentRecord returns a read-only JSON view of the agent
@@ -1126,20 +1035,12 @@ func (T *OrchestrateApp) PublicHandleAgentKnowledgeUpload(w http.ResponseWriter,
 
 // PublicHandleAgentKnowledgeSources mirrors handleAgentKnowledgeSources.
 func (T *OrchestrateApp) PublicHandleAgentKnowledgeSources(w http.ResponseWriter, r *http.Request, agentID string) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	T.handleAgentKnowledgeSources(w, r, user, agentID)
+	T.knowledgeSourcesRoute(callerAgent(agentID, ""))(w, r)
 }
 
 // PublicHandleAgentKnowledgeSourceDelete mirrors handleAgentKnowledgeSourceDelete.
 func (T *OrchestrateApp) PublicHandleAgentKnowledgeSourceDelete(w http.ResponseWriter, r *http.Request, agentID, reportID string) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	T.handleAgentKnowledgeSourceDelete(w, r, user, agentID, reportID)
+	T.knowledgeSourceDeleteRoute(callerAgent(agentID, reportID))(w, r)
 }
 
 // PublicHandleSessionList writes the calling user's session

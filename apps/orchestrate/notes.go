@@ -11,12 +11,12 @@ package orchestrate
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/notes"
 )
 
@@ -57,7 +57,7 @@ func AgentStateNamespace(agentID string) string { return factsNamespace(agentID)
 
 // --- HTTP handler ---------------------------------------------------------
 
-// handleAgentNotes serves the Working notes block to the Memory modal.
+// notesRoute serves the Working notes block to the Memory modal.
 //
 //	GET  → the effective text (store, or the record's SeedNotes when the
 //	       store is empty), when it was last rewritten, whether notes are
@@ -72,53 +72,42 @@ func AgentStateNamespace(agentID string) string { return factsNamespace(agentID)
 // how a stale "pending task: <tool> with <args>" survived across sessions.
 //
 // user is the STATE scope; the caller resolves and authorizes it, matching
-// handleAgentFacts (RequireUser on the web surfaces, an appliance scope for
+// factsRoute (RequireUser on the web surfaces, an appliance scope for
 // the per-scope variant).
-func (T *OrchestrateApp) handleAgentNotes(w http.ResponseWriter, r *http.Request, user, agentID string) {
-	udb := UserDB(T.DB, user)
-	if udb == nil {
-		http.Error(w, "no store for user", http.StatusInternalServerError)
-		return
-	}
-	if agentID == "" || strings.Contains(agentID, "/") {
-		http.NotFound(w, r)
-		return
-	}
-	a, ok := T.memoryAgent(r, udb, user, agentID)
-	if !ok {
-		http.NotFound(w, r)
-		return
-	}
-	ns := factsNamespace(agentID)
-	switch r.Method {
-	case http.MethodGet:
-		stored := LoadOperatingNotes(udb, ns)
-		eff := ResolveOperatingNotes(udb, ns, a.SeedNotes)
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"text":    eff.Text,
-			"enabled": a.EnableNotes,
-			// Whether the READER can turn them on. An app agent's flags come
-			// from its code-registered spec and its record is hidden from the
-			// pickers, so there is no editor to send anyone to — telling them
-			// to go to one is the same unfollowable advice as pointing a macOS
-			// operator at a Linux package. The panel hides itself instead.
-			"can_enable": !isAppAgent(agentID),
-			"cap":        OperatingNotesCap,
-			// What each register costs, biggest first — the same measurement
-			// the over-cap refusal quotes at the agent. Served rather than
-			// computed in the panel so the person trimming the block and the
-			// model trimming it read one number; a browser-side count would
-			// disagree the first time a heading appeared inside a code fence.
-			"sections": notes.SectionSizes(eff.Text),
-			// Distinguishes "the agent wrote this" from "nobody has written
-			// anything, you're looking at the configured seed" — clearing is
-			// meaningless in the second case, and the panel says which it is.
-			"from_seed":  strings.TrimSpace(stored.Text) == "" && strings.TrimSpace(eff.Text) != "",
-			"updated_at": stored.UpdatedAt,
-		})
-	case http.MethodPost:
-		var body struct {
+func (T *OrchestrateApp) notesRoute(at memAt) http.HandlerFunc {
+	return jsonapi.Methods{
+		"GET": jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) {
+			m, err := T.memoryOf(c, at)
+			if err != nil {
+				return nil, err
+			}
+			ns := factsNamespace(m.agentID)
+			stored := LoadOperatingNotes(m.udb, ns)
+			eff := ResolveOperatingNotes(m.udb, ns, m.agent.SeedNotes)
+			return map[string]any{
+				"text":    eff.Text,
+				"enabled": m.agent.EnableNotes,
+				// Whether the READER can turn them on. An app agent's flags come
+				// from its code-registered spec and its record is hidden from the
+				// pickers, so there is no editor to send anyone to — telling them
+				// to go to one is the same unfollowable advice as pointing a macOS
+				// operator at a Linux package. The panel hides itself instead.
+				"can_enable": !isAppAgent(m.agentID),
+				"cap":        OperatingNotesCap,
+				// What each register costs, biggest first — the same measurement
+				// the over-cap refusal quotes at the agent. Served rather than
+				// computed in the panel so the person trimming the block and the
+				// model trimming it read one number; a browser-side count would
+				// disagree the first time a heading appeared inside a code fence.
+				"sections": notes.SectionSizes(eff.Text),
+				// Distinguishes "the agent wrote this" from "nobody has written
+				// anything, you're looking at the configured seed" — clearing is
+				// meaningless in the second case, and the panel says which it is.
+				"from_seed":  strings.TrimSpace(stored.Text) == "" && strings.TrimSpace(eff.Text) != "",
+				"updated_at": stored.UpdatedAt,
+			}, nil
+		}),
+		"POST": jsonapi.Post(T.DB, func(c *jsonapi.Call, body struct {
 			Text string `json:"text"`
 			// Optional, and the same semantics update_notes has: replace one
 			// named part, remove it when the text is empty, leave the rest
@@ -126,36 +115,33 @@ func (T *OrchestrateApp) handleAgentNotes(w http.ResponseWriter, r *http.Request
 			// implementation because two of them is how they come to disagree
 			// about where a note lives.
 			Section string `json:"section"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		text := strings.TrimSpace(body.Text)
-		if section := strings.TrimSpace(body.Section); section != "" {
-			next, err := notes.ApplyNoteSection(ResolveOperatingNotes(udb, ns, a.SeedNotes).Text, section, text)
+		}) (any, error) {
+			m, err := T.memoryOf(c, at)
 			if err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
+				return nil, err
 			}
-			text = next
-		}
-		if n := len([]rune(text)); n > OperatingNotesCap {
-			msg := fmt.Sprintf("notes are %d characters, over the %d limit", n, OperatingNotesCap)
-			if advice := notes.OverCapAdvice(text); advice != "" {
-				msg += ". " + advice
+			ns := factsNamespace(m.agentID)
+			text := strings.TrimSpace(body.Text)
+			if section := strings.TrimSpace(body.Section); section != "" {
+				next, err := notes.ApplyNoteSection(ResolveOperatingNotes(m.udb, ns, m.agent.SeedNotes).Text, section, text)
+				if err != nil {
+					return nil, jsonapi.BadRequest(err.Error())
+				}
+				text = next
 			}
-			http.Error(w, msg, http.StatusBadRequest)
-			return
-		}
-		if _, over := SaveOperatingNotes(udb, ns, text); over {
-			http.Error(w, fmt.Sprintf("over the %d character limit", OperatingNotesCap), http.StatusBadRequest)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
+			if n := len([]rune(text)); n > OperatingNotesCap {
+				msg := fmt.Sprintf("notes are %d characters, over the %d limit", n, OperatingNotesCap)
+				if advice := notes.OverCapAdvice(text); advice != "" {
+					msg += ". " + advice
+				}
+				return nil, jsonapi.BadRequest(msg)
+			}
+			if _, over := SaveOperatingNotes(m.udb, ns, text); over {
+				return nil, jsonapi.BadRequest(fmt.Sprintf("over the %d character limit", OperatingNotesCap))
+			}
+			return jsonapi.Empty(http.StatusNoContent), nil
+		}),
+	}.Serve
 }
 
 // notesCopy names the block a write lands in. The write PATH is identical for

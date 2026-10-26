@@ -18,10 +18,11 @@ import (
 func TestTheGraphListSaysItsCap(t *testing.T) {
 	root := &DBase{Store: kvlite.MemStore()}
 	app := &OrchestrateApp{AppCore: AppCore{DB: root}}
+	signedUp(t, "u-graph-list")
 	udb := UserDB(root, "u-graph-list")
 	UpsertGraphEntity(udb, factsNamespace("a-1"), "module", "api", nil, nil)
 	w := httptest.NewRecorder()
-	app.handleAgentGraph(w, httptest.NewRequest(http.MethodGet, "/x", nil), "u-graph-list", "a-1")
+	routed(app)(w, withSession(httptest.NewRequest(http.MethodGet, "/api/agents/a-1/graph", nil), "u-graph-list"))
 	var got struct {
 		Counts map[string]int `json:"counts"`
 		Caps   map[string]int `json:"caps"`

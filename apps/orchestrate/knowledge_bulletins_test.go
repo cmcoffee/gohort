@@ -21,7 +21,7 @@ func TestBulletinsAndCollectionsSaveWithoutUndoingEachOther(t *testing.T) {
 	patch := func(body string) int {
 		r := httptest.NewRequest(http.MethodPatch, "/api/agents/"+ag.ID, strings.NewReader(body))
 		w := httptest.NewRecorder()
-		app.handleAgentOne(w, asUser(r, user))
+		routed(app)(w, asUser(r, user))
 		return w.Code
 	}
 	if code := patch(`{"bulletins": ["news"]}`); code != http.StatusOK {

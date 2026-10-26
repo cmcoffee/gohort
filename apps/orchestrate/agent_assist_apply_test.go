@@ -138,7 +138,7 @@ func TestAPostToOneAgentCannotWeakenItsGuardrails(t *testing.T) {
 	}
 	post := func(body map[string]any) int {
 		w := httptest.NewRecorder()
-		app.handleAgentOne(w, req("POST", "/api/agents/agent-1", body))
+		routed(app)(w, req("POST", "/api/agents/agent-1", body))
 		return w.Code
 	}
 	for _, body := range []map[string]any{

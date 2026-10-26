@@ -14,12 +14,12 @@
 package orchestrate
 
 import (
-	"encoding/json"
 	"net/http"
 	"sort"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 const phantomUserPrefix = "phantom:"
@@ -37,7 +37,7 @@ type phantomSessionRow struct {
 	Messages  int    `json:"messages"`
 }
 
-// handleAgentPhantomSessions returns every phantom-dispatched session
+// phantomSessionsRoute returns every phantom-dispatched session
 // the agent has across every phantom chat (GET), or wipes the entire
 // per-chat session bucket for the agent (DELETE).
 //
@@ -47,31 +47,22 @@ type phantomSessionRow struct {
 // chat_id=<id> scopes the wipe to one chat's sub-store. The contaminated-
 // context recovery path the operator reaches for when an agent's
 // phantom-side memory needs a hard reset.
-func (T *OrchestrateApp) handleAgentPhantomSessions(w http.ResponseWriter, r *http.Request, user, agentID string) {
-	if r.Method == http.MethodDelete {
-		T.handlePhantomSessionsWipe(w, r, user, agentID)
-		return
-	}
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if T.DB == nil {
-		http.Error(w, "DB not initialized", http.StatusInternalServerError)
-		return
-	}
+func (T *OrchestrateApp) phantomSessionsRoute() http.HandlerFunc {
+	return jsonapi.Methods{
+		"GET":    jsonapi.Get(T.DB, T.phantomSessionsList),
+		"DELETE": jsonapi.Delete(T.DB, T.phantomSessionsWipe),
+	}.Serve
+}
+
+// phantomSessionsList is the list itself; an agent that is not the caller's
+// lists nothing rather than answering 404.
+func (T *OrchestrateApp) phantomSessionsList(c *jsonapi.Call) (any, error) {
+	user, udb, agentID := c.User, c.UDB, c.R.PathValue("id")
 	// Owner gate against the caller's own DB — Agency users can't
 	// peek at phantom sessions for agents they don't own.
-	udb := UserDB(T.DB, user)
-	if udb == nil {
-		http.Error(w, "no user DB", http.StatusInternalServerError)
-		return
-	}
 	agent, ok := loadAgent(udb, agentID)
 	if !ok || (agent.Owner != user && agent.Owner != seedOwner) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode([]phantomSessionRow{})
-		return
+		return []phantomSessionRow{}, nil
 	}
 	out := make([]phantomSessionRow, 0)
 	for _, fuid := range ListForeignUsers() {
@@ -107,87 +98,77 @@ func (T *OrchestrateApp) handleAgentPhantomSessions(w http.ResponseWriter, r *ht
 	// Most-recent first across all chats so the operator sees fresh
 	// dispatches at the top regardless of which chat fired them.
 	sort.Slice(out, func(i, j int) bool { return out[i].LastAt > out[j].LastAt })
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(out)
+	return out, nil
 }
 
-// handleAgentPhantomSessionOne returns the full session for one phantom
+// phantomSessionRoute returns the full session for one phantom
 // dispatch (GET) or deletes it (DELETE), scoped to the per-chat sub-
 // store via ?chat_id=<id>. DELETE is the per-row clear from the table.
-func (T *OrchestrateApp) handleAgentPhantomSessionOne(w http.ResponseWriter, r *http.Request, user, agentID, sessionID string) {
-	if r.Method != http.MethodGet && r.Method != http.MethodDelete {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	chatID := strings.TrimSpace(r.URL.Query().Get("chat_id"))
-	if chatID == "" {
-		http.Error(w, "chat_id query param required", http.StatusBadRequest)
-		return
-	}
-	if T.DB == nil {
-		http.Error(w, "DB not initialized", http.StatusInternalServerError)
-		return
-	}
-	// Owner gate against the caller's own DB.
-	udb := UserDB(T.DB, user)
-	if udb == nil {
-		http.Error(w, "no user DB", http.StatusInternalServerError)
-		return
-	}
-	agent, ok := loadAgent(udb, agentID)
-	if !ok || (agent.Owner != user && agent.Owner != seedOwner) {
-		http.NotFound(w, r)
-		return
-	}
-	chatDB := UserDB(T.DB, phantomUserPrefix+chatID)
-	if chatDB == nil {
-		http.NotFound(w, r)
-		return
-	}
-	if r.Method == http.MethodDelete {
-		deleteChatSession(chatDB, agentID, sessionID)
-		Log("[orchestrate.phantom-sessions] wiped session chat=%s agent=%s session=%s by user=%s",
-			chatID, agentID, sessionID, user)
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	sess, found := loadChatSession(chatDB, agentID, sessionID)
-	if !found {
-		http.NotFound(w, r)
-		return
-	}
-	// HistoryPanel expects a flat array of messages. Return just the
-	// Messages slice; the row-table above already exposes the metadata
-	// (title, created, last_at, count). Empty slice when the session
-	// has no turns yet.
-	if sess.Messages == nil {
-		sess.Messages = []ChatMessage{}
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(sess.Messages)
+func (T *OrchestrateApp) phantomSessionRoute() http.HandlerFunc {
+	return jsonapi.Methods{
+		"GET": jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) {
+			chatDB, agentID, sessionID, err := T.phantomSession(c)
+			if err != nil {
+				return nil, err
+			}
+			sess, found := loadChatSession(chatDB, agentID, sessionID)
+			if !found {
+				return nil, errNotFound
+			}
+			// HistoryPanel expects a flat array of messages. Return just the
+			// Messages slice; the row-table above already exposes the metadata
+			// (title, created, last_at, count). Empty slice when the session
+			// has no turns yet.
+			if sess.Messages == nil {
+				sess.Messages = []ChatMessage{}
+			}
+			return sess.Messages, nil
+		}),
+		"DELETE": jsonapi.Delete(T.DB, func(c *jsonapi.Call, _ struct{}) (any, error) {
+			chatDB, agentID, sessionID, err := T.phantomSession(c)
+			if err != nil {
+				return nil, err
+			}
+			deleteChatSession(chatDB, agentID, sessionID)
+			Log("[orchestrate.phantom-sessions] wiped session chat=%s agent=%s session=%s by user=%s",
+				strings.TrimSpace(c.R.URL.Query().Get("chat_id")), agentID, sessionID, c.User)
+			return jsonapi.Empty(http.StatusNoContent), nil
+		}),
+	}.Serve
 }
 
-// handlePhantomSessionsWipe drops every phantom session for the agent,
+// phantomSession resolves /phantom-sessions/{item}?chat_id= to the chat's
+// store, for an agent the caller owns.
+func (T *OrchestrateApp) phantomSession(c *jsonapi.Call) (chatDB Database, agentID, sessionID string, err error) {
+	agentID, sessionID = c.R.PathValue("id"), c.R.PathValue("item")
+	chatID := strings.TrimSpace(c.R.URL.Query().Get("chat_id"))
+	if chatID == "" {
+		return nil, "", "", jsonapi.BadRequest("chat_id query param required")
+	}
+	// Owner gate against the caller's own DB.
+	agent, ok := loadAgent(c.UDB, agentID)
+	if !ok || (agent.Owner != c.User && agent.Owner != seedOwner) {
+		return nil, "", "", errNotFound
+	}
+	chatDB = UserDB(T.DB, phantomUserPrefix+chatID)
+	if chatDB == nil {
+		return nil, "", "", errNotFound
+	}
+	return chatDB, agentID, sessionID, nil
+}
+
+// phantomSessionsWipe drops every phantom session for the agent,
 // either across all chats (no chat_id query) or scoped to one chat
 // (chat_id=<id>). Used by the Agency editor's "Wipe all phantom
 // sessions" button when phantom-side state needs a hard reset that
 // won't come back via the normal continuity model.
-func (T *OrchestrateApp) handlePhantomSessionsWipe(w http.ResponseWriter, r *http.Request, user, agentID string) {
-	if T.DB == nil {
-		http.Error(w, "DB not initialized", http.StatusInternalServerError)
-		return
-	}
-	udb := UserDB(T.DB, user)
-	if udb == nil {
-		http.Error(w, "no user DB", http.StatusInternalServerError)
-		return
-	}
-	agent, ok := loadAgent(udb, agentID)
+func (T *OrchestrateApp) phantomSessionsWipe(c *jsonapi.Call, _ struct{}) (any, error) {
+	user, agentID := c.User, c.R.PathValue("id")
+	agent, ok := loadAgent(c.UDB, agentID)
 	if !ok || (agent.Owner != user && agent.Owner != seedOwner) {
-		http.NotFound(w, r)
-		return
+		return nil, errNotFound
 	}
-	chatScope := strings.TrimSpace(r.URL.Query().Get("chat_id"))
+	chatScope := strings.TrimSpace(c.R.URL.Query().Get("chat_id"))
 	wiped := 0
 	for _, fuid := range ListForeignUsers() {
 		if !strings.HasPrefix(fuid, phantomUserPrefix) {
@@ -210,6 +191,5 @@ func (T *OrchestrateApp) handlePhantomSessionsWipe(w http.ResponseWriter, r *htt
 	}
 	Log("[orchestrate.phantom-sessions] wiped %d session(s) agent=%s chat_scope=%q by user=%s",
 		wiped, agentID, chatScope, user)
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"wiped": wiped})
+	return map[string]any{"wiped": wiped}, nil
 }

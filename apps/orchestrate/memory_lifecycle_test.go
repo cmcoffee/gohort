@@ -217,7 +217,7 @@ func TestTheMemoryPanelListsMovesAndUndoesThem(t *testing.T) {
 	closeOpenItem(udb, "agent-1", f, time.Now())
 
 	w := httptest.NewRecorder()
-	app.handleAgentOne(w, req(http.MethodGet, "/api/agents/agent-1/memaudit", nil))
+	routed(app)(w, req(http.MethodGet, "/api/agents/agent-1/memaudit", nil))
 	var got struct {
 		Moves []memoryMove `json:"moves"`
 	}
@@ -225,7 +225,7 @@ func TestTheMemoryPanelListsMovesAndUndoesThem(t *testing.T) {
 		t.Fatalf("the panel should list the close: %d %s", w.Code, w.Body.String())
 	}
 	w = httptest.NewRecorder()
-	app.handleAgentOne(w, req(http.MethodPost, "/api/agents/agent-1/memaudit", map[string]any{"undo": got.Moves[0].ID}))
+	routed(app)(w, req(http.MethodPost, "/api/agents/agent-1/memaudit", map[string]any{"undo": got.Moves[0].ID}))
 	if w.Code != http.StatusOK {
 		t.Fatalf("undo: %d %s", w.Code, w.Body.String())
 	}
