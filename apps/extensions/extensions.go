@@ -100,20 +100,38 @@ func (T *Extensions) Routes() {
 		"GET":  jsonapi.Get(T.DB, T.handleCategorySecurity),
 		"POST": jsonapi.Post(T.DB, T.handleCategorySecuritySet),
 	}.Serve)
-	T.HandleFunc("/api/tool-categories", T.handleUserToolCategories)
-	T.HandleFunc("/api/promotions", T.handlePromotions)
+	T.HandleFunc("/api/tool-categories", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, T.handleUserToolCategories),
+		"POST": jsonapi.Post(T.DB, T.handleUserToolCategoriesSet),
+	}.Serve)
+	T.HandleFunc("/api/promotions", jsonapi.Methods{
+		"POST": jsonapi.Post(T.DB, T.handlePromotions, jsonapi.EmptyBodyOK),
+	}.Serve)
 	// The ACL picker's candidate list, served HERE rather than borrowed from
 	// another app. It is two lines over a core helper, and pointing the picker
 	// at a sibling app's URL would make sharing a skill depend on that app
 	// being installed and enabled — and on a relative path resolving against
 	// whatever page happened to be open, which is how a picker 404s.
 	T.HandleFunc("/api/user-candidates", jsonapi.Get(T.DB, T.handleUserCandidates))
-	T.HandleFunc("/api/global-tools", T.handleGlobalTools)
-	T.HandleFunc("/api/skills", T.handleUserSkills)
+	T.HandleFunc("/api/global-tools", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, T.handleGlobalTools),
+		"POST": jsonapi.Post(T.DB, T.handleGlobalToolAdopt, jsonapi.EmptyBodyOK),
+	}.Serve)
+	T.HandleFunc("/api/skills", jsonapi.Methods{
+		"GET":    jsonapi.Get(T.DB, T.handleUserSkills),
+		"POST":   T.skillPost(),
+		"PATCH":  jsonapi.Post(T.DB, T.handleSkillGrants),
+		"DELETE": jsonapi.Post(T.DB, T.handleSkillDelete),
+	}.Serve)
 	T.HandleFunc("/api/skills/", T.handleUserSkillOne)
 	T.HandleFunc("/api/skill-tools", jsonapi.Get(T.DB, T.handleSkillToolOptions))
 	T.HandleFunc("/api/skill-collections", jsonapi.Get(T.DB, T.handleSkillCollectionOptions))
-	T.HandleFunc("/api/skill-playbook", T.handleSkillPlaybookRule)
+	T.HandleFunc("/api/skill-playbook", jsonapi.Methods{
+		"GET":   jsonapi.Get(T.DB, T.handleSkillPlaybookRule),
+		"POST":  jsonapi.Post(T.DB, T.handleSkillPlaybookRuleSet),
+		"PUT":   jsonapi.Post(T.DB, T.handleSkillPlaybookRuleSet),
+		"PATCH": jsonapi.Post(T.DB, T.handleSkillPlaybookRuleSet),
+	}.Serve)
 	T.HandleFunc("/skill-playbook", T.handleSkillPlaybookPage)
 	T.HandleFunc("/", T.servePage)
 }
@@ -1088,304 +1106,293 @@ func (T *Extensions) deleteUserTool(c *jsonapi.Call, _ struct{}) (any, error) {
 // full model). Authoring stays in Builder/chat — a skill is instructions plus
 // optional knowledge, not a hand-filled form — so this surface is view + toggle +
 // delete, mirroring "Extensions › Tools". GET lists; POST ?action=enable|disable mutes/unmutes
-// without a full round-trip; DELETE removes one.
-func (T *Extensions) handleUserSkills(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
+// without a full round-trip (skillPost); DELETE removes one.
+func (T *Extensions) handleUserSkills(c *jsonapi.Call) (any, error) {
+	user := c.User
+	// Single-record fetch (?id=) — prefills the Edit form with the BEHAVIOR
+	// fields the user may edit (triggers as the list the tags editor
+	// takes). Builder-managed fields (bundled Tools, AllowedTools,
+	// AttachedCollections) are intentionally omitted — this surface edits
+	// behavior, not capability grants.
+	if id := strings.TrimSpace(c.R.URL.Query().Get("id")); id != "" {
+		if own, ok := findOwnSkill(user, id); ok {
+			s := own.SkillRecord
+			out := map[string]any{
+				"id":           s.ID,
+				"name":         s.Name,
+				"description":  s.Description,
+				"triggers":     append([]string{}, s.Triggers...),
+				"instructions": s.Instructions,
+				// Two doors, both here: the rules as JSON to edit in
+				// place (what the admin form offers), and the address of
+				// the visual editor for anyone who would rather answer
+				// questions than write braces.
+				// Twice, deliberately: one copy is the read-only view,
+				// the other is what the textarea edits once Edit JSON
+				// is on. One field cannot be both without the form
+				// echoing its own display back into the payload.
+				"playbook_text": playbookText(s),
+				"playbook_url":  playbookEditorURL(s.ID),
+			}
+			// ?view=form is the behaviour form's own load. It leaves
+			// the grants out: a form posts back the whole record it
+			// loaded, so a grant on the wire here would be written back
+			// on Save as it stood when the row opened, undoing any chip
+			// flipped since.
+			if c.R.URL.Query().Get("view") != "form" {
+				out["allowed_tools"] = nonNilStrings(s.AllowedTools)
+				out["attached_collections"] = nonNilStrings(s.AttachedCollections)
+				// The picker reads what it will post back, so the field
+				// has to be on the wire or it opens empty and the first
+				// save silently clears the share.
+				out["allowed_users"] = nonNilStrings(s.AllowedUsers)
+			}
+			return out, nil
+		}
+		return nil, jsonapi.NotFound("not found")
 	}
-	switch r.Method {
-	case http.MethodGet:
-		// Single-record fetch (?id=) — prefills the Edit form with the BEHAVIOR
-		// fields the user may edit (triggers as the list the tags editor
-		// takes). Builder-managed fields (bundled Tools, AllowedTools,
-		// AttachedCollections) are intentionally omitted — this surface edits
-		// behavior, not capability grants.
-		if id := strings.TrimSpace(r.URL.Query().Get("id")); id != "" {
-			if own, ok := findOwnSkill(user, id); ok {
-				s := own.SkillRecord
-				out := map[string]any{
-					"id":           s.ID,
-					"name":         s.Name,
-					"description":  s.Description,
-					"triggers":     append([]string{}, s.Triggers...),
-					"instructions": s.Instructions,
-					// Two doors, both here: the rules as JSON to edit in
-					// place (what the admin form offers), and the address of
-					// the visual editor for anyone who would rather answer
-					// questions than write braces.
-					// Twice, deliberately: one copy is the read-only view,
-					// the other is what the textarea edits once Edit JSON
-					// is on. One field cannot be both without the form
-					// echoing its own display back into the payload.
-					"playbook_text": playbookText(s),
-					"playbook_url":  playbookEditorURL(s.ID),
-				}
-				// ?view=form is the behaviour form's own load. It leaves
-				// the grants out: a form posts back the whole record it
-				// loaded, so a grant on the wire here would be written back
-				// on Save as it stood when the row opened, undoing any chip
-				// flipped since.
-				if r.URL.Query().Get("view") != "form" {
-					out["allowed_tools"] = nonNilStrings(s.AllowedTools)
-					out["attached_collections"] = nonNilStrings(s.AttachedCollections)
-					// The picker reads what it will post back, so the field
-					// has to be on the wire or it opens empty and the first
-					// save silently clears the share.
-					out["allowed_users"] = nonNilStrings(s.AllowedUsers)
-				}
-				jsonapi.Write(w, out)
-				return
-			}
-			http.Error(w, "not found", http.StatusNotFound)
-			return
+	// Wire shape omits the embedding (a large float32 array the UI never
+	// needs) and the instructions/tools bodies (managed in Builder).
+	type row struct {
+		ID          string `json:"id"`
+		Name        string `json:"name"`
+		Description string `json:"description,omitempty"`
+		Triggers    int    `json:"triggers"`
+		Disabled    bool   `json:"disabled"`
+		Updated     string `json:"updated,omitempty"`
+		// The rule count, and the editor it links to: the count is the
+		// way in, rather than a separate control on every row.
+		Playbook    string `json:"playbook"`
+		PlaybookURL string `json:"playbook_url"`
+		// Where this skill sits on the three rungs. A published skill has
+		// left the author's pool, so without listing it here they would
+		// watch it disappear and have no way back.
+		Published      bool `json:"published"`
+		PublishPending bool `json:"publish_pending"`
+		CanPublish     bool `json:"can_publish"`
+	}
+	toSkillRow := func(s SkillRecord, published bool) row {
+		updated := ""
+		if !s.Updated.IsZero() {
+			updated = s.Updated.Format("2006-01-02")
 		}
-		// Wire shape omits the embedding (a large float32 array the UI never
-		// needs) and the instructions/tools bodies (managed in Builder).
-		type row struct {
-			ID          string `json:"id"`
-			Name        string `json:"name"`
-			Description string `json:"description,omitempty"`
-			Triggers    int    `json:"triggers"`
-			Disabled    bool   `json:"disabled"`
-			Updated     string `json:"updated,omitempty"`
-			// The rule count, and the editor it links to: the count is the
-			// way in, rather than a separate control on every row.
-			Playbook    string `json:"playbook"`
-			PlaybookURL string `json:"playbook_url"`
-			// Where this skill sits on the three rungs. A published skill has
-			// left the author's pool, so without listing it here they would
-			// watch it disappear and have no way back.
-			Published      bool `json:"published"`
-			PublishPending bool `json:"publish_pending"`
-			CanPublish     bool `json:"can_publish"`
+		pending := !published && skillPublishPending(user, s.Name)
+		return row{
+			ID: s.ID, Name: s.Name, Description: s.Description,
+			Triggers: len(s.Triggers), Disabled: s.Disabled, Updated: updated,
+			Playbook: playbookCount(s), PlaybookURL: playbookEditorURL(s.ID),
+			Published: published, PublishPending: pending,
+			CanPublish: !published && !pending,
 		}
-		toSkillRow := func(s SkillRecord, published bool) row {
-			updated := ""
-			if !s.Updated.IsZero() {
-				updated = s.Updated.Format("2006-01-02")
-			}
-			pending := !published && skillPublishPending(user, s.Name)
-			return row{
-				ID: s.ID, Name: s.Name, Description: s.Description,
-				Triggers: len(s.Triggers), Disabled: s.Disabled, Updated: updated,
-				Playbook: playbookCount(s), PlaybookURL: playbookEditorURL(s.ID),
-				Published: published, PublishPending: pending,
-				CanPublish: !published && !pending,
-			}
-		}
-		// ?deployment=1 is what the deployment publishes, for everybody. These
-		// activate on your turns whether or not you went looking for them, so
-		// there is a page that says which.
-		if strings.TrimSpace(r.URL.Query().Get("deployment")) != "" {
-			rows := []row{}
-			for _, s := range DeploymentSkills(AuthDB()) {
-				rows = append(rows, toSkillRow(s, true))
-			}
-			jsonapi.Write(w, rows)
-			return
-		}
+	}
+	// ?deployment=1 is what the deployment publishes, for everybody. These
+	// activate on your turns whether or not you went looking for them, so
+	// there is a page that says which.
+	if strings.TrimSpace(c.R.URL.Query().Get("deployment")) != "" {
 		rows := []row{}
-		for _, s := range LoadSkills(AuthDB(), user) {
-			rows = append(rows, toSkillRow(s, false))
-		}
-		// Plus the ones this user published, which left their pool for the
-		// deployment's. Still theirs to edit and to take back, and a muted one
-		// is listed too: DeploymentSkills hides it from everybody's turns, and
-		// hiding it from its author would leave no row to Enable it from.
-		for _, s := range PublishedSkillsBy(AuthDB(), user) {
+		for _, s := range DeploymentSkills(AuthDB()) {
 			rows = append(rows, toSkillRow(s, true))
 		}
-		jsonapi.Write(w, rows)
-	case http.MethodPost:
-		id := strings.TrimSpace(r.URL.Query().Get("id"))
-		action := strings.TrimSpace(r.URL.Query().Get("action"))
-		// Taking a published skill back is the author's alone: nobody needs
-		// permission to stop publishing something they wrote. It returns to
-		// their own pool, without the bundled tools, which were dropped when it
-		// went out and are not the record everybody has been using.
-		if action == "unpublish" {
-			if id == "" {
-				http.Error(w, "missing id", http.StatusBadRequest)
-				return
-			}
-			if err := NarrowSkillToOwner(AuthDB(), user, id); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		// enable/disable — mute/unmute without touching the definition.
-		if action == "enable" || action == "disable" {
-			if id == "" {
-				http.Error(w, "missing id", http.StatusBadRequest)
-				return
-			}
-			found, ok := findOwnSkill(user, id)
-			if !ok {
-				http.Error(w, "skill not found", http.StatusNotFound)
-				return
-			}
-			found.Disabled = (action == "disable")
-			if _, err := found.save(); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		// Save — create (no ?id=) or edit (?id=) a skill's BEHAVIOR fields
-		// directly (name, description, triggers, instructions). An edit
-		// load-then-mutates so Builder-managed capability fields (bundled Tools,
-		// AllowedTools, AttachedCollections) are preserved. This form CANNOT set
-		// those grants — a form-authored skill is pure behavior; anything that
-		// ships code or grants tools stays in Builder. Own namespace only.
-		var body struct {
-			Name         string        `json:"name"`
-			Description  string        `json:"description"`
-			Triggers     skillTriggers `json:"triggers"`
-			Instructions string        `json:"instructions"`
-			PlaybookText *string       `json:"playbook_text"`
-			// Pointers, so a form that did not carry a grant leaves it alone
-			// while one that carried an empty list clears it. The chip
-			// pickers post the whole record; the behaviour form posts neither.
-			AllowedTools        *[]string `json:"allowed_tools"`
-			AttachedCollections *[]string `json:"attached_collections"`
-			// Who else may USE this skill. Same absent-means-unchanged rule as
-			// the two above, so the behaviour form does not wipe a share it
-			// never showed.
-			AllowedUsers *[]string `json:"allowed_users"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		// A POINTER, so a form that did not carry the field (the Add form, a
-		// chip picker) leaves the rules alone, while one that carried it empty
-		// clears them. Validated here rather than at the store: the error has
-		// to name the rule while the person still has it on screen.
-		var playbook []PlaybookRule
-		if body.PlaybookText != nil && strings.TrimSpace(*body.PlaybookText) != "" {
-			if err := json.Unmarshal([]byte(*body.PlaybookText), &playbook); err != nil {
-				http.Error(w, "playbook rules: not a JSON array: "+err.Error(), http.StatusBadRequest)
-				return
-			}
-			if probs := (SkillRecord{Playbook: playbook}).PlaybookProblems(); len(probs) > 0 {
-				http.Error(w, "playbook rules: "+strings.Join(probs, "; "), http.StatusBadRequest)
-				return
-			}
-		}
-		name := strings.TrimSpace(body.Name)
-		if name == "" {
-			http.Error(w, "name is required", http.StatusBadRequest)
-			return
-		}
-		// A create (no id) always lands in the caller's own pool.
-		rec := ownedSkill{user: user}
-		if id != "" {
-			found, ok := findOwnSkill(user, id) // preserves Tools / AllowedTools / AttachedCollections
-			if !ok {
-				http.Error(w, "skill not found", http.StatusNotFound)
-				return
-			}
-			rec = found
-		}
-		if rec.published && body.AllowedUsers != nil && len(*body.AllowedUsers) > 0 {
-			http.Error(w, publishedShareRefusal, http.StatusBadRequest)
-			return
-		}
-		// One name, one skill, per person: a create or a rename onto a name
-		// they already have (here or published) is refused. Two of their
-		// skills under one name is a name that picks neither, in this list and
-		// in every agent that names it. An edit that keeps its name is not
-		// checked, so a duplicate older data already holds can still be fixed.
-		if id == "" || !strings.EqualFold(strings.TrimSpace(rec.Name), name) {
-			if other, taken := ownSkillNamed(user, name, id); taken {
-				http.Error(w, "you already have a skill called "+other.Name+"; pick another name, or edit that one", http.StatusConflict)
-				return
-			}
-		}
-		rec.Name = name
-		rec.Description = strings.TrimSpace(body.Description)
-		rec.Instructions = body.Instructions
-		rec.Triggers = []string(body.Triggers)
-		if body.PlaybookText != nil {
-			rec.Playbook = playbook // nil when the field came through blank — clears
-		}
-		if body.AllowedTools != nil {
-			rec.AllowedTools = *body.AllowedTools
-		}
-		if body.AttachedCollections != nil {
-			rec.AttachedCollections = *body.AttachedCollections
-		}
-		if body.AllowedUsers != nil {
-			rec.AllowedUsers = *body.AllowedUsers
-		}
-		if _, err := rec.save(); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	case http.MethodPatch:
-		// The grant pickers: each sends only its own field, so flipping one
-		// chip cannot write back another picker's list, or the behaviour
-		// form's text, as they stood when the row opened.
-		id := strings.TrimSpace(r.URL.Query().Get("id"))
-		if id == "" {
-			http.Error(w, "missing id", http.StatusBadRequest)
-			return
-		}
-		var body struct {
-			AllowedTools        *[]string `json:"allowed_tools"`
-			AttachedCollections *[]string `json:"attached_collections"`
-			AllowedUsers        *[]string `json:"allowed_users"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		if body.AllowedTools == nil && body.AttachedCollections == nil && body.AllowedUsers == nil {
-			http.Error(w, "nothing to change", http.StatusBadRequest)
-			return
-		}
-		rec, found := findOwnSkill(user, id)
-		if !found {
-			http.Error(w, "skill not found", http.StatusNotFound)
-			return
-		}
-		if rec.published && body.AllowedUsers != nil && len(*body.AllowedUsers) > 0 {
-			http.Error(w, publishedShareRefusal, http.StatusBadRequest)
-			return
-		}
-		if body.AllowedTools != nil {
-			rec.AllowedTools = *body.AllowedTools
-		}
-		if body.AttachedCollections != nil {
-			rec.AttachedCollections = *body.AttachedCollections
-		}
-		if body.AllowedUsers != nil {
-			rec.AllowedUsers = *body.AllowedUsers
-		}
-		if _, err := rec.save(); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	case http.MethodDelete:
-		id := strings.TrimSpace(r.URL.Query().Get("id"))
-		if id == "" {
-			http.Error(w, "missing id", http.StatusBadRequest)
-			return
-		}
-		if !DeleteSkill(AuthDB(), user, id) {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return rows, nil
 	}
+	rows := []row{}
+	for _, s := range LoadSkills(AuthDB(), user) {
+		rows = append(rows, toSkillRow(s, false))
+	}
+	// Plus the ones this user published, which left their pool for the
+	// deployment's. Still theirs to edit and to take back, and a muted one
+	// is listed too: DeploymentSkills hides it from everybody's turns, and
+	// hiding it from its author would leave no row to Enable it from.
+	for _, s := range PublishedSkillsBy(AuthDB(), user) {
+		rows = append(rows, toSkillRow(s, true))
+	}
+	return rows, nil
+}
+
+// skillPost tells /api/skills' POST shapes apart by ?action=: taking a
+// published skill back, the mute switch, or (no action) the form's save.
+func (T *Extensions) skillPost() http.HandlerFunc {
+	unpublish := jsonapi.Post(T.DB, T.handleSkillUnpublish)
+	toggle := jsonapi.Post(T.DB, T.handleSkillToggle)
+	save := jsonapi.Post(T.DB, T.handleSkillSave)
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch strings.TrimSpace(r.URL.Query().Get("action")) {
+		case "unpublish":
+			unpublish(w, r)
+		case "enable", "disable":
+			toggle(w, r)
+		default:
+			save(w, r)
+		}
+	}
+}
+
+// handleSkillUnpublish takes a published skill back, which is the author's
+// alone: nobody needs permission to stop publishing something they wrote. It
+// returns to their own pool, without the bundled tools, which were dropped when it
+// went out and are not the record everybody has been using.
+func (T *Extensions) handleSkillUnpublish(c *jsonapi.Call, _ struct{}) (any, error) {
+	id := strings.TrimSpace(c.R.URL.Query().Get("id"))
+	if id == "" {
+		return nil, jsonapi.BadRequest("missing id")
+	}
+	if err := NarrowSkillToOwner(AuthDB(), c.User, id); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// handleSkillToggle mutes or unmutes a skill without touching the definition.
+func (T *Extensions) handleSkillToggle(c *jsonapi.Call, _ struct{}) (any, error) {
+	id := strings.TrimSpace(c.R.URL.Query().Get("id"))
+	if id == "" {
+		return nil, jsonapi.BadRequest("missing id")
+	}
+	found, ok := findOwnSkill(c.User, id)
+	if !ok {
+		return nil, jsonapi.NotFound("skill not found")
+	}
+	found.Disabled = strings.TrimSpace(c.R.URL.Query().Get("action")) == "disable"
+	if _, err := found.save(); err != nil {
+		return nil, err
+	}
+	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// skillSave is the skill form.
+type skillSave struct {
+	Name         string        `json:"name"`
+	Description  string        `json:"description"`
+	Triggers     skillTriggers `json:"triggers"`
+	Instructions string        `json:"instructions"`
+	PlaybookText *string       `json:"playbook_text"`
+	// Pointers, so a form that did not carry a grant leaves it alone
+	// while one that carried an empty list clears it. The chip
+	// pickers post the whole record; the behaviour form posts neither.
+	AllowedTools        *[]string `json:"allowed_tools"`
+	AttachedCollections *[]string `json:"attached_collections"`
+	// Who else may USE this skill. Same absent-means-unchanged rule as
+	// the two above, so the behaviour form does not wipe a share it
+	// never showed.
+	AllowedUsers *[]string `json:"allowed_users"`
+}
+
+// handleSkillSave creates (no ?id=) or edits (?id=) a skill's BEHAVIOR fields
+// directly (name, description, triggers, instructions). An edit
+// load-then-mutates so Builder-managed capability fields (bundled Tools,
+// AllowedTools, AttachedCollections) are preserved. This form CANNOT set
+// those grants — a form-authored skill is pure behavior; anything that
+// ships code or grants tools stays in Builder. Own namespace only.
+func (T *Extensions) handleSkillSave(c *jsonapi.Call, body skillSave) (any, error) {
+	user, id := c.User, strings.TrimSpace(c.R.URL.Query().Get("id"))
+	// A POINTER, so a form that did not carry the field (the Add form, a
+	// chip picker) leaves the rules alone, while one that carried it empty
+	// clears them. Validated here rather than at the store: the error has
+	// to name the rule while the person still has it on screen.
+	var playbook []PlaybookRule
+	if body.PlaybookText != nil && strings.TrimSpace(*body.PlaybookText) != "" {
+		if err := json.Unmarshal([]byte(*body.PlaybookText), &playbook); err != nil {
+			return nil, jsonapi.BadRequest("playbook rules: not a JSON array: " + err.Error())
+		}
+		if probs := (SkillRecord{Playbook: playbook}).PlaybookProblems(); len(probs) > 0 {
+			return nil, jsonapi.BadRequest("playbook rules: " + strings.Join(probs, "; "))
+		}
+	}
+	name := strings.TrimSpace(body.Name)
+	if name == "" {
+		return nil, jsonapi.BadRequest("name is required")
+	}
+	// A create (no id) always lands in the caller's own pool.
+	rec := ownedSkill{user: user}
+	if id != "" {
+		found, ok := findOwnSkill(user, id) // preserves Tools / AllowedTools / AttachedCollections
+		if !ok {
+			return nil, jsonapi.NotFound("skill not found")
+		}
+		rec = found
+	}
+	if rec.published && body.AllowedUsers != nil && len(*body.AllowedUsers) > 0 {
+		return nil, jsonapi.BadRequest(publishedShareRefusal)
+	}
+	// One name, one skill, per person: a create or a rename onto a name
+	// they already have (here or published) is refused. Two of their
+	// skills under one name is a name that picks neither, in this list and
+	// in every agent that names it. An edit that keeps its name is not
+	// checked, so a duplicate older data already holds can still be fixed.
+	if id == "" || !strings.EqualFold(strings.TrimSpace(rec.Name), name) {
+		if other, taken := ownSkillNamed(user, name, id); taken {
+			return nil, jsonapi.Status(http.StatusConflict, "you already have a skill called "+other.Name+"; pick another name, or edit that one")
+		}
+	}
+	rec.Name = name
+	rec.Description = strings.TrimSpace(body.Description)
+	rec.Instructions = body.Instructions
+	rec.Triggers = []string(body.Triggers)
+	if body.PlaybookText != nil {
+		rec.Playbook = playbook // nil when the field came through blank — clears
+	}
+	if body.AllowedTools != nil {
+		rec.AllowedTools = *body.AllowedTools
+	}
+	if body.AttachedCollections != nil {
+		rec.AttachedCollections = *body.AttachedCollections
+	}
+	if body.AllowedUsers != nil {
+		rec.AllowedUsers = *body.AllowedUsers
+	}
+	if _, err := rec.save(); err != nil {
+		return nil, err
+	}
+	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// handleSkillGrants is the grant pickers' PATCH: each sends only its own
+// field, so flipping one chip cannot write back another picker's list, or the
+// behaviour form's text, as they stood when the row opened.
+func (T *Extensions) handleSkillGrants(c *jsonapi.Call, body struct {
+	AllowedTools        *[]string `json:"allowed_tools"`
+	AttachedCollections *[]string `json:"attached_collections"`
+	AllowedUsers        *[]string `json:"allowed_users"`
+}) (any, error) {
+	id := strings.TrimSpace(c.R.URL.Query().Get("id"))
+	if id == "" {
+		return nil, jsonapi.BadRequest("missing id")
+	}
+	if body.AllowedTools == nil && body.AttachedCollections == nil && body.AllowedUsers == nil {
+		return nil, jsonapi.BadRequest("nothing to change")
+	}
+	rec, found := findOwnSkill(c.User, id)
+	if !found {
+		return nil, jsonapi.NotFound("skill not found")
+	}
+	if rec.published && body.AllowedUsers != nil && len(*body.AllowedUsers) > 0 {
+		return nil, jsonapi.BadRequest(publishedShareRefusal)
+	}
+	if body.AllowedTools != nil {
+		rec.AllowedTools = *body.AllowedTools
+	}
+	if body.AttachedCollections != nil {
+		rec.AttachedCollections = *body.AttachedCollections
+	}
+	if body.AllowedUsers != nil {
+		rec.AllowedUsers = *body.AllowedUsers
+	}
+	if _, err := rec.save(); err != nil {
+		return nil, err
+	}
+	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// handleSkillDelete removes one of the user's skills.
+func (T *Extensions) handleSkillDelete(c *jsonapi.Call, _ struct{}) (any, error) {
+	id := strings.TrimSpace(c.R.URL.Query().Get("id"))
+	if id == "" {
+		return nil, jsonapi.BadRequest("missing id")
+	}
+	if !DeleteSkill(AuthDB(), c.User, id) {
+		return nil, jsonapi.NotFound("not found")
+	}
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // ownedSkill is one of the caller's skills and which pool it is in. A
@@ -1445,26 +1452,19 @@ func (o ownedSkill) save() (SkillRecord, error) {
 // filed, and refuses a request with no change in it). POST
 // ?kind=tool&name=<tool> with an optional JSON {note}; owner is the session
 // user, who must own the tool.
-func (T *Extensions) handlePromotions(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	kind := strings.TrimSpace(r.URL.Query().Get("kind"))
-	name := strings.TrimSpace(r.URL.Query().Get("name"))
+func (T *Extensions) handlePromotions(c *jsonapi.Call, body *struct {
+	Note string `json:"note"`
+}) (any, error) {
+	user := c.User
+	kind := strings.TrimSpace(c.R.URL.Query().Get("kind"))
+	name := strings.TrimSpace(c.R.URL.Query().Get("name"))
 	switch kind {
 	case "tool", CredentialPromotionKind, SkillPromotionKind:
 	default:
-		http.Error(w, "only tool, credential and skill promotion are available", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("only tool, credential and skill promotion are available")
 	}
 	if name == "" {
-		http.Error(w, "missing name", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("missing name")
 	}
 	// Ownership: whatever is being handed over has to be the caller's.
 	owns := false
@@ -1483,179 +1483,170 @@ func (T *Extensions) handlePromotions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !owns {
-		http.NotFound(w, r)
-		return
+		return nil, jsonapi.NotFound("not found")
 	}
-	var body struct {
-		Note string `json:"note"`
+	note := "" // optional
+	if body != nil {
+		note = body.Note
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body) // note is optional
-	if err := CreatePromotionRequest(AuthDB(), user, kind, name, body.Note); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+	if err := CreatePromotionRequest(AuthDB(), user, kind, name, note); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
 	}
-	w.WriteHeader(http.StatusNoContent)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // handleGlobalTools is the global-tool OPT-IN catalog. Global (Shared) tools are
 // published by an admin and no longer auto-load; a user picks the ones they want
 // from this catalog and they load for that user's agents. GET lists the catalog
-// with an adopted flag; POST {name, adopt} adds/removes one from the user's
-// adoption list. Enforcement (which shared tools actually load) lives in the
+// with an adopted flag; POST {name, adopt} (handleGlobalToolAdopt) adds/removes
+// one from the user's adoption list. Enforcement (which shared tools actually load) lives in the
 // runner + operator-wake tool-load paths.
 //
 // Adding a colleague's tool again when it is already added accepts their
 // update: the copy the user runs becomes the colleague's current definition.
-func (T *Extensions) handleGlobalTools(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
+func (T *Extensions) handleGlobalTools(c *jsonapi.Call) (any, error) {
+	user := c.User
+	// "Added" means that owner's tool is what the user's agents load, not
+	// merely that the name is on their list: an adoption is pinned to the
+	// owner it was taken from.
+	loadedFrom := map[string]string{}
+	taken := map[string]LentTool{} // what the user's agents run, by name
+	for _, p := range AdoptedToolsFor(AuthDB(), user) {
+		loadedFrom[p.Tool.Name] = p.Owner
+		taken[p.Tool.Name] = p
 	}
-	switch r.Method {
-	case http.MethodGet:
-		// "Added" means that owner's tool is what the user's agents load, not
-		// merely that the name is on their list: an adoption is pinned to the
-		// owner it was taken from.
-		loadedFrom := map[string]string{}
-		taken := map[string]LentTool{} // what the user's agents run, by name
-		for _, p := range AdoptedToolsFor(AuthDB(), user) {
-			loadedFrom[p.Tool.Name] = p.Owner
-			taken[p.Tool.Name] = p
-		}
-		publishedBy := SharedToolOwners(AuthDB())
-		versions := map[string]int{}
-		for _, rel := range ToolReleases(AuthDB()) {
-			versions[rel.Name] = rel.Version
-		}
-		// A tool already in the user's OWN pool (they authored it, and it may be
-		// the one they published) is always active for them, and their own copy
-		// wins over anything taken under the same name. Their own published tool
-		// is not an offer to them at all, so it stays out of the catalog; a
-		// same-named tool somebody ELSE offers is listed, marked as shadowed.
-		// Hiding it left the user no way to see that a colleague's tool exists
-		// under a name their own copy holds, or to remove an adoption their own
-		// tool had quietly overtaken.
-		own := map[string]bool{}
-		for _, p := range LoadPersistentTempTools(AuthDB(), user) {
-			own[p.Tool.Name] = true
-		}
-		type row struct {
-			// Key is the row's identity: owner and name. A name can be offered
-			// by more than one person (two colleagues lending tools of one
-			// name, or a colleague and the deployment), and adoption is pinned
-			// to whose it is, so every offer is its own row.
-			Key         string `json:"key"`
-			Name        string `json:"name"`
-			Description string `json:"description,omitempty"`
-			Mode        string `json:"mode,omitempty"`
-			Credential  string `json:"credential,omitempty"`
-			Adopted     bool   `json:"adopted"`
-			Missing     bool   `json:"missing"`
-			// Shadowed: the user has a tool of their own under this name, and
-			// their own copy is the one their agents run (for a copy scoped to
-			// some agents, on those agents).
-			Shadowed bool `json:"shadowed"`
-			// From names the colleague who handed it over, empty for one the
-			// deployment publishes. Whose code you are about to run in your own
-			// session is the first thing to know about it.
-			From string `json:"from,omitempty"`
-			// Owner is whose tool this row is, either way: what Add pins the
-			// adoption to.
-			Owner string `json:"owner"`
-			// Version is a published tool's approved version ("v3"); a
-			// colleague's tool has none.
-			Version string `json:"version,omitempty"`
-			// UpdateAvailable: the user took a colleague's tool, which runs as
-			// the copy they took, and the colleague has changed it since. Diff
-			// says how; Accept takes the new definition.
-			UpdateAvailable bool   `json:"update_available"`
-			Diff            string `json:"diff,omitempty"`
-		}
-		rows := []row{}
-		missingCred := func(t TempTool) bool {
-			cred := strings.TrimSpace(t.Credential)
-			if cred == "" || strings.EqualFold(cred, "no_auth") {
-				return false
-			}
-			_, found := Secure().Resolve(cred, user)
-			return !found
-		}
-		listed := map[string]bool{} // owner + "/" + name
-		// A colleague's tools first: the catalog is one list of things you may
-		// take, and something handed to you personally is the more specific
-		// entry.
-		for _, p := range PeerSharedToolsFor(AuthDB(), user) {
-			key := p.Owner + "/" + p.Tool.Name
-			if listed[key] {
-				continue
-			}
-			listed[key] = true
-			r := row{
-				Key:  key,
-				Name: p.Tool.Name, Description: p.Tool.Description, Mode: p.Tool.Mode,
-				Credential: p.Tool.Credential, Adopted: loadedFrom[p.Tool.Name] == p.Owner,
-				Missing: missingCred(p.Tool), Shadowed: own[p.Tool.Name],
-				From: p.Owner, Owner: p.Owner,
-			}
-			if t, ok := taken[p.Tool.Name]; ok && r.Adopted && t.Version == 0 && t.Update != nil {
-				r.UpdateAvailable, r.Diff = true, t.Tool.DefinitionDiff(*t.Update)
-			}
-			rows = append(rows, r)
-		}
-		for _, p := range LoadSharedPersistentTempTools(AuthDB()) {
-			owner := publishedBy[p.Tool.Name]
-			// The user's own published tool is theirs already: it is listed
-			// under "Extensions › Tools", not offered back to them here.
-			if owner == user {
-				continue
-			}
-			// Adopt-ACL: a restricted global tool only appears in the catalog for
-			// users on its AllowedUsers list (empty = open to everyone). Keeps a
-			// user from even seeing — let alone adopting — a tool not meant for them.
-			if !CanAdoptGlobalTool(AuthDB(), user, p.Tool.Name) {
-				continue
-			}
-			key := owner + "/" + p.Tool.Name
-			if listed[key] {
-				continue
-			}
-			listed[key] = true
-			rows = append(rows, row{
-				Key:  key,
-				Name: p.Tool.Name, Description: p.Tool.Description, Mode: p.Tool.Mode,
-				Credential: p.Tool.Credential, Adopted: owner != "" && loadedFrom[p.Tool.Name] == owner,
-				Missing: missingCred(p.Tool), Shadowed: own[p.Tool.Name], Owner: owner,
-				Version: "v" + strconv.Itoa(versions[p.Tool.Name]),
-			})
-		}
-		jsonapi.Write(w, rows)
-	case http.MethodPost:
-		// Accept the toggle either as a JSON body ({name, adopt}) or as query
-		// params (?name=&adopt=true) — the latter lets a declarative table
-		// RowAction button drive it with no client script.
-		name := strings.TrimSpace(r.URL.Query().Get("name"))
-		owner := strings.TrimSpace(r.URL.Query().Get("owner"))
-		adopt := r.URL.Query().Get("adopt") == "true"
-		if name == "" {
-			var body struct {
-				Name  string `json:"name"`
-				Owner string `json:"owner"`
-				Adopt bool   `json:"adopt"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				http.Error(w, "bad request", http.StatusBadRequest)
-				return
-			}
-			name, owner, adopt = strings.TrimSpace(body.Name), strings.TrimSpace(body.Owner), body.Adopt
-		}
-		if err := SetGlobalToolAdopted(AuthDB(), user, name, owner, adopt); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	publishedBy := SharedToolOwners(AuthDB())
+	versions := map[string]int{}
+	for _, rel := range ToolReleases(AuthDB()) {
+		versions[rel.Name] = rel.Version
 	}
+	// A tool already in the user's OWN pool (they authored it, and it may be
+	// the one they published) is always active for them, and their own copy
+	// wins over anything taken under the same name. Their own published tool
+	// is not an offer to them at all, so it stays out of the catalog; a
+	// same-named tool somebody ELSE offers is listed, marked as shadowed.
+	// Hiding it left the user no way to see that a colleague's tool exists
+	// under a name their own copy holds, or to remove an adoption their own
+	// tool had quietly overtaken.
+	own := map[string]bool{}
+	for _, p := range LoadPersistentTempTools(AuthDB(), user) {
+		own[p.Tool.Name] = true
+	}
+	type row struct {
+		// Key is the row's identity: owner and name. A name can be offered
+		// by more than one person (two colleagues lending tools of one
+		// name, or a colleague and the deployment), and adoption is pinned
+		// to whose it is, so every offer is its own row.
+		Key         string `json:"key"`
+		Name        string `json:"name"`
+		Description string `json:"description,omitempty"`
+		Mode        string `json:"mode,omitempty"`
+		Credential  string `json:"credential,omitempty"`
+		Adopted     bool   `json:"adopted"`
+		Missing     bool   `json:"missing"`
+		// Shadowed: the user has a tool of their own under this name, and
+		// their own copy is the one their agents run (for a copy scoped to
+		// some agents, on those agents).
+		Shadowed bool `json:"shadowed"`
+		// From names the colleague who handed it over, empty for one the
+		// deployment publishes. Whose code you are about to run in your own
+		// session is the first thing to know about it.
+		From string `json:"from,omitempty"`
+		// Owner is whose tool this row is, either way: what Add pins the
+		// adoption to.
+		Owner string `json:"owner"`
+		// Version is a published tool's approved version ("v3"); a
+		// colleague's tool has none.
+		Version string `json:"version,omitempty"`
+		// UpdateAvailable: the user took a colleague's tool, which runs as
+		// the copy they took, and the colleague has changed it since. Diff
+		// says how; Accept takes the new definition.
+		UpdateAvailable bool   `json:"update_available"`
+		Diff            string `json:"diff,omitempty"`
+	}
+	rows := []row{}
+	missingCred := func(t TempTool) bool {
+		cred := strings.TrimSpace(t.Credential)
+		if cred == "" || strings.EqualFold(cred, "no_auth") {
+			return false
+		}
+		_, found := Secure().Resolve(cred, user)
+		return !found
+	}
+	listed := map[string]bool{} // owner + "/" + name
+	// A colleague's tools first: the catalog is one list of things you may
+	// take, and something handed to you personally is the more specific
+	// entry.
+	for _, p := range PeerSharedToolsFor(AuthDB(), user) {
+		key := p.Owner + "/" + p.Tool.Name
+		if listed[key] {
+			continue
+		}
+		listed[key] = true
+		r := row{
+			Key:  key,
+			Name: p.Tool.Name, Description: p.Tool.Description, Mode: p.Tool.Mode,
+			Credential: p.Tool.Credential, Adopted: loadedFrom[p.Tool.Name] == p.Owner,
+			Missing: missingCred(p.Tool), Shadowed: own[p.Tool.Name],
+			From: p.Owner, Owner: p.Owner,
+		}
+		if t, ok := taken[p.Tool.Name]; ok && r.Adopted && t.Version == 0 && t.Update != nil {
+			r.UpdateAvailable, r.Diff = true, t.Tool.DefinitionDiff(*t.Update)
+		}
+		rows = append(rows, r)
+	}
+	for _, p := range LoadSharedPersistentTempTools(AuthDB()) {
+		owner := publishedBy[p.Tool.Name]
+		// The user's own published tool is theirs already: it is listed
+		// under "Extensions › Tools", not offered back to them here.
+		if owner == user {
+			continue
+		}
+		// Adopt-ACL: a restricted global tool only appears in the catalog for
+		// users on its AllowedUsers list (empty = open to everyone). Keeps a
+		// user from even seeing — let alone adopting — a tool not meant for them.
+		if !CanAdoptGlobalTool(AuthDB(), user, p.Tool.Name) {
+			continue
+		}
+		key := owner + "/" + p.Tool.Name
+		if listed[key] {
+			continue
+		}
+		listed[key] = true
+		rows = append(rows, row{
+			Key:  key,
+			Name: p.Tool.Name, Description: p.Tool.Description, Mode: p.Tool.Mode,
+			Credential: p.Tool.Credential, Adopted: owner != "" && loadedFrom[p.Tool.Name] == owner,
+			Missing: missingCred(p.Tool), Shadowed: own[p.Tool.Name], Owner: owner,
+			Version: "v" + strconv.Itoa(versions[p.Tool.Name]),
+		})
+	}
+	return rows, nil
+}
+
+// handleGlobalToolAdopt adds a tool from the catalog or removes it. The toggle
+// comes either as query params (?name=&owner=&adopt=true), which lets a
+// declarative table RowAction button drive it with no client script, or as a
+// JSON body {name, owner, adopt}.
+func (T *Extensions) handleGlobalToolAdopt(c *jsonapi.Call, body *struct {
+	Name  string `json:"name"`
+	Owner string `json:"owner"`
+	Adopt bool   `json:"adopt"`
+}) (any, error) {
+	q := c.R.URL.Query()
+	name := strings.TrimSpace(q.Get("name"))
+	owner := strings.TrimSpace(q.Get("owner"))
+	adopt := q.Get("adopt") == "true"
+	if name == "" {
+		if body == nil {
+			return nil, jsonapi.BadRequest("bad request")
+		}
+		name, owner, adopt = strings.TrimSpace(body.Name), strings.TrimSpace(body.Owner), body.Adopt
+	}
+	if err := SetGlobalToolAdopted(AuthDB(), c.User, name, owner, adopt); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // credentialFormFields is the shared field list for the "API credentials" add
@@ -3139,107 +3130,94 @@ func userToolCategories(user string) map[string][]string {
 // category, tools dropped from it have their claim cleared. A tool holds one
 // category, so moving it here moves it out of wherever it was — which is the
 // behavior the picker's checkboxes imply, and the reason this is a set.
-func (T *Extensions) handleUserToolCategories(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
+func (T *Extensions) handleUserToolCategories(c *jsonapi.Call) (any, error) {
+	user, name := c.User, strings.TrimSpace(c.R.URL.Query().Get("name"))
+	if c.R.URL.Query().Get("options") != "" {
+		type opt struct {
+			Value string `json:"value"`
+			Label string `json:"label"`
+			Desc  string `json:"desc,omitempty"`
+		}
+		opts := []opt{}
+		for _, t := range userPickableTools(user, name) {
+			opts = append(opts, opt{Value: t.Name, Label: t.Name, Desc: t.Desc})
+		}
+		return opts, nil
 	}
-	name := strings.TrimSpace(r.URL.Query().Get("name"))
-	switch r.Method {
-	case http.MethodGet:
-		if r.URL.Query().Get("options") != "" {
-			type opt struct {
-				Value string `json:"value"`
-				Label string `json:"label"`
-				Desc  string `json:"desc,omitempty"`
-			}
-			opts := []opt{}
-			for _, t := range userPickableTools(user, name) {
-				opts = append(opts, opt{Value: t.Name, Label: t.Name, Desc: t.Desc})
-			}
-			jsonapi.Write(w, opts)
-			return
-		}
-		cats := userToolCategories(user)
-		if name != "" {
-			// Record mode: the picker reads its current selection from here.
-			// An unknown name is a category being created — empty, not 404.
-			jsonapi.Write(w, map[string]any{"name": name, "tools": cats[name]})
-			return
-		}
-		type catRow struct {
-			Name  string   `json:"name"`
-			Count int      `json:"count"`
-			Tools []string `json:"tools"`
-			List  string   `json:"tool_list,omitempty"`
-		}
-		rows := []catRow{}
-		for n, tools := range cats {
-			rows = append(rows, catRow{Name: n, Count: len(tools), Tools: tools, List: strings.Join(tools, ", ")})
-		}
-		sort.Slice(rows, func(i, j int) bool {
-			return strings.ToLower(rows[i].Name) < strings.ToLower(rows[j].Name)
-		})
-		jsonapi.Write(w, rows)
-	case http.MethodPost:
-		var body struct {
-			Name  string   `json:"name"`
-			Tools []string `json:"tools"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		// The per-row picker names the category in the query; the "Add
-		// category" form types it into a field, so it arrives in the body. An
-		// unsubstituted "{name}" placeholder is never a category: it filed
-		// tools under a category literally called that.
-		if name == "" || strings.HasPrefix(name, "{") {
-			name = strings.TrimSpace(body.Name)
-		}
-		if name == "" || strings.HasPrefix(name, "{") {
-			http.Error(w, "missing name", http.StatusBadRequest)
-			return
-		}
-		want := map[string]bool{}
-		for _, t := range body.Tools {
-			if t = strings.TrimSpace(t); t != "" {
-				want[t] = true
-			}
-		}
-		// File everything ticked, and clear the claim on anything that was in
-		// this category and is no longer ticked. Only THIS category's former
-		// members are cleared — a tool that lives elsewhere is untouched.
-		var failed []string
-		for t := range want {
-			if err := setToolCategoryFor(user, t, name); err != nil {
-				failed = append(failed, t+" ("+err.Error()+")")
-			}
-		}
-		for _, t := range userToolCategories(user)[name] {
-			if want[t] {
-				continue
-			}
-			// Unticked: out of this category for good. Its own label is
-			// cleared, and gohort will not file it back here on its own
-			// (core/toolcat Reject); it is filed somewhere else instead.
-			if tt, ok := userToolNamed(user, t); ok {
-				toolcat.Reject(user, tt, name)
-			}
-			if err := setToolCategoryFor(user, t, ""); err != nil {
-				failed = append(failed, t+" ("+err.Error()+")")
-			}
-		}
-		toolcat.Kick(user)
-		if len(failed) > 0 {
-			// Partial success is the honest report: the rest DID move.
-			http.Error(w, "some tools could not be filed: "+strings.Join(failed, "; "), http.StatusBadRequest)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	cats := userToolCategories(user)
+	if name != "" {
+		// Record mode: the picker reads its current selection from here.
+		// An unknown name is a category being created — empty, not 404.
+		return map[string]any{"name": name, "tools": cats[name]}, nil
 	}
+	type catRow struct {
+		Name  string   `json:"name"`
+		Count int      `json:"count"`
+		Tools []string `json:"tools"`
+		List  string   `json:"tool_list,omitempty"`
+	}
+	rows := []catRow{}
+	for n, tools := range cats {
+		rows = append(rows, catRow{Name: n, Count: len(tools), Tools: tools, List: strings.Join(tools, ", ")})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		return strings.ToLower(rows[i].Name) < strings.ToLower(rows[j].Name)
+	})
+	return rows, nil
+}
+
+// handleUserToolCategoriesSet files exactly the ticked tools under one
+// category, {name, tools}.
+func (T *Extensions) handleUserToolCategoriesSet(c *jsonapi.Call, body struct {
+	Name  string   `json:"name"`
+	Tools []string `json:"tools"`
+}) (any, error) {
+	user, name := c.User, strings.TrimSpace(c.R.URL.Query().Get("name"))
+	// The per-row picker names the category in the query; the "Add
+	// category" form types it into a field, so it arrives in the body. An
+	// unsubstituted "{name}" placeholder is never a category: it filed
+	// tools under a category literally called that.
+	if name == "" || strings.HasPrefix(name, "{") {
+		name = strings.TrimSpace(body.Name)
+	}
+	if name == "" || strings.HasPrefix(name, "{") {
+		return nil, jsonapi.BadRequest("missing name")
+	}
+	want := map[string]bool{}
+	for _, t := range body.Tools {
+		if t = strings.TrimSpace(t); t != "" {
+			want[t] = true
+		}
+	}
+	// File everything ticked, and clear the claim on anything that was in
+	// this category and is no longer ticked. Only THIS category's former
+	// members are cleared — a tool that lives elsewhere is untouched.
+	var failed []string
+	for t := range want {
+		if err := setToolCategoryFor(user, t, name); err != nil {
+			failed = append(failed, t+" ("+err.Error()+")")
+		}
+	}
+	for _, t := range userToolCategories(user)[name] {
+		if want[t] {
+			continue
+		}
+		// Unticked: out of this category for good. Its own label is
+		// cleared, and gohort will not file it back here on its own
+		// (core/toolcat Reject); it is filed somewhere else instead.
+		if tt, ok := userToolNamed(user, t); ok {
+			toolcat.Reject(user, tt, name)
+		}
+		if err := setToolCategoryFor(user, t, ""); err != nil {
+			failed = append(failed, t+" ("+err.Error()+")")
+		}
+	}
+	toolcat.Kick(user)
+	if len(failed) > 0 {
+		// Partial success is the honest report: the rest DID move.
+		return nil, jsonapi.BadRequest("some tools could not be filed: " + strings.Join(failed, "; "))
+	}
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // nonNilStrings keeps a chip picker from reading null as "unset": an empty

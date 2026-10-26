@@ -31,6 +31,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -339,70 +340,72 @@ func mergeRuleForm(rule PlaybookRule, body map[string]any) PlaybookRule {
 	return rule
 }
 
-// handleSkillPlaybookRule serves one rule's form: GET reads it, POST merges
-// and saves; "new" reads an empty form and "add" appends a rule.
-func (T *Extensions) handleSkillPlaybookRule(w http.ResponseWriter, r *http.Request) {
-	username, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
+// handleSkillPlaybookRule reads one rule's form; "new" reads an empty one.
+func (T *Extensions) handleSkillPlaybookRule(c *jsonapi.Call) (any, error) {
+	skill, rest, err := playbookRuleOf(c)
+	if err != nil {
+		return nil, err
 	}
-	skillID := strings.TrimSpace(r.URL.Query().Get("id"))
-	rest := strings.Trim(strings.TrimSpace(r.URL.Query().Get("rule")), "/")
-	skill, found := findOwnSkill(username, skillID)
-	if !found {
-		http.NotFound(w, r)
-		return
+	if rest == "new" {
+		return map[string]any{"fact": "", "how": "", "then": "", "else": ""}, nil
 	}
-	w.Header().Set("Content-Type", "application/json")
-	switch {
-	case rest == "new" && r.Method == http.MethodGet:
-		_ = json.NewEncoder(w).Encode(map[string]any{"fact": "", "how": "", "then": "", "else": ""})
-		return
-	case rest == "add" && r.Method == http.MethodPost:
-		var body map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
+	n, err := ruleIndex(skill, rest)
+	if err != nil {
+		return nil, err
+	}
+	return ruleForm(skill.Playbook[n]), nil
+}
+
+// handleSkillPlaybookRuleSet merges a rule's form and saves it; "add"
+// appends a rule, and {remove: true} drops one.
+func (T *Extensions) handleSkillPlaybookRuleSet(c *jsonapi.Call, body map[string]any) (any, error) {
+	skill, rest, err := playbookRuleOf(c)
+	if err != nil {
+		return nil, err
+	}
+	if rest == "add" {
 		skill.Playbook = append(skill.Playbook, mergeRuleForm(PlaybookRule{}, body))
 		if _, err := skill.save(); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+			return nil, err
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "rules": len(skill.Playbook)})
-		return
+		return map[string]any{"ok": true, "rules": len(skill.Playbook)}, nil
 	}
+	n, err := ruleIndex(skill, rest)
+	if err != nil {
+		return nil, err
+	}
+	if BoolArg(body, "remove") {
+		skill.Playbook = append(skill.Playbook[:n], skill.Playbook[n+1:]...)
+	} else {
+		skill.Playbook[n] = mergeRuleForm(skill.Playbook[n], body)
+	}
+	saved, err := skill.save()
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]any{"ok": true, "rules": len(saved.Playbook)}
+	if n < len(saved.Playbook) {
+		out["problems"] = saved.Playbook[n].Problems("rule "+strconv.Itoa(n+1), 1)
+		out["sentence"] = saved.Playbook[n].Sentence()
+	}
+	return out, nil
+}
+
+// playbookRuleOf is the caller's own skill ?id= names, and the ?rule= after it.
+func playbookRuleOf(c *jsonapi.Call) (ownedSkill, string, error) {
+	q := c.R.URL.Query()
+	skill, found := findOwnSkill(c.User, strings.TrimSpace(q.Get("id")))
+	if !found {
+		return ownedSkill{}, "", jsonapi.NotFound("not found")
+	}
+	return skill, strings.Trim(strings.TrimSpace(q.Get("rule")), "/"), nil
+}
+
+// ruleIndex is the rule a ?rule= number names in skill.
+func ruleIndex(skill ownedSkill, rest string) (int, error) {
 	n, err := strconv.Atoi(rest)
 	if err != nil || n < 0 || n >= len(skill.Playbook) {
-		http.NotFound(w, r)
-		return
+		return 0, jsonapi.NotFound("not found")
 	}
-	switch r.Method {
-	case http.MethodGet:
-		_ = json.NewEncoder(w).Encode(ruleForm(skill.Playbook[n]))
-	case http.MethodPost, http.MethodPut, http.MethodPatch:
-		var body map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		if BoolArg(body, "remove") {
-			skill.Playbook = append(skill.Playbook[:n], skill.Playbook[n+1:]...)
-		} else {
-			skill.Playbook[n] = mergeRuleForm(skill.Playbook[n], body)
-		}
-		saved, err := skill.save()
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		out := map[string]any{"ok": true, "rules": len(saved.Playbook)}
-		if n < len(saved.Playbook) {
-			out["problems"] = saved.Playbook[n].Problems("rule "+strconv.Itoa(n+1), 1)
-			out["sentence"] = saved.Playbook[n].Sentence()
-		}
-		_ = json.NewEncoder(w).Encode(out)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
+	return n, nil
 }

@@ -11,8 +11,8 @@ import (
 
 // Every JSON route on jsonapi refuses a signed-out request, answers a
 // signed-in one (whatever the answer, it is not a refusal of who is asking),
-// and refuses a method it does not take. A credential or a tool is the
-// owner's: another user asking for it by name is told there is no such thing.
+// and refuses a method it does not take. A credential, a tool or a skill is
+// the owner's: another user asking for it is told there is no such thing.
 func TestEveryJSONRouteRefusesTheSignedOut(t *testing.T) {
 	app, req := authedExtensions(t)
 	h := serve(app)
@@ -20,6 +20,10 @@ func TestEveryJSONRouteRefusesTheSignedOut(t *testing.T) {
 	adb.Set(AuthTable, "user:bob", AuthUser{Username: "bob"})
 	bob := AuthCreateSession(adb, "bob")
 	if err := AdminPersistTempTool(RootDB, "alice", TempTool{Name: "rt_auth_tool", Description: "d", CommandTemplate: "echo x"}); err != nil {
+		t.Fatal(err)
+	}
+	skill, err := SaveSkill(AuthDB(), "alice", SkillRecord{Name: "rt_auth_mine", Instructions: "i", Playbook: []PlaybookRule{{Fact: "f", How: "h"}}})
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -39,6 +43,18 @@ func TestEveryJSONRouteRefusesTheSignedOut(t *testing.T) {
 		{"DELETE", "/api/tools?name=rt_auth_nope", "", ""},
 		{"GET", "/api/tool-access?section=run&name=rt_auth_tool", "", "PUT"},
 		{"POST", "/api/tool-access?section=run&name=rt_auth_tool", `{"target":"ask_first","on":false}`, ""},
+		{"GET", "/api/tool-categories", "", "PUT"},
+		{"POST", "/api/tool-categories?name=Mine", `{"tools":[]}`, ""},
+		{"POST", "/api/promotions?kind=tool&name=rt_auth_nope", `{"note":"n"}`, "GET"},
+		{"GET", "/api/global-tools", "", "PUT"},
+		{"POST", "/api/global-tools?name=rt_auth_nope&owner=bob&adopt=true", "", ""},
+		{"GET", "/api/skills", "", "PUT"},
+		{"POST", "/api/skills", `{"name":"rt_auth_skill","instructions":"i"}`, ""},
+		{"POST", "/api/skills?action=disable&id=nope", "", ""},
+		{"PATCH", "/api/skills?id=nope", `{"allowed_tools":[]}`, ""},
+		{"DELETE", "/api/skills?id=nope", "", ""},
+		{"GET", "/api/skill-playbook?id=nope&rule=new", "", "DELETE"},
+		{"POST", "/api/skill-playbook?id=nope&rule=add", `{"fact":"f"}`, ""},
 		{"GET", "/api/user-candidates", "", "POST"},
 		{"GET", "/api/skill-tools", "", "POST"},
 		{"GET", "/api/skill-collections", "", "POST"},
@@ -84,6 +100,16 @@ func TestEveryJSONRouteRefusesTheSignedOut(t *testing.T) {
 	}
 	if code := as("GET", "/api/tools?name=rt_auth_tool"); code != http.StatusNotFound {
 		t.Errorf("bob read alice's tool: %d, want 404", code)
+	}
+	for _, p := range []string{"/api/skills?id=" + skill.ID, "/api/skill-playbook?id=" + skill.ID + "&rule=0"} {
+		if code := as("GET", p); code != http.StatusNotFound {
+			t.Errorf("bob read alice's skill at %s: %d, want 404", p, code)
+		}
+	}
+	as("POST", "/api/skills?action=disable&id="+skill.ID)
+	as("DELETE", "/api/skills?id="+skill.ID)
+	if own, ok := findOwnSkill("alice", skill.ID); !ok || own.Disabled {
+		t.Errorf("bob's requests changed alice's skill: found=%v disabled=%v", ok, own.Disabled)
 	}
 	as("POST", "/api/credentials?action=enable&name=rt_auth_alice")
 	as("DELETE", "/api/credentials?name=rt_auth_alice")
