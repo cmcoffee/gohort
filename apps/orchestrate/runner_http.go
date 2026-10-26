@@ -11,6 +11,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // handleSend drives one user turn against an agent:
@@ -1186,29 +1187,29 @@ func (sr *sendRun) flagFalseClaims() {
 	}
 }
 
-// handleCancel aborts an in-flight runner by session ID. The runner
+// cancelTarget names the turn to stop. The Agency chat panel POSTs the
+// session id as the ?id= query param (no body); older callers send
+// {session_id} in the JSON body.
+type cancelTarget struct {
+	SessionID string `json:"session_id"`
+	AgentID   string `json:"agent_id"`
+}
+
+// cancelTurn aborts an in-flight runner by session ID. The runner
 // goroutine cleans up on ctx.Done. Only the caller's own turn: the id comes
 // from the request, so the cancel is looked up under (user, id), never the id
 // alone.
-func (T *OrchestrateApp) handleCancel(w http.ResponseWriter, r *http.Request, user string, agent AgentRecord) {
-	// The Agency chat panel POSTs the session id as the ?id= query param (no
-	// body); older callers send {session_id} in the JSON body. Accept BOTH —
-	// reading only the body meant the Agency cancel button silently no-opped
-	// (empty body → empty id → cancel() never fired, loop ran to completion).
-	sid := strings.TrimSpace(r.URL.Query().Get("id"))
+func (T *OrchestrateApp) cancelTurn(c *jsonapi.Call, in cancelTarget) (any, error) {
+	sid := strings.TrimSpace(c.R.URL.Query().Get("id"))
 	if sid == "" {
-		var body struct {
-			SessionID string `json:"session_id"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		sid = strings.TrimSpace(body.SessionID)
+		sid = strings.TrimSpace(in.SessionID)
 	}
 	if sid != "" {
-		if v, ok := inflightCancels.Load(runSessKey(user, sid)); ok {
+		if v, ok := inflightCancels.Load(runSessKey(c.User, sid)); ok {
 			if cancel, ok := v.(context.CancelFunc); ok {
 				cancel()
 			}
 		}
 	}
-	w.WriteHeader(http.StatusNoContent)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }

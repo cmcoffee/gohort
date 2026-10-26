@@ -16,13 +16,13 @@
 package orchestrate
 
 import (
-	"encoding/json"
 	"net/http"
 	"sort"
 	"strings"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // toolGrantTable holds ToolGrant records in the granting user's own store.
@@ -145,31 +145,20 @@ func deleteToolGrant(udb Database, id string) bool {
 // whatever it scoped its grants under, so one project's Permissions screen
 // never shows (or revokes) another's.
 func (T *OrchestrateApp) PublicHandleGrants(w http.ResponseWriter, r *http.Request, scope, grantID string) {
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	_ = user
-	switch r.Method {
-	case http.MethodGet:
-		writeGrantJSON(w, listToolGrants(udb, scope))
-	case http.MethodDelete:
-		// Revoking is scoped the same way listing is: an id the caller
-		// cannot see in this scope is one they cannot delete through it.
-		for _, g := range listToolGrants(udb, scope) {
-			if g.ID == grantID {
-				deleteToolGrant(udb, grantID)
-				writeGrantJSON(w, map[string]any{"ok": true})
-				return
+	jsonapi.Methods{
+		"GET": jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) {
+			return listToolGrants(c.UDB, scope), nil
+		}),
+		"DELETE": jsonapi.Delete(T.DB, func(c *jsonapi.Call, _ struct{}) (any, error) {
+			// Revoking is scoped the same way listing is: an id the caller
+			// cannot see in this scope is one they cannot delete through it.
+			for _, g := range listToolGrants(c.UDB, scope) {
+				if g.ID == grantID {
+					deleteToolGrant(c.UDB, grantID)
+					return map[string]any{"ok": true}, nil
+				}
 			}
-		}
-		http.NotFound(w, r)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
-}
-
-func writeGrantJSON(w http.ResponseWriter, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(v)
+			return nil, errNotFound
+		}),
+	}.Serve(w, r)
 }

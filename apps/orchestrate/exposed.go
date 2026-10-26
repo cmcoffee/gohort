@@ -28,8 +28,6 @@ package orchestrate
 
 import (
 	"context"
-	"encoding/json"
-	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -164,12 +162,6 @@ func (T *OrchestrateApp) DashboardPinnable(r *http.Request) []DashboardCard {
 	}
 	return out
 }
-
-// jsonEncode + jsonDecode are tiny adapters so PublicHandleSessionOne
-// doesn't repeat the encoding/json boilerplate. Local to this file —
-// the orchestrate routes already use encoding/json directly elsewhere.
-func jsonEncode(w io.Writer, v any) error { return json.NewEncoder(w).Encode(v) }
-func jsonDecode(r io.Reader, v any) error { return json.NewDecoder(r).Decode(v) }
 
 // ExposedSlug returns the public URL slug for an agent. Derived
 // from PublicName if set (so admins can rebrand the app face
@@ -774,11 +766,7 @@ func (T *OrchestrateApp) PublicHandleSendWithAppTools(w http.ResponseWriter, r *
 
 // PublicHandleCancel mirrors PublicHandleSend's bypass for cancel.
 func (T *OrchestrateApp) PublicHandleCancel(w http.ResponseWriter, r *http.Request, agent agenthost.Agent) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	T.handleCancel(w, r, user, appRecord(agent))
+	jsonapi.Post(T.DB, T.cancelTurn, jsonapi.EmptyBodyOK)(w, r)
 }
 
 // PublicHandleRunsActive / PublicHandleRunsDispatch expose the run-stream
@@ -801,17 +789,10 @@ func (T *OrchestrateApp) PublicHandleRunsDispatch(w http.ResponseWriter, r *http
 // their OWN thread. agentID comes from the slug-resolved record, not the
 // request, so a crafted ?agent= can't redirect the wipe.
 func (T *OrchestrateApp) PublicHandleChannelClear(w http.ResponseWriter, r *http.Request, agentID string) {
-	_, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	sid := cortexSessionID(agentID)
-	deleteChatSession(udb, agentID, sid) // includes the compact state
-	w.WriteHeader(http.StatusNoContent)
+	jsonapi.Post(T.DB, func(c *jsonapi.Call, _ struct{}) (any, error) {
+		deleteChatSession(c.UDB, agentID, cortexSessionID(agentID)) // includes the compact state
+		return jsonapi.Empty(http.StatusNoContent), nil
+	})(w, r)
 }
 
 // (PublicHandleAgentMemory removed — the auto-notes Memory layer
@@ -945,20 +926,13 @@ func (T *OrchestrateApp) PublicHandleAgentKnowledgeAutoInferredWipeForScope(w ht
 // loads from the scope store via loadAgent's seed fallback — the same
 // path the facts handler relies on.
 func (T *OrchestrateApp) PublicHandleAgentRecordForScope(w http.ResponseWriter, r *http.Request, scopeUser, agentID string) {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok {
-		return
-	}
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	a, ok := loadAgent(UserDB(T.DB, scopeUser), agentID)
-	if !ok {
-		http.NotFound(w, r)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = jsonEncode(w, a)
+	jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) {
+		a, ok := loadAgent(UserDB(T.DB, scopeUser), agentID)
+		if !ok {
+			return nil, errNotFound
+		}
+		return a, nil
+	})(w, r)
 }
 
 // PublicHandleAgentGraph* expose the per-(user, agent) graph memory (the
@@ -1014,12 +988,7 @@ func (T *OrchestrateApp) PublicHandleAgentInferredDelete(w http.ResponseWriter, 
 // (disable_explicit, disable_inferred, etc.) without a separate
 // per-flag endpoint.
 func (T *OrchestrateApp) PublicHandleAgentRecord(w http.ResponseWriter, r *http.Request, agent AgentRecord) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = jsonEncode(w, agent)
+	jsonapi.Get(T.DB, func(*jsonapi.Call) (any, error) { return agent, nil })(w, r)
 }
 
 // PublicHandleAgentKnowledgeUpload mirrors handleAgentKnowledgeUpload
@@ -1078,14 +1047,14 @@ func (T *OrchestrateApp) PublicHandleSessionListOnly(w http.ResponseWriter, r *h
 }
 
 func (T *OrchestrateApp) publicSessionList(w http.ResponseWriter, r *http.Request, agentID, appContext string, only bool) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	_, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+	jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) {
+		return sessionsAbout(c.UDB, agentID, appContext, only), nil
+	})(w, r)
+}
+
+// sessionsAbout is the caller's sessions with agentID, without the Cortex
+// home thread, narrowed to appContext as publicSessionList describes.
+func sessionsAbout(udb Database, agentID, appContext string, only bool) []ChatSession {
 	sessions := listChatSessions(udb, agentID)
 	// The Cortex home-thread lives as a session keyed "channel:<agentID>"
 	// (see cortexSessionID). Orchestrate's own UI lifts that row out of the
@@ -1107,8 +1076,7 @@ func (T *OrchestrateApp) publicSessionList(w http.ResponseWriter, r *http.Reques
 		}
 		filtered = append(filtered, s)
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = jsonEncode(w, filtered)
+	return filtered
 }
 
 // PublicHandleSessionOne is GET (load) / DELETE (drop) / PATCH

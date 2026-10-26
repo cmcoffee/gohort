@@ -39,7 +39,6 @@
 package orchestrate
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -47,6 +46,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/textutil"
 )
 
@@ -676,39 +676,32 @@ func (t *chatTurn) sendConfirmResolvedLabel(id, value, label string) {
 	t.sse.Send(map[string]any{"kind": "confirm_resolved", "id": id, "value": value, "label": label})
 }
 
-// resolveToolConfirm is the /api/confirm POST body's landing: the
+// confirmAnswer is a confirm card's answer: which card, which button.
+type confirmAnswer struct {
+	ID    string `json:"id"`
+	Value string `json:"value"`
+}
+
+// answerToolConfirm is the /api/confirm POST body's landing: the
 // chat panel's confirm card submits {id, value}. Owner-checked — only
 // the user whose turn parked the escalation can resolve it. Unknown
 // ids answer 204 silently (plan-card confirms and stale cards POST
 // here too; they have nothing to resolve).
-func (T *OrchestrateApp) resolveToolConfirm(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	var req struct {
-		ID    string `json:"id"`
-		Value string `json:"value"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	v, found := toolConfirms.Load(strings.TrimSpace(req.ID))
+func (T *OrchestrateApp) answerToolConfirm(c *jsonapi.Call, in confirmAnswer) (any, error) {
+	id := strings.TrimSpace(in.ID)
+	v, found := toolConfirms.Load(id)
 	if !found {
-		w.WriteHeader(http.StatusNoContent)
-		return
+		return jsonapi.Empty(http.StatusNoContent), nil
 	}
 	p := v.(*pendingToolConfirm)
-	if p.user != user {
-		http.Error(w, "not your approval", http.StatusForbidden)
-		return
+	if p.user != c.User {
+		return nil, jsonapi.Forbidden("not your approval")
 	}
 	// Delete before signalling so a double-click can't send twice
 	// (both channels are buffered 1; the waiter also deletes on its way out).
-	toolConfirms.Delete(strings.TrimSpace(req.ID))
-	p.resolve(strings.TrimSpace(req.Value))
-	w.WriteHeader(http.StatusNoContent)
+	toolConfirms.Delete(id)
+	p.resolve(strings.TrimSpace(in.Value))
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // resolve hands the parked waiter the button that was clicked.
@@ -735,7 +728,7 @@ func (p *pendingToolConfirm) resolve(value string) {
 // nobody is waiting on answers 204. So the worst an unrelated caller can do
 // is resolve nothing.
 func (T *OrchestrateApp) PublicHandleConfirm(w http.ResponseWriter, r *http.Request) {
-	T.resolveToolConfirm(w, r)
+	jsonapi.Post(T.DB, T.answerToolConfirm)(w, r)
 }
 
 // firstNonBlank returns the first argument that isn't empty after trimming.

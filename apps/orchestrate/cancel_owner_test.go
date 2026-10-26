@@ -6,6 +6,9 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/snugforge/kvlite"
 )
 
 // The cancel endpoint looked a turn up by the session id alone, which comes
@@ -17,12 +20,12 @@ func TestCancelOnlyReachesOwnTurn(t *testing.T) {
 	inflightCancels.Store(runSessKey("user1", "sess-x"), context.CancelFunc(cancel))
 	defer inflightCancels.Delete(runSessKey("user1", "sess-x"))
 
-	T := &OrchestrateApp{}
-	T.handleCancel(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/cancel?id=sess-x", nil), "user2", AgentRecord{})
+	h := routed(&OrchestrateApp{AppCore: AppCore{DB: &DBase{Store: kvlite.MemStore()}}})
+	h(httptest.NewRecorder(), as(t, httptest.NewRequest(http.MethodPost, "/api/cancel?id=sess-x", nil), "user2"))
 	if ctx.Err() != nil {
 		t.Fatal("another user's cancel stopped the turn")
 	}
-	T.handleCancel(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/cancel?id=sess-x", nil), "user1", AgentRecord{})
+	h(httptest.NewRecorder(), as(t, httptest.NewRequest(http.MethodPost, "/api/cancel?id=sess-x", nil), "user1"))
 	if ctx.Err() == nil {
 		t.Fatal("the owner's cancel did not stop the turn")
 	}

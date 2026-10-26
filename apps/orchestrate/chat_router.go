@@ -57,26 +57,6 @@ func (T *OrchestrateApp) resolveAgent(w http.ResponseWriter, r *http.Request, ud
 	return agent, true
 }
 
-// hasAgentID reports whether an agent_id is present in the request — the query
-// string, or (for POSTs) the JSON body — WITHOUT consuming the body (it's
-// restored for the real handler, same as resolveAgent). Lets a handler treat
-// agent resolution as OPTIONAL instead of hard-failing when it's absent.
-func hasAgentID(r *http.Request) bool {
-	if strings.TrimSpace(r.URL.Query().Get("agent_id")) != "" {
-		return true
-	}
-	if r.Method == http.MethodPost {
-		var head struct {
-			AgentID string `json:"agent_id"`
-		}
-		if raw, err := readAndRestoreBody(r); err == nil && len(raw) > 0 {
-			_ = json.Unmarshal(raw, &head)
-			return strings.TrimSpace(head.AgentID) != ""
-		}
-	}
-	return false
-}
-
 // sessionListItem is the wire shape returned by handleSessionList.
 // Embeds ChatSession for the native rows; the optional Source +
 // ChatID fields carry tagging contributed by external sources (see
@@ -301,18 +281,26 @@ func (T *OrchestrateApp) sessionsMarkAllRead(c *jsonapi.Call, _ struct{}) (any, 
 // sessionRename labels a thread, e.g. "Phantom Monitor", so the sessions where
 // monitor wakes land are identifiable in the rail. The id is in the body, not
 // the path, since core/ui's rename affordance POSTs it that way.
-func (T *OrchestrateApp) sessionRename(c *jsonapi.Call, body struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-}) (any, error) {
+func (T *OrchestrateApp) sessionRename(c *jsonapi.Call, in sessionName) (any, error) {
 	agent, err := T.sessionAgent(c)
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(body.ID) == "" {
+	return renameSession(c, agent.ID, in)
+}
+
+// sessionName is a rename: which session, and what to call it.
+type sessionName struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// renameSession renames one of the caller's sessions with agentID.
+func renameSession(c *jsonapi.Call, agentID string, in sessionName) (any, error) {
+	if strings.TrimSpace(in.ID) == "" {
 		return nil, jsonapi.BadRequest("bad request")
 	}
-	renameChatSession(c.UDB, agent.ID, body.ID, body.Name)
+	renameChatSession(c.UDB, agentID, in.ID, in.Name)
 	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
@@ -507,41 +495,25 @@ func (T *OrchestrateApp) handleSendRouter(w http.ResponseWriter, r *http.Request
 	T.handleSend(w, r, udb, user, agent)
 }
 
-// handleCancelRouter wraps the runner's cancel. The cancel handler only
-// needs the session id (which keys the in-flight cancel map); agent_id
-// isn't strictly required, but we still authorize it when supplied so
-// users can't cancel another owner's session by guessing its id.
-func (T *OrchestrateApp) handleCancelRouter(w http.ResponseWriter, r *http.Request) {
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
+// cancelOwnTurn is cancelTurn for orchestrate's own route, where the request
+// can name an agent (?agent_id=, or agent_id in the body). One named has to be
+// the caller's own or a seed; none named is fine, since the cancel is keyed by
+// the caller and the session alone. The Agency chat panel's cancel POSTs only
+// ?id=<session>, and hard-requiring agent_id once 400'd it before the run
+// was reached: the button aborted the client stream, but the run loop
+// (detached from the HTTP request for EVERY session) kept going.
+func (T *OrchestrateApp) cancelOwnTurn(c *jsonapi.Call, in cancelTarget) (any, error) {
+	id := strings.TrimSpace(c.R.URL.Query().Get("agent_id"))
+	if id == "" {
+		id = strings.TrimSpace(in.AgentID)
 	}
-	// Cancel keys purely off the session id — handleCancel ignores the agent
-	// arg. The Agency chat panel's cancel POSTs only ?id=<session> (no agent_id
-	// in query or body), so hard-requiring agent_id here 400'd the request
-	// before it reached handleCancel: the button aborted the client stream, but
-	// the run loop (detached from the HTTP request for EVERY session) kept
-	// going — most visibly on long Cortex/Operator turns, which re-attach on
-	// nav-back so the user sees them still working. Make agent resolution
-	// OPTIONAL: authorize against the agent when one is supplied, otherwise
-	// cancel by session id directly (mirrors PublicHandleCancel).
-	if hasAgentID(r) {
-		agent, ok := T.resolveAgent(w, r, udb, user)
-		if !ok {
-			return
+	if id != "" {
+		agent, ok := loadAgent(c.UDB, id)
+		if !ok || (agent.Owner != c.User && agent.Owner != seedOwner) {
+			return nil, errNotFound
 		}
-		T.handleCancel(w, r, user, agent)
-		return
 	}
-	T.handleCancel(w, r, user, AgentRecord{})
-}
-
-// handleConfirmRouter resolves in-flight tool-call escalations (see
-// confirm.go). Posts that don't match a pending escalation (plan-card
-// confirms, stale cards) answer 204 harmlessly, preserving the old
-// no-op contract for everything that isn't an escalation.
-func (T *OrchestrateApp) handleConfirmRouter(w http.ResponseWriter, r *http.Request) {
-	T.resolveToolConfirm(w, r)
+	return T.cancelTurn(c, in)
 }
 
 // ErrBodyTooLarge means the request exceeded what the peek will buffer. It is

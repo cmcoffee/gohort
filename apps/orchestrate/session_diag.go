@@ -11,7 +11,6 @@ package orchestrate
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -480,23 +479,19 @@ func (T *OrchestrateApp) handleSessionDiag(c *jsonapi.Call) (any, error) {
 // without a surface they exist only in the server log, which is not where the
 // person who asked the question is looking.
 func (T *OrchestrateApp) PublicHandleSessionDiag(w http.ResponseWriter, r *http.Request, agentID, sessionID string) {
-	_, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	if agentID == "" || sessionID == "" {
-		http.Error(w, "agent and session required", http.StatusBadRequest)
-		return
-	}
-	var list []SessionDiag
-	udb.Get(sessionDiagTable, agentID+":"+sessionID, &list)
-	list = decorateSessionDiags(list)
-	out := make([]SessionDiag, 0, len(list))
-	for i := len(list) - 1; i >= 0; i-- {
-		out = append(out, list[i])
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(out)
+	jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) {
+		if agentID == "" || sessionID == "" {
+			return nil, jsonapi.BadRequest("agent and session required")
+		}
+		var list []SessionDiag
+		c.UDB.Get(sessionDiagTable, agentID+":"+sessionID, &list)
+		list = decorateSessionDiags(list)
+		out := make([]SessionDiag, 0, len(list))
+		for i := len(list) - 1; i >= 0; i-- {
+			out = append(out, list[i])
+		}
+		return out, nil
+	})(w, r)
 }
 
 // PublicHandleSessionRename renames one of the caller's sessions. Body is
@@ -506,22 +501,7 @@ func (T *OrchestrateApp) PublicHandleSessionDiag(w http.ResponseWriter, r *http.
 // A coding thread's auto-title comes from its first message, which is
 // routinely the least descriptive thing about it ("have a look at this").
 func (T *OrchestrateApp) PublicHandleSessionRename(w http.ResponseWriter, r *http.Request, agentID string) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	_, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	var body struct {
-		ID   string `json:"id"`
-		Name string `json:"name"`
-	}
-	if json.NewDecoder(r.Body).Decode(&body) != nil || strings.TrimSpace(body.ID) == "" {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-	renameChatSession(udb, agentID, body.ID, body.Name)
-	w.WriteHeader(http.StatusNoContent)
+	jsonapi.Post(T.DB, func(c *jsonapi.Call, in sessionName) (any, error) {
+		return renameSession(c, agentID, in)
+	})(w, r)
 }

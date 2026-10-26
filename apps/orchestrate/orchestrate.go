@@ -276,7 +276,7 @@ func (T *OrchestrateApp) webRestrictedLegacy(r *http.Request) bool {
 //	/api/sessions/{sid}        — load / delete (agent_id query param)
 //	/api/send                  — SSE send (agent_id in body)
 //	/api/cancel                — abort in-flight round (by ?id=<session>; agent_id optional)
-//	/api/confirm               — operator confirm (Phase 1 no-op stub)
+//	/api/confirm               — answer a tool confirm card (POST {id, value})
 //	/api/inject                — POST/PATCH/DELETE: mid-flight note queue
 func (T *OrchestrateApp) Routes() {
 	T.wireRunners()
@@ -801,10 +801,10 @@ func (T *OrchestrateApp) registerHandlers() {
 	// Live options for an intake form's select (IntakeField.OptionsFrom).
 	T.HandleFunc("/api/intake/options", jsonapi.Get(T.DB, T.handleIntakeOptions))
 	T.HandleFunc("/api/send", T.handleSendRouter)
-	T.HandleFunc("/api/cancel", T.handleCancelRouter)
-	T.HandleFunc("/api/confirm", T.handleConfirmRouter)
+	T.HandleFunc("/api/cancel", jsonapi.Post(T.DB, T.cancelOwnTurn, jsonapi.EmptyBodyOK))
+	T.HandleFunc("/api/confirm", jsonapi.Post(T.DB, T.answerToolConfirm))
 	T.HandleFunc("/api/approvals/answer", jsonapi.Post(T.DB, T.handleApprovalAnswer, jsonapi.EmptyBodyOK))
-	T.HandleFunc("/api/inject", T.handleInject)
+	T.HandleFunc("/api/inject", T.injectRoute())
 	// Delivered attachments, so a reloaded thread still shows its pictures —
 	// and so a message posted with nobody watching can show one at all.
 	T.HandleFunc("/api/attachment", T.handleAttachment)

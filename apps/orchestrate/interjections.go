@@ -23,13 +23,13 @@
 package orchestrate
 
 import (
-	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/agenthost"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // Aliases keep existing call sites in this package terse. The
@@ -51,7 +51,7 @@ func lookupInjectionQueue(sessionID string) *injectionQueue {
 	return LookupInjectionQueue(sessionID)
 }
 
-// handleInject implements the same request/response contract servitor
+// injectRoute implements the same request/response contract servitor
 // uses so the AgentLoopPanel runtime's built-in inject flow works
 // unchanged:
 //
@@ -64,113 +64,111 @@ func lookupInjectionQueue(sessionID string) *injectionQueue {
 //
 // Notes the runner has already drained can no longer be edited or
 // deleted — those return 410 Gone.
-func (T *OrchestrateApp) handleInject(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
+func (T *OrchestrateApp) injectRoute() http.HandlerFunc {
+	return jsonapi.Methods{
+		"GET": T.signedIn(func(w http.ResponseWriter, r *http.Request, user string, _ Database) {
+			agenthost.ServeWaitingNotes(w, r, user)
+		}),
+		"POST":   jsonapi.Post(T.DB, T.injectPost),
+		"PATCH":  jsonapi.Patch(T.DB, T.injectEdit),
+		"DELETE": jsonapi.Delete(T.DB, T.injectDrop),
+	}.Serve
+}
+
+// injectNote is an inject request: the running session, and for a lock, an
+// edit or a delete, the note.
+type injectNote struct {
+	ID     string `json:"id"`
+	NoteID string `json:"note_id"`
+	Text   string `json:"text"`
+	Action string `json:"action"`
+}
+
+// errNoteGone is a note the runner has already read, or never had.
+var errNoteGone = jsonapi.Status(http.StatusGone, "note already delivered or not found")
+
+// runningQueue is the note queue of the caller's own run that in names.
+// Either the session isn't running right now, or its turn already finished:
+// either way there is no queue to write to.
+func runningQueue(c *jsonapi.Call, in injectNote) (*injectionQueue, error) {
+	if in.ID == "" {
+		return nil, jsonapi.BadRequest("id required")
 	}
-	if r.Method == http.MethodGet {
-		agenthost.ServeWaitingNotes(w, r, user)
-		return
-	}
-	var req struct {
-		ID     string `json:"id"`
-		NoteID string `json:"note_id"`
-		Text   string `json:"text"`
-		Action string `json:"action"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-	if req.ID == "" {
-		http.Error(w, "id required", http.StatusBadRequest)
-		return
-	}
-	q := lookupInjectionQueue(req.ID)
+	q := lookupInjectionQueue(in.ID)
 	if q == nil {
-		// Either the session isn't running right now, or its turn
-		// already finished. Either way, no queue to write to.
-		http.Error(w, "session not found or not interjectable", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("session not found or not interjectable")
 	}
-	if q.Owner != user {
-		http.NotFound(w, r)
-		return
+	if q.Owner != c.User {
+		return nil, errNotFound
 	}
+	return q, nil
+}
 
-	switch r.Method {
-	case http.MethodPost:
-		switch req.Action {
-		case "lock":
-			if req.NoteID == "" {
-				http.Error(w, "note_id required", http.StatusBadRequest)
-				return
-			}
-			if !q.Lock(req.NoteID) {
-				http.Error(w, "note already delivered or not found", http.StatusGone)
-				return
-			}
-			w.WriteHeader(http.StatusNoContent)
-			return
-		case "unlock":
-			if req.NoteID == "" {
-				http.Error(w, "note_id required", http.StatusBadRequest)
-				return
-			}
-			if !q.Unlock(req.NoteID) {
-				http.Error(w, "note already delivered or not found", http.StatusGone)
-				return
-			}
-			w.WriteHeader(http.StatusNoContent)
-			return
-		case "":
-			// A note into a cortex run is a write into the cortex, which a
-			// person reaches only by answering a question it asked.
-			if req.ID == cortexSessionID(q.AgentID) {
-				http.Error(w, cortexWriteRefusal, http.StatusForbidden)
-				return
-			}
-			// falls through to new-note path
-		default:
-			http.Error(w, "unknown action", http.StatusBadRequest)
-			return
+// injectPost queues a new note, or locks or unlocks one for editing.
+func (T *OrchestrateApp) injectPost(c *jsonapi.Call, in injectNote) (any, error) {
+	q, err := runningQueue(c, in)
+	if err != nil {
+		return nil, err
+	}
+	switch in.Action {
+	case "lock", "unlock":
+		if in.NoteID == "" {
+			return nil, jsonapi.BadRequest("note_id required")
 		}
-		req.Text = strings.TrimSpace(req.Text)
-		if req.Text == "" {
-			http.Error(w, "text required", http.StatusBadRequest)
-			return
+		mark := q.Lock
+		if in.Action == "unlock" {
+			mark = q.Unlock
 		}
-		noteID, _ := q.Push(req.Text)
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{"note_id": noteID})
-
-	case http.MethodPatch:
-		req.Text = strings.TrimSpace(req.Text)
-		if req.NoteID == "" || req.Text == "" {
-			http.Error(w, "note_id and text required", http.StatusBadRequest)
-			return
+		if !mark(in.NoteID) {
+			return nil, errNoteGone
 		}
-		if !q.Update(req.NoteID, req.Text) {
-			http.Error(w, "note already delivered or not found", http.StatusGone)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-
-	case http.MethodDelete:
-		if req.NoteID == "" {
-			http.Error(w, "note_id required", http.StatusBadRequest)
-			return
-		}
-		if !q.Delete(req.NoteID) {
-			http.Error(w, "note already delivered or not found", http.StatusGone)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-
+		return jsonapi.Empty(http.StatusNoContent), nil
+	case "":
 	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return nil, jsonapi.BadRequest("unknown action")
 	}
+	// A note into a cortex run is a write into the cortex, which a
+	// person reaches only by answering a question it asked.
+	if in.ID == cortexSessionID(q.AgentID) {
+		return nil, jsonapi.Forbidden(cortexWriteRefusal)
+	}
+	text := strings.TrimSpace(in.Text)
+	if text == "" {
+		return nil, jsonapi.BadRequest("text required")
+	}
+	noteID, _ := q.Push(text)
+	return map[string]string{"note_id": noteID}, nil
+}
+
+// injectEdit commits a note's edited text, which also unlocks it.
+func (T *OrchestrateApp) injectEdit(c *jsonapi.Call, in injectNote) (any, error) {
+	q, err := runningQueue(c, in)
+	if err != nil {
+		return nil, err
+	}
+	text := strings.TrimSpace(in.Text)
+	if in.NoteID == "" || text == "" {
+		return nil, jsonapi.BadRequest("note_id and text required")
+	}
+	if !q.Update(in.NoteID, text) {
+		return nil, errNoteGone
+	}
+	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// injectDrop removes a note the runner has not read yet.
+func (T *OrchestrateApp) injectDrop(c *jsonapi.Call, in injectNote) (any, error) {
+	q, err := runningQueue(c, in)
+	if err != nil {
+		return nil, err
+	}
+	if in.NoteID == "" {
+		return nil, jsonapi.BadRequest("note_id required")
+	}
+	if !q.Delete(in.NoteID) {
+		return nil, errNoteGone
+	}
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // PublicHandleInject is the landing an app routes its AgentLoopPanel's
@@ -188,7 +186,7 @@ func (T *OrchestrateApp) handleInject(w http.ResponseWriter, r *http.Request) {
 // no queue and answers 404, which is the correct answer to "add this to the
 // turn in progress" when there is no turn in progress.
 func (T *OrchestrateApp) PublicHandleInject(w http.ResponseWriter, r *http.Request) {
-	T.handleInject(w, r)
+	T.injectRoute()(w, r)
 }
 
 // leftoverNotesWait bounds how long a send of unread notes waits for the turn
