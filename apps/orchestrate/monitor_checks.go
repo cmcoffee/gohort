@@ -6,7 +6,6 @@ package orchestrate
 // shows the checks that WOULD have fired and why they did not.
 
 import (
-	"net/http"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -38,15 +37,12 @@ func lastCheckNote(m EventMonitor) string {
 
 // handleConsoleMonitorChecks is a monitor's recent checks, for the Scheduler
 // card's Recent checks button: GET ?id=<monitor name>, the caller's own only.
-func (T *OrchestrateApp) handleConsoleMonitorChecks(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleConsoleMonitorChecks(c *jsonapi.Call) (any, error) {
+	r := c.R
+	user := c.User
 	m, found := GetEventMonitor(RootDB, user, strings.TrimSpace(r.URL.Query().Get("id")))
 	if !found {
-		http.Error(w, "no such monitor", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("no such monitor")
 	}
 	lines := monitorCheckLines(m, len(m.RecentChecks))
 	out := map[string]any{"monitor": m.Name}
@@ -58,5 +54,5 @@ func (T *OrchestrateApp) handleConsoleMonitorChecks(w http.ResponseWriter, r *ht
 	} else {
 		out["recent checks"] = lines
 	}
-	jsonapi.Write(w, out)
+	return out, nil
 }

@@ -179,28 +179,24 @@ func clampToDeploymentMaximum(db Database, setting, answer string) string {
 
 // handleDeploymentSettings serves both controls. ADMIN only - an owner may set
 // what their own fleet does and may not set what everybody's does.
-func (T *OrchestrateApp) handleDeploymentSettings(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok {
-		return
-	}
+func (T *OrchestrateApp) handleDeploymentSettings(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+	r := c.R
 	if !RequestIsAdmin(r) {
-		http.Error(w, "admin only", http.StatusForbidden)
-		return
+		return nil, jsonapi.Forbidden("admin only")
 	}
 	switch r.Method {
 	case http.MethodGet:
-		w.Header().Set("Cache-Control", "no-store")
+		c.W.Header().Set("Cache-Control", "no-store")
 		out := map[string]any{}
 		for setting := range triSettings {
 			out[setting] = effectiveDeploymentDefault(RootDB, setting)
 			out[setting+"_max"] = effectiveDeploymentMaximum(RootDB, setting)
 		}
-		jsonapi.Write(w, out)
+		return out, nil
 	case http.MethodPatch, http.MethodPost:
 		var body map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
+		if err := json.Unmarshal(raw, &body); err != nil {
+			return nil, jsonapi.BadRequest("bad request")
 		}
 		for setting, spec := range triSettings {
 			for _, pair := range []struct{ field, kind string }{
@@ -216,8 +212,7 @@ func (T *OrchestrateApp) handleDeploymentSettings(w http.ResponseWriter, r *http
 					v = strings.TrimSpace(fmt.Sprint(raw))
 				}
 				if v != "" && !slices.Contains(spec.values, v) {
-					http.Error(w, pair.field+" does not take "+v, http.StatusBadRequest)
-					return
+					return nil, jsonapi.BadRequest(pair.field + " does not take " + v)
 				}
 				setDeploymentSetting(RootDB, pair.kind, setting, v)
 				// Tightening the MAXIMUM pulls the default down with it. The
@@ -234,9 +229,9 @@ func (T *OrchestrateApp) handleDeploymentSettings(w http.ResponseWriter, r *http
 				}
 			}
 		}
-		w.WriteHeader(http.StatusNoContent)
+		return jsonapi.Empty(http.StatusNoContent), nil
 	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return nil, jsonapi.Status(http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 

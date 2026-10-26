@@ -31,7 +31,7 @@ func fetchGuardrailRows(t *testing.T, app *OrchestrateApp, cookie *http.Cookie, 
 	r := httptest.NewRequest(http.MethodGet, "/api/console/guardrail-blocks"+query, nil)
 	r.AddCookie(cookie)
 	w := httptest.NewRecorder()
-	app.handleConsoleGuardrails(w, r)
+	routed(app)(w, r)
 	if w.Code != http.StatusOK {
 		t.Fatalf("console view returned %d: %s", w.Code, w.Body.String())
 	}
@@ -150,7 +150,7 @@ func TestConsoleGuardrailsEmptyIsAnEmptyList(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/api/console/guardrail-blocks", nil)
 	r.AddCookie(cookie)
 	w := httptest.NewRecorder()
-	app.handleConsoleGuardrails(w, r)
+	routed(app)(w, r)
 	if body := strings.TrimSpace(w.Body.String()); body != "[]" {
 		t.Errorf("an empty fleet should serialize as [], got %q", body)
 	}

@@ -940,30 +940,22 @@ func linkLastRunLabel(g linkGroup, loc *time.Location) string {
 
 // --- handlers ----------------------------------------------------------------
 
-func (T *OrchestrateApp) handleConsoleLinkOptions(w http.ResponseWriter, r *http.Request) {
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleConsoleLinkOptions(c *jsonapi.Call) (any, error) {
+	r := c.R
+	user, udb := c.User, c.UDB
 	q := r.URL.Query()
-	jsonapi.Write(w, linkOptions(user, agentNames(udb, user), strings.TrimSpace(q.Get("ref")), strings.TrimSpace(q.Get("agent"))))
+	return linkOptions(user, agentNames(udb, user), strings.TrimSpace(q.Get("ref")), strings.TrimSpace(q.Get("agent"))), nil
 }
 
 // handleConsoleLink serves the row verbs: POST /api/console/links/<verb>?id=
 // (the last path segment is the verb, so a mount prefix does not matter).
 // link (value = what to link with), unlink, up, down take a row's "<kind>:<id>";
 // pause, resume, run take a group id.
-func (T *OrchestrateApp) handleConsoleLink(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleConsoleLink(c *jsonapi.Call, _ struct{}) (any, error) {
+	r := c.R
+	user := c.User
 	verb := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
 	var err error
 	switch verb {
 	case "link":
@@ -992,14 +984,12 @@ func (T *OrchestrateApp) handleConsoleLink(w http.ResponseWriter, r *http.Reques
 	case "update":
 		err = T.updateLinkGroupTime(user, id, r)
 	default:
-		http.NotFound(w, r)
-		return
+		return nil, errNotFound
 	}
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest(err.Error())
 	}
-	w.WriteHeader(http.StatusNoContent)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 func setLinkGroupPaused(owner, id string, paused bool) error {
@@ -1018,11 +1008,11 @@ func setLinkGroupPaused(owner, id string, paused bool) error {
 
 // handleConsoleLinkGet is the group's time for the editor, in the fields the
 // scheduled-agent editor's timing half reads.
-func (T *OrchestrateApp) handleConsoleLinkGet(w http.ResponseWriter, user, id string) {
+func (T *OrchestrateApp) handleConsoleLinkGet(c *jsonapi.Call) (any, error) {
+	user, id := c.User, strings.TrimSpace(c.R.URL.Query().Get("id"))
 	g, ok := getLinkGroup(user, id)
 	if !ok {
-		http.Error(w, "no such link group", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("no such link group")
 	}
 	var members []string
 	for i, m := range g.Members {
@@ -1030,7 +1020,7 @@ func (T *OrchestrateApp) handleConsoleLinkGet(w http.ResponseWriter, user, id st
 			members = append(members, fmt.Sprintf("%d. %s", i+1, t.name))
 		}
 	}
-	jsonapi.Write(w, map[string]any{
+	return map[string]any{
 		"cron":                 g.Cron,
 		"interval_minutes":     g.IntervalSeconds / 60,
 		"max_interval_minutes": g.MaxIntervalSeconds / 60,
@@ -1042,7 +1032,7 @@ func (T *OrchestrateApp) handleConsoleLinkGet(w http.ResponseWriter, user, id st
 		// carry any goal.
 		"until":   func() untilOut { u := standingUntilOut(g.timing(), false); u.Runs = g.Rounds; return u }(),
 		"members": members,
-	})
+	}, nil
 }
 
 // updateLinkGroupTime sets the group's time, through the same validation a

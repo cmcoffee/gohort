@@ -31,11 +31,8 @@ import (
 // user's own, and only the ones marked to RUN.
 //
 //	GET /api/console/machine-options → [{value, label}]
-func (T *OrchestrateApp) handleConsoleMachineOptions(w http.ResponseWriter, r *http.Request) {
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleConsoleMachineOptions(c *jsonapi.Call) (any, error) {
+	user, udb := c.User, c.UDB
 	type opt struct {
 		Value string `json:"value"`
 		Label string `json:"label"`
@@ -67,22 +64,15 @@ func (T *OrchestrateApp) handleConsoleMachineOptions(w http.ResponseWriter, r *h
 		}
 		opts = append(opts, opt{Value: sm.Def.ID, Label: label + " (shared by " + sm.Owner + ")"})
 	}
-	jsonapi.Write(w, opts)
+	return opts, nil
 }
 
 // handleConsoleMachineScheduleCreate arms a machine to run on a timetable.
 //
 //	POST /api/console/machine-schedule/create
 //	{name, machine_id, mission, cron | interval_minutes, agent_id}
-func (T *OrchestrateApp) handleConsoleMachineScheduleCreate(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+func (T *OrchestrateApp) handleConsoleMachineScheduleCreate(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+	user := c.User
 	var body struct {
 		Name            string `json:"name"`
 		MachineID       string `json:"machine_id"`
@@ -96,72 +86,61 @@ func (T *OrchestrateApp) handleConsoleMachineScheduleCreate(w http.ResponseWrite
 		// Until is the shared Until section (schedule_until.go).
 		Until *untilBody `json:"until"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "bad body: "+err.Error(), http.StatusBadRequest)
-		return
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return nil, jsonapi.BadRequest("bad body: " + err.Error())
 	}
 	name := strings.TrimSpace(body.Name)
 	if name == "" {
-		http.Error(w, "give the schedule a name", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("give the schedule a name")
 	}
 	if _, exists := GetStandingAgent(RootDB, user, name); exists {
-		http.Error(w, "a schedule called "+name+" already exists", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("a schedule called " + name + " already exists")
 	}
 	def, found := machineForUser(user, strings.TrimSpace(body.MachineID))
 	if !found {
-		http.Error(w, "no such machine", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("no such machine")
 	}
 	// The same two refusals the runner makes, made HERE: a schedule that
 	// could never fire cleanly should not be armed and then discovered at
 	// four in the morning.
 	if !def.Unattended {
-		http.Error(w, "that machine converses rather than runs: a schedule fires with nobody there to answer a step that waits",
-			http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("that machine converses rather than runs: a schedule fires with nobody there to answer a step that waits")
 	}
 	if probs := machineRunProblems(UserDB(T.DB, user), user, def); len(probs) > 0 {
-		http.Error(w, "that machine will not run yet: "+probs[0], http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("that machine will not run yet: " + probs[0])
 	}
 
 	cronIn, intervalIn := strings.TrimSpace(body.Cron), body.IntervalMinutes
 	if body.Timing != nil {
 		if err := body.Timing.Validate(); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest(err.Error())
 		}
 		cronIn, intervalIn = "", 1 // satisfies the builder; Timing replaces it below
 	}
 	sa, err := buildMachineSchedule(user, name, def, strings.TrimSpace(body.Mission),
 		cronIn, intervalIn, strings.TrimSpace(body.AgentID))
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest(err.Error())
 	}
 	if body.Timing != nil {
 		sa.Timing, sa.IntervalSeconds = *body.Timing, 0
 	}
 	if body.Until != nil {
 		if err := applyStandingUntil(&sa, *body.Until, true); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest(err.Error())
 		}
 	}
 	SaveStandingAgent(RootDB, sa)
 	if err := ScheduleStandingAgent(RootDB, sa); err != nil {
 		// Saved but not armed is the worst of both, so say which happened.
-		http.Error(w, "saved, but arming the schedule failed: "+err.Error(), http.StatusInternalServerError)
-		return
+		return nil, jsonapi.Status(http.StatusInternalServerError, "saved, but arming the schedule failed: "+err.Error())
 	}
 	got, _ := GetStandingAgent(RootDB, user, name)
 	Log("[orchestrate.standing] user=%q scheduled machine %q as %q (%s)", user, def.Name, name, StandingScheduleLabel(got))
-	jsonapi.Write(w, map[string]any{
+	return map[string]any{
 		"ok": true, "name": name, "schedule": StandingScheduleLabel(got),
 		"next_run": got.NextRun,
-	})
+	}, nil
 }
 
 // machineRunCreatorAction names the client action that opens the "schedule a

@@ -11,7 +11,6 @@ package orchestrate
 
 import (
 	"fmt"
-	"net/http"
 	"strconv"
 	"time"
 
@@ -57,9 +56,10 @@ func (bs *buildStamper) step(info StepInfo) {
 const buildOutcomeDays = 30
 
 // handleBuildOutcomes serves the ledger read over the window. GET, admin only.
-func (T *OrchestrateApp) handleBuildOutcomes(w http.ResponseWriter, r *http.Request) {
-	if !T.requireAdmin(w, r) {
-		return
+func (T *OrchestrateApp) handleBuildOutcomes(c *jsonapi.Call) (any, error) {
+	r := c.R
+	if err := T.requireAdmin(c); err != nil {
+		return nil, err
 	}
 	days := buildOutcomeDays
 	if n, err := strconv.Atoi(r.URL.Query().Get("days")); err == nil && n > 0 && n <= 365 {
@@ -103,7 +103,7 @@ func (T *OrchestrateApp) handleBuildOutcomes(w http.ResponseWriter, r *http.Requ
 	if rep.Green > 0 {
 		median = fmt.Sprintf("%d (mean %.1f)", rep.MedianToGreen, rep.MeanToGreen)
 	}
-	jsonapi.Write(w, map[string]any{
+	return map[string]any{
 		"window":        fmt.Sprintf("last %d days", days),
 		"verifications": fmt.Sprintf("%d (%d passed, %d failed, %d unproven)", rep.Verifications, rep.Passes, rep.Fails, rep.Unproven),
 		"builds":        fmt.Sprintf("%d (%d green, %d still open)", rep.Episodes, rep.Green, rep.Open),
@@ -112,7 +112,7 @@ func (T *OrchestrateApp) handleBuildOutcomes(w http.ResponseWriter, r *http.Requ
 		"recent":        recent,
 		"classes":       classes,
 		"tiers":         tiers,
-	})
+	}, nil
 }
 
 func servedLabel(tier, model string) string {

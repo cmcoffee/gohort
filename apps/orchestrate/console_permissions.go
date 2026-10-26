@@ -11,11 +11,8 @@ import (
 
 // handleConsoleApprovals lists pending delegations awaiting the user's
 // approval (the authorizations queue).
-func (T *OrchestrateApp) handleConsoleApprovals(w http.ResponseWriter, r *http.Request) {
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleConsoleApprovals(c *jsonapi.Call) (any, error) {
+	user, udb := c.User, c.UDB
 	type apprRow struct {
 		Agent     string `json:"agent"`
 		Action    string `json:"action"`
@@ -32,7 +29,7 @@ func (T *OrchestrateApp) handleConsoleApprovals(w http.ResponseWriter, r *http.R
 			ID:        a.ID,
 		})
 	}
-	jsonapi.Write(w, out)
+	return out, nil
 }
 
 // approvalDisplay maps a pending Authorization to its (who, detail) display
@@ -119,11 +116,9 @@ func approvalDisplay(udb Database, user string, a Authorization) (who, detail st
 // rows come first (they need action) and carry _pending; granted rows carry
 // _granted, so the table's conditional row actions show Approve/Always/Deny on
 // the former and Revoke on the latter. The pinned rail badge counts _pending.
-func (T *OrchestrateApp) handleConsolePermissions(w http.ResponseWriter, r *http.Request) {
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleConsolePermissions(c *jsonapi.Call) (any, error) {
+	r := c.R
+	user, udb := c.User, c.UDB
 	// Field order matters: the card layout uses the FIRST non-underscore field
 	// as the title (Who), then Detail (mono box), Status (pill), Requested.
 	type permRow struct {
@@ -454,7 +449,7 @@ func (T *OrchestrateApp) handleConsolePermissions(w http.ResponseWriter, r *http
 		}
 		kept = append(kept, row)
 	}
-	jsonapi.Write(w, kept)
+	return kept, nil
 }
 
 // permRowKind sorts a row under one of the tabs along the top of the window.
@@ -546,37 +541,28 @@ func removeAutoApproveTool(udb Database, agentID, tool string) {
 // Tool policy is binary: "allow" pre-authorizes the tool for unattended runs
 // (AutoApproveTools), anything else revokes so it queues again on its next
 // fire. Flags map to the capability toggles by their form field names.
-func (T *OrchestrateApp) handleConsolePrivileges(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+func (T *OrchestrateApp) handleConsolePrivileges(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+	r := c.R
+	user := c.User
 	var body struct {
 		AgentID string            `json:"agent_id"`
 		Tools   map[string]string `json:"tools"`
 		Flags   map[string]bool   `json:"flags"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "bad body", http.StatusBadRequest)
-		return
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return nil, jsonapi.BadRequest("bad body")
 	}
 	udb := UserDB(T.DB, user)
 	rec, found := loadAgent(udb, strings.TrimSpace(body.AgentID))
 	if !found {
-		http.Error(w, "no such agent", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("no such agent")
 	}
 	// A sub-agent's posture is the framework's to decide (it carries its
 	// parent's authority and is never published on its own), so the card shows
 	// those rows locked and the server refuses them too — a locked control that
 	// only the UI enforces is not a control.
 	if strings.TrimSpace(rec.OwnedBy) != "" && len(body.Flags) > 0 {
-		http.Error(w, "a sub-agent's capabilities follow its parent", http.StatusConflict)
-		return
+		return nil, jsonapi.Status(http.StatusConflict, "a sub-agent's capabilities follow its parent")
 	}
 	for tool, policy := range body.Tools {
 		tool = strings.TrimSpace(tool)
@@ -632,23 +618,20 @@ func (T *OrchestrateApp) handleConsolePrivileges(w http.ResponseWriter, r *http.
 		case "allow_builder_dispatch":
 			rec.AllowBuilderDispatch = on
 		default:
-			http.Error(w, "unknown capability "+field, http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest("unknown capability " + field)
 		}
 	}
 	if _, err := saveAgent(udb, rec); err != nil {
 		Log("[console.privileges] save %s failed: %v", rec.ID, err)
-		http.Error(w, "could not save", http.StatusInternalServerError)
-		return
+		return nil, jsonapi.Status(http.StatusInternalServerError, "could not save")
 	}
 	if len(requested) > 0 {
 		// A body rather than 204, because "requested" and "done" are different
 		// outcomes and a caller that cannot tell them apart will show the
 		// capability as live when an administrator has not looked at it yet.
-		jsonapi.Write(w, map[string]any{"ok": true, "requested": requested})
-		return
+		return map[string]any{"ok": true, "requested": requested}, nil
 	}
-	w.WriteHeader(http.StatusNoContent)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // appendUnique adds s to list unless it's already there.
@@ -663,15 +646,9 @@ func appendUnique(list []string, s string) []string {
 
 // handleConsolePermissionPolicy sets a subject's standing policy.
 // POST ?id=<agent:…|contact:…>&value=<allow|ask|block>.
-func (T *OrchestrateApp) handleConsolePermissionPolicy(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+func (T *OrchestrateApp) handleConsolePermissionPolicy(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+	r := c.R
+	user := c.User
 	kind, target, found := strings.Cut(strings.TrimSpace(r.URL.Query().Get("id")), ":")
 	value := strings.TrimSpace(r.URL.Query().Get("value"))
 	// A segmented control on a TABLE row sends the new value as a JSON body
@@ -680,13 +657,12 @@ func (T *OrchestrateApp) handleConsolePermissionPolicy(w http.ResponseWriter, r 
 	// growing a second endpoint that would have to be kept in step.
 	if value == "" {
 		var body map[string]string
-		if json.NewDecoder(r.Body).Decode(&body) == nil {
+		if json.Unmarshal(raw, &body) == nil {
 			value = strings.TrimSpace(body["_policy"])
 		}
 	}
 	if !found || target == "" {
-		http.Error(w, "bad id", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("bad id")
 	}
 	switch kind {
 	case "agent":
@@ -712,8 +688,7 @@ func (T *OrchestrateApp) handleConsolePermissionPolicy(w http.ResponseWriter, r 
 		// agent is set on that agent's Security page, where the tool row
 		// carries it.
 		if !SetUserToolAsksInChat(AuthDB(), user, "", target, value == PolicyAsk) {
-			http.Error(w, "could not record that", http.StatusInternalServerError)
-			return
+			return nil, jsonapi.Status(http.StatusInternalServerError, "could not record that")
 		}
 	case "workspace":
 		// The sandbox's own reach. Two states only, and "allow" CLEARS the
@@ -730,8 +705,7 @@ func (T *OrchestrateApp) handleConsolePermissionPolicy(w http.ResponseWriter, r 
 				}
 				rec.WorkspaceNoNetwork = false
 				if _, err := saveAgent(udb, rec); err != nil {
-					http.Error(w, err.Error(), http.StatusInternalServerError)
-					return
+					return nil, jsonapi.Status(http.StatusInternalServerError, err.Error())
 				}
 			}
 		}
@@ -752,8 +726,7 @@ func (T *OrchestrateApp) handleConsolePermissionPolicy(w http.ResponseWriter, r 
 				}
 				rec.DisabledToolActions = kept
 				if _, err := saveAgent(udb, rec); err != nil {
-					http.Error(w, err.Error(), http.StatusInternalServerError)
-					return
+					return nil, jsonapi.Status(http.StatusInternalServerError, err.Error())
 				}
 			}
 		}
@@ -765,27 +738,19 @@ func (T *OrchestrateApp) handleConsolePermissionPolicy(w http.ResponseWriter, r 
 			setAutoToolPolicy(RootDB, UserDB(T.DB, user), user, aid, tool, value)
 		}
 	default:
-		http.Error(w, "unknown subject", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("unknown subject")
 	}
-	w.WriteHeader(http.StatusNoContent)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // handleConsolePermissionRemove forgets a subject's policy entirely (back to
 // the ask default, dropped from the list). POST ?id=<agent:…|contact:…>.
-func (T *OrchestrateApp) handleConsolePermissionRemove(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+func (T *OrchestrateApp) handleConsolePermissionRemove(c *jsonapi.Call, _ struct{}) (any, error) {
+	r := c.R
+	user := c.User
 	kind, target, found := strings.Cut(strings.TrimSpace(r.URL.Query().Get("id")), ":")
 	if !found || target == "" {
-		http.Error(w, "bad id", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("bad id")
 	}
 	switch kind {
 	case "agent":
@@ -805,10 +770,9 @@ func (T *OrchestrateApp) handleConsolePermissionRemove(w http.ResponseWriter, r 
 			removeAutoToolPolicy(RootDB, UserDB(T.DB, user), user, aid, tool)
 		}
 	default:
-		http.Error(w, "unknown subject", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("unknown subject")
 	}
-	w.WriteHeader(http.StatusNoContent)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // handleConsolePermissionPromote widens one agent's grant, contact or
@@ -824,36 +788,27 @@ func (T *OrchestrateApp) handleConsolePermissionRemove(w http.ResponseWriter, r 
 // not "everyone now agrees with this one": an agent the owner has deliberately
 // blocked from this contact stays blocked, which is the precedence rule the
 // resolution follows everywhere else.
-func (T *OrchestrateApp) handleConsolePermissionPromote(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+func (T *OrchestrateApp) handleConsolePermissionPromote(c *jsonapi.Call, _ struct{}) (any, error) {
+	r := c.R
+	user := c.User
 	kind, target, found := strings.Cut(strings.TrimSpace(r.URL.Query().Get("id")), ":")
 	if !found || (kind != "contactfor" && kind != "agentfor") {
-		http.Error(w, "only a grant scoped to one agent can be promoted", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("only a grant scoped to one agent can be promoted")
 	}
 	aid, subject, ok := strings.Cut(target, ":")
 	if !ok || subject == "" {
-		http.Error(w, "bad id", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("bad id")
 	}
 	if kind == "agentfor" {
 		policy := DelegationPolicy(RootDB, user, aid, subject)
 		setDelegationDecision(user, "", subject, policy)
 		removeDelegationDecision(user, aid, subject)
-		w.WriteHeader(http.StatusNoContent)
-		return
+		return jsonapi.Empty(http.StatusNoContent), nil
 	}
 	policy := ContactPolicy(RootDB, user, aid, subject)
 	SetContactPolicy(RootDB, user, "", subject, policy)
 	RemoveContactPolicy(RootDB, user, aid, subject)
-	w.WriteHeader(http.StatusNoContent)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // handleConsolePermissionNarrow is promote's opposite: it takes a decision
@@ -870,20 +825,13 @@ func (T *OrchestrateApp) handleConsolePermissionPromote(w http.ResponseWriter, r
 //
 // This takes reach AWAY from every other agent, which is the direction that
 // needs saying out loud rather than the one that grants.
-func (T *OrchestrateApp) handleConsolePermissionNarrow(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+func (T *OrchestrateApp) handleConsolePermissionNarrow(c *jsonapi.Call, _ struct{}) (any, error) {
+	r := c.R
+	user := c.User
 	agentID := strings.TrimSpace(r.URL.Query().Get("agent"))
 	kind, subject, found := strings.Cut(strings.TrimSpace(r.URL.Query().Get("id")), ":")
 	if !found || subject == "" || agentID == "" {
-		http.Error(w, "bad id", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("bad id")
 	}
 	switch kind {
 	case "agent":
@@ -895,10 +843,9 @@ func (T *OrchestrateApp) handleConsolePermissionNarrow(w http.ResponseWriter, r 
 		SetContactPolicy(RootDB, user, agentID, subject, policy)
 		RemoveContactPolicy(RootDB, user, "", subject)
 	default:
-		http.Error(w, "only a decision that binds every agent can be narrowed", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("only a decision that binds every agent can be narrowed")
 	}
-	w.WriteHeader(http.StatusNoContent)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // operatorApprovalRecipient renders a human-readable recipient for a phantom
@@ -944,40 +891,30 @@ func operatorApprovalRecipient(owner string, a Authorization) string {
 // Per agent, always. The fleet-wide form is reached by granting here and then
 // widening, which keeps "this binds everything" a deliberate second step
 // rather than something you can do by accident on the way in.
-func (T *OrchestrateApp) handleConsolePermissionGrant(w http.ResponseWriter, r *http.Request) {
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+func (T *OrchestrateApp) handleConsolePermissionGrant(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+	r := c.R
+	user, udb := c.User, c.UDB
 	agentID := strings.TrimSpace(r.URL.Query().Get("agent"))
 	kind := strings.TrimSpace(r.URL.Query().Get("kind"))
 	if agentID == "" {
-		http.Error(w, "agent required", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("agent required")
 	}
 	var body struct {
 		Subject string `json:"subject"`
 		Value   string `json:"value"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return nil, jsonapi.BadRequest("bad request")
 	}
 	subject := strings.TrimSpace(body.Subject)
 	value := strings.TrimSpace(body.Value)
 	if subject == "" {
-		http.Error(w, "nothing named to grant", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("nothing named to grant")
 	}
 	// A policy the gate does not know reads as SOME state on the page and
 	// behaves as none, so it is refused rather than stored.
 	if value != PolicyAllow && value != PolicyAsk && value != PolicyBlock {
-		http.Error(w, "policy must be allow, ask or block", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("policy must be allow, ask or block")
 	}
 	switch kind {
 	case "contact":
@@ -985,8 +922,7 @@ func (T *OrchestrateApp) handleConsolePermissionGrant(w http.ResponseWriter, r *
 	case "agent":
 		// Its own id, which would be a decision about talking to itself.
 		if subject == agentID {
-			http.Error(w, "an agent does not dispatch to itself", http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest("an agent does not dispatch to itself")
 		}
 		// A decision about an agent the dispatch policy does not reach can
 		// never fire: the call is refused a layer earlier, before anything
@@ -997,23 +933,19 @@ func (T *OrchestrateApp) handleConsolePermissionGrant(w http.ResponseWriter, r *
 			// A parent always reaches its own sub-agent, so a Block there
 			// would read as a setting and do nothing.
 			if target, ok := loadAgent(udb, subject); ok && value == PolicyBlock && ownSubAgent(caller, target) {
-				http.Error(w, agentName(target)+" is a sub-agent of this agent, and an agent can always call its own sub-agents. "+
-					"To stop it being used, delete the sub-agent or narrow its tools.", http.StatusBadRequest)
-				return
+				return nil, jsonapi.BadRequest(agentName(target) + " is a sub-agent of this agent, and an agent can always call its own sub-agents. " +
+					"To stop it being used, delete the sub-agent or narrow its tools.")
 			}
 			if target, ok := loadAgent(udb, subject); ok && !dispatchReachable(caller, target) {
-				http.Error(w, "this agent's dispatch policy does not reach "+agentName(target)+
-					", so a decision about it could never take effect. Widen the policy above first, or pick a target it can already call.",
-					http.StatusBadRequest)
-				return
+				return nil, jsonapi.BadRequest("this agent's dispatch policy does not reach " + agentName(target) +
+					", so a decision about it could never take effect. Widen the policy above first, or pick a target it can already call.")
 			}
 		}
 		setDelegationDecision(user, agentID, subject, value)
 	default:
-		http.Error(w, "unknown kind "+kind, http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("unknown kind " + kind)
 	}
-	w.WriteHeader(http.StatusNoContent)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // handleConsolePermissionAudience sets who may RUN an agent: everyone signed
@@ -1034,24 +966,16 @@ func (T *OrchestrateApp) handleConsolePermissionGrant(w http.ResponseWriter, r *
 // decisions at once: everyone may use it, AND put a card on the dashboard.
 // Those were deliberately split, and writing the old flag would weld them
 // back together.
-func (T *OrchestrateApp) handleConsolePermissionAudience(w http.ResponseWriter, r *http.Request) {
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+func (T *OrchestrateApp) handleConsolePermissionAudience(call *jsonapi.Call, payload json.RawMessage) (any, error) {
+	r := call.R
+	user, udb := call.User, call.UDB
 	rec, found := findAgentByNameOrID(udb, user, strings.TrimSpace(r.URL.Query().Get("agent")))
 	if !found {
-		http.NotFound(w, r)
-		return
+		return nil, errNotFound
 	}
 	var body map[string]any
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
+	if err := json.Unmarshal(payload, &body); err != nil {
+		return nil, jsonapi.BadRequest("bad request")
 	}
 	// Two reach flags, one door. Both are an administrator's to grant and both
 	// go through the same gate; which one arrived decides nothing else.
@@ -1061,20 +985,17 @@ func (T *OrchestrateApp) handleConsolePermissionAudience(w http.ResponseWriter, 
 		field, current, raw, present = "mcp_exposed", rec.MCPExposed, v, true
 	}
 	if !present {
-		http.Error(w, "no reach flag given", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("no reach flag given")
 	}
 	on := truthyPatchValue(raw)
 	if on == current {
-		w.WriteHeader(http.StatusNoContent) // already what was asked for
-		return
+		return jsonapi.Empty(http.StatusNoContent), nil // already what was asked for
 	}
 	if T.agentPublishNeedsApproval(r, user, rec.ID, field, on, current) {
 		// A body rather than 204: "requested" and "done" are different
 		// outcomes, and a caller that cannot tell them apart shows the agent
 		// as published while an administrator has not looked at it yet.
-		jsonapi.Write(w, map[string]any{"ok": true, "requested": []string{field}})
-		return
+		return map[string]any{"ok": true, "requested": []string{field}}, nil
 	}
 	if field == "mcp_exposed" {
 		rec.MCPExposed = on
@@ -1082,8 +1003,7 @@ func (T *OrchestrateApp) handleConsolePermissionAudience(w http.ResponseWriter, 
 		rec.Everyone = on
 	}
 	if _, err := saveAgent(udb, rec); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return nil, jsonapi.Status(http.StatusInternalServerError, err.Error())
 	}
-	w.WriteHeader(http.StatusNoContent)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }

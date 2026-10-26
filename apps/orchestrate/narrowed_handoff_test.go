@@ -75,7 +75,7 @@ func TestANarrowedAgentsFirstHandoffFromAChannelWaitsForTheOwner(t *testing.T) {
 	r.AddCookie(&http.Cookie{Name: "gohort_session", Value: AuthCreateSession(AuthDB(), "u")})
 	w := httptest.NewRecorder()
 	before := len(df.thread(room).Messages)
-	df.app.resolveApproval(w, r, true)
+	routed(df.app)(w, r)
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("approve answered %d %s", w.Code, w.Body.String())
 	}

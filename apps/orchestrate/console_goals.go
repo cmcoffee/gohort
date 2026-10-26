@@ -21,7 +21,6 @@ package orchestrate
 
 import (
 	"fmt"
-	"net/http"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -75,11 +74,9 @@ type consoleGoalRow struct {
 
 // handleConsoleGoals serves the merged view: GET /api/console/goals (+ ?agent=
 // to scope it, matching the Scheduler).
-func (T *OrchestrateApp) handleConsoleGoals(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleConsoleGoals(c *jsonapi.Call) (any, error) {
+	r := c.R
+	user := c.User
 	agentID := strings.TrimSpace(r.URL.Query().Get("agent"))
 	out := []map[string]any{}
 
@@ -165,7 +162,7 @@ func (T *OrchestrateApp) handleConsoleGoals(w http.ResponseWriter, r *http.Reque
 	}
 
 	ui.SortRowsBySection(out, []string{goalSectionStalled, goalSectionInFlight, goalSectionMet})
-	jsonapi.Write(w, out)
+	return out, nil
 }
 
 // rfc3339 is the one stamp format every scheduled surface reports a next fire

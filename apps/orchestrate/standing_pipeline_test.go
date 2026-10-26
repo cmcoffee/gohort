@@ -114,7 +114,7 @@ func TestRelinkOffersAndAcceptsTheRightTargetKind(t *testing.T) {
 	// The picker, asked about the PIPELINE schedule, offers pipelines.
 	r := httptest.NewRequest("GET", "/api/console/agent-options?row=nightly", nil)
 	w := httptest.NewRecorder()
-	app.handleConsoleAgentOptions(w, asUser(r, user))
+	routed(app)(w, asUser(r, user))
 	body := w.Body.String()
 	if !strings.Contains(body, good.ID) || !strings.Contains(body, "Nightly") {
 		t.Errorf("the pipeline schedule's picker should list pipelines:\n%s", body)
@@ -125,7 +125,7 @@ func TestRelinkOffersAndAcceptsTheRightTargetKind(t *testing.T) {
 	// Asked about the AGENT schedule, it offers agents, exactly as before.
 	r = httptest.NewRequest("GET", "/api/console/agent-options?row=morning", nil)
 	w = httptest.NewRecorder()
-	app.handleConsoleAgentOptions(w, asUser(r, user))
+	routed(app)(w, asUser(r, user))
 	if !strings.Contains(w.Body.String(), agent.ID) {
 		t.Errorf("the agent schedule's picker should still list agents:\n%s", w.Body.String())
 	}
@@ -133,7 +133,7 @@ func TestRelinkOffersAndAcceptsTheRightTargetKind(t *testing.T) {
 	// Relink accepts a pipeline for the pipeline schedule, and clears broken.
 	r = httptest.NewRequest("POST", "/api/console/agents/relink?id=nightly&value="+good.ID, nil)
 	w = httptest.NewRecorder()
-	app.handleConsoleAgentRelink(w, asUser(r, user))
+	routed(app)(w, asUser(r, user))
 	if w.Code != 204 {
 		t.Fatalf("relink: %d %s", w.Code, w.Body.String())
 	}
@@ -155,7 +155,7 @@ func TestRelinkOffersAndAcceptsTheRightTargetKind(t *testing.T) {
 	// old picker.
 	r = httptest.NewRequest("POST", "/api/console/agents/relink?id=nightly&value="+agent.ID, nil)
 	w = httptest.NewRecorder()
-	app.handleConsoleAgentRelink(w, asUser(r, user))
+	routed(app)(w, asUser(r, user))
 	if w.Code != 400 {
 		t.Errorf("an agent is not a pipeline: %d %s", w.Code, w.Body.String())
 	}
@@ -165,7 +165,7 @@ func TestRelinkOffersAndAcceptsTheRightTargetKind(t *testing.T) {
 	// are the same ones the single view builds.
 	r = httptest.NewRequest("GET", "/api/console/scheduler", nil)
 	w = httptest.NewRecorder()
-	app.handleConsoleScheduler(w, asUser(r, user))
+	routed(app)(w, asUser(r, user))
 	if !strings.Contains(w.Body.String(), "pipeline - Nightly") {
 		t.Errorf("the row should name the pipeline it fires:\n%s", w.Body.String())
 	}
@@ -280,7 +280,7 @@ func machineScheduleReq(t *testing.T, app *OrchestrateApp, user, body string) *h
 	t.Helper()
 	r := httptest.NewRequest("POST", "/api/console/machine-schedule/create", strings.NewReader(body))
 	w := httptest.NewRecorder()
-	app.handleConsoleMachineScheduleCreate(w, asUser(r, user))
+	routed(app)(w, asUser(r, user))
 	return w
 }
 
@@ -375,7 +375,7 @@ func TestMachineOptionsOfferOnlyRuns(t *testing.T) {
 
 	r := httptest.NewRequest("GET", "/api/console/machine-options", nil)
 	w := httptest.NewRecorder()
-	app.handleConsoleMachineOptions(w, asUser(r, user))
+	routed(app)(w, asUser(r, user))
 	if w.Code != 200 {
 		t.Fatalf("%d", w.Code)
 	}

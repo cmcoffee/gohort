@@ -114,7 +114,7 @@ func TestDeploymentSettingsRefuseWhatNothingReads(t *testing.T) {
 	patch := func(body string) int {
 		r := httptest.NewRequest(http.MethodPatch, "/api/console/deployment-settings", strings.NewReader(body))
 		w := httptest.NewRecorder()
-		app.handleDeploymentSettings(w, asUser(r, "alice"))
+		routed(app)(w, asUser(r, "alice"))
 		return w.Code
 	}
 	if code := patch(`{"workspace_network":"off"}`); code != http.StatusNoContent {

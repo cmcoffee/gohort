@@ -898,19 +898,16 @@ func sortedCounts(m map[string]*firingCount) []firingCount {
 // handleConsoleFirings serves the admin view: GET
 // /api/console/judge-records?kind=&arm=&overturned=&limit=. Admin only, because
 // it spans every user's agents.
-func (T *OrchestrateApp) handleConsoleFirings(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok {
-		return
-	}
+func (T *OrchestrateApp) handleConsoleFirings(c *jsonapi.Call) (any, error) {
+	r := c.R
 	if !RequestIsAdmin(r) {
-		http.Error(w, "admin only", http.StatusForbidden)
-		return
+		return nil, jsonapi.Forbidden("admin only")
 	}
 	q := r.URL.Query()
 	limit, _ := strconv.Atoi(q.Get("limit"))
 	f := firingFilter{Kind: q.Get("kind"), Arm: q.Get("arm"), Overturned: q.Get("overturned"), Limit: limit}
-	w.Header().Set("Cache-Control", "no-store")
-	jsonapi.Write(w, summarizeFirings(loadFirings(T.DB, time.Now()), f))
+	c.W.Header().Set("Cache-Control", "no-store")
+	return summarizeFirings(loadFirings(T.DB, time.Now()), f), nil
 }
 
 // firingTestCase is a record exported as the start of a regression test: the

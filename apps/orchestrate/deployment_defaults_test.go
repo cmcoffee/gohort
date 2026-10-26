@@ -283,7 +283,7 @@ func TestTighteningTheMaximumMovesTheDefault(t *testing.T) {
 		t.Helper()
 		r := httptest.NewRequest(http.MethodPatch, "/api/console/deployment-settings", strings.NewReader(body))
 		w := httptest.NewRecorder()
-		app.handleDeploymentSettings(w, asUser(r, "alice"))
+		routed(app)(w, asUser(r, "alice"))
 		if w.Code != http.StatusNoContent {
 			t.Fatalf("patch %s: %d", body, w.Code)
 		}

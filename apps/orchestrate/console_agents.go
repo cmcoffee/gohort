@@ -16,11 +16,9 @@ import (
 // handleConsoleAgentOptions lists the owner's agents as picker options
 // ({value:id,label:name}) — the shared source for the "Relink" row action across
 // the monitors / enabled-agents / recurring panes.
-func (T *OrchestrateApp) handleConsoleAgentOptions(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleConsoleAgentOptions(c *jsonapi.Call) (any, error) {
+	r := c.R
+	user := c.User
 	type opt struct {
 		Value string `json:"value"`
 		Label string `json:"label"`
@@ -62,8 +60,7 @@ func (T *OrchestrateApp) handleConsoleAgentOptions(w http.ResponseWriter, r *htt
 				}
 				opts = append(opts, opt{Value: sm.Def.ID, Label: label + " (shared by " + sm.Owner + ")"})
 			}
-			jsonapi.Write(w, opts)
-			return
+			return opts, nil
 		}
 		if sa, found := GetStandingAgent(RootDB, user, row); found && sa.TargetsPipeline() {
 			for _, d := range ListPipelineDefs(UserDB(T.DB, user), user) {
@@ -84,8 +81,7 @@ func (T *OrchestrateApp) handleConsoleAgentOptions(w http.ResponseWriter, r *htt
 				}
 				opts = append(opts, opt{Value: sp.Def.ID, Label: label + " (shared by " + sp.Owner + ")"})
 			}
-			jsonapi.Write(w, opts)
-			return
+			return opts, nil
 		}
 	}
 	// with_default=1 (the monitor relink picker only) leads with a "use the
@@ -110,16 +106,14 @@ func (T *OrchestrateApp) handleConsoleAgentOptions(w http.ResponseWriter, r *htt
 	// Your own agents first, then each app's: the picker draws a heading
 	// where the group changes.
 	sort.SliceStable(opts, func(i, j int) bool { return appGroupsLast(opts[i].Group, opts[j].Group) })
-	jsonapi.Write(w, opts)
+	return opts, nil
 }
 
 // handleConsoleAgentRelink re-points a broken standing agent at a live target
 // agent and clears broken (leaves paused — an explicit Resume finishes recovery).
-func (T *OrchestrateApp) handleConsoleAgentRelink(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleConsoleAgentRelink(c *jsonapi.Call, _ struct{}) (any, error) {
+	r := c.R
+	user := c.User
 	name := strings.TrimSpace(r.URL.Query().Get("id"))
 	value := strings.TrimSpace(r.URL.Query().Get("value"))
 	// Load the schedule FIRST: what the value has to be depends on what
@@ -129,8 +123,7 @@ func (T *OrchestrateApp) handleConsoleAgentRelink(w http.ResponseWriter, r *http
 	// where whichever the runner checks first wins forever.
 	sa, found := GetStandingAgent(RootDB, user, name)
 	if !found {
-		http.Error(w, "no such standing agent", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("no such standing agent")
 	}
 	if sa.TargetsMachine() {
 		// The same resolver the picker offered from, so a choice the picker
@@ -138,75 +131,63 @@ func (T *OrchestrateApp) handleConsoleAgentRelink(w http.ResponseWriter, r *http
 		// worse than no offer.
 		def, ok := machineForUser(user, value)
 		if !ok {
-			http.Error(w, "no such machine", http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest("no such machine")
 		}
 		// The same two refusals the runner makes, made HERE instead, so a
 		// repair that would fail at 3am fails now with somebody reading it.
 		if !def.Unattended {
-			http.Error(w, "that machine converses rather than runs: a schedule fires with nobody there to answer a step that waits", http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest("that machine converses rather than runs: a schedule fires with nobody there to answer a step that waits")
 		}
 		if probs := def.Problems(); len(probs) > 0 {
-			http.Error(w, "that machine will not run yet: "+probs[0], http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest("that machine will not run yet: " + probs[0])
 		}
 		sa.MachineID = def.ID
 		sa.Broken = false
 		sa.BrokenReason = ""
 		SaveStandingAgent(RootDB, sa)
 		clearParked(schedKindStanding, user, sa.Name)
-		w.WriteHeader(http.StatusNoContent)
-		return
+		return jsonapi.Empty(http.StatusNoContent), nil
 	}
 	if sa.TargetsPipeline() {
 		// pipelineForUser, not the own-store load: the picker above offers
 		// pipelines somebody shared, and this refused every one of them.
 		def, ok := pipelineForUser(user, value)
 		if !ok {
-			http.Error(w, "no such pipeline", http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest("no such pipeline")
 		}
 		// A pipeline that would not run is not a repair. Refusing here
 		// keeps the schedule broken-and-visible rather than pointing it at
 		// something that fails on its next fire.
 		if err := def.Validate(); err != nil {
-			http.Error(w, "that pipeline would not run: "+err.Error(), http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest("that pipeline would not run: " + err.Error())
 		}
 		sa.PipelineID = def.ID
 		sa.Broken = false
 		sa.BrokenReason = ""
 		SaveStandingAgent(RootDB, sa)
 		clearParked(schedKindStanding, user, sa.Name)
-		w.WriteHeader(http.StatusNoContent)
-		return
+		return jsonapi.Empty(http.StatusNoContent), nil
 	}
 	if _, ok := loadAgent(UserDB(T.DB, user), value); !ok {
-		http.Error(w, "no such agent", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("no such agent")
 	}
 	// Left paused: an explicit Resume finishes the recovery here.
 	if err := relinkStandingToAgent(user, name, value, false); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest(err.Error())
 	}
-	w.WriteHeader(http.StatusNoContent)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // handleConsoleAgentGet returns a standing agent's editable record for the
 // Scheduler edit modal — the mission as well as the timing, because "this runs
 // at the wrong time" and "this runs doing the wrong thing" are the same
 // complaint from the same page.
-func (T *OrchestrateApp) handleConsoleAgentGet(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleConsoleAgentGet(c *jsonapi.Call) (any, error) {
+	r := c.R
+	user := c.User
 	sa, found := GetStandingAgent(RootDB, user, strings.TrimSpace(r.URL.Query().Get("id")))
 	if !found {
-		http.Error(w, "no such standing agent", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("no such standing agent")
 	}
 	startAt := ""
 	if !sa.StartAt.IsZero() {
@@ -216,7 +197,7 @@ func (T *OrchestrateApp) handleConsoleAgentGet(w http.ResponseWriter, r *http.Re
 	// and the sub-agent in the "Who does it" picker. A pipeline or machine
 	// schedule runs no agent, so it has neither.
 	mission, forID, forOptions := scheduleHandoffView(UserDB(T.DB, user), user, sa.AgentID, sa.Mission)
-	jsonapi.Write(w, map[string]any{
+	return map[string]any{
 		"name":             sa.Name,
 		"mission":          mission,
 		"for":              forID,
@@ -244,7 +225,7 @@ func (T *OrchestrateApp) handleConsoleAgentGet(w http.ResponseWriter, r *http.Re
 		// it has to know which it is looking at.
 		"runs":        standingRunsLabel(user, sa),
 		"targets_run": sa.TargetsPipeline() || sa.TargetsMachine(),
-	})
+	}, nil
 }
 
 // handleConsoleAgentUpdate edits a standing agent's schedule (a cron spec OR an
@@ -259,37 +240,27 @@ func (T *OrchestrateApp) handleConsoleAgentGet(w http.ResponseWriter, r *http.Re
 // REFUSED rather than treated as "clear it" — a standing agent whose mission is
 // blank fires on its schedule with nothing to do, so a stray empty textarea
 // would quietly turn a working schedule into a recurring no-op.
-func (T *OrchestrateApp) handleConsoleAgentUpdate(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+func (T *OrchestrateApp) handleConsoleAgentUpdate(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+	r := c.R
+	user := c.User
 	sa, found := GetStandingAgent(RootDB, user, strings.TrimSpace(r.URL.Query().Get("id")))
 	if !found {
-		http.Error(w, "no such standing agent", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("no such standing agent")
 	}
 	var body standingUpdateBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "bad body: "+err.Error(), http.StatusBadRequest)
-		return
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return nil, jsonapi.BadRequest("bad body: " + err.Error())
 	}
 	// The editor showed the mission without its handoff line, so the line is
 	// rebuilt from the picker before the mission is checked and stored.
 	mission, err := scheduleHandoffEdit(UserDB(T.DB, user), user, sa.AgentID, sa.Mission, body.Mission, body.For)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest(err.Error())
 	}
 	body.Mission = mission
 	before := sa
 	if err := applyStandingUpdate(&sa, body); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest(err.Error())
 	}
 	if sa.Paused || !standingNeedsRearm(before, sa) {
 		SaveStandingAgent(RootDB, sa)
@@ -305,11 +276,10 @@ func (T *OrchestrateApp) handleConsoleAgentUpdate(w http.ResponseWriter, r *http
 		} else {
 			_ = ScheduleStandingAgent(RootDB, before)
 		}
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest(err.Error())
 	}
 	summarizeMissionLater(sa)
-	w.WriteHeader(http.StatusNoContent)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // standingUpdateBody is what the Scheduler's scheduled-agent editor posts.
@@ -447,13 +417,11 @@ type consoleAgentRow struct {
 
 // handleConsoleAgents lists the owner's standing (scheduled) agents, each
 // joined with the status of its most recent run.
-func (T *OrchestrateApp) handleConsoleAgents(w http.ResponseWriter, r *http.Request) {
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleConsoleAgents(c *jsonapi.Call) (any, error) {
+	r := c.R
+	user, udb := c.User, c.UDB
 	agentID := strings.TrimSpace(r.URL.Query().Get("agent"))
-	jsonapi.Write(w, consoleAgentRows(user, udb, agentID, nil))
+	return consoleAgentRows(user, udb, agentID, nil), nil
 }
 
 // standingRunIndex is the owner's run ledger, read once for every standing
@@ -601,34 +569,28 @@ func standingNameCollision(udb Database, owner string, sa StandingAgent) (AgentR
 
 // handleConsoleAgentDelete removes a standing agent (and cancels its schedule)
 // from the Enabled-agents pane's row Delete button. id = the agent's name.
-func (T *OrchestrateApp) handleConsoleAgentDelete(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleConsoleAgentDelete(c *jsonapi.Call, _ struct{}) (any, error) {
+	r := c.R
+	user := c.User
 	name := strings.TrimSpace(r.URL.Query().Get("id"))
 	if name == "" {
-		http.Error(w, "id is required", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("id is required")
 	}
 	DeleteStandingAgent(RootDB, user, name)
-	w.WriteHeader(http.StatusNoContent)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // setConsoleAgentPaused pauses or resumes a standing agent — the same logic as
 // the set_standing_paused tool, behind the Enabled-agents pane's Pause/Resume
 // row buttons. Idempotent, so a Pause click on an already-paused agent (or vice
 // versa) is harmless. id = the agent's name.
-func (T *OrchestrateApp) setConsoleAgentPaused(w http.ResponseWriter, r *http.Request, paused bool) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) setConsoleAgentPaused(c *jsonapi.Call, paused bool) (any, error) {
+	r := c.R
+	user := c.User
 	name := strings.TrimSpace(r.URL.Query().Get("id"))
 	sa, found := GetStandingAgent(RootDB, user, name)
 	if !found {
-		http.Error(w, "no such standing agent", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("no such standing agent")
 	}
 	sa.Paused = paused
 	if paused {
@@ -651,8 +613,7 @@ func (T *OrchestrateApp) setConsoleAgentPaused(w http.ResponseWriter, r *http.Re
 		// clearing the broken flag on success (see the monitor path for rationale).
 		if sa.Broken {
 			if reason := standingAgentDependencyError(sa); reason != "" {
-				http.Error(w, "can't resume: "+reason+"; relink it to a live agent or delete it", http.StatusConflict)
-				return
+				return nil, jsonapi.Status(http.StatusConflict, "can't resume: "+reason+"; relink it to a live agent or delete it")
 			}
 			sa.Broken = false
 			sa.BrokenReason = ""
@@ -660,15 +621,15 @@ func (T *OrchestrateApp) setConsoleAgentPaused(w http.ResponseWriter, r *http.Re
 		SaveStandingAgent(RootDB, sa)
 		_ = ScheduleStandingAgent(RootDB, sa)
 	}
-	w.WriteHeader(http.StatusNoContent)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
-func (T *OrchestrateApp) handleConsoleAgentPause(w http.ResponseWriter, r *http.Request) {
-	T.setConsoleAgentPaused(w, r, true)
+func (T *OrchestrateApp) handleConsoleAgentPause(c *jsonapi.Call, _ struct{}) (any, error) {
+	return T.setConsoleAgentPaused(c, true)
 }
 
-func (T *OrchestrateApp) handleConsoleAgentResume(w http.ResponseWriter, r *http.Request) {
-	T.setConsoleAgentPaused(w, r, false)
+func (T *OrchestrateApp) handleConsoleAgentResume(c *jsonapi.Call, _ struct{}) (any, error) {
+	return T.setConsoleAgentPaused(c, false)
 }
 
 // handleConsoleAgentRun fires a standing agent's run immediately from the
@@ -679,15 +640,12 @@ func (T *OrchestrateApp) handleConsoleAgentResume(w http.ResponseWriter, r *http
 // when the HTTP handler returns; the outcome reports back through the standing
 // reporter, and the run ledger updates the row's status on reload. id = the
 // agent's name. Returns 202 once the run is launched.
-func (T *OrchestrateApp) handleConsoleAgentRun(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleConsoleAgentRun(c *jsonapi.Call, _ struct{}) (any, error) {
+	r := c.R
+	user := c.User
 	name := strings.TrimSpace(r.URL.Query().Get("id"))
 	if _, found := GetStandingAgent(RootDB, user, name); !found {
-		http.Error(w, "no such standing agent", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("no such standing agent")
 	}
 	go func() {
 		defer func() {
@@ -697,7 +655,7 @@ func (T *OrchestrateApp) handleConsoleAgentRun(w http.ResponseWriter, r *http.Re
 		}()
 		RunStandingAgentNow(context.Background(), RootDB, user, name)
 	}()
-	w.WriteHeader(http.StatusAccepted)
+	return jsonapi.Empty(http.StatusAccepted), nil
 }
 
 // standingRunsLabel names the TARGET a schedule fires, or "" when it is the

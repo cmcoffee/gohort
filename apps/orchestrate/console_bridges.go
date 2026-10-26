@@ -26,10 +26,11 @@ func channelLabelForRow(m EventMonitor) string {
 // handleConsoleBridgeSetChannel hooks the bridge (owner+name) to a channel, or
 // detaches it when channel_id is empty. Reuses the same shared logic the bridge
 // tool's update action calls, so UI and tool behave identically.
-func (T *OrchestrateApp) handleConsoleBridgeSetChannel(w http.ResponseWriter, r *http.Request) {
-	m, ok := T.consoleBridgeMonitor(w, r)
-	if !ok {
-		return
+func (T *OrchestrateApp) handleConsoleBridgeSetChannel(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+	r := c.R
+	m, mErr := T.consoleBridgeMonitor(c)
+	if mErr != nil {
+		return nil, mErr
 	}
 	channelID := strings.TrimSpace(r.URL.Query().Get("channel_id"))
 	if channelID == "" {
@@ -38,31 +39,32 @@ func (T *OrchestrateApp) handleConsoleBridgeSetChannel(w http.ResponseWriter, r 
 			ChannelID string `json:"channel_id"`
 			ID        string `json:"id"`
 		}
-		_ = json.NewDecoder(r.Body).Decode(&body)
+		_ = json.Unmarshal(raw, &body)
 		channelID = strings.TrimSpace(body.ChannelID)
 		if channelID == "" {
 			channelID = strings.TrimSpace(body.ID)
 		}
 	}
 	if _, err := setBridgeChannel(m.Owner, m.Name, channelID); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest(err.Error())
 	}
-	w.WriteHeader(http.StatusNoContent)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // handleConsoleBridgeChannels lists a given owner's channels as {id,label,desc}
 // for the Connect picker. A bridge can deliver into ANY of the owner's channels
 // (it's a delivery target, not an exclusive transport binding), so — unlike the
 // messaging Connect picker — occupied channels are included.
-func (T *OrchestrateApp) handleConsoleBridgeChannels(w http.ResponseWriter, r *http.Request) {
+func (T *OrchestrateApp) handleConsoleBridgeChannels(c *jsonapi.Call) (any, error) {
+	r := c.R
 	owner := strings.TrimSpace(r.URL.Query().Get("owner"))
 	if owner == "" {
-		if u, _, ok := RequireUser(w, r, T.DB); ok {
-			owner = u
-		} else {
-			return
+		// Behind the admin gate, which admits a request without asking who
+		// it is: with no owner named, the reader's own channels.
+		if c.User == "" {
+			return nil, jsonapi.Status(http.StatusUnauthorized, "unauthorized")
 		}
+		owner = c.User
 	}
 	udb := UserDB(T.DB, owner)
 	rows := []map[string]any{}
@@ -81,14 +83,14 @@ func (T *OrchestrateApp) handleConsoleBridgeChannels(w http.ResponseWriter, r *h
 			"desc":  "Agent: " + agentName,
 		})
 	}
-	jsonapi.Write(w, rows)
+	return rows, nil
 }
 
 // handleConsoleBridges lists every owner's bridges (watch-kind event
 // monitors created by the bridge tool) for the Admin > Bridges table.
 // Admin-gated at the route (adminGated), so cross-owner listing is
 // deliberate — the admin governs all bridges, not just their own.
-func (T *OrchestrateApp) handleConsoleBridges(w http.ResponseWriter, r *http.Request) {
+func (T *OrchestrateApp) handleConsoleBridges(c *jsonapi.Call) (any, error) {
 	rows := []map[string]any{}
 	for _, m := range ListAllEventMonitors(RootDB) {
 		if !isBridgeMonitor(m) {
@@ -124,7 +126,7 @@ func (T *OrchestrateApp) handleConsoleBridges(w http.ResponseWriter, r *http.Req
 			"channel_name": channelLabelForRow(m),
 		})
 	}
-	jsonapi.Write(w, rows)
+	return rows, nil
 }
 
 // handleConsoleBridgeThread returns the recent messages of the channel a poll
@@ -135,10 +137,10 @@ func (T *OrchestrateApp) handleConsoleBridges(w http.ResponseWriter, r *http.Req
 // effectiveChannelSession — the SAME resolver delivery uses, so the view can't
 // diverge from where the messages actually land). Emits [] (not an error) when
 // the bridge targets no channel or nothing has landed yet.
-func (T *OrchestrateApp) handleConsoleBridgeThread(w http.ResponseWriter, r *http.Request) {
-	m, ok := T.consoleBridgeMonitor(w, r)
-	if !ok {
-		return
+func (T *OrchestrateApp) handleConsoleBridgeThread(c *jsonapi.Call) (any, error) {
+	m, mErr := T.consoleBridgeMonitor(c)
+	if mErr != nil {
+		return nil, mErr
 	}
 	out := []ChannelLine{}
 	if wc := strings.TrimSpace(m.WakeChannel); wc != "" {
@@ -149,7 +151,7 @@ func (T *OrchestrateApp) handleConsoleBridgeThread(w http.ResponseWriter, r *htt
 			}
 		}
 	}
-	jsonapi.Write(w, out)
+	return out, nil
 }
 
 // channelLinesFromMessages projects a session's stored turns into the
@@ -177,21 +179,20 @@ func channelLinesFromMessages(msgs []ChatMessage, limit int) []ChannelLine {
 
 // consoleBridgeMonitor resolves the bridge a row action targets from
 // ?owner=&name=. Returns ok=false after writing the error response.
-func (T *OrchestrateApp) consoleBridgeMonitor(w http.ResponseWriter, r *http.Request) (EventMonitor, bool) {
-	owner := strings.TrimSpace(r.URL.Query().Get("owner"))
-	name := strings.TrimSpace(r.URL.Query().Get("name"))
+func (T *OrchestrateApp) consoleBridgeMonitor(c *jsonapi.Call) (EventMonitor, error) {
+	owner := strings.TrimSpace(c.R.URL.Query().Get("owner"))
+	name := strings.TrimSpace(c.R.URL.Query().Get("name"))
 	m, found := GetEventMonitor(RootDB, owner, name)
 	if !found || !isBridgeMonitor(m) {
-		http.Error(w, "no such bridge", http.StatusNotFound)
-		return EventMonitor{}, false
+		return EventMonitor{}, jsonapi.NotFound("no such bridge")
 	}
-	return m, true
+	return m, nil
 }
 
-func (T *OrchestrateApp) setConsoleBridgePaused(w http.ResponseWriter, r *http.Request, paused bool) {
-	m, ok := T.consoleBridgeMonitor(w, r)
-	if !ok {
-		return
+func (T *OrchestrateApp) setConsoleBridgePaused(c *jsonapi.Call, paused bool) (any, error) {
+	m, mErr := T.consoleBridgeMonitor(c)
+	if mErr != nil {
+		return nil, mErr
 	}
 	m.Paused = paused
 	if paused {
@@ -205,27 +206,27 @@ func (T *OrchestrateApp) setConsoleBridgePaused(w http.ResponseWriter, r *http.R
 		SaveEventMonitor(RootDB, m)
 		_ = ScheduleEventMonitor(RootDB, m)
 	}
-	w.WriteHeader(http.StatusNoContent)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
-func (T *OrchestrateApp) handleConsoleBridgePause(w http.ResponseWriter, r *http.Request) {
-	T.setConsoleBridgePaused(w, r, true)
+func (T *OrchestrateApp) handleConsoleBridgePause(c *jsonapi.Call, _ struct{}) (any, error) {
+	return T.setConsoleBridgePaused(c, true)
 }
 
-func (T *OrchestrateApp) handleConsoleBridgeResume(w http.ResponseWriter, r *http.Request) {
-	T.setConsoleBridgePaused(w, r, false)
+func (T *OrchestrateApp) handleConsoleBridgeResume(c *jsonapi.Call, _ struct{}) (any, error) {
+	return T.setConsoleBridgePaused(c, false)
 }
 
-func (T *OrchestrateApp) handleConsoleBridgeDelete(w http.ResponseWriter, r *http.Request) {
-	m, ok := T.consoleBridgeMonitor(w, r)
-	if !ok {
-		return
+func (T *OrchestrateApp) handleConsoleBridgeDelete(c *jsonapi.Call, _ struct{}) (any, error) {
+	m, mErr := T.consoleBridgeMonitor(c)
+	if mErr != nil {
+		return nil, mErr
 	}
 	if m.SchedulerID != "" {
 		UnscheduleTask(m.SchedulerID)
 	}
 	DeleteEventMonitor(RootDB, m.Owner, m.Name)
-	w.WriteHeader(http.StatusNoContent)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // handleConsoleGrants lists the owner's STANDING authorizations — the "Always
@@ -233,11 +234,8 @@ func (T *OrchestrateApp) handleConsoleBridgeDelete(w http.ResponseWriter, r *htt
 // Distinct from the pending queue (/api/console/approvals): those are one-time
 // and vanish once acted on; these persist until revoked. Each row carries a
 // "_id" of "<kind>:<target>" the Revoke action round-trips. GET only.
-func (T *OrchestrateApp) handleConsoleGrants(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleConsoleGrants(c *jsonapi.Call) (any, error) {
+	user := c.User
 	out := []map[string]any{}
 	for _, agent := range ListDelegationPreAuthorizations(RootDB, user) {
 		out = append(out, map[string]any{"_id": "agent:" + agent, "Kind": "Agent", "Target": agent})
@@ -245,26 +243,18 @@ func (T *OrchestrateApp) handleConsoleGrants(w http.ResponseWriter, r *http.Requ
 	for _, handle := range ListContactPreAuthorizations(RootDB, user) {
 		out = append(out, map[string]any{"_id": "contact:" + handle, "Kind": "Contact", "Target": handle})
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(out)
+	return out, nil
 }
 
 // handleGrantRevoke clears one standing grant. id = "<kind>:<target>" from the
 // grants list; future actions to that agent/contact queue for approval again.
-func (T *OrchestrateApp) handleGrantRevoke(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+func (T *OrchestrateApp) handleGrantRevoke(c *jsonapi.Call, _ struct{}) (any, error) {
+	r := c.R
+	user := c.User
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
 	kind, target, found := strings.Cut(id, ":")
 	if !found || target == "" {
-		http.Error(w, "bad grant id", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("bad grant id")
 	}
 	switch kind {
 	case "agent":
@@ -272,29 +262,22 @@ func (T *OrchestrateApp) handleGrantRevoke(w http.ResponseWriter, r *http.Reques
 	case "contact":
 		SetContactPreAuthorized(RootDB, user, "", target, false)
 	default:
-		http.Error(w, "unknown grant kind", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("unknown grant kind")
 	}
-	w.WriteHeader(http.StatusNoContent)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // handleChannelClear wipes an agent's Cortex home-thread conversation and its
 // rolling summary / fold cursor — the cheap fix for a crystallized thread.
 // Operational state (monitors, standing agents, approvals) is left untouched;
 // that is not this button's job. POST ?agent=<id>.
-func (T *OrchestrateApp) handleChannelClear(w http.ResponseWriter, r *http.Request) {
-	_, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+func (T *OrchestrateApp) handleChannelClear(c *jsonapi.Call, _ struct{}) (any, error) {
+	r := c.R
+	udb := c.UDB
 	agentID := consoleAgentID(r)
 	sid := cortexSessionID(agentID)
 	deleteChatSession(udb, agentID, sid) // includes the compact state
-	w.WriteHeader(http.StatusNoContent)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // handleChannelCompact force-folds an agent's Cortex home thread now: messages
@@ -302,26 +285,18 @@ func (T *OrchestrateApp) handleChannelClear(w http.ResponseWriter, r *http.Reque
 // archived to searchable history), rather than being wiped. The gentle middle
 // ground between doing nothing and Clear Cortex. The fold runs in the background
 // (single-flight per thread), so this returns immediately. POST ?agent=<id>.
-func (T *OrchestrateApp) handleChannelCompact(w http.ResponseWriter, r *http.Request) {
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+func (T *OrchestrateApp) handleChannelCompact(c *jsonapi.Call, _ struct{}) (any, error) {
+	r := c.R
+	user, udb := c.User, c.UDB
 	agentID := consoleAgentID(r)
 	agent, ok := loadAgent(udb, agentID)
 	if !ok {
-		http.Error(w, "agent not found", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("agent not found")
 	}
 	// Nothing to fold into when the rolling summary is turned off — the thread
 	// bounds by forgetting old messages instead, so there's no summary to build.
 	if agent.DisableCompaction {
-		http.Error(w, "compaction is disabled for this agent: nothing to compact", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("compaction is disabled for this agent: nothing to compact")
 	}
 	keepRecent := agent.ContextDepth
 	if keepRecent <= 0 {
@@ -330,5 +305,5 @@ func (T *OrchestrateApp) handleChannelCompact(w http.ResponseWriter, r *http.Req
 	// Trigger=1 forces a fold regardless of how short the unsummarized tail is:
 	// everything older than the KeepRecent verbatim tail folds now.
 	T.maybeFoldOperatorHistory(udb, user, agent, cortexSessionID(agentID), CompactionConfig{KeepRecent: keepRecent, Trigger: 1})
-	w.WriteHeader(http.StatusNoContent)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }

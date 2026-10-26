@@ -13,12 +13,10 @@ package orchestrate
 // and there is nothing to do to it from here except go and look at the rule.
 
 import (
-	"net/http"
 	"sort"
 	"strings"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
@@ -50,11 +48,9 @@ const consoleGuardrailLimit = 60
 // Scoped to the requesting user's own store, like every other console view, so
 // one user can never read another's blocks — and a block record names a rule
 // and a contact, which is exactly the pairing that must not leak sideways.
-func (T *OrchestrateApp) handleConsoleGuardrails(w http.ResponseWriter, r *http.Request) {
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleConsoleGuardrails(c *jsonapi.Call) (any, error) {
+	r := c.R
+	user, udb := c.User, c.UDB
 	// An agent filter, so the same endpoint backs a per-agent view if one is
 	// ever wanted. Absent = the whole fleet, which is the point of this view.
 	only := strings.TrimSpace(r.URL.Query().Get("agent"))
@@ -94,7 +90,7 @@ func (T *OrchestrateApp) handleConsoleGuardrails(w http.ResponseWriter, r *http.
 		}
 		rows = append(rows, row)
 	}
-	jsonapi.Write(w, rows)
+	return rows, nil
 }
 
 // guardrailRowTitle renders the rule as a card title, trimmed so one long rule

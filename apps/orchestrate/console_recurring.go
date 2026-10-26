@@ -52,13 +52,11 @@ func subAgentRunsLabel(text string) string {
 // → per-session scheduled updates) for the Recurring-tasks nav card view — the
 // status-card sibling of Enabled agents / Event monitors. Scoped to the agent
 // that runs them (AgentID), matching the other two panes.
-func (T *OrchestrateApp) handleConsoleRecurring(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleConsoleRecurring(c *jsonapi.Call) (any, error) {
+	r := c.R
+	user := c.User
 	agentID := strings.TrimSpace(r.URL.Query().Get("agent"))
-	jsonapi.Write(w, consoleRecurringRows(user, agentID))
+	return consoleRecurringRows(user, agentID), nil
 }
 
 // consoleRecurringRows builds the rows for this view. Split off the handler so the
@@ -131,15 +129,12 @@ func consoleRecurringRows(user, agentID string) []consoleRecurringRow {
 // The history survives: Attempts, FireCount and the ledger are untouched. Only
 // the attempt ALLOWANCE restarts (AttemptsBase), or the resumed task would
 // stall again on its first fire.
-func (T *OrchestrateApp) handleConsoleRecurringResume(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleConsoleRecurringResume(c *jsonapi.Call, _ struct{}) (any, error) {
+	r := c.R
+	user := c.User
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
 	if id == "" {
-		http.Error(w, "id required", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("id required")
 	}
 	// Ownership by payload username, the same way delete and relink enforce it:
 	// the scheduler bucket is global and keyed by opaque UUID.
@@ -151,11 +146,9 @@ func (T *OrchestrateApp) handleConsoleRecurringResume(w http.ResponseWriter, r *
 		// allowance is its own, and nothing it was waiting on has changed.
 		if rt.Payload.Paused && !rt.Payload.Broken {
 			if _, err := setRecurringPaused(user, id, false); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
+				return nil, jsonapi.Status(http.StatusInternalServerError, err.Error())
 			}
-			w.WriteHeader(http.StatusNoContent)
-			return
+			return jsonapi.Empty(http.StatusNoContent), nil
 		}
 		UnscheduleTask(id)
 		p := rt.Payload
@@ -166,41 +159,30 @@ func (T *OrchestrateApp) handleConsoleRecurringResume(w http.ResponseWriter, r *
 		p.LastActive = time.Now().Format(time.RFC3339)
 		next, err := computeNextFire(&p, time.Now().In(UserLocation(user)))
 		if err != nil {
-			http.Error(w, "resumed but couldn't schedule: "+err.Error(), http.StatusInternalServerError)
-			return
+			return nil, jsonapi.Status(http.StatusInternalServerError, "resumed but couldn't schedule: "+err.Error())
 		}
 		if _, err := ScheduleTask(OrchestrateScheduledUpdateKind, p, next); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+			return nil, jsonapi.Status(http.StatusInternalServerError, err.Error())
 		}
 		Log("[orchestrate/objective] task %q resumed by %s: allowance restarts at fire %d", recurringName(p), user, p.FireCount)
-		w.WriteHeader(http.StatusNoContent)
-		return
+		return jsonapi.Empty(http.StatusNoContent), nil
 	}
-	http.Error(w, "recurring task not found", http.StatusNotFound)
+	return nil, jsonapi.NotFound("recurring task not found")
 }
 
 // handleConsoleRecurringPause holds one of the user's recurring tasks: POST
 // ?id=<scheduler id>. Resume is handleConsoleRecurringResume.
-func (T *OrchestrateApp) handleConsoleRecurringPause(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+func (T *OrchestrateApp) handleConsoleRecurringPause(c *jsonapi.Call, _ struct{}) (any, error) {
+	r := c.R
+	user := c.User
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
 	if id == "" {
-		http.Error(w, "id required", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("id required")
 	}
 	if _, err := setRecurringPaused(user, id, true); err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound(err.Error())
 	}
-	w.WriteHeader(http.StatusNoContent)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // setRecurringPaused pauses or resumes one of the owner's recurring tasks, by
@@ -262,25 +244,21 @@ func setRecurringPaused(owner, id string, paused bool) (string, error) {
 // UUID, so ownership is enforced by matching the task's payload username (via
 // listAgentRecurringTasks) before unscheduling — a user can't cancel another
 // user's task by guessing its id.
-func (T *OrchestrateApp) handleConsoleRecurringDelete(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleConsoleRecurringDelete(c *jsonapi.Call, _ struct{}) (any, error) {
+	r := c.R
+	user := c.User
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
 	if id == "" {
-		http.Error(w, "id required", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("id required")
 	}
 	for _, rt := range listAgentRecurringTasks(user, "") {
 		if rt.TaskID == id {
 			UnscheduleTask(id)
 			dropRecurringTaskNotes(rt.Payload)
-			w.WriteHeader(http.StatusNoContent)
-			return
+			return jsonapi.Empty(http.StatusNoContent), nil
 		}
 	}
-	http.Error(w, "recurring task not found", http.StatusNotFound)
+	return nil, jsonapi.NotFound("recurring task not found")
 }
 
 // handleConsoleRecurringRelink re-points a parked (broken) recurring task at a
@@ -288,22 +266,18 @@ func (T *OrchestrateApp) handleConsoleRecurringDelete(w http.ResponseWriter, r *
 // pause/resume concept (unlike monitors/standing), so relink resumes it
 // directly; LastActive is refreshed so the idle guard doesn't immediately reap a
 // just-relinked task.
-func (T *OrchestrateApp) handleConsoleRecurringRelink(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleConsoleRecurringRelink(c *jsonapi.Call, _ struct{}) (any, error) {
+	r := c.R
+	user := c.User
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
 	newAgent := strings.TrimSpace(r.URL.Query().Get("value"))
 	if _, ok := loadAgent(UserDB(T.DB, user), newAgent); !ok {
-		http.Error(w, "no such agent", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("no such agent")
 	}
 	if err := relinkRecurringToAgent(user, id, newAgent); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest(err.Error())
 	}
-	w.WriteHeader(http.StatusNoContent)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // handleConsoleRecurringRun fires a recurring task's prompt once immediately from
@@ -315,15 +289,12 @@ func (T *OrchestrateApp) handleConsoleRecurringRelink(w http.ResponseWriter, r *
 // full agent-loop turn and must outlive the response); the reply is appended to
 // the task's thread and the run ledger updates on reload. id = the scheduler task
 // id. Returns 202 once the fire is launched.
-func (T *OrchestrateApp) handleConsoleRecurringRun(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleConsoleRecurringRun(c *jsonapi.Call, _ struct{}) (any, error) {
+	r := c.R
+	user := c.User
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
 	if id == "" {
-		http.Error(w, "id required", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("id required")
 	}
 	found := false
 	for _, rt := range listAgentRecurringTasks(user, "") {
@@ -333,8 +304,7 @@ func (T *OrchestrateApp) handleConsoleRecurringRun(w http.ResponseWriter, r *htt
 		}
 	}
 	if !found {
-		http.Error(w, "recurring task not found", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("recurring task not found")
 	}
 	go func() {
 		defer func() {
@@ -346,16 +316,14 @@ func (T *OrchestrateApp) handleConsoleRecurringRun(w http.ResponseWriter, r *htt
 			Log("[orchestrate/console] run-now failed for recurring task %s: %v", id, err)
 		}
 	}()
-	w.WriteHeader(http.StatusAccepted)
+	return jsonapi.Empty(http.StatusAccepted), nil
 }
 
 // handleConsoleRecurringGet returns one recurring task's editable fields for the
 // rail's edit modal. Owner-checked via listAgentRecurringTasks. GET ?id=<id>.
-func (T *OrchestrateApp) handleConsoleRecurringGet(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleConsoleRecurringGet(c *jsonapi.Call) (any, error) {
+	r := c.R
+	user := c.User
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
 	udb := UserDB(T.DB, user)
 	for _, rt := range listAgentRecurringTasks(user, "") {
@@ -374,7 +342,7 @@ func (T *OrchestrateApp) handleConsoleRecurringGet(w http.ResponseWriter, r *htt
 		if !isTaskWake(p.Prompt) {
 			prompt, forID, forOptions = scheduleHandoffView(udb, user, p.AgentID, p.Prompt)
 		}
-		jsonapi.Write(w, map[string]any{
+		return map[string]any{
 			"id": rt.TaskID,
 			// The STORED name, not the derived one. recurringName falls back
 			// to the directive's first line, and handing that to the editor's
@@ -401,10 +369,9 @@ func (T *OrchestrateApp) handleConsoleRecurringGet(w http.ResponseWriter, r *htt
 			"timing":           recurringTimingOut(p),
 			"until":            recurringUntilOut(p),
 			"linked":           p.LinkGroup != "",
-		})
-		return
+		}, nil
 	}
-	http.Error(w, "recurring task not found", http.StatusNotFound)
+	return nil, jsonapi.NotFound("recurring task not found")
 }
 
 // handleConsoleRecurringUpdate edits a recurring task's schedule in place: rebuild
@@ -412,15 +379,9 @@ func (T *OrchestrateApp) handleConsoleRecurringGet(w http.ResponseWriter, r *htt
 // posted timing, unschedule the old, schedule the edited one. On a validation
 // error the original is restored so a bad edit never destroys the task. POST
 // ?id=<id> with a JSON timing body.
-func (T *OrchestrateApp) handleConsoleRecurringUpdate(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+func (T *OrchestrateApp) handleConsoleRecurringUpdate(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+	r := c.R
+	user := c.User
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
 	var found *orchUpdatePayload
 	for _, rt := range listAgentRecurringTasks(user, "") {
@@ -431,8 +392,7 @@ func (T *OrchestrateApp) handleConsoleRecurringUpdate(w http.ResponseWriter, r *
 		}
 	}
 	if found == nil {
-		http.Error(w, "recurring task not found", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("recurring task not found")
 	}
 	var body struct {
 		Pattern         string `json:"pattern"`
@@ -459,9 +419,8 @@ func (T *OrchestrateApp) handleConsoleRecurringUpdate(w http.ResponseWriter, r *
 		// sub-agent's id. Sent only when it was changed.
 		For *string `json:"for"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "bad body: "+err.Error(), http.StatusBadRequest)
-		return
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return nil, jsonapi.BadRequest("bad body: " + err.Error())
 	}
 	// Directive + name are editable now (not just timing). Base = the stored
 	// values; a provided prompt (non-empty; prompt is required) or name overrides.
@@ -482,15 +441,13 @@ func (T *OrchestrateApp) handleConsoleRecurringUpdate(w http.ResponseWriter, r *
 	if !isTaskWake(found.Prompt) {
 		text, err := scheduleHandoffEdit(UserDB(T.DB, user), user, found.AgentID, found.Prompt, posted, body.For)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest(err.Error())
 		}
 		if text != nil {
 			prompt = *text
 		}
 		if strings.TrimSpace(prompt) == "" {
-			http.Error(w, "directive (prompt) is required", http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest("directive (prompt) is required")
 		}
 	}
 	spec := RecurringSpec{
@@ -525,15 +482,13 @@ func (T *OrchestrateApp) handleConsoleRecurringUpdate(w http.ResponseWriter, r *
 	}
 	if body.Until != nil {
 		if err := applyRecurringUntil(&spec, user, *body.Until); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest(err.Error())
 		}
 	}
 	if spec.Pattern == RecurringDaily || (spec.Pattern == "" && strings.TrimSpace(body.DailyAt) != "") {
 		mins, derr := parseDailyAt(body.DailyAt)
 		if derr != nil {
-			http.Error(w, derr.Error(), http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest(derr.Error())
 		}
 		spec.Pattern, spec.AtMinutes = RecurringDaily, mins
 	}
@@ -543,19 +498,16 @@ func (T *OrchestrateApp) handleConsoleRecurringUpdate(w http.ResponseWriter, r *
 	from := strings.TrimSpace(body.ActiveFrom)
 	to := strings.TrimSpace(body.ActiveTo)
 	if (from == "") != (to == "") {
-		http.Error(w, "active_from and active_to must be set together", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("active_from and active_to must be set together")
 	}
 	if from != "" {
 		fMin, ferr := parseHHMM(from)
 		if ferr != nil {
-			http.Error(w, ferr.Error(), http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest(ferr.Error())
 		}
 		tMin, terr := parseHHMM(to)
 		if terr != nil {
-			http.Error(w, terr.Error(), http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest(terr.Error())
 		}
 		spec.HasWindow = true
 		spec.WindowFromMin = fMin
@@ -569,25 +521,22 @@ func (T *OrchestrateApp) handleConsoleRecurringUpdate(w http.ResponseWriter, r *
 		if next, cerr := computeNextFire(found, time.Now().In(UserLocation(found.Username))); cerr == nil {
 			_, _ = ScheduleTask(OrchestrateScheduledUpdateKind, *found, next)
 		}
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest(err.Error())
 	}
-	jsonapi.Write(w, map[string]any{"id": newID})
+	return map[string]any{"id": newID}, nil
 }
 
 // handleConsoleRecurringForOptions is the "Who does it" picker for the New
 // recurring task modal: GET ?agent=<id>. An empty list when the agent has no
 // sub-agents, and the modal then draws no picker.
-func (T *OrchestrateApp) handleConsoleRecurringForOptions(w http.ResponseWriter, r *http.Request) {
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleConsoleRecurringForOptions(c *jsonapi.Call) (any, error) {
+	r := c.R
+	user, udb := c.User, c.UDB
 	opts := scheduleForOptions(udb, user, strings.TrimSpace(r.URL.Query().Get("agent")))
 	if opts == nil {
 		opts = []scheduleForOption{}
 	}
-	jsonapi.Write(w, opts)
+	return opts, nil
 }
 
 // handleConsoleRecurringCreate creates a NEW recurring task from the Scheduler
@@ -597,15 +546,8 @@ func (T *OrchestrateApp) handleConsoleRecurringForOptions(w http.ResponseWriter,
 // is open so an agent-level task always lands somewhere sensible. The per-session
 // active-task cap is enforced inside ScheduleOrchestrateUpdate. POST JSON
 // {agent_id, session_id, name, prompt, pattern, timing…}.
-func (T *OrchestrateApp) handleConsoleRecurringCreate(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+func (T *OrchestrateApp) handleConsoleRecurringCreate(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+	user := c.User
 	var body struct {
 		AgentID         string `json:"agent_id"`
 		SessionID       string `json:"session_id"`
@@ -629,31 +571,26 @@ func (T *OrchestrateApp) handleConsoleRecurringCreate(w http.ResponseWriter, r *
 		// task is handed to, or "" for agent_id itself.
 		For string `json:"for"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "bad body: "+err.Error(), http.StatusBadRequest)
-		return
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return nil, jsonapi.BadRequest("bad body: " + err.Error())
 	}
 	agentID := strings.TrimSpace(body.AgentID)
 	if agentID == "" {
-		http.Error(w, "agent_id required", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("agent_id required")
 	}
 	udb := UserDB(T.DB, user)
 	if _, ok := loadAgent(udb, agentID); !ok {
-		http.Error(w, "unknown agent", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("unknown agent")
 	}
 	if strings.TrimSpace(body.Prompt) == "" {
-		http.Error(w, "directive (prompt) is required", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("directive (prompt) is required")
 	}
 	// Made for a sub-agent: the task is agent_id's, with the line that hands
 	// it on, and reports in agent_id's cortex.
 	if forID := strings.TrimSpace(body.For); forID != "" && forID != topAgentOf(udb, agentID) {
 		sub, err := scheduleForName(udb, user, agentID, forID)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest(err.Error())
 		}
 		body.Prompt = withSubAgentHandoff(withoutSubAgentHandoff(strings.TrimSpace(body.Prompt)), sub)
 	}
@@ -679,15 +616,13 @@ func (T *OrchestrateApp) handleConsoleRecurringCreate(w http.ResponseWriter, r *
 	}
 	if body.Until != nil {
 		if err := applyRecurringUntil(&spec, user, *body.Until); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest(err.Error())
 		}
 	}
 	if spec.Pattern == RecurringDaily || (spec.Pattern == "" && strings.TrimSpace(body.DailyAt) != "") {
 		mins, derr := parseDailyAt(body.DailyAt)
 		if derr != nil {
-			http.Error(w, derr.Error(), http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest(derr.Error())
 		}
 		spec.Pattern, spec.AtMinutes = RecurringDaily, mins
 	}
@@ -697,19 +632,16 @@ func (T *OrchestrateApp) handleConsoleRecurringCreate(w http.ResponseWriter, r *
 	from := strings.TrimSpace(body.ActiveFrom)
 	to := strings.TrimSpace(body.ActiveTo)
 	if (from == "") != (to == "") {
-		http.Error(w, "active_from and active_to must be set together", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("active_from and active_to must be set together")
 	}
 	if from != "" {
 		fMin, ferr := parseHHMM(from)
 		if ferr != nil {
-			http.Error(w, ferr.Error(), http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest(ferr.Error())
 		}
 		tMin, terr := parseHHMM(to)
 		if terr != nil {
-			http.Error(w, terr.Error(), http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest(terr.Error())
 		}
 		spec.HasWindow = true
 		spec.WindowFromMin = fMin
@@ -717,8 +649,7 @@ func (T *OrchestrateApp) handleConsoleRecurringCreate(w http.ResponseWriter, r *
 	}
 	newID, err := ScheduleOrchestrateUpdate(spec)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest(err.Error())
 	}
 	// Same pre-flight the recurring() tool reports, for the human-authored path:
 	// what this task would be refused when it fires unattended. Advisory — the
@@ -728,5 +659,5 @@ func (T *OrchestrateApp) handleConsoleRecurringCreate(w http.ResponseWriter, r *
 		resp["warnings"] = findings
 		resp["warning"] = PreflightSummary(findings)
 	}
-	jsonapi.Write(w, resp)
+	return resp, nil
 }

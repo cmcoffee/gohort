@@ -20,7 +20,7 @@ func permRowsFor(t *testing.T, app *OrchestrateApp, user string) []map[string]an
 	t.Helper()
 	r := httptest.NewRequest(http.MethodGet, "/api/console/permissions", nil)
 	w := httptest.NewRecorder()
-	app.handleConsolePermissions(w, asUser(r, user))
+	routed(app)(w, asUser(r, user))
 	if w.Code != http.StatusOK {
 		t.Fatalf("permissions: %d %s", w.Code, w.Body.String())
 	}
@@ -92,7 +92,7 @@ func TestAWorkspaceDecisionCanBeRevokedFromThePage(t *testing.T) {
 		t.Helper()
 		r := httptest.NewRequest(http.MethodPost, "/api/console/permissions/policy?id="+id+"&value="+value, nil)
 		w := httptest.NewRecorder()
-		app.handleConsolePermissionPolicy(w, asUser(r, "alice"))
+		routed(app)(w, asUser(r, "alice"))
 		// 204 is this endpoint's success: it stores and returns no body.
 		if w.Code != http.StatusOK && w.Code != http.StatusNoContent {
 			t.Fatalf("policy %s=%s: %d %s", id, value, w.Code, w.Body.String())
@@ -170,7 +170,7 @@ func permRowsForAgentIn(t *testing.T, app *OrchestrateApp, user, agentID string)
 	t.Helper()
 	r := httptest.NewRequest(http.MethodGet, "/api/console/permissions?agent="+agentID, nil)
 	w := httptest.NewRecorder()
-	app.handleConsolePermissions(w, asUser(r, user))
+	routed(app)(w, asUser(r, user))
 	if w.Code != http.StatusOK {
 		t.Fatalf("permissions: %d %s", w.Code, w.Body.String())
 	}
@@ -241,7 +241,7 @@ func TestAllowingTheWorkspaceKeepsTheRow(t *testing.T) {
 		r := httptest.NewRequest(http.MethodPost,
 			"/api/console/permissions/policy?id=workspace:mine:network&value="+value, nil)
 		w := httptest.NewRecorder()
-		app.handleConsolePermissionPolicy(w, asUser(r, "alice"))
+		routed(app)(w, asUser(r, "alice"))
 		if w.Code != http.StatusOK && w.Code != http.StatusNoContent {
 			t.Fatalf("policy %s: %d %s", value, w.Code, w.Body.String())
 		}
@@ -337,7 +337,7 @@ func TestAgentScopedAndFleetWideDecisionsCanBeAskedForSeparately(t *testing.T) {
 		r := httptest.NewRequest(http.MethodGet,
 			"/api/console/permissions?agent=mine&kind=access&scope="+scope, nil)
 		w := httptest.NewRecorder()
-		app.handleConsolePermissions(w, asUser(r, "alice"))
+		routed(app)(w, asUser(r, "alice"))
 		var rows []map[string]any
 		if err := json.Unmarshal(w.Body.Bytes(), &rows); err != nil {
 			t.Fatal(err)
@@ -383,9 +383,9 @@ func TestADecisionCanBeWidenedAndBroughtBack(t *testing.T) {
 		w := httptest.NewRecorder()
 		switch {
 		case strings.Contains(path, "/promote"):
-			app.handleConsolePermissionPromote(w, asUser(r, "alice"))
+			routed(app)(w, asUser(r, "alice"))
 		default:
-			app.handleConsolePermissionNarrow(w, asUser(r, "alice"))
+			routed(app)(w, asUser(r, "alice"))
 		}
 		if w.Code != http.StatusNoContent && w.Code != http.StatusOK {
 			t.Fatalf("%s: %d %s", path, w.Code, w.Body.String())
@@ -409,7 +409,7 @@ func TestADecisionCanBeWidenedAndBroughtBack(t *testing.T) {
 		r := httptest.NewRequest(http.MethodGet,
 			"/api/console/permissions?agent=mine&kind=access&scope="+scope, nil)
 		w := httptest.NewRecorder()
-		app.handleConsolePermissions(w, asUser(r, "alice"))
+		routed(app)(w, asUser(r, "alice"))
 		var rows []map[string]any
 		if err := json.Unmarshal(w.Body.Bytes(), &rows); err != nil {
 			t.Fatal(err)
@@ -442,7 +442,7 @@ func TestNarrowingRefusesWhatIsNotFleetWide(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost,
 		"/api/console/permissions/narrow?id=contactfor:mine:+15550109999&agent=mine", nil)
 	w := httptest.NewRecorder()
-	app.handleConsolePermissionNarrow(w, asUser(r, "alice"))
+	routed(app)(w, asUser(r, "alice"))
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("want 400, got %d %s", w.Code, w.Body.String())
 	}
@@ -465,7 +465,7 @@ func TestGrantingCreatesADecisionForOneAgent(t *testing.T) {
 		r := httptest.NewRequest(http.MethodPost,
 			"/api/console/permissions/grant?kind="+kind+"&agent="+agentID, strings.NewReader(body))
 		w := httptest.NewRecorder()
-		app.handleConsolePermissionGrant(w, asUser(r, "alice"))
+		routed(app)(w, asUser(r, "alice"))
 		if w.Code != want {
 			t.Fatalf("grant %s %s: %d %s", agentID, kind, w.Code, w.Body.String())
 		}
@@ -513,7 +513,7 @@ func TestGrantingRefusesWhatItCannotStore(t *testing.T) {
 		r := httptest.NewRequest(http.MethodPost,
 			"/api/console/permissions/grant?kind="+c.kind+"&agent=agent_a", strings.NewReader(c.body))
 		w := httptest.NewRecorder()
-		app.handleConsolePermissionGrant(w, asUser(r, "alice"))
+		routed(app)(w, asUser(r, "alice"))
 		if w.Code != http.StatusBadRequest {
 			t.Errorf("%s: want 400, got %d %s", c.why, w.Code, w.Body.String())
 		}
@@ -540,7 +540,7 @@ func TestADecisionAboutAnUnreachableAgentIsRefused(t *testing.T) {
 		"/api/console/permissions/grant?kind=agent&agent=caller",
 		strings.NewReader(`{"subject":"target","value":"allow"}`))
 	w := httptest.NewRecorder()
-	app.handleConsolePermissionGrant(w, asUser(r, "alice"))
+	routed(app)(w, asUser(r, "alice"))
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("want 400 for a decision that could never fire, got %d %s", w.Code, w.Body.String())
 	}
@@ -561,7 +561,7 @@ func TestADecisionAboutAnUnreachableAgentIsRefused(t *testing.T) {
 		"/api/console/permissions/grant?kind=agent&agent=caller",
 		strings.NewReader(`{"subject":"target","value":"allow"}`))
 	w2 := httptest.NewRecorder()
-	app.handleConsolePermissionGrant(w2, asUser(r2, "alice"))
+	routed(app)(w2, asUser(r2, "alice"))
 	if w2.Code != http.StatusNoContent {
 		t.Fatalf("a reachable target was refused: %d %s", w2.Code, w2.Body.String())
 	}

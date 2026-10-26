@@ -44,11 +44,9 @@ func consoleRunTask(rec RunRecord) string {
 
 // handleConsoleRuns returns the run-ledger feed (owner-scoped, status-level)
 // shaped for the Runs cards pane, newest first.
-func (T *OrchestrateApp) handleConsoleRuns(w http.ResponseWriter, r *http.Request) {
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleConsoleRuns(c *jsonapi.Call) (any, error) {
+	r := c.R
+	user, udb := c.User, c.UDB
 	loc := UserLocation(user)
 	// Narrowing arrives from a summary figure that linked here — a count of
 	// failures handing over the scope it counted. The pane's own button sends
@@ -81,7 +79,7 @@ func (T *OrchestrateApp) handleConsoleRuns(w http.ResponseWriter, r *http.Reques
 			ID:      rec.ID,
 		})
 	}
-	jsonapi.Write(w, rows)
+	return rows, nil
 }
 
 // consoleRunTitle names a run the way its owner thinks of it: the schedule
@@ -158,17 +156,14 @@ type consoleRunPrompt struct {
 // handleConsoleRunDetail serves one run's full record for the Details modal.
 // An unknown or foreign id answers an empty object, which the modal reads as
 // "gone", rather than confirming the id exists.
-func (T *OrchestrateApp) handleConsoleRunDetail(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleConsoleRunDetail(c *jsonapi.Call) (any, error) {
+	r := c.R
+	user := c.User
 	rec, found := GetRun(RootDB, user, r.URL.Query().Get("id"))
 	if !found {
-		jsonapi.Write(w, map[string]any{})
-		return
+		return map[string]any{}, nil
 	}
-	jsonapi.Write(w, consoleRunDetailOf(rec, UserLocation(user)))
+	return consoleRunDetailOf(rec, UserLocation(user)), nil
 }
 
 func consoleRunDetailOf(rec RunRecord, loc *time.Location) consoleRunDetail {
@@ -245,11 +240,9 @@ func runOwnerDestination(prefix string, s RunSnapshot) string {
 // the history horizon). This is the "what is the AI doing right now" pane
 // the per-session live card can't provide: it only ever shows the session
 // you're looking at, while the fleet works in the background.
-func (T *OrchestrateApp) handleConsoleActivity(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleConsoleActivity(c *jsonapi.Call) (any, error) {
+	r := c.R
+	user := c.User
 	rows := []consoleActivityRow{}
 	now := time.Now()
 	// ?run=<id> narrows to one run and everything it started — the destination
@@ -295,31 +288,27 @@ func (T *OrchestrateApp) handleConsoleActivity(w http.ResponseWriter, r *http.Re
 			Cancellable: s.Status == RunStatusRunning && s.Cancellable,
 		})
 	}
-	jsonapi.Write(w, rows)
+	return rows, nil
 }
 
 // handleConsoleActivityCancel cancels one in-flight run from the Active-now
 // pane — the UI kill switch for a runaway cycle. Owner-checked against the
 // run's recorded user; canceling an already-finished run is a no-op.
-func (T *OrchestrateApp) handleConsoleActivityCancel(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleConsoleActivityCancel(c *jsonapi.Call, _ struct{}) (any, error) {
+	r := c.R
+	user := c.User
 	run := T.runsRegistry().Get(r.URL.Query().Get("id"))
 	if run == nil || run.UserID != user {
-		http.Error(w, "run not found", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("run not found")
 	}
 	// A run with no cancel func behind it cannot be stopped, and saying so is
 	// the point: this answered 204 either way, so the button reported success
 	// on work that carried right on. Rows now offer Cancel only where it does
 	// something (_cancellable), and this is the backstop for a stale row.
 	if !run.Cancel() {
-		http.Error(w, "this run cannot be cancelled: it is not running under a stoppable context", http.StatusConflict)
-		return
+		return nil, jsonapi.Status(http.StatusConflict, "this run cannot be cancelled: it is not running under a stoppable context")
 	}
-	w.WriteHeader(http.StatusNoContent)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // shortElapsed renders a duration for the activity pane: 42s, 3m10s, 1h04m.

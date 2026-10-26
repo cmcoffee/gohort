@@ -42,7 +42,7 @@ func TestTheCollectionRoutesAreNotAdminGated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading the console routes: %v", err)
 	}
-	if !strings.Contains(string(console), "g := T.adminGated") {
+	if !strings.Contains(string(console), "T.adminOpt()") {
 		t.Error("the console gave up its admin gate; that is the half the gate is for")
 	}
 }

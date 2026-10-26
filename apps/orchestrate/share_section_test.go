@@ -271,7 +271,7 @@ func TestBothReachFlagsAreRequestedNotApplied(t *testing.T) {
 		r := httptest.NewRequest(http.MethodPost,
 			"/api/console/permissions/audience?agent=a50", strings.NewReader(body))
 		w := httptest.NewRecorder()
-		app.handleConsolePermissionAudience(w, asUser(r, "alice"))
+		routed(app)(w, asUser(r, "alice"))
 		if w.Code != http.StatusOK && w.Code != http.StatusNoContent {
 			t.Fatalf("%s: %d %s", body, w.Code, w.Body.String())
 		}
@@ -285,7 +285,7 @@ func TestBothReachFlagsAreRequestedNotApplied(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost,
 		"/api/console/permissions/audience?agent=a50", strings.NewReader(`{"mcp_exposed":false}`))
 	w := httptest.NewRecorder()
-	app.handleConsolePermissionAudience(w, asUser(r, "alice"))
+	routed(app)(w, asUser(r, "alice"))
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("turning MCP reach off: %d %s", w.Code, w.Body.String())
 	}

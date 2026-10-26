@@ -43,7 +43,7 @@ func TestRecentChecksReadNewestFirstAndOnlyForTheOwner(t *testing.T) {
 		r := httptest.NewRequest(http.MethodGet, "/api/console/monitors/checks?id=cve-watch", nil)
 		r.AddCookie(&http.Cookie{Name: "gohort_session", Value: AuthCreateSession(AuthDB(), who)})
 		w := httptest.NewRecorder()
-		app.handleConsoleMonitorChecks(w, r)
+		routed(app)(w, r)
 		return w
 	}
 	if w := ask("u"); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "held: still matches") {

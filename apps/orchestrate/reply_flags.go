@@ -20,7 +20,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
-	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -175,26 +174,18 @@ func clip(s string, n int) string {
 // replies. POST {session_id, agent_id, reply, verdict, evaluation}. The reply
 // is matched in the stored session, so what the admin reads is what the agent
 // said, with the message before it and the model that wrote it.
-func (T *OrchestrateApp) handleReplyFlag(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleReplyFlag(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+	r := c.R
+	user := c.User
 	if r.Method == http.MethodDelete {
 		// Pressed again: take it back. Only the person's own.
 		var f replyFlag
 		id := strings.TrimSpace(r.URL.Query().Get("id"))
 		if id == "" || !T.DB.Get(replyFlagTable, id, &f) || f.User != user {
-			http.Error(w, "no such flag", http.StatusNotFound)
-			return
+			return nil, jsonapi.NotFound("no such flag")
 		}
 		unflag(T.DB, f)
-		jsonapi.Write(w, map[string]any{"ok": true, "message": "Taken back."})
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST required", http.StatusMethodNotAllowed)
-		return
+		return map[string]any{"ok": true, "message": "Taken back."}, nil
 	}
 	var req struct {
 		SessionID  string `json:"session_id"`
@@ -203,27 +194,22 @@ func (T *OrchestrateApp) handleReplyFlag(w http.ResponseWriter, r *http.Request)
 		Verdict    string `json:"verdict"`
 		Evaluation string `json:"evaluation"`
 	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
+	if err := json.Unmarshal(raw, &req); err != nil {
+		return nil, jsonapi.BadRequest("bad request")
 	}
 	req.Evaluation = strings.TrimSpace(req.Evaluation)
 	switch {
 	case req.Verdict != flagDown && req.Verdict != flagUp:
-		http.Error(w, "verdict must be up or down", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("verdict must be up or down")
 	case req.Verdict == flagDown && req.Evaluation == "":
-		http.Error(w, "Say what was wrong with the reply: that is what a fix is built from.", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("Say what was wrong with the reply: that is what a fix is built from.")
 	case strings.TrimSpace(req.Reply) == "":
-		http.Error(w, "no reply to flag", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("no reply to flag")
 	}
 	udb := UserDB(T.DB, user)
 	sess, found := loadChatSession(udb, req.AgentID, req.SessionID)
 	if found && sess.Incognito {
-		http.Error(w, "This is an incognito session: nothing from it is kept, so it cannot be flagged.", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("This is an incognito session: nothing from it is kept, so it cannot be flagged.")
 	}
 	f := replyFlag{
 		ID: UUIDv4(), At: time.Now(), User: user, AgentID: req.AgentID, SessionID: req.SessionID,
@@ -260,7 +246,7 @@ func (T *OrchestrateApp) handleReplyFlag(w http.ResponseWriter, r *http.Request)
 	if f.Verdict == flagDown {
 		msg = "Sent to the admin for review."
 	}
-	jsonapi.Write(w, map[string]any{"ok": true, "message": msg, "id": f.ID, "verdict": f.Verdict})
+	return map[string]any{"ok": true, "message": msg, "id": f.ID, "verdict": f.Verdict}, nil
 }
 
 // findFlaggedReply finds the assistant message a flag is about, newest first:
@@ -315,22 +301,18 @@ func turnAround(msgs []ChatMessage, i int) (earlier string, toolCalls int) {
 }
 
 // requireAdmin answers a non-admin with 403 and reports whether to go on.
-func (T *OrchestrateApp) requireAdmin(w http.ResponseWriter, r *http.Request) bool {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok {
-		return false
+func (T *OrchestrateApp) requireAdmin(c *jsonapi.Call) error {
+	if !RequestIsAdmin(c.R) {
+		return jsonapi.Forbidden("admin only")
 	}
-	if !RequestIsAdmin(r) {
-		http.Error(w, "admin only", http.StatusForbidden)
-		return false
-	}
-	return true
+	return nil
 }
 
 // handleReplyFlags lists the flags for the admin: the thumbs-downs to review
 // and the thumbs-ups kept as good examples. GET.
-func (T *OrchestrateApp) handleReplyFlags(w http.ResponseWriter, r *http.Request) {
-	if !T.requireAdmin(w, r) {
-		return
+func (T *OrchestrateApp) handleReplyFlags(c *jsonapi.Call) (any, error) {
+	if err := T.requireAdmin(c); err != nil {
+		return nil, err
 	}
 	type row struct {
 		replyFlag
@@ -357,25 +339,21 @@ func (T *OrchestrateApp) handleReplyFlags(w http.ResponseWriter, r *http.Request
 		return review[i].At.After(review[j].At)
 	})
 	sort.Slice(good, func(i, j int) bool { return good[i].At.After(good[j].At) })
-	jsonapi.Write(w, map[string]any{"review": review, "good": good})
+	return map[string]any{"review": review, "good": good}, nil
 }
 
 // handleReplyFlagStatus sets a flag's review state, or deletes it. POST
 // ?id=&status=kept|dismissed|new|delete.
-func (T *OrchestrateApp) handleReplyFlagStatus(w http.ResponseWriter, r *http.Request) {
-	if !T.requireAdmin(w, r) {
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST required", http.StatusMethodNotAllowed)
-		return
+func (T *OrchestrateApp) handleReplyFlagStatus(c *jsonapi.Call, _ struct{}) (any, error) {
+	r := c.R
+	if err := T.requireAdmin(c); err != nil {
+		return nil, err
 	}
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
 	status := strings.TrimSpace(r.URL.Query().Get("status"))
 	var f replyFlag
 	if id == "" || !T.DB.Get(replyFlagTable, id, &f) {
-		http.Error(w, "no such flag", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("no such flag")
 	}
 	switch status {
 	case "delete":
@@ -384,10 +362,9 @@ func (T *OrchestrateApp) handleReplyFlagStatus(w http.ResponseWriter, r *http.Re
 		f.Status = status
 		T.DB.Set(replyFlagTable, id, f)
 	default:
-		http.Error(w, "status must be kept, dismissed, new or delete", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("status must be kept, dismissed, new or delete")
 	}
-	jsonapi.Write(w, map[string]any{"ok": true})
+	return map[string]any{"ok": true}, nil
 }
 
 // replyGuardRow is one line of the guard table: a guard for all tiers, or on
@@ -451,9 +428,9 @@ func guardOutcomeLabel(out string) string {
 // handleReplyGuards lists every guard on three rows: all tiers, the lead and
 // the worker, each with the model the tier runs and what the guard caught
 // there. GET.
-func (T *OrchestrateApp) handleReplyGuards(w http.ResponseWriter, r *http.Request) {
-	if !T.requireAdmin(w, r) {
-		return
+func (T *OrchestrateApp) handleReplyGuards(c *jsonapi.Call) (any, error) {
+	if err := T.requireAdmin(c); err != nil {
+		return nil, err
 	}
 	stats := replyguard.Stats()
 	var rows []replyGuardRow
@@ -556,7 +533,7 @@ func (T *OrchestrateApp) handleReplyGuards(w http.ResponseWriter, r *http.Reques
 			rows = append(rows, row)
 		}
 	}
-	jsonapi.Write(w, map[string]any{"records": rows})
+	return map[string]any{"records": rows}, nil
 }
 
 // guardScope reads "<guard>|<scope>" from ?id=.
@@ -570,43 +547,42 @@ func guardScope(r *http.Request) (string, string) {
 
 // handleReplyGuardMode sets a guard's mode on one scope. POST
 // ?id=<guard>|<scope> with {"_mode": on|shadow|off}.
-func (T *OrchestrateApp) handleReplyGuardMode(w http.ResponseWriter, r *http.Request) {
-	if !T.requireAdmin(w, r) {
-		return
+func (T *OrchestrateApp) handleReplyGuardMode(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+	r := c.R
+	if err := T.requireAdmin(c); err != nil {
+		return nil, err
 	}
 	var body map[string]string
-	_ = json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body)
+	_ = json.Unmarshal(raw, &body)
 	id, scope := guardScope(r)
 	if err := replyguard.Put(replyguard.Setting{ID: id, Scope: scope, Mode: replyguard.Mode(strings.TrimSpace(body["_mode"]))}); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest(err.Error())
 	}
 	Log("[orchestrate.replyguard] %s on %s set to %q", id, scope, body["_mode"])
-	jsonapi.Write(w, map[string]any{"ok": true})
+	return map[string]any{"ok": true}, nil
 }
 
 // handleReplyGuardSetting edits a scope's note, retries and, for a drafted
 // guard, its checks. POST ?id=<guard>|<scope> with {note, retries, checks}.
 // An empty note, zero retries or empty checks put that part back to what the
 // scope above says.
-func (T *OrchestrateApp) handleReplyGuardSetting(w http.ResponseWriter, r *http.Request) {
-	if !T.requireAdmin(w, r) {
-		return
+func (T *OrchestrateApp) handleReplyGuardSetting(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+	r := c.R
+	if err := T.requireAdmin(c); err != nil {
+		return nil, err
 	}
 	var body struct {
 		Note    string `json:"note"`
 		Retries int    `json:"retries"`
 		Checks  string `json:"checks"`
 	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return nil, jsonapi.BadRequest("bad request")
 	}
 	id, scope := guardScope(r)
 	g, ok := replyguard.Lookup(id)
 	if !ok {
-		http.Error(w, "no such guard", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("no such guard")
 	}
 	set := replyguard.Setting{ID: id, Scope: scope, Retries: body.Retries}
 	// A note that is the guard's own, word for word, is not a change.
@@ -619,8 +595,7 @@ func (T *OrchestrateApp) handleReplyGuardSetting(w http.ResponseWriter, r *http.
 	}
 	if c := strings.TrimSpace(body.Checks); c != "" {
 		if err := json.Unmarshal([]byte(c), &set.Checks); err != nil {
-			http.Error(w, "the checks are not valid JSON: "+err.Error(), http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest("the checks are not valid JSON: " + err.Error())
 		}
 		if a, ok := replyguard.LoadAuthored(id); ok {
 			if cur, _ := json.Marshal(a.Checks); string(cur) == mustJSON(set.Checks) && scope == replyguard.AllTiers {
@@ -629,8 +604,7 @@ func (T *OrchestrateApp) handleReplyGuardSetting(w http.ResponseWriter, r *http.
 		}
 	}
 	if err := replyguard.Put(set); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest(err.Error())
 	}
 	if set.Note == "" {
 		replyguard.ClearPart(id, scope, "note")
@@ -642,7 +616,7 @@ func (T *OrchestrateApp) handleReplyGuardSetting(w http.ResponseWriter, r *http.
 		replyguard.ClearPart(id, scope, "checks")
 	}
 	Log("[orchestrate.replyguard] %s on %s edited", id, scope)
-	jsonapi.Write(w, map[string]any{"ok": true})
+	return map[string]any{"ok": true}, nil
 }
 
 func mustJSON(v any) string {
@@ -652,20 +626,19 @@ func mustJSON(v any) string {
 
 // handleReplyGuardClear removes a tier's own settings (Remove), or puts a
 // built-in guard back as shipped (?revert=1). POST ?id=<guard>|<scope>.
-func (T *OrchestrateApp) handleReplyGuardClear(w http.ResponseWriter, r *http.Request) {
-	if !T.requireAdmin(w, r) {
-		return
+func (T *OrchestrateApp) handleReplyGuardClear(c *jsonapi.Call, _ struct{}) (any, error) {
+	r := c.R
+	if err := T.requireAdmin(c); err != nil {
+		return nil, err
 	}
 	id, scope := guardScope(r)
 	g, ok := replyguard.Lookup(id)
 	if !ok {
-		http.Error(w, "no such guard", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("no such guard")
 	}
 	if r.URL.Query().Get("revert") == "1" {
 		if g.Authored {
-			http.Error(w, "a drafted guard has no shipped version to revert to", http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest("a drafted guard has no shipped version to revert to")
 		}
 		replyguard.Revert(id)
 		Log("[orchestrate.replyguard] %s reverted to default", id)
@@ -673,7 +646,7 @@ func (T *OrchestrateApp) handleReplyGuardClear(w http.ResponseWriter, r *http.Re
 		replyguard.Clear(id, scope)
 		Log("[orchestrate.replyguard] %s on %s cleared", id, scope)
 	}
-	jsonapi.Write(w, map[string]any{"ok": true})
+	return map[string]any{"ok": true}, nil
 }
 
 // replyGuardModeOptions is the three-way control on each row.

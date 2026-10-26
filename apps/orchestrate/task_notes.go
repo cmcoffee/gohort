@@ -296,21 +296,18 @@ func taskNotesFor(user, kind, id string) (taskNotes, bool) {
 // hundred versions with no owner surface at all, filed under the agent where
 // nobody was looking for it; a task's notes belong on the thing that wrote
 // them, beside its goal, its attempts and its next fire.
-func (T *OrchestrateApp) handleTaskNotes(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleTaskNotes(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+	r := c.R
+	user := c.User
 	q := r.URL.Query()
 	tn, found := taskNotesFor(user, q.Get("kind"), q.Get("id"))
 	if !found {
-		http.NotFound(w, r)
-		return
+		return nil, errNotFound
 	}
 	switch r.Method {
 	case http.MethodGet:
 		n := tn.load()
-		jsonapi.Write(w, map[string]any{
+		return map[string]any{
 			"text":       n.Text,
 			"cap":        tn.cap(),
 			"updated_at": n.UpdatedAt,
@@ -318,15 +315,14 @@ func (T *OrchestrateApp) handleTaskNotes(w http.ResponseWriter, r *http.Request)
 			// served rather than counted in the browser so the person trimming
 			// the block and the model trimming it read one number.
 			"sections": notes.SectionSizes(n.Text),
-		})
+		}, nil
 	case http.MethodPost:
 		var body struct {
 			Text    string `json:"text"`
 			Section string `json:"section"`
 		}
-		if json.NewDecoder(r.Body).Decode(&body) != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
+		if json.Unmarshal(raw, &body) != nil {
+			return nil, jsonapi.BadRequest("bad request")
 		}
 		args := map[string]any{"text": body.Text}
 		if s := strings.TrimSpace(body.Section); s != "" {
@@ -337,11 +333,10 @@ func (T *OrchestrateApp) handleTaskNotes(w http.ResponseWriter, r *http.Request)
 		// asking.
 		msg, err := tn.tool()[0].Handler(r.Context(), args)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest(err.Error())
 		}
-		jsonapi.Write(w, map[string]any{"ok": true, "message": msg})
+		return map[string]any{"ok": true, "message": msg}, nil
 	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return nil, jsonapi.Status(http.StatusMethodNotAllowed, "method not allowed")
 	}
 }

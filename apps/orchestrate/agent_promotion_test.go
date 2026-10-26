@@ -27,7 +27,7 @@ func publishFlags(t *testing.T, T *OrchestrateApp, user, agentID string, flags m
 	body, _ := json.Marshal(map[string]any{"agent_id": agentID, "flags": flags})
 	r := asUser(httptest.NewRequest(http.MethodPost, "/api/console/privileges", bytes.NewReader(body)), user)
 	w := httptest.NewRecorder()
-	T.handleConsolePrivileges(w, r)
+	routed(T)(w, r)
 	return w
 }
 

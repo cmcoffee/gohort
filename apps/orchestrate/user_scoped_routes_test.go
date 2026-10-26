@@ -45,8 +45,21 @@ func TestUserScopedRoutesResolveASessionUser(t *testing.T) {
 	for _, m := range ungated.FindAllStringSubmatch(routes.String(), -1) {
 		names = append(names, strings.TrimPrefix(m[1], "T."))
 	}
-	if len(names) < 90 {
-		t.Fatalf("only found %d ungated routes; the pattern has stopped matching", len(names))
+	// A jsonapi handler with no gate option is answered only for a signed-in
+	// user: jsonapi resolves the session before the handler runs, so it holds
+	// by construction. One that takes a gate (adminOpt, Authorize) is gated;
+	// one that takes InternalOK also answers a request with no user, so it
+	// has to say who it is for some other way, which this cannot see.
+	viaJSON := regexp.MustCompile(`jsonapi\.(?:Get|Post)\(T\.DB, (?:T\.([A-Za-z]+)|func[^\n]*?T\.([A-Za-z]+)\(c, nil\)[^\n]*?)(, [^\n]*?)?\)(?:,|\)|\n)`)
+	resolvedByJSON := 0
+	for _, m := range viaJSON.FindAllStringSubmatch(routes.String(), -1) {
+		if strings.Contains(m[3], "InternalOK") {
+			t.Errorf("%s%s admits an internal request with no user; check it by hand and name it here", m[1], m[2])
+		}
+		resolvedByJSON++
+	}
+	if len(names)+resolvedByJSON < 90 {
+		t.Fatalf("only found %d ungated routes; the pattern has stopped matching", len(names)+resolvedByJSON)
 	}
 
 	bodies := packageSource(t)

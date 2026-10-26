@@ -22,7 +22,6 @@ package orchestrate
 
 import (
 	"encoding/json"
-	"net/http"
 	"strings"
 	"time"
 
@@ -43,11 +42,9 @@ const (
 // handleConsoleScheduler serves the merged view: GET /api/console/scheduler
 // (+ ?agent= to scope it, which the Manage menu does and the Fleet menu
 // deliberately does not).
-func (T *OrchestrateApp) handleConsoleScheduler(w http.ResponseWriter, r *http.Request) {
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleConsoleScheduler(c *jsonapi.Call) (any, error) {
+	r := c.R
+	user, udb := c.User, c.UDB
 	agentID := strings.TrimSpace(r.URL.Query().Get("agent"))
 	// An agent's schedules are its whole family's: a parent's card lists what
 	// its sub-agents run, and a sub-agent's shows the family it belongs to
@@ -111,7 +108,7 @@ func (T *OrchestrateApp) handleConsoleScheduler(w http.ResponseWriter, r *http.R
 			agentID, len(family), len(out), took.Round(time.Millisecond), rowsDone.Sub(start).Round(time.Millisecond),
 			len(ix.runs), time.Since(rowsDone).Round(time.Millisecond))
 	}
-	jsonapi.Write(w, out)
+	return out, nil
 }
 
 // agentRowLabel is a fleet Scheduler row's title, led by the name of the agent

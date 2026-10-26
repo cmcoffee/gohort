@@ -15,7 +15,6 @@ package orchestrate
 
 import (
 	"fmt"
-	"net/http"
 	"sort"
 	"strings"
 	"time"
@@ -70,15 +69,12 @@ const overviewRunLimit = 300
 // summary. Everything is scoped to the agent in view, including the runs its
 // schedules and monitors produced, which is what makes it different from the
 // fleet pane rather than a filtered copy of it.
-func (T *OrchestrateApp) handleConsoleOverview(w http.ResponseWriter, r *http.Request) {
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleConsoleOverview(c *jsonapi.Call) (any, error) {
+	r := c.R
+	user, udb := c.User, c.UDB
 	agentID := strings.TrimSpace(r.URL.Query().Get("agent"))
 	if agentID == "" {
-		jsonapi.Write(w, []overviewCard{{Title: "No agent selected", Detail: "Open an agent to see what it has been doing.", Section: secGlance}})
-		return
+		return []overviewCard{{Title: "No agent selected", Detail: "Open an agent to see what it has been doing.", Section: secGlance}}, nil
 	}
 	loc := UserLocation(user)
 	now := time.Now()
@@ -181,17 +177,14 @@ func (T *OrchestrateApp) handleConsoleOverview(w http.ResponseWriter, r *http.Re
 		})
 	}
 
-	jsonapi.Write(w, cards)
+	return cards, nil
 }
 
 // handleConsoleFleet answers "what is my whole fleet doing on my behalf".
 // Deliberately takes no agent: the menu marks this item fleet-scoped so the
 // selected agent is not appended, and nothing here narrows by one.
-func (T *OrchestrateApp) handleConsoleFleet(w http.ResponseWriter, r *http.Request) {
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleConsoleFleet(c *jsonapi.Call) (any, error) {
+	user, udb := c.User, c.UDB
 	loc := UserLocation(user)
 	now := time.Now()
 	runs := ListRuns(RootDB, user, RunFilter{Limit: overviewRunLimit})
@@ -301,7 +294,7 @@ func (T *OrchestrateApp) handleConsoleFleet(w http.ResponseWriter, r *http.Reque
 	if len(cards) == 0 {
 		cards = append(cards, overviewCard{Title: "Nothing has run yet", Detail: "Schedules, monitors and dispatched work show up here once they do.", Section: secGlance})
 	}
-	jsonapi.Write(w, cards)
+	return cards, nil
 }
 
 // --- gathering ---------------------------------------------------------------

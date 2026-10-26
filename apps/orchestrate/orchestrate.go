@@ -39,6 +39,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/appagents"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/messaging"
 )
 
@@ -840,6 +841,34 @@ func (T *OrchestrateApp) adminGatedWrite(h http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		h(w, r)
+	})
+}
+
+// adminOnlyOpt is the check requireAdmin made before these routes were
+// jsonapi handlers: a signed-in user (401 without one), and an administrator
+// (403 "admin only"), before the body is read.
+func (T *OrchestrateApp) adminOnlyOpt() jsonapi.Option {
+	return jsonapi.Authorize(func(w http.ResponseWriter, r *http.Request) bool {
+		if _, _, ok := RequireUser(w, r, T.DB); !ok {
+			return false
+		}
+		if !RequestIsAdmin(r) {
+			http.Error(w, "admin only", http.StatusForbidden)
+			return false
+		}
+		return true
+	})
+}
+
+// adminOpt is adminGated as a jsonapi gate: the same refusal, before the
+// handler runs.
+func (T *OrchestrateApp) adminOpt() jsonapi.Option {
+	return jsonapi.Authorize(func(w http.ResponseWriter, r *http.Request) bool {
+		if !RequestIsAdmin(r) {
+			http.Error(w, "That is an administrator's view across every user's agents. Your own are on the Agents page.", http.StatusForbidden)
+			return false
+		}
+		return true
 	})
 }
 

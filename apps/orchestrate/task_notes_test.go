@@ -262,7 +262,7 @@ func TestGoalRowsCanReachTheirTasksNotes(t *testing.T) {
 	})
 
 	w := httptest.NewRecorder()
-	T.handleConsoleGoals(w, asUser(httptest.NewRequest(http.MethodGet, "/api/console/goals", nil), user))
+	routed(T)(w, asUser(httptest.NewRequest(http.MethodGet, "/api/console/goals", nil), user))
 	if w.Code != http.StatusOK {
 		t.Fatalf("goals: %d %s", w.Code, w.Body.String())
 	}

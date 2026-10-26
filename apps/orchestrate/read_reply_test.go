@@ -112,10 +112,10 @@ func TestOneApprovalSendsAndBindsTheReply(t *testing.T) {
 	}
 
 	app := &OrchestrateApp{AppCore: AppCore{DB: orchestrateBaseDB}}
-	r := httptest.NewRequest(http.MethodPost, "/api/approvals/approve?id="+auths[0].ID, nil)
+	r := httptest.NewRequest(http.MethodPost, "/api/console/approvals/approve?id="+auths[0].ID, nil)
 	r.AddCookie(&http.Cookie{Name: "gohort_session", Value: AuthCreateSession(AuthDB(), "u")})
 	w := httptest.NewRecorder()
-	app.resolveApproval(w, r, false)
+	routed(app)(w, r)
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("approve answered %d %s", w.Code, w.Body.String())
 	}

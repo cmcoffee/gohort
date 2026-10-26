@@ -117,10 +117,10 @@ func TestAnApprovedChangeIsMadeAndComesBack(t *testing.T) {
 	}
 
 	q := registerInjectionQueue(sid, "u", "wiwee")
-	r := httptest.NewRequest(http.MethodPost, "/api/approvals/approve?id="+a.ID, nil)
+	r := httptest.NewRequest(http.MethodPost, "/api/console/approvals/approve?id="+a.ID, nil)
 	r.AddCookie(&http.Cookie{Name: "gohort_session", Value: AuthCreateSession(AuthDB(), "u")})
 	w := httptest.NewRecorder()
-	app.resolveApproval(w, r, false)
+	routed(app)(w, r)
 	if w.Code != http.StatusNoContent || !changeGranted(udb, a.Agent, a.Handle) {
 		t.Fatalf("approve answered %d %s, granted=%v", w.Code, w.Body.String(), changeGranted(udb, a.Agent, a.Handle))
 	}

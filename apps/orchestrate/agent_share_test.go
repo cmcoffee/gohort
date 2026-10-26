@@ -25,7 +25,7 @@ func TestEveryoneInAnAgentsShareListIsARequest(t *testing.T) {
 	share := func(method, body string) string {
 		t.Helper()
 		w := httptest.NewRecorder()
-		app.handleAgentShare(w, asUser(httptest.NewRequest(method, "/api/console/permissions/share?agent=a51", strings.NewReader(body)), "alice"))
+		routed(app)(w, asUser(httptest.NewRequest(method, "/api/console/permissions/share?agent=a51", strings.NewReader(body)), "alice"))
 		if w.Code != http.StatusOK {
 			t.Fatalf("%s answered %d: %s", method, w.Code, w.Body.String())
 		}

@@ -17,11 +17,9 @@ import (
 // handleConsoleMonitorRelink re-points a broken monitor's wake agent at a live
 // one and clears the broken flag — but LEAVES it paused, so recovery finishes
 // with an explicit Resume (which re-checks the now-healthy dependency).
-func (T *OrchestrateApp) handleConsoleMonitorRelink(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleConsoleMonitorRelink(c *jsonapi.Call, _ struct{}) (any, error) {
+	r := c.R
+	user := c.User
 	name := strings.TrimSpace(r.URL.Query().Get("id"))
 	newAgent := strings.TrimSpace(r.URL.Query().Get("value"))
 	// The agent is OPTIONAL for a monitor: an empty WakeAgent resolves to the
@@ -33,8 +31,7 @@ func (T *OrchestrateApp) handleConsoleMonitorRelink(w http.ResponseWriter, r *ht
 	useDefault := newAgent == "" || newAgent == "__default__"
 	if !useDefault {
 		if _, ok := loadAgent(UserDB(T.DB, user), newAgent); !ok {
-			http.Error(w, "no such agent", http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest("no such agent")
 		}
 	}
 	if useDefault {
@@ -42,10 +39,9 @@ func (T *OrchestrateApp) handleConsoleMonitorRelink(w http.ResponseWriter, r *ht
 	}
 	// Paused stays true on purpose — the user resumes explicitly.
 	if err := relinkMonitorToAgent(user, name, newAgent, false); err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound(err.Error())
 	}
-	w.WriteHeader(http.StatusNoContent)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // handleConsoleMonitorGet returns an event monitor's editable record for the
@@ -59,15 +55,12 @@ func (T *OrchestrateApp) handleConsoleMonitorRelink(w http.ResponseWriter, r *ht
 // editor shows one kind's section and the rest are absent from the record
 // anyway (omitempty on the way in), so branching here would only move the same
 // switch to the far side of the wire.
-func (T *OrchestrateApp) handleConsoleMonitorGet(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleConsoleMonitorGet(c *jsonapi.Call) (any, error) {
+	r := c.R
+	user := c.User
 	m, found := GetEventMonitor(RootDB, user, strings.TrimSpace(r.URL.Query().Get("id")))
 	if !found {
-		http.Error(w, "no such monitor", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("no such monitor")
 	}
 	// One handed to a sub-agent shows its brief without the handoff line and
 	// the sub-agent in the "Who does it" picker; one that wakes no agent has
@@ -77,7 +70,7 @@ func (T *OrchestrateApp) handleConsoleMonitorGet(w http.ResponseWriter, r *http.
 	if monitorWakesAgent(m) {
 		brief, forID, forOptions = scheduleHandoffView(UserDB(T.DB, user), user, m.WakeAgent, m.WakeBrief)
 	}
-	jsonapi.Write(w, map[string]any{
+	return map[string]any{
 		"name":             m.Name,
 		"kind":             m.Kind,
 		"interval_seconds": m.IntervalSeconds,
@@ -113,7 +106,7 @@ func (T *OrchestrateApp) handleConsoleMonitorGet(w http.ResponseWriter, r *http.
 		"tool_name":     m.ToolName,
 		"source_kind":   m.SourceKind,
 		"format_script": m.FormatScript,
-	})
+	}, nil
 }
 
 // handleConsoleMonitorUpdate edits an event monitor in place and re-arms it:
@@ -130,37 +123,27 @@ func (T *OrchestrateApp) handleConsoleMonitorGet(w http.ResponseWriter, r *http.
 // A field belonging to a different kind is REFUSED by name rather than stored.
 // It would be dead weight on the record and live weight in the reader's head:
 // a poll monitor carrying a url reads like something that fetches it.
-func (T *OrchestrateApp) handleConsoleMonitorUpdate(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+func (T *OrchestrateApp) handleConsoleMonitorUpdate(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+	r := c.R
+	user := c.User
 	m, found := GetEventMonitor(RootDB, user, strings.TrimSpace(r.URL.Query().Get("id")))
 	if !found {
-		http.Error(w, "no such monitor", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("no such monitor")
 	}
 	var body monitorUpdateBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "bad body: "+err.Error(), http.StatusBadRequest)
-		return
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return nil, jsonapi.BadRequest("bad body: " + err.Error())
 	}
 	// The editor showed the brief without its handoff line, so the line is
 	// rebuilt from the picker.
 	brief, err := scheduleHandoffEdit(UserDB(T.DB, user), user, m.WakeAgent, m.WakeBrief, body.WakeBrief, body.For)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest(err.Error())
 	}
 	body.WakeBrief = brief
 	before := m
 	if err := applyMonitorUpdate(&m, body); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest(err.Error())
 	}
 	// The stored edge/baseline state describes the condition that was just
 	// replaced. Left alone, an http_poll whose threshold moved past the current
@@ -182,10 +165,9 @@ func (T *OrchestrateApp) handleConsoleMonitorUpdate(w http.ResponseWriter, r *ht
 		} else {
 			_ = ScheduleEventMonitor(RootDB, before)
 		}
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest(err.Error())
 	}
-	w.WriteHeader(http.StatusNoContent)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // monitorWakesAgent reports whether a fire can reach an agent, which is the
@@ -479,13 +461,11 @@ type consoleMonitorRow struct {
 
 // handleConsoleMonitors lists the owner's event monitors (webhook / poll /
 // http_poll) for the Event-monitors nav pane.
-func (T *OrchestrateApp) handleConsoleMonitors(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleConsoleMonitors(c *jsonapi.Call) (any, error) {
+	r := c.R
+	user := c.User
 	agentID := strings.TrimSpace(r.URL.Query().Get("agent"))
-	jsonapi.Write(w, consoleMonitorRows(user, agentID))
+	return consoleMonitorRows(user, agentID), nil
 }
 
 // consoleMonitorRows builds the rows for this view. Split off the handler so the
@@ -625,32 +605,26 @@ func consoleMonitorRows(user, agentID string) []consoleMonitorRow {
 	return rows
 }
 
-func (T *OrchestrateApp) handleConsoleMonitorDelete(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleConsoleMonitorDelete(c *jsonapi.Call, _ struct{}) (any, error) {
+	r := c.R
+	user := c.User
 	name := strings.TrimSpace(r.URL.Query().Get("id"))
 	if name == "" {
-		http.Error(w, "id is required", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("id is required")
 	}
 	DeleteEventMonitor(RootDB, user, name)
-	w.WriteHeader(http.StatusNoContent)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // setConsoleMonitorPaused pauses/resumes an event monitor. Pausing a scheduled
 // monitor (poll/http_poll) cancels its next check; resuming reschedules it. For
 // a webhook monitor the Paused flag alone gates the public endpoint.
-func (T *OrchestrateApp) setConsoleMonitorPaused(w http.ResponseWriter, r *http.Request, paused bool) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) setConsoleMonitorPaused(c *jsonapi.Call, paused bool) (any, error) {
+	r := c.R
+	user := c.User
 	m, found := GetEventMonitor(RootDB, user, strings.TrimSpace(r.URL.Query().Get("id")))
 	if !found {
-		http.Error(w, "no such monitor", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("no such monitor")
 	}
 	m.Paused = paused
 	if paused {
@@ -679,8 +653,7 @@ func (T *OrchestrateApp) setConsoleMonitorPaused(w http.ResponseWriter, r *http.
 		// success so the monitor comes back healthy.
 		if m.Broken {
 			if reason := eventMonitorDependencyError(m); reason != "" {
-				http.Error(w, "can't resume: "+reason+"; relink it to a live agent or delete it", http.StatusConflict)
-				return
+				return nil, jsonapi.Status(http.StatusConflict, "can't resume: "+reason+"; relink it to a live agent or delete it")
 			}
 			m.Broken = false
 			m.BrokenReason = ""
@@ -688,15 +661,15 @@ func (T *OrchestrateApp) setConsoleMonitorPaused(w http.ResponseWriter, r *http.
 		SaveEventMonitor(RootDB, m)
 		_ = ScheduleEventMonitor(RootDB, m)
 	}
-	w.WriteHeader(http.StatusNoContent)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
-func (T *OrchestrateApp) handleConsoleMonitorPause(w http.ResponseWriter, r *http.Request) {
-	T.setConsoleMonitorPaused(w, r, true)
+func (T *OrchestrateApp) handleConsoleMonitorPause(c *jsonapi.Call, _ struct{}) (any, error) {
+	return T.setConsoleMonitorPaused(c, true)
 }
 
-func (T *OrchestrateApp) handleConsoleMonitorResume(w http.ResponseWriter, r *http.Request) {
-	T.setConsoleMonitorPaused(w, r, false)
+func (T *OrchestrateApp) handleConsoleMonitorResume(c *jsonapi.Call, _ struct{}) (any, error) {
+	return T.setConsoleMonitorPaused(c, false)
 }
 
 // handleConsoleMonitorRun runs a monitor's check immediately from the
@@ -707,20 +680,16 @@ func (T *OrchestrateApp) handleConsoleMonitorResume(w http.ResponseWriter, r *ht
 // goroutine with a background context (a poll can call an external agent/URL and
 // must outlive the response); the row's last-checked timestamp updates on
 // reload. id = the monitor's name. Returns 202 once the check is launched.
-func (T *OrchestrateApp) handleConsoleMonitorRun(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleConsoleMonitorRun(c *jsonapi.Call, _ struct{}) (any, error) {
+	r := c.R
+	user := c.User
 	name := strings.TrimSpace(r.URL.Query().Get("id"))
 	m, found := GetEventMonitor(RootDB, user, name)
 	if !found {
-		http.Error(w, "no such monitor", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("no such monitor")
 	}
 	if !IsScheduledEventKind(m.Kind) {
-		http.Error(w, "this monitor is push-triggered: it has no check to run", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("this monitor is push-triggered: it has no check to run")
 	}
 	go func() {
 		defer func() {
@@ -732,7 +701,7 @@ func (T *OrchestrateApp) handleConsoleMonitorRun(w http.ResponseWriter, r *http.
 			Log("[orchestrate/console] test-check failed for monitor %s/%s: %v", user, name, err)
 		}
 	}()
-	w.WriteHeader(http.StatusAccepted)
+	return jsonapi.Empty(http.StatusAccepted), nil
 }
 
 // --- the row mark ------------------------------------------------------------

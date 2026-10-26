@@ -162,7 +162,7 @@ func TestAnAskingToolCanBeQuietedFromThePage(t *testing.T) {
 		t.Helper()
 		r := httptest.NewRequest(http.MethodPost, "/api/console/permissions/policy?id=confirmtool:confirm_quiet_me&value="+value, nil)
 		w := httptest.NewRecorder()
-		app.handleConsolePermissionPolicy(w, asUser(r, "alice"))
+		routed(app)(w, asUser(r, "alice"))
 		if w.Code != http.StatusOK && w.Code != http.StatusNoContent {
 			t.Fatalf("policy %s: %d %s", value, w.Code, w.Body.String())
 		}

@@ -14,7 +14,6 @@ package orchestrate
 
 import (
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
 
@@ -44,11 +43,8 @@ func toolOutcomeStore() Database {
 }
 
 // handleConsoleBrokenTools lists the owner's broken actions.
-func (T *OrchestrateApp) handleConsoleBrokenTools(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleConsoleBrokenTools(c *jsonapi.Call) (any, error) {
+	user := c.User
 	loc := UserLocation(user)
 	rows := []consoleBrokenToolRow{}
 	for _, rec := range brokenToolActions(toolOutcomeStore(), user) {
@@ -61,7 +57,7 @@ func (T *OrchestrateApp) handleConsoleBrokenTools(w http.ResponseWriter, r *http
 			ID:       rec.key(),
 		})
 	}
-	jsonapi.Write(w, rows)
+	return rows, nil
 }
 
 // brokenToolSince renders the window the failures span, in the owner's zone.
@@ -79,23 +75,15 @@ func brokenToolSince(rec toolOutcomeRecord, loc *time.Location) string {
 // handleConsoleBrokenToolForget clears one action's tally.
 //
 //	POST /api/console/broken-tools/forget?id=<tool.action>
-func (T *OrchestrateApp) handleConsoleBrokenToolForget(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	if r.Method != http.MethodPost && r.Method != http.MethodDelete {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+func (T *OrchestrateApp) handleConsoleBrokenToolForget(c *jsonapi.Call, _ struct{}) (any, error) {
+	r := c.R
+	user := c.User
 	key := strings.TrimSpace(r.URL.Query().Get("id"))
 	if key == "" {
-		http.Error(w, "id is required", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("id is required")
 	}
 	if !forgetToolOutcome(toolOutcomeStore(), user, key) {
-		http.Error(w, "no tally for that action (it may already have cleared itself with a success)", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("no tally for that action (it may already have cleared itself with a success)")
 	}
-	jsonapi.Write(w, map[string]any{"ok": true, "forgot": key})
+	return map[string]any{"ok": true, "forgot": key}, nil
 }

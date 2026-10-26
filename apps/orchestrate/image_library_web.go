@@ -65,15 +65,12 @@ type imageLibraryRow struct {
 }
 
 // handleAgentImages lists one agent's kept library.
-func (T *OrchestrateApp) handleAgentImages(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleAgentImages(c *jsonapi.Call) (any, error) {
+	r := c.R
+	user := c.User
 	agentID := strings.TrimSpace(r.URL.Query().Get("id"))
 	if agentID == "" {
-		jsonapi.Write(w, []imageLibraryRow{})
-		return
+		return []imageLibraryRow{}, nil
 	}
 	sess := &ToolSession{Username: user, AgentID: agentID}
 	all := KeptImages(sess)
@@ -97,7 +94,7 @@ func (T *OrchestrateApp) handleAgentImages(w http.ResponseWriter, r *http.Reques
 			HasDupe:   dupe != "",
 		})
 	}
-	jsonapi.Write(w, rows)
+	return rows, nil
 }
 
 // librarySubject says who the picture is of, and says so plainly when nobody
@@ -182,15 +179,9 @@ func (T *OrchestrateApp) handleAgentImageRaw(w http.ResponseWriter, r *http.Requ
 }
 
 // handleAgentImageAction applies forget or label to one entry.
-func (T *OrchestrateApp) handleAgentImageAction(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+func (T *OrchestrateApp) handleAgentImageAction(c *jsonapi.Call, _ struct{}) (any, error) {
+	r := c.R
+	user := c.User
 	// Query params, not a JSON body. Both callers are UI controls — a row
 	// button that posts to a URL, and a client action that builds one — and a
 	// body would mean the button could not call this at all without its own
@@ -199,28 +190,24 @@ func (T *OrchestrateApp) handleAgentImageAction(w http.ResponseWriter, r *http.R
 	agentID := strings.TrimSpace(q.Get("id"))
 	name := strings.TrimSpace(q.Get("name"))
 	if agentID == "" || name == "" {
-		http.Error(w, "id and name are required", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("id and name are required")
 	}
 	sess := &ToolSession{Username: user, AgentID: agentID}
 	switch strings.ToLower(strings.TrimSpace(q.Get("action"))) {
 	case "forget":
 		gone, err := ForgetImage(sess, name)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest(err.Error())
 		}
 		if !gone {
-			http.Error(w, "nothing kept under that name", http.StatusNotFound)
-			return
+			return nil, jsonapi.NotFound("nothing kept under that name")
 		}
 		Log("[images] %s forgot %q from agent %s", user, name, agentID)
-		w.WriteHeader(http.StatusNoContent)
+		return jsonapi.Empty(http.StatusNoContent), nil
 	case "label":
 		of := strings.TrimSpace(q.Get("of"))
 		if of == "" {
-			http.Error(w, "say who or what it shows", http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest("say who or what it shows")
 		}
 		// The OWNER is labelling, at their own keyboard, so there is no speaker
 		// to anchor a handle from — this is a name, and it says so. Anchoring
@@ -228,23 +215,20 @@ func (T *OrchestrateApp) handleAgentImageAction(w http.ResponseWriter, r *http.R
 		// which is the only moment a handle is actually known.
 		_, conflict, err := LabelKeptImage(sess, name, ImageSubject{Person: q.Get("is_person") != "false", Name: of})
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest(err.Error())
 		}
 		Log("[images] %s labelled %q as %q on agent %s", user, name, of, agentID)
 		if conflict != "" {
 			// 200 with a body rather than an error: the label WAS applied, and
 			// reporting it as a failure would have the owner apply it twice.
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]string{
+			return map[string]string{
 				"conflict": conflict,
 				"message":  conflict + " is also filed as that subject. Nothing was deleted: forget whichever is wrong, or a request naming them has two answers.",
-			})
-			return
+			}, nil
 		}
-		w.WriteHeader(http.StatusNoContent)
+		return jsonapi.Empty(http.StatusNoContent), nil
 	default:
-		http.Error(w, "action must be forget or label", http.StatusBadRequest)
+		return nil, jsonapi.BadRequest("action must be forget or label")
 	}
 }
 

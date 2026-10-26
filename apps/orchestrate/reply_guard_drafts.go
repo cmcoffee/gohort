@@ -24,7 +24,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -324,20 +323,19 @@ func (T *OrchestrateApp) runBacktest(id, after string) {
 
 // handleGuardDraft starts drafting a guard from one flagged reply.
 // POST ?flag=<id>.
-func (T *OrchestrateApp) handleGuardDraft(w http.ResponseWriter, r *http.Request) {
-	if !T.requireAdmin(w, r) {
-		return
+func (T *OrchestrateApp) handleGuardDraft(c *jsonapi.Call, _ struct{}) (any, error) {
+	r := c.R
+	if err := T.requireAdmin(c); err != nil {
+		return nil, err
 	}
-	user, _, _ := RequireUser(w, r, T.DB)
+	user := c.User
 	flagID := strings.TrimSpace(r.URL.Query().Get("flag"))
 	var f replyFlag
 	if flagID == "" || !T.DB.Get(replyFlagTable, flagID, &f) || f.ID == "" {
-		http.Error(w, "no such flag", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("no such flag")
 	}
 	if f.Verdict != flagDown {
-		http.Error(w, "a guard is drafted from a flagged reply, not a good example", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("a guard is drafted from a flagged reply, not a good example")
 	}
 	now := time.Now()
 	a := replyguard.Authored{
@@ -352,35 +350,33 @@ func (T *OrchestrateApp) handleGuardDraft(w http.ResponseWriter, r *http.Request
 		T.DB.Set(replyFlagTable, f.ID, f)
 	}
 	go T.runDraft(a.ID)
-	jsonapi.Write(w, map[string]any{"ok": true, "id": a.ID})
+	return map[string]any{"ok": true, "id": a.ID}, nil
 }
 
 // handleAuthoredGuard acts on one drafted guard. POST ?id=&action=
 // redraft (body {note}) | test | enable | disable | delete.
-func (T *OrchestrateApp) handleAuthoredGuard(w http.ResponseWriter, r *http.Request) {
-	if !T.requireAdmin(w, r) {
-		return
+func (T *OrchestrateApp) handleAuthoredGuard(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+	r := c.R
+	if err := T.requireAdmin(c); err != nil {
+		return nil, err
 	}
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
 	a, ok := replyguard.LoadAuthored(id)
 	if !ok {
-		http.Error(w, "no such guard", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("no such guard")
 	}
 	busy := a.Status == replyguard.StatusDrafting
 	switch action := r.URL.Query().Get("action"); action {
 	case "redraft":
 		if busy {
-			http.Error(w, "it is still being drafted", http.StatusConflict)
-			return
+			return nil, jsonapi.Status(http.StatusConflict, "it is still being drafted")
 		}
 		var body struct {
 			Note string `json:"note"`
 		}
-		_ = json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body)
+		_ = json.Unmarshal(raw, &body)
 		if strings.TrimSpace(body.Note) == "" {
-			http.Error(w, "say what to change", http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest("say what to change")
 		}
 		a.Note = clip(body.Note, 2000)
 		a.Status, a.Stage, a.Started, a.Error = replyguard.StatusDrafting, "drafting", time.Now(), ""
@@ -388,8 +384,7 @@ func (T *OrchestrateApp) handleAuthoredGuard(w http.ResponseWriter, r *http.Requ
 		go T.runDraft(id)
 	case "test":
 		if busy || len(a.Checks) == 0 {
-			http.Error(w, "there is nothing to test yet", http.StatusConflict)
-			return
+			return nil, jsonapi.Status(http.StatusConflict, "there is nothing to test yet")
 		}
 		after := a.Status
 		a.Status, a.Stage, a.Started = replyguard.StatusDrafting, "testing", time.Now()
@@ -397,12 +392,10 @@ func (T *OrchestrateApp) handleAuthoredGuard(w http.ResponseWriter, r *http.Requ
 		go T.runBacktest(id, after)
 	case "enable":
 		if busy {
-			http.Error(w, "it is still being drafted", http.StatusConflict)
-			return
+			return nil, jsonapi.Status(http.StatusConflict, "it is still being drafted")
 		}
 		if err := replyguard.Validate(a.Checks); err != nil || strings.TrimSpace(a.Correction) == "" {
-			http.Error(w, "this draft is not a complete guard", http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest("this draft is not a complete guard")
 		}
 		a.Status = replyguard.StatusActive
 		replyguard.SaveAuthored(a)
@@ -419,19 +412,18 @@ func (T *OrchestrateApp) handleAuthoredGuard(w http.ResponseWriter, r *http.Requ
 	case "delete":
 		replyguard.DeleteAuthored(id)
 	default:
-		http.Error(w, "action must be redraft, test, enable, disable or delete", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("action must be redraft, test, enable, disable or delete")
 	}
-	jsonapi.Write(w, map[string]any{"ok": true})
+	return map[string]any{"ok": true}, nil
 }
 
 var spinFrames = []rune("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
 
 // handleAuthoredGuards lists the drafted guards for the admin, with what each
 // is doing now. GET.
-func (T *OrchestrateApp) handleAuthoredGuards(w http.ResponseWriter, r *http.Request) {
-	if !T.requireAdmin(w, r) {
-		return
+func (T *OrchestrateApp) handleAuthoredGuards(c *jsonapi.Call) (any, error) {
+	if err := T.requireAdmin(c); err != nil {
+		return nil, err
 	}
 	label := func(ids []string) string {
 		var out []string
@@ -487,7 +479,7 @@ func (T *OrchestrateApp) handleAuthoredGuards(w http.ResponseWriter, r *http.Req
 		rw.Active = a.Status == replyguard.StatusActive
 		rows = append(rows, rw)
 	}
-	jsonapi.Write(w, map[string]any{"records": rows})
+	return map[string]any{"records": rows}, nil
 }
 
 func init() {

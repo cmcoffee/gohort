@@ -22,6 +22,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // liveProviderOnce guards one-time registration of the agent-activity
@@ -60,12 +61,12 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	// an administrator.
 	//
 	// What keeps the gate is the view ACROSS owners: the bridges table lists
-	// every user's, deliberately, for an administrator to govern.
-	g := T.adminGated
-	gw := T.adminGatedWrite // admin + rejects safe methods (mutating actions)
-	// The method guard on its own, for a user-scoped action. Dropping the gate
-	// must not drop the CSRF protection that happened to travel with it.
-	w := T.stateChangingOnly
+	// every user's, deliberately, for an administrator to govern
+	// (T.adminOpt()).
+	//
+	// A user-scoped action is a bare jsonapi.Post, which takes any
+	// state-changing method and nothing else: the method guard the CSRF
+	// protection relies on, without a gate.
 
 	// Feed live AGENT activity into the global live ribbon — the same pill that
 	// shows running apps. Agents were invisible there because they run through
@@ -142,164 +143,172 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 			return out
 		})
 	})
-	T.HandleFunc("/api/console/agents", T.handleConsoleAgents)
-	T.HandleFunc("/api/console/agents/delete", w(T.handleConsoleAgentDelete))
-	T.HandleFunc("/api/console/agents/pause", w(T.handleConsoleAgentPause))
-	T.HandleFunc("/api/console/agents/resume", w(T.handleConsoleAgentResume))
-	T.HandleFunc("/api/console/agents/run", w(T.handleConsoleAgentRun))
-	T.HandleFunc("/api/console/agents/relink", w(T.handleConsoleAgentRelink))
+	T.HandleFunc("/api/console/agents", jsonapi.Get(T.DB, T.handleConsoleAgents))
+	T.HandleFunc("/api/console/agents/delete", jsonapi.Post(T.DB, T.handleConsoleAgentDelete))
+	T.HandleFunc("/api/console/agents/pause", jsonapi.Post(T.DB, T.handleConsoleAgentPause))
+	T.HandleFunc("/api/console/agents/resume", jsonapi.Post(T.DB, T.handleConsoleAgentResume))
+	T.HandleFunc("/api/console/agents/run", jsonapi.Post(T.DB, T.handleConsoleAgentRun))
+	T.HandleFunc("/api/console/agents/relink", jsonapi.Post(T.DB, T.handleConsoleAgentRelink))
 	// Shared relink picker source: the owner's agents as {value:id,label:name}.
-	T.HandleFunc("/api/console/agent-options", T.handleConsoleAgentOptions)
+	T.HandleFunc("/api/console/agent-options", jsonapi.Get(T.DB, T.handleConsoleAgentOptions))
 	// The owner's view of an agent's picture library — the first surface that
 	// shows what is in it rather than describing it in the agent's own words.
-	T.HandleFunc("/api/agent-images", T.handleAgentImages)
+	T.HandleFunc("/api/agent-images", jsonapi.Get(T.DB, T.handleAgentImages))
 	T.HandleFunc("/api/agent-images/raw", T.handleAgentImageRaw)
-	T.HandleFunc("/api/agent-images/action", w(T.handleAgentImageAction))
+	T.HandleFunc("/api/agent-images/action", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleAgentImageAction)}.Serve)
 	// Fleet-wide guardrail review — read-only, so no gw() write wrapper.
-	T.HandleFunc("/api/console/guardrail-blocks", T.handleConsoleGuardrails)
+	T.HandleFunc("/api/console/guardrail-blocks", jsonapi.Get(T.DB, T.handleConsoleGuardrails))
 	// Deployment-wide review of every correction check and guardrail that
 	// fired, admin only (judge_records.go). Read-only, so no gw() wrapper.
-	T.HandleFunc("/api/console/judge-records", T.handleConsoleFirings)
+	T.HandleFunc("/api/console/judge-records", jsonapi.Get(T.DB, T.handleConsoleFirings))
 	T.HandleFunc("/api/console/judge-records/export", T.handleConsoleFiringExport)
 	// Reply guards per model, and the flagged-replies queue (reply_flags.go).
 	// Admin only, checked in each handler; w() rejects a GET that writes.
-	T.HandleFunc("/api/console/reply-guards", T.handleReplyGuards)
-	T.HandleFunc("/api/console/reply-guards/mode", w(T.handleReplyGuardMode))
-	T.HandleFunc("/api/console/reply-guards/setting", w(T.handleReplyGuardSetting))
-	T.HandleFunc("/api/console/reply-guards/clear", w(T.handleReplyGuardClear))
-	T.HandleFunc("/api/console/reply-flags", T.handleReplyFlags)
-	T.HandleFunc("/api/console/reply-flags/status", w(T.handleReplyFlagStatus))
+	T.HandleFunc("/api/console/reply-guards", jsonapi.Get(T.DB, T.handleReplyGuards, T.adminOnlyOpt()))
+	T.HandleFunc("/api/console/reply-guards/mode", jsonapi.Post(T.DB, T.handleReplyGuardMode, T.adminOnlyOpt(), jsonapi.EmptyBodyOK, jsonapi.MaxBody(1<<16)))
+	T.HandleFunc("/api/console/reply-guards/setting", jsonapi.Post(T.DB, T.handleReplyGuardSetting, T.adminOnlyOpt(), jsonapi.EmptyBodyOK, jsonapi.MaxBody(1<<16)))
+	T.HandleFunc("/api/console/reply-guards/clear", jsonapi.Post(T.DB, T.handleReplyGuardClear, T.adminOnlyOpt()))
+	T.HandleFunc("/api/console/reply-flags", jsonapi.Get(T.DB, T.handleReplyFlags, T.adminOnlyOpt()))
+	T.HandleFunc("/api/console/reply-flags/status", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleReplyFlagStatus, T.adminOnlyOpt())}.Serve)
 	// Every tool test and app verify, per target (build_ledger.go). Admin
 	// only, read-only.
-	T.HandleFunc("/api/console/build-outcomes", T.handleBuildOutcomes)
+	T.HandleFunc("/api/console/build-outcomes", jsonapi.Get(T.DB, T.handleBuildOutcomes, T.adminOnlyOpt()))
 	// Drafting guards from flagged replies (reply_guard_drafts.go).
-	T.HandleFunc("/api/console/reply-guards/draft", w(T.handleGuardDraft))
-	T.HandleFunc("/api/console/reply-guards/authored", T.handleAuthoredGuards)
-	T.HandleFunc("/api/console/reply-guards/authored/act", w(T.handleAuthoredGuard))
+	T.HandleFunc("/api/console/reply-guards/draft", jsonapi.Post(T.DB, T.handleGuardDraft, T.adminOnlyOpt()))
+	T.HandleFunc("/api/console/reply-guards/authored", jsonapi.Get(T.DB, T.handleAuthoredGuards, T.adminOnlyOpt()))
+	T.HandleFunc("/api/console/reply-guards/authored/act", jsonapi.Post(T.DB, T.handleAuthoredGuard, T.adminOnlyOpt(), jsonapi.EmptyBodyOK, jsonapi.MaxBody(1<<16)))
 	// Anyone's thumbs-up or thumbs-down on one of their own replies.
-	T.HandleFunc("/api/reply-flag", w(T.handleReplyFlag))
+	T.HandleFunc("/api/reply-flag", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleReplyFlag, jsonapi.EmptyBodyOK, jsonapi.MaxBody(1<<20)), "DELETE": jsonapi.Post(T.DB, T.handleReplyFlag, jsonapi.EmptyBodyOK, jsonapi.MaxBody(1<<20))}.Serve)
 	// Tool health: actions that have failed repeatedly and never once worked.
-	T.HandleFunc("/api/console/broken-tools", T.handleConsoleBrokenTools)
-	T.HandleFunc("/api/console/broken-tools/forget", w(T.handleConsoleBrokenToolForget))
+	T.HandleFunc("/api/console/broken-tools", jsonapi.Get(T.DB, T.handleConsoleBrokenTools))
+	T.HandleFunc("/api/console/broken-tools/forget", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleConsoleBrokenToolForget), "DELETE": jsonapi.Post(T.DB, T.handleConsoleBrokenToolForget)}.Serve)
 	// Per-agent spend: each agent's LLM usage, banked per run (agent_spend.go).
-	T.HandleFunc("/api/console/spend", T.handleConsoleSpend)
-	T.HandleFunc("/api/console/monitors", T.handleConsoleMonitors)
-	T.HandleFunc("/api/console/monitors/delete", w(T.handleConsoleMonitorDelete))
-	T.HandleFunc("/api/console/monitors/pause", w(T.handleConsoleMonitorPause))
-	T.HandleFunc("/api/console/monitors/resume", w(T.handleConsoleMonitorResume))
-	T.HandleFunc("/api/console/monitors/relink", w(T.handleConsoleMonitorRelink))
-	T.HandleFunc("/api/console/monitors/run", w(T.handleConsoleMonitorRun))
-	T.HandleFunc("/api/console/monitors/checks", w(T.handleConsoleMonitorChecks))
-	T.HandleFunc("/api/console/monitors/get", T.handleConsoleMonitorGet)
-	T.HandleFunc("/api/console/monitors/update", w(T.handleConsoleMonitorUpdate))
-	T.HandleFunc("/api/console/agents/get", T.handleConsoleAgentGet)
-	T.HandleFunc("/api/console/agents/update", w(T.handleConsoleAgentUpdate))
-	T.HandleFunc("/api/console/activity", T.handleConsoleActivity)
-	T.HandleFunc("/api/console/activity/cancel", w(T.handleConsoleActivityCancel))
+	T.HandleFunc("/api/console/spend", jsonapi.Get(T.DB, T.handleConsoleSpend))
+	T.HandleFunc("/api/console/monitors", jsonapi.Get(T.DB, T.handleConsoleMonitors))
+	T.HandleFunc("/api/console/monitors/delete", jsonapi.Post(T.DB, T.handleConsoleMonitorDelete))
+	T.HandleFunc("/api/console/monitors/pause", jsonapi.Post(T.DB, T.handleConsoleMonitorPause))
+	T.HandleFunc("/api/console/monitors/resume", jsonapi.Post(T.DB, T.handleConsoleMonitorResume))
+	T.HandleFunc("/api/console/monitors/relink", jsonapi.Post(T.DB, T.handleConsoleMonitorRelink))
+	T.HandleFunc("/api/console/monitors/run", jsonapi.Post(T.DB, T.handleConsoleMonitorRun))
+	// A read: the row's Recent checks button GETs it.
+	T.HandleFunc("/api/console/monitors/checks", jsonapi.Get(T.DB, T.handleConsoleMonitorChecks))
+	T.HandleFunc("/api/console/monitors/get", jsonapi.Get(T.DB, T.handleConsoleMonitorGet))
+	T.HandleFunc("/api/console/monitors/update", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleConsoleMonitorUpdate, jsonapi.EmptyBodyOK)}.Serve)
+	T.HandleFunc("/api/console/agents/get", jsonapi.Get(T.DB, T.handleConsoleAgentGet))
+	T.HandleFunc("/api/console/agents/update", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleConsoleAgentUpdate, jsonapi.EmptyBodyOK)}.Serve)
+	T.HandleFunc("/api/console/activity", jsonapi.Get(T.DB, T.handleConsoleActivity))
+	T.HandleFunc("/api/console/activity/cancel", jsonapi.Post(T.DB, T.handleConsoleActivityCancel))
 	// The two summaries. Overview answers for the agent in view; fleet answers
 	// for everything the user owns and is marked fleet-scoped in the menu so no
 	// agent is appended to its request.
-	T.HandleFunc("/api/console/overview", T.handleConsoleOverview)
-	T.HandleFunc("/api/console/fleet", T.handleConsoleFleet)
-	T.HandleFunc("/api/console/runs", T.handleConsoleRuns)
-	T.HandleFunc("/api/console/run-detail", T.handleConsoleRunDetail)
-	T.HandleFunc("/api/console/approvals", T.handleConsoleApprovals)
-	T.HandleFunc("/api/console/permissions", T.handleConsolePermissions)
+	T.HandleFunc("/api/console/overview", jsonapi.Get(T.DB, T.handleConsoleOverview))
+	T.HandleFunc("/api/console/fleet", jsonapi.Get(T.DB, T.handleConsoleFleet))
+	T.HandleFunc("/api/console/runs", jsonapi.Get(T.DB, T.handleConsoleRuns))
+	T.HandleFunc("/api/console/run-detail", jsonapi.Get(T.DB, T.handleConsoleRunDetail))
+	T.HandleFunc("/api/console/approvals", jsonapi.Get(T.DB, T.handleConsoleApprovals))
+	T.HandleFunc("/api/console/permissions", jsonapi.Get(T.DB, T.handleConsolePermissions))
 	// Widen one agent's contact grant to every agent. See
 	// handleConsolePermissionPromote for why the scoped row is the default.
-	T.HandleFunc("/api/console/permissions/promote", w(T.handleConsolePermissionPromote))
-	T.HandleFunc("/api/console/permissions/policy", T.handleConsolePermissionPolicy)
-	T.HandleFunc("/api/console/permissions/remove", T.handleConsolePermissionRemove)
+	T.HandleFunc("/api/console/permissions/promote", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleConsolePermissionPromote)}.Serve)
+	T.HandleFunc("/api/console/permissions/policy", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleConsolePermissionPolicy, jsonapi.EmptyBodyOK)}.Serve)
+	T.HandleFunc("/api/console/permissions/remove", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleConsolePermissionRemove)}.Serve)
 	// promote widens a decision to every agent; narrow is its opposite. The
 	// pair is what makes the two scopes usable in both directions.
-	T.HandleFunc("/api/console/permissions/narrow", T.handleConsolePermissionNarrow)
+	T.HandleFunc("/api/console/permissions/narrow", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleConsolePermissionNarrow)}.Serve)
 	// grant CREATES one, which every other control here cannot: they all act
 	// on a decision that already exists.
-	T.HandleFunc("/api/console/permissions/grant", T.handleConsolePermissionGrant)
+	T.HandleFunc("/api/console/permissions/grant", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleConsolePermissionGrant, jsonapi.EmptyBodyOK)}.Serve)
 	// Who may RUN the agent. Its own door because publishing is requested,
 	// not applied: see handleConsolePermissionAudience.
-	T.HandleFunc("/api/console/permissions/audience", T.handleConsolePermissionAudience)
+	T.HandleFunc("/api/console/permissions/audience", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleConsolePermissionAudience, jsonapi.EmptyBodyOK)}.Serve)
 	// The agent's one share list, Everyone in it (agent_promotion.go).
-	T.HandleFunc("/api/console/permissions/share", T.handleAgentShare)
+	T.HandleFunc("/api/console/permissions/share", jsonapi.Methods{
+		"GET":   jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) { return T.handleAgentShare(c, nil) }),
+		"PATCH": jsonapi.Post(T.DB, T.handleAgentShare, jsonapi.EmptyBodyOK),
+		"POST":  jsonapi.Post(T.DB, T.handleAgentShare, jsonapi.EmptyBodyOK),
+	}.Serve)
 	// What holds for every agent until one says otherwise.
 	// ONE default for every agent, and the ceiling over all of them. Admin-gated
 	// inside the handler. There was a per-OWNER rung here too, on its own
 	// endpoint, and it was one rung too many: two pages answered the same
 	// question and an owner reading theirs could not see the deployment's.
-	T.HandleFunc("/api/console/deployment-settings", T.handleDeploymentSettings)
-	T.HandleFunc("/api/console/privileges", T.handleConsolePrivileges)
-	T.HandleFunc("/api/console/approvals/approve", w(T.handleApprovalApprove))
-	T.HandleFunc("/api/console/approvals/always", w(T.handleApprovalAlways))
-	T.HandleFunc("/api/console/approvals/deny", w(T.handleApprovalDeny))
-	T.HandleFunc("/api/console/credential-update/apply", w(T.handleCredentialUpdateApply))
-	T.HandleFunc("/api/console/credential-key/replace", w(T.handleKeyReplacement))
-	T.HandleFunc("/api/console/channel/clear", T.handleChannelClear)
-	T.HandleFunc("/api/console/channel/compact", T.handleChannelCompact)
-	T.HandleFunc("/api/console/grants", T.handleConsoleGrants)
-	T.HandleFunc("/api/console/grants/revoke", T.handleGrantRevoke)
+	T.HandleFunc("/api/console/deployment-settings", jsonapi.Methods{
+		"GET":   jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) { return T.handleDeploymentSettings(c, nil) }, T.adminOnlyOpt()),
+		"PATCH": jsonapi.Post(T.DB, T.handleDeploymentSettings, T.adminOnlyOpt(), jsonapi.EmptyBodyOK),
+		"POST":  jsonapi.Post(T.DB, T.handleDeploymentSettings, T.adminOnlyOpt(), jsonapi.EmptyBodyOK),
+	}.Serve)
+	T.HandleFunc("/api/console/privileges", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleConsolePrivileges, jsonapi.EmptyBodyOK)}.Serve)
+	T.HandleFunc("/api/console/approvals/approve", jsonapi.Post(T.DB, T.handleApprovalApprove))
+	T.HandleFunc("/api/console/approvals/always", jsonapi.Post(T.DB, T.handleApprovalAlways))
+	T.HandleFunc("/api/console/approvals/deny", jsonapi.Post(T.DB, T.handleApprovalDeny))
+	T.HandleFunc("/api/console/credential-update/apply", jsonapi.Post(T.DB, T.handleCredentialUpdateApply, jsonapi.EmptyBodyOK))
+	T.HandleFunc("/api/console/credential-key/replace", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleKeyReplacement, jsonapi.EmptyBodyOK)}.Serve)
+	T.HandleFunc("/api/console/channel/clear", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleChannelClear)}.Serve)
+	T.HandleFunc("/api/console/channel/compact", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleChannelCompact)}.Serve)
+	T.HandleFunc("/api/console/grants", jsonapi.Get(T.DB, T.handleConsoleGrants))
+	T.HandleFunc("/api/console/grants/revoke", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleGrantRevoke)}.Serve)
 	// Bridges — deployment-wide admin management of the credential-
 	// polling bridges agents have created, regardless of owner. This
 	// is the admin's enable/disable switch for a bridge: a paused
 	// bridge stops polling AND agents can't resume it themselves
 	// (bridge tools have no resume action; only these routes and the
 	// owner's console do).
-	T.HandleFunc("/api/console/bridges", g(T.handleConsoleBridges))
-	T.HandleFunc("/api/console/bridges/pause", gw(T.handleConsoleBridgePause))
-	T.HandleFunc("/api/console/bridges/resume", gw(T.handleConsoleBridgeResume))
-	T.HandleFunc("/api/console/bridges/delete", gw(T.handleConsoleBridgeDelete))
+	T.HandleFunc("/api/console/bridges", jsonapi.Get(T.DB, T.handleConsoleBridges, T.adminOpt()))
+	T.HandleFunc("/api/console/bridges/pause", jsonapi.Post(T.DB, T.handleConsoleBridgePause, T.adminOpt()))
+	T.HandleFunc("/api/console/bridges/resume", jsonapi.Post(T.DB, T.handleConsoleBridgeResume, T.adminOpt()))
+	T.HandleFunc("/api/console/bridges/delete", jsonapi.Post(T.DB, T.handleConsoleBridgeDelete, T.adminOpt()))
 	// Hook/unhook a bridge to a channel (Stage C: the UI equivalent of the
 	// bridge tool's update action).
-	T.HandleFunc("/api/console/bridges/set-channel", gw(T.handleConsoleBridgeSetChannel))
+	T.HandleFunc("/api/console/bridges/set-channel", jsonapi.Post(T.DB, T.handleConsoleBridgeSetChannel, T.adminOpt(), jsonapi.EmptyBodyOK))
 	// Channel picker for the Connect action — an owner's channels as
 	// {id, label, desc}. owner is passed per-row (a bridge's own owner).
-	T.HandleFunc("/api/console/bridge-channels", g(T.handleConsoleBridgeChannels))
+	T.HandleFunc("/api/console/bridge-channels", jsonapi.Get(T.DB, T.handleConsoleBridgeChannels, T.adminOpt()))
 	// Recent activity in a poll bridge's connected channel — the HistoryPanel
 	// expand on the /bridges/ poll table.
-	T.HandleFunc("/api/console/bridge-thread", g(T.handleConsoleBridgeThread))
+	T.HandleFunc("/api/console/bridge-thread", jsonapi.Get(T.DB, T.handleConsoleBridgeThread, T.adminOpt()))
 	// Per-agent schedules rail — the agent's own event monitors + scheduled
 	// runs + recurring tasks, so a schedule is visible within the agent it fires
 	// (any agent, not just controllers).
 	// Making one, rather than only managing what an agent made
 	// (console_machine_schedule.go).
-	T.HandleFunc("/api/console/machine-options", T.handleConsoleMachineOptions)
-	T.HandleFunc("/api/console/machine-schedule/create", T.handleConsoleMachineScheduleCreate)
+	T.HandleFunc("/api/console/machine-options", jsonapi.Get(T.DB, T.handleConsoleMachineOptions))
+	T.HandleFunc("/api/console/machine-schedule/create", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleConsoleMachineScheduleCreate, jsonapi.EmptyBodyOK)}.Serve)
 	// Delete a recurring task (the `recurring` tool's session updates) from the
 	// schedules rail. Owner-checked against the task payload before unscheduling.
-	T.HandleFunc("/api/console/recurring", T.handleConsoleRecurring)
+	T.HandleFunc("/api/console/recurring", jsonapi.Get(T.DB, T.handleConsoleRecurring))
 	// The merged view the Scheduler nav entry reads — the three lists above in
 	// one page, grouped. See console_scheduler.go.
-	T.HandleFunc("/api/console/scheduler", T.handleConsoleScheduler)
+	T.HandleFunc("/api/console/scheduler", jsonapi.Get(T.DB, T.handleConsoleScheduler))
 	// One task's working notes: what its fires have left for each other. GET
 	// reads, POST replaces (the same write path update_notes uses). Scoped by
 	// (kind, id) from the row, and only for tasks this user owns. See
 	// task_notes.go and docs/design/task-notes.md.
-	T.HandleFunc("/api/console/scheduler/notes", T.handleTaskNotes)
-	T.HandleFunc("/api/console/goals", T.handleConsoleGoals)
+	T.HandleFunc("/api/console/scheduler/notes", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) { return T.handleTaskNotes(c, nil) }),
+		"POST": jsonapi.Post(T.DB, T.handleTaskNotes, jsonapi.EmptyBodyOK),
+	}.Serve)
+	T.HandleFunc("/api/console/goals", jsonapi.Get(T.DB, T.handleConsoleGoals))
 	// Link groups: schedules that run together at one time, one after another.
 	// See schedule_links.go.
-	T.HandleFunc("/api/console/links/options", T.handleConsoleLinkOptions)
-	T.HandleFunc("/api/console/links/get", func(rw http.ResponseWriter, r *http.Request) {
-		if user, _, ok := RequireUser(rw, r, T.DB); ok {
-			T.handleConsoleLinkGet(rw, user, strings.TrimSpace(r.URL.Query().Get("id")))
-		}
-	})
+	T.HandleFunc("/api/console/links/options", jsonapi.Get(T.DB, T.handleConsoleLinkOptions))
+	T.HandleFunc("/api/console/links/get", jsonapi.Get(T.DB, T.handleConsoleLinkGet))
 	for _, verb := range []string{"link", "unlink", "up", "down", "pause", "resume", "run", "update"} {
-		T.HandleFunc("/api/console/links/"+verb, w(T.handleConsoleLink))
+		T.HandleFunc("/api/console/links/"+verb, jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleConsoleLink)}.Serve)
 	}
-	T.HandleFunc("/api/console/recurring/run", w(T.handleConsoleRecurringRun))
-	T.HandleFunc("/api/console/recurring/delete", w(T.handleConsoleRecurringDelete))
-	T.HandleFunc("/api/console/recurring/relink", w(T.handleConsoleRecurringRelink))
-	T.HandleFunc("/api/console/recurring/resume", w(T.handleConsoleRecurringResume))
-	T.HandleFunc("/api/console/recurring/pause", w(T.handleConsoleRecurringPause))
+	T.HandleFunc("/api/console/recurring/run", jsonapi.Post(T.DB, T.handleConsoleRecurringRun))
+	T.HandleFunc("/api/console/recurring/delete", jsonapi.Post(T.DB, T.handleConsoleRecurringDelete))
+	T.HandleFunc("/api/console/recurring/relink", jsonapi.Post(T.DB, T.handleConsoleRecurringRelink))
+	T.HandleFunc("/api/console/recurring/resume", jsonapi.Post(T.DB, T.handleConsoleRecurringResume))
+	T.HandleFunc("/api/console/recurring/pause", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleConsoleRecurringPause)}.Serve)
 	// Get one recurring task's editable fields (for the rail's edit modal) and
 	// update its schedule in place (re-validate + reschedule, prompt preserved).
-	T.HandleFunc("/api/console/recurring/get", T.handleConsoleRecurringGet)
-	T.HandleFunc("/api/console/recurring/update", w(T.handleConsoleRecurringUpdate))
+	T.HandleFunc("/api/console/recurring/get", jsonapi.Get(T.DB, T.handleConsoleRecurringGet))
+	T.HandleFunc("/api/console/recurring/update", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleConsoleRecurringUpdate, jsonapi.EmptyBodyOK)}.Serve)
 	// Create a NEW recurring task from the Scheduler modal's "New recurring task"
 	// button (agent + session supplied in the body; timing same shape as update).
-	T.HandleFunc("/api/console/recurring/create", w(T.handleConsoleRecurringCreate))
+	T.HandleFunc("/api/console/recurring/create", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleConsoleRecurringCreate, jsonapi.EmptyBodyOK)}.Serve)
 	// Who a new task can be for: the agent itself or one of its sub-agents.
-	T.HandleFunc("/api/console/recurring/for-options", T.handleConsoleRecurringForOptions)
+	T.HandleFunc("/api/console/recurring/for-options", jsonapi.Get(T.DB, T.handleConsoleRecurringForOptions))
 }
 
 // standingAgentOnRailOf reports whether a standing agent belongs on agentID's
@@ -358,3 +367,7 @@ func standingRoleSuffix(udb Database, sa StandingAgent, agentID string) string {
 	}
 	return ""
 }
+
+// errNotFound answers a JSON route naming something the caller does not have,
+// as http.NotFound did.
+var errNotFound = jsonapi.NotFound("404 page not found")

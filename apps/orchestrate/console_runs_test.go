@@ -38,7 +38,7 @@ func TestConsoleRunsPaneAndDetail(t *testing.T) {
 		return w
 	}
 
-	w := get("/api/console/runs", T.handleConsoleRuns)
+	w := get("/api/console/runs", routed(T))
 	if w.Code != http.StatusOK {
 		t.Fatalf("runs: %d %s", w.Code, w.Body.String())
 	}
@@ -65,7 +65,7 @@ func TestConsoleRunsPaneAndDetail(t *testing.T) {
 		t.Fatalf("list leaked GetRun-only fields: %s", b)
 	}
 
-	w = get("/api/console/run-detail?id="+rec.ID, T.handleConsoleRunDetail)
+	w = get("/api/console/run-detail?id="+rec.ID, routed(T))
 	var d consoleRunDetail
 	if err := json.Unmarshal(w.Body.Bytes(), &d); err != nil {
 		t.Fatal(err)
@@ -85,7 +85,7 @@ func TestConsoleRunsPaneAndDetail(t *testing.T) {
 	for _, r := range ListRuns(RootDB, "mallory", RunFilter{}) {
 		theirs = r
 	}
-	w = get("/api/console/run-detail?id="+theirs.ID, T.handleConsoleRunDetail)
+	w = get("/api/console/run-detail?id="+theirs.ID, routed(T))
 	if body := w.Body.String(); body != "{}\n" && body != "{}" {
 		t.Fatalf("foreign run detail = %q, want empty object", body)
 	}

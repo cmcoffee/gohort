@@ -143,15 +143,12 @@ func (T *OrchestrateApp) agentPublishNeedsApproval(r *http.Request, user, agentI
 // filed for an administrator unless one is asking, taken back by the owner at
 // once. The names beside it are kept, and add to Everyone rather than narrow
 // it: somebody named reaches the agent whether or not it is published.
-func (T *OrchestrateApp) handleAgentShare(w http.ResponseWriter, r *http.Request) {
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleAgentShare(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+	r := c.R
+	user, udb := c.User, c.UDB
 	rec, found := findAgentByNameOrID(udb, user, strings.TrimSpace(r.URL.Query().Get("agent")))
 	if !found || !isShareableAgent(rec, user) {
-		http.NotFound(w, r)
-		return
+		return nil, errNotFound
 	}
 	ask := promotion.EveryoneAsk{
 		Kind: agentPromotionKind, Owner: user, ID: agentPromotionName(rec.ID, "exposed"),
@@ -171,14 +168,13 @@ func (T *OrchestrateApp) handleAgentShare(w http.ResponseWriter, r *http.Request
 	}
 	switch r.Method {
 	case http.MethodGet:
-		jsonapi.Write(w, list(rec))
+		return list(rec), nil
 	case http.MethodPost, http.MethodPatch:
 		var body struct {
 			AllowedUsers []string `json:"allowed_users"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
+		if err := json.Unmarshal(raw, &body); err != nil {
+			return nil, jsonapi.BadRequest("bad request")
 		}
 		names, want := splitEveryone(body.AllowedUsers)
 		if want {
@@ -186,13 +182,11 @@ func (T *OrchestrateApp) handleAgentShare(w http.ResponseWriter, r *http.Request
 		}
 		level, err := promotion.AskEveryone(db, ask)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest(err.Error())
 		}
 		if on := level != ""; on && !rec.Everyone {
 			if err := T.publishedSlugClash(rec); err != nil {
-				http.Error(w, err.Error(), http.StatusConflict)
-				return
+				return nil, jsonapi.Status(http.StatusConflict, err.Error())
 			}
 			rec.Everyone = true
 		} else if !on {
@@ -201,11 +195,10 @@ func (T *OrchestrateApp) handleAgentShare(w http.ResponseWriter, r *http.Request
 		rec.AllowedUsers = normalizeShareList(names, user)
 		saved, err := saveAgent(udb, rec)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+			return nil, jsonapi.Status(http.StatusInternalServerError, err.Error())
 		}
-		jsonapi.Write(w, list(saved))
+		return list(saved), nil
 	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return nil, jsonapi.Status(http.StatusMethodNotAllowed, "method not allowed")
 	}
 }

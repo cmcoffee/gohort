@@ -7,6 +7,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/activity"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // resolveApproval approves a queued delegation: optionally pre-authorizes the
@@ -28,15 +29,12 @@ func approvalRequester(a Authorization) string {
 	return strings.TrimSpace(a.Agent)
 }
 
-func (T *OrchestrateApp) resolveApproval(w http.ResponseWriter, r *http.Request, always bool) {
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) resolveApproval(c *jsonapi.Call, always bool) (any, error) {
+	r := c.R
+	user, udb := c.User, c.UDB
 	a, found := GetAuthorization(RootDB, user, r.URL.Query().Get("id"))
 	if !found {
-		http.Error(w, "no such authorization", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("no such authorization")
 	}
 	DeleteAuthorization(RootDB, user, a.ID)
 	RecordActivity(r, activity.Approval, user, approvalActivity(a, map[bool]string{true: "approved and always allowed", false: "approved"}[always]))
@@ -50,8 +48,7 @@ func (T *OrchestrateApp) resolveApproval(w http.ResponseWriter, r *http.Request,
 				Log("[operator.approval] activate_sub_agent %s save failed: %v", a.Agent, err)
 			}
 		}
-		w.WriteHeader(http.StatusNoContent)
-		return
+		return jsonapi.Empty(http.StatusNoContent), nil
 	}
 	// build_agent: a non-Fleet agent asked (via request_build) to have a sub-agent
 	// built. The user approving THIS is the human-in-the-loop the Fleet gate
@@ -68,8 +65,7 @@ func (T *OrchestrateApp) resolveApproval(w http.ResponseWriter, r *http.Request,
 	if a.Action == changeApprovalAction {
 		grantChange(udb, a.Agent, a.Handle)
 		T.runApprovedChange(a)
-		w.WriteHeader(http.StatusNoContent)
-		return
+		return jsonapi.Empty(http.StatusNoContent), nil
 	}
 	// propose_rule: an agent suggested a rule of its own (propose_rule.go).
 	// Approving adds it to the agent's Rules.
@@ -77,14 +73,12 @@ func (T *OrchestrateApp) resolveApproval(w http.ResponseWriter, r *http.Request,
 		if err := addAgentRule(udb, a.Agent, a.Brief); err != nil {
 			Log("[operator.approval] propose_rule %s save failed: %v", a.Agent, err)
 		}
-		w.WriteHeader(http.StatusNoContent)
-		return
+		return jsonapi.Empty(http.StatusNoContent), nil
 	}
 	if a.Action == buildAgentAction {
 		go T.runApprovedDelegation(a, "builder")
 		Log("[operator.approval] build_agent approved: dispatching Builder for owner=%s requester=%s", a.Owner, a.FromAgent)
-		w.WriteHeader(http.StatusNoContent)
-		return
+		return jsonapi.Empty(http.StatusNoContent), nil
 	}
 	// autonomous_tool: an unattended (standing/scheduled) fire wanted a
 	// NeedsConfirm tool the agent isn't pre-authorized for. Approving adds the tool
@@ -112,8 +106,7 @@ func (T *OrchestrateApp) resolveApproval(w http.ResponseWriter, r *http.Request,
 				}
 			}
 		}
-		w.WriteHeader(http.StatusNoContent)
-		return
+		return jsonapi.Empty(http.StatusNoContent), nil
 	}
 	// orphan_memory_ref: an agent's memory names a tool whose last carrier was
 	// deleted. Approving RE-HOMES the orphan onto this agent, which makes the
@@ -123,14 +116,12 @@ func (T *OrchestrateApp) resolveApproval(w http.ResponseWriter, r *http.Request,
 	if a.Action == orphanMemoryRefAction {
 		if a.Brief != "" {
 			if err := rehomeOrphanTool(RootDB, user, a.Brief, a.Agent); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
+				return nil, jsonapi.BadRequest(err.Error())
 			}
 			Log("[orchestrate.memaudit] approved: re-homed orphaned %q onto agent=%s", a.Brief, a.Agent)
 		}
 		DeleteAuthorization(RootDB, user, a.ID)
-		w.WriteHeader(http.StatusNoContent)
-		return
+		return jsonapi.Empty(http.StatusNoContent), nil
 	}
 	// scope_tool: the Tier-2 elevation suggestion — this agent load_tool'd the
 	// same shared tool across enough sessions that it's evidently kit.
@@ -141,8 +132,7 @@ func (T *OrchestrateApp) resolveApproval(w http.ResponseWriter, r *http.Request,
 		if a.Brief != "" {
 			p, ok := UserToolByName(udb, user, a.Brief)
 			if !ok {
-				http.Error(w, "tool no longer exists", http.StatusNotFound)
-				return
+				return nil, jsonapi.NotFound("tool no longer exists")
 			}
 			scope := p.ScopeAgents
 			has := false
@@ -155,14 +145,12 @@ func (T *OrchestrateApp) resolveApproval(w http.ResponseWriter, r *http.Request,
 			if !has {
 				scope = append(scope, a.Agent)
 				if !SetUserToolScopeAgents(udb, user, a.Brief, scope) {
-					http.Error(w, "scope update failed", http.StatusInternalServerError)
-					return
+					return nil, jsonapi.Status(http.StatusInternalServerError, "scope update failed")
 				}
 				Log("[orchestrate.elevate] approved: scoped %q to agent=%s", a.Brief, a.Agent)
 			}
 		}
-		w.WriteHeader(http.StatusNoContent)
-		return
+		return jsonapi.Empty(http.StatusNoContent), nil
 	}
 	// send_message: deliver the queued text to the contact via the phantom
 	// bridge. ("Always allow" doesn't pre-authorize a contact — each outbound
@@ -195,8 +183,7 @@ func (T *OrchestrateApp) resolveApproval(w http.ResponseWriter, r *http.Request,
 				bindReplyThread(a.Owner, agent, a.ChatID, a.Handle, a.Brief, true)
 			}
 		}
-		w.WriteHeader(http.StatusNoContent)
-		return
+		return jsonapi.Empty(http.StatusNoContent), nil
 	}
 	// bind_thread: the agent asked to bind a person's 1:1 thread so it can read
 	// their replies. Approval creates a persistent, agent-bound channel scoped to
@@ -204,8 +191,7 @@ func (T *OrchestrateApp) resolveApproval(w http.ResponseWriter, r *http.Request,
 	// messages. Idempotent; "Always allow" has no separate meaning here.
 	if a.Action == "bind_thread" {
 		bindReplyThread(a.Owner, a.Agent, a.ChatID, a.Handle, a.Brief, a.Text != "nowake")
-		w.WriteHeader(http.StatusNoContent)
-		return
+		return jsonapi.Empty(http.StatusNoContent), nil
 	}
 	// converse_contact: hand the goal to phantom, which runs the autonomous
 	// multi-turn conversation and wakes the Operator back here when done.
@@ -216,8 +202,7 @@ func (T *OrchestrateApp) resolveApproval(w http.ResponseWriter, r *http.Request,
 		// clears (nothing to start). Guard kept so it doesn't fall through to the
 		// delegation path below.
 		Log("[operator.approval] converse_contact retired; clearing stale approval")
-		w.WriteHeader(http.StatusNoContent)
-		return
+		return jsonapi.Empty(http.StatusNoContent), nil
 	}
 	if always {
 		// Granted to the agent that ASKED (a.FromAgent), not to every agent the
@@ -243,7 +228,7 @@ func (T *OrchestrateApp) resolveApproval(w http.ResponseWriter, r *http.Request,
 	// legacy records — that run just keeps its own scope. The asking
 	// conversation's privacy is re-applied, and its result goes back there.
 	go T.runApprovedDelegation(a, a.Agent)
-	w.WriteHeader(http.StatusNoContent)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // bindReplyThread binds a person's 1:1 thread to agent so it can read their
@@ -283,12 +268,12 @@ func bindReplyThread(owner, agent, chatID, handle, name string, wake bool) {
 	})
 }
 
-func (T *OrchestrateApp) handleApprovalApprove(w http.ResponseWriter, r *http.Request) {
-	T.resolveApproval(w, r, false)
+func (T *OrchestrateApp) handleApprovalApprove(c *jsonapi.Call, _ struct{}) (any, error) {
+	return T.resolveApproval(c, false)
 }
 
-func (T *OrchestrateApp) handleApprovalAlways(w http.ResponseWriter, r *http.Request) {
-	T.resolveApproval(w, r, true)
+func (T *OrchestrateApp) handleApprovalAlways(c *jsonapi.Call, _ struct{}) (any, error) {
+	return T.resolveApproval(c, true)
 }
 
 // handleCredentialUpdateApply applies a user-APPROVED config change to the
@@ -299,26 +284,21 @@ func (T *OrchestrateApp) handleApprovalAlways(w http.ResponseWriter, r *http.Req
 // the Disabled/Secured state. So approving an update can never wipe the secret
 // or silently enable/disable a working credential. Scoped to the user's
 // namespace (LoadUser + Owner=user), so it can't touch a global/admin cred.
-func (T *OrchestrateApp) handleCredentialUpdateApply(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleCredentialUpdateApply(call *jsonapi.Call, raw json.RawMessage) (any, error) {
+	user := call.User
 	var body struct {
 		Name        string `json:"name"`
 		BaseURL     string `json:"base_url"`
 		ParamName   string `json:"param_name"`
 		Description string `json:"description"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return nil, jsonapi.BadRequest("bad request")
 	}
 	name := strings.TrimSpace(body.Name)
 	c, found := Secure().LoadUser(user, name)
 	if !found {
-		http.Error(w, "no credential named "+name+" in your API credentials", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("no credential named " + name + " in your API credentials")
 	}
 	// Overlay only the provided config fields; leave the rest as-is.
 	if v := strings.TrimSpace(body.BaseURL); v != "" {
@@ -333,17 +313,14 @@ func (T *OrchestrateApp) handleCredentialUpdateApply(w http.ResponseWriter, r *h
 	c.Owner = user
 	// Empty secret => preserve the existing secret + enabled/secured state.
 	if err := Secure().Save(c, ""); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest(err.Error())
 	}
-	w.WriteHeader(http.StatusNoContent)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
-func (T *OrchestrateApp) handleApprovalDeny(w http.ResponseWriter, r *http.Request) {
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleApprovalDeny(c *jsonapi.Call, _ struct{}) (any, error) {
+	r := c.R
+	user, udb := c.User, c.UDB
 	id := r.URL.Query().Get("id")
 	// Denying a sub-agent activation rejects the draft outright — delete the
 	// held agent so it doesn't linger dormant (PendingApproval) forever.
@@ -362,7 +339,7 @@ func (T *OrchestrateApp) handleApprovalDeny(w http.ResponseWriter, r *http.Reque
 		RecordActivity(r, activity.Approval, user, approvalActivity(a, "denied"))
 	}
 	DeleteAuthorization(RootDB, user, id)
-	w.WriteHeader(http.StatusNoContent)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // approvalActivity says, for the activity log, which request was decided. It

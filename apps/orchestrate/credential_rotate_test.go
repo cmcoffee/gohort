@@ -44,7 +44,7 @@ func TestReplacingAWorkingKeyWaitsForApproval(t *testing.T) {
 	answer := func(approve bool) *httptest.ResponseRecorder {
 		body := `{"name":"forge","approve":` + map[bool]string{true: "true", false: "false"}[approve] + `}`
 		w := httptest.NewRecorder()
-		T.handleKeyReplacement(w, asUser(httptest.NewRequest(http.MethodPost, "/api/console/credential-key/replace", strings.NewReader(body)), user))
+		routed(T)(w, asUser(httptest.NewRequest(http.MethodPost, "/api/console/credential-key/replace", strings.NewReader(body)), user))
 		return w
 	}
 	if w := answer(false); w.Code != http.StatusNoContent {

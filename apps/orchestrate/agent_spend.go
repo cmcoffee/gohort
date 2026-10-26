@@ -20,7 +20,6 @@ package orchestrate
 
 import (
 	"context"
-	"net/http"
 	"sort"
 	"strconv"
 	"strings"
@@ -240,14 +239,11 @@ func trimMoney(v float64) string {
 }
 
 // handleConsoleSpend serves the pane.
-func (T *OrchestrateApp) handleConsoleSpend(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *OrchestrateApp) handleConsoleSpend(c *jsonapi.Call) (any, error) {
+	user := c.User
 	rows := agentSpendRows(user, time.Now(), UserLocation(user))
 	if rows == nil {
 		rows = []agentSpendRow{}
 	}
-	jsonapi.Write(w, rows)
+	return rows, nil
 }

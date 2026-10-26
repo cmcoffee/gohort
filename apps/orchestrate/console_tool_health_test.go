@@ -30,7 +30,7 @@ func TestBrokenToolsPaneListsAndForgets(t *testing.T) {
 		h(w, r)
 		return w
 	}
-	w := call(http.MethodGet, "/api/console/broken-tools", T.handleConsoleBrokenTools)
+	w := call(http.MethodGet, "/api/console/broken-tools", routed(T))
 	var rows []consoleBrokenToolRow
 	if err := json.Unmarshal(w.Body.Bytes(), &rows); err != nil {
 		t.Fatal(err)
@@ -42,15 +42,15 @@ func TestBrokenToolsPaneListsAndForgets(t *testing.T) {
 		t.Fatalf("row detail = %+v", rows[0])
 	}
 
-	w = call(http.MethodPost, "/api/console/broken-tools/forget?id=jira.create_issue", T.handleConsoleBrokenToolForget)
+	w = call(http.MethodPost, "/api/console/broken-tools/forget?id=jira.create_issue", routed(T))
 	if w.Code != http.StatusOK {
 		t.Fatalf("forget: %d %s", w.Code, w.Body.String())
 	}
-	w = call(http.MethodGet, "/api/console/broken-tools", T.handleConsoleBrokenTools)
+	w = call(http.MethodGet, "/api/console/broken-tools", routed(T))
 	if strings.TrimSpace(w.Body.String()) != "[]" {
 		t.Fatalf("after forget: %s", w.Body.String())
 	}
-	if w = call(http.MethodPost, "/api/console/broken-tools/forget?id=jira.create_issue", T.handleConsoleBrokenToolForget); w.Code != http.StatusNotFound {
+	if w = call(http.MethodPost, "/api/console/broken-tools/forget?id=jira.create_issue", routed(T)); w.Code != http.StatusNotFound {
 		t.Fatalf("forgetting twice: %d", w.Code)
 	}
 	// The flaky action's tally survived the forget of its sibling.

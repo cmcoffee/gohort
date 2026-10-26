@@ -395,7 +395,7 @@ func TestTheAdminEndpointReturnsCountsAndRecords(t *testing.T) {
 		if strings.Contains(url, "/export") {
 			app.handleConsoleFiringExport(w, r)
 		} else {
-			app.handleConsoleFirings(w, r)
+			routed(app)(w, r)
 		}
 		return w
 	}

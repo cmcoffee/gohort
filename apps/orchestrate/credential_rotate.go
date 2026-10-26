@@ -19,6 +19,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 const (
@@ -118,38 +119,28 @@ func (t *chatTurn) emitKeyReplacementCard(name string, deployment bool) {
 // handleKeyReplacement answers the card: POST {name, approve}. Approving
 // writes the held key through the same reach checks (the person's own
 // credential, or the deployment's for an admin); either answer forgets it.
-func (T *OrchestrateApp) handleKeyReplacement(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST required", http.StatusMethodNotAllowed)
-		return
-	}
+func (T *OrchestrateApp) handleKeyReplacement(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+	r := c.R
+	user := c.User
 	var body struct {
 		Name    string `json:"name"`
 		Approve bool   `json:"approve"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return nil, jsonapi.BadRequest("bad request")
 	}
 	name := strings.TrimSpace(body.Name)
 	secret, held := takeKeyReplacement(user, name)
 	if !body.Approve {
-		w.WriteHeader(http.StatusNoContent)
-		return
+		return jsonapi.Empty(http.StatusNoContent), nil
 	}
 	if !held {
-		http.Error(w, "the replacement key is no longer held (it waits an hour): ask the assistant to fetch a new one", http.StatusGone)
-		return
+		return nil, jsonapi.Status(http.StatusGone, "the replacement key is no longer held (it waits an hour): ask the assistant to fetch a new one")
 	}
 	if err := Secure().ReplaceSecret(user, RequestIsAdmin(r), name, secret); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest(err.Error())
 	}
-	w.WriteHeader(http.StatusNoContent)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // secretToolArgs names, per tool, the arguments that carry a secret, so they
