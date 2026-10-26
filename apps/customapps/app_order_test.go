@@ -24,8 +24,7 @@ func TestMyAppsKeepTheOrderTheyWereDraggedInto(t *testing.T) {
 		SaveAppSpec(AppSpec{Slug: s, Name: strings.ToUpper(s[:1]) + s[1:], Owner: "alice"})
 	}
 	list := func() string {
-		w := httptest.NewRecorder()
-		T.handleAppsList(w, httptest.NewRequest(http.MethodGet, "/apps/_apps", nil), "alice")
+		w := as(t, T, "alice", httptest.NewRequest(http.MethodGet, "/apps/_apps", nil))
 		var rows []map[string]string
 		json.Unmarshal(w.Body.Bytes(), &rows)
 		var slugs []string
@@ -38,9 +37,8 @@ func TestMyAppsKeepTheOrderTheyWereDraggedInto(t *testing.T) {
 		t.Fatalf("before any drag: %s", got)
 	}
 
-	w := httptest.NewRecorder()
-	T.handleAppOrder(w, httptest.NewRequest(http.MethodPost, "/apps/_app/order",
-		strings.NewReader(`{"order":["gamma","nobodys","alpha","beta"]}`)), "alice")
+	w := as(t, T, "alice", httptest.NewRequest(http.MethodPost, "/apps/_app/order",
+		strings.NewReader(`{"order":["gamma","nobodys","alpha","beta"]}`)))
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("saving the order: %d %s", w.Code, w.Body.String())
 	}
@@ -56,8 +54,7 @@ func TestMyAppsKeepTheOrderTheyWereDraggedInto(t *testing.T) {
 		t.Errorf("a slug not on the list was stored: %s", got)
 	}
 
-	w = httptest.NewRecorder()
-	T.handleAppOrder(w, httptest.NewRequest(http.MethodGet, "/apps/_app/order", nil), "alice")
+	w = as(t, T, "alice", httptest.NewRequest(http.MethodGet, "/apps/_app/order", nil))
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Errorf("a GET changed the order: %d", w.Code)
 	}

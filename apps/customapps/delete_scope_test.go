@@ -17,8 +17,7 @@ func TestDeleteOwnAppKeepsOthersShare(t *testing.T) {
 	SetSharedOwner(T.DB, sharedAppsIndex, "tool", "bob", true)
 	SaveAppSpec(AppSpec{Slug: "tool", Name: "Alice Tool", Owner: "alice"})
 
-	w := httptest.NewRecorder()
-	T.handleDeleteApp(w, httptest.NewRequest(http.MethodDelete, "/apps/_app?slug=tool", nil), "alice")
+	w := as(t, T, "alice", httptest.NewRequest(http.MethodDelete, "/apps/_app?slug=tool", nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("delete: %d %s", w.Code, w.Body.String())
 	}
@@ -36,8 +35,7 @@ func TestDeleteOwnAppKeepsOthersShare(t *testing.T) {
 	}
 
 	// The owner's own delete still clears the entry.
-	w = httptest.NewRecorder()
-	T.handleDeleteApp(w, httptest.NewRequest(http.MethodDelete, "/apps/_app?slug=tool", nil), "bob")
+	w = as(t, T, "bob", httptest.NewRequest(http.MethodDelete, "/apps/_app?slug=tool", nil))
 	if _, ok := LookupSharedOwner(T.DB, sharedAppsIndex, "tool"); ok {
 		t.Fatal("owner delete left the shared index entry")
 	}

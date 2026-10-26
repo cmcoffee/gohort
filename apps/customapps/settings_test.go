@@ -46,8 +46,7 @@ func TestSettingsValuesRoundTrip(t *testing.T) {
 	spec := settingsSpec()
 
 	get := func(uid string, owner bool) map[string]any {
-		w := httptest.NewRecorder()
-		T.handleSettingsValues(w, httptest.NewRequest(http.MethodGet, "/apps/wx/_settings/values", nil), spec, uid, owner)
+		w := appAs(t, T, spec, uid, httptest.NewRequest(http.MethodGet, "/apps/wx/_settings/values", nil))
 		if w.Code != http.StatusOK {
 			t.Fatalf("GET as %s: %d %s", uid, w.Code, w.Body.String())
 		}
@@ -56,8 +55,7 @@ func TestSettingsValuesRoundTrip(t *testing.T) {
 		return out
 	}
 	post := func(uid string, owner bool, body string) *httptest.ResponseRecorder {
-		w := httptest.NewRecorder()
-		T.handleSettingsValues(w, httptest.NewRequest(http.MethodPost, "/apps/wx/_settings/values", strings.NewReader(body)), spec, uid, owner)
+		w := appAs(t, T, spec, uid, httptest.NewRequest(http.MethodPost, "/apps/wx/_settings/values", strings.NewReader(body)))
 		return w
 	}
 
@@ -113,8 +111,7 @@ func TestSettingsValuesRoundTrip(t *testing.T) {
 	}
 
 	// Reset clears the person's own overrides and nobody else's.
-	w := httptest.NewRecorder()
-	T.handleSettingsReset(w, httptest.NewRequest(http.MethodPost, "/apps/wx/_settings/reset", nil), spec, "bob", false)
+	w := appAs(t, T, spec, "bob", httptest.NewRequest(http.MethodPost, "/apps/wx/_settings/reset", nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("reset: %d", w.Code)
 	}

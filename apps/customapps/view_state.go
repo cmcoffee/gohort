@@ -20,7 +20,6 @@ package customapps
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 
@@ -63,23 +62,14 @@ type viewStateChange struct {
 	Set    map[string]string `json:"set"`
 }
 
-// handleViewState saves a change to the person's view of the app (POST), or
-// returns it (GET).
-func (T *CustomApps) handleViewState(w http.ResponseWriter, r *http.Request, appdb Database, spec AppSpec) {
-	switch r.Method {
-	case http.MethodGet:
-		jsonapi.Write(w, loadViewState(appdb, spec.Slug))
-		return
-	case http.MethodPost:
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	var ch viewStateChange
-	if err := json.NewDecoder(io.LimitReader(r.Body, viewStateMax*2)).Decode(&ch); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
+// viewState is the person's saved view of the app.
+func (T *CustomApps) viewState(a *appCall) (any, error) {
+	return loadViewState(a.appdb, a.spec.Slug), nil
+}
+
+// saveViewState merges a change into the person's view of the app.
+func (T *CustomApps) saveViewState(a *appCall, ch viewStateChange) (any, error) {
+	appdb, spec := a.appdb, a.spec
 	state := loadViewState(appdb, spec.Slug)
 	if ch.Clear {
 		state = map[string]string{}
@@ -92,15 +82,14 @@ func (T *CustomApps) handleViewState(w http.ResponseWriter, r *http.Request, app
 	}
 	if n := viewStateSize(state); n > viewStateMax {
 		Debug("[customapps] %s: view state of %d bytes refused (limit %d)", spec.Slug, n, viewStateMax)
-		http.Error(w, fmt.Sprintf("the page's saved state would be %d KB, over the %d KB an app may keep for one person: keep records in app.records, and only where the person was in localStorage", n>>10, viewStateMax>>10), http.StatusRequestEntityTooLarge)
-		return
+		return nil, jsonapi.Status(http.StatusRequestEntityTooLarge, fmt.Sprintf("the page's saved state would be %d KB, over the %d KB an app may keep for one person: keep records in app.records, and only where the person was in localStorage", n>>10, viewStateMax>>10))
 	}
 	if len(state) == 0 {
 		appdb.Unset(viewStateTable, spec.Slug)
 	} else {
 		appdb.Set(viewStateTable, spec.Slug, state)
 	}
-	w.WriteHeader(http.StatusNoContent)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // handleViewReset forgets the person's view of the app and opens it fresh.

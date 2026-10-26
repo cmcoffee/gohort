@@ -246,71 +246,59 @@ func (T *CustomApps) handleSettingsPage(w http.ResponseWriter, r *http.Request, 
 // leaving the rest as they were, and refuses a value the declaration rules
 // out. Only visible settings are ever read or written here — a recipient
 // cannot reach the owner's values by naming them.
-func (T *CustomApps) handleSettingsValues(w http.ResponseWriter, r *http.Request, spec AppSpec, uid string, owner bool) {
-	visible := visibleSettings(spec, owner)
-	db := T.settingsBase(spec, uid)
-	switch r.Method {
-	case http.MethodGet:
-		stored := loadSettingValues(db, spec.Slug)
-		out := map[string]any{}
-		for _, s := range visible {
-			v, ok := stored[s.Name]
-			if !ok {
-				v = s.Default
-			}
-			out[s.Name] = typedSetting(s, v)
+func (T *CustomApps) settingsValues(a *appCall) (any, error) {
+	stored := loadSettingValues(T.settingsBase(a.spec, a.User), a.spec.Slug)
+	out := map[string]any{}
+	for _, s := range visibleSettings(a.spec, a.mine()) {
+		v, ok := stored[s.Name]
+		if !ok {
+			v = s.Default
 		}
-		jsonapi.Write(w, out)
-	case http.MethodPost:
-		var in map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-			http.Error(w, "invalid JSON body", http.StatusBadRequest)
-			return
-		}
-		stored := loadSettingValues(db, spec.Slug)
-		timing := scheduleSettings(spec)
-		retime := false
-		for _, s := range visible {
-			v, ok := in[s.Name]
-			if !ok {
-				continue
-			}
-			val, err := coerceSetting(s, v)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			// A setting that says when the app refreshes is refused when it
-			// does not read as a time, rather than saved and quietly ignored.
-			if timing[s.Name] {
-				if _, _, err := ScheduleFromSetting(val); err != nil {
-					http.Error(w, settingLabel(s)+": "+err.Error(), http.StatusBadRequest)
-					return
-				}
-				retime = retime || stored[s.Name] != val
-			}
-			stored[s.Name] = val
-		}
-		db.Set(settingsTable, spec.Slug, stored)
-		if retime && owner {
-			T.reconcileAppSchedules(spec)
-		}
-		jsonapi.Write(w, map[string]bool{"ok": true})
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		out[s.Name] = typedSetting(s, v)
 	}
+	return out, nil
 }
 
-// handleSettingsReset clears this person's set values for the settings they
-// may set, so the declared defaults apply again. The form re-loads itself.
-func (T *CustomApps) handleSettingsReset(w http.ResponseWriter, r *http.Request, spec AppSpec, uid string, owner bool) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	db := T.settingsBase(spec, uid)
+// saveSettingsValues is the POST: see settingsValues.
+func (T *CustomApps) saveSettingsValues(a *appCall, in map[string]any) (any, error) {
+	spec := a.spec
+	db := T.settingsBase(spec, a.User)
 	stored := loadSettingValues(db, spec.Slug)
-	for _, s := range visibleSettings(spec, owner) {
+	timing := scheduleSettings(spec)
+	retime := false
+	for _, s := range visibleSettings(spec, a.mine()) {
+		v, ok := in[s.Name]
+		if !ok {
+			continue
+		}
+		val, err := coerceSetting(s, v)
+		if err != nil {
+			return nil, jsonapi.BadRequest(err.Error())
+		}
+		// A setting that says when the app refreshes is refused when it
+		// does not read as a time, rather than saved and quietly ignored.
+		if timing[s.Name] {
+			if _, _, err := ScheduleFromSetting(val); err != nil {
+				return nil, jsonapi.BadRequest(settingLabel(s) + ": " + err.Error())
+			}
+			retime = retime || stored[s.Name] != val
+		}
+		stored[s.Name] = val
+	}
+	db.Set(settingsTable, spec.Slug, stored)
+	if retime && a.mine() {
+		T.reconcileAppSchedules(spec)
+	}
+	return map[string]bool{"ok": true}, nil
+}
+
+// resetSettings clears this person's set values for the settings they may
+// set, so the declared defaults apply again. The form re-loads itself.
+func (T *CustomApps) resetSettings(a *appCall, _ struct{}) (any, error) {
+	spec := a.spec
+	db := T.settingsBase(spec, a.User)
+	stored := loadSettingValues(db, spec.Slug)
+	for _, s := range visibleSettings(spec, a.mine()) {
 		delete(stored, s.Name)
 	}
 	if len(stored) == 0 {
@@ -318,10 +306,10 @@ func (T *CustomApps) handleSettingsReset(w http.ResponseWriter, r *http.Request,
 	} else {
 		db.Set(settingsTable, spec.Slug, stored)
 	}
-	if owner && len(scheduleSettings(spec)) > 0 {
+	if a.mine() && len(scheduleSettings(spec)) > 0 {
 		T.reconcileAppSchedules(spec)
 	}
-	jsonapi.Write(w, map[string]bool{"ok": true})
+	return map[string]bool{"ok": true}, nil
 }
 
 // settingsFor resolves the values an app's scripts see when run for one
@@ -388,50 +376,53 @@ func (T *CustomApps) appAgentExists(spec AppSpec) bool {
 	return ok
 }
 
-// handleSettingsAgent is the Agent form's record: GET {agent} (empty when the
-// agent it names is gone), POST {agent} rebinds the app to another of the
-// owner's agents. The owner's only.
-func (T *CustomApps) handleSettingsAgent(w http.ResponseWriter, r *http.Request, spec AppSpec, owner bool) {
-	if !owner {
-		http.Error(w, "only the app's owner can change its agent", http.StatusForbidden)
-		return
+// settingsAgent is the Agent form's record: {agent}, empty when the agent it
+// names is gone. saveSettingsAgent rebinds the app to another of the owner's
+// agents. The owner's only.
+func (T *CustomApps) settingsAgent(a *appCall) (any, error) {
+	orch, err := ownerAgents(a)
+	if err != nil {
+		return nil, err
+	}
+	id := ""
+	if ag, ok := orch.LookupAppAgent(a.spec.Owner, a.spec.AgentID); ok {
+		id = ag.ID
+	}
+	a.W.Header().Set("Cache-Control", "no-store")
+	return map[string]any{"agent": id}, nil
+}
+
+func (T *CustomApps) saveSettingsAgent(a *appCall, body struct {
+	Agent string `json:"agent"`
+}) (any, error) {
+	orch, err := ownerAgents(a)
+	if err != nil {
+		return nil, err
+	}
+	spec := a.spec
+	ag, ok := orch.LookupAppAgent(spec.Owner, strings.TrimSpace(body.Agent))
+	if !ok {
+		return nil, jsonapi.BadRequest("pick one of your agents")
+	}
+	if ag.ID != spec.AgentID {
+		spec.AgentID = ag.ID
+		SaveAppSpecAs(spec, "agent changed in Settings")
+	}
+	name := strings.TrimSpace(ag.Name)
+	if name == "" {
+		name = ag.ID
+	}
+	return map[string]any{"ok": true, "message": "This app now asks " + name + "."}, nil
+}
+
+// ownerAgents is the agent host, for the app's owner alone.
+func ownerAgents(a *appCall) (agenthost.Host, error) {
+	if !a.mine() {
+		return nil, jsonapi.Forbidden("only the app's owner can change its agent")
 	}
 	orch := agenthost.Get()
 	if orch == nil {
-		http.Error(w, "agents are not available here", http.StatusServiceUnavailable)
-		return
+		return nil, jsonapi.Status(http.StatusServiceUnavailable, "agents are not available here")
 	}
-	switch r.Method {
-	case http.MethodGet:
-		id := ""
-		if a, ok := orch.LookupAppAgent(spec.Owner, spec.AgentID); ok {
-			id = a.ID
-		}
-		w.Header().Set("Cache-Control", "no-store")
-		jsonapi.Write(w, map[string]any{"agent": id})
-	case http.MethodPost:
-		var body struct {
-			Agent string `json:"agent"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		a, ok := orch.LookupAppAgent(spec.Owner, strings.TrimSpace(body.Agent))
-		if !ok {
-			http.Error(w, "pick one of your agents", http.StatusBadRequest)
-			return
-		}
-		if a.ID != spec.AgentID {
-			spec.AgentID = a.ID
-			SaveAppSpecAs(spec, "agent changed in Settings")
-		}
-		name := strings.TrimSpace(a.Name)
-		if name == "" {
-			name = a.ID
-		}
-		jsonapi.Write(w, map[string]any{"ok": true, "message": "This app now asks " + name + "."})
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
+	return orch, nil
 }

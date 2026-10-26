@@ -65,8 +65,7 @@ func TestTheAppsAgentRunsItsActions(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	var p map[string]any
 	for time.Now().Before(deadline) {
-		w := httptest.NewRecorder()
-		T.handleActionProgress(w, httptest.NewRequest(http.MethodGet, "/apps/prep/action-progress/fetch", nil), "alice", "bob", spec, "fetch")
+		w := appAs(t, T, spec, "bob", httptest.NewRequest(http.MethodGet, "/apps/prep/action-progress/fetch", nil))
 		json.Unmarshal(w.Body.Bytes(), &p)
 		if p["running"] == true && strings.Contains(p["progress"].(string), "downloading 3 of 8") {
 			break

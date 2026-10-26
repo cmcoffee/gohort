@@ -260,10 +260,7 @@ func TestShareIsAPublishRequestForNonAdmins(t *testing.T) {
 	SaveAppSpec(AppSpec{Slug: "tally", Name: "Tally", Owner: "alice"})
 
 	share := func(on string, body string) *httptest.ResponseRecorder {
-		w := httptest.NewRecorder()
-		r := httptest.NewRequest(http.MethodPost, "/apps/_app/share?slug=tally&on="+on, strings.NewReader(body))
-		T.handleShareApp(w, r, "alice")
-		return w
+		return as(t, T, "alice", httptest.NewRequest(http.MethodPost, "/apps/_app/share?slug=tally&on="+on, strings.NewReader(body)))
 	}
 
 	// Share from a non-admin = a request, not a share.
@@ -293,8 +290,7 @@ func TestShareIsAPublishRequestForNonAdmins(t *testing.T) {
 	share("true", `{"note":"the team wants it"}`)
 
 	// The owner's list carries the state so the modal can say who it waits on.
-	w = httptest.NewRecorder()
-	T.handleAppsList(w, httptest.NewRequest(http.MethodGet, "/apps/_apps", nil), "alice")
+	w = as(t, T, "alice", httptest.NewRequest(http.MethodGet, "/apps/_apps", nil))
 	if !strings.Contains(w.Body.String(), `"requested":"1"`) || !strings.Contains(w.Body.String(), `"status":"publish requested"`) {
 		t.Fatalf("row must show the request: %s", w.Body.String())
 	}

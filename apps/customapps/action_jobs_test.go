@@ -49,8 +49,7 @@ func TestASlowActionRunsAsAJob(t *testing.T) {
 		return out
 	}
 	progress := func(name string) map[string]any {
-		w := httptest.NewRecorder()
-		T.handleActionProgress(w, httptest.NewRequest(http.MethodGet, "/apps/prep/action-progress/"+name, nil), "alice", "alice", spec, name)
+		w := appAs(t, T, spec, "alice", httptest.NewRequest(http.MethodGet, "/apps/prep/action-progress/"+name, nil))
 		var out map[string]any
 		json.Unmarshal(w.Body.Bytes(), &out)
 		return out
@@ -83,8 +82,7 @@ func TestASlowActionRunsAsAJob(t *testing.T) {
 		t.Errorf("the job's records were not saved: %v", recs)
 	}
 	// Another person sees none of it.
-	w := httptest.NewRecorder()
-	T.handleActionProgress(w, httptest.NewRequest(http.MethodGet, "/apps/prep/action-progress/extract", nil), "alice", "bob", spec, "extract")
+	w := appAs(t, T, spec, "bob", httptest.NewRequest(http.MethodGet, "/apps/prep/action-progress/extract", nil))
 	if strings.TrimSpace(w.Body.String()) != "{}" {
 		t.Errorf("another person read the job: %s", w.Body.String())
 	}
@@ -105,12 +103,10 @@ func TestAnActionJobCanBeStopped(t *testing.T) {
 	}
 	w := httptest.NewRecorder()
 	T.handleAction(w, httptest.NewRequest(http.MethodPost, "/apps/prep/action/download", nil), "alice", "alice", T.recordBase(spec, "alice"), spec, "download")
-	w = httptest.NewRecorder()
-	T.handleActionCancel(w, httptest.NewRequest(http.MethodPost, "/apps/prep/action-cancel/download", nil), "alice", "alice", spec, "download")
+	w = appAs(t, T, spec, "alice", httptest.NewRequest(http.MethodPost, "/apps/prep/action-cancel/download", nil))
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		w = httptest.NewRecorder()
-		T.handleActionProgress(w, httptest.NewRequest(http.MethodGet, "/apps/prep/action-progress/download", nil), "alice", "alice", spec, "download")
+		w = appAs(t, T, spec, "alice", httptest.NewRequest(http.MethodGet, "/apps/prep/action-progress/download", nil))
 		if strings.Contains(w.Body.String(), `"done":true`) {
 			if !strings.Contains(w.Body.String(), "Failed") {
 				t.Errorf("a stopped job should not read as a success: %s", w.Body.String())
@@ -203,13 +199,11 @@ func TestARunningActionIsInTheLivePill(t *testing.T) {
 		t.Error("the script's line is in the status, which is shown to everyone unmasked")
 	}
 	id := entry.CancelURL[strings.Index(entry.CancelURL, "id=")+3:]
-	w = httptest.NewRecorder()
-	handleJobCancel(w, httptest.NewRequest(http.MethodPost, "/apps/_app/job-cancel?id="+id, nil), "mallory")
+	w = as(t, T, "mallory", httptest.NewRequest(http.MethodPost, "/apps/_app/job-cancel?id="+id, nil))
 	if w.Code != http.StatusNotFound {
 		t.Errorf("another person stopped the job: %d", w.Code)
 	}
-	w = httptest.NewRecorder()
-	handleJobCancel(w, httptest.NewRequest(http.MethodPost, "/apps/_app/job-cancel?id="+id, nil), "bob")
+	w = as(t, T, "bob", httptest.NewRequest(http.MethodPost, "/apps/_app/job-cancel?id="+id, nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("the owner's Stop: %d %s", w.Code, w.Body.String())
 	}

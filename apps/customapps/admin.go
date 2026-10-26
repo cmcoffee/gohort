@@ -310,25 +310,92 @@ func lookupAdminPipeline(owner, pipelineID string) (PipelineDef, bool) {
 
 // --- the endpoints ----------------------------------------------------------
 
-// handleAdmin serves the operator writes. Admin-gated here rather than trusting
-// the page that rendered the control: a control's URL is a URL, and whoever
-// finds it is not necessarily who was shown it.
-func (T *CustomApps) handleAdmin(w http.ResponseWriter, r *http.Request, user string, sub string) {
+// adminOnly answers anybody but an administrator as if the operator routes
+// were not there. Checked here rather than trusting the page that rendered the
+// control: a control's URL is a URL, and whoever finds it is not necessarily
+// who was shown it.
+func adminOnly(w http.ResponseWriter, r *http.Request) bool {
 	if !AuthIsAdmin(AuthDB(), r) {
 		http.NotFound(w, r)
-		return
+		return false
 	}
-	if r.Method != http.MethodPost && r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	owner := strings.TrimSpace(r.URL.Query().Get("owner"))
-	slug := strings.TrimSpace(r.URL.Query().Get("slug"))
-	spec, ok := loadSpec(owner, slug)
+	return true
+}
+
+// adminRoute is one operator control's route: GET what it shows, POST a
+// change.
+func (T *CustomApps) adminRoute(sub string) http.HandlerFunc {
+	return jsonapi.Methods{
+		"GET": jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) {
+			return T.handleAdminRead(c, sub)
+		}, jsonapi.Authorize(adminOnly)),
+		"POST": jsonapi.Post(T.DB, func(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+			return T.handleAdminWrite(c, sub, raw)
+		}, jsonapi.Authorize(adminOnly), jsonapi.EmptyBodyOK),
+	}.Serve
+}
+
+// adminApp is the app ?owner=&slug= names.
+func adminApp(r *http.Request) (spec AppSpec, owner, slug string, found bool) {
+	owner = strings.TrimSpace(r.URL.Query().Get("owner"))
+	slug = strings.TrimSpace(r.URL.Query().Get("slug"))
+	spec, found = loadSpec(owner, slug)
+	return spec, owner, slug, found
+}
+
+// handleAdminRead serves what an operator control shows: who may open the app
+// (reach), its stages' tiers (tiers), and what its scripts declare (review).
+func (T *CustomApps) handleAdminRead(c *jsonapi.Call, sub string) (any, error) {
+	spec, owner, slug, ok := adminApp(c.R)
 	if !ok {
-		http.NotFound(w, r)
-		return
+		return nil, errNoApp
 	}
+	switch sub {
+	case "reach":
+		// One response carries BOTH the options and the current selection,
+		// which is what lets the picker skip a second fetch for a record
+		// that does not exist as one.
+		st := appadmin.Load(RootDB, owner, slug)
+		users := []map[string]any{}
+		for _, u := range AuthListUsers(AuthDB()) {
+			if u.Username == owner {
+				continue // the owner always reaches their own app
+			}
+			users = append(users, map[string]any{"name": u.Username})
+		}
+		allowed := st.AllowedUsers
+		if allowed == nil {
+			allowed = []string{}
+		}
+		return map[string]any{"users": users, "allowed": allowed}, nil
+	case "tiers":
+		def, ok := lookupAdminPipeline(owner, spec.PipelineID)
+		if !ok {
+			return nil, errNoApp
+		}
+		// Only the OVERRIDE is stored, so an unset stage comes back empty
+		// and the form shows "As authored" — which is the true statement
+		// about it, where a filled-in value would claim a decision nobody
+		// made.
+		out := map[string]any{}
+		for _, st := range def.Stages {
+			out[st.Name] = RouteOverride(PipelineStageRouteKey(def.ID, st.Name))
+		}
+		return out, nil
+	case "review":
+		return adminReview(spec, owner), nil
+	}
+	return nil, errNoApp
+}
+
+// handleAdminWrite serves the operator writes: clearing a leftover link token
+// (revoke-link), who may open the app (reach), and its stages' tiers (tiers).
+func (T *CustomApps) handleAdminWrite(c *jsonapi.Call, sub string, raw json.RawMessage) (any, error) {
+	spec, owner, slug, ok := adminApp(c.R)
+	if !ok {
+		return nil, errNoApp
+	}
+	user := c.User
 	switch sub {
 	case "revoke-link":
 		// Anonymous links no longer exist; the control stays only long enough
@@ -338,62 +405,29 @@ func (T *CustomApps) handleAdmin(w http.ResponseWriter, r *http.Request, user st
 			SaveAppSpec(spec)
 			Log("[customapps] admin %q cleared a leftover public token on %q/%q", user, owner, slug)
 		}
-		jsonapi.Write(w, map[string]any{"ok": true, "message": "Link revoked."})
+		return map[string]any{"ok": true, "message": "Link revoked."}, nil
 	case "reach":
-		st := appadmin.Load(RootDB, owner, slug)
-		if r.Method == http.MethodGet {
-			// One response carries BOTH the options and the current selection,
-			// which is what lets the picker skip a second fetch for a record
-			// that does not exist as one.
-			users := []map[string]any{}
-			for _, u := range AuthListUsers(AuthDB()) {
-				if u.Username == owner {
-					continue // the owner always reaches their own app
-				}
-				users = append(users, map[string]any{"name": u.Username})
-			}
-			allowed := st.AllowedUsers
-			if allowed == nil {
-				allowed = []string{}
-			}
-			jsonapi.Write(w, map[string]any{"users": users, "allowed": allowed})
-			return
-		}
 		var in struct {
 			Users []string `json:"users"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
+		if err := json.Unmarshal(raw, &in); err != nil {
+			return nil, jsonapi.BadRequest("bad request")
 		}
+		st := appadmin.Load(RootDB, owner, slug)
 		st.AllowedUsers = in.Users
 		st.UpdatedBy = user
 		st.Updated = time.Now().UTC().Format(time.RFC3339)
 		appadmin.Save(RootDB, owner, slug, st)
 		Log("[customapps] admin %q set the allowlist on %q/%q to %d user(s)", user, owner, slug, len(st.AllowedUsers))
-		jsonapi.Write(w, map[string]any{"ok": true, "message": "Saved."})
+		return map[string]any{"ok": true, "message": "Saved."}, nil
 	case "tiers":
 		def, ok := lookupAdminPipeline(owner, spec.PipelineID)
 		if !ok {
-			http.NotFound(w, r)
-			return
-		}
-		if r.Method == http.MethodGet {
-			// Only the OVERRIDE is stored, so an unset stage comes back empty
-			// and the form shows "As authored" — which is the true statement
-			// about it, where a filled-in value would claim a decision nobody
-			// made.
-			out := map[string]any{}
-			for _, st := range def.Stages {
-				out[st.Name] = RouteOverride(PipelineStageRouteKey(def.ID, st.Name))
-			}
-			jsonapi.Write(w, out)
-			return
+			return nil, errNoApp
 		}
 		var in map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
+		if err := json.Unmarshal(raw, &in); err != nil {
+			return nil, jsonapi.BadRequest("bad request")
 		}
 		legal := map[string]bool{"": true}
 		for _, v := range RouteValues() {
@@ -406,8 +440,7 @@ func (T *CustomApps) handleAdmin(w http.ResponseWriter, r *http.Request, user st
 			}
 			val := strings.TrimSpace(fmt.Sprint(raw))
 			if !legal[val] {
-				http.Error(w, "invalid tier for stage "+st.Name, http.StatusBadRequest)
-				return
+				return nil, jsonapi.BadRequest("invalid tier for stage " + st.Name)
 			}
 			key := PipelineStageRouteKey(def.ID, st.Name)
 			if val == "" {
@@ -420,69 +453,87 @@ func (T *CustomApps) handleAdmin(w http.ResponseWriter, r *http.Request, user st
 			RootDB.Set(RoutingTable, key, val)
 		}
 		Log("[customapps] admin %q set stage tiers on %q/%q", user, owner, slug)
-		jsonapi.Write(w, map[string]any{"ok": true, "message": "Saved."})
-	case "review":
-		caps := map[string]bool{}
-		for _, d := range spec.DataSources {
-			for _, c := range d.Capabilities {
-				caps[c] = true
-			}
-		}
-		for _, a := range spec.Actions {
-			for _, c := range a.Capabilities {
-				caps[c] = true
-			}
-		}
-		declared := make([]string, 0, len(caps))
-		for c := range caps {
-			declared = append(declared, c)
-		}
-		sort.Strings(declared)
-		shown := strings.Join(declared, ", ")
-		if shown == "" {
-			// Not the same as "none declared and therefore harmless": fetch is
-			// granted by default and the owner's credentials are auto-granted
-			// to app scripts, so an empty list is a statement about the
-			// DECLARATION, not about the reach.
-			shown = "none declared (fetch and the owner's credentials are granted by default)"
-		}
-		pageCode := "none"
-		if n := len(pageBrowserCode(spec)); n > 0 {
-			pageCode = fmt.Sprintf("%d block(s) of HTML or script that run in each viewer's browser, isolated (no gohort session, only this app's own endpoints): read them under Show scripts", n)
-		}
-		jsonapi.Write(w, map[string]any{
-			"sources":      len(spec.DataSources),
-			"actions":      len(spec.Actions),
-			"page_code":    pageCode,
-			"capabilities": shown,
-			"runs_as":      owner,
-		})
-	case "scripts":
-		// Logged, always. Reading somebody else's code is a legitimate operator
-		// act and an unrecorded one is indistinguishable from a quiet look.
-		Log("[customapps] admin %q read the scripts of %q/%q", user, owner, slug)
-		var b strings.Builder
-		fmt.Fprintf(&b, "%s, %s\nowner: %s\nscripts run in the owner's sandbox, as the owner\n",
-			spec.Name, spec.Slug, owner)
-		for _, d := range spec.DataSources {
-			fmt.Fprintf(&b, "\n=== data source: %s (%s) ===\ncapabilities: %s\n\n%s\n",
-				d.Name, firstNonEmptyText(d.Language, "python"), capsOrNone(d.Capabilities), d.Script)
-		}
-		for _, a := range spec.Actions {
-			fmt.Fprintf(&b, "\n=== action: %s (%s) ===\ncapabilities: %s\n\n%s\n",
-				a.Name, firstNonEmptyText(a.Language, "python"), capsOrNone(a.Capabilities), a.Script)
-		}
-		// The page's own HTML and script. It runs in each viewer's browser,
-		// in an isolated frame with no origin, reaching only the app's own
-		// endpoints (isolateAppHTML): not as the viewer on this site.
-		for i, code := range pageBrowserCode(spec) {
-			fmt.Fprintf(&b, "\n=== page code %d (runs in each viewer's browser, isolated: no gohort session, only this app's own endpoints) ===\n\n%s\n", i+1, code)
-		}
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		_, _ = w.Write([]byte(b.String()))
-	default:
-		http.NotFound(w, r)
+		return map[string]any{"ok": true, "message": "Saved."}, nil
 	}
+	return nil, errNoApp
+}
+
+// adminReview is what the app's scripts declare, for the Scripts control.
+func adminReview(spec AppSpec, owner string) map[string]any {
+	caps := map[string]bool{}
+	for _, d := range spec.DataSources {
+		for _, c := range d.Capabilities {
+			caps[c] = true
+		}
+	}
+	for _, a := range spec.Actions {
+		for _, c := range a.Capabilities {
+			caps[c] = true
+		}
+	}
+	declared := make([]string, 0, len(caps))
+	for c := range caps {
+		declared = append(declared, c)
+	}
+	sort.Strings(declared)
+	shown := strings.Join(declared, ", ")
+	if shown == "" {
+		// Not the same as "none declared and therefore harmless": fetch is
+		// granted by default and the owner's credentials are auto-granted
+		// to app scripts, so an empty list is a statement about the
+		// DECLARATION, not about the reach.
+		shown = "none declared (fetch and the owner's credentials are granted by default)"
+	}
+	pageCode := "none"
+	if n := len(pageBrowserCode(spec)); n > 0 {
+		pageCode = fmt.Sprintf("%d block(s) of HTML or script that run in each viewer's browser, isolated (no gohort session, only this app's own endpoints): read them under Show scripts", n)
+	}
+	return map[string]any{
+		"sources":      len(spec.DataSources),
+		"actions":      len(spec.Actions),
+		"page_code":    pageCode,
+		"capabilities": shown,
+		"runs_as":      owner,
+	}
+}
+
+// handleAdminScripts is the app's code, as plain text for an operator to read.
+func (T *CustomApps) handleAdminScripts(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok || !adminOnly(w, r) {
+		return
+	}
+	if r.Method != http.MethodPost && r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	spec, owner, slug, found := adminApp(r)
+	if !found {
+		http.NotFound(w, r)
+		return
+	}
+	// Logged, always. Reading somebody else's code is a legitimate operator
+	// act and an unrecorded one is indistinguishable from a quiet look.
+	Log("[customapps] admin %q read the scripts of %q/%q", user, owner, slug)
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s, %s\nowner: %s\nscripts run in the owner's sandbox, as the owner\n",
+		spec.Name, spec.Slug, owner)
+	for _, d := range spec.DataSources {
+		fmt.Fprintf(&b, "\n=== data source: %s (%s) ===\ncapabilities: %s\n\n%s\n",
+			d.Name, firstNonEmptyText(d.Language, "python"), capsOrNone(d.Capabilities), d.Script)
+	}
+	for _, a := range spec.Actions {
+		fmt.Fprintf(&b, "\n=== action: %s (%s) ===\ncapabilities: %s\n\n%s\n",
+			a.Name, firstNonEmptyText(a.Language, "python"), capsOrNone(a.Capabilities), a.Script)
+	}
+	// The page's own HTML and script. It runs in each viewer's browser,
+	// in an isolated frame with no origin, reaching only the app's own
+	// endpoints (isolateAppHTML): not as the viewer on this site.
+	for i, code := range pageBrowserCode(spec) {
+		fmt.Fprintf(&b, "\n=== page code %d (runs in each viewer's browser, isolated: no gohort session, only this app's own endpoints) ===\n\n%s\n", i+1, code)
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = w.Write([]byte(b.String()))
 }
 
 // pageBrowserCode collects every string in an app's page and sections that

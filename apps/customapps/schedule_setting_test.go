@@ -34,9 +34,7 @@ func TestARefreshTimeSettingMovesTheSchedule(t *testing.T) {
 	}
 
 	post := func(body string) *httptest.ResponseRecorder {
-		w := httptest.NewRecorder()
-		T.handleSettingsValues(w, httptest.NewRequest(http.MethodPost, "/apps/paper/_settings/values", strings.NewReader(body)), spec, "alice", true)
-		return w
+		return appAs(t, T, spec, "alice", httptest.NewRequest(http.MethodPost, "/apps/paper/_settings/values", strings.NewReader(body)))
 	}
 	if w := post(`{"refresh_time": "07:30"}`); w.Code != http.StatusOK {
 		t.Fatalf("save: %d %s", w.Code, w.Body.String())
@@ -51,7 +49,7 @@ func TestARefreshTimeSettingMovesTheSchedule(t *testing.T) {
 		t.Errorf("a refused save must leave the trigger, cron = %q", tr.Cron)
 	}
 	// Reset brings back the default time.
-	T.handleSettingsReset(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/apps/paper/_settings/reset", nil), spec, "alice", true)
+	appAs(t, T, spec, "alice", httptest.NewRequest(http.MethodPost, "/apps/paper/_settings/reset", nil))
 	if tr, _ := GetScheduledTrigger(RootDB, "alice", name); tr.Cron != "daily 06:00" {
 		t.Errorf("reset should restore the default time, cron = %q", tr.Cron)
 	}

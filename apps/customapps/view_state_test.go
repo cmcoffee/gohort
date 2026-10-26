@@ -8,27 +8,23 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/snugforge/kvlite"
 )
 
-func postViewState(t *testing.T, T *CustomApps, appdb Database, spec AppSpec, body string) int {
+func postViewState(t *testing.T, T *CustomApps, spec AppSpec, body string) int {
 	t.Helper()
-	w := httptest.NewRecorder()
-	T.handleViewState(w, httptest.NewRequest(http.MethodPost, "/apps/x/view-state", strings.NewReader(body)), appdb, spec)
-	return w.Code
+	return appAs(t, T, spec, spec.Owner, httptest.NewRequest(http.MethodPost, "/apps/"+spec.Slug+"/view-state", strings.NewReader(body))).Code
 }
 
 // A page's localStorage changes merge into the person's saved view, in the
 // order they were made, and come back on the next load.
 func TestViewStateMergesAndReturns(t *testing.T) {
-	T := &CustomApps{}
-	db := &DBase{Store: kvlite.MemStore()}
-	alice, bob := UserDB(db, "alice"), UserDB(db, "bob")
-	spec := AppSpec{Slug: "prep"}
-	if c := postViewState(t, T, alice, spec, `{"set":{"tab":"logs","case":"CASE-1"}}`); c != 204 {
+	T := sharingTestApp(t)
+	alice, bob := UserDB(T.DB, "alice"), UserDB(T.DB, "bob")
+	spec := AppSpec{Slug: "prep", Owner: "alice"}
+	if c := postViewState(t, T, spec, `{"set":{"tab":"logs","case":"CASE-1"}}`); c != 204 {
 		t.Fatalf("save: %d", c)
 	}
-	postViewState(t, T, alice, spec, `{"remove":["case"],"set":{"filter":"errors"}}`)
+	postViewState(t, T, spec, `{"remove":["case"],"set":{"filter":"errors"}}`)
 	got := loadViewState(alice, "prep")
 	if len(got) != 2 || got["tab"] != "logs" || got["filter"] != "errors" {
 		t.Errorf("alice's view: %v", got)
@@ -36,12 +32,12 @@ func TestViewStateMergesAndReturns(t *testing.T) {
 	if len(loadViewState(bob, "prep")) != 0 || len(loadViewState(alice, "other")) != 0 {
 		t.Error("the view leaked to another person or another app")
 	}
-	postViewState(t, T, alice, spec, `{"clear":true,"set":{"tab":"summary"}}`)
+	postViewState(t, T, spec, `{"clear":true,"set":{"tab":"summary"}}`)
 	if got := loadViewState(alice, "prep"); len(got) != 1 || got["tab"] != "summary" {
 		t.Errorf("after clear: %v", got)
 	}
 	big := strings.Repeat("x", viewStateMax)
-	if c := postViewState(t, T, alice, spec, `{"set":{"blob":"`+big+`"}}`); c != http.StatusRequestEntityTooLarge {
+	if c := postViewState(t, T, spec, `{"set":{"blob":"`+big+`"}}`); c != http.StatusRequestEntityTooLarge {
 		t.Errorf("an oversized view was kept: %d", c)
 	}
 	if got := loadViewState(alice, "prep"); got["tab"] != "summary" || got["blob"] != "" {
@@ -57,16 +53,15 @@ func TestViewStateMergesAndReturns(t *testing.T) {
 // The page arrives with the person's view inside every isolated frame, after
 // the page helper, and offers Reset view only when there is one to reset.
 func TestThePageCarriesTheSavedView(t *testing.T) {
-	T := &CustomApps{}
-	db := &DBase{Store: kvlite.MemStore()}
-	alice := UserDB(db, "alice")
-	spec := AppSpec{Slug: "prep"}
+	T := sharingTestApp(t)
+	alice := UserDB(T.DB, "alice")
+	spec := AppSpec{Slug: "prep", Owner: "alice"}
 	page := isolateAppHTML(json.RawMessage(`{"sections":[{"body":{"type":"frame","html":"<p>x</p>"}}]}`), "/apps/prep/")
 	fresh := string(T.withViewState(page, alice, spec))
 	if !strings.Contains(fresh, `localStorage`) || strings.Contains(fresh, "Reset view") {
 		t.Errorf("a fresh page: storage script present=%v, reset offered=%v", strings.Contains(fresh, "localStorage"), strings.Contains(fresh, "Reset view"))
 	}
-	postViewState(t, T, alice, spec, `{"set":{"note":"</script><b>hi</b>","tab":"logs"}}`)
+	postViewState(t, T, spec, `{"set":{"note":"</script><b>hi</b>","tab":"logs"}}`)
 	out := T.withViewState(page, alice, spec)
 	var m map[string]any
 	if err := json.Unmarshal(out, &m); err != nil {

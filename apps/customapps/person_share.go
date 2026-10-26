@@ -11,7 +11,6 @@ package customapps
 
 import (
 	"encoding/json"
-	"net/http"
 	"sort"
 	"strings"
 
@@ -84,24 +83,18 @@ func (T *CustomApps) setPersonShare(owner, slug, person string, on bool) error {
 
 // handleSharePerson is POST _app/share_person?slug=&user=&on=true|false, for
 // an app the requester owns.
-func (T *CustomApps) handleSharePerson(w http.ResponseWriter, r *http.Request, user string) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	q := r.URL.Query()
+func (T *CustomApps) handleSharePerson(c *jsonapi.Call, _ struct{}) (any, error) {
+	user, q := c.User, c.R.URL.Query()
 	slug, person := strings.TrimSpace(q.Get("slug")), strings.TrimSpace(q.Get("user"))
 	if slug == "" || person == "" {
-		http.Error(w, "send slug and user", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("send slug and user")
 	}
 	on := q.Get("on") != "false"
 	if err := T.setPersonShare(user, slug, person, on); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest(err.Error())
 	}
 	Log("[customapps] %s %s app %q with %q", user, map[bool]string{true: "shared", false: "unshared"}[on], slug, person)
-	jsonapi.Write(w, map[string]any{"ok": true, "on": on})
+	return map[string]any{"ok": true, "on": on}, nil
 }
 
 // sharePeopleJSON is the Share dialog's people section for one app: who it

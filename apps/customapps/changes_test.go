@@ -14,10 +14,9 @@ import (
 
 func askChanges(t *testing.T, owner, user, slug, shared, records string) (map[string]string, time.Duration) {
 	t.Helper()
-	T := &CustomApps{}
-	w := httptest.NewRecorder()
+	T := sharingTestApp(t)
 	start := time.Now()
-	T.handleChanges(w, httptest.NewRequest(http.MethodGet, "/apps/"+slug+"/changes?shared="+shared+"&records="+records, nil), owner, user, slug)
+	w := appAs(t, T, AppSpec{Slug: slug, Owner: owner}, user, httptest.NewRequest(http.MethodGet, "/apps/"+slug+"/changes?shared="+shared+"&records="+records, nil))
 	var v map[string]string
 	if err := json.Unmarshal(w.Body.Bytes(), &v); err != nil {
 		t.Fatalf("changes answered %d %s", w.Code, w.Body.String())

@@ -100,7 +100,7 @@ func (T *CustomApps) Routes() {
 	// An app's own rows travel with it on request (records_artifact.go).
 	T.registerRecordsArtifact()
 	T.registerPipelineRestore()
-	T.HandleFunc("/", T.route)
+	T.routes()
 	// An app's running work (its actions, its asks) in the live pill, with
 	// Stop: the one place work in progress is seen and stopped.
 	liveAppWorkOnce.Do(func() { RegisterLiveProvider(T.liveAppWork) })
@@ -135,9 +135,34 @@ func (T *CustomApps) Routes() {
 	T.retirePublicLinks()
 }
 
+// routes registers the HTTP routes, apart from the registries Routes fills,
+// so a test can serve the real routes.
+func (T *CustomApps) routes() {
+	// The person's controls over their own apps, and the operator's over
+	// anybody's. These paths come before any app's, as they always have: an
+	// app slugged _app or _admin would be shadowed by them.
+	T.HandleFunc("/_apps", jsonapi.Get(T.DB, T.handleAppsList))
+	T.HandleFunc("/_app", jsonapi.Methods{"DELETE": jsonapi.Post(T.DB, T.handleDeleteApp)}.Serve)
+	T.HandleFunc("/_app/enable", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleEnableApp)}.Serve)
+	T.HandleFunc("/_app/share", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleShareApp, jsonapi.EmptyBodyOK)}.Serve)
+	T.HandleFunc("/_app/share_group", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleShareGroup)}.Serve)
+	T.HandleFunc("/_app/share_person", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleSharePerson)}.Serve)
+	T.HandleFunc("/_app/order", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleAppOrder, jsonapi.MaxBody(1<<16))}.Serve)
+	T.HandleFunc("/_app/schedule", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleScheduleToggle)}.Serve)
+	T.HandleFunc("/_app/job-cancel", jsonapi.Methods{"POST": jsonapi.Post(T.DB, handleJobCancel)}.Serve)
+	// Operator controls on somebody else's app (admin.go). Named one by one:
+	// "/_admin/{sub}" would overlap "/{slug}/records" at /_admin/records.
+	T.HandleFunc("/_admin/scripts", T.handleAdminScripts)
+	for _, sub := range []string{"reach", "tiers", "review", "revoke-link"} {
+		T.HandleFunc("/_admin/"+sub, T.adminRoute(sub))
+	}
+	// One app's JSON routes (app_routes.go), then everything else of it.
+	T.appRoutes()
+	T.HandleFunc("/", T.route)
+}
+
 // route parses "/<slug>/<rest>" off the (prefix-stripped) sub-mux and
-// dispatches. "_apps" is reserved for the index data feed so it can't collide
-// with a real slug.
+// dispatches.
 func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 	path := strings.Trim(r.URL.Path, "/")
 
@@ -146,51 +171,8 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	switch path {
-	case "":
+	if path == "" {
 		T.handleIndex(w, r)
-		return
-	case "_apps":
-		T.handleAppsList(w, r, user)
-		return
-	case "_app":
-		// DELETE ?slug=… removes a custom app (its spec + records + active state).
-		T.handleDeleteApp(w, r, user)
-		return
-	case "_app/enable":
-		// POST ?slug=… flips an imported (disabled) app live — the review gate
-		// for bundle imports.
-		T.handleEnableApp(w, r, user)
-		return
-	case "_app/share":
-		// POST ?slug=&on=… toggles authenticated (per-user-copy) sharing.
-		T.handleShareApp(w, r, user)
-		return
-	case "_app/share_group":
-		// POST ?slug=&group=&on=… shares with one of the owner's groups.
-		T.handleShareGroup(w, r, user)
-		return
-	case "_app/share_person":
-		// POST ?slug=&user=&on=… shares with one person by name.
-		T.handleSharePerson(w, r, user)
-		return
-	case "_admin/revoke-link", "_admin/reach", "_admin/tiers", "_admin/review", "_admin/scripts":
-		// Operator controls on somebody else's app. Admin-gated inside the
-		// handler rather than by where the control was rendered: a URL is a
-		// URL, and whoever finds it is not necessarily who was shown it.
-		T.handleAdmin(w, r, user, strings.TrimPrefix(path, "_admin/"))
-		return
-	case "_app/order":
-		// POST {order: [slugs]}: the order the person dragged their apps into.
-		T.handleAppOrder(w, r, user)
-		return
-	case "_app/schedule":
-		// POST ?slug=&on=… pauses / resumes an app's self-updating schedule.
-		T.handleScheduleToggle(w, r, user)
-		return
-	case "_app/job-cancel":
-		// POST ?id=… the live pill's Stop on one of this person's app jobs.
-		handleJobCancel(w, r, user)
 		return
 	}
 
@@ -201,26 +183,12 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 		rest = parts[1]
 	}
 	// Own-first resolution: the requester's own app shadows any shared one of the
-	// same slug; otherwise an app another user shared to all authenticated users.
+	// same slug; otherwise an app another user shared with them (openApp).
 	// ownerUser is the app's owner (== user for owned apps) — the identity its
 	// sandboxed scripts run as.
-	spec, ownerUser, found := T.resolveSpec(user, slug)
-	if !found {
-		http.NotFound(w, r)
-		return
-	}
-	// A shared app is somebody else's: the framework grant has to admit this
-	// user to it. Own apps skip this — an owner needs no grant to their own
-	// work — and the operator allowlist was already applied in resolveSpec.
-	if ownerUser != user && !T.sharedAppReachableBy(r, slug) {
-		http.NotFound(w, r)
-		return
-	}
-	// A disabled app serves NOTHING — no page, no records, and above all no
-	// data-source/action scripts. Bundle imports land disabled; the Custom
-	// Apps index's Enable button is the review gate.
-	if spec.Disabled {
-		http.Error(w, "this app is disabled: review it and press Enable on the My Apps page to activate it", http.StatusForbidden)
+	spec, ownerUser, err := T.openApp(r, user, slug)
+	if err != nil {
+		writeRefusal(w, err)
 		return
 	}
 	// appdb is the app's record store for THIS user: a dedicated per-app file when
@@ -270,41 +238,15 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		_ = ui.RenderPageJSON(w, page, "", recordsInvalidationBridge(spec), spec.Name) // "" → resolved theme (see RegisterThemeResolver)
-	case rest == "view-state":
-		T.handleViewState(w, r, appdb, spec)
 	case rest == "_view/reset":
 		T.handleViewReset(w, r, appdb, spec)
 	case rest == "_settings":
 		// The app's Settings page — a form over the tunables it declares.
 		T.handleSettingsPage(w, r, spec, user == ownerUser)
-	case rest == "_settings/values":
-		T.handleSettingsValues(w, r, spec, user, user == ownerUser)
-	case rest == "_settings/reset":
-		T.handleSettingsReset(w, r, spec, user, user == ownerUser)
-	case rest == "_settings/agent":
-		T.handleSettingsAgent(w, r, spec, user == ownerUser)
 	case strings.HasPrefix(rest, "data/"):
 		T.handleData(w, r, ownerUser, user, appdb, spec, strings.TrimPrefix(rest, "data/"))
-	case rest == "actions":
-		T.handleActionsList(w, r, spec)
 	case strings.HasPrefix(rest, "action/"):
 		T.handleAction(w, r, ownerUser, user, appdb, spec, strings.TrimPrefix(rest, "action/"))
-	case strings.HasPrefix(rest, "action-progress/"):
-		T.handleActionProgress(w, r, ownerUser, user, spec, strings.TrimPrefix(rest, "action-progress/"))
-	case strings.HasPrefix(rest, "action-cancel/"):
-		T.handleActionCancel(w, r, ownerUser, user, spec, strings.TrimPrefix(rest, "action-cancel/"))
-	case rest == "records":
-		T.handleRecords(w, r, appdb, spec)
-		if r.Method == http.MethodPost {
-			noteChange(recordsChangeKey(ownerUser, slug, user))
-		}
-	case rest == "record":
-		T.handleRecord(w, r, appdb, spec)
-		if r.Method == http.MethodDelete {
-			noteChange(recordsChangeKey(ownerUser, slug, user))
-		}
-	case rest == "changes":
-		T.handleChanges(w, r, ownerUser, user, slug)
 	case rest == "ask":
 		T.handleAsk(w, r, T.recordBase(spec, ownerUser), ownerUser, user, spec)
 	case rest == "chat" || strings.HasPrefix(rest, "chat/"):
@@ -807,18 +749,13 @@ const shareModalScript = `<script>
 // handleDeleteApp removes a custom app: its spec, its per-app record store, and
 // any workbench active-selection state. The demo "notes" app re-seeds on next
 // visit (by design); delete a real app and it stays gone.
-func (T *CustomApps) handleDeleteApp(w http.ResponseWriter, r *http.Request, user string) {
-	if r.Method != http.MethodDelete {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	slug := strings.TrimSpace(r.URL.Query().Get("slug"))
+func (T *CustomApps) handleDeleteApp(c *jsonapi.Call, _ struct{}) (any, error) {
+	slug := strings.TrimSpace(c.R.URL.Query().Get("slug"))
 	if slug == "" {
-		http.Error(w, "slug required", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("slug required")
 	}
-	T.deleteApp(user, slug)
-	jsonapi.Write(w, map[string]bool{"ok": true})
+	T.deleteApp(c.User, slug)
+	return map[string]bool{"ok": true}, nil
 }
 
 // deleteApp removes one of owner's apps and what it leaves behind: its spec,
@@ -925,7 +862,8 @@ func (T *CustomApps) ListGrantableApps() []GrantableApp {
 	return out
 }
 
-func (T *CustomApps) handleAppsList(w http.ResponseWriter, r *http.Request, owner string) {
+func (T *CustomApps) handleAppsList(c *jsonapi.Call) (any, error) {
+	r, owner := c.R, c.User
 	out := []map[string]string{}
 	seen := map[string]bool{}
 	direct := requestIsAdmin(r) // shares and links directly, no request
@@ -1044,7 +982,7 @@ func (T *CustomApps) handleAppsList(w http.ResponseWriter, r *http.Request, owne
 	// shared apps came back in a different one on every load.
 	sort.SliceStable(out, func(i, j int) bool { return out[i]["name"] < out[j]["name"] })
 	sort.SliceStable(shared, func(i, j int) bool { return shared[i]["name"] < shared[j]["name"] })
-	jsonapi.Write(w, append(inDashboardOrder(owner, out), inDashboardOrder(owner, shared)...))
+	return append(inDashboardOrder(owner, out), inDashboardOrder(owner, shared)...), nil
 }
 
 // inDashboardOrder puts rows in the order the person keeps these apps in. There
@@ -1067,18 +1005,10 @@ func inDashboardOrder(user string, rows []map[string]string) []map[string]string
 // handleAppOrder stores the order the person dragged My Apps into: POST
 // {"order": [slugs]} (Table.ReorderURL). Only slugs of apps on their list are
 // kept; the order lands in their dashboard's card order (inDashboardOrder).
-func (T *CustomApps) handleAppOrder(w http.ResponseWriter, r *http.Request, user string) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	var body struct {
-		Order []string `json:"order"`
-	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&body); err != nil {
-		http.Error(w, "send {\"order\": [slugs]}", http.StatusBadRequest)
-		return
-	}
+func (T *CustomApps) handleAppOrder(c *jsonapi.Call, body struct {
+	Order []string `json:"order"`
+}) (any, error) {
+	user := c.User
 	theirs := map[string]bool{}
 	for _, s := range listSpecs(user) {
 		theirs[s.Slug] = true
@@ -1097,57 +1027,49 @@ func (T *CustomApps) handleAppOrder(w http.ResponseWriter, r *http.Request, user
 		}
 	}
 	SetDashboardOrderOf(user, paths)
-	w.WriteHeader(http.StatusNoContent)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // handleScheduleToggle pauses or resumes an app's self-updating action
 // schedule(s): POST ?slug=&on=true|false. Owner-only (a schedule fires in the
 // owner's sandbox, so only the owner controls it). Pausing leaves the trigger in
 // place so Resume can re-arm it without re-authoring.
-func (T *CustomApps) handleScheduleToggle(w http.ResponseWriter, r *http.Request, user string) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	slug := strings.TrimSpace(r.URL.Query().Get("slug"))
+func (T *CustomApps) handleScheduleToggle(c *jsonapi.Call, _ struct{}) (any, error) {
+	user, q := c.User, c.R.URL.Query()
+	slug := strings.TrimSpace(q.Get("slug"))
 	if slug == "" {
-		http.Error(w, "slug required", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("slug required")
 	}
 	if _, ok := loadSpec(user, slug); !ok {
-		http.NotFound(w, r)
-		return
+		return nil, errNoApp
 	}
-	resume := r.URL.Query().Get("on") == "true"
+	resume := q.Get("on") == "true"
 	changed := setAppSchedulesPaused(user, slug, !resume)
-	jsonapi.Write(w, map[string]any{"ok": true, "changed": changed})
+	return map[string]any{"ok": true, "changed": changed}, nil
 }
 
 // handleEnableApp flips an imported (disabled) app live: POST ?slug=…. This is
 // the review gate for bundle imports — a recipe can carry sandboxed
 // data-source/action scripts, and none of them run until the owner has looked
 // and enabled the app here. Enabling an already-live app is a no-op.
-func (T *CustomApps) handleEnableApp(w http.ResponseWriter, r *http.Request, user string) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	slug := strings.TrimSpace(r.URL.Query().Get("slug"))
+func (T *CustomApps) handleEnableApp(c *jsonapi.Call, _ struct{}) (any, error) {
+	slug := strings.TrimSpace(c.R.URL.Query().Get("slug"))
 	if slug == "" {
-		http.Error(w, "slug required", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("slug required")
 	}
-	spec, ok := loadSpec(user, slug)
+	spec, ok := loadSpec(c.User, slug)
 	if !ok {
-		http.NotFound(w, r)
-		return
+		return nil, errNoApp
 	}
 	if spec.Disabled {
 		spec.Disabled = false
 		SaveAppSpec(spec)
 	}
-	jsonapi.Write(w, map[string]bool{"ok": true})
+	return map[string]bool{"ok": true}, nil
 }
+
+// errNoApp answers a request naming an app the caller does not have.
+var errNoApp = jsonapi.NotFound("404 page not found")
 
 // --- script-backed data sources (the "logic" seam) ---------------------------
 
@@ -1403,9 +1325,9 @@ func cachedRunDataSource(user string, db Database, spec AppSpec, ds AppDataSourc
 // variable so a test can stand in for the sandbox.
 var runAppScript = func(j appscript.Job) (string, error) { return j.Run() }
 
-// handleActionsList feeds the actions section's button list: one {name, button,
-// desc, confirm} per declared action. GET only.
-func (T *CustomApps) handleActionsList(w http.ResponseWriter, r *http.Request, spec AppSpec) {
+// actionsList feeds the actions section's button list: one {name, button,
+// desc, confirm} per declared action.
+func (T *CustomApps) actionsList(a *appCall) (any, error) {
 	type item struct {
 		Name    string `json:"name"`
 		Button  string `json:"button"`
@@ -1413,14 +1335,14 @@ func (T *CustomApps) handleActionsList(w http.ResponseWriter, r *http.Request, s
 		Confirm string `json:"confirm,omitempty"`
 	}
 	out := []item{}
-	for _, a := range spec.Actions {
-		label := strings.TrimSpace(a.Label)
+	for _, act := range a.spec.Actions {
+		label := strings.TrimSpace(act.Label)
 		if label == "" {
-			label = a.Name
+			label = act.Name
 		}
-		out = append(out, item{Name: a.Name, Button: label, Desc: a.Desc, Confirm: a.Confirm})
+		out = append(out, item{Name: act.Name, Button: label, Desc: act.Desc, Confirm: act.Confirm})
 	}
-	jsonapi.Write(w, out)
+	return out, nil
 }
 
 // handleAction runs a named action script: POST /apps/<slug>/action/<name>.
@@ -1650,59 +1572,60 @@ func lastJSONObject(out string) string {
 
 func recTable(slug string) string { return appscript.RecordsTable(slug) }
 
-func (T *CustomApps) handleRecords(w http.ResponseWriter, r *http.Request, udb Database, spec AppSpec) {
-	tbl := recTable(spec.Slug)
-	switch r.Method {
-	case http.MethodGet:
-		// Oldest first, as scripts get them: in key order (random hex) a page
-		// listing "my entries" showed them shuffled.
-		jsonapi.Write(w, appscript.ReadRecords(udb, spec.Slug))
-	case http.MethodPost:
-		var rec map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&rec); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		if rec == nil {
-			rec = map[string]any{}
-		}
-		// Key on RecordKey; allocate one for new records.
-		id, _ := rec[spec.RecordKey].(string)
-		if strings.TrimSpace(id) == "" {
-			id = newID()
-			rec[spec.RecordKey] = id
-		}
-		if _, ok := rec["created"]; !ok {
-			rec["created"] = time.Now().UTC().Format(time.RFC3339)
-		}
-		udb.Set(tbl, id, rec)
-		jsonapi.Write(w, rec)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
+// listRecords is the caller's records, oldest first, as scripts get them: in
+// key order (random hex) a page listing "my entries" showed them shuffled.
+func (T *CustomApps) listRecords(a *appCall) (any, error) {
+	return appscript.ReadRecords(a.appdb, a.spec.Slug), nil
 }
 
-func (T *CustomApps) handleRecord(w http.ResponseWriter, r *http.Request, udb Database, spec AppSpec) {
-	id := strings.TrimSpace(r.URL.Query().Get("id"))
+// saveRecord stores one record, keyed on the app's RecordKey, and answers it
+// as stored: a new one gets a key and a created stamp.
+func (T *CustomApps) saveRecord(a *appCall, rec map[string]any) (any, error) {
+	if rec == nil {
+		rec = map[string]any{}
+	}
+	id, _ := rec[a.spec.RecordKey].(string)
+	if strings.TrimSpace(id) == "" {
+		id = newID()
+		rec[a.spec.RecordKey] = id
+	}
+	if _, ok := rec["created"]; !ok {
+		rec["created"] = time.Now().UTC().Format(time.RFC3339)
+	}
+	a.appdb.Set(recTable(a.spec.Slug), id, rec)
+	noteChange(recordsChangeKey(a.owner, a.spec.Slug, a.User))
+	return rec, nil
+}
+
+// recordID is the record ?id= names.
+func recordID(a *appCall) (string, error) {
+	id := strings.TrimSpace(a.R.URL.Query().Get("id"))
 	if id == "" {
-		http.Error(w, "id required", http.StatusBadRequest)
-		return
+		return "", jsonapi.BadRequest("id required")
 	}
-	tbl := recTable(spec.Slug)
-	switch r.Method {
-	case http.MethodGet:
-		var rec map[string]any
-		if !udb.Get(tbl, id, &rec) {
-			http.NotFound(w, r)
-			return
-		}
-		jsonapi.Write(w, rec)
-	case http.MethodDelete:
-		udb.Unset(tbl, id)
-		jsonapi.Write(w, map[string]bool{"ok": true})
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	return id, nil
+}
+
+func (T *CustomApps) getRecord(a *appCall) (any, error) {
+	id, err := recordID(a)
+	if err != nil {
+		return nil, err
 	}
+	var rec map[string]any
+	if !a.appdb.Get(recTable(a.spec.Slug), id, &rec) {
+		return nil, errNoApp
+	}
+	return rec, nil
+}
+
+func (T *CustomApps) deleteRecord(a *appCall, _ struct{}) (any, error) {
+	id, err := recordID(a)
+	if err != nil {
+		return nil, err
+	}
+	a.appdb.Unset(recTable(a.spec.Slug), id)
+	noteChange(recordsChangeKey(a.owner, a.spec.Slug, a.User))
+	return map[string]bool{"ok": true}, nil
 }
 
 // --- spec storage (core) + demo seed -----------------------------------------
@@ -1755,16 +1678,14 @@ func (T *CustomApps) resolveSpec(reqUser, slug string) (AppSpec, string, bool) {
 // construction (the spec is looked up in the requester's own store). Sharing a
 // slug another user already shares is rejected — shared slugs are one global
 // namespace.
-func (T *CustomApps) handleShareApp(w http.ResponseWriter, r *http.Request, user string) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+func (T *CustomApps) handleShareApp(c *jsonapi.Call, body *struct {
+	Note string `json:"note"`
+}) (any, error) {
+	r, user := c.R, c.User
 	slug := strings.TrimSpace(r.URL.Query().Get("slug"))
 	spec, ok := loadSpec(user, slug)
 	if !ok {
-		http.NotFound(w, r)
-		return
+		return nil, errNoApp
 	}
 	on := r.URL.Query().Get("on") != "false" // default: turn sharing ON
 	if on && !spec.Shared && !requestIsAdmin(r) {
@@ -1773,16 +1694,14 @@ func (T *CustomApps) handleShareApp(w http.ResponseWriter, r *http.Request, user
 		// the owner asks, an administrator approves (the Pending promotions
 		// queue on the Administrator page), and the approver does the share.
 		// An admin owner, or a deployment with nobody to ask, shares directly.
-		var body struct {
-			Note string `json:"note"`
+		note := "" // optional
+		if body != nil {
+			note = body.Note
 		}
-		_ = json.NewDecoder(r.Body).Decode(&body) // note is optional
-		if err := CreatePromotionRequest(AuthDB(), user, "app", slug, body.Note); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+		if err := CreatePromotionRequest(AuthDB(), user, "app", slug, note); err != nil {
+			return nil, jsonapi.BadRequest(err.Error())
 		}
-		jsonapi.Write(w, map[string]any{"ok": true, "shared": false, "requested": true})
-		return
+		return map[string]any{"ok": true, "shared": false, "requested": true}, nil
 	}
 	if !on && promotion.WithdrawPromotionRequest(AuthDB(), user, "app", slug) {
 		// Everyone taken back out while it waited: the request goes, so
@@ -1790,10 +1709,9 @@ func (T *CustomApps) handleShareApp(w http.ResponseWriter, r *http.Request, user
 		Log("[customapps] %s withdrew the publish request for %q", user, slug)
 	}
 	if err := T.setShared(user, slug, on); err != nil {
-		http.Error(w, err.Error(), http.StatusConflict)
-		return
+		return nil, jsonapi.Status(http.StatusConflict, err.Error())
 	}
-	jsonapi.Write(w, map[string]any{"ok": true, "shared": on})
+	return map[string]any{"ok": true, "shared": on}, nil
 }
 
 // requestIsAdmin decides who may share an app directly. A var so a test can

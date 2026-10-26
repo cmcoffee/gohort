@@ -19,11 +19,8 @@ package customapps
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"sync"
 	"time"
-
-	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // changesWait is how long a request waits for a change before answering with
@@ -74,20 +71,16 @@ func changeVersion(key string) (string, chan struct{}) {
 	return fmt.Sprintf("%s.%d", changesEpoch, c.n), c.ch
 }
 
-// handleChanges is GET changes?shared=<v>&records=<v>: it answers at once when
+// changes is GET changes?shared=<v>&records=<v>: it answers at once when
 // either version differs from the one given, else when either changes, else
 // after changesWait, with {"shared": v, "records": v}.
-func (T *CustomApps) handleChanges(w http.ResponseWriter, r *http.Request, owner, user, slug string) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	q := r.URL.Query()
-	sk, rk := sharedChangeKey(owner, slug), recordsChangeKey(owner, slug, user)
+func (T *CustomApps) changes(a *appCall) (any, error) {
+	q := a.R.URL.Query()
+	sk, rk := sharedChangeKey(a.owner, a.spec.Slug), recordsChangeKey(a.owner, a.spec.Slug, a.User)
 	sv, sch := changeVersion(sk)
 	rv, rch := changeVersion(rk)
 	if sv == q.Get("shared") && rv == q.Get("records") {
-		ctx, cancel := context.WithTimeout(r.Context(), changesWait)
+		ctx, cancel := context.WithTimeout(a.R.Context(), changesWait)
 		defer cancel()
 		select {
 		case <-sch:
@@ -97,6 +90,6 @@ func (T *CustomApps) handleChanges(w http.ResponseWriter, r *http.Request, owner
 		sv, _ = changeVersion(sk)
 		rv, _ = changeVersion(rk)
 	}
-	w.Header().Set("Cache-Control", "no-store")
-	jsonapi.Write(w, map[string]any{"shared": sv, "records": rv})
+	a.W.Header().Set("Cache-Control", "no-store")
+	return map[string]any{"shared": sv, "records": rv}, nil
 }

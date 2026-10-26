@@ -42,8 +42,10 @@ func TestAPerAppGrantOpensThatAppAlone(t *testing.T) {
 		return
 	}
 	listed := func(user string) (out []string) {
+		r := req(user)
+		r.URL.Path = "/_apps"
 		w := httptest.NewRecorder()
-		T.handleAppsList(w, req(user), user)
+		routed(T)(w, r)
 		for _, slug := range []string{"alpha", "beta"} {
 			if strings.Contains(w.Body.String(), `"slug":"`+slug+`"`) {
 				out = append(out, "/apps/"+slug)

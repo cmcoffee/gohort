@@ -192,20 +192,15 @@ func (T *CustomApps) liveAppWork() []LiveEntry {
 
 // handleJobCancel is the live pill's Stop on an app job: POST
 // _app/job-cancel?id=<job>. Only the person the job runs for may stop it.
-func handleJobCancel(w http.ResponseWriter, r *http.Request, user string) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+func handleJobCancel(c *jsonapi.Call, _ struct{}) (any, error) {
 	actionJobs.Lock()
-	j := actionJobs.byID[strings.TrimSpace(r.URL.Query().Get("id"))]
+	j := actionJobs.byID[strings.TrimSpace(c.R.URL.Query().Get("id"))]
 	actionJobs.Unlock()
-	if j == nil || j.work.UID != user {
-		http.NotFound(w, r)
-		return
+	if j == nil || j.work.UID != c.User {
+		return nil, jsonapi.NotFound("404 page not found")
 	}
 	j.cancel()
-	jsonapi.Write(w, map[string]any{"ok": true})
+	return map[string]any{"ok": true}, nil
 }
 
 // pruneActionJobs drops outcomes past their keeping time. Called with the lock
@@ -238,26 +233,21 @@ func findActionJob(r *http.Request, key string) *actionJob {
 	return actionJobs.byKey[key]
 }
 
-// handleActionProgress answers action-progress/<name>: {running, progress}
-// while the person's job runs, {done, outcome, message, saved, records,
-// result} (or {done, error}) once it ends, {} when there is none.
-func (T *CustomApps) handleActionProgress(w http.ResponseWriter, r *http.Request, owner, uid string, spec AppSpec, name string) {
-	j := findActionJob(r, actionJobKey(owner, spec.Slug, uid, name))
+// actionProgress answers action-progress/<name>: {running, progress} while
+// the person's job runs, {done, outcome, message, saved, records, result} (or
+// {done, error}) once it ends, {} when there is none.
+func (T *CustomApps) actionProgress(a *appCall) (any, error) {
+	j := findActionJob(a.R, actionJobKey(a.owner, a.spec.Slug, a.User, a.R.PathValue("name")))
 	if j == nil {
-		jsonapi.Write(w, map[string]any{})
-		return
+		return map[string]any{}, nil
 	}
-	jsonapi.Write(w, j.status())
+	return j.status(), nil
 }
 
-// handleActionCancel answers action-cancel/<name>: stops the person's job.
-func (T *CustomApps) handleActionCancel(w http.ResponseWriter, r *http.Request, owner, uid string, spec AppSpec, name string) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if j := findActionJob(r, actionJobKey(owner, spec.Slug, uid, name)); j != nil {
+// cancelAction answers action-cancel/<name>: stops the person's job.
+func (T *CustomApps) cancelAction(a *appCall, _ struct{}) (any, error) {
+	if j := findActionJob(a.R, actionJobKey(a.owner, a.spec.Slug, a.User, a.R.PathValue("name"))); j != nil {
 		j.cancel()
 	}
-	jsonapi.Write(w, map[string]any{"ok": true})
+	return map[string]any{"ok": true}, nil
 }

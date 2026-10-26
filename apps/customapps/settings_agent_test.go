@@ -21,7 +21,7 @@ func TestAnAppWhoseAgentIsGoneSaysSo(t *testing.T) {
 	o.DB = &DBase{Store: kvlite.MemStore()}
 	agenthost.Register(o)
 
-	app := &CustomApps{}
+	app := sharingTestApp(t)
 	spec := AppSpec{Slug: "swing", Name: "Swing", Owner: "u", AgentID: "a-deleted"}
 	if app.appAgentExists(spec) {
 		t.Fatal("an agent that is not there reads as existing")
@@ -39,18 +39,15 @@ func TestAnAppWhoseAgentIsGoneSaysSo(t *testing.T) {
 		t.Errorf("nav = %+v", m.Nav)
 	}
 
-	w := httptest.NewRecorder()
-	app.handleSettingsAgent(w, httptest.NewRequest("GET", "/x", nil), spec, true)
+	w := appAs(t, app, spec, "u", httptest.NewRequest("GET", "/apps/swing/_settings/agent", nil))
 	if !strings.Contains(w.Body.String(), `"agent":""`) {
 		t.Errorf("a gone agent is still offered as the current one: %s", w.Body.String())
 	}
-	w = httptest.NewRecorder()
-	app.handleSettingsAgent(w, httptest.NewRequest("POST", "/x", strings.NewReader(`{"agent":"nobody"}`)), spec, true)
+	w = appAs(t, app, spec, "u", httptest.NewRequest("POST", "/apps/swing/_settings/agent", strings.NewReader(`{"agent":"nobody"}`)))
 	if w.Code != 400 {
 		t.Errorf("bound to something that is not an agent: %d", w.Code)
 	}
-	w = httptest.NewRecorder()
-	app.handleSettingsAgent(w, httptest.NewRequest("GET", "/x", nil), spec, false)
+	w = appAs(t, app, spec, "someone", httptest.NewRequest("GET", "/apps/swing/_settings/agent", nil))
 	if w.Code != 403 {
 		t.Errorf("someone other than the owner reached the agent setting: %d", w.Code)
 	}

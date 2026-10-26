@@ -20,7 +20,6 @@ package customapps
 
 import (
 	"encoding/json"
-	"net/http"
 	"sort"
 	"strings"
 
@@ -193,22 +192,16 @@ func (T *CustomApps) setGroupShare(owner, slug, groupID string, on bool) error {
 // handleShareGroup is POST _app/share_group?slug=&group=&on=true|false, for an
 // app the requester owns. No administrator: which groups may be shared with
 // was theirs to decide, once, on the group.
-func (T *CustomApps) handleShareGroup(w http.ResponseWriter, r *http.Request, user string) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	q := r.URL.Query()
+func (T *CustomApps) handleShareGroup(c *jsonapi.Call, _ struct{}) (any, error) {
+	user, q := c.User, c.R.URL.Query()
 	slug, group := strings.TrimSpace(q.Get("slug")), strings.TrimSpace(q.Get("group"))
 	if slug == "" || group == "" {
-		http.Error(w, "send slug and group", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("send slug and group")
 	}
 	on := q.Get("on") != "false"
 	if err := T.setGroupShare(user, slug, group, on); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest(err.Error())
 	}
 	Log("[customapps] %s %s app %q with group %q", user, map[bool]string{true: "shared", false: "unshared"}[on], slug, group)
-	jsonapi.Write(w, map[string]any{"ok": true, "on": on})
+	return map[string]any{"ok": true, "on": on}, nil
 }

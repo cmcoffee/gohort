@@ -111,8 +111,7 @@ func TestMyAppsShowsGroupShares(t *testing.T) {
 	requestIsAdmin = func(*http.Request) bool { return false }
 	t.Cleanup(func() { requestIsAdmin = saved })
 
-	w := httptest.NewRecorder()
-	T.handleAppsList(w, httptest.NewRequest(http.MethodGet, "/apps/_list", nil), "alice")
+	w := as(t, T, "alice", httptest.NewRequest(http.MethodGet, "/apps/_apps", nil))
 	if !strings.Contains(w.Body.String(), `\"name\":\"Team\"`) || !strings.Contains(w.Body.String(), "shared with Team") {
 		t.Errorf("the owner's row should offer Team and say it is shared with it:\n%s", w.Body.String())
 	}
