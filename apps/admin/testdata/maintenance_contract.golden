@@ -1,0 +1,70 @@
+(signed out) GET /api/maintenance ""
+  403 forbidden
+alice GET /api/maintenance ""
+  403 forbidden
+root GET /api/maintenance ""
+  200 [{"Desc":"Counts three.","Group":"Housekeeping","History":"Never run.","Key":"ct.tidy","Label":"Tidy the test's things"}]
+root PUT /api/maintenance "{}"
+  405 method not allowed
+(signed out) GET /api/maintenance?group=Housekeeping ""
+  403 forbidden
+alice GET /api/maintenance?group=Housekeeping ""
+  403 forbidden
+root GET /api/maintenance?group=Housekeeping ""
+  200 [{"Desc":"Counts three.","Group":"Housekeeping","History":"Never run.","Key":"ct.tidy","Label":"Tidy the test's things"}]
+root PUT /api/maintenance?group=Housekeeping "{}"
+  405 method not allowed
+(signed out) GET /api/maintenance/progress?key=ct.tidy ""
+  403 forbidden
+alice GET /api/maintenance/progress?key=ct.tidy ""
+  403 forbidden
+root GET /api/maintenance/progress?key=ct.tidy ""
+  200 {"outcome":"","progress":""}
+root PUT /api/maintenance/progress?key=ct.tidy "{}"
+  405 method not allowed
+(signed out) GET /api/migrations ""
+  403 forbidden
+alice GET /api/migrations ""
+  403 forbidden
+root GET /api/migrations ""
+  200 a list
+root PUT /api/migrations "{}"
+  405 method not allowed
+(signed out) GET /api/scheduled-tasks ""
+  403 forbidden
+alice GET /api/scheduled-tasks ""
+  403 forbidden
+root GET /api/scheduled-tasks ""
+  200 [{"id":"<task>","kind":"ct.contract","payload":{"what":"a test task"},"run_at":"<time>","created":"<time>","detail":""}]
+root PUT /api/scheduled-tasks "{}"
+  405 method not allowed
+alice POST /api/maintenance?key=ct.tidy ""
+  403 forbidden
+root POST /api/maintenance ""
+  400 missing key
+root POST /api/maintenance?key=ct.nope ""
+  404 unknown maintenance function
+root POST /api/maintenance?key=ct.tidy ""
+  200 {"fixed":3}
+root GET /api/maintenance?group=Housekeeping ""
+  200 [{"Desc":"Counts three.","Group":"Housekeeping","History":"Last run just now by root, 3 changed.","Key":"ct.tidy","Label":"Tidy the test's things"}]
+root GET /api/maintenance?group=Reports ""
+  200 []
+root GET /api/maintenance/progress?key=ct.tidy ""
+  200 {"outcome":"finished: 3 record(s) changed","progress":""}
+root GET /api/maintenance/progress?key=ct.nope ""
+  200 {"outcome":"","progress":""}
+alice POST /api/maintenance/cancel?key=ct.tidy ""
+  403 forbidden
+root GET /api/maintenance/cancel?key=ct.tidy ""
+  405 method not allowed
+root POST /api/maintenance/cancel?key=ct.tidy ""
+  200 {"message":"Nothing is running there."}
+alice DELETE /api/scheduled-tasks?id=<task> ""
+  403 forbidden
+root DELETE /api/scheduled-tasks ""
+  400 missing id
+root DELETE /api/scheduled-tasks?id=<task> ""
+  204 
+root GET /api/scheduled-tasks ""
+  200 []

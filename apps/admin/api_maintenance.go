@@ -2,7 +2,6 @@ package admin
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"sort"
 	"strings"
@@ -25,189 +24,32 @@ func (a *AdminApp) registerMaintenanceRoutes(sub *http.ServeMux) {
 	// Where a running pass has got to. Polled by the action list while its
 	// POST is in flight, so a long pass shows movement rather than a button
 	// that has been disabled for four minutes.
-	sub.HandleFunc("/api/maintenance/progress", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		key := r.URL.Query().Get("key")
-		w.Header().Set("Content-Type", "application/json")
-		// Two fields, because they answer different questions: progress is
-		// where a RUNNING pass has got to, outcome is how the last one ended.
-		// A page that arrives after a run it did not start has only the
-		// second, and showing nothing there reads as "it never ran".
-		json.NewEncoder(w).Encode(map[string]string{
-			"progress": MaintenanceProgress(key),
-			"outcome":  MaintenanceOutcome(key),
-		})
-	})
+	sub.HandleFunc("/api/maintenance/progress", jsonapi.Get(a.db, a.handleMaintenanceProgress, a.gate()))
 
 	// Stop a running pass. It ends at its next check of its context and its
 	// outcome reads "stopped"; the press that started it gets its count back
 	// as usual.
-	sub.HandleFunc("/api/maintenance/cancel", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		msg := "Nothing is running there."
-		if CancelMaintenance(r.URL.Query().Get("key")) {
-			msg = "Stopping: it ends at its next step."
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"message": msg})
-	})
+	sub.HandleFunc("/api/maintenance/cancel", jsonapi.Methods{
+		"POST": jsonapi.Post(a.db, a.handleMaintenanceCancel, a.gate()),
+	}.Serve)
 
 	// List registered maintenance functions (GET) or run one by key (POST ?key=<key>).
-	sub.HandleFunc("/api/maintenance", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		if r.Method == http.MethodGet {
-			// ?group= narrows the list to one admin section. A registrant
-			// that named no group, or one the page does not lay out, is
-			// shown under Housekeeping so no button can vanish.
-			want := r.URL.Query().Get("group")
-			all := ListMaintenanceFuncs()
-			out := all[:0:0]
-			for _, f := range all {
-				g := f.Group
-				if !maintenanceGroupKnown(g) {
-					g = maintenanceGroupOther
-				}
-				if want == "" || g == want {
-					out = append(out, f)
-				}
-			}
-			// Each item carries what happened to it last time. Built here
-			// rather than in the registry because the record is admin's and so
-			// is the identity in it.
-			rows := make([]map[string]any, 0, len(out))
-			for _, f := range out {
-				run, ok := a.lastMaintenanceRun(f.Key)
-				rows = append(rows, map[string]any{
-					"Group": f.Group, "Key": f.Key, "Label": f.Label, "Desc": f.Desc,
-					"History": maintenanceHistoryLine(run, ok),
-				})
-			}
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(rows)
-			return
-		}
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		key := r.URL.Query().Get("key")
-		if key == "" {
-			http.Error(w, "missing key", http.StatusBadRequest)
-			return
-		}
-		// The run outlives the request. A request context dies the moment the
-		// browser does, and the passes check it every iteration — so closing
-		// the tab used to stop a re-embed wherever it had got to, silently,
-		// which is exactly what the progress spinner invites you to do.
-		// WithoutCancel keeps the request's values (deadlines and identity
-		// for anything downstream) and drops only its cancellation.
-		started := time.Now()
-		first, release := claimMaintenancePress(key)
-		// Released in a defer: a pass that panics must not leave its key
-		// claimed, or no later press would ever be recorded again.
-		count := func() int {
-			defer release()
-			return RunMaintenanceFunc(context.WithoutCancel(r.Context()), key)
-		}()
-		if count < 0 {
-			http.Error(w, "unknown maintenance function", http.StatusNotFound)
-			return
-		}
-		// Recorded after it returns, so a pass that panicked leaves the
-		// previous record standing rather than claiming a run that did not
-		// finish. RunMaintenanceFunc blocks for the whole pass; the progress
-		// endpoint is what the page watches meanwhile.
-		// A press that joined one already running reports the count and
-		// leaves the record to the press that started it.
-		if first {
-			a.recordMaintenanceRun(key, AuthCurrentUser(r), count, time.Since(started))
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]int{"fixed": count})
-	})
+	sub.HandleFunc("/api/maintenance", jsonapi.Methods{
+		"GET":  jsonapi.Get(a.db, a.handleMaintenanceList, a.gate()),
+		"POST": jsonapi.Post(a.db, a.handleMaintenanceRun, a.gate()),
+	}.Serve)
 
 	// List every recorded migration marker across all apps + owners.
 	// Read-only; markers are written by MigrationRunner.Once when each
 	// migration fires. Operators clear markers manually (delete the row
 	// from the DB) to force a re-run after fixing a panic.
-	sub.HandleFunc("/api/migrations", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		markers := ListMigrationMarkers()
-		rows := make([]map[string]any, 0, len(markers))
-		for _, m := range markers {
-			owner := m.Owner
-			if owner == "" {
-				owner = "(global)"
-			}
-			var ranAt any
-			if !m.RanAt.IsZero() {
-				ranAt = m.RanAt
-			}
-			rows = append(rows, map[string]any{
-				"key":     m.Key(),
-				"app":     m.App,
-				"name":    m.Name,
-				"owner":   owner,
-				"ran_at":  ranAt,
-				"changed": m.Changed,
-				"error":   m.Error,
-			})
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(rows)
-	})
+	sub.HandleFunc("/api/migrations", jsonapi.Get(a.db, a.handleMigrations, a.gate()))
 
 	// Scheduled tasks: list pending tasks (GET) or delete by ID (DELETE ?id=xxx).
-	sub.HandleFunc("/api/scheduled-tasks", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		if r.Method == http.MethodGet {
-			w.Header().Set("Content-Type", "application/json")
-			// Enrich each row with a human label (monitor name + agent, etc.)
-			// via the task-describer registry, so the table can show WHAT a task
-			// is rather than a bare kind + uuid. Kinds without a describer get an
-			// empty detail (the id + kind still render).
-			type schedTaskRow struct {
-				ScheduledTask
-				Detail string `json:"detail"`
-			}
-			tasks := ListScheduledTasks("")
-			rows := make([]schedTaskRow, 0, len(tasks))
-			for _, t := range tasks {
-				rows = append(rows, schedTaskRow{ScheduledTask: t, Detail: DescribeTask(t)})
-			}
-			json.NewEncoder(w).Encode(rows)
-			return
-		}
-		if r.Method != http.MethodDelete {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		id := r.URL.Query().Get("id")
-		if id == "" {
-			http.Error(w, "missing id", http.StatusBadRequest)
-			return
-		}
-		UnscheduleTask(id)
-		w.WriteHeader(http.StatusNoContent)
-	})
+	sub.HandleFunc("/api/scheduled-tasks", jsonapi.Methods{
+		"GET":    jsonapi.Get(a.db, a.handleScheduledTasks, a.gate()),
+		"DELETE": jsonapi.Post(a.db, a.handleScheduledTaskDelete, a.gate()),
+	}.Serve)
 
 	// API: database browser.
 	sub.HandleFunc("/api/db/tables", jsonapi.Get(a.db, a.handleDBTables, a.gate()))
@@ -216,6 +58,148 @@ func (a *AdminApp) registerMaintenanceRoutes(sub *http.ServeMux) {
 
 	sub.HandleFunc("/api/db/record", jsonapi.Get(a.db, a.handleDBRecord, a.gate()))
 
+}
+
+// handleMaintenanceProgress is where the ?key= pass has got to, and how the
+// last one ended. Two fields, because they answer different questions:
+// progress is where a RUNNING pass has got to, outcome is how the last one
+// ended. A page that arrives after a run it did not start has only the
+// second, and showing nothing there reads as "it never ran".
+func (a *AdminApp) handleMaintenanceProgress(c *jsonapi.Call) (any, error) {
+	key := c.R.URL.Query().Get("key")
+	return map[string]string{
+		"progress": MaintenanceProgress(key),
+		"outcome":  MaintenanceOutcome(key),
+	}, nil
+}
+
+// handleMaintenanceCancel stops the ?key= pass, if one is running.
+func (a *AdminApp) handleMaintenanceCancel(c *jsonapi.Call, _ struct{}) (any, error) {
+	msg := "Nothing is running there."
+	if CancelMaintenance(c.R.URL.Query().Get("key")) {
+		msg = "Stopping: it ends at its next step."
+	}
+	return map[string]string{"message": msg}, nil
+}
+
+// handleMaintenanceList is the registered passes, each with how it went last
+// time. ?group= narrows the list to one admin section. A registrant that
+// named no group, or one the page does not lay out, is shown under
+// Housekeeping so no button can vanish.
+func (a *AdminApp) handleMaintenanceList(c *jsonapi.Call) (any, error) {
+	want := c.R.URL.Query().Get("group")
+	all := ListMaintenanceFuncs()
+	out := all[:0:0]
+	for _, f := range all {
+		g := f.Group
+		if !maintenanceGroupKnown(g) {
+			g = maintenanceGroupOther
+		}
+		if want == "" || g == want {
+			out = append(out, f)
+		}
+	}
+	// Each item carries what happened to it last time. Built here
+	// rather than in the registry because the record is admin's and so
+	// is the identity in it.
+	rows := make([]map[string]any, 0, len(out))
+	for _, f := range out {
+		run, ok := a.lastMaintenanceRun(f.Key)
+		rows = append(rows, map[string]any{
+			"Group": f.Group, "Key": f.Key, "Label": f.Label, "Desc": f.Desc,
+			"History": maintenanceHistoryLine(run, ok),
+		})
+	}
+	return rows, nil
+}
+
+// handleMaintenanceRun runs the ?key= pass to its end and answers its count.
+func (a *AdminApp) handleMaintenanceRun(c *jsonapi.Call, _ struct{}) (any, error) {
+	key := c.R.URL.Query().Get("key")
+	if key == "" {
+		return nil, jsonapi.BadRequest("missing key")
+	}
+	// The run outlives the request. A request context dies the moment the
+	// browser does, and the passes check it every iteration — so closing
+	// the tab used to stop a re-embed wherever it had got to, silently,
+	// which is exactly what the progress spinner invites you to do.
+	// WithoutCancel keeps the request's values (deadlines and identity
+	// for anything downstream) and drops only its cancellation.
+	started := time.Now()
+	first, release := claimMaintenancePress(key)
+	// Released in a defer: a pass that panics must not leave its key
+	// claimed, or no later press would ever be recorded again.
+	count := func() int {
+		defer release()
+		return RunMaintenanceFunc(context.WithoutCancel(c.R.Context()), key)
+	}()
+	if count < 0 {
+		return nil, jsonapi.NotFound("unknown maintenance function")
+	}
+	// Recorded after it returns, so a pass that panicked leaves the
+	// previous record standing rather than claiming a run that did not
+	// finish. RunMaintenanceFunc blocks for the whole pass; the progress
+	// endpoint is what the page watches meanwhile.
+	// A press that joined one already running reports the count and
+	// leaves the record to the press that started it.
+	if first {
+		a.recordMaintenanceRun(key, c.User, count, time.Since(started))
+	}
+	return map[string]int{"fixed": count}, nil
+}
+
+// handleMigrations is every recorded migration marker.
+func (a *AdminApp) handleMigrations(c *jsonapi.Call) (any, error) {
+	markers := ListMigrationMarkers()
+	rows := make([]map[string]any, 0, len(markers))
+	for _, m := range markers {
+		owner := m.Owner
+		if owner == "" {
+			owner = "(global)"
+		}
+		var ranAt any
+		if !m.RanAt.IsZero() {
+			ranAt = m.RanAt
+		}
+		rows = append(rows, map[string]any{
+			"key":     m.Key(),
+			"app":     m.App,
+			"name":    m.Name,
+			"owner":   owner,
+			"ran_at":  ranAt,
+			"changed": m.Changed,
+			"error":   m.Error,
+		})
+	}
+	return rows, nil
+}
+
+// handleScheduledTasks is the pending scheduled tasks. Each row is enriched
+// with a human label (monitor name + agent, etc.) via the task-describer
+// registry, so the table can show WHAT a task is rather than a bare kind +
+// uuid. Kinds without a describer get an empty detail (the id + kind still
+// render).
+func (a *AdminApp) handleScheduledTasks(c *jsonapi.Call) (any, error) {
+	type schedTaskRow struct {
+		ScheduledTask
+		Detail string `json:"detail"`
+	}
+	tasks := ListScheduledTasks("")
+	rows := make([]schedTaskRow, 0, len(tasks))
+	for _, t := range tasks {
+		rows = append(rows, schedTaskRow{ScheduledTask: t, Detail: DescribeTask(t)})
+	}
+	return rows, nil
+}
+
+// handleScheduledTaskDelete unschedules the ?id= task.
+func (a *AdminApp) handleScheduledTaskDelete(c *jsonapi.Call, _ struct{}) (any, error) {
+	id := c.R.URL.Query().Get("id")
+	if id == "" {
+		return nil, jsonapi.BadRequest("missing id")
+	}
+	UnscheduleTask(id)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // handleVectorStats returns a snapshot of the semantic-search index for the
