@@ -232,27 +232,7 @@ func (T *Servitor) handleChatPage(w http.ResponseWriter, r *http.Request) {
 // on one card released whichever command the map visited first, and before
 // that, any user's click could release any other user's command. A card that
 // does not name its session is refused rather than routed by guesswork.
-func (T *Servitor) handleChatConfirm(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	// Identity first: it is half of the access decision.
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	var body struct {
-		ID    string `json:"id"`
-		Value string `json:"value"`
-		// Input is the rule an Always answer saves, as the card showed it and
-		// the person left or edited it (allow_rules.go).
-		Input string `json:"input"`
-	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&body); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
+func (T *Servitor) handleChatConfirm(c *jsonapi.Call, body chatConfirmAnswer) (any, error) {
 	allow := body.Value == "allow" || body.Value == "always"
 	// Always is Allow that is remembered: this exact command, on this
 	// appliance, runs without asking again. Written before the run is let go,
@@ -261,12 +241,12 @@ func (T *Servitor) handleChatConfirm(w http.ResponseWriter, r *http.Request) {
 	if body.Value == "always" {
 		// Checked before anything is let go: a rule that no longer covers
 		// the command it was made from is refused with the reason, and the
-		// card stays live to fix it.
-		if rule := strings.TrimSpace(body.Input); rule != "" {
+		// card stays live to fix it. Only for a card the caller could answer:
+		// to anyone else it is not waiting, the same as every other refusal.
+		if rule := strings.TrimSpace(body.Input); rule != "" && answerableBy(c.User, body.ID) {
 			if cmd, ok := pendingCommand(body.ID); ok {
 				if err := validAllowRule(rule, cmd); err != nil {
-					http.Error(w, err.Error(), http.StatusBadRequest)
-					return
+					return nil, jsonapi.BadRequest(err.Error())
 				}
 			}
 		}
@@ -275,20 +255,40 @@ func (T *Servitor) handleChatConfirm(w http.ResponseWriter, r *http.Request) {
 			if rule == "" || validAllowRule(rule, cmd) != nil {
 				rule = cmd
 			}
-			rememberAlwaysAllow(udb, user, sid, rule)
+			rememberAlwaysAllow(c.UDB, c.User, sid, rule)
 		}
 	}
 
-	delivered := deliverConfirmWith(user, body.ID, allow, remember)
+	delivered := deliverConfirmWith(c.User, body.ID, allow, remember)
 	if delivered == "" {
 		// Say so rather than answering 204. A silent success settles the card
 		// as answered while the run stays blocked, which reads as servitor
 		// ignoring the click; the runtime's catch re-enables the buttons.
-		http.Error(w, "that command is no longer waiting for approval: it may have already been answered, timed out, or the run may have ended", http.StatusConflict)
-		return
+		return nil, jsonapi.Status(http.StatusConflict, "that command is no longer waiting for approval: it may have already been answered, timed out, or the run may have ended")
 	}
-	Log("[servitor] %s answered confirm on session %s: allow=%v", user, delivered, allow)
-	w.WriteHeader(http.StatusNoContent)
+	Log("[servitor] %s answered confirm on session %s: allow=%v", c.User, delivered, allow)
+	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// chatConfirmAnswer is a confirm card's answer: which card, which button.
+type chatConfirmAnswer struct {
+	ID    string `json:"id"`
+	Value string `json:"value"`
+	// Input is the rule an Always answer saves, as the card showed it and
+	// the person left or edited it (allow_rules.go).
+	Input string `json:"input"`
+}
+
+// answerableBy reports whether user could answer the card: it names a session
+// of theirs that a person answers.
+func answerableBy(user, cardID string) bool {
+	sid, _, ok := parseConfirmCardID(cardID)
+	if !ok || strings.TrimSpace(user) == "" {
+		return false
+	}
+	val, _ := confirmChans.Load(sid)
+	p, ok := val.(pendingConfirm)
+	return ok && p.ch != nil && p.interactive && p.owner != "" && p.owner == user
 }
 
 // confirmCardSep separates the parts of a card id. Not a character a UUID, a

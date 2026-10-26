@@ -10,7 +10,15 @@
 // since it is the whole of the access decision.
 package servitor
 
-import "testing"
+import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/snugforge/kvlite"
+)
 
 // register stands up one pending confirmation the way a live session does -
 // the channel, and the command it is waiting on - and returns the card id the
@@ -198,4 +206,60 @@ func TestSessionIDLiveUnderAnotherUserIsNotAdopted(t *testing.T) {
 	if !sessionIDUsableBy("", "bob") || !sessionIDUsableBy("s-fresh", "bob") {
 		t.Error("a fresh or empty id must be usable")
 	}
+}
+
+// An Always answer's rule is checked only for a card the caller could answer.
+// To anyone else the card is not waiting, the same refusal as every other:
+// checking it first told them the card was live and what it was waiting on.
+func TestAnAlwaysRuleIsCheckedOnlyForTheCardsOwner(t *testing.T) {
+	aliceAndBob(t)
+	ch, card := register(t, "s-rule", "alice", true)
+	app := &Servitor{}
+	app.DB = &DBase{Store: kvlite.MemStore()}
+	answer := func(who string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		routed(app)(w, reqAs(t, http.MethodPost, "/api/chat/v2/confirm", who,
+			`{"id":"`+card+`","value":"always","input":"cat /etc/shadow"}`))
+		return w
+	}
+	if w := answer("bob"); w.Code != http.StatusConflict {
+		t.Errorf("another user's bad rule answered %d %s, want the 409 a card not waiting gets", w.Code, w.Body.String())
+	}
+	if w := answer("alice"); w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "does not cover") {
+		t.Errorf("the owner's bad rule answered %d %s, want the reason", w.Code, w.Body.String())
+	}
+	expectNothing(t, ch, "a refused answer released the command")
+}
+
+// The confirm and map endpoints take POST and nothing else, and refuse a
+// caller who is not signed in.
+func TestConfirmAndMapTakePost(t *testing.T) {
+	aliceAndBob(t)
+	app := &Servitor{}
+	app.DB = &DBase{Store: kvlite.MemStore()}
+	for _, path := range []string{"/api/chat/v2/confirm", "/api/map"} {
+		for _, m := range []string{"GET", "PUT", "PATCH", "DELETE"} {
+			w := httptest.NewRecorder()
+			routed(app)(w, reqAs(t, m, path, "alice", "{}"))
+			if w.Code != http.StatusMethodNotAllowed {
+				t.Errorf("%s %s answered %d", m, path, w.Code)
+			}
+		}
+		w := httptest.NewRecorder()
+		routed(app)(w, httptest.NewRequest("POST", path, strings.NewReader("{}")))
+		if w.Code != http.StatusUnauthorized {
+			t.Errorf("signed out, POST %s answered %d", path, w.Code)
+		}
+	}
+}
+
+// aliceAndBob points AuthDB at a fresh store holding two accounts.
+func aliceAndBob(t *testing.T) {
+	t.Helper()
+	auth := &DBase{Store: kvlite.MemStore()}
+	AuthSetUser(auth, "alice", "pw", false)
+	AuthSetUser(auth, "bob", "pw", false)
+	prev := AuthDB
+	AuthDB = func() Database { return auth }
+	t.Cleanup(func() { AuthDB = prev })
 }

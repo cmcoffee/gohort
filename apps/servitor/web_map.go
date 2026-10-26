@@ -2,7 +2,7 @@ package servitor
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -12,40 +12,27 @@ import (
 
 // --- Map (full scan) ---
 
-func (T *Servitor) handleMap(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	userID, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	var req struct {
-		ApplianceID string `json:"appliance_id"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ApplianceID == "" {
-		http.Error(w, "appliance_id required", http.StatusBadRequest)
-		return
+func (T *Servitor) handleMap(c *jsonapi.Call, req struct {
+	ApplianceID string `json:"appliance_id"`
+}) (any, error) {
+	userID, udb := c.User, c.UDB
+	if req.ApplianceID == "" {
+		return nil, jsonapi.BadRequest("appliance_id required")
 	}
 	if udb == nil {
-		http.Error(w, "no database", http.StatusInternalServerError)
-		return
+		return nil, errors.New("no database")
 	}
 	appliance, ownerUser, _, found := T.resolveAppliance(userID, udb, req.ApplianceID)
 	if !found {
-		http.Error(w, "system not found", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("system not found")
 	}
 	if why := readOnlyRefusal(appliance, ownerUser, userID); why != "" {
-		http.Error(w, why, http.StatusForbidden)
-		return
+		return nil, jsonapi.Forbidden(why)
 	}
 	if appliance.Type == "workspace" {
 		// A workspace owns no system to map — its knowledge IS its members'.
 		// Refreshing it means refreshing them, individually.
-		http.Error(w, "a workspace has nothing of its own to map: refresh its member systems instead", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("a workspace has nothing of its own to map: refresh its member systems instead")
 	}
 
 	sid := UUIDv4()
@@ -95,8 +82,7 @@ func (T *Servitor) handleMap(w http.ResponseWriter, r *http.Request) {
 		go T.runSession(ctx, sid, userID, ownerUser, appliance, ch, hist, udb, true)
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"session_id": sid})
+	return map[string]string{"session_id": sid}, nil
 }
 
 func (T *Servitor) handleMapApp(c *jsonapi.Call, req mapAppReq) (any, error) {

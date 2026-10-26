@@ -77,7 +77,7 @@ func TestASystemIsSharedToReadOrWithFullAccess(t *testing.T) {
 
 	// Mapping runs commands: refused for Read.
 	w = httptest.NewRecorder()
-	app.handleMap(w, reqAs(t, http.MethodPost, "/api/map", "carol", `{"appliance_id":"web01"}`))
+	routed(app)(w, reqAs(t, http.MethodPost, "/api/map", "carol", `{"appliance_id":"web01"}`))
 	if w.Code != http.StatusForbidden {
 		t.Errorf("Read mapped the system: %d", w.Code)
 	}

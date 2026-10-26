@@ -209,7 +209,7 @@ func (T *Servitor) routes(sub *http.ServeMux) {
 	// AgentLoopPanel-facing endpoints — translator on top of the
 	// existing probeSessions queue. See chat_bridge.go / chat_page.go.
 	sub.HandleFunc("/api/chat/v2/events", T.handleChatEvents)
-	sub.HandleFunc("/api/chat/v2/confirm", T.handleChatConfirm)
+	sub.HandleFunc("/api/chat/v2/confirm", jsonapi.Post(T.DB, T.handleChatConfirm, jsonapi.MaxBody(1<<16)))
 	sub.HandleFunc("/api/profile", jsonapi.Get(T.DB, T.handleProfile))
 	sub.HandleFunc("/api/appliances", T.handleAppliances)
 	sub.HandleFunc("/api/appliances/", T.handleApplianceMemory) // /api/appliances/<id>/{facts,graph,inferred,...} — shared agent-memory surface
@@ -240,7 +240,7 @@ func (T *Servitor) routes(sub *http.ServeMux) {
 		"POST": jsonapi.Post(T.DB, T.handlePushToGuideSave),
 	}.Serve)
 	sub.HandleFunc("/api/inject", T.injectRoute())
-	sub.HandleFunc("/api/map", T.handleMap)
+	sub.HandleFunc("/api/map", jsonapi.Post(T.DB, T.handleMap))
 	sub.HandleFunc("/api/mapapp", jsonapi.Post(T.DB, T.handleMapApp))
 	sub.HandleFunc("/api/terminal", T.handleTerminal)
 	sub.HandleFunc("/api/facts", jsonapi.Methods{
