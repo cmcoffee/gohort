@@ -1,13 +1,14 @@
 package admin
 
 import (
-	"encoding/json"
+	"fmt"
 	"math"
 	"net/http"
 	"strconv"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/activity"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // registerCostRoutes wires the cost API under the admin sub-mux.
@@ -16,37 +17,18 @@ func (a *AdminApp) registerCostRoutes(sub *http.ServeMux) {
 	// telemetry. Shared between --setup (writes to the same kvlite
 	// bucket via core.SaveCostRatesToDB) and this admin page; either
 	// path writes the same record and updates live via SetCostRates.
-	sub.HandleFunc("/api/cost-rates", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		switch r.Method {
-		case http.MethodGet:
-			a.handleGetCostRates(w, r)
-		case http.MethodPut:
-			a.handleUpdateCostRates(w, r)
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		}
-	})
+	sub.HandleFunc("/api/cost-rates", jsonapi.Methods{
+		"GET": jsonapi.Get(a.db, a.handleGetCostRates, a.gate()),
+		"PUT": jsonapi.Post(a.db, a.handleUpdateCostRates, a.gate()),
+	}.Serve)
 
 	// Per-day cost history for the admin chart. Aggregates across every
 	// spend-bearing record type whose package registered a scanner at
 	// init time via core.RegisterCostRecordScanner. Apps plug in their
 	// own record sources — admin stays generic.
-	sub.HandleFunc("/api/cost-history", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		a.handleCostHistory(w, r)
-	})
+	sub.HandleFunc("/api/cost-history", jsonapi.Get(a.db, a.handleCostHistory, a.gate()))
 
-	sub.HandleFunc("/api/cost-by-source", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		a.handleCostBySource(w, r)
-	})
+	sub.HandleFunc("/api/cost-by-source", jsonapi.Get(a.db, a.handleCostBySource, a.gate()))
 
 }
 
@@ -57,8 +39,7 @@ func (a *AdminApp) registerCostRoutes(sub *http.ServeMux) {
 // `configured` flag distinguishes "all zeros because never set" from
 // "operator explicitly set everything to zero" so the client can
 // render blank inputs in the first case and "0" in the second.
-func (a *AdminApp) handleGetCostRates(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
+func (a *AdminApp) handleGetCostRates(c *jsonapi.Call) (any, error) {
 	rates := GetCostRates()
 	// The multipliers are returned as their EFFECTIVE values rather than
 	// the stored ones: both are omitempty, so an unset field would render
@@ -70,7 +51,7 @@ func (a *AdminApp) handleGetCostRates(w http.ResponseWriter, r *http.Request) {
 	// publishes them, so a price page's "$1.50 / $9.00" is typed as it
 	// reads. They are stored per thousand (CostRates), and only this page
 	// sees the other unit.
-	json.NewEncoder(w).Encode(struct {
+	return struct {
 		CostRates
 		CacheReadMultiplier  float64 `json:"cache_read_multiplier"`
 		CacheWriteMultiplier float64 `json:"cache_write_multiplier"`
@@ -81,7 +62,7 @@ func (a *AdminApp) handleGetCostRates(w http.ResponseWriter, r *http.Request) {
 		LeadOutputPer1M      float64 `json:"lead_output_per_1m"`
 	}{rates, rates.EffectiveCacheReadMultiplier(), rates.EffectiveCacheWriteMultiplier(), RatesConfigured(),
 		perMillion(rates.WorkerInputPer1K), perMillion(rates.WorkerOutputPer1K),
-		perMillion(rates.LeadInputPer1K), perMillion(rates.LeadOutputPer1K)})
+		perMillion(rates.LeadInputPer1K), perMillion(rates.LeadOutputPer1K)}, nil
 }
 
 // perMillion turns a stored per-thousand rate into the per-million one the
@@ -95,28 +76,8 @@ func perMillion(per1K float64) float64 {
 // installing it live via SetCostRates. Partial update semantics (each
 // field is a pointer) so the form can PUT a single field without
 // re-sending the rest.
-func (a *AdminApp) handleUpdateCostRates(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		WorkerInputPer1K  *float64 `json:"worker_input_per_1k,omitempty"`
-		WorkerOutputPer1K *float64 `json:"worker_output_per_1k,omitempty"`
-		LeadInputPer1K    *float64 `json:"lead_input_per_1k,omitempty"`
-		LeadOutputPer1K   *float64 `json:"lead_output_per_1k,omitempty"`
-		// What the page sends: per million tokens, stored per thousand.
-		WorkerInputPer1M  *float64 `json:"worker_input_per_1m,omitempty"`
-		WorkerOutputPer1M *float64 `json:"worker_output_per_1m,omitempty"`
-		LeadInputPer1M    *float64 `json:"lead_input_per_1m,omitempty"`
-		LeadOutputPer1M   *float64 `json:"lead_output_per_1m,omitempty"`
-		SearchPerCall     *float64 `json:"search_per_call,omitempty"`
-		ImagePerCall      *float64 `json:"image_per_call,omitempty"`
-		// Cached-prompt weights. Not rates in dollars — multipliers on the
-		// matching input rate, which is how both providers price them.
-		CacheReadMultiplier  *float64 `json:"cache_read_multiplier,omitempty"`
-		CacheWriteMultiplier *float64 `json:"cache_write_multiplier,omitempty"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request", http.StatusBadRequest)
-		return
-	}
+func (a *AdminApp) handleUpdateCostRates(c *jsonapi.Call, req costRatesUpdate) (any, error) {
+	r := c.R
 	rates := GetCostRates()
 	if req.WorkerInputPer1K != nil {
 		rates.WorkerInputPer1K = *req.WorkerInputPer1K
@@ -169,12 +130,30 @@ func (a *AdminApp) handleUpdateCostRates(w http.ResponseWriter, r *http.Request)
 		}
 	}
 	if err := SaveCostRatesToDB(a.db, rates); err != nil {
-		http.Error(w, "save failed: "+err.Error(), http.StatusInternalServerError)
-		return
+		return nil, fmt.Errorf("save cost rates: %w", err)
 	}
 	SetCostRates(rates)
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(rates)
+	return rates, nil
+}
+
+// costRatesUpdate is the cost-rates form's PUT: any of the rates, each
+// optional.
+type costRatesUpdate struct {
+	WorkerInputPer1K  *float64 `json:"worker_input_per_1k,omitempty"`
+	WorkerOutputPer1K *float64 `json:"worker_output_per_1k,omitempty"`
+	LeadInputPer1K    *float64 `json:"lead_input_per_1k,omitempty"`
+	LeadOutputPer1K   *float64 `json:"lead_output_per_1k,omitempty"`
+	// What the page sends: per million tokens, stored per thousand.
+	WorkerInputPer1M  *float64 `json:"worker_input_per_1m,omitempty"`
+	WorkerOutputPer1M *float64 `json:"worker_output_per_1m,omitempty"`
+	LeadInputPer1M    *float64 `json:"lead_input_per_1m,omitempty"`
+	LeadOutputPer1M   *float64 `json:"lead_output_per_1m,omitempty"`
+	SearchPerCall     *float64 `json:"search_per_call,omitempty"`
+	ImagePerCall      *float64 `json:"image_per_call,omitempty"`
+	// Cached-prompt weights. Not rates in dollars — multipliers on the
+	// matching input rate, which is how both providers price them.
+	CacheReadMultiplier  *float64 `json:"cache_read_multiplier,omitempty"`
+	CacheWriteMultiplier *float64 `json:"cache_write_multiplier,omitempty"`
 }
 
 // handleCostHistory returns per-day cost aggregation across every
@@ -190,13 +169,8 @@ func (a *AdminApp) handleUpdateCostRates(w http.ResponseWriter, r *http.Request)
 // The chart consumes this directly: each DailyCost row prices the
 // day's usage at current CostRates, so rate changes propagate
 // immediately without re-scanning.
-func (a *AdminApp) handleCostHistory(w http.ResponseWriter, r *http.Request) {
-	days := 30
-	if s := r.URL.Query().Get("days"); s != "" {
-		if n, err := strconv.Atoi(s); err == nil && n >= 0 {
-			days = n
-		}
-	}
+func (a *AdminApp) handleCostHistory(c *jsonapi.Call) (any, error) {
+	days := costDays(c)
 	records := CollectAllUsage()
 	daily := AggregateDailyCost(records, days)
 	// Fold metered source-hook / credential spend (cost hooks) into each day's
@@ -215,19 +189,19 @@ func (a *AdminApp) handleCostHistory(w http.ResponseWriter, r *http.Request) {
 			daily = append(daily, DailyCost{Date: date, Cost: cost, ExternalCost: cost})
 		}
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(daily)
+	return daily, nil
 }
 
 // handleCostBySource returns each metered source's total spend over the
 // window — the admin "Cost by source" breakdown table.
-func (a *AdminApp) handleCostBySource(w http.ResponseWriter, r *http.Request) {
-	days := 30
-	if s := r.URL.Query().Get("days"); s != "" {
-		if n, err := strconv.Atoi(s); err == nil && n >= 0 {
-			days = n
-		}
+func (a *AdminApp) handleCostBySource(c *jsonapi.Call) (any, error) {
+	return map[string]any{"items": CostBySource(costDays(c))}, nil
+}
+
+// costDays is the ?days= window: 30 unless it names another, 0 for all data.
+func costDays(c *jsonapi.Call) int {
+	if n, err := strconv.Atoi(c.R.URL.Query().Get("days")); err == nil && n >= 0 {
+		return n
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"items": CostBySource(days)})
+	return 30
 }

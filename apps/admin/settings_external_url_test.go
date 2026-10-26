@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -19,7 +20,7 @@ func TestSettingsReturnTheExternalURLUntouched(t *testing.T) {
 	a.db.Set(WebTable, "ollama_proxy_port", 11434)
 	a.db.Set(WebTable, "ollama_proxy_bind", "127.0.0.1")
 	w := httptest.NewRecorder()
-	a.handleGetSettings(w, httptest.NewRequest("GET", "/api/settings", nil))
+	jsonapi.Get(a.db, a.handleGetSettings, a.gate())(w, httptest.NewRequest("GET", "/api/settings", nil))
 	var got map[string]any
 	_ = json.Unmarshal(w.Body.Bytes(), &got)
 	if got["external_url"] != "https://gohort.example" {

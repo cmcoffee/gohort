@@ -1,0 +1,225 @@
+(signed out) GET /api/status ""
+  403 forbidden
+alice GET /api/status ""
+  403 forbidden
+root GET /api/status ""
+  200 object with keys active_sessions,allow_signup,auth_enabled,sandbox_advice,sandbox_backend,sandbox_bypass,sandbox_confined,sandbox_limits,sandbox_refusing,sandbox_required,sandbox_status,tls_enabled,tls_self_signed,user_count
+root POST /api/status "{}"
+  405 method not allowed
+(signed out) GET /api/dependencies ""
+  403 forbidden
+alice GET /api/dependencies ""
+  403 forbidden
+root GET /api/dependencies ""
+  200 probes antiword,bwrap,ffmpeg,ffprobe,git,heif-convert,pandoc,pdftotext,python3,yt-dlp
+root POST /api/dependencies "{}"
+  405 method not allowed
+(signed out) GET /api/apps ""
+  403 forbidden
+alice GET /api/apps ""
+  403 forbidden
+root GET /api/apps ""
+  200 list of objects with keys name,path
+root POST /api/apps "{}"
+  405 method not allowed
+(signed out) GET /api/settings ""
+  403 forbidden
+alice GET /api/settings ""
+  403 forbidden
+root GET /api/settings ""
+  200 {"allow_signup":false,"api_key_allow_query":false,"channel_wake_rules":"","default_apps":null,"doc_brand":"","external_url":"","fetch_cache_quota_mb":100,"lockout_minutes":15,"max_login_attempts":5,"n… (453 bytes, sha1 88811d0d9b212d80b3b9282fe01a075d6c9f9b76)
+(signed out) GET /api/settings?app=/nope ""
+  403 forbidden
+alice GET /api/settings?app=/nope ""
+  403 forbidden
+root GET /api/settings?app=/nope ""
+  200 {}
+(signed out) GET /api/cost-rates ""
+  403 forbidden
+alice GET /api/cost-rates ""
+  403 forbidden
+root GET /api/cost-rates ""
+  200 {"worker_input_per_1k":0,"worker_output_per_1k":0,"lead_input_per_1k":0,"lead_output_per_1k":0,"search_per_call":0,"image_per_call":0,"cache_read_multiplier":0.1,"cache_write_multiplier":1.25,"configured":true,"worker_input_per_1m":0,"worker_output_per_1m":0,"lead_input_per_1m":0,"lead_output_per_1m":0}
+(signed out) GET /api/cost-history ""
+  403 forbidden
+alice GET /api/cost-history ""
+  403 forbidden
+root GET /api/cost-history ""
+  200 [{"date":"<date>","cost":0,"worker_input":0,"worker_output":0,"lead_input":0,"lead_output":0,"search_calls":0,"image_calls":0,"external_cost":0,"run_count":0},{"date":"<date>","cost":0,"worker_input":… (4741 bytes, sha1 a7b1b86750ad0d9ae581778899dc4a80a7a93195)
+(signed out) GET /api/cost-history?days=0 ""
+  403 forbidden
+alice GET /api/cost-history?days=0 ""
+  403 forbidden
+root GET /api/cost-history?days=0 ""
+  200 []
+(signed out) GET /api/cost-history?days=x ""
+  403 forbidden
+alice GET /api/cost-history?days=x ""
+  403 forbidden
+root GET /api/cost-history?days=x ""
+  200 [{"date":"<date>","cost":0,"worker_input":0,"worker_output":0,"lead_input":0,"lead_output":0,"search_calls":0,"image_calls":0,"external_cost":0,"run_count":0},{"date":"<date>","cost":0,"worker_input":… (4741 bytes, sha1 a7b1b86750ad0d9ae581778899dc4a80a7a93195)
+(signed out) GET /api/cost-by-source ""
+  403 forbidden
+alice GET /api/cost-by-source ""
+  403 forbidden
+root GET /api/cost-by-source ""
+  200 {"items":[]}
+(signed out) GET /api/cost-by-source?days=7 ""
+  403 forbidden
+alice GET /api/cost-by-source?days=7 ""
+  403 forbidden
+root GET /api/cost-by-source?days=7 ""
+  200 {"items":[]}
+(signed out) GET /api/vector-stats ""
+  403 forbidden
+alice GET /api/vector-stats ""
+  403 forbidden
+root GET /api/vector-stats ""
+  200 {"by_source_text":"(no chunks yet)","embedded":0,"empty":0,"empty_by_source_text":"none: every chunk has a vector","stale":0,"stale_by_source_text":"none: every vector is in the current space","total":0,"unusable":0,"unusable_by_source_text":"none"}
+(signed out) GET /api/vector-stats/by-kind ""
+  403 forbidden
+alice GET /api/vector-stats/by-kind ""
+  403 forbidden
+root GET /api/vector-stats/by-kind ""
+  200 []
+(signed out) GET /api/db/record?table=zz_browse&key=a-string ""
+  403 forbidden
+alice GET /api/db/record?table=zz_browse&key=a-string ""
+  403 forbidden
+root GET /api/db/record?table=zz_browse&key=a-string ""
+  200 "hello"
+(signed out) GET /api/db/record?table=zz_browse&key=a-number ""
+  403 forbidden
+alice GET /api/db/record?table=zz_browse&key=a-number ""
+  403 forbidden
+root GET /api/db/record?table=zz_browse&key=a-number ""
+  200 42
+(signed out) GET /api/db/record?table=zz_browse&key=nope ""
+  403 forbidden
+alice GET /api/db/record?table=zz_browse&key=nope ""
+  403 forbidden
+root GET /api/db/record?table=zz_browse&key=nope ""
+  404 not found
+(signed out) GET /api/db/record?table=zz_browse ""
+  403 forbidden
+alice GET /api/db/record?table=zz_browse ""
+  403 forbidden
+root GET /api/db/record?table=zz_browse ""
+  400 table and key required
+(signed out) GET /api/settings/reset-tunables ""
+  403 forbidden
+alice GET /api/settings/reset-tunables ""
+  403 forbidden
+root GET /api/settings/reset-tunables ""
+  405 method not allowed
+root POST /api/cost-history "{}"
+  405 method not allowed
+root POST /api/cost-by-source "{}"
+  405 method not allowed
+root POST /api/vector-stats "{}"
+  405 method not allowed
+root POST /api/vector-stats/by-kind "{}"
+  405 method not allowed
+root POST /api/db/record?table=zz_browse&key=a-string "{}"
+  405 method not allowed
+alice PATCH /api/settings "{\"allow_signup\":true}"
+  403 forbidden
+root PATCH /api/settings "{\"allow_signup\":true}"
+  200 {"status":"updated"}
+root PATCH /api/settings "{\"session_days\":14,\"max_login_attempts\":7,\"lockout_minutes\":30,\"session_absolute_days\":0}"
+  200 {"status":"updated"}
+root PATCH /api/settings "{\"session_days\":999,\"lockout_minutes\":0}"
+  200 {"status":"updated"}
+root PUT /api/settings "{\"service_name\":\"Example\",\"external_url\":\"https://example.test\",\"notify_from\":\"ops@example.test\",\"site_name\":\" Site \",\"doc_brand\":\" Brand \"}"
+  200 {"status":"updated"}
+root POST /api/settings "{\"default_apps\":[\"/chat\"],\"api_key_allow_query\":false}"
+  200 {"status":"updated"}
+root PATCH /api/settings "{\"ui_theme\":\"nope\"}"
+  200 {"status":"updated"}
+root PATCH /api/settings "{\"ui_theme\":\"indigo\"}"
+  200 {"status":"updated"}
+root PATCH /api/settings "{\"timezone\":\"Not/AZone\"}"
+  200 {"status":"updated"}
+root PATCH /api/settings "{\"timezone\":\"UTC\"}"
+  200 {"status":"updated"}
+root PATCH /api/settings "{\"timezone\":\"\"}"
+  200 {"status":"updated"}
+root PATCH /api/settings "{\"ollama_proxy_bind\":\"10.0.0.1\"}"
+  400 ollama_proxy_bind must be 127.0.0.1 (this machine only) or 0.0.0.0 (all interfaces)
+root PATCH /api/settings "{\"ollama_proxy_port\":11500,\"ollama_proxy_bind\":\"127.0.0.1\",\"fetch_cache_quota_mb\":0}"
+  200 {"status":"updated"}
+root PATCH /api/settings "{\"channel_wake_rules\":\"  wake on mention  \"}"
+  200 {"status":"updated"}
+root PATCH /api/settings "{\"allow_signup\":"
+  400 invalid JSON: unexpected EOF
+root PATCH /api/settings ""
+  400 invalid JSON: EOF
+root PATCH /api/settings "[]"
+  400 invalid request
+root DELETE /api/settings ""
+  405 method not allowed
+root PATCH /api/settings "{\"tune_account_key_lifetime\":3650}"
+  200 {"status":"updated"}
+root PATCH /api/settings "{\"tune_account_key_lifetime\":3651}"
+  200 {"status":"updated"}
+root PATCH /api/settings "{\"tune_account_key_lifetime\":90}"
+  200 {"status":"updated"}
+root PATCH /api/settings?app=/nope "{\"tune_account_key_lifetime\":3650}"
+  200 {"status":"updated"}
+root GET /api/settings ""
+  200 {"allow_signup":true,"api_key_allow_query":false,"channel_wake_rules":"wake on mention","default_apps":["/chat"],"doc_brand":"Brand","external_url":"https://example.test","fetch_cache_quota_mb":0,"loc… (548 bytes, sha1 2f9f82d800dfb4d3426fea4969f1858744cb3ed6)
+alice POST /api/settings/reset-tunables ""
+  403 forbidden
+root POST /api/settings/reset-tunables?category=nope ""
+  200 {"status":"reset"}
+root POST /api/settings/reset-tunables?app=/nope ""
+  200 {"status":"reset"}
+root POST /api/settings/reset-tunables ""
+  200 {"status":"reset"}
+root PUT /api/settings/reset-tunables ""
+  405 method not allowed
+alice PUT /api/cost-rates "{\"search_per_call\":0.01}"
+  403 forbidden
+root PUT /api/cost-rates "{\"search_per_call\":0.01,\"image_per_call\":0.04,\"cache_read_multiplier\":0.1}"
+  200 {"worker_input_per_1k":0,"worker_output_per_1k":0,"lead_input_per_1k":0,"lead_output_per_1k":0,"search_per_call":0.01,"image_per_call":0.04,"cache_read_multiplier":0.1}
+root PUT /api/cost-rates "{\"worker_input_per_1k\":0.002,\"worker_input_per_1m\":1.5,\"lead_output_per_1m\":9}"
+  200 {"worker_input_per_1k":0.0015,"worker_output_per_1k":0,"lead_input_per_1k":0,"lead_output_per_1k":0.009,"search_per_call":0.01,"image_per_call":0.04,"cache_read_multiplier":0.1}
+root PUT /api/cost-rates "{\"search_per_call\":"
+  400 invalid JSON: unexpected EOF
+root PUT /api/cost-rates ""
+  400 invalid JSON: EOF
+root POST /api/cost-rates "{}"
+  405 method not allowed
+root GET /api/cost-rates ""
+  200 {"worker_input_per_1k":0.0015,"worker_output_per_1k":0,"lead_input_per_1k":0,"lead_output_per_1k":0.009,"search_per_call":0.01,"image_per_call":0.04,"cache_read_multiplier":0.1,"cache_write_multiplier":1.25,"configured":true,"worker_input_per_1m":1.5,"worker_output_per_1m":0,"lead_input_per_1m":0,"lead_output_per_1m":9}
+activity log, 30 entries:
+  settings root: cleared timezone (host zone; applies on restart)
+  settings root: reverted tunables to defaults (app="/nope")
+  settings root: reverted tunables to defaults (category="")
+  settings root: reverted tunables to defaults (category="nope")
+  settings root: set allow_signup=true
+  settings root: set api_key_allow_query=off
+  settings root: set cache_read_multiplier=0.1
+  settings root: set default_apps=[/chat]
+  settings root: set doc_brand="Brand"
+  settings root: set external_url="https://example.test"
+  settings root: set fetch_cache_quota_mb=0
+  settings root: set image_per_call=0.04
+  settings root: set lead_output=$9 per 1M tokens
+  settings root: set lockout_minutes=30
+  settings root: set max_login_attempts=7
+  settings root: set notify_from="ops@example.test"
+  settings root: set ollama_proxy_bind=127.0.0.1
+  settings root: set ollama_proxy_port=11500
+  settings root: set search_per_call=0.01
+  settings root: set service_name="Example"
+  settings root: set session_absolute_days=0
+  settings root: set session_days=14
+  settings root: set site_name="Site"
+  settings root: set timezone="UTC" (applies on restart)
+  settings root: set tune_account_key_lifetime back to its default (90)
+  settings root: set tune_account_key_lifetime=3650
+  settings root: set ui_theme="indigo"
+  settings root: set worker_input=$1.5 per 1M tokens
+  settings root: set worker_input_per_1k=0.002
+  settings root: updated channel_wake_rules (15 chars)

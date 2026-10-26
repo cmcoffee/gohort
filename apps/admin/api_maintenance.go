@@ -15,22 +15,12 @@ import (
 // registerMaintenanceRoutes wires the maintenance API under the admin sub-mux.
 func (a *AdminApp) registerMaintenanceRoutes(sub *http.ServeMux) {
 	// Vector Index snapshot — backs the admin DisplayPanel (page.go).
-	sub.HandleFunc("/api/vector-stats", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		a.handleVectorStats(w, r)
-	})
+	sub.HandleFunc("/api/vector-stats", jsonapi.Get(a.db, a.handleVectorStats, a.gate()))
 
 	// Per-kind breakdown (research / debate / lcm / collections / …) with doc +
 	// chunk counts — the legible view of what's in the index, vs the opaque
 	// per-source id dump.
-	sub.HandleFunc("/api/vector-stats/by-kind", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		a.handleVectorStatsByKind(w, r)
-	})
+	sub.HandleFunc("/api/vector-stats/by-kind", jsonapi.Get(a.db, a.handleVectorStatsByKind, a.gate()))
 
 	// Where a running pass has got to. Polled by the action list while its
 	// POST is in flight, so a long pass shows movement rather than a button
@@ -224,7 +214,7 @@ func (a *AdminApp) registerMaintenanceRoutes(sub *http.ServeMux) {
 
 	sub.HandleFunc("/api/db/keys", jsonapi.Get(a.db, a.handleDBKeys, a.gate()))
 
-	sub.HandleFunc("/api/db/record", a.handleDBRecord)
+	sub.HandleFunc("/api/db/record", jsonapi.Get(a.db, a.handleDBRecord, a.gate()))
 
 }
 
@@ -236,7 +226,7 @@ func (a *AdminApp) registerMaintenanceRoutes(sub *http.ServeMux) {
 // carry its own copy of it, which left core's version with no callers — so the
 // EmptyBySource breakdown, added there, would have been born dead. One walk,
 // one definition of what "empty" means.
-func (a *AdminApp) handleVectorStats(w http.ResponseWriter, r *http.Request) {
+func (a *AdminApp) handleVectorStats(c *jsonapi.Call) (any, error) {
 	db := VectorDB
 	if db == nil {
 		db = RootDB
@@ -260,8 +250,7 @@ func (a *AdminApp) handleVectorStats(w http.ResponseWriter, r *http.Request) {
 	if unusableText == "" {
 		unusableText = "none"
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	return map[string]any{
 		"total":                   stats.Total,
 		"embedded":                stats.Embedded,
 		"empty":                   stats.Empty,
@@ -271,14 +260,14 @@ func (a *AdminApp) handleVectorStats(w http.ResponseWriter, r *http.Request) {
 		"empty_by_source_text":    emptyText,
 		"stale_by_source_text":    staleText,
 		"unusable_by_source_text": unusableText,
-	})
+	}, nil
 }
 
 // handleVectorStatsByKind aggregates the index by SOURCE KIND — the prefix
 // before the first ':' (research / debate / answer / lcm / collections / …) —
 // reporting a document count (distinct full sources) and a chunk count per kind.
 // The raw per-source ids are opaque; grouping by kind is what's actually legible.
-func (a *AdminApp) handleVectorStatsByKind(w http.ResponseWriter, r *http.Request) {
+func (a *AdminApp) handleVectorStatsByKind(c *jsonapi.Call) (any, error) {
 	db := VectorDB
 	if db == nil {
 		db = RootDB
@@ -317,8 +306,7 @@ func (a *AdminApp) handleVectorStatsByKind(w http.ResponseWriter, r *http.Reques
 		})
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i]["chunks"].(int) > rows[j]["chunks"].(int) })
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(rows)
+	return rows, nil
 }
 
 // vectorKindLabel maps a source-kind prefix to a human label; unknown kinds
@@ -362,19 +350,13 @@ func (a *AdminApp) handleDBKeys(c *jsonapi.Call) (any, error) {
 	return keys, nil
 }
 
-func (a *AdminApp) handleDBRecord(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
-		return
-	}
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	table := r.URL.Query().Get("table")
-	key := r.URL.Query().Get("key")
+// handleDBRecord is one record of the database browser, compact: the page
+// lays it out itself.
+func (a *AdminApp) handleDBRecord(c *jsonapi.Call) (any, error) {
+	table := c.R.URL.Query().Get("table")
+	key := c.R.URL.Query().Get("key")
 	if table == "" || key == "" {
-		http.Error(w, "table and key required", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("table and key required")
 	}
 
 	// Probing means guessing a type and being wrong most times. That used to
@@ -384,16 +366,9 @@ func (a *AdminApp) handleDBRecord(w http.ResponseWriter, r *http.Request) {
 	// so this reads the framework's own store like everything else does.
 	val, found := dbProbeRecord(a.db, table, key)
 	if !found {
-		http.Error(w, "not found", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("not found")
 	}
-	b, err := json.MarshalIndent(val, "", "  ")
-	if err != nil {
-		http.Error(w, "marshal error: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(b)
+	return val, nil
 }
 
 // dbProbeRecord tries to decode a kvlite record into the first matching

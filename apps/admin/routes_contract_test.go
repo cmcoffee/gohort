@@ -108,11 +108,22 @@ type contract struct {
 	// rewrite, when set, masks what differs run to run (a test server's
 	// address) in the request and its reply.
 	rewrite *strings.Replacer
+	// shape, while set, records what it makes of a reply instead of the reply
+	// (replyShape: its keys): for a reply that describes the host (its
+	// sandbox, its binaries), which differs between this machine and the next
+	// one to run the test.
+	shape func(out string) string
+	// dates masks calendar dates (a window ending today), and drop leaves
+	// out the top-level keys of an object reply it matches (a registry other
+	// packages add to).
+	dates bool
+	drop  func(key string) bool
 }
 
 var (
 	contractHex   = regexp.MustCompile(`\b[0-9a-f]{16,64}\b`)
 	contractStamp = regexp.MustCompile(`\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?(Z|[+-]\d\d:\d\d)`)
+	contractDate  = regexp.MustCompile(`\b\d{4}-\d\d-\d\d\b`)
 )
 
 // run sends one request as user ("" for signed out), records the reply, and
@@ -135,6 +146,21 @@ func (ct *contract) run(mux *http.ServeMux, db Database, user, method, path, bod
 		// Before the sort, so a list's order does not follow its random ids.
 		out, path, body = ct.rewrite.Replace(out), ct.rewrite.Replace(path), ct.rewrite.Replace(body)
 	}
+	if ct.drop != nil {
+		var m map[string]json.RawMessage
+		if json.Unmarshal([]byte(out), &m) == nil {
+			for k := range m {
+				if ct.drop(k) {
+					delete(m, k)
+				}
+			}
+			b, _ := json.Marshal(m)
+			out = string(b)
+		}
+	}
+	if ct.shape != nil {
+		out = ct.shape(out)
+	}
 	var items []json.RawMessage
 	if strings.HasPrefix(out, "[") && json.Unmarshal([]byte(out), &items) == nil {
 		rows := make([]string, 0, len(items))
@@ -148,6 +174,9 @@ func (ct *contract) run(mux *http.ServeMux, db Database, user, method, path, bod
 	}
 	out = contractHex.ReplaceAllString(out, "<hex>")
 	out = contractStamp.ReplaceAllString(out, "<time>")
+	if ct.dates {
+		out = contractDate.ReplaceAllString(out, "<date>")
+	}
 	if len(out) > 400 {
 		out = fmt.Sprintf("%s… (%d bytes, sha1 %x)", out[:200], len(out), sha1.Sum([]byte(out)))
 	}
@@ -181,6 +210,42 @@ func (ct *contract) activity(mux *http.ServeMux, db Database, user string) {
 	}
 	sort.Strings(lines)
 	fmt.Fprintf(&ct.log, "activity log, %d entries:\n%s", len(rows), strings.Join(lines, ""))
+}
+
+// replyShape is a JSON reply's keys: an object's, or every key a list's
+// objects carry (not how many there are, which is the host's too).
+func replyShape(out string) string {
+	keys := func(raw []byte) []string {
+		var m map[string]json.RawMessage
+		if json.Unmarshal(raw, &m) != nil {
+			return nil
+		}
+		ks := make([]string, 0, len(m))
+		for k := range m {
+			ks = append(ks, k)
+		}
+		sort.Strings(ks)
+		return ks
+	}
+	var items []json.RawMessage
+	if json.Unmarshal([]byte(out), &items) == nil {
+		seen := map[string]bool{}
+		for _, it := range items {
+			for _, k := range keys(it) {
+				seen[k] = true
+			}
+		}
+		all := make([]string, 0, len(seen))
+		for k := range seen {
+			all = append(all, k)
+		}
+		sort.Strings(all)
+		return fmt.Sprintf("list of objects with keys %s", strings.Join(all, ","))
+	}
+	if ks := keys([]byte(out)); ks != nil {
+		return "object with keys " + strings.Join(ks, ",")
+	}
+	return out
 }
 
 // check compares the record with golden, or rewrites golden when

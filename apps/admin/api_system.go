@@ -3,12 +3,12 @@ package admin
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/activity"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -22,60 +22,37 @@ const settingsSaveMethod = "PATCH"
 // registerSystemRoutes wires the system API under the admin sub-mux.
 func (a *AdminApp) registerSystemRoutes(sub *http.ServeMux) {
 	// API: list available apps.
-	sub.HandleFunc("/api/apps", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		a.handleListApps(w, r)
-	})
+	sub.HandleFunc("/api/apps", jsonapi.Get(a.db, a.handleListApps, a.gate()))
 
 	// API: system status.
-	sub.HandleFunc("/api/status", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		a.handleStatus(w, r)
-	})
+	sub.HandleFunc("/api/status", jsonapi.Get(a.db, a.handleStatus, a.gate()))
 
 	// System Hooks — probes optional host binaries (ffmpeg, pdftotext,
 	// bwrap, …) so the admin panel can show what's installed and what each gates.
-	sub.HandleFunc("/api/dependencies", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(CheckDependencies())
-	})
+	sub.HandleFunc("/api/dependencies", jsonapi.Get(a.db, func(c *jsonapi.Call) (any, error) {
+		return CheckDependencies(), nil
+	}, a.gate()))
 
-	sub.HandleFunc("/api/settings", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		switch r.Method {
-		case http.MethodGet:
-			a.handleGetSettings(w, r)
-		case http.MethodPut, http.MethodPost, http.MethodPatch:
-			// The settings panels save with PATCH, which sends only the field
-			// that changed (see settingsForm). POST and PUT stay for the chip
-			// picker and any older caller; every key here is optional, so the
-			// handler is a partial update whichever verb carried it.
-			a.handleUpdateSettings(w, r)
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		}
-	})
+	// The settings panels save with PATCH, which sends only the field that
+	// changed (see settingsForm). POST and PUT stay for the chip picker and
+	// any older caller; every key here is optional, so the handler is a
+	// partial update whichever verb carried it.
+	save := jsonapi.Post(a.db, a.handleUpdateSettings, a.gate())
+	sub.HandleFunc("/api/settings", jsonapi.Methods{
+		"GET":   jsonapi.Get(a.db, a.handleGetSettings, a.gate()),
+		"PUT":   save,
+		"POST":  save,
+		"PATCH": save,
+	}.Serve)
 
 	// API: revert retrieval/limit tunables to their code defaults.
-	sub.HandleFunc("/api/settings/reset-tunables", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		a.handleResetTunables(w, r)
-	})
+	sub.HandleFunc("/api/settings/reset-tunables", jsonapi.Methods{
+		"POST": jsonapi.Post(a.db, a.handleResetTunables, a.gate()),
+	}.Serve)
 
 }
 
-func (a *AdminApp) handleStatus(w http.ResponseWriter, r *http.Request) {
+func (a *AdminApp) handleStatus(c *jsonapi.Call) (any, error) {
 	var allow_signup bool
 	a.db.Get(WebTable, "allow_signup", &allow_signup)
 	sandbox := GetSandboxStatus()
@@ -118,21 +95,18 @@ func (a *AdminApp) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"active_sessions": len(AllLiveSessions()),
 		"allow_signup":    allow_signup,
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(status)
+	return status, nil
 }
 
-func (a *AdminApp) handleGetSettings(w http.ResponseWriter, r *http.Request) {
+func (a *AdminApp) handleGetSettings(c *jsonapi.Call) (any, error) {
 	// ?app=<mount> is one app's pane on the Apps tab: only the knobs that app
 	// claimed, at the same effective values the full record reports.
-	if app := strings.TrimSpace(r.URL.Query().Get("app")); app != "" {
+	if app := strings.TrimSpace(c.R.URL.Query().Get("app")); app != "" {
 		resp := map[string]any{}
 		for _, s := range TunablesForApp(app) {
 			resp[s.Key] = tunableWireValue(s)
 		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
-		return
+		return resp, nil
 	}
 	var allow_signup, ollama_proxy_enabled bool
 	var session_days, session_absolute_days, max_attempts, lockout_minutes, ollama_proxy_port, fetch_cache_quota_mb int
@@ -215,7 +189,6 @@ func (a *AdminApp) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	if ui_theme == "" {
 		ui_theme = "indigo"
 	}
-	w.Header().Set("Content-Type", "application/json")
 	var apiKeyAllowQuery string
 	a.db.Get(WebTable, "api_key_allow_query", &apiKeyAllowQuery)
 	resp := map[string]interface{}{
@@ -246,7 +219,7 @@ func (a *AdminApp) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	for _, s := range AllTunableSpecs() {
 		resp[s.Key] = tunableWireValue(s)
 	}
-	json.NewEncoder(w).Encode(resp)
+	return resp, nil
 }
 
 // tunableWireValue is a knob's effective value as a form reads it: a bool for a
@@ -258,7 +231,11 @@ func tunableWireValue(s TunableSpec) any {
 	return TunableEffectiveValue(s.Key)
 }
 
-func (a *AdminApp) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
+// handleUpdateSettings saves what the body names. The body is taken whole: the
+// static settings decode into the typed struct below, the tunables come off
+// the same bytes as a generic map (validated against the registry).
+func (a *AdminApp) handleUpdateSettings(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+	r := c.R
 	var req struct {
 		AllowSignup         *bool     `json:"allow_signup,omitempty"`
 		SessionDays         *int      `json:"session_days,omitempty"`
@@ -280,19 +257,10 @@ func (a *AdminApp) handleUpdateSettings(w http.ResponseWriter, r *http.Request) 
 		Timezone            *string   `json:"timezone,omitempty"`
 		APIKeyAllowQuery    *bool     `json:"api_key_allow_query,omitempty"`
 	}
-	// Read the body once: the static settings decode into the typed struct
-	// above, the tunables come off the same bytes as a generic map (validated
-	// against the registry below).
-	raw, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, "invalid request", http.StatusBadRequest)
-		return
-	}
 	if err := json.Unmarshal(raw, &req); err != nil {
-		http.Error(w, "invalid request", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("invalid request")
 	}
-	current := AuthCurrentUser(r)
+	current := c.User
 	// ?app=<mount> is an app's pane saving: it may set that app's knobs and
 	// nothing else. Without this the address would read as scoped while still
 	// accepting every site setting, which is a promise the URL makes and the
@@ -302,9 +270,7 @@ func (a *AdminApp) handleUpdateSettings(w http.ResponseWriter, r *http.Request) 
 		if json.Unmarshal(raw, &generic) == nil && a.applyTunables(generic, TunablesForApp(app), r) {
 			InvalidateTunables()
 		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
-		return
+		return map[string]string{"status": "updated"}, nil
 	}
 	if req.AllowSignup != nil {
 		a.db.Set(WebTable, "allow_signup", *req.AllowSignup)
@@ -372,8 +338,7 @@ func (a *AdminApp) handleUpdateSettings(w http.ResponseWriter, r *http.Request) 
 		// not parse would silently fail to bind at next start, and the operator
 		// would find out from a missing endpoint rather than from this form.
 		if bind != "127.0.0.1" && bind != "0.0.0.0" {
-			http.Error(w, "ollama_proxy_bind must be 127.0.0.1 (this machine only) or 0.0.0.0 (all interfaces)", http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest("ollama_proxy_bind must be 127.0.0.1 (this machine only) or 0.0.0.0 (all interfaces)")
 		}
 		a.db.Set(WebTable, "ollama_proxy_bind", bind)
 		// Logged at Warn when it widens: this is the one setting on the page
@@ -443,8 +408,7 @@ func (a *AdminApp) handleUpdateSettings(w http.ResponseWriter, r *http.Request) 
 	if json.Unmarshal(raw, &generic) == nil && a.applyTunables(generic, AllTunableSpecs(), r) {
 		InvalidateTunables()
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
+	return map[string]string{"status": "updated"}, nil
 }
 
 // applyTunables stores the knobs in generic that specs names, validated against
@@ -498,11 +462,8 @@ func (a *AdminApp) applyTunables(generic map[string]any, specs []TunableSpec, r 
 // handleResetTunables clears every retrieval/limit tunable override so the
 // getters fall back to their code defaults. Backs the "Revert to defaults"
 // button on the admin Retrieval & limits panel.
-func (a *AdminApp) handleResetTunables(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+func (a *AdminApp) handleResetTunables(c *jsonapi.Call, _ struct{}) (any, error) {
+	r := c.R
 	// Optional ?category=X scopes the revert to one section's knobs; absent,
 	// every tunable resets. Either way the getters fall back to spec defaults.
 	//
@@ -516,9 +477,7 @@ func (a *AdminApp) handleResetTunables(w http.ResponseWriter, r *http.Request) {
 		}
 		InvalidateTunables()
 		adminChange(r, activity.Settings, "reverted tunables to defaults (app=%q)", app)
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"status": "reset"})
-		return
+		return map[string]string{"status": "reset"}, nil
 	}
 	for _, s := range AllTunableSpecs() {
 		if cat == "" || s.Category == cat {
@@ -527,8 +486,7 @@ func (a *AdminApp) handleResetTunables(w http.ResponseWriter, r *http.Request) {
 	}
 	InvalidateTunables()
 	adminChange(r, activity.Settings, "reverted tunables to defaults (category=%q)", cat)
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "reset"})
+	return map[string]string{"status": "reset"}, nil
 }
 
 // handleListApps returns all registered web apps (excluding admin and
@@ -537,7 +495,7 @@ func (a *AdminApp) handleResetTunables(w http.ResponseWriter, r *http.Request) {
 // /agents/ umbrella that fans out to per-slug exposed agents) — they
 // shouldn't appear as togglable items in the per-user / default-apps
 // pickers.
-func (a *AdminApp) handleListApps(w http.ResponseWriter, r *http.Request) {
+func (a *AdminApp) handleListApps(c *jsonapi.Call) (any, error) {
 	type appInfo struct {
 		Path string `json:"path"`
 		Name string `json:"name"`
@@ -583,6 +541,5 @@ func (a *AdminApp) handleListApps(w http.ResponseWriter, r *http.Request) {
 			unique = append(unique, ap)
 		}
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(unique)
+	return unique, nil
 }
