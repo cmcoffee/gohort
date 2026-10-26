@@ -1,12 +1,12 @@
 package admin
 
 import (
-	"encoding/json"
 	"net/http"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/appagents"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // registerToolsRoutes wires the tools API under the admin sub-mux.
@@ -17,49 +17,38 @@ func (a *AdminApp) registerToolsRoutes(sub *http.ServeMux) {
 	// the full command_template so the admin can spot anything fishy
 	// before approving — that visibility is the whole point of the
 	// approval queue.
-	sub.HandleFunc("/api/persistent-tools", a.handlePersistentTools)
+	sub.HandleFunc("/api/persistent-tools", jsonapi.Methods{
+		"GET":    jsonapi.Get(a.db, a.handlePersistentTools, a.gate()),
+		"POST":   jsonapi.Post(a.db, a.changePersistentTool, a.gate(), jsonapi.EmptyBodyOK),
+		"DELETE": jsonapi.Post(a.db, a.deletePersistentTool, a.gate()),
+	}.Serve)
 
 	// Tool scope — the pill control's data + toggles. GET ?name=&owner=
 	// returns the ToolScopeState (global flag + per-agent on/off + missing
 	// deps). POST ?name=&owner= with body {target, on} applies one toggle
 	// (target "global" or an agent id). Both delegate to orchestrate.
-	sub.HandleFunc("/api/tool-scope", a.handleToolScope)
+	sub.HandleFunc("/api/tool-scope", jsonapi.Methods{
+		"GET":  jsonapi.Get(a.db, a.handleToolScope, a.gate()),
+		"POST": jsonapi.Post(a.db, a.handleToolScopeSet, a.gate()),
+	}.Serve)
 
 }
 
-// handlePersistentTools serves /api/persistent-tools; registerToolsRoutes says what it is for.
-func (a *AdminApp) handlePersistentTools(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
-		return
+// handlePersistentTools answers GET /api/persistent-tools: every user's
+// tools by where they live, or one tool's access list for the picker.
+func (a *AdminApp) handlePersistentTools(c *jsonapi.Call) (any, error) {
+	username, err := skillUser(c)
+	if err != nil {
+		return nil, err
 	}
-	username := AuthCurrentUser(r)
-	if username == "" {
-		http.Error(w, "no user identity", http.StatusUnauthorized)
-		return
-	}
-	switch r.Method {
-	case http.MethodGet:
-		a.listPersistentTools(w, r, username)
-	case http.MethodPost:
-		a.changePersistentTool(w, r, username)
-	case http.MethodDelete:
-		a.deletePersistentTool(w, r, username)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
-}
-
-// listPersistentTools answers GET: every user's tools by where they live,
-// or one tool's access list for the picker.
-func (a *AdminApp) listPersistentTools(w http.ResponseWriter, r *http.Request, username string) {
-	ov := &toolsOverview{a: a, w: w, r: r, username: username}
-	if !ov.answerPicker() {
-		return
+	ov := &toolsOverview{a: a, r: c.R, username: username}
+	if acl, ok := ov.picker(); ok {
+		return acl, nil
 	}
 	ov.pools()
 	ov.scoped()
 	ov.orphans()
-	ov.write()
+	return ov.reply(), nil
 }
 
 // pendingWithOwner is a tool waiting for approval, with whose it is.
@@ -108,7 +97,6 @@ type orphanWithOwner struct {
 // a local of listPersistentTools, which is now the order of the phases.
 type toolsOverview struct {
 	a        *AdminApp
-	w        http.ResponseWriter
 	r        *http.Request
 	username string
 	pending  []pendingWithOwner
@@ -117,9 +105,10 @@ type toolsOverview struct {
 	orphaned []orphanWithOwner
 }
 
-func (ov *toolsOverview) answerPicker() bool {
+// picker is the single-tool access list the ACLPicker asks for, when the
+// request is for one.
+func (ov *toolsOverview) picker() (any, bool) {
 	a := ov.a
-	w := ov.w
 	r := ov.r
 	username := ov.username
 	// Single-tool adopt-ACL fetch for the ACLPicker: ?allowed_users=<name>&owner=<u>
@@ -140,11 +129,9 @@ func (ov *toolsOverview) answerPicker() bool {
 		if allowed == nil {
 			allowed = []string{}
 		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"allowed_users": allowed})
-		return false
+		return map[string]any{"allowed_users": allowed}, true
 	}
-	return true
+	return nil, false
 }
 
 // Flag a tool whose credential dependency doesn't resolve, for a
@@ -299,19 +286,23 @@ func (ov *toolsOverview) orphans() {
 	}
 }
 
-func (ov *toolsOverview) write() {
-	w := ov.w
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+// reply is the overview, each list as the table reads it.
+func (ov *toolsOverview) reply() map[string]any {
+	return map[string]any{
 		"pending":  ov.pending,
 		"active":   ov.active,
 		"bundled":  ov.bundled,
 		"orphaned": ov.orphaned,
-	})
+	}
 }
 
 // changePersistentTool answers POST: one action on one user's tool, named by ?action=.
-func (a *AdminApp) changePersistentTool(w http.ResponseWriter, r *http.Request, username string) {
+func (a *AdminApp) changePersistentTool(c *jsonapi.Call, acl *toolACL) (any, error) {
+	username, err := skillUser(c)
+	if err != nil {
+		return nil, err
+	}
+	r := c.R
 	// owner query param tells the handler which user's pool
 	// to mutate. Falls back to the calling admin (back-compat
 	// with old URLs that didn't pass owner) but ANY admin can
@@ -324,10 +315,8 @@ func (a *AdminApp) changePersistentTool(w http.ResponseWriter, r *http.Request, 
 		owner = username
 	}
 	if name == "" {
-		http.Error(w, "missing name", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("missing name")
 	}
-	var err error
 	switch action {
 	case "approve":
 		err = ApprovePendingTempTool(a.db, owner, name)
@@ -339,126 +328,121 @@ func (a *AdminApp) changePersistentTool(w http.ResponseWriter, r *http.Request, 
 		err = SetPersistentTempToolShared(a.db, owner, name, false)
 	case "set_allowed_users":
 		// Body carries the full ACL array (the ACLPicker posts the fetched
-		// {allowed_users:[...]} record whole). Empty = open to all users.
-		var body struct {
-			AllowedUsers []string `json:"allowed_users"`
+		// {allowed_users:[...]} record whole). An empty list opens the tool
+		// to all users, so no body is refused rather than read as one.
+		if acl == nil {
+			return nil, jsonapi.BadRequest("bad request")
 		}
-		if derr := json.NewDecoder(r.Body).Decode(&body); derr != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		err = SetPersistentTempToolAllowedUsers(a.db, owner, name, body.AllowedUsers)
+		err = SetPersistentTempToolAllowedUsers(a.db, owner, name, acl.AllowedUsers)
 	case "orphan_promote":
 		if AdminRehomeOrphanTool == nil {
-			http.Error(w, "unavailable (orchestrate not wired)", http.StatusServiceUnavailable)
-			return
+			return nil, jsonapi.Status(http.StatusServiceUnavailable, "unavailable (orchestrate not wired)")
 		}
 		err = AdminRehomeOrphanTool(a.db, owner, name, "global")
 	case "orphan_attach":
 		agentID := strings.TrimSpace(r.URL.Query().Get("agent"))
 		if agentID == "" {
-			http.Error(w, "orphan_attach requires agent", http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest("orphan_attach requires agent")
 		}
 		if AdminRehomeOrphanTool == nil {
-			http.Error(w, "unavailable (orchestrate not wired)", http.StatusServiceUnavailable)
-			return
+			return nil, jsonapi.Status(http.StatusServiceUnavailable, "unavailable (orchestrate not wired)")
 		}
 		err = AdminRehomeOrphanTool(a.db, owner, name, agentID)
 	case "orphan_delete":
 		if !RemoveOrphanedTempTool(a.db, owner, name) {
-			http.Error(w, "no orphaned tool named "+name, http.StatusNotFound)
-			return
+			return nil, jsonapi.NotFound("no orphaned tool named " + name)
 		}
 	default:
-		http.Error(w, "action must be approve|reject|share|unshare|set_allowed_users|orphan_promote|orphan_attach|orphan_delete", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("action must be approve|reject|share|unshare|set_allowed_users|orphan_promote|orphan_attach|orphan_delete")
 	}
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest(err.Error())
 	}
-	w.WriteHeader(http.StatusNoContent)
+	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// toolACL is the access list the ACLPicker posts with set_allowed_users.
+type toolACL struct {
+	AllowedUsers []string `json:"allowed_users"`
 }
 
 // deletePersistentTool answers DELETE: removes one user's tool from their pool.
-func (a *AdminApp) deletePersistentTool(w http.ResponseWriter, r *http.Request, username string) {
-	name := strings.TrimSpace(r.URL.Query().Get("name"))
-	owner := strings.TrimSpace(r.URL.Query().Get("owner"))
+func (a *AdminApp) deletePersistentTool(c *jsonapi.Call, _ struct{}) (any, error) {
+	username, err := skillUser(c)
+	if err != nil {
+		return nil, err
+	}
+	name := strings.TrimSpace(c.R.URL.Query().Get("name"))
+	owner := strings.TrimSpace(c.R.URL.Query().Get("owner"))
 	if owner == "" {
 		owner = username
 	}
 	if name == "" {
-		http.Error(w, "missing name", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("missing name")
 	}
 	if err := DeletePersistentTempTool(a.db, owner, name); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest(err.Error())
 	}
-	w.WriteHeader(http.StatusNoContent)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
-// handleToolScope serves /api/tool-scope; registerToolsRoutes says what it is for.
-func (a *AdminApp) handleToolScope(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
-		return
-	}
-	username := AuthCurrentUser(r)
-	name := strings.TrimSpace(r.URL.Query().Get("name"))
-	owner := strings.TrimSpace(r.URL.Query().Get("owner"))
+// toolScopeArgs is what a tool-scope request names: whose, which, and the
+// scope backend its ?kind= selects (tool | pipeline | credential), dispatched
+// through the core registry the orchestrate app wires.
+func toolScopeArgs(c *jsonapi.Call) (owner, name, kind string, prov ScopeProvider, err error) {
+	q := c.R.URL.Query()
+	name = strings.TrimSpace(q.Get("name"))
+	owner = strings.TrimSpace(q.Get("owner"))
 	if owner == "" {
-		owner = username
+		owner = c.User
 	}
 	if name == "" {
-		http.Error(w, "missing name", http.StatusBadRequest)
-		return
+		return "", "", "", ScopeProvider{}, jsonapi.BadRequest("missing name")
 	}
-	// kind selects the scope backend (tool | pipeline | credential),
-	// dispatched through the core registry the orchestrate app wires.
-	kind := strings.TrimSpace(r.URL.Query().Get("kind"))
+	kind = strings.TrimSpace(q.Get("kind"))
 	if kind == "" {
 		kind = "tool"
 	}
 	prov, ok := ScopeProviderFor(kind)
 	if !ok {
-		http.Error(w, "unavailable (scope kind "+kind+" not wired)", http.StatusServiceUnavailable)
-		return
+		return "", "", "", ScopeProvider{}, jsonapi.Status(http.StatusServiceUnavailable, "unavailable (scope kind "+kind+" not wired)")
 	}
-	switch r.Method {
-	case http.MethodGet:
-		st, ok := prov.State(a.db, owner, name)
-		if !ok {
-			http.Error(w, kind+" not found", http.StatusNotFound)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		// The scope-pill modal re-GETs this exact URL immediately after
-		// each toggle POST to re-render. A cached (stale) response makes
-		// the pill snap back to its pre-toggle state ("won't uncheck"), so
-		// force a fresh read every time.
-		w.Header().Set("Cache-Control", "no-store")
-		json.NewEncoder(w).Encode(st)
-	case http.MethodPost:
-		var body struct {
-			Target string `json:"target"`
-			On     bool   `json:"on"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad request body", http.StatusBadRequest)
-			return
-		}
-		body.Target = strings.TrimSpace(body.Target)
-		if body.Target == "" {
-			http.Error(w, "target is required", http.StatusBadRequest)
-			return
-		}
-		if err := prov.Set(a.db, owner, name, body.Target, body.On); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	return owner, name, kind, prov, nil
+}
+
+// handleToolScope is the scope pill's state for one tool.
+func (a *AdminApp) handleToolScope(c *jsonapi.Call) (any, error) {
+	owner, name, kind, prov, err := toolScopeArgs(c)
+	if err != nil {
+		return nil, err
 	}
+	st, ok := prov.State(a.db, owner, name)
+	if !ok {
+		return nil, jsonapi.NotFound(kind + " not found")
+	}
+	// The scope-pill modal re-GETs this exact URL immediately after
+	// each toggle POST to re-render. A cached (stale) response makes
+	// the pill snap back to its pre-toggle state ("won't uncheck"), so
+	// force a fresh read every time.
+	c.W.Header().Set("Cache-Control", "no-store")
+	return st, nil
+}
+
+// handleToolScopeSet applies one toggle: target "global" or an agent id.
+func (a *AdminApp) handleToolScopeSet(c *jsonapi.Call, body struct {
+	Target string `json:"target"`
+	On     bool   `json:"on"`
+}) (any, error) {
+	owner, name, _, prov, err := toolScopeArgs(c)
+	if err != nil {
+		return nil, err
+	}
+	body.Target = strings.TrimSpace(body.Target)
+	if body.Target == "" {
+		return nil, jsonapi.BadRequest("target is required")
+	}
+	if err := prov.Set(a.db, owner, name, body.Target, body.On); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	return jsonapi.Empty(http.StatusNoContent), nil
 }

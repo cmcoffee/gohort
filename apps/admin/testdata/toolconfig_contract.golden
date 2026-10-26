@@ -1,0 +1,155 @@
+(signed out) GET /api/persistent-tools ""
+  403 forbidden
+alice GET /api/persistent-tools ""
+  403 forbidden
+root GET /api/persistent-tools ""
+  200 {"active":[{"owner":"root","has_missing":false,"id":"<uuid>","tool":{"name":"ct_shared","description":"Shared one.","command_template":"echo shared","trial_since":"<time>"},"approved_at":"<time>","las… (621 bytes, sha1 e3a10de1ea88909e1a7420ac799631615158bba2)
+root PUT /api/persistent-tools "{}"
+  405 method not allowed
+(signed out) GET /api/persistent-tools?allowed_users=ct_shared ""
+  403 forbidden
+alice GET /api/persistent-tools?allowed_users=ct_shared ""
+  403 forbidden
+root GET /api/persistent-tools?allowed_users=ct_shared ""
+  200 {"allowed_users":[]}
+root PUT /api/persistent-tools?allowed_users=ct_shared "{}"
+  405 method not allowed
+(signed out) GET /api/tool-scope?kind=ct&name=ct_shared ""
+  403 forbidden
+alice GET /api/tool-scope?kind=ct&name=ct_shared ""
+  403 forbidden
+root GET /api/tool-scope?kind=ct&name=ct_shared ""
+  200 {"name":"","global":false,"agents":null}
+root PUT /api/tool-scope?kind=ct&name=ct_shared "{}"
+  405 method not allowed
+(signed out) GET /api/tool-config?tool=ct_shared ""
+  403 forbidden
+alice GET /api/tool-config?tool=ct_shared ""
+  403 forbidden
+root GET /api/tool-config?tool=ct_shared ""
+  400 this tool has no config template
+root PUT /api/tool-config?tool=ct_shared "{}"
+  405 method not allowed
+(signed out) GET /api/connector-config?connector=nope ""
+  403 forbidden
+alice GET /api/connector-config?connector=nope ""
+  403 forbidden
+root GET /api/connector-config?connector=nope ""
+  404 no such connector
+root PUT /api/connector-config?connector=nope "{}"
+  405 method not allowed
+alice POST /api/persistent-tools?action=approve&owner=bob&name=ct_pending ""
+  403 forbidden
+root POST /api/persistent-tools?action=approve&owner=bob ""
+  400 missing name
+root POST /api/persistent-tools?action=approve&owner=bob&name=ct_pending ""
+  204 
+root POST /api/persistent-tools?action=reject&owner=bob&name=ct_unwanted ""
+  204 
+root POST /api/persistent-tools?action=approve&owner=bob&name=ct_nope ""
+  400 no pending tool named ct_nope
+root POST /api/persistent-tools?action=share&name=ct_shared ""
+  204 
+root POST /api/persistent-tools?action=set_allowed_users&name=ct_shared "{\"allowed_users\":[\"alice\"]}"
+  204 
+root GET /api/persistent-tools?allowed_users=ct_shared ""
+  200 {"allowed_users":["alice"]}
+root POST /api/persistent-tools?action=set_allowed_users&name=ct_shared ""
+  400 bad request
+root POST /api/persistent-tools?action=set_allowed_users&name=ct_shared "{\"allowed_users\":"
+  400 invalid JSON: unexpected EOF
+root GET /api/persistent-tools?allowed_users=ct_shared ""
+  200 {"allowed_users":["alice"]}
+root POST /api/persistent-tools?action=unshare&name=ct_shared ""
+  204 
+root POST /api/persistent-tools?action=orphan_promote&name=ct_gone ""
+  503 unavailable (orchestrate not wired)
+root POST /api/persistent-tools?action=orphan_attach&name=ct_gone ""
+  400 orphan_attach requires agent
+root POST /api/persistent-tools?action=orphan_delete&name=ct_gone ""
+  404 no orphaned tool named ct_gone
+root POST /api/persistent-tools?action=sideways&name=ct_shared ""
+  400 action must be approve|reject|share|unshare|set_allowed_users|orphan_promote|orphan_attach|orphan_delete
+root GET /api/persistent-tools ""
+  200 {"active":[{"owner":"bob","has_missing":false,"id":"<uuid>","tool":{"name":"ct_pending","description":"Waiting.","command_template":"echo ct_pending","trial_since":"<time>"},"approved_at":"<time>","la… (499 bytes, sha1 0d5a6d0d9ab026d65c3e50b6fdcbb875a3ea714e)
+alice DELETE /api/persistent-tools?owner=bob&name=ct_pending ""
+  403 forbidden
+root DELETE /api/persistent-tools?owner=bob ""
+  400 missing name
+root DELETE /api/persistent-tools?owner=bob&name=ct_pending ""
+  204 
+root GET /api/persistent-tools ""
+  200 {"active":[{"owner":"root","has_missing":false,"id":"<uuid>","tool":{"name":"ct_shared","description":"Shared one.","command_template":"echo shared","trial_since":"<time>"},"approved_at":"<time>","last_used_at":"<time>","allowed_users":["alice"]}],"bundled":[],"orphaned":[],"pending":[]}
+root GET /api/tool-scope?kind=ct ""
+  400 missing name
+root GET /api/tool-scope?kind=elsewhere&name=ct_shared ""
+  503 unavailable (scope kind elsewhere not wired)
+root GET /api/tool-scope?kind=ct&name=ct_nope ""
+  404 ct not found
+alice POST /api/tool-scope?kind=ct&name=ct_shared "{\"target\":\"global\",\"on\":true}"
+  403 forbidden
+root POST /api/tool-scope?kind=ct&name=ct_shared "{\"target\":\"global\",\"on\":true}"
+  204 
+root GET /api/tool-scope?kind=ct&name=ct_shared ""
+  200 {"name":"","global":true,"agents":null}
+root POST /api/tool-scope?kind=ct&name=ct_shared "{\"target\":\" \"}"
+  400 target is required
+root POST /api/tool-scope?kind=ct&name=ct_shared "{\"target\":\"nowhere\",\"on\":true}"
+  400 no such agent
+root POST /api/tool-scope?kind=ct&name=ct_shared "{\"target\":"
+  400 invalid JSON: unexpected EOF
+alice POST /api/tool-detect?template=openapi_tool "{\"values\":{\"spec\":\"{\\\"openapi\\\":\\\"3.0.0\\\",\\\"servers\\\":[{\\\"url\\\":\\\"https://api.example.test\\\"}],\\\"paths\\\":{\\\"/items\\\":{\\\"get\\\":{\\\"operationId\\\":\\\"listItems\\\",\\\"summary\\\":\\\"List items\\\"}}}}\"}}"
+  403 forbidden
+root POST /api/tool-detect?template=openapi_tool "{\"values\":{\"spec\":\"{\\\"openapi\\\":\\\"3.0.0\\\",\\\"servers\\\":[{\\\"url\\\":\\\"https://api.example.test\\\"}],\\\"paths\\\":{\\\"/items\\\":{\\\"get\\\":{\\\"operationId\\\":\\\"listItems\\\",\\\"summary\\\":\\\"List items\\\"}}}}\"}}"
+  200 {"values":{"base_url":"https://api.example.test","operations":"GET /items - List items"},"warnings":["1 operation(s) found"]}
+root POST /api/tool-detect?template=openapi_tool "{\"values\":{\"spec\":\"not a spec\"}}"
+  400 spec is not valid JSON: invalid character 'o' in literal null (expecting 'u')
+root POST /api/tool-detect?template=nope "{\"values\":{}}"
+  400 template has no detect
+root POST /api/tool-detect?template=openapi_tool "{\"values\":"
+  400 invalid JSON: unexpected EOF
+alice POST /api/tool-config "{\"template\":\"openapi_tool\",\"name\":\"ct_items\",\"values\":{\"spec\":\"{\\\"openapi\\\":\\\"3.0.0\\\",\\\"servers\\\":[{\\\"url\\\":\\\"https://api.example.test\\\"}],\\\"paths\\\":{\\\"/items\\\":{\\\"get\\\":{\\\"operationId\\\":\\\"listItems\\\",\\\"summary\\\":\\\"List items\\\"}}}}\"}}"
+  403 forbidden
+root POST /api/tool-config "{\"template\":\"openapi_tool\",\"name\":\"ct_items\",\"values\":{\"spec\":\"{\\\"openapi\\\":\\\"3.0.0\\\",\\\"servers\\\":[{\\\"url\\\":\\\"https://api.example.test\\\"}],\\\"paths\\\":{\\\"/items\\\":{\\\"get\\\":{\\\"operationId\\\":\\\"listItems\\\",\\\"summary\\\":\\\"List items\\\"}}}}\"}}"
+  204 
+root POST /api/tool-config "{\"template\":\"nope\",\"name\":\"ct_x\",\"values\":{}}"
+  400 no such tool template
+root POST /api/tool-config "{\"template\":\"openapi_tool\",\"values\":{}}"
+  400 name is required
+root POST /api/tool-config "{\"template\":"
+  400 invalid JSON: unexpected EOF
+root GET /api/tool-config?tool=ct_items ""
+  200 object with keys category,connector,create,detect,fields,label,owner,target,template,values
+root GET /api/tool-config?tool=ct_nope ""
+  404 no such tool
+root POST /api/tool-config "{\"template\":\"openapi_tool\",\"connector\":\"ct_items\",\"values\":{\"spec\":\"{\\\"openapi\\\":\\\"3.0.0\\\",\\\"servers\\\":[{\\\"url\\\":\\\"https://api.example.test\\\"}],\\\"paths\\\":{\\\"/items\\\":{\\\"get\\\":{\\\"operationId\\\":\\\"listItems\\\",\\\"summary\\\":\\\"List items\\\"}}}}\",\"description\":\"Edited.\"}}"
+  204 
+alice POST /api/connector-detect?template=a1111 "{\"values\":{}}"
+  403 forbidden
+root POST /api/connector-detect?template=a1111 "{\"values\":{}}"
+  400 template has no detect
+root POST /api/connector-detect?template=nope "{\"values\":{}}"
+  400 template has no detect
+alice POST /api/connector-config "{\"template\":\"a1111\",\"name\":\"ct-art\",\"values\":{\"base_url\":\"http://127.0.0.1:1\"}}"
+  403 forbidden
+root POST /api/connector-config "{\"template\":\"a1111\",\"name\":\"ct-art\",\"values\":{\"base_url\":\"http://127.0.0.1:1\"}}"
+  204 
+root POST /api/connector-config "{\"template\":\"a1111\",\"name\":\"ct-art\",\"values\":{\"base_url\":\"http://127.0.0.1:1\"}}"
+  400 a connector named ct-art already exists
+root POST /api/connector-config "{\"template\":\"a1111\",\"name\":\" \",\"values\":{\"base_url\":\"http://127.0.0.1:1\"}}"
+  400 name is required
+root POST /api/connector-config "{\"template\":\"nope\",\"name\":\"ct-x\",\"values\":{}}"
+  400 no such template
+root POST /api/connector-config "{\"template\":\"a1111\",\"connector\":\"ct-nope\",\"values\":{\"base_url\":\"http://127.0.0.1:1\"}}"
+  404 no such connector
+root POST /api/connector-config "{\"template\":"
+  400 invalid JSON: unexpected EOF
+root GET /api/connector-config?connector=ct-art ""
+  200 object with keys category,connector,create,detect,fields,label,target,template,values
+root POST /api/connector-config "{\"template\":\"a1111\",\"connector\":\"ct-art\",\"values\":{\"base_url\":\"http://127.0.0.1:2\"}}"
+  204 
+root GET /api/connector-config?connector=ct-art ""
+  200 object with keys category,connector,create,detect,fields,label,target,template,values
+activity log, 2 entries:
+  settings root: added backend "ct-art" via template "a1111"
+  settings root: configured backend "ct-art" via template "a1111"

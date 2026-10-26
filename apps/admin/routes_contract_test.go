@@ -118,11 +118,15 @@ type contract struct {
 	// packages add to).
 	dates bool
 	drop  func(key string) bool
+	// uuids masks every UUID, for ids a test never names; a test that
+	// learns an id from a reply and masks it by name leaves this off.
+	uuids bool
 }
 
 var (
 	contractHex   = regexp.MustCompile(`\b[0-9a-f]{16,64}\b`)
 	contractStamp = regexp.MustCompile(`\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?(Z|[+-]\d\d:\d\d)`)
+	contractUUID  = regexp.MustCompile(`\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b`)
 	contractDate  = regexp.MustCompile(`\b\d{4}-\d\d-\d\d( \d\d:\d\d:\d\d)?\b`)
 )
 
@@ -172,6 +176,9 @@ func (ct *contract) run(mux *http.ServeMux, db Database, user, method, path, bod
 		}
 		sort.Strings(rows)
 		out = "[" + strings.Join(rows, ",") + "]"
+	}
+	if ct.uuids {
+		out = contractUUID.ReplaceAllString(out, "<uuid>")
 	}
 	out = contractHex.ReplaceAllString(out, "<hex>")
 	out = contractStamp.ReplaceAllString(out, "<time>")

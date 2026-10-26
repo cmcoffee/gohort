@@ -199,7 +199,8 @@ func TestTheToolsPageRefusesWhatItCannotDo(t *testing.T) {
 		{"POST", "/api/persistent-tools?action=share", "", 400, "missing name"},
 		{"DELETE", "/api/persistent-tools", "", 400, "missing name"},
 		{"POST", "/api/persistent-tools?action=zz&name=x", "", 400, "action must be approve|reject"},
-		{"POST", "/api/persistent-tools?action=set_allowed_users&name=x", "not json", 400, "bad request"},
+		{"POST", "/api/persistent-tools?action=set_allowed_users&name=x", "not json", 400, "invalid JSON"},
+		{"POST", "/api/persistent-tools?action=set_allowed_users&name=x", "", 400, "bad request"},
 		{"POST", "/api/persistent-tools?action=orphan_promote&name=x", "", 503, "orchestrate not wired"},
 		{"POST", "/api/persistent-tools?action=orphan_attach&name=x", "", 400, "requires agent"},
 		{"POST", "/api/persistent-tools?action=orphan_delete&name=x", "", 404, "no orphaned tool named x"},
@@ -240,7 +241,7 @@ func TestTheScopePillsReachTheirKindsProvider(t *testing.T) {
 	if w := f.do(t, "POST", "/api/tool-scope?kind=zz_test_kind&owner=bob&name=x", `{"target":"a-1","on":true}`); w.Code != 204 || strings.Join(set, " ") != "bob/x:a-1" {
 		t.Errorf("toggle: %d, set %v", w.Code, set)
 	}
-	for body, want := range map[string]string{`{"target":" "}`: "target is required", `{"target":"bad"}`: "no such agent", `nope`: "bad request body"} {
+	for body, want := range map[string]string{`{"target":" "}`: "target is required", `{"target":"bad"}`: "no such agent", `nope`: "invalid JSON"} {
 		if w := f.do(t, "POST", "/api/tool-scope?kind=zz_test_kind&name=x", body); w.Code != 400 || !strings.Contains(w.Body.String(), want) {
 			t.Errorf("POST %s answered %d %q", body, w.Code, w.Body.String())
 		}
