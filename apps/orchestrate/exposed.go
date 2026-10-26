@@ -37,6 +37,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/appagents"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // DashboardCards implements core.DashboardCardSource — one card per
@@ -1111,9 +1112,9 @@ func (T *OrchestrateApp) publicSessionList(w http.ResponseWriter, r *http.Reques
 }
 
 // PublicHandleSessionOne is GET (load) / DELETE (drop) / PATCH
-// (truncate) for one session under an exposed agent. Method on
-// *OrchestrateApp so the udb resolves from orchestrate's T.DB
-// (same bucket the sessions were written into by PublicHandleSend).
+// (truncate) for one session under an exposed agent: orchestrate's own
+// session route, for the agent the caller has already let them reach. The
+// store is orchestrate's T.DB, the bucket PublicHandleSend wrote it into.
 func (T *OrchestrateApp) PublicHandleSessionOne(w http.ResponseWriter, r *http.Request, agentID, sid string) {
 	// Sub-action: /api/sessions/{sid}/export — full session trace
 	// download. Same behavior as the admin orchestrate surface; the
@@ -1132,49 +1133,7 @@ func (T *OrchestrateApp) PublicHandleSessionOne(w http.ResponseWriter, r *http.R
 		http.NotFound(w, r)
 		return
 	}
-	_, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	switch r.Method {
-	case http.MethodGet:
-		s, ok := loadChatSession(udb, agentID, sid)
-		if !ok {
-			http.NotFound(w, r)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = jsonEncode(w, s)
-	case http.MethodDelete:
-		deleteChatSession(udb, agentID, sid)
-		w.WriteHeader(http.StatusNoContent)
-	case http.MethodPatch:
-		var body struct {
-			At int `json:"at"`
-		}
-		if err := jsonDecode(r.Body, &body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		s, ok := loadChatSession(udb, agentID, sid)
-		if !ok {
-			http.NotFound(w, r)
-			return
-		}
-		if body.At < 0 {
-			body.At = 0
-		}
-		if body.At > len(s.Messages) {
-			body.At = len(s.Messages)
-		}
-		s.Messages = s.Messages[:body.At]
-		if _, err := saveChatSession(udb, s); err != nil {
-			http.Error(w, "save: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = jsonEncode(w, map[string]any{"at": body.At, "messages_remaining": len(s.Messages)})
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
+	T.sessionRoute(func(*jsonapi.Call) (AgentRecord, string, error) {
+		return AgentRecord{ID: agentID}, sid, nil
+	})(w, r)
 }

@@ -88,3 +88,52 @@ func TestEverySessionRouteTakesItsMethodsAndItsOwner(t *testing.T) {
 		t.Error("the session is gone")
 	}
 }
+
+// The other apps' session door (the agents app, customapps, filestore) is the
+// same route as orchestrate's, for the agent they let the caller reach: the
+// thread comes back trimmed with its offset, and clearing it drops the rolling
+// summary too, so the next turn is not re-primed with the old conversation.
+func TestTheOtherAppsSessionDoorIsOrchestratesRoute(t *testing.T) {
+	root := &DBase{Store: kvlite.MemStore()}
+	prevRoot, prevBase := RootDB, orchestrateBaseDB
+	RootDB, orchestrateBaseDB = root, root
+	t.Cleanup(func() { RootDB, orchestrateBaseDB = prevRoot, prevBase })
+	signedUp(t, "bob")
+	T := &OrchestrateApp{AppCore: AppCore{DB: root}}
+	udb := UserDB(root, "bob")
+	if _, err := saveChatSession(udb, ChatSession{ID: "s1", AgentID: "agent-x", Title: "visit",
+		Messages: []ChatMessage{{Role: "user", Content: "hi"}, {Role: "assistant", Content: "hello"}}}); err != nil {
+		t.Fatal(err)
+	}
+	saveCompactState(udb, "agent-x", "s1", CompactState{Summary: "they said hi", SummarizedThrough: 1})
+	door := func(user, method, body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, "/agents/x/api/sessions/s1", strings.NewReader(body))
+		if user != "" {
+			r = withSession(r, user)
+		}
+		w := httptest.NewRecorder()
+		T.PublicHandleSessionOne(w, r, "agent-x", "s1")
+		return w
+	}
+	if w := door("", "GET", ""); w.Code != http.StatusUnauthorized {
+		t.Errorf("signed out: %d", w.Code)
+	}
+	if w := door("bob", "PUT", "{}"); w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("PUT: %d", w.Code)
+	}
+	if w := door("bob", "GET", ""); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"message_offset":0`) || !strings.Contains(w.Body.String(), `"chunk_size"`) {
+		t.Errorf("the load is not the served session: %d %s", w.Code, w.Body.String())
+	}
+	if w := door("bob", "PATCH", `{"at":0}`); w.Code != http.StatusOK {
+		t.Fatalf("clear: %d %s", w.Code, w.Body.String())
+	}
+	if st := loadCompactState(udb, "agent-x", "s1"); st.Summary != "" {
+		t.Errorf("clearing the thread kept its rolling summary: %q", st.Summary)
+	}
+	if w := door("bob", "DELETE", ""); w.Code != http.StatusNoContent {
+		t.Errorf("delete: %d", w.Code)
+	}
+	if _, ok := loadChatSession(udb, "agent-x", "s1"); ok {
+		t.Error("the session survived its delete")
+	}
+}

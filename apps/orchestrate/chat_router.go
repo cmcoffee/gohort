@@ -228,11 +228,7 @@ type servedSession struct {
 func (T *OrchestrateApp) registerSessionRoutes() {
 	T.HandleFunc("/api/sessions/mark-all-read", jsonapi.Post(T.DB, T.sessionsMarkAllRead))
 	T.HandleFunc("/api/sessions/rename", jsonapi.Post(T.DB, T.sessionRename))
-	T.HandleFunc("/api/sessions/{sid}", jsonapi.Methods{
-		"GET":    jsonapi.Get(T.DB, T.sessionGet),
-		"DELETE": jsonapi.Delete(T.DB, T.sessionDelete),
-		"PATCH":  jsonapi.Patch(T.DB, T.sessionTruncate),
-	}.Serve)
+	T.HandleFunc("/api/sessions/{sid}", T.sessionRoute(T.ownSession))
 	T.HandleFunc("/api/sessions/{sid}/continue", jsonapi.Post(T.DB, T.sessionContinue))
 	T.HandleFunc("/api/sessions/{sid}/send-to-builder", jsonapi.Post(T.DB, T.sessionSendToBuilder, jsonapi.EmptyBodyOK))
 	T.HandleFunc("/api/sessions/{sid}/blocks/{block}/resolve", T.blockResolveRoute(func(c *jsonapi.Call) (string, string, string, error) {
@@ -264,6 +260,31 @@ func (T *OrchestrateApp) sessionAgent(c *jsonapi.Call) (AgentRecord, error) {
 		return AgentRecord{}, errNotFound
 	}
 	return agent, nil
+}
+
+// sessionAt is the agent and session a call is about.
+type sessionAt func(c *jsonapi.Call) (agent AgentRecord, sid string, err error)
+
+// ownSession is the session the path names, of the agent ?agent_id= names.
+func (T *OrchestrateApp) ownSession(c *jsonapi.Call) (AgentRecord, string, error) {
+	agent, err := T.sessionAgent(c)
+	return agent, c.R.PathValue("sid"), err
+}
+
+// sessionRoute is one session: GET reads it, DELETE removes it, PATCH
+// truncates it. Orchestrate serves it for the path's session; the agents app,
+// customapps and filestore serve it, through PublicHandleSessionOne, for the
+// session of the agent they have already let the caller reach.
+func (T *OrchestrateApp) sessionRoute(at sessionAt) http.HandlerFunc {
+	return jsonapi.Methods{
+		"GET": jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) { return T.sessionGet(c, at) }),
+		"DELETE": jsonapi.Delete(T.DB, func(c *jsonapi.Call, _ struct{}) (any, error) {
+			return T.sessionDelete(c, at)
+		}),
+		"PATCH": jsonapi.Patch(T.DB, func(c *jsonapi.Call, body sessionCut) (any, error) {
+			return T.sessionTruncate(c, at, body)
+		}),
+	}.Serve
 }
 
 // sessionsMarkAllRead clears the unread state on EVERY session of the agent
@@ -301,12 +322,12 @@ func (T *OrchestrateApp) sessionRename(c *jsonapi.Call, body struct {
 // Channel agents no longer force every visit onto one thread — they have a
 // channel thread AND normal sessions. The channel thread is just a specific
 // session id (cortexSessionID) the client opens via the Channel row.
-func (T *OrchestrateApp) sessionGet(c *jsonapi.Call) (any, error) {
-	agent, err := T.sessionAgent(c)
+func (T *OrchestrateApp) sessionGet(c *jsonapi.Call, at sessionAt) (any, error) {
+	agent, sid, err := at(c)
 	if err != nil {
 		return nil, err
 	}
-	r, user, udb, sid := c.R, c.User, c.UDB, c.R.PathValue("sid")
+	r, user, udb := c.R, c.User, c.UDB
 	// External-source row (e.g. ?source=phantom&chat_id=…)?
 	// Delegate to the registered source so it can resolve to
 	// the right per-source storage scope. Sources gate user
@@ -390,22 +411,18 @@ func (T *OrchestrateApp) sessionGet(c *jsonapi.Call) (any, error) {
 // opened (psql/redis-cli/ssh/etc.) so the bwrap processes don't leak. Scope
 // is sess.ChatSessionID — matches what the persistent_shell substrate uses as
 // its registry key prefix.
-func (T *OrchestrateApp) sessionDelete(c *jsonapi.Call, _ struct{}) (any, error) {
-	agent, err := T.sessionAgent(c)
+func (T *OrchestrateApp) sessionDelete(c *jsonapi.Call, at sessionAt) (any, error) {
+	agent, sid, err := at(c)
 	if err != nil {
 		return nil, err
 	}
-	sid := c.R.PathValue("sid")
 	temptool.TerminateSessionShellsByScope(sid)
 	deleteChatSession(c.UDB, agent.ID, sid)
 	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
-// sessionTruncate is PATCH: {at: N} drops messages from index N onward, and
-// {delete_at: N} scrubs exactly one. Used by the per-message Edit and Delete
-// affordances: the client drops the DOM rows, this drops the stored ones, and
-// a follow-up send (on Edit) appends a fresh exchange below the cut.
-func (T *OrchestrateApp) sessionTruncate(c *jsonapi.Call, body struct {
+// sessionCut is a truncate: where to cut, or the one message to scrub.
+type sessionCut struct {
 	At int `json:"at"`
 	// DeleteAt (pointer = presence) scrubs EXACTLY ONE message at this
 	// raw storage index, keeping everything after it — the in-thread
@@ -413,12 +430,18 @@ func (T *OrchestrateApp) sessionTruncate(c *jsonapi.Call, body struct {
 	// the index onward. Raw index (client carries it from the load
 	// payload, which includes hidden messages), so it lands precisely.
 	DeleteAt *int `json:"delete_at"`
-}) (any, error) {
-	agent, err := T.sessionAgent(c)
+}
+
+// sessionTruncate is PATCH: {at: N} drops messages from index N onward, and
+// {delete_at: N} scrubs exactly one. Used by the per-message Edit and Delete
+// affordances: the client drops the DOM rows, this drops the stored ones, and
+// a follow-up send (on Edit) appends a fresh exchange below the cut.
+func (T *OrchestrateApp) sessionTruncate(c *jsonapi.Call, at sessionAt, body sessionCut) (any, error) {
+	agent, sid, err := at(c)
 	if err != nil {
 		return nil, err
 	}
-	udb, sid := c.UDB, c.R.PathValue("sid")
+	udb := c.UDB
 	s, ok := loadChatSession(udb, agent.ID, sid)
 	if !ok {
 		return nil, errNotFound
