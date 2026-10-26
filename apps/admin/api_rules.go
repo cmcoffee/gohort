@@ -17,88 +17,84 @@ package admin
 // request).
 
 import (
-	"encoding/json"
 	"net/http"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	rules "github.com/cmcoffee/gohort/core/prompts"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
 func (a *AdminApp) registerRulesRoutes(sub *http.ServeMux) {
 	sub.HandleFunc("/api/rules-assist", a.handleRulesAssist)
-	sub.HandleFunc("/api/global-rules", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		if r.Method == http.MethodPost {
-			var req struct {
-				Rules string `json:"rules"`
-				// Pointers: a caller that sends only the rules leaves how they
-				// are checked alone rather than resetting it.
-				Depth     *string `json:"depth"`
-				Unchecked *string `json:"if_unchecked"`
-				When      *string `json:"when_checked"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				http.Error(w, "bad request", http.StatusBadRequest)
-				return
-			}
-			var list []rules.StyleRule
-			for _, line := range splitRuleLines(req.Rules) {
-				list = append(list, rules.StyleRule{Text: line})
-			}
-			rules.SetGlobalRules(list)
-			if req.Depth != nil {
-				rules.SetGlobalRulesDepth(*req.Depth)
-			}
-			if req.Unchecked != nil {
-				rules.SetGlobalRulesFailOpen(*req.Unchecked == "allow")
-			}
-			if req.When != nil {
-				rules.SetGlobalRulesStreaming(*req.When == "stream")
-			}
-			Log("[admin] global rules saved by %s: %d, checked %s, if unchecked %s", AuthCurrentUser(r), len(list),
-				rules.GlobalRulesDepth(), uncheckedWord(rules.GlobalRulesFailOpen()))
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]any{"ok": true})
-			return
-		}
-		var lines []string
-		for _, rule := range rules.EnabledGlobalRules() {
-			lines = append(lines, rule.Text)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"rules": strings.Join(lines, "\n"),
-			"depth": rules.GlobalRulesDepth(), "if_unchecked": uncheckedWord(rules.GlobalRulesFailOpen()),
-			"when_checked": whenCheckedWord(rules.GlobalRulesStreaming())})
-	})
-	sub.HandleFunc("/api/style-rules", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		if r.Method == http.MethodPost {
-			var req struct {
-				Rules string `json:"rules"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				http.Error(w, "bad request", http.StatusBadRequest)
-				return
-			}
-			on, edited, custom := saveStyleRules(splitRuleLines(req.Rules))
-			Log("[admin] style rules saved by %s: %d shipped live (%d edited), %d custom", AuthCurrentUser(r), on, edited, custom)
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]any{"ok": true})
-			return
-		}
-		var lines []string
-		for _, rule := range rules.EnabledStyleRules() {
-			lines = append(lines, rule.Text)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"rules": strings.Join(lines, "\n")})
-	})
+	sub.HandleFunc("/api/global-rules", jsonapi.Methods{
+		"GET":  jsonapi.Get(a.db, a.handleGlobalRules, a.gate()),
+		"POST": jsonapi.Post(a.db, a.handleGlobalRulesSave, a.gate()),
+	}.Serve)
+	sub.HandleFunc("/api/style-rules", jsonapi.Methods{
+		"GET":  jsonapi.Get(a.db, a.handleStyleRules, a.gate()),
+		"POST": jsonapi.Post(a.db, a.handleStyleRulesSave, a.gate()),
+	}.Serve)
+}
+
+// handleGlobalRules is the Always rules, one per line, and how they are
+// checked.
+func (a *AdminApp) handleGlobalRules(c *jsonapi.Call) (any, error) {
+	var lines []string
+	for _, rule := range rules.EnabledGlobalRules() {
+		lines = append(lines, rule.Text)
+	}
+	return map[string]any{"rules": strings.Join(lines, "\n"),
+		"depth": rules.GlobalRulesDepth(), "if_unchecked": uncheckedWord(rules.GlobalRulesFailOpen()),
+		"when_checked": whenCheckedWord(rules.GlobalRulesStreaming())}, nil
+}
+
+// handleGlobalRulesSave replaces the Always rules, and how they are checked
+// when the body says.
+func (a *AdminApp) handleGlobalRulesSave(c *jsonapi.Call, req struct {
+	Rules string `json:"rules"`
+	// Pointers: a caller that sends only the rules leaves how they
+	// are checked alone rather than resetting it.
+	Depth     *string `json:"depth"`
+	Unchecked *string `json:"if_unchecked"`
+	When      *string `json:"when_checked"`
+}) (any, error) {
+	var list []rules.StyleRule
+	for _, line := range splitRuleLines(req.Rules) {
+		list = append(list, rules.StyleRule{Text: line})
+	}
+	rules.SetGlobalRules(list)
+	if req.Depth != nil {
+		rules.SetGlobalRulesDepth(*req.Depth)
+	}
+	if req.Unchecked != nil {
+		rules.SetGlobalRulesFailOpen(*req.Unchecked == "allow")
+	}
+	if req.When != nil {
+		rules.SetGlobalRulesStreaming(*req.When == "stream")
+	}
+	Log("[admin] global rules saved by %s: %d, checked %s, if unchecked %s", c.User, len(list),
+		rules.GlobalRulesDepth(), uncheckedWord(rules.GlobalRulesFailOpen()))
+	return map[string]any{"ok": true}, nil
+}
+
+// handleStyleRules is the Style rules in force, one per line.
+func (a *AdminApp) handleStyleRules(c *jsonapi.Call) (any, error) {
+	var lines []string
+	for _, rule := range rules.EnabledStyleRules() {
+		lines = append(lines, rule.Text)
+	}
+	return map[string]any{"rules": strings.Join(lines, "\n")}, nil
+}
+
+// handleStyleRulesSave replaces the Style list with the lines posted.
+func (a *AdminApp) handleStyleRulesSave(c *jsonapi.Call, req struct {
+	Rules string `json:"rules"`
+}) (any, error) {
+	on, edited, custom := saveStyleRules(splitRuleLines(req.Rules))
+	Log("[admin] style rules saved by %s: %d shipped live (%d edited), %d custom", c.User, on, edited, custom)
+	return map[string]any{"ok": true}, nil
 }
 
 // saveStyleRules replaces the style list with these lines.

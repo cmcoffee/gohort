@@ -1,0 +1,56 @@
+(signed out) GET /api/global-rules ""
+  403 forbidden
+alice GET /api/global-rules ""
+  403 forbidden
+root GET /api/global-rules ""
+  200 {"depth":"quick","if_unchecked":"block","rules":"","when_checked":"before"}
+root PUT /api/global-rules "{}"
+  405 method not allowed
+alice POST /api/global-rules "{\"rules\":\"be kind\"}"
+  403 forbidden
+root POST /api/global-rules "{\"rules\":"
+  400 invalid JSON: unexpected EOF
+root POST /api/global-rules ""
+  400 invalid JSON: EOF
+(signed out) GET /api/style-rules ""
+  403 forbidden
+alice GET /api/style-rules ""
+  403 forbidden
+root GET /api/style-rules ""
+  200 {"rules":"","shipped_lines_left_out":"all"}
+root PUT /api/style-rules "{}"
+  405 method not allowed
+alice POST /api/style-rules "{\"rules\":\"be kind\"}"
+  403 forbidden
+root POST /api/style-rules "{\"rules\":"
+  400 invalid JSON: unexpected EOF
+root POST /api/style-rules ""
+  400 invalid JSON: EOF
+root POST /api/global-rules "{\"rules\":\"Never share a password.\\n\\n  Ask before deleting anything.  \",\"depth\":\"thorough\",\"if_unchecked\":\"allow\",\"when_checked\":\"stream\"}"
+  200 {"ok":true}
+root GET /api/global-rules ""
+  200 {"depth":"thorough","if_unchecked":"allow","rules":"Never share a password.\nAsk before deleting anything.","when_checked":"stream"}
+root POST /api/global-rules "{\"rules\":\"Never share a password.\"}"
+  200 {"ok":true}
+root GET /api/global-rules ""
+  200 {"depth":"thorough","if_unchecked":"allow","rules":"Never share a password.","when_checked":"stream"}
+root POST /api/global-rules "{\"rules\":\"\",\"depth\":\"quick\",\"if_unchecked\":\"block\",\"when_checked\":\"whole\"}"
+  200 {"ok":true}
+root GET /api/global-rules ""
+  200 {"depth":"quick","if_unchecked":"block","rules":"","when_checked":"before"}
+root POST /api/style-rules "{\"rules\":\"<shipped 2>\\n<the other shipped rules>\\nWrite dates as YYYY-MM-DD.\\n  Sign off with the team name.  \"}"
+  200 {"ok":true}
+root GET /api/style-rules ""
+  200 {"rules":"Write dates as YYYY-MM-DD.\nSign off with the team name.","shipped_lines_left_out":"all but 1"}
+root POST /api/style-rules "{\"rules\":\"<shipped 1>\\n<shipped 2> (edited)\\n<the other shipped rules>\"}"
+  200 {"ok":true}
+root GET /api/style-rules ""
+  200 {"rules":"<shipped 2> (edited)","shipped_lines_left_out":"all but 1"}
+root POST /api/style-rules "{\"rules\":\"<shipped 1>\\n<shipped 2>\\n<the other shipped rules>\"}"
+  200 {"ok":true}
+root GET /api/style-rules ""
+  200 {"rules":"","shipped_lines_left_out":"all"}
+root POST /api/style-rules "{\"rules\":\"<shipped 1>\\nOur own wording of the second rule.\\n<the other shipped rules>\"}"
+  200 {"ok":true}
+root GET /api/style-rules ""
+  200 {"rules":"Our own wording of the second rule.","shipped_lines_left_out":"all but 1"}

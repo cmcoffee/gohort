@@ -142,10 +142,6 @@ func (ct *contract) run(mux *http.ServeMux, db Database, user, method, path, bod
 			ct.t.Errorf("%s %s as %q answered with a secret: %s", method, path, user, out)
 		}
 	}
-	if ct.rewrite != nil {
-		// Before the sort, so a list's order does not follow its random ids.
-		out, path, body = ct.rewrite.Replace(out), ct.rewrite.Replace(path), ct.rewrite.Replace(body)
-	}
 	if ct.drop != nil {
 		var m map[string]json.RawMessage
 		if json.Unmarshal([]byte(out), &m) == nil {
@@ -160,6 +156,11 @@ func (ct *contract) run(mux *http.ServeMux, db Database, user, method, path, bod
 	}
 	if ct.shape != nil {
 		out = ct.shape(out)
+	}
+	if ct.rewrite != nil {
+		// After drop and shape, which read the reply as it came, and before
+		// the sort, so a list's order does not follow its random ids.
+		out, path, body = ct.rewrite.Replace(out), ct.rewrite.Replace(path), ct.rewrite.Replace(body)
 	}
 	var items []json.RawMessage
 	if strings.HasPrefix(out, "[") && json.Unmarshal([]byte(out), &items) == nil {
