@@ -1,0 +1,144 @@
+(signed out) GET /api/embeddings ""
+  403 forbidden
+alice GET /api/embeddings ""
+  403 forbidden
+root GET /api/embeddings ""
+  200 {"endpoint":"","model":"","api_key":"","enabled":false,"provider":"local"}
+root PUT /api/embeddings "{}"
+  405 method not allowed
+(signed out) GET /api/transcribe ""
+  403 forbidden
+alice GET /api/transcribe ""
+  403 forbidden
+root GET /api/transcribe ""
+  200 {"endpoint":"","model":"","api_key":"","enabled":false}
+root PUT /api/transcribe "{}"
+  405 method not allowed
+(signed out) GET /api/image-gen ""
+  403 forbidden
+alice GET /api/image-gen ""
+  403 forbidden
+root GET /api/image-gen ""
+  200 {"api_key":"","provider":"gemini"}
+root PUT /api/image-gen "{}"
+  405 method not allowed
+(signed out) GET /api/embeddings/models ""
+  403 forbidden
+alice GET /api/embeddings/models ""
+  403 forbidden
+root GET /api/embeddings/models ""
+  200 []
+root PUT /api/embeddings/models "{}"
+  405 method not allowed
+alice POST /api/embeddings/test "{\"enabled\":true}"
+  403 forbidden
+root GET /api/embeddings/test ""
+  405 method not allowed
+root POST /api/embeddings/test "{\"enabled\":"
+  400 invalid JSON: unexpected EOF
+root POST /api/embeddings/test ""
+  400 invalid JSON: EOF
+alice POST /api/transcribe/test "{\"enabled\":true}"
+  403 forbidden
+root GET /api/transcribe/test ""
+  405 method not allowed
+root POST /api/transcribe/test "{\"enabled\":"
+  400 invalid JSON: unexpected EOF
+root POST /api/transcribe/test ""
+  400 invalid JSON: EOF
+alice POST /api/image-gen/test "{\"enabled\":true}"
+  403 forbidden
+root GET /api/image-gen/test ""
+  405 method not allowed
+root POST /api/image-gen/test "{\"enabled\":"
+  400 invalid JSON: unexpected EOF
+root POST /api/image-gen/test ""
+  400 invalid JSON: EOF
+alice POST /api/embeddings "{\"enabled\":true,\"endpoint\":\"<stub>/embed/v1\",\"model\":\"nomic-embed-text\",\"api_key\":\"s3cr3t-embed-x\"}"
+  403 forbidden
+root POST /api/embeddings "{\"enabled\":true,\"provider\":\"local\",\"endpoint\":\"<stub>/embed/v1\",\"model\":\"nomic-embed-text\",\"api_key\":\"s3cr3t-embed-1\"}"
+  204 
+root GET /api/embeddings ""
+  200 {"endpoint":"<stub>/embed/v1","model":"nomic-embed-text","api_key":"(unchanged)","enabled":true,"provider":"local"}
+root POST /api/embeddings "{\"enabled\":true,\"provider\":\"local\",\"endpoint\":\"<stub>/embed/v1\",\"model\":\"nomic-embed-text\",\"api_key\":\"(unchanged)\"}"
+  204 
+root GET /api/embeddings/models ""
+  200 [{"id":"bge-m3","name":"bge-m3","value":"bge-m3"},{"id":"nomic-embed-text","name":"nomic-embed-text","value":"nomic-embed-text"}]
+root POST /api/embeddings "{\"enabled\":true,\"provider\":\"peer:nope\"}"
+  400 no peer named "nope" is registered: add it under Peers first
+root POST /api/embeddings "{\"enabled\":"
+  400 invalid JSON: unexpected EOF
+root POST /api/embeddings ""
+  400 invalid JSON: EOF
+root POST /api/embeddings/test "{\"enabled\":false,\"endpoint\":\"<stub>/embed/v1\",\"model\":\"nomic-embed-text\"}"
+  200 {"error":"embeddings are disabled: flip the toggle on first","ok":false}
+root POST /api/embeddings/test "{\"enabled\":true,\"model\":\"m\"}"
+  200 {"error":"endpoint is required","ok":false}
+root POST /api/embeddings/test "{\"enabled\":true,\"provider\":\"peer:nope\"}"
+  200 {"error":"no peer named \"nope\" is registered: add it under Peers first","ok":false}
+root POST /api/embeddings/test "{\"enabled\":true,\"endpoint\":\"<stub>/embed/v1\",\"model\":\"nomic-embed-text\",\"api_key\":\"(unchanged)\"}"
+  200 {"message":"OK: 3-dim embedding from nomic-embed-text via this instance","ok":true}
+root POST /api/embeddings/test "{\"enabled\":true,\"endpoint\":\"<stub>/embed/v1\"}"
+  200 {"message":"OK: 3-dim embedding from server default via this instance","ok":true}
+root POST /api/embeddings/test "{\"enabled\":true,\"endpoint\":\"http://127.0.0.1:1/v1\"}"
+  200 {"error":"embed request failed (http://127.0.0.1:1/v1/embeddings): Post \"http://127.0.0.1:1/v1/embeddings\": dial tcp 127.0.0.1:1: connect: connection refused","ok":false}
+alice POST /api/transcribe "{\"enabled\":true,\"endpoint\":\"<stub>/stt-ok/v1\",\"api_key\":\"s3cr3t-stt-x\"}"
+  403 forbidden
+root POST /api/transcribe "{\"enabled\":true,\"endpoint\":\"<stub>/stt-ok/v1\",\"model\":\"whisper-1\",\"api_key\":\"s3cr3t-stt\"}"
+  204 
+root GET /api/transcribe ""
+  200 {"endpoint":"<stub>/stt-ok/v1","model":"whisper-1","api_key":"(unchanged)","enabled":true}
+root POST /api/transcribe "{\"enabled\":true,\"endpoint\":\"<stub>/stt-ok/v1\",\"model\":\"whisper-1\",\"api_key\":\"(unchanged)\"}"
+  204 
+root POST /api/transcribe "{\"enabled\":true,\"provider\":\"peer:nope\"}"
+  400 no peer named "nope" is registered: add it under Peers first
+root POST /api/transcribe "{\"enabled\":"
+  400 invalid JSON: unexpected EOF
+root POST /api/transcribe/test "{\"enabled\":false}"
+  200 {"error":"transcription is disabled: flip the toggle on first","ok":false}
+root POST /api/transcribe/test "{\"enabled\":true}"
+  200 {"error":"endpoint is required","ok":false}
+root POST /api/transcribe/test "{\"enabled\":true,\"provider\":\"peer:nope\"}"
+  200 {"error":"no peer named \"nope\" is registered: add it under Peers first","ok":false}
+root POST /api/transcribe/test "{\"enabled\":true,\"endpoint\":\"<stub>/stt-ok/v1\",\"api_key\":\"(unchanged)\"}"
+  200 {"message":"Endpoint reachable + /models OK (HTTP 200)","ok":true}
+root POST /api/transcribe/test "{\"enabled\":true,\"endpoint\":\"<stub>/stt-ok/v1\",\"api_key\":\"wrong\"}"
+  200 {"error":"HTTP 401: endpoint reached but rejected the API key","ok":false}
+root POST /api/transcribe/test "{\"enabled\":true,\"endpoint\":\"<stub>/stt-deny/v1\"}"
+  200 {"error":"HTTP 403: endpoint reached but rejected the API key","ok":false}
+root POST /api/transcribe/test "{\"enabled\":true,\"endpoint\":\"<stub>/whisper/v1\"}"
+  200 {"message":"Endpoint reachable (HTTP 200 at root; 404 at /models: server doesn't expose /models, fine for whisper.cpp)","ok":true}
+root POST /api/transcribe/test "{\"enabled\":true,\"endpoint\":\"<stub>/nothing/v1\"}"
+  200 {"message":"Endpoint reachable (HTTP 404 at root; 404 at /models: server doesn't expose /models, fine for whisper.cpp)","ok":true}
+root POST /api/transcribe/test "{\"enabled\":true,\"endpoint\":\"http://127.0.0.1:1/v1\"}"
+  200 {"error":"reach failed: Get \"http://127.0.0.1:1/v1/models\": dial tcp 127.0.0.1:1: connect: connection refused","ok":false}
+alice POST /api/image-gen "{\"provider\":\"openai\",\"api_key\":\"s3cr3t-img-x\"}"
+  403 forbidden
+root POST /api/image-gen "{\"provider\":\"openai\",\"api_key\":\"s3cr3t-img\"}"
+  204 
+root GET /api/image-gen ""
+  200 {"api_key":"(unchanged)","provider":"openai"}
+root POST /api/image-gen "{\"provider\":\"gemini\",\"api_key\":\"(unchanged)\"}"
+  204 
+root GET /api/image-gen ""
+  200 {"api_key":"(unchanged)","provider":"gemini"}
+root POST /api/image-gen "{\"provider\":"
+  400 invalid JSON: unexpected EOF
+root POST /api/image-gen/test "{\"provider\":\"\"}"
+  200 {"error":"pick a provider first","ok":false}
+root POST /api/image-gen/test "{\"provider\":\"none\"}"
+  200 {"error":"pick a provider first","ok":false}
+root POST /api/image-gen/test "{\"provider\":\"elsewhere\",\"api_key\":\"(unchanged)\"}"
+  200 {"error":"unknown provider: elsewhere","ok":false}
+root POST /api/image-gen "{\"provider\":\"gemini\",\"api_key\":\"\"}"
+  204 
+root POST /api/image-gen/test "{\"provider\":\"gemini\",\"api_key\":\"(unchanged)\"}"
+  200 {"error":"no API key: set one here, or set the matching LLM provider's key","ok":false}
+activity log, 7 entries:
+  settings root: updated embeddings config (enabled=true provider="local" endpoint="<stub>/embed/v1" model="nomic-embed-text")
+  settings root: updated embeddings config (enabled=true provider="local" endpoint="<stub>/embed/v1" model="nomic-embed-text")
+  settings root: updated image-gen config (provider="gemini")
+  settings root: updated image-gen config (provider="gemini")
+  settings root: updated image-gen config (provider="openai")
+  settings root: updated transcribe config (enabled=true endpoint="<stub>/stt-ok/v1" model="whisper-1")
+  settings root: updated transcribe config (enabled=true endpoint="<stub>/stt-ok/v1" model="whisper-1")

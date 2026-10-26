@@ -18,12 +18,15 @@ func (a *AdminApp) registerMediaRoutes(sub *http.ServeMux) {
 	// Embeddings config — GET returns current settings, POST persists +
 	// reinstalls the live config so the next ingestion/search call picks
 	// up the new endpoint/model without a restart.
-	sub.HandleFunc("/api/embeddings", a.handleEmbeddings)
+	sub.HandleFunc("/api/embeddings", jsonapi.Methods{
+		"GET":  jsonapi.Get(a.db, a.handleEmbeddings, a.gate()),
+		"POST": jsonapi.Post(a.db, a.handleEmbeddingsSave, a.gate()),
+	}.Serve)
 
 	// Embeddings connectivity test — POSTs current form values (NOT the
 	// saved DB record), runs a one-shot Embed() against them, returns
 	// {ok, message|error} for inline display in the admin FormPanel.
-	sub.HandleFunc("/api/embeddings/test", a.handleEmbeddingsTest)
+	sub.HandleFunc("/api/embeddings/test", jsonapi.Post(a.db, a.handleEmbeddingsTest, a.gate()))
 
 	// /api/embeddings/models — probe the saved embedding endpoint for
 	// available models. Returns chip-shaped JSON (id/name/value) so
@@ -37,59 +40,36 @@ func (a *AdminApp) registerMediaRoutes(sub *http.ServeMux) {
 	// Audio transcription (STT) — GET/POST. POST persists + reinstalls
 	// the live TranscribeConfig so the next Transcribe() call picks up
 	// the new endpoint/model/key without a restart.
-	sub.HandleFunc("/api/transcribe", a.handleTranscribe)
+	sub.HandleFunc("/api/transcribe", jsonapi.Methods{
+		"GET":  jsonapi.Get(a.db, a.handleTranscribe, a.gate()),
+		"POST": jsonapi.Post(a.db, a.handleTranscribeSave, a.gate()),
+	}.Serve)
 
 	// Image generation — provider + api_key live in per-key rows under
 	// ImageTable. Shape mirrors the legacy --setup wiring so existing
 	// installs read/write the same kvlite keys.
-	sub.HandleFunc("/api/image-gen", a.handleImageGen)
+	sub.HandleFunc("/api/image-gen", jsonapi.Methods{
+		"GET":  jsonapi.Get(a.db, a.handleImageGen, a.gate()),
+		"POST": jsonapi.Post(a.db, a.handleImageGenSave, a.gate()),
+	}.Serve)
 
 	// STT connectivity test — GET {endpoint}/models with auth header so
 	// the operator can confirm reachability + credentials without needing
 	// a sample audio file. Both whisper.cpp and the real OpenAI API
 	// expose /models on the OpenAI-compatible base; a 2xx means the
 	// endpoint is reachable and (if a key was provided) accepts it.
-	sub.HandleFunc("/api/transcribe/test", a.handleTranscribeTest)
+	sub.HandleFunc("/api/transcribe/test", jsonapi.Post(a.db, a.handleTranscribeTest, a.gate()))
 
 	// Image gen connectivity test — same shape as STT but per-provider
 	// (each has its own models URL convention). Validates the API key
 	// is recognized; doesn't actually generate an image (which would
 	// cost money on every test click).
-	sub.HandleFunc("/api/image-gen/test", a.handleImageGenTest)
+	sub.HandleFunc("/api/image-gen/test", jsonapi.Post(a.db, a.handleImageGenTest, a.gate()))
 
 }
 
 // handleEmbeddings serves /api/embeddings; registerMediaRoutes says what it is for.
-func (a *AdminApp) handleEmbeddings(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
-		return
-	}
-	if r.Method == http.MethodPost {
-		var req EmbeddingConfig
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		req.APIKey = keepSecret(req.APIKey, a.storedEmbeddingConfig().APIKey)
-		// A peer selection carries no endpoint of its own — the manual
-		// fields are hidden while one is picked. Resolve it into a complete,
-		// ordinary config here so everything downstream (Embed,
-		// EmbedVersion, the vector store) stays peer-unaware.
-		resolved, err := ResolveEmbeddingProvider(req)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		req = resolved
-		if a.db != nil {
-			a.db.Set(EmbeddingTable, "current", req)
-		}
-		SetEmbeddingConfig(req)
-		adminChange(r, activity.Settings, "updated embeddings config (enabled=%v provider=%q endpoint=%q model=%q)",
-			req.Enabled, req.Provider, req.Endpoint, req.Model)
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
+func (a *AdminApp) handleEmbeddings(c *jsonapi.Call) (any, error) {
 	var cfg EmbeddingConfig
 	if a.db != nil {
 		a.db.Get(EmbeddingTable, "current", &cfg)
@@ -101,28 +81,36 @@ func (a *AdminApp) handleEmbeddings(w http.ResponseWriter, r *http.Request) {
 		cfg.Provider = EmbeddingProviderLocal
 	}
 	cfg.APIKey = maskSecret(cfg.APIKey)
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(cfg)
+	return cfg, nil
+}
+
+// handleEmbeddingsSave persists the embeddings config and reinstalls it live.
+func (a *AdminApp) handleEmbeddingsSave(c *jsonapi.Call, req EmbeddingConfig) (any, error) {
+	req.APIKey = keepSecret(req.APIKey, a.storedEmbeddingConfig().APIKey)
+	// A peer selection carries no endpoint of its own — the manual
+	// fields are hidden while one is picked. Resolve it into a complete,
+	// ordinary config here so everything downstream (Embed,
+	// EmbedVersion, the vector store) stays peer-unaware.
+	resolved, err := ResolveEmbeddingProvider(req)
+	if err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	req = resolved
+	if a.db != nil {
+		a.db.Set(EmbeddingTable, "current", req)
+	}
+	SetEmbeddingConfig(req)
+	adminChange(c.R, activity.Settings, "updated embeddings config (enabled=%v provider=%q endpoint=%q model=%q)",
+		req.Enabled, req.Provider, req.Endpoint, req.Model)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // handleEmbeddingsTest serves /api/embeddings/test; registerMediaRoutes says what it is for.
-func (a *AdminApp) handleEmbeddingsTest(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	var req EmbeddingConfig
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeTestResult(w, false, "", "invalid request body")
-		return
-	}
+func (a *AdminApp) handleEmbeddingsTest(c *jsonapi.Call, req EmbeddingConfig) (any, error) {
+	r := c.R
 	req.APIKey = keepSecret(req.APIKey, a.storedEmbeddingConfig().APIKey)
 	if !req.Enabled {
-		writeTestResult(w, false, "", "embeddings are disabled: flip the toggle on first")
-		return
+		return testResultBody(false, "", "embeddings are disabled: flip the toggle on first"), nil
 	}
 	// Resolve a peer selection the same way the SAVE path does. Without
 	// this the test ran the form's literal fields — and with a peer picked
@@ -132,13 +120,11 @@ func (a *AdminApp) handleEmbeddingsTest(w http.ResponseWriter, r *http.Request) 
 	// currently configured for is worse than no test button.
 	resolved, err := ResolveEmbeddingProvider(req)
 	if err != nil {
-		writeTestResult(w, false, "", err.Error())
-		return
+		return testResultBody(false, "", err.Error()), nil
 	}
 	req = resolved
 	if req.Endpoint == "" {
-		writeTestResult(w, false, "", "endpoint is required")
-		return
+		return testResultBody(false, "", "endpoint is required"), nil
 	}
 	// Temporarily swap in the form's working config for this one call
 	// without persisting. Restore on exit so a failed test doesn't
@@ -150,8 +136,7 @@ func (a *AdminApp) handleEmbeddingsTest(w http.ResponseWriter, r *http.Request) 
 	defer cancel()
 	vec, err := Embed(ctx, "hello from gohort admin connectivity test")
 	if err != nil {
-		writeTestResult(w, false, "", err.Error())
-		return
+		return testResultBody(false, "", err.Error()), nil
 	}
 	modelLabel := req.Model
 	if modelLabel == "" {
@@ -167,7 +152,7 @@ func (a *AdminApp) handleEmbeddingsTest(w http.ResponseWriter, r *http.Request) 
 			where += " (" + p.Instance + ")"
 		}
 	}
-	writeTestResult(w, true, fmt.Sprintf("OK: %d-dim embedding from %s via %s", len(vec), modelLabel, where), "")
+	return testResultBody(true, fmt.Sprintf("OK: %d-dim embedding from %s via %s", len(vec), modelLabel, where), ""), nil
 }
 
 // handleEmbeddingModels serves /api/embeddings/models; registerMediaRoutes says what it is for.
@@ -201,67 +186,37 @@ func (a *AdminApp) handleEmbeddingModels(c *jsonapi.Call) (any, error) {
 }
 
 // handleTranscribe serves /api/transcribe; registerMediaRoutes says what it is for.
-func (a *AdminApp) handleTranscribe(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
-		return
-	}
-	if r.Method == http.MethodPost {
-		var req TranscribeConfig
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		req.APIKey = keepSecret(req.APIKey, a.storedTranscribeConfig().APIKey)
-		// A peer selection carries no endpoint of its own — the manual
-		// fields are hidden while one is picked. Resolve it into a
-		// complete, ordinary config here so everything downstream
-		// (Transcribe, the transcribe tool, inbound voice notes) stays
-		// peer-unaware. Same shape as the embeddings save above.
-		resolved, err := ResolveTranscribeProvider(req, req.Provider)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		req = resolved
-		if a.db != nil {
-			a.db.Set(TranscribeTable, "current", req)
-		}
-		SetTranscribeConfig(req)
-		adminChange(r, activity.Settings, "updated transcribe config (enabled=%v endpoint=%q model=%q)",
-			req.Enabled, req.Endpoint, req.Model)
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
+func (a *AdminApp) handleTranscribe(c *jsonapi.Call) (any, error) {
 	cfg := a.storedTranscribeConfig()
 	cfg.APIKey = maskSecret(cfg.APIKey)
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(cfg)
+	return cfg, nil
+}
+
+// handleTranscribeSave persists the transcription config and reinstalls it
+// live.
+func (a *AdminApp) handleTranscribeSave(c *jsonapi.Call, req TranscribeConfig) (any, error) {
+	req.APIKey = keepSecret(req.APIKey, a.storedTranscribeConfig().APIKey)
+	// A peer selection carries no endpoint of its own — the manual
+	// fields are hidden while one is picked. Resolve it into a
+	// complete, ordinary config here so everything downstream
+	// (Transcribe, the transcribe tool, inbound voice notes) stays
+	// peer-unaware. Same shape as the embeddings save above.
+	resolved, err := ResolveTranscribeProvider(req, req.Provider)
+	if err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	req = resolved
+	if a.db != nil {
+		a.db.Set(TranscribeTable, "current", req)
+	}
+	SetTranscribeConfig(req)
+	adminChange(c.R, activity.Settings, "updated transcribe config (enabled=%v endpoint=%q model=%q)",
+		req.Enabled, req.Endpoint, req.Model)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // handleImageGen serves /api/image-gen; registerMediaRoutes says what it is for.
-func (a *AdminApp) handleImageGen(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
-		return
-	}
-	if r.Method == http.MethodPost {
-		var req struct {
-			Provider string `json:"provider"`
-			APIKey   string `json:"api_key"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		req.APIKey = keepSecret(req.APIKey, a.storedString(ImageTable, "api_key"))
-		if a.db != nil {
-			a.db.Set(ImageTable, "provider", req.Provider)
-			a.db.Set(ImageTable, "api_key", req.APIKey)
-		}
-		adminChange(r, activity.Settings, "updated image-gen config (provider=%q)",
-			req.Provider)
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
+func (a *AdminApp) handleImageGen(c *jsonapi.Call) (any, error) {
 	var provider, key string
 	if a.db != nil {
 		a.db.Get(ImageTable, "provider", &provider)
@@ -270,28 +225,27 @@ func (a *AdminApp) handleImageGen(w http.ResponseWriter, r *http.Request) {
 	if provider == "" {
 		provider = "gemini"
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"provider": provider, "api_key": maskSecret(key)})
+	return map[string]any{"provider": provider, "api_key": maskSecret(key)}, nil
+}
+
+// handleImageGenSave persists the image-generation provider and key.
+func (a *AdminApp) handleImageGenSave(c *jsonapi.Call, req imageGenConfig) (any, error) {
+	req.APIKey = keepSecret(req.APIKey, a.storedString(ImageTable, "api_key"))
+	if a.db != nil {
+		a.db.Set(ImageTable, "provider", req.Provider)
+		a.db.Set(ImageTable, "api_key", req.APIKey)
+	}
+	adminChange(c.R, activity.Settings, "updated image-gen config (provider=%q)",
+		req.Provider)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // handleTranscribeTest serves /api/transcribe/test; registerMediaRoutes says what it is for.
-func (a *AdminApp) handleTranscribeTest(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	var req TranscribeConfig
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeTestResult(w, false, "", "invalid request body")
-		return
-	}
+func (a *AdminApp) handleTranscribeTest(c *jsonapi.Call, req TranscribeConfig) (any, error) {
+	r := c.R
 	req.APIKey = keepSecret(req.APIKey, a.storedTranscribeConfig().APIKey)
 	if !req.Enabled {
-		writeTestResult(w, false, "", "transcription is disabled: flip the toggle on first")
-		return
+		return testResultBody(false, "", "transcription is disabled: flip the toggle on first"), nil
 	}
 	// Resolve a peer selection the same way the SAVE path does. Without
 	// this the test ran the form's literal fields — and with a peer picked
@@ -300,13 +254,11 @@ func (a *AdminApp) handleTranscribeTest(w http.ResponseWriter, r *http.Request) 
 	// to fill in. Exactly the bug the embeddings test button already had.
 	resolved, rerr := ResolveTranscribeProvider(req, req.Provider)
 	if rerr != nil {
-		writeTestResult(w, false, "", rerr.Error())
-		return
+		return testResultBody(false, "", rerr.Error()), nil
 	}
 	req = resolved
 	if req.Endpoint == "" {
-		writeTestResult(w, false, "", "endpoint is required")
-		return
+		return testResultBody(false, "", "endpoint is required"), nil
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
@@ -319,8 +271,7 @@ func (a *AdminApp) handleTranscribeTest(w http.ResponseWriter, r *http.Request) 
 	// instance still have STT configured) and says which one failed.
 	if p, isPeer := PeerFromProvider(req.Provider); isPeer {
 		ok, msg, errMsg := peerTranscribeTestResult(ctx, p)
-		writeTestResult(w, ok, msg, errMsg)
-		return
+		return testResultBody(ok, msg, errMsg), nil
 	}
 	// probeURL: GET with optional bearer header. Returns the response status
 	// or any transport error. Closing the body inline so callers don't have to.
@@ -347,16 +298,13 @@ func (a *AdminApp) handleTranscribeTest(w http.ResponseWriter, r *http.Request) 
 	modelsURL := base + "/models"
 	status, err := probeURL(modelsURL)
 	if err != nil {
-		writeTestResult(w, false, "", "reach failed: "+err.Error())
-		return
+		return testResultBody(false, "", "reach failed: "+err.Error()), nil
 	}
 	switch {
 	case status >= 200 && status < 300:
-		writeTestResult(w, true, fmt.Sprintf("Endpoint reachable + /models OK (HTTP %d)", status), "")
-		return
+		return testResultBody(true, fmt.Sprintf("Endpoint reachable + /models OK (HTTP %d)", status), ""), nil
 	case status == 401 || status == 403:
-		writeTestResult(w, false, "", fmt.Sprintf("HTTP %d: endpoint reached but rejected the API key", status))
-		return
+		return testResultBody(false, "", fmt.Sprintf("HTTP %d: endpoint reached but rejected the API key", status)), nil
 	}
 	// /models 404/405 → fall back to a plain GET on the endpoint root.
 	// Strip any trailing /v1 (or /api) so we hit the actual host root.
@@ -369,44 +317,26 @@ func (a *AdminApp) handleTranscribeTest(w http.ResponseWriter, r *http.Request) 
 	}
 	rootStatus, err := probeURL(rootBase + "/")
 	if err != nil {
-		writeTestResult(w, false, "", fmt.Sprintf("HTTP %d at %s, and root probe failed: %s", status, modelsURL, err.Error()))
-		return
+		return testResultBody(false, "", fmt.Sprintf("HTTP %d at %s, and root probe failed: %s", status, modelsURL, err.Error())), nil
 	}
 	if rootStatus >= 200 && rootStatus < 500 {
-		writeTestResult(w, true, fmt.Sprintf("Endpoint reachable (HTTP %d at root; %d at /models: server doesn't expose /models, fine for whisper.cpp)", rootStatus, status), "")
-		return
+		return testResultBody(true, fmt.Sprintf("Endpoint reachable (HTTP %d at root; %d at /models: server doesn't expose /models, fine for whisper.cpp)", rootStatus, status), ""), nil
 	}
-	writeTestResult(w, false, "", fmt.Sprintf("HTTP %d at root, HTTP %d at /models", rootStatus, status))
+	return testResultBody(false, "", fmt.Sprintf("HTTP %d at root, HTTP %d at /models", rootStatus, status)), nil
 }
 
 // handleImageGenTest serves /api/image-gen/test; registerMediaRoutes says what it is for.
-func (a *AdminApp) handleImageGenTest(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	var req struct {
-		Provider string `json:"provider"`
-		APIKey   string `json:"api_key"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeTestResult(w, false, "", "invalid request body")
-		return
-	}
+func (a *AdminApp) handleImageGenTest(c *jsonapi.Call, req imageGenConfig) (any, error) {
+	r := c.R
 	if req.Provider == "" || req.Provider == "none" {
-		writeTestResult(w, false, "", "pick a provider first")
-		return
+		return testResultBody(false, "", "pick a provider first"), nil
 	}
 	// Connector-backed provider (rest_image: ComfyUI / A1111 / custom): it
 	// carries its own SecureAPI credential, so there's no API key to probe
 	// here. Report that it's live rather than falling into the built-in
 	// gemini/openai key test (which would reject the name as "unknown").
 	if ImageBackendRegistered(req.Provider) {
-		writeTestResult(w, true, "Connector backend “"+req.Provider+"” is approved and active. It uses its own credential: generate an image to verify it end to end.", "")
-		return
+		return testResultBody(true, "Connector backend “"+req.Provider+"” is approved and active. It uses its own credential: generate an image to verify it end to end.", ""), nil
 	}
 	// Fall back to the key of an LLM that uses the SAME provider, worker
 	// first then lead: the rule the GenerateImage runtime uses
@@ -426,8 +356,7 @@ func (a *AdminApp) handleImageGenTest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if key == "" {
-		writeTestResult(w, false, "", "no API key: set one here, or set the matching LLM provider's key")
-		return
+		return testResultBody(false, "", "no API key: set one here, or set the matching LLM provider's key"), nil
 	}
 	var url string
 	var authHeader, authPrefix string
@@ -439,33 +368,39 @@ func (a *AdminApp) handleImageGenTest(w http.ResponseWriter, r *http.Request) {
 		// Gemini takes the key as ?key= rather than a header.
 		url = "https://generativelanguage.googleapis.com/v1beta/models?key=" + key
 	default:
-		writeTestResult(w, false, "", "unknown provider: "+req.Provider)
-		return
+		return testResultBody(false, "", "unknown provider: "+req.Provider), nil
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	httpReq, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
-		writeTestResult(w, false, "", err.Error())
-		return
+		return testResultBody(false, "", err.Error()), nil
 	}
 	if authHeader != "" {
 		httpReq.Header.Set(authHeader, authPrefix+key)
 	}
 	resp, err := (&http.Client{}).Do(httpReq)
 	if err != nil {
-		writeTestResult(w, false, "", "reach failed: "+err.Error())
-		return
+		// Gemini's key rides in the URL, and a request that fails names its
+		// URL: said as it is, the stored key the form masks would come back
+		// in the error.
+		return testResultBody(false, "", "reach failed: "+strings.ReplaceAll(err.Error(), key, "<key>")), nil
 	}
 	defer resp.Body.Close()
 	switch {
 	case resp.StatusCode >= 200 && resp.StatusCode < 300:
-		writeTestResult(w, true, fmt.Sprintf("%s reachable + key accepted (HTTP %d)", req.Provider, resp.StatusCode), "")
+		return testResultBody(true, fmt.Sprintf("%s reachable + key accepted (HTTP %d)", req.Provider, resp.StatusCode), ""), nil
 	case resp.StatusCode == 401 || resp.StatusCode == 403:
-		writeTestResult(w, false, "", fmt.Sprintf("HTTP %d: %s rejected the API key", resp.StatusCode, req.Provider))
+		return testResultBody(false, "", fmt.Sprintf("HTTP %d: %s rejected the API key", resp.StatusCode, req.Provider)), nil
 	default:
-		writeTestResult(w, false, "", fmt.Sprintf("HTTP %d from %s", resp.StatusCode, req.Provider))
+		return testResultBody(false, "", fmt.Sprintf("HTTP %d from %s", resp.StatusCode, req.Provider)), nil
 	}
+}
+
+// imageGenConfig is the image-generation form: its provider and key.
+type imageGenConfig struct {
+	Provider string `json:"provider"`
+	APIKey   string `json:"api_key"`
 }
 
 // probeEmbeddingModels fetches and parses a model list from an

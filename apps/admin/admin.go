@@ -14,6 +14,12 @@ import (
 
 func writeTestResult(w http.ResponseWriter, ok bool, message, errMsg string) {
 	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(testResultBody(ok, message, errMsg))
+}
+
+// testResultBody is a connectivity test's answer, for a handler built on
+// jsonapi to return: {ok, message} or {ok, error}.
+func testResultBody(ok bool, message, errMsg string) map[string]any {
 	body := map[string]any{"ok": ok}
 	if message != "" {
 		body["message"] = message
@@ -21,7 +27,7 @@ func writeTestResult(w http.ResponseWriter, ok bool, message, errMsg string) {
 	if errMsg != "" {
 		body["error"] = errMsg
 	}
-	json.NewEncoder(w).Encode(body)
+	return body
 }
 
 // testProgress switches a test response to a stream of lines and returns
