@@ -17,7 +17,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -25,6 +24,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/docs"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 const (
@@ -414,150 +414,140 @@ func firstLink(s string) string {
 
 // --- HTTP: the Publishing targets section --------------------------------
 
-func (T *PublishApp) handleTargets(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
+// handleTargets is the user's targets, as the section's table shows them.
+func (T *PublishApp) handleTargets(c *jsonapi.Call) (any, error) {
+	user := c.User
+	rows := []map[string]any{}
+	names := map[string]string{}
+	for _, o := range AgentNameOptions(user) {
+		names[o.Value] = o.Label
 	}
-	db := T.targetsDB(user)
-	rest := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/targets"), "/")
-	id, action, _ := strings.Cut(rest, "/")
-	switch {
-	case id == "" && r.Method == http.MethodGet:
-		rows := []map[string]any{}
-		names := map[string]string{}
-		for _, o := range AgentNameOptions(user) {
-			names[o.Value] = o.Label
+	for _, t := range T.listTargets(user) {
+		uses := "API: " + t.Credential
+		if t.Uses == "agent" {
+			uses = "Agent: " + chFirst(names[t.Agent], t.Agent)
 		}
-		for _, t := range T.listTargets(user) {
-			uses := "API: " + t.Credential
-			if t.Uses == "agent" {
-				uses = "Agent: " + chFirst(names[t.Agent], t.Agent)
-			}
-			var asks, who []string
-			for _, f := range t.Fields {
-				asks = append(asks, chFirst(f.Label, f.Name))
-			}
-			for _, a := range t.Agents {
-				who = append(who, chFirst(names[a], a))
-			}
-			rows = append(rows, map[string]any{
-				"id": t.ID, "label": t.Label, "desc": t.Desc, "uses": uses,
-				"asks":   chFirst(strings.Join(asks, ", "), "nothing"),
-				"agents": chFirst(strings.Join(who, ", "), "only you, from Scribe"),
-			})
+		var asks, who []string
+		for _, f := range t.Fields {
+			asks = append(asks, chFirst(f.Label, f.Name))
 		}
-		writeTargetJSON(w, rows)
-	case id == "" && r.Method == http.MethodPost:
-		var t Target
-		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<18)).Decode(&t); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		t, err := normalizeTarget(t)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		if prev, ok := T.loadTarget(user, t.ID); ok {
-			t.Agents, t.Created = prev.Agents, prev.Created // the pills own who may use it
-		} else {
-			t.ID, t.Created, t.Agents = UUIDv4(), time.Now(), nil
-		}
-		db.Set(targetTable, t.ID, t)
-		Log("[publish.target] user=%q saved target %q", user, t.Label)
-		writeTargetJSON(w, map[string]any{"id": t.ID})
-	case id != "" && action == "":
-		t, found := T.loadTarget(user, id)
-		if !found {
-			http.NotFound(w, r)
-			return
-		}
-		switch r.Method {
-		case http.MethodGet:
-			writeTargetJSON(w, t)
-		case http.MethodDelete:
-			db.Unset(targetTable, t.ID)
-			w.WriteHeader(http.StatusNoContent)
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		}
-	case id != "" && action == "agents":
-		T.targetAgentPills(w, r, user, id)
-	case id != "" && action == "options" && r.Method == http.MethodGet:
-		t, found := T.loadTarget(user, id)
-		if !found {
-			http.NotFound(w, r)
-			return
-		}
-		opts, err := T.liveOptions(r.Context(), user, t, r.URL.Query().Get("field"))
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadGateway)
-			return
-		}
-		writeTargetJSON(w, map[string]any{"options": opts})
-	default:
-		http.NotFound(w, r)
-	}
-}
-
-// targetAgentPills serves and applies the pills for which agents may publish
-// to this target with the publish tool.
-func (T *PublishApp) targetAgentPills(w http.ResponseWriter, r *http.Request, user, id string) {
-	t, found := T.loadTarget(user, id)
-	if !found {
-		http.NotFound(w, r)
-		return
-	}
-	switch r.Method {
-	case http.MethodGet:
-		items := []map[string]any{}
-		for _, o := range AgentNameOptions(user) {
-			on := false
-			for _, a := range t.Agents {
-				on = on || a == o.Value
-			}
-			items = append(items, map[string]any{"key": o.Value, "label": o.Label, "on": on})
-		}
-		writeTargetJSON(w, map[string]any{"items": items,
-			"note": "An agent switched on here gets a publish tool naming this target, with its form as the tool's arguments. You can always publish to it yourself from Scribe."})
-	case http.MethodPost:
-		var one struct {
-			Target string `json:"target"`
-			On     bool   `json:"on"`
-		}
-		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&one); err != nil || strings.TrimSpace(one.Target) == "" {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		known := false
-		for _, o := range AgentNameOptions(user) {
-			known = known || o.Value == one.Target
-		}
-		if !known {
-			http.Error(w, "no such agent", http.StatusNotFound)
-			return
-		}
-		out := t.Agents[:0:0]
 		for _, a := range t.Agents {
-			if a != one.Target {
-				out = append(out, a)
-			}
+			who = append(who, chFirst(names[a], a))
 		}
-		if one.On {
-			out = append(out, one.Target)
-		}
-		t.Agents = out
-		T.targetsDB(user).Set(targetTable, t.ID, t)
-		w.WriteHeader(http.StatusNoContent)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		rows = append(rows, map[string]any{
+			"id": t.ID, "label": t.Label, "desc": t.Desc, "uses": uses,
+			"asks":   chFirst(strings.Join(asks, ", "), "nothing"),
+			"agents": chFirst(strings.Join(who, ", "), "only you, from Scribe"),
+		})
 	}
+	return rows, nil
 }
 
-func writeTargetJSON(w http.ResponseWriter, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(v)
+// handleTargetSave creates a target, or saves the one it names. The pills own
+// who may use it, so a save keeps them.
+func (T *PublishApp) handleTargetSave(c *jsonapi.Call, t Target) (any, error) {
+	user := c.User
+	t, err := normalizeTarget(t)
+	if err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	if prev, ok := T.loadTarget(user, t.ID); ok {
+		t.Agents, t.Created = prev.Agents, prev.Created // the pills own who may use it
+	} else {
+		t.ID, t.Created, t.Agents = UUIDv4(), time.Now(), nil
+	}
+	T.targetsDB(user).Set(targetTable, t.ID, t)
+	Log("[publish.target] user=%q saved target %q", user, t.Label)
+	return map[string]any{"id": t.ID}, nil
+}
+
+// targetIn is the user's target the path names.
+func (T *PublishApp) targetIn(c *jsonapi.Call) (Target, error) {
+	t, found := T.loadTarget(c.User, c.R.PathValue("id"))
+	if !found {
+		return Target{}, jsonapi.NotFound("no such target")
+	}
+	return t, nil
+}
+
+// handleTarget is one target.
+func (T *PublishApp) handleTarget(c *jsonapi.Call) (any, error) {
+	return T.targetIn(c)
+}
+
+// handleTargetDelete removes one target.
+func (T *PublishApp) handleTargetDelete(c *jsonapi.Call, _ struct{}) (any, error) {
+	t, err := T.targetIn(c)
+	if err != nil {
+		return nil, err
+	}
+	T.targetsDB(c.User).Unset(targetTable, t.ID)
+	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// handleTargetOptions is a field's options, asked of the system it names.
+func (T *PublishApp) handleTargetOptions(c *jsonapi.Call) (any, error) {
+	t, err := T.targetIn(c)
+	if err != nil {
+		return nil, err
+	}
+	opts, err := T.liveOptions(c.R.Context(), c.User, t, c.R.URL.Query().Get("field"))
+	if err != nil {
+		return nil, jsonapi.Status(http.StatusBadGateway, err.Error())
+	}
+	return map[string]any{"options": opts}, nil
+}
+
+// handleTargetAgents is the pills for which agents may publish to this target
+// with the publish tool.
+func (T *PublishApp) handleTargetAgents(c *jsonapi.Call) (any, error) {
+	t, err := T.targetIn(c)
+	if err != nil {
+		return nil, err
+	}
+	items := []map[string]any{}
+	for _, o := range AgentNameOptions(c.User) {
+		on := false
+		for _, a := range t.Agents {
+			on = on || a == o.Value
+		}
+		items = append(items, map[string]any{"key": o.Value, "label": o.Label, "on": on})
+	}
+	return map[string]any{"items": items,
+		"note": "An agent switched on here gets a publish tool naming this target, with its form as the tool's arguments. You can always publish to it yourself from Scribe."}, nil
+}
+
+// handleTargetAgentSet switches one agent's pill.
+func (T *PublishApp) handleTargetAgentSet(c *jsonapi.Call, one struct {
+	Target string `json:"target"`
+	On     bool   `json:"on"`
+}) (any, error) {
+	t, err := T.targetIn(c)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(one.Target) == "" {
+		return nil, jsonapi.BadRequest("bad request")
+	}
+	known := false
+	for _, o := range AgentNameOptions(c.User) {
+		known = known || o.Value == one.Target
+	}
+	if !known {
+		return nil, jsonapi.NotFound("no such agent")
+	}
+	out := t.Agents[:0:0]
+	for _, a := range t.Agents {
+		if a != one.Target {
+			out = append(out, a)
+		}
+	}
+	if one.On {
+		out = append(out, one.Target)
+	}
+	t.Agents = out
+	T.targetsDB(c.User).Set(targetTable, t.ID, t)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // maxLiveOptions bounds a fetched list: a form is not a search box.

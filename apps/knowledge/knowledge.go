@@ -25,7 +25,9 @@ import (
 	"net/url"
 	"strings"
 
+	"encoding/json"
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -69,17 +71,12 @@ func (T *KnowledgeApp) Routes() {
 	// so there is no reason for this page's picker to 404 when a sibling app is
 	// disabled. The collection itself still lives in orchestrate, which is why
 	// the SAVE below goes there.
-	T.HandleFunc("/api/user-candidates", T.handleUserCandidates)
+	T.HandleFunc("/api/user-candidates", jsonapi.Get(T.DB, T.handleUserCandidates))
 }
 
-func (T *KnowledgeApp) handleUserCandidates(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
+func (T *KnowledgeApp) handleUserCandidates(c *jsonapi.Call) (any, error) {
 	// ?groups=1 from a picker whose kind can go to a group as well.
-	w.Write(ShareCandidatesJSON(user, r.URL.Query().Get("groups") == "1", false))
+	return json.RawMessage(ShareCandidatesJSON(c.User, c.R.URL.Query().Get("groups") == "1", false)), nil
 }
 
 func (T *KnowledgeApp) handleListPage(w http.ResponseWriter, r *http.Request) {

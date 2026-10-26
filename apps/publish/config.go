@@ -9,7 +9,6 @@
 package publish
 
 import (
-	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -110,47 +109,33 @@ func credentialUsable(user, name string) (bool, string) {
 
 // --- endpoints ---------------------------------------------------------------
 
-// handleConfig serves + saves the deployment configuration. Admin-only: it
-// names which credential reaches out to which external system, which is a
-// deployment decision, not a personal one.
-func (T *PublishApp) handleConfig(w http.ResponseWriter, r *http.Request) {
-	if !RequestIsAdmin(r) {
-		http.Error(w, "Publishing settings are admin-only: they name which credential writes to which external system.", http.StatusForbidden)
-		return
-	}
-	if r.Method == http.MethodPost {
-		var in PublishConfig
-		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		in.ConfluenceCredential = strings.TrimSpace(in.ConfluenceCredential)
-		in.ConfluenceBaseURL = strings.TrimRight(strings.TrimSpace(in.ConfluenceBaseURL), "/")
-		in.WebhookCredential = strings.TrimSpace(in.WebhookCredential)
-		in.WebhookURL = strings.TrimSpace(in.WebhookURL)
-		in.WebhookFormat = strings.TrimSpace(in.WebhookFormat)
-		in.WebhookLabel = strings.TrimSpace(in.WebhookLabel)
-		in.Agents = normalizeAgentDestinations(in.Agents)
-		T.saveConfig(in)
-		// Re-register, so a destination added here appears in the Publish
-		// dialog without a restart. Registration is keyed by kind and replaces,
-		// so re-running it is how an edit lands rather than a duplicate.
-		T.registerAgentDestinations()
-		jsonapi.Write(w, map[string]any{"ok": true})
-		return
-	}
-	jsonapi.Write(w, T.config())
+// handleConfig is the deployment configuration. Admin-only, by the route.
+func (T *PublishApp) handleConfig(c *jsonapi.Call) (any, error) {
+	return T.config(), nil
+}
+
+// handleConfigSave saves the deployment configuration.
+func (T *PublishApp) handleConfigSave(c *jsonapi.Call, in PublishConfig) (any, error) {
+	in.ConfluenceCredential = strings.TrimSpace(in.ConfluenceCredential)
+	in.ConfluenceBaseURL = strings.TrimRight(strings.TrimSpace(in.ConfluenceBaseURL), "/")
+	in.WebhookCredential = strings.TrimSpace(in.WebhookCredential)
+	in.WebhookURL = strings.TrimSpace(in.WebhookURL)
+	in.WebhookFormat = strings.TrimSpace(in.WebhookFormat)
+	in.WebhookLabel = strings.TrimSpace(in.WebhookLabel)
+	in.Agents = normalizeAgentDestinations(in.Agents)
+	T.saveConfig(in)
+	// Re-register, so a destination added here appears in the Publish
+	// dialog without a restart. Registration is keyed by kind and replaces,
+	// so re-running it is how an edit lands rather than a duplicate.
+	T.registerAgentDestinations()
+	return map[string]any{"ok": true}, nil
 }
 
 // handleDestinations lists the registered destinations with THIS user's
 // availability resolved — what a producer app shows before opening a publisher
 // chat, and what tells someone a destination exists but needs connecting.
-func (T *PublishApp) handleDestinations(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	jsonapi.Write(w, map[string]any{"destinations": docs.PublishDestinations(user)})
+func (T *PublishApp) handleDestinations(c *jsonapi.Call) (any, error) {
+	return map[string]any{"destinations": docs.PublishDestinations(c.User)}, nil
 }
 
 // --- admin section -----------------------------------------------------------

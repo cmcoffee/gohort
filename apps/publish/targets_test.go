@@ -86,7 +86,10 @@ func TestTheTargetControls(t *testing.T) {
 		r := httptest.NewRequest(method, path, bytes.NewReader(b))
 		r.AddCookie(&http.Cookie{Name: "gohort_session", Value: token})
 		w := httptest.NewRecorder()
-		app.handleTargets(w, r)
+		mux := http.NewServeMux()
+		app.SetWebMux(mux, "")
+		app.Routes()
+		mux.ServeHTTP(w, r)
 		return w
 	}
 	if w := do("POST", "/api/targets", map[string]any{"label": "Blog", "uses": "api", "instructions": "Post it."}); w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "API integration") {

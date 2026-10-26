@@ -18,10 +18,10 @@ package publish
 
 import (
 	"net/http"
-	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/docs"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // registeredApp is the live instance the destinations read their configuration
@@ -83,20 +83,34 @@ func (T *PublishApp) Routes() {
 	docs.RegisterPublishDestination(&webhookDest{app: T})
 	T.registerAgentDestinations()
 	docs.RegisterPublishDestination(&targetsDest{app: T})
-	T.HandleFunc("/", T.route)
-}
-
-func (T *PublishApp) route(w http.ResponseWriter, r *http.Request) {
-	switch r.URL.Path {
-	case "/api/config":
-		T.handleConfig(w, r)
-	case "/api/destinations":
-		T.handleDestinations(w, r)
-	default:
-		if strings.HasPrefix(r.URL.Path, "/api/targets") {
-			T.handleTargets(w, r)
-			return
+	// The deployment's configuration is admin-only: it names which credential
+	// reaches out to which external system.
+	admin := jsonapi.Authorize(func(w http.ResponseWriter, r *http.Request) bool {
+		if !RequestIsAdmin(r) {
+			http.Error(w, "Publishing settings are admin-only: they name which credential writes to which external system.", http.StatusForbidden)
+			return false
 		}
-		http.NotFound(w, r)
-	}
+		return true
+	})
+	T.HandleFunc("/api/config", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, T.handleConfig, admin),
+		"POST": jsonapi.Post(T.DB, T.handleConfigSave, admin),
+	}.Serve)
+	T.HandleFunc("/api/destinations", jsonapi.Get(T.DB, T.handleDestinations))
+	// The Publishing targets section: the list and a save, one target, which
+	// agents may publish to it, and a field's live options.
+	T.HandleFunc("/api/targets", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, T.handleTargets),
+		"POST": jsonapi.Post(T.DB, T.handleTargetSave, jsonapi.MaxBody(1<<18)),
+	}.Serve)
+	T.HandleFunc("/api/targets/{id}", jsonapi.Methods{
+		"GET":    jsonapi.Get(T.DB, T.handleTarget),
+		"DELETE": jsonapi.Post(T.DB, T.handleTargetDelete),
+	}.Serve)
+	T.HandleFunc("/api/targets/{id}/agents", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, T.handleTargetAgents),
+		"POST": jsonapi.Post(T.DB, T.handleTargetAgentSet, jsonapi.MaxBody(1<<16)),
+	}.Serve)
+	T.HandleFunc("/api/targets/{id}/options", jsonapi.Get(T.DB, T.handleTargetOptions))
+	T.HandleFunc("/", http.NotFound)
 }
