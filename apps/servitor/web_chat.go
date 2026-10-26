@@ -115,9 +115,8 @@ func (T *Servitor) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	// Pre-create the injection queue so /api/inject finds it immediately
 	// (the user could plausibly inject before the worker goroutine even
-	// installs OnRoundStart). Servitor doesn't gate by owner today —
-	// RequireUser in handleInject confirms the requester is logged in,
-	// no per-queue cross-check — so the registration leaves Owner empty.
+	// installs OnRoundStart). It is the caller's: only they can add to it
+	// (agenthost.InjectRoute).
 	RegisterInjectionQueue(sid, userID, "")
 
 	go T.runSession(ctx, sid, userID, ownerUser, appliance, ch, hist, udb, false)
@@ -126,129 +125,15 @@ func (T *Servitor) handleChat(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"session_id": sid})
 }
 
-// handleInject manages mid-flight user notes for an active chat session.
-//
-//	POST   {id, text}                     → queue a new note. Returns {note_id}.
-//	POST   {id, note_id, action:"lock"}   → mark a queued note as being edited.
-//	POST   {id, note_id, action:"unlock"} → cancel an in-progress edit.
-//	PATCH  {id, note_id, text}            → commit edited text (auto-unlocks).
-//	DELETE {id, note_id}                  → remove an unread note.
-//
-// Notes the orchestrator has already drained can no longer be edited or
-// deleted — those return 410 Gone. Edit-locked notes stay in the queue but
-// are skipped by Drain so the orchestrator can't grab them mid-edit.
-func (T *Servitor) handleInject(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	// GET ?id=: the notes still waiting, for a page joining the run.
-	if r.Method == http.MethodGet {
-		agenthost.ServeWaitingNotes(w, r, user)
-		return
-	}
-	var req struct {
-		ID     string `json:"id"`
-		NoteID string `json:"note_id"`
-		Text   string `json:"text"`
-		Action string `json:"action"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-	if req.ID == "" {
-		http.Error(w, "id required", http.StatusBadRequest)
-		return
-	}
-	q := LookupInjectionQueue(req.ID)
-	if q == nil {
-		http.Error(w, "session not found or not interjectable", http.StatusNotFound)
-		return
-	}
-	// Only into your own run, the same check orchestrate's handleInject makes
-	// on the same contract (see apps/orchestrate/interjections.go). This copy
-	// dropped it, and registered its queues with an empty owner, so any session
-	// id was enough: a note pushed here is read by the orchestrator on its next
-	// decision, which made it a way to put words in front of somebody else's
-	// agent mid-investigation, on an appliance the sender may have no way to
-	// reach themselves. The same id also reads and edits the queue, so this
-	// sits above the switch and covers every method. An empty Owner now matches
-	// nobody rather than everybody.
-	if q.Owner == "" || q.Owner != user {
-		// Same answer as "no such session": whether someone else is running
-		// something is not the caller's business.
-		http.Error(w, "session not found or not interjectable", http.StatusNotFound)
-		return
-	}
-
-	switch r.Method {
-	case http.MethodPost:
-		// Lock/unlock are POST + action so we don't need separate routes.
-		switch req.Action {
-		case "lock":
-			if req.NoteID == "" {
-				http.Error(w, "note_id required", http.StatusBadRequest)
-				return
-			}
-			if !q.Lock(req.NoteID) {
-				http.Error(w, "note already delivered or not found", http.StatusGone)
-				return
-			}
-			w.WriteHeader(http.StatusNoContent)
-			return
-		case "unlock":
-			if req.NoteID == "" {
-				http.Error(w, "note_id required", http.StatusBadRequest)
-				return
-			}
-			if !q.Unlock(req.NoteID) {
-				http.Error(w, "note already delivered or not found", http.StatusGone)
-				return
-			}
-			w.WriteHeader(http.StatusNoContent)
-			return
-		case "":
-			// Falls through to create-new-note path.
-		default:
-			http.Error(w, "unknown action", http.StatusBadRequest)
-			return
-		}
-		req.Text = strings.TrimSpace(req.Text)
-		if req.Text == "" {
-			http.Error(w, "text required", http.StatusBadRequest)
-			return
-		}
-		noteID, clean := q.Push(req.Text)
+// injectRoute is servitor's inject endpoint (agenthost.InjectRoute): notes the
+// person types mid-investigation, for the orchestrator's next decision. Each
+// new note says so in the session's own stream.
+func (T *Servitor) injectRoute() http.HandlerFunc {
+	return agenthost.InjectRoute{Queued: func(sid string, clean bool) {
 		if !clean {
-			emit(req.ID, probeEvent{Kind: "status", Text: "Note queued (oldest dropped: queue at capacity)"})
+			emit(sid, probeEvent{Kind: "status", Text: "Note queued (oldest dropped: queue at capacity)"})
 		} else {
-			emit(req.ID, probeEvent{Kind: "status", Text: "Note queued: orchestrator will see it on its next decision."})
+			emit(sid, probeEvent{Kind: "status", Text: "Note queued: orchestrator will see it on its next decision."})
 		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"note_id": noteID})
-	case http.MethodPatch:
-		req.Text = strings.TrimSpace(req.Text)
-		if req.NoteID == "" || req.Text == "" {
-			http.Error(w, "note_id and text required", http.StatusBadRequest)
-			return
-		}
-		if !q.Update(req.NoteID, req.Text) {
-			http.Error(w, "note already delivered or not found", http.StatusGone)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	case http.MethodDelete:
-		if req.NoteID == "" {
-			http.Error(w, "note_id required", http.StatusBadRequest)
-			return
-		}
-		if !q.Delete(req.NoteID) {
-			http.Error(w, "note already delivered or not found", http.StatusGone)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
+	}}.Handler(T.DB)
 }

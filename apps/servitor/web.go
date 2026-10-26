@@ -239,7 +239,7 @@ func (T *Servitor) routes(sub *http.ServeMux) {
 		"GET":  jsonapi.Get(T.DB, T.handlePushToGuide),
 		"POST": jsonapi.Post(T.DB, T.handlePushToGuideSave),
 	}.Serve)
-	sub.HandleFunc("/api/inject", T.handleInject)
+	sub.HandleFunc("/api/inject", T.injectRoute())
 	sub.HandleFunc("/api/map", T.handleMap)
 	sub.HandleFunc("/api/mapapp", jsonapi.Post(T.DB, T.handleMapApp))
 	sub.HandleFunc("/api/terminal", T.handleTerminal)

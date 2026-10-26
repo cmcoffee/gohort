@@ -233,3 +233,19 @@ func TestAppAgentSettingsTakeTheirMethods(t *testing.T) {
 		t.Errorf("signed out, the settings page answered %d, want 401", code)
 	}
 }
+
+// A note into a cortex run is refused: the cortex is reached only by answering
+// a question it asked, so its run's queue takes no new notes.
+func TestANoteIntoACortexRunIsRefused(t *testing.T) {
+	signedUp(t, "alice")
+	sid := cortexSessionID("agent-cortex-note")
+	q := registerInjectionQueue(sid, "alice", "agent-cortex-note")
+	t.Cleanup(func() { releaseInjectionQueue(sid) })
+	h := routed(&OrchestrateApp{AppCore: AppCore{DB: &DBase{Store: kvlite.MemStore()}}})
+	r := withSession(httptest.NewRequest("POST", "/api/inject", strings.NewReader(`{"id":"`+sid+`","text":"listen to me"}`)), "alice")
+	w := httptest.NewRecorder()
+	h(w, r)
+	if w.Code != http.StatusForbidden || q.Len() != 0 {
+		t.Errorf("a note into the cortex answered %d and left %d queued", w.Code, q.Len())
+	}
+}

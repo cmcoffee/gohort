@@ -51,124 +51,19 @@ func lookupInjectionQueue(sessionID string) *injectionQueue {
 	return LookupInjectionQueue(sessionID)
 }
 
-// injectRoute implements the same request/response contract servitor
-// uses so the AgentLoopPanel runtime's built-in inject flow works
-// unchanged:
-//
-//	POST   {id, text}                     → queue a new note. Returns {note_id}.
-//	POST   {id, note_id, action:"lock"}   → mark a queued note as being edited.
-//	POST   {id, note_id, action:"unlock"} → cancel an in-progress edit.
-//	PATCH  {id, note_id, text}            → commit edited text (auto-unlocks).
-//	DELETE {id, note_id}                  → remove an unread note.
-//	GET    ?id=<session>                  → the notes still waiting.
-//
-// Notes the runner has already drained can no longer be edited or
-// deleted — those return 410 Gone.
+// injectRoute is orchestrate's inject endpoint (agenthost.InjectRoute), with
+// a cortex run's queue closed to new notes.
 func (T *OrchestrateApp) injectRoute() http.HandlerFunc {
-	return jsonapi.Methods{
-		"GET": T.signedIn(func(w http.ResponseWriter, r *http.Request, user string, _ Database) {
-			agenthost.ServeWaitingNotes(w, r, user)
-		}),
-		"POST":   jsonapi.Post(T.DB, T.injectPost),
-		"PATCH":  jsonapi.Patch(T.DB, T.injectEdit),
-		"DELETE": jsonapi.Delete(T.DB, T.injectDrop),
-	}.Serve
+	return agenthost.InjectRoute{Refuse: refuseCortexNote}.Handler(T.DB)
 }
 
-// injectNote is an inject request: the running session, and for a lock, an
-// edit or a delete, the note.
-type injectNote struct {
-	ID     string `json:"id"`
-	NoteID string `json:"note_id"`
-	Text   string `json:"text"`
-	Action string `json:"action"`
-}
-
-// errNoteGone is a note the runner has already read, or never had.
-var errNoteGone = jsonapi.Status(http.StatusGone, "note already delivered or not found")
-
-// runningQueue is the note queue of the caller's own run that in names.
-// Either the session isn't running right now, or its turn already finished:
-// either way there is no queue to write to.
-func runningQueue(c *jsonapi.Call, in injectNote) (*injectionQueue, error) {
-	if in.ID == "" {
-		return nil, jsonapi.BadRequest("id required")
+// refuseCortexNote refuses a note into a cortex run: that is a write into the
+// cortex, which a person reaches only by answering a question it asked.
+func refuseCortexNote(q *injectionQueue, sessionID string) error {
+	if sessionID == cortexSessionID(q.AgentID) {
+		return jsonapi.Forbidden(cortexWriteRefusal)
 	}
-	q := lookupInjectionQueue(in.ID)
-	if q == nil {
-		return nil, jsonapi.NotFound("session not found or not interjectable")
-	}
-	if q.Owner != c.User {
-		return nil, errNotFound
-	}
-	return q, nil
-}
-
-// injectPost queues a new note, or locks or unlocks one for editing.
-func (T *OrchestrateApp) injectPost(c *jsonapi.Call, in injectNote) (any, error) {
-	q, err := runningQueue(c, in)
-	if err != nil {
-		return nil, err
-	}
-	switch in.Action {
-	case "lock", "unlock":
-		if in.NoteID == "" {
-			return nil, jsonapi.BadRequest("note_id required")
-		}
-		mark := q.Lock
-		if in.Action == "unlock" {
-			mark = q.Unlock
-		}
-		if !mark(in.NoteID) {
-			return nil, errNoteGone
-		}
-		return jsonapi.Empty(http.StatusNoContent), nil
-	case "":
-	default:
-		return nil, jsonapi.BadRequest("unknown action")
-	}
-	// A note into a cortex run is a write into the cortex, which a
-	// person reaches only by answering a question it asked.
-	if in.ID == cortexSessionID(q.AgentID) {
-		return nil, jsonapi.Forbidden(cortexWriteRefusal)
-	}
-	text := strings.TrimSpace(in.Text)
-	if text == "" {
-		return nil, jsonapi.BadRequest("text required")
-	}
-	noteID, _ := q.Push(text)
-	return map[string]string{"note_id": noteID}, nil
-}
-
-// injectEdit commits a note's edited text, which also unlocks it.
-func (T *OrchestrateApp) injectEdit(c *jsonapi.Call, in injectNote) (any, error) {
-	q, err := runningQueue(c, in)
-	if err != nil {
-		return nil, err
-	}
-	text := strings.TrimSpace(in.Text)
-	if in.NoteID == "" || text == "" {
-		return nil, jsonapi.BadRequest("note_id and text required")
-	}
-	if !q.Update(in.NoteID, text) {
-		return nil, errNoteGone
-	}
-	return jsonapi.Empty(http.StatusNoContent), nil
-}
-
-// injectDrop removes a note the runner has not read yet.
-func (T *OrchestrateApp) injectDrop(c *jsonapi.Call, in injectNote) (any, error) {
-	q, err := runningQueue(c, in)
-	if err != nil {
-		return nil, err
-	}
-	if in.NoteID == "" {
-		return nil, jsonapi.BadRequest("note_id required")
-	}
-	if !q.Delete(in.NoteID) {
-		return nil, errNoteGone
-	}
-	return jsonapi.Empty(http.StatusNoContent), nil
+	return nil
 }
 
 // PublicHandleInject is the landing an app routes its AgentLoopPanel's
