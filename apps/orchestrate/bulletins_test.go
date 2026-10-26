@@ -99,17 +99,17 @@ func TestTheBulletinControls(t *testing.T) {
 	if w := do(req("POST", "/api/bulletins", map[string]any{"name": "news"}), routed(app)); w.Code != http.StatusConflict {
 		t.Errorf("a taken name is refused, got %d", w.Code)
 	}
-	if w := do(req("POST", "/api/bulletins/news/followers", map[string]any{"target": helper.ID, "on": true}), app.handleBulletinOne); w.Code != http.StatusNoContent {
+	if w := do(req("POST", "/api/bulletins/news/followers", map[string]any{"target": helper.ID, "on": true}), routed(app)); w.Code != http.StatusNoContent {
 		t.Fatalf("follow: %d %s", w.Code, w.Body)
 	}
 	if a, _ := loadAgent(udb, helper.ID); !containsString(a.Bulletins, "news") {
 		t.Fatalf("the agent should now follow the board: %+v", a.Bulletins)
 	}
-	do(req("POST", "/api/bulletins/news/posters", map[string]any{"target": helper.ID, "on": true}), app.handleBulletinOne)
+	do(req("POST", "/api/bulletins/news/posters", map[string]any{"target": helper.ID, "on": true}), routed(app))
 	if b, _ := loadBulletin(udb, "news"); !b.canPost(helper.ID) {
 		t.Error("the poster pill should grant posting")
 	}
-	if w := do(req("POST", "/api/bulletins/news/post", map[string]any{"text": "Fed holds rates"}), app.handleBulletinOne); w.Code != 200 {
+	if w := do(req("POST", "/api/bulletins/news/post", map[string]any{"text": "Fed holds rates"}), routed(app)); w.Code != 200 {
 		t.Fatalf("post: %d %s", w.Code, w.Body)
 	}
 	w := do(req("GET", "/api/bulletins", nil), routed(app))
@@ -118,7 +118,7 @@ func TestTheBulletinControls(t *testing.T) {
 	if len(rows) != 1 || rows[0]["latest"] != "Fed holds rates" || rows[0]["followers"] != "Helper" {
 		t.Errorf("the table row should show the post and its follower: %+v", rows)
 	}
-	if w := do(req("DELETE", "/api/bulletins/news", nil), app.handleBulletinOne); w.Code != http.StatusNoContent {
+	if w := do(req("DELETE", "/api/bulletins/news", nil), routed(app)); w.Code != http.StatusNoContent {
 		t.Fatalf("delete: %d", w.Code)
 	}
 	if a, _ := loadAgent(udb, helper.ID); containsString(a.Bulletins, "news") {
@@ -317,7 +317,7 @@ func TestTheOwnerClearsABoard(t *testing.T) {
 	saveBulletin(udb, bulletinBoard{Name: "radar"})
 	postBulletin(udb, "radar", "Fog until noon", "you")
 	w := httptest.NewRecorder()
-	app.handleBulletinOne(w, req("POST", "/api/bulletins/radar/clear", nil))
+	routed(app)(w, req("POST", "/api/bulletins/radar/clear", nil))
 	if w.Code != 200 {
 		t.Fatalf("clear: %d %s", w.Code, w.Body)
 	}
@@ -325,7 +325,7 @@ func TestTheOwnerClearsABoard(t *testing.T) {
 		t.Errorf("the owner's Clear should empty the board: %+v", b)
 	}
 	w = httptest.NewRecorder()
-	app.handleBulletinOne(w, req("GET", "/api/bulletins/radar/clear", nil))
+	routed(app)(w, req("GET", "/api/bulletins/radar/clear", nil))
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Errorf("clear is a POST, got %d", w.Code)
 	}

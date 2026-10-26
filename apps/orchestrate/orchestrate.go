@@ -716,7 +716,7 @@ func (T *OrchestrateApp) registerHandlers() {
 	T.HandleFunc("/api/agents/propose", jsonapi.Post(T.DB, T.handleAgentPropose, jsonapi.EmptyBodyOK))
 	// Per-user Default agent preference (surfaced on /account via the
 	// account-section registry — account_prefs.go).
-	T.HandleFunc("/api/ask-owner", T.handleAskOwner)
+	T.HandleFunc("/api/ask-owner", T.askOwnerByID())
 	T.HandleFunc("/api/default-agent", jsonapi.Methods{
 		"GET":  jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) { return T.handleDefaultAgentPref(c, nil) }),
 		"POST": jsonapi.Post(T.DB, T.handleDefaultAgentPref, jsonapi.EmptyBodyOK),
@@ -766,7 +766,7 @@ func (T *OrchestrateApp) registerHandlers() {
 		"GET":  jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) { return T.handleBulletins(c, nil) }),
 		"POST": jsonapi.Post(T.DB, T.handleBulletins, jsonapi.EmptyBodyOK, jsonapi.MaxBody(1<<16)),
 	}.Serve)
-	T.HandleFunc("/api/bulletins/", T.handleBulletinOne)
+	T.registerBulletinRoutes()
 	T.HandleFunc("/api/machines", jsonapi.Methods{
 		"GET":  jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) { return T.handleMachines(c, nil) }),
 		"POST": jsonapi.Post(T.DB, T.handleMachines, jsonapi.EmptyBodyOK),
@@ -798,10 +798,6 @@ func (T *OrchestrateApp) registerHandlers() {
 	// match and never reaches handleSessionOne as a session id.
 	T.HandleFunc("/api/sessions/start", jsonapi.Post(T.DB, T.handleSessionStart, jsonapi.EmptyBodyOK))
 	T.HandleFunc("/api/sessions/", T.handleSessionOne)
-	// Staged improvement-brief retrieval for the "Send to Builder"
-	// handoff (see send_to_builder.go). The brief is created by the
-	// /api/sessions/{sid}/send-to-builder sub-action and consumed here.
-	T.HandleFunc("/api/builder-brief/", T.handleBuilderBrief)
 	// Live options for an intake form's select (IntakeField.OptionsFrom).
 	T.HandleFunc("/api/intake/options", jsonapi.Get(T.DB, T.handleIntakeOptions))
 	T.HandleFunc("/api/send", T.handleSendRouter)

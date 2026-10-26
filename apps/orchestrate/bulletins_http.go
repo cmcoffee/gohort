@@ -14,7 +14,6 @@ package orchestrate
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -124,161 +123,178 @@ func (T *OrchestrateApp) handleBulletins(c *jsonapi.Call, raw json.RawMessage) (
 	}
 }
 
-func (T *OrchestrateApp) handleBulletinOne(w http.ResponseWriter, r *http.Request) {
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
+func (T *OrchestrateApp) registerBulletinRoutes() {
+	T.HandleFunc("/api/bulletins/{name}", jsonapi.Methods{
+		"GET":    jsonapi.Get(T.DB, T.bulletinGet),
+		"POST":   jsonapi.Post(T.DB, T.bulletinSave, jsonapi.MaxBody(1<<16)),
+		"PUT":    jsonapi.Put(T.DB, T.bulletinSave, jsonapi.MaxBody(1<<16)),
+		"DELETE": jsonapi.Delete(T.DB, T.bulletinDelete),
+	}.Serve)
+	T.HandleFunc("/api/bulletins/{name}/post", jsonapi.Post(T.DB, T.bulletinPost, jsonapi.MaxBody(1<<16)))
+	T.HandleFunc("/api/bulletins/{name}/clear", jsonapi.Post(T.DB, T.bulletinClear))
+	for _, side := range []string{"followers", "posters"} {
+		followers := side == "followers"
+		T.HandleFunc("/api/bulletins/{name}/"+side, jsonapi.Methods{
+			"GET": jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) { return T.bulletinPills(c, followers) }),
+			"POST": jsonapi.Post(T.DB, func(c *jsonapi.Call, one bulletinPill) (any, error) {
+				return T.bulletinPillSave(c, followers, one)
+			}, jsonapi.MaxBody(1<<16)),
+		}.Serve)
 	}
-	rest := strings.TrimPrefix(r.URL.Path, "/api/bulletins/")
-	name, action, _ := strings.Cut(rest, "/")
-	b, found := loadBulletin(udb, name)
+}
+
+// bulletinAt is the caller's board the path names.
+func bulletinAt(c *jsonapi.Call) (bulletinBoard, error) {
+	b, found := loadBulletin(c.UDB, c.R.PathValue("name"))
 	if !found {
-		http.NotFound(w, r)
-		return
+		return bulletinBoard{}, errNotFound
 	}
-	switch action {
-	case "":
-		T.bulletinRecord(w, r, udb, user, b)
-	case "post":
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		var body struct {
-			Text string `json:"text"`
-		}
-		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		if _, err := postBulletin(udb, b.Name, body.Text, "you"); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		jsonapi.Write(w, map[string]any{"name": b.Name})
-	case "clear":
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		if _, err := clearBulletin(udb, b.Name, "you"); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		Log("[orchestrate.bulletins] user=%q cleared board %q", user, b.Name)
-		jsonapi.Write(w, map[string]any{"name": b.Name})
-	case "followers", "posters":
-		T.bulletinPills(w, r, udb, user, b, action == "followers")
-	default:
-		http.NotFound(w, r)
-	}
+	return b, nil
 }
 
-// bulletinRecord reads, edits or deletes one board.
-func (T *OrchestrateApp) bulletinRecord(w http.ResponseWriter, r *http.Request, udb Database, user string, b bulletinBoard) {
-	switch r.Method {
-	case http.MethodGet:
-		jsonapi.Write(w, map[string]any{"name": b.Name, "desc": b.Desc, "ttl_hours": b.TTLHours, "text": b.Text})
-	case http.MethodPost, http.MethodPut:
-		var body struct {
-			Desc     *string `json:"desc"`
-			TTLHours *int    `json:"ttl_hours"`
-		}
-		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		if body.Desc != nil {
-			b.Desc = strings.TrimSpace(*body.Desc)
-		}
-		if body.TTLHours != nil {
-			b.TTLHours = *body.TTLHours
-		}
-		if err := saveBulletin(udb, b); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		jsonapi.Write(w, map[string]any{"name": b.Name})
-	case http.MethodDelete:
-		// Unfollowed everywhere as it goes, so no agent keeps a name that
-		// points at nothing.
-		for _, a := range bulletinTargets(udb, user) {
-			if !containsString(a.Bulletins, b.Name) {
-				continue
-			}
-			a.Bulletins = removeString(a.Bulletins, b.Name)
-			_, _ = saveAgent(udb, a)
-		}
-		deleteBulletin(udb, b.Name)
-		Log("[orchestrate.bulletins] user=%q deleted board %q", user, b.Name)
-		w.WriteHeader(http.StatusNoContent)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+// bulletinPost writes a post, as the owner.
+func (T *OrchestrateApp) bulletinPost(c *jsonapi.Call, body struct {
+	Text string `json:"text"`
+}) (any, error) {
+	b, err := bulletinAt(c)
+	if err != nil {
+		return nil, err
 	}
+	if _, err := postBulletin(c.UDB, b.Name, body.Text, "you"); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	return map[string]any{"name": b.Name}, nil
 }
 
-// bulletinPills serves and applies the follower or poster pills: the shape
+// bulletinClear empties the board, as the owner.
+func (T *OrchestrateApp) bulletinClear(c *jsonapi.Call, _ struct{}) (any, error) {
+	b, err := bulletinAt(c)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := clearBulletin(c.UDB, b.Name, "you"); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	Log("[orchestrate.bulletins] user=%q cleared board %q", c.User, b.Name)
+	return map[string]any{"name": b.Name}, nil
+}
+
+// bulletinGet reads one board, for its Edit form.
+func (T *OrchestrateApp) bulletinGet(c *jsonapi.Call) (any, error) {
+	b, err := bulletinAt(c)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"name": b.Name, "desc": b.Desc, "ttl_hours": b.TTLHours, "text": b.Text}, nil
+}
+
+// bulletinSave edits the board's description and how long a post stays fresh.
+func (T *OrchestrateApp) bulletinSave(c *jsonapi.Call, body struct {
+	Desc     *string `json:"desc"`
+	TTLHours *int    `json:"ttl_hours"`
+}) (any, error) {
+	b, err := bulletinAt(c)
+	if err != nil {
+		return nil, err
+	}
+	if body.Desc != nil {
+		b.Desc = strings.TrimSpace(*body.Desc)
+	}
+	if body.TTLHours != nil {
+		b.TTLHours = *body.TTLHours
+	}
+	if err := saveBulletin(c.UDB, b); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	return map[string]any{"name": b.Name}, nil
+}
+
+// bulletinDelete deletes the board, unfollowed everywhere as it goes, so no
+// agent keeps a name that points at nothing.
+func (T *OrchestrateApp) bulletinDelete(c *jsonapi.Call, _ struct{}) (any, error) {
+	b, err := bulletinAt(c)
+	if err != nil {
+		return nil, err
+	}
+	for _, a := range bulletinTargets(c.UDB, c.User) {
+		if !containsString(a.Bulletins, b.Name) {
+			continue
+		}
+		a.Bulletins = removeString(a.Bulletins, b.Name)
+		_, _ = saveAgent(c.UDB, a)
+	}
+	deleteBulletin(c.UDB, b.Name)
+	Log("[orchestrate.bulletins] user=%q deleted board %q", c.User, b.Name)
+	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// bulletinPills serves the follower or poster pills: the shape
 // uiRenderScopePills takes. Followers have a primary "All agents" pill.
-func (T *OrchestrateApp) bulletinPills(w http.ResponseWriter, r *http.Request, udb Database, user string, b bulletinBoard, followers bool) {
-	switch r.Method {
-	case http.MethodGet:
-		items := []map[string]any{}
-		for _, a := range bulletinTargets(udb, user) {
-			on := b.canPost(a.ID)
-			if followers {
-				on = containsString(a.Bulletins, b.Name)
-			}
-			items = append(items, map[string]any{"key": a.ID, "label": chFirst(a.Name, a.ID), "on": on})
-		}
-		out := map[string]any{"items": items}
-		if followers {
-			out["primary"] = map[string]any{"label": "All agents", "on": b.AllAgents}
-			out["note"] = "An agent that follows this board sees its latest post on every turn it takes. All agents covers every agent, including ones you make later."
-		} else {
-			out["note"] = "Agents allowed to post here get a bulletin_board tool naming this board, which posts and clears. Anyone may read a board they follow; only these may write to it."
-		}
-		jsonapi.Write(w, out)
-	case http.MethodPost:
-		var one struct {
-			Target string `json:"target"`
-			On     bool   `json:"on"`
-		}
-		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&one); err != nil || strings.TrimSpace(one.Target) == "" {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		if followers && one.Target == "__primary__" {
-			b.AllAgents = one.On
-			_ = saveBulletin(udb, b)
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		ag, ok := loadAgent(udb, strings.TrimSpace(one.Target))
-		if !ok || (ag.Owner != user && !isSeedID(ag.ID)) {
-			http.Error(w, "no such agent", http.StatusNotFound)
-			return
-		}
-		if followers {
-			ag.Bulletins = removeString(ag.Bulletins, b.Name)
-			if one.On {
-				ag.Bulletins = append(ag.Bulletins, b.Name)
-			}
-			ag.Owner = user
-			if _, err := saveAgent(udb, ag); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-		} else {
-			b.Posters = removeString(b.Posters, ag.ID)
-			if one.On {
-				b.Posters = append(b.Posters, ag.ID)
-			}
-			_ = saveBulletin(udb, b)
-		}
-		Log("[orchestrate.bulletins] user=%q board %q: %s %s %q", user, b.Name,
-			chIf(followers, "follower", "poster"), chIf(one.On, "added", "removed"), chFirst(ag.Name, ag.ID))
-		w.WriteHeader(http.StatusNoContent)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+func (T *OrchestrateApp) bulletinPills(c *jsonapi.Call, followers bool) (any, error) {
+	b, err := bulletinAt(c)
+	if err != nil {
+		return nil, err
 	}
+	items := []map[string]any{}
+	for _, a := range bulletinTargets(c.UDB, c.User) {
+		on := b.canPost(a.ID)
+		if followers {
+			on = containsString(a.Bulletins, b.Name)
+		}
+		items = append(items, map[string]any{"key": a.ID, "label": chFirst(a.Name, a.ID), "on": on})
+	}
+	out := map[string]any{"items": items}
+	if followers {
+		out["primary"] = map[string]any{"label": "All agents", "on": b.AllAgents}
+		out["note"] = "An agent that follows this board sees its latest post on every turn it takes. All agents covers every agent, including ones you make later."
+	} else {
+		out["note"] = "Agents allowed to post here get a bulletin_board tool naming this board, which posts and clears. Anyone may read a board they follow; only these may write to it."
+	}
+	return out, nil
+}
+
+// bulletinPill is one pill's switch: an agent, on or off.
+type bulletinPill struct {
+	Target string `json:"target"`
+	On     bool   `json:"on"`
+}
+
+// bulletinPillSave adds or removes one follower or poster.
+func (T *OrchestrateApp) bulletinPillSave(c *jsonapi.Call, followers bool, one bulletinPill) (any, error) {
+	b, err := bulletinAt(c)
+	if err != nil {
+		return nil, err
+	}
+	user, udb := c.User, c.UDB
+	if strings.TrimSpace(one.Target) == "" {
+		return nil, jsonapi.BadRequest("bad request")
+	}
+	if followers && one.Target == "__primary__" {
+		b.AllAgents = one.On
+		_ = saveBulletin(udb, b)
+		return jsonapi.Empty(http.StatusNoContent), nil
+	}
+	ag, ok := loadAgent(udb, strings.TrimSpace(one.Target))
+	if !ok || (ag.Owner != user && !isSeedID(ag.ID)) {
+		return nil, jsonapi.NotFound("no such agent")
+	}
+	if followers {
+		ag.Bulletins = removeString(ag.Bulletins, b.Name)
+		if one.On {
+			ag.Bulletins = append(ag.Bulletins, b.Name)
+		}
+		ag.Owner = user
+		if _, err := saveAgent(udb, ag); err != nil {
+			return nil, err
+		}
+	} else {
+		b.Posters = removeString(b.Posters, ag.ID)
+		if one.On {
+			b.Posters = append(b.Posters, ag.ID)
+		}
+		_ = saveBulletin(udb, b)
+	}
+	Log("[orchestrate.bulletins] user=%q board %q: %s %s %q", user, b.Name,
+		chIf(followers, "follower", "poster"), chIf(one.On, "added", "removed"), chFirst(ag.Name, ag.ID))
+	return jsonapi.Empty(http.StatusNoContent), nil
 }

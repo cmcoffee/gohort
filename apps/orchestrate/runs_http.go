@@ -131,39 +131,24 @@ func (T *OrchestrateApp) handleRunsStream(w http.ResponseWriter, r *http.Request
 	}
 }
 
-// handleRunsCancel triggers Run.Cancel for the given run ID. Mirrors
+// runsCancel triggers Run.Cancel for the given run ID. Mirrors
 // /api/cancel (which is keyed by session ID) but takes a run ID,
 // so a subscriber tailing a run can cancel it directly without
 // needing to know which session it belongs to.
-func (T *OrchestrateApp) handleRunsCancel(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	runID := extractRunID(r.URL.Path, "/cancel")
+func (T *OrchestrateApp) runsCancel(c *jsonapi.Call, _ struct{}) (any, error) {
+	runID := extractRunID(c.R.URL.Path, "/cancel")
 	if runID == "" {
-		http.Error(w, "run id required", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("run id required")
 	}
 	run := T.runsRegistry().Get(runID)
-	if run == nil {
-		http.Error(w, "run not found", http.StatusNotFound)
-		return
-	}
-	if run.UserID != user {
-		http.Error(w, "run not found", http.StatusNotFound)
-		return
+	if run == nil || run.UserID != c.User {
+		return nil, jsonapi.NotFound("run not found")
 	}
 	// Honest about the runs that cannot be stopped — see the console handler.
 	if !run.Cancel() {
-		http.Error(w, "this run cannot be cancelled: it is not running under a stoppable context", http.StatusConflict)
-		return
+		return nil, jsonapi.Status(http.StatusConflict, "this run cannot be cancelled: it is not running under a stoppable context")
 	}
-	w.WriteHeader(http.StatusOK)
+	return jsonapi.Empty(http.StatusOK), nil
 }
 
 // handleRunsDispatch routes /api/runs/<id>/<verb> to the right
@@ -174,7 +159,7 @@ func (T *OrchestrateApp) handleRunsDispatch(w http.ResponseWriter, r *http.Reque
 	case strings.HasSuffix(r.URL.Path, "/stream"):
 		T.handleRunsStream(w, r)
 	case strings.HasSuffix(r.URL.Path, "/cancel"):
-		T.handleRunsCancel(w, r)
+		jsonapi.Post(T.DB, T.runsCancel)(w, r)
 	default:
 		http.NotFound(w, r)
 	}

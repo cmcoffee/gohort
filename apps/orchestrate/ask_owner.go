@@ -20,7 +20,6 @@ package orchestrate
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -142,73 +141,60 @@ func askOwnerNote(asker, owner, agentID string) {
 	orchestrateBaseDB.Set(askOwnerTable, key, append(kept, time.Now()))
 }
 
-// handleAskOwner is the button's half of the same request the tool files.
+// askOwnerByID is the button's half of the same request the tool files.
 //
 // Two doors, one function: the model reaches for the tool when it hits a wall,
 // and a user who has already decided to ask presses a button rather than
 // phrasing a sentence that makes a model choose a tool. Both land in
 // askOwnerFor, so the cap, the wording and the fold cannot come apart.
-func (T *OrchestrateApp) handleAskOwner(w http.ResponseWriter, r *http.Request) {
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	id := strings.TrimSpace(r.URL.Query().Get("agent_id"))
-	if id == "" {
-		http.Error(w, "agent_id is required", http.StatusBadRequest)
-		return
-	}
-	// Resolved the way a run resolves it, so the button reaches exactly the
-	// agents this user may actually open — their own (where there is nobody to
-	// ask) and the ones shared with them.
-	a, found := findAgentByNameOrID(udb, user, id)
-	if !found {
-		http.NotFound(w, r)
-		return
-	}
-	T.askOwnerRequest(w, r, user, a)
+func (T *OrchestrateApp) askOwnerByID() http.HandlerFunc {
+	return T.askOwnerRoute(func(c *jsonapi.Call) (AgentRecord, error) {
+		id := strings.TrimSpace(c.R.URL.Query().Get("agent_id"))
+		if id == "" {
+			return AgentRecord{}, jsonapi.BadRequest("agent_id is required")
+		}
+		// Resolved the way a run resolves it, so the button reaches exactly the
+		// agents this user may actually open — their own (where there is nobody to
+		// ask) and the ones shared with them.
+		a, found := findAgentByNameOrID(c.UDB, c.User, id)
+		if !found {
+			return AgentRecord{}, errNotFound
+		}
+		return a, nil
+	})
 }
 
-// askOwnerRequest is the body both doors share, once the agent is resolved.
-func (T *OrchestrateApp) askOwnerRequest(w http.ResponseWriter, r *http.Request, user string, a AgentRecord) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	var body struct {
+// askOwnerRoute is the route both doors share, given how to find the agent.
+func (T *OrchestrateApp) askOwnerRoute(agent func(c *jsonapi.Call) (AgentRecord, error)) http.HandlerFunc {
+	return jsonapi.Post(T.DB, func(c *jsonapi.Call, body struct {
 		Request string `json:"request"`
 		// Session, when the ask is about a particular turn: the mark on a
 		// stopped turn sends it, so the owner reads what was actually asked
 		// and what came back instead of a description of it. Optional, and
 		// the plain ask carries none.
 		Session string `json:"session"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-	if strings.TrimSpace(body.Request) == "" && strings.TrimSpace(body.Session) == "" {
-		http.Error(w, "say what you need", http.StatusBadRequest)
-		return
-	}
-	request := body.Request
-	if sid := strings.TrimSpace(body.Session); sid != "" {
-		// Everything about the rule comes from the OWNER's block log, so the
-		// report cannot be forged by whoever sends it, and the recipient's own
-		// conversation is not shipped anywhere. See blockedTurnReport.
-		blocks := blocksForTurn(UserDB(T.DB, a.Owner), a.ID, sid, 3)
-		request = blockedTurnReport(body.Request, chFirst(a.Name, a.ID), blocks)
-	}
-	out, err := askOwnerFor(user, a.Owner, a.ID, chFirst(a.Name, a.ID), request)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	jsonapi.Write(w, map[string]string{"result": out})
+	}) (any, error) {
+		a, err := agent(c)
+		if err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(body.Request) == "" && strings.TrimSpace(body.Session) == "" {
+			return nil, jsonapi.BadRequest("say what you need")
+		}
+		request := body.Request
+		if sid := strings.TrimSpace(body.Session); sid != "" {
+			// Everything about the rule comes from the OWNER's block log, so the
+			// report cannot be forged by whoever sends it, and the recipient's own
+			// conversation is not shipped anywhere. See blockedTurnReport.
+			blocks := blocksForTurn(UserDB(T.DB, a.Owner), a.ID, sid, 3)
+			request = blockedTurnReport(body.Request, chFirst(a.Name, a.ID), blocks)
+		}
+		out, err := askOwnerFor(c.User, a.Owner, a.ID, chFirst(a.Name, a.ID), request)
+		if err != nil {
+			return nil, jsonapi.BadRequest(err.Error())
+		}
+		return map[string]string{"result": out}, nil
+	})
 }
 
 // hasSomeoneElsesAgent reports whether this user's picker can land on an agent
@@ -242,11 +228,7 @@ func hasSomeoneElsesAgent(agents []AgentRecord, user string) bool {
 // a question already settled. This is also the surface where the ask MATTERS —
 // a recipient of a shared agent lives here, not in the workbench.
 func (T *OrchestrateApp) PublicHandleAskOwner(w http.ResponseWriter, r *http.Request, agent AgentRecord) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	T.askOwnerRequest(w, r, user, agent)
+	T.askOwnerRoute(func(*jsonapi.Call) (AgentRecord, error) { return agent, nil })(w, r)
 }
 
 // OwnerLabel is how to refer to an agent's owner in front of somebody running

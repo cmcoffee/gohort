@@ -19,8 +19,9 @@
 //
 //	POST /api/sessions/{sid}/send-to-builder?agent_id=<id>
 //	     — stage the brief; returns {brief_id, builder_agent_id}.
-//	GET  /api/builder-brief/{id}
-//	     — fetch the staged brief text (one-shot: consumed on read).
+//
+// The chat page reads the staged brief by ?builder_brief=<id> and consumes
+// it (page_chat.go), so nothing fetches it over HTTP.
 //
 // The brief is staged server-side (not passed through the URL) because
 // the transcript is too large for a query param and lives in the DB
@@ -100,29 +101,6 @@ func (T *OrchestrateApp) handleSendToBuilder(w http.ResponseWriter, r *http.Requ
 		"brief_id":         brief.ID,
 		"builder_agent_id": "seed-builder",
 	})
-}
-
-// handleBuilderBrief serves GET /api/builder-brief/{id}. Returns the
-// staged brief text and deletes the row (one-shot) so the transcript
-// isn't left lying around after Builder's surface consumes it.
-func (T *OrchestrateApp) handleBuilderBrief(w http.ResponseWriter, r *http.Request) {
-	_, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	id := strings.TrimPrefix(r.URL.Path, "/api/builder-brief/")
-	if id == "" || strings.Contains(id, "/") {
-		http.NotFound(w, r)
-		return
-	}
-	var brief builderBriefRecord
-	if !udb.Get(builderBriefTable, id, &brief) {
-		http.NotFound(w, r)
-		return
-	}
-	udb.Unset(builderBriefTable, id)
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{"text": brief.Text})
 }
 
 // maxBriefTranscript caps the transcript portion of a brief. Corrections
