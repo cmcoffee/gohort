@@ -1,0 +1,185 @@
+(signed out) GET /api/routing ""
+  403 forbidden
+alice GET /api/routing ""
+  403 forbidden
+root GET /api/routing ""
+  200 [{"key":"zz_contract.open","label":"Open stage","value":"worker","default":"worker","think_budget":0,"default_budget":0,"group":"Zz_contract","private":false},{"key":"zz_contract.private","label":"Private stage","value":"worker","default":"worker","think_budget":0,"default_budget":0,"group":"Zz_contract","private":true}]
+root PUT /api/routing "{}"
+  405 method not allowed
+(signed out) GET /api/routing?app=/zz_contract ""
+  403 forbidden
+alice GET /api/routing?app=/zz_contract ""
+  403 forbidden
+root GET /api/routing?app=/zz_contract ""
+  200 [{"key":"zz_contract.open","label":"Open stage","value":"worker","default":"worker","think_budget":0,"default_budget":0,"group":"Zz_contract","private":false},{"key":"zz_contract.private","label":"Private stage","value":"worker","default":"worker","think_budget":0,"default_budget":0,"group":"Zz_contract","private":true}]
+root PUT /api/routing?app=/zz_contract "{}"
+  405 method not allowed
+(signed out) GET /api/llm-privacy ""
+  403 forbidden
+alice GET /api/llm-privacy ""
+  403 forbidden
+root GET /api/llm-privacy ""
+  200 {"advice":"Worker: (unset) - private (local by default (no endpoint configured))\nLead: (unset) - private (not configured: lead stages run on the worker model)\n\nBoth tiers look local, so turning this on is consistent with how the deployment is configured.","all_private":false,"recommended":true}
+root PUT /api/llm-privacy "{}"
+  405 method not allowed
+(signed out) GET /api/worker-thinking ""
+  403 forbidden
+alice GET /api/worker-thinking ""
+  403 forbidden
+root GET /api/worker-thinking ""
+  200 {"budget":0,"enabled":true}
+root PUT /api/worker-thinking "{}"
+  405 method not allowed
+(signed out) GET /api/worker-llm ""
+  403 forbidden
+alice GET /api/worker-llm ""
+  403 forbidden
+root GET /api/worker-llm ""
+  200 {"_live":"","api_key":"","aws_profile":"","aws_region":"","bedrock_api":"converse","context_size":0,"default_effort":"","disable_thinking":false,"endpoint":"","max_effort":"","model":"","native_tools"… (426 bytes, sha1 8e521e8af2279910f0fb711eff84aaed33a0da2b)
+root PUT /api/worker-llm "{}"
+  405 method not allowed
+(signed out) GET /api/lead-llm ""
+  403 forbidden
+alice GET /api/lead-llm ""
+  403 forbidden
+root GET /api/lead-llm ""
+  200 {"_live":"No lead model is loaded; escalations run on the worker.","api_key":"","aws_profile":"","aws_region":"","bedrock_api":"converse","context_size":0,"default_effort":"","disable_thinking":false,… (453 bytes, sha1 d222e445dbebc603c66a265094c128e0cb6a2a0a)
+root PUT /api/lead-llm "{}"
+  405 method not allowed
+(signed out) GET /api/local-scheduler ""
+  403 forbidden
+alice GET /api/local-scheduler ""
+  403 forbidden
+root GET /api/local-scheduler ""
+  200 {"background_yield":"","image_render_yield":"","llamacpp_max_parallel":1,"ollama_max_parallel":1}
+root PUT /api/local-scheduler "{}"
+  405 method not allowed
+alice POST /api/worker-llm/models "{\"provider\":\"ollama\"}"
+  403 forbidden
+root GET /api/worker-llm/models ""
+  405 method not allowed
+root POST /api/worker-llm/models "{}"
+  200 {"error":"Pick a provider first."}
+root POST /api/worker-llm/models "{\"provider\":\"ollama\",\"endpoint\":\"<stub>\",\"model\":\"qwen3:8b\"}"
+  200 {"note":"What ollama offers. Pick one, or type any id in the field.","suggestions":["llama3.2","qwen3:8b"]}
+root POST /api/worker-llm/models "{\"provider\":\"ollama\",\"endpoint\":\"<stub>\",\"model\":\"mistral\"}"
+  200 {"note":"What ollama offers. Pick one, or type any id in the field. The current value, mistral, is not in this list.","suggestions":["llama3.2","qwen3:8b"]}
+root POST /api/worker-llm/models "{\"provider\":\"ollama\",\"endpoint\":\"http://127.0.0.1:1\"}"
+  200 {"error":"Could not list the models: could not reach 127.0.0.1:1: Get \"http://127.0.0.1:1/api/tags\": dial tcp 127.0.0.1:1: connect: connection refused"}
+root POST /api/worker-llm/models "{\"provider\":"
+  400 invalid JSON: unexpected EOF
+alice POST /api/lead-llm/models "{\"provider\":\"ollama\"}"
+  403 forbidden
+root GET /api/lead-llm/models ""
+  405 method not allowed
+root POST /api/lead-llm/models "{}"
+  200 {"error":"Pick a provider first."}
+root POST /api/lead-llm/models "{\"provider\":\"ollama\",\"endpoint\":\"<stub>\",\"model\":\"qwen3:8b\"}"
+  200 {"note":"What ollama offers. Pick one, or type any id in the field.","suggestions":["llama3.2","qwen3:8b"]}
+root POST /api/lead-llm/models "{\"provider\":\"ollama\",\"endpoint\":\"<stub>\",\"model\":\"mistral\"}"
+  200 {"note":"What ollama offers. Pick one, or type any id in the field. The current value, mistral, is not in this list.","suggestions":["llama3.2","qwen3:8b"]}
+root POST /api/lead-llm/models "{\"provider\":\"ollama\",\"endpoint\":\"http://127.0.0.1:1\"}"
+  200 {"error":"Could not list the models: could not reach 127.0.0.1:1: Get \"http://127.0.0.1:1/api/tags\": dial tcp 127.0.0.1:1: connect: connection refused"}
+root POST /api/lead-llm/models "{\"provider\":"
+  400 invalid JSON: unexpected EOF
+alice POST /api/routing "{\"key\":\"zz_contract.open\",\"value\":\"lead\"}"
+  403 forbidden
+root POST /api/routing "{\"key\":\"zz_contract.open\",\"value\":\"lead\"}"
+  204 
+root POST /api/routing "{\"key\":\"zz_contract.open\",\"think_budget\":2048}"
+  204 
+root POST /api/routing "{\"key\":\"zz_contract.open\",\"value\":\"sideways\"}"
+  400 invalid value
+root POST /api/routing "{\"key\":\"zz_contract.open\",\"think_budget\":70000}"
+  400 think_budget must be between 0 and 65536
+root POST /api/routing "{\"key\":\"zz_contract.open\"}"
+  400 key and a value or think_budget are required
+root POST /api/routing "{\"key\":\" \",\"value\":\"worker\"}"
+  400 key and a value or think_budget are required
+root POST /api/routing "{\"key\":\"zz_contract.private\",\"value\":\"lead (thinking)\"}"
+  403 private stage: cannot route to lead
+root POST /api/routing "{\"key\":\"zz_contract.private\",\"value\":\"worker (thinking)\",\"think_budget\":512}"
+  204 
+root POST /api/routing "{\"key\":"
+  400 invalid JSON: unexpected EOF
+root POST /api/routing ""
+  400 invalid JSON: EOF
+root GET /api/routing?app=/zz_contract ""
+  200 [{"key":"zz_contract.open","label":"Open stage","value":"lead","default":"worker","think_budget":2048,"default_budget":0,"group":"Zz_contract","private":false},{"key":"zz_contract.private","label":"Private stage","value":"worker (thinking)","default":"worker","think_budget":512,"default_budget":0,"group":"Zz_contract","private":true}]
+alice POST /api/llm-privacy "{\"all_private\":true}"
+  403 forbidden
+root POST /api/llm-privacy "{\"all_private\":true}"
+  204 
+root GET /api/llm-privacy ""
+  200 {"advice":"Worker: (unset) - private (local by default (no endpoint configured))\nLead: (unset) - private (not configured: lead stages run on the worker model)\n\nBoth tiers look local, so turning this on is consistent with how the deployment is configured.","all_private":true,"recommended":true}
+root POST /api/routing "{\"key\":\"zz_contract.private\",\"value\":\"lead\"}"
+  204 
+root GET /api/routing?app=/zz_contract ""
+  200 [{"key":"zz_contract.open","label":"Open stage","value":"lead","default":"worker","think_budget":2048,"default_budget":0,"group":"Zz_contract","private":false},{"key":"zz_contract.private","label":"Private stage","value":"lead","default":"worker","think_budget":512,"default_budget":0,"group":"Zz_contract","private":false}]
+root POST /api/llm-privacy "{\"all_private\":false}"
+  204 
+root POST /api/llm-privacy "{\"all_private\":"
+  400 invalid JSON: unexpected EOF
+root GET /api/routing?app=/zz_contract ""
+  200 [{"key":"zz_contract.open","label":"Open stage","value":"lead","default":"worker","think_budget":2048,"default_budget":0,"group":"Zz_contract","private":false},{"key":"zz_contract.private","label":"Private stage","value":"lead","default":"worker","think_budget":512,"default_budget":0,"group":"Zz_contract","private":true}]
+alice POST /api/worker-thinking "{\"enabled\":false}"
+  403 forbidden
+root POST /api/worker-thinking "{\"enabled\":false,\"budget\":1024}"
+  204 
+root GET /api/worker-thinking ""
+  200 {"budget":1024,"enabled":false}
+root POST /api/worker-thinking "{\"enabled\":true,\"budget\":0}"
+  204 
+root GET /api/worker-thinking ""
+  200 {"budget":0,"enabled":true}
+root POST /api/worker-thinking ""
+  400 invalid JSON: EOF
+alice POST /api/local-scheduler "{\"ollama_max_parallel\":4}"
+  403 forbidden
+root POST /api/local-scheduler "{\"ollama_max_parallel\":0,\"llamacpp_max_parallel\":4,\"background_yield\":\"sometimes\",\"image_render_yield\":\"maybe\"}"
+  204 
+root GET /api/local-scheduler ""
+  200 {"background_yield":"","image_render_yield":"","llamacpp_max_parallel":4,"ollama_max_parallel":1}
+root POST /api/local-scheduler "{\"ollama_max_parallel\":2,\"llamacpp_max_parallel\":1,\"background_yield\":\"never\",\"image_render_yield\":\"never\"}"
+  204 
+root GET /api/local-scheduler ""
+  200 {"background_yield":"never","image_render_yield":"never","llamacpp_max_parallel":1,"ollama_max_parallel":2}
+root POST /api/local-scheduler "{\"ollama_max_parallel\":"
+  400 invalid JSON: unexpected EOF
+alice POST /api/worker-llm "{\"provider\":\"ollama\",\"model\":\"qwen3:8b\"}"
+  403 forbidden
+root POST /api/worker-llm "{\"provider\":\" ollama \",\"model\":\" qwen3:8b \",\"endpoint\":\" <stub> \",\"api_key\":\"s3cr3t-llm-w\",\"context_size\":8192,\"request_timeout_seconds\":120,\"default_effort\":\" HIGH \",\"max_effort\":\"extreme\",\"thinking_budget\":2048}"
+  204 
+root GET /api/worker-llm ""
+  200 {"_live":"","api_key":"","aws_profile":"","aws_region":"","bedrock_api":"converse","context_size":8192,"default_effort":"high","disable_thinking":false,"endpoint":"<stub>","max_effort":"","model":"qwe… (457 bytes, sha1 eacf84cac3ec3628913e7500184c6acf2272bf68)
+root POST /api/worker-llm/models "{\"provider\":\"ollama\",\"endpoint\":\"<stub>\"}"
+  200 {"note":"What ollama offers. Pick one, or type any id in the field.","suggestions":["llama3.2","qwen3:8b"]}
+root POST /api/worker-llm "{\"provider\":\"ollama\",\"model\":\"qwen3:8b\",\"endpoint\":\"<stub>\"}"
+  204 
+root POST /api/worker-llm "{\"provider\":\"bedrock\",\"model\":\"anthropic.claude\u200b-v2\",\"aws_region\":\"us-east-1\"}"
+  400 a Bedrock model id or ARN is made of letters, digits and . - _ : / only, and this one has '\u200b' at position 16.
+root POST /api/worker-llm "{\"provider\":\"ollama\",\"model\":\"breaks\",\"endpoint\":\"<stub>\"}"
+  409 Saved, but NOT applied: the provider refused the config. Calls keep going to the previously loaded model until this is fixed and the settings are saved again.
+root POST /api/worker-llm "{\"provider\":"
+  400 invalid JSON: unexpected EOF
+root POST /api/worker-llm ""
+  400 invalid JSON: EOF
+root GET /api/worker-llm ""
+  200 {"_live":"","api_key":"","aws_profile":"","aws_region":"","bedrock_api":"converse","context_size":0,"default_effort":"","disable_thinking":false,"endpoint":"<stub>","max_effort":"","model":"breaks","n… (443 bytes, sha1 9f1f25f7757167584ab45fb4a63ae2caeb6b745f)
+root POST /api/worker-llm "{\"provider\":\"ollama\",\"model\":\"qwen3:8b\",\"endpoint\":\"<stub>\"}"
+  204 
+root GET /api/lead-llm ""
+  200 {"_live":"No lead model is loaded; escalations run on the worker.","api_key":"","aws_profile":"","aws_region":"","bedrock_api":"converse","context_size":0,"default_effort":"","disable_thinking":false,… (452 bytes, sha1 35563fcc0a0554e0c1af1666268c65f72b939b16)
+root POST /api/lead-llm "{\"provider\":\"bedrock\",\"model\":\"anthropic.claude-3-5-sonnet\",\"aws_region\":\"us-east-1\",\"bedrock_api\":\"converse\",\"api_key\":\"s3cr3t-llm-l\",\"no_images\":true}"
+  204 
+root GET /api/lead-llm ""
+  200 {"_live":"No lead model is loaded; escalations run on the worker.","api_key":"","aws_profile":"","aws_region":"us-east-1","bedrock_api":"converse","context_size":0,"default_effort":"","disable_thinkin… (494 bytes, sha1 8ec89959ee4499f4c34e48d6d5cfd204d6563d4a)
+root GET /api/llm-privacy ""
+  200 {"advice":"Worker: ollama at <stub> - private (loopback endpoint)\nLead: bedrock - NOT private (a hosted provider: prompts leave this deployment)\n\nAt least one tier reaches a third party. Turning this on anyway would send private-stage data: including SSH credentials and log contents, to it.","all_private":false,"recommended":false}
+activity log, 6 entries:
+  settings root: set all-LLMs-private=false: private stages may no longer escalate to the lead tier
+  settings root: set all-LLMs-private=true: private stages MAY now escalate to the lead tier
+  settings root: updated lead_llm_config (provider="bedrock" model="anthropic.claude-3-5-sonnet")
+  settings root: updated llm_config (provider=" ollama " model=" qwen3:8b ")
+  settings root: updated llm_config (provider="ollama" model="qwen3:8b")
+  settings root: updated llm_config (provider="ollama" model="qwen3:8b")

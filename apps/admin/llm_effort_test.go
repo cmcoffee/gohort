@@ -20,7 +20,7 @@ func TestLLMEffortSettingsSaveAndLoadPerTier(t *testing.T) {
 	post := func(table string, worker bool, body string) {
 		t.Helper()
 		w := httptest.NewRecorder()
-		a.handleLLMConfig(w, httptest.NewRequest("POST", "/api/llm", strings.NewReader(body)), table, worker)
+		a.llmConfigRoutes(table, worker)(w, httptest.NewRequest("POST", "/api/llm", strings.NewReader(body)))
 		if w.Code != 204 {
 			t.Fatalf("%s save: %d %s", table, w.Code, w.Body.String())
 		}
@@ -28,7 +28,7 @@ func TestLLMEffortSettingsSaveAndLoadPerTier(t *testing.T) {
 	get := func(table string, worker bool) map[string]any {
 		t.Helper()
 		w := httptest.NewRecorder()
-		a.handleLLMConfig(w, httptest.NewRequest("GET", "/api/llm", nil), table, worker)
+		a.llmConfigRoutes(table, worker)(w, httptest.NewRequest("GET", "/api/llm", nil))
 		var out map[string]any
 		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
 			t.Fatal(err)

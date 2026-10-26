@@ -27,12 +27,12 @@ func TestEachTierSaysWhetherItReadsImages(t *testing.T) {
 		{LeadLLMTable, false, `{"provider":"bedrock","no_images":true}`, true},
 	} {
 		w := httptest.NewRecorder()
-		a.handleLLMConfig(w, httptest.NewRequest("POST", "/api/llm", strings.NewReader(c.body)), c.table, c.worker)
+		a.llmConfigRoutes(c.table, c.worker)(w, httptest.NewRequest("POST", "/api/llm", strings.NewReader(c.body)))
 		if w.Code != 204 {
 			t.Fatalf("%s save: %d %s", c.table, w.Code, w.Body.String())
 		}
 		w = httptest.NewRecorder()
-		a.handleLLMConfig(w, httptest.NewRequest("GET", "/api/llm", nil), c.table, c.worker)
+		a.llmConfigRoutes(c.table, c.worker)(w, httptest.NewRequest("GET", "/api/llm", nil))
 		var out map[string]any
 		json.Unmarshal(w.Body.Bytes(), &out)
 		if out["no_images"] != c.want {
@@ -73,7 +73,7 @@ func TestANewLeadStartsWithoutImages(t *testing.T) {
 	a := &AdminApp{db: &DBase{Store: kvlite.MemStore()}}
 	leadNoImages := func() any {
 		w := httptest.NewRecorder()
-		a.handleLLMConfig(w, httptest.NewRequest("GET", "/api/llm", nil), LeadLLMTable, false)
+		a.llmConfigRoutes(LeadLLMTable, false)(w, httptest.NewRequest("GET", "/api/llm", nil))
 		var out map[string]any
 		json.Unmarshal(w.Body.Bytes(), &out)
 		return out["no_images"]
