@@ -147,17 +147,62 @@ func (T *OrchestrateApp) serveAppAgentSettings(w http.ResponseWriter, r *http.Re
 		http.NotFound(w, r)
 		return
 	}
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
+	switch sub {
+	case "settings":
+		T.signedIn(func(w http.ResponseWriter, r *http.Request, _ string, udb Database) {
+			T.appAgentSettingsPage(udb, agents, c.Back).ServeHTTP(w, r)
+		})(w, r)
+	case "settings/data":
+		save := func(c *jsonapi.Call, body map[string]json.RawMessage) (any, error) {
+			rec, err := settingsAgentAt(c, agents)
+			if err != nil {
+				return nil, err
+			}
+			if err := saveAppAgentSettings(c.UDB, c.User, rec, settableFields(T.appAgentSettingsFields(rec)), body); err != nil {
+				return nil, err
+			}
+			return map[string]any{"ok": true}, nil
+		}
+		jsonapi.Methods{
+			"GET": jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) {
+				rec, err := settingsAgentAt(c, agents)
+				if err != nil {
+					return nil, err
+				}
+				allowed := settableFields(T.appAgentSettingsFields(rec))
+				out := pickFields(rec, allowed)
+				view := withEditorChoices(RootDB, rec)
+				for _, k := range []string{"lead_use", "reasoning"} {
+					if allowed[k] {
+						out[k] = view[k]
+					}
+				}
+				return out, nil
+			}),
+			"PATCH": jsonapi.Patch(T.DB, save),
+			"POST":  jsonapi.Post(T.DB, save),
+		}.Serve(w, r)
+	case "settings/reset":
+		jsonapi.Post(T.DB, func(c *jsonapi.Call, _ struct{}) (any, error) {
+			rec, err := settingsAgentAt(c, agents)
+			if err != nil {
+				return nil, err
+			}
+			if err := resetAppAgent(c.UDB, rec.ID); err != nil {
+				return nil, jsonapi.BadRequest("Not reset: " + err.Error())
+			}
+			return map[string]any{"ok": true}, nil
+		})(w, r)
+	default:
+		http.NotFound(w, r)
 	}
-	if sub == "settings" {
-		page := T.appAgentSettingsPage(udb, agents, c.Back)
-		page.ServeHTTP(w, r)
-		return
-	}
-	// Which agent: one this page covers, the chat's own when unnamed.
-	id := strings.TrimSpace(r.URL.Query().Get("agent"))
+}
+
+// settingsAgentAt is the agent a settings call is about: ?agent= when it names
+// one the page covers, the chat's own when it names none, and nothing
+// otherwise.
+func settingsAgentAt(c *jsonapi.Call, agents []appagents.AppAgentSpec) (AgentRecord, error) {
+	id := strings.TrimSpace(c.R.URL.Query().Get("agent"))
 	if id == "" {
 		id = agents[0].ID
 	}
@@ -166,49 +211,13 @@ func (T *OrchestrateApp) serveAppAgentSettings(w http.ResponseWriter, r *http.Re
 		covered = covered || sp.ID == id
 	}
 	if !covered {
-		http.NotFound(w, r)
-		return
+		return AgentRecord{}, errNotFound
 	}
-	rec, ok := loadAgent(udb, id)
+	rec, ok := loadAgent(c.UDB, id)
 	if !ok {
-		http.NotFound(w, r)
-		return
+		return AgentRecord{}, errNotFound
 	}
-	switch sub {
-	case "settings/data":
-		allowed := settableFields(T.appAgentSettingsFields(rec))
-		switch r.Method {
-		case http.MethodGet:
-			out := pickFields(rec, allowed)
-			view := withEditorChoices(RootDB, rec)
-			for _, k := range []string{"lead_use", "reasoning"} {
-				if allowed[k] {
-					out[k] = view[k]
-				}
-			}
-			jsonapi.Write(w, out)
-		case http.MethodPatch, http.MethodPost:
-			if err := saveAppAgentSettings(udb, user, rec, allowed, r); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			jsonapi.Write(w, map[string]any{"ok": true})
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		}
-	case "settings/reset":
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		if err := resetAppAgent(udb, id); err != nil {
-			http.Error(w, "Not reset: "+err.Error(), http.StatusBadRequest)
-			return
-		}
-		jsonapi.Write(w, map[string]any{"ok": true})
-	default:
-		http.NotFound(w, r)
-	}
+	return rec, nil
 }
 
 // pickFields is rec as a JSON object holding only the allowed fields.
@@ -228,24 +237,22 @@ func pickFields(rec AgentRecord, allowed map[string]bool) map[string]json.RawMes
 // saveAppAgentSettings merges the allowed fields of the request body onto the
 // person's copy of the agent. A field outside allowed is refused rather than
 // dropped quietly: a request that names one is not one this page made.
-func saveAppAgentSettings(udb Database, user string, rec AgentRecord, allowed map[string]bool, r *http.Request) error {
-	var body map[string]json.RawMessage
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		return fmt.Errorf("bad request")
-	}
+func saveAppAgentSettings(udb Database, user string, rec AgentRecord, allowed map[string]bool, body map[string]json.RawMessage) error {
 	for k := range body {
 		if !allowed[k] {
-			return fmt.Errorf("%q is not an app agent setting", k)
+			return jsonapi.BadRequest(fmt.Sprintf("%q is not an app agent setting", k))
 		}
 	}
 	raw, _ := json.Marshal(body)
 	if err := json.Unmarshal(raw, &rec); err != nil {
-		return fmt.Errorf("bad value: %v", err)
+		return jsonapi.BadRequest(fmt.Sprintf("bad value: %v", err))
 	}
 	applyEditorChoices(RootDB, &rec, body)
 	rec.Owner = user
-	_, err := saveAgent(udb, rec)
-	return err
+	if _, err := saveAgent(udb, rec); err != nil {
+		return jsonapi.BadRequest(err.Error())
+	}
+	return nil
 }
 
 // resetAppAgent removes the person's copy of an app agent, so it reads as its

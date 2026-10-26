@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appagents"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -185,5 +186,50 @@ func TestTheAppChatEndpointsReachOnlyTheCallersOwn(t *testing.T) {
 	}
 	if w := do(mux, "alice", "POST", "/api/cancel?id=s1", ""); w.Code != http.StatusNoContent || ctx.Err() == nil {
 		t.Errorf("alice could not stop her own turn: %d", w.Code)
+	}
+}
+
+// An app agent's settings take their methods and no other: the data GET to
+// read, PATCH or POST to save, and reset POST. A caller who is not signed in
+// is refused, and a malformed save is refused rather than read as nothing.
+func TestAppAgentSettingsTakeTheirMethods(t *testing.T) {
+	appagents.RegisterAppAgent(appagents.AppAgentSpec{
+		ID: "app-test-methods", Name: "Methodical", OwningApp: "Zz Methods", Hidden: true, Prompt: "x",
+	})
+	T, udb, _ := newTestOrchestrate(t)
+	agent, _ := loadAgent(udb, "app-test-methods")
+	c := AppChat{Prefix: "chat/", Settings: true}
+	serve := func(signed bool, method, path, body string) int {
+		r := httptest.NewRequest(method, "/"+path, strings.NewReader(body))
+		if signed {
+			r = asUser(r, "alice")
+		}
+		w := httptest.NewRecorder()
+		if !T.ServeAppChat(w, r, AppAgentOf(agent), c, path, "") {
+			t.Fatalf("%s %s was not answered", method, path)
+		}
+		return w.Code
+	}
+	takes := map[string]string{"chat/settings/data": "GET PATCH POST", "chat/settings/reset": "POST"}
+	for path, methods := range takes {
+		for _, m := range []string{"GET", "POST", "PUT", "PATCH", "DELETE"} {
+			if !strings.Contains(" "+methods+" ", " "+m+" ") {
+				if code := serve(true, m, path, "{}"); code != http.StatusMethodNotAllowed {
+					t.Errorf("%s %s answered %d, want 405", m, path, code)
+				}
+				continue
+			}
+			if code := serve(false, m, path, "{}"); code != http.StatusUnauthorized {
+				t.Errorf("signed out, %s %s answered %d, want 401", m, path, code)
+			}
+		}
+	}
+	for _, m := range []string{"PATCH", "POST"} {
+		if code := serve(true, m, "chat/settings/data", "not json"); code != http.StatusBadRequest {
+			t.Errorf("a malformed %s save answered %d, want 400", m, code)
+		}
+	}
+	if code := serve(false, "GET", "chat/settings", ""); code != http.StatusUnauthorized {
+		t.Errorf("signed out, the settings page answered %d, want 401", code)
 	}
 }
