@@ -29,7 +29,7 @@ func TestOnlyAnAdminPointsASystemAtAPeer(t *testing.T) {
 	app.DB = &DBase{Store: kvlite.MemStore()}
 	post := func(user, remoteID string) *httptest.ResponseRecorder {
 		w := httptest.NewRecorder()
-		app.handleAppliances(w, reqAs(t, http.MethodPost, "/api/appliances", user,
+		routed(app)(w, reqAs(t, http.MethodPost, "/api/appliances", user,
 			`{"type":"remote","name":"web","peer_name":"den","remote_id":"`+remoteID+`"}`))
 		return w
 	}

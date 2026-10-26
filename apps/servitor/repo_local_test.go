@@ -143,7 +143,7 @@ func TestSavingALocalRepo(t *testing.T) {
 	dir := t.TempDir()
 	post := func(user, body string) *httptest.ResponseRecorder {
 		w := httptest.NewRecorder()
-		app.handleAppliances(w, reqAs(t, http.MethodPost, "/api/appliances", user, body))
+		routed(app)(w, reqAs(t, http.MethodPost, "/api/appliances", user, body))
 		return w
 	}
 	if w := post("alice", `{"type":"repo","repo_path":"`+dir+`"}`); w.Code != http.StatusForbidden {

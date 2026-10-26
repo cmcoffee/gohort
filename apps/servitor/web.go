@@ -211,7 +211,10 @@ func (T *Servitor) routes(sub *http.ServeMux) {
 	sub.HandleFunc("/api/chat/v2/events", T.handleChatEvents)
 	sub.HandleFunc("/api/chat/v2/confirm", jsonapi.Post(T.DB, T.handleChatConfirm, jsonapi.MaxBody(1<<16)))
 	sub.HandleFunc("/api/profile", jsonapi.Get(T.DB, T.handleProfile))
-	sub.HandleFunc("/api/appliances", T.handleAppliances)
+	sub.HandleFunc("/api/appliances", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, T.handleApplianceList),
+		"POST": jsonapi.Post(T.DB, T.handleApplianceSave),
+	}.Serve)
 	sub.HandleFunc("/api/appliances/", T.handleApplianceMemory) // /api/appliances/<id>/{facts,graph,inferred,...} — shared agent-memory surface
 	sub.HandleFunc("/api/appliance/", jsonapi.Methods{
 		"GET":    jsonapi.Get(T.DB, T.handleAppliance),

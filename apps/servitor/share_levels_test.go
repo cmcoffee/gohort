@@ -37,7 +37,7 @@ func TestASystemIsSharedToReadOrWithFullAccess(t *testing.T) {
 
 	// The owner saves levels: bob Full, carol Read.
 	w := httptest.NewRecorder()
-	app.handleAppliances(w, reqAs(t, http.MethodPost, "/api/appliances", "alice",
+	routed(app)(w, reqAs(t, http.MethodPost, "/api/appliances", "alice",
 		`{"id":"web01","type":"ssh","name":"web01","host":"web01.example.com","allowed_users":["bob","carol"],"full_access":["bob","dan"]}`))
 	if w.Code != http.StatusOK {
 		t.Fatalf("save answered %d: %s", w.Code, w.Body.String())
@@ -52,7 +52,7 @@ func TestASystemIsSharedToReadOrWithFullAccess(t *testing.T) {
 	}
 	// A save that sends no levels keeps them.
 	w = httptest.NewRecorder()
-	app.handleAppliances(w, reqAs(t, http.MethodPost, "/api/appliances", "alice",
+	routed(app)(w, reqAs(t, http.MethodPost, "/api/appliances", "alice",
 		`{"id":"web01","type":"ssh","name":"web01 renamed","host":"web01.example.com"}`))
 	json.Unmarshal(w.Body.Bytes(), &a)
 	if !a.LevelsSet || strings.Join(a.FullAccess, ",") != "bob" {

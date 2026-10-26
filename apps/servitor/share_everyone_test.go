@@ -30,7 +30,7 @@ func TestASystemIsNeverNewlySharedWithEveryone(t *testing.T) {
 	save := func(body string) Appliance {
 		t.Helper()
 		w := httptest.NewRecorder()
-		app.handleAppliances(w, reqAs(t, http.MethodPost, "/api/appliances", "alice", body))
+		routed(app)(w, reqAs(t, http.MethodPost, "/api/appliances", "alice", body))
 		if w.Code != http.StatusOK {
 			t.Fatalf("save answered %d: %s", w.Code, w.Body.String())
 		}

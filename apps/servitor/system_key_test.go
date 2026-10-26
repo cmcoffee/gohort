@@ -3,14 +3,19 @@ package servitor
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/json"
 	"encoding/pem"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
 
+	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/snugforge/kvlite"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -155,21 +160,66 @@ func TestARefusedSignInIsNotRepeated(t *testing.T) {
 }
 
 // The key is write-only like the password: every read path blanks it and
-// says only whether one is saved, a save that omits it keeps it, and leaving
-// SSH drops it.
+// says only whether one is saved, a save that omits it keeps it, Clear drops
+// it, and leaving SSH drops it.
 func TestASystemKeyIsWriteOnly(t *testing.T) {
-	src := webSource(t)
-	if n := strings.Count(src, `HasKey, a.PrivateKey = a.PrivateKey != "", ""`) + strings.Count(src, `resp.HasKey, resp.PrivateKey = resp.PrivateKey != "", ""`); n < 4 {
-		t.Errorf("only %d read paths blank the private key; every path that blanks Password must", n)
+	aliceAndBob(t)
+	app := &Servitor{}
+	app.DB = &DBase{Store: kvlite.MemStore()}
+	key, _ := newTestKey(t, "")
+	stored := func() Appliance {
+		var a Appliance
+		UserDB(app.DB, "alice").Get(applianceTable, "box", &a)
+		return a
 	}
-	for _, want := range []string{
-		"if req.PrivateKey == \"\" && !req.ClearKey {\n\t\t\t\treq.PrivateKey = existing.PrivateKey",
-		"req.HasKey, req.ClearKey = false, false",
+	save := func(body map[string]any) string {
+		t.Helper()
+		raw, _ := json.Marshal(body)
+		w := httptest.NewRecorder()
+		routed(app)(w, reqAs(t, http.MethodPost, "/api/appliances", "alice", string(raw)))
+		if w.Code != http.StatusOK {
+			t.Fatalf("save answered %d %s", w.Code, w.Body.String())
+		}
+		return w.Body.String()
+	}
+	// The record exists first, so the saves below are edits to it.
+	UserDB(app.DB, "alice").Set(applianceTable, "box", Appliance{ID: "box", Name: "box", Type: "ssh", Host: "box.example.com", Owner: "alice"})
+	reply := save(map[string]any{"id": "box", "name": "box", "host": "box.example.com", "private_key": key})
+	if stored().PrivateKey == "" {
+		t.Fatal("the key was not saved")
+	}
+	for name, body := range map[string]string{
+		"the save's reply": reply,
+		"the list":         get(t, app, "/api/appliances"),
+		"one record":       get(t, app, "/api/appliance/box"),
 	} {
-		if !strings.Contains(src, want) {
-			t.Errorf("save path is missing %q", want)
+		if strings.Contains(body, "PRIVATE KEY") || !strings.Contains(body, `"has_key":true`) {
+			t.Errorf("%s does not blank the key and say one is saved: %s", name, body)
 		}
 	}
+	save(map[string]any{"id": "box", "name": "box renamed", "host": "box.example.com"})
+	if stored().PrivateKey == "" {
+		t.Fatal("a save that did not send the key dropped it")
+	}
+	save(map[string]any{"id": "box", "name": "box", "host": "box.example.com", "clear_key": true})
+	if stored().PrivateKey != "" {
+		t.Fatal("Clear kept the key")
+	}
+	save(map[string]any{"id": "box", "name": "box", "host": "box.example.com", "private_key": key})
+	// Files already counted, so the change to a repo starts no clone.
+	UserDB(app.DB, "alice").Set(applianceTable, "box", func() Appliance { a := stored(); a.RepoFiles = 1; return a }())
+	save(map[string]any{"id": "box", "type": "repo", "name": "box", "repo_url": "https://example.com/box.git"})
+	if stored().PrivateKey != "" {
+		t.Error("a system that left SSH kept its key")
+	}
+}
+
+// get is the reply alice gets for a GET of path.
+func get(t *testing.T, app *Servitor, path string) string {
+	t.Helper()
+	w := httptest.NewRecorder()
+	routed(app)(w, reqAs(t, http.MethodGet, path, "alice", ""))
+	return w.Body.String()
 }
 
 // A system reached through a peer is checked before its session runs, in both

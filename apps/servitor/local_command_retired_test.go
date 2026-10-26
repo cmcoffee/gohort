@@ -31,7 +31,7 @@ func TestNoNewLocalCommandSystemIsMade(t *testing.T) {
 	udb.Set(applianceTable, "s1", Appliance{ID: "s1", Name: "web", Type: "ssh", Host: "web.example.test", Owner: "root"})
 	post := func(body string) (int, string) {
 		w := httptest.NewRecorder()
-		app.handleAppliances(w, reqAs(t, http.MethodPost, "/api/appliances", "root", body))
+		routed(app)(w, reqAs(t, http.MethodPost, "/api/appliances", "root", body))
 		return w.Code, w.Body.String()
 	}
 

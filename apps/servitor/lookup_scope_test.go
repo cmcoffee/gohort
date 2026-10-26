@@ -16,7 +16,7 @@ func TestSavingLookupDestinations(t *testing.T) {
 	save := func(list string) *httptest.ResponseRecorder {
 		w := httptest.NewRecorder()
 		body := `{"type":"ssh","name":"web01","host":"web01.corp.example.com","lookup_allow":` + list + `}`
-		app.handleAppliances(w, reqAs(t, http.MethodPost, "/api/appliances", "alice", body))
+		routed(app)(w, reqAs(t, http.MethodPost, "/api/appliances", "alice", body))
 		return w
 	}
 	if w := save(`["com"]`); w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "top-level domain") {

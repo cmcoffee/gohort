@@ -41,7 +41,7 @@ func TestSharedApplianceEnvValuesStayWithTheOwner(t *testing.T) {
 		path string
 	}{
 		{"one record", routed(app), "/api/appliance/cmd-1"},
-		{"the list", app.handleAppliances, "/api/appliances"},
+		{"the list", routed(app), "/api/appliances"},
 	} {
 		w := httptest.NewRecorder()
 		c.call(w, reqAs(t, http.MethodGet, c.path, "bob", ""))
