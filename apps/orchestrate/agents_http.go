@@ -323,7 +323,10 @@ var patchAgentFields = map[string]bool{
 	"attached_collections": true, "attached_pipelines": true,
 	// The boards it follows, set from the Knowledge dialog beside its
 	// collections. A board's post is read, and a follower gains no reach.
-	"bulletins":                true,
+	"bulletins": true,
+	// The machine it runs under: the partial save machines_http.go names
+	// for attaching one, and a field the whole-record form takes too.
+	"machine":                  true,
 	"allowed_dispatch_targets": true, "allowed_users": true,
 	// How a share reaches its recipients, beside the list of who they are.
 	// These widen what a recipient can READ and never what they can change,
@@ -791,35 +794,15 @@ func (T *OrchestrateApp) handleAgentOne(w http.ResponseWriter, r *http.Request) 
 		// LeadModel + ConsultLead, and over Think + Effort.
 		_ = json.NewEncoder(w).Encode(withEditorChoices(RootDB, a))
 	case http.MethodPost:
-		// PARTIAL update of one existing agent. The full edit form posts the
-		// whole record to /api/agents (handleAgentList); single-field surfaces
-		// like the dispatch-allowlist ChipPicker POST just their field HERE.
-		// Without this case the POST fell to default → 405, so the
-		// allowed_dispatch_targets picker silently never saved (the dispatch
-		// allowlist "didn't work"). Decoding the posted body INTO the loaded
-		// record merges: present fields overwrite, absent fields keep their
-		// stored value.
-		existing, ok := loadAgent(udb, id)
-		if !ok || (existing.Owner != "" && existing.Owner != user && existing.Owner != seedOwner) {
-			http.NotFound(w, r)
-			return
-		}
-		if err := json.NewDecoder(r.Body).Decode(&existing); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		existing.ID = id
-		existing.Owner = user
-		// Flattened namespace: tools live in the unified store, and the GET
-		// view synthesizes them onto the record — never write that view back.
-		existing.Tools = nil
-		saved, err := saveAgent(udb, existing)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(saved)
+		// PARTIAL update of one existing agent, the same as PATCH below. The
+		// full edit form posts the whole record to /api/agents
+		// (handleAgentList); a single-field surface may POST just its field
+		// here. This used to decode the body straight onto the stored record
+		// with no allowlist, so one POST could clear the agent's guardrails,
+		// switch off its scanner or re-parent it past the move endpoint's
+		// check: everything the other spellings protect. It is patchAgent now,
+		// so every way to change one agent goes through patchAgentFields.
+		T.patchAgent(w, r, udb, user, id)
 	case http.MethodPatch:
 		// PATCH /api/agents/<id> — the RESTful spelling of the collection's
 		// PATCH /api/agents?id=<id>, and the one any client writes first.
@@ -831,9 +814,7 @@ func (T *OrchestrateApp) handleAgentOne(w http.ResponseWriter, r *http.Request) 
 		// The SAME patchAgent, so the same patchAgentFields allowlist
 		// applies: guardrails and the injection-scan settings stay absent
 		// by name, and a second spelling of an operation must never be a
-		// second set of rules for it. Deliberately not routed to the POST
-		// branch below, which merges a whole record with no allowlist at
-		// all.
+		// second set of rules for it. POST above is the same patchAgent.
 		T.patchAgent(w, r, udb, user, id)
 	case http.MethodDelete:
 		// The family is read before the delete, which removes the sub-agents

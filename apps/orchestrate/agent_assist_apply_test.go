@@ -14,6 +14,7 @@ package orchestrate
 // spelling has to go through.
 
 import (
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -123,4 +124,42 @@ func funcBody(t *testing.T, src, sig string) string {
 		t.Fatalf("%q never closes", sig)
 	}
 	return src[i : i+j]
+}
+
+// A POST to one agent is a partial save, and the protected fields stay out of
+// it: it once merged the whole body onto the record, so one POST could clear
+// an agent's guardrails, switch off its scanner, or re-parent it past the move
+// endpoint's check, which every other way to save an agent refuses.
+func TestAPostToOneAgentCannotWeakenItsGuardrails(t *testing.T) {
+	app, req, udb := authedApp(t)
+	if _, err := saveAgent(udb, AgentRecord{ID: "agent-1", Owner: "alice", Name: "Helper", OrchestratorPrompt: "p",
+		Guardrails: "Never delete anything.", ScanToolResults: true}); err != nil {
+		t.Fatal(err)
+	}
+	post := func(body map[string]any) int {
+		w := httptest.NewRecorder()
+		app.handleAgentOne(w, req("POST", "/api/agents/agent-1", body))
+		return w.Code
+	}
+	for _, body := range []map[string]any{
+		{"guardrails": ""},
+		{"guardrails_disabled": true},
+		{"scan_tool_results": false},
+		{"owned_by": "agent-2"},
+	} {
+		if code := post(body); code < 400 {
+			t.Errorf("POST %v answered %d, want it refused", body, code)
+		}
+	}
+	got, _ := loadAgent(udb, "agent-1")
+	if got.Guardrails != "Never delete anything." || got.GuardrailsDisabled || !got.ScanToolResults || got.OwnedBy != "" {
+		t.Errorf("a refused POST changed the agent: %+v", got)
+	}
+	// The fields a partial save may change still change.
+	if code := post(map[string]any{"name": "Renamed", "allowed_dispatch_targets": []string{"agent-3"}}); code != 200 {
+		t.Fatalf("an allowed field answered %d", code)
+	}
+	if got, _ := loadAgent(udb, "agent-1"); got.Name != "Renamed" || len(got.AllowedDispatchTargets) != 1 {
+		t.Errorf("an allowed POST did not save: %+v", got)
+	}
 }
