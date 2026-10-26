@@ -3,11 +3,11 @@ package admin
 import (
 	"bytes"
 	"encoding/json"
-	"io"
 	"net/http"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // registerConnectorsRoutes wires the connectors API under the admin sub-mux.
@@ -19,125 +19,118 @@ func (a *AdminApp) registerConnectorsRoutes(sub *http.ServeMux) {
 	// remote_mcp: an enabled MCP server), so its tools go live for agents. The
 	// LLM never handles a secret — auth is a referenced credential or per-user
 	// oauth; approval is the human gate.
-	sub.HandleFunc("/api/connectors", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		switch r.Method {
-		case http.MethodGet:
-			w.Header().Set("Content-Type", "application/json")
-			type connRow struct {
-				Name         string `json:"name"`
-				Kind         string `json:"kind"`
-				Summary      string `json:"summary"`
-				Owner        string `json:"owner"`
-				Approved     bool   `json:"approved"`
-				LastError    string `json:"last_error"`
-				Template     string `json:"template,omitempty"` // provenance (which template authored it)
-				IsImage      bool   `json:"is_image"`           // rest_image → image-section toolbar pick
-				Configurable bool   `json:"configurable"`       // resolves to a template → gets "Configure" (incl. imports)
-				Webhook      string `json:"webhook,omitempty"`  // a push bridge's provider → gets "Webhook…"
-			}
-			var rows []connRow
-			for _, c := range ListConnectors(RootDB) {
-				_, canConfig := TemplateForConnector(c)
-				rows = append(rows, connRow{c.Name, c.Kind, ConnectorSummary(c), c.Owner, c.Approved, c.LastError, c.Template, c.Kind == RestImageConnectorKind, canConfig, connectorWebhook(c)})
-			}
-			json.NewEncoder(w).Encode(rows)
-		case http.MethodPost:
-			name := strings.TrimSpace(r.URL.Query().Get("name"))
-			if name == "" {
-				http.Error(w, "missing name", http.StatusBadRequest)
-				return
-			}
-			var err error
-			switch r.URL.Query().Get("action") {
-			case "approve":
-				err = ApproveConnector(RootDB, name)
-			case "unapprove":
-				err = UnapproveConnector(RootDB, name)
-			case "update_spec":
-				// Replace the connector's kind-specific Spec with the posted JSON.
-				// SaveConnector re-validates against the kind and, if the connector
-				// is approved, re-materializes so an edit (e.g. a rest_image
-				// backend's default_steps / submit_body) takes effect immediately.
-				body, rerr := io.ReadAll(io.LimitReader(r.Body, 1<<20))
-				if rerr != nil {
-					http.Error(w, "read error", http.StatusBadRequest)
-					return
-				}
-				if !json.Valid(body) {
-					http.Error(w, "spec must be valid JSON", http.StatusBadRequest)
-					return
-				}
-				c, ok := GetConnector(RootDB, name)
-				if !ok {
-					http.Error(w, "no connector named "+name, http.StatusNotFound)
-					return
-				}
-				// If comfy_workflow was edited as a nested object (the readable
-				// Edit-spec view), fold it back into the spec's string field.
-				c.Spec = json.RawMessage(stringifyComfyWorkflow(body))
-				err = SaveConnector(RootDB, c)
-			default:
-				http.Error(w, "action must be approve|unapprove|update_spec", http.StatusBadRequest)
-				return
-			}
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			w.WriteHeader(http.StatusNoContent)
-		case http.MethodDelete:
-			name := strings.TrimSpace(r.URL.Query().Get("name"))
-			if name == "" {
-				http.Error(w, "missing name", http.StatusBadRequest)
-				return
-			}
-			if err := DeleteConnector(RootDB, name); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			w.WriteHeader(http.StatusNoContent)
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		}
-	})
+	sub.HandleFunc("/api/connectors", jsonapi.Methods{
+		"GET":    jsonapi.Get(a.db, a.handleConnectors, a.gate()),
+		"POST":   jsonapi.Post(a.db, a.handleConnectorAction, a.gate(), jsonapi.EmptyBodyOK, jsonapi.MaxBody(1<<20)),
+		"DELETE": jsonapi.Post(a.db, a.handleConnectorDelete, a.gate()),
+	}.Serve)
 
 	// Connector spec — GET the current kind-specific Spec as pretty JSON for the
 	// admin's inline spec editor (the "Edit spec" row action). Paired with the
 	// update_spec POST above. Read-only; no secret is ever in a Spec.
-	sub.HandleFunc("/api/connectors/spec", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
+	sub.HandleFunc("/api/connectors/spec", jsonapi.Get(a.db, a.handleConnectorSpec, a.gate()))
+
+}
+
+// handleConnectors is every backend, with what each can do from its row.
+func (a *AdminApp) handleConnectors(c *jsonapi.Call) (any, error) {
+	type connRow struct {
+		Name         string `json:"name"`
+		Kind         string `json:"kind"`
+		Summary      string `json:"summary"`
+		Owner        string `json:"owner"`
+		Approved     bool   `json:"approved"`
+		LastError    string `json:"last_error"`
+		Template     string `json:"template,omitempty"` // provenance (which template authored it)
+		IsImage      bool   `json:"is_image"`           // rest_image → image-section toolbar pick
+		Configurable bool   `json:"configurable"`       // resolves to a template → gets "Configure" (incl. imports)
+		Webhook      string `json:"webhook,omitempty"`  // a push bridge's provider → gets "Webhook…"
+	}
+	var rows []connRow
+	for _, conn := range ListConnectors(RootDB) {
+		_, canConfig := TemplateForConnector(conn)
+		rows = append(rows, connRow{conn.Name, conn.Kind, ConnectorSummary(conn), conn.Owner, conn.Approved, conn.LastError, conn.Template, conn.Kind == RestImageConnectorKind, canConfig, connectorWebhook(conn)})
+	}
+	return rows, nil
+}
+
+// handleConnectorAction is ?action= on the ?name= backend: approve,
+// unapprove, or update_spec, which replaces its kind-specific Spec with the
+// posted JSON.
+func (a *AdminApp) handleConnectorAction(c *jsonapi.Call, body json.RawMessage) (any, error) {
+	q := c.R.URL.Query()
+	name := strings.TrimSpace(q.Get("name"))
+	if name == "" {
+		return nil, jsonapi.BadRequest("missing name")
+	}
+	var err error
+	switch q.Get("action") {
+	case "approve":
+		err = ApproveConnector(RootDB, name)
+	case "unapprove":
+		err = UnapproveConnector(RootDB, name)
+	case "update_spec":
+		// SaveConnector re-validates against the kind and, if the connector
+		// is approved, re-materializes so an edit (e.g. a rest_image
+		// backend's default_steps / submit_body) takes effect immediately.
+		if !json.Valid(body) {
+			return nil, jsonapi.BadRequest("spec must be valid JSON")
 		}
-		name := strings.TrimSpace(r.URL.Query().Get("name"))
-		c, ok := GetConnector(RootDB, name)
+		conn, ok := GetConnector(RootDB, name)
 		if !ok {
-			http.Error(w, "no connector named "+name, http.StatusNotFound)
-			return
+			return nil, jsonapi.NotFound("no connector named " + name)
 		}
-		spec := "{}"
-		if len(c.Spec) > 0 {
-			// Show a rest_image comfy_workflow as a NESTED object (readable) rather
-			// than an escaped string; other kinds just get plain indentation.
-			if nested, ok := nestComfyWorkflow(c.Spec); ok {
-				spec = string(nested)
+		// If comfy_workflow was edited as a nested object (the readable
+		// Edit-spec view), fold it back into the spec's string field.
+		conn.Spec = json.RawMessage(stringifyComfyWorkflow(body))
+		err = SaveConnector(RootDB, conn)
+	default:
+		return nil, jsonapi.BadRequest("action must be approve|unapprove|update_spec")
+	}
+	if err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// handleConnectorDelete removes the ?name= backend and tears it down.
+func (a *AdminApp) handleConnectorDelete(c *jsonapi.Call, _ struct{}) (any, error) {
+	name := strings.TrimSpace(c.R.URL.Query().Get("name"))
+	if name == "" {
+		return nil, jsonapi.BadRequest("missing name")
+	}
+	if err := DeleteConnector(RootDB, name); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// handleConnectorSpec is the ?name= backend's spec as pretty JSON, for the
+// inline spec editor. No secret is ever in a Spec.
+func (a *AdminApp) handleConnectorSpec(c *jsonapi.Call) (any, error) {
+	name := strings.TrimSpace(c.R.URL.Query().Get("name"))
+	conn, ok := GetConnector(RootDB, name)
+	if !ok {
+		return nil, jsonapi.NotFound("no connector named " + name)
+	}
+	spec := "{}"
+	if len(conn.Spec) > 0 {
+		// Show a rest_image comfy_workflow as a NESTED object (readable) rather
+		// than an escaped string; other kinds just get plain indentation.
+		if nested, ok := nestComfyWorkflow(conn.Spec); ok {
+			spec = string(nested)
+		} else {
+			var pretty bytes.Buffer
+			if json.Indent(&pretty, conn.Spec, "", "  ") == nil {
+				spec = pretty.String()
 			} else {
-				var pretty bytes.Buffer
-				if json.Indent(&pretty, c.Spec, "", "  ") == nil {
-					spec = pretty.String()
-				} else {
-					spec = string(c.Spec)
-				}
+				spec = string(conn.Spec)
 			}
 		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
-			"name": c.Name, "kind": c.Kind, "approved": c.Approved, "spec": spec,
-		})
-	})
-
+	}
+	return map[string]any{
+		"name": conn.Name, "kind": conn.Kind, "approved": conn.Approved, "spec": spec,
+	}, nil
 }
 
 // nestComfyWorkflow renders a spec for the Edit-spec view with comfy_workflow as

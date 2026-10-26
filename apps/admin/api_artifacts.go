@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // registerArtifactsRoutes wires the artifacts API under the admin sub-mux.
@@ -90,60 +91,43 @@ func (a *AdminApp) registerArtifactsRoutes(sub *http.ServeMux) {
 	// the importing admin: connectors land unapproved, tools land in the pending
 	// pool. Nothing goes live without a separate approval. Returns the per-
 	// artifact import summary as JSON. POST-only.
-	sub.HandleFunc("/api/artifacts/import", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		data, err := readArtifactBundleBody(r)
-		if err != nil {
-			http.Error(w, "read body: "+err.Error(), http.StatusBadRequest)
-			return
-		}
-		res, err := ImportArtifactBundle(RootDB, data, AuthCurrentUser(r))
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		// message drives the form's post-submit note: counts plus any
-		// unmet-dependency warnings, so an import that leaves a tool wired to a
-		// missing credential says so instead of looking like a clean success.
-		_ = json.NewEncoder(w).Encode(struct {
-			ArtifactImportResult
-			Message string `json:"message"`
-		}{res, res.Summary()})
-	})
+	sub.HandleFunc("/api/artifacts/import", jsonapi.Methods{
+		"POST": jsonapi.Post(a.db, a.handleArtifactImport, a.gate(), jsonapi.EmptyBodyOK, jsonapi.MaxBody(artifactBundleMaxBody)),
+	}.Serve)
 
 	// Artifact import PREVIEW — the dry-run twin of /api/artifacts/import.
 	// Same body shapes, same auth, writes NOTHING: returns what the bundle
 	// carries, what would import vs skip, and any unmet references, so the
 	// admin sees exactly what a bundle does before committing to it.
-	sub.HandleFunc("/api/artifacts/preview", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		data, err := readArtifactBundleBody(r)
-		if err != nil {
-			http.Error(w, "read body: "+err.Error(), http.StatusBadRequest)
-			return
-		}
-		res, err := PreviewArtifactBundle(RootDB, data, AuthCurrentUser(r))
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(res)
-	})
+	sub.HandleFunc("/api/artifacts/preview", jsonapi.Methods{
+		"POST": jsonapi.Post(a.db, a.handleArtifactPreview, a.gate(), jsonapi.EmptyBodyOK, jsonapi.MaxBody(artifactBundleMaxBody)),
+	}.Serve)
 
+}
+
+// handleArtifactImport imports the posted bundle as drafts, and says what
+// came in: counts plus any unmet-dependency warnings, so an import that
+// leaves a tool wired to a missing credential says so instead of looking like
+// a clean success.
+func (a *AdminApp) handleArtifactImport(c *jsonapi.Call, body json.RawMessage) (any, error) {
+	res, err := ImportArtifactBundle(RootDB, artifactBundleBytes(body), c.User)
+	if err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	return struct {
+		ArtifactImportResult
+		Message string `json:"message"`
+	}{res, res.Summary()}, nil
+}
+
+// handleArtifactPreview says what importing the posted bundle would do, and
+// writes nothing.
+func (a *AdminApp) handleArtifactPreview(c *jsonapi.Call, body json.RawMessage) (any, error) {
+	res, err := PreviewArtifactBundle(RootDB, artifactBundleBytes(body), c.User)
+	if err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	return res, nil
 }
 
 // readArtifactBundleBody reads an artifact-bundle request body, accepting

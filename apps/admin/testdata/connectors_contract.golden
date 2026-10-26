@@ -1,0 +1,128 @@
+(signed out) GET /api/connectors ""
+  403 forbidden
+alice GET /api/connectors ""
+  403 forbidden
+root GET /api/connectors ""
+  200 [{"name":"ct-art","kind":"rest_image","summary":"generate images via http://127.0.0.1:1/sdapi/v1/txt2img (synchronous, credential no_auth) → tool generate_image_ct_art","owner":"root","approved":false,"last_error":"","template":"a1111","is_image":true,"configurable":true}]
+root PUT /api/connectors "{}"
+  405 method not allowed
+(signed out) GET /api/connectors/spec?name=ct-art ""
+  403 forbidden
+alice GET /api/connectors/spec?name=ct-art ""
+  403 forbidden
+root GET /api/connectors/spec?name=ct-art ""
+  200 object with keys approved,kind,name,spec
+root PUT /api/connectors/spec?name=ct-art "{}"
+  405 method not allowed
+(signed out) GET /api/source-hooks ""
+  403 forbidden
+alice GET /api/source-hooks ""
+  403 forbidden
+root GET /api/source-hooks ""
+  200 []
+root PUT /api/source-hooks "{}"
+  405 method not allowed
+(signed out) GET /api/source-hooks?name=ct-pubmed ""
+  403 forbidden
+alice GET /api/source-hooks?name=ct-pubmed ""
+  403 forbidden
+root GET /api/source-hooks?name=ct-pubmed ""
+  404 hook not found
+root PUT /api/source-hooks?name=ct-pubmed "{}"
+  405 method not allowed
+alice POST /api/artifacts/preview "{\"bundle\":\"gohort.bundle/v1\",\"artifacts\":[{\"type\":\"tool\",\"name\":\"ct_imported\",\"recipe\":{\"name\":\"ct_imported\",\"description\":\"Came in a bundle.\",\"command_template\":\"echo hi\",\"mode\":\"shell\"}}]}"
+  403 forbidden
+root GET /api/artifacts/preview ""
+  405 method not allowed
+alice POST /api/artifacts/import "{\"bundle\":\"gohort.bundle/v1\",\"artifacts\":[{\"type\":\"tool\",\"name\":\"ct_imported\",\"recipe\":{\"name\":\"ct_imported\",\"description\":\"Came in a bundle.\",\"command_template\":\"echo hi\",\"mode\":\"shell\"}}]}"
+  403 forbidden
+root GET /api/artifacts/import ""
+  405 method not allowed
+alice POST /api/connectors?action=approve&name=ct-art ""
+  403 forbidden
+root POST /api/connectors?action=approve ""
+  400 missing name
+root POST /api/connectors?action=approve&name=ct-art ""
+  204 
+root POST /api/connectors?action=approve&name=ct-nope ""
+  400 no connector named "ct-nope"
+root POST /api/connectors?action=unapprove&name=ct-art ""
+  204 
+root POST /api/connectors?action=sideways&name=ct-art ""
+  400 action must be approve|unapprove|update_spec
+root POST /api/connectors?action=update_spec&name=ct-art "not json"
+  400 invalid JSON: invalid character 'o' in literal null (expecting 'u')
+root POST /api/connectors?action=update_spec&name=ct-art ""
+  400 spec must be valid JSON
+root POST /api/connectors?action=update_spec&name=ct-nope "{}"
+  404 no connector named ct-nope
+root POST /api/connectors?action=update_spec&name=ct-art "{\"credential\":\"no_auth\",\"submit_url\":\"http://127.0.0.1:2/sdapi/v1/txt2img\",\"submit_method\":\"POST\",\"submit_body\":\"{\\\"prompt\\\":\\\"{prompt}\\\",\\\"negative_prompt\\\":\\\"{negative}\\\",\\\"width\\\":{width},\\\"height\\\":{height},\\\"steps\\\":{steps},\\\"seed\\\":{seed}}\",\"image_b64_path\":\"images.0\",\"default_width\":512,\"default_height\":512,\"default_steps\":20,\"comfy_map\":{}}"
+  204 
+root GET /api/connectors ""
+  200 [{"name":"ct-art","kind":"rest_image","summary":"generate images via http://127.0.0.1:2/sdapi/v1/txt2img (synchronous, credential no_auth) → tool generate_image_ct_art","owner":"root","approved":false,"last_error":"","template":"a1111","is_image":true,"configurable":true}]
+root GET /api/connectors/spec?name=ct-nope ""
+  404 no connector named ct-nope
+alice POST /api/source-hooks "{\"name\":\"ct-mine\",\"type\":\"api\",\"endpoint\":\"https://example.test\"}"
+  403 forbidden
+root POST /api/source-hooks "{\"name\":\" ct-pubmed \",\"type\":\"api\",\"endpoint\":\" https://pubmed.example.test/search \",\"auth_type\":\"bearer\",\"auth_key\":\"s3cr3t-hook\",\"query_param\":\"q\",\"domains\":[\"pubmed.gov\"]}"
+  204 
+root POST /api/source-hooks "{\"name\":\" \"}"
+  400 name required
+root POST /api/source-hooks "{\"name\":"
+  400 invalid JSON: unexpected EOF
+root POST /api/source-hooks ""
+  400 invalid JSON: EOF
+root GET /api/source-hooks?name=CT-PUBMED ""
+  200 {"name":"ct-pubmed","type":"api","endpoint":"https://pubmed.example.test/search","auth_type":"bearer","auth_key":"","query_param":"q","results_path":"","title_field":"","url_field":"","snippet_field":"","content_field":"","domains":["pubmed.gov"],"trigger_domains":null,"always_active":false,"max_rps":0}
+root GET /api/source-hooks?name=ct-nope ""
+  404 hook not found
+root POST /api/source-hooks "{\"name\":\"ct-pubmed\",\"type\":\"api\",\"endpoint\":\"https://pubmed.example.test/v2\",\"auth_type\":\"bearer\",\"auth_key\":\"(configured)\"}"
+  204 
+root POST /api/source-hooks?action=expose&name=ct-pubmed ""
+  204 
+root POST /api/source-hooks?action=disable&name=ct-pubmed ""
+  204 
+root POST /api/source-hooks "{\"name\":\"ct-pubmed\",\"type\":\"api\",\"endpoint\":\"https://pubmed.example.test/v3\"}"
+  204 
+root GET /api/source-hooks ""
+  200 [{"name":"ct-pubmed","type":"api","endpoint":"https://pubmed.example.test/v3","auth_type":"","has_auth":true,"query_param":"","results_path":"","title_field":"","url_field":"","snippet_field":"","content_field":"","domains":null,"trigger_domains":null,"always_active":false,"expose_to_llm":false,"disabled":true,"tool_name":"","effective_tool":"ct-pubmed_search","tool_description":""}]
+root POST /api/source-hooks?action=enable&name=ct-pubmed ""
+  204 
+root POST /api/source-hooks?action=hide&name=ct-pubmed ""
+  204 
+root POST /api/source-hooks?action=expose ""
+  400 missing name
+root POST /api/source-hooks?action=expose&name=ct-nope ""
+  404 hook not found
+root POST /api/source-hooks?action=sideways&name=ct-pubmed ""
+  400 action must be expose|hide|enable|disable
+root GET /api/source-hooks ""
+  200 [{"name":"ct-pubmed","type":"api","endpoint":"https://pubmed.example.test/v3","auth_type":"","has_auth":true,"query_param":"","results_path":"","title_field":"","url_field":"","snippet_field":"","content_field":"","domains":null,"trigger_domains":null,"always_active":false,"expose_to_llm":false,"disabled":false,"tool_name":"","effective_tool":"ct-pubmed_search","tool_description":""}]
+alice DELETE /api/source-hooks?name=ct-pubmed ""
+  403 forbidden
+root DELETE /api/source-hooks ""
+  400 missing name
+root DELETE /api/source-hooks?name=ct-pubmed ""
+  204 
+root GET /api/source-hooks ""
+  200 []
+root POST /api/artifacts/preview "{\"bundle\":\"gohort.bundle/v1\",\"artifacts\":[{\"type\":\"tool\",\"name\":\"ct_imported\",\"recipe\":{\"name\":\"ct_imported\",\"description\":\"Came in a bundle.\",\"command_template\":\"echo hi\",\"mode\":\"shell\"}}]}"
+  200 {"bundle":"gohort.bundle/v1","exported_at":"<time>","would_import":1,"would_skip":0,"items":[{"type":"tool","name":"ct_imported","action":"import"}]}
+root POST /api/artifacts/preview "{\"pack\":\"{\\\"bundle\\\":\\\"gohort.bundle/v1\\\",\\\"artifacts\\\":[{\\\"type\\\":\\\"tool\\\",\\\"name\\\":\\\"ct_imported\\\",\\\"recipe\\\":{\\\"name\\\":\\\"ct_imported\\\",\\\"description\\\":\\\"Came in a bundle.\\\",\\\"command_template\\\":\\\"echo hi\\\",\\\"mode\\\":\\\"shell\\\"}}]}\"}"
+  200 {"bundle":"gohort.bundle/v1","exported_at":"<time>","would_import":1,"would_skip":0,"items":[{"type":"tool","name":"ct_imported","action":"import"}]}
+root POST /api/artifacts/preview "{\"bundle\":\"something else\"}"
+  200 {"bundle":"gohort.bundle/v1","exported_at":"<time>","would_import":0,"would_skip":1,"items":[{"type":"connector","name":"","action":"skip","detail":"missing artifact name"}]}
+root POST /api/artifacts/preview ""
+  400 empty artifact bundle
+root POST /api/artifacts/import "{\"bundle\":\"gohort.bundle/v1\",\"artifacts\":[{\"type\":\"tool\",\"name\":\"ct_imported\",\"recipe\":{\"name\":\"ct_imported\",\"description\":\"Came in a bundle.\",\"command_template\":\"echo hi\",\"mode\":\"shell\"}}]}"
+  200 {"bundle":"gohort.bundle/v1","imported":1,"skipped":0,"outcomes":[{"type":"tool","name":"ct_imported","status":"imported"}],"checklist":[{"type":"tool","name":"ct_imported","action":"Waiting for an ad… (467 bytes, sha1 9a4335f5057f4498a163d1aef05c37d359a2ac6c)
+root POST /api/artifacts/import "not json"
+  400 invalid JSON: invalid character 'o' in literal null (expecting 'u')
+alice DELETE /api/connectors?name=ct-art ""
+  403 forbidden
+root DELETE /api/connectors ""
+  400 missing name
+root DELETE /api/connectors?name=ct-art ""
+  204 
+root GET /api/connectors ""
+  200 null
