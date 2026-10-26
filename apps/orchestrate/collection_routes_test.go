@@ -114,3 +114,37 @@ func TestEveryCollectionRouteTakesItsMethodsAndKeepsTheGate(t *testing.T) {
 		t.Errorf("the collection changed: %+v %v", got, ok)
 	}
 }
+
+// Asking for deployment scope is not getting it. The owner's request is filed
+// for an administrator and the collection stays theirs; an administrator's
+// own promotes at once; nobody but the owner asks.
+func TestWideningACollectionGoesThroughAnAdministrator(t *testing.T) {
+	prevRoot, prevAuth, prevBase, prevVec := RootDB, AuthDB, orchestrateBaseDB, VectorDB
+	t.Cleanup(func() { RootDB, AuthDB, orchestrateBaseDB, VectorDB = prevRoot, prevAuth, prevBase, prevVec })
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	orchestrateBaseDB = RootDB
+	VectorDB = &DBase{Store: kvlite.MemStore()}
+	signedUp(t, "alice", "carol")
+	AuthSetUser(AuthDB(), "root", "pw", true)
+	saveCollection(UserDB(CollectionsDB(), "alice"), Collection{ID: "col-a", Owner: "alice", Name: "Notes",
+		AllowedUsers: []string{"carol"}, Contributors: []string{"carol"}})
+	saveCollection(UserDB(CollectionsDB(), "root"), Collection{ID: "col-r", Owner: "root", Name: "Shared"})
+	h := routed(&OrchestrateApp{AppCore: AppCore{DB: CollectionsDB()}})
+	widen := func(user, id string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		h(w, withSession(httptest.NewRequest("PATCH", "/api/collections/"+id, strings.NewReader(`{"scope":"deployment"}`)), user))
+		return w
+	}
+	if w := widen("carol", "col-a"); w.Code != http.StatusForbidden {
+		t.Errorf("a contributor changed the scope: %d %s", w.Code, w.Body.String())
+	}
+	if w := widen("alice", "col-a"); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"requested":true`) {
+		t.Errorf("the owner's ask: %d %s", w.Code, w.Body.String())
+	}
+	if c, ok := loadCollection(UserDB(CollectionsDB(), "alice"), "alice", "col-a"); !ok || IsDeploymentScope(c) {
+		t.Errorf("asking promoted the collection: %+v %v", c, ok)
+	}
+	if w := widen("root", "col-r"); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"requested":false`) {
+		t.Errorf("an administrator's own: %d %s", w.Code, w.Body.String())
+	}
+}

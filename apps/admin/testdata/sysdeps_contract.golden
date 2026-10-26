@@ -58,7 +58,7 @@ root POST /api/system-deps "{\"name\":\"ctheic\",\"direction\":\"input\",\"takes
   400 gohort already reads iPhone photos (HEIC) (iPhone photos (HEIC), AVIF images, under Reading): to use another tool for it, adapt that row instead
 root POST /api/system-deps?job=no.such.job "{\"name\":\"ctjob\",\"steps\":\"true\"}"
   400 there is no job no.such.job
-root POST /api/system-deps?job=read.heic "{\"name\":\"read-heic-adapted\",\"steps\":\"heif-convert {in} {out.png}\"}"
+root POST /api/system-deps?job=read.heic "{\"name\":\"read-heic-adapted\",\"steps\":\"dd if={in} of={out.png}\"}"
   200 {"message":"Saved, off. Test it, then turn it on.","ok":true}
 root POST /api/system-deps "{\"name\":"
   400 invalid JSON: unexpected EOF
@@ -67,11 +67,11 @@ root POST /api/system-deps ""
 root GET /api/system-deps?custom=1 ""
   200 [{"id":"ctstrip","name":"ctstrip","group":"Reading what arrives","enables":"Reads anything else","by":"dd if={in} of={out} bs=8 skip=1","state":"off","detail":"Becomes an image the model can read.","j… (463 bytes, sha1 0d276f83059682f32738df356ca19cc39a9ab110)
 root GET /api/system-deps ""
-  200 [{"id":"read-heic-adapted","name":"read-heic-adapted","group":"Reading what arrives","enables":"↳ read-heic-adapted","by":"heif-convert {in} {out.png}","state":"off","detail":"Adapted, for iPhone ph… (493 bytes, sha1 9a9c787c440fac2920de1b10c4b9f16a4cd3b42e)
+  200 [{"id":"read-heic-adapted","name":"read-heic-adapted","group":"Reading what arrives","enables":"↳ read-heic-adapted","by":"dd if={in} of={out.png}","state":"off","detail":"Adapted, for iPhone photos… (489 bytes, sha1 b5ac8145154896da8227c0d7715979d23d9020b0)
 root GET /api/system-deps/one?name=ctstrip ""
   200 {"name":"ctstrip","direction":"input","takes":"*","becomes":"image","steps":[{"command":"dd if={in} of={out} bs=8 skip=1"}],"timeout_secs":0,"prefer":false}
 root GET /api/system-deps/one?name=read-heic-adapted ""
-  200 {"name":"read-heic-adapted","steps":[{"command":"heif-convert {in} {out.png}"}],"timeout_secs":0,"prefer":false}
+  200 {"name":"read-heic-adapted","steps":[{"command":"dd if={in} of={out.png}"}],"timeout_secs":0,"prefer":false}
 root GET /api/system-deps/one?name=nope ""
   404 no such flow
 root POST /api/system-deps?edit=ctstrip "{\"name\":\"ctstrip\",\"direction\":\"input\",\"takes\":\"*\",\"becomes\":\"image\",\"steps\":\"dd if={in} of={out} bs=4 skip=2\"}"

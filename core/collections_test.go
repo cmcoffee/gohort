@@ -21,24 +21,9 @@ import (
 // than the outcome has to be rewritten to ship the feature, and a guard
 // rewritten to ship a feature guards nothing. This one pins the outcome.
 func TestWideningACollectionGoesThroughAnAdministrator(t *testing.T) {
-	raw, err := os.ReadFile("../apps/orchestrate/collections.go")
-	if err != nil {
-		t.Fatalf("reading the handler: %v", err)
-	}
-	src := string(raw)
-	// The request path exists...
-	if !strings.Contains(src, "CreatePromotionRequest(AuthDB(), user, CollectionPromotionKind") {
-		t.Error("widening no longer files a promotion request; a user could mint a deployment-wide collection")
-	}
-	// ...and the direct path is reachable only by an admin.
-	if !strings.Contains(src, "if RequestIsAdmin(r) {") {
-		t.Error("the direct promote is not gated on an admin")
-	}
-	// Only the owner decides either way.
-	if !strings.Contains(src, `http.Error(w, "only the owner can change who this is shared with"`) {
-		t.Error("a non-owner can change a collection's scope")
-	}
-	// And the approver is what actually promotes, so approving is the act.
+	// The route half (asking files a request; only an administrator promotes;
+	// only the owner asks) is pinned by orchestrate's own route tests. What
+	// lives here is the approver: approving is the act that promotes.
 	if !strings.Contains(string(mustRead(t, "collections.go")), "promotion.RegisterApprover(CollectionPromotionKind") {
 		t.Error("nothing registers an approver, so an approved request would be refused as unsupported")
 	}

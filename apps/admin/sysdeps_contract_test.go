@@ -80,7 +80,7 @@ func TestSystemDepsRoutesContract(t *testing.T) {
 	do("root", "POST", "/api/system-deps", strings.Replace(strings.Replace(strip, `"ctstrip"`, `"ctnoin"`, 1), " if={in}", "", 1))
 	do("root", "POST", "/api/system-deps", `{"name":"ctheic","direction":"input","takes":"heic","becomes":"image","steps":"dd if={in} of={out}"}`)
 	do("root", "POST", "/api/system-deps?job=no.such.job", `{"name":"ctjob","steps":"true"}`)
-	do("root", "POST", "/api/system-deps?job=read.heic", `{"name":"read-heic-adapted","steps":"heif-convert {in} {out.png}"}`)
+	do("root", "POST", "/api/system-deps?job=read.heic", `{"name":"read-heic-adapted","steps":"dd if={in} of={out.png}"}`)
 	do("root", "POST", "/api/system-deps", `{"name":`)
 	do("root", "POST", "/api/system-deps", ``)
 	do("root", "GET", "/api/system-deps?custom=1", "")
