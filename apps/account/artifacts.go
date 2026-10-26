@@ -13,13 +13,13 @@ package account
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"regexp"
 	"strings"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -133,69 +133,32 @@ func (T *Account) handleArtifactExport(w http.ResponseWriter, r *http.Request) {
 	_ = enc.Encode(bundle)
 }
 
-// readAccountImportBody reads a bundle posted raw or in the {"pack": "<text>"}
-// shape the shared import flow sends, answering 413 itself when it is too big.
-func readAccountImportBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return nil, false
-	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxAccountImportBytes+1))
-	if err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return nil, false
-	}
-	if len(body) > maxAccountImportBytes {
-		http.Error(w, fmt.Sprintf("that file is larger than the %d MB an import accepts", maxAccountImportBytes>>20), http.StatusRequestEntityTooLarge)
-		return nil, false
-	}
-	return UnwrapArtifactUpload(body), true
-}
-
 // handleArtifactPreview is the dry run: what the file would bring in, what it
 // would skip and why, and what it references that is not here. Writes nothing.
-func (T *Account) handleArtifactPreview(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	body, ok := readAccountImportBody(w, r)
-	if !ok {
-		return
-	}
-	res, err := PreviewArtifactBundleAsUser(RootDB, body, user)
+// The bundle comes raw or in the {"pack": "<text>"} shape the shared import
+// flow sends.
+func (T *Account) handleArtifactPreview(c *jsonapi.Call, body json.RawMessage) (any, error) {
+	res, err := PreviewArtifactBundleAsUser(RootDB, UnwrapArtifactUpload(body), c.User)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest(err.Error())
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(res)
+	return res, nil
 }
 
 // handleArtifactImport brings a bundle into the requester's own namespace.
 // Every kind lands inert (agents private, tools pending review, skills and
 // apps disabled, monitors paused); kinds only an administrator may import are
 // reported as skipped.
-func (T *Account) handleArtifactImport(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	body, ok := readAccountImportBody(w, r)
-	if !ok {
-		return
-	}
-	res, err := ImportArtifactBundleAsUser(RootDB, body, user)
+func (T *Account) handleArtifactImport(c *jsonapi.Call, body json.RawMessage) (any, error) {
+	res, err := ImportArtifactBundleAsUser(RootDB, UnwrapArtifactUpload(body), c.User)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest(err.Error())
 	}
-	Log("[account.artifacts] user=%q imported a bundle: %d imported, %d skipped", user, res.Imported, res.Skipped)
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(struct {
+	Log("[account.artifacts] user=%q imported a bundle: %d imported, %d skipped", c.User, res.Imported, res.Skipped)
+	return struct {
 		ArtifactImportResult
 		Message string `json:"message"`
-	}{res, res.Summary()})
+	}{res, res.Summary()}, nil
 }
 
 // artifactsHead points the shared bundle client (core ArtifactClientJS) at

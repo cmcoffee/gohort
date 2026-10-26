@@ -8,7 +8,6 @@ package account
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
@@ -49,17 +48,33 @@ func (T *Account) WebHidden() bool { return true }
 func (T *Account) WebEveryUser() bool { return true }
 
 func (T *Account) Routes() {
-	T.HandleFunc("/api/prefs", T.handlePrefs)
-	T.HandleFunc("/api/password", T.handlePassword)
+	T.HandleFunc("/api/prefs", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, T.handlePrefs),
+		"POST": jsonapi.Post(T.DB, T.handlePrefsSave),
+	}.Serve)
+	T.HandleFunc("/api/password", jsonapi.Methods{
+		"POST": jsonapi.Post(T.DB, T.handlePassword),
+	}.Serve)
 	// Connected-accounts (per-user OAuth/MCP) endpoints stay registered here for
 	// redirect-URI stability even though the management card now renders under
 	// the Gateways app (which calls these by absolute /account path).
-	T.HandleFunc("/api/connections", T.handleConnections)
-	T.HandleFunc("/api/tokens", T.handleTokens)
-	T.HandleFunc("/api/token-targets", T.handleTokenTargets)
+	T.HandleFunc("/api/connections", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, T.handleConnections),
+		"POST": jsonapi.Post(T.DB, T.handleConnectionSave),
+	}.Serve)
+	T.HandleFunc("/api/tokens", jsonapi.Methods{
+		"GET":    jsonapi.Get(T.DB, T.handleTokens),
+		"POST":   T.tokenPost(),
+		"DELETE": jsonapi.Post(T.DB, T.handleTokenRevoke),
+	}.Serve)
+	T.HandleFunc("/api/token-targets", jsonapi.Get(T.DB, T.handleTokenTargets))
 	T.HandleFunc("/api/artifacts/export", T.handleArtifactExport)
-	T.HandleFunc("/api/artifacts/preview", T.handleArtifactPreview)
-	T.HandleFunc("/api/artifacts/import", T.handleArtifactImport)
+	T.HandleFunc("/api/artifacts/preview", jsonapi.Methods{
+		"POST": jsonapi.Post(T.DB, T.handleArtifactPreview, jsonapi.EmptyBodyOK, jsonapi.MaxBody(maxAccountImportBytes)),
+	}.Serve)
+	T.HandleFunc("/api/artifacts/import", jsonapi.Methods{
+		"POST": jsonapi.Post(T.DB, T.handleArtifactImport, jsonapi.EmptyBodyOK, jsonapi.MaxBody(maxAccountImportBytes)),
+	}.Serve)
 	T.HandleFunc("/oauth/start", T.handleOAuthStart)
 	T.HandleFunc("/oauth/callback", T.handleOAuthCallback)
 	T.HandleFunc("/mcp/connect", T.handleMCPConnect)
@@ -259,203 +274,174 @@ func htmlEscape(s string) string {
 	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(s)
 }
 
-// handleConnections GET lists the per-user (per_user-scoped) credentials the user
-// can connect, each flagged connected/not; POST sets or clears the user's secret
-// for one. The secret value is never returned — only connected status.
-func (T *Account) handleConnections(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
+// handleConnections lists the per-user (per_user-scoped) credentials the user
+// can connect, each flagged connected/not. The secret value is never returned,
+// only connected status.
+func (T *Account) handleConnections(c *jsonapi.Call) (any, error) {
+	user := c.User
+	// SecureAPI per-user credentials + per-user OAuth MCP servers, rendered
+	// in one panel. MCP entries carry Kind="mcp" + a ConnectURL so the panel
+	// routes their Connect/Disconnect to the MCP endpoints.
+	// The deployment's per-user integrations, then the user's own API
+	// credentials (their configuration lives under APIs; their
+	// key lives here, with every other key and sign-in), then MCP servers.
+	conns := Secure().PerUserConnectionsFor(user)
+	conns = append(conns, Secure().OwnConnectionsFor(user)...)
+	conns = append(conns, MCP().PerUserOAuthConnectionsFor(user)...)
+	conns = append(conns, mcppersonal.Connections(user)...)
+	if conns == nil {
+		conns = []PerUserConnection{}
 	}
-	switch r.Method {
-	case http.MethodGet:
-		// SecureAPI per-user credentials + per-user OAuth MCP servers, rendered
-		// in one panel. MCP entries carry Kind="mcp" + a ConnectURL so the panel
-		// routes their Connect/Disconnect to the MCP endpoints.
-		// The deployment's per-user integrations, then the user's own API
-		// credentials (their configuration lives under APIs; their
-		// key lives here, with every other key and sign-in), then MCP servers.
-		conns := Secure().PerUserConnectionsFor(user)
-		conns = append(conns, Secure().OwnConnectionsFor(user)...)
-		conns = append(conns, MCP().PerUserOAuthConnectionsFor(user)...)
-		conns = append(conns, mcppersonal.Connections(user)...)
-		if conns == nil {
-			conns = []PerUserConnection{}
-		}
-		jsonapi.Write(w, conns)
-	case http.MethodPost:
-		var body struct {
-			Name       string `json:"name"`
-			Secret     string `json:"secret"`
-			Disconnect bool   `json:"disconnect"`
-			// Kind "own" is one of the user's own credentials, which can share
-			// a name with a deployment one, so the panel says which it means.
-			Kind string `json:"kind"`
-			// A POINTER so "absent" and "off" are different things: a save
-			// that says nothing about the lock must not read as a request to
-			// unlock, which is the shape that loses a setting nobody touched.
-			Secured *bool `json:"secured,omitempty"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		// The user's own credential: only its key is set here. Its
-		// configuration, reach and lending stay under APIs.
-		if body.Kind == ConnKindOwn {
-			if body.Secured != nil {
-				http.Error(w, "this credential's reach is set under APIs", http.StatusBadRequest)
-				return
-			}
-			// Only an explicit Disconnect removes the key. A blank save is a
-			// mistake to refuse, not a request to wipe what is stored.
-			secret := body.Secret
-			if body.Disconnect {
-				secret = ""
-			} else if strings.TrimSpace(secret) == "" {
-				http.Error(w, "paste a key to save", http.StatusBadRequest)
-				return
-			}
-			if err := Secure().SetOwnedSecret(user, body.Name, secret); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		// One of their own MCP servers: Disconnect only, as below.
-		if body.Kind == mcppersonal.ConnKind {
-			if !body.Disconnect {
-				http.Error(w, "this server connects via OAuth: use Connect", http.StatusBadRequest)
-				return
-			}
-			mcppersonal.Disconnect(user, body.Name)
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		// MCP oauth server: only Disconnect flows through here (Connect goes via
-		// the /mcp/connect consent redirect, not a POST). Handle before the
-		// SecureAPI guard, whose Load() wouldn't find this name.
-		if cfg, found := MCP().Load(body.Name); found && cfg.AuthMode == MCPAuthOAuth {
-			if body.Disconnect {
-				MCP().DisconnectUser(user, body.Name)
-				w.WriteHeader(http.StatusNoContent)
-				return
-			}
-			http.Error(w, "this integration connects via OAuth: use Connect", http.StatusBadRequest)
-			return
-		}
-		// Guard: only per_user credentials are touchable from the account page
-		// (never the shared/admin secrets).
-		c, found := Secure().Load(body.Name)
-		if !found || !c.IsPerUser() {
-			http.Error(w, "no such per-user integration", http.StatusNotFound)
-			return
-		}
-		// The lock on this user's OWN key: whether every agent they have gets a
-		// generic call_<name> route to spend it. Sent on its own, never
-		// alongside a secret, so a save that only moves the switch cannot
-		// disturb the key and vice versa.
+	return conns, nil
+}
+
+// connectionSave is what the Connected accounts panel posts for one
+// integration.
+type connectionSave struct {
+	Name       string `json:"name"`
+	Secret     string `json:"secret"`
+	Disconnect bool   `json:"disconnect"`
+	// Kind "own" is one of the user's own credentials, which can share
+	// a name with a deployment one, so the panel says which it means.
+	Kind string `json:"kind"`
+	// A POINTER so "absent" and "off" are different things: a save
+	// that says nothing about the lock must not read as a request to
+	// unlock, which is the shape that loses a setting nobody touched.
+	Secured *bool `json:"secured,omitempty"`
+}
+
+// handleConnectionSave sets or clears the user's secret for one integration,
+// or moves its lock.
+func (T *Account) handleConnectionSave(c *jsonapi.Call, body connectionSave) (any, error) {
+	user := c.User
+	// The user's own credential: only its key is set here. Its
+	// configuration, reach and lending stay under APIs.
+	if body.Kind == ConnKindOwn {
 		if body.Secured != nil {
-			if c.Secured && !*body.Secured {
-				// The admin's lock is about the deployment's exposure and is
-				// not a user's to lift. Said plainly rather than silently
-				// ignored, so a switch that will not move explains itself.
-				http.Error(w, "an admin has secured this integration for everyone: you can keep it locked, but not open it", http.StatusForbidden)
-				return
-			}
-			if err := Secure().SetUserSecured(body.Name, user, *body.Secured); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			w.WriteHeader(http.StatusNoContent)
-			return
+			return nil, jsonapi.BadRequest("this credential's reach is set under APIs")
 		}
-		switch {
-		case body.Disconnect && c.IsAuthCode():
-			Secure().ClearUserToken(body.Name, user) // OAuth: drop the token
-		case c.IsAuthCode():
-			// OAuth creds connect via the consent flow (oauth/start), not by
-			// posting a secret here.
-			http.Error(w, "this integration connects via OAuth: use Connect", http.StatusBadRequest)
-			return
-		default:
-			// Key creds: set or clear the user's key (empty secret = disconnect).
-			if err := Secure().SaveUserSecret(body.Name, user, body.Secret); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
+		// Only an explicit Disconnect removes the key. A blank save is a
+		// mistake to refuse, not a request to wipe what is stored.
+		secret := body.Secret
+		if body.Disconnect {
+			secret = ""
+		} else if strings.TrimSpace(secret) == "" {
+			return nil, jsonapi.BadRequest("paste a key to save")
 		}
-		w.WriteHeader(http.StatusNoContent)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		if err := Secure().SetOwnedSecret(user, body.Name, secret); err != nil {
+			return nil, jsonapi.BadRequest(err.Error())
+		}
+		return jsonapi.Empty(http.StatusNoContent), nil
 	}
+	// One of their own MCP servers: Disconnect only, as below.
+	if body.Kind == mcppersonal.ConnKind {
+		if !body.Disconnect {
+			return nil, jsonapi.BadRequest("this server connects via OAuth: use Connect")
+		}
+		mcppersonal.Disconnect(user, body.Name)
+		return jsonapi.Empty(http.StatusNoContent), nil
+	}
+	// MCP oauth server: only Disconnect flows through here (Connect goes via
+	// the /mcp/connect consent redirect, not a POST). Handle before the
+	// SecureAPI guard, whose Load() wouldn't find this name.
+	if cfg, found := MCP().Load(body.Name); found && cfg.AuthMode == MCPAuthOAuth {
+		if body.Disconnect {
+			MCP().DisconnectUser(user, body.Name)
+			return jsonapi.Empty(http.StatusNoContent), nil
+		}
+		return nil, jsonapi.BadRequest("this integration connects via OAuth: use Connect")
+	}
+	// Guard: only per_user credentials are touchable from the account page
+	// (never the shared/admin secrets).
+	cred, found := Secure().Load(body.Name)
+	if !found || !cred.IsPerUser() {
+		return nil, jsonapi.NotFound("no such per-user integration")
+	}
+	// The lock on this user's OWN key: whether every agent they have gets a
+	// generic call_<name> route to spend it. Sent on its own, never
+	// alongside a secret, so a save that only moves the switch cannot
+	// disturb the key and vice versa.
+	if body.Secured != nil {
+		if cred.Secured && !*body.Secured {
+			// The admin's lock is about the deployment's exposure and is
+			// not a user's to lift. Said plainly rather than silently
+			// ignored, so a switch that will not move explains itself.
+			return nil, jsonapi.Forbidden("an admin has secured this integration for everyone: you can keep it locked, but not open it")
+		}
+		if err := Secure().SetUserSecured(body.Name, user, *body.Secured); err != nil {
+			return nil, jsonapi.Status(http.StatusInternalServerError, err.Error())
+		}
+		return jsonapi.Empty(http.StatusNoContent), nil
+	}
+	switch {
+	case body.Disconnect && cred.IsAuthCode():
+		Secure().ClearUserToken(body.Name, user) // OAuth: drop the token
+	case cred.IsAuthCode():
+		// OAuth creds connect via the consent flow (oauth/start), not by
+		// posting a secret here.
+		return nil, jsonapi.BadRequest("this integration connects via OAuth: use Connect")
+	default:
+		// Key creds: set or clear the user's key (empty secret = disconnect).
+		if err := Secure().SaveUserSecret(body.Name, user, body.Secret); err != nil {
+			return nil, jsonapi.Status(http.StatusInternalServerError, err.Error())
+		}
+	}
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // --- preferences endpoint ----------------------------------------------------
 
-// handlePrefs GET returns the user's personal defaults; POST updates whichever
-// fields are present (the FormPanel auto-saves per toggle).
-func (T *Account) handlePrefs(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
+// handlePrefs returns the user's personal defaults.
+func (T *Account) handlePrefs(c *jsonapi.Call) (any, error) {
+	db, user := AuthDB(), c.User
+	return map[string]any{
+		"notify":            AuthGetNotifyDefault(db, user),
+		"private_mode":      AuthGetPrivateMode(db, user),
+		"inferred_disabled": AuthGetInferredDisabled(db, user),
+		"timezone":          AuthGetUserTimezone(db, user),
+		// RESOLVED, so the form shows what will actually happen rather than
+		// a blank that means "nobody has asked you yet". Saving from here
+		// then stores it explicitly, which is how never-chosen becomes a
+		// decision without anybody being surprised by the default.
+		"notify_forward": ResolveNotifyForward(db, user),
+	}, nil
+}
+
+// handlePrefsSave updates whichever fields are present (the FormPanel
+// auto-saves per toggle).
+func (T *Account) handlePrefsSave(c *jsonapi.Call, req struct {
+	Notify           *bool   `json:"notify,omitempty"`
+	PrivateMode      *bool   `json:"private_mode,omitempty"`
+	InferredDisabled *bool   `json:"inferred_disabled,omitempty"`
+	Timezone         *string `json:"timezone,omitempty"`
+	NotifyForward    *string `json:"notify_forward,omitempty"`
+}) (any, error) {
+	db, user := AuthDB(), c.User
+	if req.NotifyForward != nil {
+		AuthSetNotifyForward(db, user, *req.NotifyForward)
 	}
-	db := AuthDB()
-	switch r.Method {
-	case http.MethodGet:
-		jsonapi.Write(w, map[string]any{
-			"notify":            AuthGetNotifyDefault(db, user),
-			"private_mode":      AuthGetPrivateMode(db, user),
-			"inferred_disabled": AuthGetInferredDisabled(db, user),
-			"timezone":          AuthGetUserTimezone(db, user),
-			// RESOLVED, so the form shows what will actually happen rather than
-			// a blank that means "nobody has asked you yet". Saving from here
-			// then stores it explicitly, which is how never-chosen becomes a
-			// decision without anybody being surprised by the default.
-			"notify_forward": ResolveNotifyForward(db, user),
-		})
-	case http.MethodPost:
-		var req struct {
-			Notify           *bool   `json:"notify,omitempty"`
-			PrivateMode      *bool   `json:"private_mode,omitempty"`
-			InferredDisabled *bool   `json:"inferred_disabled,omitempty"`
-			Timezone         *string `json:"timezone,omitempty"`
-			NotifyForward    *string `json:"notify_forward,omitempty"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		if req.NotifyForward != nil {
-			AuthSetNotifyForward(db, user, *req.NotifyForward)
-		}
-		if req.Notify != nil {
-			AuthSetNotifyDefault(db, user, *req.Notify)
-		}
-		if req.PrivateMode != nil {
-			AuthSetPrivateMode(db, user, *req.PrivateMode)
-		}
-		if req.InferredDisabled != nil {
-			AuthSetInferredDisabled(db, user, *req.InferredDisabled)
-		}
-		if req.Timezone != nil {
-			// Blank clears back to the deployment zone. Otherwise validate and
-			// store the canonical IANA name so a typo can't corrupt the user's
-			// schedules/stamp; a bad value is rejected so the form shows it.
-			if tz := strings.TrimSpace(*req.Timezone); tz == "" {
-				AuthSetUserTimezone(db, user, "")
-			} else if _, iana, err := ResolveZone(tz); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			} else {
-				AuthSetUserTimezone(db, user, iana)
-			}
-		}
-		w.WriteHeader(http.StatusNoContent)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	if req.Notify != nil {
+		AuthSetNotifyDefault(db, user, *req.Notify)
 	}
+	if req.PrivateMode != nil {
+		AuthSetPrivateMode(db, user, *req.PrivateMode)
+	}
+	if req.InferredDisabled != nil {
+		AuthSetInferredDisabled(db, user, *req.InferredDisabled)
+	}
+	if req.Timezone != nil {
+		// Blank clears back to the deployment zone. Otherwise validate and
+		// store the canonical IANA name so a typo can't corrupt the user's
+		// schedules/stamp; a bad value is rejected so the form shows it.
+		if tz := strings.TrimSpace(*req.Timezone); tz == "" {
+			AuthSetUserTimezone(db, user, "")
+		} else if _, iana, err := ResolveZone(tz); err != nil {
+			return nil, jsonapi.BadRequest(err.Error())
+		} else {
+			AuthSetUserTimezone(db, user, iana)
+		}
+	}
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // handlePassword lets a logged-in user change their OWN password: POST
@@ -463,37 +449,21 @@ func (T *Account) handlePrefs(w http.ResponseWriter, r *http.Request) {
 // session can't silently reset it), and only the hash is updated — admin flag,
 // apps, and preferences are preserved. 204 on success; 400 on weak input; 403
 // when the current password is wrong.
-func (T *Account) handlePassword(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	var req struct {
-		Current string `json:"current"`
-		New     string `json:"new"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
+func (T *Account) handlePassword(c *jsonapi.Call, req struct {
+	Current string `json:"current"`
+	New     string `json:"new"`
+}) (any, error) {
 	// Match the signup/reset policy (6–128 chars).
 	if len(req.New) < 6 {
-		http.Error(w, "New password must be at least 6 characters.", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("New password must be at least 6 characters.")
 	}
 	if len(req.New) > 128 {
-		http.Error(w, "New password is too long.", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("New password is too long.")
 	}
-	if !AuthChangePassword(AuthDB(), user, req.Current, req.New, r) {
-		http.Error(w, "Current password is incorrect.", http.StatusForbidden)
-		return
+	if !AuthChangePassword(AuthDB(), c.User, req.Current, req.New, c.R) {
+		return nil, jsonapi.Forbidden("Current password is incorrect.")
 	}
-	w.WriteHeader(http.StatusNoContent)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // --- page --------------------------------------------------------------------
@@ -584,65 +554,66 @@ func (T *Account) servePage(w http.ResponseWriter, r *http.Request) {
 	}.ServeHTTP(w, r)
 }
 
-// handleTokens lists / mints / revokes the user's personal access tokens. The
-// full secret is returned ONLY by the POST (mint) response; GET masks it.
-func (T *Account) handleTokens(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	switch r.Method {
-	case http.MethodGet:
-		// Swept here rather than on a timer: the list is the only place the
-		// rows are read, so it is the moment the cleanup is owed, and it keeps
-		// this file free of a goroutine whose failure mode is silent.
-		SweepExpiredAccountTokens()
-		jsonapi.Write(w, ListAccountTokens(user))
-	case http.MethodPost:
-		// action=scope rescopes an existing key; default POST mints a new one.
-		// How long a key lives is not the owner's to choose: it is the admin's
-		// API key lifetime (core AccountKeyLifetime).
+// handleTokens lists the user's personal access tokens, secrets masked.
+func (T *Account) handleTokens(c *jsonapi.Call) (any, error) {
+	// Swept here rather than on a timer: the list is the only place the
+	// rows are read, so it is the moment the cleanup is owed, and it keeps
+	// this file free of a goroutine whose failure mode is silent.
+	SweepExpiredAccountTokens()
+	return ListAccountTokens(c.User), nil
+}
+
+// tokenPost tells /api/tokens' two POST shapes apart: ?action=scope rescopes
+// an existing key, anything else mints a new one. The full secret is returned
+// ONLY by the mint.
+func (T *Account) tokenPost() http.HandlerFunc {
+	scope := jsonapi.Post(T.DB, T.handleTokenScope)
+	mint := jsonapi.Post(T.DB, T.handleTokenMint, jsonapi.EmptyBodyOK)
+	return func(w http.ResponseWriter, r *http.Request) {
 		if strings.TrimSpace(r.URL.Query().Get("action")) == "scope" {
-			id := strings.TrimSpace(r.URL.Query().Get("id"))
-			var body struct {
-				Scope TokenScope `json:"scope"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				http.Error(w, "bad request", http.StatusBadRequest)
-				return
-			}
-			if !SetAccountTokenScope(user, id, T.grantableScope(user, &body.Scope)) {
-				http.Error(w, "token not found", http.StatusNotFound)
-				return
-			}
-			w.WriteHeader(http.StatusNoContent)
+			scope(w, r)
 			return
 		}
-		var req struct {
-			Name  string      `json:"name"`
-			Scope *TokenScope `json:"scope"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&req)
-		// New keys are minted deny-by-default: an explicit (possibly empty)
-		// scope, never the nil legacy-unrestricted case. A client that sends no
-		// scope still gets an empty one, so it reaches nothing until scoped.
-		scope := req.Scope
-		if scope == nil {
-			scope = &TokenScope{}
-		}
-		scope = T.grantableScope(user, scope)
-		jsonapi.Write(w, MintAccountTokenScoped(user, req.Name, scope)) // secret returned once
-	case http.MethodDelete:
-		id := strings.TrimSpace(r.URL.Query().Get("id"))
-		if id == "" {
-			http.Error(w, "missing id", http.StatusBadRequest)
-			return
-		}
-		RevokeAccountToken(user, id)
-		w.WriteHeader(http.StatusNoContent)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		mint(w, r)
 	}
+}
+
+// handleTokenScope rescopes the ?id= key to what the editor offers.
+func (T *Account) handleTokenScope(c *jsonapi.Call, body struct {
+	Scope TokenScope `json:"scope"`
+}) (any, error) {
+	id := strings.TrimSpace(c.R.URL.Query().Get("id"))
+	if !SetAccountTokenScope(c.User, id, T.grantableScope(c.User, &body.Scope)) {
+		return nil, jsonapi.NotFound("token not found")
+	}
+	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// handleTokenMint mints a key and returns its secret, once. How long a key
+// lives is not the owner's to choose: it is the admin's API key lifetime
+// (core AccountKeyLifetime).
+func (T *Account) handleTokenMint(c *jsonapi.Call, req struct {
+	Name  string      `json:"name"`
+	Scope *TokenScope `json:"scope"`
+}) (any, error) {
+	// New keys are minted deny-by-default: an explicit (possibly empty)
+	// scope, never the nil legacy-unrestricted case. A client that sends no
+	// scope still gets an empty one, so it reaches nothing until scoped.
+	scope := req.Scope
+	if scope == nil {
+		scope = &TokenScope{}
+	}
+	return MintAccountTokenScoped(c.User, req.Name, T.grantableScope(c.User, scope)), nil // secret returned once
+}
+
+// handleTokenRevoke revokes the ?id= key.
+func (T *Account) handleTokenRevoke(c *jsonapi.Call, _ struct{}) (any, error) {
+	id := strings.TrimSpace(c.R.URL.Query().Get("id"))
+	if id == "" {
+		return nil, jsonapi.BadRequest("missing id")
+	}
+	RevokeAccountToken(c.User, id)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // grantableScope keeps only what the scope editor offers this user: features
@@ -684,11 +655,8 @@ func (T *Account) grantableScope(user string, scope *TokenScope) *TokenScope {
 // agents, channels, and the raw tiers). A feature the admin has NOT granted
 // this user is omitted, so the editor can't offer a key something the admin
 // gate would reject anyway.
-func (T *Account) handleTokenTargets(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *Account) handleTokenTargets(c *jsonapi.Call) (any, error) {
+	user := c.User
 	// Kind is where the editor puts a feature: "door" (a way a client
 	// connects: the Model API, MCP), "app" (an app's agents, which are
 	// something a key REACHES, listed with the agents), or "lends" (the
@@ -720,11 +688,11 @@ func (T *Account) handleTokenTargets(w http.ResponseWriter, r *http.Request) {
 			tools = append(tools, mcpTool{Name: st.Name, Label: st.Name})
 		}
 	}
-	jsonapi.Write(w, map[string]any{
+	return map[string]any{
 		"features": feats,
 		"targets":  ListExternalTargets(T.DB, user),
 		"tools":    tools,
-	})
+	}, nil
 }
 
 // featureKind sorts a shareable feature for the key editor (handleTokenTargets).

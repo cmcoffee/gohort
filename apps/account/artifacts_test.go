@@ -81,7 +81,7 @@ func TestImportTakesYourKindsAndReportsTheRest(t *testing.T) {
 	body, _ := json.Marshal(map[string]string{"pack": string(bundle)})
 
 	w := httptest.NewRecorder()
-	T.handleArtifactPreview(w, as(httptest.NewRequest(http.MethodPost, "/account/api/artifacts/preview", bytes.NewReader(body)), sess["bob"]))
+	routed(T)(w, as(httptest.NewRequest(http.MethodPost, "/account/api/artifacts/preview", bytes.NewReader(body)), sess["bob"]))
 	var pv ArtifactPreviewResult
 	_ = json.Unmarshal(w.Body.Bytes(), &pv)
 	if w.Code != http.StatusOK || pv.WouldImport != 1 || pv.WouldSkip != 1 {
@@ -89,7 +89,7 @@ func TestImportTakesYourKindsAndReportsTheRest(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	T.handleArtifactImport(w, as(httptest.NewRequest(http.MethodPost, "/account/api/artifacts/import", bytes.NewReader(body)), sess["bob"]))
+	routed(T)(w, as(httptest.NewRequest(http.MethodPost, "/account/api/artifacts/import", bytes.NewReader(body)), sess["bob"]))
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "only an administrator") {
 		t.Fatalf("import: %d %s", w.Code, w.Body.String())
 	}
@@ -104,11 +104,24 @@ func TestImportTakesYourKindsAndReportsTheRest(t *testing.T) {
 
 func TestAnonymousCannotReachTheDataDoors(t *testing.T) {
 	T, _ := accountFixture(t)
-	for _, h := range []http.HandlerFunc{T.handleArtifactExport, T.handleArtifactPreview, T.handleArtifactImport} {
+	for _, door := range []string{"export", "preview", "import"} {
 		w := httptest.NewRecorder()
-		h(w, httptest.NewRequest(http.MethodPost, "/account/api/artifacts/import", strings.NewReader("{}")))
+		routed(T)(w, httptest.NewRequest(http.MethodPost, "/account/api/artifacts/"+door, strings.NewReader("{}")))
 		if w.Code == http.StatusOK {
-			t.Error("a signed-out request reached an account data door")
+			t.Errorf("a signed-out request reached the %s door", door)
 		}
+	}
+}
+
+// routed is the app's real routes, under the /account mount.
+func routed(T *Account) http.HandlerFunc {
+	mux := http.NewServeMux()
+	T.SetWebMux(mux, "")
+	T.Routes()
+	return func(w http.ResponseWriter, r *http.Request) {
+		if p, ok := strings.CutPrefix(r.URL.Path, "/account"); ok {
+			r.URL.Path = p
+		}
+		mux.ServeHTTP(w, r)
 	}
 }

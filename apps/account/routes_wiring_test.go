@@ -47,8 +47,8 @@ func TestOwnCredentialKeysRouteByKind(t *testing.T) {
 	for _, want := range []string{
 		"conns = append(conns, Secure().OwnConnectionsFor(user)...)",
 		"if body.Kind == ConnKindOwn {",
-		`http.Error(w, "paste a key to save", http.StatusBadRequest)`,
-		`http.Error(w, "this credential's reach is set under APIs", http.StatusBadRequest)`,
+		`jsonapi.BadRequest("paste a key to save")`,
+		`jsonapi.BadRequest("this credential's reach is set under APIs")`,
 		"Secure().SetOwnedSecret(user, body.Name, secret)",
 	} {
 		if !strings.Contains(src, want) {
@@ -58,7 +58,7 @@ func TestOwnCredentialKeysRouteByKind(t *testing.T) {
 	// The own branch must run before the deployment lookup, or a name both
 	// kinds share would set the deployment credential's key instead.
 	own := strings.Index(src, "if body.Kind == ConnKindOwn {")
-	dep := strings.Index(src, "c, found := Secure().Load(body.Name)")
+	dep := strings.Index(src, "cred, found := Secure().Load(body.Name)")
 	if own < 0 || dep < 0 || own > dep {
 		t.Error("the own-credential branch must come before the deployment lookup")
 	}

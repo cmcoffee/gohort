@@ -22,7 +22,7 @@ func TestOwnMCPServersSignInFromConnectedAccounts(t *testing.T) {
 	}
 
 	w := httptest.NewRecorder()
-	T.handleConnections(w, as(httptest.NewRequest(http.MethodGet, "/api/connections", nil), sessions["alice"]))
+	routed(T)(w, as(httptest.NewRequest(http.MethodGet, "/api/connections", nil), sessions["alice"]))
 	var conns []PerUserConnection
 	json.Unmarshal(w.Body.Bytes(), &conns)
 	found := false
@@ -35,7 +35,7 @@ func TestOwnMCPServersSignInFromConnectedAccounts(t *testing.T) {
 		t.Fatalf("alice's server is not under Connected accounts: %s", w.Body.String())
 	}
 	w = httptest.NewRecorder()
-	T.handleConnections(w, as(httptest.NewRequest(http.MethodGet, "/api/connections", nil), sessions["bob"]))
+	routed(T)(w, as(httptest.NewRequest(http.MethodGet, "/api/connections", nil), sessions["bob"]))
 	if strings.Contains(w.Body.String(), "hosted") {
 		t.Errorf("bob sees alice's server: %s", w.Body.String())
 	}
@@ -50,7 +50,7 @@ func TestOwnMCPServersSignInFromConnectedAccounts(t *testing.T) {
 	post := func(user string, body map[string]any) int {
 		b, _ := json.Marshal(body)
 		w := httptest.NewRecorder()
-		T.handleConnections(w, as(httptest.NewRequest(http.MethodPost, "/api/connections", bytes.NewReader(b)), sessions[user]))
+		routed(T)(w, as(httptest.NewRequest(http.MethodPost, "/api/connections", bytes.NewReader(b)), sessions[user]))
 		return w.Code
 	}
 	if code := post("alice", map[string]any{"name": "hosted", "kind": mcppersonal.ConnKind}); code != http.StatusBadRequest {
