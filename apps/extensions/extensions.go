@@ -80,17 +80,17 @@ func (T *Extensions) Routes() {
 	T.HandleFunc("/api/credentials", jsonapi.Methods{
 		"GET":    jsonapi.Get(T.DB, T.handleCredentials),
 		"POST":   T.credentialPost(),
-		"DELETE": jsonapi.Post(T.DB, T.handleCredentialDelete),
+		"DELETE": jsonapi.Delete(T.DB, T.handleCredentialDelete),
 	}.Serve)
 	T.HandleFunc("/api/mcp-servers", jsonapi.Methods{
 		"GET":    jsonapi.Get(T.DB, T.handleMCPServers),
 		"POST":   T.mcpServerPost(),
-		"DELETE": jsonapi.Post(T.DB, T.handleMCPServerDelete),
+		"DELETE": jsonapi.Delete(T.DB, T.handleMCPServerDelete),
 	}.Serve)
 	T.HandleFunc("/api/tools", jsonapi.Methods{
 		"GET":    jsonapi.Get(T.DB, T.listUserTools),
 		"POST":   T.userToolPost(),
-		"DELETE": jsonapi.Post(T.DB, T.deleteUserTool),
+		"DELETE": jsonapi.Delete(T.DB, T.deleteUserTool),
 	}.Serve)
 	T.HandleFunc("/api/tool-access", jsonapi.Methods{
 		"GET":  jsonapi.Get(T.DB, T.handleToolAccess),
@@ -120,8 +120,8 @@ func (T *Extensions) Routes() {
 	T.HandleFunc("/api/skills", jsonapi.Methods{
 		"GET":    jsonapi.Get(T.DB, T.handleUserSkills),
 		"POST":   T.skillPost(),
-		"PATCH":  jsonapi.Post(T.DB, T.handleSkillGrants),
-		"DELETE": jsonapi.Post(T.DB, T.handleSkillDelete),
+		"PATCH":  jsonapi.Patch(T.DB, T.handleSkillGrants),
+		"DELETE": jsonapi.Delete(T.DB, T.handleSkillDelete),
 	}.Serve)
 	T.HandleFunc("/api/skills/", T.handleUserSkillOne)
 	T.HandleFunc("/api/skill-tools", jsonapi.Get(T.DB, T.handleSkillToolOptions))
@@ -129,8 +129,8 @@ func (T *Extensions) Routes() {
 	T.HandleFunc("/api/skill-playbook", jsonapi.Methods{
 		"GET":   jsonapi.Get(T.DB, T.handleSkillPlaybookRule),
 		"POST":  jsonapi.Post(T.DB, T.handleSkillPlaybookRuleSet),
-		"PUT":   jsonapi.Post(T.DB, T.handleSkillPlaybookRuleSet),
-		"PATCH": jsonapi.Post(T.DB, T.handleSkillPlaybookRuleSet),
+		"PUT":   jsonapi.Put(T.DB, T.handleSkillPlaybookRuleSet),
+		"PATCH": jsonapi.Patch(T.DB, T.handleSkillPlaybookRuleSet),
 	}.Serve)
 	T.HandleFunc("/skill-playbook", T.handleSkillPlaybookPage)
 	T.HandleFunc("/", T.servePage)

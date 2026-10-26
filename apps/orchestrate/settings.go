@@ -117,7 +117,7 @@ func (T *OrchestrateApp) handlePrivateModeSet(c *jsonapi.Call, raw json.RawMessa
 // privateModeSetRoute is handlePrivateModeSet's route, for the registration and the Public wrapper
 // another app serves it through.
 func (T *OrchestrateApp) privateModeSetRoute() http.HandlerFunc {
-	return jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handlePrivateModeSet, jsonapi.EmptyBodyOK)}.Serve
+	return jsonapi.Post(T.DB, T.handlePrivateModeSet, jsonapi.EmptyBodyOK)
 }
 
 // handleMemoryModeGet / Set expose the (per-(user, agent)) Inferred
@@ -175,5 +175,5 @@ func (T *OrchestrateApp) handleMemoryModeSet(c *jsonapi.Call, raw json.RawMessag
 // memoryModeSetRoute is handleMemoryModeSet's route, for the registration and the Public wrapper
 // another app serves it through.
 func (T *OrchestrateApp) memoryModeSetRoute() http.HandlerFunc {
-	return jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleMemoryModeSet, jsonapi.EmptyBodyOK)}.Serve
+	return jsonapi.Post(T.DB, T.handleMemoryModeSet, jsonapi.EmptyBodyOK)
 }

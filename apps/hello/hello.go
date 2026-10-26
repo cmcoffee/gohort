@@ -76,7 +76,7 @@ func (T *HelloAgent) Routes() {
 	// resolved (c.User, c.UDB), its body already decoded, and returns what to
 	// send. A signed-out request, a wrong method and a broken body are
 	// answered before it runs.
-	T.HandleFunc("/api/echo", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleEcho)}.Serve)
+	T.HandleFunc("/api/echo", jsonapi.Post(T.DB, T.handleEcho))
 	T.HandleFunc("/chart", T.handleChartPage)
 	registerAgentRoutes(T)
 }

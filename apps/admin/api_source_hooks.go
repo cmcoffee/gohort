@@ -19,7 +19,7 @@ func (a *AdminApp) registerSourceHooksRoutes(sub *http.ServeMux) {
 	sub.HandleFunc("/api/source-hooks", jsonapi.Methods{
 		"GET":    jsonapi.Get(a.db, a.handleSourceHooks, a.gate()),
 		"POST":   a.sourceHookPost(),
-		"DELETE": jsonapi.Post(a.db, a.handleSourceHookDelete, a.gate()),
+		"DELETE": jsonapi.Delete(a.db, a.handleSourceHookDelete, a.gate()),
 	}.Serve)
 
 }

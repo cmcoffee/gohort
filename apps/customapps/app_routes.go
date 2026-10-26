@@ -71,13 +71,23 @@ func (T *CustomApps) appGet(fn func(a *appCall) (any, error)) http.HandlerFunc {
 
 // appPost is a write to one app, with its body.
 func appPost[In any](T *CustomApps, fn func(a *appCall, in In) (any, error), opts ...jsonapi.Option) http.HandlerFunc {
-	return jsonapi.Post(T.DB, func(c *jsonapi.Call, in In) (any, error) {
+	return jsonapi.Post(T.DB, inAppWrite(T, fn), opts...)
+}
+
+// appDelete is appPost for a DELETE.
+func appDelete[In any](T *CustomApps, fn func(a *appCall, in In) (any, error), opts ...jsonapi.Option) http.HandlerFunc {
+	return jsonapi.Delete(T.DB, inAppWrite(T, fn), opts...)
+}
+
+// inAppWrite runs fn on the app the path names.
+func inAppWrite[In any](T *CustomApps, fn func(a *appCall, in In) (any, error)) func(c *jsonapi.Call, in In) (any, error) {
+	return func(c *jsonapi.Call, in In) (any, error) {
 		a, err := T.inApp(c)
 		if err != nil {
 			return nil, err
 		}
 		return fn(a, in)
-	}, opts...)
+	}
 }
 
 // appRoutes registers the app's JSON routes. The page, its scripts' data and
@@ -92,21 +102,21 @@ func (T *CustomApps) appRoutes() {
 		"GET":  T.appGet(T.settingsValues),
 		"POST": appPost(T, T.saveSettingsValues),
 	}.Serve)
-	T.HandleFunc("/{slug}/_settings/reset", jsonapi.Methods{"POST": appPost(T, T.resetSettings)}.Serve)
+	T.HandleFunc("/{slug}/_settings/reset", appPost(T, T.resetSettings))
 	T.HandleFunc("/{slug}/_settings/agent", jsonapi.Methods{
 		"GET":  T.appGet(T.settingsAgent),
 		"POST": appPost(T, T.saveSettingsAgent),
 	}.Serve)
 	T.HandleFunc("/{slug}/actions", jsonapi.Methods{"GET": T.appGet(T.actionsList)}.Serve)
 	T.HandleFunc("/{slug}/action-progress/{name}", jsonapi.Methods{"GET": T.appGet(T.actionProgress)}.Serve)
-	T.HandleFunc("/{slug}/action-cancel/{name}", jsonapi.Methods{"POST": appPost(T, T.cancelAction)}.Serve)
+	T.HandleFunc("/{slug}/action-cancel/{name}", appPost(T, T.cancelAction))
 	T.HandleFunc("/{slug}/records", jsonapi.Methods{
 		"GET":  T.appGet(T.listRecords),
 		"POST": appPost(T, T.saveRecord),
 	}.Serve)
 	T.HandleFunc("/{slug}/record", jsonapi.Methods{
 		"GET":    T.appGet(T.getRecord),
-		"DELETE": appPost(T, T.deleteRecord),
+		"DELETE": appDelete(T, T.deleteRecord),
 	}.Serve)
 	T.HandleFunc("/{slug}/changes", jsonapi.Methods{"GET": T.appGet(T.changes)}.Serve)
 }

@@ -19,7 +19,7 @@ func (a *AdminApp) registerMCPRoutes(sub *http.ServeMux) {
 	sub.HandleFunc("/api/mcp-servers", jsonapi.Methods{
 		"GET":    jsonapi.Get(a.db, a.handleMCPServers, a.gate()),
 		"POST":   a.mcpServerPost(),
-		"DELETE": jsonapi.Post(a.db, a.handleMCPServerDelete, a.gate()),
+		"DELETE": jsonapi.Delete(a.db, a.handleMCPServerDelete, a.gate()),
 	}.Serve)
 
 	// Inbound MCP tool governance: which app-contributed MCP tools are exposed on

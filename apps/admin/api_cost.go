@@ -19,7 +19,7 @@ func (a *AdminApp) registerCostRoutes(sub *http.ServeMux) {
 	// path writes the same record and updates live via SetCostRates.
 	sub.HandleFunc("/api/cost-rates", jsonapi.Methods{
 		"GET": jsonapi.Get(a.db, a.handleGetCostRates, a.gate()),
-		"PUT": jsonapi.Post(a.db, a.handleUpdateCostRates, a.gate()),
+		"PUT": jsonapi.Put(a.db, a.handleUpdateCostRates, a.gate()),
 	}.Serve)
 
 	// Per-day cost history for the admin chart. Aggregates across every

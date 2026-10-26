@@ -232,7 +232,7 @@ func (T *Servitor) handleServitorSessionOne() http.HandlerFunc {
 				Guides []SessionGuide `json:"guides,omitempty"`
 			}{chatSession: s, Guides: SessionGuides(c.UDB, id)}, nil
 		}),
-		"DELETE": jsonapi.Post(T.DB, func(c *jsonapi.Call, _ struct{}) (any, error) {
+		"DELETE": jsonapi.Delete(T.DB, func(c *jsonapi.Call, _ struct{}) (any, error) {
 			id, appID, err := sessionPath(c.R)
 			if err != nil {
 				return nil, err
@@ -247,7 +247,7 @@ func (T *Servitor) handleServitorSessionOne() http.HandlerFunc {
 		// sessions follow: {at: N} drops messages from index N on (Edit then
 		// resends the changed text), {delete_at: N} drops just that one. The
 		// next turn's history comes from the page, which drops the same rows.
-		"PATCH": jsonapi.Post(T.DB, func(c *jsonapi.Call, body sessionCutReq) (any, error) {
+		"PATCH": jsonapi.Patch(T.DB, func(c *jsonapi.Call, body sessionCutReq) (any, error) {
 			id, appID, err := sessionPath(c.R)
 			if err != nil {
 				return nil, err

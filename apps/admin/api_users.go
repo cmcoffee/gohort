@@ -43,19 +43,19 @@ func (a *AdminApp) registerUsersRoutes(sub *http.ServeMux) {
 	sub.HandleFunc("/api/user-credentials", jsonapi.Methods{
 		"GET":    jsonapi.Get(a.db, a.handleUserCredentials, a.gate()),
 		"POST":   jsonapi.Post(a.db, a.handleUserCredentialAction, a.gate()),
-		"DELETE": jsonapi.Post(a.db, a.handleUserCredentialDelete, a.gate()),
+		"DELETE": jsonapi.Delete(a.db, a.handleUserCredentialDelete, a.gate()),
 	}.Serve)
 	// Whether people add their own credentials and MCP servers at all.
 	sub.HandleFunc("/api/personal-integrations", jsonapi.Methods{
 		"GET":   jsonapi.Get(a.db, a.handlePersonalIntegrations, a.gate()),
 		"POST":  jsonapi.Post(a.db, a.handlePersonalIntegrationsSave, a.gate(), jsonapi.MaxBody(1<<16)),
-		"PUT":   jsonapi.Post(a.db, a.handlePersonalIntegrationsSave, a.gate(), jsonapi.MaxBody(1<<16)),
-		"PATCH": jsonapi.Post(a.db, a.handlePersonalIntegrationsSave, a.gate(), jsonapi.MaxBody(1<<16)),
+		"PUT":   jsonapi.Put(a.db, a.handlePersonalIntegrationsSave, a.gate(), jsonapi.MaxBody(1<<16)),
+		"PATCH": jsonapi.Patch(a.db, a.handlePersonalIntegrationsSave, a.gate(), jsonapi.MaxBody(1<<16)),
 	}.Serve)
 	sub.HandleFunc("/api/personal-mcp-servers", jsonapi.Methods{
 		"GET":    jsonapi.Get(a.db, a.handlePersonalMCPServers, a.gate()),
 		"POST":   jsonapi.Post(a.db, a.handlePersonalMCPServerAction, a.gate()),
-		"DELETE": jsonapi.Post(a.db, a.handlePersonalMCPServerDelete, a.gate()),
+		"DELETE": jsonapi.Delete(a.db, a.handlePersonalMCPServerDelete, a.gate()),
 	}.Serve)
 
 	// API: user-owned agents — the governance view over peer-shared agents. Agents
@@ -525,12 +525,12 @@ func (a *AdminApp) handleGlobalToolRollback(c *jsonapi.Call, _ struct{}) (any, e
 func (a *AdminApp) userRoutes() http.HandlerFunc {
 	one := jsonapi.Methods{
 		"GET":    jsonapi.Get(a.db, a.handleUserOne, a.gate()),
-		"PUT":    jsonapi.Post(a.db, audit("changed the account", a.handleUpdateUser), a.gate()),
-		"DELETE": jsonapi.Post(a.db, audit("deleted the account", a.handleDeleteUser), a.gate()),
+		"PUT":    jsonapi.Put(a.db, audit("changed the account", a.handleUpdateUser), a.gate()),
+		"DELETE": jsonapi.Delete(a.db, audit("deleted the account", a.handleDeleteUser), a.gate()),
 	}
 	actions := map[string]jsonapi.Methods{
-		"apps":            {"PUT": jsonapi.Post(a.db, audit("changed the apps of", a.handleUpdateUserApps), a.gate())},
-		"groups":          {"PUT": jsonapi.Post(a.db, audit("changed the groups of", a.handleUpdateUserGroups), a.gate())},
+		"apps":            {"PUT": jsonapi.Put(a.db, audit("changed the apps of", a.handleUpdateUserApps), a.gate())},
+		"groups":          {"PUT": jsonapi.Put(a.db, audit("changed the groups of", a.handleUpdateUserGroups), a.gate())},
 		"approve":         {"POST": jsonapi.Post(a.db, audit("approved the account", a.handleApproveUser), a.gate())},
 		"reject":          {"POST": jsonapi.Post(a.db, audit("rejected the account", a.handleRejectUser), a.gate())},
 		"reset-password":  {"POST": jsonapi.Post(a.db, audit("reset the password of", a.handleResetPassword), a.gate(), jsonapi.EmptyBodyOK)},

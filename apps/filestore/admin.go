@@ -547,22 +547,22 @@ func (T *FileStoreApp) registerRoutes() {
 	T.HandleFunc("/api/stores", jsonapi.Methods{
 		"GET":    jsonapi.Get(T.DB, T.handleStores),
 		"POST":   jsonapi.Post(T.DB, T.handleStoreSave, jsonapi.MaxBody(maxStoreBodyBytes)),
-		"PATCH":  jsonapi.Post(T.DB, T.handleStoreSave, jsonapi.MaxBody(maxStoreBodyBytes)),
-		"DELETE": jsonapi.Post(T.DB, T.handleStoreDelete),
+		"PATCH":  jsonapi.Patch(T.DB, T.handleStoreSave, jsonapi.MaxBody(maxStoreBodyBytes)),
+		"DELETE": jsonapi.Delete(T.DB, T.handleStoreDelete),
 	}.Serve)
 	T.HandleFunc("/api/upload", T.handleUpload)
-	T.HandleFunc("/api/commands/run", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleCommand, jsonapi.EmptyBodyOK)}.Serve)
+	T.HandleFunc("/api/commands/run", jsonapi.Post(T.DB, T.handleCommand, jsonapi.EmptyBodyOK))
 	T.HandleFunc("/api/commands", jsonapi.Methods{
 		"GET":    jsonapi.Get(T.DB, T.handleCommands),
 		"POST":   jsonapi.Post(T.DB, T.handleCommandSave),
-		"DELETE": jsonapi.Post(T.DB, T.handleCommandDelete),
+		"DELETE": jsonapi.Delete(T.DB, T.handleCommandDelete),
 	}.Serve)
 	T.HandleFunc("/api/map/chat/send", T.handleMapChat)
 	T.HandleFunc("/api/map/chat/sessions", T.handleMapSessions)
 	T.HandleFunc("/api/map/chat/sessions/", T.handleMapSessions)
 	T.HandleFunc("/api/map/chat/cancel", T.handleMapCancel)
-	T.HandleFunc("/api/commands/approve", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleCommandApprove)}.Serve)
-	T.HandleFunc("/api/commands/background", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleCommandBackground)}.Serve)
+	T.HandleFunc("/api/commands/approve", jsonapi.Post(T.DB, T.handleCommandApprove))
+	T.HandleFunc("/api/commands/background", jsonapi.Post(T.DB, T.handleCommandBackground))
 	T.HandleFunc("/api/commands/uses", jsonapi.Methods{
 		"GET":  jsonapi.Get(T.DB, T.handleCommandUses),
 		"POST": jsonapi.Post(T.DB, T.handleCommandUsesSave, jsonapi.MaxBody(1<<16)),
@@ -572,8 +572,8 @@ func (T *FileStoreApp) registerRoutes() {
 	T.HandleFunc("/api/map/examples", jsonapi.Methods{
 		"GET":    jsonapi.Get(T.DB, T.handleExamples),
 		"POST":   jsonapi.Post(T.DB, T.handleExampleSave, jsonapi.MaxBody(1<<16)),
-		"PATCH":  jsonapi.Post(T.DB, T.handleExampleSave, jsonapi.MaxBody(1<<16)),
-		"DELETE": jsonapi.Post(T.DB, T.handleExampleDelete),
+		"PATCH":  jsonapi.Patch(T.DB, T.handleExampleSave, jsonapi.MaxBody(1<<16)),
+		"DELETE": jsonapi.Delete(T.DB, T.handleExampleDelete),
 	}.Serve)
 	T.HandleFunc("/api/commands/mapping", jsonapi.Get(T.DB, T.handleCommandMapping))
 	T.HandleFunc("/api/folders", jsonapi.Get(T.DB, T.handleFolders))
@@ -584,7 +584,7 @@ func (T *FileStoreApp) registerRoutes() {
 	T.HandleFunc("/api/app-grants", jsonapi.Methods{
 		"GET":    jsonapi.Get(T.DB, T.handleAppGrants),
 		"POST":   jsonapi.Post(T.DB, T.handleAppGrantSave, jsonapi.MaxBody(1<<16)),
-		"DELETE": jsonapi.Post(T.DB, T.handleAppGrantDelete),
+		"DELETE": jsonapi.Delete(T.DB, T.handleAppGrantDelete),
 	}.Serve)
 	T.HandleFunc("/api/app-options", jsonapi.Get(T.DB, T.handleAppOptions))
 	T.HandleFunc("/api/pull/", T.handlePull())

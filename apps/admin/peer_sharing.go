@@ -155,16 +155,17 @@ func decodeCapsField(raw json.RawMessage) []string {
 // secret and revokes what was issued against it — so it gets a verb of its
 // own instead of another optional field on the PUT body.
 func (a *AdminApp) peerKeyRoutes() http.HandlerFunc {
-	edit := jsonapi.Post(a.db, a.handlePeerKeyEdit, a.gate(), jsonapi.EmptyBodyOK)
 	one := jsonapi.Methods{
 		"GET":    jsonapi.Get(a.db, a.handlePeerKeyOne, a.gate()),
-		"PUT":    edit,
-		"PATCH":  edit,
-		"POST":   edit,
-		"DELETE": jsonapi.Post(a.db, a.handlePeerKeyDelete, a.gate()),
+		"PUT":    jsonapi.Put(a.db, a.handlePeerKeyEdit, a.gate(), jsonapi.EmptyBodyOK),
+		"PATCH":  jsonapi.Patch(a.db, a.handlePeerKeyEdit, a.gate(), jsonapi.EmptyBodyOK),
+		"POST":   jsonapi.Post(a.db, a.handlePeerKeyEdit, a.gate(), jsonapi.EmptyBodyOK),
+		"DELETE": jsonapi.Delete(a.db, a.handlePeerKeyDelete, a.gate()),
 	}
-	repair := jsonapi.Post(a.db, a.handlePeerKeyRepair, a.gate())
-	repairs := jsonapi.Methods{"POST": repair, "PUT": repair}
+	repairs := jsonapi.Methods{
+		"POST": jsonapi.Post(a.db, a.handlePeerKeyRepair, a.gate()),
+		"PUT":  jsonapi.Put(a.db, a.handlePeerKeyRepair, a.gate()),
+	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch _, action := peerKeyInPath(r); action {
 		case "":
@@ -373,7 +374,7 @@ func (a *AdminApp) handlePeerAdd(c *jsonapi.Call, req struct {
 // peerRoutes serves one peer: POST {name}/refresh re-probes it, {name}/key
 // re-pairs it with a new key, and DELETE forgets it.
 func (a *AdminApp) peerRoutes() http.HandlerFunc {
-	forget := jsonapi.Post(a.db, a.handlePeerForget, a.gate())
+	forget := jsonapi.Delete(a.db, a.handlePeerForget, a.gate())
 	refresh := jsonapi.Post(a.db, a.handlePeerRefresh, a.gate())
 	key := jsonapi.Methods{
 		"GET":  jsonapi.Get(a.db, a.peerKeyForm, a.gate()),

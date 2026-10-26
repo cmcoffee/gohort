@@ -56,7 +56,10 @@ func TestEveryConsoleRouteRefusesWhoItShould(t *testing.T) {
 		getOK := strings.Contains(expr, "jsonapi.Get(")
 		admin := strings.Contains(expr, "T.adminOpt()")
 		probe, wrong := http.MethodGet, http.MethodPut
-		if !getOK {
+		switch {
+		case strings.HasPrefix(expr, "jsonapi.Delete("):
+			probe, wrong = http.MethodDelete, http.MethodPost
+		case !getOK:
 			probe, wrong = http.MethodPost, http.MethodGet
 		}
 		switch code := do("", probe, path); {
@@ -68,9 +71,9 @@ func TestEveryConsoleRouteRefusesWhoItShould(t *testing.T) {
 		if code := do("alice", wrong, path); code != http.StatusMethodNotAllowed {
 			t.Errorf("%s %s answered %d, want 405", wrong, path, code)
 		}
-		// A route that names its methods takes no other state-changing one:
-		// a handler that guarded its own methods kept that guard here.
-		if strings.Contains(expr, "jsonapi.Methods{") && !strings.Contains(expr, `"PUT"`) {
+		// A route takes only the methods its registration names: no PUT
+		// unless it says PUT.
+		if !strings.Contains(expr, `"PUT"`) && !strings.HasPrefix(expr, "jsonapi.Put(") {
 			if code := do("alice", http.MethodPut, path); code != http.StatusMethodNotAllowed {
 				t.Errorf("PUT %s answered %d, want 405", path, code)
 			}
@@ -97,6 +100,13 @@ func TestEveryConsoleRouteRefusesWhoItShould(t *testing.T) {
 		"/api/reply-flag", "/api/console/credential-key/replace"} {
 		if code := do("alice", http.MethodPut, path); code != http.StatusMethodNotAllowed {
 			t.Errorf("PUT %s answered %d, want 405", path, code)
+		}
+	}
+	// The Scheduler's Delete buttons send DELETE (page_chat.go), so these
+	// take it: signed out, a DELETE reaches the sign-in refusal, not a 405.
+	for _, path := range []string{"/api/console/agents/delete", "/api/console/monitors/delete", "/api/console/recurring/delete"} {
+		if code := do("", http.MethodDelete, path); code != http.StatusUnauthorized {
+			t.Errorf("signed out, DELETE %s answered %d, want 401", path, code)
 		}
 	}
 	if n < 85 {

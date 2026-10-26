@@ -19,7 +19,7 @@ func (a *AdminApp) registerGroupsRoutes(sub *http.ServeMux) {
 	sub.HandleFunc("/api/tool-groups", jsonapi.Methods{
 		"GET":    jsonapi.Get(a.db, a.handleToolGroups, a.gate()),
 		"POST":   jsonapi.Post(a.db, a.handleToolGroupSave, a.gate()),
-		"DELETE": jsonapi.Post(a.db, a.handleToolGroupDelete, a.gate()),
+		"DELETE": jsonapi.Delete(a.db, a.handleToolGroupDelete, a.gate()),
 	}.Serve)
 
 	// App groups: bundle apps (by web path) so an admin can grant a whole
@@ -28,7 +28,7 @@ func (a *AdminApp) registerGroupsRoutes(sub *http.ServeMux) {
 	sub.HandleFunc("/api/app-groups", jsonapi.Methods{
 		"GET":    jsonapi.Get(a.db, a.handleAppGroups, a.gate()),
 		"POST":   jsonapi.Post(a.db, a.handleAppGroupSave, a.gate()),
-		"DELETE": jsonapi.Post(a.db, a.handleAppGroupDelete, a.gate()),
+		"DELETE": jsonapi.Delete(a.db, a.handleAppGroupDelete, a.gate()),
 	}.Serve)
 
 	// Single-record GET for the per-row editor (ChipPicker.RecordSource /

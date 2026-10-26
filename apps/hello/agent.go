@@ -164,12 +164,12 @@ func registerAgentRoutes(T *HelloAgent) {
 	T.HandleFunc("/api/agent/sessions", jsonapi.Get(T.DB, T.handleAgentSessions))
 	T.HandleFunc("/api/agent/sessions/{id}", jsonapi.Methods{
 		"GET":    jsonapi.Get(T.DB, T.handleAgentSession),
-		"DELETE": jsonapi.Post(T.DB, T.handleAgentSessionDelete),
+		"DELETE": jsonapi.Delete(T.DB, T.handleAgentSessionDelete),
 	}.Serve)
 	// A stream is not JSON: the send handler resolves the caller itself.
 	T.HandleFunc("/api/agent/send", T.handleAgentSend)
-	T.HandleFunc("/api/agent/confirm", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleAgentConfirm)}.Serve)
-	T.HandleFunc("/api/agent/cancel", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleAgentCancel)}.Serve)
+	T.HandleFunc("/api/agent/confirm", jsonapi.Post(T.DB, T.handleAgentConfirm))
+	T.HandleFunc("/api/agent/cancel", jsonapi.Post(T.DB, T.handleAgentCancel))
 }
 
 func (T *HelloAgent) handleAgentPage(w http.ResponseWriter, r *http.Request) {

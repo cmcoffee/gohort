@@ -680,8 +680,8 @@ func (T *OrchestrateApp) registerHandlers() {
 	T.HandleFunc("/api/agent-access", jsonapi.Get(T.DB, T.handleAgentAccess))
 	// One tool's standing decisions, written from the access page through the
 	// same setters the Permissions page uses. See agent_access_tools.go.
-	T.HandleFunc("/api/agent-access/tool", jsonapi.Methods{"PATCH": jsonapi.Post(T.DB, T.handleAgentAccessTool, jsonapi.EmptyBodyOK), "POST": jsonapi.Post(T.DB, T.handleAgentAccessTool, jsonapi.EmptyBodyOK)}.Serve)
-	T.HandleFunc("/api/agent-access/handoff", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleAgentAccessHandoff)}.Serve)
+	T.HandleFunc("/api/agent-access/tool", jsonapi.Methods{"PATCH": jsonapi.Patch(T.DB, T.handleAgentAccessTool, jsonapi.EmptyBodyOK), "POST": jsonapi.Post(T.DB, T.handleAgentAccessTool, jsonapi.EmptyBodyOK)}.Serve)
+	T.HandleFunc("/api/agent-access/handoff", jsonapi.Post(T.DB, T.handleAgentAccessHandoff))
 	T.HandleFunc("/api/agent-credentials", jsonapi.Methods{
 		"GET":  jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) { return T.handleAgentCredentials(c, nil) }),
 		"POST": jsonapi.Post(T.DB, T.handleAgentCredentials, jsonapi.EmptyBodyOK),
@@ -705,15 +705,15 @@ func (T *OrchestrateApp) registerHandlers() {
 	T.HandleFunc("/api/capabilities", jsonapi.Get(T.DB, T.handleAgentCapabilities))
 	T.HandleFunc("/api/channels", jsonapi.Methods{
 		"GET":    jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) { return T.handleChannels(c, nil) }),
-		"DELETE": jsonapi.Post(T.DB, T.handleChannels, jsonapi.EmptyBodyOK),
+		"DELETE": jsonapi.Delete(T.DB, T.handleChannels, jsonapi.EmptyBodyOK),
 		"POST":   jsonapi.Post(T.DB, T.handleChannels, jsonapi.EmptyBodyOK),
 	}.Serve)
 	T.HandleFunc("/api/agents/import", T.handleAgentImport)
 	T.HandleFunc("/api/agents/suggest", T.handleAgentSuggest)
 	// Guided create: drafts the prompt from the wizard brief, saves,
 	// and echoes the new record for the redirect into the editor.
-	T.HandleFunc("/api/agents/wizard", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleAgentWizard, jsonapi.EmptyBodyOK)}.Serve)
-	T.HandleFunc("/api/agents/propose", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleAgentPropose, jsonapi.EmptyBodyOK)}.Serve)
+	T.HandleFunc("/api/agents/wizard", jsonapi.Post(T.DB, T.handleAgentWizard, jsonapi.EmptyBodyOK))
+	T.HandleFunc("/api/agents/propose", jsonapi.Post(T.DB, T.handleAgentPropose, jsonapi.EmptyBodyOK))
 	// Per-user Default agent preference (surfaced on /account via the
 	// account-section registry — account_prefs.go).
 	T.HandleFunc("/api/ask-owner", T.handleAskOwner)
@@ -754,7 +754,7 @@ func (T *OrchestrateApp) registerHandlers() {
 	// import gets its own handler without colliding with the per-id
 	// routes (get/put/delete/export/run) in handlePipelineOne.
 	T.HandleFunc("/api/pipelines/import", T.handlePipelineImport)
-	T.HandleFunc("/api/pipelines/draft", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handlePipelineDraft, jsonapi.EmptyBodyOK)}.Serve)
+	T.HandleFunc("/api/pipelines/draft", jsonapi.Post(T.DB, T.handlePipelineDraft, jsonapi.EmptyBodyOK))
 	T.HandleFunc("/api/pipelines/", T.handlePipelineOne)
 	// Phase machines (machines_http.go, docs/design/agent-machines.md). Same
 	// route shape as pipelines, minus /run — a machine only runs inside a
@@ -778,12 +778,12 @@ func (T *OrchestrateApp) registerHandlers() {
 	// levers (move the phase, clear the blackboard). machine_session_state.go.
 	T.HandleFunc("/api/session-state", jsonapi.Get(T.DB, T.handleSessionState))
 	T.HandleFunc("/api/session-phases", jsonapi.Get(T.DB, T.handleSessionPhases))
-	T.HandleFunc("/api/session-phase", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleSessionPhase)}.Serve)
-	T.HandleFunc("/api/session-state-clear", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleSessionStateClear)}.Serve)
+	T.HandleFunc("/api/session-phase", jsonapi.Post(T.DB, T.handleSessionPhase))
+	T.HandleFunc("/api/session-state-clear", jsonapi.Post(T.DB, T.handleSessionStateClear))
 	// The context view for a thread that has folded (session_context.go).
 	T.HandleFunc("/api/session-context", jsonapi.Get(T.DB, T.handleSessionContext))
 	T.HandleFunc("/api/machines/import", T.handleMachineImport)
-	T.HandleFunc("/api/machines/draft", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleMachineDraft, jsonapi.EmptyBodyOK)}.Serve)
+	T.HandleFunc("/api/machines/draft", jsonapi.Post(T.DB, T.handleMachineDraft, jsonapi.EmptyBodyOK))
 	T.HandleFunc("/api/machines/", T.handleMachineOne)
 	// The Sources picker (reference_picker.go) — cross-app reference
 	// sources attached to one agent. Its own endpoint rather than the
@@ -797,7 +797,7 @@ func (T *OrchestrateApp) registerHandlers() {
 	T.HandleFunc("/api/sessions", jsonapi.Get(T.DB, T.handleSessionList))
 	// More specific than /api/sessions/, so it wins the mux's longest-prefix
 	// match and never reaches handleSessionOne as a session id.
-	T.HandleFunc("/api/sessions/start", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleSessionStart, jsonapi.EmptyBodyOK)}.Serve)
+	T.HandleFunc("/api/sessions/start", jsonapi.Post(T.DB, T.handleSessionStart, jsonapi.EmptyBodyOK))
 	T.HandleFunc("/api/sessions/", T.handleSessionOne)
 	// Staged improvement-brief retrieval for the "Send to Builder"
 	// handoff (see send_to_builder.go). The brief is created by the
@@ -808,7 +808,7 @@ func (T *OrchestrateApp) registerHandlers() {
 	T.HandleFunc("/api/send", T.handleSendRouter)
 	T.HandleFunc("/api/cancel", T.handleCancelRouter)
 	T.HandleFunc("/api/confirm", T.handleConfirmRouter)
-	T.HandleFunc("/api/approvals/answer", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleApprovalAnswer, jsonapi.EmptyBodyOK)}.Serve)
+	T.HandleFunc("/api/approvals/answer", jsonapi.Post(T.DB, T.handleApprovalAnswer, jsonapi.EmptyBodyOK))
 	T.HandleFunc("/api/inject", T.handleInject)
 	// Delivered attachments, so a reloaded thread still shows its pictures —
 	// and so a message posted with nobody watching can show one at all.

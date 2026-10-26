@@ -26,15 +26,14 @@ func (a *AdminApp) registerSkillsRoutes(sub *http.ServeMux) {
 	// read + prune surface, mirroring the Skills section.
 	sub.HandleFunc("/api/pipelines", jsonapi.Methods{
 		"GET":    jsonapi.Get(a.db, a.handlePipelines, a.gate()),
-		"DELETE": jsonapi.Post(a.db, a.handlePipelineDelete, a.gate()),
+		"DELETE": jsonapi.Delete(a.db, a.handlePipelineDelete, a.gate()),
 	}.Serve)
 
-	save := a.skillPost()
 	sub.HandleFunc("/api/skills", jsonapi.Methods{
 		"GET":    jsonapi.Get(a.db, a.handleSkills, a.gate()),
-		"POST":   save,
-		"PATCH":  save,
-		"DELETE": jsonapi.Post(a.db, a.handleSkillDelete, a.gate()),
+		"POST":   a.skillPost(),
+		"PATCH":  jsonapi.Patch(a.db, a.handleSkillSave, a.gate()),
+		"DELETE": jsonapi.Delete(a.db, a.handleSkillDelete, a.gate()),
 	}.Serve)
 
 	// Per-skill GET — backs the row-expand FormPanel.Source. POST /

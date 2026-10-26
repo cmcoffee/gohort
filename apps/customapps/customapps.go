@@ -142,14 +142,14 @@ func (T *CustomApps) routes() {
 	// anybody's. These paths come before any app's, as they always have: an
 	// app slugged _app or _admin would be shadowed by them.
 	T.HandleFunc("/_apps", jsonapi.Get(T.DB, T.handleAppsList))
-	T.HandleFunc("/_app", jsonapi.Methods{"DELETE": jsonapi.Post(T.DB, T.handleDeleteApp)}.Serve)
-	T.HandleFunc("/_app/enable", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleEnableApp)}.Serve)
-	T.HandleFunc("/_app/share", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleShareApp, jsonapi.EmptyBodyOK)}.Serve)
-	T.HandleFunc("/_app/share_group", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleShareGroup)}.Serve)
-	T.HandleFunc("/_app/share_person", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleSharePerson)}.Serve)
-	T.HandleFunc("/_app/order", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleAppOrder, jsonapi.MaxBody(1<<16))}.Serve)
-	T.HandleFunc("/_app/schedule", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleScheduleToggle)}.Serve)
-	T.HandleFunc("/_app/job-cancel", jsonapi.Methods{"POST": jsonapi.Post(T.DB, handleJobCancel)}.Serve)
+	T.HandleFunc("/_app", jsonapi.Methods{"DELETE": jsonapi.Delete(T.DB, T.handleDeleteApp)}.Serve)
+	T.HandleFunc("/_app/enable", jsonapi.Post(T.DB, T.handleEnableApp))
+	T.HandleFunc("/_app/share", jsonapi.Post(T.DB, T.handleShareApp, jsonapi.EmptyBodyOK))
+	T.HandleFunc("/_app/share_group", jsonapi.Post(T.DB, T.handleShareGroup))
+	T.HandleFunc("/_app/share_person", jsonapi.Post(T.DB, T.handleSharePerson))
+	T.HandleFunc("/_app/order", jsonapi.Post(T.DB, T.handleAppOrder, jsonapi.MaxBody(1<<16)))
+	T.HandleFunc("/_app/schedule", jsonapi.Post(T.DB, T.handleScheduleToggle))
+	T.HandleFunc("/_app/job-cancel", jsonapi.Post(T.DB, handleJobCancel))
 	// Operator controls on somebody else's app (admin.go). Named one by one:
 	// "/_admin/{sub}" would overlap "/{slug}/records" at /_admin/records.
 	T.HandleFunc("/_admin/scripts", T.handleAdminScripts)

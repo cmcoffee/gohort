@@ -98,7 +98,7 @@ root POST /api/skills "{\"id\":\"<skill-1>\",\"name\":\"Release notes\",\"descri
   200 {"id":"<skill-1>","name":"Release notes","description":"Write release notes","triggers":["release"],"allowed_tools":["git"],"instructions":"Be very brief.","owner":"root","disabled":true,"attached_collections":["col-root"],"created":"<time>","updated":"<time>"}
 root GET /api/skills/<skill-1> ""
   200 {"id":"<skill-1>","name":"Release notes","description":"Write release notes","triggers":["release"],"allowed_tools":["git"],"attached_collections":["col-root"],"instructions":"Be very brief.","disabled":true,"playbook_text":""}
-root PATCH /api/skills?action=enable&id=<skill-1> ""
+root POST /api/skills?action=enable&id=<skill-1> ""
   204 
 root GET /api/skills/<skill-1> ""
   200 {"id":"<skill-1>","name":"Release notes","description":"Write release notes","triggers":["release"],"allowed_tools":["git"],"attached_collections":["col-root"],"instructions":"Be very brief.","disabled":false,"playbook_text":""}

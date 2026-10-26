@@ -80,9 +80,10 @@ func Get[Out any](base core.Database, fn func(c *Call) (Out, error), opts ...Opt
 	}
 }
 
-// Post answers a request that changes something (POST, PUT, PATCH or DELETE):
-// it decodes the JSON body into an In and answers with what fn returns. A safe
-// method (GET, HEAD) is a 405, and a body that is not an In is a 400.
+// Post answers a POST: it decodes the JSON body into an In and answers with
+// what fn returns. Any other method is a 405, and a body that is not an In is
+// a 400. Put, Patch and Delete are the same for their own method, so a route
+// takes exactly the methods its registration names.
 //
 // An In of struct{} reads no body, for an action the URL says everything
 // about (a delete, a switch thrown). By default a missing body is a 400, as a
@@ -90,11 +91,31 @@ func Get[Out any](base core.Database, fn func(c *Call) (Out, error), opts ...Opt
 // DefaultMaxBody is a 413; MaxBody raises the limit for an endpoint that takes
 // more.
 //
-// Methods picks between Get and Post on a path that answers both.
+// Methods puts more than one of them on a path.
 func Post[In, Out any](base core.Database, fn func(c *Call, in In) (Out, error), opts ...Option) http.HandlerFunc {
+	return send(http.MethodPost, base, fn, opts)
+}
+
+// Put is Post for a PUT.
+func Put[In, Out any](base core.Database, fn func(c *Call, in In) (Out, error), opts ...Option) http.HandlerFunc {
+	return send(http.MethodPut, base, fn, opts)
+}
+
+// Patch is Post for a PATCH.
+func Patch[In, Out any](base core.Database, fn func(c *Call, in In) (Out, error), opts ...Option) http.HandlerFunc {
+	return send(http.MethodPatch, base, fn, opts)
+}
+
+// Delete is Post for a DELETE.
+func Delete[In, Out any](base core.Database, fn func(c *Call, in In) (Out, error), opts ...Option) http.HandlerFunc {
+	return send(http.MethodDelete, base, fn, opts)
+}
+
+// send answers method alone, with its body decoded into an In.
+func send[In, Out any](method string, base core.Database, fn func(c *Call, in In) (Out, error), opts []Option) http.HandlerFunc {
 	cfg := configure(opts)
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !core.IsStateChangingMethod(r.Method) {
+		if r.Method != method {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
@@ -171,9 +192,9 @@ var EmptyBodyOK Option = func(c *config) { c.emptyOK = true }
 func MaxBody(n int64) Option { return func(c *config) { c.maxBody = n } }
 
 // Methods routes one path by method, for an endpoint that answers more than
-// one: Methods{"GET": jsonapi.Get(...), "POST": jsonapi.Post(...)}.Serve. Any
-// http.HandlerFunc can sit in it, so a method whose answer does not fit
-// Get or Post keeps a handler of its own beside them.
+// one: Methods{"GET": jsonapi.Get(...), "DELETE": jsonapi.Delete(...)}.Serve.
+// Any http.HandlerFunc can sit in it, so a method whose answer does not fit
+// these keeps a handler of its own beside them.
 // A method it has no entry for is a 405.
 type Methods map[string]http.HandlerFunc
 

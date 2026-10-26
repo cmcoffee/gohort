@@ -18,7 +18,7 @@ func (a *AdminApp) registerCredentialsRoutes(sub *http.ServeMux) {
 	sub.HandleFunc("/api/secure-api", jsonapi.Methods{
 		"GET":    jsonapi.Get(a.db, a.readCredentials, a.gate()),
 		"POST":   a.credentialPost(),
-		"DELETE": jsonapi.Post(a.db, a.deleteCredential, a.gate()),
+		"DELETE": jsonapi.Delete(a.db, a.deleteCredential, a.gate()),
 	}.Serve)
 
 	// Inline "Test token" for an oauth2 credential. The declarative form's

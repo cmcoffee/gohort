@@ -33,9 +33,9 @@ func (T *Scribe) routes() {
 	T.HandleFunc("/guides", jsonapi.Get(T.DB, T.handleList))
 	T.HandleFunc("/guide", jsonapi.Methods{
 		"GET":    jsonapi.Get(T.DB, T.handleGuide),
-		"DELETE": jsonapi.Post(T.DB, T.handleGuideDelete),
+		"DELETE": jsonapi.Delete(T.DB, T.handleGuideDelete),
 	}.Serve)
-	T.HandleFunc("/new", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleNew, jsonapi.EmptyBodyOK)}.Serve)
+	T.HandleFunc("/new", jsonapi.Post(T.DB, T.handleNew, jsonapi.EmptyBodyOK))
 	T.HandleFunc("/settings", jsonapi.Methods{
 		"GET":  jsonapi.Get(T.DB, T.handleSettings),
 		"POST": jsonapi.Post(T.DB, T.handleSettingsSave),
@@ -43,28 +43,28 @@ func (T *Scribe) routes() {
 	// Who it is shared with, and the people and teams to pick from.
 	T.HandleFunc("/share", jsonapi.Methods{
 		"GET":   jsonapi.Get(T.DB, T.handleShare),
-		"PATCH": jsonapi.Post(T.DB, T.handleShareSave),
+		"PATCH": jsonapi.Patch(T.DB, T.handleShareSave),
 		"POST":  jsonapi.Post(T.DB, T.handleShareSave),
 	}.Serve)
 	// The whole guide edited as one page (the viewer's Edit all), and the
 	// header image.
-	T.HandleFunc("/body", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleBody)}.Serve)
+	T.HandleFunc("/body", jsonapi.Post(T.DB, T.handleBody))
 	T.HandleFunc("/image", jsonapi.Methods{
 		"GET":    jsonapi.Get(T.DB, T.handleImage),
 		"POST":   jsonapi.Post(T.DB, T.handleImageSet, jsonapi.EmptyBodyOK),
-		"DELETE": jsonapi.Post(T.DB, T.handleImageRemove),
+		"DELETE": jsonapi.Delete(T.DB, T.handleImageRemove),
 	}.Serve)
 	T.HandleFunc("/revision", jsonapi.Get(T.DB, T.handleRevisionPreview))
 	T.HandleFunc("/revisions", jsonapi.Get(T.DB, T.handleRevisions))
-	T.HandleFunc("/restore", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleRestore)}.Serve)
-	T.HandleFunc("/audit", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleAudit)}.Serve)
+	T.HandleFunc("/restore", jsonapi.Post(T.DB, T.handleRestore))
+	T.HandleFunc("/audit", jsonapi.Post(T.DB, T.handleAudit))
 	T.HandleFunc("/section", jsonapi.Methods{
 		"GET":    jsonapi.Get(T.DB, T.handleSection),
 		"POST":   jsonapi.Post(T.DB, T.handleSectionSave),
-		"DELETE": jsonapi.Post(T.DB, T.handleSectionRemove),
+		"DELETE": jsonapi.Delete(T.DB, T.handleSectionRemove),
 	}.Serve)
-	T.HandleFunc("/section/move", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleSectionMove)}.Serve)
-	T.HandleFunc("/section/add", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleSectionAdd, jsonapi.EmptyBodyOK)}.Serve)
+	T.HandleFunc("/section/move", jsonapi.Post(T.DB, T.handleSectionMove))
+	T.HandleFunc("/section/add", jsonapi.Post(T.DB, T.handleSectionAdd, jsonapi.EmptyBodyOK))
 	T.HandleFunc("/collections", jsonapi.Methods{
 		"GET":  jsonapi.Get(T.DB, T.handleCollections),
 		"POST": jsonapi.Post(T.DB, T.handleCollectionsSave),
@@ -73,30 +73,30 @@ func (T *Scribe) routes() {
 		"GET":  jsonapi.Get(T.DB, T.handleReferences),
 		"POST": jsonapi.Post(T.DB, T.handleReferencesSave),
 	}.Serve)
-	T.HandleFunc("/chat/active", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleSetActive, jsonapi.EmptyBodyOK)}.Serve)
+	T.HandleFunc("/chat/active", jsonapi.Post(T.DB, T.handleSetActive, jsonapi.EmptyBodyOK))
 	T.HandleFunc("/share/candidates", jsonapi.Get(T.DB, T.handleShareCandidates))
 	// Update from sources: the distills from guides set to Distill, and the
 	// Stop on a running one (follow.go, distill.go).
-	T.HandleFunc("/sources/update", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleUpdateFromSources)}.Serve)
-	T.HandleFunc("/distill/stop", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleDistillStop)}.Serve)
+	T.HandleFunc("/sources/update", jsonapi.Post(T.DB, T.handleUpdateFromSources))
+	T.HandleFunc("/distill/stop", jsonapi.Post(T.DB, T.handleDistillStop))
 	// A page already published somewhere, taken in to start a guide that
 	// keeps it, or linked to a guide that has one (page_import.go).
-	T.HandleFunc("/publish/link", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handlePublishLink, jsonapi.MaxBody(1<<16))}.Serve)
+	T.HandleFunc("/publish/link", jsonapi.Post(T.DB, T.handlePublishLink, jsonapi.MaxBody(1<<16)))
 	T.HandleFunc("/import/page", jsonapi.Methods{
 		"GET":  jsonapi.Get(T.DB, T.handleImportPage),
 		"POST": jsonapi.Post(T.DB, T.handleImportPageStart, jsonapi.MaxBody(1<<16)),
 	}.Serve)
 	T.HandleFunc("/import/page/job", jsonapi.Get(T.DB, T.handleImportPageJob))
-	T.HandleFunc("/import/page/stop", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleImportPageStop)}.Serve)
+	T.HandleFunc("/import/page/stop", jsonapi.Post(T.DB, T.handleImportPageStop))
 	// Publishing OUT: the modal's state, the no-conversation update of an
 	// already-published copy, a publish to one target and its progress and
 	// Stop, and Keep published (publish.go, publish_targets.go).
 	T.HandleFunc("/publish/state", jsonapi.Get(T.DB, T.handlePublishState))
-	T.HandleFunc("/publish/again", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleRepublish)}.Serve)
-	T.HandleFunc("/publish/to", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handlePublishTo, jsonapi.MaxBody(1<<16))}.Serve)
+	T.HandleFunc("/publish/again", jsonapi.Post(T.DB, T.handleRepublish))
+	T.HandleFunc("/publish/to", jsonapi.Post(T.DB, T.handlePublishTo, jsonapi.MaxBody(1<<16)))
 	T.HandleFunc("/publish/job", jsonapi.Get(T.DB, T.handlePublishJob))
-	T.HandleFunc("/publish/stop", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handlePublishStop)}.Serve)
-	T.HandleFunc("/publish/keep", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleKeepPublished, jsonapi.MaxBody(1<<10))}.Serve)
+	T.HandleFunc("/publish/stop", jsonapi.Post(T.DB, T.handlePublishStop))
+	T.HandleFunc("/publish/keep", jsonapi.Post(T.DB, T.handleKeepPublished, jsonapi.MaxBody(1<<10)))
 	// Curator: the digest (what it did), the queue (what it has not done yet),
 	// an undo per decision, and a manual drain (curator_web.go). The two
 	// writes take any state-changing method, as they always have.

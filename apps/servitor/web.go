@@ -215,20 +215,20 @@ func (T *Servitor) routes(sub *http.ServeMux) {
 	sub.HandleFunc("/api/appliances/", T.handleApplianceMemory) // /api/appliances/<id>/{facts,graph,inferred,...} — shared agent-memory surface
 	sub.HandleFunc("/api/appliance/", jsonapi.Methods{
 		"GET":    jsonapi.Get(T.DB, T.handleAppliance),
-		"DELETE": jsonapi.Post(T.DB, T.handleApplianceDelete),
+		"DELETE": jsonapi.Delete(T.DB, T.handleApplianceDelete),
 	}.Serve)
 	sub.HandleFunc("/api/user-candidates", jsonapi.Get(T.DB, T.handleUserCandidates))
 	// Capability proposals: the list the owner reviews, and the decision on one.
 	sub.HandleFunc("/api/appliance-tools", jsonapi.Get(T.DB, T.handleApplianceTools))
 	sub.HandleFunc("/api/appliance-tool", jsonapi.Methods{
 		"POST":   jsonapi.Post(T.DB, T.handleApplianceTool),
-		"DELETE": jsonapi.Post(T.DB, T.handleApplianceTool),
+		"DELETE": jsonapi.Delete(T.DB, T.handleApplianceTool),
 	}.Serve)
 	// Which agents may work with which machines — the first link in the chain.
 	sub.HandleFunc("/api/command-grants", jsonapi.Methods{
 		"GET":    jsonapi.Get(T.DB, T.handleCommandGrants),
 		"POST":   jsonapi.Post(T.DB, T.handleCommandGrantAdd),
-		"DELETE": jsonapi.Post(T.DB, T.handleCommandGrantRemove),
+		"DELETE": jsonapi.Delete(T.DB, T.handleCommandGrantRemove),
 	}.Serve)
 	sub.HandleFunc("/api/access-agents", jsonapi.Get(T.DB, T.handleAccessAgents))
 	sub.HandleFunc("/api/chat", T.handleChat)
@@ -241,16 +241,16 @@ func (T *Servitor) routes(sub *http.ServeMux) {
 	}.Serve)
 	sub.HandleFunc("/api/inject", T.handleInject)
 	sub.HandleFunc("/api/map", T.handleMap)
-	sub.HandleFunc("/api/mapapp", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleMapApp)}.Serve)
+	sub.HandleFunc("/api/mapapp", jsonapi.Post(T.DB, T.handleMapApp))
 	sub.HandleFunc("/api/terminal", T.handleTerminal)
 	sub.HandleFunc("/api/facts", jsonapi.Methods{
 		"GET":    jsonapi.Get(T.DB, T.handleFacts),
 		"POST":   jsonapi.Post(T.DB, T.handleFactSave),
-		"DELETE": jsonapi.Post(T.DB, T.handleFactDelete),
+		"DELETE": jsonapi.Delete(T.DB, T.handleFactDelete),
 	}.Serve)
 	sub.HandleFunc("/api/knowledge/export", T.handleKnowledgeExport)
-	sub.HandleFunc("/api/memory/clear", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleMemoryClear)}.Serve)
-	sub.HandleFunc("/api/repo/refresh", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleRepoRefresh)}.Serve)
+	sub.HandleFunc("/api/memory/clear", jsonapi.Post(T.DB, T.handleMemoryClear))
+	sub.HandleFunc("/api/repo/refresh", jsonapi.Post(T.DB, T.handleRepoRefresh))
 	// Evidence bundles: staging one file per request, then a single ingest
 	// over everything staged — which doubles as the retry path after a failed
 	// ingest, without re-sending a gigabyte. See bundle_upload.go.
@@ -260,7 +260,7 @@ func (T *Servitor) routes(sub *http.ServeMux) {
 	sub.HandleFunc("/api/appliance-peers", jsonapi.Methods{
 		"GET":  jsonapi.Get(T.DB, T.handleAppliancePeers),
 		"POST": jsonapi.Post(T.DB, T.handleAppliancePeerGrant),
-		"PUT":  jsonapi.Post(T.DB, T.handleAppliancePeerGrant),
+		"PUT":  jsonapi.Put(T.DB, T.handleAppliancePeerGrant),
 	}.Serve)
 	sub.HandleFunc("/api/bundle/upload", T.handleBundleUpload)
 	sub.HandleFunc("/api/bundle/ingest", jsonapi.Post(T.DB, T.handleBundleIngest))
@@ -271,17 +271,17 @@ func (T *Servitor) routes(sub *http.ServeMux) {
 		"POST": jsonapi.Post(T.DB, T.handleBundleMoveStart),
 	}.Serve)
 	sub.HandleFunc("/api/bundle/move-targets", jsonapi.Get(T.DB, T.handleBundleMoveTargets))
-	sub.HandleFunc("/api/workspace/agent", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleWorkspaceAgent)}.Serve)
+	sub.HandleFunc("/api/workspace/agent", jsonapi.Post(T.DB, T.handleWorkspaceAgent))
 	sub.HandleFunc("/api/collections", jsonapi.Get(T.DB, T.handleCollectionsList))
 	sub.HandleFunc("/api/cancel", probeSessions.HandleCancel("servitor"))
 	sub.HandleFunc("/api/save_destinations", jsonapi.Get(T.DB, T.handleSaveDestinations))
-	sub.HandleFunc("/api/save_article", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleSaveArticle)}.Serve)
-	sub.HandleFunc("/api/save_snippet", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleSaveSnippet)}.Serve)
+	sub.HandleFunc("/api/save_article", jsonapi.Post(T.DB, T.handleSaveArticle))
+	sub.HandleFunc("/api/save_snippet", jsonapi.Post(T.DB, T.handleSaveSnippet))
 	sub.HandleFunc("/api/rules", jsonapi.Methods{
 		"GET":  jsonapi.Get(T.DB, T.handleRules),
 		"POST": jsonapi.Post(T.DB, T.handleRuleAdd),
 	}.Serve)
-	sub.HandleFunc("/api/rules/", jsonapi.Methods{"DELETE": jsonapi.Post(T.DB, T.handleRuleDelete)}.Serve)
+	sub.HandleFunc("/api/rules/", jsonapi.Methods{"DELETE": jsonapi.Delete(T.DB, T.handleRuleDelete)}.Serve)
 	sub.HandleFunc("/api/permissions", jsonapi.Methods{
 		"GET":  jsonapi.Get(T.DB, T.handlePermissions),
 		"POST": jsonapi.Post(T.DB, T.handlePermissionsSave),

@@ -120,7 +120,7 @@ func TestSkillsRoutesContract(t *testing.T) {
 	do("root", "GET", "/api/skills/"+s1, "")
 	do("root", "POST", "/api/skills", `{"id":"`+s1+`","name":"Release notes","description":"Write release notes","disabled":false}`)
 	do("root", "GET", "/api/skills/"+s1, "")
-	do("root", "PATCH", "/api/skills?action=enable&id="+s1, "")
+	do("root", "POST", "/api/skills?action=enable&id="+s1, "")
 	do("root", "GET", "/api/skills/"+s1, "")
 
 	do("alice", "DELETE", "/api/skills?id="+s2, "")

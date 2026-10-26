@@ -48,7 +48,7 @@ func (a *AdminApp) registerMaintenanceRoutes(sub *http.ServeMux) {
 	// Scheduled tasks: list pending tasks (GET) or delete by ID (DELETE ?id=xxx).
 	sub.HandleFunc("/api/scheduled-tasks", jsonapi.Methods{
 		"GET":    jsonapi.Get(a.db, a.handleScheduledTasks, a.gate()),
-		"DELETE": jsonapi.Post(a.db, a.handleScheduledTaskDelete, a.gate()),
+		"DELETE": jsonapi.Delete(a.db, a.handleScheduledTaskDelete, a.gate()),
 	}.Serve)
 
 	// API: database browser.

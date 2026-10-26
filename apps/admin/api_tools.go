@@ -20,7 +20,7 @@ func (a *AdminApp) registerToolsRoutes(sub *http.ServeMux) {
 	sub.HandleFunc("/api/persistent-tools", jsonapi.Methods{
 		"GET":    jsonapi.Get(a.db, a.handlePersistentTools, a.gate()),
 		"POST":   jsonapi.Post(a.db, a.changePersistentTool, a.gate(), jsonapi.EmptyBodyOK),
-		"DELETE": jsonapi.Post(a.db, a.deletePersistentTool, a.gate()),
+		"DELETE": jsonapi.Delete(a.db, a.deletePersistentTool, a.gate()),
 	}.Serve)
 
 	// Tool scope — the pill control's data + toggles. GET ?name=&owner=

@@ -105,7 +105,7 @@ func (T *PublishApp) Routes() {
 	}.Serve)
 	T.HandleFunc("/api/targets/{id}", jsonapi.Methods{
 		"GET":    jsonapi.Get(T.DB, T.handleTarget),
-		"DELETE": jsonapi.Post(T.DB, T.handleTargetDelete),
+		"DELETE": jsonapi.Delete(T.DB, T.handleTargetDelete),
 	}.Serve)
 	T.HandleFunc("/api/targets/{id}/agents", jsonapi.Methods{
 		"GET":  jsonapi.Get(T.DB, T.handleTargetAgents),

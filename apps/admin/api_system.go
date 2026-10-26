@@ -37,12 +37,11 @@ func (a *AdminApp) registerSystemRoutes(sub *http.ServeMux) {
 	// changed (see settingsForm). POST and PUT stay for the chip picker and
 	// any older caller; every key here is optional, so the handler is a
 	// partial update whichever verb carried it.
-	save := jsonapi.Post(a.db, a.handleUpdateSettings, a.gate())
 	sub.HandleFunc("/api/settings", jsonapi.Methods{
 		"GET":   jsonapi.Get(a.db, a.handleGetSettings, a.gate()),
-		"PUT":   save,
-		"POST":  save,
-		"PATCH": save,
+		"PUT":   jsonapi.Put(a.db, a.handleUpdateSettings, a.gate()),
+		"POST":  jsonapi.Post(a.db, a.handleUpdateSettings, a.gate()),
+		"PATCH": jsonapi.Patch(a.db, a.handleUpdateSettings, a.gate()),
 	}.Serve)
 
 	// API: revert retrieval/limit tunables to their code defaults.

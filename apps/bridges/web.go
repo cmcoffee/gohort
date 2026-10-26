@@ -85,7 +85,7 @@ func (T *Bridges) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	sub.HandleFunc("/api/config", jsonapi.Methods{
 		"GET":   jsonapi.Get(T.DB, T.handleConfig),
 		"POST":  jsonapi.Post(T.DB, T.handleConfigSet, jsonapi.EmptyBodyOK),
-		"PATCH": jsonapi.Post(T.DB, T.handleConfigSet, jsonapi.EmptyBodyOK),
+		"PATCH": jsonapi.Patch(T.DB, T.handleConfigSet, jsonapi.EmptyBodyOK),
 	}.Serve)
 	sub.HandleFunc("/api/conversations", jsonapi.Get(T.DB, T.handleConversations))
 	sub.HandleFunc("/api/incoming-convos", jsonapi.Get(T.DB, T.handleIncomingConvos))
@@ -97,12 +97,12 @@ func (T *Bridges) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	sub.HandleFunc("/api/connect-channel", jsonapi.Methods{
 		"POST": jsonapi.Post(T.DB, T.handleConnectChannel, jsonapi.EmptyBodyOK),
 	}.Serve)
-	sub.HandleFunc("/api/set-autoreply", jsonapi.Post(T.DB, T.handleSetAutoReply, jsonapi.EmptyBodyOK))
+	sub.HandleFunc("/api/set-autoreply", jsonapi.Patch(T.DB, T.handleSetAutoReply, jsonapi.EmptyBodyOK))
 	sub.HandleFunc("/api/conv-info/", jsonapi.Get(T.DB, T.handleConvInfo))
 	sub.HandleFunc("/api/conversation/", jsonapi.Methods{
-		"PATCH":  jsonapi.Post(T.DB, T.handleConvUpdate),
+		"PATCH":  jsonapi.Patch(T.DB, T.handleConvUpdate),
 		"POST":   jsonapi.Post(T.DB, T.handleConvUpdate),
-		"DELETE": jsonapi.Post(T.DB, T.handleConvDelete),
+		"DELETE": jsonapi.Delete(T.DB, T.handleConvDelete),
 	}.Serve)
 	sub.HandleFunc("/api/messages/", jsonapi.Get(T.DB, T.handleMessages))
 	MountSubMux(mux, prefix, sub)

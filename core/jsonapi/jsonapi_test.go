@@ -69,7 +69,8 @@ func TestPostDoesTheFrameSoTheHandlerIsTheWork(t *testing.T) {
 		{"a safe method", "GET", "", cookie, 405, "method not allowed"},
 		{"not JSON", "POST", `{"agent_id":`, cookie, 400, "invalid JSON"},
 		{"no body", "POST", "", cookie, 400, "invalid JSON"},
-		{"PATCH changes things too", "PATCH", `{"agent_id":"a"}`, cookie, 200, `"agent":"a"`},
+		{"Post takes a POST alone", "PATCH", `{"agent_id":"a"}`, cookie, 405, "method not allowed"},
+		{"and not a DELETE", "DELETE", "", cookie, 405, "method not allowed"},
 		{"the work refuses it", "POST", `{}`, cookie, 400, "agent_id is required"},
 		{"not found", "POST", `{"agent_id":"gone"}`, cookie, 404, "no such agent"},
 		{"forbidden", "POST", `{"agent_id":"theirs"}`, cookie, 403, "not your agent"},
@@ -135,7 +136,7 @@ func TestABodyCanBeLeftOffWhereThatIsMeant(t *testing.T) {
 	// An action with no input reads no body at all, so a body that is there
 	// (or is not JSON) does not stop it.
 	thrown := 0
-	action := Post(base, func(c *Call, _ struct{}) (map[string]bool, error) {
+	action := Delete(base, func(c *Call, _ struct{}) (map[string]bool, error) {
 		thrown++
 		return map[string]bool{"stopped": true}, nil
 	})
@@ -146,6 +147,31 @@ func TestABodyCanBeLeftOffWhereThatIsMeant(t *testing.T) {
 	}
 	if thrown != 2 {
 		t.Errorf("the action ran %d times, want 2", thrown)
+	}
+}
+
+// Put, Patch and Delete each take their own method and no other, so a
+// registration says every method its route takes.
+func TestEachWriteTakesItsOwnMethod(t *testing.T) {
+	cookie := signIn(t)
+	base := &core.DBase{Store: kvlite.MemStore()}
+	work := func(c *Call, in modeReq) (string, error) { return c.R.Method + " " + in.Agent, nil }
+	for method, h := range map[string]http.HandlerFunc{
+		"POST": Post(base, work), "PUT": Put(base, work), "PATCH": Patch(base, work), "DELETE": Delete(base, work),
+	} {
+		for _, try := range []string{"GET", "POST", "PUT", "PATCH", "DELETE"} {
+			w := call(h, try, `{"agent_id":"a"}`, cookie)
+			if try == method {
+				if w.Code != 200 || !strings.Contains(w.Body.String(), method+" a") {
+					t.Errorf("%s handler, %s: %d %q", method, try, w.Code, w.Body.String())
+				}
+			} else if w.Code != 405 {
+				t.Errorf("%s handler answered a %s: %d", method, try, w.Code)
+			}
+		}
+	}
+	if w := call(Delete(base, work), "DELETE", "", nil); w.Code != 401 {
+		t.Errorf("Delete answered a caller who is not signed in: %d", w.Code)
 	}
 }
 

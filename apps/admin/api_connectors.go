@@ -22,7 +22,7 @@ func (a *AdminApp) registerConnectorsRoutes(sub *http.ServeMux) {
 	sub.HandleFunc("/api/connectors", jsonapi.Methods{
 		"GET":    jsonapi.Get(a.db, a.handleConnectors, a.gate()),
 		"POST":   jsonapi.Post(a.db, a.handleConnectorAction, a.gate(), jsonapi.EmptyBodyOK, jsonapi.MaxBody(1<<20)),
-		"DELETE": jsonapi.Post(a.db, a.handleConnectorDelete, a.gate()),
+		"DELETE": jsonapi.Delete(a.db, a.handleConnectorDelete, a.gate()),
 	}.Serve)
 
 	// Connector spec — GET the current kind-specific Spec as pretty JSON for the

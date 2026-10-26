@@ -63,7 +63,7 @@ func (T *HelloAgent) Routes() {
         }
         T.handlePage(w, r)
     })
-    T.HandleFunc("/api/echo", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleEcho)}.Serve)
+    T.HandleFunc("/api/echo", jsonapi.Post(T.DB, T.handleEcho))
 }
 
 func (T *HelloAgent) handlePage(w http.ResponseWriter, r *http.Request) {
@@ -114,7 +114,7 @@ Run `gohort serve :8080`. The Hello page is live at `/hello/`.
 - The SimpleWebApp methods (`WebPath`/`WebName`/`WebDesc`/`Routes`) cover the dashboard. The framework creates a per-app sub-mux, calls `Routes()` against it, and mounts it at `prefix` with cost-tracking middleware: no explicit `NewWebUI`/`MountSubMux` plumbing.
 - `T.HandleFunc(pattern, handler)` registers against that pre-wired sub-mux. Patterns are relative to the prefix.
 - `ui.Page{...}.ServeHTTP(w, r)` renders the page from its declarative spec. You never write HTML in app code.
-- A JSON endpoint is a `core/jsonapi` handler. `jsonapi.Post` resolves the caller, refuses a signed-out request (401), decodes the body into the handler's second argument (a broken one is 400, one over 1 MiB is 413), and writes what the handler returns as JSON. `jsonapi.Methods` answers any other method with 405. The handler is only the part that is yours.
+- A JSON endpoint is a `core/jsonapi` handler. `jsonapi.Post` resolves the caller, refuses a signed-out request (401), decodes the body into the handler's second argument (a broken one is 400, one over 1 MiB is 413), and writes what the handler returns as JSON. Each answers its own method and no other: `jsonapi.Get`, `Post`, `Put`, `Patch` and `Delete`, and `jsonapi.Methods` puts more than one on a path. Any other method is a 405. The handler is only the part that is yours.
 - The form has no `Source` (read endpoint): it's a blank-state form. `PostURL` is the only write target. The field key is `Field` (not `Name`).
 
 If you need direct mux/prefix control (custom access wrappers, alternate mount semantics), implement the older `WebApp` interface with `RegisterRoutes(mux, prefix)` instead. SimpleWebApp is the default; WebApp is the escape hatch.
@@ -583,7 +583,7 @@ func (T *MyApp) Routes() {
     }.Serve)
     T.HandleFunc("/api/records/{id}", jsonapi.Methods{
         "GET":    jsonapi.Get(T.DB, T.handleRecord),
-        "DELETE": jsonapi.Post(T.DB, T.handleRecordDelete),
+        "DELETE": jsonapi.Delete(T.DB, T.handleRecordDelete),
     }.Serve)
     T.HandleFunc("/api/send", T.handleSend) // SSE pipeline: not JSON, resolves the caller itself
 }

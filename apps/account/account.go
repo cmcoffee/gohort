@@ -65,7 +65,7 @@ func (T *Account) Routes() {
 	T.HandleFunc("/api/tokens", jsonapi.Methods{
 		"GET":    jsonapi.Get(T.DB, T.handleTokens),
 		"POST":   T.tokenPost(),
-		"DELETE": jsonapi.Post(T.DB, T.handleTokenRevoke),
+		"DELETE": jsonapi.Delete(T.DB, T.handleTokenRevoke),
 	}.Serve)
 	T.HandleFunc("/api/token-targets", jsonapi.Get(T.DB, T.handleTokenTargets))
 	T.HandleFunc("/api/artifacts/export", T.handleArtifactExport)

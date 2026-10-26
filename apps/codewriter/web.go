@@ -96,7 +96,7 @@ func (T *CodeWriterAgent) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	}.Serve)
 	sub.HandleFunc("/api/snippet/", jsonapi.Methods{
 		"GET":    jsonapi.Get(T.DB, recordAt[SnippetRecord]("/api/snippet/", snippetTable)),
-		"DELETE": jsonapi.Post(T.DB, deleteRecordAt("/api/snippet/", snippetTable)),
+		"DELETE": jsonapi.Delete(T.DB, deleteRecordAt("/api/snippet/", snippetTable)),
 	}.Serve)
 	sub.HandleFunc("/api/values", jsonapi.Methods{
 		"GET":  jsonapi.Get(T.DB, listRecords[SavedValue](valueTable)),
@@ -104,7 +104,7 @@ func (T *CodeWriterAgent) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	}.Serve)
 	sub.HandleFunc("/api/value/", jsonapi.Methods{
 		"GET":    jsonapi.Get(T.DB, recordAt[SavedValue]("/api/value/", valueTable)),
-		"DELETE": jsonapi.Post(T.DB, deleteRecordAt("/api/value/", valueTable)),
+		"DELETE": jsonapi.Delete(T.DB, deleteRecordAt("/api/value/", valueTable)),
 	}.Serve)
 	sub.HandleFunc("/api/contexts", jsonapi.Methods{
 		"GET":  jsonapi.Get(T.DB, listRecords[ContextRecord](contextTable)),
@@ -112,7 +112,7 @@ func (T *CodeWriterAgent) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	}.Serve)
 	sub.HandleFunc("/api/context/", jsonapi.Methods{
 		"GET":    jsonapi.Get(T.DB, recordAt[ContextRecord]("/api/context/", contextTable)),
-		"DELETE": jsonapi.Post(T.DB, deleteRecordAt("/api/context/", contextTable)),
+		"DELETE": jsonapi.Delete(T.DB, deleteRecordAt("/api/context/", contextTable)),
 	}.Serve)
 	sub.HandleFunc("/api/writers", jsonapi.Methods{
 		"GET":  jsonapi.Get(T.DB, listRecords[WriterRecord](writerTable)),
@@ -120,7 +120,7 @@ func (T *CodeWriterAgent) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	}.Serve)
 	sub.HandleFunc("/api/writer/", jsonapi.Methods{
 		"GET":    jsonapi.Get(T.DB, T.handleWriter),
-		"DELETE": jsonapi.Post(T.DB, T.handleWriterDelete),
+		"DELETE": jsonapi.Delete(T.DB, T.handleWriterDelete),
 	}.Serve)
 	sub.HandleFunc("/api/assist", T.handleAssist)
 	sub.HandleFunc("/api/rules", func(w http.ResponseWriter, r *http.Request) {
@@ -132,7 +132,7 @@ func (T *CodeWriterAgent) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	}.Serve)
 	sub.HandleFunc("/api/template/", jsonapi.Methods{
 		"GET":    jsonapi.Get(T.DB, recordAt[TemplateRecord]("/api/template/", templateTable)),
-		"DELETE": jsonapi.Post(T.DB, deleteRecordAt("/api/template/", templateTable)),
+		"DELETE": jsonapi.Delete(T.DB, deleteRecordAt("/api/template/", templateTable)),
 	}.Serve)
 	sub.HandleFunc("/api/collections", jsonapi.Get(T.DB, T.handleCollectionsList))
 	sub.HandleFunc("/api/reference-sources", jsonapi.Get(T.DB, T.handleReferenceSources))
