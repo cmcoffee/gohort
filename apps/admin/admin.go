@@ -162,7 +162,10 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	// population — it includes the dynamic per-agent surfaces a grant can name
 	// and the switchboard cannot toggle. Both on one path is a duplicate
 	// registration, which ServeMux answers with a panic at startup.
-	sub.HandleFunc("/api/app-switches", a.handleApps)
+	sub.HandleFunc("/api/app-switches", jsonapi.Methods{
+		"GET":  jsonapi.Get(a.db, a.handleApps, a.gate()),
+		"POST": jsonapi.Post(a.db, a.handleAppSwitch, a.gate()),
+	}.Serve)
 	sub.HandleFunc("/api/app-summary", jsonapi.Get(a.db, a.handleAppSummary, a.gate()))
 	sub.HandleFunc("/api/app-panels", jsonapi.Get(a.db, a.handleAppPanels, a.gate()))
 	// One app's own page, opened from its row in the table.

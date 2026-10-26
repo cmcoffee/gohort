@@ -87,7 +87,10 @@ func (a *AdminApp) registerUsersRoutes(sub *http.ServeMux) {
 	// kind-specific side effect) or denies. Approve runs the kind's registered
 	// approver: a tool is Shared to the global catalog, an app is shared to
 	// every signed-in user, a public_link mints an app's anonymous URL.
-	sub.HandleFunc("/api/promotions", a.handlePromotions)
+	sub.HandleFunc("/api/promotions", jsonapi.Methods{
+		"GET":  jsonapi.Get(a.db, a.handlePromotions, a.gate()),
+		"POST": jsonapi.Post(a.db, a.handlePromotionAction, a.gate()),
+	}.Serve)
 
 	// API: the global tool catalog — what this deployment publishes, and who
 	// may take it.
@@ -99,7 +102,10 @@ func (a *AdminApp) registerUsersRoutes(sub *http.ServeMux) {
 	// governance question is whether a tool is published and to whom, and an
 	// admin who wants somebody to stop using one takes away the permission
 	// rather than the preference. Unshare and Access do that, on the row.
-	sub.HandleFunc("/api/global-tools", a.handleGlobalTools)
+	sub.HandleFunc("/api/global-tools", jsonapi.Methods{
+		"GET":  jsonapi.Get(a.db, a.handleGlobalTools, a.gate()),
+		"POST": jsonapi.Post(a.db, a.handleGlobalToolRollback, a.gate()),
+	}.Serve)
 
 	// API: user operations (update/delete/apps).
 	sub.HandleFunc("/api/users/", a.userRoutes())
@@ -341,192 +347,177 @@ func (a *AdminApp) handleUserMachinesAction(c *jsonapi.Call, _ struct{}) (any, e
 }
 
 // handlePromotions serves /api/promotions; registerUsersRoutes says what it is for.
-func (a *AdminApp) handlePromotions(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
-		return
-	}
-	switch r.Method {
-	case http.MethodGet:
-		// A tool request carries what approving it would publish: the
-		// definition the owner's request froze, as a diff against the
-		// published version for an update, whole for a first publish.
-		type reqRow struct {
-			PromotionRequest
-			Update bool   `json:"update,omitempty"`
-			Review string `json:"review,omitempty"`
-		}
-		releases := map[string]ToolRelease{}
-		for _, rel := range ToolReleases(a.db) {
-			releases[rel.Name] = rel
-		}
-		rows := []reqRow{}
-		for _, req := range ListPromotionRequests(a.db, true) { // pending only — the actionable queue
-			row := reqRow{PromotionRequest: req}
-			if req.Kind == "tool" {
-				row.Update, row.Review = toolRequestReview(a.db, releases, req.Owner, req.Name)
-			}
-			rows = append(rows, row)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(rows)
-	case http.MethodPost:
-		action := r.URL.Query().Get("action")
-		id := strings.TrimSpace(r.URL.Query().Get("id"))
-		if id == "" {
-			http.Error(w, "missing id", http.StatusBadRequest)
-			return
-		}
-		req, ok := GetPromotionRequest(a.db, id)
-		if !ok {
-			http.NotFound(w, r)
-			return
-		}
-		switch action {
-		case "approve":
-			// The kind's registered side effect runs BEFORE the row is
-			// marked approved, so a failure leaves the request pending
-			// (re-approvable). Each kind registers its own approver (a
-			// tool in core, an app in customapps); a kind without one
-			// is refused here.
-			if err := promotion.Approve(a.db, id, AuthCurrentUser(r)); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-		case "deny":
-			if err := SetPromotionRequestState(a.db, id, PromotionDeniedState, AuthCurrentUser(r)); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-		default:
-			http.Error(w, "action must be approve|deny", http.StatusBadRequest)
-			return
-		}
-		verb := map[string]string{"approve": "approved", "deny": "denied"}[action]
-		RecordActivity(r, activity.Approval, AuthCurrentUser(r), verb+" publishing the "+req.Kind+" "+req.Name+" of "+req.Owner)
-		w.WriteHeader(http.StatusNoContent)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
-}
-
-// handleGlobalTools serves /api/global-tools; registerUsersRoutes says what it is for.
-func (a *AdminApp) handleGlobalTools(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
-		return
+func (a *AdminApp) handlePromotions(c *jsonapi.Call) (any, error) {
+	// A tool request carries what approving it would publish: the
+	// definition the owner's request froze, as a diff against the
+	// published version for an update, whole for a first publish.
+	type reqRow struct {
+		PromotionRequest
+		Update bool   `json:"update,omitempty"`
+		Review string `json:"review,omitempty"`
 	}
 	releases := map[string]ToolRelease{}
 	for _, rel := range ToolReleases(a.db) {
 		releases[rel.Name] = rel
 	}
-	switch r.Method {
-	case http.MethodGet:
-		// ?history=<tool>: the versions a release keeps to roll back to,
-		// each with what rolling back to it would change.
-		if name := strings.TrimSpace(r.URL.Query().Get("history")); name != "" {
-			type histRow struct {
-				Tool        string `json:"tool"`
-				Owner       string `json:"owner"`
-				PastVersion int    `json:"past_version"`
-				Label       string `json:"label"`
-				ApprovedAt  string `json:"approved_at,omitempty"`
-				ApprovedBy  string `json:"approved_by,omitempty"`
-				Changes     string `json:"changes"`
-			}
-			hist := []histRow{}
-			if rel, ok := releases[name]; ok {
-				for _, h := range rel.History {
-					hr := histRow{
-						Tool: rel.Name, Owner: rel.Owner, PastVersion: h.Version,
-						Label: fmt.Sprintf("v%d", h.Version), ApprovedBy: h.ApprovedBy,
-						Changes: rel.Tool.DefinitionDiff(h.Tool),
-					}
-					if !h.ApprovedAt.IsZero() {
-						hr.ApprovedAt = h.ApprovedAt.UTC().Format("2006-01-02T15:04:05Z")
-					}
-					if hr.Changes == "" {
-						hr.Changes = "The same definition as the current version."
-					}
-					hist = append(hist, hr)
-				}
-			}
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(hist)
-			return
+	rows := []reqRow{}
+	for _, req := range ListPromotionRequests(a.db, true) { // pending only — the actionable queue
+		row := reqRow{PromotionRequest: req}
+		if req.Kind == "tool" {
+			row.Update, row.Review = toolRequestReview(a.db, releases, req.Owner, req.Name)
 		}
-		type row struct {
-			ID     string `json:"id"`
-			Tool   string `json:"tool"`
-			Owner  string `json:"owner"`
-			Access string `json:"access"`
-			// Restricted drives the badge: "every user" and "these three"
-			// are different grants and should not read the same.
-			Restricted bool `json:"restricted"`
-			// Version is the approved version adopters run; the owner's
-			// working copy may have moved on, which only an approved
-			// update carries to them.
-			Version    string `json:"version"`
-			ApprovedAt string `json:"approved_at,omitempty"`
-			HasHistory bool   `json:"has_history"`
-			// UpdateRequested: the owner asked for their current copy to
-			// become the next version; Review is the diff to approve or
-			// deny in Pending promotions.
-			UpdateRequested bool   `json:"update_requested"`
-			Review          string `json:"review,omitempty"`
-		}
-		rows := []row{}
-		// Who published each one. A catalog entry with no name behind it
-		// is one nobody is answerable for.
-		owners := SharedToolOwners(a.db)
-		for _, p := range LoadSharedPersistentTempTools(a.db) {
-			access, restricted := "Every user", false
-			if len(p.AllowedUsers) > 0 {
-				access, restricted = strings.Join(p.AllowedUsers, ", "), true
-			}
-			rw := row{
-				ID: p.Tool.Name, Tool: p.Tool.Name, Owner: owners[p.Tool.Name],
-				Access: access, Restricted: restricted,
-			}
-			if rel, ok := releases[p.Tool.Name]; ok {
-				rw.Version = fmt.Sprintf("v%d", rel.Version)
-				rw.HasHistory = len(rel.History) > 0
-				if !rel.ApprovedAt.IsZero() {
-					rw.ApprovedAt = rel.ApprovedAt.UTC().Format("2006-01-02T15:04:05Z")
-				}
-				if PendingPromotion(a.db, rel.Owner, "tool", rel.Name) {
-					rw.UpdateRequested, rw.Review = toolRequestReview(a.db, releases, rel.Owner, rel.Name)
-				}
-			}
-			rows = append(rows, rw)
-		}
-		sort.Slice(rows, func(i, j int) bool { return rows[i].Tool < rows[j].Tool })
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(rows)
-	case http.MethodPost:
-		// ?action=rollback&tool=&owner=&to=<version>: make a kept version
-		// the one adopters run. The one it replaces is kept in turn.
-		if r.URL.Query().Get("action") != "rollback" {
-			http.Error(w, "action must be rollback", http.StatusBadRequest)
-			return
-		}
-		name := strings.TrimSpace(r.URL.Query().Get("tool"))
-		rel, ok := releases[name]
-		if !ok || rel.Owner != strings.TrimSpace(r.URL.Query().Get("owner")) {
-			http.Error(w, "no published tool "+name+" of that owner's", http.StatusNotFound)
-			return
-		}
-		var to int
-		if _, err := fmt.Sscanf(r.URL.Query().Get("to"), "%d", &to); err != nil {
-			http.Error(w, "to must be a version number", http.StatusBadRequest)
-			return
-		}
-		if err := rel.RollBack(a.db, to, AuthCurrentUser(r)); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		rows = append(rows, row)
 	}
+	return rows, nil
+}
+
+// handlePromotionAction approves or denies the ?id= request.
+func (a *AdminApp) handlePromotionAction(c *jsonapi.Call, _ struct{}) (any, error) {
+	q := c.R.URL.Query()
+	action := q.Get("action")
+	id := strings.TrimSpace(q.Get("id"))
+	if id == "" {
+		return nil, jsonapi.BadRequest("missing id")
+	}
+	req, ok := GetPromotionRequest(a.db, id)
+	if !ok {
+		return nil, jsonapi.NotFound("no such request")
+	}
+	switch action {
+	case "approve":
+		// The kind's registered side effect runs BEFORE the row is
+		// marked approved, so a failure leaves the request pending
+		// (re-approvable). Each kind registers its own approver (a
+		// tool in core, an app in customapps); a kind without one
+		// is refused here.
+		if err := promotion.Approve(a.db, id, c.User); err != nil {
+			return nil, jsonapi.BadRequest(err.Error())
+		}
+	case "deny":
+		if err := SetPromotionRequestState(a.db, id, PromotionDeniedState, c.User); err != nil {
+			return nil, jsonapi.BadRequest(err.Error())
+		}
+	default:
+		return nil, jsonapi.BadRequest("action must be approve|deny")
+	}
+	verb := map[string]string{"approve": "approved", "deny": "denied"}[action]
+	RecordActivity(c.R, activity.Approval, c.User, verb+" publishing the "+req.Kind+" "+req.Name+" of "+req.Owner)
+	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// handleGlobalTools serves /api/global-tools; registerUsersRoutes says what it is for.
+func (a *AdminApp) handleGlobalTools(c *jsonapi.Call) (any, error) {
+	releases := a.toolReleases()
+	// ?history=<tool>: the versions a release keeps to roll back to,
+	// each with what rolling back to it would change.
+	if name := strings.TrimSpace(c.R.URL.Query().Get("history")); name != "" {
+		type histRow struct {
+			Tool        string `json:"tool"`
+			Owner       string `json:"owner"`
+			PastVersion int    `json:"past_version"`
+			Label       string `json:"label"`
+			ApprovedAt  string `json:"approved_at,omitempty"`
+			ApprovedBy  string `json:"approved_by,omitempty"`
+			Changes     string `json:"changes"`
+		}
+		hist := []histRow{}
+		if rel, ok := releases[name]; ok {
+			for _, h := range rel.History {
+				hr := histRow{
+					Tool: rel.Name, Owner: rel.Owner, PastVersion: h.Version,
+					Label: fmt.Sprintf("v%d", h.Version), ApprovedBy: h.ApprovedBy,
+					Changes: rel.Tool.DefinitionDiff(h.Tool),
+				}
+				if !h.ApprovedAt.IsZero() {
+					hr.ApprovedAt = h.ApprovedAt.UTC().Format("2006-01-02T15:04:05Z")
+				}
+				if hr.Changes == "" {
+					hr.Changes = "The same definition as the current version."
+				}
+				hist = append(hist, hr)
+			}
+		}
+		return hist, nil
+	}
+	type row struct {
+		ID     string `json:"id"`
+		Tool   string `json:"tool"`
+		Owner  string `json:"owner"`
+		Access string `json:"access"`
+		// Restricted drives the badge: "every user" and "these three"
+		// are different grants and should not read the same.
+		Restricted bool `json:"restricted"`
+		// Version is the approved version adopters run; the owner's
+		// working copy may have moved on, which only an approved
+		// update carries to them.
+		Version    string `json:"version"`
+		ApprovedAt string `json:"approved_at,omitempty"`
+		HasHistory bool   `json:"has_history"`
+		// UpdateRequested: the owner asked for their current copy to
+		// become the next version; Review is the diff to approve or
+		// deny in Pending promotions.
+		UpdateRequested bool   `json:"update_requested"`
+		Review          string `json:"review,omitempty"`
+	}
+	rows := []row{}
+	// Who published each one. A catalog entry with no name behind it
+	// is one nobody is answerable for.
+	owners := SharedToolOwners(a.db)
+	for _, p := range LoadSharedPersistentTempTools(a.db) {
+		access, restricted := "Every user", false
+		if len(p.AllowedUsers) > 0 {
+			access, restricted = strings.Join(p.AllowedUsers, ", "), true
+		}
+		rw := row{
+			ID: p.Tool.Name, Tool: p.Tool.Name, Owner: owners[p.Tool.Name],
+			Access: access, Restricted: restricted,
+		}
+		if rel, ok := releases[p.Tool.Name]; ok {
+			rw.Version = fmt.Sprintf("v%d", rel.Version)
+			rw.HasHistory = len(rel.History) > 0
+			if !rel.ApprovedAt.IsZero() {
+				rw.ApprovedAt = rel.ApprovedAt.UTC().Format("2006-01-02T15:04:05Z")
+			}
+			if PendingPromotion(a.db, rel.Owner, "tool", rel.Name) {
+				rw.UpdateRequested, rw.Review = toolRequestReview(a.db, releases, rel.Owner, rel.Name)
+			}
+		}
+		rows = append(rows, rw)
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Tool < rows[j].Tool })
+	return rows, nil
+}
+
+// toolReleases is each published tool's release, by name.
+func (a *AdminApp) toolReleases() map[string]ToolRelease {
+	releases := map[string]ToolRelease{}
+	for _, rel := range ToolReleases(a.db) {
+		releases[rel.Name] = rel
+	}
+	return releases
+}
+
+// handleGlobalToolRollback is ?action=rollback&tool=&owner=&to=<version>:
+// make a kept version the one adopters run. The one it replaces is kept in
+// turn.
+func (a *AdminApp) handleGlobalToolRollback(c *jsonapi.Call, _ struct{}) (any, error) {
+	q := c.R.URL.Query()
+	if q.Get("action") != "rollback" {
+		return nil, jsonapi.BadRequest("action must be rollback")
+	}
+	name := strings.TrimSpace(q.Get("tool"))
+	rel, ok := a.toolReleases()[name]
+	if !ok || rel.Owner != strings.TrimSpace(q.Get("owner")) {
+		return nil, jsonapi.NotFound("no published tool " + name + " of that owner's")
+	}
+	var to int
+	if _, err := fmt.Sscanf(q.Get("to"), "%d", &to); err != nil {
+		return nil, jsonapi.BadRequest("to must be a version number")
+	}
+	if err := rel.RollBack(a.db, to, c.User); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // userRoutes serves /api/users/{user} and /api/users/{user}/{action}. Every

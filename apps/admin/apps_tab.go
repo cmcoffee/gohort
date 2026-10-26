@@ -20,7 +20,6 @@
 package admin
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/url"
 	"sort"
@@ -264,45 +263,33 @@ func appsListSection() ui.Section {
 	}
 }
 
-// handleApps lists every app for the tab's table (GET) and flips a shipped one
-// on or off (POST ?path=<mount>, body {"enabled": bool}).
-func (a *AdminApp) handleApps(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
+// handleApps lists every app for the tab's table; handleAppSwitch flips a
+// shipped one on or off (POST ?path=<mount>, body {"enabled": bool}).
+func (a *AdminApp) handleApps(c *jsonapi.Call) (any, error) {
+	return a.appRows(newPanes(c.R)), nil
+}
 
-	if r.Method == http.MethodPost {
-		path := strings.TrimSpace(r.URL.Query().Get("path"))
-		var req struct {
-			Enabled bool `json:"enabled"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "bad request body", http.StatusBadRequest)
-			return
-		}
-		// Only apps this tab actually offers. Without this the endpoint would
-		// switch off anything with a mount prefix — including the hidden
-		// framework apps the list deliberately withholds, which is exactly the
-		// trap the list was shaped to avoid.
-		if !isListableApp(path) {
-			http.Error(w, "not an app that can be switched off: "+path, http.StatusBadRequest)
-			return
-		}
-		if err := SetAppEnabled(a.db, path, req.Enabled); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		state := "disabled"
-		if req.Enabled {
-			state = "enabled"
-		}
-		Log("[admin] app %s %s by %s", path, state, AuthCurrentUser(r))
-		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "path": path, "enabled": req.Enabled})
-		return
+// handleAppSwitch switches the ?path= app on or off.
+func (a *AdminApp) handleAppSwitch(c *jsonapi.Call, req struct {
+	Enabled bool `json:"enabled"`
+}) (any, error) {
+	path := strings.TrimSpace(c.R.URL.Query().Get("path"))
+	// Only apps this tab actually offers. Without this the endpoint would
+	// switch off anything with a mount prefix — including the hidden
+	// framework apps the list deliberately withholds, which is exactly the
+	// trap the list was shaped to avoid.
+	if !isListableApp(path) {
+		return nil, jsonapi.BadRequest("not an app that can be switched off: " + path)
 	}
-
-	_ = json.NewEncoder(w).Encode(a.appRows(newPanes(r)))
+	if err := SetAppEnabled(a.db, path, req.Enabled); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	state := "disabled"
+	if req.Enabled {
+		state = "enabled"
+	}
+	Log("[admin] app %s %s by %s", path, state, c.User)
+	return map[string]any{"ok": true, "path": path, "enabled": req.Enabled}, nil
 }
 
 // appRows is the table: the apps that ship, then the authored ones. A row

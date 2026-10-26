@@ -1,0 +1,96 @@
+(signed out) GET /api/promotions ""
+  403 forbidden
+alice GET /api/promotions ""
+  403 forbidden
+root GET /api/promotions ""
+  200 [{"id":"<request-nah>","owner":"bob","kind":"tool","name":"ct_nah","note":"please publish","created":"<time>","state":"pending","review":"A new tool for the catalog. Its whole definition:\n\ncommand /… (619 bytes, sha1 d85ecaea30e0f12f6da3f60b1795069322791194)
+root PUT /api/promotions "{}"
+  405 method not allowed
+(signed out) GET /api/global-tools ""
+  403 forbidden
+alice GET /api/global-tools ""
+  403 forbidden
+root GET /api/global-tools ""
+  200 []
+root PUT /api/global-tools "{}"
+  405 method not allowed
+(signed out) GET /api/global-tools?history=ct_pub ""
+  403 forbidden
+alice GET /api/global-tools?history=ct_pub ""
+  403 forbidden
+root GET /api/global-tools?history=ct_pub ""
+  200 []
+root PUT /api/global-tools?history=ct_pub "{}"
+  405 method not allowed
+(signed out) GET /api/app-switches ""
+  403 forbidden
+alice GET /api/app-switches ""
+  403 forbidden
+root GET /api/app-switches ""
+  200 [{"access":"1 admin only: no other account has been granted it","desc":"a test app","enabled":true,"group":"Built in","href":"","key":"/zzcontractapp","name":"Fake /zzcontractapp","path":"/zzcontractapp","settings":"","state":"enabled","switchable":true}]
+root PUT /api/app-switches "{}"
+  405 method not allowed
+alice POST /api/promotions?action=approve&id=<request-pub> ""
+  403 forbidden
+root POST /api/promotions?action=approve ""
+  400 missing id
+root POST /api/promotions?action=approve&id=nope ""
+  404 no such request
+root POST /api/promotions?action=sideways&id=<request-pub> ""
+  400 action must be approve|deny
+root POST /api/promotions?action=approve&id=<request-pub> ""
+  204 
+root POST /api/promotions?action=deny&id=<request-nah> ""
+  204 
+root GET /api/promotions ""
+  200 []
+root GET /api/global-tools ""
+  200 [{"id":"ct_pub","tool":"ct_pub","owner":"bob","access":"Every user","restricted":false,"version":"v1","approved_at":"<time>","has_history":false,"update_requested":false}]
+root GET /api/promotions ""
+  200 [{"id":"<request-pub>","owner":"bob","kind":"tool","name":"ct_pub","note":"please publish","created":"<time>","state":"pending","update":true,"review":"Update to bob's published tool, now at version 1. Approving makes this the next version for everyone who added it.\n\ncommand / URL template:\n- echo one\n+ echo two\n\ndescription:\n- Publish me.\n+ Publish me, again."}]
+root GET /api/global-tools ""
+  200 [{"id":"ct_pub","tool":"ct_pub","owner":"bob","access":"Every user","restricted":false,"version":"v1","approved_at":"<time>","has_history":false,"update_requested":true,"review":"Update to bob's published tool, now at version 1. Approving makes this the next version for everyone who added it.\n\ncommand / URL template:\n- echo one\n+ echo two\n\ndescription:\n- Publish me.\n+ Publish me, again."}]
+root POST /api/promotions?action=approve&id=<request-pub> ""
+  204 
+root GET /api/global-tools ""
+  200 [{"id":"ct_pub","tool":"ct_pub","owner":"bob","access":"Every user","restricted":false,"version":"v2","approved_at":"<time>","has_history":true,"update_requested":false}]
+root GET /api/global-tools?history=ct_pub ""
+  200 [{"tool":"ct_pub","owner":"bob","past_version":1,"label":"v1","approved_at":"<time>","changes":"command / URL template:\n- echo two\n+ echo one\n\ndescription:\n- Publish me, again.\n+ Publish me."}]
+root GET /api/global-tools?history=ct_nope ""
+  200 []
+alice POST /api/global-tools?action=rollback&tool=ct_pub&owner=bob&to=1 ""
+  403 forbidden
+root POST /api/global-tools?action=undo&tool=ct_pub&owner=bob&to=1 ""
+  400 action must be rollback
+root POST /api/global-tools?action=rollback&tool=ct_pub&owner=alice&to=1 ""
+  404 no published tool ct_pub of that owner's
+root POST /api/global-tools?action=rollback&tool=ct_pub&owner=bob&to=one ""
+  400 to must be a version number
+root POST /api/global-tools?action=rollback&tool=ct_pub&owner=bob&to=99 ""
+  400 version 99 of ct_pub is not kept; the last 5 versions are
+root POST /api/global-tools?action=rollback&tool=ct_pub&owner=bob&to=1 ""
+  204 
+root GET /api/global-tools ""
+  200 [{"id":"ct_pub","tool":"ct_pub","owner":"bob","access":"Every user","restricted":false,"version":"v1","approved_at":"<time>","has_history":true,"update_requested":false}]
+alice POST /api/app-switches?path=/zzcontractapp "{\"enabled\":false}"
+  403 forbidden
+root POST /api/app-switches?path=/admin "{\"enabled\":false}"
+  400 not an app that can be switched off: /admin
+root POST /api/app-switches?path=/nope "{\"enabled\":false}"
+  400 not an app that can be switched off: /nope
+root POST /api/app-switches?path=/zzcontractapp "{\"enabled\":"
+  400 invalid JSON: unexpected EOF
+root POST /api/app-switches?path=/zzcontractapp ""
+  400 invalid JSON: EOF
+root POST /api/app-switches?path=/zzcontractapp "{\"enabled\":false}"
+  200 {"enabled":false,"ok":true,"path":"/zzcontractapp"}
+root GET /api/app-switches ""
+  200 [{"access":"1 admin only: no other account has been granted it","desc":"a test app","enabled":false,"group":"Built in","href":"","key":"/zzcontractapp","name":"Fake /zzcontractapp","path":"/zzcontractapp","settings":"","state":"disabled","switchable":true}]
+root POST /api/app-switches?path=/zzcontractapp "{\"enabled\":true}"
+  200 {"enabled":true,"ok":true,"path":"/zzcontractapp"}
+root GET /api/app-switches ""
+  200 [{"access":"1 admin only: no other account has been granted it","desc":"a test app","enabled":true,"group":"Built in","href":"","key":"/zzcontractapp","name":"Fake /zzcontractapp","path":"/zzcontractapp","settings":"","state":"enabled","switchable":true}]
+activity log, 3 entries:
+  approval root: approved publishing the tool ct_pub of bob
+  approval root: approved publishing the tool ct_pub of bob
+  approval root: denied publishing the tool ct_nah of bob
