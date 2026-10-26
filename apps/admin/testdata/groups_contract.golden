@@ -1,0 +1,106 @@
+(signed out) GET /api/tool-groups ""
+  403 forbidden
+alice GET /api/tool-groups ""
+  403 forbidden
+root GET /api/tool-groups ""
+  200 []
+root PUT /api/tool-groups "{}"
+  405 method not allowed
+(signed out) GET /api/app-groups ""
+  403 forbidden
+alice GET /api/app-groups ""
+  403 forbidden
+root GET /api/app-groups ""
+  200 []
+root PUT /api/app-groups "{}"
+  405 method not allowed
+(signed out) GET /api/tool-groups/registry ""
+  403 forbidden
+alice GET /api/tool-groups/registry ""
+  403 forbidden
+root GET /api/tool-groups/registry ""
+  200 [{"name":"ct_bobs","description":"Bob's tool.","source":"temp"},{"name":"ct_lookup","description":"Look a thing up.\nMore detail.","source":"temp"},{"name":"ct_report","description":"Write a report.","source":"temp"}]
+root PUT /api/tool-groups/registry "{}"
+  405 method not allowed
+(signed out) GET /api/tool-groups/registry?exclude_grouped=true ""
+  403 forbidden
+alice GET /api/tool-groups/registry?exclude_grouped=true ""
+  403 forbidden
+root GET /api/tool-groups/registry?exclude_grouped=true ""
+  200 [{"name":"ct_bobs","description":"Bob's tool.","source":"temp"},{"name":"ct_lookup","description":"Look a thing up.\nMore detail.","source":"temp"},{"name":"ct_report","description":"Write a report.","source":"temp"}]
+root PUT /api/tool-groups/registry?exclude_grouped=true "{}"
+  405 method not allowed
+alice POST /api/tool-groups "{\"name\":\"Mine\"}"
+  403 forbidden
+root POST /api/tool-groups "{\"name\":\" Research \",\"description\":\"Looking things up\",\"members\":[\"ct_lookup\",\"ct_lookup\",\" \"]}"
+  200 {"id":"<tool-group>","name":"Research","description":"Looking things up","members":["ct_lookup"],"created":"<time>","updated":"<time>"}
+root POST /api/tool-groups "{\"name\":\" \"}"
+  400 tool groups: name is required
+root POST /api/tool-groups "{\"name\":"
+  400 invalid JSON: unexpected EOF
+root POST /api/tool-groups "{\"id\":\"<tool-group>\",\"name\":\"Research Desk\",\"description\":\"renamed\"}"
+  200 {"id":"<tool-group>","name":"Research Desk","description":"renamed","members":["ct_lookup"],"created":"<time>","updated":"<time>"}
+root GET /api/tool-groups/<tool-group> ""
+  200 {"id":"<tool-group>","name":"Research Desk","description":"renamed","members":["ct_lookup"],"created":"<time>","updated":"<time>"}
+root GET /api/tool-groups/nope ""
+  404 no such tool group
+root POST /api/tool-groups/<tool-group> "{}"
+  405 method not allowed
+root GET /api/tool-groups/registry?exclude_grouped=true ""
+  200 [{"name":"ct_bobs","description":"Bob's tool.","source":"temp"},{"name":"ct_report","description":"Write a report.","source":"temp"}]
+root GET /api/tool-groups/registry?exclude_grouped=true&except_group=<tool-group> ""
+  200 [{"name":"ct_bobs","description":"Bob's tool.","source":"temp"},{"name":"ct_lookup","description":"Look a thing up.\nMore detail.","source":"temp"},{"name":"ct_report","description":"Write a report.","source":"temp"}]
+root GET /api/tool-groups/registry?exclude=ct_bobs ""
+  200 [{"name":"ct_lookup","description":"Look a thing up.\nMore detail.","source":"temp"},{"name":"ct_report","description":"Write a report.","source":"temp"}]
+root GET /api/tool-groups ""
+  200 [{"id":"<tool-group>","name":"Research Desk","description":"renamed","members":["ct_lookup"],"created":"<time>","updated":"<time>","is_builtin":false}]
+alice GET /api/tool-groups/<tool-group>/members ""
+  403 forbidden
+alice POST /api/tool-groups/<tool-group>/members "{\"members\":[\"ct_lookup\"]}"
+  403 forbidden
+root GET /api/tool-groups/<tool-group>/members ""
+  200 {"records":[{"name":"ct_lookup","desc":"Look a thing up.","scope":"user-wide"},{"name":"ct_report","desc":"Write a report.","scope":"user-wide"}],"selected":null}
+root POST /api/tool-groups/<tool-group>/members "{\"members\":[\"ct_lookup\",\" \",\"ct_report\"]}"
+  200 {"records":[{"name":"ct_lookup","desc":"Look a thing up.","scope":"user-wide"},{"name":"ct_report","desc":"Write a report.","scope":"user-wide"}],"selected":["ct_lookup","ct_report"]}
+root POST /api/tool-groups/<tool-group>/members "{\"members\":[]}"
+  200 {"records":[{"name":"ct_lookup","desc":"Look a thing up.","scope":"user-wide"},{"name":"ct_report","desc":"Write a report.","scope":"user-wide"}],"selected":null}
+root POST /api/tool-groups/<tool-group>/members "{\"members\":"
+  400 invalid JSON: unexpected EOF
+root PUT /api/tool-groups/<tool-group>/members "{}"
+  405 method not allowed
+root GET /api/tool-groups/nope/members ""
+  404 no such tool group
+alice POST /api/app-groups "{\"name\":\"Mine\"}"
+  403 forbidden
+root POST /api/app-groups "{\"name\":\"Writers\",\"apps\":[\"/scribe\",\"/codewriter\"]}"
+  200 {"id":"<app-group>","name":"Writers","description":"","apps":["/scribe","/codewriter"],"created":"<time>","updated":"<time>"}
+root POST /api/app-groups "{\"name\":\"\"}"
+  400 app groups: name is required
+root POST /api/app-groups "{\"name\":"
+  400 invalid JSON: unexpected EOF
+root GET /api/app-groups/<app-group> ""
+  200 {"id":"<app-group>","name":"Writers","description":"","apps":["/scribe","/codewriter"],"created":"<time>","updated":"<time>"}
+root GET /api/app-groups/nope ""
+  404 no such app group
+root POST /api/app-groups/<app-group> "{}"
+  405 method not allowed
+root GET /api/app-groups ""
+  200 [{"id":"<app-group>","name":"Writers","description":"","apps":["/scribe","/codewriter"],"created":"<time>","updated":"<time>"}]
+alice DELETE /api/tool-groups?id=<tool-group> ""
+  403 forbidden
+root DELETE /api/tool-groups ""
+  400 missing id
+root DELETE /api/tool-groups?id=builtin-web-media ""
+  400 tool group "builtin-web-media" is at framework defaults (nothing to revert)
+root DELETE /api/tool-groups?id=<tool-group> ""
+  204 
+root GET /api/tool-groups/<tool-group> ""
+  404 no such tool group
+alice DELETE /api/app-groups?id=<app-group> ""
+  403 forbidden
+root DELETE /api/app-groups ""
+  400 missing id
+root DELETE /api/app-groups?id=<app-group> ""
+  204 
+root GET /api/app-groups ""
+  200 []
