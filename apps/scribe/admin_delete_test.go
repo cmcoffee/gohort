@@ -32,9 +32,7 @@ func TestDeletingAGuideRemovesTheOwnersCollection(t *testing.T) {
 
 	// No auth store in a test, so RequestIsAdmin says yes: this is the
 	// administrator path.
-	w := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodDelete, "/scribe/guide?id="+g.ID, nil)
-	T.handleGuide(w, r, UserDB(appDB, "admin-user"), "admin-user")
+	w := asAdmin(t, T, "admin-user", httptest.NewRequest(http.MethodDelete, "/scribe/guide?id="+g.ID, nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("delete answered %d: %s", w.Code, w.Body.String())
 	}

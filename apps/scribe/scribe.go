@@ -146,7 +146,7 @@ func (T *Scribe) Routes() {
 	RegisterUserDataHandler(&scribeUserData{app: T})
 	// Guides travel losslessly in the bundle format (guide_artifact.go).
 	RegisterGuideArtifactType(T)
-	T.HandleFunc("/", T.route)
+	T.routes()
 	// The interval half of the curator's batching. The threshold half fires
 	// from SubmitFinding; this is what stops a handful of findings sitting
 	// unfiled forever because the threshold is never reached.

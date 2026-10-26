@@ -87,7 +87,7 @@ func TestGuideAuthorSessionsAreReachable(t *testing.T) {
 	if !strings.Contains(page, `PreviewURL: "revision?id={id}&rev={rev}"`) {
 		t.Error("History without a PreviewURL offers only Restore, which cannot answer 'what did that section say'")
 	}
-	if !strings.Contains(web, `case path == "revision":`) {
+	if !strings.Contains(web, `T.HandleFunc("/revision",`) {
 		t.Error("nothing serves the revision preview")
 	}
 }

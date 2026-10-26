@@ -27,6 +27,59 @@ import (
 // tools know which document to write into.
 const activeTable = "guides_active"
 
+// routes registers the HTTP routes, apart from the registries Routes fills,
+// so a test can serve the real routes.
+func (T *Scribe) routes() {
+	T.HandleFunc("/guides", jsonapi.Get(T.DB, T.handleList))
+	T.HandleFunc("/guide", jsonapi.Methods{
+		"GET":    jsonapi.Get(T.DB, T.handleGuide),
+		"DELETE": jsonapi.Post(T.DB, T.handleGuideDelete),
+	}.Serve)
+	T.HandleFunc("/new", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleNew, jsonapi.EmptyBodyOK)}.Serve)
+	T.HandleFunc("/settings", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, T.handleSettings),
+		"POST": jsonapi.Post(T.DB, T.handleSettingsSave),
+	}.Serve)
+	// Who it is shared with, and the people and teams to pick from.
+	T.HandleFunc("/share", jsonapi.Methods{
+		"GET":   jsonapi.Get(T.DB, T.handleShare),
+		"PATCH": jsonapi.Post(T.DB, T.handleShareSave),
+		"POST":  jsonapi.Post(T.DB, T.handleShareSave),
+	}.Serve)
+	// The whole guide edited as one page (the viewer's Edit all), and the
+	// header image.
+	T.HandleFunc("/body", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleBody)}.Serve)
+	T.HandleFunc("/image", jsonapi.Methods{
+		"GET":    jsonapi.Get(T.DB, T.handleImage),
+		"POST":   jsonapi.Post(T.DB, T.handleImageSet, jsonapi.EmptyBodyOK),
+		"DELETE": jsonapi.Post(T.DB, T.handleImageRemove),
+	}.Serve)
+	T.HandleFunc("/revision", jsonapi.Get(T.DB, T.handleRevisionPreview))
+	T.HandleFunc("/revisions", jsonapi.Get(T.DB, T.handleRevisions))
+	T.HandleFunc("/restore", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleRestore)}.Serve)
+	T.HandleFunc("/audit", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleAudit)}.Serve)
+	T.HandleFunc("/section", jsonapi.Methods{
+		"GET":    jsonapi.Get(T.DB, T.handleSection),
+		"POST":   jsonapi.Post(T.DB, T.handleSectionSave),
+		"DELETE": jsonapi.Post(T.DB, T.handleSectionRemove),
+	}.Serve)
+	T.HandleFunc("/section/move", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleSectionMove)}.Serve)
+	T.HandleFunc("/section/add", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleSectionAdd, jsonapi.EmptyBodyOK)}.Serve)
+	T.HandleFunc("/collections", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, T.handleCollections),
+		"POST": jsonapi.Post(T.DB, T.handleCollectionsSave),
+	}.Serve)
+	T.HandleFunc("/references", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, T.handleReferences),
+		"POST": jsonapi.Post(T.DB, T.handleReferencesSave),
+	}.Serve)
+	T.HandleFunc("/chat/active", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleSetActive, jsonapi.EmptyBodyOK)}.Serve)
+	T.HandleFunc("/", T.route)
+}
+
+// errNoGuide answers a request naming a guide the caller cannot open.
+var errNoGuide = jsonapi.NotFound("404 page not found")
+
 func (T *Scribe) route(w http.ResponseWriter, r *http.Request) {
 	user, udb, ok := RequireUser(w, r, T.DB)
 	if !ok {
@@ -40,26 +93,10 @@ func (T *Scribe) route(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		T.servePage(w, r)
-	case path == "guides":
-		T.handleList(w, r, udb, user)
-	case path == "guide":
-		T.handleGuide(w, r, udb, user)
-	case path == "new":
-		T.handleNew(w, r, udb, user)
-	case path == "settings":
-		T.handleSettings(w, r, udb, user)
-	// Who it is shared with, and the people and teams to pick from.
-	case path == "share":
-		T.handleShare(w, r, udb, user)
 	case path == "share/candidates":
 		T.handleShareCandidates(w, r, udb, user)
-	// The whole guide edited as one page (the viewer's Edit all), the header
-	// image, importing a page exported earlier, and the pictures pasted or
-	// dropped into a guide (stored, then served to whoever may read it).
-	case path == "body":
-		T.handleBody(w, r, udb, user)
-	case path == "image":
-		T.handleImage(w, r, udb, user)
+	// Importing a page exported earlier, and the pictures pasted or dropped
+	// into a guide (stored, then served to whoever may read it).
 	// A page already published somewhere, taken in to start a guide that
 	// keeps it (page_import.go).
 	// Update from sources: the distills from guides set to Distill, and the
@@ -85,30 +122,12 @@ func (T *Scribe) route(w http.ResponseWriter, r *http.Request) {
 	// House-style rules, per user, appended to every Guide Author turn.
 	case path == "rules":
 		HandleDocRules(w, r, T.DB, rulesNamespace)
-	case path == "revision":
-		T.handleRevisionPreview(w, r, udb, user)
-	case path == "revisions":
-		T.handleRevisions(w, r, udb, user)
-	case path == "restore":
-		T.handleRestore(w, r, udb, user)
 	case path == "export":
 		T.handleExport(w, r, udb, user)
-	case path == "audit":
-		T.handleAudit(w, r, udb, user)
-	case path == "section":
-		T.handleSection(w, r, udb, user)
-	case path == "section/move":
-		T.handleSectionMove(w, r, udb, user)
 	case path == "section/discuss":
 		T.handleSectionDiscuss(w, r, udb, user)
 	case path == "brief/discuss":
 		T.handleBriefDiscuss(w, r, udb, user)
-	case path == "section/add":
-		T.handleSectionAdd(w, r, udb, user)
-	case path == "collections":
-		T.handleCollections(w, r, udb, user)
-	case path == "references":
-		T.handleReferences(w, r, udb, user)
 	// Publishing OUT: the modal's state, its Publisher chat, and the
 	// no-conversation update of an already-published copy.
 	case path == "publish/state":
@@ -135,8 +154,6 @@ func (T *Scribe) route(w http.ResponseWriter, r *http.Request) {
 		T.handleCuratorUndo(w, r, udb, user)
 	case path == "curator/run":
 		T.handleCuratorRunNow(w, r, udb, user)
-	case path == "chat/active":
-		T.handleSetActive(w, r, udb)
 	case path == "chat/send":
 		T.handleChatSend(w, r, udb, user)
 	case strings.HasPrefix(path, scribeChat.Prefix) || strings.HasPrefix(path, "api/runs/"):
@@ -168,7 +185,8 @@ func (T *Scribe) resolve(r *http.Request, reqUDB Database, user, id string) (g G
 
 // handleList feeds the workbench's left list: [{id, title, shared, own}]. It
 // unions the user's own guides with guides others have shared read-only.
-func (T *Scribe) handleList(w http.ResponseWriter, r *http.Request, udb Database, user string) {
+func (T *Scribe) handleList(c *jsonapi.Call) (any, error) {
+	udb, user := c.UDB, c.User
 	type row struct {
 		ID     string `json:"id"`
 		Title  string `json:"title"`
@@ -198,69 +216,73 @@ func (T *Scribe) handleList(w http.ResponseWriter, r *http.Request, udb Database
 			}
 		}
 	}
-	jsonapi.Write(w, out)
+	return out, nil
 }
 
 // handleGuide GETs one guide rendered for the viewer ({id, title, html, own,
-// shared}) or DELETEs it. Shared guides resolve to the owner's store; the inline
+// shared}); handleGuideDelete DELETEs it. Shared guides resolve to the owner's store; the inline
 // edit controls only render for a user who can manage the guide.
-func (T *Scribe) handleGuide(w http.ResponseWriter, r *http.Request, udb Database, user string) {
-	id := strings.TrimSpace(r.URL.Query().Get("id"))
-	g, ownerUDB, canManage, canEdit, found := T.resolve(r, udb, user, id)
+func (T *Scribe) handleGuide(c *jsonapi.Call) (any, error) {
+	id := strings.TrimSpace(c.R.URL.Query().Get("id"))
+	g, _, canManage, canEdit, found := T.resolve(c.R, c.UDB, c.User, id)
 	if !found {
-		http.NotFound(w, r)
-		return
+		return nil, errNoGuide
 	}
-	switch r.Method {
-	case http.MethodGet:
-		rec := map[string]any{
-			"id": g.ID, "title": g.Title, "kind": g.Kind, "html": renderGuideHTML(g, canEdit),
-			"own": canManage, "can_edit": canEdit, "shared": g.Shared,
-			"image_url": g.ImageURL,
-		}
-		// The whole guide as one markdown page, for anyone who may edit it:
-		// its presence is what enables the viewer's Edit toggle (see
-		// ui.WorkbenchPanel.EditURL). Each ## heading is a section.
-		if canEdit {
-			rec["markdown"] = guideMarkdown(g)
-		}
-		jsonapi.Write(w, rec)
-	case http.MethodDelete:
-		if !canManage {
-			http.Error(w, "only the owner can delete this guide", http.StatusForbidden)
-			return
-		}
-		// The guide's research collection is its OWNER's, so it is the owner's
-		// collection that goes with it. Passing the caller here meant an
-		// administrator deleting somebody else's guide vacuumed a collection
-		// of that id in the administrator's own store and left the owner's
-		// behind, orphaned, with its chunks still in the index.
-		_, owner, _, _ := resolveGuide(T.DB, udb, user, id)
-		deleteGuide(ownerUDB, owner, id)
-		indexGuideShares(T.DB, owner, id, false, nil) // drop from both shared indexes
-		jsonapi.Write(w, map[string]bool{"ok": true})
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	rec := map[string]any{
+		"id": g.ID, "title": g.Title, "kind": g.Kind, "html": renderGuideHTML(g, canEdit),
+		"own": canManage, "can_edit": canEdit, "shared": g.Shared,
+		"image_url": g.ImageURL,
 	}
+	// The whole guide as one markdown page, for anyone who may edit it:
+	// its presence is what enables the viewer's Edit toggle (see
+	// ui.WorkbenchPanel.EditURL). Each ## heading is a section.
+	if canEdit {
+		rec["markdown"] = guideMarkdown(g)
+	}
+	return rec, nil
+}
+
+// handleGuideDelete deletes a guide, which only its owner (or an
+// administrator) may.
+func (T *Scribe) handleGuideDelete(c *jsonapi.Call, _ struct{}) (any, error) {
+	udb, user := c.UDB, c.User
+	id := strings.TrimSpace(c.R.URL.Query().Get("id"))
+	_, ownerUDB, canManage, _, found := T.resolve(c.R, udb, user, id)
+	if !found {
+		return nil, errNoGuide
+	}
+	if !canManage {
+		return nil, jsonapi.Forbidden("only the owner can delete this guide")
+	}
+	// The guide's research collection is its OWNER's, so it is the owner's
+	// collection that goes with it. Passing the caller here meant an
+	// administrator deleting somebody else's guide vacuumed a collection
+	// of that id in the administrator's own store and left the owner's
+	// behind, orphaned, with its chunks still in the index.
+	_, owner, _, _ := resolveGuide(T.DB, udb, user, id)
+	deleteGuide(ownerUDB, owner, id)
+	indexGuideShares(T.DB, owner, id, false, nil) // drop from both shared indexes
+	return map[string]bool{"ok": true}, nil
+}
+
+// newGuideForm is the New modal.
+type newGuideForm struct {
+	Title    string `json:"title"`
+	Subtitle string `json:"subtitle"`
+	Template string `json:"template"` // a MarkdownDocTemplates name for the starting sections
 }
 
 // handleNew creates a guide from the workbench's New modal (a title field). The
 // creator is stamped as Owner; new guides are private until shared.
-func (T *Scribe) handleNew(w http.ResponseWriter, r *http.Request, udb Database, user string) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
+func (T *Scribe) handleNew(c *jsonapi.Call, body *newGuideForm) (any, error) {
+	udb, user := c.UDB, c.User
+	if body == nil {
+		body = &newGuideForm{}
 	}
-	var body struct {
-		Title    string `json:"title"`
-		Subtitle string `json:"subtitle"`
-		Template string `json:"template"` // a MarkdownDocTemplates name for the starting sections
-	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
 	g := newDocument(user, body.Title, templateBody(body.Template), false)
 	g.Subtitle = strings.TrimSpace(body.Subtitle)
 	g = saveGuideRev(udb, g, "Created guide")
-	jsonapi.Write(w, map[string]string{"id": g.ID, "title": g.Title})
+	return map[string]string{"id": g.ID, "title": g.Title}, nil
 }
 
 // templateBody returns the starting body for a named shared document template
@@ -287,32 +309,22 @@ func listLabel(g Guide, suffix string) string {
 // handleBody is the viewer's whole-guide save: POST ?id= with {markdown}, the
 // guide as one page, splits it back into sections at its ## headings and saves
 // that as one revision. A section whose title survives keeps its ID.
-func (T *Scribe) handleBody(w http.ResponseWriter, r *http.Request, udb Database, user string) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+func (T *Scribe) handleBody(c *jsonapi.Call, body struct {
+	Markdown string `json:"markdown"`
+}) (any, error) {
+	r, udb, user := c.R, c.UDB, c.User
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
 	g, ownerUDB, _, canEdit, found := T.resolve(r, udb, user, id)
 	if !found {
-		http.NotFound(w, r)
-		return
+		return nil, errNoGuide
 	}
 	if !canEdit {
-		http.Error(w, "you don't have edit access to this guide", http.StatusForbidden)
-		return
-	}
-	var body struct {
-		Markdown string `json:"markdown"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
+		return nil, jsonapi.Forbidden("you don't have edit access to this guide")
 	}
 	g.Sections = sectionsFromMarkdown(body.Markdown, g.Sections)
 	T.storeEmbeddedImages(&g, ownerUDB)
 	saveGuideRev(ownerUDB, g, "Edited as one page")
-	jsonapi.Write(w, map[string]bool{"ok": true})
+	return map[string]bool{"ok": true}, nil
 }
 
 // handleImage manages a guide's header image. GET ?id= → {image_url,
@@ -321,50 +333,71 @@ func (T *Scribe) handleBody(w http.ResponseWriter, r *http.Request, udb Database
 // guide (header_image.go) and stores it (a remote URL, or a data URL when the
 // generator writes a local file or a logo is placed on it). {logo} or {from}
 // sets or, empty, clears a picture that goes with a generated header; each is
-// the URL an upload of this guide's returned. DELETE ?id= removes the header.
+// the URL an upload of this guide's returned (handleImageSet). DELETE ?id=
+// removes the header (handleImageRemove).
 // Each change is a revision.
-func (T *Scribe) handleImage(w http.ResponseWriter, r *http.Request, udb Database, user string) {
-	id := strings.TrimSpace(r.URL.Query().Get("id"))
-	g, ownerUDB, _, canEdit, found := T.resolve(r, udb, user, id)
+func (T *Scribe) handleImage(c *jsonapi.Call) (any, error) {
+	id := strings.TrimSpace(c.R.URL.Query().Get("id"))
+	g, _, _, canEdit, found := T.resolve(c.R, c.UDB, c.User, id)
 	if !found {
-		http.NotFound(w, r)
-		return
+		return nil, errNoGuide
 	}
-	switch r.Method {
-	case http.MethodGet:
-		jsonapi.Write(w, map[string]any{
-			"image_url":         g.ImageURL,
-			"can_edit":          canEdit,
-			"can_generate":      ImageProfileAvailable("blog") || ImageGenerationAvailable(),
-			"logo_url":          g.HeaderLogo,
-			"from_url":          g.HeaderFrom,
-			"can_generate_from": headerEditor(1).Name != "",
-			"can_blend_logo":    headerEditor(2).Name != "",
-			"can_place_from":    headerEditor(2).Name != "",
-		})
-		return
-	case http.MethodPost, http.MethodDelete:
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
+	return map[string]any{
+		"image_url":         g.ImageURL,
+		"can_edit":          canEdit,
+		"can_generate":      ImageProfileAvailable("blog") || ImageGenerationAvailable(),
+		"logo_url":          g.HeaderLogo,
+		"from_url":          g.HeaderFrom,
+		"can_generate_from": headerEditor(1).Name != "",
+		"can_blend_logo":    headerEditor(2).Name != "",
+		"can_place_from":    headerEditor(2).Name != "",
+	}, nil
+}
+
+// guideImage is the guide a header-image change is for, when the caller may
+// edit it.
+func (T *Scribe) guideImage(c *jsonapi.Call) (Guide, Database, error) {
+	id := strings.TrimSpace(c.R.URL.Query().Get("id"))
+	g, ownerUDB, _, canEdit, found := T.resolve(c.R, c.UDB, c.User, id)
+	if !found {
+		return Guide{}, nil, errNoGuide
 	}
 	if !canEdit {
-		http.Error(w, "you don't have edit access to this guide", http.StatusForbidden)
-		return
+		return Guide{}, nil, jsonapi.Forbidden("you don't have edit access to this guide")
 	}
-	if r.Method == http.MethodDelete {
-		g.ImageURL = ""
-		saveGuideRev(ownerUDB, g, "Removed header image")
-		jsonapi.Write(w, map[string]bool{"ok": true})
-		return
+	return g, ownerUDB, nil
+}
+
+// handleImageRemove removes the header.
+func (T *Scribe) handleImageRemove(c *jsonapi.Call, _ struct{}) (any, error) {
+	g, ownerUDB, err := T.guideImage(c)
+	if err != nil {
+		return nil, err
 	}
-	var body struct {
-		URL      string  `json:"url"`
-		Generate bool    `json:"generate"`
-		Logo     *string `json:"logo"`
-		From     *string `json:"from"`
+	g.ImageURL = ""
+	saveGuideRev(ownerUDB, g, "Removed header image")
+	return map[string]bool{"ok": true}, nil
+}
+
+// guideImageChange is a header-image POST: a URL, a generate, or the logo or
+// picture that goes with a generated header.
+type guideImageChange struct {
+	URL      string  `json:"url"`
+	Generate bool    `json:"generate"`
+	Logo     *string `json:"logo"`
+	From     *string `json:"from"`
+}
+
+// handleImageSet sets the header: see handleImage.
+func (T *Scribe) handleImageSet(c *jsonapi.Call, body *guideImageChange) (any, error) {
+	r := c.R
+	g, ownerUDB, err := T.guideImage(c)
+	if err != nil {
+		return nil, err
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	if body == nil {
+		body = &guideImageChange{}
+	}
 	if body.Logo != nil || body.From != nil {
 		note := ""
 		for _, p := range []struct {
@@ -377,8 +410,7 @@ func (T *Scribe) handleImage(w http.ResponseWriter, r *http.Request, udb Databas
 			}
 			v := strings.TrimSpace(*p.in)
 			if v != "" && guidePicture(ownerUDB, g, v) == nil {
-				http.Error(w, "the "+p.what+" must be a picture uploaded to this guide", http.StatusBadRequest)
-				return
+				return nil, jsonapi.BadRequest("the " + p.what + " must be a picture uploaded to this guide")
 			}
 			*p.field = v
 			if v == "" {
@@ -388,14 +420,12 @@ func (T *Scribe) handleImage(w http.ResponseWriter, r *http.Request, udb Databas
 			}
 		}
 		saveGuideRev(ownerUDB, g, note)
-		jsonapi.Write(w, map[string]string{"logo_url": g.HeaderLogo, "from_url": g.HeaderFrom})
-		return
+		return map[string]string{"logo_url": g.HeaderLogo, "from_url": g.HeaderFrom}, nil
 	}
 	url := strings.TrimSpace(body.URL)
 	if body.Generate {
 		if !ImageProfileAvailable("blog") && !ImageGenerationAvailable() {
-			http.Error(w, "image generation is not configured on this deployment", http.StatusServiceUnavailable)
-			return
+			return nil, jsonapi.Status(http.StatusServiceUnavailable, "image generation is not configured on this deployment")
 		}
 		// The render is not the request's: a header that takes a minute lands
 		// even if the dialog is closed.
@@ -403,18 +433,16 @@ func (T *Scribe) handleImage(w http.ResponseWriter, r *http.Request, udb Databas
 		defer cancel()
 		generated, err := T.generateHeader(ctx, g, ownerUDB)
 		if err != nil {
-			http.Error(w, "image generation failed: "+err.Error(), http.StatusInternalServerError)
-			return
+			return nil, jsonapi.Status(http.StatusInternalServerError, "image generation failed: "+err.Error())
 		}
 		url = generated
 	}
 	if url == "" {
-		http.Error(w, "url required", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("url required")
 	}
 	g.ImageURL = url
 	saveGuideRev(ownerUDB, g, "Set header image")
-	jsonapi.Write(w, map[string]string{"image_url": url})
+	return map[string]string{"image_url": url}, nil
 }
 
 // handleImport creates a guide from an HTML page exported earlier (Scribe's
@@ -451,112 +479,111 @@ func (T *Scribe) handleImport(w http.ResponseWriter, r *http.Request, udb Databa
 // GET ?id=<id> returns current values + can_manage. POST ?id=<id> with
 // {title, subtitle, private, ...} updates them (owner/admin only). Metadata,
 // so it saves without a content revision. Sharing is handleShare's.
-func (T *Scribe) handleSettings(w http.ResponseWriter, r *http.Request, udb Database, user string) {
-	id := strings.TrimSpace(r.URL.Query().Get("id"))
-	g, ownerUDB, canManage, _, found := T.resolve(r, udb, user, id)
+func (T *Scribe) handleSettings(c *jsonapi.Call) (any, error) {
+	id := strings.TrimSpace(c.R.URL.Query().Get("id"))
+	g, _, canManage, _, found := T.resolve(c.R, c.UDB, c.User, id)
 	if !found {
-		http.NotFound(w, r)
-		return
+		return nil, errNoGuide
 	}
-	switch r.Method {
-	case http.MethodGet:
-		jsonapi.Write(w, map[string]any{
-			"title": g.Title, "subtitle": g.Subtitle, "private": g.Private,
-			"owner": g.Owner, "can_manage": canManage, "curate_on_report": g.CurateOnReport, "brief": g.Brief,
-		})
-	case http.MethodPost:
-		if !canManage {
-			http.Error(w, "only the owner can change this guide's settings", http.StatusForbidden)
-			return
-		}
-		var body struct {
-			Title    string `json:"title"`
-			Subtitle string `json:"subtitle"`
-			Private  bool   `json:"private"`
-			// A pointer: a dialog that does not send it (one opened before
-			// the setting existed) leaves it as it is.
-			CurateOnReport *bool `json:"curate_on_report"`
-			// The writing brief; a pointer for the same reason.
-			Brief *string `json:"brief"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		g.Title = firstNonEmpty(strings.TrimSpace(body.Title), "Untitled guide")
-		g.Subtitle = strings.TrimSpace(body.Subtitle)
-		g.Private = body.Private
-		if body.CurateOnReport != nil {
-			g.CurateOnReport = *body.CurateOnReport
-		}
-		if body.Brief != nil {
-			brief := strings.TrimSpace(*body.Brief)
-			if n := len([]rune(brief)); n > guideBriefMax {
-				http.Error(w, fmt.Sprintf("the writing brief is %d characters; keep it to %d, it rides on every turn that writes this guide", n, guideBriefMax), http.StatusBadRequest)
-				return
-			}
-			g.Brief = brief
-		}
-		saveGuide(ownerUDB, g) // metadata, not a content change — no revision snapshot
-		jsonapi.Write(w, map[string]bool{"ok": true})
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	return map[string]any{
+		"title": g.Title, "subtitle": g.Subtitle, "private": g.Private,
+		"owner": g.Owner, "can_manage": canManage, "curate_on_report": g.CurateOnReport, "brief": g.Brief,
+	}, nil
+}
+
+// handleSettingsSave is the Settings modal's POST: see handleSettings.
+func (T *Scribe) handleSettingsSave(c *jsonapi.Call, body struct {
+	Title    string `json:"title"`
+	Subtitle string `json:"subtitle"`
+	Private  bool   `json:"private"`
+	// A pointer: a dialog that does not send it (one opened before
+	// the setting existed) leaves it as it is.
+	CurateOnReport *bool `json:"curate_on_report"`
+	// The writing brief; a pointer for the same reason.
+	Brief *string `json:"brief"`
+}) (any, error) {
+	id := strings.TrimSpace(c.R.URL.Query().Get("id"))
+	g, ownerUDB, canManage, _, found := T.resolve(c.R, c.UDB, c.User, id)
+	if !found {
+		return nil, errNoGuide
 	}
+	if !canManage {
+		return nil, jsonapi.Forbidden("only the owner can change this guide's settings")
+	}
+	g.Title = firstNonEmpty(strings.TrimSpace(body.Title), "Untitled guide")
+	g.Subtitle = strings.TrimSpace(body.Subtitle)
+	g.Private = body.Private
+	if body.CurateOnReport != nil {
+		g.CurateOnReport = *body.CurateOnReport
+	}
+	if body.Brief != nil {
+		brief := strings.TrimSpace(*body.Brief)
+		if n := len([]rune(brief)); n > guideBriefMax {
+			return nil, jsonapi.BadRequest(fmt.Sprintf("the writing brief is %d characters; keep it to %d, it rides on every turn that writes this guide", n, guideBriefMax))
+		}
+		g.Brief = brief
+	}
+	saveGuide(ownerUDB, g) // metadata, not a content change — no revision snapshot
+	return map[string]bool{"ok": true}, nil
 }
 
 // handleShare drives the Share picker: who the guide is shared with, people
 // and teams by name and Everyone as one more choice, and which of them may
 // edit. GET ?id=<id> returns {allowed_users, editors}; PATCH ?id=<id> with
-// either list replaces it (owner/admin only). Everyone is stored where it
+// either list replaces it (owner/admin only, handleShareSave). Everyone is stored where it
 // always was, Shared and ShareMode, so it reads in the lists as ShareEveryone.
-func (T *Scribe) handleShare(w http.ResponseWriter, r *http.Request, udb Database, user string) {
-	id := strings.TrimSpace(r.URL.Query().Get("id"))
-	g, owner, ownerUDB, ok := resolveGuide(T.DB, udb, user, id)
+func (T *Scribe) handleShare(c *jsonapi.Call) (any, error) {
+	g, _, ask, err := T.guideShareFor(c)
+	if err != nil {
+		return nil, err
+	}
+	return guideShareOf(g, promotion.EveryonePending(AuthDB(), ask)), nil
+}
+
+// guideShareFor is the guide ?id= names, when the caller may change who it is
+// shared with, and its owner and Everyone request.
+func (T *Scribe) guideShareFor(c *jsonapi.Call) (Guide, string, promotion.EveryoneAsk, error) {
+	id := strings.TrimSpace(c.R.URL.Query().Get("id"))
+	g, owner, _, ok := resolveGuide(T.DB, c.UDB, c.User, id)
 	if !ok {
-		http.NotFound(w, r)
-		return
+		return Guide{}, "", promotion.EveryoneAsk{}, errNoGuide
 	}
-	if !CanManageShared(user, owner, RequestIsAdmin(r)) {
-		http.Error(w, "only the owner can change who this guide is shared with", http.StatusForbidden)
-		return
+	if !CanManageShared(c.User, owner, RequestIsAdmin(c.R)) {
+		return Guide{}, "", promotion.EveryoneAsk{}, jsonapi.Forbidden("only the owner can change who this guide is shared with")
 	}
-	ask := guideEveryoneAsk(owner, g, RequestIsAdmin(r))
-	switch r.Method {
-	case http.MethodGet:
-		jsonapi.Write(w, guideShareOf(g, promotion.EveryonePending(AuthDB(), ask)))
-	case http.MethodPatch, http.MethodPost:
-		var body struct {
-			AllowedUsers *[]string `json:"allowed_users"`
-			Editors      *[]string `json:"editors"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		cur := guideShareOf(g, promotion.EveryonePending(AuthDB(), ask))
-		if body.AllowedUsers != nil {
-			cur.AllowedUsers = *body.AllowedUsers
-		}
-		if body.Editors != nil {
-			cur.Editors = *body.Editors
-		}
-		g.applyShare(owner, cur)
-		// Everyone is the administrator's to widen to (guide_everyone.go):
-		// the list asks, and what is stored is what may be granted now.
-		ask.Want = g.everyoneLevel()
-		ask.Note = "Guide " + strconv.Quote(g.Title) + ": everyone can " + ask.Want
-		level, err := promotion.AskEveryone(AuthDB(), ask)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		g.setEveryoneLevel(level)
-		saveGuide(ownerUDB, g) // who it reaches, not what it says: no revision
-		indexGuideShares(T.DB, owner, id, g.Shared, g.AllowedUsers)
-		jsonapi.Write(w, guideShareOf(g, promotion.EveryonePending(AuthDB(), ask)))
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	return g, owner, guideEveryoneAsk(owner, g, RequestIsAdmin(c.R)), nil
+}
+
+// handleShareSave replaces either list: see handleShare.
+func (T *Scribe) handleShareSave(c *jsonapi.Call, body struct {
+	AllowedUsers *[]string `json:"allowed_users"`
+	Editors      *[]string `json:"editors"`
+}) (any, error) {
+	g, owner, ask, err := T.guideShareFor(c)
+	if err != nil {
+		return nil, err
 	}
+	_, _, ownerUDB, _ := resolveGuide(T.DB, c.UDB, c.User, g.ID)
+	cur := guideShareOf(g, promotion.EveryonePending(AuthDB(), ask))
+	if body.AllowedUsers != nil {
+		cur.AllowedUsers = *body.AllowedUsers
+	}
+	if body.Editors != nil {
+		cur.Editors = *body.Editors
+	}
+	g.applyShare(owner, cur)
+	// Everyone is the administrator's to widen to (guide_everyone.go):
+	// the list asks, and what is stored is what may be granted now.
+	ask.Want = g.everyoneLevel()
+	ask.Note = "Guide " + strconv.Quote(g.Title) + ": everyone can " + ask.Want
+	level, err := promotion.AskEveryone(AuthDB(), ask)
+	if err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	g.setEveryoneLevel(level)
+	saveGuide(ownerUDB, g) // who it reaches, not what it says: no revision
+	indexGuideShares(T.DB, owner, g.ID, g.Shared, g.AllowedUsers)
+	return guideShareOf(g, promotion.EveryonePending(AuthDB(), ask)), nil
 }
 
 // guideShare is a guide's sharing as the Share picker reads and writes it:
@@ -625,12 +652,12 @@ func (g *Guide) applyShare(owner string, sh guideShare) {
 }
 
 // handleRevisions lists a guide's revision history (newest first): {id, at, note}.
-func (T *Scribe) handleRevisions(w http.ResponseWriter, r *http.Request, udb Database, user string) {
+func (T *Scribe) handleRevisions(c *jsonapi.Call) (any, error) {
+	r, udb, user := c.R, c.UDB, c.User
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
 	_, ownerUDB, _, _, found := T.resolve(r, udb, user, id)
 	if !found {
-		jsonapi.Write(w, []any{})
-		return
+		return []any{}, nil
 	}
 	revs := listRevisions(ownerUDB, id)
 	type row struct {
@@ -642,7 +669,7 @@ func (T *Scribe) handleRevisions(w http.ResponseWriter, r *http.Request, udb Dat
 	for i := len(revs) - 1; i >= 0; i-- { // newest first
 		out = append(out, row{ID: revs[i].ID, At: revs[i].At, Note: revs[i].Note})
 	}
-	jsonapi.Write(w, out)
+	return out, nil
 }
 
 // handleRevisionPreview renders one revision read-only, marking the sections it
@@ -651,50 +678,43 @@ func (T *Scribe) handleRevisions(w http.ResponseWriter, r *http.Request, udb Dat
 // a bad way to ask that question — it would discard everything written since
 // just to find out what a paragraph used to say. Read access, not edit: anyone
 // who can see the guide can read its past.
-func (T *Scribe) handleRevisionPreview(w http.ResponseWriter, r *http.Request, udb Database, user string) {
+func (T *Scribe) handleRevisionPreview(c *jsonapi.Call) (any, error) {
+	r, udb, user := c.R, c.UDB, c.User
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
 	cur, ownerUDB, _, _, found := T.resolve(r, udb, user, id)
 	if !found {
-		http.NotFound(w, r)
-		return
+		return nil, errNoGuide
 	}
 	rev, ok := loadRevision(ownerUDB, id, strings.TrimSpace(r.URL.Query().Get("rev")))
 	if !ok {
-		http.NotFound(w, r)
-		return
+		return nil, errNoGuide
 	}
 	title := rev.At
 	if note := strings.TrimSpace(rev.Note); note != "" {
 		title = note + " - " + rev.At
 	}
-	jsonapi.Write(w, map[string]string{
+	return map[string]string{
 		"title": title,
 		"html":  renderRevisionHTML(rev.Guide, cur, rev.At),
-	})
+	}, nil
 }
 
 // handleRestore makes a revision's snapshot the current guide (recording the
 // restore itself as a new revision, so it's undoable too). Owner/admin only.
-func (T *Scribe) handleRestore(w http.ResponseWriter, r *http.Request, udb Database, user string) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+func (T *Scribe) handleRestore(c *jsonapi.Call, _ struct{}) (any, error) {
+	r, udb, user := c.R, c.UDB, c.User
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
 	cur, ownerUDB, _, canEdit, found := T.resolve(r, udb, user, id)
 	if !found {
-		http.NotFound(w, r)
-		return
+		return nil, errNoGuide
 	}
 	if !canEdit {
-		http.Error(w, "you don't have edit access to this guide", http.StatusForbidden)
-		return
+		return nil, jsonapi.Forbidden("you don't have edit access to this guide")
 	}
 	revID := strings.TrimSpace(r.URL.Query().Get("rev"))
 	rev, ok := loadRevision(ownerUDB, id, revID)
 	if !ok {
-		http.NotFound(w, r)
-		return
+		return nil, errNoGuide
 	}
 	g := rev.Guide
 	g.ID = id           // guard against a snapshot carrying a stale id
@@ -703,7 +723,7 @@ func (T *Scribe) handleRestore(w http.ResponseWriter, r *http.Request, udb Datab
 	g.ShareMode = cur.ShareMode
 	g.AllowedUsers, g.Editors = cur.AllowedUsers, cur.Editors
 	saveGuideRev(ownerUDB, g, "Restored revision from "+rev.At)
-	jsonapi.Write(w, map[string]bool{"ok": true})
+	return map[string]bool{"ok": true}, nil
 }
 
 // applyAction is the optional follow-up button a "report" action can return so a
@@ -757,24 +777,18 @@ type reportResp struct {
 // the prior version). The DOCUMENT is never auto-mutated — that's the whole point
 // of a review-and-apply refresh over a blind regenerate. Owner/editor only, since
 // they're the ones who can act on the report. Synchronous (an agent loop).
-func (T *Scribe) handleAudit(w http.ResponseWriter, r *http.Request, udb Database, user string) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+func (T *Scribe) handleAudit(c *jsonapi.Call, _ struct{}) (any, error) {
+	r, udb, user := c.R, c.UDB, c.User
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
 	g, owner, ownerUDB, ok := resolveGuide(T.DB, udb, user, id)
 	if !ok {
-		http.NotFound(w, r)
-		return
+		return nil, errNoGuide
 	}
 	if !(CanManageShared(user, owner, RequestIsAdmin(r)) || g.editableBy(owner, user)) {
-		http.Error(w, "you don't have edit access to this guide", http.StatusForbidden)
-		return
+		return nil, jsonapi.Forbidden("you don't have edit access to this guide")
 	}
 	if len(g.Sections) == 0 {
-		jsonapi.Write(w, map[string]string{"report": "_This guide has no sections yet: nothing to audit._"})
-		return
+		return map[string]string{"report": "_This guide has no sections yet: nothing to audit._"}, nil
 	}
 	// Housekeeping cleanup: strip stray LLM artifacts (reasoning delimiters,
 	// tool-call / attach markup) that leaked into section bodies during drafting.
@@ -796,8 +810,7 @@ func (T *Scribe) handleAudit(w http.ResponseWriter, r *http.Request, udb Databas
 	}
 	orch := agenthost.Get()
 	if orch == nil {
-		http.Error(w, "orchestrate not initialized", http.StatusServiceUnavailable)
-		return
+		return nil, jsonapi.Status(http.StatusServiceUnavailable, "orchestrate not initialized")
 	}
 	// A bounded snapshot of the guide's CURRENT linked sources (owner-scoped), so
 	// the audit can flag where the written guide has fallen behind its sources.
@@ -811,8 +824,7 @@ func (T *Scribe) handleAudit(w http.ResponseWriter, r *http.Request, udb Databas
 		// linked sources — no web-currency check.
 		auditCtx = WithNetworkConnector(auditCtx, NewNetworkConnector(true))
 		if snapshot == "" {
-			jsonapi.Write(w, map[string]string{"report": cleanupNote + "_This is a private guide with no linked sources: nothing to audit against (web research is disabled)._"})
-			return
+			return map[string]string{"report": cleanupNote + "_This is a private guide with no linked sources: nothing to audit against (web research is disabled)._"}, nil
 		}
 		prompt = "This is a PRIVATE guide: you have NO internet access; do NOT attempt web research. Audit it ONLY against its linked sources (a current snapshot is below). Report:\n" +
 			"1. **Contradicted / outdated by the sources**: sections whose claims the linked sources now contradict or supersede. Name the section + the exact change, quoting the source.\n" +
@@ -841,8 +853,7 @@ func (T *Scribe) handleAudit(w http.ResponseWriter, r *http.Request, udb Databas
 	prompt += "\n\n**Also assess STRUCTURE & ORDERING.** Read the sections in their current order and judge whether the guide would flow better in a different one (prerequisites before steps, overview before details, reference/troubleshooting/FAQ last). If so, add a **Structure** section to your report recommending the specific new order (list the section titles in the order they should appear), and note any section that should be split or merged for flow. Do NOT rewrite section content for this; recommend the structural change only. If the current order already reads well, say so in one line."
 	report, err := orch.RunAgentSync(auditCtx, user, user, "seed-research", prompt)
 	if err != nil {
-		http.Error(w, "audit failed: "+err.Error(), http.StatusInternalServerError)
-		return
+		return nil, jsonapi.Status(http.StatusInternalServerError, "audit failed: "+err.Error())
 	}
 	// Offer a one-click apply: the report is read-only, but the author shouldn't
 	// have to hand-carry each finding into the chat.
@@ -865,7 +876,7 @@ func (T *Scribe) handleAudit(w http.ResponseWriter, r *http.Request, udb Databas
 	// asked for. Private is enforced by handleChatSend on the send itself
 	// (ForcePrivate + web tools stripped + source tools filtered by cap), which
 	// is stricter than this path could be from here.
-	jsonapi.Write(w, reportResp{
+	return reportResp{
 		Report: cleanupNote + report,
 		Apply: &applyAction{
 			Label: "Apply these fixes",
@@ -878,7 +889,7 @@ func (T *Scribe) handleAudit(w http.ResponseWriter, r *http.Request, udb Databas
 				"When done, reply with a short bulleted summary of exactly which sections you changed or added and why, and note any recommendation you deliberately skipped. If you applied nothing, say why.",
 			ComposeBody: UntrustedData("audit findings", report),
 		},
-	})
+	}, nil
 }
 
 // --- inline section editing (viewer controls) --------------------------------
@@ -894,70 +905,86 @@ func sectionIdx(g Guide, sid string) int {
 	return -1
 }
 
-// handleSection GET (raw fields for the edit form) / POST (save title+markdown) /
-// DELETE (remove) one section. ?guide=&section=.
-func (T *Scribe) handleSection(w http.ResponseWriter, r *http.Request, udb Database, user string) {
-	gid := strings.TrimSpace(r.URL.Query().Get("guide"))
-	sid := strings.TrimSpace(r.URL.Query().Get("section"))
-	g, ownerUDB, _, canEdit, found := T.resolve(r, udb, user, gid)
+// handleSection GETs one section's raw fields for the edit form;
+// handleSectionSave saves its title and markdown, handleSectionRemove removes
+// it. ?guide=&section=.
+func (T *Scribe) handleSection(c *jsonapi.Call) (any, error) {
+	g, idx, _, _, err := T.sectionOf(c)
+	if err != nil {
+		return nil, err
+	}
+	s := g.Sections[idx]
+	return map[string]string{"id": s.ID, "title": s.Title, "markdown": s.Markdown}, nil
+}
+
+// sectionOf is the guide ?guide= names and the index of its ?section=, and
+// whether the caller may edit it.
+func (T *Scribe) sectionOf(c *jsonapi.Call) (Guide, int, Database, bool, error) {
+	gid := strings.TrimSpace(c.R.URL.Query().Get("guide"))
+	sid := strings.TrimSpace(c.R.URL.Query().Get("section"))
+	g, ownerUDB, _, canEdit, found := T.resolve(c.R, c.UDB, c.User, gid)
 	if !found {
-		http.NotFound(w, r)
-		return
+		return Guide{}, 0, nil, false, errNoGuide
 	}
 	idx := sectionIdx(g, sid)
 	if idx < 0 {
-		http.NotFound(w, r)
-		return
+		return Guide{}, 0, nil, false, errNoGuide
 	}
-	if r.Method != http.MethodGet && !canEdit {
-		http.Error(w, "you don't have edit access to this guide", http.StatusForbidden)
-		return
+	return g, idx, ownerUDB, canEdit, nil
+}
+
+// editableSection is sectionOf for a change, which needs edit access.
+func (T *Scribe) editableSection(c *jsonapi.Call) (Guide, int, Database, error) {
+	g, idx, ownerUDB, canEdit, err := T.sectionOf(c)
+	if err != nil {
+		return Guide{}, 0, nil, err
 	}
-	switch r.Method {
-	case http.MethodGet:
-		s := g.Sections[idx]
-		jsonapi.Write(w, map[string]string{"id": s.ID, "title": s.Title, "markdown": s.Markdown})
-	case http.MethodPost:
-		var body struct {
-			Title    string `json:"title"`
-			Markdown string `json:"markdown"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		g.Sections[idx].Title = strings.TrimSpace(body.Title)
-		g.Sections[idx].Markdown = strings.TrimSpace(body.Markdown)
-		saveGuideRev(ownerUDB, g, "Edited section: "+g.Sections[idx].Title)
-		jsonapi.Write(w, map[string]bool{"ok": true})
-	case http.MethodDelete:
-		removed := g.Sections[idx].Title
-		g.Sections = append(g.Sections[:idx], g.Sections[idx+1:]...)
-		normalizeOrder(&g)
-		saveGuideRev(ownerUDB, g, "Removed section: "+removed)
-		jsonapi.Write(w, map[string]bool{"ok": true})
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	if !canEdit {
+		return Guide{}, 0, nil, jsonapi.Forbidden("you don't have edit access to this guide")
 	}
+	return g, idx, ownerUDB, nil
+}
+
+// handleSectionSave saves a section's title and markdown.
+func (T *Scribe) handleSectionSave(c *jsonapi.Call, body struct {
+	Title    string `json:"title"`
+	Markdown string `json:"markdown"`
+}) (any, error) {
+	g, idx, ownerUDB, err := T.editableSection(c)
+	if err != nil {
+		return nil, err
+	}
+	g.Sections[idx].Title = strings.TrimSpace(body.Title)
+	g.Sections[idx].Markdown = strings.TrimSpace(body.Markdown)
+	saveGuideRev(ownerUDB, g, "Edited section: "+g.Sections[idx].Title)
+	return map[string]bool{"ok": true}, nil
+}
+
+// handleSectionRemove removes a section.
+func (T *Scribe) handleSectionRemove(c *jsonapi.Call, _ struct{}) (any, error) {
+	g, idx, ownerUDB, err := T.editableSection(c)
+	if err != nil {
+		return nil, err
+	}
+	removed := g.Sections[idx].Title
+	g.Sections = append(g.Sections[:idx], g.Sections[idx+1:]...)
+	normalizeOrder(&g)
+	saveGuideRev(ownerUDB, g, "Removed section: "+removed)
+	return map[string]bool{"ok": true}, nil
 }
 
 // handleSectionMove reorders a section one step up/down. POST ?guide=&section=&dir=up|down.
-func (T *Scribe) handleSectionMove(w http.ResponseWriter, r *http.Request, udb Database, user string) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+func (T *Scribe) handleSectionMove(c *jsonapi.Call, _ struct{}) (any, error) {
+	r, udb, user := c.R, c.UDB, c.User
 	gid := strings.TrimSpace(r.URL.Query().Get("guide"))
 	sid := strings.TrimSpace(r.URL.Query().Get("section"))
 	dir := strings.TrimSpace(r.URL.Query().Get("dir"))
 	g, ownerUDB, _, canEdit, found := T.resolve(r, udb, user, gid)
 	if !found {
-		http.NotFound(w, r)
-		return
+		return nil, errNoGuide
 	}
 	if !canEdit {
-		http.Error(w, "you don't have edit access to this guide", http.StatusForbidden)
-		return
+		return nil, jsonapi.Forbidden("you don't have edit access to this guide")
 	}
 	secs := g.sorted()
 	idx := -1
@@ -968,8 +995,7 @@ func (T *Scribe) handleSectionMove(w http.ResponseWriter, r *http.Request, udb D
 		}
 	}
 	if idx < 0 {
-		http.NotFound(w, r)
-		return
+		return nil, errNoGuide
 	}
 	target := idx - 1
 	if dir == "down" {
@@ -978,34 +1004,31 @@ func (T *Scribe) handleSectionMove(w http.ResponseWriter, r *http.Request, udb D
 	reordered, _ := reorderSections(secs, idx, target)
 	g.Sections = reordered
 	saveGuideRev(ownerUDB, g, "Moved section: "+sectionHeading(secs[idx], idx))
-	jsonapi.Write(w, map[string]bool{"ok": true})
+	return map[string]bool{"ok": true}, nil
 }
 
 // handleSectionAdd appends a new section. POST ?guide= with {title, markdown}.
-func (T *Scribe) handleSectionAdd(w http.ResponseWriter, r *http.Request, udb Database, user string) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+func (T *Scribe) handleSectionAdd(c *jsonapi.Call, body *struct {
+	Title    string `json:"title"`
+	Markdown string `json:"markdown"`
+}) (any, error) {
+	r, udb, user := c.R, c.UDB, c.User
 	gid := strings.TrimSpace(r.URL.Query().Get("guide"))
 	g, ownerUDB, _, canEdit, found := T.resolve(r, udb, user, gid)
 	if !found {
-		http.NotFound(w, r)
-		return
+		return nil, errNoGuide
 	}
 	if !canEdit {
-		http.Error(w, "you don't have edit access to this guide", http.StatusForbidden)
-		return
+		return nil, jsonapi.Forbidden("you don't have edit access to this guide")
 	}
-	var body struct {
-		Title    string `json:"title"`
-		Markdown string `json:"markdown"`
+	var title, markdown string
+	if body != nil {
+		title, markdown = body.Title, body.Markdown
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
-	title := firstNonEmpty(strings.TrimSpace(body.Title), "New section")
-	g.Sections = append(g.Sections, Section{ID: newID(), Title: title, Markdown: strings.TrimSpace(body.Markdown), Order: g.nextOrder()})
+	title = firstNonEmpty(strings.TrimSpace(title), "New section")
+	g.Sections = append(g.Sections, Section{ID: newID(), Title: title, Markdown: strings.TrimSpace(markdown), Order: g.nextOrder()})
 	saveGuideRev(ownerUDB, g, "Added section: "+title)
-	jsonapi.Write(w, map[string]bool{"ok": true})
+	return map[string]bool{"ok": true}, nil
 }
 
 // handleCollections drives the per-guide knowledge picker. GET ?guide=<id>
@@ -1014,47 +1037,39 @@ func (T *Scribe) handleSectionAdd(w http.ResponseWriter, r *http.Request, udb Da
 // already attached to this guide. POST ?guide=<id> with {collections:[ids]}
 // stores the attachment on the guide. Collections live in the shared
 // collections home (CollectionsDB()), so guides never reaches into orchestrate.
-func (T *Scribe) handleCollections(w http.ResponseWriter, r *http.Request, udb Database, user string) {
-	gid := strings.TrimSpace(r.URL.Query().Get("guide"))
-	switch r.Method {
-	case http.MethodGet:
-		type item struct {
-			ID          string `json:"id"`
-			Name        string `json:"name"`
-			Description string `json:"description,omitempty"`
-		}
-		available := []item{}
-		for _, c := range ListCollections(UserDB(CollectionsDB(), user), user) {
-			available = append(available, item{ID: c.ID, Name: c.Name, Description: c.Description})
-		}
-		attached := []string{}
-		if g, _, _, _, ok := T.resolve(r, udb, user, gid); ok && g.Collections != nil {
-			attached = g.Collections
-		}
-		jsonapi.Write(w, map[string]any{"available": available, "attached": attached})
-	case http.MethodPost:
-		g, ownerUDB, canManage, _, found := T.resolve(r, udb, user, gid)
-		if !found {
-			http.NotFound(w, r)
-			return
-		}
-		if !canManage {
-			http.Error(w, "only the owner can change this guide's knowledge", http.StatusForbidden)
-			return
-		}
-		var body struct {
-			Collections []string `json:"collections"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		g.Collections = body.Collections
-		saveGuide(ownerUDB, g) // not a content change — no revision snapshot
-		jsonapi.Write(w, map[string]bool{"ok": true})
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+func (T *Scribe) handleCollections(c *jsonapi.Call) (any, error) {
+	gid := strings.TrimSpace(c.R.URL.Query().Get("guide"))
+	type item struct {
+		ID          string `json:"id"`
+		Name        string `json:"name"`
+		Description string `json:"description,omitempty"`
 	}
+	available := []item{}
+	for _, coll := range ListCollections(UserDB(CollectionsDB(), c.User), c.User) {
+		available = append(available, item{ID: coll.ID, Name: coll.Name, Description: coll.Description})
+	}
+	attached := []string{}
+	if g, _, _, _, ok := T.resolve(c.R, c.UDB, c.User, gid); ok && g.Collections != nil {
+		attached = g.Collections
+	}
+	return map[string]any{"available": available, "attached": attached}, nil
+}
+
+// handleCollectionsSave stores the attachment: see handleCollections.
+func (T *Scribe) handleCollectionsSave(c *jsonapi.Call, body struct {
+	Collections []string `json:"collections"`
+}) (any, error) {
+	gid := strings.TrimSpace(c.R.URL.Query().Get("guide"))
+	g, ownerUDB, canManage, _, found := T.resolve(c.R, c.UDB, c.User, gid)
+	if !found {
+		return nil, errNoGuide
+	}
+	if !canManage {
+		return nil, jsonapi.Forbidden("only the owner can change this guide's knowledge")
+	}
+	g.Collections = body.Collections
+	saveGuide(ownerUDB, g) // not a content change — no revision snapshot
+	return map[string]bool{"ok": true}, nil
 }
 
 // handleReferences drives the per-guide Sources picker. It speaks the generic
@@ -1066,127 +1081,116 @@ func (T *Scribe) handleCollections(w http.ResponseWriter, r *http.Request, udb D
 // ?guide=<id> takes {references:[id]} and splits each composite id back into the
 // stored {kind,item_id}. The registry is per-user + access-gated, so the user
 // only ever sees their own sources.
-func (T *Scribe) handleReferences(w http.ResponseWriter, r *http.Request, udb Database, user string) {
-	gid := strings.TrimSpace(r.URL.Query().Get("guide"))
-	switch r.Method {
-	case http.MethodGet:
-		items := []map[string]any{}
-		for _, grp := range ReferenceGroups(user) {
-			for _, it := range grp.Items {
-				if grp.Kind == "guide" && it.ID == gid {
-					continue // a guide is not a source for itself
-				}
-				items = append(items, map[string]any{
-					// ReferenceSelection.Ref(), NOT a hand-rolled join. This built
-					// "kind::item" while core emits "kind:item", so the two
-					// pickers put different strings on the wire for the same
-					// source. Harmless only because ParseReferenceRef tolerates
-					// both spellings — which is exactly what kept it invisible,
-					// and what would have let any future change to Ref()
-					// (escaping, a third component) reach one picker and not
-					// the other.
-					"id": ReferenceSelection{Kind: grp.Kind, ItemID: it.ID}.Ref(), "name": it.Name, "desc": it.Desc, "group": grp.Label,
-					// Only a guide changes in a way that can feed this one
-					// (follow.go), so only a guide's pill has Distill.
-					"can_distill": grp.Kind == guideSourceKind,
-				})
+func (T *Scribe) handleReferences(c *jsonapi.Call) (any, error) {
+	gid := strings.TrimSpace(c.R.URL.Query().Get("guide"))
+	items := []map[string]any{}
+	for _, grp := range ReferenceGroups(c.User) {
+		for _, it := range grp.Items {
+			if grp.Kind == "guide" && it.ID == gid {
+				continue // a guide is not a source for itself
 			}
+			items = append(items, map[string]any{
+				// ReferenceSelection.Ref(), NOT a hand-rolled join. This built
+				// "kind::item" while core emits "kind:item", so the two
+				// pickers put different strings on the wire for the same
+				// source. Harmless only because ParseReferenceRef tolerates
+				// both spellings — which is exactly what kept it invisible,
+				// and what would have let any future change to Ref()
+				// (escaping, a third component) reach one picker and not
+				// the other.
+				"id": ReferenceSelection{Kind: grp.Kind, ItemID: it.ID}.Ref(), "name": it.Name, "desc": it.Desc, "group": grp.Label,
+				// Only a guide changes in a way that can feed this one
+				// (follow.go), so only a guide's pill has Distill.
+				"can_distill": grp.Kind == guideSourceKind,
+			})
 		}
-		attached, distill := []string{}, []string{}
-		if g, _, _, _, ok := T.resolve(r, udb, user, gid); ok {
-			for _, s := range g.References {
-				attached = append(attached, s.Ref())
-			}
-			for _, id := range g.DistillFrom {
-				distill = append(distill, ReferenceSelection{Kind: guideSourceKind, ItemID: id}.Ref())
-			}
-		}
-		jsonapi.Write(w, map[string]any{"items": items, "attached": attached, "distill": distill})
-	case http.MethodPost:
-		g, ownerUDB, canManage, _, found := T.resolve(r, udb, user, gid)
-		if !found {
-			http.NotFound(w, r)
-			return
-		}
-		if !canManage {
-			http.Error(w, "only the owner can change this guide's sources", http.StatusForbidden)
-			return
-		}
-		var body struct {
-			References []string `json:"references"`
-			// The guide Sources set to Distill, as the picker's flag sends
-			// them. Absent (an older page) leaves the setting as it is.
-			Distill *[]string `json:"distill"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		sel := make([]ReferenceSelection, 0, len(body.References))
-		for _, id := range body.References {
-			// Shared parser (core.ParseReferenceRef) rather than a local
-			// split, so this picker and orchestrate's cannot drift on what a
-			// composite handle is.
-			if s, ok := ParseReferenceRef(id); ok {
-				sel = append(sel, s)
-			}
-		}
-		g.References = sel
-		if body.Distill != nil {
-			attachedGuide := map[string]bool{}
-			for _, s := range sel {
-				if s.Kind == guideSourceKind {
-					attachedGuide[s.ItemID] = true
-				}
-			}
-			var from []string
-			for _, ref := range *body.Distill {
-				s, ok := ParseReferenceRef(ref)
-				if !ok || s.Kind != guideSourceKind || !attachedGuide[s.ItemID] {
-					continue // only an attached guide can be distilled from
-				}
-				if followLoops(ownerUDB, g.ID, s.ItemID) {
-					name := s.ItemID
-					if src, ok := loadGuide(ownerUDB, s.ItemID); ok {
-						name = firstNonEmpty(src.Title, name)
-					}
-					http.Error(w, fmt.Sprintf("%q already distills from this guide, directly or through others: set one of them back to Consult first", name), http.StatusBadRequest)
-					return
-				}
-				from = append(from, s.ItemID)
-			}
-			g.DistillFrom = from
-		} else {
-			// Detaching a guide takes its Distill with it.
-			var kept []string
-			for _, id := range g.DistillFrom {
-				for _, s := range sel {
-					if s.Kind == guideSourceKind && s.ItemID == id {
-						kept = append(kept, id)
-						break
-					}
-				}
-			}
-			g.DistillFrom = kept
-		}
-		saveGuide(ownerUDB, g) // attachment is not a content change — no revision snapshot
-		jsonapi.Write(w, map[string]bool{"ok": true})
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+	attached, distill := []string{}, []string{}
+	if g, _, _, _, ok := T.resolve(c.R, c.UDB, c.User, gid); ok {
+		for _, s := range g.References {
+			attached = append(attached, s.Ref())
+		}
+		for _, id := range g.DistillFrom {
+			distill = append(distill, ReferenceSelection{Kind: guideSourceKind, ItemID: id}.Ref())
+		}
+	}
+	return map[string]any{"items": items, "attached": attached, "distill": distill}, nil
 }
 
-func (T *Scribe) handleSetActive(w http.ResponseWriter, r *http.Request, udb Database) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
+// handleReferencesSave stores the Sources: see handleReferences.
+func (T *Scribe) handleReferencesSave(c *jsonapi.Call, body struct {
+	References []string `json:"references"`
+	// The guide Sources set to Distill, as the picker's flag sends
+	// them. Absent (an older page) leaves the setting as it is.
+	Distill *[]string `json:"distill"`
+}) (any, error) {
+	gid := strings.TrimSpace(c.R.URL.Query().Get("guide"))
+	g, ownerUDB, canManage, _, found := T.resolve(c.R, c.UDB, c.User, gid)
+	if !found {
+		return nil, errNoGuide
 	}
-	var body struct {
-		ID string `json:"id"`
+	if !canManage {
+		return nil, jsonapi.Forbidden("only the owner can change this guide's sources")
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
-	udb.Set(activeTable, "current", strings.TrimSpace(body.ID))
-	w.WriteHeader(http.StatusNoContent)
+	sel := make([]ReferenceSelection, 0, len(body.References))
+	for _, id := range body.References {
+		// Shared parser (core.ParseReferenceRef) rather than a local
+		// split, so this picker and orchestrate's cannot drift on what a
+		// composite handle is.
+		if s, ok := ParseReferenceRef(id); ok {
+			sel = append(sel, s)
+		}
+	}
+	g.References = sel
+	if body.Distill != nil {
+		attachedGuide := map[string]bool{}
+		for _, s := range sel {
+			if s.Kind == guideSourceKind {
+				attachedGuide[s.ItemID] = true
+			}
+		}
+		var from []string
+		for _, ref := range *body.Distill {
+			s, ok := ParseReferenceRef(ref)
+			if !ok || s.Kind != guideSourceKind || !attachedGuide[s.ItemID] {
+				continue // only an attached guide can be distilled from
+			}
+			if followLoops(ownerUDB, g.ID, s.ItemID) {
+				name := s.ItemID
+				if src, ok := loadGuide(ownerUDB, s.ItemID); ok {
+					name = firstNonEmpty(src.Title, name)
+				}
+				return nil, jsonapi.BadRequest(fmt.Sprintf("%q already distills from this guide, directly or through others: set one of them back to Consult first", name))
+			}
+			from = append(from, s.ItemID)
+		}
+		g.DistillFrom = from
+	} else {
+		// Detaching a guide takes its Distill with it.
+		var kept []string
+		for _, id := range g.DistillFrom {
+			for _, s := range sel {
+				if s.Kind == guideSourceKind && s.ItemID == id {
+					kept = append(kept, id)
+					break
+				}
+			}
+		}
+		g.DistillFrom = kept
+	}
+	saveGuide(ownerUDB, g) // attachment is not a content change — no revision snapshot
+	return map[string]bool{"ok": true}, nil
+}
+
+func (T *Scribe) handleSetActive(c *jsonapi.Call, body *struct {
+	ID string `json:"id"`
+}) (any, error) {
+	id := ""
+	if body != nil {
+		id = body.ID
+	}
+	c.UDB.Set(activeTable, "current", strings.TrimSpace(id))
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // pinnedOrActiveGuide answers WHICH document a piece of work is about.

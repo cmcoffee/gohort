@@ -82,8 +82,7 @@ func TestATurnListsItsChangesAndUndoesThemAtOnce(t *testing.T) {
 		t.Errorf("the turn should start from the newest revision: rev %s, %d revisions", blk.Data["rev"], len(revs))
 	}
 
-	w := httptest.NewRecorder()
-	T.handleRestore(w, httptest.NewRequest(http.MethodPost, "/scribe/restore?id=g1&rev="+blk.Data["rev"], nil), udb, "u")
+	w := as(t, T, "u", httptest.NewRequest(http.MethodPost, "/scribe/restore?id=g1&rev="+blk.Data["rev"], nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("undo: %d %s", w.Code, w.Body.String())
 	}
@@ -108,8 +107,9 @@ func TestUndoGoesBackToTheGuideTheTurnFound(t *testing.T) {
 	if tc.before == revs[0].ID {
 		t.Fatal("the Undo would go back past the hand edit")
 	}
-	w := httptest.NewRecorder()
-	T.handleRestore(w, httptest.NewRequest(http.MethodPost, "/scribe/restore?id=g1&rev="+tc.before, nil), udb, "u")
+	if w := as(t, T, "u", httptest.NewRequest(http.MethodPost, "/scribe/restore?id=g1&rev="+tc.before, nil)); w.Code != http.StatusOK {
+		t.Fatalf("undo: %d %s", w.Code, w.Body.String())
+	}
 	if g, _ := loadGuide(udb, "g1"); g.Sections[1].Markdown != "Run it, edited by hand." {
 		t.Errorf("the hand edit was lost: %q", g.Sections[1].Markdown)
 	}

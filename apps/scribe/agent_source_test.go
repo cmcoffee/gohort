@@ -194,8 +194,7 @@ func TestCurateOnReportIsSetInTheEditDialog(t *testing.T) {
 	src, udb, g := guideSourceFixture(t)
 	post := func(body string) {
 		t.Helper()
-		w := httptest.NewRecorder()
-		src.app.handleSettings(w, httptest.NewRequest("POST", "/settings?id="+g.ID, strings.NewReader(body)), udb, "u")
+		w := as(t, src.app, "u", httptest.NewRequest("POST", "/settings?id="+g.ID, strings.NewReader(body)))
 		if w.Code != 200 {
 			t.Fatalf("%s: %d %s", body, w.Code, w.Body.String())
 		}
@@ -208,8 +207,7 @@ func TestCurateOnReportIsSetInTheEditDialog(t *testing.T) {
 	if cur, _ := loadGuide(udb, g.ID); !cur.CurateOnReport {
 		t.Error("a save that did not send it turned it off")
 	}
-	w := httptest.NewRecorder()
-	src.app.handleSettings(w, httptest.NewRequest("GET", "/settings?id="+g.ID, nil), udb, "u")
+	w := as(t, src.app, "u", httptest.NewRequest("GET", "/settings?id="+g.ID, nil))
 	if !strings.Contains(w.Body.String(), `"curate_on_report":true`) {
 		t.Errorf("the dialog is not told it is on: %s", w.Body.String())
 	}

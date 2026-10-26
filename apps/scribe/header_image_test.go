@@ -119,8 +119,7 @@ func TestAHeaderIsGeneratedWithTheGuidesLogo(t *testing.T) {
 	saveGuideRev(udb, Guide{ID: "g1", Owner: "u", Title: `Deploying "Atlas" safely`}, "new")
 
 	post := func(body string) *httptest.ResponseRecorder {
-		w := httptest.NewRecorder()
-		T.handleImage(w, httptest.NewRequest(http.MethodPost, "/scribe/image?id=g1", strings.NewReader(body)), udb, "u")
+		w := as(t, T, "u", httptest.NewRequest(http.MethodPost, "/scribe/image?id=g1", strings.NewReader(body)))
 		return w
 	}
 	// Only a picture uploaded to this guide can go with its header.

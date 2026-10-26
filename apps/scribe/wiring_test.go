@@ -26,9 +26,9 @@ func read(t *testing.T, name string) string {
 func TestPageURLsAreRouted(t *testing.T) {
 	page, web := read(t, "page.go"), read(t, "web.go")
 	for _, w := range []struct{ decl, route string }{
-		{`EditURL:    "body?id={id}"`, `case path == "body":`},
+		{`EditURL:    "body?id={id}"`, `T.HandleFunc("/body",`},
 		{`URL: "scribe_import"`, `case path == "import":`},
-		{`URL: "scribe_image"`, `case path == "image":`},
+		{`URL: "scribe_image"`, `T.HandleFunc("/image",`},
 		{`URL: "scribe_rules"`, `case path == "rules":`},
 	} {
 		if !strings.Contains(page, w.decl) {

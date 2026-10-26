@@ -16,8 +16,7 @@ const testBrief = "Write every section as a general lesson: symptom, where to lo
 func TestABriefIsSetInTheEditDialog(t *testing.T) {
 	src, udb, g := guideSourceFixture(t)
 	post := func(body string) *httptest.ResponseRecorder {
-		w := httptest.NewRecorder()
-		src.app.handleSettings(w, httptest.NewRequest("POST", "/settings?id="+g.ID, strings.NewReader(body)), udb, "u")
+		w := as(t, src.app, "u", httptest.NewRequest("POST", "/settings?id="+g.ID, strings.NewReader(body)))
 		return w
 	}
 	if w := post(`{"title":"Dump Triage","brief":"  ` + testBrief + `  "}`); w.Code != 200 {

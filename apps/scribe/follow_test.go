@@ -75,8 +75,7 @@ func TestGuidesThatFeedEachOtherFeedNeither(t *testing.T) {
 	}
 
 	refs := func(id, body string) *httptest.ResponseRecorder {
-		w := httptest.NewRecorder()
-		app.handleReferences(w, httptest.NewRequest("POST", "/references?guide="+id, strings.NewReader(body)), udb, "u")
+		w := as(t, app, "u", httptest.NewRequest("POST", "/references?guide="+id, strings.NewReader(body)))
 		return w
 	}
 	if w := refs("a", `{"references":["guide:c"],"distill":["guide:c"]}`); w.Code != 400 || !strings.Contains(w.Body.String(), "set one of them back to Consult") {
@@ -106,8 +105,7 @@ func TestTheSourcesPickerSetsDistillPerGuide(t *testing.T) {
 	saveGuide(udb, Guide{ID: "ref", Owner: "u", Title: "Reference"})
 	saveGuide(udb, Guide{ID: "logs", Owner: "u", Title: "Logs"})
 	post := func(body string) int {
-		w := httptest.NewRecorder()
-		app.handleReferences(w, httptest.NewRequest("POST", "/references?guide=logs", strings.NewReader(body)), udb, "u")
+		w := as(t, app, "u", httptest.NewRequest("POST", "/references?guide=logs", strings.NewReader(body)))
 		return w.Code
 	}
 	if code := post(`{"references":["guide:raw","guide:ref"],"distill":["guide:raw","guide:nowhere","system:box"]}`); code != 200 {
@@ -117,8 +115,7 @@ func TestTheSourcesPickerSetsDistillPerGuide(t *testing.T) {
 	if strings.Join(g.DistillFrom, ",") != "raw" || !follows(g, "raw") || follows(g, "ref") {
 		t.Fatalf("distill from one guide, consult the other: %+v", g.DistillFrom)
 	}
-	w := httptest.NewRecorder()
-	app.handleReferences(w, httptest.NewRequest("GET", "/references?guide=logs", nil), udb, "u")
+	w := as(t, app, "u", httptest.NewRequest("GET", "/references?guide=logs", nil))
 	body := w.Body.String()
 	if !strings.Contains(body, `"distill":["guide:raw"]`) || !strings.Contains(body, `"can_distill":true`) {
 		t.Errorf("the picker is told what is set and where Distill is offered: %s", body)
