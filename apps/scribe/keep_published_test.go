@@ -133,21 +133,18 @@ func TestChangesDuringAnUpdateAreOneMoreUpdate(t *testing.T) {
 // state reports it.
 func TestKeepPublishedIsSwitchedFromTheDialog(t *testing.T) {
 	app, udb, _ := keepFixture(t, false)
-	w := httptest.NewRecorder()
-	app.handleKeepPublished(w, httptest.NewRequest("POST", "/publish/keep?id=kg", strings.NewReader(`{"on":true}`)), udb, "u")
+	w := as(t, app, "u", httptest.NewRequest("POST", "/publish/keep?id=kg", strings.NewReader(`{"on":true}`)))
 	if w.Code != 200 {
 		t.Fatalf("switch on: %d %s", w.Code, w.Body.String())
 	}
 	if g, _ := loadGuide(udb, "kg"); !g.KeepPublished {
 		t.Error("Keep published did not turn on")
 	}
-	w = httptest.NewRecorder()
-	app.handlePublishState(w, httptest.NewRequest("GET", "/publish/state?id=kg", nil), udb, "u")
+	w = as(t, app, "u", httptest.NewRequest("GET", "/publish/state?id=kg", nil))
 	if !strings.Contains(w.Body.String(), `"keep_published":true`) {
 		t.Errorf("the dialog's state does not say so: %s", w.Body.String())
 	}
-	w = httptest.NewRecorder()
-	app.handleKeepPublished(w, httptest.NewRequest("GET", "/publish/keep?id=kg", nil), udb, "u")
+	w = as(t, app, "u", httptest.NewRequest("GET", "/publish/keep?id=kg", nil))
 	if w.Code != 405 {
 		t.Errorf("a GET changed it: %d", w.Code)
 	}

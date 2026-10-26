@@ -46,9 +46,8 @@ func TestAPublishedPageIsTakenInAndKept(t *testing.T) {
 	T := &Scribe{AppCore: AppCore{DB: &DBase{Store: kvlite.MemStore()}, LLM: fake}}
 	udb := UserDB(T.DB, "alice")
 
-	w := httptest.NewRecorder()
-	T.handleImportPage(w, httptest.NewRequest(http.MethodPost, "/scribe/import/page",
-		strings.NewReader(`{"kind":"wikitest","link":"https://wiki.example.com/pages/77/Runbook"}`)), udb, "alice")
+	w := as(t, T, "alice", httptest.NewRequest(http.MethodPost, "/scribe/import/page",
+		strings.NewReader(`{"kind":"wikitest","link":"https://wiki.example.com/pages/77/Runbook"}`)))
 	if w.Code != http.StatusOK {
 		t.Fatalf("import answered %d: %s", w.Code, w.Body.String())
 	}
@@ -109,9 +108,8 @@ func TestAGuideIsLinkedToAnExistingPage(t *testing.T) {
 		Sections:  []Section{{ID: "s", Title: "Restart", Markdown: "Restart it now.", Order: 1}},
 		Published: []docs.PublishRecord{{Kind: "wikitest", Target: "space-1", ExternalID: "99", URL: "https://wiki.example.com/pages/99"}}})
 
-	w := httptest.NewRecorder()
-	T.handlePublishLink(w, httptest.NewRequest(http.MethodPost, "/scribe/publish/link?id=g-link",
-		strings.NewReader(`{"kind":"wikitest","link":"https://wiki.example.com/pages/77/Runbook"}`)), udb, "alice")
+	w := as(t, T, "alice", httptest.NewRequest(http.MethodPost, "/scribe/publish/link?id=g-link",
+		strings.NewReader(`{"kind":"wikitest","link":"https://wiki.example.com/pages/77/Runbook"}`)))
 	if w.Code != http.StatusOK {
 		t.Fatalf("link answered %d: %s", w.Code, w.Body.String())
 	}
@@ -155,9 +153,8 @@ func TestAnImportCanSkipTheBrief(t *testing.T) {
 	fake := &FakeLLM{}
 	T := &Scribe{AppCore: AppCore{DB: &DBase{Store: kvlite.MemStore()}, LLM: fake}}
 	udb := UserDB(T.DB, "alice")
-	w := httptest.NewRecorder()
-	T.handleImportPage(w, httptest.NewRequest(http.MethodPost, "/scribe/import/page",
-		strings.NewReader(`{"kind":"wikitest","link":"https://wiki.example.com/pages/77/Runbook","write_brief":false}`)), udb, "alice")
+	w := as(t, T, "alice", httptest.NewRequest(http.MethodPost, "/scribe/import/page",
+		strings.NewReader(`{"kind":"wikitest","link":"https://wiki.example.com/pages/77/Runbook","write_brief":false}`)))
 	job := strings.SplitN(strings.SplitN(w.Body.String(), `"job":"`, 2)[1], `"`, 2)[0]
 	deadline := time.Now().Add(5 * time.Second)
 	var j publishJob

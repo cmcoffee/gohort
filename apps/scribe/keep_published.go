@@ -17,11 +17,8 @@ package scribe
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -162,29 +159,19 @@ func waitForPublishJob(ctx context.Context, guideID string, max time.Duration) b
 
 // handleKeepPublished switches Keep published on a guide: POST ?id=<guide>
 // with {on}. Edit rights, like publishing.
-func (T *Scribe) handleKeepPublished(w http.ResponseWriter, r *http.Request, udb Database, user string) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST required", http.StatusMethodNotAllowed)
-		return
-	}
+func (T *Scribe) handleKeepPublished(c *jsonapi.Call, body struct {
+	On bool `json:"on"`
+}) (any, error) {
+	r, udb, user := c.R, c.UDB, c.User
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
 	g, ownerUDB, _, canEdit, found := T.resolve(r, udb, user, id)
 	if !found {
-		http.NotFound(w, r)
-		return
+		return nil, errNoGuide
 	}
 	if !canEdit {
-		http.Error(w, "You need edit access to this guide to change how it is published.", http.StatusForbidden)
-		return
-	}
-	var body struct {
-		On bool `json:"on"`
-	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<10)).Decode(&body); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
+		return nil, jsonapi.Forbidden("You need edit access to this guide to change how it is published.")
 	}
 	g.KeepPublished = body.On
 	saveGuide(ownerUDB, g)
-	jsonapi.Write(w, map[string]any{"keep_published": g.KeepPublished})
+	return map[string]any{"keep_published": g.KeepPublished}, nil
 }

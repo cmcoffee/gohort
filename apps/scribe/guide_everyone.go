@@ -10,9 +10,10 @@ package scribe
 // before this keeps it.
 
 import (
-	"net/http"
+	"encoding/json"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/promotion"
 )
 
@@ -75,12 +76,12 @@ func (T *Scribe) approveEveryone(owner, name string) error {
 
 // handleShareCandidates is the Share picker's choices, Everyone worded for
 // where this guide stands with it (?id=).
-func (T *Scribe) handleShareCandidates(w http.ResponseWriter, r *http.Request, udb Database, user string) {
-	granted, pending, admin := false, false, RequestIsAdmin(r)
-	if g, owner, _, ok := resolveGuide(T.DB, udb, user, r.URL.Query().Get("id")); ok {
+func (T *Scribe) handleShareCandidates(c *jsonapi.Call) (any, error) {
+	user := c.User
+	granted, pending, admin := false, false, RequestIsAdmin(c.R)
+	if g, owner, _, ok := resolveGuide(T.DB, c.UDB, user, c.R.URL.Query().Get("id")); ok {
 		granted = g.Shared
 		pending = promotion.EveryonePending(AuthDB(), guideEveryoneAsk(owner, g, admin)) != ""
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(ShareCandidatesFor(user, true, EveryoneChoiceLabel(granted, pending, admin)))
+	return json.RawMessage(ShareCandidatesFor(user, true, EveryoneChoiceLabel(granted, pending, admin))), nil
 }

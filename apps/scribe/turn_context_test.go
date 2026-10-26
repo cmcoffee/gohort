@@ -83,14 +83,13 @@ func TestACallThatReturnsDoesNotEndTheTurn(t *testing.T) {
 // "Curate now" took no lock, so a press landing while the threshold or interval
 // run was working read the same queue and filed the findings twice.
 func TestCurateNowWaitsItsTurn(t *testing.T) {
-	udb := testStore(t)
-	udb.Set(findingsTable, "f1", mkFinding("topic", "content", "verified"))
+	T := &Scribe{AppCore: AppCore{DB: testStore(t)}}
+	UserDB(T.DB, "curate-now-user").Set(findingsTable, "f1", mkFinding("topic", "content", "verified"))
 	mu := curatorLock("curate-now-user")
 	mu.Lock()
 	defer mu.Unlock()
 
-	w := httptest.NewRecorder()
-	(&Scribe{}).handleCuratorRunNow(w, httptest.NewRequest(http.MethodPost, "/curator/run", nil), udb, "curate-now-user")
+	w := as(t, T, "curate-now-user", httptest.NewRequest(http.MethodPost, "/curator/run", nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("answered %d: %s", w.Code, w.Body.String())
 	}

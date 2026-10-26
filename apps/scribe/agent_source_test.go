@@ -132,13 +132,12 @@ func TestAGoneOrForeignGuideGivesNoTools(t *testing.T) {
 // The Curator panel lists what is waiting, not only how many: each finding
 // with the guide it is for and how long ago it arrived.
 func TestTheCuratorListsWhatIsWaiting(t *testing.T) {
-	src, udb, g := guideSourceFixture(t)
+	src, _, g := guideSourceFixture(t)
 	report := toolsByName(src.ItemToolsWithSession(&ToolSession{AgentID: "a-triage"}, "u", g.ID))["report_to_dump_triage_guide"]
 	if _, err := report.Handler(context.Background(), map[string]any{"topic": "Empty dumps", "finding": "Restart the collector."}); err != nil {
 		t.Fatal(err)
 	}
-	w := httptest.NewRecorder()
-	src.app.handlePendingFindings(w, httptest.NewRequest("GET", "/curator/pending", nil), udb, "u")
+	w := as(t, src.app, "u", httptest.NewRequest("GET", "/curator/pending", nil))
 	body := w.Body.String()
 	for _, want := range []string{`"topic":"Empty dumps"`, `"for":"Dump Triage"`, `"age":"just now"`, `"content":"Restart the collector."`} {
 		if !strings.Contains(body, want) {

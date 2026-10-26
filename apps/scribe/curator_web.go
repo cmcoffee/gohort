@@ -10,7 +10,6 @@ package scribe
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
@@ -21,11 +20,8 @@ import (
 
 // handleCuratorRuns GETs the digest list: recent runs, newest first, with their
 // entries and the pending queue depth.
-func (T *Scribe) handleCuratorRuns(w http.ResponseWriter, r *http.Request, udb Database, user string) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+func (T *Scribe) handleCuratorRuns(c *jsonapi.Call) (any, error) {
+	udb, user := c.UDB, c.User
 	type entryRow struct {
 		Kind      string `json:"kind"`
 		FindingID string `json:"finding_id"`
@@ -77,10 +73,10 @@ func (T *Scribe) handleCuratorRuns(w http.ResponseWriter, r *http.Request, udb D
 		}
 		out = append(out, row)
 	}
-	jsonapi.Write(w, map[string]any{
+	return map[string]any{
 		"runs":    out,
 		"pending": len(udb.Keys(findingsTable)),
-	})
+	}, nil
 }
 
 // undoAvailability reports whether one entry can still be undone, and why not.
@@ -106,49 +102,34 @@ func undoAvailability(appDB, udb Database, user string, e CuratorEntry) (bool, s
 
 // handleCuratorUndo POSTs {run_id, finding_id} and restores the guide to the
 // revision that preceded that entry's write.
-func (T *Scribe) handleCuratorUndo(w http.ResponseWriter, r *http.Request, udb Database, user string) {
-	if !IsStateChangingMethod(r.Method) {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	var body struct {
-		RunID     string `json:"run_id"`
-		FindingID string `json:"finding_id"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
+func (T *Scribe) handleCuratorUndo(c *jsonapi.Call, body struct {
+	RunID     string `json:"run_id"`
+	FindingID string `json:"finding_id"`
+}) (any, error) {
+	udb, user := c.UDB, c.User
 	if strings.TrimSpace(body.RunID) == "" || strings.TrimSpace(body.FindingID) == "" {
-		http.Error(w, "run_id and finding_id are required", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("run_id and finding_id are required")
 	}
 	if err := undoCuratorEntry(T.DB, udb, user, body.RunID, body.FindingID); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest(err.Error())
 	}
-	w.WriteHeader(http.StatusOK)
+	return jsonapi.Empty(http.StatusOK), nil
 }
 
 // handleCuratorRunNow drains this user's queue immediately. The two automatic
 // firings are both delayed by design, so without this there is no way to watch
 // the curator handle a batch you just produced.
-func (T *Scribe) handleCuratorRunNow(w http.ResponseWriter, r *http.Request, udb Database, user string) {
-	if !IsStateChangingMethod(r.Method) {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+func (T *Scribe) handleCuratorRunNow(c *jsonapi.Call, _ struct{}) (any, error) {
+	r, udb, user := c.R, c.UDB, c.User
 	if len(udb.Keys(findingsTable)) == 0 {
-		jsonapi.Write(w, map[string]any{"ran": false, "reason": "nothing is waiting to be curated"})
-		return
+		return map[string]any{"ran": false, "reason": "nothing is waiting to be curated"}, nil
 	}
 	// Under the same per-user lock the automatic firings take. Without it a
 	// press landing while the threshold or interval run was in flight read the
 	// same pending findings and filed them a second time.
 	mu := curatorLock(user)
 	if !mu.TryLock() {
-		jsonapi.Write(w, map[string]any{"ran": false, "reason": "the curator is already working through your queue"})
-		return
+		return map[string]any{"ran": false, "reason": "the curator is already working through your queue"}, nil
 	}
 	defer mu.Unlock()
 	// The run outlives the request: it files findings into guides as it goes,
@@ -157,21 +138,17 @@ func (T *Scribe) handleCuratorRunNow(w http.ResponseWriter, r *http.Request, udb
 	run, err := T.RunCurator(context.WithoutCancel(r.Context()), user)
 	lastCuratorRun.Store(user, time.Now())
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return nil, jsonapi.Status(http.StatusInternalServerError, err.Error())
 	}
-	jsonapi.Write(w, map[string]any{"ran": true, "run_id": run.ID, "entries": len(run.Entries)})
+	return map[string]any{"ran": true, "run_id": run.ID, "entries": len(run.Entries)}, nil
 }
 
 // handlePendingFindings GETs the queue itself — what is waiting and has not been
 // decided. Distinct from the digest: the digest says what the curator DID, and a
 // user wondering why their guide has not changed is asking what it has not done
 // yet.
-func (T *Scribe) handlePendingFindings(w http.ResponseWriter, r *http.Request, udb Database, user string) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+func (T *Scribe) handlePendingFindings(c *jsonapi.Call) (any, error) {
+	udb := c.UDB
 	type row struct {
 		ID         string `json:"id"`
 		Topic      string `json:"topic"`
@@ -198,5 +175,5 @@ func (T *Scribe) handlePendingFindings(w http.ResponseWriter, r *http.Request, u
 		}
 		out = append(out, r)
 	}
-	jsonapi.Write(w, out)
+	return out, nil
 }

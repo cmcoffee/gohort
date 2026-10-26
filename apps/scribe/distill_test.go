@@ -31,8 +31,7 @@ func TestUpdateFromSourcesDistillsTheGuidesSetToDistill(t *testing.T) {
 		References:  []ReferenceSelection{{Kind: "guide", ItemID: "g-src"}, {Kind: "guide", ItemID: "g-ref"}, {Kind: "system", ItemID: "box"}},
 		DistillFrom: []string{"g-src"}})
 
-	w := httptest.NewRecorder()
-	T.handleUpdateFromSources(w, httptest.NewRequest(http.MethodPost, "/scribe/sources/update?id=g-dst", nil), udb, "alice")
+	w := as(t, T, "alice", httptest.NewRequest(http.MethodPost, "/scribe/sources/update?id=g-dst", nil))
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"distilling":["Billing outage runbook"]`) || !strings.Contains(w.Body.String(), `"consult":2`) {
 		t.Fatalf("the Distill guide is read and two Sources are left for the Author: %d %s", w.Code, w.Body.String())
 	}
@@ -66,8 +65,7 @@ func TestUpdateFromSourcesDistillsTheGuidesSetToDistill(t *testing.T) {
 	}
 
 	// Somebody else's guide is not theirs to update.
-	w = httptest.NewRecorder()
-	T.handleUpdateFromSources(w, httptest.NewRequest(http.MethodPost, "/scribe/sources/update?id=g-dst", nil), UserDB(T.DB, "bob"), "bob")
+	w = as(t, T, "bob", httptest.NewRequest(http.MethodPost, "/scribe/sources/update?id=g-dst", nil))
 	if w.Code == http.StatusOK {
 		t.Error("another person updated a guide that is not shared with them")
 	}

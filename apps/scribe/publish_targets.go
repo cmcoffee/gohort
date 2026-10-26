@@ -12,10 +12,8 @@ package scribe
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -247,30 +245,20 @@ func currentPublishJob(guideID string) (publishJob, bool) {
 
 // handlePublishTo starts a publish to one target: POST ?id=<guide> with
 // {kind, target, title, answers}.
-func (T *Scribe) handlePublishTo(w http.ResponseWriter, r *http.Request, udb Database, user string) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST required", http.StatusMethodNotAllowed)
-		return
-	}
+func (T *Scribe) handlePublishTo(c *jsonapi.Call, body struct {
+	Kind    string            `json:"kind"`
+	Target  string            `json:"target"`
+	Title   string            `json:"title"`
+	Answers map[string]string `json:"answers"`
+}) (any, error) {
+	r, udb, user := c.R, c.UDB, c.User
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
 	g, ownerUDB, _, canEdit, found := T.resolve(r, udb, user, id)
 	if !found {
-		http.NotFound(w, r)
-		return
+		return nil, errNoGuide
 	}
 	if !canEdit {
-		http.Error(w, "You need edit access to publish this guide.", http.StatusForbidden)
-		return
-	}
-	var body struct {
-		Kind    string            `json:"kind"`
-		Target  string            `json:"target"`
-		Title   string            `json:"title"`
-		Answers map[string]string `json:"answers"`
-	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
+		return nil, jsonapi.Forbidden("You need edit access to publish this guide.")
 	}
 	var spec docs.PublishTargetSpec
 	for _, s := range docs.PublishTargetSpecs(r.Context(), user) {
@@ -279,16 +267,13 @@ func (T *Scribe) handlePublishTo(w http.ResponseWriter, r *http.Request, udb Dat
 		}
 	}
 	if spec.Kind == "" {
-		http.Error(w, "That publishing target is not one of yours any more.", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("That publishing target is not one of yours any more.")
 	}
 	if missing := docs.MissingAnswers(spec.Fields, body.Answers); len(missing) > 0 {
-		http.Error(w, "Still needed: "+strings.Join(missing, ", "), http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("Still needed: " + strings.Join(missing, ", "))
 	}
 	if j, running := currentPublishJob(g.ID); running && !j.Done {
-		http.Error(w, "This guide is already being published to "+j.Target+".", http.StatusConflict)
-		return
+		return nil, jsonapi.Status(http.StatusConflict, "This guide is already being published to "+j.Target+".")
 	}
 	title := chFirst(strings.TrimSpace(body.Title), g.Title)
 	prev, _ := docs.FindPublishRecord(g.Published, spec.Kind)
@@ -299,23 +284,22 @@ func (T *Scribe) handlePublishTo(w http.ResponseWriter, r *http.Request, udb Dat
 			NavLinks: prev.NavLinks, NavContents: prev.NavContents,
 		},
 		docs.PublishRecord{Kind: spec.Kind, Target: spec.Target.ID, TargetTitle: spec.Target.Title, Title: title, Answers: body.Answers})
-	jsonapi.Write(w, map[string]any{"started": true, "target": spec.Target.Title})
+	return map[string]any{"started": true, "target": spec.Target.Title}, nil
 }
 
 // handlePublishJob reports a guide's publish: running (with its elapsed
 // time), or how it ended. GET ?id=<guide>.
-func (T *Scribe) handlePublishJob(w http.ResponseWriter, r *http.Request, udb Database, user string) {
+func (T *Scribe) handlePublishJob(c *jsonapi.Call) (any, error) {
+	r, udb, user := c.R, c.UDB, c.User
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
 	if _, _, _, _, found := T.resolve(r, udb, user, id); !found {
-		http.NotFound(w, r)
-		return
+		return nil, errNoGuide
 	}
 	j, ok := currentPublishJob(id)
 	if !ok {
-		jsonapi.Write(w, map[string]any{"none": true})
-		return
+		return map[string]any{"none": true}, nil
 	}
-	jsonapi.Write(w, map[string]any{
+	return map[string]any{
 		"target": j.Target, "done": j.Done, "ok": j.OK, "message": j.Message, "url": j.URL,
 		"elapsed": int(time.Since(j.Started).Seconds()),
 		"took":    fmt.Sprintf("%ds", int(j.Ended.Sub(j.Started).Seconds())),
@@ -323,27 +307,22 @@ func (T *Scribe) handlePublishJob(w http.ResponseWriter, r *http.Request, udb Da
 		"now":     j.Now,
 		"stopped": j.Stopped,
 		"linked":  j.linking,
-	})
+	}, nil
 }
 
 // handlePublishStop stops the guide's running publish: POST ?id=<guide>.
 // Edit rights, like starting one.
-func (T *Scribe) handlePublishStop(w http.ResponseWriter, r *http.Request, udb Database, user string) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST required", http.StatusMethodNotAllowed)
-		return
-	}
+func (T *Scribe) handlePublishStop(c *jsonapi.Call, _ struct{}) (any, error) {
+	r, udb, user := c.R, c.UDB, c.User
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
 	_, _, _, canEdit, found := T.resolve(r, udb, user, id)
 	if !found {
-		http.NotFound(w, r)
-		return
+		return nil, errNoGuide
 	}
 	if !canEdit {
-		http.Error(w, "You need edit access to this guide to stop its publish.", http.StatusForbidden)
-		return
+		return nil, jsonapi.Forbidden("You need edit access to this guide to stop its publish.")
 	}
-	jsonapi.Write(w, map[string]any{"stopping": stopPublishJob(id)})
+	return map[string]any{"stopping": stopPublishJob(id)}, nil
 }
 
 func chFirst(a, b string) string {

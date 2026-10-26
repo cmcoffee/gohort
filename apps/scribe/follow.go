@@ -23,7 +23,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -279,19 +278,14 @@ func changedNote(changed, dst Guide) string {
 // Sources left on Consult. Distilling from a guide was a button on the SOURCE
 // ("Distill into another guide") pushing into a guide picked each time; it is
 // set where the Source is attached now, so the catch-up is started there too.
-func (T *Scribe) handleUpdateFromSources(w http.ResponseWriter, r *http.Request, udb Database, user string) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST required", http.StatusMethodNotAllowed)
-		return
-	}
+func (T *Scribe) handleUpdateFromSources(c *jsonapi.Call, _ struct{}) (any, error) {
+	r, udb, user := c.R, c.UDB, c.User
 	g, ownerUDB, _, canEdit, found := T.resolve(r, udb, user, strings.TrimSpace(r.URL.Query().Get("id")))
 	if !found {
-		http.NotFound(w, r)
-		return
+		return nil, errNoGuide
 	}
 	if !canEdit {
-		http.Error(w, "You need edit access to update this guide.", http.StatusForbidden)
-		return
+		return nil, jsonapi.Forbidden("You need edit access to update this guide.")
 	}
 	// The findings go to the owner's Curator, which is the one that files
 	// into the owner's guide.
@@ -314,7 +308,7 @@ func (T *Scribe) handleUpdateFromSources(w http.ResponseWriter, r *http.Request,
 			consult++
 		}
 	}
-	jsonapi.Write(w, map[string]any{"distilling": distilling, "consult": consult})
+	return map[string]any{"distilling": distilling, "consult": consult}, nil
 }
 
 // What the Author is asked to do with the Sources left on Consult. Guides set

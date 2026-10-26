@@ -50,6 +50,12 @@ func TestEveryJSONRouteRefusesWhoItShould(t *testing.T) {
 		{"GET", "/guides", "", "PUT"},
 		{"POST", "/new", `{"title":"Fresh"}`, "GET"},
 		{"POST", "/chat/active", `{"id":"g1"}`, "GET"},
+		{"GET", "/share/candidates?id=g1", "", "PUT"},
+		{"GET", "/import/page", "", "PUT"},
+		{"GET", "/curator/runs", "", "PUT"},
+		{"GET", "/curator/pending", "", "PUT"},
+		{"POST", "/curator/undo", `{"run_id":"r","finding_id":"f"}`, "GET"},
+		{"POST", "/curator/run", "", "GET"},
 	} {
 		if code := do("", rt.method, rt.path, rt.body); code != http.StatusUnauthorized {
 			t.Errorf("signed out, %s %s answered %d, want 401", rt.method, rt.path, code)
@@ -85,6 +91,14 @@ func TestEveryJSONRouteRefusesWhoItShould(t *testing.T) {
 		{"POST", "/section/add?guide=g1", `{"title":"Three"}`, "GET", true, false},
 		{"POST", "/collections?guide=g1", `{"collections":[]}`, "", true, false},
 		{"POST", "/references?guide=g1", `{"references":[]}`, "", true, false},
+		{"POST", "/sources/update?id=g1", "", "GET", true, false},
+		{"GET", "/publish/state?id=g1", "", "PUT", false, false},
+		{"GET", "/publish/job?id=g1", "", "PUT", false, false},
+		{"POST", "/publish/to?id=g1", `{"kind":"nowhere"}`, "GET", true, false},
+		{"POST", "/publish/again?id=g1&kind=nowhere", "", "GET", true, false},
+		{"POST", "/publish/stop?id=g1", "", "GET", true, false},
+		{"POST", "/publish/keep?id=g1", `{"on":false}`, "GET", true, false},
+		{"POST", "/publish/link?id=g1", `{"kind":"nowhere","link":"x"}`, "GET", true, false},
 	} {
 		if code := do("", rt.method, rt.path, rt.body); code != http.StatusUnauthorized {
 			t.Errorf("signed out, %s %s answered %d, want 401", rt.method, rt.path, code)
@@ -102,6 +116,20 @@ func TestEveryJSONRouteRefusesWhoItShould(t *testing.T) {
 			if code := do("alice", rt.wrong, rt.path, ""); code != http.StatusMethodNotAllowed {
 				t.Errorf("%s %s answered %d, want 405", rt.wrong, rt.path, code)
 			}
+		}
+	}
+	// A job's routes, which answer anyone but the person it runs for as if
+	// there were none.
+	for _, rt := range []struct{ method, path string }{
+		{"GET", "/import/page/job?job=nope"},
+		{"POST", "/import/page/stop?job=nope"},
+		{"POST", "/distill/stop?id=nope"},
+	} {
+		if code := do("", rt.method, rt.path, ""); code != http.StatusUnauthorized {
+			t.Errorf("signed out, %s %s answered %d, want 401", rt.method, rt.path, code)
+		}
+		if code := do("alice", rt.method, rt.path, ""); code != http.StatusNotFound {
+			t.Errorf("no such job, %s %s answered %d, want 404", rt.method, rt.path, code)
 		}
 	}
 	if code := do("bob", "DELETE", "/guide?id=g1", ""); code != http.StatusNotFound {

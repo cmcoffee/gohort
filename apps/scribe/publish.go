@@ -119,12 +119,12 @@ func (T *Scribe) handlePublishChat(w http.ResponseWriter, r *http.Request, udb D
 // handlePublishState feeds the Publish modal's header: whether this deployment
 // publishes anywhere at all, whether the caller may publish THIS guide, and
 // where it has already gone. GET ?id=
-func (T *Scribe) handlePublishState(w http.ResponseWriter, r *http.Request, udb Database, user string) {
+func (T *Scribe) handlePublishState(c *jsonapi.Call) (any, error) {
+	r, udb, user := c.R, c.UDB, c.User
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
 	g, _, _, canEdit, found := T.resolve(r, udb, user, id)
 	if !found {
-		http.NotFound(w, r)
-		return
+		return nil, errNoGuide
 	}
 	type publishedRow struct {
 		Kind        string `json:"kind"`
@@ -154,7 +154,7 @@ func (T *Scribe) handlePublishState(w http.ResponseWriter, r *http.Request, udb 
 		}
 	}
 	job, _ := currentPublishJob(id)
-	jsonapi.Write(w, map[string]any{
+	return map[string]any{
 		"configured":   docs.HasPublishDestinations(),
 		"can_publish":  canEdit,
 		"destinations": docs.PublishDestinations(user),
@@ -165,36 +165,29 @@ func (T *Scribe) handlePublishState(w http.ResponseWriter, r *http.Request, udb 
 		"running":      job.Target != "" && !job.Done,
 		// Whether its copies follow it when the Curator changes it.
 		"keep_published": g.KeepPublished,
-	})
+	}, nil
 }
 
 // handleRepublish updates an already-published copy with no conversation: the
 // guide has a record saying exactly which page it is, so re-publishing it is a
 // deterministic write. POST ?id=&kind=
-func (T *Scribe) handleRepublish(w http.ResponseWriter, r *http.Request, udb Database, user string) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST required", http.StatusMethodNotAllowed)
-		return
-	}
+func (T *Scribe) handleRepublish(c *jsonapi.Call, _ struct{}) (any, error) {
+	r, udb, user := c.R, c.UDB, c.User
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
 	kind := strings.TrimSpace(r.URL.Query().Get("kind"))
 	g, ownerUDB, _, canEdit, found := T.resolve(r, udb, user, id)
 	if !found {
-		http.NotFound(w, r)
-		return
+		return nil, errNoGuide
 	}
 	if !canEdit {
-		http.Error(w, "You need edit access to publish this guide.", http.StatusForbidden)
-		return
+		return nil, jsonapi.Forbidden("You need edit access to publish this guide.")
 	}
 	prev, ok := docs.FindPublishRecord(g.Published, kind)
 	if !ok {
-		http.Error(w, "This guide has not been published there yet: use Publish to choose where it should go.", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("This guide has not been published there yet: use Publish to choose where it should go.")
 	}
 	if j, running := currentPublishJob(g.ID); running && !j.Done {
-		http.Error(w, "This guide is already being published to "+j.Target+".", http.StatusConflict)
-		return
+		return nil, jsonapi.Status(http.StatusConflict, "This guide is already being published to "+j.Target+".")
 	}
 	// A job like any publish: it outlives the request, the dialog follows its
 	// steps, and a dialog opened mid-run rejoins it. It used to run on the
@@ -202,5 +195,5 @@ func (T *Scribe) handleRepublish(w http.ResponseWriter, r *http.Request, udb Dat
 	p := republishOf(g, ownerUDB, user, prev)
 	job, ctx := p.start(context.WithoutCancel(r.Context()))
 	go p.do(ctx, job)
-	jsonapi.Write(w, map[string]any{"started": true, "target": p.where})
+	return map[string]any{"started": true, "target": p.where}, nil
 }

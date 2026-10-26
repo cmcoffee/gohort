@@ -24,7 +24,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"regexp"
 	"strings"
 	"time"
@@ -233,22 +232,18 @@ func (d distillRun) distillPart(ctx context.Context, p distillPart, i, n int) ([
 }
 
 // handleDistillStop stops it: POST ?id=.
-func (T *Scribe) handleDistillStop(w http.ResponseWriter, r *http.Request, user string) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST required", http.StatusMethodNotAllowed)
-		return
-	}
+func (T *Scribe) handleDistillStop(c *jsonapi.Call, _ struct{}) (any, error) {
+	r, user := c.R, c.User
 	publishJobsMu.Lock()
 	defer publishJobsMu.Unlock()
 	j, ok := publishJobs[distillJobPrefix+strings.TrimSpace(r.URL.Query().Get("id"))]
 	if !ok || j.owner != user {
-		http.NotFound(w, r)
-		return
+		return nil, errNoGuide
 	}
 	stopping := !j.Done && j.cancel != nil
 	if stopping {
 		j.Stopped, j.Now = true, "stopping"
 		j.cancel()
 	}
-	jsonapi.Write(w, map[string]any{"stopping": stopping})
+	return map[string]any{"stopping": stopping}, nil
 }

@@ -74,6 +74,36 @@ func (T *Scribe) routes() {
 		"POST": jsonapi.Post(T.DB, T.handleReferencesSave),
 	}.Serve)
 	T.HandleFunc("/chat/active", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleSetActive, jsonapi.EmptyBodyOK)}.Serve)
+	T.HandleFunc("/share/candidates", jsonapi.Get(T.DB, T.handleShareCandidates))
+	// Update from sources: the distills from guides set to Distill, and the
+	// Stop on a running one (follow.go, distill.go).
+	T.HandleFunc("/sources/update", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleUpdateFromSources)}.Serve)
+	T.HandleFunc("/distill/stop", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleDistillStop)}.Serve)
+	// A page already published somewhere, taken in to start a guide that
+	// keeps it, or linked to a guide that has one (page_import.go).
+	T.HandleFunc("/publish/link", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handlePublishLink, jsonapi.MaxBody(1<<16))}.Serve)
+	T.HandleFunc("/import/page", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, T.handleImportPage),
+		"POST": jsonapi.Post(T.DB, T.handleImportPageStart, jsonapi.MaxBody(1<<16)),
+	}.Serve)
+	T.HandleFunc("/import/page/job", jsonapi.Get(T.DB, T.handleImportPageJob))
+	T.HandleFunc("/import/page/stop", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleImportPageStop)}.Serve)
+	// Publishing OUT: the modal's state, the no-conversation update of an
+	// already-published copy, a publish to one target and its progress and
+	// Stop, and Keep published (publish.go, publish_targets.go).
+	T.HandleFunc("/publish/state", jsonapi.Get(T.DB, T.handlePublishState))
+	T.HandleFunc("/publish/again", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleRepublish)}.Serve)
+	T.HandleFunc("/publish/to", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handlePublishTo, jsonapi.MaxBody(1<<16))}.Serve)
+	T.HandleFunc("/publish/job", jsonapi.Get(T.DB, T.handlePublishJob))
+	T.HandleFunc("/publish/stop", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handlePublishStop)}.Serve)
+	T.HandleFunc("/publish/keep", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleKeepPublished, jsonapi.MaxBody(1<<10))}.Serve)
+	// Curator: the digest (what it did), the queue (what it has not done yet),
+	// an undo per decision, and a manual drain (curator_web.go). The two
+	// writes take any state-changing method, as they always have.
+	T.HandleFunc("/curator/runs", jsonapi.Methods{"GET": jsonapi.Get(T.DB, T.handleCuratorRuns)}.Serve)
+	T.HandleFunc("/curator/pending", jsonapi.Methods{"GET": jsonapi.Get(T.DB, T.handlePendingFindings)}.Serve)
+	T.HandleFunc("/curator/undo", jsonapi.Post(T.DB, T.handleCuratorUndo))
+	T.HandleFunc("/curator/run", jsonapi.Post(T.DB, T.handleCuratorRunNow))
 	T.HandleFunc("/", T.route)
 }
 
@@ -93,26 +123,10 @@ func (T *Scribe) route(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		T.servePage(w, r)
-	case path == "share/candidates":
-		T.handleShareCandidates(w, r, udb, user)
 	// Importing a page exported earlier, and the pictures pasted or dropped
 	// into a guide (stored, then served to whoever may read it).
 	// A page already published somewhere, taken in to start a guide that
 	// keeps it (page_import.go).
-	// Update from sources: the distills from guides set to Distill, and the
-	// Stop on a running one (follow.go, distill.go).
-	case path == "sources/update":
-		T.handleUpdateFromSources(w, r, udb, user)
-	case path == "distill/stop":
-		T.handleDistillStop(w, r, user)
-	case path == "publish/link":
-		T.handlePublishLink(w, r, udb, user)
-	case path == "import/page":
-		T.handleImportPage(w, r, udb, user)
-	case path == "import/page/job":
-		T.handleImportPageJob(w, r, user)
-	case path == "import/page/stop":
-		T.handleImportPageStop(w, r, user)
 	case path == "import":
 		T.handleImport(w, r, udb, user)
 	case path == "images":
@@ -128,32 +142,9 @@ func (T *Scribe) route(w http.ResponseWriter, r *http.Request) {
 		T.handleSectionDiscuss(w, r, udb, user)
 	case path == "brief/discuss":
 		T.handleBriefDiscuss(w, r, udb, user)
-	// Publishing OUT: the modal's state, its Publisher chat, and the
-	// no-conversation update of an already-published copy.
-	case path == "publish/state":
-		T.handlePublishState(w, r, udb, user)
+	// Publishing OUT through the Publisher chat (publish.go).
 	case path == "publish/chat/send":
 		T.handlePublishChat(w, r, udb, user)
-	case path == "publish/again":
-		T.handleRepublish(w, r, udb, user)
-	case path == "publish/to":
-		T.handlePublishTo(w, r, udb, user)
-	case path == "publish/job":
-		T.handlePublishJob(w, r, udb, user)
-	case path == "publish/stop":
-		T.handlePublishStop(w, r, udb, user)
-	case path == "publish/keep":
-		T.handleKeepPublished(w, r, udb, user)
-	// Curator: the digest (what it did), the queue (what it has not done yet),
-	// an undo per decision, and a manual drain.
-	case path == "curator/runs":
-		T.handleCuratorRuns(w, r, udb, user)
-	case path == "curator/pending":
-		T.handlePendingFindings(w, r, udb, user)
-	case path == "curator/undo":
-		T.handleCuratorUndo(w, r, udb, user)
-	case path == "curator/run":
-		T.handleCuratorRunNow(w, r, udb, user)
 	case path == "chat/send":
 		T.handleChatSend(w, r, udb, user)
 	case strings.HasPrefix(path, scribeChat.Prefix) || strings.HasPrefix(path, "api/runs/"):

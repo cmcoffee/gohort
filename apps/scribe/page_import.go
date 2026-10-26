@@ -14,9 +14,7 @@ package scribe
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -55,54 +53,46 @@ func importPlaces(ctx context.Context, user string) []importPlace {
 	return out
 }
 
-// handleImportPage is GET the places, POST {kind, target, link,
-// keep_published} to start an import.
-func (T *Scribe) handleImportPage(w http.ResponseWriter, r *http.Request, udb Database, user string) {
-	switch r.Method {
-	case http.MethodGet:
-		jsonapi.Write(w, map[string]any{"places": importPlaces(r.Context(), user)})
-	case http.MethodPost:
-		var body struct {
-			Kind          string `json:"kind"`
-			Target        string `json:"target"`
-			Link          string `json:"link"`
-			KeepPublished bool   `json:"keep_published"`
-			// WriteBrief has the model write the guide's brief from it
-			// (brief_draft.go). On unless the body says otherwise.
-			WriteBrief *bool `json:"write_brief"`
+// handleImportPage is GET the places; handleImportPageStart is POST {kind,
+// target, link, keep_published} to start an import.
+func (T *Scribe) handleImportPage(c *jsonapi.Call) (any, error) {
+	return map[string]any{"places": importPlaces(c.R.Context(), c.User)}, nil
+}
+
+// handleImportPageStart starts an import: see handleImportPage.
+func (T *Scribe) handleImportPageStart(c *jsonapi.Call, body struct {
+	Kind          string `json:"kind"`
+	Target        string `json:"target"`
+	Link          string `json:"link"`
+	KeepPublished bool   `json:"keep_published"`
+	// WriteBrief has the model write the guide's brief from it
+	// (brief_draft.go). On unless the body says otherwise.
+	WriteBrief *bool `json:"write_brief"`
+}) (any, error) {
+	r, udb, user := c.R, c.UDB, c.User
+	var where string
+	for _, p := range importPlaces(r.Context(), user) {
+		if p.Kind == body.Kind && p.Target == body.Target {
+			where = p.Title
 		}
-		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		var where string
-		for _, p := range importPlaces(r.Context(), user) {
-			if p.Kind == body.Kind && p.Target == body.Target {
-				where = p.Title
-			}
-		}
-		if where == "" {
-			http.Error(w, "That is not one of the places you can take a page in from.", http.StatusNotFound)
-			return
-		}
-		if strings.TrimSpace(body.Link) == "" {
-			http.Error(w, "Paste the page's address.", http.StatusBadRequest)
-			return
-		}
-		id := newID()
-		// Not on the request's context: the read outlives the request.
-		ctx, cancel := context.WithCancel(context.WithoutCancel(r.Context()))
-		job := &publishJob{Target: where, Started: time.Now(), cancel: cancel,
-			owner: user, guideID: importJobPrefix + id, importing: true}
-		publishJobsMu.Lock()
-		publishJobs[job.guideID] = job
-		publishJobsMu.Unlock()
-		brief := body.WriteBrief == nil || *body.WriteBrief
-		go T.importPage(ctx, udb, user, where, body.Kind, body.Target, body.Link, body.KeepPublished, brief, job)
-		jsonapi.Write(w, map[string]any{"job": id})
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+	if where == "" {
+		return nil, jsonapi.NotFound("That is not one of the places you can take a page in from.")
+	}
+	if strings.TrimSpace(body.Link) == "" {
+		return nil, jsonapi.BadRequest("Paste the page's address.")
+	}
+	id := newID()
+	// Not on the request's context: the read outlives the request.
+	ctx, cancel := context.WithCancel(context.WithoutCancel(r.Context()))
+	job := &publishJob{Target: where, Started: time.Now(), cancel: cancel,
+		owner: user, guideID: importJobPrefix + id, importing: true}
+	publishJobsMu.Lock()
+	publishJobs[job.guideID] = job
+	publishJobsMu.Unlock()
+	brief := body.WriteBrief == nil || *body.WriteBrief
+	go T.importPage(ctx, udb, user, where, body.Kind, body.Target, body.Link, body.KeepPublished, brief, job)
+	return map[string]any{"job": id}, nil
 }
 
 // importPage reads the page and makes the guide, reporting on job.
@@ -185,7 +175,8 @@ func (T *Scribe) guideFromPage(ctx context.Context, udb Database, user, where, k
 }
 
 // handleImportPageJob reports an import: GET ?job=<id>.
-func (T *Scribe) handleImportPageJob(w http.ResponseWriter, r *http.Request, user string) {
+func (T *Scribe) handleImportPageJob(c *jsonapi.Call) (any, error) {
+	r, user := c.R, c.User
 	publishJobsMu.Lock()
 	j, ok := publishJobs[importJobPrefix+strings.TrimSpace(r.URL.Query().Get("job"))]
 	var snap publishJob
@@ -194,35 +185,30 @@ func (T *Scribe) handleImportPageJob(w http.ResponseWriter, r *http.Request, use
 	}
 	publishJobsMu.Unlock()
 	if !ok || snap.owner != user {
-		http.NotFound(w, r)
-		return
+		return nil, errNoGuide
 	}
-	jsonapi.Write(w, map[string]any{
+	return map[string]any{
 		"target": snap.Target, "done": snap.Done, "ok": snap.OK, "message": snap.Message,
 		"guide_id": snap.GuideID, "steps": snap.Steps, "now": snap.Now, "stopped": snap.Stopped,
 		"elapsed": int(time.Since(snap.Started).Seconds()),
-	})
+	}, nil
 }
 
 // handleImportPageStop stops an import: POST ?job=<id>.
-func (T *Scribe) handleImportPageStop(w http.ResponseWriter, r *http.Request, user string) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST required", http.StatusMethodNotAllowed)
-		return
-	}
+func (T *Scribe) handleImportPageStop(c *jsonapi.Call, _ struct{}) (any, error) {
+	r, user := c.R, c.User
 	publishJobsMu.Lock()
 	defer publishJobsMu.Unlock()
 	j, ok := publishJobs[importJobPrefix+strings.TrimSpace(r.URL.Query().Get("job"))]
 	if !ok || j.owner != user {
-		http.NotFound(w, r)
-		return
+		return nil, errNoGuide
 	}
 	stopping := !j.Done && j.cancel != nil
 	if stopping {
 		j.Stopped, j.Now = true, "stopping"
 		j.cancel()
 	}
-	jsonapi.Write(w, map[string]any{"stopping": stopping})
+	return map[string]any{"stopping": stopping}, nil
 }
 
 // countOf is "1 section" or "3 sections".
@@ -239,29 +225,19 @@ func countOf(n int, noun string) string {
 // baseline, so the next update puts the guide on that page. Edit rights, like
 // publishing. Runs as the guide's publish job, which the Publish dialog
 // follows.
-func (T *Scribe) handlePublishLink(w http.ResponseWriter, r *http.Request, udb Database, user string) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST required", http.StatusMethodNotAllowed)
-		return
-	}
+func (T *Scribe) handlePublishLink(c *jsonapi.Call, body struct {
+	Kind   string `json:"kind"`
+	Target string `json:"target"`
+	Link   string `json:"link"`
+}) (any, error) {
+	r, udb, user := c.R, c.UDB, c.User
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
 	g, ownerUDB, _, canEdit, found := T.resolve(r, udb, user, id)
 	if !found {
-		http.NotFound(w, r)
-		return
+		return nil, errNoGuide
 	}
 	if !canEdit {
-		http.Error(w, "You need edit access to change where this guide is published.", http.StatusForbidden)
-		return
-	}
-	var body struct {
-		Kind   string `json:"kind"`
-		Target string `json:"target"`
-		Link   string `json:"link"`
-	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
+		return nil, jsonapi.Forbidden("You need edit access to change where this guide is published.")
 	}
 	var where string
 	for _, p := range importPlaces(r.Context(), user) {
@@ -270,16 +246,13 @@ func (T *Scribe) handlePublishLink(w http.ResponseWriter, r *http.Request, udb D
 		}
 	}
 	if where == "" {
-		http.Error(w, "That is not one of the places you can link a page from.", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("That is not one of the places you can link a page from.")
 	}
 	if strings.TrimSpace(body.Link) == "" {
-		http.Error(w, "Paste the page's address.", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("Paste the page's address.")
 	}
 	if j, running := currentPublishJob(g.ID); running && !j.Done {
-		http.Error(w, "This guide is already being published to "+j.Target+".", http.StatusConflict)
-		return
+		return nil, jsonapi.Status(http.StatusConflict, "This guide is already being published to "+j.Target+".")
 	}
 	ctx, cancel := context.WithCancel(context.WithoutCancel(r.Context()))
 	job := &publishJob{Target: where, Started: time.Now(), cancel: cancel,
@@ -288,7 +261,7 @@ func (T *Scribe) handlePublishLink(w http.ResponseWriter, r *http.Request, udb D
 	publishJobs[g.ID] = job
 	publishJobsMu.Unlock()
 	go T.linkGuide(ctx, ownerUDB, user, g.ID, where, body.Kind, body.Target, body.Link, job)
-	jsonapi.Write(w, map[string]any{"started": true, "target": where})
+	return map[string]any{"started": true, "target": where}, nil
 }
 
 // linkGuide reads the page and records it as the guide's copy there.
