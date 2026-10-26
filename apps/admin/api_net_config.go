@@ -2,7 +2,6 @@ package admin
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -12,8 +11,8 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/activity"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/sourcehooks"
-	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 // secretUnchanged is what a stored secret reads as on a GET. The admin forms
@@ -47,130 +46,20 @@ func keepSecret(posted, stored string) string {
 func (a *AdminApp) registerNetConfigRoutes(sub *http.ServeMux) {
 	// Web search — per-key rows under SearchTable (provider, api_key,
 	// endpoint). Same shape as --setup.
-	sub.HandleFunc("/api/web-search", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		if r.Method == http.MethodPost {
-			var req WebSearchConfig
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				http.Error(w, "bad request", http.StatusBadRequest)
-				return
-			}
-			req.APIKey = keepSecret(req.APIKey, a.storedString(SearchTable, "api_key"))
-			// A peer selection carries no provider/key/endpoint of its own —
-			// those fields are hidden while one is picked. Resolve here, the
-			// same way the embeddings and transcription saves do, so what gets
-			// stored is an ordinary searxng config and tools/websearch never
-			// learns that peers exist.
-			resolved, serr := ResolveSearchProvider(req, req.Source)
-			if serr != nil {
-				http.Error(w, serr.Error(), http.StatusBadRequest)
-				return
-			}
-			req = resolved
-			// A Source Hook as the engine must be one that can be: refused
-			// here, where the admin sees it, rather than every search failing.
-			if req.Provider == "hook" {
-				if _, ok := sourcehooks.SearchHook(req.Hook); !ok {
-					http.Error(w, "pick a Source Hook to search with: an API hook that is switched on", http.StatusBadRequest)
-					return
-				}
-			} else {
-				req.Hook = ""
-			}
-			if a.db != nil {
-				a.db.Set(SearchTable, "provider", req.Provider)
-				a.db.Set(SearchTable, "api_key", req.APIKey)
-				a.db.Set(SearchTable, "endpoint", req.Endpoint)
-				a.db.Set(SearchTable, "source", req.Source)
-				a.db.Set(SearchTable, "hook", req.Hook)
-			}
-			adminChange(r, activity.Settings, "updated web-search config (provider=%q)",
-				req.Provider)
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		var provider, key, endpoint, source, hook string
-		if a.db != nil {
-			a.db.Get(SearchTable, "provider", &provider)
-			a.db.Get(SearchTable, "api_key", &key)
-			a.db.Get(SearchTable, "endpoint", &endpoint)
-			a.db.Get(SearchTable, "source", &source)
-			a.db.Get(SearchTable, "hook", &hook)
-		}
-		if source == "" {
-			source = EmbeddingProviderLocal
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
-			"provider": provider, "api_key": maskSecret(key), "endpoint": endpoint, "source": source, "hook": hook,
-		})
-	})
+	sub.HandleFunc("/api/web-search", jsonapi.Methods{
+		"GET":  jsonapi.Get(a.db, a.handleWebSearch, a.gate()),
+		"POST": jsonapi.Post(a.db, a.handleWebSearchSave, a.gate()),
+	}.Serve)
 
 	// The Source Hooks that can be the search engine: API hooks that are on,
 	// for the Web Search form's picker.
-	sub.HandleFunc("/api/web-search/hooks", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		opts := []map[string]string{}
-		// Every hook that can be the engine, the engine itself among them:
-		// it is out of the source hooks' own uses, not out of this list.
-		for _, h := range sourcehooks.RegisteredSourceHooks() {
-			if _, ok := sourcehooks.SearchHook(h.Name); !ok {
-				continue
-			}
-			label := h.Name
-			if u, err := url.Parse(h.Endpoint); err == nil && u.Host != "" {
-				label += " (" + u.Host + ")"
-			}
-			opts = append(opts, map[string]string{"value": h.Name, "label": label})
-		}
-		writeJSONOut(w, opts)
-	})
+	sub.HandleFunc("/api/web-search/hooks", jsonapi.Get(a.db, a.handleWebSearchHooks, a.gate()))
 
 	// Page rendering — where browse_page and the render escalations happen.
-	sub.HandleFunc("/api/browse", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		if r.Method == http.MethodPost {
-			var req BrowseConfig
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				http.Error(w, "bad request", http.StatusBadRequest)
-				return
-			}
-			src := strings.TrimSpace(req.Source)
-			// Validate the selection rather than storing a name that silently
-			// renders nothing: a peer that was forgotten, or had its browse
-			// grant pulled, must be refused here where the operator can see it.
-			if src != "" && src != EmbeddingProviderLocal {
-				p, ok := PeerFromProvider(src)
-				if !ok {
-					http.Error(w, "no peer named "+strings.TrimPrefix(src, "peer:")+" is registered", http.StatusBadRequest)
-					return
-				}
-				if !p.Offers(PeerCapBrowse) {
-					http.Error(w, "peer "+p.Name+" does not offer page rendering (it offers: "+strings.Join(p.Caps, ", ")+")", http.StatusBadRequest)
-					return
-				}
-			}
-			if a.db != nil {
-				a.db.Set(BrowseTable, "source", src)
-			}
-			SetBrowseConfig(BrowseConfig{Source: src})
-			adminChange(r, activity.Settings, "set page rendering to %q", src)
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		cfg := LoadBrowseConfig()
-		if cfg.Source == "" {
-			cfg.Source = EmbeddingProviderLocal
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(cfg)
-	})
+	sub.HandleFunc("/api/browse", jsonapi.Methods{
+		"GET":  jsonapi.Get(a.db, a.handleBrowse, a.gate()),
+		"POST": jsonapi.Post(a.db, a.handleBrowseSave, a.gate()),
+	}.Serve)
 
 	// Web search connectivity test — temporarily swap in the form's
 	// working WebSearchConfig via LoadWebSearchConfigFunc, run a one-
@@ -178,213 +67,278 @@ func (a *AdminApp) registerNetConfigRoutes(sub *http.ServeMux) {
 	// loader on exit. Empty result counts as failure (most providers
 	// return SOMETHING for any term; an empty result implies a config
 	// problem rather than a genuinely empty corpus).
-	sub.HandleFunc("/api/web-search/test", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		var req WebSearchConfig
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeTestResult(w, false, "", "invalid request body")
-			return
-		}
-		req.APIKey = keepSecret(req.APIKey, a.storedString(SearchTable, "api_key"))
-		// Resolve before inspecting the fields — with a peer picked they are
-		// hidden and empty, and testing a valid peer would otherwise fail on
-		// the provider being blank. Same lesson as the embeddings and
-		// transcription test buttons.
-		if resolved, serr := ResolveSearchProvider(req, req.Source); serr != nil {
-			writeTestResult(w, false, "", serr.Error())
-			return
-		} else {
-			req = resolved
-		}
-		if req.Provider == "" {
-			writeTestResult(w, false, "", "provider is required")
-			return
-		}
-		orig := LoadWebSearchConfigFunc
-		LoadWebSearchConfigFunc = func() WebSearchConfig { return req }
-		defer func() { LoadWebSearchConfigFunc = orig }()
-		// Under the request's context: the form's Cancel closes the request,
-		// and the search tool's handler takes a context, so the provider call
-		// is dropped with it rather than running out its own timeout.
-		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
-		defer cancel()
-		out, serr := webSearchCtx(ctx, "gohort connectivity test")
-		if serr != nil {
-			writeTestResult(w, false, "", serr.Error())
-			return
-		}
-		if strings.TrimSpace(out) == "" {
-			writeTestResult(w, false, "", "no results returned: check provider/key/endpoint")
-			return
-		}
-		// Trim the result to a short preview so the inline UI doesn't
-		// overflow with a wall of links.
-		preview := strings.TrimSpace(out)
-		preview = textutil.Clip(preview, 80)
-		writeTestResult(w, true, fmt.Sprintf("OK via %s: %d chars returned", req.Provider, len(out)), "")
-	})
+	sub.HandleFunc("/api/web-search/test", jsonapi.Post(a.db, a.handleWebSearchTest, a.gate()))
 
 	// Mail / SMTP — per-key rows under MailTable. The password reads as
 	// secretUnchanged on GET and is kept when that comes back.
-	sub.HandleFunc("/api/mail", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		if r.Method == http.MethodPost {
-			var req MailConfig
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				http.Error(w, "bad request", http.StatusBadRequest)
-				return
-			}
-			req.Password = keepSecret(req.Password, a.storedString(MailTable, "password"))
-			if a.db != nil {
-				a.db.Set(MailTable, "server", req.Server)
-				a.db.Set(MailTable, "from", req.From)
-				a.db.Set(MailTable, "recipient", req.Recipient)
-				a.db.Set(MailTable, "username", req.Username)
-				a.db.Set(MailTable, "password", req.Password)
-			}
-			adminChange(r, activity.Settings, "updated mail config (server=%q from=%q)",
-				req.Server, req.From)
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		var cfg MailConfig
-		if a.db != nil {
-			a.db.Get(MailTable, "server", &cfg.Server)
-			a.db.Get(MailTable, "from", &cfg.From)
-			a.db.Get(MailTable, "username", &cfg.Username)
-			a.db.Get(MailTable, "password", &cfg.Password)
-			a.db.Get(MailTable, "recipient", &cfg.Recipient)
-		}
-		cfg.Password = maskSecret(cfg.Password)
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(cfg)
-	})
+	sub.HandleFunc("/api/mail", jsonapi.Methods{
+		"GET":  jsonapi.Get(a.db, a.handleMail, a.gate()),
+		"POST": jsonapi.Post(a.db, a.handleMailSave, a.gate()),
+	}.Serve)
 
 	// Mail connectivity test — sends a real email to the recipient
 	// using the form's current (possibly unsaved) MailConfig. Mirrors
 	// the "Send Test Email" flow in --setup.
-	sub.HandleFunc("/api/mail/test", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		var req MailConfig
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeTestResult(w, false, "", "invalid request body")
-			return
-		}
-		req.Password = keepSecret(req.Password, a.storedString(MailTable, "password"))
-		to := req.Recipient
-		if to == "" {
-			writeTestResult(w, false, "", "set a Default Recipient first; test mail needs an address")
-			return
-		}
-		// The posted (unsaved) config sends directly, under the request's
-		// context, so Cancel ends the SMTP conversation wherever it is
-		// blocked instead of leaving it to the server's timeout.
-		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-		defer cancel()
-		if err := req.SendNotification(ctx, to, "Gohort Admin Test Email",
-			"This is a test from the gohort admin UI.\n\nIf you received this, mail is configured correctly.\n"); err != nil {
-			if ctx.Err() != nil {
-				writeTestResult(w, false, "", "cancelled before the mail server answered")
-				return
-			}
-			writeTestResult(w, false, "", err.Error())
-			return
-		}
-		writeTestResult(w, true, fmt.Sprintf("Test email sent to %s", to), "")
-	})
+	sub.HandleFunc("/api/mail/test", jsonapi.Post(a.db, a.handleMailTest, a.gate()))
 
 	// Network timeouts — per-key rows under NetworkTable.
-	sub.HandleFunc("/api/network", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		if r.Method == http.MethodPost {
-			var req struct {
-				ConnectTimeoutSeconds int `json:"connect_timeout_seconds"`
-				RequestTimeoutSeconds int `json:"request_timeout_seconds"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				http.Error(w, "bad request", http.StatusBadRequest)
-				return
-			}
-			if a.db != nil {
-				if req.ConnectTimeoutSeconds > 0 {
-					a.db.Set(NetworkTable, "connect_timeout_seconds", req.ConnectTimeoutSeconds)
-				}
-				if req.RequestTimeoutSeconds > 0 {
-					a.db.Set(NetworkTable, "request_timeout_seconds", req.RequestTimeoutSeconds)
-				}
-			}
-			adminChange(r, activity.Settings, "updated network timeouts (connect=%ds request=%ds)",
-				req.ConnectTimeoutSeconds, req.RequestTimeoutSeconds)
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		var connectSec, requestSec int
-		if a.db != nil {
-			a.db.Get(NetworkTable, "connect_timeout_seconds", &connectSec)
-			a.db.Get(NetworkTable, "request_timeout_seconds", &requestSec)
-		}
-		if connectSec <= 0 {
-			connectSec = 10
-		}
-		if requestSec <= 0 {
-			requestSec = 15
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]int{
-			"connect_timeout_seconds": connectSec,
-			"request_timeout_seconds": requestSec,
-		})
-	})
+	sub.HandleFunc("/api/network", jsonapi.Methods{
+		"GET":  jsonapi.Get(a.db, a.handleNetwork, a.gate()),
+		"POST": jsonapi.Post(a.db, a.handleNetworkSave, a.gate()),
+	}.Serve)
 
 	// Agent-loop tuning — history-budget cap (and future LLM-retry
 	// knobs). Mirrors /api/network's GET-current/POST-new shape so the
 	// admin FormPanel can save without app-specific JS.
-	sub.HandleFunc("/api/agent-loop-tuning", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		if r.Method == http.MethodPost {
-			var req struct {
-				HistoryBudgetPercent int `json:"history_budget_percent"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				http.Error(w, "bad request", http.StatusBadRequest)
-				return
-			}
-			if err := SaveAgentLoopTuningToDB(a.db, AgentLoopTuning{
-				HistoryBudgetPercent: req.HistoryBudgetPercent,
-			}); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			adminChange(r, activity.Settings, "updated agent-loop tuning (history_budget_percent=%d)",
-				GetAgentLoopTuning().HistoryBudgetPercent)
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		cur := GetAgentLoopTuning()
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]int{
-			"history_budget_percent": cur.HistoryBudgetPercent,
-		})
-	})
+	sub.HandleFunc("/api/agent-loop-tuning", jsonapi.Methods{
+		"GET":  jsonapi.Get(a.db, a.handleAgentLoopTuning, a.gate()),
+		"POST": jsonapi.Post(a.db, a.handleAgentLoopTuningSave, a.gate()),
+	}.Serve)
+}
 
+// handleWebSearch is the web search config, its key masked.
+func (a *AdminApp) handleWebSearch(c *jsonapi.Call) (any, error) {
+	var provider, key, endpoint, source, hook string
+	if a.db != nil {
+		a.db.Get(SearchTable, "provider", &provider)
+		a.db.Get(SearchTable, "api_key", &key)
+		a.db.Get(SearchTable, "endpoint", &endpoint)
+		a.db.Get(SearchTable, "source", &source)
+		a.db.Get(SearchTable, "hook", &hook)
+	}
+	if source == "" {
+		source = EmbeddingProviderLocal
+	}
+	return map[string]any{
+		"provider": provider, "api_key": maskSecret(key), "endpoint": endpoint, "source": source, "hook": hook,
+	}, nil
+}
+
+// handleWebSearchSave saves the web search config.
+func (a *AdminApp) handleWebSearchSave(c *jsonapi.Call, req WebSearchConfig) (any, error) {
+	req.APIKey = keepSecret(req.APIKey, a.storedString(SearchTable, "api_key"))
+	// A peer selection carries no provider/key/endpoint of its own —
+	// those fields are hidden while one is picked. Resolve here, the
+	// same way the embeddings and transcription saves do, so what gets
+	// stored is an ordinary searxng config and tools/websearch never
+	// learns that peers exist.
+	resolved, serr := ResolveSearchProvider(req, req.Source)
+	if serr != nil {
+		return nil, jsonapi.BadRequest(serr.Error())
+	}
+	req = resolved
+	// A Source Hook as the engine must be one that can be: refused
+	// here, where the admin sees it, rather than every search failing.
+	if req.Provider == "hook" {
+		if _, ok := sourcehooks.SearchHook(req.Hook); !ok {
+			return nil, jsonapi.BadRequest("pick a Source Hook to search with: an API hook that is switched on")
+		}
+	} else {
+		req.Hook = ""
+	}
+	if a.db != nil {
+		a.db.Set(SearchTable, "provider", req.Provider)
+		a.db.Set(SearchTable, "api_key", req.APIKey)
+		a.db.Set(SearchTable, "endpoint", req.Endpoint)
+		a.db.Set(SearchTable, "source", req.Source)
+		a.db.Set(SearchTable, "hook", req.Hook)
+	}
+	adminChange(c.R, activity.Settings, "updated web-search config (provider=%q)",
+		req.Provider)
+	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// handleWebSearchHooks is the hooks the search engine may be.
+func (a *AdminApp) handleWebSearchHooks(c *jsonapi.Call) (any, error) {
+	opts := []map[string]string{}
+	// Every hook that can be the engine, the engine itself among them:
+	// it is out of the source hooks' own uses, not out of this list.
+	for _, h := range sourcehooks.RegisteredSourceHooks() {
+		if _, ok := sourcehooks.SearchHook(h.Name); !ok {
+			continue
+		}
+		label := h.Name
+		if u, err := url.Parse(h.Endpoint); err == nil && u.Host != "" {
+			label += " (" + u.Host + ")"
+		}
+		opts = append(opts, map[string]string{"value": h.Name, "label": label})
+	}
+	return opts, nil
+}
+
+// handleBrowse is where pages are rendered.
+func (a *AdminApp) handleBrowse(c *jsonapi.Call) (any, error) {
+	cfg := LoadBrowseConfig()
+	if cfg.Source == "" {
+		cfg.Source = EmbeddingProviderLocal
+	}
+	return cfg, nil
+}
+
+// handleBrowseSave sets where pages are rendered.
+func (a *AdminApp) handleBrowseSave(c *jsonapi.Call, req BrowseConfig) (any, error) {
+	src := strings.TrimSpace(req.Source)
+	// Validate the selection rather than storing a name that silently
+	// renders nothing: a peer that was forgotten, or had its browse
+	// grant pulled, must be refused here where the operator can see it.
+	if src != "" && src != EmbeddingProviderLocal {
+		p, ok := PeerFromProvider(src)
+		if !ok {
+			return nil, jsonapi.BadRequest("no peer named " + strings.TrimPrefix(src, "peer:") + " is registered")
+		}
+		if !p.Offers(PeerCapBrowse) {
+			return nil, jsonapi.BadRequest("peer " + p.Name + " does not offer page rendering (it offers: " + strings.Join(p.Caps, ", ") + ")")
+		}
+	}
+	if a.db != nil {
+		a.db.Set(BrowseTable, "source", src)
+	}
+	SetBrowseConfig(BrowseConfig{Source: src})
+	adminChange(c.R, activity.Settings, "set page rendering to %q", src)
+	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// handleWebSearchTest runs one search with the form's working config.
+func (a *AdminApp) handleWebSearchTest(c *jsonapi.Call, req WebSearchConfig) (any, error) {
+	req.APIKey = keepSecret(req.APIKey, a.storedString(SearchTable, "api_key"))
+	// Resolve before inspecting the fields — with a peer picked they are
+	// hidden and empty, and testing a valid peer would otherwise fail on
+	// the provider being blank. Same lesson as the embeddings and
+	// transcription test buttons.
+	resolved, serr := ResolveSearchProvider(req, req.Source)
+	if serr != nil {
+		return testResultBody(false, "", serr.Error()), nil
+	}
+	req = resolved
+	if req.Provider == "" {
+		return testResultBody(false, "", "provider is required"), nil
+	}
+	orig := LoadWebSearchConfigFunc
+	LoadWebSearchConfigFunc = func() WebSearchConfig { return req }
+	defer func() { LoadWebSearchConfigFunc = orig }()
+	// Under the request's context: the form's Cancel closes the request,
+	// and the search tool's handler takes a context, so the provider call
+	// is dropped with it rather than running out its own timeout.
+	ctx, cancel := context.WithTimeout(c.R.Context(), 20*time.Second)
+	defer cancel()
+	out, serr := webSearchCtx(ctx, "gohort connectivity test")
+	if serr != nil {
+		return testResultBody(false, "", serr.Error()), nil
+	}
+	if strings.TrimSpace(out) == "" {
+		return testResultBody(false, "", "no results returned: check provider/key/endpoint"), nil
+	}
+	return testResultBody(true, fmt.Sprintf("OK via %s: %d chars returned", req.Provider, len(out)), ""), nil
+}
+
+// handleMail is the mail config, its password masked.
+func (a *AdminApp) handleMail(c *jsonapi.Call) (any, error) {
+	var cfg MailConfig
+	if a.db != nil {
+		a.db.Get(MailTable, "server", &cfg.Server)
+		a.db.Get(MailTable, "from", &cfg.From)
+		a.db.Get(MailTable, "username", &cfg.Username)
+		a.db.Get(MailTable, "password", &cfg.Password)
+		a.db.Get(MailTable, "recipient", &cfg.Recipient)
+	}
+	cfg.Password = maskSecret(cfg.Password)
+	return cfg, nil
+}
+
+// handleMailSave saves the mail config.
+func (a *AdminApp) handleMailSave(c *jsonapi.Call, req MailConfig) (any, error) {
+	req.Password = keepSecret(req.Password, a.storedString(MailTable, "password"))
+	if a.db != nil {
+		a.db.Set(MailTable, "server", req.Server)
+		a.db.Set(MailTable, "from", req.From)
+		a.db.Set(MailTable, "recipient", req.Recipient)
+		a.db.Set(MailTable, "username", req.Username)
+		a.db.Set(MailTable, "password", req.Password)
+	}
+	adminChange(c.R, activity.Settings, "updated mail config (server=%q from=%q)",
+		req.Server, req.From)
+	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// handleMailTest sends a test email with the form's working config.
+func (a *AdminApp) handleMailTest(c *jsonapi.Call, req MailConfig) (any, error) {
+	req.Password = keepSecret(req.Password, a.storedString(MailTable, "password"))
+	to := req.Recipient
+	if to == "" {
+		return testResultBody(false, "", "set a Default Recipient first; test mail needs an address"), nil
+	}
+	// The posted (unsaved) config sends directly, under the request's
+	// context, so Cancel ends the SMTP conversation wherever it is
+	// blocked instead of leaving it to the server's timeout.
+	ctx, cancel := context.WithTimeout(c.R.Context(), 30*time.Second)
+	defer cancel()
+	if err := req.SendNotification(ctx, to, "Gohort Admin Test Email",
+		"This is a test from the gohort admin UI.\n\nIf you received this, mail is configured correctly.\n"); err != nil {
+		if ctx.Err() != nil {
+			return testResultBody(false, "", "cancelled before the mail server answered"), nil
+		}
+		return testResultBody(false, "", err.Error()), nil
+	}
+	return testResultBody(true, fmt.Sprintf("Test email sent to %s", to), ""), nil
+}
+
+// handleNetwork is the network timeouts.
+func (a *AdminApp) handleNetwork(c *jsonapi.Call) (any, error) {
+	var connectSec, requestSec int
+	if a.db != nil {
+		a.db.Get(NetworkTable, "connect_timeout_seconds", &connectSec)
+		a.db.Get(NetworkTable, "request_timeout_seconds", &requestSec)
+	}
+	if connectSec <= 0 {
+		connectSec = 10
+	}
+	if requestSec <= 0 {
+		requestSec = 15
+	}
+	return map[string]int{
+		"connect_timeout_seconds": connectSec,
+		"request_timeout_seconds": requestSec,
+	}, nil
+}
+
+// handleNetworkSave sets the network timeouts; a value of zero or less leaves
+// that one as it was.
+func (a *AdminApp) handleNetworkSave(c *jsonapi.Call, req struct {
+	ConnectTimeoutSeconds int `json:"connect_timeout_seconds"`
+	RequestTimeoutSeconds int `json:"request_timeout_seconds"`
+}) (any, error) {
+	if a.db != nil {
+		if req.ConnectTimeoutSeconds > 0 {
+			a.db.Set(NetworkTable, "connect_timeout_seconds", req.ConnectTimeoutSeconds)
+		}
+		if req.RequestTimeoutSeconds > 0 {
+			a.db.Set(NetworkTable, "request_timeout_seconds", req.RequestTimeoutSeconds)
+		}
+	}
+	adminChange(c.R, activity.Settings, "updated network timeouts (connect=%ds request=%ds)",
+		req.ConnectTimeoutSeconds, req.RequestTimeoutSeconds)
+	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// handleAgentLoopTuning is the agent loop's history budget.
+func (a *AdminApp) handleAgentLoopTuning(c *jsonapi.Call) (any, error) {
+	return map[string]int{
+		"history_budget_percent": GetAgentLoopTuning().HistoryBudgetPercent,
+	}, nil
+}
+
+// handleAgentLoopTuningSave sets the agent loop's history budget.
+func (a *AdminApp) handleAgentLoopTuningSave(c *jsonapi.Call, req struct {
+	HistoryBudgetPercent int `json:"history_budget_percent"`
+}) (any, error) {
+	if err := SaveAgentLoopTuningToDB(a.db, AgentLoopTuning{
+		HistoryBudgetPercent: req.HistoryBudgetPercent,
+	}); err != nil {
+		return nil, err
+	}
+	adminChange(c.R, activity.Settings, "updated agent-loop tuning (history_budget_percent=%d)",
+		GetAgentLoopTuning().HistoryBudgetPercent)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // webSearchCtx is core.WebSearch under a context: the registered web_search

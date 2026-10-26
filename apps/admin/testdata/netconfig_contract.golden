@@ -1,0 +1,145 @@
+(signed out) GET /api/web-search ""
+  403 forbidden
+alice GET /api/web-search ""
+  403 forbidden
+root GET /api/web-search ""
+  200 {"api_key":"","endpoint":"","hook":"","provider":"","source":"local"}
+root PUT /api/web-search "{}"
+  405 method not allowed
+(signed out) GET /api/browse ""
+  403 forbidden
+alice GET /api/browse ""
+  403 forbidden
+root GET /api/browse ""
+  200 {"source":"local"}
+root PUT /api/browse "{}"
+  405 method not allowed
+(signed out) GET /api/mail ""
+  403 forbidden
+alice GET /api/mail ""
+  403 forbidden
+root GET /api/mail ""
+  200 {"server":"","from":"","username":"","password":"","recipient":""}
+root PUT /api/mail "{}"
+  405 method not allowed
+(signed out) GET /api/network ""
+  403 forbidden
+alice GET /api/network ""
+  403 forbidden
+root GET /api/network ""
+  200 {"connect_timeout_seconds":10,"request_timeout_seconds":15}
+root PUT /api/network "{}"
+  405 method not allowed
+(signed out) GET /api/agent-loop-tuning ""
+  403 forbidden
+alice GET /api/agent-loop-tuning ""
+  403 forbidden
+root GET /api/agent-loop-tuning ""
+  200 {"history_budget_percent":50}
+root PUT /api/agent-loop-tuning "{}"
+  405 method not allowed
+(signed out) GET /api/web-search/hooks ""
+  403 forbidden
+alice GET /api/web-search/hooks ""
+  403 forbidden
+root GET /api/web-search/hooks ""
+  200 a list
+root POST /api/web-search/hooks "{}"
+  405 method not allowed
+alice POST /api/web-search/test "{}"
+  403 forbidden
+root GET /api/web-search/test ""
+  405 method not allowed
+root POST /api/web-search/test "{\"provider\":"
+  400 invalid JSON: unexpected EOF
+root POST /api/web-search/test ""
+  400 invalid JSON: EOF
+alice POST /api/mail/test "{}"
+  403 forbidden
+root GET /api/mail/test ""
+  405 method not allowed
+root POST /api/mail/test "{\"provider\":"
+  400 invalid JSON: unexpected EOF
+root POST /api/mail/test ""
+  400 invalid JSON: EOF
+alice POST /api/web-search "{\"provider\":\"brave\",\"api_key\":\"s3cr3t-search-x\"}"
+  403 forbidden
+root POST /api/web-search "{\"provider\":\"brave\",\"api_key\":\"s3cr3t-search\",\"endpoint\":\"\",\"hook\":\"left over\"}"
+  204 
+root GET /api/web-search ""
+  200 {"api_key":"(unchanged)","endpoint":"","hook":"","provider":"brave","source":"local"}
+root POST /api/web-search "{\"provider\":\"brave\",\"api_key\":\"(unchanged)\"}"
+  204 
+root POST /api/web-search "{\"provider\":\"hook\",\"hook\":\"zz_nope\",\"api_key\":\"(unchanged)\"}"
+  400 pick a Source Hook to search with: an API hook that is switched on
+root POST /api/web-search "{\"source\":\"peer:nope\"}"
+  400 no peer named "nope" is registered: add it under Peers first
+root POST /api/web-search "{\"provider\":"
+  400 invalid JSON: unexpected EOF
+root POST /api/web-search/test "{\"provider\":\"\"}"
+  200 {"error":"provider is required","ok":false}
+root POST /api/web-search/test "{\"source\":\"peer:nope\"}"
+  200 {"error":"no peer named \"nope\" is registered: add it under Peers first","ok":false}
+root POST /api/web-search/test "{\"provider\":\"brave\",\"api_key\":\"(unchanged)\"}"
+  200 {"error":"no web_search tool is registered: enable a search provider first","ok":false}
+alice POST /api/browse "{\"source\":\"local\"}"
+  403 forbidden
+root POST /api/browse "{\"source\":\"peer:nope\"}"
+  400 no peer named nope is registered
+root POST /api/browse "{\"source\":\" local \"}"
+  204 
+root GET /api/browse ""
+  200 {"source":"local"}
+root POST /api/browse "{\"source\":\"\"}"
+  204 
+root POST /api/browse "{\"source\":"
+  400 invalid JSON: unexpected EOF
+alice POST /api/mail "{\"server\":\"smtp.example.test:587\",\"password\":\"s3cr3t-mail-x\"}"
+  403 forbidden
+root POST /api/mail "{\"server\":\"127.0.0.1:1\",\"from\":\"ops@example.test\",\"recipient\":\"\",\"username\":\"ops\",\"password\":\"s3cr3t-mail\"}"
+  204 
+root GET /api/mail ""
+  200 {"server":"127.0.0.1:1","from":"ops@example.test","username":"ops","password":"(unchanged)","recipient":""}
+root POST /api/mail "{\"server\":\"127.0.0.1:1\",\"from\":\"ops@example.test\",\"recipient\":\"admin@example.test\",\"username\":\"ops\",\"password\":\"(unchanged)\"}"
+  204 
+root POST /api/mail "{\"server\":"
+  400 invalid JSON: unexpected EOF
+root POST /api/mail/test "{\"server\":\"127.0.0.1:1\",\"from\":\"ops@example.test\",\"password\":\"(unchanged)\"}"
+  200 {"error":"set a Default Recipient first; test mail needs an address","ok":false}
+root POST /api/mail/test "{\"server\":\"127.0.0.1:1\",\"from\":\"ops@example.test\",\"recipient\":\"admin@example.test\",\"password\":\"(unchanged)\"}"
+  200 {"error":"dial tcp 127.0.0.1:1: connect: connection refused","ok":false}
+alice POST /api/network "{\"connect_timeout_seconds\":5}"
+  403 forbidden
+root POST /api/network "{\"connect_timeout_seconds\":5,\"request_timeout_seconds\":0}"
+  204 
+root GET /api/network ""
+  200 {"connect_timeout_seconds":5,"request_timeout_seconds":15}
+root POST /api/network "{\"connect_timeout_seconds\":-1,\"request_timeout_seconds\":30}"
+  204 
+root GET /api/network ""
+  200 {"connect_timeout_seconds":5,"request_timeout_seconds":30}
+root POST /api/network "{\"connect_timeout_seconds\":"
+  400 invalid JSON: unexpected EOF
+alice POST /api/agent-loop-tuning "{\"history_budget_percent\":50}"
+  403 forbidden
+root POST /api/agent-loop-tuning "{\"history_budget_percent\":50}"
+  204 
+root GET /api/agent-loop-tuning ""
+  200 {"history_budget_percent":50}
+root POST /api/agent-loop-tuning "{\"history_budget_percent\":500}"
+  204 
+root GET /api/agent-loop-tuning ""
+  200 {"history_budget_percent":90}
+root POST /api/agent-loop-tuning "{\"history_budget_percent\":"
+  400 invalid JSON: unexpected EOF
+activity log, 10 entries:
+  settings root: set page rendering to ""
+  settings root: set page rendering to "local"
+  settings root: updated agent-loop tuning (history_budget_percent=50)
+  settings root: updated agent-loop tuning (history_budget_percent=90)
+  settings root: updated mail config (server="127.0.0.1:1" from="ops@example.test")
+  settings root: updated mail config (server="127.0.0.1:1" from="ops@example.test")
+  settings root: updated network timeouts (connect=-1s request=30s)
+  settings root: updated network timeouts (connect=5s request=0s)
+  settings root: updated web-search config (provider="brave")
+  settings root: updated web-search config (provider="brave")
