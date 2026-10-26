@@ -124,9 +124,10 @@ func Post[In, Out any](base core.Database, fn func(c *Call, in In) (Out, error),
 type Option func(*config)
 
 type config struct {
-	authorize func(http.ResponseWriter, *http.Request) bool
-	emptyOK   bool
-	maxBody   int64
+	authorize  func(http.ResponseWriter, *http.Request) bool
+	internalOK bool
+	emptyOK    bool
+	maxBody    int64
 }
 
 func configure(opts []Option) config {
@@ -145,6 +146,15 @@ func configure(opts []Option) config {
 func Authorize(check func(http.ResponseWriter, *http.Request) bool) Option {
 	return func(c *config) { c.authorize = check }
 }
+
+// InternalOK also admits this instance's own internal request
+// (core.NewInternalRequest), which has no user behind it: for an endpoint
+// another app's background work calls, such as a scheduler asking for
+// suggestions. It is the same proof the auth middleware takes, a per-process
+// token on a genuinely local connection that is not a browser. The Call's
+// User is then "" and its UDB nil, so a handler that keys a store by the
+// caller must not take this.
+var InternalOK Option = func(c *config) { c.internalOK = true }
 
 // DefaultMaxBody is the most a Post reads unless MaxBody says otherwise: room
 // for any form or record, and a ceiling on what a caller can make the server
@@ -197,6 +207,9 @@ func Write(w http.ResponseWriter, v any) {
 // Authorize's check or else a signed-in user (core.RequireUser answers 401
 // itself when there is none).
 func start(w http.ResponseWriter, r *http.Request, base core.Database, cfg config) (*Call, bool) {
+	if cfg.internalOK && core.IsInternalRequest(r) && !core.IsBrowserRequest(r) {
+		return &Call{W: w, R: r}, true
+	}
 	if cfg.authorize != nil {
 		if !cfg.authorize(w, r) {
 			return nil, false

@@ -210,3 +210,43 @@ func TestAuthorizeAdmitsByTheGivenGate(t *testing.T) {
 		t.Errorf("Post ignored the gate: %d", w.Code)
 	}
 }
+
+// InternalOK admits this instance's own internal request, which has no user,
+// as well as a signed-in one; without it, or with a request that only looks
+// local, the caller still has to be signed in.
+func TestInternalOKAdmitsTheInstancesOwnCall(t *testing.T) {
+	cookie := signIn(t)
+	core.WebListenAddr = "127.0.0.1:8181"
+	who := func(c *Call) (string, error) { return "user=" + c.User, nil }
+	internal := func() *http.Request {
+		r, err := core.NewInternalRequest(t.Context(), http.MethodGet, "/api/x", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.RemoteAddr = "127.0.0.1:44444"
+		return r
+	}
+	serve := func(h http.HandlerFunc, r *http.Request) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		h(w, r)
+		return w
+	}
+	open := Get(nil, who, InternalOK)
+	if w := serve(open, internal()); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"user="`) {
+		t.Errorf("an internal call with InternalOK: %d %s", w.Code, w.Body.String())
+	}
+	if w := call(open, http.MethodGet, "", cookie); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "user=alice") {
+		t.Errorf("a signed-in call with InternalOK: %d %s", w.Code, w.Body.String())
+	}
+	if w := call(open, http.MethodGet, "", nil); w.Code != http.StatusUnauthorized {
+		t.Errorf("a signed-out call with InternalOK answered %d, want 401", w.Code)
+	}
+	bare := httptest.NewRequest(http.MethodGet, "/api/x", nil)
+	bare.RemoteAddr = "127.0.0.1:44444"
+	if w := serve(open, bare); w.Code != http.StatusUnauthorized {
+		t.Errorf("a plain loopback call with InternalOK answered %d, want 401", w.Code)
+	}
+	if w := serve(Get(nil, who), internal()); w.Code != http.StatusUnauthorized {
+		t.Errorf("an internal call without InternalOK answered %d, want 401", w.Code)
+	}
+}
