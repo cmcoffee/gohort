@@ -35,7 +35,7 @@ func postStage(t *testing.T, app *OrchestrateApp, user, id, name, body string) *
 	}
 	r := httptest.NewRequest("POST", url, strings.NewReader(body))
 	w := httptest.NewRecorder()
-	app.handlePipelineOne(w, asUser(r, user))
+	routed(app)(w, asUser(r, user))
 	return w
 }
 
@@ -59,7 +59,7 @@ func TestAStageSaveMergesRatherThanReplaces(t *testing.T) {
 	// GET returns the flat record the form binds to.
 	r := httptest.NewRequest("GET", "/api/pipelines/"+def.ID+"/stages?name=plan", nil)
 	rec := httptest.NewRecorder()
-	app.handlePipelineOne(rec, asUser(r, user))
+	routed(app)(rec, asUser(r, user))
 	var got map[string]any
 	_ = json.Unmarshal(rec.Body.Bytes(), &got)
 	if got["model"] != "lead" || got["kind"] != "worker" {
@@ -113,14 +113,14 @@ func TestRemovingAStageThroughTheFormSaysWhatIsInTheWay(t *testing.T) {
 
 	r := httptest.NewRequest("DELETE", "/api/pipelines/"+def.ID+"/stages?name=plan", nil)
 	w := httptest.NewRecorder()
-	app.handlePipelineOne(w, asUser(r, user))
+	routed(app)(w, asUser(r, user))
 	if w.Code != 400 || !strings.Contains(w.Body.String(), "dig (fan_over)") {
 		t.Errorf("should refuse and name the reader: %d %s", w.Code, w.Body.String())
 	}
 
 	r = httptest.NewRequest("DELETE", "/api/pipelines/"+def.ID+"/stages?name=answer", nil)
 	w = httptest.NewRecorder()
-	app.handlePipelineOne(w, asUser(r, user))
+	routed(app)(w, asUser(r, user))
 	if w.Code != 200 {
 		t.Fatalf("an unread stage should remove: %d %s", w.Code, w.Body.String())
 	}

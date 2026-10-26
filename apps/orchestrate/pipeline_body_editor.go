@@ -20,7 +20,6 @@
 package orchestrate
 
 import (
-	"net/http"
 	"strconv"
 	"strings"
 
@@ -139,31 +138,24 @@ func bodyKindOptions() []ui.SelectOption {
 // savePipelineBodyStage writes one stage inside a body: an edit when the
 // path resolved to an existing one, an add when the form named a parent.
 //
-// Returns nil on success having written the reply, and a non-nil error
-// having written the refusal — so the caller returns either way and never
-// writes twice.
-func (T *OrchestrateApp) savePipelineBodyStage(w http.ResponseWriter, udb Database, user string, def PipelineDef, slot stageSlot, parentRef string, stage PipelineStage) error {
+// It answers with the saved stage, or the refusal.
+func (T *OrchestrateApp) savePipelineBodyStage(udb Database, user string, def PipelineDef, slot stageSlot, parentRef string, stage PipelineStage) (any, error) {
 	parent := slot.parent
 	if parent == nil {
 		var ok bool
 		if parent, ok = resolveBodyOwner(&def, parentRef); !ok {
-			http.Error(w, "no stage called "+strconv.Quote(parentRef)+" to add a step to: it was renamed or removed; reload the page",
-				http.StatusNotFound)
-			return Error("no parent")
+			return nil, jsonapi.NotFound("no stage called " + strconv.Quote(parentRef) + " to add a step to: it was renamed or removed; reload the page")
 		}
 	}
 	if parent.Kind != StageLoop && parent.Kind != StageFanout {
-		http.Error(w, "stage "+strconv.Quote(parent.Name)+" has no body: only a loop or a fanout runs stages of its own",
-			http.StatusBadRequest)
-		return Error("not a body-bearing stage")
+		return nil, jsonapi.BadRequest("stage " + strconv.Quote(parent.Name) + " has no body: only a loop or a fanout runs stages of its own")
 	}
 
 	if slot.found() {
 		_, oldName := splitStagePath(strings.TrimSpace(parent.Name) + "." + strings.TrimSpace(slot.stage().Name))
 		if oldName != stage.Name {
 			if indexIn(parent.Body, stage.Name) >= 0 {
-				http.Error(w, "a step called "+strconv.Quote(stage.Name)+" already exists in this body", http.StatusBadRequest)
-				return Error("duplicate")
+				return nil, jsonapi.BadRequest("a step called " + strconv.Quote(stage.Name) + " already exists in this body")
 			}
 			parent.Body[slot.idx] = stage
 			renameInBody(parent, oldName, stage.Name)
@@ -172,8 +164,7 @@ func (T *OrchestrateApp) savePipelineBodyStage(w http.ResponseWriter, udb Databa
 		}
 	} else {
 		if indexIn(parent.Body, stage.Name) >= 0 {
-			http.Error(w, "a step called "+strconv.Quote(stage.Name)+" already exists in this body", http.StatusBadRequest)
-			return Error("duplicate")
+			return nil, jsonapi.BadRequest("a step called " + strconv.Quote(stage.Name) + " already exists in this body")
 		}
 		parent.Body = append(parent.Body, stage)
 	}
@@ -182,13 +173,11 @@ func (T *OrchestrateApp) savePipelineBodyStage(w http.ResponseWriter, udb Databa
 	// here: the body rules (no nesting, a branch that may only skip
 	// within the pass) are exactly what somebody authoring one will trip.
 	if err := def.Validate(); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return Error("invalid")
+		return nil, jsonapi.BadRequest(err.Error())
 	}
 	saved := SavePipelineDef(udb, def)
 	path := strings.TrimSpace(parent.Name) + "." + strings.TrimSpace(stage.Name)
 	Log("[orchestrate.pipelines] user=%q edited body stage %q of %q", user, path, saved.Name)
-	jsonapi.Write(w, map[string]any{"ok": true, "id": saved.ID, "name": path,
-		"slug": ui.SectionSlug(bodyStageSectionTitle(parent.Name, stage.Name))})
-	return nil
+	return map[string]any{"ok": true, "id": saved.ID, "name": path,
+		"slug": ui.SectionSlug(bodyStageSectionTitle(parent.Name, stage.Name))}, nil
 }

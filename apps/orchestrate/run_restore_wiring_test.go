@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"net/http/httptest"
 	"os"
 	"regexp"
 	"strings"
@@ -18,8 +19,8 @@ func TestRunSurfacesAreRestorableAndReachable(t *testing.T) {
 		}
 		return string(b)
 	}
-	runs, machine, page, routes, exposed, orch := read("pipeline_runs.go"), read("machine_run.go"),
-		read("pipeline_page.go"), read("pipelines_http.go"), read("exposed.go"), read("orchestrate.go")
+	runs, machine, page, exposed, orch := read("pipeline_runs.go"), read("machine_run.go"),
+		read("pipeline_page.go"), read("exposed.go"), read("orchestrate.go")
 
 	// Each restorable surface names its kind and a page link ending in {id},
 	// which the completion notice links to.
@@ -46,7 +47,10 @@ func TestRunSurfacesAreRestorableAndReachable(t *testing.T) {
 		!strings.Contains(page, `ReconnectURL: "api/pipelines/" + url_(def.ID) + "/reconnect/{id}"`) {
 		t.Error("the pipeline page must declare cancel and reconnect")
 	}
-	if !regexp.MustCompile(`case "stream", "sessions", "cancel"[^:]*:`).MatchString(routes) || !strings.Contains(routes, `strings.CutPrefix(action, "reconnect/")`) {
+	mux := routeMux(&OrchestrateApp{})
+	_, cancel := mux.Handler(httptest.NewRequest("POST", "/api/pipelines/p1/cancel", nil))
+	_, reconnect := mux.Handler(httptest.NewRequest("GET", "/api/pipelines/p1/reconnect/run-1", nil))
+	if cancel == "" || reconnect == "" {
 		t.Error("the pipeline routes must reach cancel and reconnect")
 	}
 	if !strings.Contains(machine, `CancelURL:        base + "cancel"`) || !strings.Contains(machine, `ReconnectURL:     base + "reconnect/{id}"`) {

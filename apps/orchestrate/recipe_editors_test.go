@@ -41,7 +41,7 @@ func TestARecipeSharedToEditIsChangedInTheOwnersCopy(t *testing.T) {
 		handle          func(http.ResponseWriter, *http.Request)
 		read            func() (name, owner string, editors []string)
 	}{
-		{"pipeline", "/api/pipelines/" + pl.ID, `{"name":"Nightly v2","stages":[{"name":"one"}]}`, T.handlePipelineOne, func() (string, string, []string) {
+		{"pipeline", "/api/pipelines/" + pl.ID, `{"name":"Nightly v2","stages":[{"name":"one"}]}`, routed(T), func() (string, string, []string) {
 			d, _ := LoadPipelineDef(udb, "alice", pl.ID)
 			return d.Name, d.Owner, d.Editors
 		}},

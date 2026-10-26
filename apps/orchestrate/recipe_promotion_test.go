@@ -171,7 +171,7 @@ func TestEveryoneInARecipesShareListFilesTheRequest(t *testing.T) {
 		handle     func(http.ResponseWriter, *http.Request)
 		published  func() bool
 	}{
-		{pipelinePromotionKind, "/api/pipelines/" + pl.ID, T.handlePipelineOne, func() bool {
+		{pipelinePromotionKind, "/api/pipelines/" + pl.ID, routed(T), func() bool {
 			d, _ := LoadPipelineDef(udb, "alice", pl.ID)
 			return d.Published
 		}},

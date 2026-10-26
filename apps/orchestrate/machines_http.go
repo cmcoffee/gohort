@@ -664,7 +664,7 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 }
 
 // machineOwnerOnly refuses a write to a machine somebody else shared with this
-// user, in the words that say what to do instead. Mirrors pipelineOwnerOnly.
+// user, in the words that say what to do instead. Mirrors pipelineCall.ownerOnly.
 func machineOwnerOnly(w http.ResponseWriter, mine bool, owner, verb string) bool {
 	if mine {
 		return true

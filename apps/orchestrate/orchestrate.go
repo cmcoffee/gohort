@@ -754,7 +754,7 @@ func (T *OrchestrateApp) registerHandlers() {
 	// routes (get/put/delete/export/run) in handlePipelineOne.
 	T.HandleFunc("/api/pipelines/import", T.handlePipelineImport)
 	T.HandleFunc("/api/pipelines/draft", jsonapi.Post(T.DB, T.handlePipelineDraft, jsonapi.EmptyBodyOK))
-	T.HandleFunc("/api/pipelines/", T.handlePipelineOne)
+	T.registerPipelineRoutes()
 	// Phase machines (machines_http.go, docs/design/agent-machines.md). Same
 	// route shape as pipelines, minus /run — a machine only runs inside a
 	// session, so there is nothing to invoke from here.

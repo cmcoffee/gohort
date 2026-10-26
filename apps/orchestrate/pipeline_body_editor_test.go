@@ -32,18 +32,18 @@ func post(t *testing.T, app *OrchestrateApp, udb Database, user string, def Pipe
 	t.Helper()
 	r := httptest.NewRequest("POST", "/api/pipelines/"+def.ID+"/stages"+query, strings.NewReader(body))
 	w := httptest.NewRecorder()
-	app.handlePipelineStages(w, asUser(r, user), udb, user, def)
+	routed(app)(w, asUser(r, user))
 	return w
 }
 
 // A path addresses a body stage, and it is unambiguous because a stage
 // name may not contain a dot.
 func TestABodyStageIsAddressedByPath(t *testing.T) {
-	app, udb, user, def := bodyFixture(t)
+	app, _, user, def := bodyFixture(t)
 
 	r := httptest.NewRequest("GET", "/api/pipelines/"+def.ID+"/stages?name=dig.look", nil)
 	w := httptest.NewRecorder()
-	app.handlePipelineStages(w, asUser(r, user), udb, user, def)
+	routed(app)(w, asUser(r, user))
 	if w.Code != 200 {
 		t.Fatalf("want the body stage, got %d: %s", w.Code, w.Body.String())
 	}
@@ -116,7 +116,7 @@ func TestRemovingABodyStageASiblingReadsIsRefused(t *testing.T) {
 
 	r := httptest.NewRequest("DELETE", "/api/pipelines/"+saved.ID+"/stages?name=dig.look", nil)
 	w := httptest.NewRecorder()
-	app.handlePipelineStages(w, asUser(r, user), udb, saved.Owner, saved)
+	routed(app)(w, asUser(r, user))
 	if w.Code == 200 {
 		t.Fatal("removing a step another step reads should be refused")
 	}
@@ -127,7 +127,7 @@ func TestRemovingABodyStageASiblingReadsIsRefused(t *testing.T) {
 	// And one nothing reads goes.
 	r = httptest.NewRequest("DELETE", "/api/pipelines/"+saved.ID+"/stages?name=dig.judge", nil)
 	w = httptest.NewRecorder()
-	app.handlePipelineStages(w, asUser(r, user), udb, saved.Owner, saved)
+	routed(app)(w, asUser(r, user))
 	if w.Code != 200 {
 		t.Fatalf("%d %s", w.Code, w.Body.String())
 	}

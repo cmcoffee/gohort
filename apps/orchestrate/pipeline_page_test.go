@@ -251,7 +251,7 @@ func TestAPipelineCanBeGivenToAnAgentFromItsOwnPage(t *testing.T) {
 	body := `{"agents":["` + wren.ID + `","` + busy.ID + `"]}`
 	r := httptest.NewRequest("POST", "/api/pipelines/"+def.ID+"/agents", strings.NewReader(body))
 	w := httptest.NewRecorder()
-	app.handlePipelineOne(w, asUser(r, user))
+	routed(app)(w, asUser(r, user))
 	if w.Code != 200 {
 		t.Fatalf("attach: %d %s", w.Code, w.Body.String())
 	}
@@ -263,7 +263,7 @@ func TestAPipelineCanBeGivenToAnAgentFromItsOwnPage(t *testing.T) {
 	// Unchecking removes only this pipeline.
 	r = httptest.NewRequest("POST", "/api/pipelines/"+def.ID+"/agents", strings.NewReader(`{"agents":[]}`))
 	w = httptest.NewRecorder()
-	app.handlePipelineOne(w, asUser(r, user))
+	routed(app)(w, asUser(r, user))
 	got, _ = loadAgent(udb, busy.ID)
 	if len(got.AttachedPipelines) != 1 || got.AttachedPipelines[0] != other.ID {
 		t.Errorf("detaching one must leave the agent's others alone: %v", got.AttachedPipelines)
@@ -420,7 +420,7 @@ func TestAPipelineCanBeRunFromItsOwnPage(t *testing.T) {
 	// 404 is the same lie as a button that does nothing.
 	r = httptest.NewRequest("GET", "/api/pipelines/"+def.ID+"/sessions", nil)
 	w = httptest.NewRecorder()
-	app.handlePipelineOne(w, asUser(r, user))
+	routed(app)(w, asUser(r, user))
 	if w.Code == 404 {
 		t.Error("the sessions endpoint the panel names is not routed")
 	}
@@ -584,7 +584,7 @@ func TestThePipelineMapIsRedrawnWhenAStageChangesTheShape(t *testing.T) {
 	// or a redraw would quietly cost every box its link.
 	r := httptest.NewRequest("GET", "/api/pipelines/"+def.ID+"/graph?links=1", nil)
 	w := httptest.NewRecorder()
-	app.handlePipelineOne(w, asUser(r, user))
+	routed(app)(w, asUser(r, user))
 	if w.Code != 200 {
 		t.Fatalf("graph fetch failed: %d", w.Code)
 	}
@@ -595,7 +595,7 @@ func TestThePipelineMapIsRedrawnWhenAStageChangesTheShape(t *testing.T) {
 	// or a saved copy gets.
 	r = httptest.NewRequest("GET", "/api/pipelines/"+def.ID+"/graph", nil)
 	w = httptest.NewRecorder()
-	app.handlePipelineOne(w, asUser(r, user))
+	routed(app)(w, asUser(r, user))
 	if strings.Contains(w.Body.String(), `href="#3-dig"`) {
 		t.Error("anchors only mean something inside the page that has those sections")
 	}
@@ -639,7 +639,7 @@ func TestThePipelineMapIsRedrawnWhenAStageChangesTheShape(t *testing.T) {
 	} {
 		r = httptest.NewRequest("GET", "/api/pipelines/"+def.ID+"/block?name="+tc.name, nil)
 		w = httptest.NewRecorder()
-		app.handlePipelineOne(w, asUser(r, user))
+		routed(app)(w, asUser(r, user))
 		if w.Code != 200 {
 			t.Errorf("block %q does not render: %d", tc.name, w.Code)
 			continue
@@ -653,7 +653,7 @@ func TestThePipelineMapIsRedrawnWhenAStageChangesTheShape(t *testing.T) {
 	// itself on the first save.
 	r = httptest.NewRequest("GET", "/api/pipelines/"+def.ID+"/block?name=nonsense", nil)
 	w = httptest.NewRecorder()
-	app.handlePipelineOne(w, asUser(r, user))
+	routed(app)(w, asUser(r, user))
 	if w.Code != 404 {
 		t.Errorf("an unknown block should 404, got %d", w.Code)
 	}

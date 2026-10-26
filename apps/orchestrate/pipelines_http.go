@@ -210,349 +210,385 @@ func (T *OrchestrateApp) handlePipelineImport(w http.ResponseWriter, r *http.Req
 	jsonapi.Write(w, saved)
 }
 
-// handlePipelineOne serves per-pipeline routes: GET / PUT / DELETE, plus
-// the /export and /run actions.
-func (T *OrchestrateApp) handlePipelineOne(w http.ResponseWriter, r *http.Request) {
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
+// registerPipelineRoutes mounts one pipeline's routes: the record, its
+// actions, and the run surfaces.
+func (T *OrchestrateApp) registerPipelineRoutes() {
+	T.HandleFunc("/api/pipelines/{id}", jsonapi.Methods{
+		"GET":    jsonapi.Get(T.DB, T.pipelineGet),
+		"PUT":    jsonapi.Put(T.DB, T.pipelineSave),
+		"DELETE": jsonapi.Delete(T.DB, T.pipelineDelete),
+	}.Serve)
+	T.HandleFunc("/api/pipelines/{id}/agents", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, T.pipelineAgents),
+		"POST": jsonapi.Post(T.DB, T.pipelineAgentsSave, jsonapi.MaxBody(maxImportBytes)),
+		"PUT":  jsonapi.Put(T.DB, T.pipelineAgentsSave, jsonapi.MaxBody(maxImportBytes)),
+	}.Serve)
+	T.HandleFunc("/api/pipelines/{id}/duplicate", jsonapi.Post(T.DB, T.pipelineDuplicate))
+	T.HandleFunc("/api/pipelines/{id}/revise", jsonapi.Post(T.DB, T.pipelineRevise))
+	T.HandleFunc("/api/pipelines/{id}/undo", jsonapi.Post(T.DB, T.pipelineUndo))
+	T.HandleFunc("/api/pipelines/{id}/stages", jsonapi.Methods{
+		"GET":    jsonapi.Get(T.DB, T.pipelineStage),
+		"POST":   jsonapi.Post(T.DB, T.pipelineStageSave),
+		"PUT":    jsonapi.Put(T.DB, T.pipelineStageSave),
+		"PATCH":  jsonapi.Patch(T.DB, T.pipelineStageSave),
+		"DELETE": jsonapi.Delete(T.DB, T.pipelineStageDelete),
+	}.Serve)
+	T.HandleFunc("/api/pipelines/{id}/share", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, T.pipelineShare),
+		"POST": jsonapi.Post(T.DB, T.pipelineShareSave),
+	}.Serve)
+	T.HandleFunc("/api/pipelines/{id}/publish", jsonapi.Post(T.DB, T.pipelinePublish, jsonapi.EmptyBodyOK))
+	T.HandleFunc("/api/pipelines/{id}/unpublish", jsonapi.Post(T.DB, T.pipelineUnpublish))
+	T.HandleFunc("/api/pipelines/{id}/run", jsonapi.Post(T.DB, T.pipelineRun))
+	// Not JSON: an editor page block, the picture, a download, and the run
+	// surfaces core serves (core/pipeline_runs.go).
+	T.HandleFunc("/api/pipelines/{id}/block", T.pipelineRaw(T.handlePipelineBlock))
+	T.HandleFunc("/api/pipelines/{id}/graph", T.pipelineRaw(T.handlePipelineGraph))
+	T.HandleFunc("/api/pipelines/{id}/export", T.pipelineRaw(T.handlePipelineExport))
+	revisions := T.pipelineRaw(func(w http.ResponseWriter, r *http.Request, p *pipelineCall) {
+		T.handlePipelineRevisions(w, r, p.call.User, p.def, p.owner, p.ed.ok, r.PathValue("action"))
+	})
+	T.HandleFunc("/api/pipelines/{id}/revisions", revisions)
+	T.HandleFunc("/api/pipelines/{id}/revisions/{action}", revisions)
+	// The streaming twin of "run": same execution, transcript instead of a
+	// lump. This is what lets a PipelineDef be an APP — core serves the
+	// protocol (core/pipeline_runs.go); orchestrate supplies the store and
+	// the agent-dispatch hook.
+	runs := func(sub func(r *http.Request) string) http.HandlerFunc {
+		return T.pipelineRaw(func(w http.ResponseWriter, r *http.Request, p *pipelineCall) {
+			T.handlePipelineRuns(w, r, p.call.User, p.def, sub(r))
+		})
 	}
-	rest := strings.TrimPrefix(r.URL.Path, "/api/pipelines/")
-	if rest == "" {
-		http.NotFound(w, r)
-		return
+	for _, name := range []string{"stream", "sessions", "cancel", "followups", "suggest"} {
+		T.HandleFunc("/api/pipelines/{id}/"+name, runs(func(*http.Request) string { return name }))
 	}
-	var id, action string
-	if slash := strings.IndexByte(rest, '/'); slash >= 0 {
-		id = rest[:slash]
-		action = rest[slash+1:]
-	} else {
-		id = rest
-	}
-	if id == "" {
-		http.NotFound(w, r)
-		return
-	}
-	// Own first, then one somebody shared with this user (pipeline_sharing.go).
-	// mine is what every write below gates on: a recipient reads, runs and
-	// copies; the definition stays the owner's.
-	def, defOwner, mine, found := resolvePipelineFor(user, udb, id)
-	if !found {
-		http.NotFound(w, r)
-		return
-	}
-	// Where an edit goes, and as whose (recipeEdit): the owner's own, or an
-	// editor's change to the owner's copy. Sharing, publishing, deleting and
-	// attaching to agents stay the owner's (pipelineOwnerOnly).
-	ed := recipeEditFor(user, udb, defOwner, mine, def.Editors)
-
-	// Revisions: the list, one version read-only, and the way back. Matched
-	// before the switch, which compares whole strings and would miss a tail.
-	if sub, isRev := revisionAction(action); isRev {
-		T.handlePipelineRevisions(w, r, user, def, defOwner, ed.ok, sub)
-		return
-	}
-
-	switch action {
-	case "":
-		switch r.Method {
-		case http.MethodGet:
-			jsonapi.Write(w, def)
-		case http.MethodPut:
-			if !recipeEditorOnly(w, ed, "pipeline", defOwner, "edit") {
-				return
-			}
-			var body PipelineDef
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				http.Error(w, "bad request", http.StatusBadRequest)
-				return
-			}
-			// Identity stays the server's: keep id/owner from the loaded
-			// record, take name/description/stages from the body. The
-			// recipient list is identity too — an edit form must not be able
-			// to widen or clear who a pipeline is shared with, the same way
-			// an agent's guardrails survive a whole-record save.
-			body.ID = def.ID
-			body.Owner = ed.owner
-			body.AllowedUsers = def.AllowedUsers
-			body.Editors = def.Editors
-			// Published is an administrator's approval, reached only through
-			// the promotion queue; an edit form must not be able to assert it.
-			body.Published = def.Published
-			body.Created = def.Created
-			if err := body.Validate(); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			saved := SavePipelineDef(ed.db, body)
-			Log("[orchestrate.pipelines] user=%q updated pipeline %q (id=%s, owner %q)", user, saved.Name, saved.ID, ed.owner)
-			jsonapi.Write(w, saved)
-		case http.MethodDelete:
-			if !pipelineOwnerOnly(w, mine, defOwner, "delete") {
-				return
-			}
-			DeletePipelineDef(udb, def.ID)
-			Log("[orchestrate.pipelines] user=%q deleted pipeline %q (id=%s)", user, def.Name, def.ID)
-			jsonapi.Write(w, map[string]any{"deleted": def.ID})
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		}
-	case "agents":
-		// Assign to agents. An unattached pipeline is a tool no agent
-		// has, which the list already says and nothing could change.
-		//
-		// Owner-only, and not merely for symmetry: attaching writes the
-		// pipeline's ID into an agent's AttachedPipelines, and that agent
-		// resolves the id in its OWN owner's store. A recipient attaching a
-		// shared pipeline would mint a run_<name> tool pointing at a record
-		// their store cannot load.
-		if !pipelineOwnerOnly(w, mine, defOwner, "attach") {
-			return
-		}
-		T.handlePipelineAgents(w, r, udb, user, def)
-	case "duplicate":
-		// Iterating on a working pipeline in place is how the working
-		// one stops working. The copy is where an experiment belongs,
-		// and landing in it is the reason anybody clicked.
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		dup := def
-		dup.ID = ""
-		dup.Previous = nil
-		dup.Global = false
-		// A copy of somebody else's pipeline is YOURS: re-owned, and shared
-		// with nobody until you say so. Carrying their recipient list into
-		// your store would re-share their work under your name.
-		dup.Owner = user
-		dup.AllowedUsers = nil
-		dup.Editors = nil
-		// And not published either. An administrator agreed that THAT record
-		// should reach everybody, not every copy anyone makes of it.
-		dup.Published = false
-		dup.Name = copyName(def.Name, pipelineNames(ListPipelineDefs(udb, user)))
-		saved := SavePipelineDef(udb, dup)
-		Log("[orchestrate.pipelines] user=%q duplicated pipeline %q as %q", user, def.Name, saved.Name)
-		jsonapi.Write(w, map[string]any{"id": saved.ID, "name": saved.Name})
-	case "revise":
-		// Say what should change, against the pipeline on screen
-		// (pipeline_revise.go). Undoable, because it can rewrite every
-		// prompt in it.
-		if !recipeEditorOnly(w, ed, "pipeline", defOwner, "revise") {
-			return
-		}
-		T.handlePipelineRevise(w, r, ed.db, ed.owner, def)
-	case "undo":
-		if !recipeEditorOnly(w, ed, "pipeline", defOwner, "undo a change to") {
-			return
-		}
-		T.handlePipelineUndo(w, r, ed.db, ed.owner, def)
-	case "stages":
-		// The per-stage form (pipeline_editor.go).
-		if !recipeEditorOnly(w, ed, "pipeline", defOwner, "edit") {
-			return
-		}
-		T.handlePipelineStages(w, r, ed.db, ed.owner, def)
-	case "share":
-		// The recipient list, and ONLY the recipient list. The ACLPicker posts
-		// the whole record back (record mode), and this reads one field out of
-		// it — so a picker save cannot rewrite a stage, and the ordinary edit
-		// path cannot rewrite the ACL. Each door opens one thing, which is the
-		// same split an agent's guardrails have.
-		//
-		// Everyone rides in the same list (recipeShare): the publish steps,
-		// requested rather than applied unless an administrator is asking.
-		if r.Method != http.MethodGet && r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		if !pipelineOwnerOnly(w, mine, defOwner, "change who can see") {
-			return
-		}
-		rs := recipeShare{
-			kind: pipelinePromotionKind, owner: user, name: def.Name,
-			published: def.Published, before: def.AllowedUsers, editors: def.Editors,
-			publish:   func() error { return publishPipelineForDeployment(user, def.ID) },
-			unpublish: func() error { return unpublishPipeline(user, def.ID) },
-		}
-		rs.save = func(names, editors []string) any {
-			cur, err := findOwnedPipeline(user, def.ID)
-			if err != nil {
-				cur = def
-			}
-			before := cur.AllowedUsers
-			cur.Owner = user
-			cur.AllowedUsers = normalizeShareList(names, user)
-			cur.Editors = editors
-			saved := SavePipelineDef(udb, cur)
-			// Anybody dropped from the list loses it now, including any
-			// schedule they had armed against it: a share taken back has to
-			// take back everything it enabled, not just the next page load.
-			breakSchedulesForLostRecipients(saved, before)
-			Log("[orchestrate.pipelines] user=%q shared pipeline %q with %d user(s)", user, saved.Name, len(saved.AllowedUsers))
-			saved.AllowedUsers = withEveryone(saved.AllowedUsers, saved.Published || rs.pending())
-			return saved
-		}
-		if r.Method == http.MethodGet {
-			jsonapi.Write(w, rs.list())
-			return
-		}
-		var body struct {
-			AllowedUsers []string  `json:"allowed_users"`
-			Editors      *[]string `json:"editors"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		out, err := rs.apply(r, body.AllowedUsers, body.Editors)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		jsonapi.Write(w, out)
-	case "publish":
-		// The third rung: ask an administrator to let EVERY user of the
-		// deployment run this. The narrower grant beside it is the owner's own
-		// to make; this one is not, which is why the door only files a request.
-		//
-		// A separate door from "share" for the same reason share is separate
-		// from the editor: each one opens exactly one thing.
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		if !pipelineOwnerOnly(w, mine, defOwner, "publish") {
-			return
-		}
-		if def.Published {
-			http.Error(w, "this pipeline is already published", http.StatusBadRequest)
-			return
-		}
-		var body struct {
-			Note string `json:"note"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&body) // the note is optional
-		if err := CreatePromotionRequest(AuthDB(), user, pipelinePromotionKind, def.Name, body.Note); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		Log("[orchestrate.pipelines] user=%q asked to publish pipeline %q", user, def.Name)
-		w.WriteHeader(http.StatusNoContent)
-	case "unpublish":
-		// Owner-direct, exactly as revoking a share is: nobody needs
-		// permission to stop publishing something they wrote.
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		if !pipelineOwnerOnly(w, mine, defOwner, "take back") {
-			return
-		}
-		if err := unpublishPipeline(user, def.ID); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	case "block":
-		// One derived block of the editor page, by name, as the HTML the
-		// page itself renders (pipeline_page.go). A ui.Card with a Source
-		// fetches this when a stage is saved, which is what keeps the
-		// plan, the price and the findings describing the pipeline as it
-		// is rather than as it was when the page was opened.
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		html, ok := pipelinePageBlock(udb, user, def, strings.TrimSpace(r.URL.Query().Get("name")))
-		if !ok {
-			http.NotFound(w, r)
-			return
-		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-store")
-		_, _ = w.Write([]byte(html))
-	case "graph":
-		// The picture (docs/design/workflow-graph.md), so the editor can redraw
-		// it after an edit that changed the SHAPE — ticking a branch's
-		// destination adds an arrow, and the map is rendered server-side.
-		//
-		// Served as SVG so it can be linked or saved on its own; the page
-		// fetches the text and injects it inline, which is what lets the
-		// page's CSS variables theme it. Every dynamic string in the
-		// document is escaped at the renderer (see xmlEscape).
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		w.Header().Set("Content-Type", "image/svg+xml; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-store")
-		// ?links=1 draws it as the editor's MAP: every box a door into
-		// that stage's section. Same picture either way — the difference
-		// is anchors, which only mean something inside the page that has
-		// those sections. Mirrors the machines route.
-		if r.URL.Query().Get("links") == "1" {
-			_, _ = w.Write([]byte(pipelineGraphSVG(def)))
-			return
-		}
-		_, _ = w.Write([]byte(def.Graph().SVG(nil)))
-	case "export":
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		recipe := ExportPipeline(def)
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Content-Disposition", "attachment; filename=\""+SnakeFromDisplay(def.Name)+".pipeline.json\"")
-		_ = json.NewEncoder(w).Encode(recipe)
-	case "run":
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		T.runPipelineHTTP(w, r, user, def)
-	case "stream", "sessions", "cancel", "followups", "suggest":
-		// The streaming twin of "run": same execution, transcript instead of a
-		// lump. This is what lets a PipelineDef be an APP — core serves the
-		// protocol (core/pipeline_runs.go); orchestrate supplies the store and
-		// the agent-dispatch hook.
-		T.handlePipelineRuns(w, r, user, def, action)
-	default:
-		if sid, ok := strings.CutPrefix(action, "sessions/"); ok && sid != "" && !strings.Contains(sid, "/") {
-			T.handlePipelineRuns(w, r, user, def, action)
-			return
-		}
-		if rid, ok := strings.CutPrefix(action, "reconnect/"); ok && rid != "" && !strings.Contains(rid, "/") {
-			T.handlePipelineRuns(w, r, user, def, action)
-			return
-		}
-		// followup/<name>/<run>: put a finished run through a follow-up.
-		if rest, ok := strings.CutPrefix(action, "followup/"); ok && strings.Count(rest, "/") == 1 {
-			T.handlePipelineRuns(w, r, user, def, action)
-			return
-		}
-		http.NotFound(w, r)
-	}
+	T.HandleFunc("/api/pipelines/{id}/sessions/{sid}", runs(func(r *http.Request) string { return "sessions/" + r.PathValue("sid") }))
+	T.HandleFunc("/api/pipelines/{id}/reconnect/{rid}", runs(func(r *http.Request) string { return "reconnect/" + r.PathValue("rid") }))
+	// followup/<name>/<run>: put a finished run through a follow-up.
+	T.HandleFunc("/api/pipelines/{id}/followup/{name}/{run}", runs(func(r *http.Request) string {
+		return "followup/" + r.PathValue("name") + "/" + r.PathValue("run")
+	}))
 }
 
-// runPipelineHTTP executes a pipeline synchronously for the browser and
+// pipelineCall is one request on one pipeline: the definition, whose it is,
+// whether it is the caller's, and where an edit to it goes (recipeEdit).
+type pipelineCall struct {
+	call  *jsonapi.Call
+	def   PipelineDef
+	owner string
+	mine  bool
+	ed    recipeEdit
+}
+
+// pipelineAt resolves the pipeline the path names: the caller's own, then one
+// somebody shared with them (pipeline_sharing.go). A recipient reads, runs
+// and copies; the definition stays the owner's, and an editor's change goes
+// to the owner's copy.
+func (T *OrchestrateApp) pipelineAt(c *jsonapi.Call) (*pipelineCall, error) {
+	def, owner, mine, found := resolvePipelineFor(c.User, c.UDB, c.R.PathValue("id"))
+	if !found {
+		return nil, errNotFound
+	}
+	return &pipelineCall{call: c, def: def, owner: owner, mine: mine,
+		ed: recipeEditFor(c.User, c.UDB, owner, mine, def.Editors)}, nil
+}
+
+// editable refuses a change by somebody it was shared with to run.
+func (p *pipelineCall) editable(verb string) error {
+	return recipeEditRefusal(p.ed, "pipeline", p.owner, verb)
+}
+
+// ownerOnly refuses what stays the owner's: sharing, publishing, deleting
+// and attaching to agents.
+//
+// A share hands over the recipe, not the pen. The refusal names the owner
+// because the alternative — a flat 403 on a page that plainly shows the thing —
+// reads as a bug, and the reader's actual next step is to go ask that person.
+func (p *pipelineCall) ownerOnly(verb string) error {
+	if p.mine {
+		return nil
+	}
+	return jsonapi.Forbidden("this pipeline is shared with you by " + p.owner + ", so you can run and copy it but not " + verb + " it: ask " + p.owner + " to make the change, or duplicate it and edit your copy")
+}
+
+// pipelineRaw is a raw route on one pipeline, refused as the JSON ones are.
+func (T *OrchestrateApp) pipelineRaw(h func(w http.ResponseWriter, r *http.Request, p *pipelineCall)) http.HandlerFunc {
+	return T.signedIn(func(w http.ResponseWriter, r *http.Request, user string, udb Database) {
+		p, err := T.pipelineAt(&jsonapi.Call{W: w, R: r, User: user, UDB: udb})
+		if err != nil {
+			jsonapi.Fail(w, r, err)
+			return
+		}
+		h(w, r, p)
+	})
+}
+
+func (T *OrchestrateApp) pipelineGet(c *jsonapi.Call) (any, error) {
+	p, err := T.pipelineAt(c)
+	if err != nil {
+		return nil, err
+	}
+	return p.def, nil
+}
+
+// pipelineSave is the editor's whole-record save. Identity stays the
+// server's: id, owner, who it is shared with and whether it is published.
+func (T *OrchestrateApp) pipelineSave(c *jsonapi.Call, body PipelineDef) (any, error) {
+	p, err := T.pipelineAt(c)
+	if err != nil {
+		return nil, err
+	}
+	if err := p.editable("edit"); err != nil {
+		return nil, err
+	}
+	user, def, ed := c.User, p.def, p.ed
+	// Identity stays the server's: keep id/owner from the loaded
+	// record, take name/description/stages from the body. The
+	// recipient list is identity too — an edit form must not be able
+	// to widen or clear who a pipeline is shared with, the same way
+	// an agent's guardrails survive a whole-record save.
+	body.ID = def.ID
+	body.Owner = ed.owner
+	body.AllowedUsers = def.AllowedUsers
+	body.Editors = def.Editors
+	// Published is an administrator's approval, reached only through
+	// the promotion queue; an edit form must not be able to assert it.
+	body.Published = def.Published
+	body.Created = def.Created
+	if err := body.Validate(); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	saved := SavePipelineDef(ed.db, body)
+	Log("[orchestrate.pipelines] user=%q updated pipeline %q (id=%s, owner %q)", user, saved.Name, saved.ID, ed.owner)
+	return saved, nil
+}
+
+func (T *OrchestrateApp) pipelineDelete(c *jsonapi.Call, _ struct{}) (any, error) {
+	p, err := T.pipelineAt(c)
+	if err != nil {
+		return nil, err
+	}
+	if err := p.ownerOnly("delete"); err != nil {
+		return nil, err
+	}
+	DeletePipelineDef(c.UDB, p.def.ID)
+	Log("[orchestrate.pipelines] user=%q deleted pipeline %q (id=%s)", c.User, p.def.Name, p.def.ID)
+	return map[string]any{"deleted": p.def.ID}, nil
+}
+
+// pipelineDuplicate copies the pipeline into the caller's own store.
+// Iterating on a working pipeline in place is how the working one stops
+// working. The copy is where an experiment belongs, and landing in it is the
+// reason anybody clicked.
+func (T *OrchestrateApp) pipelineDuplicate(c *jsonapi.Call, _ struct{}) (any, error) {
+	p, err := T.pipelineAt(c)
+	if err != nil {
+		return nil, err
+	}
+	user, udb, def := c.User, c.UDB, p.def
+	dup := def
+	dup.ID = ""
+	dup.Previous = nil
+	dup.Global = false
+	// A copy of somebody else's pipeline is YOURS: re-owned, and shared
+	// with nobody until you say so. Carrying their recipient list into
+	// your store would re-share their work under your name.
+	dup.Owner = user
+	dup.AllowedUsers = nil
+	dup.Editors = nil
+	// And not published either. An administrator agreed that THAT record
+	// should reach everybody, not every copy anyone makes of it.
+	dup.Published = false
+	dup.Name = copyName(def.Name, pipelineNames(ListPipelineDefs(udb, user)))
+	saved := SavePipelineDef(udb, dup)
+	Log("[orchestrate.pipelines] user=%q duplicated pipeline %q as %q", user, def.Name, saved.Name)
+	return map[string]any{"id": saved.ID, "name": saved.Name}, nil
+}
+
+// pipelineShareOf is the share door's list of who can see the pipeline: the
+// recipient list, and ONLY the recipient list. The ACLPicker posts
+// the whole record back (record mode), and this reads one field out of
+// it — so a picker save cannot rewrite a stage, and the ordinary edit
+// path cannot rewrite the ACL. Each door opens one thing, which is the
+// same split an agent's guardrails have.
+//
+// Everyone rides in the same list (recipeShare): the publish steps,
+// requested rather than applied unless an administrator is asking.
+func (T *OrchestrateApp) pipelineShareOf(c *jsonapi.Call) (recipeShare, error) {
+	p, err := T.pipelineAt(c)
+	if err != nil {
+		return recipeShare{}, err
+	}
+	if err := p.ownerOnly("change who can see"); err != nil {
+		return recipeShare{}, err
+	}
+	user, udb, def := c.User, c.UDB, p.def
+	rs := recipeShare{
+		kind: pipelinePromotionKind, owner: user, name: def.Name,
+		published: def.Published, before: def.AllowedUsers, editors: def.Editors,
+		publish:   func() error { return publishPipelineForDeployment(user, def.ID) },
+		unpublish: func() error { return unpublishPipeline(user, def.ID) },
+	}
+	rs.save = func(names, editors []string) any {
+		cur, err := findOwnedPipeline(user, def.ID)
+		if err != nil {
+			cur = def
+		}
+		before := cur.AllowedUsers
+		cur.Owner = user
+		cur.AllowedUsers = normalizeShareList(names, user)
+		cur.Editors = editors
+		saved := SavePipelineDef(udb, cur)
+		// Anybody dropped from the list loses it now, including any
+		// schedule they had armed against it: a share taken back has to
+		// take back everything it enabled, not just the next page load.
+		breakSchedulesForLostRecipients(saved, before)
+		Log("[orchestrate.pipelines] user=%q shared pipeline %q with %d user(s)", user, saved.Name, len(saved.AllowedUsers))
+		saved.AllowedUsers = withEveryone(saved.AllowedUsers, saved.Published || rs.pending())
+		return saved
+	}
+	return rs, nil
+}
+
+func (T *OrchestrateApp) pipelineShare(c *jsonapi.Call) (any, error) {
+	rs, err := T.pipelineShareOf(c)
+	if err != nil {
+		return nil, err
+	}
+	return rs.list(), nil
+}
+
+func (T *OrchestrateApp) pipelineShareSave(c *jsonapi.Call, body struct {
+	AllowedUsers []string  `json:"allowed_users"`
+	Editors      *[]string `json:"editors"`
+}) (any, error) {
+	rs, err := T.pipelineShareOf(c)
+	if err != nil {
+		return nil, err
+	}
+	r := c.R
+	out, err := rs.apply(r, body.AllowedUsers, body.Editors)
+	if err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	return out, nil
+}
+
+// pipelinePublish asks an administrator to let EVERY user of the deployment
+// run this. The narrower grant beside it is the owner's own to make; this one
+// is not, which is why the door only files a request. A separate door from
+// share for the same reason share is separate from the editor: each one
+// opens exactly one thing.
+func (T *OrchestrateApp) pipelinePublish(c *jsonapi.Call, body struct {
+	Note string `json:"note"` // optional
+}) (any, error) {
+	p, err := T.pipelineAt(c)
+	if err != nil {
+		return nil, err
+	}
+	if err := p.ownerOnly("publish"); err != nil {
+		return nil, err
+	}
+	if p.def.Published {
+		return nil, jsonapi.BadRequest("this pipeline is already published")
+	}
+	if err := CreatePromotionRequest(AuthDB(), c.User, pipelinePromotionKind, p.def.Name, body.Note); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	Log("[orchestrate.pipelines] user=%q asked to publish pipeline %q", c.User, p.def.Name)
+	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// pipelineUnpublish is owner-direct, exactly as revoking a share is: nobody
+// needs permission to stop publishing something they wrote.
+func (T *OrchestrateApp) pipelineUnpublish(c *jsonapi.Call, _ struct{}) (any, error) {
+	p, err := T.pipelineAt(c)
+	if err != nil {
+		return nil, err
+	}
+	if err := p.ownerOnly("take back"); err != nil {
+		return nil, err
+	}
+	if err := unpublishPipeline(c.User, p.def.ID); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// handlePipelineBlock serves one derived block of the editor page, by name, as the HTML the
+// page itself renders (pipeline_page.go). A ui.Card with a Source
+// fetches this when a stage is saved, which is what keeps the
+// plan, the price and the findings describing the pipeline as it
+// is rather than as it was when the page was opened.
+func (T *OrchestrateApp) handlePipelineBlock(w http.ResponseWriter, r *http.Request, p *pipelineCall) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	html, ok := pipelinePageBlock(p.call.UDB, p.call.User, p.def, strings.TrimSpace(r.URL.Query().Get("name")))
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write([]byte(html))
+}
+
+// handlePipelineGraph serves the picture (docs/design/workflow-graph.md), so the editor can redraw
+// it after an edit that changed the SHAPE — ticking a branch's
+// destination adds an arrow, and the map is rendered server-side.
+//
+// Served as SVG so it can be linked or saved on its own; the page
+// fetches the text and injects it inline, which is what lets the
+// page's CSS variables theme it. Every dynamic string in the
+// document is escaped at the renderer (see xmlEscape).
+func (T *OrchestrateApp) handlePipelineGraph(w http.ResponseWriter, r *http.Request, p *pipelineCall) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "image/svg+xml; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	// ?links=1 draws it as the editor's MAP: every box a door into
+	// that stage's section. Same picture either way — the difference
+	// is anchors, which only mean something inside the page that has
+	// those sections. Mirrors the machines route.
+	if r.URL.Query().Get("links") == "1" {
+		_, _ = w.Write([]byte(pipelineGraphSVG(p.def)))
+		return
+	}
+	_, _ = w.Write([]byte(p.def.Graph().SVG(nil)))
+}
+
+// handlePipelineExport downloads the recipe.
+func (T *OrchestrateApp) handlePipelineExport(w http.ResponseWriter, r *http.Request, p *pipelineCall) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	recipe := ExportPipeline(p.def)
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+SnakeFromDisplay(p.def.Name)+".pipeline.json\"")
+	_ = json.NewEncoder(w).Encode(recipe)
+}
+
+// pipelineRun executes a pipeline synchronously for the browser and
 // returns {output}. Agent stages dispatch through RunAgentSync as the
 // requesting user. Sync (no SSE) for the MVP panel — the request blocks
 // until the run finishes; a streaming/async run endpoint can layer on
 // later if slow pipelines make the blocking call painful.
-func (T *OrchestrateApp) runPipelineHTTP(w http.ResponseWriter, r *http.Request, user string, def PipelineDef) {
-	var body struct {
-		Input string `json:"input"`
+func (T *OrchestrateApp) pipelineRun(c *jsonapi.Call, body struct {
+	Input string `json:"input"`
+}) (any, error) {
+	p, perr := T.pipelineAt(c)
+	if perr != nil {
+		return nil, perr
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
+	r, user, def := c.R, c.User, p.def
 	input := strings.TrimSpace(body.Input)
 	if input == "" {
-		http.Error(w, "input required", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("input required")
 	}
 	dispatch := func(ctx context.Context, agentID, stageInput string) (string, error) {
 		return T.RunAgentSync(ctx, user, user, agentID, stageInput)
@@ -564,22 +600,7 @@ func (T *OrchestrateApp) runPipelineHTTP(w http.ResponseWriter, r *http.Request,
 		Machine:  T.pipelineMachineRunner(user),
 	})
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return nil, jsonapi.Status(http.StatusInternalServerError, err.Error())
 	}
-	jsonapi.Write(w, map[string]any{"output": out})
-}
-
-// pipelineOwnerOnly refuses a write on a pipeline the requester does not own,
-// and reports whether the caller may continue.
-//
-// A share hands over the recipe, not the pen. The refusal names the owner
-// because the alternative — a flat 403 on a page that plainly shows the thing —
-// reads as a bug, and the reader's actual next step is to go ask that person.
-func pipelineOwnerOnly(w http.ResponseWriter, mine bool, owner, verb string) bool {
-	if mine {
-		return true
-	}
-	http.Error(w, "this pipeline is shared with you by "+owner+", so you can run and copy it but not "+verb+" it: ask "+owner+" to make the change, or duplicate it and edit your copy", http.StatusForbidden)
-	return false
+	return map[string]any{"output": out}, nil
 }

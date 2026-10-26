@@ -50,6 +50,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 func init() {
@@ -335,14 +336,23 @@ func recipeEditFor(user string, udb Database, owner string, mine bool, editors [
 	return recipeEdit{}
 }
 
-// recipeEditorOnly refuses a change to a recipe somebody shared with the
+// recipeEditRefusal refuses a change to a recipe somebody shared with the
 // requester to run, not to edit. noun is "pipeline" or "machine".
-func recipeEditorOnly(w http.ResponseWriter, ed recipeEdit, noun, owner, verb string) bool {
+func recipeEditRefusal(ed recipeEdit, noun, owner, verb string) error {
 	if ed.ok {
-		return true
+		return nil
 	}
-	http.Error(w, "this "+noun+" is shared with you by "+owner+" to run, so you can run and copy it but not "+verb+" it: ask "+owner+" to give you edit access, or duplicate it and edit your copy", http.StatusForbidden)
-	return false
+	return jsonapi.Forbidden("this " + noun + " is shared with you by " + owner + " to run, so you can run and copy it but not " + verb + " it: ask " + owner + " to give you edit access, or duplicate it and edit your copy")
+}
+
+// recipeEditorOnly is recipeEditRefusal for a raw handler: it writes the
+// refusal and reports whether the caller may continue.
+func recipeEditorOnly(w http.ResponseWriter, ed recipeEdit, noun, owner, verb string) bool {
+	if err := recipeEditRefusal(ed, noun, owner, verb); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return false
+	}
+	return true
 }
 
 // cleanEditors keeps the editors the share list reaches: named people and

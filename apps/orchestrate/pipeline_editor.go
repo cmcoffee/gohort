@@ -33,7 +33,6 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/ui"
-	"io"
 )
 
 // stageFormFields is the controls for one stage.
@@ -396,143 +395,152 @@ func applyStageEdit(s *PipelineStage, body map[string]any) {
 	}
 }
 
-// handlePipelineStages is the per-stage form's endpoint.
+// pipelineStage is the per-stage form's endpoint.
 //
 //	GET    /api/pipelines/{id}/stages?name=X → the stage as flat values
 //	POST   /api/pipelines/{id}/stages?name=X → merge and save
 //	POST   /api/pipelines/{id}/stages        → add a stage (name in body)
 //	DELETE /api/pipelines/{id}/stages?name=X → remove it
-func (T *OrchestrateApp) handlePipelineStages(w http.ResponseWriter, r *http.Request, udb Database, user string, def PipelineDef) {
+func (T *OrchestrateApp) pipelineStage(c *jsonapi.Call) (any, error) {
+	p, perr := T.pipelineAt(c)
+	if perr != nil {
+		return nil, perr
+	}
+	if err := p.editable("edit"); err != nil {
+		return nil, err
+	}
 	// name is a PATH: "stage" at the top level, "outer.inner" for a stage
 	// inside a body. A stage name may not contain a dot, so the two can
 	// never be confused (pipeline_body_editor.go).
-	name := strings.TrimSpace(r.URL.Query().Get("name"))
+	name := strings.TrimSpace(c.R.URL.Query().Get("name"))
+	def := p.def
 	slot := resolveStagePath(&def, name)
-	idx := slot.idx
+	if !slot.found() {
+		return nil, errNotFound
+	}
+	return stageRecord(slot.stage()), nil
+}
 
-	switch r.Method {
-	case http.MethodGet:
-		if !slot.found() {
-			http.NotFound(w, r)
-			return
-		}
-		jsonapi.Write(w, stageRecord(slot.stage()))
-
-	case http.MethodPost, http.MethodPut, http.MethodPatch:
-		var body map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		if name != "" && !slot.found() {
-			// A form still addressing a stage that was renamed or
-			// removed. Treating its save as a create would resurrect the
-			// old stage beside the new one.
-			http.Error(w, "no stage called "+strconv.Quote(name)+", it was renamed or removed; reload the page",
-				http.StatusNotFound)
-			return
-		}
-		var stage PipelineStage
-		if slot.found() {
-			stage = slot.stage()
-		} else {
-			stage = PipelineStage{Kind: StageWorker}
-		}
-		applyStageEdit(&stage, body)
-		if !slot.found() && !stageReadsPrompt(stage.Kind) {
-			// The add form hides the prompt for these kinds but still posts
-			// it, and a tool stage carrying one is refused over a box the
-			// author can no longer see.
-			stage.Prompt = ""
-		}
-		if strings.TrimSpace(stage.Name) == "" {
-			http.Error(w, "give the stage a name", http.StatusBadRequest)
-			return
-		}
-		// A stage inside a body: same form, same validator, scoped
-		// rename and scoped uniqueness. Handled before the top-level
-		// paths below because everything they do reads def.Stages.
-		if parentRef := strings.TrimSpace(r.URL.Query().Get("parent")); parentRef != "" || slot.parent != nil {
-			if err := T.savePipelineBodyStage(w, udb, user, def, slot, parentRef, stage); err != nil {
-				return // savePipelineBodyStage wrote the refusal
-			}
-			return
-		}
-		if idx >= 0 {
-			// A rename rewrites every reference, or the save is refused
-			// by the validator for a reason the author did not cause.
-			if old := strings.TrimSpace(def.Stages[idx].Name); old != stage.Name {
-				for _, other := range def.Stages {
-					if strings.TrimSpace(other.Name) == stage.Name {
-						http.Error(w, "a stage called "+strconv.Quote(stage.Name)+" already exists",
-							http.StatusBadRequest)
-						return
-					}
-				}
-				def.Stages[idx] = stage
-				def.RenameStage(old, stage.Name)
-			} else {
-				def.Stages[idx] = stage
-			}
-		} else {
+// pipelineStageSave merges the form into the named stage, or adds one.
+func (T *OrchestrateApp) pipelineStageSave(c *jsonapi.Call, body map[string]any) (any, error) {
+	p, perr := T.pipelineAt(c)
+	if perr != nil {
+		return nil, perr
+	}
+	if err := p.editable("edit"); err != nil {
+		return nil, err
+	}
+	// name is a PATH: "stage" at the top level, "outer.inner" for a stage
+	// inside a body. A stage name may not contain a dot, so the two can
+	// never be confused (pipeline_body_editor.go).
+	name := strings.TrimSpace(c.R.URL.Query().Get("name"))
+	def := p.def
+	slot := resolveStagePath(&def, name)
+	r, udb, user, idx := c.R, p.ed.db, p.ed.owner, slot.idx
+	if name != "" && !slot.found() {
+		// A form still addressing a stage that was renamed or
+		// removed. Treating its save as a create would resurrect the
+		// old stage beside the new one.
+		return nil, jsonapi.NotFound("no stage called " + strconv.Quote(name) + ", it was renamed or removed; reload the page")
+	}
+	var stage PipelineStage
+	if slot.found() {
+		stage = slot.stage()
+	} else {
+		stage = PipelineStage{Kind: StageWorker}
+	}
+	applyStageEdit(&stage, body)
+	if !slot.found() && !stageReadsPrompt(stage.Kind) {
+		// The add form hides the prompt for these kinds but still posts
+		// it, and a tool stage carrying one is refused over a box the
+		// author can no longer see.
+		stage.Prompt = ""
+	}
+	if strings.TrimSpace(stage.Name) == "" {
+		return nil, jsonapi.BadRequest("give the stage a name")
+	}
+	// A stage inside a body: same form, same validator, scoped
+	// rename and scoped uniqueness. Handled before the top-level
+	// paths below because everything they do reads def.Stages.
+	if parentRef := strings.TrimSpace(r.URL.Query().Get("parent")); parentRef != "" || slot.parent != nil {
+		return T.savePipelineBodyStage(udb, user, def, slot, parentRef, stage)
+	}
+	if idx >= 0 {
+		// A rename rewrites every reference, or the save is refused
+		// by the validator for a reason the author did not cause.
+		if old := strings.TrimSpace(def.Stages[idx].Name); old != stage.Name {
 			for _, other := range def.Stages {
 				if strings.TrimSpace(other.Name) == stage.Name {
-					http.Error(w, "a stage called "+strconv.Quote(stage.Name)+" already exists",
-						http.StatusBadRequest)
-					return
+					return nil, jsonapi.BadRequest("a stage called " + strconv.Quote(stage.Name) + " already exists")
 				}
 			}
-			def.Stages = append(def.Stages, stage)
+			def.Stages[idx] = stage
+			def.RenameStage(old, stage.Name)
+		} else {
+			def.Stages[idx] = stage
 		}
-		// The same gate every other pipeline door uses. Its sentence is
-		// the reply, because the form shows it inline and the validator
-		// says what is wrong better than "bad request" does.
-		if err := def.Validate(); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		saved := SavePipelineDef(udb, def)
-		Log("[orchestrate.pipelines] user=%q edited stage %q of %q", user, stage.Name, saved.Name)
-		jsonapi.Write(w, map[string]any{"ok": true, "id": saved.ID, "name": stage.Name,
-			"slug": ui.SectionSlug(stageSectionTitle(indexOfStage(saved, stage.Name), stage.Name))})
-
-	case http.MethodDelete:
-		if !slot.found() {
-			http.NotFound(w, r)
-			return
-		}
-		if slot.parent != nil {
-			// Refused by a SIBLING that reads it, not by anything
-			// outside: nothing outside may name a body stage.
-			_, child := splitStagePath(name)
-			if err := removeFromBody(slot.parent, child); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
+	} else {
+		for _, other := range def.Stages {
+			if strings.TrimSpace(other.Name) == stage.Name {
+				return nil, jsonapi.BadRequest("a stage called " + strconv.Quote(stage.Name) + " already exists")
 			}
-			if err := def.Validate(); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			saved := SavePipelineDef(udb, def)
-			Log("[orchestrate.pipelines] user=%q removed body stage %q from %q", user, name, saved.Name)
-			jsonapi.Write(w, map[string]any{"deleted": name, "id": saved.ID})
-			return
 		}
-		if err := def.RemoveStage(name); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		if err := def.Validate(); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		saved := SavePipelineDef(udb, def)
-		Log("[orchestrate.pipelines] user=%q removed stage %q from %q", user, name, saved.Name)
-		jsonapi.Write(w, map[string]any{"deleted": name, "id": saved.ID})
-
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		def.Stages = append(def.Stages, stage)
 	}
+	// The same gate every other pipeline door uses. Its sentence is
+	// the reply, because the form shows it inline and the validator
+	// says what is wrong better than "bad request" does.
+	if err := def.Validate(); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	saved := SavePipelineDef(udb, def)
+	Log("[orchestrate.pipelines] user=%q edited stage %q of %q", user, stage.Name, saved.Name)
+	return map[string]any{"ok": true, "id": saved.ID, "name": stage.Name,
+		"slug": ui.SectionSlug(stageSectionTitle(indexOfStage(saved, stage.Name), stage.Name))}, nil
+}
+
+// pipelineStageDelete removes the named stage.
+func (T *OrchestrateApp) pipelineStageDelete(c *jsonapi.Call, _ struct{}) (any, error) {
+	p, perr := T.pipelineAt(c)
+	if perr != nil {
+		return nil, perr
+	}
+	if err := p.editable("edit"); err != nil {
+		return nil, err
+	}
+	// name is a PATH: "stage" at the top level, "outer.inner" for a stage
+	// inside a body. A stage name may not contain a dot, so the two can
+	// never be confused (pipeline_body_editor.go).
+	name := strings.TrimSpace(c.R.URL.Query().Get("name"))
+	def := p.def
+	slot := resolveStagePath(&def, name)
+	udb, user := p.ed.db, p.ed.owner
+	if !slot.found() {
+		return nil, errNotFound
+	}
+	if slot.parent != nil {
+		// Refused by a SIBLING that reads it, not by anything
+		// outside: nothing outside may name a body stage.
+		_, child := splitStagePath(name)
+		if err := removeFromBody(slot.parent, child); err != nil {
+			return nil, jsonapi.BadRequest(err.Error())
+		}
+		if err := def.Validate(); err != nil {
+			return nil, jsonapi.BadRequest(err.Error())
+		}
+		saved := SavePipelineDef(udb, def)
+		Log("[orchestrate.pipelines] user=%q removed body stage %q from %q", user, name, saved.Name)
+		return map[string]any{"deleted": name, "id": saved.ID}, nil
+	}
+	if err := def.RemoveStage(name); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	if err := def.Validate(); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	saved := SavePipelineDef(udb, def)
+	Log("[orchestrate.pipelines] user=%q removed stage %q from %q", user, name, saved.Name)
+	return map[string]any{"deleted": name, "id": saved.ID}, nil
 }
 
 // indexOfStage is where a stage sits, for the anchor a save redirects to.
@@ -545,7 +553,7 @@ func indexOfStage(def PipelineDef, name string) int {
 	return 0
 }
 
-// handlePipelineAgents is the "Assign to agents" checklist.
+// pipelineAgents is the "Assign to agents" checklist.
 //
 //	GET  /api/pipelines/{id}/agents → {agents: [id, ...]}
 //	POST /api/pipelines/{id}/agents {agents: [...]} → attach/detach
@@ -553,113 +561,131 @@ func indexOfStage(def PipelineDef, name string) int {
 // A pipeline attaches to an agent as a callable tool (run_<name>), and
 // an agent holds a LIST of them — so unlike a machine, checking one
 // here adds to that list rather than replacing what the agent runs.
-func (T *OrchestrateApp) handlePipelineAgents(w http.ResponseWriter, r *http.Request, udb Database, user string, def PipelineDef) {
-	switch r.Method {
-	case http.MethodGet:
-		// ?pills=1 — the shape uiRenderScopePills wants, so a pipeline
-		// can be handed to an agent from the LIST as well as from its
-		// own page.
-		if r.URL.Query().Get("pills") == "1" {
-			jsonapi.Write(w, pipelineAgentPills(udb, user, def))
-			return
-		}
-		var ids []string
-		for _, ag := range listAgents(udb, user) {
-			for _, pid := range ag.AttachedPipelines {
-				if pid == def.ID {
-					ids = append(ids, ag.ID)
-					break
-				}
+func (T *OrchestrateApp) pipelineAgents(c *jsonapi.Call) (any, error) {
+	p, perr := T.pipelineAt(c)
+	if perr != nil {
+		return nil, perr
+	}
+	// Owner-only, and not merely for symmetry: attaching writes the
+	// pipeline's ID into an agent's AttachedPipelines, and that agent
+	// resolves the id in its OWN owner's store. A recipient attaching a
+	// shared pipeline would mint a run_<name> tool pointing at a record
+	// their store cannot load.
+	if err := p.ownerOnly("attach"); err != nil {
+		return nil, err
+	}
+	udb, user, def := c.UDB, c.User, p.def
+	r := c.R
+	// ?pills=1 — the shape uiRenderScopePills wants, so a pipeline
+	// can be handed to an agent from the LIST as well as from its
+	// own page.
+	if r.URL.Query().Get("pills") == "1" {
+		return pipelineAgentPills(udb, user, def), nil
+	}
+	var ids []string
+	for _, ag := range listAgents(udb, user) {
+		for _, pid := range ag.AttachedPipelines {
+			if pid == def.ID {
+				ids = append(ids, ag.ID)
+				break
 			}
 		}
-		jsonapi.Write(w, map[string]any{"agents": ids})
+	}
+	return map[string]any{"agents": ids}, nil
+}
 
-	case http.MethodPost, http.MethodPut:
-		// A single toggle, as the pills send it.
-		var one struct {
-			Target string `json:"target"`
-			On     *bool  `json:"on"`
+// pipelineAgentsSave attaches and detaches: one toggle as the pills send it,
+// or the whole checklist.
+func (T *OrchestrateApp) pipelineAgentsSave(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+	p, perr := T.pipelineAt(c)
+	if perr != nil {
+		return nil, perr
+	}
+	// Owner-only, and not merely for symmetry: attaching writes the
+	// pipeline's ID into an agent's AttachedPipelines, and that agent
+	// resolves the id in its OWN owner's store. A recipient attaching a
+	// shared pipeline would mint a run_<name> tool pointing at a record
+	// their store cannot load.
+	if err := p.ownerOnly("attach"); err != nil {
+		return nil, err
+	}
+	udb, user, def := c.UDB, c.User, p.def
+	// A single toggle, as the pills send it.
+	var one struct {
+		Target string `json:"target"`
+		On     *bool  `json:"on"`
+	}
+	if json.Unmarshal(raw, &one) == nil && one.On != nil && strings.TrimSpace(one.Target) != "" {
+		ag, ok := loadAgent(udb, strings.TrimSpace(one.Target))
+		if !ok || ag.Owner != user {
+			return nil, jsonapi.NotFound("no such agent")
 		}
-		raw, _ := io.ReadAll(io.LimitReader(r.Body, maxImportBytes))
-		if json.Unmarshal(raw, &one) == nil && one.On != nil && strings.TrimSpace(one.Target) != "" {
-			ag, ok := loadAgent(udb, strings.TrimSpace(one.Target))
-			if !ok || ag.Owner != user {
-				http.Error(w, "no such agent", http.StatusNotFound)
-				return
-			}
-			kept := ag.AttachedPipelines[:0:0]
-			for _, pid := range ag.AttachedPipelines {
-				if pid != def.ID {
-					kept = append(kept, pid)
-				}
-			}
-			if *one.On {
-				kept = append(kept, def.ID)
-			}
-			ag.AttachedPipelines = kept
-			if _, err := saveAgent(udb, ag); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			Log("[orchestrate.pipelines] user=%q pipeline %q: %s %q", user, def.Name,
-				chIf(*one.On, "attached to", "detached from"), chFirst(ag.Name, ag.ID))
-			jsonapi.Write(w, map[string]any{"ok": true})
-			return
-		}
-		var body struct {
-			Agents []string `json:"agents"`
-		}
-		if err := json.Unmarshal(raw, &body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		want := make(map[string]bool, len(body.Agents))
-		for _, id := range body.Agents {
-			want[strings.TrimSpace(id)] = true
-		}
-		var attached, detached []string
-		for _, ag := range listAgents(udb, user) {
-			// The checklist never shows app agents or hidden ones, so a
-			// whole-set POST must not touch them: an agent that was
-			// never ON the list would be silently unplugged by every
-			// save of the agents that are. Same rule the machine
-			// version follows, for the same reason.
-			if isAppAgent(ag.ID) || ag.Hidden {
-				continue
-			}
-			has := false
-			kept := ag.AttachedPipelines[:0:0]
-			for _, pid := range ag.AttachedPipelines {
-				if pid == def.ID {
-					has = true
-					continue
-				}
+		kept := ag.AttachedPipelines[:0:0]
+		for _, pid := range ag.AttachedPipelines {
+			if pid != def.ID {
 				kept = append(kept, pid)
 			}
-			switch {
-			case want[ag.ID] && !has:
-				ag.AttachedPipelines = append(kept, def.ID)
-				if _, err := saveAgent(udb, ag); err == nil {
-					attached = append(attached, chFirst(ag.Name, ag.ID))
-				}
-			case !want[ag.ID] && has:
-				// Only this pipeline is removed; the agent's other
-				// pipelines are its own business.
-				ag.AttachedPipelines = kept
-				if _, err := saveAgent(udb, ag); err == nil {
-					detached = append(detached, chFirst(ag.Name, ag.ID))
-				}
+		}
+		if *one.On {
+			kept = append(kept, def.ID)
+		}
+		ag.AttachedPipelines = kept
+		if _, err := saveAgent(udb, ag); err != nil {
+			return nil, jsonapi.Status(http.StatusInternalServerError, err.Error())
+		}
+		Log("[orchestrate.pipelines] user=%q pipeline %q: %s %q", user, def.Name,
+			chIf(*one.On, "attached to", "detached from"), chFirst(ag.Name, ag.ID))
+		return map[string]any{"ok": true}, nil
+	}
+	var body struct {
+		Agents []string `json:"agents"`
+	}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return nil, jsonapi.BadRequest("bad request")
+	}
+	want := make(map[string]bool, len(body.Agents))
+	for _, id := range body.Agents {
+		want[strings.TrimSpace(id)] = true
+	}
+	var attached, detached []string
+	for _, ag := range listAgents(udb, user) {
+		// The checklist never shows app agents or hidden ones, so a
+		// whole-set POST must not touch them: an agent that was
+		// never ON the list would be silently unplugged by every
+		// save of the agents that are. Same rule the machine
+		// version follows, for the same reason.
+		if isAppAgent(ag.ID) || ag.Hidden {
+			continue
+		}
+		has := false
+		kept := ag.AttachedPipelines[:0:0]
+		for _, pid := range ag.AttachedPipelines {
+			if pid == def.ID {
+				has = true
+				continue
+			}
+			kept = append(kept, pid)
+		}
+		switch {
+		case want[ag.ID] && !has:
+			ag.AttachedPipelines = append(kept, def.ID)
+			if _, err := saveAgent(udb, ag); err == nil {
+				attached = append(attached, chFirst(ag.Name, ag.ID))
+			}
+		case !want[ag.ID] && has:
+			// Only this pipeline is removed; the agent's other
+			// pipelines are its own business.
+			ag.AttachedPipelines = kept
+			if _, err := saveAgent(udb, ag); err == nil {
+				detached = append(detached, chFirst(ag.Name, ag.ID))
 			}
 		}
-		if len(attached)+len(detached) > 0 {
-			Log("[orchestrate.pipelines] user=%q pipeline %q: attached %v, detached %v",
-				user, def.Name, attached, detached)
-		}
-		jsonapi.Write(w, map[string]any{"ok": true, "attached": attached, "detached": detached})
-
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+	if len(attached)+len(detached) > 0 {
+		Log("[orchestrate.pipelines] user=%q pipeline %q: attached %v, detached %v",
+			user, def.Name, attached, detached)
+	}
+	return map[string]any{"ok": true, "attached": attached, "detached": detached}, nil
 }
 
 // attachPipelineAgentOptions lists the agents a pipeline can be given

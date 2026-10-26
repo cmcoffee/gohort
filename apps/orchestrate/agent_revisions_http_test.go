@@ -255,7 +255,7 @@ func TestPipelineRevisionRoutes(t *testing.T) {
 	SavePipelineDefAs(udb, edited, "renamed")
 
 	w := httptest.NewRecorder()
-	app.handlePipelineOne(w, req("GET", "/api/pipelines/"+made.ID+"/revisions", nil))
+	routed(app)(w, req("GET", "/api/pipelines/"+made.ID+"/revisions", nil))
 	if w.Code != 200 {
 		t.Fatalf("list status %d: %s", w.Code, w.Body.String())
 	}
@@ -268,7 +268,7 @@ func TestPipelineRevisionRoutes(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	app.handlePipelineOne(w, req("GET", "/api/pipelines/"+made.ID+"/revisions/preview?rev=1", nil))
+	routed(app)(w, req("GET", "/api/pipelines/"+made.ID+"/revisions/preview?rev=1", nil))
 	if w.Code != 200 {
 		t.Fatalf("preview status %d: %s", w.Code, w.Body.String())
 	}

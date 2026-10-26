@@ -20,7 +20,7 @@ func reviseP(t *testing.T, app *OrchestrateApp, user, id, body string) *httptest
 	t.Helper()
 	r := httptest.NewRequest("POST", "/api/pipelines/"+id+"/revise", strings.NewReader(body))
 	w := httptest.NewRecorder()
-	app.handlePipelineOne(w, asUser(r, user))
+	routed(app)(w, asUser(r, user))
 	return w
 }
 
@@ -119,7 +119,7 @@ func TestAPipelineRevisionCanBeTakenBack(t *testing.T) {
 
 	r = httptest.NewRequest("POST", "/api/pipelines/"+def.ID+"/undo", nil)
 	w = httptest.NewRecorder()
-	app.handlePipelineOne(w, asUser(r, user))
+	routed(app)(w, asUser(r, user))
 	if w.Code != 200 {
 		t.Fatalf("undo: %d %s", w.Code, w.Body.String())
 	}
@@ -139,7 +139,7 @@ func TestAPipelineRevisionCanBeTakenBack(t *testing.T) {
 	}
 	r = httptest.NewRequest("POST", "/api/pipelines/"+def.ID+"/undo", nil)
 	w = httptest.NewRecorder()
-	app.handlePipelineOne(w, asUser(r, user))
+	routed(app)(w, asUser(r, user))
 	if w.Code != 400 {
 		t.Errorf("a second undo should refuse, got %d", w.Code)
 	}

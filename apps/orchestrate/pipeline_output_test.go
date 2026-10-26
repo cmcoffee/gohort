@@ -68,7 +68,7 @@ func TestAStagesDeclaredFieldsAreEditable(t *testing.T) {
 	// from what each field is rather than left blank.
 	r := httptest.NewRequest("GET", "/api/pipelines/"+def.ID+"/stages?name=plan", nil)
 	w := httptest.NewRecorder()
-	app.handlePipelineOne(w, asUser(r, user))
+	routed(app)(w, asUser(r, user))
 	var rec map[string]any
 	_ = json.Unmarshal(w.Body.Bytes(), &rec)
 	rows, _ := rec["output"].([]any)

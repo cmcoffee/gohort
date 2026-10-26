@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -35,7 +36,10 @@ func TestThePipelineToolTakesFollowUps(t *testing.T) {
 		}
 		return string(b)
 	}
-	if !strings.Contains(read("pipelines_http.go"), `strings.CutPrefix(action, "followup/")`) ||
+	mux := routeMux(&OrchestrateApp{})
+	_, followups := mux.Handler(httptest.NewRequest("GET", "/api/pipelines/p1/followups", nil))
+	_, followup := mux.Handler(httptest.NewRequest("POST", "/api/pipelines/p1/followup/report/run-1", nil))
+	if followups == "" || followup == "" ||
 		!strings.Contains(read("pipeline_page.go"), `FollowUpsURL: "api/pipelines/" + url_(def.ID) + "/followups"`) ||
 		!strings.Contains(read("app_def_tool_build.go"), `FollowUpsURL: "pipeline/followups"`) {
 		t.Error("the pipeline page and app sections must offer follow-ups, and the routes must reach them")

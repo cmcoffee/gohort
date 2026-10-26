@@ -27,30 +27,27 @@ import (
 	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
-// handlePipelineRevise redrafts an existing pipeline from a description
+// pipelineRevise redrafts an existing pipeline from a description
 // of what should change.
 //
 //	POST /api/pipelines/{id}/revise {"description": "..."} → {id, changed[]}
-func (T *OrchestrateApp) handlePipelineRevise(w http.ResponseWriter, r *http.Request, udb Database, user string, def PipelineDef) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
+func (T *OrchestrateApp) pipelineRevise(c *jsonapi.Call, body struct {
+	Description string `json:"description"`
+}) (any, error) {
+	p, perr := T.pipelineAt(c)
+	if perr != nil {
+		return nil, perr
 	}
+	if err := p.editable("revise"); err != nil {
+		return nil, err
+	}
+	r, udb, user, def := c.R, p.ed.db, p.ed.owner, p.def
 	if T.LLM == nil {
-		http.Error(w, "worker LLM not configured", http.StatusServiceUnavailable)
-		return
-	}
-	var body struct {
-		Description string `json:"description"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
+		return nil, jsonapi.Status(http.StatusServiceUnavailable, "worker LLM not configured")
 	}
 	want := strings.TrimSpace(body.Description)
 	if want == "" {
-		http.Error(w, "say what should change", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("say what should change")
 	}
 	if len(want) > maxDraftDescription {
 		want = want[:maxDraftDescription]
@@ -62,8 +59,7 @@ func (T *OrchestrateApp) handlePipelineRevise(w http.ResponseWriter, r *http.Req
 	// document invites a rewrite from scratch.
 	current, err := json.MarshalIndent(ExportPipeline(def), "", "  ")
 	if err != nil {
-		http.Error(w, "could not read the pipeline", http.StatusInternalServerError)
-		return
+		return nil, jsonapi.Status(http.StatusInternalServerError, "could not read the pipeline")
 	}
 	ask := "Revise this pipeline.\n\nWHAT SHOULD CHANGE:\n" + want +
 		"\n\nTHE PIPELINE AS IT STANDS:\n" + string(current) +
@@ -76,8 +72,7 @@ func (T *OrchestrateApp) handlePipelineRevise(w http.ResponseWriter, r *http.Req
 		if revised, derr = T.draftPipelineOnce(r.Context(), ask+
 			"\n\nYour previous reply could not be used: "+derr.Error()+
 			"\nReply with ONLY the JSON object."); derr != nil {
-			http.Error(w, "the revision could not be produced: "+derr.Error(), http.StatusBadGateway)
-			return
+			return nil, jsonapi.Status(http.StatusBadGateway, "the revision could not be produced: "+derr.Error())
 		}
 	}
 	// A pipeline is refused unless it runs, so the repair pass is what
@@ -87,9 +82,8 @@ func (T *OrchestrateApp) handlePipelineRevise(w http.ResponseWriter, r *http.Req
 			"\n\nA previous attempt would not run:\n"+verr.Error()+
 			"\nReturn a corrected pipeline.")
 		if ferr != nil || fixed.Validate() != nil {
-			http.Error(w, "the revision would not run, and a second attempt did not fix it:\n"+
-				verr.Error()+"\n\nNothing was changed.", http.StatusBadGateway)
-			return
+			return nil, jsonapi.Status(http.StatusBadGateway, "the revision would not run, and a second attempt did not fix it:\n"+
+				verr.Error()+"\n\nNothing was changed.")
 		}
 		revised = fixed
 	}
@@ -109,18 +103,21 @@ func (T *OrchestrateApp) handlePipelineRevise(w http.ResponseWriter, r *http.Req
 	changed := describePipelineChange(before, saved)
 	Log("[orchestrate.pipelines] user=%q revised pipeline %q (id=%s): %s", user, saved.Name, saved.ID,
 		strings.Join(changed, "; "))
-	jsonapi.Write(w, map[string]any{"id": saved.ID, "name": saved.Name, "changed": changed})
+	return map[string]any{"id": saved.ID, "name": saved.Name, "changed": changed}, nil
 }
 
-// handlePipelineUndo puts back the definition a revision replaced.
-func (T *OrchestrateApp) handlePipelineUndo(w http.ResponseWriter, r *http.Request, udb Database, user string, def PipelineDef) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
+// pipelineUndo puts back the definition a revision replaced.
+func (T *OrchestrateApp) pipelineUndo(c *jsonapi.Call, _ struct{}) (any, error) {
+	p, perr := T.pipelineAt(c)
+	if perr != nil {
+		return nil, perr
 	}
+	if err := p.editable("undo a change to"); err != nil {
+		return nil, err
+	}
+	udb, user, def := p.ed.db, p.ed.owner, p.def
 	if def.Previous == nil {
-		http.Error(w, "there is no revision to undo", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("there is no revision to undo")
 	}
 	back := *def.Previous
 	back.ID = def.ID
@@ -130,7 +127,7 @@ func (T *OrchestrateApp) handlePipelineUndo(w http.ResponseWriter, r *http.Reque
 	back.Previous = nil
 	saved := SavePipelineDef(udb, back)
 	Log("[orchestrate.pipelines] user=%q undid the last revision of pipeline %q", user, saved.Name)
-	jsonapi.Write(w, map[string]any{"id": saved.ID, "name": saved.Name})
+	return map[string]any{"id": saved.ID, "name": saved.Name}, nil
 }
 
 // draftPipelineOnce makes one authoring call and decodes it through the
