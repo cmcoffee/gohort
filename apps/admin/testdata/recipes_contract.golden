@@ -1,0 +1,102 @@
+(signed out) GET /api/templates ""
+  403 forbidden
+alice GET /api/templates ""
+  403 forbidden
+root GET /api/templates ""
+  200 []
+(signed out) GET /api/templates/recipe?id=ct-echo ""
+  403 forbidden
+alice GET /api/templates/recipe?id=ct-echo ""
+  403 forbidden
+root GET /api/templates/recipe?id=ct-echo ""
+  404 no such template
+(signed out) GET /api/templates/pieces ""
+  403 forbidden
+alice GET /api/templates/pieces ""
+  403 forbidden
+root GET /api/templates/pieces ""
+  200 []
+(signed out) GET /api/templates/export?id=ct-echo ""
+  403 forbidden
+alice GET /api/templates/export?id=ct-echo ""
+  403 forbidden
+root GET /api/templates/export?id=ct-echo ""
+  404 no template "ct-echo"
+alice POST /api/templates/install?id=ct-echo "{}"
+  403 forbidden
+root GET /api/templates/install?id=ct-echo ""
+  405 method not allowed
+alice POST /api/templates/import "{}"
+  403 forbidden
+root GET /api/templates/import ""
+  405 method not allowed
+alice POST /api/templates/delete?id=ct-echo "{}"
+  403 forbidden
+root GET /api/templates/delete?id=ct-echo ""
+  405 method not allowed
+alice POST /api/templates/save "{}"
+  403 forbidden
+root GET /api/templates/save ""
+  405 method not allowed
+root POST /api/templates/import "{\n  \"id\": \"ct-echo\",\n  \"title\": \"Echo a greeting\",\n  \"description\": \"A shell tool that echoes what it was set up with.\",\n  \"category\": \"Tools\",\n  \"questions\": [{\"name\": \"greeting\", \"label\": \"Greeting\", \"required\": true}],\n  \"bundle\": {\n    \"bundle\": \"gohort.bundle/v1\",\n    \"artifacts\": [{\n      \"type\": \"tool\",\n      \"name\": \"ct_echo\",\n      \"recipe\": {\"name\": \"ct_echo\", \"description\": \"Echo the greeting.\", \"command_template\": \"echo {{greeting}}\", \"mode\": \"shell\"}\n    }]\n  }\n}"
+  200 {"message":"Imported the template \"Echo a greeting\". Add it from the list when you are ready.","ok":true}
+root POST /api/templates/import "{\"pack\":\"{\\n  \\\"id\\\": \\\"ct-echo-2\\\",\\n  \\\"title\\\": \\\"Echo a greeting\\\",\\n  \\\"description\\\": \\\"A shell tool that echoes what it was set up with.\\\",\\n  \\\"category\\\": \\\"Tools\\\",\\n  \\\"questions\\\": [{\\\"name\\\": \\\"greeting\\\", \\\"label\\\": \\\"Greeting\\\", \\\"required\\\": true}],\\n  \\\"bundle\\\": {\\n    \\\"bundle\\\": \\\"gohort.bundle/v1\\\",\\n    \\\"artifacts\\\": [{\\n      \\\"type\\\": \\\"tool\\\",\\n      \\\"name\\\": \\\"ct_echo\\\",\\n      \\\"recipe\\\": {\\\"name\\\": \\\"ct_echo\\\", \\\"description\\\": \\\"Echo the greeting.\\\", \\\"command_template\\\": \\\"echo {{greeting}}\\\", \\\"mode\\\": \\\"shell\\\"}\\n    }]\\n  }\\n}\"}"
+  200 {"message":"Imported the template \"Echo a greeting\". Add it from the list when you are ready.","ok":true}
+root POST /api/templates/import "{\n  \"id\": \"system-info\",\n  \"title\": \"Echo a greeting\",\n  \"description\": \"A shell tool that echoes what it was set up with.\",\n  \"category\": \"Tools\",\n  \"questions\": [{\"name\": \"greeting\", \"label\": \"Greeting\", \"required\": true}],\n  \"bundle\": {\n    \"bundle\": \"gohort.bundle/v1\",\n    \"artifacts\": [{\n      \"type\": \"tool\",\n      \"name\": \"ct_echo\",\n      \"recipe\": {\"name\": \"ct_echo\", \"description\": \"Echo the greeting.\", \"command_template\": \"echo {{greeting}}\", \"mode\": \"shell\"}\n    }]\n  }\n}"
+  400 "system-info" is a built-in template's id: give this one another
+root POST /api/templates/import "{\"id\":\"ct-empty\"}"
+  400 the template has no title
+root POST /api/templates/import "{\"id\":"
+  400 invalid JSON: unexpected EOF
+root POST /api/templates/import ""
+  400 invalid JSON: EOF
+root GET /api/templates ""
+  200 [{"id":"ct-echo","kind":"template","title":"Echo a greeting","category":"Tools","description":"A shell tool that echoes what it was set up with.","contains":"ct_echo (tool)","source":"imported","_reci… (455 bytes, sha1 d23990ca961d2bf56c2b6de3a3ada235eba0c531)
+root GET /api/templates/recipe?id=ct-echo ""
+  200 {"contains":["ct_echo (tool)"],"description":"A shell tool that echoes what it was set up with.","destinations":{},"id":"ct-echo","questions":[{"name":"greeting","label":"Greeting","required":true}],"setup_notes":"","source":"imported","title":"Echo a greeting"}
+root GET /api/templates/recipe?id=nope ""
+  404 no such template
+root GET /api/templates/export?id=ct-echo ""
+  200 {
+  "id": "ct-echo",
+  "title": "Echo a greeting",
+  "description": "A shell tool that echoes what it was set up with.",
+  "category": "Tools",
+  "questions": [
+    {
+      "name": "greeting",
+      "… (632 bytes, sha1 9fdf236f5ef0734c42447e076334df78dcbd3a2c)
+root GET /api/templates/export?id=nope ""
+  404 no template "nope"
+root POST /api/templates/install?id=ct-echo "{\"answers\":{}}"
+  400 Greeting is needed
+root POST /api/templates/install?id=ct-echo "{\"answers\":{\"greeting\":\"hello\"}}"
+  200 {"bundle":"gohort.bundle/v1","imported":1,"skipped":0,"outcomes":[{"type":"tool","name":"ct_echo","status":"imported"}],"checklist":[{"type":"tool","name":"ct_echo","action":"Waiting for an administra… (455 bytes, sha1 22612f3b5cf792851220a2188483de82640b0f37)
+root POST /api/templates/install?id=nope "{\"answers\":{}}"
+  400 no template "nope"
+root POST /api/templates/install?id=ct-echo "{\"answers\":"
+  400 invalid JSON: unexpected EOF
+root POST /api/templates/install?id=ct-echo ""
+  400 invalid JSON: EOF
+root GET /api/templates/pieces ""
+  200 []
+root POST /api/templates/save "{\"title\":\"Nothing in it\",\"pieces\":[]}"
+  400 pick at least one thing to put in the template
+root POST /api/templates/save "{\"title\":\"Saved Echo!\",\"pieces\":[\"tool|ct_echo|root\"],\"questions\":[{\"name\":\"greeting\",\"value\":\"hello\"},{\"name\":\" \"}]}"
+  200 {"message":"Saved the template \"Saved Echo!\" with 1 question(s). Export it to share it.","ok":true}
+root POST /api/templates/save "{\"id\":\"system-info\",\"title\":\"Clash\",\"pieces\":[\"tool|ct_echo|root\"]}"
+  400 "system-info" is a built-in template's id: give this one another
+root POST /api/templates/save "{\"title\":"
+  400 invalid JSON: unexpected EOF
+root GET /api/templates/recipe?id=saved-echo ""
+  200 {"contains":["ct_echo (tool)"],"description":"","destinations":{},"id":"saved-echo","questions":[{"name":"greeting","label":"greeting"}],"setup_notes":"","source":"imported","title":"Saved Echo!"}
+root POST /api/templates/delete?id=system-info ""
+  400 built-in templates cannot be deleted
+root POST /api/templates/delete?id=nope ""
+  400 no template "nope"
+root POST /api/templates/delete?id=ct-echo-2 ""
+  200 {"ok":true}
+root PUT /api/templates/delete?id=ct-echo ""
+  405 method not allowed
+root GET /api/templates ""
+  200 [{"id":"ct-echo","kind":"template","title":"Echo a greeting","category":"Tools","description":"A shell tool that echoes what it was set up with.","contains":"ct_echo (tool)","source":"imported","_recipe":true,"_imported":true},{"id":"saved-echo","kind":"template","title":"Saved Echo!","contains":"ct_echo (tool)","source":"imported","_recipe":true,"_imported":true}]

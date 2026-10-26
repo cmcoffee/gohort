@@ -153,10 +153,19 @@ func (a *AdminApp) registerArtifactsRoutes(sub *http.ServeMux) {
 // carry a corpus's chunk text (recipe-only bundles are kilobytes), and the
 // {"pack"} wrapper's JSON-string escaping roughly doubles the wire size.
 func readArtifactBundleBody(r *http.Request) ([]byte, error) {
-	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<26))
+	body, err := io.ReadAll(io.LimitReader(r.Body, artifactBundleMaxBody))
 	if err != nil {
 		return nil, err
 	}
+	return artifactBundleBytes(body), nil
+}
+
+// artifactBundleMaxBody is how big a pasted or uploaded bundle may be.
+const artifactBundleMaxBody = 1 << 26
+
+// artifactBundleBytes is the bundle a posted body carries: the file's JSON as
+// it is, or the "pack" a {"pack": "<json>"} wraps it in.
+func artifactBundleBytes(body []byte) []byte {
 	data := bytes.TrimSpace(body)
 	var wrap struct {
 		Pack string `json:"pack"`
@@ -164,5 +173,5 @@ func readArtifactBundleBody(r *http.Request) ([]byte, error) {
 	if json.Unmarshal(data, &wrap) == nil && strings.TrimSpace(wrap.Pack) != "" {
 		data = []byte(strings.TrimSpace(wrap.Pack))
 	}
-	return data, nil
+	return data
 }
