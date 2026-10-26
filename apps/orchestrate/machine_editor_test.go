@@ -117,7 +117,7 @@ func TestEditingOneSectionKeepsTheRest(t *testing.T) {
 
 	r := httptest.NewRequest("POST", "/api/machines/"+def.ID+"/meta", strings.NewReader(`{"name":"Renamed"}`))
 	w := httptest.NewRecorder()
-	app.handleMachineMeta(w, asUser(r, user), udb, user, def)
+	routed(app)(w, asUser(r, user))
 	if w.Code != 200 {
 		t.Fatalf("%d %s", w.Code, w.Body.String())
 	}
@@ -137,7 +137,7 @@ func TestEditingOneSectionKeepsTheRest(t *testing.T) {
 	r = httptest.NewRequest("POST", "/api/machines/"+def.ID+"/phases?name=triage", strings.NewReader(body))
 	w = httptest.NewRecorder()
 	after, _ = LoadMachineDef(udb, user, def.ID)
-	app.handleMachinePhases(w, asUser(r, user), udb, user, after)
+	routed(app)(w, asUser(r, user))
 	if w.Code != 200 {
 		t.Fatalf("%d %s", w.Code, w.Body.String())
 	}
@@ -160,7 +160,7 @@ func TestFirstPhaseBecomesTheStart(t *testing.T) {
 	r := httptest.NewRequest("POST", "/api/machines/"+def.ID+"/phases",
 		strings.NewReader(`{"name":"first","prompt":"hello","resident":true}`))
 	w := httptest.NewRecorder()
-	app.handleMachinePhases(w, asUser(r, user), udb, user, def)
+	routed(app)(w, asUser(r, user))
 	if w.Code != 200 {
 		t.Fatalf("%d %s", w.Code, w.Body.String())
 	}
@@ -336,7 +336,7 @@ func TestImportedFieldsSurviveAFormSave(t *testing.T) {
 	r := httptest.NewRequest("POST", "/api/machines/"+def.ID+"/phases?name=work",
 		strings.NewReader(`{"prompt":"do it carefully"}`))
 	w := httptest.NewRecorder()
-	app.handleMachinePhases(w, asUser(r, user), udb, user, def)
+	routed(app)(w, asUser(r, user))
 	if w.Code != 200 {
 		t.Fatalf("%d %s", w.Code, w.Body.String())
 	}
@@ -909,10 +909,10 @@ func TestKeptToolNamesDoNotLeakBetweenSteps(t *testing.T) {
 func TestRenamingAStepFromTheFormRewritesReferences(t *testing.T) {
 	app, udb, user, def := editorFixture(t)
 
-	r := httptest.NewRequest("POST", "/orchestrate/api/machines/"+def.ID+"/phases?name=triage",
+	r := httptest.NewRequest("POST", "/api/machines/"+def.ID+"/phases?name=triage",
 		strings.NewReader(`{"name": "intake"}`))
 	w := httptest.NewRecorder()
-	app.handleMachinePhases(w, asUser(r, user), udb, user, def)
+	routed(app)(w, asUser(r, user))
 	if w.Code != 200 {
 		t.Fatalf("rename failed: %d %s", w.Code, w.Body.String())
 	}
@@ -928,10 +928,10 @@ func TestRenamingAStepFromTheFormRewritesReferences(t *testing.T) {
 	}
 
 	// Renaming answer onto intake would re-point everything at intake.
-	r = httptest.NewRequest("POST", "/orchestrate/api/machines/"+def.ID+"/phases?name=answer",
+	r = httptest.NewRequest("POST", "/api/machines/"+def.ID+"/phases?name=answer",
 		strings.NewReader(`{"name": "intake"}`))
 	w = httptest.NewRecorder()
-	app.handleMachinePhases(w, asUser(r, user), udb, user, saved)
+	routed(app)(w, asUser(r, user))
 	if w.Code != 400 {
 		t.Fatalf("a rename onto an existing step should be refused, got %d", w.Code)
 	}
@@ -946,16 +946,15 @@ func TestRenamingAStepFromTheFormRewritesReferences(t *testing.T) {
 func TestAStaleFormCannotResurrectARenamedStep(t *testing.T) {
 	app, udb, user, def := editorFixture(t)
 
-	r := httptest.NewRequest("POST", "/orchestrate/api/machines/"+def.ID+"/phases?name=triage",
+	r := httptest.NewRequest("POST", "/api/machines/"+def.ID+"/phases?name=triage",
 		strings.NewReader(`{"name": "intake"}`))
-	app.handleMachinePhases(httptest.NewRecorder(), asUser(r, user), udb, user, def)
-	renamed, _ := LoadMachineDef(udb, user, def.ID)
+	routed(app)(httptest.NewRecorder(), asUser(r, user))
 
 	// The stale section saves another field against the OLD address.
-	r = httptest.NewRequest("POST", "/orchestrate/api/machines/"+def.ID+"/phases?name=triage",
+	r = httptest.NewRequest("POST", "/api/machines/"+def.ID+"/phases?name=triage",
 		strings.NewReader(`{"desc": "typed into a stale form"}`))
 	w := httptest.NewRecorder()
-	app.handleMachinePhases(w, asUser(r, user), udb, user, renamed)
+	routed(app)(w, asUser(r, user))
 	if w.Code != 404 {
 		t.Fatalf("a stale save should 404, got %d: %s", w.Code, w.Body.String())
 	}
@@ -984,9 +983,9 @@ func TestRenamingASelfReferencingStepKeepsItsRewrites(t *testing.T) {
 			{Name: "answer", Prompt: "a", Resident: true,
 				Guard: "they moved on", GuardTo: "answer"},
 		}})
-	r := httptest.NewRequest("POST", "/x?name=answer", strings.NewReader(`{"name": "reply"}`))
+	r := httptest.NewRequest("POST", "/api/machines/"+def.ID+"/phases?name=answer", strings.NewReader(`{"name": "reply"}`))
 	w := httptest.NewRecorder()
-	app.handleMachinePhases(w, asUser(r, user), udb, user, def)
+	routed(app)(w, asUser(r, user))
 	if w.Code != 200 {
 		t.Fatalf("rename failed: %d %s", w.Code, w.Body.String())
 	}
@@ -1005,14 +1004,14 @@ func TestRenamingASelfReferencingStepKeepsItsRewrites(t *testing.T) {
 // NEW rows, not onto rows about to be replaced.
 func TestRoutingTargetsSurviveAFullRecordSave(t *testing.T) {
 	app, udb, user, def := editorFixture(t)
-	r := httptest.NewRequest("POST", "/x?name=triage", strings.NewReader(`{
+	r := httptest.NewRequest("POST", "/api/machines/"+def.ID+"/phases?name=triage", strings.NewReader(`{
 		"prompt": "decide",
 		"output": [{"name": "next_phase", "type": "string", "required": true}],
 		"next_from": "next_phase",
 		"targets": ["answer"]
 	}`))
 	w := httptest.NewRecorder()
-	app.handleMachinePhases(w, asUser(r, user), udb, user, def)
+	routed(app)(w, asUser(r, user))
 	if w.Code != 200 {
 		t.Fatalf("save failed: %d %s", w.Code, w.Body.String())
 	}
@@ -1027,9 +1026,9 @@ func TestRoutingTargetsSurviveAFullRecordSave(t *testing.T) {
 // quietly merge onto the step somebody already built.
 func TestAddingAStepUnderAnExistingNameIsRefused(t *testing.T) {
 	app, udb, user, def := editorFixture(t)
-	r := httptest.NewRequest("POST", "/x", strings.NewReader(`{"name": "triage", "desc": "typed into the add form"}`))
+	r := httptest.NewRequest("POST", "/api/machines/"+def.ID+"/phases", strings.NewReader(`{"name": "triage", "desc": "typed into the add form"}`))
 	w := httptest.NewRecorder()
-	app.handleMachinePhases(w, asUser(r, user), udb, user, def)
+	routed(app)(w, asUser(r, user))
 	if w.Code != 400 {
 		t.Fatalf("a create onto an existing name should refuse, got %d: %s", w.Code, w.Body.String())
 	}
@@ -1059,9 +1058,9 @@ func TestAddingAStepLandsOnTheNewStep(t *testing.T) {
 		t.Error("the redirect should replace the page, not open a tab")
 	}
 
-	r := httptest.NewRequest("POST", "/x", strings.NewReader(`{"name": "log check", "desc": "dig"}`))
+	r := httptest.NewRequest("POST", "/api/machines/"+def.ID+"/phases", strings.NewReader(`{"name": "log check", "desc": "dig"}`))
 	w := httptest.NewRecorder()
-	app.handleMachinePhases(w, asUser(r, user), udb, user, def)
+	routed(app)(w, asUser(r, user))
 	if w.Code != 200 {
 		t.Fatalf("add failed: %d %s", w.Code, w.Body.String())
 	}
@@ -1471,9 +1470,9 @@ func TestTheEditorOffersBoundedExits(t *testing.T) {
 		t.Error("the default should be stated where the choice is made")
 	}
 
-	r := httptest.NewRequest("POST", "/x?name=answer", strings.NewReader(`{"exits_to": ["triage"]}`))
+	r := httptest.NewRequest("POST", "/api/machines/"+def.ID+"/phases?name=answer", strings.NewReader(`{"exits_to": ["triage"]}`))
 	w := httptest.NewRecorder()
-	app.handleMachinePhases(w, asUser(r, user), udb, user, def)
+	routed(app)(w, asUser(r, user))
 	if w.Code != 200 {
 		t.Fatalf("save failed: %d %s", w.Code, w.Body.String())
 	}
@@ -1505,9 +1504,9 @@ func TestRemovingAStepFromTheEditorLeavesNoComplaint(t *testing.T) {
 		t.Errorf("the confirm should say what else it touches: %q", confirm)
 	}
 
-	r := httptest.NewRequest("DELETE", "/x?name=dig", nil)
+	r := httptest.NewRequest("DELETE", "/api/machines/"+def.ID+"/phases?name=dig", nil)
 	w := httptest.NewRecorder()
-	app.handleMachinePhases(w, asUser(r, user), udb, user, def)
+	routed(app)(w, asUser(r, user))
 	if w.Code != 200 {
 		t.Fatalf("remove failed: %d %s", w.Code, w.Body.String())
 	}
@@ -1825,7 +1824,7 @@ func TestTheDenyChecklistRoundTrips(t *testing.T) {
 		t.Helper()
 		r := httptest.NewRequest("POST", "/api/machines/"+def.ID+"/phases?name=look", strings.NewReader(bodyJSON))
 		w := httptest.NewRecorder()
-		app.handleMachinePhases(w, asUser(r, user), udb, user, def)
+		routed(app)(w, asUser(r, user))
 		if w.Code != 200 {
 			t.Fatalf("%d %s", w.Code, w.Body.String())
 		}
@@ -1858,7 +1857,7 @@ func TestTheSettingsFormCarriesRouteEachMessage(t *testing.T) {
 		t.Helper()
 		r := httptest.NewRequest("POST", "/api/machines/"+def.ID+"/meta", strings.NewReader(body))
 		w := httptest.NewRecorder()
-		app.handleMachineMeta(w, asUser(r, user), udb, user, def)
+		routed(app)(w, asUser(r, user))
 		if w.Code != 200 {
 			t.Fatalf("%d %s", w.Code, w.Body.String())
 		}
@@ -1874,7 +1873,7 @@ func TestTheSettingsFormCarriesRouteEachMessage(t *testing.T) {
 	}
 	r := httptest.NewRequest("GET", "/api/machines/"+def.ID+"/meta", nil)
 	w := httptest.NewRecorder()
-	app.handleMachineMeta(w, asUser(r, user), udb, user, def)
+	routed(app)(w, asUser(r, user))
 	if !strings.Contains(w.Body.String(), `"route_each_message":true`) {
 		t.Errorf("the form should read it back: %s", w.Body.String())
 	}
@@ -1894,8 +1893,7 @@ func TestReplyWithIsAStepPicker(t *testing.T) {
 		t.Helper()
 		r := httptest.NewRequest("POST", "/api/machines/"+def.ID+"/phases?name=answer", strings.NewReader(body))
 		w := httptest.NewRecorder()
-		cur, _ := LoadMachineDef(udb, user, def.ID)
-		app.handleMachinePhases(w, asUser(r, user), udb, user, cur)
+		routed(app)(w, asUser(r, user))
 		if w.Code != 200 {
 			t.Fatalf("%d %s", w.Code, w.Body.String())
 		}
@@ -1908,8 +1906,7 @@ func TestReplyWithIsAStepPicker(t *testing.T) {
 	}
 	r := httptest.NewRequest("GET", "/api/machines/"+def.ID+"/phases?name=answer", nil)
 	w := httptest.NewRecorder()
-	cur, _ := LoadMachineDef(udb, user, def.ID)
-	app.handleMachinePhases(w, asUser(r, user), udb, user, cur)
+	routed(app)(w, asUser(r, user))
 	if !strings.Contains(w.Body.String(), `"reply_with":"triage"`) {
 		t.Errorf("the picker should read back the step's name: %s", w.Body.String())
 	}
@@ -1922,7 +1919,7 @@ func TestReplyWithIsAStepPicker(t *testing.T) {
 	if ph := post(`{"reply_with":"` + custom + `"}`); ph.ReplyWith != custom {
 		t.Fatalf("a custom template is stored as written, got %q", ph.ReplyWith)
 	}
-	cur, _ = LoadMachineDef(udb, user, def.ID)
+	cur, _ := LoadMachineDef(udb, user, def.ID)
 	answer, _ = cur.Phase("answer")
 	opts = replyWithOptions(cur, answer)
 	if last := opts[len(opts)-1]; last.Value != custom || !strings.HasPrefix(last.Label, "Custom: ") {

@@ -42,7 +42,7 @@ func TestARevisionKeepsIdentityAndSaysWhatItChanged(t *testing.T) {
 	r := httptest.NewRequest("POST", "/api/machines/"+def.ID+"/revise",
 		strings.NewReader(`{"description": "let sort choose between digging and answering"}`))
 	w := httptest.NewRecorder()
-	app.handleMachineOne(w, asUser(r, user))
+	routed(app)(w, asUser(r, user))
 	if w.Code != 200 {
 		t.Fatalf("revise: %d %s", w.Code, w.Body.String())
 	}
@@ -89,7 +89,7 @@ func TestARevisionCanBeTakenBack(t *testing.T) {
 	r := httptest.NewRequest("POST", "/api/machines/"+def.ID+"/revise",
 		strings.NewReader(`{"description": "change it"}`))
 	w := httptest.NewRecorder()
-	app.handleMachineOne(w, asUser(r, user))
+	routed(app)(w, asUser(r, user))
 	if w.Code != 200 {
 		t.Fatalf("revise: %d %s", w.Code, w.Body.String())
 	}
@@ -110,7 +110,7 @@ func TestARevisionCanBeTakenBack(t *testing.T) {
 
 	r = httptest.NewRequest("POST", "/api/machines/"+def.ID+"/undo", nil)
 	w = httptest.NewRecorder()
-	app.handleMachineOne(w, asUser(r, user))
+	routed(app)(w, asUser(r, user))
 	if w.Code != 200 {
 		t.Fatalf("undo: %d %s", w.Code, w.Body.String())
 	}
@@ -127,7 +127,7 @@ func TestARevisionCanBeTakenBack(t *testing.T) {
 	}
 	r = httptest.NewRequest("POST", "/api/machines/"+def.ID+"/undo", nil)
 	w = httptest.NewRecorder()
-	app.handleMachineOne(w, asUser(r, user))
+	routed(app)(w, asUser(r, user))
 	if w.Code != 400 {
 		t.Errorf("a second undo should refuse, got %d", w.Code)
 	}

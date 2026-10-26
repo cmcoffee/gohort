@@ -175,7 +175,7 @@ func TestEveryoneInARecipesShareListFilesTheRequest(t *testing.T) {
 			d, _ := LoadPipelineDef(udb, "alice", pl.ID)
 			return d.Published
 		}},
-		{machinePromotionKind, "/api/machines/" + mc.ID, T.handleMachineOne, func() bool {
+		{machinePromotionKind, "/api/machines/" + mc.ID, routed(T), func() bool {
 			d, _ := LoadMachineDef(udb, "alice", mc.ID)
 			return d.Published
 		}},

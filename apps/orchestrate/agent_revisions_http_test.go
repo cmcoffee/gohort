@@ -222,7 +222,7 @@ func TestMachineRevisionRoutes(t *testing.T) {
 	SaveMachineDefAs(udb, edited, "renamed")
 
 	w := httptest.NewRecorder()
-	app.handleMachineOne(w, req("GET", "/api/machines/"+made.ID+"/revisions", nil))
+	routed(app)(w, req("GET", "/api/machines/"+made.ID+"/revisions", nil))
 	if w.Code != 200 {
 		t.Fatalf("list status %d: %s", w.Code, w.Body.String())
 	}
@@ -238,7 +238,7 @@ func TestMachineRevisionRoutes(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	app.handleMachineOne(w, req("POST", "/api/machines/"+made.ID+"/revisions/restore?rev=1", nil))
+	routed(app)(w, req("POST", "/api/machines/"+made.ID+"/revisions/restore?rev=1", nil))
 	if w.Code != 200 {
 		t.Fatalf("restore status %d: %s", w.Code, w.Body.String())
 	}

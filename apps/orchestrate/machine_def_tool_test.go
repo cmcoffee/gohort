@@ -312,7 +312,7 @@ func TestMachinesList_ReportsWhoUsesEach(t *testing.T) {
 
 	// Deleting through HTTP detaches, exactly like the tool's delete.
 	w = httptest.NewRecorder()
-	app.handleMachineOne(w, req(http.MethodDelete, "/api/machines/"+def.ID, nil))
+	routed(app)(w, req(http.MethodDelete, "/api/machines/"+def.ID, nil))
 	if !strings.Contains(w.Body.String(), "Wren") {
 		t.Errorf("delete should report what it detached: %s", w.Body.String())
 	}
@@ -334,7 +334,7 @@ func TestMachineGraphEndpoint_StructureAndOverlay(t *testing.T) {
 	})
 
 	w := httptest.NewRecorder()
-	app.handleMachineOne(w, req(http.MethodGet, "/api/machines/"+def.ID+"/graph", nil))
+	routed(app)(w, req(http.MethodGet, "/api/machines/"+def.ID+"/graph", nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("graph: %d %s", w.Code, w.Body.String())
 	}
@@ -352,7 +352,7 @@ func TestMachineGraphEndpoint_StructureAndOverlay(t *testing.T) {
 		MachineLog: []PhaseHop{{From: "decompose", To: "answer"}},
 	})
 	w = httptest.NewRecorder()
-	app.handleMachineOne(w, req(http.MethodGet,
+	routed(app)(w, req(http.MethodGet,
 		"/api/machines/"+def.ID+"/graph?agent=a1&session="+sess.ID, nil))
 	live := w.Body.String()
 	if live == plain {
@@ -366,7 +366,7 @@ func TestMachineGraphEndpoint_StructureAndOverlay(t *testing.T) {
 	// one — the ids have to match, not just exist.
 	other, _ := saveChatSession(udb, ChatSession{ID: "s2", AgentID: "a1", MachineID: "someone-else", Phase: "answer"})
 	w = httptest.NewRecorder()
-	app.handleMachineOne(w, req(http.MethodGet,
+	routed(app)(w, req(http.MethodGet,
 		"/api/machines/"+def.ID+"/graph?agent=a1&session="+other.ID, nil))
 	if w.Body.String() != plain {
 		t.Error("a session running another machine must not mark this graph")

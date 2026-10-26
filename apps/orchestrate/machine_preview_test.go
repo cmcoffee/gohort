@@ -157,9 +157,9 @@ func TestThePreviewRefreshesAfterASave(t *testing.T) {
 	// The endpoint the refresh calls, and the page render, come from one
 	// function — so what a save re-fetches cannot drift from what was
 	// drawn.
-	r := httptest.NewRequest("GET", "/x?name=look&preview=1", nil)
+	r := httptest.NewRequest("GET", "/api/machines/"+def.ID+"/phases?name=look&preview=1", nil)
 	w := httptest.NewRecorder()
-	app.handleMachinePhases(w, asUser(r, user), udb, user, def)
+	routed(app)(w, asUser(r, user))
 	if w.Code != 200 {
 		t.Fatalf("preview fetch failed: %d %s", w.Code, w.Body.String())
 	}

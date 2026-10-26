@@ -96,7 +96,7 @@ func TestMachinesHTTP_CreateListReadUpdateDelete(t *testing.T) {
 
 	// Read one.
 	w = httptest.NewRecorder()
-	app.handleMachineOne(w, req(http.MethodGet, "/api/machines/"+created.ID, nil))
+	routed(app)(w, req(http.MethodGet, "/api/machines/"+created.ID, nil))
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "{state:decompose.parts}") {
 		t.Fatalf("read one: %d %s", w.Code, w.Body.String())
 	}
@@ -106,7 +106,7 @@ func TestMachinesHTTP_CreateListReadUpdateDelete(t *testing.T) {
 	upd["name"] = "Triage v2"
 	upd["id"] = "someone-elses-id"
 	w = httptest.NewRecorder()
-	app.handleMachineOne(w, req(http.MethodPut, "/api/machines/"+created.ID, upd))
+	routed(app)(w, req(http.MethodPut, "/api/machines/"+created.ID, upd))
 	if w.Code != http.StatusOK {
 		t.Fatalf("update: %d %s", w.Code, w.Body.String())
 	}
@@ -121,7 +121,7 @@ func TestMachinesHTTP_CreateListReadUpdateDelete(t *testing.T) {
 
 	// Export strips storage metadata.
 	w = httptest.NewRecorder()
-	app.handleMachineOne(w, req(http.MethodGet, "/api/machines/"+created.ID+"/export", nil))
+	routed(app)(w, req(http.MethodGet, "/api/machines/"+created.ID+"/export", nil))
 	var recipe MachineDef
 	_ = json.Unmarshal(w.Body.Bytes(), &recipe)
 	if recipe.Owner != "" || !recipe.Created.IsZero() {
@@ -130,7 +130,7 @@ func TestMachinesHTTP_CreateListReadUpdateDelete(t *testing.T) {
 
 	// Delete.
 	w = httptest.NewRecorder()
-	app.handleMachineOne(w, req(http.MethodDelete, "/api/machines/"+created.ID, nil))
+	routed(app)(w, req(http.MethodDelete, "/api/machines/"+created.ID, nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("delete: %d %s", w.Code, w.Body.String())
 	}
@@ -166,7 +166,7 @@ func TestMachinesHTTP_ImportRoundTrip(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &created)
 
 	w = httptest.NewRecorder()
-	app.handleMachineOne(w, req(http.MethodGet, "/api/machines/"+created.ID+"/export", nil))
+	routed(app)(w, req(http.MethodGet, "/api/machines/"+created.ID+"/export", nil))
 	var recipe MachineDef
 	_ = json.Unmarshal(w.Body.Bytes(), &recipe)
 
@@ -308,7 +308,7 @@ func TestMachinesHTTP_EditKeepsIdentityAndExplainsRejections(t *testing.T) {
 		},
 	}
 	w = httptest.NewRecorder()
-	app.handleMachineOne(w, req(http.MethodPut, "/api/machines/"+created.ID, edited))
+	routed(app)(w, req(http.MethodPut, "/api/machines/"+created.ID, edited))
 	if w.Code != http.StatusOK {
 		t.Fatalf("edit: %d %s", w.Code, w.Body.String())
 	}
@@ -331,7 +331,7 @@ func TestMachinesHTTP_EditKeepsIdentityAndExplainsRejections(t *testing.T) {
 		},
 	}
 	w = httptest.NewRecorder()
-	app.handleMachineOne(w, req(http.MethodPut, "/api/machines/"+created.ID, broken))
+	routed(app)(w, req(http.MethodPut, "/api/machines/"+created.ID, broken))
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", w.Code)
 	}

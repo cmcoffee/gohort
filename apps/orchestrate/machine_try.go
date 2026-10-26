@@ -28,7 +28,6 @@ package orchestrate
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
@@ -43,51 +42,44 @@ import (
 // has something wrong with it rather than being slow.
 const tryTimeout = 3 * time.Minute
 
-// handleMachineTry runs one message through the machine and reports the
+// machineTry runs one message through the machine and reports the
 // path it took.
 //
 //	POST /api/machines/{id}/try  {"message": "..."}
-func (T *OrchestrateApp) handleMachineTry(w http.ResponseWriter, r *http.Request, udb Database, user string, def MachineDef) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
+func (T *OrchestrateApp) machineTry(c *jsonapi.Call, body struct {
+	Message string `json:"message"`
+	// Cursor is the previous try's position, round-tripped through
+	// the browser. This is what makes the rehearsal MULTI-TURN — a
+	// second message resumes the parked step, which is the only way
+	// a guard, a re-entry or a one-turn handoff can ever be watched:
+	// all of them exist only across turns. Client-held rather than
+	// stored because a rehearsal should die with the page, and the
+	// cursor is the user's own data about their own machine.
+	Cursor *MachineCursor `json:"cursor"`
+}) (any, error) {
+	mc, perr := T.machineAt(c)
+	if perr != nil {
+		return nil, perr
 	}
+	r, udb, user, def := c.R, c.UDB, c.User, mc.def
 	// Same guard the draft endpoint carries: every transient hop is a
 	// worker call, and a nil LLM would surface as a panic three layers
 	// down instead of a sentence here.
 	if T.LLM == nil {
-		http.Error(w, "worker LLM not configured", http.StatusServiceUnavailable)
-		return
-	}
-	var body struct {
-		Message string `json:"message"`
-		// Cursor is the previous try's position, round-tripped through
-		// the browser. This is what makes the rehearsal MULTI-TURN — a
-		// second message resumes the parked step, which is the only way
-		// a guard, a re-entry or a one-turn handoff can ever be watched:
-		// all of them exist only across turns. Client-held rather than
-		// stored because a rehearsal should die with the page, and the
-		// cursor is the user's own data about their own machine.
-		Cursor *MachineCursor `json:"cursor"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
+		return nil, jsonapi.Status(http.StatusServiceUnavailable, "worker LLM not configured")
 	}
 	msg := strings.TrimSpace(body.Message)
 	if msg == "" {
-		http.Error(w, "type a message to run through it", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("type a message to run through it")
 	}
 	// A machine that cannot run should say why HERE rather than failing
 	// somewhere downstream with the same information in a worse place.
 	if probs := def.Problems(); len(probs) > 0 {
-		jsonapi.Write(w, map[string]any{
+		return map[string]any{
 			"blocked":   true,
 			"checklist": probs,
 			"note":      "This machine will not run yet. Fix the list above and try again.",
-		})
-		return
+		}, nil
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), tryTimeout)
@@ -113,19 +105,18 @@ func (T *OrchestrateApp) handleMachineTry(w http.ResponseWriter, r *http.Request
 	}, T.PhaseWorker(nil),
 		func(kind, detail string) { notes = append(notes, kind+": "+detail) })
 	if err != nil {
-		jsonapi.Write(w, map[string]any{
+		return map[string]any{
 			"failed": err.Error(),
 			"path":   tryPath(cur, priorHops),
 			"notes":  notes,
 			"cursor": cur,
-		})
-		return
+		}, nil
 	}
 	Log("[orchestrate.machines] user=%q dry-ran %q → landed in %s after %d hop(s)",
 		user, def.Name, landed.Name, len(cur.Log))
 
 	reach, reachNote := tryReach(udb, user, def, cur, landed, priorHops)
-	jsonapi.Write(w, map[string]any{
+	return map[string]any{
 		"landed":      landed.Name,
 		"landed_desc": strings.TrimSpace(landed.Desc),
 		"path":        tryPath(cur, priorHops),
@@ -141,7 +132,7 @@ func (T *OrchestrateApp) handleMachineTry(w http.ResponseWriter, r *http.Request
 		// Stated every time. Somebody reading a thin answer should know
 		// which of the reasons it is.
 		"caveat": tryCaveat(def),
-	})
+	}, nil
 }
 
 // tryReach answers the question a tool-less rehearsal otherwise leaves open:

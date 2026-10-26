@@ -30,30 +30,27 @@ import (
 	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
-// handleMachineRevise redrafts an existing machine from a description of
+// machineRevise redrafts an existing machine from a description of
 // what should change.
 //
 //	POST /api/machines/{id}/revise {"description": "..."} → {id, changed[], checklist}
-func (T *OrchestrateApp) handleMachineRevise(w http.ResponseWriter, r *http.Request, udb Database, user string, def MachineDef) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
+func (T *OrchestrateApp) machineRevise(c *jsonapi.Call, body struct {
+	Description string `json:"description"`
+}) (any, error) {
+	mc, perr := T.machineAt(c)
+	if perr != nil {
+		return nil, perr
 	}
+	if err := mc.editable("revise"); err != nil {
+		return nil, err
+	}
+	r, udb, user, def := c.R, mc.ed.db, mc.ed.owner, mc.def
 	if T.LLM == nil {
-		http.Error(w, "worker LLM not configured", http.StatusServiceUnavailable)
-		return
-	}
-	var body struct {
-		Description string `json:"description"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
+		return nil, jsonapi.Status(http.StatusServiceUnavailable, "worker LLM not configured")
 	}
 	want := strings.TrimSpace(body.Description)
 	if want == "" {
-		http.Error(w, "say what should change", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("say what should change")
 	}
 	if len(want) > maxDraftDescription {
 		want = want[:maxDraftDescription]
@@ -65,8 +62,7 @@ func (T *OrchestrateApp) handleMachineRevise(w http.ResponseWriter, r *http.Requ
 	// about the document invites a rewrite from scratch.
 	current, err := json.MarshalIndent(ExportMachine(def), "", "  ")
 	if err != nil {
-		http.Error(w, "could not read the machine", http.StatusInternalServerError)
-		return
+		return nil, jsonapi.Status(http.StatusInternalServerError, "could not read the machine")
 	}
 	ask := "Revise this machine.\n\nWHAT SHOULD CHANGE:\n" + want +
 		"\n\nTHE MACHINE AS IT STANDS:\n" + string(current) +
@@ -79,8 +75,7 @@ func (T *OrchestrateApp) handleMachineRevise(w http.ResponseWriter, r *http.Requ
 		if revised, derr = T.draftMachineOnce(r.Context(), ask+
 			"\n\nYour previous reply could not be used: "+derr.Error()+
 			"\nReply with ONLY the JSON object."); derr != nil {
-			http.Error(w, "the revision could not be produced: "+derr.Error(), http.StatusBadGateway)
-			return
+			return nil, jsonapi.Status(http.StatusBadGateway, "the revision could not be produced: "+derr.Error())
 		}
 	}
 	if probs := revised.Problems(); len(probs) > 0 {
@@ -108,22 +103,25 @@ func (T *OrchestrateApp) handleMachineRevise(w http.ResponseWriter, r *http.Requ
 	changed := describeMachineChange(before, saved)
 	Log("[orchestrate.machines] user=%q revised machine %q (id=%s): %s", user, saved.Name, saved.ID,
 		strings.Join(changed, "; "))
-	jsonapi.Write(w, map[string]any{
+	return map[string]any{
 		"id": saved.ID, "name": saved.Name,
 		"changed":   changed,
 		"checklist": saved.Problems(),
-	})
+	}, nil
 }
 
-// handleMachineUndo puts back the definition a revision replaced.
-func (T *OrchestrateApp) handleMachineUndo(w http.ResponseWriter, r *http.Request, udb Database, user string, def MachineDef) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
+// machineUndo puts back the definition a revision replaced.
+func (T *OrchestrateApp) machineUndo(c *jsonapi.Call, _ struct{}) (any, error) {
+	mc, perr := T.machineAt(c)
+	if perr != nil {
+		return nil, perr
 	}
+	if err := mc.editable("undo a change to"); err != nil {
+		return nil, err
+	}
+	udb, user, def := mc.ed.db, mc.ed.owner, mc.def
 	if def.Previous == nil {
-		http.Error(w, "there is no revision to undo", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("there is no revision to undo")
 	}
 	back := *def.Previous
 	back.ID = def.ID
@@ -136,7 +134,7 @@ func (T *OrchestrateApp) handleMachineUndo(w http.ResponseWriter, r *http.Reques
 	back.Previous = nil
 	saved := SaveMachineDef(udb, back)
 	Log("[orchestrate.machines] user=%q undid the last revision of machine %q (id=%s)", user, saved.Name, saved.ID)
-	jsonapi.Write(w, map[string]any{"id": saved.ID, "name": saved.Name, "checklist": saved.Problems()})
+	return map[string]any{"id": saved.ID, "name": saved.Name, "checklist": saved.Problems()}, nil
 }
 
 // describeMachineChange says what a revision actually did, in steps.

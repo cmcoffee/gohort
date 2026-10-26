@@ -157,11 +157,7 @@ func TestMachineTryPanel_ButtonMarkupAndRouteAgree(t *testing.T) {
 	if !strings.Contains(machineTryJS, "/try'") {
 		t.Error("the handler does not post to the try endpoint")
 	}
-	routes, err := os.ReadFile("machines_http.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(routes), `case "try":`) {
+	if _, pattern := routeMux(&OrchestrateApp{}).Handler(httptest.NewRequest("POST", "/api/machines/m1/try", nil)); pattern == "" {
 		t.Error("nothing serves /try")
 	}
 }
@@ -273,12 +269,9 @@ func TestTheEditorOffersExportAndDuplicate(t *testing.T) {
 		t.Error("duplicate should land in the copy")
 	}
 	// And the endpoint it posts to is one the router serves.
-	routes, err := os.ReadFile("machines_http.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{`case "duplicate":`, `case "export":`} {
-		if !strings.Contains(string(routes), want) {
+	mux := routeMux(&OrchestrateApp{})
+	for _, want := range []string{"duplicate", "export"} {
+		if _, pattern := mux.Handler(httptest.NewRequest("POST", "/api/machines/m1/"+want, nil)); pattern == "" {
 			t.Errorf("nothing serves %s", want)
 		}
 	}
@@ -602,7 +595,7 @@ func TestTheMapRedrawsWhenAStepChangesShape(t *testing.T) {
 	// its link.
 	r := httptest.NewRequest("GET", "/api/machines/"+def.ID+"/graph?links=1", nil)
 	w := httptest.NewRecorder()
-	app.handleMachineOne(w, asUser(r, user))
+	routed(app)(w, asUser(r, user))
 	if w.Code != 200 {
 		t.Fatalf("graph fetch failed: %d", w.Code)
 	}
@@ -613,7 +606,7 @@ func TestTheMapRedrawsWhenAStepChangesShape(t *testing.T) {
 	// image or a saved copy gets.
 	r = httptest.NewRequest("GET", "/api/machines/"+def.ID+"/graph", nil)
 	w = httptest.NewRecorder()
-	app.handleMachineOne(w, asUser(r, user))
+	routed(app)(w, asUser(r, user))
 	if strings.Contains(w.Body.String(), `href="#dig"`) {
 		t.Error("anchors only mean something inside the page that has those sections")
 	}
@@ -623,7 +616,7 @@ func TestTheMapRedrawsWhenAStepChangesShape(t *testing.T) {
 	// the local copy below is mutated.
 	r = httptest.NewRequest("GET", "/api/machines/"+def.ID+"/block?name=map", nil)
 	w = httptest.NewRecorder()
-	app.handleMachineOne(w, asUser(r, user))
+	routed(app)(w, asUser(r, user))
 	if w.Body.String() != machineMapHTML(def) {
 		t.Error("the refreshed map is not the map the page drew")
 	}
@@ -725,7 +718,7 @@ func TestTheChecklistStaysTrueWhileYouFixThings(t *testing.T) {
 	for _, name := range []string{"checklist", "advice"} {
 		r = httptest.NewRequest("GET", "/api/machines/"+def.ID+"/block?name="+name, nil)
 		w = httptest.NewRecorder()
-		app.handleMachineOne(w, asUser(r, user))
+		routed(app)(w, asUser(r, user))
 		if w.Code != 200 {
 			t.Fatalf("the %s block does not render: %d", name, w.Code)
 		}
@@ -821,7 +814,7 @@ func TestAFindingYouCannotActOnHasAButton(t *testing.T) {
 	// And the endpoint settles it.
 	r = httptest.NewRequest("POST", "/api/machines/"+def.ID+"/repair?kind=problems", nil)
 	w = httptest.NewRecorder()
-	app.handleMachineOne(w, asUser(r, user))
+	routed(app)(w, asUser(r, user))
 	if w.Code != 200 {
 		t.Fatalf("repair: %d %s", w.Code, w.Body.String())
 	}
@@ -965,7 +958,7 @@ func TestTheProseFindingOffersARewrite(t *testing.T) {
 	// The refresh endpoint carries the set, or the buttons vanish on save.
 	r = httptest.NewRequest("GET", "/api/machines/"+def.ID+"/editor", nil)
 	w = httptest.NewRecorder()
-	app.handleMachineOne(w, asUser(r, user))
+	routed(app)(w, asUser(r, user))
 	if !strings.Contains(w.Body.String(), `"rewrites"`) {
 		t.Error("the editor spec should say which findings can be rewritten")
 	}

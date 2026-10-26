@@ -26,9 +26,7 @@
 package orchestrate
 
 import (
-	"encoding/json"
 	"fmt"
-	"net/http"
 	"sort"
 	"strconv"
 	"strings"
@@ -1236,206 +1234,227 @@ func nameValueRowsOf(m map[string]string) []map[string]any {
 // separate so the intent reads at the call site.
 func url_(s string) string { return strings.TrimSpace(s) }
 
-// handleMachineEditor serves the spec the modal mounts.
-func (T *OrchestrateApp) handleMachineEditor(w http.ResponseWriter, r *http.Request, udb Database, user string, def MachineDef) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
+// machineEditor serves the spec the modal mounts.
+func (T *OrchestrateApp) machineEditor(c *jsonapi.Call) (any, error) {
+	mc, perr := T.machineAt(c)
+	if perr != nil {
+		return nil, perr
 	}
-	jsonapi.Write(w, machineEditorSpec(def, editorCatalog{
+	udb, user, def := c.UDB, c.User, mc.def
+	return machineEditorSpec(def, editorCatalog{
 		agents: agentOptions(udb, user), tools: phaseToolOptions(user),
 		pipelines: pipelineOptions(udb, user), machines: childMachineOptions(udb, user, def),
 		checklist: machineChecklist(udb, user, def),
-	}))
+	}), nil
 }
 
-// handleMachineMeta reads and merges the machine-level fields.
+// machineMeta reads, and machineMetaSave merges, the machine-level fields.
 //
 // A MERGE, not a replace: this form holds three fields and the record
 // has phases. A form panel that posts what it holds would otherwise take
 // the phases with it — which is the exact failure patchAgent exists to
 // prevent on the agent record.
-func (T *OrchestrateApp) handleMachineMeta(w http.ResponseWriter, r *http.Request, udb Database, user string, def MachineDef) {
-	switch r.Method {
-	case http.MethodGet:
-		jsonapi.Write(w, map[string]any{
-			"name": def.Name, "description": def.Description,
-			"start": def.StartPhase(), "unattended": def.Unattended,
-			"route_each_message": def.RouteEachMessage,
-			"deny":               def.Deny,
-		})
-	case http.MethodPost, http.MethodPut, http.MethodPatch:
-		var body map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		if v, ok := body["name"]; ok {
-			def.Name = strings.TrimSpace(fmt.Sprint(v))
-		}
-		if v, ok := body["description"]; ok {
-			def.Description = strings.TrimSpace(fmt.Sprint(v))
-		}
-		if v, ok := body["start"]; ok {
-			def.Start = strings.TrimSpace(fmt.Sprint(v))
-		}
-		if _, ok := body["unattended"]; ok {
-			def.Unattended = BoolArg(body, "unattended")
-		}
-		if _, ok := body["route_each_message"]; ok {
-			def.RouteEachMessage = BoolArg(body, "route_each_message")
-		}
-		if _, ok := body["deny"]; ok {
-			def.Deny = stringSliceFromArgs(body, "deny")
-		}
-		// Saved even when it does not validate. This is an editor: a
-		// machine half-built is the normal state while somebody is
-		// building it, and refusing to store the third field until the
-		// tenth exists is how an editor becomes a puzzle. The checklist
-		// says what is still wrong, and enterMachine already degrades to
-		// an ordinary turn rather than breaking a conversation.
-		saved := SaveMachineDef(udb, def)
-		jsonapi.Write(w, map[string]any{"ok": true, "checklist": machineChecklist(udb, user, saved)})
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+func (T *OrchestrateApp) machineMeta(c *jsonapi.Call) (any, error) {
+	mc, perr := T.machineAt(c)
+	if perr != nil {
+		return nil, perr
 	}
+	if err := mc.editable("edit"); err != nil {
+		return nil, err
+	}
+	def := mc.def
+	return map[string]any{
+		"name": def.Name, "description": def.Description,
+		"start": def.StartPhase(), "unattended": def.Unattended,
+		"route_each_message": def.RouteEachMessage,
+		"deny":               def.Deny,
+	}, nil
 }
 
-// handleMachinePhases is the phase CRUD the table and its forms use.
-func (T *OrchestrateApp) handleMachinePhases(w http.ResponseWriter, r *http.Request, udb Database, user string, def MachineDef) {
-	name := strings.TrimSpace(r.URL.Query().Get("name"))
-
-	switch r.Method {
-	case http.MethodGet:
-		if name != "" {
-			ph, found := def.Phase(name)
-			if !found {
-				http.NotFound(w, r)
-				return
-			}
-			// ?preview=1 — just the composed block and its framing, for
-			// the in-place refresh after a save. Same function the page
-			// renders from, so the two cannot drift.
-			if r.URL.Query().Get("preview") == "1" {
-				block, note := phasePreviewParts(def, ph)
-				jsonapi.Write(w, map[string]any{"block": block, "note": note})
-				return
-			}
-			rec := phaseRecord(ph)
-			rec["reply_with"] = replyWithChoice(def, ph.ReplyWith) // the picker holds a step's name
-			jsonapi.Write(w, rec)
-			return
-		}
-		rows := make([]map[string]any, 0, len(def.Phases))
-		for _, p := range def.Phases {
-			rows = append(rows, phaseRow(p))
-		}
-		jsonapi.Write(w, rows)
-
-	case http.MethodPost, http.MethodPut, http.MethodPatch:
-		var body map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		target := name
-		if target == "" {
-			target = strings.TrimSpace(fmt.Sprint(body["name"]))
-		}
-		if target == "" || target == "<nil>" {
-			http.Error(w, "give the phase a name", http.StatusBadRequest)
-			return
-		}
-		idx := -1
-		for i, p := range def.Phases {
-			if p.Name == target {
-				idx = i
-				break
-			}
-		}
-		// A CREATE names the step in its body and posts to the bare
-		// collection. A form still addressing ?name=X after X was renamed
-		// or removed is stale, and treating its save as a create would
-		// resurrect the old step next to the new one — the kind of ghost
-		// nobody notices until the router starts offering both.
-		if idx < 0 && name != "" {
-			http.Error(w, "no step called "+strconv.Quote(name)+", it was renamed or removed; reload the editor", http.StatusNotFound)
-			return
-		}
-		// And the mirror image: the ADD form naming a step that already
-		// exists must not quietly merge onto it — the rename path refuses
-		// this exact collision, and a create that half-overwrites a step
-		// someone built is worse than either.
-		if idx >= 0 && name == "" {
-			http.Error(w, "a step called "+strconv.Quote(target)+" already exists: edit it in its own section, or pick another name", http.StatusBadRequest)
-			return
-		}
-		var ph MachinePhase
-		if idx >= 0 {
-			ph = def.Phases[idx]
-		} else {
-			ph = MachinePhase{Name: target}
-		}
-		applyPhaseEdit(&ph, body)
-		// The picker posts a step's name; stored, it is that step's answer.
-		if _, sent := body["reply_with"]; sent {
-			ph.ReplyWith = replyWithFromChoice(def, ph.ReplyWith)
-		}
-		if idx >= 0 {
-			// A rename. Two names are in play, and both need care: the
-			// new one must not collide with another step (references
-			// would silently re-point at it), and every reference to the
-			// old one is rewritten so a rename is one edit rather than a
-			// scavenger hunt through the checklist.
-			//
-			// The edited copy is placed FIRST and RenameStep runs on the
-			// slice after — never the other way round: RenameStep also
-			// rewrites the renamed step's OWN references (a guard_to
-			// pointing at itself, its old name in its own guard), and a
-			// stale copy assigned afterwards would quietly undo exactly
-			// those.
-			if ph.Name != target {
-				if _, taken := def.Phase(ph.Name); taken {
-					http.Error(w, "a step called "+strconv.Quote(ph.Name)+" already exists: renaming this one onto it would point its references somewhere else", http.StatusBadRequest)
-					return
-				}
-				def.Phases[idx] = ph
-				def.RenameStep(target, ph.Name)
-				Log("[orchestrate.machines] user=%q renamed step %q to %q in %q (references rewritten)", user, target, ph.Name, def.Name)
-			} else {
-				def.Phases[idx] = ph
-			}
-		} else {
-			def.Phases = append(def.Phases, ph)
-			// The first phase added to an empty machine is where it
-			// starts, because there is nowhere else it could.
-			if strings.TrimSpace(def.Start) == "" {
-				def.Start = ph.Name
-			}
-		}
-		saved := SaveMachineDef(udb, def)
-		Log("[orchestrate.machines] user=%q edited phase %q of %q", user, ph.Name, def.Name)
-		// id/name/slug are what the ADD form's redirect substitutes to
-		// reopen the editor on the step just created. The per-step
-		// panels post here too and ignore them.
-		jsonapi.Write(w, map[string]any{
-			"ok": true, "checklist": machineChecklist(udb, user, saved),
-			"id": saved.ID, "name": ph.Name, "slug": ui.SectionSlug(ph.Name),
-		})
-
-	case http.MethodDelete:
-		// The references go with it. A name left pointing at a deleted
-		// step is not work the author forgot — it is part of the
-		// deletion, and reporting it as something to fix blames somebody
-		// for doing what they meant.
-		rewritten := def.RemoveStep(name)
-		saved := SaveMachineDef(udb, def)
-		Log("[orchestrate.machines] user=%q removed phase %q from %q (rewrote %v)", user, name, def.Name, rewritten)
-		jsonapi.Write(w, map[string]any{"deleted": name, "rewritten": rewritten, "checklist": machineChecklist(udb, user, saved)})
-
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+// machineMetaSave merges the posted fields into the machine.
+func (T *OrchestrateApp) machineMetaSave(c *jsonapi.Call, body map[string]any) (any, error) {
+	mc, perr := T.machineAt(c)
+	if perr != nil {
+		return nil, perr
 	}
+	if err := mc.editable("edit"); err != nil {
+		return nil, err
+	}
+	udb, user, def := mc.ed.db, mc.ed.owner, mc.def
+	if v, ok := body["name"]; ok {
+		def.Name = strings.TrimSpace(fmt.Sprint(v))
+	}
+	if v, ok := body["description"]; ok {
+		def.Description = strings.TrimSpace(fmt.Sprint(v))
+	}
+	if v, ok := body["start"]; ok {
+		def.Start = strings.TrimSpace(fmt.Sprint(v))
+	}
+	if _, ok := body["unattended"]; ok {
+		def.Unattended = BoolArg(body, "unattended")
+	}
+	if _, ok := body["route_each_message"]; ok {
+		def.RouteEachMessage = BoolArg(body, "route_each_message")
+	}
+	if _, ok := body["deny"]; ok {
+		def.Deny = stringSliceFromArgs(body, "deny")
+	}
+	// Saved even when it does not validate. This is an editor: a
+	// machine half-built is the normal state while somebody is
+	// building it, and refusing to store the third field until the
+	// tenth exists is how an editor becomes a puzzle. The checklist
+	// says what is still wrong, and enterMachine already degrades to
+	// an ordinary turn rather than breaking a conversation.
+	saved := SaveMachineDef(udb, def)
+	return map[string]any{"ok": true, "checklist": machineChecklist(udb, user, saved)}, nil
+}
+
+// machinePhases is the phase CRUD the table and its forms use.
+func (T *OrchestrateApp) machinePhases(c *jsonapi.Call) (any, error) {
+	mc, perr := T.machineAt(c)
+	if perr != nil {
+		return nil, perr
+	}
+	if err := mc.editable("edit"); err != nil {
+		return nil, err
+	}
+	name := strings.TrimSpace(c.R.URL.Query().Get("name"))
+	r, def := c.R, mc.def
+	if name != "" {
+		ph, found := def.Phase(name)
+		if !found {
+			return nil, errNotFound
+		}
+		// ?preview=1 — just the composed block and its framing, for
+		// the in-place refresh after a save. Same function the page
+		// renders from, so the two cannot drift.
+		if r.URL.Query().Get("preview") == "1" {
+			block, note := phasePreviewParts(def, ph)
+			return map[string]any{"block": block, "note": note}, nil
+		}
+		rec := phaseRecord(ph)
+		rec["reply_with"] = replyWithChoice(def, ph.ReplyWith) // the picker holds a step's name
+		return rec, nil
+	}
+	rows := make([]map[string]any, 0, len(def.Phases))
+	for _, p := range def.Phases {
+		rows = append(rows, phaseRow(p))
+	}
+	return rows, nil
+}
+
+// machinePhaseSave edits the named step, or adds one.
+func (T *OrchestrateApp) machinePhaseSave(c *jsonapi.Call, body map[string]any) (any, error) {
+	mc, perr := T.machineAt(c)
+	if perr != nil {
+		return nil, perr
+	}
+	if err := mc.editable("edit"); err != nil {
+		return nil, err
+	}
+	name := strings.TrimSpace(c.R.URL.Query().Get("name"))
+	udb, user, def := mc.ed.db, mc.ed.owner, mc.def
+	target := name
+	if target == "" {
+		target = strings.TrimSpace(fmt.Sprint(body["name"]))
+	}
+	if target == "" || target == "<nil>" {
+		return nil, jsonapi.BadRequest("give the phase a name")
+	}
+	idx := -1
+	for i, p := range def.Phases {
+		if p.Name == target {
+			idx = i
+			break
+		}
+	}
+	// A CREATE names the step in its body and posts to the bare
+	// collection. A form still addressing ?name=X after X was renamed
+	// or removed is stale, and treating its save as a create would
+	// resurrect the old step next to the new one — the kind of ghost
+	// nobody notices until the router starts offering both.
+	if idx < 0 && name != "" {
+		return nil, jsonapi.NotFound("no step called " + strconv.Quote(name) + ", it was renamed or removed; reload the editor")
+	}
+	// And the mirror image: the ADD form naming a step that already
+	// exists must not quietly merge onto it — the rename path refuses
+	// this exact collision, and a create that half-overwrites a step
+	// someone built is worse than either.
+	if idx >= 0 && name == "" {
+		return nil, jsonapi.BadRequest("a step called " + strconv.Quote(target) + " already exists: edit it in its own section, or pick another name")
+	}
+	var ph MachinePhase
+	if idx >= 0 {
+		ph = def.Phases[idx]
+	} else {
+		ph = MachinePhase{Name: target}
+	}
+	applyPhaseEdit(&ph, body)
+	// The picker posts a step's name; stored, it is that step's answer.
+	if _, sent := body["reply_with"]; sent {
+		ph.ReplyWith = replyWithFromChoice(def, ph.ReplyWith)
+	}
+	if idx >= 0 {
+		// A rename. Two names are in play, and both need care: the
+		// new one must not collide with another step (references
+		// would silently re-point at it), and every reference to the
+		// old one is rewritten so a rename is one edit rather than a
+		// scavenger hunt through the checklist.
+		//
+		// The edited copy is placed FIRST and RenameStep runs on the
+		// slice after — never the other way round: RenameStep also
+		// rewrites the renamed step's OWN references (a guard_to
+		// pointing at itself, its old name in its own guard), and a
+		// stale copy assigned afterwards would quietly undo exactly
+		// those.
+		if ph.Name != target {
+			if _, taken := def.Phase(ph.Name); taken {
+				return nil, jsonapi.BadRequest("a step called " + strconv.Quote(ph.Name) + " already exists: renaming this one onto it would point its references somewhere else")
+			}
+			def.Phases[idx] = ph
+			def.RenameStep(target, ph.Name)
+			Log("[orchestrate.machines] user=%q renamed step %q to %q in %q (references rewritten)", user, target, ph.Name, def.Name)
+		} else {
+			def.Phases[idx] = ph
+		}
+	} else {
+		def.Phases = append(def.Phases, ph)
+		// The first phase added to an empty machine is where it
+		// starts, because there is nowhere else it could.
+		if strings.TrimSpace(def.Start) == "" {
+			def.Start = ph.Name
+		}
+	}
+	saved := SaveMachineDef(udb, def)
+	Log("[orchestrate.machines] user=%q edited phase %q of %q", user, ph.Name, def.Name)
+	// id/name/slug are what the ADD form's redirect substitutes to
+	// reopen the editor on the step just created. The per-step
+	// panels post here too and ignore them.
+	return map[string]any{
+		"ok": true, "checklist": machineChecklist(udb, user, saved),
+		"id": saved.ID, "name": ph.Name, "slug": ui.SectionSlug(ph.Name),
+	}, nil
+}
+
+// machinePhaseDelete removes the named step.
+func (T *OrchestrateApp) machinePhaseDelete(c *jsonapi.Call, _ struct{}) (any, error) {
+	mc, perr := T.machineAt(c)
+	if perr != nil {
+		return nil, perr
+	}
+	if err := mc.editable("edit"); err != nil {
+		return nil, err
+	}
+	name := strings.TrimSpace(c.R.URL.Query().Get("name"))
+	udb, user, def := mc.ed.db, mc.ed.owner, mc.def
+	// The references go with it. A name left pointing at a deleted
+	// step is not work the author forgot — it is part of the
+	// deletion, and reporting it as something to fix blames somebody
+	// for doing what they meant.
+	rewritten := def.RemoveStep(name)
+	saved := SaveMachineDef(udb, def)
+	Log("[orchestrate.machines] user=%q removed phase %q from %q (rewrote %v)", user, name, def.Name, rewritten)
+	return map[string]any{"deleted": name, "rewritten": rewritten, "checklist": machineChecklist(udb, user, saved)}, nil
 }
 
 // applyPhaseEdit merges a form's fields onto a phase. Only keys the form

@@ -97,9 +97,9 @@ func TestTryPanelHoldsAConversationAndTheGuardFires(t *testing.T) {
 	})
 
 	post := func(body string) map[string]any {
-		r := httptest.NewRequest("POST", "/orchestrate/api/machines/"+def.ID+"/try", strings.NewReader(body))
+		r := httptest.NewRequest("POST", "/api/machines/"+def.ID+"/try", strings.NewReader(body))
 		w := httptest.NewRecorder()
-		app.handleMachineTry(w, asUser(r, user), udb, user, def)
+		routed(app)(w, asUser(r, user))
 		if w.Code != 200 {
 			t.Fatalf("try failed: %d %s", w.Code, w.Body.String())
 		}
@@ -143,9 +143,9 @@ func TestMachineAgentsAttachAndDetachFromTheEditor(t *testing.T) {
 	wren, _ := saveAgent(udb, AgentRecord{Name: "Wren", Owner: user, OrchestratorPrompt: "hi"})
 	crow, _ := saveAgent(udb, AgentRecord{Name: "Crow", Owner: user, OrchestratorPrompt: "hi"})
 
-	r := httptest.NewRequest("POST", "/x", strings.NewReader(`{"agents": ["`+wren.ID+`"]}`))
+	r := httptest.NewRequest("POST", "/api/machines/"+def.ID+"/agents", strings.NewReader(`{"agents": ["`+wren.ID+`"]}`))
 	w := httptest.NewRecorder()
-	app.handleMachineAgents(w, asUser(r, user), udb, user, def)
+	routed(app)(w, asUser(r, user))
 	if w.Code != 200 {
 		t.Fatalf("attach failed: %d %s", w.Code, w.Body.String())
 	}
@@ -158,8 +158,8 @@ func TestMachineAgentsAttachAndDetachFromTheEditor(t *testing.T) {
 	}
 
 	// The whole-set POST detaches what is no longer checked.
-	r = httptest.NewRequest("POST", "/x", strings.NewReader(`{"agents": []}`))
-	app.handleMachineAgents(httptest.NewRecorder(), asUser(r, user), udb, user, def)
+	r = httptest.NewRequest("POST", "/api/machines/"+def.ID+"/agents", strings.NewReader(`{"agents": []}`))
+	routed(app)(httptest.NewRecorder(), asUser(r, user))
 	if got, _ = loadAgent(udb, wren.ID); got.Machine != "" {
 		t.Errorf("unchecking should detach, got %q", got.Machine)
 	}
@@ -180,7 +180,7 @@ func TestDuplicateAndMoveAndCost(t *testing.T) {
 	// original, same steps.
 	r := httptest.NewRequest("POST", "/api/machines/"+def.ID+"/duplicate", nil)
 	w := httptest.NewRecorder()
-	app.handleMachineOne(w, asUser(r, user))
+	routed(app)(w, asUser(r, user))
 	if w.Code != 200 {
 		t.Fatalf("duplicate failed: %d %s", w.Code, w.Body.String())
 	}
@@ -195,7 +195,7 @@ func TestDuplicateAndMoveAndCost(t *testing.T) {
 	// A second copy cannot collide with the first.
 	r = httptest.NewRequest("POST", "/api/machines/"+def.ID+"/duplicate", nil)
 	w = httptest.NewRecorder()
-	app.handleMachineOne(w, asUser(r, user))
+	routed(app)(w, asUser(r, user))
 	var dup2 struct{ Name string }
 	_ = json.Unmarshal(w.Body.Bytes(), &dup2)
 	if dup2.Name != "Inv (copy 2)" {
@@ -206,7 +206,7 @@ func TestDuplicateAndMoveAndCost(t *testing.T) {
 	r = httptest.NewRequest("POST", "/api/machines/"+def.ID+"/move",
 		strings.NewReader(`{"name": "b", "dir": "up"}`))
 	w = httptest.NewRecorder()
-	app.handleMachineOne(w, asUser(r, user))
+	routed(app)(w, asUser(r, user))
 	if w.Code != 200 {
 		t.Fatalf("move failed: %d %s", w.Code, w.Body.String())
 	}
@@ -217,7 +217,7 @@ func TestDuplicateAndMoveAndCost(t *testing.T) {
 	r = httptest.NewRequest("POST", "/api/machines/"+def.ID+"/move",
 		strings.NewReader(`{"name": "b", "dir": "up"}`))
 	w = httptest.NewRecorder()
-	app.handleMachineOne(w, asUser(r, user))
+	routed(app)(w, asUser(r, user))
 	if w.Code != 400 {
 		t.Errorf("moving the first step up should be refused, got %d", w.Code)
 	}
@@ -242,8 +242,8 @@ func TestAgentsSaveLeavesHiddenAgentsAlone(t *testing.T) {
 		OrchestratorPrompt: "hi", Hidden: true, Machine: def.ID})
 	wren, _ := saveAgent(udb, AgentRecord{Name: "Wren", Owner: user, OrchestratorPrompt: "hi"})
 
-	r := httptest.NewRequest("POST", "/x", strings.NewReader(`{"agents": ["`+wren.ID+`"]}`))
-	app.handleMachineAgents(httptest.NewRecorder(), asUser(r, user), udb, user, def)
+	r := httptest.NewRequest("POST", "/api/machines/"+def.ID+"/agents", strings.NewReader(`{"agents": ["`+wren.ID+`"]}`))
+	routed(app)(httptest.NewRecorder(), asUser(r, user))
 
 	if got, _ := loadAgent(udb, ghost.ID); got.Machine != def.ID {
 		t.Errorf("a hidden agent the checklist never showed must keep its machine, got %q", got.Machine)
@@ -276,7 +276,7 @@ func TestReorderingDoesNotMoveTheEntryPoint(t *testing.T) {
 	r := httptest.NewRequest("POST", "/api/machines/"+def.ID+"/move",
 		strings.NewReader(`{"name": "answer", "dir": "up"}`))
 	w := httptest.NewRecorder()
-	app.handleMachineOne(w, asUser(r, user))
+	routed(app)(w, asUser(r, user))
 	if w.Code != 200 {
 		t.Fatalf("move failed: %d %s", w.Code, w.Body.String())
 	}

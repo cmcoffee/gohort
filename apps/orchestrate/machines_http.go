@@ -31,7 +31,6 @@ package orchestrate
 
 import (
 	"encoding/json"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -240,437 +239,466 @@ func (T *OrchestrateApp) handleMachineImport(w http.ResponseWriter, r *http.Requ
 	jsonapi.Write(w, saved)
 }
 
-// handleMachineOne serves per-machine routes: GET / PUT / DELETE plus
-// /export.
-func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request) {
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	rest := strings.TrimPrefix(r.URL.Path, "/api/machines/")
-	if rest == "" {
-		http.NotFound(w, r)
-		return
-	}
-	var id, action string
-	if slash := strings.IndexByte(rest, '/'); slash >= 0 {
-		id, action = rest[:slash], rest[slash+1:]
-	} else {
-		id = rest
-	}
-	if id == "" {
-		http.NotFound(w, r)
-		return
-	}
-	// Own first, then one somebody shared with this user (machine_sharing.go).
-	// mine is what every write below gates on: a recipient reads, runs and
-	// copies; the definition stays the owner's.
-	def, defOwner, mine, found := resolveMachineFor(user, udb, id)
-	if !found {
-		http.NotFound(w, r)
-		return
-	}
-
-	// runs/... is a sub-protocol rather than a single action: the panel
-	// speaks stream / sessions / sessions/<id>, and action carries the
-	// whole tail. Matched before the switch, which compares whole strings.
-	if action == "runs" || strings.HasPrefix(action, "runs/") {
-		T.handleMachineRuns(w, r, udb, user, def, strings.TrimPrefix(strings.TrimPrefix(action, "runs"), "/"))
-		return
-	}
-
-	// Revisions: the list, one version read-only, and the way back. Matched
-	// before the switch for the same reason runs/... is — the tail carries a
-	// sub-action and the switch compares whole strings.
-	// Where an edit goes, and as whose (recipeEdit): the owner's own, or an
-	// editor's change to the owner's copy. Sharing, publishing, deleting and
-	// attaching stay the owner's (machineOwnerOnly).
-	ed := recipeEditFor(user, udb, defOwner, mine, def.Editors)
-	if sub, isRev := revisionAction(action); isRev {
-		T.handleMachineRevisions(w, r, user, def, defOwner, ed.ok, sub)
-		return
-	}
-
-	switch action {
-	case "":
-		switch r.Method {
-		case http.MethodGet:
-			jsonapi.Write(w, def)
-		case http.MethodPut:
-			if !recipeEditorOnly(w, ed, "machine", defOwner, "edit") {
-				return
-			}
-			var body MachineDef
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				http.Error(w, "bad request", http.StatusBadRequest)
-				return
-			}
-			// Identity stays the server's: keep id/owner/created from the
-			// loaded record, take everything else from the body. The recipient
-			// list is identity too — an edit form must not be able to widen or
-			// clear who a machine is shared with, which is why /share is its
-			// own door.
-			body.ID = def.ID
-			body.Owner = ed.owner
-			body.AllowedUsers = def.AllowedUsers
-			body.Editors = def.Editors
-			// Published is an administrator's approval, reached only through
-			// the promotion queue; an edit form must not be able to assert it.
-			body.Published = def.Published
-			body.Created = def.Created
-			if err := body.Validate(); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			saved := SaveMachineDef(ed.db, body)
-			Log("[orchestrate.machines] user=%q updated machine %q (id=%s, owner %q)", user, saved.Name, saved.ID, ed.owner)
-			jsonapi.Write(w, saved)
-		case http.MethodDelete:
-			if !machineOwnerOnly(w, mine, defOwner, "delete") {
-				return
-			}
-			// Detach from every agent first — same as the tool's delete,
-			// through the same function, so an agent is never left
-			// pointing at a machine that isn't there.
-			//
-			// Live SESSIONS are a different case and are deliberately
-			// left alone: they keep their pinned MachineID and cursor,
-			// and their next turn degrades to an ordinary agent turn with
-			// a machine_missing breadcrumb. Broken-dependency posture —
-			// surface the break, don't quietly rewrite a conversation
-			// somebody is in the middle of.
-			detached := detachMachineFromAgents(udb, user, def.ID)
-			DeleteMachineDef(udb, def.ID)
-			Log("[orchestrate.machines] user=%q deleted machine %q (id=%s, detached from %d agent(s))", user, def.Name, def.ID, len(detached))
-			jsonapi.Write(w, map[string]any{"deleted": def.ID, "detached": detached})
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		}
-	case "editor":
-		// The structured editor's spec (machine_editor.go): a checklist of
-		// what is still missing plus the components that edit it.
-		T.handleMachineEditor(w, r, udb, user, def)
-	case "meta":
-		if !recipeEditorOnly(w, ed, "machine", defOwner, "edit") {
-			return
-		}
-		T.handleMachineMeta(w, r, ed.db, ed.owner, def)
-	case "phases":
-		if !recipeEditorOnly(w, ed, "machine", defOwner, "edit") {
-			return
-		}
-		T.handleMachinePhases(w, r, ed.db, ed.owner, def)
-	case "try":
-		T.handleMachineTry(w, r, udb, user, def)
-	case "duplicate":
-		// Iterating on a working machine in place is how the working one
-		// stops working. A copy makes the experiment safe, and landing in
-		// the copy's editor is the reason anybody clicked.
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		dup := def
-		dup.ID = ""
-		// A copy of somebody else's machine is YOURS: re-owned, and shared with
-		// nobody until you say so. Carrying their recipient list into your
-		// store would re-share their work under your name. Previous goes too —
-		// an undo of an edit you did not make is not an undo.
-		dup.Owner = user
-		dup.AllowedUsers = nil
-		dup.Editors = nil
-		// And not published. An administrator agreed that THAT record should
-		// reach everybody, not every copy anyone makes of it.
-		dup.Published = false
-		dup.Previous = nil
-		dup.Name = copyName(def.Name, machineNames(ListMachineDefs(udb, user)))
-		saved := SaveMachineDef(udb, dup)
-		Log("[orchestrate.machines] user=%q duplicated machine %q as %q (id=%s)", user, def.Name, saved.Name, saved.ID)
-		jsonapi.Write(w, map[string]any{"id": saved.ID, "name": saved.Name})
-	case "revise":
-		// Describe a change against the machine already on screen
-		// (machine_revise.go). Undoable, because a revision can rewrite
-		// every prompt in it.
-		if !recipeEditorOnly(w, ed, "machine", defOwner, "revise") {
-			return
-		}
-		T.handleMachineRevise(w, r, ed.db, ed.owner, def)
-	case "undo":
-		if !recipeEditorOnly(w, ed, "machine", defOwner, "undo a change to") {
-			return
-		}
-		T.handleMachineUndo(w, r, ed.db, ed.owner, def)
-	case "repair":
-		// Settle the findings that have exactly one right answer. The
-		// class this exists for is a reference to a step that is gone:
-		// the picker no longer offers the name, so the finding names
-		// something there is no longer any way to open or clear.
-		//
-		// Scoped by the panel that asked, because a button in one list
-		// that quietly rewrote the other's findings would be its own
-		// surprise. Nothing here guesses at intent — see core's
-		// machine_repair.go for what it refuses.
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		kind := strings.TrimSpace(r.URL.Query().Get("kind"))
-		switch kind {
-		case RepairAll, RepairProblems, RepairAdvice:
-		default:
-			http.Error(w, "unknown repair kind", http.StatusBadRequest)
-			return
-		}
-		if !recipeEditorOnly(w, ed, "machine", defOwner, "repair") {
-			return
-		}
-		fixed := def.Repair(kind)
-		if len(fixed) == 0 {
-			jsonapi.Write(w, map[string]any{"fixed": []string{}})
-			return
-		}
-		saved := SaveMachineDef(ed.db, def)
-		Log("[orchestrate.machines] user=%q repaired machine %q: %s", user, saved.Name,
-			strings.Join(RepairLines(fixed), "; "))
-		jsonapi.Write(w, map[string]any{"fixed": RepairLines(fixed), "id": saved.ID})
-	case "move":
-		// Reordering is cosmetic to the DRIVER (routing is by name) but
-		// not to the person: the order is the rail, the reading order,
-		// and the first-resident fallback.
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		var mv struct {
-			Name string `json:"name"`
-			Dir  string `json:"dir"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&mv); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		if !recipeEditorOnly(w, ed, "machine", defOwner, "reorder") {
-			return
-		}
-		idx := -1
-		for i, p := range def.Phases {
-			if p.Name == strings.TrimSpace(mv.Name) {
-				idx = i
-			}
-		}
-		to := idx - 1
-		if mv.Dir == "down" {
-			to = idx + 1
-		}
-		if idx < 0 || to < 0 || to >= len(def.Phases) {
-			http.Error(w, "nowhere to move it", http.StatusBadRequest)
-			return
-		}
-		// Pin the entry point before moving anything. An unset start
-		// RESOLVES to the first step (StartPhase), and the editor shows
-		// that resolved value — so a machine that never chose one looks
-		// settled while actually being positional, and reordering would
-		// move where conversations begin without anyone touching the
-		// control that claims to say so. Writing it down first makes the
-		// displayed answer the stored one and this move a no-op for it.
-		if strings.TrimSpace(def.Start) == "" {
-			def.Start = def.StartPhase()
-		}
-		def.Phases[idx], def.Phases[to] = def.Phases[to], def.Phases[idx]
-		SaveMachineDef(ed.db, def)
-		jsonapi.Write(w, map[string]any{"ok": true, "start": def.Start})
-	case "agents":
-		// Who runs this machine — readable and settable from the editor,
-		// which is where you are standing when the question comes up. An
-		// unattached machine does nothing, and the only place to attach
-		// one used to be a different surface (the chat toolbar's
-		// Configure → Machines).
-		//
-		// Owner-only, and not merely for symmetry: AgentRecord.Machine is
-		// resolved in the AGENT owner's store on every turn, so pointing your
-		// agent's brain at somebody else's machine would be a pointer their
-		// session cannot follow. Duplicate it and attach the copy.
-		if !machineOwnerOnly(w, mine, defOwner, "attach") {
-			return
-		}
-		T.handleMachineAgents(w, r, udb, user, def)
-	case "share":
-		// The recipient list, and ONLY the recipient list. The ACLPicker posts
-		// the whole record back (record mode), and this reads one field out of
-		// it — so a picker save cannot rewrite a step, and the ordinary edit
-		// path cannot rewrite the ACL.
-		//
-		// Everyone rides in the same list (recipeShare): the publish steps,
-		// requested rather than applied unless an administrator is asking.
-		if r.Method != http.MethodGet && r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		if !machineOwnerOnly(w, mine, defOwner, "change who can see") {
-			return
-		}
-		rs := recipeShare{
-			kind: machinePromotionKind, owner: user, name: def.Name,
-			published: def.Published, before: def.AllowedUsers, editors: def.Editors,
-			publish:   func() error { return publishMachineForDeployment(user, def.ID) },
-			unpublish: func() error { return unpublishMachine(user, def.ID) },
-		}
-		rs.save = func(names, editors []string) any {
-			cur, err := findOwnedMachine(user, def.ID)
-			if err != nil {
-				cur = def
-			}
-			before := cur.AllowedUsers
-			cur.Owner = user
-			cur.AllowedUsers = normalizeShareList(names, user)
-			cur.Editors = editors
-			saved := SaveMachineDef(udb, cur)
-			// Anybody dropped from the list loses it now, including any
-			// schedule they had armed against it: a share taken back has to
-			// take back everything it enabled, not just the next page load.
-			breakMachineSchedulesForLostRecipients(saved, before)
-			Log("[orchestrate.machines] user=%q shared machine %q with %d user(s)", user, saved.Name, len(saved.AllowedUsers))
-			saved.AllowedUsers = withEveryone(saved.AllowedUsers, saved.Published || rs.pending())
-			return saved
-		}
-		if r.Method == http.MethodGet {
-			jsonapi.Write(w, rs.list())
-			return
-		}
-		var body struct {
-			AllowedUsers []string  `json:"allowed_users"`
-			Editors      *[]string `json:"editors"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		out, err := rs.apply(r, body.AllowedUsers, body.Editors)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		jsonapi.Write(w, out)
-	case "publish":
-		// The third rung: ask an administrator to let EVERY user of the
-		// deployment run this. The narrower grant beside it is the owner's own
-		// to make; this one is not, which is why the door only files a request.
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		if !machineOwnerOnly(w, mine, defOwner, "publish") {
-			return
-		}
-		if def.Published {
-			http.Error(w, "this machine is already published", http.StatusBadRequest)
-			return
-		}
-		var body struct {
-			Note string `json:"note"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&body) // the note is optional
-		if err := CreatePromotionRequest(AuthDB(), user, machinePromotionKind, def.Name, body.Note); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		Log("[orchestrate.machines] user=%q asked to publish machine %q", user, def.Name)
-		w.WriteHeader(http.StatusNoContent)
-	case "unpublish":
-		// Owner-direct, exactly as revoking a share is.
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		if !machineOwnerOnly(w, mine, defOwner, "take back") {
-			return
-		}
-		if err := unpublishMachine(user, def.ID); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	case "suggest":
+// registerMachineRoutes mounts one machine's routes: the record, its
+// actions, and the run sub-protocol.
+func (T *OrchestrateApp) registerMachineRoutes() {
+	T.HandleFunc("/api/machines/{id}", jsonapi.Methods{
+		"GET":    jsonapi.Get(T.DB, T.machineGet),
+		"PUT":    jsonapi.Put(T.DB, T.machineSave),
+		"DELETE": jsonapi.Delete(T.DB, T.machineDelete),
+	}.Serve)
+	T.HandleFunc("/api/machines/{id}/editor", jsonapi.Get(T.DB, T.machineEditor))
+	T.HandleFunc("/api/machines/{id}/meta", jsonapi.Methods{
+		"GET":   jsonapi.Get(T.DB, T.machineMeta),
+		"POST":  jsonapi.Post(T.DB, T.machineMetaSave),
+		"PUT":   jsonapi.Put(T.DB, T.machineMetaSave),
+		"PATCH": jsonapi.Patch(T.DB, T.machineMetaSave),
+	}.Serve)
+	T.HandleFunc("/api/machines/{id}/phases", jsonapi.Methods{
+		"GET":    jsonapi.Get(T.DB, T.machinePhases),
+		"POST":   jsonapi.Post(T.DB, T.machinePhaseSave),
+		"PUT":    jsonapi.Put(T.DB, T.machinePhaseSave),
+		"PATCH":  jsonapi.Patch(T.DB, T.machinePhaseSave),
+		"DELETE": jsonapi.Delete(T.DB, T.machinePhaseDelete),
+	}.Serve)
+	T.HandleFunc("/api/machines/{id}/try", jsonapi.Post(T.DB, T.machineTry))
+	T.HandleFunc("/api/machines/{id}/duplicate", jsonapi.Post(T.DB, T.machineDuplicate))
+	T.HandleFunc("/api/machines/{id}/revise", jsonapi.Post(T.DB, T.machineRevise))
+	T.HandleFunc("/api/machines/{id}/undo", jsonapi.Post(T.DB, T.machineUndo))
+	T.HandleFunc("/api/machines/{id}/repair", jsonapi.Post(T.DB, T.machineRepair))
+	T.HandleFunc("/api/machines/{id}/move", jsonapi.Post(T.DB, T.machineMove))
+	T.HandleFunc("/api/machines/{id}/agents", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, T.machineAgents),
+		"POST": jsonapi.Post(T.DB, T.machineAgentsSave, jsonapi.MaxBody(maxImportBytes)),
+		"PUT":  jsonapi.Put(T.DB, T.machineAgentsSave, jsonapi.MaxBody(maxImportBytes)),
+	}.Serve)
+	T.HandleFunc("/api/machines/{id}/share", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, T.machineShare),
+		"POST": jsonapi.Post(T.DB, T.machineShareSave),
+	}.Serve)
+	T.HandleFunc("/api/machines/{id}/publish", jsonapi.Post(T.DB, T.machinePublish, jsonapi.EmptyBodyOK))
+	T.HandleFunc("/api/machines/{id}/unpublish", jsonapi.Post(T.DB, T.machineUnpublish))
+	// Not JSON in and out: the ✨ step draft, an editor page block, the
+	// picture, a download, the revisions surface and the run sub-protocol.
+	T.HandleFunc("/api/machines/{id}/suggest", T.machineRaw(func(w http.ResponseWriter, r *http.Request, mc *machineCall) {
 		// Drafting one step's instructions, grounded in the machine
 		// around it (machine_suggest.go).
-		if !recipeEditorOnly(w, ed, "machine", defOwner, "draft a step for") {
+		if err := mc.editable("draft a step for"); err != nil {
+			jsonapi.Fail(w, r, err)
 			return
 		}
-		T.handleMachineSuggest(w, r, ed.db, ed.owner, def)
-	case "block":
-		// One derived block of the editor page, by name, as the HTML the
-		// page itself renders (machine_page.go). A ui.Card with a Source
-		// fetches this when a step is saved, which is what keeps the map
-		// and the two findings lists describing the machine as it is
-		// rather than as it was when the page was opened.
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		html, ok := machinePageBlock(udb, user, def, strings.TrimSpace(r.URL.Query().Get("name")))
-		if !ok {
-			http.NotFound(w, r)
-			return
-		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-store")
-		_, _ = w.Write([]byte(html))
-	case "graph":
-		// The picture (docs/design/workflow-graph.md). With ?session=<id> it
-		// carries the overlay: where that conversation is sitting and
-		// which edges it has actually taken. Without one it is the plain
-		// structure.
-		//
-		// Served as SVG so it can be linked, saved, or opened on its own;
-		// the modal fetches the text and injects it inline, which is what
-		// lets the page's CSS variables theme it. Every dynamic string in
-		// the document is escaped at the renderer (see xmlEscape) for
-		// exactly that reason.
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		var overlay *WorkflowOverlay
-		if sid := strings.TrimSpace(r.URL.Query().Get("session")); sid != "" {
-			agentID := strings.TrimSpace(r.URL.Query().Get("agent"))
-			if sess, ok := loadChatSession(udb, agentID, sid); ok && sess.MachineID == def.ID {
-				cur := MachineCursor{Phase: sess.Phase, State: sess.MachineState, Log: sess.MachineLog}
-				overlay = cur.Overlay()
-			}
-		}
-		w.Header().Set("Content-Type", "image/svg+xml; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-store")
-		// ?links=1 draws it as the editor's MAP: every box a door into
-		// that step's section. Same picture either way — the difference
-		// is anchors, which only mean something inside the page that has
-		// those sections.
-		if r.URL.Query().Get("links") == "1" {
-			_, _ = w.Write([]byte(machineGraphSVG(def)))
-			return
-		}
-		_, _ = w.Write([]byte(def.Graph().SVG(overlay)))
-	case "export":
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		recipe := ExportMachine(def)
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Content-Disposition", "attachment; filename=\""+SnakeFromDisplay(def.Name)+".machine.json\"")
-		_ = json.NewEncoder(w).Encode(recipe)
-	default:
-		http.NotFound(w, r)
-	}
+		T.handleMachineSuggest(w, r, mc.ed.db, mc.ed.owner, mc.def)
+	}))
+	T.HandleFunc("/api/machines/{id}/block", T.machineRaw(T.handleMachineBlock))
+	T.HandleFunc("/api/machines/{id}/graph", T.machineRaw(T.handleMachineGraph))
+	T.HandleFunc("/api/machines/{id}/export", T.machineRaw(T.handleMachineExport))
+	revisions := T.machineRaw(func(w http.ResponseWriter, r *http.Request, mc *machineCall) {
+		T.handleMachineRevisions(w, r, mc.call.User, mc.def, mc.owner, mc.ed.ok, r.PathValue("action"))
+	})
+	T.HandleFunc("/api/machines/{id}/revisions", revisions)
+	T.HandleFunc("/api/machines/{id}/revisions/{action}", revisions)
+	// runs/... is a sub-protocol rather than a single action: the panel
+	// speaks stream / sessions / sessions/<id>, and the tail says which.
+	runs := T.machineRaw(func(w http.ResponseWriter, r *http.Request, mc *machineCall) {
+		T.handleMachineRuns(w, r, mc.call.UDB, mc.call.User, mc.def, r.PathValue("rest"))
+	})
+	T.HandleFunc("/api/machines/{id}/runs", runs)
+	T.HandleFunc("/api/machines/{id}/runs/{rest...}", runs)
 }
 
-// machineOwnerOnly refuses a write to a machine somebody else shared with this
-// user, in the words that say what to do instead. Mirrors pipelineCall.ownerOnly.
-func machineOwnerOnly(w http.ResponseWriter, mine bool, owner, verb string) bool {
-	if mine {
-		return true
+// machineCall is one request on one machine: the definition, whose it is,
+// whether it is the caller's, and where an edit to it goes (recipeEdit).
+type machineCall struct {
+	call  *jsonapi.Call
+	def   MachineDef
+	owner string
+	mine  bool
+	ed    recipeEdit
+}
+
+// machineAt resolves the machine the path names: the caller's own, then one
+// somebody shared with them (machine_sharing.go). A recipient reads, runs
+// and copies; the definition stays the owner's, and an editor's change goes
+// to the owner's copy.
+func (T *OrchestrateApp) machineAt(c *jsonapi.Call) (*machineCall, error) {
+	def, owner, mine, found := resolveMachineFor(c.User, c.UDB, c.R.PathValue("id"))
+	if !found {
+		return nil, errNotFound
 	}
-	http.Error(w, "this machine is shared with you by "+owner+", so you can run and copy it but not "+verb+" it: ask "+owner+" to make the change, or duplicate it and edit your copy", http.StatusForbidden)
-	return false
+	return &machineCall{call: c, def: def, owner: owner, mine: mine,
+		ed: recipeEditFor(c.User, c.UDB, owner, mine, def.Editors)}, nil
+}
+
+// editable refuses a change by somebody it was shared with to run.
+func (mc *machineCall) editable(verb string) error {
+	return recipeEditRefusal(mc.ed, "machine", mc.owner, verb)
+}
+
+// ownerOnly refuses what stays the owner's: deleting, sharing, publishing
+// and attaching, in the words that say what to do instead.
+func (mc *machineCall) ownerOnly(verb string) error {
+	if mc.mine {
+		return nil
+	}
+	return jsonapi.Forbidden("this machine is shared with you by " + mc.owner + ", so you can run and copy it but not " + verb + " it: ask " + mc.owner + " to make the change, or duplicate it and edit your copy")
+}
+
+// machineRaw is a raw route on one machine, refused as the JSON ones are.
+func (T *OrchestrateApp) machineRaw(h func(w http.ResponseWriter, r *http.Request, mc *machineCall)) http.HandlerFunc {
+	return T.signedIn(func(w http.ResponseWriter, r *http.Request, user string, udb Database) {
+		mc, err := T.machineAt(&jsonapi.Call{W: w, R: r, User: user, UDB: udb})
+		if err != nil {
+			jsonapi.Fail(w, r, err)
+			return
+		}
+		h(w, r, mc)
+	})
+}
+
+func (T *OrchestrateApp) machineGet(c *jsonapi.Call) (any, error) {
+	mc, perr := T.machineAt(c)
+	if perr != nil {
+		return nil, perr
+	}
+	return mc.def, nil
+}
+
+// machineSave is the editor's whole-record save. Identity stays the
+// server's: id, owner, created, who it is shared with and whether it is
+// published.
+func (T *OrchestrateApp) machineSave(c *jsonapi.Call, body MachineDef) (any, error) {
+	mc, perr := T.machineAt(c)
+	if perr != nil {
+		return nil, perr
+	}
+	if err := mc.editable("edit"); err != nil {
+		return nil, err
+	}
+	user, def, ed := c.User, mc.def, mc.ed
+	// Identity stays the server's: keep id/owner/created from the
+	// loaded record, take everything else from the body. The recipient
+	// list is identity too — an edit form must not be able to widen or
+	// clear who a machine is shared with, which is why /share is its
+	// own door.
+	body.ID = def.ID
+	body.Owner = ed.owner
+	body.AllowedUsers = def.AllowedUsers
+	body.Editors = def.Editors
+	// Published is an administrator's approval, reached only through
+	// the promotion queue; an edit form must not be able to assert it.
+	body.Published = def.Published
+	body.Created = def.Created
+	if err := body.Validate(); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	saved := SaveMachineDef(ed.db, body)
+	Log("[orchestrate.machines] user=%q updated machine %q (id=%s, owner %q)", user, saved.Name, saved.ID, ed.owner)
+	return saved, nil
+}
+
+func (T *OrchestrateApp) machineDelete(c *jsonapi.Call, _ struct{}) (any, error) {
+	mc, perr := T.machineAt(c)
+	if perr != nil {
+		return nil, perr
+	}
+	if err := mc.ownerOnly("delete"); err != nil {
+		return nil, err
+	}
+	udb, user, def := c.UDB, c.User, mc.def
+	// Detach from every agent first — same as the tool's delete,
+	// through the same function, so an agent is never left
+	// pointing at a machine that isn't there.
+	//
+	// Live SESSIONS are a different case and are deliberately
+	// left alone: they keep their pinned MachineID and cursor,
+	// and their next turn degrades to an ordinary agent turn with
+	// a machine_missing breadcrumb. Broken-dependency posture —
+	// surface the break, don't quietly rewrite a conversation
+	// somebody is in the middle of.
+	detached := detachMachineFromAgents(udb, user, def.ID)
+	DeleteMachineDef(udb, def.ID)
+	Log("[orchestrate.machines] user=%q deleted machine %q (id=%s, detached from %d agent(s))", user, def.Name, def.ID, len(detached))
+	return map[string]any{"deleted": def.ID, "detached": detached}, nil
+}
+
+// machineDuplicate copies the machine into the caller's own store.
+// Iterating on a working machine in place is how the working one stops
+// working. A copy makes the experiment safe, and landing in the copy's
+// editor is the reason anybody clicked.
+func (T *OrchestrateApp) machineDuplicate(c *jsonapi.Call, _ struct{}) (any, error) {
+	mc, perr := T.machineAt(c)
+	if perr != nil {
+		return nil, perr
+	}
+	udb, user, def := c.UDB, c.User, mc.def
+	dup := def
+	dup.ID = ""
+	// A copy of somebody else's machine is YOURS: re-owned, and shared with
+	// nobody until you say so. Carrying their recipient list into your
+	// store would re-share their work under your name. Previous goes too —
+	// an undo of an edit you did not make is not an undo.
+	dup.Owner = user
+	dup.AllowedUsers = nil
+	dup.Editors = nil
+	// And not published. An administrator agreed that THAT record should
+	// reach everybody, not every copy anyone makes of it.
+	dup.Published = false
+	dup.Previous = nil
+	dup.Name = copyName(def.Name, machineNames(ListMachineDefs(udb, user)))
+	saved := SaveMachineDef(udb, dup)
+	Log("[orchestrate.machines] user=%q duplicated machine %q as %q (id=%s)", user, def.Name, saved.Name, saved.ID)
+	return map[string]any{"id": saved.ID, "name": saved.Name}, nil
+}
+
+// machineRepair settles the findings that have exactly one right answer. The
+// class this exists for is a reference to a step that is gone:
+// the picker no longer offers the name, so the finding names
+// something there is no longer any way to open or clear.
+//
+// Scoped by the panel that asked, because a button in one list
+// that quietly rewrote the other's findings would be its own
+// surprise. Nothing here guesses at intent — see core's
+// machine_repair.go for what it refuses.
+func (T *OrchestrateApp) machineRepair(c *jsonapi.Call, _ struct{}) (any, error) {
+	mc, perr := T.machineAt(c)
+	if perr != nil {
+		return nil, perr
+	}
+	r, user, def, ed := c.R, c.User, mc.def, mc.ed
+	kind := strings.TrimSpace(r.URL.Query().Get("kind"))
+	switch kind {
+	case RepairAll, RepairProblems, RepairAdvice:
+	default:
+		return nil, jsonapi.BadRequest("unknown repair kind")
+	}
+	if err := mc.editable("repair"); err != nil {
+		return nil, err
+	}
+	fixed := def.Repair(kind)
+	if len(fixed) == 0 {
+		return map[string]any{"fixed": []string{}}, nil
+	}
+	saved := SaveMachineDef(ed.db, def)
+	Log("[orchestrate.machines] user=%q repaired machine %q: %s", user, saved.Name,
+		strings.Join(RepairLines(fixed), "; "))
+	return map[string]any{"fixed": RepairLines(fixed), "id": saved.ID}, nil
+}
+
+// machineMove moves a step up or down. Reordering is cosmetic to the DRIVER (routing is by name) but
+// not to the person: the order is the rail, the reading order,
+// and the first-resident fallback.
+func (T *OrchestrateApp) machineMove(c *jsonapi.Call, mv struct {
+	Name string `json:"name"`
+	Dir  string `json:"dir"`
+}) (any, error) {
+	mc, perr := T.machineAt(c)
+	if perr != nil {
+		return nil, perr
+	}
+	if err := mc.editable("reorder"); err != nil {
+		return nil, err
+	}
+	def, ed := mc.def, mc.ed
+	idx := -1
+	for i, p := range def.Phases {
+		if p.Name == strings.TrimSpace(mv.Name) {
+			idx = i
+		}
+	}
+	to := idx - 1
+	if mv.Dir == "down" {
+		to = idx + 1
+	}
+	if idx < 0 || to < 0 || to >= len(def.Phases) {
+		return nil, jsonapi.BadRequest("nowhere to move it")
+	}
+	// Pin the entry point before moving anything. An unset start
+	// RESOLVES to the first step (StartPhase), and the editor shows
+	// that resolved value — so a machine that never chose one looks
+	// settled while actually being positional, and reordering would
+	// move where conversations begin without anyone touching the
+	// control that claims to say so. Writing it down first makes the
+	// displayed answer the stored one and this move a no-op for it.
+	if strings.TrimSpace(def.Start) == "" {
+		def.Start = def.StartPhase()
+	}
+	def.Phases[idx], def.Phases[to] = def.Phases[to], def.Phases[idx]
+	SaveMachineDef(ed.db, def)
+	return map[string]any{"ok": true, "start": def.Start}, nil
+}
+
+// machineShareOf is the share door's list of who can see the machine: the
+// recipient list, and ONLY the recipient list. The ACLPicker posts the whole
+// record back (record mode), and this reads one field out of it — so a
+// picker save cannot rewrite a step, and the ordinary edit
+// path cannot rewrite the ACL.
+//
+// Everyone rides in the same list (recipeShare): the publish steps,
+// requested rather than applied unless an administrator is asking.
+func (T *OrchestrateApp) machineShareOf(c *jsonapi.Call) (recipeShare, error) {
+	mc, err := T.machineAt(c)
+	if err != nil {
+		return recipeShare{}, err
+	}
+	if err := mc.ownerOnly("change who can see"); err != nil {
+		return recipeShare{}, err
+	}
+	user, udb, def := c.User, c.UDB, mc.def
+	rs := recipeShare{
+		kind: machinePromotionKind, owner: user, name: def.Name,
+		published: def.Published, before: def.AllowedUsers, editors: def.Editors,
+		publish:   func() error { return publishMachineForDeployment(user, def.ID) },
+		unpublish: func() error { return unpublishMachine(user, def.ID) },
+	}
+	rs.save = func(names, editors []string) any {
+		cur, err := findOwnedMachine(user, def.ID)
+		if err != nil {
+			cur = def
+		}
+		before := cur.AllowedUsers
+		cur.Owner = user
+		cur.AllowedUsers = normalizeShareList(names, user)
+		cur.Editors = editors
+		saved := SaveMachineDef(udb, cur)
+		// Anybody dropped from the list loses it now, including any
+		// schedule they had armed against it: a share taken back has to
+		// take back everything it enabled, not just the next page load.
+		breakMachineSchedulesForLostRecipients(saved, before)
+		Log("[orchestrate.machines] user=%q shared machine %q with %d user(s)", user, saved.Name, len(saved.AllowedUsers))
+		saved.AllowedUsers = withEveryone(saved.AllowedUsers, saved.Published || rs.pending())
+		return saved
+	}
+	return rs, nil
+}
+
+func (T *OrchestrateApp) machineShare(c *jsonapi.Call) (any, error) {
+	rs, err := T.machineShareOf(c)
+	if err != nil {
+		return nil, err
+	}
+	return rs.list(), nil
+}
+
+func (T *OrchestrateApp) machineShareSave(c *jsonapi.Call, body struct {
+	AllowedUsers []string  `json:"allowed_users"`
+	Editors      *[]string `json:"editors"`
+}) (any, error) {
+	rs, err := T.machineShareOf(c)
+	if err != nil {
+		return nil, err
+	}
+	r := c.R
+	out, err := rs.apply(r, body.AllowedUsers, body.Editors)
+	if err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	return out, nil
+}
+
+// machinePublish asks an administrator to let EVERY user of the deployment
+// run this. The narrower grant beside it is the owner's own to make; this one
+// is not, which is why the door only files a request.
+func (T *OrchestrateApp) machinePublish(c *jsonapi.Call, body struct {
+	Note string `json:"note"` // optional
+}) (any, error) {
+	mc, perr := T.machineAt(c)
+	if perr != nil {
+		return nil, perr
+	}
+	if err := mc.ownerOnly("publish"); err != nil {
+		return nil, err
+	}
+	if mc.def.Published {
+		return nil, jsonapi.BadRequest("this machine is already published")
+	}
+	if err := CreatePromotionRequest(AuthDB(), c.User, machinePromotionKind, mc.def.Name, body.Note); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	Log("[orchestrate.machines] user=%q asked to publish machine %q", c.User, mc.def.Name)
+	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// machineUnpublish is owner-direct, exactly as revoking a share is.
+func (T *OrchestrateApp) machineUnpublish(c *jsonapi.Call, _ struct{}) (any, error) {
+	mc, perr := T.machineAt(c)
+	if perr != nil {
+		return nil, perr
+	}
+	if err := mc.ownerOnly("take back"); err != nil {
+		return nil, err
+	}
+	if err := unpublishMachine(c.User, mc.def.ID); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// handleMachineBlock serves one derived block of the editor page, by name, as the HTML the
+// page itself renders (machine_page.go). A ui.Card with a Source
+// fetches this when a step is saved, which is what keeps the map
+// and the two findings lists describing the machine as it is
+// rather than as it was when the page was opened.
+func (T *OrchestrateApp) handleMachineBlock(w http.ResponseWriter, r *http.Request, mc *machineCall) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	html, ok := machinePageBlock(mc.call.UDB, mc.call.User, mc.def, strings.TrimSpace(r.URL.Query().Get("name")))
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write([]byte(html))
+}
+
+// handleMachineGraph serves the picture (docs/design/workflow-graph.md). With ?session=<id> it
+// carries the overlay: where that conversation is sitting and
+// which edges it has actually taken. Without one it is the plain
+// structure.
+//
+// Served as SVG so it can be linked, saved, or opened on its own;
+// the modal fetches the text and injects it inline, which is what
+// lets the page's CSS variables theme it. Every dynamic string in
+// the document is escaped at the renderer (see xmlEscape) for
+// exactly that reason.
+func (T *OrchestrateApp) handleMachineGraph(w http.ResponseWriter, r *http.Request, mc *machineCall) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var overlay *WorkflowOverlay
+	if sid := strings.TrimSpace(r.URL.Query().Get("session")); sid != "" {
+		agentID := strings.TrimSpace(r.URL.Query().Get("agent"))
+		if sess, ok := loadChatSession(mc.call.UDB, agentID, sid); ok && sess.MachineID == mc.def.ID {
+			cur := MachineCursor{Phase: sess.Phase, State: sess.MachineState, Log: sess.MachineLog}
+			overlay = cur.Overlay()
+		}
+	}
+	w.Header().Set("Content-Type", "image/svg+xml; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	// ?links=1 draws it as the editor's MAP: every box a door into
+	// that step's section. Same picture either way — the difference
+	// is anchors, which only mean something inside the page that has
+	// those sections.
+	if r.URL.Query().Get("links") == "1" {
+		_, _ = w.Write([]byte(machineGraphSVG(mc.def)))
+		return
+	}
+	_, _ = w.Write([]byte(mc.def.Graph().SVG(overlay)))
+}
+
+// handleMachineExport downloads the recipe.
+func (T *OrchestrateApp) handleMachineExport(w http.ResponseWriter, r *http.Request, mc *machineCall) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	recipe := ExportMachine(mc.def)
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+SnakeFromDisplay(mc.def.Name)+".machine.json\"")
+	_ = json.NewEncoder(w).Encode(recipe)
 }
 
 // usedByText says who runs a machine, or says plainly that nobody does.
@@ -697,7 +725,7 @@ func machineStatusText(d MachineDef) string {
 	return strconv.Itoa(len(probs)) + " things to fix"
 }
 
-// handleMachineAgents reads and writes the set of agents running this
+// machineAgents reads and writes the set of agents running this
 // machine.
 //
 //	GET  → {"agents": [ids]}
@@ -708,105 +736,119 @@ func machineStatusText(d MachineDef) string {
 // the form warns per option), an agent that WAS on this machine and is
 // not in the list is detached. Agents on other machines that were never
 // in the set are left alone.
-func (T *OrchestrateApp) handleMachineAgents(w http.ResponseWriter, r *http.Request, udb Database, user string, def MachineDef) {
-	switch r.Method {
-	case http.MethodGet:
-		// ?pills=1 — the shape uiRenderScopePills wants, so assignment
-		// can happen from the LIST as well as from inside the machine.
-		// Somebody deciding which agents run what is looking at all of
-		// them at once, and opening each machine to answer that is the
-		// navigation the tools table already avoids.
-		if r.URL.Query().Get("pills") == "1" {
-			jsonapi.Write(w, machineAgentPills(udb, user, def))
-			return
-		}
-		var ids []string
-		for _, ag := range listAgents(udb, user) {
-			if ag.Machine == def.ID {
-				ids = append(ids, ag.ID)
-			}
-		}
-		jsonapi.Write(w, map[string]any{"agents": ids})
-	case http.MethodPost, http.MethodPut:
-		// A single toggle, as the pills send it. The whole-set form
-		// below is the page's checklist and stays exactly as it was.
-		var one struct {
-			Target string `json:"target"`
-			On     *bool  `json:"on"`
-		}
-		raw, _ := io.ReadAll(io.LimitReader(r.Body, maxImportBytes))
-		if json.Unmarshal(raw, &one) == nil && one.On != nil && strings.TrimSpace(one.Target) != "" {
-			ag, ok := loadAgent(udb, strings.TrimSpace(one.Target))
-			if !ok || ag.Owner != user {
-				http.Error(w, "no such agent", http.StatusNotFound)
-				return
-			}
-			switch {
-			case *one.On:
-				ag.Machine = def.ID
-			case ag.Machine == def.ID:
-				ag.Machine = ""
-			}
-			if _, err := saveAgent(udb, ag); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			Log("[orchestrate.machines] user=%q machine %q: %s %q", user, def.Name,
-				chIf(*one.On, "attached to", "detached from"), chFirst(ag.Name, ag.ID))
-			// Said on the way IN only: detaching cannot leave a gap, and a
-			// warning attached to the act of removing something reads as an
-			// objection to removing it.
-			gaps := []string{}
-			if *one.On {
-				gaps = machineAttachGaps(udb, user, def, ag)
-				for _, g := range gaps {
-					Log("[orchestrate.machines] preflight: %s", g)
-				}
-			}
-			jsonapi.Write(w, map[string]any{"ok": true, "gaps": gaps})
-			return
-		}
-		var body struct {
-			Agents []string `json:"agents"`
-		}
-		if err := json.Unmarshal(raw, &body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		want := make(map[string]bool, len(body.Agents))
-		for _, id := range body.Agents {
-			want[strings.TrimSpace(id)] = true
-		}
-		var attached, detached []string
-		for _, ag := range listAgents(udb, user) {
-			// The checklist never shows app agents or hidden ones, so
-			// this save must never touch them either — a whole-set POST
-			// detaches whatever is unchecked, and an agent that was
-			// never ON the list would be silently unplugged by every
-			// save of the agents that are.
-			if isAppAgent(ag.ID) || ag.Hidden {
-				continue
-			}
-			switch {
-			case want[ag.ID] && ag.Machine != def.ID:
-				ag.Machine = def.ID
-				if _, err := saveAgent(udb, ag); err == nil {
-					attached = append(attached, chFirst(ag.Name, ag.ID))
-				}
-			case !want[ag.ID] && ag.Machine == def.ID:
-				ag.Machine = ""
-				if _, err := saveAgent(udb, ag); err == nil {
-					detached = append(detached, chFirst(ag.Name, ag.ID))
-				}
-			}
-		}
-		if len(attached)+len(detached) > 0 {
-			Log("[orchestrate.machines] user=%q machine %q attached=%v detached=%v", user, def.Name, attached, detached)
-		}
-		jsonapi.Write(w, map[string]any{"ok": true, "attached": attached, "detached": detached})
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+func (T *OrchestrateApp) machineAgents(c *jsonapi.Call) (any, error) {
+	// Owner-only, and not merely for symmetry: AgentRecord.Machine is
+	// resolved in the AGENT owner's store on every turn, so pointing your
+	// agent's brain at somebody else's machine would be a pointer their
+	// session cannot follow. Duplicate it and attach the copy.
+	mc, perr := T.machineAt(c)
+	if perr != nil {
+		return nil, perr
 	}
+	if err := mc.ownerOnly("attach"); err != nil {
+		return nil, err
+	}
+	udb, user, def := c.UDB, c.User, mc.def
+	r := c.R
+	// ?pills=1 — the shape uiRenderScopePills wants, so assignment
+	// can happen from the LIST as well as from inside the machine.
+	// Somebody deciding which agents run what is looking at all of
+	// them at once, and opening each machine to answer that is the
+	// navigation the tools table already avoids.
+	if r.URL.Query().Get("pills") == "1" {
+		return machineAgentPills(udb, user, def), nil
+	}
+	var ids []string
+	for _, ag := range listAgents(udb, user) {
+		if ag.Machine == def.ID {
+			ids = append(ids, ag.ID)
+		}
+	}
+	return map[string]any{"agents": ids}, nil
+}
+
+// machineAgentsSave attaches and detaches: one toggle as the pills send it,
+// or the whole checklist.
+func (T *OrchestrateApp) machineAgentsSave(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+	mc, perr := T.machineAt(c)
+	if perr != nil {
+		return nil, perr
+	}
+	if err := mc.ownerOnly("attach"); err != nil {
+		return nil, err
+	}
+	udb, user, def := c.UDB, c.User, mc.def
+	// A single toggle, as the pills send it. The whole-set form
+	// below is the page's checklist and stays exactly as it was.
+	var one struct {
+		Target string `json:"target"`
+		On     *bool  `json:"on"`
+	}
+	if json.Unmarshal(raw, &one) == nil && one.On != nil && strings.TrimSpace(one.Target) != "" {
+		ag, ok := loadAgent(udb, strings.TrimSpace(one.Target))
+		if !ok || ag.Owner != user {
+			return nil, jsonapi.NotFound("no such agent")
+		}
+		switch {
+		case *one.On:
+			ag.Machine = def.ID
+		case ag.Machine == def.ID:
+			ag.Machine = ""
+		}
+		if _, err := saveAgent(udb, ag); err != nil {
+			return nil, jsonapi.Status(http.StatusInternalServerError, err.Error())
+		}
+		Log("[orchestrate.machines] user=%q machine %q: %s %q", user, def.Name,
+			chIf(*one.On, "attached to", "detached from"), chFirst(ag.Name, ag.ID))
+		// Said on the way IN only: detaching cannot leave a gap, and a
+		// warning attached to the act of removing something reads as an
+		// objection to removing it.
+		gaps := []string{}
+		if *one.On {
+			gaps = machineAttachGaps(udb, user, def, ag)
+			for _, g := range gaps {
+				Log("[orchestrate.machines] preflight: %s", g)
+			}
+		}
+		return map[string]any{"ok": true, "gaps": gaps}, nil
+	}
+	var body struct {
+		Agents []string `json:"agents"`
+	}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return nil, jsonapi.BadRequest("bad request")
+	}
+	want := make(map[string]bool, len(body.Agents))
+	for _, id := range body.Agents {
+		want[strings.TrimSpace(id)] = true
+	}
+	var attached, detached []string
+	for _, ag := range listAgents(udb, user) {
+		// The checklist never shows app agents or hidden ones, so
+		// this save must never touch them either — a whole-set POST
+		// detaches whatever is unchecked, and an agent that was
+		// never ON the list would be silently unplugged by every
+		// save of the agents that are.
+		if isAppAgent(ag.ID) || ag.Hidden {
+			continue
+		}
+		switch {
+		case want[ag.ID] && ag.Machine != def.ID:
+			ag.Machine = def.ID
+			if _, err := saveAgent(udb, ag); err == nil {
+				attached = append(attached, chFirst(ag.Name, ag.ID))
+			}
+		case !want[ag.ID] && ag.Machine == def.ID:
+			ag.Machine = ""
+			if _, err := saveAgent(udb, ag); err == nil {
+				detached = append(detached, chFirst(ag.Name, ag.ID))
+			}
+		}
+	}
+	if len(attached)+len(detached) > 0 {
+		Log("[orchestrate.machines] user=%q machine %q attached=%v detached=%v", user, def.Name, attached, detached)
+	}
+	return map[string]any{"ok": true, "attached": attached, "detached": detached}, nil
 }
 
 // copyName picks the duplicate's name: "X (copy)", counting up until it

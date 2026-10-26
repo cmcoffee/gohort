@@ -45,7 +45,7 @@ func TestARecipeSharedToEditIsChangedInTheOwnersCopy(t *testing.T) {
 			d, _ := LoadPipelineDef(udb, "alice", pl.ID)
 			return d.Name, d.Owner, d.Editors
 		}},
-		{"machine", "/api/machines/" + mc.ID, string(machinePut), T.handleMachineOne, func() (string, string, []string) {
+		{"machine", "/api/machines/" + mc.ID, string(machinePut), routed(T), func() (string, string, []string) {
 			d, _ := LoadMachineDef(udb, "alice", mc.ID)
 			return d.Name, d.Owner, d.Editors
 		}},

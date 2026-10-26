@@ -783,7 +783,7 @@ func (T *OrchestrateApp) registerHandlers() {
 	T.HandleFunc("/api/session-context", jsonapi.Get(T.DB, T.handleSessionContext))
 	T.HandleFunc("/api/machines/import", T.handleMachineImport)
 	T.HandleFunc("/api/machines/draft", jsonapi.Post(T.DB, T.handleMachineDraft, jsonapi.EmptyBodyOK))
-	T.HandleFunc("/api/machines/", T.handleMachineOne)
+	T.registerMachineRoutes()
 	// The Sources picker (reference_picker.go) — cross-app reference
 	// sources attached to one agent. Its own endpoint rather than the
 	// agent record's field because the record stores objects and a chip

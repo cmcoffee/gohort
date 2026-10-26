@@ -24,7 +24,7 @@ func pillsGET(t *testing.T, app *OrchestrateApp, user, path string) map[string]a
 	if strings.Contains(path, "/pipelines/") {
 		routed(app)(w, asUser(r, user))
 	} else {
-		app.handleMachineOne(w, asUser(r, user))
+		routed(app)(w, asUser(r, user))
 	}
 	if w.Code != 200 {
 		t.Fatalf("pills %s: %d %s", path, w.Code, w.Body.String())
@@ -73,7 +73,7 @@ func TestAssignPillsSayWhichKindOfAssignmentItIs(t *testing.T) {
 	r := httptest.NewRequest("POST", "/api/machines/"+mine.ID+"/agents",
 		strings.NewReader(`{"target":"`+busy.ID+`","on":true}`))
 	w := httptest.NewRecorder()
-	app.handleMachineOne(w, asUser(r, user))
+	routed(app)(w, asUser(r, user))
 	if w.Code != 200 {
 		t.Fatalf("toggle: %d %s", w.Code, w.Body.String())
 	}
@@ -105,7 +105,7 @@ func TestAssignPillsSayWhichKindOfAssignmentItIs(t *testing.T) {
 	r = httptest.NewRequest("POST", "/api/machines/"+mine.ID+"/agents",
 		strings.NewReader(`{"agents":[]}`))
 	w = httptest.NewRecorder()
-	app.handleMachineOne(w, asUser(r, user))
+	routed(app)(w, asUser(r, user))
 	if w.Code != 200 {
 		t.Fatalf("whole-set save: %d %s", w.Code, w.Body.String())
 	}
