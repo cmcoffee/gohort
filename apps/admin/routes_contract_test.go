@@ -123,7 +123,7 @@ type contract struct {
 var (
 	contractHex   = regexp.MustCompile(`\b[0-9a-f]{16,64}\b`)
 	contractStamp = regexp.MustCompile(`\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?(Z|[+-]\d\d:\d\d)`)
-	contractDate  = regexp.MustCompile(`\b\d{4}-\d\d-\d\d\b`)
+	contractDate  = regexp.MustCompile(`\b\d{4}-\d\d-\d\d( \d\d:\d\d:\d\d)?\b`)
 )
 
 // run sends one request as user ("" for signed out), records the reply, and

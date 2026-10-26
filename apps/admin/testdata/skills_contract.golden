@@ -1,0 +1,114 @@
+(signed out) GET /api/pipelines ""
+  403 forbidden
+alice GET /api/pipelines ""
+  403 forbidden
+root GET /api/pipelines ""
+  200 {"pipelines":[{"id":"pl-alice","owner":"alice","name":"Alice's flow","description":"two steps","stages":2,"detail":{"id":"pl-alice","name":"Alice's flow","description":"two steps","stages":[{"name":"o… (521 bytes, sha1 4fb774c7bba6c0a4553b72542bb9f7823bc65a21)
+root PUT /api/pipelines "{}"
+  405 method not allowed
+(signed out) GET /api/skills ""
+  403 forbidden
+alice GET /api/skills ""
+  403 forbidden
+root GET /api/skills ""
+  200 []
+root PUT /api/skills "{}"
+  405 method not allowed
+(signed out) GET /api/collections ""
+  403 forbidden
+alice GET /api/collections ""
+  403 forbidden
+root GET /api/collections ""
+  200 [{"id":"col-root","name":"Runbooks","description":"how-tos"}]
+root PUT /api/collections "{}"
+  405 method not allowed
+alice DELETE /api/pipelines?id=pl-alice ""
+  403 forbidden
+root DELETE /api/pipelines ""
+  400 id required
+root DELETE /api/pipelines?id=nope ""
+  404 no such pipeline
+root DELETE /api/pipelines?id=pl-alice ""
+  200 {"deleted":"pl-alice"}
+root GET /api/pipelines ""
+  200 {"pipelines":[{"id":"pl-root","owner":"root","name":"Root's flow","description":"","stages":1,"detail":{"id":"pl-root","name":"Root's flow","stages":[{"name":"only","kind":"","prompt":""}],"created":"<time>","updated":"<time>"}}]}
+alice POST /api/skills "{\"name\":\"mine\",\"description\":\"d\"}"
+  403 forbidden
+root POST /api/skills "{\"name\":\"Release notes\",\"description\":\"Write release notes\",\"triggers\":[\"release\"],\"instructions\":\"Be brief.\",\"allowed_tools\":[\"git\"],\"attached_collections\":[\"col-root\"]}"
+  200 {"id":"<skill-1>","name":"Release notes","description":"Write release notes","triggers":["release"],"allowed_tools":["git"],"instructions":"Be brief.","owner":"root","attached_collections":["col-root"],"created":"<time>","updated":"<time>"}
+root POST /api/skills "{\"name\":\"Triage\",\"description\":\"Sort tickets\",\"playbook_text\":\"[{\\\"fact\\\":\\\"severity\\\",\\\"how\\\":\\\"ask the reporter\\\",\\\"then\\\":\\\"label it urgent\\\"}]\"}"
+  200 {"id":"<skill-2>","name":"Triage","description":"Sort tickets","instructions":"","owner":"root","playbook":[{"fact":"severity","how":"ask the reporter","then":"label it urgent"}],"created":"<time>","updated":"<time>"}
+root POST /api/skills "{\"name\":\"release NOTES\",\"description\":\"a second one\"}"
+  409 you already have a skill called Release notes; pick another name, or edit that one
+root POST /api/skills "{\"description\":\"no name\"}"
+  400 name is required
+root POST /api/skills "{\"name\":\"No description\"}"
+  400 description is required
+root POST /api/skills "{\"name\":\"Bad playbook\",\"description\":\"d\",\"playbook_text\":\"not json\"}"
+  400 invalid body: playbook is not a JSON array of rules: invalid character 'o' in literal null (expecting 'u')
+root POST /api/skills "{\"name\":\"Odd playbook\",\"description\":\"d\",\"playbook_text\":\"[{\\\"when\\\":\\\"bug\\\"}]\"}"
+  400 invalid body: playbook is not a JSON array of rules: json: cannot unmarshal string into Go struct field PlaybookRule.when of type []string
+root POST /api/skills "{\"name\":\"Empty rule\",\"description\":\"d\",\"playbook_text\":\"[{}]\"}"
+  400 playbook: rule 1: fact is required: the name of what the rule establishes; rule 1: how is required: the instruction for establishing the fact; rule 1: a bool rule needs at least one arm: then, else, then_rule or else_rule
+root POST /api/skills "{\"name\":"
+  400 invalid JSON: unexpected EOF
+root POST /api/skills ""
+  400 invalid JSON: EOF
+root PATCH /api/skills?id=<skill-1> "{\"instructions\":\"Be very brief.\"}"
+  200 {"id":"<skill-1>","name":"Release notes","description":"Write release notes","triggers":["release"],"allowed_tools":["git"],"instructions":"Be very brief.","owner":"root","attached_collections":["col-root"],"created":"<time>","updated":"<time>"}
+root POST /api/skills "{\"id\":\"<skill-2>\",\"name\":\"Release Notes\",\"description\":\"rename onto a taken name\"}"
+  409 you already have a skill called Release notes; pick another name, or edit that one
+root POST /api/skills "{\"id\":\"<skill-2>\",\"playbook_text\":\"\"}"
+  200 {"id":"<skill-2>","name":"Triage","description":"Sort tickets","instructions":"","owner":"root","created":"<time>","updated":"<time>"}
+root GET /api/skills ""
+  200 [{"id":"<skill-1>","name":"Release notes","description":"Write release notes","triggers":["release"],"allowed_tools":["git"],"attached_collections":["col-root"],"instructions":"Be very brief.","disabl… (447 bytes, sha1 d73cc2094b585b70f6a303c7dec8051f2ee00890)
+alice GET /api/skills/<skill-1> ""
+  403 forbidden
+root GET /api/skills/<skill-1> ""
+  200 {"id":"<skill-1>","name":"Release notes","description":"Write release notes","triggers":["release"],"allowed_tools":["git"],"attached_collections":["col-root"],"instructions":"Be very brief.","disabled":false,"playbook_text":""}
+alice GET /api/skills/<skill-2> ""
+  403 forbidden
+root GET /api/skills/<skill-2> ""
+  200 {"id":"<skill-2>","name":"Triage","description":"Sort tickets","triggers":null,"allowed_tools":null,"attached_collections":null,"instructions":"","disabled":false,"playbook_text":""}
+alice GET /api/skills/nope ""
+  403 forbidden
+root GET /api/skills/nope ""
+  404 no such skill
+alice GET /api/skills/ ""
+  403 forbidden
+root GET /api/skills/ ""
+  404 no such skill
+root GET /api/skills/<skill-1>?view=form ""
+  200 {"description":"Write release notes","disabled":false,"id":"<skill-1>","instructions":"Be very brief.","name":"Release notes","playbook_text":"","triggers":["release"]}
+root GET /api/skills/<skill-1>/extra ""
+  404 no such skill
+root POST /api/skills/<skill-1> "{}"
+  405 method not allowed
+alice POST /api/skills?action=disable&id=<skill-1> ""
+  403 forbidden
+root POST /api/skills?action=disable&id=<skill-1> ""
+  204 
+root POST /api/skills?action=disable ""
+  400 missing id
+root POST /api/skills?action=disable&id=nope ""
+  404 skill not found
+root GET /api/skills/<skill-1> ""
+  200 {"id":"<skill-1>","name":"Release notes","description":"Write release notes","triggers":["release"],"allowed_tools":["git"],"attached_collections":["col-root"],"instructions":"Be very brief.","disabled":true,"playbook_text":""}
+root POST /api/skills "{\"id\":\"<skill-1>\",\"name\":\"Release notes\",\"description\":\"Write release notes\",\"disabled\":false}"
+  200 {"id":"<skill-1>","name":"Release notes","description":"Write release notes","triggers":["release"],"allowed_tools":["git"],"instructions":"Be very brief.","owner":"root","disabled":true,"attached_collections":["col-root"],"created":"<time>","updated":"<time>"}
+root GET /api/skills/<skill-1> ""
+  200 {"id":"<skill-1>","name":"Release notes","description":"Write release notes","triggers":["release"],"allowed_tools":["git"],"attached_collections":["col-root"],"instructions":"Be very brief.","disabled":true,"playbook_text":""}
+root PATCH /api/skills?action=enable&id=<skill-1> ""
+  204 
+root GET /api/skills/<skill-1> ""
+  200 {"id":"<skill-1>","name":"Release notes","description":"Write release notes","triggers":["release"],"allowed_tools":["git"],"attached_collections":["col-root"],"instructions":"Be very brief.","disabled":false,"playbook_text":""}
+alice DELETE /api/skills?id=<skill-2> ""
+  403 forbidden
+root DELETE /api/skills ""
+  400 missing id
+root DELETE /api/skills?id=nope ""
+  404 not found
+root DELETE /api/skills?id=<skill-2> ""
+  204 
+root GET /api/skills ""
+  200 [{"id":"<skill-1>","name":"Release notes","description":"Write release notes","triggers":["release"],"allowed_tools":["git"],"attached_collections":["col-root"],"instructions":"Be very brief.","disabled":false,"updated":"<date>","playbook":"add"}]
