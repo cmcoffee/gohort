@@ -21,7 +21,7 @@ func TestToolRunSectionTogglesReadBack(t *testing.T) {
 	pills := func() map[string]bool {
 		t.Helper()
 		w := httptest.NewRecorder()
-		app.handleUserToolAccess(w, req("GET", "/api/tool-access?section=run&name=wiki_read"))
+		serve(app)(w, req("GET", "/api/tool-access?section=run&name=wiki_read"))
 		var out struct {
 			Items []struct {
 				Key string `json:"key"`
@@ -43,7 +43,7 @@ func TestToolRunSectionTogglesReadBack(t *testing.T) {
 		r := req("POST", "/api/tool-access?section=run&name=wiki_read")
 		r.Body = io.NopCloser(strings.NewReader(string(body)))
 		w := httptest.NewRecorder()
-		app.handleUserToolAccess(w, r)
+		serve(app)(w, r)
 		return w.Code
 	}
 
@@ -78,7 +78,7 @@ func TestToolRunSectionRefusesAFlagOutsideThePool(t *testing.T) {
 	r := req("POST", "/api/tool-access?section=run&name=nothing_here")
 	r.Body = io.NopCloser(strings.NewReader(`{"target":"never_unattended","on":true}`))
 	w := httptest.NewRecorder()
-	app.handleUserToolAccess(w, r)
+	serve(app)(w, r)
 	if w.Code != 400 || !strings.Contains(w.Body.String(), "keep the tool") {
 		t.Errorf("a flag on a tool outside the pool: %d %s", w.Code, w.Body.String())
 	}
@@ -86,7 +86,7 @@ func TestToolRunSectionRefusesAFlagOutsideThePool(t *testing.T) {
 	r = req("POST", "/api/tool-access?section=run&name=nothing_here")
 	r.Body = io.NopCloser(strings.NewReader(`{"target":"locked","on":true}`))
 	w = httptest.NewRecorder()
-	app.handleUserToolAccess(w, r)
+	serve(app)(w, r)
 	if w.Code != 400 {
 		t.Errorf("locked is still a setting: %d", w.Code)
 	}
@@ -141,7 +141,7 @@ func TestToolWhoChoices(t *testing.T) {
 	state := func() (string, map[string]bool) {
 		t.Helper()
 		w := httptest.NewRecorder()
-		app.handleUserToolAccess(w, req("GET", "/api/tool-access?section=who&name=wiki_read"))
+		serve(app)(w, req("GET", "/api/tool-access?section=who&name=wiki_read"))
 		var out struct {
 			Mode   string `json:"mode"`
 			Agents []struct {
@@ -165,7 +165,7 @@ func TestToolWhoChoices(t *testing.T) {
 		r := req("POST", "/api/tool-access?section=who&name=wiki_read")
 		r.Body = io.NopCloser(strings.NewReader(body))
 		w := httptest.NewRecorder()
-		app.handleUserToolAccess(w, r)
+		serve(app)(w, r)
 		if w.Code != 204 {
 			t.Fatalf("%s: %d %s", body, w.Code, w.Body.String())
 		}

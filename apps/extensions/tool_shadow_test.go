@@ -38,7 +38,7 @@ func TestAnOwnToolShadowingATakenOneIsShownOnBothLists(t *testing.T) {
 	}
 
 	w := httptest.NewRecorder()
-	app.handleUserTools(w, req("GET", "/api/tools"))
+	serve(app)(w, req("GET", "/api/tools"))
 	var tools []map[string]any
 	if err := json.Unmarshal(w.Body.Bytes(), &tools); err != nil {
 		t.Fatalf("tools list: %v %s", err, w.Body.String())
@@ -63,7 +63,7 @@ func TestAnOwnToolShadowingATakenOneIsShownOnBothLists(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	app.handleGlobalTools(w, req("GET", "/api/global-tools"))
+	serve(app)(w, req("GET", "/api/global-tools"))
 	var offers []map[string]any
 	if err := json.Unmarshal(w.Body.Bytes(), &offers); err != nil {
 		t.Fatalf("catalog: %v %s", err, w.Body.String())

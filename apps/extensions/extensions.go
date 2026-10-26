@@ -87,8 +87,15 @@ func (T *Extensions) Routes() {
 		"POST":   T.mcpServerPost(),
 		"DELETE": jsonapi.Post(T.DB, T.handleMCPServerDelete),
 	}.Serve)
-	T.HandleFunc("/api/tools", T.handleUserTools)
-	T.HandleFunc("/api/tool-access", T.handleUserToolAccess)
+	T.HandleFunc("/api/tools", jsonapi.Methods{
+		"GET":    jsonapi.Get(T.DB, T.listUserTools),
+		"POST":   T.userToolPost(),
+		"DELETE": jsonapi.Post(T.DB, T.deleteUserTool),
+	}.Serve)
+	T.HandleFunc("/api/tool-access", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, T.handleToolAccess),
+		"POST": jsonapi.Post(T.DB, T.handleToolAccessSet),
+	}.Serve)
 	T.HandleFunc("/api/category-security", jsonapi.Methods{
 		"GET":  jsonapi.Get(T.DB, T.handleCategorySecurity),
 		"POST": jsonapi.Post(T.DB, T.handleCategorySecuritySet),
@@ -377,61 +384,52 @@ func (T *Extensions) handleCredentialDelete(c *jsonapi.Call, _ struct{}) (any, e
 	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
-// handleUserTools is the user's OWN persistent-tool surface — the counterpart to
+// userToolPost and the GET and DELETE beside it are the user's OWN
+// persistent-tool surface — the counterpart to
 // the admin persistent-tools page, scoped to the calling user's pool. GET lists
 // the user's active tools (authored via chat/Builder); DELETE removes one (the
 // break-glass "this tool misbehaves, drop it" control). Authoring stays in chat —
 // a tool is a script or API definition, not a hand-filled form — so this surface
 // is view + delete, not create.
-func (T *Extensions) handleUserTools(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	name := strings.TrimSpace(r.URL.Query().Get("name"))
-	// The recipient list, and ONLY the recipient list. Handing a colleague a
-	// tool is the owner's own rung: it puts the tool in their catalog to take,
-	// and loads for their agents once they take it. Refused for a tool that
-	// dispatches through a SECURED credential, because that key's access
-	// follows the tools an administrator bound to it.
-	if r.Method == http.MethodPost && strings.TrimSpace(r.URL.Query().Get("action")) == "share" {
-		var body struct {
-			SharedWith []string `json:"shared_with"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
+func (T *Extensions) userToolPost() http.HandlerFunc {
+	share := jsonapi.Post(T.DB, T.shareUserTool)
+	change := jsonapi.Post(T.DB, T.changeUserTool, jsonapi.EmptyBodyOK)
+	return func(w http.ResponseWriter, r *http.Request) {
+		if strings.TrimSpace(r.URL.Query().Get("action")) == "share" {
+			share(w, r)
 			return
 		}
-		if err := SetPersistentTempToolSharedWith(AuthDB(), user, name, body.SharedWith); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		Log("[extensions] user=%q shared tool %q with %d user(s)", user, name, len(body.SharedWith))
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	switch r.Method {
-	case http.MethodGet:
-		T.listUserTools(w, r, user, name)
-	case http.MethodPost:
-		T.changeUserTool(w, r, user, name)
-	case http.MethodDelete:
-		T.deleteUserTool(w, r, user, name)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		change(w, r)
 	}
 }
 
-// listUserTools is handleUserTools' GET: the user's tools as the page lists them.
-func (T *Extensions) listUserTools(w http.ResponseWriter, r *http.Request, user, name string) {
-	lt := &toolList{T: T, w: w, r: r, user: user, name: name}
-	if !lt.answerOne() {
-		return
+// shareUserTool sets the recipient list, and ONLY the recipient list. Handing
+// a colleague a tool is the owner's own rung: it puts the tool in their
+// catalog to take, and loads for their agents once they take it. Refused for
+// a tool that dispatches through a SECURED credential, because that key's
+// access follows the tools an administrator bound to it.
+func (T *Extensions) shareUserTool(c *jsonapi.Call, body struct {
+	SharedWith []string `json:"shared_with"`
+}) (any, error) {
+	user, name := c.User, strings.TrimSpace(c.R.URL.Query().Get("name"))
+	if err := SetPersistentTempToolSharedWith(AuthDB(), user, name, body.SharedWith); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	Log("[extensions] user=%q shared tool %q with %d user(s)", user, name, len(body.SharedWith))
+	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// listUserTools is /api/tools' GET: the user's tools as the page lists them.
+func (T *Extensions) listUserTools(c *jsonapi.Call) (any, error) {
+	lt := &toolList{T: T, r: c.R, user: c.User, name: strings.TrimSpace(c.R.URL.Query().Get("name"))}
+	if one, answered, err := lt.answerOne(); answered {
+		return one, err
 	}
 	lt.ownRows()
 	lt.scopedRows()
 	lt.orphanRows()
 	lt.twinsAndOrder()
+	return lt.rows, nil
 }
 
 type toolRow struct {
@@ -525,7 +523,6 @@ type toolRow struct {
 // phases.
 type toolList struct {
 	T        *Extensions
-	w        http.ResponseWriter
 	r        *http.Request
 	user     string
 	name     string
@@ -535,8 +532,7 @@ type toolList struct {
 	byName   map[string]int
 }
 
-func (lt *toolList) answerOne() bool {
-	w := lt.w
+func (lt *toolList) answerOne() (any, bool, error) {
 	r := lt.r
 	user := lt.user
 	name := lt.name
@@ -558,18 +554,15 @@ func (lt *toolList) answerOne() bool {
 	if want := strings.TrimSpace(r.URL.Query().Get("share")); want != "" {
 		for _, p := range LoadPersistentTempTools(AuthDB(), user) {
 			if p.Tool.Name == want {
-				jsonapi.Write(w, map[string]any{"shared_with": nonNilList(p.SharedWith)})
-				return false
+				return map[string]any{"shared_with": nonNilList(p.SharedWith)}, true, nil
 			}
 		}
-		jsonapi.Write(w, map[string]any{"shared_with": []string{}})
-		return false
+		return map[string]any{"shared_with": []string{}}, true, nil
 	}
 	if name != "" {
 		for _, p := range LoadPersistentTempTools(AuthDB(), user) {
 			if p.Tool.Name == name {
-				jsonapi.Write(w, p.Tool)
-				return false
+				return p.Tool, true, nil
 			}
 		}
 		for _, st := range ListScopedTools(user) {
@@ -577,8 +570,7 @@ func (lt *toolList) answerOne() bool {
 				continue
 			}
 			if st.Tool.Name == name {
-				jsonapi.Write(w, st.Tool)
-				return false
+				return st.Tool, true, nil
 			}
 		}
 		for _, d := range ListSessionDrafts(user) {
@@ -586,14 +578,12 @@ func (lt *toolList) answerOne() bool {
 				continue
 			}
 			if d.Tool.Name == name {
-				jsonapi.Write(w, d.Tool)
-				return false
+				return d.Tool, true, nil
 			}
 		}
-		http.Error(w, "not found", http.StatusNotFound)
-		return false
+		return nil, true, jsonapi.NotFound("not found")
 	}
-	return true
+	return nil, false, nil
 }
 
 func (lt *toolList) ownRows() {
@@ -800,7 +790,6 @@ func (lt *toolList) rank(r toolRow) int {
 }
 
 func (lt *toolList) twinsAndOrder() {
-	w := lt.w
 	user := lt.user
 	// Name-conflict pass: the same name living in more than one bucket is
 	// exactly the state that made the old shared RowKey lie, and it stays
@@ -869,11 +858,21 @@ func (lt *toolList) twinsAndOrder() {
 		}
 		return strings.ToLower(lt.rows[i].Name) < strings.ToLower(lt.rows[j].Name)
 	})
-	jsonapi.Write(w, lt.rows)
 }
 
-// changeUserTool is handleUserTools' POST: one change to a tool, named by ?action.
-func (T *Extensions) changeUserTool(w http.ResponseWriter, r *http.Request, user, name string) {
+// toolChange is a change's body: set_category's category. Every other action
+// takes none.
+type toolChange struct {
+	Category string `json:"category"`
+}
+
+// changeUserTool is /api/tools' POST: one change to a tool, named by ?action.
+func (T *Extensions) changeUserTool(c *jsonapi.Call, body *toolChange) (any, error) {
+	user, name := c.User, strings.TrimSpace(c.R.URL.Query().Get("name"))
+	category := ""
+	if body != nil {
+		category = strings.TrimSpace(body.Category)
+	}
 	// Governance toggles + category, all on the user's OWN tool record (own
 	// namespace, nothing shared):
 	//   set_category — claim/clear a grouping label (see Tool.Category).
@@ -881,20 +880,18 @@ func (T *Extensions) changeUserTool(w http.ResponseWriter, r *http.Request, user
 	//   disable / enable — hide from / restore to every agent's catalog.
 	//   builder_only_on / builder_only_off — expose to Builder agent only.
 	//   keep_draft / drop_draft — resolve a session draft (see below).
-	action := r.URL.Query().Get("action")
+	action := c.R.URL.Query().Get("action")
 	if name == "" {
-		http.Error(w, "missing name", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("missing name")
 	}
 	// Session-draft actions run BEFORE the pool lookup: a draft is by
 	// definition not in the persistent pool, so that lookup would 404 it.
 	// confirm — the user vouching for a trial tool the assistant authored.
 	// It doesn't move the tool; it only clears the unconfirmed mark.
 	if action == "confirm" {
-		agentID := strings.TrimSpace(r.URL.Query().Get("agent_id"))
+		agentID := strings.TrimSpace(c.R.URL.Query().Get("agent_id"))
 		if ConfirmAgentTool == nil {
-			http.Error(w, "confirm unavailable", http.StatusServiceUnavailable)
-			return
+			return nil, jsonapi.Status(http.StatusServiceUnavailable, "confirm unavailable")
 		}
 		// Vouching for a tool is not per-agent: the row is one TOOL, so
 		// confirm clears the mark on every agent holding a copy. Confirming
@@ -911,23 +908,19 @@ func (T *Extensions) changeUserTool(w http.ResponseWriter, r *http.Request, user
 			}
 		}
 		if len(targets) == 0 {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
+			return nil, jsonapi.NotFound("not found")
 		}
 		for _, id := range targets {
 			if err := ConfirmAgentTool(AuthDB(), user, id, name); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
+				return nil, jsonapi.BadRequest(err.Error())
 			}
 		}
-		w.WriteHeader(http.StatusNoContent)
-		return
+		return jsonapi.Empty(http.StatusNoContent), nil
 	}
 	if action == "keep_draft" || action == "drop_draft" {
-		sid := strings.TrimSpace(r.URL.Query().Get("session_id"))
+		sid := strings.TrimSpace(c.R.URL.Query().Get("session_id"))
 		if sid == "" {
-			http.Error(w, "missing session_id", http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest("missing session_id")
 		}
 		// Resolve from the session that owns it, not by name alone: two
 		// sessions can hold different drafts under the same name.
@@ -939,13 +932,11 @@ func (T *Extensions) changeUserTool(w http.ResponseWriter, r *http.Request, user
 			}
 		}
 		if !found {
-			http.Error(w, "no session draft "+name+" in that session", http.StatusNotFound)
-			return
+			return nil, jsonapi.NotFound("no session draft " + name + " in that session")
 		}
 		if action == "drop_draft" {
 			RemoveSessionTempTool(AuthDB(), sid, name)
-			w.WriteHeader(http.StatusNoContent)
-			return
+			return jsonapi.Empty(http.StatusNoContent), nil
 		}
 		// Where a kept draft lands — the user-wide pool (every agent) or the
 		// agent whose session built it. This is the same session-vs-global
@@ -954,7 +945,7 @@ func (T *Extensions) changeUserTool(w http.ResponseWriter, r *http.Request, user
 		// now-redundant agent copy on a global keep). Default global: it is
 		// the answer for most keeps and the one with no agent dependency.
 		target := ScopeTargetGlobal
-		if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("target")), ScopeTargetAgent) {
+		if strings.EqualFold(strings.TrimSpace(c.R.URL.Query().Get("target")), ScopeTargetAgent) {
 			target = ScopeTargetAgent
 		}
 		agentID := ""
@@ -965,11 +956,9 @@ func (T *Extensions) changeUserTool(w http.ResponseWriter, r *http.Request, user
 			}
 		}
 		if _, err := PromoteScopedTool(user, agentID, sid, name, target); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest(err.Error())
 		}
-		w.WriteHeader(http.StatusNoContent)
-		return
+		return jsonapi.Empty(http.StatusNoContent), nil
 	}
 	// withdraw — the owner taking their published tool back out of the
 	// deployment catalog. Publishing is an administrator's to grant;
@@ -977,11 +966,9 @@ func (T *Extensions) changeUserTool(w http.ResponseWriter, r *http.Request, user
 	// loading it, and the last approved version is kept.
 	if action == "withdraw" {
 		if err := SetPersistentTempToolShared(AuthDB(), user, name, false); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest(err.Error())
 		}
-		w.WriteHeader(http.StatusNoContent)
-		return
+		return jsonapi.Empty(http.StatusNoContent), nil
 	}
 	var tt *TempTool
 	for _, p := range LoadPersistentTempTools(AuthDB(), user) {
@@ -1009,18 +996,11 @@ func (T *Extensions) changeUserTool(w http.ResponseWriter, r *http.Request, user
 		switch action {
 		case "set_category", "disable", "enable":
 		default:
-			http.Error(w, "this action applies to pool tools only: "+name+" is scoped to an agent", http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest("this action applies to pool tools only: " + name + " is scoped to an agent")
 		}
 		if AttachToolToAgent == nil {
-			http.Error(w, "agent-scoped update unavailable", http.StatusServiceUnavailable)
-			return
+			return nil, jsonapi.Status(http.StatusServiceUnavailable, "agent-scoped update unavailable")
 		}
-		var body struct {
-			Category string `json:"category"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		cat := strings.TrimSpace(body.Category)
 		updated := 0
 		for _, st := range ListScopedTools(user) {
 			if st.Shadowed || st.Scope != ScopeAgentTool || st.Tool.Name != name {
@@ -1029,24 +1009,21 @@ func (T *Extensions) changeUserTool(w http.ResponseWriter, r *http.Request, user
 			t := st.Tool // copy; Attach replaces the whole record on that agent
 			switch action {
 			case "set_category":
-				t.Category = cat
+				t.Category = category
 			case "disable":
 				t.Disabled = true
 			case "enable":
 				t.Disabled = false
 			}
 			if err := AttachToolToAgent(AuthDB(), user, st.AgentID, t); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
+				return nil, jsonapi.BadRequest(err.Error())
 			}
 			updated++
 		}
 		if updated == 0 {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
+			return nil, jsonapi.NotFound("not found")
 		}
-		w.WriteHeader(http.StatusNoContent)
-		return
+		return jsonapi.Empty(http.StatusNoContent), nil
 	}
 	switch action {
 	case "set_category":
@@ -1055,11 +1032,7 @@ func (T *Extensions) changeUserTool(w http.ResponseWriter, r *http.Request, user
 		// categories that have a registered entry. The label lives on the
 		// user's own tool record, so this touches nothing outside their
 		// namespace — no per-user group store needed.
-		var body struct {
-			Category string `json:"category"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		tt.Category = strings.TrimSpace(body.Category)
+		tt.Category = category
 	case "disable":
 		tt.Disabled = true
 	case "enable":
@@ -1078,21 +1051,19 @@ func (T *Extensions) changeUserTool(w http.ResponseWriter, r *http.Request, user
 	case "bound_only_off":
 		tt.BoundOnly = false
 	default:
-		http.Error(w, "unknown action", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("unknown action")
 	}
 	if !UpdatePersistentTempTool(AuthDB(), user, *tt) {
-		http.Error(w, "update failed", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("update failed")
 	}
-	w.WriteHeader(http.StatusNoContent)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
-// deleteUserTool is handleUserTools' DELETE: the tool dropped.
-func (T *Extensions) deleteUserTool(w http.ResponseWriter, r *http.Request, user, name string) {
+// deleteUserTool is /api/tools' DELETE: the tool dropped.
+func (T *Extensions) deleteUserTool(c *jsonapi.Call, _ struct{}) (any, error) {
+	user, name := c.User, strings.TrimSpace(c.R.URL.Query().Get("name"))
 	if name == "" {
-		http.Error(w, "missing name", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("missing name")
 	}
 	// An orphan isn't in the pool, so the pool delete would 404 it — discard
 	// it from the orphan store instead. Checked first because that is the
@@ -1100,18 +1071,15 @@ func (T *Extensions) deleteUserTool(w http.ResponseWriter, r *http.Request, user
 	for _, o := range LoadOrphanedTempTools(AuthDB(), user) {
 		if o.Tool.Name == name {
 			if !RemoveOrphanedTempTool(AuthDB(), user, name) {
-				http.Error(w, "not found", http.StatusNotFound)
-				return
+				return nil, jsonapi.NotFound("not found")
 			}
-			w.WriteHeader(http.StatusNoContent)
-			return
+			return jsonapi.Empty(http.StatusNoContent), nil
 		}
 	}
 	if err := DeletePersistentTempTool(AuthDB(), user, name); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest(err.Error())
 	}
-	w.WriteHeader(http.StatusNoContent)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // handleUserSkills is the user's OWN skills surface — the per-user counterpart to
@@ -2655,7 +2623,7 @@ func (T *Extensions) skillsSection() ui.Section {
 	}
 }
 
-// handleUserToolAccess serves a tool's Security panel (tool_security.go):
+// handleToolAccess serves a tool's Security panel (tool_security.go):
 // ?section=run for How it runs, ?section=who for Who can use it, ?section=steps
 // for a toolbox's Replies may ask for. Which of the
 // user's OWN agents load a tool is theirs to decide; tier 1 (which USERS may
@@ -2664,30 +2632,56 @@ func (T *Extensions) skillsSection() ui.Section {
 // scopeAllAgents is the ScopeProvider's target for the user-wide pool.
 const scopeAllAgents = "global"
 
-func (T *Extensions) handleUserToolAccess(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
+func (T *Extensions) handleToolAccess(c *jsonapi.Call) (any, error) {
+	name, err := toolAccessName(c)
+	if err != nil {
+		return nil, err
 	}
-	name := strings.TrimSpace(r.URL.Query().Get("name"))
-	if name == "" {
-		http.Error(w, "missing name", http.StatusBadRequest)
-		return
-	}
-	db := AuthDB()
-	switch r.URL.Query().Get("section") {
+	db, user := AuthDB(), c.User
+	switch c.R.URL.Query().Get("section") {
 	case "run":
-		toolRunSection(w, r, db, user, name)
-		return
+		c.W.Header().Set("Cache-Control", "no-store")
+		return toolRunState(db, user, name), nil
 	case "who":
-		w.Header().Set("Cache-Control", "no-store")
-		toolWhoSection(w, r, db, user, name)
-		return
+		c.W.Header().Set("Cache-Control", "no-store")
+		return toolWhoGet(db, user, name)
 	case "steps":
-		toolStepsSection(w, r, db, user, name)
-		return
+		c.W.Header().Set("Cache-Control", "no-store")
+		return toolStepsState(db, user, name)
 	}
-	http.Error(w, "unknown section: use section=run, section=who or section=steps", http.StatusNotFound)
+	return nil, toolAccessUnknown
+}
+
+// handleToolAccessSet applies one change to the section. The body is the
+// section's own: {target, on} for run, {mode} or {agent, on} for who, and
+// {action, follow, on} for steps.
+func (T *Extensions) handleToolAccessSet(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+	name, err := toolAccessName(c)
+	if err != nil {
+		return nil, err
+	}
+	db, user := AuthDB(), c.User
+	switch c.R.URL.Query().Get("section") {
+	case "run":
+		return toolRunSet(db, user, name, raw)
+	case "who":
+		return toolWhoSet(db, user, name, raw)
+	case "steps":
+		return toolStepsSet(db, user, name, raw)
+	}
+	return nil, toolAccessUnknown
+}
+
+// toolAccessUnknown answers a section that is none of the three.
+var toolAccessUnknown = jsonapi.NotFound("unknown section: use section=run, section=who or section=steps")
+
+// toolAccessName is the tool /api/tool-access?name= names.
+func toolAccessName(c *jsonapi.Call) (string, error) {
+	name := strings.TrimSpace(c.R.URL.Query().Get("name"))
+	if name == "" {
+		return "", jsonapi.BadRequest("missing name")
+	}
+	return name, nil
 }
 
 // toolSecurityJS drives a tool's Security panel on Extensions › Tools
@@ -2733,7 +2727,7 @@ func toolSecurityJS() string {
     });
   }
   // Who can use it: one choice of three, and the agents only under "Only
-  // these agents" (tool_security.go, toolWhoSection).
+  // these agents" (tool_security.go, toolWhoSet).
   function who(body){
     var host = document.createElement('div');
     body.appendChild(host);
@@ -2811,7 +2805,7 @@ func toolSecurityJS() string {
     load();
   }
   // Replies may ask for: a toolbox's declared next steps, the service's own
-  // protocol (tool_security.go, toolStepsSection). Every exception listed,
+  // protocol (tool_security.go, toolStepsSet). Every exception listed,
   // each editable or removable, and a form under them to add or change one:
   // the step, then which actions' replies may ask for it, Every action first.
   function steps(body){

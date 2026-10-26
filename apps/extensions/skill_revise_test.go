@@ -25,7 +25,7 @@ func TestSkillReviseFromADescription(t *testing.T) {
 	r := req("POST", "/api/skills/"+made.ID+"/revise")
 	r.Body = readCloser(`{"description":"ask for the order number first, and also catch money back"}`)
 	w := httptest.NewRecorder()
-	app.handleUserSkillOne(w, r)
+	serve(app)(w, r)
 	if w.Code != 200 {
 		t.Fatalf("status %d: %s", w.Code, w.Body.String())
 	}
@@ -41,7 +41,7 @@ func TestSkillReviseFromADescription(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	app.handleUserSkillOne(w, req("GET", "/api/skills/"+made.ID+"/revisions"))
+	serve(app)(w, req("GET", "/api/skills/"+made.ID+"/revisions"))
 	if !strings.Contains(w.Body.String(), "revised from a description") {
 		t.Errorf("the version before is not in the history: %s", w.Body.String())
 	}
@@ -56,7 +56,7 @@ func TestSkillReviseRefusesAnUnusableReply(t *testing.T) {
 	r := req("POST", "/api/skills/"+made.ID+"/revise")
 	r.Body = readCloser(`{"description":"make it friendlier"}`)
 	w := httptest.NewRecorder()
-	app.handleUserSkillOne(w, r)
+	serve(app)(w, r)
 	if w.Code == 200 {
 		t.Fatalf("an unusable reply was accepted: %s", w.Body.String())
 	}

@@ -34,7 +34,7 @@ func TestAnAuthorCanEditAndMuteTheirPublishedSkill(t *testing.T) {
 			r.Body = io.NopCloser(strings.NewReader(body))
 		}
 		w := httptest.NewRecorder()
-		app.handleUserSkills(w, r)
+		serve(app)(w, r)
 		return w
 	}
 

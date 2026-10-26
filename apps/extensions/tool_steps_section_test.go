@@ -31,7 +31,7 @@ func TestTheOwnerDeclaresAToolboxsNextSteps(t *testing.T) {
 		r := req("POST", "/api/tool-access?section=steps&name=social")
 		r.Body = io.NopCloser(strings.NewReader(string(body)))
 		w := httptest.NewRecorder()
-		app.handleUserToolAccess(w, r)
+		serve(app)(w, r)
 		return w.Code, w.Body.String()
 	}
 	stored := func() []string {
@@ -50,7 +50,7 @@ func TestTheOwnerDeclaresAToolboxsNextSteps(t *testing.T) {
 		t.Fatalf("the step was not stored: %v", got)
 	}
 	w := httptest.NewRecorder()
-	app.handleUserToolAccess(w, req("GET", "/api/tool-access?section=steps&name=social"))
+	serve(app)(w, req("GET", "/api/tool-access?section=steps&name=social"))
 	if !strings.Contains(w.Body.String(), `{"action":"create_post","follow":"verify_post"}`) {
 		t.Errorf("the panel does not read back the step: %s", w.Body.String())
 	}
@@ -71,7 +71,7 @@ func TestTheOwnerDeclaresAToolboxsNextSteps(t *testing.T) {
 		t.Fatalf("the every-action step was not stored: %v", row.Tool.FollowUpsFromAny)
 	}
 	w = httptest.NewRecorder()
-	app.handleUserToolAccess(w, req("GET", "/api/tool-access?section=steps&name=social"))
+	serve(app)(w, req("GET", "/api/tool-access?section=steps&name=social"))
 	if !strings.Contains(w.Body.String(), `{"action":"*","follow":"verify_post"}`) {
 		t.Errorf("the panel does not read the every-action step back: %s", w.Body.String())
 	}

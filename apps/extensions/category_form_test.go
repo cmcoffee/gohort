@@ -23,7 +23,7 @@ func TestAddCategoryTakesItsNameFromTheForm(t *testing.T) {
 		r := req(http.MethodPost, path)
 		r.Body = io.NopCloser(strings.NewReader(body))
 		w := httptest.NewRecorder()
-		app.handleUserToolCategories(w, r)
+		serve(app)(w, r)
 		return w
 	}
 	if w := post("/api/tool-categories?name=%7Bname%7D", `{"name":"Calendar","tools":["cal_add"]}`); w.Code/100 != 2 {

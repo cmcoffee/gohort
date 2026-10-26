@@ -38,7 +38,7 @@ func TestAPublishedToolRowSaysItsCopyDiffers(t *testing.T) {
 		t.Fatal(err)
 	}
 	w := httptest.NewRecorder()
-	app.handleUserTools(w, req("GET", "/api/tools"))
+	serve(app)(w, req("GET", "/api/tools"))
 	if r := rowsNamed(t, w.Body.Bytes(), "lookup"); r["release"] != "Published v1" || r["can_update"] == true {
 		t.Fatalf("an unchanged published tool: %+v", r)
 	}
@@ -46,7 +46,7 @@ func TestAPublishedToolRowSaysItsCopyDiffers(t *testing.T) {
 		t.Fatal(err)
 	}
 	w = httptest.NewRecorder()
-	app.handleUserTools(w, req("GET", "/api/tools"))
+	serve(app)(w, req("GET", "/api/tools"))
 	r := rowsNamed(t, w.Body.Bytes(), "lookup")
 	if r["can_update"] != true || r["differs"] != true || !strings.Contains(r["release"].(string), "your copy differs") {
 		t.Fatalf("an edited published tool should offer Request update: %+v", r)
@@ -57,7 +57,7 @@ func TestAPublishedToolRowSaysItsCopyDiffers(t *testing.T) {
 
 	// The owner withdraws it themselves.
 	w = httptest.NewRecorder()
-	app.handleUserTools(w, req("POST", "/api/tools?action=withdraw&name=lookup"))
+	serve(app)(w, req("POST", "/api/tools?action=withdraw&name=lookup"))
 	if w.Code/100 != 2 {
 		t.Fatalf("withdraw: %d %s", w.Code, w.Body.String())
 	}
@@ -81,18 +81,18 @@ func TestTheCatalogOffersAColleaguesUpdate(t *testing.T) {
 		t.Fatal(err)
 	}
 	w := httptest.NewRecorder()
-	app.handleGlobalTools(w, req("GET", "/api/global-tools"))
+	serve(app)(w, req("GET", "/api/global-tools"))
 	r := rowsNamed(t, w.Body.Bytes(), "wiki_read")
 	if r["update_available"] != true || !strings.Contains(r["diff"].(string), "+ echo two") {
 		t.Fatalf("the colleague's edit should read as an update available: %+v", r)
 	}
 	w = httptest.NewRecorder()
-	app.handleGlobalTools(w, req("POST", "/api/global-tools?name=wiki_read&owner=lender&adopt=true"))
+	serve(app)(w, req("POST", "/api/global-tools?name=wiki_read&owner=lender&adopt=true"))
 	if w.Code/100 != 2 {
 		t.Fatalf("accept: %d %s", w.Code, w.Body.String())
 	}
 	w = httptest.NewRecorder()
-	app.handleGlobalTools(w, req("GET", "/api/global-tools"))
+	serve(app)(w, req("GET", "/api/global-tools"))
 	if r := rowsNamed(t, w.Body.Bytes(), "wiki_read"); r["update_available"] == true {
 		t.Fatalf("accepting should clear the update: %+v", r)
 	}

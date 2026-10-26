@@ -32,7 +32,7 @@ func TestToolWhoAgainstTheRealScope(t *testing.T) {
 		r := req("POST", "/api/tool-access?section=who&name=make_event")
 		r.Body = io.NopCloser(strings.NewReader(body))
 		w := httptest.NewRecorder()
-		app.handleUserToolAccess(w, r)
+		serve(app)(w, r)
 		if w.Code != 204 {
 			t.Fatalf("%s: %d %s", body, w.Code, w.Body.String())
 		}

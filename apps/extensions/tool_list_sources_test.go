@@ -18,7 +18,7 @@ import (
 func listedTools(t *testing.T, app *Extensions, r *http.Request) []map[string]any {
 	t.Helper()
 	w := httptest.NewRecorder()
-	app.handleUserTools(w, r)
+	serve(app)(w, r)
 	var rows []map[string]any
 	if err := json.Unmarshal(w.Body.Bytes(), &rows); err != nil {
 		t.Fatalf("tools list: %v %s", err, w.Body.String())
@@ -86,21 +86,21 @@ func TestTheToolsListReadsEveryPlaceAToolLives(t *testing.T) {
 	// View answers one record, from the same places.
 	for _, name := range []string{"pool_tool", "agent_tool", "draft_tool"} {
 		w := httptest.NewRecorder()
-		app.handleUserTools(w, req("GET", "/api/tools?name="+name))
+		serve(app)(w, req("GET", "/api/tools?name="+name))
 		var one TempTool
 		if err := json.Unmarshal(w.Body.Bytes(), &one); err != nil || one.Name != name {
 			t.Errorf("View of %s: %v %s", name, err, w.Body.String())
 		}
 	}
 	w := httptest.NewRecorder()
-	app.handleUserTools(w, req("GET", "/api/tools?name=stale_draft"))
+	serve(app)(w, req("GET", "/api/tools?name=stale_draft"))
 	if w.Code != http.StatusNotFound {
 		t.Errorf("View of a tool that is not listed answered %d, want 404", w.Code)
 	}
 
 	// The share picker reads only the recipient list.
 	w = httptest.NewRecorder()
-	app.handleUserTools(w, req("GET", "/api/tools?share=pool_tool"))
+	serve(app)(w, req("GET", "/api/tools?share=pool_tool"))
 	var share map[string][]string
 	if err := json.Unmarshal(w.Body.Bytes(), &share); err != nil || len(share) != 1 || len(share["shared_with"]) != 1 || share["shared_with"][0] != "bob" {
 		t.Errorf("the share picker should get the recipients and nothing else: %v %s", err, w.Body.String())

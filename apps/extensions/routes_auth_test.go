@@ -11,14 +11,17 @@ import (
 
 // Every JSON route on jsonapi refuses a signed-out request, answers a
 // signed-in one (whatever the answer, it is not a refusal of who is asking),
-// and refuses a method it does not take. A credential is the owner's: another
-// user asking for it by name is told there is no such credential.
+// and refuses a method it does not take. A credential or a tool is the
+// owner's: another user asking for it by name is told there is no such thing.
 func TestEveryJSONRouteRefusesTheSignedOut(t *testing.T) {
 	app, req := authedExtensions(t)
 	h := serve(app)
 	adb := AuthDB()
 	adb.Set(AuthTable, "user:bob", AuthUser{Username: "bob"})
 	bob := AuthCreateSession(adb, "bob")
+	if err := AdminPersistTempTool(RootDB, "alice", TempTool{Name: "rt_auth_tool", Description: "d", CommandTemplate: "echo x"}); err != nil {
+		t.Fatal(err)
+	}
 
 	for _, rt := range []struct{ method, path, body, wrong string }{
 		{"GET", "/api/credentials", "", "PUT"},
@@ -30,6 +33,12 @@ func TestEveryJSONRouteRefusesTheSignedOut(t *testing.T) {
 		{"DELETE", "/api/mcp-servers?name=rt_auth_nope", "", ""},
 		{"GET", "/api/category-security?category=nope&section=run", "", "PUT"},
 		{"POST", "/api/category-security?category=nope&section=run", `{"target":"x","on":true}`, ""},
+		{"GET", "/api/tools", "", "PUT"},
+		{"POST", "/api/tools?action=share&name=rt_auth_tool", `{"shared_with":[]}`, ""},
+		{"POST", "/api/tools?action=disable&name=rt_auth_tool", "", ""},
+		{"DELETE", "/api/tools?name=rt_auth_nope", "", ""},
+		{"GET", "/api/tool-access?section=run&name=rt_auth_tool", "", "PUT"},
+		{"POST", "/api/tool-access?section=run&name=rt_auth_tool", `{"target":"ask_first","on":false}`, ""},
 		{"GET", "/api/user-candidates", "", "POST"},
 		{"GET", "/api/skill-tools", "", "POST"},
 		{"GET", "/api/skill-collections", "", "POST"},
@@ -72,6 +81,9 @@ func TestEveryJSONRouteRefusesTheSignedOut(t *testing.T) {
 	}
 	if code := as("GET", "/api/credentials?name=rt_auth_alice"); code != http.StatusNotFound {
 		t.Errorf("bob read alice's credential: %d, want 404", code)
+	}
+	if code := as("GET", "/api/tools?name=rt_auth_tool"); code != http.StatusNotFound {
+		t.Errorf("bob read alice's tool: %d, want 404", code)
 	}
 	as("POST", "/api/credentials?action=enable&name=rt_auth_alice")
 	as("DELETE", "/api/credentials?name=rt_auth_alice")

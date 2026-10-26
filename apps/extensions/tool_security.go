@@ -27,43 +27,38 @@ import (
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
-// toolRunSection serves the "How it runs" pills: GET the pills, POST one
-// toggle {target, on}, the same contract the access pills use.
-func toolRunSection(w http.ResponseWriter, r *http.Request, db Database, user, name string) {
+// toolRunState is the "How it runs" pills, the same contract the access
+// pills use.
+func toolRunState(db Database, user, name string) map[string]any {
 	row, inPool := UserToolByName(db, user, name)
-	switch r.Method {
-	case http.MethodGet:
-		type pill struct {
-			Key   string `json:"key"`
-			Label string `json:"label"`
-			On    bool   `json:"on"`
-		}
-		items := []pill{
-			{Key: "never_unattended", Label: "Never run unattended", On: inPool && row.Tool.NoUnattended},
-			{Key: "ask_first", Label: "Ask me before every call", On: UserToolAsksInChat(db, user, "", name)},
-		}
-		note := "Never run unattended: it is held for you in a schedule or a channel message, where nobody is there to ask. " +
-			"Ask me before every call: every agent asks you first, in the chat or your approval queue. " +
-			"Changes to it by Builder or an agent always ask you first."
-		w.Header().Set("Cache-Control", "no-store")
-		jsonapi.Write(w, map[string]any{"items": items, "note": note})
-	case http.MethodPost:
-		var body struct {
-			Target string `json:"target"`
-			On     bool   `json:"on"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad body: "+err.Error(), http.StatusBadRequest)
-			return
-		}
-		if code, err := toolRunApply(db, user, name, strings.TrimSpace(body.Target), body.On); err != nil {
-			http.Error(w, err.Error(), code)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	type pill struct {
+		Key   string `json:"key"`
+		Label string `json:"label"`
+		On    bool   `json:"on"`
 	}
+	items := []pill{
+		{Key: "never_unattended", Label: "Never run unattended", On: inPool && row.Tool.NoUnattended},
+		{Key: "ask_first", Label: "Ask me before every call", On: UserToolAsksInChat(db, user, "", name)},
+	}
+	note := "Never run unattended: it is held for you in a schedule or a channel message, where nobody is there to ask. " +
+		"Ask me before every call: every agent asks you first, in the chat or your approval queue. " +
+		"Changes to it by Builder or an agent always ask you first."
+	return map[string]any{"items": items, "note": note}
+}
+
+// toolRunSet is one pill's toggle {target, on}.
+func toolRunSet(db Database, user, name string, raw json.RawMessage) (any, error) {
+	var body struct {
+		Target string `json:"target"`
+		On     bool   `json:"on"`
+	}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return nil, jsonapi.BadRequest("bad body: " + err.Error())
+	}
+	if code, err := toolRunApply(db, user, name, strings.TrimSpace(body.Target), body.On); err != nil {
+		return nil, jsonapi.Status(code, err.Error())
+	}
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // toolRunApply sets one How it runs setting on one tool: ask_first (the
@@ -183,44 +178,46 @@ const (
 	toolWhoBound  = "bound"
 )
 
-// toolWhoSection serves "Who can use it". GET -> {mode, agents, note}; mode is
-// "" for a tool not kept anywhere yet. POST {mode} picks one of the three, and
-// POST {agent, on} ticks one agent under "agents".
-func toolWhoSection(w http.ResponseWriter, r *http.Request, db Database, user, name string) {
+// toolWhoGet is "Who can use it": {mode, agents, note}; mode is "" for a
+// tool not kept anywhere yet.
+func toolWhoGet(db Database, user, name string) (any, error) {
 	prov, ok := ScopeProviderFor("tool")
 	if !ok {
-		http.Error(w, "tool scope unavailable", http.StatusServiceUnavailable)
-		return
+		return nil, toolScopeUnavailable
 	}
-	switch r.Method {
-	case http.MethodGet:
-		jsonapi.Write(w, toolWhoState(prov, db, user, name))
-	case http.MethodPost:
-		var body struct {
-			Mode  string `json:"mode"`
-			Agent string `json:"agent"`
-			On    bool   `json:"on"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad body: "+err.Error(), http.StatusBadRequest)
-			return
-		}
-		var code int
-		var err error
-		if a := strings.TrimSpace(body.Agent); a != "" {
-			code, err = toolWhoTick(prov, db, user, name, a, body.On)
-		} else {
-			code, err = toolWhoPick(prov, db, user, name, strings.TrimSpace(body.Mode))
-		}
-		if err != nil {
-			http.Error(w, err.Error(), code)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
+	return toolWhoState(prov, db, user, name), nil
 }
+
+// toolWhoSet picks one of the three with {mode}, or ticks one agent under
+// "agents" with {agent, on}.
+func toolWhoSet(db Database, user, name string, raw json.RawMessage) (any, error) {
+	prov, ok := ScopeProviderFor("tool")
+	if !ok {
+		return nil, toolScopeUnavailable
+	}
+	var body struct {
+		Mode  string `json:"mode"`
+		Agent string `json:"agent"`
+		On    bool   `json:"on"`
+	}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return nil, jsonapi.BadRequest("bad body: " + err.Error())
+	}
+	var code int
+	var err error
+	if a := strings.TrimSpace(body.Agent); a != "" {
+		code, err = toolWhoTick(prov, db, user, name, a, body.On)
+	} else {
+		code, err = toolWhoPick(prov, db, user, name, strings.TrimSpace(body.Mode))
+	}
+	if err != nil {
+		return nil, jsonapi.Status(code, err.Error())
+	}
+	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// toolScopeUnavailable answers when no agent scope backend is registered.
+var toolScopeUnavailable = jsonapi.Status(http.StatusServiceUnavailable, "tool scope unavailable")
 
 type toolWhoAgent struct {
 	ID    string `json:"id"`
@@ -449,7 +446,7 @@ func toolWhoRemembered(db Database, user, name string) []string {
 	return ids
 }
 
-// toolStepsSection serves "Replies may ask for": a toolbox action's declared
+// toolStepsState serves "Replies may ask for": a toolbox action's declared
 // next steps (TempToolAction.FollowUps), the service's own protocol that a
 // reply to that action asks the agent for, such as a post the service answers
 // with a verification challenge to send back. The injection check reads such
@@ -460,59 +457,60 @@ func toolWhoRemembered(db Database, user, name string) []string {
 // The owner's say, as data on the tool: not free text for the check to
 // weigh, which an attacker's post could argue past, but a pair of this tool's
 // own actions, which it cannot reach.
-func toolStepsSection(w http.ResponseWriter, r *http.Request, db Database, user, name string) {
+func toolStepsState(db Database, user, name string) (any, error) {
+	tool, _, found := ownedToolbox(db, user, name)
+	if !found {
+		return nil, toolNotYourToolbox
+	}
+	type step struct {
+		Action string `json:"action"`
+		Follow string `json:"follow"`
+	}
+	actions := []string{}
+	steps := []step{}
+	for _, f := range tool.FollowUpsFromAny {
+		steps = append(steps, step{"*", f})
+	}
+	for _, a := range tool.Actions {
+		actions = append(actions, a.Name)
+		for _, f := range a.FollowUps {
+			steps = append(steps, step{a.Name, f})
+		}
+	}
+	return map[string]any{"actions": actions, "steps": steps,
+		"note": "A step the service asks for in its own reply, such as a post it answers with a verification challenge to send back. " +
+			"When a reply to the first action asks for the second, the injection check treats it as the service's next step rather than an attack. " +
+			"Pick the step, then which actions' replies may ask for it. Only those replies count, and only this tool's own actions can be asked for, so text in anything else the agent reads never does. " +
+			"Every action includes what it reads, a feed or a search, where other accounts write: that is safe because only the step you picked is allowed, never anything else."}, nil
+}
+
+// toolStepsSet declares or drops one step, {action, follow, on}.
+func toolStepsSet(db Database, user, name string, raw json.RawMessage) (any, error) {
 	tool, save, found := ownedToolbox(db, user, name)
 	if !found {
-		http.Error(w, "not one of your toolboxes", http.StatusNotFound)
-		return
+		return nil, toolNotYourToolbox
 	}
-	switch r.Method {
-	case http.MethodGet:
-		type step struct {
-			Action string `json:"action"`
-			Follow string `json:"follow"`
-		}
-		actions := []string{}
-		steps := []step{}
-		for _, f := range tool.FollowUpsFromAny {
-			steps = append(steps, step{"*", f})
-		}
-		for _, a := range tool.Actions {
-			actions = append(actions, a.Name)
-			for _, f := range a.FollowUps {
-				steps = append(steps, step{a.Name, f})
-			}
-		}
-		w.Header().Set("Cache-Control", "no-store")
-		jsonapi.Write(w, map[string]any{"actions": actions, "steps": steps,
-			"note": "A step the service asks for in its own reply, such as a post it answers with a verification challenge to send back. " +
-				"When a reply to the first action asks for the second, the injection check treats it as the service's next step rather than an attack. " +
-				"Pick the step, then which actions' replies may ask for it. Only those replies count, and only this tool's own actions can be asked for, so text in anything else the agent reads never does. " +
-				"Every action includes what it reads, a feed or a search, where other accounts write: that is safe because only the step you picked is allowed, never anything else."})
-	case http.MethodPost:
-		var body struct {
-			Action string `json:"action"`
-			Follow string `json:"follow"`
-			On     bool   `json:"on"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad body: "+err.Error(), http.StatusBadRequest)
-			return
-		}
-		updated, err := setFollowUp(tool, strings.TrimSpace(body.Action), strings.TrimSpace(body.Follow), body.On)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		if err := save(updated); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	var body struct {
+		Action string `json:"action"`
+		Follow string `json:"follow"`
+		On     bool   `json:"on"`
 	}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return nil, jsonapi.BadRequest("bad body: " + err.Error())
+	}
+	updated, err := setFollowUp(tool, strings.TrimSpace(body.Action), strings.TrimSpace(body.Follow), body.On)
+	if err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	if err := save(updated); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
+
+// toolNotYourToolbox answers a steps request for anything but one of the
+// caller's own toolboxes.
+var toolNotYourToolbox = jsonapi.NotFound("not one of your toolboxes")
 
 // setFollowUp declares (on) or drops a follow-up of one action of tool,
 // held to another action of the same toolbox. action "*" is the reply to

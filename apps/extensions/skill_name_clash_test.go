@@ -19,7 +19,7 @@ func TestTheSkillsFormRefusesANameYouHave(t *testing.T) {
 		r := req(method, path)
 		r.Body = io.NopCloser(strings.NewReader(body))
 		w := httptest.NewRecorder()
-		app.handleUserSkills(w, r)
+		serve(app)(w, r)
 		return w
 	}
 	if w := call("POST", "/api/skills", `{"name":"Triage","description":"d","instructions":"x"}`); w.Code/100 != 2 {

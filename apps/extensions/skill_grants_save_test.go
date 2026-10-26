@@ -28,7 +28,7 @@ func TestSavingTheSkillFormKeepsAChipFlippedSinceItOpened(t *testing.T) {
 			r.Body = io.NopCloser(strings.NewReader(body))
 		}
 		w := httptest.NewRecorder()
-		app.handleUserSkills(w, r)
+		serve(app)(w, r)
 		return w
 	}
 
@@ -79,7 +79,7 @@ func TestASkillPickerChangesOnlyItsOwnField(t *testing.T) {
 		r := req("PATCH", "/api/skills?id="+made.ID)
 		r.Body = io.NopCloser(strings.NewReader(body))
 		w := httptest.NewRecorder()
-		app.handleUserSkills(w, r)
+		serve(app)(w, r)
 		return w.Code
 	}
 	if c := patch(`{"attached_collections":["c1"]}`); c/100 != 2 {

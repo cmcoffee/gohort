@@ -56,7 +56,7 @@ func TestSkillRevisionRoutes(t *testing.T) {
 	}
 
 	w := httptest.NewRecorder()
-	app.handleUserSkillOne(w, req("GET", "/api/skills/"+made.ID+"/revisions"))
+	serve(app)(w, req("GET", "/api/skills/"+made.ID+"/revisions"))
 	if w.Code != 200 {
 		t.Fatalf("list status %d: %s", w.Code, w.Body.String())
 	}
@@ -82,7 +82,7 @@ func TestSkillRevisionRoutes(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	app.handleUserSkillOne(w, req("GET", "/api/skills/"+made.ID+"/revisions/preview?rev=1"))
+	serve(app)(w, req("GET", "/api/skills/"+made.ID+"/revisions/preview?rev=1"))
 	if w.Code != 200 {
 		t.Fatalf("preview status %d: %s", w.Code, w.Body.String())
 	}
@@ -95,7 +95,7 @@ func TestSkillRevisionRoutes(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	app.handleUserSkillOne(w, req("POST", "/api/skills/"+made.ID+"/revisions/restore?rev=1"))
+	serve(app)(w, req("POST", "/api/skills/"+made.ID+"/revisions/restore?rev=1"))
 	if w.Code != 200 {
 		t.Fatalf("restore status %d: %s", w.Code, w.Body.String())
 	}
@@ -125,13 +125,13 @@ func TestSkillRevisionsRefuseAnotherUsersSkill(t *testing.T) {
 		"/api/skills/" + made.ID + "/revisions/preview?rev=1",
 	} {
 		w := httptest.NewRecorder()
-		app.handleUserSkillOne(w, req("GET", path))
+		serve(app)(w, req("GET", path))
 		if w.Code == 200 {
 			t.Errorf("%s served another user's history", path)
 		}
 	}
 	w := httptest.NewRecorder()
-	app.handleUserSkillOne(w, req("POST", "/api/skills/"+made.ID+"/revisions/restore?rev=1"))
+	serve(app)(w, req("POST", "/api/skills/"+made.ID+"/revisions/restore?rev=1"))
 	if w.Code == 200 {
 		t.Error("another user's skill was restored")
 	}

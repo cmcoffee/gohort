@@ -16,7 +16,7 @@ func TestDeletingAToolDropsItFromThePool(t *testing.T) {
 		t.Fatal(err)
 	}
 	w := httptest.NewRecorder()
-	app.handleUserTools(w, req("DELETE", "/api/tools?name=misbehaves"))
+	serve(app)(w, req("DELETE", "/api/tools?name=misbehaves"))
 	if w.Code != 204 {
 		t.Fatalf("delete answered %d %s", w.Code, w.Body.String())
 	}
@@ -24,7 +24,7 @@ func TestDeletingAToolDropsItFromThePool(t *testing.T) {
 		t.Error("the tool is still in the pool")
 	}
 	w = httptest.NewRecorder()
-	app.handleUserTools(w, req("DELETE", "/api/tools"))
+	serve(app)(w, req("DELETE", "/api/tools"))
 	if w.Code != 400 {
 		t.Errorf("a delete naming no tool answered %d", w.Code)
 	}
