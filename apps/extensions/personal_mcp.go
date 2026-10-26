@@ -6,7 +6,6 @@ package extensions
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -59,122 +58,125 @@ func mcpRow(s mcppersonal.Server) mcpServerRow {
 //	POST {name,url,auth,token} add or update one, then check it
 //	POST ?action=check|enable|disable&name=
 //	DELETE ?name=
-func (T *Extensions) handleMCPServers(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
+func (T *Extensions) handleMCPServers(c *jsonapi.Call) (any, error) {
+	user := c.User
+	if c.R.URL.Query().Get("options") == "credentials" {
+		return credentialOptions(user), nil
 	}
-	name := strings.TrimSpace(r.URL.Query().Get("name"))
-	switch r.Method {
-	case http.MethodGet:
-		if r.URL.Query().Get("options") == "credentials" {
-			jsonapi.Write(w, credentialOptions(user))
+	rows := []mcpServerRow{}
+	for _, s := range mcppersonal.List(user) {
+		rows = append(rows, mcpRow(s))
+	}
+	return rows, nil
+}
+
+// mcpServerPost tells /api/mcp-servers' POST shapes apart: ?action= acts on
+// one server, no action adds or updates one.
+func (T *Extensions) mcpServerPost() http.HandlerFunc {
+	act := jsonapi.Post(T.DB, T.handleMCPServerAction)
+	save := jsonapi.Post(T.DB, T.handleMCPServerSave, jsonapi.MaxBody(1<<16))
+	return func(w http.ResponseWriter, r *http.Request) {
+		if strings.TrimSpace(r.URL.Query().Get("action")) != "" {
+			act(w, r)
 			return
 		}
-		rows := []mcpServerRow{}
-		for _, s := range mcppersonal.List(user) {
-			rows = append(rows, mcpRow(s))
-		}
-		jsonapi.Write(w, rows)
-	case http.MethodPost:
-		switch action := strings.TrimSpace(r.URL.Query().Get("action")); action {
-		case "check":
-			ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
-			defer cancel()
-			s, err := mcppersonal.Check(ctx, user, name)
-			if err != nil {
-				http.Error(w, "could not reach it: "+err.Error(), http.StatusBadGateway)
-				return
-			}
-			jsonapi.Write(w, map[string]string{"message": fmt.Sprintf("%s answered with %d tool(s).", s.Name, len(s.Tools))})
-			return
-		case "enable", "disable":
-			if err := mcppersonal.SetDisabled(user, name, action == "disable"); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			w.WriteHeader(http.StatusNoContent)
-			return
-		case "one_tool", "many_tools":
-			if err := mcppersonal.SetOneTool(user, name, action == "one_tool"); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			w.WriteHeader(http.StatusNoContent)
-			return
-		case "":
-		default:
-			http.Error(w, "action must be check, enable, disable, one_tool or many_tools", http.StatusBadRequest)
-			return
-		}
-		var body struct {
-			Name       string `json:"name"`
-			URL        string `json:"url"`
-			Auth       string `json:"auth"`
-			Token      string `json:"token"`
-			Credential string `json:"credential"`
-			ClientID   string `json:"oauth_client_id"`
-			Secret     string `json:"oauth_client_secret"`
-			Scopes     string `json:"oauth_scopes"`
-			OneTool    bool   `json:"one_tool"`
-		}
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		body.Name = strings.TrimSpace(body.Name)
-		// A NEW one answers to the administrator's policy; an edit to one
-		// they have is not adding one.
-		var hold bool
-		if _, exists := mcppersonal.Load(user, body.Name); !exists {
-			var perr error
-			if hold, perr = governance.Permit(governance.MCPServers, user); perr != nil {
-				http.Error(w, perr.Error(), http.StatusForbidden)
-				return
-			}
-		}
-		// The secret goes with the sign-in it is for: a token typed and then
-		// left behind on a switch to OAuth is not the client's secret.
-		secret := body.Token
-		if body.Auth == mcppersonal.AuthOAuth {
-			secret = body.Secret
-		}
-		srv := mcppersonal.Server{Owner: user, Name: body.Name, URL: body.URL, Auth: body.Auth, Credential: body.Credential,
-			OAuthClientID: body.ClientID, OAuthScopes: body.Scopes, OneTool: body.OneTool}
-		if err := mcppersonal.Save(srv, secret, hold); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		// What it offers, now, so the list (and an approving administrator)
-		// can see it. A server that does not answer is saved all the same.
-		ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
+		save(w, r)
+	}
+}
+
+// handleMCPServerAction checks, switches, or sets how the ?name= server's
+// tools are offered.
+func (T *Extensions) handleMCPServerAction(c *jsonapi.Call, _ struct{}) (any, error) {
+	user, q := c.User, c.R.URL.Query()
+	name := strings.TrimSpace(q.Get("name"))
+	switch action := strings.TrimSpace(q.Get("action")); action {
+	case "check":
+		ctx, cancel := context.WithTimeout(c.R.Context(), 45*time.Second)
 		defer cancel()
-		if body.Auth == mcppersonal.AuthOAuth && !mcppersonal.Connected(user, body.Name) {
-			msg := fmt.Sprintf("Added %s. Sign in to it next: press Connect beside it under Connected accounts, and its tools reach your agents once you have.", body.Name)
-			if s, _ := mcppersonal.Load(user, body.Name); s.AwaitingApproval {
-				msg += " Personal MCP servers need an administrator's approval here, too."
-			}
-			jsonapi.Write(w, map[string]string{"message": msg})
-			return
-		}
-		s, err := mcppersonal.Check(ctx, user, body.Name)
-		msg := fmt.Sprintf("Added %s: it answered with %d tool(s).", s.Name, len(s.Tools))
+		s, err := mcppersonal.Check(ctx, user, name)
 		if err != nil {
-			msg = fmt.Sprintf("Added %s, but it did not answer (%v): check its address and how it signs in, then press Check.", s.Name, err)
+			return nil, jsonapi.Status(http.StatusBadGateway, "could not reach it: "+err.Error())
 		}
-		if s.AwaitingApproval {
-			msg += " Personal MCP servers need an administrator's approval here: its tools reach your agents once one approves it."
+		return map[string]string{"message": fmt.Sprintf("%s answered with %d tool(s).", s.Name, len(s.Tools))}, nil
+	case "enable", "disable":
+		if err := mcppersonal.SetDisabled(user, name, action == "disable"); err != nil {
+			return nil, jsonapi.BadRequest(err.Error())
 		}
-		jsonapi.Write(w, map[string]string{"message": msg})
-	case http.MethodDelete:
-		if err := mcppersonal.Remove(user, name); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+	case "one_tool", "many_tools":
+		if err := mcppersonal.SetOneTool(user, name, action == "one_tool"); err != nil {
+			return nil, jsonapi.BadRequest(err.Error())
 		}
-		w.WriteHeader(http.StatusNoContent)
 	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return nil, jsonapi.BadRequest("action must be check, enable, disable, one_tool or many_tools")
 	}
+	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// mcpServerSave is the MCP server form.
+type mcpServerSave struct {
+	Name       string `json:"name"`
+	URL        string `json:"url"`
+	Auth       string `json:"auth"`
+	Token      string `json:"token"`
+	Credential string `json:"credential"`
+	ClientID   string `json:"oauth_client_id"`
+	Secret     string `json:"oauth_client_secret"`
+	Scopes     string `json:"oauth_scopes"`
+	OneTool    bool   `json:"one_tool"`
+}
+
+// handleMCPServerSave adds or updates a server, then checks it.
+func (T *Extensions) handleMCPServerSave(c *jsonapi.Call, body mcpServerSave) (any, error) {
+	user := c.User
+	body.Name = strings.TrimSpace(body.Name)
+	// A NEW one answers to the administrator's policy; an edit to one
+	// they have is not adding one.
+	var hold bool
+	if _, exists := mcppersonal.Load(user, body.Name); !exists {
+		var perr error
+		if hold, perr = governance.Permit(governance.MCPServers, user); perr != nil {
+			return nil, jsonapi.Forbidden(perr.Error())
+		}
+	}
+	// The secret goes with the sign-in it is for: a token typed and then
+	// left behind on a switch to OAuth is not the client's secret.
+	secret := body.Token
+	if body.Auth == mcppersonal.AuthOAuth {
+		secret = body.Secret
+	}
+	srv := mcppersonal.Server{Owner: user, Name: body.Name, URL: body.URL, Auth: body.Auth, Credential: body.Credential,
+		OAuthClientID: body.ClientID, OAuthScopes: body.Scopes, OneTool: body.OneTool}
+	if err := mcppersonal.Save(srv, secret, hold); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	// What it offers, now, so the list (and an approving administrator)
+	// can see it. A server that does not answer is saved all the same.
+	ctx, cancel := context.WithTimeout(c.R.Context(), 45*time.Second)
+	defer cancel()
+	if body.Auth == mcppersonal.AuthOAuth && !mcppersonal.Connected(user, body.Name) {
+		msg := fmt.Sprintf("Added %s. Sign in to it next: press Connect beside it under Connected accounts, and its tools reach your agents once you have.", body.Name)
+		if s, _ := mcppersonal.Load(user, body.Name); s.AwaitingApproval {
+			msg += " Personal MCP servers need an administrator's approval here, too."
+		}
+		return map[string]string{"message": msg}, nil
+	}
+	s, err := mcppersonal.Check(ctx, user, body.Name)
+	msg := fmt.Sprintf("Added %s: it answered with %d tool(s).", s.Name, len(s.Tools))
+	if err != nil {
+		msg = fmt.Sprintf("Added %s, but it did not answer (%v): check its address and how it signs in, then press Check.", s.Name, err)
+	}
+	if s.AwaitingApproval {
+		msg += " Personal MCP servers need an administrator's approval here: its tools reach your agents once one approves it."
+	}
+	return map[string]string{"message": msg}, nil
+}
+
+// handleMCPServerDelete removes the ?name= server.
+func (T *Extensions) handleMCPServerDelete(c *jsonapi.Call, _ struct{}) (any, error) {
+	if err := mcppersonal.Remove(c.User, strings.TrimSpace(c.R.URL.Query().Get("name"))); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // mcpServersSection is the Extensions section for them.

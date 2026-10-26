@@ -23,7 +23,7 @@ func TestAPersonalMCPServerFollowsThePolicy(t *testing.T) {
 			r.Body = readCloser(body)
 		}
 		w := httptest.NewRecorder()
-		app.handleMCPServers(w, r)
+		serve(app)(w, r)
 		return w.Code, w.Body.String()
 	}
 	// Needs approval is the default: added, held, and the page says so.
@@ -78,7 +78,7 @@ func TestAPersonalMCPServerSignsInWithCredentialsOrOAuth(t *testing.T) {
 			r.Body = readCloser(body)
 		}
 		w := httptest.NewRecorder()
-		app.handleMCPServers(w, r)
+		serve(app)(w, r)
 		return w.Code, w.Body.String()
 	}
 	if err := Secure().Save(SecureCredential{Name: "mine", Type: SecureCredBearer, BaseURL: "https://mcp.invalid", Owner: "alice"}, "k"); err != nil {

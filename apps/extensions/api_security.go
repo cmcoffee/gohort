@@ -15,11 +15,11 @@
 package extensions
 
 import (
-	"encoding/json"
 	"net/http"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -56,17 +56,12 @@ func apiSecurityOf(c SecureCredential) apiSecurity {
 }
 
 // saveAPISecurity is POST api/credentials?action=security&name=.
-func (T *Extensions) saveAPISecurity(w http.ResponseWriter, r *http.Request, user string) {
-	name := strings.TrimSpace(r.URL.Query().Get("name"))
+func (T *Extensions) saveAPISecurity(call *jsonapi.Call, body apiSecurity) (any, error) {
+	user := call.User
+	name := strings.TrimSpace(call.R.URL.Query().Get("name"))
 	c, found := Secure().LoadUser(user, name)
 	if !found {
-		http.Error(w, "no such credential", http.StatusNotFound)
-		return
-	}
-	var body apiSecurity
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
+		return nil, jsonapi.NotFound("no such credential")
 	}
 	secured, agents := false, []string(nil)
 	switch body.Reach {
@@ -80,12 +75,10 @@ func (T *Extensions) saveAPISecurity(w http.ResponseWriter, r *http.Request, use
 			}
 		}
 		if len(agents) == 0 {
-			http.Error(w, "pick at least one agent, or choose All my agents", http.StatusBadRequest)
-			return
+			return nil, jsonapi.BadRequest("pick at least one agent, or choose All my agents")
 		}
 	default:
-		http.Error(w, "who can use it must be all, tools or agents", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("who can use it must be all, tools or agents")
 	}
 	switch body.Ask {
 	case "", "never":
@@ -95,33 +88,28 @@ func (T *Extensions) saveAPISecurity(w http.ResponseWriter, r *http.Request, use
 	case "always":
 		c.RequiresConfirm, c.ConfirmWrites = true, false
 	default:
-		http.Error(w, "ask first must be never, writes or always", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("ask first must be never, writes or always")
 	}
 	switch body.Lending {
 	case "", LendNone, LendRead, LendAny:
 		c.Lending = body.Lending
 	default:
-		http.Error(w, "unknown lending setting", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("unknown lending setting")
 	}
 	// The record's own fields through Save (an empty secret keeps the stored
 	// one); the lock and the agent list through their own setters, which Save
 	// leaves alone.
 	if err := Secure().Save(c, ""); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest(err.Error())
 	}
 	if err := Secure().SetSecuredOwned(user, name, secured); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest(err.Error())
 	}
 	if err := Secure().SetOnlyAgentsOwned(user, name, agents); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest(err.Error())
 	}
 	Log("[extensions] user=%q set security on API %q: reach=%s agents=%d ask=%s lending=%q", user, name, body.Reach, len(agents), body.Ask, c.Lending)
-	w.WriteHeader(http.StatusNoContent)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // apiSecurityFields is the panel's form.

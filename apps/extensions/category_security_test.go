@@ -51,7 +51,7 @@ func TestCategorySecurityShowsDifferencesAndAppliesToAll(t *testing.T) {
 	get := func(section string) map[string]any {
 		t.Helper()
 		w := httptest.NewRecorder()
-		app.handleCategorySecurity(w, req("GET", "/api/category-security?name=Calendar&section="+section))
+		serve(app)(w, req("GET", "/api/category-security?name=Calendar&section="+section))
 		var out map[string]any
 		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
 			t.Fatalf("%s: %v %s", section, err, w.Body.String())
@@ -63,7 +63,7 @@ func TestCategorySecurityShowsDifferencesAndAppliesToAll(t *testing.T) {
 		r := req("POST", "/api/category-security?name=Calendar&section="+section)
 		r.Body = io.NopCloser(strings.NewReader(body))
 		w := httptest.NewRecorder()
-		app.handleCategorySecurity(w, r)
+		serve(app)(w, r)
 		if w.Code >= 300 {
 			t.Fatalf("%s %s: %d %s", section, body, w.Code, w.Body.String())
 		}

@@ -19,7 +19,7 @@ func TestANewCredentialFollowsThePolicy(t *testing.T) {
 		r := req("POST", "/api/credentials")
 		r.Body = readCloser(body)
 		w := httptest.NewRecorder()
-		app.handleCredentials(w, r)
+		serve(app)(w, r)
 		return w.Code
 	}
 	if code := post(`{"name":"kept","type":"bearer","base_url":"https://k.test","secret":"k"}`); code >= 300 {

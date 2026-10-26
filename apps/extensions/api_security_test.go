@@ -16,7 +16,7 @@ func TestAPISecurityPanel(t *testing.T) {
 		r := req("POST", path)
 		r.Body = readCloser(body)
 		w := httptest.NewRecorder()
-		app.handleCredentials(w, r)
+		serve(app)(w, r)
 		if w.Code >= 300 {
 			t.Logf("%s: %d %s", path, w.Code, w.Body.String())
 		}
@@ -30,7 +30,7 @@ func TestAPISecurityPanel(t *testing.T) {
 		t.Fatalf("security: %d", code)
 	}
 	w := httptest.NewRecorder()
-	app.handleCredentials(w, req("GET", "/api/credentials?name=weather&view=security"))
+	serve(app)(w, req("GET", "/api/credentials?name=weather&view=security"))
 	var got apiSecurity
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)

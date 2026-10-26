@@ -77,11 +77,22 @@ func (T *Extensions) Routes() {
 			MigrateAppPathGrants(adb, legacyGatewaysPath, T.WebPath())
 		}
 	}
-	T.HandleFunc("/api/credentials", T.handleCredentials)
-	T.HandleFunc("/api/mcp-servers", T.handleMCPServers)
+	T.HandleFunc("/api/credentials", jsonapi.Methods{
+		"GET":    jsonapi.Get(T.DB, T.handleCredentials),
+		"POST":   T.credentialPost(),
+		"DELETE": jsonapi.Post(T.DB, T.handleCredentialDelete),
+	}.Serve)
+	T.HandleFunc("/api/mcp-servers", jsonapi.Methods{
+		"GET":    jsonapi.Get(T.DB, T.handleMCPServers),
+		"POST":   T.mcpServerPost(),
+		"DELETE": jsonapi.Post(T.DB, T.handleMCPServerDelete),
+	}.Serve)
 	T.HandleFunc("/api/tools", T.handleUserTools)
 	T.HandleFunc("/api/tool-access", T.handleUserToolAccess)
-	T.HandleFunc("/api/category-security", T.handleCategorySecurity)
+	T.HandleFunc("/api/category-security", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, T.handleCategorySecurity),
+		"POST": jsonapi.Post(T.DB, T.handleCategorySecuritySet),
+	}.Serve)
 	T.HandleFunc("/api/tool-categories", T.handleUserToolCategories)
 	T.HandleFunc("/api/promotions", T.handlePromotions)
 	// The ACL picker's candidate list, served HERE rather than borrowed from
@@ -89,12 +100,12 @@ func (T *Extensions) Routes() {
 	// at a sibling app's URL would make sharing a skill depend on that app
 	// being installed and enabled — and on a relative path resolving against
 	// whatever page happened to be open, which is how a picker 404s.
-	T.HandleFunc("/api/user-candidates", T.handleUserCandidates)
+	T.HandleFunc("/api/user-candidates", jsonapi.Get(T.DB, T.handleUserCandidates))
 	T.HandleFunc("/api/global-tools", T.handleGlobalTools)
 	T.HandleFunc("/api/skills", T.handleUserSkills)
 	T.HandleFunc("/api/skills/", T.handleUserSkillOne)
-	T.HandleFunc("/api/skill-tools", T.handleSkillToolOptions)
-	T.HandleFunc("/api/skill-collections", T.handleSkillCollectionOptions)
+	T.HandleFunc("/api/skill-tools", jsonapi.Get(T.DB, T.handleSkillToolOptions))
+	T.HandleFunc("/api/skill-collections", jsonapi.Get(T.DB, T.handleSkillCollectionOptions))
 	T.HandleFunc("/api/skill-playbook", T.handleSkillPlaybookRule)
 	T.HandleFunc("/skill-playbook", T.handleSkillPlaybookPage)
 	T.HandleFunc("/", T.servePage)
@@ -107,268 +118,263 @@ func (T *Extensions) Routes() {
 // live in the user's namespace and never appear on the admin page. Only the
 // simple key-based types are offered here; OAuth2 stays admin-managed. Secrets
 // are never returned — GET reports has_secret only.
-func (T *Extensions) handleCredentials(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
+func (T *Extensions) handleCredentials(c *jsonapi.Call) (any, error) {
+	user, q := c.User, c.R.URL.Query()
+	type row struct {
+		Name            string `json:"name"`
+		Type            string `json:"type"`
+		BaseURL         string `json:"base_url"`
+		ParamName       string `json:"param_name,omitempty"`
+		Description     string `json:"description,omitempty"`
+		RequiresConfirm bool   `json:"requires_confirm"`
+		ConfirmWrites   bool   `json:"confirm_writes"`
+		HasSecret       bool   `json:"has_secret"`
+		// NeedsKey: an authenticated credential with no key stored (a
+		// draft never finished). Every tool on it fails until it is set.
+		NeedsKey bool `json:"needs_key"`
+		Disabled bool `json:"disabled"`
+		Secured  bool `json:"secured"`
+		// Lending is the owner's standing answer to "may this be lent at
+		// all", as against the two lists below, which are who it is lent
+		// to today. A decision about the key, not about an occasion.
+		Lending      string `json:"lending"`
+		LendingLabel string `json:"lending_label"`
+		// The two share lists the pickers edit, plus the one-line summary
+		// the table column reads. Who a key reaches is the fact this page
+		// exists to let someone control, so it belongs in the list and not
+		// only inside an edit form.
+		SharedReadOnly  []string `json:"shared_read_only"`
+		SharedReadWrite []string `json:"shared_read_write"`
+		SharedSummary   string   `json:"shared_summary"`
+		// Handover state. A button that stays live after the ask reads as
+		// having done nothing, and a second request would just overwrite
+		// the first — so the row says it is waiting instead.
+		HandoverPending bool `json:"handover_pending"`
+		CanHandOver     bool `json:"can_hand_over"`
+		// Added while personal credentials need approval: off until an
+		// administrator approves it, which the row says.
+		AwaitingApproval bool `json:"awaiting_approval"`
 	}
-	switch r.Method {
-	case http.MethodGet:
-		type row struct {
-			Name            string `json:"name"`
-			Type            string `json:"type"`
-			BaseURL         string `json:"base_url"`
-			ParamName       string `json:"param_name,omitempty"`
-			Description     string `json:"description,omitempty"`
-			RequiresConfirm bool   `json:"requires_confirm"`
-			ConfirmWrites   bool   `json:"confirm_writes"`
-			HasSecret       bool   `json:"has_secret"`
-			// NeedsKey: an authenticated credential with no key stored (a
-			// draft never finished). Every tool on it fails until it is set.
-			NeedsKey bool `json:"needs_key"`
-			Disabled        bool   `json:"disabled"`
-			Secured         bool   `json:"secured"`
-			// Lending is the owner's standing answer to "may this be lent at
-			// all", as against the two lists below, which are who it is lent
-			// to today. A decision about the key, not about an occasion.
-			Lending      string `json:"lending"`
-			LendingLabel string `json:"lending_label"`
-			// The two share lists the pickers edit, plus the one-line summary
-			// the table column reads. Who a key reaches is the fact this page
-			// exists to let someone control, so it belongs in the list and not
-			// only inside an edit form.
-			SharedReadOnly  []string `json:"shared_read_only"`
-			SharedReadWrite []string `json:"shared_read_write"`
-			SharedSummary   string   `json:"shared_summary"`
-			// Handover state. A button that stays live after the ask reads as
-			// having done nothing, and a second request would just overwrite
-			// the first — so the row says it is waiting instead.
-			HandoverPending bool `json:"handover_pending"`
-			CanHandOver     bool `json:"can_hand_over"`
-			// Added while personal credentials need approval: off until an
-			// administrator approves it, which the row says.
-			AwaitingApproval bool `json:"awaiting_approval"`
-		}
-		toRow := func(c SecureCredential) row {
-			_, _, stored := Secure().CredentialStatusOwned(user, c.Name)
-			return row{
-				Name: c.Name, Type: c.Type, BaseURL: c.BaseURL, ParamName: c.ParamName,
-				Description: c.Description, RequiresConfirm: c.RequiresConfirm, ConfirmWrites: c.ConfirmWrites,
-				HasSecret: c.Type != SecureCredNone && stored, Disabled: c.Disabled,
-				NeedsKey:  c.Type != SecureCredNone && !stored,
-				Secured:         c.Secured,
-				SharedReadOnly:  nonNilList(c.SharedReadOnly),
-				SharedReadWrite: nonNilList(c.SharedReadWrite),
-				SharedSummary:   shareSummary(c),
-				Lending:         c.Lending,
-				LendingLabel:    lendingListLabel(c),
-				HandoverPending: handoverPending(user, c.Name),
-				CanHandOver:     !handoverPending(user, c.Name),
+	toRow := func(cred SecureCredential) row {
+		_, _, stored := Secure().CredentialStatusOwned(user, cred.Name)
+		return row{
+			Name: cred.Name, Type: cred.Type, BaseURL: cred.BaseURL, ParamName: cred.ParamName,
+			Description: cred.Description, RequiresConfirm: cred.RequiresConfirm, ConfirmWrites: cred.ConfirmWrites,
+			HasSecret: cred.Type != SecureCredNone && stored, Disabled: cred.Disabled,
+			NeedsKey:        cred.Type != SecureCredNone && !stored,
+			Secured:         cred.Secured,
+			SharedReadOnly:  nonNilList(cred.SharedReadOnly),
+			SharedReadWrite: nonNilList(cred.SharedReadWrite),
+			SharedSummary:   shareSummary(cred),
+			Lending:         cred.Lending,
+			LendingLabel:    lendingListLabel(cred),
+			HandoverPending: handoverPending(user, cred.Name),
+			CanHandOver:     !handoverPending(user, cred.Name),
 
-				AwaitingApproval: c.AwaitingApproval,
-			}
+			AwaitingApproval: cred.AwaitingApproval,
 		}
-		// ?audit=<name> is the owner's own dispatch ledger for their own key.
-		// Sharing a credential and then having no way to see what went out
-		// through it would be the worst of both: the owner carries the far
-		// end's attribution and cannot read the one record that says who
-		// actually made each call.
-		if name := strings.TrimSpace(r.URL.Query().Get("audit")); name != "" {
-			jsonapi.Write(w, credentialLedgerRows(user, name))
-			return
-		}
-		// ?lent=1 is the other side of the share: what other people gave THIS
-		// user. A share nobody can see is one they cannot use and cannot reason
-		// about when a call goes out under somebody else's name.
-		if strings.TrimSpace(r.URL.Query().Get("lent")) != "" {
-			jsonapi.Write(w, lentCredentialRows(user))
-			return
-		}
-		// ?name=<name> returns the SINGLE record — the edit form's Source. The
-		// secret is never included, so leaving the form's secret field blank keeps
-		// the stored value.
-		if name := strings.TrimSpace(r.URL.Query().Get("name")); name != "" {
-			c, found := Secure().LoadUser(user, name)
-			if !found {
-				http.Error(w, "no such credential", http.StatusNotFound)
-				return
-			}
-			// view=security is the Security panel's record (api_security.go).
-			if r.URL.Query().Get("view") == "security" {
-				jsonapi.Write(w, apiSecurityOf(c))
-				return
-			}
-			jsonapi.Write(w, toRow(c))
-			return
-		}
-		rows := []row{}
-		for _, c := range Secure().ListUser(user) {
-			rows = append(rows, toRow(c))
-		}
-		jsonapi.Write(w, rows)
-	case http.MethodPost:
-		// enable/disable — mute/unmute a credential without editing it. A
-		// disabled credential drops out of the agent tool catalog until re-
-		// enabled. Owner-scoped via SetDisabledOwned, so it only ever touches
-		// the user's own credential, never a global one of the same name.
-		// The share lists, and ONLY the share lists. Each picker posts the whole
-		// record back (record mode) and this reads two fields out of it, so a
-		// picker save cannot rewrite a base URL and the ordinary edit form
-		// cannot rewrite who the key reaches. Each door opens one thing.
-		if strings.TrimSpace(r.URL.Query().Get("action")) == "share" {
-			name := strings.TrimSpace(r.URL.Query().Get("name"))
-			if name == "" {
-				http.Error(w, "missing name", http.StatusBadRequest)
-				return
-			}
-			var body struct {
-				SharedReadOnly  []string `json:"shared_read_only"`
-				SharedReadWrite []string `json:"shared_read_write"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				http.Error(w, "bad request", http.StatusBadRequest)
-				return
-			}
-			if err := Secure().SetCredentialShares(user, name, body.SharedReadOnly, body.SharedReadWrite); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			Log("[extensions] user=%q shared credential %q with %d reader(s) and %d writer(s)",
-				user, name, len(body.SharedReadOnly), len(body.SharedReadWrite))
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		if strings.TrimSpace(r.URL.Query().Get("action")) == "security" {
-			T.saveAPISecurity(w, r, user)
-			return
-		}
-		if action := strings.TrimSpace(r.URL.Query().Get("action")); action == "enable" || action == "disable" {
-			name := strings.TrimSpace(r.URL.Query().Get("name"))
-			if name == "" {
-				http.Error(w, "missing name", http.StatusBadRequest)
-				return
-			}
-			if err := Secure().SetDisabledOwned(user, name, action == "disable"); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		var body struct {
-			Name            string `json:"name"`
-			Type            string `json:"type"`
-			BaseURL         string `json:"base_url"`
-			ParamName       string `json:"param_name"`
-			Description     string `json:"description"`
-			Secret      string `json:"secret"`
-			// The security fields are the Security panel's (api_security.go).
-			// Pointers, so a form that does not carry them (Edit, Add) leaves
-			// the stored values alone instead of resetting them to off.
-			RequiresConfirm *bool   `json:"requires_confirm"`
-			ConfirmWrites   *bool   `json:"confirm_writes"`
-			Secured         *bool   `json:"secured"`
-			Lending         *string `json:"lending"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		// Only the simple key-based types are user-managed; OAuth2 (and its
-		// admin-only client config) stays on the admin surface.
-		switch body.Type {
-		case SecureCredBearer, SecureCredHeader, SecureCredQuery, SecureCredBasicAuth, SecureCredNone:
-		default:
-			http.Error(w, "type must be bearer, header, query, basic_auth, or none", http.StatusBadRequest)
-			return
-		}
-		// Owner = the calling user: Save keys this into the user's namespace, so
-		// it can never touch a global (admin) credential of the same name.
-		c := SecureCredential{
-			Name:        strings.TrimSpace(body.Name),
-			Type:        body.Type,
-			BaseURL:     strings.TrimSpace(body.BaseURL),
-			ParamName:   strings.TrimSpace(body.ParamName),
-			Description: strings.TrimSpace(body.Description),
-			Owner:       user,
-		}
-		// A NEW one answers to the administrator's policy for personal
-		// credentials (core/governance): refused, held for approval, or live.
-		// An edit to one they have is not adding one.
-		var hold bool
-		if _, found := Secure().LoadUser(user, c.Name); !found {
-			var perr error
-			if hold, perr = governance.Permit(governance.Credentials, user); perr != nil {
-				http.Error(w, perr.Error(), http.StatusForbidden)
-				return
-			}
-		}
-		if prev, found := Secure().LoadUser(user, c.Name); found {
-			c.RequiresConfirm, c.ConfirmWrites, c.Lending = prev.RequiresConfirm, prev.ConfirmWrites, prev.Lending
-		}
-		if body.RequiresConfirm != nil {
-			c.RequiresConfirm = *body.RequiresConfirm
-		}
-		if body.ConfirmWrites != nil {
-			c.ConfirmWrites = *body.ConfirmWrites
-		}
-		if body.Lending != nil {
-			c.Lending = *body.Lending
-		}
-		// Auto-enable on finishing a draft. A draft_api_credential lands
-		// DISABLED with a placeholder secret, and Save deliberately preserves
-		// Disabled — so pasting the secret here would leave the credential
-		// silently disabled and unusable, forcing the user to discover a
-		// SEPARATE Enable step (a real point of confusion). If this record was a
-		// pending draft (disabled, no real secret) and the user is now providing
-		// one, flip it live so saving the secret is all it takes.
-		_, wasEnabled, hadSecret := Secure().CredentialStatusOwned(user, c.Name)
-		if err := Secure().Save(c, body.Secret); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		if hold {
-			if err := Secure().HoldForApproval(user, c.Name); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-		}
-		// One waiting for approval stays off with its secret kept: approving
-		// it is the administrator's switch, not this one.
-		if cur, ok := Secure().LoadUser(user, c.Name); ok && cur.AwaitingApproval {
-			hold = true
-		}
-		if !hold && !wasEnabled && !hadSecret && strings.TrimSpace(body.Secret) != "" {
-			if err := Secure().SetDisabledOwned(user, c.Name, false); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-		}
-		// Secured rides its own setter because Save deliberately PRESERVES the
-		// flag from the stored record — the field is owned by this toggle, not
-		// by the form body, so an edit that never mentions it cannot clear it.
-		// Same shape as Disabled above.
-		if body.Secured != nil {
-			if err := Secure().SetSecuredOwned(user, c.Name, *body.Secured); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-		}
-		w.WriteHeader(http.StatusNoContent)
-	case http.MethodDelete:
-		name := strings.TrimSpace(r.URL.Query().Get("name"))
-		if name == "" {
-			http.Error(w, "missing name", http.StatusBadRequest)
-			return
-		}
-		if err := Secure().DeleteUser(user, name); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+	// ?audit=<name> is the owner's own dispatch ledger for their own key.
+	// Sharing a credential and then having no way to see what went out
+	// through it would be the worst of both: the owner carries the far
+	// end's attribution and cannot read the one record that says who
+	// actually made each call.
+	if name := strings.TrimSpace(q.Get("audit")); name != "" {
+		return credentialLedgerRows(user, name), nil
+	}
+	// ?lent=1 is the other side of the share: what other people gave THIS
+	// user. A share nobody can see is one they cannot use and cannot reason
+	// about when a call goes out under somebody else's name.
+	if strings.TrimSpace(q.Get("lent")) != "" {
+		return lentCredentialRows(user), nil
+	}
+	// ?name=<name> returns the SINGLE record — the edit form's Source. The
+	// secret is never included, so leaving the form's secret field blank keeps
+	// the stored value.
+	if name := strings.TrimSpace(q.Get("name")); name != "" {
+		cred, found := Secure().LoadUser(user, name)
+		if !found {
+			return nil, jsonapi.NotFound("no such credential")
+		}
+		// view=security is the Security panel's record (api_security.go).
+		if q.Get("view") == "security" {
+			return apiSecurityOf(cred), nil
+		}
+		return toRow(cred), nil
+	}
+	rows := []row{}
+	for _, cred := range Secure().ListUser(user) {
+		rows = append(rows, toRow(cred))
+	}
+	return rows, nil
+}
+
+// credentialPost tells /api/credentials' POST shapes apart by ?action=: the
+// share lists, the Security panel, the on/off switch, or (no action) the
+// whole record.
+func (T *Extensions) credentialPost() http.HandlerFunc {
+	share := jsonapi.Post(T.DB, T.handleCredentialShare)
+	security := jsonapi.Post(T.DB, T.saveAPISecurity)
+	toggle := jsonapi.Post(T.DB, T.handleCredentialToggle)
+	save := jsonapi.Post(T.DB, T.handleCredentialSave)
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch action := strings.TrimSpace(r.URL.Query().Get("action")); action {
+		case "share":
+			share(w, r)
+		case "security":
+			security(w, r)
+		case "enable", "disable":
+			toggle(w, r)
+		default:
+			save(w, r)
+		}
+	}
+}
+
+// handleCredentialShare sets the share lists, and ONLY the share lists. Each
+// picker posts the whole record back (record mode) and this reads two fields
+// out of it, so a picker save cannot rewrite a base URL and the ordinary edit
+// form cannot rewrite who the key reaches. Each door opens one thing.
+func (T *Extensions) handleCredentialShare(c *jsonapi.Call, body struct {
+	SharedReadOnly  []string `json:"shared_read_only"`
+	SharedReadWrite []string `json:"shared_read_write"`
+}) (any, error) {
+	user := c.User
+	name := strings.TrimSpace(c.R.URL.Query().Get("name"))
+	if name == "" {
+		return nil, jsonapi.BadRequest("missing name")
+	}
+	if err := Secure().SetCredentialShares(user, name, body.SharedReadOnly, body.SharedReadWrite); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	Log("[extensions] user=%q shared credential %q with %d reader(s) and %d writer(s)",
+		user, name, len(body.SharedReadOnly), len(body.SharedReadWrite))
+	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// handleCredentialToggle mutes or unmutes a credential without editing it. A
+// disabled credential drops out of the agent tool catalog until re-enabled.
+// Owner-scoped via SetDisabledOwned, so it only ever touches the user's own
+// credential, never a global one of the same name.
+func (T *Extensions) handleCredentialToggle(c *jsonapi.Call, _ struct{}) (any, error) {
+	q := c.R.URL.Query()
+	name := strings.TrimSpace(q.Get("name"))
+	if name == "" {
+		return nil, jsonapi.BadRequest("missing name")
+	}
+	if err := Secure().SetDisabledOwned(c.User, name, strings.TrimSpace(q.Get("action")) == "disable"); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// credentialSave is the credential form.
+type credentialSave struct {
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	BaseURL     string `json:"base_url"`
+	ParamName   string `json:"param_name"`
+	Description string `json:"description"`
+	Secret      string `json:"secret"`
+	// The security fields are the Security panel's (api_security.go).
+	// Pointers, so a form that does not carry them (Edit, Add) leaves
+	// the stored values alone instead of resetting them to off.
+	RequiresConfirm *bool   `json:"requires_confirm"`
+	ConfirmWrites   *bool   `json:"confirm_writes"`
+	Secured         *bool   `json:"secured"`
+	Lending         *string `json:"lending"`
+}
+
+// handleCredentialSave creates or edits one of the user's own credentials.
+func (T *Extensions) handleCredentialSave(c *jsonapi.Call, body credentialSave) (any, error) {
+	user := c.User
+	// Only the simple key-based types are user-managed; OAuth2 (and its
+	// admin-only client config) stays on the admin surface.
+	switch body.Type {
+	case SecureCredBearer, SecureCredHeader, SecureCredQuery, SecureCredBasicAuth, SecureCredNone:
+	default:
+		return nil, jsonapi.BadRequest("type must be bearer, header, query, basic_auth, or none")
+	}
+	// Owner = the calling user: Save keys this into the user's namespace, so
+	// it can never touch a global (admin) credential of the same name.
+	cred := SecureCredential{
+		Name:        strings.TrimSpace(body.Name),
+		Type:        body.Type,
+		BaseURL:     strings.TrimSpace(body.BaseURL),
+		ParamName:   strings.TrimSpace(body.ParamName),
+		Description: strings.TrimSpace(body.Description),
+		Owner:       user,
+	}
+	// A NEW one answers to the administrator's policy for personal
+	// credentials (core/governance): refused, held for approval, or live.
+	// An edit to one they have is not adding one.
+	var hold bool
+	if _, found := Secure().LoadUser(user, cred.Name); !found {
+		var perr error
+		if hold, perr = governance.Permit(governance.Credentials, user); perr != nil {
+			return nil, jsonapi.Forbidden(perr.Error())
+		}
+	}
+	if prev, found := Secure().LoadUser(user, cred.Name); found {
+		cred.RequiresConfirm, cred.ConfirmWrites, cred.Lending = prev.RequiresConfirm, prev.ConfirmWrites, prev.Lending
+	}
+	if body.RequiresConfirm != nil {
+		cred.RequiresConfirm = *body.RequiresConfirm
+	}
+	if body.ConfirmWrites != nil {
+		cred.ConfirmWrites = *body.ConfirmWrites
+	}
+	if body.Lending != nil {
+		cred.Lending = *body.Lending
+	}
+	// Auto-enable on finishing a draft. A draft_api_credential lands
+	// DISABLED with a placeholder secret, and Save deliberately preserves
+	// Disabled — so pasting the secret here would leave the credential
+	// silently disabled and unusable, forcing the user to discover a
+	// SEPARATE Enable step (a real point of confusion). If this record was a
+	// pending draft (disabled, no real secret) and the user is now providing
+	// one, flip it live so saving the secret is all it takes.
+	_, wasEnabled, hadSecret := Secure().CredentialStatusOwned(user, cred.Name)
+	if err := Secure().Save(cred, body.Secret); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	if hold {
+		if err := Secure().HoldForApproval(user, cred.Name); err != nil {
+			return nil, jsonapi.Status(http.StatusInternalServerError, err.Error())
+		}
+	}
+	// One waiting for approval stays off with its secret kept: approving
+	// it is the administrator's switch, not this one.
+	if cur, ok := Secure().LoadUser(user, cred.Name); ok && cur.AwaitingApproval {
+		hold = true
+	}
+	if !hold && !wasEnabled && !hadSecret && strings.TrimSpace(body.Secret) != "" {
+		if err := Secure().SetDisabledOwned(user, cred.Name, false); err != nil {
+			return nil, jsonapi.BadRequest(err.Error())
+		}
+	}
+	// Secured rides its own setter because Save deliberately PRESERVES the
+	// flag from the stored record — the field is owned by this toggle, not
+	// by the form body, so an edit that never mentions it cannot clear it.
+	// Same shape as Disabled above.
+	if body.Secured != nil {
+		if err := Secure().SetSecuredOwned(user, cred.Name, *body.Secured); err != nil {
+			return nil, jsonapi.BadRequest(err.Error())
+		}
+	}
+	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// handleCredentialDelete removes one of the user's own credentials.
+func (T *Extensions) handleCredentialDelete(c *jsonapi.Call, _ struct{}) (any, error) {
+	name := strings.TrimSpace(c.R.URL.Query().Get("name"))
+	if name == "" {
+		return nil, jsonapi.BadRequest("missing name")
+	}
+	if err := Secure().DeleteUser(c.User, name); err != nil {
+		return nil, jsonapi.Status(http.StatusInternalServerError, err.Error())
+	}
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // handleUserTools is the user's OWN persistent-tool surface — the counterpart to
@@ -3254,11 +3260,8 @@ func nonNilStrings(v []string) []string {
 // handleSkillToolOptions lists the tools a skill may be given: the registered
 // catalog minus the framework's own plumbing, plus the caller's OWN authored
 // tools. Scoped to the caller — this is their skill pool, not everyone's.
-func (T *Extensions) handleSkillToolOptions(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *Extensions) handleSkillToolOptions(c *jsonapi.Call) (any, error) {
+	user := c.User
 	type entry struct {
 		Name        string `json:"name"`
 		Description string `json:"description"`
@@ -3283,40 +3286,32 @@ func (T *Extensions) handleSkillToolOptions(w http.ResponseWriter, r *http.Reque
 	for _, t := range LoadPersistentTempTools(AuthDB(), user) {
 		add(t.Tool.Name, t.Tool.Description, "yours")
 	}
-	jsonapi.Write(w, out)
+	return out, nil
 }
 
 // handleSkillCollectionOptions lists the document collections the caller can
 // attach to a skill: their own, plus any deployment-wide ones.
-func (T *Extensions) handleSkillCollectionOptions(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
+func (T *Extensions) handleSkillCollectionOptions(c *jsonapi.Call) (any, error) {
+	user := c.User
 	type entry struct {
 		ID          string `json:"id"`
 		Name        string `json:"name"`
 		Description string `json:"description"`
 	}
 	out := []entry{}
-	for _, c := range ListCollections(UserDB(CollectionsDB(), user), user) {
-		out = append(out, entry{ID: c.ID, Name: c.Name, Description: c.Description})
+	for _, col := range ListCollections(UserDB(CollectionsDB(), user), user) {
+		out = append(out, entry{ID: col.ID, Name: col.Name, Description: col.Description})
 	}
-	jsonapi.Write(w, out)
+	return out, nil
 }
 
 // handleUserCandidates serves the ACL-picker candidate list ([{value,label}])
 // for the "Shared with" picker on a skill. Any authenticated user may share
 // what they own, so every approved user is a candidate; this is the fleet-wide
 // list, not the admin-only one.
-func (T *Extensions) handleUserCandidates(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
+func (T *Extensions) handleUserCandidates(c *jsonapi.Call) (any, error) {
 	// ?groups=1 from a picker whose kind can go to a group as well.
-	w.Write(ShareCandidatesJSON(user, r.URL.Query().Get("groups") == "1", false))
+	return json.RawMessage(ShareCandidatesJSON(c.User, c.R.URL.Query().Get("groups") == "1", false)), nil
 }
 
 // nonNilList keeps an empty array an array in JSON: an ACLPicker handed null

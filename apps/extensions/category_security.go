@@ -26,84 +26,110 @@ func categoryMembers(user, category string) []string {
 	return userToolCategories(user)[strings.TrimSpace(category)]
 }
 
-// handleCategorySecurity is /api/category-security?name=<category>&section=run|who.
-func (T *Extensions) handleCategorySecurity(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	name := strings.TrimSpace(r.URL.Query().Get("name"))
-	members := categoryMembers(user, name)
+// categoryOf is the category /api/category-security?name= names, and its
+// tools.
+func categoryOf(c *jsonapi.Call) ([]string, error) {
+	name := strings.TrimSpace(c.R.URL.Query().Get("name"))
+	members := categoryMembers(c.User, name)
 	if name == "" || len(members) == 0 {
-		http.Error(w, "no tools in that category", http.StatusNotFound)
-		return
+		return nil, jsonapi.NotFound("no tools in that category")
 	}
-	db := AuthDB()
-	w.Header().Set("Cache-Control", "no-store")
-	switch r.URL.Query().Get("section") {
-	case "run":
-		categoryRunSection(w, r, db, user, members)
-	case "who":
-		categoryWhoSection(w, r, db, user, members)
-	default:
-		http.Error(w, "unknown section: use section=run or section=who", http.StatusNotFound)
-	}
+	return members, nil
 }
 
-// categoryRunSection is How it runs for the whole category: a pill is on when
-// every tool has it, dashed when only some do; a click sets it on all.
-func categoryRunSection(w http.ResponseWriter, r *http.Request, db Database, user string, members []string) {
-	switch r.Method {
-	case http.MethodGet:
-		type pill struct {
-			Key     string `json:"key"`
-			Label   string `json:"label"`
-			On      bool   `json:"on"`
-			Partial bool   `json:"partial,omitempty"`
-		}
-		unattended, ask := 0, 0
-		for _, n := range members {
-			if row, ok := UserToolByName(db, user, n); ok && row.Tool.NoUnattended {
-				unattended++
-			}
-			if UserToolAsksInChat(db, user, "", n) {
-				ask++
-			}
-		}
-		state := func(have int) (bool, bool) { return have == len(members), have > 0 && have < len(members) }
-		uOn, uPart := state(unattended)
-		aOn, aPart := state(ask)
-		note := "Sets it for all " + countTools(len(members)) + " in this category."
-		if uPart || aPart {
-			note += " A dashed one is on for some of them and not others; clicking it turns it on for all."
-		}
-		jsonapi.Write(w, map[string]any{"note": note, "items": []pill{
-			{Key: "never_unattended", Label: "Never run unattended", On: uOn, Partial: uPart},
-			{Key: "ask_first", Label: "Ask me before every call", On: aOn, Partial: aPart},
-		}})
-	case http.MethodPost:
+// handleCategorySecurity is /api/category-security?name=<category>&section=run|who:
+// How it runs for the whole category, or Who can use it.
+func (T *Extensions) handleCategorySecurity(c *jsonapi.Call) (any, error) {
+	members, err := categoryOf(c)
+	if err != nil {
+		return nil, err
+	}
+	c.W.Header().Set("Cache-Control", "no-store")
+	db, user := AuthDB(), c.User
+	switch c.R.URL.Query().Get("section") {
+	case "run":
+		return categoryRunState(db, user, members), nil
+	case "who":
+		return categoryWhoState(db, user, members)
+	}
+	return nil, jsonapi.NotFound("unknown section: use section=run or section=who")
+}
+
+// handleCategorySecuritySet applies the section's choice to every tool in the
+// category. The body is the section's own: {target, on} for run, {mode,
+// agents} for who.
+func (T *Extensions) handleCategorySecuritySet(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+	members, err := categoryOf(c)
+	if err != nil {
+		return nil, err
+	}
+	db, user := AuthDB(), c.User
+	switch c.R.URL.Query().Get("section") {
+	case "run":
 		var body struct {
 			Target string `json:"target"`
 			On     bool   `json:"on"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad body: "+err.Error(), http.StatusBadRequest)
-			return
+		if err := json.Unmarshal(raw, &body); err != nil {
+			return nil, jsonapi.BadRequest("bad body: " + err.Error())
 		}
-		var failed []string
-		for _, n := range members {
-			if _, err := toolRunApply(db, user, n, strings.TrimSpace(body.Target), body.On); err != nil {
-				failed = append(failed, n+" ("+err.Error()+")")
-			}
+		return categoryRunSet(db, user, members, body.Target, body.On)
+	case "who":
+		var body struct {
+			Mode   string   `json:"mode"`
+			Agents []string `json:"agents"`
 		}
-		if len(failed) > 0 {
-			http.Error(w, "set for the others, but not: "+strings.Join(failed, "; "), http.StatusBadRequest)
-			return
+		if err := json.Unmarshal(raw, &body); err != nil {
+			return nil, jsonapi.BadRequest("bad body: " + err.Error())
 		}
-		w.WriteHeader(http.StatusNoContent)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return categoryWhoSet(db, user, members, body.Mode, body.Agents)
 	}
+	return nil, jsonapi.NotFound("unknown section: use section=run or section=who")
+}
+
+// categoryRunState is How it runs for the whole category: a pill is on when
+// every tool has it, dashed when only some do.
+func categoryRunState(db Database, user string, members []string) map[string]any {
+	type pill struct {
+		Key     string `json:"key"`
+		Label   string `json:"label"`
+		On      bool   `json:"on"`
+		Partial bool   `json:"partial,omitempty"`
+	}
+	unattended, ask := 0, 0
+	for _, n := range members {
+		if row, ok := UserToolByName(db, user, n); ok && row.Tool.NoUnattended {
+			unattended++
+		}
+		if UserToolAsksInChat(db, user, "", n) {
+			ask++
+		}
+	}
+	state := func(have int) (bool, bool) { return have == len(members), have > 0 && have < len(members) }
+	uOn, uPart := state(unattended)
+	aOn, aPart := state(ask)
+	note := "Sets it for all " + countTools(len(members)) + " in this category."
+	if uPart || aPart {
+		note += " A dashed one is on for some of them and not others; clicking it turns it on for all."
+	}
+	return map[string]any{"note": note, "items": []pill{
+		{Key: "never_unattended", Label: "Never run unattended", On: uOn, Partial: uPart},
+		{Key: "ask_first", Label: "Ask me before every call", On: aOn, Partial: aPart},
+	}}
+}
+
+// categoryRunSet sets a How it runs pill on every tool in the category.
+func categoryRunSet(db Database, user string, members []string, target string, on bool) (any, error) {
+	var failed []string
+	for _, n := range members {
+		if _, err := toolRunApply(db, user, n, strings.TrimSpace(target), on); err != nil {
+			failed = append(failed, n+" ("+err.Error()+")")
+		}
+	}
+	if len(failed) > 0 {
+		return nil, jsonapi.BadRequest("set for the others, but not: " + strings.Join(failed, "; "))
+	}
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // toolWhoSummary is one tool's Who can use it, in words.
@@ -129,120 +155,110 @@ func toolWhoSummary(state map[string]any) string {
 	return "Not kept yet"
 }
 
-// categoryWhoSection is Who can use it for the whole category. GET says what
-// the tools have: one setting when they agree, and when they do not, each
-// tool and what it has. POST {mode, agents} sets every tool to exactly that.
-func categoryWhoSection(w http.ResponseWriter, r *http.Request, db Database, user string, members []string) {
+// categoryWhoState is Who can use it for the whole category: one setting when
+// the tools agree, and when they do not, each tool and what it has.
+func categoryWhoState(db Database, user string, members []string) (any, error) {
 	prov, ok := ScopeProviderFor("tool")
 	if !ok {
-		http.Error(w, "tool scope unavailable", http.StatusServiceUnavailable)
-		return
+		return nil, jsonapi.Status(http.StatusServiceUnavailable, "tool scope unavailable")
 	}
-	switch r.Method {
-	case http.MethodGet:
-		type agentRow struct {
-			ID      string `json:"id"`
-			Label   string `json:"label"`
-			On      bool   `json:"on"`
-			Partial bool   `json:"partial,omitempty"`
-			Under   string `json:"under,omitempty"`
-		}
-		type differ struct {
-			Tool    string `json:"tool"`
-			Setting string `json:"setting"`
-		}
-		var rows []agentRow
-		index := map[string]int{}
-		onCount := map[string]int{}
-		bySetting := map[string][]string{}
-		mode := ""
-		sameMode := true
-		for i, n := range members {
-			st := toolWhoState(prov, db, user, n)
-			m, _ := st["mode"].(string)
-			if i == 0 {
-				mode = m
-			} else if m != mode {
-				sameMode = false
-			}
-			bySetting[toolWhoSummary(st)] = append(bySetting[toolWhoSummary(st)], n)
-			for _, a := range st["agents"].([]toolWhoAgent) {
-				if _, seen := index[a.ID]; !seen {
-					index[a.ID] = len(rows)
-					rows = append(rows, agentRow{ID: a.ID, Label: a.Label, Under: a.Under})
-				}
-				if a.On && m == toolWhoAgents {
-					onCount[a.ID]++
-				}
-			}
-		}
-		for i := range rows {
-			c := onCount[rows[i].ID]
-			rows[i].On = c == len(members)
-			rows[i].Partial = c > 0 && c < len(members)
-		}
-		if rows == nil {
-			rows = []agentRow{}
-		}
-		differs := []differ{}
-		if len(bySetting) > 1 {
-			for setting, tools := range bySetting {
-				for _, tl := range tools {
-					differs = append(differs, differ{Tool: tl, Setting: setting})
-				}
-			}
-			sort.Slice(differs, func(i, j int) bool {
-				if differs[i].Setting != differs[j].Setting {
-					return differs[i].Setting < differs[j].Setting
-				}
-				return differs[i].Tool < differs[j].Tool
-			})
-			mode = "" // nothing one choice describes
-		} else if !sameMode {
-			mode = ""
-		}
-		jsonapi.Write(w, map[string]any{"mode": mode, "agents": rows, "count": len(members), "differ": differs})
-	case http.MethodPost:
-		var body struct {
-			Mode   string   `json:"mode"`
-			Agents []string `json:"agents"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad body: "+err.Error(), http.StatusBadRequest)
-			return
-		}
-		mode := strings.TrimSpace(body.Mode)
-		var failed []string
-		for _, n := range members {
-			var err error
-			switch mode {
-			case toolWhoAll, toolWhoBound:
-				_, err = toolWhoPick(prov, db, user, n, mode)
-			case toolWhoAgents:
-				// Exactly the agents chosen here, not whatever this tool last
-				// had: the category's choice replaces each tool's own.
-				toolWhoRemember(prov, db, user, n)
-				if len(body.Agents) == 0 {
-					_, err = toolWhoFlags(db, user, n, true, false)
-				} else {
-					_, err = toolWhoOnly(prov, db, user, n, body.Agents)
-				}
-			default:
-				http.Error(w, "unknown choice "+mode, http.StatusBadRequest)
-				return
-			}
-			if err != nil {
-				failed = append(failed, n+" ("+err.Error()+")")
-			}
-		}
-		if len(failed) > 0 {
-			http.Error(w, "set for the others, but not: "+strings.Join(failed, "; "), http.StatusBadRequest)
-			return
-		}
-		jsonapi.Write(w, map[string]any{"ok": true, "message": "Set for all " + countTools(len(members)) + "."})
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	type agentRow struct {
+		ID      string `json:"id"`
+		Label   string `json:"label"`
+		On      bool   `json:"on"`
+		Partial bool   `json:"partial,omitempty"`
+		Under   string `json:"under,omitempty"`
 	}
+	type differ struct {
+		Tool    string `json:"tool"`
+		Setting string `json:"setting"`
+	}
+	var rows []agentRow
+	index := map[string]int{}
+	onCount := map[string]int{}
+	bySetting := map[string][]string{}
+	mode := ""
+	sameMode := true
+	for i, n := range members {
+		st := toolWhoState(prov, db, user, n)
+		m, _ := st["mode"].(string)
+		if i == 0 {
+			mode = m
+		} else if m != mode {
+			sameMode = false
+		}
+		bySetting[toolWhoSummary(st)] = append(bySetting[toolWhoSummary(st)], n)
+		for _, a := range st["agents"].([]toolWhoAgent) {
+			if _, seen := index[a.ID]; !seen {
+				index[a.ID] = len(rows)
+				rows = append(rows, agentRow{ID: a.ID, Label: a.Label, Under: a.Under})
+			}
+			if a.On && m == toolWhoAgents {
+				onCount[a.ID]++
+			}
+		}
+	}
+	for i := range rows {
+		c := onCount[rows[i].ID]
+		rows[i].On = c == len(members)
+		rows[i].Partial = c > 0 && c < len(members)
+	}
+	if rows == nil {
+		rows = []agentRow{}
+	}
+	differs := []differ{}
+	if len(bySetting) > 1 {
+		for setting, tools := range bySetting {
+			for _, tl := range tools {
+				differs = append(differs, differ{Tool: tl, Setting: setting})
+			}
+		}
+		sort.Slice(differs, func(i, j int) bool {
+			if differs[i].Setting != differs[j].Setting {
+				return differs[i].Setting < differs[j].Setting
+			}
+			return differs[i].Tool < differs[j].Tool
+		})
+		mode = "" // nothing one choice describes
+	} else if !sameMode {
+		mode = ""
+	}
+	return map[string]any{"mode": mode, "agents": rows, "count": len(members), "differ": differs}, nil
+}
+
+// categoryWhoSet sets every tool in the category to exactly one choice.
+func categoryWhoSet(db Database, user string, members []string, choice string, agents []string) (any, error) {
+	prov, ok := ScopeProviderFor("tool")
+	if !ok {
+		return nil, jsonapi.Status(http.StatusServiceUnavailable, "tool scope unavailable")
+	}
+	mode := strings.TrimSpace(choice)
+	var failed []string
+	for _, n := range members {
+		var err error
+		switch mode {
+		case toolWhoAll, toolWhoBound:
+			_, err = toolWhoPick(prov, db, user, n, mode)
+		case toolWhoAgents:
+			// Exactly the agents chosen here, not whatever this tool last
+			// had: the category's choice replaces each tool's own.
+			toolWhoRemember(prov, db, user, n)
+			if len(agents) == 0 {
+				_, err = toolWhoFlags(db, user, n, true, false)
+			} else {
+				_, err = toolWhoOnly(prov, db, user, n, agents)
+			}
+		default:
+			return nil, jsonapi.BadRequest("unknown choice " + mode)
+		}
+		if err != nil {
+			failed = append(failed, n+" ("+err.Error()+")")
+		}
+	}
+	if len(failed) > 0 {
+		return nil, jsonapi.BadRequest("set for the others, but not: " + strings.Join(failed, "; "))
+	}
+	return map[string]any{"ok": true, "message": "Set for all " + countTools(len(members)) + "."}, nil
 }
 
 func countTools(n int) string {
