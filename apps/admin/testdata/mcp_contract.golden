@@ -1,0 +1,96 @@
+(signed out) GET /api/mcp-servers ""
+  403 forbidden
+alice GET /api/mcp-servers ""
+  403 forbidden
+root GET /api/mcp-servers ""
+  200 []
+root PUT /api/mcp-servers "{}"
+  405 method not allowed
+(signed out) GET /api/mcp-servers?name=ct-docs ""
+  403 forbidden
+alice GET /api/mcp-servers?name=ct-docs ""
+  403 forbidden
+root GET /api/mcp-servers?name=ct-docs ""
+  404 not found
+root PUT /api/mcp-servers?name=ct-docs "{}"
+  405 method not allowed
+(signed out) GET /api/mcp-tools ""
+  403 forbidden
+alice GET /api/mcp-tools ""
+  403 forbidden
+root GET /api/mcp-tools ""
+  200 [{"name":"ct_app_tool","description":"A tool an app offers.","exposed":false}]
+root PUT /api/mcp-tools "{}"
+  405 method not allowed
+alice POST /api/mcp-servers/test "{}"
+  403 forbidden
+root GET /api/mcp-servers/test ""
+  405 method not allowed
+alice POST /api/mcp-servers "{\"name\":\"ct-mine\",\"url\":\"http://127.0.0.1:1/mcp\"}"
+  403 forbidden
+root POST /api/mcp-servers "{\"name\":\"ct-docs\",\"url\":\"http://127.0.0.1:1/mcp\",\"auth_mode\":\"bearer\",\"token\":\"s3cr3t-mcp\",\"expose_tools\":true,\"enabled\":false}"
+  204 
+root POST /api/mcp-servers "{\"name\":\"Bad Name\",\"url\":\"http://127.0.0.1:1/mcp\"}"
+  400 name must match ^[a-z0-9_-]+$
+root POST /api/mcp-servers "{\"name\":\"ct-ftp\",\"url\":\"ftp://127.0.0.1/mcp\"}"
+  400 url must be http(s)
+root POST /api/mcp-servers "{\"name\":\"ct-vault\",\"url\":\"http://127.0.0.1:1/mcp\",\"auth_mode\":\"secure_api\"}"
+  400 secure_api mode requires a credential name
+root POST /api/mcp-servers "{\"name\":"
+  400 invalid JSON: unexpected EOF
+root POST /api/mcp-servers ""
+  400 invalid JSON: EOF
+root GET /api/mcp-servers?name=ct-docs ""
+  200 {"name":"ct-docs","url":"http://127.0.0.1:1/mcp","auth_mode":"bearer","secure_cred":"","expose_tools":true,"expose_reference":false,"search_tool":"","enabled":false}
+root GET /api/mcp-servers?name=ct-nope ""
+  404 not found
+root GET /api/mcp-servers ""
+  200 [{"name":"ct-docs","url":"http://127.0.0.1:1/mcp","auth_mode":"bearer","secure_cred":"","expose_tools":true,"expose_reference":false,"search_tool":"","enabled":false,"is_oauth":false,"connected":false}]
+alice POST /api/mcp-servers?action=enable&name=ct-docs ""
+  403 forbidden
+root POST /api/mcp-servers?action=enable ""
+  400 missing name
+root POST /api/mcp-servers?action=enable&name=ct-nope ""
+  404 not found
+root POST /api/mcp-servers?action=sideways&name=ct-docs ""
+  400 action must be enable|disable
+root POST /api/mcp-servers?action=disable&name=ct-docs ""
+  204 
+root GET /api/mcp-servers?name=ct-docs ""
+  200 {"name":"ct-docs","url":"http://127.0.0.1:1/mcp","auth_mode":"bearer","secure_cred":"","expose_tools":true,"expose_reference":false,"search_tool":"","enabled":false}
+root POST /api/mcp-servers/test "{\"name\":\"ct-docs\",\"url\":\"http://127.0.0.1:1/mcp\",\"auth_mode\":\"bearer\",\"token\":\"s3cr3t-mcp\"}"
+  200 {"error":"mcp initialize: Post \"http://127.0.0.1:1/mcp\": dial tcp 127.0.0.1:1: connect: connection refused","ok":false}
+root POST /api/mcp-servers/test "{\"name\":\"ct-docs\",\"url\":\"ftp://127.0.0.1/mcp\"}"
+  200 {"error":"mcp initialize: Post \"ftp://127.0.0.1/mcp\": unsupported protocol scheme \"ftp\"","ok":false}
+root POST /api/mcp-servers/test "{\"name\":"
+  400 invalid JSON: unexpected EOF
+root POST /api/mcp-servers/test ""
+  400 invalid JSON: EOF
+alice POST /api/mcp-tools?name=ct_app_tool "{\"exposed\":true}"
+  403 forbidden
+root POST /api/mcp-tools?name=ct_app_tool "{\"exposed\":true}"
+  204 
+root GET /api/mcp-tools ""
+  200 [{"name":"ct_app_tool","description":"A tool an app offers.","exposed":true}]
+root POST /api/mcp-tools?name=ct_app_tool "{\"exposed\":false}"
+  204 
+root POST /api/mcp-tools "{\"exposed\":true}"
+  400 missing name
+root POST /api/mcp-tools?name=ct_nope "{\"exposed\":true}"
+  404 no such MCP tool
+root POST /api/mcp-tools?name=ct_app_tool "{\"exposed\":"
+  400 invalid JSON: unexpected EOF
+root POST /api/mcp-tools?name=ct_app_tool ""
+  400 invalid JSON: EOF
+root GET /api/mcp-tools ""
+  200 [{"name":"ct_app_tool","description":"A tool an app offers.","exposed":false}]
+alice DELETE /api/mcp-servers?name=ct-docs ""
+  403 forbidden
+root DELETE /api/mcp-servers ""
+  400 missing name
+root DELETE /api/mcp-servers?name=ct-nope ""
+  204 
+root DELETE /api/mcp-servers?name=ct-docs ""
+  204 
+root GET /api/mcp-servers ""
+  200 []
