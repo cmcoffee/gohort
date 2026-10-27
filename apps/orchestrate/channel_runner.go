@@ -296,7 +296,7 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 			if txt == "" {
 				return "\n[Audio attachment received, but transcription returned no text: the clip may have no speech, or whisper couldn't decode this format.]"
 			}
-			return "\n[Audio transcript] " + txt
+			return "\n[Voice message, transcribed] " + txt
 		}
 		// Decode inbound photos (base64 on the wire) to the raw bytes the
 		// vision model takes; skip any that don't decode rather than failing
@@ -391,6 +391,14 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 		}
 		if gifFrames > 0 {
 			videoNote += fmt.Sprintf("\n[Inbound GIF: %d frame(s) sampled and attached above as images in time order, describe the motion/content from these stills, not a single frame.]", gifFrames)
+		}
+		// A voice message with nothing else is the person talking, not
+		// something to look at. Said outright, because the agent is shown the
+		// conversation's earlier pictures every turn, and a message that was
+		// only a transcript note read as if the newest of them had just
+		// arrived: it went looking for a picture and answered about one.
+		if voiceNote && len(images) == 0 {
+			attachNote += "\n[It was a voice message only: no picture or file came with it.]"
 		}
 		// Channel = relay, Cortex = the thread. A DEDICATED cortex agent (a single
 		// channel) runs its inbound IN its cortex — the channel is just the pipe

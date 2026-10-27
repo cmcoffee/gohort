@@ -627,3 +627,41 @@ func TestAnAgentSpeaksInItsOwnVoice(t *testing.T) {
 		t.Errorf("somebody else's agent is not looked up: %q", got)
 	}
 }
+
+// A voice message reaches the agent as what the person said, and one that
+// came alone says so: told nothing, the agent took the conversation's newest
+// earlier picture for something just sent and answered about a picture.
+func TestAVoiceMessageReachesTheAgentAsSpeech(t *testing.T) {
+	df, _ := voiceChannel(t, "Sure.", http.StatusOK)
+	userTurn := func() string {
+		t.Helper()
+		var last string
+		for _, m := range df.llm.Sent(df.llm.Calls() - 1) {
+			if m.Role == "user" {
+				last = m.Content
+			}
+		}
+		return last
+	}
+	voice := base64.StdEncoding.EncodeToString([]byte("not really an m4a"))
+	if _, err := RunChannelAgent(t.Context(), ChannelInbound{Owner: "u", AgentID: df.agent.ID, SessionID: "room-1",
+		ChatID: "chat-1", SenderName: "Alice", Audios: []string{voice}}); err != nil {
+		t.Fatal(err)
+	}
+	got := userTurn()
+	if !strings.Contains(got, "[Voice message, transcribed] call me") {
+		t.Errorf("the transcript should read as the person's words: %q", got)
+	}
+	if !strings.Contains(got, "no picture or file came with it") {
+		t.Errorf("a voice message alone should say nothing else came: %q", got)
+	}
+
+	png := base64.StdEncoding.EncodeToString([]byte("\x89PNG\r\n\x1a\n" + strings.Repeat("\x00", 32)))
+	if _, err := RunChannelAgent(t.Context(), ChannelInbound{Owner: "u", AgentID: df.agent.ID, SessionID: "room-2",
+		ChatID: "chat-1", SenderName: "Alice", Audios: []string{voice}, Images: []string{png}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := userTurn(); strings.Contains(got, "no picture or file came with it") {
+		t.Errorf("a voice message sent with a photo must not deny the photo: %q", got)
+	}
+}
