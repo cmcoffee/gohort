@@ -1,6 +1,9 @@
 # Wails build outputs
 build/bin/
 build/darwin/
+# (build/darwin/Info.plist is tracked all the same, added with -f like
+# build/appicon.png: Wails writes a default only when there is none, and the
+# default does not name the microphone, which a page needs to dictate.)
 build/windows/
 build/linux/
 

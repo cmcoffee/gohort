@@ -189,8 +189,10 @@ uninstall:
 # icon and helpfully wrote its own default in its place. The result is a build
 # that succeeds, an icns generated faithfully from the wrong picture, and a dock
 # showing the Wails "W" with nothing anywhere reporting a failure.
+# build/darwin/Info.plist is tracked for the same reason: deleted, Wails would
+# write its default, which has no microphone line, and dictation would fail.
 clean:
-	rm -rf $(OUTDIR) build/darwin build/windows build/linux
+	rm -rf $(OUTDIR) build/windows build/linux
 
 help:
 	@echo "gohort-desktop build targets:"
