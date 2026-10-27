@@ -14,6 +14,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/cmcoffee/gohort/core/media"
@@ -28,6 +29,11 @@ import (
 const mediaUploadCredential = "media_local"
 
 func init() {
+	// The chat's read-aloud: media serves it, and only core knows who is
+	// signed in.
+	RegisterRootRoute(media.ReadAloudPath, func(w http.ResponseWriter, r *http.Request) {
+		media.ServeReadAloud(w, r, AuthCurrentUser(r))
+	})
 	media.GovernedUploadFunc = func(ctx context.Context, up media.UploadRequest) (string, error) {
 		out, err := mediaUpload(ctx, up, mediaUploadBearer(ctx, up))
 		if err != nil {

@@ -116,3 +116,35 @@ func TestInlineSecretIsNotSerializedOrStored(t *testing.T) {
 		t.Errorf("the inline secret serialized into the credential JSON: %s", blob)
 	}
 }
+
+// The chat's read-aloud is mounted at the root and knows who is signed in:
+// nobody gets a 403 before anything else is checked, a user gets past it.
+func TestReadAloudIsMountedForSignedInUsers(t *testing.T) {
+	withUsers(t)
+	var h http.HandlerFunc
+	for _, rr := range rootRoutes {
+		if rr.path == media.ReadAloudPath {
+			h = rr.h
+		}
+	}
+	if h == nil {
+		t.Fatalf("nothing mounted at %s", media.ReadAloudPath)
+	}
+	prev := media.GetSpeechConfig()
+	media.SetSpeechConfig(media.SpeechConfig{Enabled: false})
+	t.Cleanup(func() { media.SetSpeechConfig(prev) })
+
+	post := func(user string) int {
+		r := asUser(t, media.ReadAloudPath, user)
+		r.Method = http.MethodPost
+		w := httptest.NewRecorder()
+		h(w, r)
+		return w.Code
+	}
+	if code := post(""); code != http.StatusForbidden {
+		t.Errorf("signed out: %d, want 403", code)
+	}
+	if code := post("craig"); code != http.StatusServiceUnavailable {
+		t.Errorf("signed in, speech off: %d, want 503 (past the sign-in check)", code)
+	}
+}

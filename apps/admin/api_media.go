@@ -267,19 +267,8 @@ func (a *AdminApp) handleSpeechTest(c *jsonapi.Call, req media.SpeechConfig) (an
 	}
 	body := testResultBody(true, fmt.Sprintf("Spoke a sample: %d KB of %s audio.",
 		(len(audio)+1023)/1024, strings.TrimPrefix(ext, ".")), "")
-	body["audio"] = "data:" + speechMIME(ext) + ";base64," + base64.StdEncoding.EncodeToString(audio)
+	body["audio"] = "data:" + media.SpeechMIME(ext) + ";base64," + base64.StdEncoding.EncodeToString(audio)
 	return body, nil
-}
-
-// speechMIME is the media type a browser plays a clip of this extension as.
-func speechMIME(ext string) string {
-	switch ext {
-	case ".wav":
-		return "audio/wav"
-	case ".ogg":
-		return "audio/ogg"
-	}
-	return "audio/mpeg"
 }
 
 // handleSpeechVoices lists the voices the configured server offers, for the

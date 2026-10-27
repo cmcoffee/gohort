@@ -9,6 +9,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/media"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -198,7 +199,7 @@ func (c *chatPage) buildHead() {
 		";\nwindow.ORCH_CHANNEL_AGENTS = " + string(cortexAgentsJSON) +
 		";\nwindow.ORCH_RECORD_AGENTS = " + string(recordAgentsJSON) +
 		";\nwindow.ORCH_PICTURE_DAYS = " + strconv.Itoa(int(TuneDuration(TunableImageReapDeliveredDays)/(24*time.Hour))) +
-		";</script>\n<script>" + ArtifactClientJS + "</script>\n" + TranscribeRuntimeFlagScript() + "\n" + orchestrateWebAssets + ReportCardHead + agentDeleteAskJS
+		";</script>\n<script>" + ArtifactClientJS + "</script>\n" + TranscribeRuntimeFlagScript() + media.ReadAloudScript() + "\n" + orchestrateWebAssets + ReportCardHead + agentDeleteAskJS
 	c.phases.mark("head html concat")
 }
 

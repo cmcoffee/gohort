@@ -2668,7 +2668,9 @@
     // action bar (Edit/Retry/Delete on user; Retry/Copy on assistant).
     // Each registered action gets appended after the built-ins. The
     // action object is { role, label, title?, danger?, onclick(ctx) }
-    // where ctx = { bubble, getText() }. role must be 'user' or
+    // where ctx = { bubble, getText(), button }: button is the pressed
+    // button itself, for an action that shows its own progress or state on
+    // it until the bar is next redrawn. role must be 'user' or
     // 'assistant'. Optional group: consecutive actions with the same group
     // wrap as one unit, so a pair (a rating's two halves) never splits
     // across lines on a narrow screen. Action buttons get re-rendered every time the
@@ -2732,6 +2734,7 @@
             try { act.onclick(ctx); } catch (e) { /* isolate */ }
           },
         }, [label]);
+        ctx.button = btn;
         if (!act.group) { bar.appendChild(btn); return; }
         var last = bar.lastElementChild;
         if (!last || !last.classList.contains('ui-agent-msg-act-group') || last.dataset.group !== String(act.group)) {
