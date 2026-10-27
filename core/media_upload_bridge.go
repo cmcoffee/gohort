@@ -31,9 +31,11 @@ const mediaUploadCredential = "media_local"
 func init() {
 	// The chat's read-aloud: media serves it, and only core knows who is
 	// signed in.
-	RegisterRootRoute(media.ReadAloudPath, func(w http.ResponseWriter, r *http.Request) {
+	readAloud := func(w http.ResponseWriter, r *http.Request) {
 		media.ServeReadAloud(w, r, AuthCurrentUser(r))
-	})
+	}
+	RegisterRootRoute(media.ReadAloudPath, readAloud)     // POST the reply
+	RegisterRootRoute(media.ReadAloudPath+"/", readAloud) // GET the stream
 	media.GovernedUploadFunc = func(ctx context.Context, up media.UploadRequest) (string, error) {
 		out, err := mediaUpload(ctx, up, mediaUploadBearer(ctx, up))
 		if err != nil {

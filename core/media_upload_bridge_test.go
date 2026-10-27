@@ -118,17 +118,21 @@ func TestInlineSecretIsNotSerializedOrStored(t *testing.T) {
 }
 
 // The chat's read-aloud is mounted at the root and knows who is signed in:
-// nobody gets a 403 before anything else is checked, a user gets past it.
+// nobody gets a 403 before anything else is checked, a user gets past it, and
+// the link a reply is played from is mounted below it.
 func TestReadAloudIsMountedForSignedInUsers(t *testing.T) {
 	withUsers(t)
-	var h http.HandlerFunc
+	var h, stream http.HandlerFunc
 	for _, rr := range rootRoutes {
-		if rr.path == media.ReadAloudPath {
+		switch rr.path {
+		case media.ReadAloudPath:
 			h = rr.h
+		case media.ReadAloudPath + "/":
+			stream = rr.h
 		}
 	}
-	if h == nil {
-		t.Fatalf("nothing mounted at %s", media.ReadAloudPath)
+	if h == nil || stream == nil {
+		t.Fatalf("read aloud needs %s (start) and %s/ (stream) mounted", media.ReadAloudPath, media.ReadAloudPath)
 	}
 	prev := media.GetSpeechConfig()
 	media.SetSpeechConfig(media.SpeechConfig{Enabled: false})
@@ -146,5 +150,11 @@ func TestReadAloudIsMountedForSignedInUsers(t *testing.T) {
 	}
 	if code := post("craig"); code != http.StatusServiceUnavailable {
 		t.Errorf("signed in, speech off: %d, want 503 (past the sign-in check)", code)
+	}
+	r := asUser(t, media.ReadAloudPath+"/nope", "craig")
+	w := httptest.NewRecorder()
+	stream(w, r)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("the stream path should reach the stream, signed in: %d, want 404 for no such link", w.Code)
 	}
 }
