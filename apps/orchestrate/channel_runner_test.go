@@ -562,3 +562,68 @@ func TestSpokenReplySkipsWhatIsNotWorthSaying(t *testing.T) {
 		t.Errorf("parts read aloud: %q", got)
 	}
 }
+
+// An agent with a voice of its own answers a voice note in it, and has its
+// replies read aloud in it; one without uses the deployment's voice, and
+// asking about somebody else's agent gets the deployment's voice too.
+func TestAnAgentSpeaksInItsOwnVoice(t *testing.T) {
+	df := newDispatchFixture(t, FakeTurn{Content: "At noon.", Repeat: true})
+	prevRoot := RootDB
+	RootDB = df.app.DB
+	t.Cleanup(func() { RootDB = prevRoot })
+	SaveChannel(RootDB, Channel{ID: "c1", Owner: "u", Service: "sms", AgentID: df.agent.ID})
+	registerChannelAgentRunner(df.app)
+	t.Cleanup(func() { RegisterChannelAgentRunner(nil) })
+
+	stt := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("call me")) }))
+	defer stt.Close()
+	var mu sync.Mutex
+	var voices []string
+	tts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]string
+		json.NewDecoder(r.Body).Decode(&body)
+		mu.Lock()
+		voices = append(voices, body["voice"])
+		mu.Unlock()
+		w.Write(append([]byte("ID3\x04\x00\x00\x00\x00\x00\x00"), make([]byte, 32)...))
+	}))
+	defer tts.Close()
+	prevSTT, prevTTS := GetTranscribeConfig(), media.GetSpeechConfig()
+	SetTranscribeConfig(TranscribeConfig{Endpoint: stt.URL, Enabled: true})
+	media.SetSpeechConfig(media.SpeechConfig{Endpoint: tts.URL, Voice: "af_heart", Enabled: true})
+	t.Cleanup(func() {
+		SetTranscribeConfig(prevSTT)
+		media.SetSpeechConfig(prevTTS)
+	})
+	lastVoice := func(session string) string {
+		t.Helper()
+		if _, err := RunChannelAgent(t.Context(), ChannelInbound{Owner: "u", AgentID: df.agent.ID, SessionID: session,
+			ChatID: "chat-1", SenderName: "Alice", Audios: []string{base64.StdEncoding.EncodeToString([]byte("clip"))}}); err != nil {
+			t.Fatal(err)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if len(voices) == 0 {
+			t.Fatal("nothing was spoken")
+		}
+		return voices[len(voices)-1]
+	}
+
+	if got := lastVoice("room-1"); got != "af_heart" {
+		t.Errorf("an agent without a voice speaks in the deployment's: %q", got)
+	}
+	a := df.agent
+	a.Voice = "bm_george"
+	if _, err := saveAgent(df.udb, a); err != nil {
+		t.Fatal(err)
+	}
+	if got := lastVoice("room-2"); got != "bm_george" {
+		t.Errorf("an agent with a voice answers a voice note in it: %q", got)
+	}
+	if got := media.ReadAloudVoice("u", df.agent.ID); got != "bm_george" {
+		t.Errorf("its replies are read aloud in it: %q", got)
+	}
+	if got := media.ReadAloudVoice("someone-else", df.agent.ID); got != "" {
+		t.Errorf("somebody else's agent is not looked up: %q", got)
+	}
+}

@@ -607,13 +607,34 @@ func spokenReply(ctx context.Context, in ChannelInbound, out ChannelReply, voice
 	}
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
-	audio, _, err := media.Speak(ctx, text)
+	audio, _, err := media.SpeakIn(ctx, text, agentVoice(in.Owner, in.AgentID))
 	if err != nil {
 		Log("[channel] reply to a voice note for owner=%s agent=%s sent as text only: speech failed: %v", in.Owner, in.AgentID, err)
 		return nil
 	}
 	return []string{base64.StdEncoding.EncodeToString(audio)}
 }
+
+// agentVoice is the speech voice an owner's agent talks in, "" for the
+// deployment's. Looked up in the owner's own store only, so naming somebody
+// else's agent gets the deployment's voice and learns nothing.
+func agentVoice(owner, agentID string) string {
+	if owner == "" || agentID == "" || orchestrateBaseDB == nil {
+		return ""
+	}
+	udb := UserDB(orchestrateBaseDB, owner)
+	if udb == nil {
+		return ""
+	}
+	if a, ok := loadAgent(udb, agentID); ok {
+		return strings.TrimSpace(a.Voice)
+	}
+	return ""
+}
+
+// The web chat's read-aloud asks for the voice of the agent whose reply is
+// being read; core/media knows nothing of agents.
+func init() { media.ReadAloudVoice = agentVoice }
 
 // channelEmptyFallback is what a channel sends when a turn produced nothing at
 // all. A messaging surface must not go silent by accident — the contact texted

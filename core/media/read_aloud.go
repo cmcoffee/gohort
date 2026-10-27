@@ -71,6 +71,7 @@ type readAloudJob struct {
 	first     []byte
 	firstType string
 	rest      []string
+	voice     string // the agent's voice, empty for the configured one
 	expires   time.Time
 
 	mu        sync.Mutex
@@ -81,6 +82,12 @@ type readAloudJob struct {
 	listeners int
 	cancel    context.CancelFunc
 }
+
+// ReadAloudVoice, when set, names the voice of the agent whose reply is read:
+// orchestrate installs it, since this package knows nothing of agents. It is
+// asked only about the user's own agents and answers "" for any other, which
+// reads in the configured voice.
+var ReadAloudVoice func(user, agentID string) string
 
 // readAloudGrace is how long the maker keeps going with nobody listening, so
 // a probe that closes just before the real request arrives costs nothing.
@@ -103,7 +110,12 @@ func ServeReadAloud(w http.ResponseWriter, r *http.Request, user string) {
 	case http.MethodPost:
 		startReadAloud(w, r, user)
 	case http.MethodGet:
-		streamReadAloud(w, r, user, strings.TrimPrefix(r.URL.Path, ReadAloudPath+"/"))
+		key := strings.TrimPrefix(r.URL.Path, ReadAloudPath+"/")
+		if key == "voices" {
+			serveVoices(w, r)
+			return
+		}
+		streamReadAloud(w, r, user, key)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -115,11 +127,16 @@ func startReadAloud(w http.ResponseWriter, r *http.Request, user string) {
 		return
 	}
 	var req struct {
-		Text string `json:"text"`
+		Text    string `json:"text"`
+		AgentID string `json:"agent_id"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
 		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
+	}
+	voice := ""
+	if ReadAloudVoice != nil && strings.TrimSpace(req.AgentID) != "" {
+		voice = ReadAloudVoice(user, strings.TrimSpace(req.AgentID))
 	}
 	text := readAloudText(req.Text)
 	if text == "" {
@@ -127,11 +144,11 @@ func startReadAloud(w http.ResponseWriter, r *http.Request, user string) {
 		return
 	}
 	pieces := readAloudPieces(text)
-	first, ext, err := Speak(r.Context(), pieces[0])
+	first, ext, err := SpeakIn(r.Context(), pieces[0], voice)
 	if err == nil && ext != ".mp3" && len(pieces) > 1 {
 		// Only mp3 pieces join into one stream. A server that answers in
 		// another format is asked for the whole reply in one piece instead.
-		first, ext, err = Speak(r.Context(), text)
+		first, ext, err = SpeakIn(r.Context(), text, voice)
 		pieces = pieces[:1]
 	}
 	if err != nil {
@@ -161,7 +178,7 @@ func startReadAloud(w http.ResponseWriter, r *http.Request, user string) {
 		delete(readAloudJobs, oldest)
 	}
 	job := &readAloudJob{user: user, first: first, firstType: SpeechMIME(ext),
-		rest: pieces[1:], expires: now.Add(readAloudTTL)}
+		rest: pieces[1:], voice: voice, expires: now.Add(readAloudTTL)}
 	job.cond = sync.NewCond(&job.mu)
 	readAloudJobs[key] = job
 	readAloudMu.Unlock()
@@ -267,7 +284,7 @@ func (j *readAloudJob) make(ctx context.Context, from int) {
 		j.mu.Unlock()
 	}()
 	for i := from; i < len(j.rest); i++ {
-		audio, ext, err := Speak(ctx, j.rest[i])
+		audio, ext, err := SpeakIn(ctx, j.rest[i], j.voice)
 		if err == nil && ext != ".mp3" {
 			err = fmt.Errorf("the server answered %s, which does not join an mp3 stream", ext)
 		}
@@ -285,6 +302,18 @@ func (j *readAloudJob) make(ctx context.Context, from int) {
 		j.cond.Broadcast()
 		j.mu.Unlock()
 	}
+}
+
+// serveVoices lists the speech server's voices for any signed-in user, for
+// the agent form's Voice chips; the admin's own list needs an administrator.
+// Empty while speech is off.
+func serveVoices(w http.ResponseWriter, r *http.Request) {
+	var voices []string
+	if cfg := GetSpeechConfig(); cfg.Enabled {
+		voices = SpeechVoices(r.Context(), cfg)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(VoiceChips(voices))
 }
 
 // readAloudText is the part of a reply worth reading aloud, cut at the end of
@@ -450,7 +479,7 @@ const readAloudJS = `(function(){
       }, 100);
     }
     fetch('` + ReadAloudPath + `', {method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({text: text}), signal: p.ctl.signal})
+        body: JSON.stringify({text: text, agent_id: ctx.agentId || ''}), signal: p.ctl.signal})
       .then(function(r) {
         if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
         return r.json();

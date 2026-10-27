@@ -84,6 +84,16 @@ func Speak(ctx context.Context, text string) ([]byte, string, error) {
 	return SpeakWith(ctx, GetSpeechConfig(), text)
 }
 
+// SpeakIn is Speak in a given voice, for an agent with a voice of its own.
+// An empty voice is the configured one.
+func SpeakIn(ctx context.Context, text, voice string) ([]byte, string, error) {
+	cfg := GetSpeechConfig()
+	if v := strings.TrimSpace(voice); v != "" {
+		cfg.Voice = v
+	}
+	return SpeakWith(ctx, cfg, text)
+}
+
 // SpeakWith is Speak against an explicit config, for the admin Test button,
 // which tries the form as typed before it is saved.
 func SpeakWith(ctx context.Context, cfg SpeechConfig, text string) ([]byte, string, error) {
@@ -184,4 +194,66 @@ func SpeechMIME(ext string) string {
 		return "audio/ogg"
 	}
 	return "audio/mpeg"
+}
+
+// SpeechVoices lists the voices cfg's server offers, from its GET
+// /audio/voices (Kokoro-FastAPI has one; OpenAI does not). Empty for a server
+// without the list, or one that cannot be reached: the voice is then typed.
+func SpeechVoices(ctx context.Context, cfg SpeechConfig) []string {
+	if strings.TrimSpace(cfg.Endpoint) == "" {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, "GET", strings.TrimRight(cfg.Endpoint, "/")+"/audio/voices", nil)
+	if err != nil {
+		return nil
+	}
+	if cfg.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+	}
+	resp, err := (&http.Client{}).Do(req)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	var body struct {
+		Voices []json.RawMessage `json:"voices"`
+	}
+	if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&body) != nil {
+		return nil
+	}
+	var out []string
+	for _, v := range body.Voices {
+		if name := speechVoiceName(v); name != "" {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// speechVoiceName reads one entry of a voice list: a bare name, or an object
+// naming it under id or name.
+func speechVoiceName(v json.RawMessage) string {
+	var name string
+	if json.Unmarshal(v, &name) == nil {
+		return strings.TrimSpace(name)
+	}
+	var obj struct{ ID, Name string }
+	if json.Unmarshal(v, &obj) == nil {
+		if obj.ID != "" {
+			return strings.TrimSpace(obj.ID)
+		}
+		return strings.TrimSpace(obj.Name)
+	}
+	return ""
+}
+
+// VoiceChips is a voice list in the shape a form field's ChipsSource reads.
+func VoiceChips(voices []string) []map[string]string {
+	out := make([]map[string]string, 0, len(voices))
+	for _, v := range voices {
+		out = append(out, map[string]string{"id": v, "name": v, "value": v})
+	}
+	return out
 }

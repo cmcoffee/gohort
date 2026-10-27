@@ -316,7 +316,7 @@ Audio.prototype.pause = function() { this.paused = true; };
 Audio.prototype.removeAttribute = function(a) { if (a === 'src') this.src = ''; };
 Audio.prototype.load = function() {};
 function link(url) { return {ok: true, json: function() { return Promise.resolve({url: url}); }}; }
-function reply(text) { return {bubble: {}, button: {textContent: '🔊', title: 'Read aloud'}, getText: function() { return text; }}; }
+function reply(text) { return {bubble: {}, agentId: 'a1', button: {textContent: '🔊', title: 'Read aloud'}, getText: function() { return text; }}; }
 var idle = '🔊';
 
 eval(readAloudJS);
@@ -325,6 +325,7 @@ eval(readAloudJS);
   var one = reply('Hello there.');
   registered.onclick(one);
   check('posts the reply', pending.length === 1 && pending[0].url === '/api/speak' && JSON.parse(pending[0].opts.body).text === 'Hello there.');
+  check('with the agent it is from', JSON.parse(pending[0].opts.body).agent_id === 'a1');
   await sleep(150);
   check('spins while the voice gets ready', /^[⠀-⣿]/.test(one.button.textContent));
   pending[0].res(link('/api/speak/abc'));
@@ -574,5 +575,81 @@ func TestAFailurePartwayIsNotRetriedPerListener(t *testing.T) {
 	}
 	if n := counts()[last]; n != 1 {
 		t.Errorf("the failing piece was asked for %d times", n)
+	}
+}
+
+// A reply is read aloud in its agent's voice, every piece of it; a reply with
+// no agent, or one the hook does not know, in the configured voice. The hook
+// is asked with the signed-in user, never the caller's say-so.
+func TestReadAloudSpeaksInTheAgentsVoice(t *testing.T) {
+	var mu sync.Mutex
+	voices := map[string]bool{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]string
+		json.NewDecoder(r.Body).Decode(&body)
+		mu.Lock()
+		voices[body["voice"]] = true
+		mu.Unlock()
+		w.Write(fakeMP3)
+	}))
+	defer srv.Close()
+	prev, prevHook := GetSpeechConfig(), ReadAloudVoice
+	SetSpeechConfig(SpeechConfig{Endpoint: srv.URL, Voice: "af_heart", Enabled: true})
+	var asked []string
+	ReadAloudVoice = func(user, agentID string) string {
+		asked = append(asked, user+"/"+agentID)
+		if user == "alice" && agentID == "a1" {
+			return "bm_george"
+		}
+		return ""
+	}
+	t.Cleanup(func() { SetSpeechConfig(prev); ReadAloudVoice = prevHook })
+
+	readAll := func(body string) map[string]bool {
+		mu.Lock()
+		voices = map[string]bool{}
+		mu.Unlock()
+		var start struct{ URL string }
+		json.Unmarshal(readAloudDo("POST", ReadAloudPath, "alice", body).Body.Bytes(), &start)
+		readAloudDo("GET", start.URL, "alice", "")
+		mu.Lock()
+		defer mu.Unlock()
+		return voices
+	}
+	text := strconv.Quote(longReply)
+	if got := readAll(`{"text":` + text + `,"agent_id":"a1"}`); len(got) != 1 || !got["bm_george"] {
+		t.Errorf("every piece in the agent's voice: %v", got)
+	}
+	if got := readAll(`{"text":` + text + `}`); len(got) != 1 || !got["af_heart"] {
+		t.Errorf("no agent, the configured voice: %v", got)
+	}
+	if got := readAll(`{"text":` + text + `,"agent_id":"a2"}`); len(got) != 1 || !got["af_heart"] {
+		t.Errorf("an agent without a voice, the configured voice: %v", got)
+	}
+	if strings.Join(asked, ",") != "alice/a1,alice/a2" {
+		t.Errorf("the hook should be asked about the signed-in user's agent only when one is named: %q", asked)
+	}
+}
+
+// Any signed-in user can list the voices, for an agent's Voice field; nobody
+// signed out can, and while speech is off there are none.
+func TestVoicesForSignedInUsers(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"voices":["af_heart","bm_george"]}`))
+	}))
+	defer srv.Close()
+	prev := GetSpeechConfig()
+	SetSpeechConfig(SpeechConfig{Endpoint: srv.URL, Enabled: true})
+	t.Cleanup(func() { SetSpeechConfig(prev) })
+	if w := readAloudDo("GET", ReadAloudPath+"/voices", "", ""); w.Code != http.StatusForbidden {
+		t.Errorf("signed out: %d", w.Code)
+	}
+	w := readAloudDo("GET", ReadAloudPath+"/voices", "bob", "")
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"value":"bm_george"`) {
+		t.Errorf("a signed-in user's list: %d %s", w.Code, w.Body.String())
+	}
+	SetSpeechConfig(SpeechConfig{Endpoint: srv.URL, Enabled: false})
+	if w := readAloudDo("GET", ReadAloudPath+"/voices", "bob", ""); strings.TrimSpace(w.Body.String()) != "[]" {
+		t.Errorf("speech off, no voices: %s", w.Body.String())
 	}
 }

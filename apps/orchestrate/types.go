@@ -149,6 +149,12 @@ type AgentRecord struct {
 	// chokepoint from the name the runner stamps on the reply.
 	TagName bool `json:"tag_name,omitempty"`
 
+	// Voice is the speech voice this agent talks in, when it answers a voice
+	// note and when its replies are read aloud in the web chat. Empty uses the
+	// deployment's voice (Admin > Capabilities > Speech). A name the speech
+	// server does not offer fails there, and the reply goes as text.
+	Voice string `json:"voice,omitempty"`
+
 	// Triggers are word/glob patterns (same shape as a skill's
 	// Triggers) matched against the user message each turn. When one
 	// matches, the framework injects a per-turn HINT next to the message —

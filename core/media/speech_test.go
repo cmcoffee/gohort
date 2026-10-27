@@ -120,3 +120,46 @@ func TestSpeechExt(t *testing.T) {
 		}
 	}
 }
+
+// SpeakIn speaks in the voice it is given, and in the configured one when
+// given none.
+func TestSpeakInAVoice(t *testing.T) {
+	var got []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]string
+		json.NewDecoder(r.Body).Decode(&body)
+		got = append(got, body["voice"])
+		w.Write(fakeMP3)
+	}))
+	defer srv.Close()
+	prev := GetSpeechConfig()
+	SetSpeechConfig(SpeechConfig{Endpoint: srv.URL, Voice: "af_heart", Enabled: true})
+	t.Cleanup(func() { SetSpeechConfig(prev) })
+	SpeakIn(context.Background(), "hi", "bm_george")
+	SpeakIn(context.Background(), "hi", "  ")
+	if len(got) != 2 || got[0] != "bm_george" || got[1] != "af_heart" {
+		t.Errorf("voices asked for: %q", got)
+	}
+	if GetSpeechConfig().Voice != "af_heart" {
+		t.Error("speaking in another voice must not change the configured one")
+	}
+}
+
+// The voice list reads a bare name or an object naming it, and is empty for a
+// server without one.
+func TestSpeechVoices(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/audio/voices" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Write([]byte(`{"voices":["af_heart",{"id":"bm_george"},{"name":"am_adam"},""]}`))
+	}))
+	defer srv.Close()
+	if got := SpeechVoices(context.Background(), SpeechConfig{Endpoint: srv.URL + "/v1"}); strings.Join(got, ",") != "af_heart,bm_george,am_adam" {
+		t.Errorf("voices: %q", got)
+	}
+	if got := SpeechVoices(context.Background(), SpeechConfig{Endpoint: srv.URL + "/none"}); len(got) != 0 {
+		t.Errorf("a server without a list: %q", got)
+	}
+}

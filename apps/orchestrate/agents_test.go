@@ -995,3 +995,17 @@ func TestHidingAnAgentAddsAShortcutNotReach(t *testing.T) {
 		t.Error("hiding an agent published it to the whole deployment")
 	}
 }
+
+// An agent's voice is set from its settings page like any other field.
+func TestAnAgentsVoiceIsSettable(t *testing.T) {
+	app, udb, user := newTestOrchestrate(t)
+	if _, err := saveAgent(udb, AgentRecord{ID: "a1", Owner: user, Name: "Ada", OrchestratorPrompt: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	if w := patchAs(app, user, "/api/agents/a1", `{"voice":"bm_george"}`); w.Code != http.StatusOK {
+		t.Fatalf("PATCH voice: %d %s", w.Code, w.Body.String())
+	}
+	if got, _ := loadAgent(udb, "a1"); got.Voice != "bm_george" {
+		t.Errorf("voice not saved: %q", got.Voice)
+	}
+}

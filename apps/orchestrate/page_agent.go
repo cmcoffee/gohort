@@ -9,6 +9,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/appagents"
+	"github.com/cmcoffee/gohort/core/media"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -426,6 +427,11 @@ func (ed *agentEditor) formFields() {
 			ui.FormField{Field: "tag_name", Type: "toggle", Label: "Sign outbound messages with this agent's name",
 				Help:   "Prefixes every message this agent sends over a channel with its name.",
 				Detail: "For example, \"[Assistant] on my way\". Lets the recipient tell the agent's texts apart from your own messages in the same thread. Off by default; turn it on for agents that reply in conversations you also text in."},
+			ui.FormField{Field: "voice", Type: "text", Label: "Voice",
+				Placeholder: "the deployment's voice",
+				Help:        "The voice this agent speaks in when it answers a voice note or a reply is read aloud.",
+				Detail:      "Pick one of the speech server's voices from the chips, or leave it blank for the deployment's voice (Admin, Capabilities, Speech). A voice the server does not offer makes the reply go as text, so preview it there first if unsure.",
+				ChipsSource: media.ReadAloudPath + "/voices"},
 
 			// Where it shows up is not here. Your own dashboard is the gear
 			// on its Agents section, which pins any of your agents; the

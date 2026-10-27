@@ -272,57 +272,10 @@ func (a *AdminApp) handleSpeechTest(c *jsonapi.Call, req media.SpeechConfig) (an
 }
 
 // handleSpeechVoices lists the voices the configured server offers, for the
-// Voice field's chips. Kokoro-FastAPI answers GET /audio/voices; a server
-// without that list gets no chips, and the field is typed by hand.
+// Voice field's chips. A server without a voice list gets no chips, and the
+// field is typed by hand.
 func (a *AdminApp) handleSpeechVoices(c *jsonapi.Call) (any, error) {
-	out := []map[string]string{}
-	cfg := a.storedSpeechConfig()
-	if cfg.Endpoint == "" {
-		return out, nil
-	}
-	ctx, cancel := context.WithTimeout(c.R.Context(), 8*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, "GET", strings.TrimRight(cfg.Endpoint, "/")+"/audio/voices", nil)
-	if err != nil {
-		return out, nil
-	}
-	if cfg.APIKey != "" {
-		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
-	}
-	resp, err := (&http.Client{}).Do(req)
-	if err != nil {
-		return out, nil
-	}
-	defer resp.Body.Close()
-	var body struct {
-		Voices []json.RawMessage `json:"voices"`
-	}
-	if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&body) != nil {
-		return out, nil
-	}
-	for _, v := range body.Voices {
-		if name := speechVoiceName(v); name != "" {
-			out = append(out, map[string]string{"id": name, "name": name, "value": name})
-		}
-	}
-	return out, nil
-}
-
-// speechVoiceName reads one entry of a voice list: a bare name, or an object
-// naming it under id or name.
-func speechVoiceName(v json.RawMessage) string {
-	var name string
-	if json.Unmarshal(v, &name) == nil {
-		return strings.TrimSpace(name)
-	}
-	var obj struct{ ID, Name string }
-	if json.Unmarshal(v, &obj) == nil {
-		if obj.ID != "" {
-			return strings.TrimSpace(obj.ID)
-		}
-		return strings.TrimSpace(obj.Name)
-	}
-	return ""
+	return media.VoiceChips(media.SpeechVoices(c.R.Context(), a.storedSpeechConfig())), nil
 }
 
 // handleImageGen serves /api/image-gen; registerMediaRoutes says what it is for.
