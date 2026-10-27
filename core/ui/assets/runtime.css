@@ -4210,12 +4210,16 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
     padding: 0.3rem 0.3rem 0.3rem 0.55rem !important;
     gap: 0.3rem; align-items: flex-end;
     border: 1px solid var(--border); border-radius: 1.4rem; background: var(--bg-1);
+    flex-wrap: wrap;
   }
   .ui-chat-input-area:focus-within { border-color: color-mix(in srgb, var(--accent) 70%, var(--border)); }
   .ui-chat-input-area .ui-chat-input {
     border: 0; background: transparent; resize: none;
     padding: 0.5rem 0.2rem; min-height: 2.25rem; line-height: 1.35;
+    flex: 1 0 100%; order: -1; /* Attach comes first in the markup */
   }
+  .ui-chat-input-area .ui-chat-send,
+  .ui-chat-input-area .ui-chat-cancel { margin-left: auto; }
   .ui-chat-input-area .ui-chat-input:focus { outline: none; }
   .ui-chat-input-area .ui-chat-iconbtn,
   .ui-chat-input-area .ui-chat-send {
@@ -5213,9 +5217,11 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   }
   /* The composer is one rounded pill holding the text and its buttons, as
    * phone chat apps draw it, inset from the edges and the home indicator.
-   * The text field drops its own box to be the pill's inside; one line at
-   * rest (rows, set by the panel), growing as the message does, with the
-   * buttons kept at its foot. No resize grabber: a finger cannot use it.
+   * The text field drops its own box to be the pill's inside and takes the
+   * whole first line, growing upward as the message does; the buttons sit
+   * on a line of their own beneath it, tools at the left and Send at the
+   * right, the way the phone chat apps lay a composer out. One wrapping row,
+   * so the panels need no second container for it. No resize grabber: a finger cannot use it.
    * The pill shows focus, since the field inside it no longer can. */
   /* The bottom margin is the home-indicator inset LESS 0.75rem, with
    * 0.4rem as the floor: the inset (about 34px on an iPhone) is a whole
@@ -5229,11 +5235,21 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
     gap: 0.3rem; align-items: flex-end;
     border: 1px solid var(--border); border-radius: 1.4rem;
     background: var(--bg-1);
+    flex-wrap: wrap;
   }
   .ui-agent .ui-agent-input-row:focus-within { border-color: color-mix(in srgb, var(--accent) 70%, var(--border)); }
   .ui-agent .ui-agent-input {
     resize: none; border: 0; background: transparent; box-shadow: none;
     padding: 0.5rem 0.2rem; min-height: 2.25rem; line-height: 1.35;
+    flex: 1 0 100%; order: -1;
+  }
+  .ui-agent .ui-agent-input-row .ui-agent-send,
+  .ui-agent .ui-agent-input-row .ui-agent-cancel { margin-left: auto; }
+  /* A page script's buttons (uiRegisterComposerAction) sit with Attach: round
+   * and quiet at rest, widening for a label such as a recording's time. */
+  .ui-agent .ui-agent-input-row .ui-agent-composer-act {
+    min-width: 2.25rem; height: 2.25rem; padding: 0 0.45rem;
+    background: transparent; border-color: transparent;
   }
   .ui-agent .ui-agent-input:focus { outline: none; }
   .ui-agent .ui-agent-input-row .ui-row-btn { border-radius: 999px; min-height: 2.25rem; }

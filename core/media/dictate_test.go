@@ -122,7 +122,7 @@ global.window = {
   uiRegisterComposerAction: function(o) {
     var ctx = {button: {textContent: o.label, title: o.title || ''}, input: input,
       insertText: function(t) { input.value += (input.value ? ' ' : '') + t; },
-      send: function() { sends++; }, onclick: o.onclick};
+      send: function() { sends++; }, onclick: o.onclick, first: o.first};
     actions.push(ctx);
     return ctx;
   },
@@ -165,6 +165,7 @@ eval(dictationJS);
   var speaker = actions[1];
   check('a mic button in the input row', mic && mic.button.textContent === '🎤');
   check('and the read-aloud switch beside it, on by default on a phone', speaker && speaker.button.textContent === '🔈');
+  check('both lead the row, under the thumb', mic.first === true && speaker.first === true);
 
   mic.onclick(mic);
   await sleep(10);

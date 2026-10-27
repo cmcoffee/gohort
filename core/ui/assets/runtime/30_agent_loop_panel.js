@@ -3004,12 +3004,15 @@
     inputRow.appendChild(cancelBtn);
 
     // uiRegisterComposerAction adds a button to the input row, before Send:
-    // { label, title?, onclick(ctx) } where ctx = { button, input,
+    // { label, title?, first?, onclick(ctx) } where ctx = { button, input,
     // insertText(text), send() }. insertText adds to what is already typed (a
     // space between) and resizes the box, so text an action produces lands
     // where typed text would, to be read over before it is sent; send() sends
     // what is in the box as the Send button does, for an action that means it
-    // to go at once. The button is
+    // to go at once. first puts the button ahead of Attach, at the start of
+    // the row's buttons, for the one most often reached for: on a phone that
+    // is the corner under the thumb. Buttons registered first keep the order
+    // they were registered in. The button is
     // added at once, so a page script registering after the panel is built
     // works; the ctx comes back, for an action that shows its own state on
     // its button or keeps a second button in step.
@@ -3033,7 +3036,19 @@
       btn.addEventListener('click', function() {
         try { opts.onclick(ctx); } catch (e) { /* isolate */ }
       });
-      inputRow.insertBefore(btn, sendBtn);
+      if (opts.first) {
+        // Ahead of Attach and of any button an earlier call did not put
+        // first, after the ones it did.
+        var anchor = sendBtn;
+        for (var k = 0; k < inputRow.childNodes.length; k++) {
+          var n = inputRow.childNodes[k];
+          if (n === attachBtn || (n.classList && n.classList.contains('ui-agent-composer-act') && !n.dataset.first)) { anchor = n; break; }
+        }
+        btn.dataset.first = '1';
+        inputRow.insertBefore(btn, anchor);
+      } else {
+        inputRow.insertBefore(btn, sendBtn);
+      }
       return ctx;
     };
     // Copy session no longer auto-appended here. Apps that want it

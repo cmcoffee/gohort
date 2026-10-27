@@ -289,12 +289,14 @@ const dictationJS = `(function(){
     window.uiRegisterMessageDecorator(function(m) {
       if (awaiting && m && m.role === 'assistant' && String(m.rawText || '').trim()) lastReply = m;
     });
-    var mic = window.uiRegisterComposerAction({label: micGlyph, title: 'Dictate', onclick: press});
+    // First in the row, the mic then its switch: the button most reached for
+    // sits in the corner under a phone user's thumb.
+    var mic = window.uiRegisterComposerAction({label: micGlyph, title: 'Dictate', first: true, onclick: press});
     if (mic && mic.input) {
       mic.input.addEventListener('input', function() { if (window.gohortReadAloudStop) window.gohortReadAloudStop(); });
     }
     if (window.gohortReadAloud) {
-      var speaker = window.uiRegisterComposerAction({label: speakerOn, onclick: function(ctx) {
+      var speaker = window.uiRegisterComposerAction({label: speakerOn, first: true, onclick: function(ctx) {
         setReadRepliesAloud(!readRepliesAloud());
         showSpeaker(ctx);
         markSpoken();
