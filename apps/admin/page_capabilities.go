@@ -38,7 +38,8 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 		{
 			Title:    "Speech (TTS)",
 			Subtitle: "Spoken replies to voice notes.",
-			Detail: "When someone sends a channel agent a voice note, the reply goes back as a voice note as well as text. " +
+			Detail: "When someone sends a channel agent a voice note, the reply goes back as a voice note. On iMessage it goes as the voice note alone, " +
+				"an audio attachment rather than a voice-memo bubble, which only Messages itself can send; services that cannot deliver audio get the text. " +
 				"Needs Audio Transcription too, so the agent can hear the note. Code and web addresses are left out of what is read aloud, " +
 				"a reply over about 2,500 characters goes as text only, and if the speech server fails the text still goes. " +
 				"The endpoint is an OpenAI-compatible /audio/speech server, such as Kokoro-FastAPI; gohort appends /audio/speech.",

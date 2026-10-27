@@ -97,7 +97,7 @@ func TestAReplyOfSeveralMessagesGoesOutAsSeveral(t *testing.T) {
 }
 
 // End to end: a voice note in, and the agent's spoken reply reaches the
-// connector's poll with the written one.
+// connector's poll on its own: the words once, as a voice note.
 func TestASpokenReplyReachesTheConnector(t *testing.T) {
 	prevRoot := RootDB
 	RootDB = &DBase{Store: kvlite.MemStore()}
@@ -116,8 +116,8 @@ func TestASpokenReplyReachesTheConnector(t *testing.T) {
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		if items := T.drainOutbox("imessage", "alice"); len(items) > 0 {
-			if len(items) != 1 || !strings.Contains(items[0].Text, "at noon") || len(items[0].Audios) != 1 || items[0].Audios[0] != "c3Bva2Vu" {
-				t.Errorf("the reply should go out with its voice note: %+v", items)
+			if len(items) != 1 || items[0].Text != "" || len(items[0].Audios) != 1 || items[0].Audios[0] != "c3Bva2Vu" {
+				t.Errorf("the reply should go out as its voice note alone: %+v", items)
 			}
 			return
 		}
@@ -125,5 +125,25 @@ func TestASpokenReplyReachesTheConnector(t *testing.T) {
 			t.Fatal("the reply never reached the outbox")
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// Only iMessage delivers audio, so only there does a voice note stand in for
+// the text; a reply with no voice note always keeps its text.
+func TestVoiceOnlyWhereAudioIsDelivered(t *testing.T) {
+	spoken := ChannelReply{Text: "at noon", Audios: []string{"aud"}}
+	cases := []struct {
+		svc   string
+		reply ChannelReply
+		want  bool
+	}{
+		{"imessage", spoken, true},
+		{"telegram", spoken, false},
+		{"imessage", ChannelReply{Text: "at noon"}, false},
+	}
+	for _, c := range cases {
+		if got := voiceOnly(c.svc, c.reply); got != c.want {
+			t.Errorf("voiceOnly(%q, audios=%d) = %v, want %v", c.svc, len(c.reply.Audios), got, c.want)
+		}
 	}
 }

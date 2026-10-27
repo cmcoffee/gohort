@@ -676,7 +676,12 @@ func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
 			logLoopCut(chatID, cut)
 		}
 		if hasOutput {
-			T.enqueueReply(OutboxItem{ChatID: chatID, Handle: handle, Service: svc, Text: reply.Text, Images: reply.Images, Videos: reply.Videos, Audios: reply.Audios, Agent: reply.AgentName, Owner: ch.Owner, Type: "reply"}, reply.More)
+			item := OutboxItem{ChatID: chatID, Handle: handle, Service: svc, Text: reply.Text, Images: reply.Images, Videos: reply.Videos, Audios: reply.Audios, Agent: reply.AgentName, Owner: ch.Owner, Type: "reply"}
+			more := reply.More
+			if voiceOnly(svc, reply) {
+				item.Text, more = "", nil
+			}
+			T.enqueueReply(item, more)
 		} else if OverflowChannelReply(in, strings.Join(append([]string{reply.Text}, reply.More...), "\n\n")) {
 			// No delivery path for this service — surface the reply to the agent's
 			// cortex/session instead of stranding it in an outbox nothing drains.
@@ -699,6 +704,15 @@ func (T *Bridges) enqueueReply(first OutboxItem, more []string) {
 		next.Text, next.Images, next.Videos, next.Audios = m, nil, nil, nil
 		T.enqueueOutbox(next)
 	}
+}
+
+// voiceOnly reports whether a reply goes out as its voice note alone. A person
+// who sent a voice note and got the same words back twice, spoken and written,
+// read the text as a duplicate. Only the iMessage connector delivers audio, so
+// every other service keeps the text. The written reply is still stored with
+// the conversation either way.
+func voiceOnly(svc string, reply ChannelReply) bool {
+	return len(reply.Audios) > 0 && svc == "imessage"
 }
 
 // serviceHasOutput reports whether a service can actually deliver outbound. A
