@@ -1,11 +1,7 @@
 package orchestrate
 
-// A bool cannot hold "not decided here". The difference between "off because
-// the default is off" and "off because I set it" only appears later, when the
-// default changes: one agent should follow and the other should not, and
-// nothing recorded which was which.
-
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -13,7 +9,13 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/snugforge/kvlite"
 )
+
+// A bool cannot hold "not decided here". The difference between "off because
+// the default is off" and "off because I set it" only appears later, when the
+// default changes: one agent should follow and the other should not, and
+// nothing recorded which was which.
 
 // The four answers, in the order they override each other.
 func TestWorkspaceReachResolvesInOrder(t *testing.T) {
@@ -198,5 +200,217 @@ func TestTheShareLayersKeepTheirOldDefaults(t *testing.T) {
 	}
 	if settingIsOn(RootDB, old, defaultShareCortex) {
 		t.Error("an agent holding its cortex back started sharing it")
+	}
+}
+
+// "Consult the Lead" is its own per-agent setting. It used to ride along with
+// the authoring toolset, so only authoring agents had it, and dispatched runs
+// (which build that toolset with no turn) got a copy that could only fail.
+
+func TestConsultTheLeadResolves(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	prev := RootDB
+	RootDB = db
+	t.Cleanup(func() { RootDB = prev })
+
+	plain := AgentRecord{ID: "a1"}
+	author := AgentRecord{ID: "seed-builder"}
+	if settingIsOn(db, plain, defaultConsultLead) {
+		t.Error("an ordinary agent does not consult by default")
+	}
+	if !settingIsOn(db, author, defaultConsultLead) {
+		t.Error("Builder, the authoring agent, keeps consulting, as it always has")
+	}
+	author.ConsultLead = settingOff
+	if settingIsOn(db, author, defaultConsultLead) {
+		t.Error("an explicit Off beats the old authoring default")
+	}
+	plain.ConsultLead = settingOn
+	if !settingIsOn(db, plain, defaultConsultLead) {
+		t.Error("any agent can be switched on")
+	}
+	// An administrator's limit of Off holds everybody on the worker.
+	setDeploymentSetting(db, deploymentMaximum, defaultConsultLead, settingOff)
+	if settingIsOn(db, plain, defaultConsultLead) || settingIsOn(db, AgentRecord{ID: "a3", Author: true}, defaultConsultLead) {
+		t.Error("the deployment limit keeps every agent from consulting")
+	}
+}
+
+func TestTheAuthoringToolsNoLongerCarryConsult(t *testing.T) {
+	for _, td := range builderAuthoringTools(&ToolSession{Username: "u"}, nil) {
+		if td.Tool.Name == "consult" {
+			t.Fatal("consult rides its own setting now; a dispatched run's copy could never work")
+		}
+	}
+}
+
+// One choice over two stored fields: each choice stores what it means, an
+// agent following the default stays following it when the form sends the
+// choice back unchanged, and the old fourth combination reads as the lead.
+func TestTheLeadChoiceRoundTrips(t *testing.T) {
+	prev := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB = prev })
+
+	plain := AgentRecord{ID: "a1", Name: "Plain"} // no authoring: default is off
+	if got := leadUseOf(RootDB, plain); got != leadUseOff {
+		t.Fatalf("an undecided plain agent reads %q", got)
+	}
+	a := plain
+	applyLeadUse(RootDB, &a, leadUseOff)
+	if a.ConsultLead != "" || a.LeadModel {
+		t.Errorf("choosing what it already has pinned it: %+v", a)
+	}
+	applyLeadUse(RootDB, &a, leadUseConsult)
+	if a.ConsultLead != settingOn || a.LeadModel || leadUseOf(RootDB, a) != leadUseConsult {
+		t.Errorf("consult: %+v", a)
+	}
+	applyLeadUse(RootDB, &a, leadUseLead)
+	if !a.LeadModel || leadUseOf(RootDB, a) != leadUseLead {
+		t.Errorf("lead: %+v", a)
+	}
+	applyLeadUse(RootDB, &a, leadUseOff)
+	if a.LeadModel || a.ConsultLead != "" || leadUseOf(RootDB, a) != leadUseOff {
+		t.Errorf("back to off should follow the default again: %+v", a)
+	}
+
+	// Planning on the lead is the lead with LeadPlans; leaving it for any
+	// other choice clears LeadPlans.
+	applyLeadUse(RootDB, &a, leadUsePlan)
+	if !a.LeadModel || !a.LeadPlans || leadUseOf(RootDB, a) != leadUsePlan {
+		t.Errorf("plan: %+v", a)
+	}
+	applyLeadUse(RootDB, &a, leadUseLead)
+	if !a.LeadModel || a.LeadPlans || leadUseOf(RootDB, a) != leadUseLead {
+		t.Errorf("plan back to lead: %+v", a)
+	}
+	applyLeadUse(RootDB, &a, leadUsePlan)
+	applyLeadUse(RootDB, &a, leadUseOff)
+	if a.LeadModel || a.LeadPlans {
+		t.Errorf("plan to off: %+v", a)
+	}
+	// LeadPlans without LeadModel is inert and reads as what it is.
+	if got := leadUseOf(RootDB, AgentRecord{ID: "a3", LeadPlans: true}); got == leadUsePlan {
+		t.Error("LeadPlans alone reads as planning on the lead")
+	}
+	// On Builder the choice means its own thing, the lead designing apps and a
+	// worker writing them (builder_app_split.go), and is named for it.
+	for _, o := range leadUseField(true, AgentRecord{ID: "seed-builder"}).Options {
+		if o.Value == leadUsePlan && !strings.Contains(o.Label, "Lead designs apps") {
+			t.Errorf("Builder's plan choice reads %q", o.Label)
+		}
+	}
+
+	// The fourth combination (lead on and consult on) is the lead.
+	both := AgentRecord{ID: "a2", LeadModel: true, ConsultLead: settingOn}
+	if got := leadUseOf(RootDB, both); got != leadUseLead {
+		t.Errorf("lead + consult reads %q", got)
+	}
+
+	// A scale from the worker alone to the lead for everything, the default
+	// said in its stop's own help line.
+	f := leadUseField(true, plain)
+	var order []string
+	for _, o := range f.Options {
+		order = append(order, o.Value)
+	}
+	if f.Field != "lead_use" || f.Type != "scale" || strings.Join(order, " ") != "off consult review plan lead" ||
+		!strings.Contains(f.Options[0].Help, "This is the default.") {
+		t.Errorf("the scale: %+v", f.Options)
+	}
+	if m := withEditorChoices(RootDB, plain); string(m["lead_use"]) != `"off"` {
+		t.Errorf("the form's lead_use: %s", m["lead_use"])
+	}
+}
+
+// The lead choice saves through PATCH, which is how the editor sends it, for
+// every value it offers: the translation writes lead_plans as well as
+// lead_model and consult_lead, and a field the allowlist did not know made
+// "Lead plans" (and Builder's "Lead designs apps") answer 400.
+func TestTheLeadChoiceSavesThroughPATCH(t *testing.T) {
+	T, udb, user := newTestOrchestrate(t)
+	pinRootDB(t)
+	for _, id := range []string{"seed-builder", ""} {
+		a, err := saveAgent(udb, AgentRecord{ID: id, Owner: user, Name: "Agent " + id, OrchestratorPrompt: "Help."})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, choice := range []string{leadUsePlan, leadUseLead, leadUseReview, leadUseOff, leadUseReview, leadUsePlan} {
+			w := httptest.NewRecorder()
+			body := `{"id":"` + a.ID + `","lead_use":"` + choice + `"}`
+			routed(T)(w, as(t, httptest.NewRequest(http.MethodPatch, "/api/agents?id="+a.ID, strings.NewReader(body)), user))
+			if w.Code != http.StatusOK {
+				t.Fatalf("%s: lead_use=%s answered %d: %s", a.ID, choice, w.Code, w.Body.String())
+			}
+			got, _ := loadAgent(udb, a.ID)
+			if leadUseOf(RootDB, got) != choice && !(choice == leadUseOff && leadUseOf(RootDB, got) == leadUseDefault(RootDB, got)) {
+				t.Errorf("%s: chose %s, reads %s", a.ID, choice, leadUseOf(RootDB, got))
+			}
+		}
+	}
+}
+
+// The editor's Reasoning section had Think mode and Effort, and a set Effort
+// decides Think, so Effort Off and Think Off were the same control twice. It
+// is one choice now, over the same two stored fields: Default, Off, or a
+// level. A forced On with no level was Default unless the admin turned the
+// route off, so it reads as Default and saves as following the route.
+
+func TestTheReasoningChoiceReadsAsTheAgentRuns(t *testing.T) {
+	for _, c := range []struct {
+		think, effort, want string
+	}{
+		{"", "", ""},
+		{"on", "", ""},
+		{"off", "", "off"},
+		{"off", "high", "high"}, // a set effort wins, as thinkMode has it
+		{"on", "off", "off"},
+	} {
+		if got := reasoningOf(AgentRecord{Think: c.think, Effort: c.effort}); got != c.want {
+			t.Errorf("think=%q effort=%q reads %q, want %q", c.think, c.effort, got, c.want)
+		}
+	}
+
+	// A form sending the choice back with the fields it loaded runs as it
+	// did, and a value that is no choice changes nothing.
+	a := AgentRecord{Think: "off", Effort: "high"}
+	applyEditorChoices(nil, &a, map[string]json.RawMessage{"reasoning": json.RawMessage(`"high"`)})
+	if a.thinkMode() != "on" || a.Effort != "high" {
+		t.Errorf("an unchanged choice changed how it runs: %+v", a)
+	}
+	applyEditorChoices(nil, &a, map[string]json.RawMessage{"reasoning": json.RawMessage(`"bogus"`)})
+	if a.Effort != "high" {
+		t.Errorf("a value that is no choice changed the record: %+v", a)
+	}
+
+	if m := withEditorChoices(nil, AgentRecord{Think: "off"}); string(m["reasoning"]) != `"off"` {
+		t.Errorf("the form's reasoning: %s", m["reasoning"])
+	}
+}
+
+func TestTheReasoningChoiceSavesThroughPATCH(t *testing.T) {
+	T, udb, user := newTestOrchestrate(t)
+	pinRootDB(t)
+	a, err := saveAgent(udb, AgentRecord{Owner: user, Name: "Agent", OrchestratorPrompt: "Help.", Think: "on"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ choice, mode, effort string }{
+		{"", "", ""}, // a forced on saved as Default follows the route
+		{"off", "off", "off"},
+		{"high", "on", "high"},
+		{"low", "on", "low"},
+		{"", "", ""},
+	} {
+		w := httptest.NewRecorder()
+		body := `{"reasoning":"` + c.choice + `"}`
+		routed(T)(w, as(t, httptest.NewRequest(http.MethodPatch, "/api/agents?id="+a.ID, strings.NewReader(body)), user))
+		if w.Code != http.StatusOK {
+			t.Fatalf("reasoning=%q answered %d: %s", c.choice, w.Code, w.Body.String())
+		}
+		got, _ := loadAgent(udb, a.ID)
+		if got.thinkMode() != c.mode || got.Effort != c.effort || reasoningOf(got) != c.choice {
+			t.Errorf("chose %q: think=%q effort=%q runs %q", c.choice, got.Think, got.Effort, got.thinkMode())
+		}
 	}
 }

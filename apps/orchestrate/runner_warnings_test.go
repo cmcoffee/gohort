@@ -1,0 +1,329 @@
+package orchestrate
+
+import (
+	"testing"
+
+	. "github.com/cmcoffee/gohort/core"
+)
+
+func TestClaimsSuccessWithoutAck(t *testing.T) {
+	yes := []string{
+		"Done! I've rebuilt the moltbook toolbox with proper POST actions.",
+		"The tool is live and ready to use.",
+		"Fixed — post_message is now a POST.",
+		"All set — the agent is up and running.",
+		// The changelog shape, verbatim from the app_def session that closed
+		// clean after three failed updates.
+		"Fixes applied:\n- Collision now uses proper bounding-box math\n- Pipe gap widened to 170px\n\nTry it now — navigate to /custom/flappy-lawyer/.",
+	}
+	no := []string{
+		"I didn't fix it yet — the toolbox still has post_message as a GET.",
+		"That failed with an error; let me try again.",
+		"I wasn't able to update it.",
+		"Here's a joke about robots.", // no success phrase at all
+	}
+	for _, s := range yes {
+		if !claimsSuccessWithoutAck(s) {
+			t.Errorf("expected a success-claim: %q", s)
+		}
+	}
+	for _, s := range no {
+		if claimsSuccessWithoutAck(s) {
+			t.Errorf("expected NOT a success-claim: %q", s)
+		}
+	}
+}
+
+func TestInjectFailedAuthoringWarning(t *testing.T) {
+	allErrored := []PersistedToolCall{
+		{Name: "tool_def", Err: "actions is required"},
+		{Name: "tool_def", Err: "required param sent NOWHERE"},
+	}
+
+	// All authoring errored + success claim → fires + appends a hidden note.
+	sess := &ChatSession{}
+	if !injectFailedAuthoringWarning(sess, allErrored, "Done! I've rebuilt the toolbox.") {
+		t.Fatal("expected the warning to fire (all authoring errored + success claim)")
+	}
+	if len(sess.Messages) != 1 || !sess.Messages[0].Hidden {
+		t.Fatalf("expected one hidden corrective note; got %d messages", len(sess.Messages))
+	}
+
+	// One authoring call SUCCEEDED → no warning.
+	mixed := []PersistedToolCall{
+		{Name: "tool_def", Err: "first try failed"},
+		{Name: "tool_def", Result: "Created toolbox tool"},
+	}
+	if injectFailedAuthoringWarning(&ChatSession{}, mixed, "Done! Created it.") {
+		t.Fatal("must NOT fire when an authoring call succeeded")
+	}
+
+	// Errored but the reply acknowledges the failure → no warning.
+	if injectFailedAuthoringWarning(&ChatSession{}, allErrored, "That didn't work — the update errored.") {
+		t.Fatal("must NOT fire when the reply acknowledges the failure")
+	}
+
+	// No authoring tool fired → no warning.
+	if injectFailedAuthoringWarning(&ChatSession{}, []PersistedToolCall{{Name: "fetch_url", Err: "x"}}, "Done!") {
+		t.Fatal("must NOT fire when no authoring tool fired")
+	}
+
+	// The live app_def case: a READ succeeded, every WRITE errored, and the
+	// reply listed the fixes as applied. A successful read must not vouch for
+	// a failed write.
+	readOKWritesFailed := []PersistedToolCall{
+		{Name: "app_def", Args: map[string]any{"action": "get", "id": "flappy-lawyer"}, Result: `{"slug":"flappy-lawyer"}`},
+		{Name: "app_def", Args: map[string]any{"action": "update", "id": "flappy-lawyer"}, Err: `section 1: unknown section kind ""`},
+		{Name: "app_def", Args: map[string]any{"action": "update", "id": "flappy-lawyer"}, Err: "section 1: an html section needs an `html` field"},
+	}
+	sess = &ChatSession{}
+	if !injectFailedAuthoringWarning(sess, readOKWritesFailed, "Fixes applied — the collision math is corrected and the gap is wider. Try it now.") {
+		t.Fatal("expected the warning to fire: every app_def WRITE errored (the get doesn't count)")
+	}
+	if len(sess.Messages) != 1 || !sess.Messages[0].Hidden {
+		t.Fatalf("expected one hidden corrective note; got %d messages", len(sess.Messages))
+	}
+
+	// A read-only turn claims nothing was built, so it can't be caught here.
+	readsOnly := []PersistedToolCall{
+		{Name: "app_def", Args: map[string]any{"action": "get"}, Err: "no matching app"},
+		{Name: "app_def", Args: map[string]any{"action": "list"}, Err: "boom"},
+	}
+	if injectFailedAuthoringWarning(&ChatSession{}, readsOnly, "Done! Updated the app.") {
+		t.Fatal("must NOT fire when no authoring WRITE was attempted")
+	}
+}
+
+func TestAuthoringCallIsWrite(t *testing.T) {
+	write := []PersistedToolCall{
+		{Name: "create_agent"}, // no action arg at all
+		{Name: "app_def", Args: map[string]any{"action": "update"}},   //
+		{Name: "app_def", Args: map[string]any{"action": " Create "}}, // spacing/case
+		{Name: "tool_def", Args: map[string]any{"action": "delete"}},  //
+		{Name: "app_def", Args: map[string]any{"action": ""}},         // unreadable → assume write
+		{Name: "app_def", Args: map[string]any{"action": float64(1)}}, // wrong type → assume write
+	}
+	for _, tc := range write {
+		if !authoringCallIsWrite(tc) {
+			t.Errorf("expected a write: %+v", tc.Args)
+		}
+	}
+	read := []string{"get", "list", "help", "test", "verify"}
+	for _, a := range read {
+		if authoringCallIsWrite(PersistedToolCall{Name: "app_def", Args: map[string]any{"action": a}}) {
+			t.Errorf("action %q is a read, not a write", a)
+		}
+	}
+}
+
+func TestPromisesAuthoringWithoutAction(t *testing.T) {
+	yes := []string{
+		// Both replies from the live vapi session that stalled.
+		"Great! I will now create the `vapi_calls` toolbox with the specified actions.",
+		"I can help you build a toolbox for Vapi calls. I'll create actions for placing a call, hanging up a call, and getting transcripts.",
+		"Let me set up the agent with those three tools.",
+		"Next I'll add the get_transcript action to the toolbox.",
+	}
+	no := []string{
+		"I'll use the get_weather tool to check that.",    // dispatch, no authoring verb
+		"I've created the toolbox and verified it works.", // past tense — sibling guard's job
+		"The toolbox already exists, so nothing to do.",
+		"Here's a joke about robots.",
+		"I'll look up the API docs first.", // no authoring object
+		// Three signals present but split across sentences.
+		"I'll check the credential. Creating a toolbox is the next step for someone.",
+	}
+	for _, s := range yes {
+		if !promisesAuthoringWithoutAction(s) {
+			t.Errorf("expected an authoring promise: %q", s)
+		}
+	}
+	for _, s := range no {
+		if promisesAuthoringWithoutAction(s) {
+			t.Errorf("expected NOT an authoring promise: %q", s)
+		}
+	}
+}
+
+func TestInjectPromisedAuthoringWarning(t *testing.T) {
+	const promise = "Great! I will now create the vapi_calls toolbox with the specified actions."
+
+	// The live failure: check_credential fired, then prose. No plan, no error.
+	sess := &ChatSession{}
+	calls := []PersistedToolCall{{Name: "check_credential", Result: "READY"}}
+	if !injectPromisedAuthoringWarning(sess, calls, promise) {
+		t.Fatal("expected the warning to fire (promise + zero authoring calls)")
+	}
+	if len(sess.Messages) != 1 || !sess.Messages[0].Hidden {
+		t.Fatalf("expected one hidden corrective note; got %d messages", len(sess.Messages))
+	}
+
+	// An authoring call DID fire → the promise was kept.
+	kept := []PersistedToolCall{{Name: "tool_def", Result: "Created toolbox tool"}}
+	if injectPromisedAuthoringWarning(&ChatSession{}, kept, promise) {
+		t.Fatal("must NOT fire when an authoring tool fired")
+	}
+
+	// Waiting on approval or laying down a plan card — the promise is about a
+	// future turn, not this one.
+	for _, name := range []string{"ask_user", "plan_set"} {
+		if injectPromisedAuthoringWarning(&ChatSession{}, []PersistedToolCall{{Name: name}}, promise) {
+			t.Fatalf("must NOT fire when %s ended the turn", name)
+		}
+	}
+
+	// Proposing, not promising.
+	if injectPromisedAuthoringWarning(&ChatSession{}, calls, "I can build a vapi toolbox — should I create it now?") {
+		t.Fatal("must NOT fire on a question")
+	}
+
+	// Empty reply (streamed nothing) → nothing to correct.
+	if injectPromisedAuthoringWarning(&ChatSession{}, calls, "  ") {
+		t.Fatal("must NOT fire on an empty reply")
+	}
+}
+
+func TestMigrationTargetAgent(t *testing.T) {
+	// Authoring for another agent → the draft follows the focus, not the
+	// agent running the turn (the Builder case).
+	if got := migrationTargetAgent("seed-builder", "agent-vapi"); got != "agent-vapi" {
+		t.Errorf("authoring focus must win: got %q", got)
+	}
+	// No focus → the running agent keeps its own work.
+	if got := migrationTargetAgent("seed-chat", ""); got != "seed-chat" {
+		t.Errorf("no focus → running agent: got %q", got)
+	}
+	// Neither known → caller leaves the draft alone.
+	if got := migrationTargetAgent("", ""); got != "" {
+		t.Errorf("expected empty target: got %q", got)
+	}
+}
+
+func TestIsTrialTool(t *testing.T) {
+	sess := &ToolSession{}
+	if err := sess.AppendTempTool(&TempTool{Name: "draft_tool", Trial: true}); err != nil {
+		t.Fatalf("seed trial: %v", err)
+	}
+	if err := sess.AppendTempTool(&TempTool{Name: "kept_tool"}); err != nil {
+		t.Fatalf("seed confirmed: %v", err)
+	}
+	if !isTrialTool(sess, "draft_tool") {
+		t.Error("expected draft_tool to be trial")
+	}
+	if isTrialTool(sess, "kept_tool") {
+		t.Error("confirmed tool must not read as trial")
+	}
+	// Unknown name and nil session fall back to the pre-existing behavior.
+	if isTrialTool(sess, "nope") || isTrialTool(nil, "draft_tool") {
+		t.Error("absent record must report false")
+	}
+}
+
+// Every agent but Builder builds by handing the work to Builder, so a handoff
+// keeps an "I'll create that tool" promise. A dispatch to anyone else does not.
+func TestAHandoffToBuilderKeepsTheAuthoringPromise(t *testing.T) {
+	const promise = "I'll have Builder create that tool for you now."
+	for _, tc := range []PersistedToolCall{
+		{Name: "hand_to_builder"},
+		{Name: "request_build"},
+		{Name: "agents", Args: map[string]any{"action": "run", "agent": "Builder"}},
+		{Name: "agents", Args: map[string]any{"action": "run", "agent": "seed-builder"}},
+	} {
+		if injectPromisedAuthoringWarning(&ChatSession{}, []PersistedToolCall{tc}, promise) {
+			t.Errorf("a handoff to Builder (%s %v) was treated as a broken promise", tc.Name, tc.Args)
+		}
+	}
+	other := PersistedToolCall{Name: "agents", Args: map[string]any{"action": "run", "agent": "Comedian"}}
+	if !injectPromisedAuthoringWarning(&ChatSession{}, []PersistedToolCall{other}, promise) {
+		t.Error("dispatching some other agent does not build the tool, so the warning should still fire")
+	}
+}
+
+// The live Builder transcript: three turns insisting tool_def was
+// inaccessible and telling the user to report a platform error, with no
+// tool_def call ever emitted. tool_def is in builderAuthoringTools().
+func TestFalseUnavailabilityFiresOnBuilderClaim(t *testing.T) {
+	builder := AgentRecord{ID: "seed-builder"}
+	replies := []string{
+		"I made a mistake and tried to use tool_def directly, which is not in my available tools.",
+		"It appears I am unable to access the tool_def function, which is essential for creating tools.",
+		"I cannot access tool_def — this is a framework problem on my end that I need to report.",
+		"I am unable to use tool_def at this time.",
+	}
+	for _, reply := range replies {
+		sess := &ChatSession{}
+		if !injectFalseUnavailabilityWarning(sess, nil, reply, builder) {
+			t.Errorf("no warning for %q", reply)
+			continue
+		}
+		if len(sess.Messages) != 1 || !sess.Messages[0].Hidden {
+			t.Errorf("expected one hidden corrective note for %q", reply)
+		}
+	}
+}
+
+// An honest report of a real failure must not be rewritten as a
+// hallucination — the tool DID run and said something.
+func TestFalseUnavailabilityIgnoresRealCallResults(t *testing.T) {
+	builder := AgentRecord{ID: "seed-builder"}
+	calls := []PersistedToolCall{{Name: "tool_def", Err: "validation failed"}}
+	if injectFalseUnavailabilityWarning(&ChatSession{}, calls,
+		"I cannot use tool_def for this — it rejected the params.", builder) {
+		t.Error("fired even though tool_def actually ran this turn")
+	}
+}
+
+// An agent without authoring rights genuinely lacks these tools, so the
+// same sentence is true and must pass.
+func TestFalseUnavailabilityRespectsAgentsWithoutAuthoring(t *testing.T) {
+	plain := AgentRecord{ID: "some-agent"}
+	if injectFalseUnavailabilityWarning(&ChatSession{}, nil,
+		"I do not have access to tool_def.", plain) {
+		t.Error("fired for an agent that really has no authoring tools")
+	}
+}
+
+// Promises, honest error reports, and unrelated prose must stay clear.
+func TestFalseUnavailabilityDoesNotOverfire(t *testing.T) {
+	builder := AgentRecord{ID: "seed-builder"}
+	clean := []string{
+		"I will call tool_def now to update the tool.",
+		"tool_def returned an error about the params.",
+		"Let me use tool_def to fix this.",
+		"I cannot access the remote API without a credential.",
+		"The get_weather tool is not available to me.",
+		"",
+		"   ",
+	}
+	for _, reply := range clean {
+		if injectFalseUnavailabilityWarning(&ChatSession{}, nil, reply, builder) {
+			t.Errorf("over-fired on %q", reply)
+		}
+	}
+}
+
+// The name and the inability phrase must share a sentence, or an
+// unrelated complaint next to a mention of the tool would trip it.
+func TestFalseUnavailabilityRequiresSameSentence(t *testing.T) {
+	builder := AgentRecord{ID: "seed-builder"}
+	if injectFalseUnavailabilityWarning(&ChatSession{}, nil,
+		"I will use tool_def. I cannot access the appliance over SSH.", builder) {
+		t.Error("matched across two unrelated sentences")
+	}
+}
+
+func TestFalselyClaimedUnavailableNamesTheTool(t *testing.T) {
+	cases := map[string]string{
+		"tool_def is not available to me":          "tool_def",
+		"I am unable to access create_agent":       "create_agent",
+		"I don't have access to update_agent here": "update_agent",
+		"I cannot use skill_def":                   "skill_def",
+		"everything is fine":                       "",
+		"I will call tool_def":                     "",
+	}
+	for reply, want := range cases {
+		if got := falselyClaimedUnavailable(reply); got != want {
+			t.Errorf("falselyClaimedUnavailable(%q) = %q, want %q", reply, got, want)
+		}
+	}
+}

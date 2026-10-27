@@ -473,7 +473,13 @@ func listReferenceSourcesToolDef(user string) AgentToolDef {
 // renderReferenceSources is the tool body, split out so it is testable without a
 // session.
 func renderReferenceSources(user string) string {
-	groups := ReferenceGroups(user)
+	return formatReferenceSources(user, ReferenceGroups(user))
+}
+
+// formatReferenceSources is the listing of groups, apart from where they come
+// from: the registry is the whole process's, so a test of the empty listing
+// cannot rely on it being empty.
+func formatReferenceSources(user string, groups []ReferenceGroup) string {
 	if len(groups) == 0 {
 		return "No reference sources are available to this user. Servitor systems appear once one is added; file stores once an admin registers a folder (and the user is allowed to reach it); document spaces once connected."
 	}

@@ -1,10 +1,5 @@
 package orchestrate
 
-// The structured editor. Its whole claim is that somebody who does not
-// know the vocabulary can build a machine, so the tests are about
-// whether the form carries the concepts and whether a partial edit is
-// safe — not about JSON shapes.
-
 import (
 	"encoding/json"
 	"net/http"
@@ -19,6 +14,11 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/ui"
 )
+
+// The structured editor. Its whole claim is that somebody who does not
+// know the vocabulary can build a machine, so the tests are about
+// whether the form carries the concepts and whether a partial edit is
+// safe — not about JSON shapes.
 
 func editorFixture(t *testing.T) (*OrchestrateApp, Database, string, MachineDef) {
 	t.Helper()
@@ -1973,6 +1973,113 @@ func TestStepControlsHideWhereTheRunnerIgnoresThem(t *testing.T) {
 	for _, f := range metaPanel(def, "api/machines/x", editorCatalog{}).Fields {
 		if f.Field == "route_each_message" && f.ShowWhen != "!unattended" {
 			t.Errorf("route_each_message does nothing on a job, got %q", f.ShowWhen)
+		}
+	}
+}
+
+// A form field with no matching key in the record it edits renders EMPTY over
+// stored data, and posts that emptiness back on the next save.
+//
+// The live report: a phase's header said "Withheld tools (2)" — computed
+// server-side from p.Deny — above a checklist with nothing ticked, because
+// phaseRecord did not carry "deny". The two tools really were withheld, the
+// prompt block said so, and the editor showed a clear list. Saving anything
+// else in that phase would then have written the empty list back.
+//
+// Asserted over the WHOLE form rather than for deny alone: this is a class, not
+// an incident, and the next field added to the form will be added by somebody
+// who did not read this comment.
+func TestEveryPhaseFormFieldHasARecordKey(t *testing.T) {
+	p := MachinePhase{
+		Name: "assess", Desc: "work it out", Prompt: "do the thing", Resident: true,
+		Tools: []string{"web_search"}, Deny: []string{"fetch_url", "browse_page"},
+		Reach: ReachRead, Guard: "the user moved on", GuardTo: "answer",
+		Think: "on", Model: "lead", Next: "answer", Keep: []string{"findings"},
+	}
+	def := MachineDef{Name: "m", Start: "assess", Phases: []MachinePhase{p, {Name: "answer", Resident: true, Prompt: "answer"}}}
+
+	rec := phaseRecord(p)
+	var missing []string
+	for _, f := range phaseFieldsFor(def, p, editorCatalog{}) {
+		if f.Field == "" || f.Type == "header" {
+			continue
+		}
+		if _, ok := rec[f.Field]; !ok {
+			missing = append(missing, f.Field)
+		}
+	}
+	if len(missing) > 0 {
+		t.Errorf("form fields with no record key render empty over stored data and post the emptiness back on save: %v", missing)
+	}
+}
+
+// The specific regression, stated plainly so a future edit that drops the key
+// again fails with the reason rather than with a list.
+func TestTheDenyListReachesTheFormItIsEditedIn(t *testing.T) {
+	rec := phaseRecord(MachinePhase{Name: "a", Deny: []string{"fetch_url", "browse_page"}})
+	v, ok := rec["deny"]
+	if !ok {
+		t.Fatal("the withheld list must reach the checklist that edits it, or the editor shows it empty and then saves it empty")
+	}
+	names, _ := v.([]string)
+	if len(names) != 2 {
+		t.Errorf("want both withheld names, got %v", v)
+	}
+}
+
+// A tool step has no model, so nothing in the tool-limit panel can apply to
+// it: runToolPhase builds its own pool of exactly the named tool. The editor
+// offered three choices about what a model may reach anyway, one labelled
+// "this step only decides", under a control reading "No model, no tokens".
+
+func TestToolStepHidesToolLimitsWhenNothingIsStored(t *testing.T) {
+	if phaseShowsTools(MachinePhase{Name: "search", Tool: "search_acme_knowledge"}) {
+		t.Error("a tool step with nothing stored must not offer controls that do nothing")
+	}
+}
+
+// Kept when something IS stored: it takes effect again the moment the tool is
+// cleared, and a restriction nobody can see is worse than one they can.
+func TestToolStepKeepsStoredLimitsVisible(t *testing.T) {
+	for _, p := range []MachinePhase{
+		{Name: "a", Tool: "x", Tools: []string{"search_docs"}},
+		{Name: "b", Tool: "x", Reach: ReachRead},
+	} {
+		if !phaseShowsTools(p) {
+			t.Errorf("a stored limit must stay visible on a tool step: %+v", p)
+		}
+	}
+}
+
+func TestKeptLimitsSayTheyAreNotInEffect(t *testing.T) {
+	fields := phaseToolFields(MachinePhase{
+		Name: "a", Tool: "search_acme_knowledge", Reach: ReachNone,
+	}, editorCatalog{})
+	var head, help string
+	for _, f := range fields {
+		if f.Type == "header" {
+			head, help = f.Label, f.Help
+			break
+		}
+	}
+	if !strings.Contains(head, "Kept, not applied") {
+		t.Errorf("first header should say the panel is inert, got %q", head)
+	}
+	if !strings.Contains(help, "search_acme_knowledge") {
+		t.Errorf("should name the tool the step calls: %q", help)
+	}
+	if !strings.Contains(help, "clear the tool above") {
+		t.Errorf("should say what to change: %q", help)
+	}
+}
+
+func TestModelStepStillShowsItsToolLimits(t *testing.T) {
+	if !phaseShowsTools(MachinePhase{Name: "think"}) {
+		t.Error("a model step must still get the tool-limit panel")
+	}
+	for _, f := range phaseToolFields(MachinePhase{Name: "think", Reach: ReachRead}, editorCatalog{}) {
+		if f.Type == "header" && strings.Contains(f.Label, "Kept, not applied") {
+			t.Error("a model step's limits are in effect and must not say otherwise")
 		}
 	}
 }

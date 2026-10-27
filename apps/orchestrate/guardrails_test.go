@@ -2,16 +2,21 @@ package orchestrate
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
 	"sync"
+	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/prompts"
 	"github.com/cmcoffee/snugforge/kvlite"
-	"os"
-	"regexp"
-	"sort"
-	"strings"
-	"testing"
 )
 
 // Guardrails are TERMINAL by default: a violation ends the turn and the rejection
@@ -1161,5 +1166,382 @@ func TestWardenVerdictsByNumber(t *testing.T) {
 	old := parseWardenVerdicts(`{"verdicts":[{"rule":"no jokes","status":"comply","reason":"ok"}]}`, rules...)
 	if len(old) == 0 || old[0].Rule != "no jokes" {
 		t.Errorf("text-named verdict: %+v", old)
+	}
+}
+
+// How diligent a guardrail check is. The deployment's Always rules are checked
+// at the depth an administrator set for them, and blocked on a failed check if
+// the administrator said so, whatever the agent's owner chose for their own.
+
+func TestTheCheckReadsAsCarefullyAsItsRulesAsk(t *testing.T) {
+	restore := withGlobalRules(t, "Never discuss the lunar calendar.")
+	defer restore()
+	own := AgentRecord{Guardrails: "never mention salary"}
+	globals := enforcedGuardrailRules(own)
+	var ownOnly []guardrailRule
+	for _, r := range globals {
+		if !r.Global {
+			ownOnly = append(ownOnly, r)
+		}
+	}
+
+	if d := wardenDepth(own, ownOnly); d != prompts.RuleDepthQuick {
+		t.Errorf("an agent's own rules default to quick, as they always ran: %s", d)
+	}
+	if d := wardenDepth(own, globals); d != prompts.RuleDepthQuick {
+		t.Errorf("the deployment's rules default to quick too: %s", d)
+	}
+	prompts.SetGlobalRulesDepth(prompts.RuleDepthModerate)
+	if d := wardenDepth(own, globals); d != prompts.RuleDepthModerate {
+		t.Errorf("with the deployment's rules in the check, its depth applies: %s", d)
+	}
+	careful := own
+	careful.GuardrailDepth = prompts.RuleDepthThorough
+	if d := wardenDepth(careful, globals); d != prompts.RuleDepthThorough {
+		t.Errorf("judging both never lowers an owner's more careful choice: %s", d)
+	}
+	prompts.SetGlobalRulesDepth(prompts.RuleDepthQuick)
+	if d := wardenDepth(own, globals); d != prompts.RuleDepthQuick {
+		t.Errorf("the administrator's quick applies: %s", d)
+	}
+
+	// The depth reaches the checker as a reasoning level.
+	prompts.SetGlobalRulesDepth(prompts.RuleDepthModerate)
+	llm := &FakeLLM{Turns: []FakeTurn{{Content: `{"verdicts":[{"rule":"Never discuss the lunar calendar.","status":"comply","reason":"unrelated"}]}`}}}
+	turn := guardTurn(t, llm, AgentRecord{Name: "X"})
+	if turn.guardrailCheckHook()(guardHookPreOutput, "The weather is fine.").Blocked {
+		t.Fatal("a complying reply was blocked")
+	}
+	cfg := llm.Config(0)
+	if cfg.Think == nil || !*cfg.Think || cfg.Effort != "low" {
+		t.Errorf("a moderate check reasons briefly: think=%v effort=%q", cfg.Think, cfg.Effort)
+	}
+}
+
+// An owner's agent that lets a failed check through does not get to let a
+// failed check on the DEPLOYMENT's rules through.
+func TestAFailedCheckOnGovernanceRulesBlocksWhateverTheOwnerChose(t *testing.T) {
+	restore := withGlobalRules(t, "Never discuss the lunar calendar.")
+	defer restore()
+	turn := guardTurn(t, wardenDown(), AgentRecord{Name: "X"}) // fails open on its own rules
+	if !turn.guardrailCheckHook()(guardHookPreOutput, "anything").Blocked {
+		t.Fatal("a failed check on the deployment's rules should block by default")
+	}
+	prompts.SetGlobalRulesFailOpen(true)
+	if turn.guardrailCheckHook()(guardHookPreOutput, "anything").Blocked {
+		t.Error("an administrator who chose to let it through is obeyed")
+	}
+	// Own rules alone keep the owner's choice.
+	prompts.SetGlobalRules(nil)
+	own := guardTurn(t, wardenDown(), AgentRecord{Name: "X", Guardrails: "r", GuardrailHooks: []string{"pre_action"}})
+	if own.guardrailCheckHook()(guardHookPreAction, "do the thing").Blocked {
+		t.Error("with no deployment rule in the check, the owner's fail-open stands")
+	}
+}
+
+func TestGuardrailDepthIsAnAgentSettingWithADeploymentLimit(t *testing.T) {
+	s, ok := triSettings[defaultGuardrailDepth]
+	if !ok || s.framework != prompts.RuleDepthQuick || strings.Join(s.strictness, ",") != "quick,moderate,thorough" {
+		t.Fatalf("depth should be a registered setting, quick by default, ordered quick to thorough: %+v", s)
+	}
+	if patchAgentFields["guardrail_depth"] {
+		t.Error("guardrail fields never go through the general PATCH")
+	}
+}
+
+// The depth is saved through its own owner-only endpoint, and a whole-record
+// save from an agent's edit paths cannot change it.
+func TestGuardrailDepthHasItsOwnOwnerOnlyEndpoint(t *testing.T) {
+	app, req, udb := authedApp(t)
+	if _, err := saveAgent(udb, AgentRecord{ID: "agent-1", Owner: "alice", Name: "Helper", OrchestratorPrompt: "p", Guardrails: "never mention salary"}); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	routed(app)(w, req(http.MethodPost, "/api/agents/agent-1/guardrail-depth", map[string]any{"guardrail_depth": "thorough"}))
+	if w.Code != http.StatusOK {
+		t.Fatalf("set: %d %s", w.Code, w.Body.String())
+	}
+	rec, _ := loadAgent(udb, "agent-1")
+	if rec.GuardrailDepth != prompts.RuleDepthThorough || rec.Guardrails != "never mention salary" {
+		t.Fatalf("depth set, rules untouched: %+v", rec)
+	}
+	w = httptest.NewRecorder()
+	routed(app)(w, req(http.MethodPost, "/api/agents/agent-1/guardrail-depth", map[string]any{"guardrail_depth": "extreme"}))
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("an unknown depth is refused, got %d", w.Code)
+	}
+}
+
+// Whether a reply is held until its check clears is decided per kind of rule:
+// the agent's own rules by its owner's hooks, the deployment's by Governance's
+// "when replies are checked". Any Governance rule used to stop every agent
+// streaming.
+func TestReplyHoldingFollowsWhoseRulesAndWhen(t *testing.T) {
+	restore := withGlobalRules(t, "Never discuss the lunar calendar.")
+	defer restore()
+	fast := AgentRecord{Guardrails: "never mention salary", GuardrailHooks: []string{guardHookPreInput, guardHookPreAction}}
+	bare := AgentRecord{}
+
+	if !agentHasOutputGuardrail(bare) || !agentHasOutputGuardrail(fast) {
+		t.Error("by default the deployment's rules hold replies until checked")
+	}
+	prompts.SetGlobalRulesStreaming(true)
+	if agentHasOutputGuardrail(bare) || agentHasOutputGuardrail(fast) {
+		t.Error("checked while streaming: agents whose own rules don't judge output stream again")
+	}
+	if hooks := resolveGuardrailHooks(bare); !hooks[guardHookPreOutput] {
+		t.Error("streaming changes WHEN the reply is checked, not whether")
+	}
+	balanced := fast
+	balanced.GuardrailHooks = nil // the default: request, action and reply
+	if !agentHasOutputGuardrail(balanced) {
+		t.Error("an agent whose own rules judge output still holds its replies")
+	}
+}
+
+// The rule editor's markers, driven rather than read: a rule tied to two tools
+// in the editor is a rule the server binds to both, and taking one off leaves
+// the other. The editor used to hold one tool, so a second replaced the first.
+
+func TestTheEditorTiesARuleToSeveralTools(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node not installed")
+	}
+	src := readFile(t, "assets/web_assets.html")
+	const open, close = "          var G_BLOCK = 'block'", "          function gSlug(s) {"
+	i, j := strings.Index(src, open), strings.Index(src, close)
+	if i < 0 || j < i {
+		t.Fatal("the rule marker helpers have moved; this test no longer reads them")
+	}
+	harness := src[i:j] + `
+var line = '#web_search #fetch_url ? never put an internal name in a search';
+var out = {tools: gTools(line), body: gBody(line), mode: gMode(line)};
+out.both = gCompose(out.body, out.mode, false, [], out.tools);
+out.one = gCompose(out.body, out.mode, false, [], out.tools.filter(function(t) { return t !== 'web_search'; }));
+out.none = gCompose(out.body, out.mode, false, [], []);
+out.dupes = gTools('#a #A #a- never');
+console.log(JSON.stringify(out));
+`
+	tmp := filepath.Join(t.TempDir(), "markers.js")
+	if err := os.WriteFile(tmp, []byte(harness), 0644); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := exec.Command("node", tmp).CombinedOutput()
+	if err != nil {
+		t.Fatalf("%v\n%s", err, raw)
+	}
+	var got struct {
+		Tools           []string
+		Body, Mode      string
+		Both, One, None string
+		Dupes           []string
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("%v: %s", err, raw)
+	}
+	if strings.Join(got.Tools, ",") != "web_search,fetch_url" || got.Mode != "recover" {
+		t.Errorf("the editor read %v (%s) off the rule", got.Tools, got.Mode)
+	}
+	if strings.Join(got.Dupes, ",") != "a" {
+		t.Errorf("one tool written three ways is %v", got.Dupes)
+	}
+	// What the editor writes, the server binds the same way.
+	for _, c := range []struct{ line, want string }{
+		{got.Both, "web_search or fetch_url"}, {got.One, "fetch_url"}, {got.None, ""},
+	} {
+		r := parseGuardrailRule(c.line)
+		if r.boundTo() != c.want || r.Text != "never put an internal name in a search" || !r.Correctable {
+			t.Errorf("the editor wrote %q, which the server reads as bound to %q (%+v), want %q", c.line, r.boundTo(), r, c.want)
+		}
+	}
+	// And each row shows the tools as chips beside a picker that adds one.
+	if !strings.Contains(src, "var bound = gTools(text);") || !strings.Contains(src, "setTools(bound.concat([toolSel.value]))") {
+		t.Error("the rule row no longer edits a list of tools")
+	}
+}
+
+// Named exceptions: authored once, linked to rules with "@name", and rendered
+// to the warden on an "Except:" line under the rule they belong to. The point
+// of the indirection is that fifteen rules sharing a carve-out get ONE wording,
+// so these pin that the wording travels intact and that a broken link fails
+// toward the rule applying rather than away from it.
+
+func exceptionAgent(rules string) AgentRecord {
+	return AgentRecord{
+		Name: "X", Owner: "u", Guardrails: rules,
+		GuardrailExceptions: []GuardrailException{
+			{Name: "confirmed", Text: "the user has already confirmed this in the conversation"},
+			{Name: "night-shift", Text: "the request arrived outside business hours"},
+		},
+	}
+}
+
+// TestExceptionLinksParse — "@name" links a named exception; a bare "@" is the
+// built-in authorized-people carve-out. The two must not be confused, since one
+// is settled by the framework and the other by the warden.
+func TestExceptionLinksParse(t *testing.T) {
+	cases := []struct {
+		line       string
+		text       string
+		links      []string
+		exceptAuth bool
+	}{
+		{"never send money", "never send money", nil, false},
+		{"@confirmed never send money", "never send money", []string{"confirmed"}, false},
+		{"@confirmed@night-shift never send money", "never send money", []string{"confirmed", "night-shift"}, false},
+		{"@ never send money", "never send money", nil, true},
+		{"@ @confirmed never send money", "never send money", []string{"confirmed"}, true},
+		{"?@confirmed keep it short", "keep it short", []string{"confirmed"}, false},
+	}
+	for _, c := range cases {
+		got := parseGuardrailRule(c.line)
+		if got.Text != c.text {
+			t.Errorf("%q → text %q, want %q", c.line, got.Text, c.text)
+		}
+		if got.ExceptAuthorized != c.exceptAuth {
+			t.Errorf("%q → exceptAuthorized=%v, want %v", c.line, got.ExceptAuthorized, c.exceptAuth)
+		}
+		var names []string
+		for _, l := range got.Links {
+			names = append(names, l.Name)
+		}
+		if strings.Join(names, ",") != strings.Join(c.links, ",") {
+			t.Errorf("%q → links %v, want %v", c.line, names, c.links)
+		}
+	}
+}
+
+// TestExceptionNameStopsAtTheRule — the name charset has to be narrow or a link
+// eats the first word of the rule, which then reads as authored text and is not.
+func TestExceptionNameStopsAtTheRule(t *testing.T) {
+	got := parseGuardrailRule("@night-shift never page me")
+	if got.Text != "never page me" {
+		t.Errorf("rule text = %q, want %q", got.Text, "never page me")
+	}
+	if len(got.Links) != 1 || got.Links[0].Name != "night-shift" {
+		t.Errorf("links = %+v, want [night-shift]", got.Links)
+	}
+}
+
+// TestExceptionTextReachesTheWarden — the linked condition arrives under its
+// rule, and the instruction explaining "Except:" arrives with it.
+func TestExceptionTextReachesTheWarden(t *testing.T) {
+	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":"never send money","status":"comply","reason":"ok"}]}`}
+	agent := exceptionAgent("@confirmed never send money\nnever share addresses")
+	turn := guardTurn(t, stub, agent)
+	if _, err := turn.app.runWarden(turn.ctx, agent, guardHookPreOutput, "hi", requesterIdentity{Owner: true}); err != nil {
+		t.Fatalf("runWarden: %v", err)
+	}
+	prompt := stub.seen()
+	if !strings.Contains(prompt, "1. never send money") {
+		t.Errorf("rule missing from prompt:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "Except: the user has already confirmed this in the conversation") {
+		t.Errorf("linked exception text missing from prompt:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "COMPLIED WITH") {
+		t.Errorf("the prompt must say what an Except line means:\n%s", prompt)
+	}
+	// The unlinked rule carries no carve-out. Counted on the INDENTED form:
+	// the sentence explaining what an Except line means says the word too.
+	if n := strings.Count(prompt, "\n   Except: "); n != 1 {
+		t.Errorf("expected exactly one Except line, got %d:\n%s", n, prompt)
+	}
+	// The name is a handle for linking, never a thing the warden judges.
+	if strings.Contains(prompt, "@confirmed") {
+		t.Errorf("the link marker leaked into the prompt:\n%s", prompt)
+	}
+}
+
+// TestNoExceptionsLeavesThePromptAlone — an agent not using the feature must
+// pay nothing for it, in prompt bytes or in a rule shape it never sees.
+func TestNoExceptionsLeavesThePromptAlone(t *testing.T) {
+	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":"never send money","status":"comply","reason":"ok"}]}`}
+	agent := AgentRecord{Name: "X", Owner: "u", Guardrails: "never send money"}
+	turn := guardTurn(t, stub, agent)
+	if _, err := turn.app.runWarden(turn.ctx, agent, guardHookPreOutput, "hi", requesterIdentity{Owner: true}); err != nil {
+		t.Fatalf("runWarden: %v", err)
+	}
+	if strings.Contains(stub.seen(), "Except") {
+		t.Errorf("an agent with no exceptions should never see the word:\n%s", stub.seen())
+	}
+}
+
+// TestDanglingLinkTightensTheRule — deleting an exception must strengthen the
+// rules that referenced it, not leave them carrying a condition nobody wrote.
+func TestDanglingLinkTightensTheRule(t *testing.T) {
+	agent := exceptionAgent("@deleted-one never send money")
+	rule := parseGuardrailRule("@deleted-one never send money")
+	if got := ruleConditionTexts(agent, rule); len(got) != 0 {
+		t.Errorf("a link to a missing exception resolved to %v, want nothing", got)
+	}
+	// And the warden sees a bare rule rather than a dangling name.
+	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":"never send money","status":"comply","reason":"ok"}]}`}
+	turn := guardTurn(t, stub, agent)
+	if _, err := turn.app.runWarden(turn.ctx, agent, guardHookPreOutput, "hi", requesterIdentity{Owner: true}); err != nil {
+		t.Fatalf("runWarden: %v", err)
+	}
+	if strings.Contains(stub.seen(), "Except") || strings.Contains(stub.seen(), "deleted-one") {
+		t.Errorf("dangling link reached the warden:\n%s", stub.seen())
+	}
+}
+
+// TestExceptionTextIsSharedNotCopied — one wording, many rules. This is the
+// whole reason the indirection exists.
+func TestExceptionTextIsSharedNotCopied(t *testing.T) {
+	stub := &wardenStubLLM{reply: `{"verdicts":[]}`}
+	agent := exceptionAgent("@confirmed never send money\n@confirmed never delete records")
+	turn := guardTurn(t, stub, agent)
+	if _, err := turn.app.runWarden(turn.ctx, agent, guardHookPreOutput, "hi", requesterIdentity{Owner: true}); err != nil {
+		t.Fatalf("runWarden: %v", err)
+	}
+	if n := strings.Count(stub.seen(), "the user has already confirmed this in the conversation"); n != 2 {
+		t.Errorf("expected the one authored wording under both rules, saw it %d times:\n%s", n, stub.seen())
+	}
+}
+
+// TestSanitizeGuardrailExceptions — anything carrying a real CONDITION must
+// survive the save. The first version dropped an entry whose name was blank,
+// which is the worst outcome available: the owner writes a condition, saves,
+// gets no error, reopens, and finds nothing there. A name is a handle this code
+// can invent, so it invents one; only a missing condition is unrecoverable.
+func TestSanitizeGuardrailExceptions(t *testing.T) {
+	got := sanitizeGuardrailExceptions([]GuardrailException{
+		{Name: "Night Shift", Text: " outside business hours "},
+		{Name: "", Text: "the user has already confirmed"}, // no name — derived
+		{Name: "no-text", Text: "   "},                     // no condition — dropped
+		{Name: "night shift", Text: "collides after slugging"},
+		{Name: "  Confirmed!  ", Text: "already confirmed"},
+	})
+	// Suffixed, not dropped. A typed collision is REFUSED at the door (see
+	// checkExceptionNames); by the time a name reaches here the owner is past
+	// that check, and quietly merging two conditions under one handle would be
+	// the worse failure.
+	want := []GuardrailException{
+		{Name: "night-shift", Text: "outside business hours"},
+		{Name: "the-user-has-already", Text: "the user has already confirmed"},
+		{Name: "night-shift-2", Text: "collides after slugging"},
+		{Name: "confirmed", Text: "already confirmed"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("kept %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("entry %d = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+	// Every stored name must be linkable: whatever slugging or deriving did,
+	// "@name" has to parse it back out whole, or the link silently points at
+	// nothing and the rule quietly loses its carve-out.
+	for _, e := range got {
+		rule := parseGuardrailRule("@" + e.Name + " never page me")
+		if len(rule.Links) != 1 || rule.Links[0].Name != e.Name || rule.Text != "never page me" {
+			t.Errorf("name %q does not round-trip through a link: links=%+v text=%q", e.Name, rule.Links, rule.Text)
+		}
+	}
+	// A collision must not merge two different conditions under one handle.
+	if got[0].Text == got[2].Text {
+		t.Error("two conditions collapsed onto one name")
 	}
 }
