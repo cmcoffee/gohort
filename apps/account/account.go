@@ -70,10 +70,10 @@ func (T *Account) Routes() {
 	T.HandleFunc("/api/token-targets", jsonapi.Get(T.DB, T.handleTokenTargets))
 	T.HandleFunc("/api/artifacts/export", T.handleArtifactExport)
 	T.HandleFunc("/api/artifacts/preview", jsonapi.Methods{
-		"POST": jsonapi.Post(T.DB, T.handleArtifactPreview, jsonapi.EmptyBodyOK, jsonapi.MaxBody(maxAccountImportBytes)),
+		"POST": jsonapi.Post(T.DB, T.handleArtifactPreview, jsonapi.MaxBody(maxAccountImportBytes)),
 	}.Serve)
 	T.HandleFunc("/api/artifacts/import", jsonapi.Methods{
-		"POST": jsonapi.Post(T.DB, T.handleArtifactImport, jsonapi.EmptyBodyOK, jsonapi.MaxBody(maxAccountImportBytes)),
+		"POST": jsonapi.Post(T.DB, T.handleArtifactImport, jsonapi.MaxBody(maxAccountImportBytes)),
 	}.Serve)
 	T.HandleFunc("/oauth/start", T.handleOAuthStart)
 	T.HandleFunc("/oauth/callback", T.handleOAuthCallback)
@@ -568,7 +568,7 @@ func (T *Account) handleTokens(c *jsonapi.Call) (any, error) {
 // ONLY by the mint.
 func (T *Account) tokenPost() http.HandlerFunc {
 	scope := jsonapi.Post(T.DB, T.handleTokenScope)
-	mint := jsonapi.Post(T.DB, T.handleTokenMint, jsonapi.EmptyBodyOK)
+	mint := jsonapi.Post(T.DB, T.handleTokenMint)
 	return func(w http.ResponseWriter, r *http.Request) {
 		if strings.TrimSpace(r.URL.Query().Get("action")) == "scope" {
 			scope(w, r)
@@ -589,13 +589,19 @@ func (T *Account) handleTokenScope(c *jsonapi.Call, body struct {
 	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
+// tokenMintBody is a key to mint: its name and scope.
+type tokenMintBody struct {
+	Name  string      `json:"name"`
+	Scope *TokenScope `json:"scope"`
+}
+
 // handleTokenMint mints a key and returns its secret, once. How long a key
 // lives is not the owner's to choose: it is the admin's API key lifetime
 // (core AccountKeyLifetime).
-func (T *Account) handleTokenMint(c *jsonapi.Call, req struct {
-	Name  string      `json:"name"`
-	Scope *TokenScope `json:"scope"`
-}) (any, error) {
+func (T *Account) handleTokenMint(c *jsonapi.Call, req *tokenMintBody) (any, error) {
+	if req == nil {
+		req = &tokenMintBody{}
+	}
 	// New keys are minted deny-by-default: an explicit (possibly empty)
 	// scope, never the nil legacy-unrestricted case. A client that sends no
 	// scope still gets an empty one, so it reaches nothing until scoped.

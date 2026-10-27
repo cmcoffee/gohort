@@ -15,7 +15,6 @@
 package orchestrate
 
 import (
-	"encoding/json"
 	"net/http"
 	"sort"
 	"strings"
@@ -60,88 +59,91 @@ func userScopableCredentials(user string) []SecureCredential {
 	return out
 }
 
-// handleAgentCredentials serves the agent editor's "External
-// credentials" picker. GET returns the candidate creds + the currently-enabled subset;
-// POST {enabled_credentials:[...]} rewrites the agent's opt-out for exactly those
-// candidates (opt-outs for creds NOT in the candidate set are preserved).
-func (T *OrchestrateApp) handleAgentCredentials(c *jsonapi.Call, raw json.RawMessage) (any, error) {
-	r := c.R
-	user, udb := c.User, c.UDB
-	id := strings.TrimSpace(r.URL.Query().Get("id"))
-	if id == "" {
-		return nil, jsonapi.BadRequest("missing id")
+// agentCredentialsGet serves the agent editor's "External credentials"
+// picker: the candidate creds and the currently-enabled subset.
+func (T *OrchestrateApp) agentCredentialsGet(c *jsonapi.Call) (any, error) {
+	a, candidates, err := agentCredentialsAt(c)
+	if err != nil {
+		return nil, err
 	}
-	a, ok := loadAgent(udb, id)
-	// A user may only scope their OWN agent (seeds load with an empty Owner until
-	// first shadowed; treat that as the caller's).
-	if !ok || (a.Owner != "" && a.Owner != user && a.Owner != seedOwner) {
-		return nil, errNotFound
+	disabled := map[string]bool{}
+	for _, n := range a.DisabledCredentials {
+		disabled[n] = true
 	}
-	candidates := userScopableCredentials(user)
+	type opt struct {
+		Value string `json:"value"`
+		Label string `json:"label"`
+		Desc  string `json:"desc,omitempty"`
+	}
+	opts := []opt{}
+	enabled := []string{}
+	for _, c := range candidates {
+		opts = append(opts, opt{Value: c.Name, Label: c.Name, Desc: c.Description})
+		if !disabled[c.Name] {
+			enabled = append(enabled, c.Name)
+		}
+	}
+	return map[string]any{
+		"credentials":         opts,
+		"enabled_credentials": enabled,
+	}, nil
+}
 
-	switch r.Method {
-	case http.MethodGet:
-		disabled := map[string]bool{}
-		for _, n := range a.DisabledCredentials {
-			disabled[n] = true
-		}
-		type opt struct {
-			Value string `json:"value"`
-			Label string `json:"label"`
-			Desc  string `json:"desc,omitempty"`
-		}
-		opts := []opt{}
-		enabled := []string{}
-		for _, c := range candidates {
-			opts = append(opts, opt{Value: c.Name, Label: c.Name, Desc: c.Description})
-			if !disabled[c.Name] {
-				enabled = append(enabled, c.Name)
-			}
-		}
-		return map[string]any{
-			"credentials":         opts,
-			"enabled_credentials": enabled,
-		}, nil
-	case http.MethodPost:
-		var body struct {
-			EnabledCredentials []string `json:"enabled_credentials"`
-		}
-		if err := json.Unmarshal(raw, &body); err != nil {
-			return nil, jsonapi.BadRequest("bad request")
-		}
-		enabled := map[string]bool{}
-		for _, n := range body.EnabledCredentials {
-			enabled[strings.TrimSpace(n)] = true
-		}
-		cand := map[string]bool{}
-		for _, c := range candidates {
-			cand[c.Name] = true
-		}
-		// Preserve opt-outs for creds not shown here; recompute the candidate ones
-		// from the enabled allowlist (unchecked candidate -> disabled).
-		set := map[string]bool{}
-		for _, n := range a.DisabledCredentials {
-			if !cand[n] {
-				set[n] = true
-			}
-		}
-		for _, c := range candidates {
-			if !enabled[c.Name] {
-				set[c.Name] = true
-			}
-		}
-		out := make([]string, 0, len(set))
-		for n := range set {
-			out = append(out, n)
-		}
-		sort.Strings(out)
-		a.DisabledCredentials = out
-		a.Owner = user
-		if _, err := saveAgent(udb, a); err != nil {
-			return nil, jsonapi.BadRequest(err.Error())
-		}
-		return jsonapi.Empty(http.StatusNoContent), nil
-	default:
-		return nil, jsonapi.Status(http.StatusMethodNotAllowed, "method not allowed")
+// agentCredentialsSave takes {enabled_credentials:[...]} and rewrites the
+// agent's opt-out for exactly those candidates (opt-outs for creds NOT in the
+// candidate set are preserved).
+func (T *OrchestrateApp) agentCredentialsSave(c *jsonapi.Call, body struct {
+	EnabledCredentials []string `json:"enabled_credentials"`
+}) (any, error) {
+	a, candidates, err := agentCredentialsAt(c)
+	if err != nil {
+		return nil, err
 	}
+	enabled := map[string]bool{}
+	for _, n := range body.EnabledCredentials {
+		enabled[strings.TrimSpace(n)] = true
+	}
+	cand := map[string]bool{}
+	for _, c := range candidates {
+		cand[c.Name] = true
+	}
+	// Preserve opt-outs for creds not shown here; recompute the candidate ones
+	// from the enabled allowlist (unchecked candidate -> disabled).
+	set := map[string]bool{}
+	for _, n := range a.DisabledCredentials {
+		if !cand[n] {
+			set[n] = true
+		}
+	}
+	for _, c := range candidates {
+		if !enabled[c.Name] {
+			set[c.Name] = true
+		}
+	}
+	out := make([]string, 0, len(set))
+	for n := range set {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	a.DisabledCredentials = out
+	a.Owner = c.User
+	if _, err := saveAgent(c.UDB, a); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// agentCredentialsAt is the agent ?id= names and the credentials the caller
+// may scope it to. A user may only scope their OWN agent (seeds load with an
+// empty Owner until first shadowed; treat that as the caller's).
+func agentCredentialsAt(c *jsonapi.Call) (AgentRecord, []SecureCredential, error) {
+	id := strings.TrimSpace(c.R.URL.Query().Get("id"))
+	if id == "" {
+		return AgentRecord{}, nil, jsonapi.BadRequest("missing id")
+	}
+	a, ok := loadAgent(c.UDB, id)
+	if !ok || (a.Owner != "" && a.Owner != c.User && a.Owner != seedOwner) {
+		return AgentRecord{}, nil, errNotFound
+	}
+	return a, userScopableCredentials(c.User), nil
 }

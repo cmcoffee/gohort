@@ -1,7 +1,6 @@
 package codewriter
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"sort"
@@ -9,6 +8,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/assist"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 )
@@ -89,7 +89,11 @@ func (T *CodeWriterAgent) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	// T.DB is live.
 	RegisterArtifactType(&writerArtifact{app: T})
 	sub.HandleFunc("/", T.handleCodeWriterPage)
-	sub.HandleFunc("/api/chat", T.handleChat)
+	// The chat is the Code Writer's (chat.go): the send is codewriter's own,
+	// the rest of its endpoints are the agent chat's.
+	sub.HandleFunc("/chat/send", T.handleChatSend)
+	sub.HandleFunc("/chat/", T.dispatchChat)
+	sub.HandleFunc("/"+agenthost.ChatRunsPath, T.dispatchChat)
 	sub.HandleFunc("/api/snippets", jsonapi.Methods{
 		"GET":  jsonapi.Get(T.DB, listRecords[SnippetRecord](snippetTable)),
 		"POST": jsonapi.Post(T.DB, T.handleSaveSnippet),
@@ -165,251 +169,6 @@ func (T *CodeWriterAgent) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		})
 		return id, nil
 	}
-}
-
-// handleChat receives the current editor code + a chat message, sends to the
-// worker LLM, and returns the response. If the response contains code, we
-// flag it so the frontend can show an "Apply" button.
-func (T *CodeWriterAgent) handleChat(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Name    string `json:"name"`
-		Lang    string `json:"lang"`
-		Code    string `json:"code"`
-		Context string `json:"context"`
-		Message string `json:"message"`
-		// Mode controls whether the LLM is allowed to propose code
-		// changes. "edit" (default) is the legacy behavior — the LLM
-		// can emit a fenced code block which the UI offers to apply
-		// to the editor. "chat" tells the LLM to discuss and explain
-		// only, never emit code — used for "talk me through this"
-		// / "what would you do" conversations before committing to
-		// a change. Absent / blank is treated as "edit" for back-compat
-		// with older clients.
-		Mode string `json:"mode"`
-		// Collections is the set of Document Collection IDs the user
-		// picked as reference corpora for this turn. Top chunks are
-		// RAG-retrieved (best-effort) from each and injected as grounding
-		// alongside the manual Context block. Empty = no collection RAG.
-		Collections []string `json:"collections"`
-		// References are reference-source selections the user picked in
-		// the chat header ([{kind, item_id}]) — knowledge another gohort
-		// service gathered (servitor systems, MCP doc sources). Each
-		// source's cached text is injected into the system prompt, and
-		// its per-item tools (search / facts / live investigate) ride the
-		// chat so the LLM can dig deeper when the cached picture doesn't
-		// answer.
-		References []ReferenceSelection `json:"references"`
-		// Writer names the configured WRITER this turn runs under (writers.go):
-		// a named profile whose knowledge foundation governs everything written
-		// here. Distinct from the three fields above, which are per-turn
-		// attachments the user ticks — this one is chosen from the panel's
-		// picker and persists across turns and sessions. Empty = no writer.
-		// Wire name is the panel's generic `profile`; the app's own name for the
-		// concept is Writer. core/ui names no host's nouns (see CollectionsNoun),
-		// so the contract stays generic and the domain word lives here.
-		Writer string `json:"profile"`
-		// History is the prior conversation, client-maintained.
-		// Allows Chat → Edit to carry discussion context so Edit can
-		// act on what was just discussed. File state (code/context)
-		// attaches to the CURRENT message only — never embedded into
-		// past turns — so the LLM always sees the file as it is now
-		// rather than stale snapshots from earlier turns.
-		History []struct {
-			Role    string `json:"role"`
-			Content string `json:"content"`
-		} `json:"history"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Message == "" {
-		http.Error(w, "message required", http.StatusBadRequest)
-		return
-	}
-
-	chatOnly := req.Mode == "chat"
-	is_regex := req.Lang == "regex"
-
-	var code_context string
-	if req.Context != "" {
-		label := "Reference context (table schemas, docs, notes)"
-		if is_regex {
-			label = "Target description (what the pattern should match)"
-		}
-		code_context = fmt.Sprintf("\n\n%s:\n%s\n%s\n%s", label, DocFence(req.Context), req.Context, DocFence(req.Context))
-	}
-	if req.Code != "" {
-		lang := req.Lang
-		if lang == "" {
-			lang = "code"
-		}
-		if is_regex {
-			code_context += fmt.Sprintf("\n\nTest samples (one per line; lines prefixed `+` should match, `-` should not match, unprefixed are ambiguous):\n%s\n%s\n%s", DocFence(req.Code), req.Code, DocFence(req.Code))
-		} else {
-			f := DocFence(req.Code)
-			code_context += fmt.Sprintf("\n\nCurrent script (%s):\n%s%s\n%s\n%s", req.Name, f, lang, req.Code, f)
-		}
-	} else if req.Name != "" && !is_regex {
-		code_context += fmt.Sprintf("\n\nScript name: %s\n(Editor is empty -- this is a new script.)", req.Name)
-	}
-
-	// Reference Collections — best-effort RAG over the user's picked
-	// Document Collections via the shared core primitive. Degrades
-	// silently on any miss (no auth, no embedding backend, empty corpus)
-	// so chat always works; retrieved chunks ride on the user message as
-	// a labeled grounding block, same shape as the manual Context.
-	if len(req.Collections) > 0 {
-		if uid := AuthCurrentUser(r); uid != "" {
-			// Collections live in the shared collections home, NOT
-			// codewriter's own bucket — reach them via CollectionsDB().
-			hits := SearchCollections(r.Context(), CollectionsDB(), uid, req.Collections, req.Message, 6)
-			code_context += formatCollectionRefs(hits)
-		}
-	}
-
-	prompt := req.Message + code_context
-
-	// Build system prompt with selected language hint and available value sets.
-	system_prompt := T.SystemPrompt()
-	if is_regex {
-		system_prompt += "\n\nThe user is building a regular expression. The editor holds test samples (one per line; `+` prefix = should match, `-` prefix = should not match). The context holds a plain-English description of what the pattern should match. Return a single regex in a fenced ```regex block, then a short explanation naming each capture group and why each sample matches or doesn't. Default to PCRE-compatible syntax unless the user specifies a flavor (ERE, Go re2, JavaScript, etc.). Do not wrap the regex in delimiters like /.../ unless the user asked for a specific language's literal syntax."
-	} else if req.Lang != "" {
-		system_prompt += fmt.Sprintf("\n\nThe user is currently working in %s. Default to %s for code output unless they specify otherwise.", req.Lang, req.Lang)
-	}
-	system_prompt += T.buildValuePrompt()
-
-	if chatOnly {
-		// Discussion-only mode. The user wants to talk through an
-		// approach before touching the editor, so the LLM must not
-		// emit a fenced code block (the UI would offer to apply it,
-		// defeating the whole point of the mode). Explanation via
-		// prose, short inline snippets as backticks if unavoidable.
-		system_prompt += "\n\nDISCUSSION MODE: the user is chatting about the code, not asking for it to be changed. Do NOT write out a revised full script or propose an applyable change. Do NOT emit a fenced code block (```). Explain your thinking, ask clarifying questions, or describe the approach you'd take. Short inline snippets using single backticks are fine. If the user asks for the actual edit, tell them to click Edit instead of Chat."
-	}
-
-	// Reference sources — knowledge gathered by other gohort services
-	// (servitor systems, MCP doc sources) that the user attached in the
-	// chat header. Cached material is injected into the system prompt
-	// (closest to the user message), and each attached item's own tools
-	// ride the chat so the LLM can search deeper or run a live
-	// investigation when the cached picture doesn't answer.
-	var ref_tools []AgentToolDef
-	var ref_context string
-	// The active WRITER's standing sources join whatever the user attached for
-	// this one turn. Merged here rather than handled separately because they
-	// are the same kind of thing and want the same treatment — the only
-	// difference is that one selection was made once and the other per
-	// question. A writer's material must not take a different, weaker path
-	// than a checkbox ticked ten seconds ago.
-	refs := req.References
-	var writer WriterRecord
-	if uid := AuthCurrentUser(r); uid != "" && strings.TrimSpace(req.Writer) != "" {
-		if wr, found := loadWriter(UserDB(T.DB, uid), req.Writer); found {
-			writer = wr
-			// Writer's sources FIRST, then the per-turn picks: a duplicate
-			// resolves to the same item either way, and ordering the standing
-			// material first keeps the prompt prefix stable across turns where
-			// only the ad-hoc pick changes.
-			refs = append(append(ReferenceSelections{}, wr.Sources...), refs...)
-		}
-	}
-	// The same item picked in both places is one reference, not two: fetched
-	// once, and its tools built once. Twice put every tool name in the request
-	// twice, which some providers refuse outright.
-	refs = uniqueReferences(refs)
-	if len(refs) > 0 {
-		if uid := AuthCurrentUser(r); uid != "" {
-			// Rides the current user message, not the system prompt — the
-			// retrieved text changes per query, and a per-turn system prompt
-			// re-prefills the whole thread on the worker every turn.
-			if ref := FetchReferences(r.Context(), uid, req.Message, refs); ref != "" {
-				ref_context = "\n\n" + ref
-			}
-			for _, sel := range refs {
-				ref_tools = append(ref_tools, ReferenceItemTools(uid, sel.Kind, sel.ItemID)...)
-			}
-			if len(ref_tools) > 0 {
-				system_prompt += "\n\nThe attached reference source also provides tools. Use them when the reference context above doesn't answer the question, or when the user asks about the CURRENT state of the system: the investigate tool runs a live session when cached knowledge isn't enough."
-			}
-		}
-	}
-
-	agent := &AppCore{LLM: T.AppCore.LLM}
-
-	// Build messages: prior turns (capped) + current message with file
-	// context. File state rides on the last user message only so the
-	// LLM sees the current editor, not stale copies.
-	const maxHistoryTurns = 20
-	hist := req.History
-	if len(hist) > maxHistoryTurns {
-		hist = hist[len(hist)-maxHistoryTurns:]
-	}
-	messages := make([]Message, 0, len(hist)+1)
-	for _, h := range hist {
-		role := h.Role
-		if role != "user" && role != "assistant" {
-			continue // drop malformed turns
-		}
-		if strings.TrimSpace(h.Content) == "" {
-			continue
-		}
-		messages = append(messages, Message{Role: role, Content: h.Content})
-	}
-	messages = append(messages, Message{Role: "user", Content: prompt + ref_context})
-
-	// The writer's standing note — what its material IS and how far it binds.
-	// AFTER the mode rules on purpose: those are the app's output CONTRACT
-	// (discussion mode emits no fenced block, edit mode returns one applyable
-	// block) and the Apply button reads that shape, so a note about domain
-	// knowledge must not be the last word on it. The sources govern WHAT the
-	// code says; the mode rules govern what the reply looks like.
-	system_prompt += writer.sourceBlock()
-
-	// Standing rules append to the system prompt on every chat turn, the
-	// same as on assist — they're constraints on output, not on mode.
-	if uid := AuthCurrentUser(r); uid != "" {
-		system_prompt += DocRulesSection(UserDB(T.DB, uid), "codewriter")
-	}
-
-	resp, err := agent.LeadChatWithTools(r.Context(), messages, ref_tools,
-		WithSystemPrompt(system_prompt), WithRouteKey("app.codewriter"))
-
-	if err != nil {
-		http.Error(w, "LLM error: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	text := strings.TrimSpace(ResponseText(resp))
-
-	// Detect if the response contains a fenced code block.
-	// (The old CODE: sentinel strip is gone — no prompt ever requested it.)
-	code_content := ""
-
-	// Extract the first fenced code block as the applyable code.
-	if idx := strings.Index(text, "```"); idx >= 0 {
-		after := text[idx+3:]
-		// Skip the language tag on the opening fence.
-		if nl := strings.Index(after, "\n"); nl >= 0 {
-			after = after[nl+1:]
-		}
-		if end := strings.Index(after, "```"); end >= 0 {
-			code_content = after[:end]
-			if len(code_content) > 0 && code_content[len(code_content)-1] == '\n' {
-				code_content = code_content[:len(code_content)-1]
-			}
-		}
-	}
-
-	result := map[string]any{"content": text}
-	// In chat-only mode, never offer an apply — even if the LLM ignored
-	// the system-prompt rule and emitted a fenced block anyway. The
-	// client also guards for this, but double-guarding here keeps the
-	// mode clean at the API level.
-	if !chatOnly && code_content != "" {
-		result["code"] = code_content
-		result["type"] = "code"
-	} else {
-		result["type"] = "chat"
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
 }
 
 // formatCollectionRefs renders retrieved collection chunks as a labeled

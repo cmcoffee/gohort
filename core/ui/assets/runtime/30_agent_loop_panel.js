@@ -2925,6 +2925,18 @@
         return (host && host.getAttribute('data-ui-scope')) || '';
       } catch (e) { return ''; }
     }
+    // hostSendContext is what the panel's host adds to every send: the host
+    // element carries data-ui-send-context and a uiSendContext() function
+    // returning fields to merge into the body. It is read at send time, so a
+    // host whose state is still being edited (an editor's unsaved text) sends
+    // what is on screen now. Merged last: the host's fields are its own.
+    function hostSendContext() {
+      try {
+        var host = wrap && wrap.closest && wrap.closest('[data-ui-send-context]');
+        var ctx = host && typeof host.uiSendContext === 'function' ? host.uiSendContext() : null;
+        return (ctx && typeof ctx === 'object') ? ctx : {};
+      } catch (e) { return {}; }
+    }
     // A conversation belongs to the record it is about. A panel whose URLs
     // name the host's open record ({scope}) starts a new session when that
     // record changes to another, and lists the new record's sessions. Kept,
@@ -5130,7 +5142,9 @@
 
     // App-registered block renderer dispatcher — same shape as
     // PipelinePanel uses. Apps register via window.uiRegisterBlockRenderer.
-    function addBlock(d) {
+    // live is a block arriving from the running turn, not a reload's replay:
+    // the renderer gets it as ctx.live, for a card that acts when it arrives.
+    function addBlock(d, live) {
       var id = d.id || '';
       var fn = window.UIBlockRenderers && window.UIBlockRenderers[d.type];
       if (typeof fn !== 'function') {
@@ -5153,7 +5167,7 @@
         refreshPins();
         return;
       }
-      var built = fn(d, {sessionId: activeSessionId, addNote: addPickedUpNote});
+      var built = fn(d, {sessionId: activeSessionId, addNote: addPickedUpNote, live: !!live});
       if (!built || !built.wrap) return;
       blockEls[id] = built;
       // App blocks default to the conversation pane (the more
@@ -5528,7 +5542,7 @@
           settleConfirmCard(ev.id, ev.value, ev.label);
           break;
         case 'block':
-          addBlock(ev);
+          addBlock(ev, true);
           break;
         // A mark on the reply this turn just produced. Sent at the END of a
         // turn, so it addresses no id: the last assistant bubble is the one
@@ -6134,6 +6148,7 @@
         body[k] = pendingMessageExtras[k];
       });
       pendingMessageExtras = {};
+      Object.assign(body, hostSendContext());
 
       sawTurnEnd = false;
       activeRunId = '';

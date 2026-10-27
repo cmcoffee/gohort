@@ -7,6 +7,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/appstores"
+	"github.com/cmcoffee/gohort/tools/appscript"
 )
 
 func (t *chatTurn) appDefList() (string, error) {
@@ -51,6 +52,10 @@ func (t *chatTurn) appDefGet(args map[string]any) (string, error) {
 		} else {
 			one["name"] = spec.Actions[ref.idx].Name
 			one["capabilities"] = spec.Actions[ref.idx].Capabilities
+		}
+		// How it went when it ran for real, next to the code that ran.
+		if runs := scriptRuns(appscript.RecentRuns(t.user, spec.Slug), ref.kind, one["name"].(string)); len(runs) > 0 {
+			one["recent_runs"] = runs
 		}
 		b, _ := json.Marshal(one)
 		return string(b), nil
@@ -167,6 +172,10 @@ func (t *chatTurn) appDefGet(args map[string]any) (string, error) {
 		}
 		out["actions"] = acts
 	}
+	if runs := appscript.RecentRuns(t.user, spec.Slug); len(runs) > 0 {
+		out["recent_runs"] = runsAtAGlance(runs)
+		out["runs_note"] = "The newest live runs of this app's scripts, newest first; a run another user started shows its outcome only. get with script=<name> lists that script's kept runs with what each logged."
+	}
 	if len(spec.Libraries) > 0 {
 		libs := map[string]any{}
 		for n, src := range spec.Libraries {
@@ -176,6 +185,34 @@ func (t *chatTurn) appDefGet(args map[string]any) (string, error) {
 	}
 	b, _ := json.Marshal(out)
 	return string(b), nil
+}
+
+// runsShown is how many runs the whole-app view lists.
+const runsShown = 8
+
+// runsAtAGlance is the newest runs without their log lines: what ran and how
+// it ended. A script's own view has the lines.
+func runsAtAGlance(runs []appscript.AppRun) []appscript.AppRun {
+	if len(runs) > runsShown {
+		runs = runs[:runsShown]
+	}
+	out := make([]appscript.AppRun, len(runs))
+	for i, r := range runs {
+		r.Log = nil
+		out[i] = r
+	}
+	return out
+}
+
+// scriptRuns is one script's kept runs.
+func scriptRuns(runs []appscript.AppRun, kind, name string) []appscript.AppRun {
+	var out []appscript.AppRun
+	for _, r := range runs {
+		if r.Kind == kind && r.Name == name {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // isFullHTMLDocument reports whether a blob is a whole page rather than a

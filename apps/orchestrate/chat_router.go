@@ -210,7 +210,7 @@ func (T *OrchestrateApp) registerSessionRoutes() {
 	T.HandleFunc("/api/sessions/rename", jsonapi.Post(T.DB, T.sessionRename))
 	T.HandleFunc("/api/sessions/{sid}", T.sessionRoute(T.ownSession))
 	T.HandleFunc("/api/sessions/{sid}/continue", jsonapi.Post(T.DB, T.sessionContinue))
-	T.HandleFunc("/api/sessions/{sid}/send-to-builder", jsonapi.Post(T.DB, T.sessionSendToBuilder, jsonapi.EmptyBodyOK))
+	T.HandleFunc("/api/sessions/{sid}/send-to-builder", jsonapi.Post(T.DB, T.sessionSendToBuilder))
 	T.HandleFunc("/api/sessions/{sid}/blocks/{block}/resolve", T.blockResolveRoute(func(c *jsonapi.Call) (string, string, string, error) {
 		agent, err := T.sessionAgent(c)
 		return agent.ID, c.R.PathValue("sid"), c.R.PathValue("block"), err
@@ -502,7 +502,10 @@ func (T *OrchestrateApp) handleSendRouter(w http.ResponseWriter, r *http.Request
 // ?id=<session>, and hard-requiring agent_id once 400'd it before the run
 // was reached: the button aborted the client stream, but the run loop
 // (detached from the HTTP request for EVERY session) kept going.
-func (T *OrchestrateApp) cancelOwnTurn(c *jsonapi.Call, in cancelTarget) (any, error) {
+func (T *OrchestrateApp) cancelOwnTurn(c *jsonapi.Call, in *cancelTarget) (any, error) {
+	if in == nil {
+		in = &cancelTarget{}
+	}
 	id := strings.TrimSpace(c.R.URL.Query().Get("agent_id"))
 	if id == "" {
 		id = strings.TrimSpace(in.AgentID)

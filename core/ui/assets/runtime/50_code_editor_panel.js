@@ -327,7 +327,7 @@
     // or not you ever named the arrangement — and it makes the profiles honest,
     // because clicking one now sets the same state that gets remembered rather
     // than living in a parallel place.
-    var lastKey = 'ui-cw-last:' + (cfg.chat_url || cfg.list_url || '');
+    var lastKey = 'ui-cw-last:' + (cfg.list_url || '');
     function rememberSettings() {
       try {
         window.localStorage.setItem(lastKey, JSON.stringify({
@@ -755,7 +755,43 @@
         collBar.appendChild(el('span', {class: 'ui-cw-coll-chip'}, [(c.name || c.id) + ' ', x]));
       });
     }
-    var ctxPane    = el('div', {class: 'ui-cw-ctx-pane open'}, [collBar, ctxEditor, ctxOutlineHost]);
+    // Generic reference picker — when the host wires reference_sources_url,
+    // surface every registered reference source in one dropdown. The chosen
+    // item rides every chat send as the editor's references ([{kind,
+    // item_id}]); the app's handler injects that source's text / tools into
+    // the model context. Domain-agnostic: core/ui knows only the shape. Same
+    // wire format as the ArticleEditor picker.
+    var selectedRef = null;
+    var refBar = el('div', {class: 'ui-cw-coll-bar'});
+    refBar.style.display = 'none';
+    if (cfg.reference_sources_url) {
+      var refSelect = el('select', {class: 'ui-chat-mode', title: 'Ground replies in material gathered by another service',
+        onchange: function() {
+          var o = refSelect.options[refSelect.selectedIndex];
+          selectedRef = (o && o.value) ? {kind: o.getAttribute('data-kind'), item_id: o.value} : null;
+          rememberSettings();
+        }});
+      refSelect.appendChild(el('option', {value: ''}, ['Reference…']));
+      fetch(cfg.reference_sources_url, {credentials: 'same-origin'})
+        .then(function(r){ return r.json(); })
+        .then(function(groups) {
+          if (!groups || !groups.length) return;
+          refBar.style.display = '';
+          groups.forEach(function(g) {
+            var og = el('optgroup', {label: g.label});
+            (g.items || []).forEach(function(it) {
+              og.appendChild(el('option', {value: it.id, 'data-kind': g.kind, title: it.desc || ''}, [it.name]));
+            });
+            refSelect.appendChild(og);
+          });
+          // Same race as the collection list: state restored before these
+          // options existed found nothing to match and left the picker empty.
+          restoreSettings();
+        }).catch(function() {});
+      refBar.appendChild(el('span', {class: 'ui-cw-coll-lbl'}, ['Source']));
+      refBar.appendChild(refSelect);
+    }
+    var ctxPane    = el('div', {class: 'ui-cw-ctx-pane open'}, [collBar, refBar, ctxEditor, ctxOutlineHost]);
     var ctxSection = el('div', {class: 'ui-cw-ctx-section'}, [ctxToggle, ctxPane]);
 
     // Load the collection list once for the picker. Best-effort: any
@@ -856,66 +892,24 @@
       });
     }
 
-    // Chat pane — header + scrollable transcript + input area with
-    // dual-send buttons (Chat = discuss only, Edit = propose code).
+    // Chat pane — the host's chat (cfg.chat, typically an AgentLoopPanel),
+    // the same chat every agent has. Mounted as the workbench mounts its chat:
+    // the app's config carried through, with what this column imposes forced.
+    // The panel is its host (see the send context and editor_proposal below).
     var chatPane = el('div', {class: 'ui-cw-chat'});
-    var chatHdr  = el('div', {class: 'ui-cw-chat-h'});
-    chatHdr.appendChild(el('span', {}, ['Chat']));
-
-    // Generic reference picker — when the host wires reference_sources_url,
-    // surface every registered reference source in one dropdown. The chosen
-    // item rides along with each chat POST as references ([{kind, item_id}]);
-    // the app's handler injects that source's text / tools into the model
-    // context. Domain-agnostic: core/ui knows only the shape. Same wire
-    // format as the ArticleEditor picker.
-    var selectedRef = null;
-    if (cfg.reference_sources_url) {
-      var refSelect = el('select', {class: 'ui-chat-mode', title: 'Ground replies in material gathered by another service',
-        onchange: function() {
-          var o = refSelect.options[refSelect.selectedIndex];
-          selectedRef = (o && o.value) ? {kind: o.getAttribute('data-kind'), item_id: o.value} : null;
-          rememberSettings();
-        }});
-      refSelect.appendChild(el('option', {value: ''}, ['Reference…']));
-      fetch(cfg.reference_sources_url, {credentials: 'same-origin'})
-        .then(function(r){ return r.json(); })
-        .then(function(groups) {
-          if (!groups || !groups.length) { refSelect.style.display = 'none'; return; }
-          groups.forEach(function(g) {
-            var og = el('optgroup', {label: g.label});
-            (g.items || []).forEach(function(it) {
-              og.appendChild(el('option', {value: it.id, 'data-kind': g.kind, title: it.desc || ''}, [it.name]));
-            });
-            refSelect.appendChild(og);
-          });
-          // Same race as the collection list: state restored before these
-          // options existed found nothing to match and left the picker empty.
-          restoreSettings();
-        }).catch(function() { refSelect.style.display = 'none'; });
-      chatHdr.appendChild(refSelect);
-    }
-
-    var chatClearBtn = el('button', {class: 'ui-row-btn', onclick: function(){ clearChat(); }}, ['Clear']);
-    chatHdr.appendChild(chatClearBtn);
-
-    var chatMessages = el('div', {class: 'ui-cw-chat-msgs'});
-    var chatInput = el('textarea', {
-      class: 'ui-cw-chat-input', rows: '3',
-      placeholder: cfg.placeholder_chat || 'Discuss with Chat, or click Edit to apply changes.',
-    });
-    var chatBtnTalk = el('button', {class: 'ui-row-btn', title: 'Discuss without changing the editor', onclick: function(){ sendChat('chat'); }}, ['Chat']);
-    var chatBtnEdit = el('button', {class: 'ui-row-btn primary', title: 'Propose a change to apply to the editor', onclick: function(){ sendChat('edit'); }}, ['Edit']);
-    chatInput.addEventListener('keydown', function(ev) {
-      if (ev.key === 'Enter' && !ev.shiftKey) {
-        ev.preventDefault();
-        sendChat(ev.altKey ? 'chat' : 'edit');
+    if (cfg.chat) {
+      var chatMount = {};
+      for (var ck in cfg.chat) {
+        if (Object.prototype.hasOwnProperty.call(cfg.chat, ck)) chatMount[ck] = cfg.chat[ck];
       }
-    });
-    var chatInputArea = el('div', {class: 'ui-cw-chat-input-area'},
-      [chatInput, chatBtnTalk, chatBtnEdit]);
-    chatPane.appendChild(chatHdr);
-    chatPane.appendChild(chatMessages);
-    chatPane.appendChild(chatInputArea);
+      chatMount.type          = 'agent_loop_panel';
+      chatMount.lock_activity = true;
+      chatMount.send_url      = cfg.chat.send_url || 'chat/send';
+      if (chatMount.markdown === undefined) chatMount.markdown = true;
+      mountComponent(chatMount, chatPane);
+    } else {
+      chatPane.style.display = 'none';
+    }
 
     // Vertical drag handle between editor wrap and chat pane. Width
     // changes are inline-styled on chatPane; persisted across the
@@ -953,7 +947,8 @@
         {key: 'code', label: cfg.viewer_label || 'Code', els: [toolbar, profBar, editorWrap]},
         {key: 'chat', label: cfg.chat_label || 'Assistant', els: [chatResizer, chatPane]},
       ],
-      watch: {key: 'chat', el: chatMessages, selector: '.ui-cw-msg.assistant'},
+      watch: {key: 'chat', el: chatPane,
+        selector: '.ui-agent-msg-assistant:not(.ui-agent-thinking), .ui-agent-msg-failed'},
     });
     drawer.mobileHdr.appendChild(panes.el);
 
@@ -977,124 +972,44 @@
       collapseBtn.textContent = '›';
     }
 
-    // --- Chat state ---
-    // History lives inside docChat (buildDocChat); this side owns only
-    // the visible transcript.
-    function clearChat() {
-      chatMessages.innerHTML = '';
-      docChat.clear();
-    }
-    function addChatMsg(role, html, copyPayload) {
-      var msg = el('div', {class: 'ui-cw-msg ' + role});
-      msg.innerHTML = html;
-      if (copyPayload != null) msg.dataset.copy = copyPayload;
-      chatMessages.appendChild(msg);
-      chatMessages.scrollTop = chatMessages.scrollHeight;
-      return msg;
-    }
-    function escapeChat(s) {
-      return String(s == null ? '' : s)
-        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-    }
-    function formatChatBody(s) {
-      // Render fenced code blocks as <pre>; everything else as escaped
-      // paragraphs with line breaks. Avoids embedding a literal backtick
-      // (would close the Go raw-string holding this JS) by composing
-      // the fence delimiter at runtime.
-      var fence = String.fromCharCode(96, 96, 96);
-      var out = '';
-      var parts = String(s || '').split(fence);
-      for (var i = 0; i < parts.length; i++) {
-        if (i % 2 === 0) {
-          var t = parts[i].replace(/^\s+|\s+$/g, '');
-          if (t) out += '<p>' + escapeChat(t).replace(/\n/g, '<br>') + '</p>';
-        } else {
-          var body = parts[i];
-          var nl = body.indexOf('\n');
-          if (nl >= 0 && body.slice(0, nl).match(/^[a-zA-Z0-9_+-]*$/)) {
-            body = body.slice(nl + 1);
-          }
-          out += '<pre>' + escapeChat(body) + '</pre>';
-        }
+    // --- The chat's host ---
+    // Every send carries the editor as it is on screen, unsaved text and all:
+    // the chat reads it through data-ui-send-context at send time. File state
+    // rides the CURRENT message only; the server never stores it, so the model
+    // always sees the file as it is now rather than stale copies.
+    wrap.setAttribute('data-ui-send-context', '');
+    wrap.uiSendContext = function() {
+      return {editor: {
+        name:    nameInput.value.trim(),
+        lang:    langSelect.value,
+        code:    editorValue(),
+        context: ctxEditor.value || '',
+        collections: pickedCollections(),
+        references: selectedRef ? [selectedRef] : [],
+        // The standing profile, sent on EVERY turn — including the first of a
+        // session and every edit. A foundation that applied only to some turns
+        // would be worse than none: the code would follow house conventions
+        // intermittently, and nothing in the reply would say which turns had it.
+        profile: pickedProfile || '',
+      }};
+    };
+    // proposeEdit opens text as a diff against the editor, with Apply. The
+    // diff pane hides the textarea and inserts itself where the textarea sat,
+    // so outline mode drops first, or the outline stays up covering a review
+    // the user can't see or resolve.
+    wrap.uiProposeEdit = function(text) {
+      docToRaw();
+      if (typeof window.editorShowDiff === 'function') {
+        window.editorShowDiff({
+          newText: text,
+          editorPane: editorWrap,
+          editorTextarea: editor,
+          onApply: function(t) { docSetValue(t); },
+        });
+      } else {
+        docSetValue(text);
       }
-      return out;
-    }
-    function setChatBusy(busy) {
-      chatBtnTalk.disabled = !!busy;
-      chatBtnEdit.disabled = !!busy;
-    }
-    // Chat protocol — shared with article_editor via buildDocChat
-    // (45_document_core.js). Rendering stays here: this panel formats
-    // fenced code into HTML, which article_editor deliberately doesn't.
-    var docChat = buildDocChat({
-      url: cfg.chat_url,
-      setBusy: setChatBusy,
-      appendMsg: function(role, text) {
-        if (role === 'user') {
-          var prefix = chatLastMode === 'chat' ? '<span class="ui-cw-mode-tag">chat</span> ' : '';
-          return addChatMsg('user', prefix + escapeChat(text));
-        }
-        if (role === 'error') {
-          return addChatMsg('assistant', '<span class="ui-cw-err">Error: ' + escapeChat(text) + '</span>');
-        }
-        return addChatMsg('assistant', formatChatBody(text), text || '');
-      },
-      thinking: function() {
-        return addChatMsg('assistant', '<span class="ui-cw-spinner"></span> Thinking…');
-      },
-      buildBody: function(message, mode, history) {
-        return {
-          name:    nameInput.value.trim(),
-          lang:    langSelect.value,
-          code:    editorValue(),
-          context: ctxEditor.value || '',
-          collections: pickedCollections(),
-          references: selectedRef ? [selectedRef] : [],
-          // The standing profile, sent on EVERY turn — including the first of a
-          // session and every edit. A foundation that applied only to some turns
-          // would be worse than none: the code would follow house conventions
-          // intermittently, and nothing in the reply would say which turns had it.
-          profile: pickedProfile || '',
-          message: message,
-          mode:    mode,
-          history: history,
-        };
-      },
-      // A regex snippet's "code" is a pattern the diff pane can't
-      // usefully review, so those replies stay in the chat.
-      proposalOf: function(data, mode) {
-        if (mode === 'chat' || data.type !== 'code' || !data.code) return null;
-        if (langSelect.value === 'regex') return null;
-        return data.code;
-      },
-      onProposal: function(text) {
-        // The diff pane hides the textarea and inserts itself where the
-        // textarea sat. Drop out of outline mode first, or the outline
-        // stays up covering a review the user can't see or resolve.
-        docToRaw();
-        if (typeof window.editorShowDiff === 'function') {
-          window.editorShowDiff({
-            newText: text,
-            editorPane: editorWrap,
-            editorTextarea: editor,
-            onApply: function(t) { docSetValue(t); },
-          });
-        } else {
-          docSetValue(text);
-        }
-        // No chat bubble: the diff pane already shows the change with
-        // its own +N / -M counters, so a prose echo would duplicate it.
-      },
-    });
-    // The user bubble is tagged with the mode that produced it, and
-    // appendMsg fires before send() knows the mode, so stash it.
-    var chatLastMode = 'edit';
-    function sendChat(mode) {
-      chatLastMode = mode === 'chat' ? 'chat' : 'edit';
-      docChat.send(chatInput.value, chatLastMode);
-      chatInput.value = '';
-    }
+    };
 
     // --- State ---
     var currentID    = null;
@@ -1584,3 +1499,23 @@
     return wrap;
   };
 
+
+  // editor_proposal is a reply's proposed new text for the editor its chat
+  // sits beside: Text is the reply's one-line summary of the change, data.code
+  // the whole proposed file. Live, the diff opens at once with Apply, as a
+  // proposed change always has here; after a reload the card stays, and
+  // Review opens it again. Nothing is applied without Apply.
+  window.uiRegisterBlockRenderer('editor_proposal', function(d, ctx) {
+    var code = (d.data && d.data.code) || '';
+    var card = el('div', {class: 'ui-cw-proposal'});
+    function review() {
+      var host = card.closest && card.closest('.ui-cw');
+      if (host && typeof host.uiProposeEdit === 'function') host.uiProposeEdit(code);
+    }
+    var lines = code ? code.split('\n').length : 0;
+    card.appendChild(el('div', {class: 'ui-cw-proposal-h'}, [d.text || 'Proposed change']));
+    card.appendChild(el('div', {class: 'ui-cw-proposal-meta'}, [lines + (lines === 1 ? ' line' : ' lines')]));
+    card.appendChild(el('button', {class: 'ui-row-btn', type: 'button', onclick: review}, ['Review in editor']));
+    if (ctx && ctx.live) setTimeout(review, 0);
+    return {wrap: card};
+  });

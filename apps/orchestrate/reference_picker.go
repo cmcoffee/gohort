@@ -31,9 +31,7 @@
 package orchestrate
 
 import (
-	"encoding/json"
 	"fmt"
-	"net/http"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -41,110 +39,117 @@ import (
 	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
-// handleReferenceSources drives the Sources modal.
-func (T *OrchestrateApp) handleReferenceSources(c *jsonapi.Call, raw json.RawMessage) (any, error) {
-	r := c.R
+// referenceSourcesGet drives the Sources modal.
+func (T *OrchestrateApp) referenceSourcesGet(c *jsonapi.Call) (any, error) {
 	user, udb := c.User, c.UDB
-	agentID := strings.TrimSpace(r.URL.Query().Get("agent"))
-	if agentID == "" {
-		return nil, jsonapi.BadRequest("agent required")
+	rec, err := referenceAgentAt(c)
+	if err != nil {
+		return nil, err
 	}
-	rec, found := loadAgent(udb, agentID)
-	if !found {
-		return nil, errNotFound
+	items := []map[string]any{}
+	for _, grp := range ReferenceGroups(user) {
+		for _, it := range grp.Items {
+			tools := ReferenceItemTools(user, grp.Kind, it.ID)
+			row := map[string]any{
+				"id":    ReferenceSelection{Kind: grp.Kind, ItemID: it.ID}.Ref(),
+				"name":  it.Name,
+				"desc":  refPickerDesc(it, tools),
+				"group": grp.Label,
+				// Offers the "Can make changes" switch on its pill: only
+				// a source with tools that write has anything to switch.
+				"can_write": len(sourceWriteTools(tools)) > 0,
+			}
+			items = append(items, row)
+		}
 	}
+	// Its own sub-agents, which the shared list leaves out: they are hidden
+	// from the fleet, and the list is the same for every agent. Attached
+	// here, the parent reads what its sub-agent recorded (search_<sub>_memory,
+	// agent_catalog.go) before running it, which is how a Librarian sub-agent
+	// is asked first. Only this agent's own: another agent's sub-agent is
+	// private to its parent.
+	listed := map[string]bool{}
+	for _, row := range items {
+		listed[row["id"].(string)] = true
+	}
+	for _, sub := range listAgents(udb, user) {
+		if sub.OwnedBy != rec.ID {
+			continue
+		}
+		ref := ReferenceSelection{Kind: AgentReferenceKind, ItemID: sub.ID}.Ref()
+		if listed[ref] {
+			continue
+		}
+		it := ReferenceItem{ID: sub.ID, Name: sub.Name, Desc: strings.TrimSpace("This agent's sub-agent. " + sub.Description)}
+		items = append(items, map[string]any{
+			"id": ref, "name": sub.Name, "group": agentReferenceSource{}.Label(),
+			"desc": refPickerDesc(it, ReferenceItemTools(user, AgentReferenceKind, sub.ID)),
+		})
+	}
+	attached, writes := []string{}, []string{}
+	for _, s := range rec.AttachedSources {
+		attached = append(attached, s.Ref())
+		if s.Writes {
+			writes = append(writes, s.Ref())
+		}
+	}
+	return map[string]any{"items": items, "attached": attached, "writes": writes}, nil
+}
 
-	switch r.Method {
-	case http.MethodGet:
-		items := []map[string]any{}
-		for _, grp := range ReferenceGroups(user) {
-			for _, it := range grp.Items {
-				tools := ReferenceItemTools(user, grp.Kind, it.ID)
-				row := map[string]any{
-					"id":    ReferenceSelection{Kind: grp.Kind, ItemID: it.ID}.Ref(),
-					"name":  it.Name,
-					"desc":  refPickerDesc(it, tools),
-					"group": grp.Label,
-					// Offers the "Can make changes" switch on its pill: only
-					// a source with tools that write has anything to switch.
-					"can_write": len(sourceWriteTools(tools)) > 0,
-				}
-				items = append(items, row)
-			}
-		}
-		// Its own sub-agents, which the shared list leaves out: they are hidden
-		// from the fleet, and the list is the same for every agent. Attached
-		// here, the parent reads what its sub-agent recorded (search_<sub>_memory,
-		// agent_catalog.go) before running it, which is how a Librarian sub-agent
-		// is asked first. Only this agent's own: another agent's sub-agent is
-		// private to its parent.
-		listed := map[string]bool{}
-		for _, row := range items {
-			listed[row["id"].(string)] = true
-		}
-		for _, sub := range listAgents(udb, user) {
-			if sub.OwnedBy != rec.ID {
-				continue
-			}
-			ref := ReferenceSelection{Kind: AgentReferenceKind, ItemID: sub.ID}.Ref()
-			if listed[ref] {
-				continue
-			}
-			it := ReferenceItem{ID: sub.ID, Name: sub.Name, Desc: strings.TrimSpace("This agent's sub-agent. " + sub.Description)}
-			items = append(items, map[string]any{
-				"id": ref, "name": sub.Name, "group": agentReferenceSource{}.Label(),
-				"desc": refPickerDesc(it, ReferenceItemTools(user, AgentReferenceKind, sub.ID)),
-			})
-		}
-		attached, writes := []string{}, []string{}
-		for _, s := range rec.AttachedSources {
-			attached = append(attached, s.Ref())
-			if s.Writes {
-				writes = append(writes, s.Ref())
-			}
-		}
-		return map[string]any{"items": items, "attached": attached, "writes": writes}, nil
-	case http.MethodPost:
-		var body struct {
-			References []string `json:"references"`
-			// Writes is the attached sources whose "Can make changes" is on.
-			Writes []string `json:"writes"`
-		}
-		if err := json.Unmarshal(raw, &body); err != nil {
-			return nil, jsonapi.BadRequest("bad request")
-		}
-		writes := map[string]bool{}
-		for _, ref := range body.Writes {
-			if s, ok := ParseReferenceRef(ref); ok {
-				writes[s.Ref()] = true
-			}
-		}
-		sel := make(ReferenceSelections, 0, len(body.References))
-		for _, ref := range body.References {
-			if s, ok := ParseReferenceRef(ref); ok {
-				s.Writes = writes[s.Ref()]
-				sel = append(sel, s)
-			}
-		}
-		// A selection is NOT validated against the live catalog. A source
-		// can be temporarily absent (an app not yet registered this boot, a
-		// disconnected MCP server) and dropping the attachment because the
-		// producer is down would quietly rewrite the agent — the
-		// broken-dependency posture is to keep the link and let the tools
-		// be missing until it comes back.
-		rec.AttachedSources = sel
-		if _, err := saveAgent(udb, rec); err != nil {
-			// saveAgent enforces the record's own invariants, so a save
-			// CAN be refused here for a reason that has nothing to do with
-			// sources. Reporting ok on a refused write is the failure that
-			// looks exactly like a picker that does not persist.
-			return nil, jsonapi.BadRequest(err.Error())
-		}
-		Log("[orchestrate.sources] user=%q agent=%q now attached to %d source(s)", user, rec.ID, len(sel))
-		return map[string]bool{"ok": true}, nil
-	default:
-		return nil, jsonapi.Status(http.StatusMethodNotAllowed, "method not allowed")
+// referenceSourcesSave sets the sources attached to the agent, and which of
+// them may make changes.
+func (T *OrchestrateApp) referenceSourcesSave(c *jsonapi.Call, body struct {
+	References []string `json:"references"`
+	// Writes is the attached sources whose "Can make changes" is on.
+	Writes []string `json:"writes"`
+}) (any, error) {
+	user, udb := c.User, c.UDB
+	rec, err := referenceAgentAt(c)
+	if err != nil {
+		return nil, err
 	}
+	writes := map[string]bool{}
+	for _, ref := range body.Writes {
+		if s, ok := ParseReferenceRef(ref); ok {
+			writes[s.Ref()] = true
+		}
+	}
+	sel := make(ReferenceSelections, 0, len(body.References))
+	for _, ref := range body.References {
+		if s, ok := ParseReferenceRef(ref); ok {
+			s.Writes = writes[s.Ref()]
+			sel = append(sel, s)
+		}
+	}
+	// A selection is NOT validated against the live catalog. A source
+	// can be temporarily absent (an app not yet registered this boot, a
+	// disconnected MCP server) and dropping the attachment because the
+	// producer is down would quietly rewrite the agent — the
+	// broken-dependency posture is to keep the link and let the tools
+	// be missing until it comes back.
+	rec.AttachedSources = sel
+	if _, err := saveAgent(udb, rec); err != nil {
+		// saveAgent enforces the record's own invariants, so a save
+		// CAN be refused here for a reason that has nothing to do with
+		// sources. Reporting ok on a refused write is the failure that
+		// looks exactly like a picker that does not persist.
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	Log("[orchestrate.sources] user=%q agent=%q now attached to %d source(s)", user, rec.ID, len(sel))
+	return map[string]bool{"ok": true}, nil
+}
+
+// referenceAgentAt is the agent the Sources modal is open on (?agent=).
+func referenceAgentAt(c *jsonapi.Call) (AgentRecord, error) {
+	agentID := strings.TrimSpace(c.R.URL.Query().Get("agent"))
+	if agentID == "" {
+		return AgentRecord{}, jsonapi.BadRequest("agent required")
+	}
+	rec, found := loadAgent(c.UDB, agentID)
+	if !found {
+		return AgentRecord{}, errNotFound
+	}
+	return rec, nil
 }
 
 // refPickerDesc is the item's own description plus what attaching it

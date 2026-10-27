@@ -68,6 +68,16 @@ func Clip(s string, n int) string {
 	return s[:n] + "…"
 }
 
+// FirstMessageTitle is a session's name before it has a better one: the
+// first message, trimmed and clipped to n bytes, or "New session" when the
+// message is empty.
+func FirstMessageTitle(msg string, n int) string {
+	if t := Clip(strings.TrimSpace(msg), n); t != "" {
+		return t
+	}
+	return "New session"
+}
+
 // HTMLEscape escapes special HTML characters.
 func HTMLEscape(s string) string {
 	s = strings.ReplaceAll(s, "&", "&amp;")

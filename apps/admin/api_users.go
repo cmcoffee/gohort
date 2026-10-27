@@ -533,7 +533,7 @@ func (a *AdminApp) userRoutes() http.HandlerFunc {
 		"groups":          {"PUT": jsonapi.Put(a.db, audit("changed the groups of", a.handleUpdateUserGroups), a.gate())},
 		"approve":         {"POST": jsonapi.Post(a.db, audit("approved the account", a.handleApproveUser), a.gate())},
 		"reject":          {"POST": jsonapi.Post(a.db, audit("rejected the account", a.handleRejectUser), a.gate())},
-		"reset-password":  {"POST": jsonapi.Post(a.db, audit("reset the password of", a.handleResetPassword), a.gate(), jsonapi.EmptyBodyOK)},
+		"reset-password":  {"POST": jsonapi.Post(a.db, audit("reset the password of", a.handleResetPassword), a.gate())},
 		"data":            {"GET": jsonapi.Get(a.db, a.handleUserDataSummary, a.gate())},
 		"data-action":     {"POST": jsonapi.Post(a.db, audit("moved or deleted the data of", a.handleUserDataAction), a.gate())},
 		"revoke-sessions": {"POST": jsonapi.Post(a.db, audit("signed %s out everywhere", a.handleRevokeSessions), a.gate())},
@@ -662,13 +662,19 @@ func (a *AdminApp) handleAddUser(c *jsonapi.Call, req struct {
 	return map[string]any{"status": "created"}, nil
 }
 
+// resetPasswordBody is a password reset: no body is a reset link.
+type resetPasswordBody struct {
+	Mode     string `json:"mode"`
+	Password string `json:"password"`
+}
+
 // handleResetPassword resets a user's password: mode "set" (admin types a new
 // one) or "link" (default, and what no body means: email/return a one-time
 // reset link). Owner-of-the-deployment authority (admin-gated by the router).
-func (a *AdminApp) handleResetPassword(c *jsonapi.Call, req struct {
-	Mode     string `json:"mode"`
-	Password string `json:"password"`
-}) (any, error) {
+func (a *AdminApp) handleResetPassword(c *jsonapi.Call, req *resetPasswordBody) (any, error) {
+	if req == nil {
+		req = &resetPasswordBody{}
+	}
 	username := userInPath(c.R)
 	if _, ok := AuthGetUser(a.db, username); !ok {
 		return nil, jsonapi.NotFound("user not found")

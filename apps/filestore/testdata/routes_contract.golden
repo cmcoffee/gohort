@@ -47,7 +47,7 @@ root POST /api/stores "{\"name\":\"Fresh\",\"path\":\"<new>\",\"members\":[\"ali
 root POST /api/stores "{\"name\":"
   400 invalid JSON: unexpected EOF
 root POST /api/stores ""
-  400 invalid JSON: EOF
+  400 invalid JSON: unexpected end of JSON input
 root POST /api/stores "{\"name\":\"Nowhere\",\"path\":\"/no/such/dir\"}"
   400 that path cannot be read: stat /no/such/dir: no such file or directory
 root PATCH /api/stores?slug=nope "{\"slug\":\"nope\",\"name\":\"x\"}"

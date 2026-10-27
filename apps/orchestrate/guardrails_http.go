@@ -259,7 +259,10 @@ func (T *OrchestrateApp) ownedAgent(c *jsonapi.Call) (AgentRecord, error) {
 //
 //	POST /api/agents/{id}/guardrail-test  {"candidate": "...", "hook": "pre_action"}
 //	→ {"status": "violate|unsure|comply", "verdicts": [...]}
-func (T *OrchestrateApp) agentGuardrailTest(c *jsonapi.Call, body guardrailTestBody) (any, error) {
+func (T *OrchestrateApp) agentGuardrailTest(c *jsonapi.Call, body *guardrailTestBody) (any, error) {
+	if body == nil {
+		body = &guardrailTestBody{}
+	}
 	agent, err := T.ownedAgent(c)
 	if err != nil {
 		return nil, err

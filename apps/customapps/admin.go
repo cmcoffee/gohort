@@ -331,7 +331,7 @@ func (T *CustomApps) adminRoute(sub string) http.HandlerFunc {
 		}, jsonapi.Authorize(adminOnly)),
 		"POST": jsonapi.Post(T.DB, func(c *jsonapi.Call, raw json.RawMessage) (any, error) {
 			return T.handleAdminWrite(c, sub, raw)
-		}, jsonapi.Authorize(adminOnly), jsonapi.EmptyBodyOK),
+		}, jsonapi.Authorize(adminOnly)),
 	}.Serve
 }
 

@@ -12,7 +12,6 @@
 package orchestrate
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -85,42 +84,35 @@ func bulletinTargets(udb Database, user string) []AgentRecord {
 	return out
 }
 
-func (T *OrchestrateApp) handleBulletins(c *jsonapi.Call, raw json.RawMessage) (any, error) {
-	r := c.R
-	user, udb := c.User, c.UDB
-	switch r.Method {
-	case http.MethodGet:
-		agents := bulletinTargets(udb, user)
-		rows := []map[string]any{}
-		for _, b := range listBulletins(udb) {
-			rows = append(rows, bulletinRow(b, agents, UserLocation(user)))
-		}
-		return rows, nil
-	case http.MethodPost:
-		var body struct {
-			Name     string `json:"name"`
-			Desc     string `json:"desc"`
-			TTLHours int    `json:"ttl_hours"`
-		}
-		if err := json.Unmarshal(raw, &body); err != nil {
-			return nil, jsonapi.BadRequest("bad request")
-		}
-		name := bulletinName(body.Name)
-		if name == "" {
-			return nil, jsonapi.BadRequest("a board needs a name: letters, digits, - or _")
-		}
-		if _, exists := loadBulletin(udb, name); exists {
-			return nil, jsonapi.Status(http.StatusConflict, fmt.Sprintf("a board named %q already exists", name))
-		}
-		b := bulletinBoard{Name: name, Desc: strings.TrimSpace(body.Desc), TTLHours: body.TTLHours, Created: time.Now()}
-		if err := saveBulletin(udb, b); err != nil {
-			return nil, jsonapi.BadRequest(err.Error())
-		}
-		Log("[orchestrate.bulletins] user=%q created board %q", user, name)
-		return map[string]any{"name": name}, nil
-	default:
-		return nil, jsonapi.Status(http.StatusMethodNotAllowed, "method not allowed")
+// bulletinsList is the caller's boards, each as its row.
+func (T *OrchestrateApp) bulletinsList(c *jsonapi.Call) (any, error) {
+	agents := bulletinTargets(c.UDB, c.User)
+	rows := []map[string]any{}
+	for _, b := range listBulletins(c.UDB) {
+		rows = append(rows, bulletinRow(b, agents, UserLocation(c.User)))
 	}
+	return rows, nil
+}
+
+// bulletinCreate makes a new, empty board.
+func (T *OrchestrateApp) bulletinCreate(c *jsonapi.Call, body struct {
+	Name     string `json:"name"`
+	Desc     string `json:"desc"`
+	TTLHours int    `json:"ttl_hours"`
+}) (any, error) {
+	name := bulletinName(body.Name)
+	if name == "" {
+		return nil, jsonapi.BadRequest("a board needs a name: letters, digits, - or _")
+	}
+	if _, exists := loadBulletin(c.UDB, name); exists {
+		return nil, jsonapi.Status(http.StatusConflict, fmt.Sprintf("a board named %q already exists", name))
+	}
+	b := bulletinBoard{Name: name, Desc: strings.TrimSpace(body.Desc), TTLHours: body.TTLHours, Created: time.Now()}
+	if err := saveBulletin(c.UDB, b); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	Log("[orchestrate.bulletins] user=%q created board %q", c.User, name)
+	return map[string]any{"name": name}, nil
 }
 
 func (T *OrchestrateApp) registerBulletinRoutes() {

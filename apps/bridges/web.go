@@ -77,27 +77,31 @@ func (T *Bridges) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	sub.HandleFunc("/api/webhook-secret", jsonapi.Post(T.DB, T.handleWebhookSecret))
 	sub.HandleFunc("/api/keys", jsonapi.Methods{
 		"GET":  jsonapi.Get(T.DB, T.handleKeys),
-		"POST": jsonapi.Post(T.DB, T.handleKeyMint, jsonapi.EmptyBodyOK),
+		"POST": jsonapi.Post(T.DB, T.handleKeyMint),
 	}.Serve)
-	sub.HandleFunc("/api/keys/", T.handleKeyOne)
+	sub.HandleFunc("/api/keys/{id}", jsonapi.Methods{
+		"PATCH":  jsonapi.Patch(T.DB, T.handleKeyToggle),
+		"POST":   jsonapi.Post(T.DB, T.handleKeyToggle),
+		"DELETE": jsonapi.Delete(T.DB, T.handleKeyRevoke),
+	}.Serve)
 	sub.HandleFunc("/api/bridges", jsonapi.Get(T.DB, T.handleBridgeList))
 	sub.HandleFunc("/api/panic", jsonapi.Post(T.DB, T.handlePanic))
 	sub.HandleFunc("/api/config", jsonapi.Methods{
 		"GET":   jsonapi.Get(T.DB, T.handleConfig),
-		"POST":  jsonapi.Post(T.DB, T.handleConfigSet, jsonapi.EmptyBodyOK),
-		"PATCH": jsonapi.Patch(T.DB, T.handleConfigSet, jsonapi.EmptyBodyOK),
+		"POST":  jsonapi.Post(T.DB, T.handleConfigSet),
+		"PATCH": jsonapi.Patch(T.DB, T.handleConfigSet),
 	}.Serve)
 	sub.HandleFunc("/api/conversations", jsonapi.Get(T.DB, T.handleConversations))
 	sub.HandleFunc("/api/incoming-convos", jsonapi.Get(T.DB, T.handleIncomingConvos))
 	sub.HandleFunc("/api/add-convo", jsonapi.Methods{
 		"GET":  jsonapi.Get(T.DB, T.handleAddConvoForm),
-		"POST": jsonapi.Post(T.DB, T.handleAddConvo, jsonapi.EmptyBodyOK),
+		"POST": jsonapi.Post(T.DB, T.handleAddConvo),
 	}.Serve)
 	sub.HandleFunc("/api/agent-channels", jsonapi.Get(T.DB, T.handleAgentChannels))
 	sub.HandleFunc("/api/connect-channel", jsonapi.Methods{
-		"POST": jsonapi.Post(T.DB, T.handleConnectChannel, jsonapi.EmptyBodyOK),
+		"POST": jsonapi.Post(T.DB, T.handleConnectChannel),
 	}.Serve)
-	sub.HandleFunc("/api/set-autoreply", jsonapi.Patch(T.DB, T.handleSetAutoReply, jsonapi.EmptyBodyOK))
+	sub.HandleFunc("/api/set-autoreply", jsonapi.Patch(T.DB, T.handleSetAutoReply))
 	sub.HandleFunc("/api/conv-info/", jsonapi.Get(T.DB, T.handleConvInfo))
 	sub.HandleFunc("/api/conversation/", jsonapi.Methods{
 		"PATCH":  jsonapi.Patch(T.DB, T.handleConvUpdate),

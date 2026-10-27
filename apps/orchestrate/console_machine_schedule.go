@@ -17,7 +17,6 @@
 package orchestrate
 
 import (
-	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
@@ -71,24 +70,20 @@ func (T *OrchestrateApp) handleConsoleMachineOptions(c *jsonapi.Call) (any, erro
 //
 //	POST /api/console/machine-schedule/create
 //	{name, machine_id, mission, cron | interval_minutes, agent_id}
-func (T *OrchestrateApp) handleConsoleMachineScheduleCreate(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+func (T *OrchestrateApp) handleConsoleMachineScheduleCreate(c *jsonapi.Call, body struct {
+	Name            string `json:"name"`
+	MachineID       string `json:"machine_id"`
+	Mission         string `json:"mission"`
+	Cron            string `json:"cron"`
+	IntervalMinutes int    `json:"interval_minutes"`
+	AgentID         string `json:"agent_id"` // whose rail this lands on
+	// Timing is the shared timing section (core/timing); when sent it
+	// replaces cron / interval_minutes.
+	Timing *timing.Spec `json:"timing"`
+	// Until is the shared Until section (schedule_until.go).
+	Until *untilBody `json:"until"`
+}) (any, error) {
 	user := c.User
-	var body struct {
-		Name            string `json:"name"`
-		MachineID       string `json:"machine_id"`
-		Mission         string `json:"mission"`
-		Cron            string `json:"cron"`
-		IntervalMinutes int    `json:"interval_minutes"`
-		AgentID         string `json:"agent_id"` // whose rail this lands on
-		// Timing is the shared timing section (core/timing); when sent it
-		// replaces cron / interval_minutes.
-		Timing *timing.Spec `json:"timing"`
-		// Until is the shared Until section (schedule_until.go).
-		Until *untilBody `json:"until"`
-	}
-	if err := json.Unmarshal(raw, &body); err != nil {
-		return nil, jsonapi.BadRequest("bad body: " + err.Error())
-	}
 	name := strings.TrimSpace(body.Name)
 	if name == "" {
 		return nil, jsonapi.BadRequest("give the schedule a name")

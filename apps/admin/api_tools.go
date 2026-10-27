@@ -19,7 +19,7 @@ func (a *AdminApp) registerToolsRoutes(sub *http.ServeMux) {
 	// approval queue.
 	sub.HandleFunc("/api/persistent-tools", jsonapi.Methods{
 		"GET":    jsonapi.Get(a.db, a.handlePersistentTools, a.gate()),
-		"POST":   jsonapi.Post(a.db, a.changePersistentTool, a.gate(), jsonapi.EmptyBodyOK),
+		"POST":   jsonapi.Post(a.db, a.changePersistentTool, a.gate()),
 		"DELETE": jsonapi.Delete(a.db, a.deletePersistentTool, a.gate()),
 	}.Serve)
 

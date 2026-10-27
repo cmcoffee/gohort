@@ -9,7 +9,6 @@
 package orchestrate
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/url"
 	"strings"
@@ -68,34 +67,26 @@ func (T *OrchestrateApp) accountSection(r *http.Request, user string) (ui.Sectio
 	}, true
 }
 
-// handleDefaultAgentPref is the /api/default-agent endpoint behind the
-// account section's FormPanel: GET returns {default_agent}; POST saves
-// it after validating that a specific agent ID is one this user can see
-// (so a stale or forged value can't point the surface at nothing).
-func (T *OrchestrateApp) handleDefaultAgentPref(c *jsonapi.Call, raw json.RawMessage) (any, error) {
-	r := c.R
-	user, udb := c.User, c.UDB
-	switch r.Method {
-	case http.MethodGet:
-		return map[string]any{
-			"default_agent": AuthGetDefaultAgent(AuthDB(), user),
-		}, nil
-	case http.MethodPost:
-		var req struct {
-			DefaultAgent string `json:"default_agent"`
-		}
-		if err := json.Unmarshal(raw, &req); err != nil {
-			return nil, jsonapi.BadRequest("bad request")
-		}
-		v := strings.TrimSpace(req.DefaultAgent)
-		if v != "" && v != lastAccessedSentinel && !userCanSeeAgent(udb, user, v) {
-			return nil, jsonapi.BadRequest("unknown agent")
-		}
-		AuthSetDefaultAgent(AuthDB(), user, v)
-		return jsonapi.Empty(http.StatusNoContent), nil
-	default:
-		return nil, jsonapi.Status(http.StatusMethodNotAllowed, "method not allowed")
+// defaultAgentGet is the /api/default-agent endpoint behind the account
+// section's FormPanel: {default_agent}.
+func (T *OrchestrateApp) defaultAgentGet(c *jsonapi.Call) (any, error) {
+	return map[string]any{
+		"default_agent": AuthGetDefaultAgent(AuthDB(), c.User),
+	}, nil
+}
+
+// defaultAgentSave saves it after validating that a specific agent ID is one
+// this user can see (so a stale or forged value can't point the surface at
+// nothing).
+func (T *OrchestrateApp) defaultAgentSave(c *jsonapi.Call, req struct {
+	DefaultAgent string `json:"default_agent"`
+}) (any, error) {
+	v := strings.TrimSpace(req.DefaultAgent)
+	if v != "" && v != lastAccessedSentinel && !userCanSeeAgent(c.UDB, c.User, v) {
+		return nil, jsonapi.BadRequest("unknown agent")
 	}
+	AuthSetDefaultAgent(AuthDB(), c.User, v)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // userCanSeeAgent reports whether id is one of the agents the PICKER

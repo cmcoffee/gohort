@@ -6,7 +6,7 @@
 //     wakes the Operator with the posted summary. This is the TeamSpeak model —
 //     an outside watcher notices an event and pokes gohort.
 //   - "poll": runs a checker agent on an interval; when the checker's answer
-//     contains the match string, the Operator is woken with that answer. This
+//     begins with the match string, the Operator is woken with that answer. This
 //     is "watch X and tell me when Y" with no external integration needed.
 //
 // Split mirrors standing_agent.go: the STORE + SCHEDULE + LEDGER glue live here
@@ -32,6 +32,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/cmcoffee/gohort/core/notes"
 	"github.com/cmcoffee/gohort/core/timing"
@@ -131,7 +133,7 @@ type EventMonitor struct {
 	// poll kind
 	CheckAgent      string `json:"check_agent,omitempty"`    // agent run each interval to check the condition
 	Check           string `json:"check,omitempty"`          // the brief/question given to the checker
-	MatchContains   string `json:"match_contains,omitempty"` // fire when the answer contains this (default "YES")
+	MatchContains   string `json:"match_contains,omitempty"` // fire when the answer begins with this (default "YES")
 	IntervalSeconds int    `json:"interval_seconds,omitempty"`
 	// DailyAt checks at set times of day instead of on the interval: minutes
 	// since midnight in the owner's zone, ascending. A watch feeding a morning
@@ -846,14 +848,41 @@ var EventMonitorDependencyError func(m EventMonitor) string
 
 // --- poll match --------------------------------------------------------------
 
-// eventMatch reports whether a checker answer should fire the monitor: it fires
-// when the answer contains the match string (default "YES"), case-insensitive.
+// eventMatch reports whether a checker answer should fire the monitor: its
+// LEADING word or phrase is the match string (default "YES"), case-insensitive,
+// after any markdown emphasis or quoting.
+//
+// Only the lead counts. A checker that finds nothing answers NONE and then
+// says why, and the why is about the very thing it watches for: "NONE: the
+// vendor announced the model but has not released it" contains RELEASED.
+// Matched anywhere, that fired the monitor, texted the owner on a no, and
+// spent a once-only monitor's one fire. pollQuestion tells the checker the
+// lead is its verdict.
 func eventMatch(answer, match string) bool {
-	want := strings.TrimSpace(match)
-	if want == "" {
-		want = "YES"
+	want := strings.ToUpper(matchWord(match))
+	lead := strings.ToUpper(strings.TrimLeft(answer, " \t\r\n*_#>`\"'"))
+	if !strings.HasPrefix(lead, want) {
+		return false
 	}
-	return strings.Contains(strings.ToUpper(answer), strings.ToUpper(want))
+	// A whole word: YES leads "YES, two new CVEs" and not "YESTERDAY".
+	next, _ := utf8.DecodeRuneInString(lead[len(want):])
+	return next == utf8.RuneError || !(unicode.IsLetter(next) || unicode.IsDigit(next))
+}
+
+// matchWord is a poll's match string, "YES" when none was set.
+func matchWord(match string) string {
+	if want := strings.TrimSpace(match); want != "" {
+		return want
+	}
+	return "YES"
+}
+
+// pollQuestion is the check a checker agent is asked: the monitor's own
+// question, and what its answer has to start with, since only the lead is
+// read (eventMatch).
+func pollQuestion(check, match string) string {
+	return strings.TrimRight(check, "\n") + "\n\nBegin your answer with " + strconv.Quote(matchWord(match)) +
+		" if it is so, or with NONE if it is not. Anything you add goes after that first word."
 }
 
 // isScheduledKind reports whether a monitor runs on the interval scheduler
@@ -1208,7 +1237,7 @@ func executeEventPoll(ctx context.Context, db Database, m EventMonitor) {
 		Log("[event] poll %s/%s fired but no poller is registered", m.Owner, m.Name)
 		return
 	}
-	answer, err := poller(ctx, m.Owner, m.CheckAgent, m.Check)
+	answer, err := poller(ctx, m.Owner, m.CheckAgent, pollQuestion(m.Check, m.MatchContains))
 	if err != nil {
 		notePollFailure(db, m, truncateEvent(strings.TrimSpace(err.Error()), 200))
 		return

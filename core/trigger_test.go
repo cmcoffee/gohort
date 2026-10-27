@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"github.com/cmcoffee/snugforge/kvlite"
+	"strings"
 	"testing"
 	"time"
 )
@@ -136,5 +137,32 @@ func TestEvaluateGateAlwaysFires(t *testing.T) {
 	fire, summary := evaluateGate(context.Background(), db, tr)
 	if !fire || summary != "" {
 		t.Fatalf("always gate: fire=%v summary=%q, want fire=true empty summary", fire, summary)
+	}
+}
+
+// A check rule reads its checker's answer the way a poll monitor does: the
+// checker is told to lead with the verdict, and only the lead fires it. A NONE
+// whose explanation names what it watches for does not.
+func TestACheckRuleFiresOnlyOnTheVerdict(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	tr := ScheduledTrigger{Owner: "u", Name: "release", Gate: GateRule, RuleMode: RuleCheck,
+		CheckAgent: "c", Check: "Has v2 been released?", MatchContains: "RELEASED"}
+	SaveScheduledTrigger(db, tr)
+	var asked string
+	answer := "NONE. Announced, not released yet."
+	RegisterEventPoller(func(ctx context.Context, owner, agentID, check string) (string, error) {
+		asked = check
+		return answer, nil
+	})
+	defer RegisterEventPoller(nil)
+	if fire, _ := evaluateGate(context.Background(), db, tr); fire {
+		t.Error("a NONE that names the release fired the rule")
+	}
+	if !strings.Contains(asked, `Begin your answer with "RELEASED"`) {
+		t.Errorf("the checker was asked %q", asked)
+	}
+	answer = "RELEASED: v2 is out"
+	if fire, _ := evaluateGate(context.Background(), db, tr); !fire {
+		t.Error("the verdict did not fire the rule")
 	}
 }

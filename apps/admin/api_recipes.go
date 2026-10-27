@@ -253,11 +253,6 @@ func firstNonBlankStr(vs ...string) string {
 	return ""
 }
 
-func writeJSONOut(w http.ResponseWriter, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(v)
-}
-
 // slugID makes a template id from its title.
 func slugID(title string) string {
 	var b strings.Builder

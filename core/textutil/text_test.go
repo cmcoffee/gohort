@@ -158,3 +158,22 @@ func TestClip(t *testing.T) {
 		}
 	}
 }
+
+// A new session's name is its first message, trimmed and clipped; an empty
+// one is still named.
+func TestFirstMessageTitle(t *testing.T) {
+	for _, c := range []struct {
+		in   string
+		n    int
+		want string
+	}{
+		{"  how do I rotate keys?  ", 60, "how do I rotate keys?"},
+		{"abcdefghij", 4, "abcd…"},
+		{"   ", 60, "New session"},
+		{"", 60, "New session"},
+	} {
+		if got := FirstMessageTitle(c.in, c.n); got != c.want {
+			t.Errorf("FirstMessageTitle(%q, %d) = %q, want %q", c.in, c.n, got, c.want)
+		}
+	}
+}

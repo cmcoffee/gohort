@@ -186,9 +186,38 @@ func TestTheDeploymentLayerIsOfferedToAnAdmin(t *testing.T) {
 // Admin only. An owner sets what their own fleet does; they do not set what
 // everybody's does, and they certainly do not set the ceiling over their own.
 func TestTheDeploymentLayerIsAdminOnly(t *testing.T) {
-	src := mustReadFile(t, "deployment_defaults.go")
-	if !strings.Contains(src, "if !RequestIsAdmin(r) {") {
-		t.Error("the deployment settings endpoint is not admin-gated, so any owner can set the ceiling over every other owner")
+	root := &DBase{Store: kvlite.MemStore()}
+	prevRoot, prevBase := RootDB, orchestrateBaseDB
+	RootDB, orchestrateBaseDB = root, root
+	t.Cleanup(func() { RootDB, orchestrateBaseDB = prevRoot, prevBase })
+	signedUp(t, "owner")
+	AuthSetUser(AuthDB(), "boss", "pw", true)
+	h := routed(&OrchestrateApp{AppCore: AppCore{DB: root}})
+	do := func(user, method, body string) int {
+		r := withSession(httptest.NewRequest(method, "/api/console/deployment-settings", strings.NewReader(body)), user)
+		w := httptest.NewRecorder()
+		h(w, r)
+		return w.Code
+	}
+	before := effectiveDeploymentMaximum(root, defaultWorkspaceNetwork)
+	tighter := settingOff
+	if before == settingOff {
+		tighter = settingOn
+	}
+	set := `{"` + defaultWorkspaceNetwork + `_max":"` + tighter + `"}`
+	for _, m := range []string{"GET", "POST", "PATCH"} {
+		if code := do("owner", m, set); code != http.StatusForbidden {
+			t.Errorf("an owner's %s answered %d, want 403", m, code)
+		}
+	}
+	if got := effectiveDeploymentMaximum(root, defaultWorkspaceNetwork); got != before {
+		t.Fatalf("an owner set the ceiling over every other owner: %q -> %q", before, got)
+	}
+	if code := do("boss", "PATCH", set); code != http.StatusNoContent {
+		t.Fatalf("the admin's save answered %d", code)
+	}
+	if got := effectiveDeploymentMaximum(root, defaultWorkspaceNetwork); got != tighter {
+		t.Errorf("the admin's save did not land: %q", got)
 	}
 	// And there is no second, owner-scoped copy of the same chain. Two pages
 	// answering one question is what this replaced.

@@ -126,82 +126,77 @@ type machineRow struct {
 	SharedWith string `json:"shared_with,omitempty"`
 }
 
-// handleMachines serves the collection routes: GET list, POST create.
-func (T *OrchestrateApp) handleMachines(c *jsonapi.Call, raw json.RawMessage) (any, error) {
-	r := c.R
+// machinesList and machineCreate serve the collection routes: GET list, POST
+// create.
+func (T *OrchestrateApp) machinesList(c *jsonapi.Call) (any, error) {
 	user, udb := c.User, c.UDB
-	switch r.Method {
-	case http.MethodGet:
-		// ?starter=1 — a blank machine to edit, rather than an empty box.
-		//
-		// Served from Go rather than written in the editor's JavaScript so
-		// there is ONE copy and a test can prove it validates. A starter
-		// that gets rejected on first save teaches the wrong lesson about
-		// the whole feature.
-		if r.URL.Query().Get("starter") == "1" {
-			return StarterMachine(), nil
-		}
-		defs := ListMachineDefs(udb, user)
-		users := map[string][]string{}
-		for _, ag := range listAgents(udb, user) {
-			if ag.Machine != "" {
-				users[ag.Machine] = append(users[ag.Machine], chFirst(ag.Name, ag.ID))
-			}
-		}
-		rows := make([]machineRow, 0, len(defs))
-		for _, d := range defs {
-			rows = append(rows, machineRow{
-				ID: d.ID, Name: d.Name, Description: d.Description,
-				Phases: len(d.Phases), PhaseNames: d.PhaseNames(),
-				Start: d.StartPhase(), UsedBy: users[d.ID],
-				Legend:     d.Graph().Legend,
-				UsedByText: usedByText(users[d.ID]),
-				Status:     machineStatusText(d),
-				EditURL:    "/orchestrate/machine?id=" + d.ID,
-				Mine:       true,
-				SharedWith: ShareRecipientsText(d.AllowedUsers),
-			})
-		}
-		// Machines other people shared, after the user's own and labelled with
-		// whose they are. Listed at all because a share nobody can find is a
-		// share that did not happen; listed LAST because your own work is what
-		// you came to this page for.
-		for _, sm := range sharedMachinesFor(user) {
-			rows = append(rows, machineRow{
-				ID: sm.Def.ID, Name: sm.Def.Name, Description: sm.Def.Description,
-				Phases: len(sm.Def.Phases), PhaseNames: sm.Def.PhaseNames(),
-				Start:   sm.Def.StartPhase(),
-				Legend:  sm.Def.Graph().Legend,
-				Status:  "shared by " + sm.Owner,
-				EditURL: "/orchestrate/machine?id=" + sm.Def.ID,
-				Owner:   sm.Owner,
-			})
-		}
-		return map[string]any{"machines": rows}, nil
-	case http.MethodPost:
-		var def MachineDef
-		if err := json.Unmarshal(raw, &def); err != nil {
-			return nil, jsonapi.BadRequest("bad request")
-		}
-		// Force a fresh, user-owned record — the client doesn't get to
-		// assert id/owner on create.
-		def.ID = ""
-		def.Owner = user
-		// Sharing is its own door (/share). A create that could assert a
-		// recipient list would be a second way to grant, and the two would
-		// eventually disagree about what a grant means.
-		def.AllowedUsers = nil
-		def.Editors = nil
-		def.Published = false
-		if err := def.Validate(); err != nil {
-			return nil, jsonapi.BadRequest(err.Error())
-		}
-		saved := SaveMachineDef(udb, def)
-		Log("[orchestrate.machines] user=%q created machine %q (id=%s, %d phases)", user, saved.Name, saved.ID, len(saved.Phases))
-		return saved, nil
-	default:
-		return nil, jsonapi.Status(http.StatusMethodNotAllowed, "method not allowed")
+	// ?starter=1 — a blank machine to edit, rather than an empty box.
+	//
+	// Served from Go rather than written in the editor's JavaScript so
+	// there is ONE copy and a test can prove it validates. A starter
+	// that gets rejected on first save teaches the wrong lesson about
+	// the whole feature.
+	if c.R.URL.Query().Get("starter") == "1" {
+		return StarterMachine(), nil
 	}
+	defs := ListMachineDefs(udb, user)
+	users := map[string][]string{}
+	for _, ag := range listAgents(udb, user) {
+		if ag.Machine != "" {
+			users[ag.Machine] = append(users[ag.Machine], chFirst(ag.Name, ag.ID))
+		}
+	}
+	rows := make([]machineRow, 0, len(defs))
+	for _, d := range defs {
+		rows = append(rows, machineRow{
+			ID: d.ID, Name: d.Name, Description: d.Description,
+			Phases: len(d.Phases), PhaseNames: d.PhaseNames(),
+			Start: d.StartPhase(), UsedBy: users[d.ID],
+			Legend:     d.Graph().Legend,
+			UsedByText: usedByText(users[d.ID]),
+			Status:     machineStatusText(d),
+			EditURL:    "/orchestrate/machine?id=" + d.ID,
+			Mine:       true,
+			SharedWith: ShareRecipientsText(d.AllowedUsers),
+		})
+	}
+	// Machines other people shared, after the user's own and labelled with
+	// whose they are. Listed at all because a share nobody can find is a
+	// share that did not happen; listed LAST because your own work is what
+	// you came to this page for.
+	for _, sm := range sharedMachinesFor(user) {
+		rows = append(rows, machineRow{
+			ID: sm.Def.ID, Name: sm.Def.Name, Description: sm.Def.Description,
+			Phases: len(sm.Def.Phases), PhaseNames: sm.Def.PhaseNames(),
+			Start:   sm.Def.StartPhase(),
+			Legend:  sm.Def.Graph().Legend,
+			Status:  "shared by " + sm.Owner,
+			EditURL: "/orchestrate/machine?id=" + sm.Def.ID,
+			Owner:   sm.Owner,
+		})
+	}
+	return map[string]any{"machines": rows}, nil
+}
+
+// machineCreate saves a new machine, the caller's own.
+func (T *OrchestrateApp) machineCreate(c *jsonapi.Call, def MachineDef) (any, error) {
+	user, udb := c.User, c.UDB
+	// Force a fresh, user-owned record — the client doesn't get to
+	// assert id/owner on create.
+	def.ID = ""
+	def.Owner = user
+	// Sharing is its own door (/share). A create that could assert a
+	// recipient list would be a second way to grant, and the two would
+	// eventually disagree about what a grant means.
+	def.AllowedUsers = nil
+	def.Editors = nil
+	def.Published = false
+	if err := def.Validate(); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	saved := SaveMachineDef(udb, def)
+	Log("[orchestrate.machines] user=%q created machine %q (id=%s, %d phases)", user, saved.Name, saved.ID, len(saved.Phases))
+	return saved, nil
 }
 
 // handleMachineImport accepts a portable recipe and saves it as a new
@@ -276,7 +271,7 @@ func (T *OrchestrateApp) registerMachineRoutes() {
 		"GET":  jsonapi.Get(T.DB, T.machineShare),
 		"POST": jsonapi.Post(T.DB, T.machineShareSave),
 	}.Serve)
-	T.HandleFunc("/api/machines/{id}/publish", jsonapi.Post(T.DB, T.machinePublish, jsonapi.EmptyBodyOK))
+	T.HandleFunc("/api/machines/{id}/publish", jsonapi.Post(T.DB, T.machinePublish))
 	T.HandleFunc("/api/machines/{id}/unpublish", jsonapi.Post(T.DB, T.machineUnpublish))
 	// Not JSON in and out: the ✨ step draft, an editor page block, the
 	// picture, a download, the revisions surface and the run sub-protocol.
@@ -595,12 +590,18 @@ func (T *OrchestrateApp) machineShareSave(c *jsonapi.Call, body struct {
 	return out, nil
 }
 
+// machinePublishBody is a publish request: an optional note for the administrator.
+type machinePublishBody struct {
+	Note string `json:"note"` // optional
+}
+
 // machinePublish asks an administrator to let EVERY user of the deployment
 // run this. The narrower grant beside it is the owner's own to make; this one
 // is not, which is why the door only files a request.
-func (T *OrchestrateApp) machinePublish(c *jsonapi.Call, body struct {
-	Note string `json:"note"` // optional
-}) (any, error) {
+func (T *OrchestrateApp) machinePublish(c *jsonapi.Call, body *machinePublishBody) (any, error) {
+	if body == nil {
+		body = &machinePublishBody{}
+	}
 	mc, perr := T.machineAt(c)
 	if perr != nil {
 		return nil, perr

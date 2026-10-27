@@ -132,7 +132,7 @@ func scheduleToolDef(sess *ToolSession, owner, controllerAgentID string, impl ma
 		b.WriteString("  when=\"value_crosses\": a URL's value crosses a line, silently checked, no LLM. \"tell me when NVDA goes below 150\". url + json_path (or regex) + compare_op + threshold.\n")
 		b.WriteString("  when=\"output_changes\": a tool's output changes, silently checked, no LLM until it does. \"tell me when the chat has a new message\", \"when the page changes\". tool_name (+ tool_args).\n")
 		b.WriteString("  when=\"posted\": an external system POSTs to a secret URL you are given. No polling.\n")
-		b.WriteString("  when=\"agent_says\": an agent judges a fuzzy condition each check (the expensive one; only when no value or hash can capture it). check = the question; it fires when the answer contains match_contains (default YES).\n")
+		b.WriteString("  when=\"agent_says\": an agent judges a fuzzy condition each check (the expensive one; only when no value or hash can capture it). check = the question; it fires when the answer begins with match_contains (default YES), and the checker is told to begin with that or NONE.\n")
 	}
 	b.WriteString("`then` is what to do when it fires, in plain words: for every it is the mission run each time; for the rest it is handed to you on wake. Everything else has a default: a name is made up")
 	if hasOp {
@@ -188,7 +188,7 @@ func scheduleToolDef(sess *ToolSession, owner, controllerAgentID string, impl ma
 			"tool_args":      {Type: "object", Description: "(output_changes) Arguments passed to tool_name every check, e.g. {\"chat_id\":\"any;+;chat123\",\"limit\":10}."},
 			"format_script":  {Type: "string", Description: "(output_changes, optional) Sandboxed python shaping the alert: reads {\"prior\",\"current\"} JSON on stdin, prints the alert; print \"SKIP\" to drop a change. Empty output falls back to the built-in diff."},
 			"check":          {Type: "string", Description: "(agent_says) The question the checking agent answers each check. Tell it to answer the match word only when the event has happened, and a clean NONE otherwise."},
-			"match_contains": {Type: "string", Description: "(agent_says) Fires when the answer contains this (case-insensitive). Default \"YES\"."},
+			"match_contains": {Type: "string", Description: "(agent_says) Fires when the answer begins with this word (case-insensitive). Default \"YES\". The checker is told to begin with it or with NONE."},
 			"notify":         {Type: "string", Enum: []string{"channel", "direct", "text"}, Description: "(at / monitors) channel (default): wake you here so you react in your own words. direct: post the change into this thread with NO LLM. text: text the owner's phone, no LLM."},
 			"deliver_to":     {Type: "string", Description: "(monitors, optional) A chat_id from list_chats: the alert is posted straight to THAT conversation with no LLM instead of waking you."},
 			"bulletin":       {Type: "string", Description: "(monitors, optional) A bulletin board name: each change is posted there with no LLM for every following agent to read."},

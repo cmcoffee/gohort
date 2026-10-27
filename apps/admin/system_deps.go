@@ -659,7 +659,7 @@ func (a *AdminApp) registerSystemDepsRoutes(sub *http.ServeMux) {
 				recordTest(id, testOutcome{Message: err.Error(), Log: res.Log, At: time.Now()})
 			}
 			out["ok"], out["message"] = false, err.Error()
-			writeJSONOut(w, out)
+			jsonapi.Write(w, out)
 			return
 		}
 		recordTest(id, testOutcome{OK: true, At: time.Now()})
@@ -671,7 +671,7 @@ func (a *AdminApp) registerSystemDepsRoutes(sub *http.ServeMux) {
 				out["download"] = "data:" + flows.OutMIME(ext) + ";base64," + base64.StdEncoding.EncodeToString(res.Out)
 				out["filename"] = "sample." + ext
 			}
-			writeJSONOut(w, out)
+			jsonapi.Write(w, out)
 			return
 		}
 		if len(res.Files) > 0 {
@@ -689,7 +689,7 @@ func (a *AdminApp) registerSystemDepsRoutes(sub *http.ServeMux) {
 			text = textutil.Clip(text, 2000)
 			out["text"] = text
 		}
-		writeJSONOut(w, out)
+		jsonapi.Write(w, out)
 	})
 }
 

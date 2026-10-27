@@ -19,7 +19,6 @@ package orchestrate
 // needs permission to stop publishing.
 
 import (
-	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -135,25 +134,75 @@ func (T *OrchestrateApp) agentPublishNeedsApproval(r *http.Request, user, agentI
 	return true
 }
 
-// handleAgentShare is the agent's share list: GET and POST
-// /api/console/permissions/share?agent=<id>, {"allowed_users": [...]}.
+// agentShareGet is the agent's share list, GET
+// /api/console/permissions/share?agent=<id>; agentShareSave takes it back as
+// POST or PATCH {"allowed_users": [...]}.
 //
 // One list, as every other kind has: people, a team, or Everyone. Everyone is
 // publishing, so it goes through the shared rule (promotion.AskEveryone):
 // filed for an administrator unless one is asking, taken back by the owner at
 // once. The names beside it are kept, and add to Everyone rather than narrow
 // it: somebody named reaches the agent whether or not it is published.
-func (T *OrchestrateApp) handleAgentShare(c *jsonapi.Call, raw json.RawMessage) (any, error) {
-	r := c.R
-	user, udb := c.User, c.UDB
-	rec, found := findAgentByNameOrID(udb, user, strings.TrimSpace(r.URL.Query().Get("agent")))
+func (T *OrchestrateApp) agentShareGet(c *jsonapi.Call) (any, error) {
+	sh, err := agentShareAt(c)
+	if err != nil {
+		return nil, err
+	}
+	return sh.list(sh.rec), nil
+}
+
+// agentShareSave replaces the share list, Everyone in it or not.
+func (T *OrchestrateApp) agentShareSave(c *jsonapi.Call, body struct {
+	AllowedUsers []string `json:"allowed_users"`
+}) (any, error) {
+	sh, err := agentShareAt(c)
+	if err != nil {
+		return nil, err
+	}
+	rec, ask := sh.rec, sh.ask
+	names, want := splitEveryone(body.AllowedUsers)
+	if want {
+		ask.Want = promotion.EveryoneOn
+	}
+	level, err := promotion.AskEveryone(sh.db, ask)
+	if err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	if on := level != ""; on && !rec.Everyone {
+		if err := T.publishedSlugClash(rec); err != nil {
+			return nil, jsonapi.Status(http.StatusConflict, err.Error())
+		}
+		rec.Everyone = true
+	} else if !on {
+		rec.Everyone = false
+	}
+	rec.AllowedUsers = normalizeShareList(names, c.User)
+	saved, err := saveAgent(c.UDB, rec)
+	if err != nil {
+		return nil, jsonapi.Status(http.StatusInternalServerError, err.Error())
+	}
+	return sh.list(saved), nil
+}
+
+// agentShare is the caller's agent a share call names (?agent=), and its
+// Everyone request as the shared rule files it.
+type agentShare struct {
+	rec AgentRecord
+	ask promotion.EveryoneAsk
+	db  promotion.Store
+}
+
+// agentShareAt is the share of the caller's own shareable agent ?agent= names.
+func agentShareAt(c *jsonapi.Call) (agentShare, error) {
+	user := c.User
+	rec, found := findAgentByNameOrID(c.UDB, user, strings.TrimSpace(c.R.URL.Query().Get("agent")))
 	if !found || !isShareableAgent(rec, user) {
-		return nil, errNotFound
+		return agentShare{}, errNotFound
 	}
 	ask := promotion.EveryoneAsk{
 		Kind: agentPromotionKind, Owner: user, ID: agentPromotionName(rec.ID, "exposed"),
 		Note:  "Agent " + strconv.Quote(chFirst(rec.Name, rec.ID)) + ": everyone can run it",
-		Admin: requestIsAdminAgent(r),
+		Admin: requestIsAdminAgent(c.R),
 	}
 	if rec.Everyone {
 		ask.Has = promotion.EveryoneOn
@@ -162,43 +211,12 @@ func (T *OrchestrateApp) handleAgentShare(c *jsonapi.Call, raw json.RawMessage) 
 	if AuthDB != nil {
 		db = AuthDB()
 	}
-	list := func(a AgentRecord) map[string]any {
-		return map[string]any{"allowed_users": withEveryone(nonNilUsers(a.AllowedUsers),
-			a.Everyone || promotion.EveryonePending(db, ask) != "")}
-	}
-	switch r.Method {
-	case http.MethodGet:
-		return list(rec), nil
-	case http.MethodPost, http.MethodPatch:
-		var body struct {
-			AllowedUsers []string `json:"allowed_users"`
-		}
-		if err := json.Unmarshal(raw, &body); err != nil {
-			return nil, jsonapi.BadRequest("bad request")
-		}
-		names, want := splitEveryone(body.AllowedUsers)
-		if want {
-			ask.Want = promotion.EveryoneOn
-		}
-		level, err := promotion.AskEveryone(db, ask)
-		if err != nil {
-			return nil, jsonapi.BadRequest(err.Error())
-		}
-		if on := level != ""; on && !rec.Everyone {
-			if err := T.publishedSlugClash(rec); err != nil {
-				return nil, jsonapi.Status(http.StatusConflict, err.Error())
-			}
-			rec.Everyone = true
-		} else if !on {
-			rec.Everyone = false
-		}
-		rec.AllowedUsers = normalizeShareList(names, user)
-		saved, err := saveAgent(udb, rec)
-		if err != nil {
-			return nil, jsonapi.Status(http.StatusInternalServerError, err.Error())
-		}
-		return list(saved), nil
-	default:
-		return nil, jsonapi.Status(http.StatusMethodNotAllowed, "method not allowed")
-	}
+	return agentShare{rec: rec, ask: ask, db: db}, nil
+}
+
+// list is a's share list as the editor reads it: the names, and Everyone when
+// it is on or waiting for an administrator.
+func (sh agentShare) list(a AgentRecord) map[string]any {
+	return map[string]any{"allowed_users": withEveryone(nonNilUsers(a.AllowedUsers),
+		a.Everyone || promotion.EveryonePending(sh.db, sh.ask) != "")}
 }

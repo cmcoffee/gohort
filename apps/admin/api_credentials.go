@@ -35,7 +35,7 @@ func (a *AdminApp) registerCredentialsRoutes(sub *http.ServeMux) {
 // names ?action= (and only the access pill sends a body), the upsert sends the
 // whole record.
 func (a *AdminApp) credentialPost() http.HandlerFunc {
-	toggle := jsonapi.Post(a.db, a.credentialAction, a.gate(), jsonapi.EmptyBodyOK)
+	toggle := jsonapi.Post(a.db, a.credentialAction, a.gate())
 	save := jsonapi.Post(a.db, a.saveCredential, a.gate())
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("action") != "" {
@@ -173,10 +173,16 @@ func (a *AdminApp) credentialList() any {
 	return rows
 }
 
-// credentialAction answers POST ?action=: one toggle on one credential.
-func (a *AdminApp) credentialAction(c *jsonapi.Call, body struct {
+// credentialActionBody is a credential action: the row buttons send none, the access pill its level.
+type credentialActionBody struct {
 	AccessLevel string `json:"access_level"` // the access pill's pick
-}) (any, error) {
+}
+
+// credentialAction answers POST ?action=: one toggle on one credential.
+func (a *AdminApp) credentialAction(c *jsonapi.Call, body *credentialActionBody) (any, error) {
+	if body == nil {
+		body = &credentialActionBody{}
+	}
 	r := c.R
 	action := r.URL.Query().Get("action")
 	name := strings.TrimSpace(r.URL.Query().Get("name"))

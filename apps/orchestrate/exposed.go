@@ -289,7 +289,7 @@ func (T *OrchestrateApp) AgentReachableBy(r *http.Request, slug, owner string, a
 	// publishing.
 	//
 	// It used to be both gates at once, the list narrowing inside the grant.
-	// With Everyone one more choice in the same list (handleAgentShare),
+	// With Everyone one more choice in the same list (agentShareSave),
 	// "Everyone, Bob" reading as "only Bob" would have been a list that says
 	// the opposite of what it does.
 	if SharedWithUser(allowedUsers, owner, u) {
@@ -766,7 +766,7 @@ func (T *OrchestrateApp) PublicHandleSendWithAppTools(w http.ResponseWriter, r *
 
 // PublicHandleCancel mirrors PublicHandleSend's bypass for cancel.
 func (T *OrchestrateApp) PublicHandleCancel(w http.ResponseWriter, r *http.Request, agent agenthost.Agent) {
-	jsonapi.Post(T.DB, T.cancelTurn, jsonapi.EmptyBodyOK)(w, r)
+	jsonapi.Post(T.DB, T.cancelTurn)(w, r)
 }
 
 // PublicHandleRunsActive / PublicHandleRunsDispatch expose the run-stream

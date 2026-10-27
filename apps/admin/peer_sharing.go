@@ -157,9 +157,9 @@ func decodeCapsField(raw json.RawMessage) []string {
 func (a *AdminApp) peerKeyRoutes() http.HandlerFunc {
 	one := jsonapi.Methods{
 		"GET":    jsonapi.Get(a.db, a.handlePeerKeyOne, a.gate()),
-		"PUT":    jsonapi.Put(a.db, a.handlePeerKeyEdit, a.gate(), jsonapi.EmptyBodyOK),
-		"PATCH":  jsonapi.Patch(a.db, a.handlePeerKeyEdit, a.gate(), jsonapi.EmptyBodyOK),
-		"POST":   jsonapi.Post(a.db, a.handlePeerKeyEdit, a.gate(), jsonapi.EmptyBodyOK),
+		"PUT":    jsonapi.Put(a.db, a.handlePeerKeyEdit, a.gate()),
+		"PATCH":  jsonapi.Patch(a.db, a.handlePeerKeyEdit, a.gate()),
+		"POST":   jsonapi.Post(a.db, a.handlePeerKeyEdit, a.gate()),
 		"DELETE": jsonapi.Delete(a.db, a.handlePeerKeyDelete, a.gate()),
 	}
 	repairs := jsonapi.Methods{
@@ -215,16 +215,22 @@ func (a *AdminApp) handlePeerKeyOne(c *jsonapi.Call) (any, error) {
 	return nil, jsonapi.NotFound("no such key")
 }
 
-// handlePeerKeyEdit changes one key. Two different edits share this verb: the
-// row toggle sends {"enabled":bool}, the Grants modal sends {"caps":[...]}.
-// Dispatch on which one is present rather than on the method, so neither has
-// to know about the other.
-func (a *AdminApp) handlePeerKeyEdit(c *jsonapi.Call, req struct {
+// peerKeyEditBody is a peer key edit: only what it names changes.
+type peerKeyEditBody struct {
 	Enabled    *bool     `json:"enabled"`
 	Caps       *[]string `json:"caps"`
 	Owner      *string   `json:"owner"`
 	Appliances *[]string `json:"appliances"`
-}) (any, error) {
+}
+
+// handlePeerKeyEdit changes one key. Two different edits share this verb: the
+// row toggle sends {"enabled":bool}, the Grants modal sends {"caps":[...]}.
+// Dispatch on which one is present rather than on the method, so neither has
+// to know about the other.
+func (a *AdminApp) handlePeerKeyEdit(c *jsonapi.Call, req *peerKeyEditBody) (any, error) {
+	if req == nil {
+		req = &peerKeyEditBody{}
+	}
 	id, err := peerKeyID(c)
 	if err != nil {
 		return nil, err

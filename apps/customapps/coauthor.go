@@ -13,28 +13,34 @@ package customapps
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // activeTable holds the open-record id per app slug (within a user's store).
 const activeTable = "wb_active"
 
-func (T *CustomApps) handleSetActiveRecord(w http.ResponseWriter, r *http.Request, udb Database, spec AppSpec) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
+// setActiveRecord records which record the workbench has open, so the
+// co-author tool knows where to write. No body clears it.
+func (T *CustomApps) setActiveRecord(a *appCall, body *activeRecordBody) (any, error) {
+	if strings.TrimSpace(a.spec.AgentID) == "" {
+		return nil, jsonapi.NotFound("this app has no chat agent bound")
 	}
-	var body struct {
-		ID string `json:"id"`
+	id := ""
+	if body != nil {
+		id = body.ID
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
-	udb.Set(activeTable, spec.Slug, strings.TrimSpace(body.ID))
-	w.WriteHeader(http.StatusNoContent)
+	a.appdb.Set(activeTable, a.spec.Slug, strings.TrimSpace(id))
+	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// activeRecordBody is what the workbench posts on each selection.
+type activeRecordBody struct {
+	ID string `json:"id"`
 }
 
 func activeRecordID(udb Database, slug string) string {

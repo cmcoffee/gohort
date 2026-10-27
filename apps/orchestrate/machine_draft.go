@@ -34,17 +34,13 @@ const maxDraftDescription = 4000
 // handleMachineDraft authors a machine from a plain-language description.
 //
 //	POST /api/machines/draft {"description": "..."} → {id, name, checklist}
-func (T *OrchestrateApp) handleMachineDraft(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+func (T *OrchestrateApp) handleMachineDraft(c *jsonapi.Call, body struct {
+	Description string `json:"description"`
+}) (any, error) {
 	r := c.R
 	user, udb := c.User, c.UDB
 	if T.LLM == nil {
 		return nil, jsonapi.Status(http.StatusServiceUnavailable, "worker LLM not configured")
-	}
-	var body struct {
-		Description string `json:"description"`
-	}
-	if err := json.Unmarshal(raw, &body); err != nil {
-		return nil, jsonapi.BadRequest("bad request")
 	}
 	desc := strings.TrimSpace(body.Description)
 	if desc == "" {

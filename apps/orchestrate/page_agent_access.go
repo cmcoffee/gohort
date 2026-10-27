@@ -813,7 +813,7 @@ func (ap *accessPage) accessSections() []ui.Section {
 	}
 }
 
-// shareURL is the agent's one share list (handleAgentShare).
+// shareURL is the agent's one share list (agentShareGet).
 func (ap *accessPage) shareURL() string {
 	return ap.T.WebPrefix() + "/api/console/permissions/share?agent=" + url.QueryEscape(ap.agent.ID)
 }
@@ -838,7 +838,7 @@ func (ap *accessPage) shareSections() []ui.Section {
 				"What the agent uses travels with it either way: your tools, your documents, your skills, readable through this agent and nowhere else. Each person gets their own sessions and memory under it. A credential is the exception, because it is whose identity a call goes out as rather than a copy anybody is missing: decide that per key.",
 			// Its own door, not the record PATCH: Everyone is publishing,
 			// which is requested rather than applied and has to go through
-			// the one place that rule is enforced (handleAgentShare).
+			// the one place that rule is enforced (agentShareSave).
 			Body: ui.ACLPicker(ui.ACLPickerConfig{
 				OptionsSource: T.WebPrefix() + "/api/user-candidates?groups=1&everyone=" + everyoneParam(ap.agent.Everyone),
 				RecordSource:  ap.shareURL(),

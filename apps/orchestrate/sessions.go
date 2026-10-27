@@ -10,7 +10,6 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/changes"
-	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 // sessionTable returns the per-agent session table name. One bucket
@@ -394,18 +393,10 @@ func dropChatSessionBucket(db Database, agentID string) {
 	dropAgentSessionMarkers(db, agentID)
 }
 
-// titleFromFirstMessage derives a short session title from the first
-// user message. Used the moment we save a new session so the sidebar
-// has something nameable; an LLM-generated title replaces it after
-// the first turn completes (see generateSessionTitle below).
-func titleFromFirstMessage(msg string) string {
-	t := strings.TrimSpace(msg)
-	t = textutil.Clip(t, 60)
-	if t == "" {
-		t = "New session"
-	}
-	return t
-}
+// sessionTitleChars is how much of the first message names a new session
+// in the sidebar, the moment it is saved; an LLM-generated title replaces
+// it after the first turn completes (see generateSessionTitle below).
+const sessionTitleChars = 60
 
 // titleExchanges is how far into a conversation its title keeps up: the
 // last automatic title is written from the first this many exchanges.

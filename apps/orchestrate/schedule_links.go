@@ -950,7 +950,8 @@ func (T *OrchestrateApp) handleConsoleLinkOptions(c *jsonapi.Call) (any, error) 
 // handleConsoleLink serves the row verbs: POST /api/console/links/<verb>?id=
 // (the last path segment is the verb, so a mount prefix does not matter).
 // link (value = what to link with), unlink, up, down take a row's "<kind>:<id>";
-// pause, resume, run take a group id.
+// pause, resume, run take a group id. Update has a body, so it is a route of
+// its own (handleConsoleLinkUpdate).
 func (T *OrchestrateApp) handleConsoleLink(c *jsonapi.Call, _ struct{}) (any, error) {
 	r := c.R
 	user := c.User
@@ -981,8 +982,6 @@ func (T *OrchestrateApp) handleConsoleLink(c *jsonapi.Call, _ struct{}) (any, er
 			}()
 			runLinkGroup(context.Background(), user, id, false)
 		}()
-	case "update":
-		err = T.updateLinkGroupTime(user, id, r)
 	default:
 		return nil, errNotFound
 	}
@@ -1035,14 +1034,20 @@ func (T *OrchestrateApp) handleConsoleLinkGet(c *jsonapi.Call) (any, error) {
 	}, nil
 }
 
+// handleConsoleLinkUpdate sets a group's time: POST
+// /api/console/links/update?id=, with the scheduled-agent editor's timing
+// fields.
+func (T *OrchestrateApp) handleConsoleLinkUpdate(c *jsonapi.Call, body standingUpdateBody) (any, error) {
+	if err := T.updateLinkGroupTime(c.User, strings.TrimSpace(c.R.URL.Query().Get("id")), body); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
 // updateLinkGroupTime sets the group's time, through the same validation a
 // scheduled agent's editor posts through. A time that will not arm is refused
 // and the old one kept.
-func (T *OrchestrateApp) updateLinkGroupTime(owner, id string, r *http.Request) error {
-	var body standingUpdateBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		return Error("bad body: " + err.Error())
-	}
+func (T *OrchestrateApp) updateLinkGroupTime(owner, id string, body standingUpdateBody) error {
 	body.Mission = nil
 	if body.Until != nil {
 		body.Until.Goal = nil // a group has no goal of its own

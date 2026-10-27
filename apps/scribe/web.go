@@ -35,7 +35,7 @@ func (T *Scribe) routes() {
 		"GET":    jsonapi.Get(T.DB, T.handleGuide),
 		"DELETE": jsonapi.Delete(T.DB, T.handleGuideDelete),
 	}.Serve)
-	T.HandleFunc("/new", jsonapi.Post(T.DB, T.handleNew, jsonapi.EmptyBodyOK))
+	T.HandleFunc("/new", jsonapi.Post(T.DB, T.handleNew))
 	T.HandleFunc("/settings", jsonapi.Methods{
 		"GET":  jsonapi.Get(T.DB, T.handleSettings),
 		"POST": jsonapi.Post(T.DB, T.handleSettingsSave),
@@ -51,7 +51,7 @@ func (T *Scribe) routes() {
 	T.HandleFunc("/body", jsonapi.Post(T.DB, T.handleBody))
 	T.HandleFunc("/image", jsonapi.Methods{
 		"GET":    jsonapi.Get(T.DB, T.handleImage),
-		"POST":   jsonapi.Post(T.DB, T.handleImageSet, jsonapi.EmptyBodyOK),
+		"POST":   jsonapi.Post(T.DB, T.handleImageSet),
 		"DELETE": jsonapi.Delete(T.DB, T.handleImageRemove),
 	}.Serve)
 	T.HandleFunc("/revision", jsonapi.Get(T.DB, T.handleRevisionPreview))
@@ -64,7 +64,7 @@ func (T *Scribe) routes() {
 		"DELETE": jsonapi.Delete(T.DB, T.handleSectionRemove),
 	}.Serve)
 	T.HandleFunc("/section/move", jsonapi.Post(T.DB, T.handleSectionMove))
-	T.HandleFunc("/section/add", jsonapi.Post(T.DB, T.handleSectionAdd, jsonapi.EmptyBodyOK))
+	T.HandleFunc("/section/add", jsonapi.Post(T.DB, T.handleSectionAdd))
 	T.HandleFunc("/collections", jsonapi.Methods{
 		"GET":  jsonapi.Get(T.DB, T.handleCollections),
 		"POST": jsonapi.Post(T.DB, T.handleCollectionsSave),
@@ -73,7 +73,7 @@ func (T *Scribe) routes() {
 		"GET":  jsonapi.Get(T.DB, T.handleReferences),
 		"POST": jsonapi.Post(T.DB, T.handleReferencesSave),
 	}.Serve)
-	T.HandleFunc("/chat/active", jsonapi.Post(T.DB, T.handleSetActive, jsonapi.EmptyBodyOK))
+	T.HandleFunc("/chat/active", jsonapi.Post(T.DB, T.handleSetActive))
 	T.HandleFunc("/share/candidates", jsonapi.Get(T.DB, T.handleShareCandidates))
 	// Update from sources: the distills from guides set to Distill, and the
 	// Stop on a running one (follow.go, distill.go).

@@ -18,9 +18,7 @@ package orchestrate
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"net/http"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -285,7 +283,7 @@ func taskNotesFor(user, kind, id string) (taskNotes, bool) {
 	return taskNotes{}, false
 }
 
-// handleTaskNotes serves one task's notes to the Scheduler.
+// taskNotesGet and taskNotesSave serve one task's notes to the Scheduler.
 //
 //	GET  -> the text, the cap, and what each section costs
 //	POST -> replaces the block wholesale, or one section, same semantics as
@@ -296,47 +294,53 @@ func taskNotesFor(user, kind, id string) (taskNotes, bool) {
 // hundred versions with no owner surface at all, filed under the agent where
 // nobody was looking for it; a task's notes belong on the thing that wrote
 // them, beside its goal, its attempts and its next fire.
-func (T *OrchestrateApp) handleTaskNotes(c *jsonapi.Call, raw json.RawMessage) (any, error) {
-	r := c.R
-	user := c.User
-	q := r.URL.Query()
-	tn, found := taskNotesFor(user, q.Get("kind"), q.Get("id"))
+func (T *OrchestrateApp) taskNotesGet(c *jsonapi.Call) (any, error) {
+	tn, err := taskNotesAt(c)
+	if err != nil {
+		return nil, err
+	}
+	n := tn.load()
+	return map[string]any{
+		"text":       n.Text,
+		"cap":        tn.cap(),
+		"updated_at": n.UpdatedAt,
+		// The same measurement the over-cap refusal quotes at the agent,
+		// served rather than counted in the browser so the person trimming
+		// the block and the model trimming it read one number.
+		"sections": notes.SectionSizes(n.Text),
+	}, nil
+}
+
+// taskNotesSave replaces the notes, or one section of them.
+func (T *OrchestrateApp) taskNotesSave(c *jsonapi.Call, body struct {
+	Text    string `json:"text"`
+	Section string `json:"section"`
+}) (any, error) {
+	tn, err := taskNotesAt(c)
+	if err != nil {
+		return nil, err
+	}
+	args := map[string]any{"text": body.Text}
+	if s := strings.TrimSpace(body.Section); s != "" {
+		args["section"] = s
+	}
+	// Through the tool's own handler: one write path for both surfaces, so
+	// the cap, the splice and the refusal are the same sentence whoever is
+	// asking.
+	msg, err := tn.tool()[0].Handler(c.R.Context(), args)
+	if err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	return map[string]any{"ok": true, "message": msg}, nil
+}
+
+// taskNotesAt is the notes of the caller's task the row names, by ?kind= and
+// ?id=.
+func taskNotesAt(c *jsonapi.Call) (taskNotes, error) {
+	q := c.R.URL.Query()
+	tn, found := taskNotesFor(c.User, q.Get("kind"), q.Get("id"))
 	if !found {
-		return nil, errNotFound
+		return taskNotes{}, errNotFound
 	}
-	switch r.Method {
-	case http.MethodGet:
-		n := tn.load()
-		return map[string]any{
-			"text":       n.Text,
-			"cap":        tn.cap(),
-			"updated_at": n.UpdatedAt,
-			// The same measurement the over-cap refusal quotes at the agent,
-			// served rather than counted in the browser so the person trimming
-			// the block and the model trimming it read one number.
-			"sections": notes.SectionSizes(n.Text),
-		}, nil
-	case http.MethodPost:
-		var body struct {
-			Text    string `json:"text"`
-			Section string `json:"section"`
-		}
-		if json.Unmarshal(raw, &body) != nil {
-			return nil, jsonapi.BadRequest("bad request")
-		}
-		args := map[string]any{"text": body.Text}
-		if s := strings.TrimSpace(body.Section); s != "" {
-			args["section"] = s
-		}
-		// Through the tool's own handler: one write path for both surfaces, so
-		// the cap, the splice and the refusal are the same sentence whoever is
-		// asking.
-		msg, err := tn.tool()[0].Handler(r.Context(), args)
-		if err != nil {
-			return nil, jsonapi.BadRequest(err.Error())
-		}
-		return map[string]any{"ok": true, "message": msg}, nil
-	default:
-		return nil, jsonapi.Status(http.StatusMethodNotAllowed, "method not allowed")
-	}
+	return tn, nil
 }

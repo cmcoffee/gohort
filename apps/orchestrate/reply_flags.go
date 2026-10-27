@@ -174,7 +174,13 @@ func clip(s string, n int) string {
 // replies. POST {session_id, agent_id, reply, verdict, evaluation}. The reply
 // is matched in the stored session, so what the admin reads is what the agent
 // said, with the message before it and the model that wrote it.
-func (T *OrchestrateApp) handleReplyFlag(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+func (T *OrchestrateApp) handleReplyFlag(c *jsonapi.Call, req struct {
+	SessionID  string `json:"session_id"`
+	AgentID    string `json:"agent_id"`
+	Reply      string `json:"reply"`
+	Verdict    string `json:"verdict"`
+	Evaluation string `json:"evaluation"`
+}) (any, error) {
 	r := c.R
 	user := c.User
 	if r.Method == http.MethodDelete {
@@ -186,16 +192,6 @@ func (T *OrchestrateApp) handleReplyFlag(c *jsonapi.Call, raw json.RawMessage) (
 		}
 		unflag(T.DB, f)
 		return map[string]any{"ok": true, "message": "Taken back."}, nil
-	}
-	var req struct {
-		SessionID  string `json:"session_id"`
-		AgentID    string `json:"agent_id"`
-		Reply      string `json:"reply"`
-		Verdict    string `json:"verdict"`
-		Evaluation string `json:"evaluation"`
-	}
-	if err := json.Unmarshal(raw, &req); err != nil {
-		return nil, jsonapi.BadRequest("bad request")
 	}
 	req.Evaluation = strings.TrimSpace(req.Evaluation)
 	switch {
@@ -547,13 +543,11 @@ func guardScope(r *http.Request) (string, string) {
 
 // handleReplyGuardMode sets a guard's mode on one scope. POST
 // ?id=<guard>|<scope> with {"_mode": on|shadow|off}.
-func (T *OrchestrateApp) handleReplyGuardMode(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+func (T *OrchestrateApp) handleReplyGuardMode(c *jsonapi.Call, body map[string]string) (any, error) {
 	r := c.R
 	if err := T.requireAdmin(c); err != nil {
 		return nil, err
 	}
-	var body map[string]string
-	_ = json.Unmarshal(raw, &body)
 	id, scope := guardScope(r)
 	if err := replyguard.Put(replyguard.Setting{ID: id, Scope: scope, Mode: replyguard.Mode(strings.TrimSpace(body["_mode"]))}); err != nil {
 		return nil, jsonapi.BadRequest(err.Error())
@@ -566,18 +560,14 @@ func (T *OrchestrateApp) handleReplyGuardMode(c *jsonapi.Call, raw json.RawMessa
 // guard, its checks. POST ?id=<guard>|<scope> with {note, retries, checks}.
 // An empty note, zero retries or empty checks put that part back to what the
 // scope above says.
-func (T *OrchestrateApp) handleReplyGuardSetting(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+func (T *OrchestrateApp) handleReplyGuardSetting(c *jsonapi.Call, body struct {
+	Note    string `json:"note"`
+	Retries int    `json:"retries"`
+	Checks  string `json:"checks"`
+}) (any, error) {
 	r := c.R
 	if err := T.requireAdmin(c); err != nil {
 		return nil, err
-	}
-	var body struct {
-		Note    string `json:"note"`
-		Retries int    `json:"retries"`
-		Checks  string `json:"checks"`
-	}
-	if err := json.Unmarshal(raw, &body); err != nil {
-		return nil, jsonapi.BadRequest("bad request")
 	}
 	id, scope := guardScope(r)
 	g, ok := replyguard.Lookup(id)

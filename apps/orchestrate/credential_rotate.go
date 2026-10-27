@@ -11,7 +11,6 @@ package orchestrate
 // itself never carries the key.
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -119,16 +118,12 @@ func (t *chatTurn) emitKeyReplacementCard(name string, deployment bool) {
 // handleKeyReplacement answers the card: POST {name, approve}. Approving
 // writes the held key through the same reach checks (the person's own
 // credential, or the deployment's for an admin); either answer forgets it.
-func (T *OrchestrateApp) handleKeyReplacement(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+func (T *OrchestrateApp) handleKeyReplacement(c *jsonapi.Call, body struct {
+	Name    string `json:"name"`
+	Approve bool   `json:"approve"`
+}) (any, error) {
 	r := c.R
 	user := c.User
-	var body struct {
-		Name    string `json:"name"`
-		Approve bool   `json:"approve"`
-	}
-	if err := json.Unmarshal(raw, &body); err != nil {
-		return nil, jsonapi.BadRequest("bad request")
-	}
 	name := strings.TrimSpace(body.Name)
 	secret, held := takeKeyReplacement(user, name)
 	if !body.Approve {

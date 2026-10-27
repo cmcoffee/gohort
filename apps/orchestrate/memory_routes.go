@@ -86,7 +86,7 @@ func (T *OrchestrateApp) registerMemoryRoutes() {
 	T.HandleFunc("/api/agents/{id}/knowledge/auto-inferred", T.autoInferredRoute(at))
 	T.HandleFunc("/api/agents/{id}/knowledge/sources", T.knowledgeSourcesRoute(at))
 	T.HandleFunc("/api/agents/{id}/knowledge/sources/{item}", T.knowledgeSourceDeleteRoute(at))
-	T.HandleFunc("/api/agents/{id}/knowledge/scaffold-collection", jsonapi.Post(T.DB, T.handleAgentKnowledgeScaffoldCollection, jsonapi.EmptyBodyOK))
+	T.HandleFunc("/api/agents/{id}/knowledge/scaffold-collection", jsonapi.Post(T.DB, T.handleAgentKnowledgeScaffoldCollection))
 	T.HandleFunc("/api/agents/{id}/phantom-sessions", T.phantomSessionsRoute())
 	T.HandleFunc("/api/agents/{id}/phantom-sessions/{item}", T.phantomSessionRoute())
 }

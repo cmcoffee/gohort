@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 
 	"github.com/cmcoffee/gohort/core"
 )
@@ -85,11 +86,20 @@ func Get[Out any](base core.Database, fn func(c *Call) (Out, error), opts ...Opt
 // a 400. Put, Patch and Delete are the same for their own method, so a route
 // takes exactly the methods its registration names.
 //
-// An In of struct{} reads no body, for an action the URL says everything
-// about (a delete, a switch thrown). By default a missing body is a 400, as a
-// malformed one is; EmptyBodyOK takes it as the zero In instead. A body over
-// DefaultMaxBody is a 413; MaxBody raises the limit for an endpoint that takes
-// more.
+// The In type says what the body is, and there is one rule for each:
+//
+//   - struct{}: no body. It is never read, for an action the URL says
+//     everything about (a delete, a switch thrown).
+//   - a pointer, *T: an optional body. A request with none gets nil; one
+//     that is there is decoded and must be valid.
+//   - json.RawMessage: the handler reads the body itself (a bundle passed
+//     through, a patch merged onto what is stored, two shapes told apart).
+//     A request with none gets nil; one that is there must be valid JSON.
+//   - anything else: a required body. A missing body is a 400, as a
+//     malformed one is, so an empty save never reads as a save of nothing.
+//
+// A body over DefaultMaxBody is a 413; MaxBody raises the limit for an
+// endpoint that takes more.
 //
 // Methods puts more than one of them on a path.
 func Post[In, Out any](base core.Database, fn func(c *Call, in In) (Out, error), opts ...Option) http.HandlerFunc {
@@ -124,6 +134,10 @@ func send[In, Out any](method string, base core.Database, fn func(c *Call, in In
 			return
 		}
 		var in In
+		optional := reflect.TypeOf(&in).Elem().Kind() == reflect.Pointer
+		if _, raw := any(in).(json.RawMessage); raw {
+			optional = true
+		}
 		if _, none := any(&in).(*struct{}); !none {
 			err := json.NewDecoder(http.MaxBytesReader(w, r.Body, cfg.maxBody)).Decode(&in)
 			var tooBig *http.MaxBytesError
@@ -131,7 +145,7 @@ func send[In, Out any](method string, base core.Database, fn func(c *Call, in In
 			case errors.As(err, &tooBig):
 				http.Error(w, fmt.Sprintf("request body is over %d bytes", tooBig.Limit), http.StatusRequestEntityTooLarge)
 				return
-			case err != nil && !(cfg.emptyOK && errors.Is(err, io.EOF)):
+			case err != nil && !(optional && errors.Is(err, io.EOF)):
 				http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 				return
 			}
@@ -147,7 +161,6 @@ type Option func(*config)
 type config struct {
 	authorize  func(http.ResponseWriter, *http.Request) bool
 	internalOK bool
-	emptyOK    bool
 	maxBody    int64
 }
 
@@ -181,11 +194,6 @@ var InternalOK Option = func(c *config) { c.internalOK = true }
 // for any form or record, and a ceiling on what a caller can make the server
 // hold.
 const DefaultMaxBody = 1 << 20
-
-// EmptyBodyOK takes a request with no body as the zero In rather than a 400:
-// for an endpoint whose callers leave the body off when the query string
-// carries what they mean. A body that is there and malformed is still a 400.
-var EmptyBodyOK Option = func(c *config) { c.emptyOK = true }
 
 // MaxBody lets a Post read up to n bytes, for an endpoint whose body is a
 // document rather than a form.

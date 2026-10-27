@@ -46,7 +46,8 @@ func TestRoutesContract(t *testing.T) {
 		if strings.HasPrefix(out, "[") && json.Unmarshal([]byte(out), &items) == nil {
 			rows := make([]string, len(items))
 			for i, it := range items {
-				rows[i] = string(it)
+				// Masked first: a row's random id must not decide its place.
+				rows[i] = stamp.ReplaceAllString(hex.ReplaceAllString(string(it), "<hex>"), "<time>")
 			}
 			sort.Strings(rows)
 			out = "[" + strings.Join(rows, ",") + "]"
@@ -80,6 +81,20 @@ func TestRoutesContract(t *testing.T) {
 	do("alice", "POST", "/bridges/api/keys", `{"service":"imessage"}`)
 	do("root", "POST", "/bridges/api/keys", `{"service":"imessage","name":"relay"}`)
 	do("alice", "DELETE", "/bridges/api/keys", "")
+	do("alice", "PATCH", "/bridges/api/keys/key-alice", `{"enabled":false}`)
+	do("alice", "GET", "/bridges/api/bridges", "")
+	do("alice", "POST", "/bridges/api/keys/key-alice", `{"enabled":true}`)
+	do("alice", "PATCH", "/bridges/api/keys/key-alice", ``)
+	do("alice", "PATCH", "/bridges/api/keys/key-alice", `{"enabled":`)
+	do("alice", "GET", "/bridges/api/keys/key-alice", "")
+	do("bob", "PATCH", "/bridges/api/keys/key-alice", `{"enabled":false}`)
+	do("bob", "DELETE", "/bridges/api/keys/key-alice", "")
+	do("alice", "PATCH", "/bridges/api/keys/nope", `{"enabled":true}`)
+	do("alice", "DELETE", "/bridges/api/keys/nope", "")
+	do("", "DELETE", "/bridges/api/keys/key-alice", "")
+	do("alice", "GET", "/bridges/api/bridges", "")
+	do("alice", "DELETE", "/bridges/api/keys/key-alice", "")
+	do("alice", "GET", "/bridges/api/bridges", "")
 
 	do("alice", "GET", "/bridges/api/config", "")
 	do("alice", "PATCH", "/bridges/api/config", `{"self_name":"Alice"}`)

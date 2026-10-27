@@ -92,7 +92,7 @@ func (a *AdminApp) registerArtifactsRoutes(sub *http.ServeMux) {
 	// pool. Nothing goes live without a separate approval. Returns the per-
 	// artifact import summary as JSON. POST-only.
 	sub.HandleFunc("/api/artifacts/import", jsonapi.Methods{
-		"POST": jsonapi.Post(a.db, a.handleArtifactImport, a.gate(), jsonapi.EmptyBodyOK, jsonapi.MaxBody(artifactBundleMaxBody)),
+		"POST": jsonapi.Post(a.db, a.handleArtifactImport, a.gate(), jsonapi.MaxBody(artifactBundleMaxBody)),
 	}.Serve)
 
 	// Artifact import PREVIEW — the dry-run twin of /api/artifacts/import.
@@ -100,7 +100,7 @@ func (a *AdminApp) registerArtifactsRoutes(sub *http.ServeMux) {
 	// carries, what would import vs skip, and any unmet references, so the
 	// admin sees exactly what a bundle does before committing to it.
 	sub.HandleFunc("/api/artifacts/preview", jsonapi.Methods{
-		"POST": jsonapi.Post(a.db, a.handleArtifactPreview, a.gate(), jsonapi.EmptyBodyOK, jsonapi.MaxBody(artifactBundleMaxBody)),
+		"POST": jsonapi.Post(a.db, a.handleArtifactPreview, a.gate(), jsonapi.MaxBody(artifactBundleMaxBody)),
 	}.Serve)
 
 }

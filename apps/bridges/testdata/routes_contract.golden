@@ -52,6 +52,34 @@ root POST /bridges/api/keys "{\"service\":\"imessage\",\"name\":\"relay\"}"
   200 {"id":"<hex>","name":"relay","key":"<hex>","owner":"root","service":"imessage","enabled":true,"created":"<time>"}
 alice DELETE /bridges/api/keys ""
   405 method not allowed
+alice PATCH /bridges/api/keys/key-alice "{\"enabled\":false}"
+  200 {"enabled":false,"id":"key-alice"}
+alice GET /bridges/api/bridges ""
+  200 [{"id":"<hex>","bridge":" (api)","reach":"0 channels","status":"never connected","enabled":true},{"id":"<hex>","bridge":"phone (api)","reach":"0 channels","status":"never connected","enabled":true},{"id":"key-alice","bridge":"laptop (api)","reach":"0 channels","status":"never connected","enabled":false}]
+alice POST /bridges/api/keys/key-alice "{\"enabled\":true}"
+  200 {"enabled":true,"id":"key-alice"}
+alice PATCH /bridges/api/keys/key-alice ""
+  400 invalid JSON: EOF
+alice PATCH /bridges/api/keys/key-alice "{\"enabled\":"
+  400 invalid JSON: unexpected EOF
+alice GET /bridges/api/keys/key-alice ""
+  405 method not allowed
+bob PATCH /bridges/api/keys/key-alice "{\"enabled\":false}"
+  404 no such bridge key
+bob DELETE /bridges/api/keys/key-alice ""
+  204 
+alice PATCH /bridges/api/keys/nope "{\"enabled\":true}"
+  404 no such bridge key
+alice DELETE /bridges/api/keys/nope ""
+  204 
+(signed out) DELETE /bridges/api/keys/key-alice ""
+  401 unauthorized
+alice GET /bridges/api/bridges ""
+  200 [{"id":"<hex>","bridge":" (api)","reach":"0 channels","status":"never connected","enabled":true},{"id":"<hex>","bridge":"phone (api)","reach":"0 channels","status":"never connected","enabled":true},{"id":"key-alice","bridge":"laptop (api)","reach":"0 channels","status":"never connected","enabled":true}]
+alice DELETE /bridges/api/keys/key-alice ""
+  204 
+alice GET /bridges/api/bridges ""
+  200 [{"id":"<hex>","bridge":" (api)","reach":"0 channels","status":"never connected","enabled":true},{"id":"<hex>","bridge":"phone (api)","reach":"0 channels","status":"never connected","enabled":true}]
 alice GET /bridges/api/config ""
   200 {"enabled":true}
 alice PATCH /bridges/api/config "{\"self_name\":\"Alice\"}"

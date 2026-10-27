@@ -165,8 +165,8 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	// Reply guards per model, and the flagged-replies queue (reply_flags.go).
 	// Admin only, checked in each handler; w() rejects a GET that writes.
 	T.HandleFunc("/api/console/reply-guards", jsonapi.Get(T.DB, T.handleReplyGuards, T.adminOnlyOpt()))
-	T.HandleFunc("/api/console/reply-guards/mode", jsonapi.Post(T.DB, T.handleReplyGuardMode, T.adminOnlyOpt(), jsonapi.EmptyBodyOK, jsonapi.MaxBody(1<<16)))
-	T.HandleFunc("/api/console/reply-guards/setting", jsonapi.Post(T.DB, T.handleReplyGuardSetting, T.adminOnlyOpt(), jsonapi.EmptyBodyOK, jsonapi.MaxBody(1<<16)))
+	T.HandleFunc("/api/console/reply-guards/mode", jsonapi.Post(T.DB, T.handleReplyGuardMode, T.adminOnlyOpt(), jsonapi.MaxBody(1<<16)))
+	T.HandleFunc("/api/console/reply-guards/setting", jsonapi.Post(T.DB, T.handleReplyGuardSetting, T.adminOnlyOpt(), jsonapi.MaxBody(1<<16)))
 	T.HandleFunc("/api/console/reply-guards/clear", jsonapi.Post(T.DB, T.handleReplyGuardClear, T.adminOnlyOpt()))
 	T.HandleFunc("/api/console/reply-flags", jsonapi.Get(T.DB, T.handleReplyFlags, T.adminOnlyOpt()))
 	T.HandleFunc("/api/console/reply-flags/status", jsonapi.Post(T.DB, T.handleReplyFlagStatus, T.adminOnlyOpt()))
@@ -176,9 +176,9 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	// Drafting guards from flagged replies (reply_guard_drafts.go).
 	T.HandleFunc("/api/console/reply-guards/draft", jsonapi.Post(T.DB, T.handleGuardDraft, T.adminOnlyOpt()))
 	T.HandleFunc("/api/console/reply-guards/authored", jsonapi.Get(T.DB, T.handleAuthoredGuards, T.adminOnlyOpt()))
-	T.HandleFunc("/api/console/reply-guards/authored/act", jsonapi.Post(T.DB, T.handleAuthoredGuard, T.adminOnlyOpt(), jsonapi.EmptyBodyOK, jsonapi.MaxBody(1<<16)))
+	T.HandleFunc("/api/console/reply-guards/authored/act", jsonapi.Post(T.DB, T.handleAuthoredGuard, T.adminOnlyOpt(), jsonapi.MaxBody(1<<16)))
 	// Anyone's thumbs-up or thumbs-down on one of their own replies.
-	T.HandleFunc("/api/reply-flag", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleReplyFlag, jsonapi.EmptyBodyOK, jsonapi.MaxBody(1<<20)), "DELETE": jsonapi.Delete(T.DB, T.handleReplyFlag, jsonapi.EmptyBodyOK, jsonapi.MaxBody(1<<20))}.Serve)
+	T.HandleFunc("/api/reply-flag", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleReplyFlag, jsonapi.MaxBody(1<<20)), "DELETE": jsonapi.Delete(T.DB, T.handleReplyFlag, jsonapi.MaxBody(1<<20))}.Serve)
 	// Tool health: actions that have failed repeatedly and never once worked.
 	T.HandleFunc("/api/console/broken-tools", jsonapi.Get(T.DB, T.handleConsoleBrokenTools))
 	T.HandleFunc("/api/console/broken-tools/forget", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleConsoleBrokenToolForget), "DELETE": jsonapi.Delete(T.DB, T.handleConsoleBrokenToolForget)}.Serve)
@@ -193,9 +193,9 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	// A read: the row's Recent checks button GETs it.
 	T.HandleFunc("/api/console/monitors/checks", jsonapi.Get(T.DB, T.handleConsoleMonitorChecks))
 	T.HandleFunc("/api/console/monitors/get", jsonapi.Get(T.DB, T.handleConsoleMonitorGet))
-	T.HandleFunc("/api/console/monitors/update", jsonapi.Post(T.DB, T.handleConsoleMonitorUpdate, jsonapi.EmptyBodyOK))
+	T.HandleFunc("/api/console/monitors/update", jsonapi.Post(T.DB, T.handleConsoleMonitorUpdate))
 	T.HandleFunc("/api/console/agents/get", jsonapi.Get(T.DB, T.handleConsoleAgentGet))
-	T.HandleFunc("/api/console/agents/update", jsonapi.Post(T.DB, T.handleConsoleAgentUpdate, jsonapi.EmptyBodyOK))
+	T.HandleFunc("/api/console/agents/update", jsonapi.Post(T.DB, T.handleConsoleAgentUpdate))
 	T.HandleFunc("/api/console/activity", jsonapi.Get(T.DB, T.handleConsoleActivity))
 	T.HandleFunc("/api/console/activity/cancel", jsonapi.Post(T.DB, T.handleConsoleActivityCancel))
 	// The two summaries. Overview answers for the agent in view; fleet answers
@@ -210,22 +210,22 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	// Widen one agent's contact grant to every agent. See
 	// handleConsolePermissionPromote for why the scoped row is the default.
 	T.HandleFunc("/api/console/permissions/promote", jsonapi.Post(T.DB, T.handleConsolePermissionPromote))
-	T.HandleFunc("/api/console/permissions/policy", jsonapi.Post(T.DB, T.handleConsolePermissionPolicy, jsonapi.EmptyBodyOK))
+	T.HandleFunc("/api/console/permissions/policy", jsonapi.Post(T.DB, T.handleConsolePermissionPolicy))
 	T.HandleFunc("/api/console/permissions/remove", jsonapi.Post(T.DB, T.handleConsolePermissionRemove))
 	// promote widens a decision to every agent; narrow is its opposite. The
 	// pair is what makes the two scopes usable in both directions.
 	T.HandleFunc("/api/console/permissions/narrow", jsonapi.Post(T.DB, T.handleConsolePermissionNarrow))
 	// grant CREATES one, which every other control here cannot: they all act
 	// on a decision that already exists.
-	T.HandleFunc("/api/console/permissions/grant", jsonapi.Post(T.DB, T.handleConsolePermissionGrant, jsonapi.EmptyBodyOK))
+	T.HandleFunc("/api/console/permissions/grant", jsonapi.Post(T.DB, T.handleConsolePermissionGrant))
 	// Who may RUN the agent. Its own door because publishing is requested,
 	// not applied: see handleConsolePermissionAudience.
-	T.HandleFunc("/api/console/permissions/audience", jsonapi.Post(T.DB, T.handleConsolePermissionAudience, jsonapi.EmptyBodyOK))
+	T.HandleFunc("/api/console/permissions/audience", jsonapi.Post(T.DB, T.handleConsolePermissionAudience))
 	// The agent's one share list, Everyone in it (agent_promotion.go).
 	T.HandleFunc("/api/console/permissions/share", jsonapi.Methods{
-		"GET":   jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) { return T.handleAgentShare(c, nil) }),
-		"PATCH": jsonapi.Patch(T.DB, T.handleAgentShare, jsonapi.EmptyBodyOK),
-		"POST":  jsonapi.Post(T.DB, T.handleAgentShare, jsonapi.EmptyBodyOK),
+		"GET":   jsonapi.Get(T.DB, T.agentShareGet),
+		"PATCH": jsonapi.Patch(T.DB, T.agentShareSave),
+		"POST":  jsonapi.Post(T.DB, T.agentShareSave),
 	}.Serve)
 	// What holds for every agent until one says otherwise.
 	// ONE default for every agent, and the ceiling over all of them. Admin-gated
@@ -233,16 +233,16 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	// endpoint, and it was one rung too many: two pages answered the same
 	// question and an owner reading theirs could not see the deployment's.
 	T.HandleFunc("/api/console/deployment-settings", jsonapi.Methods{
-		"GET":   jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) { return T.handleDeploymentSettings(c, nil) }, T.adminOnlyOpt()),
-		"PATCH": jsonapi.Patch(T.DB, T.handleDeploymentSettings, T.adminOnlyOpt(), jsonapi.EmptyBodyOK),
-		"POST":  jsonapi.Post(T.DB, T.handleDeploymentSettings, T.adminOnlyOpt(), jsonapi.EmptyBodyOK),
+		"GET":   jsonapi.Get(T.DB, T.deploymentSettingsGet, T.adminOnlyOpt()),
+		"PATCH": jsonapi.Patch(T.DB, T.deploymentSettingsSave, T.adminOnlyOpt()),
+		"POST":  jsonapi.Post(T.DB, T.deploymentSettingsSave, T.adminOnlyOpt()),
 	}.Serve)
-	T.HandleFunc("/api/console/privileges", jsonapi.Post(T.DB, T.handleConsolePrivileges, jsonapi.EmptyBodyOK))
+	T.HandleFunc("/api/console/privileges", jsonapi.Post(T.DB, T.handleConsolePrivileges))
 	T.HandleFunc("/api/console/approvals/approve", jsonapi.Post(T.DB, T.handleApprovalApprove))
 	T.HandleFunc("/api/console/approvals/always", jsonapi.Post(T.DB, T.handleApprovalAlways))
 	T.HandleFunc("/api/console/approvals/deny", jsonapi.Post(T.DB, T.handleApprovalDeny))
-	T.HandleFunc("/api/console/credential-update/apply", jsonapi.Post(T.DB, T.handleCredentialUpdateApply, jsonapi.EmptyBodyOK))
-	T.HandleFunc("/api/console/credential-key/replace", jsonapi.Post(T.DB, T.handleKeyReplacement, jsonapi.EmptyBodyOK))
+	T.HandleFunc("/api/console/credential-update/apply", jsonapi.Post(T.DB, T.handleCredentialUpdateApply))
+	T.HandleFunc("/api/console/credential-key/replace", jsonapi.Post(T.DB, T.handleKeyReplacement))
 	T.HandleFunc("/api/console/channel/clear", jsonapi.Post(T.DB, T.handleChannelClear))
 	T.HandleFunc("/api/console/channel/compact", jsonapi.Post(T.DB, T.handleChannelCompact))
 	T.HandleFunc("/api/console/grants", jsonapi.Get(T.DB, T.handleConsoleGrants))
@@ -259,7 +259,7 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	T.HandleFunc("/api/console/bridges/delete", jsonapi.Post(T.DB, T.handleConsoleBridgeDelete, T.adminOpt()))
 	// Hook/unhook a bridge to a channel (Stage C: the UI equivalent of the
 	// bridge tool's update action).
-	T.HandleFunc("/api/console/bridges/set-channel", jsonapi.Post(T.DB, T.handleConsoleBridgeSetChannel, T.adminOpt(), jsonapi.EmptyBodyOK))
+	T.HandleFunc("/api/console/bridges/set-channel", jsonapi.Post(T.DB, T.handleConsoleBridgeSetChannel, T.adminOpt()))
 	// Channel picker for the Connect action — an owner's channels as
 	// {id, label, desc}. owner is passed per-row (a bridge's own owner).
 	T.HandleFunc("/api/console/bridge-channels", jsonapi.Get(T.DB, T.handleConsoleBridgeChannels, T.adminOpt()))
@@ -272,7 +272,7 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	// Making one, rather than only managing what an agent made
 	// (console_machine_schedule.go).
 	T.HandleFunc("/api/console/machine-options", jsonapi.Get(T.DB, T.handleConsoleMachineOptions))
-	T.HandleFunc("/api/console/machine-schedule/create", jsonapi.Post(T.DB, T.handleConsoleMachineScheduleCreate, jsonapi.EmptyBodyOK))
+	T.HandleFunc("/api/console/machine-schedule/create", jsonapi.Post(T.DB, T.handleConsoleMachineScheduleCreate))
 	// Delete a recurring task (the `recurring` tool's session updates) from the
 	// schedules rail. Owner-checked against the task payload before unscheduling.
 	T.HandleFunc("/api/console/recurring", jsonapi.Get(T.DB, T.handleConsoleRecurring))
@@ -284,17 +284,18 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	// (kind, id) from the row, and only for tasks this user owns. See
 	// task_notes.go and docs/design/task-notes.md.
 	T.HandleFunc("/api/console/scheduler/notes", jsonapi.Methods{
-		"GET":  jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) { return T.handleTaskNotes(c, nil) }),
-		"POST": jsonapi.Post(T.DB, T.handleTaskNotes, jsonapi.EmptyBodyOK),
+		"GET":  jsonapi.Get(T.DB, T.taskNotesGet),
+		"POST": jsonapi.Post(T.DB, T.taskNotesSave),
 	}.Serve)
 	T.HandleFunc("/api/console/goals", jsonapi.Get(T.DB, T.handleConsoleGoals))
 	// Link groups: schedules that run together at one time, one after another.
 	// See schedule_links.go.
 	T.HandleFunc("/api/console/links/options", jsonapi.Get(T.DB, T.handleConsoleLinkOptions))
 	T.HandleFunc("/api/console/links/get", jsonapi.Get(T.DB, T.handleConsoleLinkGet))
-	for _, verb := range []string{"link", "unlink", "up", "down", "pause", "resume", "run", "update"} {
+	for _, verb := range []string{"link", "unlink", "up", "down", "pause", "resume", "run"} {
 		T.HandleFunc("/api/console/links/"+verb, jsonapi.Post(T.DB, T.handleConsoleLink))
 	}
+	T.HandleFunc("/api/console/links/update", jsonapi.Post(T.DB, T.handleConsoleLinkUpdate))
 	T.HandleFunc("/api/console/recurring/run", jsonapi.Post(T.DB, T.handleConsoleRecurringRun))
 	T.HandleFunc("/api/console/recurring/delete", jsonapi.Delete(T.DB, T.handleConsoleRecurringDelete))
 	T.HandleFunc("/api/console/recurring/relink", jsonapi.Post(T.DB, T.handleConsoleRecurringRelink))
@@ -303,10 +304,10 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	// Get one recurring task's editable fields (for the rail's edit modal) and
 	// update its schedule in place (re-validate + reschedule, prompt preserved).
 	T.HandleFunc("/api/console/recurring/get", jsonapi.Get(T.DB, T.handleConsoleRecurringGet))
-	T.HandleFunc("/api/console/recurring/update", jsonapi.Post(T.DB, T.handleConsoleRecurringUpdate, jsonapi.EmptyBodyOK))
+	T.HandleFunc("/api/console/recurring/update", jsonapi.Post(T.DB, T.handleConsoleRecurringUpdate))
 	// Create a NEW recurring task from the Scheduler modal's "New recurring task"
 	// button (agent + session supplied in the body; timing same shape as update).
-	T.HandleFunc("/api/console/recurring/create", jsonapi.Post(T.DB, T.handleConsoleRecurringCreate, jsonapi.EmptyBodyOK))
+	T.HandleFunc("/api/console/recurring/create", jsonapi.Post(T.DB, T.handleConsoleRecurringCreate))
 	// Who a new task can be for: the agent itself or one of its sub-agents.
 	T.HandleFunc("/api/console/recurring/for-options", jsonapi.Get(T.DB, T.handleConsoleRecurringForOptions))
 }

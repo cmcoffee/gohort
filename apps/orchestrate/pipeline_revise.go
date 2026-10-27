@@ -266,17 +266,13 @@ func samePipelineWiring(a, b PipelineStage) bool {
 // revision: a pipeline that would not run is not stored, because every
 // other pipeline door refuses too and a stored one that cannot run is
 // a tool an agent will call and be failed by.
-func (T *OrchestrateApp) handlePipelineDraft(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+func (T *OrchestrateApp) handlePipelineDraft(c *jsonapi.Call, body struct {
+	Description string `json:"description"`
+}) (any, error) {
 	r := c.R
 	user, udb := c.User, c.UDB
 	if T.LLM == nil {
 		return nil, jsonapi.Status(http.StatusServiceUnavailable, "worker LLM not configured")
-	}
-	var body struct {
-		Description string `json:"description"`
-	}
-	if err := json.Unmarshal(raw, &body); err != nil {
-		return nil, jsonapi.BadRequest("bad request")
 	}
 	desc := strings.TrimSpace(body.Description)
 	if desc == "" {

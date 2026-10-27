@@ -1,7 +1,6 @@
 package orchestrate
 
 import (
-	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -541,17 +540,13 @@ func removeAutoApproveTool(udb Database, agentID, tool string) {
 // Tool policy is binary: "allow" pre-authorizes the tool for unattended runs
 // (AutoApproveTools), anything else revokes so it queues again on its next
 // fire. Flags map to the capability toggles by their form field names.
-func (T *OrchestrateApp) handleConsolePrivileges(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+func (T *OrchestrateApp) handleConsolePrivileges(c *jsonapi.Call, body struct {
+	AgentID string            `json:"agent_id"`
+	Tools   map[string]string `json:"tools"`
+	Flags   map[string]bool   `json:"flags"`
+}) (any, error) {
 	r := c.R
 	user := c.User
-	var body struct {
-		AgentID string            `json:"agent_id"`
-		Tools   map[string]string `json:"tools"`
-		Flags   map[string]bool   `json:"flags"`
-	}
-	if err := json.Unmarshal(raw, &body); err != nil {
-		return nil, jsonapi.BadRequest("bad body")
-	}
 	udb := UserDB(T.DB, user)
 	rec, found := loadAgent(udb, strings.TrimSpace(body.AgentID))
 	if !found {
@@ -646,7 +641,9 @@ func appendUnique(list []string, s string) []string {
 
 // handleConsolePermissionPolicy sets a subject's standing policy.
 // POST ?id=<agent:…|contact:…>&value=<allow|ask|block>.
-func (T *OrchestrateApp) handleConsolePermissionPolicy(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+func (T *OrchestrateApp) handleConsolePermissionPolicy(c *jsonapi.Call, body *struct {
+	Policy string `json:"_policy"` // a table row's segmented control
+}) (any, error) {
 	r := c.R
 	user := c.User
 	kind, target, found := strings.Cut(strings.TrimSpace(r.URL.Query().Get("id")), ":")
@@ -655,11 +652,8 @@ func (T *OrchestrateApp) handleConsolePermissionPolicy(c *jsonapi.Call, raw json
 	// keyed by its field; the card list sends it as ?value=. Same decision and
 	// the same setter below, so this reads whichever arrived rather than
 	// growing a second endpoint that would have to be kept in step.
-	if value == "" {
-		var body map[string]string
-		if json.Unmarshal(raw, &body) == nil {
-			value = strings.TrimSpace(body["_policy"])
-		}
+	if value == "" && body != nil {
+		value = strings.TrimSpace(body.Policy)
 	}
 	if !found || target == "" {
 		return nil, jsonapi.BadRequest("bad id")
@@ -891,20 +885,16 @@ func operatorApprovalRecipient(owner string, a Authorization) string {
 // Per agent, always. The fleet-wide form is reached by granting here and then
 // widening, which keeps "this binds everything" a deliberate second step
 // rather than something you can do by accident on the way in.
-func (T *OrchestrateApp) handleConsolePermissionGrant(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+func (T *OrchestrateApp) handleConsolePermissionGrant(c *jsonapi.Call, body struct {
+	Subject string `json:"subject"`
+	Value   string `json:"value"`
+}) (any, error) {
 	r := c.R
 	user, udb := c.User, c.UDB
 	agentID := strings.TrimSpace(r.URL.Query().Get("agent"))
 	kind := strings.TrimSpace(r.URL.Query().Get("kind"))
 	if agentID == "" {
 		return nil, jsonapi.BadRequest("agent required")
-	}
-	var body struct {
-		Subject string `json:"subject"`
-		Value   string `json:"value"`
-	}
-	if err := json.Unmarshal(raw, &body); err != nil {
-		return nil, jsonapi.BadRequest("bad request")
 	}
 	subject := strings.TrimSpace(body.Subject)
 	value := strings.TrimSpace(body.Value)
@@ -966,16 +956,12 @@ func (T *OrchestrateApp) handleConsolePermissionGrant(c *jsonapi.Call, raw json.
 // decisions at once: everyone may use it, AND put a card on the dashboard.
 // Those were deliberately split, and writing the old flag would weld them
 // back together.
-func (T *OrchestrateApp) handleConsolePermissionAudience(call *jsonapi.Call, payload json.RawMessage) (any, error) {
+func (T *OrchestrateApp) handleConsolePermissionAudience(call *jsonapi.Call, body map[string]any) (any, error) {
 	r := call.R
 	user, udb := call.User, call.UDB
 	rec, found := findAgentByNameOrID(udb, user, strings.TrimSpace(r.URL.Query().Get("agent")))
 	if !found {
 		return nil, errNotFound
-	}
-	var body map[string]any
-	if err := json.Unmarshal(payload, &body); err != nil {
-		return nil, jsonapi.BadRequest("bad request")
 	}
 	// Two reach flags, one door. Both are an administrator's to grant and both
 	// go through the same gate; which one arrived decides nothing else.

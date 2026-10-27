@@ -21,7 +21,7 @@ func (a *AdminApp) registerConnectorsRoutes(sub *http.ServeMux) {
 	// oauth; approval is the human gate.
 	sub.HandleFunc("/api/connectors", jsonapi.Methods{
 		"GET":    jsonapi.Get(a.db, a.handleConnectors, a.gate()),
-		"POST":   jsonapi.Post(a.db, a.handleConnectorAction, a.gate(), jsonapi.EmptyBodyOK, jsonapi.MaxBody(1<<20)),
+		"POST":   jsonapi.Post(a.db, a.handleConnectorAction, a.gate(), jsonapi.MaxBody(1<<20)),
 		"DELETE": jsonapi.Delete(a.db, a.handleConnectorDelete, a.gate()),
 	}.Serve)
 

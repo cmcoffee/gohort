@@ -1,7 +1,6 @@
 package orchestrate
 
 import (
-	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -284,17 +283,13 @@ func (T *OrchestrateApp) handleApprovalAlways(c *jsonapi.Call, _ struct{}) (any,
 // the Disabled/Secured state. So approving an update can never wipe the secret
 // or silently enable/disable a working credential. Scoped to the user's
 // namespace (LoadUser + Owner=user), so it can't touch a global/admin cred.
-func (T *OrchestrateApp) handleCredentialUpdateApply(call *jsonapi.Call, raw json.RawMessage) (any, error) {
+func (T *OrchestrateApp) handleCredentialUpdateApply(call *jsonapi.Call, body struct {
+	Name        string `json:"name"`
+	BaseURL     string `json:"base_url"`
+	ParamName   string `json:"param_name"`
+	Description string `json:"description"`
+}) (any, error) {
 	user := call.User
-	var body struct {
-		Name        string `json:"name"`
-		BaseURL     string `json:"base_url"`
-		ParamName   string `json:"param_name"`
-		Description string `json:"description"`
-	}
-	if err := json.Unmarshal(raw, &body); err != nil {
-		return nil, jsonapi.BadRequest("bad request")
-	}
 	name := strings.TrimSpace(body.Name)
 	c, found := Secure().LoadUser(user, name)
 	if !found {

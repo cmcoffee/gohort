@@ -2,7 +2,6 @@ package orchestrate
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"math"
 	"net/http"
@@ -379,7 +378,31 @@ func (T *OrchestrateApp) handleConsoleRecurringGet(c *jsonapi.Call) (any, error)
 // posted timing, unschedule the old, schedule the edited one. On a validation
 // error the original is restored so a bad edit never destroys the task. POST
 // ?id=<id> with a JSON timing body.
-func (T *OrchestrateApp) handleConsoleRecurringUpdate(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+func (T *OrchestrateApp) handleConsoleRecurringUpdate(c *jsonapi.Call, body struct {
+	Pattern         string `json:"pattern"`
+	IntervalMinutes int    `json:"interval_minutes"`
+	DailyAt         string `json:"daily_at"`
+	TimesPerDay     int    `json:"times_per_day"`
+	MinGapMinutes   int    `json:"min_gap_minutes"`
+	MaxGapMinutes   int    `json:"max_gap_minutes"`
+	ActiveFrom      string `json:"active_from"`
+	ActiveTo        string `json:"active_to"`
+	MaxFires        int    `json:"max_fires"`
+	// Timing, when sent, is the shared timing section (core/timing) and
+	// replaces the pattern fields above.
+	Timing *timing.Spec `json:"timing"`
+	// Until, when sent, is the dialog's Until section (schedule_until.go).
+	Until *untilBody `json:"until"`
+	// Pointers so "field omitted" (nil = preserve the stored value) is
+	// distinguishable from "sent empty". Prompt is required, so an empty
+	// prompt preserves too; Name may legitimately be cleared (empty falls
+	// back to the prompt's first line at render).
+	Prompt *string `json:"prompt"`
+	Name   *string `json:"name"`
+	// For is the "Who does it" picker: "" for the agent itself, or a
+	// sub-agent's id. Sent only when it was changed.
+	For *string `json:"for"`
+}) (any, error) {
 	r := c.R
 	user := c.User
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
@@ -393,34 +416,6 @@ func (T *OrchestrateApp) handleConsoleRecurringUpdate(c *jsonapi.Call, raw json.
 	}
 	if found == nil {
 		return nil, jsonapi.NotFound("recurring task not found")
-	}
-	var body struct {
-		Pattern         string `json:"pattern"`
-		IntervalMinutes int    `json:"interval_minutes"`
-		DailyAt         string `json:"daily_at"`
-		TimesPerDay     int    `json:"times_per_day"`
-		MinGapMinutes   int    `json:"min_gap_minutes"`
-		MaxGapMinutes   int    `json:"max_gap_minutes"`
-		ActiveFrom      string `json:"active_from"`
-		ActiveTo        string `json:"active_to"`
-		MaxFires        int    `json:"max_fires"`
-		// Timing, when sent, is the shared timing section (core/timing) and
-		// replaces the pattern fields above.
-		Timing *timing.Spec `json:"timing"`
-		// Until, when sent, is the dialog's Until section (schedule_until.go).
-		Until *untilBody `json:"until"`
-		// Pointers so "field omitted" (nil = preserve the stored value) is
-		// distinguishable from "sent empty". Prompt is required, so an empty
-		// prompt preserves too; Name may legitimately be cleared (empty falls
-		// back to the prompt's first line at render).
-		Prompt *string `json:"prompt"`
-		Name   *string `json:"name"`
-		// For is the "Who does it" picker: "" for the agent itself, or a
-		// sub-agent's id. Sent only when it was changed.
-		For *string `json:"for"`
-	}
-	if err := json.Unmarshal(raw, &body); err != nil {
-		return nil, jsonapi.BadRequest("bad body: " + err.Error())
 	}
 	// Directive + name are editable now (not just timing). Base = the stored
 	// values; a provided prompt (non-empty; prompt is required) or name overrides.
@@ -546,34 +541,30 @@ func (T *OrchestrateApp) handleConsoleRecurringForOptions(c *jsonapi.Call) (any,
 // is open so an agent-level task always lands somewhere sensible. The per-session
 // active-task cap is enforced inside ScheduleOrchestrateUpdate. POST JSON
 // {agent_id, session_id, name, prompt, pattern, timing…}.
-func (T *OrchestrateApp) handleConsoleRecurringCreate(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+func (T *OrchestrateApp) handleConsoleRecurringCreate(c *jsonapi.Call, body struct {
+	AgentID         string `json:"agent_id"`
+	SessionID       string `json:"session_id"`
+	Name            string `json:"name"`
+	Prompt          string `json:"prompt"`
+	Pattern         string `json:"pattern"`
+	IntervalMinutes int    `json:"interval_minutes"`
+	DailyAt         string `json:"daily_at"`
+	TimesPerDay     int    `json:"times_per_day"`
+	MinGapMinutes   int    `json:"min_gap_minutes"`
+	MaxGapMinutes   int    `json:"max_gap_minutes"`
+	ActiveFrom      string `json:"active_from"`
+	ActiveTo        string `json:"active_to"`
+	MaxFires        int    `json:"max_fires"`
+	// Timing, when sent, is the shared timing section (core/timing) and
+	// replaces the pattern fields above.
+	Timing *timing.Spec `json:"timing"`
+	// Until, when sent, is the dialog's Until section (schedule_until.go).
+	Until *untilBody `json:"until"`
+	// For is the "Who does it" picker: a sub-agent of agent_id that the
+	// task is handed to, or "" for agent_id itself.
+	For string `json:"for"`
+}) (any, error) {
 	user := c.User
-	var body struct {
-		AgentID         string `json:"agent_id"`
-		SessionID       string `json:"session_id"`
-		Name            string `json:"name"`
-		Prompt          string `json:"prompt"`
-		Pattern         string `json:"pattern"`
-		IntervalMinutes int    `json:"interval_minutes"`
-		DailyAt         string `json:"daily_at"`
-		TimesPerDay     int    `json:"times_per_day"`
-		MinGapMinutes   int    `json:"min_gap_minutes"`
-		MaxGapMinutes   int    `json:"max_gap_minutes"`
-		ActiveFrom      string `json:"active_from"`
-		ActiveTo        string `json:"active_to"`
-		MaxFires        int    `json:"max_fires"`
-		// Timing, when sent, is the shared timing section (core/timing) and
-		// replaces the pattern fields above.
-		Timing *timing.Spec `json:"timing"`
-		// Until, when sent, is the dialog's Until section (schedule_until.go).
-		Until *untilBody `json:"until"`
-		// For is the "Who does it" picker: a sub-agent of agent_id that the
-		// task is handed to, or "" for agent_id itself.
-		For string `json:"for"`
-	}
-	if err := json.Unmarshal(raw, &body); err != nil {
-		return nil, jsonapi.BadRequest("bad body: " + err.Error())
-	}
 	agentID := strings.TrimSpace(body.AgentID)
 	if agentID == "" {
 		return nil, jsonapi.BadRequest("agent_id required")

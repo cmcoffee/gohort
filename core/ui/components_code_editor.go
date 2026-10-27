@@ -5,12 +5,17 @@ import (
 )
 
 // CodeEditorPanel is a two-pane code workbench: a snippet sidebar + a code
-// editor (with optional Context block) on the left, and a dual-mode chat
-// ("Chat" discusses, "Edit" proposes fenced code that's applied via inline
-// diff) on the right. Supports {{NAME}} variable substitution, a saved-values
-// library, and a saved-contexts library. Distinct enough from ArticleEditor /
+// editor (with optional Context block) on the left, and the host's chat on
+// the right. Supports {{NAME}} variable substitution, a saved-values library,
+// and a saved-contexts library. Distinct enough from ArticleEditor /
 // ChatPanel that it gets its own component type rather than overloading
 // either. Every endpoint is host-supplied, so the panel names no app.
+//
+// The chat is the host's AgentLoopPanel, the same chat every agent has. The
+// panel is its host for two things: every send carries the editor as it is on
+// screen, as an "editor" object ({name, lang, code, context, collections,
+// references, profile}), and a reply's "editor_proposal" block (Text = the
+// proposed file) opens as a diff in the editor with Apply.
 type CodeEditorPanel struct {
 	// Snippet CRUD endpoints.
 	ListURL   string `json:"list_url"`             // GET → array of snippets
@@ -18,9 +23,9 @@ type CodeEditorPanel struct {
 	SaveURL   string `json:"save_url"`             // POST snippet
 	DeleteURL string `json:"delete_url,omitempty"` // DELETE {id}
 
-	// Chat endpoint. POST {name, lang, code, context, message, mode, history}
-	// → {response, code?} — code present only on mode="edit" successes.
-	ChatURL string `json:"chat_url"`
+	// Chat is the assistant beside the editor, typically an AgentLoopPanel
+	// (agenthost.Chat.Panel). Leave nil for an editor with no chat.
+	Chat Component `json:"-"`
 
 	// Optional toolbar / library endpoints. Leave blank to hide.
 	SuggestNameURL   string `json:"suggest_name_url,omitempty"`
@@ -33,8 +38,8 @@ type CodeEditorPanel struct {
 
 	// CollectionsListURL, when set, turns on the reference-collections
 	// picker: a multi-select populated from this endpoint (GET → array
-	// of {id, name}). The IDs the user checks are sent as a "collections"
-	// array on every chat POST, so the handler can RAG-retrieve grounding
+	// of {id, name}). The IDs the user checks ride every chat send as the
+	// editor's "collections", so the handler can RAG-retrieve grounding
 	// from those corpora. Domain-agnostic — collections are a framework
 	// primitive (core.SearchCollections); leave blank to hide the picker.
 	CollectionsListURL string `json:"collections_list_url,omitempty"`
@@ -42,17 +47,17 @@ type CodeEditorPanel struct {
 	// label, the "+ Add <noun>" button, the modal title). Host-supplied so
 	// core/ui names no specific app; defaults to a generic label when blank.
 	CollectionsNoun string `json:"collections_noun,omitempty"`
-	// ReferenceSourcesURL, when set, renders the generic reference picker in
-	// the chat header. GET → []core.ReferenceGroup
+	// ReferenceSourcesURL, when set, renders the generic reference picker
+	// beside the collections. GET → []core.ReferenceGroup
 	// ({kind, label, items:[{id, name, desc}]}). The selected item rides
-	// with each chat POST as `references` ([{kind, item_id}]); the app's
-	// ChatURL handler injects that source's text into the model context.
+	// each chat send as the editor's `references` ([{kind, item_id}]); the
+	// app's send handler injects that source's text into the model context.
 	// Same wire shape as ArticleEditor's picker — see core.ReferenceSource.
 	ReferenceSourcesURL string `json:"reference_sources_url,omitempty"`
 
 	// ProfilesListURL, when set, renders the PROFILE BAR under the toolbar: the
 	// roster of named configurations this surface can work under, one of which
-	// is in force at a time and rides every chat POST as `profile`.
+	// is in force at a time and rides every chat send as the editor's `profile`.
 	//
 	// A profile is a SNAPSHOT OF THIS PANEL'S SETTINGS — language, sources,
 	// collections — saved under a name and restored by clicking it. Not an
@@ -155,7 +160,6 @@ type CodeEditorPanel struct {
 	PlaceholderName string `json:"placeholder_name,omitempty"`
 	PlaceholderCode string `json:"placeholder_code,omitempty"`
 	PlaceholderCtx  string `json:"placeholder_ctx,omitempty"`
-	PlaceholderChat string `json:"placeholder_chat,omitempty"`
 	// ViewerLabel and ChatLabel name the code and its assistant on a phone,
 	// where the two are shown one at a time behind a switch (defaults "Code"
 	// and "Assistant").
@@ -179,9 +183,14 @@ type DocTemplate struct {
 func (CodeEditorPanel) componentType() string { return "code_editor_panel" }
 
 func (c CodeEditorPanel) MarshalJSON() ([]byte, error) {
+	var chat json.RawMessage
+	if c.Chat != nil {
+		chat = marshalComponent(c.Chat)
+	}
 	type alias CodeEditorPanel
 	return json.Marshal(struct {
-		Type string `json:"type"`
+		Type string          `json:"type"`
+		Chat json.RawMessage `json:"chat,omitempty"`
 		alias
-	}{"code_editor_panel", alias(c)})
+	}{"code_editor_panel", chat, alias(c)})
 }

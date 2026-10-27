@@ -384,7 +384,10 @@ func runRegisteredCommand(ctx context.Context, dir, bin string, args ...string) 
 // Output is passed through VERBATIM in both directions. Nothing here
 // parses it: the format belongs to the registered binary, and a parser
 // guessing at it is how the first real bundle breaks.
-func (T *FileStoreApp) handleCommand(c *jsonapi.Call, body runReq) (any, error) {
+func (T *FileStoreApp) handleCommand(c *jsonapi.Call, body *runReq) (any, error) {
+	if body == nil {
+		body = &runReq{}
+	}
 	user, q := c.User, c.R.URL.Query()
 	st, found := LoadStore(T.DB, strings.TrimSpace(q.Get("slug")))
 	if !found || !st.AllowsUser(user) {
@@ -459,7 +462,7 @@ func (T *FileStoreApp) handleCommand(c *jsonapi.Call, body runReq) (any, error) 
 }
 
 // runReq is what handleCommand is posted. An empty body is the first phase of
-// a two-phase command (the route takes it with jsonapi.EmptyBodyOK).
+// a two-phase command (handleCommand takes it as a pointer, nil when none).
 type runReq struct {
 	Input string `json:"input"`
 }

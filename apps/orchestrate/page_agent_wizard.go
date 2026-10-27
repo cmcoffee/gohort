@@ -651,13 +651,9 @@ func wizardBaseRecord(kind string) AgentRecord {
 // the same worker-LLM path as the editor's ✨ Suggest, then the record
 // saves through the normal saveAgent path and the new record echoes
 // back so the form can redirect to agent/{id}.
-func (T *OrchestrateApp) handleAgentWizard(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+func (T *OrchestrateApp) handleAgentWizard(c *jsonapi.Call, req wizardRequest) (any, error) {
 	r := c.R
 	user, udb := c.User, c.UDB
-	var req wizardRequest
-	if err := json.Unmarshal(raw, &req); err != nil {
-		return nil, jsonapi.BadRequest("bad request")
-	}
 	req.Name = strings.TrimSpace(req.Name)
 	req.Purpose = strings.TrimSpace(req.Purpose)
 
@@ -1267,13 +1263,9 @@ func shapeAnswerBrief(doc archetype, req wizardRequest) string {
 //
 // No model call: the shape match is deterministic and the shape already ships
 // the agent, so the first screen costs nothing and is the same every time.
-func (T *OrchestrateApp) handleAgentPropose(c *jsonapi.Call, raw json.RawMessage) (any, error) {
-	var req struct {
-		Request string `json:"request"`
-	}
-	if err := json.Unmarshal(raw, &req); err != nil {
-		return nil, jsonapi.BadRequest("bad request")
-	}
+func (T *OrchestrateApp) handleAgentPropose(c *jsonapi.Call, req struct {
+	Request string `json:"request"`
+}) (any, error) {
 	p, ok := proposeAgent(req.Request)
 	if !ok {
 		// Nothing fit well enough to open with. Saying so is an answer: the

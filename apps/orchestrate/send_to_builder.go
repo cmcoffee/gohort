@@ -56,13 +56,19 @@ type builderBriefRecord struct {
 	Candidates []TriageCandidate `json:"candidates,omitempty"`
 }
 
+// sessionSendToBuilderBody is a send to Builder: why, optionally.
+type sessionSendToBuilderBody struct {
+	Reason string `json:"reason"`
+}
+
 // sessionSendToBuilder stages a brief for the given session and returns
 // its id. Reached from handleSessionOne when the path carries the
 // /send-to-builder sub-action. agent is the agent under review (the one
 // the user was just correcting); sessionID is the session to bundle.
-func (T *OrchestrateApp) sessionSendToBuilder(c *jsonapi.Call, body struct {
-	Reason string `json:"reason"`
-}) (any, error) {
+func (T *OrchestrateApp) sessionSendToBuilder(c *jsonapi.Call, body *sessionSendToBuilderBody) (any, error) {
+	if body == nil {
+		body = &sessionSendToBuilderBody{}
+	}
 	agent, aerr := T.sessionAgent(c)
 	if aerr != nil {
 		return nil, aerr

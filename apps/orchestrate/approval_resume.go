@@ -12,7 +12,6 @@ package orchestrate
 // call, used once, so the woken turn is not asked the same question again.
 
 import (
-	"encoding/json"
 	"strings"
 	"sync"
 	"time"
@@ -134,13 +133,12 @@ func takeResumePass(owner, agentID, tool, args string) bool {
 // --- answering a kept card ---------------------------------------------------
 
 // handleApprovalAnswer is POST /api/approvals/answer {id, answer: allow|deny}.
-func (T *OrchestrateApp) handleApprovalAnswer(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+func (T *OrchestrateApp) handleApprovalAnswer(c *jsonapi.Call, body struct {
+	ID     string `json:"id"`
+	Answer string `json:"answer"`
+}) (any, error) {
 	user := c.User
-	var body struct {
-		ID     string `json:"id"`
-		Answer string `json:"answer"`
-	}
-	if err := json.Unmarshal(raw, &body); err != nil || (body.Answer != "allow" && body.Answer != "deny") {
+	if body.Answer != "allow" && body.Answer != "deny" {
 		return nil, jsonapi.BadRequest("send id and answer (allow or deny)")
 	}
 	p, err := T.answerPendingApproval(user, strings.TrimSpace(body.ID), body.Answer)

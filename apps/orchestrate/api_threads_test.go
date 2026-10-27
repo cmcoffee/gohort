@@ -5,6 +5,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 // A thread an external caller opens is named from what was said in it, at
@@ -27,7 +28,7 @@ func TestAnAPIThreadIsNamedFromItsConversation(t *testing.T) {
 	deadline := time.Now().Add(3 * time.Second)
 	for {
 		s := df.thread("ext:k:conv:2")
-		if s.Title != "" && s.Title != titleFromFirstMessage(asked) {
+		if s.Title != "" && s.Title != textutil.FirstMessageTitle(asked, sessionTitleChars) {
 			break
 		}
 		if time.Now().After(deadline) {

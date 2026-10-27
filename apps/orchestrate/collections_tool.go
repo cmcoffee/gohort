@@ -56,7 +56,7 @@ func collectionsListTool() ChatTool {
 				k := strings.ToLower(strings.TrimSpace(c.Name))
 				byName[k] = append(byName[k], c)
 			}
-			// Same one-pass stats walk handleCollections uses —
+			// Same one-pass stats walk collectionsList uses —
 			// O(M) over chunks regardless of collection count.
 			type stats struct{ docs, chunks int }
 			statsByID := make(map[string]*stats, len(cols))

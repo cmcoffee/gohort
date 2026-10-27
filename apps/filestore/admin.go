@@ -551,7 +551,7 @@ func (T *FileStoreApp) registerRoutes() {
 		"DELETE": jsonapi.Delete(T.DB, T.handleStoreDelete),
 	}.Serve)
 	T.HandleFunc("/api/upload", T.handleUpload)
-	T.HandleFunc("/api/commands/run", jsonapi.Post(T.DB, T.handleCommand, jsonapi.EmptyBodyOK))
+	T.HandleFunc("/api/commands/run", jsonapi.Post(T.DB, T.handleCommand))
 	T.HandleFunc("/api/commands", jsonapi.Methods{
 		"GET":    jsonapi.Get(T.DB, T.handleCommands),
 		"POST":   jsonapi.Post(T.DB, T.handleCommandSave),

@@ -589,9 +589,17 @@ func (T *MyApp) Routes() {
 }
 ```
 
-A body the endpoint may go without is a pointer with `jsonapi.EmptyBodyOK`
-(nil when none was sent); one that takes no body at all is `struct{}`.
-`jsonapi.MaxBody(n)` raises or lowers the 1 MiB cap. Return
+The handler's body type says what the body is:
+
+| Body type | Means | A request with no body |
+|---|---|---|
+| `struct{}` | no body; it is never read | runs |
+| `*T` | optional | gets nil |
+| `json.RawMessage` | the handler decodes it itself (a patch merged onto what is stored, two shapes) | gets nil |
+| any other `T` | required | 400 |
+
+A body that is there and malformed is always a 400. `jsonapi.MaxBody(n)`
+raises or lowers the 1 MiB cap. Return
 `jsonapi.BadRequest`, `NotFound`, `Forbidden` or `Status(code, msg)` to refuse
 with a message the browser sees; any other error is logged and the browser is
 told only that something failed.

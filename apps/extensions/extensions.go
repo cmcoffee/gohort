@@ -105,7 +105,7 @@ func (T *Extensions) Routes() {
 		"POST": jsonapi.Post(T.DB, T.handleUserToolCategoriesSet),
 	}.Serve)
 	T.HandleFunc("/api/promotions", jsonapi.Methods{
-		"POST": jsonapi.Post(T.DB, T.handlePromotions, jsonapi.EmptyBodyOK),
+		"POST": jsonapi.Post(T.DB, T.handlePromotions),
 	}.Serve)
 	// The ACL picker's candidate list, served HERE rather than borrowed from
 	// another app. It is two lines over a core helper, and pointing the picker
@@ -115,7 +115,7 @@ func (T *Extensions) Routes() {
 	T.HandleFunc("/api/user-candidates", jsonapi.Get(T.DB, T.handleUserCandidates))
 	T.HandleFunc("/api/global-tools", jsonapi.Methods{
 		"GET":  jsonapi.Get(T.DB, T.handleGlobalTools),
-		"POST": jsonapi.Post(T.DB, T.handleGlobalToolAdopt, jsonapi.EmptyBodyOK),
+		"POST": jsonapi.Post(T.DB, T.handleGlobalToolAdopt),
 	}.Serve)
 	T.HandleFunc("/api/skills", jsonapi.Methods{
 		"GET":    jsonapi.Get(T.DB, T.handleUserSkills),
@@ -124,6 +124,7 @@ func (T *Extensions) Routes() {
 		"DELETE": jsonapi.Delete(T.DB, T.handleSkillDelete),
 	}.Serve)
 	T.HandleFunc("/api/skills/", T.handleUserSkillOne)
+	T.HandleFunc("/api/skills/{id}/revise", jsonapi.Post(T.DB, T.handleSkillRevise))
 	T.HandleFunc("/api/skill-tools", jsonapi.Get(T.DB, T.handleSkillToolOptions))
 	T.HandleFunc("/api/skill-collections", jsonapi.Get(T.DB, T.handleSkillCollectionOptions))
 	T.HandleFunc("/api/skill-playbook", jsonapi.Methods{
@@ -411,7 +412,7 @@ func (T *Extensions) handleCredentialDelete(c *jsonapi.Call, _ struct{}) (any, e
 // is view + delete, not create.
 func (T *Extensions) userToolPost() http.HandlerFunc {
 	share := jsonapi.Post(T.DB, T.shareUserTool)
-	change := jsonapi.Post(T.DB, T.changeUserTool, jsonapi.EmptyBodyOK)
+	change := jsonapi.Post(T.DB, T.changeUserTool)
 	return func(w http.ResponseWriter, r *http.Request) {
 		if strings.TrimSpace(r.URL.Query().Get("action")) == "share" {
 			share(w, r)

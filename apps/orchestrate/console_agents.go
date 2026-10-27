@@ -2,7 +2,6 @@ package orchestrate
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"sort"
 	"strings"
@@ -240,16 +239,12 @@ func (T *OrchestrateApp) handleConsoleAgentGet(c *jsonapi.Call) (any, error) {
 // REFUSED rather than treated as "clear it" — a standing agent whose mission is
 // blank fires on its schedule with nothing to do, so a stray empty textarea
 // would quietly turn a working schedule into a recurring no-op.
-func (T *OrchestrateApp) handleConsoleAgentUpdate(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+func (T *OrchestrateApp) handleConsoleAgentUpdate(c *jsonapi.Call, body standingUpdateBody) (any, error) {
 	r := c.R
 	user := c.User
 	sa, found := GetStandingAgent(RootDB, user, strings.TrimSpace(r.URL.Query().Get("id")))
 	if !found {
 		return nil, jsonapi.NotFound("no such standing agent")
-	}
-	var body standingUpdateBody
-	if err := json.Unmarshal(raw, &body); err != nil {
-		return nil, jsonapi.BadRequest("bad body: " + err.Error())
 	}
 	// The editor showed the mission without its handoff line, so the line is
 	// rebuilt from the picker before the mission is checked and stored.

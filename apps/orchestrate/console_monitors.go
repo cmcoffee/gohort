@@ -123,16 +123,12 @@ func (T *OrchestrateApp) handleConsoleMonitorGet(c *jsonapi.Call) (any, error) {
 // A field belonging to a different kind is REFUSED by name rather than stored.
 // It would be dead weight on the record and live weight in the reader's head:
 // a poll monitor carrying a url reads like something that fetches it.
-func (T *OrchestrateApp) handleConsoleMonitorUpdate(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+func (T *OrchestrateApp) handleConsoleMonitorUpdate(c *jsonapi.Call, body monitorUpdateBody) (any, error) {
 	r := c.R
 	user := c.User
 	m, found := GetEventMonitor(RootDB, user, strings.TrimSpace(r.URL.Query().Get("id")))
 	if !found {
 		return nil, jsonapi.NotFound("no such monitor")
-	}
-	var body monitorUpdateBody
-	if err := json.Unmarshal(raw, &body); err != nil {
-		return nil, jsonapi.BadRequest("bad body: " + err.Error())
 	}
 	// The editor showed the brief without its handoff line, so the line is
 	// rebuilt from the picker.

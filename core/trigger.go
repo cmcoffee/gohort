@@ -519,7 +519,7 @@ func evaluateGate(ctx context.Context, db Database, t ScheduledTrigger) (fire bo
 			Log("[trigger] rule(check) %s/%s fired but no poller is registered", t.Owner, t.Name)
 			return false, ""
 		}
-		answer, err := poller(ctx, t.Owner, t.CheckAgent, t.Check)
+		answer, err := poller(ctx, t.Owner, t.CheckAgent, pollQuestion(t.Check, t.MatchContains))
 		if err != nil {
 			Log("[trigger] rule(check) %s/%s check failed: %v", t.Owner, t.Name, err)
 			return false, ""

@@ -144,7 +144,7 @@ func (T *CustomApps) routes() {
 	T.HandleFunc("/_apps", jsonapi.Get(T.DB, T.handleAppsList))
 	T.HandleFunc("/_app", jsonapi.Methods{"DELETE": jsonapi.Delete(T.DB, T.handleDeleteApp)}.Serve)
 	T.HandleFunc("/_app/enable", jsonapi.Post(T.DB, T.handleEnableApp))
-	T.HandleFunc("/_app/share", jsonapi.Post(T.DB, T.handleShareApp, jsonapi.EmptyBodyOK))
+	T.HandleFunc("/_app/share", jsonapi.Post(T.DB, T.handleShareApp))
 	T.HandleFunc("/_app/share_group", jsonapi.Post(T.DB, T.handleShareGroup))
 	T.HandleFunc("/_app/share_person", jsonapi.Post(T.DB, T.handleSharePerson))
 	T.HandleFunc("/_app/order", jsonapi.Post(T.DB, T.handleAppOrder, jsonapi.MaxBody(1<<16)))
@@ -236,6 +236,7 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 			if !T.appAgentExists(spec) {
 				page = withNavLink(page, "⚠ Its agent was deleted: pick another", T.WebPath()+"/"+slug+"/_settings")
 			}
+			page = withFailedRunLink(page, T.WebPath()+"/"+slug, appscript.RecentRuns(ownerUser, slug))
 		}
 		_ = ui.RenderPageJSON(w, page, "", recordsInvalidationBridge(spec), spec.Name) // "" → resolved theme (see RegisterThemeResolver)
 	case rest == "_view/reset":
@@ -243,6 +244,9 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 	case rest == "_settings":
 		// The app's Settings page — a form over the tunables it declares.
 		T.handleSettingsPage(w, r, spec, user == ownerUser)
+	case rest == "_runs":
+		// What its scripts did when they ran (runs.go). The owner's only.
+		T.handleRunsPage(w, r, spec, user == ownerUser)
 	case strings.HasPrefix(rest, "data/"):
 		T.handleData(w, r, ownerUser, user, appdb, spec, strings.TrimPrefix(rest, "data/"))
 	case strings.HasPrefix(rest, "action/"):
@@ -403,12 +407,6 @@ func (T *CustomApps) handleChat(w http.ResponseWriter, r *http.Request, owner, u
 		http.Error(w, "this app has no chat agent bound", http.StatusNotFound)
 		return
 	}
-	// "active" records which record the workbench has open, so the co-author tool
-	// knows where to write. POST {id}. Stored per (user, slug) in this app's store.
-	if sub == "active" {
-		T.handleSetActiveRecord(w, r, udb, spec)
-		return
-	}
 	orch := agenthost.Get()
 	if orch == nil {
 		http.Error(w, "orchestrate not initialized", http.StatusServiceUnavailable)
@@ -550,6 +548,8 @@ func (T *CustomApps) handleIndex(w http.ResponseWriter, r *http.Request) {
 					// Only an app that declares tunables gets the button; for a
 					// shared app, only when some of them are the reader's own.
 					{Type: "button", Label: "Settings", Method: "GET", PostTo: "{slug}/_settings", OnlyIf: "has_settings", HideIf: "disabled"},
+					// What its scripts did when they ran (runs.go). Yours only.
+					{Type: "button", Label: "Runs", Method: "GET", PostTo: "{slug}/_runs", OnlyIf: "has_runs", HideIf: "disabled"},
 					// Builder, pointed at this app. Yours only: Builder changes
 					// what you own.
 					{Type: "button", Label: "Change", Method: "GET", PostTo: changeURL, OnlyIf: "mine", HideIf: "disabled"},
@@ -879,6 +879,9 @@ func (T *CustomApps) handleAppsList(c *jsonapi.Call) (any, error) {
 		if len(visibleSettings(s, true)) > 0 {
 			row["has_settings"] = "1"
 		}
+		if hasScripts(s) {
+			row["has_runs"] = "1"
+		}
 		if direct {
 			// The modal words its toggles as acts or as requests by this.
 			row["direct"] = "1"
@@ -1178,7 +1181,11 @@ func scriptSlug(name string) string {
 // runDataSource executes one data-source script and returns its stdout.
 func runDataSource(user string, db Database, spec AppSpec, ds AppDataSource, args map[string]any, caller string) (string, error) {
 	// A data source runs when a page asks for it: someone is looking.
-	return runAppScript(appscript.Job{Owner: user, DB: db, Slug: spec.Slug, Kind: "data", Name: ds.Name, Language: ds.Language, Script: ds.Script, Caps: ds.Capabilities, Args: args, Caller: caller, Libs: spec.Libraries, Interactive: true})
+	j := appscript.Job{Owner: user, DB: db, Slug: spec.Slug, Kind: "data", Name: ds.Name, Language: ds.Language, Script: ds.Script, Caps: ds.Capabilities, Args: args, Caller: caller, Libs: spec.Libraries, Interactive: true}
+	trace := appscript.Track(&j)
+	out, err := runAppScript(j)
+	trace.Done(err)
+	return out, err
 }
 
 // dataSourceCacheTTL is how long a data source's output is reused before it is
@@ -1472,8 +1479,13 @@ func runActionAndPersist(owner string, ownerDB, udb Database, spec AppSpec, act 
 	if len(spec.SharedCollections) > 0 {
 		args["shared"] = sharedInput(ownerDB, spec)
 	}
-	out, err := runAppScript(appscript.Job{Owner: owner, DB: ownerDB, Slug: spec.Slug, Kind: "action", Name: act.Name, Language: act.Language, Script: act.Script, Caps: act.Capabilities, Args: args, Caller: by, Libs: spec.Libraries,
-		Interactive: how.Interactive, Long: how.Long, Ctx: how.Ctx, OnProgress: how.OnProgress})
+	j := appscript.Job{Owner: owner, DB: ownerDB, Slug: spec.Slug, Kind: "action", Name: act.Name, Language: act.Language, Script: act.Script, Caps: act.Capabilities, Args: args, Caller: by, Libs: spec.Libraries,
+		Interactive: how.Interactive, Long: how.Long, Ctx: how.Ctx, OnProgress: how.OnProgress}
+	// The record takes the run's whole ending: a reply the host refuses is
+	// as much the action failing as the script exiting badly.
+	trace := appscript.Track(&j)
+	defer func() { trace.Done(err) }()
+	out, err := runAppScript(j)
 	if err != nil {
 		return res, err
 	}

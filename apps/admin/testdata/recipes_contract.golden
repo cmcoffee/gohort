@@ -49,7 +49,7 @@ root POST /api/templates/import "{\"id\":\"ct-empty\"}"
 root POST /api/templates/import "{\"id\":"
   400 invalid JSON: unexpected EOF
 root POST /api/templates/import ""
-  400 invalid JSON: EOF
+  400 this is not a template file: unexpected end of JSON input
 root GET /api/templates ""
   200 [{"id":"ct-echo","kind":"template","title":"Echo a greeting","category":"Tools","description":"A shell tool that echoes what it was set up with.","contains":"ct_echo (tool)","source":"imported","_reci… (455 bytes, sha1 d23990ca961d2bf56c2b6de3a3ada235eba0c531)
 root GET /api/templates/recipe?id=ct-echo ""

@@ -11,7 +11,6 @@
 package orchestrate
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -21,57 +20,62 @@ import (
 	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
-// handleToolScope serves the in-chat pill control (Tools modal). GET returns
-// the scope state for a tool; POST applies one toggle. Owner is always the
-// requesting user — they manage their own agents' tool scopes. Passes RootDB
-// (the process root) so the same agentUserDB derivation the admin path uses
-// resolves to this user's orchestrate store.
-func (T *OrchestrateApp) handleToolScope(c *jsonapi.Call, raw json.RawMessage) (any, error) {
-	r := c.R
-	user := c.User
-	name := strings.TrimSpace(r.URL.Query().Get("name"))
+// toolScopeAt is the scope backend and item a tool-scope call names: ?name=,
+// and ?kind= (tool | pipeline | credential). The in-chat control historically
+// only manages tools, so kind defaults there.
+func toolScopeAt(c *jsonapi.Call) (prov ScopeProvider, kind, name string, err error) {
+	name = strings.TrimSpace(c.R.URL.Query().Get("name"))
 	if name == "" {
-		return nil, jsonapi.BadRequest("missing name")
+		return ScopeProvider{}, "", "", jsonapi.BadRequest("missing name")
 	}
-	// kind selects the scope backend (tool | pipeline | credential); the
-	// in-chat control historically only manages tools, so default there.
-	kind := strings.TrimSpace(r.URL.Query().Get("kind"))
+	kind = strings.TrimSpace(c.R.URL.Query().Get("kind"))
 	if kind == "" {
 		kind = "tool"
 	}
 	prov, ok := ScopeProviderFor(kind)
 	if !ok {
-		return nil, jsonapi.BadRequest("unknown scope kind: " + kind)
+		return ScopeProvider{}, "", "", jsonapi.BadRequest("unknown scope kind: " + kind)
 	}
-	switch r.Method {
-	case http.MethodGet:
-		st, found := prov.State(RootDB, user, name)
-		if !found {
-			return nil, jsonapi.NotFound(kind + " not found")
-		}
-		// No caching: the pill modal re-reads this immediately after each
-		// toggle POST, and a stale cached body snaps the pill back on.
-		c.W.Header().Set("Cache-Control", "no-store")
-		return st, nil
-	case http.MethodPost:
-		var body struct {
-			Target string `json:"target"`
-			On     bool   `json:"on"`
-		}
-		if err := json.Unmarshal(raw, &body); err != nil {
-			return nil, jsonapi.BadRequest("bad request")
-		}
-		body.Target = strings.TrimSpace(body.Target)
-		if body.Target == "" {
-			return nil, jsonapi.BadRequest("target required")
-		}
-		if err := prov.Set(RootDB, user, name, body.Target, body.On); err != nil {
-			return nil, jsonapi.BadRequest(err.Error())
-		}
-		return jsonapi.Empty(http.StatusNoContent), nil
-	default:
-		return nil, jsonapi.Status(http.StatusMethodNotAllowed, "method not allowed")
+	return prov, kind, name, nil
+}
+
+// toolScopeGet serves the in-chat pill control (Tools modal): the scope state
+// for a tool. Owner is always the requesting user — they manage their own
+// agents' tool scopes. Passes RootDB (the process root) so the same
+// agentUserDB derivation the admin path uses resolves to this user's
+// orchestrate store.
+func (T *OrchestrateApp) toolScopeGet(c *jsonapi.Call) (any, error) {
+	prov, kind, name, err := toolScopeAt(c)
+	if err != nil {
+		return nil, err
 	}
+	st, found := prov.State(RootDB, c.User, name)
+	if !found {
+		return nil, jsonapi.NotFound(kind + " not found")
+	}
+	// No caching: the pill modal re-reads this immediately after each
+	// toggle POST, and a stale cached body snaps the pill back on.
+	c.W.Header().Set("Cache-Control", "no-store")
+	return st, nil
+}
+
+// toolScopeSet applies one toggle.
+func (T *OrchestrateApp) toolScopeSet(c *jsonapi.Call, body struct {
+	Target string `json:"target"`
+	On     bool   `json:"on"`
+}) (any, error) {
+	prov, _, name, err := toolScopeAt(c)
+	if err != nil {
+		return nil, err
+	}
+	body.Target = strings.TrimSpace(body.Target)
+	if body.Target == "" {
+		return nil, jsonapi.BadRequest("target required")
+	}
+	if err := prov.Set(RootDB, c.User, name, body.Target, body.On); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 func init() {

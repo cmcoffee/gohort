@@ -571,7 +571,11 @@ func handleNotifyPreference(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Notify bool `json:"notify"`
 		}
-		json.NewDecoder(r.Body).Decode(&req)
+		// A body that is not JSON decodes to "off"; it must not save that.
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid JSON body", http.StatusBadRequest)
+			return
+		}
 		AuthSetNotifyDefault(db, username, req.Notify)
 		json.NewEncoder(w).Encode(map[string]bool{"notify": req.Notify})
 		return

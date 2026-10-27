@@ -1,3 +1,12 @@
+// The runtime behaves as go.mod's go line says, however the binary is built.
+// A build in GOPATH mode ignores go.mod and takes the GODEBUG defaults of an
+// old Go: the 1.21 ServeMux, where a "/api/sessions/{sid}" pattern is literal
+// text and every such route answers 404, and TLS 1.0, RSA key exchange and
+// 3DES on the server. A main package's //go:debug lines apply in either build
+// mode, so the defaults are pinned here. Keep it equal to go.mod's go line
+// (godebug_default_test.go checks).
+//
+//go:debug default=go1.25
 package main
 
 import (

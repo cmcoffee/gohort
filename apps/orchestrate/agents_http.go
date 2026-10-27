@@ -527,7 +527,7 @@ func (T *OrchestrateApp) registerAgentRoutes() {
 		"PATCH":  jsonapi.Patch(T.DB, patchOne),
 		"DELETE": jsonapi.Delete(T.DB, T.agentDelete),
 	}.Serve)
-	T.HandleFunc("/api/agents/{id}/clone", jsonapi.Post(T.DB, T.agentClone, jsonapi.EmptyBodyOK))
+	T.HandleFunc("/api/agents/{id}/clone", jsonapi.Post(T.DB, T.agentClone))
 	T.HandleFunc("/api/agents/{id}/detach", jsonapi.Post(T.DB, T.agentDetach))
 	T.HandleFunc("/api/agents/{id}/move", jsonapi.Methods{
 		"GET":  jsonapi.Get(T.DB, T.agentMoveOptions),
@@ -551,7 +551,7 @@ func (T *OrchestrateApp) registerAgentRoutes() {
 		"GET":  jsonapi.Get(T.DB, T.agentGuardrailDepth),
 		"POST": jsonapi.Post(T.DB, T.agentGuardrailDepthSave),
 	}.Serve)
-	T.HandleFunc("/api/agents/{id}/guardrail-test", jsonapi.Post(T.DB, T.agentGuardrailTest, jsonapi.EmptyBodyOK))
+	T.HandleFunc("/api/agents/{id}/guardrail-test", jsonapi.Post(T.DB, T.agentGuardrailTest))
 	T.HandleFunc("/api/agents/{id}/decline-suggest", jsonapi.Post(T.DB, T.agentDeclineSuggest))
 	// Not JSON in and out: a download, an upload, the ✨ assist and the
 	// revisions surface. They resolve the caller themselves.
@@ -621,11 +621,17 @@ func (T *OrchestrateApp) agentDelete(c *jsonapi.Call, _ struct{}) (any, error) {
 	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
-// agentClone copies the agent under a new id, optionally renamed.
-func (T *OrchestrateApp) agentClone(c *jsonapi.Call, body struct {
+// agentCloneBody is a clone: optionally renamed or promoted.
+type agentCloneBody struct {
 	Name    string `json:"name,omitempty"`
 	Promote bool   `json:"promote,omitempty"`
-}) (any, error) {
+}
+
+// agentClone copies the agent under a new id, optionally renamed.
+func (T *OrchestrateApp) agentClone(c *jsonapi.Call, body *agentCloneBody) (any, error) {
+	if body == nil {
+		body = &agentCloneBody{}
+	}
 	clone, err := cloneAgent(c.UDB, c.R.PathValue("id"), c.User, body.Name, body.Promote)
 	if err != nil {
 		return nil, jsonapi.BadRequest(err.Error())

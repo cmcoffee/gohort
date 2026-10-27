@@ -1,9 +1,11 @@
 package jsonapi
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -120,17 +122,44 @@ func TestGetAndMethodsRouteByMethod(t *testing.T) {
 	}
 }
 
+// The In type says what the body is: a value is required, a pointer is
+// optional (nil when there is none), and struct{} is never read.
 func TestABodyCanBeLeftOffWhereThatIsMeant(t *testing.T) {
 	cookie := signIn(t)
 	base := &core.DBase{Store: kvlite.MemStore()}
-	lenient := Post(base, func(c *Call, in modeReq) (string, error) {
-		return "agent=" + in.Agent + " query=" + c.R.URL.Query().Get("id"), nil
-	}, EmptyBodyOK)
-	if w := call(lenient, "POST", "", cookie); w.Code != 200 || !strings.Contains(w.Body.String(), "agent=") {
-		t.Errorf("EmptyBodyOK refused no body: %d %q", w.Code, w.Body.String())
+	required := Post(base, func(c *Call, in modeReq) (string, error) {
+		return "agent=" + in.Agent, nil
+	})
+	if w := call(required, "POST", "", cookie); w.Code != 400 {
+		t.Errorf("a required body was left off and answered %d", w.Code)
 	}
-	if w := call(lenient, "POST", `{"agent_id":`, cookie); w.Code != 400 {
-		t.Errorf("EmptyBodyOK took a malformed body: %d", w.Code)
+	optional := Post(base, func(c *Call, in *modeReq) (string, error) {
+		if in == nil {
+			return "none", nil
+		}
+		return "agent=" + in.Agent, nil
+	})
+	if w := call(optional, "POST", "", cookie); w.Code != 200 || !strings.Contains(w.Body.String(), "none") {
+		t.Errorf("an optional body left off: %d %q", w.Code, w.Body.String())
+	}
+	if w := call(optional, "POST", `{"agent_id":"a1"}`, cookie); w.Code != 200 || !strings.Contains(w.Body.String(), "agent=a1") {
+		t.Errorf("an optional body sent: %d %q", w.Code, w.Body.String())
+	}
+	if w := call(optional, "POST", `{"agent_id":`, cookie); w.Code != 400 {
+		t.Errorf("an optional body that is malformed answered %d", w.Code)
+	}
+	// A raw body is the handler's to read: none reaches it as nil.
+	raw := Post(base, func(c *Call, in json.RawMessage) (string, error) {
+		return "len=" + strconv.Itoa(len(in)), nil
+	})
+	if w := call(raw, "POST", "", cookie); w.Code != 200 || !strings.Contains(w.Body.String(), "len=0") {
+		t.Errorf("a raw body left off: %d %q", w.Code, w.Body.String())
+	}
+	if w := call(raw, "POST", `{"a":1}`, cookie); w.Code != 200 || !strings.Contains(w.Body.String(), "len=7") {
+		t.Errorf("a raw body sent: %d %q", w.Code, w.Body.String())
+	}
+	if w := call(raw, "POST", `{"a":`, cookie); w.Code != 400 {
+		t.Errorf("a raw body that is not JSON answered %d", w.Code)
 	}
 
 	// An action with no input reads no body at all, so a body that is there

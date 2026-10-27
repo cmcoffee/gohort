@@ -37,7 +37,7 @@ func createEventMonitorToolDef(sess *ToolSession, owner, agentID string) AgentTo
 				"format_script":    {Type: "string", Description: "watch only, optional: sandboxed python that shapes the alert. It receives {\"prior\":...,\"current\":...} JSON on stdin (the previous and current tool output) and prints the notification text to stdout. Printing NOTHING no longer suppresses, it FAILS OPEN to the built-in diff so a broken script can't silently eat a change; to intentionally drop a change, print the sentinel \"SKIP\" (or {\"skip\":true}). No network, no LLM. Omit to use the built-in diff summary. Use this to format exactly the notification you want (e.g. parse a client list and print only \"X joined\" / \"X left\", or \"SKIP\" when only serveradmin changed)."},
 				"check_agent":      {Type: "string", Description: "poll only: name/id of an existing agent that checks the condition each interval."},
 				"check":            {Type: "string", Description: "poll only: the question/brief given to the checker. Tell it to answer with the match string when the event has happened."},
-				"match_contains":   {Type: "string", Description: "poll only: fire when the checker's answer contains this (case-insensitive). Default \"YES\"."},
+				"match_contains":   {Type: "string", Description: "poll only: fire when the checker's answer begins with this word (case-insensitive). Default \"YES\". The checker is told to begin with it or with NONE."},
 				"url":              {Type: "string", Description: "http_poll only: URL fetched each interval (e.g. a finance JSON API)."},
 				"json_path":        {Type: "string", Description: "http_poll: dotted path into the JSON response, array indices included, e.g. \"quoteResponse.result.0.regularMarketPrice\". Omit json_path and regex to compare the whole body."},
 				"regex":            {Type: "string", Description: "http_poll: alternative extraction, first capture group of this regex against the body."},
@@ -234,7 +234,7 @@ func createEventMonitorToolDef(sess *ToolSession, owner, agentID string) AgentTo
 				match = "YES"
 			}
 			got, _ := GetEventMonitor(RootDB, owner, name)
-			return fmt.Sprintf("Poll monitor %q created: %s, agent %q is asked %q; I wake when the answer contains %q.%s Next check: %s.",
+			return fmt.Sprintf("Poll monitor %q created: %s, agent %q is asked %q; I wake when the answer begins with %q.%s Next check: %s.",
 				name, monitorCadence(got), m.CheckAgent, m.Check, match, fireLimitSentence(m), got.NextCheck.Local().Format("Mon Jan 2 3:04 PM")) + dupMonitorWarning(m), nil
 		},
 	}

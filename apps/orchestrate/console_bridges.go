@@ -1,7 +1,6 @@
 package orchestrate
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -26,20 +25,18 @@ func channelLabelForRow(m EventMonitor) string {
 // handleConsoleBridgeSetChannel hooks the bridge (owner+name) to a channel, or
 // detaches it when channel_id is empty. Reuses the same shared logic the bridge
 // tool's update action calls, so UI and tool behave identically.
-func (T *OrchestrateApp) handleConsoleBridgeSetChannel(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+func (T *OrchestrateApp) handleConsoleBridgeSetChannel(c *jsonapi.Call, body *struct {
+	ChannelID string `json:"channel_id"`
+	ID        string `json:"id"`
+}) (any, error) {
 	r := c.R
 	m, mErr := T.consoleBridgeMonitor(c)
 	if mErr != nil {
 		return nil, mErr
 	}
 	channelID := strings.TrimSpace(r.URL.Query().Get("channel_id"))
-	if channelID == "" {
+	if channelID == "" && body != nil {
 		// Also accept it in the JSON body (ActionList posts {id} → channel_id).
-		var body struct {
-			ChannelID string `json:"channel_id"`
-			ID        string `json:"id"`
-		}
-		_ = json.Unmarshal(raw, &body)
 		channelID = strings.TrimSpace(body.ChannelID)
 		if channelID == "" {
 			channelID = strings.TrimSpace(body.ID)

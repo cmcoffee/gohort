@@ -2026,7 +2026,7 @@ func (cr *continuingRun) loadThread() {
 		cr.priorSession.Title = run.Title
 	}
 	if cr.priorSession.Title == "" && run.AutoTitle {
-		t := titleFromFirstMessage(run.Message)
+		t := textutil.FirstMessageTitle(run.Message, sessionTitleChars)
 		cr.priorSession.Title, cr.priorSession.AutoTitle = t, t
 	}
 	// A wake, a scheduled fire or a report into a thread nobody named (or one

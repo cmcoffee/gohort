@@ -153,7 +153,7 @@ root PATCH /api/settings "{\"channel_wake_rules\":\"  wake on mention  \"}"
 root PATCH /api/settings "{\"allow_signup\":"
   400 invalid JSON: unexpected EOF
 root PATCH /api/settings ""
-  400 invalid JSON: EOF
+  400 invalid request
 root PATCH /api/settings "[]"
   400 invalid request
 root DELETE /api/settings ""

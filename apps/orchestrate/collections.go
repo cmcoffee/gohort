@@ -118,100 +118,94 @@ func (T *OrchestrateApp) collectionDB(c Collection) Database {
 
 // --- HTTP handlers --------------------------------------------------------
 
-// handleCollections serves the collections-list endpoint.
+// collectionsList and collectionCreate serve the collections-list endpoint.
 //
 //	GET  /api/collections        → [{id, name, description, chunks, documents, updated}]
 //	POST /api/collections        → create (body: {name, description})
-func (T *OrchestrateApp) handleCollections(c *jsonapi.Call, raw json.RawMessage) (any, error) {
-	r := c.R
+func (T *OrchestrateApp) collectionsList(c *jsonapi.Call) (any, error) {
 	user, udb := c.User, c.UDB
-	switch r.Method {
-	case http.MethodGet:
-		cols := listCollections(udb, user)
-		type out struct {
-			Collection
-			Documents int `json:"documents"`
-			Chunks    int `json:"chunks"`
-		}
-		// Single pass over EmbeddedChunks instead of one walk per
-		// collection. The old shape (collectionStats called per
-		// collection) was O(N * M) for N collections + M chunks —
-		// 10 collections × 5000 chunks = 50K reads + decryption
-		// per page load. Walk once, bucket by collection ID.
-		type stats struct{ docs, chunks int }
-		statsByID := make(map[string]*stats, len(cols))
-		seenReportPerCollection := make(map[string]map[string]bool, len(cols))
-		hasDeploymentCol := false
-		for _, c := range cols {
-			statsByID[c.ID] = &stats{}
-			seenReportPerCollection[c.ID] = map[string]bool{}
-			if IsDeploymentScope(c) {
-				hasDeploymentCol = true
-			}
-		}
-		// countChunks walks one DB and credits stats for any collection
-		// chunk whose ID is in the statsByID map.
-		countChunks := func(d Database) {
-			// Source format: collection:<id> (exact, no suffixes
-			// today — collection chunks don't carry topic dims).
-			const prefix = "collection:"
-			for _, ch := range ChunksWhere(d, func(x EmbeddedChunk) bool { return strings.HasPrefix(x.Source, prefix) }) {
-				id := strings.TrimPrefix(ch.Source, prefix)
-				s, ok := statsByID[id]
-				if !ok {
-					continue // chunk from a collection the user doesn't own
-				}
-				s.chunks++
-				seen := seenReportPerCollection[id]
-				if !seen[ch.ReportID] {
-					seen[ch.ReportID] = true
-					s.docs++
-				}
-			}
-		}
-		// All collection chunks — user-scoped and deployment-scoped
-		// alike — live in the dedicated shared vector store now,
-		// partitioned by Source tag. One walk suffices.
-		_ = hasDeploymentCol
-		countChunks(VectorDB)
-		results := make([]out, 0, len(cols))
-		for _, c := range cols {
-			s := statsByID[c.ID]
-			results = append(results, out{
-				Collection: c,
-				Documents:  s.docs,
-				Chunks:     s.chunks,
-			})
-		}
-		return map[string]any{"collections": results}, nil
-	case http.MethodPost:
-		var body struct {
-			Name        string `json:"name"`
-			Description string `json:"description"`
-		}
-		if err := json.Unmarshal(raw, &body); err != nil {
-			return nil, jsonapi.BadRequest("bad request")
-		}
-		name := strings.TrimSpace(body.Name)
-		if name == "" {
-			return nil, jsonapi.BadRequest("name required")
-		}
-		if why := duplicateCollectionName(udb, user, name, ""); why != "" {
-			return nil, jsonapi.Status(http.StatusConflict, why)
-		}
-		c := Collection{
-			ID:          UUIDv4(),
-			Owner:       user,
-			Name:        name,
-			Description: strings.TrimSpace(body.Description),
-			Created:     time.Now(),
-		}
-		saveCollection(udb, c)
-		Log("[orchestrate.collections] user=%q created collection %q (id=%s)", user, name, c.ID)
-		return c, nil
-	default:
-		return nil, jsonapi.Status(http.StatusMethodNotAllowed, "method not allowed")
+	cols := listCollections(udb, user)
+	type out struct {
+		Collection
+		Documents int `json:"documents"`
+		Chunks    int `json:"chunks"`
 	}
+	// Single pass over EmbeddedChunks instead of one walk per
+	// collection. The old shape (collectionStats called per
+	// collection) was O(N * M) for N collections + M chunks —
+	// 10 collections × 5000 chunks = 50K reads + decryption
+	// per page load. Walk once, bucket by collection ID.
+	type stats struct{ docs, chunks int }
+	statsByID := make(map[string]*stats, len(cols))
+	seenReportPerCollection := make(map[string]map[string]bool, len(cols))
+	hasDeploymentCol := false
+	for _, c := range cols {
+		statsByID[c.ID] = &stats{}
+		seenReportPerCollection[c.ID] = map[string]bool{}
+		if IsDeploymentScope(c) {
+			hasDeploymentCol = true
+		}
+	}
+	// countChunks walks one DB and credits stats for any collection
+	// chunk whose ID is in the statsByID map.
+	countChunks := func(d Database) {
+		// Source format: collection:<id> (exact, no suffixes
+		// today — collection chunks don't carry topic dims).
+		const prefix = "collection:"
+		for _, ch := range ChunksWhere(d, func(x EmbeddedChunk) bool { return strings.HasPrefix(x.Source, prefix) }) {
+			id := strings.TrimPrefix(ch.Source, prefix)
+			s, ok := statsByID[id]
+			if !ok {
+				continue // chunk from a collection the user doesn't own
+			}
+			s.chunks++
+			seen := seenReportPerCollection[id]
+			if !seen[ch.ReportID] {
+				seen[ch.ReportID] = true
+				s.docs++
+			}
+		}
+	}
+	// All collection chunks — user-scoped and deployment-scoped
+	// alike — live in the dedicated shared vector store now,
+	// partitioned by Source tag. One walk suffices.
+	_ = hasDeploymentCol
+	countChunks(VectorDB)
+	results := make([]out, 0, len(cols))
+	for _, c := range cols {
+		s := statsByID[c.ID]
+		results = append(results, out{
+			Collection: c,
+			Documents:  s.docs,
+			Chunks:     s.chunks,
+		})
+	}
+	return map[string]any{"collections": results}, nil
+}
+
+// collectionCreate makes a new, empty collection.
+func (T *OrchestrateApp) collectionCreate(c *jsonapi.Call, body struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}) (any, error) {
+	user, udb := c.User, c.UDB
+	name := strings.TrimSpace(body.Name)
+	if name == "" {
+		return nil, jsonapi.BadRequest("name required")
+	}
+	if why := duplicateCollectionName(udb, user, name, ""); why != "" {
+		return nil, jsonapi.Status(http.StatusConflict, why)
+	}
+	col := Collection{
+		ID:          UUIDv4(),
+		Owner:       user,
+		Name:        name,
+		Description: strings.TrimSpace(body.Description),
+		Created:     time.Now(),
+	}
+	saveCollection(udb, col)
+	Log("[orchestrate.collections] user=%q created collection %q (id=%s)", user, name, col.ID)
+	return col, nil
 }
 
 // registerCollectionRoutes mounts the per-collection routes:
@@ -237,10 +231,10 @@ func (T *OrchestrateApp) registerCollectionRoutes() {
 	T.HandleFunc("/api/collections/{id}/sources", jsonapi.Get(T.DB, T.collectionSources))
 	T.HandleFunc("/api/collections/{id}/sources/{doc}", jsonapi.Delete(T.DB, T.collectionSourceDelete))
 	T.HandleFunc("/api/collections/{id}/search", jsonapi.Get(T.DB, T.collectionSearch))
-	T.HandleFunc("/api/collections/{id}/autofill", jsonapi.Post(T.DB, T.collectionAutofill, jsonapi.EmptyBodyOK))
-	T.HandleFunc("/api/collections/{id}/research", jsonapi.Post(T.DB, T.collectionResearch, jsonapi.EmptyBodyOK))
+	T.HandleFunc("/api/collections/{id}/autofill", jsonapi.Post(T.DB, T.collectionAutofill))
+	T.HandleFunc("/api/collections/{id}/research", jsonapi.Post(T.DB, T.collectionResearch))
 	T.HandleFunc("/api/collections/{id}/audit", jsonapi.Post(T.DB, T.collectionAudit))
-	T.HandleFunc("/api/collections/{id}/suggest-description", jsonapi.Post(T.DB, T.collectionSuggestDescription, jsonapi.EmptyBodyOK))
+	T.HandleFunc("/api/collections/{id}/suggest-description", jsonapi.Post(T.DB, T.collectionSuggestDescription))
 	// An upload and a download: raw, behind the same gate.
 	T.HandleFunc("/api/collections/{id}/upload", T.signedIn(func(w http.ResponseWriter, r *http.Request, user string, udb Database) {
 		if c, err := T.collectionFor(r, user, udb, "upload"); err != nil {
@@ -457,16 +451,22 @@ func (T *OrchestrateApp) handleCollectionExport(w http.ResponseWriter, r *http.R
 	_ = enc.Encode(bundle)
 }
 
+// collectionResearchBody is a seed-research run: one topic or several.
+type collectionResearchBody struct {
+	Topic  string   `json:"topic"`
+	Topics []string `json:"topics"`
+}
+
 // collectionResearch runs the seed-research agent on one or more topics —
 // web search + source fetch + cited synthesis — and ingests each synthesized,
 // cited report into the collection as a document. Distinct from autofill (which
 // ingests RAW source pages): this stores distilled, cited findings, the higher-
 // quality material for a knowledge base. Synchronous (research is an agent loop
 // of tens of seconds per topic); the caller shows a spinner.
-func (T *OrchestrateApp) collectionResearch(call *jsonapi.Call, body struct {
-	Topic  string   `json:"topic"`
-	Topics []string `json:"topics"`
-}) (any, error) {
+func (T *OrchestrateApp) collectionResearch(call *jsonapi.Call, body *collectionResearchBody) (any, error) {
+	if body == nil {
+		body = &collectionResearchBody{}
+	}
 	c, cerr := T.collectionAt(call, "research")
 	if cerr != nil {
 		return nil, cerr
@@ -989,6 +989,12 @@ func queriesForMaxDocs(maxDocs int) int {
 	return n
 }
 
+// collectionAutofillBody is an autofill: no body generates the queries.
+type collectionAutofillBody struct {
+	Queries []string `json:"queries"`
+	MaxDocs int      `json:"max_docs"`
+}
+
 // collectionAutofill seeds the collection from the web. Generates
 // a handful of search queries via worker LLM from the collection's
 // name + description (override with explicit queries in the body),
@@ -1005,10 +1011,10 @@ func queriesForMaxDocs(maxDocs int) int {
 //	body (all optional):
 //	  {queries: []string, max_docs: int}
 //	→ {added, skipped, failed, queries_used, results}
-func (T *OrchestrateApp) collectionAutofill(call *jsonapi.Call, body struct {
-	Queries []string `json:"queries"`
-	MaxDocs int      `json:"max_docs"`
-}) (any, error) {
+func (T *OrchestrateApp) collectionAutofill(call *jsonapi.Call, body *collectionAutofillBody) (any, error) {
+	if body == nil {
+		body = &collectionAutofillBody{}
+	}
 	c, cerr := T.collectionAt(call, "autofill")
 	if cerr != nil {
 		return nil, cerr
@@ -1239,6 +1245,17 @@ func (T *OrchestrateApp) collectionAutofill(call *jsonapi.Call, body struct {
 	}, nil
 }
 
+// collectionSuggestDescriptionBody is a description draft: which expertise to draft with.
+type collectionSuggestDescriptionBody struct {
+	// Mode picks the expertise source:
+	//   ""         → default (treat as "attached")
+	//   "attached" → union every skill currently attached to this collection
+	//   "none"     → vanilla worker LLM, no expertise primer
+	//   "skill"    → single named skill, identified by SkillID
+	Mode    string `json:"mode"`
+	SkillID string `json:"skill_id"`
+}
+
 // collectionSuggestDescription drafts a description for the
 // collection using the worker LLM. Optionally takes a skill_id —
 // when provided, the skill's instructions get prepended to the system
@@ -1249,15 +1266,10 @@ func (T *OrchestrateApp) collectionAutofill(call *jsonapi.Call, body struct {
 //	POST /api/collections/{id}/suggest-description
 //	body (optional): {skill_id: "..."}
 //	→ {description: "..."}
-func (T *OrchestrateApp) collectionSuggestDescription(call *jsonapi.Call, body struct {
-	// Mode picks the expertise source:
-	//   ""         → default (treat as "attached")
-	//   "attached" → union every skill currently attached to this collection
-	//   "none"     → vanilla worker LLM, no expertise primer
-	//   "skill"    → single named skill, identified by SkillID
-	Mode    string `json:"mode"`
-	SkillID string `json:"skill_id"`
-}) (any, error) {
+func (T *OrchestrateApp) collectionSuggestDescription(call *jsonapi.Call, body *collectionSuggestDescriptionBody) (any, error) {
+	if body == nil {
+		body = &collectionSuggestDescriptionBody{}
+	}
 	c, cerr := T.collectionAt(call, "suggest-description")
 	if cerr != nil {
 		return nil, cerr

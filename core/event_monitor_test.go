@@ -49,11 +49,21 @@ func TestEventMatch(t *testing.T) {
 		answer, match string
 		want          bool
 	}{
-		{"YES, two new CVEs", "", true},         // default match = YES
-		{"no change", "", false},                // default match = YES, absent
-		{"status: ALERT raised", "alert", true}, // case-insensitive custom
-		{"all quiet", "ALERT", false},           // custom absent
-		{"", "", false},                         // empty answer never fires
+		{"YES, two new CVEs", "", true},             // default match = YES
+		{"no change", "", false},                    // default match = YES, absent
+		{"alert: disk full", "ALERT", true},         // case-insensitive custom
+		{"all quiet", "ALERT", false},               // custom absent
+		{"", "", false},                             // empty answer never fires
+		{"**YES** it shipped", "", true},            // markdown emphasis around the verdict
+		{"> Released: v2 is out", "released", true}, // a quote marker before it
+		{"YESTERDAY nothing", "", false},            // a whole word, not a prefix
+		{"IN STOCK now", "in stock", true},          // a match phrase leads too
+		// Only the lead is the verdict. A checker that finds nothing says why,
+		// and the why names what it watches for: matched anywhere, this fired
+		// a once-only monitor on a no and texted its owner.
+		{"NONE. Alibaba announced the model but it is not released yet", "released", false},
+		{"status: ALERT raised", "alert", false},
+		{"fetch failed. YES", "", false},
 	}
 	for _, c := range cases {
 		if got := eventMatch(c.answer, c.match); got != c.want {
@@ -870,11 +880,11 @@ func TestAConditionThatNeverClearsSaysSoOnce(t *testing.T) {
 	db := memDB(t)
 	m := EventMonitor{
 		Name: "always-yes", Owner: "craig", Kind: EventKindPoll,
-		CheckAgent: "Checker", Check: "end your answer with YES", IntervalSeconds: 300,
+		CheckAgent: "Checker", Check: "always answer YES", IntervalSeconds: 300,
 	}
 	SaveEventMonitor(db, m)
 	RegisterEventPoller(func(ctx context.Context, owner, agentID, check string) (string, error) {
-		return "fetch failed. YES", nil // the checker that always matches
+		return "YES (fetch failed)", nil // the checker that always matches
 	})
 	defer RegisterEventPoller(nil)
 	wakes := 0
@@ -1163,5 +1173,37 @@ func TestHTTPAndWatchChecksSayWhyTheyDidNotFire(t *testing.T) {
 	noteCheck(&cur, "no match", long)
 	if d := cur.RecentChecks[1].Detail; len([]rune(d)) > 170 || strings.Contains(d, "\n") {
 		t.Fatalf("detail not kept to one short line: %q", d)
+	}
+}
+
+// The checker is told what its answer has to start with, since only the start
+// is read: the monitor's question, then the verdict word or NONE.
+func TestTheCheckerIsToldToLeadWithItsVerdict(t *testing.T) {
+	db := memDB(t)
+	m := EventMonitor{Name: "release-watch", Owner: "craig", Kind: EventKindPoll, CheckAgent: "c",
+		Check: "Has v2 been released?", MatchContains: "RELEASED", IntervalSeconds: 3600, MaxFires: 1}
+	SaveEventMonitor(db, m)
+	var asked string
+	RegisterEventPoller(func(ctx context.Context, owner, agentID, check string) (string, error) {
+		asked = check
+		return "NONE. The vendor announced v2 but it is not released yet.", nil
+	})
+	defer RegisterEventPoller(nil)
+	wakes := 0
+	RegisterEventWaker(func(ctx context.Context, owner, name, summary string) (bool, string) {
+		wakes++
+		return true, ""
+	})
+	defer RegisterEventWaker(nil)
+	executeEventPoll(context.Background(), db, m)
+	if !strings.HasPrefix(asked, "Has v2 been released?") || !strings.Contains(asked, `Begin your answer with "RELEASED"`) || !strings.Contains(asked, "NONE") {
+		t.Errorf("the checker was asked %q", asked)
+	}
+	cur, _ := GetEventMonitor(db, "craig", "release-watch")
+	if wakes != 0 || cur.FiresUsed() != 0 || cur.Paused {
+		t.Errorf("a NONE that names the release fired: %d wakes, %d fires used, paused %v", wakes, cur.FiresUsed(), cur.Paused)
+	}
+	if !strings.Contains(pollQuestion("Is it raining?", ""), `Begin your answer with "YES"`) {
+		t.Error("a monitor with no match word does not tell its checker to lead with YES")
 	}
 }

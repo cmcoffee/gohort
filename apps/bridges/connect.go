@@ -109,7 +109,10 @@ func (T *Bridges) handleIncomingConvos(c *jsonapi.Call) (any, error) {
 //
 //	POST /bridges/api/add-convo?chat_id=<id>   (pick an incoming chat)
 //	POST /bridges/api/add-convo  {handle, service}   (manual number)
-func (T *Bridges) handleAddConvo(c *jsonapi.Call, req addConvoReq) (any, error) {
+func (T *Bridges) handleAddConvo(c *jsonapi.Call, req *addConvoReq) (any, error) {
+	if req == nil {
+		req = &addConvoReq{}
+	}
 	user, admin := c.User, RequestIsAdmin(c.R)
 	if req.ChatID == "" {
 		req.ChatID = c.R.URL.Query().Get("chat_id")
@@ -189,7 +192,10 @@ func (T *Bridges) handleAgentChannels(c *jsonapi.Call) (any, error) {
 // phantom's per-conversation toggle). Off = inbound recorded, agent not run.
 //
 //	PATCH /bridges/api/set-autoreply?id=<channel_id>  {auto_reply}
-func (T *Bridges) handleSetAutoReply(c *jsonapi.Call, req autoReplyReq) (any, error) {
+func (T *Bridges) handleSetAutoReply(c *jsonapi.Call, req *autoReplyReq) (any, error) {
+	if req == nil {
+		req = &autoReplyReq{}
+	}
 	ch, found := GetChannel(RootDB, c.User, c.R.URL.Query().Get("id"))
 	if !found {
 		return nil, jsonapi.NotFound("channel not found")
@@ -210,7 +216,10 @@ type autoReplyReq struct {
 // agent id; we reuse a free channel for that agent or create one, then stamp
 // this chat's source onto it. agent_id="" (or legacy channel_id="") disconnects.
 // Accepts query params (the ActionList posts via PostTo substitution) or a body.
-func (T *Bridges) handleConnectChannel(c *jsonapi.Call, req connectChannelReq) (any, error) {
+func (T *Bridges) handleConnectChannel(c *jsonapi.Call, req *connectChannelReq) (any, error) {
+	if req == nil {
+		req = &connectChannelReq{}
+	}
 	user := c.User
 	q := c.R.URL.Query()
 	if req.ChatID == "" {

@@ -101,74 +101,68 @@ func pipelineStageNames(d PipelineDef) []string {
 	return out
 }
 
-// handlePipelines serves the collection-level routes: GET list, POST
-// create.
-func (T *OrchestrateApp) handlePipelines(c *jsonapi.Call, raw json.RawMessage) (any, error) {
-	r := c.R
+// pipelinesList and pipelineCreate serve the collection-level routes: GET
+// list, POST create.
+func (T *OrchestrateApp) pipelinesList(c *jsonapi.Call) (any, error) {
 	user, udb := c.User, c.UDB
-	switch r.Method {
-	case http.MethodGet:
-		defs := ListPipelineDefs(udb, user)
-		// Which agents can call what. A pipeline attaches to an agent as
-		// a tool (run_<name>), so an unattached one is inert in exactly
-		// the way an unattached machine is.
-		users := map[string][]string{}
-		for _, ag := range listAgents(udb, user) {
-			for _, pid := range ag.AttachedPipelines {
-				users[pid] = append(users[pid], chFirst(ag.Name, ag.ID))
-			}
+	defs := ListPipelineDefs(udb, user)
+	// Which agents can call what. A pipeline attaches to an agent as
+	// a tool (run_<name>), so an unattached one is inert in exactly
+	// the way an unattached machine is.
+	users := map[string][]string{}
+	for _, ag := range listAgents(udb, user) {
+		for _, pid := range ag.AttachedPipelines {
+			users[pid] = append(users[pid], chFirst(ag.Name, ag.ID))
 		}
-		rows := make([]pipelineRow, 0, len(defs))
-		for _, d := range defs {
-			rows = append(rows, pipelineRow{
-				ID: d.ID, Name: d.Name, Description: d.Description, Stages: len(d.Stages),
-				StageNames: pipelineStageNames(d),
-				UsedBy:     users[d.ID],
-				UsedByText: usedByText(users[d.ID]),
-				Status:     pipelineStatusText(d),
-				EditURL:    "/orchestrate/pipeline?id=" + d.ID,
-				Mine:       true,
-				SharedWith: ShareRecipientsText(d.AllowedUsers),
-			})
-		}
-		// Pipelines other people shared, after the user's own and labelled with
-		// whose they are. Listed at all because a share nobody can find is a
-		// share that did not happen; listed LAST because your own work is what
-		// you came to this page for.
-		for _, sp := range sharedPipelinesFor(user) {
-			rows = append(rows, pipelineRow{
-				ID: sp.Def.ID, Name: sp.Def.Name, Description: sp.Def.Description, Stages: len(sp.Def.Stages),
-				StageNames: pipelineStageNames(sp.Def),
-				Status:     "shared by " + sp.Owner,
-				EditURL:    "/orchestrate/pipeline?id=" + sp.Def.ID,
-				Owner:      sp.Owner,
-			})
-		}
-		return map[string]any{"pipelines": rows}, nil
-	case http.MethodPost:
-		var def PipelineDef
-		if err := json.Unmarshal(raw, &def); err != nil {
-			return nil, jsonapi.BadRequest("bad request")
-		}
-		// Force a fresh, user-owned record — the client doesn't get to
-		// assert id/owner on create.
-		def.ID = ""
-		def.Owner = user
-		// Sharing is its own door (/share). A create that could assert a
-		// recipient list would let one POST make a pipeline and hand it out
-		// in the same breath, which is not a thing anybody asked to do.
-		def.AllowedUsers = nil
-		def.Editors = nil
-		def.Published = false
-		if err := def.Validate(); err != nil {
-			return nil, jsonapi.BadRequest(err.Error())
-		}
-		saved := SavePipelineDef(udb, def)
-		Log("[orchestrate.pipelines] user=%q created pipeline %q (id=%s, %d stages)", user, saved.Name, saved.ID, len(saved.Stages))
-		return saved, nil
-	default:
-		return nil, jsonapi.Status(http.StatusMethodNotAllowed, "method not allowed")
 	}
+	rows := make([]pipelineRow, 0, len(defs))
+	for _, d := range defs {
+		rows = append(rows, pipelineRow{
+			ID: d.ID, Name: d.Name, Description: d.Description, Stages: len(d.Stages),
+			StageNames: pipelineStageNames(d),
+			UsedBy:     users[d.ID],
+			UsedByText: usedByText(users[d.ID]),
+			Status:     pipelineStatusText(d),
+			EditURL:    "/orchestrate/pipeline?id=" + d.ID,
+			Mine:       true,
+			SharedWith: ShareRecipientsText(d.AllowedUsers),
+		})
+	}
+	// Pipelines other people shared, after the user's own and labelled with
+	// whose they are. Listed at all because a share nobody can find is a
+	// share that did not happen; listed LAST because your own work is what
+	// you came to this page for.
+	for _, sp := range sharedPipelinesFor(user) {
+		rows = append(rows, pipelineRow{
+			ID: sp.Def.ID, Name: sp.Def.Name, Description: sp.Def.Description, Stages: len(sp.Def.Stages),
+			StageNames: pipelineStageNames(sp.Def),
+			Status:     "shared by " + sp.Owner,
+			EditURL:    "/orchestrate/pipeline?id=" + sp.Def.ID,
+			Owner:      sp.Owner,
+		})
+	}
+	return map[string]any{"pipelines": rows}, nil
+}
+
+// pipelineCreate saves a new pipeline, the caller's own.
+func (T *OrchestrateApp) pipelineCreate(c *jsonapi.Call, def PipelineDef) (any, error) {
+	user, udb := c.User, c.UDB
+	// Force a fresh, user-owned record — the client doesn't get to
+	// assert id/owner on create.
+	def.ID = ""
+	def.Owner = user
+	// Sharing is its own door (/share). A create that could assert a
+	// recipient list would let one POST make a pipeline and hand it out
+	// in the same breath, which is not a thing anybody asked to do.
+	def.AllowedUsers = nil
+	def.Editors = nil
+	def.Published = false
+	if err := def.Validate(); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	saved := SavePipelineDef(udb, def)
+	Log("[orchestrate.pipelines] user=%q created pipeline %q (id=%s, %d stages)", user, saved.Name, saved.ID, len(saved.Stages))
+	return saved, nil
 }
 
 // handlePipelineImport accepts a portable recipe (from /export or an
@@ -237,7 +231,7 @@ func (T *OrchestrateApp) registerPipelineRoutes() {
 		"GET":  jsonapi.Get(T.DB, T.pipelineShare),
 		"POST": jsonapi.Post(T.DB, T.pipelineShareSave),
 	}.Serve)
-	T.HandleFunc("/api/pipelines/{id}/publish", jsonapi.Post(T.DB, T.pipelinePublish, jsonapi.EmptyBodyOK))
+	T.HandleFunc("/api/pipelines/{id}/publish", jsonapi.Post(T.DB, T.pipelinePublish))
 	T.HandleFunc("/api/pipelines/{id}/unpublish", jsonapi.Post(T.DB, T.pipelineUnpublish))
 	T.HandleFunc("/api/pipelines/{id}/run", jsonapi.Post(T.DB, T.pipelineRun))
 	// Not JSON: an editor page block, the picture, a download, and the run
@@ -474,14 +468,20 @@ func (T *OrchestrateApp) pipelineShareSave(c *jsonapi.Call, body struct {
 	return out, nil
 }
 
+// pipelinePublishBody is a publish request: an optional note for the administrator.
+type pipelinePublishBody struct {
+	Note string `json:"note"` // optional
+}
+
 // pipelinePublish asks an administrator to let EVERY user of the deployment
 // run this. The narrower grant beside it is the owner's own to make; this one
 // is not, which is why the door only files a request. A separate door from
 // share for the same reason share is separate from the editor: each one
 // opens exactly one thing.
-func (T *OrchestrateApp) pipelinePublish(c *jsonapi.Call, body struct {
-	Note string `json:"note"` // optional
-}) (any, error) {
+func (T *OrchestrateApp) pipelinePublish(c *jsonapi.Call, body *pipelinePublishBody) (any, error) {
+	if body == nil {
+		body = &pipelinePublishBody{}
+	}
 	p, err := T.pipelineAt(c)
 	if err != nil {
 		return nil, err

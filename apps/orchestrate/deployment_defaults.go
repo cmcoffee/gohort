@@ -32,7 +32,6 @@
 package orchestrate
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"slices"
@@ -177,62 +176,58 @@ func clampToDeploymentMaximum(db Database, setting, answer string) string {
 	return answer
 }
 
-// handleDeploymentSettings serves both controls. ADMIN only - an owner may set
+// deploymentSettingsGet serves both controls. ADMIN only - an owner may set
 // what their own fleet does and may not set what everybody's does.
-func (T *OrchestrateApp) handleDeploymentSettings(c *jsonapi.Call, raw json.RawMessage) (any, error) {
-	r := c.R
-	if !RequestIsAdmin(r) {
+func (T *OrchestrateApp) deploymentSettingsGet(c *jsonapi.Call) (any, error) {
+	if !RequestIsAdmin(c.R) {
 		return nil, jsonapi.Forbidden("admin only")
 	}
-	switch r.Method {
-	case http.MethodGet:
-		c.W.Header().Set("Cache-Control", "no-store")
-		out := map[string]any{}
-		for setting := range triSettings {
-			out[setting] = effectiveDeploymentDefault(RootDB, setting)
-			out[setting+"_max"] = effectiveDeploymentMaximum(RootDB, setting)
-		}
-		return out, nil
-	case http.MethodPatch, http.MethodPost:
-		var body map[string]any
-		if err := json.Unmarshal(raw, &body); err != nil {
-			return nil, jsonapi.BadRequest("bad request")
-		}
-		for setting, spec := range triSettings {
-			for _, pair := range []struct{ field, kind string }{
-				{setting, deploymentDefault},
-				{setting + "_max", deploymentMaximum},
-			} {
-				raw, present := body[pair.field]
-				if !present {
-					continue
-				}
-				v := ""
-				if raw != nil {
-					v = strings.TrimSpace(fmt.Sprint(raw))
-				}
-				if v != "" && !slices.Contains(spec.values, v) {
-					return nil, jsonapi.BadRequest(pair.field + " does not take " + v)
-				}
-				setDeploymentSetting(RootDB, pair.kind, setting, v)
-				// Tightening the MAXIMUM pulls the default down with it. The
-				// alternative is refusing the write and asking the reader to
-				// go and change the other control first, which is a rule the
-				// page would have to teach; this way the ceiling simply means
-				// what it says, and the default that was too loose is one the
-				// deployment was not running under anyway.
-				if pair.kind == deploymentMaximum {
-					if held := clampToDeploymentMaximum(RootDB, setting,
-						effectiveDeploymentDefault(RootDB, setting)); held != "" {
-						setDeploymentSetting(RootDB, deploymentDefault, setting, held)
-					}
+	c.W.Header().Set("Cache-Control", "no-store")
+	out := map[string]any{}
+	for setting := range triSettings {
+		out[setting] = effectiveDeploymentDefault(RootDB, setting)
+		out[setting+"_max"] = effectiveDeploymentMaximum(RootDB, setting)
+	}
+	return out, nil
+}
+
+// deploymentSettingsSave sets the defaults and maximums the body names.
+func (T *OrchestrateApp) deploymentSettingsSave(c *jsonapi.Call, body map[string]any) (any, error) {
+	if !RequestIsAdmin(c.R) {
+		return nil, jsonapi.Forbidden("admin only")
+	}
+	for setting, spec := range triSettings {
+		for _, pair := range []struct{ field, kind string }{
+			{setting, deploymentDefault},
+			{setting + "_max", deploymentMaximum},
+		} {
+			raw, present := body[pair.field]
+			if !present {
+				continue
+			}
+			v := ""
+			if raw != nil {
+				v = strings.TrimSpace(fmt.Sprint(raw))
+			}
+			if v != "" && !slices.Contains(spec.values, v) {
+				return nil, jsonapi.BadRequest(pair.field + " does not take " + v)
+			}
+			setDeploymentSetting(RootDB, pair.kind, setting, v)
+			// Tightening the MAXIMUM pulls the default down with it. The
+			// alternative is refusing the write and asking the reader to
+			// go and change the other control first, which is a rule the
+			// page would have to teach; this way the ceiling simply means
+			// what it says, and the default that was too loose is one the
+			// deployment was not running under anyway.
+			if pair.kind == deploymentMaximum {
+				if held := clampToDeploymentMaximum(RootDB, setting,
+					effectiveDeploymentDefault(RootDB, setting)); held != "" {
+					setDeploymentSetting(RootDB, deploymentDefault, setting, held)
 				}
 			}
 		}
-		return jsonapi.Empty(http.StatusNoContent), nil
-	default:
-		return nil, jsonapi.Status(http.StatusMethodNotAllowed, "method not allowed")
 	}
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // The admin surface, contributed through the section registry rather than by

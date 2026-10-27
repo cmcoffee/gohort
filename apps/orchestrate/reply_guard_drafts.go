@@ -355,7 +355,9 @@ func (T *OrchestrateApp) handleGuardDraft(c *jsonapi.Call, _ struct{}) (any, err
 
 // handleAuthoredGuard acts on one drafted guard. POST ?id=&action=
 // redraft (body {note}) | test | enable | disable | delete.
-func (T *OrchestrateApp) handleAuthoredGuard(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+func (T *OrchestrateApp) handleAuthoredGuard(c *jsonapi.Call, body *struct {
+	Note string `json:"note"` // redraft's: what to change
+}) (any, error) {
 	r := c.R
 	if err := T.requireAdmin(c); err != nil {
 		return nil, err
@@ -371,11 +373,7 @@ func (T *OrchestrateApp) handleAuthoredGuard(c *jsonapi.Call, raw json.RawMessag
 		if busy {
 			return nil, jsonapi.Status(http.StatusConflict, "it is still being drafted")
 		}
-		var body struct {
-			Note string `json:"note"`
-		}
-		_ = json.Unmarshal(raw, &body)
-		if strings.TrimSpace(body.Note) == "" {
+		if body == nil || strings.TrimSpace(body.Note) == "" {
 			return nil, jsonapi.BadRequest("say what to change")
 		}
 		a.Note = clip(body.Note, 2000)

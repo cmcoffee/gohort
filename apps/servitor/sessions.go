@@ -48,15 +48,9 @@ type chatSession struct {
 	Updated  string       `json:"updated"`
 }
 
-// sessionTitle derives a short rail label from the first user message.
-func sessionTitle(msg string) string {
-	t := strings.TrimSpace(msg)
-	t = textutil.Clip(t, 80)
-	if t == "" {
-		t = "New session"
-	}
-	return t
-}
+// sessionTitleChars is how much of the first message labels a session on
+// the rail.
+const sessionTitleChars = 80
 
 func loadSession(udb Database, applianceID, id string) (chatSession, bool) {
 	var s chatSession
@@ -125,7 +119,7 @@ func ensureSession(udb Database, applianceID, id, firstMsg string) string {
 			return id
 		}
 	}
-	s := saveSession(udb, applianceID, chatSession{ID: id, Name: sessionTitle(firstMsg)})
+	s := saveSession(udb, applianceID, chatSession{ID: id, Name: textutil.FirstMessageTitle(firstMsg, sessionTitleChars)})
 	return s.ID
 }
 

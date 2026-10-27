@@ -16,7 +16,6 @@ package orchestrate
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"sort"
 	"strings"
@@ -266,7 +265,10 @@ func (T *OrchestrateApp) resolvedAgentTools(ctx context.Context, udb Database, u
 // which is not an inconsistency: a tool's riskiness in chat is a property of
 // the tool, while whether it may run with nobody watching is a property of the
 // agent doing the running.
-func (T *OrchestrateApp) handleAgentAccessTool(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+func (T *OrchestrateApp) handleAgentAccessTool(c *jsonapi.Call, body struct {
+	Chat       *string `json:"chat"`
+	Unattended *string `json:"unattended"`
+}) (any, error) {
 	r := c.R
 	user, udb := c.User, c.UDB
 	rec, found := findAgentByNameOrID(udb, user, strings.TrimSpace(r.URL.Query().Get("agent")))
@@ -276,13 +278,6 @@ func (T *OrchestrateApp) handleAgentAccessTool(c *jsonapi.Call, raw json.RawMess
 	name := strings.TrimSpace(r.URL.Query().Get("name"))
 	if name == "" {
 		return nil, jsonapi.BadRequest("name required")
-	}
-	var body struct {
-		Chat       *string `json:"chat"`
-		Unattended *string `json:"unattended"`
-	}
-	if err := json.Unmarshal(raw, &body); err != nil {
-		return nil, jsonapi.BadRequest("bad request")
 	}
 	switch {
 	case body.Chat != nil:

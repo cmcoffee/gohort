@@ -11,7 +11,8 @@ import (
 	"github.com/cmcoffee/gohort/core/revisions"
 )
 
-// handleUserSkillOne serves /api/skills/{id}/revisions[/preview|/restore].
+// handleUserSkillOne serves /api/skills/{id}/revisions[/preview|/restore];
+// /api/skills/{id}/revise has its own route (skill_revise.go).
 //
 // A separate route from /api/skills because that one is an exact pattern: a
 // path with anything after it does not reach it at all.
@@ -27,7 +28,7 @@ func (T *Extensions) handleUserSkillOne(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	action, isRev := revisionAction(tail)
-	if !isRev && tail != "revise" {
+	if !isRev {
 		http.NotFound(w, r)
 		return
 	}
@@ -38,11 +39,6 @@ func (T *Extensions) handleUserSkillOne(w http.ResponseWriter, r *http.Request) 
 	current := own.SkillRecord
 	if !found {
 		http.NotFound(w, r)
-		return
-	}
-	// Describe a change (skill_revise.go).
-	if tail == "revise" {
-		T.handleSkillRevise(w, r, own)
 		return
 	}
 	// The store is NOT the handle above and the key is NOT the id: skills live

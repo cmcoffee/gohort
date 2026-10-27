@@ -11,7 +11,6 @@
 package orchestrate
 
 import (
-	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -19,58 +18,47 @@ import (
 	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
-// handleToolConfirm serves the Ask control in the Tools modal.
-//
-// GET returns name to flag for this agent: every tool the user owns, and every
-// tool marked to ask, the framework's included (a mark is keyed by name and
-// needs no record). The modal offers the control on every row; a name it does
-// not find here does not ask.
-//
-// POST {"name":…,"on":…} flips one.
-func (T *OrchestrateApp) handleToolConfirm(c *jsonapi.Call, raw json.RawMessage) (any, error) {
-	r := c.R
-	user := c.User
-	switch r.Method {
-	case http.MethodGet:
-		tools := map[string]bool{}
-		agentID := strings.TrimSpace(r.URL.Query().Get("agent"))
-		asks := map[string]bool{}
-		for _, n := range AskInChatTools(AuthDB(), user, agentID) {
-			asks[n] = true
-		}
-		for _, p := range LoadPersistentTempTools(AuthDB(), user) {
-			tools[p.Tool.Name] = asks[p.Tool.Name]
-		}
-		for n := range asks {
-			tools[n] = true
-		}
-		// No caching, for the reason /api/tool-scope gives: the modal re-reads
-		// right after a write and a stale body snaps the control back.
-		c.W.Header().Set("Cache-Control", "no-store")
-		return map[string]any{"tools": tools}, nil
-	case http.MethodPost:
-		var body struct {
-			Name string `json:"name"`
-			On   bool   `json:"on"`
-		}
-		if err := json.Unmarshal(raw, &body); err != nil {
-			return nil, jsonapi.BadRequest("bad request")
-		}
-		body.Name = strings.TrimSpace(body.Name)
-		if body.Name == "" {
-			return nil, jsonapi.BadRequest("name required")
-		}
-		// Scoped to this user's own pool by construction: the setter is handed
-		// the requesting account, so a name belonging to somebody else simply
-		// is not found rather than being edited.
-		// Agent-scoped, like every other permission. The mark is keyed by
-		// name so it needs no record, which is what lets a framework tool
-		// carry one too.
-		if !SetUserToolAsksInChat(AuthDB(), user, strings.TrimSpace(r.URL.Query().Get("agent")), body.Name, body.On) {
-			return nil, jsonapi.Status(http.StatusInternalServerError, "could not record that")
-		}
-		return jsonapi.Empty(http.StatusNoContent), nil
-	default:
-		return nil, jsonapi.Status(http.StatusMethodNotAllowed, "method not allowed")
+// toolConfirmGet serves the Ask control in the Tools modal: the name to flag
+// for this agent of every tool the user owns, and of every tool marked to ask,
+// the framework's included (a mark is keyed by name and needs no record). The
+// modal offers the control on every row; a name it does not find here does
+// not ask.
+func (T *OrchestrateApp) toolConfirmGet(c *jsonapi.Call) (any, error) {
+	tools := map[string]bool{}
+	agentID := strings.TrimSpace(c.R.URL.Query().Get("agent"))
+	asks := map[string]bool{}
+	for _, n := range AskInChatTools(AuthDB(), c.User, agentID) {
+		asks[n] = true
 	}
+	for _, p := range LoadPersistentTempTools(AuthDB(), c.User) {
+		tools[p.Tool.Name] = asks[p.Tool.Name]
+	}
+	for n := range asks {
+		tools[n] = true
+	}
+	// No caching, for the reason /api/tool-scope gives: the modal re-reads
+	// right after a write and a stale body snaps the control back.
+	c.W.Header().Set("Cache-Control", "no-store")
+	return map[string]any{"tools": tools}, nil
+}
+
+// toolConfirmSet flips one: {"name":…,"on":…}.
+func (T *OrchestrateApp) toolConfirmSet(c *jsonapi.Call, body struct {
+	Name string `json:"name"`
+	On   bool   `json:"on"`
+}) (any, error) {
+	body.Name = strings.TrimSpace(body.Name)
+	if body.Name == "" {
+		return nil, jsonapi.BadRequest("name required")
+	}
+	// Scoped to this user's own pool by construction: the setter is handed
+	// the requesting account, so a name belonging to somebody else simply
+	// is not found rather than being edited.
+	// Agent-scoped, like every other permission. The mark is keyed by
+	// name so it needs no record, which is what lets a framework tool
+	// carry one too.
+	if !SetUserToolAsksInChat(AuthDB(), c.User, strings.TrimSpace(c.R.URL.Query().Get("agent")), body.Name, body.On) {
+		return nil, jsonapi.Status(http.StatusInternalServerError, "could not record that")
+	}
+	return jsonapi.Empty(http.StatusNoContent), nil
 }

@@ -71,3 +71,39 @@ func readCloser(s string) *nopCloser { return &nopCloser{strings.NewReader(s)} }
 type nopCloser struct{ *strings.Reader }
 
 func (nopCloser) Close() error { return nil }
+
+// What the reviser refuses before it asks anyone: no change described, a body
+// that is not JSON, a skill that is not the caller's, a GET, and a change that
+// would rename it onto another skill of theirs.
+func TestSkillReviseRefusals(t *testing.T) {
+	app, req := authedExtensions(t)
+	made, _ := SaveSkill(AuthDB(), "alice", SkillRecord{Name: "refunds", Instructions: "Check the order date."})
+	SaveSkill(AuthDB(), "alice", SkillRecord{Name: "returns", Instructions: "Ask why."})
+	theirs, _ := SaveSkill(AuthDB(), "bob", SkillRecord{Name: "bobs", Instructions: "x"})
+	app.LLM = &FakeLLM{Turns: []FakeTurn{{Content: `{"name":"returns","description":"","triggers":[],"instructions":"Check."}`}}}
+	post := func(method, id, body string) int {
+		r := req(method, "/api/skills/"+id+"/revise")
+		r.Body = readCloser(body)
+		w := httptest.NewRecorder()
+		serve(app)(w, r)
+		return w.Code
+	}
+	for _, c := range []struct {
+		what, method, id, body string
+		want                   int
+	}{
+		{"no change described", "POST", made.ID, `{"description":"  "}`, 400},
+		{"a body that is not JSON", "POST", made.ID, `{"description":`, 400},
+		{"somebody else's skill", "POST", theirs.ID, `{"description":"x"}`, 404},
+		{"no such skill", "POST", "nope", `{"description":"x"}`, 404},
+		{"a GET", "GET", made.ID, ``, 405},
+		{"a rename onto another of theirs", "POST", made.ID, `{"description":"call it returns"}`, 409},
+	} {
+		if got := post(c.method, c.id, c.body); got != c.want {
+			t.Errorf("%s: %d, want %d", c.what, got, c.want)
+		}
+	}
+	if got, _ := findOwnSkill("alice", made.ID); got.Name != "refunds" {
+		t.Errorf("a refused revision changed the skill: %+v", got.SkillRecord)
+	}
+}

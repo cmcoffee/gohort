@@ -28,11 +28,22 @@ func (T *CodeWriterAgent) handleCodeWriterPage(w http.ResponseWriter, r *http.Re
 			{
 				NoChrome: true,
 				Body: ui.CodeEditorPanel{
-					ListURL:             "api/snippets",
-					LoadURL:             "api/snippet/{id}",
-					SaveURL:             "api/snippets",
-					DeleteURL:           "api/snippet/{id}",
-					ChatURL:             "api/chat",
+					ListURL:   "api/snippets",
+					LoadURL:   "api/snippet/{id}",
+					SaveURL:   "api/snippets",
+					DeleteURL: "api/snippet/{id}",
+					// The chat is the Code Writer's, the chat every agent has (chat.go).
+					Chat: codeWriterChat.Panel(ui.AgentLoopPanel{
+						SendURL:      "chat/send",
+						ListTitle:    "Past sessions",
+						NewLabel:     "New session",
+						ListPosition: "modal",
+						BulkSelect:   true,
+						Markdown:     true,
+						LockActivity: true,
+						EmptyText:    "Ask for a script or query, or for a change to the one in the editor. Changes come back as a diff to apply.",
+						Placeholder:  "Ask the Code Writer…",
+					}),
 					SuggestNameURL:      "api/suggest-name",
 					RevisionsListURL:    "api/revisions/{id}",
 					RevisionLoadURL:     "api/revision/{id}",
@@ -57,14 +68,13 @@ func (T *CodeWriterAgent) handleCodeWriterPage(w http.ResponseWriter, r *http.Re
 					PlaceholderName:     "Snippet name…",
 					PlaceholderCode:     "Write or paste code here. Save it for later, or chat with the LLM to generate one.\n\nUse {{NAME}} placeholders for reusable values.",
 					PlaceholderCtx:      "Reference context: table schemas, API docs, notes. Sent to the LLM alongside the code on every chat turn.",
-					PlaceholderChat:     "Discuss with Chat, or click Edit to apply changes.",
 				},
 			},
 		},
-		// Pull in the inline diff helper used by Edit-mode chat
-		// responses. Both sets of statics are added verbatim into the
-		// document head so the renderer's chat handler can call
-		// window.editorShowDiff / window.editorDiffStats.
+		// Pull in the inline diff helper a proposed change opens in (the
+		// editor_proposal card). Both sets of statics are added verbatim into
+		// the document head so the panel can call window.editorShowDiff /
+		// window.editorDiffStats.
 		ExtraHeadHTML: "<style>" + editor.DiffCSS() + "</style>" +
 			"<script>" + editor.UtilsJS() + editor.DiffJS() + "</script>",
 	}

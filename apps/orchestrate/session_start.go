@@ -27,7 +27,6 @@
 package orchestrate
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -44,16 +43,12 @@ import (
 // record that is read on every turn is a slow leak.
 const maxOpeningPrompt = 8000
 
-func (T *OrchestrateApp) handleSessionStart(c *jsonapi.Call, raw json.RawMessage) (any, error) {
+func (T *OrchestrateApp) handleSessionStart(c *jsonapi.Call, body struct {
+	Agent   string `json:"agent"`
+	Message string `json:"message"`
+	Title   string `json:"title"`
+}) (any, error) {
 	user, udb := c.User, c.UDB
-	var body struct {
-		Agent   string `json:"agent"`
-		Message string `json:"message"`
-		Title   string `json:"title"`
-	}
-	if err := json.Unmarshal(raw, &body); err != nil {
-		return nil, jsonapi.BadRequest("bad request")
-	}
 	ref := strings.TrimSpace(body.Agent)
 	if ref == "" {
 		return nil, jsonapi.BadRequest("name the agent to open a session on")

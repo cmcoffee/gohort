@@ -1,7 +1,6 @@
 package bridges
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -35,10 +34,13 @@ func (T *Bridges) handleKeys(c *jsonapi.Call) (any, error) {
 }
 
 // handleKeyMint creates a key. An empty body is fine: it mints a generic "api"
-// key (the route takes it with jsonapi.EmptyBodyOK). A non-empty but malformed
+// key (the body is a pointer, so none reaches it as nil). A non-empty but malformed
 // body is a client bug, rejected rather than silently creating an unnamed
 // generic key the caller never asked for.
-func (T *Bridges) handleKeyMint(c *jsonapi.Call, req keyMintReq) (any, error) {
+func (T *Bridges) handleKeyMint(c *jsonapi.Call, req *keyMintReq) (any, error) {
+	if req == nil {
+		req = &keyMintReq{}
+	}
 	svc := strings.TrimSpace(req.Service)
 	// A key for a messaging service (imessage, …) polls and drains that
 	// service's outbox, which is the deployment owner's outgoing
@@ -71,39 +73,40 @@ func (T *Bridges) handleKeyMint(c *jsonapi.Call, req keyMintReq) (any, error) {
 // keyMintReq is what handleKeyMint is posted.
 type keyMintReq struct{ Name, Service string }
 
-// handleKeyOne toggles (PATCH) or revokes (DELETE) one bridge key — the
-// per-bridge enable switch and the revoke action.
-func (T *Bridges) handleKeyOne(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	id := strings.TrimPrefix(r.URL.Path, "/api/keys/")
+// ownKey is the caller's bridge key the path names.
+func (T *Bridges) ownKey(c *jsonapi.Call) (BridgeKey, bool) {
 	var k BridgeKey
-	if !T.DB.Get(bridgeKeysTable, id, &k) || k.Owner != user {
-		w.WriteHeader(http.StatusNoContent)
-		return
+	if !T.DB.Get(bridgeKeysTable, c.R.PathValue("id"), &k) || k.Owner != c.User {
+		return BridgeKey{}, false
 	}
-	switch r.Method {
-	case http.MethodDelete:
-		T.DB.Unset(bridgeKeysTable, id)
-		w.WriteHeader(http.StatusNoContent)
-	case http.MethodPatch, http.MethodPost:
-		var req struct {
-			Enabled bool `json:"enabled"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "invalid request body", http.StatusBadRequest)
-			return
-		}
-		k.Enabled = req.Enabled
-		T.saveBridgeKey(k)
-		Log("[bridges] bridge %q enabled=%v", k.Name, k.Enabled)
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"id": k.ID, "enabled": k.Enabled})
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	return k, true
+}
+
+// keyToggleBody is the per-bridge enable switch's post.
+type keyToggleBody struct {
+	Enabled bool `json:"enabled"`
+}
+
+// handleKeyToggle turns one of the caller's bridge keys on or off: the
+// per-bridge enable switch.
+func (T *Bridges) handleKeyToggle(c *jsonapi.Call, req keyToggleBody) (any, error) {
+	k, ok := T.ownKey(c)
+	if !ok {
+		return nil, jsonapi.NotFound("no such bridge key")
 	}
+	k.Enabled = req.Enabled
+	T.saveBridgeKey(k)
+	Log("[bridges] bridge %q enabled=%v", k.Name, k.Enabled)
+	return map[string]any{"id": k.ID, "enabled": k.Enabled}, nil
+}
+
+// handleKeyRevoke deletes one of the caller's bridge keys. A key that is
+// already gone, or was never theirs, is the same answer: nothing to revoke.
+func (T *Bridges) handleKeyRevoke(c *jsonapi.Call, _ struct{}) (any, error) {
+	if k, ok := T.ownKey(c); ok {
+		T.DB.Unset(bridgeKeysTable, k.ID)
+	}
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // handleBridgeList is the dashboard registry view: one row per connector with a

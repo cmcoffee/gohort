@@ -11,7 +11,9 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/jsonapi"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 // handleSend drives one user turn against an agent:
@@ -417,8 +419,8 @@ func (sr *sendRun) openSession() bool {
 			// through to saveChatSession minting a fresh UUID.
 			ID:        sr.req.SessionID,
 			AgentID:   sr.agent.ID,
-			Title:     titleFromFirstMessage(sr.req.Message),
-			AutoTitle: titleFromFirstMessage(sr.req.Message),
+			Title:     textutil.FirstMessageTitle(sr.req.Message, sessionTitleChars),
+			AutoTitle: textutil.FirstMessageTitle(sr.req.Message, sessionTitleChars),
 			Created:   time.Now(),
 			Incognito: sr.req.Incognito, // clean-room session, set at creation
 			// What this conversation is about, for an app that scopes its
@@ -627,6 +629,24 @@ func (sr *sendRun) recordUserMessage() {
 		// content stays recoverable via recall_history. Cursor stays consistent.
 		sr.sess.Messages = sr.T.trimStoredHistory(sr.udb, sr.agent, sr.sess.ID, sr.sess.Messages)
 	}
+	sr.planMsgs = withHostTurnContext(sr.planMsgs, agenthost.TurnContext(sr.r.Context()))
+}
+
+// withHostTurnContext is msgs with the host app's turn context
+// (agenthost.WithTurnContext) added to the newest user message. A copy: the
+// stored conversation shares msgs' array and never carries it.
+func withHostTurnContext(msgs []ChatMessage, text string) []ChatMessage {
+	if text == "" {
+		return msgs
+	}
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == "user" {
+			out := append([]ChatMessage(nil), msgs...)
+			out[i].Content = strings.TrimRight(out[i].Content, "\n") + "\n\n" + text
+			return out
+		}
+	}
+	return msgs
 }
 
 func (sr *sendRun) keepLeftoverNotes() {
@@ -1199,7 +1219,10 @@ type cancelTarget struct {
 // goroutine cleans up on ctx.Done. Only the caller's own turn: the id comes
 // from the request, so the cancel is looked up under (user, id), never the id
 // alone.
-func (T *OrchestrateApp) cancelTurn(c *jsonapi.Call, in cancelTarget) (any, error) {
+func (T *OrchestrateApp) cancelTurn(c *jsonapi.Call, in *cancelTarget) (any, error) {
+	if in == nil {
+		in = &cancelTarget{}
+	}
 	sid := strings.TrimSpace(c.R.URL.Query().Get("id"))
 	if sid == "" {
 		sid = strings.TrimSpace(in.SessionID)

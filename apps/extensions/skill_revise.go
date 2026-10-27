@@ -40,24 +40,21 @@ const skillReviseSystem = "You revise a skill: standing instructions an assistan
 	"Make the change asked for and nothing else: every word the change does not touch stays exactly as it was. " +
 	"Keep the name unless the change is about the name. Reply with ONLY the JSON object."
 
+// skillReviseBody is the change to make, in plain words.
+type skillReviseBody struct {
+	Description string `json:"description"`
+}
+
 // handleSkillRevise is POST /api/skills/{id}/revise {"description": "..."}
-// -> {"changed": [fields]}.
-func (T *Extensions) handleSkillRevise(w http.ResponseWriter, r *http.Request, own ownedSkill) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	var body struct {
-		Description string `json:"description"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
+// -> {"changed": [fields]}, on one of the caller's own skills.
+func (T *Extensions) handleSkillRevise(c *jsonapi.Call, body skillReviseBody) (any, error) {
+	own, found := findOwnSkill(c.User, c.R.PathValue("id"))
+	if !found {
+		return nil, jsonapi.NotFound("no such skill")
 	}
 	want := strings.TrimSpace(body.Description)
 	if want == "" {
-		http.Error(w, "say what should change", http.StatusBadRequest)
-		return
+		return nil, jsonapi.BadRequest("say what should change")
 	}
 	if len(want) > maxSkillChange {
 		want = want[:maxSkillChange]
@@ -66,19 +63,17 @@ func (T *Extensions) handleSkillRevise(w http.ResponseWriter, r *http.Request, o
 	current, _ := json.MarshalIndent(before, "", "  ")
 	ask := "WHAT SHOULD CHANGE:\n" + want + "\n\nTHE SKILL AS IT STANDS:\n" + string(current)
 
-	revised, err := T.reviseSkillOnce(r, ask)
+	revised, err := T.reviseSkillOnce(c.R, ask)
 	if err != nil {
 		// One retry that names what was wrong, as the machine reviser does.
-		if revised, err = T.reviseSkillOnce(r, ask+"\n\nYour previous reply could not be used: "+err.Error()+"\nReply with ONLY the JSON object."); err != nil {
-			http.Error(w, "the change could not be made: "+err.Error(), http.StatusBadGateway)
-			return
+		if revised, err = T.reviseSkillOnce(c.R, ask+"\n\nYour previous reply could not be used: "+err.Error()+"\nReply with ONLY the JSON object."); err != nil {
+			return nil, jsonapi.Status(http.StatusBadGateway, "the change could not be made: "+err.Error())
 		}
 	}
 	name := strings.TrimSpace(revised.Name)
 	if !strings.EqualFold(name, strings.TrimSpace(own.Name)) {
 		if other, taken := ownSkillNamed(own.user, name, own.ID); taken {
-			http.Error(w, "the change would rename it to "+other.Name+", which you already have", http.StatusConflict)
-			return
+			return nil, jsonapi.Status(http.StatusConflict, "the change would rename it to "+other.Name+", which you already have")
 		}
 	}
 	var changed []string
@@ -95,18 +90,18 @@ func (T *Extensions) handleSkillRevise(w http.ResponseWriter, r *http.Request, o
 		changed = append(changed, "instructions")
 	}
 	if len(changed) == 0 {
-		jsonapi.Write(w, map[string]any{"changed": []string{}, "message": "Nothing needed to change."})
-		return
+		return map[string]any{"changed": []string{}, "message": "Nothing needed to change."}, nil
 	}
 	rec := own.SkillRecord
 	rec.Name, rec.Description = name, strings.TrimSpace(revised.Description)
 	rec.Triggers, rec.Instructions = cleanTriggers(revised.Triggers), revised.Instructions
 	if _, err := SaveSkillAs(AuthDB(), own.user, rec, "revised from a description: "+truncateWords(want, 12)); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		// The store's refusal is about the skill (a name, a size), so it is
+		// the person's to read.
+		return nil, jsonapi.Status(http.StatusInternalServerError, err.Error())
 	}
-	jsonapi.Write(w, map[string]any{"changed": changed,
-		"message": "Changed " + strings.Join(changed, ", ") + ". The version before is in Version history."})
+	return map[string]any{"changed": changed,
+		"message": "Changed " + strings.Join(changed, ", ") + ". The version before is in Version history."}, nil
 }
 
 // reviseSkillOnce asks the worker once and reads its reply.
