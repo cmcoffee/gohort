@@ -119,6 +119,17 @@
   // and one "javascript:" among them runs as whoever is looking at the page.
   // Other schemes pass (data: is how downloads are offered; top-level data:
   // navigation is blocked by browsers themselves).
+  // uiComposerEnterSends says whether a key press in a message box sends
+  // the message. Enter sends and Shift+Enter starts a new line, on a
+  // keyboard. On a touch screen's own keyboard the return key starts a new
+  // line, as in a phone's messaging apps, and the round send button sends.
+  // And an Enter that picks a word from an input method's candidates
+  // (Japanese, Chinese) belongs to the input method, not to Send.
+  function uiComposerEnterSends(ev) {
+    if (ev.key !== 'Enter' || ev.shiftKey || ev.isComposing || ev.keyCode === 229) return false;
+    return !(window.matchMedia && window.matchMedia('(hover: none) and (pointer: coarse)').matches);
+  }
+
   function safeURL(u) {
     if (u == null) return u;
     var probe = String(u).replace(/[\u0000-\u0020\u007f-\u00a0]/g, '').toLowerCase();

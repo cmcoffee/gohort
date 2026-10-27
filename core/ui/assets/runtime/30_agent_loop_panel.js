@@ -2295,18 +2295,15 @@
 
     // --- Input row --------------------------------------------------------
     var inputRow = el('div', {class: 'ui-agent-input-row'});
-    // Two rows at rest on a desktop; one on a phone, where an empty
-    // two-row box (the autosize below starts from its rows) stood twice the
-    // height of the Send button beside it with nothing in it. It still grows
+    // One line at rest, the buttons on their own line beneath it; it grows
     // as the message does.
-    var phone = window.matchMedia && window.matchMedia('(max-width: 700px)').matches;
     var inputArea = el('textarea', {
       class: 'ui-agent-input',
       placeholder: cfg.placeholder || 'Ask something…',
-      rows: phone ? 1 : 2,
+      rows: 1,
     });
     inputArea.addEventListener('keydown', function(ev) {
-      if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); sendMessage(); }
+      if (uiComposerEnterSends(ev)) { ev.preventDefault(); sendMessage(); }
       if (ev.key === 'Escape' && userEdit) { ev.preventDefault(); endComposerEdit(true); }
     });
     // Auto-grow the textarea as content changes so a multi-line
@@ -2991,7 +2988,7 @@
     // during a long investigation.
     var cancelLabel = el('span', {}, ['Cancel']);
     var cancelBtn = el('button', {class: 'ui-row-btn ui-agent-cancel',
-      style: 'display:none',
+      style: 'display:none', title: 'Stop',
       onclick: function(){ cancelMessage(); }},
       [el('span', {class: 'ui-agent-cancel-spinner', 'aria-hidden': 'true'}), cancelLabel]);
     // statusPill is created earlier in this function (right after

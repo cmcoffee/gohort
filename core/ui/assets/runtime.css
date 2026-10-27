@@ -4199,44 +4199,42 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 /* The composer row: the field and its buttons stand at one height. */
 .ui-chat-input-area { --btn-h: 2.5rem; --btn-px: 1.1rem; }
 @media (pointer: coarse) { .ui-chat-input-area { --btn-h: var(--tap, 44px); } }
-/* Phone: the chat composer is the agent composer's shape, one rounded field
+/* The chat composer is the agent composer's shape, one rounded field
  * holding the text and its buttons, inset from the edges and the home
  * indicator, with round attach and send buttons (send an arrow) at the
- * field's foot. Two chat surfaces on one phone should not compose two ways. */
-@media (max-width: 700px) {
-  .ui-chat-input-area {
-    --btn-h: 2.25rem;
-    margin: 0.35rem 0.5rem calc(0.4rem + env(safe-area-inset-bottom, 0px));
-    padding: 0.3rem 0.3rem 0.3rem 0.55rem !important;
-    gap: 0.3rem; align-items: flex-end;
-    border: 1px solid var(--border); border-radius: 1.4rem; background: var(--bg-1);
-    flex-wrap: wrap;
-  }
-  .ui-chat-input-area:focus-within { border-color: color-mix(in srgb, var(--accent) 70%, var(--border)); }
-  .ui-chat-input-area .ui-chat-input {
-    border: 0; background: transparent; resize: none;
-    padding: 0.5rem 0.2rem; min-height: 2.25rem; line-height: 1.35;
-    flex: 1 0 100%; order: -1; /* Attach comes first in the markup */
-  }
-  .ui-chat-input-area .ui-chat-send,
-  .ui-chat-input-area .ui-chat-cancel { margin-left: auto; }
-  .ui-chat-input-area .ui-chat-input:focus { outline: none; }
-  .ui-chat-input-area .ui-chat-iconbtn,
-  .ui-chat-input-area .ui-chat-send {
-    width: 2.25rem; height: 2.25rem; min-width: 2.25rem; min-height: 2.25rem;
-    max-width: 2.25rem; max-height: 2.25rem; aspect-ratio: 1;
-    flex: 0 0 2.25rem; border-radius: 50%; padding: 0;
-  }
-  .ui-chat-input-area .ui-chat-iconbtn { border-color: transparent; font-size: var(--fs-lg); }
-  .ui-chat-input-area .ui-chat-cancel { border-radius: 999px; }
-  .ui-chat-input-area .ui-chat-send {
-    font-size: 0; display: inline-flex; align-items: center; justify-content: center;
-  }
-  .ui-chat-input-area .ui-chat-send::before {
-    content: ""; width: 1.1rem; height: 1.1rem; background: currentColor;
-    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 19V5M5.5 11.5L12 5l6.5 6.5'/%3E%3C/svg%3E") center / contain no-repeat;
-    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 19V5M5.5 11.5L12 5l6.5 6.5'/%3E%3C/svg%3E") center / contain no-repeat;
-  }
+ * field's foot. Two chat surfaces should not compose two ways. */
+.ui-chat-input-area {
+  --btn-h: 2.25rem;
+  margin: 0.35rem 0.5rem calc(0.4rem + env(safe-area-inset-bottom, 0px));
+  padding: 0.3rem 0.3rem 0.3rem 0.55rem !important;
+  gap: 0.3rem; align-items: flex-end;
+  border: 1px solid var(--border); border-radius: 1.4rem; background: var(--bg-1);
+  flex-wrap: wrap;
+}
+.ui-chat-input-area:focus-within { border-color: color-mix(in srgb, var(--accent) 70%, var(--border)); }
+.ui-chat-input-area .ui-chat-input {
+  border: 0; background: transparent; resize: none;
+  padding: 0.5rem 0.2rem; min-height: 2.25rem; line-height: 1.35;
+  flex: 1 0 100%; order: -1; /* Attach comes first in the markup */
+}
+.ui-chat-input-area .ui-chat-send,
+.ui-chat-input-area .ui-chat-cancel { margin-left: auto; }
+.ui-chat-input-area .ui-chat-input:focus { outline: none; }
+.ui-chat-input-area .ui-chat-iconbtn,
+.ui-chat-input-area .ui-chat-send {
+  width: 2.25rem; height: 2.25rem; min-width: 2.25rem; min-height: 2.25rem;
+  max-width: 2.25rem; max-height: 2.25rem; aspect-ratio: 1;
+  flex: 0 0 2.25rem; border-radius: 50%; padding: 0;
+}
+.ui-chat-input-area .ui-chat-iconbtn { border-color: transparent; font-size: var(--fs-lg); }
+.ui-chat-input-area .ui-chat-cancel { border-radius: 999px; }
+.ui-chat-input-area .ui-chat-send {
+  font-size: 0; display: inline-flex; align-items: center; justify-content: center;
+}
+.ui-chat-input-area .ui-chat-send::before {
+  content: ""; width: 1.1rem; height: 1.1rem; background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 19V5M5.5 11.5L12 5l6.5 6.5'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 19V5M5.5 11.5L12 5l6.5 6.5'/%3E%3C/svg%3E") center / contain no-repeat;
 }
 
 /* --- CodeEditorPanel ---
@@ -5215,64 +5213,16 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
     display: inline-block; max-width: 60%; vertical-align: bottom;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  /* The composer is one rounded pill holding the text and its buttons, as
-   * phone chat apps draw it, inset from the edges and the home indicator.
-   * The text field drops its own box to be the pill's inside and takes the
-   * whole first line, growing upward as the message does; the buttons sit
-   * on a line of their own beneath it, tools at the left and Send at the
-   * right, the way the phone chat apps lay a composer out. One wrapping row,
-   * so the panels need no second container for it. No resize grabber: a finger cannot use it.
-   * The pill shows focus, since the field inside it no longer can. */
-  /* The bottom margin is the home-indicator inset LESS 0.75rem, with
-   * 0.4rem as the floor: the inset (about 34px on an iPhone) is a whole
-   * band, the indicator only its lowest strip, and the full band plus a
-   * gap held the pill about 40px off the bottom edge. Spacing inside the
-   * one-screen grid only; the page's height and its scroll-past are
-   * untouched. */
+  /* The composer pill (see .ui-agent-input-row) sits closer to the edges.
+   * The bottom margin is the home-indicator inset LESS 0.75rem, with 0.4rem
+   * as the floor: the inset (about 34px on an iPhone) is a whole band, the
+   * indicator only its lowest strip, and the full band plus a gap held the
+   * pill about 40px off the bottom edge. Spacing inside the one-screen grid
+   * only; the page's height and its scroll-past are untouched. */
   .ui-agent .ui-agent-input-row {
     margin: 0.35rem 0.5rem max(0.4rem, calc(env(safe-area-inset-bottom, 0px) - 0.75rem));
-    padding: 0.3rem 0.3rem 0.3rem 0.55rem;
-    gap: 0.3rem; align-items: flex-end;
-    border: 1px solid var(--border); border-radius: 1.4rem;
-    background: var(--bg-1);
-    flex-wrap: wrap;
   }
-  .ui-agent .ui-agent-input-row:focus-within { border-color: color-mix(in srgb, var(--accent) 70%, var(--border)); }
-  .ui-agent .ui-agent-input {
-    resize: none; border: 0; background: transparent; box-shadow: none;
-    padding: 0.5rem 0.2rem; min-height: 2.25rem; line-height: 1.35;
-    flex: 1 0 100%; order: -1;
-  }
-  .ui-agent .ui-agent-input-row .ui-agent-send,
-  .ui-agent .ui-agent-input-row .ui-agent-cancel { margin-left: auto; }
-  /* A page script's buttons (uiRegisterComposerAction) sit with Attach: round
-   * and quiet at rest, widening for a label such as a recording's time. */
-  .ui-agent .ui-agent-input-row .ui-agent-composer-act {
-    min-width: 2.25rem; height: 2.25rem; padding: 0 0.45rem;
-    background: transparent; border-color: transparent;
-  }
-  .ui-agent .ui-agent-input:focus { outline: none; }
-  .ui-agent .ui-agent-input-row .ui-row-btn { border-radius: 999px; min-height: 2.25rem; }
-  /* The round ones are pinned square, every dimension: the base button's
-   * touch-size minimum (44px) otherwise wins one axis and draws an oval. */
-  .ui-agent .ui-agent-input-row .ui-agent-attach,
-  .ui-agent .ui-agent-input-row .ui-agent-send-plain {
-    width: 2.25rem; height: 2.25rem; min-width: 2.25rem; min-height: 2.25rem;
-    max-width: 2.25rem; max-height: 2.25rem; aspect-ratio: 1;
-    flex: 0 0 2.25rem; border-radius: 50%; padding: 0;
-  }
-  .ui-agent .ui-agent-input-row .ui-agent-attach { background: transparent; border-color: transparent; }
-  /* The arrow is drawn, not typed: a text arrow sits on its font's baseline
-   * rather than the circle's middle, and lands differently in every font.
-   * A masked shape in the button's own colour centres exactly. */
-  .ui-agent .ui-agent-input-row .ui-agent-send-plain {
-    font-size: 0; display: inline-flex; align-items: center; justify-content: center;
-  }
-  .ui-agent .ui-agent-input-row .ui-agent-send-plain::before {
-    content: ""; width: 1.1rem; height: 1.1rem; background: currentColor;
-    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 19V5M5.5 11.5L12 5l6.5 6.5'/%3E%3C/svg%3E") center / contain no-repeat;
-    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 19V5M5.5 11.5L12 5l6.5 6.5'/%3E%3C/svg%3E") center / contain no-repeat;
-  }
+
 }
 
 /* Struck message: taken back but kept on screen. The text stays readable
@@ -5709,40 +5659,81 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   -webkit-mask-image: linear-gradient(to right, transparent, #000 1.75rem, #000 calc(100% - 1.75rem), transparent);
   mask-image: linear-gradient(to right, transparent, #000 1.75rem, #000 calc(100% - 1.75rem), transparent);
 }
-/* When the modes row hosts both pill toggles and app-relocated
- * rectangular context buttons (.ui-row-btn), keep them on the same
- * baseline — the .ui-row-btn default styling carries its own padding
- * that would otherwise tower over the pills. */
-.ui-agent-input-row {
-  display: flex; gap: 0.4rem; align-items: center;
-  /* center (not stretch) so the textarea uses its own height
-   * — governed by min-height + autosizeInput's inline style.height
-   * — rather than stretching to match the row's intrinsic height.
-   * Without this, the spinner + cancel button showing during a run
-   * make the row slightly taller than the resting send-button row,
-   * and the textarea stretches vertically with it. Centred rather
-   * than bottom-aligned: once the textarea has grown to several
-   * lines, Attach and Send sitting at its foot read as having slid
-   * off the row, and the middle is where the eye expects them. */
-  padding: 0.5rem 0.7rem; border-top: 1px solid var(--border);
+/* The composer is one rounded pill holding the text and its buttons, as the
+ * chat apps draw it, inset from the panel's edges. The text field drops its
+ * own box to be the pill's inside and takes the whole first line, growing
+ * as the message does; the buttons sit on a line of their own beneath it,
+ * tools at the left and a round Send at the right, which gives way to a
+ * round Stop while a turn runs. One wrapping row, so the panels need no
+ * second container for it. No resize grabber: the box sizes itself. The
+ * pill shows focus, since the field inside it no longer can. (Left unset,
+ * WebKit, the desktop app's webview, draws the system's own focus ring in
+ * the system accent colour.) */
+.ui-agent .ui-agent-input-row {
+  display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center;
+  margin: 0.5rem 0.75rem max(0.75rem, calc(env(safe-area-inset-bottom, 0px) - 0.75rem));
+  padding: 0.3rem 0.3rem 0.3rem 0.55rem;
+  border: 1px solid var(--border); border-radius: 1.4rem;
   background: var(--bg-1);
 }
-.ui-agent-input {
-  flex: 1 1 auto; resize: vertical; min-height: var(--btn-h);
-  /* Cap auto-grow at roughly 8 lines — enough for medium messages
-   * but doesn't eat the chat pane. Content beyond scrolls inside the
-   * box. Pastes longer than the snippet threshold get redirected to
-   * an attachment chip instead, see the paste handler. */
-  max-height: 12rem; overflow-y: auto;
-  background: var(--bg-0); color: var(--text);
-  border: 1px solid var(--border); border-radius: var(--btn-radius);
-  padding: 0.4rem 0.55rem; font: inherit;
+.ui-agent .ui-agent-input-row:focus-within { border-color: color-mix(in srgb, var(--accent) 70%, var(--border)); }
+.ui-agent .ui-agent-input {
+  flex: 1 0 100%; order: -1; resize: none;
+  /* Cap auto-grow at roughly 8 lines: enough for medium messages without
+   * eating the chat pane. Content beyond scrolls inside the box. Pastes
+   * longer than the snippet threshold become an attachment chip instead,
+   * see the paste handler. */
+  min-height: 2.25rem; max-height: 12rem; overflow-y: auto;
+  background: transparent; color: var(--text); border: 0; box-shadow: none;
+  padding: 0.5rem 0.2rem; font: inherit; line-height: 1.35;
   white-space: pre-wrap; word-wrap: break-word;
 }
-/* Focus is the theme's, as on the chat composer. Left unset, WebKit (the
- * desktop app's webview) draws the system's own focus ring in the system
- * accent colour, and the row's edges clip part of it. */
-.ui-agent-input:focus { outline: none; border-color: var(--accent); }
+.ui-agent .ui-agent-input:focus { outline: none; }
+.ui-agent .ui-agent-input-row .ui-agent-send,
+.ui-agent .ui-agent-input-row .ui-agent-cancel { margin-left: auto; }
+/* A page script's buttons (uiRegisterComposerAction) sit with Attach: round
+ * and quiet at rest, widening for a label such as a recording's time. */
+.ui-agent .ui-agent-input-row .ui-agent-composer-act {
+  min-width: 2.25rem; height: 2.25rem; padding: 0 0.45rem;
+  background: transparent; border-color: transparent;
+}
+.ui-agent .ui-agent-input-row .ui-row-btn { border-radius: 999px; min-height: 2.25rem; }
+/* The round ones are pinned square, every dimension: the base button's
+ * touch-size minimum (44px) otherwise wins one axis and draws an oval. */
+.ui-agent .ui-agent-input-row .ui-agent-attach,
+.ui-agent .ui-agent-input-row .ui-agent-send-plain,
+.ui-agent .ui-agent-input-row .ui-agent-cancel {
+  width: 2.25rem; height: 2.25rem; min-width: 2.25rem; min-height: 2.25rem;
+  max-width: 2.25rem; max-height: 2.25rem; aspect-ratio: 1;
+  flex: 0 0 2.25rem; border-radius: 50%; padding: 0;
+}
+.ui-agent .ui-agent-input-row .ui-agent-attach { background: transparent; border-color: transparent; }
+/* The arrow and the stop square are drawn, not typed: a text glyph sits on
+ * its font's baseline rather than the circle's middle, and lands
+ * differently in every font. A masked shape in the button's own colour
+ * centres exactly. The words stay in the markup for a screen reader. */
+.ui-agent .ui-agent-input-row .ui-agent-send-plain,
+.ui-agent .ui-agent-input-row .ui-agent-cancel {
+  font-size: 0; display: inline-flex; align-items: center; justify-content: center;
+}
+.ui-agent .ui-agent-input-row .ui-agent-send-plain::before {
+  content: ""; width: 1.1rem; height: 1.1rem; background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 19V5M5.5 11.5L12 5l6.5 6.5'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 19V5M5.5 11.5L12 5l6.5 6.5'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+/* Stop: a square, with the "still working" indicator a ring turning around
+ * it, so the one control that cannot scroll away shows the turn is alive. */
+.ui-agent .ui-agent-input-row .ui-agent-cancel { position: relative; gap: 0; }
+.ui-agent .ui-agent-input-row .ui-agent-cancel::before {
+  content: ""; width: 0.7rem; height: 0.7rem; border-radius: 2px; background: currentColor;
+}
+.ui-agent .ui-agent-input-row .ui-agent-cancel-spinner {
+  position: absolute; inset: 3px; width: auto; height: auto;
+  background: none; border-radius: 50%;
+  border: 2px solid transparent; border-top-color: currentColor;
+  animation: ui-pl-spin 0.9s linear infinite;
+}
+.ui-agent .ui-agent-input-row .ui-agent-cancel:disabled .ui-agent-cancel-spinner { animation-duration: 2.4s; }
 /* ui-ask-card — the default ask_user / ask_user_form clarifying card
  * rendered inline in an AgentLoopPanel transcript (the framework control
  * tools). Scoped + theme-tokened; the Agency chat ships a richer variant. */
@@ -7127,9 +7118,6 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
          select) { min-height: var(--btn-h-sm); }
 }
 @media (max-width: 900px) {
-  /* The agent composer sits at the bottom of a full-height panel; keep its
-   * send row clear of the phone's home indicator, as the chat composer is. */
-  .ui-agent-input-row { padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px)); }
   /* One scrolling row of tabs rather than three wrapped rows of them. */
   .ui-tabbar { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
   .ui-tabbar::-webkit-scrollbar { display: none; }

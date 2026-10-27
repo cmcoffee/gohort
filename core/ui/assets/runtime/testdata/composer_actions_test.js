@@ -90,4 +90,22 @@ check('the end of a turn is announced', events.length === 2 && events[1].type ==
 var send = lift(panel, 'function sendMessage()', 'sendMessage');
 check('the queued-note send announces itself', /inputArea\.value = '';\s*announceSent\(text\);/.test(send));
 check('the ordinary send announces itself', /inputArea\.style\.height = '';\s*announceSent\(text\);\s*disableInput\(\);/.test(send));
+
+// Enter sends on a keyboard, Shift+Enter is a new line; on a touch screen's
+// own keyboard return is a new line and the send button sends; an Enter that
+// picks an input method's candidate belongs to the input method.
+var prelude = fs.readFileSync(dir + '/00_prelude.js', 'utf8');
+eval(lift(prelude, 'function uiComposerEnterSends(ev)', 'uiComposerEnterSends'));
+var touch = false;
+window.matchMedia = function(q) { return {matches: touch && q === '(hover: none) and (pointer: coarse)'}; };
+check('Enter sends', uiComposerEnterSends({key: 'Enter'}) === true);
+check('Shift+Enter is a new line', uiComposerEnterSends({key: 'Enter', shiftKey: true}) === false);
+check('another key sends nothing', uiComposerEnterSends({key: 'a'}) === false);
+check('Enter picking a candidate is the input method\'s', uiComposerEnterSends({key: 'Enter', isComposing: true}) === false);
+check('so is the 229 some browsers send instead', uiComposerEnterSends({key: 'Enter', keyCode: 229}) === false);
+touch = true;
+check('a touch keyboard\'s return is a new line', uiComposerEnterSends({key: 'Enter'}) === false);
+var panelChat = fs.readFileSync(dir + '/20_chat_panel.js', 'utf8');
+check('the agent composer asks it', /if \(uiComposerEnterSends\(ev\)\) \{ ev\.preventDefault\(\); sendMessage\(\); \}/.test(panel));
+check('so does the chat composer', /if \(uiComposerEnterSends\(ev\)\) \{\s*ev\.preventDefault\(\);\s*doSend\(\);/.test(panelChat));
 process.exit(fail ? 1 : 0);

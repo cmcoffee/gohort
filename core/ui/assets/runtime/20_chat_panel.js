@@ -1338,7 +1338,7 @@
     }
     input.addEventListener('input', autoresize);
     input.addEventListener('keydown', function(ev) {
-      if (ev.key === 'Enter' && !ev.shiftKey) {
+      if (uiComposerEnterSends(ev)) {
         ev.preventDefault();
         doSend();
       }
