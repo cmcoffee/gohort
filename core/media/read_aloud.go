@@ -10,8 +10,9 @@
 //     reported with its reason, not as a player that never starts) and
 //     answers {"url": ...}, a link only this user can open for a while.
 //  2. GET that link plays the first sentence and then the rest, made a few
-//     sentences at a time as the player goes. A listener who stops closes the
-//     connection, which stops the making too.
+//     sentences at a time as the player goes, and made once however many
+//     requests open the link. When the last listener closes it, the making
+//     stops a moment later.
 //
 // The splitting is done here rather than asked of the speech server, so it
 // works with any server that speaks mp3. core mounts ServeReadAloud at
@@ -21,9 +22,11 @@
 package media
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -42,9 +45,9 @@ const (
 	// readAloudMaxChars bounds one read-aloud: about seven minutes of speech.
 	readAloudMaxChars = 6000
 	// readAloudFirstChars bounds the first piece, made before the link is
-	// handed back: a first sentence longer than this is split, so nobody waits
-	// on it.
-	readAloudFirstChars = 200
+	// handed back: a first sentence longer than this is split, at a comma when
+	// one is near, so nobody waits on it. About a second on a CPU-only server.
+	readAloudFirstChars = 100
 	// readAloudChunkChars bounds each later piece. Made a few sentences at a
 	// time, so the voice keeps its phrasing across them; on a CPU-only server
 	// a piece this size is made several times faster than it plays.
@@ -57,13 +60,31 @@ const (
 
 // readAloudJob is one reply waiting to be played: its first piece already
 // made, the rest as text.
+//
+// The rest is made once per link, however many requests play it: a browser
+// opens a media link twice at once (a probe, then the real fetch), and each
+// making the reply on its own doubled the work and slowed both. The first
+// request starts the maker; every request replays what is made and waits for
+// the next piece.
 type readAloudJob struct {
 	user      string
 	first     []byte
 	firstType string
 	rest      []string
 	expires   time.Time
+
+	mu        sync.Mutex
+	cond      *sync.Cond // a piece was made, or the maker stopped
+	made      [][]byte   // the rest, as made so far, tags dropped
+	making    bool       // the maker is running
+	failed    bool       // the maker stopped on an error; nothing more will come
+	listeners int
+	cancel    context.CancelFunc
 }
+
+// readAloudGrace is how long the maker keeps going with nobody listening, so
+// a probe that closes just before the real request arrives costs nothing.
+var readAloudGrace = 2 * time.Second
 
 var (
 	readAloudMu   sync.Mutex
@@ -139,8 +160,10 @@ func startReadAloud(w http.ResponseWriter, r *http.Request, user string) {
 		}
 		delete(readAloudJobs, oldest)
 	}
-	readAloudJobs[key] = &readAloudJob{user: user, first: first, firstType: SpeechMIME(ext),
+	job := &readAloudJob{user: user, first: first, firstType: SpeechMIME(ext),
 		rest: pieces[1:], expires: now.Add(readAloudTTL)}
+	job.cond = sync.NewCond(&job.mu)
+	readAloudJobs[key] = job
 	readAloudMu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
@@ -168,25 +191,99 @@ func streamReadAloud(w http.ResponseWriter, r *http.Request, user, key string) {
 		return
 	}
 	flush.Flush()
-	for _, piece := range job.rest {
-		if r.Context().Err() != nil {
-			return // the listener stopped
+	ctx := r.Context()
+	job.listen()
+	defer job.leave()
+	// Wake this request's wait when its listener goes, so it does not hold on
+	// for a piece nobody will hear.
+	stopWake := context.AfterFunc(ctx, func() {
+		job.mu.Lock()
+		job.cond.Broadcast()
+		job.mu.Unlock()
+	})
+	defer stopWake()
+	for i := range job.rest {
+		job.mu.Lock()
+		for len(job.made) <= i && job.making && ctx.Err() == nil {
+			job.cond.Wait()
 		}
-		audio, ext, err := Speak(r.Context(), piece)
-		if err != nil {
-			if r.Context().Err() == nil {
-				nfo.Log("[speech] read aloud for %s stopped partway: %v", user, err)
-			}
-			return
+		var piece []byte
+		if len(job.made) > i {
+			piece = job.made[i]
 		}
-		if ext != ".mp3" {
-			nfo.Log("[speech] read aloud for %s stopped partway: the server answered %s, which does not join an mp3 stream", user, ext)
-			return
+		job.mu.Unlock()
+		if piece == nil || ctx.Err() != nil {
+			return // the maker stopped, or the listener did
 		}
-		if _, err := w.Write(withoutID3(audio)); err != nil {
+		if _, err := w.Write(piece); err != nil {
 			return
 		}
 		flush.Flush()
+	}
+}
+
+// listen counts a request in, and starts the maker if nothing is making the
+// rest: the first request, or one reopening a link whose maker was stopped
+// when everyone left. It picks up from the last piece made.
+func (j *readAloudJob) listen() {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.listeners++
+	if j.making || j.failed || len(j.made) >= len(j.rest) {
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	j.making, j.cancel = true, cancel
+	go j.make(ctx, len(j.made))
+}
+
+// leave counts a request out. The last one out stops the maker, after the
+// grace, if nobody has come back by then.
+func (j *readAloudJob) leave() {
+	j.mu.Lock()
+	j.listeners--
+	idle := j.listeners == 0
+	j.mu.Unlock()
+	if !idle {
+		return
+	}
+	time.AfterFunc(readAloudGrace, func() {
+		j.mu.Lock()
+		defer j.mu.Unlock()
+		if j.listeners == 0 && j.making && j.cancel != nil {
+			j.cancel()
+		}
+	})
+}
+
+// make speaks the rest from piece from on, one piece at a time, handing each
+// to the listeners as it is ready.
+func (j *readAloudJob) make(ctx context.Context, from int) {
+	defer func() {
+		j.mu.Lock()
+		j.making = false
+		j.cancel = nil
+		j.cond.Broadcast()
+		j.mu.Unlock()
+	}()
+	for i := from; i < len(j.rest); i++ {
+		audio, ext, err := Speak(ctx, j.rest[i])
+		if err == nil && ext != ".mp3" {
+			err = fmt.Errorf("the server answered %s, which does not join an mp3 stream", ext)
+		}
+		if err != nil {
+			if ctx.Err() == nil {
+				nfo.Log("[speech] read aloud for %s stopped partway: %v", j.user, err)
+				j.mu.Lock()
+				j.failed = true
+				j.mu.Unlock()
+			}
+			return
+		}
+		j.mu.Lock()
+		j.made = append(j.made, withoutID3(audio))
+		j.cond.Broadcast()
+		j.mu.Unlock()
 	}
 }
 

@@ -2,6 +2,7 @@ package media
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -393,4 +394,185 @@ func TestReadAloudButton(t *testing.T) {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	t.Logf("%s", out)
+}
+
+// countingSpeech is a speech server that counts how often each piece is made,
+// takes a moment over each, and refuses a piece that says "fail".
+func countingSpeech(t *testing.T) (counts func() map[string]int) {
+	t.Helper()
+	var mu sync.Mutex
+	made := map[string]int{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]string
+		json.NewDecoder(r.Body).Decode(&body)
+		mu.Lock()
+		made[body["input"]]++
+		mu.Unlock()
+		if strings.Contains(body["input"], "fail") {
+			http.Error(w, "voice not found", http.StatusBadRequest)
+			return
+		}
+		time.Sleep(30 * time.Millisecond)
+		w.Write(append([]byte("ID3\x04\x00\x00\x00\x00\x00\x00"), "["+body["input"]+"]"...))
+	}))
+	t.Cleanup(srv.Close)
+	prev := GetSpeechConfig()
+	SetSpeechConfig(SpeechConfig{Endpoint: srv.URL, Enabled: true})
+	t.Cleanup(func() { SetSpeechConfig(prev) })
+	return func() map[string]int {
+		mu.Lock()
+		defer mu.Unlock()
+		out := map[string]int{}
+		for k, v := range made {
+			out[k] = v
+		}
+		return out
+	}
+}
+
+// longReply is a reply of several pieces after its first sentence, each
+// sentence numbered so no two pieces read alike.
+var longReply = func() string {
+	var b strings.Builder
+	b.WriteString("Hi.")
+	for i := 1; i <= 40; i++ {
+		b.WriteString(" Sentence " + strconv.Itoa(i) + " fills a piece of this reply.")
+	}
+	return b.String()
+}()
+
+func startLink(t *testing.T, text string) string {
+	t.Helper()
+	var start struct{ URL string }
+	w := readAloudDo("POST", ReadAloudPath, "alice", `{"text":`+strconv.Quote(text)+`}`)
+	json.Unmarshal(w.Body.Bytes(), &start)
+	if start.URL == "" {
+		t.Fatalf("start: %d %s", w.Code, w.Body.String())
+	}
+	return start.URL
+}
+
+// A browser opens a media link twice at once. Both get the whole reply, and
+// each piece is made once.
+func TestALinkOpenedTwiceIsMadeOnce(t *testing.T) {
+	counts := countingSpeech(t)
+	url := startLink(t, longReply)
+	if n := len(readAloudPieces(longReply)); n < 3 {
+		t.Fatalf("the reply should be several pieces, is %d", n)
+	}
+	bodies := make([]string, 2)
+	var wg sync.WaitGroup
+	for i := range bodies {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			bodies[i] = readAloudDo("GET", url, "alice", "").Body.String()
+		}(i)
+	}
+	wg.Wait()
+	if bodies[0] != bodies[1] || strings.Count(bodies[0], "[") != len(readAloudPieces(longReply)) {
+		t.Errorf("both should play the whole reply:\n%q\n%q", bodies[0], bodies[1])
+	}
+	for piece, n := range counts() {
+		if n != 1 {
+			t.Errorf("made %d times: %.40q", n, piece)
+		}
+	}
+}
+
+// A probe that closes at once, then the real request: the piece the probe
+// started is not made again.
+func TestAProbeThatLeavesCostsNothing(t *testing.T) {
+	counts := countingSpeech(t)
+	url := startLink(t, longReply)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	ServeReadAloud(httptest.NewRecorder(), httptest.NewRequest("GET", url, nil).WithContext(ctx), "alice")
+	body := readAloudDo("GET", url, "alice", "").Body.String()
+	if strings.Count(body, "[") != len(readAloudPieces(longReply)) {
+		t.Errorf("the real request should play the whole reply: %q", body)
+	}
+	for piece, n := range counts() {
+		if n != 1 {
+			t.Errorf("made %d times: %.40q", n, piece)
+		}
+	}
+}
+
+// A link everyone left stops being made; opened again, it carries on from the
+// last piece made, making nothing twice, and plays to the end.
+func TestALinkReopenedPlaysToTheEnd(t *testing.T) {
+	counts := countingSpeech(t)
+	prev := readAloudGrace
+	readAloudGrace = 0
+	t.Cleanup(func() { readAloudGrace = prev })
+	url := startLink(t, longReply)
+	readAloudMu.Lock()
+	job := readAloudJobs[strings.TrimPrefix(url, ReadAloudPath+"/")]
+	readAloudMu.Unlock()
+	state := func() (made int, making bool) {
+		job.mu.Lock()
+		defer job.mu.Unlock()
+		return len(job.made), job.making
+	}
+	waitFor := func(what string, ok func() bool) {
+		t.Helper()
+		for deadline := time.Now().Add(5 * time.Second); !ok(); time.Sleep(2 * time.Millisecond) {
+			if time.Now().After(deadline) {
+				t.Fatal(what)
+			}
+		}
+	}
+
+	// A listener who leaves once the first piece is made.
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		ServeReadAloud(httptest.NewRecorder(), httptest.NewRequest("GET", url, nil).WithContext(ctx), "alice")
+		close(done)
+	}()
+	waitFor("the first piece was never made", func() bool { n, _ := state(); return n >= 1 })
+	cancel()
+	<-done
+	waitFor("the maker should stop once nobody is listening", func() bool { _, making := state(); return !making })
+	stoppedAt, _ := state()
+	if stoppedAt >= len(job.rest) {
+		t.Fatalf("the maker should have stopped short, made all %d pieces", stoppedAt)
+	}
+	// The piece being made when everyone left was cut off, so it is the one
+	// piece that is made again.
+	cutOff := job.rest[stoppedAt]
+
+	body := readAloudDo("GET", url, "alice", "").Body.String()
+	var want strings.Builder
+	for _, p := range readAloudPieces(longReply) {
+		want.WriteString("[" + p + "]")
+	}
+	if got := body[strings.Index(body, "["):]; got != want.String() {
+		t.Errorf("reopened, it should play the whole reply once, in order:\n got %.200q\nwant %.200q", got, want.String())
+	}
+	for piece, n := range counts() {
+		if n != 1 && !(piece == cutOff && n == 2) {
+			t.Errorf("made %d times: %.40q", n, piece)
+		}
+	}
+}
+
+// A piece the server refuses ends the stream for every listener, and is not
+// asked for again by the next.
+func TestAFailurePartwayIsNotRetriedPerListener(t *testing.T) {
+	counts := countingSpeech(t)
+	reply := longReply + " This one will fail."
+	url := startLink(t, reply)
+	pieces := readAloudPieces(reply)
+	last := pieces[len(pieces)-1]
+	for i := 0; i < 2; i++ {
+		body := readAloudDo("GET", url, "alice", "").Body.String()
+		if strings.Count(body, "[") != len(pieces)-1 {
+			t.Errorf("listener %d should hear everything before the failure: %d pieces", i, strings.Count(body, "["))
+		}
+	}
+	if n := counts()[last]; n != 1 {
+		t.Errorf("the failing piece was asked for %d times", n)
+	}
 }
