@@ -24,6 +24,7 @@ package media
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -108,6 +109,10 @@ func ServeReadAloud(w http.ResponseWriter, r *http.Request, user string) {
 	}
 	switch r.Method {
 	case http.MethodPost:
+		if r.URL.Path == ReadAloudPath+"/preview" {
+			servePreview(w, r)
+			return
+		}
 		startReadAloud(w, r, user)
 	case http.MethodGet:
 		key := strings.TrimPrefix(r.URL.Path, ReadAloudPath+"/")
@@ -302,6 +307,52 @@ func (j *readAloudJob) make(ctx context.Context, from int) {
 		j.cond.Broadcast()
 		j.mu.Unlock()
 	}
+}
+
+// PreviewSentence is what a voice preview says: a reply's kind of sentence,
+// so the voice is heard the way it will be used. Shared by the admin's
+// Preview voice and an agent's.
+const PreviewSentence = "Hi! This is how I'll sound when I answer one of your voice notes."
+
+// servePreview speaks PreviewSentence in the voice a form holds, saved or
+// not, on the deployment's speech server, for an agent's Preview voice. It
+// answers as a form test does ({"ok", "message"|"error", "audio"}), so the
+// form plays the clip. Any signed-in user may: it says one fixed sentence.
+func servePreview(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Voice string `json:"voice"`
+	}
+	result := map[string]any{"ok": false}
+	reply := func() {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(result)
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if !GetSpeechConfig().Enabled {
+		result["error"] = "speech is not set up: an admin turns it on under Capabilities, Speech (TTS)"
+		reply()
+		return
+	}
+	voice := strings.TrimSpace(req.Voice)
+	audio, ext, err := SpeakIn(r.Context(), PreviewSentence, voice)
+	if err != nil {
+		result["error"] = err.Error()
+		reply()
+		return
+	}
+	if voice == "" {
+		voice = "the deployment's voice"
+		if v := GetSpeechConfig().Voice; v != "" {
+			voice += " (" + v + ")"
+		}
+	}
+	result["ok"] = true
+	result["message"] = "Speaking in " + voice + "."
+	result["audio"] = "data:" + SpeechMIME(ext) + ";base64," + base64.StdEncoding.EncodeToString(audio)
+	reply()
 }
 
 // serveVoices lists the speech server's voices for any signed-in user, for

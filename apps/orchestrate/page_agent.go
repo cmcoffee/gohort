@@ -427,10 +427,14 @@ func (ed *agentEditor) formFields() {
 			ui.FormField{Field: "tag_name", Type: "toggle", Label: "Sign outbound messages with this agent's name",
 				Help:   "Prefixes every message this agent sends over a channel with its name.",
 				Detail: "For example, \"[Assistant] on my way\". Lets the recipient tell the agent's texts apart from your own messages in the same thread. Off by default; turn it on for agents that reply in conversations you also text in."},
+
+			ui.FormField{Type: "header", Label: "Voice",
+				Help:   "How this agent sounds when it speaks.",
+				Detail: "It speaks when it answers a voice note, and when one of its replies is read aloud in the web chat."},
 			ui.FormField{Field: "voice", Type: "text", Label: "Voice",
 				Placeholder: "the deployment's voice",
-				Help:        "The voice this agent speaks in when it answers a voice note or a reply is read aloud.",
-				Detail:      "Pick one of the speech server's voices from the chips, or leave it blank for the deployment's voice (Admin, Capabilities, Speech). A voice the server does not offer makes the reply go as text, so preview it there first if unsure.",
+				Help:        "Pick a voice from the chips, then Preview voice to hear it.",
+				Detail:      "Leave it blank for the deployment's voice (Admin, Capabilities, Speech). A voice the server does not offer makes the reply go as text, which Preview voice shows before you save.",
 				ChipsSource: media.ReadAloudPath + "/voices"},
 
 			// Where it shows up is not here. Your own dashboard is the gear
@@ -1130,10 +1134,17 @@ func splitAgentFormSections(id, source string, fields []ui.FormField, identitySu
 		Body:     identity,
 	}}
 	for _, g := range groups[1:] {
+		p := panel(g.fields)
+		// The voice is heard before it is chosen: the panel's test speaks a
+		// sentence in the voice the form holds, saved or not.
+		if slices.ContainsFunc(g.fields, func(f ui.FormField) bool { return f.Field == "voice" }) {
+			p.TestURL = media.ReadAloudPath + "/preview"
+			p.TestLabel = "Preview voice"
+		}
 		out = append(out, ui.Section{
 			Title:    g.title,
 			Subtitle: g.help,
-			Body:     panel(g.fields),
+			Body:     p,
 		})
 	}
 	return out

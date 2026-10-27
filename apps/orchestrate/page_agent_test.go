@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/media"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -296,5 +297,29 @@ func TestLeadModelFieldHiddenWithoutDistinctLead(t *testing.T) {
 	}
 	if f.Default != "" {
 		t.Error("the hidden placeholder must not contribute a value to the save payload")
+	}
+}
+
+// The voice is heard before it is chosen: the section holding the Voice
+// field previews it, and no other section gets the button.
+func TestOnlyTheVoiceSectionPreviewsAVoice(t *testing.T) {
+	fields := []ui.FormField{
+		{Field: "name", Label: "Name"},
+		{Type: "header", Label: "Capability"},
+		{Field: "fleet", Label: "Conductor", Type: "toggle"},
+		{Type: "header", Label: "Messages"},
+		{Field: "tag_name", Label: "Sign", Type: "toggle"},
+		{Type: "header", Label: "Voice"},
+		{Field: "voice", Label: "Voice"},
+	}
+	secs := splitAgentFormSections("a1", "../api/agents?id=a1", fields, "")
+	previews := map[string]string{}
+	for _, s := range secs {
+		if p, ok := s.Body.(ui.FormPanel); ok && p.TestURL != "" {
+			previews[s.Title] = p.TestURL + " " + p.TestLabel
+		}
+	}
+	if len(previews) != 1 || previews["Voice"] != media.ReadAloudPath+"/preview Preview voice" {
+		t.Errorf("only the Voice section should preview: %v", previews)
 	}
 }

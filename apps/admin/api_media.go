@@ -245,10 +245,6 @@ func (a *AdminApp) handleSpeechSave(c *jsonapi.Call, req media.SpeechConfig) (an
 	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
-// speechTestSentence is what the preview has the server say: a reply's kind
-// of sentence, so the voice is heard the way it will be used.
-const speechTestSentence = "Hi! This is how I'll sound when I answer one of your voice notes."
-
 // handleSpeechTest speaks a sentence with the form as typed, saved or not,
 // and hands the clip back for the page to play: the only test that proves
 // the model and voice are ones the server takes, and the way to hear a voice
@@ -261,7 +257,7 @@ func (a *AdminApp) handleSpeechTest(c *jsonapi.Call, req media.SpeechConfig) (an
 	// A minute: a CPU-only server loads its model on the first request.
 	ctx, cancel := context.WithTimeout(c.R.Context(), time.Minute)
 	defer cancel()
-	audio, ext, err := media.SpeakWith(ctx, req, speechTestSentence)
+	audio, ext, err := media.SpeakWith(ctx, req, media.PreviewSentence)
 	if err != nil {
 		return testResultBody(false, "", err.Error()), nil
 	}

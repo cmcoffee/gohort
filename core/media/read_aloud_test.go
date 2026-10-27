@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -651,5 +652,55 @@ func TestVoicesForSignedInUsers(t *testing.T) {
 	SetSpeechConfig(SpeechConfig{Endpoint: srv.URL, Enabled: false})
 	if w := readAloudDo("GET", ReadAloudPath+"/voices", "bob", ""); strings.TrimSpace(w.Body.String()) != "[]" {
 		t.Errorf("speech off, no voices: %s", w.Body.String())
+	}
+}
+
+// An agent's Preview voice speaks the sample sentence in the voice the form
+// holds and answers the way a form test does, with the clip to play.
+func TestAnAgentsVoicePreview(t *testing.T) {
+	var asked []map[string]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]string
+		json.NewDecoder(r.Body).Decode(&body)
+		asked = append(asked, body)
+		if body["voice"] == "nobody" {
+			http.Error(w, `{"detail":"voice not found"}`, http.StatusBadRequest)
+			return
+		}
+		w.Write(fakeMP3)
+	}))
+	defer srv.Close()
+	prev := GetSpeechConfig()
+	SetSpeechConfig(SpeechConfig{Endpoint: srv.URL, Voice: "af_heart", Enabled: true})
+	t.Cleanup(func() { SetSpeechConfig(prev) })
+
+	preview := func(user, body string) (int, map[string]any) {
+		w := readAloudDo("POST", ReadAloudPath+"/preview", user, body)
+		var out map[string]any
+		json.Unmarshal(w.Body.Bytes(), &out)
+		return w.Code, out
+	}
+	code, out := preview("alice", `{"name":"Ada","voice":"bm_george","tag_name":true}`)
+	if code != 200 || out["ok"] != true || !strings.HasPrefix(fmt.Sprint(out["audio"]), "data:audio/mpeg;base64,") || out["message"] != "Speaking in bm_george." {
+		t.Errorf("a preview in the form's voice: %d %v", code, out)
+	}
+	if last := asked[len(asked)-1]; last["voice"] != "bm_george" || last["input"] != PreviewSentence {
+		t.Errorf("the sample sentence in the form's voice: %v", last)
+	}
+	if _, out := preview("alice", `{"voice":""}`); out["ok"] != true || out["message"] != "Speaking in the deployment's voice (af_heart)." || asked[len(asked)-1]["voice"] != "af_heart" {
+		t.Errorf("blank previews the deployment's voice: %v", out)
+	}
+	if _, out := preview("alice", `{"voice":"nobody"}`); out["ok"] != false || !strings.Contains(fmt.Sprint(out["error"]), "voice not found") || out["audio"] != nil {
+		t.Errorf("a voice the server lacks says so, with nothing to play: %v", out)
+	}
+	if code, _ := preview("", `{"voice":"bm_george"}`); code != http.StatusForbidden {
+		t.Errorf("signed out: %d", code)
+	}
+	if code, _ := preview("alice", `{"voice":`); code != http.StatusBadRequest {
+		t.Errorf("broken body: %d", code)
+	}
+	SetSpeechConfig(SpeechConfig{Endpoint: srv.URL, Enabled: false})
+	if _, out := preview("alice", `{"voice":"bm_george"}`); out["ok"] != false || !strings.Contains(fmt.Sprint(out["error"]), "not set up") {
+		t.Errorf("speech off: %v", out)
 	}
 }
