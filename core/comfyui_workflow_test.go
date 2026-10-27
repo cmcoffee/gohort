@@ -1051,3 +1051,528 @@ func TestApplyComfyWorkflowInvalid(t *testing.T) {
 		t.Error("expected error for empty workflow")
 	}
 }
+
+// Which photo is "the first one". The caller's first image goes to
+// ImageNodes[0], so that list's order decides what "the base/subject" means —
+// and ComfyUI numbers nodes by creation, not by role.
+
+func parseGraph(t *testing.T, raw string) map[string]map[string]any {
+	t.Helper()
+	var g map[string]map[string]any
+	dec := json.NewDecoder(strings.NewReader(raw))
+	dec.UseNumber()
+	if err := dec.Decode(&g); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	return g
+}
+
+func TestImageNodesFollowTheEncoderNotTheNodeIds(t *testing.T) {
+	// Node "2" feeds image1 and node "1" feeds image2 — the reverse of id
+	// order. Before this, the caller's FIRST photo went to node "1", which the
+	// graph treats as the second source: a blend composited backwards, with no
+	// error and a plausible-looking result.
+	g := parseGraph(t, `{
+	  "1": {"class_type": "LoadImage", "inputs": {"image": "b.png"}},
+	  "2": {"class_type": "LoadImage", "inputs": {"image": "a.png"}},
+	  "3": {"class_type": "TextEncodeQwenImageEditPlus", "inputs": {
+	          "image1": ["2", 0], "image2": ["1", 0], "prompt": "blend them"}}
+	}`)
+	got := orderImageNodesByConsumer(g, []string{"1", "2"})
+	if len(got) != 2 || got[0] != "2" || got[1] != "1" {
+		t.Errorf("order = %v, want [2 1] — the loader feeding image1 comes first", got)
+	}
+}
+
+func TestThreeSourcesOrderByTheirSlots(t *testing.T) {
+	g := parseGraph(t, `{
+	  "10": {"class_type": "LoadImage", "inputs": {"image": "c.png"}},
+	  "11": {"class_type": "LoadImage", "inputs": {"image": "a.png"}},
+	  "12": {"class_type": "LoadImage", "inputs": {"image": "b.png"}},
+	  "20": {"class_type": "TextEncodeQwenImageEditPlus", "inputs": {
+	          "image1": ["11", 0], "image2": ["12", 0], "image3": ["10", 0]}}
+	}`)
+	got := orderImageNodesByConsumer(g, []string{"10", "11", "12"})
+	want := []string{"11", "12", "10"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("order = %v, want %v", got, want)
+		}
+	}
+}
+
+func TestAGraphThatExpressesNoOrderIsLeftAlone(t *testing.T) {
+	// Plain "image"/"images" inputs say nothing about which source is first;
+	// inventing an order from them would be worse than keeping id order.
+	g := parseGraph(t, `{
+	  "1": {"class_type": "LoadImage", "inputs": {"image": "a.png"}},
+	  "2": {"class_type": "LoadImage", "inputs": {"image": "b.png"}},
+	  "3": {"class_type": "PreviewImage", "inputs": {"images": ["1", 0]}},
+	  "4": {"class_type": "VAEEncode", "inputs": {"pixels": ["2", 0]}}
+	}`)
+	got := orderImageNodesByConsumer(g, []string{"1", "2"})
+	if got[0] != "1" || got[1] != "2" {
+		t.Errorf("order = %v, want the id order preserved", got)
+	}
+	// One loader needs no ordering at all.
+	if got := orderImageNodesByConsumer(g, []string{"1"}); len(got) != 1 || got[0] != "1" {
+		t.Errorf("single loader = %v", got)
+	}
+}
+
+func TestAnUnwiredLoaderSortsAfterTheWiredOnes(t *testing.T) {
+	// A spare loader nothing numbered references must not displace a real
+	// source — it goes last, where an extra image would be ignored anyway.
+	g := parseGraph(t, `{
+	  "1": {"class_type": "LoadImage", "inputs": {"image": "spare.png"}},
+	  "5": {"class_type": "LoadImage", "inputs": {"image": "real.png"}},
+	  "9": {"class_type": "ImageBlend", "inputs": {"image1": ["5", 0]}}
+	}`)
+	got := orderImageNodesByConsumer(g, []string{"1", "5"})
+	if got[0] != "5" {
+		t.Errorf("order = %v, want the wired loader first", got)
+	}
+}
+
+func TestNumberedImageInputsOnly(t *testing.T) {
+	for _, c := range []struct {
+		key  string
+		n    int
+		want bool
+	}{
+		{"image1", 1, true}, {"image2", 2, true}, {"image10", 10, true},
+		{"image", 0, false}, {"images", 0, false}, {"image0", 0, false},
+		{"mask1", 0, false}, {"", 0, false},
+	} {
+		n, ok := numberedImageInput(c.key)
+		if ok != c.want || (ok && n != c.n) {
+			t.Errorf("%q → (%d,%v), want (%d,%v)", c.key, n, ok, c.n, c.want)
+		}
+	}
+}
+
+func TestOrderingFollowsThroughIntermediateNodes(t *testing.T) {
+	// The shape a real Qwen edit graph actually has: each source runs through a
+	// scaler before the encoder, so image1 names the SCALER and the scaler names
+	// the loader. Ranking on direct links alone found nothing here and fell
+	// back to node id — in precisely the workflows this ordering exists for.
+	g := parseGraph(t, `{
+	  "41": {"class_type": "LoadImage", "inputs": {"image": "second.png"}},
+	  "42": {"class_type": "LoadImage", "inputs": {"image": "first.png"}},
+	  "160": {"class_type": "FluxKontextImageScale", "inputs": {"image": ["42", 0]}},
+	  "170": {"class_type": "FluxKontextImageScale", "inputs": {"image": ["41", 0]}},
+	  "149": {"class_type": "TextEncodeQwenImageEditPlus", "inputs": {
+	            "image1": ["160", 0], "image2": ["170", 0]}}
+	}`)
+	got := orderImageNodesByConsumer(g, []string{"41", "42"})
+	if got[0] != "42" || got[1] != "41" {
+		t.Errorf("order = %v, want [42 41] — 42 reaches image1 through the scaler", got)
+	}
+}
+
+func TestTheRealBlendWorkflowOrdersByItsEncoder(t *testing.T) {
+	// The user's own two-LoadImage export. Its encoder reads image1 from the
+	// scaler fed by 41 and image2 from the scaler fed by 42, so id order and
+	// consumer order agree here — the assertion is that the walk RESOLVES them
+	// rather than falling through to the id fallback.
+	spec, _, err := NewComfyImageSpec("http://localhost:8188", "no_auth", qwenBlendGraph(t), "")
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	nodes := spec.ComfyMap.ImageNodes
+	if len(nodes) != 2 {
+		t.Fatalf("image nodes = %v, want two", nodes)
+	}
+	if nodes[0] != "41" || nodes[1] != "42" {
+		t.Errorf("image nodes = %v, want [41 42] in encoder order", nodes)
+	}
+}
+
+// Asking a COMPOSE workflow for a text-only picture. It has image inputs and
+// nothing to put in them, so the graph runs against the filenames it was
+// exported with — a photo from whenever that export happened — and returns the
+// prompt composited with it. The result looks like a poor render, not a wiring
+// error, which is why it publishes.
+
+func TestAComposeBackendRefusesATextOnlyRender(t *testing.T) {
+	var s RestImageSpec
+	if _, err := ApplyComfyWorkflow(&s, qwenBlendGraph(t), ""); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	_, err := BuildComfyBody(s.ComfyWorkflow, s.ComfyMap, ComfyBuildInput{Prompt: "a dramatic blog header"})
+	if err == nil {
+		t.Fatal("a blend backend must refuse a text-only render rather than draw against its placeholders")
+	}
+	for _, want := range []string{"SOURCE PHOTOS", "text-only"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the error should say what is wrong (%q missing): %v", want, err)
+		}
+	}
+	// With its sources supplied it builds normally.
+	if _, err := BuildComfyBody(s.ComfyWorkflow, s.ComfyMap, ComfyBuildInput{
+		Prompt: "blend them",
+		Images: []ComfyUploadedImage{{Name: "a.png"}, {Name: "b.png"}},
+	}); err != nil {
+		t.Errorf("a compose backend with its images must build: %v", err)
+	}
+}
+
+func TestATextToImageBackendIsUnaffected(t *testing.T) {
+	// The guard keys on the graph HAVING image inputs, so a txt2img workflow —
+	// which has none — is untouched.
+	var s RestImageSpec
+	if _, err := ApplyComfyWorkflow(&s, ComfyStarterGraph("generate"), ""); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if len(s.ComfyMap.ImageNodes) != 0 {
+		t.Skipf("starter graph has image nodes (%v) — not the shape under test", s.ComfyMap.ImageNodes)
+	}
+	if _, err := BuildComfyBody(s.ComfyWorkflow, s.ComfyMap, ComfyBuildInput{Prompt: "a cat"}); err != nil {
+		t.Errorf("a text-to-image backend must still render from text alone: %v", err)
+	}
+}
+
+// Auto-wiring for the image-input graphs: img2img, multi-image compose, blend.
+// The failure these guard against is specific and nasty — a graph that wires
+// "successfully" but drops the caller's photo produces a plausible picture of
+// the wrong thing, which reads as a bad model rather than bad config.
+
+// parseBody unwraps a built {"prompt": graph} request body. The sibling
+// buildGraph helper does this for the text-only path, but these tests need to
+// pass images through ComfyBuildInput, so they call BuildComfyBody directly.
+func parseBody(t *testing.T, body string) map[string]any {
+	t.Helper()
+	var m map[string]any
+	if err := json.Unmarshal([]byte(body), &m); err != nil {
+		t.Fatalf("body is not JSON: %v\n%s", err, body)
+	}
+	g, ok := m["prompt"].(map[string]any)
+	if !ok {
+		t.Fatalf("body not wrapped in {\"prompt\":...}: %s", body)
+	}
+	return g
+}
+
+const img2imgGraph = `{
+  "3":{"class_type":"KSampler","inputs":{"seed":0,"steps":20,"cfg":7,"denoise":0.5,"model":["4",0],"positive":["6",0],"negative":["7",0],"latent_image":["10",0]}},
+  "4":{"class_type":"CheckpointLoaderSimple","inputs":{"ckpt_name":"sd15.safetensors"}},
+  "6":{"class_type":"CLIPTextEncode","inputs":{"text":"x","clip":["4",1]}},
+  "7":{"class_type":"CLIPTextEncode","inputs":{"text":"","clip":["4",1]}},
+  "8":{"class_type":"VAEDecode","inputs":{"samples":["3",0],"vae":["4",2]}},
+  "9":{"class_type":"SaveImage","inputs":{"filename_prefix":"g","images":["8",0]}},
+  "10":{"class_type":"VAEEncode","inputs":{"pixels":["11",0],"vae":["4",2]}},
+  "11":{"class_type":"LoadImage","inputs":{"image":"example.png"}}
+}`
+
+func TestImg2ImgWiresTheLoadImageNode(t *testing.T) {
+	var s RestImageSpec
+	warns, err := ApplyComfyWorkflow(&s, img2imgGraph, "")
+	if err != nil {
+		t.Fatalf("ApplyComfyWorkflow: %v", err)
+	}
+	if !eqStrs(s.ComfyMap.ImageNodes, []string{"11"}) {
+		t.Errorf("image nodes = %v, want [11]", s.ComfyMap.ImageNodes)
+	}
+	if s.ComfyMap.ImageKey != "image" {
+		t.Errorf("image key = %q, want \"image\"", s.ComfyMap.ImageKey)
+	}
+	// The size warning is for txt2img graphs. An img2img graph takes its size
+	// from the source photo — warning here told every edit backend it was broken.
+	for _, w := range warns {
+		if strings.Contains(w, "EmptyLatentImage") {
+			t.Errorf("spurious size warning on an img2img graph: %q", w)
+		}
+	}
+}
+
+func TestComposeGraphKeepsBothImagesInNodeOrder(t *testing.T) {
+	// Two LoadImage nodes: caller image[0] must land in the lower node id, so
+	// "subject then background" stays "subject then background".
+	graph := `{
+      "1":{"class_type":"LoadImage","inputs":{"image":"a.png"}},
+      "2":{"class_type":"LoadImage","inputs":{"image":"b.png"}},
+      "3":{"class_type":"KSampler","inputs":{"seed":0,"steps":20,"denoise":0.6,"positive":["6",0],"negative":["7",0],"latent_image":["10",0]}},
+      "6":{"class_type":"CLIPTextEncode","inputs":{"text":"x"}},
+      "7":{"class_type":"CLIPTextEncode","inputs":{"text":""}},
+      "10":{"class_type":"VAEEncode","inputs":{"pixels":["1",0]}},
+      "9":{"class_type":"SaveImage","inputs":{"images":["3",0]}}
+    }`
+	var s RestImageSpec
+	if _, err := ApplyComfyWorkflow(&s, graph, ""); err != nil {
+		t.Fatalf("ApplyComfyWorkflow: %v", err)
+	}
+	if !eqStrs(s.ComfyMap.ImageNodes, []string{"1", "2"}) {
+		t.Fatalf("image nodes = %v, want [1 2] in id order", s.ComfyMap.ImageNodes)
+	}
+	body, err := BuildComfyBody(s.ComfyWorkflow, s.ComfyMap, ComfyBuildInput{
+		Prompt: "p",
+		Images: []ComfyUploadedImage{{Name: "first.png"}, {Name: "second.png", Subfolder: "gohort"}},
+	})
+	if err != nil {
+		t.Fatalf("BuildComfyBody: %v", err)
+	}
+	g := parseBody(t, body)
+	if got := nodeInput(t, g, "1", "image"); got != "first.png" {
+		t.Errorf("node 1 image = %v, want the caller's FIRST image", got)
+	}
+	// A subfolder has to be joined on, or the backend looks in the wrong place.
+	if got := nodeInput(t, g, "2", "image"); got != "gohort/second.png" {
+		t.Errorf("node 2 image = %v, want \"gohort/second.png\"", got)
+	}
+}
+
+func TestMaskLoaderIsNotTreatedAsASourcePhoto(t *testing.T) {
+	// A LoadImageMask in ImageNodes would swallow one of the caller's images.
+	graph := `{
+      "1":{"class_type":"LoadImage","inputs":{"image":"a.png"}},
+      "2":{"class_type":"LoadImageMask","inputs":{"image":"m.png","channel":"red"}},
+      "3":{"class_type":"KSampler","inputs":{"seed":0,"denoise":0.5,"positive":["6",0],"negative":["7",0],"latent_image":["10",0]}},
+      "6":{"class_type":"CLIPTextEncode","inputs":{"text":"x"}},
+      "7":{"class_type":"CLIPTextEncode","inputs":{"text":""}},
+      "10":{"class_type":"VAEEncode","inputs":{"pixels":["1",0]}},
+      "9":{"class_type":"SaveImage","inputs":{"images":["3",0]}}
+    }`
+	var s RestImageSpec
+	if _, err := ApplyComfyWorkflow(&s, graph, ""); err != nil {
+		t.Fatalf("ApplyComfyWorkflow: %v", err)
+	}
+	if !eqStrs(s.ComfyMap.ImageNodes, []string{"1"}) {
+		t.Errorf("image nodes = %v, want only [1]", s.ComfyMap.ImageNodes)
+	}
+	if !eqStrs(s.ComfyMap.MaskNodes, []string{"2"}) {
+		t.Errorf("mask nodes = %v, want [2]", s.ComfyMap.MaskNodes)
+	}
+}
+
+func TestBlendGraphNeedsNoSamplerOrPrompt(t *testing.T) {
+	// A two-photo blend is pure pixel work: no checkpoint, no diffusion, no text
+	// anywhere. Requiring a KSampler rejected this working workflow at import.
+	var s RestImageSpec
+	warns, err := ApplyComfyWorkflow(&s, ComfyBlendDefaultGraph(), "")
+	if err != nil {
+		t.Fatalf("a sampler-less blend graph must wire: %v", err)
+	}
+	if !eqStrs(s.ComfyMap.ImageNodes, []string{"1", "2"}) {
+		t.Errorf("image nodes = %v, want [1 2]", s.ComfyMap.ImageNodes)
+	}
+	if len(s.ComfyMap.PromptNodes) != 0 {
+		t.Errorf("prompt nodes = %v, want none — this graph has no text node", s.ComfyMap.PromptNodes)
+	}
+	if s.ComfyMap.OutputNode != "9" {
+		t.Errorf("output node = %q, want 9", s.ComfyMap.OutputNode)
+	}
+	// The user is told what they've got, rather than left guessing why there's
+	// no prompt field.
+	var explained bool
+	for _, w := range warns {
+		if strings.Contains(w, "no sampler") {
+			explained = true
+		}
+	}
+	if !explained {
+		t.Errorf("a promptless graph should say so; warnings = %v", warns)
+	}
+}
+
+func TestBlendGraphValidatesAndRuns(t *testing.T) {
+	spec, _, err := NewComfyImageSpec("http://localhost:8188", "no_auth", ComfyBlendDefaultGraph(), "")
+	if err != nil {
+		t.Fatalf("NewComfyImageSpec: %v", err)
+	}
+	// prompt_nodes is empty — Validate must not insist on it for an image graph.
+	c := Connector{Name: "blend", Kind: RestImageConnectorKind}
+	c.Spec, _ = json.Marshal(spec)
+	if err := (restImageHandler{}).Validate(c); err != nil {
+		t.Fatalf("a promptless blend backend must validate: %v", err)
+	}
+	if !spec.SupportsImageInput() {
+		t.Error("a blend backend must report image input support")
+	}
+	if spec.MaxImages() != 2 {
+		t.Errorf("MaxImages = %d, want 2", spec.MaxImages())
+	}
+	body, err := BuildComfyBody(spec.ComfyWorkflow, spec.ComfyMap, ComfyBuildInput{
+		Images: []ComfyUploadedImage{{Name: "left.png"}, {Name: "right.png"}},
+	})
+	if err != nil {
+		t.Fatalf("BuildComfyBody: %v", err)
+	}
+	g := parseBody(t, body)
+	if nodeInput(t, g, "1", "image") != "left.png" || nodeInput(t, g, "2", "image") != "right.png" {
+		t.Errorf("blend inputs not wired: %s", body)
+	}
+	// The blend amount stays baked in the graph — no knob, by design.
+	if bf := nodeInput(t, g, "3", "blend_factor"); bf == nil {
+		t.Error("blend_factor must survive from the workflow")
+	}
+}
+
+func TestUnmappedImageNodeIsAnErrorNotASilentSkip(t *testing.T) {
+	// THE failure mode this whole path is built around: writing to a node that
+	// isn't there used to no-op, the graph ran against its placeholder image,
+	// and the caller got a confident picture of the wrong thing.
+	var s RestImageSpec
+	if _, err := ApplyComfyWorkflow(&s, img2imgGraph, ""); err != nil {
+		t.Fatalf("ApplyComfyWorkflow: %v", err)
+	}
+	bad := s.ComfyMap
+	bad.ImageNodes = []string{"404"}
+	_, err := BuildComfyBody(s.ComfyWorkflow, bad, ComfyBuildInput{
+		Prompt: "p",
+		Images: []ComfyUploadedImage{{Name: "a.png"}},
+	})
+	if err == nil {
+		t.Fatal("writing to an unmapped image node must fail loudly")
+	}
+	if !strings.Contains(err.Error(), "404") {
+		t.Errorf("error should name the bad node: %v", err)
+	}
+}
+
+func TestTooManyImagesIsRejected(t *testing.T) {
+	var s RestImageSpec
+	if _, err := ApplyComfyWorkflow(&s, img2imgGraph, ""); err != nil {
+		t.Fatalf("ApplyComfyWorkflow: %v", err)
+	}
+	_, err := BuildComfyBody(s.ComfyWorkflow, s.ComfyMap, ComfyBuildInput{
+		Prompt: "p",
+		Images: []ComfyUploadedImage{{Name: "a.png"}, {Name: "b.png"}},
+	})
+	if err == nil {
+		t.Fatal("more images than nodes must fail rather than drop one")
+	}
+}
+
+func TestTxt2ImgStillWarnsAboutMissingSize(t *testing.T) {
+	// The suppression is scoped to graphs with image input — a genuine txt2img
+	// defect must still be reported.
+	graph := `{
+      "3":{"class_type":"KSampler","inputs":{"seed":0,"positive":["6",0],"negative":["7",0],"latent_image":["10",0]}},
+      "6":{"class_type":"CLIPTextEncode","inputs":{"text":"x"}},
+      "7":{"class_type":"CLIPTextEncode","inputs":{"text":""}},
+      "10":{"class_type":"VAEEncode","inputs":{"pixels":["3",0]}},
+      "9":{"class_type":"SaveImage","inputs":{"images":["3",0]}}
+    }`
+	var s RestImageSpec
+	warns, err := ApplyComfyWorkflow(&s, graph, "")
+	if err != nil {
+		t.Fatalf("ApplyComfyWorkflow: %v", err)
+	}
+	var warned bool
+	for _, w := range warns {
+		if strings.Contains(w, "EmptyLatentImage") {
+			warned = true
+		}
+	}
+	if !warned {
+		t.Errorf("a txt2img graph with no size node should still warn; got %v", warns)
+	}
+}
+
+func TestGraphWithNeitherPromptNorImageIsRejected(t *testing.T) {
+	graph := `{"9":{"class_type":"SaveImage","inputs":{"images":["8",0]}}}`
+	if _, err := ApplyComfyWorkflow(&RestImageSpec{}, graph, ""); err == nil {
+		t.Fatal("a graph with no sampler and no LoadImage has nothing to work from")
+	}
+}
+
+// One requested size is often several nodes in the graph. Flux 2 carries
+// width/height on BOTH the empty latent and the scheduler, and the scheduler
+// derives its sigmas from the image area — so moving only the latent leaves it
+// solving for a resolution that is no longer being rendered. That does not
+// fail. It quietly degrades the picture, which is worse: the backend looks like
+// it is working and the size control looks like it took effect.
+
+func sizeGraph(t *testing.T, raw string) map[string]map[string]any {
+	t.Helper()
+	var g map[string]map[string]any
+	if err := json.Unmarshal([]byte(raw), &g); err != nil {
+		t.Fatal(err)
+	}
+	return g
+}
+
+// TestOnlyTheSamplersAncestorsCount — a node DOWNSTREAM of the sampler with a
+// width and height is doing something else with it (an upscale, a crop), and
+// rewriting that to the requested size would break a deliberate step.
+func TestOnlyTheSamplersAncestorsCount(t *testing.T) {
+	g := sizeGraph(t, `{
+	  "s":  {"inputs": {"latent_image": ["lat", 0]}, "class_type": "KSampler"},
+	  "lat":{"inputs": {"width": 512, "height": 512}, "class_type": "EmptyLatentImage"},
+	  "up": {"inputs": {"samples": ["s", 0], "width": 2048, "height": 2048}, "class_type": "LatentUpscale"}
+	}`)
+	got := comfySizeNodesFeeding(g, "s")
+	for _, id := range got {
+		if id == "up" {
+			t.Error("an upscale downstream of the sampler was treated as the render size — " +
+				"the requested size would overwrite a deliberate step")
+		}
+	}
+	if len(got) != 1 || got[0] != "lat" {
+		t.Errorf("found %v, want just the latent", got)
+	}
+}
+
+// TestALinkedSizeIsLeftAlone — a width driven by a link is computed by the
+// graph, and writing over it either loses the wiring or is silently recomputed.
+// Same reasoning that leaves a linked `steps` unmapped rather than offering a
+// knob that can only do harm.
+func TestALinkedSizeIsLeftAlone(t *testing.T) {
+	g := sizeGraph(t, `{
+	  "s":   {"inputs": {"latent_image": ["lat", 0]}, "class_type": "KSampler"},
+	  "lat": {"inputs": {"width": ["prim", 0], "height": ["prim", 0]}, "class_type": "EmptyLatentImage"},
+	  "prim":{"inputs": {"value": 768}, "class_type": "PrimitiveInt"}
+	}`)
+	if got := comfySizeNodesFeeding(g, "s"); len(got) != 0 {
+		t.Errorf("found %v — a graph-computed size must stay unmapped", got)
+	}
+}
+
+// TestAPlainGraphIsUnchanged — the single-node case must keep working exactly
+// as it did. This began as a fix for a two-node graph and must not disturb the
+// ordinary one.
+func TestAPlainGraphIsUnchanged(t *testing.T) {
+	g := sizeGraph(t, `{
+	  "3":{"inputs": {"latent_image": ["5", 0]}, "class_type": "KSampler"},
+	  "5":{"inputs": {"width": 512, "height": 512, "batch_size": 1}, "class_type": "EmptyLatentImage"}
+	}`)
+	got := comfySizeNodesFeeding(g, "3")
+	if len(got) != 1 || got[0] != "5" {
+		t.Errorf("found %v, want just [5]", got)
+	}
+}
+
+// TestACycleDoesNotHang — a hand-edited graph can point back at itself, and a
+// walk with no visited set would spin forever inside a save.
+func TestACycleDoesNotHang(t *testing.T) {
+	g := sizeGraph(t, `{
+	  "a":{"inputs": {"x": ["b", 0], "width": 64, "height": 64}, "class_type": "A"},
+	  "b":{"inputs": {"y": ["a", 0]}, "class_type": "B"}
+	}`)
+	if got := comfySizeNodesFeeding(g, "a"); len(got) != 1 {
+		t.Errorf("found %v, want the one sized node", got)
+	}
+}
+
+// TestOrderIsStable — the mapping is stored on the backend record and shown to
+// an operator; a set that reorders between saves reads as a change nobody made.
+func TestOrderIsStable(t *testing.T) {
+	g := sizeGraph(t, `{
+	  "s":  {"inputs": {"a": ["z", 0], "b": ["m", 0], "c": ["lat", 0]}, "class_type": "KSampler"},
+	  "z":  {"inputs": {"width": 8, "height": 8}, "class_type": "Z"},
+	  "m":  {"inputs": {"width": 8, "height": 8}, "class_type": "M"},
+	  "lat":{"inputs": {"width": 8, "height": 8}, "class_type": "EmptyLatentImage"}
+	}`)
+	first := comfySizeNodesFeeding(g, "s")
+	for i := 0; i < 20; i++ {
+		again := comfySizeNodesFeeding(g, "s")
+		if len(again) != len(first) {
+			t.Fatalf("unstable length: %v vs %v", first, again)
+		}
+		for j := range first {
+			if again[j] != first[j] {
+				t.Fatalf("order is unstable across calls: %v vs %v — map iteration is leaking out", first, again)
+			}
+		}
+	}
+}

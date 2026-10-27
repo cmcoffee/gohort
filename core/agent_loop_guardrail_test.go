@@ -1,0 +1,1400 @@
+package core
+
+import (
+	"context"
+	"fmt"
+	"reflect"
+	"runtime"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+
+	"github.com/cmcoffee/gohort/core/textutil"
+)
+
+// What the pre_action warden is allowed to read.
+//
+// It used to reuse formatArgs, whose 200-character cap was chosen for a confirm
+// dialog and a loop-guard hash. A rule about what an agent SENDS someone was
+// therefore applied to the first 200 characters of the message — everything
+// after that was invisible to the check, and nothing said so.
+
+func TestGuardrailArgsReadFarMoreThanTheDisplayCap(t *testing.T) {
+	body := strings.Repeat("x", 3000) + "SECRET"
+	args := map[string]any{"text": body, "to": "+15550109999"}
+
+	// The display formatter still stops at 200 — it feeds the confirm dialog
+	// and the repeat-fail signature, and changing it would change what those
+	// key on.
+	if got := formatArgs(args); strings.Contains(got, "SECRET") {
+		t.Error("the display formatter should still be short")
+	}
+	// The warden's does not.
+	got := formatArgsForGuardrail(args)
+	if !strings.Contains(got, "SECRET") {
+		t.Errorf("the warden cannot see past %d chars — a content rule would judge a prefix", 200)
+	}
+	// Both arguments survive, and the key order is deterministic so the same
+	// call never produces two different candidates.
+	if !strings.Contains(got, "to: +15550109999") {
+		t.Errorf("an argument was dropped:\n%s", got)
+	}
+	if strings.Index(got, "text:") > strings.Index(got, "to:") {
+		t.Error("keys are not sorted; the same call would judge differently run to run")
+	}
+}
+
+func TestGuardrailArgsStayBounded(t *testing.T) {
+	// A tool argument can be a base64 image or a whole document. Unbounded
+	// would make the check slow, expensive, and possibly too big to fit.
+	huge := strings.Repeat("y", 200000)
+	got := formatArgsForGuardrail(map[string]any{"blob": huge})
+	if len([]rune(got)) > guardrailArgChars()+200 {
+		t.Errorf("per-value cap not applied: %d runes", len([]rune(got)))
+	}
+	// And many large values must not multiply past the cap.
+	many := map[string]any{}
+	for i := 0; i < 40; i++ {
+		many[string(rune('a'+i%26))+strings.Repeat("k", i)] = strings.Repeat("z", 10000)
+	}
+	total := formatArgsForGuardrail(many)
+	if limit := guardrailArgChars() * guardrailArgTotalFactor; len([]rune(total)) > limit+200 {
+		t.Errorf("whole-candidate cap not applied: %d runes, limit %d", len([]rune(total)), limit)
+	}
+}
+
+// TestTruncationIsAnnounced — a warden handed a silent prefix reports that it
+// found nothing objectionable, which is true of the prefix and says nothing
+// about the rest.
+func TestTruncationIsAnnounced(t *testing.T) {
+	got := formatArgsForGuardrail(map[string]any{"text": strings.Repeat("x", 200000)})
+	if !strings.Contains(got, "truncated") || !strings.Contains(got, "NOT shown") {
+		t.Errorf("truncation must be visible to the judge:\n%s", got[len(got)-120:])
+	}
+	// A value that fits is passed through untouched — no marker, no noise.
+	short := formatArgsForGuardrail(map[string]any{"text": "send it"})
+	if strings.Contains(short, "truncated") {
+		t.Errorf("a short value should not be marked: %q", short)
+	}
+}
+
+// TestTruncationIsRuneSafe — cutting by bytes splits a multi-byte character and
+// hands the judge a replacement glyph, which reads as corruption rather than as
+// a trim. Same bug as the console title trim.
+func TestTruncationIsRuneSafe(t *testing.T) {
+	got := truncateRunes(strings.Repeat("é", 5000), 100)
+	if !strings.HasPrefix(got, strings.Repeat("é", 100)) {
+		t.Error("trim cut mid-character")
+	}
+	for _, r := range got {
+		if r == '�' {
+			t.Fatal("trim produced a replacement character")
+		}
+	}
+	if n := len([]rune(strings.Repeat("é", 50))); truncateRunes(strings.Repeat("é", 50), 100) != strings.Repeat("é", n) {
+		t.Error("a value under the cap was altered")
+	}
+}
+
+// TestEmptyArgsStayEmpty — a consequential call with no arguments must not
+// gain a stray marker or a blank line the warden then has to interpret.
+func TestEmptyArgsStayEmpty(t *testing.T) {
+	if got := formatArgsForGuardrail(nil); got != "" {
+		t.Errorf("nil args produced %q", got)
+	}
+	if got := formatArgsForGuardrail(map[string]any{}); got != "" {
+		t.Errorf("empty args produced %q", got)
+	}
+}
+
+// The canned decline is the floor under every block. Uniform random from eight
+// lines repeats about one time in eight, and a repeat is the single clearest
+// tell that a machine answered — a user who hits the same wall twice and reads
+// the identical sentence learns more from the repetition than any of the
+// wording was allowed to tell them.
+
+// TestDeclineNeverRepeatsBackToBack — consecutive picks always differ, over a
+// long enough run that a uniform draw would certainly have repeated.
+func TestDeclineNeverRepeatsBackToBack(t *testing.T) {
+	prev := ""
+	for i := 0; i < 200; i++ {
+		got := guardrailSafeFallbackReply(nil)
+		if got == prev {
+			t.Fatalf("decline repeated back-to-back on draw %d: %q", i, got)
+		}
+		if !isGuardrailSafeFallback(got) {
+			t.Fatalf("draw %d returned %q, which is not a built-in decline", i, got)
+		}
+		prev = got
+	}
+}
+
+// TestDeclineStillUsesTheWholePool — suppressing the immediate repeat must not
+// collapse the choice onto a subset.
+func TestDeclineStillUsesTheWholePool(t *testing.T) {
+	seen := map[string]bool{}
+	for i := 0; i < 500; i++ {
+		seen[guardrailSafeFallbackReply(nil)] = true
+	}
+	if len(seen) != len(guardrailSafeFallbacks) {
+		t.Errorf("only %d of %d built-in declines were ever chosen", len(seen), len(guardrailSafeFallbacks))
+	}
+}
+
+// TestSingleOwnerDeclineStillHonored — an owner who authored exactly one line
+// meant it. The no-repeat rule must not invent variety they didn't ask for by
+// reaching into the built-ins.
+func TestSingleOwnerDeclineStillHonored(t *testing.T) {
+	const only = "That's not something this desk handles."
+	for i := 0; i < 20; i++ {
+		if got := guardrailSafeFallbackReply([]string{only}); got != only {
+			t.Fatalf("single owner decline was not used: %q", got)
+		}
+	}
+}
+
+// TestOwnerDeclinesAlsoAvoidRepeats — with a set to work from, the same rule
+// applies to the owner's lines.
+func TestOwnerDeclinesAlsoAvoidRepeats(t *testing.T) {
+	custom := []string{"Not this one.", "That's a no from me.", "I'll pass on that."}
+	prev := ""
+	for i := 0; i < 100; i++ {
+		got := guardrailSafeFallbackReply(custom)
+		if got == prev {
+			t.Fatalf("owner decline repeated back-to-back on draw %d: %q", i, got)
+		}
+		prev = got
+	}
+}
+
+// TestGuardrailPreActionGateBlocksHandler proves the enforcement contract that
+// matters most: when GuardrailCheck blocks a NeedsConfirm tool at pre_action,
+// the tool's handler NEVER runs, the model gets the (trusted, unfenced) block
+// message back as an error result, and the turn keeps going rather than
+// crashing. This is the property a compromised context can't talk its way
+// around — the block happens in the loop, outside the model's reach.
+func TestGuardrailPreActionGateBlocksHandler(t *testing.T) {
+	app, _ := withTierStubs(t, "test.guard", func(n int) []ToolCall {
+		if n >= 2 {
+			return nil // stop after one attempted spend
+		}
+		return []ToolCall{{ID: "1", Name: "spend", Args: map[string]any{"amount": "100"}}}
+	})
+
+	handlerRan := false
+	spend := AgentToolDef{
+		Tool: Tool{
+			Name:        "spend",
+			Description: "spends money",
+			Parameters:  map[string]ToolParam{"amount": {Type: "string", Description: "how much"}},
+		},
+		NeedsConfirm: true,
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+			handlerRan = true
+			return "spent", nil
+		},
+	}
+
+	_, history, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "go"}}, AgentLoopConfig{
+		Tools:     []AgentToolDef{spend},
+		MaxRounds: 4,
+		RouteKey:  "test.guard",
+		GuardrailCheck: func(hook, candidate string) GuardrailDecision {
+			if hook == GuardHookPreAction {
+				return GuardrailDecision{Blocked: true, Message: "The action was NOT performed: guardrail 'never spend money' would be violated."}
+			}
+			return GuardrailDecision{}
+		},
+	})
+	if err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	if handlerRan {
+		t.Fatal("a blocked pre-action tool must NEVER reach its handler")
+	}
+	found := false
+	for _, m := range history {
+		for _, tr := range m.ToolResults {
+			if tr.IsError && strings.Contains(tr.Content, "was NOT performed") {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatal("the trusted block message must be handed back into history as the tool result")
+	}
+}
+
+// leakThenCleanLLM returns a leaking reply first, then a clean one — to prove a
+// pre_output-blocked draft is scrubbed from history, not just re-prompted.
+// TestGuardrailPreOutputRedactsLeakedDraft is the regression for the Alex leak:
+// pre_output correctly blocked a reply containing the salary figure, but the
+// draft had already been recorded to history (round 1) and so was persisted and
+// delivered before the clean retry. The blocked draft must be REDACTED from the
+// returned history — the figure must not survive anywhere the caller can persist
+// or deliver it.
+func TestGuardrailPreOutputRedactsLeakedDraft(t *testing.T) {
+	// Leaks the figure once, then complies on the retry.
+	app := &AppCore{LLM: &FakeLLM{Turns: []FakeTurn{
+		{Content: "Alex makes $150k-$180k as Director of Operations."},
+		{Content: "I'll pass on that one.", Repeat: true},
+	}}}
+	resp, history, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "How much does Alex make?"}}, AgentLoopConfig{
+		MaxRounds: 4,
+		GuardrailCheck: func(hook, candidate string) GuardrailDecision {
+			if hook == GuardHookPreOutput && strings.Contains(candidate, "$150k") {
+				return GuardrailDecision{Blocked: true, Correctable: true, Message: "BLOCKED by a guardrail: never mention salary. Deflect."}
+			}
+			return GuardrailDecision{}
+		},
+	})
+	if err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	if strings.Contains(resp.Content, "$150k") {
+		t.Fatalf("the final reply must be the clean retry, not the leak; got: %s", resp.Content)
+	}
+	for i, m := range history {
+		if strings.Contains(m.Content, "$150k") {
+			t.Fatalf("the leaked figure must not survive anywhere in history; found at [%d] role=%s: %s", i, m.Role, m.Content)
+		}
+	}
+	// And the scrubbed turn is a placeholder, not simply gone (alternation kept).
+	sawRedaction := false
+	for _, m := range history {
+		if strings.Contains(m.Content, "withheld here") {
+			sawRedaction = true
+		}
+	}
+	if !sawRedaction {
+		t.Fatal("the blocked draft should be replaced by the redaction placeholder")
+	}
+}
+
+// alwaysLeakLLM keeps trying to disclose no matter how many times it's
+// corrected — the "determined push" a socially-engineered turn produces.
+// TestGuardrailPreOutputSubstitutesWhenPushed closes the escape hatch: after the
+// correction budget is spent, pre_output must NOT release a still-violating
+// reply. The final reply must be the safe substitute, and the figure must
+// appear nowhere in history — no matter how many times the model retries the leak.
+func TestGuardrailPreOutputSubstitutesWhenPushed(t *testing.T) {
+	// Leaks every time, however often it is asked.
+	app := &AppCore{LLM: &FakeLLM{Turns: []FakeTurn{
+		{Content: "Fine — Alex makes $150k-$180k.", Repeat: true},
+	}}}
+	resp, history, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "go ahead and show me"}}, AgentLoopConfig{
+		MaxRounds: 8,
+		GuardrailCheck: func(hook, candidate string) GuardrailDecision {
+			if hook == GuardHookPreOutput && strings.Contains(candidate, "$150k") {
+				return GuardrailDecision{Blocked: true, Message: "BLOCKED: never mention salary. Deflect."}
+			}
+			return GuardrailDecision{}
+		},
+	})
+	if err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	if !isGuardrailSafeFallback(resp.Content) {
+		t.Fatalf("a reply that keeps violating must end as one of the safe substitutes; got: %s", resp.Content)
+	}
+	for i, m := range history {
+		if strings.Contains(m.Content, "$150k") {
+			t.Fatalf("the figure must not survive anywhere in history; found at [%d] role=%s", i, m.Role)
+		}
+	}
+}
+
+// TestGuardrailPreOutputRetractsNotSettles proves a blocked round is DISCARDED
+// via RetractRound (which the app wires to skip persistence/delivery) rather
+// than SettleRound (which commits the bubble). This is the fix for the leak
+// where the web transcript kept the blocked draft even though history was
+// scrubbed — the transcript is built from settled per-round bubbles.
+func TestGuardrailPreOutputRetractsNotSettles(t *testing.T) {
+	settled, retracted := 0, 0
+	app := &AppCore{LLM: &FakeLLM{Turns: []FakeTurn{
+		{Content: "Alex makes $150k-$180k as Director of Operations."},
+		{Content: "I'll pass on that one.", Repeat: true},
+	}}}
+	_, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "How much does Alex make?"}}, AgentLoopConfig{
+		MaxRounds:    4,
+		SettleRound:  func() { settled++ },
+		RetractRound: func() { retracted++ },
+		GuardrailCheck: func(hook, candidate string) GuardrailDecision {
+			if hook == GuardHookPreOutput && strings.Contains(candidate, "$150k") {
+				return GuardrailDecision{Blocked: true, Message: "BLOCKED: never mention salary. Deflect."}
+			}
+			return GuardrailDecision{}
+		},
+	})
+	if err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	if retracted == 0 {
+		t.Fatal("a pre_output block must DISCARD the bubble via RetractRound")
+	}
+	if settled != 0 {
+		t.Fatalf("a blocked round must NOT be settled (that persists the leak); settled=%d", settled)
+	}
+}
+
+// The decline set exists so a blocked reply is not a FINGERPRINT: a
+// verbatim-identical string tells a prober exactly which attempts tripped the
+// guardrail, letting them bisect toward a rule they never see.
+func TestGuardrailFallbackVariesAndStaysUninformative(t *testing.T) {
+	if len(guardrailSafeFallbacks) < 4 {
+		t.Fatalf("only %d declines — too few to stop the reply reading as a fingerprint", len(guardrailSafeFallbacks))
+	}
+	seen := map[string]bool{}
+	for i := 0; i < 400; i++ {
+		seen[guardrailSafeFallbackReply(nil)] = true
+	}
+	if len(seen) < 2 {
+		t.Error("the decline never varied across 400 picks")
+	}
+	for _, line := range guardrailSafeFallbacks {
+		if !isGuardrailSafeFallback(line) {
+			t.Errorf("%q not recognized by isGuardrailSafeFallback", line)
+		}
+		low := strings.ToLower(line)
+		// Uniform in information, varied only in wording. Anything naming the
+		// mechanism, or hinting a rephrase might land, leaks more than the one
+		// fixed string it replaced.
+		for _, leak := range []string{"guardrail", "rule", "policy", "blocked", "not allowed", "restrict", "rephrase", "try again"} {
+			if strings.Contains(low, leak) {
+				t.Errorf("decline %q leaks %q", line, leak)
+			}
+		}
+		// House style: no em-dashes (the display boundary rewrites them anyway).
+		if strings.Contains(line, "—") {
+			t.Errorf("decline %q contains an em-dash", line)
+		}
+	}
+}
+
+// An agent's own decline set wins, so it refuses in its own voice. The set may
+// have been model-written at AUTHORING time; by the time it is used here it is
+// static reviewed text, which is the whole distinction.
+func TestOwnerDeclineOverridesBuiltIn(t *testing.T) {
+	const custom = "That's not something this desk handles."
+	for i := 0; i < 20; i++ {
+		if got := guardrailSafeFallbackReply([]string{custom}); got != custom {
+			t.Fatalf("owner decline ignored: got %q", got)
+		}
+	}
+	// Blank / whitespace falls back to the built-in set rather than sending
+	// an empty reply.
+	for _, blank := range [][]string{nil, {}, {""}, {"   ", "\n\t"}} {
+		if got := guardrailSafeFallbackReply(blank); !isGuardrailSafeFallback(got) {
+			t.Errorf("blank custom declines %q produced %q, want a built-in", blank, got)
+		}
+	}
+}
+
+// Every hook but pre_output used to be advisory: a blocked pre_action returned
+// an error result and the loop carried on, so the model could reword the call,
+// route to an ungoverned tool, or just try again. The escalation meant to catch
+// that handed the model a string reading "STOP" — an INSTRUCTION to the very
+// agent whose judgment the warden had overruled. GuardrailHalted makes the
+// termination real: the loop ends, and no further generation happens.
+func TestGuardrailHaltEndsTheTurn(t *testing.T) {
+	rounds := 0
+	app, _ := withTierStubs(t, "test.halt", func(n int) []ToolCall {
+		rounds = n
+		return []ToolCall{{ID: "1", Name: "spend", Args: map[string]any{"amount": "100"}}}
+	})
+
+	handlerRan := false
+	spend := AgentToolDef{
+		Tool:         Tool{Name: "spend", Description: "spends money", Parameters: map[string]ToolParam{"amount": {Type: "string", Description: "how much"}}},
+		NeedsConfirm: true,
+		Handler:      func(ctx context.Context, args map[string]any) (string, error) { handlerRan = true; return "spent", nil },
+	}
+
+	resp, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "go"}}, AgentLoopConfig{
+		Tools:     []AgentToolDef{spend},
+		MaxRounds: 20, // generous: if the halt doesn't fire, the model keeps retrying
+		RouteKey:  "test.halt",
+		GuardrailCheck: func(hook, candidate string) GuardrailDecision {
+			return GuardrailDecision{Blocked: hook == GuardHookPreAction, Message: "blocked"}
+		},
+		GuardrailHalted: func() bool { return true },
+		GuardrailReject: func(GuardrailHalt) string { return "I can't help with that one." },
+	})
+	if err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	if handlerRan {
+		t.Error("the blocked tool must never execute")
+	}
+	if resp.Content != "I can't help with that one." {
+		t.Errorf("the reply must come from the rejection model, got %q", resp.Content)
+	}
+	if len(resp.ToolCalls) != 0 {
+		t.Error("a halted turn must not return pending tool calls")
+	}
+	// The point of a hard stop: it does not spend the round budget arguing.
+	if rounds > 2 {
+		t.Errorf("halt should end the turn immediately, but the model was called %d times", rounds)
+	}
+}
+
+// The rejection model is the handover target, so a failure there must not
+// release what it was replacing. Empty (or absent) falls back to the canned
+// decline — never to the model's own blocked draft.
+func TestRejectionFailureFallsBackToCannedDecline(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		reject func(GuardrailHalt) string
+	}{
+		{"returns empty", func(GuardrailHalt) string { return "" }},
+		{"returns whitespace", func(GuardrailHalt) string { return "   \n " }},
+		{"not wired at all", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			app, _ := withTierStubs(t, "test.reject", func(n int) []ToolCall { return nil })
+			resp, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "go"}}, AgentLoopConfig{
+				MaxRounds: 3,
+				RouteKey:  "test.reject",
+				GuardrailCheck: func(hook, candidate string) GuardrailDecision {
+					return GuardrailDecision{Blocked: hook == GuardHookPreOutput, Message: "blocked"}
+				},
+				GuardrailHalted: func() bool { return true },
+				GuardrailReject: tc.reject,
+			})
+			if err != nil {
+				t.Fatalf("loop: %v", err)
+			}
+			if !isGuardrailSafeFallback(resp.Content) {
+				t.Errorf("a failed rejection must fall back to a canned decline, got %q", resp.Content)
+			}
+		})
+	}
+}
+
+// Halt must override the correction budget at pre_output too. Re-prompting is
+// one more generation from the context that just failed, which is exactly what
+// a halt exists to prevent.
+func TestHaltSkipsOutputCorrectionRetries(t *testing.T) {
+	calls := 0
+	app, _ := withTierStubs(t, "test.nocorrect", func(n int) []ToolCall { calls = n; return nil })
+
+	resp, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "go"}}, AgentLoopConfig{
+		MaxRounds: 10,
+		RouteKey:  "test.nocorrect",
+		GuardrailCheck: func(hook, candidate string) GuardrailDecision {
+			return GuardrailDecision{Blocked: hook == GuardHookPreOutput, Message: "blocked"}
+		},
+		GuardrailHalted: func() bool { return true },
+		GuardrailReject: func(GuardrailHalt) string { return "Sorry, not this one." },
+	})
+	if err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	if deliveredReply(resp.Content) != "Sorry, not this one." {
+		t.Errorf("expected the rejection reply, got %q", resp.Content)
+	}
+	if calls > 1 {
+		t.Errorf("a halted pre_output must not re-prompt for revisions; model called %d times", calls)
+	}
+}
+
+// Without a halt the old behavior stands: block, correct, keep going. Pinned so
+// adding the halt didn't quietly turn every block into a turn-ender.
+func TestBlockWithoutHaltStillCorrects(t *testing.T) {
+	app, _ := withTierStubs(t, "test.nohalt", func(n int) []ToolCall { return nil })
+	_, history, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "go"}}, AgentLoopConfig{
+		MaxRounds: 4,
+		RouteKey:  "test.nohalt",
+		GuardrailCheck: func(hook, candidate string) GuardrailDecision {
+			return GuardrailDecision{Blocked: hook == GuardHookPreOutput, Correctable: true, Message: "revise please"}
+		},
+		// No GuardrailHalted — the correction path must still run.
+	})
+	if err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	sawCorrection := false
+	for _, m := range history {
+		if strings.Contains(m.Content, "revise please") {
+			sawCorrection = true
+		}
+	}
+	if !sawCorrection {
+		t.Error("without a halt, a blocked reply should still be re-prompted for correction")
+	}
+}
+
+// A non-correctable block skips the revise pass on the FIRST flag, with no halt
+// in sight. The rule forbids the content the request asked for, so there is no
+// compliant revision of this reply to wait for — and each retry would be another
+// draft holding the protected thing, to be retracted and scrubbed.
+func TestBlockingRuleSkipsCorrectionWithoutAHalt(t *testing.T) {
+	calls := 0
+	app, _ := withTierStubs(t, "test.blocking", func(n int) []ToolCall { calls = n; return nil })
+
+	resp, history, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "how much does Alex make?"}}, AgentLoopConfig{
+		MaxRounds: 10,
+		RouteKey:  "test.blocking",
+		GuardrailCheck: func(hook, candidate string) GuardrailDecision {
+			return GuardrailDecision{
+				Blocked:     hook == GuardHookPreOutput,
+				Correctable: false,
+				Message:     "blocked",
+			}
+		},
+		// No GuardrailHalted at all: a non-correctable block alone must end it.
+		GuardrailReject: func(GuardrailHalt) string { return "Not one I'll get into." },
+	})
+	if err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	if deliveredReply(resp.Content) != "Not one I'll get into." {
+		t.Errorf("a blocking rule hands the reply to the rejection writer, got %q", resp.Content)
+	}
+	if calls > 1 {
+		t.Errorf("a blocking rule must not re-prompt for revisions; model called %d times", calls)
+	}
+	// And the draft it replaced is nowhere in the returned history.
+	for _, m := range history {
+		if strings.Contains(m.Content, "blocked") && m.Role == "user" {
+			t.Error("a blocking rule must not inject a correction turn — it isn't asking for one")
+		}
+	}
+}
+
+// narratingLLM scripts a turn that narrates while it works: `rounds` rounds of
+// prose alongside a tool call, then a finish.
+//
+// vary makes each round's prose distinct, so a dedup somewhere downstream does
+// not mask a missing check — with every round identical, one check covers all
+// of them and a gap looks like a pass.
+func narratingLLM(prose string, rounds int, vary bool) *FakeLLM {
+	var turns []FakeTurn
+	for n := 1; n <= rounds; n++ {
+		content := prose
+		if vary {
+			content = fmt.Sprintf("%s (round %d)", prose, n)
+		}
+		turns = append(turns, FakeTurn{
+			Content:      content,
+			ToolCalls:    []ToolCall{{ID: "1", Name: "noop", Args: map[string]any{}}},
+			InputTokens:  1000,
+			OutputTokens: 50,
+		})
+	}
+	// The finishing round, and every round after it: a test that runs longer
+	// than its script is asserting about the rounds it named, not about where
+	// the model stops.
+	return &FakeLLM{Turns: append(turns, FakeTurn{
+		Content: "done", InputTokens: 1000, OutputTokens: 50, Repeat: true,
+	})}
+}
+
+func narratingApp(t *testing.T, routeKey string, stub *FakeLLM) (*AppCore, AgentToolDef) {
+	t.Helper()
+	prevWorker, prevLead := SharedWorkerLLM(), SharedLeadLLM()
+	SetSharedLLMs(stub, stub)
+	t.Cleanup(func() { SetSharedLLMs(prevWorker, prevLead) })
+	RegisterRouteStage(RouteStage{Key: routeKey, Label: "test", Default: "lead"})
+	noop := AgentToolDef{
+		Tool:    Tool{Name: "noop", Description: "does nothing", Parameters: map[string]ToolParam{}},
+		Handler: func(ctx context.Context, args map[string]any) (string, error) { return "ok", nil },
+	}
+	return &AppCore{LLM: stub, LeadLLM: stub}, noop
+}
+
+// The periodic guard must judge EVERY round that produces narration. It used to
+// sample every 4th, and the skipped rounds were a straight leak: interim prose is
+// appended to history and delivered mid-turn (the OnStep with Done:false paints a
+// bubble), so an unsampled round reached the transcript and the user unjudged.
+func TestPeriodicJudgesEveryNarratingRound(t *testing.T) {
+	stub := narratingLLM("working on it", 6, true)
+	app, noop := narratingApp(t, "test.everyround", stub)
+
+	seen := []string{}
+	_, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "go"}}, AgentLoopConfig{
+		Tools:     []AgentToolDef{noop},
+		MaxRounds: 8,
+		RouteKey:  "test.everyround",
+		GuardrailCheck: func(hook, candidate string) GuardrailDecision {
+			if hook == GuardHookPeriodic {
+				seen = append(seen, candidate)
+			}
+			return GuardrailDecision{}
+		},
+	})
+	if err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	if len(seen) < 6 {
+		t.Fatalf("every narrating round must be judged; got %d checks for 6 rounds: %q", len(seen), seen)
+	}
+	// And each round's own prose was what got judged, not a stale copy.
+	for i, got := range seen[:6] {
+		if !strings.Contains(got, fmt.Sprintf("round %d", i+1)) {
+			t.Errorf("check %d judged %q, expected round %d's narration", i, got, i+1)
+		}
+	}
+}
+
+// Cost control: identical prose is judged once. The check is a pure function of
+// (rules, text), so a repeated lead-in cannot get a different answer.
+func TestPeriodicDedupesIdenticalNarration(t *testing.T) {
+	stub := narratingLLM("same words every round", 6, false) // vary off
+	app, noop := narratingApp(t, "test.dedupe", stub)
+
+	checks := 0
+	_, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "go"}}, AgentLoopConfig{
+		Tools:     []AgentToolDef{noop},
+		MaxRounds: 8,
+		RouteKey:  "test.dedupe",
+		GuardrailCheck: func(hook, candidate string) GuardrailDecision {
+			if hook == GuardHookPeriodic {
+				checks++
+			}
+			return GuardrailDecision{}
+		},
+	})
+	if err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	if checks != 1 {
+		t.Errorf("six identical narrations should cost ONE warden call; got %d", checks)
+	}
+}
+
+// The escape hatch pre_output had to have removed, in its periodic form: the gate
+// used to stop CHECKING once the correction budget was spent, so the round after
+// the budget ran out was released unjudged. The budget may govern whether a block
+// can redirect; it must never stop the check.
+func TestPeriodicKeepsCheckingAfterCorrectionBudgetSpent(t *testing.T) {
+	stub := narratingLLM("leaking", 10, true)
+	app, noop := narratingApp(t, "test.afterbudget", stub)
+
+	checks := 0
+	resp, history, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "go"}}, AgentLoopConfig{
+		Tools:     []AgentToolDef{noop},
+		MaxRounds: 12,
+		RouteKey:  "test.afterbudget",
+		GuardrailCheck: func(hook, candidate string) GuardrailDecision {
+			if hook != GuardHookPeriodic {
+				return GuardrailDecision{}
+			}
+			checks++
+			return GuardrailDecision{Blocked: true, Correctable: true, Message: "blocked"}
+		},
+		GuardrailReject: func(GuardrailHalt) string { return "Not that one." },
+	})
+	if err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	// Blocked every time, so once the redirect budget is spent the turn must hand
+	// over rather than let a round through.
+	if deliveredReply(resp.Content) != "Not that one." {
+		t.Errorf("a block with no redirect left must hand over, got %q", resp.Content)
+	}
+	if checks < maxGuardrailOutputCorrections+1 {
+		t.Errorf("the check must keep running past the correction budget; ran %d times", checks)
+	}
+	for _, m := range history {
+		if m.Role == "assistant" && strings.Contains(m.Content, "leaking") {
+			t.Error("no blocked narration may survive in history")
+		}
+	}
+}
+
+// A blocking rule flagged in mid-flight narration hands over rather than
+// redirecting the turn to carry on differently. With per-round checking, the
+// violation is always caught in the round that produced it, so scrubbing the most
+// recent assistant turn genuinely clears it — the figure survives NOWHERE.
+func TestBlockingRuleAtPeriodicHandsOverWithoutAHalt(t *testing.T) {
+	stub := narratingLLM("the manager makes $202,000, let me confirm", 6, true)
+	app, noop := narratingApp(t, "test.blockperiodic", stub)
+
+	hooks := map[string]int{}
+	resp, history, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "go"}}, AgentLoopConfig{
+		Tools:     []AgentToolDef{noop},
+		MaxRounds: 8,
+		RouteKey:  "test.blockperiodic",
+		GuardrailCheck: func(hook, candidate string) GuardrailDecision {
+			hooks[hook]++
+			return GuardrailDecision{Blocked: hook == GuardHookPeriodic, Correctable: false, Message: "blocked"}
+		},
+		GuardrailReject: func(GuardrailHalt) string { return "Skipping that one." },
+	})
+	if err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	if hooks[GuardHookPeriodic] == 0 {
+		t.Fatal("the periodic gate never fired — the test proves nothing")
+	}
+	if resp.Content != "Skipping that one." {
+		t.Errorf("a blocking rule at periodic hands over to the rejection writer, got %q", resp.Content)
+	}
+	// This is the assertion the sampling interval used to make impossible.
+	for _, m := range history {
+		if strings.Contains(m.Content, "202,000") {
+			t.Errorf("flagged narration must survive nowhere in history; found in %s turn: %q", m.Role, m.Content)
+		}
+	}
+}
+
+// Correctable carries no weight at pre_action: a blocked tool call still leaves a
+// compliant route to finishing the task, so this stays block-and-continue.
+// Ending the turn there would make every recoverable detour a dead end.
+func TestBlockingRuleDoesNotEndTheTurnAtPreAction(t *testing.T) {
+	handlerRan := false
+	app, _ := withTierStubs(t, "test.blockaction", func(n int) []ToolCall {
+		if n == 0 {
+			return []ToolCall{{ID: "1", Name: "spend", Args: map[string]any{"amount": 5}}}
+		}
+		return nil // second round: answer normally
+	})
+	spend := AgentToolDef{
+		Tool:         Tool{Name: "spend", Description: "spends money", Parameters: map[string]ToolParam{"amount": {Type: "string", Description: "how much"}}},
+		NeedsConfirm: true,
+		Handler:      func(ctx context.Context, args map[string]any) (string, error) { handlerRan = true; return "spent", nil },
+	}
+	resp, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "go"}}, AgentLoopConfig{
+		Tools:     []AgentToolDef{spend},
+		MaxRounds: 6,
+		RouteKey:  "test.blockaction",
+		GuardrailCheck: func(hook, candidate string) GuardrailDecision {
+			return GuardrailDecision{Blocked: hook == GuardHookPreAction, Correctable: false, Message: "blocked, change course"}
+		},
+		GuardrailReject: func(GuardrailHalt) string { return "REJECTED" },
+	})
+	if err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	if handlerRan {
+		t.Error("the blocked tool must never execute")
+	}
+	if resp.Content == "REJECTED" {
+		t.Error("a blocking rule at pre_action must NOT end the turn; the agent gets to change course")
+	}
+}
+
+// The periodic check is the expensive one — a model call for every round that
+// produces narration. It is worth that where the words are painted into a live
+// transcript and worth nothing where the round's prose is discarded before
+// anyone sees it, which is what InterimContentHidden declares.
+func TestPeriodicSkippedWhenInterimContentIsHidden(t *testing.T) {
+	stub := narratingLLM("thinking out loud", 6, true)
+	app, noop := narratingApp(t, "test.hidden", stub)
+
+	hooks := map[string]int{}
+	_, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "go"}}, AgentLoopConfig{
+		Tools:                []AgentToolDef{noop},
+		MaxRounds:            8,
+		RouteKey:             "test.hidden",
+		InterimContentHidden: true,
+		GuardrailCheck: func(hook, candidate string) GuardrailDecision {
+			hooks[hook]++
+			return GuardrailDecision{}
+		},
+	})
+	if err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	if hooks[GuardHookPeriodic] != 0 {
+		t.Errorf("periodic must not run when interim prose goes nowhere; ran %d times", hooks[GuardHookPeriodic])
+	}
+	// The saving must not have cost containment: pre_output still judges the reply
+	// that actually ships, which on such a path is the only text there is.
+	if hooks[GuardHookPreOutput] == 0 {
+		t.Error("pre_output must still judge the final reply")
+	}
+}
+
+// The zero value has to be the safe one: a host that says nothing keeps full
+// checking rather than silently losing containment.
+func TestPeriodicRunsByDefault(t *testing.T) {
+	stub := narratingLLM("thinking out loud", 4, true)
+	app, noop := narratingApp(t, "test.default", stub)
+
+	hooks := map[string]int{}
+	_, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "go"}}, AgentLoopConfig{
+		Tools:     []AgentToolDef{noop},
+		MaxRounds: 8,
+		RouteKey:  "test.default",
+		// InterimContentHidden deliberately unset.
+		GuardrailCheck: func(hook, candidate string) GuardrailDecision {
+			hooks[hook]++
+			return GuardrailDecision{}
+		},
+	})
+	if err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	if hooks[GuardHookPeriodic] == 0 {
+		t.Fatal("a host that declares nothing must get the periodic check — the zero value is the safe one")
+	}
+}
+
+// And a hidden path must still contain a leak in the reply itself: skipping
+// periodic saves calls, it does not open the door pre_output guards.
+func TestHiddenInterimStillBlocksTheReply(t *testing.T) {
+	app, _ := withTierStubs(t, "test.hiddenblock", func(n int) []ToolCall { return nil })
+	resp, history, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "go"}}, AgentLoopConfig{
+		MaxRounds:            6,
+		RouteKey:             "test.hiddenblock",
+		InterimContentHidden: true,
+		GuardrailCheck: func(hook, candidate string) GuardrailDecision {
+			return GuardrailDecision{Blocked: hook == GuardHookPreOutput, Correctable: false, Message: "blocked"}
+		},
+		GuardrailReject: func(GuardrailHalt) string { return "Not that one." },
+	})
+	if err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	if deliveredReply(resp.Content) != "Not that one." {
+		t.Errorf("a hidden-interim path must still substitute on a pre_output block, got %q", resp.Content)
+	}
+	for _, m := range history {
+		if m.Role == "assistant" && strings.Contains(m.Content, "done") {
+			t.Error("the blocked draft must not survive in history")
+		}
+	}
+}
+
+// A pre-empted turn calls no model at all, and still delivers through the path
+// every host already renders with — streamed, then one Done step. Returning the
+// text without streaming it persists a reply the browser never paints.
+func TestPreEmptedReplyCallsNoModel(t *testing.T) {
+	calls := 0
+	app, _ := withTierStubs(t, "test.preempt", func(n int) []ToolCall { calls = n; return nil })
+
+	var streamed strings.Builder
+	steps := 0
+	resp, history, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "the forbidden question"}}, AgentLoopConfig{
+		MaxRounds:      6,
+		RouteKey:       "test.preempt",
+		PreEmptedReply: "Not one I'll get into.",
+		Stream:         func(chunk string) { streamed.WriteString(chunk) },
+		OnStep:         func(info StepInfo) { steps++ },
+	})
+	if err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	if calls != 0 {
+		t.Errorf("a pre-empted turn must not call a model; called %d times", calls)
+	}
+	if deliveredReply(resp.Content) != "Not one I'll get into." {
+		t.Errorf("the pre-empted reply must be returned verbatim, got %q", resp.Content)
+	}
+	if streamed.String() != "Not one I'll get into." {
+		t.Errorf("the reply must be streamed so the web transcript paints it, got %q", streamed.String())
+	}
+	if steps != 1 {
+		t.Errorf("expected exactly one Done step, got %d", steps)
+	}
+	// A caller that persists the transcript must get a real conversation, not nil.
+	if len(history) != 2 || history[1].Role != "assistant" || history[1].Content != "Not one I'll get into." {
+		t.Errorf("history must be the request plus the reply; got %+v", history)
+	}
+}
+
+// Whitespace-only is not a reply. It must not pre-empt the turn, or a bug in the
+// app layer would silently answer every request with nothing.
+func TestBlankPreEmptedReplyStillRunsTheTurn(t *testing.T) {
+	calls := 0
+	app, _ := withTierStubs(t, "test.preemptblank", func(n int) []ToolCall { calls = n; return nil })
+	_, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "go"}}, AgentLoopConfig{
+		MaxRounds:      3,
+		RouteKey:       "test.preemptblank",
+		PreEmptedReply: "   \n ",
+	})
+	if err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	if calls == 0 {
+		t.Error("a blank pre-empted reply must not suppress the turn")
+	}
+}
+
+// The zero value is the strict one, and that is the point of naming the field for
+// the correctable case. A caller that reports a block without saying anything
+// about severity gets block-and-refuse, not a free revise pass — so forgetting the
+// field costs a refusal, never a leak.
+func TestZeroValueDecisionIsNotCorrectable(t *testing.T) {
+	var dec GuardrailDecision
+	if dec.Correctable {
+		t.Fatal("the zero value must not be correctable")
+	}
+	calls := 0
+	app, _ := withTierStubs(t, "test.zerosev", func(n int) []ToolCall { calls = n; return nil })
+	resp, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "go"}}, AgentLoopConfig{
+		MaxRounds: 6,
+		RouteKey:  "test.zerosev",
+		GuardrailCheck: func(hook, candidate string) GuardrailDecision {
+			// Severity deliberately unset — the shape a careless caller writes.
+			return GuardrailDecision{Blocked: hook == GuardHookPreOutput, Message: "blocked"}
+		},
+		GuardrailReject: func(GuardrailHalt) string { return "Not that one." },
+	})
+	if err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	if deliveredReply(resp.Content) != "Not that one." {
+		t.Errorf("an unset severity must hand over rather than revise; got %q", resp.Content)
+	}
+	if calls > 1 {
+		t.Errorf("an unset severity must not buy a revise pass; model called %d times", calls)
+	}
+}
+
+// deliveredReply is the reply as the READER receives it. A guardrail-substituted
+// decline carries guardrailClosedNote for the model — telling it the refused
+// request is closed so it does not answer it a turn later — and every delivery
+// boundary strips it. Assertions about what someone sees have to strip it too,
+// or they are testing the internal copy.
+func deliveredReply(s string) string {
+	return strings.TrimSpace(textutil.StripMetaTags(s))
+}
+
+// The round-cap exit used to leave without ever asking the output guardrail.
+//
+// finalRoundOutputGuardrail claims the budget-spent case is exactly what it
+// covers — "a determined push can't leak on the attempt after the budget runs
+// out (the old escape hatch)". It could not: its chain runs inside the loop,
+// and a turn that exhausts its rounds returns from below it, carrying whatever
+// the last round produced.
+//
+// Observed on a live group chat: a reply carrying a nickname a standing rule
+// forbids went out with no guardrail line logged at all. Messages landing
+// mid-turn make finalRoundJudges return early to drain them — before the
+// guardrail, which is last in the chain — so a lively conversation spends its
+// rounds skipping the check and then delivers through this door.
+func TestRoundCapExitStillAsksTheOutputGuardrail(t *testing.T) {
+	// A model that never stops calling tools burns the budget and leaves by the
+	// exhaustion path rather than by a natural final answer.
+	// MaxRounds 2 with no grace (grace only defaults on for MaxRounds >= 10),
+	// so the loop makes two calls and leaves by exhaustion. Call 3 is the
+	// forced-final-answer rescue AFTER the loop: it gets no tool calls back and
+	// so produces the text that would be delivered.
+	// The counter is the TEST's, not the stub's: withTierStubs builds a lead
+	// and a worker stub with independent counts, and the rescue runs on the
+	// worker whichever tier served the rounds — so a per-stub count restarts
+	// under it and the rescue gets tool calls back instead of text.
+	var calls int32
+	app, _ := withTierStubs(t, "test.capguard", func(int) []ToolCall {
+		if n := atomic.AddInt32(&calls, 1); n >= 3 {
+			return nil // the rescue: answer in words
+		}
+		return []ToolCall{{ID: fmt.Sprint(atomic.LoadInt32(&calls)), Name: "noop", Args: map[string]any{}}}
+	})
+	noop := AgentToolDef{
+		Tool:    Tool{Name: "noop", Description: "does nothing"},
+		Handler: func(ctx context.Context, args map[string]any) (string, error) { return "ok", nil },
+	}
+
+	asked := map[string]int{}
+	var mu sync.Mutex
+	resp, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "go"}}, AgentLoopConfig{
+		Tools:     []AgentToolDef{noop},
+		MaxRounds: 2,
+		RouteKey:  "test.capguard",
+		GuardrailCheck: func(hook, candidate string) GuardrailDecision {
+			mu.Lock()
+			asked[hook]++
+			mu.Unlock()
+			if hook == GuardHookPreOutput {
+				return GuardrailDecision{Blocked: true, Message: "that name is forbidden"}
+			}
+			return GuardrailDecision{}
+		},
+	})
+	if err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	mu.Lock()
+	outputChecks := asked[GuardHookPreOutput]
+	mu.Unlock()
+	if outputChecks == 0 {
+		t.Fatalf("the turn ran out of rounds and delivered without the output guardrail ever being asked (hooks asked: %v, resp=%#v)", asked, resp)
+	}
+	if resp == nil {
+		t.Fatal("no response")
+	}
+	// Blocked means the draft is NOT what goes out. There are no rounds left to
+	// revise in, so the only safe answer is the decline.
+	if strings.Contains(resp.Content, "done") {
+		t.Errorf("the blocked draft was released on the round-cap exit: %q", resp.Content)
+	}
+	if strings.TrimSpace(resp.Content) == "" {
+		t.Error("something has to be delivered — a blocked reply becomes a decline, not silence")
+	}
+	// And whatever is delivered carries no framework marker to the reader.
+	if strings.Contains(textutil.StripMetaTags(resp.Content), "<gohort-meta") {
+		t.Errorf("a meta marker survived delivery: %q", resp.Content)
+	}
+}
+
+// The chain stops at the first guard that ends the round, and the output
+// guardrail used to be LAST in it — so a truncation recovery, a stall guard, a
+// judge or the injection drain decided whether the safety check ran at all.
+// Ordering is a bad place to keep a safety property: it is invisible at every
+// call site and one inserted guard undoes it.
+//
+// It lives on the exit funnel now, which cannot be reordered. This pins that a
+// reply leaving by a path that never reaches the chain is still judged.
+func TestEveryExitIsJudgedNotJustTheLastGuardInAList(t *testing.T) {
+	// A model that answers in words on the FIRST round: the loop takes a
+	// natural completion, which returns from inside the loop through exit().
+	app, _ := withTierStubs(t, "test.exitfunnel", func(int) []ToolCall { return nil })
+
+	var mu sync.Mutex
+	outputChecks := 0
+	resp, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "go"}}, AgentLoopConfig{
+		MaxRounds: 3,
+		RouteKey:  "test.exitfunnel",
+		GuardrailCheck: func(hook, candidate string) GuardrailDecision {
+			if hook != GuardHookPreOutput {
+				return GuardrailDecision{}
+			}
+			mu.Lock()
+			outputChecks++
+			mu.Unlock()
+			return GuardrailDecision{Blocked: true, Message: "not that"}
+		},
+	})
+	if err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	mu.Lock()
+	n := outputChecks
+	mu.Unlock()
+	if n == 0 {
+		t.Fatal("a reply was returned without the output guardrail being asked")
+	}
+	// Asked ONCE. The final-round check and the funnel must not both pay for
+	// the same draft — a warden call per terminal reply is the expensive part.
+	if n > 1 {
+		t.Errorf("the same draft was judged %d times; the funnel should defer to the round's own check", n)
+	}
+	if resp == nil || strings.Contains(resp.Content, "done") {
+		t.Errorf("the blocked draft was released: %#v", resp)
+	}
+}
+
+// The exit the chain provably never reaches: a control tool (respond_directly,
+// ask_user) closes the turn, and because its call IS a tool call the final-round
+// chain — which only runs when there are none — is skipped wholesale.
+//
+// The funnel now covers any PROSE the model wrote alongside that call. What it
+// cannot cover is the reply carried in the tool's ARGUMENTS: core does not know
+// which argument holds a message (RoundAbortTools is a list of names and
+// nothing more), and the text is read and delivered by the app —
+// orchestrate's emitCapturedAsBubble. Judging that is orchestrate's to do, and
+// this test exists to record the boundary rather than to imply it is closed.
+func TestAControlToolExitCarriesNoProseToJudge(t *testing.T) {
+	app, _ := withTierStubs(t, "test.abortexit", func(n int) []ToolCall {
+		return []ToolCall{{ID: fmt.Sprint(n), Name: "respond_directly", Args: map[string]any{"text": "the forbidden thing"}}}
+	})
+	respond := AgentToolDef{
+		Tool:    Tool{Name: "respond_directly", Description: "answer now"},
+		Handler: func(ctx context.Context, args map[string]any) (string, error) { return "ok", nil },
+	}
+
+	var mu sync.Mutex
+	asked := 0
+	resp, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "go"}}, AgentLoopConfig{
+		Tools:           []AgentToolDef{respond},
+		MaxRounds:       3,
+		RouteKey:        "test.abortexit",
+		RoundAbortTools: []string{"respond_directly"},
+		GuardrailCheck: func(hook, candidate string) GuardrailDecision {
+			if hook == GuardHookPreOutput {
+				mu.Lock()
+				asked++
+				mu.Unlock()
+			}
+			return GuardrailDecision{}
+		},
+	})
+	if err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	// The response core returns carries no prose — which is WHY the funnel asks
+	// nothing here, and why the arg-borne reply is still the app's problem. If
+	// this ever starts carrying content, the funnel will judge it and the count
+	// below changes; that is the signal to revisit, not a failure.
+	if resp != nil && strings.TrimSpace(resp.Content) != "" {
+		mu.Lock()
+		n := asked
+		mu.Unlock()
+		if n == 0 {
+			t.Errorf("the control-tool exit now carries prose (%q) and it went unjudged", resp.Content)
+		}
+	}
+	// The argument text must not have become the reply CONTENT — that is the
+	// field every output check reads, and the tool-call record carrying it is
+	// not a delivery.
+	if resp != nil && strings.Contains(resp.Content, "the forbidden thing") {
+		t.Error("the control tool's argument text became the reply content and would bypass every output check")
+	}
+}
+
+// An ERROR exit has no reply to release, and asking a warden about a
+// context-exhaustion message spends a call to be told what nobody was going to
+// send anyway.
+func TestAnErrorExitIsNotJudged(t *testing.T) {
+	lr := &loopRun{cfg: AgentLoopConfig{
+		GuardrailCheck: func(hook, candidate string) GuardrailDecision {
+			t.Errorf("an error exit must not be judged (hook=%s)", hook)
+			return GuardrailDecision{}
+		},
+	}}
+	lr.exit(&Response{Content: "half an answer"}, nil, fmt.Errorf("context exhausted"))
+	// And an empty reply is nothing to judge either.
+	lr.outputChecked = false
+	lr.exit(&Response{Content: "   "}, nil, nil)
+}
+
+// The hold is the whole safety argument for running a request check alongside
+// round 1: nothing the round emits gets out before the check answers, it all
+// gets out in order once the check admits it, and none of it ever does once
+// the check refuses.
+func TestFirstRoundGateHoldsUntilTheVerdict(t *testing.T) {
+	release := make(chan struct{})
+	g := startFirstRoundGate(func() FirstRoundVerdict { <-release; return FirstRoundVerdict{} })
+	var out []string
+	text := g.hold(func(c string) { out = append(out, "text:"+c) })
+	thought := g.hold(func(c string) { out = append(out, "thought:"+c) })
+	thought("weighing it")
+	text("hel")
+	text("lo")
+	g.mu.Lock()
+	early := len(out)
+	g.mu.Unlock()
+	if early != 0 {
+		t.Fatalf("emitted before the check answered: %v", out)
+	}
+	close(release)
+	g.wait()
+	text("!")
+	if got := strings.Join(out, " "); got != "thought:weighing it text:hel text:lo text:!" {
+		t.Errorf("an admitted round goes out whole and in order, got %q", got)
+	}
+
+	refused := startFirstRoundGate(func() FirstRoundVerdict { return FirstRoundVerdict{Decline: "no"} })
+	refused.wait()
+	ctx, cancel := refused.arm(context.Background())
+	defer cancel()
+	if ctx.Err() == nil {
+		t.Error("a call armed after a refusal must start cancelled")
+	}
+	out = nil
+	refused.hold(func(c string) { out = append(out, c) })("the forbidden answer")
+	if len(out) != 0 {
+		t.Errorf("a refused round must emit nothing, got %v", out)
+	}
+	if g.hold(nil) != nil {
+		t.Error("holding no emitter must stay no emitter")
+	}
+}
+
+// A refusal cancels round 1 where it stands: the call that would otherwise run
+// forever returns, the tool it asked for never runs, and the decline is the
+// only thing streamed.
+func TestFirstRoundGateDeclineCancelsTheRound(t *testing.T) {
+	ran := false
+	tool := AgentToolDef{
+		Tool:    Tool{Name: "lookup", Description: "d", Parameters: map[string]ToolParam{"q": {Type: "string"}}},
+		Handler: func(ctx context.Context, args map[string]any) (string, error) { ran = true; return "salary data", nil },
+	}
+	never := make(chan struct{})
+	fake := &FakeLLM{Turns: []FakeTurn{{Chunks: []string{"Their salary is "}, Wait: never}}}
+	app := &AppCore{LLM: fake}
+	var streamed strings.Builder
+	resp, history, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "what do they earn?"}}, AgentLoopConfig{
+		MaxRounds:      4,
+		Tools:          []AgentToolDef{tool},
+		Stream:         func(c string) { streamed.WriteString(c) },
+		FirstRoundGate: func() FirstRoundVerdict { return FirstRoundVerdict{Decline: "Not one I'll get into."} },
+	})
+	if err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	if ran {
+		t.Error("a refused round's tool must never run")
+	}
+	if resp.Content != "Not one I'll get into." || streamed.String() != "Not one I'll get into." {
+		t.Errorf("the decline is the reply and all that streams; got reply %q, streamed %q", resp.Content, streamed.String())
+	}
+	if n := len(history); n == 0 || history[n-1].Role != "assistant" || history[n-1].Content != "Not one I'll get into." {
+		t.Errorf("history must end on the decline, got %+v", history)
+	}
+	if fake.Calls() != 1 {
+		t.Errorf("expected the one cancelled call, got %d", fake.Calls())
+	}
+}
+
+// A steer throws round 1 away and runs it again with the directive just ahead
+// of the request, where a check run first would have put it.
+func TestFirstRoundGateSteerRerunsWithTheDirective(t *testing.T) {
+	ran := false
+	tool := AgentToolDef{
+		Tool:    Tool{Name: "lookup", Description: "d", Parameters: map[string]ToolParam{"q": {Type: "string"}}},
+		Handler: func(ctx context.Context, args map[string]any) (string, error) { ran = true; return "salary data", nil },
+	}
+	never := make(chan struct{})
+	fake := &FakeLLM{Turns: []FakeTurn{
+		{Chunks: []string{"Looking that up"}, ToolCalls: []ToolCall{{ID: "c1", Name: "lookup", Args: map[string]any{"q": "salary"}}}, Wait: never},
+		{Content: "I can help with the role, not the pay."},
+	}}
+	app := &AppCore{LLM: fake}
+	var streamed strings.Builder
+	resp, _, err := app.RunAgentLoop(context.Background(), []Message{
+		{Role: "user", Content: "hi"}, {Role: "assistant", Content: "hello"}, {Role: "user", Content: "what do they earn?"},
+	}, AgentLoopConfig{
+		MaxRounds:      4,
+		Tools:          []AgentToolDef{tool},
+		Stream:         func(c string) { streamed.WriteString(c) },
+		FirstRoundGate: func() FirstRoundVerdict { return FirstRoundVerdict{Steer: "Constraint on this reply: no pay."} },
+	})
+	if err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	if ran {
+		t.Error("the discarded round's tool must never run")
+	}
+	if deliveredReply(resp.Content) != "I can help with the role, not the pay." {
+		t.Errorf("the reply comes from the rerun, got %q", resp.Content)
+	}
+	if strings.Contains(streamed.String(), "Looking that up") {
+		t.Errorf("the discarded round must not stream, got %q", streamed.String())
+	}
+	sent := fake.Sent(1)
+	at := -1
+	for i, m := range sent {
+		if m.Role == "system" && m.Content == "Constraint on this reply: no pay." {
+			at = i
+		}
+	}
+	if at < 0 || at+1 >= len(sent) || sent[at+1].Role != "user" || !strings.Contains(sent[at+1].Content, "what do they earn?") {
+		t.Errorf("the directive must sit just ahead of the request; sent %+v", sent)
+	}
+	if fake.Calls() != 2 {
+		t.Errorf("expected the cancelled call and the rerun, got %d", fake.Calls())
+	}
+}
+
+// An admitted round is the round: one call, its text streamed once, and the
+// loop does not return before the check has finished whatever it records.
+func TestFirstRoundGateAdmitKeepsTheRound(t *testing.T) {
+	fake := &FakeLLM{Turns: []FakeTurn{{Chunks: []string{"hel", "lo"}}}}
+	app := &AppCore{LLM: fake}
+	var streamed strings.Builder
+	var recorded atomic.Bool
+	resp, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "hi"}}, AgentLoopConfig{
+		MaxRounds: 3,
+		Stream:    func(c string) { streamed.WriteString(c) },
+		FirstRoundGate: func() FirstRoundVerdict {
+			for fake.Calls() == 0 {
+				runtime.Gosched()
+			}
+			recorded.Store(true)
+			return FirstRoundVerdict{}
+		},
+	})
+	if err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	if deliveredReply(resp.Content) != "hello" || streamed.String() != "hello" {
+		t.Errorf("got reply %q, streamed %q", resp.Content, streamed.String())
+	}
+	if fake.Calls() != 1 {
+		t.Errorf("an admitted round runs once, got %d calls", fake.Calls())
+	}
+	if !recorded.Load() {
+		t.Error("the loop returned before the check finished")
+	}
+}
+
+// A relayed reply waits on the check too: a refusal wins over it, and an
+// admitted request gets the relay.
+func TestFirstRoundGateOutranksARelayedReply(t *testing.T) {
+	for _, tc := range []struct{ decline, want string }{{"Not one I'll get into.", "Not one I'll get into."}, {"", "the relayed answer"}} {
+		fake := &FakeLLM{}
+		app := &AppCore{LLM: fake}
+		resp, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "go"}}, AgentLoopConfig{
+			MaxRounds:      3,
+			PreEmptedReply: "the relayed answer",
+			FirstRoundGate: func() FirstRoundVerdict { return FirstRoundVerdict{Decline: tc.decline} },
+		})
+		if err != nil {
+			t.Fatalf("loop: %v", err)
+		}
+		if resp.Content != tc.want {
+			t.Errorf("decline %q: got %q, want %q", tc.decline, resp.Content, tc.want)
+		}
+		if fake.Calls() != 0 {
+			t.Errorf("a relayed turn calls no model, got %d", fake.Calls())
+		}
+	}
+}
+
+// A halted turn's reply writer is told what the turn's tools did, so a run
+// nobody asked for can report its work instead of declining its mission.
+func TestHaltedTurnCallsListsThisTurnsCalls(t *testing.T) {
+	history := []Message{
+		{Role: "user", Content: "an earlier turn"},
+		{Role: "assistant", ToolCalls: []ToolCall{{Name: "old_call"}}},
+		{Role: "user", Content: "run the cycle"},
+		{Role: "assistant", ToolCalls: []ToolCall{{Name: "moltbook", Args: map[string]any{"action": "list_notifications"}}}},
+		{Role: "user", ToolResults: []ToolResult{{ID: "1", Content: "ok"}}},
+		{Role: "assistant", ToolCalls: []ToolCall{
+			{Name: "moltbook", Args: map[string]any{"action": "upvote_post"}},
+			{Name: "update_notes", Args: map[string]any{"section": "ENGAGED"}},
+		}},
+		{Role: "user", ToolResults: []ToolResult{{ID: "2", Content: "ok"}}},
+		{Role: "assistant", Content: "the withheld report"},
+	}
+	at, req := lastUserRequestAt(history)
+	if req != "run the cycle" {
+		t.Fatalf("request = %q", req)
+	}
+	got := haltedTurnCalls(history, at, GuardHookPreOutput)
+	want := []string{"moltbook/list_notifications", "moltbook/upvote_post", "update_notes"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("pre_output: got %v, want %v", got, want)
+	}
+	// A pre_action halt's own round is the one the rule refused: not done.
+	got = haltedTurnCalls(history[:7], at, GuardHookPreAction)
+	if want := []string{"moltbook/list_notifications"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("pre_action: got %v, want %v", got, want)
+	}
+}
+
+// The loop hands the calls over when it halts on the reply.
+func TestGuardrailRejectReceivesTheTurnsCalls(t *testing.T) {
+	app, _ := withTierStubs(t, "test.reject.did", func(n int) []ToolCall {
+		if n == 1 {
+			return []ToolCall{{ID: "c1", Name: "probe", Args: map[string]any{"action": "look"}}}
+		}
+		return nil
+	})
+	var got GuardrailHalt
+	_, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "go"}}, AgentLoopConfig{
+		MaxRounds: 4,
+		RouteKey:  "test.reject.did",
+		Tools: []AgentToolDef{{
+			Tool:    Tool{Name: "probe", Description: "probe", Parameters: map[string]ToolParam{"action": {Type: "string"}}},
+			Handler: func(context.Context, map[string]any) (string, error) { return "seen", nil },
+		}},
+		GuardrailCheck: func(hook, candidate string) GuardrailDecision {
+			return GuardrailDecision{Blocked: hook == GuardHookPreOutput, Message: "blocked"}
+		},
+		GuardrailHalted: func() bool { return true },
+		GuardrailReject: func(h GuardrailHalt) string { got = h; return "held back" },
+	})
+	if err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	if got.Reason != GuardHookPreOutput || got.Request != "go" || !reflect.DeepEqual(got.Did, []string{"probe/look"}) {
+		t.Errorf("halt = %+v", got)
+	}
+}

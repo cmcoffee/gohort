@@ -4,13 +4,18 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"github.com/cmcoffee/snugforge/nfo"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
+
+	"github.com/cmcoffee/gohort/core/textutil"
+	"github.com/cmcoffee/snugforge/nfo"
 )
 
 // TestApplyOptsAutoDate: by default a system prompt gets the "Today's date is …"
@@ -479,6 +484,614 @@ func TestOpenAIChatModelFilter(t *testing.T) {
 	} {
 		if got := openAIChatModel(id); got != want {
 			t.Errorf("openAIChatModel(%q) = %v, want %v", id, got, want)
+		}
+	}
+}
+
+// Thinking is switched OFF for one round after a guardrail block.
+//
+// A block is the round where deliberation reliably goes wrong: the model is
+// handed a refusal it did not expect, about a mechanism it is told not to name,
+// and asked to carry on. It reasons at length about the system it is inside
+// instead of answering — the failure COLLAPSE-DIAG exists to detect. Trimming
+// the block messages helped and did not fix it, because the deliberation is
+// caused by the situation rather than only by the wording.
+//
+// These pin the mechanism at the level it can be tested without a live model:
+// the option is produced, it wins over the static options, and it lasts exactly
+// one round.
+
+// thinkStateOf resolves a built option slice the way the LLM layer does and
+// reports the thinking decision it lands on.
+func thinkStateOf(opts []ChatOption) (enabled, set bool) {
+	cfg := applyOpts("m", 1024, opts)
+	if cfg.Think == nil {
+		return false, false
+	}
+	return *cfg.Think, true
+}
+
+// TestQuietRoundOptionWins — the option is appended LAST, so it has to beat a
+// per-agent think budget and any static ChatOptions the caller set. An agent
+// configured to think would otherwise keep thinking through exactly the round
+// this exists for.
+func TestQuietRoundOptionWins(t *testing.T) {
+	// What the loop builds: static options first, the one-shot last.
+	static := []ChatOption{WithThink(true), WithThinkBudget(4096)}
+	on, set := thinkStateOf(static)
+	if !set || !on {
+		t.Fatalf("baseline should have thinking on: on=%v set=%v", on, set)
+	}
+	quiet := append(append([]ChatOption{}, static...), WithThink(false))
+	on, set = thinkStateOf(quiet)
+	if !set {
+		t.Fatal("the one-shot option did not reach the config")
+	}
+	if on {
+		t.Error("a static WithThink(true) beat the one-shot; it must be appended last and win")
+	}
+}
+
+// TestQuietRoundIsOneShot — the flag is consumed when applied. A block that
+// silenced thinking for the rest of the turn would degrade every later round,
+// including ones doing real work after the agent changed course.
+func TestQuietRoundIsOneShot(t *testing.T) {
+	// Mirrors the loop's consume-on-apply shape.
+	quiet := true
+	build := func() []ChatOption {
+		opts := []ChatOption{WithThink(true)}
+		if quiet {
+			quiet = false
+			opts = append(opts, WithThink(false))
+		}
+		return opts
+	}
+	if on, _ := thinkStateOf(build()); on {
+		t.Error("the round after a block should not think")
+	}
+	if quiet {
+		t.Error("the flag was not consumed")
+	}
+	if on, _ := thinkStateOf(build()); !on {
+		t.Error("thinking must come back the round after — the agent still has work to do")
+	}
+}
+
+// TestUnblockedRoundsAreUntouched — an agent that never trips a guardrail must
+// build byte-identical options to before this existed. The whole feature is
+// meant to cost nothing in the steady state.
+func TestUnblockedRoundsAreUntouched(t *testing.T) {
+	quiet := false
+	opts := []ChatOption{WithThink(true), WithThinkBudget(2048)}
+	if quiet {
+		opts = append(opts, WithThink(false))
+	}
+	on, set := thinkStateOf(opts)
+	if !set || !on {
+		t.Errorf("an unblocked round changed shape: on=%v set=%v", on, set)
+	}
+	cfg := applyOpts("m", 1024, opts)
+	if cfg.ThinkBudget == nil || *cfg.ThinkBudget != 2048 {
+		t.Errorf("the agent's think budget was disturbed: %v", cfg.ThinkBudget)
+	}
+}
+
+// TestClosedNoteIsForTheModelOnly — the note exists to stop the next turn
+// answering a request that was refused, and it must never reach the reader.
+func TestClosedNoteIsForTheModelOnly(t *testing.T) {
+	substituted := "I can't help with that one." + guardrailClosedNote
+
+	// The persisted copy carries it: cleanReply is stored BEFORE stripping, so
+	// the next turn's history contains it and the model sees the outcome.
+	if !strings.Contains(substituted, "declined and is closed") {
+		t.Fatal("the persisted reply lost the note the next turn depends on")
+	}
+	// Every delivery boundary strips it.
+	delivered := textutil.StripMetaTags(substituted)
+	if strings.Contains(delivered, "gohort-meta") || strings.Contains(delivered, "declined and is closed") {
+		t.Errorf("the note reached the reader: %q", delivered)
+	}
+	if strings.TrimSpace(delivered) != "I can't help with that one." {
+		t.Errorf("stripping disturbed the decline itself: %q", delivered)
+	}
+	// It must not name the MECHANISM. Doing so invites the model to reason
+	// about the system it is inside — the deliberation the one-shot
+	// thinking-off exists to stop, and the reason guardrailInputMessage
+	// dropped "ENFORCED GUARDRAIL". Nor may it restate the subject, which
+	// would re-seed the topic the block just removed.
+	low := strings.ToLower(guardrailClosedNote)
+	for _, leak := range []string{"guardrail", "rule", "enforced", "check", "policy", "blocked"} {
+		if strings.Contains(low, leak) {
+			t.Errorf("the note names the mechanism (%q): %s", leak, guardrailClosedNote)
+		}
+	}
+	// And it still reads as CLOSED rather than deferred — the distinction the
+	// model got wrong live.
+	for _, want := range []string{"closed", "do not answer it later"} {
+		if !strings.Contains(low, want) {
+			t.Errorf("the note does not say the request is settled (missing %q)", want)
+		}
+	}
+}
+
+func gateFixture(t *testing.T, workerSees bool) (lead *retryLLM, leadInner, worker *FakeLLM) {
+	t.Helper()
+	worker = &FakeLLM{Turns: []FakeTurn{{Content: "A red bicycle against a brick wall; a sign reads OPEN 9-5.", Repeat: true}}}
+	leadInner = &FakeLLM{Turns: []FakeTurn{{Content: "It is a bicycle.", Repeat: true}}}
+	w := &retryLLM{inner: worker, maxRetries: 1, noImages: !workerSees}
+	lead = &retryLLM{inner: leadInner, maxRetries: 1, noImages: true}
+	prevW, prevL := SharedWorkerLLM(), SharedLeadLLM()
+	SetSharedLLMs(w, lead)
+	t.Cleanup(func() { SetSharedLLMs(prevW, prevL) })
+	describeMu.Lock()
+	describeCache, describeOrder = map[[32]byte]string{}, nil
+	describeMu.Unlock()
+	return lead, leadInner, worker
+}
+
+// A model set not to read images never receives one, on either call path: the
+// picture goes to the worker, which reads them, and the lead gets the
+// worker's description in its place. The caller's messages keep the image,
+// and the same picture is described once however often it is re-sent.
+func TestAModelThatDoesNotReadImagesGetsADescription(t *testing.T) {
+	lead, leadInner, worker := gateFixture(t, true)
+	photo := []byte("\x89PNG fake bytes of a photo")
+	msgs := []Message{{Role: "user", Content: "what is in this picture?", Images: [][]byte{photo}}}
+
+	if _, err := lead.Chat(context.Background(), msgs); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lead.ChatStream(context.Background(), msgs, func(string) {}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < leadInner.Calls(); i++ {
+		for _, m := range leadInner.Sent(i) {
+			if len(m.Images) > 0 || len(m.Videos) > 0 {
+				t.Fatalf("call %d: the lead was sent an image", i)
+			}
+		}
+		got := leadInner.Sent(i)[0].Content
+		if !strings.Contains(got, "what is in this picture?") || !strings.Contains(got, "sign reads OPEN 9-5") ||
+			!strings.Contains(got, "described by another model") {
+			t.Errorf("call %d: the lead got %q", i, got)
+		}
+	}
+	if worker.Calls() != 1 {
+		t.Errorf("the picture was described %d times; once is enough", worker.Calls())
+	}
+	if len(worker.Sent(0)[0].Images) != 1 {
+		t.Error("the describing model was not shown the picture")
+	}
+	if len(msgs[0].Images) != 1 || msgs[0].Content != "what is in this picture?" {
+		t.Error("the caller's messages were changed")
+	}
+}
+
+// With nothing that reads images, the model is told an image was there and
+// that its contents are unknown, rather than nothing at all; a model that
+// reads images is sent them as before; and a video with no still to take is
+// said to have been there.
+func TestWithNoDescriberTheModelIsToldAnImageWasThere(t *testing.T) {
+	lead, leadInner, worker := gateFixture(t, false)
+	lead.Chat(context.Background(), []Message{{Role: "user", Content: "look", Images: [][]byte{[]byte("img")}, Videos: [][]byte{[]byte("not a video")}}})
+	sent := leadInner.Sent(0)[0]
+	if len(sent.Images) > 0 || len(sent.Videos) > 0 || !strings.Contains(sent.Content, "contents are unknown") {
+		t.Errorf("the lead got %+v", sent)
+	}
+	if worker.Calls() != 0 {
+		t.Error("a model that does not read images was asked to describe one")
+	}
+
+	sees := &FakeLLM{Turns: []FakeTurn{{Content: "ok", Repeat: true}}}
+	open := &retryLLM{inner: sees, maxRetries: 1}
+	open.Chat(context.Background(), []Message{{Role: "user", Content: "look", Images: [][]byte{[]byte("img")}}})
+	if len(sees.Sent(0)[0].Images) != 1 {
+		t.Error("a model that reads images was not sent the image")
+	}
+}
+
+// The setting reaches the client built from a configuration.
+func TestNoImagesReachesTheClient(t *testing.T) {
+	llm, err := NewLLMFromConfig(LLMProviderConfig{Provider: "ollama", Model: "m", NoImages: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r, ok := llm.(*retryLLM); !ok || !r.noImages {
+		t.Errorf("the client does not hold back images: %#v", llm)
+	}
+}
+
+// capLLM reads pictures but refuses more than max in one request, the way
+// vLLM does over its --limit-mm-per-prompt, and records how many each call
+// carried.
+type capLLM struct {
+	max  int
+	sent [][]Message
+}
+
+func (c *capLLM) answer(messages []Message) (*Response, error) {
+	c.sent = append(c.sent, messages)
+	if n := countImages(messages); n > c.max {
+		return nil, &APIError{Provider: "vllm", StatusCode: 400, Message: fmt.Sprintf("At most %d image(s) may be provided in one prompt. (parameter=image)", c.max)}
+	}
+	return &Response{Content: "a dog on a sofa"}, nil
+}
+
+func (c *capLLM) Chat(_ context.Context, messages []Message, _ ...ChatOption) (*Response, error) {
+	return c.answer(messages)
+}
+
+func (c *capLLM) ChatStream(_ context.Context, messages []Message, _ StreamHandler, _ ...ChatOption) (*Response, error) {
+	return c.answer(messages)
+}
+
+// A model that takes two pictures a request, sent four: the refusal is not
+// the end of the turn. The request goes again with the newest two, each older
+// picture described by the same model on its own, and the next request is
+// trimmed before it is sent. Observed 2026-10-23: four parallel finds queued
+// four pictures, vLLM refused the round, and the turn failed outright.
+func TestAModelsPictureLimitIsLearnedAndKept(t *testing.T) {
+	describeMu.Lock()
+	describeCache, describeOrder = map[[32]byte]string{}, nil
+	describeMu.Unlock()
+	stub := &capLLM{max: 2}
+	r := &retryLLM{inner: stub, maxRetries: 1}
+	pic := func(s string) []byte { return []byte("\x89PNG " + s) }
+	msgs := []Message{
+		{Role: "user", Content: "earlier", Images: [][]byte{pic("old")}},
+		{Role: "user", Content: "the four you found", Images: [][]byte{pic("a"), pic("b"), pic("c")}},
+	}
+	if _, err := r.Chat(context.Background(), msgs); err != nil {
+		t.Fatalf("the refusal should have been retried within the limit: %v", err)
+	}
+	counts := func(from int) (n []int) {
+		for _, m := range stub.sent[from:] {
+			n = append(n, countImages(m))
+		}
+		return n
+	}
+	// Refused with four; each of the two held back described alone; then two.
+	if got := fmt.Sprint(counts(0)); got != "[4 1 1 2]" {
+		t.Fatalf("pictures per call = %s, want [4 1 1 2]", got)
+	}
+	last := stub.sent[len(stub.sent)-1]
+	if imgs := last[1].Images; len(imgs) != 2 || string(imgs[0]) != string(pic("b")) || string(imgs[1]) != string(pic("c")) {
+		t.Errorf("the newest two should be kept: %q", imgs)
+	}
+	if len(last[0].Images) != 0 || !strings.Contains(last[0].Content, "earlier") ||
+		!strings.Contains(last[0].Content, "reads at most 2 in one request. What it shows: a dog on a sofa") {
+		t.Errorf("an older picture should go as its description: %q", last[0].Content)
+	}
+	if len(msgs[1].Images) != 3 || msgs[0].Content != "earlier" {
+		t.Error("the caller's messages were changed")
+	}
+
+	// Kept: the next request, streamed this time, is trimmed before it goes,
+	// and the descriptions come from the cache.
+	from := len(stub.sent)
+	if _, err := r.ChatStream(context.Background(), msgs, func(string) {}); err != nil {
+		t.Fatal(err)
+	}
+	if got := fmt.Sprint(counts(from)); got != "[2]" {
+		t.Errorf("after learning the limit, pictures per call = %s, want [2]", got)
+	}
+}
+
+func TestAPictureLimitIsReadFromTheRefusal(t *testing.T) {
+	for err, want := range map[error]int{
+		&APIError{Provider: "vllm", StatusCode: 400, Message: "At most 2 image(s) may be provided in one prompt. (parameter=image)"}: 2,
+		errors.New("at most 5 images may be provided in one prompt"):                                                                 5,
+		errors.New("vllm api error (400): maximum context length exceeded"):                                                          0,
+	} {
+		if got := imageLimitFrom(err); got != want {
+			t.Errorf("%v: limit %d, want %d", err, got, want)
+		}
+	}
+	if imageLimitFrom(nil) != 0 {
+		t.Error("no error, no limit")
+	}
+}
+
+// A limit lowered while gohort runs is learned again from the next refusal.
+func TestALoweredPictureLimitIsLearnedAgain(t *testing.T) {
+	describeMu.Lock()
+	describeCache, describeOrder = map[[32]byte]string{}, nil
+	describeMu.Unlock()
+	stub := &capLLM{max: 2}
+	r := &retryLLM{inner: stub, maxRetries: 1}
+	msgs := []Message{{Role: "user", Content: "four", Images: [][]byte{[]byte("1"), []byte("2"), []byte("3"), []byte("4")}}}
+	if _, err := r.Chat(context.Background(), msgs); err != nil {
+		t.Fatal(err)
+	}
+	stub.max = 1
+	if _, err := r.Chat(context.Background(), msgs); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.imageLimit.Load(); got != 1 {
+		t.Errorf("limit %d, want the lowered 1", got)
+	}
+}
+
+// flakyStream fails once after emitting a partial chunk, then succeeds — the
+// shape of a stream that dies on a deadline mid-generation. The partial is
+// delivered BEFORE the failure, which is the whole point: whether anything
+// already reached the caller is what retrying has to decide on.
+func flakyStream(partial, full string) *FakeLLM {
+	return &FakeLLM{Turns: []FakeTurn{
+		{Chunks: []string{partial}, Err: context.DeadlineExceeded},
+		{Chunks: []string{full}, Repeat: true},
+	}}
+}
+
+// Without an opt-in, a stream that delivered anything is never retried. This is
+// the existing contract and the reason a visible reply is never duplicated.
+func TestStreamNotRetriedAfterPartialByDefault(t *testing.T) {
+	inner := flakyStream("half a sen", "a whole sentence")
+	r := &retryLLM{inner: inner, maxRetries: 5}
+
+	var got strings.Builder
+	_, err := r.ChatStream(context.Background(), []Message{{Role: "user", Content: "hi"}},
+		func(chunk string) { got.WriteString(chunk) })
+
+	if err == nil {
+		t.Fatal("a stream that died after partial output reported success")
+	}
+	if inner.Calls() != 1 {
+		t.Fatalf("attempted %d times; a visible stream must not be retried", inner.Calls())
+	}
+	if got.String() != "half a sen" {
+		t.Fatalf("caller received %q", got.String())
+	}
+}
+
+// With the reset supplied, the same failure retries — and the caller's buffer
+// holds ONLY the successful attempt. That last part is the whole reason the
+// option carries a callback instead of being a bool: a caller that kept its
+// partial would end up with "half a sen" + "a whole sentence".
+func TestStreamRetriesWhenTheCallerCanDiscardItsPartial(t *testing.T) {
+	inner := flakyStream("half a sen", "a whole sentence")
+	r := &retryLLM{inner: inner, maxRetries: 5}
+
+	var buf strings.Builder
+	resp, err := r.ChatStream(context.Background(), []Message{{Role: "user", Content: "hi"}},
+		func(chunk string) { buf.WriteString(chunk) },
+		WithStreamRestart(func() { buf.Reset() }),
+	)
+	if err != nil {
+		t.Fatalf("a retryable stream still failed: %v", err)
+	}
+	if inner.Calls() != 2 {
+		t.Fatalf("attempted %d times, want 2", inner.Calls())
+	}
+	if buf.String() != "a whole sentence" {
+		t.Fatalf("the caller's buffer holds %q — the partial was not discarded", buf.String())
+	}
+	if resp == nil || resp.Content != "a whole sentence" {
+		t.Fatalf("response = %+v", resp)
+	}
+}
+
+// The reset does not make every failure retryable. Transience still decides,
+// so a stream that died on something deterministic fails once and stops.
+func TestStreamRestartDoesNotRetryNonTransientFailures(t *testing.T) {
+	inner := permanentFailStream()
+	r := &retryLLM{inner: inner, maxRetries: 5}
+
+	var buf strings.Builder
+	_, err := r.ChatStream(context.Background(), []Message{{Role: "user", Content: "hi"}},
+		func(chunk string) { buf.WriteString(chunk) },
+		WithStreamRestart(func() { buf.Reset() }),
+	)
+	if err == nil {
+		t.Fatal("a permanent failure reported success")
+	}
+	if inner.Calls() != 1 {
+		t.Fatalf("attempted %d times; a 400 is not worth repeating", inner.Calls())
+	}
+}
+
+// permanentFailStream emits and then fails with a 400 every time — an error
+// that repeating cannot fix.
+func permanentFailStream() *FakeLLM {
+	return &FakeLLM{Turns: []FakeTurn{{
+		Chunks: []string{"some output"},
+		Err:    &APIError{StatusCode: 400, Message: "malformed request"},
+		Repeat: true,
+	}}}
+}
+
+// recordingChatServer answers every chat call with a short reply and keeps
+// each request body it was sent.
+func recordingChatServer(t *testing.T) (url string, bodies func() []map[string]any) {
+	t.Helper()
+	var mu sync.Mutex
+	var got []map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		var body map[string]any
+		json.Unmarshal(raw, &body)
+		mu.Lock()
+		got = append(got, body)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"model":"qwen","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":1}}`))
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL + "/v1", func() []map[string]any {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]map[string]any(nil), got...)
+	}
+}
+
+// vLLM is the llama.cpp client minus thinking_budget_tokens. vLLM ignores that
+// field (a 128-token budget still thought for thousands), so sending it only
+// padded max_tokens for a cap nothing enforced. Effort still reaches the model,
+// through the chat template, and the no-think switch still goes out.
+func TestVLLMSendsEffortButNoBudget(t *testing.T) {
+	for _, c := range []struct {
+		provider   string
+		wantBudget bool
+	}{
+		{"vllm", false},
+		{"llama.cpp", true},
+	} {
+		url, bodies := recordingChatServer(t)
+		llm, err := NewLLMFromConfig(LLMProviderConfig{
+			Provider: c.provider, Model: "qwen", Endpoint: url,
+			ThinkingBudget: 4096, NoThinkUseKwarg: true, NoThinkSendBudget: true,
+		})
+		if err != nil {
+			t.Fatalf("%s: build: %v", c.provider, err)
+		}
+		msgs := []Message{{Role: "user", Content: "hi"}}
+		if _, err := llm.Chat(t.Context(), msgs, WithEffort("low")); err != nil {
+			t.Fatalf("%s: effort call: %v", c.provider, err)
+		}
+		if _, err := llm.Chat(t.Context(), msgs, WithThink(false)); err != nil {
+			t.Fatalf("%s: no-think call: %v", c.provider, err)
+		}
+		got := bodies()
+		if len(got) != 2 {
+			t.Fatalf("%s: %d calls reached the server, want 2", c.provider, len(got))
+		}
+		for i, b := range got {
+			if _, has := b["thinking_budget_tokens"]; has != c.wantBudget {
+				t.Errorf("%s call %d: thinking_budget_tokens present=%v, want %v (body %v)", c.provider, i, has, c.wantBudget, b)
+			}
+		}
+		kw, _ := got[0]["chat_template_kwargs"].(map[string]any)
+		if kw["reasoning_effort"] != "low" || kw["enable_thinking"] != true {
+			t.Errorf("%s: effort call kwargs %v, want reasoning_effort=low with thinking on", c.provider, kw)
+		}
+		kw, _ = got[1]["chat_template_kwargs"].(map[string]any)
+		if kw["enable_thinking"] != false {
+			t.Errorf("%s: no-think call kwargs %v, want enable_thinking=false", c.provider, kw)
+		}
+	}
+}
+
+// The rest of the framework treats vLLM as the local server it is: native
+// tool calls, a model this instance may lend to a peer, and its own name in
+// logs and errors.
+func TestVLLMIsALocalServer(t *testing.T) {
+	if !ProviderHasNativeTools("vllm") {
+		t.Error("vLLM calls tools natively; without this its tools would be parsed out of prose")
+	}
+	if !peerLendableProviders["vllm"] {
+		t.Error("a local vLLM model should be lendable to peers, as llama.cpp is")
+	}
+	if ok, why := ProviderLooksPrivate("vllm", "http://localhost:8000/v1"); !ok {
+		t.Errorf("a loopback vLLM endpoint read as not private: %s", why)
+	}
+	if ok, _ := ProviderLooksPrivate("vllm", "https://api.example.com/v1"); ok {
+		t.Error("a public vLLM endpoint read as private: the endpoint, not the name, decides")
+	}
+	llm, err := NewLLMFromConfig(LLMProviderConfig{Provider: "vllm", Model: "qwen"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	oc, ok := unwrapOpenAIClient(llm)
+	if !ok {
+		t.Fatal("vllm did not build the OpenAI-compatible client")
+	}
+	if oc.endpoint != "http://localhost:8000/v1" || oc.provider() != "vllm" {
+		t.Errorf("endpoint %q tag %q, want vLLM's default port and its own name", oc.endpoint, oc.provider())
+	}
+}
+
+// unwrapOpenAIClient digs the OpenAI-compatible client out of the wrappers
+// NewLLMFromConfig puts around it.
+func unwrapOpenAIClient(l LLM) (*openAIClient, bool) {
+	for i := 0; i < 8 && l != nil; i++ {
+		switch v := l.(type) {
+		case *openAIClient:
+			return v, true
+		case *retryLLM:
+			l = v.inner
+		default:
+			return nil, false
+		}
+	}
+	return nil, false
+}
+
+// A system message past the first one goes to a local server as a user turn,
+// in the same place: Qwen's chat template refuses a system message anywhere
+// but first, and the guardrail's steer sits just before the request. OpenAI's
+// own API keeps it as written.
+func TestALaterSystemMessageReachesALocalServerAsAUserTurn(t *testing.T) {
+	msgs := []Message{{Role: "user", Content: "earlier"}, {Role: "assistant", Content: "ok"},
+		{Role: "system", Content: "Constraint on this reply"}, {Role: "user", Content: "now"}}
+	roles := func(c *openAIClient) string {
+		var r []string
+		for _, m := range c.buildMessages(ChatConfig{SystemPrompt: "persona"}, msgs) {
+			r = append(r, m.Role)
+		}
+		return strings.Join(r, ",")
+	}
+	for name, c := range map[string]*openAIClient{"vllm": {vllm: true}, "llama.cpp": {llamacpp: true}} {
+		if got := roles(c); got != "system,user,assistant,user,user" {
+			t.Errorf("%s: %s", name, got)
+		}
+	}
+	if got := roles(&openAIClient{}); got != "system,user,assistant,system,user" {
+		t.Errorf("openai: %s", got)
+	}
+}
+
+// A tool that arrived mid-turn (RenderLate) leaves the tools block on vLLM,
+// whose template ignores lazy_tool_names and would put it at the top, where
+// adding it invalidates the whole cached prompt. It is described in a note at
+// the end instead, so the tools block, and the prompt up to the conversation's
+// tail, is the same as the round before it was loaded. llama.cpp's split
+// template keeps it in the block, named in lazy_tool_names.
+func TestALateToolLeavesTheToolsBlockOnVLLM(t *testing.T) {
+	early := Tool{Name: "web_search", Description: "Search.", Parameters: map[string]ToolParam{"q": {Type: "string"}}}
+	late := Tool{Name: "recall_about", Description: "Recall.", Parameters: map[string]ToolParam{"name": {Type: "string", Description: "Who"}}, RenderLate: true}
+	msgs := []Message{{Role: "user", Content: "hi"}}
+	for _, c := range []struct {
+		provider  string
+		stream    bool
+		wantBlock []string
+	}{
+		{"vllm", false, []string{"web_search"}},
+		{"vllm", true, []string{"web_search"}},
+		{"llama.cpp", false, []string{"web_search", "recall_about"}},
+	} {
+		url, bodies := recordingChatServer(t)
+		llm, err := NewLLMFromConfig(LLMProviderConfig{Provider: c.provider, Model: "qwen", Endpoint: url})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.stream {
+			llm.ChatStream(t.Context(), msgs, func(string) {}, WithTools([]Tool{early, late}))
+		} else {
+			llm.Chat(t.Context(), msgs, WithTools([]Tool{early, late}))
+		}
+		got := bodies()
+		if len(got) == 0 {
+			t.Fatalf("%s: no request", c.provider)
+		}
+		body := got[len(got)-1]
+		var block []string
+		tools, _ := body["tools"].([]any)
+		for _, tl := range tools {
+			fn, _ := tl.(map[string]any)["function"].(map[string]any)
+			block = append(block, fmt.Sprint(fn["name"]))
+		}
+		if strings.Join(block, ",") != strings.Join(c.wantBlock, ",") {
+			t.Errorf("%s stream=%v: tools block %v, want %v", c.provider, c.stream, block, c.wantBlock)
+		}
+		sent, _ := body["messages"].([]any)
+		last, _ := sent[len(sent)-1].(map[string]any)
+		lastText := fmt.Sprint(last["content"])
+		if c.provider == "vllm" {
+			if !strings.Contains(lastText, `"name":"recall_about"`) || !strings.Contains(lastText, "Who") {
+				t.Errorf("%s: the late tool is not described at the end: %d messages, last %q", c.provider, len(sent), lastText)
+			}
+		} else if strings.Contains(lastText, "recall_about") {
+			t.Errorf("%s: a note was added where the template already places late tools", c.provider)
 		}
 	}
 }

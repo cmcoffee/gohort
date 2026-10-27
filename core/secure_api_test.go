@@ -1,17 +1,24 @@
 package core
 
 import (
-	"errors"
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
-	"github.com/cmcoffee/snugforge/kvlite"
+	"errors"
 	"io"
 	"mime"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
+
+	"github.com/cmcoffee/snugforge/kvlite"
 )
 
 // TestFinishDraftAutoEnables locks the "not clear I had to enable it" fix: a
@@ -2073,5 +2080,603 @@ func TestADraftWaitingForItsSecretSaysSo(t *testing.T) {
 	c, _ = s.Resolve("acme", "alice")
 	if err := s.disabledError(c); strings.Contains(err.Error(), "waiting") {
 		t.Errorf("a credential with its secret set read as waiting: %v", err)
+	}
+}
+
+// An administrator's switch-off and stopped lending hold: the owner's own
+// switch cannot undo them, and only an administrator lifts them.
+func TestAnAdminsHoldOnAUsersCredentialHolds(t *testing.T) {
+	s := reachFixture(t)
+	if err := s.Save(SecureCredential{Name: "wiki", Type: SecureCredBearer, BaseURL: "https://wiki.example", Owner: "alice"}, "k"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AdminSetDisabledOwned("alice", "wiki", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetDisabledOwned("alice", "wiki", false); err == nil {
+		t.Error("alice switched back on what an administrator switched off")
+	}
+	if err := s.AdminSetDisabledOwned("alice", "wiki", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetDisabledOwned("alice", "wiki", true); err != nil {
+		t.Errorf("once lifted, her own switch works: %v", err)
+	}
+	s.SetDisabledOwned("alice", "wiki", false)
+
+	if err := s.SetCredentialShares("alice", "wiki", []string{"bob"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AdminRevokeShares("alice", "wiki"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetCredentialShares("alice", "wiki", []string{"bob"}, nil); err == nil {
+		t.Error("alice lent again what an administrator stopped")
+	}
+	if err := s.AdminAllowLending("alice", "wiki"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetCredentialShares("alice", "wiki", []string{"bob"}, nil); err != nil {
+		t.Errorf("once allowed, she may lend: %v", err)
+	}
+	c, _ := s.LoadUser("alice", "wiki")
+	if err := s.Save(c, ""); err != nil {
+		t.Fatal(err)
+	}
+	s.AdminSetDisabledOwned("alice", "wiki", true)
+	c, _ = s.LoadUser("alice", "wiki")
+	c.Description = "edited"
+	s.Save(c, "")
+	if got, _ := s.LoadUser("alice", "wiki"); !got.AdminDisabled {
+		t.Error("an edit of the credential cleared the administrator's hold")
+	}
+}
+
+// A secured deployment key is bound to a new tool only by an administrator's
+// run; anyone else's new tool is refused until one approves it.
+func TestSecuredDeploymentKeysBindOnlyForAnAdmin(t *testing.T) {
+	s := reachFixture(t)
+	if err := s.Save(SecureCredential{Name: "team", Type: SecureCredBearer, BaseURL: "https://team.example"}, "k"); err != nil {
+		t.Fatal(err)
+	}
+	s.SetSecured("team", true)
+	if err := s.EnforceSecuredBinding("team", "alices_tool", "alice"); err == nil || !strings.Contains(err.Error(), "not bound") {
+		t.Errorf("alice's new tool reached the deployment's secured key: %v", err)
+	}
+	if err := s.EnforceSecuredBinding("team", "admins_tool", "root"); err != nil {
+		t.Errorf("an administrator's run binds its tool: %v", err)
+	}
+	if err := s.EnforceSecuredBinding("team", "admins_tool", "alice"); err != nil {
+		t.Errorf("a bound tool runs for anyone allowed the key: %v", err)
+	}
+}
+
+// secret: does not hand out a per-person credential's stored value, which is
+// only what the admin typed when creating it.
+func TestSecretHookRefusesAPerPersonCredential(t *testing.T) {
+	s := reachFixture(t)
+	if err := s.Save(SecureCredential{Name: "each", Type: SecureCredBearer, BaseURL: "https://each.example", CredScope: "per_user"}, "admin-typed"); err != nil {
+		t.Fatal(err)
+	}
+	c, _ := s.Load("each")
+	c.CredScope = "per_user"
+	s.db.Set(secureAPITable, "each", c)
+	h := &SandboxHook{Capabilities: []string{"secret:each"}, Sess: &ToolSession{Username: "alice"}, ToolName: "t"}
+	if got := hookSecret(t, h, "each"); strings.Contains(got, "admin-typed") {
+		t.Errorf("a per-person credential's admin value reached a script: %s", got)
+	}
+}
+
+// Where a credential's methods are limited, a method-override header does not
+// reach the server.
+func TestAMethodOverrideDoesNotSlipALimit(t *testing.T) {
+	s := reachFixture(t)
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get("X-HTTP-Method-Override")
+		w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+	if err := s.Save(SecureCredential{Name: "ro", Type: SecureCredBearer, BaseURL: srv.URL, AllowedMethods: []string{"GET"}}, "k"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DispatchToolCallArgs(&ToolSession{Username: "root"}, "ro", map[string]any{"url": srv.URL + "/x",
+		"request_headers": map[string]any{"X-HTTP-Method-Override": "DELETE"}}); err != nil {
+		t.Fatal(err)
+	}
+	if got != "" {
+		t.Errorf("the override reached the server: %q", got)
+	}
+}
+
+// Tokens and per-person keys given for an address do not follow the
+// credential when its token host moves.
+func TestMovingATokenHostDropsItsTokens(t *testing.T) {
+	s := reachFixture(t)
+	if err := s.Save(SecureCredential{Name: "sso", Type: SecureCredOAuth2, Grant: OAuthGrantClientCredentials, ClientID: "c",
+		TokenURL: "https://sso.example/token", BaseURL: "https://api.example"}, "client-secret"); err != nil {
+		t.Fatal(err)
+	}
+	s.db.CryptSet(secureAPITable, secureCredUserTokenKey("sso", "alice"), CredOAuthToken{AccessToken: "a", RefreshToken: "r"})
+	s.db.CryptSet(secureAPITable, secureCredUserSecretKey("sso", "bob"), "bobs-key")
+	c, _ := s.Load("sso")
+	c.TokenURL = "https://collector.example/token"
+	if err := s.Save(c, ""); err != nil {
+		t.Fatal(err)
+	}
+	var v any
+	if s.db.Get(secureAPITable, secureCredUserTokenKey("sso", "alice"), &v) || s.db.Get(secureAPITable, secureCredUserSecretKey("sso", "bob"), &v) {
+		t.Error("a token or key given for the old token host survived the move")
+	}
+}
+
+// A watch polls as its agent: a credential the agent switched off stays off.
+func TestAWatchKeepsItsAgentsCredentialScope(t *testing.T) {
+	secureAPITestStore(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`{}`)) }))
+	defer srv.Close()
+	url := srv.URL
+	if err := Secure().Save(SecureCredential{Name: "team", Type: SecureCredBearer, BaseURL: srv.URL}, "k"); err != nil {
+		t.Fatal(err)
+	}
+	RegisterWatchCredentialScope(func(owner, agentID string) map[string]bool {
+		if agentID == "quiet" {
+			return map[string]bool{"team": true}
+		}
+		return nil
+	})
+	t.Cleanup(func() { RegisterWatchCredentialScope(nil) })
+	args := map[string]any{"url": url + "/x"}
+	if _, err := InvokeWatchTool("bob", "quiet", "call_team", args); err == nil || !strings.Contains(err.Error(), "switched off") {
+		t.Errorf("the agent's switched-off credential was polled: %v", err)
+	}
+	if _, err := InvokeWatchTool("bob", "busy", "call_team", args); err != nil {
+		t.Errorf("another agent of bob's may: %v", err)
+	}
+}
+
+// "Confirm writes" asks before a call that changes something and lets reads
+// through; a standing poll cannot write through it, and its fetch_url tool
+// is marked so the gate is consulted per call.
+func TestConfirmWritesAsksOnlyBeforeChanges(t *testing.T) {
+	c := SecureCredential{Name: "tracker", ConfirmWrites: true}
+	for m, want := range map[string]bool{"GET": false, "head": false, "OPTIONS": false, "POST": true, "put": true, "DELETE": true, "PATCH": true, "": true} {
+		if got := c.AsksBefore(m); got != want {
+			t.Errorf("%q: asks=%v, want %v", m, got, want)
+		}
+	}
+	if !(SecureCredential{RequiresConfirm: true}).AsksBefore("GET") {
+		t.Error("confirm-each-call still asks before reads")
+	}
+
+	s := reachFixture(t)
+	if err := s.Save(SecureCredential{Name: "tracker", Type: SecureCredBearer, BaseURL: "https://tracker.example", ConfirmWrites: true}, "k"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PollMayUse("root", "tracker", "GET"); err != nil {
+		t.Errorf("a reading poll is fine: %v", err)
+	}
+	if err := s.PollMayUse("root", "tracker", "POST"); err == nil {
+		t.Error("a writing poll went through a credential that asks before writes")
+	}
+	for _, td := range s.BuildTools(&ToolSession{Username: "root"}) {
+		if td.Tool.Name == "fetch_url_tracker" && !td.NeedsConfirm {
+			t.Error("fetch_url_tracker is not put before the confirm gate")
+		}
+	}
+}
+
+// One call through a credential, phase by phase: each check that refuses a
+// call refuses it before anything is sent, the secret rides the request in
+// the credential's own shape, and the reply the caller reads never carries it.
+
+const phaseSecret = "sekret-0123456789"
+
+// phaseSeen is what the far end saw of the calls made to it.
+type phaseSeen struct {
+	mu   sync.Mutex
+	hits int
+	auth string
+	key  string
+	path string
+}
+
+func (p *phaseSeen) count() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.hits
+}
+
+// phaseServer answers every call with status and a body of ctype, in which
+// {auth} is replaced by the Authorization header the call carried, so a reply
+// that echoes the key can be checked for redaction.
+func phaseServer(t *testing.T, seen *phaseSeen, status int, ctype, body string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen.mu.Lock()
+		seen.hits++
+		seen.auth, seen.key, seen.path = r.Header.Get("Authorization"), r.Header.Get("X-Key"), r.URL.Path
+		seen.mu.Unlock()
+		w.Header().Set("Content-Type", ctype)
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(strings.ReplaceAll(body, "{auth}", r.Header.Get("Authorization"))))
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func phaseCred(srv *httptest.Server, typ string) SecureCredential {
+	c := SecureCredential{Name: "phase_api", Type: typ, AllowedURLPattern: imageHostPattern(srv.URL)}
+	if typ != SecureCredNone {
+		c.inlineSecret = phaseSecret
+	}
+	return c
+}
+
+func TestARefusedCallSendsNothing(t *testing.T) {
+	secureAPITestStore(t)
+	var seen phaseSeen
+	srv := phaseServer(t, &seen, 200, "application/json", `{}`)
+	cases := []struct {
+		name string
+		cred func() SecureCredential
+		args map[string]any
+		sess *ToolSession
+		want string
+	}{
+		{"disabled", func() SecureCredential { c := phaseCred(srv, SecureCredNone); c.Disabled = true; return c },
+			map[string]any{"url": srv.URL + "/x"}, nil, `"phase_api"`},
+		{"no url", func() SecureCredential { return phaseCred(srv, SecureCredNone) },
+			map[string]any{}, nil, "url is required"},
+		{"a path with no Base URL", func() SecureCredential { return phaseCred(srv, SecureCredNone) },
+			map[string]any{"url": "/v1/x"}, nil, "no Base URL"},
+		{"save_to with no workspace", func() SecureCredential { return phaseCred(srv, SecureCredNone) },
+			map[string]any{"url": srv.URL + "/x", "save_to": "out.txt"}, nil, "save_to requires"},
+		{"a method off the list", func() SecureCredential {
+			c := phaseCred(srv, SecureCredNone)
+			c.AllowedMethods = []string{"GET"}
+			return c
+		}, map[string]any{"url": srv.URL + "/x", "method": "POST"}, nil, "method POST not allowed"},
+		{"a host off the list", func() SecureCredential { return phaseCred(srv, SecureCredNone) },
+			map[string]any{"url": "https://elsewhere.invalid/x"}, nil, "is not allowed for credential"},
+		{"a denied path", func() SecureCredential {
+			c := phaseCred(srv, SecureCredNone)
+			c.DeniedURLPatterns = []string{strings.TrimSuffix(imageHostPattern(srv.URL), "**") + "billing/**"}
+			return c
+		}, map[string]any{"url": srv.URL + "/billing/x"}, nil, "deny pattern"},
+		{"no stored secret", func() SecureCredential {
+			c := phaseCred(srv, SecureCredBearer)
+			c.inlineSecret = ""
+			return c
+		}, map[string]any{"url": srv.URL + "/x"}, nil, "no stored secret"},
+		// Refused before the call, not cancelled during it: the two read
+		// differently, and only one says nothing was sent.
+		{"Private mode", func() SecureCredential { return phaseCred(srv, SecureCredNone) },
+			map[string]any{"url": srv.URL + "/x"}, &ToolSession{Network: NewNetworkConnector(true)}, "was NOT attempted"},
+		{"a request that cannot be built", func() SecureCredential { return phaseCred(srv, SecureCredNone) },
+			map[string]any{"url": srv.URL + "/x", "method": "GE T"}, nil, "build request"},
+		{"basic auth with no username", func() SecureCredential { return phaseCred(srv, SecureCredBasicAuth) },
+			map[string]any{"url": srv.URL + "/x"}, nil, "basic_auth needs a username"},
+		{"a type nobody knows", func() SecureCredential { return phaseCred(srv, "carrier_pigeon") },
+			map[string]any{"url": srv.URL + "/x"}, nil, "unknown credential type"},
+	}
+	for _, tc := range cases {
+		before := seen.count()
+		out, err := Secure().dispatch(tc.cred(), tc.args, tc.sess)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: want an error naming %q, got %q / %v", tc.name, tc.want, out, err)
+		}
+		if seen.count() != before {
+			t.Errorf("%s: the call reached the server", tc.name)
+		}
+	}
+}
+
+// A path-only url takes the credential's Base URL.
+func TestAPathOnlyURLGoesToTheBaseURL(t *testing.T) {
+	secureAPITestStore(t)
+	var seen phaseSeen
+	srv := phaseServer(t, &seen, 200, "application/json", `{}`)
+	c := phaseCred(srv, SecureCredNone)
+	c.BaseURL = srv.URL
+	if _, err := Secure().dispatch(c, map[string]any{"url": "/v1/pages"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if seen.path != "/v1/pages" {
+		t.Errorf("the call went to %q", seen.path)
+	}
+}
+
+func TestTheSecretRidesTheRequestAndNeverTheReply(t *testing.T) {
+	secureAPITestStore(t)
+	var seen phaseSeen
+	srv := phaseServer(t, &seen, 200, "application/json", `{"saw":"{auth}"}`)
+	basic := base64.StdEncoding.EncodeToString([]byte("robot:" + phaseSecret))
+	for _, tc := range []struct {
+		typ, auth, key string
+	}{
+		{SecureCredBearer, "Bearer " + phaseSecret, ""},
+		{SecureCredBasicAuth, "Basic " + basic, ""},
+		{SecureCredHeader, "", phaseSecret},
+	} {
+		c := phaseCred(srv, tc.typ)
+		c.Username, c.ParamName = "robot", "X-Key"
+		out, err := Secure().dispatch(c, map[string]any{"url": srv.URL + "/x"}, nil)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.typ, err)
+		}
+		if seen.auth != tc.auth || seen.key != tc.key {
+			t.Errorf("%s: the server saw Authorization %q, X-Key %q", tc.typ, seen.auth, seen.key)
+		}
+		if !strings.HasPrefix(out, "HTTP 200 OK\n") {
+			t.Errorf("%s: the reply does not lead with its status: %q", tc.typ, out)
+		}
+		if strings.Contains(out, phaseSecret) || strings.Contains(out, basic) {
+			t.Errorf("%s: the reply carries the secret: %q", tc.typ, out)
+		}
+		if tc.auth != "" && !strings.Contains(out, "[REDACTED]") {
+			t.Errorf("%s: the echoed key is not marked redacted: %q", tc.typ, out)
+		}
+	}
+	if audit := Secure().LoadAudit("", "phase_api"); len(audit) != 3 || audit[0].Status != 200 {
+		t.Errorf("each call should be in the ledger with its status: %+v", audit)
+	}
+}
+
+// save_to writes the reply to the workspace and says where; a text reply is
+// redacted there too.
+func TestSaveToWritesTheReplyToTheWorkspace(t *testing.T) {
+	secureAPITestStore(t)
+	var seen phaseSeen
+	srv := phaseServer(t, &seen, 200, "text/plain", "key was {auth}")
+	dir := t.TempDir()
+	out, err := Secure().dispatch(phaseCred(srv, SecureCredBearer),
+		map[string]any{"url": srv.URL + "/x", "save_to": "reply.txt"}, &ToolSession{WorkspaceDir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "saved") || !strings.Contains(out, "reply.txt") {
+		t.Errorf("the reply should say where it was saved: %q", out)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "reply.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(got), phaseSecret) || !strings.Contains(string(got), "[REDACTED]") {
+		t.Errorf("the saved text carries the key: %q", got)
+	}
+}
+
+// A web page on an error status is named for what it is, not dumped.
+func TestAnHTMLErrorPageIsNamedNotDumped(t *testing.T) {
+	secureAPITestStore(t)
+	var seen phaseSeen
+	srv := phaseServer(t, &seen, 404, "text/html", "<!DOCTYPE html><html><script>x</script></html>")
+	out, err := Secure().dispatch(phaseCred(srv, SecureCredNone), map[string]any{"url": srv.URL + "/x"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(out, "HTTP 404 Not Found\n") || !strings.Contains(out, secureAPIHTMLPageNote) || strings.Contains(out, "<script>") {
+		t.Errorf("an HTML error page should be replaced by the note: %q", out)
+	}
+}
+
+// A 401 on a connected account drops the access token and keeps the refresh
+// token, so this call fails but the next one mints a fresh token instead of
+// sending the rejected one again.
+func TestARejectedTokenIsDroppedForTheNextCall(t *testing.T) {
+	secureAPITestStore(t)
+	var seen phaseSeen
+	srv := phaseServer(t, &seen, 401, "application/json", `{"error":"expired"}`)
+	c := SecureCredential{Name: "phase_oauth", Type: SecureCredOAuth2, Grant: "authorization_code", AllowedURLPattern: imageHostPattern(srv.URL)}
+	if err := Secure().SaveUserToken("phase_oauth", "alice", CredOAuthToken{AccessToken: phaseSecret, RefreshToken: "refresh-1", Expiry: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Secure().dispatch(c, map[string]any{"url": srv.URL + "/x"}, &ToolSession{Username: "alice"}); err != nil {
+		t.Fatal(err)
+	}
+	if seen.auth != "Bearer "+phaseSecret {
+		t.Fatalf("the call did not carry alice's token: %q", seen.auth)
+	}
+	tok, ok := Secure().loadUserTokenRaw("phase_oauth", "alice")
+	if !ok || tok.AccessToken != "" || tok.RefreshToken != "refresh-1" {
+		t.Errorf("after a 401 the access token should be gone and the refresh token kept: %+v", tok)
+	}
+}
+
+// reachFixture is a fresh credential store plus an auth store where root is
+// an administrator and alice is not.
+func reachFixture(t *testing.T) *SecureAPI {
+	t.Helper()
+	secureAPITestStore(t)
+	adb := &DBase{Store: kvlite.MemStore()}
+	adb.Set(AuthTable, "user:root", AuthUser{Username: "root", Admin: true})
+	adb.Set(AuthTable, "user:alice", AuthUser{Username: "alice"})
+	prev := AuthDB
+	AuthDB = func() Database { return adb }
+	t.Cleanup(func() { AuthDB = prev })
+	return Secure()
+}
+
+// A personal credential reaches internal addresses only when an administrator
+// owns it: refused when set up, and refused on dispatch for one saved before
+// the rule. Deployment credentials keep their reach, and so does the legacy
+// no_auth path lose its: it has the reach of a plain fetch.
+func TestPersonalCredentialsKeepToPublicAddresses(t *testing.T) {
+	s := reachFixture(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`{}`)) }))
+	defer srv.Close()
+
+	for _, base := range []string{"http://127.0.0.1:8080", "http://169.254.169.254", "https://10.0.0.5", "https://nas.local"} {
+		if err := s.Save(SecureCredential{Name: "inside", Type: SecureCredBearer, BaseURL: base, Owner: "alice"}, "k"); err == nil {
+			t.Errorf("alice's credential at %s was saved", base)
+		}
+		if err := s.SaveAPIDraft(SecureCredential{Name: "inside", Type: SecureCredBearer, BaseURL: base, Owner: "alice"}); err == nil {
+			t.Errorf("alice's draft at %s was saved", base)
+		}
+	}
+	if err := s.Save(SecureCredential{Name: "fw", Type: SecureCredBearer, BaseURL: "https://192.168.1.1", Owner: "root"}, "k"); err != nil {
+		t.Errorf("an administrator's own credential may name the LAN: %v", err)
+	}
+	if err := s.Save(SecureCredential{Name: "local", Type: SecureCredBearer, BaseURL: srv.URL}, "k"); err != nil {
+		t.Fatalf("a deployment credential may name an internal host: %v", err)
+	}
+	if _, err := s.DispatchToolCall(&ToolSession{Username: "alice"}, "local", srv.URL+"/x", "GET", ""); err != nil {
+		t.Errorf("and reach it: %v", err)
+	}
+
+	// A record from before the rule is held at dispatch.
+	s.db.Set(secureAPITable, credStoreKey("alice", "old"), SecureCredential{Name: "old", Type: SecureCredNone, BaseURL: srv.URL, Owner: "alice"})
+	if _, err := s.DispatchToolCall(&ToolSession{Username: "alice"}, "old", srv.URL+"/x", "GET", ""); err == nil || !strings.Contains(err.Error(), "public addresses only") {
+		t.Errorf("alice's older credential reached an internal host: %v", err)
+	}
+	if _, err := s.DispatchToolCall(&ToolSession{Username: "root"}, "no_auth", strings.Replace(srv.URL, "http://", "https://", 1)+"/x", "GET", ""); err == nil || !strings.Contains(err.Error(), "public addresses only") {
+		t.Errorf("the no_auth path reached an internal host: %v", err)
+	}
+}
+
+// A credential name cannot contain "__", the separator the store names a
+// credential's secret with, so no name lands on another credential's key.
+func TestCredentialNamesCannotLandOnASecret(t *testing.T) {
+	s := reachFixture(t)
+	if err := s.Save(SecureCredential{Name: "gh", Type: SecureCredBearer, BaseURL: "https://api.github.com"}, "real-key"); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"gh__secret", "gh__password", "gh__usertok__alice"} {
+		if err := s.SaveOAuthDraft(SecureCredential{Name: name, Grant: OAuthGrantClientCredentials, TokenURL: "https://sso.example/token", BaseURL: "https://x.example"}); err == nil {
+			t.Errorf("an oauth draft named %s was saved", name)
+		}
+		if err := s.SaveAPIDraft(SecureCredential{Name: name, Type: SecureCredBearer, BaseURL: "https://x.example"}); err == nil {
+			t.Errorf("an api draft named %s was saved", name)
+		}
+		if err := s.Save(SecureCredential{Name: name, Type: SecureCredBearer, BaseURL: "https://x.example"}, "k"); err == nil {
+			t.Errorf("a credential named %s was saved", name)
+		}
+	}
+	if sec, _ := s.loadSecret("gh"); sec != "real-key" {
+		t.Errorf("gh's key was touched: %q", sec)
+	}
+	if _, err := s.TestMintFromPosted(nil, SecureCredential{Name: "@u:alice:gh", Type: SecureCredOAuth2, Grant: OAuthGrantClientCredentials, TokenURL: "https://elsewhere.example/token"}, ""); err == nil {
+		t.Error("Test token reached a secret by a name that is not a credential's")
+	}
+}
+
+// A lend does not take over a deployment credential's name: it cannot be
+// made while one exists, and one made before resolves to the deployment's.
+func TestALendDoesNotTakeADeploymentName(t *testing.T) {
+	s := reachFixture(t)
+	if err := s.Save(SecureCredential{Name: "wiki", Type: SecureCredBearer, BaseURL: "https://wiki.example", Owner: "alice"}, "alice-key"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetCredentialShares("alice", "wiki", nil, []string{"bob"}); err != nil {
+		t.Fatalf("lend with no deployment credential of the name: %v", err)
+	}
+	if c, _ := s.Resolve("wiki", "bob"); c.Owner != "alice" {
+		t.Fatalf("bob gets alice's lend: %+v", c)
+	}
+	if err := s.Save(SecureCredential{Name: "wiki", Type: SecureCredBearer, BaseURL: "https://wiki.corp.example"}, "deploy-key"); err != nil {
+		t.Fatal(err)
+	}
+	if c, _ := s.Resolve("wiki", "bob"); c.Owner != "" {
+		t.Errorf("the deployment's wiki is bob's wiki, not alice's lend: %+v", c)
+	}
+	if err := s.SetCredentialShares("alice", "wiki", nil, []string{"carol"}); err == nil {
+		t.Error("a new lend under a deployment credential's name is refused")
+	}
+}
+
+// A tool somebody else wrote is not handed the runner's raw key.
+func TestAForeignToolGetsNoRawKey(t *testing.T) {
+	s := reachFixture(t)
+	if err := s.Save(SecureCredential{Name: "gh", Type: SecureCredBearer, BaseURL: "https://api.github.com", Owner: "alice"}, "alice-key"); err != nil {
+		t.Fatal(err)
+	}
+	own := &SandboxHook{Capabilities: []string{"secret:gh"}, Sess: &ToolSession{Username: "alice"}, ToolName: "mine"}
+	if got := hookSecret(t, own, "gh"); !strings.Contains(got, "alice-key") {
+		t.Fatalf("alice's own tool gets her key: %s", got)
+	}
+	foreign := &SandboxHook{Capabilities: []string{"secret:gh"}, Sess: &ToolSession{Username: "alice"}, ToolName: "shared", ForeignTool: true}
+	if got := hookSecret(t, foreign, "gh"); strings.Contains(got, "alice-key") || !strings.Contains(got, "fetch_via") {
+		t.Errorf("a colleague's tool got alice's key: %s", got)
+	}
+}
+
+// A credentialed request does not follow a redirect off its credential's host
+// or outside its allowed endpoints.
+
+func TestACredentialedRequestStaysOnItsHost(t *testing.T) {
+	check := credentialRedirectCheck(SecureCredential{
+		Name: "crm", BaseURL: "https://api.crm.example", AllowedEndpoints: []string{"/v1/*"},
+		DeniedURLPatterns: []string{"https://api.crm.example/v1/billing*"},
+	})
+	first := &http.Request{URL: mustURL(t, "https://api.crm.example/v1/items")}
+	for target, ok := range map[string]bool{
+		"https://api.crm.example/v1/items?page=2": true,
+		"https://evil.example/v1/items":           false,
+		"https://api.crm.example/admin":           false,
+		"https://api.crm.example/v1/billing":      false,
+	} {
+		err := check(&http.Request{URL: mustURL(t, target)}, []*http.Request{first})
+		if (err == nil) != ok {
+			t.Errorf("redirect to %s: allowed=%v, want %v (%v)", target, err == nil, ok, err)
+		}
+	}
+}
+
+func mustURL(t *testing.T, s string) *url.URL {
+	t.Helper()
+	u, err := url.Parse(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return u
+}
+
+// Saving a credential with an empty secret keeps the stored one, which was
+// right for a description edit and wrong for a new address: an edit, or an
+// agent's proposed edit, could point the key at any server. A user-owned
+// credential moved to another host needs its secret entered again.
+func TestRepointedCredentialNeedsItsSecretAgain(t *testing.T) {
+	secureAPITestStore(t)
+	s := Secure()
+	c := SecureCredential{Name: "svc", Type: SecureCredBearer, BaseURL: "https://api.example.com/v1", Owner: "user1"}
+	if err := s.Save(c, "tok-1"); err != nil {
+		t.Fatal(err)
+	}
+
+	same := c
+	same.BaseURL = "https://api.example.com/v2"
+	same.Description = "path change only"
+	if err := s.Save(same, ""); err != nil {
+		t.Fatalf("a same-host edit should keep the secret: %v", err)
+	}
+
+	moved := same
+	moved.BaseURL = "https://collector.example.net"
+	if err := s.Save(moved, ""); err == nil {
+		t.Fatal("moving the credential to another host kept its secret")
+	}
+	if got, _ := s.LoadUser("user1", "svc"); got.BaseURL != same.BaseURL {
+		t.Fatalf("the refused move was stored anyway: %q", got.BaseURL)
+	}
+	if err := s.Save(moved, "tok-2"); err != nil {
+		t.Fatalf("a move with the secret re-entered should save: %v", err)
+	}
+
+	// A draft over a credential that holds a real secret drops it when the
+	// draft names another server, instead of leaving it for a re-enable.
+	draft := SecureCredential{Name: "svc", Type: SecureCredBearer, BaseURL: "https://elsewhere.example.org", Owner: "user1"}
+	if err := s.SaveAPIDraft(draft); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, hasSecret := s.CredentialStatusOwned("user1", "svc"); hasSecret {
+		t.Fatal("a repointing draft kept the real secret")
+	}
+
+	if !credDestinationMoved(SecureCredential{TokenURL: "https://idp.example.com/token"}, SecureCredential{TokenURL: "https://idp.example.net/token"}) {
+		t.Error("a new token endpoint host should count as a move")
+	}
+	if credDestinationMoved(SecureCredential{BaseURL: "https://a.example.com", AllowedURLPattern: "https://a.example.com/**"}, SecureCredential{BaseURL: "https://A.example.com/"}) {
+		t.Error("a case change, or a field the form does not carry, is not a move")
 	}
 }
