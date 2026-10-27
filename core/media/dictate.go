@@ -88,9 +88,10 @@ func dictationFileName(contentType string) string {
 // for pages to embed beside ReadAloudScript. Empty while transcription is off.
 //
 // Press 🎤 to record (it shows the time), press again to stop; the recording
-// is written out by the deployment's transcription and lands in the input box
-// to be read over and sent, with a spinner meanwhile (press it to cancel). It
-// stops itself at two minutes.
+// is written out by the deployment's transcription, with a spinner meanwhile
+// (press it to cancel), and lands in the input box. It stops itself at two
+// minutes. With read-aloud on (below) it is then sent at once, hands-free;
+// with it off it waits in the box to be read over and sent.
 //
 // With speech on too, a 🔈 beside it says whether the reply to a dictated
 // message is read aloud when it arrives: on by default on a phone, off on a
@@ -227,7 +228,13 @@ const dictationJS = `(function(){
         if (!text) { failed(ctx, 'nothing was heard in the recording.'); return; }
         ctx.insertText(text);
         dictated = true;
+        markSpoken();
         idle(ctx);
+        // Talking with read-aloud on is hands-free: it goes at once, and a
+        // misheard word is fixed with the message's Edit. With read-aloud off
+        // the reply will be read, so the words wait in the box to be looked
+        // over first.
+        if (window.gohortReadAloud && readRepliesAloud() && ctx.send) ctx.send();
       })
       .catch(function(e) {
         if (e && e.name === 'AbortError') return;
@@ -242,6 +249,15 @@ const dictationJS = `(function(){
     case 'starting': idle(ctx); return;
     }
     record(ctx);
+  }
+
+  // A send whose reply will be read aloud tells the agent so, and it answers
+  // the way it would speak (spoken_reply on the send body; the panel clears
+  // it after one send). Switching read-aloud before sending updates it.
+  function markSpoken() {
+    if (dictated && window.uiSetPendingMessageExtras) {
+      window.uiSetPendingMessageExtras({spoken_reply: !!window.gohortReadAloud && readRepliesAloud()});
+    }
   }
 
   // The reply to a dictated message, read aloud once the turn is over: the
@@ -281,6 +297,7 @@ const dictationJS = `(function(){
       var speaker = window.uiRegisterComposerAction({label: speakerOn, onclick: function(ctx) {
         setReadRepliesAloud(!readRepliesAloud());
         showSpeaker(ctx);
+        markSpoken();
       }});
       if (speaker) showSpeaker(speaker);
     }

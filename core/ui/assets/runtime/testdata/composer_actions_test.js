@@ -54,6 +54,10 @@ ctx.insertText('two');
 check('no extra space after a line break', inputArea.value === 'line one\ntwo');
 ctx.insertText('   ');
 check('nothing to add changes nothing', inputArea.value === 'line one\ntwo');
+var sent = 0;
+function sendMessage() { sent++; }
+ctx.send();
+check('send() sends what is in the box, as Send does', sent === 1);
 check('an action without an onclick is refused', window.uiRegisterComposerAction({label: 'x'}) === null && inputRow.kids.length === 2);
 
 eval(lift(panel, 'function announceSent(text)', 'announceSent'));

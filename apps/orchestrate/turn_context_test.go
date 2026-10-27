@@ -60,3 +60,47 @@ func TestATurnContextReachesTheModelAndIsNotStored(t *testing.T) {
 		}
 	}
 }
+
+// A send the page will read aloud (a dictated message with read-aloud on)
+// tells the turn to answer the way it would speak; any other send does not,
+// and the stored conversation holds what was said either way.
+func TestASpokenReplySendIsToldToSpeak(t *testing.T) {
+	T, udb, user := newTestOrchestrate(t)
+	pinRootDB(t)
+	fake := &FakeLLM{Turns: []FakeTurn{{Content: "Noon works.", Repeat: true}}}
+	T.LLM = fake
+	appagents.RegisterAppAgent(appagents.AppAgentSpec{
+		ID: "app-test-spoken-reply", OwningApp: "Test", Name: "Helper", Prompt: "You help.",
+		AllowedTools: []string{"ask_user"}, Hidden: true, ExactTools: true,
+	})
+	agent, ok := loadAgent(udb, "app-test-spoken-reply")
+	if !ok {
+		t.Fatal("the app agent did not resolve")
+	}
+	send := func(body map[string]any) string {
+		t.Helper()
+		raw, _ := json.Marshal(body)
+		r := asUser(httptest.NewRequest(http.MethodPost, "/api/send", strings.NewReader(string(raw))), user)
+		before := fake.Calls()
+		T.handleSendWithAppTools(httptest.NewRecorder(), r, udb, user, agent, nil)
+		if fake.Calls() == before {
+			t.Fatal("the turn never reached the model")
+		}
+		sent := fake.Sent(before)
+		return sent[len(sent)-1].Content
+	}
+	if got := send(map[string]any{"message": "When can we meet?", "spoken_reply": true}); !strings.Contains(got, spokenReplyNote) {
+		t.Errorf("a spoken-reply send should be told to speak: %q", got)
+	}
+	if got := send(map[string]any{"message": "When can we meet?"}); strings.Contains(got, "will be heard") {
+		t.Errorf("a typed send should not be: %q", got)
+	}
+	for _, s := range listChatSessions(udb, agent.ID) {
+		full, _ := loadChatSession(udb, agent.ID, s.ID)
+		for _, m := range full.Messages {
+			if strings.Contains(m.Content, "will be heard") {
+				t.Errorf("the stored conversation kept the note: %s %q", m.Role, m.Content)
+			}
+		}
+	}
+}

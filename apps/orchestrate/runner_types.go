@@ -362,6 +362,7 @@ type chatTurn struct {
 	// t.inferredOff() returns the effective state. The Knowledge layer
 	// (uploaded files) and Explicit Memory (facts) are unaffected.
 	inferredDisabled bool
+	spokenReply      bool     // per-turn: the page will read the reply aloud (spokenReplyNote)
 	userImages       [][]byte // decoded image attachments from the chat panel; attached to the orchestrator's last user message
 	// fromDesktopClient is true when THIS request came from the gohort-desktop
 	// viewer (its proxy stamped the bridge key). Gates the from_client_* tool

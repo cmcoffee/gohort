@@ -3005,9 +3005,11 @@
 
     // uiRegisterComposerAction adds a button to the input row, before Send:
     // { label, title?, onclick(ctx) } where ctx = { button, input,
-    // insertText(text) }. insertText adds to what is already typed (a space
-    // between) and resizes the box, so text an action produces lands where
-    // typed text would, to be read over before it is sent. The button is
+    // insertText(text), send() }. insertText adds to what is already typed (a
+    // space between) and resizes the box, so text an action produces lands
+    // where typed text would, to be read over before it is sent; send() sends
+    // what is in the box as the Send button does, for an action that means it
+    // to go at once. The button is
     // added at once, so a page script registering after the panel is built
     // works; the ctx comes back, for an action that shows its own state on
     // its button or keeps a second button in step.
@@ -3026,6 +3028,7 @@
           autosizeInput();
           if (inputArea.focus) inputArea.focus();
         },
+        send: function() { sendMessage(); },
       };
       btn.addEventListener('click', function() {
         try { opts.onclick(ctx); } catch (e) { /* isolate */ }

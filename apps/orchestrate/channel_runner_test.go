@@ -359,7 +359,7 @@ func TestMergedNoteSurvivesAnUnknownBinding(t *testing.T) {
 	if base := channelSurfaceContext(in); base != "" {
 		t.Skipf("this deployment resolved the binding (%q); the guard is untestable here", base)
 	}
-	full := channelSurfaceContextFull(in)
+	full := channelSurfaceContextFull(in, false)
 	if !strings.Contains(full, "2 separate messages") {
 		t.Errorf("merge note lost when the binding is unknown: %q", full)
 	}
@@ -663,5 +663,43 @@ func TestAVoiceMessageReachesTheAgentAsSpeech(t *testing.T) {
 	}
 	if got := userTurn(); strings.Contains(got, "no picture or file came with it") {
 		t.Errorf("a voice message sent with a photo must not deny the photo: %q", got)
+	}
+}
+
+// A voice note whose reply goes back as speech tells the agent to answer the
+// way it would speak; with speech off, or for a typed message, it does not.
+func TestAVoiceNoteIsAnsweredTheWayItIsSpoken(t *testing.T) {
+	df, _ := voiceChannel(t, "Sure.", http.StatusOK)
+	lastUser := func() string {
+		var last string
+		for _, m := range df.llm.Sent(df.llm.Calls() - 1) {
+			if m.Role == "user" {
+				last = m.Content
+			}
+		}
+		return last
+	}
+	voice := base64.StdEncoding.EncodeToString([]byte("clip"))
+	run := func(session string, in ChannelInbound) string {
+		t.Helper()
+		in.Owner, in.AgentID, in.SessionID, in.ChatID, in.SenderName = "u", df.agent.ID, session, "chat-1", "Alice"
+		if _, err := RunChannelAgent(t.Context(), in); err != nil {
+			t.Fatal(err)
+		}
+		return lastUser()
+	}
+	if got := run("room-1", ChannelInbound{Audios: []string{voice}}); !strings.Contains(got, spokenReplyNote) {
+		t.Errorf("a voice note answered aloud should be told to speak: %q", got)
+	}
+	if got := run("room-2", ChannelInbound{Text: "when?"}); strings.Contains(got, "will be heard") {
+		t.Errorf("a typed message should not be: %q", got)
+	}
+	prev := media.GetSpeechConfig()
+	off := prev
+	off.Enabled = false
+	media.SetSpeechConfig(off)
+	defer media.SetSpeechConfig(prev)
+	if got := run("room-3", ChannelInbound{Audios: []string{voice}}); strings.Contains(got, "will be heard") {
+		t.Errorf("with speech off the reply is read, so it should not be: %q", got)
 	}
 }

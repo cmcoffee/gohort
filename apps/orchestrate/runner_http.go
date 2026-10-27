@@ -185,6 +185,10 @@ type sendRequest struct {
 	// the conversation ended on: what was picked and typed there, in the
 	// card's own shape. See ChatMessage.AskState.
 	AskState json.RawMessage `json:"ask_state,omitempty"`
+	// SpokenReply marks a send whose reply the page will read aloud (a
+	// dictated message with read-aloud on): the turn is told to answer the
+	// way it would speak. See spokenReplyNote.
+	SpokenReply bool `json:"spoken_reply,omitempty"`
 }
 
 // Extract attached documents (PDFs, DOCX, text files). Hold them
@@ -760,6 +764,7 @@ func (sr *sendRun) buildTurn() {
 		// Incognito (clean-room) sessions also suppress the inferred memory layer
 		// (write side) — nothing accumulates back, matching "no baggage out".
 		inferredDisabled: sr.req.InferredDisabled || sr.sess.Incognito,
+		spokenReply:      sr.req.SpokenReply,
 		userImages:       decodeUserImages(sr.req.Images),
 		// from_client_* tools are exposed only when the request came from the
 		// gohort-desktop viewer (its proxy stamps the bridge key) — never a

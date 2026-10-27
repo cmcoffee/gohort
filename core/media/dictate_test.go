@@ -113,7 +113,7 @@ function sleep(ms) { return new Promise(function(r) { setTimeout(r, ms); }); }
 var listeners = {};
 var store = {};
 var coarse = true;
-var actions = [], decorators = [], readCalls = [], stops = 0;
+var actions = [], decorators = [], readCalls = [], stops = 0, extras = [], sends = 0;
 var input = {value: '', on: {}, addEventListener: function(t, f) { this.on[t] = f; }};
 global.window = {
   addEventListener: function(t, f) { (listeners[t] = listeners[t] || []).push(f); },
@@ -121,13 +121,15 @@ global.window = {
   matchMedia: function(q) { return {matches: coarse && q === '(pointer: coarse)'}; },
   uiRegisterComposerAction: function(o) {
     var ctx = {button: {textContent: o.label, title: o.title || ''}, input: input,
-      insertText: function(t) { input.value += (input.value ? ' ' : '') + t; }, onclick: o.onclick};
+      insertText: function(t) { input.value += (input.value ? ' ' : '') + t; },
+      send: function() { sends++; }, onclick: o.onclick};
     actions.push(ctx);
     return ctx;
   },
   uiRegisterMessageDecorator: function(f) { decorators.push(f); },
   gohortReadAloud: function(ctx) { readCalls.push(ctx); },
   gohortReadAloudStop: function() { stops++; },
+  uiSetPendingMessageExtras: function(o) { extras.push(o); },
   GOHORT_AGENT_ID: 'a1',
 };
 function fire(t) { (listeners[t] || []).forEach(function(f) { f({}); }); }
@@ -178,6 +180,8 @@ eval(dictationJS);
   await sleep(10);
   check('the words land in the box to be read over', input.value === 'Meet me at noon.');
   check('and the button is ready again', mic.button.textContent === '🎤');
+  check('the send tells the agent its reply will be heard', extras.length === 1 && extras[0].spoken_reply === true);
+  check('with read-aloud on it goes at once, hands-free', sends === 1);
 
   // The reply to the dictated message is read once the turn is over: its
   // last reply, not a note before it.
@@ -199,9 +203,15 @@ eval(dictationJS);
   // Switched off on this device, a dictated message's reply is not read.
   speaker.onclick(speaker);
   check('the switch turns it off and says so', store['gohort.readDictatedReplies'] === 'off' && speaker.button.textContent === '🔇');
+  check('with nothing dictated waiting, switching tags no send', extras.length === 1);
   mic.onclick(mic); await sleep(10); mic.onclick(mic); await sleep(10);
   pending[1].res(written('Thanks.'));
   await sleep(10);
+  check('switched off, a dictated send is not told its reply will be heard', extras.length === 2 && extras[1].spoken_reply === false);
+  check('and the words wait in the box to be read over', sends === 1 && input.value.indexOf('Thanks.') >= 0);
+  speaker.onclick(speaker);
+  check('switching back on before sending tags it again', extras.length === 3 && extras[2].spoken_reply === true);
+  speaker.onclick(speaker);
   fire('ui-agent-sent');
   decorators.forEach(function(d) { d(answer); });
   fire('ui-agent-turn-done');
@@ -226,6 +236,7 @@ eval(dictationJS);
   pending[4].res(written('   '));
   await sleep(10);
   check('a silent recording says nothing was heard', mic.button.textContent === '⚠' && mic.button.title.indexOf('nothing was heard') >= 0);
+  check('and sends nothing', sends === 1);
   micDenied = true;
   mic.onclick(mic); await sleep(10);
   check('a refused microphone says so', mic.button.textContent === '⚠' && mic.button.title.indexOf('not allowed') >= 0);

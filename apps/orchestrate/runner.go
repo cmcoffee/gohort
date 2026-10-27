@@ -2335,6 +2335,12 @@ func (pr *planRun) loopConfig() AgentLoopConfig {
 				}
 				notes += ask
 			}
+			if t.spokenReply {
+				if notes != "" {
+					notes += "\n\n"
+				}
+				notes += spokenReplyNote
+			}
 			return notes
 		},
 		// Last look before the reply goes out: is it true about what this turn

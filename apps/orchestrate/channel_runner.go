@@ -52,10 +52,13 @@ func mergedMessagesNote(in ChannelInbound) string {
 // binding's own provenance. Kept separate because channelSurfaceContext
 // returns EMPTY for an unrecognized chat, and the merge note must not be lost
 // with it — a coalesced pair is exactly as easy to half-answer either way.
-func channelSurfaceContextFull(in ChannelInbound) string {
-	parts := make([]string, 0, 2)
+func channelSurfaceContextFull(in ChannelInbound, spoken bool) string {
+	parts := make([]string, 0, 3)
 	if note := mergedMessagesNote(in); note != "" {
 		parts = append(parts, note)
+	}
+	if spoken {
+		parts = append(parts, spokenReplyNote)
 	}
 	if ctx := channelSurfaceContext(in); ctx != "" {
 		parts = append(parts, ctx)
@@ -434,7 +437,7 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 			// not persisted) so it knows its reply goes straight back here and
 			// doesn't confabulate a destination or offer to "send it to" the
 			// channel it's already on.
-			SurfaceContext: channelSurfaceContextFull(in),
+			SurfaceContext: channelSurfaceContextFull(in, voiceNote && media.GetSpeechConfig().Enabled),
 			StatusCallback: in.StatusCallback,
 		})
 		if app.supersededInConversation(in.Owner, sessionID, err) {
@@ -622,6 +625,16 @@ func spokenReply(ctx context.Context, in ChannelInbound, out ChannelReply, voice
 	}
 	return []string{base64.StdEncoding.EncodeToString(audio)}
 }
+
+// spokenReplyNote is the turn note for a reply that will be heard, not read:
+// the answer to a voice note sent back as speech, or to a message dictated in
+// the web chat with read-aloud on. A reply written for the screen (a list, a
+// table, a link, "Sat" for Saturday) is a poor thing to listen to, and the
+// shape of an answer is set by how it is written, not fixed afterwards. Run
+// only: the person's message is stored as they sent it.
+const spokenReplyNote = "This reply will be heard, not read: it is spoken back to the person. " +
+	"Answer the way you would say it out loud: brief and conversational, without lists, tables, headings, code or links. " +
+	"Say times, dates, numbers and names the way they are spoken, and write words out in full (Saturday, not Sat; Drive, not Dr)."
 
 // agentVoice is the speech voice an owner's agent talks in, "" for the
 // deployment's. Looked up in the owner's own store only, so naming somebody
