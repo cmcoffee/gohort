@@ -105,7 +105,8 @@ var (
 // reading aloud. A speech model reads a code block or a web address out
 // character by character and a listener can use neither, so code blocks are
 // dropped, a link keeps only its words, a bare address goes, and bullets lose
-// their mark. The written reply still carries all of it.
+// their mark, and abbreviations are written out (SpokenWords). The written
+// reply still carries all of it.
 func SpeakableText(md string) string {
 	var kept []string
 	inCode := false
@@ -125,5 +126,5 @@ func SpeakableText(md string) string {
 	s = spokenEmptyPair.ReplaceAllString(s, "")
 	s = spokenSpaces.ReplaceAllString(s, " ")
 	s = spokenLoosePunc.ReplaceAllString(s, "$1")
-	return strings.TrimSpace(s)
+	return SpokenWords(strings.TrimSpace(s))
 }

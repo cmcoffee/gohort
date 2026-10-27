@@ -36,6 +36,7 @@ func TestSpeakableText(t *testing.T) {
 		{"address in brackets goes with them", "Done (details: https://example.com).", "Done (details:)."},
 		{"bullets lose their mark", "Two things:\n- **milk**\n- bread", "Two things:\nmilk\nbread"},
 		{"heading keeps its text", "## Weather\nSunny, 72.", "Weather\nSunny, 72."},
+		{"abbreviations written out", "**Open** Sat, Nov 2.", "Open Saturday, November 2nd."},
 		{"plain text unchanged", "Sure, I'll call at noon.", "Sure, I'll call at noon."},
 	}
 	for _, c := range cases {
