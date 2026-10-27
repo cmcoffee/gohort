@@ -76,7 +76,7 @@ func TestMediaRoutesContract(t *testing.T) {
 			http.Error(w, `{"detail":"voice not found"}`, http.StatusBadRequest)
 			return
 		}
-		w.Write(append([]byte("ID3\x04\x00\x00\x00\x00\x00\x00"), make([]byte, 1500)...))
+		w.Write([]byte("ID3\x04\x00\x00\x00\x00\x00\x00clip"))
 	})
 	stub.HandleFunc("/tts-ok/v1/audio/voices", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"voices":["af_heart","bm_george"]}`))

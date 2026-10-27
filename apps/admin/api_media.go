@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -244,11 +245,14 @@ func (a *AdminApp) handleSpeechSave(c *jsonapi.Call, req media.SpeechConfig) (an
 	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
-// speechTestSentence is what the Test button has the server say.
-const speechTestSentence = "This is a test of spoken replies."
+// speechTestSentence is what the preview has the server say: a reply's kind
+// of sentence, so the voice is heard the way it will be used.
+const speechTestSentence = "Hi! This is how I'll sound when I answer one of your voice notes."
 
-// handleSpeechTest speaks a sentence with the form as typed: the only test
-// that proves the model and voice names are ones the server takes.
+// handleSpeechTest speaks a sentence with the form as typed, saved or not,
+// and hands the clip back for the page to play: the only test that proves
+// the model and voice are ones the server takes, and the way to hear a voice
+// before choosing it.
 func (a *AdminApp) handleSpeechTest(c *jsonapi.Call, req media.SpeechConfig) (any, error) {
 	req.APIKey = keepSecret(req.APIKey, a.storedSpeechConfig().APIKey)
 	if !req.Enabled {
@@ -261,8 +265,21 @@ func (a *AdminApp) handleSpeechTest(c *jsonapi.Call, req media.SpeechConfig) (an
 	if err != nil {
 		return testResultBody(false, "", err.Error()), nil
 	}
-	return testResultBody(true, fmt.Sprintf("Spoke a test sentence: %d KB of %s audio.",
-		(len(audio)+1023)/1024, strings.TrimPrefix(ext, ".")), ""), nil
+	body := testResultBody(true, fmt.Sprintf("Spoke a sample: %d KB of %s audio.",
+		(len(audio)+1023)/1024, strings.TrimPrefix(ext, ".")), "")
+	body["audio"] = "data:" + speechMIME(ext) + ";base64," + base64.StdEncoding.EncodeToString(audio)
+	return body, nil
+}
+
+// speechMIME is the media type a browser plays a clip of this extension as.
+func speechMIME(ext string) string {
+	switch ext {
+	case ".wav":
+		return "audio/wav"
+	case ".ogg":
+		return "audio/ogg"
+	}
+	return "audio/mpeg"
 }
 
 // handleSpeechVoices lists the voices the configured server offers, for the

@@ -108,7 +108,9 @@ type FormPanel struct {
 	//   {"ok": true,  "message": "..."}  → green check + message
 	//   {"ok": false, "error":   "..."}  → red x + error
 	// or any non-2xx → red x + status text. Result renders inline next
-	// to the button. Use for connectivity / credential checks (SMTP,
+	// to the button. A passing result may add "audio" (a URL, data: URL
+	// included) for something to hear, such as a speech endpoint's sample:
+	// a player appears below the result and starts playing. Use for connectivity / credential checks (SMTP,
 	// embedding endpoint, search API, image-gen API) so operators can
 	// validate before saving.
 	//

@@ -153,7 +153,7 @@ root POST /api/speech/test "{\"enabled\":false,\"endpoint\":\"<stub>/tts-ok/v1\"
 root POST /api/speech/test "{\"enabled\":true}"
   200 {"error":"speech endpoint not configured","ok":false}
 root POST /api/speech/test "{\"enabled\":true,\"endpoint\":\"<stub>/tts-ok/v1\",\"model\":\"kokoro\",\"voice\":\"af_heart\",\"api_key\":\"(unchanged)\"}"
-  200 {"message":"Spoke a test sentence: 2 KB of mp3 audio.","ok":true}
+  200 {"audio":"data:audio/mpeg;base64,SUQzBAAAAAAAAGNsaXA=","message":"Spoke a sample: 1 KB of mp3 audio.","ok":true}
 root POST /api/speech/test "{\"enabled\":true,\"endpoint\":\"<stub>/tts-ok/v1\",\"model\":\"kokoro\",\"voice\":\"nobody\",\"api_key\":\"(unchanged)\"}"
   200 {"error":"speech: HTTP 400: {\"detail\":\"voice not found\"}","ok":false}
 root POST /api/speech/test "{\"enabled\":true,\"endpoint\":\"<stub>/tts-ok/v1\",\"model\":\"kokoro\",\"voice\":\"af_heart\",\"api_key\":\"wrong\"}"

@@ -92,5 +92,25 @@ function settled() { return new Promise(function(r) { setTimeout(r, 20); }); }
   await settled();
   check('a JSON answer still reads', out.textContent === '✓ Connected');
   check('a one-line result sits beside the button', out.style.flexBasis === '');
+  check('a result with nothing to hear adds no player', row.kids.length === 2);
+
+  // A result with something to hear gets a player below it; the next test
+  // without one hides it again.
+  reply = function() {
+    return {ok: true, headers: {get: function() { return 'application/json'; }},
+      json: function() { return Promise.resolve({ok: true, message: 'Spoke', audio: 'data:audio/mpeg;base64,SUQz'}); }};
+  };
+  btn.onclick();
+  await settled();
+  var player = row.kids[2];
+  check('a result with audio gets a player', player && player.tag === 'audio' && player.src === 'data:audio/mpeg;base64,SUQz');
+  check('the player has controls to replay it', player && player.attrs.controls === true);
+  reply = function() {
+    return {ok: true, headers: {get: function() { return 'application/json'; }},
+      json: function() { return Promise.resolve({ok: false, error: 'voice not found'}); }};
+  };
+  btn.onclick();
+  await settled();
+  check('a failed test hides the last player', player.style.display === 'none' && row.kids.length === 3);
   process.exit(fail ? 1 : 0);
 })();

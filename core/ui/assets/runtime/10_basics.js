@@ -4188,6 +4188,27 @@
           testResult.textContent = text;
           testResult.style.flexBasis = text.indexOf('\n') >= 0 ? '100%' : '';
         }
+        // A test may answer with something to hear ({"audio": url}): a player
+        // takes the row below the result and starts at once, since the click
+        // was the person asking to hear it. Hidden again by the next test.
+        var testAudio = null;
+        function showAudio(src) {
+          if (!src) {
+            if (testAudio) testAudio.style.display = 'none';
+            return;
+          }
+          if (!testAudio) {
+            testAudio = el('audio', {class: 'ui-form-test-audio', controls: true,
+              style: 'flex-basis:100%;max-width:100%'});
+            testRow.appendChild(testAudio);
+          }
+          testAudio.style.display = '';
+          testAudio.src = src;
+          if (testAudio.play) {
+            var playing = testAudio.play();
+            if (playing && playing.catch) playing.catch(function() {});
+          }
+        }
         // While a test is in flight the button IS the cancel: a wrong host or
         // a dead port used to mean staring at "Testing…" until the server's
         // timeout gave up, with nothing to click. Aborting the request also
@@ -4212,6 +4233,7 @@
           testBtn.textContent = 'Cancel';
           testBtn.classList.add('danger');
           showResult('var(--text-mute)', 'Testing…');
+          showAudio('');
           var startedAt = Date.now();
           var step = '';   // the step a streaming test last said it started
           function tick() {
@@ -4266,6 +4288,7 @@
           }).then(function(resp) {
             if (resp && resp.ok) {
               showResult('var(--accent)', '✓ ' + (resp.message || 'OK'));
+              showAudio(resp.audio);
             } else {
               showResult('var(--danger,#ff7b72)', '✗ ' + ((resp && resp.error) || 'Failed'));
             }
