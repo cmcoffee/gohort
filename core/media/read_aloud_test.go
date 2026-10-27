@@ -48,6 +48,12 @@ func readAloudServer(t *testing.T) (asked func() []string) {
 	}
 }
 
+// readAloudLong is a sentence too long to share the first piece, so what
+// comes before it is made alone.
+func readAloudLong(lead string) string {
+	return lead + strings.Repeat(", and the day after", 12) + "."
+}
+
 func readAloudDo(method, path, user, body string) *httptest.ResponseRecorder {
 	w := httptest.NewRecorder()
 	ServeReadAloud(w, httptest.NewRequest(method, path, strings.NewReader(body)), user)
@@ -59,7 +65,7 @@ func readAloudDo(method, path, user, body string) *httptest.ResponseRecorder {
 // mp3 stream with no stray tags in the middle.
 func TestAReplyIsReadAloudAsAStream(t *testing.T) {
 	asked := readAloudServer(t)
-	reply := "**Sure.** I checked the forecast for tomorrow. It will be sunny, with a high of 72. See https://example.com/x for more."
+	reply := "**Sure.** " + readAloudLong("I checked the forecast for tomorrow") + " It will be sunny, with a high of 72. See https://example.com/x for more."
 	w := readAloudDo("POST", ReadAloudPath, "alice", `{"text":`+strconv.Quote(reply)+`}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("start: %d %s", w.Code, w.Body.String())
@@ -87,7 +93,7 @@ func TestAReplyIsReadAloudAsAStream(t *testing.T) {
 	if !strings.HasPrefix(body, "ID3") || strings.Count(body, "ID3") != 1 {
 		t.Errorf("one tag, at the head of the stream: %q", body)
 	}
-	want := "[Sure.][I checked the forecast for tomorrow. It will be sunny, with a high of 72. See for more.]"
+	want := "[Sure.][" + readAloudLong("I checked the forecast for tomorrow") + " It will be sunny, with a high of 72. See for more.]"
 	if got := body[strings.Index(body, "["):]; got != want {
 		t.Errorf("the stream plays the reply in order, without the markdown or the address:\n got %q\nwant %q", got, want)
 	}
@@ -109,7 +115,7 @@ func TestTheFirstSentenceIsSentBeforeTheRestIsMade(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]string
 		json.NewDecoder(r.Body).Decode(&body)
-		if body["input"] == "Then the rest." {
+		if body["input"] == readAloudLong("Then the rest") {
 			atomic.StoreInt32(&seen, atomic.LoadInt32(&flushes))
 		}
 		w.Write(fakeMP3)
@@ -120,7 +126,7 @@ func TestTheFirstSentenceIsSentBeforeTheRestIsMade(t *testing.T) {
 	t.Cleanup(func() { SetSpeechConfig(prev) })
 
 	var start struct{ URL string }
-	resp := readAloudDo("POST", ReadAloudPath, "alice", `{"text":"First. Then the rest."}`)
+	resp := readAloudDo("POST", ReadAloudPath, "alice", `{"text":`+strconv.Quote("First. "+readAloudLong("Then the rest"))+`}`)
 	json.Unmarshal(resp.Body.Bytes(), &start)
 	if start.URL == "" {
 		t.Fatalf("start: %d %s", resp.Code, resp.Body.String())
@@ -212,35 +218,51 @@ func TestReadAloudWithoutMP3IsOnePiece(t *testing.T) {
 	t.Cleanup(func() { SetSpeechConfig(prev) })
 
 	var start struct{ URL string }
-	json.Unmarshal(readAloudDo("POST", ReadAloudPath, "alice", `{"text":"One. Two. Three."}`).Body.Bytes(), &start)
+	whole := "One. " + readAloudLong("Two") + " Three."
+	json.Unmarshal(readAloudDo("POST", ReadAloudPath, "alice", `{"text":`+strconv.Quote(whole)+`}`).Body.Bytes(), &start)
 	w := readAloudDo("GET", start.URL, "alice", "")
-	if w.Header().Get("Content-Type") != "audio/wav" || len(asked) != 2 || asked[1] != "One. Two. Three." {
+	if w.Header().Get("Content-Type") != "audio/wav" || len(asked) != 2 || asked[0] != "One." || asked[1] != whole {
 		t.Errorf("one whole clip: type=%q asked=%q", w.Header().Get("Content-Type"), asked)
 	}
 }
 
 func TestReadAloudPieces(t *testing.T) {
-	long := strings.Repeat("This sentence is here to fill the reply. ", 40)
-	pieces := readAloudPieces(strings.TrimSpace("Hi there! " + long))
-	if pieces[0] != "Hi there!" {
-		t.Errorf("the first piece is the first sentence: %q", pieces[0])
+	long := strings.Repeat("This sentence is here to fill the reply. ", 80)
+	text := strings.TrimSpace("Hi there! Here is the news. " + long)
+	pieces := readAloudPieces(text)
+	if !strings.HasPrefix(pieces[0], "Hi there! Here is the news. This sentence") {
+		t.Errorf("the first piece gathers the sentences that fit: %q", pieces[0])
+	}
+	if len(pieces) < 4 {
+		t.Fatalf("want short pieces first, then long ones: %d pieces", len(pieces))
 	}
 	for i, p := range pieces {
-		if n := len([]rune(p)); n > readAloudChunkChars {
-			t.Errorf("piece %d is %d characters", i, n)
+		n := len([]rune(p))
+		if n > readAloudLimit(i) {
+			t.Errorf("piece %d is %d characters, limit %d", i, n, readAloudLimit(i))
 		}
-		if i > 0 && !strings.HasSuffix(p, ".") {
+		// Every piece but the last is full: one more sentence would not fit.
+		if i < len(pieces)-1 && n+len(" This sentence is here to fill the reply.") <= readAloudLimit(i) {
+			t.Errorf("piece %d is %d characters and had room for more", i, n)
+		}
+		if !strings.HasSuffix(p, ".") {
 			t.Errorf("piece %d should end on a sentence: %q", i, p[len(p)-20:])
 		}
 	}
-	if joined := strings.Join(pieces, " "); joined != strings.TrimSpace("Hi there! "+long) {
+	if readAloudLimit(0) >= readAloudLimit(1) || readAloudLimit(1) >= readAloudLimit(2) || readAloudLimit(5) != readAloudChunkChars {
+		t.Errorf("the limits grow: %d, %d, %d", readAloudLimit(0), readAloudLimit(1), readAloudLimit(2))
+	}
+	if joined := strings.Join(pieces, " "); joined != text {
 		t.Errorf("the pieces should hold the whole reply")
 	}
-	first := readAloudPieces(strings.Repeat("aaa bbb ccc ddd eee, ", 20) + "end.")
+	first := readAloudPieces(strings.Repeat("aaa bbb ccc ddd eee, ", 30) + "end.")
 	if n := len([]rune(first[0])); n > readAloudFirstChars || !strings.HasSuffix(first[0], ",") {
 		t.Errorf("a long first sentence is cut at a comma within %d: %q", readAloudFirstChars, first[0])
 	}
-	if got := readAloudPieces("Version 1.2 is out.\nTry it."); len(got) != 2 || got[0] != "Version 1.2 is out." {
+	if n := len([]rune(first[1])); n <= readAloudFirstChars || n > readAloudSecondChars {
+		t.Errorf("the rest of it fills the second piece: %d characters", n)
+	}
+	if got := readAloudSentences("Version 1.2 is out.\nTry it."); len(got) != 2 || got[0] != "Version 1.2 is out." {
 		t.Errorf("a dot inside a number does not end a sentence, a line does: %q", got)
 	}
 }

@@ -47,12 +47,17 @@ const (
 	readAloudMaxChars = 6000
 	// readAloudFirstChars bounds the first piece, made before the link is
 	// handed back: a first sentence longer than this is split, at a comma when
-	// one is near, so nobody waits on it. About a second on a CPU-only server.
-	readAloudFirstChars = 100
+	// one is near, so nobody waits on it. A third of a second on a GPU.
+	readAloudFirstChars = 200
+	// readAloudSecondChars bounds the second piece, made while the first
+	// plays: a first piece can be one short sentence, a second or two of
+	// speech, and this must be ready before it ends.
+	readAloudSecondChars = 500
 	// readAloudChunkChars bounds each later piece. Made a few sentences at a
-	// time, so the voice keeps its phrasing across them; on a CPU-only server
-	// a piece this size is made several times faster than it plays.
-	readAloudChunkChars = 600
+	// time, so the voice keeps its phrasing across them and restarts less
+	// often; on a GPU a piece this size is made about ten times faster than it
+	// plays, so the maker stays well ahead.
+	readAloudChunkChars = 1200
 	// readAloudTTL is how long a link plays.
 	readAloudTTL = 10 * time.Minute
 	// readAloudMaxJobs bounds the links held at once; the oldest goes first.
@@ -384,11 +389,53 @@ func readAloudText(reply string) string {
 	return cut
 }
 
-// readAloudPieces splits text into the pieces it is made in: the first
-// sentence alone, so it plays soon, then whole sentences gathered up to
-// readAloudChunkChars. A sentence too long for its piece is split at a comma
-// or a space.
+// readAloudPieces splits text into the pieces it is made in: whole sentences
+// gathered up to each piece's limit (readAloudLimit), short at the start so
+// it plays soon and long after. Only a sentence too long for a piece of its
+// own is split, at a comma or a space.
 func readAloudPieces(text string) []string {
+	var pieces []string
+	cur := ""
+	for _, s := range readAloudSentences(text) {
+		// A sentence that does not fit starts the next piece whole, rather
+		// than being cut to fill this one.
+		if cur != "" && utf8.RuneCountInString(cur)+1+utf8.RuneCountInString(s) > readAloudLimit(len(pieces)) {
+			pieces = append(pieces, cur)
+			cur = ""
+		}
+		for _, part := range splitAtWords(s, readAloudLimit(len(pieces))) {
+			if cur != "" && utf8.RuneCountInString(cur)+1+utf8.RuneCountInString(part) > readAloudLimit(len(pieces)) {
+				pieces = append(pieces, cur)
+				cur = ""
+			}
+			if cur == "" {
+				cur = part
+			} else {
+				cur += " " + part
+			}
+		}
+	}
+	if cur != "" {
+		pieces = append(pieces, cur)
+	}
+	return pieces
+}
+
+// readAloudLimit is how many characters piece i may hold. The limits only
+// grow, so a part cut to fit one piece fits every piece after it.
+func readAloudLimit(i int) int {
+	switch i {
+	case 0:
+		return readAloudFirstChars
+	case 1:
+		return readAloudSecondChars
+	}
+	return readAloudChunkChars
+}
+
+// readAloudSentences splits text at the end of each sentence and line. A dot
+// inside a number or a name ("1.2", "x.com") ends nothing.
+func readAloudSentences(text string) []string {
 	var sentences []string
 	start := 0
 	runes := []rune(text)
@@ -410,30 +457,7 @@ func readAloudPieces(text string) []string {
 	if s := strings.TrimSpace(string(runes[start:])); s != "" {
 		sentences = append(sentences, s)
 	}
-	if len(sentences) == 0 {
-		return nil
-	}
-	first := splitAtWords(sentences[0], readAloudFirstChars)
-	pieces := []string{first[0]}
-	rest := append(first[1:], sentences[1:]...)
-	cur := ""
-	for _, s := range rest {
-		for _, part := range splitAtWords(s, readAloudChunkChars) {
-			if cur != "" && utf8.RuneCountInString(cur)+1+utf8.RuneCountInString(part) > readAloudChunkChars {
-				pieces = append(pieces, cur)
-				cur = ""
-			}
-			if cur == "" {
-				cur = part
-			} else {
-				cur += " " + part
-			}
-		}
-	}
-	if cur != "" {
-		pieces = append(pieces, cur)
-	}
-	return pieces
+	return sentences
 }
 
 // splitAtWords cuts s into parts of at most n characters, each ending at a
