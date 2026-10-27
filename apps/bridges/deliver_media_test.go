@@ -119,6 +119,9 @@ func TestASpokenReplyReachesTheConnector(t *testing.T) {
 			if len(items) != 1 || items[0].Text != "" || len(items[0].Audios) != 1 || items[0].Audios[0] != "c3Bva2Vu" {
 				t.Errorf("the reply should go out as its voice note alone: %+v", items)
 			}
+			if len(items) == 1 && items[0].AudioName != "at noon" {
+				t.Errorf("the voice note should be named for what it says: %q", items[0].AudioName)
+			}
 			return
 		}
 		if time.Now().After(deadline) {
@@ -145,5 +148,26 @@ func TestVoiceOnlyWhereAudioIsDelivered(t *testing.T) {
 		if got := voiceOnly(c.svc, c.reply); got != c.want {
 			t.Errorf("voiceOnly(%q, audios=%d) = %v, want %v", c.svc, len(c.reply.Audios), got, c.want)
 		}
+	}
+}
+
+// A spoken reply's clip is named like a subject line, by its first words, and
+// by its agent only when the agent signs its messages.
+func TestVoiceNoteName(t *testing.T) {
+	cases := []struct{ name, agent, text, want string }{
+		{"first words", "", "Sure, I can call you at noon tomorrow if that works.", "Sure, I can call you at"},
+		{"signed agent", "Wren", "Sure, at noon.", "Wren - Sure, at noon."},
+		{"markdown and links left out", "", "**Done.** See [the notes](https://example.com/x)", "Done. See the notes"},
+		{"trailing punctuation trimmed", "", "Here's the plan: one, two, three, four, five", "Here's the plan- one, two, three"},
+		{"nothing to say", "", "```\nls\n```", "Voice reply"},
+		{"no path in a name", "a/b", "c:d", "a-b - c-d"},
+	}
+	for _, c := range cases {
+		if got := voiceNoteName(c.agent, c.text); got != c.want {
+			t.Errorf("%s: voiceNoteName(%q, %q) = %q, want %q", c.name, c.agent, c.text, got, c.want)
+		}
+	}
+	if got := voiceNoteName("", strings.Repeat("abcdefghij", 8)); len([]rune(got)) > 48 {
+		t.Errorf("a long first word should be cut: %q", got)
 	}
 }

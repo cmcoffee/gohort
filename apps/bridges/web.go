@@ -12,6 +12,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/messaging"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 const configTable = "bridges_config"
@@ -678,6 +679,9 @@ func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
 		if hasOutput {
 			item := OutboxItem{ChatID: chatID, Handle: handle, Service: svc, Text: reply.Text, Images: reply.Images, Videos: reply.Videos, Audios: reply.Audios, Agent: reply.AgentName, Owner: ch.Owner, Type: "reply"}
 			more := reply.More
+			if len(reply.Audios) > 0 {
+				item.AudioName = voiceNoteName(reply.AgentName, strings.Join(append([]string{reply.Text}, reply.More...), " "))
+			}
 			if voiceOnly(svc, reply) {
 				item.Text, more = "", nil
 			}
@@ -714,6 +718,36 @@ func (T *Bridges) enqueueReply(first OutboxItem, more []string) {
 func voiceOnly(svc string, reply ChannelReply) bool {
 	return len(reply.Audios) > 0 && svc == "imessage"
 }
+
+// voiceNoteWords is how many of a reply's first words name its voice note.
+const voiceNoteWords = 6
+
+// voiceNoteName names a spoken reply's clip the way a subject line names a
+// message: by its first words, with the agent's name in front when the agent
+// signs its messages (agent is empty when it does not, and a clip must not
+// reveal a name the text would not). Messages shows an attachment by its file
+// name, and the connector's own temp name read as noise.
+func voiceNoteName(agent, text string) string {
+	words := strings.Fields(textutil.SpeakableText(text))
+	if len(words) > voiceNoteWords {
+		words = words[:voiceNoteWords]
+	}
+	name := strings.TrimRight(strings.Join(words, " "), ",;:-")
+	if r := []rune(name); len(r) > 48 {
+		name = strings.TrimSpace(string(r[:48]))
+	}
+	if name == "" {
+		name = "Voice reply"
+	}
+	if agent = strings.TrimSpace(agent); agent != "" {
+		name = agent + " - " + name
+	}
+	return fileNameSafe.Replace(name)
+}
+
+// fileNameSafe takes out what a file name cannot hold on the Mac the clip is
+// written on, or would read as a path.
+var fileNameSafe = strings.NewReplacer("/", "-", "\\", "-", ":", "-", "\x00", "", "\n", " ", "\r", " ")
 
 // serviceHasOutput reports whether a service can actually deliver outbound. A
 // rest_messaging connector without send_url (a poll/webhook bridge configured

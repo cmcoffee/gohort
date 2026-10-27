@@ -762,7 +762,10 @@ type OutboxItem struct {
 	Images  []string `json:"images,omitempty"` // base64
 	Videos  []string `json:"videos,omitempty"` // base64 video attachments — connector delivers as video, not image
 	Audios  []string `json:"audios,omitempty"` // base64 audio: a reply spoken back to a voice note
-	Type    string   `json:"type,omitempty"`   // "reply" | "status"
+	// AudioName is what the connector names the clip, without an extension:
+	// Messages shows an attachment by its file name. See voiceNoteName.
+	AudioName string `json:"audio_name,omitempty"`
+	Type      string `json:"type,omitempty"` // "reply" | "status"
 	// Agent is the display name of the agent that composed this outbound (the
 	// bound channel agent for a reply, the calling agent for a proactive send),
 	// set ONLY when that agent opted into signing its messages

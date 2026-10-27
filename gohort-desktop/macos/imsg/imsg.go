@@ -209,7 +209,10 @@ type OutboxItem struct {
 	Images []string `json:"images,omitempty"` // base64-encoded images to send as attachments
 	Videos []string `json:"videos,omitempty"` // base64-encoded videos to send as attachments
 	Audios []string `json:"audios,omitempty"` // base64-encoded audio: a reply spoken back to a voice note
-	Type   string   `json:"type"`
+	// AudioName names the spoken clip's file (no extension): Messages shows
+	// an attachment by its file name. Empty from a server that sets none.
+	AudioName string `json:"audio_name,omitempty"`
+	Type      string `json:"type"`
 }
 
 // retryEntry holds a failed outbox item waiting for a retry attempt.
@@ -1443,17 +1446,14 @@ func tryDeliver(cfg Config, db *sql.DB, item OutboxItem, attempt int) {
 			continue
 		}
 		ext := videoExt(data)
-		tmp, err := os.CreateTemp("", "phantom-vid-*"+ext)
+		tmpPath, err := clipTempPath(kind, item.AudioName, ext)
 		if err != nil {
 			logf("%s %d temp file error: %v", kind, i, err)
 			continue
 		}
-		tmpPath := tmp.Name()
-		_, err = tmp.Write(data)
-		tmp.Close()
-		if err != nil {
+		if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
 			logf("%s %d write error: %v", kind, i, err)
-			os.Remove(tmpPath)
+			removeClip(tmpPath)
 			continue
 		}
 		if fi, err := os.Stat(tmpPath); err == nil {
@@ -1461,13 +1461,13 @@ func tryDeliver(cfg Config, db *sql.DB, item OutboxItem, attempt int) {
 		}
 		if err := sendFileViaMessages(item.Handle, item.ChatID, tmpPath); err != nil {
 			logf("%s %d send error to %s: %v", kind, i, item.Handle, err)
-			os.Remove(tmpPath)
+			removeClip(tmpPath)
 		} else {
 			logf("%s %d sent to %s (%s)", kind, i, item.Handle, filepath.Ext(tmpPath))
 			videoBytesSent += int64(len(data))
 			go func(p string) {
 				time.Sleep(15 * time.Second) // longer than images — videos take Messages.app a moment to ingest
-				os.Remove(p)
+				removeClip(p)
 			}(tmpPath)
 		}
 	}
@@ -1841,6 +1841,56 @@ func videoExt(data []byte) string {
 		return ".webm"
 	}
 	return ".mp4"
+}
+
+// clipTempPath is where a clip is written before Messages sends it. A spoken
+// reply is named for what it says (OutboxItem.AudioName), since Messages shows
+// an attachment by its file name, and gets a directory of its own so two
+// replies that open with the same words cannot collide. Anything else keeps a
+// random temp name. Both live under $TMPDIR: Messages cannot read /tmp or the
+// Desktop, and an attachment from there arrives as "Not Delivered".
+func clipTempPath(kind, name, ext string) (string, error) {
+	name = safeClipName(name)
+	if kind != "audio" || name == "" {
+		f, err := os.CreateTemp("", "phantom-vid-*"+ext)
+		if err != nil {
+			return "", err
+		}
+		f.Close()
+		return f.Name(), nil
+	}
+	dir, err := os.MkdirTemp("", "gohort-voice-*")
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, name+ext), nil
+}
+
+// removeClip deletes a clip once sent, and the directory a named one was given.
+func removeClip(path string) {
+	os.Remove(path)
+	if dir := filepath.Dir(path); strings.HasPrefix(filepath.Base(dir), "gohort-voice-") {
+		os.Remove(dir)
+	}
+}
+
+// safeClipName keeps a clip's name to what a file name can hold. The server
+// already cleans it; this is the side that writes the file, so it checks too.
+func safeClipName(name string) string {
+	name = strings.Map(func(r rune) rune {
+		switch {
+		case r == '/' || r == '\\' || r == ':':
+			return '-'
+		case r < ' ':
+			return ' '
+		}
+		return r
+	}, name)
+	name = strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(name), "."))
+	if r := []rune(name); len(r) > 80 {
+		name = strings.TrimSpace(string(r[:80]))
+	}
+	return name
 }
 
 // sendFileViaMessages sends a local file as an iMessage attachment via osascript.
