@@ -1,14 +1,14 @@
 package temptool
 
-// A parameter goes into a shell command bare only when its value is literally
-// a number or a boolean; the declared type is not enough.
-
 import (
 	"strings"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
 )
+
+// A parameter goes into a shell command bare only when its value is literally
+// a number or a boolean; the declared type is not enough.
 
 func TestADeclaredIntegerCannotCarryACommand(t *testing.T) {
 	params := map[string]ToolParam{"n": {Type: "integer"}, "flag": {Type: "boolean"}}

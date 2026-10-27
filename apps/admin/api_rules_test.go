@@ -1,8 +1,5 @@
 package admin
 
-// Global rules are edited under Governance now. The endpoint round-trips the
-// list (pasted list markers dropped), and only an administrator reaches it.
-
 import (
 	"encoding/json"
 	"net/http"
@@ -14,6 +11,9 @@ import (
 	rules "github.com/cmcoffee/gohort/core/prompts"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
+
+// Global rules are edited under Governance now. The endpoint round-trips the
+// list (pasted list markers dropped), and only an administrator reaches it.
 
 func TestGovernanceRulesRoundTripAndAreAdminOnly(t *testing.T) {
 	store := &DBase{Store: kvlite.MemStore()}

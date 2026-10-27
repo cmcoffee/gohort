@@ -1,6 +1,8 @@
 package temptool
 
-import "testing"
+import (
+	"testing"
+)
 
 // Removing a param from an action must drop its required entry too. Leaving a
 // stale required strands a name the schema no longer declares, and dispatch

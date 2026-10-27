@@ -1,6 +1,8 @@
 package admin
 
-import "testing"
+import (
+	"testing"
+)
 
 // A new Bedrock setup starts on Converse; a tier already on Bedrock with the
 // historical blank keeps the Messages API it has been running.

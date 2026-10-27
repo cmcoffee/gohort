@@ -1,8 +1,5 @@
 package servitor
 
-// An SSH host key is trusted the first time and pinned: a different key later
-// is refused, until the system is saved again.
-
 import (
 	"crypto/ed25519"
 	"crypto/rand"
@@ -13,6 +10,9 @@ import (
 	"github.com/cmcoffee/snugforge/kvlite"
 	"golang.org/x/crypto/ssh"
 )
+
+// An SSH host key is trusted the first time and pinned: a different key later
+// is refused, until the system is saved again.
 
 func newHostKey(t *testing.T) ssh.PublicKey {
 	t.Helper()

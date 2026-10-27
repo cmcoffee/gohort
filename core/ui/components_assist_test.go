@@ -1,11 +1,5 @@
 package ui
 
-// The assist panel beside a form: it opens on its request, the model is told
-// the form and what it holds, what it proposes fills the form as a version
-// that walks back to what was there, and the window says what the endpoint
-// is doing while it works. Driven, because each of these fails silently: a
-// form that is not filled, or a request without the form, raises nothing.
-
 import (
 	"encoding/json"
 	"os"
@@ -14,6 +8,12 @@ import (
 	"strings"
 	"testing"
 )
+
+// The assist panel beside a form: it opens on its request, the model is told
+// the form and what it holds, what it proposes fills the form as a version
+// that walks back to what was there, and the window says what the endpoint
+// is doing while it works. Driven, because each of these fails silently: a
+// form that is not filled, or a request without the form, raises nothing.
 
 func TestAssistPanelFillsTheForm(t *testing.T) {
 	if _, err := exec.LookPath("node"); err != nil {

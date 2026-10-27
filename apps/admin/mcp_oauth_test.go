@@ -1,5 +1,11 @@
 package admin
 
+import (
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
+
 // Per-user MCP OAuth uses a DIFFERENT redirect URI from the admin
 // Connect button, and a provider with a pre-registered client must have
 // both.
@@ -8,12 +14,6 @@ package admin
 // page worked, and Reconnect from Extensions came back with "the app's
 // callback URL is invalid" — because the admin form's help named only
 // the admin path, so that is the only one anybody registers.
-
-import (
-	"net/http/httptest"
-	"strings"
-	"testing"
-)
 
 func TestBothMCPRedirectURIsAreDocumentedWhereTheyAreRegistered(t *testing.T) {
 	help := adminPageSource(t)
