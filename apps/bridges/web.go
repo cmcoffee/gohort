@@ -658,7 +658,7 @@ func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
 			Log("[bridges] inbound-only channel %q: processed, reply not delivered here", ch.Name)
 			return
 		}
-		if strings.TrimSpace(reply.Text) == "" && len(reply.Images) == 0 && len(reply.Videos) == 0 {
+		if strings.TrimSpace(reply.Text) == "" && len(reply.Images) == 0 && len(reply.Videos) == 0 && len(reply.Audios) == 0 {
 			return
 		}
 		// Count the reply against this conversation's budget. The echo guard
@@ -676,7 +676,7 @@ func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
 			logLoopCut(chatID, cut)
 		}
 		if hasOutput {
-			T.enqueueReply(OutboxItem{ChatID: chatID, Handle: handle, Service: svc, Text: reply.Text, Images: reply.Images, Videos: reply.Videos, Agent: reply.AgentName, Owner: ch.Owner, Type: "reply"}, reply.More)
+			T.enqueueReply(OutboxItem{ChatID: chatID, Handle: handle, Service: svc, Text: reply.Text, Images: reply.Images, Videos: reply.Videos, Audios: reply.Audios, Agent: reply.AgentName, Owner: ch.Owner, Type: "reply"}, reply.More)
 		} else if OverflowChannelReply(in, strings.Join(append([]string{reply.Text}, reply.More...), "\n\n")) {
 			// No delivery path for this service — surface the reply to the agent's
 			// cortex/session instead of stranding it in an outbox nothing drains.
@@ -696,7 +696,7 @@ func (T *Bridges) enqueueReply(first OutboxItem, more []string) {
 	for _, m := range more {
 		next := first
 		next.ID, next.Seq, next.Created = "", 0, ""
-		next.Text, next.Images, next.Videos = m, nil, nil
+		next.Text, next.Images, next.Videos, next.Audios = m, nil, nil, nil
 		T.enqueueOutbox(next)
 	}
 }

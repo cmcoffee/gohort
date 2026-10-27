@@ -1307,6 +1307,8 @@ func init_database() {
 	// Silent no-op when unconfigured — videodl falls back to
 	// frames-only.
 	LoadTranscribeConfigFromDB(global.db)
+	// And speech, for spoken replies to voice notes. Off until configured.
+	media.LoadSpeechConfigFromDB(global.db)
 	// Where page rendering happens. Restored here so a peer chosen for browsing
 	// survives a restart — otherwise BrowserFetchFunc silently reverts to the
 	// local browser (or to nothing, on a machine that has none) and every

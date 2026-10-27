@@ -1,10 +1,16 @@
 package orchestrate
 
 import (
+	"encoding/base64"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/media"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -430,5 +436,129 @@ func TestChannelPassesRealTextThrough(t *testing.T) {
 		if !deliver || text != "on my way" {
 			t.Errorf("silenced=%v: real text must pass through, got %q deliver=%v", silenced, text, deliver)
 		}
+	}
+}
+
+// voiceChannel wires a channel agent that answers with reply, a transcriber
+// that hears every clip as "call me", and a speech server that answers with
+// status, recording what it was asked to say.
+func voiceChannel(t *testing.T, reply string, status int) (df *dispatchFixture, spoken func() []string) {
+	t.Helper()
+	df = newDispatchFixture(t, FakeTurn{Content: reply, Repeat: true})
+	prevRoot := RootDB
+	RootDB = df.app.DB
+	t.Cleanup(func() { RootDB = prevRoot })
+	SaveChannel(RootDB, Channel{ID: "c1", Owner: "u", Service: "sms", AgentID: df.agent.ID})
+	registerChannelAgentRunner(df.app)
+	t.Cleanup(func() { RegisterChannelAgentRunner(nil) })
+
+	stt := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("call me"))
+	}))
+	t.Cleanup(stt.Close)
+	var mu sync.Mutex
+	var asked []string
+	tts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]string
+		json.NewDecoder(r.Body).Decode(&body)
+		mu.Lock()
+		asked = append(asked, body["input"])
+		mu.Unlock()
+		w.WriteHeader(status)
+		w.Write(append([]byte("ID3\x04\x00\x00\x00\x00\x00\x00"), make([]byte, 32)...))
+	}))
+	t.Cleanup(tts.Close)
+
+	prevSTT, prevTTS := GetTranscribeConfig(), media.GetSpeechConfig()
+	SetTranscribeConfig(TranscribeConfig{Endpoint: stt.URL, Enabled: true})
+	media.SetSpeechConfig(media.SpeechConfig{Endpoint: tts.URL, Enabled: true})
+	t.Cleanup(func() {
+		SetTranscribeConfig(prevSTT)
+		media.SetSpeechConfig(prevTTS)
+	})
+	return df, func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), asked...)
+	}
+}
+
+// A voice note gets its answer back as a voice note as well as text, read
+// without the web address; a typed message gets text alone.
+func TestAVoiceNoteIsAnsweredOutLoud(t *testing.T) {
+	df, spoken := voiceChannel(t, "Sure, at noon. Details: https://example.com/x", http.StatusOK)
+	voice := base64.StdEncoding.EncodeToString([]byte("not really an m4a"))
+
+	reply, err := RunChannelAgent(t.Context(), ChannelInbound{Owner: "u", AgentID: df.agent.ID, SessionID: "room-1",
+		ChatID: "chat-1", SenderName: "Alice", Audios: []string{voice}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(reply.Text, "https://example.com/x") {
+		t.Errorf("the written reply keeps everything: %q", reply.Text)
+	}
+	if len(reply.Audios) != 1 {
+		t.Fatalf("a voice note should be answered with one: %d", len(reply.Audios))
+	}
+	if clip, _ := base64.StdEncoding.DecodeString(reply.Audios[0]); !strings.HasPrefix(string(clip), "ID3") {
+		t.Errorf("the voice note is the speech server's clip: %q", clip)
+	}
+	if got := spoken(); len(got) != 1 || got[0] != "Sure, at noon. Details:" {
+		t.Errorf("read aloud: %q", got)
+	}
+
+	typed, err := RunChannelAgent(t.Context(), ChannelInbound{Owner: "u", AgentID: df.agent.ID, SessionID: "room-2",
+		ChatID: "chat-1", SenderName: "Alice", Text: "call me"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(typed.Audios) != 0 || len(spoken()) != 1 {
+		t.Errorf("a typed message is answered in text alone: audios=%d spoken=%q", len(typed.Audios), spoken())
+	}
+}
+
+// When the speech server fails, the answer still goes, as text.
+func TestAFailedVoiceStillSendsTheText(t *testing.T) {
+	df, spoken := voiceChannel(t, "Sure, at noon.", http.StatusInternalServerError)
+	reply, err := RunChannelAgent(t.Context(), ChannelInbound{Owner: "u", AgentID: df.agent.ID, SessionID: "room-1",
+		ChatID: "chat-1", SenderName: "Alice", Audios: []string{base64.StdEncoding.EncodeToString([]byte("clip"))}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reply.Text != "Sure, at noon." || len(reply.Audios) != 0 {
+		t.Errorf("text alone when speech fails: text=%q audios=%d", reply.Text, len(reply.Audios))
+	}
+	if len(spoken()) != 1 {
+		t.Errorf("the speech server should have been asked once: %q", spoken())
+	}
+}
+
+// What cannot or should not be read aloud is not sent to the speech server.
+func TestSpokenReplySkipsWhatIsNotWorthSaying(t *testing.T) {
+	_, spoken := voiceChannel(t, "unused", http.StatusOK)
+	in := ChannelInbound{Owner: "u", AgentID: "a"}
+	cases := []struct {
+		name  string
+		reply ChannelReply
+		voice bool
+	}{
+		{"typed message", ChannelReply{Text: "hello"}, false},
+		{"only code", ChannelReply{Text: "```\nls -la\n```"}, true},
+		{"too long", ChannelReply{Text: strings.Repeat("word ", spokenReplyMaxChars/5+1)}, true},
+	}
+	for _, c := range cases {
+		if got := spokenReply(t.Context(), in, c.reply, c.voice); got != nil {
+			t.Errorf("%s: spoke %d clip(s)", c.name, len(got))
+		}
+	}
+	if got := spoken(); len(got) != 0 {
+		t.Errorf("nothing should reach the speech server: %q", got)
+	}
+	// Several messages are spoken as one clip, in order.
+	if got := spokenReply(t.Context(), in, ChannelReply{Text: "one", More: []string{"two"}}, true); len(got) != 1 {
+		t.Fatalf("parts: %d clips", len(got))
+	}
+	if got := spoken(); len(got) != 1 || got[0] != "one\n\ntwo" {
+		t.Errorf("parts read aloud: %q", got)
 	}
 }

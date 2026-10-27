@@ -546,6 +546,7 @@ type ChannelReply struct {
 	More   []string
 	Images []string // base64 image attachments the agent produced this turn
 	Videos []string // base64 video attachments (kept separate so the transport delivers them as video, not mislabeled images)
+	Audios []string // base64 audio: the reply spoken, when it answers a voice note and speech is configured
 	// AgentName is the display name of the bound agent that produced this reply,
 	// so the transport can prefix an outbound name tag (opt-in) letting the
 	// recipient tell an agent's message apart from the owner's own texts. Empty

@@ -761,6 +761,7 @@ type OutboxItem struct {
 	Text    string   `json:"text,omitempty"`
 	Images  []string `json:"images,omitempty"` // base64
 	Videos  []string `json:"videos,omitempty"` // base64 video attachments — connector delivers as video, not image
+	Audios  []string `json:"audios,omitempty"` // base64 audio: a reply spoken back to a voice note
 	Type    string   `json:"type,omitempty"`   // "reply" | "status"
 	// Agent is the display name of the agent that composed this outbound (the
 	// bound channel agent for a reply, the calling agent for a proactive send),
@@ -858,8 +859,12 @@ func (T *Bridges) enqueueOutbox(it OutboxItem) {
 	for _, v := range it.Videos {
 		vidBytes += len(v)
 	}
-	Log("[bridges.outbox] enqueued id=%s chat=%s svc=%q type=%s text=%dch images=%d (%d img bytes) videos=%d (%d vid bytes)",
-		it.ID, it.ChatID, it.Service, it.Type, len(it.Text), len(it.Images), imgBytes, len(it.Videos), vidBytes)
+	audBytes := 0
+	for _, a := range it.Audios {
+		audBytes += len(a)
+	}
+	Log("[bridges.outbox] enqueued id=%s chat=%s svc=%q type=%s text=%dch images=%d (%d img bytes) videos=%d (%d vid bytes) audios=%d (%d aud bytes)",
+		it.ID, it.ChatID, it.Service, it.Type, len(it.Text), len(it.Images), imgBytes, len(it.Videos), vidBytes, len(it.Audios), audBytes)
 }
 
 // outboxFor reports whether a connector owned by owner (admin: that owner's
@@ -907,6 +912,9 @@ func (T *Bridges) drainOutbox(service, owner string) []OutboxItem {
 			}
 			for _, v := range it.Videos {
 				total += len(v)
+			}
+			for _, a := range it.Audios {
+				total += len(a)
 			}
 		}
 		Log("[bridges.outbox] drained %d item(s) for svc=%q owner=%q (%d bytes total): handed to connector", len(out), service, owner, total)

@@ -5,7 +5,7 @@ import (
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
-// capabilitiesSections is the capabilities part of the admin page: System Hooks, Embeddings, Audio Transcription (STT), Image Generation, Web Search, Page Rendering (Browser), Mail (SMTP), Network Timeouts.
+// capabilitiesSections is the capabilities part of the admin page: System Hooks, Embeddings, Audio Transcription (STT), Speech (TTS), Image Generation, Web Search, Page Rendering (Browser), Mail (SMTP), Network Timeouts.
 func (a *AdminApp) capabilitiesSections() []ui.Section {
 	return []ui.Section{
 		// First: what this machine can and cannot do, which the settings
@@ -33,6 +33,21 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 				TestURL:   "api/transcribe/test",
 				TestLabel: "Test endpoint",
 				Fields:    transcribeFormFields(),
+			},
+		},
+		{
+			Title:    "Speech (TTS)",
+			Subtitle: "Spoken replies to voice notes.",
+			Detail: "When someone sends a channel agent a voice note, the reply goes back as a voice note as well as text. " +
+				"Needs Audio Transcription too, so the agent can hear the note. Code and web addresses are left out of what is read aloud, " +
+				"a reply over about 2,500 characters goes as text only, and if the speech server fails the text still goes. " +
+				"The endpoint is an OpenAI-compatible /audio/speech server, such as Kokoro-FastAPI; gohort appends /audio/speech.",
+			Body: ui.FormPanel{
+				Assist:    true,
+				Source:    "api/speech",
+				TestURL:   "api/speech/test",
+				TestLabel: "Speak a test sentence",
+				Fields:    speechFormFields(),
 			},
 		},
 		{
@@ -294,6 +309,35 @@ func transcribeFormFields() []ui.FormField {
 			Detail:   "Required for OpenAI hosted Whisper, or a whisper.cpp server behind an authenticating proxy. Leave it blank for a plain local whisper.cpp server.",
 			ShowWhen: local},
 	)
+}
+
+// speechFormFields builds the speech (TTS) settings.
+func speechFormFields() []ui.FormField {
+	return []ui.FormField{
+		{Field: "enabled", Label: "Enable speech", Type: "toggle"},
+		{Field: "endpoint", Label: "Endpoint", Type: "text",
+			Placeholder: "http://localhost:8880/v1",
+			Help:        "Base URL with the version prefix: gohort appends /audio/speech.",
+			ShowWhen:    "enabled",
+			Presets: []ui.FieldPreset{
+				{Label: "Kokoro-FastAPI", Value: "http://localhost:8880/v1", Hint: "Kokoro-FastAPI's default port"},
+				{Label: "OpenAI", Value: "https://api.openai.com/v1", Hint: "OpenAI hosted speech"},
+			}},
+		{Field: "model", Label: "Model", Type: "text",
+			Placeholder: "kokoro",
+			Help:        "Optional. Kokoro-FastAPI takes 'kokoro'; OpenAI 'tts-1'.",
+			ShowWhen:    "enabled"},
+		{Field: "voice", Label: "Voice", Type: "text",
+			Placeholder: "af_heart",
+			Help:        "Optional. A voice the server offers, such as Kokoro's 'af_heart' or OpenAI's 'alloy'.",
+			Detail:      "Save the endpoint first, then click a chip to pick from the server's own list. Servers without a voice list show no chips; type the name instead.",
+			ShowWhen:    "enabled",
+			ChipsSource: "api/speech/voices"},
+		{Field: "api_key", Label: "API Key", Type: "password",
+			Help:     "Optional bearer token.",
+			Detail:   "Required for OpenAI hosted speech, or a server behind an authenticating proxy. Leave it blank for a local speech server.",
+			ShowWhen: "enabled"},
+	}
 }
 
 // webSearchFormFields builds the Web Search settings, with the peer picker

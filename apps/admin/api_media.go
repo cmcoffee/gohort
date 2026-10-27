@@ -11,6 +11,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/activity"
 	"github.com/cmcoffee/gohort/core/jsonapi"
+	"github.com/cmcoffee/gohort/core/media"
 )
 
 // registerMediaRoutes wires the media API under the admin sub-mux.
@@ -66,6 +67,15 @@ func (a *AdminApp) registerMediaRoutes(sub *http.ServeMux) {
 	// cost money on every test click).
 	sub.HandleFunc("/api/image-gen/test", jsonapi.Post(a.db, a.handleImageGenTest, a.gate()))
 
+	// Speech (TTS): spoken replies to voice notes. Same GET/POST shape as
+	// transcription; the test speaks a sentence rather than probing /models,
+	// because a speech server that lists models can still refuse the voice.
+	sub.HandleFunc("/api/speech", jsonapi.Methods{
+		"GET":  jsonapi.Get(a.db, a.handleSpeech, a.gate()),
+		"POST": jsonapi.Post(a.db, a.handleSpeechSave, a.gate()),
+	}.Serve)
+	sub.HandleFunc("/api/speech/test", jsonapi.Post(a.db, a.handleSpeechTest, a.gate()))
+	sub.HandleFunc("/api/speech/voices", jsonapi.Get(a.db, a.handleSpeechVoices, a.gate()))
 }
 
 // handleEmbeddings serves /api/embeddings; registerMediaRoutes says what it is for.
@@ -213,6 +223,100 @@ func (a *AdminApp) handleTranscribeSave(c *jsonapi.Call, req TranscribeConfig) (
 	adminChange(c.R, activity.Settings, "updated transcribe config (enabled=%v endpoint=%q model=%q)",
 		req.Enabled, req.Endpoint, req.Model)
 	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// handleSpeech serves GET /api/speech; registerMediaRoutes says what it is for.
+func (a *AdminApp) handleSpeech(c *jsonapi.Call) (any, error) {
+	cfg := a.storedSpeechConfig()
+	cfg.APIKey = maskSecret(cfg.APIKey)
+	return cfg, nil
+}
+
+// handleSpeechSave persists the speech config and installs it live.
+func (a *AdminApp) handleSpeechSave(c *jsonapi.Call, req media.SpeechConfig) (any, error) {
+	req.APIKey = keepSecret(req.APIKey, a.storedSpeechConfig().APIKey)
+	if a.db != nil {
+		a.db.Set(media.SpeechTable, "current", req)
+	}
+	media.SetSpeechConfig(req)
+	adminChange(c.R, activity.Settings, "updated speech config (enabled=%v endpoint=%q model=%q voice=%q)",
+		req.Enabled, req.Endpoint, req.Model, req.Voice)
+	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// speechTestSentence is what the Test button has the server say.
+const speechTestSentence = "This is a test of spoken replies."
+
+// handleSpeechTest speaks a sentence with the form as typed: the only test
+// that proves the model and voice names are ones the server takes.
+func (a *AdminApp) handleSpeechTest(c *jsonapi.Call, req media.SpeechConfig) (any, error) {
+	req.APIKey = keepSecret(req.APIKey, a.storedSpeechConfig().APIKey)
+	if !req.Enabled {
+		return testResultBody(false, "", "speech is disabled: flip the toggle on first"), nil
+	}
+	// A minute: a CPU-only server loads its model on the first request.
+	ctx, cancel := context.WithTimeout(c.R.Context(), time.Minute)
+	defer cancel()
+	audio, ext, err := media.SpeakWith(ctx, req, speechTestSentence)
+	if err != nil {
+		return testResultBody(false, "", err.Error()), nil
+	}
+	return testResultBody(true, fmt.Sprintf("Spoke a test sentence: %d KB of %s audio.",
+		(len(audio)+1023)/1024, strings.TrimPrefix(ext, ".")), ""), nil
+}
+
+// handleSpeechVoices lists the voices the configured server offers, for the
+// Voice field's chips. Kokoro-FastAPI answers GET /audio/voices; a server
+// without that list gets no chips, and the field is typed by hand.
+func (a *AdminApp) handleSpeechVoices(c *jsonapi.Call) (any, error) {
+	out := []map[string]string{}
+	cfg := a.storedSpeechConfig()
+	if cfg.Endpoint == "" {
+		return out, nil
+	}
+	ctx, cancel := context.WithTimeout(c.R.Context(), 8*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, "GET", strings.TrimRight(cfg.Endpoint, "/")+"/audio/voices", nil)
+	if err != nil {
+		return out, nil
+	}
+	if cfg.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+	}
+	resp, err := (&http.Client{}).Do(req)
+	if err != nil {
+		return out, nil
+	}
+	defer resp.Body.Close()
+	var body struct {
+		Voices []json.RawMessage `json:"voices"`
+	}
+	if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&body) != nil {
+		return out, nil
+	}
+	for _, v := range body.Voices {
+		if name := speechVoiceName(v); name != "" {
+			out = append(out, map[string]string{"id": name, "name": name, "value": name})
+		}
+	}
+	return out, nil
+}
+
+// speechVoiceName reads one entry of a voice list: a bare name, or an object
+// naming it under id or name.
+func speechVoiceName(v json.RawMessage) string {
+	var name string
+	if json.Unmarshal(v, &name) == nil {
+		return strings.TrimSpace(name)
+	}
+	var obj struct{ ID, Name string }
+	if json.Unmarshal(v, &obj) == nil {
+		if obj.ID != "" {
+			return strings.TrimSpace(obj.ID)
+		}
+		return strings.TrimSpace(obj.Name)
+	}
+	return ""
 }
 
 // handleImageGen serves /api/image-gen; registerMediaRoutes says what it is for.
@@ -470,6 +574,14 @@ func (a *AdminApp) storedEmbeddingConfig() EmbeddingConfig {
 	var cfg EmbeddingConfig
 	if a.db != nil {
 		a.db.Get(EmbeddingTable, "current", &cfg)
+	}
+	return cfg
+}
+
+func (a *AdminApp) storedSpeechConfig() media.SpeechConfig {
+	var cfg media.SpeechConfig
+	if a.db != nil {
+		a.db.Get(media.SpeechTable, "current", &cfg)
 	}
 	return cfg
 }

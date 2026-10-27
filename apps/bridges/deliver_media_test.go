@@ -1,10 +1,14 @@
 package bridges
 
 import (
+	"context"
+	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/snugforge/kvlite"
 )
 
 // A finished background job could not send the file it had just produced. The
@@ -63,10 +67,11 @@ func TestBridgesSatisfiesTheMediaDeliverer(t *testing.T) {
 }
 
 // A reply the agent sent as several messages goes out as several, in order,
-// the pictures on the first only.
+// the pictures and the spoken reply on the first only, and the connector's
+// poll carries the spoken reply under the name it reads.
 func TestAReplyOfSeveralMessagesGoesOutAsSeveral(t *testing.T) {
 	T := &Bridges{AppCore{DB: OpenCache()}}
-	T.enqueueReply(OutboxItem{ChatID: "chat1", Service: "imessage", Owner: "craig", Text: "one", Images: []string{"img"}, Type: "reply"},
+	T.enqueueReply(OutboxItem{ChatID: "chat1", Service: "imessage", Owner: "craig", Text: "one", Images: []string{"img"}, Audios: []string{"aud"}, Type: "reply"},
 		[]string{"two", "three"})
 	items := T.drainOutbox("imessage", "craig")
 	if len(items) != 3 {
@@ -80,7 +85,45 @@ func TestAReplyOfSeveralMessagesGoesOutAsSeveral(t *testing.T) {
 	if len(items[0].Images) != 1 || len(items[1].Images)+len(items[2].Images) != 0 {
 		t.Errorf("the picture should ride the first message only: %+v", items)
 	}
+	if len(items[0].Audios) != 1 || len(items[1].Audios)+len(items[2].Audios) != 0 {
+		t.Errorf("the spoken reply should ride the first message only: %+v", items)
+	}
+	if wire, _ := json.Marshal(items[0]); !strings.Contains(string(wire), `"audios":["aud"]`) {
+		t.Errorf("the poll should carry it as audios: %s", wire)
+	}
 	if items[1].ID == items[0].ID || items[2].Seq <= items[1].Seq {
 		t.Errorf("each message needs its own id, in order: %+v", items)
+	}
+}
+
+// End to end: a voice note in, and the agent's spoken reply reaches the
+// connector's poll with the written one.
+func TestASpokenReplyReachesTheConnector(t *testing.T) {
+	prevRoot := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB = prevRoot })
+	T := &Bridges{AppCore{DB: &DBase{Store: kvlite.MemStore()}}}
+	T.setConfig(bridgesConfig{Enabled: true})
+	const chat = "any;-;+15550100"
+	SaveChannel(RootDB, Channel{ID: "ch-voice", Owner: "alice", Name: "Voice", Service: "imessage", Address: chat, AgentID: "agent-1", AutoReply: true})
+	RegisterChannelAgentRunner(func(_ context.Context, in ChannelInbound) (ChannelReply, error) {
+		return ChannelReply{Text: "at noon", Audios: []string{"c3Bva2Vu"}}, nil
+	})
+	t.Cleanup(func() { RegisterChannelAgentRunner(nil) })
+
+	T.ingestInbound(BridgeKey{Owner: "alice", Service: "imessage", Enabled: true},
+		hookRequest{ChatID: chat, Handle: "+15550100", Audios: []string{"dm9pY2U="}, RowID: 201})
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if items := T.drainOutbox("imessage", "alice"); len(items) > 0 {
+			if len(items) != 1 || !strings.Contains(items[0].Text, "at noon") || len(items[0].Audios) != 1 || items[0].Audios[0] != "c3Bva2Vu" {
+				t.Errorf("the reply should go out with its voice note: %+v", items)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the reply never reached the outbox")
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }

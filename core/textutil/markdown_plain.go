@@ -93,3 +93,37 @@ func MarkdownToPlain(md string) string {
 	}
 	return strings.TrimSpace(result)
 }
+
+var (
+	spokenURL       = regexp.MustCompile(`(https?://|www\.)\S*[^\s.,;:!?)'"]`) // not the punctuation after it
+	spokenSpaces    = regexp.MustCompile(`[ \t]{2,}`)
+	spokenEmptyPair = regexp.MustCompile(`\(\s*\)`)
+	spokenLoosePunc = regexp.MustCompile(`[ \t]+([.,;:!?)])`)
+)
+
+// SpeakableText is MarkdownToPlain for a voice: the part of a reply worth
+// reading aloud. A speech model reads a code block or a web address out
+// character by character and a listener can use neither, so code blocks are
+// dropped, a link keeps only its words, a bare address goes, and bullets lose
+// their mark. The written reply still carries all of it.
+func SpeakableText(md string) string {
+	var kept []string
+	inCode := false
+	for _, ln := range strings.Split(md, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(ln), "```") {
+			inCode = !inCode
+			continue
+		}
+		if !inCode {
+			kept = append(kept, ln)
+		}
+	}
+	s := mdLink.ReplaceAllString(strings.Join(kept, "\n"), "$1")
+	s = MarkdownToPlain(s)
+	s = spokenURL.ReplaceAllString(s, "")
+	s = strings.ReplaceAll(s, "• ", "")
+	s = spokenEmptyPair.ReplaceAllString(s, "")
+	s = spokenSpaces.ReplaceAllString(s, " ")
+	s = spokenLoosePunc.ReplaceAllString(s, "$1")
+	return strings.TrimSpace(s)
+}

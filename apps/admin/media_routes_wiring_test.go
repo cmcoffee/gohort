@@ -21,9 +21,12 @@ func TestEachMediaPathReachesItsOwnHandler(t *testing.T) {
 		{"GET", "/api/embeddings", `"provider":"local"`},
 		{"GET", "/api/embeddings/models", "[]"},
 		{"GET", "/api/transcribe", `"enabled":false}`},
+		{"GET", "/api/speech", `"voice":""`},
+		{"GET", "/api/speech/voices", "[]"},
 		{"GET", "/api/image-gen", `"provider":"gemini"`},
 		{"POST", "/api/embeddings/test", "embeddings are disabled"},
 		{"POST", "/api/transcribe/test", "transcription is disabled"},
+		{"POST", "/api/speech/test", "speech is disabled"},
 		{"POST", "/api/image-gen/test", "pick a provider first"},
 	} {
 		w := httptest.NewRecorder()

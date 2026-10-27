@@ -208,6 +208,7 @@ type OutboxItem struct {
 	Text   string   `json:"text"`
 	Images []string `json:"images,omitempty"` // base64-encoded images to send as attachments
 	Videos []string `json:"videos,omitempty"` // base64-encoded videos to send as attachments
+	Audios []string `json:"audios,omitempty"` // base64-encoded audio: a reply spoken back to a voice note
 	Type   string   `json:"type"`
 }
 
@@ -1425,35 +1426,44 @@ func tryDeliver(cfg Config, db *sql.DB, item OutboxItem, attempt int) {
 	// same sendFileViaMessages path images use. No transcoding —
 	// gohort's downloader prefers mp4 already, and re-encoding here
 	// would burn CPU on the relay machine for no clear win.
+	//
+	// A spoken reply (a voice note answered in kind) rides the same path,
+	// after any videos: videoExt names audio as audio, and it should land
+	// before the text it speaks for the same reason a video should.
 	var videoBytesSent int64
-	for i, b64 := range item.Videos {
+	clips := append(append([]string{}, item.Videos...), item.Audios...)
+	for i, b64 := range clips {
+		kind := "video"
+		if i >= len(item.Videos) {
+			kind = "audio"
+		}
 		data, err := base64.StdEncoding.DecodeString(b64)
 		if err != nil {
-			logf("video %d decode error: %v", i, err)
+			logf("%s %d decode error: %v", kind, i, err)
 			continue
 		}
 		ext := videoExt(data)
 		tmp, err := os.CreateTemp("", "phantom-vid-*"+ext)
 		if err != nil {
-			logf("video %d temp file error: %v", i, err)
+			logf("%s %d temp file error: %v", kind, i, err)
 			continue
 		}
 		tmpPath := tmp.Name()
 		_, err = tmp.Write(data)
 		tmp.Close()
 		if err != nil {
-			logf("video %d write error: %v", i, err)
+			logf("%s %d write error: %v", kind, i, err)
 			os.Remove(tmpPath)
 			continue
 		}
 		if fi, err := os.Stat(tmpPath); err == nil {
-			logf("video %d sending: %s (%d bytes)", i, filepath.Ext(tmpPath), fi.Size())
+			logf("%s %d sending: %s (%d bytes)", kind, i, filepath.Ext(tmpPath), fi.Size())
 		}
 		if err := sendFileViaMessages(item.Handle, item.ChatID, tmpPath); err != nil {
-			logf("video %d send error to %s: %v", i, item.Handle, err)
+			logf("%s %d send error to %s: %v", kind, i, item.Handle, err)
 			os.Remove(tmpPath)
 		} else {
-			logf("video %d sent to %s (%s)", i, item.Handle, filepath.Ext(tmpPath))
+			logf("%s %d sent to %s (%s)", kind, i, item.Handle, filepath.Ext(tmpPath))
 			videoBytesSent += int64(len(data))
 			go func(p string) {
 				time.Sleep(15 * time.Second) // longer than images — videos take Messages.app a moment to ingest

@@ -14,9 +14,13 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
+	"unicode/utf8"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/media"
 	"github.com/cmcoffee/gohort/core/prompts"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 // channelSurfaceContext renders a one-line provenance note for a channel
@@ -271,6 +275,7 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 		}
 		sttOK := GetTranscribeConfig().Enabled // STT on? (canonical flag — matches Transcribe + the admin toggle)
 		attachNote := ""                       // notes for non-image attachments (audio transcripts, unsupported types)
+		voiceNote := false                     // a voice note arrived, so the reply goes back spoken too (spokenReply)
 		// transcribeAudio runs STT on one audio blob and returns the note to
 		// append. It distinguishes the REAL outcomes — disabled vs. a transcription
 		// ERROR (endpoint down / 404 / format whisper can't decode) vs. empty (no
@@ -340,6 +345,7 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 			// decode to — m4a often sniffs as video/mp4 or octet-stream) goes to STT;
 			// a genuine other type (pdf, vcard) gets a typed note.
 			if strings.HasPrefix(ct, "audio/") || ct == "video/mp4" || ct == "application/octet-stream" {
+				voiceNote = true
 				attachNote += transcribeAudio(data, audioNameForType(ct))
 				continue
 			}
@@ -352,6 +358,7 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 			if derr != nil {
 				continue
 			}
+			voiceNote = true
 			attachNote += transcribeAudio(data, audioNameForType(http.DetectContentType(data)))
 		}
 		// Inbound videos: the vision model can't ingest raw mp4, so sample a
@@ -527,6 +534,7 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 				out.Text = replyText
 			}
 		}
+		out.Audios = spokenReply(ctx, in, out, voiceNote)
 		return out, nil
 	})
 }
@@ -566,6 +574,38 @@ func audioNameForType(ct string) string {
 	default:
 		return "inbound.m4a"
 	}
+}
+
+// spokenReplyMaxChars bounds what is read aloud: about three minutes of speech.
+// A longer answer is a document, and nobody listens to a voice note of one;
+// it goes as text alone.
+const spokenReplyMaxChars = 2500
+
+// spokenReply is the reply as a voice note, for a message that arrived as one,
+// so a person who talked gets an answer they can listen to. The written reply
+// goes too. Nil when the message was typed, speech is off, nothing in the reply
+// can be read aloud, or synthesis fails; the last two say so in the log, since
+// the person sent a voice note and got only text.
+func spokenReply(ctx context.Context, in ChannelInbound, out ChannelReply, voiceNote bool) []string {
+	if !voiceNote || !media.GetSpeechConfig().Enabled {
+		return nil
+	}
+	text := textutil.SpeakableText(strings.Join(append([]string{out.Text}, out.More...), "\n\n"))
+	if text == "" {
+		return nil
+	}
+	if n := utf8.RuneCountInString(text); n > spokenReplyMaxChars {
+		Log("[channel] reply to a voice note for owner=%s agent=%s sent as text only: %d characters is too long to read aloud (limit %d)", in.Owner, in.AgentID, n, spokenReplyMaxChars)
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	defer cancel()
+	audio, _, err := media.Speak(ctx, text)
+	if err != nil {
+		Log("[channel] reply to a voice note for owner=%s agent=%s sent as text only: speech failed: %v", in.Owner, in.AgentID, err)
+		return nil
+	}
+	return []string{base64.StdEncoding.EncodeToString(audio)}
 }
 
 // channelEmptyFallback is what a channel sends when a turn produced nothing at

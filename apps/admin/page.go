@@ -34,7 +34,7 @@ var sectionGroup = map[string]string{
 	"Local Model Scheduler": "LLMs",
 
 	"Embeddings":                "Capabilities",
-	"Audio Transcription (STT)": "Capabilities", "Image Generation": "Capabilities",
+	"Audio Transcription (STT)": "Capabilities", "Speech (TTS)": "Capabilities", "Image Generation": "Capabilities",
 	"Resource Sharing": "Capabilities", "Peers": "Capabilities", "Shared With": "Capabilities",
 	"Web Search": "Capabilities", "Mail (SMTP)": "System",
 	"Network Timeouts": "Tuning",
