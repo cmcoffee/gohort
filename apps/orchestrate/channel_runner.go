@@ -288,21 +288,12 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 			if !sttOK {
 				return "\n[Audio attachment received, but speech-to-text isn't enabled: turn it on in Admin → Audio transcription to get a transcript.]"
 			}
-			// Normalize to 16kHz mono WAV first so STT doesn't depend on the whisper
-			// server decoding m4a/AAC/caf (a stock build 400s on those). Fall back to
-			// the raw bytes when ffmpeg isn't present or the input is already friendly.
-			sendData, sendName := data, nameHint
-			if wav, terr := TranscodeAudioToWAV(data); terr == nil && len(wav) > 0 {
-				sendData, sendName = wav, "inbound.wav"
-			} else if terr != nil {
-				Log("[channel] inbound audio transcode failed (%s), sending raw to STT: %v", nameHint, terr)
-			}
-			txt, terr := Transcribe(ctx, sendData, sendName)
+			txt, terr := transcribeVoice(ctx, data, nameHint)
 			if terr != nil {
 				Log("[channel] inbound audio transcription failed (%s, %d bytes): %v", nameHint, len(data), terr)
 				return "\n[Audio attachment received, but transcription failed (" + terr.Error() + "). STT is enabled; the endpoint or audio format is the problem.]"
 			}
-			if txt = strings.TrimSpace(txt); txt == "" {
+			if txt == "" {
 				return "\n[Audio attachment received, but transcription returned no text: the clip may have no speech, or whisper couldn't decode this format.]"
 			}
 			return "\n[Audio transcript] " + txt
@@ -553,6 +544,22 @@ func (T *OrchestrateApp) RenameChannelSession(owner, agentID, chatID, name strin
 		return
 	}
 	renameChatSession(udb, agentID, "chan:"+chatID, name)
+}
+
+// transcribeVoice turns one inbound audio clip into its words. The clip is
+// normalized to 16kHz mono WAV first so STT doesn't depend on the whisper
+// server decoding m4a/AAC/caf (a stock build 400s on those), falling back to
+// the raw bytes when ffmpeg isn't present or the input is already friendly.
+// nameHint carries a real extension: whisper picks its decoder from it.
+func transcribeVoice(ctx context.Context, data []byte, nameHint string) (string, error) {
+	sendData, sendName := data, nameHint
+	if wav, terr := TranscodeAudioToWAV(data); terr == nil && len(wav) > 0 {
+		sendData, sendName = wav, "inbound.wav"
+	} else if terr != nil {
+		Log("[channel] inbound audio transcode failed (%s), sending raw to STT: %v", nameHint, terr)
+	}
+	txt, err := Transcribe(ctx, sendData, sendName)
+	return strings.TrimSpace(txt), err
 }
 
 // audioNameForType picks a filename (with a real extension) to hand the STT

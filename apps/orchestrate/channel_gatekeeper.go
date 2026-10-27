@@ -19,7 +19,9 @@ package orchestrate
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
+	"net/http"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -95,11 +97,23 @@ func (app *OrchestrateApp) channelGatekeeperAllow(ctx context.Context, in Channe
 	}
 
 	msgDesc := strings.TrimSpace(in.Text)
+	// A voice note is judged by what was said, as typed text is. Without this
+	// a voice note reached the gate as an empty message and every wake rule
+	// blocked it, so an agent in a gated room could never be spoken to.
+	if len(in.Audios) > 0 {
+		if said := voiceNotesSaid(ctx, in.Audios); said != "" {
+			msgDesc = strings.TrimSpace(msgDesc + " [voice note: " + said + "]")
+		} else {
+			msgDesc = strings.TrimSpace(msgDesc + " [voice note that could not be transcribed]")
+		}
+	}
 	switch {
 	case len(in.Images) > 0 && msgDesc != "":
 		msgDesc = fmt.Sprintf("[image with caption: %s]", msgDesc)
 	case len(in.Images) > 0:
 		msgDesc = fmt.Sprintf("[image, no text: %d image(s)]", len(in.Images))
+	case len(in.Videos) > 0 && msgDesc == "":
+		msgDesc = fmt.Sprintf("[video, no text: %d video(s)]", len(in.Videos))
 	}
 
 	var contextBlock string
@@ -247,3 +261,29 @@ The rules are TRIGGERS connected by OR: each numbered rule describes a condition
 The rules may be split into "Master rules" and "Channel rules" sections. EVERY rule in EVERY section must be evaluated against the message before you decide. Walk the list from rule 1 to the last rule explicitly: do not stop early, do not skip the Channel rules, do not collapse multiple rules into a single criterion. The reason field should name the rule number that actually fired (or, if none fire, identify what was missing).
 
 Apply each rule literally to every message, regardless of who sent it, including messages from the owner themselves. Do not grant any sender an implicit exception based on identity, role, or familiarity. If a rule wants the owner auto-allowed, it will say so explicitly.`
+
+// voiceNotesSaid is what an inbound message's voice notes say, for the gate.
+// Empty when transcription is off or none of them could be heard; the runner
+// transcribes them again for the agent if the message is let through, which
+// costs a second pass over a short clip and keeps the two paths independent.
+func voiceNotesSaid(ctx context.Context, audios []string) string {
+	if !GetTranscribeConfig().Enabled {
+		return ""
+	}
+	var said []string
+	for _, b64 := range audios {
+		data, err := base64.StdEncoding.DecodeString(b64)
+		if err != nil {
+			continue
+		}
+		txt, err := transcribeVoice(ctx, data, audioNameForType(http.DetectContentType(data)))
+		if err != nil {
+			Log("[gatekeeper] voice note could not be transcribed for the gate: %v", err)
+			continue
+		}
+		if txt != "" {
+			said = append(said, txt)
+		}
+	}
+	return strings.Join(said, " ")
+}
