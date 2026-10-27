@@ -119,7 +119,8 @@ func TestInlineSecretIsNotSerializedOrStored(t *testing.T) {
 
 // The chat's read-aloud is mounted at the root and knows who is signed in:
 // nobody gets a 403 before anything else is checked, a user gets past it, and
-// the link a reply is played from is mounted below it.
+// the link a reply is played from is mounted below it. Dictation is mounted
+// beside it, for signed-in users only.
 func TestReadAloudIsMountedForSignedInUsers(t *testing.T) {
 	withUsers(t)
 	var h, stream http.HandlerFunc
@@ -151,6 +152,28 @@ func TestReadAloudIsMountedForSignedInUsers(t *testing.T) {
 	if code := post("craig"); code != http.StatusServiceUnavailable {
 		t.Errorf("signed in, speech off: %d, want 503 (past the sign-in check)", code)
 	}
+	var dictate http.HandlerFunc
+	for _, rr := range rootRoutes {
+		if rr.path == media.DictatePath {
+			dictate = rr.h
+		}
+	}
+	if dictate == nil {
+		t.Fatalf("nothing mounted at %s", media.DictatePath)
+	}
+	prevSTT := media.GetTranscribeConfig()
+	media.SetTranscribeConfig(media.TranscribeConfig{Enabled: false})
+	t.Cleanup(func() { media.SetTranscribeConfig(prevSTT) })
+	for user, want := range map[string]int{"": http.StatusForbidden, "craig": http.StatusServiceUnavailable} {
+		r := asUser(t, media.DictatePath, user)
+		r.Method = http.MethodPost
+		w := httptest.NewRecorder()
+		dictate(w, r)
+		if w.Code != want {
+			t.Errorf("dictation as %q: %d, want %d", user, w.Code, want)
+		}
+	}
+
 	r := asUser(t, media.ReadAloudPath+"/nope", "craig")
 	w := httptest.NewRecorder()
 	stream(w, r)

@@ -3002,6 +3002,37 @@
     if (attachBtn) inputRow.appendChild(attachBtn);
     inputRow.appendChild(sendBtn);
     inputRow.appendChild(cancelBtn);
+
+    // uiRegisterComposerAction adds a button to the input row, before Send:
+    // { label, title?, onclick(ctx) } where ctx = { button, input,
+    // insertText(text) }. insertText adds to what is already typed (a space
+    // between) and resizes the box, so text an action produces lands where
+    // typed text would, to be read over before it is sent. The button is
+    // added at once, so a page script registering after the panel is built
+    // works; the ctx comes back, for an action that shows its own state on
+    // its button or keeps a second button in step.
+    window.uiRegisterComposerAction = function(opts) {
+      if (!opts || typeof opts.onclick !== 'function') return null;
+      var btn = el('button', {type: 'button', class: 'ui-row-btn ui-agent-composer-act',
+        title: opts.title || opts.label || ''}, [String(opts.label || 'Action')]);
+      var ctx = {
+        button: btn,
+        input: inputArea,
+        insertText: function(text) {
+          text = String(text || '').trim();
+          if (!text) return;
+          var cur = inputArea.value;
+          inputArea.value = (cur && !/\s$/.test(cur)) ? cur + ' ' + text : cur + text;
+          autosizeInput();
+          if (inputArea.focus) inputArea.focus();
+        },
+      };
+      btn.addEventListener('click', function() {
+        try { opts.onclick(ctx); } catch (e) { /* isolate */ }
+      });
+      inputRow.insertBefore(btn, sendBtn);
+      return ctx;
+    };
     // Copy session no longer auto-appended here. Apps that want it
     // in the input row can register their own client action and place
     // it via Actions or via ExtraHeadHTML DOM massage; built-in
@@ -5899,7 +5930,16 @@
       renderAttachments();
     }
 
+    // announceSent tells a page script a message went out (ui-agent-sent,
+    // detail.text): the counterpart of ui-agent-turn-done, for one that acts
+    // on the reply to a particular send.
+    function announceSent(text) {
+      try { window.dispatchEvent(new CustomEvent('ui-agent-sent', {detail: {text: text}})); } catch (e) {}
+    }
+
     function enableInput() {
+      // The turn is over: the reply, or what there is of it, is on screen.
+      try { window.dispatchEvent(new CustomEvent('ui-agent-turn-done')); } catch (e) {}
       sendBtn.disabled = recordLocked;
       sendBtn.style.display = '';
       cancelBtn.style.display = 'none';
@@ -6032,6 +6072,7 @@
           keepPendingInterjectionsLast();
         }
         inputArea.value = '';
+        announceSent(text);
         // Match the normal-send path: reset the inline style.height
         // so a multi-line message (or a retry that put long text
         // back into the input) doesn't leave the textarea visually
@@ -6115,6 +6156,7 @@
       // really it just never shrank back. Clearing forces a return to
       // the CSS-governed min-height: 2.2rem until the user types again.
       inputArea.style.height = '';
+      announceSent(text);
 
       disableInput();
 

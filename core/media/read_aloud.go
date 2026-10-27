@@ -538,18 +538,23 @@ const readAloudJS = `(function(){
       .then(function(d) {
         if (playing !== p) return;
         p.ctl = null;
-        var a = p.audio = new Audio(d.url);
-        a.addEventListener('playing', function() {
+        // A player handed in is reused: the dictation script unlocks one on
+        // the mic tap, since a phone plays sound only from a tap and the
+        // reply arrives seconds later. Handlers are set, not added, so a
+        // reused player carries this read's and no earlier one's.
+        var a = p.audio = ctx.audio || new Audio();
+        a.src = d.url;
+        a.onplaying = function() {
           if (playing !== p) return;
           if (p.timer) { clearInterval(p.timer); p.timer = null; }
           if (btn) { btn.textContent = stopGlyph; btn.title = 'Stop reading'; }
-        });
-        a.addEventListener('ended', function() { if (playing === p) stop(); });
-        a.addEventListener('error', function() {
+        };
+        a.onended = function() { if (playing === p) stop(); };
+        a.onerror = function() {
           if (playing !== p) return;
           stop();
           fail(btn, 'the audio stopped: the speech server may have failed partway.');
-        });
+        };
         return a.play();
       })
       .catch(function(e) {
@@ -558,6 +563,12 @@ const readAloudJS = `(function(){
         fail(btn, e && e.message || e);
       });
   }
+  // For the dictation script: read a reply aloud on its own (the reply to a
+  // dictated message), and stop whatever is playing (the person started
+  // typing). ctx is a bubble action's: {bubble, getText, agentId, button?,
+  // audio?}.
+  window.gohortReadAloud = press;
+  window.gohortReadAloudStop = stop;
   function register() {
     if (!window.uiRegisterBubbleAction) { setTimeout(register, 50); return; }
     window.uiRegisterBubbleAction({role: 'assistant', label: idle, title: 'Read aloud', onclick: press});

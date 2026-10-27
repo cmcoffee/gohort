@@ -36,6 +36,10 @@ func init() {
 	}
 	RegisterRootRoute(media.ReadAloudPath, readAloud)     // POST the reply
 	RegisterRootRoute(media.ReadAloudPath+"/", readAloud) // GET the stream
+	// And the chat's dictation, which posts a recording to be written out.
+	RegisterRootRoute(media.DictatePath, func(w http.ResponseWriter, r *http.Request) {
+		media.ServeDictation(w, r, AuthCurrentUser(r))
+	})
 	media.GovernedUploadFunc = func(ctx context.Context, up media.UploadRequest) (string, error) {
 		out, err := mediaUpload(ctx, up, mediaUploadBearer(ctx, up))
 		if err != nil {
