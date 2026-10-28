@@ -4972,6 +4972,15 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   font-size: var(--fs-md); line-height: 1; cursor: pointer; opacity: 0.7;
 }
 .ui-agent-wide-toggle:hover { opacity: 1; color: var(--text); }
+/* Something arrived below while the reader was further up (showNewBelow):
+ * held at the foot of the thread until they go down to it. */
+.ui-agent-new-below {
+  position: sticky; bottom: 0.5rem; z-index: 3; align-self: center;
+  padding: 0.3rem 0.85rem; border-radius: 999px; cursor: pointer;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--border));
+  background: var(--bg-1); color: var(--text-hi); font-size: var(--fs-sm);
+  box-shadow: 0 4px 14px -6px rgba(0, 0, 0, 0.6);
+}
 .ui-agent-wide-toggle[aria-pressed="true"] {
   opacity: 1; color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 50%, var(--border));

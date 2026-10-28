@@ -33,6 +33,9 @@ function setTimeout(fn) { timers.push(fn); return timers.length; }
 function clearTimeout() {}
 function flush() { var t = timers; timers = []; t.forEach(function(f) { f(); }); }
 var requestAnimationFrame;
+// The "new message" pill is put away when the reader is back at the bottom.
+var pillHidden = 0;
+function hideNewBelow() { pillHidden++; }
 eval(block);
 
 function chunk(px) { convoLog.scrollHeight += px; scrollConvo(); handlers.scroll(); }
@@ -76,5 +79,7 @@ check('a chunk right after a wheel upward does not scroll', convoLog.scrollTop =
 // A send still scrolls, whatever the reader did.
 scrollConvo(true);
 check('a forced scroll goes to the end', convoLog.scrollTop === convoLog.scrollHeight - convoLog.clientHeight);
+
+check('back at the bottom, the new-message pill is put away', pillHidden > 0);
 
 if (fail) { console.log(fail + ' failed'); process.exit(1); }

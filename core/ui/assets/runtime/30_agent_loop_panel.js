@@ -3292,7 +3292,7 @@
       convoUserScrollTimer = setTimeout(function() {
         var g = convoLog.scrollHeight - convoLog.scrollTop - convoLog.clientHeight;
         convoStickToBottom = convoReaderLeft ? g <= 4 : convoIsAtBottom();
-        if (convoStickToBottom) convoReaderLeft = false;
+        if (convoStickToBottom) { convoReaderLeft = false; hideNewBelow(); }
       }, 120);
     });
     convoLog.addEventListener('wheel', function(e) {
@@ -4711,7 +4711,7 @@
     // the text ("...picked up by agent🔧 3 tools").
     function notToolHost(node) {
       var c = node.classList;
-      return c.contains('ui-agent-act') || c.contains('ui-agent-interjection') || c.contains('ui-agent-confirm');
+      return c.contains('ui-agent-act') || c.contains('ui-agent-interjection') || c.contains('ui-agent-confirm') || c.contains('ui-agent-new-below');
     }
     // callHostFor is where one call was drawn (liveToolHost), falling back to
     // the bubble's own host for a call drawn some other way (a reload).
@@ -6919,10 +6919,75 @@
     // result read aloud) must not act on all of them again.
     function announceArrived(mid, m) {
       var e = msgEls[mid];
+      followArrival(e && e.bubble);
       try {
         window.dispatchEvent(new CustomEvent('ui-agent-message-arrived',
           {detail: {message: m, bubble: e && e.bubble}}));
       } catch (_) {}
+    }
+
+    // followArrival keeps a message that arrived live in view as it settles.
+    // Its picture has no height until it is decoded, and is drawn a moment
+    // after the text, so one scroll on arrival landed short: the words and
+    // the picture's top edge. A reader following at the bottom is taken to
+    // it as it grows: all of it when it fits (it, and anything after it, to
+    // the end), else its top at the top of the pane, so the words come first
+    // and as much of the picture as fits. A reader who has scrolled up to
+    // read is not moved; a pill says something arrived below and takes them
+    // to the first of what did.
+    var arrivalFollowMs = 8000;
+    function followArrival(bubble) {
+      if (!bubble) return;
+      if (!convoStickToBottom) { showNewBelow(bubble); return; }
+      placeArrival(bubble);
+    }
+    function placeArrival(bubble) {
+      var until = Date.now() + arrivalFollowMs;
+      // Stops for good once the reader scrolls up, the message is gone, or
+      // it has had its time to settle.
+      function place() {
+        if (convoReaderLeft || !bubble.parentNode || Date.now() > until) return false;
+        var below = bubble.getBoundingClientRect().top - convoLog.getBoundingClientRect().top;
+        var rest = convoLog.scrollHeight - (convoLog.scrollTop + below);
+        if (rest > convoLog.clientHeight - 16) {
+          convoLog.scrollTop += below - 8;
+        } else {
+          convoLog.scrollTop = convoLog.scrollHeight;
+        }
+        return true;
+      }
+      place();
+      if (window.ResizeObserver) {
+        var ro = new window.ResizeObserver(function() { if (!place()) ro.disconnect(); });
+        ro.observe(bubble);
+        setTimeout(function() { ro.disconnect(); }, arrivalFollowMs);
+      } else {
+        setTimeout(place, 60);
+        setTimeout(place, 250);
+        setTimeout(place, 1000);
+      }
+    }
+    // The "new below" pill, held at the foot of the thread (sticky) while
+    // the reader is above an arrival, and gone once they reach the bottom.
+    var newBelow = null;
+    function showNewBelow(bubble) {
+      if (!newBelow) {
+        newBelow = el('button', {type: 'button', class: 'ui-agent-new-below', title: 'Show what arrived'}, ['↓ New message']);
+        newBelow.addEventListener('click', function() {
+          var target = newBelow.target;
+          hideNewBelow();
+          convoReaderLeft = false;
+          convoStickToBottom = true;
+          if (target && target.parentNode) placeArrival(target); else scrollConvo(true);
+        });
+      }
+      // The first of what arrived while the reader was away, so they read on
+      // from its start.
+      if (!newBelow.parentNode) newBelow.target = bubble;
+      convoLog.appendChild(newBelow); // last, where sticky holds it at the foot
+    }
+    function hideNewBelow() {
+      if (newBelow && newBelow.parentNode) newBelow.parentNode.removeChild(newBelow);
     }
     // startReportPolling — while a thread is open, re-fetch it and render any
     // NEW report cards (report_from set) live — anything the server posts to
