@@ -391,6 +391,24 @@ eval(readAloudJS);
   check('the button comes back when it ends', three.button.textContent === idle);
   registered.onclick(reply('   '));
   check('an empty reply asks for nothing', pending.length === 6);
+
+  // Whoever asked hears how a piece ended, so a caller reading several in
+  // turn goes on only after one plays to its end.
+  var ends = [];
+  var four = reply('Fourth.'); four.onDone = function(ended) { ends.push('four:' + ended); };
+  window.gohortReadAloud(four);
+  pending[6].res(link('/api/speak/mno'));
+  await sleep(20);
+  audios[4].onended();
+  check('played to its end, it says so', ends.join() === 'four:true');
+  var five = reply('Fifth.'); five.onDone = function(ended) { ends.push('five:' + ended); };
+  window.gohortReadAloud(five);
+  window.gohortReadAloud(reply('Sixth.'));
+  check('replaced by another, it says it did not end', ends.join() === 'four:true,five:false');
+  var seven = reply('Seventh.'); seven.onDone = function(ended) { ends.push('seven:' + ended); };
+  window.gohortReadAloud(seven);
+  window.gohortReadAloudStop();
+  check('stopped, it says so too', ends.join() === 'four:true,five:false,seven:false');
   process.exit(fail ? 1 : 0);
 })();
 `

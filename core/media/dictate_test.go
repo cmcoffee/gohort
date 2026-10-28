@@ -201,41 +201,61 @@ const dictationFlow = `
   check('the send tells the agent its reply will be heard', extras.length === 1 && extras[0].spoken_reply === true);
   check('with read-aloud on it goes at once, hands-free', sends === 1);
 
-  // The reply to the dictated message is read once the turn is over: its
-  // last reply, not a note before it.
+  // The replies to the dictated message are read as each is written, in
+  // order: the note before the agent's tools run, then its answer, which
+  // waits for the note to finish.
   fire('ui-agent-sent');
   var note = {role: 'assistant', rawText: 'Checking.', wrap: {querySelector: function() { return null; }}};
   var answer = {role: 'assistant', rawText: 'Noon works.', wrap: {querySelector: function() { return {title: 'Read aloud'}; }}};
-  decorators.forEach(function(d) { d(note); d(answer); });
-  check('nothing is read before the turn is over', readCalls.length === 0);
+  decorators.forEach(function(d) { d(note); });
+  await sleep(5);
+  check('the note before the tools run is read as it is written', readCalls.length === 1 && readCalls[0].getText() === 'Checking.' && readCalls[0].bubble === note.wrap);
+  decorators.forEach(function(d) { d(answer); });
+  await sleep(5);
+  check('the answer waits for it to finish', readCalls.length === 1);
+  readCalls[0].onDone(true);
+  check('and is read once it has', readCalls.length === 2 && readCalls[1].getText() === 'Noon works.' && readCalls[1].bubble === answer.wrap);
+  check('in the unlocked player, for the right agent, with its button', readCalls[1].audio && readCalls[1].agentId === 'a1' && readCalls[1].button);
+  // Stopping a piece drops the ones waiting: the person stopped listening.
+  var more = {role: 'assistant', rawText: 'One more thing.', wrap: {}}, last = {role: 'assistant', rawText: 'Done.', wrap: {}};
+  decorators.forEach(function(d) { d(more); d(last); });
+  await sleep(5);
+  readCalls[1].onDone(false);
+  await sleep(5);
+  check('stopping a piece drops the ones waiting', readCalls.length === 2);
   fire('ui-agent-turn-done');
-  check('the last reply of the turn is read aloud', readCalls.length === 1 && readCalls[0].getText() === 'Noon works.' && readCalls[0].bubble === answer.wrap);
-  check('in the unlocked player, for the right agent, with its button', readCalls[0].audio && readCalls[0].agentId === 'a1' && readCalls[0].button);
+  decorators.forEach(function(d) { d(answer); });
+  await sleep(5);
+  check('a reply after the turn is over is not read', readCalls.length === 2);
 
   // A typed message's reply is not read.
   fire('ui-agent-sent');
   decorators.forEach(function(d) { d(answer); });
+  await sleep(5);
   fire('ui-agent-turn-done');
-  check('a typed message is not answered aloud', readCalls.length === 1);
+  check('a typed message is not answered aloud', readCalls.length === 2);
 
   // A result posted later for a request made by voice is read as it arrives,
   // to someone who can be listening.
   var card = {querySelector: function() { return {title: 'Read aloud'}; }};
-  fire('ui-agent-message-arrived', {message: {role: 'assistant', spoken: true, content: 'The venue is the mill.'}, bubble: card});
-  check('a spoken result is read aloud as it arrives', readCalls.length === 2 && readCalls[1].getText() === 'The venue is the mill.' &&
-    readCalls[1].bubble === card && readCalls[1].button && readCalls[1].audio && readCalls[1].agentId === 'a1');
-  fire('ui-agent-message-arrived', {message: {role: 'assistant', content: 'A scheduled report.'}, bubble: card});
-  check('a result not asked for by voice is not', readCalls.length === 2);
-  fire('ui-agent-message-arrived', {message: {role: 'user', spoken: true, content: 'hello'}, bubble: card});
-  fire('ui-agent-message-arrived', {message: {role: 'assistant', spoken: true, content: '  '}, bubble: card});
-  fire('ui-agent-message-arrived', {});
-  check('nor a message that is not a reply with words', readCalls.length === 2);
+  async function arrive(m) { fire('ui-agent-message-arrived', m); await sleep(5); }
+  await arrive({message: {role: 'assistant', spoken: true, content: 'The venue is the mill.'}, bubble: card});
+  check('a spoken result is read aloud as it arrives', readCalls.length === 3 && readCalls[2].getText() === 'The venue is the mill.' &&
+    readCalls[2].bubble === card && readCalls[2].button && readCalls[2].audio && readCalls[2].agentId === 'a1');
+  readCalls[2].onDone(true);
+  await arrive({message: {role: 'assistant', content: 'A scheduled report.'}, bubble: card});
+  check('a result not asked for by voice is not', readCalls.length === 3);
+  await arrive({message: {role: 'user', spoken: true, content: 'hello'}, bubble: card});
+  await arrive({message: {role: 'assistant', spoken: true, content: '  '}, bubble: card});
+  await arrive({});
+  check('nor a message that is not a reply with words', readCalls.length === 3);
   global.document = {visibilityState: 'hidden'};
-  fire('ui-agent-message-arrived', {message: {role: 'assistant', spoken: true, content: 'Later.'}, bubble: card});
-  check('a page out of view does not start talking', readCalls.length === 2);
+  await arrive({message: {role: 'assistant', spoken: true, content: 'Later.'}, bubble: card});
+  check('a page out of view does not start talking', readCalls.length === 3);
   global.document = {visibilityState: 'visible'};
-  fire('ui-agent-message-arrived', {message: {role: 'assistant', spoken: true, content: 'Now.'}, bubble: card});
-  check('back in view it does', readCalls.length === 3);
+  await arrive({message: {role: 'assistant', spoken: true, content: 'Now.'}, bubble: card});
+  check('back in view it does', readCalls.length === 4);
+  readCalls[3].onDone(true);
   delete global.document;
 
   // Switched off on this device, a dictated message's reply is not read.
@@ -253,6 +273,7 @@ const dictationFlow = `
   var heard = readCalls.length;
   fire('ui-agent-sent');
   decorators.forEach(function(d) { d(answer); });
+  await sleep(5);
   fire('ui-agent-turn-done');
   check('switched off, it is not read', readCalls.length === heard);
 
@@ -367,13 +388,13 @@ const dictationFlow = `
   check('on a desktop the first press turns it on', store['gohort.readDictatedReplies'] === 'on');
   var reads = readCalls.length;
   mic.onclick(mic); await sleep(10);
-  fire('ui-agent-message-arrived', {message: {role: 'assistant', spoken: true, content: 'Done.'}, bubble: card});
+  await arrive({message: {role: 'assistant', spoken: true, content: 'Done.'}, bubble: card});
   check('it does not talk over someone recording', readCalls.length === reads);
   speaker.onclick(speaker);
   mic.onclick(mic); await sleep(10);
   pending[pending.length - 1].res(written('ok'));
   await sleep(10);
-  fire('ui-agent-message-arrived', {message: {role: 'assistant', spoken: true, content: 'Done.'}, bubble: card});
+  await arrive({message: {role: 'assistant', spoken: true, content: 'Done.'}, bubble: card});
   check('nor with read-aloud off on this device', readCalls.length === reads);
   process.exit(fail ? 1 : 0);
 })();

@@ -96,8 +96,9 @@ func dictationFileName(contentType string) string {
 // then sent at once, hands-free; with it off it waits in the box to be read
 // over and sent.
 //
-// With speech on too, a 🔈 beside it says whether the reply to a dictated
-// message is read aloud when it arrives: on by default on a phone, off on a
+// With speech on too, a 🔈 beside it says whether the replies to a dictated
+// message are read aloud as they arrive, the agent's word before its tools
+// run as well as its answer: on by default on a phone, off on a
 // desktop, switched per device. The phone's audio is unlocked on the 🎤 tap,
 // since a phone plays sound only from a tap and the reply comes seconds after
 // it. Typing stops a reply being read.
@@ -187,7 +188,7 @@ const dictationJS = `(function(){
   }
 
   var state = 'idle', rec = null, stream = null, timer = null, cutoff = null, ctl = null, started = 0;
-  var dictated = false, awaiting = false, lastReply = null;
+  var dictated = false, awaiting = false;
   // held is the recording whose writing-out failed in a way that sending it
   // again could fix ({blob, secs}), and discard the ✕ beside the mic shown
   // while one is. It lives in this page only: a reload or leaving the page
@@ -430,15 +431,39 @@ const dictationJS = `(function(){
     }
   }
 
-  // The reply to a dictated message, read aloud once the turn is over: the
-  // last reply of the turn, so a note before the answer is not what is read.
+  // The replies to a dictated message are read aloud as each one is written,
+  // in order: the agent's word before it works ("let me look that up") plays
+  // while its tools run, and the answer follows it. One piece at a time,
+  // since starting a read stops the one playing; the next goes only once
+  // the last has played to its end, and stopping one (typing, its button,
+  // another reply pressed) drops the rest.
+  var readQueue = [], reading = false;
+  function readLater(bubble, text) {
+    readQueue.push({bubble: bubble, text: text});
+    // After this tick, so the bubble's own Read aloud button is drawn and
+    // shows the piece playing.
+    setTimeout(readNext, 0);
+  }
+  function readNext() {
+    if (reading || !readQueue.length) return;
+    // Asked at play time, so switching it off drops what is waiting too.
+    if (!window.gohortReadAloud || !readRepliesAloud()) { readQueue = []; return; }
+    var m = readQueue.shift();
+    var btn = m.bubble && m.bubble.querySelector ? m.bubble.querySelector('button[title="Read aloud"]') : null;
+    reading = true;
+    window.gohortReadAloud({bubble: m.bubble, getText: function() { return m.text; },
+      agentId: window.GOHORT_AGENT_ID || '', audio: player, button: btn,
+      onDone: function(ended) {
+        reading = false;
+        if (ended) readNext(); else readQueue = [];
+      }});
+  }
   window.addEventListener('ui-agent-sent', function() {
     // A message going out while a recording is held was written another
     // way, so the recording is out of date.
     letGo();
     awaiting = dictated;
     dictated = false;
-    lastReply = null;
   });
   // A result posted later, for a request made by voice (a background task's
   // answer, marked spoken), is read aloud as it arrives, but only to someone
@@ -450,20 +475,9 @@ const dictationJS = `(function(){
     if (!m || !m.spoken || m.role !== 'assistant' || !String(m.content || '').trim()) return;
     if (!window.gohortReadAloud || !readRepliesAloud() || state !== 'idle') return;
     if (typeof document !== 'undefined' && document.visibilityState && document.visibilityState !== 'visible') return;
-    var btn = d.bubble && d.bubble.querySelector ? d.bubble.querySelector('button[title="Read aloud"]') : null;
-    window.gohortReadAloud({bubble: d.bubble, getText: function() { return m.content; },
-      agentId: window.GOHORT_AGENT_ID || '', audio: player, button: btn});
+    readLater(d.bubble, m.content);
   });
-  window.addEventListener('ui-agent-turn-done', function() {
-    if (!awaiting) return;
-    awaiting = false;
-    var m = lastReply;
-    lastReply = null;
-    if (!m || !window.gohortReadAloud || !readRepliesAloud()) return;
-    var btn = m.wrap && m.wrap.querySelector ? m.wrap.querySelector('button[title="Read aloud"]') : null;
-    window.gohortReadAloud({bubble: m.wrap, getText: function() { return m.rawText; },
-      agentId: window.GOHORT_AGENT_ID || '', audio: player, button: btn});
-  });
+  window.addEventListener('ui-agent-turn-done', function() { awaiting = false; });
 
   function showSpeaker(ctx) {
     var on = readRepliesAloud();
@@ -474,7 +488,8 @@ const dictationJS = `(function(){
   function register() {
     if (!window.uiRegisterComposerAction || !window.uiRegisterMessageDecorator) { setTimeout(register, 50); return; }
     window.uiRegisterMessageDecorator(function(m) {
-      if (awaiting && m && m.role === 'assistant' && String(m.rawText || '').trim()) lastReply = m;
+      if (!awaiting || !m || m.role !== 'assistant' || !String(m.rawText || '').trim()) return;
+      readLater(m.wrap, m.rawText);
     });
     // First in the row, the mic then its switch: the button most reached for
     // sits in the corner under a phone user's thumb, and is drawn prominent,

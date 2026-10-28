@@ -532,6 +532,10 @@ const readAloudJS = `(function(){
     if (p.ctl) p.ctl.abort();
     if (p.audio) { p.audio.pause(); p.audio.removeAttribute('src'); p.audio.load(); }
     if (p.button) { p.button.textContent = idle; p.button.title = 'Read aloud'; }
+    // Whoever asked hears how it ended: played to the end, or not (stopped,
+    // replaced, failed). A caller reading several pieces in turn goes on
+    // only after an end.
+    if (p.onDone) { try { p.onDone(!!p.ended); } catch (e) {} }
   }
   function fail(btn, why) {
     if (!btn) return;
@@ -545,7 +549,7 @@ const readAloudJS = `(function(){
     var text = String(ctx.getText() || '');
     if (!text.trim()) return;
     var btn = ctx.button || null;
-    var p = playing = {bubble: ctx.bubble, button: btn, ctl: new AbortController()};
+    var p = playing = {bubble: ctx.bubble, button: btn, ctl: new AbortController(), onDone: ctx.onDone};
     var started = Date.now(), frame = 0;
     if (btn) {
       btn.title = 'Getting the voice ready. Press to cancel';
@@ -574,7 +578,7 @@ const readAloudJS = `(function(){
           if (p.timer) { clearInterval(p.timer); p.timer = null; }
           if (btn) { btn.textContent = stopGlyph; btn.title = 'Stop reading'; }
         };
-        a.onended = function() { if (playing === p) stop(); };
+        a.onended = function() { if (playing === p) { p.ended = true; stop(); } };
         a.onerror = function() {
           if (playing !== p) return;
           stop();
@@ -591,7 +595,7 @@ const readAloudJS = `(function(){
   // For the dictation script: read a reply aloud on its own (the reply to a
   // dictated message), and stop whatever is playing (the person started
   // typing). ctx is a bubble action's: {bubble, getText, agentId, button?,
-  // audio?}.
+  // audio?, onDone?(ended)}.
   window.gohortReadAloud = press;
   window.gohortReadAloudStop = stop;
   function register() {
