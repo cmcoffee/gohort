@@ -4958,6 +4958,12 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
  * trace being troubleshot wrapped inside it. The percentage is the pane's,
  * since it is resolved where the padding and margin use it. */
 .ui-agent { --ui-agent-column: clamp(52rem, 80%, 72rem); }
+/* The composer reads less than it types: reading can use a wide column,
+ * but typing across 1150px put the start of a line, the mic and Send a
+ * long way apart. So the composer, and its attachment chips, keep to 52rem
+ * centred under the column however wide the column grows (widescreen
+ * included), and share its edges when the column is narrower. */
+.ui-agent { --ui-agent-composer: min(var(--ui-agent-column, 100%), 52rem); }
 /* Widescreen (uiWidescreenToggle): nearly the whole pane, 3.5rem kept at
  * each side so the text never runs into the window's edge, and the switch
  * below has the margin to itself. */
@@ -5714,7 +5720,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   /* Button size: 2rem with a mouse, 2.25rem for a finger. */
   --compose-btn: 2rem;
   display: flex; flex-wrap: wrap; gap: 0.2rem; align-items: center;
-  margin: 0.5rem max(0.75rem, calc((100% - var(--ui-agent-column, 100%)) / 2)) max(0.75rem, calc(env(safe-area-inset-bottom, 0px) - 0.75rem));
+  margin: 0.5rem max(0.75rem, calc((100% - var(--ui-agent-composer, 100%)) / 2)) max(0.75rem, calc(env(safe-area-inset-bottom, 0px) - 0.75rem));
   padding: 0.15rem 0.35rem 0.35rem 0.55rem;
   border: 1px solid var(--border); border-radius: 1.4rem;
   background: var(--bg-1);
@@ -5901,7 +5907,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   white-space: nowrap;
 }
 .ui-agent-attach-strip {
-  padding: 0.3rem max(0.7rem, calc((100% - var(--ui-agent-column, 100%)) / 2)); border-top: 1px solid var(--border);
+  padding: 0.3rem max(0.7rem, calc((100% - var(--ui-agent-composer, 100%)) / 2)); border-top: 1px solid var(--border);
   background: var(--bg-2); display: flex; gap: 0.4rem; flex-wrap: wrap;
   font-size: var(--fs-xs);
 }
