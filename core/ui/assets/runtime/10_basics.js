@@ -2403,7 +2403,11 @@
           initial.forEach(function(v){ selectedSet[String(v)] = true; });
         }
         var mkOpt = function(o) {
-          var opt = el('option', {value: o.value}, [o.label || o.value]);
+          // An indented option (o.indent) sits under the one before it: a
+          // native option takes no styling, so the nesting is drawn in its
+          // text, in spaces that are not collapsed and a mark.
+          var lead = o.indent > 0 ? new Array(o.indent * 3 + 1).join('\u00a0') + '\u21b3 ' : '';
+          var opt = el('option', {value: o.value}, [lead + (o.label || o.value)]);
           if (multi ? selectedSet[String(o.value)] : String(initial) === String(o.value)) opt.selected = true;
           return opt;
         };

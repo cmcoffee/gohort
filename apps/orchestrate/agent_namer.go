@@ -31,38 +31,41 @@ func registerAgentNamer(app *OrchestrateApp) {
 	})
 }
 
-// agentNameOptions is the picker's list: the top-level agents, then each one's
-// sub-agents under a heading naming the parent.
+// agentNameOptions is the picker's list: each top-level agent, with its
+// sub-agents indented under it.
 //
 // Sub-agents used to be missing altogether. A sub-agent is pinned hidden (it
 // has no way in of its own), and the list left out every hidden agent, so the
 // one a family keeps for a job of its own, the collection's curator or the
 // agent that publishes, could not be picked for it. They are listed by their
-// own name, the parent in the group rather than the label, since a picker
+// own name, indented rather than labelled with the parent, since a picker
 // that saves the label (Publishing) looks the agent up by that name.
 func agentNameOptions(agents []AgentRecord) []ui.SelectOption {
-	top := map[string]AgentRecord{}
-	var out, subs []ui.SelectOption
+	isTop := map[string]bool{}
 	for _, a := range agents {
-		if isAppAgent(a.ID) || a.OwnedBy != "" || a.Hidden {
+		if !isAppAgent(a.ID) && a.OwnedBy == "" && !a.Hidden {
+			isTop[a.ID] = true
+		}
+	}
+	subs := map[string][]AgentRecord{}
+	for _, a := range agents {
+		if a.OwnedBy != "" && isTop[a.OwnedBy] && !isAppAgent(a.ID) {
+			subs[a.OwnedBy] = append(subs[a.OwnedBy], a)
+		}
+	}
+	var out []ui.SelectOption
+	for _, a := range agents {
+		if !isTop[a.ID] {
 			continue
 		}
-		top[a.ID] = a
 		out = append(out, ui.SelectOption{Value: a.ID, Label: chFirst(a.Name, a.ID)})
-	}
-	for _, a := range agents {
-		parent, ok := top[a.OwnedBy]
-		if a.OwnedBy == "" || !ok || isAppAgent(a.ID) {
-			continue
+		kids := subs[a.ID]
+		sort.SliceStable(kids, func(i, j int) bool {
+			return strings.ToLower(chFirst(kids[i].Name, kids[i].ID)) < strings.ToLower(chFirst(kids[j].Name, kids[j].ID))
+		})
+		for _, k := range kids {
+			out = append(out, ui.SelectOption{Value: k.ID, Label: chFirst(k.Name, k.ID), Indent: 1})
 		}
-		subs = append(subs, ui.SelectOption{Value: a.ID, Label: chFirst(a.Name, a.ID),
-			Group: chFirst(parent.Name, parent.ID) + "'s sub-agents"})
 	}
-	sort.SliceStable(subs, func(i, j int) bool {
-		if subs[i].Group != subs[j].Group {
-			return strings.ToLower(subs[i].Group) < strings.ToLower(subs[j].Group)
-		}
-		return strings.ToLower(subs[i].Label) < strings.ToLower(subs[j].Label)
-	})
-	return append(out, subs...)
+	return out
 }

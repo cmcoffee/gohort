@@ -129,6 +129,11 @@ type SelectOption struct {
 	Label string `json:"label,omitempty"`
 	Help  string `json:"help,omitempty"`
 	Group string `json:"group,omitempty"`
+	// Indent nests this option under the one before it in a select, drawn
+	// indented and marked, for a short hierarchy (a record's children under
+	// it) that a heading per parent would make long. The label stays as
+	// given, so whatever reads it back reads the plain name.
+	Indent int `json:"indent,omitempty"`
 	// Detail is this option's long explanation, behind an ⓘ icon beside
 	// its label in a checklist. Same split as FormField.Detail: Help is
 	// the scannable line, Detail is what the reader wants once they have

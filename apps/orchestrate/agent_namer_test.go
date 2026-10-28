@@ -55,8 +55,8 @@ func TestTheAgentNamerOffersIDsAndReadsBackNames(t *testing.T) {
 	}
 }
 
-// A family's sub-agents can be picked, listed under their parent by their own
-// name. An agent the person hid stays out, and so do its sub-agents.
+// A family's sub-agents can be picked, indented under their parent by their
+// own name. An agent the person hid stays out, and so do its sub-agents.
 func TestTheAgentPickerListsSubAgentsUnderTheirParent(t *testing.T) {
 	got := agentNameOptions([]AgentRecord{
 		{ID: "p2", Name: "Ops"},
@@ -68,9 +68,9 @@ func TestTheAgentPickerListsSubAgentsUnderTheirParent(t *testing.T) {
 	})
 	var rows []string
 	for _, o := range got {
-		rows = append(rows, o.Group+"|"+o.Label+"|"+o.Value)
+		rows = append(rows, strings.Repeat(">", o.Indent)+o.Label+"|"+o.Value)
 	}
-	want := "|Ops|p2,|Research|p1,Research's sub-agents|Archivist|s2,Research's sub-agents|Curator|s1"
+	want := "Ops|p2,Research|p1,>Archivist|s2,>Curator|s1"
 	if strings.Join(rows, ",") != want {
 		t.Errorf("picker rows:\n got %s\nwant %s", strings.Join(rows, ","), want)
 	}
