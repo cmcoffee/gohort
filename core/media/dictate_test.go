@@ -139,7 +139,7 @@ global.window = {
   uiSetPendingMessageExtras: function(o) { extras.push(o); },
   GOHORT_AGENT_ID: 'a1',
 };
-function fire(t) { (listeners[t] || []).forEach(function(f) { f({}); }); }
+function fire(t, detail) { (listeners[t] || []).forEach(function(f) { f({detail: detail}); }); }
 var mic = null, micDenied = false, tracksStopped = 0;
 Object.defineProperty(global, 'navigator', {configurable: true, value: {mediaDevices: {getUserMedia: function() {
   if (micDenied) { var e = new Error('denied'); e.name = 'NotAllowedError'; return Promise.reject(e); }
@@ -217,6 +217,26 @@ const dictationFlow = `
   fire('ui-agent-turn-done');
   check('a typed message is not answered aloud', readCalls.length === 1);
 
+  // A result posted later for a request made by voice is read as it arrives,
+  // to someone who can be listening.
+  var card = {querySelector: function() { return {title: 'Read aloud'}; }};
+  fire('ui-agent-message-arrived', {message: {role: 'assistant', spoken: true, content: 'The venue is the mill.'}, bubble: card});
+  check('a spoken result is read aloud as it arrives', readCalls.length === 2 && readCalls[1].getText() === 'The venue is the mill.' &&
+    readCalls[1].bubble === card && readCalls[1].button && readCalls[1].audio && readCalls[1].agentId === 'a1');
+  fire('ui-agent-message-arrived', {message: {role: 'assistant', content: 'A scheduled report.'}, bubble: card});
+  check('a result not asked for by voice is not', readCalls.length === 2);
+  fire('ui-agent-message-arrived', {message: {role: 'user', spoken: true, content: 'hello'}, bubble: card});
+  fire('ui-agent-message-arrived', {message: {role: 'assistant', spoken: true, content: '  '}, bubble: card});
+  fire('ui-agent-message-arrived', {});
+  check('nor a message that is not a reply with words', readCalls.length === 2);
+  global.document = {visibilityState: 'hidden'};
+  fire('ui-agent-message-arrived', {message: {role: 'assistant', spoken: true, content: 'Later.'}, bubble: card});
+  check('a page out of view does not start talking', readCalls.length === 2);
+  global.document = {visibilityState: 'visible'};
+  fire('ui-agent-message-arrived', {message: {role: 'assistant', spoken: true, content: 'Now.'}, bubble: card});
+  check('back in view it does', readCalls.length === 3);
+  delete global.document;
+
   // Switched off on this device, a dictated message's reply is not read.
   speaker.onclick(speaker);
   check('the switch turns it off and says so', store['gohort.readDictatedReplies'] === 'off' && speaker.button.textContent === '🔇');
@@ -229,10 +249,11 @@ const dictationFlow = `
   speaker.onclick(speaker);
   check('switching back on before sending tags it again', extras.length === 3 && extras[2].spoken_reply === true);
   speaker.onclick(speaker);
+  var heard = readCalls.length;
   fire('ui-agent-sent');
   decorators.forEach(function(d) { d(answer); });
   fire('ui-agent-turn-done');
-  check('switched off, it is not read', readCalls.length === 1);
+  check('switched off, it is not read', readCalls.length === heard);
 
   // Typing stops a reply being read.
   var before = stops;
@@ -343,6 +364,16 @@ const dictationFlow = `
   delete store['gohort.readDictatedReplies'];
   speaker.onclick(speaker);
   check('on a desktop the first press turns it on', store['gohort.readDictatedReplies'] === 'on');
+  var reads = readCalls.length;
+  mic.onclick(mic); await sleep(10);
+  fire('ui-agent-message-arrived', {message: {role: 'assistant', spoken: true, content: 'Done.'}, bubble: card});
+  check('it does not talk over someone recording', readCalls.length === reads);
+  speaker.onclick(speaker);
+  mic.onclick(mic); await sleep(10);
+  pending[pending.length - 1].res(written('ok'));
+  await sleep(10);
+  fire('ui-agent-message-arrived', {message: {role: 'assistant', spoken: true, content: 'Done.'}, bubble: card});
+  check('nor with read-aloud off on this device', readCalls.length === reads);
   process.exit(fail ? 1 : 0);
 })();
 `

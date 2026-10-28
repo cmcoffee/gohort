@@ -35,6 +35,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/media"
 	"github.com/cmcoffee/gohort/core/pacing"
 	"github.com/cmcoffee/gohort/core/timing"
 )
@@ -122,6 +123,10 @@ type orchUpdatePayload struct {
 	// records written before this existed.
 	ChannelChatID string `json:"channel_chat_id,omitempty"`
 	ChannelHandle string `json:"channel_handle,omitempty"`
+	// SpokenReply marks a background task's result for someone who asked by
+	// voice: the reply is written to be heard and goes back spoken, as a voice
+	// note on a channel and read aloud by a web page that is open and in view.
+	SpokenReply bool `json:"spoken_reply,omitempty"`
 
 	IntervalSeconds int    `json:"interval_seconds"`
 	FireCount       int    `json:"fire_count"`
@@ -727,6 +732,10 @@ func (fr *fireRun) buildPrompt() {
 		p.FireCount+1, recurringDetail(p), p.Prompt, scheduledFireDirective, timeCtx)
 	if isTaskWake(p.Prompt) {
 		fireContent = p.Prompt + "\n\n" + timeCtx
+		// Asked by voice: the result is heard, so it is written to be.
+		if fr.spoken() {
+			fireContent += "\n\n" + spokenReplyNote
+		}
 	}
 	// What earlier attempts tried, for an objective on its second or later fire.
 	// Placed last, in the volatile tail beside the time context: recency is
@@ -744,6 +753,13 @@ func (fr *fireRun) buildPrompt() {
 		fireContent += "\n\n" + block
 	}
 	fr.msgs = append(fr.msgs, Message{Role: "user", Content: fireContent})
+}
+
+// spoken reports whether this fire delivers a background result to someone
+// who asked by voice, with speech there to answer them in. Only a result's
+// fire carries SpokenReply (startWakeTurn).
+func (fr *fireRun) spoken() bool {
+	return fr.p.SpokenReply && media.GetSpeechConfig().Enabled
 }
 
 func (fr *fireRun) buildSession() {
@@ -782,6 +798,11 @@ func (fr *fireRun) buildSession() {
 		// this field and the workspace ceiling reads the context, and
 		// WorkspaceNetworkAllowed ANDs them. One of the two set is half a gate.
 		Network: fr.fireConnector,
+		// The conversation a background result is for, and how it was asked,
+		// so work this turn starts in turn comes back the same way.
+		ChannelChatID: p.ChannelChatID,
+		ChannelHandle: p.ChannelHandle,
+		SpokenReply:   fr.spoken(),
 	}
 	fr.subSess.DirectCredentialRefusal = directCredentialRefusal(fr.agent, fr.subSess)
 	fr.subSess.ToolFailureAdvice = toolFailureAdvice(fr.agent, false, nil) // the owner's own automation
@@ -1444,6 +1465,7 @@ func (fr *fireRun) postReport() {
 		ReportFrom:   recurringName(p),
 		ReportKind:   fireCardKind(p),
 		ReportDetail: fr.detail,
+		Spoken:       fr.spoken(),
 		ToolCalls:    fr.toolTrace,
 		// This turn had no live stream to paint an attachment onto — it ran
 		// with nobody watching. Keeping the bytes is the only way the thread

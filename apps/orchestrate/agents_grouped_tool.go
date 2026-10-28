@@ -130,13 +130,18 @@ func (t *chatTurn) agentsGroupedToolDef(allowRun bool) AgentToolDef {
 		// waiting for this, or handing it off" — that IS answerable, and it is
 		// the difference between a specialist's answer the caller weaves into
 		// its reply and a job it should not be sitting silent through.
-		params["await"] = ToolParam{
-			Type: "boolean",
-			Description: "TRUE (the default) when you need this agent's answer to write your own reply: the call waits and hands you the answer. " +
-				"FALSE when you are handing the work off: the call returns immediately, the agent works in the background, and its answer arrives on its own as a message when it is done. " +
-				"Use false for \"go do X and let me know\" and for anything you would otherwise sit silent through for minutes; use true for \"find out X so I can use it\". " +
-				"On a messaging conversation prefer false: the person sees nothing at all while you wait, so a long silence reads as an assistant that stopped answering.",
+		awaitDesc := "TRUE (the default) when you need this agent's answer to write your own reply: the call waits and hands you the answer. " +
+			"FALSE when you are handing the work off: the call returns immediately, the agent works in the background, and its answer arrives on its own as a message when it is done. " +
+			"Use false for \"go do X and let me know\" and for anything you would otherwise sit silent through for minutes; use true for \"find out X so I can use it\"."
+		// On a messaging conversation the default flips: the person sees
+		// nothing while a delegation is waited on, so a long one reads as an
+		// assistant that stopped answering.
+		if t.onMessaging() {
+			awaitDesc = "FALSE (the default on this messaging conversation) when you are handing the work off: the call returns immediately, the agent works in the background, and its answer arrives in this conversation on its own when it is done. " +
+				"TRUE when your reply cannot be written without this agent's answer: the call waits and hands it to you, and the person sees nothing meanwhile. " +
+				"Leave it out for \"go do X and let me know\"; pass true for a quick \"find out X so I can use it\"."
 		}
+		params["await"] = ToolParam{Type: "boolean", Description: awaitDesc}
 		// CapNetwork is tagged here even though the bare tool itself
 		// doesn't make HTTP calls: the `run` action dispatches into a
 		// sub-agent whose tools may. Without this cap, Private mode
@@ -214,7 +219,7 @@ func (t *chatTurn) agentsGroupedToolDef(allowRun bool) AgentToolDef {
 	// picker) — there is nothing to dispatch into and no session to mint, and
 	// WrapDetachable would be a no-op anyway.
 	if t.app != nil {
-		handler = WrapDetachable(t.agentsDispatchPolicy(allowRun), t.newToolSession(), handler)
+		handler = WrapDetachable(t.agentsDispatchPolicy(allowRun), t.detachSession(), handler)
 	}
 	return AgentToolDef{
 		Tool: Tool{
@@ -1856,13 +1861,19 @@ func (ar *agentsRun) finish() bool {
 // So an awaited dispatch always waits, on every surface. An un-awaited one
 // always detaches, on every surface — a caller that has said it is not waiting
 // has no reason to hold the conversation open even for a fast sub-agent.
+//
+// What a call that says neither means depends on where the turn is. On the
+// web it waits, the safe reading (see boolArgDefault). On a messaging
+// conversation it hands off: the person there sees nothing at all while a
+// delegation is waited on, and minutes of that reads as an assistant that
+// stopped answering. The agent says await true when its reply needs the answer.
 func (t *chatTurn) agentsDispatchPolicy(allowRun bool) DetachPolicy {
 	if !allowRun {
 		return DetachPolicy{} // read-only variant: nothing here can detach
 	}
-	handoff := func(args map[string]any, _ *ToolSession) bool {
+	handoff := func(args map[string]any, sess *ToolSession) bool {
 		return strings.TrimSpace(stringArg(args, "action")) == "run" &&
-			!boolArgDefault(args, "await", true)
+			!boolArgDefault(args, "await", !sess.Unattended())
 	}
 	return DetachPolicy{
 		Tool: "agents",

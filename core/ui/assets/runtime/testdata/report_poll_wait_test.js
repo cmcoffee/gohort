@@ -29,7 +29,8 @@ function setTimeout(fn, ms) { timers.push(ms); }
 function substituteExtras(u) { return u; }
 function noteObsSince() {}
 function obsKey(m) { return m.id; }
-function renderObservation(m) { drawn.push(m.id); }
+function renderObservation(m) { drawn.push(m.id); return m.id; }
+function announceArrived() {}
 function fetchJSON(url) { urls.push(url); return answer(); }
 var bgRunEl = null, bgRunId = '', bgRunTimer = null, serverClockOffset = null, convoStickToBottom = false;
 var convoLog = {kids: [], appendChild: function(n) { this.kids.push(n); n.parentNode = this; },

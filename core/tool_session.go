@@ -103,6 +103,11 @@ type ToolSession struct {
 	// a chat id and a bare handle differently. Empty on web and dispatch runs.
 	ChannelChatID string
 	ChannelHandle string
+	// SpokenReply marks a turn answering someone who spoke rather than typed:
+	// a voice note, or a message dictated with read-aloud on. Its reply is
+	// heard, and so is the result of work it hands to the background, which
+	// arrives after the turn and has no other way to know how it was asked.
+	SpokenReply bool
 	// Request is the person's message this turn answers, as they wrote it.
 	// A background job carries it to the message that delivers its result, so
 	// that message can say which request the result is for: with several jobs

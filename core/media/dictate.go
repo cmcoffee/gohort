@@ -418,6 +418,20 @@ const dictationJS = `(function(){
     dictated = false;
     lastReply = null;
   });
+  // A result posted later, for a request made by voice (a background task's
+  // answer, marked spoken), is read aloud as it arrives, but only to someone
+  // who can be listening: the page in view, read-aloud on for this device,
+  // and the mic not in use. Otherwise it waits in the thread with its Read
+  // aloud button, rather than a tab starting to talk minutes later.
+  window.addEventListener('ui-agent-message-arrived', function(e) {
+    var d = e && e.detail, m = d && d.message;
+    if (!m || !m.spoken || m.role !== 'assistant' || !String(m.content || '').trim()) return;
+    if (!window.gohortReadAloud || !readRepliesAloud() || state !== 'idle') return;
+    if (typeof document !== 'undefined' && document.visibilityState && document.visibilityState !== 'visible') return;
+    var btn = d.bubble && d.bubble.querySelector ? d.bubble.querySelector('button[title="Read aloud"]') : null;
+    window.gohortReadAloud({bubble: d.bubble, getText: function() { return m.content; },
+      agentId: window.GOHORT_AGENT_ID || '', audio: player, button: btn});
+  });
   window.addEventListener('ui-agent-turn-done', function() {
     if (!awaiting) return;
     awaiting = false;

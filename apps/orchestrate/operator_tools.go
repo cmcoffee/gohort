@@ -844,6 +844,24 @@ func operatorDeliverMedia(owner, agentID, chatID, handle, text string, images, v
 	return text, nil
 }
 
+// operatorDeliverSpoken is operatorDeliverMedia with the text's voice note
+// alongside, when there is one and the transport can carry it. Without
+// either it is operatorDeliverMedia: the words still arrive, as text.
+func operatorDeliverSpoken(owner, agentID, chatID, handle, text string, images, videos []string, voice string) (string, error) {
+	ct, ok := ActiveChannelThreads()
+	if vd, carries := ct.(ChannelVoiceDeliverer); ok && carries {
+		service := exactChannelService(owner, chatID, handle)
+		if err := vd.DeliverVoice(owner, service, chatID, handle, text, agentNameTag(owner, agentID), images, videos, voice); err != nil {
+			return "", err
+		}
+		return text, nil
+	}
+	if voice != "" {
+		Log("[operator] transport cannot carry a voice note; delivering the text")
+	}
+	return operatorDeliverMedia(owner, agentID, chatID, handle, text, images, videos)
+}
+
 // exactChannelService returns the service of a channel EXACTLY bound to this
 // chat_id/handle, or "" when only a whole-service ("global view") channel — or
 // nothing — covers it. Unlike channelForChat, it never falls back to a

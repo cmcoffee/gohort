@@ -171,3 +171,40 @@ func TestVoiceNoteName(t *testing.T) {
 		t.Errorf("a long first word should be cut: %q", got)
 	}
 }
+
+// A result sent later to someone who asked by voice goes out the way a reply
+// to their voice note does: the voice note, named for what it says, standing
+// in for the text where audio is delivered and beside it elsewhere. The
+// thread keeps the words either way.
+func TestDeliverVoiceSendsTheVoiceNote(t *testing.T) {
+	var _ ChannelVoiceDeliverer = channelThreadsImpl{}
+	T := &Bridges{AppCore{DB: OpenCache()}}
+	c := channelThreadsImpl{T: T}
+	if err := c.DeliverVoice("owner", "imessage", "chat1", "", "the venue is the mill", "", []string{"img"}, nil, "c3Bva2Vu"); err != nil {
+		t.Fatalf("deliver: %v", err)
+	}
+	items := T.drainOutbox("imessage", "owner")
+	if len(items) != 1 || items[0].Text != "" || len(items[0].Audios) != 1 || items[0].Audios[0] != "c3Bva2Vu" || len(items[0].Images) != 1 {
+		t.Fatalf("on iMessage the voice note stands in for the text, pictures kept: %+v", items)
+	}
+	if items[0].AudioName != "the venue is the mill" {
+		t.Errorf("the voice note should be named for what it says: %q", items[0].AudioName)
+	}
+	if got := T.recentMessages("owner", "chat1", 0); len(got) != 1 || got[0].Text != "the venue is the mill" {
+		t.Errorf("the thread should keep the words: %+v", got)
+	}
+
+	if err := c.DeliverVoice("owner", "telegram", "chat2", "", "the venue is the mill", "", nil, nil, "c3Bva2Vu"); err != nil {
+		t.Fatalf("deliver: %v", err)
+	}
+	items = T.drainOutbox("telegram", "owner")
+	if len(items) != 1 || !strings.Contains(items[0].Text, "the venue is the mill") || len(items[0].Audios) != 1 {
+		t.Errorf("elsewhere the text goes beside the voice note: %+v", items)
+	}
+	if err := c.DeliverMedia("owner", "imessage", "chat1", "", "typed", "", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if items = T.drainOutbox("imessage", "owner"); len(items) != 1 || len(items[0].Audios) != 0 || items[0].AudioName != "" || !strings.Contains(items[0].Text, "typed") {
+		t.Errorf("without a voice note nothing changes: %+v", items)
+	}
+}

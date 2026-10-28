@@ -323,6 +323,10 @@ type Run struct {
 	// apart: the transport treats a chat id and a bare handle differently.
 	ChannelChatID string
 	ChannelHandle string
+	// SpokenReply marks a run answering someone who spoke rather than typed
+	// (a voice note), whose reply goes back spoken. Work the run hands to the
+	// background carries it, so its result is spoken too. See ToolSession.
+	SpokenReply bool
 	// SurfaceContext, when set, is a one-line provenance note appended to the
 	// LLM's copy of THIS user message only (NOT persisted to the transcript, so
 	// it doesn't bloat a long thread on replay). A channel inbound passes it so

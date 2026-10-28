@@ -68,6 +68,7 @@ func (T *OrchestrateApp) installTaskRunner() {
 			origin: taskOrigin{
 				SessionID: sessionID, User: sess.Username, AgentID: agentID,
 				ChatID: strings.TrimSpace(sess.ChannelChatID), Handle: strings.TrimSpace(sess.ChannelHandle),
+				Spoken: sess.SpokenReply,
 			},
 			agentName: agentName,
 			title:     label,
@@ -190,6 +191,7 @@ type taskOrigin struct {
 	AgentID   string
 	ChatID    string // the messaging conversation, when the task began on one
 	Handle    string
+	Spoken    bool // the person asked by voice, so the result is answered to be heard
 }
 
 func (T *OrchestrateApp) deliverTaskResult(origin taskOrigin, label string, out TaskProduct, taskErr error) {
@@ -320,6 +322,7 @@ func (T *OrchestrateApp) startWakeTurn(origin taskOrigin, note wakeNote) error {
 		Username:      origin.User,
 		ChannelChatID: origin.ChatID,
 		ChannelHandle: origin.Handle,
+		SpokenReply:   origin.Spoken,
 		Prompt:        note.prompt,
 		HistoryNote:   note.history,
 		Name:          "background task",
@@ -697,12 +700,18 @@ func deliverWakeToChannel(p orchUpdatePayload, subSess *ToolSession, reply strin
 	if !wakeHasSomethingToSend(text, imgs, vids) {
 		return true, false
 	}
-	if _, err := operatorDeliverMedia(p.Username, p.AgentID, chatID, handle, text, imgs, vids); err != nil {
+	// Asked by voice, answered by voice: the result goes as a voice note too,
+	// as a reply to a voice note does.
+	voice := ""
+	if p.SpokenReply {
+		voice = speakReply(subSess.Context(), p.Username, p.AgentID, text)
+	}
+	if _, err := operatorDeliverSpoken(p.Username, p.AgentID, chatID, handle, text, imgs, vids, voice); err != nil {
 		Warn("[task] could not deliver the finished result to the conversation (%s): %v", chFirst(chatID, handle), err)
 		return true, false
 	}
-	Log("[task] delivered a finished background result to %s (%d char(s), %d image(s), %d video(s))",
-		chFirst(chatID, handle), len(text), len(imgs), len(vids))
+	Log("[task] delivered a finished background result to %s (%d char(s), %d image(s), %d video(s), voice note %v)",
+		chFirst(chatID, handle), len(text), len(imgs), len(vids), voice != "")
 	return true, true
 }
 

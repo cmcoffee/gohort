@@ -79,6 +79,18 @@ type ChannelMediaDeliverer interface {
 	DeliverMedia(owner, service, chatID, handle, text, agentName string, images, videos []string) error
 }
 
+// ChannelVoiceDeliverer is the OPTIONAL capability to send a message with its
+// own words spoken, as a voice note, the way a reply to a voice note goes out.
+// A message sent later (a background result for someone who asked by voice)
+// otherwise had only text to arrive as. Checked by type assertion like
+// ChannelMediaDeliverer.
+type ChannelVoiceDeliverer interface {
+	// DeliverVoice is DeliverMedia with the text's voice note (base64 audio)
+	// alongside. Where the transport delivers audio the note can stand in for
+	// the text, as it does for a live reply.
+	DeliverVoice(owner, service, chatID, handle, text, agentName string, images, videos []string, voice string) error
+}
+
 // ChannelSearcher is the OPTIONAL search capability a transport may add beside
 // ChannelThreads (checked by type assertion, so implementing the base seam
 // stays sufficient). It answers "what was said about X in this conversation"

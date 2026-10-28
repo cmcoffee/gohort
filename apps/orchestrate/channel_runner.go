@@ -438,6 +438,9 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 			// doesn't confabulate a destination or offer to "send it to" the
 			// channel it's already on.
 			SurfaceContext: channelSurfaceContextFull(in, voiceNote && media.GetSpeechConfig().Enabled),
+			// So work this run hands to the background is answered by voice
+			// too when it comes back.
+			SpokenReply:    voiceNote && media.GetSpeechConfig().Enabled,
 			StatusCallback: in.StatusCallback,
 		})
 		if app.supersededInConversation(in.Owner, sessionID, err) {
@@ -605,25 +608,39 @@ const spokenReplyMaxChars = 2500
 // can be read aloud, or synthesis fails; the last two say so in the log, since
 // the person sent a voice note and got only text.
 func spokenReply(ctx context.Context, in ChannelInbound, out ChannelReply, voiceNote bool) []string {
-	if !voiceNote || !media.GetSpeechConfig().Enabled {
+	if !voiceNote {
 		return nil
 	}
-	text := textutil.SpeakableText(strings.Join(append([]string{out.Text}, out.More...), "\n\n"))
+	if voice := speakReply(ctx, in.Owner, in.AgentID, strings.Join(append([]string{out.Text}, out.More...), "\n\n")); voice != "" {
+		return []string{voice}
+	}
+	return nil
+}
+
+// speakReply is a reply's words as a voice note (base64), in the agent's
+// voice, or "" when speech is off, nothing in it can be read aloud, it is too
+// long, or synthesis fails. The last three say so in the log: the person
+// asked by voice and is getting only text.
+func speakReply(ctx context.Context, owner, agentID, reply string) string {
+	if !media.GetSpeechConfig().Enabled {
+		return ""
+	}
+	text := textutil.SpeakableText(reply)
 	if text == "" {
-		return nil
+		return ""
 	}
 	if n := utf8.RuneCountInString(text); n > spokenReplyMaxChars {
-		Log("[channel] reply to a voice note for owner=%s agent=%s sent as text only: %d characters is too long to read aloud (limit %d)", in.Owner, in.AgentID, n, spokenReplyMaxChars)
-		return nil
+		Log("[channel] reply to a voice note for owner=%s agent=%s sent as text only: %d characters is too long to read aloud (limit %d)", owner, agentID, n, spokenReplyMaxChars)
+		return ""
 	}
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
-	audio, _, err := media.SpeakIn(ctx, text, agentVoice(in.Owner, in.AgentID))
+	audio, _, err := media.SpeakIn(ctx, text, agentVoice(owner, agentID))
 	if err != nil {
-		Log("[channel] reply to a voice note for owner=%s agent=%s sent as text only: speech failed: %v", in.Owner, in.AgentID, err)
-		return nil
+		Log("[channel] reply to a voice note for owner=%s agent=%s sent as text only: speech failed: %v", owner, agentID, err)
+		return ""
 	}
-	return []string{base64.StdEncoding.EncodeToString(audio)}
+	return base64.StdEncoding.EncodeToString(audio)
 }
 
 // spokenReplyNote is the turn note for a reply that will be heard, not read:

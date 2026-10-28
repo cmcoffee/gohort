@@ -313,6 +313,7 @@ func (t *chatTurn) dispatchExtraTools(sess *ToolSession, poolUser string, poolDB
 	// surface → no depth cascades); top-level targets get the full surface.
 	// Builder's run reaches only what it is building (builder_run_scope.go).
 	if t.agent.OwnedBy == "" && t.agentsToolWanted() {
+		t.dispatchSess = sess
 		extraTools = append(extraTools, t.agentsGroupedToolDef(true))
 	}
 	extraTools = append(extraTools, t.buildAttachedPipelineToolDefs()...)

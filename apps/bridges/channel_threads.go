@@ -113,9 +113,16 @@ func (c channelThreadsImpl) Deliver(owner, service, chatID, handle, text, agentN
 	return c.DeliverMedia(owner, service, chatID, handle, text, agentName, images, nil)
 }
 
-// DeliverMedia is the real body: the outbox has always carried videos, so this
-// only had to be reachable. See core/messaging.ChannelMediaDeliverer.
+// DeliverMedia: the outbox has always carried videos, so this only had to be
+// reachable. See core/messaging.ChannelMediaDeliverer.
 func (c channelThreadsImpl) DeliverMedia(owner, service, chatID, handle, text, agentName string, images, videos []string) error {
+	return c.DeliverVoice(owner, service, chatID, handle, text, agentName, images, videos, "")
+}
+
+// DeliverVoice is the real body, with the text's voice note alongside when
+// voice is set, named and sent the way a live reply's is (voiceOnly). See
+// core/messaging.ChannelVoiceDeliverer.
+func (c channelThreadsImpl) DeliverVoice(owner, service, chatID, handle, text, agentName string, images, videos []string, voice string) error {
 	// The outbound is stamped with this owner, so only their own connector
 	// drains it. An unnamed owner is the deployment admin's, as on inbound.
 	owner = c.T.ownerOr(strings.TrimSpace(owner))
@@ -151,8 +158,17 @@ func (c channelThreadsImpl) DeliverMedia(owner, service, chatID, handle, text, a
 			}
 		}
 	}
-	c.T.enqueueOutbox(OutboxItem{ChatID: chatID, Handle: handle, Service: svc, Text: text, Images: images, Videos: videos, Agent: agentName, Owner: owner, Type: "reply"})
-	// Mirror the outbound into the thread store so the dashboard + read_chat see it.
+	item := OutboxItem{ChatID: chatID, Handle: handle, Service: svc, Text: text, Images: images, Videos: videos, Agent: agentName, Owner: owner, Type: "reply"}
+	if voice != "" {
+		item.Audios = []string{voice}
+		item.AudioName = voiceNoteName(agentName, text)
+		if voiceOnly(svc, ChannelReply{Audios: item.Audios}) {
+			item.Text = ""
+		}
+	}
+	c.T.enqueueOutbox(item)
+	// Mirror the outbound into the thread store so the dashboard + read_chat
+	// see it, as its words even when only the voice note went out.
 	c.T.storeMessage(owner, StoredMessage{ID: newToken()[:12], ChatID: chatID, Role: "assistant", Text: text})
 	return nil
 }

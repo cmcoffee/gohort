@@ -225,14 +225,59 @@ func channelChatTools(sess *ToolSession, owner, agentID string, via ...string) [
 		}
 		return out
 	}
-	// resolve turns a loose recipient (display name / handle / chat_id) into a
-	// concrete (chatID, handle) WITHIN the agent's scope. A whole-service channel
-	// also allows a brand-new handle not yet in a thread; a per-contact channel
-	// can only reach its bound chats.
+	// channelOf names the channel a conversation belongs to: the one bound to
+	// it, or else the whole-service one it rides. The owner calls a chat by its
+	// channel's name ("send it to Family"), and the transport's own name for the
+	// conversation is often something else.
+	channelOf := func(t ChannelThreadInfo) string {
+		whole := ""
+		for _, ch := range chans {
+			name := strings.TrimSpace(ch.Name)
+			if name == "" || ch.Service != t.Service {
+				continue
+			}
+			if ch.Address == "" {
+				whole = chFirst(whole, name)
+			} else if ch.Address == t.ChatID || (t.Handle != "" && ch.Address == t.Handle) {
+				return name
+			}
+		}
+		return whole
+	}
+	// channelNamed finds one of the agent's channels by name, as the owner
+	// might say it: "Family", or "the Family channel".
+	channelNamed := func(to string) (Channel, bool) {
+		want := strings.TrimSpace(to)
+		low := strings.ToLower(want)
+		low = strings.TrimSpace(strings.TrimPrefix(low, "the "))
+		low = strings.TrimSpace(strings.TrimSuffix(low, " channel"))
+		for _, ch := range chans {
+			if ch.Service != "" && strings.TrimSpace(ch.Name) != "" && strings.EqualFold(strings.TrimSpace(ch.Name), low) {
+				return ch, true
+			}
+		}
+		return Channel{}, false
+	}
+	// resolve turns a loose recipient (display name / handle / chat_id, or the
+	// name of a channel bound to one conversation) into a concrete (chatID,
+	// handle) WITHIN the agent's scope. A whole-service channel also allows a
+	// brand-new handle not yet in a thread; a per-contact channel can only
+	// reach its bound chats.
 	resolve := func(to string) (chatID, handle string, ok bool) {
 		for _, t := range scopedThreads() {
 			if to == t.ChatID || (t.Handle != "" && to == t.Handle) || (t.DisplayName != "" && strings.EqualFold(to, t.DisplayName)) {
 				return t.ChatID, t.Handle, true
+			}
+		}
+		if ch, named := channelNamed(to); named && ch.Address != "" {
+			for _, t := range scopedThreads() {
+				if t.Service == ch.Service && (ch.Address == t.ChatID || (t.Handle != "" && ch.Address == t.Handle)) {
+					return t.ChatID, t.Handle, true
+				}
+			}
+			// Bound to a contact with no thread yet: its address is the handle.
+			if LooksLikeHandle(ch.Address) {
+				return "", ch.Address, true
 			}
 		}
 		if len(wholeService) > 0 && LooksLikeHandle(to) {
@@ -265,7 +310,7 @@ func channelChatTools(sess *ToolSession, owner, agentID string, via ...string) [
 		{
 			Tool: Tool{
 				Name:        "list_chats",
-				Description: "List the conversations on the channels YOU can reach (your own, plus any inherited from the agent that dispatched you) with display name, handle, and chat id, so you can read or message one. Scoped to those channels only (you can't see chats outside them). Read-only.",
+				Description: "List the conversations on the channels YOU can reach (your own, plus any inherited from the agent that dispatched you) with display name, handle, the channel each belongs to, and chat id, so you can read or message one. Scoped to those channels only (you can't see chats outside them). Read-only.",
 				Parameters:  map[string]ToolParam{"limit": {Type: "number", Description: "Max conversations (default 20)."}},
 			},
 			Handler: func(ctx context.Context, args map[string]any) (string, error) {
@@ -291,6 +336,9 @@ func channelChatTools(sess *ToolSession, owner, agentID string, via ...string) [
 					fmt.Fprintf(&b, "- %s", name)
 					if t.Handle != "" && t.Handle != name {
 						fmt.Fprintf(&b, " (%s)", t.Handle)
+					}
+					if chName := channelOf(t); chName != "" {
+						fmt.Fprintf(&b, " on the %q channel", chName)
 					}
 					fmt.Fprintf(&b, " [%s, chat_id: %s]", ServiceDisplayName(t.Service), t.ChatID)
 					if t.LastAt != "" {
@@ -392,9 +440,9 @@ func channelChatTools(sess *ToolSession, owner, agentID string, via ...string) [
 		{
 			Tool: Tool{
 				Name:        "send_message",
-				Description: "Send a message OUT over one of the channels you can reach (your own, or one inherited from the agent that dispatched you), to a contact or group on your channels. Set `to` to a display name, handle (phone/email), or chat_id from list_chats. Scoped to those channels only. To send an image/file, pass its workspace path in `attachments`. NOTE: if you are simply REPLYING to someone who just messaged you, you don't need this tool, put your text in your reply and attach images to it; it delivers in-thread. Use this to reach a DIFFERENT contact/group or to message proactively. Contacting a real person is consequential, so it queues for the user's approval unless they've pre-authorized that recipient (replies in-thread send without a gate).",
+				Description: "Send a message OUT over one of the channels you can reach (your own, or one inherited from the agent that dispatched you), to a contact or group on your channels. Set `to` to a display name, handle (phone/email), or chat_id from list_chats, or to the name of a channel that is bound to one conversation. Scoped to those channels only. To send an image/file, pass its workspace path in `attachments`. NOTE: if you are simply REPLYING to someone who just messaged you, you don't need this tool, put your text in your reply and attach images to it; it delivers in-thread. Use this to reach a DIFFERENT contact/group or to message proactively. Contacting a real person is consequential, so it queues for the user's approval unless they've pre-authorized that recipient (replies in-thread send without a gate).",
 				Parameters: map[string]ToolParam{
-					"to":          {Type: "string", Description: "Recipient as shown by list_chats: a display name, handle (phone/email), or chat_id. (Alias: chat_id.)"},
+					"to":          {Type: "string", Description: "Recipient as shown by list_chats: a display name, handle (phone/email), or chat_id; or a channel's name when that channel is bound to one conversation. (Alias: chat_id.)"},
 					"text":        {Type: "string", Description: "The message text to send to the channel. (Alias: message.)"},
 					"parts":       {Type: "array", Items: &ToolParam{Type: "string"}, Description: "Several messages to send one after another, each its own message, in order (after text, if text is set too). Only when the person asked for separate messages; never for alternative drafts of one message. A second send_message to the same recipient in one turn is held, so this is the way to send several."},
 					"chat_id":     {Type: "string", Description: "Alias for `to` (a conversation's chat id): accepted for compatibility; prefer `to`."},
@@ -421,6 +469,20 @@ func channelChatTools(sess *ToolSession, owner, agentID string, via ...string) [
 				text = strings.Join(msgs, "\n\n")
 				chatID, handle, ok := resolve(to)
 				if !ok {
+					// A channel over a whole service names no one conversation:
+					// say which it could be rather than guess.
+					if ch, named := channelNamed(to); named && ch.Address == "" {
+						var opts []string
+						for _, t := range scopedThreads() {
+							if t.Service == ch.Service && visible(ctx, t) {
+								opts = append(opts, chFirst(t.DisplayName, t.Handle, t.ChatID))
+							}
+							if len(opts) == 8 {
+								break
+							}
+						}
+						return "", fmt.Errorf("the %q channel covers every %s conversation, so it names no one recipient: say which (%s), or check list_chats", strings.TrimSpace(ch.Name), ServiceDisplayName(ch.Service), strings.Join(opts, ", "))
+					}
 					// The usual miss is naming the person who just spoke, in a
 					// group, instead of the conversation itself.
 					if sess != nil && sess.ReplyAuthorizedKey != "" {

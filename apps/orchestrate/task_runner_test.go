@@ -4,11 +4,17 @@
 package orchestrate
 
 import (
+	"encoding/base64"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/media"
 )
 
 func TestStagedAttachmentsRideTheTurnThatAnnouncesThem(t *testing.T) {
@@ -356,5 +362,161 @@ func TestACortexHomeWithNoSingleChannelStaysPut(t *testing.T) {
 	// would send a private result to the wrong conversation.
 	if _, _, ok := channelTargetForWake("alice", "agent-with-no-channels", cortexSessionID("agent-with-no-channels")); ok {
 		t.Error("an agent with no bound channel has nowhere to deliver")
+	}
+}
+
+// voiceThreads is a transport that can send a voice note, recording what it
+// was handed.
+type voiceThreads struct {
+	mu   *sync.Mutex
+	sent *[]voiceSend
+}
+
+type voiceSend struct{ chatID, text, voice string }
+
+func (voiceThreads) Threads(string) []ChannelThreadInfo         { return nil }
+func (voiceThreads) Messages(string, string, int) []ChannelLine { return nil }
+func (voiceThreads) Members(string, string) []ChannelMember     { return nil }
+func (v voiceThreads) Deliver(_, _, chatID, _, text, _ string, _ []string) error {
+	return v.DeliverVoice("", "", chatID, "", text, "", nil, nil, "")
+}
+func (v voiceThreads) DeliverVoice(_, _, chatID, _, text, _ string, _, _ []string, voice string) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	*v.sent = append(*v.sent, voiceSend{chatID, text, voice})
+	return nil
+}
+
+// backgroundVoiceRun has a channel agent hand work off from one message, voice
+// note or typed, and returns what reached the chat when the result came back,
+// the thread's stored result card, and whether the turn that delivered it was
+// told its reply would be heard.
+func backgroundVoiceRun(t *testing.T, voice bool) (sends []voiceSend, card ChatMessage, toldHeard bool) {
+	t.Helper()
+	room := "room-" + UUIDv4()
+	df := newDispatchFixture(t,
+		FakeTurn{ToolCalls: []ToolCall{{ID: "c1", Name: "agents", Args: map[string]any{"action": "run", "agent": "Scout", "message": "find the venue"}}}},
+		FakeTurn{Content: "The venue is the old mill.", Repeat: true})
+	if _, err := saveAgent(df.udb, AgentRecord{Name: "Scout", Owner: "u", OrchestratorPrompt: "You find venues."}); err != nil {
+		t.Fatal(err)
+	}
+	prevRoot := RootDB
+	RootDB = df.app.DB
+	t.Cleanup(func() { RootDB = prevRoot })
+	SaveChannel(RootDB, Channel{ID: "c1", Owner: "u", Service: "sms", AgentID: df.agent.ID})
+	registerChannelAgentRunner(df.app)
+	t.Cleanup(func() { RegisterChannelAgentRunner(nil) })
+	prevRunner, prevLink := TaskRunnerFunc, ConversationLinkFunc
+	df.app.installTaskRunner()
+	t.Cleanup(func() { TaskRunnerFunc, ConversationLinkFunc = prevRunner, prevLink })
+
+	var mu sync.Mutex
+	var got []voiceSend
+	prevThreads, had := ActiveChannelThreads()
+	RegisterChannelThreads(voiceThreads{&mu, &got})
+	t.Cleanup(func() {
+		if had {
+			RegisterChannelThreads(prevThreads)
+		} else {
+			RegisterChannelThreads(nil)
+		}
+	})
+	stt := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("find the venue")) }))
+	t.Cleanup(stt.Close)
+	tts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(append([]byte("ID3\x04\x00\x00\x00\x00\x00\x00"), make([]byte, 32)...))
+	}))
+	t.Cleanup(tts.Close)
+	prevSTT, prevTTS := GetTranscribeConfig(), media.GetSpeechConfig()
+	SetTranscribeConfig(TranscribeConfig{Endpoint: stt.URL, Enabled: true})
+	media.SetSpeechConfig(media.SpeechConfig{Endpoint: tts.URL, Enabled: true})
+	t.Cleanup(func() {
+		SetTranscribeConfig(prevSTT)
+		media.SetSpeechConfig(prevTTS)
+	})
+
+	in := ChannelInbound{Owner: "u", AgentID: df.agent.ID, SessionID: room, ChatID: "chat-1", SenderName: "Alice", FromOwner: true}
+	if voice {
+		in.Audios = []string{base64.StdEncoding.EncodeToString([]byte("clip"))}
+	} else {
+		in.Text = "find the venue"
+	}
+	if _, err := RunChannelAgent(t.Context(), in); err != nil {
+		t.Fatal(err)
+	}
+	result := func() (ChatMessage, bool) {
+		for _, m := range df.thread(room).Messages {
+			if m.Role == "assistant" && m.ReportFrom != "" {
+				return m, true
+			}
+		}
+		return ChatMessage{}, false
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if c, ok := result(); ok {
+			card = c
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the background result never came back to the conversation")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	for i := 0; i < df.llm.Calls(); i++ {
+		for _, m := range df.llm.Sent(i) {
+			if m.Role == "user" && strings.Contains(m.Content, "BACKGROUND TASK FINISHED") && strings.Contains(m.Content, spokenReplyNote) {
+				toldHeard = true
+			}
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	return append([]voiceSend(nil), got...), card, toldHeard
+}
+
+// Asked by voice note, a background result comes back the same way: written
+// to be heard, sent to the chat that asked as a voice note, and marked spoken
+// in the thread. Typed, it comes back as text.
+func TestABackgroundResultIsAnsweredTheWayItWasAsked(t *testing.T) {
+	sends, card, heard := backgroundVoiceRun(t, true)
+	if !heard {
+		t.Error("the turn delivering a spoken request's result was not told it will be heard")
+	}
+	if len(sends) != 1 || sends[0].chatID != "chat-1" || sends[0].voice == "" || sends[0].text == "" {
+		t.Errorf("the result should reach the chat that asked as a voice note with its words: %+v", sends)
+	}
+	if !card.Spoken {
+		t.Error("the stored result should be marked spoken")
+	}
+
+	sends, card, heard = backgroundVoiceRun(t, false)
+	if heard || card.Spoken {
+		t.Errorf("a typed request's result is not for hearing: told=%v spoken=%v", heard, card.Spoken)
+	}
+	if len(sends) != 1 || sends[0].chatID != "chat-1" || sends[0].voice != "" {
+		t.Errorf("a typed request's result goes back as text: %+v", sends)
+	}
+}
+
+// A dictated web message with read-aloud on hands its background work the same
+// mark a voice note does, and the turn delivering a spoken result passes it on
+// with the chat it is for: a job that turn starts comes back the same way.
+func TestTheSpokenMarkFollowsTheWork(t *testing.T) {
+	app := &OrchestrateApp{}
+	if !(&chatTurn{app: app, spokenReply: true}).newToolSession().SpokenReply {
+		t.Error("a dictated turn's work lost the spoken mark")
+	}
+	if (&chatTurn{app: app}).newToolSession().SpokenReply {
+		t.Error("a typed turn's work was marked spoken")
+	}
+	prevTTS := media.GetSpeechConfig()
+	media.SetSpeechConfig(media.SpeechConfig{Endpoint: "http://speech.invalid", Enabled: true})
+	t.Cleanup(func() { media.SetSpeechConfig(prevTTS) })
+	fr := &fireRun{app: app, p: orchUpdatePayload{SessionID: "room-1", Prompt: taskWakeMarker + " done",
+		SpokenReply: true, ChannelChatID: "chat-1", ChannelHandle: "+15550100"}}
+	fr.buildSession()
+	if s := fr.subSess; !s.SpokenReply || s.ChannelChatID != "chat-1" || s.ChannelHandle != "+15550100" {
+		t.Errorf("the result's turn should pass on how and where it was asked: %+v", s)
 	}
 }

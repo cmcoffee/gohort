@@ -222,6 +222,11 @@ type chatTurn struct {
 	// no construction site has to remember it.
 	detach     *DetachLedger
 	detachOnce sync.Once
+	// dispatchSess is the run's own session when this turn only assembles the
+	// catalog of a channel or dispatch run (dispatchExtraTools). That run
+	// knows its conversation; a session this turn mints does not, so work it
+	// hands to the background would have nowhere to be delivered.
+	dispatchSess *ToolSession
 	// turnClosed records that a control tool ended this turn — today
 	// stay_silent, whose tool result promises "this turn is now closed".
 	// It closes the LOOP it fires in (agent_loop breaks server-side), but a

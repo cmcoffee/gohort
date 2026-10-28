@@ -436,6 +436,28 @@ func (t *chatTurn) chatSessionID() string {
 	return t.session.ID
 }
 
+// detachSession is the session work this turn hands to the background is
+// started from, and so where its result is delivered: the run's own when that
+// run answers a real conversation (a messaging chat, or one it was told to
+// deliver into), otherwise one this turn mints.
+//
+// A dispatch run's own session is otherwise a synthetic thread nobody reads
+// ("external-dispatch:…"), and a result delivered there never reaches the
+// conversation that asked. A minted session names no conversation, so the
+// work runs inline instead, as it always has there.
+func (t *chatTurn) detachSession() *ToolSession {
+	if d := t.dispatchSess; d != nil && (d.Unattended() || strings.TrimSpace(d.DeliverySessionID) != "") {
+		return d
+	}
+	return t.newToolSession()
+}
+
+// onMessaging reports whether this turn answers a messaging conversation,
+// where nobody watches it work (ToolSession.Unattended).
+func (t *chatTurn) onMessaging() bool {
+	return t.dispatchSess.Unattended()
+}
+
 func (t *chatTurn) newToolSession() *ToolSession {
 	sess := &ToolSession{
 		LLM:      t.app.LLM,
@@ -482,6 +504,9 @@ func (t *chatTurn) newToolSession() *ToolSession {
 	// another render.
 	sess.Detach = t.detachLedger()
 	sess.Request = t.request
+	// A dictated message with read-aloud on: work it hands to the background
+	// is answered to be heard too.
+	sess.SpokenReply = t.spokenReply
 	sess.DeniedCredentials = credentialDenySet(t.agent, sess.Username)
 	sess.DirectCredentialRefusal = directCredentialRefusal(t.agent, sess)
 	sess.ToolFailureAdvice = toolFailureAdvice(t.agent, t.sse != nil, func() bool { return nonOwnerRequester(t.ctx) })

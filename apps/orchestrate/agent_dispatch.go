@@ -1738,6 +1738,7 @@ func (cr *continuingRun) buildSession() {
 		ReplyAuthorizedKey: run.ReplyAuthorizedKey, // in-thread reply skips the send approval gate
 		ChannelChatID:      run.ChannelChatID,      // so a background task can still reach this conversation
 		ChannelHandle:      run.ChannelHandle,
+		SpokenReply:        run.SpokenReply, // and be answered the way it was asked
 		DeniedCredentials:  credentialDenySet(cr.target, cr.runtimeUser),
 	}
 	// Builder sent work by another agent stamps what it builds as that

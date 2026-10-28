@@ -371,6 +371,7 @@ type (
 	ChannelThreads        = messaging.ChannelThreads
 	ChannelSearcher       = messaging.ChannelSearcher
 	ChannelMediaDeliverer = messaging.ChannelMediaDeliverer
+	ChannelVoiceDeliverer = messaging.ChannelVoiceDeliverer
 )
 
 var (

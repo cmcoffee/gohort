@@ -6697,7 +6697,7 @@
     // paints from a replay hook) showed only after a reload.
     function appendChannelMessage(m) {
       if (!m || m.hidden) return;
-      renderObservation(m);
+      announceArrived(renderObservation(m), m);
     }
 
     function stopChannelPolling() {
@@ -6865,6 +6865,19 @@
       if (m.created || m.usage || m.report_from || m.mark || m.retracted || m.label) setMessageMeta(mid, {created: m.created, usage: m.usage, report_from: m.report_from, report_kind: m.report_kind, report_detail: m.report_detail, mark: m.mark, retracted: m.retracted, label: m.label});
       applyPersistedToolCalls(mid, m);
       runReplayHooks(mid, m);
+      return mid;
+    }
+    // announceArrived tells page scripts a message the server posted on its
+    // own has just arrived while the thread is open (ui-agent-message-arrived,
+    // with the stored message and its bubble). Only a live arrival: a reload's
+    // replay is history, and a script acting on each message as it comes (a
+    // result read aloud) must not act on all of them again.
+    function announceArrived(mid, m) {
+      var e = msgEls[mid];
+      try {
+        window.dispatchEvent(new CustomEvent('ui-agent-message-arrived',
+          {detail: {message: m, bubble: e && e.bubble}}));
+      } catch (_) {}
     }
     // startReportPolling — while a thread is open, re-fetch it and render any
     // NEW report cards (report_from set) live — anything the server posts to
@@ -6931,7 +6944,7 @@
             var k = obsKey(m);
             if (cortexObsSeen[k]) return;
             cortexObsSeen[k] = true;
-            renderObservation(m);
+            announceArrived(renderObservation(m), m);
             drew++;
           });
         }).catch(function() {}).then(function() {

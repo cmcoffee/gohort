@@ -1633,6 +1633,10 @@ type ChatMessage struct {
 	// standing agents / monitors may populate it too. Display-only, like
 	// ReportFrom/ReportKind — the LLM context marker ignores it.
 	ReportDetail string `json:"report_detail,omitempty"`
+	// Spoken marks a reply that answers someone who asked by voice and is
+	// meant to be heard: a background task's result for a dictated request,
+	// which a page that is open and in view reads aloud as it arrives.
+	Spoken bool `json:"spoken,omitempty"`
 	// Attachments holds ids (not bytes — see core/chat_attachments.go) of the
 	// images this message delivered, so a reloaded thread can still show them.
 	// Live chat paints attachments off the SSE stream as they arrive and that
