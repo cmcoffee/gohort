@@ -207,14 +207,14 @@ func TestNavShellMeasuresTheChrome(t *testing.T) {
 }
 
 // On a wide screen the conversation reads in one centred column, and the
-// composer pill and its attachment chips sit centred under it, at most 52rem
-// wide: reading can use the width, typing a mile across cannot.
+// composer pill and its attachment chips sit centred under it, half the pane
+// and 52rem at least: reading can use the width, typing a mile across cannot.
 func TestTheThreadAndTheComposerAreCentredColumns(t *testing.T) {
 	css := stripCSSComments(runtimeCSS)
 	if !strings.Contains(css, ".ui-agent { --ui-agent-column:") {
 		t.Fatal("the agent panel no longer sets its column width")
 	}
-	if !strings.Contains(css, ".ui-agent { --ui-agent-composer: min(var(--ui-agent-column, 100%), 52rem); }") {
+	if !strings.Contains(css, ".ui-agent { --ui-agent-composer: min(var(--ui-agent-column, 100%), max(52rem, 50%)); }") {
 		t.Error("the composer is no longer kept to a typing width under the column")
 	}
 	// A phone's own rules set their edges outright: narrower than the

@@ -4960,10 +4960,10 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-agent { --ui-agent-column: clamp(52rem, 80%, 72rem); }
 /* The composer reads less than it types: reading can use a wide column,
  * but typing across 1150px put the start of a line, the mic and Send a
- * long way apart. So the composer, and its attachment chips, keep to 52rem
- * centred under the column however wide the column grows (widescreen
- * included), and share its edges when the column is narrower. */
-.ui-agent { --ui-agent-composer: min(var(--ui-agent-column, 100%), 52rem); }
+ * long way apart. So the composer, and its attachment chips, are half the
+ * pane, 52rem at least, centred under the column (widescreen included),
+ * and share its edges when the column is narrower. */
+.ui-agent { --ui-agent-composer: min(var(--ui-agent-column, 100%), max(52rem, 50%)); }
 /* Widescreen (uiWidescreenToggle): nearly the whole pane, 3.5rem kept at
  * each side so the text never runs into the window's edge, and the switch
  * below has the margin to itself. */
