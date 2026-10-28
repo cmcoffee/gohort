@@ -205,3 +205,29 @@ func TestNavShellMeasuresTheChrome(t *testing.T) {
 		}
 	}
 }
+
+// On a wide screen the conversation reads in one centred column, and the
+// thread, the composer pill and its attachment chips keep the same edges: a
+// pill wider or narrower than the text above it reads as belonging to
+// something else.
+func TestTheThreadAndTheComposerShareOneColumn(t *testing.T) {
+	const column = "calc((100% - var(--ui-agent-column, 100%)) / 2)"
+	css := stripCSSComments(runtimeCSS)
+	if !strings.Contains(css, ".ui-agent { --ui-agent-column:") {
+		t.Fatal("the agent panel no longer sets its column width")
+	}
+	// A phone's own rules set their edges outright: narrower than the
+	// column, there is nothing to centre.
+	for _, sel := range []string{".ui-agent-convo-log", ".ui-agent .ui-agent-input-row", ".ui-agent-attach-strip"} {
+		on := false
+		for _, rule := range strings.Split(css, "}") {
+			head, body, ok := strings.Cut(rule, "{")
+			if ok && strings.TrimSpace(head) == sel && strings.Contains(body, column) {
+				on = true
+			}
+		}
+		if !on {
+			t.Errorf("%s is not on the conversation's column", sel)
+		}
+	}
+}

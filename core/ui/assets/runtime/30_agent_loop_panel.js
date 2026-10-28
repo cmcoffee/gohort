@@ -1,3 +1,47 @@
+  // uiWidescreenToggle puts the conversation's widescreen switch in the
+  // pane's top corner. Widescreen widens the reading column to nearly the
+  // whole pane, a healthy margin kept at each side (.ui-agent-wide), for the
+  // work that wants the width: logs, stack traces, wide tables. Remembered
+  // per device, since it is a question of the screen, and shown only while
+  // the pane is wide enough for it to change anything. It sits just inside
+  // the thread's scrollbar, measured: a fixed inset that cleared a scrollbar
+  // which takes room left it stranded where scrollbars overlay (a Mac).
+  var uiWideKey = 'ui.agent.widescreen';
+  var uiWideMinPane = 940;
+  var uiWideGap = 8;
+  function uiWidescreenToggle(root, pane, log) {
+    var on = false;
+    try { on = window.localStorage.getItem(uiWideKey) === '1'; } catch (e) {}
+    var btn = el('button', {type: 'button', class: 'ui-agent-wide-toggle'}, ['↔']);
+    function apply() {
+      root.classList.toggle('ui-agent-wide', on);
+      btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+      btn.title = on ? 'Widescreen is on: press for the standard reading width' : 'Widescreen: use nearly the full width of the window';
+    }
+    btn.addEventListener('click', function() {
+      on = !on;
+      try { window.localStorage.setItem(uiWideKey, on ? '1' : '0'); } catch (e) {}
+      apply();
+    });
+    function fit() {
+      btn.style.display = pane.clientWidth >= uiWideMinPane ? '' : 'none';
+      var bar = log ? Math.max(0, log.offsetWidth - log.clientWidth) : 0;
+      btn.style.right = (bar + uiWideGap) + 'px';
+    }
+    // The thread as well as the pane: a scrollbar appears when the thread
+    // outgrows the pane, which leaves the pane's size alone and shrinks the
+    // thread's content box.
+    if (window.ResizeObserver) {
+      var ro = new window.ResizeObserver(fit);
+      ro.observe(pane);
+      if (log) ro.observe(log);
+    } else window.addEventListener('resize', fit);
+    apply();
+    fit();
+    pane.appendChild(btn);
+    return btn;
+  }
+
   components.agent_loop_panel = function(cfg) {
     var idF   = cfg.id_field       || 'ID';
     var ttlF  = cfg.title_field    || 'Title';
@@ -2211,6 +2255,7 @@
     var convoPane = el('div', {class: 'ui-agent-convo'});
     var convoLog  = el('div', {class: 'ui-agent-convo-log'});
     convoPane.appendChild(convoLog);
+    uiWidescreenToggle(wrap, convoPane, convoLog);
     var emptyMsg = el('div', {class: 'ui-agent-empty'},
       [cfg.empty_text || 'Start typing below.']);
     convoLog.appendChild(emptyMsg);
