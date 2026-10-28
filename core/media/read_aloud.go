@@ -215,9 +215,26 @@ func streamReadAloud(w http.ResponseWriter, r *http.Request, user, key string) {
 	w.Header().Set("Content-Type", job.firstType)
 	w.Header().Set("Cache-Control", "no-store")
 	flush := http.NewResponseController(w)
+	// How this request ended, said in the log: a voice cut short is the
+	// player hanging up (it decided the audio was over), or the maker
+	// stopping, and the two are fixed in different places. With the Range it
+	// asked for and the kind of browser, since players differ in how they
+	// take a stream of unknown length.
+	sent, sentBytes, ended := 0, 0, "all pieces sent"
+	defer func() {
+		line := fmt.Sprintf("[speech] read aloud for %s: %d of %d piece(s), %d bytes, %s (range %q, %s)",
+			user, sent, 1+len(job.rest), sentBytes, ended, r.Header.Get("Range"), readAloudClient(r.UserAgent()))
+		if sent < 1+len(job.rest) {
+			nfo.Log("%s", line)
+		} else {
+			nfo.Debug("%s", line)
+		}
+	}()
 	if _, err := w.Write(job.first); err != nil {
+		ended = "the player hung up"
 		return
 	}
+	sent, sentBytes = 1, len(job.first)
 	flush.Flush()
 	ctx := r.Context()
 	job.listen()
@@ -240,14 +257,44 @@ func streamReadAloud(w http.ResponseWriter, r *http.Request, user, key string) {
 			piece = job.made[i]
 		}
 		job.mu.Unlock()
-		if piece == nil || ctx.Err() != nil {
-			return // the maker stopped, or the listener did
-		}
-		if _, err := w.Write(piece); err != nil {
+		if ctx.Err() != nil {
+			ended = "the player hung up"
 			return
 		}
+		if piece == nil {
+			ended = "the speech maker stopped"
+			return
+		}
+		if _, err := w.Write(piece); err != nil {
+			ended = "the player hung up"
+			return
+		}
+		sent, sentBytes = sent+1, sentBytes+len(piece)
 		flush.Flush()
 	}
+}
+
+// readAloudClient names the kind of browser a user agent is, for the log:
+// WebKit (Safari, the desktop app's webview, every browser on an iPhone)
+// takes a stream of unknown length differently from Chrome and Firefox.
+func readAloudClient(ua string) string {
+	switch {
+	case strings.Contains(ua, "Firefox/"):
+		return "Firefox"
+	case strings.Contains(ua, "Edg/"):
+		return "Edge"
+	case strings.Contains(ua, "Chrome/") || strings.Contains(ua, "CriOS/"):
+		return "Chrome"
+	case strings.Contains(ua, "iPhone") || strings.Contains(ua, "iPad"):
+		return "WebKit (iOS)"
+	case strings.Contains(ua, "AppleWebKit/") && strings.Contains(ua, "Safari/"):
+		return "Safari"
+	case strings.Contains(ua, "AppleWebKit/"):
+		return "WebKit (app)"
+	case ua == "":
+		return "no user agent"
+	}
+	return "other"
 }
 
 // listen counts a request in, and starts the maker if nothing is making the
