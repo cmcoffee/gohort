@@ -191,7 +191,7 @@ select:-webkit-autofill {
  * controls that share a row with them. Not a modal's footer or a decision
  * card's answers: those stand alone and keep the full size. */
 .ui-table-group-foot, .ui-bulk-bar, .ui-pl-actions, .ui-pl-modal-h-actions,
-.ui-agent-actions, .ui-agent-top-bundle .ui-agent-modes-in-bundle,
+.ui-agent-actions,
 .ui-agent-msg-file-row, .ui-cw-rev-group,
 .ui-row-actions, .ui-rows-actions, .ui-agent-msg-actions, .ui-agent-msg-edit-actions,
 .ui-chat-actions, .ui-chat-edit-actions, .ui-wb-head-actions, .ui-wb-actions,
@@ -4214,7 +4214,9 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-chat-input-area:focus-within { border-color: color-mix(in srgb, var(--accent) 70%, var(--border)); }
 .ui-chat-input-area .ui-chat-input {
   border: 0; background: transparent; resize: none;
-  padding: 0.5rem 0.2rem; min-height: 2.25rem; line-height: 1.35;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: 0; margin-bottom: 0.1rem;
+  padding: 0.4rem 0.2rem; min-height: 2rem; line-height: 1.35;
   flex: 1 0 100%; order: -1; /* Attach comes first in the markup */
 }
 .ui-chat-input-area .ui-chat-send,
@@ -4228,11 +4230,11 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 }
 .ui-chat-input-area .ui-chat-iconbtn { border-color: transparent; font-size: var(--fs-lg); }
 .ui-chat-input-area .ui-chat-cancel { border-radius: 999px; }
-.ui-chat-input-area .ui-chat-send {
-  font-size: 0; display: inline-flex; align-items: center; justify-content: center;
-}
+/* Pinned to the circle's centre by position, as the agent composer's is. */
+.ui-chat-input-area .ui-chat-send { font-size: 0; position: relative; }
 .ui-chat-input-area .ui-chat-send::before {
-  content: ""; width: 1.1rem; height: 1.1rem; background: currentColor;
+  position: absolute; inset: 0; margin: auto;
+  content: ""; width: 1rem; height: 1rem; background: currentColor;
   -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 19V5M5.5 11.5L12 5l6.5 6.5'/%3E%3C/svg%3E") center / contain no-repeat;
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 19V5M5.5 11.5L12 5l6.5 6.5'/%3E%3C/svg%3E") center / contain no-repeat;
 }
@@ -4498,8 +4500,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   flex: 0 1 auto;
   margin-right: 0;
   /* Children size to content (border tight to text) instead of
-   * stretching to fill the container's height. Same reasoning as
-   * the .ui-agent-modes fix above. */
+   * stretching to fill the container's height. */
   align-items: center;
   /* Visual order: modes/extras (Private) render BEFORE actions
    * (Memory). DOM order stays actions-then-extras (so the default
@@ -4724,24 +4725,6 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   min-width: 0;
   padding: 0.2rem 0.45rem;
   font-size: var(--fs-xs);
-}
-.ui-agent.ui-agent-list-top .ui-agent-modes {
-  background: transparent;
-  border-top: 0;
-  padding: 0;
-  gap: 0.3rem;
-  /* align-items: center so child pills size to their CONTENT and
-   * aren't stretched to the modes-row height. flex default is
-   * stretch — that was making the Private pill render taller than
-   * its content (border pushed out from the text) instead of
-   * hugging the text the way the action buttons do. */
-  align-items: center;
-}
-.ui-agent.ui-agent-list-top .ui-agent-mode {
-  /* Same shape as the rail's + New / Select and the action
-   * buttons — slight-rounded rectangle (6px), same padding, same
-   * font, transparent bg, muted text. */
-  border-radius: var(--btn-radius) !important;
 }
 .ui-agent.ui-agent-list-top .ui-agent-expand { display: none; }
 
@@ -5541,49 +5524,58 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   display: flex; flex-wrap: wrap; align-items: center;
   background: var(--bg-2);
 }
-.ui-agent-extras-slot > .ui-agent-extras,
-.ui-agent-extras-slot > .ui-agent-modes {
+.ui-agent-extras-slot > .ui-agent-extras {
   border-top: none;
   background: transparent;
 }
 
-/* Per-session mode toggle pills (Private, Explorer, …) — same shape
- * as ChatPanel's chat-mode pill, restyled for AgentLoopPanel's bar. */
-.ui-agent-modes {
-  display: flex; flex-wrap: wrap; gap: 0.4rem;
-  padding: 0.4rem 0.7rem;
-  background: var(--bg-2);
-  border-top: 1px solid var(--border);
-}
+/* Mode switches (ChatMode): per-message, so they sit in the composer
+ * after Attach. A round mark while off; on, a chip in the accent that names
+ * itself, so a switch changing what the next send does is never on unseen.
+ * A mode with no icon shows its label either way. */
 .ui-agent-mode {
-  background: transparent; border: 1px solid var(--border);
+  background: transparent; border: 1px solid transparent;
   color: var(--text-mute);
   border-radius: 999px;
   cursor: pointer;
-  transition: color 0.1s ease, border-color 0.1s ease;
+  transition: color 0.1s ease, border-color 0.1s ease, background 0.1s ease;
 }
-.ui-agent-mode:hover { color: var(--text); border-color: var(--text-mute); }
+.ui-agent-mode:hover { color: var(--text); }
 .ui-agent-mode.active {
-  color: var(--accent); border-color: var(--accent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
 }
-/* Mode pills riding inside the top bundle — strip the row chrome
- * (background, border-top, big padding) so they sit cleanly between
- * the bundle's dividers instead of looking like a band stacked
- * above. Buttons themselves keep their pill shape. */
-.ui-agent-top-bundle .ui-agent-modes-in-bundle {
-  /* Match row 1's left inset (.ui-agent-actions padding-left) so the
-   * bottom row's buttons line up flush under the top row's instead of
-   * sitting 0.4rem further left. !important is required to beat the
-   * higher-specificity .ui-agent.ui-agent-list-top .ui-agent-modes
-   * rule (padding: 0), same trick row 1's .ui-agent-actions uses. */
-  padding: 0 0 0 0.4rem !important;
-  background: transparent;
-  border-top: 0;
-  gap: 0.3rem;
-  align-items: center;
-  flex: 0 1 auto;
+.ui-agent .ui-agent-input-row .ui-agent-mode {
+  position: relative; gap: 0.3rem;
+  height: var(--compose-btn); min-height: var(--compose-btn); min-width: var(--compose-btn);
+  padding: 0 0.6rem; font-size: var(--fs-sm);
 }
-/* Two-row buttons table inside the top bundle's right column.
+/* Off, with a mark: a circle like Attach's, the mark pinned to its centre by
+ * position (a button is not a flex container in every engine), the label
+ * kept for a screen reader. */
+.ui-agent .ui-agent-input-row .ui-agent-mode-has-icon:not(.active) {
+  width: var(--compose-btn); max-width: var(--compose-btn); padding: 0;
+  flex: 0 0 var(--compose-btn);
+}
+.ui-agent .ui-agent-input-row .ui-agent-mode-has-icon:not(.active) .ui-agent-mode-icon {
+  position: absolute; inset: 0; margin: auto;
+}
+.ui-agent .ui-agent-input-row .ui-agent-mode-has-icon:not(.active) .ui-agent-mode-label {
+  position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+}
+.ui-agent-mode-icon {
+  display: inline-block; flex: 0 0 auto; width: 1rem; height: 1rem; background: currentColor;
+}
+.ui-agent-mode-icon-globe-off {
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M3 12h18M12 3c2.5 2.7 3.8 5.7 3.8 9s-1.3 6.3-3.8 9c-2.5-2.7-3.8-5.7-3.8-9S9.5 5.7 12 3z'/%3E%3Cpath d='M3.5 3.5l17 17' stroke-width='2.6'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M3 12h18M12 3c2.5 2.7 3.8 5.7 3.8 9s-1.3 6.3-3.8 9c-2.5-2.7-3.8-5.7-3.8-9S9.5 5.7 12 3z'/%3E%3Cpath d='M3.5 3.5l17 17' stroke-width='2.6'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+.ui-agent-mode-icon-eraser {
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7 21h13'/%3E%3Cpath d='M4.6 14.6l9.9-9.9a2 2 0 0 1 2.8 0l2 2a2 2 0 0 1 0 2.8L11 18.8a2 2 0 0 1-1.4.6H7.4a2 2 0 0 1-1.4-.6l-1.4-1.4a2 2 0 0 1 0-2.8z'/%3E%3Cpath d='M9 10.2l4.8 4.8'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7 21h13'/%3E%3Cpath d='M4.6 14.6l9.9-9.9a2 2 0 0 1 2.8 0l2 2a2 2 0 0 1 0 2.8L11 18.8a2 2 0 0 1-1.4.6H7.4a2 2 0 0 1-1.4-.6l-1.4-1.4a2 2 0 0 1 0-2.8z'/%3E%3Cpath d='M9 10.2l4.8 4.8'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+/* The buttons table inside the top bundle's right column.
  * Using <table> sidesteps the bundle's CSS-grid layout — rows are
  * structural HTML rather than flex/grid items that fight the
  * parent's grid-template-columns. */
@@ -5595,20 +5587,12 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   padding: 0.3rem 0.4rem;
   vertical-align: middle;
 }
-/* Visual gap between row 1 (record actions) and row 2 (mode toggles
- * + relocated context buttons) — no separator line, just enough
- * vertical breathing room to read as two logical groups. */
-.ui-agent-top-bundle-table td.ui-agent-top-bundle-row-2 {
-  padding-top: 0.225rem;
-}
-/* Phone: each row of the top bar is ONE line you swipe sideways, instead of
- * wrapping into a stack of three or four lines of buttons above the
- * conversation. The picker keeps its own line and the record actions take
- * the next, the whole width. Below them the session toggles (Private,
- * Clean) sit on the left and the page tiles (Build, Security), shrunk to
- * one-line buttons, on the right of the same line. The table's rows give
- * way to a grid for this (rows display:contents), so the tiles' cell can
- * sit on the second line. A fade on an edge says there is
+/* Phone: the top bar's buttons are ONE line you swipe sideways, instead of
+ * wrapping into a stack of lines of buttons above the conversation. The
+ * picker keeps its own line; the record actions take the next, with the
+ * page tiles (Build, Security), shrunk to one-line buttons, on the right of
+ * the same line. The table's rows give way to a grid for this (rows
+ * display:contents). A fade on an edge says there is
  * more that way (set by the panel as the row scrolls). Menus opened from the
  * row live on <body>, so the scrolling row cannot clip them.
  *
@@ -5625,25 +5609,21 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   }
   .ui-agent .ui-agent-top-bundle-table tr { display: contents; }
   .ui-agent .ui-agent-top-bundle-table td { display: block; padding: 0 !important; min-width: 0; }
-  .ui-agent .ui-agent-top-bundle-table tr:first-child > td:first-child { grid-column: 1 / -1; grid-row: 1; }
-  .ui-agent .ui-agent-top-bundle-table td.ui-agent-top-bundle-row-2 { grid-column: 1; grid-row: 2; }
-  .ui-agent .ui-agent-top-bundle-table td[rowspan] {
-    grid-column: 2; grid-row: 2; justify-self: end;
+  .ui-agent .ui-agent-top-bundle-table tr:first-child > td:first-child { grid-column: 1; grid-row: 1; }
+  .ui-agent .ui-agent-top-bundle-table td.ui-agent-top-bundle-nav {
+    grid-column: 2; grid-row: 1; justify-self: end;
     width: auto !important; text-align: right !important;
   }
-  .ui-agent .ui-agent-top-bundle-table td[rowspan] > div { height: auto !important; justify-content: flex-end; flex-wrap: nowrap; }
-  .ui-agent .ui-agent-top-bundle .ui-agent-actions,
-  .ui-agent .ui-agent-top-bundle .ui-agent-modes-in-bundle {
+  .ui-agent .ui-agent-top-bundle-table td.ui-agent-top-bundle-nav > div { height: auto !important; justify-content: flex-end; flex-wrap: nowrap; }
+  .ui-agent .ui-agent-top-bundle .ui-agent-actions {
     flex-wrap: nowrap !important; overflow-x: auto; overflow-y: hidden;
     overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
     width: 100%; max-width: 100%; box-sizing: border-box;
     padding: 0 !important; align-items: center !important;
   }
-  .ui-agent .ui-agent-top-bundle .ui-agent-actions::-webkit-scrollbar,
-  .ui-agent .ui-agent-top-bundle .ui-agent-modes-in-bundle::-webkit-scrollbar { display: none; }
-  .ui-agent .ui-agent-top-bundle .ui-agent-actions > *,
-  .ui-agent .ui-agent-top-bundle .ui-agent-modes-in-bundle > * { flex: 0 0 auto; white-space: nowrap; }
+  .ui-agent .ui-agent-top-bundle .ui-agent-actions::-webkit-scrollbar { display: none; }
+  .ui-agent .ui-agent-top-bundle .ui-agent-actions > * { flex: 0 0 auto; white-space: nowrap; }
   .ui-agent .ui-agent-top-bundle .ui-topbar-tile {
     flex-direction: row; height: auto; min-width: 0; gap: 0.3rem;
     padding: 0.25rem 0.55rem; border-radius: var(--btn-radius);
@@ -5670,12 +5650,15 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
  * WebKit, the desktop app's webview, draws the system's own focus ring in
  * the system accent colour.) */
 .ui-agent .ui-agent-input-row {
-  display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center;
+  /* Button size: 2rem with a mouse, 2.25rem for a finger. */
+  --compose-btn: 2rem;
+  display: flex; flex-wrap: wrap; gap: 0.2rem; align-items: center;
   margin: 0.5rem 0.75rem max(0.75rem, calc(env(safe-area-inset-bottom, 0px) - 0.75rem));
-  padding: 0.3rem 0.3rem 0.3rem 0.55rem;
+  padding: 0.15rem 0.35rem 0.35rem 0.55rem;
   border: 1px solid var(--border); border-radius: 1.4rem;
   background: var(--bg-1);
 }
+@media (pointer: coarse) { .ui-agent .ui-agent-input-row { --compose-btn: 2.25rem; } }
 .ui-agent .ui-agent-input-row:focus-within { border-color: color-mix(in srgb, var(--accent) 70%, var(--border)); }
 .ui-agent .ui-agent-input {
   flex: 1 0 100%; order: -1; resize: none;
@@ -5683,49 +5666,82 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
    * eating the chat pane. Content beyond scrolls inside the box. Pastes
    * longer than the snippet threshold become an attachment chip instead,
    * see the paste handler. */
-  min-height: 2.25rem; max-height: 12rem; overflow-y: auto;
+  min-height: 2rem; max-height: 12rem; overflow-y: auto;
   background: transparent; color: var(--text); border: 0; box-shadow: none;
-  padding: 0.5rem 0.2rem; font: inherit; line-height: 1.35;
+  /* A thin line under the text sets it off from the buttons beneath. */
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: 0; margin-bottom: 0.1rem;
+  padding: 0.4rem 0.2rem; font: inherit; line-height: 1.35;
   white-space: pre-wrap; word-wrap: break-word;
 }
 .ui-agent .ui-agent-input:focus { outline: none; }
-.ui-agent .ui-agent-input-row .ui-agent-send,
-.ui-agent .ui-agent-input-row .ui-agent-cancel { margin-left: auto; }
+/* Along the row: a prominent action, then the switches and other actions,
+ * at the left; Attach and Send at the right. The group's right margin takes
+ * the space between. */
+.ui-agent .ui-agent-input-row .ui-agent-composer-middle {
+  display: flex; align-items: center; gap: 0.2rem; margin-right: auto; min-width: 0;
+}
 /* A page script's buttons (uiRegisterComposerAction) sit with Attach: round
  * and quiet at rest, widening for a label such as a recording's time. */
 .ui-agent .ui-agent-input-row .ui-agent-composer-act {
-  min-width: 2.25rem; height: 2.25rem; padding: 0 0.45rem;
+  min-width: var(--compose-btn); height: var(--compose-btn); padding: 0 0.45rem;
   background: transparent; border-color: transparent;
 }
-.ui-agent .ui-agent-input-row .ui-row-btn { border-radius: 999px; min-height: 2.25rem; }
+.ui-agent .ui-agent-input-row .ui-row-btn { border-radius: 999px; min-height: var(--compose-btn); }
+/* A prominent one (opts.prominent), at the left: filled in the accent and
+ * round at Send's size, for the action a page means people to reach for
+ * before typing. Showing more than its icon (a spinner and its seconds, a
+ * time) it widens into a pill rather than spilling out of the circle.
+ * Running (aria-pressed), any action turns red, ringed by the live level it
+ * reports in --ui-act-level. */
+.ui-agent .ui-agent-input-row .ui-agent-composer-act-lead {
+  width: auto; min-width: var(--compose-btn); flex: 0 0 auto;
+  padding: 0 0.35rem; border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  color: var(--text-hi); font-size: var(--fs-lg);
+}
+.ui-agent .ui-agent-input-row .ui-agent-composer-act-lead[aria-pressed="true"] {
+  width: auto; padding: 0 0.6rem;
+}
+.ui-agent .ui-agent-input-row .ui-agent-composer-act[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--danger, #ff7b72) 18%, transparent);
+  border-color: color-mix(in srgb, var(--danger, #ff7b72) 60%, transparent);
+  box-shadow: 0 0 0 calc(var(--ui-act-level, 0) * 7px) color-mix(in srgb, var(--danger, #ff7b72) 30%, transparent);
+  transition: box-shadow 80ms linear;
+}
 /* The round ones are pinned square, every dimension: the base button's
  * touch-size minimum (44px) otherwise wins one axis and draws an oval. */
 .ui-agent .ui-agent-input-row .ui-agent-attach,
 .ui-agent .ui-agent-input-row .ui-agent-send-plain,
 .ui-agent .ui-agent-input-row .ui-agent-cancel {
-  width: 2.25rem; height: 2.25rem; min-width: 2.25rem; min-height: 2.25rem;
-  max-width: 2.25rem; max-height: 2.25rem; aspect-ratio: 1;
-  flex: 0 0 2.25rem; border-radius: 50%; padding: 0;
+  width: var(--compose-btn); height: var(--compose-btn);
+  min-width: var(--compose-btn); min-height: var(--compose-btn);
+  max-width: var(--compose-btn); max-height: var(--compose-btn); aspect-ratio: 1;
+  flex: 0 0 var(--compose-btn); border-radius: 50%; padding: 0;
 }
 .ui-agent .ui-agent-input-row .ui-agent-attach { background: transparent; border-color: transparent; }
 /* The arrow and the stop square are drawn, not typed: a text glyph sits on
  * its font's baseline rather than the circle's middle, and lands
- * differently in every font. A masked shape in the button's own colour
- * centres exactly. The words stay in the markup for a screen reader. */
+ * differently in every font. A masked shape in the button's own colour,
+ * pinned to the circle's centre by position rather than by flex (a button
+ * is not a flex container in every engine, and Safari's drew the arrow off
+ * centre). The words stay in the markup for a screen reader. */
 .ui-agent .ui-agent-input-row .ui-agent-send-plain,
-.ui-agent .ui-agent-input-row .ui-agent-cancel {
-  font-size: 0; display: inline-flex; align-items: center; justify-content: center;
+.ui-agent .ui-agent-input-row .ui-agent-cancel { font-size: 0; position: relative; }
+.ui-agent .ui-agent-input-row .ui-agent-send-plain::before,
+.ui-agent .ui-agent-input-row .ui-agent-cancel::before {
+  position: absolute; inset: 0; margin: auto;
 }
 .ui-agent .ui-agent-input-row .ui-agent-send-plain::before {
-  content: ""; width: 1.1rem; height: 1.1rem; background: currentColor;
+  content: ""; width: 1rem; height: 1rem; background: currentColor;
   -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 19V5M5.5 11.5L12 5l6.5 6.5'/%3E%3C/svg%3E") center / contain no-repeat;
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 19V5M5.5 11.5L12 5l6.5 6.5'/%3E%3C/svg%3E") center / contain no-repeat;
 }
 /* Stop: a square, with the "still working" indicator a ring turning around
  * it, so the one control that cannot scroll away shows the turn is alive. */
-.ui-agent .ui-agent-input-row .ui-agent-cancel { position: relative; gap: 0; }
 .ui-agent .ui-agent-input-row .ui-agent-cancel::before {
-  content: ""; width: 0.7rem; height: 0.7rem; border-radius: 2px; background: currentColor;
+  content: ""; width: 0.65rem; height: 0.65rem; border-radius: 2px; background: currentColor;
 }
 .ui-agent .ui-agent-input-row .ui-agent-cancel-spinner {
   position: absolute; inset: 3px; width: auto; height: auto;

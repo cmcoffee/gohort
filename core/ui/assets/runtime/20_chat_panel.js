@@ -333,7 +333,7 @@
         // scoping: when window.GOHORT_AGENT_ID is set by the host page,
         // withAgentParam appends it so the server returns the per-agent
         // override (falls back to global user-level when no override
-        // exists). Lets each agent remember its own Private/Clean stance.
+        // exists). Lets each agent remember its own Private/Fresh stance.
         refresh();
       });
       // ExtraFields are arbitrary form fields (number, select, text)

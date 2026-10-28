@@ -2823,23 +2823,35 @@
     });
     if ((cfg.extra_fields || []).length > 0) extrasRow.style.display = '';
 
-    // --- Mode toggles (per-session boolean flags rendered as pill
-    // buttons above the input). Same shape as ChatPanel.Modes; state
-    // is mirrored into modeState and mixed into every send body.
+    // --- Mode toggles: per-message switches, in the composer beside the
+    // text they apply to (placed with the composer's buttons below).
+    // State is mirrored into modeState and mixed into every send body.
+    // A mode with an icon is a round mark while off and a chip naming
+    // itself while on, so a switch that changes what the next send does
+    // is named whenever it is doing it; one without shows its label.
     var modeState = {};
-    var modesRow = el('div', {class: 'ui-agent-modes', style: 'display:none'});
+    var modeBtns = [];
+    var MODE_ICONS = {'globe-off': true, 'eraser': true};
     (cfg.modes || []).forEach(function(m) {
+      var icon = MODE_ICONS[m.icon] ? m.icon : '';
+      var label = el('span', {class: 'ui-agent-mode-label'}, [m.label]);
+      var kids = icon ? [el('span', {class: 'ui-agent-mode-icon ui-agent-mode-icon-' + icon, 'aria-hidden': 'true'}), label] : [label];
       var btn = el('button', {
-        class: 'ui-agent-mode',
+        class: 'ui-agent-mode' + (icon ? ' ui-agent-mode-has-icon' : ''),
         type:  'button',
         title: m.title || m.label,
+        'aria-pressed': 'false',
         'data-mode-label': m.label,
-      }, [m.label]);
+      }, kids);
+      function setOn(v) {
+        btn.classList.toggle('active', v);
+        btn.setAttribute('aria-pressed', v ? 'true' : 'false');
+      }
       btn.addEventListener('click', function() {
         var key = m.send_field || m.field;
         var next = !modeState[key];
         modeState[key] = next;
-        btn.classList.toggle('active', next);
+        setOn(next);
         var body = {};
         body[m.field] = next;
         // Per-(user, agent) scoping — include agent_id so the server
@@ -2858,11 +2870,11 @@
         }).catch(function(err) {
           // POST failed — roll back local state so the pill matches reality.
           modeState[key] = !next;
-          btn.classList.toggle('active', !next);
+          setOn(!next);
           showToast('Save failed: ' + (err && err.message || err));
         });
       });
-      modesRow.appendChild(btn);
+      modeBtns.push(btn);
       // Initial state from GET — fire-and-forget; runs after the
       // panel mounts. Appends agent_id when the host page has set
       // window.GOHORT_AGENT_ID, so the server returns the per-agent
@@ -2878,23 +2890,23 @@
         fetchJSON(url).then(function(d) {
           var v = !!(d && d[m.field]);
           modeState[m.send_field || m.field] = v;
-          btn.classList.toggle('active', v);
+          setOn(v);
           // Locked flag = ForcePrivate / DisableInferred is set on the
           // agent → the toggle is enforced ON regardless of user
           // choice. Per-field behavior:
           //   Private — show a visible 🔒 indicator (user wants to
           //     see that network tools are locked off, since it
           //     changes what the agent can do)
-          //   Clean / anything else — hide the toggle (the
+          //   Fresh / anything else — hide the toggle (the
           //     behavior is internal-corpus-only; less user-visible
           //     impact, so a missing toggle is less confusing than
           //     a locked one)
           if (d && d.locked) {
             if (m.field === 'private_mode') {
               btn.classList.add('ui-chat-mode-locked');
-              btn.classList.add('active');
+              setOn(true);
               btn.disabled = true;
-              btn.textContent = '🔒 ' + m.label;
+              label.textContent = '🔒 ' + m.label;
               btn.title = m.label + ' is force-enabled by the operator: can\'t be toggled off.';
               btn.style.display = '';
             } else {
@@ -2903,7 +2915,7 @@
           } else {
             btn.classList.remove('ui-chat-mode-locked');
             btn.disabled = false;
-            btn.textContent = m.label;
+            label.textContent = m.label;
             btn.title = m.title || m.label;
             btn.style.display = '';
           }
@@ -2914,7 +2926,6 @@
       // the new agent's override.
       window.addEventListener('gohort-agent-id-changed', refresh);
     });
-    if ((cfg.modes || []).length > 0) modesRow.style.display = '';
 
     // panelScope reads the nearest enclosing [data-ui-scope] — a host component
     // saying which of its records this panel is currently for. Empty when the
@@ -2996,26 +3007,38 @@
     // only carries Send / Cancel now.
 
     inputRow.appendChild(inputArea);
+    // Along the row: a page's prominent action, then the switches and other
+    // actions in a group after it, all on the left; Attach and Send on the
+    // right.
+    var composerMiddle = el('div', {class: 'ui-agent-composer-middle'});
+    modeBtns.forEach(function(b) { composerMiddle.appendChild(b); });
+    inputRow.appendChild(composerMiddle);
     if (attachBtn) inputRow.appendChild(attachBtn);
     inputRow.appendChild(sendBtn);
     inputRow.appendChild(cancelBtn);
 
-    // uiRegisterComposerAction adds a button to the input row, before Send:
-    // { label, title?, first?, onclick(ctx) } where ctx = { button, input,
+    // uiRegisterComposerAction adds a button to the input row:
+    // { label, title?, first?, prominent?, onclick(ctx) } where ctx = { button, input,
     // insertText(text), send() }. insertText adds to what is already typed (a
     // space between) and resizes the box, so text an action produces lands
     // where typed text would, to be read over before it is sent; send() sends
     // what is in the box as the Send button does, for an action that means it
-    // to go at once. first puts the button ahead of Attach, at the start of
-    // the row's buttons, for the one most often reached for: on a phone that
-    // is the corner under the thumb. Buttons registered first keep the order
-    // they were registered in. The button is
+    // to go at once. A plain action goes in the group after the mode
+    // switches; first puts it ahead of them. prominent takes it out of the
+    // group to the left-hand end, ahead of it, drawn filled at Send's size, for the
+    // one action a page means people to reach for before typing: on a phone
+    // that corner is under the thumb. Attach and Send keep the right-hand
+    // end. Buttons in the same place keep the order they were registered in.
+    // An action shows it is running by setting aria-pressed
+    // on its button, and may set --ui-act-level (0 to 1) for a live ring
+    // around it. The button is
     // added at once, so a page script registering after the panel is built
     // works; the ctx comes back, for an action that shows its own state on
     // its button or keeps a second button in step.
     window.uiRegisterComposerAction = function(opts) {
       if (!opts || typeof opts.onclick !== 'function') return null;
-      var btn = el('button', {type: 'button', class: 'ui-row-btn ui-agent-composer-act',
+      var btn = el('button', {type: 'button',
+        class: 'ui-row-btn ui-agent-composer-act' + (opts.prominent ? ' ui-agent-composer-act-lead' : ''),
         title: opts.title || opts.label || ''}, [String(opts.label || 'Action')]);
       var ctx = {
         button: btn,
@@ -3033,18 +3056,18 @@
       btn.addEventListener('click', function() {
         try { opts.onclick(ctx); } catch (e) { /* isolate */ }
       });
-      if (opts.first) {
-        // Ahead of Attach and of any button an earlier call did not put
-        // first, after the ones it did.
-        var anchor = sendBtn;
-        for (var k = 0; k < inputRow.childNodes.length; k++) {
-          var n = inputRow.childNodes[k];
-          if (n === attachBtn || (n.classList && n.classList.contains('ui-agent-composer-act') && !n.dataset.first)) { anchor = n; break; }
-        }
-        btn.dataset.first = '1';
-        inputRow.insertBefore(btn, anchor);
+      if (opts.prominent) {
+        inputRow.insertBefore(btn, composerMiddle);
       } else {
-        inputRow.insertBefore(btn, sendBtn);
+        var anchor = null;
+        if (opts.first) {
+          for (var k = 0; k < composerMiddle.childNodes.length; k++) {
+            var n = composerMiddle.childNodes[k];
+            if (!n.dataset || !n.dataset.first) { anchor = n; break; }
+          }
+          btn.dataset.first = '1';
+        }
+        composerMiddle.insertBefore(btn, anchor);
       }
       return ctx;
     };
@@ -3060,25 +3083,20 @@
     // (cfg.extra_fields_in_sidebar). When in the rail, it sits
     // between the rail's title row and the session list — natural
     // for context pickers that scope the list itself (an Agent picker
-    // whose sessions belong to the active pick, say). Modes always
-    // stay in the topbar regardless.
+    // whose sessions belong to the active pick, say).
     if (cfg.extra_fields_in_sidebar && side) {
       // Lift the strip OUT of the rail AND pull the action buttons
       // up alongside it into a top bundle that spans the full width
       // above gridRow. The picker pins to a rail-width left column;
-      // the right column hosts a 2-row <table> of buttons so the
-      // record actions sit above the mode toggles + relocated
-      // context buttons without fighting the bundle's CSS grid.
+      // the right column hosts a <table> of buttons so they do not
+      // fight the bundle's CSS grid.
       //
       //   ┌─────────────────┬──────────────────────────────────┐
-      //   │ Agent: <picker> │ Row 1: New Edit Clone Export … │
-      //   │                 │ Row 2: Private Clean Tools …    │
+      //   │ Agent: <picker> │ New Edit Clone Export …        │
       //   └─────────────────┴──────────────────────────────────┘
       //
-      // Row 1: record-level operations (mint / mutate / export the
-      // agent record). Row 2: per-session affordances (mode toggles
-      // + Tools/Memory/etc., which apps relocate into the modes row
-      // via the standard .ui-agent-actions → .ui-agent-modes hop).
+      // The mode switches are not up here: they are per message, and
+      // sit in the composer.
       extrasRow.classList.add('ui-agent-extras-in-side');
       var topBundle = el('div', {class: 'ui-agent-top-bundle'});
       topBundle.appendChild(extrasRow);
@@ -3089,21 +3107,12 @@
       row1Td.appendChild(actionsBar);
       row1Tr.appendChild(row1Td);
       bundleTbody.appendChild(row1Tr);
-      if ((cfg.modes || []).length > 0) {
-        modesRow.classList.add('ui-agent-modes-in-bundle');
-        var row2Tr = el('tr', {});
-        var row2Td = el('td', {class: 'ui-agent-top-bundle-row-2'});
-        row2Td.appendChild(modesRow);
-        row2Tr.appendChild(row2Td);
-        bundleTbody.appendChild(row2Tr);
-      }
-      // A topbar control that must span BOTH rows: in this layout the two
-      // rows are table rows, so a rowspan cell is the honest way to do it —
-      // and, more importantly, this layout DROPS the topbar element entirely
-      // (see the assembly below), so a control parented there vanishes. It
-      // relocates here by appendChild; nothing to detach first.
+      // A topbar control beside the buttons. This layout DROPS the topbar
+      // element entirely (see the assembly below), so a control parented
+      // there would vanish; it relocates here by appendChild, nothing to
+      // detach first.
       if (navTopbarEl) {
-        var navTd = el('td', {rowspan: '2', style: 'vertical-align:middle;text-align:right;width:1%;padding-left:0.4rem'});
+        var navTd = el('td', {class: 'ui-agent-top-bundle-nav', style: 'vertical-align:middle;text-align:right;width:1%;padding-left:0.4rem'});
         navTd.appendChild(navTopbarEl);
         row1Tr.appendChild(navTd);
       }
@@ -3117,10 +3126,8 @@
       // On a phone these rows scroll sideways rather than wrap (runtime.css);
       // the fade marks the side there is more on.
       window.uiEdgeFade(actionsBar);
-      window.uiEdgeFade(modesRow);
     } else {
       extrasSlot.appendChild(extrasRow);
-      extrasSlot.appendChild(modesRow);
     }
     convoPane.appendChild(inputRow);
     convoPane.appendChild(attachStrip);

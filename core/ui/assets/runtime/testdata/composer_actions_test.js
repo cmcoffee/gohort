@@ -35,16 +35,27 @@ var focused = 0;
 var inputArea = {value: '', style: {}, scrollHeight: 40, focus: function() { focused++; }};
 var sendBtn = {name: 'send', style: {}};
 var attachBtn = {name: 'attach'};
-var inputRow = {kids: [attachBtn, sendBtn], insertBefore: function(n, ref) {
-  this.kids.splice(this.kids.indexOf(ref), 0, n);
-}};
-inputRow.childNodes = inputRow.kids;
+function box(kids) {
+  var b = {kids: kids, insertBefore: function(n, ref) {
+    var i = ref == null ? -1 : this.kids.indexOf(ref);
+    if (i < 0) this.kids.push(n); else this.kids.splice(i, 0, n);
+  }};
+  b.childNodes = b.kids;
+  return b;
+}
+function mode(name) { return {name: name, dataset: {}}; }
+// The row's three places: the left end, the middle (holding the mode
+// switches), and Attach and Send on the right.
+var composerMiddle = box([mode('private'), mode('fresh')]);
+composerMiddle.name = 'middle';
+var inputRow = box([composerMiddle, attachBtn, sendBtn]);
+function names(b) { return b.kids.map(function(k) { return k.name || k.textContent; }).join(','); }
 eval(lift(panel, 'function autosizeInput()', 'autosizeInput'));
 eval('window.uiRegisterComposerAction = ' + lift(panel, 'window.uiRegisterComposerAction = function(opts)', 'uiRegisterComposerAction').replace('window.uiRegisterComposerAction = ', ''));
 
 var pressed = null;
 var ctx = window.uiRegisterComposerAction({label: 'M', title: 'Dictate', onclick: function(c) { pressed = c; }});
-check('the button sits in the input row before Send', inputRow.kids.length === 3 && inputRow.kids[1].tag === 'button' && inputRow.kids[2] === sendBtn);
+check('a plain button goes in the middle, after the switches', names(composerMiddle) === 'private,fresh,M' && names(inputRow) === 'middle,attach,send');
 check('with its label and title', ctx.button.textContent === 'M' && ctx.button.attrs.title === 'Dictate');
 ctx.button.on.click();
 check('pressing it hands over its ctx', pressed === ctx && pressed.button === ctx.button && pressed.input === inputArea);
@@ -62,15 +73,20 @@ var sent = 0;
 function sendMessage() { sent++; }
 ctx.send();
 check('send() sends what is in the box, as Send does', sent === 1);
-check('an action without an onclick is refused', window.uiRegisterComposerAction({label: 'x'}) === null && inputRow.kids.length === 3);
+check('an action without an onclick is refused', window.uiRegisterComposerAction({label: 'x'}) === null && composerMiddle.kids.length === 3);
 
-// first puts a button at the start of the row's buttons, ahead of Attach and
-// of buttons not put first, in the order such buttons were registered.
+// prominent takes a button to the left-hand end; first puts one at the
+// start of the middle, ahead of the switches; each place keeps the order its
+// buttons were registered in.
 var noop = function() {};
-var mic = window.uiRegisterComposerAction({label: 'mic', first: true, onclick: noop});
+var mic = window.uiRegisterComposerAction({label: 'mic', first: true, prominent: true, onclick: noop});
 var spk = window.uiRegisterComposerAction({label: 'spk', first: true, onclick: noop});
-var names = inputRow.kids.map(function(k) { return k.name || k.textContent; });
-check('first buttons lead the row, in the order registered', names.join(',') === 'mic,spk,attach,M,send');
+var spk2 = window.uiRegisterComposerAction({label: 'spk2', first: true, onclick: noop});
+var plain = window.uiRegisterComposerAction({label: 'plain', onclick: noop});
+check('the prominent one leads the row, Attach and Send end it', names(inputRow) === 'mic,middle,attach,send');
+check('first ones lead the middle, plain ones follow the switches', names(composerMiddle) === 'spk,spk2,private,fresh,M,plain');
+check('prominent marks the one a page means people to reach for first',
+  mic.button.classList.contains('ui-agent-composer-act-lead') && !spk.button.classList.contains('ui-agent-composer-act-lead'));
 
 eval(lift(panel, 'function announceSent(text)', 'announceSent'));
 announceSent('the message');

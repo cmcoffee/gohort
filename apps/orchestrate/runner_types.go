@@ -353,7 +353,7 @@ type chatTurn struct {
 	session     *ChatSession      // mutable session pointer so drained notes can be persisted
 	privateMode bool              // per-turn: drop internet tools from worker pool
 	network     *NetworkConnector // SHARED instance: ctx + sess.Network + inflight registry all reference this same pointer so SetAllowed flips propagate to every read site mid-turn
-	// inferredDisabled is the per-turn snapshot of the user's "Clean"
+	// inferredDisabled is the per-turn snapshot of the user's "Fresh"
 	// toggle preference — when true (or when agent.DisableInferred is
 	// true), the Reference Memory layer is suppressed for this turn:
 	// memory_save / memory_search / memory_forget stripped, synthesis

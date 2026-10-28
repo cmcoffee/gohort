@@ -380,7 +380,7 @@ type AuthUser struct {
 	// overrides for the corresponding global toggles. Keyed by agent ID.
 	// Lookup precedence: per-agent override → global PrivateMode/
 	// InferredDisabled → false. Lets different agents remember their
-	// own preferred stance for the same user — flip Clean ON for Tax bot
+	// own preferred stance for the same user — flip Fresh ON for Tax bot
 	// without it bleeding into Chat.
 	PrivateModePerAgent      map[string]bool `json:"private_mode_per_agent,omitempty"`
 	InferredDisabledPerAgent map[string]bool `json:"inferred_disabled_per_agent,omitempty"`

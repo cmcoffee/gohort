@@ -117,13 +117,20 @@ type ChatField struct {
 	Max         int            `json:"max,omitempty"` // for type=number
 }
 
-// ChatMode describes a toggle pill above the chat input. Bound to a
-// single boolean field on the GET endpoint. The runtime mixes
-// {field: true|false} into the SendURL body so the server sees the
-// active modes (e.g. private_mode).
+// ChatMode describes a per-message switch. Bound to a single boolean
+// field on the GET endpoint. The runtime mixes {field: true|false} into
+// the SendURL body so the server sees the active modes (e.g.
+// private_mode). An AgentLoopPanel puts them in its composer, beside the
+// text they apply to.
 type ChatMode struct {
-	Label   string `json:"label"`
-	Title   string `json:"title,omitempty"` // tooltip
+	Label string `json:"label"`
+	Title string `json:"title,omitempty"` // tooltip
+	// Icon draws the switch as a round button with a mark while it is off,
+	// and as a chip with the mark and the label while it is on, so a switch
+	// that changes what the next send does is named whenever it is doing
+	// it. One of: "globe-off" (a globe struck through), "eraser". Empty, or
+	// a name not listed, shows the label at all times.
+	Icon    string `json:"icon,omitempty"`
 	GetURL  string `json:"get_url"`
 	PostURL string `json:"post_url"`
 	Field   string `json:"field"` // bool field name on GET / POST body

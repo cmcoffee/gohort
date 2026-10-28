@@ -92,7 +92,8 @@ func TestTheChatPageIsAssembledInSteps(t *testing.T) {
 	}
 	var modes []ui.ChatMode
 	decodeAfter(t, body, `"modes":`, &modes)
-	if len(modes) != 2 || modes[0].Label != "Private" || modes[1].Label != "Clean" {
+	if len(modes) != 2 || modes[0].Label != "Private" || modes[1].Label != "Fresh" ||
+		modes[0].Icon != "globe-off" || modes[1].Icon != "eraser" {
 		t.Errorf("modes: %+v", modes)
 	}
 	var actions []ui.ToolbarAction

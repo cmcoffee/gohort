@@ -1451,7 +1451,7 @@ func SearchChunks(db Database, query []float32, k int) []SearchHit {
 // mix of exact matches (skill IDs, collection IDs) and prefix matches
 // (per-(user, agent) corpus across every topic suffix), OR when a
 // stricter rule applies (e.g. exclude derived chunks by ReportID
-// prefix — the Force Clean mode's behavior).
+// prefix — the forced Fresh mode's behavior).
 //
 // Pass the whole chunk (not just source) so callers can implement
 // provenance-aware filters without re-reading the chunk after match.

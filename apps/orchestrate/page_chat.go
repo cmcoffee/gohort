@@ -426,7 +426,7 @@ func (c *chatPage) page(nav []ui.NavLink) ui.Page {
 					// Incognito is NOT a live toggle — it's a creation-time
 					// choice (it severs cortex standing context + memory for the
 					// NEW session and stores nothing back). Presenting it as a
-					// pill alongside Private/Clean read as a current-thread
+					// pill alongside Private/Fresh read as a current-thread
 					// switch, which it never was. It now rides the rail's
 					// "+ New ▾" menu, where it actually applies: picking it
 					// opens a fresh session and arms incognito onto that
@@ -825,20 +825,22 @@ func chatFleetNav() []ui.OrchestratorNavItem {
 	}
 }
 
-// chatModes is the per-turn switches beside the send box.
+// chatModes is the per-message switches in the composer.
 func chatModes() []ui.ChatMode {
 	return []ui.ChatMode{
 		{
 			Label:     "Private",
-			Title:     "Drop internet tools (web_search, fetch_url, browse_page, …) for this and subsequent turns. Local + agent-management tools still work.",
+			Icon:      "globe-off",
+			Title:     "Private: no internet tools (web search, fetching and browsing pages) for this and later messages, until you switch it off. Local and agent-management tools still work.",
 			GetURL:    "api/settings/private",
 			PostURL:   "api/settings/private/set",
 			Field:     "private_mode",
 			SendField: "private_mode",
 		},
 		{
-			Label:     "Clean",
-			Title:     "Suppress the Reference Memory layer for this turn: memory_save / memory_search / memory_forget stripped from the agent's catalog so it can't write to or read from its accumulated derived store. The agent answers fresh from the user's question plus the Knowledge layer (uploaded files) and Explicit Memory (facts), without prior memory_save findings coloring the response. Use when you want the agent unbiased by its own accumulated history.",
+			Label:     "Fresh",
+			Icon:      "eraser",
+			Title:     "Fresh: the agent answers without the notes it has gathered from past conversations, and saves none, for this and later messages until you switch it off. Your saved facts and uploaded documents still apply. Use it when you want an answer not shaped by its own history.",
 			GetURL:    "api/settings/memory",
 			PostURL:   "api/settings/memory/set",
 			Field:     "inferred_disabled",

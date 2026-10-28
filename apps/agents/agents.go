@@ -283,21 +283,23 @@ func (T *AgentsApp) handleChatPage(w http.ResponseWriter, r *http.Request, agent
 	if agent.AllowPrivateMode && !agent.ForcePrivate {
 		modes = append(modes, ui.ChatMode{
 			Label:     "Private",
-			Title:     "Mask network-capability tools (web_search, fetch_url, …): keeps this turn local.",
+			Icon:      "globe-off",
+			Title:     "Private: no internet tools (web search, fetching pages), so this turn stays local. Stays on for later messages until you switch it off.",
 			GetURL:    "api/settings/private",
 			PostURL:   "api/settings/private/set",
 			Field:     "private_mode",
 			SendField: "private_mode",
 		})
 	}
-	// "Clean" toggle suppresses the Reference Memory layer for this turn.
+	// "Fresh" suppresses the Reference Memory layer for this turn.
 	// Hidden when the agent has DisableInferred set (nothing to control)
 	// since the agent is already configured to never use that layer.
 	// Otherwise any end-user gets the per-(user, agent) opt-in.
 	if !agent.DisableInferred {
 		modes = append(modes, ui.ChatMode{
-			Label:     "Clean",
-			Title:     "Suppress the Reference Memory layer for this turn: no memory_save / memory_search / memory_forget tools, no synthesis auto-ingest, no derived chunks in auto-injection. The agent answers fresh from your question plus the Knowledge layer (uploaded files) and Explicit Memory (facts), without its own prior derived findings coloring the response.",
+			Label:     "Fresh",
+			Icon:      "eraser",
+			Title:     "Fresh: the agent answers without the notes it has gathered from past conversations. Your saved facts and uploaded documents still apply. Stays on for later messages until you switch it off.",
 			GetURL:    "api/settings/memory",
 			PostURL:   "api/settings/memory/set",
 			Field:     "inferred_disabled",
@@ -373,12 +375,9 @@ func (T *AgentsApp) handleChatPage(w http.ResponseWriter, r *http.Request, agent
 		//     curated) + the end-user's own uploaded docs
 		//     (editable, private to them).
 		// Per-visitor surfaces — the granted user managing THEIR OWN data (notes,
-		// uploads, session export). These collapse into a single "⋯" overflow that
-		// sits AFTER the Private / Clean mode toggles, so the bar reads
-		// [Private] [Clean] [⋯] and the page lands you straight in the chat.
-		//
-		// The ordering is done in dashboardBarCSS, on the WRAPPER the panel puts
-		// the actions row inside rather than on the row itself; see the rule. What does NOT belong here is agent MANAGEMENT —
+		// uploads, session export). These collapse into a single "⋯" overflow, so
+		// the page lands you straight in the chat; the Private and Fresh switches
+		// are in the composer. What does NOT belong here is agent MANAGEMENT —
 		// config lives in admin-only Agency, never on the dashboard surface.
 		Actions: dashboardActions,
 		Modes:   modes,
@@ -905,18 +904,17 @@ const intakeFormAssets = `<style>
 // dashboardBarCSS gives the dashboard app's top bar the same compact, transparent
 // treatment list-top mode already ships — but applies it to rail-mode (Cortex)
 // agents too, which otherwise keep the default boxy, lighter-bg ui-row-btn (the
-// "square around each button" look). One horizontal row, the mode toggles
-// (Private / Clean) BEFORE the actions / ⋯ overflow (CSS order), and the action
-// buttons + the ⋯ toggle styled like the mode pills (transparent, compact, same
-// padding/font/radius) instead of standing out as boxes. App-scoped via
-// ExtraHeadHTML so Agency / bridges / servitor layouts are untouched.
+// "square around each button" look). One horizontal row, any extra fields
+// BEFORE the actions / ⋯ overflow (CSS order), and the action buttons + the ⋯
+// toggle transparent and compact instead of standing out as boxes. App-scoped
+// via ExtraHeadHTML so Agency / bridges / servitor layouts are untouched.
 const dashboardBarCSS = `<style>
 /* One uniform top bar: the dark background goes on the topbar itself (not the
-   per-container bands), spanning the full width, with the modes + actions
-   containers made transparent so they don't leave a gap where one ends. Modes
-   (Private / Clean) render before the actions / ⋯ overflow (CSS order), and the
-   buttons match the mode pills (transparent, compact). Mirrors list-top mode for
-   rail-mode Cortex agents. App-scoped via ExtraHeadHTML. */
+   per-container bands), spanning the full width, with the extras + actions
+   containers made transparent so they don't leave a gap where one ends. Extras
+   render before the actions / ⋯ overflow (CSS order), and the buttons are
+   transparent and compact. Mirrors list-top mode for rail-mode Cortex agents.
+   App-scoped via ExtraHeadHTML. */
 .ui-agent-topbar {
   flex-direction: row !important; align-items: center; flex-wrap: wrap; gap: 0.4rem;
   background: var(--bg-1);
@@ -928,9 +926,8 @@ const dashboardBarCSS = `<style>
    topbar: it sits inside an unclassed wrapper the panel builds for the top
    span, and the order property only ranks siblings. So the rule below aimed at
    .ui-agent-actions never competed with the extras slot, and the bar came out
-   [⋯] [Private] [Clean]. Ordering the wrapper is what actually moves it. */
+   with the ⋯ first. Ordering the wrapper is what actually moves it. */
 .ui-agent-topbar > div:not(.ui-agent-extras-slot) { order: 2; }
-.ui-agent-modes { background: transparent !important; border-top: 0 !important; padding: 0 !important; }
 .ui-agent-actions {
   flex: 0 1 auto;
   background: transparent !important; border-bottom: 0 !important; padding: 0 !important;
