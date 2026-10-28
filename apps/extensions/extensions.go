@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/governance"
@@ -444,11 +445,53 @@ func (T *Extensions) listUserTools(c *jsonapi.Call) (any, error) {
 	if one, answered, err := lt.answerOne(); answered {
 		return one, err
 	}
+	lt.pt = startPhases()
 	lt.ownRows()
 	lt.scopedRows()
 	lt.orphanRows()
+	lt.pt.mark("orphans")
 	lt.twinsAndOrder()
+	lt.pt.mark("order")
+	lt.pt.logIfSlow(fmt.Sprintf("the tool list (%d rows)", len(lt.rows)))
 	return lt.rows, nil
+}
+
+// slowBuild is how long a page or list may take to build before it says in
+// the log where its time went.
+const slowBuild = 300 * time.Millisecond
+
+// phaseTimes records how long each step of building a response took, so a
+// slow one names its cost in the log an operator already reads, rather than
+// leaving it to be guessed at. Nil-safe, so a step can mark it whether or
+// not it is being timed.
+type phaseTimes struct {
+	start, last time.Time
+	steps       []string
+}
+
+func startPhases() *phaseTimes {
+	now := time.Now()
+	return &phaseTimes{start: now, last: now}
+}
+
+// mark closes the step running since the last mark under name.
+func (p *phaseTimes) mark(name string) {
+	if p == nil {
+		return
+	}
+	now := time.Now()
+	p.steps = append(p.steps, name+" "+now.Sub(p.last).Round(time.Millisecond).String())
+	p.last = now
+}
+
+// logIfSlow logs the steps when the whole took longer than slowBuild.
+func (p *phaseTimes) logIfSlow(what string) {
+	if p == nil {
+		return
+	}
+	if total := time.Since(p.start); total > slowBuild {
+		Log("[extensions] %s took %s: %s", what, total.Round(time.Millisecond), strings.Join(p.steps, ", "))
+	}
 }
 
 type toolRow struct {
@@ -549,6 +592,7 @@ type toolList struct {
 	released map[string]ToolRelease
 	scoped   []ScopedTool
 	byName   map[string]int
+	pt       *phaseTimes // the list's step times; nil for a single-record fetch
 }
 
 func (lt *toolList) answerOne() (any, bool, error) {
@@ -618,9 +662,13 @@ func (lt *toolList) ownRows() {
 			lt.released[rel.Name] = rel
 		}
 	}
+	lt.pt.mark("releases")
 	// Shared rows only: agent-scoped rows live in the same store now, but
 	// they render under "Scoped Tools" (via ListScopedTools), not here.
-	for _, p := range SharedUserTools(AuthDB(), user) {
+	shared := SharedUserTools(AuthDB(), user)
+	lt.pt.mark(fmt.Sprintf("loading %d shared", len(shared)))
+	defer lt.pt.mark("shared rows")
+	for _, p := range shared {
 		// Dependency check resolves in the USER's namespace (a tool may lean
 		// on the user's own credential, which the global-only CredentialStatus
 		// wouldn't find).
@@ -690,6 +738,8 @@ func (lt *toolList) scopedRows() {
 	// Shadowed rows are dropped: a draft already committed under the same
 	// name would invite an action that does nothing.
 	lt.scoped = ListScopedTools(user)
+	lt.pt.mark(fmt.Sprintf("loading %d scoped", len(lt.scoped)))
+	defer lt.pt.mark("scoped rows")
 	lt.byName = map[string]int{} // tool name -> index into rows
 	for _, st := range lt.scoped {
 		if st.Shadowed || st.Scope != ScopeAgentTool {
@@ -1811,13 +1861,18 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	sections := []ui.Section{
-		T.apisSection(),
-		T.mcpServersSection(user),
-		T.connectedAccountsSection(),
-		T.toolsSection(user),
-		T.skillsSection(),
-	}
+	pt := startPhases()
+	defer pt.logIfSlow("the page")
+	sections := []ui.Section{T.apisSection()}
+	pt.mark("APIs")
+	sections = append(sections, T.mcpServersSection(user))
+	pt.mark("MCP servers")
+	sections = append(sections, T.connectedAccountsSection())
+	pt.mark("connected accounts")
+	sections = append(sections, T.toolsSection(user))
+	pt.mark("tools")
+	sections = append(sections, T.skillsSection())
+	pt.mark("skills")
 	// App-contributed sections (core/sections). Extensions is where a
 	// user's own reusable things live, and the things they build are not
 	// all this app's to know about — a machine belongs to orchestrate and
@@ -1846,8 +1901,10 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 			if strings.TrimSpace(e.Head) != "" {
 				head = head.HTML(e.Head)
 			}
+			pt.mark(sec.Title)
 		}
 	}
+	defer pt.mark("render")
 
 	ui.Page{
 		Title:     "Extensions",
@@ -3145,7 +3202,10 @@ func (T *Extensions) handleUserToolCategories(c *jsonapi.Call) (any, error) {
 		}
 		return opts, nil
 	}
+	pt := startPhases()
 	cats := userToolCategories(user)
+	pt.mark(fmt.Sprintf("filing tools under %d categories", len(cats)))
+	defer pt.logIfSlow("the category list")
 	if name != "" {
 		// Record mode: the picker reads its current selection from here.
 		// An unknown name is a category being created — empty, not 404.
