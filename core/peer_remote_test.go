@@ -45,6 +45,8 @@ func peerServer(t *testing.T, caps ...string) (base, key string) {
 	mux.HandleFunc("/api/peer/v1/token", HandlePeerToken)
 	mux.HandleFunc("/api/peer/v1/embeddings", HandlePeerEmbeddings)
 	mux.HandleFunc("/api/peer/v1/audio/transcriptions", HandlePeerTranscribe)
+	mux.HandleFunc("/api/peer/v1/audio/speech", handlePeerSpeech)
+	mux.HandleFunc("/api/peer/v1/audio/voices", handlePeerSpeechVoices)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv.URL, pk.Key

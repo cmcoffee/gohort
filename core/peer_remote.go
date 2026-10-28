@@ -55,6 +55,9 @@ type RemotePeer struct {
 	// unlike EmbedModel, a mismatch produces worse text rather than vectors in
 	// the wrong space — but stored so the operator can see what they picked.
 	TranscribeModel string `json:"transcribe_model,omitempty"`
+	// SpeechModel is the text-to-speech model the peer said it uses, advisory
+	// like TranscribeModel.
+	SpeechModel string `json:"speech_model,omitempty"`
 	// SearchProvider is the upstream the peer searches with ("serper",
 	// "duckduckgo"). Shown to the operator because borrowing a free DuckDuckGo
 	// relay and borrowing a metered Serper key look identical otherwise.
@@ -368,6 +371,9 @@ func SaveRemotePeer(ctx context.Context, name, baseURL, key string) (RemotePeer,
 	if m.Transcribe != nil {
 		p.TranscribeModel = m.Transcribe.Model
 	}
+	if m.Speech != nil {
+		p.SpeechModel = m.Speech.Model
+	}
 	if m.Search != nil {
 		p.SearchProvider = m.Search.Provider
 	}
@@ -552,9 +558,12 @@ func RefreshRemotePeer(ctx context.Context, name string) (RemotePeer, error) {
 	if m.Embeddings != nil {
 		p.EmbedModel, p.EmbedDim = m.Embeddings.Model, m.Embeddings.Dim
 	}
-	p.TranscribeModel, p.SearchProvider = "", ""
+	p.TranscribeModel, p.SpeechModel, p.SearchProvider = "", "", ""
 	if m.Transcribe != nil {
 		p.TranscribeModel = m.Transcribe.Model
+	}
+	if m.Speech != nil {
+		p.SpeechModel = m.Speech.Model
 	}
 	if m.Search != nil {
 		p.SearchProvider = m.Search.Provider

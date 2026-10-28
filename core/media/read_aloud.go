@@ -47,8 +47,9 @@ const (
 	readAloudMaxChars = 6000
 	// readAloudFirstChars bounds the first piece, made before the link is
 	// handed back: a first sentence longer than this is split, at a comma when
-	// one is near, so nobody waits on it. A third of a second on a GPU.
-	readAloudFirstChars = 200
+	// one is near, so nobody waits on it. Under half a second on a GPU, and
+	// it holds the whole of most short replies, which then play with no seam.
+	readAloudFirstChars = 300
 	// readAloudSecondChars bounds the second piece, made while the first
 	// plays: a first piece can be one short sentence, a second or two of
 	// speech, and this must be ready before it ends.

@@ -236,6 +236,13 @@ func (a *AdminApp) handleSpeech(c *jsonapi.Call) (any, error) {
 // handleSpeechSave persists the speech config and installs it live.
 func (a *AdminApp) handleSpeechSave(c *jsonapi.Call, req media.SpeechConfig) (any, error) {
 	req.APIKey = keepSecret(req.APIKey, a.storedSpeechConfig().APIKey)
+	// A peer selection carries no endpoint of its own: resolve it into an
+	// ordinary config, so everything that speaks stays peer-unaware.
+	resolved, err := ResolveSpeechProvider(req, req.Provider)
+	if err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	req = resolved
 	if a.db != nil {
 		a.db.Set(media.SpeechTable, "current", req)
 	}
@@ -254,6 +261,13 @@ func (a *AdminApp) handleSpeechTest(c *jsonapi.Call, req media.SpeechConfig) (an
 	if !req.Enabled {
 		return testResultBody(false, "", "speech is disabled: flip the toggle on first"), nil
 	}
+	// A peer picked in the form is resolved as the save resolves it, so the
+	// preview is spoken by the peer: the whole link, proven by hearing it.
+	resolved, rerr := ResolveSpeechProvider(req, req.Provider)
+	if rerr != nil {
+		return testResultBody(false, "", rerr.Error()), nil
+	}
+	req = resolved
 	// A minute: a CPU-only server loads its model on the first request.
 	ctx, cancel := context.WithTimeout(c.R.Context(), time.Minute)
 	defer cancel()
@@ -271,7 +285,12 @@ func (a *AdminApp) handleSpeechTest(c *jsonapi.Call, req media.SpeechConfig) (an
 // Voice field's chips. A server without a voice list gets no chips, and the
 // field is typed by hand.
 func (a *AdminApp) handleSpeechVoices(c *jsonapi.Call) (any, error) {
-	return media.VoiceChips(media.SpeechVoices(c.R.Context(), a.storedSpeechConfig())), nil
+	cfg := a.storedSpeechConfig()
+	// A peer's voices come from the peer, with its current credential.
+	if resolved, err := ResolveSpeechProvider(cfg, cfg.Provider); err == nil {
+		cfg = resolved
+	}
+	return media.VoiceChips(media.SpeechVoices(c.R.Context(), cfg)), nil
 }
 
 // handleImageGen serves /api/image-gen; registerMediaRoutes says what it is for.

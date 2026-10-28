@@ -181,6 +181,8 @@ func TestMediaRoutesContract(t *testing.T) {
 	do("root", "POST", "/api/speech/test", `{"enabled":true,`+tts+`,"voice":"nobody","api_key":"(unchanged)"}`)
 	do("root", "POST", "/api/speech/test", `{"enabled":true,`+tts+`,"voice":"af_heart","api_key":"wrong"}`)
 	do("root", "POST", "/api/speech/test", `{"enabled":true,"endpoint":"http://127.0.0.1:1/v1"}`)
+	do("root", "POST", "/api/speech/test", `{"enabled":true,"provider":"peer:nope"}`)
+	do("root", "POST", "/api/speech", `{"enabled":true,"provider":"peer:nope"}`)
 	if got := media.GetSpeechConfig(); !got.Enabled || got.Voice != "af_heart" || got.APIKey != "s3cr3t-tts" {
 		t.Errorf("a save should install the speech config live: %+v", got)
 	}

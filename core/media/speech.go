@@ -36,6 +36,28 @@ type SpeechConfig struct {
 	Voice    string `json:"voice"`    // optional for servers with a default voice
 	APIKey   string `json:"api_key"`  // optional bearer token (real OpenAI / authenticated proxies)
 	Enabled  bool   `json:"enabled"`  // false → calls return an error and callers send text only
+	// Provider records where the config came from: "local" (typed in) or
+	// "peer:<name>" (filled from a peer instance that lends its speech
+	// server). Same field, same reason, as TranscribeConfig.Provider.
+	Provider string `json:"provider,omitempty"`
+}
+
+// SpeechResolver, when set, rewrites the stored config on every read, so one
+// whose Provider names a peer picks up that peer's current endpoint and
+// credential. core installs it; this package knows nothing about peers. Same
+// seam as TranscribeResolver, and it must be as cheap.
+var SpeechResolver func(SpeechConfig) SpeechConfig
+
+// speechClient is what a speech request goes out on: the peer transport for
+// a config borrowed from a peer (a credential current at send time), an
+// ordinary client otherwise.
+func speechClient(cfg SpeechConfig, timeout time.Duration) *http.Client {
+	if HTTPClientForProvider != nil {
+		if c := HTTPClientForProvider(cfg.Provider, timeout); c != nil {
+			return c
+		}
+	}
+	return &http.Client{Timeout: timeout}
 }
 
 var (
@@ -50,11 +72,18 @@ func SetSpeechConfig(cfg SpeechConfig) {
 	speechCfgMu.Unlock()
 }
 
-// GetSpeechConfig returns the current speech config.
+// GetSpeechConfig returns the current speech config, with any registered
+// resolver applied.
 func GetSpeechConfig() SpeechConfig {
 	speechCfgMu.RLock()
-	defer speechCfgMu.RUnlock()
-	return speechCfg
+	cfg := speechCfg
+	speechCfgMu.RUnlock()
+	// Outside the lock, as GetTranscribeConfig does: the resolver reads
+	// another package's state.
+	if SpeechResolver != nil {
+		cfg = SpeechResolver(cfg)
+	}
+	return cfg
 }
 
 // LoadSpeechConfigFromDB reads the persisted speech config and installs it.
@@ -130,7 +159,7 @@ func SpeakWith(ctx context.Context, cfg SpeechConfig, text string) ([]byte, stri
 	// 2 minutes is the ceiling for a caller with no deadline of its own; a
 	// long reply on a CPU-only server takes a while, and the request is
 	// context-aware, so a caller's shorter budget wins.
-	resp, err := (&http.Client{Timeout: 2 * time.Minute}).Do(httpReq)
+	resp, err := speechClient(cfg, 2*time.Minute).Do(httpReq)
 	if err != nil {
 		return nil, "", fmt.Errorf("speech request failed (%s): %w", url, err)
 	}
@@ -212,7 +241,7 @@ func SpeechVoices(ctx context.Context, cfg SpeechConfig) []string {
 	if cfg.APIKey != "" {
 		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
 	}
-	resp, err := (&http.Client{}).Do(req)
+	resp, err := speechClient(cfg, 0).Do(req)
 	if err != nil {
 		return nil
 	}

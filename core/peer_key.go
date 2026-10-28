@@ -62,6 +62,7 @@ const (
 	PeerCapEmbeddings = "embeddings"
 	PeerCapImages     = "images"
 	PeerCapTranscribe = "transcribe"
+	PeerCapSpeech     = "speech" // text-to-speech, the other way from transcribe
 	PeerCapSearch     = "search"
 	PeerCapBrowse     = "browse"
 	PeerCapModels     = "models"
@@ -94,7 +95,7 @@ var retiredPeerCaps = map[string]bool{"investigate": true, "knowledge": true}
 
 // PeerCapabilities is every capability name, in a stable order.
 func PeerCapabilities() []string {
-	return []string{PeerCapEmbeddings, PeerCapImages, PeerCapTranscribe, PeerCapSearch, PeerCapBrowse, PeerCapModels, PeerCapExec}
+	return []string{PeerCapEmbeddings, PeerCapImages, PeerCapTranscribe, PeerCapSpeech, PeerCapSearch, PeerCapBrowse, PeerCapModels, PeerCapExec}
 }
 
 // peerCapServed reports whether this build can actually serve a capability.
@@ -102,7 +103,7 @@ func PeerCapabilities() []string {
 // so plainly rather than advertising something that would 404.
 func peerCapServed(cap string) bool {
 	switch cap {
-	case PeerCapEmbeddings, PeerCapImages, PeerCapTranscribe, PeerCapSearch, PeerCapBrowse, PeerCapExec:
+	case PeerCapEmbeddings, PeerCapImages, PeerCapTranscribe, PeerCapSpeech, PeerCapSearch, PeerCapBrowse, PeerCapExec:
 		return true
 	case PeerCapModels:
 		// Served only when there is something lendable. A hosted provider is
@@ -654,7 +655,7 @@ func peerNoteAuthFailure(r *http.Request) {
 // search is cheap and a command can hold a host for minutes.
 var peerConcurrency = map[string]int{
 	PeerCapExec: 4, PeerCapBrowse: 3, PeerCapImages: 2,
-	PeerCapTranscribe: 2, PeerCapModels: 4, PeerCapEmbeddings: 8, PeerCapSearch: 4,
+	PeerCapTranscribe: 2, PeerCapSpeech: 2, PeerCapModels: 4, PeerCapEmbeddings: 8, PeerCapSearch: 4,
 }
 
 type peerLiveReq struct{ cancel context.CancelFunc }

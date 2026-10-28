@@ -125,7 +125,11 @@ const (
 	// command's spilled output waits in. Two tools in two apps (orchestrate's
 	// document fetch, servitor's run_command) page the same way, and the
 	// text they page is the one thing they have in common.
-	coreFileCeiling = 198
+	//
+	// 198 -> 199 (v0.8.751): core/peer_speech.go, a peer capability's serving
+	// and consuming halves beside its siblings (peer_transcribe.go): the peer
+	// auth, hold and credential helpers they use are unexported here.
+	coreFileCeiling = 199
 
 	// coreExportCeiling is the number of exported top-level symbols — funcs,
 	// types, vars, consts. Methods are excluded because they are not what
@@ -347,7 +351,11 @@ const (
 	// changes while deleting it still asks.
 	// 2333: KeepOutput, so a caller with its own one-line preview (app_def's
 	// script checks) can hand the rest to read_output instead of cutting it.
-	coreExportCeiling = 2333
+	// 2360: the slack had been spent again (HEAD stood at 2358), plus
+	// PeerCapSpeech and ResolveSpeechProvider, the speech capability's name
+	// and the admin save's resolver, as transcription has. Its handlers and
+	// manifest entry stay unexported.
+	coreExportCeiling = 2360
 
 	// coreExportSlack is a small band on the export count only. A file here
 	// legitimately grows an exported helper or two during ordinary work, and a

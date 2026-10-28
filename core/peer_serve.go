@@ -199,6 +199,9 @@ type PeerManifest struct {
 	// advertising a path that answers "disabled" to everything is worse than
 	// saying nothing.
 	Transcribe *PeerTranscribeInfo `json:"transcribe,omitempty"`
+	// Speech is the same for text-to-speech: where to point an OpenAI-shaped
+	// speech client, and with which model. Absent when this instance has none.
+	Speech *peerSpeechOffer `json:"speech,omitempty"`
 	// Search says where to point a SearXNG-shaped client and which upstream
 	// this instance actually uses — a free DuckDuckGo relay and a metered
 	// Serper key are the same endpoint and very different favours.
@@ -307,6 +310,9 @@ func HandlePeerManifest(w http.ResponseWriter, r *http.Request) {
 	}
 	if k.Allows(PeerCapTranscribe) && peerCapServed(PeerCapTranscribe) {
 		m.Transcribe = peerTranscribeInfo("/api/peer/v1")
+	}
+	if k.Allows(PeerCapSpeech) && peerCapServed(PeerCapSpeech) {
+		m.Speech = peerSpeechInfo("/api/peer/v1")
 	}
 	if k.Allows(PeerCapSearch) && peerCapServed(PeerCapSearch) {
 		m.Search = peerSearchInfo("/api/peer/v1")

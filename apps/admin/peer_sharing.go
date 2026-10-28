@@ -530,6 +530,31 @@ func TranscribeProviderOptions() []ui.SelectOption {
 	return out
 }
 
+// SpeechProviderOptions builds the "Speak with" dropdown for the Speech
+// settings: this instance, plus every peer that actually offers speech.
+func SpeechProviderOptions() []ui.SelectOption {
+	out := []ui.SelectOption{{
+		Value: EmbeddingProviderLocal,
+		Label: "This instance",
+		Help:  "Speak with the endpoint and model below.",
+	}}
+	for _, p := range PeersOffering(PeerCapSpeech) {
+		label := "Peer: " + p.Name
+		if p.Instance != "" {
+			label += " (" + p.Instance + ")"
+		}
+		help := "Speak with " + p.BaseURL
+		if p.SpeechModel != "" {
+			help += " using " + p.SpeechModel
+		}
+		if p.LastError != "" {
+			help += ", last check failed: " + p.LastError
+		}
+		out = append(out, ui.SelectOption{Value: PeerProviderValue(p.Name), Label: label, Help: help})
+	}
+	return out
+}
+
 // SearchProviderOptions builds the "Search on" dropdown: this instance, plus
 // every peer that actually offers search.
 func SearchProviderOptions() []ui.SelectOption {
@@ -605,6 +630,8 @@ func peerCapShortLabel(cap string) string {
 		return "Image generation"
 	case PeerCapTranscribe:
 		return "Transcription"
+	case PeerCapSpeech:
+		return "Speech"
 	case PeerCapSearch:
 		return "Web search"
 	case PeerCapBrowse:
@@ -634,6 +661,7 @@ func peerCapOptions() []ui.SelectOption {
 		PeerCapEmbeddings: "Let the peer embed text using this instance's embedder.",
 		PeerCapImages:     "Generate and edit images on this instance's GPU, including multi-image edits.",
 		PeerCapTranscribe: "Turn speech into text using this instance's STT model: audio files, voice notes, the audio track of a video.",
+		PeerCapSpeech:     "Turn text into speech using this instance's speech server: spoken replies to voice notes and read-aloud, in a voice the peer picks from this server's list. If the speech server here is a hosted one such as OpenAI, the peer's speech spends this instance's key.",
 		PeerCapSearch:     "Run web searches through this instance's search provider. Note this SPENDS a metered API key if one is configured here; it is rate-limited separately and more tightly than everything else.",
 		PeerCapBrowse:     "Render pages in this instance's headless browser. Public web only: a peer can never reach this machine's private network through it.",
 		PeerCapModels: "Let the peer run its LLM turns on THIS instance's model: the machine with the GPU does the thinking for the one without. " +
@@ -651,6 +679,7 @@ func peerCapOptions() []ui.SelectOption {
 	// Offers column. Restating them is how "exec" came to have three names.
 	qualifier := map[string]string{
 		PeerCapTranscribe: " (speech-to-text)",
+		PeerCapSpeech:     " (text-to-speech)",
 		PeerCapBrowse:     " (browser)",
 		PeerCapModels:     " (the peer's turns execute on this machine's model)",
 		PeerCapExec:       " (the peer gets a shell on these systems, gated on ITS side)",

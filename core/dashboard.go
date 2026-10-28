@@ -257,6 +257,12 @@ func ServeDashboard(addr string) error {
 	// <base>/api/peer/v1 and needs no gohort-specific client.
 	RegisterPublicPath("/api/peer/v1/audio/transcriptions")
 	mux.HandleFunc("/api/peer/v1/audio/transcriptions", HandlePeerTranscribe)
+	// Text-to-speech for a peer, at the OpenAI path for the same reason, with
+	// the voice list beside it so the far side's voice pickers fill in.
+	RegisterPublicPath("/api/peer/v1/audio/speech")
+	mux.HandleFunc("/api/peer/v1/audio/speech", handlePeerSpeech)
+	RegisterPublicPath("/api/peer/v1/audio/voices")
+	mux.HandleFunc("/api/peer/v1/audio/voices", handlePeerSpeechVoices)
 	// Search in the SearXNG JSON shape, so the far side drives it with an
 	// ordinary searxng-provider config and no client of its own.
 	RegisterPublicPath("/api/peer/v1/search")

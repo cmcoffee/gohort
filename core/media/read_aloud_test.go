@@ -49,9 +49,10 @@ func readAloudServer(t *testing.T) (asked func() []string) {
 }
 
 // readAloudLong is a sentence too long to share the first piece, so what
-// comes before it is made alone.
+// comes before it is made alone, and short enough for the second.
 func readAloudLong(lead string) string {
-	return lead + strings.Repeat(", and the day after", 12) + "."
+	clause := ", and the day after"
+	return lead + strings.Repeat(clause, (readAloudFirstChars+readAloudSecondChars)/2/len(clause)) + "."
 }
 
 func readAloudDo(method, path, user, body string) *httptest.ResponseRecorder {

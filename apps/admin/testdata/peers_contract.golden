@@ -37,7 +37,7 @@ root POST /api/peer-keys/mint "{\"label\":\"quoted\",\"caps\":\"[\\\"embeddings\
 root POST /api/peer-keys/mint "{\"label\":\"\",\"caps\":[\"embeddings\"]}"
   400 a label is required: it is how you will recognize this peer later
 root POST /api/peer-keys/mint "{\"label\":\"odd\",\"caps\":[\"nonsense\"]}"
-  400 unknown capability "nonsense" (known: embeddings, images, transcribe, search, browse, models, exec)
+  400 unknown capability "nonsense" (known: embeddings, images, transcribe, speech, search, browse, models, exec)
 root POST /api/peer-keys/mint "{\"label\":"
   400 invalid JSON: unexpected EOF
 root POST /api/peer-keys/mint ""
@@ -65,7 +65,7 @@ root PATCH /api/peer-keys/<k2> "{\"enabled\":true}"
 root POST /api/peer-keys/<k2> "{\"caps\":[\"embeddings\",\"transcribe\"]}"
   200 {"ok":true}
 root PUT /api/peer-keys/<k2> "{\"caps\":[\"nonsense\"]}"
-  400 unknown capability "nonsense" (known: embeddings, images, transcribe, search, browse, models, exec)
+  400 unknown capability "nonsense" (known: embeddings, images, transcribe, speech, search, browse, models, exec)
 root PUT /api/peer-keys/<k2> "{\"owner\":\"alice\",\"appliances\":[]}"
   200 {"ok":true}
 root PUT /api/peer-keys/<k2> "{\"appliances\":[\"alice:a1\",\"bob:b1\"]}"

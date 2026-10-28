@@ -160,6 +160,10 @@ root POST /api/speech/test "{\"enabled\":true,\"endpoint\":\"<stub>/tts-ok/v1\",
   200 {"error":"speech: HTTP 401: {\"detail\":\"bad key\"}","ok":false}
 root POST /api/speech/test "{\"enabled\":true,\"endpoint\":\"http://127.0.0.1:1/v1\"}"
   200 {"error":"speech request failed (http://127.0.0.1:1/v1/audio/speech): Post \"http://127.0.0.1:1/v1/audio/speech\": dial tcp 127.0.0.1:1: connect: connection refused","ok":false}
+root POST /api/speech/test "{\"enabled\":true,\"provider\":\"peer:nope\"}"
+  200 {"error":"no peer named \"nope\" is registered: add it under Peers first","ok":false}
+root POST /api/speech "{\"enabled\":true,\"provider\":\"peer:nope\"}"
+  400 no peer named "nope" is registered: add it under Peers first
 alice POST /api/image-gen "{\"provider\":\"openai\",\"api_key\":\"s3cr3t-img-x\"}"
   403 forbidden
 root POST /api/image-gen "{\"provider\":\"openai\",\"api_key\":\"s3cr3t-img\"}"

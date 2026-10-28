@@ -312,33 +312,54 @@ func transcribeFormFields() []ui.FormField {
 	)
 }
 
-// speechFormFields builds the speech (TTS) settings.
+// speechFormFields builds the speech (TTS) settings, with the peer picker
+// added only when a peer offers speech: the same conditional shape as
+// transcribeFormFields, for the same reason. The voice stays while a peer is
+// picked: it is chosen here, from the peer's own list.
 func speechFormFields() []ui.FormField {
-	return []ui.FormField{
+	peers := SpeechProviderOptions()
+	hasPeers := len(peers) > 1
+
+	local := "enabled"
+	if hasPeers {
+		local = "enabled;provider:local"
+	}
+
+	fields := []ui.FormField{
 		{Field: "enabled", Label: "Enable speech", Type: "toggle"},
-		{Field: "endpoint", Label: "Endpoint", Type: "text",
+	}
+	if hasPeers {
+		fields = append(fields, ui.FormField{
+			Field: "provider", Label: "Speak with", Type: "select",
+			Options:  peers,
+			ShowWhen: "enabled",
+			Help:     "Use this instance's own speech server, or a peer instance you've connected under Resource Sharing › Peers.",
+		})
+	}
+	return append(fields,
+		ui.FormField{Field: "endpoint", Label: "Endpoint", Type: "text",
 			Placeholder: "http://localhost:8880/v1",
 			Help:        "Base URL with the version prefix: gohort appends /audio/speech.",
-			ShowWhen:    "enabled",
+			ShowWhen:    local,
 			Presets: []ui.FieldPreset{
 				{Label: "Kokoro-FastAPI", Value: "http://localhost:8880/v1", Hint: "Kokoro-FastAPI's default port"},
 				{Label: "OpenAI", Value: "https://api.openai.com/v1", Hint: "OpenAI hosted speech"},
 			}},
-		{Field: "model", Label: "Model", Type: "text",
+		ui.FormField{Field: "model", Label: "Model", Type: "text",
 			Placeholder: "kokoro",
 			Help:        "Optional. Kokoro-FastAPI takes 'kokoro'; OpenAI 'tts-1'.",
-			ShowWhen:    "enabled"},
-		{Field: "voice", Label: "Voice", Type: "text",
+			ShowWhen:    local},
+		ui.FormField{Field: "voice", Label: "Voice", Type: "text",
 			Placeholder: "af_heart",
 			Help:        "Optional. A voice the server offers, such as Kokoro's 'af_heart' or OpenAI's 'alloy'.",
-			Detail:      "Save the endpoint first, then click a chip to pick from the server's own list, and Preview voice to hear it before you save. Servers without a voice list show no chips; type the name instead.",
+			Detail:      "Save the endpoint or peer first, then click a chip to pick from the server's own list, and Preview voice to hear it before you save. Servers without a voice list show no chips; type the name instead.",
 			ShowWhen:    "enabled",
 			ChipsSource: "api/speech/voices"},
-		{Field: "api_key", Label: "API Key", Type: "password",
+		ui.FormField{Field: "api_key", Label: "API Key", Type: "password",
 			Help:     "Optional bearer token.",
 			Detail:   "Required for OpenAI hosted speech, or a server behind an authenticating proxy. Leave it blank for a local speech server.",
-			ShowWhen: "enabled"},
-	}
+			ShowWhen: local},
+	)
 }
 
 // webSearchFormFields builds the Web Search settings, with the peer picker
