@@ -32,4 +32,37 @@ check('a refusal re-enables to fix it', /catch\(function\(err\) \{[\s\S]{0,200}b
 
 check('the field is styled', css.indexOf('.ui-agent-confirm-input {') >= 0 && css.indexOf('.ui-agent-confirm-edit {') >= 0);
 
+// Answering a card moves the thinking dots below it: the turn goes on, and
+// what comes next appears there, not above every card it asked.
+function lift(start) {
+  var i = src.indexOf(start), depth = 0, j = src.indexOf('{', i);
+  for (; j < src.length; j++) {
+    if (src[j] === '{') depth++;
+    else if (src[j] === '}' && --depth === 0) break;
+  }
+  return src.slice(i, j + 1);
+}
+function node(cls) {
+  var n = {cls: cls, kids: [], parentNode: null, classList: {list: [], add: function() { this.list.push.apply(this.list, arguments); }, contains: function(c) { return this.list.indexOf(c) >= 0; }},
+    querySelectorAll: function() { return []; }, querySelector: function() { return null; }, appendChild: function(k) { this.kids.push(k); }};
+  return n;
+}
+var convoLog = {kids: [], appendChild: function(n) { var i = this.kids.indexOf(n); if (i >= 0) this.kids.splice(i, 1); this.kids.push(n); n.parentNode = this; }};
+var thinkingEl = node('thinking'), card = node('card'), scrolled = 0, kept = 0;
+convoLog.appendChild(thinkingEl);
+convoLog.appendChild(card);
+var document = {getElementById: function(id) { return id === 'confirm-c1' ? card : null; }};
+function el(tag, attrs, kids) { return node(attrs && attrs['class']); }
+function keepPendingInterjectionsLast() { kept++; }
+function scrollConvo() { scrolled++; }
+eval(lift('function settleConfirmCard(id, value, label)'));
+settleConfirmCard('c1', 'allow', 'Allow');
+check('answered, the card is followed by the thinking dots', convoLog.kids[0] === card && convoLog.kids[1] === thinkingEl);
+check('with notes still last and the view following', kept === 1 && scrolled === 1);
+var over = node('card2');
+convoLog.kids = [over]; thinkingEl.parentNode = null;
+document.getElementById = function() { return over; };
+settleConfirmCard('c2', 'deny', 'Deny');
+check('a turn that has finished grows no dots', convoLog.kids.length === 1);
+
 process.exit(fail ? 1 : 0);

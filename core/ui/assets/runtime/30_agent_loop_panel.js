@@ -5106,6 +5106,15 @@
         [(deny ? '✕ ' : '✓ ') + (label || value || 'Done')]);
       var row = card.querySelector('.ui-agent-confirm-btns');
       if (row) { row.replaceWith(stamp); } else { card.appendChild(stamp); }
+      // The turn goes on past the answer, so the thinking dots move below
+      // the card, where what comes next will appear, as they do below a
+      // notice. Left where they were, they sat above every card the turn had
+      // asked until its next message.
+      if (thinkingEl && thinkingEl.parentNode === convoLog) {
+        convoLog.appendChild(thinkingEl);
+        keepPendingInterjectionsLast();
+        scrollConvo(false);
+      }
     }
 
     // editConfirmInput is an answer that carries text the person sees and can
