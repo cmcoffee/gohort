@@ -87,6 +87,40 @@ func curatedCollectionsFor(udb Database, user, agentID string) []Collection {
 	return out
 }
 
+// collectionKeepingTools are the tools an agent's place in the collections it
+// reads brings: the corpus actions for the ones it is in charge of, and
+// suggesting updates to the ones it only reads (collection_suggestions.go).
+// One place, for every path that builds a catalog: the chat turn and the
+// dispatch runs (delegation, schedules, channels) each assembled their own,
+// and only the chat turn had these.
+//
+// Owner-only: both reach the owner's corpus, so neither goes to a run by a
+// granted non-owner, or to one a stranger set going: a channel message from
+// anyone but the owner marks the run's context, and the mark rides through
+// every delegation it starts (authoring_requester.go). The context and not
+// the turn's requester fields, which a channel run fills only after its
+// catalog is built.
+func (t *chatTurn) collectionKeepingTools(sess *ToolSession) []AgentToolDef {
+	if t == nil || t.app == nil {
+		return nil
+	}
+	owner := t.agent.Owner == "" || t.agent.Owner == seedOwner || t.agent.Owner == t.user
+	if !owner || nonOwnerRequester(t.ctx) {
+		return nil
+	}
+	var out []AgentToolDef
+	if cols := curatedCollectionsFor(UserDB(t.app.DB, t.user), t.user, t.agent.ID); len(cols) > 0 {
+		if st := t.app.stewardToolWithQueue(cols); st != nil {
+			out = append(out, ChatToolToAgentToolDefWithSession(st, sess))
+			Log("[orchestrate.tools] agent=%s: steward of %d collection(s), scoped corpus tools attached", t.agent.ID, len(cols))
+		}
+	}
+	if td, ok := t.suggestCollectionUpdateTool(); ok {
+		out = append(out, td)
+	}
+	return out
+}
+
 // collectionStewardTool builds the scoped tool for one agent's collections, or
 // nil when it is in charge of none.
 func collectionStewardTool(cols []Collection) ChatTool {

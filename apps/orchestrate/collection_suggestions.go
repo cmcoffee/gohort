@@ -33,6 +33,13 @@ import (
 	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
+// suggestCollectionUpdateName is the reading agent's tool. Reserved, as every
+// tool minted per agent is, so a custom tool cannot take its name and stand in
+// for it (core/reserved_tools.go).
+const suggestCollectionUpdateName = "suggest_collection_update"
+
+func init() { RegisterReservedToolName(suggestCollectionUpdateName) }
+
 // collectionSuggestionsTable holds pending suggestions, keyed "<collection>/<id>".
 const collectionSuggestionsTable = "collection_suggestions"
 
@@ -218,7 +225,7 @@ func (t *chatTurn) suggestCollectionUpdateTool() (AgentToolDef, bool) {
 		"Collections: " + strings.Join(names, "; ") + "."
 	return AgentToolDef{
 		Tool: Tool{
-			Name:        "suggest_collection_update",
+			Name:        suggestCollectionUpdateName,
 			Description: desc,
 			Parameters:  params,
 			Required:    required,

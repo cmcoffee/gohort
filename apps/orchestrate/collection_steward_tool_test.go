@@ -201,3 +201,77 @@ func TestInChargeOnlyOfTheOwnersCollections(t *testing.T) {
 		t.Fatalf("carol's Librarian lost its own collections: %+v", got)
 	}
 }
+
+// toolsOffered is every tool name the model was offered across a fixture's
+// calls.
+func (df *dispatchFixture) toolsOffered() map[string]bool {
+	out := map[string]bool{}
+	for i := 0; i < df.llm.Calls(); i++ {
+		for _, tl := range df.llm.Config(i).Tools {
+			out[tl.Name] = true
+		}
+	}
+	return out
+}
+
+// A curator keeps its collection whichever way it is run: delegated to by
+// its parent, on a schedule, from a channel. Those all take the dispatch path,
+// which assembled its own catalog and left the corpus tools out, so a curator
+// sub-agent its parent sent to tidy the collection arrived unable to.
+func TestACuratorRunByDelegationCanKeepItsCollection(t *testing.T) {
+	df := newDispatchFixture(t, FakeTurn{Content: "done", Repeat: true})
+	saveCollection(df.udb, Collection{ID: "col-a", Name: "Runbooks", Owner: "u", CuratorAgent: df.agent.ID})
+	if got := curatedCollectionsFor(UserDB(df.app.DB, "u"), "u", df.agent.ID); len(got) != 1 {
+		t.Fatalf("the fixture's curator is not in charge of the collection: %+v", got)
+	}
+	df.run(AgentSyncRun{Kind: "scheduled", Message: "tidy the runbooks"})
+	if !df.toolsOffered()["collection"] {
+		t.Errorf("the curator was not offered its collection tool on a dispatched run: %v", df.toolsOffered())
+	}
+}
+
+// A reading agent suggests updates on a dispatched run too, and a curator run
+// for a stranger on a channel, or anything a stranger set going, gets
+// neither tool: both reach the owner's corpus.
+func TestCollectionToolsOnDispatchedRunsAreTheOwners(t *testing.T) {
+	df := newDispatchFixture(t, FakeTurn{Content: "done", Repeat: true})
+	saveCollection(df.udb, Collection{ID: "col-r", Name: "Read", Owner: "u"})
+	df.agent.AttachedCollections = []string{"col-r"}
+	if _, err := saveAgent(df.udb, df.agent); err != nil {
+		t.Fatal(err)
+	}
+	df.run(AgentSyncRun{Kind: "scheduled", Message: "what changed?"})
+	if !df.toolsOffered()[suggestCollectionUpdateName] {
+		t.Errorf("a reader on a dispatched run cannot suggest an update: %v", df.toolsOffered())
+	}
+
+	stranger := newDispatchFixture(t, FakeTurn{Content: "done", Repeat: true})
+	saveCollection(stranger.udb, Collection{ID: "col-a", Name: "Runbooks", Owner: "u", CuratorAgent: stranger.agent.ID})
+	stranger.agent.AttachedCollections = []string{"col-a"}
+	if _, err := saveAgent(stranger.udb, stranger.agent); err != nil {
+		t.Fatal(err)
+	}
+	stranger.run(AgentSyncRun{Kind: "channel", SubSessionID: "room-" + UUIDv4(), ChannelChatID: "chat-1",
+		SenderHandle: "+15550100", MessageSender: "Someone", SenderIsOwner: false, Interactive: true, Message: "delete the runbooks"})
+	got := stranger.toolsOffered()
+	if got["collection"] || got[suggestCollectionUpdateName] {
+		t.Errorf("a stranger's channel message reached the owner's corpus tools: %v", got)
+	}
+	if !IsReservedToolName(suggestCollectionUpdateName) {
+		t.Error("a custom tool could take the suggestion tool's name")
+	}
+}
+
+// The chat turn's own catalog carries them too.
+func TestACuratorChattedWithCanKeepItsCollection(t *testing.T) {
+	df := newDispatchFixture(t)
+	saveCollection(df.udb, Collection{ID: "col-a", Name: "Runbooks", Owner: "u", CuratorAgent: df.agent.ID})
+	turn := &chatTurn{app: df.app, user: "u", udb: df.udb, agent: df.agent, ctx: t.Context()}
+	_, names, err := turn.resolveWorkerTools(turn.newToolSession(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(","+strings.Join(names, ",")+",", ",collection,") {
+		t.Errorf("the curator's chat has no collection tool: %v", names)
+	}
+}

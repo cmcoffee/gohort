@@ -317,6 +317,10 @@ func (t *chatTurn) dispatchExtraTools(sess *ToolSession, poolUser string, poolDB
 		extraTools = append(extraTools, t.agentsGroupedToolDef(true))
 	}
 	extraTools = append(extraTools, t.buildAttachedPipelineToolDefs()...)
+	// A curator keeps its collection however it is run: delegated to, on a
+	// schedule, from a channel. This catalog left them out, so a curator its
+	// parent sent to tidy the collection arrived unable to.
+	extraTools = append(extraTools, t.collectionKeepingTools(sess)...)
 	// App-contributed tools for this agent (core/agent_tool_providers.go). The
 	// pool USER is the agent's owner, not the acting runtime identity, for the
 	// same reason the custom-tool pool below uses it: a channel run acts as a
