@@ -350,11 +350,19 @@ func (wc *workerCatalog) authoringTools() {
 	// write to collections that are not theirs.
 	if wc.ownerRun {
 		if cols := curatedCollectionsFor(UserDB(t.app.DB, t.user), t.user, t.agent.ID); len(cols) > 0 {
-			if st := collectionStewardTool(cols); st != nil {
+			if st := t.app.stewardToolWithQueue(cols); st != nil {
 				wc.tools = append(wc.tools, ChatToolToAgentToolDefWithSession(st, sess))
 				wc.toolNames = append(wc.toolNames, st.Name())
 				Log("[orchestrate.tools] agent=%s: steward of %d collection(s), scoped corpus tools attached", t.agent.ID, len(cols))
 			}
+		}
+		// An agent that READS collections suggests updates to them rather
+		// than writing them (collection_suggestions.go). Owner-only like the
+		// grant above: a suggestion carries text out of the run, and a
+		// visitor's run is not the owner's to send.
+		if td, ok := t.suggestCollectionUpdateTool(); ok {
+			wc.tools = append(wc.tools, td)
+			wc.toolNames = append(wc.toolNames, td.Tool.Name)
 		}
 	}
 	// Fleet agents get the exclusive fleet-management catalog on their

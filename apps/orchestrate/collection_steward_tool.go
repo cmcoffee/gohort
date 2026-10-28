@@ -90,6 +90,17 @@ func curatedCollectionsFor(udb Database, user, agentID string) []Collection {
 // collectionStewardTool builds the scoped tool for one agent's collections, or
 // nil when it is in charge of none.
 func collectionStewardTool(cols []Collection) ChatTool {
+	return buildStewardTool(cols, nil)
+}
+
+// stewardToolWithQueue is collectionStewardTool with the suggestions agents
+// reading the collections have filed (collection_suggestions.go): the two
+// actions that work the queue, and a line in the brief when any are waiting.
+func (T *OrchestrateApp) stewardToolWithQueue(cols []Collection) ChatTool {
+	return buildStewardTool(cols, T)
+}
+
+func buildStewardTool(cols []Collection, queue *OrchestrateApp) ChatTool {
 	if len(cols) == 0 {
 		return nil
 	}
@@ -109,6 +120,9 @@ func collectionStewardTool(cols []Collection) ChatTool {
 
 	brief := "Keep the collection you are in charge of current: see what is in it, add to it, and prune it. " +
 		"Scoped to " + strings.Join(names, ", ") + " and nothing else."
+	if queue != nil {
+		brief += queue.stewardWaitingNote(cols)
+	}
 	gt := NewGroupedTool("collection", brief)
 
 	for _, act := range stewardActions {
@@ -151,6 +165,9 @@ func collectionStewardTool(cols []Collection) ChatTool {
 	}
 	if len(gt.ActionNames()) == 0 {
 		return nil
+	}
+	if queue != nil {
+		queue.addStewardSuggestionActions(gt, cols)
 	}
 	return gt
 }

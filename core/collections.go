@@ -202,6 +202,18 @@ type Collection struct {
 	// keep/drop. Default false. Autofill-specific; ignored by
 	// other consumers of Collection.
 	ClassifyOnAutofill bool `json:"classify_on_autofill,omitempty"`
+	// Articles are the specific ones the owner wants in this collection, each
+	// a link or a description to search for ("IRS Publication 17, 2026").
+	// Auto-fill fetches them before it searches on its own, and only the ones
+	// not fetched yet, so the list can stay as a statement of what belongs.
+	Articles []string `json:"articles,omitempty"`
+	// ArticlesFetched maps an entry of Articles to the address it was fetched
+	// from. An entry with none is still to fetch.
+	ArticlesFetched map[string]string `json:"articles_fetched,omitempty"`
+	// SuggestionsOff stops agents that read this collection from suggesting
+	// updates to it. Off by default, so suggestions are taken: they change
+	// nothing until whoever looks after the collection acts on them.
+	SuggestionsOff bool `json:"suggestions_off,omitempty"`
 }
 
 // CollectionSource returns the chunk-source tag for a collection's

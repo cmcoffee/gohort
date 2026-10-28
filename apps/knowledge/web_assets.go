@@ -170,7 +170,17 @@ const documentsDetailBody = `
   <div class="docs-section">
     <div class="docs-section-title">Auto-fill from web</div>
     <div class="docs-section-help">Seeds this collection from the web using the name + description above. Skips URLs already pulled. The settings below shape which candidates get in.</div>
-    <label style="display:block;font-size:var(--fs-sm, 0.82rem);font-weight:600;color:var(--text);margin-top:0.6rem">Filter rules / hints (optional)</label>
+    <label style="display:block;font-size:var(--fs-sm, 0.82rem);font-weight:600;color:var(--text);margin-top:0.6rem">Articles to fetch (optional)</label>
+    <div class="docs-section-help" style="margin-top:0.15rem;font-size:var(--fs-xs, 0.74rem)">Particular articles this collection should hold: paste a link, or describe one for auto-fill to search for (e.g. &quot;IRS Publication 17, 2026 edition&quot;). Auto-fill fetches these first, then searches on its own. Each is fetched once; taking one off the list keeps its document.</div>
+    <div id="docs-articles-list" style="display:flex;flex-direction:column;gap:0.3rem;margin:0.4rem 0"></div>
+    <div style="display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap">
+      <input id="docs-articles-input" type="text" placeholder="A link, or the article to look for"
+        style="flex:1;min-width:12rem;background:var(--bg-0);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.35rem 0.55rem;font:inherit;font-size:var(--fs-sm, 0.85rem)">
+      <button id="docs-articles-add" class="ui-row-btn" disabled>+ Add</button>
+      <button id="docs-articles-fetch" class="ui-row-btn" disabled title="Fetch the listed articles not fetched yet, with none of auto-fill's own searches">Fetch these only</button>
+      <span id="docs-articles-status" style="font-size:var(--fs-2xs, 0.72rem);color:var(--text-mute)"></span>
+    </div>
+    <label style="display:block;font-size:var(--fs-sm, 0.82rem);font-weight:600;color:var(--text);margin-top:0.8rem">Filter rules / hints (optional)</label>
     <div class="docs-section-help" style="margin-top:0.15rem;font-size:var(--fs-xs, 0.74rem)">Rules bias the generated search queries (e.g. "2026 edition", "official sources only") and, when the LLM judge is on, also drop candidates that don't match.</div>
     <div id="docs-filter-rules-list" style="display:flex;flex-direction:column;gap:0.3rem;margin:0.4rem 0"></div>
     <div style="display:flex;align-items:center;gap:0.4rem">
@@ -302,6 +312,8 @@ const documentsDetailAssets = `<style>
         // Stored newline-joined server-side; split on load.
         loadedFilterRules = c.filter_rules || '';
         renderFilterRules(loadedFilterRules);
+        loadedArticles = c.articles || [];
+        renderArticles(loadedArticles);
         var cb = $('#docs-classify-toggle');
         if (cb) cb.checked = !!c.classify_on_autofill;
       }).catch(function(err) {
@@ -394,6 +406,141 @@ const documentsDetailAssets = `<style>
       inp.focus();
     });
   })();
+
+  // Articles to fetch: an add/remove list like the rules above, each row
+  // saying whether it is in yet and, when it is, where from. The whole list
+  // is PATCHed on every change; the server keeps what was fetched for the
+  // entries that stay.
+  var loadedArticles = [];
+  function renderArticles(rows) {
+    var host = $('#docs-articles-list');
+    if (!host) return;
+    host.innerHTML = '';
+    var pending = 0;
+    if (rows.length === 0) {
+      var emp = document.createElement('div');
+      emp.style.cssText = 'font-size:var(--fs-xs, 0.78rem);color:var(--text-mute);font-style:italic';
+      emp.textContent = '(none listed: auto-fill picks everything from its own searches)';
+      host.appendChild(emp);
+    }
+    rows.forEach(function(row, idx) {
+      var el = document.createElement('div');
+      el.style.cssText = 'display:flex;align-items:center;gap:0.4rem;padding:0.3rem 0.55rem;background:var(--bg-0);border:1px solid var(--border);border-radius:4px;font-size:var(--fs-sm, 0.82rem)';
+      var label = document.createElement('span');
+      label.style.cssText = 'flex:1;min-width:0;word-break:break-word';
+      label.textContent = row.article;
+      var state = document.createElement('span');
+      state.style.cssText = 'font-size:var(--fs-2xs, 0.72rem);flex-shrink:0';
+      var from = row.fetched_from || '';
+      if (from) {
+        var a = document.createElement('a');
+        a.textContent = '✓ fetched';
+        a.title = from;
+        if (/^https?:\/\//i.test(from)) { a.href = from; a.target = '_blank'; a.rel = 'noopener noreferrer'; }
+        a.style.color = 'var(--accent,#56d364)';
+        state.appendChild(a);
+      } else {
+        pending++;
+        state.textContent = 'not fetched yet';
+        state.style.color = 'var(--text-mute)';
+      }
+      var del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'ui-icon-btn danger';
+      del.textContent = '✕';
+      del.title = 'Take this off the list (its document stays)';
+      del.addEventListener('click', function() {
+        var next = rows.map(function(r){ return r.article; });
+        next.splice(idx, 1);
+        saveArticles(next);
+      });
+      el.appendChild(label); el.appendChild(state); el.appendChild(del);
+      host.appendChild(el);
+    });
+    var fetchBtn = $('#docs-articles-fetch');
+    if (fetchBtn && !fetchBtn.dataset.busy) fetchBtn.disabled = pending === 0;
+  }
+  function saveArticles(list) {
+    var st = $('#docs-articles-status');
+    st.style.color = 'var(--text-mute)';
+    st.textContent = 'Saving…';
+    fetch(api('/api/collections/' + encodeURIComponent(cid)), {
+      method: 'PATCH', credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({articles: list}),
+    }).then(function(r){
+      if (!r.ok) return r.text().then(function(t){ throw new Error(t); });
+      st.style.color = 'var(--accent,#56d364)';
+      st.textContent = 'Saved';
+      setTimeout(function(){ if (st.textContent === 'Saved') st.textContent = ''; }, 1800);
+      loadDetail();
+    }).catch(function(err){
+      st.style.color = 'var(--danger,#ff7b72)';
+      st.textContent = 'Save failed: ' + (err && err.message || err);
+    });
+  }
+  (function(){
+    var inp = $('#docs-articles-input');
+    var btn = $('#docs-articles-add');
+    if (!inp || !btn) return;
+    function refreshBtn(){ btn.disabled = inp.value.trim().length === 0; }
+    inp.addEventListener('input', refreshBtn);
+    inp.addEventListener('keydown', function(ev) {
+      if (ev.key === 'Enter' && !btn.disabled) { ev.preventDefault(); btn.click(); }
+    });
+    btn.addEventListener('click', function() {
+      var v = inp.value.trim();
+      if (!v) return;
+      var next = loadedArticles.map(function(r){ return r.article; });
+      next.push(v);
+      saveArticles(next);
+      inp.value = '';
+      refreshBtn();
+      inp.focus();
+    });
+  })();
+  // Fetch these only: the listed articles not in yet, and no searches of
+  // auto-fill's own.
+  $('#docs-articles-fetch') && $('#docs-articles-fetch').addEventListener('click', function() {
+    var btn = $('#docs-articles-fetch');
+    var st = $('#docs-articles-status');
+    var orig = btn.textContent;
+    btn.disabled = true;
+    btn.dataset.busy = '1';
+    var frames = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
+    var fi = 0;
+    var started = Date.now();
+    var timer = setInterval(function(){
+      btn.textContent = frames[fi] + ' Fetching…';
+      fi = (fi + 1) % frames.length;
+      var secs = Math.round((Date.now() - started) / 1000);
+      if (secs >= 3) st.textContent = 'Searching and fetching - ' + secs + 's';
+    }, 100);
+    st.style.color = 'var(--text-mute)';
+    st.textContent = 'Searching and fetching…';
+    function done() { clearInterval(timer); btn.textContent = orig; delete btn.dataset.busy; }
+    fetch(api('/api/collections/' + encodeURIComponent(cid) + '/autofill'), {
+      method: 'POST', credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({articles_only: true, max_docs: 50}),
+    }).then(function(r){
+      if (!r.ok) return r.text().then(function(t){ throw new Error(t); });
+      return r.json();
+    }).then(function(out) {
+      done();
+      var missed = (out.results || []).filter(function(it){ return it.status !== 'added' && it.status !== 'already'; });
+      var parts = ['Fetched ' + (out.added || 0)];
+      if (missed.length) parts.push(missed.length + ' not fetched: ' + missed.map(function(it){ return it.article + ' (' + (it.err || it.status) + ')'; }).join('; '));
+      st.style.color = missed.length ? 'var(--warn,#d29922)' : 'var(--accent,#56d364)';
+      st.textContent = parts.join(' - ');
+      loadSources(); loadDetail();
+    }).catch(function(err) {
+      done();
+      st.style.color = 'var(--danger,#ff7b72)';
+      st.textContent = 'Failed: ' + (err && err.message || err);
+      loadDetail();
+    });
+  });
 
   // Classify-on-autofill toggle: saves immediately on change.
   $('#docs-classify-toggle') && $('#docs-classify-toggle').addEventListener('change', function() {
@@ -793,7 +940,8 @@ const documentsDetailAssets = `<style>
     var maxDocs = parseInt(maxInput && maxInput.value, 10);
     if (isNaN(maxDocs) || maxDocs < 1) maxDocs = 10;
     if (maxDocs > 50) maxDocs = 50;
-    if (!(await window.uiConfirm('Auto-fill this collection from the web?\n\nThe framework will generate search queries from the name + description, fetch up to ' + maxDocs + ' document' + (maxDocs === 1 ? '' : 's') + ', extract text, and ingest into this collection.\n\nLarger batches take longer (~30 sec per 10 docs). URLs already pulled previously will be skipped.'))) {
+    var listed = loadedArticles.filter(function(r){ return !r.fetched_from; }).length;
+    if (!(await window.uiConfirm('Auto-fill this collection from the web?\n\n' + (listed ? 'The ' + listed + ' listed article' + (listed === 1 ? '' : 's') + ' not fetched yet come first. Then the' : 'The') + ' framework will generate search queries from the name + description, fetch up to ' + maxDocs + ' document' + (maxDocs === 1 ? '' : 's') + ' in all, extract text, and ingest into this collection.\n\nLarger batches take longer (~30 sec per 10 docs). URLs already pulled previously will be skipped.'))) {
       return;
     }
     var btn = $('#docs-autofill');

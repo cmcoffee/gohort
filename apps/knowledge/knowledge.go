@@ -130,6 +130,9 @@ func (T *KnowledgeApp) handleDetailPage(w http.ResponseWriter, r *http.Request) 
 	if s, ok := T.stewardSection(user, collectionIDFromPath(r.URL.Path)); ok {
 		sections = append(sections, s)
 	}
+	if s, ok := T.suggestionsSection(user, collectionIDFromPath(r.URL.Path)); ok {
+		sections = append(sections, s)
+	}
 	if s, ok := T.sharingSection(user, collectionIDFromPath(r.URL.Path)); ok {
 		sections = append(sections, s)
 	}
@@ -214,6 +217,59 @@ func (T *KnowledgeApp) stewardSection(user, collectionID string) (ui.Section, bo
 				},
 			},
 		},
+	}, true
+}
+
+// suggestionsSection is the queue of updates agents reading this collection
+// have suggested, and the switch that stops them.
+//
+// For whoever decides about the collection: its owner, or an administrator
+// for the deployment's own. The endpoint refuses everybody else, and the
+// suggestions carry text out of other people's chats.
+func (T *KnowledgeApp) suggestionsSection(user, collectionID string) (ui.Section, bool) {
+	if strings.TrimSpace(collectionID) == "" || strings.TrimSpace(user) == "" {
+		return ui.Section{}, false
+	}
+	c, ok := LoadCollection(UserDB(CollectionsDB(), user), user, collectionID)
+	if !ok {
+		return ui.Section{}, false
+	}
+	if c.Owner != user && !(c.Owner == "" && IsDeploymentScope(c) && UserIsAdmin(user)) {
+		return ui.Section{}, false
+	}
+	base := "/orchestrate/api/collections/" + url.PathEscape(collectionID) + "/suggestions"
+	return ui.Section{
+		Title:    "Suggestions from agents",
+		Subtitle: "Agents that read this collection can suggest an update when they learn something it should know. Nothing changes until somebody acts on it.",
+		Detail: "A reading agent never writes to the collection itself: one that did would later read its own conclusions back as fact. It files a suggestion naming its source instead.\n\n" +
+			"With an agent in charge of the collection (above), suggestions go to that agent, which checks each against its source and updates the collection or declines. With nobody in charge, they wait here for you.\n\n" +
+			"Only your own agents, and those of people you made contributors, can suggest, and only on their own runs.",
+		Body: ui.Stack{Children: []ui.Component{
+			ui.FormPanel{
+				Source:  base,
+				PostURL: base + "/settings",
+				Fields: []ui.FormField{{
+					Field: "accept_suggestions", Type: "toggle", Label: "Take suggestions from agents",
+					Help: "Off: no agent can suggest updates to this collection. Ones already waiting stay.",
+				}},
+			},
+			ui.Table{
+				Source:       base,
+				RecordsField: "suggestions",
+				RowKey:       "id",
+				EmptyText:    "No suggestions waiting.",
+				Columns: []ui.Col{
+					{Field: "text", Label: "Suggestion", Flex: 3},
+					{Field: "source", Label: "Source", Flex: 1, Link: "source_link"},
+					{Field: "from", Label: "From", Mute: true},
+					{Field: "created", Label: "When", Format: "reltime", Mute: true},
+				},
+				RowActions: []ui.RowAction{
+					{Type: "button", Label: "Fetch the link", OnlyIf: "source_link", PostTo: base + "/fetch?sid={id}"},
+					{Type: "button", Label: "Dismiss", PostTo: base + "/dismiss?sid={id}"},
+				},
+			},
+		}},
 	}, true
 }
 

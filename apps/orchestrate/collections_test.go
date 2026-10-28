@@ -40,16 +40,20 @@ func TestEveryCollectionRouteTakesItsMethodsAndKeepsTheGate(t *testing.T) {
 	}
 
 	takes := map[string]string{
-		"":                    "GET PATCH DELETE",
-		"steward":             "GET POST",
-		"paste":               "POST",
-		"sources":             "GET",
-		"sources/x":           "DELETE",
-		"search":              "GET",
-		"autofill":            "POST",
-		"research":            "POST",
-		"audit":               "POST",
-		"suggest-description": "POST",
+		"":                     "GET PATCH DELETE",
+		"steward":              "GET POST",
+		"paste":                "POST",
+		"sources":              "GET",
+		"sources/x":            "DELETE",
+		"search":               "GET",
+		"autofill":             "POST",
+		"research":             "POST",
+		"audit":                "POST",
+		"suggest-description":  "POST",
+		"suggestions":          "GET",
+		"suggestions/settings": "POST",
+		"suggestions/dismiss":  "POST",
+		"suggestions/fetch":    "POST",
 	}
 	for action, methods := range takes {
 		path := "/api/collections/col-a"
@@ -106,6 +110,11 @@ func TestEveryCollectionRouteTakesItsMethodsAndKeepsTheGate(t *testing.T) {
 			{"DELETE", "/api/collections/col-a", ""},
 			{"DELETE", "/api/collections/col-a/sources/x", ""},
 			{"POST", "/api/collections/col-a/steward", `{"curator_agent":"x"}`},
+			// Suggestions carry text out of other people's chats: the
+			// owner's to read and act on, not a reader's or a contributor's.
+			{"GET", "/api/collections/col-a/suggestions", ""},
+			{"POST", "/api/collections/col-a/suggestions/settings", `{"accept_suggestions":false}`},
+			{"POST", "/api/collections/col-a/suggestions/dismiss?sid=x", ""},
 		} {
 			if w := do(u, c.method, c.path, c.body); w.Code != http.StatusForbidden {
 				t.Errorf("%s %s %s answered %d, want 403", u, c.method, c.path, w.Code)

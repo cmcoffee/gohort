@@ -227,6 +227,10 @@ func (T *OrchestrateApp) registerCollectionRoutes() {
 		"GET":  jsonapi.Get(T.DB, T.collectionSteward),
 		"POST": jsonapi.Post(T.DB, T.collectionStewardSave),
 	}.Serve)
+	T.HandleFunc("/api/collections/{id}/suggestions", jsonapi.Get(T.DB, T.collectionSuggestions))
+	T.HandleFunc("/api/collections/{id}/suggestions/settings", jsonapi.Post(T.DB, T.collectionSuggestionsSettings))
+	T.HandleFunc("/api/collections/{id}/suggestions/dismiss", jsonapi.Post(T.DB, T.collectionSuggestionDismiss))
+	T.HandleFunc("/api/collections/{id}/suggestions/fetch", jsonapi.Post(T.DB, T.collectionSuggestionFetch))
 	T.HandleFunc("/api/collections/{id}/paste", jsonapi.Post(T.DB, T.collectionPaste))
 	T.HandleFunc("/api/collections/{id}/sources", jsonapi.Get(T.DB, T.collectionSources))
 	T.HandleFunc("/api/collections/{id}/sources/{doc}", jsonapi.Delete(T.DB, T.collectionSourceDelete))
@@ -301,6 +305,10 @@ func (T *OrchestrateApp) collectionGet(call *jsonapi.Call) (any, error) {
 		"chunks":               chunks,
 		"filter_rules":         c.FilterRules,
 		"classify_on_autofill": c.ClassifyOnAutofill,
+		// Each listed article with the address it was fetched from, or none
+		// yet, so the page can say which ones are in.
+		"articles":        articleRows(c),
+		"suggestions_off": c.SuggestionsOff,
 		// The share picker reads what it will patch back, so the field
 		// has to be on the wire or it opens empty and the first save
 		// silently clears the share.
@@ -316,6 +324,10 @@ type collectionPatch struct {
 	Description        *string `json:"description"`
 	FilterRules        *string `json:"filter_rules"`
 	ClassifyOnAutofill *bool   `json:"classify_on_autofill"`
+	// The articles auto-fill fetches first, the whole list. An entry taken
+	// off it forgets where it was fetched from; its document stays.
+	Articles       *[]string `json:"articles"`
+	SuggestionsOff *bool     `json:"suggestions_off"`
 	// Who else may attach and search this. Absent means unchanged,
 	// like every other field here, so a rename cannot clear a share
 	// it never showed.
@@ -356,6 +368,23 @@ func (T *OrchestrateApp) collectionPatch(call *jsonapi.Call, body collectionPatc
 	}
 	if body.ClassifyOnAutofill != nil {
 		c.ClassifyOnAutofill = *body.ClassifyOnAutofill
+	}
+	if body.Articles != nil {
+		list, err := normalizeArticles(*body.Articles)
+		if err != nil {
+			return nil, jsonapi.BadRequest(err.Error())
+		}
+		c.Articles = list
+		fetched := map[string]string{}
+		for _, a := range list {
+			if from := c.ArticlesFetched[a]; from != "" {
+				fetched[a] = from
+			}
+		}
+		c.ArticlesFetched = fetched
+	}
+	if body.SuggestionsOff != nil {
+		c.SuggestionsOff = *body.SuggestionsOff
 	}
 	if body.Scope != nil {
 		// Widening reaches every user's agents, so it is an
@@ -423,6 +452,7 @@ func (T *OrchestrateApp) collectionDelete(call *jsonapi.Call, _ struct{}) (any, 
 		return nil, cerr
 	}
 	user, udb := call.User, call.UDB
+	T.dropAllSuggestions(c)
 	removed := deleteCollection(udb, T.DB, user, c.ID)
 	Log("[orchestrate.collections] user=%q deleted collection %q (id=%s, %d chunks removed)", user, c.Name, c.ID, removed)
 	return map[string]int{"removed": removed}, nil
@@ -993,9 +1023,13 @@ func queriesForMaxDocs(maxDocs int) int {
 type collectionAutofillBody struct {
 	Queries []string `json:"queries"`
 	MaxDocs int      `json:"max_docs"`
+	// ArticlesOnly fetches the listed articles not fetched yet and stops,
+	// with no searches of its own.
+	ArticlesOnly bool `json:"articles_only"`
 }
 
-// collectionAutofill seeds the collection from the web. Generates
+// collectionAutofill seeds the collection from the web. The listed articles
+// not fetched yet go first (collection_articles.go); then it generates
 // a handful of search queries via worker LLM from the collection's
 // name + description (override with explicit queries in the body),
 // runs each against the registered web_search tool, fetches the top
@@ -1009,7 +1043,7 @@ type collectionAutofillBody struct {
 //
 //	POST /api/collections/{id}/autofill
 //	body (all optional):
-//	  {queries: []string, max_docs: int}
+//	  {queries: []string, max_docs: int, articles_only: bool}
 //	→ {added, skipped, failed, queries_used, results}
 func (T *OrchestrateApp) collectionAutofill(call *jsonapi.Call, body *collectionAutofillBody) (any, error) {
 	if body == nil {
@@ -1020,18 +1054,47 @@ func (T *OrchestrateApp) collectionAutofill(call *jsonapi.Call, body *collection
 		return nil, cerr
 	}
 	r := call.R
-	user, udb := call.User, call.UDB
-	_ = user
+	udb := call.UDB
 	if maxDocs := autofillMaxDocs(); body.MaxDocs <= 0 || body.MaxDocs > maxDocs {
 		body.MaxDocs = maxDocs
 	}
 
-	if !WebSearchAvailable() {
+	// A link needs no search; a description, or auto-fill's own queries, do.
+	pending := pendingArticles(c)
+	if body.ArticlesOnly && len(pending) == 0 {
+		return nil, jsonapi.BadRequest("every listed article is already in this collection: add one to the list first")
+	}
+	needsSearch := !body.ArticlesOnly
+	for _, a := range pending {
+		if !isArticleLink(a) {
+			needsSearch = true
+		}
+	}
+	if needsSearch && !WebSearchAvailable() {
 		return nil, jsonapi.BadRequest("web search is not configured for this deployment")
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), autofillTimeout())
 	defer cancel()
+
+	// Step 0: the articles the owner listed, before anything auto-fill picks.
+	added, results := T.fetchArticles(ctx, udb, &c, body.MaxDocs)
+	failed := 0
+	for _, it := range results {
+		if it.Status != "added" && it.Status != "already" {
+			failed++
+		}
+	}
+	if body.ArticlesOnly || added >= body.MaxDocs {
+		Log("[orchestrate.autofill] collection=%s articles only: added=%d failed=%d", c.ID, added, failed)
+		return map[string]any{
+			"added":        added,
+			"skipped":      0,
+			"failed":       failed,
+			"queries_used": []string{},
+			"results":      results,
+		}, nil
+	}
 
 	// Step 1: queries. Use what the caller provided; otherwise ask the
 	// worker LLM to invent a batch from the collection name + description.
@@ -1044,6 +1107,9 @@ func (T *OrchestrateApp) collectionAutofill(call *jsonapi.Call, body *collection
 		queries = generateAutofillQueries(ctx, T, c, wanted)
 	}
 	if len(queries) == 0 {
+		if added > 0 {
+			return map[string]any{"added": added, "skipped": 0, "failed": failed, "queries_used": []string{}, "results": results}, nil
+		}
 		return nil, jsonapi.BadRequest("could not derive search queries: try filling in the collection description, or pass queries explicitly")
 	}
 	if len(queries) > wanted {
@@ -1060,44 +1126,15 @@ func (T *OrchestrateApp) collectionAutofill(call *jsonapi.Call, body *collection
 	for _, u := range c.IngestedURLs {
 		alreadyIngested[normalizeIngestURL(u)] = true
 	}
-	type candidate struct {
-		URL   string
-		Title string
-	}
-	var candidates []candidate
+	var candidates []searchCandidate
 	seen := map[string]bool{}
 	for _, q := range queries {
 		raw := WebSearch(q)
 		if raw == "" {
 			continue
 		}
-		// Parse the search results properly: blank-line-separated
-		// blocks of "N. Title\n   URL\n   Snippet". Pair title with
-		// URL so the ingested document has a meaningful name instead
-		// of falling back to nameFromURL (which often degrades to
-		// "document" for path-less URLs).
-		blocks := strings.Split(raw, "\n\n")
-		for _, block := range blocks {
-			lines := strings.Split(strings.TrimSpace(block), "\n")
-			if len(lines) < 2 {
-				continue
-			}
-			title := strings.TrimSpace(lines[0])
-			// Strip the "N. " numbering prefix websearch uses.
-			if dot := strings.Index(title, ". "); dot >= 0 && dot < 4 {
-				title = strings.TrimSpace(title[dot+2:])
-			}
-			var u string
-			for _, ln := range lines[1:] {
-				ln = strings.TrimSpace(ln)
-				if strings.HasPrefix(ln, "http://") || strings.HasPrefix(ln, "https://") {
-					u = ln
-					break
-				}
-			}
-			if u == "" {
-				continue
-			}
+		for _, cand := range parseWebSearchResults(raw) {
+			u := cand.URL
 			nu := normalizeIngestURL(u)
 			if alreadyIngested[nu] || seen[nu] {
 				continue
@@ -1114,7 +1151,7 @@ func (T *OrchestrateApp) collectionAutofill(call *jsonapi.Call, body *collection
 				continue
 			}
 			seen[nu] = true
-			candidates = append(candidates, candidate{URL: u, Title: title})
+			candidates = append(candidates, cand)
 		}
 	}
 	// Prefer PDF/docx URLs first — they extract cleanly.
@@ -1126,17 +1163,7 @@ func (T *OrchestrateApp) collectionAutofill(call *jsonapi.Call, body *collection
 	}
 
 	// Step 3: fetch + extract + ingest.
-	added := 0
 	skipped := len(alreadyIngested)
-	failed := 0
-	type summaryItem struct {
-		URL    string `json:"url"`
-		Status string `json:"status"`
-		Name   string `json:"name,omitempty"`
-		Chunks int    `json:"chunks,omitempty"`
-		Err    string `json:"err,omitempty"`
-	}
-	results := make([]summaryItem, 0, len(candidates))
 	for _, cand := range candidates {
 		if added >= body.MaxDocs {
 			break
@@ -1151,21 +1178,16 @@ func (T *OrchestrateApp) collectionAutofill(call *jsonapi.Call, body *collection
 		}
 		if gerr != nil {
 			failed++
-			results = append(results, summaryItem{URL: cand.URL, Status: "unusable", Name: name, Err: gerr.Error()})
+			results = append(results, autofillItem{URL: cand.URL, Status: "unusable", Name: name, Err: gerr.Error()})
 			continue
 		}
 		// Reject extracted blobs above a reasonable doc-text cap.
 		// Cap is on EXTRACTED text (post-parse) — HTML pages get
 		// stripped of markup first, so what we measure here is the
-		// actual readable content, not raw bytes. 200 KB of plain
-		// text is enough for the biggest legitimate single-doc
-		// reference material (long RFCs, dense API specs); anything
-		// bigger is almost certainly a junk page with infinite
-		// scroll, mailing-list digest, or content farm.
-		const maxAutofillDocChars = 200 * 1024
+		// actual readable content, not raw bytes.
 		if len(text) > maxAutofillDocChars {
 			failed++
-			results = append(results, summaryItem{URL: cand.URL, Status: "too_large", Name: name, Err: fmt.Sprintf("%d chars > %d cap (likely junk page or aggregator)", len(text), maxAutofillDocChars)})
+			results = append(results, autofillItem{URL: cand.URL, Status: "too_large", Name: name, Err: fmt.Sprintf("%d chars > %d cap (likely junk page or aggregator)", len(text), maxAutofillDocChars)})
 			Log("[orchestrate.autofill] dropping %q: %d chars > %d cap", cand.URL, len(text), maxAutofillDocChars)
 			continue
 		}
@@ -1188,7 +1210,7 @@ func (T *OrchestrateApp) collectionAutofill(call *jsonapi.Call, body *collection
 				if reason == "" {
 					reason = "(judge declined to keep this doc)"
 				}
-				results = append(results, summaryItem{URL: cand.URL, Status: "judge_dropped", Name: name, Err: reason})
+				results = append(results, autofillItem{URL: cand.URL, Status: "judge_dropped", Name: name, Err: reason})
 				Log("[orchestrate.autofill] judge DROP %q: %s", cand.URL, reason)
 				continue
 			} else if cleaned := strings.TrimSpace(verdict.CleanedText); cleaned != "" && len(cleaned) >= 200 {
@@ -1200,38 +1222,10 @@ func (T *OrchestrateApp) collectionAutofill(call *jsonapi.Call, body *collection
 				text = cleaned
 			}
 		}
-		baseReportID := fmt.Sprintf("autofill-%s-%d", c.ID, time.Now().UnixNano())
-		mainDoc := "## " + name + "\n\n" + text
-		chunkDB := T.collectionDB(c)
-		IngestReport(ctx, chunkDB, collectionSource(c.ID), baseReportID, mainDoc)
-		chunks := countReportChunks(chunkDB, baseReportID)
-		// Also ingest any kind-tagged regions (comments,
-		// related-link rails, author bios) under a sibling
-		// reportID per kind so the chunker boundaries stay
-		// clean. Chunks carry Kind so consumers can frame
-		// hits appropriately at retrieval time.
-		if len(raw) > 0 && (strings.HasPrefix(strings.ToLower(mime), "text/html") || strings.HasSuffix(strings.ToLower(name), ".html") || strings.HasSuffix(strings.ToLower(name), ".htm")) {
-			if buckets, _ := ExtractHTMLByKind(raw); len(buckets) > 0 {
-				for kind, kindText := range buckets {
-					if kind == "" || len(kindText) < 100 {
-						continue // default bucket already ingested via ExtractDocument; skip tiny tagged regions
-					}
-					kindReportID := baseReportID + "-" + kind
-					kindDoc := "## " + name + " (" + kind + ")\n\n" + kindText
-					IngestReportTagged(ctx, chunkDB, collectionSource(c.ID), kindReportID, kindDoc, kind)
-					chunks += countReportChunks(chunkDB, kindReportID)
-				}
-			}
-		}
-		results = append(results, summaryItem{URL: cand.URL, Status: "added", Name: name, Chunks: chunks})
-		c.IngestedURLs = append(c.IngestedURLs, cand.URL)
+		chunks := T.ingestAutofillDoc(ctx, c, name, text, raw, mime)
+		results = append(results, autofillItem{URL: cand.URL, Status: "added", Name: name, Chunks: chunks})
 		added++
-		// Persist after EVERY ingest, not just at the end. A mid-run
-		// timeout / panic / context-cancel previously left chunks in
-		// the DB but the URL never recorded in c.IngestedURLs, so the
-		// next autofill re-ingested everything as duplicates. Cheap
-		// to save — the collection record is small.
-		saveCollection(udb, c)
+		T.recordIngest(udb, &c, cand.URL, "")
 	}
 
 	Log("[orchestrate.autofill] collection=%s queries=%d added=%d failed=%d (max=%d)",
@@ -1889,6 +1883,9 @@ var collectionCorpusActions = map[string]bool{
 	"sources":  true,
 	"autofill": true,
 	"research": true,
+	// Filing a suggestion for whoever looks after it: an agent of somebody
+	// who may add to the collection, offering what it learned instead.
+	"suggest": true,
 }
 
 // collectionWriteRefusal says why this user may not perform this action on
