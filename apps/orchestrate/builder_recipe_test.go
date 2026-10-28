@@ -161,3 +161,17 @@ func TestLatestIntakeReadsThePackedText(t *testing.T) {
 		t.Fatalf("read %v from %q", vals, from)
 	}
 }
+
+// A collection kept current has one curator, set through the action the
+// collections tool offers, and readers suggest rather than write.
+func TestTheRecipeKnowsTheCuratorPattern(t *testing.T) {
+	for _, want := range []string{"ONE curator", "collections update curator=<agent>", "suggest updates instead of writing"} {
+		if !strings.Contains(builderRecipeShipped, want) {
+			t.Errorf("the recipe lost %q", want)
+		}
+	}
+	gt := collectionsListTool().(*GroupedTool)
+	if a, ok := gt.Action("update"); !ok || a.Params["curator"].Type == "" {
+		t.Error("the recipe names a curator parameter the collections tool does not have")
+	}
+}

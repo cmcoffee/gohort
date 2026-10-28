@@ -27,7 +27,7 @@ import (
 
 func collectionsListTool() ChatTool {
 	gt := NewGroupedTool("collections",
-		"Manage the user's Document Collections so you can wire them into agents (attached_collections=[...]). Actions: list, get, create (mint an empty collection), update (patch name/description), docs (list ingested documents), add_url (ingest one URL into the corpus), add_text (ingest text you have (markdown or JSON) as one titled document; same title replaces), remove_doc (drop one document). Use add_url to pull a known authoritative source (a statute's full-text page) into a collection, add_text to save material the user gave you or you drafted WITH the user's say-so, and remove_doc to prune noise; for bulk topic-based filling, the Knowledge surface's Auto-fill is still the better path.")
+		"Manage the user's Document Collections so you can wire them into agents (attached_collections=[...]). Actions: list, get, create (mint an empty collection), update (patch name, description or curator), docs (list ingested documents), add_url (ingest one URL into the corpus), add_text (ingest text you have (markdown or JSON) as one titled document; same title replaces), remove_doc (drop one document). Use add_url to pull a known authoritative source (a statute's full-text page) into a collection, add_text to save material the user gave you or you drafted WITH the user's say-so, and remove_doc to prune noise; for bulk topic-based filling, the Knowledge surface's Auto-fill is still the better path.")
 
 	gt.AddAction("list", &GroupedToolAction{
 		Description: "List every collection the user can attach: their own, ones colleagues shared with them, and the deployment's. Returns [{id, name, access, description, documents, chunks}] sorted by most-recently-updated; access is \"yours\", \"shared by <owner>\" or \"deployment\". Names are not unique across owners: an entry with name_also_used set shares its name with the listed others, so pick by access and id, and when the user named a collection without saying whose, ask which one. Use this when the user names a collection by display name and you need its ID to pass to attached_collections, or when surveying what corpus material exists for a new agent.",
@@ -160,11 +160,12 @@ func collectionsListTool() ChatTool {
 	})
 
 	gt.AddAction("update", &GroupedToolAction{
-		Description: "Patch an existing collection's name and/or description by ID: only the fields you pass change. Use to refine a collection's description so it reads as a model-facing selection cue (\"contains X, for Y\" naming the docs/subjects). Does NOT touch the collection's documents, that stays on the Knowledge surface.",
+		Description: "Patch an existing collection's name, description or curator by ID: only the fields you pass change. Use to refine a collection's description so it reads as a model-facing selection cue (\"contains X, for Y\" naming the docs/subjects). Does NOT touch the collection's documents, that stays on the Knowledge surface.",
 		Params: map[string]ToolParam{
 			"id":          {Type: "string", Description: "Collection ID (from collections(action=\"list\"))."},
 			"name":        {Type: "string", Description: "(optional) New display name."},
 			"description": {Type: "string", Description: "(optional) New description: \"contains X, for Y\" naming the docs/subjects it holds."},
+			"curator":     {Type: "string", Description: "(optional) The one agent, the user's own, in charge of keeping it current, by name or id: it alone may add and remove documents here, and readers suggest instead. \"\" clears it."},
 		},
 		Required: []string{"id"},
 		Caps:     []Capability{CapWrite},
@@ -197,8 +198,16 @@ func collectionsListTool() ChatTool {
 				c.Description = strings.TrimSpace(stringArg(args, "description"))
 				changed = append(changed, "description")
 			}
+			if _, has := args["curator"]; has {
+				who, err := collectionCuratorFor(sess, stringArg(args, "curator"))
+				if err != nil {
+					return "", err
+				}
+				c.CuratorAgent = who
+				changed = append(changed, "curator")
+			}
 			if len(changed) == 0 {
-				return "", errors.New("nothing to update: pass name and/or description")
+				return "", errors.New("nothing to update: pass name, description or curator")
 			}
 			saveCollection(sess.DB, c)
 			Log("[orchestrate.collections] user=%q updated collection %q (id=%s): %s", sess.Username, c.Name, c.ID, strings.Join(changed, ", "))
@@ -385,4 +394,27 @@ func collectionsListTool() ChatTool {
 	})
 
 	return gt
+}
+
+// collectionCuratorFor resolves the agent named to be a collection's curator,
+// to the id the grant matches on (curatedCollectionsFor). It must be one of the
+// user's own agents: a curator writes to their corpus on their runs, and an
+// agent shared with them is somebody else's. A name more than one agent
+// answers to is refused rather than guessed at, and "" clears the curator.
+func collectionCuratorFor(sess *ToolSession, name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", nil
+	}
+	a, ok, err := resolveAgentRef(sess.DB, sess.Username, name)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", fmt.Errorf("no agent of yours is called %q: name the curator by its id or exact name (agents action=list)", name)
+	}
+	if a.Owner != "" && a.Owner != seedOwner && a.Owner != sess.Username {
+		return "", fmt.Errorf("%q is %s's agent, shared with you: a collection's curator must be one of your own agents", chFirst(a.Name, a.ID), a.Owner)
+	}
+	return a.ID, nil
 }

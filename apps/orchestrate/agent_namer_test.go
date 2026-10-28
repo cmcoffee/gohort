@@ -5,6 +5,7 @@ package orchestrate
 // what it stores is not what it shows.
 
 import (
+	"strings"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -51,5 +52,26 @@ func TestTheAgentNamerOffersIDsAndReadsBackNames(t *testing.T) {
 	}
 	if got := AgentNameOptions("bob"); got != nil {
 		t.Errorf("one user's agents must not be offered to another: %+v", got)
+	}
+}
+
+// A family's sub-agents can be picked, listed under their parent by their own
+// name. An agent the person hid stays out, and so do its sub-agents.
+func TestTheAgentPickerListsSubAgentsUnderTheirParent(t *testing.T) {
+	got := agentNameOptions([]AgentRecord{
+		{ID: "p2", Name: "Ops"},
+		{ID: "s1", Name: "Curator", OwnedBy: "p1", Hidden: true},
+		{ID: "p1", Name: "Research"},
+		{ID: "s2", Name: "Archivist", OwnedBy: "p1", Hidden: true},
+		{ID: "h1", Name: "Hidden one", Hidden: true},
+		{ID: "s3", Name: "Ghost", OwnedBy: "h1", Hidden: true},
+	})
+	var rows []string
+	for _, o := range got {
+		rows = append(rows, o.Group+"|"+o.Label+"|"+o.Value)
+	}
+	want := "|Ops|p2,|Research|p1,Research's sub-agents|Archivist|s2,Research's sub-agents|Curator|s1"
+	if strings.Join(rows, ",") != want {
+		t.Errorf("picker rows:\n got %s\nwant %s", strings.Join(rows, ","), want)
 	}
 }
