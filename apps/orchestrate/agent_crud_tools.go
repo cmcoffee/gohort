@@ -274,6 +274,11 @@ func unresolvedToolNote(db Database, a AgentRecord) string {
 		if name = strings.TrimSpace(name); name == "" || name == "*" {
 			continue
 		}
+		// A framework tool is explained where it comes from instead
+		// (unresolvedToolsWarning): called unknown here, it read as a typo.
+		if frameworkAlwaysOnTools[name] {
+			continue
+		}
 		if !isResolvableToolName(db, a.Owner, name) {
 			bad = append(bad, strconv.Quote(name))
 		}
@@ -532,6 +537,12 @@ var frameworkAlwaysOnTools = map[string]bool{
 	// its old name, still in lists written before it could clear.
 	bulletinToolName:       true,
 	legacyBulletinToolName: true,
+	// Handed to a collection's curator by the collection's own curator
+	// setting (collections update curator=<agent>), and to an agent that reads
+	// a collection it may suggest to. Listed here, they were reported as typos
+	// and Builder went on trying names in the allowlist.
+	"collection":                true,
+	suggestCollectionUpdateName: true,
 }
 
 // frameworkAlwaysOnToolNames is the same set as a slice, for callers building a
@@ -576,7 +587,7 @@ func unresolvedToolsWarning(sess *ToolSession, rec *AgentRecord) string {
 	var out string
 	if len(framework) > 0 {
 		out += fmt.Sprintf(
-			" NOTE: %s %s provided by the framework, not by this list, the agent gets them when the condition behind them holds (a corpus attached, for knowledge_search / fetch_knowledge_doc; a board that lets it post, granted with bulletins allow_poster, for bulletin_board), and listing them here neither grants nor removes them. Harmless to leave; if the agent CANNOT reach one, the cause is elsewhere: most often a machine phase or pipeline stage whose own tool list narrows the catalog, which drops framework tools it does not name.",
+			" NOTE: %s %s provided by the framework, not by this list, the agent gets them when the condition behind them holds (a corpus attached, for knowledge_search / fetch_knowledge_doc; a board that lets it post, granted with bulletins allow_poster, for bulletin_board; being a collection's curator, set with collections update curator=<agent>, for collection; a collection attached that takes suggestions, for suggest_collection_update), and listing them here neither grants nor removes them. Harmless to leave; if the agent CANNOT reach one, the cause is elsewhere: most often a machine phase or pipeline stage whose own tool list narrows the catalog, which drops framework tools it does not name.",
 			strings.Join(framework, ", "), isAre(len(framework)))
 	}
 	if len(missing) > 0 {
@@ -584,6 +595,12 @@ func unresolvedToolsWarning(sess *ToolSession, rec *AgentRecord) string {
 			" ⚠ WARNING: these allowed_tools entries match no known tool and were dropped (typo, or a tool you haven't actually created yet): %s. The agent will NOT have them. Create the tool first (tool_def), then update_agent to add it.",
 			strings.Join(missing, ", "),
 		)
+		for _, n := range missing {
+			if n == "collections" {
+				out += " collections is your own authoring tool, not one an agent holds: an agent keeps a collection by being its curator (collections update curator=<agent>), which gives it the collection tool for that collection."
+				break
+			}
+		}
 	}
 	return out + attachedMachineGapsWarning(sess, rec)
 }

@@ -520,3 +520,25 @@ func TestAgentHasNoTools(t *testing.T) {
 		})
 	}
 }
+
+// A collection's tools come with the collection, not the allowlist. Builder,
+// told its curator needed "collections" and then "collection", tried both in
+// allowed_tools and was told each was a typo, twice, then explained the grant
+// wrongly. It is told where they come from instead.
+func TestCollectionToolsAreExplainedNotDropped(t *testing.T) {
+	rec := &AgentRecord{Owner: "u", AllowedTools: []string{"collection", suggestCollectionUpdateName}}
+	msg := unresolvedToolsWarning(nil, rec)
+	if strings.Contains(msg, "were dropped") {
+		t.Errorf("the curator's tool was reported as a typo: %q", msg)
+	}
+	if !strings.Contains(msg, "collections update curator=<agent>, for collection") {
+		t.Errorf("say the curator setting is where it comes from: %q", msg)
+	}
+	if note := unresolvedToolNote(nil, *rec); strings.Contains(note, "collection") {
+		t.Errorf("the second check called it unknown too: %q", note)
+	}
+	plural := unresolvedToolsWarning(nil, &AgentRecord{AllowedTools: []string{"collections"}})
+	if !strings.Contains(plural, "were dropped") || !strings.Contains(plural, "by being its curator") {
+		t.Errorf("collections is a real mistake, with the right way said: %q", plural)
+	}
+}
