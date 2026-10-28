@@ -117,7 +117,7 @@ const dictationJS = `(function(){
   var maxMs = 300000;
   // Stopping on silence: once somebody has spoken, this long quiet ends the
   // recording, as a press would. Before anything is heard it waits quietMs,
-  // then stops, so a forgotten tap does not record for five minutes.
+  // then cancels, so a forgotten tap does not record for five minutes.
   var silenceMs = 1800, quietMs = 15000, tickMs = 50;
   // The start tone's length; recording begins after it, so it is not heard.
   var toneMs = 150;
@@ -318,8 +318,8 @@ const dictationJS = `(function(){
       source.connect(an);
     } catch (e) { return; }
     var buf = new Uint8Array(an.fftSize);
-    var floor = -1, voiced = 0, lastVoice = Date.now(), from = Date.now();
-    meter = {source: source, timer: setInterval(function() {
+    var floor = -1, lastVoice = Date.now(), from = Date.now();
+    var m = meter = {source: source, voiced: 0, timer: setInterval(function() {
       if (state !== 'recording') return;
       an.getByteTimeDomainData(buf);
       var sum = 0;
@@ -327,10 +327,32 @@ const dictationJS = `(function(){
       var v = Math.sqrt(sum / buf.length);
       floor = (floor < 0 || v < floor) ? v : floor + (v - floor) * 0.005;
       var now = Date.now();
-      if (v > Math.max(floor * 4, 0.02)) { voiced += tickMs; lastVoice = now; }
+      if (v > Math.max(floor * 4, 0.02)) { m.voiced += tickMs; lastVoice = now; }
       level(ctx, Math.min(1, v / 0.15));
-      if (voiced >= 300 ? now - lastVoice >= silenceMs : now - from >= quietMs) stopRecording(ctx);
+      if (m.voiced >= 300) { if (now - lastVoice >= silenceMs) stopRecording(ctx); }
+      else if (now - from >= quietMs) { if (heardNothing()) cancelRecording(ctx); else stopRecording(ctx); }
     }, tickMs)};
+  }
+
+  // heardNothing reports whether the meter is listening and has heard no
+  // one speak yet. The bar is a tenth of a second of voice, well under the
+  // 300ms the silence stop waits for: a short "yes" must not be thrown
+  // away, and a recording is cancelled only when it is truly silent.
+  // Without a meter nobody knows, so the recording is sent.
+  function heardNothing() { return !!meter && meter.voiced < 100; }
+
+  // cancelRecording ends a recording in which nobody was heard: there is
+  // nothing to write out, so nothing is sent, and the mic says so. Sending
+  // it made a stop pressed before speaking a wait on a spinner for an
+  // answer that came back "nothing was heard", where it meant cancel.
+  function cancelRecording(ctx) {
+    var r = rec;
+    state = 'idle';
+    pressed(ctx, false);
+    tone(false);
+    if (r) r.stop();
+    idle(ctx);
+    ctx.button.title = 'Nothing was heard, so nothing was sent. Press to dictate';
   }
 
   function stopRecording(ctx) {
@@ -386,7 +408,7 @@ const dictationJS = `(function(){
 
   function press(ctx) {
     switch (state) {
-    case 'recording': stopRecording(ctx); return;
+    case 'recording': if (heardNothing()) cancelRecording(ctx); else stopRecording(ctx); return;
     case 'sending':
       if (ctl) ctl.abort();
       // A cancelled resend keeps the recording; a first send lets it go,

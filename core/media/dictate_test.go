@@ -150,6 +150,7 @@ var recorders = [];
 global.MediaRecorder = function(s) { this.mimeType = 'audio/webm;codecs=opus'; recorders.push(this); };
 MediaRecorder.prototype.start = function() { this.started = true; };
 MediaRecorder.prototype.stop = function() {
+  this.stopped = true;
   this.ondataavailable({data: new Blob(['sound'], {type: 'audio/webm'})});
   this.onstop();
 };
@@ -434,24 +435,55 @@ eval(dictationJS);
   mic.onclick(mic); await sleep(250);
   loud = 0.06; await sleep(400);
   check('a noisy room is not taken for speech', pending.length === 1);
-  loud = 0.4; await sleep(300);
+  loud = 0.4; await sleep(500);
   loud = 0.06; await sleep(400);
   check('speech over it, then its noise again, stops it', pending.length === 2);
   pending[1].res(written('Hello again.'));
   await sleep(10);
 
-  // Nothing said at all: it stops after the quiet wait.
+  // Nothing said at all: after the quiet wait it cancels, and nothing is
+  // sent to be written out.
   mic.onclick(mic); await sleep(250);
   loud = 0.003; await sleep(500);
-  check('a short silence before speaking does not stop it', pending.length === 2);
+  check('a short silence before speaking does not stop it', !recorders[2].stopped);
   await sleep(500);
-  check('a long one with nothing said does', pending.length === 3);
-  pending[2].res(written(''));
+  check('a long one with nothing said cancels, sending nothing', recorders[2].stopped && pending.length === 2 &&
+    mic.button.textContent === '🎤' && mic.button.title.indexOf('Nothing was heard') === 0);
+  check('with the falling tone, the meter let go and the ring cleared', tones[tones.length - 1] === 'down' &&
+    !('aria-pressed' in mic.button.attrs) && mic.button.style.props['--ui-act-level'] === '0.00' && disconnected === 3);
+
+  // Stop pressed before anything is said is a cancel; after, it sends.
+  mic.onclick(mic); await sleep(250);
+  loud = 0.003; await sleep(100);
+  mic.onclick(mic); await sleep(10);
+  check('stop pressed before speaking cancels, sending nothing', recorders[3].stopped && pending.length === 2 && mic.button.textContent === '🎤');
+  mic.onclick(mic); await sleep(250);
+  loud = 0.3; await sleep(500);
+  mic.onclick(mic); await sleep(10);
+  check('stop pressed after speaking sends it', recorders[4].stopped && pending.length === 3);
+  pending[2].res(written('Yes.'));
+  await sleep(10);
+  // A word too short for the silence stop to count is still kept: a short
+  // "yes" and then stop is sent, not thrown away.
+  loud = 0.003;
+  mic.onclick(mic); await sleep(250);
+  loud = 0.3; await sleep(150);
+  loud = 0.003;
+  mic.onclick(mic); await sleep(10);
+  check('a short word and then stop is sent', recorders[5].stopped && pending.length === 4);
+  pending[3].res(written('Yes.'));
+  await sleep(10);
+  mic.onclick(mic); await sleep(250);
+  loud = 0.3; await sleep(150);
+  loud = 0.003; await sleep(900);
+  check('so is a short word and then the long quiet', recorders[6].stopped && pending.length === 5);
+  pending[4].res(written('Yes.'));
   await sleep(10);
 
   // Pressed during the tone: nothing records.
+  var recs = recorders.length;
   mic.onclick(mic); await sleep(20); mic.onclick(mic); await sleep(250);
-  check('pressing during the tone cancels before any recording', recorders.length === 3 && mic.button.textContent === '🎤');
+  check('pressing during the tone cancels before any recording', recorders.length === recs && mic.button.textContent === '🎤');
   process.exit(fail ? 1 : 0);
 })();
 `
