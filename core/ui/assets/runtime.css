@@ -1332,6 +1332,10 @@ select:-webkit-autofill {
   :is(.ui-row-actions, .ui-pl-actions) { align-self: stretch; width: 100%; box-sizing: border-box; }
   .ui-pl-modal-h-actions { flex: 1 1 0; justify-content: flex-end; }
   .ui-agent.ui-agent-list-top .ui-agent-actions { flex: 1 1 0; }
+  /* And its container takes the bar's width. Sized by its content it took
+   * the contained row's, which is none, so a bar holding only the ⋯ menu
+   * drew as an empty band with the menu clipped out of it. */
+  .ui-agent.ui-agent-list-top .ui-agent-top-span { flex: 1 1 auto; min-width: 0; }
   :is(.ui-row-actions, .ui-card-controls, .ui-toolbar-strip,
       .ui-pl-actions, .ui-pl-modal-h-actions, .ui-agent-actions)::-webkit-scrollbar { display: none; }
   :is(.ui-row-actions, .ui-card-controls, .ui-toolbar-strip,
@@ -4699,15 +4703,16 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   flex-wrap: wrap;
   justify-content: flex-start;
 }
-/* The top bar's action buttons and menus: compact, so two rows of them fit
- * beside the picker. Their size lives here, not inline, so a touch screen
- * can raise them to the compact tap size like every other small control. */
+/* The top bar's action buttons and menus: the small button size, one row
+ * of them beside the picker (the mode switches that once made a second row
+ * are in the composer). Their size lives here, not inline, so a touch screen
+ * can raise them to the full button height like every other control. */
 .ui-agent-top-bundle .ui-agent-actions button {
-  padding: 0.2rem 0.55rem; font-size: var(--fs-xs);
-  min-width: 0; min-height: 0; border-radius: var(--btn-radius);
+  padding: 0.3rem 0.7rem; font-size: var(--fs-sm);
+  min-width: 0; min-height: var(--btn-h-sm); border-radius: var(--btn-radius);
 }
 @media (pointer: coarse) {
-  .ui-agent-top-bundle .ui-agent-actions button { min-height: var(--btn-h-sm); }
+  .ui-agent-top-bundle .ui-agent-actions button { min-height: var(--btn-h); }
 }
 .ui-agent-top-bundle .ui-agent-actions .ui-row-btn:not(.primary):not(.copied) {
   background: transparent;
@@ -5628,6 +5633,19 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
     flex-direction: row; height: auto; min-width: 0; gap: 0.3rem;
     padding: 0.25rem 0.55rem; border-radius: var(--btn-radius);
   }
+}
+/* On a phone the page tiles (Build, Security) are their icons alone, square
+ * at the buttons' height, so the record actions beside them keep most of the
+ * line rather than scrolling in what the tiles leave. The name stays for a
+ * screen reader, and on the tile's tooltip. */
+@media (max-width: 700px) {
+  .ui-agent .ui-agent-top-bundle .ui-topbar-tile {
+    width: var(--btn-h); height: var(--btn-h); padding: 0; gap: 0;
+  }
+  .ui-agent .ui-agent-top-bundle .ui-topbar-tile-label {
+    position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+  }
+  .ui-agent .ui-agent-top-bundle .ui-topbar-tile .ui-channel-badge { top: -0.3rem; right: -0.3rem; }
 }
 /* A row that scrolls sideways fades on the side it has more on (set by
  * uiEdgeFade as it scrolls), so a cut-off button or tab reads as "swipe"

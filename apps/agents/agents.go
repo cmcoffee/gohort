@@ -306,7 +306,7 @@ func (T *AgentsApp) handleChatPage(w http.ResponseWriter, r *http.Request, agent
 			SendField: "inferred_disabled",
 		})
 	}
-	// Toolbar actions (all in the "⋯" overflow). Memory is offered only when the
+	// Toolbar actions, as buttons along the bar. Memory is offered only when the
 	// agent actually has a memory layer to manage — when BOTH the Explicit
 	// (facts + graph) and Reference layers are disabled, the Memory modal would be
 	// empty, so the button is dropped entirely rather than opening to nothing.
@@ -314,14 +314,14 @@ func (T *AgentsApp) handleChatPage(w http.ResponseWriter, r *http.Request, agent
 	var dashboardActions []ui.ToolbarAction
 	if !(agent.DisableExplicit && agent.DisableInferred) {
 		dashboardActions = append(dashboardActions, ui.ToolbarAction{
-			Label: "Memory", Group: "⋯", Method: "client", URL: "agents_memory_modal",
+			Label: "Memory", Method: "client", URL: "agents_memory_modal",
 			Title: "Review and prune the notes this agent has accumulated from your conversations.",
 		})
 	}
 	dashboardActions = append(dashboardActions,
-		ui.ToolbarAction{Label: "Knowledge", Group: "⋯", Method: "client", URL: "agents_knowledge_modal",
+		ui.ToolbarAction{Label: "Knowledge", Method: "client", URL: "agents_knowledge_modal",
 			Title: "Manage your private documents for this agent, review the agent's shared knowledge base, and wipe your accumulated corpus."},
-		ui.ToolbarAction{Label: "Copy session", Group: "⋯", Method: "client", URL: "copy_session",
+		ui.ToolbarAction{Label: "Copy session", Method: "client", URL: "copy_session",
 			Title: "Copy the full session as markdown (every user message, every assistant round, every tool call/result) for pasting into a prompt-tuning chat."},
 	)
 	// The route back to whoever owns this. Offered only on an agent that is not
@@ -338,7 +338,7 @@ func (T *AgentsApp) handleChatPage(w http.ResponseWriter, r *http.Request, agent
 		// orchestrate.OwnerLabel.
 		who := orchestrate.OwnerLabel(agent, user)
 		dashboardActions = append(dashboardActions,
-			ui.ToolbarAction{Label: "Ask the owner", Group: "⋯", Method: "client", URL: "agents_ask_owner",
+			ui.ToolbarAction{Label: "Ask the owner", Method: "client", URL: "agents_ask_owner",
 				Title: "Need something this agent cannot reach — a document collection, a tool, a credential? Ask " + who + ". It goes to their notifications; there is no reply here, so try again once they grant it."})
 	}
 	panel := ui.AgentLoopPanel{
@@ -375,9 +375,9 @@ func (T *AgentsApp) handleChatPage(w http.ResponseWriter, r *http.Request, agent
 		//     curated) + the end-user's own uploaded docs
 		//     (editable, private to them).
 		// Per-visitor surfaces — the granted user managing THEIR OWN data (notes,
-		// uploads, session export). These collapse into a single "⋯" overflow, so
-		// the page lands you straight in the chat; the Private and Fresh switches
-		// are in the composer. What does NOT belong here is agent MANAGEMENT —
+		// uploads, session export). Buttons in plain sight, one tap each: the bar
+		// holds nothing else since the Private and Fresh switches moved into the
+		// composer, so a "⋯" menu only hid them. What does NOT belong here is agent MANAGEMENT —
 		// config lives in admin-only Agency, never on the dashboard surface.
 		Actions: dashboardActions,
 		Modes:   modes,
@@ -905,14 +905,14 @@ const intakeFormAssets = `<style>
 // treatment list-top mode already ships — but applies it to rail-mode (Cortex)
 // agents too, which otherwise keep the default boxy, lighter-bg ui-row-btn (the
 // "square around each button" look). One horizontal row, any extra fields
-// BEFORE the actions / ⋯ overflow (CSS order), and the action buttons + the ⋯
-// toggle transparent and compact instead of standing out as boxes. App-scoped
+// BEFORE the actions (CSS order), and the action buttons transparent and
+// compact instead of standing out as boxes. App-scoped
 // via ExtraHeadHTML so Agency / bridges / servitor layouts are untouched.
 const dashboardBarCSS = `<style>
 /* One uniform top bar: the dark background goes on the topbar itself (not the
    per-container bands), spanning the full width, with the extras + actions
    containers made transparent so they don't leave a gap where one ends. Extras
-   render before the actions / ⋯ overflow (CSS order), and the buttons are
+   render before the actions (CSS order), and the buttons are
    transparent and compact. Mirrors list-top mode for rail-mode Cortex agents.
    App-scoped via ExtraHeadHTML. */
 .ui-agent-topbar {
@@ -922,11 +922,11 @@ const dashboardBarCSS = `<style>
   padding: 0.3rem 0.7rem;
 }
 .ui-agent-extras-slot { order: 1; flex: 0 1 auto; }
-/* The actions row (and the ⋯ overflow in it) is NOT a direct child of the
+/* The actions row is NOT a direct child of the
    topbar: it sits inside an unclassed wrapper the panel builds for the top
    span, and the order property only ranks siblings. So the rule below aimed at
    .ui-agent-actions never competed with the extras slot, and the bar came out
-   with the ⋯ first. Ordering the wrapper is what actually moves it. */
+   with the actions first. Ordering the wrapper is what actually moves it. */
 .ui-agent-topbar > div:not(.ui-agent-extras-slot) { order: 2; }
 .ui-agent-actions {
   flex: 0 1 auto;

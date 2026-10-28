@@ -1276,9 +1276,6 @@
         if (navigator.clipboard) navigator.clipboard.writeText(t);
         showToast('Copied');
       }}, ['Copy']));
-      bar.appendChild(el('button', {class: 'ui-chat-act', title: 'Drop this reply and re-run from the prior user message', onclick: function() {
-        retryFromMessage(msgEl);
-      }}, ['Retry']));
       msgEl.appendChild(bar);
       // Fire the SHARED message-decorator registry so app-side affordances
       // (e.g. the workbench's "Add to document" co-author button) attach to
@@ -1296,29 +1293,6 @@
           });
         } catch (_) {}
       }
-    }
-
-    // Walk back from msgEl to the most recent user message, drop everything
-    // after it, then re-send that user text. Useful when an assistant reply
-    // missed the mark and you want a fresh try.
-    function retryFromMessage(msgEl) {
-      // Find the user message immediately before this assistant turn.
-      var prev = msgEl.previousElementSibling;
-      while (prev && !(prev.classList && prev.classList.contains('ui-chat-msg') && prev.dataset.role === 'user')) {
-        prev = prev.previousElementSibling;
-      }
-      if (!prev) { showToast('No prior user message to retry'); return; }
-      var userText = prev.dataset.raw || prev.querySelector('.ui-chat-msg-body').textContent;
-      // Remove everything from prev (inclusive) onward in the DOM.
-      var n = prev;
-      while (n) { var next = n.nextElementSibling; n.remove(); n = next; }
-      // Trim history back to before that user turn.
-      while (history.length > 0 && !(history[history.length-1].role === 'user' && history[history.length-1].content === userText)) {
-        history.pop();
-      }
-      if (history.length > 0) history.pop(); // drop the matching user entry — doSend will re-add
-      input.value = userText;
-      doSend();
     }
 
     // Minimal markdown renderer for completed assistant messages.

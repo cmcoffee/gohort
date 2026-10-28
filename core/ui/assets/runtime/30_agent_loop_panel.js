@@ -1557,7 +1557,7 @@
     // into the action row can only ever be one row tall; a user-scoped queue
     // reads better spanning both, where it is plainly not part of either row.
     var topRows = el('div', {style: 'display:flex;flex-direction:column;flex:1;min-width:0'});
-    var topSpan = el('div', {style: 'display:flex;align-items:stretch;gap:0.4rem'});
+    var topSpan = el('div', {class: 'ui-agent-top-span', style: 'display:flex;align-items:stretch;gap:0.4rem'});
     topSpan.appendChild(topRows);
     topbar.appendChild(topSpan);
     var gridRow = el('div', {class: 'ui-agent-grid'});
@@ -2662,7 +2662,7 @@
     };
 
     // uiRegisterBubbleAction lets apps add buttons to the per-bubble
-    // action bar (Edit/Retry/Delete on user; Retry/Copy on assistant).
+    // action bar (Edit/Retry/Delete on user; Copy on assistant).
     // Each registered action gets appended after the built-ins. The
     // action object is { role, label, title?, danger?, onclick(ctx) }
     // where ctx = { bubble, getText(), button }: button is the pressed
@@ -3460,7 +3460,7 @@
         created: Date.now(),
       };
       // Action bar gets attached to every user AND assistant bubble.
-      // User: Edit / Delete / Retry. Assistant: Retry / Copy. Both
+      // User: Edit / Delete / Retry. Assistant: Copy / Copy turn. Both
       // show the timestamp on hover. Retry/Edit/Delete on a mid-
       // history bubble trigger a truncate-and-replay — matches
       // Claude's branch-on-edit semantics rather than blocking it.
@@ -3471,7 +3471,6 @@
       } else if (role === 'assistant') {
         // Copy is client-only and always available — attach for every
         // app, including ones without a truncate_url (e.g. servitor).
-        // Retry inside renderAssistantActions self-gates on truncate_url.
         attachAssistantActions(bubble);
       }
       return msgEls[id];
@@ -3708,11 +3707,11 @@
       renderUserActions(bubble);
     }
 
-    // attachAssistantActions adds Copy (always) + Retry (when the app
-    // supports truncate-and-replay) + a hover-only timestamp to an
-    // assistant bubble. Copy is client-only — it needs no server
-    // endpoint — so it renders for every app, including ones without a
-    // truncate_url (e.g. read-only or replay-immutable conversations).
+    // attachAssistantActions adds Copy and Copy turn + a hover-only
+    // timestamp to an assistant bubble. Both are client-only — they need no
+    // server endpoint — so they render for every app, including ones
+    // without a truncate_url (e.g. read-only or replay-immutable
+    // conversations).
     function attachAssistantActions(bubble) {
       var existing = bubble.querySelector(':scope > .ui-agent-msg-actions');
       if (existing) existing.remove();
@@ -3753,16 +3752,10 @@
       var tsEl = el('span', {class: 'ui-agent-msg-timestamp'},
         [ts && ts.created ? formatTimestamp(ts.created) : '']);
       bar.appendChild(tsEl);
-      // Retry / Copy pack LEFT right after the timestamp — no spacer.
-      // Retry needs truncate-and-replay, so it's gated on truncate_url;
-      // Copy is client-only and always available.
-      if (cfg.truncate_url) {
-        bar.appendChild(el('button', {
-          class: 'ui-agent-msg-act',
-          title: 'Regenerate this response (re-runs the previous user message)',
-          onclick: function(){ retryAssistantMessage(bubble); },
-        }, ['Retry']));
-      }
+      // Copy packs LEFT right after the timestamp — no spacer. No Retry
+      // here: a retry re-sends a message, and the message is the user's, so
+      // Retry lives on the user's bubble; a second one on every reply was the
+      // same action twice.
       // Two copies, because they are wanted for different things. Copy is the
       // one you reach for constantly — take this answer somewhere else — and it
       // takes the text and nothing else. Copy turn is the one you reach for when
@@ -3832,23 +3825,6 @@
         return;
       }
       commitUserEdit(bubble, raw).catch(failed);
-    }
-
-    // retryAssistantMessage finds the user bubble that preceded this
-    // assistant and re-fires it. The framework already truncates +
-    // resends via commitUserEdit, which drops this assistant + every
-    // later bubble before sending — exactly the "regenerate" UX.
-    function retryAssistantMessage(bubble) {
-      if (!activeSessionId) return;
-      var prev = bubble.previousElementSibling;
-      while (prev && !prev.classList.contains('ui-agent-msg-user')) {
-        prev = prev.previousElementSibling;
-      }
-      if (!prev) {
-        window.uiAlert('No prior user message to retry from.');
-        return;
-      }
-      retryUserMessage(prev);
     }
 
     // writeClipboard is the one clipboard path both copy buttons use: the
@@ -4580,7 +4556,7 @@
       if (!msgEl || !msgEl.tools) return;
       var count = msgEl.tools.length;
       var label = '🔧 ' + count + ' tool' + (count === 1 ? '' : 's');
-      // Toggle button lives in the action bar (right of Retry/Copy)
+      // Toggle button lives in the action bar (right of Copy)
       // so it sits with the other hover-revealed meta controls. The
       // expansion panel still drops INTO the bubble (between body
       // and action bar) so when opened the tool list expands inline
@@ -4875,7 +4851,7 @@
       var existing = m.bubble.querySelector(':scope > .ui-agent-stats');
       if (existing) existing.remove();
       var footer = el('div', {class: 'ui-agent-stats'}, parts);
-      // Place stats ABOVE the action bar (Retry/Copy/timestamp).
+      // Place stats ABOVE the action bar (Copy/timestamp).
       // The bar lives at the bottom of the bubble container, so we
       // insert stats before it when present.
       var bar = m.bubble.querySelector(':scope > .ui-agent-msg-actions');
