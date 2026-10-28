@@ -110,7 +110,7 @@ You tell the Builder agent:
 
 It drafts an API credential for the status endpoint, authors a poll connector that checks it on a schedule, wires the result to a channel agent that speaks to your team's messaging service, and asks your admin for one approval, where the secret is pasted in. No code, no flow editor, no key pasted into a chat, and the model that assembled it cannot read the key.
 
-![An agent turn: the reply alongside the tool calls that produced it](docs/images/agent-turn-2026-10-18.png)
+![An agent turn: the reply alongside the tool calls that produced it](docs/images/agent-turn-2026-10-28.png)
 
 ## The primitives
 
