@@ -364,21 +364,28 @@ const dictationJS = `(function(){
     tone(false);
     if (timer) { clearInterval(timer); timer = null; }
     if (cutoff) { clearTimeout(cutoff); cutoff = null; }
+    writing(ctx);
     var r = rec;
     r.stop();
     if (stream) { stream.getTracks().forEach(function(t) { t.stop(); }); stream = null; }
   }
 
+  // writing spins the button while a recording is written out, from the
+  // moment it stops: the browser hands the audio over a beat after, and the
+  // recording clock frozen until then read as Stop not having worked.
+  function writing(ctx) {
+    var from = Date.now(), frame = 0;
+    show(ctx, frames.charAt(0), 'Writing it out. Press to cancel');
+    timer = setInterval(function() {
+      var secs = Math.round((Date.now() - from) / 1000);
+      ctx.button.textContent = frames.charAt(frame++ % frames.length) + (secs >= 3 ? ' ' + secs + 's' : '');
+    }, 100);
+  }
+
   function transcribe(ctx, blob, secs) {
     state = 'sending';
     ctl = new AbortController();
-    started = Date.now();
-    var frame = 0;
-    show(ctx, frames.charAt(0), 'Writing it out. Press to cancel');
-    timer = setInterval(function() {
-      var secs = Math.round((Date.now() - started) / 1000);
-      ctx.button.textContent = frames.charAt(frame++ % frames.length) + (secs >= 3 ? ' ' + secs + 's' : '');
-    }, 100);
+    if (!timer) writing(ctx);
     fetch('` + DictatePath + `', {method: 'POST', headers: {'Content-Type': blob.type || 'audio/webm'}, body: blob, signal: ctl.signal})
       .then(function(r) {
         if (!r.ok) return r.text().then(function(t) { var e = new Error(t || ('HTTP ' + r.status)); e.status = r.status; throw e; });

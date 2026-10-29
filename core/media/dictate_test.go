@@ -149,10 +149,17 @@ window.navigator = navigator;
 var recorders = [];
 global.MediaRecorder = function(s) { this.mimeType = 'audio/webm;codecs=opus'; recorders.push(this); };
 MediaRecorder.prototype.start = function() { this.started = true; };
+// A real browser hands the audio over a beat after stop; with lateStop set
+// the fake holds it until handOver() is called.
+var lateStop = false, handOver = null;
 MediaRecorder.prototype.stop = function() {
   this.stopped = true;
-  this.ondataavailable({data: new Blob(['sound'], {type: 'audio/webm'})});
-  this.onstop();
+  var r = this;
+  var hand = function() {
+    r.ondataavailable({data: new Blob(['sound'], {type: 'audio/webm'})});
+    r.onstop();
+  };
+  if (lateStop) handOver = hand; else hand();
 };
 var played = [];
 global.Audio = function() { this.src = ''; };
@@ -371,6 +378,16 @@ const dictationFlow = `
   fire('ui-agent-sent');
   check('a message going out during a resend stops it and lets it go', pending[17].opts.signal.aborted && mic.button.textContent === '🎤' && discard.button.style.display === 'none');
   fire('ui-agent-sent');
+  lateStop = true;
+  mic.onclick(mic); await sleep(10);
+  var sent = pending.length;
+  mic.onclick(mic);
+  check('Stop spins at once, before the browser hands the audio over', /^[⠀-⣿]/.test(mic.button.textContent) && pending.length === sent);
+  handOver(); await sleep(10);
+  check('and sends it once it does', pending.length === sent + 1 && /^[⠀-⣿]/.test(mic.button.textContent));
+  pending[sent].res(written('ok'));
+  await sleep(10);
+  lateStop = false;
   micDenied = true;
   mic.onclick(mic); await sleep(10);
   check('a refused microphone says so', mic.button.textContent === '⚠' && mic.button.title.indexOf('not allowed') >= 0);
