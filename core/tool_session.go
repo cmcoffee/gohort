@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -622,6 +623,27 @@ func (s *ToolSession) StagedFiles() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return slices.Clone(s.stagedFiles)
+}
+
+// StagedPaths is StagedFiles as absolute paths: a name relative to the
+// session's folder resolved against it (one that would leave it is dropped),
+// an absolute one as it is. For handing what a run made to a session with a
+// different folder, or none.
+func (s *ToolSession) StagedPaths() []string {
+	var out []string
+	for _, n := range s.StagedFiles() {
+		if filepath.IsAbs(n) {
+			out = append(out, n)
+			continue
+		}
+		if s.WorkspaceDir == "" {
+			continue
+		}
+		if p, err := ResolveWorkspacePath(s.WorkspaceDir, n); err == nil {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // HoldImage keeps a finished picture (base64) back from delivery, for a pass

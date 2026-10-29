@@ -1211,6 +1211,7 @@ func (fr *fireRun) reportable() bool {
 		fr.record(RunOK, "(a held step: the next pass started)", fr.reply, "")
 		return fr.exit(nil)
 	}
+	fr.recoverClaimedDelivery()
 	if fr.reply == "" {
 		Log("[orchestrate/scheduled] agent=%s session=%s fire %d produced no reply, skipping append", fr.agentLabel, p.SessionID, p.FireCount+1)
 		fr.record(RunOK, "(no output: nothing to post this cycle)", "", "")
@@ -1352,6 +1353,36 @@ func (fr *fireRun) sendHeldIfStalled() bool {
 		fr.reply = "Here is where the picture got to."
 	}
 	return false
+}
+
+// recoverClaimedDelivery ships the file a fire's reply says it sent when
+// nothing was attached: the backstop the web turn and the dispatch path
+// already run (recoverStagedDeliverable), which a fire went without. Live, a
+// background song finished, the turn its result woke said "Attached." with
+// nothing attached, and the song never went: the file was on disk, and the
+// claim was the model's own signal that it was meant to go.
+func (fr *fireRun) recoverClaimedDelivery() {
+	s := fr.subSess
+	if s == nil || len(s.Images)+len(s.Videos)+len(s.Files) > 0 {
+		return
+	}
+	staged := recoverStagedDeliverable(s, fr.reply, turnProducedDeliverable(fr.toolTrace))
+	if staged == "" {
+		return
+	}
+	b64s := resolveWorkspaceImages(s, []string{staged})
+	if len(b64s) == 0 {
+		return
+	}
+	Log("[orchestrate/scheduled] agent=%s session=%s: reply claimed a delivery but attached nothing: backstop attaching staged %q", fr.agentLabel, fr.p.SessionID, staged)
+	for _, b := range b64s {
+		if isVideoAttachment(staged) {
+			s.AppendVideo(b)
+		} else {
+			s.AppendImage(b)
+		}
+	}
+	fr.carriedAttachments += len(b64s)
 }
 
 func (fr *fireRun) composeDetail() {

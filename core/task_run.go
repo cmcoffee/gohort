@@ -236,6 +236,14 @@ type TaskProduct struct {
 	// to send and the call builds on, kept back from that turn. Superseded by
 	// what the call makes; sent in its place when the call fails.
 	Carried []string
+
+	// Made are the files the work wrote into its folder, as absolute paths
+	// (ToolSession.StagedPaths). The turn the result wakes takes them as its
+	// own work, so it can attach them as what it just made. A tool that saves
+	// its result rather than attaching it (a song generator) otherwise left
+	// the turn announcing the result with nothing to send and no record that
+	// anything was made, once it ran long enough to go to the background.
+	Made []string
 }
 
 // HeldStepMarker opens the instruction a held step's result carries, so the

@@ -206,6 +206,7 @@ func WrapDetachable(p DetachPolicy, sess *ToolSession, inline ToolHandlerFunc) T
 				Held:         held,
 				Inputs:       inputs,
 				Carried:      carried,
+				Made:         detached.StagedPaths(),
 			}, rerr
 		})
 		if err != nil {

@@ -963,6 +963,10 @@ func AttachWorkspaceFile(sess *ToolSession, relPath, displayName string, cleanup
 		displayName, mime, humanSize(info.Size()), channel, suffix, staleAttachWarning(sess, relPath, info)), nil
 }
 
+// staleAttachAge is how old a file attached on a turn that made nothing has
+// to be before the attach says its age.
+const staleAttachAge = 10 * time.Minute
+
 // staleAttachWarning names a file that this turn did NOT produce.
 //
 // The workspace root is per user and shared by every session, agent and turn,
@@ -982,7 +986,15 @@ func staleAttachWarning(sess *ToolSession, relPath string, info os.FileInfo) str
 	}
 	staged := sess.StagedFiles()
 	if len(staged) == 0 {
-		return "" // nothing was produced this turn, so nothing is being confused with it
+		// Nothing made this turn, so nothing of this turn's to confuse it
+		// with. But something made a minute ago, by an agent this one ran or
+		// a task that finished, is easily taken for it: "send the attachment"
+		// went out as a song nine days old under the new song's name. So an
+		// old file still says how old it is.
+		if age := time.Since(info.ModTime()); age > staleAttachAge {
+			return fmt.Sprintf(" NOTE: this file was last written %s ago, and nothing was made this turn. If the person asked for something just made, this is not it: say so rather than send it as new.", humanAge(age))
+		}
+		return ""
 	}
 	base := filepath.Base(relPath)
 	for _, name := range staged {

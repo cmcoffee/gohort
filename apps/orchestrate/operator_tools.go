@@ -269,7 +269,7 @@ func replyClaimsAttachment(reply string) bool {
 		return false
 	}
 	r := strings.ToLower(reply)
-	for _, noun := range []string{"photo", "picture", " pic", "image", "shot", "meme", "gif", "screenshot", "attachment", "file", "pdf", "doc", "video", "clip"} {
+	for _, noun := range []string{"photo", "picture", " pic", "image", "shot", "meme", "gif", "screenshot", "attachment", "file", "pdf", "doc", "video", "clip", "song", "track", "mp3", "audio", "recording"} {
 		if strings.Contains(r, noun) {
 			return true
 		}
@@ -434,7 +434,10 @@ func isDeliverableFile(name string) bool {
 	case ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".pdf", ".docx", ".mp4", ".mov", ".webm", ".m4v":
 		return true
 	}
-	return false
+	// A song is something made to be sent, as a picture is: without this a
+	// reply saying "here's the track" with nothing attached was never given
+	// the track it had just saved.
+	return media.IsAudioFileName(name)
 }
 
 // isVideoAttachment classifies a workspace file path as a video or audio file

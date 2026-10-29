@@ -8,6 +8,9 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -518,5 +521,78 @@ func TestTheSpokenMarkFollowsTheWork(t *testing.T) {
 	fr.buildSession()
 	if s := fr.subSess; !s.SpokenReply || s.ChannelChatID != "chat-1" || s.ChannelHandle != "+15550100" {
 		t.Errorf("the result's turn should pass on how and where it was asked: %+v", s)
+	}
+}
+
+// A background task that SAVED its result (a song generator writes its mp3,
+// it does not attach it) hands the file to the turn its result wakes. Live,
+// the turn announcing a finished song had nothing to send and no record that
+// anything was made: it said "Attached." with no file, and the agent asked
+// next sent an older song from its own folder under the same name. Here the
+// agent's folder holds that older generated_music.mp3 and the new one was
+// written in the folder of the agent that made it:
+//   - the wake note names the saved file and says it is not attached yet;
+//   - claiming the wake copies it in under a free name, as this turn's own,
+//     which is what makes workspace attach refuse the older file under the
+//     original name (TestAnOlderFileWithARenamedCopyThisTurnIsRefused);
+//   - a reply claiming it sent the song, with nothing attached, gets the new
+//     song from the backstop, audio included.
+func TestABackgroundTasksSavedFileIsTheWakeTurnsOwn(t *testing.T) {
+	mine, theirs := t.TempDir(), t.TempDir()
+	os.WriteFile(filepath.Join(mine, "generated_music.mp3"), []byte("the old song"), 0o644)
+	old := time.Now().Add(-9 * 24 * time.Hour)
+	os.Chtimes(filepath.Join(mine, "generated_music.mp3"), old, old)
+	made := filepath.Join(theirs, "generated_music.mp3")
+	os.WriteFile(made, []byte("the new song"), 0o644)
+	os.WriteFile(filepath.Join(theirs, "mapi_scratch.json"), []byte("{}"), 0o644)
+
+	const session = "sess-made-1"
+	note := buildWakeNote(session, "agents run: Lyric & Music Generator", TaskProduct{
+		Text: "Done: the country rock version, saved as generated_music.mp3.",
+		Made: []string{made, filepath.Join(theirs, "mapi_scratch.json")},
+	}, nil)
+	if !strings.Contains(note.prompt, "It saved generated_music.mp3") || strings.Contains(note.prompt, "mapi_scratch") {
+		t.Errorf("the note names the saved song and not the scratch file:\n%s", note.prompt)
+	}
+	if !hasStagedAttachments(session) {
+		t.Fatal("a saved song is staged for the wake")
+	}
+	sess := &ToolSession{Username: "u", WorkspaceDir: mine}
+	claimTaskAttachments(session, sess)
+	if got := sess.StagedFiles(); !slices.Contains(got, "generated_music-2.mp3") || slices.Contains(got, "generated_music.mp3") {
+		t.Fatalf("the new song is this turn's own under a free name, and the old one is not: %q", got)
+	}
+	if b, _ := os.ReadFile(filepath.Join(mine, "generated_music-2.mp3")); string(b) != "the new song" {
+		t.Errorf("the copy is the new song: %q", b)
+	}
+	if got := recoverStagedDeliverable(sess, "Here's the track, attached.", false); got != "generated_music-2.mp3" {
+		t.Errorf("the backstop finds the new song for a reply that claims it: %q", got)
+	}
+	// And the turn the wake runs (a fire) ships it: the reply claimed it,
+	// nothing was attached.
+	fr := &fireRun{subSess: sess, reply: "Here's the track, attached.", agentLabel: "music"}
+	fr.recoverClaimedDelivery()
+	if len(sess.Videos) != 1 || fr.carriedAttachments != 1 {
+		t.Errorf("the song goes out with the reply, on the file channel: %d videos, %d images", len(sess.Videos), len(sess.Images))
+	}
+	if b, _ := base64.StdEncoding.DecodeString(sess.Videos[0]); string(b) != "the new song" {
+		t.Errorf("the song sent is the new one: %q", b)
+	}
+}
+
+// A file the task wrote in the turn's own folder is recorded by its name
+// there, not copied.
+func TestABackgroundTasksFileInTheSameFolderIsNotCopied(t *testing.T) {
+	dir := t.TempDir()
+	made := filepath.Join(dir, "render.png")
+	os.WriteFile(made, []byte("png"), 0o644)
+	stageTaskAttachments("sess-made-2", TaskProduct{Made: []string{made}})
+	sess := &ToolSession{Username: "u", WorkspaceDir: dir}
+	claimTaskAttachments("sess-made-2", sess)
+	if got := sess.StagedFiles(); len(got) != 1 || got[0] != "render.png" {
+		t.Errorf("staged %q", got)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 1 {
+		t.Errorf("nothing is copied within one folder: %d files", len(entries))
 	}
 }

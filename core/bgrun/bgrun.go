@@ -478,6 +478,10 @@ func (b BackgroundRun) Start(sess *ToolSession) (string, error) {
 					Images: work.ClaimUnflushedImages(),
 					Videos: work.ClaimUnflushedVideos(),
 					Files:  work.ClaimUnflushedFiles(),
+					// What it wrote: handOver gives the turn these when the
+					// run ends inline, and the turn this one wakes needs them
+					// just the same.
+					Made: work.StagedPaths(),
 				}, r.err
 			case <-tick.C:
 				ReportTaskProgress(taskCtx, act.Summary())

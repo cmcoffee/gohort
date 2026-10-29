@@ -70,11 +70,16 @@ func TestAttachingThisTurnsOwnOutputIsQuiet(t *testing.T) {
 	}
 }
 
-// A turn that produced nothing is not confusing anything with anything — the
-// user asking for a file they put there themselves must not be second-guessed.
-func TestAttachingWithNothingStagedIsQuiet(t *testing.T) {
+// A turn that produced nothing has nothing of its own to confuse a file with,
+// so it is not told the file is not its work, and it is attached: the user
+// asking for a file they put there themselves is an ordinary request. But an
+// old file says how old it is, because something made a minute ago elsewhere
+// (by an agent this one ran) is easily taken for it: "send the attachment"
+// sent a nine-day-old song under the new one's name. A recent file is quiet.
+func TestAttachingWithNothingStagedSaysOnlyItsAge(t *testing.T) {
 	dir := t.TempDir()
 	writeWorkspaceFile(t, dir, "report.pdf", 48*time.Hour)
+	writeWorkspaceFile(t, dir, "fresh.pdf", time.Minute)
 	sess := &ToolSession{Username: "alice", WorkspaceDir: dir}
 
 	out, err := AttachWorkspaceFile(sess, "report.pdf", "", false)
@@ -82,7 +87,16 @@ func TestAttachingWithNothingStagedIsQuiet(t *testing.T) {
 		t.Fatalf("attach: %v", err)
 	}
 	if strings.Contains(out, "NOT one your tools produced") {
-		t.Errorf("nothing was made this turn, so there is nothing to warn about:\n%s", out)
+		t.Errorf("nothing was made this turn, so it is not told the file is not its work:\n%s", out)
+	}
+	if !strings.Contains(out, "last written 2 days ago") {
+		t.Errorf("an old file says how old it is:\n%s", out)
+	}
+	if out, _ := AttachWorkspaceFile(sess, "fresh.pdf", "", false); strings.Contains(out, "NOTE") {
+		t.Errorf("a recent file attaches quietly:\n%s", out)
+	}
+	if len(sess.Images)+len(sess.Files) != 2 {
+		t.Error("both are attached: a note, never a refusal")
 	}
 }
 

@@ -16,6 +16,8 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -246,6 +248,12 @@ func buildWakeNote(sessionID, label string, out TaskProduct, taskErr error) wake
 		if n := stageTaskAttachments(sessionID, out); n > 0 {
 			fmt.Fprintf(&fact, "The %d file(s) it produced are ATTACHED to the message you are about to send: they go out with it automatically. Do not attach them again and do not describe how to find them.\n", n)
 		}
+		// What it saved rather than attached (a song, a render written to
+		// disk): named, and made this turn's own when the turn claims them
+		// (claimTaskAttachments), so attaching one sends what was just made.
+		if made := deliverableNames(out.Made); len(made) > 0 {
+			fmt.Fprintf(&fact, "It saved %s in your working folder; that is the result, and it is not attached yet. Attach what this request was for: an older file of a similar name is not it.\n", strings.Join(made, ", "))
+		}
 		// More of this work to do. It joins the ACT half deliberately: the
 		// count and the order belong to this one turn, and an instruction to
 		// "start the next one" left in the thread is one a later turn can read
@@ -434,6 +442,9 @@ type stagedTaskMedia struct {
 	// folded into the turn, and sent only if that turn starts nothing more
 	// (claimHeldImages).
 	held []string
+	// made are the files the task wrote, as absolute paths (TaskProduct.Made),
+	// for the claiming turn to take as its own.
+	made []string
 }
 
 var (
@@ -451,7 +462,7 @@ const stagedMediaTTL = 30 * time.Minute
 // their notes coalesce into one turn, so their files have to as well.
 func stageTaskAttachments(sessionID string, out TaskProduct) int {
 	n := len(out.Images) + len(out.Videos) + len(out.Files)
-	if n == 0 || strings.TrimSpace(sessionID) == "" {
+	if (n == 0 && len(deliverableNames(out.Made)) == 0) || strings.TrimSpace(sessionID) == "" {
 		return 0
 	}
 	stagedMediaMu.Lock()
@@ -466,7 +477,20 @@ func stageTaskAttachments(sessionID string, out TaskProduct) int {
 	s.images = append(s.images, out.Images...)
 	s.videos = append(s.videos, out.Videos...)
 	s.files = append(s.files, out.Files...)
+	s.made = append(s.made, out.Made...)
 	return n
+}
+
+// deliverableNames are the base names of the files among paths that are made
+// to be sent (isDeliverableFile): a scratch file a tool also wrote is not.
+func deliverableNames(paths []string) []string {
+	var out []string
+	for _, p := range paths {
+		if name := filepath.Base(p); isDeliverableFile(name) && !strings.HasPrefix(name, "_") {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // stageHeldImages keeps a held step's pictures for the session's next wake.
@@ -538,7 +562,37 @@ func claimTaskAttachments(sessionID string, sess *ToolSession) int {
 	for _, f := range s.files {
 		sess.AppendFile(f)
 	}
+	adoptMadeFiles(sess, s.made)
 	return len(s.images) + len(s.videos) + len(s.files)
+}
+
+// adoptMadeFiles makes the files a finished task wrote this turn's own work:
+// offered to attach as what was just made, found by the backstop when the
+// reply says it sent one and attached nothing, and refused when the agent
+// reaches for an older file of the same name instead (workspace attach). A
+// file already in the turn's folder is recorded by its name there; one
+// written somewhere else (the folder of an agent this one ran) is copied in,
+// under the next free name when the name is taken, which is the case that
+// sent an old song in place of a new one.
+func adoptMadeFiles(sess *ToolSession, made []string) {
+	dir := filepath.Clean(sess.WorkspaceDir)
+	if strings.TrimSpace(sess.WorkspaceDir) == "" || len(made) == 0 {
+		return
+	}
+	var elsewhere []string
+	for _, p := range made {
+		if _, err := os.Stat(p); err != nil {
+			continue // removed since (an attach with cleanup)
+		}
+		if rel, err := filepath.Rel(dir, p); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			sess.AddStagedFiles([]string{filepath.ToSlash(rel)})
+			continue
+		}
+		elsewhere = append(elsewhere, p)
+	}
+	if len(elsewhere) > 0 {
+		handBackFiles("the background task", elsewhere, sess)
+	}
 }
 
 func sweepStagedMediaLocked() {

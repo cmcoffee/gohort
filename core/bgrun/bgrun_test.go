@@ -404,3 +404,34 @@ func TestPsWorkFindsTheProcess(t *testing.T) {
 		t.Error("ps did not report this process")
 	}
 }
+
+// A run that saves its result rather than attaching it (a song generator)
+// hands back what it wrote when it finishes in the background, as absolute
+// paths: the turn that started it has ended, and the turn its result wakes
+// has to know the file was made to send it.
+func TestABackgroundRunHandsBackWhatItWrote(t *testing.T) {
+	setTuneForTest(t, map[string]float64{"tune_tool_detach_after": 0.1, "tune_tool_idle_limit": 60})
+	host := installFakeTaskHost(t)
+	dir := t.TempDir()
+	turnCtx, endTurn := context.WithCancel(context.Background())
+	sess := turnSession(turnCtx)
+	sess.WorkspaceDir = dir
+	if _, err := (BackgroundRun{Tool: "generate_music", Run: func(work *ToolSession) (string, error) {
+		time.Sleep(400 * time.Millisecond)
+		os.WriteFile(filepath.Join(work.WorkspaceDir, "song.mp3"), []byte("ID3"), 0o644)
+		work.AddStagedFiles([]string{"song.mp3"})
+		return "saved song.mp3", nil
+	}}).Start(sess); err != nil {
+		t.Fatal(err)
+	}
+	endTurn()
+	var got TaskProduct
+	select {
+	case got = <-host.delivered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the background run never delivered")
+	}
+	if want := filepath.Join(dir, "song.mp3"); len(got.Made) != 1 || got.Made[0] != want {
+		t.Errorf("Made = %q, want [%q]", got.Made, want)
+	}
+}

@@ -74,22 +74,7 @@ var handBackFileLimit int64 = 200 << 20
 // records the names relative to its folder; a collecting session (the sink a
 // delegation hands its media to) is given absolute ones (returnMadeFiles), as
 // it has no folder of its own.
-func madeFiles(s *ToolSession) []string {
-	var out []string
-	for _, n := range s.StagedFiles() {
-		if filepath.IsAbs(n) {
-			out = append(out, n)
-			continue
-		}
-		if s.WorkspaceDir == "" {
-			continue
-		}
-		if p, err := ResolveWorkspacePath(s.WorkspaceDir, n); err == nil {
-			out = append(out, p)
-		}
-	}
-	return out
-}
+func madeFiles(s *ToolSession) []string { return s.StagedPaths() }
 
 // returnMadeFiles records what run's tools created on sink, the session
 // collecting what a delegation hands back, by absolute path.
