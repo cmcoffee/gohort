@@ -48,6 +48,7 @@ function node(cls) {
 function el(tag, attrs) { return node(attrs && attrs.class); }
 
 var msgEls = {};
+eval(lift(panel, 'function markTextless(bubble)', 'markTextless'));
 eval(lift(panel, 'function markEmptyBubble(m)', 'markEmptyBubble'));
 eval(lift(panel, 'function labelMessage(id, label)', 'labelMessage'));
 

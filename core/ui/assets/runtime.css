@@ -5312,6 +5312,13 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
  * why): the label is the message, so the empty card under it is dropped, and
  * the label wraps as a sentence, since a reason on one uppercase line ran
  * past a phone's edge. */
+/* A shown bubble with no text of its own (it carries tool pills, a delivery
+   or a label) is never drawn as an empty card: the body that draws the card
+   is hidden, and the tools button stays in view since it is all there is.
+   Copy and the rest have nothing to act on here. See markTextless. */
+.ui-agent-msg-textless > .ui-agent-msg-body { display: none; }
+.ui-agent-msg-textless > .ui-agent-msg-actions { opacity: 1; margin-top: 0; }
+.ui-agent-msg-textless > .ui-agent-msg-actions > :not(.ui-agent-tools-toggle) { display: none; }
 .ui-agent-msg-label-only > .ui-agent-msg-body { display: none; }
 .ui-agent-msg-label-only > .ui-agent-msg-label {
   width: auto; max-width: 100%;

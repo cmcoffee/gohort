@@ -161,6 +161,41 @@ func TestAQuestionTurnIsLeftAlone(t *testing.T) {
 	}
 }
 
+// Held text goes back where it was written. The live export: an approval
+// card came between the held round and the final reply, the held bubble was
+// left open and blank, the final reply streamed into it ABOVE the card, and
+// the restore added a new bubble UNDER everything, so the screen showed the
+// reply first and the saved transcript showed it second. Holding now closes the
+// bubble and frees the next round to open its own; restoring refills that
+// bubble, with no new one and no stats footer.
+func TestWithheldProseIsRestoredWhereItWasWritten(t *testing.T) {
+	held := strings.Repeat("what I did and why. ", 55)
+	pr, buf := withheldFixture("", "")
+	pr.streamMsgID = "orch-held"
+
+	pr.withholdLeadIn("orch-held", held)
+	got := buf.String()
+	if !strings.Contains(got, `"kind":"chunk_replace"`) || !strings.Contains(got, `"kind":"message_done"`) {
+		t.Fatalf("holding should blank and close the bubble:\n%s", got)
+	}
+	if pr.streamMsgID != "" || pr.withheldID != "orch-held" || pr.withheldLeadIn != held {
+		t.Fatalf("the next round must open its own bubble, and the held text keep its place: stream=%q id=%q", pr.streamMsgID, pr.withheldID)
+	}
+
+	before := len(buf.String())
+	pr.restoreWithheldLeadIn("", "It's in.")
+	restored := buf.String()[before:]
+	if !strings.Contains(restored, `"id":"orch-held"`) || !strings.Contains(restored, "what I did and why") {
+		t.Fatalf("the held text should refill its own bubble:\n%s", restored)
+	}
+	if strings.Contains(restored, `"kind":"message"`) || strings.Contains(restored, `"kind":"stats"`) {
+		t.Errorf("no new bubble and no stats footer on a restore:\n%s", restored)
+	}
+	if pr.withheldID != "" {
+		t.Error("the held bubble must be released once restored")
+	}
+}
+
 // Nothing shown at all is the worst case and the clearest restore.
 func TestNothingShownRestores(t *testing.T) {
 	held := strings.Repeat("what I did and why. ", 55)

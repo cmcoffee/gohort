@@ -85,7 +85,9 @@ type planRun struct {
 	capturedReply     string
 	// withheldLeadIn is prose a tool round streamed and the length guard took
 	// back, kept so the turn can put it back if the guard's bet does not pay.
+	// withheldID is the bubble it was taken from, where it goes back.
 	withheldLeadIn string
+	withheldID     string
 
 	// plan_set fixation guard: a Qwen failure mode is re-submitting a
 	// rejected (single-step / vacuous) plan_set round after round, ignoring
@@ -1351,14 +1353,7 @@ func (pr *planRun) onStepHandler(info StepInfo) {
 		// tool is the delivery and the prose is the explanation that goes
 		// with it. Clearing it leaves a link with nothing said about it.
 		if len(cleaned) > leadInMaxLen && !isBuilderAgent(t.agent.ID) && !presentationOnlyRound(info.ToolCalls) && earlyAnswerActs(info.Tier, info.Model, cleaned) {
-			t.sse.Send(map[string]any{"kind": "chunk_replace", "id": id, "text": ""})
-			// Held, not dropped. The guard is betting the final round will say
-			// this again; restoreWithheldLeadIn collects if it does not.
-			pr.withheldLeadIn = cleaned
-			t.turnDiag("lead-in-withheld", fmt.Sprintf(
-				"%d characters the assistant wrote alongside a tool call were held back: prose that long before a tool is usually an answer written early and repeated at the end, which would show twice. It is restored after the reply if the final answer comes back much shorter.",
-				len(cleaned)))
-			pr.streamedBuf.Reset()
+			pr.withholdLeadIn(id, cleaned)
 			return
 		}
 		pr.paintHeldBubble(id, cleaned) // held stream: paint the (now-cleared) lead-in
@@ -1587,9 +1582,36 @@ func presentationOnlyRound(calls []ToolCall) bool {
 // The restored text lands after the short reply rather than in its original
 // place, which reads slightly out of order. That is the price of only knowing
 // the bet failed once the turn is over, and it beats the alternative.
+// withholdLeadIn takes back prose a tool round streamed that is long enough to
+// be an answer written early (the length guard in onStepHandler), and CLOSES
+// its bubble.
+//
+// Closed, not left open. Open, every later round streamed into it: the bubble
+// sat blank above whatever the turn showed next (an approval card, the next
+// tool's pills), and the final reply then filled it, ABOVE those, while a
+// restored lead-in went in under everything. The live order was the reverse of
+// the saved one. Closed, the bubble keeps only this round's tool pills (and
+// hides when it has none), the rounds after open below it, and a restore puts
+// the text back in it, where it was written.
+func (pr *planRun) withholdLeadIn(id, cleaned string) {
+	t := pr.t
+	t.sse.Send(map[string]any{"kind": "chunk_replace", "id": id, "text": ""})
+	t.sse.Send(map[string]any{"kind": "message_done", "id": id})
+	// Held, not dropped. The guard is betting the final round will say this
+	// again; restoreWithheldLeadIn collects if it does not.
+	pr.withheldLeadIn, pr.withheldID = cleaned, id
+	t.turnDiag("lead-in-withheld", fmt.Sprintf(
+		"%d characters the assistant wrote alongside a tool call were held back: prose that long before a tool is usually an answer written early and repeated at the end, which would show twice. It is restored where it was written if the final answer comes back much shorter.",
+		len(cleaned)))
+	pr.streamMsgID = ""
+	t.setCurrentMsgID("")
+	pr.streamedBuf.Reset()
+}
+
 func (pr *planRun) restoreWithheldLeadIn(question, shown string) {
 	held := strings.TrimSpace(pr.withheldLeadIn)
-	pr.withheldLeadIn = ""
+	id := pr.withheldID
+	pr.withheldLeadIn, pr.withheldID = "", ""
 	// A turn that ends by ASKING is not one whose answer went missing, and
 	// dropping a paragraph in after the question would talk over it.
 	if held == "" || strings.TrimSpace(question) != "" {
@@ -1604,9 +1626,19 @@ func (pr *planRun) restoreWithheldLeadIn(question, shown string) {
 	}
 	Log("[orchestrate.orch] restoring %d withheld character(s): the final reply came back at %d", len(held), len(visible))
 	pr.t.turnDiag("lead-in-restored", fmt.Sprintf(
-		"%d characters written alongside a tool call were held back, and the final reply came back at %d, so the held text was restored below it rather than lost.",
+		"%d characters written alongside a tool call were held back, and the final reply came back at %d, so the held text was restored where it was written rather than lost.",
 		len(held), len(visible)))
-	pr.emitBubble(held)
+	// Back into the bubble it was taken from, above what the turn showed
+	// after it: the order it was written in, and the order the saved
+	// transcript replays (captureMidTurnBubble files it ahead of the reply).
+	// A new bubble here landed under the final reply, so the screen and a
+	// reload disagreed. No stats on it: the footer belongs on the answer.
+	if id != "" {
+		pr.t.sse.Send(map[string]any{"kind": "chunk_replace", "id": id, "text": StripMetaTags(held)})
+		pr.t.sse.Send(map[string]any{"kind": "message_done", "id": id})
+	} else {
+		pr.emitBubble(held)
+	}
 	pr.t.captureMidTurnBubble(held)
 }
 

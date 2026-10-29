@@ -4385,7 +4385,19 @@
     // materialization for tool_call events) stays hidden until real
     // text streams.
     function unmarkEmptyBubble(m) {
-      if (m && m.bubble) m.bubble.classList.remove('ui-agent-msg-empty');
+      if (m && m.bubble) m.bubble.classList.remove('ui-agent-msg-empty', 'ui-agent-msg-textless');
+    }
+    // markTextless is the guard against an empty card: a bubble that is
+    // shown but has no text of its own (it carries tool pills, a delivery or
+    // a label) is drawn WITHOUT its body, which is what draws the card, and
+    // with its tools button in view, since that is all there is to see
+    // (.ui-agent-msg-textless). Every way a shown bubble can end up textless
+    // comes through here: text cleared under hosted pills (markEmptyBubble),
+    // a delivery arriving before any text (agentMsgAttachmentBox).
+    function markTextless(bubble) {
+      if (!bubble) return;
+      var body = bubble.querySelector(':scope > .ui-agent-msg-body');
+      bubble.classList.toggle('ui-agent-msg-textless', !(body && body.textContent.trim()));
     }
     // markEmptyBubble puts the class BACK when a bubble's text is
     // cleared after it had some. Only unmark existed, so the class was
@@ -4404,7 +4416,12 @@
       if (m.bubble.querySelector(':scope > .ui-agent-tools-panel, ' +
                                  ':scope > .ui-agent-tools-toggle, ' +
                                  ':scope > .ui-agent-msg-attachments, ' +
-                                 ':scope > .ui-agent-msg-label')) return;
+                                 ':scope > .ui-agent-msg-label')) {
+        // Kept for what it hosts, but never as an empty card: the
+        // blanked lead-in under its tool pill was exactly that.
+        markTextless(m.bubble);
+        return;
+      }
       m.bubble.classList.add('ui-agent-msg-empty');
     }
     // streamingText is what a bubble shows while its reply is still arriving.
@@ -4735,6 +4752,7 @@
     // bubble alone; this is the other half.
     function agentMsgAttachmentBox(bubble) {
       bubble.classList.remove('ui-agent-msg-empty');
+      markTextless(bubble); // a delivery before any text: no empty card above it
       var box = bubble.querySelector(':scope > .ui-agent-msg-attachments');
       if (!box) {
         box = el('div', {class: 'ui-agent-msg-attachments'});
