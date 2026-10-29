@@ -2509,6 +2509,72 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	return ac.ret, ac.retErr
 }
 
+// StreamRequest is a call through a credential whose reply the caller reads
+// as it arrives instead of having it collected: a git pack, far larger than
+// any reply a tool or script reads whole.
+type StreamRequest struct {
+	URL, Method string
+	Headers     map[string]string
+	Body        io.Reader // nil for none; a *bytes.Reader sends its length
+	Timeout     time.Duration
+}
+
+// OpenStream sends r through credName with every check a dispatch makes:
+// who may spend the key, the allow and deny lists, Private mode, the daily
+// cap, auth added last, the reply's secret redaction aside (a stream is
+// passed on, not shown). It hands back the live response; the caller reads
+// it and calls done with how many bytes it read, which closes it and records
+// the call in the credential's audit.
+func (s *SecureAPI) OpenStream(sess *ToolSession, credName string, r StreamRequest) (*http.Response, func(n int64), error) {
+	c, ok := s.ResolveIn(credName, sessUsername(sess), sessAgentID(sess))
+	if !ok {
+		return nil, nil, fmt.Errorf("credential %q not registered", credName)
+	}
+	args := map[string]any{"url": r.URL, "method": r.Method}
+	if h := toolCallHeaderArgs(r.Headers); h != nil {
+		args["request_headers"] = h
+	}
+	ac := &apiCall{s: s, c: c, args: args, sess: sess, stream: r.Body}
+	failed := func() error {
+		if ac.retErr != nil {
+			return ac.retErr
+		}
+		return fmt.Errorf("%s", strings.TrimSpace(ac.ret))
+	}
+	for _, phase := range []func() bool{ac.admit, ac.target, ac.allowed, ac.loadSecret, ac.online} {
+		if !phase() {
+			return nil, nil, failed()
+		}
+	}
+	var parent context.Context = context.Background()
+	if sess != nil {
+		parent = sess.Context()
+	}
+	baseCtx, releaseConn := ac.connector.DeriveCancelCtx(parent)
+	ac.callTimeout = r.Timeout
+	ctx, cancel := context.WithTimeout(baseCtx, r.Timeout)
+	ac.ctx = ctx
+	release := func() { cancel(); releaseConn() }
+	redactions := func() bool { ac.redactions(); return true } // a failure's message is redacted too
+	for _, phase := range []func() bool{ac.build, ac.authorize, redactions, ac.client, ac.send} {
+		if !phase() {
+			release()
+			return nil, nil, failed()
+		}
+	}
+	ac.dropRejectedToken()
+	resp := ac.resp
+	done := func(n int64) {
+		resp.Body.Close()
+		ac.auditEntry.Status = resp.StatusCode
+		ac.auditEntry.ResponseBytes = int(n)
+		s.recordAudit(ac.auditEntry)
+		s.touch(c.Name)
+		release()
+	}
+	return resp, done, nil
+}
+
 // apiCall is one call through a credential: the checks that decide whether
 // it may go, the request with the secret attached, and the reply the caller
 // reads. Each field is a local of the function it was cut from; dispatch is
@@ -2524,6 +2590,7 @@ type apiCall struct {
 	rawURL   string
 	method   string
 	body     string
+	stream   io.Reader // a streamed request's body (OpenStream), in place of body
 	saveTo   string
 	savePath string
 	parsed   *url.URL
@@ -2862,6 +2929,8 @@ func (ac *apiCall) build() bool {
 	switch {
 	case upload != nil:
 		bodyReader = upload.Reader // wrapped into a multipart stream below
+	case ac.stream != nil:
+		bodyReader = ac.stream
 	case ac.body != "":
 		bodyReader = bytes.NewReader([]byte(ac.body))
 	}

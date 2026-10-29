@@ -152,6 +152,7 @@ func (s seatbeltSandbox) build(ctx context.Context, run sandboxRun) *exec.Cmd {
 		Writable:     run.Writable,
 		AllowNetwork: run.AllowNetwork,
 		HookSocket:   run.Env["GOHORT_HOOK_PATH"],
+		RelayPort:    run.Env[RelayPort],
 	}
 	// The pipe and script shapes are pure data transformation: no workspace, no
 	// outbound. Mirrors bwrapPipeArgv / bwrapScriptArgv, which both pass
@@ -161,6 +162,7 @@ func (s seatbeltSandbox) build(ctx context.Context, run sandboxRun) *exec.Cmd {
 		spec.Writable = nil
 		spec.AllowNetwork = false
 		spec.HookSocket = ""
+		spec.RelayPort = ""
 	}
 	// Ensure* writes the helper package and the managed deps to their host
 	// locations and reports where they landed. Reads are open filesystem-wide,
@@ -208,6 +210,11 @@ type seatbeltSpec struct {
 	// ModuleNotFoundError: Python skips a path entry it cannot read.
 	Readable   []string
 	HookSocket string // unix socket the hook listens on, or ""
+	// RelayPort is the run's loopback relay port (relay.go), or "". The
+	// one localhost port a closed run may bind and connect to: macOS has no
+	// private loopback, so opening localhost wholesale would hand the
+	// command every service on the machine, gohort's own included.
+	RelayPort string
 	// No read-only path list. Reads are allowed filesystem-wide by
 	// construction (a subpath-scoped file-read* aborts the profile), so a
 	// field naming readable directories could only ever describe paths that
@@ -296,6 +303,16 @@ func seatbeltProfile(spec seatbeltSpec) string {
 		// socket connect is network-outbound in SBPL, so it needs naming even
 		// though nothing leaves the machine.
 		b.WriteString("(allow network-outbound " + sbLiteral(spec.HookSocket) + ")\n")
+		if port := spec.RelayPort; port != "" && strings.Trim(port, "0123456789") == "" {
+			// The relay: it binds and serves this port, and git or a proxy
+			// client in the run connects to it. That port only. An ip filter
+			// takes a bare string, not a (literal ...); the port is digits
+			// alone (checked above), so it needs no escaping.
+			addr := `"localhost:` + port + `"`
+			b.WriteString("(allow network-bind (local ip " + addr + "))\n")
+			b.WriteString("(allow network-inbound (local ip " + addr + "))\n")
+			b.WriteString("(allow network-outbound (remote ip " + addr + "))\n")
+		}
 	}
 	if spec.HookSocket != "" {
 		b.WriteString("(allow file-read* file-write* " + sbLiteral(spec.HookSocket) + ")\n")

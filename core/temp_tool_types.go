@@ -401,7 +401,8 @@ type TempTool struct {
 	// JOINED with the host's (no --unshare-net). The default is
 	// false: shell-mode + persistent-mode tools run with the network
 	// namespace cut, so a script that does urllib.request /
-	// socket.connect / curl from inside the sandbox fails. Such
+	// socket.connect from inside the sandbox fails (curl and wget are
+	// the sandbox's stand-ins, which go through the hook). Such
 	// tools must declare hook_capabilities=["fetch"] and call
 	// gohort.fetch(...) instead — gohort proxies HTTP on their
 	// behalf with auditing.

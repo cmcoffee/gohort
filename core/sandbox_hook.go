@@ -27,8 +27,11 @@ package core
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -74,6 +77,20 @@ type SandboxHook struct {
 	SocketPath   string
 	Capabilities []string
 	Sess         *ToolSession
+	// RelayPort and RelayToken are this run's loopback relay (relay.go in
+	// core/sandbox): the port the in-sandbox forwarder listens on, chosen
+	// free on this host because on macOS the sandbox shares the host's
+	// loopback, and the secret a request through it must carry, because
+	// anything else on that loopback could otherwise use it. RunEnv hands
+	// both to the command.
+	RelayPort  int
+	RelayToken string
+	// relayNotes are what the relay has to say to the command that used it
+	// (a refusal, a sign-in to add, a reply cut at the cap), read once by
+	// relay_notes: the git stand-in prints them after git, which shows a
+	// failed request only as its status code.
+	relayNotesMu sync.Mutex
+	relayNotes   []string
 	// ToolName identifies the temp tool this hook serves, for secured-credential
 	// binding enforcement on fetch_via (see EnforceSecuredBinding). Empty for
 	// unnamed callers (run_local / persistent shell), which aren't binding-gated.
@@ -170,10 +187,53 @@ func NewSandboxHook(workspaceDir string, capabilities []string, sess *ToolSessio
 		listener:     l,
 		closed:       make(chan struct{}),
 	}
+	if h.RelayToken, err = randomHookToken(); err != nil {
+		l.Close()
+		return nil, fmt.Errorf("relay token: %w", err)
+	}
+	h.RelayPort = freeLoopbackPort()
 	h.wg.Add(1)
 	go h.acceptLoop()
 	Debug("[hook] listening at %s caps=%v", path, capabilities)
 	return h, nil
+}
+
+// RunEnv is what a run needs in its environment to reach this hook: the
+// socket, and the loopback relay's port and token. The one place they are
+// listed, for every caller that starts a run with a hook.
+func (h *SandboxHook) RunEnv() map[string]string {
+	env := map[string]string{"GOHORT_HOOK_PATH": h.SocketPath, "GOHORT_RELAY_TOKEN": h.RelayToken}
+	if h.RelayPort > 0 {
+		env["GOHORT_RELAY_PORT"] = strconv.Itoa(h.RelayPort)
+	}
+	return env
+}
+
+// freeLoopbackPort is a port free on this host's loopback, for a run's relay;
+// zero when none could be had, and the run then has no relay. Free when asked:
+// on Linux the run's own network namespace makes that moot, and on macOS the
+// moment between this and the forwarder binding is the only window.
+func freeLoopbackPort() int {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0
+	}
+	defer l.Close()
+	return l.Addr().(*net.TCPAddr).Port
+}
+
+// relayNote keeps a message for the command that used the relay.
+func (h *SandboxHook) relayNote(msg string) {
+	h.relayNotesMu.Lock()
+	defer h.relayNotesMu.Unlock()
+	for _, n := range h.relayNotes {
+		if n == msg {
+			return
+		}
+	}
+	if len(h.relayNotes) < 20 {
+		h.relayNotes = append(h.relayNotes, msg)
+	}
 }
 
 // maxUnixSocketPath is the usable length of sun_path on Linux: the
@@ -323,7 +383,13 @@ func (h *SandboxHook) handleConn(conn net.Conn) {
 	}
 	method = req.Method
 	h.Calls.Add(1)
-	if !h.granted(req.Method) {
+	// The relay serves two grants (relayRequest decides per request), so
+	// either opens the connection.
+	grant := h.granted(req.Method)
+	if req.Method == "relay" || req.Method == "relay_notes" {
+		grant = h.granted("fetch") || h.granted("proxy")
+	}
+	if !grant {
 		Log("[hook] method %q not granted; capabilities=%v", req.Method, h.Capabilities)
 		if req.Method == "tool" {
 			// The generic refusal listed every capability the script HAS and
@@ -359,7 +425,7 @@ func (h *SandboxHook) handleConn(conn net.Conn) {
 	// control is cosmetic: cutting the network namespace and leaving this open
 	// just moves a script from curl to gohort.fetch, which is the route the
 	// sandbox docs tell it to prefer anyway.
-	if req.Method == "fetch" || req.Method == "fetch_via" || req.Method == "browse_page" {
+	if req.Method == "fetch" || req.Method == "fetch_via" || req.Method == "browse_page" || req.Method == "relay" {
 		if h.Sess != nil && !h.Sess.NetworkAllowed() {
 			Log("[hook/%s] DENIED: session network blocked (privacy mode)", req.Method)
 			writeHookError(conn, fmt.Sprintf("hook %q refused: session network blocked (privacy mode is on)", req.Method))
@@ -402,6 +468,14 @@ func (h *SandboxHook) handleConn(conn net.Conn) {
 		h.handleNotify(conn, req.Params)
 	case "store_pull":
 		h.handleStorePull(conn, req.Params)
+	case "relay":
+		h.handleRelay(conn, br)
+	case "relay_notes":
+		h.relayNotesMu.Lock()
+		notes := h.relayNotes
+		h.relayNotes = nil
+		h.relayNotesMu.Unlock()
+		writeHookResult(conn, map[string]interface{}{"notes": notes})
 	default:
 		Log("[hook] unknown method: %s", req.Method)
 		writeHookError(conn, "unknown method: "+req.Method)
@@ -432,6 +506,8 @@ func (h *SandboxHook) handleConn(conn net.Conn) {
 //   - secret, log: 10s. Trivial operations.
 func hookMethodDeadline(method string, params map[string]interface{}) time.Duration {
 	switch method {
+	case "relay":
+		return gitRelayTimeout + 15*time.Second
 	case "fetch":
 		callTimeout := 30 * time.Second
 		if t, ok := params["timeout"].(float64); ok && t > 0 && t < 300 {
@@ -725,6 +801,408 @@ func (h *SandboxHook) handleStorePull(conn net.Conn, params map[string]interface
 
 // --- method handlers ---
 
+// The git relay's bounds. A request is git's want/have negotiation, small
+// unless a fetch is very far behind; a reply can be a whole repository's
+// pack, so it streams, and stops at the cap rather than filling the disk.
+const (
+	gitRelayMaxRequest  = 64 << 20
+	gitRelayMaxResponse = 1 << 30
+	gitRelayTimeout     = 30 * time.Minute
+)
+
+// gitRelayHeaders are the request headers git's smart HTTP needs passed on.
+// Nothing else crosses: in particular no Authorization, which a credential
+// adds on this side or nobody does.
+var gitRelayHeaders = []string{"Content-Type", "Accept", "Content-Encoding", "Git-Protocol", "User-Agent"}
+
+// gitRelayRefusal holds the relay to what a git fetch sends: the ref
+// advertisement (GET .../info/refs?service=git-upload-pack) and the pack
+// request (POST .../git-upload-pack). It is a way for git to fetch, not a
+// general way out of the sandbox, and a push (git-receive-pack) changes
+// something outside gohort, so it is refused by name. Empty when allowed.
+func gitRelayRefusal(method string, u *neturl.URL) string {
+	path, service := u.EscapedPath(), u.Query().Get("service")
+	switch {
+	case strings.HasSuffix(path, "/git-receive-pack") || service == "git-receive-pack":
+		return "git push is not available here: gohort relays git's fetches (clone, fetch, pull, ls-remote), not pushes, which change something outside it"
+	case method == http.MethodGet && strings.HasSuffix(path, "/info/refs") && service == "git-upload-pack":
+		return ""
+	case method == http.MethodPost && strings.HasSuffix(path, "/git-upload-pack"):
+		return ""
+	}
+	return fmt.Sprintf("git: the relay carries git's fetch requests only (info/refs and git-upload-pack over smart HTTP), not %s %s", method, path)
+}
+
+// handleRelay serves one connection from the run's loopback relay
+// (core/sandbox relay.go): the forwarder there is a byte pipe, so the HTTP is
+// read here. One request per connection, by its form:
+//
+//   - "/<token>/https/<host>/<path>" (and http, and ssh for git@host:path) is
+//     git's: a remote URL the git stand-in rewrote. The fetch grant; the
+//     token in the path.
+//   - "CONNECT host:443" is a tunnel, and an absolute "http://..." URL a
+//     plain request: an ordinary HTTP client's proxy traffic. The proxy
+//     grant; the token as the proxy password.
+//
+// The token is the run's own, because on macOS the relay listens on the
+// host's shared loopback, where any process could reach it.
+func (h *SandboxHook) handleRelay(conn net.Conn, br *bufio.Reader) {
+	_ = conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+	req, err := http.ReadRequest(br)
+	if err != nil {
+		return
+	}
+	_ = conn.SetReadDeadline(time.Time{})
+	if h.Sess == nil {
+		relayReply(conn, http.StatusBadGateway, "the relay has no session to act for")
+		return
+	}
+	switch {
+	case req.Method == http.MethodConnect:
+		h.relayConnect(conn, br, req)
+	case req.URL.IsAbs():
+		h.relayPlain(conn, req)
+	default:
+		h.relayGit(conn, req)
+	}
+}
+
+// relayReply answers a relay request with a status and a one-line reason.
+func relayReply(conn net.Conn, status int, msg string, header ...string) {
+	var extra strings.Builder
+	for i := 0; i+1 < len(header); i += 2 {
+		extra.WriteString(header[i] + ": " + header[i+1] + "\r\n")
+	}
+	fmt.Fprintf(conn, "HTTP/1.1 %d %s\r\nContent-Type: text/plain\r\nContent-Length: %d\r\nConnection: close\r\n%s\r\n%s\n",
+		status, http.StatusText(status), len(msg)+1, extra.String(), msg)
+}
+
+// relayProxyAuthorized reports whether a proxy request carries the run's
+// token as its password (http://gohort:<token>@127.0.0.1:<port>).
+func (h *SandboxHook) relayProxyAuthorized(req *http.Request) bool {
+	auth := req.Header.Get("Proxy-Authorization")
+	enc, ok := strings.CutPrefix(auth, "Basic ")
+	if !ok {
+		return false
+	}
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(enc))
+	if err != nil {
+		return false
+	}
+	_, pass, _ := strings.Cut(string(raw), ":")
+	return h.RelayToken != "" && subtle.ConstantTimeCompare([]byte(pass), []byte(h.RelayToken)) == 1
+}
+
+// relayGitTarget is the remote a rewritten git URL stood for: the path after
+// the token is /https/<host>/<path>, /http/<host>/<path>, or /ssh/<host>:<path>
+// (git@host:path) or /ssh/<host>/<path> (ssh://git@host/path); an ssh remote
+// is fetched over https from the same host, the way most hosts serve both.
+func relayGitTarget(rest, rawQuery string) string {
+	kind, tail, _ := strings.Cut(rest, "/")
+	switch kind {
+	case "https", "http":
+	case "ssh":
+		host, path, _ := strings.Cut(tail, "/")
+		if h, first, ok := strings.Cut(host, ":"); ok {
+			host, path = h, first+"/"+path
+			path = strings.TrimSuffix(path, "/")
+		}
+		kind, tail = "https", host+"/"+path
+	default:
+		return ""
+	}
+	u := kind + "://" + tail
+	if rawQuery != "" {
+		u += "?" + rawQuery
+	}
+	return u
+}
+
+// relayGit sends one request of git's smart HTTP for the git stand-in
+// (core/sandbox/git_shim.go), under the rules every request from the sandbox
+// meets: credentialRoute, public hosts only without a credential, Private
+// mode. A credential covering the host is added here, so the token never
+// enters the sandbox and the clone keeps the plain URL. A git fetch reads,
+// whatever its HTTP method, so it is held to a credential's rules for reads.
+func (h *SandboxHook) relayGit(conn net.Conn, req *http.Request) {
+	token, rest, _ := strings.Cut(strings.TrimPrefix(req.URL.EscapedPath(), "/"), "/")
+	if h.RelayToken == "" || subtle.ConstantTimeCompare([]byte(token), []byte(h.RelayToken)) != 1 {
+		relayReply(conn, http.StatusForbidden, "not this run's relay")
+		return
+	}
+	fail := func(status int, msg string) {
+		h.relayNote(msg)
+		relayReply(conn, status, msg)
+	}
+	if !h.granted("fetch") {
+		fail(http.StatusForbidden, "git: this run may not fetch (it has no fetch grant)")
+		return
+	}
+	rawURL := relayGitTarget(rest, req.URL.RawQuery)
+	u, err := neturl.Parse(rawURL)
+	if rawURL == "" || err != nil || u.Host == "" || u.User != nil {
+		fail(http.StatusBadRequest, "git: not an address git can fetch from: "+req.URL.Path)
+		return
+	}
+	if why := gitRelayRefusal(req.Method, u); why != "" {
+		fail(http.StatusForbidden, why)
+		return
+	}
+	// ReadRequest has already undone a chunked upload.
+	body, err := io.ReadAll(io.LimitReader(req.Body, gitRelayMaxRequest+1))
+	if err != nil || len(body) > gitRelayMaxRequest {
+		fail(http.StatusRequestEntityTooLarge, fmt.Sprintf("git: a request over %s is more than the relay carries", HumanSize(gitRelayMaxRequest)))
+		return
+	}
+	headers := map[string]string{}
+	for _, k := range gitRelayHeaders {
+		if v := req.Header.Get(k); v != "" {
+			headers[k] = v
+		}
+	}
+	var (
+		resp *http.Response
+		done func(int64)
+	)
+	credName, refusal := h.credentialRoute(rawURL, http.MethodGet)
+	switch {
+	case refusal != "":
+		fail(http.StatusForbidden, refusal)
+		return
+	case credName != "":
+		Log("[hook/relay] git %s %s via credential %q", req.Method, rawURL, credName)
+		resp, done, err = Secure().OpenStream(h.Sess, credName, StreamRequest{URL: rawURL, Method: req.Method, Headers: headers, Body: bytes.NewReader(body), Timeout: gitRelayTimeout})
+		if err != nil {
+			fail(http.StatusBadGateway, "git (credential "+credName+"): "+err.Error())
+			return
+		}
+	default:
+		if IsNonPublicHost(u.Hostname()) {
+			fail(http.StatusForbidden, fmt.Sprintf("git: refusing to reach non-public host %s, same rule as fetch_url", u.Hostname()))
+			return
+		}
+		baseCtx, releaseConn := h.Sess.Network.DeriveCancelCtx(context.Background())
+		ctx, cancel := context.WithTimeout(baseCtx, gitRelayTimeout)
+		out, rerr := http.NewRequestWithContext(ctx, req.Method, rawURL, bytes.NewReader(body))
+		if rerr == nil {
+			for k, v := range headers {
+				out.Header.Set(k, v)
+			}
+			Log("[hook/relay] git %s %s", req.Method, rawURL)
+			// Public addresses only, checked on the address dialled,
+			// redirects included (NewPublicHTTPClient).
+			resp, rerr = NewPublicHTTPClient().Do(out)
+		}
+		if rerr != nil {
+			cancel()
+			releaseConn()
+			fail(http.StatusBadGateway, "git: "+rerr.Error())
+			return
+		}
+		done = func(int64) { resp.Body.Close(); cancel(); releaseConn() }
+	}
+	if (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) && credName == "" {
+		h.relayNote(fmt.Sprintf("%s asked for a sign-in, and no credential of yours covers it. To fetch a private repository, add a credential covering https://%s, or add that server to an existing one's Also covers", u.Host, u.Host))
+	}
+	n := relayResponse(conn, resp)
+	done(n)
+	if n >= gitRelayMaxResponse {
+		h.relayNote(fmt.Sprintf("a reply was cut at the relay's limit of %s: the repository is larger than a sandbox clone takes", HumanSize(gitRelayMaxResponse)))
+	}
+}
+
+// relayDial opens a tunnel's connection, and relayConnectPorts are the ports
+// a tunnel may reach. Variables so a test can aim a tunnel at a server of its
+// own; anywhere else, public addresses only (checked on the address dialled)
+// and https's port only. A tunnel is raw TCP that gohort cannot read, so it
+// carries HTTPS and nothing else: not ssh, not mail, not a database.
+var (
+	relayDial = func(ctx context.Context, addr string) (net.Conn, error) {
+		return sourcehooks.PublicDialer().DialContext(ctx, "tcp", addr)
+	}
+	relayConnectPorts = map[string]bool{"443": true}
+)
+
+// relayTunnelMax bounds one tunnel's life.
+const relayTunnelMax = 30 * time.Minute
+
+// relayProxyRefused answers a proxy request that may not go, and reports
+// whether it did: it needs this run's token and the proxy grant.
+func (h *SandboxHook) relayProxyRefused(conn net.Conn, req *http.Request) bool {
+	if !h.relayProxyAuthorized(req) {
+		relayReply(conn, http.StatusProxyAuthRequired, "this proxy is the sandbox run's own: use the HTTPS_PROXY it was given", "Proxy-Authenticate", `Basic realm="gohort"`)
+		return true
+	}
+	if !h.granted("proxy") {
+		relayReply(conn, http.StatusForbidden, "this run has no proxy grant: reach the network with fetch_url or curl, or declare proxy in the tool's hook_capabilities")
+		return true
+	}
+	return false
+}
+
+// relayConnect opens a tunnel for an HTTPS client: CONNECT host:443 to a
+// public address, then bytes both ways until either side closes, Private
+// mode turns on, or relayTunnelMax passes. gohort sees the host, the port and
+// how much went each way, which is what the log records; it cannot see the
+// contents, and adds no credential (curl and fetch_url do that).
+func (h *SandboxHook) relayConnect(conn net.Conn, br *bufio.Reader, req *http.Request) {
+	if h.relayProxyRefused(conn, req) {
+		return
+	}
+	host, port, err := net.SplitHostPort(req.Host)
+	if err != nil || !relayConnectPorts[port] {
+		relayReply(conn, http.StatusForbidden, fmt.Sprintf("the proxy tunnels https (port 443) only, not %s", req.Host))
+		return
+	}
+	baseCtx, releaseConn := h.Sess.Network.DeriveCancelCtx(context.Background())
+	defer releaseConn()
+	ctx, cancel := context.WithTimeout(baseCtx, relayTunnelMax)
+	defer cancel()
+	dialCtx, dialCancel := context.WithTimeout(ctx, 30*time.Second)
+	up, err := relayDial(dialCtx, req.Host)
+	dialCancel()
+	if err != nil {
+		Log("[hook/relay] tunnel to %s refused: %v", req.Host, err)
+		relayReply(conn, http.StatusBadGateway, fmt.Sprintf("could not open %s: %v", host, err))
+		return
+	}
+	defer up.Close()
+	if _, err := io.WriteString(conn, "HTTP/1.1 200 Connection Established\r\n\r\n"); err != nil {
+		return
+	}
+	// Bytes the client sent after its CONNECT, already read into br.
+	if n := br.Buffered(); n > 0 {
+		pending, _ := br.Peek(n)
+		if _, err := up.Write(pending); err != nil {
+			return
+		}
+	}
+	start := time.Now()
+	deadline := start.Add(relayTunnelMax)
+	_ = conn.SetDeadline(deadline)
+	_ = up.SetDeadline(deadline)
+	go func() { // Private mode on, or the bound passed: close both ends
+		<-ctx.Done()
+		conn.Close()
+		up.Close()
+	}()
+	var sent, received int64
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		sent, _ = io.Copy(up, conn)
+		if cw, ok := up.(interface{ CloseWrite() error }); ok {
+			cw.CloseWrite()
+		}
+	}()
+	received, _ = io.Copy(conn, up)
+	if cw, ok := conn.(interface{ CloseWrite() error }); ok {
+		cw.CloseWrite()
+	}
+	wg.Wait()
+	Log("[hook/relay] tunnel %s: %s sent, %s received, %s", req.Host, HumanSize(sent), HumanSize(received), time.Since(start).Round(time.Millisecond))
+}
+
+// relayPlain sends one plain-http request for a proxy client, to a public
+// address, redirects handed back rather than followed (the client follows
+// its own), and the reply streamed back.
+func (h *SandboxHook) relayPlain(conn net.Conn, req *http.Request) {
+	if h.relayProxyRefused(conn, req) {
+		return
+	}
+	if req.URL.Scheme != "http" {
+		relayReply(conn, http.StatusBadRequest, "an https request through the proxy is a CONNECT tunnel")
+		return
+	}
+	if IsNonPublicHost(req.URL.Hostname()) {
+		relayReply(conn, http.StatusForbidden, fmt.Sprintf("refusing to reach non-public host %s, same rule as fetch_url", req.URL.Hostname()))
+		return
+	}
+	baseCtx, releaseConn := h.Sess.Network.DeriveCancelCtx(context.Background())
+	defer releaseConn()
+	ctx, cancel := context.WithTimeout(baseCtx, gitRelayTimeout)
+	defer cancel()
+	out := req.Clone(ctx)
+	out.RequestURI = ""
+	for _, k := range []string{"Proxy-Authorization", "Proxy-Connection", "Connection", "Keep-Alive"} {
+		out.Header.Del(k)
+	}
+	client := NewPublicHTTPClient()
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	resp, err := client.Do(out)
+	if err != nil {
+		relayReply(conn, http.StatusBadGateway, err.Error())
+		return
+	}
+	defer resp.Body.Close()
+	n := relayResponse(conn, resp)
+	Log("[hook/relay] %s %s: %d, %s", req.Method, req.URL.Redacted(), resp.StatusCode, HumanSize(n))
+}
+
+// relayResponse writes resp back through the relay, its body streamed up to
+// gitRelayMaxResponse and the connection closed after it, and returns the
+// bytes of body written.
+func relayResponse(conn net.Conn, resp *http.Response) int64 {
+	_ = conn.SetDeadline(time.Now().Add(gitRelayTimeout))
+	var head strings.Builder
+	fmt.Fprintf(&head, "HTTP/1.1 %d %s\r\n", resp.StatusCode, http.StatusText(resp.StatusCode))
+	for k, vs := range resp.Header {
+		switch strings.ToLower(k) {
+		case "content-length", "transfer-encoding", "connection", "keep-alive", "proxy-connection", "set-cookie":
+			continue // framed here, closed after, and a cookie is the server's to this side
+		}
+		for _, v := range vs {
+			head.WriteString(k + ": " + v + "\r\n")
+		}
+	}
+	head.WriteString("Connection: close\r\n\r\n")
+	if _, err := io.WriteString(conn, head.String()); err != nil {
+		return 0
+	}
+	n, err := io.Copy(conn, io.LimitReader(resp.Body, gitRelayMaxResponse))
+	if err != nil {
+		Log("[hook/relay] reply stopped after %s: %v", HumanSize(n), err)
+	}
+	return n
+}
+
+// credentialRoute decides how a request from inside the sandbox to rawURL
+// goes, as the LLM-callable fetch_url decides it: through the credential that
+// covers the host (its name), out with none (""), or not at all (a refusal,
+// worded for the script). method is what the call does, for a credential
+// that asks before some calls. One decision for every path a sandboxed
+// request takes (a script's fetch, curl, the git relay), so none of them is
+// a way around another.
+func (h *SandboxHook) credentialRoute(rawURL, method string) (credName, refusal string) {
+	user := sessUsername(h.Sess)
+	credName, rerr := Secure().AutoRouteCredential(rawURL, user)
+	switch {
+	case rerr != nil:
+		return "", rerr.Error()
+	case credName == "":
+		if err := Secure().SecuredCoverRefusal(rawURL, user, h.ToolName != ""); err != nil {
+			return "", "fetch refused: " + err.Error()
+		}
+		return "", ""
+	case h.ToolName == "" && h.Sess.DirectCredentialRefusal != nil && h.Sess.DirectCredentialRefusal(credName) != "":
+		// An agent's own workspace script, not an authored tool: the same
+		// rule as its fetch_url tool. An authored tool IS the bound path.
+		return "", "fetch refused: " + h.Sess.DirectCredentialRefusal(credName)
+	case h.Sess.CredentialDenied(credName):
+		// Credential scope: mirror the LLM fetch_url — a covered host whose
+		// credential is denied for this agent is blocked, not routed, so a
+		// script can't bypass the scope pill by fetching the host directly.
+		return "", "fetch blocked: host is served by credential \"" + credName + "\", which this agent is not allowed to use (revoked in its credential scope)"
+	case credentialAsksBefore(credName, user, method):
+		// A credential that asks before this call is not reached by a
+		// plain fetch, which no consent gate sees: a tool declares
+		// fetch_via for it, and the call is confirmed like the tool's own.
+		return "", "fetch refused: credential \"" + credName + "\" asks before " + method + " calls, so a script reaches it through fetch_via:" + credName + " declared on the tool, where the call can be confirmed"
+	}
+	return credName, ""
+}
+
 // handleFetch proxies an HTTP request through gohort's network
 // stack. Capped at 10MiB response and 30s default timeout — the
 // sandbox can't escalate either. The request's ctx derives from
@@ -783,28 +1261,8 @@ func (h *SandboxHook) handleFetch(conn net.Conn, params map[string]interface{}) 
 	// scoped behind a credential. Only hosts covered by NO credential fall
 	// through to the SSRF refusal.
 	if h != nil && h.Sess != nil {
-		if credName, rerr := Secure().AutoRouteCredential(rawURL, sessUsername(h.Sess)); rerr != nil {
-			writeHookError(conn, rerr.Error())
-			return
-		} else if credName == "" && Secure().SecuredCoverRefusal(rawURL, sessUsername(h.Sess), h.ToolName != "") != nil {
-			writeHookError(conn, "fetch refused: "+Secure().SecuredCoverRefusal(rawURL, sessUsername(h.Sess), h.ToolName != "").Error())
-			return
-		} else if credName != "" && h.ToolName == "" && h.Sess.DirectCredentialRefusal != nil && h.Sess.DirectCredentialRefusal(credName) != "" {
-			// An agent's own workspace script, not an authored tool: the same
-			// rule as its fetch_url tool. An authored tool IS the bound path.
-			writeHookError(conn, "fetch refused: "+h.Sess.DirectCredentialRefusal(credName))
-			return
-		} else if credName != "" && h.Sess.CredentialDenied(credName) {
-			// Credential scope: mirror the LLM fetch_url — a covered host whose
-			// credential is denied for this agent is blocked, not routed, so a
-			// script can't bypass the scope pill by fetching the host directly.
-			writeHookError(conn, "fetch blocked: host is served by credential \""+credName+"\", which this agent is not allowed to use (revoked in its credential scope)")
-			return
-		} else if credName != "" && credentialAsksBefore(credName, sessUsername(h.Sess), hookMethod(params)) {
-			// A credential that asks before this call is not reached by a
-			// plain fetch, which no consent gate sees: a tool declares
-			// fetch_via for it, and the call is confirmed like the tool's own.
-			writeHookError(conn, "fetch refused: credential \""+credName+"\" asks before "+hookMethod(params)+" calls, so a script reaches it through fetch_via:"+credName+" declared on the tool, where the call can be confirmed")
+		if credName, refusal := h.credentialRoute(rawURL, hookMethod(params)); refusal != "" {
+			writeHookError(conn, refusal)
 			return
 		} else if credName != "" {
 			method := "GET"
@@ -1500,6 +1958,18 @@ var sandboxToolShims = []sandboxToolShim{
 	{"fetch_url", "#!/usr/bin/env python3\nimport sys\nfrom _gohort_shim import main\nraise SystemExit(main(\"fetch_url\", sys.argv[1:]))\n"},
 	{"fetch_via", "#!/usr/bin/env python3\nimport sys\nfrom _gohort_shim import main\nraise SystemExit(main(\"fetch_via\", sys.argv[1:]))\n"},
 	{"browse_page", "#!/usr/bin/env python3\nimport sys\nfrom _gohort_shim import main\nraise SystemExit(main(\"browse_page\", sys.argv[1:]))\n"},
+	// curl and wget stand in for the real binaries on a run with no network,
+	// sending the request through the same hook (core/sandbox/curl_shim.go).
+	{"_gohort_curl.py", sandbox.CurlShim},
+	{"curl", "#!/usr/bin/env python3\nimport sys\nfrom _gohort_curl import main\nraise SystemExit(main(\"curl\", sys.argv[1:]))\n"},
+	{"wget", "#!/usr/bin/env python3\nimport sys\nfrom _gohort_curl import main\nraise SystemExit(main(\"wget\", sys.argv[1:]))\n"},
+	// git runs in the sandbox with its fetches relayed through the hook
+	// (core/sandbox/git_shim.go).
+	{"_gohort_git.py", sandbox.GitShim},
+	// The run's loopback relay, a byte pipe to the hook that git and an
+	// HTTPS_PROXY client reach out through (core/sandbox/relay.go).
+	{"_gohort_relay", sandbox.RelayShim},
+	{"git", "#!/usr/bin/env python3\nimport sys\nfrom _gohort_git import main\nraise SystemExit(main(sys.argv[1:]))\n"},
 }
 
 // SandboxReachableNames returns the identifiers a sandboxed script may
@@ -1793,8 +2263,9 @@ const SandboxHookPythonShim = `# gohort.py: script-side helper for sandboxed too
 #
 # Provides a narrow callback channel back to gohort for capabilities
 # the tool was granted (fetch, log, secret, fetch_via). The sandbox
-# runs with --unshare-net by default: raw HTTP from urllib / curl
-# fails. Use this module's fetch() to do HTTP through gohort instead.
+# runs with --unshare-net by default: raw HTTP from urllib fails. Use
+# this module's fetch() to do HTTP through gohort instead (the curl and
+# wget on PATH do the same).
 #
 # Every reasonable Python import shape works:
 #

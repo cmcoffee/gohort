@@ -81,15 +81,30 @@ SHELL
   * Reliably available binaries: jq, awk, sed, grep, head,
     tail, sort, uniq, tr, cut, wc, basename, dirname, date, cat,
     echo, printf, tee, xargs, find.
-  * NOT available: bash-only features. curl/wget are NOT usable
-    the sandbox has no network (see NETWORK), and tool_def
-    REFUSES scripts that call them.
+  * NOT available: bash-only features.
+  * curl and wget work, through gohort: the sandbox has no network
+    of its own (see NETWORK), and the curl and wget on its PATH
+    send the request through the gohort bridge's fetch_url.
 
 NETWORK
   * The shell sandbox is NETWORK-ISOLATED (bwrap --unshare-net).
-    curl, wget, urllib.request, socket: they ALL FAIL inside a
-    shell-mode tool, and tool_def refuses a script_body that uses
-    any of them at authoring time.
+    urllib.request, requests, http.client, socket: they ALL FAIL
+    inside a shell-mode tool, and tool_def refuses a script_body
+    that uses any of them at authoring time.
+  * curl and wget are the exception: the ones on the sandbox's
+    PATH are gohort stand-ins that send through fetch_url, under
+    the same rules, for their common flags (-X -H -d --json -o
+    -f -s -w and the like). An uncommon flag (-F, --resolve) is
+    refused by name; use fetch_url for those.
+  * git clone / fetch / pull work too: git runs in the sandbox and
+    its requests go through gohort, signed in where a credential
+    covers the host. git push is refused.
+  * A client that makes its own requests (requests, pip, npm, go):
+    declare hook_capabilities=["proxy"] and it reaches public
+    addresses through gohort's proxy (HTTPS_PROXY is set for it).
+    No credentials go that way, gohort records the host and bytes
+    but not the contents, and the tool asks before each run. Use
+    it for a library or installer, not instead of fetch_url.
   * HTTP from a script goes through the gohort bridge instead:
     "from gohort import fetch_url" then fetch_url(url): granted
     by default, no declaration needed. Authenticated or scoped
@@ -463,9 +478,11 @@ NETWORK POLICY: shell sandbox is network-isolated by default
 ================================================================
 
 Shell-mode tools run in a bwrap sandbox with --unshare-net. That
-means: urllib.request, socket.connect, curl, wget, ALL FAIL from
+means: urllib.request, requests, socket.connect ALL FAIL from
 inside the sandbox, and tool_def REFUSES a script_body that uses
-any of them at authoring time.
+any of them at authoring time. curl and wget work: the ones on
+the sandbox's PATH are gohort stand-ins that send through
+fetch_url, under the same rules.
 
 HTTP goes through the gohort bridge instead. The bare hooks
 fetch_url, browse_page, log: are granted BY DEFAULT for any

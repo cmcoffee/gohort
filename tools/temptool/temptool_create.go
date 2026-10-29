@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -331,7 +332,7 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 	// every credential it can read. Other typos fail authoring
 	// rather than silently never being granted at dispatch.
 	if caps := stringSliceArg(args["hook_capabilities"]); len(caps) > 0 {
-		bareKnown := map[string]bool{"fetch": true, "log": true, "browse_page": true}
+		bareKnown := map[string]bool{"fetch": true, "log": true, "browse_page": true, "proxy": true}
 		var bad []string
 		var clean []string
 		seen := map[string]bool{}
@@ -399,7 +400,7 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 			clean = append(clean, c)
 		}
 		if len(bad) > 0 {
-			return "", fmt.Errorf("hook_capabilities lists unknown entry/entries %v, known forms: \"fetch\", \"log\", \"secret:<credential_name>\", \"fetch_via:<credential_name>\"", bad)
+			return "", fmt.Errorf("hook_capabilities lists unknown entry/entries %v, known forms: \"fetch\", \"log\", \"proxy\", \"secret:<credential_name>\", \"fetch_via:<credential_name>\"", bad)
 		}
 		tool.HookCapabilities = clean
 	}
@@ -446,13 +447,17 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 			return "", fmt.Errorf("%s", why)
 		}
 		// Refuse network primitives. Builder repeatedly rewrites
-		// fetch-failing tools to urllib/requests/curl/wget when
-		// fetch_url returns 4xx, but those libraries are BLOCKED in
-		// the script sandbox. Refuse at authoring time so the
-		// rewrite path is closed off entirely.
-		if forbidden := detectForbiddenNetworkPatterns(scriptBody); forbidden != "" {
+		// fetch-failing tools to urllib/requests when fetch_url returns
+		// 4xx, but those libraries are BLOCKED in the script sandbox.
+		// Refuse at authoring time so the rewrite path is closed off
+		// entirely. curl and wget are not refused: the sandbox's are
+		// stand-ins that send through the same fetch hook. Nor is a tool
+		// that declared the proxy grant: its clients reach public
+		// addresses through the run's relay (core/sandbox relay.go), and
+		// the grant makes it ask before each run.
+		if forbidden := detectForbiddenNetworkPatterns(scriptBody); forbidden != "" && !slices.Contains(tool.HookCapabilities, "proxy") {
 			return "", fmt.Errorf(
-				"script_body uses %s: that's BLOCKED. Any network-doing standard library (urllib / requests / curl / wget / http.client / socket) is blocked in the script sandbox. All HTTP goes through gohort: `from gohort import fetch_url; data = fetch_url(url)`. If gohort.fetch_url is returning a 4xx, the fix is NOT a different HTTP client, diagnose the URL itself, escalate to gohort.browse_page for JS-heavy / anti-bot hosts, or add hook_capabilities=[\"fetch_via:<credential_name>\"] for authenticated endpoints.",
+				"script_body uses %s: that's BLOCKED. Python's network libraries (urllib / requests / http.client / socket) are blocked in the script sandbox. All HTTP goes through gohort: `from gohort import fetch_url; data = fetch_url(url)`, or curl / wget, whose sandbox versions send through the same fetch_url. If gohort.fetch_url is returning a 4xx, the fix is NOT a different HTTP client, diagnose the URL itself, escalate to gohort.browse_page for JS-heavy / anti-bot hosts, or add hook_capabilities=[\"fetch_via:<credential_name>\"] for authenticated endpoints. Only when the code genuinely needs its own client (a library that makes its own requests, a package install), declare hook_capabilities=[\"proxy\"]: it reaches public addresses through gohort's proxy, with no credentials and its contents unrecorded, and the tool then asks before each run.",
 				forbidden)
 		}
 	}

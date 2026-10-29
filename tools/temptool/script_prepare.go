@@ -173,8 +173,12 @@ func inferCommandTemplate(scriptName, scriptBody string, paramOrder []string) st
 //	from urllib import urlopen                    → urllib network
 //	import http.client / from http.client …       → http.client
 //	socket.create_connection / socket.connect(    → raw socket dialing
-//	curl <url> / wget <url>                       → shell HTTP
-//	subprocess.* with "curl" or "wget"            → wrapped shell HTTP
+//
+// curl and wget are NOT here, though they once were. The ones on the
+// sandbox's PATH are gohort's stand-ins (core/sandbox/curl_shim.go) and send
+// through the same fetch hook, so a script that calls them works at dispatch
+// exactly as it did in the workspace shell where the author tried it.
+// Refusing them would tell Builder something it had just watched be false.
 func detectForbiddenNetworkPatterns(script string) string {
 	patterns := []struct {
 		needle string
@@ -192,21 +196,6 @@ func detectForbiddenNetworkPatterns(script string) string {
 		{"from http.client import", "from http.client import …"},
 		{"socket.create_connection", "socket.create_connection"},
 		{"socket.connect(", "socket.connect()"},
-		// Shell HTTP. Match with leading space / line-start so a
-		// substring inside a longer word doesn't false-positive.
-		{"\ncurl ", "curl"},
-		{" curl ", "curl"},
-		{"\nwget ", "wget"},
-		{" wget ", "wget"},
-		// Catch curl/wget wrapped in subprocess too.
-		{"subprocess.run([\"curl", "subprocess.run([\"curl …\"])"},
-		{"subprocess.run(['curl", "subprocess.run(['curl …'])"},
-		{"subprocess.run([\"wget", "subprocess.run([\"wget …\"])"},
-		{"subprocess.run(['wget", "subprocess.run(['wget …'])"},
-		{"os.system(\"curl", "os.system(\"curl …\")"},
-		{"os.system('curl", "os.system('curl …')"},
-		{"os.system(\"wget", "os.system(\"wget …\")"},
-		{"os.system('wget", "os.system('wget …')"},
 	}
 	for _, p := range patterns {
 		if strings.Contains(script, p.needle) {

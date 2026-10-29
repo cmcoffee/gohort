@@ -84,20 +84,7 @@ func NewBoundedHTTPClient() *http.Client {
 func NewPublicHTTPClient() *http.Client {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.Proxy = nil // a proxy would dial on our behalf, past the check below
-	tr.DialContext = (&net.Dialer{
-		Timeout:   HTTPConnectTimeout,
-		KeepAlive: 30 * time.Second,
-		Control: func(network, address string, _ syscall.RawConn) error {
-			host, _, err := net.SplitHostPort(address)
-			if err != nil {
-				return err
-			}
-			if ip := net.ParseIP(host); ip == nil || NonPublicIP(ip) {
-				return fmt.Errorf("refusing to connect to non-public address %s", host)
-			}
-			return nil
-		},
-	}).DialContext
+	tr.DialContext = PublicDialer().DialContext
 	tr.TLSHandshakeTimeout = HTTPConnectTimeout
 	tr.ResponseHeaderTimeout = HTTPRequestTimeout
 	return &http.Client{
@@ -108,6 +95,27 @@ func NewPublicHTTPClient() *http.Client {
 			}
 			if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
 				return fmt.Errorf("refusing a redirect to a %s: URL", req.URL.Scheme)
+			}
+			return nil
+		},
+	}
+}
+
+// PublicDialer dials public addresses only, checked on the address actually
+// dialled, after resolution: the dialer under NewPublicHTTPClient, for a
+// caller that needs a connection rather than a request (the sandbox relay's
+// tunnels).
+func PublicDialer() *net.Dialer {
+	return &net.Dialer{
+		Timeout:   HTTPConnectTimeout,
+		KeepAlive: 30 * time.Second,
+		Control: func(network, address string, _ syscall.RawConn) error {
+			host, _, err := net.SplitHostPort(address)
+			if err != nil {
+				return err
+			}
+			if ip := net.ParseIP(host); ip == nil || NonPublicIP(ip) {
+				return fmt.Errorf("refusing to connect to non-public address %s", host)
 			}
 			return nil
 		},

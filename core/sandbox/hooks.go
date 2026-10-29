@@ -30,6 +30,9 @@ var errNoHookServer = errors.New("no sandbox hook server is wired into this bina
 type HookServer interface {
 	// Path is the host-side socket path bound into the sandbox.
 	Path() string
+	// Env is what a run needs in its environment to reach the broker: its
+	// socket, and its loopback relay's port and token (relay.go).
+	Env() map[string]string
 	Close()
 }
 

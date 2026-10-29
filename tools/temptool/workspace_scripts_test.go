@@ -3,6 +3,7 @@ package temptool
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -209,5 +210,55 @@ func TestPresentWorkspaceScriptRefs(t *testing.T) {
 	// doesn't exist. Only a.py should surface.
 	if len(present) != 1 || present[0] != "a.py" {
 		t.Fatalf("present = %v, want [a.py]", present)
+	}
+}
+
+// A script that clones with git needs the same grant as one that uses curl:
+// the sandbox's git stand-in relays its fetches through the fetch hook. Local
+// git commands need nothing.
+func TestGitFetchingNeedsANetworkGrant(t *testing.T) {
+	if networkGrantMismatch(&TempTool{ScriptBody: "git clone https://host-a/org/repo.git work"}) == "" {
+		t.Error("a git clone with no grant should be caught at authoring")
+	}
+	if got := networkGrantMismatch(&TempTool{ScriptBody: "git clone https://host-a/org/repo.git work", HookCapabilities: []string{"fetch"}}); got != "" {
+		t.Errorf("the fetch grant covers it: %s", got)
+	}
+	if got := networkGrantMismatch(&TempTool{ScriptBody: "git -C work log --oneline | head"}); got != "" {
+		t.Errorf("a local git command needs no grant: %s", got)
+	}
+}
+
+// A script whose library makes its own requests is refused at authoring,
+// unless the tool declares the proxy grant, which reaches public addresses
+// through gohort's proxy and puts the tool among those that ask before each
+// run.
+func TestTheProxyGrantLetsAClientOfItsOwnThrough(t *testing.T) {
+	sess := func() *ToolSession {
+		return &ToolSession{Username: "alice", ChatSessionID: "s1", WorkspaceDir: t.TempDir(), DB: &DBase{Store: kvlite.MemStore()}, CanScopeGlobal: true}
+	}
+	args := func(name string, caps ...any) map[string]any {
+		a := map[string]any{
+			"action": "create", "name": name, "description": "d", "mode": "shell",
+			"command_template": "python3 {workspace_dir}/p.py", "script_name": "p.py",
+			"script_body": "import requests\nprint(requests.get('https://pypi.example.test/simple/').status_code)\n",
+		}
+		if len(caps) > 0 {
+			a["hook_capabilities"] = caps
+		}
+		return a
+	}
+	if _, err := createGrouped(args("no_proxy"), sess()); err == nil || !strings.Contains(err.Error(), "BLOCKED") {
+		t.Errorf("without the grant, requests is refused: %v", err)
+	}
+	s := sess()
+	if _, err := createGrouped(args("with_proxy", "proxy"), s); err != nil {
+		t.Fatalf("with the proxy grant it is allowed: %v", err)
+	}
+	tt, ok := loadExistingToolRecord(s, "with_proxy")
+	if !ok || !NeedsConfirm(&tt, "alice") {
+		t.Errorf("a tool with the proxy grant asks before it runs: %+v", tt)
+	}
+	if networkGrantMismatch(&TempTool{ScriptBody: "import requests", HookCapabilities: []string{"proxy"}}) != "" {
+		t.Error("the proxy grant is a network grant")
 	}
 }

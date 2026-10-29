@@ -279,7 +279,7 @@ func init() {
 	})
 
 	gt.AddAction("run", &GroupedToolAction{
-		Description: "Run a shell command inside the active workspace, confined by whichever sandbox this host has. The workspace is the only writable path it allows. What is READABLE outside it is NOT the same everywhere (bubblewrap hides it, the macOS backend does not), so never rely on a read outside the workspace either succeeding or failing. Auto-mints a workspace if none is active. 90s timeout, output capped at 10KB. NOTE: each call requires user confirmation, use sparingly. YOUR TOOLS ARE NOT REACHABLE FROM THIS SHELL: a tool is not on PATH and not an importable Python module, so `<tool_name> ...`, `python -m <tool_name>` and `from tools import <tool_name>` all just fail. Call the tool directly by name instead, and if its schema isn't loaded yet, load_tool(names=[\"<tool_name>\"]) first. (The one exception is fetch_url / browse_page: they work here as commands and as `from gohort import ...`, when this agent's workspace may reach the network. fetch_via does NOT work here: a call with a credential runs in an app's data source or action, or a registered tool that declares fetch_via:<cred>, and to probe an endpoint call the credential's own fetch tool directly.) For just CHECKING whether a binary exists (e.g. `command -v ffmpeg`), call workspace(action=\"probe\", name=\"ffmpeg\") instead: no-confirmation, validated-input, purpose-built for that check.",
+		Description: "Run a shell command inside the active workspace, confined by whichever sandbox this host has. The workspace is the only writable path it allows. What is READABLE outside it is NOT the same everywhere (bubblewrap hides it, the macOS backend does not), so never rely on a read outside the workspace either succeeding or failing. Auto-mints a workspace if none is active. 90s timeout, output capped at 10KB. NOTE: each call requires user confirmation, use sparingly. YOUR TOOLS ARE NOT REACHABLE FROM THIS SHELL: a tool is not on PATH and not an importable Python module, so `<tool_name> ...`, `python -m <tool_name>` and `from tools import <tool_name>` all just fail. Call the tool directly by name instead, and if its schema isn't loaded yet, load_tool(names=[\"<tool_name>\"]) first. (The one exception is fetch_url / browse_page: they work here as commands and as `from gohort import ...`, when this agent's workspace may reach the network. fetch_via does NOT work here: a call with a credential runs in an app's data source or action, or a registered tool that declares fetch_via:<cred>, and to probe an endpoint call the credential's own fetch tool directly. With no network of its own the shell still reaches public addresses through gohort: curl and wget, git clone/fetch/pull (signed in where a credential covers the host; push refused), and any client that honours HTTPS_PROXY, such as pip, npm, go or Python requests.) For just CHECKING whether a binary exists (e.g. `command -v ffmpeg`), call workspace(action=\"probe\", name=\"ffmpeg\") instead: no-confirmation, validated-input, purpose-built for that check.",
 		Params: map[string]ToolParam{
 			"command":  {Type: "string", Description: "Shell command to execute. Standard sh -c semantics: pipes, redirects, quoting work normally."},
 			"env":      {Type: "object", Description: "Optional {\"KEY\":\"value\"} map of environment variables exposed to the command, reachable as $KEY in shell or os.environ.get(\"KEY\") in Python. Use to feed a debug script the same inputs a registered shell tool would receive as params."},
@@ -733,8 +733,12 @@ func handleRun(args map[string]any, sess *ToolSession) (string, error) {
 		// fetch / log / browse_page — the common probe surface. secret:* and
 		// fetch_via:* stay explicit so a tool that needs credentials still has
 		// to declare them in its tool record.
-		HookCapabilities: []string{"fetch", "log", "browse_page"},
+		HookCapabilities: []string{"fetch", "log", "browse_page", "proxy"},
 		HookSession:      sess,
+		// An ordinary HTTP client (pip, npm, requests) reaches out through
+		// the run's relay, as curl and git already do (core/sandbox
+		// relay.go).
+		Proxy: true,
 	})
 	output := strings.TrimSpace(res.Output)
 	if len(output) > runMaxOutput {

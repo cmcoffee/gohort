@@ -277,7 +277,11 @@ func gatherWorkspaceHelpers(primaryName, primaryBody, workspaceDir string) []Rec
 // or migrate to the hook (gohort.fetch / gohort.fetch_via). Detection
 // is substring-match against the script_body — coarse but
 // catches the common authoring mistakes (mostly Python urllib and
-// shell curl/wget) without false positives in normal prose.
+// shell curl/wget) without false positives in normal prose. curl and
+// wget stay on this list though they are no longer refused: the
+// sandbox's stand-ins send through the fetch hook, so they too need
+// the grant. So do git's fetching commands, whose stand-in relays
+// through the same hook (core/sandbox/git_shim.go).
 var rawNetworkPatterns = []string{
 	"urllib.request",
 	"urlopen(",
@@ -292,6 +296,11 @@ var rawNetworkPatterns = []string{
 	"socket.connect",
 	"curl ",
 	"wget ",
+	"git clone",
+	"git fetch",
+	"git pull",
+	"git ls-remote",
+	"git submodule update",
 }
 
 // networkGrantMismatch returns a directive error string when the
@@ -320,7 +329,7 @@ func networkGrantMismatch(tt *TempTool) string {
 	// urllib AND has fetch capability) is a possible authoring smell
 	// but valid in principle (mixed-use tools).
 	for _, c := range tt.HookCapabilities {
-		if c == "fetch" || strings.HasPrefix(c, "fetch_via:") {
+		if c == "fetch" || c == "proxy" || strings.HasPrefix(c, "fetch_via:") {
 			return ""
 		}
 	}

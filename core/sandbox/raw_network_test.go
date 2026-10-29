@@ -14,6 +14,7 @@ package sandbox
 import (
 	"context"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/cmcoffee/gohort/core/netgate"
@@ -71,5 +72,52 @@ func TestADeclarationCannotWidenACeiling(t *testing.T) {
 	held := netgate.WithWorkspaceNetwork(context.Background(), false)
 	if netAllowed(t, held, true) {
 		t.Error("a declared command got network back on a workspace that may not dial")
+	}
+}
+
+// The curl and wget stand-ins in the shim bin dir decide between the real
+// binary and gohort's fetch hook by GOHORT_NETWORK, so it has to state the
+// decision made here in every case: a stand-in that thought the network was
+// open would hand an agent a curl that cannot resolve anything, and one that
+// thought it closed would translate a raw_network tool's curl it should leave
+// alone.
+func TestTheRunSaysWhetherItHasANetwork(t *testing.T) {
+	stated := func(ctx context.Context, raw bool) string {
+		t.Helper()
+		c, err := buildSandboxedShellCmd(ctx, ShellRun{Command: "true", WorkspaceDir: t.TempDir(), RawNetwork: raw})
+		if err != nil {
+			t.Fatalf("build: %v", err)
+		}
+		args := c.Cmd.Args
+		for i := 0; i+2 < len(args); i++ {
+			if args[i] == "--setenv" && args[i+1] == "GOHORT_NETWORK" {
+				return args[i+2]
+			}
+		}
+		for _, kv := range c.Cmd.Env {
+			if v, ok := strings.CutPrefix(kv, "GOHORT_NETWORK="); ok {
+				return v
+			}
+		}
+		return ""
+	}
+	private := netgate.WithNetworkConnector(context.Background(), netgate.NewNetworkConnector(true))
+	withClosedDefault(t, true)
+	for name, c := range map[string]struct {
+		ctx  context.Context
+		raw  bool
+		want string
+	}{
+		"closed default":       {context.Background(), false, "closed"},
+		"declared raw network": {context.Background(), true, "open"},
+		"raw network, private": {private, true, "closed"},
+	} {
+		if got := stated(c.ctx, c.raw); got != c.want {
+			t.Errorf("%s: GOHORT_NETWORK=%q, want %q", name, got, c.want)
+		}
+	}
+	withClosedDefault(t, false)
+	if got := stated(context.Background(), false); got != "open" {
+		t.Errorf("open default: GOHORT_NETWORK=%q, want open", got)
 	}
 }

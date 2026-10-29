@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -717,7 +718,9 @@ func (sd *shellDispatch) prepareRun() bool {
 		// Somebody else's tool (adopted from their pool) is not handed the
 		// runner's raw keys: see SandboxHook.ForeignTool.
 		sd.hook.ForeignTool = toolIsForeign(sess, tt)
-		sd.envArgs["GOHORT_HOOK_PATH"] = sd.hook.SocketPath
+		for k, v := range sd.hook.RunEnv() {
+			sd.envArgs[k] = v
+		}
 		// The gohort helper package is bind-mounted RO into the
 		// sandbox from a host-side library dir (see
 		// EnsureGohortLibDir, wired in bwrapArgv). Nothing to deploy
@@ -778,6 +781,9 @@ func (sd *shellDispatch) execute() {
 		// once the deployment closes the default; until then every command
 		// keeps the host's namespace, which is what has always happened.
 		RawNetwork: tt.RawNetwork,
+		// A tool that declared the proxy grant gets an HTTPS_PROXY through
+		// the run's relay (core/sandbox relay.go).
+		Proxy: slices.Contains(tt.HookCapabilities, "proxy"),
 	})
 	Debug("[temptool] %q sandbox exit: dur=%s err=%v timedOut=%v outBytes=%d",
 		tt.Name, time.Since(sd.tExec), sd.res.Err, sd.res.TimedOut, len(sd.res.Output))

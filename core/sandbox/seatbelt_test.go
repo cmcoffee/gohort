@@ -450,3 +450,29 @@ func TestAPathThroughALinkIsNamedAsItResolves(t *testing.T) {
 		t.Errorf("the workspace is not named as it resolves:\n%s", p)
 	}
 }
+
+// A closed run on macOS may bind and connect to its relay's one port and no
+// other: there is no private loopback there, and localhost wholesale would
+// hand the command every service on the machine. An open run needs no rule,
+// and a port that is not a number is never written into the profile.
+func TestSeatbeltOpensTheRelayPortAlone(t *testing.T) {
+	p := seatbeltProfile(seatbeltSpec{Workspace: "/w", HookSocket: "/h.sock", RelayPort: "41234"})
+	for _, want := range []string{
+		`(allow network-bind (local ip "localhost:41234"))`,
+		`(allow network-inbound (local ip "localhost:41234"))`,
+		`(allow network-outbound (remote ip "localhost:41234"))`,
+	} {
+		if !strings.Contains(p, want) {
+			t.Errorf("profile is missing %s:\n%s", want, p)
+		}
+	}
+	if strings.Contains(p, "localhost:*") || strings.Contains(p, "(allow network*)") {
+		t.Errorf("a closed run must not get localhost or the network wholesale:\n%s", p)
+	}
+	if p := seatbeltProfile(seatbeltSpec{Workspace: "/w", HookSocket: "/h.sock", RelayPort: `1") (allow network*`}); strings.Contains(p, "allow network*") {
+		t.Errorf("a port that is not a number reached the profile:\n%s", p)
+	}
+	if p := seatbeltProfile(seatbeltSpec{Workspace: "/w", RelayPort: "41234"}); strings.Contains(p, "41234") {
+		t.Errorf("no hook, no relay:\n%s", p)
+	}
+}

@@ -410,6 +410,11 @@ func tempToolNeedsConfirm(tt *TempTool, user ...string) bool {
 		switch {
 		case c == "fetch" || c == "log" || c == "browse_page":
 			// read-only audited hooks — benign
+		case c == "proxy":
+			// An HTTPS_PROXY for the script's own clients: gohort sees the
+			// host and the bytes, not the contents, so it reaches past the
+			// audited fetch the way raw network does, and asks like it.
+			return true
 		case strings.HasPrefix(c, "fetch_via:"):
 			// A call through a credential: allowlisted, audited, the key kept
 			// server-side. It takes that credential's own tier, as an api tool
@@ -759,7 +764,7 @@ func toolRunFailure(out string, err error) (failed bool, why string) {
 // content back: a fetch, a credentialed fetch, or a rendered page.
 func hooksFetch(caps []string) bool {
 	for _, c := range caps {
-		if c == "fetch" || c == "browse_page" || strings.HasPrefix(c, "fetch_via:") {
+		if c == "fetch" || c == "browse_page" || c == "proxy" || strings.HasPrefix(c, "fetch_via:") {
 			return true
 		}
 	}

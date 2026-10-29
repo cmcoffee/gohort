@@ -265,6 +265,12 @@ type ShellRun struct {
 	// ShellNetworkClosedByDefault). Until then every command keeps the host's
 	// namespace, which is what this codebase has always actually done.
 	RawNetwork bool
+	// Proxy gives the command an HTTP(S) proxy through the run's relay
+	// (relay.go): an ordinary HTTP client (pip, npm, go, requests) reaches
+	// the public internet through gohort without a network of its own.
+	// Only where the network is closed and the run has a relay; the hook
+	// still requires its proxy grant on every request.
+	Proxy bool
 	// Reach are host paths the command must be able to OPEN. No promise about
 	// anything else, so it is honored on every backend and refused on none.
 	// This is what a path-scoped parameter wants: the scope proves the value,
@@ -292,19 +298,19 @@ type ShellRun struct {
 	MaxOutput int64
 }
 
-// withHookPath returns a copy whose Env carries the hook path, which always
-// wins over a colliding caller key.
+// withHook returns a copy whose Env carries the hook's own (its socket, its
+// relay's port and token), which always win over a colliding caller key.
 //
 // A copy rather than a mutation: the caller's map belongs to the caller, and a
 // run that writes GOHORT_HOOK_PATH into it would hand the next run a stale
 // socket that no longer exists.
-func (r ShellRun) withHookPath(hookPath string) ShellRun {
-	env := make(map[string]string, len(r.Env)+1)
+func (r ShellRun) withHook(hookEnv map[string]string) ShellRun {
+	env := make(map[string]string, len(r.Env)+len(hookEnv))
 	for k, v := range r.Env {
 		env[k] = v
 	}
-	if hookPath != "" {
-		env["GOHORT_HOOK_PATH"] = hookPath
+	for k, v := range hookEnv {
+		env[k] = v
 	}
 	r.Env = env
 	return r
@@ -334,17 +340,17 @@ func RunSandboxedShellIn(ctx context.Context, spec ShellRun) SandboxedShellResul
 		return SandboxedShellResult{Err: err}
 	}
 	if len(spec.HookCapabilities) == 0 || spec.WorkspaceDir == "" {
-		return runSandboxedShellWithBinds(ctx, spec.withHookPath(""))
+		return runSandboxedShellWithBinds(ctx, spec.withHook(nil))
 	}
 	hook, err := newHook(spec.WorkspaceDir, spec.HookCapabilities, spec.HookSession)
 	if err != nil || hook == nil {
 		if err != nil {
 			nfo.Log("[sandbox] hook init failed for iterate-and-test run (%v): running without hook; gohort.fetch in this script will raise HookError", err)
 		}
-		return runSandboxedShellWithBinds(ctx, spec.withHookPath(""))
+		return runSandboxedShellWithBinds(ctx, spec.withHook(nil))
 	}
 	defer hook.Close()
-	return runSandboxedShellWithBinds(ctx, spec.withHookPath(hook.Path()))
+	return runSandboxedShellWithBinds(ctx, spec.withHook(hook.Env()))
 }
 
 // buildSandboxedShellCmd assembles one shell run: the PYTHONPATH the helper
@@ -393,6 +399,14 @@ func buildSandboxedShellCmd(ctx context.Context, spec ShellRun) (SandboxedCmd, e
 	// A copy, filtered: the map is the caller's, and the names that change
 	// which code loads never go anywhere (env_guard.go).
 	extraEnv = safeExtraEnv(extraEnv)
+	// The curl and wget stand-ins in the shim bin dir read this to choose:
+	// the real binary when the run has a network, gohort's fetch_url hook
+	// when it does not (curl_shim.go). Set after the filter and
+	// over whatever a caller passed, so it always states the decision above.
+	extraEnv["GOHORT_NETWORK"] = "closed"
+	if allowNetwork {
+		extraEnv["GOHORT_NETWORK"] = "open"
+	}
 	// PYTHONPATH must include both the gohort helper (so `from gohort import
 	// fetch` resolves) and the managed python-deps (so `import openpyxl` and
 	// friends resolve). WHERE those are depends on whether we are about to run
@@ -415,6 +429,9 @@ func buildSandboxedShellCmd(ctx context.Context, spec ShellRun) (SandboxedCmd, e
 	// all. It used to be written only as a side effect of building the bwrap
 	// argv, so on a host with no bwrap the package was never even created.
 	extraEnv["PYTHONPATH"] = sandboxPythonPath(sb.remapsPaths(), extraEnv["PYTHONPATH"])
+	if spec.Proxy && !allowNetwork {
+		command = proxyEnv(sb, extraEnv, command)
+	}
 
 	if !sb.confines() {
 		if sandboxRequired(ctx) {
@@ -663,6 +680,33 @@ func bwrapArgv(workspaceDir, shellCmd string, allowNetwork bool) []string {
 		"sh", "-c", shellCmd,
 	)
 	return args
+}
+
+// proxyEnv points a run's HTTP clients at its relay and starts the relay
+// ahead of the command, returning the command to run. Only on a backend whose
+// relay is the run's own: bubblewrap (a private loopback) and Seatbelt (the
+// host's, opened for that one port and guarded by the token). Elsewhere, or
+// with no relay in the env, the command is returned as it was.
+func proxyEnv(sb sandboxBackend, env map[string]string, command string) string {
+	port, token := env[RelayPort], env["GOHORT_RELAY_TOKEN"]
+	if port == "" || token == "" || env["GOHORT_HOOK_PATH"] == "" {
+		return command
+	}
+	if n := sb.name(); n != "bubblewrap" && n != "seatbelt" {
+		return command
+	}
+	proxy := "http://gohort:" + token + "@127.0.0.1:" + port
+	for _, k := range []string{"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"} {
+		env[k] = proxy
+	}
+	env["NO_PROXY"], env["no_proxy"] = "127.0.0.1,localhost,::1", "127.0.0.1,localhost,::1"
+	relay := filepath.Join(sandboxShimBinDir(sb.remapsPaths()), "_gohort_relay")
+	return shellQuote(relay) + " >/dev/null 2>&1; " + command
+}
+
+// shellQuote is s as one sh word.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // RunSandboxedShellPipe runs `sh -c command` in a tight sandbox with

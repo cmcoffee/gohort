@@ -256,8 +256,9 @@ var (
 // that crosses the seam, and naming them here says so.
 type hookServer struct{ h *SandboxHook }
 
-func (s hookServer) Path() string { return s.h.SocketPath }
-func (s hookServer) Close()       { s.h.Close() }
+func (s hookServer) Path() string           { return s.h.SocketPath }
+func (s hookServer) Env() map[string]string { return s.h.RunEnv() }
+func (s hookServer) Close()                 { s.h.Close() }
 
 func init() {
 	// Runtime values the mechanics need from the host. Init-time REGISTRATION
