@@ -16,13 +16,13 @@ package filestore
 
 import (
 	"bufio"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -45,6 +45,7 @@ const (
 	maxWindowLines = 400     // lines one read may return
 	maxFilesWalked = 5000    // files considered in one search
 	maxFileBytes   = 1 << 30 // skip anything larger; a 1GB log is not searched line by line
+	maxLineBytes   = 4 << 20 // a line is searched in its first this many bytes; the rest is skipped, and the reply says so
 )
 
 // Bounds on the WORK a search may do, as opposed to the answer it may
@@ -159,6 +160,8 @@ type SearchResult struct {
 	Unsearched int         // files the global cap left unread
 	Untimed    int         // files left out of a time window because they carry no timestamps
 	Total      int         // matches counted across the files searched
+	LongLines  int         // lines over maxLineBytes, searched only in their first maxLineBytes
+	Unreadable []string    // "file: why" for each file a read failed in, searched only up to there
 }
 
 // resolveUnder joins rel to root and proves the result is still inside
@@ -280,6 +283,83 @@ func open(path string) (io.ReadCloser, error) {
 	return gzReadCloser{gz: gz, under: f}, nil
 }
 
+// lineReader reads a file a line at a time, as bufio.Scanner does, except
+// that neither a long line nor a failed read can pass for the end of the file.
+//
+// Scanner gives up for good at the first line longer than its buffer, and
+// every reader here took that for the end of the file: a search reported
+// nothing after one 5MB line of minified JSON, a window read reported the file
+// shorter than it is. Here a long line is cut at the cap, said to be cut, and
+// the next line reads normally. A read that fails (a truncated .gz, an I/O
+// error) is returned as itself once the lines before it are, so a caller can
+// say where it stopped rather than report what it did not read as absent.
+type lineReader struct {
+	rd   *bufio.Reader
+	max  int
+	buf  []byte
+	err  error // the read error after the line being returned, held for the next call
+	read int64 // bytes consumed, line endings included
+}
+
+func newLineReader(r io.Reader, max int) *lineReader {
+	return &lineReader{rd: bufio.NewReaderSize(r, 64<<10), max: max}
+}
+
+// next returns the next line without its line ending, at most max bytes of
+// it, and whether the rest of it was cut. The line is only valid until the
+// next call. io.EOF once there are no more lines; any other error is the read
+// failing at this point in the file.
+//
+// A line that fits the read buffer, which is nearly every line, is returned
+// straight out of it and costs no copy.
+func (l *lineReader) next() ([]byte, bool, error) {
+	if l.err != nil {
+		return nil, false, l.err
+	}
+	frag, err := l.rd.ReadSlice('\n')
+	l.read += int64(len(frag))
+	if err != bufio.ErrBufferFull {
+		if err != nil {
+			if len(frag) == 0 {
+				return nil, false, err
+			}
+			l.err = err
+		}
+		return l.finish(frag, false)
+	}
+	// Longer than the buffer: gathered across reads, keeping no more than
+	// the cap plus room for a CRLF, so an enormous line is never held whole.
+	l.buf = l.buf[:0]
+	cut := false
+	for {
+		if room := l.max + 2 - len(l.buf); len(frag) > room {
+			l.buf = append(l.buf, frag[:max(room, 0)]...)
+			cut = true
+		} else {
+			l.buf = append(l.buf, frag...)
+		}
+		if err != bufio.ErrBufferFull {
+			break
+		}
+		frag, err = l.rd.ReadSlice('\n')
+		l.read += int64(len(frag))
+	}
+	if err != nil {
+		l.err = err
+	}
+	return l.finish(l.buf, cut)
+}
+
+// finish drops the line ending and applies the cap.
+func (l *lineReader) finish(line []byte, cut bool) ([]byte, bool, error) {
+	line = bytes.TrimSuffix(line, []byte{'\n'})
+	line = bytes.TrimSuffix(line, []byte{'\r'})
+	if len(line) > l.max {
+		line, cut = line[:l.max], true
+	}
+	return line, cut, nil
+}
+
 type gzReadCloser struct {
 	gz    *gzip.Reader
 	under *os.File
@@ -315,7 +395,7 @@ func Search(ctx context.Context, root string, opts SearchOpts) (SearchResult, er
 	if opts.IgnoreCase {
 		pattern = "(?i)" + pattern
 	}
-	re, err := regexp.Compile(pattern)
+	re, err := bundle.CompileMatcher(pattern)
 	if err != nil {
 		return res, fmt.Errorf("that pattern is not a valid regular expression: %w", err)
 	}
@@ -406,6 +486,10 @@ func Search(ctx context.Context, root string, opts SearchOpts) (SearchResult, er
 		res.Scanned++
 		scanned += fr.read
 		res.Total += fr.total
+		res.LongLines += fr.longLines
+		if fr.readErr != "" {
+			res.Unreadable = append(res.Unreadable, lf.Rel+": "+fr.readErr)
+		}
 		if win.set() && !fr.timed {
 			res.Untimed++
 		}
@@ -471,11 +555,14 @@ func detectFileFormat(path string, modified time.Time) (string, int) {
 		return bundle.FormatText, modified.Year()
 	}
 	defer rc.Close()
-	sc := bufio.NewScanner(rc)
-	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	lr := newLineReader(rc, maxLineBytes)
 	var sample []string
-	for len(sample) < 60 && sc.Scan() {
-		sample = append(sample, sc.Text())
+	for len(sample) < 60 {
+		line, _, err := lr.next()
+		if err != nil {
+			break
+		}
+		sample = append(sample, string(line))
 	}
 	return bundle.DetectFormat(sample), modified.Year()
 }
@@ -497,22 +584,27 @@ type fileResult struct {
 	timed    bool // the file carried at least one timestamp
 	stopped  bool // the deadline or a cancel cut the file short
 	read     int64
+	// longLines counts lines over maxLineBytes, searched in their first
+	// maxLineBytes only. readErr is why the file could not be read to its
+	// end, with the line it stopped at; empty when it was.
+	longLines int
+	readErr   string
 }
 
 // searchFile scans one file, keeping a small ring of preceding lines so a
 // hit can carry its context without a second pass over the file. It reads
 // the whole file even once nothing more will be shown, because the COUNT is
 // part of the answer: "15 shown of 340" needs the 340.
-func searchFile(ctx context.Context, path, rel string, re *regexp.Regexp, ctxLines int, lim fileLimits, win window, deadline time.Time) fileResult {
+func searchFile(ctx context.Context, path, rel string, re *bundle.Matcher, ctxLines int, lim fileLimits, win window, deadline time.Time) fileResult {
 	var fr fileResult
 	rc, err := open(path)
 	if err != nil {
+		fr.readErr = err.Error()
 		return fr
 	}
 	defer rc.Close()
 
-	sc := bufio.NewScanner(rc)
-	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	lr := newLineReader(rc, maxLineBytes)
 
 	var ring []string
 	// pending tracks shown hits still collecting their trailing context.
@@ -524,9 +616,19 @@ func searchFile(ctx context.Context, path, rel string, re *regexp.Regexp, ctxLin
 	var lineTime time.Time
 
 	lineNo := 0
-	for sc.Scan() {
+	for {
+		raw, cut, err := lr.next()
+		if err != nil {
+			if err != io.EOF {
+				fr.readErr = fmt.Sprintf("could not be read past line %d: %v", lineNo, err)
+			}
+			break
+		}
 		lineNo++
-		fr.read += int64(len(sc.Bytes())) + 1
+		fr.read = lr.read
+		if cut {
+			fr.longLines++
+		}
 		// One clock read per 4096 lines rather than per line: the check
 		// has to be cheap enough that it is never the reason to skip it.
 		// A .gz that decompresses to something enormous is caught here
@@ -535,7 +637,20 @@ func searchFile(ctx context.Context, path, rel string, re *regexp.Regexp, ctxLin
 			fr.stopped = true
 			return fr
 		}
-		line := truncateRunes(sc.Text(), maxLineRunes)
+		// A line is matched and dated WHOLE, and cut to maxLineRunes only for
+		// what is shown. Matching the cut line was a silent miss: a hit past
+		// the cap (deep in a JSON line, at the end of a long stack frame)
+		// was not found, and the search reported it absent.
+		//
+		// The strings are made only when something needs them: the context
+		// ring and the window's clock read every line, a plain search reads
+		// none but its hits. Making them for every line was an allocation per
+		// line of the file, for lines that almost never match.
+		var full, line string
+		if ctxLines > 0 || win.set() {
+			full = string(raw)
+			line = truncateRunes(full, maxLineRunes)
+		}
 
 		for i := 0; i < len(waiting); {
 			w := waiting[i]
@@ -551,14 +666,14 @@ func searchFile(ctx context.Context, path, rel string, re *regexp.Regexp, ctxLin
 
 		inWindow := true
 		if win.set() {
-			if ts, ok := bundle.ParseTime(win.format, win.year, line); ok {
+			if ts, ok := bundle.ParseTime(win.format, win.year, full); ok {
 				lineTime = ts
 				fr.timed = true
 			}
 			inWindow = win.holds(lineTime)
 		}
 
-		if inWindow && re.MatchString(line) {
+		if inWindow && re.Match(raw) {
 			fr.total++
 			switch {
 			case lim.keep > 0 && fr.kept >= lim.keep:
@@ -568,6 +683,9 @@ func searchFile(ctx context.Context, path, rel string, re *regexp.Regexp, ctxLin
 				fr.skipped++
 			case len(fr.shown) < lim.room:
 				fr.kept++
+				if full == "" {
+					line = truncateRunes(string(raw), maxLineRunes)
+				}
 				m := Match{File: rel, Line: lineNo, Text: line}
 				if ctxLines > 0 && len(ring) > 0 {
 					m.Before = append(m.Before, ring...)
@@ -588,6 +706,7 @@ func searchFile(ctx context.Context, path, rel string, re *regexp.Regexp, ctxLin
 			}
 		}
 	}
+	fr.read = lr.read
 	return fr
 }
 
@@ -613,20 +732,25 @@ func Read(root, rel string, around, lines int) ([]string, int, error) {
 			start = 1
 		}
 	}
-	sc := bufio.NewScanner(rc)
-	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	lr := newLineReader(rc, maxLineBytes)
 
+	// A read that fails partway is an error, not a short window: handing
+	// back the lines before it would read as the file ending there.
 	var out []string
 	n := 0
-	for sc.Scan() {
+	for len(out) < lines {
+		line, _, err := lr.next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, 0, fmt.Errorf("%s could not be read past line %d: %w", rel, n, err)
+		}
 		n++
 		if n < start {
 			continue
 		}
-		if len(out) >= lines {
-			break
-		}
-		out = append(out, truncateRunes(sc.Text(), maxLineRunes))
+		out = append(out, truncateRunes(string(line), maxLineRunes))
 	}
 	return out, start, nil
 }
@@ -642,6 +766,11 @@ func clamp(v, lo, hi int) int {
 }
 
 func truncateRunes(s string, max int) string {
+	// A string of no more bytes than max cannot hold more runes than max,
+	// which settles almost every log line without converting it.
+	if len(s) <= max {
+		return s
+	}
 	r := []rune(s)
 	if len(r) <= max {
 		return s
@@ -829,10 +958,13 @@ func FileSpan(root string, lf LogFile) (first, last time.Time, lastKnown, ok boo
 	if err != nil {
 		return
 	}
-	sc := bufio.NewScanner(rc)
-	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-	for n := 0; n < 500 && sc.Scan(); n++ {
-		if ts, found := bundle.ParseTime(format, year, sc.Text()); found {
+	lr := newLineReader(rc, maxLineBytes)
+	for n := 0; n < 500; n++ {
+		line, _, err := lr.next()
+		if err != nil {
+			break
+		}
+		if ts, found := bundle.ParseTime(format, year, string(line)); found {
 			first, ok = ts, true
 			break
 		}
@@ -852,10 +984,13 @@ func FileSpan(root string, lf LogFile) (first, last time.Time, lastKnown, ok boo
 			return
 		}
 	}
-	sc = bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-	for sc.Scan() {
-		if ts, found := bundle.ParseTime(format, year, sc.Text()); found {
+	lr = newLineReader(f, maxLineBytes)
+	for {
+		line, _, err := lr.next()
+		if err != nil {
+			break
+		}
+		if ts, found := bundle.ParseTime(format, year, string(line)); found {
 			last, lastKnown = ts, true
 		}
 	}

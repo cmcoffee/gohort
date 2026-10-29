@@ -25,8 +25,8 @@ import (
 	"fmt"
 	"io"
 	"path"
-	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -323,7 +323,7 @@ func (b Bundle) Search(ctx context.Context, q Query) (SearchResult, error) {
 	if strings.TrimSpace(q.Pattern) == "" {
 		return res, fmt.Errorf("pattern is required")
 	}
-	re, err := regexp.Compile("(?i)" + q.Pattern)
+	re, err := CompileMatcher("(?i)" + q.Pattern)
 	if err != nil {
 		return res, fmt.Errorf("pattern %q is not a valid regular expression: %w", q.Pattern, err)
 	}
@@ -383,10 +383,18 @@ func (b Bundle) Search(ctx context.Context, q Query) (SearchResult, error) {
 // pointer: res.Hits grows during the scan, and a pointer into it would be left
 // addressing a stale backing array the moment append reallocates — trailing
 // context would then be written to a copy nobody reads.
-func searchOneFile(ctx context.Context, store Store, bf File, re *regexp.Regexp, q Query, windowed bool, res *SearchResult) int {
+func searchOneFile(ctx context.Context, store Store, bf File, re *Matcher, q Query, windowed bool, res *SearchResult) int {
 	type owed struct{ idx, remaining int }
+	// seen is a line held for leading context. Held as its number and text
+	// rather than as the "N: text" it may be shown as: the text is a piece of
+	// the slice already in memory, so holding it costs nothing, and only the
+	// few lines that end up beside a hit are ever formatted.
+	type seen struct {
+		n    int
+		text string
+	}
 	var (
-		prev    []string // rolling "N: text" of the last q.Before lines
+		prev    []seen // the last q.Before lines
 		pending []owed
 		found   int
 	)
@@ -398,9 +406,9 @@ func searchOneFile(ctx context.Context, store Store, bf File, re *regexp.Regexp,
 		if n%searchCancelEvery == 0 && ctx.Err() != nil {
 			return false
 		}
-		numbered := fmt.Sprintf("%d: %s", n, text)
 		// Pay down trailing context owed to earlier hits.
 		if len(pending) > 0 {
+			numbered := numberLine(n, text)
 			kept := pending[:0]
 			for _, p := range pending {
 				res.Hits[p.idx].Context = append(res.Hits[p.idx].Context, numbered)
@@ -414,7 +422,11 @@ func searchOneFile(ctx context.Context, store Store, bf File, re *regexp.Regexp,
 		if re.MatchString(text) && (!windowed || LineInWindow(bf.Format, year, text, q.Since, q.Until)) {
 			hit := Hit{Path: bf.Path, Line: n, Text: strings.TrimRight(text, "\r")}
 			if q.Before > 0 || q.After > 0 {
-				hit.Context = append(append([]string{}, prev...), numbered)
+				hit.Context = make([]string, 0, len(prev)+1+q.After)
+				for _, p := range prev {
+					hit.Context = append(hit.Context, numberLine(p.n, p.text))
+				}
+				hit.Context = append(hit.Context, numberLine(n, text))
 			}
 			res.Hits = append(res.Hits, hit)
 			found++
@@ -428,7 +440,7 @@ func searchOneFile(ctx context.Context, store Store, bf File, re *regexp.Regexp,
 		}
 
 		if q.Before > 0 {
-			prev = append(prev, numbered)
+			prev = append(prev, seen{n: n, text: text})
 			if len(prev) > q.Before {
 				prev = prev[1:]
 			}
@@ -436,6 +448,13 @@ func searchOneFile(ctx context.Context, store Store, bf File, re *regexp.Regexp,
 		return true
 	})
 	return found
+}
+
+// numberLine is a context line as a search shows it: "N: text". Formatted
+// only for a line that is shown; a search looks at every line of the dump and
+// shows almost none of them.
+func numberLine(n int, text string) string {
+	return strconv.Itoa(n) + ": " + text
 }
 
 // MatchGlob matches a shell-style pattern against a path. A pattern with

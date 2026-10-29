@@ -5,10 +5,12 @@ package filestore
 // which is why the reading half is its own file.
 
 import (
+	"bytes"
 	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -153,6 +155,165 @@ func TestSearchTruncatesAMonstrousLine(t *testing.T) {
 	}
 	if runes := []rune(matches[0].Text); len(runes) > maxLineRunes+1 {
 		t.Errorf("line came back %d runes long, cap is %d", len(runes), maxLineRunes)
+	}
+}
+
+// failAfter yields its data and then fails, the way a truncated .gz does.
+type failAfter struct {
+	data []byte
+	err  error
+}
+
+func (f *failAfter) Read(p []byte) (int, error) {
+	if len(f.data) == 0 {
+		return 0, f.err
+	}
+	n := copy(p, f.data)
+	f.data = f.data[n:]
+	return n, nil
+}
+
+// The reader under every read here. A line past the cap, whether it fits the
+// read buffer or not, comes back cut and SAID to be cut, and the line after it
+// reads normally; a failed read comes back as itself, after the lines before
+// it, rather than as the end of the file.
+func TestLineReaderCutsLongLinesAndKeepsGoing(t *testing.T) {
+	huge := strings.Repeat("y", 200<<10) // longer than the 64KB read buffer
+	in := "short\r\n" + "0123456789abcdef\n" + huge + "\n" + "after\n" + "0123456789\r\n" + "last"
+	lr := newLineReader(strings.NewReader(in), 10)
+	want := []struct {
+		line string
+		cut  bool
+	}{
+		{"short", false},
+		{"0123456789", true},  // over the cap, inside the buffer
+		{"yyyyyyyyyy", true},  // over the cap and the buffer
+		{"after", false},      // resynchronized
+		{"0123456789", false}, // exactly the cap, CRLF dropped, not cut
+		{"last", false},       // no final newline
+	}
+	for i, w := range want {
+		line, cut, err := lr.next()
+		if err != nil {
+			t.Fatalf("line %d: %v", i+1, err)
+		}
+		if string(line) != w.line || cut != w.cut {
+			t.Errorf("line %d = %q cut=%v, want %q cut=%v", i+1, line, cut, w.line, w.cut)
+		}
+	}
+	if _, _, err := lr.next(); err != io.EOF {
+		t.Errorf("after the last line: %v, want io.EOF", err)
+	}
+	if lr.read != int64(len(in)) {
+		t.Errorf("read %d bytes, the input is %d", lr.read, len(in))
+	}
+
+	boom := errors.New("unexpected EOF in gzip stream")
+	lr = newLineReader(&failAfter{data: []byte("one\ntwo"), err: boom}, 10)
+	for _, w := range []string{"one", "two"} {
+		if line, _, err := lr.next(); err != nil || string(line) != w {
+			t.Fatalf("got %q, %v; want %q", line, err, w)
+		}
+	}
+	if _, _, err := lr.next(); err != boom {
+		t.Errorf("a failed read came back as %v, want the failure itself", err)
+	}
+}
+
+// One line over the old 4MB scanner buffer used to end the search of its file
+// without a word: the hit on the line after it was never found and the reply
+// read as complete. Now the long line is searched in its first maxLineBytes,
+// the search carries on past it, and the reply says the line was cut.
+func TestSearchCarriesOnPastAnOverlongLine(t *testing.T) {
+	root := t.TempDir()
+	body := "ERROR before\n" + "ERROR inside " + strings.Repeat("z", maxLineBytes+1024) + "\n" + "ERROR after\n"
+	if err := os.WriteFile(filepath.Join(root, "app.log"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Search(context.Background(), root, SearchOpts{Pattern: "ERROR", Context: 1})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	var lines []int
+	for _, m := range res.Matches {
+		lines = append(lines, m.Line)
+	}
+	if fmt.Sprint(lines) != "[1 2 3]" {
+		t.Fatalf("matched lines %v, want [1 2 3]: the search stopped at the long line", lines)
+	}
+	if res.LongLines != 1 {
+		t.Errorf("LongLines = %d, want 1", res.LongLines)
+	}
+	if out := renderMatches(res); !strings.Contains(out, "searched only in their first") {
+		t.Errorf("the reply does not say a line was cut:\n%s", out)
+	}
+	// And a window read past it lands on the right lines.
+	got, _, err := Read(root, "app.log", 3, 1)
+	if err != nil || len(got) != 1 || got[0] != "ERROR after" {
+		t.Errorf("Read past the long line = %q, %v; want [\"ERROR after\"]", got, err)
+	}
+}
+
+// A .gz cut short mid-stream (a copy that did not finish, a rotated file
+// half-written) used to read as a short file: whatever came before the break
+// was searched and the reply said nothing. Now the file is named as unread past
+// the line it stopped at, and "nothing matched" says it is not the whole story.
+func TestSearchNamesAFileItCouldNotReadToTheEnd(t *testing.T) {
+	root := t.TempDir()
+	var gz bytes.Buffer
+	zw := gzip.NewWriter(&gz)
+	for i := 0; i < 20000; i++ {
+		fmt.Fprintf(zw, "2026-10-27T12:00:00Z INFO line %d of a rotated log, with some padding to compress\n", i)
+	}
+	zw.Close()
+	cut := gz.Bytes()[:gz.Len()/2]
+	if err := os.WriteFile(filepath.Join(root, "app.log.1.gz"), cut, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Search(context.Background(), root, SearchOpts{Pattern: "line 0 of"})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(res.Matches) != 1 {
+		t.Errorf("the part before the break was not searched: %d matches", len(res.Matches))
+	}
+	if len(res.Unreadable) != 1 || !strings.HasPrefix(res.Unreadable[0], "app.log.1.gz: could not be read past line ") {
+		t.Fatalf("Unreadable = %q, want the truncated .gz named", res.Unreadable)
+	}
+	res, err = Search(context.Background(), root, SearchOpts{Pattern: "never present"})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if gaps := renderGaps(res); !strings.Contains(gaps, "INCOMPLETE") || !strings.Contains(gaps, "app.log.1.gz") {
+		t.Errorf("a no-match reply over a truncated file must say so, got %q", gaps)
+	}
+}
+
+// The display cap is a cap on what is SHOWN. A hit past it, deep in a JSON
+// line, used to be matched against the already-cut line and so was never
+// found: the search reported an absence nobody established. Checked with and
+// without context and a time window, since each makes the line by its own path.
+func TestSearchFindsAHitPastTheDisplayCap(t *testing.T) {
+	root := t.TempDir()
+	line := `2026-10-27T12:00:00Z {"msg":"` + strings.Repeat("x", maxLineRunes*2) + ` connection reset by peer"}`
+	if err := os.WriteFile(filepath.Join(root, "wide.log"), []byte("2026-10-27T11:59:59Z start\n"+line+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for name, opts := range map[string]SearchOpts{
+		"plain":   {Pattern: "connection reset", IgnoreCase: true},
+		"context": {Pattern: "connection reset", IgnoreCase: true, Context: 1},
+		"window":  {Pattern: "connection reset", Since: time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC)},
+	} {
+		res, err := Search(context.Background(), root, opts)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if len(res.Matches) != 1 || res.Matches[0].Line != 2 {
+			t.Fatalf("%s: a hit past the display cap was not found: %+v", name, res.Matches)
+		}
+		if runes := []rune(res.Matches[0].Text); len(runes) > maxLineRunes+1 {
+			t.Errorf("%s: shown line is %d runes, cap is %d", name, len(runes), maxLineRunes)
+		}
 	}
 }
 
@@ -498,5 +659,35 @@ func TestSearchStopsWhenTheTurnIsCancelled(t *testing.T) {
 	// A nil context reads as uncancellable rather than panicking.
 	if _, err := Search(nil, bundle, SearchOpts{Pattern: "connection refused"}); err != nil {
 		t.Errorf("a nil context should scan, got %v", err)
+	}
+}
+
+// BenchmarkSearch is a search over 100k lines that finds nothing, so it
+// measures what looking at every line costs: plain, case-folded, with context,
+// and through a time window.
+func BenchmarkSearch(b *testing.B) {
+	dir := b.TempDir()
+	var body strings.Builder
+	for i := 0; i < 100000; i++ {
+		fmt.Fprintf(&body, "2026-10-27T12:%02d:%02d.123Z INFO [worker-%d] request id=%08x handled path=/api/v1/files/%d status=200 bytes=%d dur=12ms\n",
+			i%60, i%60, i%8, i*7919, i, i*13)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "app.log"), []byte(body.String()), 0o644); err != nil {
+		b.Fatal(err)
+	}
+	since := time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC)
+	for name, opts := range map[string]SearchOpts{
+		"plain":   {Pattern: "connection reset"},
+		"fold":    {Pattern: "connection reset", IgnoreCase: true},
+		"context": {Pattern: "connection reset", IgnoreCase: true, Context: 2},
+		"window":  {Pattern: "connection reset", IgnoreCase: true, Since: since},
+	} {
+		b.Run(name, func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				if _, err := Search(context.Background(), dir, opts); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }

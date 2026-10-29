@@ -415,7 +415,11 @@ func (s storeSource) itemTools(sess *ToolSession, user, itemID string) []AgentTo
 					// absence nobody established.
 					if res.Stopped != "" {
 						return "No matches in what was read, but the search did not finish: " + res.Stopped +
-							". Narrow it with `within` or `file_glob` and try again: do not conclude this pattern is absent.", nil
+							". Narrow it with `within` or `file_glob` and try again: do not conclude this pattern is absent.\n" + renderGaps(res), nil
+					}
+					if gaps := renderGaps(res); gaps != "" {
+						return "Nothing matched in what was read, but not all of it could be:\n" + gaps +
+							"Do not conclude this pattern is absent from those files.", nil
 					}
 					return "Nothing matched. The pattern is a regular expression over raw lines: check it appears literally, try ignore_case, widen file_glob, or drop `within` to search the whole store.", nil
 				}
@@ -497,8 +501,31 @@ func renderCounts(res SearchResult, pattern string) string {
 	if res.Untimed > 0 {
 		fmt.Fprintf(&b, "%d file(s) carry no timestamps, so the time window left them out.\n", res.Untimed)
 	}
+	b.WriteString(renderGaps(res))
 	if res.Stopped != "" {
 		b.WriteString("INCOMPLETE: " + res.Stopped + ". Totals cover only what was read.\n")
+	}
+	return b.String()
+}
+
+// renderGaps says what a search could not see inside the files it did read: a
+// line too long to search whole, and a file whose read failed partway (a
+// truncated .gz, an I/O error). Either is a place a match could be that the
+// search never looked at, so it goes out with every kind of answer, "nothing
+// matched" most of all. Empty when there were none.
+func renderGaps(res SearchResult) string {
+	var b strings.Builder
+	if res.LongLines > 0 {
+		fmt.Fprintf(&b, "%d line(s) were over %d MB and were searched only in their first %d MB.\n",
+			res.LongLines, maxLineBytes>>20, maxLineBytes>>20)
+	}
+	if n := len(res.Unreadable); n > 0 {
+		list, more := res.Unreadable, ""
+		if n > 8 {
+			list, more = list[:8], fmt.Sprintf("; and %d more", n-8)
+		}
+		fmt.Fprintf(&b, "INCOMPLETE: %d file(s) could not be read to the end, so nothing past that point was searched: %s%s.\n",
+			n, strings.Join(list, "; "), more)
 	}
 	return b.String()
 }
@@ -558,6 +585,7 @@ func renderMatches(res SearchResult) string {
 	if res.Untimed > 0 {
 		fmt.Fprintf(&b, "%d file(s) carry no timestamps, so the time window left them out.\n", res.Untimed)
 	}
+	b.WriteString(renderGaps(res))
 	// Different sentence from the cap, deliberately. The cap means there
 	// are more matches; this means part of the store was never read, so
 	// an absence here is not evidence of absence.

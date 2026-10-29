@@ -29,7 +29,7 @@ import (
 // It swaps OpenStore rather than a concrete database, which is the seam core
 // assigns at init — so these tests exercise the same path production does, and
 // a change that broke the wiring would fail here rather than only in an app.
-func withMemStore(t *testing.T) {
+func withMemStore(t testing.TB) {
 	t.Helper()
 	prev := OpenStore
 	m := map[string]*memStore{}
@@ -212,7 +212,7 @@ func TestReadBundleLineTruncates(t *testing.T) {
 }
 
 // writeStage lays out a staging directory from a name→content map.
-func writeStage(t *testing.T, files map[string]string) string {
+func writeStage(t testing.TB, files map[string]string) string {
 	t.Helper()
 	dir := t.TempDir()
 	for name, body := range files {
@@ -390,6 +390,47 @@ func TestSearchContextSurvivesHitGrowth(t *testing.T) {
 		}
 		if !strings.Contains(h.Context[1], "trailing detail") {
 			t.Fatalf("hit %d trailing context = %q", i, h.Context[1])
+		}
+	}
+}
+
+// Leading context is held as line number and text and only formatted when a
+// hit shows it, so the exact "N: text" a hit carries is pinned here: a hit at
+// the top of a file with fewer lines above it than asked for, two hits close
+// enough to share context lines, and context that crosses a slice boundary.
+func TestSearchContextIsExact(t *testing.T) {
+	withMemStore(t)
+	var body strings.Builder
+	for i := 1; i <= SliceLines+2; i++ {
+		switch i {
+		case 1, 4, 5, SliceLines + 1:
+			fmt.Fprintf(&body, "hit %d\n", i)
+		default:
+			fmt.Fprintf(&body, "plain %d\n", i)
+		}
+	}
+	stage := writeStage(t, map[string]string{"app.log": body.String()})
+	if _, err := Open("u1", "b1").Ingest(context.Background(), stage); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	res, err := Open("u1", "b1").Search(context.Background(), Query{Pattern: "^hit", Before: 2, After: 1})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	last := SliceLines + 1
+	want := [][]string{
+		{"1: hit 1", "2: plain 2"},
+		{"2: plain 2", "3: plain 3", "4: hit 4", "5: hit 5"},
+		{"3: plain 3", "4: hit 4", "5: hit 5", "6: plain 6"},
+		{fmt.Sprintf("%d: plain %d", last-2, last-2), fmt.Sprintf("%d: plain %d", last-1, last-1),
+			fmt.Sprintf("%d: hit %d", last, last), fmt.Sprintf("%d: plain %d", last+1, last+1)},
+	}
+	if len(res.Hits) != len(want) {
+		t.Fatalf("found %d hits, want %d", len(res.Hits), len(want))
+	}
+	for i, h := range res.Hits {
+		if strings.Join(h.Context, "|") != strings.Join(want[i], "|") {
+			t.Errorf("hit %d (line %d) context = %q, want %q", i, h.Line, h.Context, want[i])
 		}
 	}
 }
@@ -672,5 +713,40 @@ func TestABundleFileExportsItsLines(t *testing.T) {
 	}
 	if _, err := b.Export("missing.log", &out); err == nil {
 		t.Error("a file not in the bundle was exported")
+	}
+}
+
+// benchLogLines is a typical application log: a timestamp, a level, and a
+// request line, none of which contains the searched-for text, so the benchmark
+// measures the cost of looking at every line rather than of reporting hits.
+func benchLogLines(n int) string {
+	var b strings.Builder
+	for i := 0; i < n; i++ {
+		fmt.Fprintf(&b, "2026-10-27T12:%02d:%02d.123Z INFO [worker-%d] request id=%08x handled path=/api/v1/files/%d status=200 bytes=%d dur=12ms\n",
+			i%60, i%60, i%8, i*7919, i, i*13)
+	}
+	return b.String()
+}
+
+// BenchmarkBundleSearch is a search over 100k lines that finds nothing, the
+// shape of most investigation queries: plain, then with context asked for.
+func BenchmarkBundleSearch(b *testing.B) {
+	withMemStore(b)
+	stage := writeStage(b, map[string]string{"app.log": benchLogLines(100000)})
+	if _, err := Open("u1", "bench").Ingest(context.Background(), stage); err != nil {
+		b.Fatalf("ingest: %v", err)
+	}
+	for _, q := range []Query{
+		{Pattern: "connection reset"},
+		{Pattern: "connection reset", Before: 2, After: 2},
+		{Pattern: `reset by peer \d+`},
+	} {
+		b.Run(fmt.Sprintf("%s/ctx=%d", q.Pattern, q.Before), func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				if _, err := Open("u1", "bench").Search(context.Background(), q); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }
