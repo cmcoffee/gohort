@@ -304,11 +304,24 @@ const dictationJS = `(function(){
     listen(ctx, s);
   }
 
-  // listen watches the microphone's level and stops the recording when the
-  // speaker goes quiet. Quiet is relative to the room: the floor is the
-  // lowest level heard, creeping up slowly so a noisier room raises it, and
-  // speech is anything well above it. A third of a second of speech counts
-  // as having said something; before that, only quietMs stops it.
+  // listen watches the microphone and stops the recording when the speaker
+  // goes quiet, in a noisy room as in a quiet one. It used to take the room's
+  // floor as the quietest moment ever heard and anything four times that as
+  // speech: a television, a cycling fan or other people dip to near silence
+  // now and then, the floor fell with the dip and stayed, the room's own
+  // noise then read as talk, and a recording ran on until it was stopped by
+  // hand. Now:
+  //   - the level is measured in the band speech lives in, 300 Hz to 3.4 kHz,
+  //     so a hum or a rumble barely registers;
+  //   - the floor is a low percentile of the room's own sound, so a brief
+  //     still moment does not drag it down, and speech, well above it, does
+  //     not pull it up;
+  //   - the level is smoothed, and must hold a tenth of a second to count, so
+  //     a clatter is not a word;
+  //   - once somebody has spoken, quiet is also judged against how loud they
+  //     were: the room's noise, well under their voice, is quiet.
+  // A third of a second of speech counts as having said something; before
+  // that, only quietMs stops it.
   function listen(ctx, s) {
     if (!audio || !audio.createMediaStreamSource || !audio.createAnalyser) return;
     var source, an;
@@ -316,20 +329,51 @@ const dictationJS = `(function(){
       source = audio.createMediaStreamSource(s);
       an = audio.createAnalyser();
       an.fftSize = 1024;
-      source.connect(an);
+      var tail = source;
+      if (audio.createBiquadFilter) {
+        var hp = audio.createBiquadFilter(), lp = audio.createBiquadFilter();
+        hp.type = 'highpass'; hp.frequency.value = 300;
+        lp.type = 'lowpass'; lp.frequency.value = 3400;
+        tail.connect(hp); hp.connect(lp); tail = lp;
+      }
+      tail.connect(an);
     } catch (e) { return; }
     var buf = new Uint8Array(an.fftSize);
-    var floor = -1, lastVoice = Date.now(), from = Date.now();
+    var floor = -1, smooth = -1, peak = 0, run = 0, warm = [], lastVoice = Date.now(), from = Date.now();
     var m = meter = {source: source, voiced: 0, timer: setInterval(function() {
       if (state !== 'recording') return;
       an.getByteTimeDomainData(buf);
       var sum = 0;
       for (var i = 0; i < buf.length; i++) { var x = (buf[i] - 128) / 128; sum += x * x; }
       var v = Math.sqrt(sum / buf.length);
-      floor = (floor < 0 || v < floor) ? v : floor + (v - floor) * 0.005;
-      var now = Date.now();
-      if (v > Math.max(floor * 4, 0.02)) { m.voiced += tickMs; lastVoice = now; }
+      smooth = smooth < 0 ? v : smooth + (v - smooth) * 0.4;
       level(ctx, Math.min(1, v / 0.15));
+      // The floor starts at the median of the first readings, not the first
+      // one: a room whose first reading fell in one of its dips started far
+      // under its own noise, never rose past it, and read as speech.
+      if (floor < 0) {
+        warm.push(smooth);
+        if (warm.length < 8) return;
+        warm.sort(function(a, b) { return a - b; });
+        floor = warm[4];
+      }
+      var now = Date.now();
+      var bar = Math.max(floor * 2.5, 0.02, m.voiced >= 300 ? peak * 0.25 : 0);
+      run = smooth > bar ? run + 1 : 0;
+      if (run >= 2) {
+        m.voiced += tickMs;
+        lastVoice = now;
+        peak = Math.max(peak, smooth);
+      }
+      // The floor settles at the room's 30th percentile: a step down for a
+      // reading under it, a smaller one up for a reading over it (but under
+      // speech), sized to the floor so a quiet room and a loud one move
+      // alike. A brief still moment moves it a step, not to the bottom, and
+      // speech, well above it, does not pull it up: rising on the dips
+      // between words let it climb until the voice itself read as quiet.
+      floor = Math.max(floor, 0.0005);
+      if (smooth < floor) floor *= 1 - 0.035;
+      else if (smooth < floor * 2.5) floor *= 1 + 0.015;
       if (m.voiced >= 300) { if (now - lastVoice >= silenceMs) stopRecording(ctx); }
       else if (now - from >= quietMs) { if (heardNothing()) cancelRecording(ctx); else stopRecording(ctx); }
     }, tickMs)};
