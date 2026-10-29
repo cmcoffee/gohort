@@ -62,9 +62,28 @@ func ServeDictation(w http.ResponseWriter, r *http.Request, user string) {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
+	if note := dictationMeterNote(r.Header.Get("X-Dictation-Meter")); note != "" {
+		nfo.Debug("[dictate] %s: %d bytes, meter %s, %d chars back", user, len(audio), note, len(strings.TrimSpace(text)))
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	json.NewEncoder(w).Encode(map[string]string{"text": strings.TrimSpace(text)})
+}
+
+// dictationMeterNote is the page's account of what its level meter heard
+// (live=1 voiced=150 first=40 peak=0.310), kept to the characters that note
+// uses and a line's length, since the page writes it and the log shows it.
+func dictationMeterNote(h string) string {
+	var b strings.Builder
+	for _, c := range h {
+		if b.Len() >= 80 {
+			break
+		}
+		if c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || strings.ContainsRune("=.- ", c) {
+			b.WriteRune(c)
+		}
+	}
+	return strings.TrimSpace(b.String())
 }
 
 // dictationFileName names a recording by the format the browser made it in,
@@ -122,6 +141,10 @@ const dictationJS = `(function(){
   var silenceMs = 1800, quietMs = 15000, tickMs = 50;
   // The start tone's length; recording begins after it, so it is not heard.
   var toneMs = 150;
+  // A stop this soon after the start is a tap on and off, not a recording:
+  // it cancels whatever the meter made of it, since a clip that short with
+  // nothing said comes back as words the transcriber made up.
+  var tapMs = 600;
   var key = 'gohort.readDictatedReplies';
 
   function readRepliesAloud() {
@@ -189,6 +212,9 @@ const dictationJS = `(function(){
 
   var state = 'idle', rec = null, stream = null, timer = null, cutoff = null, ctl = null, started = 0;
   var dictated = false, awaiting = false;
+  // meterNote is what the meter made of the recording being sent, for the
+  // server's log beside it.
+  var meterNote = '';
   // held is the recording whose writing-out failed in a way that sending it
   // again could fix ({blob, secs}), and discard the ✕ beside the mic shown
   // while one is. It lives in this page only: a reload or leaving the page
@@ -321,7 +347,7 @@ const dictationJS = `(function(){
     var buf = new Uint8Array(an.fftSize);
     var fbuf = an.getFloatTimeDomainData ? new Float32Array(an.fftSize) : null;
     var floor = -1, lastVoice = Date.now(), from = Date.now();
-    var m = meter = {source: source, voiced: 0, live: false, timer: setInterval(function() {
+    var m = meter = {source: source, voiced: 0, live: false, first: -1, peak: 0, timer: setInterval(function() {
       if (state !== 'recording') return;
       if (!m.live && fbuf) {
         an.getFloatTimeDomainData(fbuf);
@@ -333,7 +359,11 @@ const dictationJS = `(function(){
       var v = Math.sqrt(sum / buf.length);
       floor = (floor < 0 || v < floor) ? v : floor + (v - floor) * 0.005;
       var now = Date.now();
-      if (v > Math.max(floor * 4, 0.02)) { m.voiced += tickMs; lastVoice = now; }
+      if (v > m.peak) m.peak = v;
+      if (v > Math.max(floor * 4, 0.02)) {
+        if (m.first < 0) m.first = now - from;
+        m.voiced += tickMs; lastVoice = now;
+      }
       level(ctx, Math.min(1, v / 0.15));
       if (m.voiced >= 300) { if (now - lastVoice >= silenceMs) stopRecording(ctx); }
       else if (now - from >= quietMs) { if (heardNothing()) cancelRecording(ctx); else stopRecording(ctx); }
@@ -365,6 +395,8 @@ const dictationJS = `(function(){
   function stopRecording(ctx) {
     if (state !== 'recording' || !rec) return;
     state = 'sending';
+    meterNote = meter ? 'live=' + (meter.live ? 1 : 0) + ' voiced=' + meter.voiced + ' first=' + meter.first +
+      ' peak=' + meter.peak.toFixed(3) : 'none';
     stopMeter();
     pressed(ctx, false);
     tone(false);
@@ -392,7 +424,10 @@ const dictationJS = `(function(){
     state = 'sending';
     ctl = new AbortController();
     if (!timer) writing(ctx);
-    fetch('` + DictatePath + `', {method: 'POST', headers: {'Content-Type': blob.type || 'audio/webm'}, body: blob, signal: ctl.signal})
+    var headers = {'Content-Type': blob.type || 'audio/webm'};
+    if (meterNote) headers['X-Dictation-Meter'] = meterNote;
+    meterNote = '';
+    fetch('` + DictatePath + `', {method: 'POST', headers: headers, body: blob, signal: ctl.signal})
       .then(function(r) {
         if (!r.ok) return r.text().then(function(t) { var e = new Error(t || ('HTTP ' + r.status)); e.status = r.status; throw e; });
         return r.json();
@@ -422,7 +457,9 @@ const dictationJS = `(function(){
 
   function press(ctx) {
     switch (state) {
-    case 'recording': if (heardNothing()) cancelRecording(ctx); else stopRecording(ctx); return;
+    case 'recording':
+      if (Date.now() - started < tapMs || heardNothing()) cancelRecording(ctx); else stopRecording(ctx);
+      return;
     case 'sending':
       if (ctl) ctl.abort();
       // A cancelled resend keeps the recording; a first send lets it go,

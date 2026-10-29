@@ -182,6 +182,11 @@ const dictationFlow = `
   await sleep(10);
   mic = actions[0];
   var discard = actions[1], speaker = actions[2];
+  // Each press comes a second after the one before, as a person's would; a
+  // tap on and off is pressed with tap().
+  var skew = 0, realNow = Date.now, tap = mic.onclick;
+  Date.now = function() { return realNow() + skew; };
+  mic.onclick = function(c) { skew += 1000; tap(c); };
   check('a mic button in the input row', mic && mic.button.textContent === '🎤');
   check('a ✕ beside it, hidden until a recording is held', discard && discard.first === true && discard.button.style.display === 'none');
   check('and the read-aloud switch beside it, on by default on a phone', speaker && speaker.button.textContent === '🔈');
@@ -198,6 +203,7 @@ const dictationFlow = `
   mic.onclick(mic);
   await sleep(10);
   check('pressing again stops and sends the recording', pending.length === 1 && pending[0].url === '/api/dictate' && pending[0].opts.headers['Content-Type'] === 'audio/webm;codecs=opus' && tracksStopped >= 1);
+  check('saying it had no meter', pending[0].opts.headers['X-Dictation-Meter'] === 'none');
   check('and it is no longer marked as recording', !('aria-pressed' in mic.button.attrs));
   await sleep(150);
   check('a spinner while it is written out', /^[⠀-⣿]/.test(mic.button.textContent));
@@ -320,19 +326,19 @@ const dictationFlow = `
   var kept = pending[6].opts.body;
   pending[6].res(refused(502, 'transcribe: HTTP 500'));
   await sleep(10);
-  check('a transcriber failure says why and keeps the recording', mic.button.textContent === '↻ 0:00' &&
-    mic.button.title.indexOf('HTTP 500') >= 0 && mic.button.title.indexOf('send the 0:00 recording again') >= 0);
+  check('a transcriber failure says why and keeps the recording', mic.button.textContent === '↻ 0:01' &&
+    mic.button.title.indexOf('HTTP 500') >= 0 && mic.button.title.indexOf('send the 0:01 recording again') >= 0);
   check('with the ✕ shown to discard it', discard.button.style.display === '');
   recs = recorders.length;
   mic.onclick(mic); await sleep(10);
   check('pressing sends the same recording again, recording nothing new', pending.length === 8 && pending[7].opts.body === kept && recorders.length === recs);
   check('with the spinner', /^[⠀-⣿]/.test(mic.button.textContent));
   mic.onclick(mic);
-  check('cancelling the resend keeps it', pending[7].opts.signal.aborted && mic.button.textContent === '↻ 0:00' && discard.button.style.display === '');
+  check('cancelling the resend keeps it', pending[7].opts.signal.aborted && mic.button.textContent === '↻ 0:01' && discard.button.style.display === '');
   mic.onclick(mic); await sleep(10);
   pending[8].rej(new TypeError('Failed to fetch'));
   await sleep(10);
-  check('a dropped network keeps it too', mic.button.textContent === '↻ 0:00' && mic.button.title.indexOf('Failed to fetch') >= 0);
+  check('a dropped network keeps it too', mic.button.textContent === '↻ 0:01' && mic.button.title.indexOf('Failed to fetch') >= 0);
   mic.onclick(mic); await sleep(10);
   pending[9].res(written('Back online.'));
   await sleep(10);
@@ -378,6 +384,10 @@ const dictationFlow = `
   fire('ui-agent-sent');
   check('a message going out during a resend stops it and lets it go', pending[17].opts.signal.aborted && mic.button.textContent === '🎤' && discard.button.style.display === 'none');
   fire('ui-agent-sent');
+  var sentBefore = pending.length;
+  tap(mic); await sleep(10); tap(mic); await sleep(10);
+  check('a tap on and off sends nothing, without a meter to ask', recorders[recorders.length - 1].stopped &&
+    pending.length === sentBefore && mic.button.textContent === '🎤' && mic.button.title.indexOf('Nothing was heard') === 0);
   lateStop = true;
   mic.onclick(mic); await sleep(10);
   var sent = pending.length;
@@ -468,6 +478,7 @@ eval(dictationJS);
   check('talking keeps it recording', pending.length === 0);
   loud = 0.003; await sleep(400);
   check('going quiet after speech stops it and sends it', pending.length === 1);
+  check('saying what the meter heard, for the log', /^live=1 voiced=\d+ first=\d+ peak=0\.\d{3}$/.test(pending[0].opts.headers['X-Dictation-Meter']));
   check('with a falling tone', tones.join() === 'up,down');
   check('the meter is let go and the ring cleared', disconnected === 1 && mic.button.style.props['--ui-act-level'] === '0.00');
   pending[0].res(written('Hello.'));
@@ -585,4 +596,18 @@ func runDictationHarness(t *testing.T, node, harness string) {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	t.Logf("%s", out)
+}
+
+// The meter's note reaches the log as the page wrote it, and nothing else a
+// page could put in the header does.
+func TestTheMeterNoteKeepsToItsShape(t *testing.T) {
+	if got := dictationMeterNote("live=1 voiced=150 first=-1 peak=0.310"); got != "live=1 voiced=150 first=-1 peak=0.310" {
+		t.Errorf("a note as the page writes it: %q", got)
+	}
+	if got := dictationMeterNote("live=1\n[ERROR] forged <b>"); got != "live=1 forged b" {
+		t.Errorf("a forged line: %q", got)
+	}
+	if got := dictationMeterNote(strings.Repeat("a", 200)); len(got) != 80 {
+		t.Errorf("a long note is clipped to a line: %d", len(got))
+	}
 }
