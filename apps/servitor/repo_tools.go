@@ -10,54 +10,78 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/bundle"
 )
 
-const repoMaxSearchHits = 60
+// repoMaxSearchHits is how many hits one code search keeps: the log search's
+// limit. The reply arrives as its first page whatever it holds, so keeping
+// more costs the agent nothing until it reads on, and read_output reads on or
+// greps within all of them where a short limit made it search again.
+const repoMaxSearchHits = bundle.MaxSearchHits
+
+// repoPerFile is one file's share of a code search's hits, so one file
+// that uses a name everywhere cannot fill the reply before the others are
+// reached.
+const repoPerFile = 10
 
 // repoSearchParams adds the options every search_code shares to a tool's own
 // parameters (its query, and the repo or member it names), so the variants
-// describe the same option the same way.
+// describe the same option the same way. They are the log search's options
+// (core/bundle), less the ones that need timestamps.
 func repoSearchParams(own map[string]ToolParam) map[string]ToolParam {
-	own["regex"] = ToolParam{Type: "boolean", Description: "Treat query as a regular expression (case-insensitive), e.g. \"func (Get|Set)User\" or \"timeout.*retry\". Default false: query is literal text, so a dot or a bracket in it matches itself."}
+	own["patterns"] = ToolParam{Type: "array", Items: &ToolParam{Type: "string"}, Description: "Several texts to find in ONE pass, instead of query or with it, up to 8, e.g. [\"GetUser(\", \"users_table\", \"/api/v1/users\"]. Each is answered in its own section as if searched alone, with its own count and hits. Literal unless regex is set. Use it instead of searching several times in a row."}
+	own["regex"] = ToolParam{Type: "boolean", Description: "Treat query (and patterns) as regular expressions (case-insensitive), e.g. \"func (Get|Set)User\" or \"timeout.*retry\". Default false: literal text, so a dot or a bracket matches itself."}
 	own["exclude"] = ToolParam{Type: "string", Description: "Optional regular expression for lines to leave out: a line the query matched is dropped when this matches it too, e.g. \"^\\s*//\" to skip comment lines."}
 	own["glob"] = ToolParam{Type: "string", Description: "Optional file filter, e.g. \"*.go\", \"internal/auth/*\", or a fragment of the path such as \"handlers\". Empty searches every file."}
+	own["context"] = ToolParam{Type: "integer", Description: "Lines either side of each hit (0-8, default 0)."}
+	own["count"] = ToolParam{Type: "boolean", Description: "Return per-file match totals only, no lines, over every file, busiest first: how often and where. Not with group."}
+	own["group"] = ToolParam{Type: "boolean", Description: "Group the matching lines by shape instead of listing them: numbers, ids and quoted values are masked, so lines differing only in those are one shape, each with its count and one example, most frequent first. Shows every distinct way a name is used. Not with count."}
+	own["per_file"] = ToolParam{Type: "integer", Description: fmt.Sprintf("How many hits one file may keep (default %d), so one file cannot crowd out the rest. Lifted when only one file is in scope.", repoPerFile)}
 	return own
 }
 
 // repoQueryFromArgs reads a search_code call's arguments.
 func repoQueryFromArgs(args map[string]any, maxHits int) repoQuery {
-	q := repoQuery{MaxHits: maxHits}
-	q.Text, _ = args["query"].(string)
-	q.Regex, _ = args["regex"].(bool)
-	q.Exclude, _ = args["exclude"].(string)
-	q.Glob, _ = args["glob"].(string)
+	q := repoQuery{MaxHits: maxHits, PerFile: repoPerFile}
+	q.Text = StringArg(args, "query")
+	q.Patterns = bundle.PatternsArg(args["patterns"])
+	q.Regex = BoolArg(args, "regex")
+	q.Exclude = StringArg(args, "exclude")
+	q.Glob = strings.TrimSpace(StringArg(args, "glob"))
+	q.Context = min(max(IntArg(args, "context"), 0), 8)
+	q.Count = BoolArg(args, "count")
+	q.Group = BoolArg(args, "group")
+	if n := IntArg(args, "per_file"); n > 0 {
+		q.PerFile = n
+	}
 	return q
 }
 
-// notes says what a search left out: the cut, and the lines exclude removed.
-// Empty when it left out nothing.
-func (res repoSearchResult) notes() string {
-	var b strings.Builder
-	if res.Truncated {
-		fmt.Fprintf(&b, "(showing the first %d matches; there may be more: narrow with glob, exclude or a more specific query)\n", len(res.Hits))
+// renderRepoSearch is a code search's reply, the log search's (core/bundle
+// render.go) with the texts named as they were asked for. A search of one
+// text that found nothing says what that establishes: nothing, where exclude
+// hid the matches or glob kept the search to part of the repo, and an absence
+// otherwise.
+func renderRepoSearch(res bundle.SearchResult, q repoQuery) string {
+	texts, err := q.texts()
+	if err != nil {
+		return err.Error()
 	}
-	if res.Excluded > 0 {
-		fmt.Fprintf(&b, "(%d more line(s) matched but were left out by exclude)\n", res.Excluded)
+	if len(res.Lanes) == 0 && !q.Count && !q.Group && res.Total == 0 && res.Excluded == 0 {
+		if q.Glob != "" {
+			return fmt.Sprintf("No matches for %q in files matching %q. The rest of the repository was not searched: drop glob to search all of it.\n", texts[0], q.Glob)
+		}
+		return fmt.Sprintf("No matches for %q in %d files. The text is not in the ingested source: do not infer that it is there anyway.\n", texts[0], res.Scanned)
 	}
-	return b.String()
+	shown := q
+	shown.Regex = true // named as asked, not as quoted for the search
+	return bundle.RenderSearch(res, shown.bundleQuery(texts), "read_file")
 }
 
-// noMatches is the reply to a search that found nothing, which is not "the
-// text is absent" when exclude hid the matches or glob kept the search to
-// part of the repo.
-func (res repoSearchResult) noMatches(q repoQuery) string {
-	if res.Excluded > 0 {
-		return fmt.Sprintf("No matches left after exclude: %d line(s) matched the query and every one also matched exclude. Narrow exclude, or drop it, to see them.", res.Excluded)
-	}
-	if q.Glob != "" {
-		return fmt.Sprintf("No matches in files matching %q. The rest of the repository was not searched: drop glob to search all of it.", q.Glob)
-	}
-	return "No matches."
+// repoReply pages a code search's reply: the first page arrives, and
+// read_output reads on or greps within it without searching again.
+func repoReply(text string) string {
+	return SpillOutput(text, bundle.SearchPageChars, "read_output")
 }
 
 // errRepoNotLoaded is returned by the repo tools when the encrypted store is
@@ -78,29 +102,17 @@ func repoCodeTools(user, applianceID string) []AgentToolDef {
 				Parameters: repoSearchParams(map[string]ToolParam{
 					"query": {Type: "string", Description: "The text to find: a function/type/table name, a route, a config key, or an exact string from a log line."},
 				}),
-				Required: []string{"query"},
 			},
 			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				q := repoQueryFromArgs(args, repoMaxSearchHits)
-				if strings.TrimSpace(q.Text) == "" {
-					return "", fmt.Errorf("query is required")
-				}
 				res, err := searchRepo(ctx, user, applianceID, q)
 				if err != nil {
 					return "", err
 				}
-				if len(res.Hits) == 0 {
-					if repoFileCount(user, applianceID) == 0 {
-						return errRepoNotLoaded, nil
-					}
-					return res.noMatches(q), nil
+				if res.Scanned == 0 && repoFileCount(user, applianceID) == 0 {
+					return errRepoNotLoaded, nil
 				}
-				var b strings.Builder
-				for _, h := range res.Hits {
-					fmt.Fprintf(&b, "%s:%d: %s\n", h.Path, h.Line, h.Text)
-				}
-				b.WriteString(res.notes())
-				return b.String(), nil
+				return repoReply(renderRepoSearch(res, q)), nil
 			},
 		},
 		{
@@ -219,16 +231,16 @@ func linkedRepoTools(repos []linkedRepo) []AgentToolDef {
 				Parameters: repoSearchParams(map[string]ToolParam{
 					"query": {Type: "string", Description: "The text to find: a function/type/table name, a route, a config key, or an exact string from a log line."},
 				}),
-				Required: []string{"query"},
 			},
 			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				q := repoQueryFromArgs(args, repoMaxSearchHits)
-				if strings.TrimSpace(q.Text) == "" {
-					return "", fmt.Errorf("query is required")
+				if _, err := q.texts(); err != nil {
+					return "", err
 				}
-				var b, notes strings.Builder
-				total, loaded := 0, 0
-				var all repoSearchResult
+				// One section per repository: each is searched, limited and
+				// cut on its own, and says so on its own.
+				var b strings.Builder
+				loaded := 0
 				for _, r := range repos {
 					if repoFileCount(r.Owner, r.ID) == 0 {
 						continue // not ingested; reported below only if NOTHING is
@@ -238,25 +250,12 @@ func linkedRepoTools(repos []linkedRepo) []AgentToolDef {
 					if err != nil {
 						return "", err
 					}
-					for _, h := range res.Hits {
-						fmt.Fprintf(&b, "[%s] %s:%d: %s\n", r.Name, h.Path, h.Line, h.Text)
-						total++
-					}
-					// Each repo is cut on its own, so each says so on its own:
-					// one repo's cut is not the others'.
-					if n := res.notes(); n != "" {
-						fmt.Fprintf(&notes, "[%s] %s", r.Name, n)
-					}
-					all.Excluded += res.Excluded
+					fmt.Fprintf(&b, "=== repository %s ===\n%s\n", r.Name, renderRepoSearch(res, q))
 				}
 				if loaded == 0 {
 					return errRepoNotLoaded, nil
 				}
-				if total == 0 {
-					return all.noMatches(q), nil
-				}
-				b.WriteString(notes.String())
-				return b.String(), nil
+				return repoReply(b.String()), nil
 			},
 		},
 		{

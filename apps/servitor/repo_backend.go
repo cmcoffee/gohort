@@ -493,6 +493,7 @@ func listRepoDir(user, applianceID, prefix string) []string {
 	return out
 }
 
+// repoSearchHit is one matching line of code, as a workspace's scout keeps it.
 type repoSearchHit struct {
 	Path string
 	Line int
@@ -501,127 +502,117 @@ type repoSearchHit struct {
 
 // repoQuery is one search over a repo's encrypted store.
 type repoQuery struct {
-	Text    string // the text to find; a regular expression when Regex is set
-	Regex   bool
-	Exclude string // optional regular expression: a line Text matched is dropped if this matches it too
-	Glob    string // optional path filter, matched as a bundle's is (bundle.MatchGlob)
-	MaxHits int    // repoMaxSearchHits when unset
+	Text string // the text to find; a regular expression when Regex is set
+	// Patterns are further texts looked for in the same pass, each answered
+	// as if searched alone (core/bundle lanes.go); literal unless Regex.
+	Patterns []string
+	Regex    bool
+	Exclude  string // optional regular expression: a line Text matched is dropped if this matches it too
+	Glob     string // optional path filter, matched as a bundle's is (bundle.MatchGlob)
+	MaxHits  int    // repoMaxSearchHits when unset
+	PerFile  int    // one file's share of MaxHits; 0 for none
+	Context  int    // lines either side of each hit
+	Count    bool   // per-file totals instead of lines
+	Group    bool   // the matching lines by shape instead of listed
 }
 
-// repoSearchResult is a search's hits plus what it left out, so a reply can
-// say so rather than read as everything there is.
-type repoSearchResult struct {
-	Hits      []repoSearchHit
-	Truncated bool // stopped at MaxHits; there may be more
-	Excluded  int  // lines Text matched that Exclude took back out
+// texts is the query's texts, blanks and repeats dropped, as given.
+func (q repoQuery) texts() ([]string, error) {
+	texts, err := bundle.Patterns(q.Text, q.Patterns)
+	if err != nil {
+		return nil, fmt.Errorf("query is required")
+	}
+	return texts, nil
 }
+
+// bundleQuery is the query as the shared search takes it, with texts as its
+// patterns: quoted when literal.
+func (q repoQuery) bundleQuery(texts []string) bundle.Query {
+	pats := append([]string(nil), texts...)
+	if !q.Regex {
+		for i, t := range pats {
+			pats[i] = regexp.QuoteMeta(t)
+		}
+	}
+	return bundle.Query{
+		Pattern: pats[0], Patterns: pats[1:], Exclude: q.Exclude, Glob: q.Glob,
+		MaxHits: q.MaxHits, PerFile: q.PerFile, Before: q.Context, After: q.Context,
+		CountOnly: q.Count, Group: q.Group,
+	}
+}
+
+// repoSource is a repo's encrypted store as a source the shared search reads
+// (core/bundle source.go). A file is kept whole, so it is one slice, of a
+// height no file reaches. Code carries no timestamps: no time window or
+// record applies.
+type repoSource struct{ store Database }
+
+func (s repoSource) Files() []bundle.File {
+	paths := s.store.Keys(repoFilesTable)
+	sort.Strings(paths)
+	out := make([]bundle.File, len(paths))
+	for i, p := range paths {
+		out[i] = bundle.File{Path: p, Key: p, Slices: 1, Format: bundle.FormatText}
+	}
+	return out
+}
+
+func (s repoSource) Slice(bf bundle.File, idx int) string {
+	var content string
+	if idx == 0 {
+		s.store.Get(repoFilesTable, bf.Path, &content)
+	}
+	return content
+}
+
+func (s repoSource) Height() int { return 1 << 30 }
 
 // searchRepo finds lines in a repo's ingested files.
 //
-// The matching is core/bundle's, the one a log search uses, so a query means
-// the same thing in code as in a log: case-insensitive, literal or a regular
-// expression, an exclude pattern, a path filter, and a prefilter that rules a
-// whole file out, before it is split into lines, when it lacks the text every
-// match needs. Literal is the default because it is what this searched before
-// it shared the matcher, and an identifier with a dot or a bracket in it has
-// to find itself.
-func searchRepo(ctx context.Context, user, applianceID string, q repoQuery) (repoSearchResult, error) {
-	var res repoSearchResult
+// The search is core/bundle's, the one a log search uses, reading the repo's
+// store through repoSource, so a query means the same thing in code as in a
+// log and has the same options: case-insensitive, several texts at once, an
+// exclude pattern, a path filter, context lines, a per-file share, counts and
+// grouping, and a reply that says where it was cut. Literal is the default
+// because it is what this searched before it shared the search, and an
+// identifier with a dot or a bracket in it has to find itself. The store
+// itself is the repo's own: whole files, synced by hash, and nothing under a
+// skipped folder (.git, with the clone's credentials, above all) in it.
+func searchRepo(ctx context.Context, user, applianceID string, q repoQuery) (bundle.SearchResult, error) {
+	var res bundle.SearchResult
 	store := repoFileStore(user, applianceID)
-	if store == nil || strings.TrimSpace(q.Text) == "" {
+	if store == nil {
 		return res, nil
 	}
-	pattern := q.Text
-	if !q.Regex {
-		pattern = regexp.QuoteMeta(pattern)
-	}
-	re, err := bundle.CompileMatcher("(?i)" + pattern)
+	texts, err := q.texts()
 	if err != nil {
-		return res, fmt.Errorf("query is not a valid regular expression: %w", err)
-	}
-	f := bundle.Filter{Match: re}
-	if strings.TrimSpace(q.Exclude) != "" {
-		if f.Exclude, err = bundle.CompileMatcher("(?i)" + q.Exclude); err != nil {
-			return res, fmt.Errorf("exclude is not a valid regular expression: %w", err)
-		}
+		return res, err
 	}
 	if q.MaxHits <= 0 {
 		q.MaxHits = repoMaxSearchHits
 	}
-	var paths []string
-	for _, path := range store.Keys(repoFilesTable) {
-		if q.Glob == "" || bundle.MatchGlob(q.Glob, path) {
-			paths = append(paths, path)
-		}
+	res, err = bundle.SearchSource(ctx, repoSource{store}, q.bundleQuery(texts))
+	if err != nil {
+		return res, fmt.Errorf("query: %w", err)
 	}
-	sort.Strings(paths)
-	// Several files at once, merged in path order (core/bundle parallel.go).
-	// A file's scan keeps up to the whole limit, since it cannot know the room
-	// the files before it left; the merge takes what fits and stops there,
-	// with the exclusions counted up to that point, as a single pass would.
-	bundle.EachInOrder(ctx, len(paths),
-		func(ctx context.Context, i int) repoFileHits {
-			return scanRepoFile(ctx, store, paths[i], re, f, q.MaxHits)
-		},
-		func(i int, r repoFileHits) bool {
-			if ctx.Err() != nil {
-				return false
-			}
-			room := q.MaxHits - len(res.Hits)
-			if len(r.hits) < room {
-				res.Hits = append(res.Hits, r.hits...)
-				res.Excluded += r.excluded
-				return true
-			}
-			res.Hits = append(res.Hits, r.hits[:room]...)
-			res.Excluded += r.excludedBefore[room-1]
-			res.Truncated = true
-			return false
-		})
-	if err := ctx.Err(); err != nil {
-		return res, err
+	// A reply names each text as it was asked for, not as it was quoted.
+	for i := range res.Lanes {
+		res.Lanes[i].Pattern = texts[i]
+		clipRepoHits(res.Lanes[i].Hits)
 	}
+	clipRepoHits(res.Hits)
 	return res, nil
 }
 
-// repoFileHits is one file's part of a repo search: its first hits, up to the
-// search's limit, and the lines exclude took out. excludedBefore[k] is how
-// many had been taken out when hit k was found, so a merge that cuts the file
-// at hit k counts exactly what a single pass stopping there would have.
-type repoFileHits struct {
-	hits           []repoSearchHit
-	excluded       int
-	excludedBefore []int
-}
-
-// scanRepoFile searches one ingested file.
-func scanRepoFile(ctx context.Context, store Database, path string, re *bundle.Matcher, f bundle.Filter, max int) repoFileHits {
-	var r repoFileHits
-	if ctx.Err() != nil {
-		return r
-	}
-	var content string
-	if !store.Get(repoFilesTable, path, &content) || !re.Possible(content) {
-		return r
-	}
-	for i, line := range strings.Split(content, "\n") {
-		if !re.MatchString(line) {
-			continue
-		}
-		if f.ExcludesString(line) {
-			r.excluded++
-			continue
-		}
-		// Copied, not sliced: the line is a piece of the whole file's text,
-		// and a kept hit holding the piece would hold the file.
-		t := strings.Clone(textutil.Clip(strings.TrimSpace(line), 240))
-		r.hits = append(r.hits, repoSearchHit{Path: path, Line: i + 1, Text: t})
-		r.excludedBefore = append(r.excludedBefore, r.excluded)
-		if len(r.hits) >= max {
-			break
+// clipRepoHits bounds what a hit shows of its line: a line of minified code
+// can be the whole file.
+func clipRepoHits(hits []bundle.Hit) {
+	for i := range hits {
+		hits[i].Text = textutil.Clip(strings.TrimSpace(hits[i].Text), 240)
+		for j, c := range hits[i].Context {
+			hits[i].Context[j] = textutil.Clip(c, 250)
 		}
 	}
-	return r
 }
 
 func normRepoPath(p string) string {

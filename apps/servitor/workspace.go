@@ -265,6 +265,53 @@ func scout_terms(question string) []string {
 	return out
 }
 
+// scoutPerTerm and scoutMaxHits bound what the scout keeps of one member:
+// each term's first few hits, and a handful in all.
+const (
+	scoutPerTerm = 6
+	scoutMaxHits = 18
+)
+
+// scoutHits is a member's hits for the question's terms: each term's first
+// scoutPerTerm, in term order, each line once, until scoutMaxHits. The terms
+// are searched together, up to bundle.MaxPatterns at a time, each its own
+// lane (core/bundle lanes.go): a member is read once per batch rather than
+// once per term, which on an evidence bundle was the whole bundle a dozen
+// times over. What is kept is what a search per term kept.
+func scoutHits(terms []string, search func(batch []string) (bundle.SearchResult, error)) []repoSearchHit {
+	seen := map[string]bool{}
+	var hits []repoSearchHit
+	for start := 0; start < len(terms); start += bundle.MaxPatterns {
+		batch := terms[start:min(start+bundle.MaxPatterns, len(terms))]
+		res, err := search(batch)
+		if err != nil {
+			continue
+		}
+		lanes := len(res.Lanes)
+		if lanes == 0 {
+			lanes = 1 // one term: the result is its own
+		}
+		for i := 0; i < lanes; i++ {
+			term := res
+			if len(res.Lanes) > 0 {
+				term = res.Lane(i)
+			}
+			for _, h := range term.Hits {
+				key := fmt.Sprintf("%s:%d", h.Path, h.Line)
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+				hits = append(hits, repoSearchHit{Path: h.Path, Line: h.Line, Text: h.Text})
+			}
+			if len(hits) >= scoutMaxHits {
+				return hits
+			}
+		}
+	}
+	return hits
+}
+
 // scoutWorkspace scores every member against the question without spending a
 // worker on any of them. Repo members are searched directly (their code is
 // already ingested); live systems are judged from the map we accumulated on
@@ -288,22 +335,10 @@ func (T *Servitor) scoutWorkspace(ctx context.Context, ws Appliance, members []w
 				s.Note = "not ingested yet: run Refresh on this repo to make it searchable"
 				break
 			}
-			seen := make(map[string]bool)
-			for _, term := range terms {
-				res, _ := searchRepo(ctx, m.Owner, m.ID, repoQuery{Text: term, MaxHits: 6})
-				for _, h := range res.Hits {
-					key := fmt.Sprintf("%s:%d", h.Path, h.Line)
-					if seen[key] {
-						continue
-					}
-					seen[key] = true
-					s.Hits = append(s.Hits, h)
-					s.Score++
-				}
-				if len(s.Hits) >= 18 {
-					break
-				}
-			}
+			s.Hits = scoutHits(terms, func(batch []string) (bundle.SearchResult, error) {
+				return searchRepo(ctx, m.Owner, m.ID, repoQuery{Text: batch[0], Patterns: batch[1:], MaxHits: scoutPerTerm})
+			})
+			s.Score = len(s.Hits)
 		case "evidence":
 			// The bundle analogue of the repo pass: search the evidence itself
 			// rather than only what was recorded about it. Without this an
@@ -313,25 +348,14 @@ func (T *Servitor) scoutWorkspace(ctx context.Context, ws Appliance, members []w
 				s.Note = "no evidence ingested yet: upload this bundle's files to make it searchable"
 				break
 			}
-			seen := make(map[string]bool)
-			for _, term := range terms {
-				res, err := bundle.Open(m.Owner, m.ID).Search(ctx, bundle.Query{Pattern: regexpQuoteMeta(term), MaxHits: 6})
-				if err != nil {
-					continue
+			s.Hits = scoutHits(terms, func(batch []string) (bundle.SearchResult, error) {
+				quoted := make([]string, len(batch))
+				for i, t := range batch {
+					quoted[i] = regexpQuoteMeta(t)
 				}
-				for _, h := range res.Hits {
-					key := fmt.Sprintf("%s:%d", h.Path, h.Line)
-					if seen[key] {
-						continue
-					}
-					seen[key] = true
-					s.Hits = append(s.Hits, repoSearchHit{Path: h.Path, Line: h.Line, Text: h.Text})
-					s.Score++
-				}
-				if len(s.Hits) >= 18 {
-					break
-				}
-			}
+				return bundle.Open(m.Owner, m.ID).Search(ctx, bundle.Query{Pattern: quoted[0], Patterns: quoted[1:], MaxHits: scoutPerTerm})
+			})
+			s.Score = len(s.Hits)
 			if s.Score == 0 {
 				s.Note = "the question's terms do not appear in this bundle's ingested text"
 			}

@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
+	"sort"
 	"strings"
 	"testing"
 
@@ -274,18 +276,23 @@ func TestRepoSearchSharesTheLogSearchMatcher(t *testing.T) {
 		t.Errorf("a path fragment as glob = %s", got)
 	}
 
-	res, _ := searchRepo(ctx, "alice", "repo-1", repoQuery{Text: "user", MaxHits: 2})
-	if !res.Truncated || !strings.Contains(res.notes(), "first 2 matches; there may be more") {
-		t.Errorf("a cut search must say so: truncated=%v notes=%q", res.Truncated, res.notes())
+	q := repoQuery{Text: "user", MaxHits: 2}
+	res, _ := searchRepo(ctx, "alice", "repo-1", q)
+	if out := renderRepoSearch(res, q); !res.Truncated || !strings.HasPrefix(out, "Showing 2 of 3 matches counted in 1 of 3 files") {
+		t.Errorf("a cut search must say so: truncated=%v reply=%q", res.Truncated, out)
 	}
-	q := repoQuery{Text: "getuser", Exclude: "getuser"}
+	q = repoQuery{Text: "getuser", Exclude: "getuser"}
 	res, _ = searchRepo(ctx, "alice", "repo-1", q)
-	if len(res.Hits) != 0 || !strings.HasPrefix(res.noMatches(q), "No matches left after exclude: 4 line(s)") {
-		t.Errorf("an exclude that hid everything read as %q", res.noMatches(q))
+	if out := renderRepoSearch(res, q); len(res.Hits) != 0 || !strings.Contains(out, "But 4 line(s) matched the pattern and every one also matched exclude") {
+		t.Errorf("an exclude that hid everything read as %q", out)
 	}
 	q = repoQuery{Text: "getuser", Glob: "*.py"}
-	if res, _ := searchRepo(ctx, "alice", "repo-1", q); !strings.Contains(res.noMatches(q), "The rest of the repository was not searched") {
-		t.Errorf("a glob-narrowed miss read as %q", res.noMatches(q))
+	if res, _ := searchRepo(ctx, "alice", "repo-1", q); !strings.Contains(renderRepoSearch(res, q), "The rest of the repository was not searched") {
+		t.Errorf("a glob-narrowed miss read as %q", renderRepoSearch(res, q))
+	}
+	q = repoQuery{Text: "no such name"}
+	if res, _ := searchRepo(ctx, "alice", "repo-1", q); !strings.Contains(renderRepoSearch(res, q), "The text is not in the ingested source") {
+		t.Errorf("a miss over the whole repo read as %q", renderRepoSearch(res, q))
 	}
 
 	if _, err := searchRepo(ctx, "alice", "repo-1", repoQuery{Text: "(", Regex: true}); err == nil || !strings.Contains(err.Error(), "query") {
@@ -311,7 +318,7 @@ func TestSearchCodeToolTakesTheSharedOptions(t *testing.T) {
 			search = td
 		}
 	}
-	for _, p := range []string{"query", "regex", "exclude", "glob"} {
+	for _, p := range []string{"query", "patterns", "regex", "exclude", "glob", "context", "count", "group", "per_file"} {
 		if _, ok := search.Tool.Parameters[p]; !ok {
 			t.Errorf("search_code has no %q parameter", p)
 		}
@@ -320,7 +327,7 @@ func TestSearchCodeToolTakesTheSharedOptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out != "a.go:1: func A() {}\na.go:2: func B() {}\n" {
+	if !strings.HasPrefix(out, "2 match(es) in 1 file(s)") || !strings.HasSuffix(out, "\na.go:1: func A() {}\na.go:2: func B() {}\n") {
 		t.Errorf("reply = %q", out)
 	}
 }
@@ -340,7 +347,7 @@ func TestRepoSearchInParallelGivesTheSerialAnswer(t *testing.T) {
 	withRepoFiles(t, "alice", "repo-1", files)
 	prev := bundle.SearchWorkers
 	defer func() { bundle.SearchWorkers = prev }()
-	run := func(workers int, q repoQuery) repoSearchResult {
+	run := func(workers int, q repoQuery) bundle.SearchResult {
 		bundle.SearchWorkers = workers
 		res, err := searchRepo(context.Background(), "alice", "repo-1", q)
 		if err != nil {
@@ -362,13 +369,279 @@ func TestRepoSearchInParallelGivesTheSerialAnswer(t *testing.T) {
 		}
 	}
 
-	// The cut, counted exactly: a file whose limit falls between two
-	// excluded lines counts only the exclusion before the last kept hit.
+	// The cut, counted whole: a file the limit falls inside is still read to
+	// its end, so the reply can say how many there were and how many exclude
+	// took out of the whole file.
 	withRepoFiles(t, "alice", "repo-2", map[string]string{
 		"a.go": "keep 1\n// keep x\nkeep 2\n// keep y\nkeep 3\n",
 	})
 	res, _ := searchRepo(context.Background(), "alice", "repo-2", repoQuery{Text: "keep", Exclude: "^//", MaxHits: 2})
-	if len(res.Hits) != 2 || res.Excluded != 1 || !res.Truncated {
-		t.Errorf("hits %d excluded %d truncated %v; want 2, 1, true", len(res.Hits), res.Excluded, res.Truncated)
+	if len(res.Hits) != 2 || res.Total != 3 || res.Excluded != 2 || !res.Truncated {
+		t.Errorf("hits %d of %d, excluded %d, truncated %v; want 2 of 3, 2, true", len(res.Hits), res.Total, res.Excluded, res.Truncated)
+	}
+}
+
+// search_code runs on the log search (core/bundle) through repoSource, which
+// keeps each file whole as one slice. It must find exactly what a plain scan
+// of every line finds: every match, in path order, numbered right past the
+// log search's slice height, and none lost where a file is passed over
+// unsplit because no pattern could match it.
+func TestRepoSearchFindsWhatAPlainScanFinds(t *testing.T) {
+	files := map[string]string{}
+	var big strings.Builder
+	for i := 1; i <= bundle.SliceLines*2+500; i++ {
+		if i%377 == 0 {
+			fmt.Fprintf(&big, "\treturn retryTimeout(%d) // Timeout here\n", i)
+		} else {
+			fmt.Fprintf(&big, "\tx%d := compute(%d)\n", i, i)
+		}
+	}
+	files["pkg/big.go"] = big.String()
+	files["pkg/a.go"] = "func A() { retryTimeout(1) }\n// TIMEOUT in a comment\n"
+	files["web/b.js"] = "nothing to see\nhere\n"
+	files["web/c.js"] = "const timeout = 5\r\nretry(timeout)\r\n"
+	withRepoFiles(t, "alice", "repo-1", files)
+
+	plain := func(expr, exclude string) []string {
+		re := regexp.MustCompile("(?i)" + expr)
+		var ex *regexp.Regexp
+		if exclude != "" {
+			ex = regexp.MustCompile("(?i)" + exclude)
+		}
+		var paths []string
+		for p := range files {
+			paths = append(paths, p)
+		}
+		sort.Strings(paths)
+		var out []string
+		for _, p := range paths {
+			for i, line := range strings.Split(files[p], "\n") {
+				if re.MatchString(line) && (ex == nil || !ex.MatchString(line)) {
+					out = append(out, fmt.Sprintf("%s:%d", p, i+1))
+				}
+			}
+		}
+		return out
+	}
+	for _, c := range []struct {
+		q       repoQuery
+		re, exc string
+	}{
+		{repoQuery{Text: "timeout"}, "timeout", ""},
+		{repoQuery{Text: "retryTimeout("}, `retrytimeout\(`, ""},
+		{repoQuery{Text: `timeout\(\d+\)`, Regex: true}, `timeout\(\d+\)`, ""},
+		{repoQuery{Text: "timeout", Exclude: "^\\s*//"}, "timeout", "^\\s*//"},
+	} {
+		c.q.MaxHits = 100000
+		res, err := searchRepo(context.Background(), "alice", "repo-1", c.q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, h := range res.Hits {
+			got = append(got, fmt.Sprintf("%s:%d", h.Path, h.Line))
+		}
+		if want := plain(c.re, c.exc); !reflect.DeepEqual(got, want) {
+			t.Errorf("%+v:\n got %v\nwant %v", c.q, got, want)
+		}
+	}
+}
+
+// The log search's options reach code: several texts in one pass, each in
+// its own section; counts; groups; context lines; and a long reply paged.
+func TestSearchCodeOffersTheLogSearchOptions(t *testing.T) {
+	files := map[string]string{
+		"auth/token.go": "func GetUser(id int) {}\nfunc SetUser(u User) {}\n// users_table holds them\n",
+		"db/schema.sql": "CREATE TABLE users_table (id int);\n",
+		"web/api.js":    "fetch('/api/v1/users')\nGetUser(7)\nGetUser(8)\n",
+	}
+	withRepoFiles(t, "alice", "repo-1", files)
+	var search AgentToolDef
+	for _, td := range repoCodeTools("alice", "repo-1") {
+		if td.Tool.Name == "search_code" {
+			search = td
+		}
+	}
+	run := func(args map[string]any) string {
+		t.Helper()
+		out, err := search.Handler(context.Background(), args)
+		if err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+		return out
+	}
+	out := run(map[string]any{"patterns": []any{"GetUser(", "users_table", "/api/v2"}})
+	for _, want := range []string{
+		"3 patterns searched in one pass",
+		`"GetUser(": 3 match(es) in 2 file(s)`,
+		`"/api/v2": no matches`,
+		"db/schema.sql:1: CREATE TABLE users_table (id int);",
+		"web/api.js:3: GetUser(8)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("patterns reply is missing %q:\n%s", want, out)
+		}
+	}
+	if out := run(map[string]any{"query": "getuser", "count": true}); !strings.Contains(out, "2  web/api.js") || !strings.Contains(out, "1  auth/token.go") {
+		t.Errorf("count reply:\n%s", out)
+	}
+	if out := run(map[string]any{"query": "getuser(", "group": true}); !strings.Contains(out, "GetUser(<*>)") {
+		t.Errorf("group reply should mask the arguments:\n%s", out)
+	}
+	if out := run(map[string]any{"query": "SetUser", "context": 1}); !strings.Contains(out, "1: func GetUser(id int) {}") || !strings.Contains(out, "3: // users_table holds them") {
+		t.Errorf("context reply:\n%s", out)
+	}
+	var many strings.Builder
+	for i := 0; i < 3000; i++ {
+		fmt.Fprintf(&many, "call(%d) // GetUser path number %d\n", i, i)
+	}
+	files["gen/many.go"] = many.String()
+	withRepoFiles(t, "alice", "repo-1", files)
+	if out := run(map[string]any{"query": "getuser", "per_file": 2000, "context": 8}); !strings.Contains(out, `output_id="`) {
+		t.Errorf("a long reply should arrive paged with a read_output trailer:\n%.300s", out[len(out)-300:])
+	}
+}
+
+// GUARD: a repository's .git folder never reaches anything a tool can read.
+// A clone's .git/config holds the URL it was cloned from, and with a token
+// set that URL carries the token (repoCloneURL), so .git in the store would
+// put a credential in reach of search_code and read_file. The repo ingest
+// skips it, whatever the appliance's own skip list says, and submodules'
+// too. Checked through the tools themselves, so a change to how repos are
+// stored (through a bundle's ingest, say, which skips nothing) fails here.
+func TestRepoIngestKeepsGitInternalsOutOfReach(t *testing.T) {
+	t.Cleanup(repoIngests.Wait)
+	withRepoUsers(t)
+	withRepoFiles(t, "root-admin", "repo-g", nil)
+	app := &Servitor{}
+	app.DB = &DBase{Store: kvlite.MemStore()}
+	dir := t.TempDir()
+	const secret = "tok-FAKE-0123456789"
+	write := func(rel, body string) {
+		p := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(".git/config", "[remote \"origin\"]\n\turl = https://oauth2:"+secret+"@host-a/org/repo.git\n")
+	write(".git/logs/HEAD", "clone: from https://oauth2:"+secret+"@host-a/org/repo.git\n")
+	write("lib/sub/.git/config", "url = https://"+secret+"@host-a/org/sub.git\n")
+	write("main.go", "package main // the code itself\n")
+	udb := UserDB(app.DB, "root-admin")
+	udb.Set(applianceTable, "repo-g", Appliance{ID: "repo-g", Type: "repo", Name: "repo-g", RepoPath: dir, RepoSkipDirs: []string{"docs"}})
+	app.cloneAndIngestRepo(context.Background(), "root-admin", udb, "repo-g")
+
+	if repoFileCount("root-admin", "repo-g") == 0 {
+		t.Fatal("nothing was ingested: the guard below would prove nothing")
+	}
+	tools := map[string]AgentToolDef{}
+	for _, td := range repoCodeTools("root-admin", "repo-g") {
+		tools[td.Tool.Name] = td
+	}
+	ctx := context.Background()
+	gitHit := regexp.MustCompile(`(?m)\.git/\S*:\d+:`)
+	for _, args := range []map[string]any{
+		{"query": secret},
+		{"query": "oauth2"},
+		{"query": "url =", "glob": ".git"},
+	} {
+		out, err := tools["search_code"].Handler(ctx, args)
+		// The reply names the query and glob it was given, so the secret or
+		// ".git" may be in it; a hit is a line naming a .git path.
+		if err != nil || gitHit.MatchString(out) || !strings.Contains(out, "No matches") {
+			t.Errorf("search_code %v reached .git: %v\n%s", args, err, out)
+		}
+	}
+	for _, p := range []string{".git/config", ".git/logs/HEAD", "lib/sub/.git/config"} {
+		if out, err := tools["read_file"].Handler(ctx, map[string]any{"path": p}); err == nil || strings.Contains(out, secret) {
+			t.Errorf("read_file %s returned %q", p, out)
+		}
+	}
+	for _, d := range []string{"", "lib/sub"} {
+		out, _ := tools["list_dir"].Handler(ctx, map[string]any{"path": d})
+		if strings.Contains(out, ".git") {
+			t.Errorf("list_dir %q shows .git:\n%s", d, out)
+		}
+	}
+}
+
+// The scout searches a member's terms together, a batch of patterns at a
+// time, and must keep exactly what one search per term kept: each term's
+// first few hits in term order, each line once, up to the cap. Eleven terms,
+// so two batches; some share lines, some match nothing, and the cap falls
+// partway through.
+func TestScoutKeepsWhatASearchPerTermKept(t *testing.T) {
+	files := map[string]string{}
+	words := []string{"alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", "juliet", "kilo"}
+	for f := 0; f < 6; f++ {
+		var b strings.Builder
+		for i := 0; i < 40; i++ {
+			fmt.Fprintf(&b, "line %d %s %s\n", i, words[(i+f)%len(words)], words[(i*3+f)%len(words)])
+		}
+		files[fmt.Sprintf("pkg%d/f.go", f)] = b.String()
+	}
+	withRepoFiles(t, "alice", "repo-1", files)
+	ctx := context.Background()
+	for _, terms := range [][]string{words, {"alpha"}, {"nothing", "matches", "here"}, append([]string{"zulu"}, words[:9]...)} {
+		var want []repoSearchHit
+		seen := map[string]bool{}
+		for _, term := range terms {
+			res, _ := searchRepo(ctx, "alice", "repo-1", repoQuery{Text: term, MaxHits: scoutPerTerm})
+			for _, h := range res.Hits {
+				if key := fmt.Sprintf("%s:%d", h.Path, h.Line); !seen[key] {
+					seen[key] = true
+					want = append(want, repoSearchHit{Path: h.Path, Line: h.Line, Text: h.Text})
+				}
+			}
+			if len(want) >= scoutMaxHits {
+				break
+			}
+		}
+		searches := 0
+		got := scoutHits(terms, func(batch []string) (bundle.SearchResult, error) {
+			searches++
+			return searchRepo(ctx, "alice", "repo-1", repoQuery{Text: batch[0], Patterns: batch[1:], MaxHits: scoutPerTerm})
+		})
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("terms %v:\n got %v\nwant %v", terms, got, want)
+		}
+		if limit := (len(terms) + bundle.MaxPatterns - 1) / bundle.MaxPatterns; searches > limit {
+			t.Errorf("terms %v: %d searches, want at most %d", terms, searches, limit)
+		}
+	}
+}
+
+// search_code keeps the log search's limit, not a page's worth: the reply
+// arrives as its first page, and read_output reaches a hit far past it
+// without searching again.
+func TestSearchCodeKeepsMoreThanAPage(t *testing.T) {
+	var b strings.Builder
+	for i := 1; i <= 700; i++ {
+		fmt.Fprintf(&b, "handler%d := register(\"/route/%d\")\n", i, i)
+	}
+	withRepoFiles(t, "alice", "repo-1", map[string]string{"routes.go": b.String()})
+	var search AgentToolDef
+	for _, td := range repoCodeTools("alice", "repo-1") {
+		if td.Tool.Name == "search_code" {
+			search = td
+		}
+	}
+	out, err := search.Handler(context.Background(), map[string]any{"query": "register("})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(out, "700 match(es) in 1 file(s)") || strings.Contains(out, "/route/650\"") {
+		t.Fatalf("the first page should open with the count and stop well short of hit 650:\n%.300s", out)
+	}
+	m := regexp.MustCompile(`output_id="([^"]+)"`).FindStringSubmatch(out)
+	if m == nil {
+		t.Fatalf("no read_output trailer:\n%s", out[len(out)-300:])
+	}
+	found, err := OutputPage{ID: m[1], Grep: "/route/650\"", Tool: "read_output"}.Read()
+	if err != nil || !strings.Contains(found, "routes.go:650:") {
+		t.Errorf("read_output should reach hit 650: %v\n%s", err, found)
 	}
 }

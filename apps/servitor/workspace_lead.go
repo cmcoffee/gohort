@@ -371,7 +371,7 @@ func (T *Servitor) workspaceLeadTools(ctx context.Context, id, userID string, ws
 				"member": {Type: "string", Description: "Repo member ID (or exact name) from the roster."},
 				"query":  {Type: "string", Description: "Text to find: a log string, function name, config key. Literal unless regex is set. Not a question."},
 			}),
-			Required: []string{"member", "query"},
+			Required: []string{"member"},
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			ref, _ := args["member"].(string)
@@ -386,32 +386,21 @@ func (T *Servitor) workspaceLeadTools(ctx context.Context, id, userID string, ws
 				}
 				return "", fmt.Errorf("%s is a %s member, not a repo: use %s for it", m.Name(), m.Kind(), alt)
 			}
-			q := repoQueryFromArgs(args, 40)
-			query := q.Text
-			if strings.TrimSpace(query) == "" {
-				return "", fmt.Errorf("query is required")
+			q := repoQueryFromArgs(args, repoMaxSearchHits)
+			texts, err := q.texts()
+			if err != nil {
+				return "", err
 			}
 			res, err := searchRepo(ctx, m.Owner, m.ID, q)
 			if err != nil {
 				return "", err
 			}
-			hits := res.Hits
-			emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("search_code %s %q: %d hit(s)", m.Name(), query, len(hits))})
-			if len(hits) == 0 {
-				// The firm "not present" only when the whole repo was searched
-				// and nothing was filtered out: otherwise it is not established.
-				if res.Excluded > 0 || q.Glob != "" {
-					return fmt.Sprintf("%s, searching for %q: %s", m.Name(), query, res.noMatches(q)), nil
-				}
-				return fmt.Sprintf("No matches for %q in %s. The string is not present in the ingested source: do not infer that it is there anyway.", query, m.Name()), nil
+			matches := res.Total
+			for _, ln := range res.Lanes {
+				matches += ln.Total
 			}
-			var b strings.Builder
-			fmt.Fprintf(&b, "%d match(es) for %q in %s (`%s`):\n\n", len(hits), query, m.Name(), m.ID)
-			for _, h := range hits {
-				fmt.Fprintf(&b, "- `%s:%d`, %s\n", h.Path, h.Line, h.Text)
-			}
-			b.WriteString(res.notes())
-			return b.String(), nil
+			emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("search_code %s %q: %d match(es)", m.Name(), strings.Join(texts, `", "`), matches)})
+			return repoReply(fmt.Sprintf("In %s (`%s`):\n%s", m.Name(), m.ID, renderRepoSearch(res, q))), nil
 		},
 		NeedsConfirm: false,
 	}

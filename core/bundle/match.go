@@ -326,6 +326,21 @@ func (f Filter) Which(b []byte) uint32 {
 	return m
 }
 
+// Possible reports whether any of the filter's patterns could match a line in
+// text, by their prefilters alone (Matcher.Possible): false means none can,
+// so text can be passed over unread.
+func (f Filter) Possible(text string) bool {
+	if f.Match.Possible(text) {
+		return true
+	}
+	for _, a := range f.Also {
+		if a.Possible(text) {
+			return true
+		}
+	}
+	return false
+}
+
 // WhichString is Which for a line held as a string.
 func (f Filter) WhichString(s string) uint32 {
 	var m uint32

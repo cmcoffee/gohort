@@ -422,6 +422,16 @@ func (r SearchResult) Lane(i int) SearchResult {
 const searchCancelEvery = 2048
 
 func (b Bundle) Search(ctx context.Context, q Query) (SearchResult, error) {
+	var src Source
+	if store := b.store(); store != nil {
+		src = storeSource{b: b, store: store}
+	}
+	return SearchSource(ctx, src, q)
+}
+
+// SearchSource is Search over any Source (source.go): a bundle's store, or
+// another store of files that wants the same search.
+func SearchSource(ctx context.Context, src Source, q Query) (SearchResult, error) {
 	var res SearchResult
 	if ctx == nil {
 		ctx = context.Background()
@@ -434,8 +444,7 @@ func (b Bundle) Search(ctx context.Context, q Query) (SearchResult, error) {
 	if err != nil {
 		return res, err
 	}
-	store := b.store()
-	if store == nil {
+	if src == nil {
 		return res, fmt.Errorf("bundle store unavailable")
 	}
 	if q.MaxHits <= 0 {
@@ -455,7 +464,7 @@ func (b Bundle) Search(ctx context.Context, q Query) (SearchResult, error) {
 	// through a fixed list.
 	windowed := !q.Since.IsZero() || !q.Until.IsZero()
 	var todo []File
-	for _, bf := range b.Index() {
+	for _, bf := range src.Files() {
 		if q.Glob != "" && !MatchGlob(q.Glob, bf.Path) {
 			res.Skipped++
 			continue
@@ -505,7 +514,7 @@ func (b Bundle) Search(ctx context.Context, q Query) (SearchResult, error) {
 	case q.Records && q.Before == 0 && q.After == 0:
 		q.Before, q.After = RecordFallback, RecordFallback
 	}
-	fs := fileSearch{store: store, f: f, q: q, windowed: windowed, offer: lanes[0].Offer()}
+	fs := fileSearch{src: src, height: src.Height(), f: f, q: q, windowed: windowed, offer: lanes[0].Offer()}
 	// Several chunks at once, of several files or of one large one, merged in
 	// order (parallel.go). A file's chunks add up to the file: each lane's
 	// hits up to its offer, its total, and then the lane's budget decides
@@ -559,7 +568,7 @@ func (b Bundle) Search(ctx context.Context, q Query) (SearchResult, error) {
 		return res, err
 	}
 	if q.Records {
-		b.records(ctx, store, lanes)
+		records(ctx, src, lanes)
 		if err := ctx.Err(); err != nil {
 			return res, err
 		}
@@ -581,10 +590,11 @@ func (b Bundle) Search(ctx context.Context, q Query) (SearchResult, error) {
 // records gives every lane's kept hits their whole records (records.go),
 // decrypting only the slices around them: a hit's RecordLines either side.
 // Several lanes' hits in one file are found in one reading of it.
-func (b Bundle) records(ctx context.Context, store Store, lanes []Lane[Hit]) {
+func records(ctx context.Context, src Source, lanes []Lane[Hit]) {
 	targets, order := RecordTargets(lanes, func(h Hit) string { return h.Path }, func(h Hit) int { return h.Line })
+	height := src.Height()
 	index := map[string]File{}
-	for _, bf := range b.Index() {
+	for _, bf := range src.Files() {
 		index[bf.Path] = bf
 	}
 	found := map[string]map[int]*Record{}
@@ -604,13 +614,13 @@ func (b Bundle) records(ctx context.Context, store Store, lanes []Lane[Hit]) {
 		slices := map[int][]string{}
 		for _, sp := range RecordSpans(targets[p]) {
 			for n := sp[0]; n <= sp[1] && n <= bf.Lines; n++ {
-				si := (n - 1) / SliceLines
+				si := (n - 1) / height
 				lines, ok := slices[si]
 				if !ok {
-					lines = sliceLinesAt(store, bf, si)
+					lines = sourceLines(src, bf, si)
 					slices[si] = lines
 				}
-				if j := (n - 1) % SliceLines; j < len(lines) {
+				if j := (n - 1) % height; j < len(lines) {
 					f.Line(n, lines[j])
 				}
 			}
@@ -638,11 +648,13 @@ func (b Bundle) records(ctx context.Context, store Store, lanes []Lane[Hit]) {
 	}
 }
 
-// fileSearch is what one file's scan needs from its search: the store, the
-// line test, the query, and how many hits a file may keep (Budget.Offer).
-// Read-only, so scans of several files can share it at once.
+// fileSearch is what one file's scan needs from its search: the source and
+// its slice height, the line test, the query, and how many hits a file may
+// keep (Budget.Offer). Read-only, so scans of several files can share it at
+// once.
 type fileSearch struct {
-	store    Store
+	src      Source
+	height   int
 	f        Filter
 	q        Query
 	windowed bool
@@ -707,8 +719,8 @@ func (s fileSearch) scan(ctx context.Context, bf File, from, to int) fileHits {
 	// it would have in the whole file. A slice is far longer than any
 	// context asked for, so one slice back always covers it.
 	if q.Before > 0 && from > 0 {
-		lines := sliceLinesAt(s.store, bf, from-1)
-		base := (from-1)*SliceLines + 1
+		lines := sourceLines(s.src, bf, from-1)
+		base := (from-1)*s.height + 1
 		start := len(lines) - q.Before
 		if start < 0 {
 			start = 0
@@ -718,7 +730,7 @@ func (s fileSearch) scan(ctx context.Context, bf File, from, to int) fileHits {
 		}
 	}
 	year := fileYear(bf)
-	scanSlices(s.store, bf, from, to, func(n int, text string) bool {
+	line := func(n int, text string) bool {
 		// One file can be the whole search, so the merge's check is not
 		// enough on its own. Sampled rather than per-line: ctx.Err() takes a
 		// lock, and this callback runs once per line of every log in the dump.
@@ -801,12 +813,33 @@ func (s fileSearch) scan(ctx context.Context, bf File, from, to int) fileHits {
 			}
 		}
 		return true
-	})
+	}
+	for idx := from; idx < to && ctx.Err() == nil; idx++ {
+		body := s.src.Slice(bf, idx)
+		// A slice no pattern could match is passed over without being split
+		// into lines, when nothing reaches across it: no hit above it still
+		// owed trailing context, and no leading context to carry past it. In
+		// a sparse search that is most of them.
+		if body == "" || len(pending) == 0 && q.Before == 0 && !s.f.Possible(body) {
+			continue
+		}
+		base := idx*s.height + 1
+		stopped := false
+		for i, text := range strings.Split(body, "\n") {
+			if !line(base+i, text) {
+				stopped = true
+				break
+			}
+		}
+		if stopped {
+			break
+		}
+	}
 	// Trailing context still owed at the chunk's end comes from the slice
 	// after it, as it would have from the next lines of the whole file.
 	if len(pending) > 0 && to < bf.Slices && ctx.Err() == nil {
-		lines := sliceLinesAt(s.store, bf, to)
-		base := to*SliceLines + 1
+		lines := sourceLines(s.src, bf, to)
+		base := to*s.height + 1
 		for j := 0; j < len(lines) && len(pending) > 0; j++ {
 			numbered := numberLine(base+j, lines[j])
 			kept := pending[:0]

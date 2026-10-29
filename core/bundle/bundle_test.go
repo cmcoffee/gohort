@@ -1201,3 +1201,51 @@ func BenchmarkBundleSearchOneLargeFile(b *testing.B) {
 		})
 	}
 }
+
+// A slice no pattern can match is passed over unsplit, but never one that a
+// hit's context reaches into: trailing context runs on into the slice after a
+// hit on a slice's last line, and leading context comes from the slice before
+// a hit on a slice's first line, though neither slice has a match of its own.
+func TestPassedOverSlicesStillGiveContext(t *testing.T) {
+	withMemStore(t)
+	var b strings.Builder
+	for i := 1; i <= SliceLines*3; i++ {
+		text := fmt.Sprintf("INFO quiet %d", i)
+		if i == SliceLines || i == SliceLines*2+1 {
+			text = fmt.Sprintf("ERROR loud %d", i)
+		}
+		fmt.Fprintf(&b, "%s\n", text)
+	}
+	stage := writeStage(t, map[string]string{"app.log": b.String()})
+	if _, err := Open("u1", "b1").Ingest(context.Background(), stage); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	prevC := ChunkSlices
+	defer func() { ChunkSlices = prevC }()
+	ChunkSlices = 1 << 30 // one chunk: the slices are crossed inside one scan
+	res, err := Open("u1", "b1").Search(context.Background(), Query{Pattern: "loud", Before: 2, After: 2})
+	if err != nil || len(res.Hits) != 2 {
+		t.Fatalf("hits %+v, %v", res.Hits, err)
+	}
+	n := SliceLines
+	want := [][]string{
+		{fmt.Sprintf("%d: INFO quiet %d", n-2, n-2), fmt.Sprintf("%d: INFO quiet %d", n-1, n-1), fmt.Sprintf("%d: ERROR loud %d", n, n), fmt.Sprintf("%d: INFO quiet %d", n+1, n+1), fmt.Sprintf("%d: INFO quiet %d", n+2, n+2)},
+		{fmt.Sprintf("%d: INFO quiet %d", 2*n-1, 2*n-1), fmt.Sprintf("%d: INFO quiet %d", 2*n, 2*n), fmt.Sprintf("%d: ERROR loud %d", 2*n+1, 2*n+1), fmt.Sprintf("%d: INFO quiet %d", 2*n+2, 2*n+2), fmt.Sprintf("%d: INFO quiet %d", 2*n+3, 2*n+3)},
+	}
+	for i := range want {
+		if !reflect.DeepEqual(res.Hits[i].Context, want[i]) {
+			t.Errorf("hit %d context:\n got %q\nwant %q", i, res.Hits[i].Context, want[i])
+		}
+	}
+	// Each side alone: with no trailing context owed, the slice between is
+	// still read for the next hit's leading context, and with no leading
+	// context asked, for the last hit's trailing context.
+	res, _ = Open("u1", "b1").Search(context.Background(), Query{Pattern: "loud", Before: 2})
+	if len(res.Hits) != 2 || !reflect.DeepEqual(res.Hits[1].Context, want[1][:3]) {
+		t.Errorf("leading context out of a passed-over slice: %+v", res.Hits)
+	}
+	res, _ = Open("u1", "b1").Search(context.Background(), Query{Pattern: "loud", After: 2})
+	if len(res.Hits) != 2 || !reflect.DeepEqual(res.Hits[0].Context, want[0][2:]) {
+		t.Errorf("trailing context into a passed-over slice: %+v", res.Hits)
+	}
+}
