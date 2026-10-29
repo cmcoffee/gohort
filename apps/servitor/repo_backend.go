@@ -18,6 +18,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -32,6 +33,11 @@ const (
 	maxIngestFiles    = 50000         // a folder past this is not a codebase; ingest stops
 	binarySniff       = 8000          // bytes checked for NUL to detect binary
 )
+
+// repoIngests counts the clones a save starts in the background. Nothing in
+// the server waits on it; a test that saves a repo does, so the clone it set
+// off cannot still be reading the repo store when the next test swaps it out.
+var repoIngests sync.WaitGroup
 
 // hashContent is the change key for a file's ingested content. It only has to
 // distinguish "same as last ingest" from "different", so any stable digest works.
@@ -542,36 +548,80 @@ func searchRepo(ctx context.Context, user, applianceID string, q repoQuery) (rep
 	if q.MaxHits <= 0 {
 		q.MaxHits = repoMaxSearchHits
 	}
-	paths := store.Keys(repoFilesTable)
-	sort.Strings(paths)
-	for _, path := range paths {
-		if err := ctx.Err(); err != nil {
-			return res, err
-		}
-		if q.Glob != "" && !bundle.MatchGlob(q.Glob, path) {
-			continue
-		}
-		var content string
-		if !store.Get(repoFilesTable, path, &content) || !re.Possible(content) {
-			continue
-		}
-		for i, line := range strings.Split(content, "\n") {
-			if !re.MatchString(line) {
-				continue
-			}
-			if f.ExcludesString(line) {
-				res.Excluded++
-				continue
-			}
-			t := textutil.Clip(strings.TrimSpace(line), 240)
-			res.Hits = append(res.Hits, repoSearchHit{Path: path, Line: i + 1, Text: t})
-			if len(res.Hits) >= q.MaxHits {
-				res.Truncated = true
-				return res, nil
-			}
+	var paths []string
+	for _, path := range store.Keys(repoFilesTable) {
+		if q.Glob == "" || bundle.MatchGlob(q.Glob, path) {
+			paths = append(paths, path)
 		}
 	}
+	sort.Strings(paths)
+	// Several files at once, merged in path order (core/bundle parallel.go).
+	// A file's scan keeps up to the whole limit, since it cannot know the room
+	// the files before it left; the merge takes what fits and stops there,
+	// with the exclusions counted up to that point, as a single pass would.
+	bundle.EachInOrder(ctx, len(paths),
+		func(ctx context.Context, i int) repoFileHits {
+			return scanRepoFile(ctx, store, paths[i], re, f, q.MaxHits)
+		},
+		func(i int, r repoFileHits) bool {
+			if ctx.Err() != nil {
+				return false
+			}
+			room := q.MaxHits - len(res.Hits)
+			if len(r.hits) < room {
+				res.Hits = append(res.Hits, r.hits...)
+				res.Excluded += r.excluded
+				return true
+			}
+			res.Hits = append(res.Hits, r.hits[:room]...)
+			res.Excluded += r.excludedBefore[room-1]
+			res.Truncated = true
+			return false
+		})
+	if err := ctx.Err(); err != nil {
+		return res, err
+	}
 	return res, nil
+}
+
+// repoFileHits is one file's part of a repo search: its first hits, up to the
+// search's limit, and the lines exclude took out. excludedBefore[k] is how
+// many had been taken out when hit k was found, so a merge that cuts the file
+// at hit k counts exactly what a single pass stopping there would have.
+type repoFileHits struct {
+	hits           []repoSearchHit
+	excluded       int
+	excludedBefore []int
+}
+
+// scanRepoFile searches one ingested file.
+func scanRepoFile(ctx context.Context, store Database, path string, re *bundle.Matcher, f bundle.Filter, max int) repoFileHits {
+	var r repoFileHits
+	if ctx.Err() != nil {
+		return r
+	}
+	var content string
+	if !store.Get(repoFilesTable, path, &content) || !re.Possible(content) {
+		return r
+	}
+	for i, line := range strings.Split(content, "\n") {
+		if !re.MatchString(line) {
+			continue
+		}
+		if f.ExcludesString(line) {
+			r.excluded++
+			continue
+		}
+		// Copied, not sliced: the line is a piece of the whole file's text,
+		// and a kept hit holding the piece would hold the file.
+		t := strings.Clone(textutil.Clip(strings.TrimSpace(line), 240))
+		r.hits = append(r.hits, repoSearchHit{Path: path, Line: i + 1, Text: t})
+		r.excludedBefore = append(r.excludedBefore, r.excluded)
+		if len(r.hits) >= max {
+			break
+		}
+	}
+	return r
 }
 
 func normRepoPath(p string) string {

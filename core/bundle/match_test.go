@@ -33,6 +33,13 @@ func TestMatcherAgreesWithRegexp(t *testing.T) {
 		".*",
 		"x",
 		"(?i)é",
+		// Alternations: the prefilter becomes "any one of these".
+		"(?i)error|warn|fail",
+		"(?i)timeout|refused",
+		"(?i)KILL|session",
+		"(?i)err(or)?|warn",
+		"foo|.*bar",
+		"(?i)(ab|cd)ef",
 	}
 	lines := []string{
 		"",
@@ -65,40 +72,57 @@ func TestMatcherAgreesWithRegexp(t *testing.T) {
 		for _, ln := range lines {
 			want := re.MatchString(ln)
 			if got := m.MatchString(ln); got != want {
-				t.Errorf("MatchString(%q, %q) = %v, regexp says %v (needle %q fold=%v)", p, ln, got, want, m.need, m.fold)
+				t.Errorf("MatchString(%q, %q) = %v, regexp says %v (needles %s)", p, ln, got, want, needsOf(m))
 			}
 			if got := m.Match([]byte(ln)); got != want {
-				t.Errorf("Match(%q, %q) = %v, regexp says %v (needle %q fold=%v)", p, ln, got, want, m.need, m.fold)
+				t.Errorf("Match(%q, %q) = %v, regexp says %v (needles %s)", p, ln, got, want, needsOf(m))
 			}
 		}
 	}
 }
 
+// needsOf renders a matcher's prefilter as "a|b", each folded entry marked
+// with a trailing ~, for test messages and expectations.
+func needsOf(m *Matcher) string {
+	var parts []string
+	for _, n := range m.needs {
+		if n.fold {
+			parts = append(parts, n.text+"~")
+		} else {
+			parts = append(parts, n.text)
+		}
+	}
+	return strings.Join(parts, "|")
+}
+
 // The prefilter has to actually engage on the patterns searches send, or the
 // matcher is just a slower regexp. And it must stand down where the pattern
-// requires no text at all.
+// requires no text at all. A trailing ~ marks a folded needle.
 func TestMatcherFindsTheNeedle(t *testing.T) {
-	cases := []struct {
-		pattern, need string
-		fold          bool
-	}{
-		{"(?i)connection reset", "connection re", true}, // cut at the s, which folds outside ASCII
-		{"connection reset", "connection reset", false},
-		{"(?i)timeout after \\d+ms", "timeout after ", true},
-		{"(?i)\\Qhttp://host/api\\E", "http://ho", true},
-		{"[Ee]rror: (\\w+) failed", " failed", false}, // the longer of the two required runs
-		{"(?i)foo|barbaz", "", false},
-		{"(?i)(?:needle)?x", "x", true},
-		{"(?i)(longer)+y", "longer", true},
-		{".*", "", false},
-	}
-	for _, c := range cases {
-		m, err := CompileMatcher(c.pattern)
+	for pattern, want := range map[string]string{
+		"(?i)connection reset":      "connection re~", // cut at the s, which folds outside ASCII
+		"connection reset":          "connection reset",
+		"(?i)timeout after \\d+ms":  "timeout after ~",
+		"(?i)\\Qhttp://host/api\\E": "http://ho~",
+		"[Ee]rror: (\\w+) failed":   " failed", // the longer of the two required runs
+		"(?i)(?:needle)?x":          "x~",
+		"(?i)(longer)+y":            "longer~",
+		".*":                        "",
+		// An alternation needs one of its branches: any of their needles.
+		"(?i)foo|barbaz":                      "foo~|barbaz~",
+		"(?i)error|warn|fail":                 "error~|warn~|fail~",
+		"(?i)timeout|refused":                 "timeout~|refu~", // refused cut at its s
+		"(?i)err(or)?|warn":                   "err~|warn~",
+		"timeout|timer":                       "time", // the parser factors the shared prefix, and one long needle beats two
+		"(?i)foo|.*":                          "",     // a branch that needs nothing: the whole needs nothing
+		"aa1|bb2|cc3|dd4|ee5|ff6|gg7|hh8|ii9": "",     // past maxNeedles, the scans cost what the regexp does
+	} {
+		m, err := CompileMatcher(pattern)
 		if err != nil {
-			t.Fatalf("CompileMatcher(%q): %v", c.pattern, err)
+			t.Fatalf("CompileMatcher(%q): %v", pattern, err)
 		}
-		if m.need != c.need || (c.need != "" && m.fold != c.fold) {
-			t.Errorf("%q: needle %q fold=%v, want %q fold=%v", c.pattern, m.need, m.fold, c.need, c.fold)
+		if got := needsOf(m); got != want {
+			t.Errorf("%q: needles %q, want %q", pattern, got, want)
 		}
 	}
 }

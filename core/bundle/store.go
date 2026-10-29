@@ -252,7 +252,12 @@ func (b Bundle) Export(p string, w io.Writer) (bool, error) {
 // full scan of a large log holds one slice in memory rather than the file.
 // Returning false from fn stops the walk.
 func scanFile(store Store, bf File, fn func(lineNo int, text string) bool) {
-	for idx := 0; idx < bf.Slices; idx++ {
+	scanSlices(store, bf, 0, bf.Slices, fn)
+}
+
+// scanSlices is scanFile over slices [from, to) only: one chunk of a file.
+func scanSlices(store Store, bf File, from, to int, fn func(lineNo int, text string) bool) {
+	for idx := from; idx < to; idx++ {
 		lines := sliceLinesAt(store, bf, idx)
 		base := idx*SliceLines + 1
 		for i, ln := range lines {
@@ -261,6 +266,48 @@ func scanFile(store Store, bf File, fn func(lineNo int, text string) bool) {
 			}
 		}
 	}
+}
+
+// --- chunks ---
+
+// ChunkSlices is how many slices one chunk of a file holds: the unit a search
+// or timeline reads on one core. A large log is one file but many chunks, so
+// it is read on several cores at once instead of one; a small one is a single
+// chunk, read as it always was. A variable so a test can put a chunk boundary
+// at every slice.
+var ChunkSlices = 8
+
+// chunk is a run of one file's slices: [from, to) of the file at index file
+// in the list being read, and whether it is that file's first and last.
+type chunk struct {
+	file        int
+	from, to    int
+	first, last bool
+}
+
+// chunksOf splits files into chunks, in order. A file with no slices (a
+// binary, an unopened archive, an empty file) is one empty chunk, so it is
+// still counted as read.
+func chunksOf(files []File) []chunk {
+	size := ChunkSlices
+	if size < 1 {
+		size = 1
+	}
+	var out []chunk
+	for fi, bf := range files {
+		if bf.Slices <= 0 {
+			out = append(out, chunk{file: fi, first: true, last: true})
+			continue
+		}
+		for from := 0; from < bf.Slices; from += size {
+			to := from + size
+			if to > bf.Slices {
+				to = bf.Slices
+			}
+			out = append(out, chunk{file: fi, from: from, to: to, first: from == 0, last: to == bf.Slices})
+		}
+	}
+	return out
 }
 
 // --- search ---
@@ -381,40 +428,12 @@ func (b Bundle) Search(ctx context.Context, q Query) (SearchResult, error) {
 	if q.OverTime {
 		res.Histogram = NewHistogram()
 	}
-	index := b.Index()
-	inScope := 0
-	for _, bf := range index {
-		if q.Glob == "" || MatchGlob(q.Glob, bf.Path) {
-			inScope++
-		}
-	}
-	budget := &res.Budget
-	budget.Max, budget.PerFile = q.MaxHits, q.PerFile
-	// The share exists to divide the limit between files; with one file in
-	// scope there is nobody to divide it with.
-	if inScope <= 1 {
-		budget.PerFile = 0
-	}
-	// A whole-bundle answer counts every match and keeps none.
-	if modes == 1 {
-		q.Before, q.After = 0, 0
-		budget.Max, budget.PerFile = 0, 0
-	}
+	// The files the path filter and the window leave in, settled before any
+	// is read: the share needs to know how many there are, and the scan works
+	// through a fixed list.
 	windowed := !q.Since.IsZero() || !q.Until.IsZero()
-	for i, bf := range index {
-		if err := ctx.Err(); err != nil {
-			return res, err
-		}
-		// Kept all it may: the files not yet opened are counted, so the
-		// reply can say they were never searched.
-		if budget.Full() {
-			for _, rest := range index[i:] {
-				if q.Glob == "" || MatchGlob(q.Glob, rest.Path) {
-					budget.Unsearched++
-				}
-			}
-			break
-		}
+	var todo []File
+	for _, bf := range b.Index() {
 		if q.Glob != "" && !MatchGlob(q.Glob, bf.Path) {
 			res.Skipped++
 			continue
@@ -428,19 +447,70 @@ func (b Bundle) Search(ctx context.Context, q Query) (SearchResult, error) {
 				res.TimeUnknown++
 				continue
 			}
-			if !q.Until.IsZero() && first.After(q.Until) {
-				res.Skipped++
-				continue
-			}
-			if !q.Since.IsZero() && last.Before(q.Since) {
+			if (!q.Until.IsZero() && first.After(q.Until)) || (!q.Since.IsZero() && last.Before(q.Since)) {
 				res.Skipped++
 				continue
 			}
 		}
-		res.Scanned++
-		budget.Open(bf.Path)
-		searchOneFile(ctx, store, bf, f, q, windowed, &res)
-		budget.Close()
+		todo = append(todo, bf)
+	}
+	budget := &res.Budget
+	budget.Max, budget.PerFile = q.MaxHits, q.PerFile
+	// The share exists to divide the limit between files; with one file in
+	// scope there is nobody to divide it with.
+	if len(todo) <= 1 {
+		budget.PerFile = 0
+	}
+	// A whole-bundle answer counts every match and keeps none.
+	if modes == 1 {
+		q.Before, q.After = 0, 0
+		budget.Max, budget.PerFile = 0, 0
+	}
+	fs := fileSearch{store: store, f: f, q: q, windowed: windowed, offer: budget.Offer()}
+	// Several chunks at once, of several files or of one large one, merged in
+	// order (parallel.go). A file's chunks add up to the file: its hits up to
+	// its offer, its total, and then the budget decides what of it is kept,
+	// at its last chunk, as it did for a file read whole.
+	chunks := chunksOf(todo)
+	var cur fileHits
+	EachInOrder(ctx, len(chunks),
+		func(ctx context.Context, i int) fileHits {
+			c := chunks[i]
+			return fs.scan(ctx, todo[c.file], c.from, c.to)
+		},
+		func(i int, r fileHits) bool {
+			c := chunks[i]
+			if c.first {
+				// Kept all it may: the files not yet opened are counted, so
+				// the reply can say they were never searched.
+				if budget.Full() {
+					budget.Unsearched = len(todo) - c.file
+					return false
+				}
+				if ctx.Err() != nil {
+					return false
+				}
+				res.Scanned++
+				cur = fileHits{}
+			}
+			cur.total += r.total
+			if room := fs.offer - len(cur.hits); room > 0 {
+				if len(r.hits) > room {
+					r.hits = r.hits[:room]
+				}
+				cur.hits = append(cur.hits, r.hits...)
+			}
+			res.Excluded += r.excluded
+			res.Groups.Merge(r.groups)
+			res.Histogram.Merge(r.hist)
+			if c.last {
+				kept := budget.File(todo[c.file].Path, cur.total, len(cur.hits))
+				res.Hits = append(res.Hits, cur.hits[:kept]...)
+			}
+			return true
+		})
+	if err := ctx.Err(); err != nil {
+		return res, err
 	}
 	if q.CountOnly {
 		sort.SliceStable(res.Tallies, func(i, j int) bool { return res.Tallies[i].Matches > res.Tallies[j].Matches })
@@ -449,17 +519,45 @@ func (b Bundle) Search(ctx context.Context, q Query) (SearchResult, error) {
 	return res, nil
 }
 
-// searchOneFile scans a single file, collecting hits with context. It
-// keeps a rolling window of preceding lines rather than the whole file, and
-// fills trailing context by continuing the scan past each hit. It reads the
-// whole file even once nothing more will be kept, because the count is part
-// of the answer: "25 kept of 340" needs the 340.
+// fileSearch is what one file's scan needs from its search: the store, the
+// line test, the query, and how many hits a file may keep (Budget.Offer).
+// Read-only, so scans of several files can share it at once.
+type fileSearch struct {
+	store    Store
+	f        Filter
+	q        Query
+	windowed bool
+	offer    int
+}
+
+// fileHits is one file's part of a search, before the merge decides how much
+// of it the search keeps.
+type fileHits struct {
+	hits            []Hit // the first offer matches, in order, with context
+	total, excluded int
+	groups          *Grouper   // when the query groups
+	hist            *Histogram // when it counts over time
+}
+
+// scan reads slices [from, to) of one file, collecting its hits with context. It keeps a rolling
+// window of preceding lines rather than the whole file, and fills trailing
+// context by continuing the scan past each hit. It reads the whole file even
+// once nothing more will be kept, because the count is part of the answer:
+// "25 kept of 340" needs the 340.
 //
-// Hits still owed trailing context are tracked by INDEX into res.Hits, never by
-// pointer: res.Hits grows during the scan, and a pointer into it would be left
+// Hits still owed trailing context are tracked by INDEX into r.hits, never by
+// pointer: r.hits grows during the scan, and a pointer into it would be left
 // addressing a stale backing array the moment append reallocates — trailing
 // context would then be written to a copy nobody reads.
-func searchOneFile(ctx context.Context, store Store, bf File, f Filter, q Query, windowed bool, res *SearchResult) {
+func (s fileSearch) scan(ctx context.Context, bf File, from, to int) fileHits {
+	var r fileHits
+	if s.q.Group {
+		r.groups = NewGrouper()
+	}
+	if s.q.OverTime {
+		r.hist = NewHistogram()
+	}
+	q := s.q
 	type owed struct{ idx, remaining int }
 	// seen is a line held for leading context. Held as its number and text
 	// rather than as the "N: text" it may be shown as: the text is a piece of
@@ -473,9 +571,24 @@ func searchOneFile(ctx context.Context, store Store, bf File, f Filter, q Query,
 		prev    []seen // the last q.Before lines
 		pending []owed
 	)
+	// A chunk that does not start the file takes its leading context from
+	// the slice before it, so a hit on a chunk's first line reads exactly as
+	// it would have in the whole file. A slice is far longer than any
+	// context asked for, so one slice back always covers it.
+	if q.Before > 0 && from > 0 {
+		lines := sliceLinesAt(s.store, bf, from-1)
+		base := (from-1)*SliceLines + 1
+		start := len(lines) - q.Before
+		if start < 0 {
+			start = 0
+		}
+		for j := start; j < len(lines); j++ {
+			prev = append(prev, seen{n: base + j, text: lines[j]})
+		}
+	}
 	year := fileYear(bf)
-	scanFile(store, bf, func(n int, text string) bool {
-		// One file can be the whole search, so the outer loop's check is not
+	scanSlices(s.store, bf, from, to, func(n int, text string) bool {
+		// One file can be the whole search, so the merge's check is not
 		// enough on its own. Sampled rather than per-line: ctx.Err() takes a
 		// lock, and this callback runs once per line of every log in the dump.
 		if n%searchCancelEvery == 0 && ctx.Err() != nil {
@@ -486,7 +599,7 @@ func searchOneFile(ctx context.Context, store Store, bf File, f Filter, q Query,
 			numbered := numberLine(n, text)
 			kept := pending[:0]
 			for _, p := range pending {
-				res.Hits[p.idx].Context = append(res.Hits[p.idx].Context, numbered)
+				r.hits[p.idx].Context = append(r.hits[p.idx].Context, numbered)
 				if p.remaining--; p.remaining > 0 {
 					kept = append(kept, p)
 				}
@@ -494,42 +607,47 @@ func searchOneFile(ctx context.Context, store Store, bf File, f Filter, q Query,
 			pending = kept
 		}
 
-		keep := f.Match.MatchString(text) && (!windowed || LineInWindow(bf.Format, year, text, q.Since, q.Until))
-		// Exclusion is tested last, on lines already in, so Excluded counts
+		match := s.f.Match.MatchString(text) && (!s.windowed || LineInWindow(bf.Format, year, text, q.Since, q.Until))
+		// Exclusion is tested last, on lines already in, so excluded counts
 		// only what the search would otherwise have shown.
-		if keep && f.ExcludesString(text) {
-			res.Excluded++
-			keep = false
+		if match && s.f.ExcludesString(text) {
+			r.excluded++
+			match = false
 		}
-		// A grouped search files the line under its shape, and an over-time
-		// one under its time; neither keeps a hit. Dated from the line
-		// itself, when the file's format carries times at all: a line with
-		// none is counted as undated, never placed at a guessed time.
-		// Every match is counted by the budget, kept or not.
-		kept := keep && res.Budget.Keep()
-		if keep && (res.Groups != nil || res.Histogram != nil) {
-			var when time.Time
-			if bf.Format != FormatText {
-				when, _ = ParseTime(bf.Format, year, text)
-			}
-			if res.Groups != nil {
-				res.Groups.Add(bf.Path, n, strings.TrimRight(text, "\r"), when)
-			} else {
-				res.Histogram.Add(when)
-			}
-		}
-		if kept {
-			hit := Hit{Path: bf.Path, Line: n, Text: strings.TrimRight(text, "\r")}
-			if q.Before > 0 || q.After > 0 {
-				hit.Context = make([]string, 0, len(prev)+1+q.After)
-				for _, p := range prev {
-					hit.Context = append(hit.Context, numberLine(p.n, p.text))
+		if match {
+			r.total++
+			switch {
+			// A grouped search files the line under its shape, and an
+			// over-time one under its time; neither keeps a hit. Dated from
+			// the line itself, when the file's format carries times at all:
+			// a line with none is counted as undated, never placed at a
+			// guessed time.
+			case r.groups != nil || r.hist != nil:
+				var when time.Time
+				if bf.Format != FormatText {
+					when, _ = ParseTime(bf.Format, year, text)
 				}
-				hit.Context = append(hit.Context, numberLine(n, text))
-			}
-			res.Hits = append(res.Hits, hit)
-			if q.After > 0 {
-				pending = append(pending, owed{idx: len(res.Hits) - 1, remaining: q.After})
+				if r.groups != nil {
+					r.groups.Add(bf.Path, n, strings.TrimRight(text, "\r"), when)
+				} else {
+					r.hist.Add(when)
+				}
+			case len(r.hits) < s.offer:
+				// Copied, not sliced: the line is a piece of its whole
+				// decrypted slice, and a kept hit holding the piece would hold
+				// the slice for as long as the reply lives.
+				hit := Hit{Path: bf.Path, Line: n, Text: strings.Clone(strings.TrimRight(text, "\r"))}
+				if q.Before > 0 || q.After > 0 {
+					hit.Context = make([]string, 0, len(prev)+1+q.After)
+					for _, p := range prev {
+						hit.Context = append(hit.Context, numberLine(p.n, p.text))
+					}
+					hit.Context = append(hit.Context, numberLine(n, text))
+				}
+				r.hits = append(r.hits, hit)
+				if q.After > 0 {
+					pending = append(pending, owed{idx: len(r.hits) - 1, remaining: q.After})
+				}
 			}
 		}
 
@@ -541,6 +659,24 @@ func searchOneFile(ctx context.Context, store Store, bf File, f Filter, q Query,
 		}
 		return true
 	})
+	// Trailing context still owed at the chunk's end comes from the slice
+	// after it, as it would have from the next lines of the whole file.
+	if len(pending) > 0 && to < bf.Slices && ctx.Err() == nil {
+		lines := sliceLinesAt(s.store, bf, to)
+		base := to*SliceLines + 1
+		for j := 0; j < len(lines) && len(pending) > 0; j++ {
+			numbered := numberLine(base+j, lines[j])
+			kept := pending[:0]
+			for _, p := range pending {
+				r.hits[p.idx].Context = append(r.hits[p.idx].Context, numbered)
+				if p.remaining--; p.remaining > 0 {
+					kept = append(kept, p)
+				}
+			}
+			pending = kept
+		}
+	}
+	return r
 }
 
 // numberLine is a context line as a search shows it: "N: text". Formatted
@@ -646,11 +782,10 @@ func (b Bundle) Timeline(ctx context.Context, q TimelineQuery) (TimelineResult, 
 		}
 		f.Exclude = ex
 	}
-	keep := &earliest{max: q.Max}
+	// The files the path filter and the window leave in, settled first: the
+	// scan works through a fixed list.
+	var todo []File
 	for _, bf := range b.Index() {
-		if err := ctx.Err(); err != nil {
-			return res, err
-		}
 		if q.Glob != "" && !MatchGlob(q.Glob, bf.Path) {
 			continue
 		}
@@ -662,40 +797,82 @@ func (b Bundle) Timeline(ctx context.Context, q TimelineQuery) (TimelineResult, 
 		if (!q.Until.IsZero() && first.After(q.Until)) || (!q.Since.IsZero() && last.Before(q.Since)) {
 			continue
 		}
-		year := fileYear(bf)
-		scanFile(store, bf, func(n int, text string) bool {
-			if n%searchCancelEvery == 0 && ctx.Err() != nil {
+		todo = append(todo, bf)
+	}
+	// Several chunks at once, of several files or of one large one
+	// (parallel.go). Each keeps its own earliest Max and the merge offers
+	// them on in order: the earliest Max overall are each among their own
+	// chunk's earliest Max, and a chunk hands its lines on in time order
+	// with ties in line order, so ties still break file first, then line, as
+	// a single pass breaks them.
+	keep := &earliest{max: q.Max}
+	chunks := chunksOf(todo)
+	EachInOrder(ctx, len(chunks),
+		func(ctx context.Context, i int) fileTimeline {
+			c := chunks[i]
+			return timelineFile(ctx, store, todo[c.file], c.from, c.to, f, q)
+		},
+		func(i int, r fileTimeline) bool {
+			if ctx.Err() != nil {
 				return false
 			}
-			// The pattern first: with its prefilter it rejects a line far
-			// faster than the timestamp regexp can date one.
-			if f.Match != nil && !f.Match.MatchString(text) {
-				return true
+			for _, e := range r.kept {
+				keep.offer(e)
 			}
-			ts, ok := ParseTime(bf.Format, year, text)
-			if !ok {
-				if f.Match != nil {
-					res.Undated++
-				}
-				return true
-			}
-			if (!q.Since.IsZero() && ts.Before(q.Since)) || (!q.Until.IsZero() && ts.After(q.Until)) {
-				return true
-			}
-			if f.ExcludesString(text) {
-				res.Excluded++
-				return true
-			}
-			res.Total++
-			keep.offer(TimelineEntry{When: ts, Path: bf.Path, Line: n, Text: text})
+			res.Total += r.total
+			res.Undated += r.undated
+			res.Excluded += r.excluded
 			return true
 		})
-	}
 	if err := ctx.Err(); err != nil {
 		return res, err
 	}
 	res.Entries = keep.sorted()
 	return res, nil
+}
+
+// fileTimeline is one chunk's part of a timeline: its own earliest lines, in
+// time order, and what it counted.
+type fileTimeline struct {
+	kept                     []TimelineEntry
+	total, undated, excluded int
+}
+
+// timelineFile reads slices [from, to) of one file for a timeline, keeping
+// their earliest q.Max lines in the window that the line filters let through.
+func timelineFile(ctx context.Context, store Store, bf File, from, to int, f Filter, q TimelineQuery) fileTimeline {
+	var r fileTimeline
+	keep := &earliest{max: q.Max}
+	year := fileYear(bf)
+	scanSlices(store, bf, from, to, func(n int, text string) bool {
+		if n%searchCancelEvery == 0 && ctx.Err() != nil {
+			return false
+		}
+		// The pattern first: with its prefilter it rejects a line far
+		// faster than the timestamp regexp can date one.
+		if f.Match != nil && !f.Match.MatchString(text) {
+			return true
+		}
+		ts, ok := ParseTime(bf.Format, year, text)
+		if !ok {
+			if f.Match != nil {
+				r.undated++
+			}
+			return true
+		}
+		if (!q.Since.IsZero() && ts.Before(q.Since)) || (!q.Until.IsZero() && ts.After(q.Until)) {
+			return true
+		}
+		if f.ExcludesString(text) {
+			r.excluded++
+			return true
+		}
+		r.total++
+		keep.offer(TimelineEntry{When: ts, Path: bf.Path, Line: n, Text: text})
+		return true
+	})
+	r.kept = keep.sorted()
+	return r
 }
 
 // earliest holds the max earliest entries offered to it: a max-heap on time,

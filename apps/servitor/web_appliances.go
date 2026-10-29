@@ -392,7 +392,11 @@ func (T *Servitor) handleApplianceSave(c *jsonapi.Call, req Appliance) (any, err
 	// Repo appliances: clone + ingest under the OWNER (one shared clone) on
 	// create or when the store is empty.
 	if req.Type == "repo" && (isNew || req.RepoFiles == 0) {
-		go T.cloneAndIngestRepo(AppContext(), owner, targetUDB, req.ID)
+		repoIngests.Add(1)
+		go func() {
+			defer repoIngests.Done()
+			T.cloneAndIngestRepo(AppContext(), owner, targetUDB, req.ID)
+		}()
 	}
 	resp := req
 	resp.Password = ""

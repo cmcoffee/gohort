@@ -460,60 +460,104 @@ func Search(ctx context.Context, root string, opts SearchOpts) (SearchResult, er
 	deadline := started.Add(allowed)
 	var scanned int64
 	win := window{since: opts.Since, until: opts.Until}
+	lim := fileLimits{offer: budget.Offer(), group: opts.Group, overTime: opts.OverTime}
 
-	for i, lf := range files {
-		if budget.Full() {
-			budget.Unsearched = len(files) - i
-			break
-		}
-		if !opts.Since.IsZero() && lf.Modified.Before(opts.Since) {
-			continue // written to for the last time before the window opens
-		}
-		if lf.Size > maxFileBytes {
-			continue
-		}
-		// Cancellation rides beside the clock, on the same reasoning: a
-		// folder of ten thousand small files gives the outer loop plenty of
-		// chances to notice, and one enormous file gives it none — which is
-		// why searchFile carries the check too.
-		if err := ctx.Err(); err != nil {
-			return res, err
-		}
-		// Checked between files as well as inside one: a folder of ten
-		// thousand small files exhausts the clock without any single
-		// file being slow.
-		if time.Now().After(deadline) {
-			res.Stopped = fmt.Sprintf("stopped after %s, having read %d of %d files", allowed, res.Scanned, len(files))
-			break
-		}
-		if scanned >= maxScanBytes {
-			res.Stopped = fmt.Sprintf("stopped after reading %d MB, at %d of %d files", scanned>>20, res.Scanned, len(files))
-			break
-		}
-		path := filepath.Join(rootAbs, lf.Rel)
-		fw := win
-		if win.set() || opts.Group || opts.OverTime {
-			fw.format, fw.year = detectFileFormat(path, lf.Modified)
-		}
-		budget.Open(lf.Rel)
-		fr := searchFile(ctx, path, lf.Rel, filter, ctxLines, fileLimits{budget: budget, group: res.Groups, hist: res.Histogram}, fw, deadline)
-		budget.Close()
-		res.Matches = append(res.Matches, fr.shown...)
+	// Several chunks at once, of several files or of one large one, merged in
+	// order (core/bundle parallel.go, search_chunks.go): the scan does what
+	// one chunk needs and nothing that depends on what came before it; the
+	// merge joins a file's chunks, then applies the limit, the byte cap and
+	// the stops, in the order a single pass would.
+	cs := chunkScan{filter: filter, ctxLines: ctxLines, lim: lim, deadline: deadline}
+	chunks := folderChunks(files)
+	var acc fileAcc
+	skipping := false
+	finish := func(lf LogFile) {
+		kept := budget.File(lf.Rel, acc.total, len(acc.shown))
+		res.Matches = append(res.Matches, acc.shown[:kept]...)
 		res.Scanned++
-		scanned += fr.read
-		res.Excluded += fr.excluded
-		res.LongLines += fr.longLines
-		if fr.readErr != "" {
-			res.Unreadable = append(res.Unreadable, lf.Rel+": "+fr.readErr)
+		scanned += acc.read
+		res.Excluded += acc.excluded
+		res.LongLines += acc.longLines
+		if acc.readErr != "" {
+			res.Unreadable = append(res.Unreadable, lf.Rel+": "+acc.readErr)
 		}
-		if win.set() && !fr.timed {
+		if win.set() && !acc.timed {
 			res.Untimed++
 		}
-		if fr.stopped {
-			res.Stopped = fmt.Sprintf("stopped inside %s after %s, having read %d of %d files", lf.Rel, time.Since(started).Round(time.Second), res.Scanned, len(files))
-			break
-		}
 	}
+	bundle.EachInOrder(ctx, len(chunks),
+		func(ctx context.Context, i int) folderScan {
+			c := chunks[i]
+			lf := files[c.file]
+			if !opts.Since.IsZero() && lf.Modified.Before(opts.Since) {
+				return folderScan{skip: true} // written to for the last time before the window opens
+			}
+			if lf.Size > maxFileBytes {
+				return folderScan{skip: true}
+			}
+			// Checked before a chunk as well as inside one: a folder of ten
+			// thousand small files exhausts the clock without any single
+			// file being slow.
+			if ctx.Err() != nil || time.Now().After(deadline) {
+				return folderScan{late: true}
+			}
+			path := filepath.Join(rootAbs, lf.Rel)
+			fw := win
+			if win.set() || opts.Group || opts.OverTime {
+				fw.format, fw.year = detectFileFormat(path, lf.Modified)
+			}
+			return folderScan{r: cs.scan(ctx, path, lf.Rel, fw, c)}
+		},
+		func(i int, s folderScan) bool {
+			c := chunks[i]
+			lf := files[c.file]
+			if c.first {
+				if budget.Full() {
+					budget.Unsearched = len(files) - c.file
+					return false
+				}
+				if skipping = s.skip; skipping {
+					return true
+				}
+				// Cancellation rides beside the clock: a folder of ten
+				// thousand small files gives this plenty of chances to
+				// notice, and one enormous file gives it none, which is why
+				// the scan carries the check too.
+				if ctx.Err() != nil {
+					return false
+				}
+				if s.late {
+					res.Stopped = fmt.Sprintf("stopped after %s, having read %d of %d files", allowed, res.Scanned, len(files))
+					return false
+				}
+				if scanned >= maxScanBytes {
+					res.Stopped = fmt.Sprintf("stopped after reading %d MB, at %d of %d files", scanned>>20, res.Scanned, len(files))
+					return false
+				}
+				acc = fileAcc{}
+			} else if skipping {
+				return true
+			}
+			if ctx.Err() != nil {
+				return false
+			}
+			if !acc.done {
+				if s.late {
+					acc.stopped = true
+				} else {
+					acc.join(s.r, ctxLines, lim.offer, win, &res)
+				}
+			}
+			if acc.stopped {
+				finish(lf)
+				res.Stopped = fmt.Sprintf("stopped inside %s after %s, having read %d of %d files", lf.Rel, time.Since(started).Round(time.Second), res.Scanned, len(files))
+				return false
+			}
+			if c.last {
+				finish(lf)
+			}
+			return true
+		})
 	if opts.CountOnly {
 		sort.SliceStable(res.Tallies, func(i, j int) bool { return res.Tallies[i].Matches > res.Tallies[j].Matches })
 	}
@@ -570,160 +614,39 @@ func detectFileFormat(path string, modified time.Time) (string, int) {
 	return bundle.DetectFormat(sample), modified.Year()
 }
 
-// fileLimits is where one file's matches go: budget decides which are kept
-// (and counts them all), and group or hist, when set, receives every match in
-// place of the kept lines, since a grouped or over-time search keeps none.
+// fileLimits is what one file's scan keeps: its first offer matches
+// (Budget.Offer; the merge decides how many of those the search keeps), or,
+// for a grouped or over-time search, every match filed into the file's own
+// grouping or counts instead of kept as lines.
 type fileLimits struct {
-	budget *bundle.Budget
-	group  *bundle.Grouper
-	hist   *bundle.Histogram
+	offer           int
+	group, overTime bool
 }
 
-// fileResult is one file's part of a search.
+// folderScan is one chunk's scan as the merge receives it: skipped before
+// reading (its file out of the window by date, or too large), not started
+// because the clock ran out, or read.
+type folderScan struct {
+	skip, late bool
+	r          chunkResult
+}
+
+// fileResult is one file's part of a search, or one chunk's (search_chunks.go),
+// before the merge decides how much of it the search keeps.
 type fileResult struct {
-	shown    []Match
-	excluded int  // matches the exclude pattern took back out, counted nowhere else
-	timed    bool // the file carried at least one timestamp
-	stopped  bool // the deadline or a cancel cut the file short
+	shown    []Match           // the first lim.offer matches, in order
+	total    int               // every match in the file
+	excluded int               // matches the exclude pattern took back out, counted nowhere else
+	groups   *bundle.Grouper   // the file's own grouping, when the search groups
+	hist     *bundle.Histogram // its own counts, when the search counts over time
+	timed    bool              // the file carried at least one timestamp
+	stopped  bool              // the deadline or a cancel cut the file short
 	read     int64
 	// longLines counts lines over maxLineBytes, searched in their first
 	// maxLineBytes only. readErr is why the file could not be read to its
 	// end, with the line it stopped at; empty when it was.
 	longLines int
 	readErr   string
-}
-
-// searchFile scans one file, keeping a small ring of preceding lines so a
-// hit can carry its context without a second pass over the file. It reads
-// the whole file even once nothing more will be shown, because the COUNT is
-// part of the answer: "15 shown of 340" needs the 340.
-func searchFile(ctx context.Context, path, rel string, filter bundle.Filter, ctxLines int, lim fileLimits, win window, deadline time.Time) fileResult {
-	var fr fileResult
-	rc, err := open(path)
-	if err != nil {
-		fr.readErr = err.Error()
-		return fr
-	}
-	defer rc.Close()
-
-	lr := newLineReader(rc, maxLineBytes)
-
-	var ring []string
-	// pending tracks shown hits still collecting their trailing context.
-	type pending struct {
-		idx  int
-		left int
-	}
-	var waiting []pending
-	var lineTime time.Time
-
-	lineNo := 0
-	for {
-		raw, cut, err := lr.next()
-		if err != nil {
-			if err != io.EOF {
-				fr.readErr = fmt.Sprintf("could not be read past line %d: %v", lineNo, err)
-			}
-			break
-		}
-		lineNo++
-		fr.read = lr.read
-		if cut {
-			fr.longLines++
-		}
-		// One clock read per 4096 lines rather than per line: the check
-		// has to be cheap enough that it is never the reason to skip it.
-		// A .gz that decompresses to something enormous is caught here
-		// and nowhere else — its on-disk size passed the file cap.
-		if lineNo%4096 == 0 && (time.Now().After(deadline) || ctx.Err() != nil) {
-			fr.stopped = true
-			return fr
-		}
-		// A line is matched and dated WHOLE, and cut to maxLineRunes only for
-		// what is shown. Matching the cut line was a silent miss: a hit past
-		// the cap (deep in a JSON line, at the end of a long stack frame)
-		// was not found, and the search reported it absent.
-		//
-		// The strings are made only when something needs them: the context
-		// ring and the window's clock read every line, a plain search reads
-		// none but its hits. Making them for every line was an allocation per
-		// line of the file, for lines that almost never match.
-		var full, line string
-		if ctxLines > 0 || win.set() {
-			full = string(raw)
-			line = truncateRunes(full, maxLineRunes)
-		}
-
-		for i := 0; i < len(waiting); {
-			w := waiting[i]
-			fr.shown[w.idx].After = append(fr.shown[w.idx].After, line)
-			w.left--
-			if w.left == 0 {
-				waiting = append(waiting[:i], waiting[i+1:]...)
-				continue
-			}
-			waiting[i] = w
-			i++
-		}
-
-		inWindow := true
-		if win.set() {
-			if ts, ok := bundle.ParseTime(win.format, win.year, full); ok {
-				lineTime = ts
-				fr.timed = true
-			}
-			inWindow = win.holds(lineTime)
-		}
-
-		keep := inWindow && filter.Match.Match(raw)
-		// Exclusion is tested last, on lines already in, so the count of
-		// what it removed is only what the search would otherwise have
-		// counted. The line still feeds the context ring below: it is
-		// dropped as a hit, not from the file.
-		if keep && filter.Excludes(raw) {
-			fr.excluded++
-			keep = false
-		}
-		if keep {
-			kept := lim.budget.Keep()
-			switch {
-			case lim.group != nil || lim.hist != nil:
-				// Dated by the window's clock when there is one (an undated
-				// line takes the time above it), else by the line itself
-				// when the file's format carries times at all.
-				when := lineTime
-				if !win.set() && win.format != "" && win.format != bundle.FormatText {
-					when, _ = bundle.ParseTime(win.format, win.year, string(raw))
-				}
-				if lim.group != nil {
-					lim.group.AddBytes(rel, lineNo, raw, when)
-				} else {
-					lim.hist.Add(when)
-				}
-			case kept:
-				if full == "" {
-					line = truncateRunes(string(raw), maxLineRunes)
-				}
-				m := Match{File: rel, Line: lineNo, Text: line}
-				if ctxLines > 0 && len(ring) > 0 {
-					m.Before = append(m.Before, ring...)
-				}
-				fr.shown = append(fr.shown, m)
-				if ctxLines > 0 {
-					waiting = append(waiting, pending{idx: len(fr.shown) - 1, left: ctxLines})
-				}
-			}
-		}
-
-		if ctxLines > 0 {
-			ring = append(ring, line)
-			if len(ring) > ctxLines {
-				ring = ring[1:]
-			}
-		}
-	}
-	fr.read = lr.read
-	return fr
 }
 
 // Read returns a window of lines around a point in one file.

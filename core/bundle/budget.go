@@ -45,7 +45,7 @@ type FileTally struct {
 // Budget shares out the matches a search keeps. Max is the limit for the whole
 // search, zero for a search that keeps none and only counts. PerFile is one
 // file's share, zero for none. The rest is what happened, filled in as the
-// search reports its files and matches.
+// search reports its files, in file order.
 type Budget struct {
 	Max, PerFile int
 
@@ -53,36 +53,52 @@ type Budget struct {
 	Tallies     []FileTally // files with a match, in search order
 	CutInFiles  []FileTally // files that had more matches than PerFile
 	Unsearched  int         // files never opened because Max was reached
-
-	cur FileTally
 }
 
-// Open starts counting one file's matches.
-func (b *Budget) Open(file string) { b.cur = FileTally{File: file} }
-
-// Keep counts a match in the open file and reports whether it may be kept.
-// Counting goes on after the answer turns to no: the total is part of the
-// reply.
-func (b *Budget) Keep() bool {
-	b.cur.Matches++
-	b.Total++
-	if b.Max <= 0 || b.Kept >= b.Max || (b.PerFile > 0 && b.cur.Kept >= b.PerFile) {
-		return false
+// Offer is how many of one file's matches its scan should keep, in order:
+// its share, or the whole limit when there is no share. A file is scanned
+// before the files ahead of it are merged (parallel.go), so the scan cannot
+// know the room left; it keeps the most the budget could take, and File cuts
+// that down.
+func (b *Budget) Offer() int {
+	if b.Max <= 0 {
+		return 0
 	}
-	b.cur.Kept++
-	b.Kept++
-	return true
+	if b.PerFile > 0 && b.PerFile < b.Max {
+		return b.PerFile
+	}
+	return b.Max
 }
 
-// Close ends the open file's count.
-func (b *Budget) Close() {
-	if b.cur.Matches == 0 {
-		return
+// File counts one scanned file: matches is every match in it, offered how many
+// its scan kept, the first ones in order. It returns how many of those the
+// search keeps. What a file keeps is always its first matches, up to its share
+// and the room left, so counting a whole file at once gives what counting each
+// match in order would.
+func (b *Budget) File(name string, matches, offered int) int {
+	if matches == 0 {
+		return 0
 	}
-	b.Tallies = append(b.Tallies, b.cur)
-	if b.PerFile > 0 && b.cur.Matches > b.PerFile {
-		b.CutInFiles = append(b.CutInFiles, b.cur)
+	kept := offered
+	if kept > matches {
+		kept = matches
 	}
+	if b.PerFile > 0 && kept > b.PerFile {
+		kept = b.PerFile
+	}
+	if room := b.Max - b.Kept; b.Max <= 0 {
+		kept = 0
+	} else if kept > room {
+		kept = room
+	}
+	b.Kept += kept
+	b.Total += matches
+	t := FileTally{File: name, Matches: matches, Kept: kept}
+	b.Tallies = append(b.Tallies, t)
+	if b.PerFile > 0 && matches > b.PerFile {
+		b.CutInFiles = append(b.CutInFiles, t)
+	}
+	return kept
 }
 
 // Full reports whether the search has kept all it may: the point to stop

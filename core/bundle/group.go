@@ -115,6 +115,67 @@ func addLine[T string | []byte](g *Grouper, path string, line int, text T, when 
 	}
 }
 
+// Offset moves every example's line number on by n: groups filed from a
+// chunk of a file that numbered its lines from 1, joined after n lines.
+func (g *Grouper) Offset(n int) {
+	if g == nil || n == 0 {
+		return
+	}
+	for _, grp := range g.groups {
+		grp.Line += n
+	}
+}
+
+// Stamp dates every group that has no time yet at when: lines filed before
+// their time was known (a chunk's lines above its first timestamp, which take
+// the time of the line above them in the chunk before), once it is.
+func (g *Grouper) Stamp(when time.Time) {
+	if when.IsZero() {
+		return
+	}
+	for _, grp := range g.groups {
+		if grp.First.IsZero() {
+			grp.First, grp.Last = when, when
+		}
+	}
+}
+
+// Merge folds another file's or chunk's groups into these, taken in order
+// (parallel.go): a shape already here keeps its earlier example, counts add,
+// files add once per file (a file's chunks arrive together), spans widen. Past maxGroups a new shape's lines count as
+// ungrouped, as they would have arriving one at a time.
+func (g *Grouper) Merge(o *Grouper) {
+	if o == nil {
+		return
+	}
+	g.Lines += o.Lines
+	g.Ungrouped += o.Ungrouped
+	for _, og := range o.Sorted() {
+		grp, ok := g.groups[og.Shape]
+		if !ok {
+			if len(g.groups) >= maxGroups {
+				g.Ungrouped += og.Count
+				continue
+			}
+			copied := og
+			g.groups[og.Shape] = &copied
+			continue
+		}
+		grp.Count += og.Count
+		// Chunks of one file merge one after another; they are one file.
+		if og.lastPath != grp.lastPath {
+			grp.Files += og.Files
+			grp.lastPath = og.lastPath
+		}
+		if !og.First.IsZero() && (grp.First.IsZero() || og.First.Before(grp.First)) {
+			grp.First = og.First
+		}
+		if og.Last.After(grp.Last) {
+			grp.Last = og.Last
+		}
+	}
+}
+
 // Len is how many distinct shapes were kept.
 func (g *Grouper) Len() int { return len(g.groups) }
 

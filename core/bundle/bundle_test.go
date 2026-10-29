@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -877,6 +878,13 @@ func TestTimelineFollowsAPattern(t *testing.T) {
 	}
 }
 
+// timelineLine is one line a timeline test wrote, for the expected order.
+type timelineLine struct {
+	path string
+	n    int
+	when time.Time
+}
+
 // The timeline keeps only the earliest Max lines while it reads. Whatever it
 // keeps must be exactly what holding every line, stable-sorting by time and
 // cutting at Max gave: files out of time order, lines out of order within a
@@ -884,12 +892,7 @@ func TestTimelineFollowsAPattern(t *testing.T) {
 func TestTimelineKeepsExactlyTheEarliest(t *testing.T) {
 	withMemStore(t)
 	files := map[string]string{}
-	type line struct {
-		path string
-		n    int
-		when time.Time
-	}
-	var all []line
+	var all []timelineLine
 	base := time.Date(2026, 3, 14, 2, 0, 0, 0, time.UTC)
 	for f, name := range []string{"a.log", "b.log", "c.log"} {
 		var body strings.Builder
@@ -897,7 +900,7 @@ func TestTimelineKeepsExactlyTheEarliest(t *testing.T) {
 			// Wraps around, so every file revisits the same seconds: ties.
 			when := base.Add(time.Duration((i*37+f*11)%97) * time.Second)
 			fmt.Fprintf(&body, "%s event %d\n", when.Format(time.RFC3339), i)
-			all = append(all, line{name, i + 1, when})
+			all = append(all, timelineLine{name, i + 1, when})
 		}
 		files[name] = body.String()
 	}
@@ -906,6 +909,20 @@ func TestTimelineKeepsExactlyTheEarliest(t *testing.T) {
 		t.Fatalf("ingest: %v", err)
 	}
 	sort.SliceStable(all, func(i, j int) bool { return all[i].when.Before(all[j].when) })
+	// At one worker and at four: files are read several at once and merged
+	// in file order, and the answer, ties included, must not change.
+	prev := SearchWorkers
+	defer func() { SearchWorkers = prev }()
+	for _, workers := range []int{1, 4} {
+		SearchWorkers = workers
+		checkTimelineAgainst(t, all, workers)
+	}
+}
+
+// checkTimelineAgainst runs the timeline at several limits and compares it
+// with the stable sort of every line.
+func checkTimelineAgainst(t *testing.T, all []timelineLine, workers int) {
+	t.Helper()
 	for _, max := range []int{1, 7, 300, 2000} {
 		res, err := Open("u1", "b1").Timeline(context.Background(), TimelineQuery{Max: max})
 		if err != nil {
@@ -920,7 +937,7 @@ func TestTimelineKeepsExactlyTheEarliest(t *testing.T) {
 		}
 		for i, e := range res.Entries {
 			if e.Path != want[i].path || e.Line != want[i].n || !e.When.Equal(want[i].when) {
-				t.Fatalf("max %d: entry %d = %s:%d %s, want %s:%d %s", max, i, e.Path, e.Line, e.When, want[i].path, want[i].n, want[i].when)
+				t.Fatalf("workers %d, max %d: entry %d = %s:%d %s, want %s:%d %s", workers, max, i, e.Path, e.Line, e.When, want[i].path, want[i].n, want[i].when)
 			}
 		}
 	}
@@ -1012,5 +1029,175 @@ func TestBundleSearchSharesItsLimitAndCountsPastIt(t *testing.T) {
 	}
 	if _, err := Open("u1", "b1").Search(ctx, Query{Pattern: "x", CountOnly: true, Group: true}); err == nil {
 		t.Error("count and group together should be refused")
+	}
+}
+
+// The bundle search scans several files at once and merges in file order: at
+// one worker and at four it must give the same answer in every mode.
+func TestBundleParallelSearchGivesTheSerialAnswer(t *testing.T) {
+	withMemStore(t)
+	files := map[string]string{}
+	for f := 0; f < 12; f++ {
+		var b strings.Builder
+		for i := 0; i < 30+f*23; i++ {
+			kind := []string{"ERROR timeout after %dms", "INFO ok %d", "WARN slow %dms", "ERROR healthcheck %d"}[(i+f)%4]
+			fmt.Fprintf(&b, "2026-03-14T%02d:%02d:%02dZ "+kind+"\n", f, i%60, (i*7)%60, i*13)
+		}
+		files[fmt.Sprintf("svc-%02d.log", f)] = b.String()
+	}
+	stage := writeStage(t, files)
+	if _, err := Open("u1", "b1").Ingest(context.Background(), stage); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	prev := SearchWorkers
+	defer func() { SearchWorkers = prev }()
+	run := func(workers int, q Query) SearchResult {
+		SearchWorkers = workers
+		res, err := Open("u1", "b1").Search(context.Background(), q)
+		if err != nil {
+			t.Fatalf("%+v: %v", q, err)
+		}
+		return res
+	}
+	for name, q := range map[string]Query{
+		"shares":     {Pattern: "error", PerFile: 6, Before: 1, After: 2},
+		"limit-fill": {Pattern: "ms", MaxHits: 70, PerFile: 25},
+		"exclude":    {Pattern: "error", Exclude: "healthcheck"},
+		"count":      {Pattern: "warn", CountOnly: true},
+		"group":      {Pattern: ".", Group: true},
+		"over-time":  {Pattern: "error", OverTime: true, Bucket: time.Hour},
+		"window":     {Pattern: "error", Since: time.Date(2026, 3, 14, 3, 0, 0, 0, time.UTC), Until: time.Date(2026, 3, 14, 7, 0, 0, 0, time.UTC)},
+	} {
+		serial, parallel := run(1, q), run(4, q)
+		if name == "limit-fill" && serial.Unsearched == 0 {
+			t.Fatalf("limit-fill should leave files unread: %+v", serial.Budget)
+		}
+		if !reflect.DeepEqual(serial.Hits, parallel.Hits) {
+			t.Errorf("%s: hits differ (%d serial, %d parallel)", name, len(serial.Hits), len(parallel.Hits))
+		}
+		if !reflect.DeepEqual(serial.Budget, parallel.Budget) {
+			t.Errorf("%s: counts differ:\nserial   %+v\nparallel %+v", name, serial.Budget, parallel.Budget)
+		}
+		if serial.Scanned != parallel.Scanned || serial.Excluded != parallel.Excluded || serial.Skipped != parallel.Skipped || serial.Truncated != parallel.Truncated {
+			t.Errorf("%s: scanned/excluded/skipped/truncated differ", name)
+		}
+		if q.Group && !reflect.DeepEqual(serial.Groups.Sorted(), parallel.Groups.Sorted()) {
+			t.Errorf("%s: groups differ", name)
+		}
+		if q.OverTime && serial.Histogram.Render("x", q.Bucket) != parallel.Histogram.Render("x", q.Bucket) {
+			t.Errorf("%s: rows over time differ", name)
+		}
+	}
+}
+
+// A large file is read in chunks on several cores. Chunked must read exactly
+// as whole: hits planted on and beside slice boundaries keep their context on
+// both sides, a file's share and the search-wide limit apply across its
+// chunks, and groups, rows over time and the timeline do not change. Compared
+// with a chunk boundary at every slice and four workers, against whole files
+// read on one.
+func TestChunkedReadingGivesTheWholeFileAnswer(t *testing.T) {
+	withMemStore(t)
+	files := map[string]string{}
+	for f, n := range []int{SliceLines*3 + 17, SliceLines*2 + 1, 500} {
+		var b strings.Builder
+		for i := 1; i <= n; i++ {
+			kind := "INFO tick %d"
+			// Hits on the last line of a slice, the first of the next, and
+			// a scattering between.
+			if i%SliceLines == 0 || i%SliceLines == 1 || i%997 == 0 {
+				kind = "ERROR mark %d"
+			}
+			fmt.Fprintf(&b, "2026-03-14T%02d:%02d:%02dZ "+kind+"\n", f, (i/60)%60, i%60, i)
+		}
+		files[fmt.Sprintf("big-%d.log", f)] = b.String()
+	}
+	stage := writeStage(t, files)
+	if _, err := Open("u1", "b1").Ingest(context.Background(), stage); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	prevW, prevC := SearchWorkers, ChunkSlices
+	defer func() { SearchWorkers, ChunkSlices = prevW, prevC }()
+	whole := func() { SearchWorkers, ChunkSlices = 1, 1<<30 }
+	chunked := func() { SearchWorkers, ChunkSlices = 4, 1 }
+
+	for name, q := range map[string]Query{
+		"context":    {Pattern: "error", Before: 3, After: 3},
+		"shares":     {Pattern: "error", PerFile: 4, Before: 1, After: 1},
+		"limit-fill": {Pattern: "error", MaxHits: 9},
+		"count":      {Pattern: "error", CountOnly: true},
+		"group":      {Pattern: ".", Group: true},
+		"over-time":  {Pattern: "error", OverTime: true, Bucket: time.Minute},
+	} {
+		whole()
+		a, err := Open("u1", "b1").Search(context.Background(), q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		chunked()
+		b, err := Open("u1", "b1").Search(context.Background(), q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(a.Hits, b.Hits) {
+			for i := range a.Hits {
+				if i >= len(b.Hits) || !reflect.DeepEqual(a.Hits[i], b.Hits[i]) {
+					t.Errorf("%s: hit %d differs:\nwhole   %+v\nchunked %+v", name, i, a.Hits[i], b.Hits[min(i, len(b.Hits)-1)])
+					break
+				}
+			}
+			if len(a.Hits) != len(b.Hits) {
+				t.Errorf("%s: %d hits whole, %d chunked", name, len(a.Hits), len(b.Hits))
+			}
+		}
+		if !reflect.DeepEqual(a.Budget, b.Budget) || a.Scanned != b.Scanned || a.Truncated != b.Truncated {
+			t.Errorf("%s: counts differ:\nwhole   %+v scanned %d\nchunked %+v scanned %d", name, a.Budget, a.Scanned, b.Budget, b.Scanned)
+		}
+		if q.Group && !reflect.DeepEqual(a.Groups.Sorted(), b.Groups.Sorted()) {
+			t.Errorf("%s: groups differ", name)
+		}
+		if q.OverTime && a.Histogram.Render("x", q.Bucket) != b.Histogram.Render("x", q.Bucket) {
+			t.Errorf("%s: rows over time differ", name)
+		}
+	}
+	// A planted hit on a slice's first line carries the last lines of the
+	// slice before it: the boundary is invisible.
+	chunked()
+	res, _ := Open("u1", "b1").Search(context.Background(), Query{Pattern: fmt.Sprintf("mark %d$", SliceLines+1), Glob: "big-0.log", Before: 2, After: 1})
+	if len(res.Hits) != 1 || len(res.Hits[0].Context) != 4 || !strings.HasPrefix(res.Hits[0].Context[0], fmt.Sprintf("%d: ", SliceLines-1)) {
+		t.Errorf("context across a chunk boundary: %+v", res.Hits)
+	}
+
+	for _, max := range []int{3, 50, 100000} {
+		q := TimelineQuery{Pattern: "error", Max: max}
+		whole()
+		a, _ := Open("u1", "b1").Timeline(context.Background(), q)
+		chunked()
+		b, _ := Open("u1", "b1").Timeline(context.Background(), q)
+		if !reflect.DeepEqual(a, b) {
+			t.Errorf("timeline max %d differs: %d/%d entries, total %d/%d", max, len(a.Entries), len(b.Entries), a.Total, b.Total)
+		}
+	}
+}
+
+// BenchmarkBundleSearchOneLargeFile is one large log, the case chunking is
+// for: at one worker and at the default.
+func BenchmarkBundleSearchOneLargeFile(b *testing.B) {
+	withMemStore(b)
+	stage := writeStage(b, map[string]string{"catalina.out": benchLogLines(200000)})
+	if _, err := Open("u1", "big").Ingest(context.Background(), stage); err != nil {
+		b.Fatalf("ingest: %v", err)
+	}
+	prev := SearchWorkers
+	defer func() { SearchWorkers = prev }()
+	for _, workers := range []int{1, prev} {
+		b.Run(fmt.Sprintf("workers=%d", workers), func(b *testing.B) {
+			SearchWorkers = workers
+			for i := 0; i < b.N; i++ {
+				if _, err := Open("u1", "big").Search(context.Background(), Query{Pattern: "timeout|refused"}); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }

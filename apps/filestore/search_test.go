@@ -13,10 +13,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/cmcoffee/gohort/core/bundle"
 )
 
 // folderFixture builds a store with one bundle in it.
@@ -682,6 +685,7 @@ func BenchmarkSearch(b *testing.B) {
 		"context": {Pattern: "connection reset", IgnoreCase: true, Context: 2},
 		"window":  {Pattern: "connection reset", IgnoreCase: true, Since: since},
 		"group":   {Pattern: ".", Group: true},
+		"either":  {Pattern: "error|warn|refused", IgnoreCase: true},
 	} {
 		b.Run(name, func(b *testing.B) {
 			for i := 0; i < b.N; i++ {
@@ -849,5 +853,109 @@ func TestSearchOverTime(t *testing.T) {
 		if _, err := Search(context.Background(), root, bad); err == nil {
 			t.Errorf("%+v should be refused", bad)
 		}
+	}
+}
+
+// Files are scanned several at once and merged in file order, so a parallel
+// search must give exactly the answer a single pass gives, in every mode: the
+// same matches in the same order, the same counts and cuts, the same groups
+// and rows over time. Compared at one worker and at four over a folder built
+// to exercise each: per-file shares, a limit that fills partway through,
+// context, exclude, timestamps, a .gz.
+func TestParallelSearchGivesTheSerialAnswer(t *testing.T) {
+	root := t.TempDir()
+	for f := 0; f < 14; f++ {
+		var body strings.Builder
+		for i := 0; i < 40+f*17; i++ {
+			kind := []string{"ERROR timeout after %dms", "INFO ok %d", "WARN slow %dms", "ERROR healthcheck %d"}[(i+f)%4]
+			fmt.Fprintf(&body, "2026-10-27T%02d:%02d:%02dZ "+kind+"\n", f%24, i%60, (i*7)%60, i*13)
+		}
+		name := fmt.Sprintf("app-%02d.log", f)
+		data := []byte(body.String())
+		if f%5 == 0 {
+			var gz bytes.Buffer
+			zw := gzip.NewWriter(&gz)
+			zw.Write(data)
+			zw.Close()
+			name, data = name+".gz", gz.Bytes()
+		}
+		p := filepath.Join(root, name)
+		if err := os.WriteFile(p, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		when := time.Now().Add(-time.Duration(f) * time.Minute)
+		os.Chtimes(p, when, when)
+	}
+	prev := bundle.SearchWorkers
+	defer func() { bundle.SearchWorkers = prev }()
+	run := func(workers int, opts SearchOpts) SearchResult {
+		bundle.SearchWorkers = workers
+		res, err := Search(context.Background(), root, opts)
+		if err != nil {
+			t.Fatalf("%+v: %v", opts, err)
+		}
+		res.Elapsed = 0
+		return res
+	}
+	for name, opts := range map[string]SearchOpts{
+		"shares":     {Pattern: "error", IgnoreCase: true, PerFile: 7, Context: 2},
+		"limit-fill": {Pattern: "ms", Max: 90, PerFile: 30},
+		"exclude":    {Pattern: "ERROR", Exclude: "healthcheck", Context: 1},
+		"count":      {Pattern: "WARN", CountOnly: true},
+		"group":      {Pattern: ".", Group: true},
+		"over-time":  {Pattern: "ERROR", OverTime: true, Bucket: time.Hour},
+		"window":     {Pattern: "ERROR", Since: time.Date(2026, 10, 27, 5, 0, 0, 0, time.UTC), Until: time.Date(2026, 10, 27, 9, 0, 0, 0, time.UTC)},
+	} {
+		serial, parallel := run(1, opts), run(4, opts)
+		if name == "limit-fill" && (serial.Unsearched == 0 || len(serial.CutInFiles) == 0) {
+			t.Fatalf("limit-fill should leave files unread and cut within files: %+v", serial.Budget)
+		}
+		if !reflect.DeepEqual(serial.Matches, parallel.Matches) {
+			t.Errorf("%s: matches differ (%d serial, %d parallel)", name, len(serial.Matches), len(parallel.Matches))
+		}
+		if !reflect.DeepEqual(serial.Budget, parallel.Budget) {
+			t.Errorf("%s: counts differ:\nserial   %+v\nparallel %+v", name, serial.Budget, parallel.Budget)
+		}
+		if serial.Scanned != parallel.Scanned || serial.Excluded != parallel.Excluded || serial.Untimed != parallel.Untimed {
+			t.Errorf("%s: scanned/excluded/untimed differ: %d/%d/%d vs %d/%d/%d", name,
+				serial.Scanned, serial.Excluded, serial.Untimed, parallel.Scanned, parallel.Excluded, parallel.Untimed)
+		}
+		if opts.Group && !reflect.DeepEqual(serial.Groups.Sorted(), parallel.Groups.Sorted()) {
+			t.Errorf("%s: groups differ", name)
+		}
+		if opts.OverTime && serial.Histogram.Render("x", opts.Bucket) != parallel.Histogram.Render("x", opts.Bucket) {
+			t.Errorf("%s: rows over time differ", name)
+		}
+		if searchReply(serial, opts) != searchReply(parallel, opts) && !strings.Contains(searchReply(serial, opts), "output_id") {
+			t.Errorf("%s: the replies differ", name)
+		}
+	}
+}
+
+// BenchmarkSearchFolder is a search over a folder of several files, the case
+// parallel scanning is for: at one worker and at the default.
+func BenchmarkSearchFolder(b *testing.B) {
+	dir := b.TempDir()
+	for f := 0; f < 8; f++ {
+		var body strings.Builder
+		for i := 0; i < 25000; i++ {
+			fmt.Fprintf(&body, "2026-10-27T12:%02d:%02d.123Z INFO [worker-%d] request id=%08x handled path=/api/v1/files/%d status=200 bytes=%d dur=12ms\n",
+				i%60, i%60, i%8, i*7919, i, i*13)
+		}
+		if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("app-%d.log", f)), []byte(body.String()), 0o644); err != nil {
+			b.Fatal(err)
+		}
+	}
+	prev := bundle.SearchWorkers
+	defer func() { bundle.SearchWorkers = prev }()
+	for _, workers := range []int{1, prev} {
+		b.Run(fmt.Sprintf("workers=%d", workers), func(b *testing.B) {
+			bundle.SearchWorkers = workers
+			for i := 0; i < b.N; i++ {
+				if _, err := Search(context.Background(), dir, SearchOpts{Pattern: "timeout|refused", IgnoreCase: true}); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }

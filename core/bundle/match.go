@@ -26,11 +26,24 @@ import (
 
 // Matcher is a compiled search pattern with its prefilter.
 type Matcher struct {
-	re    *regexp.Regexp
-	need  string // text every match contains; empty when the pattern names none
-	needB []byte // need, for byte lines, so a check converts nothing
-	fold  bool   // need is lowercase ASCII and is looked for in either case
+	re *regexp.Regexp
+	// needs is the prefilter: every match contains at least ONE of these. A
+	// single entry for a pattern that names text every match contains; one
+	// per branch for an alternation ("error|warn|fail"); none when the
+	// pattern names nothing, and then every line goes to the regexp.
+	needs []needle
 }
+
+// needle is one literal the prefilter looks for.
+type needle struct {
+	text string
+	b    []byte // text, for byte lines, so a check converts nothing
+	fold bool   // text is lowercase ASCII and is looked for in either case
+}
+
+// maxNeedles bounds the prefilter's set. Each entry is a scan of the line,
+// and past a handful the scans cost about what the regexp does.
+const maxNeedles = 8
 
 // CompileMatcher compiles expr exactly as regexp.Compile does, and returns
 // regexp.Compile's error unchanged so a caller's message about a bad pattern
@@ -42,61 +55,68 @@ func CompileMatcher(expr string) (*Matcher, error) {
 	}
 	m := &Matcher{re: re}
 	// Parsed with the flags regexp.Compile uses, so the tree is the one the
-	// regexp runs. Longest literal wins: it is the one fewest lines contain.
+	// regexp runs.
 	if tree, err := syntax.Parse(expr, syntax.Perl); err == nil {
-		var best literal
-		for _, l := range requiredLiterals(tree) {
-			if len(l.text) > len(best.text) {
-				best = l
-			}
+		for _, l := range needSet(tree) {
+			m.needs = append(m.needs, needle{text: l.text, b: []byte(l.text), fold: l.fold})
 		}
-		m.need, m.needB, m.fold = best.text, []byte(best.text), best.fold
 	}
 	return m, nil
 }
 
+// has reports whether a line holds the needle.
+func (n needle) has(s string) bool {
+	if n.fold {
+		return containsFold(s, n.text)
+	}
+	return strings.Contains(s, n.text)
+}
+
+func (n needle) hasBytes(b []byte) bool {
+	if n.fold {
+		return containsFold(b, n.text)
+	}
+	return bytes.Contains(b, n.b)
+}
+
 // MatchString reports whether s contains a match.
 func (m *Matcher) MatchString(s string) bool {
-	switch {
-	case m.need == "":
-	case m.fold:
-		if !containsFold(s, m.need) {
-			return false
-		}
-	case !strings.Contains(s, m.need):
-		return false
-	}
-	return m.re.MatchString(s)
+	return m.Possible(s) && m.re.MatchString(s)
 }
 
 // Match reports whether b contains a match. For a caller holding the bytes of
 // a line it has not yet made a string, which on a line that does not match it
 // never has to.
 func (m *Matcher) Match(b []byte) bool {
-	switch {
-	case m.need == "":
-	case m.fold:
-		if !containsFold(b, m.need) {
+	if len(m.needs) > 0 {
+		hit := false
+		for _, n := range m.needs {
+			if n.hasBytes(b) {
+				hit = true
+				break
+			}
+		}
+		if !hit {
 			return false
 		}
-	case !bytes.Contains(b, m.needB):
-		return false
 	}
 	return m.re.Match(b)
 }
 
 // Possible reports whether s could hold a match on any of its lines. False is
-// certain: s lacks the text every match contains, so a caller holding a whole
+// certain: s holds none of the text a match needs, so a caller holding a whole
 // file can skip it without splitting it into lines. True says nothing, and
 // neither does a pattern that names no such text.
 func (m *Matcher) Possible(s string) bool {
-	switch {
-	case m.need == "":
+	if len(m.needs) == 0 {
 		return true
-	case m.fold:
-		return containsFold(s, m.need)
 	}
-	return strings.Contains(s, m.need)
+	for _, n := range m.needs {
+		if n.has(s) {
+			return true
+		}
+	}
+	return false
 }
 
 // literal is text a match must contain; fold means in either case.
@@ -105,28 +125,86 @@ type literal struct {
 	fold bool
 }
 
-// requiredLiterals lists literals that every match of re contains. It only
-// descends where the subexpression has to be present in a match: through a
-// concatenation, a group, and a repeat of at least one. An alternation, an
-// optional or a starred part requires nothing, so it contributes nothing.
-func requiredLiterals(re *syntax.Regexp) []literal {
+// needSet returns literals such that every match of re contains at least one
+// of them, or nil when re promises no such text. It only descends where a
+// subexpression has to be present in a match: a literal, a concatenation, a
+// group, a repeat of at least one, and an alternation, which needs one of its
+// branches and so offers the union of their sets when EVERY branch has one. A
+// single branch that requires nothing, an optional or a starred part, or a
+// character class leaves nothing to promise.
+func needSet(re *syntax.Regexp) []literal {
 	switch re.Op {
 	case syntax.OpLiteral:
-		return literalRuns(re.Rune, re.Flags&syntax.FoldCase != 0)
-	case syntax.OpConcat:
-		var out []literal
-		for _, sub := range re.Sub {
-			out = append(out, requiredLiterals(sub)...)
+		// Every run is required; the longest is the one fewest lines hold.
+		var best []literal
+		for _, l := range literalRuns(re.Rune, re.Flags&syntax.FoldCase != 0) {
+			if best == nil || len(l.text) > len(best[0].text) {
+				best = []literal{l}
+			}
 		}
-		return out
+		return best
+	case syntax.OpConcat:
+		// Every part is required, so any one part's set will do: the best.
+		var best []literal
+		for _, sub := range re.Sub {
+			if set := needSet(sub); betterSet(set, best) {
+				best = set
+			}
+		}
+		return best
 	case syntax.OpCapture, syntax.OpPlus:
-		return requiredLiterals(re.Sub[0])
+		return needSet(re.Sub[0])
 	case syntax.OpRepeat:
 		if re.Min >= 1 {
-			return requiredLiterals(re.Sub[0])
+			return needSet(re.Sub[0])
 		}
+	case syntax.OpAlternate:
+		var union []literal
+		seen := map[literal]bool{}
+		for _, sub := range re.Sub {
+			set := needSet(sub)
+			if set == nil {
+				return nil
+			}
+			for _, l := range set {
+				if !seen[l] {
+					seen[l] = true
+					union = append(union, l)
+				}
+			}
+		}
+		if len(union) > maxNeedles {
+			return nil
+		}
+		return union
 	}
 	return nil
+}
+
+// betterSet reports whether a filters more lines than b: its shortest literal
+// is longer (a set is only as selective as its least selective entry), and on
+// a tie it has fewer entries to scan for.
+func betterSet(a, b []literal) bool {
+	if len(a) == 0 {
+		return false
+	}
+	if len(b) == 0 {
+		return true
+	}
+	if sa, sb := shortest(a), shortest(b); sa != sb {
+		return sa > sb
+	}
+	return len(a) < len(b)
+}
+
+func shortest(set []literal) int {
+	n := len(set[0].text)
+	for _, l := range set[1:] {
+		if len(l.text) < n {
+			n = len(l.text)
+		}
+	}
+	return n
 }
 
 // literalRuns splits a literal into the runs a plain substring check can

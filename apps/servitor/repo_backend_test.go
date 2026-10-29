@@ -7,10 +7,12 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/bundle"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -138,6 +140,9 @@ func TestALocalFolderIsIngestedWhereItIs(t *testing.T) {
 // Saving: only an admin adds a local folder, a bad folder is refused before
 // the record exists, and a folder carries no git remote or token.
 func TestSavingALocalRepo(t *testing.T) {
+	// The save starts a clone in the background; it must be done before the
+	// next test swaps the repo store it reads.
+	t.Cleanup(repoIngests.Wait)
 	withRepoUsers(t)
 	app := &Servitor{}
 	app.DB = &DBase{Store: kvlite.MemStore()}
@@ -317,5 +322,53 @@ func TestSearchCodeToolTakesTheSharedOptions(t *testing.T) {
 	}
 	if out != "a.go:1: func A() {}\na.go:2: func B() {}\n" {
 		t.Errorf("reply = %q", out)
+	}
+}
+
+// search_code reads several files at once and merges in path order, so the
+// answer must be a single pass's: the same hits in the same order, the same
+// cut, and exclusions counted only up to where the limit stopped the search.
+func TestRepoSearchInParallelGivesTheSerialAnswer(t *testing.T) {
+	files := map[string]string{}
+	for f := 0; f < 20; f++ {
+		var b strings.Builder
+		for i := 0; i < 30+f*7; i++ {
+			fmt.Fprintf(&b, []string{"func Handle%d() {}\n", "// TODO handle %d\n", "x := handle(%d)\n", "return nil // %d\n"}[(i+f)%4], i)
+		}
+		files[fmt.Sprintf("pkg%02d/file.go", f)] = b.String()
+	}
+	withRepoFiles(t, "alice", "repo-1", files)
+	prev := bundle.SearchWorkers
+	defer func() { bundle.SearchWorkers = prev }()
+	run := func(workers int, q repoQuery) repoSearchResult {
+		bundle.SearchWorkers = workers
+		res, err := searchRepo(context.Background(), "alice", "repo-1", q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+	for name, q := range map[string]repoQuery{
+		"all":     {Text: "handle", MaxHits: 10000},
+		"cut":     {Text: "handle", MaxHits: 75},
+		"exclude": {Text: "handle", Exclude: "^//", MaxHits: 75},
+		"regex":   {Text: `func Handle\d+`, Regex: true, MaxHits: 40},
+		"glob":    {Text: "handle", Glob: "pkg1*", MaxHits: 30},
+	} {
+		serial, parallel := run(1, q), run(4, q)
+		if !reflect.DeepEqual(serial, parallel) {
+			t.Errorf("%s: serial and parallel differ: %d/%d hits, excluded %d/%d, truncated %v/%v", name,
+				len(serial.Hits), len(parallel.Hits), serial.Excluded, parallel.Excluded, serial.Truncated, parallel.Truncated)
+		}
+	}
+
+	// The cut, counted exactly: a file whose limit falls between two
+	// excluded lines counts only the exclusion before the last kept hit.
+	withRepoFiles(t, "alice", "repo-2", map[string]string{
+		"a.go": "keep 1\n// keep x\nkeep 2\n// keep y\nkeep 3\n",
+	})
+	res, _ := searchRepo(context.Background(), "alice", "repo-2", repoQuery{Text: "keep", Exclude: "^//", MaxHits: 2})
+	if len(res.Hits) != 2 || res.Excluded != 1 || !res.Truncated {
+		t.Errorf("hits %d excluded %d truncated %v; want 2, 1, true", len(res.Hits), res.Excluded, res.Truncated)
 	}
 }

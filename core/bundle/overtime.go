@@ -97,6 +97,52 @@ func (h *Histogram) rollUp() {
 	}
 }
 
+// AddN counts n lines at t: lines whose time was settled together (a chunk's
+// lines above its first timestamp, which all take the time before them).
+func (h *Histogram) AddN(t time.Time, n int) {
+	if t.IsZero() {
+		h.Undated += n
+		return
+	}
+	for ; n > 0; n-- {
+		h.Add(t)
+	}
+}
+
+// Merge folds another file's counts into these. The two are brought to the
+// coarser of their resolutions first, so a count is never split finer than
+// either side kept it.
+func (h *Histogram) Merge(o *Histogram) {
+	if o == nil {
+		return
+	}
+	for h.res < o.res {
+		h.rollUp()
+	}
+	counts := o.counts
+	if o.res < h.res {
+		factor := int64(h.res / o.res)
+		counts = make(map[int64]int, len(o.counts))
+		for k, n := range o.counts {
+			counts[floorDiv(k, factor)] += n
+		}
+	}
+	for k, n := range counts {
+		h.counts[k] += n
+	}
+	for len(h.counts) > maxHistogramKeys && h.res < histogramResolutions[len(histogramResolutions)-1] {
+		h.rollUp()
+	}
+	h.Lines += o.Lines
+	h.Undated += o.Undated
+	if !o.first.IsZero() && (h.first.IsZero() || o.first.Before(h.first)) {
+		h.first = o.first
+	}
+	if o.last.After(h.last) {
+		h.last = o.last
+	}
+}
+
 func floorDiv(a, b int64) int64 {
 	q := a / b
 	if (a%b != 0) && ((a < 0) != (b < 0)) {
