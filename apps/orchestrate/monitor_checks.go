@@ -7,6 +7,7 @@ package orchestrate
 
 import (
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/jsonapi"
@@ -33,6 +34,22 @@ func lastCheckNote(m EventMonitor) string {
 		return "; last check " + l[0]
 	}
 	return ""
+}
+
+// nextCheckNote is when a monitor checks next, for a one-line listing, in the
+// owner's zone and as a span from now, so an agent asked "when does it check
+// again" reads the answer instead of working it out from the cadence. "" for
+// one that is paused, has no check queued, or is a timer (its row says when it
+// goes off).
+func nextCheckNote(m EventMonitor, now time.Time) string {
+	if m.Paused || m.Kind == EventKindTimer || m.NextCheck.IsZero() {
+		return ""
+	}
+	at := m.NextCheck.In(UserLocation(m.Owner)).Format("Jan 2 3:04 PM MST")
+	if !m.NextCheck.After(now) {
+		return "; next check due now (" + at + ")"
+	}
+	return "; next check " + at + ", in " + humanUntil(m.NextCheck.Sub(now))
 }
 
 // handleConsoleMonitorChecks is a monitor's recent checks, for the Scheduler

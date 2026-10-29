@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/snugforge/kvlite"
@@ -51,5 +52,28 @@ func TestRecentChecksReadNewestFirstAndOnlyForTheOwner(t *testing.T) {
 	}
 	if w := ask("other"); w.Code != http.StatusNotFound {
 		t.Fatalf("another user got %d %s", w.Code, w.Body.String())
+	}
+}
+
+// A listed monitor says when it checks next, as a time and a span, so an
+// agent asked when it checks again reads the answer instead of working it out
+// from "every 21600s" and getting it wrong.
+func TestAListedMonitorSaysWhenItChecksNext(t *testing.T) {
+	now := time.Date(2026, 10, 28, 22, 42, 0, 0, time.UTC)
+	m := EventMonitor{Owner: "u", Name: "release-watch", Kind: EventKindPoll,
+		IntervalSeconds: 21600, NextCheck: now.Add(85 * time.Minute)}
+	if n := nextCheckNote(m, now); !strings.HasPrefix(n, "; next check ") || !strings.HasSuffix(n, ", in 1h 25m") {
+		t.Errorf("note = %q", n)
+	}
+	m.NextCheck = now.Add(-time.Minute)
+	if n := nextCheckNote(m, now); !strings.Contains(n, "due now") {
+		t.Errorf("an overdue check: %q", n)
+	}
+	m.Paused = true
+	if n := nextCheckNote(m, now); n != "" {
+		t.Errorf("a paused monitor has no next check: %q", n)
+	}
+	if n := nextCheckNote(EventMonitor{Kind: EventKindTimer, NextCheck: now.Add(time.Hour)}, now); n != "" {
+		t.Errorf("a timer's row already says when it goes off: %q", n)
 	}
 }

@@ -280,6 +280,7 @@ func listEventMonitorsToolDef(owner, controllerAgentID string) AgentToolDef {
 					fmt.Fprintf(&b, "; last fired %s", m.LastFired.Local().Format("Jan 2 3:04 PM"))
 				}
 				b.WriteString(lastCheckNote(m))
+				b.WriteString(nextCheckNote(m, time.Now()))
 				if lbl := m.FireLabel(); lbl != "" {
 					fmt.Fprintf(&b, "; %s", lbl)
 				}
