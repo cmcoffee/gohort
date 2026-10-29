@@ -9,7 +9,7 @@ package flows
 // run (Flow.Py) and reach the sandbox on its PYTHONPATH.
 //
 // They were core's export registry's built-in formats; moved here so every
-// export, whether an agent's export tool, Scribe or system_hook asks for it,
+// export, whether an agent's export tool, Scribe or convert_file asks for it,
 // is one job an admin can adapt.
 
 const xlsxGeneratorPy = `

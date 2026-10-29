@@ -4,7 +4,7 @@
 //
 // The formats every deployment has (PDF, Word, OpenDocument, Excel,
 // PowerPoint) are export jobs in System Hooks (core/flows): the same ones
-// Scribe's Export menu and system_hook use, so an admin who adapts one
+// Scribe's Export menu and convert_file use, so an admin who adapts one
 // (Word by pandoc, a PDF by another renderer) changes it for all of them,
 // and a format an admin adds there is offered here too. This package is
 // the tool surface: it maps the LLM's args onto a document, runs the job,

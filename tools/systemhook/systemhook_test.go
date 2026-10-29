@@ -155,3 +155,10 @@ func hasCap(caps []Capability, c Capability) bool {
 	}
 	return false
 }
+
+// The tool is named for what it does.
+func TestTheToolIsConvertFile(t *testing.T) {
+	if (&HookTool{}).Name() != "convert_file" {
+		t.Errorf("name = %q", (&HookTool{}).Name())
+	}
+}

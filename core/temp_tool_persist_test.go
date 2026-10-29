@@ -1610,3 +1610,32 @@ func TestTheOtherGovernanceFlagsStillSurvive(t *testing.T) {
 		}
 	}
 }
+
+// A renamed tool keeps what was set under its old name: an ask-first mark made
+// as system_hook binds convert_file, fleet-wide and per agent, and switching it
+// off under the new name takes the old mark off too. An allow list's old name
+// resolves to the new one.
+func TestARenamedToolKeepsItsAskFirstMark(t *testing.T) {
+	prev := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB = prev })
+	if CanonicalToolName("system_hook") != "convert_file" || CanonicalToolName("convert_file") != "convert_file" {
+		t.Errorf("system_hook should resolve to convert_file")
+	}
+	SetUserToolAsksInChat(RootDB, "u", "", "system_hook", true)
+	SetUserToolAsksInChat(RootDB, "u", "a1", "system_hook", true)
+	if !UserToolAsksInChat(RootDB, "u", "", "convert_file") || !UserToolAsksInChat(RootDB, "u", "a2", "convert_file") {
+		t.Error("a fleet-wide mark made under the old name binds the new one")
+	}
+	SetUserToolAsksInChat(RootDB, "u", "", "convert_file", false)
+	if UserToolAsksInChat(RootDB, "u", "a2", "convert_file") {
+		t.Error("switching it off under the new name takes the old mark off")
+	}
+	if !UserToolAsksInChat(RootDB, "u", "a1", "convert_file") {
+		t.Error("a1's own mark, made under the old name, still binds")
+	}
+	SetUserToolAsksInChat(RootDB, "u", "a1", "convert_file", false)
+	if UserToolAsksInChat(RootDB, "u", "a1", "convert_file") {
+		t.Error("and comes off under the new name too")
+	}
+}

@@ -11,34 +11,13 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 )
 
-// renamedToolAliases maps retired tool names to their current equivalents.
-// Agent AllowedTools lists persist verbatim in each user's store, so an agent
-// authored before a rename keeps the dead name forever — it silently drops out
-// of the catalog (intersects to nothing) and the agent loses that capability
-// without any error. The phantom-scoped chat tools were renamed to the
-// channel-scoped ones; a standing summary agent whose allowlist still says
-// read_phantom_chat would fire but be unable to read the chat. Resolving the
-// alias when the allow-set is built self-heals every such agent in place.
-var renamedToolAliases = map[string]string{
-	"read_phantom_chat":  "read_chat",
-	"list_phantom_chats": "list_chats",
-	"get_local_time":     "time_in_zone",
-	// The scheduling tools folded into `schedule` (operator_schedule_tool.go).
-	"create_standing_agent": "schedule", "list_standing_agents": "schedule", "run_standing_now": "schedule",
-	"set_standing_paused": "schedule", "delete_standing_agent": "schedule",
-	"create_event_monitor": "schedule", "list_event_monitors": "schedule", "delete_event_monitor": "schedule",
-	"set_timer": "schedule",
-}
-
 // canonicalToolName maps a possibly-retired tool name to the live name, or
-// returns it unchanged. Used when intersecting an agent's AllowedTools with the
-// live catalog so a renamed tool in an old allowlist still resolves.
-func canonicalToolName(name string) string {
-	if live, ok := renamedToolAliases[name]; ok {
-		return live
-	}
-	return name
-}
+// returns it unchanged (core's CanonicalToolName, where the renames are kept).
+// Used when intersecting an agent's AllowedTools with the live catalog: those
+// lists persist verbatim, so an agent authored before a rename keeps the dead
+// name, and resolving it when the allow-set is built self-heals every such
+// agent in place.
+func canonicalToolName(name string) string { return CanonicalToolName(name) }
 
 // localChatTime reformats a message timestamp into the deployment's LOCAL zone
 // — the same zone the model sees in the [Current date & time] stamp — and

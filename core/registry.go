@@ -304,6 +304,49 @@ func diffWorkspaceFiles(sess *ToolSession, before map[string]workspaceFileStamp)
 	return written
 }
 
+// renamedTools maps retired tool names to the ones that replaced them.
+//
+// Settings saved under a tool's name persist verbatim: an agent's allow list
+// in each user's store, an ask-first mark. A rename would leave them naming
+// nothing, and the loss is silent, in the worst direction for each: an agent
+// quietly loses a tool, and a tool marked to ask before every call quietly
+// stops asking. So an old name keeps meaning its tool: a list resolves it
+// (CanonicalToolName), and a mark made under it still binds the new name
+// (UserToolAsksInChat). Nothing stored is rewritten.
+var renamedTools = map[string]string{
+	"read_phantom_chat":  "read_chat",
+	"list_phantom_chats": "list_chats",
+	"get_local_time":     "time_in_zone",
+	// The scheduling tools folded into one, schedule.
+	"create_standing_agent": "schedule", "list_standing_agents": "schedule", "run_standing_now": "schedule",
+	"set_standing_paused": "schedule", "delete_standing_agent": "schedule",
+	"create_event_monitor": "schedule", "list_event_monitors": "schedule", "delete_event_monitor": "schedule",
+	"set_timer": "schedule",
+	// What it does, rather than where it is set up.
+	"system_hook": "convert_file",
+}
+
+// CanonicalToolName is the live name for a possibly retired one, or name as
+// it is (renamedTools).
+func CanonicalToolName(name string) string {
+	if live, ok := renamedTools[name]; ok {
+		return live
+	}
+	return name
+}
+
+// formerToolNames are the retired names that now mean name, in order.
+func formerToolNames(name string) []string {
+	var out []string
+	for old, live := range renamedTools {
+		if live == name {
+			out = append(out, old)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // WatchWorkspaceWrites snapshots the session's workspace and returns what,
 // called after a tool ran, lists the files it wrote there: new, or there
 // before and rewritten. The one check every way a tool runs uses, built-in

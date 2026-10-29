@@ -1,4 +1,5 @@
-// Package systemhook is the system_hook tool: an agent runs one of this
+// Package systemhook is the convert_file tool (once named system_hook, for
+// where its formats are set up rather than what it does): an agent runs one of this
 // machine's System Hooks (core/flows) on a file in its workspace, and gets
 // what it gives back as files there.
 //
@@ -84,10 +85,10 @@ func available(online bool) []hook {
 	return out
 }
 
-// HookTool is system_hook.
+// HookTool is convert_file.
 type HookTool struct{}
 
-func (t *HookTool) Name() string { return "system_hook" }
+func (t *HookTool) Name() string { return "convert_file" }
 
 func (t *HookTool) Desc() string {
 	return "Run one of this machine's System Hooks on a file in your workspace: turn a file into something you can read (an image, text), sample frames or details from a video, transcribe audio, or write a Markdown document as another format. The result is saved as files in your workspace, and text results are also returned."
@@ -179,7 +180,7 @@ func (t *HookTool) ActionCaps() map[string][]Capability {
 func (t *HookTool) Category() string { return "System hooks" }
 
 func (t *HookTool) Run(args map[string]any) (string, error) {
-	return "", fmt.Errorf("system_hook needs a session with a workspace")
+	return "", fmt.Errorf("convert_file needs a session with a workspace")
 }
 
 // maxFile bounds the file a hook is run on.
@@ -190,7 +191,7 @@ const textInline = 6000
 
 func (t *HookTool) RunWithSession(args map[string]any, sess *ToolSession) (string, error) {
 	if sess == nil || sess.WorkspaceDir == "" {
-		return "", fmt.Errorf("system_hook needs a session with a workspace")
+		return "", fmt.Errorf("convert_file needs a session with a workspace")
 	}
 	id := strings.TrimSpace(StringArg(args, "action"))
 	var h *hook

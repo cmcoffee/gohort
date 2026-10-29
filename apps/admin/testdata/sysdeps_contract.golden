@@ -87,7 +87,7 @@ alice POST /api/system-deps/agents?id=ctstrip "{\"agents\":true}"
 root GET /api/system-deps/agents?id=ctstrip ""
   405 method not allowed
 root POST /api/system-deps/agents?id=ctstrip "{\"agents\":true}"
-  200 {"agents":true,"message":"Agents can run it now, with the system_hook tool."}
+  200 {"agents":true,"message":"Agents can run it now, with the convert_file tool."}
 root POST /api/system-deps/agents?id=read.heic "{\"agents\":true}"
   400 gohort's own jobs reach agents through gohort's own tools (video, export, attachments): there is no switch for them
 root POST /api/system-deps/agents?id=read-heic-adapted "{\"agents\":true}"

@@ -2572,6 +2572,18 @@ func askSetHas(db Database, key, name string) bool {
 }
 
 func UserToolAsksInChat(db Database, username, agentID, name string) bool {
+	// A mark made under a tool's former name binds it still: a tool marked to
+	// ask first must not stop asking because it was renamed (renamedTools).
+	for _, n := range append([]string{name}, formerToolNames(strings.TrimSpace(name))...) {
+		if userToolAsks(db, username, agentID, n) {
+			return true
+		}
+	}
+	return false
+}
+
+// userToolAsks is UserToolAsksInChat for one name.
+func userToolAsks(db Database, username, agentID, name string) bool {
 	db = tempToolStore(db)
 	// Not a failed read - there is nothing here to read. A nil store means the
 	// binary installed no auth layer at all (a test harness, an embedded mode
@@ -2672,9 +2684,15 @@ func SetUserToolAsksInChat(db Database, username, agentID, name string, ask bool
 	key := askKey(username, agentID)
 	var names []string
 	db.Get(askInChatToolsTable, key, &names)
+	// The tool's former names go with it, or a mark made before a rename
+	// could not be taken off (UserToolAsksInChat reads them too).
+	gone := map[string]bool{name: true}
+	for _, old := range formerToolNames(name) {
+		gone[old] = true
+	}
 	kept := names[:0:0]
 	for _, n := range names {
-		if n != name {
+		if !gone[n] {
 			kept = append(kept, n)
 		}
 	}

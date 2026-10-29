@@ -329,7 +329,7 @@ gohort/
     ├── readoutput/          # read_output: paged, searchable view of a capped result
     ├── silent/              # stay_silent: suppress reply this turn
     ├── status/              # send_status: progress notes mid-turn
-    ├── systemhook/          # system_hook: run a System Hooks job on a workspace file
+    ├── systemhook/          # convert_file: run a System Hooks job on a workspace file
     ├── temptool/            # tool_def: runtime-defined shell + api tools
     ├── timezone/            # get_local_time, time_in_zone
     ├── transcribe/          # transcribe_audio: STT via configured Whisper endpoint
