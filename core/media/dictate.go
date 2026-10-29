@@ -319,9 +319,14 @@ const dictationJS = `(function(){
       source.connect(an);
     } catch (e) { return; }
     var buf = new Uint8Array(an.fftSize);
+    var fbuf = an.getFloatTimeDomainData ? new Float32Array(an.fftSize) : null;
     var floor = -1, lastVoice = Date.now(), from = Date.now();
-    var m = meter = {source: source, voiced: 0, timer: setInterval(function() {
+    var m = meter = {source: source, voiced: 0, live: false, timer: setInterval(function() {
       if (state !== 'recording') return;
+      if (!m.live && fbuf) {
+        an.getFloatTimeDomainData(fbuf);
+        for (var j = 0; j < fbuf.length; j++) if (fbuf[j] !== 0) { m.live = true; break; }
+      }
       an.getByteTimeDomainData(buf);
       var sum = 0;
       for (var i = 0; i < buf.length; i++) { var x = (buf[i] - 128) / 128; sum += x * x; }
@@ -339,13 +344,14 @@ const dictationJS = `(function(){
   // one speak yet. The bar is a tenth of a second of voice, well under the
   // 300ms the silence stop waits for: a short "yes" must not be thrown
   // away, and a recording is cancelled only when it is truly silent.
-  // Without a meter nobody knows, so the recording is sent.
-  function heardNothing() { return !!meter && meter.voiced < 100; }
+  // Without a meter nobody knows, so the recording is sent; so is one whose
+  // meter never got a signal (every sample exactly zero, where any real
+  // microphone hisses a little), as a web view can give it.
+  function heardNothing() { return !!meter && meter.live && meter.voiced < 100; }
 
-  // cancelRecording ends a recording the quiet wait ran out on with nobody
-  // heard: there is nothing to write out, so nothing is sent, and the mic
-  // says so. Never for a press: the meter only guesses at speech, and a
-  // press it guessed wrong about threw away what was said.
+  // cancelRecording ends a recording in which nobody was heard: there is
+  // nothing to write out, so nothing is sent, and the mic says so. A silent
+  // clip sent anyway came back as words the transcriber made up.
   function cancelRecording(ctx) {
     var r = rec;
     state = 'idle';
@@ -416,9 +422,7 @@ const dictationJS = `(function(){
 
   function press(ctx) {
     switch (state) {
-    // Stop always stops and sends: the person pressing it knows whether they
-    // spoke, and the meter does not.
-    case 'recording': stopRecording(ctx); return;
+    case 'recording': if (heardNothing()) cancelRecording(ctx); else stopRecording(ctx); return;
     case 'sending':
       if (ctl) ctl.abort();
       // A cancelled resend keeps the recording; a first send lets it go,

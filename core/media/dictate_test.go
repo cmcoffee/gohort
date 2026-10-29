@@ -435,9 +435,14 @@ window.AudioContext.prototype.createGain = function() {
 window.AudioContext.prototype.createMediaStreamSource = function() {
   return {connect: function() {}, disconnect: function() { disconnected++; }};
 };
+// loud = 0 is a meter with no signal at all, as a web view can give it; any
+// real microphone hisses a little, which the float reading keeps and the
+// byte one rounds away.
 window.AudioContext.prototype.createAnalyser = function() {
   return {fftSize: 0, getByteTimeDomainData: function(b) {
     for (var i = 0; i < b.length; i++) b[i] = 128 + Math.round((i % 2 ? 1 : -1) * loud * 127);
+  }, getFloatTimeDomainData: function(b) {
+    for (var i = 0; i < b.length; i++) b[i] = (i % 2 ? 1 : -1) * loud;
   }};
 };
 var realNow = Date.now, t0 = realNow();
@@ -490,19 +495,18 @@ eval(dictationJS);
   check('with the falling tone, the meter let go and the ring cleared', tones[tones.length - 1] === 'down' &&
     !('aria-pressed' in mic.button.attrs) && mic.button.style.props['--ui-act-level'] === '0.00' && disconnected === 3);
 
-  // Stop always stops and sends, whatever the meter heard: it only guesses
-  // at speech, and a press it guessed wrong about threw the words away.
+  // Stop pressed before anything was said cancels the same way: a silent
+  // clip sent anyway comes back as words the transcriber made up.
   mic.onclick(mic); await sleep(250);
   loud = 0.003; await sleep(100);
   mic.onclick(mic); await sleep(10);
-  check('stop pressed with nothing heard still sends it', recorders[3].stopped && pending.length === 3);
-  pending[2].res(written('Yes.'));
-  await sleep(10);
+  check('stop pressed with nothing heard cancels, sending nothing', recorders[3].stopped && pending.length === 2 &&
+    mic.button.textContent === '🎤' && mic.button.title.indexOf('Nothing was heard') === 0 && tones[tones.length - 1] === 'down');
   mic.onclick(mic); await sleep(250);
   loud = 0.3; await sleep(500);
   mic.onclick(mic); await sleep(10);
-  check('stop pressed after speaking sends it', recorders[4].stopped && pending.length === 4);
-  pending[3].res(written('Yes.'));
+  check('stop pressed after speaking sends it', recorders[4].stopped && pending.length === 3);
+  pending[2].res(written('Yes.'));
   await sleep(10);
   // A word too short for the silence stop to count is still kept: a short
   // "yes" and then stop is sent, not thrown away.
@@ -511,13 +515,22 @@ eval(dictationJS);
   loud = 0.3; await sleep(150);
   loud = 0.003;
   mic.onclick(mic); await sleep(10);
-  check('a short word and then stop is sent', recorders[5].stopped && pending.length === 5);
-  pending[4].res(written('Yes.'));
+  check('a short word and then stop is sent', recorders[5].stopped && pending.length === 4);
+  pending[3].res(written('Yes.'));
   await sleep(10);
   mic.onclick(mic); await sleep(250);
   loud = 0.3; await sleep(150);
   loud = 0.003; await sleep(900);
-  check('so is a short word and then the long quiet', recorders[6].stopped && pending.length === 6);
+  check('so is a short word and then the long quiet', recorders[6].stopped && pending.length === 5);
+  pending[4].res(written('Yes.'));
+  await sleep(10);
+
+  // A meter that never gets a signal knows nothing, so Stop sends.
+  loud = 0;
+  mic.onclick(mic); await sleep(250);
+  await sleep(100);
+  mic.onclick(mic); await sleep(10);
+  check('a meter with no signal does not cancel a press', recorders[7].stopped && pending.length === 6);
   pending[5].res(written('Yes.'));
   await sleep(10);
 
