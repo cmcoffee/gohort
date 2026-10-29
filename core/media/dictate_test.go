@@ -1,6 +1,7 @@
 package media
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -203,7 +204,7 @@ const dictationFlow = `
   mic.onclick(mic);
   await sleep(10);
   check('pressing again stops and sends the recording', pending.length === 1 && pending[0].url === '/api/dictate' && pending[0].opts.headers['Content-Type'] === 'audio/webm;codecs=opus' && tracksStopped >= 1);
-  check('saying it had no meter', pending[0].opts.headers['X-Dictation-Meter'] === 'none');
+  check('saying it had no meter', /^none ms=\d+$/.test(pending[0].opts.headers['X-Dictation-Meter']));
   check('and it is no longer marked as recording', !('aria-pressed' in mic.button.attrs));
   await sleep(150);
   check('a spinner while it is written out', /^[⠀-⣿]/.test(mic.button.textContent));
@@ -478,7 +479,7 @@ eval(dictationJS);
   check('talking keeps it recording', pending.length === 0);
   loud = 0.003; await sleep(400);
   check('going quiet after speech stops it and sends it', pending.length === 1);
-  check('saying what the meter heard, for the log', /^live=1 voiced=\d+ first=\d+ peak=0\.\d{3}$/.test(pending[0].opts.headers['X-Dictation-Meter']));
+  check('saying what the meter heard, for the log', /^live=1 voiced=\d+ first=\d+ peak=0\.\d{3} ctx=running ms=\d+$/.test(pending[0].opts.headers['X-Dictation-Meter']));
   check('with a falling tone', tones.join() === 'up,down');
   check('the meter is let go and the ring cleared', disconnected === 1 && mic.button.style.props['--ui-act-level'] === '0.00');
   pending[0].res(written('Hello.'));
@@ -609,5 +610,79 @@ func TestTheMeterNoteKeepsToItsShape(t *testing.T) {
 	}
 	if got := dictationMeterNote(strings.Repeat("a", 200)); len(got) != 80 {
 		t.Errorf("a long note is clipped to a line: %d", len(got))
+	}
+}
+
+// wavClip is a 16 kHz mono 16-bit WAV of secs of silence.
+func wavClip(secs float64) []byte {
+	n := int(secs * 32000)
+	b := make([]byte, 44+n)
+	copy(b, "RIFF")
+	binary.LittleEndian.PutUint32(b[4:], uint32(36+n))
+	copy(b[8:], "WAVEfmt ")
+	binary.LittleEndian.PutUint32(b[16:], 16)
+	binary.LittleEndian.PutUint16(b[20:], 1)
+	binary.LittleEndian.PutUint16(b[22:], 1)
+	binary.LittleEndian.PutUint32(b[24:], 16000)
+	binary.LittleEndian.PutUint32(b[28:], 32000)
+	binary.LittleEndian.PutUint16(b[32:], 2)
+	binary.LittleEndian.PutUint16(b[34:], 16)
+	copy(b[36:], "data")
+	binary.LittleEndian.PutUint32(b[40:], uint32(n))
+	return b
+}
+
+// A clip's length comes from its header, whatever rate it was made at, and
+// a streamed one whose data size runs past the end counts what is there.
+func TestAClipsLengthComesFromItsHeader(t *testing.T) {
+	if secs, ok := wavSeconds(wavClip(0.25)); !ok || secs != 0.25 {
+		t.Errorf("a quarter second: %v %v", secs, ok)
+	}
+	streamed := wavClip(1)
+	binary.LittleEndian.PutUint32(streamed[40:], 0xFFFFFFFF)
+	if secs, ok := wavSeconds(streamed); !ok || secs != 1 {
+		t.Errorf("a streamed second: %v %v", secs, ok)
+	}
+	for name, b := range map[string][]byte{"not a wav": []byte("recorded audio"), "no fmt": []byte("RIFF\x00\x00\x00\x00WAVEdata\x00\x00\x00\x00"), "cut short": wavClip(1)[:30]} {
+		if _, ok := wavSeconds(b); ok {
+			t.Errorf("%s read as a wav", name)
+		}
+	}
+}
+
+// A clip too short to hold a word never reaches the transcriber, which
+// writes something like "Thank you." for one; the page hears it as empty.
+func TestATapsClipIsNotWrittenOut(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Write([]byte("Thank you."))
+	}))
+	defer srv.Close()
+	prevCfg, prevHook, prevUpload, prevWAV := GetTranscribeConfig(), TranscribeHook, GovernedUploadFunc, WAVHook
+	TranscribeHook, GovernedUploadFunc = nil, nil
+	WAVHook = func(b []byte) ([]byte, error) { return b, nil }
+	SetTranscribeConfig(TranscribeConfig{Endpoint: srv.URL, Enabled: true})
+	t.Cleanup(func() {
+		SetTranscribeConfig(prevCfg)
+		TranscribeHook, GovernedUploadFunc, WAVHook = prevHook, prevUpload, prevWAV
+	})
+	post := func(clip []byte) string {
+		r := httptest.NewRequest("POST", DictatePath, strings.NewReader(string(clip)))
+		r.Header.Set("Content-Type", "audio/wav")
+		w := httptest.NewRecorder()
+		ServeDictation(w, r, "alice")
+		var out struct{ Text string }
+		json.Unmarshal(w.Body.Bytes(), &out)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%d %s", w.Code, w.Body.String())
+		}
+		return out.Text
+	}
+	if got := post(wavClip(0.15)); got != "" || calls != 0 {
+		t.Errorf("a tap's clip was written out: %q, %d calls", got, calls)
+	}
+	if got := post(wavClip(1)); got != "Thank you." || calls != 1 {
+		t.Errorf("a second-long clip should be: %q, %d calls", got, calls)
 	}
 }

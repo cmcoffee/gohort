@@ -7,6 +7,7 @@
 package media
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -54,6 +55,16 @@ func ServeDictation(w http.ResponseWriter, r *http.Request, user string) {
 	if wav, terr := TranscodeAudioToWAV(audio); terr == nil && len(wav) > 0 {
 		send, name = wav, "dictation.wav"
 	}
+	note := dictationMeterNote(r.Header.Get("X-Dictation-Meter"))
+	// Too short to hold a word: a transcriber hands back words it made up
+	// for a clip like that ("Thank you."), so it is answered as heard empty.
+	if secs, ok := wavSeconds(send); ok && secs < dictateMinSecs {
+		nfo.Debug("[dictate] %s: %.2fs of audio, too short to hold a word, not sent; meter %s", user, secs, note)
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		json.NewEncoder(w).Encode(map[string]string{"text": ""})
+		return
+	}
 	text, err := Transcribe(r.Context(), send, name)
 	if err != nil {
 		if r.Context().Err() == nil {
@@ -62,12 +73,52 @@ func ServeDictation(w http.ResponseWriter, r *http.Request, user string) {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
-	if note := dictationMeterNote(r.Header.Get("X-Dictation-Meter")); note != "" {
+	if note != "" {
 		nfo.Debug("[dictate] %s: %d bytes, meter %s, %d chars back", user, len(audio), note, len(strings.TrimSpace(text)))
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	json.NewEncoder(w).Encode(map[string]string{"text": strings.TrimSpace(text)})
+}
+
+// dictateMinSecs is the shortest clip that goes to the transcriber: under
+// it there is no word to write out.
+const dictateMinSecs = 0.5
+
+// wavSeconds is how long a WAV clip plays, from its header: the data
+// chunk's size over the fmt chunk's byte rate. ok is false for anything it
+// cannot read as a WAV. A data size past the end, as a streamed WAV writes,
+// counts what is there.
+func wavSeconds(b []byte) (secs float64, ok bool) {
+	if len(b) < 12 || string(b[:4]) != "RIFF" || string(b[8:12]) != "WAVE" {
+		return 0, false
+	}
+	var rate uint32
+	for i := 12; i+8 <= len(b); {
+		id, size, body := string(b[i:i+4]), binary.LittleEndian.Uint32(b[i+4:i+8]), i+8
+		switch id {
+		case "fmt ":
+			if body+12 > len(b) {
+				return 0, false
+			}
+			rate = binary.LittleEndian.Uint32(b[body+8 : body+12])
+		case "data":
+			if rate == 0 {
+				return 0, false
+			}
+			n := uint64(len(b) - body)
+			if uint64(size) < n {
+				n = uint64(size)
+			}
+			return float64(n) / float64(rate), true
+		}
+		next := uint64(body) + uint64(size) + uint64(size&1)
+		if next > uint64(len(b)) {
+			return 0, false
+		}
+		i = int(next)
+	}
+	return 0, false
 }
 
 // dictationMeterNote is the page's account of what its level meter heard
@@ -344,6 +395,9 @@ const dictationJS = `(function(){
       an.fftSize = 1024;
       source.connect(an);
     } catch (e) { return; }
+    // Opening the microphone can leave a WebKit context interrupted rather
+    // than suspended, where the meter reads nothing but zeros.
+    if (audio.state !== 'running' && audio.resume) { try { audio.resume(); } catch (e) {} }
     var buf = new Uint8Array(an.fftSize);
     var fbuf = an.getFloatTimeDomainData ? new Float32Array(an.fftSize) : null;
     var floor = -1, lastVoice = Date.now(), from = Date.now();
@@ -395,8 +449,8 @@ const dictationJS = `(function(){
   function stopRecording(ctx) {
     if (state !== 'recording' || !rec) return;
     state = 'sending';
-    meterNote = meter ? 'live=' + (meter.live ? 1 : 0) + ' voiced=' + meter.voiced + ' first=' + meter.first +
-      ' peak=' + meter.peak.toFixed(3) : 'none';
+    meterNote = (meter ? 'live=' + (meter.live ? 1 : 0) + ' voiced=' + meter.voiced + ' first=' + meter.first +
+      ' peak=' + meter.peak.toFixed(3) + ' ctx=' + audio.state : 'none') + ' ms=' + (Date.now() - started);
     stopMeter();
     pressed(ctx, false);
     tone(false);
