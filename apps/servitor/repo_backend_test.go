@@ -2,6 +2,7 @@ package servitor
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -215,5 +216,106 @@ func TestRepoSourceAcceptsPlainRemotes(t *testing.T) {
 	}
 	if err := validateRepoSource("https://host-a/org/repo.git", "", false); err != nil {
 		t.Errorf("https refused for a non-admin owner: %v", err)
+	}
+}
+
+// withRepoFiles puts files straight into one repo's encrypted store, the
+// state an ingest leaves, without a clone.
+func withRepoFiles(t *testing.T, user, id string, files map[string]string) {
+	t.Helper()
+	prev := RepoFilesDB
+	RepoFilesDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RepoFilesDB = prev })
+	store := repoFileStore(user, id)
+	for path, body := range files {
+		store.Set(repoFilesTable, path, body)
+	}
+}
+
+// search_code shares the log search's matcher, so a query means the same in
+// code as in a log: case-insensitive, literal by default so a bracket finds
+// itself, a regular expression on request, with exclude and a path filter,
+// and a cut and an exclusion that are both said.
+func TestRepoSearchSharesTheLogSearchMatcher(t *testing.T) {
+	withRepoFiles(t, "alice", "repo-1", map[string]string{
+		"auth/token.go":      "package auth\n// GetUser( is the old name\nfunc GetUser(id int) {}\nfunc SetUser(u User) {}\n",
+		"auth/token_test.go": "func TestGetUser(t *testing.T) { GetUser(1) }\n",
+		"web/handlers.js":    "getUser(42)\n",
+	})
+	ctx := context.Background()
+	find := func(q repoQuery) []string {
+		t.Helper()
+		res, err := searchRepo(ctx, "alice", "repo-1", q)
+		if err != nil {
+			t.Fatalf("%+v: %v", q, err)
+		}
+		var out []string
+		for _, h := range res.Hits {
+			out = append(out, fmt.Sprintf("%s:%d", h.Path, h.Line))
+		}
+		return out
+	}
+	// Literal, case-insensitive: the bracket is just a bracket.
+	if got := fmt.Sprint(find(repoQuery{Text: "getuser("})); got != "[auth/token.go:2 auth/token.go:3 auth/token_test.go:1 web/handlers.js:1]" {
+		t.Errorf("literal search = %s", got)
+	}
+	if got := fmt.Sprint(find(repoQuery{Text: `func (get|set)user\(`, Regex: true})); got != "[auth/token.go:3 auth/token.go:4]" {
+		t.Errorf("regex search = %s", got)
+	}
+	if got := fmt.Sprint(find(repoQuery{Text: "getuser(", Exclude: `^\s*//`, Glob: "*.go"})); got != "[auth/token.go:3 auth/token_test.go:1]" {
+		t.Errorf("exclude + glob = %s", got)
+	}
+	if got := fmt.Sprint(find(repoQuery{Text: "getuser", Glob: "handlers"})); got != "[web/handlers.js:1]" {
+		t.Errorf("a path fragment as glob = %s", got)
+	}
+
+	res, _ := searchRepo(ctx, "alice", "repo-1", repoQuery{Text: "user", MaxHits: 2})
+	if !res.Truncated || !strings.Contains(res.notes(), "first 2 matches; there may be more") {
+		t.Errorf("a cut search must say so: truncated=%v notes=%q", res.Truncated, res.notes())
+	}
+	q := repoQuery{Text: "getuser", Exclude: "getuser"}
+	res, _ = searchRepo(ctx, "alice", "repo-1", q)
+	if len(res.Hits) != 0 || !strings.HasPrefix(res.noMatches(q), "No matches left after exclude: 4 line(s)") {
+		t.Errorf("an exclude that hid everything read as %q", res.noMatches(q))
+	}
+	q = repoQuery{Text: "getuser", Glob: "*.py"}
+	if res, _ := searchRepo(ctx, "alice", "repo-1", q); !strings.Contains(res.noMatches(q), "The rest of the repository was not searched") {
+		t.Errorf("a glob-narrowed miss read as %q", res.noMatches(q))
+	}
+
+	if _, err := searchRepo(ctx, "alice", "repo-1", repoQuery{Text: "(", Regex: true}); err == nil || !strings.Contains(err.Error(), "query") {
+		t.Errorf("a bad regex should name the query, got %v", err)
+	}
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := searchRepo(cancelled, "alice", "repo-1", repoQuery{Text: "user"}); err == nil {
+		t.Error("a cancelled search ran to the end")
+	}
+}
+
+// The tool end to end: the new options arrive from arguments, and the reply
+// carries the cut.
+func TestSearchCodeToolTakesTheSharedOptions(t *testing.T) {
+	withRepoFiles(t, "alice", "repo-1", map[string]string{
+		"a.go": "func A() {}\nfunc B() {}\n",
+		"b.md": "func A is documented here\n",
+	})
+	var search AgentToolDef
+	for _, td := range repoCodeTools("alice", "repo-1") {
+		if td.Tool.Name == "search_code" {
+			search = td
+		}
+	}
+	for _, p := range []string{"query", "regex", "exclude", "glob"} {
+		if _, ok := search.Tool.Parameters[p]; !ok {
+			t.Errorf("search_code has no %q parameter", p)
+		}
+	}
+	out, err := search.Handler(context.Background(), map[string]any{"query": "func [ab]", "regex": true, "glob": "*.go"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "a.go:1: func A() {}\na.go:2: func B() {}\n" {
+		t.Errorf("reply = %q", out)
 	}
 }

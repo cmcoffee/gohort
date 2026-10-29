@@ -9,7 +9,10 @@
 //
 // Timestamps without a zone are read as UTC. Nothing in a bare log line says
 // otherwise, and a consistent wrong zone still orders a timeline correctly,
-// where a guessed local zone silently shifts one file against another.
+// where a guessed local zone silently shifts one file against another. A zone
+// NAME after the time ("PDT", "IST") counts as no zone: abbreviations are
+// ambiguous (IST is three different offsets), so the time is read as written,
+// the same wall-clock reading a since/until with no zone gets.
 package bundle
 
 import (
@@ -20,10 +23,11 @@ import (
 )
 
 const (
-	// MaxSearchHits caps one search_bundle call. Generous compared to
-	// the repo store's 60 because a log search legitimately wants to see a
-	// burst, and the result is truncation-marked either way.
-	MaxSearchHits = 200
+	// MaxSearchHits is how many hits one search_bundle call keeps. The
+	// reply arrives as its first page and read_output reads on through the
+	// rest (budget.go), so this bounds what one search holds, not what one
+	// reply puts in front of the model.
+	MaxSearchHits = 1000
 	// MaxTimelineLines caps one merged timeline.
 	MaxTimelineLines = 300
 	// formatSample is how many lines are examined to decide a file's
@@ -44,8 +48,10 @@ const (
 var (
 	// reISOTime matches an ISO-8601 date-time anywhere in a line, with an
 	// optional fractional part and an optional zone. Anywhere rather than
-	// anchored because a JSON line carries it inside a field.
-	reISOTime = regexp.MustCompile(`(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})(\.\d+)?(Z|[+-]\d{2}:?\d{2})?`)
+	// anchored because a JSON line carries it inside a field. The date may
+	// be written with slashes, "2026/10/27 23:25:22", as Go's log package
+	// and many others write it: year first either way, so never ambiguous.
+	reISOTime = regexp.MustCompile(`(\d{4})[-/](\d{2})[-/](\d{2})[T ](\d{2}):(\d{2}):(\d{2})(\.\d+)?(Z|[+-]\d{2}:?\d{2})?`)
 	// reCLFTime matches the bracketed timestamp of a web access log.
 	reCLFTime = regexp.MustCompile(`\[(\d{2}/\w{3}/\d{4}:\d{2}:\d{2}:\d{2} [+-]\d{4})\]`)
 	// reSyslogTime matches the classic BSD syslog prefix — which carries no
@@ -151,7 +157,7 @@ func ParseTime(format string, year int, line string) (time.Time, bool) {
 // parseISOish parses the ISO-8601 variants reISOTime can match, most specific
 // first. A value with no zone is read as UTC (see the file header).
 func parseISOish(s string) (time.Time, bool) {
-	s = strings.Replace(s, " ", "T", 1)
+	s = strings.ReplaceAll(strings.Replace(s, " ", "T", 1), "/", "-")
 	for _, layout := range []string{
 		time.RFC3339Nano, time.RFC3339,
 		"2006-01-02T15:04:05.999999999", "2006-01-02T15:04:05",

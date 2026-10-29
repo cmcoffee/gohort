@@ -21,6 +21,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/bundle"
 	"github.com/cmcoffee/gohort/core/textutil"
 )
 
@@ -492,35 +493,85 @@ type repoSearchHit struct {
 	Text string
 }
 
-func searchRepo(user, applianceID, query string, maxHits int) []repoSearchHit {
+// repoQuery is one search over a repo's encrypted store.
+type repoQuery struct {
+	Text    string // the text to find; a regular expression when Regex is set
+	Regex   bool
+	Exclude string // optional regular expression: a line Text matched is dropped if this matches it too
+	Glob    string // optional path filter, matched as a bundle's is (bundle.MatchGlob)
+	MaxHits int    // repoMaxSearchHits when unset
+}
+
+// repoSearchResult is a search's hits plus what it left out, so a reply can
+// say so rather than read as everything there is.
+type repoSearchResult struct {
+	Hits      []repoSearchHit
+	Truncated bool // stopped at MaxHits; there may be more
+	Excluded  int  // lines Text matched that Exclude took back out
+}
+
+// searchRepo finds lines in a repo's ingested files.
+//
+// The matching is core/bundle's, the one a log search uses, so a query means
+// the same thing in code as in a log: case-insensitive, literal or a regular
+// expression, an exclude pattern, a path filter, and a prefilter that rules a
+// whole file out, before it is split into lines, when it lacks the text every
+// match needs. Literal is the default because it is what this searched before
+// it shared the matcher, and an identifier with a dot or a bracket in it has
+// to find itself.
+func searchRepo(ctx context.Context, user, applianceID string, q repoQuery) (repoSearchResult, error) {
+	var res repoSearchResult
 	store := repoFileStore(user, applianceID)
-	if store == nil || strings.TrimSpace(query) == "" {
-		return nil
+	if store == nil || strings.TrimSpace(q.Text) == "" {
+		return res, nil
 	}
-	q := strings.ToLower(query)
-	var hits []repoSearchHit
+	pattern := q.Text
+	if !q.Regex {
+		pattern = regexp.QuoteMeta(pattern)
+	}
+	re, err := bundle.CompileMatcher("(?i)" + pattern)
+	if err != nil {
+		return res, fmt.Errorf("query is not a valid regular expression: %w", err)
+	}
+	f := bundle.Filter{Match: re}
+	if strings.TrimSpace(q.Exclude) != "" {
+		if f.Exclude, err = bundle.CompileMatcher("(?i)" + q.Exclude); err != nil {
+			return res, fmt.Errorf("exclude is not a valid regular expression: %w", err)
+		}
+	}
+	if q.MaxHits <= 0 {
+		q.MaxHits = repoMaxSearchHits
+	}
 	paths := store.Keys(repoFilesTable)
 	sort.Strings(paths)
 	for _, path := range paths {
-		var content string
-		if !store.Get(repoFilesTable, path, &content) {
+		if err := ctx.Err(); err != nil {
+			return res, err
+		}
+		if q.Glob != "" && !bundle.MatchGlob(q.Glob, path) {
 			continue
 		}
-		if !strings.Contains(strings.ToLower(content), q) {
+		var content string
+		if !store.Get(repoFilesTable, path, &content) || !re.Possible(content) {
 			continue
 		}
 		for i, line := range strings.Split(content, "\n") {
-			if strings.Contains(strings.ToLower(line), q) {
-				t := strings.TrimSpace(line)
-				t = textutil.Clip(t, 240)
-				hits = append(hits, repoSearchHit{Path: path, Line: i + 1, Text: t})
-				if len(hits) >= maxHits {
-					return hits
-				}
+			if !re.MatchString(line) {
+				continue
+			}
+			if f.ExcludesString(line) {
+				res.Excluded++
+				continue
+			}
+			t := textutil.Clip(strings.TrimSpace(line), 240)
+			res.Hits = append(res.Hits, repoSearchHit{Path: path, Line: i + 1, Text: t})
+			if len(res.Hits) >= q.MaxHits {
+				res.Truncated = true
+				return res, nil
 			}
 		}
 	}
-	return hits
+	return res, nil
 }
 
 func normRepoPath(p string) string {

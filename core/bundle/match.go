@@ -85,6 +85,20 @@ func (m *Matcher) Match(b []byte) bool {
 	return m.re.Match(b)
 }
 
+// Possible reports whether s could hold a match on any of its lines. False is
+// certain: s lacks the text every match contains, so a caller holding a whole
+// file can skip it without splitting it into lines. True says nothing, and
+// neither does a pattern that names no such text.
+func (m *Matcher) Possible(s string) bool {
+	switch {
+	case m.need == "":
+		return true
+	case m.fold:
+		return containsFold(s, m.need)
+	}
+	return strings.Contains(s, m.need)
+}
+
 // literal is text a match must contain; fold means in either case.
 type literal struct {
 	text string
@@ -199,4 +213,22 @@ func containsFold[T string | []byte](s T, need string) bool {
 		}
 	}
 	return false
+}
+
+// Filter is what a search asks of a line: a pattern it must match, and
+// optionally one it must not. Exclusion is its own pattern because the regexp
+// syntax cannot say "but not": there is no lookahead, so "ERROR, but not the
+// health check" is not one expression, and without this a search over a noisy
+// log pages through the noise.
+type Filter struct {
+	Match   *Matcher
+	Exclude *Matcher // nil when nothing is excluded
+}
+
+// Excludes reports whether a line the pattern matched is taken back out.
+func (f Filter) Excludes(b []byte) bool { return f.Exclude != nil && f.Exclude.Match(b) }
+
+// ExcludesString is Excludes for a line held as a string.
+func (f Filter) ExcludesString(s string) bool {
+	return f.Exclude != nil && f.Exclude.MatchString(s)
 }

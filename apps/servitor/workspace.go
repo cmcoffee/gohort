@@ -290,7 +290,8 @@ func (T *Servitor) scoutWorkspace(ctx context.Context, ws Appliance, members []w
 			}
 			seen := make(map[string]bool)
 			for _, term := range terms {
-				for _, h := range searchRepo(m.Owner, m.ID, term, 6) {
+				res, _ := searchRepo(ctx, m.Owner, m.ID, repoQuery{Text: term, MaxHits: 6})
+				for _, h := range res.Hits {
 					key := fmt.Sprintf("%s:%d", h.Path, h.Line)
 					if seen[key] {
 						continue

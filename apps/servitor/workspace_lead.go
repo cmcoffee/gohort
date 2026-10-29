@@ -367,10 +367,10 @@ func (T *Servitor) workspaceLeadTools(ctx context.Context, id, userID string, ws
 		Tool: Tool{
 			Name:        "search_code",
 			Description: "Search a repo member's ingested source for a literal string and return matching lines with file paths. Immediate and cheap: use it to locate code before deciding whether a full investigation is warranted.",
-			Parameters: map[string]ToolParam{
+			Parameters: repoSearchParams(map[string]ToolParam{
 				"member": {Type: "string", Description: "Repo member ID (or exact name) from the roster."},
-				"query":  {Type: "string", Description: "Literal text to find: a log string, function name, config key. Not a question."},
-			},
+				"query":  {Type: "string", Description: "Text to find: a log string, function name, config key. Literal unless regex is set. Not a question."},
+			}),
 			Required: []string{"member", "query"},
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
@@ -386,13 +386,23 @@ func (T *Servitor) workspaceLeadTools(ctx context.Context, id, userID string, ws
 				}
 				return "", fmt.Errorf("%s is a %s member, not a repo: use %s for it", m.Name(), m.Kind(), alt)
 			}
-			query, _ := args["query"].(string)
+			q := repoQueryFromArgs(args, 40)
+			query := q.Text
 			if strings.TrimSpace(query) == "" {
 				return "", fmt.Errorf("query is required")
 			}
-			hits := searchRepo(m.Owner, m.ID, query, 40)
+			res, err := searchRepo(ctx, m.Owner, m.ID, q)
+			if err != nil {
+				return "", err
+			}
+			hits := res.Hits
 			emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("search_code %s %q: %d hit(s)", m.Name(), query, len(hits))})
 			if len(hits) == 0 {
+				// The firm "not present" only when the whole repo was searched
+				// and nothing was filtered out: otherwise it is not established.
+				if res.Excluded > 0 || q.Glob != "" {
+					return fmt.Sprintf("%s, searching for %q: %s", m.Name(), query, res.noMatches(q)), nil
+				}
 				return fmt.Sprintf("No matches for %q in %s. The string is not present in the ingested source: do not infer that it is there anyway.", query, m.Name()), nil
 			}
 			var b strings.Builder
@@ -400,6 +410,7 @@ func (T *Servitor) workspaceLeadTools(ctx context.Context, id, userID string, ws
 			for _, h := range hits {
 				fmt.Fprintf(&b, "- `%s:%d`, %s\n", h.Path, h.Line, h.Text)
 			}
+			b.WriteString(res.notes())
 			return b.String(), nil
 		},
 		NeedsConfirm: false,
@@ -417,6 +428,7 @@ func (T *Servitor) workspaceLeadTools(ctx context.Context, id, userID string, ws
 			Parameters: map[string]ToolParam{
 				"member":  {Type: "string", Description: "Evidence member ID (or exact name) from the roster."},
 				"pattern": {Type: "string", Description: "Regular expression to find: an error string, a request id, a hostname. Not a question."},
+				"exclude": {Type: "string", Description: "Optional regular expression for lines to leave out: a line the pattern matched is dropped when this matches it too, e.g. \"healthcheck|/status\"."},
 				"since":   {Type: "string", Description: "Optional earliest timestamp, e.g. \"2026-03-14 02:00:00\"."},
 				"until":   {Type: "string", Description: "Optional latest timestamp, same format."},
 			},
@@ -435,7 +447,8 @@ func (T *Servitor) workspaceLeadTools(ctx context.Context, id, userID string, ws
 			if strings.TrimSpace(pattern) == "" {
 				return "", fmt.Errorf("pattern is required")
 			}
-			q := bundle.Query{Pattern: pattern, MaxHits: 40}
+			exclude, _ := args["exclude"].(string)
+			q := bundle.Query{Pattern: pattern, Exclude: exclude, MaxHits: 40}
 			var terr error
 			if q.Since, terr = ParseBundleArgTime(strings.TrimSpace(fmt.Sprint(args["since"]))); terr != nil && args["since"] != nil {
 				return "", terr
@@ -448,6 +461,9 @@ func (T *Servitor) workspaceLeadTools(ctx context.Context, id, userID string, ws
 				return "", err
 			}
 			emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("search_evidence %s %q: %d hit(s)", m.Name(), pattern, len(res.Hits))})
+			if len(res.Hits) == 0 && res.Excluded > 0 {
+				return fmt.Sprintf("No matches for %q in %s once exclude %q was applied: %d line(s) matched the pattern and every one also matched exclude. The text IS in the bundle; narrow exclude, or drop it, to see those lines.", pattern, m.Name(), exclude, res.Excluded), nil
+			}
 			if len(res.Hits) == 0 {
 				return fmt.Sprintf("No matches for %q in %s across %d file(s) scanned. The bundle does not contain that text, but say whether the file that WOULD carry it is even in the bundle before concluding it did not happen.", pattern, m.Name(), res.Scanned), nil
 			}
@@ -455,6 +471,9 @@ func (T *Servitor) workspaceLeadTools(ctx context.Context, id, userID string, ws
 			fmt.Fprintf(&b, "%d match(es) for %q in %s (`%s`):\n\n", len(res.Hits), pattern, m.Name(), m.ID)
 			for _, h := range res.Hits {
 				fmt.Fprintf(&b, "- `%s:%d`, %s\n", h.Path, h.Line, h.Text)
+			}
+			if res.Excluded > 0 {
+				fmt.Fprintf(&b, "\n%d more line(s) matched but were left out by exclude.\n", res.Excluded)
 			}
 			if res.Truncated {
 				b.WriteString("\nTRUNCATED: there are more matches than shown. Treat this as a lower bound, not a count.\n")

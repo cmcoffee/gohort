@@ -30,6 +30,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/bundle"
 )
 
 type storeSource struct{ app *FileStoreApp }
@@ -350,16 +351,18 @@ func (s storeSource) itemTools(sess *ToolSession, user, itemID string) []AgentTo
 				Description: fmt.Sprintf("Search the %q file store for a pattern, returning matching lines with a few lines of context.%s This is a regular-expression search over raw lines, NOT a semantic one: search for what would literally BE in the text (an error string, an id, a stack frame, a config key), not for a description of it. Compressed .gz files are searched too. Results are capped: each file contributes at most per_file matches so one noisy file cannot crowd out the rest, and the reply says where anything was cut. To learn how OFTEN something occurs, or whether it occurs at all, use count=true: per-file totals over every file, no lines.", label, about),
 				Parameters: map[string]ToolParam{
 					"pattern":     {Type: "string", Description: "A regular expression. A plain string is a valid one. Prefer something distinctive over something common."},
+					"exclude":     {Type: "string", Description: "Optional regular expression for lines to leave out: a line the pattern matched is dropped, not shown or counted, when this matches it too. The way to say \"but not\", which a pattern cannot: pattern \"ERROR\" with exclude \"healthcheck|/status\". Follows ignore_case."},
 					"within":      {Type: "string", Description: "Optional subfolder to search. Omit to search the whole store. Use list_" + slug + " to see what is there."},
 					"file_glob":   {Type: "string", Description: "Optional filename filter, e.g. \"*.log\" or \"catalina*\". Narrows a large tree."},
 					"ignore_case": {Type: "boolean", Description: "Match case-insensitively. Default false: use it when hunting a word, not when hunting an identifier."},
 					"context":     {Type: "number", Description: "Lines either side of each hit (0-8, default 2)."},
 					"since":       {Type: "string", Description: "Optional start of a time window, e.g. \"2026-08-17\" or \"2026-08-17 02:00:00\". Applied to each line's own timestamp; a line with none (a traceback line) takes the time of the last dated line above it. Use this rather than putting dates in the pattern."},
 					"until":       {Type: "string", Description: "Optional end of the time window, same formats as since."},
+					"over_time":   {Type: "boolean", Description: OverTimeHelp},
+					"bucket":      {Type: "string", Description: BucketHelp},
+					"group":       {Type: "boolean", Description: "Group the matching lines by shape instead of listing them: numbers, ids, addresses and times are masked, so lines differing only in those are one shape, each returned with its count, the files and times it spans, and one example line, most frequent first and the rarest after. The first call on an unfamiliar folder: pattern \".\" groups every line, \"ERROR|WARN\" with ignore_case just the trouble. Not with count; context and paging do not apply."},
 					"count":       {Type: "boolean", Description: "Return per-file match totals only, no lines, over every file with no match cap. The cheap way to answer how often, or whether at all."},
-					"max_matches": {Type: "number", Description: fmt.Sprintf("How many matches to show (default %d, at most %d). Raise it for a narrow, deliberate search.", maxMatches, maxMatchesCeil)},
-					"per_file":    {Type: "number", Description: fmt.Sprintf("How many matches one file may contribute (default %d). Lifted automatically when only one file is searched.", defaultPerFile)},
-					"skip":        {Type: "number", Description: "Skip this many matches, for paging: repeat the same search with skip set to the matches already seen to get the next page."},
+					"per_file":    {Type: "number", Description: fmt.Sprintf("How many matches one file may keep (default %d), so a noisy file cannot crowd out the rest. Lifted automatically when only one file is searched.", defaultPerFile)},
 				},
 				Required: []string{"pattern"},
 				Caps:     []Capability{CapRead},
@@ -375,20 +378,20 @@ func (s storeSource) itemTools(sess *ToolSession, user, itemID string) []AgentTo
 				}
 				opts := SearchOpts{
 					Pattern:    stringArg(args, "pattern"),
+					Exclude:    stringArg(args, "exclude"),
 					Glob:       stringArg(args, "file_glob"),
 					IgnoreCase: boolArg(args, "ignore_case"),
 					Context:    ctxLines,
 					CountOnly:  boolArg(args, "count"),
+					Group:      boolArg(args, "group"),
+					OverTime:   boolArg(args, "over_time"),
 					PerFile:    defaultPerFile,
-				}
-				if n, ok := numArg(args, "max_matches"); ok {
-					opts.Max = n
 				}
 				if n, ok := numArg(args, "per_file"); ok && n > 0 {
 					opts.PerFile = n
 				}
-				if n, ok := numArg(args, "skip"); ok {
-					opts.Skip = n
+				if opts.Bucket, err = bundle.ParseBucket(stringArg(args, "bucket")); err != nil {
+					return "", err
 				}
 				if opts.Since, err = ParseBundleArgTime(stringArg(args, "since")); err != nil {
 					return "", err
@@ -400,30 +403,7 @@ func (s storeSource) itemTools(sess *ToolSession, user, itemID string) []AgentTo
 				if err != nil {
 					return "", err
 				}
-				if opts.CountOnly {
-					return renderCounts(res, opts.Pattern), nil
-				}
-				if len(res.Matches) == 0 {
-					if res.Skipped > 0 {
-						return fmt.Sprintf("No more matches: all %d were already paged past (skip=%d).", res.Skipped, opts.Skip), nil
-					}
-					if res.Untimed > 0 && res.Untimed == res.Scanned {
-						return fmt.Sprintf("Nothing matched inside the time window, but none of the %d file(s) searched carry timestamps the window could be applied to. Search again without since/until.", res.Untimed), nil
-					}
-					// A search that ran out of time and found nothing is
-					// NOT "nothing matched" — saying so would report an
-					// absence nobody established.
-					if res.Stopped != "" {
-						return "No matches in what was read, but the search did not finish: " + res.Stopped +
-							". Narrow it with `within` or `file_glob` and try again: do not conclude this pattern is absent.\n" + renderGaps(res), nil
-					}
-					if gaps := renderGaps(res); gaps != "" {
-						return "Nothing matched in what was read, but not all of it could be:\n" + gaps +
-							"Do not conclude this pattern is absent from those files.", nil
-					}
-					return "Nothing matched. The pattern is a regular expression over raw lines: check it appears literally, try ignore_case, widen file_glob, or drop `within` to search the whole store.", nil
-				}
-				return renderMatches(res), nil
+				return searchReply(res, opts), nil
 			},
 		},
 		{
@@ -478,34 +458,115 @@ func describeSpan(dir string, f LogFile) string {
 	}
 }
 
-// defaultPerFile is how many matches one file contributes when the caller
-// does not say. A quarter of the default budget, so at least four files get a
-// look before any one of them fills it.
-const defaultPerFile = maxMatches / 4
+// defaultPerFile is how many matches one file keeps when the caller does not
+// say: the same share a bundle search uses (bundle.DefaultPerFile says why).
+const defaultPerFile = bundle.DefaultPerFile
+
+// searchReply is the search tool's whole answer, in the shape its mode asks
+// for, paged: a reply longer than a page is kept and arrives as its first
+// page, and read_output reads on or greps within it without searching again
+// (core paged_output.go). The search keeps up to maxMatches for exactly that.
+func searchReply(res SearchResult, opts SearchOpts) string {
+	var out string
+	switch {
+	case opts.CountOnly:
+		out = renderCounts(res, opts.Pattern)
+	case opts.Group && res.Groups.Lines > 0:
+		out = renderGroups(res)
+	case opts.OverTime && res.Histogram.Lines+res.Histogram.Undated > 0:
+		out = renderOverTime(res, opts)
+	case len(res.Matches) == 0:
+		out = renderNoMatches(res)
+	default:
+		out = renderMatches(res)
+	}
+	return SpillOutput(out, bundle.SearchPageChars, "read_output")
+}
 
 // renderCounts is the count-only answer: per-file totals, busiest first.
 func renderCounts(res SearchResult, pattern string) string {
 	var b strings.Builder
-	if res.Total == 0 {
-		fmt.Fprintf(&b, "No matches for %q in %d of %d files searched.\n", pattern, res.Scanned, res.Considered)
-	} else {
-		fmt.Fprintf(&b, "%d matches for %q in %d file(s), of %d searched (%d in scope):\n", res.Total, pattern, len(res.Tallies), res.Scanned, res.Considered)
-		for i, t := range res.Tallies {
-			if i == maxCountFiles {
-				fmt.Fprintf(&b, "...and %d more file(s) with matches, not listed.\n", len(res.Tallies)-i)
-				break
-			}
-			fmt.Fprintf(&b, "%7d  %s\n", t.Matches, t.File)
-		}
-	}
+	b.WriteString(res.Budget.Counts(pattern, res.Scanned, res.Considered))
 	if res.Untimed > 0 {
 		fmt.Fprintf(&b, "%d file(s) carry no timestamps, so the time window left them out.\n", res.Untimed)
 	}
+	b.WriteString(renderExcluded(res))
 	b.WriteString(renderGaps(res))
 	if res.Stopped != "" {
 		b.WriteString("INCOMPLETE: " + res.Stopped + ". Totals cover only what was read.\n")
 	}
 	return b.String()
+}
+
+// renderNoMatches is the reply to a search that shows nothing, which is never
+// just "nothing matched" when something else explains the empty page: paging
+// past the end, a window over untimed files, a search that did not finish, an
+// exclude that hid every match, or files that could not be read to the end.
+// Each of those is a reason the pattern may still be there.
+func renderNoMatches(res SearchResult) string {
+	if res.Untimed > 0 && res.Untimed == res.Scanned {
+		return fmt.Sprintf("Nothing matched inside the time window, but none of the %d file(s) searched carry timestamps the window could be applied to. Search again without since/until.", res.Untimed)
+	}
+	// A search that ran out of time and found nothing is NOT "nothing
+	// matched": saying so would report an absence nobody established.
+	if res.Stopped != "" {
+		return "No matches in what was read, but the search did not finish: " + res.Stopped +
+			". Narrow it with `within` or `file_glob` and try again: do not conclude this pattern is absent.\n" + renderGaps(res)
+	}
+	// Matches that exclude took out are not an absence: the pattern is
+	// there, the filter hid it.
+	if res.Excluded > 0 {
+		return fmt.Sprintf("Nothing left after exclude: %d line(s) matched the pattern and every one also matched exclude. Narrow exclude, or drop it, to see them.\n", res.Excluded) + renderGaps(res)
+	}
+	if gaps := renderGaps(res); gaps != "" {
+		return "Nothing matched in what was read, but not all of it could be:\n" + gaps +
+			"Do not conclude this pattern is absent from those files."
+	}
+	return "Nothing matched. The pattern is a regular expression over raw lines: check it appears literally, try ignore_case, widen file_glob, or drop `within` to search the whole store."
+}
+
+// renderGroups is a grouped search's reply: the shapes, then everything that
+// says they are not the whole folder.
+func renderGroups(res SearchResult) string {
+	var b strings.Builder
+	b.WriteString(res.Groups.Render(maxLineRunes))
+	fmt.Fprintf(&b, "(%d of %d files read.)\n", res.Scanned, res.Considered)
+	b.WriteString(renderExcluded(res))
+	if res.Untimed > 0 {
+		fmt.Fprintf(&b, "%d file(s) carry no timestamps, so the time window left them out.\n", res.Untimed)
+	}
+	b.WriteString(renderGaps(res))
+	if res.Stopped != "" {
+		b.WriteString("INCOMPLETE: " + res.Stopped + ". The shapes and counts cover only what was read.\n")
+	}
+	return b.String()
+}
+
+// renderOverTime is an over-time search's reply: the rows of counts, then
+// everything that says they are not the whole folder.
+func renderOverTime(res SearchResult, opts SearchOpts) string {
+	var b strings.Builder
+	b.WriteString(res.Histogram.Render(fmt.Sprintf("%q", opts.Pattern), opts.Bucket))
+	fmt.Fprintf(&b, "(%d of %d files read.)\n", res.Scanned, res.Considered)
+	b.WriteString(renderExcluded(res))
+	if res.Untimed > 0 {
+		fmt.Fprintf(&b, "%d file(s) carry no timestamps, so the time window left them out.\n", res.Untimed)
+	}
+	b.WriteString(renderGaps(res))
+	if res.Stopped != "" {
+		b.WriteString("INCOMPLETE: " + res.Stopped + ". The counts cover only what was read.\n")
+	}
+	return b.String()
+}
+
+// renderExcluded says how many matches the exclude pattern removed, so the
+// totals beside it read as what is left after the filter rather than as every
+// occurrence. Empty when it removed none.
+func renderExcluded(res SearchResult) string {
+	if res.Excluded == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d more line(s) matched the pattern but were left out by exclude, and are not in these totals.\n", res.Excluded)
 }
 
 // renderGaps says what a search could not see inside the files it did read: a
@@ -534,6 +595,27 @@ func renderGaps(res SearchResult) string {
 // and explicit about truncation.
 func renderMatches(res SearchResult) string {
 	var b strings.Builder
+	// Everything that qualifies the matches comes first: a long reply
+	// arrives as its first page, and these must be on it.
+	b.WriteString(res.Budget.Summary(res.Scanned, res.Considered, "file_glob"))
+	if res.Untimed > 0 {
+		fmt.Fprintf(&b, "%d file(s) carry no timestamps, so the time window left them out.\n", res.Untimed)
+	}
+	b.WriteString(renderExcluded(res))
+	b.WriteString(renderGaps(res))
+	// Different sentence from the cap, deliberately. The cap means there
+	// are more matches; this means part of the store was never read, so
+	// an absence here is not evidence of absence.
+	if res.Stopped != "" {
+		b.WriteString("INCOMPLETE: " + res.Stopped + ". Files not read may contain matches. Narrow with `within` or `file_glob` rather than treating this as the whole picture.\n")
+	}
+	// What it cost, when it cost something. A search that took a minute
+	// and said nothing about why reads as a system that hangs at random;
+	// "3140 files, 12 GB, 71s" reads as a big bundle, which is what it
+	// is. Under five seconds this is noise, so it is omitted.
+	if res.Elapsed > 5*time.Second {
+		fmt.Fprintf(&b, "(read %d files, %d MB, in %s)\n", res.Scanned, res.Bytes>>20, res.Elapsed.Round(time.Second))
+	}
 	file := ""
 	for _, m := range res.Matches {
 		if m.File != file {
@@ -548,51 +630,7 @@ func renderMatches(res SearchResult) string {
 			fmt.Fprintf(&b, "  %d- %s\n", m.Line+i+1, after)
 		}
 	}
-	// What it cost, when it cost something. A search that took a minute
-	// and said nothing about why reads as a system that hangs at random;
-	// "3140 files, 12 GB, 71s" reads as a big bundle, which is what it
-	// is. Under five seconds this is noise, so it is omitted.
-	if res.Elapsed > 5*time.Second {
-		fmt.Fprintf(&b, "\n(read %d files, %d MB, in %s)\n", res.Scanned, res.Bytes>>20, res.Elapsed.Round(time.Second))
-	}
-	shownFrom := res.Skipped + 1
-	fmt.Fprintf(&b, "\nShowing matches %d-%d of %d counted in %d of %d files searched. Limits: max_matches=%d",
-		shownFrom, res.Skipped+len(res.Matches), res.Total, res.Scanned, res.Considered, res.Max)
-	if res.PerFile > 0 {
-		fmt.Fprintf(&b, ", per_file=%d", res.PerFile)
-	}
-	b.WriteString(".\n")
-	// WHERE a cut happened, because the two call for different next steps:
-	// a cut inside a file is read by narrowing to that file, a cut across
-	// files by counting or paging.
-	if len(res.CutInFiles) > 0 {
-		var parts []string
-		for i, t := range res.CutInFiles {
-			if i == 8 {
-				parts = append(parts, fmt.Sprintf("and %d more", len(res.CutInFiles)-i))
-				break
-			}
-			parts = append(parts, fmt.Sprintf("%s (%d of %d)", t.File, t.Kept, t.Matches))
-		}
-		fmt.Fprintf(&b, "Cut WITHIN files by per_file: %s. Search one of them with file_glob to see all its matches; the per-file cap lifts for a single file.\n", strings.Join(parts, ", "))
-	}
-	if res.Unsearched > 0 {
-		fmt.Fprintf(&b, "Cut ACROSS files: max_matches was reached and %d file(s) were not searched, so nothing here says how often this occurs in them. Use count=true for totals everywhere, or skip=%d for the next page.\n",
-			res.Unsearched, res.Skipped+len(res.Matches))
-	} else if res.Capped && len(res.CutInFiles) == 0 {
-		fmt.Fprintf(&b, "Cut at max_matches: there are more matches than shown. Use skip=%d for the next page, or count=true for totals.\n", res.Skipped+len(res.Matches))
-	}
-	if res.Untimed > 0 {
-		fmt.Fprintf(&b, "%d file(s) carry no timestamps, so the time window left them out.\n", res.Untimed)
-	}
-	b.WriteString(renderGaps(res))
-	// Different sentence from the cap, deliberately. The cap means there
-	// are more matches; this means part of the store was never read, so
-	// an absence here is not evidence of absence.
-	if res.Stopped != "" {
-		b.WriteString("\n(INCOMPLETE: " + res.Stopped + ". Files not read may contain matches. Narrow with `within` or `file_glob` rather than treating this as the whole picture.)\n")
-	}
-	return strings.TrimLeft(b.String(), "\n")
+	return b.String()
 }
 
 // regexpQuote escapes a free-text query so the generic Fetch path treats

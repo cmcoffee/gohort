@@ -86,12 +86,18 @@ func BundleTools(ctx context.Context, owner, bundleID string) []AgentToolDef {
 				Name:        "search_bundle",
 				Description: "Search the bundle's log files for a REGULAR EXPRESSION (case-insensitive), with optional context lines, path filter, and time window. Your main tool: find the error text, the request id, the hostname, the stack frame. Returns matching lines with file path and line number.",
 				Parameters: map[string]ToolParam{
-					"pattern": {Type: "string", Description: "Regular expression to find, e.g. \"connection refused\", \"scheduler.*timeout\", \"req_id=abc123\"."},
-					"glob":    {Type: "string", Description: "Optional path filter, e.g. \"*scheduler*\" or \"var/log/*.log\". Empty searches every file."},
-					"before":  {Type: "integer", Description: "Context lines to include BEFORE each hit (default 0, max 20)."},
-					"after":   {Type: "integer", Description: "Context lines to include AFTER each hit (default 0, max 20). Use ~10 to capture a stack trace under its message."},
-					"since":   {Type: "string", Description: "Optional earliest timestamp, e.g. \"2026-03-14\" or \"2026-03-14 02:00:00\"."},
-					"until":   {Type: "string", Description: "Optional latest timestamp, same formats as since."},
+					"pattern":   {Type: "string", Description: "Regular expression to find, e.g. \"connection refused\", \"scheduler.*timeout\", \"req_id=abc123\"."},
+					"group":     {Type: "boolean", Description: "Group the matching lines by shape instead of listing them: numbers, ids, addresses and times are masked, so lines differing only in those are one shape, each returned with its count, the files and times it spans, and one example line, most frequent first and the rarest after. The first call on an unfamiliar bundle: pattern \".\" groups every line, \"error|warn|exception\" just the trouble. Context lines do not apply."},
+					"count":     {Type: "boolean", Description: "Return per-file match totals only, no lines, over every file with no match limit, busiest first. Answers how often, and in which log, which a list of hits cannot. Not with group or over_time."},
+					"per_file":  {Type: "integer", Description: fmt.Sprintf("How many hits one file may keep (default %d), so a noisy file cannot crowd out the rest. Lifted when only one file is in scope.", bundle.DefaultPerFile)},
+					"over_time": {Type: "boolean", Description: OverTimeHelp},
+					"bucket":    {Type: "string", Description: BucketHelp},
+					"exclude":   {Type: "string", Description: "Optional regular expression for lines to leave out (case-insensitive): a line the pattern matched is dropped when this matches it too. The way to say \"but not\", which a pattern cannot: pattern \"error\" with exclude \"healthcheck|/status\"."},
+					"glob":      {Type: "string", Description: "Optional path filter, e.g. \"*scheduler*\" or \"var/log/*.log\". Empty searches every file."},
+					"before":    {Type: "integer", Description: "Context lines to include BEFORE each hit (default 0, max 20)."},
+					"after":     {Type: "integer", Description: "Context lines to include AFTER each hit (default 0, max 20). Use ~10 to capture a stack trace under its message."},
+					"since":     {Type: "string", Description: "Optional earliest timestamp, e.g. \"2026-03-14\" or \"2026-03-14 02:00:00\"."},
+					"until":     {Type: "string", Description: "Optional latest timestamp, same formats as since."},
 				},
 				Required: []string{"pattern"},
 			},
@@ -101,11 +107,22 @@ func BundleTools(ctx context.Context, owner, bundleID string) []AgentToolDef {
 				}
 				q := bundle.Query{
 					Pattern: bundleStrArg(args, "pattern"),
+					Exclude: bundleStrArg(args, "exclude"),
 					Glob:    bundleStrArg(args, "glob"),
+					Group:   BoolArg(args, "group"),
 					Before:  clampInt(IntArg(args, "before"), 0, 20),
 					After:   clampInt(IntArg(args, "after"), 0, 20),
+					PerFile: bundle.DefaultPerFile,
+				}
+				q.OverTime = BoolArg(args, "over_time")
+				q.CountOnly = BoolArg(args, "count")
+				if n := IntArg(args, "per_file"); n > 0 {
+					q.PerFile = n
 				}
 				var err error
+				if q.Bucket, err = bundle.ParseBucket(bundleStrArg(args, "bucket")); err != nil {
+					return "", err
+				}
 				if q.Since, err = ParseBundleArgTime(bundleStrArg(args, "since")); err != nil {
 					return "", err
 				}
@@ -116,7 +133,9 @@ func BundleTools(ctx context.Context, owner, bundleID string) []AgentToolDef {
 				if err != nil {
 					return "", err
 				}
-				return renderBundleSearch(res, q), nil
+				// Paged like any long reply: the first page arrives, and
+				// read_output reads on or greps within the kept hits.
+				return SpillOutput(renderBundleSearch(res, q), bundle.SearchPageChars, "read_output"), nil
 			},
 		},
 		{
@@ -164,8 +183,10 @@ func BundleTools(ctx context.Context, owner, bundleID string) []AgentToolDef {
 		{
 			Tool: Tool{
 				Name:        "bundle_timeline",
-				Description: "Merge lines from SEVERAL files into one time-ordered sequence. This is what no per-file read can give you: what happened across the whole system in a window, in order. Narrow it with a time window: an unbounded timeline over a large bundle is truncated and tells you little.",
+				Description: "Merge lines from SEVERAL files into one time-ordered sequence. This is what no per-file read can give you: what happened across the whole system in a window, in order. Narrow it with a time window, and with pattern to follow one thing (a request id, a hostname, a job) through every file in order: an unbounded timeline over a large bundle is cut and tells you little.",
 				Parameters: map[string]ToolParam{
+					"pattern":   {Type: "string", Description: TimelinePatternHelp},
+					"exclude":   {Type: "string", Description: TimelineExcludeHelp},
 					"glob":      {Type: "string", Description: "Optional path filter limiting which files are merged. Empty merges every file that carries timestamps."},
 					"since":     {Type: "string", Description: "Earliest timestamp, e.g. \"2026-03-14 02:00:00\". Strongly recommended."},
 					"until":     {Type: "string", Description: "Latest timestamp, same format."},
@@ -184,11 +205,19 @@ func BundleTools(ctx context.Context, owner, bundleID string) []AgentToolDef {
 				if err != nil {
 					return "", err
 				}
-				entries, unmergeable, err := bundle.Open(owner, bundleID).Timeline(bundleStrArg(args, "glob"), since, until, IntArg(args, "max_lines"))
+				q := bundle.TimelineQuery{
+					Pattern: bundleStrArg(args, "pattern"),
+					Exclude: bundleStrArg(args, "exclude"),
+					Glob:    bundleStrArg(args, "glob"),
+					Since:   since,
+					Until:   until,
+					Max:     IntArg(args, "max_lines"),
+				}
+				res, err := bundle.Open(owner, bundleID).Timeline(ctx, q)
 				if err != nil {
 					return "", err
 				}
-				return renderBundleTimeline(entries, unmergeable), nil
+				return renderBundleTimeline(res, q), nil
 			},
 		},
 	}
@@ -340,9 +369,52 @@ func RenderBundleSummary(files []bundle.File) string {
 
 // renderBundleSearch prints hits, and says plainly what the search did not see.
 func renderBundleSearch(res bundle.SearchResult, q bundle.Query) string {
+	if h := res.Histogram; h != nil && h.Lines+h.Undated > 0 {
+		var b strings.Builder
+		b.WriteString(h.Render(fmt.Sprintf("%q", q.Pattern), q.Bucket))
+		fmt.Fprintf(&b, "(%d files scanned.)\n", res.Scanned)
+		if res.Excluded > 0 {
+			fmt.Fprintf(&b, "%d more line(s) matched but were left out by exclude, and are not counted.\n", res.Excluded)
+		}
+		if res.TimeUnknown > 0 {
+			fmt.Fprintf(&b, "%d files were skipped because they carry no parseable timestamps and a time window was set.\n", res.TimeUnknown)
+		}
+		return b.String()
+	}
+	if res.Groups != nil && res.Groups.Lines > 0 {
+		var b strings.Builder
+		b.WriteString(res.Groups.Render(400))
+		fmt.Fprintf(&b, "(%d files scanned.)\n", res.Scanned)
+		if res.Excluded > 0 {
+			fmt.Fprintf(&b, "%d more line(s) matched but were left out by exclude, and are in no shape above.\n", res.Excluded)
+		}
+		if res.TimeUnknown > 0 {
+			fmt.Fprintf(&b, "%d files were skipped because they carry no parseable timestamps and a time window was set.\n", res.TimeUnknown)
+		}
+		return b.String()
+	}
+	notes := func(b *strings.Builder) {
+		if res.Excluded > 0 {
+			fmt.Fprintf(b, "%d more line(s) matched but were left out by exclude.\n", res.Excluded)
+		}
+		if res.TimeUnknown > 0 {
+			fmt.Fprintf(b, "%d files were skipped because they carry no parseable timestamps and a time window was set.\n", res.TimeUnknown)
+		}
+	}
+	if q.CountOnly {
+		var b strings.Builder
+		b.WriteString(res.Counts(q.Pattern, res.Scanned, res.Scanned+res.Unsearched))
+		notes(&b)
+		return b.String()
+	}
 	if len(res.Hits) == 0 {
 		var b strings.Builder
 		fmt.Fprintf(&b, "No matches for %q in %d files scanned.\n", q.Pattern, res.Scanned)
+		// The pattern IS there when exclude took its matches out; saying
+		// "no matches" alone would report an absence the filter made.
+		if res.Excluded > 0 {
+			fmt.Fprintf(&b, "But %d line(s) matched the pattern and every one also matched exclude %q: narrow exclude, or drop it, to see them.\n", res.Excluded, q.Exclude)
+		}
 		if res.Skipped > 0 {
 			fmt.Fprintf(&b, "%d files were excluded by the path filter or the time window.\n", res.Skipped)
 		}
@@ -351,7 +423,12 @@ func renderBundleSearch(res bundle.SearchResult, q bundle.Query) string {
 		}
 		return b.String()
 	}
+	// Everything that qualifies the hits comes first: a long reply arrives
+	// as its first page, and these must be on it.
 	var b strings.Builder
+	b.WriteString(res.Summary(res.Scanned, res.Scanned+res.Unsearched, "glob"))
+	notes(&b)
+	b.WriteString("\n")
 	withContext := q.Before > 0 || q.After > 0
 	lastPath := ""
 	for _, h := range res.Hits {
@@ -366,29 +443,56 @@ func renderBundleSearch(res bundle.SearchResult, q bundle.Query) string {
 		}
 		fmt.Fprintf(&b, "%s:%d: %s\n", h.Path, h.Line, h.Text)
 	}
-	fmt.Fprintf(&b, "\n%d matches across %d files scanned.\n", len(res.Hits), res.Scanned)
-	if res.Truncated {
-		b.WriteString("TRUNCATED: there are more matches than shown. Narrow the pattern, the glob, or the time window before drawing a conclusion about how often this happens.\n")
-	}
-	if res.TimeUnknown > 0 {
-		fmt.Fprintf(&b, "%d files were skipped because they carry no parseable timestamps and a time window was set.\n", res.TimeUnknown)
-	}
 	return b.String()
 }
 
+// OverTimeHelp and BucketHelp describe the over-time search mode, shared by
+// every search tool that offers it (a bundle's, a file store's) so each says
+// the same thing about the same parameter.
+const (
+	OverTimeHelp = "Count the matching lines by time instead of listing them: one row per minute, hour or day with its count and a bar, from the first match to the last, empty rows in between shown as 0. Answers when something started, whether it is a spike or a trickle, and whether it stopped. Pattern, exclude and the time window still apply; context and paging do not, and it does not combine with group or count."
+	BucketHelp   = "With over_time: the size of one row, e.g. \"30s\", \"5m\", \"1h\", \"1d\". Omit it and one is chosen to fit the span in about 60 rows."
+)
+
+// TimelinePatternHelp and TimelineExcludeHelp describe a timeline's line
+// filters. Shared so every timeline tool (a bundle's, a file store's evidence)
+// says the same thing about the same parameter.
+const (
+	TimelinePatternHelp = "Optional regular expression (case-insensitive): only lines matching it go on the timeline. Follows one thing through every file in time order, e.g. a request id \"req=7f3a\", a hostname, a job name."
+	TimelineExcludeHelp = "Optional regular expression for lines to leave off: a line pattern kept is dropped when this matches it too, e.g. \"healthcheck\"."
+)
+
 // renderBundleTimeline prints a merged timeline and names the files that could
 // not be merged into it.
-func renderBundleTimeline(entries []bundle.TimelineEntry, unmergeable []string) string {
+func renderBundleTimeline(res bundle.TimelineResult, q bundle.TimelineQuery) string {
 	var b strings.Builder
+	entries := res.Entries
 	if len(entries) == 0 {
-		b.WriteString("No timestamped lines in that window.\n")
+		if q.Pattern != "" {
+			fmt.Fprintf(&b, "No timestamped lines matching %q in that window.\n", q.Pattern)
+		} else {
+			b.WriteString("No timestamped lines in that window.\n")
+		}
 	} else {
 		fmt.Fprintf(&b, "%d lines, time-ordered across %s:\n\n", len(entries), timelineFileCount(entries))
 		for _, e := range entries {
 			fmt.Fprintf(&b, "%s  %s:%d  %s\n", e.When.Format("2006-01-02 15:04:05"), e.Path, e.Line, e.Text)
 		}
 	}
-	if len(unmergeable) > 0 {
+	// The cut, said: a timeline keeps its EARLIEST lines, so one that was cut
+	// stops partway through the story and has to say where to pick it up.
+	if res.Total > len(entries) {
+		fmt.Fprintf(&b, "\nCUT: these are the earliest %d of %d lines. To read on, repeat with since set to %s, or narrow with pattern or glob.\n",
+			len(entries), res.Total, entries[len(entries)-1].When.Format("2006-01-02 15:04:05"))
+	}
+	if res.Excluded > 0 {
+		fmt.Fprintf(&b, "%d more line(s) matched but were left out by exclude.\n", res.Excluded)
+	}
+	if res.Undated > 0 {
+		fmt.Fprintf(&b, "%d line(s) matched the pattern but carry no timestamp of their own (a stack frame, a wrapped message), so they have no place on a timeline: search for them to read them in context.\n", res.Undated)
+	}
+	if len(res.Unmergeable) > 0 {
+		unmergeable := append([]string(nil), res.Unmergeable...)
 		sort.Strings(unmergeable)
 		shown := unmergeable
 		if len(shown) > 10 {

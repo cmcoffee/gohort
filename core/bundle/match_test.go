@@ -2,6 +2,7 @@ package bundle
 
 import (
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -108,5 +109,27 @@ func TestMatcherRejectsWhatRegexpRejects(t *testing.T) {
 	_, got := CompileMatcher("(unclosed")
 	if got == nil || got.Error() != want.Error() {
 		t.Errorf("CompileMatcher error = %v, want %v", got, want)
+	}
+}
+
+// Possible may only say no when no line of the text could match: it is how a
+// caller holding a whole file skips it, and a wrong no is a file never searched.
+func TestMatcherPossibleNeverRulesOutAMatch(t *testing.T) {
+	file := "package auth\nfunc CheckToken() {}\n\u212Aelvin\n"
+	for _, p := range []string{"(?i)checktoken", "(?i)kelvin", "Check.*\\(", "(?i)nothing here", ".*", "^func"} {
+		m, err := CompileMatcher(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		anyLine := false
+		for _, ln := range strings.Split(file, "\n") {
+			anyLine = anyLine || m.MatchString(ln)
+		}
+		if anyLine && !m.Possible(file) {
+			t.Errorf("%q matches a line but Possible ruled the file out", p)
+		}
+	}
+	if m, _ := CompileMatcher("(?i)nothing here"); m.Possible(file) {
+		t.Error("Possible should rule out a file without the needle")
 	}
 }

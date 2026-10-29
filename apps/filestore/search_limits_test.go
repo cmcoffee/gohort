@@ -11,9 +11,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/bundle"
 )
 
 // writeLog writes a file and dates it, so newest-first order is fixed.
@@ -59,22 +64,23 @@ func TestANoisyFileCannotStarveTheOthers(t *testing.T) {
 		t.Errorf("the cut should be named, with the file's full count: %+v", res.CutInFiles)
 	}
 	out := renderMatches(res)
-	if !strings.Contains(out, "Cut WITHIN files") || !strings.Contains(out, "noisy.log (15 of 300)") || !strings.Contains(out, "per_file=15") {
+	if !strings.Contains(out, "Cut WITHIN files") || !strings.Contains(out, fmt.Sprintf("noisy.log (%d of 300)", defaultPerFile)) ||
+		!strings.Contains(out, fmt.Sprintf("per_file=%d", defaultPerFile)) {
 		t.Errorf("the reply should state the limit and where it cut:\n%s", out)
 	}
 }
 
-func TestANarrowSearchCanRaiseTheBudget(t *testing.T) {
+func TestASearchKeepsUpToItsLimit(t *testing.T) {
 	dir := t.TempDir()
-	writeLog(t, dir, "app.log", repeatLines("ERROR x", 500), time.Minute)
-	// One file: the per-file cap lifts, and max_matches is the only limit.
+	writeLog(t, dir, "app.log", repeatLines("ERROR x", maxMatches+500), time.Minute)
+	// One file: the per-file share lifts, and the limit is the only one.
 	res, _ := Search(context.Background(), dir, SearchOpts{Pattern: "ERROR", PerFile: defaultPerFile, Max: 150})
 	if len(res.Matches) != 150 || res.PerFile != 0 {
-		t.Errorf("a single-file search should show what was asked for: %d shown, per_file=%d", len(res.Matches), res.PerFile)
+		t.Errorf("a single-file search should keep what was asked for: %d kept, per_file=%d", len(res.Matches), res.PerFile)
 	}
 	res, _ = Search(context.Background(), dir, SearchOpts{Pattern: "ERROR", Max: 100000})
-	if len(res.Matches) != maxMatchesCeil {
-		t.Errorf("max_matches is bounded at %d, got %d", maxMatchesCeil, len(res.Matches))
+	if len(res.Matches) != maxMatches || res.Total != maxMatches+500 || !res.Cut() {
+		t.Errorf("the limit is %d: kept %d of %d, cut=%v", maxMatches, len(res.Matches), res.Total, res.Cut())
 	}
 }
 
@@ -96,20 +102,39 @@ func TestCountAnswersHowOftenWithoutLines(t *testing.T) {
 	}
 }
 
-func TestSkipPagesThroughTheSameResult(t *testing.T) {
+// Paging is the generic kind, not the search's own: a reply longer than a page
+// is kept and arrives as its first page, with the summary on it, and
+// read_output reads on or greps within the kept matches without searching
+// again. What it reaches past the first page is the same search's later
+// matches.
+func TestALongReplyPagesThroughReadOutput(t *testing.T) {
 	dir := t.TempDir()
 	var b strings.Builder
-	for i := 1; i <= 130; i++ {
+	for i := 1; i <= 1200; i++ {
 		fmt.Fprintf(&b, "ERROR n=%d\n", i)
 	}
 	writeLog(t, dir, "app.log", b.String(), time.Minute)
-	first, _ := Search(context.Background(), dir, SearchOpts{Pattern: "ERROR"})
-	second, _ := Search(context.Background(), dir, SearchOpts{Pattern: "ERROR", Skip: len(first.Matches)})
-	if len(second.Matches) == 0 || second.Matches[0].Line != len(first.Matches)+1 || second.Skipped != len(first.Matches) {
-		t.Fatalf("page two should start where page one ended: %+v", second.Matches[:1])
+	opts := SearchOpts{Pattern: "ERROR", Context: 1}
+	res, _ := Search(context.Background(), dir, opts)
+	reply := searchReply(res, opts)
+	if !strings.HasPrefix(reply, fmt.Sprintf("Showing %d of 1200 matches", maxMatches)) {
+		t.Fatalf("the first page should open with the summary:\n%.300s", reply)
 	}
-	if out := renderMatches(first); !strings.Contains(out, fmt.Sprintf("skip=%d", len(first.Matches))) {
-		t.Errorf("a capped reply should say how to get the next page:\n%s", out)
+	m := regexp.MustCompile(`output_id="([^"]+)", offset=(\d+)`).FindStringSubmatch(reply)
+	if m == nil || len(reply) > 2*bundle.SearchPageChars {
+		t.Fatalf("a long reply should arrive as one page with a read_output trailer (%d chars):\n%s", len(reply), reply[len(reply)-400:])
+	}
+	if strings.Contains(reply, "n=900\n") {
+		t.Fatal("match 900 should not be on the first page")
+	}
+	offset, _ := strconv.Atoi(m[2])
+	next, err := OutputPage{ID: m[1], Offset: offset, Max: bundle.SearchPageChars, Tool: "read_output"}.Read()
+	if err != nil || !strings.Contains(next, "> ERROR n=") {
+		t.Fatalf("read_output should read on through the matches: %v\n%.300s", err, next)
+	}
+	found, err := OutputPage{ID: m[1], Grep: "n=900$", Tool: "read_output"}.Read()
+	if err != nil || !strings.Contains(found, "ERROR n=900") {
+		t.Errorf("grep within the kept reply should find match 900: %v\n%s", err, found)
 	}
 }
 

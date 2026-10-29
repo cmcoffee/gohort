@@ -118,6 +118,14 @@ func TestDetectBundleFormat(t *testing.T) {
 	if got := DetectFormat(iso); got != FormatISO {
 		t.Errorf("iso sample detected as %q", got)
 	}
+	// Slash-dated, as Go's log package writes it, with a zone name after.
+	slashed := []string{
+		"[2026/10/27 23:25:22 PDT] [http] GET /api/status 200 (14ms)",
+		"[2026/10/27 23:25:23 PDT] [scheduler] firing job",
+	}
+	if got := DetectFormat(slashed); got != FormatISO {
+		t.Errorf("slash-dated sample detected as %q", got)
+	}
 	clf := []string{
 		`10.0.0.1 - - [14/Mar/2026:02:11:09 +0000] "GET / HTTP/1.1" 200 12`,
 		`10.0.0.2 - - [14/Mar/2026:02:11:10 +0000] "GET /x HTTP/1.1" 404 3`,
@@ -167,6 +175,16 @@ func TestParseBundleTime(t *testing.T) {
 		t.Error("iso line did not parse")
 	} else if ts.Format(time.RFC3339) != "2026-03-14T02:11:09Z" {
 		t.Errorf("iso parsed to %s", ts.Format(time.RFC3339))
+	}
+	// A zone name is read as no zone: the time as written, like a since
+	// with no zone.
+	if ts, ok := ParseTime(FormatISO, 0, "[2026/10/27 23:25:22.5 PDT] [http] GET / 200"); !ok {
+		t.Error("slash-dated line did not parse")
+	} else if ts.Format(time.RFC3339Nano) != "2026-10-27T23:25:22.5Z" {
+		t.Errorf("slash-dated parsed to %s", ts.Format(time.RFC3339Nano))
+	}
+	if ts, ok := ParseTime(FormatISO, 0, "2026/10/27T23:25:22+02:00 x"); !ok || ts.Format(time.RFC3339) != "2026-10-27T21:25:22Z" {
+		t.Errorf("slash-dated with an offset parsed to %s, %v", ts.Format(time.RFC3339), ok)
 	}
 	if _, ok := ParseTime(FormatText, 0, "no timestamp here"); ok {
 		t.Error("a line with no timestamp reported one")
@@ -338,11 +356,14 @@ func TestBundleIngestReadSearchTimeline(t *testing.T) {
 	}
 
 	// --- timeline: merges both logs, names the file it cannot place ---
-	entries, unmergeable, err := Open("u1", "b1").Timeline("", time.Date(2026, 3, 14, 2, 14, 0, 0, time.UTC),
-		time.Date(2026, 3, 14, 2, 15, 0, 0, time.UTC), 0)
+	tl, err := Open("u1", "b1").Timeline(context.Background(), TimelineQuery{
+		Since: time.Date(2026, 3, 14, 2, 14, 0, 0, time.UTC),
+		Until: time.Date(2026, 3, 14, 2, 15, 0, 0, time.UTC),
+	})
 	if err != nil {
 		t.Fatalf("timeline: %v", err)
 	}
+	entries, unmergeable := tl.Entries, tl.Unmergeable
 	if len(entries) == 0 {
 		t.Fatal("timeline is empty")
 	}
@@ -740,13 +761,256 @@ func BenchmarkBundleSearch(b *testing.B) {
 		{Pattern: "connection reset"},
 		{Pattern: "connection reset", Before: 2, After: 2},
 		{Pattern: `reset by peer \d+`},
+		{Pattern: ".", Group: true},
 	} {
-		b.Run(fmt.Sprintf("%s/ctx=%d", q.Pattern, q.Before), func(b *testing.B) {
+		b.Run(fmt.Sprintf("%s/ctx=%d/group=%v", q.Pattern, q.Before, q.Group), func(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				if _, err := Open("u1", "bench").Search(context.Background(), q); err != nil {
 					b.Fatal(err)
 				}
 			}
 		})
+	}
+}
+
+// Bundle search excludes the same way: case-insensitive like its pattern,
+// counted, and still visible as context around a kept hit.
+func TestBundleSearchExclude(t *testing.T) {
+	withMemStore(t)
+	stage := writeStage(t, map[string]string{"app.log": "ERROR db timeout\n" +
+		"ERROR GET /HealthCheck failed\n" +
+		"ERROR disk full\n"})
+	if _, err := Open("u1", "b1").Ingest(context.Background(), stage); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	res, err := Open("u1", "b1").Search(context.Background(), Query{Pattern: "error", Exclude: "healthcheck", After: 1})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(res.Hits) != 2 || res.Hits[0].Line != 1 || res.Hits[1].Line != 3 || res.Excluded != 1 {
+		t.Fatalf("hits %+v excluded %d; want lines 1 and 3, 1 excluded", res.Hits, res.Excluded)
+	}
+	if got := res.Hits[0].Context; len(got) != 2 || got[1] != "2: ERROR GET /HealthCheck failed" {
+		t.Errorf("an excluded line should still show as context: %q", got)
+	}
+	if _, err := Open("u1", "b1").Search(context.Background(), Query{Pattern: "error", Exclude: "("}); err == nil || !strings.Contains(err.Error(), "exclude") {
+		t.Errorf("a bad exclude should be named as the problem, got %v", err)
+	}
+}
+
+// A grouped bundle search reads every file, keeps no hits, and hands back the
+// shapes with their counts and spans; exclude and the path filter still apply.
+func TestBundleSearchGroups(t *testing.T) {
+	withMemStore(t)
+	stage := writeStage(t, map[string]string{
+		"app.log": "2026-03-14T02:14:02Z ERROR timeout after 3000ms\n" +
+			"2026-03-14T02:14:05Z ERROR timeout after 120ms\n" +
+			"2026-03-14T02:15:00Z INFO healthcheck ok\n",
+		"db.log": "2026-03-14T02:20:00Z ERROR timeout after 9ms\n" +
+			"2026-03-14T02:21:00Z ERROR disk full\n",
+	})
+	if _, err := Open("u1", "b1").Ingest(context.Background(), stage); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	res, err := Open("u1", "b1").Search(context.Background(), Query{Pattern: ".", Exclude: "healthcheck", Group: true, MaxHits: 1})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(res.Hits) != 0 || res.Groups == nil || res.Truncated {
+		t.Fatalf("a grouped search should keep no hits and never truncate: hits %d groups %v truncated %v", len(res.Hits), res.Groups, res.Truncated)
+	}
+	all := res.Groups.Sorted()
+	if len(all) != 2 || res.Groups.Lines != 4 || res.Excluded != 1 {
+		t.Fatalf("groups %+v lines %d excluded %d", all, res.Groups.Lines, res.Excluded)
+	}
+	top := all[0]
+	if top.Shape != "<*> ERROR timeout after <*>" || top.Count != 3 || top.Files != 2 {
+		t.Errorf("top = %q x%d in %d files", top.Shape, top.Count, top.Files)
+	}
+	if want := time.Date(2026, 3, 14, 2, 14, 2, 0, time.UTC); !top.First.Equal(want) {
+		t.Errorf("first = %s, want %s", top.First, want)
+	}
+	res, _ = Open("u1", "b1").Search(context.Background(), Query{Pattern: "error", Glob: "db.log", Group: true})
+	if res.Groups.Lines != 2 {
+		t.Errorf("the path filter did not narrow a grouped search: %d lines", res.Groups.Lines)
+	}
+}
+
+// A timeline filtered by pattern follows one thing through every file in time
+// order: it says how many matching lines had no timestamp to place them by, and
+// how many exclude took out, rather than leaving them off without a word.
+func TestTimelineFollowsAPattern(t *testing.T) {
+	withMemStore(t)
+	stage := writeStage(t, map[string]string{
+		"api.log": "2026-03-14T02:14:01Z GET /order req=7f3a\n" +
+			"2026-03-14T02:14:02Z GET /order req=9b11\n" +
+			"2026-03-14T02:14:09Z 500 /order req=7f3a\n",
+		"db.log": "2026-03-14T02:14:05Z slow query req=7f3a 4200ms\n" +
+			"2026-03-14T02:14:06Z healthcheck req=7f3a\n" +
+			"2026-03-14T02:14:07Z ERROR deadlock req=7f3a\n" +
+			"   at db.Exec req=7f3a\n",
+	})
+	if _, err := Open("u1", "b1").Ingest(context.Background(), stage); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	res, err := Open("u1", "b1").Timeline(context.Background(), TimelineQuery{Pattern: "req=7F3A", Exclude: "healthcheck"})
+	if err != nil {
+		t.Fatalf("timeline: %v", err)
+	}
+	var got []string
+	for _, e := range res.Entries {
+		got = append(got, fmt.Sprintf("%s:%d", e.Path, e.Line))
+	}
+	if want := "[api.log:1 db.log:1 db.log:3 api.log:3]"; fmt.Sprint(got) != want {
+		t.Errorf("timeline = %v, want %s", got, want)
+	}
+	if res.Total != 4 || res.Excluded != 1 || res.Undated != 1 {
+		t.Errorf("total %d excluded %d undated %d; want 4, 1, 1", res.Total, res.Excluded, res.Undated)
+	}
+	if _, err := Open("u1", "b1").Timeline(context.Background(), TimelineQuery{Pattern: "("}); err == nil {
+		t.Error("a bad pattern was accepted")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := Open("u1", "b1").Timeline(ctx, TimelineQuery{}); !errors.Is(err, context.Canceled) {
+		t.Errorf("a cancelled timeline returned %v", err)
+	}
+}
+
+// The timeline keeps only the earliest Max lines while it reads. Whatever it
+// keeps must be exactly what holding every line, stable-sorting by time and
+// cutting at Max gave: files out of time order, lines out of order within a
+// file, and ties between files that have to come out in file-then-line order.
+func TestTimelineKeepsExactlyTheEarliest(t *testing.T) {
+	withMemStore(t)
+	files := map[string]string{}
+	type line struct {
+		path string
+		n    int
+		when time.Time
+	}
+	var all []line
+	base := time.Date(2026, 3, 14, 2, 0, 0, 0, time.UTC)
+	for f, name := range []string{"a.log", "b.log", "c.log"} {
+		var body strings.Builder
+		for i := 0; i < 400; i++ {
+			// Wraps around, so every file revisits the same seconds: ties.
+			when := base.Add(time.Duration((i*37+f*11)%97) * time.Second)
+			fmt.Fprintf(&body, "%s event %d\n", when.Format(time.RFC3339), i)
+			all = append(all, line{name, i + 1, when})
+		}
+		files[name] = body.String()
+	}
+	stage := writeStage(t, files)
+	if _, err := Open("u1", "b1").Ingest(context.Background(), stage); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	sort.SliceStable(all, func(i, j int) bool { return all[i].when.Before(all[j].when) })
+	for _, max := range []int{1, 7, 300, 2000} {
+		res, err := Open("u1", "b1").Timeline(context.Background(), TimelineQuery{Max: max})
+		if err != nil {
+			t.Fatalf("timeline: %v", err)
+		}
+		want := all
+		if len(want) > max {
+			want = want[:max]
+		}
+		if len(res.Entries) != len(want) || res.Total != len(all) {
+			t.Fatalf("max %d: %d entries of total %d, want %d of %d", max, len(res.Entries), res.Total, len(want), len(all))
+		}
+		for i, e := range res.Entries {
+			if e.Path != want[i].path || e.Line != want[i].n || !e.When.Equal(want[i].when) {
+				t.Fatalf("max %d: entry %d = %s:%d %s, want %s:%d %s", max, i, e.Path, e.Line, e.When, want[i].path, want[i].n, want[i].when)
+			}
+		}
+	}
+}
+
+// An over-time bundle search reads every file, keeps no hits, counts each
+// matching line by its own timestamp, and counts the undated ones apart.
+func TestBundleSearchOverTime(t *testing.T) {
+	withMemStore(t)
+	stage := writeStage(t, map[string]string{
+		"app.log": "2026-03-14T02:14:02Z ERROR timeout after 3000ms\n" +
+			"2026-03-14T02:14:40Z ERROR timeout after 120ms\n" +
+			"  timeout detail with no time of its own\n" +
+			"2026-03-14T02:16:00Z INFO all fine\n",
+		"db.log": "2026-03-14T02:16:30Z ERROR timeout after 9ms\n",
+	})
+	if _, err := Open("u1", "b1").Ingest(context.Background(), stage); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	res, err := Open("u1", "b1").Search(context.Background(), Query{Pattern: "timeout", OverTime: true, Bucket: time.Minute, MaxHits: 1})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(res.Hits) != 0 || res.Truncated || res.Histogram == nil {
+		t.Fatalf("hits %d truncated %v histogram %v", len(res.Hits), res.Truncated, res.Histogram)
+	}
+	if res.Histogram.Lines != 3 || res.Histogram.Undated != 1 {
+		t.Errorf("lines %d undated %d; want 3 and 1", res.Histogram.Lines, res.Histogram.Undated)
+	}
+	out := res.Histogram.Render(`"timeout"`, time.Minute)
+	for _, want := range []string{"02:14 2  ", "02:15 0", "02:16 1  "} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing row %q:\n%s", want, out)
+		}
+	}
+	if _, err := Open("u1", "b1").Search(context.Background(), Query{Pattern: "x", OverTime: true, Group: true}); err == nil {
+		t.Error("group and over_time together should be refused")
+	}
+}
+
+// The bundle search shares its limit the way the folder search does: a noisy
+// file keeps only its share, every match is still counted so the reply can
+// say "of N", a limit reached says which files were never opened, and a count
+// reads every file and keeps nothing.
+func TestBundleSearchSharesItsLimitAndCountsPastIt(t *testing.T) {
+	withMemStore(t)
+	stage := writeStage(t, map[string]string{
+		"a_noisy.log": strings.Repeat("ERROR retry\n", 300),
+		"b_quiet.log": "ERROR disk full\nERROR disk full\n",
+		"c_more.log":  strings.Repeat("ERROR later\n", 50),
+		"d_last.log":  "ERROR never opened\n",
+	})
+	if _, err := Open("u1", "b1").Ingest(context.Background(), stage); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	ctx := context.Background()
+
+	res, err := Open("u1", "b1").Search(ctx, Query{Pattern: "error", PerFile: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	quiet := 0
+	for _, h := range res.Hits {
+		if h.Path == "b_quiet.log" {
+			quiet++
+		}
+	}
+	if quiet != 2 || res.Kept != 10+2+10+1 || res.Total != 353 {
+		t.Errorf("quiet kept %d, kept %d of %d; want 2, 23 of 353", quiet, res.Kept, res.Total)
+	}
+	if len(res.CutInFiles) != 2 || res.CutInFiles[0].File != "a_noisy.log" || res.CutInFiles[0].Matches != 300 || !res.Truncated {
+		t.Errorf("the cut files should be named with their full counts: %+v truncated=%v", res.CutInFiles, res.Truncated)
+	}
+
+	// The limit reached inside c_more.log: that file is still counted to its
+	// end, and d_last.log is never opened, and said to be.
+	res, _ = Open("u1", "b1").Search(ctx, Query{Pattern: "error", MaxHits: 305})
+	if res.Kept != 305 || res.Total != 352 || res.Unsearched != 1 {
+		t.Errorf("kept %d of %d with %d unsearched; want 305 of 352 and 1", res.Kept, res.Total, res.Unsearched)
+	}
+	if sum := res.Summary(res.Scanned, res.Scanned+res.Unsearched, "glob"); !strings.Contains(sum, "Showing 305 of 352 matches counted in 3 of 4 files") ||
+		!strings.Contains(sum, "Cut ACROSS files") {
+		t.Errorf("summary:\n%s", sum)
+	}
+
+	res, _ = Open("u1", "b1").Search(ctx, Query{Pattern: "error", CountOnly: true})
+	if len(res.Hits) != 0 || res.Total != 353 || len(res.Tallies) != 4 || res.Tallies[0].File != "a_noisy.log" || res.Truncated {
+		t.Errorf("count: hits %d total %d tallies %+v truncated %v", len(res.Hits), res.Total, res.Tallies, res.Truncated)
+	}
+	if _, err := Open("u1", "b1").Search(ctx, Query{Pattern: "x", CountOnly: true, Group: true}); err == nil {
+		t.Error("count and group together should be refused")
 	}
 }

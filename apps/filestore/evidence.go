@@ -358,6 +358,8 @@ func (s storeSource) evidenceToolDefs(sess *ToolSession, st Store) []AgentToolDe
 	folderParam := ToolParam{Type: "string", Description: "The folder (case) to read, by name, as list_" + st.Slug + " shows it."}
 	timeParams := map[string]ToolParam{
 		"folder":    folderParam,
+		"pattern":   {Type: "string", Description: TimelinePatternHelp},
+		"exclude":   {Type: "string", Description: TimelineExcludeHelp},
 		"glob":      {Type: "string", Description: "Optional path filter limiting which files are merged, e.g. \"*scheduler*\". Empty merges every file that carries timestamps."},
 		"since":     {Type: "string", Description: "Earliest timestamp, e.g. \"2026-03-14 02:00:00\". Strongly recommended."},
 		"until":     {Type: "string", Description: "Latest timestamp, same format."},
@@ -379,7 +381,7 @@ func (s storeSource) evidenceToolDefs(sess *ToolSession, st Store) []AgentToolDe
 		{
 			Tool: Tool{
 				Name:        "timeline_" + st.Slug,
-				Description: fmt.Sprintf("Merge lines from SEVERAL files of one folder of the %q file store into one time-ordered sequence: what happened across the whole system in a window, in order, which no per-file search can show. Narrow it with since and until: an unbounded timeline over a large folder is truncated and tells you little. A folder not indexed yet is indexed first.", st.Name),
+				Description: fmt.Sprintf("Merge lines from SEVERAL files of one folder of the %q file store into one time-ordered sequence: what happened across the whole system in a window, in order, which no per-file search can show. Narrow it with since and until, and with pattern to follow one thing (a request id, a hostname) through every file in order: an unbounded timeline over a large folder is truncated and tells you little. A folder not indexed yet is indexed first.", st.Name),
 				Parameters:  timeParams,
 				Required:    []string{"folder"},
 				Caps:        []Capability{CapRead},

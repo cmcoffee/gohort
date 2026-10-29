@@ -37,9 +37,7 @@ import (
 // with it. An operator who could raise them would raise them exactly
 // once, in the moment they were most sure they needed the whole file.
 const (
-	maxMatches     = 60      // hits returned by one search, unless the caller asks for more
-	maxMatchesCeil = 200     // the most a caller may ask for; see SearchOpts.Max
-	maxCountFiles  = 200     // files listed by a count-only search
+	maxMatches     = 1000    // matches one search keeps; the reply's first page shows what fits, read_output the rest
 	maxLineRunes   = 400     // a single line is truncated past this
 	maxContext     = 8       // lines either side of a hit
 	maxWindowLines = 400     // lines one read may return
@@ -96,6 +94,7 @@ type Match struct {
 // SearchOpts is what a caller may vary.
 type SearchOpts struct {
 	Pattern    string // regular expression; a plain string is a valid one
+	Exclude    string // optional regular expression: a line Pattern matched is dropped, not shown or counted, if this matches it too; follows IgnoreCase
 	Glob       string // optional filename filter, e.g. "*.log"
 	IgnoreCase bool
 	// Since and Until are a time window applied to LINES, by the timestamp
@@ -106,21 +105,28 @@ type SearchOpts struct {
 	// modification time is before Since is skipped unread.
 	Since, Until time.Time
 	Context      int // lines either side; clamped to maxContext
-	// Max is how many matches the reply shows: maxMatches when unset, never
-	// more than maxMatchesCeil. A caller raises it for a narrow, deliberate
-	// search; it is not a way to read a noisy file whole.
+	// Max is how many matches the search keeps: maxMatches when unset, and
+	// never more. The reply shows the first page of them, and read_output
+	// reads on through the rest (core/bundle budget.go).
 	Max int
-	// PerFile caps how many of ONE file's matches may be shown, so a noisy
+	// PerFile caps how many of ONE file's matches may be kept, so a noisy
 	// file cannot take the whole budget from the others. Zero means no
 	// per-file cap. Lifted when only one file is searched: the cap exists to
 	// share the budget, and there is nobody to share it with.
 	PerFile int
-	// Skip drops this many matches from the front of the result, for paging:
-	// the same search with Skip set to what was shown returns the next page.
-	Skip int
 	// CountOnly returns per-file match totals and no lines at all, over every
 	// file, with no Max. It answers how OFTEN, which a capped list cannot.
 	CountOnly bool
+	// Group files every match under its shape (core/bundle group.go) and
+	// returns the shapes instead of lines, over every file, with no Max,
+	// PerFile or Context. It answers WHAT is in here, which a search
+	// for a pattern the asker already knows cannot.
+	Group bool
+	// OverTime counts every match by its timestamp (core/bundle overtime.go)
+	// and returns rows of counts instead of lines, on the same terms as
+	// Group. Bucket is one row's size; zero chooses one from the span.
+	OverTime bool
+	Bucket   time.Duration
 	// Deadline bounds the whole search. Zero uses searchDeadline. A
 	// search that runs out of time returns what it found and says so
 	// rather than failing: partial evidence with a warning beats no
@@ -129,39 +135,38 @@ type SearchOpts struct {
 }
 
 // FileTally is one searched file's count: every match in it, and how many of
-// those were let into the result (the per-file cap is the difference).
-type FileTally struct {
-	File    string `json:"file"`
-	Matches int    `json:"matches"`
-	Kept    int    `json:"kept"`
-}
+// those were kept (the per-file share is the difference).
+type FileTally = bundle.FileTally
 
 // SearchResult is one search's answer plus what it did NOT do.
 //
-// Every truncation is reported, and they mean different things. Capped is
-// "there are more matches than we return", and it says WHERE: CutInFiles are
-// the files that had more than PerFile, Unsearched how many files the global
-// cap left unread. Stopped is "we gave up before looking everywhere". An
-// investigator who reads a partial result as a complete one concludes
-// something is absent when nobody looked.
+// Every truncation is reported, and they mean different things. The embedded
+// Budget says how many matches were kept of how many counted, and WHERE a cut
+// fell: CutInFiles are the files that had more than PerFile, Unsearched how
+// many files the limit left unread; Cut() is whether any of that happened.
+// Stopped is "we gave up before looking everywhere". An investigator who reads
+// a partial result as a complete one concludes something is absent when
+// nobody looked.
 type SearchResult struct {
+	// Budget is embedded so its counts read as the result's own: Total,
+	// Kept, Tallies (count-only: busiest first), CutInFiles, Unsearched, and
+	// the limits that applied (Max, PerFile; PerFile 0 when no share did).
+	bundle.Budget
 	Matches    []Match
-	Capped     bool
 	Stopped    string // empty when the search finished; otherwise why it did not
 	Scanned    int    // files actually read
 	Considered int    // files the search could have read
 	Bytes      int64  // bytes read across those files
 	Elapsed    time.Duration
-	Max        int         // the limits that applied, so the reply can state them
-	PerFile    int         // 0 when no per-file cap applied
-	Skipped    int         // matches dropped by Skip
-	Tallies    []FileTally // files with at least one match, in search order (count-only: by count)
-	CutInFiles []FileTally // files that had more matches than PerFile allowed
-	Unsearched int         // files the global cap left unread
-	Untimed    int         // files left out of a time window because they carry no timestamps
-	Total      int         // matches counted across the files searched
-	LongLines  int         // lines over maxLineBytes, searched only in their first maxLineBytes
-	Unreadable []string    // "file: why" for each file a read failed in, searched only up to there
+	Untimed    int      // files left out of a time window because they carry no timestamps
+	Excluded   int      // lines Pattern matched and Exclude took back out
+	LongLines  int      // lines over maxLineBytes, searched only in their first maxLineBytes
+	Unreadable []string // "file: why" for each file a read failed in, searched only up to there
+	// Groups holds the matches by shape when Group was asked; nil otherwise.
+	Groups *bundle.Grouper
+	// Histogram holds the matches by time when OverTime was asked; nil
+	// otherwise.
+	Histogram *bundle.Histogram
 }
 
 // resolveUnder joins rel to root and proves the result is still inside
@@ -399,23 +404,39 @@ func Search(ctx context.Context, root string, opts SearchOpts) (SearchResult, er
 	if err != nil {
 		return res, fmt.Errorf("that pattern is not a valid regular expression: %w", err)
 	}
+	filter := bundle.Filter{Match: re}
+	if exclude := strings.TrimSpace(opts.Exclude); exclude != "" {
+		if opts.IgnoreCase {
+			exclude = "(?i)" + exclude
+		}
+		if filter.Exclude, err = bundle.CompileMatcher(exclude); err != nil {
+			return res, fmt.Errorf("exclude is not a valid regular expression: %w", err)
+		}
+	}
 	if !opts.Since.IsZero() && !opts.Until.IsZero() && opts.Until.Before(opts.Since) {
 		return res, fmt.Errorf("the time window ends before it starts")
 	}
+	if modes := countTrue(opts.CountOnly, opts.Group, opts.OverTime); modes > 1 {
+		return res, fmt.Errorf("count, group and over_time are different answers: count says how often a pattern occurs per file, group what kinds of lines there are, over_time when the matching ones happened. Ask for one")
+	}
+	if opts.Group {
+		res.Groups = bundle.NewGrouper()
+	}
+	if opts.OverTime {
+		res.Histogram = bundle.NewHistogram()
+	}
+	// A whole-folder answer reads every file and keeps no lines.
+	whole := opts.CountOnly || opts.Group || opts.OverTime
 	ctxLines := clamp(opts.Context, 0, maxContext)
-	if opts.CountOnly {
+	if whole {
 		ctxLines = 0
 	}
 	limit := opts.Max
-	if limit <= 0 {
+	if limit <= 0 || limit > maxMatches {
 		limit = maxMatches
 	}
-	if limit > maxMatchesCeil {
-		limit = maxMatchesCeil
-	}
-	skip := opts.Skip
-	if skip < 0 {
-		skip = 0
+	if whole {
+		limit = 0 // counts every match and keeps none
 	}
 
 	files, err := List(root, opts.Glob)
@@ -424,26 +445,25 @@ func Search(ctx context.Context, root string, opts SearchOpts) (SearchResult, er
 	}
 	rootAbs, _ := filepath.EvalSymlinks(root)
 	res.Considered = len(files)
-	res.Max = limit
 	perFile := opts.PerFile
-	if perFile <= 0 || len(files) <= 1 || opts.CountOnly {
+	if perFile <= 0 || len(files) <= 1 || whole {
 		perFile = 0
 	}
-	res.PerFile = perFile
+	budget := &res.Budget
+	budget.Max, budget.PerFile = limit, perFile
 
-	budget := opts.Deadline
-	if budget <= 0 {
-		budget = searchDeadline
+	allowed := opts.Deadline
+	if allowed <= 0 {
+		allowed = searchDeadline
 	}
 	started := time.Now()
-	deadline := started.Add(budget)
+	deadline := started.Add(allowed)
 	var scanned int64
 	win := window{since: opts.Since, until: opts.Until}
 
 	for i, lf := range files {
-		if !opts.CountOnly && len(res.Matches) >= limit {
-			res.Capped = true
-			res.Unsearched = len(files) - i
+		if budget.Full() {
+			budget.Unsearched = len(files) - i
 			break
 		}
 		if !opts.Since.IsZero() && lf.Modified.Before(opts.Since) {
@@ -463,7 +483,7 @@ func Search(ctx context.Context, root string, opts SearchOpts) (SearchResult, er
 		// thousand small files exhausts the clock without any single
 		// file being slow.
 		if time.Now().After(deadline) {
-			res.Stopped = fmt.Sprintf("stopped after %s, having read %d of %d files", budget, res.Scanned, len(files))
+			res.Stopped = fmt.Sprintf("stopped after %s, having read %d of %d files", allowed, res.Scanned, len(files))
 			break
 		}
 		if scanned >= maxScanBytes {
@@ -472,20 +492,16 @@ func Search(ctx context.Context, root string, opts SearchOpts) (SearchResult, er
 		}
 		path := filepath.Join(rootAbs, lf.Rel)
 		fw := win
-		if win.set() {
+		if win.set() || opts.Group || opts.OverTime {
 			fw.format, fw.year = detectFileFormat(path, lf.Modified)
 		}
-		room := limit - len(res.Matches)
-		if opts.CountOnly {
-			room = 0
-		}
-		fr := searchFile(ctx, path, lf.Rel, re, ctxLines, fileLimits{keep: perFile, skip: skip, room: room}, fw, deadline)
+		budget.Open(lf.Rel)
+		fr := searchFile(ctx, path, lf.Rel, filter, ctxLines, fileLimits{budget: budget, group: res.Groups, hist: res.Histogram}, fw, deadline)
+		budget.Close()
 		res.Matches = append(res.Matches, fr.shown...)
-		skip -= fr.skipped
-		res.Skipped += fr.skipped
 		res.Scanned++
 		scanned += fr.read
-		res.Total += fr.total
+		res.Excluded += fr.excluded
 		res.LongLines += fr.longLines
 		if fr.readErr != "" {
 			res.Unreadable = append(res.Unreadable, lf.Rel+": "+fr.readErr)
@@ -493,23 +509,10 @@ func Search(ctx context.Context, root string, opts SearchOpts) (SearchResult, er
 		if win.set() && !fr.timed {
 			res.Untimed++
 		}
-		if fr.total > 0 {
-			t := FileTally{File: lf.Rel, Matches: fr.total, Kept: fr.kept}
-			res.Tallies = append(res.Tallies, t)
-			if perFile > 0 && fr.total > perFile {
-				res.CutInFiles = append(res.CutInFiles, t)
-			}
-		}
 		if fr.stopped {
 			res.Stopped = fmt.Sprintf("stopped inside %s after %s, having read %d of %d files", lf.Rel, time.Since(started).Round(time.Second), res.Scanned, len(files))
 			break
 		}
-		if !opts.CountOnly && fr.overflow {
-			res.Capped = true
-		}
-	}
-	if len(res.CutInFiles) > 0 {
-		res.Capped = true
 	}
 	if opts.CountOnly {
 		sort.SliceStable(res.Tallies, func(i, j int) bool { return res.Tallies[i].Matches > res.Tallies[j].Matches })
@@ -567,20 +570,19 @@ func detectFileFormat(path string, modified time.Time) (string, int) {
 	return bundle.DetectFormat(sample), modified.Year()
 }
 
-// fileLimits is what one file may contribute: keep caps the matches it lets
-// into the stream (0 = no cap), skip is how many stream matches are still to
-// be dropped for paging, room is how many may still be shown.
+// fileLimits is where one file's matches go: budget decides which are kept
+// (and counts them all), and group or hist, when set, receives every match in
+// place of the kept lines, since a grouped or over-time search keeps none.
 type fileLimits struct {
-	keep, skip, room int
+	budget *bundle.Budget
+	group  *bundle.Grouper
+	hist   *bundle.Histogram
 }
 
 // fileResult is one file's part of a search.
 type fileResult struct {
 	shown    []Match
-	total    int  // every match in the file
-	kept     int  // matches let into the stream (shown + skipped)
-	skipped  int  // stream matches dropped for paging
-	overflow bool // stream matches this file had beyond the room left
+	excluded int  // matches the exclude pattern took back out, counted nowhere else
 	timed    bool // the file carried at least one timestamp
 	stopped  bool // the deadline or a cancel cut the file short
 	read     int64
@@ -595,7 +597,7 @@ type fileResult struct {
 // hit can carry its context without a second pass over the file. It reads
 // the whole file even once nothing more will be shown, because the COUNT is
 // part of the answer: "15 shown of 340" needs the 340.
-func searchFile(ctx context.Context, path, rel string, re *bundle.Matcher, ctxLines int, lim fileLimits, win window, deadline time.Time) fileResult {
+func searchFile(ctx context.Context, path, rel string, filter bundle.Filter, ctxLines int, lim fileLimits, win window, deadline time.Time) fileResult {
 	var fr fileResult
 	rc, err := open(path)
 	if err != nil {
@@ -673,16 +675,32 @@ func searchFile(ctx context.Context, path, rel string, re *bundle.Matcher, ctxLi
 			inWindow = win.holds(lineTime)
 		}
 
-		if inWindow && re.Match(raw) {
-			fr.total++
+		keep := inWindow && filter.Match.Match(raw)
+		// Exclusion is tested last, on lines already in, so the count of
+		// what it removed is only what the search would otherwise have
+		// counted. The line still feeds the context ring below: it is
+		// dropped as a hit, not from the file.
+		if keep && filter.Excludes(raw) {
+			fr.excluded++
+			keep = false
+		}
+		if keep {
+			kept := lim.budget.Keep()
 			switch {
-			case lim.keep > 0 && fr.kept >= lim.keep:
-				// Past this file's share: counted, not kept.
-			case fr.skipped < lim.skip:
-				fr.kept++
-				fr.skipped++
-			case len(fr.shown) < lim.room:
-				fr.kept++
+			case lim.group != nil || lim.hist != nil:
+				// Dated by the window's clock when there is one (an undated
+				// line takes the time above it), else by the line itself
+				// when the file's format carries times at all.
+				when := lineTime
+				if !win.set() && win.format != "" && win.format != bundle.FormatText {
+					when, _ = bundle.ParseTime(win.format, win.year, string(raw))
+				}
+				if lim.group != nil {
+					lim.group.AddBytes(rel, lineNo, raw, when)
+				} else {
+					lim.hist.Add(when)
+				}
+			case kept:
 				if full == "" {
 					line = truncateRunes(string(raw), maxLineRunes)
 				}
@@ -694,8 +712,6 @@ func searchFile(ctx context.Context, path, rel string, re *bundle.Matcher, ctxLi
 				if ctxLines > 0 {
 					waiting = append(waiting, pending{idx: len(fr.shown) - 1, left: ctxLines})
 				}
-			default:
-				fr.overflow = true
 			}
 		}
 
@@ -753,6 +769,17 @@ func Read(root, rel string, around, lines int) ([]string, int, error) {
 		out = append(out, truncateRunes(string(line), maxLineRunes))
 	}
 	return out, start, nil
+}
+
+// countTrue is how many of flags are set.
+func countTrue(flags ...bool) int {
+	n := 0
+	for _, f := range flags {
+		if f {
+			n++
+		}
+	}
+	return n
 }
 
 func clamp(v, lo, hi int) int {

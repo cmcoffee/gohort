@@ -58,7 +58,7 @@ func folderFixture(t *testing.T) (root, bundle string) {
 func TestSearchFindsMatchesWithContext(t *testing.T) {
 	_, bundle := folderFixture(t)
 	res, err := Search(context.Background(), bundle, SearchOpts{Pattern: "connection refused", Context: 1})
-	matches, capped := res.Matches, res.Capped
+	matches, capped := res.Matches, res.Cut()
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestSearchCapsAndSaysSo(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(bundle, "flood.log"), []byte(b.String()), 0o644)
 
 	res, err := Search(context.Background(), bundle, SearchOpts{Pattern: "ERROR"})
-	matches, capped := res.Matches, res.Capped
+	matches, capped := res.Matches, res.Cut()
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -567,7 +567,7 @@ func TestSearchStopsAtItsDeadlineAndSaysSo(t *testing.T) {
 	// conflated: Capped is "more matches exist", Stopped is "part of the
 	// store was never read". An investigator reading the second as the
 	// first concludes something is absent when nobody looked.
-	if res.Capped {
+	if res.Cut() {
 		t.Error("running out of time is not the match cap")
 	}
 	if !strings.Contains(res.Stopped, "of 60 files") {
@@ -681,6 +681,7 @@ func BenchmarkSearch(b *testing.B) {
 		"fold":    {Pattern: "connection reset", IgnoreCase: true},
 		"context": {Pattern: "connection reset", IgnoreCase: true, Context: 2},
 		"window":  {Pattern: "connection reset", IgnoreCase: true, Since: since},
+		"group":   {Pattern: ".", Group: true},
 	} {
 		b.Run(name, func(b *testing.B) {
 			for i := 0; i < b.N; i++ {
@@ -689,5 +690,164 @@ func BenchmarkSearch(b *testing.B) {
 				}
 			}
 		})
+	}
+}
+
+// exclude is the "but not" a pattern cannot say. A line the pattern matched is
+// dropped from hits AND totals when exclude matches it, follows ignore_case,
+// stays visible as context around a kept hit, and is counted, so a page that
+// exclude emptied never reads as "nothing matched".
+func TestSearchExcludeDropsMatchesAndSaysSo(t *testing.T) {
+	root := t.TempDir()
+	body := "ERROR db timeout\n" +
+		"ERROR GET /healthcheck failed\n" +
+		"ERROR disk full\n" +
+		"ERROR GET /HealthCheck failed\n"
+	if err := os.WriteFile(filepath.Join(root, "app.log"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Search(context.Background(), root, SearchOpts{Pattern: "error", Exclude: "healthcheck", IgnoreCase: true, Context: 1})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	var lines []int
+	for _, m := range res.Matches {
+		lines = append(lines, m.Line)
+	}
+	if fmt.Sprint(lines) != "[1 3]" || res.Total != 2 || res.Excluded != 2 {
+		t.Fatalf("lines %v total %d excluded %d; want [1 3], 2, 2", lines, res.Total, res.Excluded)
+	}
+	if len(res.Matches[0].After) != 1 || !strings.Contains(res.Matches[0].After[0], "/healthcheck") {
+		t.Errorf("an excluded line should still show as context: after = %q", res.Matches[0].After)
+	}
+	if out := renderMatches(res); !strings.Contains(out, "2 more line(s) matched the pattern but were left out by exclude") {
+		t.Errorf("the reply does not say what exclude removed:\n%s", out)
+	}
+
+	// Case-sensitive search, case-sensitive exclude: only the lowercase one goes.
+	res, _ = Search(context.Background(), root, SearchOpts{Pattern: "ERROR", Exclude: "healthcheck"})
+	if res.Total != 3 || res.Excluded != 1 {
+		t.Errorf("case-sensitive: total %d excluded %d, want 3 and 1", res.Total, res.Excluded)
+	}
+
+	// Count-only totals are after the filter, and say so.
+	res, _ = Search(context.Background(), root, SearchOpts{Pattern: "error", Exclude: "healthcheck", IgnoreCase: true, CountOnly: true})
+	if res.Total != 2 || !strings.Contains(renderCounts(res, "error"), "not in these totals") {
+		t.Errorf("count-only: total %d, reply %q", res.Total, renderCounts(res, "error"))
+	}
+
+	// Everything excluded is not "nothing matched".
+	res, _ = Search(context.Background(), root, SearchOpts{Pattern: "healthcheck", Exclude: "GET", IgnoreCase: true})
+	if out := renderNoMatches(res); !strings.HasPrefix(out, "Nothing left after exclude: 2 line(s)") {
+		t.Errorf("an exclude that hid every match read as %q", out)
+	}
+
+	if _, err := Search(context.Background(), root, SearchOpts{Pattern: "ERROR", Exclude: "("}); err == nil || !strings.Contains(err.Error(), "exclude") {
+		t.Errorf("a bad exclude should be named as the problem, got %v", err)
+	}
+}
+
+// A grouped folder search returns shapes, not lines, over every file with no
+// match cap, dates them from each file's own format, and refuses to be a
+// count at the same time.
+func TestSearchGroups(t *testing.T) {
+	root := t.TempDir()
+	write := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("app.log", "2026-10-27T02:14:02Z ERROR timeout after 3000ms\n"+
+		"2026-10-27T02:14:05Z ERROR timeout after 120ms\n"+
+		"2026-10-27T02:15:00Z WARN slow query 812ms\n")
+	write("db.log", "2026-10-27T03:00:00Z ERROR timeout after 9ms\n")
+
+	res, err := Search(context.Background(), root, SearchOpts{Pattern: "error|warn", IgnoreCase: true, Group: true, Max: 1, Context: 3})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(res.Matches) != 0 || res.Cut() || res.Total != 4 {
+		t.Fatalf("matches %d capped %v total %d; want 0, false, 4", len(res.Matches), res.Cut(), res.Total)
+	}
+	top := res.Groups.Sorted()[0]
+	if top.Shape != "<*> ERROR timeout after <*>" || top.Count != 3 || top.Files != 2 {
+		t.Errorf("top = %q x%d in %d files", top.Shape, top.Count, top.Files)
+	}
+	first, last := time.Date(2026, 10, 27, 2, 14, 2, 0, time.UTC), time.Date(2026, 10, 27, 3, 0, 0, 0, time.UTC)
+	if !top.First.Equal(first) || !top.Last.Equal(last) {
+		t.Errorf("span %s to %s, want %s to %s", top.First, top.Last, first, last)
+	}
+	out := renderGroups(res)
+	for _, want := range []string{"4 line(s) matched, in 2 shape(s)", "<*> WARN slow query <*>", "(2 of 2 files read.)"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("reply is missing %q:\n%s", want, out)
+		}
+	}
+	if _, err := Search(context.Background(), root, SearchOpts{Pattern: "x", Group: true, CountOnly: true}); err == nil {
+		t.Error("group and count together should be refused")
+	}
+}
+
+// A slash-dated log, as Go's log package writes it, is a timed log: a window
+// narrows it and grouping gives each shape its span. It read as untimed text
+// before, so a window left the whole file out and groups had no times.
+func TestSearchReadsSlashDatedLogs(t *testing.T) {
+	root := t.TempDir()
+	body := "[2026/10/27 23:25:11 PDT] [http] GET /status 200 (14ms)\n" +
+		"[2026/10/27 23:40:00 PDT] [http] GET /status 500 (2ms)\n" +
+		"[2026/10/28 00:10:00 PDT] [http] GET /status 200 (9ms)\n"
+	if err := os.WriteFile(filepath.Join(root, "gohort.log"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	since := time.Date(2026, 10, 27, 23, 30, 0, 0, time.UTC)
+	until := time.Date(2026, 10, 28, 0, 0, 0, 0, time.UTC)
+	res, err := Search(context.Background(), root, SearchOpts{Pattern: "GET", Since: since, Until: until})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if res.Untimed != 0 || len(res.Matches) != 1 || res.Matches[0].Line != 2 {
+		t.Fatalf("untimed %d, matches %+v; want the one line inside the window", res.Untimed, res.Matches)
+	}
+	res, _ = Search(context.Background(), root, SearchOpts{Pattern: "GET", Group: true})
+	g := res.Groups.Sorted()[0]
+	if !g.First.Equal(time.Date(2026, 10, 27, 23, 25, 11, 0, time.UTC)) || !g.Last.Equal(time.Date(2026, 10, 28, 0, 10, 0, 0, time.UTC)) {
+		t.Errorf("group span %s to %s", g.First, g.Last)
+	}
+}
+
+// An over-time folder search counts every match by time across the folder,
+// with no match cap, and refuses to be a count or a grouping at once.
+func TestSearchOverTime(t *testing.T) {
+	root := t.TempDir()
+	write := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("app.log", "[2026/10/27 02:14:02 PDT] ERROR timeout\n"+
+		"[2026/10/27 02:14:50 PDT] ERROR timeout\n"+
+		"[2026/10/27 02:17:00 PDT] ERROR timeout\n")
+	write("db.log", "[2026/10/27 02:15:10 PDT] ERROR timeout\n")
+	opts := SearchOpts{Pattern: "timeout", OverTime: true, Bucket: time.Minute, Max: 1, Context: 3}
+	res, err := Search(context.Background(), root, opts)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(res.Matches) != 0 || res.Cut() || res.Histogram.Lines != 4 {
+		t.Fatalf("matches %d capped %v counted %d", len(res.Matches), res.Cut(), res.Histogram.Lines)
+	}
+	out := renderOverTime(res, opts)
+	for _, want := range []string{`"timeout": 4 matching line(s)`, "02:14 2  ", "02:15 1  ", "02:16 0", "02:17 1  ", "(2 of 2 files read.)"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("reply is missing %q:\n%s", want, out)
+		}
+	}
+	for _, bad := range []SearchOpts{
+		{Pattern: "x", OverTime: true, CountOnly: true},
+		{Pattern: "x", OverTime: true, Group: true},
+	} {
+		if _, err := Search(context.Background(), root, bad); err == nil {
+			t.Errorf("%+v should be refused", bad)
+		}
 	}
 }
