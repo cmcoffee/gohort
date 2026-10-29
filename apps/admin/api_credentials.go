@@ -272,19 +272,23 @@ type credentialSave struct {
 	AllowedURLPattern string   `json:"allowed_url_pattern"`
 	BaseURL           string   `json:"base_url"`
 	AllowedEndpoints  []string `json:"allowed_endpoints"`
-	AllowedUsers      []string `json:"allowed_users"`
-	ParamName         string   `json:"param_name"`
-	Description       string   `json:"description"`
-	CredScope         string   `json:"cred_scope"`
-	RequiresConfirm   bool     `json:"requires_confirm"`
-	ConfirmWrites     bool     `json:"confirm_writes"`
-	InsecureSkipTLS   bool     `json:"insecure_skip_tls"`
-	Secret            string   `json:"secret"`
-	Password          string   `json:"password"` // password-grant resource-owner password (the 2nd secret)
-	AllowedMethods    []string `json:"allowed_methods"`
-	DeniedURLPatterns []string `json:"denied_url_patterns"`
-	MaxCallsPerDay    int      `json:"max_calls_per_day"`
-	CostPerCall       float64  `json:"cost_per_call"`
+	// AlsoCovers is a pointer so a poster that does not carry it keeps the
+	// stored list rather than clearing it: a list of where the key goes is
+	// not something to lose to an omitted field.
+	AlsoCovers        *[]string `json:"also_covers"`
+	AllowedUsers      []string  `json:"allowed_users"`
+	ParamName         string    `json:"param_name"`
+	Description       string    `json:"description"`
+	CredScope         string    `json:"cred_scope"`
+	RequiresConfirm   bool      `json:"requires_confirm"`
+	ConfirmWrites     bool      `json:"confirm_writes"`
+	InsecureSkipTLS   bool      `json:"insecure_skip_tls"`
+	Secret            string    `json:"secret"`
+	Password          string    `json:"password"` // password-grant resource-owner password (the 2nd secret)
+	AllowedMethods    []string  `json:"allowed_methods"`
+	DeniedURLPatterns []string  `json:"denied_url_patterns"`
+	MaxCallsPerDay    int       `json:"max_calls_per_day"`
+	CostPerCall       float64   `json:"cost_per_call"`
 	// OAuth2 (type == "oauth2").
 	Grant        string `json:"grant"`
 	TokenURL     string `json:"token_url"`
@@ -329,6 +333,11 @@ func (a *AdminApp) saveCredential(c *jsonapi.Call, req credentialSave) (any, err
 		JWTKeyID:          strings.TrimSpace(req.JWTKeyID),
 	}
 	keepOAuthConfig(&cred)
+	if req.AlsoCovers != nil {
+		cred.AlsoCovers = *req.AlsoCovers
+	} else if prev, ok := Secure().Load(cred.Name); ok {
+		cred.AlsoCovers = prev.AlsoCovers
+	}
 	if err := saveCredWithPassword(cred, req.Secret, req.Password); err != nil {
 		return nil, jsonapi.BadRequest(err.Error())
 	}

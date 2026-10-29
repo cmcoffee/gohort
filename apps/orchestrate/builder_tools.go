@@ -567,6 +567,9 @@ func checkCredentialToolDef(t *chatTurn) AgentToolDef {
 					eps = fmt.Sprintf("%v (ONLY these paths)", c.AllowedEndpoints)
 				}
 				cfg += fmt.Sprintf(" base_url=%q allowed_endpoints=%s", c.BaseURL, eps)
+				if len(c.AlsoCovers) > 0 {
+					cfg += fmt.Sprintf(" also_covers=%v (whole servers, any path)", c.AlsoCovers)
+				}
 				if c.AllowedURLPattern != "" {
 					cfg += fmt.Sprintf(" legacy_url_pattern=%q", c.AllowedURLPattern)
 				}

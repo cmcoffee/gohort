@@ -148,14 +148,15 @@ func (T *Extensions) Routes() {
 func (T *Extensions) handleCredentials(c *jsonapi.Call) (any, error) {
 	user, q := c.User, c.R.URL.Query()
 	type row struct {
-		Name            string `json:"name"`
-		Type            string `json:"type"`
-		BaseURL         string `json:"base_url"`
-		ParamName       string `json:"param_name,omitempty"`
-		Description     string `json:"description,omitempty"`
-		RequiresConfirm bool   `json:"requires_confirm"`
-		ConfirmWrites   bool   `json:"confirm_writes"`
-		HasSecret       bool   `json:"has_secret"`
+		Name            string   `json:"name"`
+		Type            string   `json:"type"`
+		BaseURL         string   `json:"base_url"`
+		AlsoCovers      []string `json:"also_covers"`
+		ParamName       string   `json:"param_name,omitempty"`
+		Description     string   `json:"description,omitempty"`
+		RequiresConfirm bool     `json:"requires_confirm"`
+		ConfirmWrites   bool     `json:"confirm_writes"`
+		HasSecret       bool     `json:"has_secret"`
 		// NeedsKey: an authenticated credential with no key stored (a
 		// draft never finished). Every tool on it fails until it is set.
 		NeedsKey bool `json:"needs_key"`
@@ -185,7 +186,7 @@ func (T *Extensions) handleCredentials(c *jsonapi.Call) (any, error) {
 	toRow := func(cred SecureCredential) row {
 		_, _, stored := Secure().CredentialStatusOwned(user, cred.Name)
 		return row{
-			Name: cred.Name, Type: cred.Type, BaseURL: cred.BaseURL, ParamName: cred.ParamName,
+			Name: cred.Name, Type: cred.Type, BaseURL: cred.BaseURL, AlsoCovers: nonNilList(cred.AlsoCovers), ParamName: cred.ParamName,
 			Description: cred.Description, RequiresConfirm: cred.RequiresConfirm, ConfirmWrites: cred.ConfirmWrites,
 			HasSecret: cred.Type != SecureCredNone && stored, Disabled: cred.Disabled,
 			NeedsKey:        cred.Type != SecureCredNone && !stored,
@@ -297,12 +298,15 @@ func (T *Extensions) handleCredentialToggle(c *jsonapi.Call, _ struct{}) (any, e
 
 // credentialSave is the credential form.
 type credentialSave struct {
-	Name        string `json:"name"`
-	Type        string `json:"type"`
-	BaseURL     string `json:"base_url"`
-	ParamName   string `json:"param_name"`
-	Description string `json:"description"`
-	Secret      string `json:"secret"`
+	Name    string `json:"name"`
+	Type    string `json:"type"`
+	BaseURL string `json:"base_url"`
+	// AlsoCovers is a pointer: a form that does not carry it keeps the
+	// stored list.
+	AlsoCovers  *[]string `json:"also_covers"`
+	ParamName   string    `json:"param_name"`
+	Description string    `json:"description"`
+	Secret      string    `json:"secret"`
 	// The security fields are the Security panel's (api_security.go).
 	// Pointers, so a form that does not carry them (Edit, Add) leaves
 	// the stored values alone instead of resetting them to off.
@@ -344,6 +348,10 @@ func (T *Extensions) handleCredentialSave(c *jsonapi.Call, body credentialSave) 
 	}
 	if prev, found := Secure().LoadUser(user, cred.Name); found {
 		cred.RequiresConfirm, cred.ConfirmWrites, cred.Lending = prev.RequiresConfirm, prev.ConfirmWrites, prev.Lending
+		cred.AlsoCovers = prev.AlsoCovers
+	}
+	if body.AlsoCovers != nil {
+		cred.AlsoCovers = *body.AlsoCovers
 	}
 	if body.RequiresConfirm != nil {
 		cred.RequiresConfirm = *body.RequiresConfirm
@@ -1741,6 +1749,8 @@ func credentialFormFields() []ui.FormField {
 		}},
 		{Field: "param_name", Label: "Header / Param name", Placeholder: "X-Api-Key or api_key", ShowWhen: "type:header|query"},
 		{Field: "base_url", Label: "Base URL", Placeholder: "https://api.example.com", Help: "The server this credential talks to. Requests are allowed only under this host."},
+		{Field: "also_covers", Label: "Also covers", Type: "tags", Placeholder: "https://github.com", Help: "Other servers the same key goes to, e.g. https://github.com beside https://api.github.com. Each is a whole server: any path on it.",
+			Detail: "Adding a server counts as moving the credential: its stored key is cleared, and you set it again under Connected accounts, so a key you gave for one server never goes to another unasked."},
 		{Field: "secret", Label: "Secret / token / password", Type: "password", ShowWhen: "type:bearer|header|query|basic_auth", Help: "Stored encrypted, never shown to the assistant. For HTTP Basic, enter it as user:pass. Leave blank when editing to keep the stored value."},
 		{Field: "description", Label: "Description", Type: "textarea", Rows: 2, Help: "Shown to your agents as the tool description."},
 	}

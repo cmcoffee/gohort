@@ -407,6 +407,11 @@ func (s *SecureAPI) SaveOAuthDraft(c SecureCredential) error {
 			return fmt.Errorf("base_url %s", why)
 		}
 	}
+	covers, err := normalizeAlsoCovers(c.AlsoCovers)
+	if err != nil {
+		return err
+	}
+	c.AlsoCovers = covers
 	if c.Grant == OAuthGrantJWTBearer && strings.TrimSpace(c.JWTIssuer) == "" {
 		return fmt.Errorf("jwt_bearer draft needs jwt_issuer")
 	}
@@ -472,6 +477,11 @@ func (s *SecureAPI) SaveAPIDraft(c SecureCredential) error {
 			return fmt.Errorf("base_url %s", why)
 		}
 	}
+	covers, err := normalizeAlsoCovers(c.AlsoCovers)
+	if err != nil {
+		return err
+	}
+	c.AlsoCovers = covers
 	c.Disabled = true // inert until the secret is added + enabled
 	s.mu.Lock()
 	defer s.mu.Unlock()

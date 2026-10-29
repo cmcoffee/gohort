@@ -2635,7 +2635,10 @@ func mustURL(t *testing.T, s string) *url.URL {
 // Saving a credential with an empty secret keeps the stored one, which was
 // right for a description edit and wrong for a new address: an edit, or an
 // agent's proposed edit, could point the key at any server. A user-owned
-// credential moved to another host needs its secret entered again.
+// credential moved to another host needs its secret entered again: the move
+// is kept and the stored key dropped, so the credential waits for its key
+// (the edit form has no key field, so refusing the move left no way to make
+// it).
 func TestRepointedCredentialNeedsItsSecretAgain(t *testing.T) {
 	secureAPITestStore(t)
 	s := Secure()
@@ -2653,11 +2656,14 @@ func TestRepointedCredentialNeedsItsSecretAgain(t *testing.T) {
 
 	moved := same
 	moved.BaseURL = "https://collector.example.net"
-	if err := s.Save(moved, ""); err == nil {
+	if err := s.Save(moved, ""); err != nil {
+		t.Fatalf("the move is kept: %v", err)
+	}
+	if _, _, has := s.CredentialStatusOwned("user1", "svc"); has {
 		t.Fatal("moving the credential to another host kept its secret")
 	}
-	if got, _ := s.LoadUser("user1", "svc"); got.BaseURL != same.BaseURL {
-		t.Fatalf("the refused move was stored anyway: %q", got.BaseURL)
+	if got, _ := s.LoadUser("user1", "svc"); got.BaseURL != moved.BaseURL {
+		t.Fatalf("the move was not stored: %q", got.BaseURL)
 	}
 	if err := s.Save(moved, "tok-2"); err != nil {
 		t.Fatalf("a move with the secret re-entered should save: %v", err)
@@ -2678,5 +2684,116 @@ func TestRepointedCredentialNeedsItsSecretAgain(t *testing.T) {
 	}
 	if credDestinationMoved(SecureCredential{BaseURL: "https://a.example.com", AllowedURLPattern: "https://a.example.com/**"}, SecureCredential{BaseURL: "https://A.example.com/"}) {
 		t.Error("a case change, or a field the form does not carry, is not a move")
+	}
+}
+
+// A credential's Also covers servers get its auth like its Base URL does,
+// at any path on them, and nothing else does: the key reaches the servers
+// listed, the fetch auto-route and the raw-header guard treat them as
+// covered, Allowed Endpoints narrow the Base URL alone, and a server on
+// another port is a different server.
+func TestAlsoCoversSendsTheKeyToTheServersListedAndNoOthers(t *testing.T) {
+	store := &DBase{Store: kvlite.MemStore()}
+	prev := AuthDB
+	AuthDB = func() Database { return store }
+	t.Cleanup(func() { AuthDB = prev })
+	seen := map[string]string{}
+	var mu sync.Mutex
+	server := func(name string) *httptest.Server {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			seen[name] = r.Header.Get("Authorization")
+			mu.Unlock()
+			w.Write([]byte(`{"ok":true}`))
+		}))
+		t.Cleanup(srv.Close)
+		return srv
+	}
+	api, git, other := server("api"), server("git"), server("other")
+	s := Secure()
+	if err := s.Save(SecureCredential{Name: "cover_gh", Type: SecureCredBearer, BaseURL: api.URL, AllowedEndpoints: []string{"/repos/**"}, AlsoCovers: []string{git.URL + "/"}}, "gh-key"); err != nil {
+		t.Fatal(err)
+	}
+	sess := &ToolSession{Username: "admin"}
+	if _, err := s.DispatchToolCall(sess, "cover_gh", git.URL+"/org/repo.git/info/refs?service=git-upload-pack", "GET", ""); err != nil || seen["git"] != "Bearer gh-key" {
+		t.Errorf("an also-covered server, any path: err %v, auth %q", err, seen["git"])
+	}
+	if _, err := s.DispatchToolCall(sess, "cover_gh", api.URL+"/repos/org/x", "GET", ""); err != nil || seen["api"] != "Bearer gh-key" {
+		t.Errorf("the base URL under its endpoints: err %v, auth %q", err, seen["api"])
+	}
+	if _, err := s.DispatchToolCall(sess, "cover_gh", api.URL+"/user", "GET", ""); err == nil {
+		t.Error("the endpoints still narrow the base URL")
+	}
+	if _, err := s.DispatchToolCall(sess, "cover_gh", other.URL+"/x", "GET", ""); err == nil || seen["other"] != "" {
+		t.Errorf("a server not listed gets nothing: err %v, auth %q", err, seen["other"])
+	}
+	if name, err := s.AutoRouteCredential(git.URL+"/org/repo.git", "admin"); err != nil || name != "cover_gh" {
+		t.Errorf("a plain fetch to an also-covered server routes through the credential: %q %v", name, err)
+	}
+	if name, _ := s.AutoRouteCredential(other.URL+"/x", "admin"); name != "" {
+		t.Errorf("a plain fetch elsewhere routes through nothing: %q", name)
+	}
+	if err := CredentialAuthGuard(git.URL+"/x", map[string]any{"Authorization": "Bearer pasted"}); err == nil {
+		t.Error("a raw auth header to an also-covered server is refused, as to the base URL")
+	}
+	u, _ := url.Parse(git.URL)
+	if name, _ := s.AutoRouteCredential("http://"+u.Hostname()+":1/x", "admin"); name != "" {
+		t.Error("another port on the same host is another server")
+	}
+}
+
+func TestAlsoCoversEntriesAreWholeServers(t *testing.T) {
+	got, err := normalizeAlsoCovers([]string{" https://GitHub.com/ ", "", "https://github.com", "https://raw.githubusercontent.com"})
+	if err != nil || strings.Join(got, ",") != "https://github.com,https://raw.githubusercontent.com" {
+		t.Errorf("normalized %v, %v", got, err)
+	}
+	for _, bad := range []string{"github.com", "https://github.com/org", "https://*.github.com", "https://github.com?x=1", "https://user:pw@example.test", "ftp://github.com"} {
+		if _, err := normalizeAlsoCovers([]string{bad}); err == nil {
+			t.Errorf("%q should be refused", bad)
+		}
+	}
+}
+
+// Adding a server is moving the credential: a personal one's stored key is
+// dropped, the edit kept, and the key waits to be set again. Taking a server
+// off moves nothing. An administrator's credential keeps its key. A personal
+// credential cannot also cover an internal address.
+func TestAddingAServerIsMovingTheCredential(t *testing.T) {
+	store := &DBase{Store: kvlite.MemStore()}
+	prev := AuthDB
+	AuthDB = func() Database { return store }
+	t.Cleanup(func() { AuthDB = prev })
+	s := Secure()
+	base := SecureCredential{Name: "alice_gh", Type: SecureCredBearer, BaseURL: "https://api.github.com", Owner: "alice"}
+	if err := s.Save(base, "alice-key"); err != nil {
+		t.Fatal(err)
+	}
+	wider := base
+	wider.AlsoCovers = []string{"https://github.com"}
+	if !credDestinationMoved(base, wider) || credDestinationMoved(wider, base) {
+		t.Error("adding a server moves the credential; taking one off does not")
+	}
+	if err := s.Save(wider, ""); err != nil {
+		t.Fatalf("the edit is kept, not refused: %v", err)
+	}
+	if _, _, has := s.CredentialStatusOwned("alice", "alice_gh"); has {
+		t.Error("the key given for the old servers is dropped")
+	}
+	if c, ok := s.LoadUser("alice", "alice_gh"); !ok || strings.Join(c.AlsoCovers, ",") != "https://github.com" {
+		t.Errorf("the new server is saved: %+v", c)
+	}
+	if err := s.Save(SecureCredential{Name: "alice_gh2", Type: SecureCredBearer, BaseURL: "https://api.github.com", AlsoCovers: []string{"https://10.0.0.5"}, Owner: "alice"}, "k"); err == nil {
+		t.Error("a personal credential may not also cover an internal address")
+	}
+	admin := SecureCredential{Name: "org_gh", Type: SecureCredBearer, BaseURL: "https://api.github.com"}
+	if err := s.Save(admin, "org-key"); err != nil {
+		t.Fatal(err)
+	}
+	admin.AlsoCovers = []string{"https://github.com"}
+	if err := s.Save(admin, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, has := s.CredentialStatus("org_gh"); !has {
+		t.Error("an administrator's credential keeps its key")
 	}
 }

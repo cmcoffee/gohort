@@ -311,6 +311,8 @@ func credentialFormFields(editing bool) []ui.FormField {
 			Detail: "Requests are allowed only under this host, and under the endpoints below."},
 		{Field: "allowed_endpoints", Label: "Allowed Endpoints", Type: "tags", Help: "Paths under the Base URL this credential may call.",
 			Detail: "For example /api/* allows everything under /api/, while /api/core/* scopes to one module. Add or remove entries. Leave it empty to allow ANY path under the Base URL."},
+		{Field: "also_covers", Label: "Also covers", Type: "tags", Placeholder: "https://github.com", Help: "Other servers this credential's auth also goes to, for a service spread over several hosts.",
+			Detail: "GitHub is the usual case: the API is https://api.github.com and git is https://github.com, both taking the same token. Each entry is a whole server, scheme and host only, and the credential is sent to any path on it. Allowed Endpoints narrow the Base URL alone; denied URL patterns apply everywhere. Adding a server counts as moving the credential: per-person keys and sign-ins given for it are cleared."},
 		// (The legacy "Allowed URL pattern" single-glob field is retired
 		// from the form: two overlapping scoping fields kept misleading
 		// admins and LLMs about which applied. Old records that still

@@ -115,9 +115,17 @@ type SecureCredential struct {
 	// legacy credentials carrying only AllowedURLPattern keep working.
 	BaseURL          string   `json:"base_url,omitempty"`
 	AllowedEndpoints []string `json:"allowed_endpoints,omitempty"`
-	Description      string   `json:"description,omitempty"`
-	ParamName        string   `json:"param_name,omitempty"`
-	RequiresConfirm  bool     `json:"requires_confirm"`
+	// AlsoCovers are further servers this credential's auth goes to, each
+	// an origin (scheme://host[:port]) and any path on it: one service spread
+	// over several hosts, as GitHub's API is on api.github.com and its git on
+	// github.com. AllowedEndpoints narrow the Base URL alone; a deny pattern
+	// applies everywhere. The key goes to no server the owner did not name,
+	// and naming a new one counts as moving the credential
+	// (credDestinationMoved).
+	AlsoCovers      []string `json:"also_covers,omitempty"`
+	Description     string   `json:"description,omitempty"`
+	ParamName       string   `json:"param_name,omitempty"`
+	RequiresConfirm bool     `json:"requires_confirm"`
 	// ConfirmWrites asks before each call that CHANGES something (any method
 	// but GET, HEAD or OPTIONS) and lets reads through: the tier between
 	// "ask every time" and "never ask" for a key an agent mostly reads with.
@@ -659,6 +667,10 @@ func (s *SecureAPI) Save(c SecureCredential, secret string) error {
 	} else if !strings.HasPrefix(c.AllowedURLPattern, "https://") && !strings.HasPrefix(c.AllowedURLPattern, "http://") {
 		return fmt.Errorf("allowed_url_pattern must start with http:// or https://")
 	}
+	var err error
+	if c.AlsoCovers, err = normalizeAlsoCovers(c.AlsoCovers); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	// Owner-aware storage key: global creds key by bare name, user-owned creds by
@@ -763,12 +775,17 @@ func (s *SecureAPI) Save(c SecureCredential, secret string) error {
 		if !exists {
 			return fmt.Errorf("secret value is required for new credentials")
 		}
-		// A user-owned credential repointed at another server keeps nothing:
-		// the stored key was entered for the old address, and keeping it
-		// would let an edit (or an agent's proposed edit) send it anywhere.
-		// Global credentials are written by an administrator only.
+		// A user-owned credential repointed at another server, or given one
+		// more, keeps nothing: the stored key was entered for the old
+		// address, and keeping it would let an edit (or an agent's proposed
+		// edit) send it anywhere. It is dropped and the edit kept, so the
+		// credential waits for its key under Connected accounts. Refusing
+		// the edit instead left no way to make it: the edit form has no key
+		// field. Global credentials are written by an administrator only.
 		if c.Owner != "" && credDestinationMoved(existing, c) {
-			return fmt.Errorf("the credential now points at a different server: enter its secret again with the new address")
+			s.db.Unset(secureAPITable, secretKey)
+			s.db.Set(secureAPITable, key, c)
+			return nil
 		}
 		var existingSecret string
 		if !s.db.Get(secureAPITable, secretKey, &existingSecret) || existingSecret == "" {
@@ -840,9 +857,85 @@ func credDestinationMoved(prev, next SecureCredential) bool {
 		b = credOrigin(b)
 		return b != "" && b != credOrigin(a)
 	}
-	return moved(prev.BaseURL, next.BaseURL) ||
+	if moved(prev.BaseURL, next.BaseURL) ||
 		moved(prev.AllowedURLPattern, next.AllowedURLPattern) ||
-		moved(prev.TokenURL, next.TokenURL)
+		moved(prev.TokenURL, next.TokenURL) {
+		return true
+	}
+	// A server added to AlsoCovers is a new place the secret goes; one
+	// taken off is not.
+	had := map[string]bool{credOrigin(prev.BaseURL): true}
+	for _, o := range prev.AlsoCovers {
+		had[credOrigin(o)] = true
+	}
+	for _, o := range next.AlsoCovers {
+		if !had[credOrigin(o)] {
+			return true
+		}
+	}
+	return false
+}
+
+// normalizeAlsoCovers checks and tidies a credential's further servers: each
+// a plain origin (https://host, or http:// written out), stored lower-case,
+// once. A path, query or wildcard is refused rather than dropped, because a
+// list that silently meant less than it said is how a key ends up somewhere
+// nobody expected.
+func normalizeAlsoCovers(list []string) ([]string, error) {
+	var out []string
+	seen := map[string]bool{}
+	for _, raw := range list {
+		raw = strings.TrimRight(strings.TrimSpace(raw), "/")
+		if raw == "" {
+			continue
+		}
+		lower := strings.ToLower(raw)
+		if !strings.HasPrefix(lower, "https://") && !strings.HasPrefix(lower, "http://") {
+			return nil, fmt.Errorf("also_covers %q must start with https:// (or http:// for a plain-http server)", raw)
+		}
+		if why := baseURLProblem(raw); why != "" {
+			return nil, fmt.Errorf("also_covers %q %s", raw, why)
+		}
+		u, _ := url.Parse(raw)
+		if u.Path != "" || u.RawQuery != "" {
+			return nil, fmt.Errorf("also_covers %q names a path: each entry is a whole server, scheme and host only (e.g. https://github.com), and covers every path on it", raw)
+		}
+		if o := credOrigin(raw); !seen[o] {
+			seen[o] = true
+			out = append(out, o)
+		}
+	}
+	return out, nil
+}
+
+// credentialCovers reports whether rawURL is one this credential's auth goes
+// to: under its Base URL, or on a server it also covers. The one answer to
+// that question, for every path that asks it (routing a plain fetch, refusing
+// a raw auth header, the secured-host refusal), so they cannot disagree.
+func credentialCovers(c SecureCredential, rawURL string) bool {
+	if base := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/"); base != "" && urlUnderBase(rawURL, base) {
+		return true
+	}
+	return alsoCoversURL(c, rawURL)
+}
+
+// alsoCoversURL reports whether rawURL is on one of the credential's
+// AlsoCovers servers: the same scheme, host and port, any path.
+func alsoCoversURL(c SecureCredential, rawURL string) bool {
+	if len(c.AlsoCovers) == 0 {
+		return false
+	}
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || u.Host == "" || u.User != nil {
+		return false
+	}
+	origin := strings.ToLower(u.Scheme + "://" + u.Host)
+	for _, o := range c.AlsoCovers {
+		if strings.EqualFold(o, origin) {
+			return true
+		}
+	}
+	return false
 }
 
 // Load fetches the public metadata for a credential by name. The
@@ -2285,7 +2378,7 @@ func (s *SecureAPI) internalReachRefusal(c SecureCredential) error {
 	if s.reachesInternal(c) {
 		return nil
 	}
-	for _, u := range []string{c.BaseURL, c.AllowedURLPattern} {
+	for _, u := range append([]string{c.BaseURL, c.AllowedURLPattern}, c.AlsoCovers...) {
 		if u = strings.TrimSpace(u); u == "" {
 			continue
 		}
@@ -2595,6 +2688,9 @@ func (ac *apiCall) allowed() bool {
 		if p := strings.TrimSpace(c.AllowedURLPattern); p != "" {
 			baseErr += fmt.Sprintf(", legacy_pattern=%q", p)
 		}
+		if len(c.AlsoCovers) > 0 {
+			baseErr += fmt.Sprintf(", also_covers=%v", c.AlsoCovers)
+		}
 		baseErr += ")"
 		// Say WHICH check failed. The raw config dump alone has sent
 		// both LLMs and admins down the wrong path — "endpoints=[]"
@@ -2603,7 +2699,7 @@ func (ac *apiCall) allowed() bool {
 		// is invisible unless someone diffs the strings by eye.
 		if base := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/"); base != "" {
 			if ac.rawURL != base && !strings.HasPrefix(ac.rawURL, base+"/") {
-				baseErr += fmt.Sprintf(". DIAGNOSIS: the request's scheme+host does not match Base URL %q, they must match EXACTLY (https vs http, and www.host vs bare host count as DIFFERENT hosts). The Allowed Endpoints list is NOT the problem. Fix: correct the Base URL, or author the tool with a path-only url so it inherits the credential's host", c.BaseURL)
+				baseErr += fmt.Sprintf(". DIAGNOSIS: the request's scheme+host does not match Base URL %q or any server in Also covers, they must match EXACTLY (https vs http, and www.host vs bare host count as DIFFERENT hosts). The Allowed Endpoints list is NOT the problem. Fix: correct the Base URL, add the server to the credential's Also covers if the same key belongs there, or author the tool with a path-only url so it inherits the credential's host", c.BaseURL)
 			} else {
 				baseErr += fmt.Sprintf(". DIAGNOSIS: the host matches; the PATH is outside Allowed Endpoints %v. An EMPTY list allows every path under Base URL; a non-empty list allows ONLY the listed patterns: add the missing pattern or clear the list", c.AllowedEndpoints)
 			}
@@ -2630,7 +2726,8 @@ func (ac *apiCall) allowed() bool {
 	// scheme and the legacy AllowedURLPattern prefix — checking only the legacy
 	// field left http base_url credentials unable to make any call.
 	allowsHTTP := strings.HasPrefix(c.AllowedURLPattern, "http://") ||
-		strings.HasPrefix(strings.ToLower(strings.TrimSpace(c.BaseURL)), "http://")
+		strings.HasPrefix(strings.ToLower(strings.TrimSpace(c.BaseURL)), "http://") ||
+		alsoCoversURL(c, ac.rawURL) // matched an entry written with its own scheme
 	if ac.parsed.Scheme != "https" && !allowsHTTP {
 		baseErr := fmt.Sprintf("non-https URL not allowed for credential %q (set the credential's Base URL to http:// if the host is plain-http)", c.Name)
 		return ac.exit("", credMisconfigEscalation(c.Name, baseErr, noteCredRejection(c.Name)))
@@ -3207,11 +3304,7 @@ func CredentialAuthGuard(rawURL string, headers map[string]any) error {
 		return nil
 	}
 	for _, c := range s.List() {
-		base := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/")
-		if base == "" {
-			continue
-		}
-		if urlUnderBase(rawURL, base) {
+		if credentialCovers(c, rawURL) {
 			return fmt.Errorf("refusing to send a raw auth header to %s: registered credential %q covers this host. Dispatch through the credential instead (the fetch_url_%s tool, or fetch_via(%q, url) in a script): the server injects the CURRENT stored secret, so calls keep working after a key rotation, and the key stays out of the conversation. If you hold a NEWER key than the stored one, save it with store_credential_secret(%q, <key>) first: never keep using an inline key", rawURL, c.Name, c.Name, c.Name, c.Name)
 		}
 	}
@@ -3266,11 +3359,7 @@ func (s *SecureAPI) AutoRouteCredential(rawURL string, user ...string) (string, 
 			// what makes "access via the tool" actually hold.
 			continue
 		}
-		base := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/")
-		if base == "" {
-			continue
-		}
-		if urlUnderBase(rawURL, base) {
+		if credentialCovers(c, rawURL) {
 			covering = append(covering, c.Name)
 		}
 	}
@@ -3320,7 +3409,7 @@ func (s *SecureAPI) SameHostCredentials(rawURL, user string) []string {
 	add := func(c SecureCredential) {
 		base := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/")
 		b, err := url.Parse(base)
-		if base == "" || err != nil || seen[c.Name] || !strings.EqualFold(b.Host, u.Host) || urlUnderBase(rawURL, base) {
+		if base == "" || err != nil || seen[c.Name] || !strings.EqualFold(b.Host, u.Host) || credentialCovers(c, rawURL) {
 			return
 		}
 		seen[c.Name] = true
@@ -3364,7 +3453,7 @@ func (s *SecureAPI) SecuredCoverRefusal(rawURL, user string, inTool bool) error 
 			if cover != nil || !s.EffectiveSecured(c, user) || (global && !s.UserMayUse(c, user)) {
 				continue
 			}
-			if base := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/"); base != "" && urlUnderBase(rawURL, base) {
+			if credentialCovers(c, rawURL) {
 				cover = &c
 			}
 		}
@@ -3396,8 +3485,7 @@ func (s *SecureAPI) autoRouteOwn(rawURL, user string) (string, error) {
 		if s.EffectiveSecured(c, user) {
 			continue // reachable only through the tools that declare it, as above
 		}
-		base := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/")
-		if base != "" && urlUnderBase(rawURL, base) {
+		if credentialCovers(c, rawURL) {
 			covering = append(covering, c.Name)
 		}
 	}
@@ -3644,6 +3732,11 @@ func urlAllowedByCredential(c SecureCredential, rawURL string) bool {
 
 // urlReadingAllowed is the allow-list check on one reading of a URL.
 func urlReadingAllowed(c SecureCredential, rawURL string) bool {
+	// A server the credential also covers takes any path; its Allowed
+	// Endpoints are the Base URL's.
+	if alsoCoversURL(c, rawURL) {
+		return true
+	}
 	if base := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/"); base != "" {
 		eps := c.AllowedEndpoints
 		if len(eps) == 0 {
