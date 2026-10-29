@@ -133,6 +133,13 @@ FILESYSTEM
     paths.
   * For state across invocations: write inside {workspace_dir}
     and declare StatePath on the tool.
+  * Name what you make. A file the tool writes is noted with the
+    tool and the request it answered; say WHAT it is too when its
+    name does not (a song's title, what a picture shows), so later
+    turns can tell it from others of a similar name:
+    "from gohort import describe" then describe("song.mp3", title),
+    or from a shell script: describe_file song.mp3 "the title".
+    Only files in {workspace_dir}; no grant needed.
 
 THE script_body / script_name PATTERN
   * script_body = the source of a script shipped INTO the sandbox.

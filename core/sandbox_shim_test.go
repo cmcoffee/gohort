@@ -16,6 +16,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/cmcoffee/gohort/core/filenotes"
 	"github.com/cmcoffee/gohort/core/netgate"
 	"github.com/cmcoffee/gohort/core/sandbox"
 )
@@ -408,5 +409,59 @@ func TestRelayRefusesAnotherRunsToken(t *testing.T) {
 	}
 	if hook.RelayPort == 0 || len(hook.RelayToken) < 16 {
 		t.Errorf("a hook makes its run a port and a token: %d %q", hook.RelayPort, hook.RelayToken)
+	}
+}
+
+// A script names what it made, through the real hook: from Python with
+// gohort.describe and from a shell with describe_file, on a run whose hook
+// grants nothing else (naming the run's own output reaches nothing outside
+// it). The name is kept with the file (core/filenotes). A file outside the
+// run's folder, or a link in it that points out, is refused.
+func TestAScriptNamesWhatItMade(t *testing.T) {
+	py, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 not available")
+	}
+	work := t.TempDir()
+	os.WriteFile(filepath.Join(work, "generated_music.mp3"), []byte("ID3"), 0o644)
+	os.WriteFile(filepath.Join(work, "cover.png"), []byte("png"), 0o644)
+	outside := filepath.Join(t.TempDir(), "elsewhere.txt")
+	os.WriteFile(outside, []byte("x"), 0o644)
+	os.Symlink(outside, filepath.Join(work, "link.txt"))
+	hook, err := NewSandboxHook(work, []string{"log"}, &ToolSession{Username: "owner"})
+	if err != nil || hook == nil {
+		t.Fatalf("hook: %v", err)
+	}
+	defer hook.Close()
+	lib := t.TempDir()
+	bin := filepath.Join(lib, "bin")
+	os.MkdirAll(bin, 0o755)
+	os.WriteFile(filepath.Join(lib, "gohort.py"), []byte(SandboxHookPythonShim), 0o644)
+	for _, s := range sandboxToolShims {
+		os.WriteFile(filepath.Join(bin, s.name), []byte(s.content), 0o755)
+	}
+	run := func(args ...string) (string, error) {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = work
+		cmd.Env = []string{"PATH=" + bin + ":/usr/bin:/bin", "PYTHONPATH=" + lib, "GOHORT_HOOK_PATH=" + hook.SocketPath}
+		out, err := cmd.CombinedOutput()
+		return string(out), err
+	}
+	if out, err := run(py, "-c", "from gohort import describe; print(describe('generated_music.mp3', 'Gas Prices Are Too High'))"); err != nil || !strings.Contains(out, `"Gas Prices Are Too High"`) {
+		t.Fatalf("python describe: %v\n%s", err, out)
+	}
+	if n, _ := filenotes.Get(filepath.Join(work, "generated_music.mp3")); n.Title != "Gas Prices Are Too High" {
+		t.Errorf("the title is kept with the file: %+v", n)
+	}
+	if out, err := run(py, filepath.Join(bin, "describe_file"), "cover.png", "Album", "cover,", "red", "truck"); err != nil || !strings.Contains(out, `"Album cover, red truck"`) {
+		t.Errorf("shell describe_file: %v\n%s", err, out)
+	}
+	for _, p := range []string{outside, "link.txt", "../x"} {
+		if out, err := run(py, "-c", "from gohort import describe; describe('"+p+"', 'nope')"); err == nil || !strings.Contains(out, "describe:") {
+			t.Errorf("describe %s should be refused: %v\n%s", p, err, out)
+		}
+	}
+	if _, ok := filenotes.Get(outside); ok {
+		t.Error("a file outside the run's folder was noted")
 	}
 }

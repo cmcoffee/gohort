@@ -50,6 +50,7 @@ import (
 	"github.com/cmcoffee/gohort/core/sandbox"
 	"github.com/cmcoffee/snugforge/iotimeout"
 
+	"github.com/cmcoffee/gohort/core/filenotes"
 	"github.com/cmcoffee/gohort/core/sourcehooks"
 )
 
@@ -85,6 +86,9 @@ type SandboxHook struct {
 	// both to the command.
 	RelayPort  int
 	RelayToken string
+	// workspaceDir is the folder the run writes in: describe names files
+	// there and nowhere else.
+	workspaceDir string
 	// relayNotes are what the relay has to say to the command that used it
 	// (a refusal, a sign-in to add, a reply cut at the cap), read once by
 	// relay_notes: the git stand-in prints them after git, which shows a
@@ -186,6 +190,7 @@ func NewSandboxHook(workspaceDir string, capabilities []string, sess *ToolSessio
 		Sess:         sess,
 		listener:     l,
 		closed:       make(chan struct{}),
+		workspaceDir: workspaceDir,
 	}
 	if h.RelayToken, err = randomHookToken(); err != nil {
 		l.Close()
@@ -386,8 +391,13 @@ func (h *SandboxHook) handleConn(conn net.Conn) {
 	// The relay serves two grants (relayRequest decides per request), so
 	// either opens the connection.
 	grant := h.granted(req.Method)
-	if req.Method == "relay" || req.Method == "relay_notes" {
+	switch req.Method {
+	case "relay", "relay_notes":
 		grant = h.granted("fetch") || h.granted("proxy")
+	case "describe":
+		// Naming the run's own output reaches nothing outside it: any run
+		// with a hook may.
+		grant = true
 	}
 	if !grant {
 		Log("[hook] method %q not granted; capabilities=%v", req.Method, h.Capabilities)
@@ -470,6 +480,8 @@ func (h *SandboxHook) handleConn(conn net.Conn) {
 		h.handleStorePull(conn, req.Params)
 	case "relay":
 		h.handleRelay(conn, br)
+	case "describe":
+		h.handleDescribe(conn, req.Params)
 	case "relay_notes":
 		h.relayNotesMu.Lock()
 		notes := h.relayNotes
@@ -1165,6 +1177,42 @@ func relayResponse(conn net.Conn, resp *http.Response) int64 {
 		Log("[hook/relay] reply stopped after %s: %v", HumanSize(n), err)
 	}
 	return n
+}
+
+// handleDescribe serves gohort.describe: a script names a file it made (a
+// song's title, what a picture shows), kept with the file (core/filenotes)
+// and shown wherever the agent sees it. Only a file in the run's own folder,
+// symlinks resolved, so a script cannot write notes about anything else.
+func (h *SandboxHook) handleDescribe(conn net.Conn, params map[string]interface{}) {
+	title := strings.TrimSpace(stringFromParams(params, "title"))
+	path := strings.TrimSpace(stringFromParams(params, "path"))
+	if title == "" || path == "" {
+		writeHookError(conn, "describe needs a path and a title")
+		return
+	}
+	root, err := filepath.EvalSymlinks(h.workspaceDir)
+	if err != nil || h.workspaceDir == "" {
+		writeHookError(conn, "describe: this run has no folder to name files in")
+		return
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(root, path)
+	}
+	real, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		writeHookError(conn, "describe: no such file: "+path)
+		return
+	}
+	if rel, err := filepath.Rel(root, real); err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		writeHookError(conn, "describe: only a file in this run's own folder can be named")
+		return
+	}
+	if info, err := os.Stat(real); err != nil || !info.Mode().IsRegular() {
+		writeHookError(conn, "describe: not a file: "+path)
+		return
+	}
+	filenotes.SetTitle(real, title)
+	writeHookResult(conn, map[string]interface{}{"text": filepath.Base(real) + " is " + filenotes.LineFor(real)})
 }
 
 // credentialRoute decides how a request from inside the sandbox to rawURL
@@ -1958,6 +2006,7 @@ var sandboxToolShims = []sandboxToolShim{
 	{"fetch_url", "#!/usr/bin/env python3\nimport sys\nfrom _gohort_shim import main\nraise SystemExit(main(\"fetch_url\", sys.argv[1:]))\n"},
 	{"fetch_via", "#!/usr/bin/env python3\nimport sys\nfrom _gohort_shim import main\nraise SystemExit(main(\"fetch_via\", sys.argv[1:]))\n"},
 	{"browse_page", "#!/usr/bin/env python3\nimport sys\nfrom _gohort_shim import main\nraise SystemExit(main(\"browse_page\", sys.argv[1:]))\n"},
+	{"describe_file", "#!/usr/bin/env python3\nimport sys\nfrom _gohort_shim import main\nraise SystemExit(main(\"describe_file\", sys.argv[1:]))\n"},
 	// curl and wget stand in for the real binaries on a run with no network,
 	// sending the request through the same hook (core/sandbox/curl_shim.go).
 	{"_gohort_curl.py", sandbox.CurlShim},
@@ -1986,7 +2035,7 @@ func SandboxReachableNames() map[string]bool {
 		out[strings.TrimSuffix(s.name, ".py")] = true
 	}
 	// The hook surface itself — see SandboxHookPythonShim's import forms.
-	for _, n := range []string{"fetch", "fetch_url", "fetch_via", "browse_page", "secret", "log", "gohort", "HookError"} {
+	for _, n := range []string{"fetch", "fetch_url", "fetch_via", "browse_page", "secret", "log", "describe", "gohort", "HookError"} {
 		out[n] = true
 	}
 	return out
@@ -2018,6 +2067,7 @@ _USAGE = {
     "fetch_url": "fetch_url [--credential NAME] [--method M] [--header 'K: V'] [--body DATA] URL",
     "fetch_via": "fetch_via CREDENTIAL [--method M] [--header 'K: V'] [--body DATA] URL",
     "browse_page": "browse_page URL",
+    "describe_file": "describe_file PATH TITLE...",
 }
 
 
@@ -2064,6 +2114,14 @@ def _parse(argv):
 
 def main(op, argv):
     argv = list(argv)
+    if op == "describe_file":
+        if len(argv) < 2:
+            return _die("usage: " + _USAGE["describe_file"])
+        try:
+            print(gohort.describe(argv[0], " ".join(argv[1:])))
+        except Exception as e:
+            return _die("describe_file error: %s" % e)
+        return 0
     if op == "fetch_via":
         cred = None
         if argv and not argv[0].startswith("-"):
@@ -2533,6 +2591,15 @@ class _Gohort:
         result = self._call("store_pull", {"store": str(store), "item": str(item), "replace": bool(replace)})
         return result.get("text", "") if isinstance(result, dict) else result
 
+    def describe(self, path, title):
+        """Say what a file this script made is, in a few words: a song's
+        title, what a picture shows. Kept with the file and shown wherever
+        the agent sees it (a listing, an attach), so the next turn can tell
+        it from others of a similar name. Only a file in this run's own
+        folder."""
+        result = self._call("describe", {"path": os.path.abspath(str(path)), "title": str(title)})
+        return result.get("text", "") if isinstance(result, dict) else result
+
     def log(self, msg, level="info"):
         """Route a message into gohort's log stream.
         level: debug, info, warn, error."""
@@ -2667,6 +2734,10 @@ def store_action(store, command, action, values=None):
 
 def notify(title, body=None):
     return gohort.notify(title, body=body)
+
+
+def describe(path, title):
+    return gohort.describe(path, title)
 
 
 def store_pull(store, item, replace=False):
