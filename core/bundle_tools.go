@@ -87,6 +87,7 @@ func BundleTools(ctx context.Context, owner, bundleID string) []AgentToolDef {
 				Description: "Search the bundle's log files for a REGULAR EXPRESSION (case-insensitive), with optional context lines, path filter, and time window. Your main tool: find the error text, the request id, the hostname, the stack frame. Returns matching lines with file path and line number.",
 				Parameters: map[string]ToolParam{
 					"pattern":   {Type: "string", Description: "Regular expression to find, e.g. \"connection refused\", \"scheduler.*timeout\", \"req_id=abc123\"."},
+					"patterns":  {Type: "array", Items: &ToolParam{Type: "string"}, Description: PatternsHelp},
 					"group":     {Type: "boolean", Description: "Group the matching lines by shape instead of listing them: numbers, ids, addresses and times are masked, so lines differing only in those are one shape, each returned with its count, the files and times it spans, and one example line, most frequent first and the rarest after. The first call on an unfamiliar bundle: pattern \".\" groups every line, \"error|warn|exception\" just the trouble. Context lines do not apply."},
 					"count":     {Type: "boolean", Description: "Return per-file match totals only, no lines, over every file with no match limit, busiest first. Answers how often, and in which log, which a list of hits cannot. Not with group or over_time."},
 					"per_file":  {Type: "integer", Description: fmt.Sprintf("How many hits one file may keep (default %d), so a noisy file cannot crowd out the rest. Lifted when only one file is in scope.", bundle.DefaultPerFile)},
@@ -95,27 +96,29 @@ func BundleTools(ctx context.Context, owner, bundleID string) []AgentToolDef {
 					"exclude":   {Type: "string", Description: "Optional regular expression for lines to leave out (case-insensitive): a line the pattern matched is dropped when this matches it too. The way to say \"but not\", which a pattern cannot: pattern \"error\" with exclude \"healthcheck|/status\"."},
 					"glob":      {Type: "string", Description: "Optional path filter, e.g. \"*scheduler*\" or \"var/log/*.log\". Empty searches every file."},
 					"before":    {Type: "integer", Description: "Context lines to include BEFORE each hit (default 0, max 20)."},
-					"after":     {Type: "integer", Description: "Context lines to include AFTER each hit (default 0, max 20). Use ~10 to capture a stack trace under its message."},
+					"after":     {Type: "integer", Description: "Context lines to include AFTER each hit (default 0, max 20)."},
+					"record":    {Type: "boolean", Description: RecordHelp},
 					"since":     {Type: "string", Description: "Optional earliest timestamp, e.g. \"2026-03-14\" or \"2026-03-14 02:00:00\"."},
 					"until":     {Type: "string", Description: "Optional latest timestamp, same formats as since."},
 				},
-				Required: []string{"pattern"},
 			},
 			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				if bundle.Open(owner, bundleID).FileCount() == 0 {
 					return errBundleNotLoaded, nil
 				}
 				q := bundle.Query{
-					Pattern: bundleStrArg(args, "pattern"),
-					Exclude: bundleStrArg(args, "exclude"),
-					Glob:    bundleStrArg(args, "glob"),
-					Group:   BoolArg(args, "group"),
-					Before:  clampInt(IntArg(args, "before"), 0, 20),
-					After:   clampInt(IntArg(args, "after"), 0, 20),
-					PerFile: bundle.DefaultPerFile,
+					Pattern:  bundleStrArg(args, "pattern"),
+					Patterns: bundle.PatternsArg(args["patterns"]),
+					Exclude:  bundleStrArg(args, "exclude"),
+					Glob:     bundleStrArg(args, "glob"),
+					Group:    BoolArg(args, "group"),
+					Before:   clampInt(IntArg(args, "before"), 0, 20),
+					After:    clampInt(IntArg(args, "after"), 0, 20),
+					PerFile:  bundle.DefaultPerFile,
 				}
 				q.OverTime = BoolArg(args, "over_time")
 				q.CountOnly = BoolArg(args, "count")
+				q.Records = BoolArg(args, "record")
 				if n := IntArg(args, "per_file"); n > 0 {
 					q.PerFile = n
 				}
@@ -369,6 +372,20 @@ func RenderBundleSummary(files []bundle.File) string {
 
 // renderBundleSearch prints hits, and says plainly what the search did not see.
 func renderBundleSearch(res bundle.SearchResult, q bundle.Query) string {
+	// Several patterns: a line each up top, then each one's answer as its
+	// own search's would read, the rarest first (core/bundle lanes.go).
+	if len(res.Lanes) > 1 {
+		order := bundle.LaneOrder(res.Lanes)
+		var b strings.Builder
+		b.WriteString(bundle.LanesHead(res.Lanes, order))
+		for _, i := range order {
+			lq := q
+			lq.Pattern, lq.Patterns = res.Lanes[i].Pattern, nil
+			b.WriteString(bundle.LaneSection(lq.Pattern))
+			b.WriteString(renderBundleSearch(res.Lane(i), lq))
+		}
+		return b.String()
+	}
 	if h := res.Histogram; h != nil && h.Lines+h.Undated > 0 {
 		var b strings.Builder
 		b.WriteString(h.Render(fmt.Sprintf("%q", q.Pattern), q.Bucket))
@@ -429,7 +446,7 @@ func renderBundleSearch(res bundle.SearchResult, q bundle.Query) string {
 	b.WriteString(res.Summary(res.Scanned, res.Scanned+res.Unsearched, "glob"))
 	notes(&b)
 	b.WriteString("\n")
-	withContext := q.Before > 0 || q.After > 0
+	withContext := q.Before > 0 || q.After > 0 || q.Records
 	lastPath := ""
 	for _, h := range res.Hits {
 		if withContext {
@@ -437,8 +454,12 @@ func renderBundleSearch(res bundle.SearchResult, q bundle.Query) string {
 				fmt.Fprintf(&b, "\n=== %s ===\n", h.Path)
 				lastPath = h.Path
 			}
+			above, below := bundle.RecordNotes(h.Record, "read_bundle_file")
+			b.WriteString(above)
 			b.WriteString(strings.Join(h.Context, "\n"))
-			b.WriteString("\n--\n")
+			b.WriteString("\n")
+			b.WriteString(below)
+			b.WriteString("--\n")
 			continue
 		}
 		fmt.Fprintf(&b, "%s:%d: %s\n", h.Path, h.Line, h.Text)
@@ -453,6 +474,14 @@ const (
 	OverTimeHelp = "Count the matching lines by time instead of listing them: one row per minute, hour or day with its count and a bar, from the first match to the last, empty rows in between shown as 0. Answers when something started, whether it is a spike or a trickle, and whether it stopped. Pattern, exclude and the time window still apply; context and paging do not, and it does not combine with group or count."
 	BucketHelp   = "With over_time: the size of one row, e.g. \"30s\", \"5m\", \"1h\", \"1d\". Omit it and one is chosen to fit the span in about 60 rows."
 )
+
+// RecordHelp describes the whole-record parameter, shared by every search
+// tool that offers it.
+const RecordHelp = "Return each match's whole log entry instead of a fixed number of context lines: from the timestamped line it belongs to down to the line before the next timestamp. A match on an error message comes with its whole stack trace, and a match deep in a trace (\"Caused by\", a frame) comes with the dated line it belongs to. Matches inside one entry are shown once. An entry over 100 lines either way is cut and says where. Use it for exceptions, tracebacks and wrapped messages."
+
+// PatternsHelp describes the several-patterns parameter, shared by every
+// search tool that offers it.
+const PatternsHelp = "Several regular expressions to look for in ONE pass, instead of pattern or with it, up to 8: e.g. [\"timeout\", \"connection refused\", \"out of memory\"]. Each is answered in its own section exactly as if searched alone (its own count, hits and limits), so a noisy one cannot crowd out a rare one, which a single \"a|b|c\" pattern lets happen. Every other parameter applies to each. Use it whenever you would otherwise search several times in a row."
 
 // TimelinePatternHelp and TimelineExcludeHelp describe a timeline's line
 // filters. Shared so every timeline tool (a bundle's, a file store's evidence)

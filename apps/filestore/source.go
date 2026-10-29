@@ -119,7 +119,7 @@ func (s storeSource) Fetch(ctx context.Context, user, itemID, query string) stri
 	if scope != "" {
 		where = "the most recent folder of " + st.Name + " (" + scope + ")"
 	}
-	return "Matches in " + where + ":\n" + renderMatches(res)
+	return "Matches in " + where + ":\n" + renderMatches(res, "")
 }
 
 // folderMenu is the "what is in here" answer: the store's subfolders,
@@ -351,11 +351,13 @@ func (s storeSource) itemTools(sess *ToolSession, user, itemID string) []AgentTo
 				Description: fmt.Sprintf("Search the %q file store for a pattern, returning matching lines with a few lines of context.%s This is a regular-expression search over raw lines, NOT a semantic one: search for what would literally BE in the text (an error string, an id, a stack frame, a config key), not for a description of it. Compressed .gz files are searched too. Results are capped: each file contributes at most per_file matches so one noisy file cannot crowd out the rest, and the reply says where anything was cut. To learn how OFTEN something occurs, or whether it occurs at all, use count=true: per-file totals over every file, no lines.", label, about),
 				Parameters: map[string]ToolParam{
 					"pattern":     {Type: "string", Description: "A regular expression. A plain string is a valid one. Prefer something distinctive over something common."},
+					"patterns":    {Type: "array", Items: &ToolParam{Type: "string"}, Description: PatternsHelp},
 					"exclude":     {Type: "string", Description: "Optional regular expression for lines to leave out: a line the pattern matched is dropped, not shown or counted, when this matches it too. The way to say \"but not\", which a pattern cannot: pattern \"ERROR\" with exclude \"healthcheck|/status\". Follows ignore_case."},
 					"within":      {Type: "string", Description: "Optional subfolder to search. Omit to search the whole store. Use list_" + slug + " to see what is there."},
 					"file_glob":   {Type: "string", Description: "Optional filename filter, e.g. \"*.log\" or \"catalina*\". Narrows a large tree."},
 					"ignore_case": {Type: "boolean", Description: "Match case-insensitively. Default false: use it when hunting a word, not when hunting an identifier."},
 					"context":     {Type: "number", Description: "Lines either side of each hit (0-8, default 2)."},
+					"record":      {Type: "boolean", Description: RecordHelp},
 					"since":       {Type: "string", Description: "Optional start of a time window, e.g. \"2026-08-17\" or \"2026-08-17 02:00:00\". Applied to each line's own timestamp; a line with none (a traceback line) takes the time of the last dated line above it. Use this rather than putting dates in the pattern."},
 					"until":       {Type: "string", Description: "Optional end of the time window, same formats as since."},
 					"over_time":   {Type: "boolean", Description: OverTimeHelp},
@@ -364,8 +366,7 @@ func (s storeSource) itemTools(sess *ToolSession, user, itemID string) []AgentTo
 					"count":       {Type: "boolean", Description: "Return per-file match totals only, no lines, over every file with no match cap. The cheap way to answer how often, or whether at all."},
 					"per_file":    {Type: "number", Description: fmt.Sprintf("How many matches one file may keep (default %d), so a noisy file cannot crowd out the rest. Lifted automatically when only one file is searched.", defaultPerFile)},
 				},
-				Required: []string{"pattern"},
-				Caps:     []Capability{CapRead},
+				Caps: []Capability{CapRead},
 			},
 			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				dir, err := SubRoot(st.Path, stringArg(args, "within"))
@@ -378,6 +379,7 @@ func (s storeSource) itemTools(sess *ToolSession, user, itemID string) []AgentTo
 				}
 				opts := SearchOpts{
 					Pattern:    stringArg(args, "pattern"),
+					Patterns:   bundle.PatternsArg(args["patterns"]),
 					Exclude:    stringArg(args, "exclude"),
 					Glob:       stringArg(args, "file_glob"),
 					IgnoreCase: boolArg(args, "ignore_case"),
@@ -385,6 +387,7 @@ func (s storeSource) itemTools(sess *ToolSession, user, itemID string) []AgentTo
 					CountOnly:  boolArg(args, "count"),
 					Group:      boolArg(args, "group"),
 					OverTime:   boolArg(args, "over_time"),
+					Records:    boolArg(args, "record"),
 					PerFile:    defaultPerFile,
 				}
 				if n, ok := numArg(args, "per_file"); ok && n > 0 {
@@ -403,7 +406,7 @@ func (s storeSource) itemTools(sess *ToolSession, user, itemID string) []AgentTo
 				if err != nil {
 					return "", err
 				}
-				return searchReply(res, opts), nil
+				return searchReply(res, opts, "read_"+slug), nil
 			},
 		},
 		{
@@ -466,7 +469,26 @@ const defaultPerFile = bundle.DefaultPerFile
 // for, paged: a reply longer than a page is kept and arrives as its first
 // page, and read_output reads on or greps within it without searching again
 // (core paged_output.go). The search keeps up to maxMatches for exactly that.
-func searchReply(res SearchResult, opts SearchOpts) string {
+func searchReply(res SearchResult, opts SearchOpts, readTool string) string {
+	return SpillOutput(searchText(res, opts, readTool), bundle.SearchPageChars, "read_output")
+}
+
+// searchText is searchReply before paging. Several patterns get a line each up
+// top, then each one's answer as its own search's would read, the rarest first
+// (core/bundle lanes.go).
+func searchText(res SearchResult, opts SearchOpts, readTool string) string {
+	if len(res.Lanes) > 1 {
+		order := bundle.LaneOrder(res.Lanes)
+		var b strings.Builder
+		b.WriteString(bundle.LanesHead(res.Lanes, order))
+		for _, i := range order {
+			lo := opts
+			lo.Pattern, lo.Patterns = res.Lanes[i].Pattern, nil
+			b.WriteString(bundle.LaneSection(lo.Pattern))
+			b.WriteString(searchText(res.Lane(i), lo, readTool))
+		}
+		return b.String()
+	}
 	var out string
 	switch {
 	case opts.CountOnly:
@@ -478,9 +500,9 @@ func searchReply(res SearchResult, opts SearchOpts) string {
 	case len(res.Matches) == 0:
 		out = renderNoMatches(res)
 	default:
-		out = renderMatches(res)
+		out = renderMatches(res, readTool)
 	}
-	return SpillOutput(out, bundle.SearchPageChars, "read_output")
+	return out
 }
 
 // renderCounts is the count-only answer: per-file totals, busiest first.
@@ -593,7 +615,7 @@ func renderGaps(res SearchResult) string {
 
 // renderMatches formats hits for a model: grouped by file, line-numbered,
 // and explicit about truncation.
-func renderMatches(res SearchResult) string {
+func renderMatches(res SearchResult, readTool string) string {
 	var b strings.Builder
 	// Everything that qualifies the matches comes first: a long reply
 	// arrives as its first page, and these must be on it.
@@ -622,6 +644,8 @@ func renderMatches(res SearchResult) string {
 			file = m.File
 			fmt.Fprintf(&b, "\n%s:\n", file)
 		}
+		above, below := bundle.RecordNotes(m.Record, readTool)
+		b.WriteString(indentNote(above))
 		for i, before := range m.Before {
 			fmt.Fprintf(&b, "  %d- %s\n", m.Line-len(m.Before)+i, before)
 		}
@@ -629,8 +653,17 @@ func renderMatches(res SearchResult) string {
 		for i, after := range m.After {
 			fmt.Fprintf(&b, "  %d- %s\n", m.Line+i+1, after)
 		}
+		b.WriteString(indentNote(below))
 	}
 	return b.String()
+}
+
+// indentNote sets a note under a file's matches at their indent.
+func indentNote(note string) string {
+	if note == "" {
+		return ""
+	}
+	return "  " + strings.ReplaceAll(strings.TrimSuffix(note, "\n"), "\n", "\n  ") + "\n"
 }
 
 // regexpQuote escapes a free-text query so the generic Fetch path treats

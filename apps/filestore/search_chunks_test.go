@@ -23,37 +23,7 @@ import (
 // hold no line of their own, up, on four workers, against whole files read on
 // one, in every mode.
 func TestChunkedFilesGiveTheWholeFileAnswer(t *testing.T) {
-	root := t.TempDir()
-	write := func(name, body string, gz bool) {
-		data := []byte(body)
-		if gz {
-			var b bytes.Buffer
-			zw := gzip.NewWriter(&b)
-			zw.Write(data)
-			zw.Close()
-			data = b.Bytes()
-		}
-		if err := os.WriteFile(filepath.Join(root, name), data, 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for f := 0; f < 3; f++ {
-		var b strings.Builder
-		for i := 0; i < 60+f*25; i++ {
-			fmt.Fprintf(&b, "2026-10-27T%02d:%02d:00Z %s request %d\n", 6+i/20, i%60, []string{"INFO", "ERROR", "WARN"}[(i+f)%3], i)
-			switch i % 7 {
-			case 2: // a traceback: undated lines that belong to the line above
-				fmt.Fprintf(&b, "Traceback (most recent call last):\n  at frame %d\nOperationalError: gone away %d\n", i, i)
-			case 4:
-				fmt.Fprintf(&b, "ERROR %s tail %d\n", strings.Repeat("x", 90), i) // longer than a small chunk
-			case 5:
-				b.WriteString("\n")
-			}
-		}
-		write(fmt.Sprintf("app-%d.log", f), b.String(), false)
-	}
-	write("rotated.log.gz", "2026-10-27T05:00:00Z ERROR in a gz\nOperationalError: gone away gz\n", true)
-
+	root := chunkEdgesFolder(t)
 	prevW, prevC := bundle.SearchWorkers, chunkBytes
 	defer func() { bundle.SearchWorkers, chunkBytes = prevW, prevC }()
 	run := func(workers int, size int64, opts SearchOpts) SearchResult {
@@ -165,5 +135,103 @@ func BenchmarkSearchOneLargeFile(b *testing.B) {
 				}
 			}
 		})
+	}
+}
+
+// chunkEdgesFolder is a folder built for the edges of chunked reading (see
+// TestChunkedFilesGiveTheWholeFileAnswer).
+func chunkEdgesFolder(t *testing.T) string {
+	root := t.TempDir()
+	write := func(name, body string, gz bool) {
+		data := []byte(body)
+		if gz {
+			var b bytes.Buffer
+			zw := gzip.NewWriter(&b)
+			zw.Write(data)
+			zw.Close()
+			data = b.Bytes()
+		}
+		if err := os.WriteFile(filepath.Join(root, name), data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for f := 0; f < 3; f++ {
+		var b strings.Builder
+		for i := 0; i < 60+f*25; i++ {
+			fmt.Fprintf(&b, "2026-10-27T%02d:%02d:00Z %s request %d\n", 6+i/20, i%60, []string{"INFO", "ERROR", "WARN"}[(i+f)%3], i)
+			switch i % 7 {
+			case 2: // a traceback: undated lines that belong to the line above
+				fmt.Fprintf(&b, "Traceback (most recent call last):\n  at frame %d\nOperationalError: gone away %d\n", i, i)
+			case 4:
+				fmt.Fprintf(&b, "ERROR %s tail %d\n", strings.Repeat("x", 90), i) // longer than a small chunk
+			case 5:
+				b.WriteString("\n")
+			}
+		}
+		write(fmt.Sprintf("app-%d.log", f), b.String(), false)
+	}
+	write("rotated.log.gz", "2026-10-27T05:00:00Z ERROR in a gz\nOperationalError: gone away gz\n", true)
+	return root
+}
+
+// A search of several patterns answers each as if it had been searched alone,
+// in every mode and across chunk edges: the held lines of a windowed chunk
+// are kept or dropped per pattern, a match two patterns share is shown in
+// both, and each keeps its own share. Searched together in chunks on four
+// workers, against each alone read whole on one.
+func TestSeveralPatternsAnswerAsEachAlone(t *testing.T) {
+	root := chunkEdgesFolder(t)
+	prevW, prevC := bundle.SearchWorkers, chunkBytes
+	defer func() { bundle.SearchWorkers, chunkBytes = prevW, prevC }()
+	patterns := []string{"error", "gone away", "frame|traceback", "no such thing"}
+	since := time.Date(2026, 10, 27, 7, 0, 0, 0, time.UTC)
+	until := time.Date(2026, 10, 27, 8, 30, 0, 0, time.UTC)
+	cases := map[string]SearchOpts{
+		"context":      {IgnoreCase: true, Context: 2},
+		"shares":       {IgnoreCase: true, PerFile: 4, Context: 1},
+		"exclude":      {IgnoreCase: true, Exclude: "tail"},
+		"count":        {IgnoreCase: true, CountOnly: true},
+		"group":        {IgnoreCase: true, Group: true},
+		"over-time":    {IgnoreCase: true, OverTime: true, Bucket: 10 * time.Minute},
+		"window":       {IgnoreCase: true, Since: since, Until: until, Context: 2},
+		"window-group": {IgnoreCase: true, Since: since, Until: until, Group: true},
+		"window-time":  {IgnoreCase: true, Since: since, OverTime: true, Bucket: 10 * time.Minute},
+	}
+	for name, opts := range cases {
+		for _, size := range []int64{1, 37, 1 << 40} {
+			bundle.SearchWorkers, chunkBytes = 4, size
+			mo := opts
+			mo.Pattern, mo.Patterns = patterns[0], patterns[1:]
+			multi, err := Search(context.Background(), root, mo)
+			if err != nil || len(multi.Lanes) != len(patterns) {
+				t.Fatalf("%s: %d lanes, %v", name, len(multi.Lanes), err)
+			}
+			bundle.SearchWorkers, chunkBytes = 1, 1<<40
+			for l, p := range patterns {
+				ao := opts
+				ao.Pattern = p
+				alone, err := Search(context.Background(), root, ao)
+				if err != nil {
+					t.Fatal(err)
+				}
+				got := multi.Lane(l)
+				label := fmt.Sprintf("%s, %q, chunks of %d", name, p, size)
+				if !reflect.DeepEqual(alone.Matches, got.Matches) {
+					t.Errorf("%s: matches differ: %d alone, %d together", label, len(alone.Matches), len(got.Matches))
+				}
+				if !reflect.DeepEqual(alone.Budget, got.Budget) || alone.Excluded != got.Excluded || alone.Scanned != got.Scanned || alone.Untimed != got.Untimed {
+					t.Errorf("%s: counts differ:\nalone    %+v excluded %d\ntogether %+v excluded %d", label, alone.Budget, alone.Excluded, got.Budget, got.Excluded)
+				}
+				if opts.Group && !reflect.DeepEqual(alone.Groups.Sorted(), got.Groups.Sorted()) {
+					t.Errorf("%s: groups differ", label)
+				}
+				if opts.OverTime && alone.Histogram.Render("x", opts.Bucket) != got.Histogram.Render("x", opts.Bucket) {
+					t.Errorf("%s: rows over time differ", label)
+				}
+			}
+			if multi.Lanes[0].Total == 0 || multi.Lanes[1].Total == 0 || multi.Lanes[3].Total != 0 {
+				t.Errorf("%s: lane totals %d/%d/%d/%d", name, multi.Lanes[0].Total, multi.Lanes[1].Total, multi.Lanes[2].Total, multi.Lanes[3].Total)
+			}
+		}
 	}
 }

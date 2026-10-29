@@ -153,3 +153,70 @@ func TestSearchBundlePagesThroughReadOutput(t *testing.T) {
 		t.Errorf("grep within the kept reply should reach hit 800: %v\n%s", err, found)
 	}
 }
+
+// A search of several patterns heads its reply with a line per pattern and
+// gives the rarest pattern's section first, so a rare hit is on the first page
+// however many the noisy pattern brings; a pattern with none says so.
+func TestSearchBundleSeveralPatternsReply(t *testing.T) {
+	var noisy []bundle.Hit
+	for i := 1; i <= 900; i++ {
+		noisy = append(noisy, bundle.Hit{Path: "app.log", Line: i, Text: fmt.Sprintf("ERROR request %d timed out", i)})
+	}
+	res := bundle.SearchResult{Scanned: 3, Lanes: []bundle.Lane[bundle.Hit]{
+		{Pattern: "timeout", Hits: noisy},
+		{Pattern: "oom", Hits: []bundle.Hit{{Path: "kern.log", Line: 77, Text: "oom-killer invoked"}}},
+		{Pattern: "refused", Excluded: 4},
+	}}
+	res.Lanes[0].Max, res.Lanes[0].Kept, res.Lanes[0].Total = 1000, 900, 900
+	res.Lanes[0].Tallies = []bundle.FileTally{{File: "app.log", Matches: 900, Kept: 900}}
+	res.Lanes[1].Max, res.Lanes[1].Kept, res.Lanes[1].Total = 1000, 1, 1
+	res.Lanes[1].Tallies = []bundle.FileTally{{File: "kern.log", Matches: 1, Kept: 1}}
+	reply := SpillOutput(renderBundleSearch(res, bundle.Query{Patterns: []string{"timeout", "oom", "refused"}}), bundle.SearchPageChars, "read_output")
+	for _, want := range []string{
+		"3 patterns searched in one pass",
+		`"timeout": 900 match(es) in 1 file(s)`,
+		`"refused": no matches (4 more left out by exclude)`,
+		"kern.log:77: oom-killer invoked",
+		`No matches for "refused"`,
+	} {
+		if !strings.Contains(reply, want) {
+			t.Errorf("first page is missing %q:\n%.1500s", want, reply)
+		}
+	}
+	if strings.Index(reply, `pattern "oom"`) > strings.Index(reply, `pattern "timeout"`) {
+		t.Errorf("the rare pattern's section should come before the noisy one's:\n%.1500s", reply)
+	}
+}
+
+// A record in a search_bundle reply says where it was cut and which other
+// matches it holds, so a cut record reads as part of an entry, not the whole.
+func TestSearchBundleRecordNotes(t *testing.T) {
+	res := bundle.SearchResult{Scanned: 1, Hits: []bundle.Hit{{
+		Path: "app.log", Line: 120, Text: "Caused by: reset",
+		Context: []string{"20: \tat a.b(C.java:1)", "120: Caused by: reset", "220: \tat x.y(Z.java:9)"},
+		Record:  &bundle.RecordView{First: 20, Last: 220, HeadCut: true, TailCut: true, AlsoAt: []int{130}},
+	}}}
+	res.Max, res.Kept, res.Total = 1000, 2, 2
+	out := renderBundleSearch(res, bundle.Query{Pattern: "caused by", Records: true})
+	for _, want := range []string{
+		"read with read_bundle_file before line 20",
+		"goes on past line 220",
+		"also matched inside this record at line(s) 130",
+		"120: Caused by: reset",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("reply is missing %q:\n%s", want, out)
+		}
+	}
+	params := map[string]bool{}
+	for _, td := range BundleTools(context.Background(), "u1", "b1") {
+		if td.Tool.Name == "search_bundle" {
+			for p := range td.Tool.Parameters {
+				params[p] = true
+			}
+		}
+	}
+	if !params["record"] || !params["patterns"] {
+		t.Errorf("search_bundle should offer record and patterns: %v", params)
+	}
+}

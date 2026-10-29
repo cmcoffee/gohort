@@ -316,14 +316,18 @@ func chunksOf(files []File) []chunk {
 // an empty query field means "no restriction on this axis".
 type Query struct {
 	Pattern string // regular expression
-	Exclude string // optional regular expression: a line Pattern matched is dropped if this matches it too
-	Glob    string // path filter, shell-style (path.Match), matched against the full path
-	Before  int    // context lines before each hit
-	After   int    // context lines after each hit
-	Since   time.Time
-	Until   time.Time
-	MaxHits int // hits kept; MaxSearchHits when unset
-	PerFile int // one file's share of MaxHits; 0 for none
+	// Patterns are further patterns looked for in the same pass (lanes.go):
+	// each answered as if searched alone, in SearchResult.Lanes. Pattern,
+	// when set, is the first of them.
+	Patterns []string
+	Exclude  string // optional regular expression: a line Pattern matched is dropped if this matches it too
+	Glob     string // path filter, shell-style (path.Match), matched against the full path
+	Before   int    // context lines before each hit
+	After    int    // context lines after each hit
+	Since    time.Time
+	Until    time.Time
+	MaxHits  int // hits kept; MaxSearchHits when unset
+	PerFile  int // one file's share of MaxHits; 0 for none
 	// CountOnly counts every match per file and keeps none: how often, and
 	// where, over the whole bundle.
 	CountOnly bool
@@ -336,7 +340,16 @@ type Query struct {
 	// size of one row; zero chooses one from the span.
 	OverTime bool
 	Bucket   time.Duration
+	// Records gives each kept hit its whole log record instead of Before and
+	// After lines (records.go): from the dated line it belongs to down to the
+	// next. Before and After still apply in a file with no timestamps, where
+	// records cannot be told apart, and default to RecordFallback there.
+	Records bool
 }
+
+// RecordFallback is the context lines either side of a hit asked for with its
+// record, in a file whose records cannot be found.
+const RecordFallback = 3
 
 // Hit is one matching line plus its requested context.
 type Hit struct {
@@ -344,6 +357,9 @@ type Hit struct {
 	Line    int
 	Text    string
 	Context []string // rendered "N: text", including the hit line itself
+	// Record says how Context was drawn when the query asked for records;
+	// nil otherwise.
+	Record *RecordView
 }
 
 // SearchResult carries the hits plus what the search had to leave out, so
@@ -371,6 +387,23 @@ type SearchResult struct {
 	// Histogram holds the matches by time when the query asked for
 	// OverTime; nil otherwise.
 	Histogram *Histogram
+	// Lanes is each pattern's answer when the query looked for several, in
+	// the order given (Lane gives one as a search of its own). Nil for one
+	// pattern, whose answer is the fields above; for several, those hold
+	// only what the patterns share (Scanned, Skipped, TimeUnknown).
+	Lanes []Lane[Hit]
+}
+
+// Lane is lane i of a search of several patterns as the result a search for
+// that pattern alone would have returned.
+func (r SearchResult) Lane(i int) SearchResult {
+	ln := r.Lanes[i]
+	out := r
+	out.Lanes = nil
+	out.Budget, out.Hits, out.Excluded = ln.Budget, ln.Hits, ln.Excluded
+	out.Groups, out.Histogram = ln.Groups, ln.Histogram
+	out.Truncated = ln.Cut()
+	return out
 }
 
 // Search runs a regex across the bundle's files with optional path, time,
@@ -393,18 +426,13 @@ func (b Bundle) Search(ctx context.Context, q Query) (SearchResult, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if strings.TrimSpace(q.Pattern) == "" {
-		return res, fmt.Errorf("pattern is required")
-	}
-	re, err := CompileMatcher("(?i)" + q.Pattern)
+	patterns, err := Patterns(q.Pattern, q.Patterns)
 	if err != nil {
-		return res, fmt.Errorf("pattern %q is not a valid regular expression: %w", q.Pattern, err)
+		return res, err
 	}
-	f := Filter{Match: re}
-	if strings.TrimSpace(q.Exclude) != "" {
-		if f.Exclude, err = CompileMatcher("(?i)" + q.Exclude); err != nil {
-			return res, fmt.Errorf("exclude %q is not a valid regular expression: %w", q.Exclude, err)
-		}
+	f, err := NewFilter(patterns, q.Exclude, "(?i)")
+	if err != nil {
+		return res, err
 	}
 	store := b.store()
 	if store == nil {
@@ -421,12 +449,6 @@ func (b Bundle) Search(ctx context.Context, q Query) (SearchResult, error) {
 	}
 	if modes > 1 {
 		return res, fmt.Errorf("count, group and over_time are different answers: count says how often a pattern occurs per file, group what kinds of lines there are, over_time when the matching ones happened. Ask for one")
-	}
-	if q.Group {
-		res.Groups = NewGrouper()
-	}
-	if q.OverTime {
-		res.Histogram = NewHistogram()
 	}
 	// The files the path filter and the window leave in, settled before any
 	// is read: the share needs to know how many there are, and the scan works
@@ -454,23 +476,41 @@ func (b Bundle) Search(ctx context.Context, q Query) (SearchResult, error) {
 		}
 		todo = append(todo, bf)
 	}
-	budget := &res.Budget
-	budget.Max, budget.PerFile = q.MaxHits, q.PerFile
-	// The share exists to divide the limit between files; with one file in
-	// scope there is nobody to divide it with.
-	if len(todo) <= 1 {
-		budget.PerFile = 0
+	// One lane per pattern, each with the limits a search for it alone
+	// would have (lanes.go).
+	lanes := make([]Lane[Hit], len(patterns))
+	for l := range lanes {
+		ln := &lanes[l]
+		ln.Pattern = patterns[l]
+		ln.Max, ln.PerFile = q.MaxHits, q.PerFile
+		// The share exists to divide the limit between files; with one
+		// file in scope there is nobody to divide it with.
+		if len(todo) <= 1 {
+			ln.PerFile = 0
+		}
+		// A whole-bundle answer counts every match and keeps none.
+		if modes == 1 {
+			ln.Max, ln.PerFile = 0, 0
+		}
+		if q.Group {
+			ln.Groups = NewGrouper()
+		}
+		if q.OverTime {
+			ln.Histogram = NewHistogram()
+		}
 	}
-	// A whole-bundle answer counts every match and keeps none.
-	if modes == 1 {
-		q.Before, q.After = 0, 0
-		budget.Max, budget.PerFile = 0, 0
+	switch {
+	case modes == 1:
+		q.Before, q.After, q.Records = 0, 0, false
+	case q.Records && q.Before == 0 && q.After == 0:
+		q.Before, q.After = RecordFallback, RecordFallback
 	}
-	fs := fileSearch{store: store, f: f, q: q, windowed: windowed, offer: budget.Offer()}
+	fs := fileSearch{store: store, f: f, q: q, windowed: windowed, offer: lanes[0].Offer()}
 	// Several chunks at once, of several files or of one large one, merged in
-	// order (parallel.go). A file's chunks add up to the file: its hits up to
-	// its offer, its total, and then the budget decides what of it is kept,
-	// at its last chunk, as it did for a file read whole.
+	// order (parallel.go). A file's chunks add up to the file: each lane's
+	// hits up to its offer, its total, and then the lane's budget decides
+	// what of it is kept, at the file's last chunk, as it did for a file
+	// read whole.
 	chunks := chunksOf(todo)
 	var cur fileHits
 	EachInOrder(ctx, len(chunks),
@@ -483,40 +523,119 @@ func (b Bundle) Search(ctx context.Context, q Query) (SearchResult, error) {
 			if c.first {
 				// Kept all it may: the files not yet opened are counted, so
 				// the reply can say they were never searched.
-				if budget.Full() {
-					budget.Unsearched = len(todo) - c.file
+				if AllFull(lanes) {
+					for l := range lanes {
+						lanes[l].Unsearched = len(todo) - c.file
+					}
 					return false
 				}
 				if ctx.Err() != nil {
 					return false
 				}
 				res.Scanned++
-				cur = fileHits{}
+				cur = fileHits{lanes: make([]laneHits, len(lanes)), offered: make([]int, len(lanes))}
 			}
-			cur.total += r.total
-			if room := fs.offer - len(cur.hits); room > 0 {
-				if len(r.hits) > room {
-					r.hits = r.hits[:room]
+			for l, rl := range r.lanes {
+				cur.lanes[l].total += rl.total
+				lanes[l].Excluded += rl.excluded
+				lanes[l].Groups.Merge(rl.groups)
+				lanes[l].Histogram.Merge(rl.hist)
+			}
+			for j, h := range r.hits {
+				if m := TakeLanes(cur.offered, r.masks[j], fs.offer); m != 0 {
+					cur.hits = append(cur.hits, h)
+					cur.masks = append(cur.masks, m)
 				}
-				cur.hits = append(cur.hits, r.hits...)
 			}
-			res.Excluded += r.excluded
-			res.Groups.Merge(r.groups)
-			res.Histogram.Merge(r.hist)
 			if c.last {
-				kept := budget.File(todo[c.file].Path, cur.total, len(cur.hits))
-				res.Hits = append(res.Hits, cur.hits[:kept]...)
+				for l := range lanes {
+					kept := lanes[l].File(todo[c.file].Path, cur.lanes[l].total, cur.offered[l])
+					lanes[l].Hits = append(lanes[l].Hits, LaneItems(cur.hits, cur.masks, l, kept)...)
+				}
 			}
 			return true
 		})
 	if err := ctx.Err(); err != nil {
 		return res, err
 	}
-	if q.CountOnly {
-		sort.SliceStable(res.Tallies, func(i, j int) bool { return res.Tallies[i].Matches > res.Tallies[j].Matches })
+	if q.Records {
+		b.records(ctx, store, lanes)
+		if err := ctx.Err(); err != nil {
+			return res, err
+		}
 	}
-	res.Truncated = res.Cut()
+	for l := range lanes {
+		if q.CountOnly {
+			t := lanes[l].Tallies
+			sort.SliceStable(t, func(i, j int) bool { return t[i].Matches > t[j].Matches })
+		}
+		res.Truncated = res.Truncated || lanes[l].Cut()
+	}
+	res.Lanes = lanes
+	if len(lanes) == 1 {
+		res = res.Lane(0)
+	}
 	return res, nil
+}
+
+// records gives every lane's kept hits their whole records (records.go),
+// decrypting only the slices around them: a hit's RecordLines either side.
+// Several lanes' hits in one file are found in one reading of it.
+func (b Bundle) records(ctx context.Context, store Store, lanes []Lane[Hit]) {
+	targets, order := RecordTargets(lanes, func(h Hit) string { return h.Path }, func(h Hit) int { return h.Line })
+	index := map[string]File{}
+	for _, bf := range b.Index() {
+		index[bf.Path] = bf
+	}
+	found := map[string]map[int]*Record{}
+	for _, p := range order {
+		if ctx.Err() != nil {
+			return
+		}
+		bf := index[p]
+		if _, _, known := FileSpan(bf); !known {
+			continue // no timestamps: no record can be told from the next
+		}
+		year := fileYear(bf)
+		f := NewRecordFinder(targets[p],
+			func(s string) bool { _, ok := ParseTime(bf.Format, year, s); return ok },
+			// Copied: the line is a piece of its whole decrypted slice.
+			func(s string) string { return strings.Clone(strings.TrimRight(s, "\r")) })
+		slices := map[int][]string{}
+		for _, sp := range RecordSpans(targets[p]) {
+			for n := sp[0]; n <= sp[1] && n <= bf.Lines; n++ {
+				si := (n - 1) / SliceLines
+				lines, ok := slices[si]
+				if !ok {
+					lines = sliceLinesAt(store, bf, si)
+					slices[si] = lines
+				}
+				if j := (n - 1) % SliceLines; j < len(lines) {
+					f.Line(n, lines[j])
+				}
+			}
+		}
+		found[p] = f.Records()
+	}
+	for l := range lanes {
+		lanes[l].Hits = FoldRecords(lanes[l].Hits,
+			func(h Hit) (*Record, bool) {
+				recs, dated := found[h.Path]
+				return recs[h.Line], dated
+			},
+			func(h *Hit, r *Record, v *RecordView) {
+				h.Record = v
+				if r == nil {
+					return
+				}
+				h.Context = make([]string, len(r.Lines))
+				for i, line := range r.Lines {
+					h.Context[i] = numberLine(r.Start+i, line)
+				}
+			},
+			func(h *Hit) *RecordView { return h.Record },
+			func(h Hit) int { return h.Line })
+	}
 }
 
 // fileSearch is what one file's scan needs from its search: the store, the
@@ -530,10 +649,20 @@ type fileSearch struct {
 	offer    int
 }
 
-// fileHits is one file's part of a search, before the merge decides how much
-// of it the search keeps.
+// fileHits is one file's part of a search, or one chunk's, before the merge
+// decides how much of it the search keeps.
 type fileHits struct {
-	hits            []Hit // the first offer matches, in order, with context
+	// hits are each lane's first offer matches, in order, with context:
+	// kept once however many lanes they are offered to, masks[i] saying
+	// which (lanes.go).
+	hits    []Hit
+	masks   []uint32
+	lanes   []laneHits
+	offered []int // per lane, hits offered so far: the merge's count for a whole file
+}
+
+// laneHits is one pattern's part of a file's search.
+type laneHits struct {
 	total, excluded int
 	groups          *Grouper   // when the query groups
 	hist            *Histogram // when it counts over time
@@ -550,12 +679,14 @@ type fileHits struct {
 // addressing a stale backing array the moment append reallocates — trailing
 // context would then be written to a copy nobody reads.
 func (s fileSearch) scan(ctx context.Context, bf File, from, to int) fileHits {
-	var r fileHits
-	if s.q.Group {
-		r.groups = NewGrouper()
-	}
-	if s.q.OverTime {
-		r.hist = NewHistogram()
+	r := fileHits{lanes: make([]laneHits, s.f.Lanes()), offered: make([]int, s.f.Lanes())}
+	for l := range r.lanes {
+		if s.q.Group {
+			r.lanes[l].groups = NewGrouper()
+		}
+		if s.q.OverTime {
+			r.lanes[l].hist = NewHistogram()
+		}
 	}
 	q := s.q
 	type owed struct{ idx, remaining int }
@@ -607,32 +738,43 @@ func (s fileSearch) scan(ctx context.Context, bf File, from, to int) fileHits {
 			pending = kept
 		}
 
-		match := s.f.Match.MatchString(text) && (!s.windowed || LineInWindow(bf.Format, year, text, q.Since, q.Until))
+		mask := s.f.WhichString(text)
+		if mask != 0 && s.windowed && !LineInWindow(bf.Format, year, text, q.Since, q.Until) {
+			mask = 0
+		}
 		// Exclusion is tested last, on lines already in, so excluded counts
 		// only what the search would otherwise have shown.
-		if match && s.f.ExcludesString(text) {
-			r.excluded++
-			match = false
+		if mask != 0 && s.f.ExcludesString(text) {
+			for l := range r.lanes {
+				if mask&(1<<l) != 0 {
+					r.lanes[l].excluded++
+				}
+			}
+			mask = 0
 		}
-		if match {
-			r.total++
-			switch {
+		if mask != 0 {
 			// A grouped search files the line under its shape, and an
 			// over-time one under its time; neither keeps a hit. Dated from
 			// the line itself, when the file's format carries times at all:
 			// a line with none is counted as undated, never placed at a
 			// guessed time.
-			case r.groups != nil || r.hist != nil:
-				var when time.Time
-				if bf.Format != FormatText {
-					when, _ = ParseTime(bf.Format, year, text)
+			var when time.Time
+			if (q.Group || q.OverTime) && bf.Format != FormatText {
+				when, _ = ParseTime(bf.Format, year, text)
+			}
+			for l := range r.lanes {
+				if mask&(1<<l) == 0 {
+					continue
 				}
-				if r.groups != nil {
-					r.groups.Add(bf.Path, n, strings.TrimRight(text, "\r"), when)
-				} else {
-					r.hist.Add(when)
+				ln := &r.lanes[l]
+				ln.total++
+				if ln.groups != nil {
+					ln.groups.Add(bf.Path, n, strings.TrimRight(text, "\r"), when)
+				} else if ln.hist != nil {
+					ln.hist.Add(when)
 				}
-			case len(r.hits) < s.offer:
+			}
+			if offered := TakeLanes(r.offered, mask, s.offer); offered != 0 {
 				// Copied, not sliced: the line is a piece of its whole
 				// decrypted slice, and a kept hit holding the piece would hold
 				// the slice for as long as the reply lives.
@@ -645,6 +787,7 @@ func (s fileSearch) scan(ctx context.Context, bf File, from, to int) fileHits {
 					hit.Context = append(hit.Context, numberLine(n, text))
 				}
 				r.hits = append(r.hits, hit)
+				r.masks = append(r.masks, offered)
 				if q.After > 0 {
 					pending = append(pending, owed{idx: len(r.hits) - 1, remaining: q.After})
 				}

@@ -63,7 +63,7 @@ func TestANoisyFileCannotStarveTheOthers(t *testing.T) {
 	if len(res.CutInFiles) != 1 || res.CutInFiles[0].File != "noisy.log" || res.CutInFiles[0].Matches != 300 {
 		t.Errorf("the cut should be named, with the file's full count: %+v", res.CutInFiles)
 	}
-	out := renderMatches(res)
+	out := renderMatches(res, "read_logs")
 	if !strings.Contains(out, "Cut WITHIN files") || !strings.Contains(out, fmt.Sprintf("noisy.log (%d of 300)", defaultPerFile)) ||
 		!strings.Contains(out, fmt.Sprintf("per_file=%d", defaultPerFile)) {
 		t.Errorf("the reply should state the limit and where it cut:\n%s", out)
@@ -116,7 +116,7 @@ func TestALongReplyPagesThroughReadOutput(t *testing.T) {
 	writeLog(t, dir, "app.log", b.String(), time.Minute)
 	opts := SearchOpts{Pattern: "ERROR", Context: 1}
 	res, _ := Search(context.Background(), dir, opts)
-	reply := searchReply(res, opts)
+	reply := searchReply(res, opts, "read_logs")
 	if !strings.HasPrefix(reply, fmt.Sprintf("Showing %d of 1200 matches", maxMatches)) {
 		t.Fatalf("the first page should open with the summary:\n%.300s", reply)
 	}
@@ -147,7 +147,7 @@ func TestACutAcrossFilesSaysWhatWasNotSearched(t *testing.T) {
 	if res.Unsearched == 0 {
 		t.Fatalf("the global cap should leave files unsearched, and say how many: %+v", res)
 	}
-	if out := renderMatches(res); !strings.Contains(out, "Cut ACROSS files") || !strings.Contains(out, "count=true") {
+	if out := renderMatches(res, "read_logs"); !strings.Contains(out, "Cut ACROSS files") || !strings.Contains(out, "count=true") {
 		t.Errorf("reply:\n%s", out)
 	}
 }
@@ -200,5 +200,42 @@ func TestTheListingShowsWhatPeriodEachFileCovers(t *testing.T) {
 	}
 	if spans["notes.txt"] != ", no timestamps" {
 		t.Errorf("notes.txt span = %q", spans["notes.txt"])
+	}
+}
+
+// A search of several patterns heads its reply with a line per pattern, then
+// gives each its own section, the rarest first: a rare pattern's matches are
+// on the first page however many the noisy one brings.
+func TestSeveralPatternsReplyRarestFirst(t *testing.T) {
+	dir := t.TempDir()
+	var b strings.Builder
+	for i := 0; i < 900; i++ {
+		fmt.Fprintf(&b, "2026-10-27T06:%02d:%02dZ ERROR request %d timed out upstream\n", i/60%60, i%60, i)
+		if i == 850 {
+			b.WriteString("2026-10-27T06:59:00Z kernel: oom-killer invoked\n")
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "app.log"), []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	opts := SearchOpts{Patterns: []string{"timed out", "oom-killer", "refused"}, Context: 1, PerFile: defaultPerFile}
+	res, err := Search(context.Background(), dir, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reply := searchReply(res, opts, "read_logs")
+	for _, want := range []string{
+		"3 patterns searched in one pass",
+		`"timed out": 900 match(es) in 1 file(s)`,
+		`"refused": no matches`,
+		"852> 2026-10-27T06:59:00Z kernel: oom-killer invoked",
+		"900 match(es) in 1 file(s), of 1 searched", // the noisy pattern's own summary: its share is lifted for one file
+	} {
+		if !strings.Contains(reply, want) {
+			t.Errorf("first page is missing %q:\n%.2000s", want, reply)
+		}
+	}
+	if strings.Index(reply, `pattern "oom-killer"`) > strings.Index(reply, `pattern "timed out"`) {
+		t.Errorf("the rare pattern's section should come first:\n%.2000s", reply)
 	}
 }

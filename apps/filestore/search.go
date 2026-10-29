@@ -89,11 +89,18 @@ type Match struct {
 	Text   string   `json:"text"`
 	Before []string `json:"before,omitempty"`
 	After  []string `json:"after,omitempty"`
+	// Record says how Before and After were drawn when the search asked for
+	// records; nil otherwise.
+	Record *bundle.RecordView `json:"record,omitempty"`
 }
 
 // SearchOpts is what a caller may vary.
 type SearchOpts struct {
-	Pattern    string // regular expression; a plain string is a valid one
+	Pattern string // regular expression; a plain string is a valid one
+	// Patterns are further patterns looked for in the same pass (core/bundle
+	// lanes.go): each answered as if searched alone, in SearchResult.Lanes.
+	// Pattern, when set, is the first of them.
+	Patterns   []string
 	Exclude    string // optional regular expression: a line Pattern matched is dropped, not shown or counted, if this matches it too; follows IgnoreCase
 	Glob       string // optional filename filter, e.g. "*.log"
 	IgnoreCase bool
@@ -127,6 +134,11 @@ type SearchOpts struct {
 	// Group. Bucket is one row's size; zero chooses one from the span.
 	OverTime bool
 	Bucket   time.Duration
+	// Records gives each kept match its whole log record instead of Context
+	// lines (core/bundle records.go): from the dated line it belongs to down
+	// to the next. Context still applies in a file with no timestamps, where
+	// records cannot be told apart.
+	Records bool
 	// Deadline bounds the whole search. Zero uses searchDeadline. A
 	// search that runs out of time returns what it found and says so
 	// rather than failing: partial evidence with a warning beats no
@@ -167,6 +179,22 @@ type SearchResult struct {
 	// Histogram holds the matches by time when OverTime was asked; nil
 	// otherwise.
 	Histogram *bundle.Histogram
+	// Lanes is each pattern's answer when the search looked for several, in
+	// the order given (Lane gives one as a search of its own). Nil for one
+	// pattern, whose answer is the fields above; for several, those hold
+	// only what the patterns share (files read, gaps, stops).
+	Lanes []bundle.Lane[Match]
+}
+
+// Lane is lane i of a search of several patterns as the result a search for
+// that pattern alone would have returned.
+func (r SearchResult) Lane(i int) SearchResult {
+	ln := r.Lanes[i]
+	out := r
+	out.Lanes = nil
+	out.Budget, out.Matches, out.Excluded = ln.Budget, ln.Hits, ln.Excluded
+	out.Groups, out.Histogram = ln.Groups, ln.Histogram
+	return out
 }
 
 // resolveUnder joins rel to root and proves the result is still inside
@@ -393,37 +421,23 @@ func Search(ctx context.Context, root string, opts SearchOpts) (SearchResult, er
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	pattern := strings.TrimSpace(opts.Pattern)
-	if pattern == "" {
-		return res, fmt.Errorf("no pattern given")
-	}
-	if opts.IgnoreCase {
-		pattern = "(?i)" + pattern
-	}
-	re, err := bundle.CompileMatcher(pattern)
+	patterns, err := bundle.Patterns(opts.Pattern, opts.Patterns)
 	if err != nil {
-		return res, fmt.Errorf("that pattern is not a valid regular expression: %w", err)
+		return res, err
 	}
-	filter := bundle.Filter{Match: re}
-	if exclude := strings.TrimSpace(opts.Exclude); exclude != "" {
-		if opts.IgnoreCase {
-			exclude = "(?i)" + exclude
-		}
-		if filter.Exclude, err = bundle.CompileMatcher(exclude); err != nil {
-			return res, fmt.Errorf("exclude is not a valid regular expression: %w", err)
-		}
+	prefix := ""
+	if opts.IgnoreCase {
+		prefix = "(?i)"
+	}
+	filter, err := bundle.NewFilter(patterns, opts.Exclude, prefix)
+	if err != nil {
+		return res, err
 	}
 	if !opts.Since.IsZero() && !opts.Until.IsZero() && opts.Until.Before(opts.Since) {
 		return res, fmt.Errorf("the time window ends before it starts")
 	}
 	if modes := countTrue(opts.CountOnly, opts.Group, opts.OverTime); modes > 1 {
 		return res, fmt.Errorf("count, group and over_time are different answers: count says how often a pattern occurs per file, group what kinds of lines there are, over_time when the matching ones happened. Ask for one")
-	}
-	if opts.Group {
-		res.Groups = bundle.NewGrouper()
-	}
-	if opts.OverTime {
-		res.Histogram = bundle.NewHistogram()
 	}
 	// A whole-folder answer reads every file and keeps no lines.
 	whole := opts.CountOnly || opts.Group || opts.OverTime
@@ -449,8 +463,20 @@ func Search(ctx context.Context, root string, opts SearchOpts) (SearchResult, er
 	if perFile <= 0 || len(files) <= 1 || whole {
 		perFile = 0
 	}
-	budget := &res.Budget
-	budget.Max, budget.PerFile = limit, perFile
+	// One lane per pattern, each with the limits a search for it alone
+	// would have (core/bundle lanes.go).
+	lanes := make([]bundle.Lane[Match], len(patterns))
+	for l := range lanes {
+		ln := &lanes[l]
+		ln.Pattern = patterns[l]
+		ln.Max, ln.PerFile = limit, perFile
+		if opts.Group {
+			ln.Groups = bundle.NewGrouper()
+		}
+		if opts.OverTime {
+			ln.Histogram = bundle.NewHistogram()
+		}
+	}
 
 	allowed := opts.Deadline
 	if allowed <= 0 {
@@ -460,7 +486,7 @@ func Search(ctx context.Context, root string, opts SearchOpts) (SearchResult, er
 	deadline := started.Add(allowed)
 	var scanned int64
 	win := window{since: opts.Since, until: opts.Until}
-	lim := fileLimits{offer: budget.Offer(), group: opts.Group, overTime: opts.OverTime}
+	lim := fileLimits{offer: lanes[0].Offer(), group: opts.Group, overTime: opts.OverTime}
 
 	// Several chunks at once, of several files or of one large one, merged in
 	// order (core/bundle parallel.go, search_chunks.go): the scan does what
@@ -472,11 +498,13 @@ func Search(ctx context.Context, root string, opts SearchOpts) (SearchResult, er
 	var acc fileAcc
 	skipping := false
 	finish := func(lf LogFile) {
-		kept := budget.File(lf.Rel, acc.total, len(acc.shown))
-		res.Matches = append(res.Matches, acc.shown[:kept]...)
+		for l := range lanes {
+			kept := lanes[l].File(lf.Rel, acc.lanes[l].total, acc.offered[l])
+			lanes[l].Hits = append(lanes[l].Hits, bundle.LaneItems(acc.shown, acc.masks, l, kept)...)
+			lanes[l].Excluded += acc.lanes[l].excluded
+		}
 		res.Scanned++
 		scanned += acc.read
-		res.Excluded += acc.excluded
 		res.LongLines += acc.longLines
 		if acc.readErr != "" {
 			res.Unreadable = append(res.Unreadable, lf.Rel+": "+acc.readErr)
@@ -512,8 +540,10 @@ func Search(ctx context.Context, root string, opts SearchOpts) (SearchResult, er
 			c := chunks[i]
 			lf := files[c.file]
 			if c.first {
-				if budget.Full() {
-					budget.Unsearched = len(files) - c.file
+				if bundle.AllFull(lanes) {
+					for l := range lanes {
+						lanes[l].Unsearched = len(files) - c.file
+					}
 					return false
 				}
 				if skipping = s.skip; skipping {
@@ -534,7 +564,7 @@ func Search(ctx context.Context, root string, opts SearchOpts) (SearchResult, er
 					res.Stopped = fmt.Sprintf("stopped after reading %d MB, at %d of %d files", scanned>>20, res.Scanned, len(files))
 					return false
 				}
-				acc = fileAcc{}
+				acc = newFileAcc(len(lanes))
 			} else if skipping {
 				return true
 			}
@@ -545,7 +575,7 @@ func Search(ctx context.Context, root string, opts SearchOpts) (SearchResult, er
 				if s.late {
 					acc.stopped = true
 				} else {
-					acc.join(s.r, ctxLines, lim.offer, win, &res)
+					acc.join(s.r, ctxLines, lim.offer, win, lanes)
 				}
 			}
 			if acc.stopped {
@@ -558,8 +588,18 @@ func Search(ctx context.Context, root string, opts SearchOpts) (SearchResult, er
 			}
 			return true
 		})
+	if opts.Records && !whole && ctx.Err() == nil {
+		folderRecords(ctx, rootAbs, files, lanes, deadline)
+	}
 	if opts.CountOnly {
-		sort.SliceStable(res.Tallies, func(i, j int) bool { return res.Tallies[i].Matches > res.Tallies[j].Matches })
+		for l := range lanes {
+			t := lanes[l].Tallies
+			sort.SliceStable(t, func(i, j int) bool { return t[i].Matches > t[j].Matches })
+		}
+	}
+	res.Lanes = lanes
+	if len(lanes) == 1 {
+		res = res.Lane(0)
 	}
 	// A cancel inside the LAST file leaves the loop by its own condition, so
 	// the error has to be asked for again on the way out or a stopped search
@@ -570,6 +610,86 @@ func Search(ctx context.Context, root string, opts SearchOpts) (SearchResult, er
 	res.Bytes = scanned
 	res.Elapsed = time.Since(started)
 	return res, nil
+}
+
+// folderRecords gives every lane's kept matches their whole records (core/bundle
+// records.go). Each file with a kept match is read again from its start up to
+// its last match's record, several files at once; only the lines near a match
+// are looked at, and the reading stops once the last record is closed. A file
+// with no timestamps has no records, and its matches keep their context.
+func folderRecords(ctx context.Context, rootAbs string, files []LogFile, lanes []bundle.Lane[Match], deadline time.Time) {
+	targets, order := bundle.RecordTargets(lanes, func(m Match) string { return m.File }, func(m Match) int { return m.Line })
+	byRel := map[string]LogFile{}
+	for _, lf := range files {
+		byRel[lf.Rel] = lf
+	}
+	// recs is nil for a file whose records could not be found: undated,
+	// or not read again (a failed open, the clock).
+	type fileRecords struct {
+		recs    map[int]*bundle.Record
+		undated bool
+	}
+	found := make([]fileRecords, len(order))
+	bundle.EachInOrder(ctx, len(order),
+		func(ctx context.Context, i int) fileRecords {
+			rel := order[i]
+			path := filepath.Join(rootAbs, rel)
+			format, year := detectFileFormat(path, byRel[rel].Modified)
+			if format == bundle.FormatText {
+				return fileRecords{undated: true}
+			}
+			rc, err := open(path)
+			if err != nil {
+				return fileRecords{}
+			}
+			defer rc.Close()
+			f := bundle.NewRecordFinder(targets[rel],
+				func(s string) bool { _, ok := bundle.ParseTime(format, year, s); return ok },
+				func(s string) string { return truncateRunes(s, maxLineRunes) })
+			spans := bundle.RecordSpans(targets[rel])
+			lr := newLineReader(rc, maxLineBytes)
+			for n, si := 1, 0; si < len(spans) && !f.Done(); n++ {
+				if n%4096 == 0 && (ctx.Err() != nil || time.Now().After(deadline)) {
+					return fileRecords{}
+				}
+				raw, _, err := lr.next()
+				if err != nil {
+					break
+				}
+				for si < len(spans) && n > spans[si][1] {
+					si++
+				}
+				if si < len(spans) && n >= spans[si][0] {
+					f.Line(n, string(raw))
+				}
+			}
+			return fileRecords{recs: f.Records()}
+		},
+		func(i int, r fileRecords) bool {
+			found[i] = r
+			return true
+		})
+	index := map[string]fileRecords{}
+	for i, rel := range order {
+		index[rel] = found[i]
+	}
+	for l := range lanes {
+		lanes[l].Hits = bundle.FoldRecords(lanes[l].Hits,
+			func(m Match) (*bundle.Record, bool) {
+				fr := index[m.File]
+				return fr.recs[m.Line], !fr.undated
+			},
+			func(m *Match, r *bundle.Record, v *bundle.RecordView) {
+				m.Record = v
+				if r == nil {
+					return
+				}
+				i := m.Line - r.Start
+				m.Before, m.Text, m.After = r.Lines[:i:i], r.Lines[i], r.Lines[i+1:]
+			},
+			func(m *Match) *bundle.RecordView { return m.Record },
+			func(m Match) int { return m.Line })
+	}
 }
 
 // window is a search's time window, with what one file needs to read it.
@@ -634,19 +754,34 @@ type folderScan struct {
 // fileResult is one file's part of a search, or one chunk's (search_chunks.go),
 // before the merge decides how much of it the search keeps.
 type fileResult struct {
-	shown    []Match           // the first lim.offer matches, in order
-	total    int               // every match in the file
-	excluded int               // matches the exclude pattern took back out, counted nowhere else
-	groups   *bundle.Grouper   // the file's own grouping, when the search groups
-	hist     *bundle.Histogram // its own counts, when the search counts over time
-	timed    bool              // the file carried at least one timestamp
-	stopped  bool              // the deadline or a cancel cut the file short
-	read     int64
+	// shown are each lane's first lim.offer matches, in order: kept once
+	// however many lanes they are offered to, masks[i] saying which, and
+	// offered counting them per lane (core/bundle lanes.go).
+	shown   []Match
+	masks   []uint32
+	offered []int
+	lanes   []laneCount
+	timed   bool // the file carried at least one timestamp
+	stopped bool // the deadline or a cancel cut the file short
+	read    int64
 	// longLines counts lines over maxLineBytes, searched in their first
 	// maxLineBytes only. readErr is why the file could not be read to its
 	// end, with the line it stopped at; empty when it was.
 	longLines int
 	readErr   string
+}
+
+// laneCount is one pattern's part of a file's search.
+type laneCount struct {
+	total    int               // every match in the file
+	excluded int               // matches the exclude pattern took back out, counted nowhere else
+	groups   *bundle.Grouper   // the file's own grouping, when the search groups
+	hist     *bundle.Histogram // its own counts, when the search counts over time
+}
+
+// newFileResult is an empty part of a search of n patterns.
+func newFileResult(n int) fileResult {
+	return fileResult{offered: make([]int, n), lanes: make([]laneCount, n)}
 }
 
 // Read returns a window of lines around a point in one file.

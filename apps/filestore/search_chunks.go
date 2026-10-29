@@ -75,10 +75,32 @@ type owedAfter struct{ idx, left int }
 // heldLines are a windowed chunk's matches above its first timestamp: they
 // take the time of the line above them, in the chunk before, so whether they
 // are in the window is the merge's to decide. The first shown entries of the
-// chunk's shown list are theirs.
+// chunk's shown list are theirs; offered counts them per lane.
 type heldLines struct {
-	shown, total, excluded, hist int
-	groups                       *bundle.Grouper
+	shown   int
+	offered []int
+	lanes   []heldLane
+}
+
+// heldLane is one pattern's held lines: its matches, those exclude took out,
+// and, filed undated until the merge knows the time, its counts over time or
+// its groups.
+type heldLane struct {
+	total, excluded, hist int
+	groups                *bundle.Grouper
+}
+
+// any reports whether anything is held.
+func (h heldLines) any() bool {
+	if h.shown > 0 {
+		return true
+	}
+	for _, hl := range h.lanes {
+		if hl.total > 0 || hl.excluded > 0 || hl.hist > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // chunkResult is one chunk's part of a file's search, before the merge joins
@@ -96,19 +118,27 @@ type chunkResult struct {
 
 // scan reads one chunk of one file.
 func (s chunkScan) scan(ctx context.Context, path, rel string, win window, c folderChunk) chunkResult {
-	var r chunkResult
-	if s.lim.group {
-		r.groups = bundle.NewGrouper()
-	}
-	if s.lim.overTime {
-		r.hist = bundle.NewHistogram()
+	n := s.filter.Lanes()
+	r := chunkResult{fileResult: newFileResult(n)}
+	for l := range r.lanes {
+		if s.lim.group {
+			r.lanes[l].groups = bundle.NewGrouper()
+		}
+		if s.lim.overTime {
+			r.lanes[l].hist = bundle.NewHistogram()
+		}
 	}
 	// Above this chunk's first timestamp the window's clock is the chunk
 	// before's, unknown here; the first chunk has no before, and its undated
 	// opening lines are outside any window, as they always were.
 	holding := win.set() && c.from > 0
-	if holding && s.lim.group {
-		r.held.groups = bundle.NewGrouper()
+	if holding {
+		r.held.offered, r.held.lanes = make([]int, n), make([]heldLane, n)
+		for l := range r.held.lanes {
+			if s.lim.group {
+				r.held.lanes[l].groups = bundle.NewGrouper()
+			}
+		}
 	}
 	var rd io.Reader
 	var start int64
@@ -216,49 +246,68 @@ func (s chunkScan) scan(ctx context.Context, path, rel string, win window, c fol
 			inWindow = holding || win.holds(lineTime)
 		}
 
-		keep := inWindow && s.filter.Match.Match(raw)
+		var mask uint32
+		if inWindow {
+			mask = s.filter.Which(raw)
+		}
 		// Exclusion is tested last, on lines already in, so the count of
 		// what it removed is only what the search would otherwise have
 		// counted. The line still feeds the context ring below: it is
 		// dropped as a hit, not from the file.
-		if keep && s.filter.Excludes(raw) {
-			if holding {
-				r.held.excluded++
-			} else {
-				r.excluded++
+		if mask != 0 && s.filter.Excludes(raw) {
+			for l := range r.lanes {
+				switch {
+				case mask&(1<<l) == 0:
+				case holding:
+					r.held.lanes[l].excluded++
+				default:
+					r.lanes[l].excluded++
+				}
 			}
-			keep = false
+			mask = 0
 		}
-		if keep {
-			if holding {
-				r.held.total++
-			} else {
-				r.total++
-			}
-			switch {
-			case r.groups != nil || r.hist != nil:
-				// Dated by the window's clock when there is one (an undated
-				// line takes the time above it), else by the line itself
-				// when the file's format carries times at all. A held line's
-				// time is the merge's to supply.
-				when := lineTime
+		if mask != 0 {
+			// Dated by the window's clock when there is one (an undated line
+			// takes the time above it), else by the line itself when the
+			// file's format carries times at all. A held line's time is the
+			// merge's to supply.
+			var when time.Time
+			if s.lim.group || s.lim.overTime {
+				when = lineTime
 				if !win.set() && win.format != "" && win.format != bundle.FormatText {
 					when, _ = bundle.ParseTime(win.format, win.year, string(raw))
 				}
-				switch {
-				case holding && r.held.groups != nil:
-					r.held.groups.AddBytes(rel, lineNo, raw, time.Time{})
-				case holding:
-					r.held.hist++
-				case r.groups != nil:
-					r.groups.AddBytes(rel, lineNo, raw, when)
-				default:
-					r.hist.Add(when)
+			}
+			for l := range r.lanes {
+				if mask&(1<<l) == 0 {
+					continue
 				}
+				if holding {
+					hl := &r.held.lanes[l]
+					hl.total++
+					if hl.groups != nil {
+						hl.groups.AddBytes(rel, lineNo, raw, time.Time{})
+					} else if s.lim.overTime {
+						hl.hist++
+					}
+					continue
+				}
+				ln := &r.lanes[l]
+				ln.total++
+				if ln.groups != nil {
+					ln.groups.AddBytes(rel, lineNo, raw, when)
+				} else if ln.hist != nil {
+					ln.hist.Add(when)
+				}
+			}
 			// Held and settled matches each keep up to the offer: whether
 			// the held ones count is not known yet, and the settled ones
 			// must not have given up room to them.
-			case (holding && r.held.shown < s.lim.offer) || (!holding && len(r.shown)-r.held.shown < s.lim.offer):
+			offered := r.offered
+			if holding {
+				offered = r.held.offered
+			}
+			if took := bundle.TakeLanes(offered, mask, s.lim.offer); took != 0 {
 				if full == "" {
 					line = truncateRunes(string(raw), maxLineRunes)
 				}
@@ -267,6 +316,7 @@ func (s chunkScan) scan(ctx context.Context, path, rel string, win window, c fol
 					m.Before = append(m.Before, ring...)
 				}
 				r.shown = append(r.shown, m)
+				r.masks = append(r.masks, took)
 				if holding {
 					r.held.shown++
 				}
@@ -290,6 +340,9 @@ func (s chunkScan) scan(ctx context.Context, path, rel string, win window, c fol
 	return r
 }
 
+// newFileAcc is a file of a search of n patterns, before its first chunk.
+func newFileAcc(n int) fileAcc { return fileAcc{fileResult: newFileResult(n)} }
+
 // fileAcc is one file as its chunks are joined: the file's result so far, and
 // what the next chunk needs from the ones before it.
 type fileAcc struct {
@@ -302,8 +355,8 @@ type fileAcc struct {
 }
 
 // join adds the next chunk of the file, in order. Groups and counts over time
-// go straight into res, which merges them in the same order.
-func (a *fileAcc) join(c chunkResult, ctxLines, offer int, win window, res *SearchResult) {
+// go straight into the search's lanes, which merge them in the same order.
+func (a *fileAcc) join(c chunkResult, ctxLines, offer int, win window, lanes []bundle.Lane[Match]) {
 	// Trailing context owed by matches in earlier chunks, from this one's
 	// first lines; a chunk too short to settle it passes the rest on.
 	for _, line := range c.head {
@@ -320,8 +373,7 @@ func (a *fileAcc) join(c chunkResult, ctxLines, offer int, win window, res *Sear
 		a.owed = kept
 	}
 	// The held lines are in the window if the time above them is.
-	accept := c.held.shown > 0 || c.held.total > 0 || c.held.excluded > 0 || c.held.hist > 0 || c.held.groups != nil
-	accept = accept && !a.lastTime.IsZero() && win.holds(a.lastTime)
+	accept := c.held.any() && !a.lastTime.IsZero() && win.holds(a.lastTime)
 	from := c.held.shown
 	if accept {
 		from = 0
@@ -341,33 +393,39 @@ func (a *fileAcc) join(c chunkResult, ctxLines, offer int, win window, res *Sear
 				m.Before = append(append([]string(nil), a.tail[len(a.tail)-missing:]...), m.Before...)
 			}
 		}
-		if len(a.shown) >= offer {
+		took := bundle.TakeLanes(a.offered, c.masks[j], offer)
+		if took == 0 {
 			continue
 		}
 		a.shown = append(a.shown, m)
+		a.masks = append(a.masks, took)
 		for _, o := range c.owed {
 			if o.idx == j {
 				a.owed = append(a.owed, owedAfter{idx: len(a.shown) - 1, left: o.left})
 			}
 		}
 	}
-	a.total += c.total
-	a.excluded += c.excluded
-	if accept {
-		a.total += c.held.total
-		a.excluded += c.held.excluded
-		if c.held.groups != nil {
-			c.held.groups.Stamp(a.lastTime)
-			c.held.groups.Offset(a.lines)
-			res.Groups.Merge(c.held.groups)
+	for l := range a.lanes {
+		al, cl := &a.lanes[l], c.lanes[l]
+		al.total += cl.total
+		al.excluded += cl.excluded
+		if accept {
+			hl := c.held.lanes[l]
+			al.total += hl.total
+			al.excluded += hl.excluded
+			if hl.groups != nil {
+				hl.groups.Stamp(a.lastTime)
+				hl.groups.Offset(a.lines)
+				lanes[l].Groups.Merge(hl.groups)
+			}
+			if lanes[l].Histogram != nil && hl.hist > 0 {
+				lanes[l].Histogram.AddN(a.lastTime, hl.hist)
+			}
 		}
-		if res.Histogram != nil && c.held.hist > 0 {
-			res.Histogram.AddN(a.lastTime, c.held.hist)
-		}
+		cl.groups.Offset(a.lines) // its examples were numbered from the chunk's first line
+		lanes[l].Groups.Merge(cl.groups)
+		lanes[l].Histogram.Merge(cl.hist)
 	}
-	c.groups.Offset(a.lines) // its examples were numbered from the chunk's first line
-	res.Groups.Merge(c.groups)
-	res.Histogram.Merge(c.hist)
 	if !c.lastTime.IsZero() {
 		a.lastTime = c.lastTime
 	}

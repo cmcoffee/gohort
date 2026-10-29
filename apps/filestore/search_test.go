@@ -247,7 +247,7 @@ func TestSearchCarriesOnPastAnOverlongLine(t *testing.T) {
 	if res.LongLines != 1 {
 		t.Errorf("LongLines = %d, want 1", res.LongLines)
 	}
-	if out := renderMatches(res); !strings.Contains(out, "searched only in their first") {
+	if out := renderMatches(res, "read_logs"); !strings.Contains(out, "searched only in their first") {
 		t.Errorf("the reply does not say a line was cut:\n%s", out)
 	}
 	// And a window read past it lands on the right lines.
@@ -724,7 +724,7 @@ func TestSearchExcludeDropsMatchesAndSaysSo(t *testing.T) {
 	if len(res.Matches[0].After) != 1 || !strings.Contains(res.Matches[0].After[0], "/healthcheck") {
 		t.Errorf("an excluded line should still show as context: after = %q", res.Matches[0].After)
 	}
-	if out := renderMatches(res); !strings.Contains(out, "2 more line(s) matched the pattern but were left out by exclude") {
+	if out := renderMatches(res, "read_logs"); !strings.Contains(out, "2 more line(s) matched the pattern but were left out by exclude") {
 		t.Errorf("the reply does not say what exclude removed:\n%s", out)
 	}
 
@@ -926,7 +926,7 @@ func TestParallelSearchGivesTheSerialAnswer(t *testing.T) {
 		if opts.OverTime && serial.Histogram.Render("x", opts.Bucket) != parallel.Histogram.Render("x", opts.Bucket) {
 			t.Errorf("%s: rows over time differ", name)
 		}
-		if searchReply(serial, opts) != searchReply(parallel, opts) && !strings.Contains(searchReply(serial, opts), "output_id") {
+		if searchReply(serial, opts, "read_logs") != searchReply(parallel, opts, "read_logs") && !strings.Contains(searchReply(serial, opts, "read_logs"), "output_id") {
 			t.Errorf("%s: the replies differ", name)
 		}
 	}
@@ -957,5 +957,73 @@ func BenchmarkSearchFolder(b *testing.B) {
 				}
 			}
 		})
+	}
+}
+
+// A search asked for records gives each match its whole log entry: a match on
+// the last line of a traceback comes with the dated line that began it and
+// every line between, in a plain file, a chunked one, and a .gz, and two
+// matches in one entry are one record. A file with no timestamps keeps its
+// context lines and says why. The records do not depend on how the search
+// read the files, or on how many patterns it looked for.
+func TestSearchReturnsWholeRecords(t *testing.T) {
+	root := chunkEdgesFolder(t)
+	if err := os.WriteFile(filepath.Join(root, "notes.txt"), []byte("plain\nOperationalError: gone away 9\nno times\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	prevW, prevC := bundle.SearchWorkers, chunkBytes
+	defer func() { bundle.SearchWorkers, chunkBytes = prevW, prevC }()
+	opts := SearchOpts{Pattern: `gone away (2|9|gz)$`, Patterns: []string{"frame 2$"}, Glob: "*", Context: 1, Records: true, PerFile: 50}
+	var first SearchResult
+	for _, size := range []int64{1 << 40, 37} {
+		bundle.SearchWorkers, chunkBytes = 4, size
+		res, err := Search(context.Background(), root, opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if size == 1<<40 {
+			first = res
+		} else if !reflect.DeepEqual(first.Lanes, res.Lanes) {
+			t.Errorf("chunks of %d: records differ from the whole-file read", size)
+		}
+	}
+	firstIn := func(hits []Match) map[string]Match {
+		out := map[string]Match{}
+		for _, m := range hits {
+			if _, ok := out[m.File]; !ok {
+				out[m.File] = m
+			}
+		}
+		return out
+	}
+	byFile := firstIn(first.Lanes[0].Hits)
+	m := byFile["app-0.log"]
+	want := []string{"2026-10-27T06:02:00Z WARN request 2", "Traceback (most recent call last):", "  at frame 2"}
+	if !reflect.DeepEqual(m.Before, want) || len(m.After) != 0 || m.Record == nil || m.Record.HeadCut || m.Record.TailCut {
+		t.Errorf("app-0.log: the record should run from its dated line to the match:\nbefore %q\nafter  %q\nview   %+v", m.Before, m.After, m.Record)
+	}
+	if gz := byFile["rotated.log.gz"]; !reflect.DeepEqual(gz.Before, []string{"2026-10-27T05:00:00Z ERROR in a gz"}) {
+		t.Errorf("a .gz match's record: %+v", gz)
+	}
+	if n := byFile["notes.txt"]; n.Record == nil || !n.Record.Undated || len(n.Before) != 1 || len(n.After) != 1 {
+		t.Errorf("an undated file keeps its context lines and says why: %+v", n)
+	}
+	// The frame line is inside the same record as "gone away 2": in its own
+	// lane it is a record of its own, sharing the lines.
+	if f := firstIn(first.Lanes[1].Hits)["app-0.log"]; len(f.Before) == 0 || f.Before[0] != want[0] || len(f.After) != 1 {
+		t.Errorf("frame lane: %+v", f)
+	}
+	reply := searchReply(first, opts, "read_logs")
+	if !strings.Contains(reply, "this file carries no timestamps") {
+		t.Errorf("the reply should say why notes.txt has plain context:\n%s", reply)
+	}
+
+	// Two matches in one record are one record, the second listed in it.
+	res, err := Search(context.Background(), root, SearchOpts{Pattern: `frame 2$|gone away 2$`, Glob: "app-0.log", Records: true})
+	if err != nil || len(res.Matches) != 1 || res.Matches[0].Record == nil || len(res.Matches[0].Record.AlsoAt) != 1 {
+		t.Fatalf("two matches in one traceback should fold: %+v, %v", res.Matches, err)
+	}
+	if out := renderMatches(res, "read_logs"); !strings.Contains(out, "also matched inside this record at line(s)") {
+		t.Errorf("the folded match should be named:\n%s", out)
 	}
 }

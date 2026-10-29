@@ -299,8 +299,45 @@ func containsFold[T string | []byte](s T, need string) bool {
 // health check" is not one expression, and without this a search over a noisy
 // log pages through the noise.
 type Filter struct {
-	Match   *Matcher
+	Match *Matcher
+	// Also are further patterns looked for in the same pass, by a search of
+	// several (lanes.go). Each is its own lane, answered as if searched
+	// alone: Match is lane 0, Also[i] lane i+1.
+	Also    []*Matcher
 	Exclude *Matcher // nil when nothing is excluded
+}
+
+// Lanes is how many patterns the filter looks for.
+func (f Filter) Lanes() int { return 1 + len(f.Also) }
+
+// Which reports the patterns a line matches as a set of lanes, bit i for lane
+// i; zero for none. Each pattern runs its own prefilter, so a line none of
+// them could match costs a few substring tests.
+func (f Filter) Which(b []byte) uint32 {
+	var m uint32
+	if f.Match.Match(b) {
+		m = 1
+	}
+	for i, a := range f.Also {
+		if a.Match(b) {
+			m |= 2 << i
+		}
+	}
+	return m
+}
+
+// WhichString is Which for a line held as a string.
+func (f Filter) WhichString(s string) uint32 {
+	var m uint32
+	if f.Match.MatchString(s) {
+		m = 1
+	}
+	for i, a := range f.Also {
+		if a.MatchString(s) {
+			m |= 2 << i
+		}
+	}
+	return m
 }
 
 // Excludes reports whether a line the pattern matched is taken back out.
