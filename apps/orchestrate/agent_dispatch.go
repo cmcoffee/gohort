@@ -2751,7 +2751,51 @@ func deliveredNote(m ChatMessage) string {
 	if len(parts) == 0 {
 		return ""
 	}
-	return textutil.FenceMeta("delivered with this message: " + strings.Join(parts, ", ") + ". Already sent; do not send it again unless asked.")
+	note := "delivered with this message: " + strings.Join(parts, ", ") + "."
+	// What each attached file was, as its attach said (core/filenotes): a
+	// later "send that song again" or "the second picture" has to resolve
+	// to the right one, and generated names do not say which is which.
+	var what []string
+	for _, tc := range m.ToolCalls {
+		if tc.Name == "workspace" && !tc.Framework && tc.Err == "" && fmt.Sprint(tc.Args["action"]) == "attach" {
+			if d := attachedDescription(tc.Result); d != "" {
+				what = append(what, d)
+			}
+		}
+	}
+	if len(what) > 0 {
+		note += " What they were: " + strings.Join(what, "; ") + "."
+	}
+	return textutil.FenceMeta(note + " Already sent; do not send it again unless asked.")
+}
+
+// attachedDescription reads what an attach result said the file was:
+// `Attached "song-2.mp3" (...) via video channel. It is "Title", made by ...`
+// gives `song-2.mp3 is "Title", made by ...`, and a result with no such
+// sentence gives "".
+func attachedDescription(result string) string {
+	rest, ok := strings.CutPrefix(strings.TrimSpace(result), `Attached "`)
+	if !ok {
+		return ""
+	}
+	name, rest, ok := strings.Cut(rest, `"`)
+	if !ok {
+		return ""
+	}
+	_, about, ok := strings.Cut(rest, " It is ")
+	if !ok {
+		return ""
+	}
+	for _, end := range []string{" (cleaned up", " (cleanup failed", " NOTE:"} {
+		if i := strings.Index(about, end); i >= 0 {
+			about = about[:i]
+		}
+	}
+	about = strings.TrimSuffix(strings.TrimSpace(about), ".")
+	if about == "" {
+		return ""
+	}
+	return name + " is " + about
 }
 
 // sentAttachmentRefs reads the attachments a send_message call named, by

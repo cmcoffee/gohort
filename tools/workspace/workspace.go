@@ -29,6 +29,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/filenotes"
 	// Imported directly rather than through a core alias: the shell run needs a
 	// working directory, and two more symbols in core put it over
 	// TestCoreStaysUnderItsCeiling.
@@ -310,10 +311,22 @@ func init() {
 			"path":    {Type: "string", Description: "Workspace-relative filename to deliver (e.g. \"meme.jpg\", \"report.pdf\")."},
 			"name":    {Type: "string", Description: "Optional display name shown to the user. Defaults to the filename."},
 			"cleanup": {Type: "boolean", Description: "If true, deletes the file from the workspace after successful delivery. Default false (keep). Producer tools that return one-shot files (find_image, fetch_image, generate_image) recommend cleanup=true: workspace stays tidy."},
+			"title":   {Type: "string", Description: "Optional: what this file is, in a few words (a song's title, what a picture shows). Kept with the file, so later turns, and other agents it is passed to, can tell it from others of a similar name. Set it when the file's name does not say what it is."},
 		},
 		Required: []string{"path"},
 		Caps:     []Capability{CapRead, CapWrite},
 		Handler:  handleAttach,
+	})
+
+	gt.AddAction("describe", &GroupedToolAction{
+		Description: "Say what a file in the workspace is, in a few words (a song's title, what a picture shows), or correct what was recorded. Every file a tool makes is noted with what made it, when, and the request it answered, and listings and attach results show it; a title is what the framework cannot know. Use it when a file's name does not say what it is, so the next turn can tell it from others of a similar name.",
+		Params: map[string]ToolParam{
+			"path":  {Type: "string", Description: "Workspace-relative path to the file."},
+			"title": {Type: "string", Description: "What it is, in a few words."},
+		},
+		Required: []string{"path", "title"},
+		Caps:     []Capability{CapWrite},
+		Handler:  handleDescribe,
 	})
 
 	gt.AddAction("view_image", &GroupedToolAction{
@@ -946,6 +959,11 @@ func AttachWorkspaceFile(sess *ToolSession, relPath, displayName string, cleanup
 		return "", fmt.Errorf("read %q: %w", relPath, err)
 	}
 	mime := http.DetectContentType(data)
+	// What it is, read before a cleanup removes it and its note.
+	var what string
+	if line := filenotes.LineFor(abs); line != "" {
+		what = " It is " + line + "."
+	}
 	displayName = strings.TrimSpace(displayName)
 	if displayName == "" {
 		displayName = filepath.Base(relPath)
@@ -959,8 +977,8 @@ func AttachWorkspaceFile(sess *ToolSession, relPath, displayName string, cleanup
 			suffix = " (cleaned up from workspace)"
 		}
 	}
-	return fmt.Sprintf("Attached %q (%s, %s) via %s channel.%s%s",
-		displayName, mime, humanSize(info.Size()), channel, suffix, staleAttachWarning(sess, relPath, info)), nil
+	return fmt.Sprintf("Attached %q (%s, %s) via %s channel.%s%s%s",
+		displayName, mime, humanSize(info.Size()), channel, what, suffix, staleAttachWarning(sess, relPath, info)), nil
 }
 
 // staleAttachAge is how old a file attached on a turn that made nothing has
@@ -1108,10 +1126,42 @@ func keptDisplayName(ref, displayName string) string {
 }
 
 func handleAttach(args map[string]any, sess *ToolSession) (string, error) {
+	if title := strings.TrimSpace(StringArg(args, "title")); title != "" && sess != nil {
+		if abs, err := ResolveWorkspacePath(sess.WorkspaceDir, StringArg(args, "path")); err == nil {
+			if info, err := os.Stat(abs); err == nil && !info.IsDir() {
+				filenotes.SetTitle(abs, title)
+			}
+		}
+	}
 	return AttachWorkspaceFile(sess,
 		StringArg(args, "path"),
 		StringArg(args, "name"),
 		boolArg(args, "cleanup"))
+}
+
+// handleDescribe names a workspace file (core/filenotes): what it is, kept
+// with it, shown wherever it is listed or attached.
+func handleDescribe(args map[string]any, sess *ToolSession) (string, error) {
+	if sess == nil {
+		return "", fmt.Errorf("describe requires a session")
+	}
+	if _, err := EnsureSessionWorkspace(sess); err != nil {
+		return "", fmt.Errorf("session workspace unavailable: %w", err)
+	}
+	rel := strings.TrimSpace(StringArg(args, "path"))
+	title := strings.TrimSpace(StringArg(args, "title"))
+	if rel == "" || title == "" {
+		return "", fmt.Errorf("describe needs path and title")
+	}
+	abs, err := ResolveWorkspacePath(sess.WorkspaceDir, rel)
+	if err != nil {
+		return "", fmt.Errorf("resolve path: %w", err)
+	}
+	if info, err := os.Stat(abs); err != nil || info.IsDir() {
+		return "", fmt.Errorf("%q is not a file in the workspace", rel)
+	}
+	filenotes.SetTitle(abs, title)
+	return fmt.Sprintf("Noted: %s is %s.", rel, filenotes.LineFor(abs)), nil
 }
 
 // handleViewImage runs the session LLM with vision on a workspace

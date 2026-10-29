@@ -4,10 +4,13 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/cmcoffee/gohort/core/filenotes"
 )
 
 // SetupSection represents a configuration section contributed by an app.
@@ -438,6 +441,16 @@ func ChatToolToAgentToolDefWithSession(ct ChatTool, sess *ToolSession) AgentTool
 				// "what did this turn make" — and a delivery backstop that
 				// asks the first one ships another conversation's picture.
 				sess.AddStagedFiles(newFiles)
+				// And what each one is: what made it, and the person's
+				// words it answered (core/filenotes), so a generated name
+				// is not all the agent has to tell it from the last one.
+				by := ct.Name()
+				if a := StringArg(args, "action"); a != "" {
+					by += " " + a
+				}
+				for _, f := range newFiles {
+					filenotes.Record(filepath.Join(sess.WorkspaceDir, f), filenotes.Note{By: by, Request: sess.Request})
+				}
 				var notice strings.Builder
 				notice.WriteString("\n\n[WORKSPACE FILES CREATED]\n")
 				for _, f := range newFiles {

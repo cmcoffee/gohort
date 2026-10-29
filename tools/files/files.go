@@ -12,10 +12,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/filenotes"
 )
 
 const (
@@ -122,6 +124,8 @@ func (t *ListDirectoryTool) RunWithSession(args map[string]any, sess *ToolSessio
 		}
 		return entries[i].Name() < entries[j].Name()
 	})
+	// The notes' own file is bookkeeping, not the agent's (core/filenotes).
+	entries = slices.DeleteFunc(entries, func(e os.DirEntry) bool { return e.Name() == filenotes.Sidecar })
 	var lines []string
 	for i, e := range entries {
 		if i >= maxListEntries {
@@ -138,7 +142,13 @@ func (t *ListDirectoryTool) RunWithSession(args map[string]any, sess *ToolSessio
 		if info, err := e.Info(); err == nil {
 			size = info.Size()
 		}
-		lines = append(lines, fmt.Sprintf("%s\t%d\t%s", flag, size, e.Name()))
+		line := fmt.Sprintf("%s\t%d\t%s", flag, size, e.Name())
+		// What a made file is, so a folder of generated names says which is
+		// which (core/filenotes).
+		if note := filenotes.LineFor(filepath.Join(abs, e.Name())); note != "" && !e.IsDir() {
+			line += "\t" + note
+		}
+		lines = append(lines, line)
 	}
 	if len(lines) == 0 {
 		return "(empty directory)", nil

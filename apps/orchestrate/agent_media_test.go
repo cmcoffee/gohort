@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/filenotes"
 )
 
 // What an agent attaches comes back to the agent that ran it and goes out with
@@ -460,5 +461,49 @@ func TestADelegationReceivesAHandedFile(t *testing.T) {
 	home := agentWorkspace(df.udb, "u", df.agent)
 	if b, err := os.ReadFile(filepath.Join(home, "received", "brief.txt")); err != nil || string(b) != "do the thing" {
 		t.Errorf("the delegated agent did not receive the file in its folder %s: %v", home, err)
+	}
+}
+
+// A file handed back from the agent that made it keeps what it is, under its
+// copy's name, and the note telling the caller about it says which is which:
+// the caller already had a generated_music.mp3, so the copy is -2, and a list
+// of generated names alone does not say that -2 is the new song.
+func TestAHandedBackFileKeepsWhatItIs(t *testing.T) {
+	mine, theirs := t.TempDir(), t.TempDir()
+	os.WriteFile(filepath.Join(mine, "generated_music.mp3"), []byte("old"), 0o644)
+	src := filepath.Join(theirs, "generated_music.mp3")
+	os.WriteFile(src, []byte("new"), 0o644)
+	filenotes.Record(src, filenotes.Note{Title: "Gas Prices Are Too High", By: "generate_music", Request: "make it country rock"})
+	plain := filepath.Join(theirs, "notes.txt")
+	os.WriteFile(plain, []byte("lyrics"), 0o644)
+
+	to := &ToolSession{Username: "u", WorkspaceDir: mine}
+	msg := handBackFiles("Lyric & Music Generator", []string{src, plain}, to)
+	if n, ok := filenotes.Get(filepath.Join(mine, "generated_music-2.mp3")); !ok || n.Title != "Gas Prices Are Too High" || n.From != "Lyric & Music Generator" {
+		t.Errorf("the copy keeps its note, marked as handed back: %+v", n)
+	}
+	if !strings.Contains(msg, `generated_music-2.mp3 ("Gas Prices Are Too High", made by generate_music (from Lyric & Music Generator)`) {
+		t.Errorf("the hand-back says what the copy is:\n%s", msg)
+	}
+	if n, ok := filenotes.Get(filepath.Join(mine, "notes.txt")); !ok || n.From != "Lyric & Music Generator" {
+		t.Errorf("a file with no note is noted as handed back: %+v", n)
+	}
+}
+
+// The history keeps what each sent file was, as its attach said: a later "send
+// that song again" resolves to the right one.
+func TestTheHistorySaysWhatASentFileWas(t *testing.T) {
+	m := ChatMessage{Role: "assistant", Content: "Sent.", Files: []deliveredFile{{Name: "generated_music-2.mp3", Kind: "audio"}},
+		ToolCalls: []PersistedToolCall{{Name: "workspace", Args: map[string]any{"action": "attach", "path": "generated_music-2.mp3"},
+			Result: `Attached "generated_music-2.mp3" (audio/mpeg, 3.7 MB) via video channel. It is "Gas Prices Are Too High", made by generate_music Oct 28 20:06, for "make it country rock". (cleaned up from workspace)`}}}
+	note := deliveredNote(m)
+	if !strings.Contains(note, `What they were: generated_music-2.mp3 is "Gas Prices Are Too High", made by generate_music Oct 28 20:06, for "make it country rock".`) {
+		t.Errorf("the delivery note says what the song was:\n%s", note)
+	}
+	if strings.Contains(note, "cleaned up") {
+		t.Errorf("the attach's own suffixes stay out of it:\n%s", note)
+	}
+	if attachedDescription(`Attached "x.png" (image/png, 1 KB) via image channel.`) != "" {
+		t.Error("an attach with no note describes nothing")
 	}
 }

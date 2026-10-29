@@ -16,6 +16,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/bgrun"
+	"github.com/cmcoffee/gohort/core/filenotes"
 	"github.com/cmcoffee/gohort/core/pathhold"
 	// Imported directly rather than through a core alias: a shell run needs a
 	// working directory, and core is at its export ceiling.
@@ -790,6 +791,9 @@ func (sd *shellDispatch) execute() {
 	if writes != nil {
 		if made := writes(); len(made) > 0 {
 			sd.sess.AddStagedFiles(made)
+			for _, f := range made {
+				filenotes.Record(filepath.Join(sd.sess.WorkspaceDir, f), filenotes.Note{By: tt.Name, Request: sd.sess.Request})
+			}
 			Debug("[temptool] %q wrote %v", tt.Name, made)
 		}
 	}

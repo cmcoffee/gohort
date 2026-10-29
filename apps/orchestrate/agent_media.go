@@ -37,6 +37,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/filenotes"
 )
 
 // handBack moves what the agent a run dispatched attached (a picture, a song,
@@ -114,6 +115,13 @@ func handBackFiles(agent string, made []string, to *ToolSession) string {
 			continue
 		}
 		total += info.Size()
+		// The copy is the same thing under maybe another name: its note
+		// comes with it, marked as from this agent (core/filenotes).
+		if _, ok := filenotes.Get(src); ok {
+			filenotes.Copy(src, filepath.Join(dir, name), agent)
+		} else {
+			filenotes.Record(filepath.Join(dir, name), filenotes.Note{From: agent, Made: info.ModTime()})
+		}
 		copied = append(copied, name)
 		if base := filepath.Base(src); name != base {
 			renamed = append(renamed, fmt.Sprintf("%s is %s in your folder", base, name))
@@ -123,7 +131,7 @@ func handBackFiles(agent string, made []string, to *ToolSession) string {
 	var b strings.Builder
 	if len(copied) > 0 {
 		fmt.Fprintf(&b, "\n\n[%s created %s. Copied into your working folder: attach any you mean to send.]",
-			agent, strings.Join(copied, ", "))
+			agent, strings.Join(describedNames(dir, copied), ", "))
 	}
 	// Said outright: a copy that had to take another name is the new file,
 	// and the agent's own file under the old name is something older. The
@@ -138,6 +146,20 @@ func handBackFiles(agent string, made []string, to *ToolSession) string {
 			agent, strings.Join(tooBig, ", "))
 	}
 	return b.String()
+}
+
+// describedNames are names in dir, each with what its note says it is
+// ("song.mp3 (\"Gas Prices Are Too High\", made by generate_music ...)"),
+// so a list of generated names says which is which.
+func describedNames(dir string, names []string) []string {
+	out := make([]string, len(names))
+	for i, n := range names {
+		out[i] = n
+		if line := filenotes.LineFor(filepath.Join(dir, n)); line != "" {
+			out[i] = n + " (" + line + ")"
+		}
+	}
+	return out
 }
 
 // freeFileName is name, or name with the first free number before its

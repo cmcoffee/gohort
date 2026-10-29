@@ -24,6 +24,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/bgrun"
+	"github.com/cmcoffee/gohort/core/filenotes"
 	"github.com/cmcoffee/gohort/core/prompts"
 )
 
@@ -482,13 +483,19 @@ func stageTaskAttachments(sessionID string, out TaskProduct) int {
 }
 
 // deliverableNames are the base names of the files among paths that are made
-// to be sent (isDeliverableFile): a scratch file a tool also wrote is not.
+// to be sent (isDeliverableFile), each with what its note says it is: a
+// scratch file a tool also wrote is not one.
 func deliverableNames(paths []string) []string {
 	var out []string
 	for _, p := range paths {
-		if name := filepath.Base(p); isDeliverableFile(name) && !strings.HasPrefix(name, "_") {
-			out = append(out, name)
+		name := filepath.Base(p)
+		if !isDeliverableFile(name) || strings.HasPrefix(name, "_") {
+			continue
 		}
+		if line := filenotes.LineFor(p); line != "" {
+			name += " (" + line + ")"
+		}
+		out = append(out, name)
 	}
 	return out
 }

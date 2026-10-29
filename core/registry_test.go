@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -8,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cmcoffee/gohort/core/filenotes"
 )
 
 // DynamicChatTool lets a tool advertise only what will actually run. The two
@@ -285,5 +288,32 @@ func TestARewrittenFileCountsAsWritten(t *testing.T) {
 	os.Chtimes(p, newer, newer)
 	if got := diffWorkspaceFiles(sess, before); len(got) != 1 || got[0] != "untouched.txt" {
 		t.Errorf("a same-size rewrite read as %v", got)
+	}
+}
+
+// writerTool writes a file into the session's workspace, as an image or music
+// tool does.
+type writerTool struct{}
+
+func (writerTool) Name() string                       { return "make_song" }
+func (writerTool) Desc() string                       { return "writes a song" }
+func (writerTool) Params() map[string]ToolParam       { return nil }
+func (writerTool) Run(map[string]any) (string, error) { return "", nil }
+func (writerTool) RunWithSession(args map[string]any, sess *ToolSession) (string, error) {
+	return "saved", os.WriteFile(filepath.Join(sess.WorkspaceDir, "song.mp3"), []byte("ID3"), 0o644)
+}
+
+// A file a tool writes is noted with the tool and the person's words the turn
+// answered (core/filenotes), and the result names it as made.
+func TestAFileAToolWritesIsNotedWithWhatMadeIt(t *testing.T) {
+	sess := &ToolSession{Username: "u", WorkspaceDir: t.TempDir(), Request: "make me a country song about gas prices"}
+	def := ChatToolToAgentToolDefWithSession(writerTool{}, sess)
+	out, err := def.Handler(context.Background(), map[string]any{})
+	if err != nil || !strings.Contains(out, "song.mp3") {
+		t.Fatalf("%v %s", err, out)
+	}
+	n, ok := filenotes.Get(filepath.Join(sess.WorkspaceDir, "song.mp3"))
+	if !ok || n.By != "make_song" || n.Request != "make me a country song about gas prices" {
+		t.Errorf("note: %+v", n)
 	}
 }

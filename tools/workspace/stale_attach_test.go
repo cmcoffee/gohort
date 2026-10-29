@@ -14,6 +14,8 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/filenotes"
+	"github.com/cmcoffee/gohort/tools/files"
 )
 
 func writeWorkspaceFile(t *testing.T, dir, name string, age time.Duration) {
@@ -138,5 +140,51 @@ func TestAnOlderFileWithARenamedCopyThisTurnIsRefused(t *testing.T) {
 	later := &ToolSession{Username: "alice", WorkspaceDir: dir}
 	if _, err := AttachWorkspaceFile(later, "generated_music.mp3", "", false); err != nil {
 		t.Errorf("on a turn that made no copy, the older file is refused: %v", err)
+	}
+}
+
+// What a file is follows it to the person and back: the listing shows each
+// made file's note and hides the notes' own file, describe names a file,
+// attach can name it too, and the attach result says what it sent.
+func TestAFilesNoteIsShownAndCanBeSet(t *testing.T) {
+	dir := t.TempDir()
+	writeWorkspaceFile(t, dir, "generated_music.mp3", 9*24*time.Hour)
+	writeWorkspaceFile(t, dir, "generated_music-2.mp3", 0)
+	filenotes.Record(filepath.Join(dir, "generated_music-2.mp3"), filenotes.Note{By: "generate_music", Request: "make it country rock"})
+	sess := &ToolSession{Username: "alice", WorkspaceDir: dir}
+	sess.AddStagedFiles([]string{"generated_music-2.mp3"})
+
+	if out, err := handleDescribe(map[string]any{"path": "generated_music-2.mp3", "title": "Gas Prices Are Too High"}, sess); err != nil || !strings.Contains(out, `"Gas Prices Are Too High", made by generate_music`) {
+		t.Errorf("describe: %v %s", err, out)
+	}
+	ls, err := (&files.ListDirectoryTool{}).RunWithSession(map[string]any{"path": "."}, sess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(ls, filenotes.Sidecar) {
+		t.Errorf("the notes' own file is not listed:\n%s", ls)
+	}
+	var newLine, oldLine string
+	for _, l := range strings.Split(ls, "\n") {
+		switch {
+		case strings.Contains(l, "generated_music-2.mp3"):
+			newLine = l
+		case strings.Contains(l, "generated_music.mp3"):
+			oldLine = l
+		}
+	}
+	if !strings.Contains(newLine, `"Gas Prices Are Too High"`) || !strings.Contains(newLine, `for "make it country rock"`) || strings.Contains(oldLine, "made by") {
+		t.Errorf("the listing tells the new song from the old:\n%s", ls)
+	}
+	out, err := handleAttach(map[string]any{"path": "generated_music-2.mp3"}, sess)
+	if err != nil || !strings.Contains(out, `It is "Gas Prices Are Too High", made by generate_music`) {
+		t.Errorf("attach says what it sent: %v %s", err, out)
+	}
+	if _, err := handleAttach(map[string]any{"path": "generated_music.mp3", "title": "the September song"}, sess); err == nil {
+		t.Error("the older song is still refused when a renamed copy was made this turn")
+	}
+	writeWorkspaceFile(t, dir, "chart.png", 0)
+	if out, _ := handleAttach(map[string]any{"path": "chart.png", "title": "Q3 sales by region"}, sess); !strings.Contains(out, `It is "Q3 sales by region"`) {
+		t.Errorf("attach can name what it sends: %s", out)
 	}
 }
