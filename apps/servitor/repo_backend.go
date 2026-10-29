@@ -415,7 +415,9 @@ var defaultSkipDirs = map[string]bool{
 }
 
 func skipRepoDir(name string, extra []string) bool {
-	if defaultSkipDirs[name] {
+	// Version-control metadata first, and whatever the appliance's own list
+	// says: a clone's .git/config holds its token (core/bundle vcs.go).
+	if bundle.VCSDir(name) || defaultSkipDirs[name] {
 		return true
 	}
 	for _, e := range extra {

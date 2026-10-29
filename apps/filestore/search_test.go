@@ -1027,3 +1027,52 @@ func TestSearchReturnsWholeRecords(t *testing.T) {
 		t.Errorf("the folded match should be named:\n%s", out)
 	}
 }
+
+// GUARD: a file store pointed at a checkout never hands out its
+// version-control metadata, where a clone's token lives: not to a search, a
+// listing, a read, a subfolder, or a symlink that names .git by another name.
+func TestStoreLeavesVersionControlOut(t *testing.T) {
+	root := t.TempDir()
+	const secret = "tok-FAKE-0123456789"
+	for rel, body := range map[string]string{
+		".git/config":     "url = https://oauth2:" + secret + "@host-a/org/repo.git\n",
+		".git/logs/HEAD":  "clone: from https://oauth2:" + secret + "@host-a/org/repo.git\n",
+		"case-1/.hg/hgrc": "default = https://user:" + secret + "@host-a/hg\n",
+		"case-1/app.log":  "2026-03-14T01:00:00Z INFO started\n",
+	} {
+		p := filepath.Join(root, rel)
+		os.MkdirAll(filepath.Dir(p), 0o755)
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join(root, ".git"), filepath.Join(root, "innocent")); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Search(context.Background(), root, SearchOpts{Pattern: secret})
+	if err != nil || res.Total != 0 {
+		t.Errorf("the token is searchable: %+v, %v", res.Matches, err)
+	}
+	files, _ := List(root, "")
+	for _, f := range files {
+		if strings.Contains(f.Rel, ".git") || strings.Contains(f.Rel, ".hg") {
+			t.Errorf("listed %s", f.Rel)
+		}
+	}
+	if len(files) != 1 {
+		t.Errorf("want only case-1/app.log listed: %+v", files)
+	}
+	for _, rel := range []string{".git/config", "case-1/.hg/hgrc", "innocent/config", "case-1/../.git/logs/HEAD"} {
+		if lines, _, err := Read(root, rel, 0, 0); err == nil || strings.Contains(strings.Join(lines, ""), secret) {
+			t.Errorf("read %s: %v %q", rel, err, lines)
+		}
+	}
+	for _, within := range []string{".git", "case-1/.hg", "innocent"} {
+		if _, err := SubRoot(root, within); err == nil {
+			t.Errorf("subfolder %s was allowed", within)
+		}
+	}
+	if _, _, err := Read(root, "case-1/app.log", 0, 0); err != nil {
+		t.Errorf("an ordinary file must still read: %v", err)
+	}
+}

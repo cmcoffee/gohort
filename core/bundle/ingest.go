@@ -163,6 +163,12 @@ func ingestTree(ctx context.Context, store Store, dir string, opts treeOpts, st 
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		// Version-control metadata can hold a credential (vcs.go): left
+		// out, and logged, so the absence has a reason on record.
+		if d.IsDir() && p != dir && VCSDir(d.Name()) {
+			nfo.Log("[bundle] left out %q: version-control metadata, which can hold credentials", p)
+			return filepath.SkipDir
+		}
 		if d.IsDir() || !d.Type().IsRegular() {
 			return nil // symlinks and devices are never followed out of staging
 		}

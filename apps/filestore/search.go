@@ -214,6 +214,9 @@ func resolveUnder(root, rel string) (string, error) {
 		return "", fmt.Errorf("that folder is unreadable: %w", err)
 	}
 	full := filepath.Join(rootAbs, filepath.Clean("/"+rel))
+	if inVCSDir(rootAbs, full) {
+		return "", errVCSDir
+	}
 	// EvalSymlinks fails on a path that does not exist, which is a
 	// legitimate "no such file" rather than a containment failure.
 	resolved, err := filepath.EvalSymlinks(full)
@@ -222,6 +225,11 @@ func resolveUnder(root, rel string) (string, error) {
 			return "", fmt.Errorf("no such file in this store: %s", rel)
 		}
 		return "", err
+	}
+	// Checked again resolved: a symlink in the store can name a .git
+	// folder by another name.
+	if inVCSDir(rootAbs, resolved) {
+		return "", errVCSDir
 	}
 	// STRICTLY below, never equal. ".." and "../" clean to the root
 	// itself, which an equality-tolerant check waves through: the caller
@@ -232,6 +240,24 @@ func resolveUnder(root, rel string) (string, error) {
 		return "", fmt.Errorf("that path resolves outside the store")
 	}
 	return resolved, nil
+}
+
+// errVCSDir refuses a path inside version-control metadata.
+var errVCSDir = fmt.Errorf("that path is inside a version-control folder (.git, .hg or .svn), which can hold credentials and is never read here")
+
+// inVCSDir reports whether path, below root, passes through a version-control
+// folder (core/bundle vcs.go).
+func inVCSDir(root, path string) bool {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	for _, part := range strings.Split(filepath.ToSlash(rel), "/") {
+		if bundle.VCSDir(part) {
+			return true
+		}
+	}
+	return false
 }
 
 // List walks a root and reports what is there, newest first.
@@ -249,6 +275,12 @@ func List(root string, glob string) ([]LogFile, error) {
 	err = filepath.Walk(rootAbs, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil // an unreadable subtree is not a reason to fail the whole listing
+		}
+		// Version-control metadata is never listed, so nothing that lists
+		// (a search, a span, a listing) reads it: a checkout's .git/config
+		// can hold the token it was cloned with.
+		if info.IsDir() && path != rootAbs && bundle.VCSDir(info.Name()) {
+			return filepath.SkipDir
 		}
 		if info.IsDir() {
 			return nil
