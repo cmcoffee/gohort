@@ -77,6 +77,7 @@ func RenderSearch(res SearchResult, q Query, readTool string) string {
 		if res.TimeUnknown > 0 {
 			fmt.Fprintf(&b, "%d files were excluded because they carry no parseable timestamps and a time window was set: re-run without since/until to include them.\n", res.TimeUnknown)
 		}
+		b.WriteString(LevelNote(q.Level))
 		return b.String()
 	}
 	// Everything that qualifies the hits comes first: a long reply arrives
@@ -104,4 +105,13 @@ func RenderSearch(res SearchResult, q Query, readTool string) string {
 		fmt.Fprintf(&b, "%s:%d: %s\n", h.Path, h.Line, h.Text)
 	}
 	return b.String()
+}
+
+// LevelNote is what a reply that found nothing says about a level filter:
+// what it left out, which may be where the answer is. Empty with no level.
+func LevelNote(level string) string {
+	if level == "" {
+		return ""
+	}
+	return fmt.Sprintf("Only lines declaring %s or worse were searched. Lines below it, and lines with no level of their own (stack frames, wrapped messages), were left out: drop level to search them.\n", strings.ToUpper(level))
 }

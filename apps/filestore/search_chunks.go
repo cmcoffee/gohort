@@ -250,6 +250,9 @@ func (s chunkScan) scan(ctx context.Context, path, rel string, win window, c fol
 		if inWindow {
 			mask = s.filter.Which(raw)
 		}
+		if mask != 0 && s.filter.Level != 0 && !s.filter.LevelOK(string(raw)) {
+			mask = 0
+		}
 		// Exclusion is tested last, on lines already in, so the count of
 		// what it removed is only what the search would otherwise have
 		// counted. The line still feeds the context ring below: it is

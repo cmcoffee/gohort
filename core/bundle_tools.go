@@ -98,6 +98,7 @@ func BundleTools(ctx context.Context, owner, bundleID string) []AgentToolDef {
 					"before":    {Type: "integer", Description: "Context lines to include BEFORE each hit (default 0, max 20)."},
 					"after":     {Type: "integer", Description: "Context lines to include AFTER each hit (default 0, max 20)."},
 					"record":    {Type: "boolean", Description: RecordHelp},
+					"level":     {Type: "string", Description: LevelHelp},
 					"since":     {Type: "string", Description: "Optional earliest timestamp, e.g. \"2026-03-14\" or \"2026-03-14 02:00:00\"."},
 					"until":     {Type: "string", Description: "Optional latest timestamp, same formats as since."},
 				},
@@ -119,6 +120,7 @@ func BundleTools(ctx context.Context, owner, bundleID string) []AgentToolDef {
 				q.OverTime = BoolArg(args, "over_time")
 				q.CountOnly = BoolArg(args, "count")
 				q.Records = BoolArg(args, "record")
+				q.Level = bundleStrArg(args, "level")
 				if n := IntArg(args, "per_file"); n > 0 {
 					q.PerFile = n
 				}
@@ -382,6 +384,10 @@ const (
 	OverTimeHelp = "Count the matching lines by time instead of listing them: one row per minute, hour or day with its count and a bar, from the first match to the last, empty rows in between shown as 0. Answers when something started, whether it is a spike or a trickle, and whether it stopped. Pattern, exclude and the time window still apply; context and paging do not, and it does not combine with group or count."
 	BucketHelp   = "With over_time: the size of one row, e.g. \"30s\", \"5m\", \"1h\", \"1d\". Omit it and one is chosen to fit the span in about 60 rows."
 )
+
+// LevelHelp describes the severity filter, shared by every search tool that
+// offers it.
+const LevelHelp = "Only lines declaring this severity or worse: fatal, error, warn, notice, info or debug, e.g. \"warn\" keeps WARN, ERROR, CRIT and FATAL. Read from the line's own level: an uppercase word (ERROR, ERR, WARNING) or a level field (level=error, \"level\":\"error\"). Works with every mode: errors over time, kinds of warnings with group. With no pattern, every line at that level. A line with no level of its own, such as a stack frame, is left out: add record=true to get the whole entry around each match."
 
 // RecordHelp describes the whole-record parameter, shared by every search
 // tool that offers it.

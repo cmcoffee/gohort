@@ -63,6 +63,11 @@ var (
 	// Uppercase only: "error" inside prose is not a severity field, and
 	// counting it would make every README look like an outage.
 	reSeverity = regexp.MustCompile(`\b(EMERG|ALERT|CRITICAL|CRIT|FATAL|PANIC|ERROR|ERR|WARNING|WARN|NOTICE|INFO|DEBUG|TRACE)\b`)
+	// reLevelField matches a level written as a field, in any case: the
+	// JSON and key=value logs that say "level":"error" or level=warn, which
+	// the uppercase token never sees. A field is a declaration, so its case
+	// does not matter the way a bare word's does.
+	reLevelField = regexp.MustCompile(`(?i)\b(?:level|severity|lvl|loglevel)"?\s*[:=]\s*"?(emerg|alert|critical|crit|fatal|panic|error|err|warning|warn|notice|info|debug|trace)\b`)
 )
 
 // severityCanon collapses the spellings that mean the same thing, so a
@@ -215,12 +220,38 @@ func fileYear(bf File) int {
 // severityOf returns the canonical severity token a line declares, or ""
 // for none. Only the FIRST match counts — a line reading "ERROR: failed to
 // parse DEBUG flag" is an error, not one of each.
+//
+// A level field (level=error, "level":"error") is read first: it is the
+// line's own declaration, and a JSON line can carry an uppercase word in its
+// message that is not its level.
 func severityOf(line string) string {
+	if m := reLevelField.FindStringSubmatch(line); m != nil {
+		return severityCanon[strings.ToUpper(m[1])]
+	}
 	m := reSeverity.FindStringSubmatch(line)
 	if m == nil {
 		return ""
 	}
 	return severityCanon[m[1]]
+}
+
+// severityRank orders the canonical severities, worst first.
+var severityRank = map[string]int{
+	"EMERG": 1, "ALERT": 2, "CRIT": 3, "FATAL": 3, "ERROR": 4,
+	"WARN": 5, "NOTICE": 6, "INFO": 7, "DEBUG": 8, "TRACE": 9,
+}
+
+// ParseLevel reads a severity a search should keep, at it or worse, as the
+// threshold Filter.Level takes: zero for none.
+func ParseLevel(s string) (int, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, nil
+	}
+	if r, ok := severityRank[severityCanon[strings.ToUpper(s)]]; ok {
+		return r, nil
+	}
+	return 0, fmt.Errorf("level %q is not a severity: use fatal, error, warn, notice, info or debug", s)
 }
 
 // hostOf extracts the emitting host, for the one format that names it.

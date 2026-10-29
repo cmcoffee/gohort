@@ -358,6 +358,7 @@ func (s storeSource) itemTools(sess *ToolSession, user, itemID string) []AgentTo
 					"ignore_case": {Type: "boolean", Description: "Match case-insensitively. Default false: use it when hunting a word, not when hunting an identifier."},
 					"context":     {Type: "number", Description: "Lines either side of each hit (0-8, default 2)."},
 					"record":      {Type: "boolean", Description: RecordHelp},
+					"level":       {Type: "string", Description: LevelHelp},
 					"since":       {Type: "string", Description: "Optional start of a time window, e.g. \"2026-08-17\" or \"2026-08-17 02:00:00\". Applied to each line's own timestamp; a line with none (a traceback line) takes the time of the last dated line above it. Use this rather than putting dates in the pattern."},
 					"until":       {Type: "string", Description: "Optional end of the time window, same formats as since."},
 					"over_time":   {Type: "boolean", Description: OverTimeHelp},
@@ -388,6 +389,7 @@ func (s storeSource) itemTools(sess *ToolSession, user, itemID string) []AgentTo
 					Group:      boolArg(args, "group"),
 					OverTime:   boolArg(args, "over_time"),
 					Records:    boolArg(args, "record"),
+					Level:      stringArg(args, "level"),
 					PerFile:    defaultPerFile,
 				}
 				if n, ok := numArg(args, "per_file"); ok && n > 0 {
@@ -498,7 +500,7 @@ func searchText(res SearchResult, opts SearchOpts, readTool string) string {
 	case opts.OverTime && res.Histogram.Lines+res.Histogram.Undated > 0:
 		out = renderOverTime(res, opts)
 	case len(res.Matches) == 0:
-		out = renderNoMatches(res)
+		out = renderNoMatches(res) + bundle.LevelNote(opts.Level)
 	default:
 		out = renderMatches(res, readTool)
 	}

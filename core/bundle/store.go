@@ -340,6 +340,9 @@ type Query struct {
 	// size of one row; zero chooses one from the span.
 	OverTime bool
 	Bucket   time.Duration
+	// Level keeps only lines declaring this severity or worse (ParseLevel),
+	// for every pattern; with no pattern, every such line.
+	Level string
 	// Records gives each kept hit its whole log record instead of Before and
 	// After lines (records.go): from the dated line it belongs to down to the
 	// next. Before and After still apply in a file with no timestamps, where
@@ -436,12 +439,18 @@ func SearchSource(ctx context.Context, src Source, q Query) (SearchResult, error
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if q.Level != "" && strings.TrimSpace(q.Pattern) == "" && len(q.Patterns) == 0 {
+		q.Pattern = "." // every line at the level
+	}
 	patterns, err := Patterns(q.Pattern, q.Patterns)
 	if err != nil {
 		return res, err
 	}
 	f, err := NewFilter(patterns, q.Exclude, "(?i)")
 	if err != nil {
+		return res, err
+	}
+	if f.Level, err = ParseLevel(q.Level); err != nil {
 		return res, err
 	}
 	if src == nil {
@@ -752,6 +761,9 @@ func (s fileSearch) scan(ctx context.Context, bf File, from, to int) fileHits {
 
 		mask := s.f.WhichString(text)
 		if mask != 0 && s.windowed && !LineInWindow(bf.Format, year, text, q.Since, q.Until) {
+			mask = 0
+		}
+		if mask != 0 && !s.f.LevelOK(text) {
 			mask = 0
 		}
 		// Exclusion is tested last, on lines already in, so excluded counts

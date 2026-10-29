@@ -49,6 +49,8 @@ func TestChunkedFilesGiveTheWholeFileAnswer(t *testing.T) {
 		"window-time":   {Pattern: "gone away|ERROR", Since: since, OverTime: true, Bucket: 10 * time.Minute},
 		"window-count":  {Pattern: "frame", Since: since, CountOnly: true},
 		"window-before": {Pattern: "gone away", Until: since, Context: 1},
+		"level":         {Level: "warn", Context: 1},
+		"level-window":  {Pattern: "request|gone", Level: "error", Since: since, Group: true},
 	}
 	for name, opts := range cases {
 		whole := run(1, 1<<40, opts)

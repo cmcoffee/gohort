@@ -134,6 +134,9 @@ type SearchOpts struct {
 	// Group. Bucket is one row's size; zero chooses one from the span.
 	OverTime bool
 	Bucket   time.Duration
+	// Level keeps only lines declaring this severity or worse (core/bundle
+	// ParseLevel), for every pattern; with no pattern, every such line.
+	Level string
 	// Records gives each kept match its whole log record instead of Context
 	// lines (core/bundle records.go): from the dated line it belongs to down
 	// to the next. Context still applies in a file with no timestamps, where
@@ -453,6 +456,9 @@ func Search(ctx context.Context, root string, opts SearchOpts) (SearchResult, er
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if opts.Level != "" && strings.TrimSpace(opts.Pattern) == "" && len(opts.Patterns) == 0 {
+		opts.Pattern = "." // every line at the level
+	}
 	patterns, err := bundle.Patterns(opts.Pattern, opts.Patterns)
 	if err != nil {
 		return res, err
@@ -463,6 +469,9 @@ func Search(ctx context.Context, root string, opts SearchOpts) (SearchResult, er
 	}
 	filter, err := bundle.NewFilter(patterns, opts.Exclude, prefix)
 	if err != nil {
+		return res, err
+	}
+	if filter.Level, err = bundle.ParseLevel(opts.Level); err != nil {
 		return res, err
 	}
 	if !opts.Since.IsZero() && !opts.Until.IsZero() && opts.Until.Before(opts.Since) {

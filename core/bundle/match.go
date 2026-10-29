@@ -305,6 +305,20 @@ type Filter struct {
 	// alone: Match is lane 0, Also[i] lane i+1.
 	Also    []*Matcher
 	Exclude *Matcher // nil when nothing is excluded
+	// Level keeps only lines declaring a severity at this rank or worse
+	// (ParseLevel); zero keeps every line.
+	Level int
+}
+
+// LevelOK reports whether a line passes the filter's severity: always, with
+// no Level set; otherwise only when the line declares one at Level or worse.
+// A line declaring none (a stack frame, a wrapped message) does not.
+func (f Filter) LevelOK(line string) bool {
+	if f.Level == 0 {
+		return true
+	}
+	r := severityRank[severityOf(line)]
+	return r > 0 && r <= f.Level
 }
 
 // Lanes is how many patterns the filter looks for.
