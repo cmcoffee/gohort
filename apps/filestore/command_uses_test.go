@@ -270,3 +270,55 @@ func TestAStoresCommandsFollowItsAccessAndItsLife(t *testing.T) {
 		t.Error("a deleted store's command stayed, approved, for the next store with its handle")
 	}
 }
+
+// The Sources picker reads a store's tools without a turn, and its commands
+// are built only inside one: told nothing of them, it never offered "Can make
+// changes", so a store's commands could reach no agent. ItemTurnWriteTools
+// names them, definitions only, to a Full Access owner and to nobody else; the
+// session-less list still hands out none of them; and the listing, asked from
+// a turn, says "yours to run" only of tools the turn holds, and otherwise
+// names the setting that keeps them out.
+func TestAStoresCommandsAreNamedToThePickerAndListedTruthfully(t *testing.T) {
+	app := &FileStoreApp{}
+	app.DB = &DBase{Store: kvlite.MemStore()}
+	st, _ := SaveStore(app.DB, Store{Name: "Intake", Path: t.TempDir(), Members: []string{"alice", "bob"}, FullAccess: []string{"bob"}})
+	SaveStoreCommand(app.DB, StoreCommand{Slug: st.Slug, Name: "kb", Command: "/opt/bin/kb", AllowedUses: []string{"list"}})
+	if _, err := SaveCommandTools(app.DB, st.Slug, "kb", "File-sharing client.",
+		[]TempToolAction{{Name: "list", Description: "List shares.", CommandTemplate: "/opt/bin/kb list"}}); err != nil {
+		t.Fatal(err)
+	}
+	SetCommandApproved(app.DB, st.Slug, "kb", true)
+	src := storeSource{app: app}
+
+	got := src.ItemTurnWriteTools("bob", st.Slug)
+	if len(got) != 1 || got[0].Name != "kb_intake_list" || !slices.Contains(got[0].Caps, CapWrite) {
+		t.Fatalf("a Full Access owner's picker should be told of the command tool: %+v", got)
+	}
+	if got := src.ItemTurnWriteTools("alice", st.Slug); len(got) != 0 {
+		t.Errorf("a read-only owner's picker was offered command tools: %+v", got)
+	}
+	for _, td := range src.ItemTools("bob", st.Slug) {
+		if td.Tool.Name == "kb_intake_list" {
+			t.Error("the session-less list handed out a runnable command tool")
+		}
+	}
+
+	reach := commandsReach{known: true, tools: map[string]bool{}, fullAccess: true}
+	if out := describeStoreCommandsFor(app.DB, st, reach); strings.Contains(out, "Yours to run") ||
+		!strings.Contains(out, "NOT in your toolset") || !strings.Contains(out, "Can make changes") {
+		t.Errorf("a turn without the tool must be told which switch is off:\n%s", out)
+	}
+	reach.fullAccess = false
+	if out := describeStoreCommandsFor(app.DB, st, reach); !strings.Contains(out, "Full Access") {
+		t.Errorf("a read-only owner's turn must be told it is Full Access:\n%s", out)
+	}
+	reach.fullAccess, reach.tools["kb_intake_list"] = true, true
+	if out := describeStoreCommandsFor(app.DB, st, reach); !strings.Contains(out, "Yours to run, with these tools:") ||
+		!strings.Contains(out, "kb_intake_list: /opt/bin/kb list") {
+		t.Errorf("a turn holding the tool should read it as its own:\n%s", out)
+	}
+	// Outside a turn nothing is known, and the listing reads as it always did.
+	if out := describeStoreCommands(app.DB, st); !strings.Contains(out, "Yours to run") {
+		t.Errorf("outside a turn:\n%s", out)
+	}
+}

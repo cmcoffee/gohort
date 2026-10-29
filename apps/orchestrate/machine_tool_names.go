@@ -173,7 +173,7 @@ func agentCatalogPreview(user string, ag AgentRecord) []AgentToolDef {
 	// because a list named them, so the allowlist does not gate them.
 	add(AgentProvidedTools(sess, user, ag.ID)...)
 	for _, ref := range ag.AttachedSources {
-		add(sourceToolsFor(ref, ReferenceItemTools(user, strings.TrimSpace(ref.Kind), strings.TrimSpace(ref.ItemID)))...)
+		add(sourceToolsFor(ref, pickerTools(user, strings.TrimSpace(ref.Kind), strings.TrimSpace(ref.ItemID)))...)
 	}
 	return out
 }
@@ -613,7 +613,7 @@ func toolCapIndex(user string) (map[string][]Capability, map[string]bool) {
 	// not find them at all.
 	for _, g := range ReferenceGroups(user) {
 		for _, it := range g.Items {
-			for _, td := range ReferenceItemTools(user, g.Kind, it.ID) {
+			for _, td := range pickerTools(user, g.Kind, it.ID) {
 				caps[td.Tool.Name] = td.Tool.Caps
 				dynamic[td.Tool.Name] = true
 			}

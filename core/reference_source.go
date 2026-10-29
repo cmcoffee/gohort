@@ -116,6 +116,32 @@ type SessionReferenceToolProvider interface {
 	ItemToolsWithSession(sess *ToolSession, user, itemID string) []AgentToolDef
 }
 
+// TurnWriteToolDescriber is an optional interface for a source whose tools
+// that make changes exist only inside a turn: a file store's mapped commands
+// and its pull run on the turn's session, so the session-less ItemTools leaves
+// them out. A picker built on ItemTools then saw nothing that makes changes,
+// never offered "Can make changes", and with the switch off the tools never
+// reached any agent. This describes them, definitions only, so the picker and
+// every list of attachable tool names can show them. Running them still goes
+// through ReferenceItemToolsWithSession and the attachment's switch: nothing
+// returned here has a handler.
+type TurnWriteToolDescriber interface {
+	ItemTurnWriteTools(user, itemID string) []Tool
+}
+
+// ReferenceItemTurnWriteTools describes the tools that make changes an item
+// builds only inside a turn (TurnWriteToolDescriber); nil when it has none or
+// the kind is unknown.
+func ReferenceItemTurnWriteTools(user, kind, itemID string) []Tool {
+	refSourcesMu.RLock()
+	s := refSources[kind]
+	refSourcesMu.RUnlock()
+	if d, ok := s.(TurnWriteToolDescriber); ok {
+		return d.ItemTurnWriteTools(user, itemID)
+	}
+	return nil
+}
+
 // NetworkReferenceSource is an optional interface a ReferenceSource implements to
 // declare that resolving its content (List/Fetch) reaches out over the network —
 // e.g. a remote MCP document source. A consumer gathering in a private/offline

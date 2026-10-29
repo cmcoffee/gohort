@@ -779,6 +779,17 @@ func (t *chatTurn) loadToolToolDef(sess *ToolSession) AgentToolDef {
 			// one bad name doesn't sink the batch or make the LLM loop.
 			var loaded, already, unknown, withheld []string
 			unknown = append(unknown, unknownGroups...)
+			// Tools the round already holds are called, not loaded: an
+			// attached source's (a file store's command tools), a framework
+			// tool. Asked to load one, load_tool answered "Unknown", and an
+			// agent holding a store's command tool concluded it did not.
+			inHand := map[string]bool{}
+			for _, tl := range TurnToolsFromContext(ctx) {
+				inHand[tl.Name] = true
+			}
+			for n := range t.attachedToolNames {
+				inHand[n] = true
+			}
 			schemas := make([]map[string]any, 0, len(want))
 			for _, n := range want {
 				// Deferred authoring tool (see registerLazyAuthoringTools).
@@ -803,7 +814,7 @@ func (t *chatTurn) loadToolToolDef(sess *ToolSession) AgentToolDef {
 				}
 				td, ok := t.lazyCustomToolDefs[n]
 				if !ok {
-					if t.staticTempToolNames[n] || t.mountedToolNames[n] {
+					if t.staticTempToolNames[n] || t.mountedToolNames[n] || inHand[n] {
 						already = append(already, n)
 						continue
 					}

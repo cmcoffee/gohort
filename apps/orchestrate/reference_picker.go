@@ -49,7 +49,7 @@ func (T *OrchestrateApp) referenceSourcesGet(c *jsonapi.Call) (any, error) {
 	items := []map[string]any{}
 	for _, grp := range ReferenceGroups(user) {
 		for _, it := range grp.Items {
-			tools := ReferenceItemTools(user, grp.Kind, it.ID)
+			tools := pickerTools(user, grp.Kind, it.ID)
 			row := map[string]any{
 				"id":    ReferenceSelection{Kind: grp.Kind, ItemID: it.ID}.Ref(),
 				"name":  it.Name,
@@ -184,6 +184,26 @@ func refPickerDesc(it ReferenceItem, tools []AgentToolDef) string {
 		return line
 	}
 	return desc + " - " + line
+}
+
+// pickerTools is what one attachable item would give an agent, for showing:
+// its tools, plus the ones that make changes it builds only inside a turn (a
+// file store's commands and pull), as definitions with no handler. Without
+// those the Sources picker never offered "Can make changes" for a file store,
+// so its commands could reach no agent. For pickers and lists of names only:
+// a catalog takes its tools from ReferenceItemToolsWithSession.
+func pickerTools(user, kind, itemID string) []AgentToolDef {
+	tools := ReferenceItemTools(user, kind, itemID)
+	have := make(map[string]bool, len(tools))
+	for _, t := range tools {
+		have[t.Tool.Name] = true
+	}
+	for _, t := range ReferenceItemTurnWriteTools(user, kind, itemID) {
+		if !have[t.Name] {
+			tools = append(tools, AgentToolDef{Tool: t})
+		}
+	}
+	return tools
 }
 
 // toolWrites reports whether a tool declares that it makes changes.

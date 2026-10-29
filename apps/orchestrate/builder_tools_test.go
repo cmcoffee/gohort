@@ -422,6 +422,26 @@ func TestGraphToolsDeferredOnDemand(t *testing.T) {
 	}
 }
 
+// An attached source's tool is in the catalog, not loaded: load_tool must say
+// so. It answered "Unknown", and an agent holding a file store's command tool
+// (named to it by the store's own listing) concluded it did not have it.
+func TestLoadToolOnAnAttachedToolSaysItIsInHand(t *testing.T) {
+	turn, sess := newAuthoringTestTurn(t)
+	turn.noteAttachedTools([]AgentToolDef{{Tool: Tool{Name: "weka_logs_sar_metrics"}}})
+	out, err := turn.loadToolToolDef(sess).Handler(context.Background(), map[string]any{
+		"names": []any{"weka_logs_sar_metrics", "no_such_tool"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "Already loaded (call directly): weka_logs_sar_metrics") {
+		t.Errorf("an attached tool must read as in hand, got %q", out)
+	}
+	if !strings.Contains(out, "Unknown") || !strings.Contains(out, "no_such_tool") {
+		t.Errorf("a name nothing holds is still unknown, got %q", out)
+	}
+}
+
 // load_tool on a tool that is already in the catalog must say so and stop. It
 // used to fall through to the persistent pool and, when an entry shared the
 // name, append it as a second definition (a live fetch_url_ts3_api collision).

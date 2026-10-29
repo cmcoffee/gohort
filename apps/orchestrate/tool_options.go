@@ -356,7 +356,7 @@ func (t *chatTurn) buildAttachedSourceToolDefs(sess *ToolSession) []AgentToolDef
 	if t == nil || len(t.agent.AttachedSources) == 0 {
 		return nil
 	}
-	return attachedSourceToolDefs(sess, t.user, t.agent, func(kind, item string) {
+	return attachedSourceToolDefs(sess, t.user, t.agent, &sourceToolNotes{empty: func(kind, item string) {
 		// A BREADCRUMB, not just a server log. The attachment is a
 		// frozen {kind, item_id}; when that id stops resolving — the
 		// item was removed, unshared, or re-created on the far side of
@@ -369,16 +369,33 @@ func (t *chatTurn) buildAttachedSourceToolDefs(sess *ToolSession) []AgentToolDef
 			" gave this turn no tools: it was removed, is no longer shared, or was re-created with a "+
 			"different id on the far side. Detach and re-attach it (Configure → Sources) to point at "+
 			"what is there now.")
-	})
+	}, withheld: func(kind, item string, names []string) {
+		// A breadcrumb for a drop nothing else recorded: a store's mapped
+		// commands kept from an agent its owner meant to have them, with
+		// the agent told by the store's own listing that they were its to
+		// run. Not a fault: the switch is the person's, so a note.
+		t.turnDiag("source_writes_off", "the attached source "+kind+"/"+item+" has tools that make changes ("+
+			strings.Join(names, ", ")+") that this agent does not get: Can make changes is off for it in "+
+			"Configure → Sources. Turn it on to give the agent them.")
+	}})
+}
+
+// sourceToolNotes is what attachedSourceToolDefs reports about an agent's
+// Sources as it builds their tools: an attachment that resolved to nothing,
+// and the tools that make changes an attachment's switch kept out. Either may
+// be nil.
+type sourceToolNotes struct {
+	empty    func(kind, item string)
+	withheld func(kind, item string, names []string)
 }
 
 // attachedSourceToolDefs is the tools an agent's Sources contribute, for any
 // run of it: a chat turn, and the runs that build their catalog themselves (a
 // scheduled fire, a delegation, a monitor wake, an inline dispatch), which
 // had none of them, so an agent whose Sources answered in chat had nothing to
-// ask them with on a schedule. empty, when set, hears of a Source that
-// resolved to nothing.
-func attachedSourceToolDefs(sess *ToolSession, user string, a AgentRecord, empty func(kind, item string)) []AgentToolDef {
+// ask them with on a schedule. notes, when set, hears of a Source that
+// resolved to nothing and of tools a Source's switch withheld.
+func attachedSourceToolDefs(sess *ToolSession, user string, a AgentRecord, notes *sourceToolNotes) []AgentToolDef {
 	var out []AgentToolDef
 	seen := map[string]bool{}
 	for _, ref := range a.AttachedSources {
@@ -387,12 +404,20 @@ func attachedSourceToolDefs(sess *ToolSession, user string, a AgentRecord, empty
 			continue
 		}
 		// Tools that make changes only when the attachment allows them.
-		defs := sourceToolsFor(ref, ReferenceItemToolsWithSession(sess, user, kind, item))
+		all := ReferenceItemToolsWithSession(sess, user, kind, item)
+		defs := sourceToolsFor(ref, all)
+		if len(defs) < len(all) && notes != nil && notes.withheld != nil {
+			var names []string
+			for _, d := range sourceWriteTools(all) {
+				names = append(names, d.Tool.Name)
+			}
+			notes.withheld(kind, item, names)
+		}
 		if len(defs) == 0 {
 			Log("[orchestrate.tools] agent=%s: attached source %s/%s resolved to no tools (removed or no longer shared?)",
 				a.ID, kind, item)
-			if empty != nil {
-				empty(kind, item)
+			if notes != nil && notes.empty != nil {
+				notes.empty(kind, item)
 			}
 			continue
 		}
@@ -492,7 +517,7 @@ func formatReferenceSources(user string, groups []ReferenceGroup) string {
 			// make changes named apart: they need the person's Can make
 			// changes, which an attachment made here does not have.
 			fmt.Fprintf(&b, "- %s:%s, %s", g.Kind, it.ID, it.Name)
-			if d := refPickerDesc(it, ReferenceItemTools(user, g.Kind, it.ID)); d != "" {
+			if d := refPickerDesc(it, pickerTools(user, g.Kind, it.ID)); d != "" {
 				fmt.Fprintf(&b, " (%s)", d)
 			}
 			b.WriteString("\n")
@@ -535,7 +560,7 @@ func attachedSourceToolOptions(user string) []ui.SelectOption {
 	seen := map[string]bool{}
 	for _, g := range ReferenceGroups(user) {
 		for _, it := range g.Items {
-			for _, td := range ReferenceItemTools(user, g.Kind, it.ID) {
+			for _, td := range pickerTools(user, g.Kind, it.ID) {
 				name := td.Tool.Name
 				if name == "" || seen[name] {
 					continue

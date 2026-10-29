@@ -516,6 +516,34 @@ func (T *FileStoreApp) handleFolders(c *jsonapi.Call) (any, error) {
 // nothing in this process can obtain that — so the honest thing is to name the
 // input it will ask for, not to imply it could be supplied.
 func describeStoreCommands(db Database, st Store) string {
+	return describeStoreCommandsFor(db, st, commandsReach{})
+}
+
+// commandsReach is what the asking turn can actually call, so the listing
+// says "yours to run" only of tools the agent has. A mapped command's tools
+// make changes, so they reach an agent only when its owner has Full Access and
+// its attachment of the store allows changes; the listing said "yours to run"
+// on mapping and approval alone, and an agent missing either went hunting for
+// a tool it had been told by name it held.
+type commandsReach struct {
+	known      bool            // the turn's tools are known: asked from inside an agent's turn
+	tools      map[string]bool // the tools the turn holds, in hand or loadable
+	fullAccess bool            // the agent's owner has Full Access to the store
+}
+
+// missing is the sentence for a mapped, approved command whose tools the
+// turn does not hold: which setting is off, and who sets it.
+func (r commandsReach) missing() string {
+	if !r.fullAccess {
+		return "\n  Mapped and approved, but NOT in your toolset: running a command needs Full Access to this store, and your owner's access is read-only. An admin grants Full Access. Tell the person; there is no other way for you to run it."
+	}
+	return "\n  Mapped and approved, but NOT in your toolset: this store's attachment does not let you make changes. The person turns on Can make changes for it in your Sources (a phase whose Tools list leaves these out, or one of your rules, can also hold them back). Tell the person which; there is no other way for you to run it."
+}
+
+// describeStoreCommandsFor is describeStoreCommands for a turn whose tools are
+// known (reach.known): a command's tools are offered only if the turn holds
+// them, and otherwise the listing says which setting keeps them out.
+func describeStoreCommandsFor(db Database, st Store, reach commandsReach) string {
 	cmds := StoreCommandsFor(db, st.Slug)
 	if len(cmds) == 0 {
 		return fmt.Sprintf("No commands are registered against %q. If a folder here is unreadable, that is not because a step is missing: nothing is set up to transform it.", st.Name)
@@ -533,8 +561,14 @@ func describeStoreCommands(db Database, st Store) string {
 			// model to find them, and one that did not went looking for
 			// another agent to do it.
 			acts := c.runnableActions()
+			held := len(acts) > 0 && !reach.known
+			for _, a := range acts {
+				held = held || reach.tools[c.ToolName()+"_"+a.Name]
+			}
 			if len(acts) == 0 {
 				b.WriteString("\n  Approved, but none of its mapped lines can run: an admin re-maps it.")
+			} else if !held {
+				b.WriteString(reach.missing())
 			} else {
 				b.WriteString("\n  Yours to run, with these tools:")
 				for _, a := range acts {

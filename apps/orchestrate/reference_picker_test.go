@@ -507,3 +507,78 @@ func TestAnAgentsOwnSubAgentsAreOfferedAsSources(t *testing.T) {
 		t.Error("another agent was offered a sub-agent that is private to its parent")
 	}
 }
+
+// turnWriteRefSource is a source whose tool that makes changes is built only
+// inside a turn, the way a file store's mapped commands are: its session-less
+// ItemTools has only the reading tool.
+type turnWriteRefSource struct{}
+
+func (turnWriteRefSource) Kind() string  { return "testcmdstore" }
+func (turnWriteRefSource) Label() string { return "Test command stores" }
+func (turnWriteRefSource) List(user string) []ReferenceItem {
+	return []ReferenceItem{{ID: "logs", Name: "Logs"}}
+}
+func (turnWriteRefSource) Fetch(ctx context.Context, user, itemID, query string) string { return "" }
+func (turnWriteRefSource) ItemTools(user, itemID string) []AgentToolDef {
+	return []AgentToolDef{{Tool: Tool{Name: "search_logs", Caps: []Capability{CapRead}}}}
+}
+func (turnWriteRefSource) ItemTurnWriteTools(user, itemID string) []Tool {
+	return []Tool{{Name: "weka_logs_snapshot", Caps: []Capability{CapExecute, CapWrite}}}
+}
+
+// A source whose tools that make changes exist only inside a turn still gets
+// the "Can make changes" switch, and the picker names what it adds: without
+// that a file store's mapped commands could reach no agent, the switch they
+// need never being offered. Described, never handed out: the session-less
+// catalog path does not get the handler-less definition. And an attachment
+// whose switch keeps tools out leaves a turn note naming them.
+func TestATurnOnlyWriteToolGetsTheSwitch(t *testing.T) {
+	RegisterReferenceSource(turnWriteRefSource{})
+	RegisterReferenceSource(writableRefSource{})
+	app, udb, user := newTestOrchestrate(t)
+	saveAgent(udb, AgentRecord{ID: "a1", Name: "Diagnostics", OrchestratorPrompt: "You diagnose."})
+	w := httptest.NewRecorder()
+	routed(app)(w, asUser(httptest.NewRequest("GET", "/api/reference-sources?agent=a1", nil), user))
+	var out struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v %s", err, w.Body.String())
+	}
+	var row map[string]any
+	for _, it := range out.Items {
+		if it["id"] == "testcmdstore:logs" {
+			row = it
+		}
+	}
+	if row == nil || row["can_write"] != true {
+		t.Fatalf("the switch was not offered for a source whose writes are built in a turn: %v", row)
+	}
+	if d, _ := row["desc"].(string); d != "Adds: search_logs; with Can make changes, also weka_logs_snapshot" {
+		t.Errorf("desc = %q", d)
+	}
+
+	a := AgentRecord{ID: "a1", AttachedSources: []ReferenceSelection{{Kind: "testcmdstore", ItemID: "logs", Writes: true}}}
+	for _, td := range attachedSourceToolDefs(nil, user, a, nil) {
+		if td.Tool.Name == "weka_logs_snapshot" {
+			t.Error("a described-only tool reached a catalog")
+		}
+	}
+
+	var withheld []string
+	notes := &sourceToolNotes{withheld: func(kind, item string, names []string) { withheld = append(withheld, names...) }}
+	a = AgentRecord{ID: "a1", AttachedSources: []ReferenceSelection{{Kind: "testguide", ItemID: "triage"}}}
+	attachedSourceToolDefs(nil, user, a, notes)
+	if len(withheld) != 1 || withheld[0] != "report_to_triage_guide" {
+		t.Errorf("a switch that is off should name what it kept out: %v", withheld)
+	}
+	withheld = nil
+	a.AttachedSources[0].Writes = true
+	attachedSourceToolDefs(nil, user, a, notes)
+	if len(withheld) != 0 {
+		t.Errorf("nothing is withheld with the switch on: %v", withheld)
+	}
+	if diagLevel("source_writes_off") != diagLevelNote {
+		t.Error("the person's own switch is a note, not a block")
+	}
+}

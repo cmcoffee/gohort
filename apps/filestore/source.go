@@ -238,6 +238,26 @@ func (s storeSource) ItemToolsWithSession(sess *ToolSession, user, itemID string
 	return tools
 }
 
+// ItemTurnWriteTools describes the store's tools that make changes, which
+// ItemToolsWithSession builds only inside a turn: its mapped commands and its
+// pull, under the same Full Access rule. Definitions only, for the Sources
+// picker and the lists of attachable tool names (core TurnWriteToolDescriber);
+// the handlers are dropped, so nothing here can run.
+func (s storeSource) ItemTurnWriteTools(user, itemID string) []Tool {
+	st, ok := LoadStore(s.app.DB, itemID)
+	if !ok || !st.AllowsUser(user) || !st.FullAccessFor(user) {
+		return nil
+	}
+	var out []Tool
+	for _, td := range s.commandToolDefs(nil, user, st) {
+		out = append(out, td.Tool)
+	}
+	if pull, ok := s.app.pullToolDef(nil, user, st); ok {
+		out = append(out, pull.Tool)
+	}
+	return out
+}
+
 // ItemTools is the session-less form, for a caller that only wants to know
 // what this store contributes. Its search then cannot be cancelled, which is
 // the honest consequence of having nothing to cancel it WITH — every caller
@@ -287,7 +307,22 @@ func (s storeSource) itemTools(sess *ToolSession, user, itemID string) []AgentTo
 			Caps:        []Capability{CapRead},
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
-			return describeStoreCommands(s.app.DB, st), nil
+			// Asked from inside a turn, the listing reports only the command
+			// tools this agent actually holds, and names the setting that
+			// keeps the rest out.
+			reach := commandsReach{fullAccess: st.FullAccessFor(user)}
+			if turn := TurnToolsFromContext(ctx); turn != nil {
+				reach.known, reach.tools = true, map[string]bool{}
+				for _, t := range turn {
+					reach.tools[t.Name] = true
+				}
+				if sess != nil && sess.LoadableTools != nil {
+					for _, t := range sess.LoadableTools() {
+						reach.tools[t.Name] = true
+					}
+				}
+			}
+			return describeStoreCommandsFor(s.app.DB, st, reach), nil
 		},
 	}
 
