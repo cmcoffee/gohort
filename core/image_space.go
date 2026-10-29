@@ -502,14 +502,16 @@ func originFromNote(note string) ImageOrigin {
 // unwritable directory) and the caller carries on without it — the space is a
 // convenience, never a dependency.
 func RecordRecentImage(sess *ToolSession, data []byte, note string, origin ImageOrigin) string {
-	return recordRecentImage(sess, data, note, origin, CaptionOnRecord)
+	return recordRecentImage(sess, data, note, origin, CaptionOnRecord, "")
 }
 
 // recordRecentImage is the implementation. describe=false is for an image the
 // TURN is already looking at — see the inbound-attachment call site — where a
 // second, concurrent vision call for the same picture buys nothing and costs
-// the user's own request its LLM slot.
-func recordRecentImage(sess *ToolSession, data []byte, note string, origin ImageOrigin, describe bool) string {
+// the user's own request its LLM slot. caption is a description the caller
+// already has (an inbound photo's, made on arrival), saved as the entry's
+// caption in place of the background pass.
+func recordRecentImage(sess *ToolSession, data []byte, note string, origin ImageOrigin, describe bool, caption string) string {
 	dir := recentImageDir(sess)
 	if dir == "" || len(data) == 0 {
 		return ""
@@ -531,6 +533,7 @@ func recordRecentImage(sess *ToolSession, data []byte, note string, origin Image
 	// position it never saw assigned is how the ring renumbers underneath it.
 	meta, _ := json.Marshal(recentImageMeta{
 		Note: strings.TrimSpace(note), Mime: "image/png", Origin: origin,
+		Caption:     strings.TrimSpace(caption),
 		Unannounced: sess != nil && sess.Detached,
 	})
 	if err := os.WriteFile(filepath.Join(dir, base+".json"), meta, 0600); err != nil {
@@ -546,7 +549,7 @@ func recordRecentImage(sess *ToolSession, data []byte, note string, origin Image
 	// operation would otherwise wait seconds for a description nothing has
 	// asked for yet. The entry is complete and usable the moment the file
 	// lands; the caption catches up.
-	if describe {
+	if describe && strings.TrimSpace(caption) == "" {
 		captionRunner(func() { captionRecentImage(filepath.Join(dir, base), sess, data) })
 	}
 	return RecentImageRefPrefix + "1"

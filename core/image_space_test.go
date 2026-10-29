@@ -1402,3 +1402,33 @@ func TestRingIDsAreTransient(t *testing.T) {
 		t.Errorf("ring ids should be caught, got %v", got)
 	}
 }
+
+// A received photo carries the description its arrival made into the image
+// space, so a later turn's list tells two photos from the same person apart
+// instead of showing identical "received from Henry" rows. It costs no vision
+// call: the arrival already looked. Keeping it still makes the long form, and
+// the arrival's line stays its caption.
+func TestAReceivedPhotoKeepsItsArrivalDescription(t *testing.T) {
+	sess := imageSpaceSession(t)
+	captionInline(t)
+	llm := &countingCaptionLLM{reply: "A dog\n\nA brown dog lying on a wooden porch."}
+	sess.LLM = llm
+	sess.RegisterInboundMediaDescribed("image", testPNG(t, 8, 8), "Henry", "A brown dog on a porch.")
+	sess.RegisterInboundMediaDescribed("image", testPNG(t, 16, 16), "Henry", "A receipt from a gas station.")
+	if llm.calls != 0 {
+		t.Fatalf("recording made %d vision calls; the arrival already described them", llm.calls)
+	}
+	m := RecentImageManifest(sess)
+	for _, want := range []string{"received from Henry - A brown dog on a porch.", "received from Henry - A receipt from a gas station."} {
+		if !strings.Contains(m, want) {
+			t.Errorf("list is missing %q:\n%s", want, m)
+		}
+	}
+	kept, err := KeepImage(sess, "image#2", "porch_dog", "")
+	if err != nil {
+		t.Fatalf("keep: %v", err)
+	}
+	if kept.Caption != "A brown dog on a porch." || !strings.Contains(kept.Description, "wooden porch") {
+		t.Errorf("kept = caption %q, description %q", kept.Caption, kept.Description)
+	}
+}

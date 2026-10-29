@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/snugforge/kvlite"
@@ -751,7 +752,7 @@ func TestADispatchRefusesWhatItCannotRun(t *testing.T) {
 // was sent.
 
 func TestChannelManifestTeachesEditing(t *testing.T) {
-	m := buildInboundMediaManifest("Alice", 1)
+	m := buildInboundMediaManifest("Alice", 1, nil)
 	if m == "" {
 		t.Fatal("no manifest for a turn carrying an image")
 	}
@@ -773,7 +774,7 @@ func TestChannelManifestTeachesEditing(t *testing.T) {
 // The anti-echo rule has to survive, and has to stop applying to edits — an
 // edited picture is a new one and IS the answer to what was asked.
 func TestChannelManifestStillBlocksEchoButAllowsEdits(t *testing.T) {
-	m := buildInboundMediaManifest("Alice", 2)
+	m := buildInboundMediaManifest("Alice", 2, nil)
 	if !strings.Contains(m, "do NOT send one back UNCHANGED") {
 		t.Error("the echo guard is gone; a photo just posted would be re-sent to the same group")
 	}
@@ -786,7 +787,7 @@ func TestChannelManifestStillBlocksEchoButAllowsEdits(t *testing.T) {
 }
 
 func TestNoManifestWithoutMedia(t *testing.T) {
-	if m := buildInboundMediaManifest("Alice", 0); m != "" {
+	if m := buildInboundMediaManifest("Alice", 0, nil); m != "" {
 		t.Errorf("manifest emitted for a turn with no media: %q", m)
 	}
 }
@@ -865,5 +866,66 @@ func TestAWakeKeepsTheThreadsDraftedTools(t *testing.T) {
 	tools := LoadSessionTempTools(df.udb, "thread-d")
 	if len(tools) != 1 || tools[0].Name != "jira_open_tickets" {
 		t.Errorf("a wake in the thread deleted the tool being built there: %+v", tools)
+	}
+}
+
+// Each id says what it shows. Matched by position against a separate list,
+// two photos from the same person were one guess apart.
+func TestChannelManifestDescribesEachItem(t *testing.T) {
+	m := buildInboundMediaManifest("Henry", 2, []string{"A brown dog on a porch.", ""})
+	if !strings.Contains(m, "media#1: image from Henry: A brown dog on a porch.") {
+		t.Errorf("media#1 lost its description:\n%s", m)
+	}
+	if !strings.Contains(m, "media#2: image from Henry\n") {
+		t.Errorf("an undescribed item should read as before:\n%s", m)
+	}
+}
+
+// countingVisionLLM answers every caption call the same and counts them.
+type countingVisionLLM struct {
+	LLM
+	calls int
+}
+
+func (f *countingVisionLLM) Chat(ctx context.Context, msgs []Message, opts ...ChatOption) (*Response, error) {
+	f.calls++
+	return &Response{Content: "A picture."}, nil
+}
+
+// A message landing mid-turn reruns the turn with both folded in; the rerun
+// must not describe the pictures the cancelled turn already had.
+func TestARerunDoesNotDescribeThePicturesAgain(t *testing.T) {
+	first, second := []byte("first-"+UUIDv4()), []byte("second-"+UUIDv4())
+	llm := &countingVisionLLM{}
+	captionInboundImages(context.Background(), llm, [][]byte{first})
+	got := captionInboundImages(context.Background(), llm, [][]byte{first, second})
+	if llm.calls != 2 {
+		t.Errorf("%d vision calls, want 2: the rerun should describe only the new picture", llm.calls)
+	}
+	if len(got) != 2 || got[0] != "A picture." || got[1] != "A picture." {
+		t.Errorf("captions = %q", got)
+	}
+}
+
+func TestTheCaptionCacheStaysBounded(t *testing.T) {
+	c := &captionCache{ttl: time.Minute, max: 2}
+	c.put([32]byte{1}, "one")
+	c.put([32]byte{2}, "two")
+	c.put([32]byte{3}, "three")
+	if _, ok := c.get([32]byte{1}); ok {
+		t.Error("the oldest entry should have gone")
+	}
+	if v, ok := c.get([32]byte{3}); !ok || v != "three" {
+		t.Error("the newest entry should be there")
+	}
+	c.put([32]byte{4}, "")
+	if _, ok := c.get([32]byte{4}); ok {
+		t.Error("an empty caption is not kept, so a failed call is tried again")
+	}
+	old := &captionCache{ttl: time.Nanosecond, max: 2}
+	old.put([32]byte{5}, "five")
+	time.Sleep(time.Millisecond)
+	if _, ok := old.get([32]byte{5}); ok {
+		t.Error("an expired caption should not be served")
 	}
 }

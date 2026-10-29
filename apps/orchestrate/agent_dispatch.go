@@ -22,10 +22,12 @@ package orchestrate
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -1300,7 +1302,7 @@ type AgentSyncResult = agenthost.Result
 // the persisted transcript): it describes bytes that ride only on this turn.
 // Returns "" when the turn carried no media. Written without em-dashes so it does
 // not model that tic to the worker (house style).
-func buildInboundMediaManifest(sender string, imageCount int) string {
+func buildInboundMediaManifest(sender string, imageCount int, captions []string) string {
 	if imageCount <= 0 {
 		return ""
 	}
@@ -1311,6 +1313,13 @@ func buildInboundMediaManifest(sender string, imageCount int) string {
 		fmt.Fprintf(&b, "\n  media#%d: image", i)
 		if who != "" {
 			b.WriteString(" from " + who)
+		}
+		// What it shows, beside its id: matched by position against a separate
+		// list, two photos from the same person were one guess apart.
+		if i <= len(captions) {
+			if c := strings.TrimSpace(captions[i-1]); c != "" {
+				b.WriteString(": " + c)
+			}
 		}
 	}
 	b.WriteString("\n  To CHANGE one of these pictures, pass its id to the image tool: image(action=\"edit\", images=[\"media#1\"], prompt=\"...\"). That is how \"put the cat in this photo\", \"make it night\", or \"blend these two\" is done. Do NOT generate a new picture from a text prompt when you were asked to change one you were sent: generating invents a different scene, and what came back was supposed to be THEIR photo.")
@@ -1348,6 +1357,11 @@ func captionInboundImages(ctx context.Context, llm LLM, images [][]byte) []strin
 		if len(img) == 0 {
 			continue
 		}
+		key := sha256.Sum256(img)
+		if c, ok := inboundCaptions.get(key); ok {
+			out[i] = c
+			continue
+		}
 		resp, err := llm.Chat(ctx,
 			[]Message{{Role: "user", Content: inboundCaptionPrompt, Images: [][]byte{img}}},
 			WithCaller("orchestrate/inbound_caption"),
@@ -1358,8 +1372,66 @@ func captionInboundImages(ctx context.Context, llm LLM, images [][]byte) []strin
 			continue
 		}
 		out[i] = strings.TrimSpace(resp.Content)
+		inboundCaptions.put(key, out[i])
 	}
 	return out
+}
+
+// inboundCaptions remembers recent arrival captions by the image's bytes. A
+// message landing mid-turn cancels the turn and runs it again with both folded
+// in, and the rerun would otherwise describe every picture the cancelled one
+// already had. Short-lived and small: it only has to outlast a rerun.
+var inboundCaptions = &captionCache{ttl: 10 * time.Minute, max: 64}
+
+type captionCache struct {
+	mu   sync.Mutex
+	ttl  time.Duration
+	max  int
+	seen map[[32]byte]cachedCaption
+}
+
+type cachedCaption struct {
+	text string
+	at   time.Time
+}
+
+func (c *captionCache) get(key [32]byte) (string, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.seen[key]
+	if !ok || time.Since(e.at) > c.ttl {
+		return "", false
+	}
+	return e.text, true
+}
+
+// put keeps a caption, dropping expired ones first and then the oldest while
+// it is full. An empty caption is not kept, so a failed call is tried again.
+func (c *captionCache) put(key [32]byte, text string) {
+	if text == "" {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.seen == nil {
+		c.seen = map[[32]byte]cachedCaption{}
+	}
+	for k, e := range c.seen {
+		if time.Since(e.at) > c.ttl {
+			delete(c.seen, k)
+		}
+	}
+	for len(c.seen) >= c.max {
+		var oldest [32]byte
+		var at time.Time
+		for k, e := range c.seen {
+			if at.IsZero() || e.at.Before(at) {
+				oldest, at = k, e.at
+			}
+		}
+		delete(c.seen, oldest)
+	}
+	c.seen[key] = cachedCaption{text: text, at: time.Now()}
 }
 
 // buildInboundImageRecord is the PERSISTED, past-tense record of images that
@@ -2104,13 +2176,14 @@ func (cr *continuingRun) buildMessages() {
 	//   - RUN-ONLY (llmMessage, further below): the individuated manifest with a
 	//     stable id + sender per item, appended alongside SurfaceContext so it is
 	//     NOT persisted.
+	var captions []string
 	if n := len(run.Images); n > 0 {
 		// Caption each inbound image ONCE, here on the arrival turn (worker is
 		// vision-capable), and persist the depiction into deliveredMessage so a
 		// later reference to the image has a durable anchor instead of an empty
 		// slot the model confabulates into (the Wiwee "meme from Henry about the
 		// Alamo" failure). Fails soft — a blank caption degrades to the bare count.
-		captions := captionInboundImages(cr.ctx, cr.subSess.LLM, run.Images)
+		captions = captionInboundImages(cr.ctx, cr.subSess.LLM, run.Images)
 		cr.deliveredMessage += buildInboundImageRecord(run.MessageSender, n, captions)
 		captioned := 0
 		for _, c := range captions {
@@ -2126,8 +2199,14 @@ func (cr *continuingRun) buildMessages() {
 		// Register each inbound image in the session's addressable media registry
 		// (media#1, media#2, …) so the model can post a SPECIFIC one back by id.
 		// Order matches the manifest enumeration appended to llmMessage below.
-		for _, img := range run.Images {
-			cr.subSess.RegisterInboundMedia("image", img, run.MessageSender)
+		// Each carries its caption into the image space, where it outlives
+		// this turn.
+		for i, img := range run.Images {
+			var depicts string
+			if i < len(captions) {
+				depicts = captions[i]
+			}
+			cr.subSess.RegisterInboundMediaDescribed("image", img, run.MessageSender, depicts)
 		}
 	}
 	// What the agent that handed this off gave it, after what the message
@@ -2165,7 +2244,7 @@ func (cr *continuingRun) buildMessages() {
 	// the ids the delivery tools resolve against (post-by-id), so the model never
 	// recalls a filename from memory. Not persisted: it describes bytes that are
 	// present only on this turn (see the deliveredMessage split above).
-	if m := buildInboundMediaManifest(run.MessageSender, len(run.Images)); m != "" {
+	if m := buildInboundMediaManifest(run.MessageSender, len(run.Images), captions); m != "" {
 		llmMessage += m
 	}
 	// Attribute the live turn to its sender too (same rendering as history, so

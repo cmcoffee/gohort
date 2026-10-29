@@ -174,6 +174,15 @@ type InboundMediaItem struct {
 // describe a photo someone sent, never re-send it. Turn-scoped: dispatch mints a
 // fresh session per turn, so ids never point at stale bytes.
 func (s *ToolSession) RegisterInboundMedia(kind string, raw []byte, sender string) string {
+	return s.RegisterInboundMediaDescribed(kind, raw, sender, "")
+}
+
+// RegisterInboundMediaDescribed is RegisterInboundMedia for an item already
+// described on arrival: the description goes on its image-space entry, so on a
+// later turn the list reads "received from Henry - a brown dog on a porch"
+// rather than a row of identical "received from Henry" the agent has to guess
+// between. Costs no vision call; depicts is the one the arrival already made.
+func (s *ToolSession) RegisterInboundMediaDescribed(kind string, raw []byte, sender, depicts string) string {
 	if s == nil || len(raw) == 0 {
 		return ""
 	}
@@ -203,9 +212,10 @@ func (s *ToolSession) RegisterInboundMedia(kind string, raw []byte, sender strin
 		// very image as part of the turn, so describing it here would be a
 		// second vision call for the same picture — racing the user's own
 		// request for the one slot a local backend has, which is how "attach a
-		// photo and ask what it is" turns into a wait. It gets described if it
-		// is ever kept, where nothing is competing with it.
-		recordRecentImage(s, raw, note, ImageFromUser, false)
+		// photo and ask what it is" turns into a wait. The arrival's own
+		// description, when there was one, is kept with it instead; the long
+		// form is made if it is ever kept, where nothing is competing with it.
+		recordRecentImage(s, raw, note, ImageFromUser, false, depicts)
 	}
 	return id
 }

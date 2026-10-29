@@ -348,10 +348,16 @@ func KeepImageOf(sess *ToolSession, ref, name, note string, subject ImageSubject
 	// Promotion, not a fresh look: the ring described this picture when it
 	// arrived, so keeping it should cost nothing. Only an entry that was never
 	// described — captioning off, the pass still in flight, or a kept image
-	// being re-kept under a new name — pays for a vision call here.
+	// being re-kept under a new name — pays for a vision call here. So does a
+	// received photo, which has only the one line it was described with on
+	// arrival; that line stays its caption.
 	caption, description := ringDescription(sess, ref)
-	if caption == "" && description == "" {
-		caption, description = CaptionImage(sess, data)
+	if description == "" {
+		c, d := CaptionImage(sess, data)
+		if caption == "" {
+			caption = c
+		}
+		description = d
 	}
 	kept := KeptImage{
 		Subject:     subject,
