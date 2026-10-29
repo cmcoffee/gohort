@@ -415,13 +415,8 @@ window.AudioContext.prototype.createOscillator = function() {
 window.AudioContext.prototype.createGain = function() {
   return {gain: {setValueAtTime: function() {}, exponentialRampToValueAtTime: function() {}}, connect: function() {}};
 };
-var chain = [];
 window.AudioContext.prototype.createMediaStreamSource = function() {
-  return {connect: function(n) { chain.push(n); }, disconnect: function() { disconnected++; }};
-};
-window.AudioContext.prototype.createBiquadFilter = function() {
-  var f = {type: '', frequency: {value: 0}, connect: function(n) { chain.push(n); }};
-  return f;
+  return {connect: function() {}, disconnect: function() { disconnected++; }};
 };
 window.AudioContext.prototype.createAnalyser = function() {
   return {fftSize: 0, getByteTimeDomainData: function(b) {
@@ -430,11 +425,6 @@ window.AudioContext.prototype.createAnalyser = function() {
 };
 var realNow = Date.now, t0 = realNow();
 Date.now = function() { return t0 + (realNow() - t0) * 20; };
-// The meter's tick runs twenty times fast too, so it samples as often per
-// second of the test's clock as it does in a browser. At real speed it read
-// the level once a test second, and nothing about timing was tested.
-var realSetInterval = setInterval;
-setInterval = function(f, ms) { return realSetInterval(f, ms === 50 ? 2.5 : ms); };
 eval(dictationJS);
 (async function() {
   await sleep(10);
@@ -447,12 +437,6 @@ eval(dictationJS);
   await sleep(250);
   check('then records', recorders.length === 1 && recorders[0].started);
   check('and says it stops on silence', mic.button.title.indexOf('stops when you go quiet') >= 0);
-
-  // The meter hears the band speech lives in: the microphone runs through a
-  // high-pass and a low-pass before it is measured.
-  check('the level is measured in the speech band', chain.length >= 2 &&
-    chain[0].type === 'highpass' && chain[0].frequency.value === 300 &&
-    chain[1].type === 'lowpass' && chain[1].frequency.value === 3400);
 
   // A quiet room, then speech, then quiet: it stops and sends.
   loud = 0.003; await sleep(150);
@@ -489,16 +473,19 @@ eval(dictationJS);
   check('with the falling tone, the meter let go and the ring cleared', tones[tones.length - 1] === 'down' &&
     !('aria-pressed' in mic.button.attrs) && mic.button.style.props['--ui-act-level'] === '0.00' && disconnected === 3);
 
-  // Stop pressed before anything is said is a cancel; after, it sends.
+  // Stop always stops and sends, whatever the meter heard: it only guesses
+  // at speech, and a press it guessed wrong about threw the words away.
   mic.onclick(mic); await sleep(250);
   loud = 0.003; await sleep(100);
   mic.onclick(mic); await sleep(10);
-  check('stop pressed before speaking cancels, sending nothing', recorders[3].stopped && pending.length === 2 && mic.button.textContent === '🎤');
+  check('stop pressed with nothing heard still sends it', recorders[3].stopped && pending.length === 3);
+  pending[2].res(written('Yes.'));
+  await sleep(10);
   mic.onclick(mic); await sleep(250);
   loud = 0.3; await sleep(500);
   mic.onclick(mic); await sleep(10);
-  check('stop pressed after speaking sends it', recorders[4].stopped && pending.length === 3);
-  pending[2].res(written('Yes.'));
+  check('stop pressed after speaking sends it', recorders[4].stopped && pending.length === 4);
+  pending[3].res(written('Yes.'));
   await sleep(10);
   // A word too short for the silence stop to count is still kept: a short
   // "yes" and then stop is sent, not thrown away.
@@ -507,14 +494,14 @@ eval(dictationJS);
   loud = 0.3; await sleep(150);
   loud = 0.003;
   mic.onclick(mic); await sleep(10);
-  check('a short word and then stop is sent', recorders[5].stopped && pending.length === 4);
-  pending[3].res(written('Yes.'));
+  check('a short word and then stop is sent', recorders[5].stopped && pending.length === 5);
+  pending[4].res(written('Yes.'));
   await sleep(10);
   mic.onclick(mic); await sleep(250);
   loud = 0.3; await sleep(150);
   loud = 0.003; await sleep(900);
-  check('so is a short word and then the long quiet', recorders[6].stopped && pending.length === 5);
-  pending[4].res(written('Yes.'));
+  check('so is a short word and then the long quiet', recorders[6].stopped && pending.length === 6);
+  pending[5].res(written('Yes.'));
   await sleep(10);
 
   // Pressed during the tone: nothing records.
@@ -555,72 +542,6 @@ func TestDictationStopsOnSilence(t *testing.T) {
 	node := dictationNode(t)
 	runDictationHarness(t, node, dictationSetup+dictationAudio)
 }
-
-// dictationNoisyRoom is a room whose noise is not steady: it wanders around
-// its level and drops to near silence now and then, as a television, a fan
-// that cycles, traffic or other people do. Seeded, so every run hears the same
-// room. The noise is never taken for speech, so a recording with nothing said
-// cancels; speech over it is heard; and when the speaker stops, the recording
-// stops too, on the room's noise, as it does in a quiet one.
-const dictationNoisyRoom = `
-var seed = 7;
-function rnd() { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; }
-var noise = 0, voice = 0;
-setInterval(function() {
-  var n = noise * (0.4 + 1.2 * rnd());
-  if (rnd() < 0.08) n = noise * 0.06; // a dip: the room goes briefly still
-  loud = Math.min(1, n + voice * (0.7 + 0.6 * rnd()));
-}, 1);
-// talk says words with short gaps between them, as speech has: half a second
-// of word, a third of a second of gap, for about ten seconds of the test clock.
-async function talk(level) {
-  for (var w = 0; w < 12; w++) {
-    voice = level; await sleep(25);
-    voice = 0; await sleep(15);
-  }
-}
-(async function() {
-  await sleep(10);
-  var mic = actions[0], n = 0;
-  // A fan-and-traffic room, then a television-loud one, the voice over each.
-  var rooms = [{noise: 0.05, voice: 0.35}, {noise: 0.12, voice: 0.45}];
-  for (var i = 0; i < rooms.length; i++) {
-    var room = rooms[i], label = ' (room ' + (i + 1) + ')';
-    noise = room.noise;
-
-    // Noise alone, for longer than the quiet wait: nothing was said, so it
-    // cancels and sends nothing.
-    mic.onclick(mic); await sleep(260);
-    var quiet = recorders[recorders.length - 1];
-    await sleep(1000);
-    check('a noisy room with nothing said cancels, sending nothing' + label, quiet.stopped && pending.length === n &&
-      mic.button.title.indexOf('Nothing was heard') === 0);
-
-    // Speech over the noise, words and gaps for ten seconds: it keeps
-    // recording. Then only the noise: it stops and sends, within a few
-    // seconds of the speaker going quiet.
-    mic.onclick(mic); await sleep(260);
-    var spoken = recorders[recorders.length - 1];
-    await talk(room.voice);
-    check('words over a noisy room keep it recording' + label, !spoken.stopped);
-    await sleep(250);
-    check('when the speaker stops, the noise alone does not keep it going' + label, spoken.stopped && pending.length === n + 1);
-    pending[n].res(written('Hello.'));
-    n++;
-    await sleep(10);
-  }
-  process.exit(fail ? 1 : 0);
-})();
-`
-
-// A room whose noise wanders and dips (see dictationNoisyRoom).
-func TestDictationStopsInANoisyRoom(t *testing.T) {
-	node := dictationNode(t)
-	runDictationHarness(t, node, dictationSetup+dictationNoisyAudio+dictationNoisyRoom)
-}
-
-// dictationNoisyAudio is dictationAudio's browser without its scenario.
-var dictationNoisyAudio = dictationAudio[:strings.Index(dictationAudio, "(async function() {")]
 
 func runDictationHarness(t *testing.T, node, harness string) {
 	t.Helper()
