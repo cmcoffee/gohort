@@ -300,6 +300,46 @@ func TestRearmStrandedEventMonitors(t *testing.T) {
 	}
 }
 
+// A restart keeps every queued check where it was. Re-arming them from the
+// boot moment pushed a 6-hour monitor six hours out on every restart, so one
+// on a server restarted every few hours never checked. A monitor with nothing
+// queued gets its stored next check, or one now when that passed while down.
+func TestBootKeepsQueuedChecks(t *testing.T) {
+	withSchedulerDB(t)
+	db := &DBase{Store: kvlite.MemStore()}
+	now := time.Now()
+	queued := EventMonitor{Owner: "u", Name: "release-watch", Kind: EventKindPoll, IntervalSeconds: 6 * 3600}
+	if err := ScheduleEventMonitor(db, queued); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := GetEventMonitor(db, "u", "release-watch")
+	ahead := now.Add(2 * time.Hour)
+	SaveEventMonitor(db, EventMonitor{Owner: "u", Name: "ahead", Kind: EventKindPoll,
+		IntervalSeconds: 6 * 3600, NextCheck: ahead})
+	SaveEventMonitor(db, EventMonitor{Owner: "u", Name: "missed", Kind: EventKindPoll,
+		IntervalSeconds: 6 * 3600, NextCheck: now.Add(-time.Hour)})
+
+	if n := RearmEventMonitorsAtBoot(db); n != 2 {
+		t.Fatalf("re-armed %d, want the 2 with nothing queued", n)
+	}
+	after, _ := GetEventMonitor(db, "u", "release-watch")
+	if after.SchedulerID != before.SchedulerID || !after.NextCheck.Equal(before.NextCheck) {
+		t.Errorf("a queued check moved on restart: %s -> %s", before.NextCheck, after.NextCheck)
+	}
+	if m, _ := GetEventMonitor(db, "u", "ahead"); !m.NextCheck.Equal(ahead) || m.SchedulerID == "" {
+		t.Errorf("a stored next check still ahead should be kept: %s", m.NextCheck)
+	}
+	if m, _ := GetEventMonitor(db, "u", "missed"); m.NextCheck.After(time.Now()) || m.SchedulerID == "" {
+		t.Errorf("a check missed while down should run now, got %s", m.NextCheck)
+	}
+	if n := RearmEventMonitorsAtBoot(db); n != 0 {
+		t.Errorf("a second boot re-armed %d", n)
+	}
+	if got := len(ListScheduledTasks(eventPollKind)); got != 3 {
+		t.Errorf("%d checks queued, want one per monitor", got)
+	}
+}
+
 func TestWatchPollFailed(t *testing.T) {
 	cases := []struct {
 		name string

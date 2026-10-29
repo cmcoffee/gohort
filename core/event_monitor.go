@@ -947,9 +947,6 @@ func ScheduleEventMonitor(db Database, m EventMonitor) error {
 	if !isScheduledKind(m.Kind) {
 		return nil
 	}
-	if m.SchedulerID != "" {
-		UnscheduleTask(m.SchedulerID)
-	}
 	next := nextPoll(m, time.Now())
 	// A wake that asked to be left alone until later wins over the cadence, for
 	// this check only. The ask is CONSUMED as it is honoured and the reason
@@ -966,14 +963,77 @@ func ScheduleEventMonitor(db Database, m EventMonitor) error {
 		m.NextAttemptAt = time.Time{}
 		m.NextAttemptWhy = ""
 	}
-	id, err := ScheduleTask(eventPollKind, eventPollPayload{Owner: m.Owner, Name: m.Name}, next)
+	return armEventMonitorAt(db, m, next)
+}
+
+// armEventMonitorAt queues m's next check for at, replacing any it had.
+func armEventMonitorAt(db Database, m EventMonitor, at time.Time) error {
+	if m.SchedulerID != "" {
+		UnscheduleTask(m.SchedulerID)
+	}
+	id, err := ScheduleTask(eventPollKind, eventPollPayload{Owner: m.Owner, Name: m.Name}, at)
 	if err != nil {
 		return err
 	}
 	m.SchedulerID = id
-	m.NextCheck = next
+	m.NextCheck = at
 	SaveEventMonitor(db, m)
 	return nil
+}
+
+// liveEventPolls is the monitors (owner:name) with a check queued.
+func liveEventPolls() map[string]bool {
+	live := map[string]bool{}
+	for _, t := range ListScheduledTasks(eventPollKind) {
+		var p eventPollPayload
+		if json.Unmarshal(t.Payload, &p) == nil {
+			live[p.Owner+":"+p.Name] = true
+		}
+	}
+	return live
+}
+
+// RearmEventMonitorsAtBoot gives every active scheduled monitor with no check
+// queued its next one, and leaves the rest alone. Queued checks are stored, so
+// they survive a restart and keep their time. Re-arming those from the boot
+// moment instead pushed each one a whole interval out on every restart: a
+// 6-hour monitor on a server restarted every few hours never checked at all,
+// sixteen hours after its last check.
+//
+// One with no check queued gets its stored NextCheck when that is still ahead,
+// and a check now when it is past (missed while the server was down), which is
+// what a queued check that came due during the downtime gets too.
+func RearmEventMonitorsAtBoot(db Database) int {
+	if db == nil {
+		return 0
+	}
+	live := liveEventPolls()
+	now := time.Now()
+	rearmed := 0
+	for _, k := range db.Keys(eventMonitorsTable) {
+		var m EventMonitor
+		if !db.Get(eventMonitorsTable, k, &m) {
+			continue
+		}
+		if m.Paused || !isScheduledKind(m.Kind) || live[m.Owner+":"+m.Name] {
+			continue
+		}
+		var err error
+		switch {
+		case m.NextCheck.IsZero():
+			err = ScheduleEventMonitor(db, m)
+		case m.NextCheck.After(now):
+			err = armEventMonitorAt(db, m, m.NextCheck)
+		default:
+			err = armEventMonitorAt(db, m, now)
+		}
+		if err != nil {
+			Log("[event] boot re-arm failed for %s/%s: %v", m.Owner, m.Name, err)
+			continue
+		}
+		rearmed++
+	}
+	return rearmed
 }
 
 // eventRearmGrace is how stale a NextCheck must be before the reconciler treats
@@ -994,13 +1054,7 @@ func RearmStrandedEventMonitors(db Database) int {
 	if db == nil {
 		return 0
 	}
-	live := map[string]bool{}
-	for _, t := range ListScheduledTasks(eventPollKind) {
-		var p eventPollPayload
-		if json.Unmarshal(t.Payload, &p) == nil {
-			live[p.Owner+":"+p.Name] = true
-		}
-	}
+	live := liveEventPolls()
 	now := time.Now()
 	revived := 0
 	for _, k := range db.Keys(eventMonitorsTable) {
@@ -1127,29 +1181,10 @@ func StartEventMonitorScheduler() {
 		}
 	})
 
-	// Boot self-heal: re-arm every active scheduled monitor across all owners.
-	// Scheduler tasks persist across restarts, so a HEALTHY chain resumes on its
-	// own after a restart — but a chain that a prior panicking tick left broken
-	// has no next task and would stay dead. Re-arming here revives those (it's
-	// what a manual pause/resume did by hand). ScheduleEventMonitor cancels-and-
-	// replaces via SchedulerID, so a monitor whose task is still live just gets an
-	// equivalent fresh one (no duplicate timers), and nextPoll spreads first
-	// checks across each monitor's own cadence (no boot stampede).
-	rearmed := 0
-	for _, k := range RootDB.Keys(eventMonitorsTable) {
-		var m EventMonitor
-		if !RootDB.Get(eventMonitorsTable, k, &m) {
-			continue
-		}
-		if m.Paused || !isScheduledKind(m.Kind) {
-			continue
-		}
-		if err := ScheduleEventMonitor(RootDB, m); err != nil {
-			Log("[event] boot re-arm failed for %s/%s: %v", m.Owner, m.Name, err)
-			continue
-		}
-		rearmed++
-	}
+	// Boot self-heal: a monitor whose chain a prior panicking tick broke has
+	// no next check and would stay dead; it gets one. Healthy chains keep the
+	// check they had queued.
+	rearmed := RearmEventMonitorsAtBoot(RootDB)
 	if rearmed > 0 {
 		Log("[event] startup self-heal: re-armed %d active scheduled monitor(s)", rearmed)
 	}
