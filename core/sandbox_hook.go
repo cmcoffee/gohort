@@ -705,7 +705,8 @@ func (h *SandboxHook) handleAsk(conn net.Conn, params map[string]interface{}) {
 }
 
 // handleRunAgent serves gohort.run_agent: one of the app's agents, run with
-// its tools on the prompt, and its reply. Granted by "run_agent"; which agents
+// its tools on the prompt, and its reply with the files its tools made or
+// attached (paths in the script's folder). Granted by "run_agent"; which agents
 // an app may run and what they may spend are the host's, inside RunAgent.
 func (h *SandboxHook) handleRunAgent(conn net.Conn, params map[string]interface{}) {
 	if h.Sess == nil || h.Sess.RunAgent == nil {
@@ -717,12 +718,15 @@ func (h *SandboxHook) handleRunAgent(conn net.Conn, params map[string]interface{
 		writeHookError(conn, "run_agent needs a prompt")
 		return
 	}
-	text, err := h.Sess.RunAgent(strings.TrimSpace(stringFromParams(params, "agent")), prompt)
+	text, files, err := h.Sess.RunAgent(strings.TrimSpace(stringFromParams(params, "agent")), prompt)
 	if err != nil {
 		writeHookError(conn, "run_agent: "+err.Error())
 		return
 	}
-	writeHookResult(conn, map[string]any{"text": text})
+	if files == nil {
+		files = []string{}
+	}
+	writeHookResult(conn, map[string]any{"text": text, "files": files})
 }
 
 // handleRunPipeline serves gohort.run_pipeline: the app's pipeline run to the
@@ -2532,11 +2536,20 @@ class _Gohort:
     def run_agent(self, prompt, agent=None):
         """Run one of the app's agents WITH its tools on prompt and return
         its reply as text (it reads as its JSON when the reply is JSON).
-        agent=None is the app's own agent; otherwise name one made for the
-        app. Under the app's daily caps; a tool that stops to ask before
-        running is refused. The script must declare "run_agent"."""
+        What its tools made or attached (a song, a picture) is in the
+        reply's .files: paths in this script's folder, to name in an
+        action's files reply. agent=None is the app's own agent; otherwise
+        name one made for the app. Under the app's daily caps; a tool that
+        stops to ask before running is refused. The script must declare
+        "run_agent"."""
         result = self._call("run_agent", {"prompt": str(prompt), "agent": str(agent or "")})
-        return Output(result.get("text", "") if isinstance(result, dict) else result)
+        if not isinstance(result, dict):
+            out = Output(result)
+            out.files = []
+            return out
+        out = Output(result.get("text", ""))
+        out.files = list(result.get("files") or [])
+        return out
 
     def run_pipeline(self, input, pipeline=None):
         """Run the app's pipeline to the end on input and return its final

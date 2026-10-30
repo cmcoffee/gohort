@@ -1,6 +1,11 @@
 package orchestrate
 
 import (
+	"context"
+	"encoding/base64"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -71,5 +76,75 @@ func TestSaveNotesUndeclaredRunAgent(t *testing.T) {
 	}
 	if strings.Contains(notes, `"fine"`) {
 		t.Errorf("a declared call was noted:\n%s", notes)
+	}
+}
+
+// What an app script's agent run makes comes back to the script as files in
+// its folder. The reply was text alone, so a song the agent rendered reached
+// the script as a sentence saying it was made, which it could not keep on the
+// song's record.
+func TestAnAppScriptGetsTheFilesItsAgentMade(t *testing.T) {
+	SetWorkspacesDir(t.TempDir())
+	t.Cleanup(func() { SetWorkspacesDir("") })
+	df := newDispatchFixture(t,
+		FakeTurn{ToolCalls: []ToolCall{{ID: "r1", Name: "apptest_render", Args: map[string]any{"take": "slow take"}}}},
+		FakeTurn{Content: "Rendered the slow take.", Repeat: true})
+	dir := filepath.Join(t.TempDir(), "run-1")
+	text, files, _, err := df.app.AppAgentRun(context.Background(), "u", "u", "studio", df.agent.ID, "", "render it", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text != "Rendered the slow take." {
+		t.Errorf("reply: %q", text)
+	}
+	// Written and attached, it is one file, not two.
+	if len(files) != 1 || files[0] != "take.mp3" {
+		t.Fatalf("files: %v", files)
+	}
+	if b, err := os.ReadFile(filepath.Join(dir, "take.mp3")); err != nil || string(b) != "ID3 slow take" {
+		t.Errorf("the take in the script's folder: %q %v", b, err)
+	}
+}
+
+// apptest_render renders a take the way a music tool does: it writes the
+// file in the agent's folder and attaches it, without asking first.
+type appTestRender struct{}
+
+func (appTestRender) Name() string { return "apptest_render" }
+func (appTestRender) Desc() string { return "Render a take." }
+func (appTestRender) Params() map[string]ToolParam {
+	return map[string]ToolParam{"take": {Type: "string", Description: "Which take."}}
+}
+func (appTestRender) Run(args map[string]any) (string, error) {
+	return "", fmt.Errorf("needs a session")
+}
+func (appTestRender) RunWithSession(args map[string]any, sess *ToolSession) (string, error) {
+	raw := []byte("ID3 " + stringArg(args, "take"))
+	if err := os.WriteFile(filepath.Join(sess.WorkspaceDir, "take.mp3"), raw, 0600); err != nil {
+		return "", err
+	}
+	sess.AppendVideo(base64.StdEncoding.EncodeToString(raw))
+	return "rendered take.mp3", nil
+}
+
+func init() { RegisterChatTool(appTestRender{}) }
+
+// Media a run attached without writing a file (a tool that hands its audio
+// straight back) is written out under a name its bytes give it.
+func TestAttachedMediaIsWrittenForTheScript(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "run-2")
+	returned := &ToolSession{}
+	returned.AppendVideo(base64.StdEncoding.EncodeToString([]byte("ID3\x04\x00 a take")))
+	returned.AppendImage(base64.StdEncoding.EncodeToString([]byte("\x89PNG\r\n\x1a\n cover")))
+	returned.AppendFile(FileAttachment{Name: "lyrics/final.pdf", Data: base64.StdEncoding.EncodeToString([]byte("%PDF-1.4 words"))})
+	got := handToScript("Composer", returned, dir)
+	if strings.Join(got, ",") != "attached.png,attached.mp3,final.pdf" {
+		t.Fatalf("files: %v", got)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "attached.mp3")); string(b) != "ID3\x04\x00 a take" {
+		t.Errorf("the take: %q", b)
+	}
+	if got := handToScript("Composer", &ToolSession{}, filepath.Join(t.TempDir(), "run-3")); got != nil {
+		t.Errorf("a run that made nothing handed back %v", got)
 	}
 }

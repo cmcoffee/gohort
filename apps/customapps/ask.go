@@ -14,6 +14,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"path"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -184,14 +187,26 @@ func init() {
 	}
 	// run_agent and run_pipeline: the agent or pipeline with its tools, held
 	// to the same allowance as ask.
-	appscript.AppRunAgent = func(ctx context.Context, spec AppSpec, caller, agent, prompt string) (string, error) {
+	appscript.AppRunAgent = func(ctx context.Context, spec AppSpec, caller, agent, prompt string) (string, []string, error) {
 		if len([]rune(prompt)) > runMaxPrompt {
-			return "", fmt.Errorf("the prompt is over %d characters", runMaxPrompt)
+			return "", nil, fmt.Errorf("the prompt is over %d characters", runMaxPrompt)
 		}
+		var files []string
 		text, _, err := appModelCall(appscript.RecordBase(spec, spec.Owner), spec, caller, "run_agent", func() (string, float64, error) {
-			return appAgentRun(ctx, spec, caller, agent, prompt)
+			dir, rel, err := agentFilesDir(spec)
+			if err != nil {
+				return "", 0, err
+			}
+			text, made, cost, err := appAgentRun(ctx, spec, caller, agent, prompt, dir)
+			for _, n := range made {
+				files = append(files, path.Join(rel, n))
+			}
+			if len(made) == 0 {
+				os.Remove(dir)
+			}
+			return text, cost, err
 		})
-		return text, err
+		return text, files, err
 	}
 	appscript.AppRunPipeline = func(ctx context.Context, spec AppSpec, caller, pipeline, input string) (string, error) {
 		if len([]rune(input)) > runMaxPrompt {
@@ -209,13 +224,48 @@ func init() {
 const runMaxPrompt = 32000
 
 // appAgentRun and appPipelineRun run the app's agent with its tools, or its
-// pipeline; tests replace them.
-var appAgentRun = func(ctx context.Context, spec AppSpec, caller, agent, prompt string) (string, float64, error) {
+// pipeline; tests replace them. appAgentRun writes what the agent's tools
+// made into filesDir and returns their names there.
+var appAgentRun = func(ctx context.Context, spec AppSpec, caller, agent, prompt, filesDir string) (string, []string, float64, error) {
 	orch := agenthost.Get()
 	if orch == nil {
-		return "", 0, fmt.Errorf("agents are not available on this deployment")
+		return "", nil, 0, fmt.Errorf("agents are not available on this deployment")
 	}
-	return orch.AppAgentRun(ctx, spec.Owner, caller, spec.Slug, spec.AgentID, agent, prompt)
+	return orch.AppAgentRun(ctx, spec.Owner, caller, spec.Slug, spec.AgentID, agent, prompt, filesDir)
+}
+
+// agentFilesFolder is where, in the owner's workspace (an app script's
+// working folder), each run_agent puts what the agent made, a folder per run.
+// An action's files reply moves them onto a record; what no reply claims is
+// cleared after agentFilesKeep.
+const agentFilesFolder = "agent_files"
+
+var agentFilesKeep = 24 * time.Hour
+
+// agentFilesDir makes the folder one run_agent of spec's hands its files to,
+// and returns it with its path relative to the script's folder. Runs older
+// than agentFilesKeep are cleared on the way.
+func agentFilesDir(spec AppSpec) (string, string, error) {
+	ws, err := EnsureWorkspaceDir(spec.Owner)
+	if err != nil {
+		return "", "", fmt.Errorf("the script's folder is unavailable: %w", err)
+	}
+	base := filepath.Join(ws, agentFilesFolder)
+	if err := os.MkdirAll(base, 0700); err != nil {
+		return "", "", err
+	}
+	if old, err := os.ReadDir(base); err == nil {
+		for _, e := range old {
+			if info, err := e.Info(); err == nil && time.Since(info.ModTime()) > agentFilesKeep {
+				os.RemoveAll(filepath.Join(base, e.Name()))
+			}
+		}
+	}
+	dir, err := os.MkdirTemp(base, appscript.SanitizeName(spec.Slug)+"-")
+	if err != nil {
+		return "", "", err
+	}
+	return dir, path.Join(agentFilesFolder, filepath.Base(dir)), nil
 }
 
 var appPipelineRun = func(ctx context.Context, spec AppSpec, caller, pipeline, input string) (string, float64, error) {

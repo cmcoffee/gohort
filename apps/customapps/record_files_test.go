@@ -233,3 +233,48 @@ func TestAnActionKeepsWhatItMadeOnItsRecord(t *testing.T) {
 		t.Errorf("the page removes it: %d %s", w.Code, w.Body.String())
 	}
 }
+
+// A take the app's agent handed the script is moved onto the record when the
+// action keeps it, not left in the folder as a second copy; a file the script
+// wrote itself stays where it wrote it.
+func TestKeepingWhatTheAgentMadeMovesIt(t *testing.T) {
+	prev := appassets.RecordFilesDir()
+	appassets.SetRecordFilesDir(t.TempDir())
+	t.Cleanup(func() { appassets.SetRecordFilesDir(prev) })
+	T := sharingTestApp(t)
+	spec := AppSpec{Slug: "studio", Name: "Studio", Owner: "u", RecordKey: "id",
+		Sections: json.RawMessage(`[{"kind":"html","html":"<p>songs</p>"}]`),
+		Actions:  []AppAction{{Name: "render", Script: "print('x')"}}}
+	SaveAppSpec(spec)
+	if w := appAs(t, T, spec, "u", httptest.NewRequest("POST", "/apps/studio/records", strings.NewReader(`{"id":"s1","title":"Money in the Cloud"}`))); w.Code != http.StatusOK {
+		t.Fatalf("seed: %d %s", w.Code, w.Body.String())
+	}
+	ws, err := EnsureWorkspaceDir("u")
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := filepath.Join(ws, agentFilesFolder, "studio-1")
+	os.MkdirAll(run, 0700)
+	os.WriteFile(filepath.Join(run, "take.mp3"), []byte("ID3\x04\x00\x00\x00\x00\x00\x00agent take"), 0o644)
+	os.WriteFile(filepath.Join(ws, "mine.mp3"), []byte("ID3\x04\x00\x00\x00\x00\x00\x00my take"), 0o644)
+	prevRun := runAppScript
+	t.Cleanup(func() { runAppScript = prevRun })
+	runAppScript = func(j appscript.Job) (string, error) {
+		return `{"files":[{"record":"s1","file":"agent_files/studio-1/take.mp3","title":"Agent take"},{"record":"s1","file":"mine.mp3","title":"My take"}]}`, nil
+	}
+	db := T.recordBase(spec, "u")
+	if _, err := runActionAndPersist("u", db, db, spec, spec.Actions[0], map[string]any{}, "u", scriptRun{Interactive: true}); err != nil {
+		t.Fatal(err)
+	}
+	var rec map[string]any
+	db.Get(recTable("studio"), "s1", &rec)
+	if n := len(recordFiles(rec, "_files")); n != 2 {
+		t.Fatalf("kept %d of 2", n)
+	}
+	if _, err := os.Stat(filepath.Join(run, "take.mp3")); !os.IsNotExist(err) {
+		t.Error("the agent's take is still in the folder after it was kept")
+	}
+	if _, err := os.Stat(filepath.Join(ws, "mine.mp3")); err != nil {
+		t.Error("the script's own file was removed")
+	}
+}

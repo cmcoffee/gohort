@@ -27,6 +27,7 @@ package orchestrate
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -35,6 +36,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/filenotes"
@@ -146,6 +148,140 @@ func handBackFiles(agent string, made []string, to *ToolSession) string {
 			agent, strings.Join(tooBig, ", "))
 	}
 	return b.String()
+}
+
+// handToScript writes what an app script's agent run made and attached into
+// dir, a folder of the script's, and returns their names there. A file the
+// run's tools wrote is copied; a picture, sound or file it attached is
+// written out, unless it is one of those files again (a tool that wrote a
+// song and attached it). Bounded by handBackFileLimit, as a hand-back is.
+func handToScript(agent string, returned *ToolSession, dir string) []string {
+	if returned == nil || strings.TrimSpace(dir) == "" {
+		return nil
+	}
+	var names []string
+	var total int64
+	seen := map[[sha256.Size]byte]bool{}
+	ready := false
+	place := func(name string, size int64, write func(dst string) error) {
+		if total+size > handBackFileLimit {
+			Log("[agent_media] %s made %s, too large to hand to the app's script", agent, name)
+			return
+		}
+		if !ready {
+			if err := os.MkdirAll(dir, 0700); err != nil {
+				Log("[agent_media] the app script's folder %s: %v", dir, err)
+				return
+			}
+			ready = true
+		}
+		name = freeFileName(dir, name)
+		if err := write(filepath.Join(dir, name)); err != nil {
+			Log("[agent_media] %s for the app's script: %v", name, err)
+			return
+		}
+		total += size
+		names = append(names, name)
+	}
+	for _, src := range madeFiles(returned) {
+		info, err := os.Stat(src)
+		if err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		if sum, err := fileSum(src); err == nil {
+			seen[sum] = true
+		}
+		place(filepath.Base(src), info.Size(), func(dst string) error {
+			if err := copyFileTo(src, dst); err != nil {
+				return err
+			}
+			if _, ok := filenotes.Get(src); ok {
+				filenotes.Copy(src, dst, agent)
+			}
+			return nil
+		})
+	}
+	attached := func(b64, name string) {
+		raw, err := base64.StdEncoding.DecodeString(b64)
+		if err != nil || len(raw) == 0 {
+			return
+		}
+		sum := sha256.Sum256(raw)
+		if seen[sum] {
+			return
+		}
+		seen[sum] = true
+		if name == "" {
+			name = "attached" + attachedExt(raw)
+		}
+		place(filepath.Base(name), int64(len(raw)), func(dst string) error {
+			if err := os.WriteFile(dst, raw, 0600); err != nil {
+				return err
+			}
+			filenotes.Record(dst, filenotes.Note{From: agent, Made: time.Now()})
+			return nil
+		})
+	}
+	for _, b := range returned.ClaimUnflushedImages() {
+		attached(b, "")
+	}
+	for _, b := range returned.ClaimUnflushedVideos() {
+		attached(b, "")
+	}
+	for _, f := range returned.ClaimUnflushedFiles() {
+		attached(f.Data, f.Name)
+	}
+	return names
+}
+
+// fileSum is the SHA-256 of the file at path.
+func fileSum(path string) ([sha256.Size]byte, error) {
+	var sum [sha256.Size]byte
+	f, err := os.Open(path)
+	if err != nil {
+		return sum, err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return sum, err
+	}
+	copy(sum[:], h.Sum(nil))
+	return sum, nil
+}
+
+// attachedExt is the extension for attached media by its first bytes, which
+// is all an attachment carries of what it is.
+func attachedExt(raw []byte) string {
+	switch {
+	case len(raw) > 4 && string(raw[:4]) == "fLaC":
+		return ".flac"
+	case len(raw) > 2 && raw[0] == 0xFF && raw[1]&0xE0 == 0xE0:
+		return ".mp3" // an MPEG audio frame with no ID3 tag before it
+	}
+	switch t := http.DetectContentType(raw); {
+	case t == "audio/mpeg":
+		return ".mp3"
+	case t == "audio/wave":
+		return ".wav"
+	case t == "audio/ogg", t == "application/ogg":
+		return ".ogg"
+	case t == "video/mp4":
+		return ".mp4"
+	case t == "video/webm":
+		return ".webm"
+	case t == "image/png":
+		return ".png"
+	case t == "image/jpeg":
+		return ".jpg"
+	case t == "image/gif":
+		return ".gif"
+	case t == "image/webp":
+		return ".webp"
+	case t == "application/pdf":
+		return ".pdf"
+	}
+	return ".bin"
 }
 
 // describedNames are names in dir, each with what its note says it is

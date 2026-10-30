@@ -58,8 +58,9 @@ type ToolSession struct {
 	// gohort.run_pipeline reach: one of the app's own agents run WITH its
 	// tools, or its pipeline run to the end ("" names the app's own). Set
 	// only by an app script's run, for one that declared "run_agent" /
-	// "run_pipeline". Nil: refused.
-	RunAgent    func(agent, prompt string) (string, error)
+	// "run_pipeline". Nil: refused. RunAgent also returns what the agent's
+	// tools made or attached, as paths in the script's working folder.
+	RunAgent    func(agent, prompt string) (string, []string, error)
 	RunPipeline func(pipeline, input string) (string, error)
 	// StoreCommand and StorePull, when set, are what gohort.store_command and
 	// gohort.store_pull reach: a file store's registered command run on one

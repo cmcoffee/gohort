@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -295,6 +296,12 @@ type actionFile struct {
 	Title  string `json:"title"`
 }
 
+// handed reports abs is a file a run_agent handed the script (ask.go).
+func handed(ws, abs string) bool {
+	rel, err := filepath.Rel(filepath.Join(ws, agentFilesFolder), abs)
+	return err == nil && rel != "." && !strings.HasPrefix(rel, "..")
+}
+
 // keepActionFiles keeps on their records the files an action's reply names,
 // for user, whose records the action wrote. It returns how many were kept and
 // a line for each that was not, which the action's message carries: the
@@ -310,7 +317,7 @@ func keepActionFiles(owner, user string, udb Database, spec AppSpec, files []act
 	field := recordFilesField(spec)
 	tbl := recTable(spec.Slug)
 	kept := 0
-	var problems []string
+	var problems, moved []string
 	recordWriteMu.Lock()
 	defer recordWriteMu.Unlock()
 	for _, f := range files {
@@ -337,6 +344,14 @@ func keepActionFiles(owner, user string, udb Database, spec AppSpec, files []act
 		rec[field] = filesValue(append(recordFiles(rec, field), k))
 		udb.Set(tbl, id, rec)
 		kept++
+		if handed(ws, abs) {
+			moved = append(moved, abs)
+		}
+	}
+	// What an agent handed the script is moved onto the record, not copied:
+	// the copy would sit in the folder until it is cleared.
+	for _, abs := range moved {
+		os.Remove(abs)
 	}
 	if kept > 0 {
 		noteChange(recordsChangeKey(owner, spec.Slug, user))

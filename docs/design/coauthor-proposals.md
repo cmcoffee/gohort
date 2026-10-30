@@ -143,6 +143,10 @@ editable finds the chat beside it through the host element they share.
    _files when no workbench names one). A rendered document its agent edits its own way (Scribe)
    takes highlighting too: WorkbenchPanel.HighlightAsk / uiHighlightContext pin the highlighted
    text into the chat with no proposals, and agenthost.HighlightContext tells the turn.
+
+   And a take the app's agent renders reaches the script: run_agent returns what the run's
+   tools made or attached as reply.files, copied into agent_files/<run>/ in the script's folder,
+   and an action's files reply moves them onto the record. Unclaimed runs clear after a day.
 5. **Fold the copies in.** CodeWriter's `editor_proposal` becomes a `text_proposal`; the agent
    page's change list, casefile's proposal card and the dead ArticleEditor chat move onto the
    review or are deleted.

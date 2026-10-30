@@ -431,8 +431,12 @@ func TestPythonRunAgentAndPipelineReachTheHook(t *testing.T) {
 	}
 	run := func(caps []string, code string) string {
 		h, err := NewSandboxHook(t.TempDir(), caps, &ToolSession{Username: "owner",
-			RunAgent: func(agent, p string) (string, error) {
-				return fmt.Sprintf(`{"agent": %q, "said": %q}`, agent, p), nil
+			RunAgent: func(agent, p string) (string, []string, error) {
+				var made []string
+				if agent == "Composer" {
+					made = []string{"agent_files/run-1/take.mp3"}
+				}
+				return fmt.Sprintf(`{"agent": %q, "said": %q}`, agent, p), made, nil
 			},
 			RunPipeline: func(pipeline, in string) (string, error) {
 				return fmt.Sprintf("pipeline %q ran on %q", pipeline, in), nil
@@ -452,6 +456,12 @@ func TestPythonRunAgentAndPipelineReachTheHook(t *testing.T) {
 	agent := "    r = run_agent('roll for it')\n    print(r.get('agent') == '' and r['said'])\n    print(run_agent('x', agent='Quartermaster').get('agent'))\n"
 	if got := run([]string{"fetch", "run_agent"}, agent); !strings.Contains(got, "roll for it") || !strings.Contains(got, "Quartermaster") {
 		t.Fatalf("run_agent granted: %s", got)
+	}
+	// What the agent's tools made comes back beside the reply, which still
+	// reads as text.
+	made := "    r = run_agent('render it', agent='Composer')\n    print(r.files, r.get('said'))\n    print(run_agent('nothing').files)\n"
+	if got := run([]string{"run_agent"}, made); !strings.Contains(got, "['agent_files/run-1/take.mp3'] render it\n[]") {
+		t.Fatalf("run_agent's files: %s", got)
 	}
 	if got := run([]string{"fetch", "ask"}, agent); !strings.Contains(got, "refused:") {
 		t.Fatalf("run_agent without its grant: %s", got)

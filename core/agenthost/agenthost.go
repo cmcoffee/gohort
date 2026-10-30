@@ -115,9 +115,11 @@ type Host interface {
 
 	// An app's own runs, from its scripts and actions: the agent asked one
 	// question with no tools, the agent run on a prompt, and the pipeline
-	// run on an input. Each returns the reply and what it cost.
+	// run on an input. Each returns the reply and what it cost. AppAgentRun
+	// also writes what the agent's tools made or attached into filesDir and
+	// returns their names there.
 	AppAgentAsk(ctx context.Context, owner, user, agentID, prompt string, jsonMode bool) (string, float64, error)
-	AppAgentRun(ctx context.Context, owner, user, slug, agentID, agentKey, prompt string) (string, float64, error)
+	AppAgentRun(ctx context.Context, owner, user, slug, agentID, agentKey, prompt, filesDir string) (string, []string, float64, error)
 	AppPipelineRun(ctx context.Context, owner, user, slug, pipelineID, pipelineKey, input string) (string, float64, error)
 
 	// An app's pipeline.

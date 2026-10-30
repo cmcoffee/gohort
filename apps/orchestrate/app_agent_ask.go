@@ -98,27 +98,32 @@ func appAskUsage(resp *Response) UsageDiff {
 // (user), as the app's chat section runs it, so a shared app's tools act with
 // that person's own accounts. Nobody is there to approve a tool that stops to
 // ask, so such a call is refused, never assumed.
-func (T *OrchestrateApp) AppAgentRun(ctx context.Context, owner, user, slug, agentID, agentKey, prompt string) (string, float64, error) {
+//
+// What the run's tools made or attached (a song, a picture) is written into
+// filesDir, a folder of the script's, and named in the return: the reply
+// alone was a sentence saying a song was made, which a script could not keep.
+func (T *OrchestrateApp) AppAgentRun(ctx context.Context, owner, user, slug, agentID, agentKey, prompt, filesDir string) (string, []string, float64, error) {
 	if T == nil || T.DB == nil || owner == "" {
-		return "", 0, fmt.Errorf("the app's agents are not available")
+		return "", nil, 0, fmt.Errorf("the app's agents are not available")
 	}
 	if user == "" {
 		user = owner
 	}
 	agent, err := T.appOwnAgent(owner, slug, agentID, agentKey)
 	if err != nil {
-		return "", 0, err
+		return "", nil, 0, err
 	}
-	res, err := T.runAgentSyncConfirm(ctx, owner, user, agent.ID, prompt, func(string, string) bool { return false })
+	returned := &ToolSession{} // what the run makes and attaches (agent_media.go)
+	res, err := T.runAgentSyncConfirm(withMediaReturn(ctx, returned), owner, user, agent.ID, prompt, func(string, string) bool { return false })
 	cost := GetCostRates().Estimate(res.Usage)
 	if err != nil {
-		return "", cost, err
+		return "", nil, cost, err
 	}
 	text := res.Text
 	if res.HitRoundCap {
 		text += "\n\n(The agent stopped at its round limit before it finished.)"
 	}
-	return text, cost, nil
+	return text, handToScript(agent.Name, returned, filesDir), cost, nil
 }
 
 // appOwnAgent resolves an agent an app may run: its agent_id, or one whose

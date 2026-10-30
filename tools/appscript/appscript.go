@@ -76,10 +76,11 @@ type Job struct {
 
 // AppRunAgent and AppRunPipeline answer a script's gohort.run_agent and
 // gohort.run_pipeline: one of the app's agents with its tools, or its pipeline
-// to the end, under the same daily caps as ask. Set by the custom-apps host;
-// nil, and refused.
+// to the end, under the same daily caps as ask. AppRunAgent also returns what
+// the agent's tools made or attached, as paths in the script's folder. Set by
+// the custom-apps host; nil, and refused.
 var (
-	AppRunAgent    func(ctx context.Context, spec AppSpec, caller, agent, prompt string) (string, error)
+	AppRunAgent    func(ctx context.Context, spec AppSpec, caller, agent, prompt string) (string, []string, error)
 	AppRunPipeline func(ctx context.Context, spec AppSpec, caller, pipeline, input string) (string, error)
 )
 
@@ -233,13 +234,13 @@ func (j Job) Run() (string, error) {
 			}
 			return AppAsk(s.Context(), spec, caller, prompt, jsonMode)
 		}
-		s.RunAgent = func(agent, prompt string) (string, error) {
+		s.RunAgent = func(agent, prompt string) (string, []string, error) {
 			if AppRunAgent == nil {
-				return "", fmt.Errorf("run_agent is not available here")
+				return "", nil, fmt.Errorf("run_agent is not available here")
 			}
 			spec, err := app()
 			if err != nil {
-				return "", err
+				return "", nil, err
 			}
 			return AppRunAgent(s.Context(), spec, caller, agent, prompt)
 		}

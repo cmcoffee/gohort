@@ -38,17 +38,17 @@ func TestAnAgentAtWorkKeepsALongScriptAlive(t *testing.T) {
 
 	working := true
 	prev := AppRunAgent
-	AppRunAgent = func(ctx context.Context, spec AppSpec, caller, agent, prompt string) (string, error) {
+	AppRunAgent = func(ctx context.Context, spec AppSpec, caller, agent, prompt string) (string, []string, error) {
 		for i := 0; i < 15; i++ { // 1.5s of agent work, three times the limit
 			if working {
 				bgrun.RunActivityFrom(ctx).Working("news: round " + string(rune('1'+i%9)))
 			}
 			time.Sleep(100 * time.Millisecond)
 			if ctx.Err() != nil {
-				return "", ctx.Err()
+				return "", nil, ctx.Err()
 			}
 		}
-		return "front page ready", nil
+		return "front page ready", nil, nil
 	}
 	t.Cleanup(func() { AppRunAgent = prev })
 
