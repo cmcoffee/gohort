@@ -37,6 +37,50 @@
     return doc.slice(0, at) + replace + doc.slice(at + find.length);
   }
 
+  // coauthorReviewParts splits a proposal into what its review shows: the
+  // document before the lines it touches, those lines as they are and as they
+  // would be, and the document after. Whole lines, so the change is drawn in
+  // place among its neighbours. A whole-document proposal is all middle.
+  function coauthorReviewParts(doc, find, at, replace) {
+    doc = String(doc == null ? '' : doc);
+    if (!find) return {before: '', oldMid: doc, newMid: String(replace || ''), after: ''};
+    var start = doc.lastIndexOf('\n', at - 1) + 1;
+    var end = at + find.length;
+    if (!(end > start && doc.charAt(end - 1) === '\n')) {
+      var nl = doc.indexOf('\n', end);
+      end = nl < 0 ? doc.length : nl + 1;
+    }
+    return {
+      before: doc.slice(0, start),
+      oldMid: doc.slice(start, end),
+      newMid: doc.slice(start, at) + String(replace || '') + doc.slice(at + find.length, end),
+      after: doc.slice(end),
+    };
+  }
+
+  // coauthorReviewHTML draws those parts as one line diff of the whole
+  // document: the lines around the change as they are, the change marked
+  // where it goes. Only the touched lines are diffed, so a long file costs
+  // no more than the passage.
+  function coauthorReviewHTML(parts) {
+    function lines(t) {
+      t = String(t || '');
+      return t ? t.replace(/\n$/, '').split('\n') : [];
+    }
+    function row(type, text) {
+      var mark = type === 'add' ? '+' : type === 'remove' ? '-' : ' ';
+      return '<div class="editor-diff-' + type + '"><span class="editor-diff-marker">' + mark +
+        '</span><span class="editor-diff-text">' + window.editorDiffEscape(text) + '</span></div>';
+    }
+    var html = '<div class="editor-diff">';
+    lines(parts.before).forEach(function(l) { html += row('equal', l); });
+    window.editorDiffLines(parts.oldMid.replace(/\n$/, ''), parts.newMid.replace(/\n$/, '')).forEach(function(op) {
+      html += row(op.type, op.text);
+    });
+    lines(parts.after).forEach(function(l) { html += row('equal', l); });
+    return html + '</div>';
+  }
+
   // coauthorLabel names a pinned passage for its chip: its opening words and,
   // past one line, how many lines it spans.
   function coauthorLabel(text) {
@@ -186,9 +230,17 @@
     host.uiSendContext = sendContext;
 
     // --- Review ----------------------------------------------------------------
+    // The review takes the document's place while it is open: the textarea
+    // hides, and the review stands where it was, at its height, so the change
+    // is seen where it goes. Closing it brings the textarea back.
+    var hiddenDisplay = null;
     function closeReview() {
       if (review && review.parentNode) review.parentNode.removeChild(review);
       review = null;
+      if (hiddenDisplay !== null) {
+        textarea.style.display = hiddenDisplay;
+        hiddenDisplay = null;
+      }
     }
     function clearUndo() {
       if (undoState && undoState.bar && undoState.bar.parentNode) undoState.bar.parentNode.removeChild(undoState.bar);
@@ -207,13 +259,15 @@
     function openReview(p, at) {
       closeReview();
       clearUndo();
-      var find = p.find, repl = p.replace;
-      var oldText = find || textarea.value;
-      var stats = typeof window.editorDiffStats === 'function' ? window.editorDiffStats(oldText, repl) : null;
+      var find = p.find;
+      var parts = coauthorReviewParts(textarea.value, find, at, p.replace);
+      var drawn = typeof window.editorDiffLines === 'function' && typeof window.editorDiffEscape === 'function';
+      var stats = typeof window.editorDiffStats === 'function'
+        ? window.editorDiffStats(parts.oldMid.replace(/\n$/, ''), parts.newMid.replace(/\n$/, '')) : null;
       var note = el('div', {class: 'ui-coauthor-review-note', style: 'display:none'});
       var applyBtn = el('button', {type: 'button', class: 'ui-row-btn ui-coauthor-apply',
         onclick: function() { apply(p, at, note, applyBtn); }}, ['Apply']);
-      review = el('div', {class: 'ui-coauthor-review'}, [
+      review = el('div', {class: 'ui-coauthor-review ui-coauthor-review-inplace'}, [
         el('div', {class: 'ui-coauthor-review-h'}, [
           el('span', {class: 'ui-coauthor-review-title'}, [p.summary || (find ? 'Proposed change to the selected passage' : 'Proposed change')]),
           stats ? el('span', {class: 'ui-coauthor-review-stats'}, ['+' + stats.add + ' −' + stats.remove]) : null,
@@ -221,12 +275,18 @@
           el('button', {type: 'button', class: 'ui-row-btn', onclick: closeReview}, ['Reject']),
         ]),
         note,
-        typeof window.editorDiffRender === 'function'
-          ? el('div', {class: 'ui-coauthor-review-body', html: window.editorDiffRender(oldText, repl)})
-          : el('pre', {class: 'ui-coauthor-review-body'}, [repl]),
+        drawn
+          ? el('div', {class: 'ui-coauthor-review-body', html: coauthorReviewHTML(parts)})
+          : el('pre', {class: 'ui-coauthor-review-body'}, [p.replace]),
       ]);
-      place(review);
-      if (find) showPassage(at, find.length);
+      var height = textarea.offsetHeight || 0;
+      textarea.parentNode.insertBefore(review, textarea);
+      if (height) review.style.height = height + 'px';
+      hiddenDisplay = textarea.style.display || '';
+      textarea.style.display = 'none';
+      // Scrolled to the change, in its surroundings.
+      var change = review.querySelector && review.querySelector('.editor-diff-remove, .editor-diff-add');
+      if (change && change.scrollIntoView) change.scrollIntoView({block: 'center'});
     }
     // Applied against the document as it is NOW: the passage is found again,
     // and if it is gone (edited since the proposal came) nothing is written.

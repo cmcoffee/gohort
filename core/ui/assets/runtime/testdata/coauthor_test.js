@@ -90,10 +90,10 @@ global.setTimeout = function(f) { f(); };
 
 // The diff ships ahead of the runtime (core/ui/runtime.go), its functions global.
 var diffSrc = fs.readFileSync(dir + '/../../../editor/static/diff.js', 'utf8');
-new Function('window', diffSrc + '\nwindow.editorDiffStats = editorDiffStats; window.editorDiffRender = editorDiffRender; window.editorDiffOps = editorDiffLines;')(window);
+new Function('window', diffSrc + '\nwindow.editorDiffStats = editorDiffStats; window.editorDiffRender = editorDiffRender; window.editorDiffOps = editorDiffLines; window.editorDiffLines = editorDiffLines; window.editorDiffEscape = editorDiffEscape;')(window);
 var src = fs.readFileSync(dir + '/47_coauthor.js', 'utf8');
 var lib = new Function('el', 'window', 'document', src +
-  '\nreturn {locate: coauthorLocate, replace: coauthorReplace, label: coauthorLabel};')(el, window, document);
+  '\nreturn {locate: coauthorLocate, replace: coauthorReplace, label: coauthorLabel, parts: coauthorReviewParts};')(el, window, document);
 
 // --- the pure pieces ----------------------------------------------------------
 var doc = 'la la\nverse one\nla la\nchorus\n';
@@ -106,6 +106,15 @@ check('a whole-document proposal is the replacement', lib.replace(doc, '', 0, 'n
 check('a chip names the passage by its opening words and lines',
   lib.label('Neon on the water\nCity never sleeps\n') === '“Neon on the water City never…”, 2 lines');
 check('one line is just its words', lib.label('Neon on the water') === '“Neon on the water”');
+var pr = lib.parts('a\nb c d\ne\n', 'c', 4, 'C');
+check('a review splits on whole lines around the change',
+  pr.before === 'a\n' && pr.oldMid === 'b c d\n' && pr.newMid === 'b C d\n' && pr.after === 'e\n');
+pr = lib.parts('a\nb\nc\n', 'b\n', 2, 'B\n');
+check('a passage ending at a line end takes just its lines', pr.before === 'a\n' && pr.oldMid === 'b\n' && pr.after === 'c\n');
+pr = lib.parts('a\nlast', 'last', 2, 'end');
+check('and the last line, with no newline after it', pr.oldMid === 'last' && pr.newMid === 'end' && pr.after === '');
+pr = lib.parts('all of it', '', 0, 'new');
+check('a whole-document proposal is all middle', pr.before === '' && pr.oldMid === 'all of it' && pr.newMid === 'new');
 
 // --- a page: the document and its chat in one host ---------------------------
 var host = el('div');
@@ -190,15 +199,16 @@ check('and one made with the keyboard', co.pinned().text === passage);
 // --- a proposal for that passage ---------------------------------------------
 var before = ta.value;
 var r = host.uiProposeText({find: passage, replace: 'Neon on the river\nCity never sleeps\n', summary: 'Water to river'});
-var review = find(pane, function(c) { return c.className === 'ui-coauthor-review'; });
+var review = find(pane, function(c) { return /ui-coauthor-review\b/.test(c.className || '') && !/-h|-body|-note/.test(c.className); });
 check('a proposal brings the document up to review it', shown.join() === 'doc');
-check('a proposal opens a review beside the document', r.ok && review && pane.children.indexOf(review) === 1);
-check('showing the passage\'s diff, not the whole document\'s',
-  /editor-diff-remove/.test(review.html || find(review, function(c) { return /editor-diff/.test(c.html || ''); }).html) &&
-  !/Chorus line/.test(find(review, function(c) { return /editor-diff/.test(c.html || ''); }).html));
+check('a proposal opens its review in the document\'s place', r.ok && review && pane.children.indexOf(review) === 0 && ta.style.display === 'none');
+var reviewHTML = find(review, function(c) { return /editor-diff/.test(c.html || ''); }).html;
+check('showing the change where it goes, among the lines around it',
+  /editor-diff-equal"><span class="editor-diff-marker"> <\/span><span class="editor-diff-text">Verse one line/.test(reviewHTML) &&
+  /editor-diff-remove[^]*Neon on the water/.test(reviewHTML) && /editor-diff-add[^]*Neon on the river/.test(reviewHTML) &&
+  /editor-diff-equal[^]*Chorus line/.test(reviewHTML));
 check('and its counts', /\+1 −1/.test(text(review)));
-var diffHTML = find(review, function(c) { return /editor-diff/.test(c.html || ''); }).html;
-check('a changed line reads old then new', diffHTML.indexOf('editor-diff-remove') < diffHTML.indexOf('editor-diff-add'));
+check('a changed line reads old then new', reviewHTML.indexOf('editor-diff-remove') < reviewHTML.indexOf('editor-diff-add'));
 var ops = window.editorDiffOps('a\nb\nc\n', 'a\nB\nc\nd\n');
 check('and in a longer diff, each change in place, old before new',
   ops.map(function(o) { return o.type[0] + o.text; }).join(',') === 'ea,rb,aB,ec,ad,e');
@@ -216,13 +226,14 @@ calls = [];
 ta.fire('mouseup', {});
 check('showing the applied passage is not the person highlighting it', co.pinned() === null && calls.length === 0);
 var undo = find(pane, function(c) { return c.className === 'ui-coauthor-undo'; });
-check('an Undo stays after Apply', undo && !find(pane, function(c) { return c.className === 'ui-coauthor-review'; }));
+check('an Undo stays after Apply', undo && !find(pane, function(c) { return /ui-coauthor-review/.test(c.className || ''); }));
+check('and the document is back in its place', ta.style.display === '');
 click(button(undo, 'Undo'));
 check('Undo puts it back', ta.value === before);
 
 // A passage edited since the proposal came is not written over.
 host.uiProposeText({find: 'Chorus line', replace: 'Chorus, louder', summary: 'Louder'});
-review = find(pane, function(c) { return c.className === 'ui-coauthor-review'; });
+review = find(pane, function(c) { return /ui-coauthor-review\b/.test(c.className || '') && !/-h|-body|-note/.test(c.className); });
 ta.value = ta.value.replace('Chorus line', 'Chorus I rewrote');
 click(button(review, 'Apply'));
 check('Apply refuses a passage that changed since, and says so',
@@ -270,7 +281,7 @@ co2.destroy();
 check('destroy hands the host its own send context back', host2.uiSendContext === own && 'data-ui-send-context' in host2.attrs);
 check('and stops answering proposals', host2.uiProposeText === undefined && !('data-ui-coauthor' in host2.attrs));
 check('and lets the pin go, chip and all', co2.pinned() === null && cleared2 === 1);
-check('and closes its review', !find(pane2, function(c) { return c.className === 'ui-coauthor-review'; }));
+check('and closes its review', !find(pane2, function(c) { return /ui-coauthor-review/.test(c.className || ''); }) && ta2.style.display === '');
 check('and stops following the page\'s selection', (docListeners.selectionchange || []).length === listenersBefore);
 var bare = el('div');
 var ta3 = el('textarea');

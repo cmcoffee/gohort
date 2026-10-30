@@ -5744,14 +5744,25 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 }
 @media (pointer: coarse) { .ui-agent .ui-agent-input-row { --compose-btn: 2.25rem; } }
 .ui-agent .ui-agent-input-row:focus-within { border-color: color-mix(in srgb, var(--accent) 70%, var(--border)); }
-/* A narrow chat (ui-agent-narrow, set from its width): the composer is a band
- * along the frame's bottom, edge to edge, instead of a pill inset inside it,
- * so the box you write in has the frame's whole width. */
+/* A narrow chat (ui-agent-narrow, set from its width): the composer pill
+ * keeps its shape but sits almost at the frame's edges, so the box you write
+ * in has nearly the frame's whole width. */
 .ui-agent.ui-agent-narrow .ui-agent-input-row {
-  margin: 0; border: 0; border-top: 1px solid var(--border); border-radius: 0;
-  padding-bottom: max(0.35rem, env(safe-area-inset-bottom, 0px));
+  margin: 0.25rem 0.25rem max(0.25rem, calc(env(safe-area-inset-bottom, 0px) - 0.75rem));
 }
-.ui-agent.ui-agent-narrow .ui-agent-input-row:focus-within { border-top-color: color-mix(in srgb, var(--accent) 70%, var(--border)); }
+/* And the conversation reads the way it does on a phone (the max-width
+ * 700px block): the reply takes the full width with lighter padding, the
+ * person's own message stays capped so it still reads as theirs, and tool
+ * calls drop their indents. A chat column beside an editor is as narrow as
+ * a phone, and the desktop's margins left a reply a sliver of it. */
+.ui-agent.ui-agent-narrow .ui-agent-convo-log { padding: 0.5rem 0.45rem; gap: 0.5rem; }
+.ui-agent.ui-agent-narrow .ui-agent-msg-assistant, .ui-agent.ui-agent-narrow .ui-agent-msg-failed { max-width: 100%; }
+.ui-agent.ui-agent-narrow .ui-agent-msg-user { max-width: 85%; }
+.ui-agent.ui-agent-narrow .ui-agent-msg-assistant .ui-agent-msg-body,
+.ui-agent.ui-agent-narrow .ui-agent-msg-user .ui-agent-msg-body { padding: 0.5rem 0.65rem; }
+.ui-agent.ui-agent-narrow .ui-agent-tools-panel { padding-left: 0.4rem; }
+.ui-agent.ui-agent-narrow .ui-agent-tool-body { padding-left: 0.35rem; }
+.ui-agent.ui-agent-narrow .ui-agent-tool-children { margin-left: 0.1rem; padding-left: 0.45rem; }
 .ui-agent .ui-agent-input {
   flex: 1 0 100%; order: -1; resize: none;
   /* Cap auto-grow at roughly 8 lines: enough for medium messages without
@@ -6198,7 +6209,9 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
    * effect — fixed flex-basis would clobber the inline value and
    * the drag would visually do nothing. */
   flex: 0 0 auto;
-  width: 360px; min-width: 240px;
+  /* Grows with the window: a fixed 360px left a big screen's chat as cramped
+   * as a laptop's. A width dragged with the resizer still wins (inline). */
+  width: clamp(360px, 36%, 600px); min-width: 240px;
   display: flex; flex-direction: column;
   border-left: 1px solid var(--border);
   background: var(--bg-1);
@@ -7235,9 +7248,9 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-agent-composer-chip-x { flex: 0 0 auto; padding: 0 0.2rem; }
 .ui-agent-composer-chip-acts { display: flex; flex-wrap: wrap; gap: 0.3rem; }
 .ui-agent-composer-chip-act { flex: 0 0 auto; }
-/* In a narrow chat the composer is a band edge to edge; the chip above it
- * keeps the same edges. */
-.ui-agent.ui-agent-narrow .ui-agent-composer-chip { padding: 0.35rem 0.55rem 0.45rem; }
+/* In a narrow chat the composer sits almost at the frame's edges; the chip
+ * above it keeps the same edges. */
+.ui-agent.ui-agent-narrow .ui-agent-composer-chip { padding: 0.35rem 0.25rem 0.2rem; }
 .ui-coauthor-review, .ui-coauthor-undo {
   border: 1px solid var(--border); border-left: 3px solid var(--accent);
   border-radius: 8px; background: var(--bg-2); margin: 0.4rem 0;
@@ -7250,6 +7263,15 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-coauthor-review-stats { color: var(--text-mute); font-size: var(--fs-xs); }
 .ui-coauthor-review-note { padding: 0 0.6rem 0.4rem; color: var(--warn, var(--text)); }
 .ui-coauthor-review-body { max-height: 40vh; overflow: auto; border-top: 1px solid var(--border); margin: 0; }
+/* In the document's place: as tall as the editor it stands in for, the diff
+ * filling it and scrolling inside, unchanged lines and all. */
+.ui-coauthor-review-inplace {
+  display: flex; flex-direction: column; box-sizing: border-box;
+  min-height: 12rem; margin: 0;
+}
+.ui-coauthor-review-inplace .ui-coauthor-review-h { flex: 0 0 auto; }
+.ui-coauthor-review-inplace .ui-coauthor-review-body { flex: 1 1 auto; min-height: 0; max-height: none; }
+.ui-coauthor-review-body .editor-diff { max-height: none; margin: 0; border: 0; border-radius: 0; }
 .ui-coauthor-proposal {
   display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 0.6rem;
   padding: 0.5rem 0.7rem; border: 1px solid var(--border); border-left: 3px solid var(--accent);

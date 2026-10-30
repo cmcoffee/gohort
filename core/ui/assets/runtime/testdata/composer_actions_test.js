@@ -216,7 +216,9 @@ check('so does the chat composer', /if \(uiComposerEnterSends\(ev\)\) \{\s*ev\.p
     panel.indexOf("if (w) wrap.classList.toggle('ui-agent-narrow', w < UI_NARROW_CHAT);") >= 0 && panel.indexOf('}).observe(convoPane);') >= 0);
   var css = fs.readFileSync(dir + '/../runtime.css', 'utf8');
   var band = css.indexOf('.ui-agent.ui-agent-narrow .ui-agent-input-row {');
-  check('where its composer is a band edge to edge',
-    band >= 0 && /margin: 0; border: 0; border-top: 1px solid var\(--border\); border-radius: 0;/.test(css.slice(band, band + 200)));
+  check('where its composer pill sits almost at the frame\'s edges',
+    band >= 0 && /margin: 0\.25rem 0\.25rem /.test(css.slice(band, band + 200)) && !/border-radius: 0/.test(css.slice(band, band + 200)));
+  check('and its conversation reads as on a phone',
+    css.indexOf('.ui-agent.ui-agent-narrow .ui-agent-msg-assistant, .ui-agent.ui-agent-narrow .ui-agent-msg-failed { max-width: 100%; }') >= 0);
 })();
 process.exit(fail ? 1 : 0);
