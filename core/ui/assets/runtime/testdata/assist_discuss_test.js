@@ -23,5 +23,7 @@ check('every send says which mode it is in',
   src.indexOf("var req = {message: text, history: priorHistory, mode: discuss ? 'discuss' : 'write', window: windowId};") >= 0 &&
   src.indexOf("opts.send(req, finish,") >= 0);
 check('the draft window sends its draft with every turn',
-  src.indexOf("extra: function() { return {draft: draft.value}; },") >= 0);
+  src.indexOf("var x = {draft: draft.value};") >= 0);
+check('and the passage selected in it, when one is pinned',
+  src.indexOf("if (sel) x.selection = {text: sel.text, start: sel.start, end: sel.end};") >= 0);
 process.exit(fail ? 1 : 0);

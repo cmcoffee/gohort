@@ -40,6 +40,8 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
+	"github.com/cmcoffee/gohort/core/docs"
 )
 
 // Spec is one assist.
@@ -151,6 +153,9 @@ type Request struct {
 	Page   string         `json:"page"`
 	Form   []Field        `json:"form"`
 	Values map[string]any `json:"values"`
+	// Selection is the passage of the draft the person selected and asked
+	// about (uiCoauthor), when they pinned one.
+	Selection agenthost.Selection `json:"selection"`
 
 	// raw is every key the request carried, for an app's own (Get).
 	raw map[string]json.RawMessage
@@ -532,6 +537,16 @@ func (t turn) system(kit []AgentToolDef, web int) string {
 // writeTurnExtras is what this turn brings to the prompt: the files
 // attached in the window, and web lookups asked for.
 func (t turn) writeTurnExtras(b *strings.Builder, web int) {
+	// The passage of the draft the message is about. Here rather than beside
+	// the draft so an app with its own prompt, which shows the draft its own
+	// way, gets it too. A draft reply is the whole draft, so the rest of it
+	// is to come back as it was.
+	if sel := t.req.Selection.Text; strings.TrimSpace(sel) != "" && len(t.req.Form) == 0 {
+		f := docs.DocFence(sel)
+		b.WriteString("\n## The passage they selected\n\n")
+		b.WriteString(f + "\n" + sel + "\n" + f + "\n")
+		b.WriteString("Their message is about this passage of the draft. Change only that passage: the draft you return keeps everything else exactly as it is.\n")
+	}
 	if len(t.files) > 0 {
 		b.WriteString("\n## Files attached here\n\n")
 		for _, f := range t.files {

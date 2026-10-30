@@ -2496,6 +2496,14 @@ input[type="checkbox"].ui-input { width: auto; }
   font-size: var(--fs-sm); line-height: 1.6; font-family: inherit; outline: none;
 }
 .ui-assist-draft:focus { border-color: var(--accent); }
+/* Changes: this version against the one before, in the draft's place. */
+.ui-assist-changes-view {
+  flex: 1 1 auto; min-height: 0; overflow: auto; -webkit-overflow-scrolling: touch;
+  border-radius: 8px; background: var(--bg-2); border: 1px solid var(--border);
+  font-size: var(--fs-sm);
+}
+.ui-assist-changes { width: auto; padding: 0 0.6rem; margin-left: auto; }
+.ui-assist-changes.on { color: var(--text); border-color: var(--accent); }
 .ui-assist-log {
   flex: 1 1 auto; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch;
   display: flex; flex-direction: column; gap: 0.5rem;
@@ -7350,3 +7358,45 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   color: var(--text-mute); font-size: var(--fs-lg); cursor: pointer;
 }
 .ui-block-dismiss:hover, .ui-block-dismiss:focus-visible { color: var(--text); background: var(--bg-2, rgba(127,127,127,0.15)); }
+
+/* Co-author (47_coauthor.js): the bar a selection shows, the chip over the
+ * chat saying what the next send is about, the review of a proposed passage
+ * and the Undo after it, and the proposal's card in the conversation. */
+/* Above dialogs (1100): a document inside one (an assist draft) shows it
+ * too. Below the info popover, which can open over anything. */
+.ui-coauthor-bar {
+  position: fixed; z-index: 10040; display: flex; flex-wrap: wrap; gap: 0.3rem;
+  max-width: calc(100vw - 16px);
+  padding: 0.25rem; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg-1); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+}
+.ui-coauthor-bar .ui-coauthor-ask { font-weight: 600; }
+.ui-agent-composer-chip {
+  padding: 0.3rem max(0.7rem, calc((100% - var(--ui-agent-composer, 100%)) / 2));
+  font-size: var(--fs-xs); display: flex; align-items: center; gap: 0.4rem;
+}
+.ui-agent-composer-chip-label {
+  background: var(--bg-2); border: 1px solid var(--border); border-left: 3px solid var(--accent);
+  border-radius: 12px; padding: 0.15rem 0.5rem; color: var(--text);
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ui-coauthor-review, .ui-coauthor-undo {
+  border: 1px solid var(--border); border-left: 3px solid var(--accent);
+  border-radius: 8px; background: var(--bg-2); margin: 0.4rem 0;
+  font-size: var(--fs-sm);
+}
+.ui-coauthor-review-h, .ui-coauthor-undo {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 0.6rem; padding: 0.45rem 0.6rem;
+}
+.ui-coauthor-review-title { flex: 1 1 12rem; color: var(--text); min-width: 0; }
+.ui-coauthor-review-stats { color: var(--text-mute); font-size: var(--fs-xs); }
+.ui-coauthor-review-note { padding: 0 0.6rem 0.4rem; color: var(--warn, var(--text)); }
+.ui-coauthor-review-body { max-height: 40vh; overflow: auto; border-top: 1px solid var(--border); margin: 0; }
+.ui-coauthor-proposal {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 0.6rem;
+  padding: 0.5rem 0.7rem; border: 1px solid var(--border); border-left: 3px solid var(--accent);
+  border-radius: 8px; background: var(--bg-2); font-size: var(--fs-sm);
+}
+.ui-coauthor-proposal-h { flex: 1 1 100%; color: var(--text); }
+.ui-coauthor-proposal-meta { color: var(--text-mute); font-size: var(--fs-xs); }
+.ui-coauthor-proposal-note { flex: 1 1 100%; color: var(--text-mute); font-size: var(--fs-xs); }

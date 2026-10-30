@@ -47,7 +47,7 @@ const codeWriterPrompt = `You are the Code Writer, the assistant beside the Code
 
 THE EDITOR: each message from the user carries the editor as it is right now, under "Editor (as it is now)": the file's name, its language, its contents, and the reference context the user keeps beside it. That is the file you are working on. A copy in an earlier turn is out of date.
 
-CHANGING THE FILE: call propose_code with the WHOLE new file and a one-line summary of the change. Never a fragment or a diff: the user sees your file as a diff against the editor and applies it or not. After proposing, say in a sentence or two what changed and why; do not paste the file into your reply as well.
+CHANGING THE FILE: to change part of it, call propose_edit with find set to the text you are replacing, copied exactly from the editor, and replace set to its new text. When the user selected a passage, the message is about that passage: change it with propose_edit and leave the rest alone. When the change runs through the whole file (a rewrite, a conversion, a new file), call propose_code with the WHOLE new file instead. Never a diff: the user sees what you propose as a diff against the editor and applies it or not. After proposing, say in a sentence or two what changed and why; do not paste the code into your reply as well.
 
 WHEN TO PROPOSE: when the user asks for a change, propose it. When they ask a question, want something explained, or want to talk an approach through, answer in prose; short inline snippets are fine. When it is unclear which they want, answer, and if a change to the file would help, propose that too: a proposal is only a suggestion, and nothing changes until the user applies it.
 
@@ -76,6 +76,9 @@ type chatEditor struct {
 type chatSendFields struct {
 	Editor  chatEditor `json:"editor"`
 	Message string     `json:"message"`
+	// Selection is the passage the user pinned before sending, when they
+	// selected one to ask about (uiCoauthor).
+	Selection agenthost.Selection `json:"selection"`
 }
 
 // dispatchChat answers the chat's endpoints other than the send: sessions,
@@ -149,15 +152,16 @@ func (T *CodeWriterAgent) handleChatSend(w http.ResponseWriter, r *http.Request)
 	orch.PublicHandleSendWithAppToolsPublishing(w, agenthost.WithTurnContext(r, turn), agent, tools, pub)
 }
 
-// editTools is the turn's way to change the file: propose_code, unless the
-// file is a regex, whose "code" is a pattern the diff can't usefully review
-// and is answered in the reply instead. Whether a turn proposes is the
-// agent's call: a proposal changes nothing until the user applies it.
+// editTools is the turn's way to change the file: propose_edit for a passage
+// and propose_code for the whole file, unless the file is a regex, whose
+// "code" is a pattern the diff can't usefully review and is answered in the
+// reply instead. Whether a turn proposes is the agent's call: a proposal
+// changes nothing until the user applies it.
 func editTools(pub *agenthost.Publisher, send chatSendFields) []AgentToolDef {
 	if send.Editor.Lang == "regex" {
 		return nil
 	}
-	return []AgentToolDef{proposeCodeTool(pub, send.Editor.Lang)}
+	return []AgentToolDef{agenthost.ProposeEditTool(pub), proposeCodeTool(pub, send.Editor.Lang)}
 }
 
 // editorTurnContext is what the turn's newest message carries about the
@@ -220,6 +224,11 @@ func (T *CodeWriterAgent) editorTurnContext(ctx context.Context, user string, se
 		if len(refTools) > 0 {
 			b.WriteString("\nThe attached reference source also provides tools. Use them when the reference above doesn't answer the question, or when the user asks about the CURRENT state of the system: the investigate tool runs a live session when gathered knowledge isn't enough.\n")
 		}
+	}
+	// The passage the user selected and asked about, with how to change it.
+	// Not for a regex: its answer is the reply, and it has no edit tools.
+	if sel := agenthost.SelectionContext(send.Selection); sel != "" && !regex {
+		b.WriteString("\n" + sel + "\n")
 	}
 	switch {
 	case regex:

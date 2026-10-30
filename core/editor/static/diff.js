@@ -26,14 +26,17 @@ function editorDiffLines(a, b) {
     }
   }
 
-  // Backtrack to build ops in reverse.
+  // Backtrack to build ops in reverse. On a tie the ADD is taken first:
+  // backtracking runs from the end, so what is taken first lands last, and a
+  // changed line reads as the old one then the new one, as diffs do. Taking
+  // the remove first listed every replacement new-above-old.
   var ops = [];
   var ai = m, bj = n;
   while (ai > 0 && bj > 0) {
     if (aLines[ai - 1] === bLines[bj - 1]) {
       ops.unshift({ type: 'equal', text: aLines[ai - 1] });
       ai--; bj--;
-    } else if (dp[ai - 1][bj] >= dp[ai][bj - 1]) {
+    } else if (dp[ai - 1][bj] > dp[ai][bj - 1]) {
       ops.unshift({ type: 'remove', text: aLines[ai - 1] });
       ai--;
     } else {

@@ -71,12 +71,9 @@ func (T *CodeWriterAgent) handleCodeWriterPage(w http.ResponseWriter, r *http.Re
 				},
 			},
 		},
-		// Pull in the inline diff helper a proposed change opens in (the
-		// editor_proposal card). Both sets of statics are added verbatim into
-		// the document head so the panel can call window.editorShowDiff /
-		// window.editorDiffStats.
-		ExtraHeadHTML: "<style>" + editor.DiffCSS() + "</style>" +
-			"<script>" + editor.UtilsJS() + editor.DiffJS() + "</script>",
+		// The editor's clipboard, resize and import helpers. The diff a
+		// proposal opens in ships with the runtime on every page.
+		ExtraHeadHTML: "<script>" + editor.UtilsJS() + "</script>",
 	}
 	page.ServeHTTP(w, r)
 }

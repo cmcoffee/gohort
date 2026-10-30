@@ -1010,6 +1010,17 @@
         docSetValue(text);
       }
     };
+    // Co-authored as well: select a passage and Ask, and what comes back for
+    // that passage is reviewed on its own (47_coauthor.js, text_proposal).
+    // After uiSendContext, which it extends with the pinned passage.
+    // On a phone the code and the chat are panes one at a time: Ask brings
+    // the chat up, and a proposal brings the code back to be reviewed.
+    window.uiCoauthor(editor, {
+      host: wrap,
+      setValue: function(t) { docToRaw(); docSetValue(t); },
+      showChat: function() { panes.show('chat'); },
+      showDocument: function() { panes.show('code'); },
+    });
 
     // --- State ---
     var currentID    = null;

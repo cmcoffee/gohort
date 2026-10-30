@@ -3083,6 +3083,17 @@
     // added at once, so a page script registering after the panel is built
     // works; the ctx comes back, for an action that shows its own state on
     // its button or keeps a second button in step.
+    // composerInsert adds text to what is already typed (a space between),
+    // resizes the box and focuses it: text something else produces lands where
+    // typed text would, to be read over before it is sent.
+    function composerInsert(text) {
+      text = String(text || '').trim();
+      if (!text) return;
+      var cur = inputArea.value;
+      inputArea.value = (cur && !/\s$/.test(cur)) ? cur + ' ' + text : cur + text;
+      autosizeInput();
+      if (inputArea.focus) inputArea.focus();
+    }
     window.uiRegisterComposerAction = function(opts) {
       if (!opts || typeof opts.onclick !== 'function') return null;
       var btn = el('button', {type: 'button',
@@ -3091,14 +3102,7 @@
       var ctx = {
         button: btn,
         input: inputArea,
-        insertText: function(text) {
-          text = String(text || '').trim();
-          if (!text) return;
-          var cur = inputArea.value;
-          inputArea.value = (cur && !/\s$/.test(cur)) ? cur + ' ' + text : cur + text;
-          autosizeInput();
-          if (inputArea.focus) inputArea.focus();
-        },
+        insertText: composerInsert,
         send: function() { sendMessage(); },
         fields: function() {
           var out = {};
@@ -3184,6 +3188,40 @@
     }
     convoPane.appendChild(inputRow);
     convoPane.appendChild(attachStrip);
+
+    // uiComposer is this panel's composer, for the component it sits in: a
+    // document whose selected passage the conversation is about (uiCoauthor)
+    // puts words in the box, sends, and shows a chip above the box saying what
+    // the next send is about. On the panel's own element rather than the page,
+    // so two panels on one page each answer for their own box.
+    //   insertText(text)     as a composer action's
+    //   send()               sends what is in the box, as Send does
+    //   focus()
+    //   setChip(label, onClear)  one chip; a second replaces it. Its x clears
+    //                        it and calls onClear.
+    //   clearChip()          clears it without calling onClear
+    var composerChip = el('div', {class: 'ui-agent-composer-chip', style: 'display:none'});
+    convoPane.insertBefore(composerChip, inputRow);
+    wrap.setAttribute('data-ui-composer', '');
+    wrap.uiComposer = {
+      insertText: composerInsert,
+      send: function() { sendMessage(); },
+      focus: function() { if (inputArea.focus) inputArea.focus(); },
+      setChip: function(label, onClear) {
+        composerChip.innerHTML = '';
+        composerChip.appendChild(el('span', {class: 'ui-agent-composer-chip-label'}, [String(label || '')]));
+        composerChip.appendChild(el('button', {type: 'button', class: 'ui-agent-attach-x', title: 'Clear',
+          onclick: function() {
+            wrap.uiComposer.clearChip();
+            if (typeof onClear === 'function') onClear();
+          }}, ['\u00d7']));
+        composerChip.style.display = '';
+      },
+      clearChip: function() {
+        composerChip.innerHTML = '';
+        composerChip.style.display = 'none';
+      },
+    };
 
     function renderAttachments() {
       attachStrip.innerHTML = '';

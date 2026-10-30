@@ -51,6 +51,7 @@ composerMiddle.name = 'middle';
 var inputRow = box([composerMiddle, attachBtn, sendBtn]);
 function names(b) { return b.kids.map(function(k) { return k.name || k.textContent; }).join(','); }
 eval(lift(panel, 'function autosizeInput()', 'autosizeInput'));
+eval(lift(panel, 'function composerInsert(text)', 'composerInsert'));
 eval('window.uiRegisterComposerAction = ' + lift(panel, 'window.uiRegisterComposerAction = function(opts)', 'uiRegisterComposerAction').replace('window.uiRegisterComposerAction = ', ''));
 
 var pressed = null;
@@ -129,4 +130,46 @@ check('a touch keyboard\'s return is a new line', uiComposerEnterSends({key: 'En
 var panelChat = fs.readFileSync(dir + '/20_chat_panel.js', 'utf8');
 check('the agent composer asks it', /if \(uiComposerEnterSends\(ev\)\) \{ ev\.preventDefault\(\); sendMessage\(\); \}/.test(panel));
 check('so does the chat composer', /if \(uiComposerEnterSends\(ev\)\) \{\s*ev\.preventDefault\(\);\s*doSend\(\);/.test(panelChat));
+// The panel's own composer, for the component it sits in (uiCoauthor): the
+// same box and send, and a chip over the box saying what the next send is about.
+(function() {
+  var a = panel.indexOf("var composerChip = el('div'");
+  var b = panel.indexOf("composerChip.style.display = 'none';\n      },\n    };", a);
+  if (a < 0 || b < 0) { check('the panel composer block is there', false); return; }
+  var block = panel.slice(a, b + "composerChip.style.display = 'none';\n      },\n    };".length);
+  function node(tag, attrs, kids) {
+    var n = {tag: tag, attrs: attrs || {}, style: {}, kids: [], on: {}};
+    if (attrs && attrs.style === 'display:none') n.style.display = 'none';
+    n.appendChild = function(c) { n.kids.push(c); };
+    Object.defineProperty(n, 'innerHTML', {set: function() { n.kids = []; }});
+    (kids || []).forEach(function(k) { n.kids.push(k); });
+    if (attrs && attrs.onclick) n.on.click = attrs.onclick;
+    return n;
+  }
+  var pane = box([]);
+  var row = {name: 'row'};
+  pane.kids.push(row);
+  var wrapAttrs = {};
+  var wrap = {setAttribute: function(k, v) { wrapAttrs[k] = v; }};
+  var sent = 0;
+  var area = {value: 'hi', style: {}, scrollHeight: 40, focus: function() {}};
+  new Function('el', 'convoPane', 'inputRow', 'wrap', 'composerInsert', 'sendMessage', 'inputArea', block)(
+    node, pane, row, wrap, function(t) { area.value += ' ' + t; }, function() { sent++; }, area);
+  var chip = pane.kids[0];
+  check('the chip row sits over the input row, hidden', pane.kids[1] === row && chip.style.display === 'none');
+  check('the panel says it has a composer', 'data-ui-composer' in wrapAttrs && typeof wrap.uiComposer === 'object');
+  var cleared = 0;
+  wrap.uiComposer.setChip('Chorus, 4 lines', function() { cleared++; });
+  check('a chip shows its label', chip.style.display === '' && chip.kids[0].kids[0] === 'Chorus, 4 lines');
+  wrap.uiComposer.setChip('Verse 2', function() { cleared++; });
+  check('a second chip replaces the first', chip.kids.length === 2 && chip.kids[0].kids[0] === 'Verse 2');
+  chip.kids[1].on.click();
+  check('its x clears it and tells its owner', chip.style.display === 'none' && cleared === 1);
+  wrap.uiComposer.setChip('x', function() { cleared++; });
+  wrap.uiComposer.clearChip();
+  check('clearChip clears without calling back', chip.style.display === 'none' && cleared === 1);
+  wrap.uiComposer.insertText('tighten');
+  wrap.uiComposer.send();
+  check('insertText and send are the box\'s own', area.value === 'hi tighten' && sent === 1);
+})();
 process.exit(fail ? 1 : 0);

@@ -280,7 +280,35 @@
     field.appendChild(sendBtn);
     composerRow.appendChild(field);
     if (fileRow) { right.appendChild(picker); right.appendChild(fileRow); }
+    // The chip over the box saying what the next send is about, and the
+    // composer handle a co-authored draft beside it reaches it by
+    // (uiCoauthor), the same handle the agent chat panel gives.
+    var chip = el('div', {class: 'ui-agent-composer-chip', style: 'display:none'});
+    right.appendChild(chip);
     right.appendChild(composerRow);
+    right.setAttribute('data-ui-composer', '');
+    right.uiComposer = {
+      insertText: function(text) {
+        text = String(text || '').trim();
+        if (!text) return;
+        var cur = composer.value;
+        composer.value = (cur && !/\s$/.test(cur)) ? cur + ' ' + text : cur + text;
+        if (!coarse) composer.focus();
+      },
+      send: function() { send(); },
+      focus: function() { composer.focus(); },
+      setChip: function(label, onClear) {
+        chip.innerHTML = '';
+        chip.appendChild(el('span', {class: 'ui-agent-composer-chip-label'}, [String(label || '')]));
+        chip.appendChild(el('button', {type: 'button', class: 'ui-agent-attach-x', title: 'Clear',
+          onclick: function() {
+            right.uiComposer.clearChip();
+            if (typeof onClear === 'function') onClear();
+          }}, ['\u00d7']));
+        chip.style.display = '';
+      },
+      clearChip: function() { chip.innerHTML = ''; chip.style.display = 'none'; },
+    };
     if (webRow) right.appendChild(webRow);
     if (opts.starters) addChoices(opts.starters);
 
@@ -419,6 +447,26 @@
     fwdBtn.addEventListener('click', function() { showVersion(idx + 1); });
     updateNav();
 
+    // Changes: this version against the one before it, in place of the
+    // draft while it is on. Stepping to another version shows that one's.
+    var changesBtn = el('button', {type: 'button', class: 'ui-assist-nav ui-assist-changes',
+      title: 'What this version changed from the one before'}, ['Changes']);
+    var changesView = el('div', {class: 'ui-assist-changes-view', style: 'display:none'});
+    var showingChanges = false;
+    function paintChanges() {
+      changesBtn.disabled = idx <= 0;
+      if (idx <= 0) showingChanges = false;
+      changesBtn.classList.toggle('on', showingChanges);
+      changesView.style.display = showingChanges ? '' : 'none';
+      draft.style.display = showingChanges ? 'none' : '';
+      if (showingChanges && typeof window.editorDiffRender === 'function') {
+        changesView.innerHTML = window.editorDiffRender(versions[idx - 1], versions[idx]);
+      }
+    }
+    changesBtn.addEventListener('click', function() { showingChanges = !showingChanges; paintChanges(); });
+    [backBtn, fwdBtn].forEach(function(b) { b.addEventListener('click', paintChanges); });
+    paintChanges();
+
     var chat = window.uiAssistChat({
       discuss: discuss, switchable: switchable, web: !!opts.web,
       intro: discuss
@@ -427,12 +475,22 @@
           ? 'Nothing written yet. Describe what you want and it will draft one.'
           : 'Ask for a change to the draft, or a question about it.'),
       send: opts.send || window.uiAssistPost(opts.url),
-      extra: function() { return {draft: draft.value}; },
+      extra: function() {
+        var x = {draft: draft.value};
+        var sel = coauthor && coauthor.pinned();
+        if (sel) x.selection = {text: sel.text, start: sel.start, end: sel.end};
+        return x;
+      },
       onResult: function(res) {
         var value = res.value == null ? '' : String(res.value);
         if (value === '' || value === versions[idx]) return '';
         versions.push(value);
         showVersion(versions.length - 1);
+        // The passage was asked about and answered: the next request is
+        // about the whole draft again. The new version opens on what changed.
+        if (coauthor) coauthor.unpin();
+        showingChanges = true;
+        paintChanges();
         // Looking at the conversation: the reply stays in view, and the
         // Draft tab is marked so the new version is not missed.
         tabs.markNew();
@@ -440,8 +498,17 @@
       },
     });
 
+    // Select a passage of the draft and Ask, as in any co-authored document:
+    // the request carries it, and the reply is a new version as always.
+    var coauthor = window.uiCoauthor ? window.uiCoauthor(draft, {
+      host: wrap,
+      showChat: function() { tabs.show('chat'); },
+      showDocument: function() { tabs.show('draft'); },
+    }) : null;
+
     window.uiOpenModal({
       title: opts.title || 'Draft with assistance',
+      onClose: function() { if (coauthor) coauthor.destroy(); },
       subtitle: opts.subtitle || undefined,
       width: 'min(1180px, 96vw)',
       actions: [
@@ -461,8 +528,10 @@
         navRow.appendChild(backBtn);
         navRow.appendChild(verLabel);
         navRow.appendChild(fwdBtn);
+        navRow.appendChild(changesBtn);
         left.appendChild(navRow);
         left.appendChild(draft);
+        left.appendChild(changesView);
 
         wrap.appendChild(left);
         wrap.appendChild(chat.right);

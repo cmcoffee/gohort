@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 )
 
 // fakeWeb stands in for the web_search tool, which lives in tools/.
@@ -409,5 +410,38 @@ func TestAnAppsOwnAssistRunsOnTheHandler(t *testing.T) {
 	}
 	if rec := do(`{"field":"other","message":"x"}`); rec.Code != http.StatusNotFound {
 		t.Errorf("a refusal should carry its status: %d", rec.Code)
+	}
+}
+
+// A passage the person selected in the draft reaches the model with the
+// draft, as what the message is about; the generic prompt and an app's own
+// both get it, and a form turn, which has no passage, does not.
+func TestASelectedPassageTravelsWithTheDraft(t *testing.T) {
+	sel := agenthost.Selection{Text: "Neon on the water\nCity never sleeps", Start: 10, End: 45}
+	fake := &FakeLLM{Turns: []FakeTurn{{Content: "Done.\n```draft\nx\n```", Repeat: true}}}
+	h := Handler(Spec{Route: "test.assist.sel", Allow: allowAll, LLM: fake})
+	post(t, h, Request{Message: "make it scan", Draft: "[Verse]\nNeon on the water\nCity never sleeps\n", Mode: "write", Selection: sel})
+	sys := fake.Config(0).SystemPrompt
+	if !strings.Contains(sys, "The passage they selected") || !strings.Contains(sys, "\nNeon on the water\nCity never sleeps\n") ||
+		!strings.Contains(sys, "Change only that passage") {
+		t.Errorf("the selected passage should travel with the draft:\n%s", sys)
+	}
+	own := &FakeLLM{Turns: []FakeTurn{{Content: "Done.\n```draft\nx\n```"}}}
+	h2 := Handler(Spec{Route: "test.assist.sel.own", Allow: allowAll, LLM: own,
+		Prompt: func(*http.Request, Request) (string, error) { return "THE APP'S OWN PROMPT", nil }})
+	post(t, h2, Request{Message: "make it scan", Draft: "d", Mode: "write", Selection: sel})
+	if !strings.Contains(own.Config(0).SystemPrompt, "The passage they selected") {
+		t.Error("an app with its own prompt gets the passage too")
+	}
+	plain := &FakeLLM{Turns: []FakeTurn{{Content: "Done.\n```draft\nx\n```"}}}
+	post(t, Handler(Spec{Route: "test.assist.sel.none", Allow: allowAll, LLM: plain}), Request{Message: "m", Draft: "d", Mode: "write"})
+	if strings.Contains(plain.Config(0).SystemPrompt, "The passage they selected") {
+		t.Error("nothing selected says nothing about a passage")
+	}
+	form := &FakeLLM{Turns: []FakeTurn{{Content: "ok\n```fields\n{}\n```"}}}
+	post(t, Handler(Spec{Route: "test.assist.sel.form", Allow: allowAll, LLM: form}),
+		Request{Message: "m", Form: heicForm, Values: map[string]any{}, Selection: sel})
+	if strings.Contains(form.Config(0).SystemPrompt, "The passage they selected") {
+		t.Error("a form turn has no passage")
 	}
 }

@@ -30,7 +30,8 @@ func TestTheCodeWriterIsAnAppAgent(t *testing.T) {
 }
 
 // A turn may propose a change to any file but a regex, whose answer is the
-// reply. Whether it does is the agent's call.
+// reply: a passage of it, or the whole file. Whether it does is the agent's
+// call.
 func TestATurnMayProposeAChange(t *testing.T) {
 	pub := &agenthost.Publisher{}
 	names := func(send chatSendFields) string {
@@ -40,7 +41,7 @@ func TestATurnMayProposeAChange(t *testing.T) {
 		}
 		return strings.Join(out, ",")
 	}
-	if got := names(chatSendFields{Editor: chatEditor{Lang: "go"}}); got != "propose_code" {
+	if got := names(chatSendFields{Editor: chatEditor{Lang: "go"}}); got != "propose_edit,propose_code" {
 		t.Errorf("an ordinary turn offered %q", got)
 	}
 	if got := names(chatSendFields{Editor: chatEditor{Lang: "regex"}}); got != "" {
@@ -104,5 +105,33 @@ func TestTheTurnCarriesTheEditor(t *testing.T) {
 		if !strings.Contains(re, want) {
 			t.Errorf("a regex turn is missing %q:\n%s", want, re)
 		}
+	}
+}
+
+// A passage the user selected and asked about reaches the turn with how to
+// change it, beside the whole file; a regex turn, which has no edit tools,
+// is not told to propose one.
+func TestTheTurnCarriesTheSelectedPassage(t *testing.T) {
+	T := &CodeWriterAgent{}
+	ctx := context.Background()
+	sel := agenthost.Selection{Text: "where x > 1", Start: 9, End: 20}
+	turn, _ := T.editorTurnContext(ctx, "alice", chatSendFields{
+		Message: "make this inclusive", Selection: sel,
+		Editor: chatEditor{Lang: "sql", Code: "select * where x > 1"},
+	}, WriterRecord{})
+	if !strings.Contains(turn, "select * where x > 1") || !strings.Contains(turn, "selected this passage") ||
+		!strings.Contains(turn, "\nwhere x > 1\n") || !strings.Contains(turn, "propose_edit") {
+		t.Errorf("the turn should carry the file and the selected passage:\n%s", turn)
+	}
+	plain, _ := T.editorTurnContext(ctx, "alice", chatSendFields{Editor: chatEditor{Lang: "sql", Code: "select 1"}}, WriterRecord{})
+	if strings.Contains(plain, "selected this passage") {
+		t.Errorf("nothing selected says nothing about a passage:\n%s", plain)
+	}
+	re, _ := T.editorTurnContext(ctx, "alice", chatSendFields{Selection: sel, Editor: chatEditor{Lang: "regex", Code: "+abc"}}, WriterRecord{})
+	if strings.Contains(re, "propose_edit") {
+		t.Errorf("a regex turn is not told to propose an edit:\n%s", re)
+	}
+	if !strings.Contains(codeWriterPrompt, "propose_edit") || !strings.Contains(codeWriterPrompt, "selected a passage") {
+		t.Error("the prompt should say how a passage is changed")
 	}
 }

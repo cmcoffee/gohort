@@ -4,6 +4,8 @@ import (
 	"embed"
 	"sort"
 	"strings"
+
+	"github.com/cmcoffee/gohort/core/editor"
 )
 
 // runtimeCSS — every component's static styling, kept in assets/runtime.css so
@@ -47,6 +49,13 @@ func assembleRuntimeJS() string {
 	}
 	sort.Strings(names)
 	var b strings.Builder
+	// The line diff goes first, OUTSIDE the IIFE the fragments open, so its
+	// functions (editorDiffLines, editorShowDiff, ...) stay global. Every page
+	// has it: a proposal reviewed as a diff no longer needs its app to inject
+	// core/editor's script by hand, which is why the review only worked inside
+	// the one app that did.
+	b.WriteString(editor.DiffJS())
+	b.WriteString("\n")
 	for _, n := range names {
 		data, err := runtimeJSParts.ReadFile(dir + "/" + n)
 		if err != nil {
