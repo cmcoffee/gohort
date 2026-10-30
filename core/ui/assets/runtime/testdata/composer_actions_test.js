@@ -167,17 +167,23 @@ check('so does the chat composer', /if \(uiComposerEnterSends\(ev\)\) \{\s*ev\.p
   check('the chip row sits over the input row, hidden', pane.kids[1] === row && chip.style.display === 'none');
   check('the panel says it has a composer', 'data-ui-composer' in wrapAttrs && typeof wrap.uiComposer === 'object');
   var cleared = 0;
+  function head() { return chip.kids[0]; }
   wrap.uiComposer.setChip('Chorus, 4 lines', function() { cleared++; });
-  check('a chip shows its label', chip.style.display === '' && chip.kids[0].kids[0] === 'Chorus, 4 lines');
+  check('a chip shows its label', chip.style.display === '' && head().kids[1].kids[0] === 'Chorus, 4 lines');
+  check('with its x on the same row, first', head().kids.length === 2 && head().kids[0].kids[0] === '\u00d7');
+  check('and nothing below it without actions', chip.kids.length === 1);
   wrap.uiComposer.setChip('Verse 2', function() { cleared++; });
-  check('a second chip replaces the first', chip.kids.length === 2 && chip.kids[0].kids[0] === 'Verse 2');
-  chip.kids[1].on.click();
+  check('a second chip replaces the first', chip.kids.length === 1 && head().kids[1].kids[0] === 'Verse 2');
+  head().kids[0].on.click();
   check('its x clears it and tells its owner', chip.style.display === 'none' && cleared === 1);
   var acted = [];
-  wrap.uiComposer.setChip('Highlighted: “Neon”', null, {actions: [{label: 'Tighten', onClick: function() { acted.push('t'); }}, {label: ''}]});
-  check('a chip carries its actions as buttons, between the label and the x',
-    chip.kids.length === 3 && chip.kids[1].kids[0] === 'Tighten' && chip.kids[2].kids[0] === '\u00d7');
-  chip.kids[1].on.click();
+  wrap.uiComposer.setChip('Highlighted: “Neon”', null, {actions: [
+    {label: 'Tighten', onClick: function() { acted.push('t'); }}, {label: ''}, {label: 'Rhyme it', onClick: function() {}}]});
+  var acts = chip.kids[1];
+  check('a chip carries its actions as buttons, side by side on a row of their own below',
+    chip.kids.length === 2 && head().kids.length === 2 && acts.kids.length === 2 &&
+    acts.kids[0].kids[0] === 'Tighten' && acts.kids[1].kids[0] === 'Rhyme it');
+  acts.kids[0].on.click();
   check('an action button does what it says', acted.join() === 't');
   wrap.uiComposer.setChip('x', function() { cleared++; });
   wrap.uiComposer.clearChip();

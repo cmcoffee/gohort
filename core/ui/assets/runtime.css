@@ -7215,18 +7215,29 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 /* Co-author (47_coauthor.js): the chip over the chat saying what the next
  * send is about (the highlighted passage, with the page's quick actions), the
  * review of a proposed passage and the Undo after it, and the proposal's card
- * in the conversation. The chip wraps: quick actions fall to a second line
- * rather than off the edge. */
+ * in the conversation. The chip spans the composer's width: its x and label
+ * share the first row, the x first and the label taking an ellipsis however
+ * long it runs, and the quick actions sit side by side below. A little space
+ * under it sets it off from the box you type in. */
 .ui-agent-composer-chip {
-  padding: 0.3rem max(0.7rem, calc((100% - var(--ui-agent-composer, 100%)) / 2));
-  font-size: var(--fs-xs); display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem;
+  padding: 0.3rem max(0.7rem, calc((100% - var(--ui-agent-composer, 100%)) / 2)) 0.45rem;
+  font-size: var(--fs-xs); display: flex; flex-direction: column; gap: 0.3rem;
 }
-.ui-agent-composer-chip-act { flex: 0 0 auto; }
-.ui-agent-composer-chip-label {
+.ui-agent-composer-chip-head {
+  display: flex; align-items: center; gap: 0.4rem; min-width: 0;
   background: var(--bg-2); border: 1px solid var(--border); border-left: 3px solid var(--accent);
-  border-radius: 12px; padding: 0.15rem 0.5rem; color: var(--text);
-  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  border-radius: 8px; padding: 0.15rem 0.5rem 0.15rem 0.3rem;
 }
+.ui-agent-composer-chip-label {
+  flex: 1 1 auto; min-width: 0; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ui-agent-composer-chip-x { flex: 0 0 auto; padding: 0 0.2rem; }
+.ui-agent-composer-chip-acts { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.ui-agent-composer-chip-act { flex: 0 0 auto; }
+/* In a narrow chat the composer is a band edge to edge; the chip above it
+ * keeps the same edges. */
+.ui-agent.ui-agent-narrow .ui-agent-composer-chip { padding: 0.35rem 0.55rem 0.45rem; }
 .ui-coauthor-review, .ui-coauthor-undo {
   border: 1px solid var(--border); border-left: 3px solid var(--accent);
   border-radius: 8px; background: var(--bg-2); margin: 0.4rem 0;

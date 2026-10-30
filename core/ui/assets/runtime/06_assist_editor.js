@@ -60,23 +60,31 @@
   }
 
   // fillComposerChip draws the chip over a chat's box that says what the next
-  // send is about (a highlighted passage): its label, the actions that go with
-  // it, each a button, and an x that clears it and calls onClear. Every chat
-  // with a uiComposer draws it this way. o: {actions: [{label, onClick}]}.
+  // send is about (a highlighted passage). Its first row is the x that clears
+  // it (calling onClear), first, where it is found at once, then the label,
+  // which gives way with an ellipsis rather than pushing anything under. The
+  // actions that go with it, each a button, sit side by side on a row below.
+  // Every chat with a uiComposer draws it this way. o: {actions: [{label,
+  // onClick}]}.
   function fillComposerChip(chip, label, onClear, o, clear) {
     o = o || {};
     chip.innerHTML = '';
-    chip.appendChild(el('span', {class: 'ui-agent-composer-chip-label'}, [String(label || '')]));
-    (o.actions || []).forEach(function(a) {
-      if (!a || !a.label) return;
-      chip.appendChild(el('button', {type: 'button', class: 'ui-row-btn ui-btn-sm ui-agent-composer-chip-act',
-        onclick: function() { if (typeof a.onClick === 'function') a.onClick(); }}, [String(a.label)]));
-    });
-    chip.appendChild(el('button', {type: 'button', class: 'ui-agent-attach-x', title: 'Clear',
-      onclick: function() {
-        clear();
-        if (typeof onClear === 'function') onClear();
-      }}, ['\u00d7']));
+    var text = String(label || '');
+    chip.appendChild(el('div', {class: 'ui-agent-composer-chip-head'}, [
+      el('button', {type: 'button', class: 'ui-agent-attach-x ui-agent-composer-chip-x', title: 'Clear', 'aria-label': 'Clear',
+        onclick: function() {
+          clear();
+          if (typeof onClear === 'function') onClear();
+        }}, ['\u00d7']),
+      el('span', {class: 'ui-agent-composer-chip-label', title: text}, [text]),
+    ]));
+    var acts = (o.actions || []).filter(function(a) { return a && a.label; });
+    if (acts.length) {
+      chip.appendChild(el('div', {class: 'ui-agent-composer-chip-acts'}, acts.map(function(a) {
+        return el('button', {type: 'button', class: 'ui-row-btn ui-btn-sm ui-agent-composer-chip-act',
+          onclick: function() { if (typeof a.onClick === 'function') a.onClick(); }}, [String(a.label)]);
+      })));
+    }
     chip.style.display = '';
   }
 
