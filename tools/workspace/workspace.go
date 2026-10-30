@@ -964,6 +964,11 @@ func AttachWorkspaceFile(sess *ToolSession, relPath, displayName string, cleanup
 	if line := filenotes.LineFor(abs); line != "" {
 		what = " It is " + line + "."
 	}
+	// A song's title goes in the file: a messaging connector names the clip
+	// from it, since nothing else carries a name that far.
+	if n, ok := filenotes.Get(abs); ok && n.Title != "" {
+		data = media.WithID3Title(data, n.Title)
+	}
 	displayName = strings.TrimSpace(displayName)
 	if displayName == "" {
 		displayName = filepath.Base(relPath)

@@ -212,7 +212,10 @@ type OutboxItem struct {
 	// AudioName names the spoken clip's file (no extension): Messages shows
 	// an attachment by its file name. Empty from a server that sets none.
 	AudioName string `json:"audio_name,omitempty"`
-	Type      string `json:"type"`
+	// Agent is the agent that sent it, set only when that agent signs its
+	// messages: a clip is named for it when nothing else names it.
+	Agent string `json:"agent,omitempty"`
+	Type  string `json:"type"`
 }
 
 // retryEntry holds a failed outbox item waiting for a retry attempt.
@@ -1446,7 +1449,11 @@ func tryDeliver(cfg Config, db *sql.DB, item OutboxItem, attempt int) {
 			continue
 		}
 		ext := videoExt(data)
-		tmpPath, err := clipTempPath(kind, item.AudioName, ext)
+		name := item.AudioName
+		if kind == "video" {
+			name = videoClipName(item.Agent, item.ID, data, i)
+		}
+		tmpPath, err := clipTempPath(name, ext)
 		if err != nil {
 			logf("%s %d temp file error: %v", kind, i, err)
 			continue
@@ -1843,15 +1850,16 @@ func videoExt(data []byte) string {
 	return ".mp4"
 }
 
-// clipTempPath is where a clip is written before Messages sends it. A spoken
-// reply is named for what it says (OutboxItem.AudioName), since Messages shows
-// an attachment by its file name, and gets a directory of its own so two
-// replies that open with the same words cannot collide. Anything else keeps a
-// random temp name. Both live under $TMPDIR: Messages cannot read /tmp or the
-// Desktop, and an attachment from there arrives as "Not Delivered".
-func clipTempPath(kind, name, ext string) (string, error) {
+// clipTempPath is where a clip is written before Messages sends it. A named
+// clip (a spoken reply by what it says, OutboxItem.AudioName; a song by its
+// title, videoClipName) is written under that name, since Messages shows an
+// attachment by its file name, in a directory of its own so two clips of one
+// name cannot collide. One with no name keeps a random temp name. Both live
+// under $TMPDIR: Messages cannot read /tmp or the Desktop, and an attachment
+// from there arrives as "Not Delivered".
+func clipTempPath(name, ext string) (string, error) {
 	name = safeClipName(name)
-	if kind != "audio" || name == "" {
+	if name == "" {
 		f, err := os.CreateTemp("", "phantom-vid-*"+ext)
 		if err != nil {
 			return "", err
@@ -1859,7 +1867,7 @@ func clipTempPath(kind, name, ext string) (string, error) {
 		f.Close()
 		return f.Name(), nil
 	}
-	dir, err := os.MkdirTemp("", "gohort-voice-*")
+	dir, err := os.MkdirTemp("", "gohort-clip-*")
 	if err != nil {
 		return "", err
 	}
@@ -1869,7 +1877,7 @@ func clipTempPath(kind, name, ext string) (string, error) {
 // removeClip deletes a clip once sent, and the directory a named one was given.
 func removeClip(path string) {
 	os.Remove(path)
-	if dir := filepath.Dir(path); strings.HasPrefix(filepath.Base(dir), "gohort-voice-") {
+	if dir := filepath.Dir(path); strings.HasPrefix(filepath.Base(dir), "gohort-clip-") {
 		os.Remove(dir)
 	}
 }
