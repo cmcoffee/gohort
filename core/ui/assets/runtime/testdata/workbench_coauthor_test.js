@@ -74,4 +74,7 @@ check('its Cancel is Revert, which asks before putting the saved text back',
   open.indexOf('closeEditor(); renderRecord(lastRec); openEditor();') >= 0);
 check('and Escape never discards it',
   open.indexOf("else if (ev.key === 'Escape' && !cfg.propose_edits)") >= 0);
+check('a document read rather than written in place can be highlighted to talk about it',
+  src.indexOf('if (cfg.highlight_ask && !cfg.propose_edits && window.uiHighlightContext) {') >= 0 &&
+  src.indexOf('window.uiHighlightContext(viewerBody, {host: root, actions: cfg.selection_actions || []});') >= 0);
 process.exit(fail ? 1 : 0);

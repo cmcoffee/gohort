@@ -74,3 +74,18 @@ func TestSelectionContext(t *testing.T) {
 		t.Error("no em-dash in prompt text")
 	}
 }
+
+// A highlighted passage in a document its agent changes its own way: the
+// turn is told the passage and to keep a change to it, not to propose one.
+func TestHighlightContext(t *testing.T) {
+	if HighlightContext(Selection{Text: "  "}) != "" {
+		t.Error("nothing highlighted says nothing")
+	}
+	got := HighlightContext(Selection{Text: "Restart the service first."})
+	if !strings.Contains(got, "Restart the service first.") || !strings.Contains(got, "change that passage") {
+		t.Errorf("the turn reads:\n%s", got)
+	}
+	if strings.Contains(got, "propose_edit") || strings.Contains(got, "—") {
+		t.Errorf("no propose_edit, no em-dash:\n%s", got)
+	}
+}

@@ -135,6 +135,14 @@ editable finds the chat beside it through the host element they share.
    songs; every send carries the open song, so the agent works on the right one.
 
    Not covered: a record's files do not travel with a records export or import.
+
+   Later the same night: the person preferred Builder's hand-built song page to the workbench it
+   was rebuilt as, so the workbench is an option again, not the rule. What the page lacked was a
+   place for takes, and any app's records can now keep files: a page uses app.files, and an action
+   script keeps what it made by printing files:[{record, file, title}] (the list is the record's
+   _files when no workbench names one). A rendered document its agent edits its own way (Scribe)
+   takes highlighting too: WorkbenchPanel.HighlightAsk / uiHighlightContext pin the highlighted
+   text into the chat with no proposals, and agenthost.HighlightContext tells the turn.
 5. **Fold the copies in.** CodeWriter's `editor_proposal` becomes a `text_proposal`; the agent
    page's change list, casefile's proposal card and the dead ArticleEditor chat move onto the
    review or are deleted.

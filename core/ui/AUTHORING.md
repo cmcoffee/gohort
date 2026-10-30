@@ -325,6 +325,13 @@ applies it, and your own Save keeps it.
   sending through `PublicHandleSendWithAppToolsPublishing`. `find` is copied
   text, not offsets: it is also the staleness check, so a passage the person
   changed since is refused at Apply instead of written over.
+- **A document the agent changes its own way** (rendered HTML it edits with
+  section tools, say): `ui.WorkbenchPanel{HighlightAsk: true}`, or
+  `window.uiHighlightContext(el, {host, actions})` on your own element. What is
+  highlighted is still what the chat is about, chip and quick actions and all,
+  and the send carries `"selection": {text}`; there are no proposals. Put
+  `agenthost.HighlightContext(sel)` in the turn so the agent knows which passage
+  is meant. Scribe works this way.
 - ✨ Assist drafts (`uiOpenAssist`) already do this: the selected passage rides
   the request as `selection`, and the reply's version opens on **Changes**.
 
@@ -336,7 +343,11 @@ picture shows, anything else opens, each with Download and Remove. `FileURL`
 the list; the page only reads it. A custom app gets all of it from the
 workbench section's `files_field` (and `files_label`), and its agent gets
 `keep_file(file, title)` to keep a file from its working folder on the open
-record: a song's rendered takes, an article's pictures. `document_actions`
+record: a song's rendered takes, an article's pictures. Any custom app's
+records can keep files, workbench or not: a page lists, plays and removes them
+with `app.files.list(id)` / `url(id, name)` / `remove(id, name)`, and an action
+script keeps one it made by printing `files: [{record, file, title}]` (the list
+lives in `_files` when no workbench names a field). `document_actions`
 [{label, prompt}] puts buttons over the document that write a prompt into the
 chat ("Render").
 

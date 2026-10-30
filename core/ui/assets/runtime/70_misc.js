@@ -1047,6 +1047,15 @@
     root.editorTextarea = function() { return editing ? editorTA : null; };
     root.editorSave = function() { if (editing && editorSave) editorSave(); };
 
+    // A document read rather than written in place (highlight_ask): what is
+    // highlighted in the viewer, rendered or in an editor opened over it, is
+    // what the chat is about, with the page's quick actions beside it. The
+    // agent changes the document its own way. A co-authored one already has
+    // this from its editor.
+    if (cfg.highlight_ask && !cfg.propose_edits && window.uiHighlightContext) {
+      window.uiHighlightContext(viewerBody, {host: root, actions: cfg.selection_actions || []});
+    }
+
     showEmpty();
     loadList();
     return root;

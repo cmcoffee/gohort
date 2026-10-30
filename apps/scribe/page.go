@@ -74,6 +74,10 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 		EditURL:    "body?id={id}",
 		EditField:  "markdown",
 		EditLabel:  "Edit all",
+		// Highlight a passage, in the guide or in Edit all, and the chat is
+		// about it: the Guide Author is told which passage the author means
+		// and changes it with its section tools.
+		HighlightAsk: true,
 		// Pictures pasted, dropped or picked in the editor: stored with the
 		// guide and inserted as markdown (images.go).
 		ImageUploadURL: "images?id={id}",

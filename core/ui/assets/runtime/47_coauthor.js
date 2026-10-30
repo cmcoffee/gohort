@@ -103,6 +103,68 @@
     return textarea.parentNode;
   }
 
+  // coauthorPinning is the half of a co-authored document the chat sees: the
+  // passage pinned as what the next send is about, its chip over the chat's
+  // box with the page's quick actions, and the send carrying it through the
+  // host's send context. Shared by uiCoauthor (a textarea the person writes
+  // in) and uiHighlightContext (a rendered document they read). pinned is
+  // {text} and, in a textarea, {start, end}.
+  function coauthorPinning(host, opts) {
+    var p = {pinned: null};
+    p.composer = function() {
+      var c = host.querySelector && host.querySelector('[data-ui-composer]');
+      if (!c) {
+        var all = document.querySelectorAll('[data-ui-composer]');
+        if (all.length === 1) c = all[0];
+      }
+      return (c && c.uiComposer) || null;
+    };
+    // A quick action sends its words about the highlighted passage at once.
+    function act(a) {
+      var c = p.composer();
+      if (!c || !p.pinned) return;
+      c.insertText(a.prompt || a.label);
+      c.send();
+    }
+    p.pin = function(sel) {
+      p.pinned = {start: sel.start, end: sel.end, text: sel.text};
+      var c = p.composer();
+      if (!c) return;
+      var label = typeof opts.label === 'function' ? opts.label(p.pinned) : coauthorLabel(p.pinned.text);
+      var actions = (opts.actions || []).filter(function(a) { return a && a.label; }).map(function(a) {
+        return {label: String(a.label), onClick: function() { act(a); }};
+      });
+      c.setChip('Highlighted: ' + label, function() { p.pinned = null; }, {actions: actions});
+    };
+    p.unpin = function() {
+      p.pinned = null;
+      var c = p.composer();
+      if (c) c.clearChip();
+    };
+    // The send carries the pinned passage beside whatever the host already
+    // sends (an editor's file, a form's fields).
+    var prior = host.uiSendContext;
+    var hadSendContext = host.hasAttribute ? host.hasAttribute('data-ui-send-context') : true;
+    host.setAttribute('data-ui-send-context', '');
+    function sendContext() {
+      var base = typeof prior === 'function' ? (prior() || {}) : {};
+      if (!p.pinned) return base;
+      var sel = {text: p.pinned.text};
+      if (p.pinned.start != null) { sel.start = p.pinned.start; sel.end = p.pinned.end; }
+      return Object.assign({}, base, {selection: sel});
+    }
+    host.uiSendContext = sendContext;
+    // release lets the pin go and hands the host its send context back.
+    p.release = function() {
+      if (p.pinned) p.unpin();
+      if (host.uiSendContext === sendContext) {
+        host.uiSendContext = prior;
+        if (!hadSendContext && host.removeAttribute) host.removeAttribute('data-ui-send-context');
+      }
+    };
+    return p;
+  }
+
   // uiCoauthor(textarea, opts) makes textarea a co-authored document.
   //   host     the element holding the document and its chat (default: the
   //            nearest ancestor containing a chat panel)
@@ -119,19 +181,10 @@
   window.uiCoauthor = function(textarea, opts) {
     opts = opts || {};
     var host = opts.host || coauthorHost(textarea);
-    var pinned = null;   // {start, end, text}: what the next send is about
     var review = null;   // the open review panel
     var applying = false;
     var undoState = null;
 
-    function composer() {
-      var c = host.querySelector && host.querySelector('[data-ui-composer]');
-      if (!c) {
-        var all = document.querySelectorAll('[data-ui-composer]');
-        if (all.length === 1) c = all[0];
-      }
-      return (c && c.uiComposer) || null;
-    }
     function selection() {
       var s = textarea.selectionStart, e = textarea.selectionEnd;
       if (s == null || e == null || e <= s) return null;
@@ -164,10 +217,11 @@
     function followSelection() {
       if (Date.now() < quietUntil) return;
       var sel = selection();
+      var pinned = pins.pinned;
       if (sel) {
-        if (!pinned || pinned.start !== sel.start || pinned.end !== sel.end) pin(sel);
+        if (!pinned || pinned.start !== sel.start || pinned.end !== sel.end) pins.pin(sel);
       } else if (pinned) {
-        unpin();
+        pins.unpin();
       }
     }
     function soon() { setTimeout(followSelection, 0); }
@@ -179,35 +233,16 @@
     function onSelectionChange() { if (document.activeElement === textarea) soon(); }
     if (document.addEventListener) document.addEventListener('selectionchange', onSelectionChange);
 
-    // --- Pinning ---------------------------------------------------------------
-    function pin(sel) {
-      pinned = {start: sel.start, end: sel.end, text: sel.text};
-      var c = composer();
-      if (!c) return;
-      var label = typeof opts.label === 'function' ? opts.label(pinned) : coauthorLabel(pinned.text);
-      var actions = (opts.actions || []).filter(function(a) { return a && a.label; }).map(function(a) {
-        return {label: String(a.label), onClick: function() { act(a); }};
-      });
-      c.setChip('Highlighted: ' + label, function() { pinned = null; }, {actions: actions});
-    }
-    function unpin() {
-      pinned = null;
-      var c = composer();
-      if (c) c.clearChip();
-    }
-    // A quick action sends its words about the highlighted passage at once.
-    function act(a) {
-      var c = composer();
-      if (!c || !pinned) return;
-      c.insertText(a.prompt || a.label);
-      c.send();
-    }
+    // --- Pinning (coauthorPinning) -------------------------------------------
+    var pins = coauthorPinning(host, opts);
+    function unpin() { pins.unpin(); }
 
     // An edit moves the pinned passage, or removes it: follow it while it is
     // still there, let it go when it is not. Any edit also ends an Undo.
     textarea.addEventListener('input', function() {
       if (applying) return;
       clearUndo();
+      var pinned = pins.pinned;
       if (!pinned) return;
       var doc = textarea.value;
       if (doc.slice(pinned.start, pinned.end) === pinned.text) return;
@@ -216,18 +251,6 @@
       pinned.start = at;
       pinned.end = at + pinned.text.length;
     });
-
-    // The send carries the pinned passage beside whatever the host already
-    // sends (an editor's file, a form's fields).
-    var prior = host.uiSendContext;
-    var hadSendContext = host.hasAttribute ? host.hasAttribute('data-ui-send-context') : true;
-    host.setAttribute('data-ui-send-context', '');
-    function sendContext() {
-      var base = typeof prior === 'function' ? (prior() || {}) : {};
-      if (!pinned) return base;
-      return Object.assign({}, base, {selection: {text: pinned.text, start: pinned.start, end: pinned.end}});
-    }
-    host.uiSendContext = sendContext;
 
     // --- Review ----------------------------------------------------------------
     // The review takes the document's place while it is open: the textarea
@@ -322,7 +345,7 @@
       p = p || {};
       p = {find: p.find == null ? '' : String(p.find), replace: p.replace == null ? '' : String(p.replace),
         summary: p.summary ? String(p.summary) : ''};
-      var at = coauthorLocate(textarea.value, p.find, pinned ? pinned.start : 0);
+      var at = coauthorLocate(textarea.value, p.find, pins.pinned ? pins.pinned.start : 0);
       if (p.find && at < 0) {
         return {ok: false, reason: 'That passage is no longer in the document: it changed since. Ask again.'};
       }
@@ -334,24 +357,80 @@
     host.uiProposeText = propose;
 
     return {
-      pin: pin, unpin: unpin, propose: propose,
-      pinned: function() { return pinned; },
+      pin: pins.pin, unpin: unpin, propose: propose,
+      pinned: function() { return pins.pinned; },
       // destroy takes its page listener away and hands the host
       // back as it was, for a document that goes before the page does (one
       // in a dialog, an editor that closes and opens again).
       destroy: function() {
         closeReview();
         clearUndo();
-        if (pinned) unpin();
+        pins.release();
         if (document.removeEventListener) document.removeEventListener('selectionchange', onSelectionChange);
-        if (host.uiSendContext === sendContext) {
-          host.uiSendContext = prior;
-          if (!hadSendContext && host.removeAttribute) host.removeAttribute('data-ui-send-context');
-        }
         if (host.uiProposeText === propose) {
           host.uiProposeText = undefined;
           if (host.removeAttribute) host.removeAttribute('data-ui-coauthor');
         }
+      },
+    };
+  };
+
+  // uiHighlightContext(root, opts): what the person highlights inside root, a
+  // document they read rather than type in (rendered HTML, a page of text),
+  // is what the chat beside it is about. The same chip and quick actions as a
+  // co-authored document, and the send carries {selection: {text}}. No
+  // proposals: the page's agent changes the document its own way, knowing now
+  // which passage the person means. A selection inside a textarea in root (an
+  // editor opened over the document) counts as well.
+  //   host     the element holding root and the chat (default: as uiCoauthor)
+  //   actions  [{label, prompt}] shown in the chat while something is
+  //            highlighted
+  // Returns {pinned, unpin, destroy}.
+  window.uiHighlightContext = function(root, opts) {
+    opts = opts || {};
+    var host = opts.host || coauthorHost(root);
+    var pins = coauthorPinning(host, opts);
+    function highlighted() {
+      var a = document.activeElement;
+      if (a && a.tagName === 'TEXTAREA' && root.contains && root.contains(a)) {
+        var s = a.selectionStart, e = a.selectionEnd;
+        return (s != null && e > s) ? a.value.slice(s, e) : '';
+      }
+      var sel = window.getSelection && window.getSelection();
+      if (!sel || sel.isCollapsed || !sel.rangeCount) return '';
+      var r = sel.getRangeAt(0);
+      if (!root.contains || !root.contains(r.commonAncestorContainer)) return null; // elsewhere: not ours
+      return String(sel.toString() || '');
+    }
+    function follow() {
+      var text = highlighted();
+      if (text === null) return;
+      if (text.trim()) {
+        if (!pins.pinned || pins.pinned.text !== text) pins.pin({text: text});
+      } else if (pins.pinned) {
+        pins.unpin();
+      }
+    }
+    function soon() { setTimeout(follow, 0); }
+    root.addEventListener('mouseup', soon);
+    root.addEventListener('touchend', soon);
+    root.addEventListener('keyup', soon);
+    function onSelectionChange() {
+      var a = document.activeElement;
+      if (a && root.contains && root.contains(a)) { soon(); return; }
+      var sel = window.getSelection && window.getSelection();
+      if (sel && sel.rangeCount && root.contains && root.contains(sel.getRangeAt(0).commonAncestorContainer)) soon();
+    }
+    if (document.addEventListener) document.addEventListener('selectionchange', onSelectionChange);
+    return {
+      pinned: function() { return pins.pinned; },
+      unpin: function() { pins.unpin(); },
+      destroy: function() {
+        pins.release();
+        root.removeEventListener('mouseup', soon);
+        root.removeEventListener('touchend', soon);
+        root.removeEventListener('keyup', soon);
+        if (document.removeEventListener) document.removeEventListener('selectionchange', onSelectionChange);
       },
     };
   };

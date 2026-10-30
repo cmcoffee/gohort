@@ -1254,6 +1254,10 @@ func (T *Scribe) handleChatSend(w http.ResponseWriter, r *http.Request, udb Data
 	// is actually looking at.
 	guideID := requestGuideID(r, udb)
 
+	// What the author highlighted in the guide, when they did: the turn is
+	// about that passage.
+	r = withHighlight(r)
+
 	// The tools' lifetime is the TURN's, not the page's. See turnContext.
 	turnCtx, endTurn := turnContext(r)
 	defer endTurn()
@@ -1305,6 +1309,23 @@ func (T *Scribe) handleChatSend(w http.ResponseWriter, r *http.Request, udb Data
 	// wrong thing.
 	stampAppContext(r, guideID)
 	orch.PublicHandleSendWithAppToolsPublishing(w, r, agent, followTurn(tools, endTurn), pub)
+}
+
+// withHighlight puts in the turn the passage a send carries ("selection":
+// {text}, what the author highlighted in the guide), leaving the body for the
+// send to read the message from. The Guide Author changes the guide with its
+// section tools, so it is told which passage is meant, not to propose one.
+func withHighlight(r *http.Request) *http.Request {
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		return r
+	}
+	r.Body = io.NopCloser(bytes.NewReader(raw))
+	var send struct {
+		Selection agenthost.Selection `json:"selection"`
+	}
+	_ = json.Unmarshal(raw, &send)
+	return agenthost.WithTurnContext(r, agenthost.HighlightContext(send.Selection))
 }
 
 // guidePictureRule rides a turn that may draw a picture. Image models write

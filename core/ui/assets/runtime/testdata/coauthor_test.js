@@ -17,6 +17,7 @@ function node(tag) {
   n.hasAttribute = function(k) { return k in n.attrs; };
   n.removeAttribute = function(k) { delete n.attrs[k]; };
   n.addEventListener = function(t, f) { (n.on[t] = n.on[t] || []).push(f); };
+  n.removeEventListener = function(t, f) { n.on[t] = (n.on[t] || []).filter(function(g) { return g !== f; }); };
   n.fire = function(t, e) { (n.on[t] || []).forEach(function(f) { f(e || {}); }); };
   n.appendChild = function(c) { c.parentNode = n; n.children.push(c); return c; };
   n.insertBefore = function(c, ref) {
@@ -288,6 +289,61 @@ var ta3 = el('textarea');
 bare.appendChild(ta3);
 window.uiCoauthor(ta3, {host: bare}).destroy();
 check('a host that had no send context of its own is left without one', !('data-ui-send-context' in bare.attrs) && bare.uiSendContext === undefined);
+
+// --- a rendered document: highlight and talk about it -----------------------------
+// A document read rather than typed in (rendered HTML): what is highlighted in
+// it is what the chat is about, the same chip and quick actions, and the send
+// carries the text. The page's agent changes it its own way.
+var rhost = el('div');
+var rdoc = el('div');
+var rnode = {};
+rdoc.contains = function(n) { return n === rdoc || n === rnode || n === rta; };
+var rta = el('textarea');
+rta.value = 'markdown source line';
+rhost.appendChild(rdoc);
+var rchat = el('div', {'data-ui-composer': ''});
+var rcalls = [];
+rchat.uiComposer = {setChip: function(label, onClear, o) { rcalls.push('chip:' + label); rchat.actions = (o && o.actions) || []; },
+  clearChip: function() { rcalls.push('clear'); }, focus: function() {},
+  insertText: function(t) { rcalls.push('insert:' + t); }, send: function() { rcalls.push('send'); }};
+rhost.appendChild(rchat);
+composers = [rchat];
+var current = {text: '', inside: true};
+window.getSelection = function() {
+  return {isCollapsed: !current.text, rangeCount: current.text ? 1 : 0, toString: function() { return current.text; },
+    getRangeAt: function() { return {commonAncestorContainer: current.inside ? rnode : {}}; }};
+};
+document.activeElement = null;
+var hl = window.uiHighlightContext(rdoc, {host: rhost, actions: [{label: 'Simplify', prompt: 'Simplify this.'}]});
+check('a rendered document is its chat\'s subject too', 'data-ui-send-context' in rhost.attrs && typeof rhost.uiSendContext === 'function');
+current.text = 'Restart the service before upgrading.';
+rdoc.fire('mouseup', {});
+check('highlighting rendered text shows it in the chat with the quick actions',
+  rcalls[0] === 'chip:Highlighted: “Restart the service before upgrading.”' && rchat.actions[0].label === 'Simplify');
+check('and the send carries the text alone, there being no offsets to give',
+  JSON.stringify(rhost.uiSendContext().selection) === '{"text":"Restart the service before upgrading."}');
+rchat.actions[0].onClick();
+check('a quick action sends its words about it', rcalls.slice(-2).join('|') === 'insert:Simplify this.|send');
+current.inside = false;
+current.text = 'something in the chat';
+selectionChanged();
+check('a selection elsewhere on the page is not this document\'s', hl.pinned().text === 'Restart the service before upgrading.');
+current.inside = true;
+current.text = '';
+rdoc.fire('mouseup', {});
+check('a click with nothing highlighted lets it go', hl.pinned() === null && rcalls[rcalls.length - 1] === 'clear');
+// An editor opened over the document: a textarea's selection counts.
+document.activeElement = rta;
+rta.tagName = 'TEXTAREA';
+rta.selectionStart = 0; rta.selectionEnd = 8;
+rdoc.fire('keyup', {});
+check('so does one in an editor opened over it', hl.pinned() && hl.pinned().text === 'markdown');
+document.activeElement = null;
+hl.destroy();
+check('destroy lets it go and hands the host back', hl.pinned() === null && !('data-ui-send-context' in rhost.attrs) && rhost.uiSendContext === undefined);
+current.text = 'later';
+rdoc.fire('mouseup', {});
+check('and stops following the document', hl.pinned() === null);
 
 // --- the proposal's card ------------------------------------------------------
 var proposed = [];

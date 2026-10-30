@@ -40,6 +40,20 @@ func SelectionContext(sel Selection) string {
 		"do not propose the whole document."
 }
 
+// HighlightContext is what a turn is told about a passage the person
+// highlighted in a document its agent changes its own way (a rendered page
+// with section tools, say), rather than by proposing: the passage, and to keep
+// a change to it. "" when nothing was highlighted.
+func HighlightContext(sel Selection) string {
+	if strings.TrimSpace(sel.Text) == "" {
+		return ""
+	}
+	f := docs.DocFence(sel.Text)
+	return "The person highlighted this passage of the document, and their message is about it:\n" +
+		f + "\n" + sel.Text + "\n" + f + "\n" +
+		"Answer about that passage. When the message asks for a change, change that passage and leave the rest of the document as it is."
+}
+
 // ProposeEditTool is propose_edit: a passage of the co-authored document and
 // its replacement, put in the conversation as a text_proposal card that opens
 // a review of that passage. Nothing changes until the person applies it, and

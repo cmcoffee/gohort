@@ -63,7 +63,13 @@ type WorkbenchPanel struct {
 	// record with no EditField yet opens as an empty document. Needs EditURL,
 	// which must MERGE what it is sent into the record: it is sent the id and
 	// the edited field only.
-	ProposeEdits     bool              `json:"propose_edits,omitempty"`
+	ProposeEdits bool `json:"propose_edits,omitempty"`
+	// HighlightAsk, for a document the agent changes its own way (not
+	// ProposeEdits): what the person highlights in the viewer, rendered or in
+	// an editor opened over it, is what the chat is about, shown over its box
+	// with the SelectionActions, and every send carries it as "selection":
+	// {text}. The server puts it in the turn (agenthost.HighlightContext).
+	HighlightAsk     bool              `json:"highlight_ask,omitempty"`
 	SelectionActions []SelectionAction `json:"selection_actions,omitempty"`
 	// FilesField names the record field listing the files the record keeps
 	// ([{name, title, type, size, added}], newest last), shown under the
