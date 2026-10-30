@@ -467,6 +467,14 @@ func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
 	// "this is also me" all resolve to the right channel regardless of which id
 	// the message arrived on or which convo the alias was added to.
 	candidates := T.inboundIdentities(owner, svc, activeChatID, req.Handle)
+	// Someone waiting on this person's answer hears it whatever happens next:
+	// whether a channel wakes for it, only records it, or there is none.
+	if !T.isOwnerHandleFor(svc, req.Handle) {
+		messaging.WatchInbound(messaging.InboundEvent{
+			Owner: owner, Service: svc, ChatID: activeChatID, Handle: req.Handle,
+			Sender: firstNonEmpty(sender, req.Handle), Text: req.Text, Addresses: candidates,
+		})
+	}
 	ch, found := ChannelForInbound(RootDB, owner, svc, candidates...)
 	// Self-heal a stale group binding: a group connected before the group-aware
 	// fix bound its channel to one member's handle (the old Handle-clobber), so

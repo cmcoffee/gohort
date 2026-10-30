@@ -2044,7 +2044,7 @@ func (pr *planRun) runLoop() {
 		// a tool retires whatever was outstanding; one that ended on a fresh
 		// promise and did nothing records it for the next turn to answer for.
 		if pr.resp != nil {
-			recordTurnCommitment(t.udb, t.chatSessionID(), pr.resp.Content, len(t.persistedToolCalls()) > 0)
+			recordTurnCommitment(t.udb, t.chatSessionID(), pr.resp.Content, t.calledAnyTool())
 		}
 		if graphExtractAllowed(t.agent, t.inferredDisabled) {
 			maybeExtractGraph(t.udb, factsNamespace(t.agent.ID),

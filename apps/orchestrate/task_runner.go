@@ -528,7 +528,11 @@ func claimHeldImages(sessionID string) []string {
 	}
 	held := s.held
 	s.held = nil
-	if len(s.images)+len(s.videos)+len(s.files) == 0 {
+	// A saved file with nothing attached (a song a background task wrote) is
+	// still something to claim. Dropping the entry here lost it: the wake
+	// named generated_music.mp3, nothing was copied in, and the agent sent
+	// its own ten-day-old file by that name.
+	if len(s.images)+len(s.videos)+len(s.files)+len(s.made) == 0 {
 		delete(stagedMedia, sessionID)
 	}
 	return held
@@ -631,7 +635,7 @@ func toolCallsInclude(calls []PersistedToolCall, name string) bool {
 // treatment at three points: the framing, the no-tool-calls guard, and the
 // staged attachments.
 func isTaskWake(prompt string) bool {
-	return strings.Contains(prompt, taskWakeMarker) || strings.Contains(prompt, approvalWakeMarker)
+	return strings.Contains(prompt, taskWakeMarker) || strings.Contains(prompt, approvalWakeMarker) || strings.Contains(prompt, replyWakeMarker)
 }
 
 // taskWakeGrace is how long a completed task waits for a live turn to pick its

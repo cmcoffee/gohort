@@ -8,6 +8,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/messaging"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -153,5 +154,46 @@ func TestABlockedPhotoReachesTheAgentWithTheNextMessage(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("the allowed message never reached the agent")
+	}
+}
+
+// A contact's message reaches the inbound watchers whether or not a channel
+// wakes for it: here there is no channel at all, so it is only recorded. The
+// owner's own messages are not handed on.
+func TestAContactsMessageIsWatchedWithNoChannelToWake(t *testing.T) {
+	prevRoot := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB = prevRoot })
+	T := &Bridges{AppCore{DB: &DBase{Store: kvlite.MemStore()}}}
+	T.setConfig(bridgesConfig{Enabled: true})
+	RegisterChannelAgentRunner(func(_ context.Context, in ChannelInbound) (ChannelReply, error) {
+		t.Errorf("no channel is bound, yet an agent ran for %q", in.Text)
+		return ChannelReply{}, nil
+	})
+	t.Cleanup(func() { RegisterChannelAgentRunner(nil) })
+	var seen []messaging.InboundEvent
+	var mu sync.Mutex
+	messaging.RegisterInboundWatcher(func(ev messaging.InboundEvent) {
+		if ev.Owner == "watcher-owner" {
+			mu.Lock()
+			seen = append(seen, ev)
+			mu.Unlock()
+		}
+	})
+	key := BridgeKey{Owner: "watcher-owner", Service: "imessage", Enabled: true}
+	const chat = "any;-;+15550177"
+	T.ingestInbound(key, hookRequest{ChatID: chat, Handle: "+15550177", Text: "yes, logging in now", RowID: 201})
+	T.ingestInbound(key, hookRequest{ChatID: chat, Text: "my own note", RowID: 202})
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seen) != 1 || seen[0].Text != "yes, logging in now" || seen[0].Handle != "+15550177" || seen[0].ChatID != chat {
+		t.Fatalf("watched %+v", seen)
+	}
+	found := false
+	for _, a := range seen[0].Addresses {
+		found = found || a == "+15550177"
+	}
+	if !found {
+		t.Errorf("the sender's handle is not among the addresses: %v", seen[0].Addresses)
 	}
 }

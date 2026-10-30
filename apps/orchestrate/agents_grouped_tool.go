@@ -1975,6 +1975,7 @@ func (t *chatTurn) agentsDispatchPolicy(allowRun bool) DetachPolicy {
 				return "", herr
 			}
 			runCtx = withHandedMedia(runCtx, handed)
+			request := msg
 			msg += handedNote
 			res, rerr := t.app.RunAgentSyncContinuingRich(runCtx, AgentSyncRun{
 				AgentOwner: t.user, RuntimeUser: t.user, AgentKey: target.ID,
@@ -1991,6 +1992,12 @@ func (t *chatTurn) agentsDispatchPolicy(allowRun bool) DetachPolicy {
 				var gerr error
 				if out, gerr = t.guardAgentOutput(d.Context(), target.Name, out); gerr != nil {
 					return "", gerr
+				}
+				// The request in the target's cortex, as the inline path files
+				// it. A channel turn hands every delegation off, so without this
+				// the agent it asked had no record of any of them.
+				if !familyRequest(t.udb, t.agent.ID, target.ID) {
+					appendCortexObs(t.udb, target.ID, t.agent.Name, cortexKindRequest, request)
 				}
 			}
 			// What it attached goes home with the result: the detached

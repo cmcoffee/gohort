@@ -16,7 +16,7 @@ func messageContactToolDef(sess *ToolSession, owner, agentID, controllerAgentID 
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "message_contact",
-			Description: "Send an iMessage to a CONTACT or a GROUP (anyone other than the owner). Set `to` to the recipient as shown by list_chats: a contact/group NAME (e.g. \"WiWee\"), a handle (phone/email), or a chat_id. Any of them resolve to the right conversation, group chats included; you don't need to track the opaque chat_id: the name works. To send an image/file, pass its workspace path in `attachments`. Your exact words are sent verbatim. Contacting real people is consequential, so it queues for the user's approval (unless they pre-authorized that recipient via 'Always allow', or you're replying to someone who just messaged you), then sends once approved. When you need their answer, set read_reply=true: the same approval lets you read their reply.",
+			Description: "Send an iMessage to a CONTACT or a GROUP (anyone other than the owner). Set `to` to the recipient as shown by list_chats: a contact/group NAME (e.g. \"WiWee\"), a handle (phone/email), or a chat_id. Any of them resolve to the right conversation, group chats included; you don't need to track the opaque chat_id: the name works. To send an image/file, pass its workspace path in `attachments`. Your exact words are sent verbatim. Contacting real people is consequential, so it queues for the user's approval (unless they pre-authorized that recipient via 'Always allow', or you're replying to someone who just messaged you), then sends once approved. Their next message comes back to this conversation by itself (for a day), so you can pass their answer on. For an ongoing exchange with them, set read_reply=true: the same approval binds their thread to you.",
 			Parameters: map[string]ToolParam{
 				"to":          {Type: "string", Description: "Recipient as shown by list_chats: a contact/group name, a handle (phone/email), or a chat_id. Required: never omit it."},
 				"text":        {Type: "string", Description: "The message to send. Do NOT type delivery markers like [ATTACH: ...] into this text; that is a different surface's convention and is stripped before sending."},
@@ -76,7 +76,8 @@ func messageContactToolDef(sess *ToolSession, owner, agentID, controllerAgentID 
 				// If the target is a bound channel, make its agent see the post
 				// (channel session + cortex) so it can field follow-ups.
 				recordChannelPost(sess.DB, owner, rec.ChatID, rec.Handle, text)
-				return bindAfterSend(fmt.Sprintf("Sent to %s (you've pre-authorized this recipient).", label)), nil
+				armReplyRelay(owner, rec.ChatID, rec.Handle, text, askingOrigin(sess))
+				return bindAfterSend(fmt.Sprintf("Sent to %s (you've pre-authorized this recipient). Their next message comes back to you here.", label)), nil
 			}
 			// Authorized sender for this channel: a parent granted THIS agent the
 			// right to deliver to its channel, OR this agent is a sub-agent of one
@@ -87,7 +88,8 @@ func messageContactToolDef(sess *ToolSession, owner, agentID, controllerAgentID 
 					return "", err
 				}
 				recordChannelPost(sess.DB, owner, rec.ChatID, rec.Handle, text)
-				return bindAfterSend(fmt.Sprintf("Sent to %s (authorized sender for this channel).", label)), nil
+				armReplyRelay(owner, rec.ChatID, rec.Handle, text, askingOrigin(sess))
+				return bindAfterSend(fmt.Sprintf("Sent to %s (authorized sender for this channel). Their next message comes back to you here.", label)), nil
 			}
 			// Don't queue a DUPLICATE. message_contact returns "queued for
 			// approval" (not "sent"), which a model reads as "it didn't go
@@ -106,6 +108,8 @@ func messageContactToolDef(sess *ToolSession, owner, agentID, controllerAgentID 
 			if readReply {
 				pending.BindReply, pending.FromAgent, pending.Brief = true, controllerAgentID, label
 			}
+			// Where their answer comes back to once it is approved and sent.
+			stampRequestOrigin(&pending, sess)
 			a := SaveAuthorization(RootDB, pending)
 			if sess != nil && sess.PendingApprovalPrompt != nil {
 				sess.PendingApprovalPrompt(a)
@@ -113,7 +117,7 @@ func messageContactToolDef(sess *ToolSession, owner, agentID, controllerAgentID 
 			if readReply {
 				return fmt.Sprintf("Queued a message to %s for the user's approval (id %s): once approved it sends, and their 1:1 thread is bound to you, so their reply wakes you (or poll it with await_result). One approval covers both: do not call request_thread_binding.", label, a.ID), nil
 			}
-			return fmt.Sprintf("Queued a message to %s for the user's approval: it's in the Authorizations pane (id %s) and sends once approved.", label, a.ID), nil
+			return fmt.Sprintf("Queued a message to %s for the user's approval: it's in the Authorizations pane (id %s) and sends once approved. Their next message after that comes back to you here.", label, a.ID), nil
 		},
 	}
 }

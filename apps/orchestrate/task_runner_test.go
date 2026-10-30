@@ -558,6 +558,10 @@ func TestABackgroundTasksSavedFileIsTheWakeTurnsOwn(t *testing.T) {
 		t.Fatal("a saved song is staged for the wake")
 	}
 	sess := &ToolSession{Username: "u", WorkspaceDir: mine}
+	// In the order the fire claims them (fireRun.buildSession): held pictures
+	// first. Skipping that step here is how a claim that dropped the saved
+	// song went unseen.
+	claimHeldImages(session)
 	claimTaskAttachments(session, sess)
 	if got := sess.StagedFiles(); !slices.Contains(got, "generated_music-2.mp3") || slices.Contains(got, "generated_music.mp3") {
 		t.Fatalf("the new song is this turn's own under a free name, and the old one is not: %q", got)

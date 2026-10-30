@@ -131,7 +131,7 @@ func hideFrameworkNotes(msgs []ChatMessage) {
 			continue
 		}
 		c := strings.TrimSpace(msgs[i].Content)
-		if strings.HasPrefix(c, taskWakeMarker) || strings.HasPrefix(c, strings.TrimSpace(frameworkNoteTag)) {
+		if strings.HasPrefix(c, taskWakeMarker) || strings.HasPrefix(c, replyWakeMarker) || strings.HasPrefix(c, strings.TrimSpace(frameworkNoteTag)) {
 			msgs[i].Hidden = true
 		}
 	}

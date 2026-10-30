@@ -812,6 +812,9 @@ func (T *OrchestrateApp) registerHandlers() {
 	// A tool call the framework judges too slow to hold a turn open runs as a
 	// detached task instead. core decides; this supplies the run + delivery.
 	T.installTaskRunner()
+	// A person's answer to a message sent from a conversation goes back to it
+	// (reply_relay.go), whatever their own thread does with it.
+	messaging.RegisterInboundWatcher(T.relayReply)
 	// Operator event webhook — PUBLIC (the unguessable per-monitor token is the
 	// credential), so it bypasses cookie auth. External watchers POST here to
 	// wake the Operator. Registered ungated + as a public path.

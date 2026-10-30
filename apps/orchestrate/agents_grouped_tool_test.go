@@ -162,3 +162,25 @@ func TestAPipelineIsReachEnough(t *testing.T) {
 		t.Error("run must still describe the pipeline target")
 	}
 }
+
+// A handed-off run (what every delegation from a channel turn becomes) files
+// the request in the target's cortex, as an inline run does. Live, WiWee
+// delegated three songs from its group chat and the agent that made them had
+// no record of being asked for any.
+func TestAHandedOffRunIsRecordedInTheTargetsCortex(t *testing.T) {
+	SetWorkspacesDir(t.TempDir())
+	t.Cleanup(func() { SetWorkspacesDir("") })
+	df := newDispatchFixture(t, FakeTurn{Content: "Done.", Repeat: true})
+	scout, err := saveAgent(df.udb, AgentRecord{Name: "Scout", Owner: "u", OrchestratorPrompt: "You make songs."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	turn := &chatTurn{app: df.app, user: "u", udb: df.udb, agent: df.agent, ctx: t.Context()}
+	d := &ToolSession{Username: "u", ChatSessionID: "chan:room-1", DB: df.udb, Ctx: t.Context()}
+	if _, err := turn.agentsDispatchPolicy(true).Detached(map[string]any{"action": "run", "agent": "Scout", "message": "make the song", "await": false}, d); err != nil {
+		t.Fatal(err)
+	}
+	if got := cortexLines(t, df.udb, scout.ID); !strings.Contains(got, df.agent.Name+": make the song") {
+		t.Errorf("the request should be in Scout's cortex, from the agent that asked: %q", got)
+	}
+}

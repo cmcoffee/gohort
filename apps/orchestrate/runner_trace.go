@@ -445,6 +445,17 @@ func (t *chatTurn) persistedToolCalls() []PersistedToolCall {
 	return t.persistedToolCallsFromUnlocked(t.lastBubbleToolIdx)
 }
 
+// calledAnyTool reports whether any tool ran this turn. persistedToolCalls
+// does not say: it leaves out the calls a mid-turn bubble already carried,
+// so a turn whose reply streamed as that bubble read as having called
+// nothing, and its promise was recorded as unkept beside the send that kept
+// it.
+func (t *chatTurn) calledAnyTool() bool {
+	t.toolMu.Lock()
+	defer t.toolMu.Unlock()
+	return len(t.toolCalls) > 0
+}
+
 // nestedToolCalls are the calls this turn recorded beneath another call (a
 // dispatched agent's, under the agents(run) that started it), for a path that
 // takes the turn's own calls from the model transcript, where these never

@@ -171,6 +171,9 @@ func (T *OrchestrateApp) resolveApproval(c *jsonapi.Call, always bool) (any, err
 		}
 		if _, err := operatorDeliverMedia(a.Owner, a.Agent, a.ChatID, a.Handle, a.Text, a.Images, a.Videos); err != nil {
 			Log("[operator.approval] send_message to %s failed: %v", recip, err)
+		} else if a.FromSession != "" {
+			// Their answer goes back to the conversation that asked.
+			armReplyRelay(a.Owner, a.ChatID, a.Handle, a.Text, approvedOrigin(a))
 		}
 		// Approved post: if the target is a bound channel, make its agent see it
 		// (channel session + cortex) so it can field follow-ups.
