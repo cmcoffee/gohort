@@ -29,7 +29,7 @@ const bulletinTable = "orchestrate_bulletins"
 
 // maxBulletinChars bounds a post. It rides on every turn of every follower,
 // so it is a blurb, not a document; a longer one belongs in a collection.
-const maxBulletinChars = 600
+const maxBulletinChars = 1200
 
 // bulletinBoard is one board and its latest post, keyed by Name in the
 // owner's store. Who FOLLOWS it lives on the agents (AgentRecord.Bulletins)

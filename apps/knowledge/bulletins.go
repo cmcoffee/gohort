@@ -10,11 +10,25 @@ const bulletinsAPI = "/orchestrate/api/bulletins"
 
 func bulletinsSection() ui.Section {
 	board := bulletinsAPI + "/{name}"
+	// The post is what people come here to change, so it is the row's Edit,
+	// in a dialog wide and tall enough to read a whole post at once.
+	post := ui.ModalAction("Edit", ui.FormPanel{
+		Source:      board,
+		PostURL:     board + "/post",
+		Method:      "POST",
+		SubmitLabel: "Post",
+		Invalidate:  []string{bulletinsAPI},
+		Fields: []ui.FormField{{
+			Field: "text", Label: "Post", Type: "textarea", Rows: 12, Required: true,
+			Help: "Replaces the board's last post. At most 1,200 characters: it rides on every turn of every follower.",
+		}},
+	})
+	post.Width = "720px"
 	return ui.Section{
 		Title:    "Bulletins",
 		Subtitle: "Short notices every following agent sees on each turn.",
 		Detail: "A collection is found by search when a question matches. A bulletin is pushed: a board holds one short latest post, and every agent that follows the board sees it on every turn, so a daily briefing or a message of the day is known without anyone fetching it. " +
-			"Post yourself with Write post, empty it with Clear, let an agent post with Posters (it gets a bulletin_board tool that posts to and clears this board), and choose who reads it with Followers.",
+			"Post yourself with Edit, empty it with Clear, change what it carries and how long a post stays current with Settings, let an agent post with Posters (it gets a bulletin_board tool that posts to and clears this board), and choose who reads it with Followers.",
 		Body: ui.Stack{Children: []ui.Component{
 			ui.ModalButton{
 				Label:    "New board",
@@ -46,22 +60,12 @@ func bulletinsSection() ui.Section {
 					{Field: "followers", Label: "Followed by", Mute: true, Flex: 2},
 				},
 				RowActions: []ui.RowAction{
-					ui.ModalAction("Write post", ui.FormPanel{
-						Source:      board,
-						PostURL:     board + "/post",
-						Method:      "POST",
-						SubmitLabel: "Post",
-						Invalidate:  []string{bulletinsAPI},
-						Fields: []ui.FormField{{
-							Field: "text", Label: "Post", Type: "textarea", Rows: 5, Required: true,
-							Help: "Replaces the board's last post. At most 600 characters: it rides on every turn of every follower.",
-						}},
-					}),
+					post,
 					{Type: "button", Label: "Clear", Method: "POST", PostTo: board + "/clear", Compact: true, OnlyIf: "_has_post",
 						Confirm: "Clear this board's post? Followers see nothing from it until the next post."},
 					{Type: "button", Label: "Followers", Method: "client", PostTo: "bulletin_followers", Compact: true},
 					{Type: "button", Label: "Posters", Method: "client", PostTo: "bulletin_posters", Compact: true},
-					ui.ModalAction("Edit", ui.FormPanel{
+					ui.ModalAction("Settings", ui.FormPanel{
 						Source:      board,
 						PostURL:     board,
 						Method:      "POST",
