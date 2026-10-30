@@ -207,7 +207,7 @@ func (rp Reply) MarshalJSON() ([]byte, error) {
 const (
 	maxBody    = 1 << 20
 	maxDraft   = 32 << 10
-	maxValue   = 4 << 10
+	maxValue   = 32 << 10
 	maxHistory = 30
 	maxPage    = 4 << 10
 )
@@ -380,6 +380,22 @@ func (t turn) run(ctx context.Context, llm LLM, kit []AgentToolDef) (Reply, erro
 	}
 	if len(t.req.Form) > 0 {
 		reply, fields, note := SplitFieldsReply(raw, t.fieldNames())
+		// A field shown cut takes no new value: one written from the part
+		// shown would replace the whole field and lose the rest.
+		var cut []string
+		for k := range fields {
+			if t.shownCut(k) {
+				cut = append(cut, k)
+				delete(fields, k)
+			}
+		}
+		if len(cut) > 0 {
+			sort.Strings(cut)
+			note = strings.TrimSpace(note + " (Left out " + strings.Join(cut, ", ") + ": too long to show whole here, so a new value would lose the part not shown. Change it in the form itself.)")
+		}
+		if len(fields) == 0 {
+			fields = nil
+		}
 		if note != "" {
 			reply = strings.TrimSpace(reply + "\n\n" + note)
 		}
@@ -581,11 +597,22 @@ func writeField(b *strings.Builder, f Field, v any) {
 		if raw, err := json.Marshal(v); err == nil && string(raw) != `""` && string(raw) != "null" && string(raw) != "[]" {
 			now = string(raw)
 			if len(now) > maxValue {
-				now = now[:maxValue] + " [... cut]"
+				now = now[:maxValue] + " [... cut: too long to show whole, so do not propose a new value for this field]"
 			}
 		}
 	}
 	fmt.Fprintf(b, "\n  Now: %s\n", now)
+}
+
+// shownCut reports whether a field's value was too long to show the model
+// whole (writeField).
+func (t turn) shownCut(field string) bool {
+	v := t.req.Values[field]
+	if v == nil {
+		return false
+	}
+	raw, err := json.Marshal(v)
+	return err == nil && len(raw) > maxValue
 }
 
 // fieldNames are the fields a proposal may fill: the form's, secrets aside.

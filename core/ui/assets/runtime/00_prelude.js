@@ -436,15 +436,23 @@
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     var fenceRe  = /```([\s\S]*?)```/g;
     var inlineRe = /`([^`\n]+)`/g;
+    // Code is set aside before any other rule runs and put back at the end,
+    // so nothing in it is read as markdown: a shell script's "# comment" is
+    // not a heading (which dropped its #), "*.go" is not italic, "- x" is
+    // not a list item, and a blank line does not split the block into
+    // paragraphs. A held block stands as a paragraph of its own.
+    var held = [];
+    function hold(html) { held.push(html); return '\uE000' + (held.length - 1) + '\uE001'; }
+    s = s.replace(/[\uE000\uE001]/g, '');
     // The rest of the opening fence's line is its language ("```text",
     // "```json"), not code: kept, it drew the word as the block's first line.
     // Only a single word is taken for one, so a fence written on one line
     // ("```npm install```") keeps its code.
     s = s.replace(fenceRe, function(_, body){
       body = body.replace(/^[A-Za-z0-9_+.#-]*[ \t]*\n/, '');
-      return '<pre><code>' + body + '</code></pre>';
+      return '\n\n' + hold('<pre><code>' + body + '</code></pre>') + '\n\n';
     });
-    s = s.replace(inlineRe, '<code>$1</code>');
+    s = s.replace(inlineRe, function(_, code){ return hold('<code>' + code + '</code>'); });
     s = s.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
     s = s.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
     // Side-coded headings — h3 lines starting with FOR or AGAINST
@@ -501,7 +509,7 @@
     s = s.split(/\n\n+/).map(function(block) {
       var t = block.trim();
       if (!t) return '';
-      if (/^<(h[1-3]|pre|ul|ol|p|blockquote)/i.test(t)) return t;
+      if (/^<(h[1-3]|pre|ul|ol|p|blockquote)/i.test(t) || /^\uE000\d+\uE001$/.test(t)) return t;
       // Side-coded paragraphs — content starting with "For:" or
       // "Against:" (bolded by an earlier pass) gets a side class
       // so the whole paragraph renders green / red. Matches
@@ -515,6 +523,7 @@
       }
       return '<p>' + t.replace(/\n/g, '<br>') + '</p>';
     }).join('');
+    s = s.replace(/\uE000(\d+)\uE001/g, function(_, i){ return held[+i]; });
     // App-registered post-processors get a final crack at the
     // rendered HTML. Used for domain-specific markdown extensions
     // (a heading pattern unique to one app, etc.) that shouldn't

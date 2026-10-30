@@ -42,20 +42,23 @@ func SplitFieldsReply(raw string, allowed map[string]bool) (reply string, fields
 		}
 	}
 	reply = strings.TrimSpace(s[:open])
+	// The block is read as one JSON value, not up to the next ```: a field's
+	// text can hold a code fence of its own (a skill's instructions with an
+	// example in them), and ending the block there cut the proposal in two,
+	// so it could not be read and its second half was shown as the reply.
 	rest := s[open+len(fence):]
-	tail := ""
-	if end := strings.Index(rest, "```"); end >= 0 {
-		rest, tail = rest[:end], strings.TrimSpace(rest[end+3:])
-	}
-	if tail != "" {
-		reply = strings.TrimSpace(reply + "\n\n" + tail)
-	}
+	dec := json.NewDecoder(strings.NewReader(rest))
 	var got map[string]any
-	if err := json.Unmarshal([]byte(strings.TrimSpace(rest)), &got); err != nil {
+	if err := dec.Decode(&got); err != nil {
 		if fence != FieldsFence {
 			return s, nil, "" // an example, not a proposal
 		}
 		return reply, nil, "(It proposed values, but they could not be read, so the form is unchanged.)"
+	}
+	tail := strings.TrimSpace(rest[dec.InputOffset():])
+	tail = strings.TrimSpace(strings.TrimPrefix(tail, "```"))
+	if tail != "" {
+		reply = strings.TrimSpace(reply + "\n\n" + tail)
 	}
 	var unknown []string
 	fields = map[string]any{}

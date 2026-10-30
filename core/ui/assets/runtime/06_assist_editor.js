@@ -57,7 +57,9 @@
 
     var log = el('div', {class: 'ui-assist-log'});
     function addMsg(role, text, isHTML) {
-      var m = el('div', {class: 'ui-assist-msg ' + role});
+      // Rendered markdown takes the prose class, so a code block in a reply
+      // scrolls inside its box instead of running past the window.
+      var m = el('div', {class: 'ui-assist-msg ' + role + (isHTML ? ' ui-md' : '')});
       if (isHTML) m.innerHTML = text;
       else m.textContent = text;
       log.appendChild(m);

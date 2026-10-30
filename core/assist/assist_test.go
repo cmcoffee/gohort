@@ -201,6 +201,38 @@ func TestRefusals(t *testing.T) {
 	}
 }
 
+// A field too long to show the model whole takes no new value from it: one
+// written from the part it saw would replace the whole field and lose the rest.
+// The rest of the proposal still fills the form.
+func TestAFieldTooLongToShowTakesNoNewValue(t *testing.T) {
+	long := strings.Repeat("Keep every line of this. ", maxValue/20)
+	fake := &FakeLLM{Turns: []FakeTurn{{Content: "Added a section.\n\n```fields\n{\"instructions\": \"the start [...] and a new section\", \"name\": \"Jira\"}\n```"}}}
+	h := Handler(Spec{Route: "test.assist.long", Allow: allowAll, LLM: fake})
+	form := []Field{{Field: "name", Label: "Name"}, {Field: "instructions", Label: "Instructions", Type: "textarea"}}
+	_, reply, code := post(t, h, Request{Message: "add a section", Form: form, Values: map[string]any{"name": "old", "instructions": long}})
+	if code != http.StatusOK {
+		t.Fatalf("status %d", code)
+	}
+	if reply.Fields["name"] != "Jira" || reply.Fields["instructions"] != nil {
+		t.Errorf("fields %+v: want the name and not the instructions", reply.Fields)
+	}
+	if !strings.Contains(reply.Reply, "Left out instructions") {
+		t.Errorf("the reply should say the instructions were left out: %q", reply.Reply)
+	}
+	if sys := fake.Config(0).SystemPrompt; !strings.Contains(sys, "do not propose a new value for this field") {
+		t.Error("the model should be told the field was cut")
+	}
+
+	// Under the limit, a long field is shown whole and takes a new value.
+	whole := strings.Repeat("Keep every line of this. ", 300)
+	fake = &FakeLLM{Turns: []FakeTurn{{Content: "Added.\n\n```fields\n{\"instructions\": \"new\"}\n```"}}}
+	h = Handler(Spec{Route: "test.assist.long", Allow: allowAll, LLM: fake})
+	_, reply, _ = post(t, h, Request{Message: "add", Form: form, Values: map[string]any{"instructions": whole}})
+	if reply.Fields["instructions"] != "new" || !strings.Contains(fake.Config(0).SystemPrompt, whole) {
+		t.Errorf("a 7.5KB field should be shown whole and filled: %+v", reply.Fields)
+	}
+}
+
 func TestSplitFieldsReply(t *testing.T) {
 	allowed := map[string]bool{"name": true, "steps": true}
 	for _, c := range []struct {
@@ -215,6 +247,10 @@ func TestSplitFieldsReply(t *testing.T) {
 		{"a field the form lacks", "Done.\n```fields\n{\"name\": \"a\", \"x\": 1}\n```", "Done.", 1, true},
 		{"untagged but plainly the form", "Done.\n```json\n{\"steps\": []}\n```", "Done.", 1, false},
 		{"an untagged example", "Like this:\n```json\n{\"other\": 1}\n```", "Like this:\n```json\n{\"other\": 1}\n```", 0, false},
+		// A skill's instructions hold code fences of their own: the block ends
+		// where its JSON does, not at the first fence inside a value.
+		{"a value holding a code fence", "Done.\n```fields\n{\"name\": \"Use:\\n```\\n| a | b |\\n```\\nthen stop.\"}\n```\nSave it after.", "Done.\n\nSave it after.", 1, false},
+		{"cut off before its end", "Done.\n```fields\n{\"name\": \"Use:\\n```\\n| a", "Done.", 0, true},
 	} {
 		reply, fields, note := SplitFieldsReply(c.raw, allowed)
 		if reply != c.reply || len(fields) != c.fields || (note != "") != c.note {
