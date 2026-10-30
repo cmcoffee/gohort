@@ -51,3 +51,26 @@ const (
 	ClaimUnsupported = "unsupported"
 	ClaimUnchecked   = "unchecked"
 )
+
+const (
+	// AuditFailRatio is the share of a ledger that has to come back
+	// unsupported before the finding is about the report as a whole, not
+	// about particular sentences. Research stops patching prose past this
+	// line and tells the reader once; a consumer of the report should stop
+	// presenting it as settled.
+	AuditFailRatio = 0.5
+
+	// AuditFailMinClaims keeps the ratio from firing on a ledger too small
+	// to draw a conclusion from. Two of three claims failing is three
+	// sentences to qualify, not evidence that the whole report is
+	// unsourced. Real ledgers land at 15-40 claims; a short one usually
+	// means a thin report, and thin reports still deserve the per-claim
+	// treatment.
+	AuditFailMinClaims = 6
+)
+
+// AuditFailed reports whether unsupported claims out of total is a
+// failure of the whole report rather than of a few sentences.
+func AuditFailed(unsupported, total int) bool {
+	return total >= AuditFailMinClaims && float64(unsupported) > float64(total)*AuditFailRatio
+}
