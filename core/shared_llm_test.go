@@ -482,7 +482,7 @@ func TestTheYieldSettingDecidesWhetherBackgroundWaits(t *testing.T) {
 	q, lq, mw, lmw, tick := laneQuiet, laneLowestQuiet, laneMaxWait, laneLowestMaxWait, laneTick
 	laneQuiet, laneLowestQuiet, laneMaxWait, laneLowestMaxWait, laneTick = 20*time.Millisecond, 20*time.Millisecond, 60*time.Millisecond, 60*time.Millisecond, 5*time.Millisecond
 	defer func() { laneQuiet, laneLowestQuiet, laneMaxWait, laneLowestMaxWait, laneTick = q, lq, mw, lmw, tick }()
-	defer SetBackgroundYield(BackgroundYieldAuto, "llama.cpp")
+	defer SetBackgroundYield(BackgroundYieldAuto, "llama.cpp", "")
 	modelUseMu.Lock()
 	modelUses = map[LLMTier]*modelUse{}
 	modelUseMu.Unlock()
@@ -491,7 +491,7 @@ func TestTheYieldSettingDecidesWhetherBackgroundWaits(t *testing.T) {
 	done, _ := reloadableLLM{}.beginModelUse(person)
 	defer done()
 	waits := func(mode, provider string, lane RunLane) bool {
-		SetBackgroundYield(mode, provider)
+		SetBackgroundYield(mode, provider, "")
 		held, _ := holdForLane(WithRunLane(context.Background(), lane), WORKER)
 		return held > 0
 	}
@@ -509,6 +509,31 @@ func TestTheYieldSettingDecidesWhetherBackgroundWaits(t *testing.T) {
 	} {
 		if got := waits(c.mode, c.provider, c.lane); got != c.want {
 			t.Errorf("mode %q on %s, %s lane: waited=%v, want %v", c.mode, c.provider, c.lane, got, c.want)
+		}
+	}
+
+	// Auto decides per model: a worker on the local GPU waits for people, a
+	// lead on a hosted API beside it does not, and a lead with no model of its
+	// own is the worker's.
+	modelUseMu.Lock()
+	modelUses[LEAD] = &modelUse{inter: 1}
+	modelUseMu.Unlock()
+	bg := WithRunLane(context.Background(), LaneBackground)
+	for _, c := range []struct {
+		worker, lead string
+		tier         LLMTier
+		want         bool
+	}{
+		{"vllm", "anthropic", WORKER, true},
+		{"vllm", "anthropic", LEAD, false},
+		{"openai", "llama.cpp", LEAD, true},
+		{"openai", "llama.cpp", WORKER, false},
+		{"vllm", "", LEAD, true},
+		{"anthropic", "", LEAD, false},
+	} {
+		SetBackgroundYield(BackgroundYieldAuto, c.worker, c.lead)
+		if held, _ := holdForLane(bg, c.tier); (held > 0) != c.want {
+			t.Errorf("worker %s, lead %q: a background %s call waited=%v, want %v", c.worker, c.lead, c.tier, held > 0, c.want)
 		}
 	}
 }

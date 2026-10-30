@@ -208,12 +208,12 @@ func describeLLMConfig(c LLMProviderConfig) string {
 }
 
 // applyBackgroundYield hands core the deployment's "background work yields to
-// people" setting and the worker's provider, which its Auto reads. At boot and
-// on every reload, since a provider swap can change what Auto means.
+// people" setting and each model's provider, which its Auto reads per model. At
+// boot and on every reload, since a provider swap can change what Auto means.
 func applyBackgroundYield() {
 	var mode string
 	global.db.Get(LLMTable, "background_yield", &mode)
-	SetBackgroundYield(mode, dbcfg.llm().Provider)
+	SetBackgroundYield(mode, dbcfg.llm().Provider, dbcfg.leadLLM().Provider)
 }
 
 func reloadSharedLLMs() error {

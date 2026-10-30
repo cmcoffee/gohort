@@ -762,14 +762,20 @@ const (
 )
 
 var (
-	yieldMu    sync.Mutex
-	yieldMode  = BackgroundYieldAuto
-	yieldLocal = true // until a config says otherwise, the old behavior
+	yieldMu   sync.Mutex
+	yieldMode = BackgroundYieldAuto
+	// yieldLocal says, per model, whether it runs on hardware the deployment
+	// shares, which is what Auto decides by. Per model because a deployment
+	// can mix them: a worker on the local GPU and a lead on a hosted API.
+	// Decided once from the worker, a background call to that hosted lead
+	// waited for people using it, up to laneMaxWait, guarding nothing.
+	yieldLocal = map[LLMTier]bool{WORKER: true, LEAD: true} // until a config says otherwise, the old behavior
 )
 
-// SetBackgroundYield records the deployment's setting and the worker's
-// provider, which Auto reads. Called at boot and on every LLM reload.
-func SetBackgroundYield(mode, workerProvider string) {
+// SetBackgroundYield records the deployment's setting and each model's
+// provider, which Auto reads. An empty lead provider is a lead that falls back
+// to the worker. Called at boot and on every LLM reload.
+func SetBackgroundYield(mode, workerProvider, leadProvider string) {
 	yieldMu.Lock()
 	defer yieldMu.Unlock()
 	switch mode {
@@ -778,7 +784,10 @@ func SetBackgroundYield(mode, workerProvider string) {
 	default:
 		yieldMode = BackgroundYieldAuto
 	}
-	yieldLocal = ProviderIsLocal(workerProvider)
+	if strings.TrimSpace(leadProvider) == "" {
+		leadProvider = workerProvider
+	}
+	yieldLocal = map[LLMTier]bool{WORKER: ProviderIsLocal(workerProvider), LEAD: ProviderIsLocal(leadProvider)}
 }
 
 // ProviderIsLocal says whether a provider runs on hardware the deployment
@@ -795,7 +804,9 @@ func ProviderIsLocal(provider string) bool {
 	return false
 }
 
-func backgroundYields() bool {
+// backgroundYields says whether a background call to tier waits for people.
+// A tier with no model of its own recorded is the worker's.
+func backgroundYields(tier LLMTier) bool {
 	yieldMu.Lock()
 	defer yieldMu.Unlock()
 	switch yieldMode {
@@ -804,7 +815,10 @@ func backgroundYields() bool {
 	case BackgroundYieldNever:
 		return false
 	}
-	return yieldLocal
+	if local, ok := yieldLocal[tier]; ok {
+		return local
+	}
+	return yieldLocal[WORKER]
 }
 
 // interactiveInUse says whether a person's call to tier is out now, or ended
@@ -837,7 +851,7 @@ func holdForLaneWith(ctx context.Context, tier LLMTier, progress func(time.Durat
 		busy = func() bool { return ModelInUse(tier, laneLowestQuiet) }
 		cap = laneLowestMaxWait
 	default:
-		if !backgroundYields() {
+		if !backgroundYields(tier) {
 			return 0, nil
 		}
 		busy = func() bool { return interactiveInUse(tier, laneQuiet) }
