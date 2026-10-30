@@ -314,6 +314,16 @@ func TestAnEditableWorkbenchIsCoauthored(t *testing.T) {
 		t.Errorf("editable and selection_actions are workbench keys: %v", notes)
 	}
 
+	// Quick actions with editable left out (Builder's rebuilt song app) mean
+	// a document the person writes; editable: false still says no.
+	acts := []any{map[string]any{"label": "Tighten"}}
+	if wb, _ := buildWorkbench(spec, map[string]any{"kind": "workbench", "body_field": "lyrics", "selection_actions": acts}); !wb.ProposeEdits || wb.EditURL == "" {
+		t.Error("selection_actions with editable left out should be an editable workbench")
+	}
+	if wb, _ := buildWorkbench(spec, map[string]any{"kind": "workbench", "body_field": "lyrics", "selection_actions": acts, "editable": false}); wb.ProposeEdits {
+		t.Error("editable: false should win over selection_actions")
+	}
+
 	plain, err := buildWorkbench(spec, map[string]any{"kind": "workbench", "body_field": "lyrics"})
 	if err != nil {
 		t.Fatal(err)

@@ -135,15 +135,6 @@ editable finds the chat beside it through the host element they share.
    songs; every send carries the open song, so the agent works on the right one.
 
    Not covered: a record's files do not travel with a records export or import.
-
-   Builder's first song app, built against a live model, did not use any of it: it wrote one html
-   page with a contenteditable editor and highlight-to-revise of its own, and its paste handler
-   called methods that do not exist. Its instructions now say a document written with an agent is
-   an editable workbench, and `app_own_editor.go` holds a build to that: a page that makes an
-   element editable, or reads a textarea's selection, in an app with an agent is refused at create
-   and told NOT DONE on update (saved, so a fix to it still lands), and its verify fails, unless
-   its notes say "own editor: <why>". A hand-written page cannot reach the co-author primitives:
-   its frame has window.app, not the runtime.
 5. **Fold the copies in.** CodeWriter's `editor_proposal` becomes a `text_proposal`; the agent
    page's change list, casefile's proposal card and the dead ArticleEditor chat move onto the
    review or are deleted.

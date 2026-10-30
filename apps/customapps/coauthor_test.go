@@ -22,13 +22,16 @@ func TestWorkbenchEditable(t *testing.T) {
 		spec AppSpec
 		want bool
 	}{
-		"editable":            {sections(`[{"kind":"workbench","editable":true}]`), true},
-		"said as text":        {sections(`[{"kind":"Workbench","editable":"true"}]`), true},
-		"not editable":        {sections(`[{"kind":"workbench"}]`), false},
-		"kind left inferred":  {sections(`[{"item_noun":"song","editable":true}]`), true},
-		"another kind":        {sections(`[{"kind":"html","editable":true}]`), false},
-		"no sections kept":    {AppSpec{BodyField: "lyrics"}, false},
-		"not a workbench app": {AppSpec{Sections: json.RawMessage(`[{"kind":"workbench","editable":true}]`)}, false},
+		"editable":                         {sections(`[{"kind":"workbench","editable":true}]`), true},
+		"said as text":                     {sections(`[{"kind":"Workbench","editable":"true"}]`), true},
+		"not editable":                     {sections(`[{"kind":"workbench"}]`), false},
+		"kind left inferred":               {sections(`[{"item_noun":"song","editable":true}]`), true},
+		"another kind":                     {sections(`[{"kind":"html","editable":true}]`), false},
+		"quick actions, editable left out": {sections(`[{"kind":"workbench","selection_actions":[{"label":"Tighten"}]}]`), true},
+		"quick actions, editable false":    {sections(`[{"kind":"workbench","editable":false,"selection_actions":[{"label":"Tighten"}]}]`), false},
+		"said as yes":                      {sections(`[{"kind":"workbench","editable":"yes"}]`), true},
+		"no sections kept":                 {AppSpec{BodyField: "lyrics"}, false},
+		"not a workbench app":              {AppSpec{Sections: json.RawMessage(`[{"kind":"workbench","editable":true}]`)}, false},
 	} {
 		if got := workbenchEditable(c.spec); got != c.want {
 			t.Errorf("%s: %v, want %v", name, got, c.want)

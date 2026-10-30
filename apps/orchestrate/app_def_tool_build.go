@@ -735,7 +735,7 @@ func buildWorkbench(spec AppSpec, m map[string]any) (ui.WorkbenchPanel, error) {
 	// applies. The "Add to" button goes: it wrote under the person's unsaved
 	// edits, and every change now comes as a proposal (customapps/coauthor.go
 	// gives the agent propose_edit in place of add_section).
-	if mapBool(m, "editable") {
+	if workbenchSectionEditable(m) {
 		wb.EditURL = "record?id={id}"
 		wb.EditField = bodyField
 		wb.ProposeEdits = true
@@ -763,6 +763,20 @@ func buildWorkbench(spec AppSpec, m map[string]any) (ui.WorkbenchPanel, error) {
 		wb.ViewerActions = append(wb.ViewerActions, ui.WorkbenchAction{Label: a.Label, Kind: "compose", Compose: firstNonEmptyStr(a.Prompt, a.Label)})
 	}
 	return wb, nil
+}
+
+// workbenchSectionEditable reports whether a workbench section is a document
+// the person writes: editable: true, or selection_actions declared with
+// nothing said about editable (quick actions for a highlighted passage mean a
+// document the person writes; Builder's rebuilt song app declared them and
+// left editable out). editable: false still says no. customapps'
+// workbenchEditable reads a section the same way, for the server's half.
+func workbenchSectionEditable(m map[string]any) bool {
+	if b := mapBoolPtr(m, "editable"); b != nil {
+		return *b
+	}
+	acts, _ := m["selection_actions"].([]any)
+	return len(acts) > 0
 }
 
 // selectionActions reads a workbench's quick actions for a selected passage:

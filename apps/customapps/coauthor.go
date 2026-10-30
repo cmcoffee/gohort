@@ -122,13 +122,29 @@ func (T *CustomApps) coauthorTools(udb Database, spec AppSpec) []AgentToolDef {
 // with no sections kept, is not. A section may leave its kind to be inferred
 // from its fields, so one with no kind counts too: BodyField being set is
 // what says the app has a workbench.
+//
+// A section that declares selection_actions and says nothing about editable
+// is editable: quick actions for a highlighted passage mean a document the
+// person writes. Builder's rebuilt song app declared the actions and left
+// editable out, and got a viewer with nothing to highlight. editable: false
+// still says no. orchestrate's buildWorkbench reads a section the same way.
 func workbenchEditable(spec AppSpec) bool {
 	for _, s := range workbenchSections(spec) {
 		switch v := s["editable"].(type) {
 		case bool:
 			return v
+		case float64:
+			return v != 0
 		case string:
-			return strings.EqualFold(strings.TrimSpace(v), "true")
+			switch strings.ToLower(strings.TrimSpace(v)) {
+			case "true", "yes", "1":
+				return true
+			case "false", "no", "0":
+				return false
+			}
+		}
+		if acts, _ := s["selection_actions"].([]any); len(acts) > 0 {
+			return true
 		}
 	}
 	return false

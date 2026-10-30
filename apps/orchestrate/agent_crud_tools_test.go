@@ -542,3 +542,38 @@ func TestCollectionToolsAreExplainedNotDropped(t *testing.T) {
 		t.Errorf("collections is a real mistake, with the right way said: %q", plural)
 	}
 }
+
+// An agent for an app is not given every tool: not at create with ["*"],
+// and not by making an agent that has every tool the app's (a clone of a
+// general one). Naming its tools goes through, and an app agent that already
+// had every tool still takes other edits.
+func TestAnAppAgentIsNotGivenEveryTool(t *testing.T) {
+	sess, parent, _ := addToolTestSess(t)
+	if _, err := (createAgentTool{}).RunWithSession(map[string]any{
+		"name": "Producer", "orchestrator_prompt": "Write songs.", "owning_app": "songs", "allowed_tools": []any{"*"},
+	}, sess); err == nil || !strings.Contains(err.Error(), "cannot have every tool") {
+		t.Fatalf("create with every tool: %v", err)
+	}
+	if _, err := (updateAgentTool{}).RunWithSession(map[string]any{"id": parent.ID, "owning_app": "songs"}, sess); err == nil || !strings.Contains(err.Error(), "agent_id") {
+		t.Fatalf("making an every-tool agent the app's: %v", err)
+	}
+	if got, _ := loadAgent(sess.DB, parent.ID); got.OwningApp != "" {
+		t.Fatalf("a refused update was saved: %+v", got.OwningApp)
+	}
+	if _, err := (updateAgentTool{}).RunWithSession(map[string]any{"id": parent.ID, "owning_app": "songs", "allowed_tools": []any{"generate_music"}}, sess); err != nil {
+		t.Fatalf("with its tools named: %v", err)
+	}
+	old, err := saveAgent(sess.DB, AgentRecord{Name: "Older App Agent", OrchestratorPrompt: "p", Owner: sess.Username, OwningApp: "songs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (updateAgentTool{}).RunWithSession(map[string]any{"id": old.ID, "description": "writes lyrics"}, sess); err != nil {
+		t.Errorf("an existing app agent's other edit was refused: %v", err)
+	}
+	if appAgentAllToolsRefusal(AgentRecord{AllowedTools: nil}) != "" {
+		t.Error("an agent for general use may have every tool")
+	}
+	if strings.Contains(appAgentAllToolsRefusal(AgentRecord{OwningApp: "songs"}), "—") {
+		t.Error("prompt text carries an em dash")
+	}
+}

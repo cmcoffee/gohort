@@ -100,6 +100,9 @@ func (createAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 		return "", errors.New("allowed_tools is required: pick a tight allowlist (4-10 tool names) for the agent's actual job. If the user genuinely wants every tool, pass [\"*\"]")
 	}
 	rec.AllowedTools = normalizeAllowedTools(rec.AllowedTools)
+	if msg := appAgentAllToolsRefusal(rec); msg != "" {
+		return "", errors.New(msg)
+	}
 	// LLM-supplied inline tools commit to the user's unified store AFTER the
 	// record is saved (scoping a store row needs the assigned agent ID) — the
 	// record no longer carries embedded tool copies.
@@ -424,6 +427,20 @@ func autoCopySessionToolsForAgent(sess *ToolSession, rec *AgentRecord) []TempToo
 	return copied
 }
 
+// appAgentAllToolsRefusal refuses an agent written for an app (OwningApp)
+// that would have every tool: allowed_tools ["*"], which the record stores
+// as an empty list. An app's chat is a narrow job, and an agent holding all
+// of its owner's tools answers it with mail, calendars and everything else
+// within reach. Builder gave a song app's agent ["*"]. "" when allowed.
+func appAgentAllToolsRefusal(rec AgentRecord) string {
+	if strings.TrimSpace(rec.OwningApp) == "" || len(rec.AllowedTools) > 0 {
+		return ""
+	}
+	return fmt.Sprintf("NOT SAVED: an agent for the app %q cannot have every tool (allowed_tools [\"*\"], or a clone of an agent that has every tool). "+
+		"Name the tools the app's job needs (for a song app: the music tool), 4 to 10. The app's own tools (propose_edit, keep_file, its actions) come from the app and need no listing. "+
+		"Better still, when one of the person's agents already does the job, bind it with app_def agent_id instead of making a new one.", rec.OwningApp)
+}
+
 // agentHasNoTools reports whether an agent's allowlist is the explicit
 // "none" sentinel — it can produce text and nothing else. Distinct from
 // an EMPTY allowlist, which means the opposite (the default pool).
@@ -725,6 +742,15 @@ func (updateAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	priorLimits.ActionQuotas = maps.Clone(existing.ActionQuotas)
 	priorFields := agentFieldValues(existing)
 	mergeAgentArgs(&existing, args)
+	// An app's agent is not given every tool by this call: not by
+	// allowed_tools ["*"], and not by making an agent that has every tool
+	// the app's (a clone of a general agent, say). An app agent that
+	// already had them keeps taking other edits.
+	if _, setsTools := args["allowed_tools"]; setsTools || existing.OwningApp != priorLimits.OwningApp {
+		if msg := appAgentAllToolsRefusal(existing); msg != "" {
+			return "", errors.New(msg)
+		}
+	}
 	if move != nil {
 		// The move sets the parent when it saves.
 		existing.OwnedBy = move.agent.OwnedBy
