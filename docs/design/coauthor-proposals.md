@@ -3,8 +3,7 @@
 Status: planned 2026-10-29. Phases 1 to 3 built and checked in headless Chromium (desktop and
 390px), including a Builder-built editable workbench. Phase 4's missing primitives (files a
 record keeps, document actions) built; the song app built by Builder against a live model is
-next, on the live server. Not yet: FormPanel text fields (phase 2), folding the copies in
-(phase 5).
+next, on the live server. Phase 5 done. Not yet: FormPanel text fields (phase 2).
 
 ## Why it exists
 
@@ -138,3 +137,18 @@ editable finds the chat beside it through the host element they share.
 5. **Fold the copies in.** CodeWriter's `editor_proposal` becomes a `text_proposal`; the agent
    page's change list, casefile's proposal card and the dead ArticleEditor chat move onto the
    review or are deleted.
+
+   Done:
+
+   - **CodeWriter** has one review. `propose_code` (the whole file) now emits a `text_proposal`
+     with an empty `find`, reviewed under the editor like a passage, with Apply, Reject and Undo.
+     Its own diff pane (`uiProposeEdit` over `editorShowDiff`) is gone, and so is
+     `editorShowDiff` itself, which nothing else called. An `editor_proposal` stored in a
+     conversation from before draws as the `text_proposal` card.
+   - **The agent page's ✨ dialog** keeps its ticked list, because a proposal there spans several
+     fields applied in one PATCH, but each change now shows as the same line diff, the field as it
+     is now against the new value, instead of the new value alone.
+   - **ArticleEditor** is deleted, with its chat (`buildDocChat`) and the styles only it used. No
+     app had built one since the prompt-block editor went.
+   - **Casefile's proposal card** stays. It proposes routing tags and a classification for an
+     intake item, edited as a form: nothing in it is a text change to diff.

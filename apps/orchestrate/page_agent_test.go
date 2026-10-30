@@ -31,7 +31,7 @@ func TestTheAgentDialogListsAndAppliesChanges(t *testing.T) {
 	harness := `
 function node(tag) {
   var n = {tag: tag, kids: [], attrs: {}, style: {}, dataset: {}, textContent: '', className: '',
-    set innerHTML(v) { this.kids = []; },
+    set innerHTML(v) { this.kids = []; this.html = v; },
     appendChild: function(c) { this.kids.push(c); return c; },
     insertBefore: function(c) { this.kids.unshift(c); return c; },
     setAttribute: function(k, v) { this.attrs[k] = v; },
@@ -57,6 +57,7 @@ var window = {
   uiAssistChat: function(o) { chatOpts = o; return {right: node('div'), focus: function() {}}; },
   uiAssistPost: function(url) { return function() {}; },
   uiToast: function() {}, uiAlert: function() {},
+  editorDiffRender: function(a, b) { return 'DIFF[' + a + '|' + b + ']'; },
 };
 ` + s[start+len("<script>"):end] + `
 var fail = 0;
@@ -70,9 +71,11 @@ var changes = body.kids[1], apply = body.kids[2].kids[0];
 check('nothing proposed yet: no Apply', apply.style.display === 'none');
 check('an answer with no changes says nothing of its own', chatOpts.onResult({reply: 'It has no rules.'}) === '');
 var said = chatOpts.onResult({reply: '', changes: [
-  {field: 'rules', label: 'Rules', why: 'stops guessing', value: 'Cite every claim.'},
+  {field: 'rules', label: 'Rules', why: 'stops guessing', value: 'Cite every claim.', current: 'Be helpful.'},
   {field: 'triggers', label: 'Triggers', value: 'look up\n find out \n'}]});
 check('proposed changes are listed to tick', changes.querySelectorAll().length === 2 && apply.style.display === '');
+check('each shows as a diff of the field as it is now against the new value',
+  changes.kids[0].kids[2].html === 'DIFF[Be helpful.|Cite every claim.]' && changes.kids[1].kids[1].html === 'DIFF[|look up\n find out \n]');
 check('an empty reply with changes still says something', said !== '');
 chatOpts.onResult({reply: 'Because it guesses.'});
 check('a reply that only answers leaves the changes standing', changes.querySelectorAll().length === 2);

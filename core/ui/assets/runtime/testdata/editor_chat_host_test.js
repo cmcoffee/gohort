@@ -1,6 +1,7 @@
 // The code editor is its chat's host: every send carries the editor as it is
-// on screen (the chat reads data-ui-send-context at send time), and a reply's
-// editor_proposal card opens the proposed file as a diff in that editor.
+// on screen (the chat reads data-ui-send-context at send time), and what a
+// reply proposes is a text_proposal, reviewed as a co-authored document. An
+// editor_proposal stored before that draws as one.
 //
 // Extracts the shipped blocks from the runtime fragments and drives them with
 // stubs, so it tests the code that ships rather than a copy of it.
@@ -41,18 +42,13 @@ check('the send merges it into the body',
   loop.indexOf('Object.assign(body, hostSendContext());') >= 0);
 
 // --- the editor is that host ------------------------------------------------
-var hostBlock = slice(cw, "wrap.setAttribute('data-ui-send-context', '');", "        docSetValue(text);\n      }\n    };", 'the editor host block');
+var hostBlock = slice(cw, "wrap.setAttribute('data-ui-send-context', '');", "      }};\n    };", 'the editor host block');
 var attrs = {};
 var wrap = {setAttribute: function(k, v) { attrs[k] = v; }};
-var shown = null, set = null, raw = 0;
-var editorStub = {};
 new Function('wrap', 'nameInput', 'langSelect', 'editorValue', 'ctxEditor', 'pickedCollections',
-  'selectedRef', 'pickedProfile', 'docToRaw', 'editorWrap', 'editor', 'docSetValue', 'window',
-  hostBlock)(
+  'selectedRef', 'pickedProfile', hostBlock)(
   wrap, {value: '  report.sql  '}, {value: 'sql'}, function() { return 'select 1'; }, {value: 'schema notes'},
-  function() { return ['c1']; }, {kind: 'system', item_id: 'db01'}, 'house-style',
-  function() { raw++; }, {}, editorStub, function(t) { set = t; },
-  {editorShowDiff: function(o) { shown = o; }});
+  function() { return ['c1']; }, {kind: 'system', item_id: 'db01'}, 'house-style');
 check('the editor marks itself as its chat\'s host', 'data-ui-send-context' in attrs);
 var ctx = wrap.uiSendContext();
 check('a send carries the unsaved code', ctx.editor.code === 'select 1');
@@ -62,46 +58,31 @@ check('and the context block', ctx.editor.context === 'schema notes');
 check('and the picked collections', ctx.editor.collections.length === 1 && ctx.editor.collections[0] === 'c1');
 check('and the picked source', ctx.editor.references.length === 1 && ctx.editor.references[0].item_id === 'db01');
 check('and the profile in force', ctx.editor.profile === 'house-style');
-wrap.uiProposeEdit('select 2');
-check('a proposal leaves outline mode first', raw === 1);
-check('a proposal opens as a diff against the editor', shown && shown.newText === 'select 2' && shown.editorTextarea === editorStub);
-check('nothing is applied until Apply', set === null);
-shown.onApply('select 2');
-check('Apply puts the proposal in the editor', set === 'select 2');
 
-// --- the editor_proposal card -----------------------------------------------
-var reg = slice(cw, "window.uiRegisterBlockRenderer('editor_proposal'", "    return {wrap: card};\n  });", 'the editor_proposal renderer');
-var renderer = null;
-function el(tag, attrs, kids) {
-  var n = {tag: tag, attrs: attrs || {}, kids: kids || [], children: []};
-  n.appendChild = function(c) { n.children.push(c); };
-  n.closest = function() { return n.host || null; };
-  return n;
-}
-var timers = [];
-new Function('window', 'el', 'setTimeout', reg)(
-  {uiRegisterBlockRenderer: function(name, fn) { if (name === 'editor_proposal') renderer = fn; }},
-  el, function(fn) { timers.push(fn); });
-check('the card renderer is registered', typeof renderer === 'function');
-var proposed = [];
-var host = {uiProposeEdit: function(t) { proposed.push(t); }};
-var d = {type: 'editor_proposal', id: 'p1', text: 'Add a WHERE clause', data: {code: 'select 1\nwhere x'}};
+// --- what it proposes is reviewed as a co-authored document -------------------
+check('the editor is a uiCoauthor document', cw.indexOf('window.uiCoauthor(editor, {\n      host: wrap,') >= 0);
+check('a proposal leaves outline mode first',
+  cw.indexOf("showDocument: function() { docToRaw(); panes.show('code'); },") >= 0);
+check('Apply writes the editor through the outline too',
+  cw.indexOf('setValue: function(t) { docToRaw(); docSetValue(t); },') >= 0);
+check('there is one review: the old diff pane is gone', cw.indexOf('editorShowDiff') < 0 && cw.indexOf('uiProposeEdit') < 0);
 
-var live = renderer(d, {live: true});
-check('the card is drawn', live && live.wrap);
-live.wrap.host = host;
-timers.splice(0).forEach(function(fn) { fn(); });
-check('live, the diff opens at once', proposed.length === 1 && proposed[0] === 'select 1\nwhere x');
-check('the card says what the change is', live.wrap.children[0].kids[0] === 'Add a WHERE clause');
-check('and how long the file is', live.wrap.children[1].kids[0] === '2 lines');
-
-proposed = [];
-var replay = renderer(d, {});
-replay.wrap.host = host;
-timers.splice(0).forEach(function(fn) { fn(); });
-check('a reload does not open the diff unasked', proposed.length === 0);
-replay.wrap.children[2].attrs.onclick();
-check('Review opens it again', proposed.length === 1);
+// --- an editor_proposal from before is a text_proposal --------------------------
+var reg = slice(cw, "window.uiRegisterBlockRenderer('editor_proposal'", "\n  });", 'the editor_proposal renderer');
+var renderer = null, seen = null;
+var win = {
+  uiRegisterBlockRenderer: function(name, fn) { if (name === 'editor_proposal') renderer = fn; },
+  UIBlockRenderers: {text_proposal: function(d, c) { seen = {d: d, c: c}; return {wrap: 'card'}; }},
+};
+new Function('window', reg)(win);
+check('the old card type is still registered', typeof renderer === 'function');
+var out = renderer({type: 'editor_proposal', id: 'p1', text: 'Add a WHERE clause', data: {code: 'select 1\nwhere x', lang: 'sql'}}, {live: true});
+check('it draws the text_proposal card', out && out.wrap === 'card');
+check('for the whole file',
+  seen && seen.d.type === 'text_proposal' && seen.d.data.find === '' && seen.d.data.replace === 'select 1\nwhere x' && seen.d.text === 'Add a WHERE clause');
+check('live or replayed as it was', seen.c.live === true);
+win.UIBlockRenderers = {};
+check('and nothing without the co-author runtime', renderer({data: {code: 'x'}}, {}) === null);
 
 // The stream marks its blocks live; a reload's replay goes through the same
 // dispatcher without it.

@@ -9,8 +9,9 @@ package codewriter
 // on screen (the panel's send context, below), which rides the newest message
 // for that turn only: the model always reads the file as it is now, and the
 // conversation never stores a copy of it. A change to the file comes back as
-// a propose_code call, which the panel opens as a diff against the editor;
-// nothing changes until the user applies it.
+// a propose_edit (a passage) or propose_code (the whole file) call, which the
+// panel reviews as a diff against the editor; nothing changes until the user
+// applies it.
 
 import (
 	"bytes"
@@ -161,7 +162,7 @@ func editTools(pub *agenthost.Publisher, send chatSendFields) []AgentToolDef {
 	if send.Editor.Lang == "regex" {
 		return nil
 	}
-	return []AgentToolDef{agenthost.ProposeEditTool(pub), proposeCodeTool(pub, send.Editor.Lang)}
+	return []AgentToolDef{agenthost.ProposeEditTool(pub), proposeCodeTool(pub)}
 }
 
 // editorTurnContext is what the turn's newest message carries about the
@@ -240,8 +241,9 @@ func (T *CodeWriterAgent) editorTurnContext(ctx context.Context, user string, se
 }
 
 // proposeCodeTool is propose_code: the whole new file, put in the
-// conversation as a card that opens a diff against the editor.
-func proposeCodeTool(pub *agenthost.Publisher, lang string) AgentToolDef {
+// conversation as a text_proposal with no find, the whole document, which
+// the panel reviews as a diff against the editor.
+func proposeCodeTool(pub *agenthost.Publisher) AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "propose_code",
@@ -260,9 +262,9 @@ func proposeCodeTool(pub *agenthost.Publisher, lang string) AgentToolDef {
 			}
 			code = strings.TrimSuffix(code, "\n")
 			pub.Publish(agenthost.Block{
-				Type: "editor_proposal", ID: UUIDv4(),
+				Type: "text_proposal", ID: UUIDv4(),
 				Text: strings.TrimSpace(summary),
-				Data: map[string]string{"code": code, "lang": lang},
+				Data: map[string]string{"find": "", "replace": code},
 			})
 			return "Proposed. The user sees it as a diff against the editor and applies it or not. Do not repeat the file in your reply: say briefly what changed.", nil
 		},

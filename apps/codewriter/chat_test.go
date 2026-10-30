@@ -55,7 +55,7 @@ func TestProposeCodePutsTheFileInACard(t *testing.T) {
 	var got []agenthost.Block
 	pub := &agenthost.Publisher{}
 	pub.Bind(func(b agenthost.Block) { got = append(got, b) })
-	tool := proposeCodeTool(pub, "sql")
+	tool := proposeCodeTool(pub)
 	if _, err := tool.Handler(context.Background(), map[string]any{"code": "  ", "summary": "nothing"}); err == nil {
 		t.Error("an empty file was proposed")
 	}
@@ -69,7 +69,7 @@ func TestProposeCodePutsTheFileInACard(t *testing.T) {
 		t.Fatalf("%d cards", len(got))
 	}
 	b := got[0]
-	if b.Type != "editor_proposal" || b.ID == "" || b.Text != "Add a filter" || b.Data["code"] != "select 1\nwhere x" || b.Data["lang"] != "sql" {
+	if b.Type != "text_proposal" || b.ID == "" || b.Text != "Add a filter" || b.Data["find"] != "" || b.Data["replace"] != "select 1\nwhere x" {
 		t.Errorf("the card is %+v", b)
 	}
 	// A reload collapses cards that share a title, so a proposal carries

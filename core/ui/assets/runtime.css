@@ -195,7 +195,7 @@ select:-webkit-autofill {
 .ui-agent-msg-file-row, .ui-cw-rev-group,
 .ui-row-actions, .ui-rows-actions, .ui-agent-msg-actions, .ui-agent-msg-edit-actions,
 .ui-chat-actions, .ui-chat-edit-actions, .ui-wb-head-actions, .ui-wb-actions,
-.ui-wb-edit-actions, .ui-tw-image-actions, .ui-tw-rules-actions,
+.ui-wb-edit-actions,
 .ui-cw-prof-actions, .ui-cw-ctx-actions, .ui-display-actions, .ui-form-test-row {
   --btn-h: var(--btn-h-sm); --btn-px: var(--btn-px-sm); --btn-fs: var(--btn-fs-sm);
 }
@@ -4948,8 +4948,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
  * block anyone adds. The column scrolls, so an item never needs to give way.
  * A new scrolling column joins this list (ui TestNoItemInAScrollingColumnShrinks). */
 .ui-agent-convo-log > *, .ui-agent-activity-log > *, .ui-pl-transcript > *,
-.ui-chat-thread > *, .ui-assist-log > *,
-.ui-tw-asst-thread > *, .ui-history > *, .ui-wb-list-body > * {
+.ui-chat-thread > *, .ui-assist-log > *, .ui-history > *, .ui-wb-list-body > * {
   flex-shrink: 0;
 }
 /* The conversation reads in one centred column on a wide screen: the thread,
@@ -6280,18 +6279,6 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   font-style: italic;
 }
 
-/* A reply's proposed change to the editor (the editor_proposal card): what it
- * changes, how long the file is, and Review, which opens the diff with Apply. */
-.ui-cw-proposal {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 0.6rem;
-  padding: 0.5rem 0.7rem;
-  border: 1px solid var(--border); border-left: 3px solid var(--accent);
-  border-radius: 8px; background: var(--bg-2);
-  font-size: var(--fs-sm);
-}
-.ui-cw-proposal-h { flex: 1 1 100%; color: var(--text); }
-.ui-cw-proposal-meta { color: var(--text-mute); font-size: var(--fs-xs); }
-
 /* Editor wrap stacks: [code editor (flex)] over [context section]. */
 .ui-cw-editor-wrap { flex-direction: column; }
 
@@ -6471,10 +6458,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-doc-tpl-empty { font-size: var(--fs-sm); color: var(--text-mute); padding: 0.3rem 0; }
 /* Outline view over the article body — same slot as the textarea, so
    toggling views doesn't reflow the editor pane. */
-.ui-tw-outline {
-  flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch;
-  background: var(--bg-0); padding: 0.7rem 0.9rem;
-}
+
 /* Outline view over the MAIN editor, shown for markdown snippets. Takes
    the textarea's slot so toggling doesn't reflow the pane. */
 .ui-cw-doc-outline {
@@ -6635,7 +6619,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   padding: 0.4rem 0.2rem; text-align: center;
 }
 
-/* --- ArticleEditor --- */
+/* --- Document workbench layout (.ui-tw): list | main, shared by the code editor --- */
 .ui-tw {
   display: grid; grid-template-columns: 175px 1fr;
   gap: var(--panel-gap);
@@ -6737,152 +6721,13 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   overflow: hidden; min-height: 0;
   position: relative; /* Anchor the revisions / rules slide-in panels. */
 }
-.ui-tw-titlebar {
-  display: flex; align-items: center; gap: 0.5rem;
-  padding: 0.55rem 0.8rem; border-bottom: 1px solid var(--border);
-  flex-wrap: wrap;
-}
 
-/* "More" menu — anchored popover that holds less-frequent actions
- * (Suggest title, Generate image, etc) so the titlebar doesn't get
- * crowded. Placed by uiAnchorMenu (below, right-aligned to the trigger,
- * kept on screen), so nothing here positions it. */
-.ui-tw-extras-wrap { display: inline-flex; }
-.ui-tw-extras-menu {
-  min-width: 180px; max-width: calc(100vw - 8px);
-  background: var(--bg-1); border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
-  padding: 0.25rem;
-  flex-direction: column;
-}
-.ui-tw-extras-item {
-  background: transparent; border: none;
-  color: var(--text); text-align: left;
-  padding: 0.45rem 0.7rem; border-radius: var(--btn-radius);
-  font-family: inherit; font-size: var(--fs-sm); cursor: pointer;
-  white-space: nowrap;
-}
-.ui-tw-extras-item:hover { background: var(--bg-2); color: var(--text-hi); }
-.ui-tw-title {
-  flex: 1; min-width: 0;
-  background: transparent; color: var(--text-hi);
-  border: none; outline: none;
-  font-size: var(--fs-lg); font-weight: 600; font-family: inherit;
-  padding: 0.3rem 0;
-  border-bottom: 1px solid transparent;
-  transition: border-color 0.15s ease;
-}
-.ui-tw-title:focus { border-bottom-color: var(--accent); }
-.ui-tw-saved { font-size: var(--fs-2xs); color: var(--text-mute); white-space: nowrap; flex-shrink: 0; }
-.ui-tw-body {
-  width: 100%; min-height: 200px;
-  flex: 1 1 auto; /* absorb remaining vertical space inside the flex-column main */
-  padding: 0.8rem 1rem;
-  background: var(--bg-0); color: var(--text);
-  border: none; outline: none; resize: none;
-  font-family: ui-monospace, "SF Mono", Menlo, monospace;
-  font-size: var(--fs-md); line-height: 1.55;
-  box-sizing: border-box;
-}
-
-.ui-tw-asst {
-  display: flex; flex-direction: column;
-  border-top: 1px solid var(--border);
-  background: var(--bg-2);
-  max-height: 35%; /* default cap; overridden by inline style when the user drag-resizes */
-  flex-shrink: 0;
-}
-/* Drag handle between editor body and assistant pane. Six pixels
- * tall is enough to grab without being visually noisy. Hover-and
- * active states use the accent color so the handle reads as
- * interactive without a label. */
-.ui-tw-resizer {
-  height: 6px; flex-shrink: 0;
-  background: var(--border);
-  cursor: ns-resize;
-  transition: background 0.1s ease;
-  position: relative;
-}
-.ui-tw-resizer:hover, .ui-tw-resizer:active { background: var(--accent); }
-/* A subtle 3-dot grip indicator centered on the handle so users
- * realize it can be dragged (vs an inert separator line). */
-.ui-tw-resizer::before {
-  content: ''; position: absolute; left: 50%; top: 50%;
-  transform: translate(-50%, -50%);
-  width: 30px; height: 2px;
-  background: rgba(255, 255, 255, 0.18);
-  border-radius: 1px;
-}
-.ui-tw-resizer:hover::before { background: rgba(0, 0, 0, 0.4); }
-.ui-tw-asst-thread {
-  flex: 1; overflow-y: auto; padding: 0.5rem 0.7rem;
-  display: flex; flex-direction: column; gap: 0.45rem;
-  min-height: 80px;
-}
-.ui-tw-asst-empty { color: var(--text-mute); font-size: var(--fs-sm); padding: 0.4rem 0.2rem; }
-.ui-tw-asst-input-row {
-  display: flex; gap: 0.5rem; padding: 0.5rem 0.7rem;
-  border-top: 1px solid var(--border);
-}
-/* ArticleEditor variants: a version switch above the body. */
-.ui-tw-variants { display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap; margin: 0.35rem 0 0.25rem; }
-.ui-tw-variant {
-  font-size: var(--fs-sm); padding: 0.2rem 0.65rem; border-radius: 999px; cursor: pointer;
-  background: var(--bg-2); color: var(--text-mute); border: 1px solid var(--border);
-}
-.ui-tw-variant.active { background: var(--accent); color: var(--text-on-accent, #fff); border-color: var(--accent); }
-.ui-tw-variant-note { font-size: var(--fs-xs); color: var(--text-mute); margin-left: 0.35rem; }
-.ui-tw-image-row {
-  display: flex; gap: 0.6rem; align-items: flex-start;
-  padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--border);
-  background: var(--bg-2);
-}
-.ui-tw-image { max-width: 360px; max-height: 200px; border-radius: 6px; border: 1px solid var(--border); }
-.ui-tw-revs {
-  position: absolute; top: 60px; right: 0.6rem; z-index: 5;
-  width: 320px; max-width: calc(100vw - 1.2rem); max-height: 60vh; overflow-y: auto;
-  background: var(--bg-1); border: 1px solid var(--border); border-radius: 8px;
-  padding: 0.5rem; box-shadow: 0 6px 20px rgba(0,0,0,0.5);
-}
-.ui-tw-revs-h {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 0.3rem 0.4rem 0.5rem; border-bottom: 1px solid var(--border);
-  margin-bottom: 0.4rem;
-  font-size: var(--fs-xs); color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.04em;
-}
-.ui-tw-rev-row {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 0.4rem 0.5rem; border-radius: 6px;
-}
-.ui-tw-rev-row:hover { background: var(--bg-2); }
-.ui-tw-rev-date { font-size: var(--fs-sm); color: var(--text); }
 .ui-tw-rev-indicator {
   font-size: var(--fs-xs); color: var(--text-mute);
   font-family: ui-monospace, monospace;
   padding: 0 0.3rem;
   white-space: nowrap;
 }
-.ui-tw-image-actions { display: flex; flex-direction: column; gap: 0.4rem; }
-.ui-tw-rules-ta {
-  width: 100%; box-sizing: border-box;
-  min-height: 220px; resize: vertical;
-  padding: 0.55rem 0.7rem;
-  background: var(--bg-0); color: var(--text);
-  border: 1px solid var(--border); border-radius: 6px;
-  font-family: ui-monospace, "SF Mono", Menlo, monospace;
-  font-size: var(--fs-sm); line-height: 1.5; outline: none;
-}
-.ui-tw-rules-ta:focus { border-color: var(--accent); }
-.ui-tw-rules-hint { font-size: var(--fs-xs); color: var(--text-mute); margin-bottom: 0.4rem; }
-.ui-tw-rules-actions {
-  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
-  margin-top: 0.5rem; gap: 0.5rem;
-}
-.ui-tw-rules-saved { font-size: var(--fs-xs); color: var(--text-mute); }
-/* Merge panel gets a touch wider than the rules panel so the dropdown
- * + paste area + guidance fit without horizontal squeeze. */
-.ui-tw-merge-panel { width: 420px; max-width: calc(100vw - 2rem); }
 
 @media (max-width: 700px) {
   .ui-tw {
@@ -6902,13 +6747,10 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   /* The assistant is a pane of its own here (the pane switch), so it takes
    * the full height when shown. !important beats the drag-resized inline
    * height a desktop session saved; there is no drag handle on a phone. */
-  .ui-tw-asst { flex: 1 1 0; min-height: 0; max-height: none !important; height: auto !important; }
-  .ui-tw-resizer { display: none; }
+
   /* Last row on screen once the root's bottom gutter is gone — clear the
    * home indicator here instead. */
-  .ui-tw-asst-input-row {
-    padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px));
-  }
+
 }
 
 /* --- NavShell (app-shell: nav rail + content pane) ---
@@ -7162,7 +7004,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   :is(.ui-seg, .ui-agent-seg, .ui-live-pill, .ui-live-stop, .ui-assist-mode,
       .ui-wizard-rail-item,
       .ui-form-chip, .ui-chat-tools-toggle, .ui-agent-earlier-btn,
-      .ui-cw-prof-pill, .ui-cw-prof-save, .ui-cw-coll-add, .ui-tw-variant,
+      .ui-cw-prof-pill, .ui-cw-prof-save, .ui-cw-coll-add,
       .ui-suggest-pick, .ui-chip, .ui-chat-act, .ui-rules-add, .ui-sec-add,
       .ui-sections-view, .ui-cw-doc-view, .ui-rules-edit-suggest,
       .ui-rules-edit-done, .ui-rules-edit-cancel, .ui-assist-send, .ui-assist-choice,
@@ -7171,7 +7013,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
       .ui-scope-pill, .ui-scope-more) {
     min-height: var(--btn-h-sm);
   }
-  :is(.ui-form-chip, .ui-tw-variant) { display: inline-flex; align-items: center; }
+  .ui-form-chip { display: inline-flex; align-items: center; }
   /* Icon buttons: square, at least the compact size each way. */
   :is(.ui-icon-btn, .ui-keys-row-del, .ui-mem-del, .ui-rules-edit-btn, .ui-rules-del,
       .ui-assist-nav, .ui-sec-mode, .ui-sec-suggest, .ui-sec-move, .ui-sec-del,
@@ -7182,7 +7024,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
     min-width: var(--btn-h-sm); min-height: var(--btn-h-sm);
   }
   /* Rows in a menu or a list of choices: the full tap size. */
-  :is(.ui-wb-menu-item, .ui-side-menu-item, .ui-tw-extras-item,
+  :is(.ui-wb-menu-item, .ui-side-menu-item,
       .ui-form-nav-item, .ui-secnav-item, .ui-toolbar-menu > button,
       .ui-channel-row) {
     min-height: var(--tap, 44px);
@@ -7220,7 +7062,6 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   .ui-tabbar { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
   .ui-tabbar::-webkit-scrollbar { display: none; }
   .ui-tab { flex: 0 0 auto; white-space: nowrap; }
-  .ui-tw-image { max-width: 100%; }
 }
 
 /* stage_tracker: where a long job is */

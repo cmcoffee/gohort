@@ -25,7 +25,7 @@ func TestPanelsShowOnePaneAtATimeOnAPhone(t *testing.T) {
 	if !strings.Contains(runtimeCSS, ".ui-pane-switch { display: none; }") {
 		t.Error("the switch must stay hidden on a wide screen, where both panes show")
 	}
-	for _, f := range []string{"70_misc.js", "60_article_editor.js", "50_code_editor_panel.js"} {
+	for _, f := range []string{"70_misc.js", "50_code_editor_panel.js"} {
 		js := readRuntimeFile(t, f)
 		if !strings.Contains(js, "makePaneSwitch({") || !strings.Contains(js, "drawer.mobileHdr.appendChild(panes.el);") {
 			t.Errorf("%s does not put its panes behind the switch", f)

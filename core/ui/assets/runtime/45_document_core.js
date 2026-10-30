@@ -1,16 +1,15 @@
   // --- document core ----------------------------------------------------
   //
-  // Shared machinery for the document workbenches (article_editor,
-  // code_editor_panel). Those two components grew the same behaviors
-  // independently: a list sidebar, revision navigation, a chat pane
-  // beside the editor. This file is where those converge, one builder at
-  // a time, so an improvement lands once instead of twice.
+  // Shared machinery for the document workbenches: a list sidebar,
+  // revision navigation, the rules panel and the template picker. Two
+  // panels grew these independently (the code editor and an article
+  // editor since removed); this file is where they converged, so an
+  // improvement lands once.
   //
   // Each builder owns its DOM and its fetch cycle, and takes callbacks
   // for everything app-shaped (what a record's fields are called, how a
   // loaded revision maps onto the editor). Class names are parameters
-  // rather than constants: the two panels are styled differently and
-  // converging their CSS would be churn with no functional gain.
+  // rather than constants, so a panel keeps its own styling.
 
   // buildDocList renders the sidebar record list: fetch, sort
   // newest-first, draw a row per record with a hover tooltip and an
@@ -390,101 +389,6 @@
     });
   }
 
-  // buildDocChat owns the chat PROTOCOL beside a document editor: the
-  // re-entrancy guard, the thinking placeholder, the history window, the
-  // POST, and the branch between "the model proposed a rewrite" and "the
-  // model said something".
-  //
-  // It deliberately does NOT own rendering. The two panels draw messages
-  // differently (one escapes to textContent, the other formats fenced
-  // code into HTML) and that is a real difference, not drift — so
-  // appendMsg is a required callback rather than something to unify.
-  //
-  // opts:
-  //   url          — chat endpoint
-  //   appendMsg(role, text) → node — role is 'user' | 'assistant' |
-  //                  'error'. Required; the app owns the markup.
-  //   thinking()   → node — optional placeholder shown while in flight,
-  //                  removed on reply. Defaults to an assistant bubble.
-  //   buildBody(message, mode, history) → object — the POST payload.
-  //                  Required: only the app knows its own field names.
-  //   proposalOf(data, mode) → text | null — non-null means the reply is
-  //                  a document rewrite to review rather than prose.
-  //   onProposal(text, data) — apply/queue the rewrite (the diff pane).
-  //   onReply(text, data)    — optional hook after a plain reply.
-  //   setBusy(bool)          — optional; toggle the app's send controls.
-  //   historyLimit — turns kept and resent (default 40).
-  //
-  // Returns {send(message, mode), clear(), history()}.
-  function buildDocChat(opts) {
-    opts = opts || {};
-    var limit = opts.historyLimit || 40;
-    var history = [];
-    var sending = false;
-
-    function remember(role, content) {
-      history.push({role: role, content: content});
-      // Cap the window: an unbounded transcript grows every request
-      // until the model's context is spent on its own backlog.
-      if (history.length > limit) history = history.slice(-limit);
-    }
-
-    function busy(on) {
-      sending = on;
-      if (opts.setBusy) opts.setBusy(on);
-    }
-
-    function send(message, mode) {
-      // One request at a time. Without this, a double-click sends twice
-      // and the two replies interleave into the same transcript.
-      if (sending) return;
-      var text = String(message == null ? '' : message).trim();
-      if (!text) return;
-
-      opts.appendMsg('user', text);
-      // Snapshot BEFORE recording this turn — the message rides in its
-      // own field, so including it in history too would double it.
-      var priorHistory = history.slice();
-      remember('user', text);
-
-      busy(true);
-      var placeholder = opts.thinking ? opts.thinking() : opts.appendMsg('assistant', '…');
-
-      fetchJSON(opts.url, {
-        method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(opts.buildBody(text, mode, priorHistory)),
-      }).then(function(data) {
-        if (placeholder && placeholder.remove) placeholder.remove();
-        if (!data) { opts.appendMsg('error', '(empty response)'); return; }
-        // A 200 carrying an error field is still an error.
-        if (data.error) { opts.appendMsg('error', String(data.error)); return; }
-
-        var proposal = opts.proposalOf ? opts.proposalOf(data, mode) : null;
-        if (proposal != null && proposal !== '') {
-          if (opts.onProposal) opts.onProposal(proposal, data);
-        } else if (opts.onReply) {
-          opts.onReply(data.content || '', data);
-        } else {
-          opts.appendMsg('assistant', data.content || '');
-        }
-        // The prose reply is what the model should see next turn, on
-        // both branches: a proposal's text already lives in the editor.
-        remember('assistant', data.content || '');
-      }).catch(function(err) {
-        if (placeholder && placeholder.remove) placeholder.remove();
-        opts.appendMsg('error', err.message);
-      }).then(function() {
-        busy(false);
-      });
-    }
-
-    return {
-      send: send,
-      clear: function() { history = []; },
-      history: function() { return history.slice(); },
-    };
-  }
-
   // buildRevisionNav builds the back / indicator / forward group that
   // walks a record's revision history, plus the "make current" button
   // that promotes an older revision by re-saving it.
@@ -492,9 +396,8 @@
   // opts:
   //   listURL          — GET template, {id} substituted. Absent = no nav.
   //   loadURL          — GET template for one revision. Both {revid} and
-  //                      {id} are substituted, because the two callers
-  //                      spell the placeholder differently and neither
-  //                      URL should have to change to share this code.
+  //                      {id} are substituted: callers have spelled the
+  //                      placeholder both ways.
   //   onLoad(rev)      — apply a fetched revision to the editor. Required;
   //                      it is the only app-specific part of the walk.
   //   onMakeCurrent()  — invoked by the make-current button, normally the

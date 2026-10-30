@@ -146,8 +146,8 @@ type SelectOption struct {
 	Confirm string `json:"confirm,omitempty"`
 }
 
-// ToolbarAction is one entry in a declarative toolbar (e.g.
-// ArticleEditor.Actions). Rendered as a button in the order declared.
+// ToolbarAction is one entry in a declarative toolbar. Rendered as a
+// button in the order declared.
 // Method semantics match MenuAction's, plus an optional Variant for
 // styling ("primary" = accent, "danger" = red, "" = default).
 //

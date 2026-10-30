@@ -120,7 +120,7 @@
     // record has revision-list / revision-load URLs configured. Hidden
     // when no snippet is open (currentID === null) so the toolbar
     // doesn't show "rev 0/0" on a blank New buffer.
-    // Revision walk — shared with article_editor via buildRevisionNav
+    // Revision walk — buildRevisionNav
     // (45_document_core.js). Only onLoad is app-shaped: a revision here
     // carries code + name + lang.
     var revNav = buildRevisionNav({
@@ -759,8 +759,7 @@
     // surface every registered reference source in one dropdown. The chosen
     // item rides every chat send as the editor's references ([{kind,
     // item_id}]); the app's handler injects that source's text / tools into
-    // the model context. Domain-agnostic: core/ui knows only the shape. Same
-    // wire format as the ArticleEditor picker.
+    // the model context. Domain-agnostic: core/ui knows only the shape.
     var selectedRef = null;
     var refBar = el('div', {class: 'ui-cw-coll-bar'});
     refBar.style.display = 'none';
@@ -993,33 +992,19 @@
         profile: pickedProfile || '',
       }};
     };
-    // proposeEdit opens text as a diff against the editor, with Apply. The
-    // diff pane hides the textarea and inserts itself where the textarea sat,
-    // so outline mode drops first, or the outline stays up covering a review
-    // the user can't see or resolve.
-    wrap.uiProposeEdit = function(text) {
-      docToRaw();
-      if (typeof window.editorShowDiff === 'function') {
-        window.editorShowDiff({
-          newText: text,
-          editorPane: editorWrap,
-          editorTextarea: editor,
-          onApply: function(t) { docSetValue(t); },
-        });
-      } else {
-        docSetValue(text);
-      }
-    };
-    // Co-authored as well: select a passage and Ask, and what comes back for
-    // that passage is reviewed on its own (47_coauthor.js, text_proposal).
-    // After uiSendContext, which it extends with the pinned passage.
-    // On a phone the code and the chat are panes one at a time: Ask brings
-    // the chat up, and a proposal brings the code back to be reviewed.
+    // Co-authored: select a passage and Ask, and what the chat proposes,
+    // for that passage or the whole file, is reviewed as a diff under the
+    // editor with Apply (47_coauthor.js, text_proposal). After uiSendContext,
+    // which it extends with the pinned passage. On a phone the code and the
+    // chat are panes one at a time: Ask brings the chat up, and a proposal
+    // brings the code back to be reviewed. A proposal leaves outline mode
+    // first: the review reads and writes the text, and the outline would
+    // stay up over it.
     window.uiCoauthor(editor, {
       host: wrap,
       setValue: function(t) { docToRaw(); docSetValue(t); },
       showChat: function() { panes.show('chat'); },
-      showDocument: function() { panes.show('code'); },
+      showDocument: function() { docToRaw(); panes.show('code'); },
     });
 
     // --- State ---
@@ -1125,7 +1110,7 @@
     }
 
 
-    // Record list — shared with article_editor via buildDocList
+    // Record list — buildDocList
     // (45_document_core.js). This panel shows the language in the row
     // tooltip; everything else is the common shape.
     var docList = buildDocList({
@@ -1432,8 +1417,7 @@
     }
 
     // --- Contexts library modal ---
-    // Template picker — shared with article_editor via
-    // openTemplatePicker (45_document_core.js), which is built on the
+    // Template picker — openTemplatePicker (45_document_core.js), which is built on the
     // standard uiOpenModal rather than this panel's bespoke shell.
     function openTemplatesModal() {
       openTemplatePicker({
@@ -1511,22 +1495,12 @@
   };
 
 
-  // editor_proposal is a reply's proposed new text for the editor its chat
-  // sits beside: Text is the reply's one-line summary of the change, data.code
-  // the whole proposed file. Live, the diff opens at once with Apply, as a
-  // proposed change always has here; after a reload the card stays, and
-  // Review opens it again. Nothing is applied without Apply.
+  // editor_proposal is what a whole-file proposal for this panel was before
+  // it became a text_proposal with no find. Kept so a conversation from then
+  // still reviews: its card is a text_proposal's.
   window.uiRegisterBlockRenderer('editor_proposal', function(d, ctx) {
-    var code = (d.data && d.data.code) || '';
-    var card = el('div', {class: 'ui-cw-proposal'});
-    function review() {
-      var host = card.closest && card.closest('.ui-cw');
-      if (host && typeof host.uiProposeEdit === 'function') host.uiProposeEdit(code);
-    }
-    var lines = code ? code.split('\n').length : 0;
-    card.appendChild(el('div', {class: 'ui-cw-proposal-h'}, [d.text || 'Proposed change']));
-    card.appendChild(el('div', {class: 'ui-cw-proposal-meta'}, [lines + (lines === 1 ? ' line' : ' lines')]));
-    card.appendChild(el('button', {class: 'ui-row-btn', type: 'button', onclick: review}, ['Review in editor']));
-    if (ctx && ctx.live) setTimeout(review, 0);
-    return {wrap: card};
+    var tp = window.UIBlockRenderers && window.UIBlockRenderers.text_proposal;
+    if (typeof tp !== 'function') return null;
+    return tp({type: 'text_proposal', id: d.id, text: d.text,
+      data: {find: '', replace: (d.data && d.data.code) || ''}}, ctx);
   });

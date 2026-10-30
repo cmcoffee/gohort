@@ -207,7 +207,6 @@ core/ui/` is the authoritative history.
 | A toggle (boolean) on a form | `ui.FormField{Type: "toggle"}` |
 | A field that must stay one line (handle, URL, slug, API key) | `ui.FormField{SingleLine: true}`: otherwise a multi-line paste grows the field into a textarea rather than flattening the content |
 | A bar chart | `ui.BarChart` |
-| An article editor with full markdown + image insertion | `ui.ArticleEditor` |
 | A code editor with diff + history | `ui.CodeEditorPanel` |
 | A document the person writes with an agent: select a passage, ask about it, review the proposed change as a diff | `ui.WorkbenchPanel{ProposeEdits: true}`, or `window.uiCoauthor` on your own textarea (see Co-authored documents below) |
 | A button in your own HTML (ExtraHeadHTML, a client action's modal) | `class="ui-row-btn"`, with `primary` / `danger` / `ui-btn-sm` as needed. It takes the shared size, rounding and touch size; a hand-styled button takes none of them |

@@ -1828,7 +1828,6 @@ var sessionBoundPanels = map[string]string{
 	"agent_loop_panel":  "chat",
 	"workbench_panel":   "document workbench",
 	"code_editor_panel": "workbench",
-	"article_editor":    "editor",
 }
 
 // --- helpers -----------------------------------------------------------------

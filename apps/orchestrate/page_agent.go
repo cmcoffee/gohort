@@ -848,6 +848,8 @@ func agentAssistHTML(id string) string {
 .aa-change label{display:flex;gap:.5rem;align-items:baseline;cursor:pointer;font-weight:600}
 .aa-why{font-size:var(--fs-sm, .85rem);opacity:.8;margin:.2rem 0 .35rem 1.4rem}
 .aa-val{margin-left:1.4rem;font-size:var(--fs-sm, .85rem);white-space:pre-wrap;max-height:9rem;overflow:auto;padding:.4rem;background:var(--bg-1);border:1px solid var(--border);border-radius:4px}
+.aa-diff{margin-left:1.4rem}
+.aa-diff .editor-diff{margin:0;max-height:14rem}
 .aa-foot{display:flex;gap:.5rem;justify-content:flex-end;margin-top:.75rem}
 @media (max-width: 760px){.aa-chat{height:52vh}}
 </style>
@@ -879,7 +881,13 @@ func agentAssistHTML(id string) string {
             var lab=el('label'); lab.appendChild(cb); lab.appendChild(el('span',{text:c.label}));
             box.appendChild(lab);
             if(c.why) box.appendChild(el('div',{class:'aa-why',text:c.why}));
-            box.appendChild(el('div',{class:'aa-val',text:c.value}));
+            // What it changes, as the same line diff every proposal is
+            // reviewed with: the field as it is now against the new value.
+            if(typeof window.editorDiffRender==='function'){
+              var d=el('div',{class:'aa-diff'});
+              d.innerHTML=window.editorDiffRender(c.current||'',c.value||'');
+              box.appendChild(d);
+            } else box.appendChild(el('div',{class:'aa-val',text:c.value}));
             changes.appendChild(box);
           });
         }

@@ -7,15 +7,15 @@ import (
 // CodeEditorPanel is a two-pane code workbench: a snippet sidebar + a code
 // editor (with optional Context block) on the left, and the host's chat on
 // the right. Supports {{NAME}} variable substitution, a saved-values library,
-// and a saved-contexts library. Distinct enough from ArticleEditor /
-// ChatPanel that it gets its own component type rather than overloading
-// either. Every endpoint is host-supplied, so the panel names no app.
+// and a saved-contexts library. Distinct enough from ChatPanel that it gets
+// its own component type rather than overloading it. Every endpoint is host-supplied, so the panel names no app.
 //
 // The chat is the host's AgentLoopPanel, the same chat every agent has. The
 // panel is its host for two things: every send carries the editor as it is on
 // screen, as an "editor" object ({name, lang, code, context, collections,
-// references, profile}), and a reply's "editor_proposal" block (Text = the
-// proposed file) opens as a diff in the editor with Apply.
+// references, profile}), and the editor is a co-authored document
+// (uiCoauthor): a reply's "text_proposal" block, for a passage or the whole
+// file, is reviewed as a diff under it with Apply.
 type CodeEditorPanel struct {
 	// Snippet CRUD endpoints.
 	ListURL   string `json:"list_url"`             // GET → array of snippets
@@ -52,7 +52,7 @@ type CodeEditorPanel struct {
 	// ({kind, label, items:[{id, name, desc}]}). The selected item rides
 	// each chat send as the editor's `references` ([{kind, item_id}]); the
 	// app's send handler injects that source's text into the model context.
-	// Same wire shape as ArticleEditor's picker — see core.ReferenceSource.
+	// See core.ReferenceSource for the wire shape.
 	ReferenceSourcesURL string `json:"reference_sources_url,omitempty"`
 
 	// ProfilesListURL, when set, renders the PROFILE BAR under the toolbar: the
