@@ -69,10 +69,10 @@ func TestThePageCarriesTheSavedView(t *testing.T) {
 	}
 	body := m["sections"].([]any)[0].(map[string]any)["body"].(map[string]any)
 	pre, _ := body["isolate_prelude"].(string)
-	if !strings.HasPrefix(pre, appPageHelper) || !strings.Contains(pre, `"tab":"logs"`) {
+	if !strings.HasPrefix(pre, appPagePrelude) || !strings.Contains(pre, `"tab":"logs"`) {
 		t.Errorf("prelude does not carry the view after the helper: %.200s", pre)
 	}
-	if strings.Count(pre, "</script>") != strings.Count(appPageHelper, "</script>")+1 {
+	if strings.Count(pre, "</script>") != strings.Count(appPagePrelude, "</script>")+1 {
 		t.Error("a saved value closed the script it rides in")
 	}
 	if !strings.Contains(string(out), "Reset view") || !strings.Contains(string(out), "/prep/_view/reset") {

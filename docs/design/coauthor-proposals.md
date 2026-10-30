@@ -147,6 +147,13 @@ editable finds the chat beside it through the host element they share.
    And a take the app's agent renders reaches the script: run_agent returns what the run's
    tools made or attached as reply.files, copied into agent_files/<run>/ in the script's folder,
    and an action's files reply moves them onto the record. Unclaimed runs clear after a day.
+
+   A designed page co-authors too: app.coauthor(textarea, {chip}) in the frame, on core/editor's
+   coauthor.js, the same document half uiCoauthor now runs on (one copy, so a fix reaches both).
+   doc.ask sends the document and highlighted passage to POST propose, which asks the app's agent
+   with no tools, in JSON, under ask's caps, and returns the change only if its passage is in the
+   document. Every path the frame may fetch (appOwnPaths) is walked by a test that refuses a
+   stranger, a disabled app and a signed-out caller before any handler acts.
 5. **Fold the copies in.** CodeWriter's `editor_proposal` becomes a `text_proposal`; the agent
    page's change list, casefile's proposal card and the dead ArticleEditor chat move onto the
    review or are deleted.

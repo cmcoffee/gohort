@@ -1,8 +1,10 @@
 package customapps
 
 import (
+	"context"
 	"encoding/json"
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appassets"
 	"github.com/cmcoffee/gohort/core/promotion"
 	"github.com/cmcoffee/gohort/tools/appscript"
 	"github.com/cmcoffee/snugforge/kvlite"
@@ -402,5 +404,126 @@ func TestUnderscoreNamesReachTheSavedScripts(t *testing.T) {
 	T.handleData(w, httptest.NewRequest(http.MethodGet, "/apps/game/data/nothing_here", nil), "alice", "alice", T.recordBase(spec, "alice"), spec, "nothing_here")
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("an unknown source must still 404, got %d", w.Code)
+	}
+}
+
+// Every path an app's page may reach from its frame (appOwnPaths, the list the
+// frame checks each request against) is behind the app's gate, by every
+// method: a person the app was not shared with, an owner whose app is
+// disabled, and someone signed out are refused before any handler acts. No
+// script runs, the agent is not asked, nothing is written.
+//
+// The list is walked, not copied, so a path added to it later is held to the
+// same test the day it is added. And each path is shown to reach a handler
+// for the owner, so the refusals are the gate's and not a missing route's.
+func TestEveryPathTheFrameReachesIsBehindTheAppGate(t *testing.T) {
+	T := sharingTestApp(t)
+	page := json.RawMessage(`[{"kind":"html","html":"<p>songs</p>"}]`)
+	open := AppSpec{Slug: "studio", Name: "Studio", Owner: "alice", RecordKey: "id", AgentID: "composer", Sections: page,
+		DataSources: []AppDataSource{{Name: "songs", Script: "print('[]')"}},
+		Actions:     []AppAction{{Name: "render", Script: "print('{}')"}}}
+	off := open
+	off.Slug, off.Name, off.Disabled = "off", "Off", true
+	SaveAppSpec(open)
+	SaveAppSpec(off)
+	// A song with a take on it, for the owner's half below.
+	prevFiles := appassets.RecordFilesDir()
+	appassets.SetRecordFilesDir(t.TempDir())
+	t.Cleanup(func() { appassets.SetRecordFilesDir(prevFiles) })
+	take := filepath.Join(t.TempDir(), "take.mp3")
+	os.WriteFile(take, []byte("ID3\x04\x00\x00\x00\x00\x00\x00take"), 0o644)
+	kept, err := appassets.KeepRecordFile("alice", "studio", "alice", "s1", take, "Take")
+	if err != nil {
+		t.Fatal(err)
+	}
+	T.recordBase(open, "alice").Set(recTable("studio"), "s1", map[string]any{"id": "s1", "_files": filesValue([]appassets.RecordFile{kept})})
+
+	var acted []string
+	prevRun, prevAsk, prevAgent := runAppScript, appAgentAsk, appAgentRun
+	t.Cleanup(func() { runAppScript, appAgentAsk, appAgentRun = prevRun, prevAsk, prevAgent })
+	runAppScript = func(j appscript.Job) (string, error) {
+		acted = append(acted, "script "+j.Kind+" "+j.Name)
+		return `{}`, nil
+	}
+	appAgentAsk = func(ctx context.Context, owner, user, agentID, prompt string, jsonMode bool) (string, float64, error) {
+		acted = append(acted, "ask")
+		return `{"reply": "ok"}`, 0, nil
+	}
+	appAgentRun = func(ctx context.Context, spec AppSpec, caller, agent, prompt, filesDir string) (string, []string, float64, error) {
+		acted = append(acted, "run_agent")
+		return "ok", nil, 0, nil
+	}
+	body := `{"document": "verse one", "prompt": "darker", "id": "s9", "title": "Taken"}`
+	req := func(method, slug, path string) *http.Request {
+		r := httptest.NewRequest(method, "/apps/"+slug+"/"+path+"?id=s1&name=take.mp3&job=j1", strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		return r
+	}
+	records := func() int {
+		n := 0
+		if T.recordBase(open, "alice").Get(recTable("studio"), "s9", new(map[string]any)) {
+			n++
+		}
+		return n
+	}
+	gate := "404 page not found"
+	// A method a route does not take is refused by the router itself, before
+	// any handler: that is a refusal too.
+	router := func(w *httptest.ResponseRecorder) bool {
+		return w.Code == http.StatusMethodNotAllowed && strings.TrimSpace(w.Body.String()) == "method not allowed"
+	}
+	methods := []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete}
+	for _, p := range appOwnPaths {
+		path := p
+		if strings.HasSuffix(p, "/") {
+			path += map[string]string{"data/": "songs", "action/": "render"}[p]
+			if strings.HasSuffix(path, "/") {
+				path += "render"
+			}
+		}
+		for _, m := range methods {
+			label := m + " " + path
+			// A stranger: the app is alice's and not shared with mallory.
+			if w := as(t, T, "mallory", req(m, "studio", path)); !router(w) && (w.Code != http.StatusNotFound || strings.TrimSpace(w.Body.String()) != gate) {
+				t.Errorf("%s as a stranger: %d %q, want the gate's 404", label, w.Code, w.Body.String())
+			}
+			// The owner, on her disabled app.
+			if w := as(t, T, "alice", req(m, "off", path)); !router(w) && (w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "disabled")) {
+				t.Errorf("%s on a disabled app: %d %q", label, w.Code, w.Body.String())
+			}
+			// Signed out.
+			r := req(m, "studio", path)
+			r.URL.Path = strings.TrimPrefix(r.URL.Path, "/apps")
+			w := httptest.NewRecorder()
+			routed(T)(w, r)
+			if !router(w) && w.Code != http.StatusUnauthorized {
+				t.Errorf("%s signed out: %d %q", label, w.Code, w.Body.String())
+			}
+		}
+	}
+	if len(acted) > 0 || records() > 0 {
+		t.Fatalf("something past the gate acted for a refused caller: %v (records written: %d)", acted, records())
+	}
+	// The owner reaches a handler on every path, so the refusals above were
+	// the gate's: a route that did not exist would refuse everyone alike.
+	for _, p := range appOwnPaths {
+		path := p
+		if strings.HasSuffix(p, "/") {
+			path += map[string]string{"data/": "songs", "action/": "render"}[p]
+			if strings.HasSuffix(path, "/") {
+				path += "render"
+			}
+		}
+		reached := false
+		for _, m := range methods {
+			w := as(t, T, "alice", req(m, "studio", path))
+			if !router(w) && !(w.Code == http.StatusNotFound && strings.TrimSpace(w.Body.String()) == gate) {
+				reached = true
+				break
+			}
+		}
+		if !reached {
+			t.Errorf("%s: the owner reaches no handler either, so this path proves nothing about the gate", path)
+		}
 	}
 }

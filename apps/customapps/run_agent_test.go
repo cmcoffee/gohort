@@ -63,9 +63,6 @@ func TestRunAgentHandsTheScriptWhatItsAgentMade(t *testing.T) {
 	prevRoot := RootDB
 	RootDB = &DBase{Store: kvlite.MemStore()}
 	t.Cleanup(func() { RootDB = prevRoot })
-	prevWS := WorkspacesDir()
-	SetWorkspacesDir(t.TempDir())
-	t.Cleanup(func() { SetWorkspacesDir(prevWS) })
 	prevAgent := appAgentRun
 	t.Cleanup(func() { appAgentRun = prevAgent })
 	render := true
@@ -76,9 +73,12 @@ func TestRunAgentHandsTheScriptWhatItsAgentMade(t *testing.T) {
 		os.WriteFile(filepath.Join(filesDir, "take.mp3"), []byte("ID3 take"), 0600)
 		return "rendered", []string{"take.mp3"}, 0, nil
 	}
-	spec := AppSpec{Slug: "studio", Owner: "alice", AgentID: "composer"}
+	// The package's one workspace root (TestMain), under an owner of this
+	// test's own.
+	spec := AppSpec{Slug: "studio", Owner: "handback-owner", AgentID: "composer"}
 	ctx := context.Background()
-	ws, _ := EnsureWorkspaceDir("alice")
+	ws, _ := EnsureWorkspaceDir(spec.Owner)
+	t.Cleanup(func() { os.RemoveAll(filepath.Join(ws, agentFilesFolder)) })
 	// A run nobody claimed, from two days ago, is cleared on the way.
 	stale := filepath.Join(ws, agentFilesFolder, "studio-old")
 	os.MkdirAll(stale, 0700)

@@ -14,83 +14,11 @@
   // actions; what a passage means (a verse, a function, a clause) is the
   // agent's business. See docs/design/coauthor-proposals.md.
 
-  // coauthorLocate is where find sits in doc: the occurrence nearest near (the
-  // pinned passage's start, so a line that repeats resolves to the one that was
-  // selected), or -1 when it is not there at all. An empty find is the whole
-  // document, at 0.
-  function coauthorLocate(doc, find, near) {
-    doc = String(doc == null ? '' : doc);
-    if (!find) return 0;
-    near = near || 0;
-    var best = -1, bestDist = Infinity;
-    for (var i = doc.indexOf(find); i >= 0; i = doc.indexOf(find, i + 1)) {
-      var d = Math.abs(i - near);
-      if (d < bestDist) { best = i; bestDist = d; }
-    }
-    return best;
-  }
-
-  // coauthorReplace is doc with find (at at) replaced by replace, or replace
-  // alone for a whole-document proposal.
-  function coauthorReplace(doc, find, at, replace) {
-    if (!find) return replace;
-    return doc.slice(0, at) + replace + doc.slice(at + find.length);
-  }
-
-  // coauthorReviewParts splits a proposal into what its review shows: the
-  // document before the lines it touches, those lines as they are and as they
-  // would be, and the document after. Whole lines, so the change is drawn in
-  // place among its neighbours. A whole-document proposal is all middle.
-  function coauthorReviewParts(doc, find, at, replace) {
-    doc = String(doc == null ? '' : doc);
-    if (!find) return {before: '', oldMid: doc, newMid: String(replace || ''), after: ''};
-    var start = doc.lastIndexOf('\n', at - 1) + 1;
-    var end = at + find.length;
-    if (!(end > start && doc.charAt(end - 1) === '\n')) {
-      var nl = doc.indexOf('\n', end);
-      end = nl < 0 ? doc.length : nl + 1;
-    }
-    return {
-      before: doc.slice(0, start),
-      oldMid: doc.slice(start, end),
-      newMid: doc.slice(start, at) + String(replace || '') + doc.slice(at + find.length, end),
-      after: doc.slice(end),
-    };
-  }
-
-  // coauthorReviewHTML draws those parts as one line diff of the whole
-  // document: the lines around the change as they are, the change marked
-  // where it goes. Only the touched lines are diffed, so a long file costs
-  // no more than the passage.
-  function coauthorReviewHTML(parts) {
-    function lines(t) {
-      t = String(t || '');
-      return t ? t.replace(/\n$/, '').split('\n') : [];
-    }
-    function row(type, text) {
-      var mark = type === 'add' ? '+' : type === 'remove' ? '-' : ' ';
-      return '<div class="editor-diff-' + type + '"><span class="editor-diff-marker">' + mark +
-        '</span><span class="editor-diff-text">' + window.editorDiffEscape(text) + '</span></div>';
-    }
-    var html = '<div class="editor-diff">';
-    lines(parts.before).forEach(function(l) { html += row('equal', l); });
-    window.editorDiffLines(parts.oldMid.replace(/\n$/, ''), parts.newMid.replace(/\n$/, '')).forEach(function(op) {
-      html += row(op.type, op.text);
-    });
-    lines(parts.after).forEach(function(l) { html += row('equal', l); });
-    return html + '</div>';
-  }
-
-  // coauthorLabel names a pinned passage for its chip: its opening words and,
-  // past one line, how many lines it spans.
-  function coauthorLabel(text) {
-    text = String(text || '');
-    var lines = text.replace(/\n+$/, '').split('\n').length;
-    var words = text.trim().split(/\s+/).slice(0, 6).join(' ');
-    if (words.length > 40) words = words.slice(0, 40).trim();
-    var opening = '“' + words + (text.trim().length > words.length ? '…' : '') + '”';
-    return lines > 1 ? opening + ', ' + lines + ' lines' : opening;
-  }
+  // The document half (what is highlighted, a review in place, Apply, Undo)
+  // and the pure pieces (coauthorLocate, coauthorReviewParts, coauthorLabel)
+  // are core/editor's coauthor.js, loaded ahead of the runtime and shared with
+  // app pages. What is here is the chat half: the chip, its quick actions, and
+  // the send carrying the passage.
 
   // coauthorHost is the element holding both the document and the chat beside
   // it: the nearest ancestor of the document that contains a chat composer.
@@ -181,193 +109,26 @@
   window.uiCoauthor = function(textarea, opts) {
     opts = opts || {};
     var host = opts.host || coauthorHost(textarea);
-    var review = null;   // the open review panel
-    var applying = false;
-    var undoState = null;
-
-    function selection() {
-      var s = textarea.selectionStart, e = textarea.selectionEnd;
-      if (s == null || e == null || e <= s) return null;
-      var text = textarea.value.slice(s, e);
-      return text.trim() ? {start: s, end: e, text: text} : null;
-    }
-    function setValue(text) {
-      applying = true;
-      try {
-        if (typeof opts.setValue === 'function') opts.setValue(text);
-        else {
-          textarea.value = text;
-          textarea.dispatchEvent(new Event('input', {bubbles: true}));
-        }
-      } finally { applying = false; }
-    }
-
-    // --- What is highlighted is what the conversation is about -----------------
-    // A selection the person makes in the document pins it: the chat shows it
-    // over its box, with the page's quick actions, and the next send carries
-    // it. Clicking back into the document with nothing selected lets it go,
-    // and the conversation is about the whole document again. Moving to the
-    // chat to type keeps it: only the document's own selection counts. No bar
-    // beside the selection: a phone puts its own Cut / Copy / Paste there, and
-    // the place to say something about a passage is the chat.
-    //
-    // A selection the page makes itself (a review showing its passage) is not
-    // the person's and pins nothing, hence quietUntil.
-    var quietUntil = 0;
-    function followSelection() {
-      if (Date.now() < quietUntil) return;
-      var sel = selection();
-      var pinned = pins.pinned;
-      if (sel) {
-        if (!pinned || pinned.start !== sel.start || pinned.end !== sel.end) pins.pin(sel);
-      } else if (pinned) {
-        pins.unpin();
-      }
-    }
-    function soon() { setTimeout(followSelection, 0); }
-    textarea.addEventListener('mouseup', soon);
-    textarea.addEventListener('touchend', soon);
-    textarea.addEventListener('keyup', soon);
-    // A phone's selection handles move the selection with no touch on the
-    // textarea itself.
-    function onSelectionChange() { if (document.activeElement === textarea) soon(); }
-    if (document.addEventListener) document.addEventListener('selectionchange', onSelectionChange);
-
-    // --- Pinning (coauthorPinning) -------------------------------------------
+    // The pinned passage lives with the chat (its chip and send context);
+    // the document follows and reviews against it.
     var pins = coauthorPinning(host, opts);
-    function unpin() { pins.unpin(); }
-
-    // An edit moves the pinned passage, or removes it: follow it while it is
-    // still there, let it go when it is not. Any edit also ends an Undo.
-    textarea.addEventListener('input', function() {
-      if (applying) return;
-      clearUndo();
-      var pinned = pins.pinned;
-      if (!pinned) return;
-      var doc = textarea.value;
-      if (doc.slice(pinned.start, pinned.end) === pinned.text) return;
-      var at = coauthorLocate(doc, pinned.text, pinned.start);
-      if (at < 0) { unpin(); return; }
-      pinned.start = at;
-      pinned.end = at + pinned.text.length;
+    var doc = coauthorTextDoc(textarea, {
+      el: el, setValue: opts.setValue, showDocument: opts.showDocument,
+      pinned: function() { return pins.pinned; }, pin: pins.pin, unpin: pins.unpin,
     });
-
-    // --- Review ----------------------------------------------------------------
-    // The review takes the document's place while it is open: the textarea
-    // hides, and the review stands where it was, at its height, so the change
-    // is seen where it goes. Closing it brings the textarea back.
-    var hiddenDisplay = null;
-    function closeReview() {
-      if (review && review.parentNode) review.parentNode.removeChild(review);
-      review = null;
-      if (hiddenDisplay !== null) {
-        textarea.style.display = hiddenDisplay;
-        hiddenDisplay = null;
-      }
-    }
-    function clearUndo() {
-      if (undoState && undoState.bar && undoState.bar.parentNode) undoState.bar.parentNode.removeChild(undoState.bar);
-      undoState = null;
-    }
-    function place(node) {
-      textarea.parentNode.insertBefore(node, textarea.nextSibling);
-    }
-    function showPassage(at, len) {
-      quietUntil = Date.now() + 400;
-      try {
-        textarea.focus();
-        textarea.setSelectionRange(at, at + len);
-      } catch (e) { /* a hidden textarea cannot take a selection */ }
-    }
-    function openReview(p, at) {
-      closeReview();
-      clearUndo();
-      var find = p.find;
-      var parts = coauthorReviewParts(textarea.value, find, at, p.replace);
-      var drawn = typeof window.editorDiffLines === 'function' && typeof window.editorDiffEscape === 'function';
-      var stats = typeof window.editorDiffStats === 'function'
-        ? window.editorDiffStats(parts.oldMid.replace(/\n$/, ''), parts.newMid.replace(/\n$/, '')) : null;
-      var note = el('div', {class: 'ui-coauthor-review-note', style: 'display:none'});
-      var applyBtn = el('button', {type: 'button', class: 'ui-row-btn ui-coauthor-apply',
-        onclick: function() { apply(p, at, note, applyBtn); }}, ['Apply']);
-      review = el('div', {class: 'ui-coauthor-review ui-coauthor-review-inplace'}, [
-        el('div', {class: 'ui-coauthor-review-h'}, [
-          el('span', {class: 'ui-coauthor-review-title'}, [p.summary || (find ? 'Proposed change to the selected passage' : 'Proposed change')]),
-          stats ? el('span', {class: 'ui-coauthor-review-stats'}, ['+' + stats.add + ' −' + stats.remove]) : null,
-          applyBtn,
-          el('button', {type: 'button', class: 'ui-row-btn', onclick: closeReview}, ['Reject']),
-        ]),
-        note,
-        drawn
-          ? el('div', {class: 'ui-coauthor-review-body', html: coauthorReviewHTML(parts)})
-          : el('pre', {class: 'ui-coauthor-review-body'}, [p.replace]),
-      ]);
-      var height = textarea.offsetHeight || 0;
-      textarea.parentNode.insertBefore(review, textarea);
-      if (height) review.style.height = height + 'px';
-      hiddenDisplay = textarea.style.display || '';
-      textarea.style.display = 'none';
-      // Scrolled to the change, in its surroundings.
-      var change = review.querySelector && review.querySelector('.editor-diff-remove, .editor-diff-add');
-      if (change && change.scrollIntoView) change.scrollIntoView({block: 'center'});
-    }
-    // Applied against the document as it is NOW: the passage is found again,
-    // and if it is gone (edited since the proposal came) nothing is written.
-    function apply(p, near, note, applyBtn) {
-      var doc = textarea.value;
-      var at = coauthorLocate(doc, p.find, near);
-      if (p.find && at < 0) {
-        note.textContent = 'That passage has changed since this was proposed, so it was not applied. Ask again.';
-        note.style.display = '';
-        applyBtn.disabled = true;
-        return;
-      }
-      var next = coauthorReplace(doc, p.find, at, p.replace);
-      setValue(next);
-      closeReview();
-      unpin();
-      if (p.find) showPassage(at, p.replace.length);
-      undoState = {before: doc, after: next};
-      undoState.bar = el('div', {class: 'ui-coauthor-undo'}, [
-        el('span', {}, ['Applied.']),
-        el('button', {type: 'button', class: 'ui-row-btn', onclick: function() {
-          var u = undoState;
-          clearUndo();
-          if (u && textarea.value === u.after) setValue(u.before);
-        }}, ['Undo']),
-      ]);
-      place(undoState.bar);
-    }
-
-    // propose opens a proposal ({find, replace, summary}) for review. A find
-    // that is not in the document is refused: {ok: false, reason}.
-    function propose(p) {
-      p = p || {};
-      p = {find: p.find == null ? '' : String(p.find), replace: p.replace == null ? '' : String(p.replace),
-        summary: p.summary ? String(p.summary) : ''};
-      var at = coauthorLocate(textarea.value, p.find, pins.pinned ? pins.pinned.start : 0);
-      if (p.find && at < 0) {
-        return {ok: false, reason: 'That passage is no longer in the document: it changed since. Ask again.'};
-      }
-      if (typeof opts.showDocument === 'function') opts.showDocument();
-      openReview(p, at);
-      return {ok: true};
-    }
     host.setAttribute('data-ui-coauthor', '');
-    host.uiProposeText = propose;
+    host.uiProposeText = doc.propose;
 
     return {
-      pin: pins.pin, unpin: unpin, propose: propose,
+      pin: pins.pin, unpin: pins.unpin, propose: doc.propose,
       pinned: function() { return pins.pinned; },
       // destroy takes its page listener away and hands the host
       // back as it was, for a document that goes before the page does (one
       // in a dialog, an editor that closes and opens again).
       destroy: function() {
-        closeReview();
-        clearUndo();
+        doc.destroy();
         pins.release();
-        if (document.removeEventListener) document.removeEventListener('selectionchange', onSelectionChange);
-        if (host.uiProposeText === propose) {
+        if (host.uiProposeText === doc.propose) {
           host.uiProposeText = undefined;
           if (host.removeAttribute) host.removeAttribute('data-ui-coauthor');
         }

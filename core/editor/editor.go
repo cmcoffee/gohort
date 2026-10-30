@@ -67,3 +67,17 @@ func DiffJS() string {
 func DiffCSS() string {
 	return asset("diff.css")
 }
+
+// CoauthorJS returns the co-authored document (coauthor.js): a highlighted
+// passage, a proposed change reviewed in the document's place, Apply and
+// Undo. Global like DiffJS and loaded after it, by the core/ui runtime and by
+// an app page's frame.
+func CoauthorJS() string {
+	return asset("coauthor.js")
+}
+
+// CoauthorCSS returns the styles for the review and its Undo, with fallbacks
+// for a page that has none of the runtime's theme.
+func CoauthorCSS() string {
+	return asset("coauthor.css")
+}

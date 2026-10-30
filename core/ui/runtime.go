@@ -56,6 +56,10 @@ func assembleRuntimeJS() string {
 	// the one app that did.
 	b.WriteString(editor.DiffJS())
 	b.WriteString("\n")
+	// And the co-authored document after it (uiCoauthor is built on it),
+	// global for the same reason: an app page's frame loads it too.
+	b.WriteString(editor.CoauthorJS())
+	b.WriteString("\n")
 	for _, n := range names {
 		data, err := runtimeJSParts.ReadFile(dir + "/" + n)
 		if err != nil {

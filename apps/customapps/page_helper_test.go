@@ -154,3 +154,131 @@ window.app.action("extract", {case: "CASE-1"}, {onProgress: function(p) { seen.p
 		}
 	}
 }
+
+// app.coauthor, run in node through the frame's whole prelude (window.app,
+// core/editor's diff and coauthor, the kit) against a small DOM: highlighting
+// shows the chip, ask sends the document and the passage to propose, the
+// change opens in the document's place, and Apply writes it and lets the
+// passage go. A change whose passage is gone is refused.
+func TestAPagesDocumentIsCoauthoredThroughTheKit(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not installed")
+	}
+	var scripts []string
+	for rest := appPagePrelude; ; {
+		i := strings.Index(rest, "<script>")
+		if i < 0 {
+			break
+		}
+		j := strings.Index(rest[i:], "</script>")
+		scripts = append(scripts, rest[i+len("<script>"):i+j])
+		rest = rest[i+j:]
+	}
+	if len(scripts) != 2 {
+		t.Fatalf("the prelude has %d scripts, want the helper and the kit", len(scripts))
+	}
+	harness := `
+function node(tag) {
+  var n = {tagName: tag.toUpperCase(), children: [], style: {}, on: {}, attrs: {}, parentNode: null, textContent: "", className: ""};
+  n.setAttribute = function(k, v) { n.attrs[k] = v; };
+  n.addEventListener = function(t, f) { (n.on[t] = n.on[t] || []).push(f); };
+  n.removeEventListener = function(t, f) { n.on[t] = (n.on[t] || []).filter(function(g) { return g !== f; }); };
+  n.fire = function(t, e) { (n.on[t] || []).slice().forEach(function(f) { f(e || {type: t}); }); };
+  n.dispatchEvent = function(e) { n.fire(e.type, e); };
+  n.appendChild = function(c) { c.parentNode = n; n.children.push(c); return c; };
+  n.insertBefore = function(c, ref) { c.parentNode = n; var i = ref ? n.children.indexOf(ref) : -1; if (i < 0) n.children.push(c); else n.children.splice(i, 0, c); return c; };
+  n.removeChild = function(c) { n.children.splice(n.children.indexOf(c), 1); c.parentNode = null; };
+  n.querySelector = function() { return null; };
+  Object.defineProperty(n, "innerHTML", {set: function(v) { n.children = []; n.html = v; }, get: function() { return n.html || ""; }});
+  return n;
+}
+function text(n) { return (n.textContent || "") + (n.html || "") + n.children.map(text).join(""); }
+function find(n, pred) { if (pred(n)) return n; for (var i = 0; i < n.children.length; i++) { var f = find(n.children[i], pred); if (f) return f; } return null; }
+var docListeners = {};
+var document = {activeElement: null,
+  createElement: node,
+  createTextNode: function(s) { var t = node("#text"); t.textContent = s; return t; },
+  addEventListener: function(t, f) { (docListeners[t] = docListeners[t] || []).push(f); },
+  removeEventListener: function() {}};
+global.window = global;
+global.document = document;
+global.Event = function(type) { this.type = type; };
+var calls = [], answer = {};
+function resp(body) { return {ok: true, status: 200, text: function() { return Promise.resolve(JSON.stringify(body)); }}; }
+global.fetch = function(u, o) { calls.push(u + " " + (o && o.body || "")); return Promise.resolve(resp(answer)); };
+// As a browser runs a <script>: its declarations are globals.
+var vm = require("vm"), fs = require("fs");
+vm.runInThisContext(fs.readFileSync(__dirname + "/helper.js", "utf8"));
+vm.runInThisContext(fs.readFileSync(__dirname + "/kit.js", "utf8"));
+var out = {};
+var page = node("div"), ask = node("div"), ta = node("textarea");
+page.appendChild(ta);
+ta.value = "Verse one\nNeon on the water\nCity never sleeps\n";
+ta.offsetHeight = 300;
+ta.focus = function() {};
+ta.setSelectionRange = function(s, e) { ta.selectionStart = s; ta.selectionEnd = e; };
+var saw = [];
+ta.addEventListener("input", function() { saw.push("input"); });
+try { window.app.coauthor(node("div")); } catch (e) { out.notTextarea = e.message; }
+var doc = window.app.coauthor(ta, {chip: ask, onSelect: function(s) { saw.push(s ? "sel:" + s.text : "sel:none"); }});
+ta.selectionStart = 10; ta.selectionEnd = 27;
+ta.fire("mouseup");
+setTimeout(function() {
+  out.chip = text(ask);
+  out.selection = doc.selection();
+  answer = {reply: "Darker.", edit: {find: "Neon on the water", replace: "Ash on the water", summary: "darker image"}};
+  doc.ask("make it darker", {history: [{role: "user", text: "a night song"}]}).then(function(r) {
+    out.ask = r;
+    out.sent = calls[0];
+    out.hidden = ta.style.display;
+    var review = page.children[0];
+    out.review = review.className + " | " + text(review).slice(0, 40);
+    out.diff = text(review).indexOf("editor-diff-remove") >= 0 ? "editor-diff-remove" : "no diff";
+    find(review, function(n) { return n.tagName === "BUTTON" && text(n) === "Apply"; }).fire("click");
+    out.value = ta.value;
+    out.shown = ta.style.display;
+    out.chipAfter = text(ask);
+    out.undo = text(page);
+    answer = {reply: "Done.", edit: {find: "Stars on the river", replace: "x"}};
+    return doc.ask("again");
+  }).then(function(r) {
+    out.gone = r;
+    out.saw = saw;
+    console.log(JSON.stringify(out));
+  }).catch(function(e) { console.log("ERR " + e.stack); });
+}, 5);
+`
+	dir := t.TempDir()
+	for name, src := range map[string]string{"helper.js": scripts[0], "kit.js": scripts[1], "run.js": harness} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f := filepath.Join(dir, "run.js")
+	b, err := exec.Command(node, f).CombinedOutput()
+	if err != nil {
+		t.Fatalf("node: %v\n%s", err, b)
+	}
+	got := string(b)
+	for _, want := range []string{
+		`"notTextarea":"app.coauthor takes a <textarea>"`,
+		`"chip":"×Highlighted: “Neon on the water”"`,
+		`"selection":{"text":"Neon on the water","start":10,"end":27}`,
+		`propose {\"document\":\"Verse one\\nNeon on the water\\nCity never sleeps\\n\",\"prompt\":\"make it darker\",\"selection\":{\"text\":\"Neon on the water\",\"start\":10,\"end\":27},\"history\":[{\"role\":\"user\",\"text\":\"a night song\"}]}`,
+		`"ask":{"reply":"Darker.","proposed":true,"reason":""}`,
+		`"hidden":"none"`,
+		`"review":"ui-coauthor-review ui-coauthor-review-inplace | darker image+1 −1ApplyReject`,
+		`editor-diff-remove`,
+		`"value":"Verse one\nAsh on the water\nCity never sleeps\n"`,
+		`"shown":""`,
+		`"chipAfter":""`,
+		`Applied.Undo`,
+		`"gone":{"reply":"Done.","proposed":false,"reason":"That passage is no longer in the document`,
+		`"saw":["sel:Neon on the water","input","sel:none"]`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %s in\n%s", want, got)
+		}
+	}
+}

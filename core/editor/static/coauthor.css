@@ -1,0 +1,25 @@
+/* coauthor.css: a proposed change reviewed in a document's place, and the
+ * Undo after it is applied (coauthor.js). Loaded with diff.css by the core/ui
+ * runtime and by an app page's frame, which has none of the runtime's theme,
+ * so every token carries a fallback. */
+.ui-coauthor-review, .ui-coauthor-undo {
+  border: 1px solid var(--border, #30363d); border-left: 3px solid var(--accent, #7c83ff);
+  border-radius: 8px; background: var(--bg-2, #161b22); margin: 0.4rem 0;
+  font-size: var(--fs-sm, 0.875rem);
+}
+.ui-coauthor-review-h, .ui-coauthor-undo {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 0.6rem; padding: 0.45rem 0.6rem;
+}
+.ui-coauthor-review-title { flex: 1 1 12rem; color: var(--text, #c9d1d9); min-width: 0; }
+.ui-coauthor-review-stats { color: var(--text-mute, #8b949e); font-size: var(--fs-xs, 0.75rem); }
+.ui-coauthor-review-note { padding: 0 0.6rem 0.4rem; color: var(--warn, var(--text, #d29922)); }
+.ui-coauthor-review-body { max-height: 40vh; overflow: auto; border-top: 1px solid var(--border, #30363d); margin: 0; }
+/* In the document's place: as tall as the editor it stands in for, the diff
+ * filling it and scrolling inside, unchanged lines and all. */
+.ui-coauthor-review-inplace {
+  display: flex; flex-direction: column; box-sizing: border-box;
+  min-height: 12rem; margin: 0;
+}
+.ui-coauthor-review-inplace .ui-coauthor-review-h { flex: 0 0 auto; }
+.ui-coauthor-review-inplace .ui-coauthor-review-body { flex: 1 1 auto; min-height: 0; max-height: none; }
+.ui-coauthor-review-body .editor-diff { max-height: none; margin: 0; border: 0; border-radius: 0; }

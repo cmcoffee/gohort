@@ -257,6 +257,8 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 		T.handleAction(w, r, ownerUser, user, appdb, spec, strings.TrimPrefix(rest, "action/"))
 	case rest == "ask":
 		T.handleAsk(w, r, T.recordBase(spec, ownerUser), ownerUser, user, spec)
+	case rest == "propose":
+		T.handlePropose(w, r, T.recordBase(spec, ownerUser), ownerUser, user, spec)
 	case rest == "chat" || strings.HasPrefix(rest, "chat/"):
 		// The app's chat surface: a chat section's AgentLoopPanel points at
 		// chat/* and these dispatch into orchestrate's PublicHandle* methods,
@@ -1947,7 +1949,7 @@ func (T *CustomApps) handleAssetWrite(w http.ResponseWriter, r *http.Request, us
 // appOwnPaths are the relative endpoints an app's own page HTML may still
 // reach from inside its sandbox: its data sources and actions, its records,
 // and its assets. Nothing else in gohort.
-var appOwnPaths = []string{"data/", "action/", "action-progress/", "action-cancel/", "actions", "records", "record", "file", "files", "assets", "shared/", "changes", "ask", "view-state"}
+var appOwnPaths = []string{"data/", "action/", "action-progress/", "action-cancel/", "actions", "records", "record", "file", "files", "assets", "shared/", "changes", "ask", "propose", "view-state"}
 
 // navigationKeys name URLs the runtime follows as a link, never fetches.
 var navigationKeys = map[string]bool{"href": true, "footer_url": true, "back_url": true, "home_url": true, "redirect_url": true}
@@ -2035,7 +2037,7 @@ func isolateAppHTML(page json.RawMessage, base ...string) json.RawMessage {
 			if typ, _ := t["type"].(string); typ == "card" || typ == "frame" {
 				t["isolate"] = true
 				t["isolate_fetch"] = appOwnPaths
-				t["isolate_prelude"] = appPageHelper
+				t["isolate_prelude"] = appPagePrelude
 			}
 			// The two other ways a page writes HTML on this origin, both on
 			// the document workbench: a record body taken as HTML, and a

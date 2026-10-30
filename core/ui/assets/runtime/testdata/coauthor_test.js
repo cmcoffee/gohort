@@ -92,7 +92,9 @@ global.setTimeout = function(f) { f(); };
 // The diff ships ahead of the runtime (core/ui/runtime.go), its functions global.
 var diffSrc = fs.readFileSync(dir + '/../../../editor/static/diff.js', 'utf8');
 new Function('window', diffSrc + '\nwindow.editorDiffStats = editorDiffStats; window.editorDiffRender = editorDiffRender; window.editorDiffOps = editorDiffLines; window.editorDiffLines = editorDiffLines; window.editorDiffEscape = editorDiffEscape;')(window);
-var src = fs.readFileSync(dir + '/47_coauthor.js', 'utf8');
+// So does core/editor's coauthor.js, the document half uiCoauthor is built on.
+var src = fs.readFileSync(dir + '/../../../editor/static/coauthor.js', 'utf8') + '\n' +
+  fs.readFileSync(dir + '/47_coauthor.js', 'utf8');
 var lib = new Function('el', 'window', 'document', src +
   '\nreturn {locate: coauthorLocate, replace: coauthorReplace, label: coauthorLabel, parts: coauthorReviewParts};')(el, window, document);
 
