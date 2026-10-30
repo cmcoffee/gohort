@@ -1516,6 +1516,7 @@ func runActionAndPersist(owner string, ownerDB, udb Database, spec AppSpec, act 
 		Shared       map[string][]map[string]any `json:"shared"`
 		SharedDelete map[string][]string         `json:"shared_delete"`
 		Result       any                         `json:"result"`
+		Files        []actionFile                `json:"files"`
 	}
 	// The reply is the LAST JSON object the script printed. A long action
 	// prints progress lines as it goes so a person (and the no-output limit)
@@ -1523,7 +1524,7 @@ func runActionAndPersist(owner string, ownerDB, udb Database, spec AppSpec, act 
 	// together, so those lines come before the reply rather than instead of it.
 	trimmed := lastJSONObject(out)
 	if trimmed != "" && json.Unmarshal([]byte(trimmed), &result) != nil {
-		return res, fmt.Errorf("the action script must print a JSON object {message?, records?, result?, shared?, shared_delete?} to stdout (got %.200s)", trimmed)
+		return res, fmt.Errorf("the action script must print a JSON object {message?, records?, result?, shared?, shared_delete?, files?} to stdout (got %.200s)", trimmed)
 	}
 	// Keys outside the reply are dropped here, and the page shows nothing
 	// with no error anywhere; leave the reason in the log.
@@ -1544,6 +1545,7 @@ func runActionAndPersist(owner string, ownerDB, udb Database, spec AppSpec, act 
 		noteChange(sharedChangeKey(owner, spec.Slug))
 	}
 	tbl := recTable(spec.Slug)
+	recordWriteMu.Lock()
 	for _, rec := range result.Records {
 		if rec == nil {
 			continue
@@ -1556,20 +1558,37 @@ func runActionAndPersist(owner string, ownerDB, udb Database, spec AppSpec, act 
 		if _, ok := rec["created"]; !ok {
 			rec["created"] = time.Now().UTC().Format(time.RFC3339)
 		}
+		// The files a record keeps are the server's list, whatever the
+		// script printed for it (record_files.go).
+		var stored map[string]any
+		udb.Get(tbl, id, &stored)
+		keepStoredFiles(spec, stored, rec)
 		udb.Set(tbl, id, rec)
 		saved++
 		res.Records = append(res.Records, rec)
 	}
+	recordWriteMu.Unlock()
 	if saved > sharedN {
 		noteChange(recordsChangeKey(owner, spec.Slug, by))
 	}
+	// Files the script made, kept on the records they belong to.
+	kept, fileProblems := keepActionFiles(owner, by, udb, spec, result.Files)
+	if len(fileProblems) > 0 {
+		Log("[customapps] action %q/%q: %s", spec.Slug, act.Name, strings.Join(fileProblems, "; "))
+	}
 	msg := strings.TrimSpace(result.Message)
 	if msg == "" {
-		if saved > 0 {
+		switch {
+		case saved > 0:
 			msg = fmt.Sprintf("Done, %d record(s) updated.", saved)
-		} else {
+		case kept > 0:
+			msg = fmt.Sprintf("Done, %d file(s) kept.", kept)
+		default:
 			msg = "Done."
 		}
+	}
+	if len(fileProblems) > 0 {
+		msg += " " + strings.Join(fileProblems, ". ") + "."
 	}
 	if res.Records == nil {
 		res.Records = []map[string]any{}
@@ -1928,7 +1947,7 @@ func (T *CustomApps) handleAssetWrite(w http.ResponseWriter, r *http.Request, us
 // appOwnPaths are the relative endpoints an app's own page HTML may still
 // reach from inside its sandbox: its data sources and actions, its records,
 // and its assets. Nothing else in gohort.
-var appOwnPaths = []string{"data/", "action/", "action-progress/", "action-cancel/", "actions", "records", "record", "file", "assets", "shared/", "changes", "ask", "view-state"}
+var appOwnPaths = []string{"data/", "action/", "action-progress/", "action-cancel/", "actions", "records", "record", "file", "files", "assets", "shared/", "changes", "ask", "view-state"}
 
 // navigationKeys name URLs the runtime follows as a link, never fetches.
 var navigationKeys = map[string]bool{"href": true, "footer_url": true, "back_url": true, "home_url": true, "redirect_url": true}

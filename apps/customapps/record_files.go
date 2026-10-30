@@ -1,8 +1,10 @@
-// Files a workbench's records keep (core/appassets/record_files.go): what
-// the app's agent made for the open record and kept on it with keep_file,
-// such as each rendered take of a song. The record lists them in the field its
-// workbench names (files_field), the viewer plays them from file?id=&name=,
-// and the record's deletion takes them with it.
+// Files an app's records keep (core/appassets/record_files.go), such as each
+// rendered take of a song. A workbench's agent keeps one on the open record
+// with keep_file; an action script keeps what it made by naming it in its
+// reply ("files"); a page lists, plays and removes them through app.files.
+// The record lists them in one field: the one its workbench names
+// (files_field), else _files. They are served from file?id=&name=, listed at
+// files?id=, and go when the record does.
 //
 // The list is the server's: a save of the record (the whole-record save a
 // form makes, or the editor's merge) keeps the list as stored, whatever it
@@ -16,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -45,6 +48,16 @@ func workbenchFiles(spec AppSpec) (field, label, noun string) {
 		return f, firstNonEmpty(strings.TrimSpace(label), "Files"), firstNonEmpty(strings.TrimSpace(noun), "document")
 	}
 	return "", "", ""
+}
+
+// recordFilesField is the record field an app's kept files are listed in:
+// its workbench's files_field, else _files, so any app's records can keep
+// files without declaring anything.
+func recordFilesField(spec AppSpec) string {
+	if f, _, _ := workbenchFiles(spec); f != "" {
+		return f
+	}
+	return "_files"
 }
 
 // firstNonEmpty is the first of vals that is not blank.
@@ -81,10 +94,7 @@ func filesValue(files []appassets.RecordFile) []any {
 // keepStoredFiles puts the files list the stored record has back on rec,
 // which a save is about to write over it.
 func keepStoredFiles(spec AppSpec, stored, rec map[string]any) {
-	field, _, _ := workbenchFiles(spec)
-	if field == "" {
-		return
-	}
+	field := recordFilesField(spec)
 	if v, ok := stored[field]; ok {
 		rec[field] = v
 	} else {
@@ -174,10 +184,10 @@ func workbenchLabelField(spec AppSpec) string {
 // keeps, DELETE removes it from the record and the disk. Only a file the
 // record lists is served, from the folder of the person asking.
 func (T *CustomApps) handleRecordFile(w http.ResponseWriter, r *http.Request, appdb Database, spec AppSpec, owner, user string) {
-	field, _, _ := workbenchFiles(spec)
+	field := recordFilesField(spec)
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
 	name := strings.TrimSpace(r.URL.Query().Get("name"))
-	if field == "" || id == "" || name == "" {
+	if id == "" || name == "" {
 		http.NotFound(w, r)
 		return
 	}
@@ -255,4 +265,81 @@ func listsFile(rec map[string]any, field, name string) bool {
 		}
 	}
 	return false
+}
+
+// listRecordFiles is GET files?id=: the files a record keeps, each with the
+// URL that plays or opens it, for a page that lists them (app.files.list).
+func (T *CustomApps) listRecordFiles(a *appCall) (any, error) {
+	id, err := recordID(a)
+	if err != nil {
+		return nil, err
+	}
+	var rec map[string]any
+	if !a.appdb.Get(recTable(a.spec.Slug), id, &rec) {
+		return nil, jsonapi.NotFound("no record " + id)
+	}
+	out := []map[string]any{}
+	for _, f := range recordFiles(rec, recordFilesField(a.spec)) {
+		out = append(out, map[string]any{"name": f.Name, "title": f.Title, "type": f.Type, "size": f.Size, "added": f.Added,
+			"url": "file?id=" + url.QueryEscape(id) + "&name=" + url.QueryEscape(f.Name)})
+	}
+	return map[string]any{"files": out}, nil
+}
+
+// actionFile is one file an action script keeps on a record, named in its
+// reply: {"files": [{"record": "<id>", "file": "<path>", "title": "..."}]}.
+// file is in the script's working folder, where it wrote it.
+type actionFile struct {
+	Record string `json:"record"`
+	File   string `json:"file"`
+	Title  string `json:"title"`
+}
+
+// keepActionFiles keeps on their records the files an action's reply names,
+// for user, whose records the action wrote. It returns how many were kept and
+// a line for each that was not, which the action's message carries: the
+// records it saved stand either way.
+func keepActionFiles(owner, user string, udb Database, spec AppSpec, files []actionFile) (int, []string) {
+	if len(files) == 0 {
+		return 0, nil
+	}
+	ws, err := EnsureWorkspaceDir(owner)
+	if err != nil {
+		return 0, []string{"no file was kept: the script's folder is unavailable (" + err.Error() + ")"}
+	}
+	field := recordFilesField(spec)
+	tbl := recTable(spec.Slug)
+	kept := 0
+	var problems []string
+	recordWriteMu.Lock()
+	defer recordWriteMu.Unlock()
+	for _, f := range files {
+		id, file := strings.TrimSpace(f.Record), strings.TrimSpace(f.File)
+		if id == "" || file == "" {
+			problems = append(problems, "a file entry needs both record and file")
+			continue
+		}
+		var rec map[string]any
+		if !udb.Get(tbl, id, &rec) || rec == nil {
+			problems = append(problems, fmt.Sprintf("%s was not kept: there is no record %q", file, id))
+			continue
+		}
+		abs, err := ResolveWorkspacePath(ws, file)
+		if err != nil {
+			problems = append(problems, fmt.Sprintf("%s was not kept: %v", file, err))
+			continue
+		}
+		k, err := appassets.KeepRecordFile(owner, spec.Slug, user, id, abs, f.Title)
+		if err != nil {
+			problems = append(problems, fmt.Sprintf("%s was not kept: %v", file, err))
+			continue
+		}
+		rec[field] = filesValue(append(recordFiles(rec, field), k))
+		udb.Set(tbl, id, rec)
+		kept++
+	}
+	if kept > 0 {
+		noteChange(recordsChangeKey(owner, spec.Slug, user))
+	}
+	return kept, problems
 }

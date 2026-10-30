@@ -252,10 +252,10 @@ func (T *CustomApps) patchRecord(a *appCall, in map[string]any) (any, error) {
 	if !a.appdb.Get(tbl, id, &rec) || rec == nil {
 		return nil, jsonapi.NotFound("no record " + id)
 	}
-	files, _, _ := workbenchFiles(a.spec)
+	files := recordFilesField(a.spec)
 	for k, v := range in {
 		// The kept files are the server's list (record_files.go).
-		if k == a.spec.RecordKey || k == "created" || k == "id" || (files != "" && k == files) {
+		if k == a.spec.RecordKey || k == "created" || k == "id" || k == files {
 			continue
 		}
 		rec[k] = v

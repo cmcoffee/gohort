@@ -24,6 +24,12 @@ package customapps
 //	app.shared(name)              a shared collection's records
 //	app.ask(prompt, {json})       a question to the app's agent, its text
 //	app.asset(name)               the URL of one of the app's assets
+//	app.files.list(id)            the files a record keeps (a song's takes),
+//	                              each {name, title, type, size, added, url}
+//	app.files.url(id, name)       the URL that plays or opens one
+//	app.files.remove(id, name)    take one off the record and the disk
+//	                              (an action script keeps one by naming it
+//	                              in its reply: files:[{record, file, title}])
 //	app.onChange(fn)              fn() whenever records or shared data change
 //	                              (anyone's), until the returned stop() is called
 //	app.confirm(msg)              a question, true or false
@@ -58,6 +64,7 @@ records:{list:function(){return fetch("records").then(json);},save:function(r){r
 shared:function(n){return fetch("shared/"+encodeURIComponent(n)).then(json);},
 ask:function(p,o){return post("ask",{prompt:String(p),json:!!(o&&o.json)}).then(function(d){return d&&d.text;});},
 asset:function(n){return "assets/"+n;},
+files:{list:function(id){return fetch("files"+q({id:id})).then(json).then(function(d){return (d&&d.files)||[];});},url:function(id,n){return "file"+q({id:id,name:n});},remove:function(id,n){return fetch("file"+q({id:id,name:n}),{method:"DELETE"}).then(json);}},
 confirm:function(m){return window.uiConfirm(m);},alert:function(m){return window.uiAlert(m);},prompt:function(m,d){return window.uiPrompt(m,d);},
 onChange:function(fn){var v=null,stop=false;
 (function loop(){if(stop)return;var s=v||{shared:"",records:""};

@@ -12,6 +12,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/appassets"
+	"github.com/cmcoffee/gohort/tools/appscript"
 )
 
 // songsWithTakes is a co-authored workbench whose songs keep their takes.
@@ -165,5 +166,70 @@ func TestKeepFileComesWithAFilesField(t *testing.T) {
 	}
 	if f, _, _ := workbenchFiles(AppSpec{BodyField: "lyrics", Sections: json.RawMessage(`[{"kind":"workbench"}]`)}); f != "" {
 		t.Errorf("no files field: %q", f)
+	}
+}
+
+// An app with no workbench, a page of its own, keeps files on its records
+// too: an action names what it made in its reply, the record lists it under
+// _files, the page lists and plays it, and a later save of the record by the
+// action keeps the list as stored.
+func TestAnActionKeepsWhatItMadeOnItsRecord(t *testing.T) {
+	prev := appassets.RecordFilesDir()
+	appassets.SetRecordFilesDir(t.TempDir())
+	t.Cleanup(func() { appassets.SetRecordFilesDir(prev) })
+	T := sharingTestApp(t)
+	spec := AppSpec{Slug: "studio", Name: "Studio", Owner: "u", RecordKey: "id",
+		Sections: json.RawMessage(`[{"kind":"html","html":"<p>songs</p>"}]`),
+		Actions:  []AppAction{{Name: "render", Script: "print('x')"}}}
+	SaveAppSpec(spec)
+	if w := appAs(t, T, spec, "u", httptest.NewRequest("POST", "/apps/studio/records", strings.NewReader(`{"id":"s1","title":"Money in the Cloud"}`))); w.Code != http.StatusOK {
+		t.Fatalf("seed: %d %s", w.Code, w.Body.String())
+	}
+	ws, err := EnsureWorkspaceDir("u")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ws, "take.mp3"), []byte("ID3\x04\x00\x00\x00\x00\x00\x00take"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	prevRun := runAppScript
+	t.Cleanup(func() { runAppScript = prevRun })
+	runAppScript = func(j appscript.Job) (string, error) {
+		return `{"records":[{"id":"s1","title":"Money in the Cloud","_files":[]}],` +
+			`"files":[{"record":"s1","file":"take.mp3","title":"Slow take"},{"record":"nope","file":"take.mp3"},{"record":"s1","file":"notes.txt"}]}`, nil
+	}
+	db := T.recordBase(spec, "u")
+	res, err := runActionAndPersist("u", db, db, spec, spec.Actions[0], map[string]any{}, "u", scriptRun{Interactive: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(res.Message, `there is no record "nope"`) || !strings.Contains(res.Message, "notes.txt was not kept") {
+		t.Errorf("the message says what was not kept: %q", res.Message)
+	}
+	w := appAs(t, T, spec, "u", httptest.NewRequest("GET", "/apps/studio/files?id=s1", nil))
+	var got struct {
+		Files []map[string]any `json:"files"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &got)
+	if len(got.Files) != 1 || got.Files[0]["title"] != "Slow take" || got.Files[0]["url"] != "file?id=s1&name=take.mp3" {
+		t.Fatalf("files: %d %s", w.Code, w.Body.String())
+	}
+	if w := appAs(t, T, spec, "u", httptest.NewRequest("GET", "/apps/studio/file?id=s1&name=take.mp3", nil)); w.Code != http.StatusOK || !strings.HasSuffix(w.Body.String(), "take") {
+		t.Errorf("the page plays it: %d", w.Code)
+	}
+	// The same action run again, printing the record without its files.
+	runAppScript = func(j appscript.Job) (string, error) {
+		return `{"records":[{"id":"s1","title":"Money in the Cloud, revised"}]}`, nil
+	}
+	if _, err := runActionAndPersist("u", db, db, spec, spec.Actions[0], map[string]any{}, "u", scriptRun{Interactive: true}); err != nil {
+		t.Fatal(err)
+	}
+	var rec map[string]any
+	db.Get(recTable("studio"), "s1", &rec)
+	if len(recordFiles(rec, "_files")) != 1 || rec["title"] != "Money in the Cloud, revised" {
+		t.Errorf("the action's save kept the files list: %v", rec)
+	}
+	if w := appAs(t, T, spec, "u", httptest.NewRequest("DELETE", "/apps/studio/file?id=s1&name=take.mp3", nil)); w.Code != http.StatusOK {
+		t.Errorf("the page removes it: %d %s", w.Code, w.Body.String())
 	}
 }
