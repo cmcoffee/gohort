@@ -207,9 +207,19 @@ func (t *WebSearchTool) runWithSession(args map[string]any, sess *ToolSession) (
 	// make a shared key look like the peer was spending all of it.
 	recordSearchCost(cfg, provider)
 	if err == nil && result != "" && result != "No results found." {
+		result = renderPublished(result, sessLocation(sess), time.Now())
 		Debug("[web_search] results:\n%s", result)
 	}
 	return result, err
+}
+
+// sessLocation is the zone of the user a tool runs for, the deployment's
+// when there is none.
+func sessLocation(sess *ToolSession) *time.Location {
+	if sess == nil {
+		return time.Local
+	}
+	return UserLocation(sess.Username)
 }
 
 // FetchURLTool is the chat tool for reading the full text of a specific
@@ -488,7 +498,8 @@ func (t *FetchURLTool) runImpl(args map[string]any, sess *ToolSession) (string, 
 		Debug("[fetch_url] low-yield result for %s: %s", target, note)
 	}
 	Debug("[fetch_url] %s → %d chars", target, len(text))
-	return fmt.Sprintf("%sFetched %s%s (%d chars):\n\n%s%s%s%s", lead, target, via, len(text), text, imagesNote, suffix, claim), nil
+	published := publishedLine(meta.PubDate, sessLocation(sess), time.Now())
+	return fmt.Sprintf("%sFetched %s%s (%d chars):\n\n%s%s%s%s%s", lead, target, via, len(text), published, text, imagesNote, suffix, claim), nil
 }
 
 // blockedFetch names why a plain fetch of a page looks refused rather than
@@ -1134,6 +1145,8 @@ type braveResponse struct {
 			Title       string `json:"title"`
 			URL         string `json:"url"`
 			Description string `json:"description"`
+			PageAge     string `json:"page_age"` // ISO stamp
+			Age         string `json:"age"`      // "September 28, 2026" or "3 days ago"
 		} `json:"results"`
 	} `json:"web"`
 }
@@ -1175,7 +1188,11 @@ func searchBrave(query string, apiKey string) (string, error) {
 
 	var results []string
 	for i, r := range result.Web.Results {
-		results = append(results, fmt.Sprintf("%d. %s\n   %s\n   %s", i+1, r.Title, r.URL, r.Description))
+		date := r.PageAge
+		if date == "" {
+			date = r.Age
+		}
+		results = append(results, fmt.Sprintf("%d. %s\n   %s\n   %s%s", i+1, r.Title, r.URL, publishedTag(date), r.Description))
 	}
 
 	if len(results) == 0 {
@@ -1190,6 +1207,7 @@ type serperResponse struct {
 		Title   string `json:"title"`
 		Link    string `json:"link"`
 		Snippet string `json:"snippet"`
+		Date    string `json:"date"` // "Sep 28, 2026" or "3 days ago"
 	} `json:"organic"`
 }
 
@@ -1237,7 +1255,7 @@ func searchSerper(query string, apiKey string) (string, error) {
 
 	var results []string
 	for i, r := range result.Organic {
-		results = append(results, fmt.Sprintf("%d. %s\n   %s\n   %s", i+1, r.Title, r.Link, r.Snippet))
+		results = append(results, fmt.Sprintf("%d. %s\n   %s\n   %s%s", i+1, r.Title, r.Link, publishedTag(r.Date), r.Snippet))
 	}
 
 	if len(results) == 0 {
@@ -1312,9 +1330,10 @@ func searchGoogle(query string, apiKey string) (string, error) {
 // SearXNG response types.
 type searxngResponse struct {
 	Results []struct {
-		Title   string `json:"title"`
-		URL     string `json:"url"`
-		Content string `json:"content"`
+		Title         string `json:"title"`
+		URL           string `json:"url"`
+		Content       string `json:"content"`
+		PublishedDate any    `json:"publishedDate"` // a stamp, or null
 	} `json:"results"`
 }
 
@@ -1381,7 +1400,8 @@ func searchSearXNG(sr SearchRequest) (string, error) {
 		if i >= 8 {
 			break
 		}
-		results = append(results, fmt.Sprintf("%d. %s\n   %s\n   %s", i+1, r.Title, r.URL, r.Content))
+		date, _ := r.PublishedDate.(string)
+		results = append(results, fmt.Sprintf("%d. %s\n   %s\n   %s%s", i+1, r.Title, r.URL, publishedTag(date), r.Content))
 	}
 
 	if len(results) == 0 {
@@ -1506,6 +1526,9 @@ func fetchArticleInternal(target_url string, max_chars int) (string, SourceMeta,
 		meta = extractMeta(html_str, meta)
 		meta.Images = textutil.PageImages(html_str, parsed, pageImageCap)
 		article, rerr := readability.FromReader(strings.NewReader(html_str), parsed)
+		if rerr == nil && meta.PubDate == "" && article.PublishedTime != nil {
+			meta.PubDate = article.PublishedTime.Format(time.RFC3339)
+		}
 		if rerr == nil && strings.TrimSpace(article.TextContent) != "" {
 			text = strings.TrimSpace(article.TextContent)
 			if meta.Title == "" && article.Title != "" {
@@ -1578,6 +1601,9 @@ func extractMetaContent(html string, attr string, value string) string {
 	return ""
 }
 
+// jsonLDDatePublishedRE reads datePublished out of a page's JSON-LD.
+var jsonLDDatePublishedRE = regexp.MustCompile(`"datePublished"\s*:\s*"([^"]{8,40})"`)
+
 // extractMeta parses HTML meta tags for article metadata.
 func extractMeta(html string, meta SourceMeta) SourceMeta {
 	// Title: og:title > <title>
@@ -1617,6 +1643,11 @@ func extractMeta(html string, meta SourceMeta) SourceMeta {
 		meta.PubDate = d
 	} else if d := extractMetaContent(html, "property", "datePublished"); d != "" {
 		meta.PubDate = d
+	} else if d := extractMetaContent(html, "itemprop", "datePublished"); d != "" {
+		meta.PubDate = d
+	} else if m := jsonLDDatePublishedRE.FindStringSubmatch(html); m != nil {
+		// Many news pages state the date only in their JSON-LD.
+		meta.PubDate = m[1]
 	}
 
 	return meta

@@ -1,16 +1,22 @@
 // Package datemath provides a chat tool for computing date differences
-// and adding/subtracting day offsets from a given date. Complements the
-// timezone tool (current time + zone conversion): datemath answers
-// "how far between X and Y" and "X plus N days."
+// and adding/subtracting day offsets from a given date, and for reading Unix
+// timestamps. Complements the timezone tool (current time + zone conversion):
+// datemath answers "how far between X and Y", "X plus N days" and "when was
+// 1793305971".
 package datemath
 
 import (
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
+
+// now is the clock "ago" counts from; a var so a test can fix it.
+var now = time.Now
 
 func init() { RegisterChatTool(new(DateMathTool)) }
 
@@ -24,39 +30,73 @@ func (t *DateMathTool) Name() string       { return "date_math" }
 func (t *DateMathTool) Caps() []Capability { return []Capability{CapRead} } // pure transform, no side effects
 
 func (t *DateMathTool) Desc() string {
-	return `Compute date arithmetic. Two operations:
+	return `Compute date arithmetic, and read Unix timestamps. Three operations:
 - operation="diff", date1, date2 → days between the two dates (date2 relative to date1).
 - operation="add", date1, days → add days to date1 (days may be negative to subtract).
-Dates accept YYYY-MM-DD, "April 16, 2026", "Apr 16, 2026", or "04/16/2026".`
+- operation="unix", value → a Unix timestamp as a date and time in the user's zone, with how long ago it was; or a date or date-time as its timestamp. Use this for any epoch value in an API response or a log rather than converting it yourself.
+Dates accept YYYY-MM-DD, "April 16, 2026", "Apr 16, 2026", "04/16/2026", or a Unix timestamp in seconds, milliseconds or microseconds ("1793305971", "1793305971123", Slack's "1793305971.123456").`
 }
 
 func (t *DateMathTool) Params() map[string]ToolParam {
 	return map[string]ToolParam{
-		"operation": {Type: "string", Description: `"diff" for days between two dates, or "add" for offset from a date.`},
-		"date1":     {Type: "string", Description: "First date (for diff) or base date (for add). YYYY-MM-DD or common formats."},
+		"operation": {Type: "string", Description: `"diff" for days between two dates, "add" for offset from a date, or "unix" to read or make a Unix timestamp.`},
+		"date1":     {Type: "string", Description: "First date (for diff) or base date (for add). YYYY-MM-DD, common formats, or a Unix timestamp."},
 		"date2":     {Type: "string", Description: "Second date: diff only."},
 		"days":      {Type: "integer", Description: "Days to add: add only. Negative subtracts."},
+		"value":     {Type: "string", Description: `unix only: a timestamp to read ("1793305971"), or a date or date-time to turn into one ("2026-10-29 15:12", "2026-10-29T22:12:51Z").`},
 	}
 }
 
 func (t *DateMathTool) Run(args map[string]any) (string, error) {
+	return t.run(args, time.Local)
+}
+
+// RunWithSession reads dates in the zone of the user it runs for, so a
+// timestamp's day and time are theirs.
+func (t *DateMathTool) RunWithSession(args map[string]any, sess *ToolSession) (string, error) {
+	loc := time.Local
+	if sess != nil {
+		loc = UserLocation(sess.Username)
+	}
+	return t.run(args, loc)
+}
+
+func (t *DateMathTool) run(args map[string]any, loc *time.Location) (string, error) {
 	op := strings.ToLower(strings.TrimSpace(asString(args["operation"])))
 	if op == "" {
-		return "", fmt.Errorf(`operation is required ("diff" or "add")`)
+		return "", fmt.Errorf(`operation is required ("diff", "add" or "unix")`)
 	}
 
 	switch op {
+	case "unix":
+		v := strings.TrimSpace(asString(args["value"]))
+		if v == "" {
+			v = strings.TrimSpace(asString(args["date1"]))
+		}
+		if v == "" {
+			return "", fmt.Errorf("unix requires value: a timestamp, or a date or date-time")
+		}
+		if ts, ok := parseUnix(v); ok {
+			return fmt.Sprintf("%s = %s (%s UTC), %s", v, ts.In(loc).Format("Mon, Jan 2, 2006 3:04:05 PM MST"),
+				ts.UTC().Format("2006-01-02 15:04:05"), ago(ts, now())), nil
+		}
+		ts, err := parseDateTime(v, loc)
+		if err != nil {
+			return "", fmt.Errorf("value: %w", err)
+		}
+		return fmt.Sprintf("%s = %d (seconds), %d (milliseconds)", ts.Format("Mon, Jan 2, 2006 3:04:05 PM MST"), ts.Unix(), ts.UnixMilli()), nil
+
 	case "diff":
 		d1str := asString(args["date1"])
 		d2str := asString(args["date2"])
 		if d1str == "" || d2str == "" {
 			return "", fmt.Errorf("diff requires date1 and date2")
 		}
-		d1, err := parseDate(d1str)
+		d1, err := parseDateIn(d1str, loc)
 		if err != nil {
 			return "", fmt.Errorf("date1: %w", err)
 		}
-		d2, err := parseDate(d2str)
+		d2, err := parseDateIn(d2str, loc)
 		if err != nil {
 			return "", fmt.Errorf("date2: %w", err)
 		}
@@ -90,7 +130,7 @@ func (t *DateMathTool) Run(args map[string]any) (string, error) {
 		if !ok {
 			return "", fmt.Errorf("days is required (integer; negative subtracts)")
 		}
-		d, err := parseDate(dstr)
+		d, err := parseDateIn(dstr, loc)
 		if err != nil {
 			return "", fmt.Errorf("date1: %w", err)
 		}
@@ -107,7 +147,106 @@ func (t *DateMathTool) Run(args map[string]any) (string, error) {
 		), nil
 	}
 
-	return "", fmt.Errorf(`unsupported operation %q (use "diff" or "add")`, op)
+	return "", fmt.Errorf(`unsupported operation %q (use "diff", "add" or "unix")`, op)
+}
+
+// unixRE is a Unix timestamp: seconds, milliseconds, microseconds or
+// nanoseconds, told apart by their length, with an optional fraction of a
+// second (Slack's message ids are "1793305971.123456").
+var unixRE = regexp.MustCompile(`^(\d{9,10}|\d{12,13}|\d{15,16}|\d{18,19})(\.\d{1,9})?$`)
+
+// parseUnix reads a Unix timestamp. ok is false for anything that is not one.
+func parseUnix(s string) (time.Time, bool) {
+	m := unixRE.FindStringSubmatch(strings.TrimSpace(s))
+	if m == nil {
+		return time.Time{}, false
+	}
+	n, err := strconv.ParseInt(m[1], 10, 64)
+	if err != nil {
+		return time.Time{}, false
+	}
+	var t time.Time
+	switch len(m[1]) {
+	case 9, 10:
+		t = time.Unix(n, 0)
+		if m[2] != "" {
+			frac, _ := strconv.ParseFloat("0"+m[2], 64)
+			t = t.Add(time.Duration(frac * float64(time.Second)))
+		}
+	case 12, 13:
+		t = time.UnixMilli(n)
+	case 15, 16:
+		t = time.UnixMicro(n)
+	default:
+		t = time.Unix(0, n)
+	}
+	return t, true
+}
+
+// parseDateIn is parseDate that also takes a Unix timestamp, read as the day
+// it falls on in loc.
+func parseDateIn(s string, loc *time.Location) (time.Time, error) {
+	if ts, ok := parseUnix(s); ok {
+		l := ts.In(loc)
+		return time.Date(l.Year(), l.Month(), l.Day(), 0, 0, 0, 0, time.UTC), nil
+	}
+	return parseDate(s)
+}
+
+// parseDateTime reads a date, or a date and time, for unix: a stamp with a
+// zone keeps it; one without is read in loc, and a bare date is its midnight.
+func parseDateTime(s string, loc *time.Location) (time.Time, error) {
+	s = strings.TrimSpace(s)
+	for _, l := range []string{time.RFC3339Nano, "2006-01-02T15:04:05Z0700", time.RFC1123Z, time.RFC1123} {
+		if t, err := time.Parse(l, s); err == nil {
+			return t, nil
+		}
+	}
+	for _, l := range []string{"2006-01-02T15:04:05", "2006-01-02 15:04:05", "2006-01-02T15:04", "2006-01-02 15:04", "2006-01-02 3:04 PM", "2006-01-02 3:04PM"} {
+		if t, err := time.ParseInLocation(l, s, loc); err == nil {
+			return t, nil
+		}
+	}
+	d, err := parseDate(s)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, loc), nil
+}
+
+// ago says how long before (or after) now t is, in the largest unit that
+// reads naturally and rounded to the nearest one: "2 hours ago", "in 3 days".
+// Rounded, not cut: 1h59m before is "2 hours ago".
+func ago(t, now time.Time) string {
+	d := now.Sub(t)
+	future := d < 0
+	if future {
+		d = -d
+	}
+	in := func(unit time.Duration) int { return int((d + unit/2) / unit) }
+	var n int
+	var unit string
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		n, unit = in(time.Minute), "minute"
+	case d < 48*time.Hour:
+		n, unit = in(time.Hour), "hour"
+	case d < 60*24*time.Hour:
+		n, unit = in(24*time.Hour), "day"
+	case d < 730*24*time.Hour:
+		n, unit = in(30*24*time.Hour), "month"
+	default:
+		n, unit = in(365*24*time.Hour), "year"
+	}
+	if n != 1 {
+		unit += "s"
+	}
+	if future {
+		return fmt.Sprintf("in %d %s", n, unit)
+	}
+	return fmt.Sprintf("%d %s ago", n, unit)
 }
 
 // parseDate accepts several common formats. Order matters — more

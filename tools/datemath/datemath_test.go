@@ -3,6 +3,7 @@ package datemath
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDateMath_diffISO(t *testing.T) {
@@ -172,5 +173,58 @@ func TestDateMath_weekdayInOutput(t *testing.T) {
 	// April 16, 2026 is a Thursday.
 	if !strings.Contains(out, "Thu") {
 		t.Errorf("expected Thu in weekday output, got %q", out)
+	}
+}
+
+// A Unix timestamp reads as a date and time in the reader's zone, with how
+// long ago it was, whatever its unit; a date reads back as its timestamp.
+func TestDateMath_unix(t *testing.T) {
+	la, err := time.LoadLocation("America/Los_Angeles")
+	if err != nil {
+		t.Skip("no zone data")
+	}
+	prev := now
+	now = func() time.Time { return time.Unix(1793305971, 0).Add(2 * time.Hour) }
+	t.Cleanup(func() { now = prev })
+	tool := &DateMathTool{}
+	for _, v := range []string{"1793305971", "1793305971000", "1793305971000000", "1793305971.123456"} {
+		out, err := tool.run(map[string]any{"operation": "unix", "value": v}, la)
+		if err != nil {
+			t.Fatalf("%s: %v", v, err)
+		}
+		if !strings.Contains(out, "Thu, Oct 29, 2026 1:32:51 PM PDT") || !strings.Contains(out, "2026-10-29 20:32:51 UTC") || !strings.Contains(out, "2 hours ago") {
+			t.Errorf("%s: %q", v, out)
+		}
+	}
+	for _, c := range []struct{ in, want string }{
+		{"2026-10-29 13:32:51", "1793305971 (seconds)"},
+		{"2026-10-29T20:32:51Z", "1793305971 (seconds)"},
+		{"2026-10-29", "1793257200 (seconds)"},
+	} {
+		out, err := tool.run(map[string]any{"operation": "unix", "value": c.in}, la)
+		if err != nil || !strings.Contains(out, c.want) {
+			t.Errorf("%s: %q %v", c.in, out, err)
+		}
+	}
+	if _, err := tool.run(map[string]any{"operation": "unix", "value": "soon"}, la); err == nil {
+		t.Error("a value that is neither should be refused")
+	}
+	if _, err := tool.run(map[string]any{"operation": "unix"}, la); err == nil {
+		t.Error("no value should be refused")
+	}
+
+	// In diff and add, a timestamp is the day it falls on for the reader:
+	// 8:32 PM UTC on Oct 29 is still Oct 29 in Los Angeles, Oct 30 in Tokyo.
+	out, err := tool.run(map[string]any{"operation": "diff", "date1": "2026-10-01", "date2": "1793305971"}, la)
+	if err != nil || !strings.Contains(out, "2026-10-29") || !strings.Contains(out, "= 28 days") {
+		t.Errorf("diff with a timestamp: %q %v", out, err)
+	}
+	tokyo, _ := time.LoadLocation("Asia/Tokyo")
+	out, _ = tool.run(map[string]any{"operation": "add", "date1": "1793305971", "days": 1}, tokyo)
+	if !strings.Contains(out, "2026-10-30 (Fri) +1 days = 2026-10-31") {
+		t.Errorf("add from a timestamp in Tokyo: %q", out)
+	}
+	if got := ago(time.Unix(0, 0), time.Unix(0, 0).Add(-3*24*time.Hour)); got != "in 3 days" {
+		t.Errorf("a time after now: %q", got)
 	}
 }
