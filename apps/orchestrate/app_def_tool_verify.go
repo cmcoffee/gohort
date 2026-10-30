@@ -240,6 +240,11 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 			classes = append(classes, "typed-only-app")
 			b.WriteString("FAIL " + p + "\n")
 		}
+		if p := appOwnEditorProblem(spec); p != "" {
+			failures++
+			classes = append(classes, "own-editor")
+			b.WriteString("FAIL " + p + "\n")
+		}
 		if recCount == 0 && appReadsRecords(spec) {
 			failures++
 			classes = append(classes, "main-path-unrun")

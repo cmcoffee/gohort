@@ -391,6 +391,11 @@ func (aw *appWrite) save() bool {
 		if p := t.appModeTypedOnlyProblem(aw.spec); p != "" {
 			return aw.exit("", errors.New("NOT CREATED: "+p))
 		}
+		// A page with a document editor of its own is refused the same way:
+		// gohort's is the editable workbench (app_own_editor.go).
+		if p := appOwnEditorProblem(aw.spec); p != "" {
+			return aw.exit("", errors.New("NOT CREATED: "+p))
+		}
 	}
 	if msg := t.appDelegationRefusal(aw.spec); msg != "" {
 		return aw.exit("", errors.New(msg))
@@ -528,6 +533,11 @@ func (aw *appWrite) check() bool {
 	if p := t.appModeTypedOnlyProblem(aw.saved); p != "" {
 		aw.msg += "\n\nNOT DONE: " + p
 		t.noteAppStanding(aw.saved.Slug, false, "built only from typed sections in an app session")
+	} else if p := appOwnEditorProblem(aw.saved); p != "" {
+		// An update is saved (a fix to the page still lands) and told to
+		// move: refusing it would hold a broken page live.
+		aw.msg += "\n\nNOT DONE: " + p
+		t.noteAppStanding(aw.saved.Slug, false, "its page writes its own document editor instead of an editable workbench")
 	} else if contractBroken {
 		t.noteAppStanding(aw.saved.Slug, false, "the page calls an endpoint the app does not have (see the last app_def result)")
 	} else if pageChecked {
