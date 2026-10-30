@@ -307,7 +307,7 @@ func TestAnEditableWorkbenchIsCoauthored(t *testing.T) {
 	if len(wb.SelectionActions) != 2 || wb.SelectionActions[0] != want[0] || wb.SelectionActions[1] != want[1] {
 		t.Errorf("quick actions %+v", wb.SelectionActions)
 	}
-	if chat, ok := wb.Chat.(ui.AgentLoopPanel); !ok || !strings.Contains(chat.EmptyText, "Select part of the song") {
+	if chat, ok := wb.Chat.(ui.AgentLoopPanel); !ok || !strings.Contains(chat.EmptyText, "Highlight part of the song") {
 		t.Errorf("the chat says how to start: %+v", wb.Chat)
 	}
 	if notes := unknownSectionKeyNotes([]any{m}); len(notes) != 0 {

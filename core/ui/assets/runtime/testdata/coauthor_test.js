@@ -1,6 +1,6 @@
-// Co-author (47_coauthor.js): select a passage the way you would to copy it,
-// Ask about it or run a quick action, and review what the agent proposes for
-// that passage as a diff, applied or not by the person. Runs the shipped
+// Co-author (47_coauthor.js): highlight a passage the way you would to copy
+// it and the chat is about it, quick actions and all; review what the agent
+// proposes for that passage as a diff, applied or not by the person. Runs the shipped
 // fragment and core/editor's diff against a small DOM stub.
 var fs = require('fs');
 var dir = __dirname + '/..';
@@ -73,7 +73,13 @@ function button(n, label) { return find(n, function(c) { return c.tag === 'butto
 
 var renderers = {};
 var composers = [];
-var document = {body: node('body'), querySelectorAll: function(sel) { return sel === '[data-ui-composer]' ? composers : []; }};
+var docListeners = {};
+var document = {body: node('body'), activeElement: null,
+  querySelectorAll: function(sel) { return sel === '[data-ui-composer]' ? composers : []; },
+  addEventListener: function(t, f) { (docListeners[t] = docListeners[t] || []).push(f); },
+  removeEventListener: function(t, f) { docListeners[t] = (docListeners[t] || []).filter(function(g) { return g !== f; }); },
+};
+function selectionChanged() { (docListeners.selectionchange || []).forEach(function(f) { f({}); }); }
 var window = {
   innerWidth: 800,
   addEventListener: function() {},
@@ -106,7 +112,7 @@ var host = el('div');
 var calls = [];
 var chat = el('div', {'data-ui-composer': ''});
 chat.uiComposer = {
-  setChip: function(label, onClear) { calls.push('chip:' + label); chat.onClear = onClear; },
+  setChip: function(label, onClear, o) { calls.push('chip:' + label); chat.onClear = onClear; chat.actions = (o && o.actions) || []; },
   clearChip: function() { calls.push('clear'); },
   focus: function() { calls.push('focus'); },
   insertText: function(t) { calls.push('insert:' + t); },
@@ -127,48 +133,65 @@ host.uiSendContext = function() { return {editor: {code: ta.value}}; };
 
 var shown = [];
 var co = window.uiCoauthor(ta, {actions: [{label: 'Tighten', prompt: 'Tighten this.'}],
-  showChat: function() { shown.push('chat'); }, showDocument: function() { shown.push('doc'); }});
+  showDocument: function() { shown.push('doc'); }});
 check('the document finds the host it shares with its chat', host.attrs['data-ui-coauthor'] === '' && typeof host.uiProposeText === 'function');
-var bar = document.body.children[0];
-check('the selection bar starts hidden', bar.style.display === 'none');
+check('nothing is put on the page beside the document', document.body.children.length === 0);
+function select(start, end) { ta.selectionStart = start; ta.selectionEnd = end; }
 
 // A drag over two lines.
 var passage = 'Neon on the water\nCity never sleeps\n';
-ta.selectionStart = ta.value.indexOf(passage);
-ta.selectionEnd = ta.selectionStart + passage.length;
-ta.fire('mouseup', {clientX: 200, clientY: 300});
-check('a selection shows the bar, with Ask and the page\'s quick actions',
-  bar.style.display === '' && button(bar, 'Ask') && button(bar, 'Tighten'));
-check('the bar sits over the selection', bar.style.left === (200 - 80) + 'px' && bar.style.top === (300 - 36 - 10) + 'px');
-
-ta.fire('keyup', {key: 'Escape'});
-check('Escape dismisses the bar', bar.style.display === 'none');
-ta.fire('mouseup', {clientX: 200, clientY: 300});
-click(button(bar, 'Ask'));
-check('Ask pins the passage with a chip and focuses the chat',
-  calls[0] === 'chip:“Neon on the water City never…”, 2 lines' && calls[1] === 'focus' && bar.style.display === 'none');
-check('Ask brings the chat up where only one shows at a time', shown.join() === 'chat');
+select(ta.value.indexOf(passage), ta.value.indexOf(passage) + passage.length);
+ta.fire('mouseup', {});
+check('highlighting a passage shows it in the chat',
+  calls[0] === 'chip:Highlighted: “Neon on the water City never…”, 2 lines');
+check('with the page\'s quick actions beside it', chat.actions.length === 1 && chat.actions[0].label === 'Tighten');
+check('and the document keeps its place: nothing jumps to the chat', shown.length === 0 && calls.length === 1);
 var ctx = host.uiSendContext();
-check('the send carries the pinned passage', ctx.selection && ctx.selection.text === passage && ctx.selection.start === 15);
+check('the send carries the highlighted passage', ctx.selection && ctx.selection.text === passage && ctx.selection.start === 15);
 check('beside what the host already sends', ctx.editor && ctx.editor.code === ta.value);
+ta.fire('mouseup', {});
+check('the same highlight again changes nothing', calls.length === 1);
+
+// Moving to the chat to type keeps it: only the document's selection counts.
+document.activeElement = {tag: 'textarea'};
+select(0, 0);
+selectionChanged();
+check('a selection change somewhere else keeps the passage', co.pinned() !== null);
+select(ta.value.indexOf(passage), ta.value.indexOf(passage) + passage.length);
+document.activeElement = ta;
 
 // An edit above moves the passage; the pin follows it.
 ta.value = 'New first line\n' + ta.value;
 ta.fire('input');
 check('an edit elsewhere moves the pin with the passage', co.pinned().start === 30);
 
-// A quick action pins and sends at once.
+// A quick action sends its words about the passage at once.
 calls = [];
-ta.fire('mouseup', {clientX: 200, clientY: 300});
-click(button(bar, 'Tighten'));
-check('a quick action sends its words at once', calls.join('|').indexOf('insert:Tighten this.|send') >= 0);
-check('and stays on the document', shown.join() === 'chat');
+chat.actions[0].onClick();
+check('a quick action sends its words at once', calls.join('|') === 'insert:Tighten this.|send');
+check('about the passage still highlighted', co.pinned() !== null);
+
+// Clicking into the document with nothing selected lets it go.
+calls = [];
+select(5, 5);
+ta.fire('mouseup', {});
+check('a click with nothing highlighted lets the passage go', co.pinned() === null && calls.join() === 'clear');
+check('and the send is about the whole document again', !host.uiSendContext().selection);
+// A phone's handles move the selection without touching the textarea.
+calls = [];
+select(ta.value.indexOf(passage), ta.value.indexOf(passage) + 4);
+selectionChanged();
+check('a selection moved by a phone\'s handles is followed', co.pinned() && co.pinned().text === 'Neon');
+var keep = ta.value.indexOf(passage);
+select(keep, keep + passage.length);
+ta.fire('keyup', {key: 'Shift'});
+check('and one made with the keyboard', co.pinned().text === passage);
 
 // --- a proposal for that passage ---------------------------------------------
 var before = ta.value;
 var r = host.uiProposeText({find: passage, replace: 'Neon on the river\nCity never sleeps\n', summary: 'Water to river'});
 var review = find(pane, function(c) { return c.className === 'ui-coauthor-review'; });
-check('a proposal brings the document up to review it', shown.join() === 'chat,doc');
+check('a proposal brings the document up to review it', shown.join() === 'doc');
 check('a proposal opens a review beside the document', r.ok && review && pane.children.indexOf(review) === 1);
 check('showing the passage\'s diff, not the whole document\'s',
   /editor-diff-remove/.test(review.html || find(review, function(c) { return /editor-diff/.test(c.html || ''); }).html) &&
@@ -189,6 +212,9 @@ check('Apply writes the replacement where the passage was',
   ta.value === 'New first line\nVerse one line\nNeon on the river\nCity never sleeps\nChorus line\n');
 check('and tells the page the document changed', inputs === 1);
 check('and the conversation is about the whole document again', calls.indexOf('clear') >= 0 && co.pinned() === null);
+calls = [];
+ta.fire('mouseup', {});
+check('showing the applied passage is not the person highlighting it', co.pinned() === null && calls.length === 0);
 var undo = find(pane, function(c) { return c.className === 'ui-coauthor-undo'; });
 check('an Undo stays after Apply', undo && !find(pane, function(c) { return c.className === 'ui-coauthor-review'; }));
 click(button(undo, 'Undo'));
@@ -205,10 +231,13 @@ check('a passage that is not there at all is refused up front',
   host.uiProposeText({find: 'no such line', replace: 'x'}).ok === false);
 
 // Deleting the pinned passage lets the pin go.
+// (A moment later: what the review selected was not the person's doing.)
+var realNow = Date.now;
+Date.now = function() { return realNow() + 1000; };
 ta.selectionStart = ta.value.indexOf('Verse one line');
 ta.selectionEnd = ta.selectionStart + 'Verse one line'.length;
-ta.fire('mouseup', {clientX: 10, clientY: 10});
-click(button(bar, 'Ask'));
+ta.fire('mouseup', {});
+check('a highlight after the review is the person\'s again', co.pinned() && co.pinned().text === 'Verse one line');
 calls = [];
 ta.value = ta.value.replace('Verse one line', '');
 ta.fire('input');
@@ -233,7 +262,7 @@ composers = [chat, chat2];
 function own() { return {document: {text: ta2.value}}; }
 host2.uiSendContext = own;
 host2.setAttribute('data-ui-send-context', '');
-var barsBefore = document.body.children.length;
+var listenersBefore = (docListeners.selectionchange || []).length;
 var co2 = window.uiCoauthor(ta2, {host: host2});
 co2.pin({start: 4, end: 7, text: 'two'});
 host2.uiProposeText({find: 'two', replace: '2'});
@@ -242,7 +271,7 @@ check('destroy hands the host its own send context back', host2.uiSendContext ==
 check('and stops answering proposals', host2.uiProposeText === undefined && !('data-ui-coauthor' in host2.attrs));
 check('and lets the pin go, chip and all', co2.pinned() === null && cleared2 === 1);
 check('and closes its review', !find(pane2, function(c) { return c.className === 'ui-coauthor-review'; }));
-check('and takes its bar off the page', document.body.children.length === barsBefore);
+check('and stops following the page\'s selection', (docListeners.selectionchange || []).length === listenersBefore);
 var bare = el('div');
 var ta3 = el('textarea');
 bare.appendChild(ta3);

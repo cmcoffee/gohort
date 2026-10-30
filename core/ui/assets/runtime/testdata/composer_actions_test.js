@@ -50,6 +50,8 @@ var composerMiddle = box([mode('private'), mode('fresh')]);
 composerMiddle.name = 'middle';
 var inputRow = box([composerMiddle, attachBtn, sendBtn]);
 function names(b) { return b.kids.map(function(k) { return k.name || k.textContent; }).join(','); }
+var convoPane = {clientWidth: 0, clientHeight: 0};
+eval(lift(fs.readFileSync(dir + '/06_assist_editor.js', 'utf8'), 'function growComposer(', 'growComposer'));
 eval(lift(panel, 'function autosizeInput()', 'autosizeInput'));
 eval(lift(panel, 'function composerInsert(text)', 'composerInsert'));
 eval('window.uiRegisterComposerAction = ' + lift(panel, 'window.uiRegisterComposerAction = function(opts)', 'uiRegisterComposerAction').replace('window.uiRegisterComposerAction = ', ''));
@@ -153,8 +155,13 @@ check('so does the chat composer', /if \(uiComposerEnterSends\(ev\)\) \{\s*ev\.p
   var wrap = {setAttribute: function(k, v) { wrapAttrs[k] = v; }};
   var sent = 0;
   var area = {value: 'hi', style: {}, scrollHeight: 40, focus: function() {}};
-  new Function('el', 'convoPane', 'inputRow', 'wrap', 'composerInsert', 'sendMessage', 'inputArea', block)(
-    node, pane, row, wrap, function(t) { area.value += ' ' + t; }, function() { sent++; }, area);
+  // The chip is drawn by the one filler every chat's composer shares.
+  var assist = fs.readFileSync(dir + '/06_assist_editor.js', 'utf8');
+  var fill = new Function('el', lift(assist, 'function fillComposerChip(', 'fillComposerChip') + '\nreturn fillComposerChip;')(node);
+  check('the assist chat draws its chip the same way',
+    assist.indexOf('fillComposerChip(chip, label, onClear, o, function() { right.uiComposer.clearChip(); });') >= 0);
+  new Function('el', 'convoPane', 'inputRow', 'wrap', 'composerInsert', 'sendMessage', 'inputArea', 'fillComposerChip', block)(
+    node, pane, row, wrap, function(t) { area.value += ' ' + t; }, function() { sent++; }, area, fill);
   var chip = pane.kids[0];
   check('the chip row sits over the input row, hidden', pane.kids[1] === row && chip.style.display === 'none');
   check('the panel says it has a composer', 'data-ui-composer' in wrapAttrs && typeof wrap.uiComposer === 'object');
@@ -165,11 +172,36 @@ check('so does the chat composer', /if \(uiComposerEnterSends\(ev\)\) \{\s*ev\.p
   check('a second chip replaces the first', chip.kids.length === 2 && chip.kids[0].kids[0] === 'Verse 2');
   chip.kids[1].on.click();
   check('its x clears it and tells its owner', chip.style.display === 'none' && cleared === 1);
+  var acted = [];
+  wrap.uiComposer.setChip('Highlighted: “Neon”', null, {actions: [{label: 'Tighten', onClick: function() { acted.push('t'); }}, {label: ''}]});
+  check('a chip carries its actions as buttons, between the label and the x',
+    chip.kids.length === 3 && chip.kids[1].kids[0] === 'Tighten' && chip.kids[2].kids[0] === '\u00d7');
+  chip.kids[1].on.click();
+  check('an action button does what it says', acted.join() === 't');
   wrap.uiComposer.setChip('x', function() { cleared++; });
   wrap.uiComposer.clearChip();
   check('clearChip clears without calling back', chip.style.display === 'none' && cleared === 1);
   wrap.uiComposer.insertText('tighten');
   wrap.uiComposer.send();
   check('insertText and send are the box\'s own', area.value === 'hi tighten' && sent === 1);
+})();
+// A chat's input grows with what is typed: about eight lines in a wide chat
+// (the CSS cap), up to half the conversation in a narrow one, where the same
+// message wraps onto many more lines.
+(function() {
+  var assist = fs.readFileSync(dir + '/06_assist_editor.js', 'utf8');
+  var grow = new Function(lift(assist, 'function growComposer(', 'growComposer') + '\nreturn growComposer;')();
+  function box(scroll) { return {style: {}, scrollHeight: scroll}; }
+  var ta = box(300);
+  grow(ta, {clientWidth: 380, clientHeight: 800});
+  check('a narrow chat lets its box grow to half the conversation', ta.style.maxHeight === '400px' && ta.style.height === '302px');
+  grow(ta, {clientWidth: 380, clientHeight: 240});
+  check('never below the eight lines a wide one has', ta.style.maxHeight === '192px');
+  grow(ta, {clientWidth: 900, clientHeight: 800});
+  check('a wide chat keeps its cap', ta.style.maxHeight === '');
+  grow(ta, {clientWidth: 0, clientHeight: 0});
+  check('one not laid out yet keeps its cap', ta.style.maxHeight === '');
+  check('the agent chat sizes its box this way', panel.indexOf('function autosizeInput() { growComposer(inputArea, convoPane); }') >= 0);
+  check('and so does the assist chat', assist.indexOf("composer.addEventListener('input', function() { growComposer(composer, right); });") >= 0);
 })();
 process.exit(fail ? 1 : 0);

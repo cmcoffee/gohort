@@ -2352,15 +2352,10 @@
       if (ev.key === 'Escape' && userEdit) { ev.preventDefault(); endComposerEdit(true); }
     });
     // Auto-grow the textarea as content changes so a multi-line
-    // paste doesn't get crammed into a 2-line scroller. Resets on
-    // each input event by measuring scrollHeight; capped via CSS
-    // max-height so an absurdly long paste doesn't push the chat
-    // pane off-screen.
-    function autosizeInput() {
-      inputArea.style.height = 'auto';
-      // +2px for the border so the last line isn't clipped.
-      inputArea.style.height = (inputArea.scrollHeight + 2) + 'px';
-    }
+    // paste doesn't get crammed into a 2-line scroller: about eight
+    // lines in a wide chat, up to half the conversation in a narrow
+    // one (growComposer).
+    function autosizeInput() { growComposer(inputArea, convoPane); }
     inputArea.addEventListener('input', autosizeInput);
     // Defer the initial sizing past mount so the element has a real
     // computed scrollHeight to read.
@@ -3197,8 +3192,9 @@
     //   insertText(text)     as a composer action's
     //   send()               sends what is in the box, as Send does
     //   focus()
-    //   setChip(label, onClear)  one chip; a second replaces it. Its x clears
-    //                        it and calls onClear.
+    //   setChip(label, onClear, {actions})  one chip; a second replaces it.
+    //                        Each action ({label, onClick}) is a button on it;
+    //                        its x clears it and calls onClear.
     //   clearChip()          clears it without calling onClear
     var composerChip = el('div', {class: 'ui-agent-composer-chip', style: 'display:none'});
     convoPane.insertBefore(composerChip, inputRow);
@@ -3207,15 +3203,8 @@
       insertText: composerInsert,
       send: function() { sendMessage(); },
       focus: function() { if (inputArea.focus) inputArea.focus(); },
-      setChip: function(label, onClear) {
-        composerChip.innerHTML = '';
-        composerChip.appendChild(el('span', {class: 'ui-agent-composer-chip-label'}, [String(label || '')]));
-        composerChip.appendChild(el('button', {type: 'button', class: 'ui-agent-attach-x', title: 'Clear',
-          onclick: function() {
-            wrap.uiComposer.clearChip();
-            if (typeof onClear === 'function') onClear();
-          }}, ['\u00d7']));
-        composerChip.style.display = '';
+      setChip: function(label, onClear, o) {
+        fillComposerChip(composerChip, label, onClear, o, function() { wrap.uiComposer.clearChip(); });
       },
       clearChip: function() {
         composerChip.innerHTML = '';

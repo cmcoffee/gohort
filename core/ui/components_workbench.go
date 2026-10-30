@@ -54,8 +54,9 @@ type WorkbenchPanel struct {
 	EditField string `json:"edit_field,omitempty"` // default "markdown"
 	EditLabel string `json:"edit_label,omitempty"` // toggle text (default "Edit")
 	// ProposeEdits makes the open document a co-authored one (uiCoauthor,
-	// 47_coauthor.js): it opens straight into the editor, selecting a passage
-	// offers Ask and SelectionActions, every chat send carries the document as
+	// 47_coauthor.js): it opens straight into the editor, a highlighted
+	// passage is what the chat is about (shown over its box with the
+	// SelectionActions), every chat send carries the document as
 	// it is on screen and the pinned passage ("document": {id, text} and
 	// "selection"), and what the chat's agent proposes (a text_proposal, from
 	// agenthost.ProposeEditTool) is reviewed as a diff of that passage. A
@@ -118,9 +119,9 @@ type WorkbenchPanel struct {
 	ChatLabel   string `json:"chat_label,omitempty"`
 }
 
-// SelectionAction is a quick action on a co-authored document's selection
-// bar: Label on the button, and Prompt the words it sends about the selected
-// passage at once (Label when empty).
+// SelectionAction is a quick action for a co-authored document's highlighted
+// passage, shown in the chat beside it: Label on the button, and Prompt the
+// words it sends about the passage at once (Label when empty).
 type SelectionAction struct {
 	Label  string `json:"label"`
 	Prompt string `json:"prompt,omitempty"`

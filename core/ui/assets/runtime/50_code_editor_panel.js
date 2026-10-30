@@ -992,18 +992,16 @@
         profile: pickedProfile || '',
       }};
     };
-    // Co-authored: select a passage and Ask, and what the chat proposes,
-    // for that passage or the whole file, is reviewed as a diff under the
-    // editor with Apply (47_coauthor.js, text_proposal). After uiSendContext,
-    // which it extends with the pinned passage. On a phone the code and the
-    // chat are panes one at a time: Ask brings the chat up, and a proposal
-    // brings the code back to be reviewed. A proposal leaves outline mode
-    // first: the review reads and writes the text, and the outline would
-    // stay up over it.
+    // Co-authored: what is highlighted is what the chat is about, and what
+    // the chat proposes, for that passage or the whole file, is reviewed as a
+    // diff under the editor with Apply (47_coauthor.js, text_proposal). After
+    // uiSendContext, which it extends with the highlighted passage. On a
+    // phone the code and the chat are panes one at a time: a proposal brings
+    // the code back to be reviewed. A proposal leaves outline mode first: the
+    // review reads and writes the text, and the outline would stay up over it.
     window.uiCoauthor(editor, {
       host: wrap,
       setValue: function(t) { docToRaw(); docSetValue(t); },
-      showChat: function() { panes.show('chat'); },
       showDocument: function() { docToRaw(); panes.show('code'); },
     });
 

@@ -301,11 +301,12 @@ any other gets one JSON reply. Never write a second assist handler.
 
 ### Co-authored documents
 
-A document the person writes, with an agent beside it. They select part of it
-the way they would to copy it (a drag, a double-click, the handles on a phone),
-and a bar beside the selection offers **Ask** and your quick actions. Ask pins
-the passage: a chip over the chat says what the next message is about, and the
-send carries it. The agent answers with a proposal, reviewed as a diff of that
+A document the person writes, with an agent beside it. What they highlight in
+it, the way they would to copy it (a drag, a double-click, the handles on a
+phone), is what the chat is about: a chip over the chat's box says so
+("Highlighted: ..."), with your quick actions beside it, and the send carries
+the passage. Clicking back into the document with nothing highlighted lets it
+go. The agent answers with a proposal, reviewed as a diff of that
 passage alone, with Apply, Reject and Undo. Nothing is written until the person
 applies it, and your own Save keeps it.
 
@@ -316,7 +317,7 @@ applies it, and your own Save keeps it.
   record: it gets the id and the edited field only. Builder's version is the
   workbench section's `editable: true`.
 - **Your own textarea:** `window.uiCoauthor(textarea, {host, actions, setValue,
-  showChat, showDocument})`, with an `AgentLoopPanel` inside `host`. It returns
+  showDocument})`, with an `AgentLoopPanel` inside `host`. It returns
   `{pin, unpin, pinned, propose, destroy}`; call `destroy` when the textarea goes.
 - **Server:** give the turn `agenthost.ProposeEditTool(pub)` (`propose_edit`:
   `find`, `replace`, `summary`; it emits a `text_proposal` block) and put

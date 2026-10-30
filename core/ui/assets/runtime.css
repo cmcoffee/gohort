@@ -2541,6 +2541,9 @@ input[type="checkbox"].ui-input { width: auto; }
 }
 .ui-assist-input {
   flex: 1; min-width: 0; box-sizing: border-box; resize: none;
+  /* Grows with what is typed (growComposer): about eight lines here, half
+   * the conversation in a narrow one. */
+  max-height: 12rem; overflow-y: auto;
   padding: 0.5rem 0.6rem; border-radius: var(--btn-radius);
   background: var(--bg-2); border: 1px solid var(--border); color: var(--text);
   font-size: var(--fs-sm); font-family: inherit; line-height: 1.45; outline: none;
@@ -5744,7 +5747,8 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-agent .ui-agent-input {
   flex: 1 0 100%; order: -1; resize: none;
   /* Cap auto-grow at roughly 8 lines: enough for medium messages without
-   * eating the chat pane. Content beyond scrolls inside the box. Pastes
+   * eating the chat pane. A narrow chat lifts it to half the conversation
+   * (growComposer). Content beyond scrolls inside the box. Pastes
    * longer than the snippet threshold become an attachment chip instead,
    * see the paste handler. */
   min-height: 2rem; max-height: 12rem; overflow-y: auto;
@@ -7200,22 +7204,16 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 }
 .ui-block-dismiss:hover, .ui-block-dismiss:focus-visible { color: var(--text); background: var(--bg-2, rgba(127,127,127,0.15)); }
 
-/* Co-author (47_coauthor.js): the bar a selection shows, the chip over the
- * chat saying what the next send is about, the review of a proposed passage
- * and the Undo after it, and the proposal's card in the conversation. */
-/* Above dialogs (1100): a document inside one (an assist draft) shows it
- * too. Below the info popover, which can open over anything. */
-.ui-coauthor-bar {
-  position: fixed; z-index: 10040; display: flex; flex-wrap: wrap; gap: 0.3rem;
-  max-width: calc(100vw - 16px);
-  padding: 0.25rem; border: 1px solid var(--border); border-radius: 8px;
-  background: var(--bg-1); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
-}
-.ui-coauthor-bar .ui-coauthor-ask { font-weight: 600; }
+/* Co-author (47_coauthor.js): the chip over the chat saying what the next
+ * send is about (the highlighted passage, with the page's quick actions), the
+ * review of a proposed passage and the Undo after it, and the proposal's card
+ * in the conversation. The chip wraps: quick actions fall to a second line
+ * rather than off the edge. */
 .ui-agent-composer-chip {
   padding: 0.3rem max(0.7rem, calc((100% - var(--ui-agent-composer, 100%)) / 2));
-  font-size: var(--fs-xs); display: flex; align-items: center; gap: 0.4rem;
+  font-size: var(--fs-xs); display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem;
 }
+.ui-agent-composer-chip-act { flex: 0 0 auto; }
 .ui-agent-composer-chip-label {
   background: var(--bg-2); border: 1px solid var(--border); border-left: 3px solid var(--accent);
   border-radius: 12px; padding: 0.15rem 0.5rem; color: var(--text);

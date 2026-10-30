@@ -742,7 +742,7 @@ func buildWorkbench(spec AppSpec, m map[string]any) (ui.WorkbenchPanel, error) {
 		wb.SelectionActions = selectionActions(m["selection_actions"])
 		wb.CoAuthor = false
 		wb.CoAuthorVerb = ""
-		chat.EmptyText = firstNonEmptyStr(mapStr(m, "chat_empty"), "Select part of the "+noun+" and Ask, or ask about the whole "+noun+".")
+		chat.EmptyText = firstNonEmptyStr(mapStr(m, "chat_empty"), "Highlight part of the "+noun+" to talk about it, or ask about the whole "+noun+".")
 		wb.Chat = chat
 	}
 	// files_field: each record keeps the files its agent made for it (a

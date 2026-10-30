@@ -43,6 +43,41 @@
   //   writeNote — the note when switched to just writing.
   //   placeholders — {discuss, write} for the composer.
   // Returns {right, say(text), focus(), discuss()}: right is the pane.
+  // growComposer sizes a chat's input to what is typed in it. A wide chat
+  // keeps its cap of about eight lines; a narrow one (a chat column beside a
+  // document, a dialog's) wraps the same message onto many more lines, so
+  // there the box may grow to half the conversation's height: what is being
+  // written stays in view instead of scrolling inside a sliver. pane is the
+  // conversation the box sits in.
+  function growComposer(ta, pane) {
+    var w = (pane && pane.clientWidth) || 0, h = (pane && pane.clientHeight) || 0;
+    ta.style.maxHeight = (w && h && w < 640) ? Math.max(192, Math.round(h / 2)) + 'px' : '';
+    ta.style.height = 'auto';
+    // +2px for the border so the last line is not clipped.
+    ta.style.height = (ta.scrollHeight + 2) + 'px';
+  }
+
+  // fillComposerChip draws the chip over a chat's box that says what the next
+  // send is about (a highlighted passage): its label, the actions that go with
+  // it, each a button, and an x that clears it and calls onClear. Every chat
+  // with a uiComposer draws it this way. o: {actions: [{label, onClick}]}.
+  function fillComposerChip(chip, label, onClear, o, clear) {
+    o = o || {};
+    chip.innerHTML = '';
+    chip.appendChild(el('span', {class: 'ui-agent-composer-chip-label'}, [String(label || '')]));
+    (o.actions || []).forEach(function(a) {
+      if (!a || !a.label) return;
+      chip.appendChild(el('button', {type: 'button', class: 'ui-row-btn ui-btn-sm ui-agent-composer-chip-act',
+        onclick: function() { if (typeof a.onClick === 'function') a.onClick(); }}, [String(a.label)]));
+    });
+    chip.appendChild(el('button', {type: 'button', class: 'ui-agent-attach-x', title: 'Clear',
+      onclick: function() {
+        clear();
+        if (typeof onClear === 'function') onClear();
+      }}, ['\u00d7']));
+    chip.style.display = '';
+  }
+
   window.uiAssistChat = function(opts) {
     opts = opts || {};
     var discuss = !!opts.discuss;
@@ -206,6 +241,7 @@
       if (!text) return;
       if (choices) { choices.remove(); choices = null; }
       composer.value = '';
+      composer.style.height = '';
       addMsg('user', text + (files.length ? '\n📎 ' + files.map(function(f) { return f.name; }).join(', ') : ''));
       if (files.length) { pendingFiles = []; drawFiles(); }
       // Snapshot the history BEFORE this turn — the server appends the
@@ -261,6 +297,7 @@
       if (busy) { busy.stop(); return; }
       send();
     });
+    composer.addEventListener('input', function() { growComposer(composer, right); });
     composer.addEventListener('keydown', function(ev) {
       // Enter sends, Shift+Enter breaks the line: this is a chat box, and
       // multi-line requests are rare enough to cost a modifier.
@@ -297,15 +334,8 @@
       },
       send: function() { send(); },
       focus: function() { composer.focus(); },
-      setChip: function(label, onClear) {
-        chip.innerHTML = '';
-        chip.appendChild(el('span', {class: 'ui-agent-composer-chip-label'}, [String(label || '')]));
-        chip.appendChild(el('button', {type: 'button', class: 'ui-agent-attach-x', title: 'Clear',
-          onclick: function() {
-            right.uiComposer.clearChip();
-            if (typeof onClear === 'function') onClear();
-          }}, ['\u00d7']));
-        chip.style.display = '';
+      setChip: function(label, onClear, o) {
+        fillComposerChip(chip, label, onClear, o, function() { right.uiComposer.clearChip(); });
       },
       clearChip: function() { chip.innerHTML = ''; chip.style.display = 'none'; },
     };
@@ -498,11 +528,11 @@
       },
     });
 
-    // Select a passage of the draft and Ask, as in any co-authored document:
-    // the request carries it, and the reply is a new version as always.
+    // Highlight a passage of the draft, as in any co-authored document: the
+    // chat shows it, the request carries it, and the reply is a new version
+    // as always.
     var coauthor = window.uiCoauthor ? window.uiCoauthor(draft, {
       host: wrap,
-      showChat: function() { tabs.show('chat'); },
       showDocument: function() { tabs.show('draft'); },
     }) : null;
 

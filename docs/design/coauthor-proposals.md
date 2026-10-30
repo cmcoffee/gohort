@@ -38,11 +38,12 @@ A text area (or the code editor) becomes a co-authored document with `uiCoauthor
 It reads the browser's own selection: a mouse drag, a double-click, shift-click, or the long-press
 handles on a phone. There is no select mode.
 
-- **Selection bar.** A selection inside the document shows a small bar beside it, the way a
-  copy/cut menu appears: **Ask**, plus the app's quick actions (`opts.actions`, each a label and
-  the words it sends). Nothing appears for an empty selection.
-- **Ask** pins the selection: a chip above the chat's input ("Chorus, 4 lines") and the input
-  focused. A quick action pins it and sends its words at once.
+- **The highlight is what the chat is about.** A selection the person makes in the document
+  pins it: a chip above the chat's input ("Highlighted: “Chorus...”, 4 lines") with the app's
+  quick actions beside it (`opts.actions`, each a label and the words it sends at once). Moving
+  to the chat to type keeps it; clicking back into the document with nothing selected lets it
+  go. (It began as a bar beside the selection with Ask: on a phone that bar sat where the
+  system's Cut / Copy / Paste goes, and Ask was a step the highlight already said.)
 - **The pin is what the turn is about.** It rides the send through the host's existing
   `uiSendContext` as `selection: {text, start, end}`. Clearing the chip, or applying a proposal,
   unpins it; the next turn is about the whole document again.
@@ -94,7 +95,7 @@ editable finds the chat beside it through the host element they share.
 
 ## Phases
 
-1. **Core primitives.** `uiCoauthor` (selection bar, pin, chip, send context), `text_proposal`
+1. **Core primitives.** `uiCoauthor` (highlight, pin, chip, send context), `text_proposal`
    renderer and range review with Apply / Reject / Undo, the composer handle, the diff in the
    runtime, `agenthost.ProposeEditTool` and `SelectionContext`. Runtime JS harnesses and Go tests
    for each.

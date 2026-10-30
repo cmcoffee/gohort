@@ -58,8 +58,8 @@ check('nothing open sends nothing', Object.keys(host({selectedId: null}).uiSendC
 var open = lift('function openEditor()', 'openEditor');
 check('the editor becomes a uiCoauthor document with the page\'s quick actions',
   /coauthor = window\.uiCoauthor\(ta, \{\s*host: root,\s*actions: cfg\.selection_actions \|\| \[\],/.test(open));
-check('on a phone, Ask brings the chat up and a proposal the document',
-  open.indexOf("showChat: function() { panes.show('chat'); }") >= 0 && open.indexOf("showDocument: function() { panes.show('viewer'); }") >= 0);
+check('on a phone, a proposal brings the document up',
+  open.indexOf("showDocument: function() { panes.show('viewer'); }") >= 0);
 check('only when the document is co-authored', open.indexOf('if (cfg.propose_edits && window.uiCoauthor) {') >= 0);
 check('and it goes when the editor does',
   lift('function closeEditor()', 'closeEditor').indexOf('if (coauthor) { coauthor.destroy(); coauthor = null; }') >= 0);
@@ -72,6 +72,6 @@ check('its Cancel is Revert, which asks before putting the saved text back',
   open.indexOf("text: cfg.propose_edits ? 'Revert' : 'Cancel'") >= 0 &&
   open.indexOf("window.uiConfirm('Put back the saved text? What you changed since the last Save goes.')") >= 0 &&
   open.indexOf('closeEditor(); renderRecord(lastRec); openEditor();') >= 0);
-check('and Escape, which dismisses the selection bar, never discards it',
+check('and Escape never discards it',
   open.indexOf("else if (ev.key === 'Escape' && !cfg.propose_edits)") >= 0);
 process.exit(fail ? 1 : 0);

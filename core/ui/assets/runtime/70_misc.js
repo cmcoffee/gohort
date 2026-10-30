@@ -390,14 +390,13 @@
       viewerBody.appendChild(wrap);
       editorTA = ta;
       ta.focus();
-      // Co-authored: select a passage and Ask, or one of the page's quick
-      // actions, and review what the chat proposes for it. On a phone Ask
-      // brings the chat up and a proposal brings the document back.
+      // Co-authored: what is highlighted is what the chat is about, with the
+      // page's quick actions beside it there, and what the chat proposes is
+      // reviewed here. On a phone a proposal brings the document back.
       if (cfg.propose_edits && window.uiCoauthor) {
         coauthor = window.uiCoauthor(ta, {
           host: root,
           actions: cfg.selection_actions || [],
-          showChat: function() { panes.show('chat'); },
           showDocument: function() { panes.show('viewer'); },
         });
       }
@@ -435,8 +434,8 @@
       });
       ta.addEventListener('keydown', function(ev) {
         if ((ev.ctrlKey || ev.metaKey) && (ev.key === 's' || ev.key === 'S')) { ev.preventDefault(); doSave(); }
-        // Escape cancels a plain edit. In a co-authored document it is what
-        // people press to dismiss the selection bar, so it never discards.
+        // Escape cancels a plain edit. A co-authored document is open for
+        // writing the whole time, so a stray Escape there never discards.
         else if (ev.key === 'Escape' && !cfg.propose_edits) { ev.preventDefault(); closeEditor(); renderRecord(lastRec); }
       });
     }

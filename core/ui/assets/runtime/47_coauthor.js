@@ -1,11 +1,11 @@
 
   // ---- Co-author: select a passage, ask about it, review what comes back ----
   //
-  // A document a person writes with an agent beside it. They select part of it
-  // the way they would to copy or cut (a drag, a double-click, the handles on a
-  // phone) and a small bar offers Ask and the page's quick actions. Asking pins
-  // the passage: a chip over the chat says what the next send is about, and the
-  // send carries it. What the agent proposes comes back as a text_proposal
+  // A document a person writes with an agent beside it. What they highlight in
+  // it, the way they would to copy or cut (a drag, a double-click, the handles
+  // on a phone), is what the conversation is about: the chat says so over its
+  // box ("Highlighted: ...") with the page's quick actions beside it, and the
+  // send carries the passage. What the agent proposes comes back as a text_proposal
   // block: the passage it replaces and the replacement, reviewed as a diff of
   // that passage and applied, or not, by the person. Nothing changes until
   // they apply it, and their own Save keeps it.
@@ -62,16 +62,16 @@
   // uiCoauthor(textarea, opts) makes textarea a co-authored document.
   //   host     the element holding the document and its chat (default: the
   //            nearest ancestor containing a chat panel)
-  //   actions  [{label, prompt}]: quick actions on the selection bar. One
-  //            pins the selection and sends its prompt at once.
+  //   actions  [{label, prompt}]: quick actions shown in the chat while a
+  //            passage is highlighted. One sends its prompt about it at once.
   //   label    function(sel) naming a pinned passage for its chip
   //   setValue function(text) writing the document, for an editor that keeps
   //            more than the textarea in step; default writes the textarea
   //            and fires input, so a page's unsaved-changes tracking sees it
-  //   showChat, showDocument  for a layout that shows the document and its
-  //            chat one at a time (a phone): Ask brings the chat up to type
-  //            in, and a proposal brings the document up to be reviewed
-  // Returns {pin, unpin, pinned, propose}.
+  //   showDocument  for a layout that shows the document and its chat one at
+  //            a time (a phone): a proposal brings the document up to be
+  //            reviewed
+  // Returns {pin, unpin, pinned, propose, destroy}.
   window.uiCoauthor = function(textarea, opts) {
     opts = opts || {};
     var host = opts.host || coauthorHost(textarea);
@@ -105,74 +105,56 @@
       } finally { applying = false; }
     }
 
-    // --- The bar a selection shows -------------------------------------------
-    var bar = el('div', {class: 'ui-coauthor-bar', role: 'toolbar', style: 'display:none'});
-    // Pressing a button must not take the selection away before it is read.
-    bar.addEventListener('mousedown', function(e) { e.preventDefault(); });
-    document.body.appendChild(bar);
-    function hideBar() { bar.style.display = 'none'; }
-    function showBar(x, y) {
+    // --- What is highlighted is what the conversation is about -----------------
+    // A selection the person makes in the document pins it: the chat shows it
+    // over its box, with the page's quick actions, and the next send carries
+    // it. Clicking back into the document with nothing selected lets it go,
+    // and the conversation is about the whole document again. Moving to the
+    // chat to type keeps it: only the document's own selection counts. No bar
+    // beside the selection: a phone puts its own Cut / Copy / Paste there, and
+    // the place to say something about a passage is the chat.
+    //
+    // A selection the page makes itself (a review showing its passage) is not
+    // the person's and pins nothing, hence quietUntil.
+    var quietUntil = 0;
+    function followSelection() {
+      if (Date.now() < quietUntil) return;
       var sel = selection();
-      if (!sel) { hideBar(); return; }
-      bar.innerHTML = '';
-      bar.appendChild(el('button', {type: 'button', class: 'ui-row-btn ui-coauthor-ask',
-        onclick: function() { ask(sel); }}, ['Ask']));
-      (opts.actions || []).forEach(function(a) {
-        if (!a || !a.label) return;
-        bar.appendChild(el('button', {type: 'button', class: 'ui-row-btn',
-          onclick: function() { act(sel, a); }}, [String(a.label)]));
-      });
-      bar.style.display = '';
-      var w = bar.offsetWidth || 160, h = bar.offsetHeight || 36;
-      var vw = window.innerWidth || 800;
-      var left = Math.max(8, Math.min(x - w / 2, vw - w - 8));
-      var top = y - h - 10;
-      if (top < 8) top = y + 18; // no room above: below the pointer
-      bar.style.left = left + 'px';
-      bar.style.top = top + 'px';
+      if (sel) {
+        if (!pinned || pinned.start !== sel.start || pinned.end !== sel.end) pin(sel);
+      } else if (pinned) {
+        unpin();
+      }
     }
-    function barAtPointer(e) {
-      setTimeout(function() {
-        var pt = e && e.changedTouches && e.changedTouches[0] ? e.changedTouches[0] : e;
-        if (pt && pt.clientX != null) { showBar(pt.clientX, pt.clientY); return; }
-        var r = textarea.getBoundingClientRect();
-        showBar(r.left + r.width / 2, r.top + 8);
-      }, 0);
-    }
-    textarea.addEventListener('mouseup', barAtPointer);
-    textarea.addEventListener('touchend', barAtPointer);
-    textarea.addEventListener('keyup', function(e) {
-      if (e.key === 'Escape') hideBar();
-      else if (e.shiftKey || e.key === 'Shift') barAtPointer(null);
-      else if (!selection()) hideBar();
-    });
-    textarea.addEventListener('blur', function() { setTimeout(hideBar, 150); });
-    window.addEventListener('scroll', hideBar, true);
+    function soon() { setTimeout(followSelection, 0); }
+    textarea.addEventListener('mouseup', soon);
+    textarea.addEventListener('touchend', soon);
+    textarea.addEventListener('keyup', soon);
+    // A phone's selection handles move the selection with no touch on the
+    // textarea itself.
+    function onSelectionChange() { if (document.activeElement === textarea) soon(); }
+    if (document.addEventListener) document.addEventListener('selectionchange', onSelectionChange);
 
     // --- Pinning ---------------------------------------------------------------
     function pin(sel) {
       pinned = {start: sel.start, end: sel.end, text: sel.text};
       var c = composer();
+      if (!c) return;
       var label = typeof opts.label === 'function' ? opts.label(pinned) : coauthorLabel(pinned.text);
-      if (c) c.setChip(label, function() { pinned = null; });
+      var actions = (opts.actions || []).filter(function(a) { return a && a.label; }).map(function(a) {
+        return {label: String(a.label), onClick: function() { act(a); }};
+      });
+      c.setChip('Highlighted: ' + label, function() { pinned = null; }, {actions: actions});
     }
     function unpin() {
       pinned = null;
       var c = composer();
       if (c) c.clearChip();
     }
-    function ask(sel) {
-      pin(sel);
-      hideBar();
-      if (typeof opts.showChat === 'function') opts.showChat();
+    // A quick action sends its words about the highlighted passage at once.
+    function act(a) {
       var c = composer();
-      if (c) c.focus();
-    }
-    function act(sel, a) {
-      pin(sel);
-      hideBar();
-      var c = composer();
-      if (!c) return;
+      if (!c || !pinned) return;
       c.insertText(a.prompt || a.label);
       c.send();
     }
@@ -180,7 +162,6 @@
     // An edit moves the pinned passage, or removes it: follow it while it is
     // still there, let it go when it is not. Any edit also ends an Undo.
     textarea.addEventListener('input', function() {
-      hideBar();
       if (applying) return;
       clearUndo();
       if (!pinned) return;
@@ -217,6 +198,7 @@
       textarea.parentNode.insertBefore(node, textarea.nextSibling);
     }
     function showPassage(at, len) {
+      quietUntil = Date.now() + 400;
       try {
         textarea.focus();
         textarea.setSelectionRange(at, at + len);
@@ -294,16 +276,14 @@
     return {
       pin: pin, unpin: unpin, propose: propose,
       pinned: function() { return pinned; },
-      // destroy takes the bar and its page listener away and hands the host
+      // destroy takes its page listener away and hands the host
       // back as it was, for a document that goes before the page does (one
       // in a dialog, an editor that closes and opens again).
       destroy: function() {
-        hideBar();
         closeReview();
         clearUndo();
         if (pinned) unpin();
-        if (bar.parentNode) bar.parentNode.removeChild(bar);
-        if (window.removeEventListener) window.removeEventListener('scroll', hideBar, true);
+        if (document.removeEventListener) document.removeEventListener('selectionchange', onSelectionChange);
         if (host.uiSendContext === sendContext) {
           host.uiSendContext = prior;
           if (!hadSendContext && host.removeAttribute) host.removeAttribute('data-ui-send-context');
