@@ -31,6 +31,17 @@
     var lastRec = null, lastRecId = null;
     var editing = false;
     var editBtn = null, editorTA = null, editorSave = null;
+    var coauthor = null; // the open editor's co-author (propose_edits)
+    // editableText is the record's source to edit, or null when it has none
+    // to offer. A co-authored document with no body yet is an empty one:
+    // a record just created has only what its New form asked for.
+    function editableText(rec) {
+      if (!rec) return null;
+      var v = rec[editField];
+      if (typeof v === 'string') return v;
+      if (cfg.propose_edits && v == null) return '';
+      return null;
+    }
 
     var root = el('div', {class: 'ui-wb'});
 
@@ -70,14 +81,17 @@
     // Optional per-document action toolbar (export / history / audit). Buttons
     // act on the selected record; disabled until one is selected.
     var actionBar = null, moreMenu = null;
-    if ((cfg.viewer_actions && cfg.viewer_actions.length) || cfg.edit_url) {
+    // A co-authored document IS its editor (propose_edits): no Edit toggle,
+    // whose "Cancel" beside the editor's own read as two ways to lose a draft.
+    var editToggle = cfg.edit_url && !cfg.propose_edits;
+    if ((cfg.viewer_actions && cfg.viewer_actions.length) || editToggle) {
       actionBar = el('div', {class: 'ui-wb-actions'});
       // The Edit toggle leads the bar: it changes what the rest of the bar acts
       // on (the source, not the rendering), so it should be the first thing read.
       // An app that wants something ahead of it marks the toggle's place with
       // an action of kind "edit".
       var editPlaced = (cfg.viewer_actions || []).some(function(a) { return a.kind === 'edit'; });
-      if (cfg.edit_url) {
+      if (editToggle) {
         editBtn = el('button', {class: 'ui-wb-action-btn ui-wb-edit-btn', text: cfg.edit_label || 'Edit'});
         editBtn.disabled = true;
         editBtn.addEventListener('click', function() {
@@ -263,7 +277,7 @@
       }
       // The Edit toggle follows the RECORD, not the selection: only a record
       // that carries its editable source can be edited here.
-      if (editBtn) editBtn.disabled = !(on && lastRec && typeof lastRec[editField] === 'string');
+      if (editBtn) editBtn.disabled = !(on && editableText(lastRec) !== null);
     }
 
     // --- direct editing (edit_url) ------------------------------------------
@@ -271,16 +285,16 @@
     // source field. Save posts the text back and re-renders; Cancel (or the
     // toggle) drops the draft. Ctrl/Cmd+S saves, Escape cancels.
     function openEditor() {
-      if (!cfg.edit_url || !lastRec || typeof lastRec[editField] !== 'string') return;
+      if (!cfg.edit_url || editableText(lastRec) === null) return;
       editing = true;
       if (editBtn) { editBtn.textContent = 'Cancel'; editBtn.classList.add('active'); }
       viewerBody.innerHTML = '';
       var wrap = el('div', {class: 'ui-wb-edit'});
       var ta = el('textarea', {class: 'ui-wb-edit-ta', spellcheck: 'true'});
-      ta.value = lastRec[editField];
+      ta.value = editableText(lastRec);
       var row = el('div', {class: 'ui-wb-edit-actions'});
       var save = el('button', {class: 'ui-row-btn primary', text: 'Save'});
-      var cancel = el('button', {class: 'ui-row-btn', text: 'Cancel'});
+      var cancel = el('button', {class: 'ui-row-btn', text: cfg.propose_edits ? 'Revert' : 'Cancel'});
       var status = el('span', {class: 'ui-wb-edit-status'});
       row.appendChild(save); row.appendChild(cancel);
       // Pictures: paste a screenshot or drop a file into the page, or pick
@@ -298,6 +312,17 @@
       viewerBody.appendChild(wrap);
       editorTA = ta;
       ta.focus();
+      // Co-authored: select a passage and Ask, or one of the page's quick
+      // actions, and review what the chat proposes for it. On a phone Ask
+      // brings the chat up and a proposal brings the document back.
+      if (cfg.propose_edits && window.uiCoauthor) {
+        coauthor = window.uiCoauthor(ta, {
+          host: root,
+          actions: cfg.selection_actions || [],
+          showChat: function() { panes.show('chat'); },
+          showDocument: function() { panes.show('viewer'); },
+        });
+      }
       function doSave() {
         if (!selectedId) return;
         save.disabled = true; status.textContent = 'Saving…';
@@ -319,15 +344,28 @@
       }
       editorSave = doSave;
       save.addEventListener('click', doSave);
-      cancel.addEventListener('click', function() { closeEditor(); renderRecord(lastRec); });
+      cancel.addEventListener('click', function() {
+        if (!cfg.propose_edits) { closeEditor(); renderRecord(lastRec); return; }
+        // A co-authored document stays in its editor: Revert puts the saved
+        // text back, after asking when there is something to lose.
+        var saved = editableText(lastRec) || '';
+        var go = ta.value === saved ? Promise.resolve(true) : window.uiConfirm('Put back the saved text? What you changed since the last Save goes.');
+        go.then(function(ok) {
+          if (!ok) return;
+          closeEditor(); renderRecord(lastRec); openEditor();
+        });
+      });
       ta.addEventListener('keydown', function(ev) {
         if ((ev.ctrlKey || ev.metaKey) && (ev.key === 's' || ev.key === 'S')) { ev.preventDefault(); doSave(); }
-        else if (ev.key === 'Escape') { ev.preventDefault(); closeEditor(); renderRecord(lastRec); }
+        // Escape cancels a plain edit. In a co-authored document it is what
+        // people press to dismiss the selection bar, so it never discards.
+        else if (ev.key === 'Escape' && !cfg.propose_edits) { ev.preventDefault(); closeEditor(); renderRecord(lastRec); }
       });
     }
     function closeEditor() {
       editing = false;
       editorTA = null; editorSave = null;
+      if (coauthor) { coauthor.destroy(); coauthor = null; }
       if (editBtn) { editBtn.textContent = cfg.edit_label || 'Edit'; editBtn.classList.remove('active'); }
     }
 
@@ -769,6 +807,18 @@
       }
     }
 
+    // A co-authored document goes with every chat send, as it is on screen,
+    // unsaved edits included, so the agent reads and quotes what the person
+    // sees (uiCoauthor adds the selected passage beside it).
+    if (cfg.propose_edits) {
+      root.setAttribute('data-ui-send-context', '');
+      root.uiSendContext = function() {
+        if (!selectedId) return {};
+        var text = editing && editorTA ? editorTA.value : (editableText(lastRec) || '');
+        return {document: {id: selectedId, text: text}};
+      };
+    }
+
     function loadViewer(id) {
       selectedId = id;
       // Expose the open record as this subtree's scope, so a panel mounted
@@ -796,12 +846,15 @@
         if (selectedId !== id) return; // a newer click won
         var switched = lastRecId !== id;
         lastRec = rec; lastRecId = id;
-        if (editBtn) editBtn.disabled = !(rec && typeof rec[editField] === 'string');
+        if (editBtn) editBtn.disabled = editableText(rec) === null;
         // A refresh of the record being edited (a co-author write, a round
         // ending) must not replace the textarea; switching records does.
         if (editing && !switched) return;
         if (editing) closeEditor();
         renderRecord(rec);
+        // A co-authored document opens straight into its editor: writing it
+        // is what the page is for.
+        if (cfg.propose_edits && cfg.edit_url) openEditor();
       }).catch(function() {});
     }
 

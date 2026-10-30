@@ -115,6 +115,7 @@ func (T *CustomApps) appRoutes() {
 	}.Serve)
 	T.HandleFunc("/{slug}/record", jsonapi.Methods{
 		"GET":    T.appGet(T.getRecord),
+		"POST":   appPost(T, T.patchRecord),
 		"DELETE": appDelete(T, T.deleteRecord),
 	}.Serve)
 	T.HandleFunc("/{slug}/changes", jsonapi.Methods{"GET": T.appGet(T.changes)}.Serve)

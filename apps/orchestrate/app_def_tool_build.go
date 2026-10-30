@@ -145,7 +145,7 @@ var sectionKeys = map[string][]string{
 	"chat":      {"list_title", "empty_text", "placeholder"},
 	"pipeline":  {"fields", "submit_label", "empty_text", "input_label", "placeholder", "pipeline_id", "toolbar", "suggest_script", "suggest_label", "suggest_target", "meta"},
 	"run":       {"fields", "submit_label", "empty_text", "input_label", "placeholder", "pipeline_id", "toolbar", "suggest_script", "suggest_label", "suggest_target", "meta"},
-	"workbench": {"item_label", "body_field", "item_noun", "new_fields", "new_label", "new_title", "list_title", "list_empty", "empty_title", "empty_hint", "empty_icon", "chat_empty", "placeholder"},
+	"workbench": {"item_label", "body_field", "item_noun", "new_fields", "new_label", "new_title", "list_title", "list_empty", "empty_title", "empty_hint", "empty_icon", "chat_empty", "placeholder", "editable", "selection_actions"},
 	"html":      {"html", "height", "source_script"},
 	"card":      {"html", "height", "source_script"},
 }
@@ -703,7 +703,7 @@ func buildWorkbench(spec AppSpec, m map[string]any) (ui.WorkbenchPanel, error) {
 	}
 
 	noun := firstNonEmptyStr(mapStr(m, "item_noun"), "document")
-	return ui.WorkbenchPanel{
+	wb := ui.WorkbenchPanel{
 		ListURL:          "records",
 		ItemKey:          spec.RecordKey,
 		ItemLabel:        itemLabel,
@@ -727,7 +727,45 @@ func buildWorkbench(spec AppSpec, m map[string]any) (ui.WorkbenchPanel, error) {
 		CoAuthorVerb: "Add to " + noun,
 		SaveURL:      "records",
 		Chat:         chat,
-	}, nil
+	}
+	// editable: the document is written with the agent, not appended to by
+	// it. It opens in an editor that saves through record?id= (a merge, so
+	// the record's other fields stay), a selected passage can be asked about,
+	// and the agent proposes changes the person reviews as a diff and
+	// applies. The "Add to" button goes: it wrote under the person's unsaved
+	// edits, and every change now comes as a proposal (customapps/coauthor.go
+	// gives the agent propose_edit in place of add_section).
+	if mapBool(m, "editable") {
+		wb.EditURL = "record?id={id}"
+		wb.EditField = bodyField
+		wb.ProposeEdits = true
+		wb.SelectionActions = selectionActions(m["selection_actions"])
+		wb.CoAuthor = false
+		wb.CoAuthorVerb = ""
+		chat.EmptyText = firstNonEmptyStr(mapStr(m, "chat_empty"), "Select part of the "+noun+" and Ask, or ask about the whole "+noun+".")
+		wb.Chat = chat
+	}
+	return wb, nil
+}
+
+// selectionActions reads a workbench's quick actions for a selected passage:
+// [{label, prompt}], or a bare label for one whose prompt is its label.
+func selectionActions(raw any) []ui.SelectionAction {
+	arr, _ := raw.([]any)
+	var out []ui.SelectionAction
+	for _, it := range arr {
+		switch v := it.(type) {
+		case string:
+			if l := strings.TrimSpace(v); l != "" {
+				out = append(out, ui.SelectionAction{Label: l})
+			}
+		case map[string]any:
+			if l := strings.TrimSpace(mapStr(v, "label")); l != "" {
+				out = append(out, ui.SelectionAction{Label: l, Prompt: strings.TrimSpace(mapStr(v, "prompt"))})
+			}
+		}
+	}
+	return out
 }
 
 // entryListError explains why a fields/columns list came out EMPTY.

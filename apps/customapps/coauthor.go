@@ -12,12 +12,17 @@
 package customapps
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
+	"github.com/cmcoffee/gohort/core/docs"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
@@ -100,4 +105,128 @@ func (T *CustomApps) coauthorTools(udb Database, spec AppSpec) []AgentToolDef {
 			return fmt.Sprintf("Added the %q section to %q. It now shows in the document viewer.", title, docName), nil
 		},
 	}}
+}
+
+// --- a co-authored document (workbench editable) ---------------------------
+//
+// A workbench whose section says editable is a document written with the
+// agent beside it (ui.WorkbenchPanel.ProposeEdits): it opens in an editor,
+// the person selects a passage and asks about it, and the agent proposes a
+// change reviewed as a diff of that passage. Every send carries the document
+// as it is on screen, so the agent quotes what the person sees, and the agent
+// changes it only by proposing: a direct write (add_section, "Add to") would
+// land under the person's unsaved edits and be lost to their next Save.
+
+// workbenchEditable reports whether the app's workbench section is editable,
+// read from the sections as authored. An app written before the option, or
+// with no sections kept, is not. A section may leave its kind to be inferred
+// from its fields, so one with no kind counts too: BodyField being set is
+// what says the app has a workbench.
+func workbenchEditable(spec AppSpec) bool {
+	if len(spec.Sections) == 0 || strings.TrimSpace(spec.BodyField) == "" {
+		return false
+	}
+	var secs []map[string]any
+	if json.Unmarshal(spec.Sections, &secs) != nil {
+		return false
+	}
+	for _, s := range secs {
+		if kind, _ := s["kind"].(string); strings.TrimSpace(kind) != "" && !strings.EqualFold(strings.TrimSpace(kind), "workbench") {
+			continue
+		}
+		switch v := s["editable"].(type) {
+		case bool:
+			return v
+		case string:
+			return strings.EqualFold(strings.TrimSpace(v), "true")
+		}
+	}
+	return false
+}
+
+// coauthorSend is what a co-authored document's send carries beside the
+// message (the workbench's send context and uiCoauthor's pinned passage).
+type coauthorSend struct {
+	Document struct {
+		ID   string `json:"id"`
+		Text string `json:"text"`
+	} `json:"document"`
+	Selection agenthost.Selection `json:"selection"`
+}
+
+// maxCoauthorDoc bounds the document a turn is shown.
+const maxCoauthorDoc = 60000
+
+// coauthorTurnContext is what the turn is told about the open document: the
+// text as the person has it, how to change it, and the passage they selected
+// when they pinned one. "" when no document is open.
+func coauthorTurnContext(send coauthorSend) string {
+	if strings.TrimSpace(send.Document.ID) == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("The document open beside this conversation, as it is now (edits not yet saved included):\n")
+	text := send.Document.Text
+	if strings.TrimSpace(text) == "" {
+		b.WriteString("(The document is empty.)\n")
+	} else {
+		if r := []rune(text); len(r) > maxCoauthorDoc {
+			text = string(r[:maxCoauthorDoc]) + "\n[... the rest is not shown]"
+		}
+		f := docs.DocFence(text)
+		b.WriteString(f + "\n" + text + "\n" + f + "\n")
+	}
+	b.WriteString("\nTo change it, call propose_edit with find set to the text you are replacing, copied exactly from the document, " +
+		"and replace set to its new text; to add to it, replace the passage the addition follows with that passage plus the addition. " +
+		"An empty document is written with an empty find. The person sees a diff and applies it or not: nothing changes until they do.\n")
+	if sel := agenthost.SelectionContext(send.Selection); sel != "" {
+		b.WriteString("\n" + sel + "\n")
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// handleCoauthorSend runs a send for a co-authored document: the document and
+// the pinned passage go into the turn, and the agent's only way to change the
+// document is to propose. others are the app's action tools, kept.
+func (T *CustomApps) handleCoauthorSend(w http.ResponseWriter, r *http.Request, orch agenthost.Host, agent agenthost.Agent, others []AgentToolDef) {
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 16<<20))
+	if err != nil {
+		http.Error(w, "request too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+	r.Body = io.NopCloser(bytes.NewReader(raw))
+	var send coauthorSend
+	_ = json.Unmarshal(raw, &send)
+	pub := &agenthost.Publisher{}
+	tools := append([]AgentToolDef{agenthost.ProposeEditTool(pub)}, others...)
+	if turn := coauthorTurnContext(send); turn != "" {
+		r = agenthost.WithTurnContext(r, turn)
+	}
+	orch.PublicHandleSendWithAppToolsPublishing(w, r, agent, tools, pub)
+}
+
+// patchRecord merges what it is sent into the record ?id= names: the fields
+// given replace theirs, every other field stays. A workbench editor saves
+// through it, sending the id and the edited field only, which the records
+// endpoint (a whole-record save) would take as the whole record and drop the
+// rest. The key and created stamp are the record's own.
+func (T *CustomApps) patchRecord(a *appCall, in map[string]any) (any, error) {
+	id, err := recordID(a)
+	if err != nil {
+		return nil, err
+	}
+	tbl := recTable(a.spec.Slug)
+	var rec map[string]any
+	if !a.appdb.Get(tbl, id, &rec) || rec == nil {
+		return nil, jsonapi.NotFound("no record " + id)
+	}
+	for k, v := range in {
+		if k == a.spec.RecordKey || k == "created" || k == "id" {
+			continue
+		}
+		rec[k] = v
+	}
+	a.appdb.Set(tbl, id, rec)
+	noteChange(recordsChangeKey(a.owner, a.spec.Slug, a.User))
+	return rec, nil
 }

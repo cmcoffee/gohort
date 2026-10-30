@@ -278,3 +278,47 @@ func TestMetaFieldsThePipelineDoesNotPromoteAreNoted(t *testing.T) {
 		t.Errorf("everything promoted should be quiet, got %v", n)
 	}
 }
+
+// An editable workbench is a document the person writes with the agent: it
+// opens in an editor that saves by merging into the record, its selection
+// offers the section's quick actions, and the "Add to" button goes, since
+// every change comes as a proposal. A plain workbench is as it was.
+func TestAnEditableWorkbenchIsCoauthored(t *testing.T) {
+	spec := AppSpec{AgentID: "lyricist", RecordKey: "id"}
+	m := map[string]any{
+		"kind": "workbench", "body_field": "lyrics", "item_noun": "song", "editable": true,
+		"selection_actions": []any{
+			map[string]any{"label": "Tighten", "prompt": "Tighten this passage."},
+			"Rhyme it",
+			map[string]any{"prompt": "no label"},
+		},
+	}
+	wb, err := buildWorkbench(spec, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !wb.ProposeEdits || wb.EditURL != "record?id={id}" || wb.EditField != "lyrics" {
+		t.Errorf("an editor over the body, saved by merge: %+v", wb)
+	}
+	if wb.CoAuthor || wb.CoAuthorVerb != "" {
+		t.Error("no Add to button on a document the agent only proposes to")
+	}
+	want := []ui.SelectionAction{{Label: "Tighten", Prompt: "Tighten this passage."}, {Label: "Rhyme it"}}
+	if len(wb.SelectionActions) != 2 || wb.SelectionActions[0] != want[0] || wb.SelectionActions[1] != want[1] {
+		t.Errorf("quick actions %+v", wb.SelectionActions)
+	}
+	if chat, ok := wb.Chat.(ui.AgentLoopPanel); !ok || !strings.Contains(chat.EmptyText, "Select part of the song") {
+		t.Errorf("the chat says how to start: %+v", wb.Chat)
+	}
+	if notes := unknownSectionKeyNotes([]any{m}); len(notes) != 0 {
+		t.Errorf("editable and selection_actions are workbench keys: %v", notes)
+	}
+
+	plain, err := buildWorkbench(spec, map[string]any{"kind": "workbench", "body_field": "lyrics"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain.ProposeEdits || plain.EditURL != "" || !plain.CoAuthor {
+		t.Errorf("a plain workbench is as it was: %+v", plain)
+	}
+}

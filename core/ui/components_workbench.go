@@ -53,6 +53,17 @@ type WorkbenchPanel struct {
 	EditURL   string `json:"edit_url,omitempty"`
 	EditField string `json:"edit_field,omitempty"` // default "markdown"
 	EditLabel string `json:"edit_label,omitempty"` // toggle text (default "Edit")
+	// ProposeEdits makes the open document a co-authored one (uiCoauthor,
+	// 47_coauthor.js): it opens straight into the editor, selecting a passage
+	// offers Ask and SelectionActions, every chat send carries the document as
+	// it is on screen and the pinned passage ("document": {id, text} and
+	// "selection"), and what the chat's agent proposes (a text_proposal, from
+	// agenthost.ProposeEditTool) is reviewed as a diff of that passage. A
+	// record with no EditField yet opens as an empty document. Needs EditURL,
+	// which must MERGE what it is sent into the record: it is sent the id and
+	// the edited field only.
+	ProposeEdits     bool              `json:"propose_edits,omitempty"`
+	SelectionActions []SelectionAction `json:"selection_actions,omitempty"`
 	// ImageUploadURL, with {id} for the open record, takes pictures pasted or
 	// dropped into the edit textarea (and an Add image button for a file):
 	// POST multipart "file", answering {markdown} to insert at the cursor.
@@ -96,6 +107,14 @@ type WorkbenchPanel struct {
 	// (defaults "Document" and "Assistant").
 	ViewerLabel string `json:"viewer_label,omitempty"`
 	ChatLabel   string `json:"chat_label,omitempty"`
+}
+
+// SelectionAction is a quick action on a co-authored document's selection
+// bar: Label on the button, and Prompt the words it sends about the selected
+// passage at once (Label when empty).
+type SelectionAction struct {
+	Label  string `json:"label"`
+	Prompt string `json:"prompt,omitempty"`
 }
 
 // WorkbenchAction is one button in a WorkbenchPanel's viewer toolbar, acting on

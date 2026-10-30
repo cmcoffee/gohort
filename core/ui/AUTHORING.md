@@ -209,6 +209,7 @@ core/ui/` is the authoritative history.
 | A bar chart | `ui.BarChart` |
 | An article editor with full markdown + image insertion | `ui.ArticleEditor` |
 | A code editor with diff + history | `ui.CodeEditorPanel` |
+| A document the person writes with an agent: select a passage, ask about it, review the proposed change as a diff | `ui.WorkbenchPanel{ProposeEdits: true}`, or `window.uiCoauthor` on your own textarea (see Co-authored documents below) |
 | A button in your own HTML (ExtraHeadHTML, a client action's modal) | `class="ui-row-btn"`, with `primary` / `danger` / `ui-btn-sm` as needed. It takes the shared size, rounding and touch size; a hand-styled button takes none of them |
 | A one-glyph button in your own HTML (remove ×, edit ✎, ✨) | `class="ui-icon-btn"` (add `danger` for a remove). Never padding and a font size of your own: on a phone that is a 20px target |
 | A list of editable entries in your own HTML, some of them long (rules, notes, examples) | A `textarea` per entry through `window.uiExpandingLine(ta, {oneLine, buttonClass, onInput})`: it reads on one line and opens to the whole entry while edited, or from the arrow it returns. `oneLine` when each entry is one stored line |
@@ -298,6 +299,36 @@ no message (a one-shot suggestion); `Request.Get` and `Request.String` read the
 keys your client sends. A client that asks for the stream
 (`Accept: application/x-ndjson`, as `uiAssistPost` does) gets progress lines;
 any other gets one JSON reply. Never write a second assist handler.
+
+### Co-authored documents
+
+A document the person writes, with an agent beside it. They select part of it
+the way they would to copy it (a drag, a double-click, the handles on a phone),
+and a bar beside the selection offers **Ask** and your quick actions. Ask pins
+the passage: a chip over the chat says what the next message is about, and the
+send carries it. The agent answers with a proposal, reviewed as a diff of that
+passage alone, with Apply, Reject and Undo. Nothing is written until the person
+applies it, and your own Save keeps it.
+
+- **Whole app:** `ui.WorkbenchPanel{ProposeEdits: true, EditURL: ..., SelectionActions: ...}`.
+  The open record is an editor from the start, every chat send carries the
+  document as it is on screen (`"document": {id, text}`) and the pinned
+  passage (`"selection"`). `EditURL` must merge what it is sent into the
+  record: it gets the id and the edited field only. Builder's version is the
+  workbench section's `editable: true`.
+- **Your own textarea:** `window.uiCoauthor(textarea, {host, actions, setValue,
+  showChat, showDocument})`, with an `AgentLoopPanel` inside `host`. It returns
+  `{pin, unpin, pinned, propose, destroy}`; call `destroy` when the textarea goes.
+- **Server:** give the turn `agenthost.ProposeEditTool(pub)` (`propose_edit`:
+  `find`, `replace`, `summary`; it emits a `text_proposal` block) and put
+  `agenthost.SelectionContext(sel)` in the turn with `agenthost.WithTurnContext`,
+  sending through `PublicHandleSendWithAppToolsPublishing`. `find` is copied
+  text, not offsets: it is also the staleness check, so a passage the person
+  changed since is refused at Apply instead of written over.
+- ✨ Assist drafts (`uiOpenAssist`) already do this: the selected passage rides
+  the request as `selection`, and the reply's version opens on **Changes**.
+
+docs/design/coauthor-proposals.md has the reasoning.
 
 ### Repeating rows
 

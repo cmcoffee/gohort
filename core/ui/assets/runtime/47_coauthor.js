@@ -142,7 +142,8 @@
     textarea.addEventListener('mouseup', barAtPointer);
     textarea.addEventListener('touchend', barAtPointer);
     textarea.addEventListener('keyup', function(e) {
-      if (e.shiftKey || e.key === 'Shift') barAtPointer(null);
+      if (e.key === 'Escape') hideBar();
+      else if (e.shiftKey || e.key === 'Shift') barAtPointer(null);
       else if (!selection()) hideBar();
     });
     textarea.addEventListener('blur', function() { setTimeout(hideBar, 150); });
@@ -194,12 +195,14 @@
     // The send carries the pinned passage beside whatever the host already
     // sends (an editor's file, a form's fields).
     var prior = host.uiSendContext;
+    var hadSendContext = host.hasAttribute ? host.hasAttribute('data-ui-send-context') : true;
     host.setAttribute('data-ui-send-context', '');
-    host.uiSendContext = function() {
+    function sendContext() {
       var base = typeof prior === 'function' ? (prior() || {}) : {};
       if (!pinned) return base;
       return Object.assign({}, base, {selection: {text: pinned.text, start: pinned.start, end: pinned.end}});
-    };
+    }
+    host.uiSendContext = sendContext;
 
     // --- Review ----------------------------------------------------------------
     function closeReview() {
@@ -291,12 +294,24 @@
     return {
       pin: pin, unpin: unpin, propose: propose,
       pinned: function() { return pinned; },
-      // destroy takes the bar and its page listener away, for a document
-      // that goes before the page does (one in a dialog).
+      // destroy takes the bar and its page listener away and hands the host
+      // back as it was, for a document that goes before the page does (one
+      // in a dialog, an editor that closes and opens again).
       destroy: function() {
         hideBar();
+        closeReview();
+        clearUndo();
+        if (pinned) unpin();
         if (bar.parentNode) bar.parentNode.removeChild(bar);
         if (window.removeEventListener) window.removeEventListener('scroll', hideBar, true);
+        if (host.uiSendContext === sendContext) {
+          host.uiSendContext = prior;
+          if (!hadSendContext && host.removeAttribute) host.removeAttribute('data-ui-send-context');
+        }
+        if (host.uiProposeText === propose) {
+          host.uiProposeText = undefined;
+          if (host.removeAttribute) host.removeAttribute('data-ui-coauthor');
+        }
       },
     };
   };

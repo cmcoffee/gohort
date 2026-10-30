@@ -1,7 +1,8 @@
 # Co-author: select, ask, review, apply
 
-Status: planned 2026-10-29. Phase 1 built. Phase 2: CodeWriter and ✨ Assist drafts built and
-checked in headless Chromium (desktop and 390px); FormPanel text fields not started.
+Status: planned 2026-10-29. Phases 1 to 3 built and checked in headless Chromium (desktop and
+390px), including a Builder-built editable workbench. Not yet: FormPanel text fields (phase 2),
+the song app built by Builder against a live model (phase 4), folding the copies in (phase 5).
 
 ## Why it exists
 
@@ -99,8 +100,12 @@ editable finds the chat beside it through the host element they share.
 2. **First consumers.** CodeWriter adopts it: selection-aware turns, `propose_edit` beside
    `propose_code`, its diff injection removed. `FormPanel` textarea fields get the same selection
    bar through ✨ Assist, and Assist's draft review shows the diff.
-3. **Builder reach.** An `app_def` section that is a document with a co-author chat (the agent,
-   the quick actions, where Save goes). `AUTHORING.md` and Builder's prompt describe it.
+3. **Builder reach.** The workbench section's `editable: true` and `selection_actions`: the
+   open item is an editor saved by merging into the record (`POST record?id=`), every send
+   carries the document and the pinned passage, and the agent gets `propose_edit` in place of
+   `add_section` and the "Add to" button, which would write under unsaved edits. Revert asks
+   before putting the saved text back, and Escape never discards. `AUTHORING.md` and the
+   section help describe it.
 4. **The song app, built by Builder.** Lyrics document with section headings, the lyric agent as
    co-author with its scansion tool, Render to `generate_music` keeping each take as a titled
    version. Whatever Builder cannot express is the next primitive to fix, not app-specific code.

@@ -14,6 +14,8 @@ function check(label, cond) {
 function node(tag) {
   var n = {tag: tag, attrs: {}, children: [], style: {}, on: {}, parentNode: null, textContent: '', disabled: false};
   n.setAttribute = function(k, v) { n.attrs[k] = v; };
+  n.hasAttribute = function(k) { return k in n.attrs; };
+  n.removeAttribute = function(k) { delete n.attrs[k]; };
   n.addEventListener = function(t, f) { (n.on[t] = n.on[t] || []).push(f); };
   n.fire = function(t, e) { (n.on[t] || []).forEach(function(f) { f(e || {}); }); };
   n.appendChild = function(c) { c.parentNode = n; n.children.push(c); return c; };
@@ -139,6 +141,9 @@ check('a selection shows the bar, with Ask and the page\'s quick actions',
   bar.style.display === '' && button(bar, 'Ask') && button(bar, 'Tighten'));
 check('the bar sits over the selection', bar.style.left === (200 - 80) + 'px' && bar.style.top === (300 - 36 - 10) + 'px');
 
+ta.fire('keyup', {key: 'Escape'});
+check('Escape dismisses the bar', bar.style.display === 'none');
+ta.fire('mouseup', {clientX: 200, clientY: 300});
 click(button(bar, 'Ask'));
 check('Ask pins the passage with a chip and focuses the chat',
   calls[0] === 'chip:“Neon on the water City never…”, 2 lines' && calls[1] === 'focus' && bar.style.display === 'none');
@@ -208,6 +213,41 @@ calls = [];
 ta.value = ta.value.replace('Verse one line', '');
 ta.fire('input');
 check('removing the pinned passage unpins it', co.pinned() === null && calls.indexOf('clear') >= 0);
+
+// --- going away ---------------------------------------------------------------
+// An editor that closes and opens again builds a new one each time: the old
+// one hands the host back as it found it, or the second wraps the first.
+var host2 = el('div');
+var pane2 = el('div');
+var ta2 = el('textarea');
+ta2.value = 'one two three';
+ta2.focus = function() {};
+ta2.setSelectionRange = function(s, e) { ta2.selectionStart = s; ta2.selectionEnd = e; };
+pane2.appendChild(ta2);
+host2.appendChild(pane2);
+var chat2 = el('div', {'data-ui-composer': ''});
+var cleared2 = 0;
+chat2.uiComposer = {setChip: function() {}, clearChip: function() { cleared2++; }, focus: function() {}, insertText: function() {}, send: function() {}};
+host2.appendChild(chat2);
+composers = [chat, chat2];
+function own() { return {document: {text: ta2.value}}; }
+host2.uiSendContext = own;
+host2.setAttribute('data-ui-send-context', '');
+var barsBefore = document.body.children.length;
+var co2 = window.uiCoauthor(ta2, {host: host2});
+co2.pin({start: 4, end: 7, text: 'two'});
+host2.uiProposeText({find: 'two', replace: '2'});
+co2.destroy();
+check('destroy hands the host its own send context back', host2.uiSendContext === own && 'data-ui-send-context' in host2.attrs);
+check('and stops answering proposals', host2.uiProposeText === undefined && !('data-ui-coauthor' in host2.attrs));
+check('and lets the pin go, chip and all', co2.pinned() === null && cleared2 === 1);
+check('and closes its review', !find(pane2, function(c) { return c.className === 'ui-coauthor-review'; }));
+check('and takes its bar off the page', document.body.children.length === barsBefore);
+var bare = el('div');
+var ta3 = el('textarea');
+bare.appendChild(ta3);
+window.uiCoauthor(ta3, {host: bare}).destroy();
+check('a host that had no send context of its own is left without one', !('data-ui-send-context' in bare.attrs) && bare.uiSendContext === undefined);
 
 // --- the proposal's card ------------------------------------------------------
 var proposed = [];

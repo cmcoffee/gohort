@@ -423,12 +423,19 @@ func (T *CustomApps) handleChat(w http.ResponseWriter, r *http.Request, owner, u
 		// the open document. An app with actions or data sources → its
 		// buttons, its data and its status as tools (agent_actions.go).
 		var tools []AgentToolDef
-		if strings.TrimSpace(spec.BodyField) != "" {
+		editable := workbenchEditable(spec)
+		if strings.TrimSpace(spec.BodyField) != "" && !editable {
 			tools = append(tools, T.coauthorTools(udb, spec)...)
 		}
 		if len(spec.Actions)+len(spec.DataSources) > 0 {
 			out, run := T.latestRunForApp(spec, r)
 			tools = append(tools, T.agentToolsFor(owner, uid, udb, spec, out, run)...)
+		}
+		// A co-authored document: the agent reads it and proposes, never
+		// writes it directly (coauthor.go).
+		if editable {
+			T.handleCoauthorSend(w, r, orch, agent, tools)
+			return
 		}
 		if len(tools) > 0 {
 			orch.PublicHandleSendWithAppTools(w, r, agent, tools)
