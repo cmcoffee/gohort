@@ -761,3 +761,79 @@ func TestReadAloudNamesTheClient(t *testing.T) {
 		}
 	}
 }
+
+// mp3Frame is one MPEG Layer III frame: MPEG-1 at 128kbps 44.1kHz (417
+// bytes) or MPEG-2 at 64kbps 24kHz (192 bytes), with tag written where an
+// encoder writes its Info or Xing tag, or at the VBRI offset.
+func mp3Frame(mpeg1, mono bool, tag string, at int) []byte {
+	h, n := []byte{0xFF, 0xFB, 0x90, 0x00}, 417
+	if !mpeg1 {
+		h, n = []byte{0xFF, 0xF3, 0x84, 0x00}, 192
+	}
+	if mono {
+		h[3] = 0xC0
+	}
+	f := make([]byte, n)
+	copy(f, h)
+	copy(f[at:], tag)
+	return f
+}
+
+// The frame an encoder writes to say how long one file is goes, wherever the
+// encoder put it; a frame of sound, a tag, or something not an mp3 stays.
+func TestWithoutLengthFrame(t *testing.T) {
+	audio := mp3Frame(true, false, "", 0)
+	join := func(parts ...[]byte) []byte { return bytes.Join(parts, nil) }
+	for _, c := range []struct {
+		name string
+		in   []byte
+		want []byte
+	}{
+		{"an Info frame, MPEG-1 stereo", join(mp3Frame(true, false, "Info", 36), audio), audio},
+		{"a Xing frame, MPEG-1 mono", join(mp3Frame(true, true, "Xing", 21), audio), audio},
+		{"a Xing frame, MPEG-2 mono", join(mp3Frame(false, true, "Xing", 13), audio), audio},
+		{"a VBRI frame", join(mp3Frame(true, false, "VBRI", 36), audio), audio},
+		{"an ID3 tag before it is kept", join([]byte("ID3\x04\x00\x00\x00\x00\x00\x03abc"), mp3Frame(true, false, "Info", 36), audio),
+			join([]byte("ID3\x04\x00\x00\x00\x00\x00\x03abc"), audio)},
+		{"a frame of sound", join(audio, audio), join(audio, audio)},
+		{"a tag in the wrong place", join(mp3Frame(true, false, "Info", 13), audio), join(mp3Frame(true, false, "Info", 13), audio)},
+		{"a frame cut short", mp3Frame(true, false, "Info", 36)[:100], mp3Frame(true, false, "Info", 36)[:100]},
+		{"not an mp3", []byte("RIFF....WAVEfmt "), []byte("RIFF....WAVEfmt ")},
+	} {
+		if got := withoutLengthFrame(c.in); !bytes.Equal(got, c.want) {
+			t.Errorf("%s: %d bytes, want %d", c.name, len(got), len(c.want))
+		}
+	}
+}
+
+// A reply read in pieces reaches the player with no piece saying how long it
+// is: WebKit took the first one's for the whole stream's and stopped there.
+func TestAJoinedStreamSaysNoLength(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]string
+		json.NewDecoder(r.Body).Decode(&body)
+		w.Write(bytes.Join([][]byte{[]byte("ID3\x04\x00\x00\x00\x00\x00\x03abc"), mp3Frame(true, false, "Info", 36), []byte("[" + body["input"] + "]")}, nil))
+	}))
+	defer srv.Close()
+	prev := GetSpeechConfig()
+	SetSpeechConfig(SpeechConfig{Endpoint: srv.URL, Enabled: true})
+	t.Cleanup(func() { SetSpeechConfig(prev) })
+
+	var start struct{ URL string }
+	resp := readAloudDo("POST", ReadAloudPath, "alice", `{"text":`+strconv.Quote("First. "+readAloudLong("Then the rest"))+`}`)
+	json.Unmarshal(resp.Body.Bytes(), &start)
+	if start.URL == "" {
+		t.Fatalf("start: %d %s", resp.Code, resp.Body.String())
+	}
+	body := readAloudDo("GET", start.URL, "alice", "").Body.String()
+	if strings.Contains(body, "Info") || !strings.HasPrefix(body, "ID3") || !strings.Contains(body, "[First.]") || !strings.Contains(body, "[Then the rest") {
+		t.Errorf("the stream should carry its sound and one tag, and no length frame: %q", body[:min(len(body), 80)])
+	}
+
+	// Read in one piece, its length frame is true and stays.
+	resp = readAloudDo("POST", ReadAloudPath, "alice", `{"text":"Just this."}`)
+	json.Unmarshal(resp.Body.Bytes(), &start)
+	if body := readAloudDo("GET", start.URL, "alice", "").Body.String(); !strings.Contains(body, "Info") {
+		t.Errorf("a reply in one piece keeps its own length: %q", body[:min(len(body), 80)])
+	}
+}

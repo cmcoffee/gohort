@@ -189,6 +189,9 @@ type sendRequest struct {
 	// dictated message with read-aloud on): the turn is told to answer the
 	// way it would speak. See spokenReplyNote.
 	SpokenReply bool `json:"spoken_reply,omitempty"`
+	// Dictated marks a message the page's mic wrote out from speech: the
+	// turn is told a word in it may be misheard. See dictatedNote.
+	Dictated bool `json:"dictated,omitempty"`
 }
 
 // Extract attached documents (PDFs, DOCX, text files). Hold them
@@ -286,6 +289,9 @@ func (sr *sendRun) readRequest() bool {
 	if err := json.NewDecoder(sr.r.Body).Decode(&sr.req); err != nil {
 		http.Error(sr.w, "bad request", http.StatusBadRequest)
 		return false
+	}
+	if sr.req.Dictated {
+		Debug("[send] %s: a dictated message, the turn is told it was transcribed", sr.user)
 	}
 	if len(sr.req.Documents) > 0 {
 		for _, d := range sr.req.Documents {
@@ -765,6 +771,7 @@ func (sr *sendRun) buildTurn() {
 		// (write side) — nothing accumulates back, matching "no baggage out".
 		inferredDisabled: sr.req.InferredDisabled || sr.sess.Incognito,
 		spokenReply:      sr.req.SpokenReply,
+		dictated:         sr.req.Dictated,
 		userImages:       decodeUserImages(sr.req.Images),
 		// from_client_* tools are exposed only when the request came from the
 		// gohort-desktop viewer (its proxy stamps the bridge key) — never a

@@ -162,6 +162,11 @@ func startReadAloud(w http.ResponseWriter, r *http.Request, user string) {
 		first, ext, err = SpeakIn(r.Context(), text, voice)
 		pieces = pieces[:1]
 	}
+	if err == nil && len(pieces) > 1 {
+		// Its length frame gives the first piece's length, which WebKit
+		// takes for the whole stream's and stops at.
+		first = withoutLengthFrame(first)
+	}
 	if err != nil {
 		if r.Context().Err() == nil {
 			nfo.Log("[speech] read aloud for %s failed: %v", user, err)
@@ -356,7 +361,7 @@ func (j *readAloudJob) make(ctx context.Context, from int) {
 			return
 		}
 		j.mu.Lock()
-		j.made = append(j.made, withoutID3(audio))
+		j.made = append(j.made, withoutLengthFrame(withoutID3(audio)))
 		j.cond.Broadcast()
 		j.mu.Unlock()
 	}
@@ -549,6 +554,69 @@ func withoutID3(b []byte) []byte {
 	return b[end:]
 }
 
+// withoutLengthFrame drops the frame an encoder (LAME, so ffmpeg) puts first in
+// an mp3 to say how long that one file is: an Info or Xing frame, or a VBRI
+// one. Joined into a stream, the first piece's said how long the whole stream
+// was, and WebKit (Safari, the desktop app) stopped playing there with every
+// piece downloaded: the reply was cut off after its first sentences. Chrome
+// and Firefox play to the end of the data either way. The frame holds no
+// sound. An ID3 tag before it is kept; anything not an mp3 frame is left
+// alone.
+func withoutLengthFrame(b []byte) []byte {
+	off := len(b) - len(withoutID3(b))
+	n, side, ok := mp3FrameInfo(b[off:])
+	if !ok || off+n > len(b) {
+		return b
+	}
+	frame := b[off : off+n]
+	tag := func(at int) string {
+		if at+4 > len(frame) {
+			return ""
+		}
+		return string(frame[at : at+4])
+	}
+	if t := tag(4 + side); t != "Xing" && t != "Info" && tag(36) != "VBRI" {
+		return b
+	}
+	out := make([]byte, 0, len(b)-n)
+	return append(append(out, b[:off]...), b[off+n:]...)
+}
+
+// mp3FrameInfo reads the MPEG Layer III frame header at the start of b: the
+// frame's length in bytes, and the length of the side information after the
+// header, where an encoder's Info or Xing tag starts. ok is false for anything
+// that is not such a header.
+func mp3FrameInfo(b []byte) (length, side int, ok bool) {
+	if len(b) < 4 || b[0] != 0xFF || b[1]&0xE0 != 0xE0 {
+		return 0, 0, false
+	}
+	version, layer := (b[1]>>3)&3, (b[1]>>1)&3 // version 3 = MPEG-1, 2 = MPEG-2, 0 = MPEG-2.5; layer 1 = III
+	bitIdx, rateIdx, pad := int(b[2]>>4), int((b[2]>>2)&3), int((b[2]>>1)&1)
+	if version == 1 || layer != 1 || bitIdx == 0 || bitIdx == 15 || rateIdx == 3 {
+		return 0, 0, false
+	}
+	mono := b[3]>>6 == 3
+	if version == 3 {
+		kbps := [...]int{0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320}[bitIdx]
+		rate := [...]int{44100, 48000, 32000}[rateIdx]
+		side = 32
+		if mono {
+			side = 17
+		}
+		return 144000*kbps/rate + pad, side, true
+	}
+	kbps := [...]int{0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160}[bitIdx]
+	rate := [...]int{22050, 24000, 16000}[rateIdx]
+	if version == 0 {
+		rate /= 2
+	}
+	side = 17
+	if mono {
+		side = 9
+	}
+	return 72000*kbps/rate + pad, side, true
+}
+
 // ReadAloudScript is the `<script>` that puts 🔊 on every agent reply in the
 // web chat, for pages to embed in Page.ExtraHeadHTML the way they embed
 // TranscribeRuntimeFlagScript. Empty while speech is off, so the button only
@@ -640,8 +708,8 @@ const readAloudJS = `(function(){
       });
   }
   // For the dictation script: read a reply aloud on its own (the reply to a
-  // dictated message), and stop whatever is playing (the person started
-  // typing). ctx is a bubble action's: {bubble, getText, agentId, button?,
+  // dictated message), and stop whatever is playing (the person sent a
+  // message, or started recording). ctx is a bubble action's: {bubble, getText, agentId, button?,
   // audio?, onDone?(ended)}.
   window.gohortReadAloud = press;
   window.gohortReadAloudStop = stop;

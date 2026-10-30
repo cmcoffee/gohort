@@ -73,6 +73,11 @@ var sent = 0;
 function sendMessage() { sent++; }
 ctx.send();
 check('send() sends what is in the box, as Send does', sent === 1);
+var extraInputs = {agent_id: {value: 'a-1'}, scope: {value: 'old'}};
+function hostSendContext() { return {scope: 'doc-7'}; }
+var f = ctx.fields();
+check('fields() is what a send carries beside the message, the host context last',
+  f.agent_id === 'a-1' && f.scope === 'doc-7' && Object.keys(f).length === 2);
 check('an action without an onclick is refused', window.uiRegisterComposerAction({label: 'x'}) === null && composerMiddle.kids.length === 3);
 
 // prominent takes a button to the left-hand end; first puts one at the

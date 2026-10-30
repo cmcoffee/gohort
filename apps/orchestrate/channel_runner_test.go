@@ -359,7 +359,7 @@ func TestMergedNoteSurvivesAnUnknownBinding(t *testing.T) {
 	if base := channelSurfaceContext(in); base != "" {
 		t.Skipf("this deployment resolved the binding (%q); the guard is untestable here", base)
 	}
-	full := channelSurfaceContextFull(in, false)
+	full := channelSurfaceContextFull(in, false, false)
 	if !strings.Contains(full, "2 separate messages") {
 		t.Errorf("merge note lost when the binding is unknown: %q", full)
 	}
@@ -701,5 +701,22 @@ func TestAVoiceNoteIsAnsweredTheWayItIsSpoken(t *testing.T) {
 	defer media.SetSpeechConfig(prev)
 	if got := run("room-3", ChannelInbound{Audios: []string{voice}}); strings.Contains(got, "will be heard") {
 		t.Errorf("with speech off the reply is read, so it should not be: %q", got)
+	}
+}
+
+// A voice note is read for what was meant: its turn carries the note that
+// speech-to-text mishears, names most of all, and a typed message does not.
+// A dictated web send carries the same flag on its body.
+func TestASpokenMessageIsReadForWhatWasMeant(t *testing.T) {
+	in := ChannelInbound{Owner: "u", ChatID: "nope", Text: "ask quill"}
+	if got := channelSurfaceContextFull(in, true, false); !strings.Contains(got, dictatedNote) {
+		t.Errorf("a voice note's turn lacks the note: %q", got)
+	}
+	if got := channelSurfaceContextFull(in, false, false); strings.Contains(got, dictatedNote) {
+		t.Errorf("a typed message's turn carries it: %q", got)
+	}
+	var req sendRequest
+	if err := json.Unmarshal([]byte(`{"message":"hi","dictated":true}`), &req); err != nil || !req.Dictated {
+		t.Errorf("dictated on the send body: %+v %v", req.Dictated, err)
 	}
 }

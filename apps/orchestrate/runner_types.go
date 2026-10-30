@@ -368,6 +368,7 @@ type chatTurn struct {
 	// (uploaded files) and Explicit Memory (facts) are unaffected.
 	inferredDisabled bool
 	spokenReply      bool     // per-turn: the page will read the reply aloud (spokenReplyNote)
+	dictated         bool     // per-turn: the message was written out from speech (dictatedNote)
 	userImages       [][]byte // decoded image attachments from the chat panel; attached to the orchestrator's last user message
 	// fromDesktopClient is true when THIS request came from the gohort-desktop
 	// viewer (its proxy stamped the bridge key). Gates the from_client_* tool

@@ -2367,6 +2367,12 @@ func (pr *planRun) loopConfig() AgentLoopConfig {
 				}
 				notes += ask
 			}
+			if t.dictated {
+				if notes != "" {
+					notes += "\n\n"
+				}
+				notes += dictatedNote
+			}
 			if t.spokenReply {
 				if notes != "" {
 					notes += "\n\n"

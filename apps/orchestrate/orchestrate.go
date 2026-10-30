@@ -40,6 +40,7 @@ import (
 	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/appagents"
 	"github.com/cmcoffee/gohort/core/jsonapi"
+	"github.com/cmcoffee/gohort/core/media"
 	"github.com/cmcoffee/gohort/core/messaging"
 )
 
@@ -821,6 +822,15 @@ func (T *OrchestrateApp) registerHandlers() {
 	// the Bridges doors do: a third party pushes to it, and the per-monitor
 	// token checks that third party here.
 	RegisterRelayablePath(T.WebPath() + "/api/operator/event/")
+	// Dictation on the chat page: the transcriber is told the name of the
+	// agent picked there, from the user's own store.
+	chatPrefix := T.WebPath() + "/"
+	media.RegisterDictationNames(func(p media.DictationPage) []string {
+		if !strings.HasPrefix(p.Path, chatPrefix) {
+			return nil
+		}
+		return []string{ownAgentName(p.User, p.Fields["agent_id"])}
+	})
 	// Run-registry endpoints (see runs.go / runs_http.go) — let a
 	// reconnecting client discover and resume the in-flight stream
 	// for a session after disconnect.

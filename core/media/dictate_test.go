@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -237,6 +238,19 @@ const dictationFlow = `
   readCalls[1].onDone(false);
   await sleep(5);
   check('stopping a piece drops the ones waiting', readCalls.length === 2);
+  // Pressing record while a reply is still coming stops it, and the rest of
+  // that reply is not read into the recording, nor after it.
+  var stopsAt = stops;
+  mic.onclick(mic);
+  await sleep(10);
+  decorators.forEach(function(d) { d(more); });
+  await sleep(5);
+  check('record stops the reading', stops === stopsAt + 1 && readCalls.length === 2);
+  tap(mic);
+  await sleep(10);
+  decorators.forEach(function(d) { d(last); });
+  await sleep(5);
+  check('nor is it read once the mic is done', readCalls.length === 2);
   fire('ui-agent-turn-done');
   decorators.forEach(function(d) { d(answer); });
   await sleep(5);
@@ -291,10 +305,13 @@ const dictationFlow = `
   fire('ui-agent-turn-done');
   check('switched off, it is not read', readCalls.length === heard);
 
-  // Typing stops a reply being read.
+  // Sending a message stops a reply being read; typing one does not.
   var before = stops;
-  input.on.input();
-  check('typing stops a reply being read', stops === before + 1);
+  if (input.on.input) input.on.input();
+  check('typing leaves a reply playing', stops === before);
+  fire('ui-agent-sent');
+  check('sending a message stops it', stops === before + 1);
+  fire('ui-agent-turn-done');
 
   // Cancelling while it is written out.
   mic.onclick(mic); await sleep(10); mic.onclick(mic); await sleep(10);
@@ -432,9 +449,10 @@ const dictationFlow = `
 // play, a level meter whose loudness the test sets, and a clock running twenty
 // times fast so the silence and quiet waits pass in a second.
 const dictationAudio = `
-var made = 0, resumed = 0, tones = [], loud = 0, disconnected = 0;
+var made = 0, resumed = 0, closed = 0, tones = [], loud = 0, disconnected = 0;
 window.AudioContext = function() { made++; this.state = 'suspended'; this.currentTime = 0; this.destination = {}; };
 window.AudioContext.prototype.resume = function() { resumed++; this.state = 'running'; };
+window.AudioContext.prototype.close = function() { closed++; this.state = 'closed'; return Promise.resolve(); };
 window.AudioContext.prototype.createOscillator = function() {
   var o = {frequency: {setValueAtTime: function(f) { o.from = f; }, linearRampToValueAtTime: function(f) { o.to = f; }},
     connect: function() {}, start: function() { tones.push(o.to > o.from ? 'up' : 'down'); }, stop: function() {}};
@@ -488,6 +506,7 @@ eval(dictationJS);
   // A noisy room raises the floor: its noise is not speech, and speech over
   // it still is.
   mic.onclick(mic); await sleep(250);
+  check('each tap makes a fresh context and closes the last, so one gone deaf does not stay deaf', made === 2 && closed === 1 && resumed === 2);
   loud = 0.06; await sleep(400);
   check('a noisy room is not taken for speech', pending.length === 1);
   loud = 0.4; await sleep(500);
@@ -532,8 +551,8 @@ eval(dictationJS);
   await sleep(10);
   mic.onclick(mic); await sleep(250);
   loud = 0.3; await sleep(150);
-  loud = 0.003; await sleep(900);
-  check('so is a short word and then the long quiet', recorders[6].stopped && pending.length === 5);
+  loud = 0.003; await sleep(200);
+  check('a short word and then quiet stops it, without the long wait', recorders[6].stopped && pending.length === 5);
   pending[4].res(written('Yes.'));
   await sleep(10);
 
@@ -557,7 +576,7 @@ eval(dictationJS);
 // The mic as the chat runs it: records with a timer, writes the recording out
 // into the box with a spinner, reads a dictated message's reply aloud once the
 // turn is over (and only then, and only while switched on), stops a reply
-// when typing starts, cancels, and says why it failed.
+// when a message is sent, cancels, and says why it failed.
 func TestDictationButton(t *testing.T) {
 	runDictationHarness(t, dictationNode(t), dictationHarness)
 }
@@ -614,8 +633,20 @@ func TestTheMeterNoteKeepsToItsShape(t *testing.T) {
 }
 
 // wavClip is a 16 kHz mono 16-bit WAV of secs of silence.
-func wavClip(secs float64) []byte {
-	n := int(secs * 32000)
+func wavClip(secs float64) []byte { return wavOf(make([]int16, int(secs*16000))) }
+
+// wavSpoken is a 16 kHz mono 16-bit WAV of secs, the first voiced of it a
+// tone of RMS level rms (1 full scale) and the rest silence.
+func wavSpoken(secs, voiced, rms float64) []byte {
+	s := make([]int16, int(secs*16000))
+	for i := 0; i < int(voiced*16000) && i < len(s); i++ {
+		s[i] = int16(rms * math.Sqrt2 * 32767 * math.Sin(2*math.Pi*440*float64(i)/16000))
+	}
+	return wavOf(s)
+}
+
+func wavOf(samples []int16) []byte {
+	n := 2 * len(samples)
 	b := make([]byte, 44+n)
 	copy(b, "RIFF")
 	binary.LittleEndian.PutUint32(b[4:], uint32(36+n))
@@ -629,30 +660,34 @@ func wavClip(secs float64) []byte {
 	binary.LittleEndian.PutUint16(b[34:], 16)
 	copy(b[36:], "data")
 	binary.LittleEndian.PutUint32(b[40:], uint32(n))
+	for i, v := range samples {
+		binary.LittleEndian.PutUint16(b[44+2*i:], uint16(v))
+	}
 	return b
 }
 
-// A clip's length comes from its header, whatever rate it was made at, and
-// a streamed one whose data size runs past the end counts what is there.
+// A clip's length comes from its header, and a streamed one whose data
+// size runs past the end counts what is there.
 func TestAClipsLengthComesFromItsHeader(t *testing.T) {
-	if secs, ok := wavSeconds(wavClip(0.25)); !ok || secs != 0.25 {
-		t.Errorf("a quarter second: %v %v", secs, ok)
+	if c, ok := readWAV(wavClip(0.25)); !ok || c.seconds() != 0.25 {
+		t.Errorf("a quarter second: %v", ok)
 	}
 	streamed := wavClip(1)
 	binary.LittleEndian.PutUint32(streamed[40:], 0xFFFFFFFF)
-	if secs, ok := wavSeconds(streamed); !ok || secs != 1 {
-		t.Errorf("a streamed second: %v %v", secs, ok)
+	if c, ok := readWAV(streamed); !ok || c.seconds() != 1 {
+		t.Errorf("a streamed second: %v", ok)
 	}
 	for name, b := range map[string][]byte{"not a wav": []byte("recorded audio"), "no fmt": []byte("RIFF\x00\x00\x00\x00WAVEdata\x00\x00\x00\x00"), "cut short": wavClip(1)[:30]} {
-		if _, ok := wavSeconds(b); ok {
+		if _, ok := readWAV(b); ok {
 			t.Errorf("%s read as a wav", name)
 		}
 	}
 }
 
-// A clip too short to hold a word never reaches the transcriber, which
-// writes something like "Thank you." for one; the page hears it as empty.
-func TestATapsClipIsNotWrittenOut(t *testing.T) {
+// A clip with no word in it never reaches the transcriber, which writes
+// something like "Thank you." for one; the page hears it as empty. Words,
+// quiet ones too, still go.
+func TestASilentClipIsNotWrittenOut(t *testing.T) {
 	calls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
@@ -667,22 +702,103 @@ func TestATapsClipIsNotWrittenOut(t *testing.T) {
 		SetTranscribeConfig(prevCfg)
 		TranscribeHook, GovernedUploadFunc, WAVHook = prevHook, prevUpload, prevWAV
 	})
-	post := func(clip []byte) string {
-		r := httptest.NewRequest("POST", DictatePath, strings.NewReader(string(clip)))
+	floatClip := wavSpoken(1, 0, 0)
+	binary.LittleEndian.PutUint16(floatClip[20:], 3)
+	cases := []struct {
+		name string
+		clip []byte
+		sent bool
+	}{
+		{"a tap's quarter second", wavSpoken(0.25, 0.25, 0.1), false},
+		{"three seconds of silence", wavClip(3), false},
+		{"three seconds of room hiss", wavSpoken(3, 3, 0.003), false},
+		{"a word in it", wavSpoken(3, 0.4, 0.1), true},
+		{"a quiet speaker", wavSpoken(2, 1, 0.015), true},
+		{"a word too short to be one", wavSpoken(2, 0.05, 0.1), false},
+		{"samples it does not read, long enough", floatClip, true},
+	}
+	for _, tc := range cases {
+		before := calls
+		r := httptest.NewRequest("POST", DictatePath, strings.NewReader(string(tc.clip)))
 		r.Header.Set("Content-Type", "audio/wav")
 		w := httptest.NewRecorder()
 		ServeDictation(w, r, "alice")
 		var out struct{ Text string }
 		json.Unmarshal(w.Body.Bytes(), &out)
-		if w.Code != http.StatusOK {
-			t.Fatalf("%d %s", w.Code, w.Body.String())
+		sent := calls > before
+		if w.Code != http.StatusOK || sent != tc.sent || (out.Text == "Thank you.") != tc.sent {
+			t.Errorf("%s: %d sent=%v text=%q, want sent=%v", tc.name, w.Code, sent, out.Text, tc.sent)
 		}
-		return out.Text
 	}
-	if got := post(wavClip(0.15)); got != "" || calls != 0 {
-		t.Errorf("a tap's clip was written out: %q, %d calls", got, calls)
+}
+
+// A recording made on a page reaches the transcriber with the names that
+// page's resolvers give: the page's path and its send fields are read from
+// the headers the mic sends, URI-encoded.
+func TestDictationNamesTheAgentToTheTranscriber(t *testing.T) {
+	var prompt string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.ParseMultipartForm(1 << 20)
+		prompt = r.FormValue("prompt")
+		w.Write([]byte("hello"))
+	}))
+	defer srv.Close()
+	prevCfg, prevHook, prevUpload := GetTranscribeConfig(), TranscribeHook, GovernedUploadFunc
+	dictationNames.mu.Lock()
+	prevFns := dictationNames.fns
+	dictationNames.fns = nil
+	dictationNames.mu.Unlock()
+	TranscribeHook, GovernedUploadFunc = nil, nil
+	SetTranscribeConfig(TranscribeConfig{Endpoint: srv.URL, Enabled: true})
+	t.Cleanup(func() {
+		SetTranscribeConfig(prevCfg)
+		TranscribeHook, GovernedUploadFunc = prevHook, prevUpload
+		dictationNames.mu.Lock()
+		dictationNames.fns = prevFns
+		dictationNames.mu.Unlock()
+	})
+
+	var seen DictationPage
+	RegisterDictationNames(func(p DictationPage) []string {
+		seen = p
+		if p.Path != "/chat/" {
+			return nil
+		}
+		return []string{"Pemberly Ñu", p.Fields["agent_id"]}
+	})
+	RegisterDictationNames(func(DictationPage) []string { return []string{"  pemberly   ñu ", ""} })
+
+	post := func(page, fields string) {
+		r := httptest.NewRequest("POST", DictatePath, strings.NewReader("recorded audio"))
+		r.Header.Set("Content-Type", "audio/webm")
+		if page != "" {
+			r.Header.Set("X-Dictation-Page", page)
+		}
+		if fields != "" {
+			r.Header.Set("X-Dictation-Fields", fields)
+		}
+		w := httptest.NewRecorder()
+		ServeDictation(w, r, "alice")
+		if w.Code != http.StatusOK {
+			t.Fatalf("dictation: %d %s", w.Code, w.Body.String())
+		}
 	}
-	if got := post(wavClip(1)); got != "Thank you." || calls != 1 {
-		t.Errorf("a second-long clip should be: %q, %d calls", got, calls)
+	post("%2Fchat%2F", "%7B%22agent_id%22%3A%22Quill%22%2C%22n%22%3A3%7D")
+	if prompt != "Talking with Pemberly Ñu, Quill." {
+		t.Errorf("prompt %q", prompt)
+	}
+	if seen.User != "alice" || seen.Request == nil || len(seen.Fields) != 1 {
+		t.Errorf("the page as a resolver sees it: %+v", seen)
+	}
+	post("%2Fchat%2F", "not json")
+	if prompt != "Talking with Pemberly Ñu." {
+		t.Errorf("unreadable fields are left out, the page still counts: %q", prompt)
+	}
+	post("", "")
+	if prompt != "Talking with pemberly ñu." {
+		t.Errorf("a page no resolver knows gets only what the others give: %q", prompt)
+	}
+	if NamesPrompt() != "" || NamesPrompt(" ", "") != "" {
+		t.Error("no names is no prompt")
 	}
 }

@@ -3064,11 +3064,14 @@
 
     // uiRegisterComposerAction adds a button to the input row:
     // { label, title?, first?, prominent?, onclick(ctx) } where ctx = { button, input,
-    // insertText(text), send() }. insertText adds to what is already typed (a
+    // insertText(text), send(), fields() }. insertText adds to what is already typed (a
     // space between) and resizes the box, so text an action produces lands
     // where typed text would, to be read over before it is sent; send() sends
     // what is in the box as the Send button does, for an action that means it
-    // to go at once. A plain action goes in the group after the mode
+    // to go at once. fields() is what the next send would carry beside the
+    // message: the extra fields' values and the host's send context, for an
+    // action whose own request needs the same context (which record, which
+    // pick). A plain action goes in the group after the mode
     // switches; first puts it ahead of them. prominent takes it out of the
     // group to the left-hand end, ahead of it, drawn filled at Send's size, for the
     // one action a page means people to reach for before typing: on a phone
@@ -3097,6 +3100,11 @@
           if (inputArea.focus) inputArea.focus();
         },
         send: function() { sendMessage(); },
+        fields: function() {
+          var out = {};
+          Object.keys(extraInputs).forEach(function(k) { out[k] = extraInputs[k].value; });
+          return Object.assign(out, hostSendContext());
+        },
       };
       btn.addEventListener('click', function() {
         try { opts.onclick(ctx); } catch (e) { /* isolate */ }

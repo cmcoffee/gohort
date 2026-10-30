@@ -229,6 +229,36 @@ func Transcribe(ctx context.Context, audio []byte, filename string) (string, err
 	return TranscribeWith(ctx, GetTranscribeConfig(), audio, filename)
 }
 
+// WithTranscribePrompt carries words the speaker is likely to say, names
+// most of all, to the transcription a ctx reaches: they go as the request's
+// prompt, which an OpenAI-shaped transcriber takes as text that came before
+// the clip, and so spells a name it would otherwise hear as some other word.
+// On the context rather than a parameter, so it reaches the transcriber
+// through the transcription job and a peer without a signature changing on
+// the way. Bounded to transcribePromptMax.
+func WithTranscribePrompt(ctx context.Context, prompt string) context.Context {
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		return ctx
+	}
+	if r := []rune(prompt); len(r) > transcribePromptMax {
+		prompt = string(r[:transcribePromptMax])
+	}
+	return context.WithValue(ctx, transcribePromptKey{}, prompt)
+}
+
+// TranscribePrompt is the prompt WithTranscribePrompt put on ctx, "" for none.
+func TranscribePrompt(ctx context.Context) string {
+	s, _ := ctx.Value(transcribePromptKey{}).(string)
+	return s
+}
+
+type transcribePromptKey struct{}
+
+// transcribePromptMax bounds a prompt: Whisper reads at most 224 tokens of
+// one, and a list of names needs far fewer.
+const transcribePromptMax = 400
+
 // TranscribeWith is Transcribe against an EXPLICIT config rather than the
 // process-wide one.
 //
@@ -262,6 +292,9 @@ func TranscribeWith(ctx context.Context, cfg TranscribeConfig, audio []byte, fil
 		if cfg.Model != "" {
 			fields["model"] = cfg.Model
 		}
+		if prompt := TranscribePrompt(ctx); prompt != "" {
+			fields["prompt"] = prompt
+		}
 		out, err := GovernedUploadFunc(ctx, UploadRequest{
 			URL: url, FieldName: "file", FileName: filepath.Base(filename),
 			Body: audio, Fields: fields, Bearer: cfg.APIKey, Provider: cfg.Provider,
@@ -290,6 +323,9 @@ func TranscribeWith(ctx context.Context, cfg TranscribeConfig, audio []byte, fil
 	// the verbose JSON that includes timestamps. The OpenAI API +
 	// whisper.cpp both accept "text" here and return raw text.
 	_ = mw.WriteField("response_format", "text")
+	if prompt := TranscribePrompt(ctx); prompt != "" {
+		_ = mw.WriteField("prompt", prompt)
+	}
 	if err := mw.Close(); err != nil {
 		return "", fmt.Errorf("transcribe: close: %w", err)
 	}

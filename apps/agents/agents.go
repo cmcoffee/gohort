@@ -89,6 +89,22 @@ func (T *AgentsApp) WebEveryUser() bool { return true }
 //	/<slug>/api/memory           — read / replace this user's memory under the agent
 func (T *AgentsApp) Routes() {
 	T.HandleFunc("/", T.dispatch)
+	// Dictation on an agent's page: the transcriber is told that agent's
+	// name, resolved the way the page itself is, among the agents this
+	// viewer can reach.
+	prefix := T.WebPath() + "/"
+	media.RegisterDictationNames(func(p media.DictationPage) []string {
+		orch := findOrchestrate()
+		if orch == nil || p.Request == nil || !strings.HasPrefix(p.Path, prefix) {
+			return nil
+		}
+		slug, _, _ := strings.Cut(strings.TrimPrefix(p.Path, prefix), "/")
+		agent, entry, ok := orch.LookupExposedAgent(p.Request, slug)
+		if !ok || !orch.AgentReachableBy(p.Request, entry.Slug, entry.Owner, agent.AllowedUsers, agent.Everyone) {
+			return nil
+		}
+		return []string{orchestrate.ExposedDisplayName(agent), agent.Name}
+	})
 }
 
 // dispatch routes by parsed URL. Single entry point so all the slug

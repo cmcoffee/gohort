@@ -178,3 +178,35 @@ func TestTranscribeIsAServedCapability(t *testing.T) {
 		t.Error("transcribe is missing from the capability vocabulary, so no key can grant it")
 	}
 }
+
+// A peer's prompt (the names its speaker is likely to say) goes on to this
+// instance's transcriber, so a peer borrowing transcription spells them too.
+func TestPeerTranscribeCarriesThePrompt(t *testing.T) {
+	peerImageDB(t)
+	prev := GetTranscribeConfig()
+	t.Cleanup(func() { SetTranscribeConfig(prev) })
+	var prompt string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.ParseMultipartForm(8 << 20)
+		prompt = r.FormValue("prompt")
+		w.Write([]byte("hi"))
+	}))
+	t.Cleanup(srv.Close)
+	SetTranscribeConfig(TranscribeConfig{Enabled: true, Endpoint: srv.URL})
+	pk, _ := MintPeerKey("mac", []string{PeerCapTranscribe}, 0)
+
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	fw, _ := mw.CreateFormFile("file", "a.wav")
+	fw.Write([]byte("x"))
+	mw.WriteField("prompt", "Talking with Pemberly.")
+	mw.Close()
+	r := httptest.NewRequest(http.MethodPost, "/api/peer/v1/audio/transcriptions", &body)
+	r.Header.Set("Content-Type", mw.FormDataContentType())
+	r.Header.Set(peerKeyHeader, peerAuth(t, pk))
+	w := httptest.NewRecorder()
+	HandlePeerTranscribe(w, r)
+	if w.Code != http.StatusOK || prompt != "Talking with Pemberly." {
+		t.Errorf("transcribe → %d, prompt %q", w.Code, prompt)
+	}
+}

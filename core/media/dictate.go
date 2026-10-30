@@ -9,9 +9,13 @@ package media
 import (
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"io"
+	"math"
 	"net/http"
+	"net/url"
 	"strings"
+	"sync"
 
 	"github.com/cmcoffee/snugforge/nfo"
 )
@@ -56,16 +60,38 @@ func ServeDictation(w http.ResponseWriter, r *http.Request, user string) {
 		send, name = wav, "dictation.wav"
 	}
 	note := dictationMeterNote(r.Header.Get("X-Dictation-Meter"))
-	// Too short to hold a word: a transcriber hands back words it made up
-	// for a clip like that ("Thank you."), so it is answered as heard empty.
-	if secs, ok := wavSeconds(send); ok && secs < dictateMinSecs {
-		nfo.Debug("[dictate] %s: %.2fs of audio, too short to hold a word, not sent; meter %s", user, secs, note)
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Cache-Control", "no-store")
-		json.NewEncoder(w).Encode(map[string]string{"text": ""})
-		return
+	// A clip with no word in it is answered as heard empty, without the
+	// transcriber, which writes words it made up for one ("Thank you."): one
+	// too short to hold a word, or, where its samples can be read, one with
+	// no voice in it. The page's meter cannot always tell; a web view's can
+	// read nothing but zeros.
+	levels := ""
+	if clip, ok := readWAV(send); ok {
+		secs := clip.seconds()
+		voiced, peak, heard := clip.voice()
+		why := ""
+		switch {
+		case secs < dictateMinSecs:
+			why = "too short to hold a word"
+		case heard && voiced < dictateMinVoicedMs:
+			why = "no voice in it"
+		}
+		if heard {
+			levels = fmt.Sprintf("%.1fs, %dms voiced, peak %.0f dBFS", secs, voiced, dbfs(peak))
+		} else {
+			levels = fmt.Sprintf("%.1fs", secs)
+		}
+		if why != "" {
+			nfo.Debug("[dictate] %s: %s, %s, not sent; meter %s", user, levels, why, note)
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-Control", "no-store")
+			json.NewEncoder(w).Encode(map[string]string{"text": ""})
+			return
+		}
 	}
-	text, err := Transcribe(r.Context(), send, name)
+	prompt := dictationPrompt(dictationPageOf(r, user))
+	ctx := WithTranscribePrompt(r.Context(), prompt)
+	text, err := Transcribe(ctx, send, name)
 	if err != nil {
 		if r.Context().Err() == nil {
 			nfo.Log("[dictate] transcription for %s failed: %v", user, err)
@@ -73,52 +99,192 @@ func ServeDictation(w http.ResponseWriter, r *http.Request, user string) {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
-	if note != "" {
-		nfo.Debug("[dictate] %s: %d bytes, meter %s, %d chars back", user, len(audio), note, len(strings.TrimSpace(text)))
-	}
+	nfo.Debug("[dictate] %s: %d bytes, %s, meter %s, prompt %q, %d chars back", user, len(audio), levels, note, prompt, len(strings.TrimSpace(text)))
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	json.NewEncoder(w).Encode(map[string]string{"text": strings.TrimSpace(text)})
 }
 
-// dictateMinSecs is the shortest clip that goes to the transcriber: under
-// it there is no word to write out.
-const dictateMinSecs = 0.5
+// DictationPage is the page a recording was made on: who is signed in, its
+// path, and the fields the chat's next send would carry (an agent picker's
+// choice, say). The page sends the path and fields; the request is the
+// signed-in request itself, for a resolver that checks what the user may
+// reach.
+type DictationPage struct {
+	User    string
+	Path    string
+	Fields  map[string]string
+	Request *http.Request
+}
 
-// wavSeconds is how long a WAV clip plays, from its header: the data
-// chunk's size over the fmt chunk's byte rate. ok is false for anything it
-// cannot read as a WAV. A data size past the end, as a streamed WAV writes,
-// counts what is there.
-func wavSeconds(b []byte) (secs float64, ok bool) {
-	if len(b) < 12 || string(b[:4]) != "RIFF" || string(b[8:12]) != "WAVE" {
-		return 0, false
+// RegisterDictationNames adds a resolver of the names a speaker on a page is
+// likely to say: the agent the page talks to, most of all, whose name a
+// transcriber otherwise hears as some ordinary word. An app registers one for
+// its own pages and returns nothing for a page it does not know. The names
+// go to the transcriber only, as its prompt; they are never sent back.
+func RegisterDictationNames(fn func(DictationPage) []string) {
+	if fn == nil {
+		return
 	}
-	var rate uint32
+	dictationNames.mu.Lock()
+	dictationNames.fns = append(dictationNames.fns, fn)
+	dictationNames.mu.Unlock()
+}
+
+var dictationNames struct {
+	mu  sync.Mutex
+	fns []func(DictationPage) []string
+}
+
+// dictationPageOf reads the page a recording came from out of the headers the
+// page sends: X-Dictation-Page (its path) and X-Dictation-Fields (a JSON
+// object), each URI-encoded since a header carries only Latin-1. Only string
+// values are kept; anything unreadable is left out.
+func dictationPageOf(r *http.Request, user string) DictationPage {
+	p := DictationPage{User: user, Request: r, Fields: map[string]string{}}
+	if v, err := url.QueryUnescape(r.Header.Get("X-Dictation-Page")); err == nil && len(v) <= 512 {
+		p.Path = v
+	}
+	raw, err := url.QueryUnescape(r.Header.Get("X-Dictation-Fields"))
+	if err != nil || raw == "" || len(raw) > 4096 {
+		return p
+	}
+	var m map[string]any
+	if json.Unmarshal([]byte(raw), &m) != nil {
+		return p
+	}
+	for k, v := range m {
+		if s, ok := v.(string); ok {
+			p.Fields[k] = s
+		}
+	}
+	return p
+}
+
+// dictationPrompt is the transcriber's prompt for a page: the names its
+// resolvers give (NamesPrompt). "" when none know the page.
+func dictationPrompt(p DictationPage) string {
+	dictationNames.mu.Lock()
+	fns := append([]func(DictationPage) []string(nil), dictationNames.fns...)
+	dictationNames.mu.Unlock()
+	var names []string
+	for _, fn := range fns {
+		names = append(names, fn(p)...)
+	}
+	return NamesPrompt(names...)
+}
+
+// NamesPrompt is a transcriber prompt naming who the speaker is likely to
+// say: each name once, in a sentence, since Whisper reads its prompt as text
+// spoken before the clip. "" for no names. For WithTranscribePrompt.
+func NamesPrompt(names ...string) string {
+	var out []string
+	seen := map[string]bool{}
+	for _, n := range names {
+		n = strings.Join(strings.Fields(n), " ")
+		if n == "" || seen[strings.ToLower(n)] {
+			continue
+		}
+		seen[strings.ToLower(n)] = true
+		out = append(out, n)
+	}
+	if len(out) == 0 {
+		return ""
+	}
+	return "Talking with " + strings.Join(out, ", ") + "."
+}
+
+// A clip goes to the transcriber only if it is dictateMinSecs long and, where
+// its samples can be read, has dictateMinVoicedMs of 50ms windows louder
+// than dictateVoiceLevel: the page meter's tenth of a second of voice, at
+// -40 dBFS, half its bar, so a quiet speaker is not taken for silence. The
+// bar is fixed, not set against the clip's quietest part as the page's is:
+// a clip of talk with no pause in it has no quiet part to set it by.
+const (
+	dictateMinSecs     = 0.5
+	dictateMinVoicedMs = 100
+	dictateVoiceLevel  = 0.01
+)
+
+// pcmClip is a WAV clip as its header describes it, and its samples.
+type pcmClip struct {
+	format, channels, bits uint16
+	rate, byteRate         uint32
+	data                   []byte
+}
+
+// readWAV reads a WAV clip's header. ok is false for anything it cannot
+// read as one. A data size past the end, as a streamed WAV writes, takes
+// what is there.
+func readWAV(b []byte) (c pcmClip, ok bool) {
+	if len(b) < 12 || string(b[:4]) != "RIFF" || string(b[8:12]) != "WAVE" {
+		return c, false
+	}
+	le := binary.LittleEndian
 	for i := 12; i+8 <= len(b); {
-		id, size, body := string(b[i:i+4]), binary.LittleEndian.Uint32(b[i+4:i+8]), i+8
+		id, size, body := string(b[i:i+4]), le.Uint32(b[i+4:i+8]), i+8
 		switch id {
 		case "fmt ":
-			if body+12 > len(b) {
-				return 0, false
+			if size < 16 || body+16 > len(b) {
+				return c, false
 			}
-			rate = binary.LittleEndian.Uint32(b[body+8 : body+12])
+			c.format, c.channels = le.Uint16(b[body:]), le.Uint16(b[body+2:])
+			c.rate, c.byteRate = le.Uint32(b[body+4:]), le.Uint32(b[body+8:])
+			c.bits = le.Uint16(b[body+14:])
 		case "data":
-			if rate == 0 {
-				return 0, false
+			if c.byteRate == 0 {
+				return c, false
 			}
 			n := uint64(len(b) - body)
 			if uint64(size) < n {
 				n = uint64(size)
 			}
-			return float64(n) / float64(rate), true
+			c.data = b[body : body+int(n)]
+			return c, true
 		}
 		next := uint64(body) + uint64(size) + uint64(size&1)
 		if next > uint64(len(b)) {
-			return 0, false
+			return c, false
 		}
 		i = int(next)
 	}
-	return 0, false
+	return c, false
+}
+
+// seconds is how long the clip plays.
+func (c pcmClip) seconds() float64 { return float64(len(c.data)) / float64(c.byteRate) }
+
+// voice is how much of the clip is louder than dictateVoiceLevel, in 50ms
+// windows, and the loudest window's level (RMS, 1 full scale). ok is false
+// where the samples are not 16-bit PCM, which it does not read.
+func (c pcmClip) voice() (ms int, peak float64, ok bool) {
+	if c.format != 1 || c.bits != 16 || c.channels == 0 || c.rate < 20 {
+		return 0, 0, false
+	}
+	win := int(c.rate/20) * int(c.channels) * 2
+	for i := 0; i+win <= len(c.data); i += win {
+		var sum float64
+		for j := i; j < i+win; j += 2 {
+			x := float64(int16(binary.LittleEndian.Uint16(c.data[j:]))) / 32768
+			sum += x * x
+		}
+		v := math.Sqrt(sum / float64(win/2))
+		if v > peak {
+			peak = v
+		}
+		if v > dictateVoiceLevel {
+			ms += 50
+		}
+	}
+	return ms, peak, true
+}
+
+// dbfs is a level in decibels below full scale, for the log.
+func dbfs(v float64) float64 {
+	if v <= 0 {
+		return -120
+	}
+	return 20 * math.Log10(v)
 }
 
 // dictationMeterNote is the page's account of what its level meter heard
@@ -171,7 +337,7 @@ func dictationFileName(contentType string) string {
 // run as well as its answer: on by default on a phone, off on a
 // desktop, switched per device. The phone's audio is unlocked on the 🎤 tap,
 // since a phone plays sound only from a tap and the reply comes seconds after
-// it. Typing stops a reply being read.
+// it. Sending a message stops a reply being read; typing one does not.
 func DictationScript() string {
 	if !GetTranscribeConfig().Enabled {
 		return ""
@@ -189,7 +355,7 @@ const dictationJS = `(function(){
   // Stopping on silence: once somebody has spoken, this long quiet ends the
   // recording, as a press would. Before anything is heard it waits quietMs,
   // then cancels, so a forgotten tap does not record for five minutes.
-  var silenceMs = 1800, quietMs = 15000, tickMs = 50;
+  var silenceMs = 1800, quietMs = 15000, tickMs = 50, armMs = 150;
   // The start tone's length; recording begins after it, so it is not heard.
   var toneMs = 150;
   // A stop this soon after the start is a tap on and off, not a recording:
@@ -232,14 +398,22 @@ const dictationJS = `(function(){
     if (p && p.catch) p.catch(function() {});
   }
 
-  // One audio context for the tones and the level meter, made or woken on
-  // the tap: a phone lets a page start sound only from one.
+  // The audio context for the tones and the level meter, made fresh on each
+  // tap: a phone lets a page start sound only from one. One kept for the
+  // page's life could stop hearing the microphone (a headset switching, a
+  // WebKit context gone quiet) while still saying it was running, and every
+  // meter after read nothing but zeros until a reload, so no recording
+  // stopped on silence. The last one is closed, since a browser allows only
+  // a few at once.
   var audio = null, meter = null;
   function wakeAudio() {
     var AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return;
+    if (audio && audio.close) {
+      try { var c = audio.close(); if (c && c.catch) c.catch(function() {}); } catch (e) {}
+    }
     try {
-      if (!audio) audio = new AC();
+      audio = new AC();
       if (audio.state === 'suspended' && audio.resume) audio.resume();
     } catch (e) { audio = null; }
   }
@@ -341,6 +515,11 @@ const dictationJS = `(function(){
     }
     unlock();
     wakeAudio();
+    // A reply being read stops, and so does the rest of it: a reply still
+    // streaming would otherwise read its next piece into the recording. What
+    // was not read stays in the thread with its Read aloud button.
+    readQueue = [];
+    awaiting = false;
     if (window.gohortReadAloudStop) window.gohortReadAloudStop();
     state = 'starting';
     show(ctx, micGlyph, 'Starting the microphone. Press to cancel');
@@ -384,8 +563,10 @@ const dictationJS = `(function(){
   // listen watches the microphone's level and stops the recording when the
   // speaker goes quiet. Quiet is relative to the room: the floor is the
   // lowest level heard, creeping up slowly so a noisier room raises it, and
-  // speech is anything well above it. A third of a second of speech counts
-  // as having said something; before that, only quietMs stops it.
+  // speech is anything well above it. Speech for armMs counts as having said
+  // something; before that, only quietMs stops it. A quiet "yes" measured
+  // 200ms, under the third of a second this once was, so it waited out the
+  // long quiet instead of stopping when the speaker did.
   function listen(ctx, s) {
     if (!audio || !audio.createMediaStreamSource || !audio.createAnalyser) return;
     var source, an;
@@ -419,14 +600,14 @@ const dictationJS = `(function(){
         m.voiced += tickMs; lastVoice = now;
       }
       level(ctx, Math.min(1, v / 0.15));
-      if (m.voiced >= 300) { if (now - lastVoice >= silenceMs) stopRecording(ctx); }
+      if (m.voiced >= armMs) { if (now - lastVoice >= silenceMs) stopRecording(ctx); }
       else if (now - from >= quietMs) { if (heardNothing()) cancelRecording(ctx); else stopRecording(ctx); }
     }, tickMs)};
   }
 
   // heardNothing reports whether the meter is listening and has heard no
-  // one speak yet. The bar is a tenth of a second of voice, well under the
-  // 300ms the silence stop waits for: a short "yes" must not be thrown
+  // one speak yet. The bar is a tenth of a second of voice, under the armMs
+  // the silence stop waits for: a short "yes" must not be thrown
   // away, and a recording is cancelled only when it is truly silent.
   // Without a meter nobody knows, so the recording is sent; so is one whose
   // meter never got a signal (every sample exactly zero, where any real
@@ -481,6 +662,11 @@ const dictationJS = `(function(){
     var headers = {'Content-Type': blob.type || 'audio/webm'};
     if (meterNote) headers['X-Dictation-Meter'] = meterNote;
     meterNote = '';
+    // Which page, and what its next send would carry, so the server can tell
+    // the transcriber whose name to expect (RegisterDictationNames).
+    // URI-encoded: a header takes only Latin-1, and a name may not be.
+    headers['X-Dictation-Page'] = encodeURIComponent((window.location && window.location.pathname) || '');
+    try { headers['X-Dictation-Fields'] = encodeURIComponent(JSON.stringify(ctx.fields ? ctx.fields() : {})); } catch (e) {}
     fetch('` + DictatePath + `', {method: 'POST', headers: headers, body: blob, signal: ctl.signal})
       .then(function(r) {
         if (!r.ok) return r.text().then(function(t) { var e = new Error(t || ('HTTP ' + r.status)); e.status = r.status; throw e; });
@@ -526,12 +712,14 @@ const dictationJS = `(function(){
     record(ctx);
   }
 
-  // A send whose reply will be read aloud tells the agent so, and it answers
-  // the way it would speak (spoken_reply on the send body; the panel clears
-  // it after one send). Switching read-aloud before sending updates it.
+  // A dictated send tells the agent so (dictated on the send body), since
+  // speech-to-text mishears a word now and then, a name most of all. One
+  // whose reply will be read aloud says that too, and it answers the way it
+  // would speak (spoken_reply). The panel clears both after one send;
+  // switching read-aloud before sending updates it.
   function markSpoken() {
     if (dictated && window.uiSetPendingMessageExtras) {
-      window.uiSetPendingMessageExtras({spoken_reply: !!window.gohortReadAloud && readRepliesAloud()});
+      window.uiSetPendingMessageExtras({dictated: true, spoken_reply: !!window.gohortReadAloud && readRepliesAloud()});
     }
   }
 
@@ -539,7 +727,7 @@ const dictationJS = `(function(){
   // in order: the agent's word before it works ("let me look that up") plays
   // while its tools run, and the answer follows it. One piece at a time,
   // since starting a read stops the one playing; the next goes only once
-  // the last has played to its end, and stopping one (typing, its button,
+  // the last has played to its end, and stopping one (a send, its button,
   // another reply pressed) drops the rest.
   var readQueue = [], reading = false;
   function readLater(bubble, text) {
@@ -566,6 +754,10 @@ const dictationJS = `(function(){
     // A message going out while a recording is held was written another
     // way, so the recording is out of date.
     letGo();
+    // So is the reply being read: the person has moved on. Typing leaves it
+    // playing, since they may be listening while they write.
+    readQueue = [];
+    if (window.gohortReadAloudStop) window.gohortReadAloudStop();
     awaiting = dictated;
     dictated = false;
   });
@@ -603,9 +795,6 @@ const dictationJS = `(function(){
     // a failed recording is held.
     discard = window.uiRegisterComposerAction({label: '✕', title: 'Discard the recording', first: true, onclick: letGo});
     if (discard) discard.button.style.display = 'none';
-    if (mic && mic.input) {
-      mic.input.addEventListener('input', function() { if (window.gohortReadAloudStop) window.gohortReadAloudStop(); });
-    }
     if (window.gohortReadAloud) {
       var speaker = window.uiRegisterComposerAction({label: speakerOn, first: true, onclick: function(ctx) {
         setReadRepliesAloud(!readRepliesAloud());

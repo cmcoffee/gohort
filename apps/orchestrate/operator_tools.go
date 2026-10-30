@@ -897,20 +897,33 @@ var orchestrateBaseDB Database
 // when the agent hasn't opted in, can't be resolved, or has no name — an empty
 // tag leaves the message untagged, which is the safe default.
 func agentNameTag(owner, agentID string) string {
-	owner = strings.TrimSpace(owner)
-	agentID = strings.TrimSpace(agentID)
-	if owner == "" || agentID == "" || orchestrateBaseDB == nil {
-		return ""
-	}
-	udb := UserDB(orchestrateBaseDB, owner)
-	if udb == nil {
-		return ""
-	}
-	a, ok := findAgentByNameOrID(udb, owner, agentID)
+	a, ok := ownerAgent(owner, agentID)
 	if !ok || !a.TagName {
 		return ""
 	}
 	return strings.TrimSpace(a.Name)
+}
+
+// ownAgentName is an owner's agent's name, "" when it cannot be resolved:
+// what a transcriber is told to expect (media.NamesPrompt), whether or not
+// the agent signs its messages.
+func ownAgentName(owner, agentID string) string {
+	a, _ := ownerAgent(owner, agentID)
+	return strings.TrimSpace(a.Name)
+}
+
+// ownerAgent resolves an agent by name or id in the owner's own store only.
+func ownerAgent(owner, agentID string) (AgentRecord, bool) {
+	owner = strings.TrimSpace(owner)
+	agentID = strings.TrimSpace(agentID)
+	if owner == "" || agentID == "" || orchestrateBaseDB == nil {
+		return AgentRecord{}, false
+	}
+	udb := UserDB(orchestrateBaseDB, owner)
+	if udb == nil {
+		return AgentRecord{}, false
+	}
+	return findAgentByNameOrID(udb, owner, agentID)
 }
 
 // threadBindingGatekeeperRule is the wake rule stamped on an agent-requested 1:1

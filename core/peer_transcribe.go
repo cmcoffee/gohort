@@ -121,6 +121,9 @@ func HandlePeerTranscribe(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(r.Context(), peerTranscribeBudget)
 	defer cancel()
+	// The peer's prompt (the names its speaker is likely to say) goes on to
+	// the transcriber here, bounded, as its own did.
+	ctx = media.WithTranscribePrompt(ctx, r.FormValue("prompt"))
 	text, err := Transcribe(ctx, audio, name)
 	if err != nil {
 		peerDeny(w, http.StatusBadGateway, "transcription failed: "+err.Error())

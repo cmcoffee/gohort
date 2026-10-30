@@ -52,10 +52,13 @@ func mergedMessagesNote(in ChannelInbound) string {
 // binding's own provenance. Kept separate because channelSurfaceContext
 // returns EMPTY for an unrecognized chat, and the merge note must not be lost
 // with it — a coalesced pair is exactly as easy to half-answer either way.
-func channelSurfaceContextFull(in ChannelInbound, spoken bool) string {
-	parts := make([]string, 0, 3)
+func channelSurfaceContextFull(in ChannelInbound, voiceNote, spoken bool) string {
+	parts := make([]string, 0, 4)
 	if note := mergedMessagesNote(in); note != "" {
 		parts = append(parts, note)
+	}
+	if voiceNote {
+		parts = append(parts, dictatedNote)
 	}
 	if spoken {
 		parts = append(parts, spokenReplyNote)
@@ -291,7 +294,7 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 			if !sttOK {
 				return "\n[Audio attachment received, but speech-to-text isn't enabled: turn it on in Admin → Audio transcription to get a transcript.]"
 			}
-			txt, terr := transcribeVoice(ctx, data, nameHint)
+			txt, terr := transcribeVoice(media.WithTranscribePrompt(ctx, media.NamesPrompt(ownAgentName(in.Owner, in.AgentID))), data, nameHint)
 			if terr != nil {
 				Log("[channel] inbound audio transcription failed (%s, %d bytes): %v", nameHint, len(data), terr)
 				return "\n[Audio attachment received, but transcription failed (" + terr.Error() + "). STT is enabled; the endpoint or audio format is the problem.]"
@@ -437,7 +440,7 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 			// not persisted) so it knows its reply goes straight back here and
 			// doesn't confabulate a destination or offer to "send it to" the
 			// channel it's already on.
-			SurfaceContext: channelSurfaceContextFull(in, voiceNote && media.GetSpeechConfig().Enabled),
+			SurfaceContext: channelSurfaceContextFull(in, voiceNote, voiceNote && media.GetSpeechConfig().Enabled),
 			// So work this run hands to the background is answered by voice
 			// too when it comes back.
 			SpokenReply:    voiceNote && media.GetSpeechConfig().Enabled,
@@ -652,6 +655,14 @@ func speakReply(ctx context.Context, owner, agentID, reply string) string {
 const spokenReplyNote = "This reply will be heard, not read: it is spoken back to the person. " +
 	"Answer the way you would say it out loud: brief and conversational, without lists, tables, headings, code or links. " +
 	"Say times, dates, numbers and names the way they are spoken, and write words out in full (Saturday, not Sat; Drive, not Dr)."
+
+// dictatedNote is the turn note for a message written out from speech: one
+// dictated in the web chat, or a voice note. Speech-to-text mishears now and
+// then, a name most of all, and an agent that takes the words as typed
+// answers the misheard word, or remarks on a misspelling the person never
+// made. Run only, like spokenReplyNote: the message is stored as written out.
+const dictatedNote = "This message was spoken and written out by speech-to-text, so a word in it may be misheard, a name most of all. " +
+	"Read it for what the person meant: where a word does not fit, take the one that sounds like it and does, and do not point out or correct the wording."
 
 // agentVoice is the speech voice an owner's agent talks in, "" for the
 // deployment's. Looked up in the owner's own store only, so naming somebody
