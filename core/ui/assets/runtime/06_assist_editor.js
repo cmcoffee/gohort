@@ -49,9 +49,11 @@
   // there the box may grow to half the conversation's height: what is being
   // written stays in view instead of scrolling inside a sliver. pane is the
   // conversation the box sits in.
+  // UI_NARROW_CHAT is the width under which a chat is a narrow one.
+  var UI_NARROW_CHAT = 640;
   function growComposer(ta, pane) {
     var w = (pane && pane.clientWidth) || 0, h = (pane && pane.clientHeight) || 0;
-    ta.style.maxHeight = (w && h && w < 640) ? Math.max(192, Math.round(h / 2)) + 'px' : '';
+    ta.style.maxHeight = (w && h && w < UI_NARROW_CHAT) ? Math.max(192, Math.round(h / 2)) + 'px' : '';
     ta.style.height = 'auto';
     // +2px for the border so the last line is not clipped.
     ta.style.height = (ta.scrollHeight + 2) + 'px';

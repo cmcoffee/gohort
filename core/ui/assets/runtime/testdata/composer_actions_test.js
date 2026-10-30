@@ -51,6 +51,7 @@ composerMiddle.name = 'middle';
 var inputRow = box([composerMiddle, attachBtn, sendBtn]);
 function names(b) { return b.kids.map(function(k) { return k.name || k.textContent; }).join(','); }
 var convoPane = {clientWidth: 0, clientHeight: 0};
+var UI_NARROW_CHAT = 640;
 eval(lift(fs.readFileSync(dir + '/06_assist_editor.js', 'utf8'), 'function growComposer(', 'growComposer'));
 eval(lift(panel, 'function autosizeInput()', 'autosizeInput'));
 eval(lift(panel, 'function composerInsert(text)', 'composerInsert'));
@@ -190,7 +191,8 @@ check('so does the chat composer', /if \(uiComposerEnterSends\(ev\)\) \{\s*ev\.p
 // message wraps onto many more lines.
 (function() {
   var assist = fs.readFileSync(dir + '/06_assist_editor.js', 'utf8');
-  var grow = new Function(lift(assist, 'function growComposer(', 'growComposer') + '\nreturn growComposer;')();
+  var grow = new Function('UI_NARROW_CHAT', lift(assist, 'function growComposer(', 'growComposer') + '\nreturn growComposer;')(640);
+  check('a narrow chat is one under 640px', assist.indexOf('var UI_NARROW_CHAT = 640;') >= 0);
   function box(scroll) { return {style: {}, scrollHeight: scroll}; }
   var ta = box(300);
   grow(ta, {clientWidth: 380, clientHeight: 800});
@@ -203,5 +205,12 @@ check('so does the chat composer', /if \(uiComposerEnterSends\(ev\)\) \{\s*ev\.p
   check('one not laid out yet keeps its cap', ta.style.maxHeight === '');
   check('the agent chat sizes its box this way', panel.indexOf('function autosizeInput() { growComposer(inputArea, convoPane); }') >= 0);
   check('and so does the assist chat', assist.indexOf("composer.addEventListener('input', function() { growComposer(composer, right); });") >= 0);
+  // And in a narrow chat the composer runs to the frame's edges.
+  check('a chat marks itself narrow from its own width',
+    panel.indexOf("if (w) wrap.classList.toggle('ui-agent-narrow', w < UI_NARROW_CHAT);") >= 0 && panel.indexOf('}).observe(convoPane);') >= 0);
+  var css = fs.readFileSync(dir + '/../runtime.css', 'utf8');
+  var band = css.indexOf('.ui-agent.ui-agent-narrow .ui-agent-input-row {');
+  check('where its composer is a band edge to edge',
+    band >= 0 && /margin: 0; border: 0; border-top: 1px solid var\(--border\); border-radius: 0;/.test(css.slice(band, band + 200)));
 })();
 process.exit(fail ? 1 : 0);

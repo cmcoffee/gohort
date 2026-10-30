@@ -2356,6 +2356,17 @@
     // lines in a wide chat, up to half the conversation in a narrow
     // one (growComposer).
     function autosizeInput() { growComposer(inputArea, convoPane); }
+    // A narrow chat (a column beside a document or an editor, a phone) runs
+    // its composer to the frame's edges, so the box written in gets the
+    // frame's whole width rather than a pill inset inside it. Watched, not a
+    // container query: containment would make the conversation the frame
+    // of every fixed-position popup inside it.
+    if (typeof ResizeObserver === 'function') {
+      new ResizeObserver(function() {
+        var w = convoPane.clientWidth;
+        if (w) wrap.classList.toggle('ui-agent-narrow', w < UI_NARROW_CHAT);
+      }).observe(convoPane);
+    }
     inputArea.addEventListener('input', autosizeInput);
     // Defer the initial sizing past mount so the element has a real
     // computed scrollHeight to read.

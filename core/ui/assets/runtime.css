@@ -5744,6 +5744,14 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 }
 @media (pointer: coarse) { .ui-agent .ui-agent-input-row { --compose-btn: 2.25rem; } }
 .ui-agent .ui-agent-input-row:focus-within { border-color: color-mix(in srgb, var(--accent) 70%, var(--border)); }
+/* A narrow chat (ui-agent-narrow, set from its width): the composer is a band
+ * along the frame's bottom, edge to edge, instead of a pill inset inside it,
+ * so the box you write in has the frame's whole width. */
+.ui-agent.ui-agent-narrow .ui-agent-input-row {
+  margin: 0; border: 0; border-top: 1px solid var(--border); border-radius: 0;
+  padding-bottom: max(0.35rem, env(safe-area-inset-bottom, 0px));
+}
+.ui-agent.ui-agent-narrow .ui-agent-input-row:focus-within { border-top-color: color-mix(in srgb, var(--accent) 70%, var(--border)); }
 .ui-agent .ui-agent-input {
   flex: 1 0 100%; order: -1; resize: none;
   /* Cap auto-grow at roughly 8 lines: enough for medium messages without
