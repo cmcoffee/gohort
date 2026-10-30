@@ -214,6 +214,10 @@ type PeerManifest struct {
 	// and a peer offering both a fast worker and a slow lead is offering a
 	// choice the operator has to be able to see in order to make.
 	Models []PeerModelInfo `json:"models,omitempty"`
+	// Relay says where to open the inbound socket and which public path will
+	// reach it. The socket's hello repeats the path; this is for an operator
+	// reading the manifest while debugging a peer that will not connect.
+	Relay *PeerRelayInfo `json:"relay,omitempty"`
 }
 
 type PeerManifestEntry struct {
@@ -322,6 +326,9 @@ func HandlePeerManifest(w http.ResponseWriter, r *http.Request) {
 	}
 	if k.Allows(PeerCapModels) && peerCapServed(PeerCapModels) {
 		m.Models = peerModelsInfo("/api/peer/v1")
+	}
+	if k.Allows(PeerCapRelay) && peerCapServed(PeerCapRelay) {
+		m.Relay = &PeerRelayInfo{Connect: peerRelayConnectPath, Inbound: peerRelayInboundPath(k.ID)}
 	}
 	// Reported per KEY, not per instance: whether the caller must exchange is a
 	// property of its own grant, and two peers on one instance can legitimately

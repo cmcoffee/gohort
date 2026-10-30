@@ -32,7 +32,7 @@ func connectorDefTool() ChatTool {
 	gt.SetSingleFirePerBatch(true)
 	gt.SetHelpPreamble(strings.TrimSpace(`
 A connector is a reusable "bridge type": a declared external capability that
-lives in one governed surface (Admin > Connectors). Six kinds ship:
+lives in one governed surface (Admin > Connectors). These kinds ship:
 
   remote_mcp: a remote Model Context Protocol server. Many services publish one
   (calendars, ticketing, CRMs). Its tools register as <name>.<tool>. Created
@@ -112,7 +112,8 @@ lives in one governed surface (Admin > Connectors). Six kinds ship:
 
   Needs, on the Microsoft side: an Entra app registration, an Azure Bot resource
   whose Messaging endpoint points at /bridges/api/bot/<connector-name> on this
-  deployment's PUBLIC https URL, its Teams channel enabled, and a Teams app
+  deployment's PUBLIC https URL (or, for an instance that can only dial out, on
+  a peer_relay connector's relay address), its Teams channel enabled, and a Teams app
   manifest naming the same app id installed in the tenant. The Azure resources
 are a registration, not hosting (gohort still runs where it runs), and the
   free tier covers Teams.
@@ -133,6 +134,17 @@ are a registration, not hosting (gohort still runs where it runs), and the
   authenticated per request against Microsoft's published signing keys; there is
   no shared secret to set and no subscription to renew, unlike webhook_provider
   ="graph". Created UNAPPROVED: an admin approves it in Admin > Connectors.
+
+  peer_relay: inbound webhooks for an instance with NO public address. It
+  holds a connection OUT to a registered peer (Admin > Capabilities > Peers)
+  whose key grants Inbound relay, and what providers send to the peer's relay
+  address is answered here. Use it when a bot_framework or webhook bridge needs
+  an address this instance cannot offer. Needs: peer (the registered peer's
+  name). Only routes that authenticate their provider themselves are reachable
+  through it (the Bridges bot and webhook doors); nothing else here is. Once
+  connected, its row in Admin > Connectors shows the address to give a
+  provider, e.g. <relay address>/bridges/api/bot/<bot connector>. One per peer.
+  Created UNAPPROVED.
 
 Governance for remote_mcp: create leaves it UNAPPROVED and inert. Tell the user
 an admin must approve it in Admin > Connectors (there they confirm the endpoint +
@@ -156,7 +168,7 @@ Typical flow for a calendar:
 	gt.AddAction("create", &GroupedToolAction{
 		Description: "Declare a new connector (bridge type). remote_mcp is created UNAPPROVED (admin approves in Admin > Connectors); rest_poll goes live immediately (it uses an already-approved credential).",
 		Params: map[string]ToolParam{
-			"kind":                 {Type: "string", Enum: []string{RemoteMCPConnectorKind, RestPollConnectorKind, DesktopMCPConnectorKind, DesktopCommandConnectorKind, MessagingBridgeConnectorKind, RestMessagingConnectorKind, BotFrameworkConnectorKind, RestImageConnectorKind}, Description: "The bridge type. remote_mcp = a remote MCP server whose tools register as <name>.<tool>. rest_poll = poll one authenticated URL every N minutes and wake an agent when it changes. desktop_mcp = run a LOCAL MCP server (subprocess) on the user's OWN machine. desktop_command = run a fixed local command (with {placeholder} args) as one tool on the user's machine: the lightweight option. messaging_bridge = enable a built-in messaging relay (iMessage) on the user's device so their chats route to agents. rest_messaging = a server-side two-sided messaging bridge for a REST-pollable service (Teams/Slack/Discord) via a SecureAPI credential: use preset=\"teams\" for the canned Graph mapping. bot_framework = gohort as a real Microsoft Teams BOT (Azure Bot registration): answers DMs, group chats and channel @mentions and replies under its own identity, the one that works when Graph app-only sending does not. rest_image = an image-GENERATION backend (ComfyUI / Automatic1111 / hosted diffusion) declared from a spec, use preset=\"a1111\" (turnkey) or preset=\"comfyui\" with vars={\"base_url\":\"http://localhost:7860\"}; materializes a generate_image_<name> tool. Created UNAPPROVED."},
+			"kind":                 {Type: "string", Enum: []string{RemoteMCPConnectorKind, RestPollConnectorKind, DesktopMCPConnectorKind, DesktopCommandConnectorKind, MessagingBridgeConnectorKind, RestMessagingConnectorKind, BotFrameworkConnectorKind, RestImageConnectorKind, PeerRelayConnectorKind}, Description: "The bridge type. remote_mcp = a remote MCP server whose tools register as <name>.<tool>. rest_poll = poll one authenticated URL every N minutes and wake an agent when it changes. desktop_mcp = run a LOCAL MCP server (subprocess) on the user's OWN machine. desktop_command = run a fixed local command (with {placeholder} args) as one tool on the user's machine: the lightweight option. messaging_bridge = enable a built-in messaging relay (iMessage) on the user's device so their chats route to agents. rest_messaging = a server-side two-sided messaging bridge for a REST-pollable service (Teams/Slack/Discord) via a SecureAPI credential: use preset=\"teams\" for the canned Graph mapping. bot_framework = gohort as a real Microsoft Teams BOT (Azure Bot registration): answers DMs, group chats and channel @mentions and replies under its own identity, the one that works when Graph app-only sending does not. rest_image = an image-GENERATION backend (ComfyUI / Automatic1111 / hosted diffusion) declared from a spec, use preset=\"a1111\" (turnkey) or preset=\"comfyui\" with vars={\"base_url\":\"http://localhost:7860\"}; materializes a generate_image_<name> tool. peer_relay = inbound webhooks via a peer's public address. Created UNAPPROVED."},
 			"name":                 {Type: "string", Description: "Short unique id (letters/digits/underscore/dash), e.g. \"gcal\". Namespaces the capability's tools."},
 			"url":                  {Type: "string", Description: "(remote_mcp) the MCP server's https endpoint. (rest_poll) the full URL to poll each interval."},
 			"auth_mode":            {Type: "string", Enum: []string{"none", "secure_api", "oauth"}, Description: "(remote_mcp) How the server authenticates. none = public; secure_api = mint a bearer from a registered SecureAPI credential (set secure_cred); oauth = per-user hosted login. NEVER pass a static token."},
@@ -190,6 +202,7 @@ Typical flow for a calendar:
 			"tenant_id":            {Type: "string", Description: "(bot_framework, optional) pin a single-tenant bot to one tenant. Omit for a multi-tenant bot."},
 			"service_host":         {Type: "string", Description: "(bot_framework, optional) the host replies are sent to (default https://smba.trafficmanager.net, which covers every public-cloud region, the region is a path segment). Set only for a sovereign cloud. The connector's credential must be allowed to reach it, which is checked at approval."},
 			"reply_in_thread":      {Type: "boolean", Description: "(bot_framework, optional) thread a channel reply under the message that triggered it instead of posting at the conversation root."},
+			"peer":                 {Type: "string", Description: "(peer_relay) registered peer whose key grants relay."},
 			"accept_channel_types": {Type: "array", Description: "(bot_framework, optional) limit which Teams surfaces route inbound: any of \"personal\" (1:1 DM), \"channel\", \"groupChat\". Omit to accept all three. The Teams app manifest is the real gate; this is a second one an admin can tighten without a manifest re-upload."},
 			"webhook_provider":     {Type: "string", Enum: []string{"slack", "graph", "generic"}, Description: "(rest_messaging, optional) switch inbound from POLL to real-time PUSH. \"slack\" (Slack Events API, turnkey: paste the webhook URL into the Slack app, admin sets the signing secret), \"graph\", or \"generic\" (any service pushing JSON: describe the check in webhook and the fields in map). The poll fields become unused; send_url/credential still deliver replies."},
 			"webhook":              {Type: "object", Description: "(rest_messaging, with webhook_provider=\"generic\") how each push is checked: {\"verify\":\"hmac_sha256\" or \"token\", \"header\": the header carrying the signature or token, \"token_path\": a body dot-path instead of a header (token), \"prefix\": stripped first (e.g. \"sha256=\"), \"encoding\": \"hex\" or \"base64\" (hmac), \"challenge_path\": a body dot-path echoed back for a URL-verification handshake}. The secret itself is set by the admin, never here."},
@@ -529,6 +542,10 @@ func connectorCreate(args map[string]any, sess *ToolSession) (string, error) {
 			ReplyInThread:      boolArg(args, "reply_in_thread"),
 			AcceptChannelTypes: stringSliceArg(args, "accept_channel_types"),
 		}
+		raw, _ := json.Marshal(spec)
+		c.Spec = raw
+	case PeerRelayConnectorKind:
+		spec := PeerRelaySpec{Peer: strings.TrimSpace(stringArg(args, "peer"))}
 		raw, _ := json.Marshal(spec)
 		c.Spec = raw
 	case RestImageConnectorKind:

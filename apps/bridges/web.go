@@ -66,6 +66,12 @@ func (T *Bridges) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	// Microsoft's rotating keys, checked against the connector's app id. There is
 	// no secret to configure on this one.
 	RegisterPublicPath(prefix + "/api/bot/")
+	// Both inbound doors may also be reached through a peer relay (a
+	// peer_relay connector), for an instance that can only dial out. Only
+	// these two: they authenticate the provider themselves, which is what
+	// makes them safe to hand a borrowed public address to.
+	RegisterRelayablePath(prefix + "/api/webhook/")
+	RegisterRelayablePath(prefix + "/api/bot/")
 
 	sub := NewWebUI(T, prefix, AppUIAssets{})
 	sub.HandleFunc("/", T.handleDashboard)

@@ -816,6 +816,11 @@ func (T *OrchestrateApp) registerHandlers() {
 	// wake the Operator. Registered ungated + as a public path.
 	T.HandleFunc("/api/operator/event/", T.handleOperatorEvent)
 	RegisterPublicPath(T.WebPath() + "/api/operator/event/")
+	// A watcher may also reach it through a peer relay (a peer_relay
+	// connector), for an instance that can only dial out. It qualifies the way
+	// the Bridges doors do: a third party pushes to it, and the per-monitor
+	// token checks that third party here.
+	RegisterRelayablePath(T.WebPath() + "/api/operator/event/")
 	// Run-registry endpoints (see runs.go / runs_http.go) — let a
 	// reconnecting client discover and resume the in-flight stream
 	// for a session after disconnect.

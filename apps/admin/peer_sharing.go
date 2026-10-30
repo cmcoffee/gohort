@@ -60,6 +60,9 @@ func peerKeyRows() []peerKeyRow {
 		if strings.TrimSpace(k.Paired) != "" {
 			status = "Paired: running on rotating tokens"
 		}
+		if since, n, ok := PeerRelayConnected(k.ID); ok {
+			status += fmt.Sprintf("; relay connected since %s, %d relayed", since.Format("Jan 2 15:04"), n)
+		}
 		if k.Disabled {
 			status = "Disabled"
 		}
@@ -640,6 +643,8 @@ func peerCapShortLabel(cap string) string {
 		return "Inference"
 	case PeerCapExec:
 		return "Run commands"
+	case PeerCapRelay:
+		return "Inbound relay"
 	}
 	return cap
 }
@@ -672,6 +677,10 @@ func peerCapOptions() []ui.SelectOption {
 			"Understand what this is: a key granted it has a shell on the named systems, and the CALLING instance decides what runs, not this one. " +
 			"There is no risk gate on this side, by design, that is what makes a peer-reached system behave exactly like a local one. " +
 			"Grant it only to instances you own, and only for the systems below.",
+		PeerCapRelay: "Lend this instance's public address to a peer that can only dial out, so providers can push to it: a Teams bot, Graph notifications, Slack or generic webhooks. " +
+			"The peer holds a connection open to here, and what arrives at its relay address is passed down that connection unread and answered by the peer. " +
+			"Nothing of this instance runs for it and nothing is kept. Each relayed request counts against this key's rate limit. " +
+			"If this instance sits behind a reverse proxy, the proxy must pass WebSocket upgrades on /api/peer/v1/relay.",
 	}
 	// The checklist is a permission screen, so it qualifies each name — but it
 	// BUILDS on the short label rather than restating it, so a capability reads
@@ -683,6 +692,7 @@ func peerCapOptions() []ui.SelectOption {
 		PeerCapBrowse:     " (browser)",
 		PeerCapModels:     " (the peer's turns execute on this machine's model)",
 		PeerCapExec:       " (the peer gets a shell on these systems, gated on ITS side)",
+		PeerCapRelay:      " (webhooks for the peer arrive at this address)",
 	}
 	label := map[string]string{}
 	for _, c := range PeerCapabilities() {

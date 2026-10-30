@@ -86,6 +86,11 @@ const (
 	// question) and "knowledge" (a copy of what this instance had gathered)
 	// were retired for that reason; see retiredPeerCaps.
 	PeerCapExec = "exec"
+	// PeerCapRelay lends this instance's PUBLIC ADDRESS to a peer that can
+	// only dial out: inbound webhooks for the peer arrive here and are passed,
+	// unread, down a socket the peer holds open (peer_relay.go). Nothing of
+	// this instance runs for it and nothing is kept.
+	PeerCapRelay = "relay"
 )
 
 // retiredPeerCaps are capability names a key may still carry from before they
@@ -95,7 +100,7 @@ var retiredPeerCaps = map[string]bool{"investigate": true, "knowledge": true}
 
 // PeerCapabilities is every capability name, in a stable order.
 func PeerCapabilities() []string {
-	return []string{PeerCapEmbeddings, PeerCapImages, PeerCapTranscribe, PeerCapSpeech, PeerCapSearch, PeerCapBrowse, PeerCapModels, PeerCapExec}
+	return []string{PeerCapEmbeddings, PeerCapImages, PeerCapTranscribe, PeerCapSpeech, PeerCapSearch, PeerCapBrowse, PeerCapModels, PeerCapExec, PeerCapRelay}
 }
 
 // peerCapServed reports whether this build can actually serve a capability.
@@ -103,7 +108,7 @@ func PeerCapabilities() []string {
 // so plainly rather than advertising something that would 404.
 func peerCapServed(cap string) bool {
 	switch cap {
-	case PeerCapEmbeddings, PeerCapImages, PeerCapTranscribe, PeerCapSpeech, PeerCapSearch, PeerCapBrowse, PeerCapExec:
+	case PeerCapEmbeddings, PeerCapImages, PeerCapTranscribe, PeerCapSpeech, PeerCapSearch, PeerCapBrowse, PeerCapExec, PeerCapRelay:
 		return true
 	case PeerCapModels:
 		// Served only when there is something lendable. A hosted provider is
@@ -656,6 +661,9 @@ func peerNoteAuthFailure(r *http.Request) {
 var peerConcurrency = map[string]int{
 	PeerCapExec: 4, PeerCapBrowse: 3, PeerCapImages: 2,
 	PeerCapTranscribe: 2, PeerCapSpeech: 2, PeerCapModels: 4, PeerCapEmbeddings: 8, PeerCapSearch: 4,
+	// One relay socket per key, plus one so a reconnect can land while the
+	// socket it supersedes is still unwinding.
+	PeerCapRelay: 2,
 }
 
 type peerLiveReq struct{ cancel context.CancelFunc }

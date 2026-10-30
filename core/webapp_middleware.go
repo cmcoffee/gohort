@@ -305,6 +305,13 @@ func accessLogMiddleware(next http.Handler) http.Handler {
 // out first, because this line goes to a file that outlives the request, and a
 // credential in a URL is a credential in every log that URL touches.
 func accessLogPath(r *http.Request) string {
+	// A relayed request is the PEER's: its path and query belong to a route on
+	// another instance, and can carry that instance's credentials in shapes the
+	// redaction below does not recognize. The relay id is all that is ours.
+	if rest, ok := strings.CutPrefix(r.URL.Path, peerRelayInboundPrefix); ok {
+		id, _, _ := strings.Cut(rest, "/")
+		return peerRelayInboundPrefix + id + "/…"
+	}
 	path := redactPathSecrets(r.URL.Path)
 	if raw := r.URL.RawQuery; raw != "" {
 		return path + "?" + redactQuerySecrets(raw)

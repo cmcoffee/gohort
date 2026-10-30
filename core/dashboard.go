@@ -8,6 +8,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/cmcoffee/gohort/core/changes"
@@ -284,6 +285,16 @@ func ServeDashboard(addr string) error {
 	RegisterPublicPath("/api/peer/v1/prompts")
 	mux.HandleFunc("/api/peer/v1/prompts", handlePeerPrompts)
 
+	// Inbound relay: a peer that can only dial out opens its socket here, and
+	// what arrives at its public prefix is passed down that socket unread.
+	// The socket authenticates with the peer credential; the prefix is public
+	// because the third party posting to it has no credential of ours, and the
+	// route it lands on at the peer checks the provider's own.
+	RegisterPublicPath(peerRelayConnectPath)
+	mux.HandleFunc(peerRelayConnectPath, HandlePeerRelayConnect)
+	RegisterPublicPath(peerRelayInboundPrefix)
+	mux.HandleFunc(peerRelayInboundPrefix, HandlePeerRelayInbound)
+
 	// Credential exchange. Public like the rest of the peer surface, and
 	// unauthenticated in the peerAuthorize sense on purpose: the credential
 	// being presented is in the body, and a peer whose access token has just
@@ -306,7 +317,26 @@ func ServeDashboard(addr string) error {
 	}
 	Log("Gohort Dashboard: %s://%s\n", scheme, addr)
 
-	return ListenAndServeTLS(addr, dashboardChain(mux))
+	handler := dashboardChain(mux)
+	setServedHandler(handler)
+	return ListenAndServeTLS(addr, handler)
+}
+
+// served is the handler the dashboard listener serves: the mux behind the
+// whole middleware chain. Recorded so a request that arrives some other way
+// than the listener (a peer relay, peer_relay.go) meets the same front door a
+// direct one does. Nil until ServeDashboard has built it, which a caller
+// answers as "still starting".
+var served atomic.Pointer[http.Handler]
+
+func setServedHandler(h http.Handler) { served.Store(&h) }
+
+// servedHandler returns the handler the listener serves, or nil before it is up.
+func servedHandler() http.Handler {
+	if h := served.Load(); h != nil {
+		return *h
+	}
+	return nil
 }
 
 // dashboardChain wraps the dashboard mux in the middleware every request goes

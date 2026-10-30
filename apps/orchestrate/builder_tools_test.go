@@ -86,7 +86,13 @@ func TestAuthoringCatalogStaysWithinBudget(t *testing.T) {
 	// 90000 -> 91000 (0.8.475): keeps_memory on create_agent and update_agent,
 	// about 130 bytes each, so a sub-agent can be given memory of its own. The
 	// catalog was within 200 bytes of the old budget before it.
-	const budgetBytes = 91000
+	//
+	// 91000 -> 91200 (0.8.826): the peer_relay connector kind, about 170 bytes
+	// (an enum value, one clause of the kind list, one param), so an instance
+	// with no public address can take a Teams bot or webhook through a peer.
+	// The catalog was about 70 bytes under the old budget before it; the rest
+	// of the kind's guidance is in the tool's help, not here.
+	const budgetBytes = 91200
 	if auth > budgetBytes {
 		t.Errorf("the authoring catalog is %d bytes (~%d tokens), past the %d-byte budget.\n"+
 			"Every Builder-capable agent pays this on every turn. Either trim a description, "+

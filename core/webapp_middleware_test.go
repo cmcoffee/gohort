@@ -13,6 +13,7 @@ package core
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -89,5 +90,21 @@ func TestTokenIsNotGuessableOrShared(t *testing.T) {
 	r := local(httptest.NewRequest(http.MethodGet, "/", nil))
 	if IsInternalRequest(r) {
 		t.Error("an ordinary request was treated as internal")
+	}
+}
+
+// A relayed request is the peer's. The instance lending its address logs that
+// one arrived on which relay, and nothing of the path or query it was for,
+// whatever shape a credential in them takes.
+func TestTheAccessLogKeepsARelayedPathToItsRelay(t *testing.T) {
+	r := httptest.NewRequest(http.MethodPost, peerRelayInboundPrefix+"abc123/orchestrate/api/operator/event/not-hex-secret?code=s3cr3t", nil)
+	got := accessLogPath(r)
+	if got != peerRelayInboundPrefix+"abc123/…" {
+		t.Errorf("relayed request logged as %q", got)
+	}
+	for _, leak := range []string{"operator", "not-hex-secret", "s3cr3t"} {
+		if strings.Contains(got, leak) {
+			t.Errorf("the access log kept %q of the peer's request: %s", leak, got)
+		}
 	}
 }

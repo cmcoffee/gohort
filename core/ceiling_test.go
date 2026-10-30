@@ -129,7 +129,12 @@ const (
 	// 198 -> 199 (v0.8.751): core/peer_speech.go, a peer capability's serving
 	// and consuming halves beside its siblings (peer_transcribe.go): the peer
 	// auth, hold and credential helpers they use are unexported here.
-	coreFileCeiling = 199
+	//
+	// 199 -> 200 (v0.8.826): core/peer_relay.go, the inbound relay capability
+	// and the peer_relay connector kind in one file, for the same reason: the
+	// serving half needs peerAuthorize and peerHold, the consuming half the
+	// connector registry, isPublicRequest and the dashboard handler.
+	coreFileCeiling = 200
 
 	// coreExportCeiling is the number of exported top-level symbols — funcs,
 	// types, vars, consts. Methods are excluded because they are not what
