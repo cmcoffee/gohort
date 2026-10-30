@@ -433,3 +433,36 @@ func TestAllBreakpointsShareTheLifetime(t *testing.T) {
 		t.Error("the system breakpoint kept the short lifetime")
 	}
 }
+
+// The API refuses a system message in first place ("messages.0: use the
+// top-level 'system' parameter for the initial system prompt"), and every lead
+// call that opened with one ran on the worker. The opening system turns go to
+// the top-level system prompt; a later one stays where it was said, which the
+// API still takes.
+func TestTheOpeningSystemTurnsGoToTheSystemPrompt(t *testing.T) {
+	msgs, err := buildAnthMessages([]Message{
+		{Role: "user", Content: "  "}, // skipped by the builder, leaving a system turn first
+		{Role: "system", Content: "You are terse."},
+		{Role: "system", Content: "Answer in English."},
+		{Role: "user", Content: "hi"},
+		{Role: "system", Content: "The user is on a phone."},
+		{Role: "assistant", Content: "hello"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lead, rest := leadingSystemTurns(msgs)
+	if lead != "You are terse.\n\nAnswer in English." {
+		t.Errorf("lead = %q", lead)
+	}
+	if len(rest) != 3 || rest[0].Role != "user" || rest[1].Role != "system" {
+		t.Fatalf("rest: %+v", rest)
+	}
+	if lead, rest := leadingSystemTurns(rest); lead != "" || len(rest) != 3 {
+		t.Errorf("a conversation that opens with the person lost a turn: %q %d", lead, len(rest))
+	}
+	// Both ways a request goes out (Chat and Stream) take them out.
+	if n := strings.Count(readRepoSource(t, "llm_anthropic.go"), "leadingSystemTurns(msgs)"); n != 2 {
+		t.Errorf("leadingSystemTurns is applied on %d send paths, want 2", n)
+	}
+}

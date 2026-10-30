@@ -598,6 +598,27 @@ func buildAnthMessages(messages []Message) ([]anthMessage, error) {
 	return msgs, nil
 }
 
+// leadingSystemTurns takes the system-role turns at the head of msgs out, as
+// text for the top-level system prompt. The API takes a system message later
+// in the conversation but refuses one in first place:
+//
+//	messages.0: use the top-level 'system' parameter for the initial system prompt
+//
+// which failed every lead call that opened with one, each of them run on the
+// worker instead. Taken after the messages are built, so a turn the builder
+// skips (an empty one) cannot leave a system turn first.
+func leadingSystemTurns(msgs []anthMessage) (string, []anthMessage) {
+	var lead []string
+	i := 0
+	for ; i < len(msgs) && msgs[i].Role == "system"; i++ {
+		var text string
+		if json.Unmarshal(msgs[i].Content, &text) == nil && strings.TrimSpace(text) != "" {
+			lead = append(lead, strings.TrimSpace(text))
+		}
+	}
+	return strings.Join(lead, "\n\n"), msgs[i:]
+}
+
 // buildAnthTools converts generic Tool definitions to Anthropic format and
 // caches the tools block. Tools render first in the prefix, so a breakpoint on
 // the last tool caches the entire (large, stable) tool schema block for reuse.
@@ -746,6 +767,9 @@ func (c *anthropicClient) Chat(ctx context.Context, messages []Message, opts ...
 	msgs, err := buildAnthMessages(messages)
 	if err != nil {
 		return nil, err
+	}
+	if lead, rest := leadingSystemTurns(msgs); lead != "" {
+		systemPrompt, msgs = strings.TrimSpace(systemPrompt+"\n\n"+lead), rest
 	}
 	addCacheBreakpoint(msgs)
 
@@ -1096,6 +1120,9 @@ func (c *anthropicClient) ChatStream(ctx context.Context, messages []Message, ha
 	msgs, err := buildAnthMessages(messages)
 	if err != nil {
 		return nil, err
+	}
+	if lead, rest := leadingSystemTurns(msgs); lead != "" {
+		systemPrompt, msgs = strings.TrimSpace(systemPrompt+"\n\n"+lead), rest
 	}
 	addCacheBreakpoint(msgs)
 
