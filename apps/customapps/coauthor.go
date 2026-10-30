@@ -123,17 +123,7 @@ func (T *CustomApps) coauthorTools(udb Database, spec AppSpec) []AgentToolDef {
 // from its fields, so one with no kind counts too: BodyField being set is
 // what says the app has a workbench.
 func workbenchEditable(spec AppSpec) bool {
-	if len(spec.Sections) == 0 || strings.TrimSpace(spec.BodyField) == "" {
-		return false
-	}
-	var secs []map[string]any
-	if json.Unmarshal(spec.Sections, &secs) != nil {
-		return false
-	}
-	for _, s := range secs {
-		if kind, _ := s["kind"].(string); strings.TrimSpace(kind) != "" && !strings.EqualFold(strings.TrimSpace(kind), "workbench") {
-			continue
-		}
+	for _, s := range workbenchSections(spec) {
 		switch v := s["editable"].(type) {
 		case bool:
 			return v
@@ -142,6 +132,26 @@ func workbenchEditable(spec AppSpec) bool {
 		}
 	}
 	return false
+}
+
+// workbenchSections are the app's sections as authored that may be its
+// workbench: kind workbench, or no kind given. None for an app with no
+// sections kept or no BodyField, which is what says it has a workbench.
+func workbenchSections(spec AppSpec) []map[string]any {
+	if len(spec.Sections) == 0 || strings.TrimSpace(spec.BodyField) == "" {
+		return nil
+	}
+	var secs, out []map[string]any
+	if json.Unmarshal(spec.Sections, &secs) != nil {
+		return nil
+	}
+	for _, s := range secs {
+		if kind, _ := s["kind"].(string); strings.TrimSpace(kind) != "" && !strings.EqualFold(strings.TrimSpace(kind), "workbench") {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
 }
 
 // coauthorSend is what a co-authored document's send carries beside the
@@ -187,8 +197,9 @@ func coauthorTurnContext(send coauthorSend) string {
 
 // handleCoauthorSend runs a send for a co-authored document: the document and
 // the pinned passage go into the turn, and the agent's only way to change the
-// document is to propose. others are the app's action tools, kept.
-func (T *CustomApps) handleCoauthorSend(w http.ResponseWriter, r *http.Request, orch agenthost.Host, agent agenthost.Agent, others []AgentToolDef) {
+// document is to propose. others are the app's action tools, kept. open, when
+// given, is set to the id of the document the send carries.
+func (T *CustomApps) handleCoauthorSend(w http.ResponseWriter, r *http.Request, orch agenthost.Host, agent agenthost.Agent, others []AgentToolDef, open *string) {
 	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 16<<20))
 	if err != nil {
 		http.Error(w, "request too large", http.StatusRequestEntityTooLarge)
@@ -197,6 +208,9 @@ func (T *CustomApps) handleCoauthorSend(w http.ResponseWriter, r *http.Request, 
 	r.Body = io.NopCloser(bytes.NewReader(raw))
 	var send coauthorSend
 	_ = json.Unmarshal(raw, &send)
+	if open != nil {
+		*open = strings.TrimSpace(send.Document.ID)
+	}
 	pub := &agenthost.Publisher{}
 	tools := append([]AgentToolDef{agenthost.ProposeEditTool(pub)}, others...)
 	if turn := coauthorTurnContext(send); turn != "" {
@@ -215,13 +229,17 @@ func (T *CustomApps) patchRecord(a *appCall, in map[string]any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	recordWriteMu.Lock()
+	defer recordWriteMu.Unlock()
 	tbl := recTable(a.spec.Slug)
 	var rec map[string]any
 	if !a.appdb.Get(tbl, id, &rec) || rec == nil {
 		return nil, jsonapi.NotFound("no record " + id)
 	}
+	files, _, _ := workbenchFiles(a.spec)
 	for k, v := range in {
-		if k == a.spec.RecordKey || k == "created" || k == "id" {
+		// The kept files are the server's list (record_files.go).
+		if k == a.spec.RecordKey || k == "created" || k == "id" || (files != "" && k == files) {
 			continue
 		}
 		rec[k] = v

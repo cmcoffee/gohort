@@ -93,6 +93,10 @@ func appRecordFields(raw any, recordKey string) map[string]string {
 					out[t] = "text"
 				}
 			}
+			// The files the record keeps, a list the server writes.
+			if f := strings.TrimSpace(mapStr(m, "files_field")); f != "" {
+				out[f] = "files"
+			}
 		}
 	}
 	return out

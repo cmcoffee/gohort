@@ -64,6 +64,15 @@ type WorkbenchPanel struct {
 	// the edited field only.
 	ProposeEdits     bool              `json:"propose_edits,omitempty"`
 	SelectionActions []SelectionAction `json:"selection_actions,omitempty"`
+	// FilesField names the record field listing the files the record keeps
+	// ([{name, title, type, size, added}], newest last), shown under the
+	// document under FilesLabel: audio and video play in place, a picture
+	// shows, anything else opens. FileURL ({id} and {name} substituted)
+	// serves one on GET and removes it from the record on DELETE. The server
+	// writes the list; the page only reads it.
+	FilesField string `json:"files_field,omitempty"`
+	FilesLabel string `json:"files_label,omitempty"`
+	FileURL    string `json:"file_url,omitempty"`
 	// ImageUploadURL, with {id} for the open record, takes pictures pasted or
 	// dropped into the edit textarea (and an Add image button for a file):
 	// POST multipart "file", answering {markdown} to insert at the cursor.

@@ -322,3 +322,36 @@ func TestAnEditableWorkbenchIsCoauthored(t *testing.T) {
 		t.Errorf("a plain workbench is as it was: %+v", plain)
 	}
 }
+
+// A workbench whose records keep files lists them under the document from
+// the field it names, and document_actions put their prompt in the chat.
+func TestAWorkbenchKeepsFilesAndHasDocumentActions(t *testing.T) {
+	spec := AppSpec{AgentID: "lyricist", RecordKey: "id"}
+	m := map[string]any{
+		"kind": "workbench", "body_field": "lyrics", "item_noun": "song", "editable": true,
+		"files_field": "takes", "files_label": "Takes",
+		"document_actions": []any{map[string]any{"label": "Render", "prompt": "Render this song and keep the take."}, "Check the meter"},
+	}
+	wb, err := buildWorkbench(spec, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wb.FilesField != "takes" || wb.FilesLabel != "Takes" || wb.FileURL != "file?id={id}&name={name}" {
+		t.Errorf("files: %+v", wb)
+	}
+	if len(wb.ViewerActions) != 2 || wb.ViewerActions[0].Kind != "compose" || wb.ViewerActions[0].Compose != "Render this song and keep the take." || wb.ViewerActions[1].Compose != "Check the meter" {
+		t.Errorf("document actions: %+v", wb.ViewerActions)
+	}
+	if notes := unknownSectionKeyNotes([]any{m}); len(notes) != 0 {
+		t.Errorf("files_field, files_label and document_actions are workbench keys: %v", notes)
+	}
+	for _, clash := range []string{"lyrics", "title", "id"} {
+		if _, err := buildWorkbench(spec, map[string]any{"kind": "workbench", "body_field": "lyrics", "files_field": clash}); err == nil {
+			t.Errorf("files_field %q shares a field with the workbench", clash)
+		}
+	}
+	plain, _ := buildWorkbench(spec, map[string]any{"kind": "workbench", "body_field": "lyrics"})
+	if plain.FilesField != "" || plain.FileURL != "" || len(plain.ViewerActions) != 0 {
+		t.Errorf("a workbench without them has neither: %+v", plain)
+	}
+}

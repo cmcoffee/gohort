@@ -102,3 +102,11 @@ func TestSampleWarningsNeedANamedField(t *testing.T) {
 		t.Errorf("a key-only schema warned: %v", w)
 	}
 }
+
+// A workbench's files field is part of what its records hold.
+func TestAWorkbenchsFilesFieldIsInTheSchema(t *testing.T) {
+	fields := appRecordFields([]any{map[string]any{"kind": "workbench", "body_field": "lyrics", "files_field": "takes"}}, "id")
+	if fields["takes"] != "files" || fields["lyrics"] != "text" {
+		t.Errorf("fields %v", fields)
+	}
+}

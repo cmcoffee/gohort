@@ -1,8 +1,10 @@
 # Co-author: select, ask, review, apply
 
 Status: planned 2026-10-29. Phases 1 to 3 built and checked in headless Chromium (desktop and
-390px), including a Builder-built editable workbench. Not yet: FormPanel text fields (phase 2),
-the song app built by Builder against a live model (phase 4), folding the copies in (phase 5).
+390px), including a Builder-built editable workbench. Phase 4's missing primitives (files a
+record keeps, document actions) built; the song app built by Builder against a live model is
+next, on the live server. Not yet: FormPanel text fields (phase 2), folding the copies in
+(phase 5).
 
 ## Why it exists
 
@@ -109,6 +111,30 @@ editable finds the chat beside it through the host element they share.
 4. **The song app, built by Builder.** Lyrics document with section headings, the lyric agent as
    co-author with its scansion tool, Render to `generate_music` keeping each take as a titled
    version. Whatever Builder cannot express is the next primitive to fix, not app-specific code.
+
+   Walking the app through Builder's section kinds found two things it could not say:
+
+   - **A take had nowhere to live.** `generate_music` leaves an mp3 in the agent's working
+     folder and the chat plays it, but a custom app's record holds JSON only, so the take
+     stayed in a conversation that is not even per song. Now a workbench names a
+     `files_field` (`takes`): each record keeps files in a folder of its own
+     (`core/appassets/record_files.go`, under `data/app_record_files`, 64 MiB a file, 40 a
+     record, audio/video/pictures/PDF only, checked by their first bytes), listed on the
+     record as `[{name, title, type, size, added}]`. The agent gets `keep_file(file, title)`
+     to keep what it made on the open record. The viewer lists them under the document, the
+     editor open or not, and plays them in place. The list is the server's: a form's
+     whole-record save and the editor's merge keep it as stored, so neither drops it nor
+     points it at another record's files. Deleting the record, or the app, deletes its
+     files. Fields on the record, not a takes table: a take cannot exist without its song.
+   - **No Render button.** `WorkbenchPanel.ViewerActions` of kind `compose` already put a
+     prompt in the chat; Builder could not declare one. Now `document_actions`
+     [{label, prompt}].
+
+   Left to the agent, not the app: the scansion check (the lyric agent's own tool, or its
+   own counting) and which music tool renders. The chat is still one conversation across
+   songs; every send carries the open song, so the agent works on the right one.
+
+   Not covered: a record's files do not travel with a records export or import.
 5. **Fold the copies in.** CodeWriter's `editor_proposal` becomes a `text_proposal`; the agent
    page's change list, casefile's proposal card and the dead ArticleEditor chat move onto the
    review or are deleted.

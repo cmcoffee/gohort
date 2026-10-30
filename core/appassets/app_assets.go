@@ -105,6 +105,10 @@ var assetMagic = map[string][]string{
 	".woff2": {"wOF2"},
 	".ogg":   {"OggS"},
 	".glb":   {"glTF"},
+	// What a record keeps (record_files.go) and an asset does not.
+	".flac": {"fLaC"},
+	".webm": {"\x1a\x45\xdf\xa3"},
+	".pdf":  {"%PDF-"},
 }
 
 // assetMatchesType reports why data is not the type name's extension says,
@@ -121,7 +125,7 @@ func assetMatchesType(name string, data []byte) error {
 		ok = len(s) >= 12 && s[:4] == "RIFF" && s[8:12] == "WAVE"
 	case ".mp3":
 		ok = strings.HasPrefix(s, "ID3") || (len(data) >= 2 && data[0] == 0xff && data[1]&0xe0 == 0xe0)
-	case ".m4a":
+	case ".m4a", ".mp4", ".mov":
 		ok = len(s) >= 8 && s[4:8] == "ftyp"
 	case ".svg":
 		ok = strings.Contains(strings.ToLower(s[:min(len(s), 4096)]), "<svg")

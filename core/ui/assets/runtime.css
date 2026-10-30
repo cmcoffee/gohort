@@ -7400,3 +7400,19 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-coauthor-proposal-h { flex: 1 1 100%; color: var(--text); }
 .ui-coauthor-proposal-meta { color: var(--text-mute); font-size: var(--fs-xs); }
 .ui-coauthor-proposal-note { flex: 1 1 100%; color: var(--text-mute); font-size: var(--fs-xs); }
+
+/* Files a workbench record keeps (files_field), under the document. */
+.ui-wb-files {
+  flex: 0 0 auto; max-height: 40%; overflow-y: auto;
+  border-top: 1px solid var(--border); padding: 0.6rem 1rem 0.8rem;
+}
+.ui-wb-files-head { font-size: var(--fs-sm); font-weight: 600; color: var(--text-hi); margin-bottom: 0.4rem; }
+.ui-wb-files-list { display: flex; flex-direction: column; gap: 0.5rem; }
+.ui-wb-file { display: flex; flex-direction: column; gap: 0.35rem; padding: 0.45rem 0.6rem; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-1); min-width: 0; }
+.ui-wb-file-head { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; min-width: 0; }
+.ui-wb-file-title { flex: 1 1 10rem; min-width: 0; font-size: var(--fs-sm); color: var(--text); overflow-wrap: anywhere; }
+.ui-wb-file-meta { font-size: var(--fs-2xs); color: var(--text-mute); }
+.ui-wb-file-btns { display: flex; gap: 0.3rem; flex-wrap: wrap; }
+.ui-wb-file-media { width: 100%; max-width: 100%; }
+.ui-wb-file-img { max-width: 100%; max-height: 16rem; border-radius: 6px; align-self: flex-start; }
+.ui-wb-has-files .ui-wb-edit-ta { min-height: 10rem; }

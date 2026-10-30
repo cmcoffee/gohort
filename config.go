@@ -14,6 +14,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appassets"
 	"github.com/cmcoffee/gohort/core/buildledger"
 	"github.com/cmcoffee/gohort/core/media"
 	"github.com/cmcoffee/gohort/core/replyguard"
@@ -1179,6 +1180,8 @@ func init_database() {
 	// Per-app static assets (images/fonts an app references), served read-only
 	// at /custom/<slug>/assets/<name>.
 	SetAppAssetsDir(data_dir + "/app_assets")
+	// Files a record keeps (a song's rendered takes), one folder per record.
+	appassets.SetRecordFilesDir(data_dir + "/app_record_files")
 
 	db_filename := FormatPath(fmt.Sprintf("%s/%s.db", data_dir, APPNAME))
 	global.db, err = SecureDatabase(db_filename)

@@ -119,7 +119,11 @@ func TestACoauthoredSendProposes(t *testing.T) {
 	body := `{"message":"tighten it","document":{"id":"s1","text":"Money in the cloud\n"},"selection":{"text":"Money in the cloud","start":0,"end":18}}`
 	r := httptest.NewRequest("POST", "/apps/songs/chat/send", strings.NewReader(body))
 	other := AgentToolDef{Tool: Tool{Name: "render_song"}}
-	(&CustomApps{}).handleCoauthorSend(httptest.NewRecorder(), r, h, agenthost.Agent{}, []AgentToolDef{other})
+	var open string
+	(&CustomApps{}).handleCoauthorSend(httptest.NewRecorder(), r, h, agenthost.Agent{}, []AgentToolDef{other}, &open)
+	if open != "s1" {
+		t.Errorf("the open document is the one the send carries: %q", open)
+	}
 	if !strings.Contains(h.turn, "Money in the cloud") || !strings.Contains(h.turn, "selected this passage") {
 		t.Errorf("the turn should carry the document and the passage:\n%s", h.turn)
 	}
@@ -163,5 +167,11 @@ func TestTheSendFollowsTheWorkbench(t *testing.T) {
 	}
 	if h := send(`[{"kind":"workbench"}]`); strings.Join(h.tools, ",") != "add_section" || h.turn != "(plain send)" {
 		t.Errorf("a plain workbench keeps add_section: %v %q", h.tools, h.turn)
+	}
+	if h := send(`[{"kind":"workbench","editable":true,"files_field":"takes"}]`); strings.Join(h.tools, ",") != "propose_edit,keep_file" {
+		t.Errorf("records that keep files give the agent keep_file: %v", h.tools)
+	}
+	if h := send(`[{"kind":"workbench","files_field":"takes"}]`); strings.Join(h.tools, ",") != "add_section,keep_file" {
+		t.Errorf("on a plain workbench too: %v", h.tools)
 	}
 }

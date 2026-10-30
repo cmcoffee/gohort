@@ -168,6 +168,15 @@
     }
     var viewerBody = el('div', {class: 'ui-wb-viewer-body'});
     center.appendChild(viewerBody);
+    // Files the open record keeps (files_field): what the chat's agent made
+    // for it and kept there, newest first, each played or opened in place.
+    // Below the document, so it stays in view while the editor is open.
+    var filesBox = null, filesShown = '';
+    if (cfg.files_field && cfg.file_url) {
+      filesBox = el('div', {class: 'ui-wb-files'});
+      filesBox.style.display = 'none';
+      center.appendChild(filesBox);
+    }
 
     // --- RIGHT: chat ------------------------------------------------------
     // Build the chat in LIVE JS from the stored chat's ENDPOINTS, rather than
@@ -241,9 +250,78 @@
     root.appendChild(right);
     root.appendChild(drawer.backdrop);
 
+    // wbFileKind is how a kept file is shown, from its content type.
+    function wbFileKind(type) {
+      type = String(type || '');
+      if (type.indexOf('audio/') === 0) return 'audio';
+      if (type.indexOf('video/') === 0) return 'video';
+      if (type.indexOf('image/') === 0) return 'image';
+      return 'other';
+    }
+    function wbFileSize(n) {
+      n = Number(n) || 0;
+      if (n >= 1048576) return (n / 1048576).toFixed(1) + ' MB';
+      if (n >= 1024) return Math.round(n / 1024) + ' KB';
+      return n + ' B';
+    }
+    // renderFiles lists the open record's kept files. A refresh that finds
+    // the same list leaves it alone: every chat round re-fetches the record,
+    // and rebuilding the players would stop the take someone is listening to.
+    function renderFiles(rec) {
+      if (!filesBox) return;
+      var list = (rec && Array.isArray(rec[cfg.files_field])) ? rec[cfg.files_field] : [];
+      var sig = selectedId + '|' + list.map(function(f) { return f && f.name; }).join('|');
+      if (sig === filesShown) return;
+      filesShown = sig;
+      filesBox.innerHTML = '';
+      filesBox.style.display = list.length ? '' : 'none';
+      // The editor gives up its tall minimum to the strip, or its Save row
+      // ends up below the fold.
+      center.classList.toggle('ui-wb-has-files', list.length > 0);
+      if (!list.length) return;
+      filesBox.appendChild(el('div', {class: 'ui-wb-files-head', text: (cfg.files_label || 'Files') + ' (' + list.length + ')'}));
+      var rows = el('div', {class: 'ui-wb-files-list'});
+      list.slice().reverse().forEach(function(f) { if (f && f.name) rows.appendChild(fileRow(f)); });
+      filesBox.appendChild(rows);
+    }
+    function fileRow(f) {
+      var url = cfg.file_url.replace('{id}', encodeURIComponent(selectedId)).replace('{name}', encodeURIComponent(f.name));
+      var title = f.title || f.name;
+      var row = el('div', {class: 'ui-wb-file'});
+      var when = f.added ? new Date(f.added) : null;
+      var meta = wbFileSize(f.size) + (when && !isNaN(when) ? ' \u00b7 ' + when.toLocaleString() : '');
+      var head = el('div', {class: 'ui-wb-file-head'}, [
+        el('div', {class: 'ui-wb-file-title', text: title}),
+        el('div', {class: 'ui-wb-file-meta', text: meta}),
+      ]);
+      var btns = el('div', {class: 'ui-wb-file-btns'});
+      var dl = el('a', {class: 'ui-row-btn', text: 'Download', href: url, download: f.name});
+      var rm = el('button', {class: 'ui-row-btn', type: 'button', text: 'Remove'});
+      rm.addEventListener('click', function() {
+        window.uiConfirm('Remove "' + title + '"? The file goes with it.').then(function(ok) {
+          if (!ok) return;
+          rm.disabled = true;
+          fetch(url, {method: 'DELETE', credentials: 'same-origin'}).then(function(r) {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            if (selectedId) loadViewer(selectedId);
+          }).catch(function(e) { rm.disabled = false; showToast('Could not remove it: ' + e.message); });
+        });
+      });
+      btns.appendChild(dl); btns.appendChild(rm);
+      head.appendChild(btns);
+      row.appendChild(head);
+      var kind = wbFileKind(f.type);
+      if (kind === 'audio') row.appendChild(el('audio', {class: 'ui-wb-file-media', controls: true, preload: 'none', src: url}));
+      else if (kind === 'video') row.appendChild(el('video', {class: 'ui-wb-file-media', controls: true, preload: 'metadata', src: url}));
+      else if (kind === 'image') row.appendChild(el('img', {class: 'ui-wb-file-img', loading: 'lazy', alt: title, src: url}));
+      else row.appendChild(el('a', {class: 'ui-wb-file-open', text: 'Open', href: url, target: '_blank', rel: 'noopener'}));
+      return row;
+    }
+
     function showEmpty() {
       setActionsEnabled(false);
       closeEditor();
+      renderFiles(null);
       lastRec = null; lastRecId = null;
       if (editBtn) editBtn.disabled = true;
       viewerBody.innerHTML = '';
@@ -846,6 +924,7 @@
         if (selectedId !== id) return; // a newer click won
         var switched = lastRecId !== id;
         lastRec = rec; lastRecId = id;
+        renderFiles(rec);
         if (editBtn) editBtn.disabled = editableText(rec) === null;
         // A refresh of the record being edited (a co-author write, a round
         // ending) must not replace the textarea; switching records does.

@@ -42,6 +42,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/appadmin"
+	"github.com/cmcoffee/gohort/core/appassets"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/promotion"
 	"github.com/cmcoffee/gohort/core/ui"
@@ -212,6 +213,9 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		T.handleAsset(w, r, ownerUser, slug, name)
+		return
+	case rest == "file":
+		T.handleRecordFile(w, r, appdb, spec, ownerUser, user)
 		return
 	case strings.HasPrefix(rest, "shared/"):
 		T.handleShared(w, r, T.recordBase(spec, ownerUser), spec, strings.TrimPrefix(rest, "shared/"))
@@ -431,10 +435,19 @@ func (T *CustomApps) handleChat(w http.ResponseWriter, r *http.Request, owner, u
 			out, run := T.latestRunForApp(spec, r)
 			tools = append(tools, T.agentToolsFor(owner, uid, udb, spec, out, run)...)
 		}
+		// Records that keep files: the agent keeps what it made on the open
+		// one (record_files.go). The open one is what the send says it is,
+		// else the one the workbench last said was open.
+		var sentID string
+		if field, _, _ := workbenchFiles(spec); field != "" {
+			tools = append(tools, T.keepFileTool(udb, spec, owner, uid, func() string {
+				return firstNonEmpty(sentID, activeRecordID(udb, spec.Slug))
+			}))
+		}
 		// A co-authored document: the agent reads it and proposes, never
 		// writes it directly (coauthor.go).
 		if editable {
-			T.handleCoauthorSend(w, r, orch, agent, tools)
+			T.handleCoauthorSend(w, r, orch, agent, tools, &sentID)
 			return
 		}
 		if len(tools) > 0 {
@@ -781,6 +794,7 @@ func (T *CustomApps) deleteApp(owner, slug string) {
 	DeleteAppSpec(owner, slug)     // shared per-owner spec store (and its triggers)
 	appdb.Drop(recTable(slug))     // this app's records
 	appdb.Unset(activeTable, slug) // workbench open-document marker
+	_ = appassets.DeleteAppRecordFiles(owner, slug)
 	appadmin.Drop(RootDB, owner, slug)
 	DeleteAppAssets(owner, slug) // files on disk, which no store sweep reaches
 }
@@ -1611,6 +1625,11 @@ func (T *CustomApps) saveRecord(a *appCall, rec map[string]any) (any, error) {
 	if _, ok := rec["created"]; !ok {
 		rec["created"] = time.Now().UTC().Format(time.RFC3339)
 	}
+	recordWriteMu.Lock()
+	defer recordWriteMu.Unlock()
+	var stored map[string]any
+	a.appdb.Get(recTable(a.spec.Slug), id, &stored)
+	keepStoredFiles(a.spec, stored, rec)
 	a.appdb.Set(recTable(a.spec.Slug), id, rec)
 	noteChange(recordsChangeKey(a.owner, a.spec.Slug, a.User))
 	return rec, nil
@@ -1643,6 +1662,8 @@ func (T *CustomApps) deleteRecord(a *appCall, _ struct{}) (any, error) {
 		return nil, err
 	}
 	a.appdb.Unset(recTable(a.spec.Slug), id)
+	// The files it kept go with it (record_files.go).
+	_ = appassets.DeleteRecordFiles(a.owner, a.spec.Slug, a.User, id)
 	noteChange(recordsChangeKey(a.owner, a.spec.Slug, a.User))
 	return map[string]bool{"ok": true}, nil
 }
@@ -1908,7 +1929,7 @@ func (T *CustomApps) handleAssetWrite(w http.ResponseWriter, r *http.Request, us
 // appOwnPaths are the relative endpoints an app's own page HTML may still
 // reach from inside its sandbox: its data sources and actions, its records,
 // and its assets. Nothing else in gohort.
-var appOwnPaths = []string{"data/", "action/", "action-progress/", "action-cancel/", "actions", "records", "record", "assets", "shared/", "changes", "ask", "view-state"}
+var appOwnPaths = []string{"data/", "action/", "action-progress/", "action-cancel/", "actions", "records", "record", "file", "assets", "shared/", "changes", "ask", "view-state"}
 
 // navigationKeys name URLs the runtime follows as a link, never fetches.
 var navigationKeys = map[string]bool{"href": true, "footer_url": true, "back_url": true, "home_url": true, "redirect_url": true}

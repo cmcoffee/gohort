@@ -328,6 +328,18 @@ applies it, and your own Save keeps it.
 - ✨ Assist drafts (`uiOpenAssist`) already do this: the selected passage rides
   the request as `selection`, and the reply's version opens on **Changes**.
 
+**Keeping what the agent makes.** `WorkbenchPanel.FilesField` names a record
+field listing files the record keeps (`[{name, title, type, size, added}]`),
+shown under the document under `FilesLabel`: audio and video play in place, a
+picture shows, anything else opens, each with Download and Remove. `FileURL`
+(`{id}`, `{name}`) serves one on GET and removes it on DELETE. The server owns
+the list; the page only reads it. A custom app gets all of it from the
+workbench section's `files_field` (and `files_label`), and its agent gets
+`keep_file(file, title)` to keep a file from its working folder on the open
+record: a song's rendered takes, an article's pictures. `document_actions`
+[{label, prompt}] puts buttons over the document that write a prompt into the
+chat ("Render").
+
 docs/design/coauthor-proposals.md has the reasoning.
 
 ### Repeating rows

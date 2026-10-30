@@ -145,7 +145,7 @@ var sectionKeys = map[string][]string{
 	"chat":      {"list_title", "empty_text", "placeholder"},
 	"pipeline":  {"fields", "submit_label", "empty_text", "input_label", "placeholder", "pipeline_id", "toolbar", "suggest_script", "suggest_label", "suggest_target", "meta"},
 	"run":       {"fields", "submit_label", "empty_text", "input_label", "placeholder", "pipeline_id", "toolbar", "suggest_script", "suggest_label", "suggest_target", "meta"},
-	"workbench": {"item_label", "body_field", "item_noun", "new_fields", "new_label", "new_title", "list_title", "list_empty", "empty_title", "empty_hint", "empty_icon", "chat_empty", "placeholder", "editable", "selection_actions"},
+	"workbench": {"item_label", "body_field", "item_noun", "new_fields", "new_label", "new_title", "list_title", "list_empty", "empty_title", "empty_hint", "empty_icon", "chat_empty", "placeholder", "editable", "selection_actions", "files_field", "files_label", "document_actions"},
 	"html":      {"html", "height", "source_script"},
 	"card":      {"html", "height", "source_script"},
 }
@@ -744,6 +744,23 @@ func buildWorkbench(spec AppSpec, m map[string]any) (ui.WorkbenchPanel, error) {
 		wb.CoAuthorVerb = ""
 		chat.EmptyText = firstNonEmptyStr(mapStr(m, "chat_empty"), "Select part of the "+noun+" and Ask, or ask about the whole "+noun+".")
 		wb.Chat = chat
+	}
+	// files_field: each record keeps the files its agent made for it (a
+	// song's takes), listed in that field by the server and shown under the
+	// document; the agent gets keep_file (customapps/record_files.go).
+	if f := strings.TrimSpace(mapStr(m, "files_field")); f != "" {
+		if f == bodyField || f == itemLabel || f == spec.RecordKey {
+			return ui.WorkbenchPanel{}, fmt.Errorf("files_field %q is already the workbench's %s: name a field of its own (e.g. \"takes\")", f, map[bool]string{true: "body_field", false: "item_label or record key"}[f == bodyField])
+		}
+		wb.FilesField = f
+		wb.FilesLabel = firstNonEmptyStr(mapStr(m, "files_label"), "Files")
+		wb.FileURL = "file?id={id}&name={name}"
+	}
+	// document_actions: buttons above the document that put a prompt in the
+	// chat, for what the person asks about the whole document again and
+	// again ("Render").
+	for _, a := range selectionActions(m["document_actions"]) {
+		wb.ViewerActions = append(wb.ViewerActions, ui.WorkbenchAction{Label: a.Label, Kind: "compose", Compose: firstNonEmptyStr(a.Prompt, a.Label)})
 	}
 	return wb, nil
 }
