@@ -108,3 +108,38 @@ func TestTheEngineHookLeavesTheSourceHooks(t *testing.T) {
 		t.Errorf("web_search should still reach it: %v %q", err, out)
 	}
 }
+
+// A service connector that searches is a search provider: Web Search names
+// it as service:<name>, the web_search tool asks it, and its results come
+// back in the numbered shape the tool reads.
+func TestAConnectorIsTheSearchEngine(t *testing.T) {
+	savedRoot, savedAuth := RootDB, AuthDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	auth := &DBase{Store: kvlite.MemStore()}
+	AuthDB = func() Database { return auth }
+	t.Cleanup(func() { RootDB, AuthDB = savedRoot, savedAuth })
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("q") != "solar panels" {
+			t.Errorf("the query went as %q", r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"hits":[{"name":"Panels compared","href":"https://example.org/panels","text":"What each one costs."}]}`))
+	}))
+	defer srv.Close()
+	spec := `{"provider":{"transport":"http","base_url":"` + srv.URL + `","auth":{"none":true},
+		"operations":{"search":{"url":"/find?q={query}"}}},
+		"provides":[{"capability":"web.search","steps":[{"call":"search"}],
+		"output":{"results":{"path":"hits","fields":{"title":"name","url":"href","snippet":"text"}}}}]}`
+	if err := SaveConnector(RootDB, Connector{Name: "finder", Kind: "service", Spec: []byte(spec)}); err != nil {
+		t.Fatal(err)
+	}
+	ApproveConnector(RootDB, "finder")
+	out, err := SearchWithProvider(SearchRequest{Query: "solar panels", Provider: "service:finder"})
+	src := ParseSearchResults(out)
+	if err != nil || len(src) != 1 || src[0].Title != "Panels compared" || src[0].URL != "https://example.org/panels" || src[0].Snippet != "What each one costs." {
+		t.Fatalf("want the result as a search result: %q %v -> %+v", out, err, src)
+	}
+	if _, err := SearchWithProvider(SearchRequest{Query: "x", Provider: "elsewhere"}); err == nil || !strings.Contains(err.Error(), "unknown search provider") {
+		t.Errorf("an unknown provider: %v", err)
+	}
+}

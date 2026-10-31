@@ -54,6 +54,61 @@ func TestGohortsOwnProvidersAreConnectors(t *testing.T) {
 	if b := got["built-in:openai-images"]; !strings.HasPrefix(b.status, "In use for Image Generation") || !strings.Contains(b.wrapper, "api.openai.com") {
 		t.Errorf("openai: %+v", b)
 	}
+	if b := got["built-in:web-search"]; b.wrapper != "Web search ⇐ duckduckgo ⇐ lite.duckduckgo.com" || !strings.HasPrefix(b.status, "In use for web search") || b.test == nil {
+		t.Errorf("web search, never set up: %+v", b)
+	}
+	a.db.Set(SearchTable, "provider", "service:finder")
+	a.db.Set(SearchTable, "api_key", "k")
+	for _, b := range a.builtinConnectors() {
+		if b.name == "built-in:web-search" && (b.status != "Not in use: web search is done by the connector finder. Set up under Admin > Capabilities > Web Search." || b.test != nil) {
+			t.Errorf("web search through a connector: %+v", b)
+		}
+	}
+	a.db.Set(SearchTable, "provider", "")
+	if b := got["built-in:worker-llm"]; b.wrapper != "Worker LLM ⇐ not set" || !strings.HasPrefix(b.status, "Off:") || b.test != nil {
+		t.Errorf("worker, never set: %+v", b)
+	}
+	if b := got["built-in:lead-llm"]; !strings.HasPrefix(b.status, "Not set: the worker LLM answers in its place.") {
+		t.Errorf("lead, never set: %+v", b)
+	}
+	a.db.Set(LLMTable, "provider", "anthropic")
+	a.db.Set(LLMTable, "model", "claude-x")
+	a.db.Set(LLMTable, "api_key", "k")
+	if b := a.builtinLLM(LLMTable, "worker-llm", "Worker LLM"); b.wrapper != "Worker LLM ⇐ anthropic (model claude-x) ⇐ api.anthropic.com (key set)" ||
+		b.status != "In use as the worker LLM. Set up under Admin > LLMs > Worker LLM." || b.test == nil {
+		t.Errorf("worker on a hosted provider: %+v", b)
+	}
+	a.db.Set(LeadLLMTable, "provider", "vllm")
+	a.db.Set(LeadLLMTable, "model", "big-model")
+	a.db.Set(LeadLLMTable, "endpoint", "http://gpu.example.test:8000/v1")
+	if b := a.builtinLLM(LeadLLMTable, "lead-llm", "Lead LLM"); b.wrapper != "Lead LLM ⇐ vllm (model big-model) ⇐ gpu.example.test:8000 (no key)" {
+		t.Errorf("lead on a model server: %+v", b)
+	}
+	a.db.Set(LeadLLMTable, "provider", "service:hosted")
+	if b := a.builtinLLM(LeadLLMTable, "lead-llm", "Lead LLM"); b.wrapper != "Lead LLM ⇐ the connector hosted (its row shows its calls and cost)" || b.test == nil {
+		t.Errorf("lead on a model connector: %+v", b)
+	}
+	if b := got["built-in:mail"]; b.wrapper != "Mail ⇐ SMTP ⇐ localhost:25 (no sign-in)" || !strings.HasPrefix(b.status, "Off:") || b.test != nil {
+		t.Errorf("mail, never set up: %+v", b)
+	}
+	a.db.Set(MailTable, "server", "smtp.example.test:587")
+	a.db.Set(MailTable, "username", "u")
+	a.db.Set(MailTable, "password", "p")
+	if b := a.builtinMail(); b.wrapper != "Mail ⇐ SMTP ⇐ smtp.example.test:587 (sign-in set)" || !strings.HasPrefix(b.status, "In use for mail") || b.test == nil {
+		t.Errorf("mail by SMTP: %+v", b)
+	}
+	a.db.Set(MailTable, "provider", "service:postbox")
+	if b := a.builtinMail(); !strings.HasPrefix(b.status, "Not in use: mail is sent by the connector postbox.") || b.test != nil {
+		t.Errorf("mail through a connector: %+v", b)
+	}
+	if b := got["built-in:page-rendering"]; !strings.HasPrefix(b.status, "In use for page rendering") || b.test == nil {
+		t.Errorf("page rendering, never set: %+v", b)
+	}
+	SetBrowseConfig(BrowseConfig{Source: "service:reader"})
+	t.Cleanup(func() { SetBrowseConfig(BrowseConfig{}) })
+	if b := builtinBrowse(); b.status != "Not in use: pages are rendered by the connector reader. Set up under Admin > Capabilities > Page Rendering (Browser)." || b.test != nil {
+		t.Errorf("page rendering through a connector: %+v", b)
+	}
 
 	c := &jsonapi.Call{R: httptest.NewRequest("POST", "/api/connectors/test", nil)}
 	res, err := a.builtinTest(c, "built-in:embeddings")
@@ -85,7 +140,7 @@ func TestGohortsOwnProvidersAreConnectors(t *testing.T) {
 			}
 		}
 	}
-	if builtins != 5 {
-		t.Errorf("%d built-in rows, want 5", builtins)
+	if builtins != 10 {
+		t.Errorf("%d built-in rows, want 10", builtins)
 	}
 }

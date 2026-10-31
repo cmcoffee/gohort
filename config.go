@@ -272,6 +272,7 @@ func (d dbCFG) mail() MailConfig {
 	global.db.Get(MailTable, "username", &c.Username)
 	global.db.Get(MailTable, "password", &c.Password)
 	global.db.Get(MailTable, "recipient", &c.Recipient)
+	global.db.Get(MailTable, "provider", &c.Provider)
 	return c
 }
 

@@ -13,8 +13,10 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/media"
 )
 
 // ForFix is connector name as the two halves: a service's own spec, or an
@@ -207,6 +209,10 @@ func runTests(ctx context.Context, name string, s Spec) []TestReport {
 	for _, b := range s.Provides {
 		ct, _ := Lookup(b.Capability)
 		rep := TestReport{Capability: b.Capability}
+		if b.Dialect != "" {
+			reports = append(reports, testModel(ctx, name))
+			continue
+		}
 		in, err := ct.testInputs()
 		if err != nil {
 			rep.Detail = err.Error()
@@ -214,6 +220,11 @@ func runTests(ctx context.Context, name string, s Spec) []TestReport {
 			continue
 		}
 		out, err := s.run(ctx, nil, b.Capability, in)
+		if err == nil && ct.testCheck != nil {
+			if err = ct.testCheck(out.result); err != nil {
+				err = fmt.Errorf("%s came back, but %w", ct.Name, err)
+			}
+		}
 		noteTest(ctx, name, b.Capability, out)
 		rep.OK, rep.Cost, rep.Priced = err == nil, out.cost, out.priced
 		if err != nil {
@@ -231,13 +242,37 @@ func runTests(ctx context.Context, name string, s Spec) []TestReport {
 	return reports
 }
 
+// testModel is a model connector's test: a short real chat through the
+// client its dialect names, as a tier on it would make, on the connector as
+// saved (a model's key is read from its credential, never from a draft).
+func testModel(ctx context.Context, name string) TestReport {
+	rep := TestReport{Capability: "llm.chat"}
+	llm, err := NewLLMFromConfig(LLMProviderConfig{Provider: media.ServiceProviderPrefix + name})
+	if err != nil {
+		rep.Detail = err.Error()
+		return rep
+	}
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	resp, err := llm.Chat(ctx, []Message{{Role: "user", Content: "Reply with the single word OK."}})
+	switch {
+	case err != nil:
+		rep.Detail = err.Error()
+	case strings.TrimSpace(resp.Content) == "":
+		rep.Detail = "the model answered with nothing"
+	default:
+		rep.OK, rep.Detail = true, fmt.Sprintf("passed: the model answered %q (%d tokens in, %d out)", clip(strings.TrimSpace(resp.Content), 40), resp.InputTokens, resp.OutputTokens)
+	}
+	return rep
+}
+
 // Grammar is the spec's shape as an assistant is told it.
 const Grammar = `A service spec is JSON in two halves.
 provider: {transport: "http", base_url, auth: {credential: "<name>"} or {none: true}, headers?: {name: value} (never auth: the credential adds it), operations: {<name>: {method, path (under base_url) or url, send?: json|form|multipart|file|none, body?, read?: json|text|file, timeout_secs?}}, limits?: {timeout_secs, max_bytes}, health?: {call: <a free operation>, expect?: <condition>, every_mins?}}.
 provides: [{capability, steps: [{call: <operation>, save?: {var: path}} or {wait: <operation>, until: <condition>, fail?: <condition>, reason?: path, every_secs?, max_secs?, save?}], output: {<name>: {path, as: base64|url|text|json, each?: path} or {from: "body"}}, defaults?: {input: value}, cost?: {per_call?, per_unit?, unit?, from_reply?: path}}].
 A local program instead: provider: {transport: "command", network?: true, operations: {<name>: {run: ["<command line>", ...], read?: json|text|file, timeout_secs?}}, health?} with no base_url, auth or headers; in a run line {token} is an input or saved value (a file input is a file), {in} the line before's result, {out} or {out.png} the file it writes (with no {out}, what it prints), every word quoted so no shell reads it, in a sandbox with no network unless network is true.
 Bodies are templates: a string that is exactly "{token}" becomes the value with its type; a token inside a longer string is written in. Tokens are the capability's inputs and what earlier steps saved. send multipart: body is its parts, one may be a file input ("{image}"); send file: body is one file input's token, sent as the whole body.
-Paths: a.b.0.c, list[field=value] for the first element whose field equals value, list[field] for the first that has the field, and {var} for a saved variable. A json output with each reads the list at path piece by piece: each is the path within every element to the piece kept (path "data", each "embedding" makes a list of the embeddings). Conditions: path == a|b, path != a, or a bare path that holds something.`
+Paths: a.b.0.c, list[field=value] for the first element whose field equals value, list[field] for the first that has the field, and {var} for a saved variable. A json output with each reads the list at path piece by piece: each is the path within every element to the piece kept (path "data", each "embedding" makes a list of the embeddings). A json output with fields reads the list at path into objects of the contract's field names, each the path within every element it comes from (path "organic", fields {"title": "title", "url": "link", "snippet": "snippet"}); a reply with no list there reads as an empty list. Conditions: path == a|b, path != a, or a bare path that holds something.`
 
 // ContractText says what a capability takes and gives, for an assistant.
 func ContractText(capability string) string {

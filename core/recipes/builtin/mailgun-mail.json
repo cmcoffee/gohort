@@ -1,0 +1,111 @@
+{
+  "id": "mailgun-mail",
+  "title": "Mailgun (mail)",
+  "description": "Mailgun as gohort's mail, in place of an SMTP server: an API that sends from a domain you verify. Declared as a service you can test and fix from Admin > Connectors.",
+  "category": "Mail",
+  "setup_notes": "Create an API key under Mailgun's API Security settings and add your sending domain. A domain in Mailgun's EU region is reached at api.eu.mailgun.net: change the credential's and the connector's address to it. The credential lands disabled: enable it under API Credentials. The connector lands unapproved: approve it in Admin > Extensions > Connectors and run Test on its row, which sends a short test email to the test recipient. Then pick it under Admin > System > Mail (SMTP) as Send with: signup approvals, reports, alerts and the send_email tool go through it. A From Address set there is used in place of the one given here. No price is declared, as it depends on your plan: add a per_call cost to the connector's spec to see what mail costs.",
+  "questions": [
+    {
+      "name": "api_key",
+      "label": "Mailgun API key",
+      "help": "Stored in the credential's secret store, never in the connector.",
+      "required": true,
+      "secret": true,
+      "credential": "mailgun_mail"
+    },
+    {
+      "name": "name",
+      "label": "Connector name",
+      "help": "Lowercase letters, digits, dashes and underscores; the mail settings list it by this name.",
+      "default": "mailgun-mail"
+    },
+    {
+      "name": "domain",
+      "label": "Sending domain",
+      "help": "The domain as Mailgun lists it, e.g. mg.yourdomain.example.",
+      "required": true
+    },
+    {
+      "name": "from",
+      "label": "Send from",
+      "help": "An address on a domain you have verified with the service, e.g. gohort@yourdomain.example.",
+      "required": true
+    },
+    {
+      "name": "to",
+      "label": "Test recipient",
+      "help": "Where the connector's Test sends its test email.",
+      "required": true
+    }
+  ],
+  "bundle": {
+    "bundle": "gohort.bundle/v1",
+    "artifacts": [
+      {
+        "type": "credential",
+        "name": "mailgun_mail",
+        "recipe": {
+          "name": "mailgun_mail",
+          "type": "basic_auth",
+          "username": "api",
+          "base_url": "https://api.mailgun.net",
+          "allowed_endpoints": [
+            "/v3/{{domain}}/messages"
+          ],
+          "description": "Mailgun API, for sending mail from {{domain}}."
+        }
+      },
+      {
+        "type": "connector",
+        "name": "{{name}}",
+        "recipe": {
+          "name": "{{name}}",
+          "kind": "service",
+          "template": "mailgun-mail",
+          "desc": "Mailgun mail from {{from}}",
+          "spec": {
+            "provider": {
+              "transport": "http",
+              "base_url": "https://api.mailgun.net",
+              "auth": {
+                "credential": "mailgun_mail"
+              },
+              "operations": {
+                "send": {
+                  "method": "POST",
+                  "path": "/v3/{{domain}}/messages",
+                  "send": "form",
+                  "body": {
+                    "from": "{from}",
+                    "to": "{to}",
+                    "subject": "{subject}",
+                    "text": "{body}"
+                  }
+                }
+              }
+            },
+            "provides": [
+              {
+                "capability": "mail.send",
+                "steps": [
+                  {
+                    "call": "send"
+                  }
+                ],
+                "output": {
+                  "id": {
+                    "path": "id"
+                  }
+                },
+                "defaults": {
+                  "from": "{{from}}",
+                  "to": "{{to}}"
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

@@ -12,6 +12,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/activity"
 	"github.com/cmcoffee/gohort/core/jsonapi"
+	"github.com/cmcoffee/gohort/core/media"
 	"github.com/cmcoffee/gohort/core/sourcehooks"
 )
 
@@ -127,6 +128,10 @@ func (a *AdminApp) handleWebSearchSave(c *jsonapi.Call, req WebSearchConfig) (an
 		return nil, jsonapi.BadRequest(serr.Error())
 	}
 	req = resolved
+	// A connector as the engine must be one that searches, and approved.
+	if err := serviceProviderOK(req.Provider, "web.search"); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
 	// A Source Hook as the engine must be one that can be: refused
 	// here, where the admin sees it, rather than every search failing.
 	if req.Provider == "hook" {
@@ -181,7 +186,11 @@ func (a *AdminApp) handleBrowseSave(c *jsonapi.Call, req BrowseConfig) (any, err
 	// Validate the selection rather than storing a name that silently
 	// renders nothing: a peer that was forgotten, or had its browse
 	// grant pulled, must be refused here where the operator can see it.
-	if src != "" && src != EmbeddingProviderLocal {
+	if strings.HasPrefix(src, media.ServiceProviderPrefix) {
+		if err := serviceProviderOK(src, "page.render"); err != nil {
+			return nil, jsonapi.BadRequest(err.Error())
+		}
+	} else if src != "" && src != EmbeddingProviderLocal {
 		p, ok := PeerFromProvider(src)
 		if !ok {
 			return nil, jsonapi.BadRequest("no peer named " + strings.TrimPrefix(src, "peer:") + " is registered")
@@ -240,6 +249,10 @@ func (a *AdminApp) handleMail(c *jsonapi.Call) (any, error) {
 		a.db.Get(MailTable, "username", &cfg.Username)
 		a.db.Get(MailTable, "password", &cfg.Password)
 		a.db.Get(MailTable, "recipient", &cfg.Recipient)
+		a.db.Get(MailTable, "provider", &cfg.Provider)
+	}
+	if cfg.Provider == "" {
+		cfg.Provider = "smtp"
 	}
 	cfg.Password = maskSecret(cfg.Password)
 	return cfg, nil
@@ -248,15 +261,19 @@ func (a *AdminApp) handleMail(c *jsonapi.Call) (any, error) {
 // handleMailSave saves the mail config.
 func (a *AdminApp) handleMailSave(c *jsonapi.Call, req MailConfig) (any, error) {
 	req.Password = keepSecret(req.Password, a.storedString(MailTable, "password"))
+	if err := serviceProviderOK(req.Provider, "mail.send"); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
 	if a.db != nil {
+		a.db.Set(MailTable, "provider", req.Provider)
 		a.db.Set(MailTable, "server", req.Server)
 		a.db.Set(MailTable, "from", req.From)
 		a.db.Set(MailTable, "recipient", req.Recipient)
 		a.db.Set(MailTable, "username", req.Username)
 		a.db.Set(MailTable, "password", req.Password)
 	}
-	adminChange(c.R, activity.Settings, "updated mail config (server=%q from=%q)",
-		req.Server, req.From)
+	adminChange(c.R, activity.Settings, "updated mail config (provider=%q server=%q from=%q)",
+		req.Provider, req.Server, req.From)
 	return jsonapi.Empty(http.StatusNoContent), nil
 }
 

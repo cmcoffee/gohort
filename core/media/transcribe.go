@@ -112,6 +112,41 @@ const ServiceProviderPrefix = "service:"
 // seams here although embedding lives in core, which keeps its exports few.
 var EmbedService func(ctx context.Context, connector, model string, texts []string) ([][]float32, error)
 
+// PageService, when set, renders a page through a service connector, for a
+// page rendering source of "service:<name>" (core/service installs it): the
+// page's readable text, at most maxChars of it. It sits with the other
+// service seams although page rendering is routed in core, for the same
+// reason as EmbedService.
+var PageService func(ctx context.Context, connector, url string, maxChars int) (string, error)
+
+// MailService, when set, sends mail through a service connector, for a mail
+// provider of "service:<name>" (core/service installs it). from may be blank:
+// the connector's own sender then. Kept here for the same reason as
+// EmbedService.
+var MailService func(ctx context.Context, connector, from, to, subject, body string) error
+
+// ModelTarget is what a model connector (core/service, llm.chat) says about
+// reaching its model: the dialect gohort's own client speaks to it (openai,
+// anthropic or gemini), its address, the model and context it defaults to,
+// what its tokens cost, and, when asked for, its key.
+type ModelTarget struct {
+	Dialect, Endpoint, Model, Key string
+	Context                       int
+	// InPerMillion and OutPerMillion are dollars per million tokens, and
+	// Priced whether the connector declares them.
+	InPerMillion, OutPerMillion float64
+	Priced                      bool
+}
+
+// ModelService, when set, reads the model connector named connector, for an
+// LLM tier whose provider is "service:<name>" (core/service installs it).
+// withKey reads its credential's key too: only the client is given it.
+var ModelService func(connector string, withKey bool) (ModelTarget, error)
+
+// ModelCallNote, when set, records one model call made through the
+// connector: its tokens, and whether it failed.
+var ModelCallNote func(connector string, inTokens, outTokens int, err error)
+
 // TranscribeService, when set, transcribes through a service connector, for a
 // config whose Provider names one. core/service installs it; this package
 // knows nothing about connectors. Nil, and such a config is refused.

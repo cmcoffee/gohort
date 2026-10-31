@@ -136,7 +136,14 @@ func (s Spec) Describe(name string) string {
 		case gives == "":
 			gives = b.Capability
 		}
-		inside = append(inside, gives+" ⇐ "+mappingText(b))
+		mapping := mappingText(b)
+		if b.Dialect != "" {
+			mapping = b.Dialect + " dialect"
+			if m := b.Defaults["model"]; m != nil {
+				mapping += fmt.Sprintf(" (model %v)", m)
+			}
+		}
+		inside = append(inside, gives+" ⇐ "+mapping)
 		gave = append(gave, gives)
 	}
 	line, count := strings.Join(inside, "; "), ""

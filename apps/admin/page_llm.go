@@ -23,7 +23,7 @@ func (a *AdminApp) llmSections() []ui.Section {
 				Fields: []ui.FormField{
 					{Field: "provider", Label: "Provider", Type: "select", Options: LLMProviderOptions(false),
 						Help:   "Local providers, ollama, llama.cpp or vLLM, are the usual worker.",
-						Detail: "A peer offering inference appears here too, and its GPU runs the turns."},
+						Detail: "A peer offering inference appears here too, and its GPU runs the turns. So does an approved model connector (Admin > Extensions > Templates has OpenRouter, Groq and others), as Service: <name>: its address and key come from the connector, and its token prices from its spec, in place of the worker's rates under Costs."},
 					{Field: "model", Label: "Model", Type: "text", Placeholder: "e.g. qwen3.6-27b", SaveOnBlur: true,
 						SuggestionsSource: "api/worker-llm/models", SuggestionsLabel: "List models",
 						Help:   "Blank uses the provider default. List models asks the provider what it offers.",

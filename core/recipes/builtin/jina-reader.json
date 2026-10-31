@@ -1,0 +1,90 @@
+{
+  "id": "jina-reader",
+  "title": "Jina Reader (page rendering)",
+  "description": "Jina Reader as gohort's page renderer: it opens a page in its own browser and gives back the readable text, so this machine needs no Chromium. Declared as a service you can test and fix from Admin > Connectors.",
+  "category": "Page rendering",
+  "setup_notes": "Get an API key at jina.ai/reader (it starts jina_; new keys come with free use). The credential lands disabled: enable it under API Credentials. The connector lands unapproved: approve it in Admin > Extensions > Connectors and run Test on its row, which reads example.com. Then pick it under Admin > Capabilities > Page Rendering (Browser) as Service: <name>: browse_page, and every fallback to a browser when a plain fetch fails, go through it. Only public web addresses are sent. No price is declared, as it depends on your plan: add a per_call cost to the connector's spec to see what pages cost.",
+  "questions": [
+    {
+      "name": "api_key",
+      "label": "Jina API key",
+      "help": "Starts jina_. Stored in the credential's secret store, never in the connector.",
+      "required": true,
+      "secret": true,
+      "credential": "jina_reader"
+    },
+    {
+      "name": "name",
+      "label": "Connector name",
+      "help": "Lowercase letters, digits, dashes and underscores; Page Rendering lists it by this name.",
+      "default": "jina-reader"
+    }
+  ],
+  "bundle": {
+    "bundle": "gohort.bundle/v1",
+    "artifacts": [
+      {
+        "type": "credential",
+        "name": "jina_reader",
+        "recipe": {
+          "name": "jina_reader",
+          "type": "bearer",
+          "base_url": "https://r.jina.ai",
+          "allowed_endpoints": [
+            "/"
+          ],
+          "description": "Jina Reader API, for page rendering."
+        }
+      },
+      {
+        "type": "connector",
+        "name": "{{name}}",
+        "recipe": {
+          "name": "{{name}}",
+          "kind": "service",
+          "template": "jina-reader",
+          "desc": "Jina Reader page rendering",
+          "spec": {
+            "provider": {
+              "transport": "http",
+              "base_url": "https://r.jina.ai",
+              "auth": {
+                "credential": "jina_reader"
+              },
+              "operations": {
+                "read": {
+                  "method": "POST",
+                  "path": "/",
+                  "body": {
+                    "url": "{url}"
+                  }
+                }
+              },
+              "headers": {
+                "Accept": "application/json"
+              }
+            },
+            "provides": [
+              {
+                "capability": "page.render",
+                "steps": [
+                  {
+                    "call": "read"
+                  }
+                ],
+                "output": {
+                  "text": {
+                    "path": "data.content"
+                  },
+                  "title": {
+                    "path": "data.title"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

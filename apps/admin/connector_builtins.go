@@ -12,7 +12,10 @@ package admin
 // exported or deleted: it is part of gohort.
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 
@@ -112,7 +115,170 @@ func (a *AdminApp) builtinConnectors() []builtinConnector {
 		}
 		out = append(out, b)
 	}
+
+	out = append(out, a.builtinSearch(), builtinBrowse(), a.builtinMail())
+	out = append(out, a.builtinLLM(LLMTable, "worker-llm", "Worker LLM"), a.builtinLLM(LeadLLMTable, "lead-llm", "Lead LLM"))
 	return out
+}
+
+// llmHosts are where each hosted LLM provider is reached.
+var llmHosts = map[string]string{
+	"anthropic": "api.anthropic.com", "openai": "api.openai.com", "gemini": "generativelanguage.googleapis.com",
+}
+
+// builtinLLM is one of gohort's model tiers, the client for it written in Go
+// (core/llm_*.go): what it runs, where, and with what key. A model is not
+// yet something a connector can be (docs/design/connectors-and-flows.md,
+// stage 12): the row shows the tier with the others, and Test is the tier's
+// own live check.
+func (a *AdminApp) builtinLLM(table, id, title string) builtinConnector {
+	provider, model, endpoint := a.storedString(table, "provider"), a.storedString(table, "model"), a.storedString(table, "endpoint")
+	key := a.storedString(table, "api_key")
+	b := builtinConnector{name: builtinPrefix + id}
+	set := " Set up under Admin > LLMs > " + title + "."
+	if provider == "" {
+		b.wrapper = title + " ⇐ not set"
+		if table == LeadLLMTable {
+			b.status = "Not set: the worker LLM answers in its place." + set
+		} else {
+			b.status = "Off: no model is set, so agents cannot run." + set
+		}
+		return b
+	}
+	what := title + " ⇐ " + withModel(provider, model)
+	switch {
+	case strings.HasPrefix(provider, media.ServiceProviderPrefix):
+		b.wrapper = title + " ⇐ " + providerName(provider) + " (its row shows its calls and cost)"
+	case strings.HasPrefix(provider, "peer:"):
+		b.wrapper = title + " ⇐ " + model + " on " + providerName(provider)
+	case provider == "bedrock":
+		region := a.storedString(table, "aws_region")
+		if region == "" {
+			region = "the default region"
+		}
+		b.wrapper = what + " ⇐ AWS Bedrock in " + region + " (the machine's AWS credentials)"
+	case llmHosts[provider] != "" && strings.TrimSpace(endpoint) == "":
+		b.wrapper = what + " ⇐ " + endpointHost("https://"+llmHosts[provider], key)
+	default:
+		b.wrapper = what + " ⇐ " + endpointHost(endpoint, key)
+	}
+	first, rest, _ := strings.Cut(title, " ")
+	b.status = "In use as the " + strings.ToLower(first) + " " + rest + "." + set
+	b.test = func(c *jsonapi.Call) (any, error) {
+		body, _ := json.Marshal(map[string]any{"provider": provider, "model": model, "endpoint": endpoint,
+			"aws_region": a.storedString(table, "aws_region"), "aws_profile": a.storedString(table, "aws_profile"),
+			"bedrock_api": a.storedString(table, "bedrock_api")})
+		r := httptest.NewRequest("POST", "/api/llm/test", bytes.NewReader(body)).WithContext(c.R.Context())
+		r.Header = c.R.Header.Clone()
+		r.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		a.testLLM(w, r, table)
+		// The tier's test reports its steps as lines as it goes; the last
+		// line is how it ended.
+		lines := strings.Split(strings.TrimSpace(w.Body.String()), "\n")
+		var res map[string]any
+		if err := json.Unmarshal([]byte(lines[len(lines)-1]), &res); err != nil {
+			return testResultBody(false, "", strings.TrimSpace(w.Body.String())), nil
+		}
+		return res, nil
+	}
+	return b
+}
+
+// builtinMail is gohort's own mail: an SMTP server (core/notify.go).
+func (a *AdminApp) builtinMail() builtinConnector {
+	cfg := MailConfig{Server: a.storedString(MailTable, "server"), From: a.storedString(MailTable, "from"),
+		Username: a.storedString(MailTable, "username"), Password: a.storedString(MailTable, "password"),
+		Recipient: a.storedString(MailTable, "recipient"), Provider: a.storedString(MailTable, "provider")}
+	server := cfg.Server
+	if server == "" {
+		server = "localhost:25"
+	}
+	signin := "no sign-in"
+	if cfg.Username != "" && cfg.Password != "" {
+		signin = "sign-in set"
+	}
+	b := builtinConnector{name: builtinPrefix + "mail", wrapper: "Mail ⇐ SMTP ⇐ " + server + " (" + signin + ")"}
+	set := " Set up under Admin > System > Mail (SMTP)."
+	switch {
+	case strings.HasPrefix(cfg.Provider, media.ServiceProviderPrefix):
+		b.status = "Not in use: mail is sent by " + providerName(cfg.Provider) + "." + set
+	case cfg.Server == "" && cfg.From == "":
+		b.status = "Off: no server or From address is set, so mail is not sent." + set
+	default:
+		b.status = "In use for mail." + set
+		b.test = func(c *jsonapi.Call) (any, error) { return a.handleMailTest(c, cfg) }
+	}
+	return b
+}
+
+// builtinBrowse is gohort's own page rendering: a headless Chromium on this
+// machine (tools/browser), public web only.
+func builtinBrowse() builtinConnector {
+	src := strings.TrimSpace(LoadBrowseConfig().Source)
+	b := builtinConnector{name: builtinPrefix + "page-rendering",
+		wrapper: "Page rendering ⇐ a headless Chromium on this machine (public web only)"}
+	set := " Set up under Admin > Capabilities > Page Rendering (Browser)."
+	if !isLocal(src) {
+		b.status = "Not in use: pages are rendered by " + providerName(src) + "." + set
+		return b
+	}
+	b.status = "In use for page rendering." + set
+	b.test = func(c *jsonapi.Call) (any, error) {
+		if BrowserFetchFunc == nil {
+			return testResultBody(false, "", "no browser is linked into this build"), nil
+		}
+		text, err := BrowserFetchFunc("https://example.com", 2000)
+		if err != nil {
+			return testResultBody(false, "", err.Error()), nil
+		}
+		return testResultBody(true, fmt.Sprintf("rendered example.com: %d characters of text", len([]rune(text))), ""), nil
+	}
+	return b
+}
+
+// searchHosts are where each built-in search provider is reached.
+var searchHosts = map[string]string{
+	"duckduckgo": "lite.duckduckgo.com", "brave": "api.search.brave.com",
+	"google": "www.googleapis.com", "serper": "google.serper.dev",
+}
+
+// builtinSearch is gohort's own web search: the providers written into
+// tools/websearch, a SearXNG instance, or a Source Hook.
+func (a *AdminApp) builtinSearch() builtinConnector {
+	provider := a.storedString(SearchTable, "provider")
+	if provider == "" {
+		provider = "duckduckgo"
+	}
+	source, key := a.storedString(SearchTable, "source"), a.storedString(SearchTable, "api_key")
+	b := builtinConnector{name: builtinPrefix + "web-search"}
+	switch {
+	case provider == "hook":
+		b.wrapper = "Web search ⇐ the Source Hook " + a.storedString(SearchTable, "hook")
+	case provider == "searxng":
+		b.wrapper = "Web search ⇐ SearXNG ⇐ " + endpointHost(a.storedString(SearchTable, "endpoint"), key)
+	case searchHosts[provider] != "":
+		b.wrapper = "Web search ⇐ " + provider + " ⇐ " + searchHosts[provider]
+		if provider != "duckduckgo" {
+			b.wrapper = "Web search ⇐ " + provider + " ⇐ " + endpointHost("https://"+searchHosts[provider], key)
+		}
+	default:
+		b.wrapper = "Web search ⇐ a search provider of your choosing"
+	}
+	set := " Set up under Admin > Capabilities > Web Search."
+	switch {
+	case strings.HasPrefix(provider, media.ServiceProviderPrefix):
+		b.status = "Not in use: web search is done by " + providerName(provider) + "." + set
+	case !isLocal(source):
+		b.status = "Not in use: web search is done by " + providerName(source) + "." + set
+	default:
+		b.status = "In use for web search." + set
+		b.test = func(c *jsonapi.Call) (any, error) {
+			return a.handleWebSearchTest(c, WebSearchConfig{Provider: provider, APIKey: key,
+				Endpoint: a.storedString(SearchTable, "endpoint"), Source: source, Hook: a.storedString(SearchTable, "hook")})
+		}
+	}
+	return b
 }
 
 // builtinTest runs the ?name= built-in's test and says how it went in the

@@ -1,0 +1,90 @@
+{
+  "id": "brave-search",
+  "title": "Brave (web search)",
+  "description": "Brave Search as gohort's web search, declared as a service: the request and how its results are read are data you can test and fix from Admin > Connectors.",
+  "category": "Search",
+  "setup_notes": "Get an API key at api-dashboard.search.brave.com (a free plan is available). The credential lands disabled: enable it under API Credentials. The connector lands unapproved: approve it in Admin > Extensions > Connectors and run Test on its row, which makes one real search for a common phrase. Then pick it under Admin > Capabilities > Web Search as Service: <name>. No price is declared, as it depends on your plan: add a per_call cost to the connector's spec to see what searches cost.",
+  "questions": [
+    {
+      "name": "api_key",
+      "label": "Brave Search API key",
+      "help": "Stored in the credential's secret store, never in the connector.",
+      "required": true,
+      "secret": true,
+      "credential": "brave_search"
+    },
+    {
+      "name": "name",
+      "label": "Connector name",
+      "help": "Lowercase letters, digits, dashes and underscores; Web Search lists it by this name.",
+      "default": "brave-search"
+    }
+  ],
+  "bundle": {
+    "bundle": "gohort.bundle/v1",
+    "artifacts": [
+      {
+        "type": "credential",
+        "name": "brave_search",
+        "recipe": {
+          "name": "brave_search",
+          "type": "header",
+          "base_url": "https://api.search.brave.com",
+          "allowed_endpoints": [
+            "/res/v1/web/search"
+          ],
+          "description": "Brave API, for web search.",
+          "param_name": "X-Subscription-Token"
+        }
+      },
+      {
+        "type": "connector",
+        "name": "{{name}}",
+        "recipe": {
+          "name": "{{name}}",
+          "kind": "service",
+          "template": "brave-search",
+          "desc": "Brave web search",
+          "spec": {
+            "provider": {
+              "transport": "http",
+              "base_url": "https://api.search.brave.com",
+              "auth": {
+                "credential": "brave_search"
+              },
+              "operations": {
+                "search": {
+                  "method": "GET",
+                  "url": "/res/v1/web/search?q={query}&count={count}"
+                }
+              }
+            },
+            "provides": [
+              {
+                "capability": "web.search",
+                "steps": [
+                  {
+                    "call": "search"
+                  }
+                ],
+                "output": {
+                  "results": {
+                    "path": "web.results",
+                    "fields": {
+                      "title": "title",
+                      "url": "url",
+                      "snippet": "description"
+                    }
+                  }
+                },
+                "defaults": {
+                  "count": 10
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

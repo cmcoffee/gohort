@@ -124,8 +124,9 @@ A template is a connector and its credential, packaged with questions.
    which gates Approve, Edit spec, Export and Delete, and `state`, the
    badge: Approved, Pending or Built in. Health on a timer is not given to
    built-ins: their settings have no free check to run. Web search, page
-   rendering, mail and the LLMs are built-in providers too, and wait for
-   contracts of their own.
+   rendering, mail and the LLMs are built-in providers too; web search has
+   its contract and row since stage 8, and the rest wait for theirs
+   (stages 9 to 12).
 4. **Flows checked by contract.** A flow is saved as steps, each naming a
    connector and a contract, with its inputs fed from the flow's own inputs
    or an earlier step's outputs. Saving checks every input is fed, by a
@@ -228,6 +229,99 @@ A template is a connector and its credential, packaged with questions.
    and a credential is a header, a query value or basic auth.
 
 Each stage ships on its own and leaves everything existing working.
+
+## Every capability through a connector
+
+The owner's goal, 2026-10-30: every capability gohort has can be extended
+by a connector. Each one gets the same five parts as embeddings did: a
+contract and its check, gohort's own provider as a built-in row, the
+settings page offering approved connectors (with a pointer while there is
+nothing to choose), templates, and tests. None needs a migration: a
+setting gains a `service:<name>` value.
+
+8. **Web search.** Built 2026-10-30. `web.search`: a query (and a count)
+   in, `results` out, a list of title, url and snippet, each result needing
+   a web address. A spec reads a provider's own result fields into those
+   with an output's `fields` (`path "organic", fields {"title": "title",
+   "url": "link", "snippet": "snippet"}`); a reply with no list there reads
+   as no results, so the contract test (a search for a common phrase) must
+   find something, which is what catches a spec reading the wrong place.
+   The web_search tool sends a `service:<name>` provider through the
+   connector (`service.Search`), which prices its own calls; Web Search
+   offers approved ones under Provider, and refuses to save one that is not
+   approved. gohort's own search is the `built-in:web-search` row.
+   Templates: Brave, Serper, Tavily.
+9. **Page rendering.** Built 2026-10-30. `page.render`: an address in,
+   the page's readable `text` out (and its `title`, when the service gives
+   one), checked for text. Page Rendering (Browser) offers approved
+   connectors beside this instance and peers, and refuses an unapproved
+   one; core's one routing point (`installBrowseRouting`) sends a
+   `service:<name>` source through `media.PageService`, so browse_page,
+   the sandbox hook and every fallback from a plain fetch follow it. The
+   public-web-only check runs before any renderer, and again in the
+   service (`renderVia`), so a flow calling the contract keeps it too.
+   The title leads the text unless the text already opens with it. Built-in
+   row `built-in:page-rendering`. Templates: Jina Reader and Firecrawl,
+   which give readable text; a renderer that gives raw HTML (Browserless)
+   would need its HTML read to text first, and is left out.
+10. **Mail.** Built 2026-10-30. `mail.send`: to, subject, body, an
+    optional from and file; separate from `message.send` because mail has
+    a subject and recipients. The mail settings gain Provider ("smtp" or
+    `service:<name>`, Send with, offered once a connector is approved; SMTP
+    alone shows a pointer to Templates instead). Both senders follow it:
+    core's `SendNotification` (signup approvals, reports, alerts) and the
+    send_email tool, through `media.MailService`, from the same From an
+    SMTP send would use (the web override, then the settings' From; blank,
+    the connector's own). SMTP's server and sign-in show only while SMTP
+    sends; From and Default Recipient serve both. Built-in row
+    `built-in:mail` (off while no server or From is set). Templates:
+    Resend, Postmark, Mailgun, text bodies only.
+11. **File conversion.** Built 2026-10-30. `file.convert`: a file, its
+    format and the format wanted (extensions) in, the converted file out.
+    It plugs in where System Hooks already lets an admin replace a job's
+    program, the adapted flow: an adapted flow names a connector
+    (`service`) in place of steps, and System Hooks' Adapt form offers
+    "Done by" (commands on this machine, or an approved converter) once one
+    exists. The job's file is sent, the job's own format is asked for (its
+    result's default extension), and what comes back is checked by the job
+    exactly as a command's result is (`flows.ConvertService`, from
+    `core/service`). A connector cannot do a job that starts from a link or
+    gives several files. The row reads "the connector X"; Prefer still
+    orders it before or after the native flow. No built-in row: the
+    programs are already listed (stage 5). Template: ConvertAPI, one
+    multipart call with the file back as base64.
+12. **LLMs**, last and different in kind: a model call streams, calls tools
+    and thinks, and the contract engine has no streams yet. First the
+    worker and lead listed as built-in rows and an OpenAI-compatible
+    template; then a chat contract with streaming.
+
+    12a built 2026-10-30: `built-in:worker-llm` and `built-in:lead-llm`,
+    each reading as its tier (`Worker LLM ⇐ anthropic (model …) ⇐
+    api.anthropic.com (key set)`, a model server's address, Bedrock's
+    region, or the peer it runs on), whether it is set (an unset lead says
+    the worker answers for it), and Test running the tier's own live check.
+    12b built 2026-10-30, with the owner's yes to both of its questions. A
+    model is not mapped step by step: the `llm.chat` binding names a
+    `dialect` gohort's own clients speak (openai at any address; anthropic
+    and gemini only at their own hosts), with a default model and context,
+    and is priced per million input and output tokens. A tier whose
+    provider is `service:<name>` is resolved where a peer is
+    (`ResolveModelProvider`, via `media.ModelService`): the dialect's
+    client, the connector's address and its credential's key, read fresh on
+    every build. That key is the one exception to keys staying in the
+    store: a model client streams its own requests, so
+    `SecureAPI.ModelKey` gives it, only from an enabled credential of the
+    deployment's, of a bearer, header or query kind, for an address the
+    credential allows. Each call is counted and priced on the connector's
+    row (`retryLLM` notes it), and the connector's token prices replace
+    the tier's rates under Costs in every estimate (the form keeps showing
+    the stored rates). Model Privacy judges such a tier by the connector's
+    own address, and not private when the connector cannot be read (a
+    tier's blank endpoint would otherwise read as a local default). Tools
+    are native for every dialect. Test is a short real chat. Templates:
+    OpenRouter, Groq, Together, Mistral, DeepSeek, any OpenAI-compatible
+    API, and Anthropic with its key in a credential. A dialect gohort does
+    not speak still needs Go.
 
 ## Migrations
 

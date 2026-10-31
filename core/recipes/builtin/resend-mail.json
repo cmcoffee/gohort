@@ -1,0 +1,103 @@
+{
+  "id": "resend-mail",
+  "title": "Resend (mail)",
+  "description": "Resend as gohort's mail, in place of an SMTP server: an API that sends from a domain you verify. Declared as a service you can test and fix from Admin > Connectors.",
+  "category": "Mail",
+  "setup_notes": "Create an API key at resend.com/api-keys and verify your sending domain under Domains. The credential lands disabled: enable it under API Credentials. The connector lands unapproved: approve it in Admin > Extensions > Connectors and run Test on its row, which sends a short test email to the test recipient. Then pick it under Admin > System > Mail (SMTP) as Send with: signup approvals, reports, alerts and the send_email tool go through it. A From Address set there is used in place of the one given here. No price is declared, as it depends on your plan: add a per_call cost to the connector's spec to see what mail costs.",
+  "questions": [
+    {
+      "name": "api_key",
+      "label": "Resend API key",
+      "help": "Starts re_. Stored in the credential's secret store, never in the connector.",
+      "required": true,
+      "secret": true,
+      "credential": "resend_mail"
+    },
+    {
+      "name": "name",
+      "label": "Connector name",
+      "help": "Lowercase letters, digits, dashes and underscores; the mail settings list it by this name.",
+      "default": "resend-mail"
+    },
+    {
+      "name": "from",
+      "label": "Send from",
+      "help": "An address on a domain you have verified with the service, e.g. gohort@yourdomain.example.",
+      "required": true
+    },
+    {
+      "name": "to",
+      "label": "Test recipient",
+      "help": "Where the connector's Test sends its test email.",
+      "required": true
+    }
+  ],
+  "bundle": {
+    "bundle": "gohort.bundle/v1",
+    "artifacts": [
+      {
+        "type": "credential",
+        "name": "resend_mail",
+        "recipe": {
+          "name": "resend_mail",
+          "type": "bearer",
+          "base_url": "https://api.resend.com",
+          "allowed_endpoints": [
+            "/emails"
+          ],
+          "description": "Resend API, for sending mail."
+        }
+      },
+      {
+        "type": "connector",
+        "name": "{{name}}",
+        "recipe": {
+          "name": "{{name}}",
+          "kind": "service",
+          "template": "resend-mail",
+          "desc": "Resend mail from {{from}}",
+          "spec": {
+            "provider": {
+              "transport": "http",
+              "base_url": "https://api.resend.com",
+              "auth": {
+                "credential": "resend_mail"
+              },
+              "operations": {
+                "send": {
+                  "method": "POST",
+                  "path": "/emails",
+                  "body": {
+                    "from": "{from}",
+                    "to": "{to}",
+                    "subject": "{subject}",
+                    "text": "{body}"
+                  }
+                }
+              }
+            },
+            "provides": [
+              {
+                "capability": "mail.send",
+                "steps": [
+                  {
+                    "call": "send"
+                  }
+                ],
+                "output": {
+                  "id": {
+                    "path": "id"
+                  }
+                },
+                "defaults": {
+                  "from": "{{from}}",
+                  "to": "{{to}}"
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

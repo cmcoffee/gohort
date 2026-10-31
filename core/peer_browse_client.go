@@ -19,6 +19,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/cmcoffee/gohort/core/media"
 )
 
 // BrowseConfig records where page rendering happens.
@@ -27,7 +29,7 @@ import (
 // the browser is either linked into the build or it is not — so this is one
 // choice, not a form.
 type BrowseConfig struct {
-	Source string `json:"source,omitempty"` // "local" (default) or "peer:<name>"
+	Source string `json:"source,omitempty"` // "local" (default), "peer:<name>" or "service:<name>"
 }
 
 var (
@@ -102,6 +104,12 @@ func installBrowseRouting() {
 	BrowserFetchFunc = func(url string, maxChars int) (string, error) {
 		if err := RefuseNonPublicHost(url); err != nil {
 			return "", err
+		}
+		if name, ok := strings.CutPrefix(strings.TrimSpace(LoadBrowseConfig().Source), media.ServiceProviderPrefix); ok {
+			if media.PageService == nil {
+				return "", fmt.Errorf("page rendering is set to the connector %s, and this build has no connectors linked", name)
+			}
+			return media.PageService(context.Background(), name, url, maxChars)
 		}
 		if p, ok := BrowsePeer(); ok {
 			return peerBrowseFetch(p, url, maxChars)

@@ -25,6 +25,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/flows"
 	"github.com/cmcoffee/gohort/core/jsonapi"
+	"github.com/cmcoffee/gohort/core/media"
 	"github.com/cmcoffee/gohort/core/sandbox"
 	"github.com/cmcoffee/gohort/core/textutil"
 	"github.com/cmcoffee/gohort/core/ui"
@@ -276,7 +277,11 @@ func depRows(custom bool) []depRow {
 // group as a format of its own.
 func adaptedRow(c Connector, a flows.Adapted, refusing bool) depRow {
 	j, _ := a.Contract()
-	row := depRow{ID: c.Name, Name: c.Name, Group: j.Group, Enables: j.Title, By: strings.Join(a.Flow(), "  then  "),
+	by := strings.Join(a.Flow(), "  then  ")
+	if a.Service != "" {
+		by = "the connector " + a.Service
+	}
+	row := depRow{ID: c.Name, Name: c.Name, Group: j.Group, Enables: j.Title, By: by,
 		Adapted: true, Fills: a.Job != "", Custom: a.Job == "", CanOn: !c.Approved, CanOff: c.Approved,
 		Testable: true, Output: j.IsExport(), Link: takesLink(j)}
 	if row.Fills {
@@ -331,6 +336,9 @@ type flowForm struct {
 	Reads       string   `json:"reads,omitempty"`
 	TimeoutSecs int      `json:"timeout_secs"`
 	Prefer      bool     `json:"prefer"`
+	// By is what does it: "commands" (the steps), or "service:<name>", a
+	// connector that converts files.
+	By string `json:"by,omitempty"`
 }
 
 // step is one row of the Steps list.
@@ -390,6 +398,9 @@ func splitLines(s string, commas bool) []string {
 func (ff flowForm) adapted(job string) flows.Adapted {
 	a := flows.Adapted{Job: job, Steps: ff.Steps.commands(), Reads: splitLines(ff.Reads, true),
 		TimeoutSecs: ff.TimeoutSecs, Prefer: ff.Prefer}
+	if svc, ok := strings.CutPrefix(strings.TrimSpace(ff.By), media.ServiceProviderPrefix); ok {
+		a.Service, a.Steps, a.Reads = svc, nil, nil
+	}
 	if job != "" {
 		return a
 	}
@@ -417,7 +428,10 @@ func (ff flowForm) adapted(job string) flows.Adapted {
 
 // formOf is a for its edit form.
 func formOf(name string, a flows.Adapted) flowForm {
-	ff := flowForm{Name: name, Steps: stepsOf(a.Flow()), Reads: strings.Join(a.Reads, ", "), TimeoutSecs: a.TimeoutSecs, Prefer: a.Prefer}
+	ff := flowForm{Name: name, Steps: stepsOf(a.Flow()), Reads: strings.Join(a.Reads, ", "), TimeoutSecs: a.TimeoutSecs, Prefer: a.Prefer, By: "commands"}
+	if a.Service != "" {
+		ff.By = media.ServiceProviderPrefix + a.Service
+	}
 	switch {
 	case a.Job != "":
 	case a.Gives != "":
@@ -810,15 +824,25 @@ func flowFields(withName, custom bool) []ui.FormField {
 				{Value: "html", Label: "HTML"},
 			}})
 	}
+	// A connector that converts files can do it in place of commands; the
+	// choice appears once one is approved.
+	by := append([]ui.SelectOption{{Value: "commands", Label: "Commands on this machine (the steps below)"}}, serviceProviderOptions("file.convert", "Convert")...)
+	cmds := ""
+	if len(by) > 1 {
+		cmds = "by:commands"
+		out = append(out, ui.FormField{Field: "by", Label: "Done by", Type: "select", Default: "commands", Options: by,
+			Help:   "Programs on this machine, or a connector that converts files through an API.",
+			Detail: "A connector is sent the file and asked for the format this gives; what comes back is checked the same way a command's result is. It cannot do a job that starts from a link, or one that gives several files."})
+	}
 	return append(out, []ui.FormField{
-		{Field: "steps", Label: "Steps", Type: "rows", AddLabel: "+ Add step",
+		{Field: "steps", Label: "Steps", Type: "rows", AddLabel: "+ Add step", ShowWhen: cmds,
 			// A two-line box that grows with it: a command line with a few
 			// arguments does not fit a one-line input.
 			Columns: []ui.FormField{{Field: "command", Label: "Command", Type: "textarea", Rows: 2,
 				Placeholder: "heif-convert {in} {out}"}},
 			Help:   "The commands, run in order: add a step for each. {in} is the file it reads (in a later step, the step before's result) and {out} the file it writes.",
 			Detail: "For example: heif-convert {in} {out}. Leave {out} out and what a step prints is its result, as with antiword -w 0 {in}. Write {out.wav} to name a step's result for the next program. A job that gives several files writes them into {outdir}, and one called with values (a count, a link) has them as {count} or {url}. Each line runs as written, without a shell, so ; | and $( ) are just characters."},
-		{Field: "reads", Label: "Can also read", Type: "text",
+		{Field: "reads", Label: "Can also read", Type: "text", ShowWhen: cmds,
 			Help: "Folders it needs to read, read-only, separated by commas: a model file a transcriber uses, say. Nothing else on this machine is visible to it."},
 		{Field: "timeout_secs", Label: "Time limit (seconds)", Type: "number",
 			Help: "Stopped after this long, all steps together. 60 when left empty, 1800 at most."},

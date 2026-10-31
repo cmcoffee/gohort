@@ -43,6 +43,11 @@ type Adapted struct {
 	// Prefer runs it before the native flow, for an admin who wants their
 	// tool used even where the native one is installed.
 	Prefer bool `json:"prefer,omitempty"`
+	// Service, in place of steps, is a connector that converts files
+	// (core/service, file.convert): the job's file is sent to it, asked for
+	// the format the job gives, and what comes back is checked by the job
+	// as a command's result is.
+	Service string `json:"service,omitempty"`
 }
 
 // Flow is a's steps.
@@ -152,7 +157,26 @@ func (a Adapted) Validate() error {
 	if a.TimeoutSecs < 0 || time.Duration(a.TimeoutSecs)*time.Second > maxTimeout {
 		return fmt.Errorf("the time limit is 1 to %d seconds", int(maxTimeout/time.Second))
 	}
+	if strings.TrimSpace(a.Service) != "" {
+		return checkService(j, a)
+	}
 	return checkFlow(j, a.Flow())
+}
+
+// checkService checks a flow done by a connector: it has no commands of its
+// own, and its job is one a converter can do, a file in and one file out.
+func checkService(j Job, a Adapted) error {
+	switch {
+	case len(a.Flow()) > 0:
+		return errors.New("a connector does this one: it has no commands of its own")
+	case len(a.Reads) > 0:
+		return errors.New("a connector does this one: it reads no folders here")
+	case !j.TakesFile() && !j.IsExport():
+		return fmt.Errorf("%s does not start from a file, so a converter cannot do it", j.Title)
+	case j.Files:
+		return fmt.Errorf("%s gives several files, and a converter gives one", j.Title)
+	}
+	return nil
 }
 
 var (

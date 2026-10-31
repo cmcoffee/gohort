@@ -1882,6 +1882,35 @@ func (s *SecureAPI) CredentialStatus(name string) (exists, enabled, hasSecret bo
 	return true, !c.Disabled, hasSecret
 }
 
+// ModelKey is the key the credential name holds, for a model client
+// (core/service, llm.chat). Every other call through a credential is made by
+// this store, the key attached on the way out; a model client streams its
+// own requests and needs the key itself. So it is given only from an
+// enabled credential of the deployment's (never a person's), of a kind a
+// model takes (a bearer token, a header or a query value), for an address
+// the credential allows, and it goes nowhere but the client.
+func (s *SecureAPI) ModelKey(name, rawURL string) (string, error) {
+	c, ok := s.Load(name)
+	switch {
+	case !ok:
+		return "", fmt.Errorf("no credential named %q", name)
+	case c.Owner != "" || c.IsPerUser():
+		return "", fmt.Errorf("credential %q is a person's: a model connector's key is the deployment's", name)
+	case c.Disabled || c.AdminDisabled:
+		return "", s.disabledError(c)
+	case c.Type != SecureCredBearer && c.Type != SecureCredHeader && c.Type != SecureCredQuery:
+		return "", fmt.Errorf("credential %q is %s: a model's key is a bearer token, a header or a query value", name, c.Type)
+	case !urlAllowedByCredential(c, rawURL):
+		return "", fmt.Errorf("credential %q does not allow %s", name, rawURL)
+	}
+	sec, ok := s.loadSecret(name)
+	if sec = strings.TrimSpace(sec); !ok || sec == "" || sec == "(pending)" {
+		return "", s.disabledError(c)
+	}
+	s.touch(name)
+	return sec, nil
+}
+
 // CredentialStatusOwned is CredentialStatus resolved in a user's namespace: a
 // user-owned credential (their own "API credentials") is found, falling back
 // to global. Empty owner = global only. hasSecret is false for an unfinished

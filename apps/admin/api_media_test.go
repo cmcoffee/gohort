@@ -2,10 +2,12 @@ package admin
 
 import (
 	"encoding/json"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/ui"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
@@ -116,5 +118,163 @@ func TestCapabilityPagesPointToAnAlternative(t *testing.T) {
 	}
 	if _, choice := read(speechFormFields()); choice {
 		t.Error("a connector that embeds made speech a choice")
+	}
+}
+
+// Web Search offers an approved connector that searches as a provider, and
+// refuses to save one that is not approved.
+func TestWebSearchTakesAConnectorThatSearches(t *testing.T) {
+	saved := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB = saved })
+	spec := `{"provider":{"transport":"http","base_url":"https://search.example.test","auth":{"none":true},
+		"operations":{"search":{"url":"/find?q={query}"}}},
+		"provides":[{"capability":"web.search","steps":[{"call":"search"}],"output":{"results":{"path":"hits","fields":{"title":"name","url":"href"}}}}]}`
+	SaveConnector(RootDB, Connector{Name: "finder", Kind: "service", Spec: json.RawMessage(spec)})
+	offered := func() bool {
+		for _, f := range webSearchFormFields() {
+			for _, o := range f.Options {
+				if f.Field == "provider" && o.Value == "service:finder" {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	a := &AdminApp{db: &DBase{Store: kvlite.MemStore()}}
+	if offered() {
+		t.Error("an unapproved connector is offered")
+	}
+	if _, err := a.handleWebSearchSave(&jsonapi.Call{R: httptest.NewRequest("POST", "/api/web-search", nil)}, WebSearchConfig{Provider: "service:finder"}); err == nil || !strings.Contains(err.Error(), "not approved") {
+		t.Errorf("saving an unapproved connector: %v", err)
+	}
+	ApproveConnector(RootDB, "finder")
+	if !offered() {
+		t.Error("an approved connector that searches is not offered")
+	}
+	if _, err := a.handleWebSearchSave(&jsonapi.Call{R: httptest.NewRequest("POST", "/api/web-search", nil)}, WebSearchConfig{Provider: "service:finder"}); err != nil {
+		t.Errorf("saving it: %v", err)
+	}
+	if got := a.storedString(SearchTable, "provider"); got != "service:finder" {
+		t.Errorf("stored provider %q", got)
+	}
+}
+
+// Page Rendering offers an approved connector that renders pages, refuses to
+// save one that is not approved, and routes browsing to the one saved.
+func TestPageRenderingTakesAConnectorThatRenders(t *testing.T) {
+	saved, prevCfg := RootDB, LoadBrowseConfig()
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB = saved; SetBrowseConfig(prevCfg) })
+	spec := `{"provider":{"transport":"http","base_url":"https://reader.example.test","auth":{"none":true},
+		"operations":{"read":{"method":"POST","path":"/","body":{"url":"{url}"}}}},
+		"provides":[{"capability":"page.render","steps":[{"call":"read"}],"output":{"text":{"path":"data.content"}}}]}`
+	SaveConnector(RootDB, Connector{Name: "reader", Kind: "service", Spec: json.RawMessage(spec)})
+	offered := func() bool {
+		for _, o := range browseFormFields()[0].Options {
+			if o.Value == "service:reader" {
+				return true
+			}
+		}
+		return false
+	}
+	a := &AdminApp{db: &DBase{Store: kvlite.MemStore()}}
+	call := &jsonapi.Call{R: httptest.NewRequest("POST", "/api/browse", nil)}
+	if offered() {
+		t.Error("an unapproved connector is offered")
+	}
+	if _, err := a.handleBrowseSave(call, BrowseConfig{Source: "service:reader"}); err == nil || !strings.Contains(err.Error(), "not approved") {
+		t.Errorf("saving an unapproved connector: %v", err)
+	}
+	ApproveConnector(RootDB, "reader")
+	if !offered() {
+		t.Error("an approved connector that renders is not offered")
+	}
+	if _, err := a.handleBrowseSave(call, BrowseConfig{Source: "service:reader"}); err != nil || LoadBrowseConfig().Source != "service:reader" {
+		t.Errorf("saving it: %v %+v", err, LoadBrowseConfig())
+	}
+}
+
+// Mail offers an approved connector that sends mail beside SMTP, keeping the
+// SMTP fields to SMTP, and points to Templates while SMTP is all there is.
+// An unapproved connector is refused; the one saved is what sends.
+func TestMailTakesAConnectorThatSends(t *testing.T) {
+	saved := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB = saved })
+	field := func(name string) (ui.FormField, bool) {
+		for _, f := range mailFormFields() {
+			if f.Field == name {
+				return f, true
+			}
+		}
+		return ui.FormField{}, false
+	}
+	if _, ok := field("provider"); ok {
+		t.Error("a choice of one: SMTP alone")
+	}
+	if f, _ := field("server"); f.ShowWhen != "" || !strings.Contains(f.Help, "Admin > Extensions > Templates") {
+		t.Errorf("SMTP alone: %+v", f)
+	}
+	spec := `{"provider":{"transport":"http","base_url":"https://mail.example.test","auth":{"none":true},
+		"operations":{"send":{"method":"POST","path":"/emails","body":{"to":"{to}","subject":"{subject}","text":"{body}"}}}},
+		"provides":[{"capability":"mail.send","steps":[{"call":"send"}],"output":{"id":{"path":"id"}}}]}`
+	SaveConnector(RootDB, Connector{Name: "postbox", Kind: "service", Spec: json.RawMessage(spec)})
+	a := &AdminApp{db: &DBase{Store: kvlite.MemStore()}}
+	call := &jsonapi.Call{R: httptest.NewRequest("POST", "/api/mail", nil)}
+	if _, err := a.handleMailSave(call, MailConfig{Provider: "service:postbox"}); err == nil || !strings.Contains(err.Error(), "not approved") {
+		t.Errorf("saving an unapproved connector: %v", err)
+	}
+	ApproveConnector(RootDB, "postbox")
+	if f, ok := field("provider"); !ok || len(f.Options) != 2 || f.Options[1].Value != "service:postbox" {
+		t.Errorf("the choice: %+v", f)
+	}
+	if f, _ := field("server"); f.ShowWhen != "provider:smtp" || f.Help != "" {
+		t.Errorf("SMTP's server with a choice: %+v", f)
+	}
+	if f, _ := field("from"); f.ShowWhen != "" {
+		t.Error("From is hidden, though a connector uses it too")
+	}
+	got, _ := a.handleMail(call)
+	if got.(MailConfig).Provider != "smtp" {
+		t.Errorf("nothing saved reads as SMTP: %+v", got)
+	}
+	if _, err := a.handleMailSave(call, MailConfig{Provider: "service:postbox", From: "alerts@mail.example"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := a.handleMail(call); got.(MailConfig).Provider != "service:postbox" {
+		t.Errorf("saved: %+v", got)
+	}
+}
+
+// The LLM tiers offer an approved model connector as a provider, and refuse
+// to save one that is not approved.
+func TestLLMTiersTakeAModelConnector(t *testing.T) {
+	saved := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB = saved })
+	spec := `{"provider":{"transport":"http","base_url":"https://llm.example.test/v1","auth":{"none":true},
+		"operations":{"models":{"path":"/models"}}},
+		"provides":[{"capability":"llm.chat","dialect":"openai","defaults":{"model":"fast-model"}}]}`
+	SaveConnector(RootDB, Connector{Name: "hosted", Kind: "service", Spec: json.RawMessage(spec)})
+	offered := func() bool {
+		for _, o := range LLMProviderOptions(false) {
+			if o.Value == "service:hosted" {
+				return true
+			}
+		}
+		return false
+	}
+	a := &AdminApp{db: &DBase{Store: kvlite.MemStore()}}
+	call := &jsonapi.Call{R: httptest.NewRequest("POST", "/api/worker-llm", nil)}
+	if offered() {
+		t.Error("an unapproved model connector is offered")
+	}
+	if _, err := a.handleLLMConfigSave(LLMTable, true)(call, llmConfigSave{Provider: "service:hosted"}); err == nil || !strings.Contains(err.Error(), "not approved") {
+		t.Errorf("saving an unapproved one: %v", err)
+	}
+	ApproveConnector(RootDB, "hosted")
+	if !offered() {
+		t.Error("an approved model connector is not offered")
 	}
 }

@@ -82,6 +82,12 @@ func RunNative(ctx context.Context, j Job, in Input) (Result, error) {
 		files: f.Files, py: f.Py})
 }
 
+// ConvertService, when set, converts a file through a service connector
+// (core/service installs it): the file's bytes, its format as an extension
+// ("docx"), and the extension wanted ("txt"). An adapted flow whose Service
+// names a connector runs through it.
+var ConvertService func(ctx context.Context, connector string, in []byte, from, to string) ([]byte, error)
+
 // RunAdapted runs an adapted flow on in, against its contract.
 func RunAdapted(ctx context.Context, name string, a Adapted, in Input) (Result, error) {
 	if err := a.Validate(); err != nil {
@@ -98,8 +104,39 @@ func RunAdapted(ctx context.Context, name string, a Adapted, in Input) (Result, 
 	if err != nil {
 		return Result{}, err
 	}
+	if svc := strings.TrimSpace(a.Service); svc != "" {
+		return runService(ctx, name, svc, j, src, from, a.Timeout())
+	}
 	return runFlow(ctx, flowRun{by: name, job: j, steps: a.Flow(), in: src, from: from, params: in.Params,
 		timeout: a.Timeout(), reads: a.Reads})
+}
+
+// runService does j with the connector svc: the file sent, the job's format
+// asked for, and the answer checked by the job as a command's result is.
+func runService(ctx context.Context, name, svc string, j Job, src []byte, from string, timeout time.Duration) (Result, error) {
+	if ConvertService == nil {
+		return Result{}, fmt.Errorf("%s is done by the connector %s, and this build has no connectors linked", name, svc)
+	}
+	if len(src) == 0 {
+		return Result{}, errors.New("the file is empty")
+	}
+	if len(src) > maxInput {
+		return Result{}, fmt.Errorf("the file is %d MB, over the %d MB a job takes", len(src)>>20, maxInput>>20)
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	want := j.target()
+	start := time.Now()
+	out, err := ConvertService(ctx, svc, src, strings.TrimPrefix(extFor(from), "."), strings.TrimPrefix(want.defaultExt(), "."))
+	res := Result{By: name, Took: time.Since(start)}
+	if err != nil {
+		return res, fmt.Errorf("the connector %s: %w", svc, err)
+	}
+	if out, err = want.accept(out); err != nil {
+		return res, fmt.Errorf("what the connector %s gave was not used: %v", svc, err)
+	}
+	res.Out = out
+	return res, nil
 }
 
 func notInstalled(j Job) error {

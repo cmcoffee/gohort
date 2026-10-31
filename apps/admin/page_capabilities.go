@@ -81,7 +81,7 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 		{
 			Title:    "Web Search",
 			Subtitle: "Provider for the web_search tool.",
-			Detail:   "DuckDuckGo and a SearXNG instance require no key; Brave, Google and Serper need one. Any other search API can be the engine too: set it up as a Source Hook, then pick it here.",
+			Detail:   "DuckDuckGo and a SearXNG instance require no key; Brave, Google and Serper need one. Any other search API can be the engine too: add a connector that searches (Admin > Extensions > Templates has Brave, Serper and Tavily), approve it, and pick it here as Service: <name>; or set the API up as a Source Hook and pick that.",
 			Body: ui.FormPanel{
 				Assist:    true,
 				Source:    "api/web-search",
@@ -102,28 +102,13 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 		{
 			Title:    "Mail (SMTP)",
 			Subtitle: "Outbound SMTP for notification emails.",
-			Detail:   "Signup approvals, scheduled deliveries and watcher alerts. Leave Server blank for localhost:25.",
+			Detail:   "Signup approvals, scheduled deliveries, watcher alerts and the send_email tool. Leave Server blank for localhost:25. A mail API (Resend, Postmark and others) can send instead: add a connector that sends mail from Admin > Extensions > Templates, approve it, and pick it under Send with.",
 			Body: ui.FormPanel{
 				Assist:    true,
 				Source:    "api/mail",
 				TestURL:   "api/mail/test",
 				TestLabel: "Send test email",
-				Fields: []ui.FormField{
-					{Field: "server", Label: "SMTP Server", Type: "text",
-						Placeholder: "smtp.gmail.com:587",
-						Presets: []ui.FieldPreset{
-							{Label: "Gmail", Value: "smtp.gmail.com:587"},
-							{Label: "Outlook", Value: "smtp-mail.outlook.com:587"},
-							{Label: "iCloud", Value: "smtp.mail.me.com:587"},
-							{Label: "Local", Value: "localhost:25"},
-						}},
-					{Field: "from", Label: "From Address", Type: "text",
-						Placeholder: "noreply@example.com"},
-					{Field: "recipient", Label: "Default Recipient", Type: "text",
-						Help: "Test emails and pipeline reports go here when no per-call recipient is given."},
-					{Field: "username", Label: "SMTP Username", Type: "text"},
-					{Field: "password", Label: "SMTP Password", Type: "password"},
-				},
+				Fields:    mailFormFields(),
 			},
 		},
 		{
@@ -143,6 +128,50 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 			},
 		},
 	}
+}
+
+// mailPointer is the mail form's pointer while SMTP is all there is.
+func mailPointer(hasChoice bool) string {
+	if hasChoice {
+		return ""
+	}
+	return "Mail is sent by the SMTP server set here. To send through a mail API instead, add a connector that sends mail (Admin > Extensions > Templates): once approved, it is offered here to choose."
+}
+
+// mailFormFields are the mail settings: what sends (SMTP, or a connector that
+// sends mail, offered once one is approved), then SMTP's server and sign-in,
+// shown while SMTP sends, and the From address and Default Recipient, which
+// both use.
+func mailFormFields() []ui.FormField {
+	choices := append([]ui.SelectOption{{Value: "smtp", Label: "SMTP (the server below)"}}, serviceProviderOptions("mail.send", "Send")...)
+	hasChoice := len(choices) > 1
+	smtp := ""
+	if hasChoice {
+		smtp = "provider:smtp"
+	}
+	var fields []ui.FormField
+	if hasChoice {
+		fields = append(fields, ui.FormField{Field: "provider", Label: "Send with", Type: "select", Options: choices,
+			Help: "This instance's SMTP server, or an approved connector that sends mail through an API."})
+	}
+	return append(fields,
+		ui.FormField{Field: "server", Label: "SMTP Server", Type: "text",
+			Placeholder: "smtp.gmail.com:587", ShowWhen: smtp,
+			Help: mailPointer(hasChoice),
+			Presets: []ui.FieldPreset{
+				{Label: "Gmail", Value: "smtp.gmail.com:587"},
+				{Label: "Outlook", Value: "smtp-mail.outlook.com:587"},
+				{Label: "iCloud", Value: "smtp.mail.me.com:587"},
+				{Label: "Local", Value: "localhost:25"},
+			}},
+		ui.FormField{Field: "from", Label: "From Address", Type: "text",
+			Placeholder: "noreply@example.com",
+			Help:        "Mail is sent from this address, whatever sends it; blank, a connector uses its own."},
+		ui.FormField{Field: "recipient", Label: "Default Recipient", Type: "text",
+			Help: "Test emails and pipeline reports go here when no per-call recipient is given."},
+		ui.FormField{Field: "username", Label: "SMTP Username", Type: "text", ShowWhen: smtp},
+		ui.FormField{Field: "password", Label: "SMTP Password", Type: "password", ShowWhen: smtp},
+	)
 }
 
 // imageBackendToolbarActions builds the Image Generation toolbar: "Add image
@@ -412,14 +441,14 @@ func webSearchFormFields() []ui.FormField {
 	return append(fields,
 		ui.FormField{Field: "provider", Label: "Provider", Type: "select",
 			ShowWhen: local,
-			Options: []ui.SelectOption{
+			Options: append([]ui.SelectOption{
 				{Value: "duckduckgo", Label: "DuckDuckGo (no key)"},
 				{Value: "brave", Label: "Brave"},
 				{Value: "google", Label: "Google"},
 				{Value: "serper", Label: "Serper"},
 				{Value: "searxng", Label: "SearXNG (self-hosted)"},
 				{Value: "hook", Label: "A Source Hook (your own search API)"},
-			}},
+			}, serviceProviderOptions("web.search", "Search")...)},
 		ui.FormField{Field: "hook", Label: "Source Hook", Type: "select",
 			OptionsSource: "api/web-search/hooks",
 			ShowWhen:      withLocal("provider:hook"),
@@ -441,10 +470,10 @@ func webSearchFormFields() []ui.FormField {
 // it is not — so this is one choice, and the section says so rather than
 // showing an empty form when no peer offers rendering.
 func browseFormFields() []ui.FormField {
-	opts := BrowseProviderOptions()
-	help := "Only this instance offers page rendering. Connect a peer that grants it under Resource Sharing › Peers to render elsewhere."
+	opts := append(BrowseProviderOptions(), serviceProviderOptions("page.render", "Render")...)
+	help := "Only this instance renders pages. To render elsewhere, add a connector that renders pages (Admin > Extensions > Templates) or a peer that lends page rendering (Admin > Capabilities > Peers): once approved, it is offered here to choose."
 	if len(opts) > 1 {
-		help = "Render locally, or on a peer. Borrowing means this machine never downloads or runs Chromium."
+		help = "Render locally, on a peer, or through a connector. Borrowing means this machine never downloads or runs Chromium. Public web only, whichever renders."
 	}
 	return []ui.FormField{
 		{Field: "source", Label: "Render pages on", Type: "select", Options: opts, Help: help},

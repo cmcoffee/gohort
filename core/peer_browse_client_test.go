@@ -7,11 +7,14 @@ package core
 // the setting without any of them learning that peers exist.
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/cmcoffee/gohort/core/media"
 )
 
 func TestBrowseRoutesToThePeerAndBackToLocal(t *testing.T) {
@@ -200,5 +203,29 @@ func TestBrowseSeamRefusesNonPublicURLsBeforeRendering(t *testing.T) {
 	}
 	if _, err := BrowserFetchFunc("https://example.com/", 100); err != nil || rendered != 1 {
 		t.Fatalf("a public URL should still render: err=%v rendered=%d", err, rendered)
+	}
+}
+
+// A connector that renders pages is a source too: every caller of
+// BrowserFetchFunc follows it, and the public-web guard still runs first.
+func TestBrowseRoutesToAConnector(t *testing.T) {
+	prevFetch, prevCfg, prevSvc := BrowserFetchFunc, LoadBrowseConfig(), media.PageService
+	t.Cleanup(func() { BrowserFetchFunc = prevFetch; SetBrowseConfig(prevCfg); media.PageService = prevSvc })
+	var asked []string
+	media.PageService = func(_ context.Context, connector, url string, maxChars int) (string, error) {
+		asked = append(asked, connector+" "+url)
+		return "rendered by " + connector, nil
+	}
+	RegisterBrowserFetch(func(url string, maxChars int) (string, error) { return "local render", nil })
+	SetBrowseConfig(BrowseConfig{Source: "service:reader"})
+	if out, err := BrowserFetchFunc("https://news.example/a", 100); err != nil || out != "rendered by reader" {
+		t.Errorf("through the connector: %q %v", out, err)
+	}
+	if _, err := BrowserFetchFunc("http://10.0.0.5/", 100); err == nil || len(asked) != 1 {
+		t.Errorf("a private address reached the connector: %v %v", err, asked)
+	}
+	SetBrowseConfig(BrowseConfig{Source: "local"})
+	if out, _ := BrowserFetchFunc("https://news.example/a", 100); out != "local render" {
+		t.Errorf("back to local: %q", out)
 	}
 }

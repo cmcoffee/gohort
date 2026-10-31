@@ -11,6 +11,10 @@ type MailConfig struct {
 	Username  string `json:"username"`  // SMTP auth username
 	Password  string `json:"password"`  // SMTP auth password
 	Recipient string `json:"recipient"` // Default report recipient email address
+	// Provider is what sends: "" or "smtp" for the server above, or
+	// "service:<name>" for a connector that sends mail (core/service,
+	// mail.send), which From is passed to.
+	Provider string `json:"provider,omitempty"`
 }
 
 // WebSearchConfig holds web search provider settings.

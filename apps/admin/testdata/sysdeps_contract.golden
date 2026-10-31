@@ -69,15 +69,15 @@ root GET /api/system-deps?custom=1 ""
 root GET /api/system-deps ""
   200 [{"id":"read-heic-adapted","name":"read-heic-adapted","group":"Reading what arrives","enables":"↳ read-heic-adapted","by":"dd if={in} of={out.png}","state":"off","detail":"Adapted, for iPhone photos… (456 bytes, sha1 4ac69adecff8317121d3cf95f923d1b4bf288833)
 root GET /api/system-deps/one?name=ctstrip ""
-  200 {"name":"ctstrip","direction":"input","takes":"*","becomes":"image","steps":[{"command":"dd if={in} of={out} bs=8 skip=1"}],"timeout_secs":0,"prefer":false}
+  200 {"name":"ctstrip","direction":"input","takes":"*","becomes":"image","steps":[{"command":"dd if={in} of={out} bs=8 skip=1"}],"timeout_secs":0,"prefer":false,"by":"commands"}
 root GET /api/system-deps/one?name=read-heic-adapted ""
-  200 {"name":"read-heic-adapted","steps":[{"command":"dd if={in} of={out.png}"}],"timeout_secs":0,"prefer":false}
+  200 {"name":"read-heic-adapted","steps":[{"command":"dd if={in} of={out.png}"}],"timeout_secs":0,"prefer":false,"by":"commands"}
 root GET /api/system-deps/one?name=nope ""
   404 no such flow
 root POST /api/system-deps?edit=ctstrip "{\"name\":\"ctstrip\",\"direction\":\"input\",\"takes\":\"*\",\"becomes\":\"image\",\"steps\":\"dd if={in} of={out} bs=4 skip=2\"}"
   200 {"message":"Saved, off. Test it, then turn it on.","ok":true}
 root GET /api/system-deps/one?name=ctstrip ""
-  200 {"name":"ctstrip","direction":"input","takes":"*","becomes":"image","steps":[{"command":"dd if={in} of={out} bs=4 skip=2"}],"timeout_secs":0,"prefer":false}
+  200 {"name":"ctstrip","direction":"input","takes":"*","becomes":"image","steps":[{"command":"dd if={in} of={out} bs=4 skip=2"}],"timeout_secs":0,"prefer":false,"by":"commands"}
 root GET /api/system-deps/adapt?id=read.heic ""
   200 {"name":"read-heic-adapted-2","steps":null,"timeout_secs":0,"prefer":false}
 root GET /api/system-deps/adapt?id=nope ""

@@ -1,0 +1,93 @@
+{
+  "id": "tavily-search",
+  "title": "Tavily (web search)",
+  "description": "Tavily, a search API made for agents, as gohort's web search, declared as a service: the request and how its results are read are data you can test and fix from Admin > Connectors.",
+  "category": "Search",
+  "setup_notes": "Get an API key at app.tavily.com (it starts tvly-; a free plan is available). The credential lands disabled: enable it under API Credentials. The connector lands unapproved: approve it in Admin > Extensions > Connectors and run Test on its row, which makes one real search for a common phrase. Then pick it under Admin > Capabilities > Web Search as Service: <name>. No price is declared, as it depends on your plan: add a per_call cost to the connector's spec to see what searches cost.",
+  "questions": [
+    {
+      "name": "api_key",
+      "label": "Tavily API key",
+      "help": "Starts tvly-. Stored in the credential's secret store, never in the connector.",
+      "required": true,
+      "secret": true,
+      "credential": "tavily_search"
+    },
+    {
+      "name": "name",
+      "label": "Connector name",
+      "help": "Lowercase letters, digits, dashes and underscores; Web Search lists it by this name.",
+      "default": "tavily-search"
+    }
+  ],
+  "bundle": {
+    "bundle": "gohort.bundle/v1",
+    "artifacts": [
+      {
+        "type": "credential",
+        "name": "tavily_search",
+        "recipe": {
+          "name": "tavily_search",
+          "type": "bearer",
+          "base_url": "https://api.tavily.com",
+          "allowed_endpoints": [
+            "/search"
+          ],
+          "description": "Tavily API, for web search."
+        }
+      },
+      {
+        "type": "connector",
+        "name": "{{name}}",
+        "recipe": {
+          "name": "{{name}}",
+          "kind": "service",
+          "template": "tavily-search",
+          "desc": "Tavily web search",
+          "spec": {
+            "provider": {
+              "transport": "http",
+              "base_url": "https://api.tavily.com",
+              "auth": {
+                "credential": "tavily_search"
+              },
+              "operations": {
+                "search": {
+                  "method": "POST",
+                  "path": "/search",
+                  "body": {
+                    "query": "{query}",
+                    "max_results": "{count}"
+                  }
+                }
+              }
+            },
+            "provides": [
+              {
+                "capability": "web.search",
+                "steps": [
+                  {
+                    "call": "search"
+                  }
+                ],
+                "output": {
+                  "results": {
+                    "path": "results",
+                    "fields": {
+                      "title": "title",
+                      "url": "url",
+                      "snippet": "content"
+                    }
+                  }
+                },
+                "defaults": {
+                  "count": 5
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

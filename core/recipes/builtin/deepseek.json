@@ -1,0 +1,83 @@
+{
+  "id": "deepseek",
+  "title": "DeepSeek (LLM)",
+  "description": "DeepSeek's models as an LLM tier, through gohort's OpenAI-style client.",
+  "category": "LLMs",
+  "setup_notes": "Create a key at platform.deepseek.com (API keys). The credential lands disabled: enable it under API Credentials. The connector lands unapproved: approve it in Admin > Extensions > Connectors and run Test on its row, which makes one short real chat. Then pick it under Admin > LLMs > Worker LLM (or Lead LLM) as Service: <name>: the tier's turns run on it through gohort's own OpenAI-style client, streaming and tool calls as usual, and the key stays in the credential. Its calls and their cost show on the connector's row; add per_million_input and per_million_output to its spec's cost to price its tokens, which then replace the tier's rates under Costs.",
+  "questions": [
+    {
+      "name": "api_key",
+      "label": "API key",
+      "help": "Stored in the credential's secret store, never in the connector or the LLM settings.",
+      "required": true,
+      "secret": true,
+      "credential": "deepseek"
+    },
+    {
+      "name": "name",
+      "label": "Connector name",
+      "help": "Lowercase letters, digits, dashes and underscores; the LLM settings list it by this name.",
+      "default": "deepseek"
+    },
+    {
+      "name": "model",
+      "label": "Model",
+      "help": "The model a tier on it runs unless the tier names another.",
+      "default": "deepseek-chat",
+      "required": false
+    }
+  ],
+  "bundle": {
+    "bundle": "gohort.bundle/v1",
+    "artifacts": [
+      {
+        "type": "credential",
+        "name": "deepseek",
+        "recipe": {
+          "name": "deepseek",
+          "type": "bearer",
+          "base_url": "https://api.deepseek.com/v1",
+          "description": "DeepSeek API, for an LLM."
+        }
+      },
+      {
+        "type": "connector",
+        "name": "{{name}}",
+        "recipe": {
+          "name": "{{name}}",
+          "kind": "service",
+          "template": "deepseek",
+          "desc": "DeepSeek model ({{model}})",
+          "spec": {
+            "provider": {
+              "transport": "http",
+              "base_url": "https://api.deepseek.com/v1",
+              "auth": {
+                "credential": "deepseek"
+              },
+              "operations": {
+                "models": {
+                  "path": "/models"
+                }
+              },
+              "health": {
+                "call": "models",
+                "expect": "data",
+                "every_mins": 60
+              }
+            },
+            "provides": [
+              {
+                "capability": "llm.chat",
+                "dialect": "openai",
+                "defaults": {
+                  "model": "{{model}}"
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

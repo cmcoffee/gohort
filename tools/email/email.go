@@ -1,12 +1,14 @@
 package email
 
 import (
+	"context"
 	"fmt"
 	"net/smtp"
 	"os"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/media"
 )
 
 func init() { RegisterChatTool(new(EmailTool)) }
@@ -50,6 +52,18 @@ func (t *EmailTool) Run(args map[string]any) (string, error) {
 
 	// Load mail config from database.
 	cfg := LoadMailConfig()
+
+	// A connector that sends mail (Admin > System > Mail) sends it instead
+	// of SMTP.
+	if name, ok := strings.CutPrefix(strings.TrimSpace(cfg.Provider), media.ServiceProviderPrefix); ok {
+		if media.MailService == nil {
+			return "", fmt.Errorf("mail is set to the connector %s, and this build has no connectors linked", name)
+		}
+		if err := media.MailService(context.Background(), name, cfg.From, to, subject, body); err != nil {
+			return "", fmt.Errorf("failed to send email through %s: %w", name, err)
+		}
+		return fmt.Sprintf("Email sent to %s.", to), nil
+	}
 
 	server := cfg.Server
 	if server == "" {

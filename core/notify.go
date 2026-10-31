@@ -8,6 +8,8 @@ import (
 	"net/smtp"
 	"os"
 	"strings"
+
+	"github.com/cmcoffee/gohort/core/media"
 )
 
 // NotifyFromFunc returns a custom from address for notification emails.
@@ -29,6 +31,9 @@ func SendNotification(to, subject, body string) error {
 // so a test against a host that accepts and then says nothing could only be
 // ended by the server's timeout. Returns nil when mail is not configured.
 func (cfg MailConfig) SendNotification(ctx context.Context, to, subject, body string) error {
+	if name, ok := strings.CutPrefix(strings.TrimSpace(cfg.Provider), media.ServiceProviderPrefix); ok {
+		return cfg.sendThrough(ctx, name, to, subject, body)
+	}
 	if cfg.Server == "" && cfg.From == "" {
 		// Mail not configured, skip silently.
 		return nil
@@ -82,6 +87,27 @@ func (cfg MailConfig) SendNotification(ctx context.Context, to, subject, body st
 		return err
 	}
 	Log("[notify] sent to %s: %s", to, subject)
+	return nil
+}
+
+// sendThrough sends one message through the connector named name, from the
+// same address SMTP would use when one is set (the connector's own when not).
+func (cfg MailConfig) sendThrough(ctx context.Context, name, to, subject, body string) error {
+	if media.MailService == nil {
+		return fmt.Errorf("mail is set to the connector %s, and this build has no connectors linked", name)
+	}
+	from := ""
+	if NotifyFromFunc != nil {
+		from = NotifyFromFunc()
+	}
+	if from == "" {
+		from = cfg.From
+	}
+	if err := media.MailService(ctx, name, from, to, subject, body); err != nil {
+		Log("[notify] failed to send to %s through %s: %v", to, name, err)
+		return err
+	}
+	Log("[notify] sent to %s through %s: %s", to, name, subject)
 	return nil
 }
 

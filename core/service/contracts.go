@@ -57,6 +57,10 @@ type Contract struct {
 	units func(in map[string]any, r Result) float64
 	// TestAudio names file inputs that take a short sample of sound.
 	TestAudio []string
+	// testCheck is a check only a contract test makes, beyond Check: what a
+	// sample call must give that a real one need not (a search for a common
+	// phrase finds something; a real search may find nothing).
+	testCheck func(r Result) error
 }
 
 func (c Contract) input(name string) (Port, bool) {
@@ -230,6 +234,107 @@ func init() {
 		Check: func(Result) error { return nil },
 		units: func(map[string]any, Result) float64 { return 1 },
 	})
+	// llm.chat is a model: what gohort's tiers run on. It is not mapped step
+	// by step like the others: its binding names the dialect gohort's own
+	// client speaks to it, and its test is a short real chat.
+	register(Contract{
+		Name:  "llm.chat",
+		Gives: "LLM",
+		Inputs: []Port{
+			{Name: "model", Type: TypeText},
+			{Name: "context", Type: TypeNumber},
+		},
+		Units: []string{"token"},
+		Check: func(Result) error { return nil },
+	})
+	// file.convert turns a file into another format: from is its format as
+	// an extension (docx), to the one wanted (pdf, txt, png). What comes back
+	// is checked here only for being there; the job that asked checks it is
+	// the format it wanted.
+	register(Contract{
+		Name:  "file.convert",
+		Gives: "File conversion",
+		Inputs: []Port{
+			{Name: "file", Type: TypeFile, Required: true},
+			{Name: "to", Type: TypeText, Required: true},
+			{Name: "from", Type: TypeText},
+		},
+		Outputs:    []Port{{Name: "file", Type: TypeFile, Required: true}},
+		Units:      []string{"file"},
+		Test:       map[string]any{"from": "png", "to": "jpg"},
+		TestImages: []string{"file"},
+		Check: func(r Result) error {
+			if f := r["file"].File; f == nil || f.Size == 0 {
+				return fmt.Errorf("no file came back")
+			}
+			return nil
+		},
+		units: func(map[string]any, Result) float64 { return 1 },
+	})
+	// mail.send is an email: to, subject and body, from the connector's
+	// own sender unless one is given; id is the service's for the message.
+	register(Contract{
+		Name:  "mail.send",
+		Gives: "Mail",
+		Inputs: []Port{
+			{Name: "to", Type: TypeText, Required: true},
+			{Name: "subject", Type: TypeText, Required: true},
+			{Name: "body", Type: TypeText, Required: true},
+			{Name: "from", Type: TypeText},
+			{Name: "file", Type: TypeFile},
+		},
+		Outputs: []Port{{Name: "id", Type: TypeText}},
+		Units:   []string{"message"},
+		Test:    map[string]any{"subject": "A test from gohort", "body": "This is a test from gohort's Connectors page. If it arrived, the connector sends mail."},
+		// A reply at all means the service took the message.
+		Check: func(Result) error { return nil },
+		units: func(map[string]any, Result) float64 { return 1 },
+	})
+	// page.render is a page read the way a browser shows it: the readable
+	// text of the page at url (and its title, when the service gives one).
+	register(Contract{
+		Name:  "page.render",
+		Gives: "Page rendering",
+		Inputs: []Port{
+			{Name: "url", Type: TypeText, Required: true},
+		},
+		Outputs: []Port{
+			{Name: "text", Type: TypeText, Required: true},
+			{Name: "title", Type: TypeText},
+		},
+		Units: []string{"page"},
+		Test:  map[string]any{"url": "https://example.com"},
+		Check: func(r Result) error {
+			if strings.TrimSpace(r["text"].Text) == "" {
+				return fmt.Errorf("no text came back: check where the page's text is read from")
+			}
+			return nil
+		},
+		units: func(map[string]any, Result) float64 { return 1 },
+	})
+	// web.search is a search engine: results are a list of objects with a
+	// title, a url and a snippet. A search can find nothing; its test, of a
+	// phrase every engine knows, must find something, which is what proves
+	// a spec reads the results from the right place.
+	register(Contract{
+		Name:  "web.search",
+		Gives: "Web search",
+		Inputs: []Port{
+			{Name: "query", Type: TypeText, Required: true},
+			{Name: "count", Type: TypeNumber},
+		},
+		Outputs: []Port{{Name: "results", Type: TypeJSON, Required: true}},
+		Units:   []string{"search"},
+		Test:    map[string]any{"query": "open source software", "count": 3},
+		Check:   checkResults("results"),
+		testCheck: func(r Result) error {
+			if rs, _ := SearchResults(r); len(rs) == 0 {
+				return fmt.Errorf("a search for a common phrase found nothing: check where the results are read from")
+			}
+			return nil
+		},
+		units: func(map[string]any, Result) float64 { return 1 },
+	})
 	register(Contract{
 		Name:  "embed.text",
 		Gives: "Embeddings",
@@ -251,6 +356,40 @@ func init() {
 			return float64(n)
 		},
 	})
+}
+
+// SearchResult is one result of a web.search.
+type SearchResult struct {
+	Title   string `json:"title"`
+	URL     string `json:"url"`
+	Snippet string `json:"snippet"`
+}
+
+// SearchResults reads a web.search result.
+func SearchResults(r Result) ([]SearchResult, error) {
+	var out []SearchResult
+	if err := json.Unmarshal([]byte(r["results"].Text), &out); err != nil {
+		return nil, fmt.Errorf("the results are not a list of title, url and snippet: %v", err)
+	}
+	return out, nil
+}
+
+// checkResults passes a list of results each with a web address: a result
+// with none points nowhere, and a spec that gives one has read the wrong
+// field for it.
+func checkResults(output string) func(Result) error {
+	return func(r Result) error {
+		rs, err := SearchResults(Result{"results": r[output]})
+		if err != nil {
+			return err
+		}
+		for i, x := range rs {
+			if !strings.HasPrefix(x.URL, "https://") && !strings.HasPrefix(x.URL, "http://") {
+				return fmt.Errorf("result %d has no web address (%q): check which field url is read from", i+1, x.URL)
+			}
+		}
+		return nil
+	}
 }
 
 // textsOf reads a texts input as given in Go ([]string) or from JSON ([]any).

@@ -1,0 +1,104 @@
+{
+  "id": "postmark-mail",
+  "title": "Postmark (mail)",
+  "description": "Postmark as gohort's mail, in place of an SMTP server: an API that sends from a sender signature or domain you verify. Declared as a service you can test and fix from Admin > Connectors.",
+  "category": "Mail",
+  "setup_notes": "In Postmark, open your server's API Tokens tab and copy the Server API token, and verify a sender signature or domain. The credential lands disabled: enable it under API Credentials. The connector lands unapproved: approve it in Admin > Extensions > Connectors and run Test on its row, which sends a short test email to the test recipient. Then pick it under Admin > System > Mail (SMTP) as Send with: signup approvals, reports, alerts and the send_email tool go through it. A From Address set there is used in place of the one given here. No price is declared, as it depends on your plan: add a per_call cost to the connector's spec to see what mail costs.",
+  "questions": [
+    {
+      "name": "api_key",
+      "label": "Server API token",
+      "help": "Stored in the credential's secret store, never in the connector.",
+      "required": true,
+      "secret": true,
+      "credential": "postmark_mail"
+    },
+    {
+      "name": "name",
+      "label": "Connector name",
+      "help": "Lowercase letters, digits, dashes and underscores; the mail settings list it by this name.",
+      "default": "postmark-mail"
+    },
+    {
+      "name": "from",
+      "label": "Send from",
+      "help": "An address on a domain you have verified with the service, e.g. gohort@yourdomain.example.",
+      "required": true
+    },
+    {
+      "name": "to",
+      "label": "Test recipient",
+      "help": "Where the connector's Test sends its test email.",
+      "required": true
+    }
+  ],
+  "bundle": {
+    "bundle": "gohort.bundle/v1",
+    "artifacts": [
+      {
+        "type": "credential",
+        "name": "postmark_mail",
+        "recipe": {
+          "name": "postmark_mail",
+          "type": "header",
+          "param_name": "X-Postmark-Server-Token",
+          "base_url": "https://api.postmarkapp.com",
+          "allowed_endpoints": [
+            "/email"
+          ],
+          "description": "Postmark API, for sending mail."
+        }
+      },
+      {
+        "type": "connector",
+        "name": "{{name}}",
+        "recipe": {
+          "name": "{{name}}",
+          "kind": "service",
+          "template": "postmark-mail",
+          "desc": "Postmark mail from {{from}}",
+          "spec": {
+            "provider": {
+              "transport": "http",
+              "base_url": "https://api.postmarkapp.com",
+              "auth": {
+                "credential": "postmark_mail"
+              },
+              "operations": {
+                "send": {
+                  "method": "POST",
+                  "path": "/email",
+                  "body": {
+                    "From": "{from}",
+                    "To": "{to}",
+                    "Subject": "{subject}",
+                    "TextBody": "{body}"
+                  }
+                }
+              }
+            },
+            "provides": [
+              {
+                "capability": "mail.send",
+                "steps": [
+                  {
+                    "call": "send"
+                  }
+                ],
+                "output": {
+                  "id": {
+                    "path": "MessageID"
+                  }
+                },
+                "defaults": {
+                  "from": "{{from}}",
+                  "to": "{{to}}"
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

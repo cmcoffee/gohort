@@ -1,0 +1,94 @@
+{
+  "id": "serper-search",
+  "title": "Serper (web search)",
+  "description": "Google results through Serper as gohort's web search, declared as a service: the request and how its results are read are data you can test and fix from Admin > Connectors.",
+  "category": "Search",
+  "setup_notes": "Get an API key at serper.dev (new accounts come with free searches). The credential lands disabled: enable it under API Credentials. The connector lands unapproved: approve it in Admin > Extensions > Connectors and run Test on its row, which makes one real search for a common phrase. Then pick it under Admin > Capabilities > Web Search as Service: <name>. No price is declared, as it depends on your plan: add a per_call cost to the connector's spec to see what searches cost.",
+  "questions": [
+    {
+      "name": "api_key",
+      "label": "Serper API key",
+      "help": "Stored in the credential's secret store, never in the connector.",
+      "required": true,
+      "secret": true,
+      "credential": "serper_search"
+    },
+    {
+      "name": "name",
+      "label": "Connector name",
+      "help": "Lowercase letters, digits, dashes and underscores; Web Search lists it by this name.",
+      "default": "serper-search"
+    }
+  ],
+  "bundle": {
+    "bundle": "gohort.bundle/v1",
+    "artifacts": [
+      {
+        "type": "credential",
+        "name": "serper_search",
+        "recipe": {
+          "name": "serper_search",
+          "type": "header",
+          "base_url": "https://google.serper.dev",
+          "allowed_endpoints": [
+            "/search"
+          ],
+          "description": "Serper API, for web search.",
+          "param_name": "X-API-KEY"
+        }
+      },
+      {
+        "type": "connector",
+        "name": "{{name}}",
+        "recipe": {
+          "name": "{{name}}",
+          "kind": "service",
+          "template": "serper-search",
+          "desc": "Serper web search",
+          "spec": {
+            "provider": {
+              "transport": "http",
+              "base_url": "https://google.serper.dev",
+              "auth": {
+                "credential": "serper_search"
+              },
+              "operations": {
+                "search": {
+                  "method": "POST",
+                  "path": "/search",
+                  "body": {
+                    "q": "{query}",
+                    "num": "{count}"
+                  }
+                }
+              }
+            },
+            "provides": [
+              {
+                "capability": "web.search",
+                "steps": [
+                  {
+                    "call": "search"
+                  }
+                ],
+                "output": {
+                  "results": {
+                    "path": "organic",
+                    "fields": {
+                      "title": "title",
+                      "url": "link",
+                      "snippet": "snippet"
+                    }
+                  }
+                },
+                "defaults": {
+                  "count": 10
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

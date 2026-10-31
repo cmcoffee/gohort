@@ -1053,6 +1053,9 @@ func LLMProviderOptions(usePrimary bool) []ui.SelectOption {
 		}
 		out = append(out, ui.SelectOption{Value: PeerProviderValue(p.Name), Label: label, Help: help})
 	}
+	// A model connector (core/service, llm.chat): an OpenAI-shaped API
+	// elsewhere, or Anthropic or Gemini through a credential.
+	out = append(out, serviceProviderOptions("llm.chat", "Run this tier's turns")...)
 	return out
 }
 

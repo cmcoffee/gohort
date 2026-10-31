@@ -42,6 +42,9 @@ func (s Spec) run(ctx context.Context, sess *ToolSession, capability string, inp
 	if err != nil {
 		return out, err
 	}
+	if b.Dialect != "" {
+		return out, fmt.Errorf("a model is run as an LLM tier (Admin > LLMs), by its dialect's client, not called step by step")
+	}
 	vars := map[string]any{}
 	for k, v := range b.Defaults {
 		vars[k] = v
@@ -176,7 +179,7 @@ func (t transport) output(ctx context.Context, last reply, o Output, vars map[st
 	case "json":
 		return jsonOutput(last.node, o)
 	}
-	if o.Each != "" {
+	if o.Each != "" || len(o.Fields) > 0 {
 		return jsonOutput(last.node, o)
 	}
 	if last.node == nil {
@@ -189,6 +192,9 @@ func (t transport) output(ctx context.Context, last reply, o Output, vars map[st
 // piece at each in every element of the list there, as one list.
 func jsonOutput(node any, o Output) (Value, error) {
 	raw := apijob.LookupJSON(node, o.Path, "")
+	if len(o.Fields) > 0 {
+		return fieldsOutput(raw, o)
+	}
 	if o.Each == "" {
 		return Value{Text: raw}, nil
 	}
@@ -209,6 +215,28 @@ func jsonOutput(node any, o Output) (Value, error) {
 		pieces[i] = piece
 	}
 	b, err := json.Marshal(pieces)
+	return Value{Text: string(b)}, err
+}
+
+// fieldsOutput reads the list raw holds into objects named by o.Fields, each
+// field the text at its path in the element ("" where it has none). No list
+// at all reads as an empty one: a search with no results leaves it out.
+func fieldsOutput(raw string, o Output) (Value, error) {
+	var list []any
+	if strings.TrimSpace(raw) != "" {
+		if err := json.Unmarshal([]byte(raw), &list); err != nil {
+			return Value{}, fmt.Errorf("what is at %q is not a list", o.Path)
+		}
+	}
+	out := make([]map[string]string, len(list))
+	for i, el := range list {
+		row := map[string]string{}
+		for name, path := range o.Fields {
+			row[name] = apijob.Lookup(el, path, "")
+		}
+		out[i] = row
+	}
+	b, err := json.Marshal(out)
 	return Value{Text: string(b)}, err
 }
 

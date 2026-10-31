@@ -5,6 +5,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cmcoffee/gohort/core/media"
+	"github.com/cmcoffee/snugforge/kvlite"
 )
 
 // "in=961,041" can be worth thirty cents or three dollars depending on
@@ -473,5 +476,36 @@ func TestHasDistinctLeadDrivesTheAttribution(t *testing.T) {
 	SetSharedLLMs(worker, lead)
 	if !(&AppCore{LLM: worker, LeadLLM: lead}).HasDistinctLead() {
 		t.Error("a genuinely distinct lead is not being recognized")
+	}
+}
+
+// A tier that runs on a model connector is priced by that connector's token
+// prices in the estimate, in place of the tier's rates set under Costs; the
+// other tier keeps its own, and a connector that declares no price leaves
+// the tier's rates as they are.
+func TestATierOnAModelConnectorIsPricedByIt(t *testing.T) {
+	savedAuth, savedSvc := AuthDB, media.ModelService
+	auth := &DBase{Store: kvlite.MemStore()}
+	AuthDB = func() Database { return auth }
+	t.Cleanup(func() { AuthDB, media.ModelService = savedAuth, savedSvc })
+	media.ModelService = func(connector string, withKey bool) (media.ModelTarget, error) {
+		if withKey {
+			t.Error("pricing read a key")
+		}
+		if connector == "free" {
+			return media.ModelTarget{Dialect: "openai"}, nil
+		}
+		return media.ModelTarget{Dialect: "openai", InPerMillion: 2, OutPerMillion: 10, Priced: true}, nil
+	}
+	auth.Set(LLMTable, "provider", "service:hosted")
+	rates := CostRates{WorkerInputPer1K: 99, WorkerOutputPer1K: 99, LeadInputPer1K: 0.001, LeadOutputPer1K: 0.002}
+	got := rates.Estimate(UsageDiff{WorkerInput: 1000000, WorkerOutput: 100000, LeadInput: 1000, LeadOutput: 1000})
+	// worker: 1M in at $2/M + 100K out at $10/M = $3; lead: 1K at $0.001/K + 1K at $0.002/K = $0.003.
+	if got < 3.0029 || got > 3.0031 {
+		t.Errorf("estimate %v, want 3.003", got)
+	}
+	auth.Set(LLMTable, "provider", "service:free")
+	if got := rates.Estimate(UsageDiff{WorkerInput: 1000}); got < 98.99 || got > 99.01 {
+		t.Errorf("a connector with no price keeps the tier's rate: %v", got)
 	}
 }

@@ -21,6 +21,8 @@ import (
 	"unicode"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/media"
+	"github.com/cmcoffee/gohort/core/service"
 	"github.com/cmcoffee/gohort/core/sourcehooks"
 	"github.com/cmcoffee/gohort/core/textutil"
 	"github.com/cmcoffee/gohort/tools/browser"
@@ -971,7 +973,13 @@ func SearchWithProvider(req SearchRequest) (string, error) {
 	case "hook":
 		result, err = searchHook(req.Hook, query)
 	default:
-		return "", fmt.Errorf("unknown search provider: %s", provider)
+		// A service connector that searches (core/service, web.search),
+		// chosen under Web Search: it counts and prices its own calls.
+		name, ok := strings.CutPrefix(provider, media.ServiceProviderPrefix)
+		if !ok {
+			return "", fmt.Errorf("unknown search provider: %s", provider)
+		}
+		result, err = service.Search(context.Background(), name, query)
 	}
 	if err != nil {
 		Debug("[web_search] error: %s", err)
@@ -1010,8 +1018,8 @@ func CrossProviderSearch(query string) (string, error) {
 // number can be right: what a provider charges is on their invoice, not in any
 // response.
 func recordSearchCost(cfg WebSearchConfig, provider string) {
-	if provider == "hook" {
-		return // the hook prices its own calls (sourcehooks.QueryLive)
+	if provider == "hook" || strings.HasPrefix(provider, media.ServiceProviderPrefix) {
+		return // the hook or the connector prices its own calls
 	}
 	RecordExternalCost("search:"+provider, "Web search ("+provider+")", cfg.CostPerCall)
 }

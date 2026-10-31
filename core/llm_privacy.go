@@ -25,6 +25,8 @@ import (
 	"net"
 	"net/url"
 	"strings"
+
+	"github.com/cmcoffee/gohort/core/media"
 )
 
 // allLLMsPrivateKey stores the operator's assertion in the web settings table.
@@ -75,6 +77,23 @@ type LLMPrivacyVerdict struct {
 // one at localhost has built a proxy to a third party rather than a local
 // model. Everything else is judged by where the endpoint points.
 func ProviderLooksPrivate(provider, endpoint string) (bool, string) {
+	// A model connector keeps its address on the connector, not the tier: a
+	// tier's blank endpoint must not read as a local default. Judged by the
+	// connector's own address, and not private when it cannot be read.
+	if name, ok := strings.CutPrefix(strings.TrimSpace(provider), media.ServiceProviderPrefix); ok {
+		if media.ModelService == nil {
+			return false, "a model connector, which this build cannot read, so it cannot be judged private"
+		}
+		t, err := media.ModelService(name, false)
+		if err != nil {
+			return false, "the model connector " + name + " cannot be read (" + err.Error() + "), so it cannot be judged private"
+		}
+		if t.Dialect != "openai" {
+			return false, "a hosted provider through the connector " + name + ": prompts leave this deployment"
+		}
+		private, why := ProviderLooksPrivate("llama.cpp", t.Endpoint)
+		return private, why + " (the connector " + name + ")"
+	}
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "anthropic", "openai", "gemini", "bedrock":
 		return false, "a hosted provider: prompts leave this deployment"

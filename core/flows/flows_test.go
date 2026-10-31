@@ -834,3 +834,41 @@ func TestAHandOffIsReadByTheNextReader(t *testing.T) {
 		}
 	}
 }
+
+// A connector that converts files can do a job in place of commands: it is
+// sent the job's file and asked for the job's format, and what comes back is
+// checked by the job as a command's result is. It cannot do a job that does
+// not start from a file, or one that gives several files.
+func TestAConnectorDoesAJob(t *testing.T) {
+	prev := ConvertService
+	t.Cleanup(func() { ConvertService = prev })
+	var asked []string
+	reply := []byte("The text of the PDF.")
+	ConvertService = func(_ context.Context, connector string, in []byte, from, to string) ([]byte, error) {
+		asked = append(asked, connector+" "+from+"->"+to+" "+string(in))
+		return reply, nil
+	}
+	a := Adapted{Job: "read.pdf", Service: "converter"}
+	res, err := RunAdapted(context.Background(), "pdf-by-api", a, Input{Data: []byte("%PDF-1.4 x"), From: "application/pdf"})
+	if err != nil || string(res.Out) != "The text of the PDF." || res.By != "pdf-by-api" || len(asked) != 1 || asked[0] != "converter pdf->txt %PDF-1.4 x" {
+		t.Fatalf("%+v %v %v", res, err, asked)
+	}
+	reply = []byte{0x00, 0x01, 0x02, 0xff, 0xfe}
+	if _, err := RunAdapted(context.Background(), "pdf-by-api", a, Input{Data: []byte("%PDF-1.4 x"), From: "application/pdf"}); err == nil || !strings.Contains(err.Error(), "was not used") {
+		t.Errorf("a result that is not text: %v", err)
+	}
+	for want, bad := range map[string]Adapted{
+		"no commands of its own":     {Job: "read.pdf", Service: "converter", Steps: []string{"cat {in}"}},
+		"reads no folders":           {Job: "read.pdf", Service: "converter", Reads: []string{"/opt/models"}},
+		"does not start from a file": {Job: "media.download", Service: "converter"},
+		"gives several files":        {Job: "media.frames", Service: "converter"},
+	} {
+		if err := bad.Validate(); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("want %q, got %v", want, err)
+		}
+	}
+	ConvertService = nil
+	if _, err := RunAdapted(context.Background(), "pdf-by-api", a, Input{Data: []byte("%PDF-1.4 x"), From: "application/pdf"}); err == nil || !strings.Contains(err.Error(), "no connectors linked") {
+		t.Errorf("with no connectors linked: %v", err)
+	}
+}

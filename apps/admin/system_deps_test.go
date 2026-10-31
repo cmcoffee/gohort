@@ -816,3 +816,49 @@ func TestAddHandsOnToAReaderThatIsHere(t *testing.T) {
 		}
 	}
 }
+
+// A job can be adapted to a connector that converts files: the form offers
+// Done by once one is approved (the steps then only for commands), saves it
+// as the flow's service with no steps, reads back the same, and the row says
+// which connector does it.
+func TestAJobCanBeDoneByAConnector(t *testing.T) {
+	saved := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB = saved })
+	field := func(name string) (ui.FormField, bool) {
+		for _, f := range flowFields(false, false) {
+			if f.Field == name {
+				return f, true
+			}
+		}
+		return ui.FormField{}, false
+	}
+	if _, ok := field("by"); ok {
+		t.Error("Done by offered with only commands to choose")
+	}
+	spec := `{"provider":{"transport":"http","base_url":"https://convert.example.test","auth":{"none":true},
+		"operations":{"convert":{"method":"POST","path":"/convert/{from}/to/{to}","send":"multipart","body":{"File":"{file}"}}}},
+		"provides":[{"capability":"file.convert","steps":[{"call":"convert"}],"output":{"file":{"path":"Files.0.FileData","as":"base64"}}}]}`
+	SaveConnector(RootDB, Connector{Name: "converter", Kind: "service", Spec: json.RawMessage(spec)})
+	ApproveConnector(RootDB, "converter")
+	if f, ok := field("by"); !ok || len(f.Options) != 2 || f.Options[1].Value != "service:converter" {
+		t.Errorf("Done by: %+v", f)
+	}
+	if f, _ := field("steps"); f.ShowWhen != "by:commands" {
+		t.Errorf("steps shown for a connector: %+v", f)
+	}
+	a := flowForm{By: "service:converter", Steps: stepsOf([]string{"cat {in}"})}.adapted("read.pdf")
+	if a.Service != "converter" || len(a.Steps) != 0 || a.Validate() != nil {
+		t.Errorf("saved as: %+v %v", a, a.Validate())
+	}
+	if ff := formOf("pdf-by-api", a); ff.By != "service:converter" {
+		t.Errorf("read back: %+v", ff)
+	}
+	if ff := formOf("pdf", flows.Adapted{Job: "read.pdf", Steps: []string{"pdftotext {in} {out}"}}); ff.By != "commands" {
+		t.Errorf("a command flow reads back as: %+v", ff)
+	}
+	spec2, _ := json.Marshal(a)
+	if row := adaptedRow(Connector{Name: "pdf-by-api", Kind: flows.ConnectorKind, Spec: spec2, Approved: true}, a, false); row.By != "the connector converter" || row.State != "on" {
+		t.Errorf("row: %+v", row)
+	}
+}

@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/cmcoffee/gohort/core/media"
 	"github.com/cmcoffee/gohort/core/textutil"
 	"github.com/cmcoffee/snugforge/apiclient"
 )
@@ -1345,6 +1346,9 @@ type retryLLM struct {
 	// credential that peer REFUSES can be dropped and re-exchanged. Empty for
 	// every other provider. See peerRefused.
 	peer string
+	// service names the model connector this tier runs on (core/service,
+	// llm.chat), so each call is counted on its row. Empty otherwise.
+	service string
 	// noImages: this model is not shown images; they are described in their
 	// place (LLMProviderConfig.NoImages, the image gate in llm.go).
 	noImages bool
@@ -1521,6 +1525,24 @@ func isTransientError(err error) bool {
 }
 
 func (r *retryLLM) Chat(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error) {
+	resp, err := r.chat(ctx, messages, opts...)
+	r.noteService(resp, err)
+	return resp, err
+}
+
+// noteService records a call on the model connector the tier runs on.
+func (r *retryLLM) noteService(resp *Response, err error) {
+	if r.service == "" || media.ModelCallNote == nil {
+		return
+	}
+	in, out := 0, 0
+	if resp != nil {
+		in, out = resp.InputTokens+resp.CacheReadTokens+resp.CacheWriteTokens, resp.OutputTokens
+	}
+	media.ModelCallNote(r.service, in, out, err)
+}
+
+func (r *retryLLM) chat(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error) {
 	messages = r.withinImageLimit(ctx, r.withoutImages(ctx, messages))
 	return doWithRetry(ctx, LLMMaxRetries(), opts, func() (*Response, error) {
 		// First attempt: original opts, original messages.
@@ -1570,6 +1592,12 @@ func (r *retryLLM) Chat(ctx context.Context, messages []Message, opts ...ChatOpt
 }
 
 func (r *retryLLM) ChatStream(ctx context.Context, messages []Message, handler StreamHandler, opts ...ChatOption) (*Response, error) {
+	resp, err := r.chatStream(ctx, messages, handler, opts...)
+	r.noteService(resp, err)
+	return resp, err
+}
+
+func (r *retryLLM) chatStream(ctx context.Context, messages []Message, handler StreamHandler, opts ...ChatOption) (*Response, error) {
 	messages = r.withinImageLimit(ctx, r.withoutImages(ctx, messages))
 	var handlerCalled bool
 	var chunks int
@@ -1859,6 +1887,11 @@ func ProviderHasNativeTools(provider string) bool {
 	if strings.HasPrefix(strings.TrimSpace(provider), peerProviderPrefix) {
 		return true
 	}
+	// A model connector speaks one of the openai, anthropic and gemini
+	// dialects through gohort's own clients, and each calls tools natively.
+	if strings.HasPrefix(strings.TrimSpace(provider), media.ServiceProviderPrefix) {
+		return true
+	}
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "anthropic", "bedrock", "openai", "gemini", "llama.cpp", "vllm":
 		return true
@@ -1883,6 +1916,7 @@ func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 	// suggest which of the two records was stale.
 	// Captured BEFORE resolution, which rewrites Provider to the concrete one.
 	peerName := peerNameFromProvider(cfg.Provider)
+	serviceName, _ := strings.CutPrefix(strings.TrimSpace(cfg.Provider), media.ServiceProviderPrefix)
 	resolved, err := ResolveModelProvider(cfg, cfg.Provider)
 	if err != nil {
 		return nil, Error(err.Error())
@@ -1949,7 +1983,9 @@ func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 		if model == "" {
 			model = "gpt-4o"
 		}
-		inner = newOpenAILLM(cfg.APIKey, model, openAIEndpoint, api)
+		// An address of its own is a model connector's (an OpenAI-shaped
+		// API elsewhere); the tier's own settings have none.
+		inner = newOpenAILLM(cfg.APIKey, model, chooseStr(cfg.Endpoint, openAIEndpoint), api)
 		inner.(*openAIClient).streamIdleTimeout = cfg.StreamIdleTimeout
 	case "gemini":
 		if cfg.APIKey == "" {
@@ -2051,7 +2087,7 @@ func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 		c.effort = tier
 	}
 
-	return &retryLLM{inner: inner, maxRetries: 5, peer: peerName, noImages: cfg.NoImages}, nil
+	return &retryLLM{inner: inner, maxRetries: 5, peer: peerName, service: serviceName, noImages: cfg.NoImages}, nil
 }
 
 // ListModels asks a provider which models it offers, from the same settings a
@@ -2078,7 +2114,7 @@ func ListModels(ctx context.Context, cfg LLMProviderConfig) ([]string, error) {
 	case "gemini":
 		ids, err = geminiModelList(ctx, cfg.APIKey)
 	case "openai":
-		ids, err = openAIModelList(ctx, "openai", openAIEndpoint, cfg.APIKey, true)
+		ids, err = openAIModelList(ctx, "openai", chooseStr(cfg.Endpoint, openAIEndpoint), cfg.APIKey, cfg.Endpoint == "")
 	case "ollama":
 		ids, err = ollamaModelList(ctx, chooseStr(cfg.Endpoint, ollamaEndpoint))
 	case "llama.cpp", "vllm":

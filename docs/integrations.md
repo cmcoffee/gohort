@@ -66,6 +66,11 @@ What gohort asks of a connector, and where it plugs in:
 | `speech.synthesize` | Admin > Capabilities > Speech (TTS): "Speak with" |
 | `speech.transcribe` | Admin > Capabilities > Audio Transcription: "Transcribe on" |
 | `embed.text` | Admin > Capabilities > Embeddings: "Embed on" |
+| `web.search` | Admin > Capabilities > Web Search: "Provider" |
+| `page.render` | Admin > Capabilities > Page Rendering (Browser): "Render pages on" |
+| `mail.send` | Admin > System > Mail (SMTP): "Send with" |
+| `file.convert` | Admin > Capabilities > System Hooks: a job's Adapt, "Done by" |
+| `llm.chat` | Admin > LLMs > Worker LLM and Lead LLM: "Provider" |
 | `music.generate` | an agent tool, `generate_music_<connector>` |
 | `message.send` | a flow's last step: send what it made through a messaging API |
 
@@ -133,7 +138,7 @@ resource's whole schema.
 | A peer (Admin > Capabilities > Peers) | models, embeddings, speech, transcription | another gohort |
 | A messaging relay | messages in and out | Telegram, Teams, others |
 | A poll (made by an agent's bridge tool) | "the answer changed" | HTTP and a key |
-| gohort's own providers (the local embedder, the built-in image code) | the same contracts | written in Go |
+| gohort's own providers (the local embedder, the built-in image code, web search, the browser, SMTP mail, the LLM tiers) | the same contracts | written in Go |
 
 Services, messaging relays, polls, MCP connections, gohort's own providers
 and the programs System Hooks run are listed under Admin > Extensions >

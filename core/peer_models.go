@@ -40,6 +40,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cmcoffee/gohort/core/media"
 	"github.com/cmcoffee/gohort/core/prompts"
 	"github.com/cmcoffee/snugforge/iotimeout"
 )
@@ -708,6 +709,9 @@ func peerNameFromProvider(provider string) string {
 
 func ResolveModelProvider(cfg LLMProviderConfig, provider string) (LLMProviderConfig, error) {
 	provider = strings.TrimSpace(provider)
+	if name, ok := strings.CutPrefix(provider, media.ServiceProviderPrefix); ok {
+		return resolveModelService(cfg, name)
+	}
 	if provider == "" || !strings.HasPrefix(provider, peerProviderPrefix) {
 		return cfg, nil
 	}
@@ -735,6 +739,28 @@ func ResolveModelProvider(cfg LLMProviderConfig, provider string) (LLMProviderCo
 	// stands, and 0 (the default) takes the peer's.
 	if peerCtx := p.ModelContext(cfg.Model); peerCtx > 0 && (cfg.ContextSize <= 0 || cfg.ContextSize > peerCtx) {
 		cfg.ContextSize = peerCtx
+	}
+	return cfg, nil
+}
+
+// resolveModelService fills a tier's config from the model connector named
+// name, read fresh on every build as a peer is: the dialect's own provider,
+// the connector's address and key, and its model and context where the tier
+// sets none.
+func resolveModelService(cfg LLMProviderConfig, name string) (LLMProviderConfig, error) {
+	if media.ModelService == nil {
+		return cfg, fmt.Errorf("this tier runs on the connector %s, and this build has no connectors linked", name)
+	}
+	t, err := media.ModelService(name, true)
+	if err != nil {
+		return cfg, err
+	}
+	cfg.Provider, cfg.Endpoint, cfg.APIKey = t.Dialect, t.Endpoint, t.Key
+	if strings.TrimSpace(cfg.Model) == "" {
+		cfg.Model = t.Model
+	}
+	if cfg.ContextSize <= 0 {
+		cfg.ContextSize = t.Context
 	}
 	return cfg, nil
 }

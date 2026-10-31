@@ -1,0 +1,90 @@
+{
+  "id": "firecrawl",
+  "title": "Firecrawl (page rendering)",
+  "description": "Firecrawl as gohort's page renderer: it opens a page in its own browser and gives back the page as Markdown, so this machine needs no Chromium. Declared as a service you can test and fix from Admin > Connectors.",
+  "category": "Page rendering",
+  "setup_notes": "Get an API key at firecrawl.dev (it starts fc-; a free plan is available). The credential lands disabled: enable it under API Credentials. The connector lands unapproved: approve it in Admin > Extensions > Connectors and run Test on its row, which reads example.com. Then pick it under Admin > Capabilities > Page Rendering (Browser) as Service: <name>: browse_page, and every fallback to a browser when a plain fetch fails, go through it. Only public web addresses are sent. No price is declared, as it depends on your plan: add a per_call cost to the connector's spec to see what pages cost.",
+  "questions": [
+    {
+      "name": "api_key",
+      "label": "Firecrawl API key",
+      "help": "Starts fc-. Stored in the credential's secret store, never in the connector.",
+      "required": true,
+      "secret": true,
+      "credential": "firecrawl"
+    },
+    {
+      "name": "name",
+      "label": "Connector name",
+      "help": "Lowercase letters, digits, dashes and underscores; Page Rendering lists it by this name.",
+      "default": "firecrawl"
+    }
+  ],
+  "bundle": {
+    "bundle": "gohort.bundle/v1",
+    "artifacts": [
+      {
+        "type": "credential",
+        "name": "firecrawl",
+        "recipe": {
+          "name": "firecrawl",
+          "type": "bearer",
+          "base_url": "https://api.firecrawl.dev",
+          "allowed_endpoints": [
+            "/v1/scrape"
+          ],
+          "description": "Firecrawl API, for page rendering."
+        }
+      },
+      {
+        "type": "connector",
+        "name": "{{name}}",
+        "recipe": {
+          "name": "{{name}}",
+          "kind": "service",
+          "template": "firecrawl",
+          "desc": "Firecrawl page rendering",
+          "spec": {
+            "provider": {
+              "transport": "http",
+              "base_url": "https://api.firecrawl.dev",
+              "auth": {
+                "credential": "firecrawl"
+              },
+              "operations": {
+                "read": {
+                  "method": "POST",
+                  "path": "/v1/scrape",
+                  "body": {
+                    "url": "{url}",
+                    "formats": [
+                      "markdown"
+                    ]
+                  }
+                }
+              }
+            },
+            "provides": [
+              {
+                "capability": "page.render",
+                "steps": [
+                  {
+                    "call": "read"
+                  }
+                ],
+                "output": {
+                  "text": {
+                    "path": "data.markdown"
+                  },
+                  "title": {
+                    "path": "data.metadata.title"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

@@ -438,6 +438,10 @@ func (a *AdminApp) handleLLMConfigSave(table string, worker bool) func(c *jsonap
 		if err := ValidateModelID(strings.TrimSpace(req.Provider), req.Model); err != nil {
 			return nil, jsonapi.BadRequest(err.Error())
 		}
+		// A model connector must be one, and approved.
+		if err := serviceProviderOK(req.Provider, "llm.chat"); err != nil {
+			return nil, jsonapi.BadRequest(err.Error())
+		}
 		// Trimmed on the way in, so the STORED value is clean and the form
 		// stops displaying a leading space nobody can see. The providers trim
 		// defensively too; this is what keeps the two from disagreeing about

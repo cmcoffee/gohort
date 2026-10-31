@@ -17,6 +17,7 @@ import (
 	"sync"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/flows"
 	"github.com/cmcoffee/gohort/core/media"
 )
 
@@ -24,6 +25,122 @@ func init() {
 	media.TranscribeService = transcribeVia
 	media.SpeechService = speakVia
 	media.EmbedService = embedVia
+	media.PageService = renderVia
+	media.MailService = mailVia
+	flows.ConvertService = convertVia
+	media.ModelService = modelTarget
+	media.ModelCallNote = noteModelCall
+}
+
+// modelTarget reads the approved model connector named name for an LLM tier:
+// its dialect, address, default model and context, its token prices, and with
+// withKey its credential's key, which the store gives only for an address the
+// credential allows (SecureAPI.ModelKey).
+func modelTarget(name string, withKey bool) (media.ModelTarget, error) {
+	var t media.ModelTarget
+	c, ok := GetConnector(RootDB, name)
+	if !ok || c.Kind != Kind {
+		return t, fmt.Errorf("no model connector named %q", name)
+	}
+	if !c.Approved {
+		return t, fmt.Errorf("the model connector %s is not approved: approve it under Admin > Extensions > Connectors", name)
+	}
+	s, err := specOf(c)
+	if err != nil {
+		return t, err
+	}
+	b, _, err := s.binding("llm.chat")
+	if err != nil {
+		return t, fmt.Errorf("the connector %s is not a model: %w", name, err)
+	}
+	t.Dialect, t.Endpoint = b.Dialect, strings.TrimRight(strings.TrimSpace(s.Provider.BaseURL), "/")
+	if m := b.Defaults["model"]; m != nil {
+		t.Model = fmt.Sprint(m)
+	}
+	t.Context = number(b.Defaults["context"], 0)
+	if cost := b.Cost; cost != nil && (cost.PerMillionInput > 0 || cost.PerMillionOutput > 0) {
+		t.InPerMillion, t.OutPerMillion, t.Priced = cost.PerMillionInput, cost.PerMillionOutput, true
+	}
+	if withKey && s.Provider.Auth.Credential != "" {
+		key, err := Secure().ModelKey(s.Provider.Auth.Credential, t.Endpoint+"/")
+		if err != nil {
+			return t, err
+		}
+		t.Key = key
+	}
+	return t, nil
+}
+
+// noteModelCall records one model call on the connector's row: whether it
+// failed, and what its tokens cost at the connector's prices.
+func noteModelCall(name string, in, out int, err error) {
+	t, terr := modelTarget(name, false)
+	var o outcome
+	if terr == nil && t.Priced {
+		o.cost, o.priced = float64(in)/1e6*t.InPerMillion+float64(out)/1e6*t.OutPerMillion, true
+	}
+	noteCall(context.Background(), name, "llm.chat", o, err)
+}
+
+// convertVia converts data, a file of format from (an extension), to format
+// to with the service connector named name, and gives the converted file.
+func convertVia(ctx context.Context, name string, data []byte, from, to string) ([]byte, error) {
+	ext := ""
+	if from != "" {
+		ext = "." + from
+	}
+	f, err := fileNamed(data, ext)
+	if err != nil {
+		return nil, err
+	}
+	defer os.Remove(f.Path)
+	in := map[string]any{"file": f, "to": to}
+	if from != "" {
+		in["from"] = from
+	}
+	res, err := Call(ctx, nil, name, "file.convert", in)
+	if err != nil {
+		return nil, err
+	}
+	out := res["file"].File
+	defer os.Remove(out.Path)
+	return os.ReadFile(out.Path)
+}
+
+// mailVia sends one email with the service connector named name: from the
+// address given, or the connector's own when it is blank.
+func mailVia(ctx context.Context, name, from, to, subject, body string) error {
+	in := map[string]any{"to": to, "subject": subject, "body": body}
+	if f := strings.TrimSpace(from); f != "" {
+		in["from"] = f
+	}
+	_, err := Call(ctx, nil, name, "mail.send", in)
+	return err
+}
+
+// renderVia renders the page at url with the service connector named name and
+// gives at most maxChars of its text. Only a public web address is sent: the
+// rule the browser keeps, so a flow calling the contract directly keeps it
+// too.
+func renderVia(ctx context.Context, name, url string, maxChars int) (string, error) {
+	if err := RefuseNonPublicHost(url); err != nil {
+		return "", err
+	}
+	res, err := Call(ctx, nil, name, "page.render", map[string]any{"url": url})
+	if err != nil {
+		return "", err
+	}
+	text := strings.TrimSpace(res["text"].Text)
+	// The title goes first, unless the text already opens with it (a
+	// Markdown heading, say).
+	first, _, _ := strings.Cut(text, "\n")
+	if t := strings.TrimSpace(res["title"].Text); t != "" && strings.TrimSpace(strings.TrimLeft(first, "# ")) != t {
+		text = t + "\n\n" + text
+	}
+	if r := []rune(text); maxChars > 0 && len(r) > maxChars {
+		text = string(r[:maxChars])
+	}
+	return text, nil
 }
 
 // embedVia embeds texts with the service connector named name, in model when
@@ -39,6 +156,34 @@ func embedVia(ctx context.Context, name, model string, texts []string) ([][]floa
 		return nil, err
 	}
 	return Vectors(res)
+}
+
+// Search searches with the service connector named name and gives the
+// results in the numbered shape every search provider gives the web_search
+// tool ("1. Title\n   URL\n   Snippet"), or "No results found."
+func Search(ctx context.Context, name, query string) (string, error) {
+	res, err := Call(ctx, nil, name, "web.search", map[string]any{"query": query})
+	if err != nil {
+		return "", err
+	}
+	rs, err := SearchResults(res)
+	if err != nil {
+		return "", err
+	}
+	if len(rs) == 0 {
+		return "No results found.", nil
+	}
+	var b strings.Builder
+	for i, x := range rs {
+		if i > 0 {
+			b.WriteString("\n\n")
+		}
+		fmt.Fprintf(&b, "%d. %s\n   %s", i+1, strings.TrimSpace(x.Title), x.URL)
+		if s := strings.TrimSpace(x.Snippet); s != "" {
+			b.WriteString("\n   " + s)
+		}
+	}
+	return b.String(), nil
 }
 
 // transcribeVia transcribes audio with the service connector named name. The
