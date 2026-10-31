@@ -74,13 +74,17 @@ func (a *AdminApp) handleConnectors(c *jsonapi.Call) (any, error) {
 		State  string `json:"state"`
 		// Endpoints is a service with endpoints to list (Endpoints on its row).
 		Endpoints bool `json:"endpoints,omitempty"`
-		// Group is the band the row sits in (connectorGroups).
-		Group string `json:"group"`
+		// Group is the band the row sits in (connectorGroups); GroupSummary
+		// what its heading says the band holds, and GroupOpen whether the
+		// band starts open (what an admin added and acts on).
+		Group        string `json:"group"`
+		GroupSummary string `json:"group_summary,omitempty"`
+		GroupOpen    bool   `json:"group_open,omitempty"`
 	}
 	var rows []connRow
 	for _, conn := range ListConnectors(RootDB) {
 		_, canConfig := TemplateForConnector(conn)
-		row := connRow{conn.Name, conn.Kind, ConnectorSummary(conn), conn.Owner, conn.Approved, conn.LastError, conn.Template, conn.Kind == RestImageConnectorKind, canConfig, connectorWebhook(conn), "", false, false, "", service.Fixable(conn), true, "pending", conn.Kind == service.Kind, connectorGroup(conn.Kind)}
+		row := connRow{conn.Name, conn.Kind, ConnectorSummary(conn), conn.Owner, conn.Approved, conn.LastError, conn.Template, conn.Kind == RestImageConnectorKind, canConfig, connectorWebhook(conn), "", false, false, "", service.Fixable(conn), true, "pending", conn.Kind == service.Kind, connectorGroup(conn.Kind), "", false}
 		if conn.Approved {
 			row.State = "approved"
 		}
@@ -118,6 +122,42 @@ func (a *AdminApp) handleConnectors(c *jsonapi.Call) (any, error) {
 	sort.SliceStable(rows, func(i, j int) bool {
 		return slices.Index(connectorGroups, rows[i].Group) < slices.Index(connectorGroups, rows[j].Group)
 	})
+	// Each band's heading says what it holds, so a folded band still does.
+	type tally struct{ n, pending, failing, inUse, missing int }
+	t := map[string]*tally{}
+	for _, r := range rows {
+		g := t[r.Group]
+		if g == nil {
+			g = &tally{}
+			t[r.Group] = g
+		}
+		g.n++
+		switch {
+		case r.State == "pending":
+			g.pending++
+		case strings.HasPrefix(r.Status, "In use"):
+			g.inUse++
+		case strings.HasPrefix(r.Status, "Not installed"):
+			g.missing++
+		}
+		if r.LastError != "" {
+			g.failing++
+		}
+	}
+	for i := range rows {
+		g := t[rows[i].Group]
+		parts := []string{fmt.Sprint(g.n)}
+		for _, x := range []struct {
+			n    int
+			what string
+		}{{g.pending, "pending"}, {g.failing, "with an error"}, {g.inUse, "in use"}, {g.missing, "not installed"}} {
+			if x.n > 0 {
+				parts = append(parts, fmt.Sprintf("%d %s", x.n, x.what))
+			}
+		}
+		rows[i].GroupSummary = strings.Join(parts, " · ")
+		rows[i].GroupOpen = rows[i].Stored
+	}
 	return rows, nil
 }
 

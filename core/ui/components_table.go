@@ -43,6 +43,19 @@ type Table struct {
 	// {field} placeholders read that row: have the server put what the
 	// group's actions need on it. Drawn quiet, since they are occasional.
 	GroupActions []RowAction `json:"group_actions,omitempty"`
+	// GroupFold makes each band's heading a toggle that folds the band to
+	// that heading, for a long list in many groups where reading every row
+	// of every group is not the job: the heading and its summary say what is
+	// inside. A band starts open when any of its rows has GroupOpenField
+	// truthy (what needs a hand, or what gets acted on), closed otherwise;
+	// searching opens every band. What a reader opens or closes stays so
+	// while the page is open.
+	GroupFold      bool   `json:"group_fold,omitempty"`
+	GroupOpenField string `json:"group_open_field,omitempty"`
+	// GroupSummaryField is a field read off a group's first row and shown
+	// beside its heading ("8 · 1 not installed"): what the group holds, so a
+	// folded band still says it. Have the server put it on every row.
+	GroupSummaryField string `json:"group_summary_field,omitempty"`
 	// Search renders a filter box above the table. Typing narrows rows to those
 	// whose visible column values (and group heading) contain the text, matched
 	// case-insensitively. Client-side over the rows already fetched — this is a

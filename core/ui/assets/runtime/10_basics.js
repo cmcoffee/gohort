@@ -489,6 +489,9 @@
       return hay.join(' \u0000 ').toLowerCase().indexOf(searchText) >= 0;
     }
 
+    // foldState is what a reader opened or closed, by group, kept across
+    // re-renders while the page is open (group_fold).
+    var foldState = {};
     function renderRows() {
       listEl.innerHTML = '';
       if (!records.length) {
@@ -511,6 +514,16 @@
       // Rows go into the band's body; ungrouped rows go straight on the list.
       var lastGroup = null;
       var host = listEl;
+      // Which bands start open, when they fold: any band one of whose rows
+      // asks for it (group_open_field). A reader's own toggle wins after.
+      var groupWantsOpen = {};
+      if (cfg.group_by && cfg.group_fold) {
+        visible.forEach(function(rec) {
+          var g = lookup(rec, cfg.group_by);
+          g = (g === undefined || g === null) ? '' : String(g);
+          if (cfg.group_open_field && lookup(rec, cfg.group_open_field)) groupWantsOpen[g] = true;
+        });
+      }
       visible.forEach(function(rec) {
         if (cfg.group_by) {
           var g = lookup(rec, cfg.group_by);
@@ -523,9 +536,35 @@
               host = listEl;
             } else {
               var band = el('div', {class: 'ui-table-band'});
-              band.appendChild(el('div', {class: 'ui-table-group'}, [g]));
+              var heading = el('div', {class: 'ui-table-group'}, [g]);
+              var summary = cfg.group_summary_field ? lookup(rec, cfg.group_summary_field) : '';
+              if (summary) heading.appendChild(el('span', {class: 'ui-table-group-summary'}, [String(summary)]));
+              band.appendChild(heading);
               host = el('div', {class: 'ui-table-band-body'});
               band.appendChild(host);
+              if (cfg.group_fold) {
+                var key = g;
+                var open = searchText ? true : (key in foldState ? foldState[key] : !!groupWantsOpen[key]);
+                heading.classList.add('ui-table-group-toggle');
+                heading.setAttribute('role', 'button');
+                heading.setAttribute('tabindex', '0');
+                var setOpen = function(b, h, o) {
+                  b.classList.toggle('is-folded', !o);
+                  h.setAttribute('aria-expanded', o ? 'true' : 'false');
+                };
+                setOpen(band, heading, open);
+                (function(b, h, k) {
+                  var toggle = function() {
+                    var o = b.classList.contains('is-folded');
+                    foldState[k] = o;
+                    setOpen(b, h, o);
+                  };
+                  h.addEventListener('click', toggle);
+                  h.addEventListener('keydown', function(e) {
+                    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
+                  });
+                })(band, heading, key);
+              }
               // Group actions sit at the foot of the band, under its rows,
               // read against the group's first row (its OnlyIf and
               // placeholders). Appended now, after the body the rows go

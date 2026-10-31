@@ -1203,6 +1203,14 @@ select:-webkit-autofill {
   border-bottom: 1px solid var(--border);
   margin-bottom: 0.2rem;
 }
+/* A foldable group band (Table.GroupFold): its heading is the toggle, with a
+ * caret that turns, and a folded band shows its heading and summary only. */
+.ui-table-group-toggle { cursor: pointer; user-select: none; }
+.ui-table-group-toggle::before { content: '\25BE'; display: inline-block; margin-right: 0.4em; transition: transform 0.12s; }
+.ui-table-band.is-folded .ui-table-group-toggle::before { transform: rotate(-90deg); }
+.ui-table-band.is-folded > .ui-table-band-body,
+.ui-table-band.is-folded > .ui-table-group-foot { display: none; }
+.ui-table-group-summary { margin-left: 0.6em; font-weight: 400; text-transform: none; letter-spacing: normal; color: var(--text-mute); }
 .ui-table-group:first-child { padding-top: 0.2rem; }
 /* Group actions at the foot of a band: quiet grey, whatever variant they
  * declare, since they act on the whole group and are reached for rarely. */
@@ -1226,6 +1234,9 @@ select:-webkit-autofill {
  * way (.ui-table-list's gap). Without it they sat edge to edge, and the last
  * one lost its bottom border to a rule written for flat rows. */
 .ui-table-band-body { display: flex; flex-direction: column; gap: 0.5rem; }
+/* A folded band is its heading alone: no rule under it, no space for rows. */
+.ui-table-band.is-folded { padding-bottom: 0; }
+.ui-table-band.is-folded > .ui-table-group { border-bottom: none; margin-bottom: 0; padding-bottom: 0.6rem; }
 .ui-table-cell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-lg); }
 .ui-table-cell.mute { color: var(--text-mute); font-size: var(--fs-xs); }
 /* The second line exists for the text that says what a row IS (a

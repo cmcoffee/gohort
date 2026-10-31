@@ -191,6 +191,13 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 						Source:  "api/connectors",
 						RowKey:  "name",
 						GroupBy: "group",
+						// Many connectors in many groups: each band folds to
+						// its heading and summary. What an admin added starts
+						// open; gohort's own and what is read from elsewhere
+						// (built-ins, peers, Source Hooks, programs) closed.
+						GroupFold:         true,
+						GroupOpenField:    "group_open",
+						GroupSummaryField: "group_summary",
 						// A connector row carries a name, a type, who drafted it,
 						// its state, a summary (an address and an auth mode) and
 						// six controls. Across one line the summary and the

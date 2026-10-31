@@ -49,8 +49,10 @@ func TestAConnectorIsAddedFromItsSpec(t *testing.T) {
 		return w
 	}
 
-	if w := call("GET", "/api/connectors/add", ""); w.Code != 200 || !strings.Contains(w.Body.String(), `"spec":""`) {
-		t.Errorf("the blank form: %d %s", w.Code, w.Body.String())
+	if w := call("GET", "/api/connectors/add", ""); w.Code != 200 || !strings.Contains(w.Body.String(), `"spec":""`) ||
+		!strings.Contains(w.Body.String(), "Embeddings: off") || !strings.Contains(w.Body.String(), "Web search: duckduckgo (built in)") ||
+		!strings.Contains(w.Body.String(), "Search: Brave, Serper, Tavily") || !strings.Contains(w.Body.String(), "ntfy (send files), ntfy (send notifications)") {
+		t.Errorf("the blank form, with what exists: %d %s", w.Code, w.Body.String())
 	}
 	if w := call("POST", "/api/connectors/add", form("voice", `{"provider":{}}`)); w.Code != 400 {
 		t.Errorf("a spec that does not fit: %d %s", w.Code, w.Body.String())
@@ -74,11 +76,20 @@ func TestAConnectorIsAddedFromItsSpec(t *testing.T) {
 	}
 
 	r := httptest.NewRequest("POST", "/api/connectors/add/assist", nil)
-	about, err := connectorAddAbout(r)
-	if err != nil || !strings.Contains(about, "list[field=value]") || !strings.Contains(about, "web.search takes") || !strings.Contains(about, "dialect") {
+	about, err := a.connectorAddAbout(r)
+	if err != nil || !strings.Contains(about, "list[field=value]") || !strings.Contains(about, "web.search takes") || !strings.Contains(about, "dialect") ||
+		!strings.Contains(about, "template:brave-search") || !strings.Contains(about, "What each capability runs on here now: Embeddings:") {
 		t.Errorf("what the assistant is told: %v\n%s", err, about)
 	}
-	for _, tl := range connectorAddTools(r) {
+	for _, tl := range a.connectorAddTools(r) {
+		if tl.Tool.Name == "service_start" {
+			if out, _ := tl.Handler(context.Background(), map[string]any{"from": "template:openai-images"}); !strings.Contains(out, `"capability": "image.generate"`) {
+				t.Errorf("starting from a template: %q", out)
+			}
+			if out, _ := tl.Handler(context.Background(), map[string]any{"from": "connector:voice"}); !strings.Contains(out, `"speech.synthesize"`) {
+				t.Errorf("starting from a connector here: %q", out)
+			}
+		}
 		if tl.Tool.Name != "service_check" {
 			continue
 		}
