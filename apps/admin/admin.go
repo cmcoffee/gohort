@@ -185,6 +185,7 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	a.registerCredentialsRoutes(sub)
 	a.registerMCPRoutes(sub)
 	a.registerConnectorsRoutes(sub)
+	a.registerConnectorFixRoutes(sub)
 	a.registerSystemDepsRoutes(sub)
 	a.registerSystemDepsFixRoutes(sub)
 	a.registerArtifactsRoutes(sub)

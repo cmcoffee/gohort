@@ -101,6 +101,22 @@ var TranscribeResolver func(TranscribeConfig) TranscribeConfig
 // sends, and a peer credential rotates between them.
 var HTTPClientForProvider func(provider string, timeout time.Duration) *http.Client
 
+// ServiceProviderPrefix marks a config whose Provider is a service connector
+// ("service:<name>", core/service) rather than this instance or a peer.
+const ServiceProviderPrefix = "service:"
+
+// EmbedService, when set, embeds through a service connector, for an
+// embedding config whose Provider is "service:<name>" (core/service installs
+// it): one vector per text, in order, made with model (blank: the service's
+// own). Nil, and such a config is refused. It sits with the other service
+// seams here although embedding lives in core, which keeps its exports few.
+var EmbedService func(ctx context.Context, connector, model string, texts []string) ([][]float32, error)
+
+// TranscribeService, when set, transcribes through a service connector, for a
+// config whose Provider names one. core/service installs it; this package
+// knows nothing about connectors. Nil, and such a config is refused.
+var TranscribeService func(ctx context.Context, connector string, audio []byte, filename string) (string, error)
+
 // transcribeClient returns what this request should be sent on.
 func transcribeClient(cfg TranscribeConfig, timeout time.Duration) *http.Client {
 	if HTTPClientForProvider != nil {
@@ -271,6 +287,15 @@ func TranscribeWith(ctx context.Context, cfg TranscribeConfig, audio []byte, fil
 	if !cfg.Enabled {
 		nfo.Debug("[transcribe] disabled (cfg.Enabled=false)")
 		return "", fmt.Errorf("transcription disabled")
+	}
+	if name, ok := strings.CutPrefix(cfg.Provider, ServiceProviderPrefix); ok {
+		if TranscribeService == nil {
+			return "", fmt.Errorf("transcription is set to the service %q, and services are not available here", name)
+		}
+		if len(audio) == 0 {
+			return "", fmt.Errorf("transcription: empty audio")
+		}
+		return TranscribeService(ctx, name, audio, filename)
 	}
 	if cfg.Endpoint == "" {
 		nfo.Debug("[transcribe] no endpoint configured")

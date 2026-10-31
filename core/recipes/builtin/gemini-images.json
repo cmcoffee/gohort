@@ -1,0 +1,128 @@
+{
+  "id": "gemini-images",
+  "title": "Gemini (image generation)",
+  "description": "Google's Gemini image model as an image backend, declared as a service: its request, reply and price are data you can test and fix from Admin > Connectors.",
+  "category": "Images",
+  "setup_notes": "Get an API key at aistudio.google.com/apikey. The credential lands disabled: enable it under API Credentials. The connector lands unapproved: approve it in Admin > Extensions > Connectors, run Test on its row, then pick it as the image provider under Capabilities. The price per image is set to Google's at the time this template was written: edit the spec's cost if it has changed.",
+  "questions": [
+    {
+      "name": "api_key",
+      "label": "Gemini API key",
+      "help": "Stored in the credential's secret store, never in the connector.",
+      "required": true,
+      "secret": true,
+      "credential": "gemini_images"
+    },
+    {
+      "name": "name",
+      "label": "Connector name",
+      "help": "Lowercase letters, digits, dashes and underscores; the image provider picker lists it by this name.",
+      "default": "gemini-images"
+    },
+    {
+      "name": "model",
+      "label": "Model",
+      "help": "A Gemini model that returns images.",
+      "default": "gemini-2.5-flash-image"
+    }
+  ],
+  "bundle": {
+    "bundle": "gohort.bundle/v1",
+    "artifacts": [
+      {
+        "type": "credential",
+        "name": "gemini_images",
+        "recipe": {
+          "name": "gemini_images",
+          "type": "header",
+          "param_name": "x-goog-api-key",
+          "base_url": "https://generativelanguage.googleapis.com",
+          "allowed_endpoints": [
+            "/v1beta/models",
+            "/v1beta/models/**"
+          ],
+          "description": "Google Gemini API, for image generation."
+        }
+      },
+      {
+        "type": "connector",
+        "name": "{{name}}",
+        "recipe": {
+          "name": "{{name}}",
+          "kind": "service",
+          "template": "gemini-images",
+          "desc": "Gemini image generation ({{model}})",
+          "spec": {
+            "provider": {
+              "transport": "http",
+              "base_url": "https://generativelanguage.googleapis.com",
+              "auth": {
+                "credential": "gemini_images"
+              },
+              "operations": {
+                "generate": {
+                  "method": "POST",
+                  "path": "/v1beta/models/{model}:generateContent",
+                  "body": {
+                    "contents": [
+                      {
+                        "parts": [
+                          {
+                            "text": "{prompt}"
+                          }
+                        ]
+                      }
+                    ],
+                    "generationConfig": {
+                      "responseModalities": [
+                        "TEXT",
+                        "IMAGE"
+                      ],
+                      "imageConfig": {
+                        "aspectRatio": "{aspect}"
+                      }
+                    }
+                  }
+                },
+                "models": {
+                  "path": "/v1beta/models"
+                }
+              },
+              "health": {
+                "call": "models",
+                "expect": "models",
+                "every_mins": 60
+              }
+            },
+            "provides": [
+              {
+                "capability": "image.generate",
+                "steps": [
+                  {
+                    "call": "generate"
+                  }
+                ],
+                "output": {
+                  "image": {
+                    "path": "candidates.0.content.parts[inlineData].inlineData.data",
+                    "as": "base64"
+                  }
+                },
+                "defaults": {
+                  "model": "{{model}}",
+                  "aspect": "1:1"
+                },
+                "wide": {
+                  "aspect": "16:9"
+                },
+                "cost": {
+                  "per_call": 0.039
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

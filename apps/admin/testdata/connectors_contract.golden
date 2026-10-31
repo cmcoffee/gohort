@@ -3,7 +3,7 @@
 alice GET /api/connectors ""
   403 forbidden
 root GET /api/connectors ""
-  200 [{"name":"ct-art","kind":"rest_image","summary":"generate images via http://127.0.0.1:1/sdapi/v1/txt2img (synchronous, credential no_auth) → tool generate_image_ct_art","owner":"root","approved":false,"last_error":"","template":"a1111","is_image":true,"configurable":true}]
+  200 [{"name":"ct-art","kind":"rest_image","summary":"generate images via http://127.0.0.1:1/sdapi/v1/txt2img (synchronous, credential no_auth) → tool generate_image_ct_art","owner":"root","approved":false,"last_error":"","template":"a1111","is_image":true,"configurable":true,"fixable":true}]
 root PUT /api/connectors "{}"
   405 method not allowed
 (signed out) GET /api/connectors/spec?name=ct-art ""
@@ -59,7 +59,7 @@ root POST /api/connectors?action=update_spec&name=ct-nope "{}"
 root POST /api/connectors?action=update_spec&name=ct-art "{\"credential\":\"no_auth\",\"submit_url\":\"http://127.0.0.1:2/sdapi/v1/txt2img\",\"submit_method\":\"POST\",\"submit_body\":\"{\\\"prompt\\\":\\\"{prompt}\\\",\\\"negative_prompt\\\":\\\"{negative}\\\",\\\"width\\\":{width},\\\"height\\\":{height},\\\"steps\\\":{steps},\\\"seed\\\":{seed}}\",\"image_b64_path\":\"images.0\",\"default_width\":512,\"default_height\":512,\"default_steps\":20,\"comfy_map\":{}}"
   204 
 root GET /api/connectors ""
-  200 [{"name":"ct-art","kind":"rest_image","summary":"generate images via http://127.0.0.1:2/sdapi/v1/txt2img (synchronous, credential no_auth) → tool generate_image_ct_art","owner":"root","approved":false,"last_error":"","template":"a1111","is_image":true,"configurable":true}]
+  200 [{"name":"ct-art","kind":"rest_image","summary":"generate images via http://127.0.0.1:2/sdapi/v1/txt2img (synchronous, credential no_auth) → tool generate_image_ct_art","owner":"root","approved":false,"last_error":"","template":"a1111","is_image":true,"configurable":true,"fixable":true}]
 root GET /api/connectors/spec?name=ct-nope ""
   404 no connector named ct-nope
 alice POST /api/source-hooks "{\"name\":\"ct-mine\",\"type\":\"api\",\"endpoint\":\"https://example.test\"}"

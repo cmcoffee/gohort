@@ -83,3 +83,34 @@ func TestAnotherUserCannotDeleteOrUpdateAConnector(t *testing.T) {
 		t.Fatalf("alice deleting her own connector: %v", err)
 	}
 }
+
+// Builder drafts a service connector as its whole spec, which lands
+// unapproved; a spec that names something it does not mean is refused with
+// what is wrong, and nothing is saved.
+func TestBuilderDraftsAServiceConnector(t *testing.T) {
+	connectorOwnerFixture(t)
+	sess := &ToolSession{Username: "alice"}
+	spec := map[string]any{
+		"provider": map[string]any{"transport": "http", "base_url": "https://api.example.test",
+			"auth":       map[string]any{"credential": "acme_key"},
+			"operations": map[string]any{"submit": map[string]any{"method": "POST", "path": "/v1/images", "body": map[string]any{"prompt": "{prompt}"}}}},
+		"provides": []any{map[string]any{"capability": "image.generate", "steps": []any{map[string]any{"call": "submit"}},
+			"output": map[string]any{"image": map[string]any{"path": "data.0.b64_json", "as": "base64"}}}},
+	}
+	out, err := connectorCreate(map[string]any{"kind": "service", "name": "acme-images", "service_spec": spec}, sess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, ok := GetConnector(RootDB, "acme-images")
+	if !ok || c.Approved || !strings.Contains(out, "acme-images") {
+		t.Fatalf("saved %v, approved %v: %s", ok, c.Approved, out)
+	}
+	bad := spec
+	bad["provides"].([]any)[0].(map[string]any)["capability"] = "image.paint"
+	if _, err := connectorCreate(map[string]any{"kind": "service", "name": "acme-two", "service_spec": bad}, sess); err == nil || !strings.Contains(err.Error(), "unknown capability") {
+		t.Errorf("an unknown capability: %v", err)
+	}
+	if _, ok := GetConnector(RootDB, "acme-two"); ok {
+		t.Error("a refused spec was saved")
+	}
+}

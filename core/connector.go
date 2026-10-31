@@ -82,6 +82,32 @@ type ConnectorAutoApprover interface {
 	AutoApprove() bool
 }
 
+// ConnectorCredentialUser is an optional ConnectorHandler capability: the
+// credentials a connector spends. A session denied one of them is not offered
+// what spends it (an image backend among an agent's choices).
+type ConnectorCredentialUser interface {
+	Credentials(c Connector) []string
+}
+
+// connectorSpends reports whether c spends a credential the session was
+// denied. A kind that does not say spends none.
+func connectorSpends(c Connector, denied map[string]bool) bool {
+	h, ok := ConnectorHandlerFor(c.Kind)
+	if !ok || len(denied) == 0 {
+		return false
+	}
+	u, ok := h.(ConnectorCredentialUser)
+	if !ok {
+		return false
+	}
+	for _, cred := range u.Credentials(c) {
+		if denied[strings.TrimSpace(cred)] {
+			return true
+		}
+	}
+	return false
+}
+
 // connectorAutoApproves reports whether a kind materializes on create.
 func connectorAutoApproves(h ConnectorHandler) bool {
 	aa, ok := h.(ConnectorAutoApprover)

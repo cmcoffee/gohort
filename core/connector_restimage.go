@@ -1348,13 +1348,24 @@ func reachableImageBackends(sess *ToolSession) []ImageBackendChoice {
 	var out []ImageBackendChoice
 	// ListConnectors already sorts by name, so the enum order is stable.
 	for _, c := range ListConnectors(RootDB) {
-		if c.Kind != RestImageConnectorKind || !c.Approved {
-			continue
-		}
 		// Registered means Materialize ran: the spec parsed and the backend
 		// closure exists. An approved-but-unmaterialized connector would
 		// advertise a name that can't dispatch.
-		if !ImageBackendRegistered(c.Name) {
+		_, edits := lookupImageEditBackend(c.Name)
+		if !c.Approved || !(ImageBackendRegistered(c.Name) || edits) {
+			continue
+		}
+		// Another kind's image backend (a service, core/service) is offered
+		// by name, unless it spends a credential this session was denied.
+		if c.Kind != RestImageConnectorKind {
+			if sess != nil && connectorSpends(c, sess.DeniedCredentials) {
+				continue
+			}
+			choice := ImageBackendChoice{Name: c.Name, Default: c.Name == defaultProvider, Edits: edits}
+			if edits {
+				choice.MaxImages, choice.CascadeMax = 1, 1
+			}
+			out = append(out, choice)
 			continue
 		}
 		s, err := restImageHandler{}.parse(c)
@@ -1467,6 +1478,22 @@ func EditImageWithBackend(sess *ToolSession, req EditImageRequest) (*ImageGenRes
 		qctx = sess.Ctx
 	}
 	defer queueRender(qctx)()
+
+	// Another kind's edit backend (a service): one source picture, verified
+	// here as for every backend, and no mask.
+	if fn, ok := lookupImageEditBackend(req.Backend); ok {
+		if len(req.Images) != 1 {
+			return nil, fmt.Errorf("image backend %q edits one picture at a time and %d were given. Do NOT retry with fewer and present it as what was asked for: tell the user it takes one", req.Backend, len(req.Images))
+		}
+		if strings.TrimSpace(req.Mask) != "" {
+			return nil, fmt.Errorf("image backend %q has no mask input: omit mask", req.Backend)
+		}
+		images, err := resolveInputImages(sess, req.Images, 1)
+		if err != nil {
+			return nil, err
+		}
+		return fn(sess, req.Prompt, images[0].data)
+	}
 
 	s, err := resolveImageConnector(req.Backend)
 	if err != nil {

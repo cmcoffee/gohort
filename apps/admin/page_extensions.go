@@ -210,6 +210,7 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 							},
 							{Field: "summary", Label: "", Mute: true, Flex: 4, Line: 2},
 							{Field: "last_error", Label: "", Mute: true, Flex: 3, Line: 2},
+							{Field: "status", Label: "", Mute: true, Flex: 4, Line: 2},
 						},
 						RowActions: []ui.RowAction{
 							{Type: "button", Label: "Approve",
@@ -222,6 +223,12 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 								PostTo: "configure_backend", OnlyIf: "configurable"},
 							{Type: "button", Label: "Webhook…", Method: "client",
 								PostTo: "connector_webhook", OnlyIf: "webhook", Compact: true},
+							{Type: "button", Label: "Test", Method: "POST",
+								PostTo: "api/connectors/test?name={name}", OnlyIf: "testable",
+								ConfirmField: "test_confirm", Compact: true},
+							{Type: "button", Label: "Check health", Method: "POST",
+								PostTo: "api/connectors/health?name={name}", OnlyIf: "has_health", Compact: true},
+							connectorFixAction(),
 							{Type: "button", Label: "Edit spec", Method: "client",
 								PostTo: "connector_edit_spec", Compact: true},
 							{Type: "button", Label: "Export", Method: "client",
@@ -313,56 +320,37 @@ func mcpServerFormFields() []ui.FormField {
 // read every artifact of every kind for every user on every administrator
 // page, which was most of the second each page took.
 func (a *AdminApp) templatesSection() ui.Section {
-	yesNo := []ui.SelectOption{{Value: "", Label: "No"}, {Value: "yes", Label: "Yes"}}
 	return ui.Section{
 		Title:    "Templates",
 		Subtitle: "Recipes for integrating a service with gohort: answer a few questions, and its credential, tools and the rest are set up as drafts for review.",
 		Detail: "A template asks what it needs (a site address, your email, an API token), fills the answers in, and adds its pieces through the same importer as a bundle file: credentials disabled until you test them, tools pending approval. " +
 			"A secret you give goes straight into its credential's secret store and never into a tool or a file.\n\n" +
-			"Built-in templates ship with gohort. Import one someone shared, or Save as template to make one from things you have built: pick them, and turn the values that differ between deployments (an address, an account) into questions. Export any template to share it.\n\n" +
+			"The list holds the templates you have added. Add offers the ones that ship with gohort, a template file someone shared, or a new one made from things you have built: pick them, and turn the values that differ between deployments (an address, an account) into questions. Export any template to share it.\n\n" +
 			"Builder can do both halves for you: ask it to integrate a service, then to make that a template. It only saves a template when an administrator asks, and stops to show you the title, pieces and questions before it does.",
 		Body: ui.Stack{Children: []ui.Component{
-			ui.Toolbar{Actions: []ui.ToolbarAction{
-				{Label: "Import a template…", Method: "client", URL: "template_import"},
-			}},
 			ui.ModalButton{
-				Label: "Save as template…", Title: "Save as a template",
-				Subtitle: "Pick what goes in, then turn the values that differ between deployments into questions.",
-				Width:    "720px",
-				Body: ui.FormPanel{
-					Assist:  true,
-					PostURL: "api/templates/save", SubmitLabel: "Save template",
-					Invalidate: []string{"api/templates"},
-					Fields: []ui.FormField{
-						{Field: "title", Label: "Title", Type: "text", Required: true, Placeholder: "Acme wiki"},
-						{Field: "id", Label: "Id", Type: "text", Placeholder: "acme-wiki",
-							Help: "Lowercase letters, digits and dashes. Left empty, it is made from the title."},
-						{Field: "description", Label: "What it sets up", Type: "text"},
-						{Field: "category", Label: "Category", Type: "text", Placeholder: "Project tracking"},
-						{Field: "setup_notes", Label: "Setup notes", Type: "textarea", Rows: 3,
-							Help: "Shown when someone adds it: where to get a token, what to enable afterwards."},
-						{Field: "pieces", Label: "What goes in", Type: "checklist", OptionsSource: "api/templates/pieces", Required: true,
-							Help: "What each needs comes along: a tool brings the credential it runs on, including a person's own key, which is why those are not listed on their own. No secret is ever included."},
-						{Field: "questions", Label: "Questions", Type: "rows", AddLabel: "Add a question",
-							Help: "Each value is replaced by the answer wherever it appears. A secret question asks for a credential's secret instead, which never travels.",
-							Columns: []ui.FormField{
-								{Field: "name", Label: "Name", Type: "text", Placeholder: "site", Width: 2},
-								{Field: "label", Label: "Asked as", Type: "text", Placeholder: "Wiki address", Width: 3},
-								{Field: "required", Label: "Required", Type: "select", Options: yesNo, Width: 1},
-								{Field: "secret", Label: "Secret", Type: "select", Options: yesNo, Width: 1},
-								{Field: "value", Label: "Value to replace", Type: "text", OwnLine: true, HideWhen: "secret:yes",
-									Placeholder: "https://wiki.acme.example"},
-								{Field: "kind", Label: "Kind", Type: "select", OwnLine: true, HideWhen: "secret:yes", Options: []ui.SelectOption{
-									{Value: "", Label: "Text"}, {Value: "url", Label: "An https address"},
-									{Value: "http_url", Label: "An http or https address (a server on your network)"},
-									{Value: "long", Label: "Long text (asked in a multi-line box)"},
-								}},
-								{Field: "credential", Label: "The credential whose secret it asks for", Type: "text", OwnLine: true, ShowWhen: "secret:yes",
-									Placeholder: "wiki"},
-								{Field: "help", Label: "Help", Type: "text", OwnLine: true},
-							}},
+				Label: "Add a template…", Title: "Add a template", Align: "left", Width: "760px",
+				Subtitle: "Use one that ships with gohort, bring in a file someone shared, or make a new one from what you have built.",
+				Body: ui.Stack{Children: []ui.Component{
+					ui.Toolbar{Actions: []ui.ToolbarAction{
+						{Label: "Import a template file…", Method: "client", URL: "template_import"},
+					}},
+					templateSaveButton(),
+					ui.Table{
+						Source: "api/templates/builtins",
+						RowKey: "id",
+						Columns: []ui.Col{
+							{Field: "title", Flex: 2},
+							{Field: "category", Mute: true},
+							{Field: "description", Mute: true, Flex: 4, Line: 2},
+						},
+						RowActions: []ui.RowAction{
+							{Type: "button", Label: "Add", Variant: "primary", PostTo: "api/templates/pick?id={id}",
+								Invalidate: []string{"api/templates"}},
+						},
+						EmptyText: "Every built-in template is on your list.",
 					},
-				},
+				}},
 			},
 			ui.Table{
 				Source: "api/templates",
@@ -375,13 +363,61 @@ func (a *AdminApp) templatesSection() ui.Section {
 					{Field: "contains", Label: "", Mute: true, Flex: 4, Line: 2},
 				},
 				RowActions: []ui.RowAction{
-					{Type: "button", Label: "Add", Method: "client", PostTo: "template_install", Variant: "primary", OnlyIf: "_recipe"},
+					{Type: "button", Label: "Set up…", Method: "client", PostTo: "template_install", Variant: "primary", OnlyIf: "_recipe"},
 					{Type: "button", Label: "Export", Method: "client", PostTo: "template_export", Compact: true, OnlyIf: "_recipe"},
 					{Type: "button", Label: "Delete", Variant: "danger", Compact: true, OnlyIf: "_imported",
 						PostTo: "api/templates/delete?id={id}", Confirm: "Delete this template? What was already added from it stays."},
+					{Type: "button", Label: "Remove", Compact: true, OnlyIf: "_picked",
+						PostTo: "api/templates/unpick?id={id}", Invalidate: []string{"api/templates/builtins"}},
 				},
-				EmptyText: "No templates.",
+				EmptyText: "No templates yet. Add one: a built-in, a file someone shared, or one you make from what you have built.",
 			},
 		}},
+	}
+}
+
+// templateSaveButton is making a new template from what has been built: pick
+// what goes in, then turn the values that differ between deployments into
+// questions.
+func templateSaveButton() ui.ModalButton {
+	yesNo := []ui.SelectOption{{Value: "", Label: "No"}, {Value: "yes", Label: "Yes"}}
+	return ui.ModalButton{
+		Label: "Make a new one from what you have built…", Title: "Save as a template", Align: "left",
+		Subtitle: "Pick what goes in, then turn the values that differ between deployments into questions.",
+		Width:    "720px",
+		Body: ui.FormPanel{
+			Assist:  true,
+			PostURL: "api/templates/save", SubmitLabel: "Save template",
+			Invalidate: []string{"api/templates"},
+			Fields: []ui.FormField{
+				{Field: "title", Label: "Title", Type: "text", Required: true, Placeholder: "Acme wiki"},
+				{Field: "id", Label: "Id", Type: "text", Placeholder: "acme-wiki",
+					Help: "Lowercase letters, digits and dashes. Left empty, it is made from the title."},
+				{Field: "description", Label: "What it sets up", Type: "text"},
+				{Field: "category", Label: "Category", Type: "text", Placeholder: "Project tracking"},
+				{Field: "setup_notes", Label: "Setup notes", Type: "textarea", Rows: 3,
+					Help: "Shown when someone adds it: where to get a token, what to enable afterwards."},
+				{Field: "pieces", Label: "What goes in", Type: "checklist", OptionsSource: "api/templates/pieces", Required: true,
+					Help: "What each needs comes along: a tool brings the credential it runs on, including a person's own key, which is why those are not listed on their own. No secret is ever included."},
+				{Field: "questions", Label: "Questions", Type: "rows", AddLabel: "Add a question",
+					Help: "Each value is replaced by the answer wherever it appears. A secret question asks for a credential's secret instead, which never travels.",
+					Columns: []ui.FormField{
+						{Field: "name", Label: "Name", Type: "text", Placeholder: "site", Width: 2},
+						{Field: "label", Label: "Asked as", Type: "text", Placeholder: "Wiki address", Width: 3},
+						{Field: "required", Label: "Required", Type: "select", Options: yesNo, Width: 1},
+						{Field: "secret", Label: "Secret", Type: "select", Options: yesNo, Width: 1},
+						{Field: "value", Label: "Value to replace", Type: "text", OwnLine: true, HideWhen: "secret:yes",
+							Placeholder: "https://wiki.acme.example"},
+						{Field: "kind", Label: "Kind", Type: "select", OwnLine: true, HideWhen: "secret:yes", Options: []ui.SelectOption{
+							{Value: "", Label: "Text"}, {Value: "url", Label: "An https address"},
+							{Value: "http_url", Label: "An http or https address (a server on your network)"},
+							{Value: "long", Label: "Long text (asked in a multi-line box)"},
+						}},
+						{Field: "credential", Label: "The credential whose secret it asks for", Type: "text", OwnLine: true, ShowWhen: "secret:yes",
+							Placeholder: "wiki"},
+						{Field: "help", Label: "Help", Type: "text", OwnLine: true},
+					}},
+			},
+		},
 	}
 }

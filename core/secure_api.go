@@ -2212,6 +2212,44 @@ func (s *SecureAPI) DispatchToolCallRequest(sess *ToolSession, r ToolCallRequest
 	return s.dispatchToolCallFull(sess, r.Credential, r.URL, r.Method, r.Body, r.ContentType, r.PipeFollowing, r.Headers, r.Upload, r.TimeoutSecs)
 }
 
+// DispatchHostScoped makes r with no credential, allowed only to the scheme
+// and host of scope: a service an admin approved that takes no auth (one on
+// the LAN, which the public-only no_auth path refuses). The same governed
+// path as a credential's call, so Private mode, the audit and the response
+// limits apply. r.Credential is ignored.
+func (s *SecureAPI) DispatchHostScoped(sess *ToolSession, scope string, r ToolCallRequest) (string, error) {
+	u, err := url.Parse(strings.TrimSpace(scope))
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return "", fmt.Errorf("a host-scoped call needs an http(s) scope URL, got %q", scope)
+	}
+	scoped := SecureCredential{
+		Name:              "host_scoped",
+		Type:              SecureCredNone,
+		AllowedURLPattern: u.Scheme + "://" + u.Host + "/**",
+		Description:       "Unauthenticated dispatch, scoped to one approved service's host.",
+	}
+	args := map[string]any{"url": r.URL, "method": firstNonEmpty(r.Method, "GET")}
+	if r.PipeFollowing {
+		args["__pipe_following"] = true
+	}
+	if r.Body != "" {
+		args["body"] = r.Body
+	}
+	if r.ContentType != "" {
+		args["__content_type"] = r.ContentType
+	}
+	if h := toolCallHeaderArgs(r.Headers); h != nil {
+		args["request_headers"] = h
+	}
+	if r.Upload != nil {
+		args[secureUploadArg] = r.Upload
+	}
+	if r.TimeoutSecs > 0 {
+		args[secureTimeoutArg] = r.TimeoutSecs
+	}
+	return s.dispatch(scoped, args, sess)
+}
+
 // DispatchUpload streams a file to url through the credential's governed
 // dispatch. Prefer this over building an http.Client: the allow-list, audit
 // log, rate limit, and Private-mode gate all live on this path.

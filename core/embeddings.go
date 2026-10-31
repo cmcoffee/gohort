@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cmcoffee/gohort/core/media"
 	"github.com/cmcoffee/gohort/core/textutil"
 )
 
@@ -62,11 +63,19 @@ type EmbeddingConfig struct {
 // chunkVectorComparable: the model, plus the document prefix when one is
 // set, since a prefix changes what the model was given. Deployments with no
 // prefix keep the bare model name, so their existing rows still match.
+//
+// A service that names no model is stamped with its own name rather than
+// nothing: a blank stamp is compared with every row, and a hosted model is
+// never the one a local row was made with.
 func (cfg EmbeddingConfig) spaceStamp() string {
-	if p := cfg.DocPrefix; p != "" {
-		return cfg.Model + "+doc:" + p
+	model := cfg.Model
+	if model == "" && strings.HasPrefix(cfg.Provider, media.ServiceProviderPrefix) {
+		model = cfg.Provider
 	}
-	return cfg.Model
+	if p := cfg.DocPrefix; p != "" {
+		return model + "+doc:" + p
+	}
+	return model
 }
 
 var (
@@ -251,6 +260,9 @@ func embedTexts(ctx context.Context, cfg EmbeddingConfig, texts []string) ([][]f
 	if !cfg.Enabled {
 		return nil, fmt.Errorf("embeddings disabled")
 	}
+	if name, ok := strings.CutPrefix(cfg.Provider, media.ServiceProviderPrefix); ok {
+		return embedThroughService(ctx, cfg, name, texts, chars)
+	}
 	if cfg.Endpoint == "" {
 		return nil, fmt.Errorf("embedding endpoint not configured")
 	}
@@ -385,6 +397,35 @@ func embedTexts(ctx context.Context, cfg EmbeddingConfig, texts []string) ([][]f
 	for _, v := range vecs {
 		if len(v) == 0 {
 			return nil, fmt.Errorf("embed response had no vector")
+		}
+	}
+	return vecs, nil
+}
+
+// embedThroughService is embedTexts for a service connector. Not queued
+// behind the local model: the service does the work, and its own limits and
+// health are the service's. Logged the same way, slow or not.
+func embedThroughService(ctx context.Context, cfg EmbeddingConfig, name string, texts []string, chars int) ([][]float32, error) {
+	if media.EmbedService == nil {
+		return nil, fmt.Errorf("embeddings are set to the service %q, and services are not available here", name)
+	}
+	started := time.Now()
+	vecs, err := media.EmbedService(ctx, name, cfg.Model, texts)
+	if elapsed := time.Since(started); elapsed > embedSlowWarn {
+		Log("[embed] SLOW through service %s in %s (%d chars): an embed on a turn's critical path delays the whole message",
+			name, elapsed.Round(time.Millisecond), chars)
+	} else {
+		Debug("[embed] through service %s in %s (%d input(s), %d chars)", name, elapsed.Round(time.Millisecond), len(texts), chars)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("embed through service %s: %w", name, err)
+	}
+	if len(vecs) != len(texts) {
+		return nil, fmt.Errorf("embed through service %s: %d vector(s) for %d input(s)", name, len(vecs), len(texts))
+	}
+	for _, v := range vecs {
+		if len(v) == 0 {
+			return nil, fmt.Errorf("embed through service %s: a vector came back empty", name)
 		}
 	}
 	return vecs, nil

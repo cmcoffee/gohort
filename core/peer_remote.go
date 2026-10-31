@@ -28,6 +28,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cmcoffee/gohort/core/media"
 	"github.com/cmcoffee/gohort/core/sourcehooks"
 )
 
@@ -769,12 +770,20 @@ func PeerFromProvider(provider string) (RemotePeer, bool) {
 func ResolveEmbeddingProvider(cfg EmbeddingConfig) (EmbeddingConfig, error) {
 	provider := strings.TrimSpace(cfg.Provider)
 	if provider == "" {
-		if stored := GetEmbeddingConfig(); strings.HasPrefix(strings.TrimSpace(stored.Provider), peerProviderPrefix) {
+		if stored := strings.TrimSpace(GetEmbeddingConfig().Provider); strings.HasPrefix(stored, peerProviderPrefix) || strings.HasPrefix(stored, media.ServiceProviderPrefix) {
 			// A submission that says nothing about the provider cannot mean
-			// "stop using the peer". Keep the selection and let the resolver
-			// overlay it as usual.
+			// "stop using the peer" (or the service). Keep the selection and
+			// let the resolver overlay it as usual.
 			return cfg, nil
 		}
+	}
+	// A service connector (core/service) is used as it is named; the admin
+	// handler checks that it provides embeddings. Its name is the endpoint,
+	// so EmbedVersion changes with it: vectors made elsewhere are a different
+	// space and are re-made, never compared.
+	if strings.HasPrefix(provider, media.ServiceProviderPrefix) {
+		cfg.Provider, cfg.Endpoint, cfg.APIKey = provider, provider, ""
+		return cfg, nil
 	}
 	if provider == "" || provider == EmbeddingProviderLocal {
 		cfg.Provider = EmbeddingProviderLocal

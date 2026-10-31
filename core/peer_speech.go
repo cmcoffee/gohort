@@ -164,6 +164,12 @@ func (p RemotePeer) SpeechURL() string {
 // a peer selection (blank means the picker was not rendered).
 func ResolveSpeechProvider(cfg media.SpeechConfig, provider string) (media.SpeechConfig, error) {
 	provider = strings.TrimSpace(provider)
+	// A service connector (core/service) is used as it is named; the admin
+	// handler checks that it provides this.
+	if strings.HasPrefix(provider, media.ServiceProviderPrefix) {
+		cfg.Provider = provider
+		return cfg, nil
+	}
 	if provider == "" || provider == EmbeddingProviderLocal {
 		return cfg, nil
 	}

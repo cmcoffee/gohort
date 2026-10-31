@@ -584,7 +584,7 @@ const skillsExportAllAction = `function(){
   __artifactExport('?all=skill', 'skills.gohort.json');
 }`
 
-// templateInstallAction (Templates row "Add", on a template) asks the
+// templateInstallAction (Templates row "Set up…", on a template) asks the
 // template's questions and adds it: the pieces land as drafts, a secret answer
 // goes into its credential, and the result lists what is left to do.
 const templateInstallAction = `function(ctx){
@@ -594,7 +594,7 @@ const templateInstallAction = `function(ctx){
   fetch('api/templates/recipe?id=' + encodeURIComponent(r.id), {credentials:'same-origin', cache:'no-store'})
     .then(function(res){ return res.text().then(function(t){ if(!res.ok) throw new Error(t || ('HTTP ' + res.status)); return JSON.parse(t); }); })
     .then(function(rec){
-      window.uiOpenSimpleModal({title: 'Add ' + (rec.title || r.title), width: '600px', mount: function(body, dlg){
+      window.uiOpenSimpleModal({title: 'Set up ' + (rec.title || r.title), width: '600px', mount: function(body, dlg){
         function note(text, style){ body.appendChild(el('p', {style: 'margin:0 0 0.6rem;font-size:var(--fs-sm, 0.86rem);line-height:1.45;' + (style || 'color:var(--text-mute)'), text: text})); }
         if (rec.description) note(rec.description, 'color:var(--text)');
         if (rec.setup_notes) note(rec.setup_notes);
@@ -626,11 +626,11 @@ const templateInstallAction = `function(ctx){
           inputs[q.name] = inp;
         });
         var out = el('div', {style: 'margin-top:0.7rem;font-size:var(--fs-sm, 0.85rem);white-space:pre-wrap'});
-        var go = el('button', {class: 'ui-row-btn', text: 'Add'});
+        var go = el('button', {class: 'ui-row-btn', text: 'Set up'});
         go.addEventListener('click', function(){
           var answers = {};
           Object.keys(inputs).forEach(function(k){ answers[k] = inputs[k].value; });
-          go.disabled = true; out.textContent = 'Adding...';
+          go.disabled = true; out.textContent = 'Setting up...';
           fetch('api/templates/install?id=' + encodeURIComponent(rec.id), {method: 'POST', credentials: 'same-origin',
             headers: {'Content-Type': 'application/json'}, body: JSON.stringify({answers: answers})})
             .then(function(res){ return res.text().then(function(t){ if(!res.ok) throw new Error(t || ('HTTP ' + res.status)); return JSON.parse(t); }); })

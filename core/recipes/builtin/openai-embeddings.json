@@ -1,0 +1,105 @@
+{
+  "id": "openai-embeddings",
+  "title": "OpenAI (embeddings)",
+  "description": "OpenAI's embedding model as gohort's semantic search, declared as a service: the request and the reply are data you can test and fix from Admin > Connectors.",
+  "category": "Embeddings",
+  "setup_notes": "Create an API key at platform.openai.com/api-keys. The credential lands disabled: enable it under API Credentials. The connector lands unapproved: approve it in Admin > Extensions > Connectors, run Test on its row (it embeds two short sentences), then pick it under Capabilities > Embeddings. Switching embedders changes the embedding space: run Repair in the Vector Index panel to make stored documents searchable again, which embeds every one of them. OpenAI bills embeddings by the token, which gohort does not count, so no price is declared: the connector shows its calls as unpriced until you add a per_unit cost per character (about a quarter of the per-token price) to its spec.",
+  "questions": [
+    {
+      "name": "api_key",
+      "label": "OpenAI API key",
+      "help": "Stored in the credential's secret store, never in the connector.",
+      "required": true,
+      "secret": true,
+      "credential": "openai_embeddings"
+    },
+    {
+      "name": "name",
+      "label": "Connector name",
+      "help": "Lowercase letters, digits, dashes and underscores; the embeddings settings list it by this name.",
+      "default": "openai-embeddings"
+    },
+    {
+      "name": "model",
+      "label": "Model",
+      "help": "The model names the embedding space: changing it later means re-embedding every stored document.",
+      "default": "text-embedding-3-small"
+    }
+  ],
+  "bundle": {
+    "bundle": "gohort.bundle/v1",
+    "artifacts": [
+      {
+        "type": "credential",
+        "name": "openai_embeddings",
+        "recipe": {
+          "name": "openai_embeddings",
+          "type": "bearer",
+          "base_url": "https://api.openai.com",
+          "allowed_endpoints": [
+            "/v1/embeddings",
+            "/v1/models"
+          ],
+          "description": "OpenAI API, for embeddings."
+        }
+      },
+      {
+        "type": "connector",
+        "name": "{{name}}",
+        "recipe": {
+          "name": "{{name}}",
+          "kind": "service",
+          "template": "openai-embeddings",
+          "desc": "OpenAI embeddings ({{model}})",
+          "spec": {
+            "provider": {
+              "transport": "http",
+              "base_url": "https://api.openai.com",
+              "auth": {
+                "credential": "openai_embeddings"
+              },
+              "operations": {
+                "embed": {
+                  "method": "POST",
+                  "path": "/v1/embeddings",
+                  "body": {
+                    "model": "{model}",
+                    "input": "{texts}"
+                  }
+                },
+                "models": {
+                  "path": "/v1/models"
+                }
+              },
+              "health": {
+                "call": "models",
+                "expect": "data",
+                "every_mins": 60
+              }
+            },
+            "provides": [
+              {
+                "capability": "embed.text",
+                "steps": [
+                  {
+                    "call": "embed"
+                  }
+                ],
+                "output": {
+                  "vectors": {
+                    "path": "data",
+                    "each": "embedding",
+                    "as": "json"
+                  }
+                },
+                "defaults": {
+                  "model": "{{model}}"
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

@@ -65,6 +65,36 @@ func UnregisterImageBackend(name string) {
 	imageBackendMu.Unlock()
 }
 
+// ImageEditFunc edits one picture for a named backend of another kind than
+// rest_image (a service, core/service): the prompt and the source picture's
+// verified bytes in, the edited picture out.
+type ImageEditFunc func(sess *ToolSession, prompt string, image []byte) (*ImageGenResult, error)
+
+var imageEditBackends = map[string]ImageEditFunc{}
+
+// RegisterImageEditBackend installs (or replaces) a named edit backend, or
+// with fn nil drops it.
+func RegisterImageEditBackend(name string, fn ImageEditFunc) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return
+	}
+	imageBackendMu.Lock()
+	defer imageBackendMu.Unlock()
+	if fn == nil {
+		delete(imageEditBackends, name)
+		return
+	}
+	imageEditBackends[name] = fn
+}
+
+func lookupImageEditBackend(name string) (ImageEditFunc, bool) {
+	imageBackendMu.RLock()
+	defer imageBackendMu.RUnlock()
+	fn, ok := imageEditBackends[strings.TrimSpace(name)]
+	return fn, ok
+}
+
 // RegisteredImageBackends returns the currently-registered backend names.
 func RegisteredImageBackends() []string {
 	imageBackendMu.RLock()

@@ -1,0 +1,111 @@
+{
+  "id": "elevenlabs-speech",
+  "title": "ElevenLabs (speech)",
+  "description": "ElevenLabs text-to-speech as gohort's voice, declared as a service: the request, the voice and the reply are data you can test and fix from Admin > Connectors.",
+  "category": "Speech",
+  "setup_notes": "Get an API key at elevenlabs.io (Profile > API keys). The credential lands disabled: enable it under API Credentials. The connector lands unapproved: approve it in Admin > Extensions > Connectors, run Test on its row, then pick it under Capabilities > Speech (TTS). ElevenLabs bills in credits by the character, so no price is declared: the connector shows its calls as unpriced until you add a cost to its spec (per_unit with unit character).",
+  "questions": [
+    {
+      "name": "api_key",
+      "label": "ElevenLabs API key",
+      "help": "Stored in the credential's secret store, never in the connector.",
+      "required": true,
+      "secret": true,
+      "credential": "elevenlabs_speech"
+    },
+    {
+      "name": "name",
+      "label": "Connector name",
+      "help": "Lowercase letters, digits, dashes and underscores; the speech settings list it by this name.",
+      "default": "elevenlabs-speech"
+    },
+    {
+      "name": "voice",
+      "label": "Voice id",
+      "help": "An ElevenLabs voice id; the speech settings' Voice overrides it when set.",
+      "default": "21m00Tcm4TlvDq8ikWAM"
+    },
+    {
+      "name": "model",
+      "label": "Model",
+      "default": "eleven_multilingual_v2"
+    }
+  ],
+  "bundle": {
+    "bundle": "gohort.bundle/v1",
+    "artifacts": [
+      {
+        "type": "credential",
+        "name": "elevenlabs_speech",
+        "recipe": {
+          "name": "elevenlabs_speech",
+          "type": "header",
+          "param_name": "xi-api-key",
+          "base_url": "https://api.elevenlabs.io",
+          "allowed_endpoints": [
+            "/v1/text-to-speech/**",
+            "/v1/voices"
+          ],
+          "description": "ElevenLabs API, for speech."
+        }
+      },
+      {
+        "type": "connector",
+        "name": "{{name}}",
+        "recipe": {
+          "name": "{{name}}",
+          "kind": "service",
+          "template": "elevenlabs-speech",
+          "desc": "ElevenLabs speech ({{model}})",
+          "spec": {
+            "provider": {
+              "transport": "http",
+              "base_url": "https://api.elevenlabs.io",
+              "auth": {
+                "credential": "elevenlabs_speech"
+              },
+              "operations": {
+                "speak": {
+                  "method": "POST",
+                  "path": "/v1/text-to-speech/{voice}?output_format=mp3_44100_128",
+                  "body": {
+                    "text": "{text}",
+                    "model_id": "{model}"
+                  },
+                  "read": "file"
+                },
+                "voices": {
+                  "path": "/v1/voices"
+                }
+              },
+              "health": {
+                "call": "voices",
+                "expect": "voices",
+                "every_mins": 60
+              }
+            },
+            "provides": [
+              {
+                "capability": "speech.synthesize",
+                "steps": [
+                  {
+                    "call": "speak"
+                  }
+                ],
+                "output": {
+                  "audio": {
+                    "from": "body"
+                  }
+                },
+                "defaults": {
+                  "voice": "{{voice}}",
+                  "model": "{{model}}"
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

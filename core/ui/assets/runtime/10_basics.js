@@ -975,8 +975,12 @@
             rowEl.style.display = 'none';
             optimisticHidden = true;
           }
+          // Alive while it runs: a row action can wait on real work (a test
+          // that calls a service), and a dead button reads as a hung one.
+          var busy = busyButton(btn, false);
           fetchJSON(url, {method: act.method || 'POST'})
             .then(function(resp) {
+              busy.stop();
               // Close any open expansion on this row before the
               // refresh — reload() silently skips when ANY expansion
               // is open in the table (the guard exists to keep
@@ -1040,6 +1044,7 @@
               }
             })
             .catch(function(err){
+              busy.stop();
               // Restore the optimistically-hidden row so the user
               // sees the state didn't actually change.
               if (optimisticHidden && rowEl) rowEl.style.display = '';

@@ -2,6 +2,7 @@ package apijob
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -117,5 +118,56 @@ func TestABrokenJobSpecIsRefused(t *testing.T) {
 	}
 	if s, err := Parse(`{"poll_url":"https://x/{id}","id_path":"id","ready_path":"done"}`); err != nil || s == nil || s.Deadline() != DefaultMax*time.Second {
 		t.Errorf("parsed from JSON text with defaults: %+v %v", s, err)
+	}
+}
+
+// A selector picks the element of a list by one of its fields, where a fixed
+// index cannot: a reply whose image part is sometimes first and sometimes
+// second. A value may hold a dot.
+func TestASelectorPicksTheElementByItsField(t *testing.T) {
+	var node any
+	json.Unmarshal([]byte(`{"parts":[{"type":"text","text":"here"},{"type":"image","data":"AAA"}],
+		"files":[{"name":"take.mp3","url":"u1"}]}`), &node)
+	for path, want := range map[string]string{
+		"parts[type=image].data":   "AAA",
+		"parts.1.data":             "AAA",
+		"files[name=take.mp3].url": "u1",
+		"parts[type=video].data":   "",
+		"parts[type=image]":        `{"data":"AAA","type":"image"}`,
+		"parts[data].data":         "AAA",
+		"parts[missing].data":      "",
+	} {
+		if got := Lookup(node, path, ""); got != want {
+			t.Errorf("%s = %q, want %q", path, got, want)
+		}
+	}
+	for _, bad := range []string{"a..b", "parts[]", "parts[=image]", "parts[type=image", "a]b"} {
+		if ValidPath(bad) == nil {
+			t.Errorf("%q passed as a path", bad)
+		}
+	}
+	for _, good := range []string{"", "a.b.0", "parts[type=image].data", "parts[data].data", "files[name=a.b].url"} {
+		if err := ValidPath(good); err != nil {
+			t.Errorf("%q refused: %v", good, err)
+		}
+	}
+}
+
+// Check decides each poll in place of the ready and error paths.
+func TestACheckDecidesEachPoll(t *testing.T) {
+	polls := 0
+	call := func(ctx context.Context, method, rawURL string) (Response, error) {
+		polls++
+		state := "running"
+		if polls == 3 {
+			state = "done"
+		}
+		return Response{Status: 200, Body: []byte(`{"state":"` + state + `"}`)}, nil
+	}
+	s := Spec{PollURL: "https://x.test/jobs/1", IntervalSecs: 1, MaxSecs: 30,
+		Check: func(node any, id string) (bool, error) { return Lookup(node, "state", id) == "done", nil }}
+	res, err := Run(context.Background(), s, "https://x.test/jobs", []byte(`{}`), call, nil)
+	if err != nil || res.Polls != 3 {
+		t.Fatalf("run: %v after %d polls", err, res.Polls)
 	}
 }

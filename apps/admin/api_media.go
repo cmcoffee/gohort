@@ -13,6 +13,8 @@ import (
 	"github.com/cmcoffee/gohort/core/activity"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/media"
+	"github.com/cmcoffee/gohort/core/service"
+	"github.com/cmcoffee/gohort/core/ui"
 )
 
 // registerMediaRoutes wires the media API under the admin sub-mux.
@@ -102,7 +104,7 @@ func (a *AdminApp) handleEmbeddingsSave(c *jsonapi.Call, req EmbeddingConfig) (a
 	// fields are hidden while one is picked. Resolve it into a complete,
 	// ordinary config here so everything downstream (Embed,
 	// EmbedVersion, the vector store) stays peer-unaware.
-	resolved, err := ResolveEmbeddingProvider(req)
+	resolved, err := resolveEmbedding(req)
 	if err != nil {
 		return nil, jsonapi.BadRequest(err.Error())
 	}
@@ -129,7 +131,7 @@ func (a *AdminApp) handleEmbeddingsTest(c *jsonapi.Call, req EmbeddingConfig) (a
 	// with "endpoint is required" against a form showing no endpoint field
 	// to fill in. A test button that cannot test the thing the form is
 	// currently configured for is worse than no test button.
-	resolved, err := ResolveEmbeddingProvider(req)
+	resolved, err := resolveEmbedding(req)
 	if err != nil {
 		return testResultBody(false, "", err.Error()), nil
 	}
@@ -162,6 +164,8 @@ func (a *AdminApp) handleEmbeddingsTest(c *jsonapi.Call, req EmbeddingConfig) (a
 		if p.Instance != "" {
 			where += " (" + p.Instance + ")"
 		}
+	} else if name, ok := strings.CutPrefix(req.Provider, media.ServiceProviderPrefix); ok {
+		where = "the service " + name
 	}
 	return testResultBody(true, fmt.Sprintf("OK: %d-dim embedding from %s via %s", len(vec), modelLabel, where), ""), nil
 }
@@ -173,7 +177,8 @@ func (a *AdminApp) handleEmbeddingModels(c *jsonapi.Call) (any, error) {
 	if a.db != nil {
 		a.db.Get(EmbeddingTable, "current", &cfg)
 	}
-	if cfg.Endpoint == "" {
+	// A service's model is the one its spec declares: nothing to list.
+	if cfg.Endpoint == "" || strings.HasPrefix(cfg.Provider, media.ServiceProviderPrefix) {
 		return []map[string]string{}, nil
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
@@ -212,6 +217,9 @@ func (a *AdminApp) handleTranscribeSave(c *jsonapi.Call, req TranscribeConfig) (
 	// complete, ordinary config here so everything downstream
 	// (Transcribe, the transcribe tool, inbound voice notes) stays
 	// peer-unaware. Same shape as the embeddings save above.
+	if err := serviceProviderOK(req.Provider, "speech.transcribe"); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
 	resolved, err := ResolveTranscribeProvider(req, req.Provider)
 	if err != nil {
 		return nil, jsonapi.BadRequest(err.Error())
@@ -238,6 +246,9 @@ func (a *AdminApp) handleSpeechSave(c *jsonapi.Call, req media.SpeechConfig) (an
 	req.APIKey = keepSecret(req.APIKey, a.storedSpeechConfig().APIKey)
 	// A peer selection carries no endpoint of its own: resolve it into an
 	// ordinary config, so everything that speaks stays peer-unaware.
+	if err := serviceProviderOK(req.Provider, "speech.synthesize"); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
 	resolved, err := ResolveSpeechProvider(req, req.Provider)
 	if err != nil {
 		return nil, jsonapi.BadRequest(err.Error())
@@ -566,4 +577,55 @@ func (a *AdminApp) storedTranscribeConfig() TranscribeConfig {
 		a.db.Get(TranscribeTable, "current", &cfg)
 	}
 	return cfg
+}
+
+// resolveEmbedding is ResolveEmbeddingProvider with a service checked first,
+// and its model taken from the service's spec: the stored model names the
+// space the vectors are in, and the service is asked for that model by name.
+func resolveEmbedding(req EmbeddingConfig) (EmbeddingConfig, error) {
+	if err := serviceProviderOK(req.Provider, "embed.text"); err != nil {
+		return req, err
+	}
+	resolved, err := ResolveEmbeddingProvider(req)
+	if err != nil {
+		return req, err
+	}
+	if name, ok := strings.CutPrefix(strings.TrimSpace(req.Provider), media.ServiceProviderPrefix); ok {
+		c, _ := GetConnector(RootDB, name)
+		resolved.Model = service.Default(c, "embed.text", "model")
+	}
+	return resolved, nil
+}
+
+// serviceProviderOK refuses a provider that names a service connector which
+// is missing, not approved, or does not provide capability. Anything else
+// (this instance, a peer) is left to its own resolution.
+func serviceProviderOK(provider, capability string) error {
+	name, ok := strings.CutPrefix(strings.TrimSpace(provider), media.ServiceProviderPrefix)
+	if !ok {
+		return nil
+	}
+	c, found := GetConnector(RootDB, name)
+	switch {
+	case !found:
+		return fmt.Errorf("no connector named %q", name)
+	case !service.Provides(c, capability):
+		return fmt.Errorf("connector %q does not provide %s", name, capability)
+	case !c.Approved:
+		return fmt.Errorf("connector %q is not approved yet: approve it in Admin > Extensions > Connectors first", name)
+	}
+	return nil
+}
+
+// serviceProviderOptions are the approved service connectors providing
+// capability, as choices beside this instance and the peers.
+func serviceProviderOptions(capability, verb string) []ui.SelectOption {
+	var out []ui.SelectOption
+	for _, c := range ListConnectors(RootDB) {
+		if c.Approved && service.Provides(c, capability) {
+			out = append(out, ui.SelectOption{Value: media.ServiceProviderPrefix + c.Name, Label: "Service: " + c.Name,
+				Help: verb + " with the " + c.Name + " connector: " + ConnectorSummary(c) + "."})
+		}
+	}
+	return out
 }

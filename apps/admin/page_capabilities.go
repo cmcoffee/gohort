@@ -2,6 +2,7 @@ package admin
 
 import (
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/service"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -168,7 +169,7 @@ func imageProviderOptions() []ui.SelectOption {
 		{Value: "openai", Label: "OpenAI (DALL-E)"},
 	}
 	for _, c := range ListConnectors(RootDB) {
-		if c.Kind == RestImageConnectorKind && c.Approved {
+		if c.Approved && (c.Kind == RestImageConnectorKind || service.Provides(c, "image.generate")) {
 			opts = append(opts, ui.SelectOption{Value: c.Name, Label: "Connector: " + c.Name})
 		}
 	}
@@ -196,7 +197,7 @@ func imageProviderOptions() []ui.SelectOption {
 // — the whole form, blank, for the overwhelmingly common case. So the clause is
 // added and removed together with the field that drives it.
 func embeddingFormFields() []ui.FormField {
-	peers := EmbeddingProviderOptions()
+	peers := append(EmbeddingProviderOptions(), serviceProviderOptions("embed.text", "Embed")...)
 	// One option means local only: nothing to choose between.
 	hasPeers := len(peers) > 1
 
@@ -216,7 +217,8 @@ func embeddingFormFields() []ui.FormField {
 			Field: "provider", Label: "Embed on", Type: "select",
 			Options:  peers,
 			ShowWhen: "enabled",
-			Help:     "Use this instance's own embedder, or a peer instance you've connected under Resource Sharing › Peers.",
+			Help:     "Use this instance's own embedder, a peer instance you've connected under Resource Sharing › Peers, or an approved service connector.",
+			Detail:   "Changing where embeddings are made changes the embedding space: search skips stored documents from the old space until Repair in the Vector Index panel makes them again, and through a paid service that is billed.",
 		})
 	}
 	return append(fields,
@@ -273,7 +275,7 @@ func embeddingFormFields() []ui.FormField {
 // while a peer is selected, and leaving that clause in with no dropdown to set
 // `provider` would hide the whole form on every deployment with no peers.
 func transcribeFormFields() []ui.FormField {
-	peers := TranscribeProviderOptions()
+	peers := append(TranscribeProviderOptions(), serviceProviderOptions("speech.transcribe", "Transcribe")...)
 	hasPeers := len(peers) > 1
 
 	local := "enabled"
@@ -289,7 +291,7 @@ func transcribeFormFields() []ui.FormField {
 			Field: "provider", Label: "Transcribe on", Type: "select",
 			Options:  peers,
 			ShowWhen: "enabled",
-			Help:     "Use this instance's own STT endpoint, or a peer instance you've connected under Resource Sharing › Peers.",
+			Help:     "Use this instance's own STT endpoint, a peer instance you've connected under Resource Sharing › Peers, or an approved service connector that transcribes.",
 		})
 	}
 	return append(fields,
@@ -317,7 +319,7 @@ func transcribeFormFields() []ui.FormField {
 // transcribeFormFields, for the same reason. The voice stays while a peer is
 // picked: it is chosen here, from the peer's own list.
 func speechFormFields() []ui.FormField {
-	peers := SpeechProviderOptions()
+	peers := append(SpeechProviderOptions(), serviceProviderOptions("speech.synthesize", "Speak")...)
 	hasPeers := len(peers) > 1
 
 	local := "enabled"
@@ -333,7 +335,7 @@ func speechFormFields() []ui.FormField {
 			Field: "provider", Label: "Speak with", Type: "select",
 			Options:  peers,
 			ShowWhen: "enabled",
-			Help:     "Use this instance's own speech server, or a peer instance you've connected under Resource Sharing › Peers.",
+			Help:     "Use this instance's own speech server, a peer instance you've connected under Resource Sharing › Peers, or an approved service connector that speaks.",
 		})
 	}
 	return append(fields,
@@ -351,7 +353,7 @@ func speechFormFields() []ui.FormField {
 			ShowWhen:    local},
 		ui.FormField{Field: "voice", Label: "Voice", Type: "text",
 			Placeholder: "af_heart",
-			Help:        "Optional. A voice the server offers, such as Kokoro's 'af_heart' or OpenAI's 'alloy'.",
+			Help:        "Optional. A voice the server offers, such as Kokoro's 'af_heart' or OpenAI's 'alloy'. A service connector uses its own default when this is blank.",
 			Detail:      "Save the endpoint or peer first, then click a chip to pick from the server's own list, and Preview voice to hear it before you save. Servers without a voice list show no chips; type the name instead.",
 			ShowWhen:    "enabled",
 			ChipsSource: "api/speech/voices"},

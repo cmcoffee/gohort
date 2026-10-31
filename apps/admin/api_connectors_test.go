@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/snugforge/kvlite"
 )
 
 // The value↔spec mapping (ReadValues/BuildSpec) now lives in core with the
@@ -45,5 +46,46 @@ func TestNestAndStringifyComfyWorkflow(t *testing.T) {
 	// A non-image spec (no comfy_workflow) is passed through untouched.
 	if _, ok := nestComfyWorkflow([]byte(`{"credential":"no_auth"}`)); ok {
 		t.Error("nesting should not apply to a spec without comfy_workflow")
+	}
+}
+
+// A service connector's row says how it is doing and asks before a test what
+// the test should cost, and an image service is offered as the image
+// provider once approved.
+func TestAServiceConnectorRowAndThePicker(t *testing.T) {
+	saved := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB = saved })
+	spec := `{"provider":{"transport":"http","base_url":"https://api.example.test","auth":{"credential":"acme_key"},
+		"operations":{"submit":{"method":"POST","path":"/v1/images","body":{"prompt":"{prompt}"}},"models":{"path":"/v1/models"}},
+		"health":{"call":"models","expect":"data"}},
+		"provides":[{"capability":"image.generate","steps":[{"call":"submit"}],
+		"output":{"image":{"path":"data.0.b64_json","as":"base64"}},"cost":{"per_call":0.04}}]}`
+	if err := SaveConnector(RootDB, Connector{Name: "acme-images", Kind: "service", Spec: json.RawMessage(spec)}); err != nil {
+		t.Fatal(err)
+	}
+	if q := testConfirm("acme-images"); !strings.Contains(q, "$0.0400") || !strings.Contains(q, "daily test budget") {
+		t.Errorf("the question before a test: %q", q)
+	}
+	conn, _ := GetConnector(RootDB, "acme-images")
+	if status, hasHealth := connectorStatus(conn); !hasHealth || status != "not checked yet" {
+		t.Errorf("status %q, has health %v", status, hasHealth)
+	}
+	offered := func() bool {
+		for _, o := range imageProviderOptions() {
+			if o.Value == "acme-images" {
+				return true
+			}
+		}
+		return false
+	}
+	if offered() {
+		t.Error("an unapproved service is offered as the image provider")
+	}
+	if err := ApproveConnector(RootDB, "acme-images"); err != nil {
+		t.Fatal(err)
+	}
+	if !offered() {
+		t.Error("an approved image service is not offered as the image provider")
 	}
 }

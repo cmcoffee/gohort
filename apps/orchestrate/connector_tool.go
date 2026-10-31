@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/service"
 )
 
 // connectorDefTool builds the grouped "connector" authoring tool. Mirrors
@@ -168,7 +169,7 @@ Typical flow for a calendar:
 	gt.AddAction("create", &GroupedToolAction{
 		Description: "Declare a new connector (bridge type). remote_mcp is created UNAPPROVED (admin approves in Admin > Connectors); rest_poll goes live immediately (it uses an already-approved credential).",
 		Params: map[string]ToolParam{
-			"kind":                 {Type: "string", Enum: []string{RemoteMCPConnectorKind, RestPollConnectorKind, DesktopMCPConnectorKind, DesktopCommandConnectorKind, MessagingBridgeConnectorKind, RestMessagingConnectorKind, BotFrameworkConnectorKind, RestImageConnectorKind, PeerRelayConnectorKind}, Description: "The bridge type. remote_mcp = a remote MCP server whose tools register as <name>.<tool>. rest_poll = poll one authenticated URL every N minutes and wake an agent when it changes. desktop_mcp = run a LOCAL MCP server (subprocess) on the user's OWN machine. desktop_command = run a fixed local command (with {placeholder} args) as one tool on the user's machine: the lightweight option. messaging_bridge = enable a built-in messaging relay (iMessage) on the user's device so their chats route to agents. rest_messaging = a server-side two-sided messaging bridge for a REST-pollable service (Teams/Slack/Discord) via a SecureAPI credential: use preset=\"teams\" for the canned Graph mapping. bot_framework = gohort as a real Microsoft Teams BOT (Azure Bot registration): answers DMs, group chats and channel @mentions and replies under its own identity, the one that works when Graph app-only sending does not. rest_image = an image-GENERATION backend (ComfyUI / Automatic1111 / hosted diffusion) declared from a spec, use preset=\"a1111\" (turnkey) or preset=\"comfyui\" with vars={\"base_url\":\"http://localhost:7860\"}; materializes a generate_image_<name> tool. peer_relay = inbound webhooks via a peer's public address. Created UNAPPROVED."},
+			"kind":                 {Type: "string", Enum: []string{RemoteMCPConnectorKind, RestPollConnectorKind, DesktopMCPConnectorKind, DesktopCommandConnectorKind, MessagingBridgeConnectorKind, RestMessagingConnectorKind, BotFrameworkConnectorKind, RestImageConnectorKind, PeerRelayConnectorKind, service.Kind}, Description: "The bridge type. remote_mcp = a remote MCP server whose tools register as <name>.<tool>. rest_poll = poll one authenticated URL every N minutes and wake an agent when it changes. desktop_mcp = run a LOCAL MCP server (subprocess) on the user's OWN machine. desktop_command = run a fixed local command (with {placeholder} args) as one tool on the user's machine: the lightweight option. messaging_bridge = enable a built-in messaging relay (iMessage) on the user's device so their chats route to agents. rest_messaging = a server-side two-sided messaging bridge for a REST-pollable service (Teams/Slack/Discord) via a SecureAPI credential: use preset=\"teams\" for the canned Graph mapping. bot_framework = gohort as a real Microsoft Teams BOT (Azure Bot registration): answers DMs, group chats and channel @mentions and replies under its own identity, the one that works when Graph app-only sending does not. rest_image = an image-GENERATION backend (ComfyUI / Automatic1111 / hosted diffusion) declared from a spec, use preset=\"a1111\" (turnkey) or preset=\"comfyui\" with vars={\"base_url\":\"http://localhost:7860\"}; materializes a generate_image_<name> tool. peer_relay = inbound webhooks via a peer's public address. Created UNAPPROVED."},
 			"name":                 {Type: "string", Description: "Short unique id (letters/digits/underscore/dash), e.g. \"gcal\". Namespaces the capability's tools."},
 			"url":                  {Type: "string", Description: "(remote_mcp) the MCP server's https endpoint. (rest_poll) the full URL to poll each interval."},
 			"auth_mode":            {Type: "string", Enum: []string{"none", "secure_api", "oauth"}, Description: "(remote_mcp) How the server authenticates. none = public; secure_api = mint a bearer from a registered SecureAPI credential (set secure_cred); oauth = per-user hosted login. NEVER pass a static token."},
@@ -209,6 +210,7 @@ Typical flow for a calendar:
 			"skip":                 {Type: "array", Description: "(rest_messaging, optional) messages to drop, each {\"path\": element dot-path, \"values\": [...]}: dropped when the path has a value, or one of the listed values. Use it to skip the bridge's own replies (e.g. {\"path\":\"bot_id\"}) and system events, or the agent answers itself."},
 			"display_name":         {Type: "string", Description: "(rest_messaging, optional) how a service gohort does not know is named to people (e.g. \"Mattermost\"). A known service keeps its own name."},
 			"markdown":             {Type: "boolean", Description: "(rest_messaging, optional) the service renders markdown, so replies keep their formatting. Only for a service gohort does not know."},
+			"service_spec":         {Type: "object", Description: "(service) {provider:{transport:\"http\",base_url,auth:{credential}|{none:true},operations:{name:{method,path,body}}},provides:[{capability:\"image.generate\",steps:[{call,save}|{wait,until}],output:{image:{path,as}}}]}; a refused save says what is wrong."},
 			"image_spec":           {Type: "object", Description: "(rest_image, optional) explicit backend fields overriding/extending the preset: submit_url, submit_method, submit_body (a JSON template with {prompt}/{negative}/{width}/{height}/{steps}/{seed} tokens), image_b64_path or image_url_path (synchronous result), or the poll set submit_id_path/poll_url/poll_ready_path/poll_b64_path/poll_url_path/poll_url_template/poll_fields (async). Omit when a preset + vars is enough. For rest_image, `credential` names the SecureAPI credential (or \"no_auth\" for a local endpoint) and `vars` fills preset tokens like {\"base_url\":\"http://localhost:7860\"}."},
 			"description":          {Type: "string", Description: "(optional) What this connector is for. For desktop_command it is also the tool's description shown to callers."},
 		},
@@ -257,6 +259,7 @@ Typical flow for a calendar:
 			"reply_in_thread":      {Type: "boolean", Description: "(bot_framework) thread a channel reply under the message that triggered it."},
 			"accept_channel_types": {Type: "array", Description: "(bot_framework) new list of Teams surfaces that route inbound: any of \"personal\", \"channel\", \"groupChat\" (replaces the whole list).", Items: &ToolParam{Type: "string"}},
 			"image_spec":           {Type: "object", Description: "(rest_image) backend fields to change; the ones given replace the stored ones, the rest are kept."},
+			"service_spec":         {Type: "object", Description: "(service) the whole new spec."},
 			"vars":                 {Type: "object", Description: "(rest_image) preset token values to re-apply across the URL, body and path fields, e.g. {\"base_url\":\"http://localhost:7860\"}."},
 		},
 		Required: []string{"name"},
@@ -354,6 +357,26 @@ func stringMapArg(args map[string]any, key string) map[string]string {
 		}
 	}
 	return out
+}
+
+// serviceSpecArg is the service_spec argument as JSON, an object or JSON
+// text. The kind's own Validate reads it when the connector is saved.
+func serviceSpecArg(args map[string]any) (json.RawMessage, error) {
+	v, ok := args["service_spec"]
+	if !ok || v == nil {
+		return nil, fmt.Errorf("a service connector needs service_spec: its provider and provides halves")
+	}
+	if str, isStr := v.(string); isStr {
+		if !json.Valid([]byte(str)) {
+			return nil, fmt.Errorf("service_spec is not valid JSON")
+		}
+		return json.RawMessage(str), nil
+	}
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	return raw, nil
 }
 
 // imageSpecArg maps the `image_spec` object arg onto a RestImageSpec by
@@ -547,6 +570,12 @@ func connectorCreate(args map[string]any, sess *ToolSession) (string, error) {
 	case PeerRelayConnectorKind:
 		spec := PeerRelaySpec{Peer: strings.TrimSpace(stringArg(args, "peer"))}
 		raw, _ := json.Marshal(spec)
+		c.Spec = raw
+	case service.Kind:
+		raw, err := serviceSpecArg(args)
+		if err != nil {
+			return "", err
+		}
 		c.Spec = raw
 	case RestImageConnectorKind:
 		over := imageSpecArg(args, "image_spec")
@@ -763,6 +792,12 @@ func connectorUpdate(args map[string]any, sess *ToolSession) (string, error) {
 			s.AcceptChannelTypes = stringSliceArg(args, "accept_channel_types")
 		}
 		c.Spec, _ = json.Marshal(s)
+	case service.Kind:
+		raw, err := serviceSpecArg(args)
+		if err != nil {
+			return "", err
+		}
+		c.Spec = raw
 	case RestImageConnectorKind:
 		var existing RestImageSpec
 		_ = json.Unmarshal(prev.Spec, &existing)

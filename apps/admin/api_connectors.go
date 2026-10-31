@@ -3,11 +3,14 @@ package admin
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/jsonapi"
+	"github.com/cmcoffee/gohort/core/service"
 )
 
 // registerConnectorsRoutes wires the connectors API under the admin sub-mux.
@@ -30,6 +33,11 @@ func (a *AdminApp) registerConnectorsRoutes(sub *http.ServeMux) {
 	// update_spec POST above. Read-only; no secret is ever in a Spec.
 	sub.HandleFunc("/api/connectors/spec", jsonapi.Get(a.db, a.handleConnectorSpec, a.gate()))
 
+	// A connector's contract test (a real call, within its daily budget) and
+	// its free health check (core/service).
+	sub.HandleFunc("/api/connectors/test", jsonapi.Post(a.db, a.handleConnectorTest, a.gate()))
+	sub.HandleFunc("/api/connectors/health", jsonapi.Post(a.db, a.handleConnectorHealth, a.gate()))
+
 }
 
 // handleConnectors is every backend, with what each can do from its row.
@@ -45,13 +53,144 @@ func (a *AdminApp) handleConnectors(c *jsonapi.Call) (any, error) {
 		IsImage      bool   `json:"is_image"`           // rest_image → image-section toolbar pick
 		Configurable bool   `json:"configurable"`       // resolves to a template → gets "Configure" (incl. imports)
 		Webhook      string `json:"webhook,omitempty"`  // a push bridge's provider → gets "Webhook…"
+		// A connector with a contract test and a health check (core/service):
+		// how it has been doing, and the question asked before a test.
+		Status      string `json:"status,omitempty"`
+		Testable    bool   `json:"testable,omitempty"`
+		HasHealth   bool   `json:"has_health,omitempty"`
+		TestConfirm string `json:"test_confirm,omitempty"`
+		Fixable     bool   `json:"fixable,omitempty"`
 	}
 	var rows []connRow
 	for _, conn := range ListConnectors(RootDB) {
 		_, canConfig := TemplateForConnector(conn)
-		rows = append(rows, connRow{conn.Name, conn.Kind, ConnectorSummary(conn), conn.Owner, conn.Approved, conn.LastError, conn.Template, conn.Kind == RestImageConnectorKind, canConfig, connectorWebhook(conn)})
+		row := connRow{conn.Name, conn.Kind, ConnectorSummary(conn), conn.Owner, conn.Approved, conn.LastError, conn.Template, conn.Kind == RestImageConnectorKind, canConfig, connectorWebhook(conn), "", false, false, "", service.Fixable(conn)}
+		if service.Testable(conn) {
+			row.Testable = true
+			row.TestConfirm = testConfirm(conn.Name)
+			row.Status, row.HasHealth = connectorStatus(conn)
+		}
+		rows = append(rows, row)
 	}
 	return rows, nil
+}
+
+// testConfirm is the question asked before a contract test: what it does and
+// what it should cost.
+func testConfirm(name string) string {
+	cost := "It may cost money: no price is declared, so the cost is unknown."
+	if est, known := service.Estimate(name); known {
+		cost = fmt.Sprintf("It should cost about $%.4f.", est)
+	}
+	return "Run a contract test of " + name + "? It makes one small real call through the service and checks what comes back. " + cost + " Tests draw on the connector's daily test budget."
+}
+
+// connectorStatus is a service connector's record as one line: its health,
+// its recent calls, and today's spend.
+func connectorStatus(conn Connector) (string, bool) {
+	rec := service.RecordOf(conn.Name)
+	var parts []string
+	hasHealth := false
+	if conn.Kind == service.Kind {
+		if spec, err := service.Parse(conn.Spec); err == nil && spec.Provider.Health != nil {
+			hasHealth = true
+		}
+		switch h := rec.Health; {
+		case h != nil && h.OK:
+			parts = append(parts, "healthy, checked "+ago(h.At))
+		case h != nil:
+			parts = append(parts, "health check failed "+ago(h.At)+": "+h.Message)
+		case hasHealth:
+			parts = append(parts, "not checked yet")
+		default:
+			parts = append(parts, "no free health check: known only from its calls and tests")
+		}
+	}
+	for capability, c := range rec.Capabilities {
+		calls, failed := c.Recent()
+		if calls > 0 {
+			noun := "calls"
+			if calls == 1 {
+				noun = "call"
+			}
+			parts = append(parts, fmt.Sprintf("%s: %d %s in the last two hours, %d failed", capability, calls, noun, failed))
+		}
+		if !c.LastFail.IsZero() && c.LastFail.After(c.LastOK) {
+			parts = append(parts, "failing since "+ago(c.LastFail)+": "+c.LastError)
+		}
+		if c.Spend > 0 {
+			parts = append(parts, fmt.Sprintf("$%.4f today", c.Spend))
+		}
+		if c.Unpriced > 0 {
+			parts = append(parts, fmt.Sprintf("%d unpriced calls today", c.Unpriced))
+		}
+	}
+	if rec.Tests > 0 {
+		t := fmt.Sprintf("%d contract tests today", rec.Tests)
+		if rec.Tests == 1 {
+			t = "1 contract test today"
+		}
+		if rec.TestSpend > 0 {
+			t += fmt.Sprintf(" ($%.4f)", rec.TestSpend)
+		}
+		parts = append(parts, t)
+	}
+	return strings.Join(parts, "; "), hasHealth
+}
+
+func ago(t time.Time) string {
+	d := time.Since(t)
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return fmt.Sprintf("%d minutes ago", int(d.Minutes()))
+	case d < 48*time.Hour:
+		return fmt.Sprintf("%d hours ago", int(d.Hours()))
+	}
+	return t.Format("Jan 2")
+}
+
+// handleConnectorTest runs the ?name= connector's contract test. A failure
+// comes back as a warning, so its reason opens in a dialog rather than a
+// toast that is gone before it is read.
+func (a *AdminApp) handleConnectorTest(c *jsonapi.Call, _ struct{}) (any, error) {
+	name := strings.TrimSpace(c.R.URL.Query().Get("name"))
+	if name == "" {
+		return nil, jsonapi.BadRequest("missing name")
+	}
+	reps, err := service.Test(c.R.Context(), name)
+	if err != nil {
+		return map[string]any{"message": err.Error(), "warnings": []string{err.Error()}}, nil
+	}
+	var lines, warns []string
+	for _, r := range reps {
+		line := r.Capability + ": " + r.Detail
+		if r.Priced {
+			line += fmt.Sprintf(" (cost $%.4f)", r.Cost)
+		}
+		lines = append(lines, line)
+		if !r.OK {
+			warns = append(warns, line)
+		}
+	}
+	return map[string]any{"message": strings.Join(lines, "\n"), "warnings": warns}, nil
+}
+
+// handleConnectorHealth runs the ?name= service's free health check now.
+func (a *AdminApp) handleConnectorHealth(c *jsonapi.Call, _ struct{}) (any, error) {
+	name := strings.TrimSpace(c.R.URL.Query().Get("name"))
+	if name == "" {
+		return nil, jsonapi.BadRequest("missing name")
+	}
+	h, err := service.CheckHealth(c.R.Context(), name)
+	if err != nil {
+		return map[string]any{"message": err.Error(), "warnings": []string{err.Error()}}, nil
+	}
+	if !h.OK {
+		return map[string]any{"message": "Health check failed: " + h.Message, "warnings": []string{h.Message}}, nil
+	}
+	return map[string]any{"message": "Healthy: " + h.Message}, nil
 }
 
 // handleConnectorAction is ?action= on the ?name= backend: approve,

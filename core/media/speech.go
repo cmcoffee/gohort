@@ -42,6 +42,11 @@ type SpeechConfig struct {
 	Provider string `json:"provider,omitempty"`
 }
 
+// SpeechService, when set, speaks through a service connector, for a config
+// whose Provider is "service:<name>" (core/service installs it), returning
+// the audio and its extension. Nil, and such a config is refused.
+var SpeechService func(ctx context.Context, connector, text, voice string) ([]byte, string, error)
+
 // SpeechResolver, when set, rewrites the stored config on every read, so one
 // whose Provider names a peer picks up that peer's current endpoint and
 // credential. core installs it; this package knows nothing about peers. Same
@@ -128,6 +133,15 @@ func SpeakIn(ctx context.Context, text, voice string) ([]byte, string, error) {
 func SpeakWith(ctx context.Context, cfg SpeechConfig, text string) ([]byte, string, error) {
 	if !cfg.Enabled {
 		return nil, "", fmt.Errorf("speech disabled")
+	}
+	if name, ok := strings.CutPrefix(cfg.Provider, ServiceProviderPrefix); ok {
+		if SpeechService == nil {
+			return nil, "", fmt.Errorf("speech is set to the service %q, and services are not available here", name)
+		}
+		if text = strings.TrimSpace(text); text == "" {
+			return nil, "", fmt.Errorf("speech: no text to speak")
+		}
+		return SpeechService(ctx, name, text, cfg.Voice)
 	}
 	if strings.TrimSpace(cfg.Endpoint) == "" {
 		return nil, "", fmt.Errorf("speech endpoint not configured")

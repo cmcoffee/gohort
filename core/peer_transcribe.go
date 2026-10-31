@@ -192,6 +192,12 @@ func (p RemotePeer) TranscribeURL() string {
 // back would send audio somewhere the operator did not choose.
 func ResolveTranscribeProvider(cfg TranscribeConfig, provider string) (TranscribeConfig, error) {
 	provider = strings.TrimSpace(provider)
+	// A service connector (core/service) is used as it is named; the admin
+	// handler checks that it provides this.
+	if strings.HasPrefix(provider, media.ServiceProviderPrefix) {
+		cfg.Provider = provider
+		return cfg, nil
+	}
 	if provider == "" {
 		// Same rule as ResolveEmbeddingProvider, and the same trap: the "local"
 		// option submits the string "local", so blank means the dropdown was
@@ -200,7 +206,7 @@ func ResolveTranscribeProvider(cfg TranscribeConfig, provider string) (Transcrib
 		// while leaving the peer's endpoint and credential in place, and the
 		// resulting config points at the peer with a credential nothing
 		// refreshes.
-		if strings.HasPrefix(strings.TrimSpace(cfg.Provider), peerProviderPrefix) {
+		if p := strings.TrimSpace(cfg.Provider); strings.HasPrefix(p, peerProviderPrefix) || strings.HasPrefix(p, media.ServiceProviderPrefix) {
 			return cfg, nil
 		}
 	}

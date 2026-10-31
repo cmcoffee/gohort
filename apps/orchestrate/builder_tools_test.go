@@ -92,7 +92,13 @@ func TestAuthoringCatalogStaysWithinBudget(t *testing.T) {
 	// with no public address can take a Teams bot or webhook through a peer.
 	// The catalog was about 70 bytes under the old budget before it; the rest
 	// of the kind's guidance is in the tool's help, not here.
-	const budgetBytes = 91200
+	//
+	// 91200 -> 91600 (0.8.855): the service connector kind (core/service),
+	// about 330 bytes: an enum value and its service_spec param on create and
+	// update. The spec's shape is in the param because nothing else teaches it
+	// to Builder, and this is the kind meant to replace the per-service ones.
+	// The catalog was about 40 bytes under the old budget before it.
+	const budgetBytes = 91600
 	if auth > budgetBytes {
 		t.Errorf("the authoring catalog is %d bytes (~%d tokens), past the %d-byte budget.\n"+
 			"Every Builder-capable agent pays this on every turn. Either trim a description, "+

@@ -1,12 +1,16 @@
 package core
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/cmcoffee/gohort/core/media"
 )
 
 // embedServer counts concurrent in-flight requests and reports the peak.
@@ -128,5 +132,69 @@ func TestEmbedCallerLabelling(t *testing.T) {
 	// the scheduler would treat as its own distinct queue.
 	if got := embedCaller(WithEmbedCaller(t.Context(), "   ")); got != embedCallerLocal {
 		t.Errorf("blank label = %q, want %q", got, embedCallerLocal)
+	}
+}
+
+// Embeddings set to a service go through media.EmbedService, in a batch, with the
+// configured model; a batch answered short is refused, and with no service
+// package installed the config is refused rather than sent anywhere.
+func TestEmbedsThroughAServiceAreCounted(t *testing.T) {
+	saved := media.EmbedService
+	t.Cleanup(func() { media.EmbedService = saved })
+	var gotName, gotModel string
+	drop := false
+	media.EmbedService = func(_ context.Context, name, model string, texts []string) ([][]float32, error) {
+		gotName, gotModel = name, model
+		out := make([][]float32, len(texts))
+		for i := range texts {
+			out[i] = []float32{float32(i), 1}
+		}
+		if drop {
+			out = out[:len(out)-1]
+		}
+		return out, nil
+	}
+	cfg := EmbeddingConfig{Enabled: true, Provider: "service:vec", Endpoint: "service:vec", Model: "m1"}
+	vecs, err := embedTexts(context.Background(), cfg, []string{"a", "b"})
+	if err != nil || len(vecs) != 2 || vecs[1][0] != 1 || gotName != "vec" || gotModel != "m1" {
+		t.Fatalf("batch: %v %v (%s, %s)", vecs, err, gotName, gotModel)
+	}
+	drop = true
+	if _, err := embedTexts(context.Background(), cfg, []string{"a", "b"}); err == nil || !strings.Contains(err.Error(), "1 vector(s) for 2") {
+		t.Errorf("a short batch: %v", err)
+	}
+	media.EmbedService = nil
+	if _, err := embedTexts(context.Background(), cfg, []string{"a"}); err == nil || !strings.Contains(err.Error(), "not available") {
+		t.Errorf("no service package: %v", err)
+	}
+}
+
+// A service is its own embedding space: picking one names it as the
+// endpoint (so EmbedVersion changes) and drops a key typed for another
+// embedder, and one that declares no model is stamped with its name, since a
+// blank stamp would be compared with every stored row.
+func TestAServiceEmbedderIsItsOwnSpace(t *testing.T) {
+	saved := GetEmbeddingConfig()
+	t.Cleanup(func() { SetEmbeddingConfig(saved) })
+	SetEmbeddingConfig(EmbeddingConfig{})
+	cfg, err := ResolveEmbeddingProvider(EmbeddingConfig{Provider: "service:vec", Endpoint: "http://localhost:11434/api", APIKey: "local-key", Model: "nomic-embed-text"})
+	if err != nil || cfg.Endpoint != "service:vec" || cfg.APIKey != "" {
+		t.Fatalf("resolved: %+v %v", cfg, err)
+	}
+	if got := (EmbeddingConfig{Provider: "service:vec"}).spaceStamp(); got != "service:vec" {
+		t.Errorf("a model-less service is stamped %q", got)
+	}
+	if got := (EmbeddingConfig{Provider: "service:vec", Model: "m1", DocPrefix: "passage: "}).spaceStamp(); got != "m1+doc:passage: " {
+		t.Errorf("a service with a model is stamped %q", got)
+	}
+	if got := (EmbeddingConfig{Provider: "local"}).spaceStamp(); got != "" {
+		t.Errorf("a model-less local embedder stays unstamped, got %q", got)
+	}
+	// A form that did not render the picker (the service went away) keeps
+	// the stored selection rather than falling back to local.
+	SetEmbeddingConfig(EmbeddingConfig{Enabled: true, Provider: "service:vec", Endpoint: "service:vec"})
+	kept, err := ResolveEmbeddingProvider(EmbeddingConfig{Enabled: true, Endpoint: "service:vec"})
+	if err != nil || kept.Provider != "" || kept.Endpoint != "service:vec" {
+		t.Errorf("a blank provider over a stored service: %+v %v", kept, err)
 	}
 }

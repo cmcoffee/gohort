@@ -67,6 +67,10 @@ type Spec struct {
 	IntervalSecs int `json:"interval_secs,omitempty"`
 	MaxSecs      int `json:"max_secs,omitempty"`
 	ExpectSecs   int `json:"expect_secs,omitempty"`
+	// Check, when set, decides each poll in place of ReadyPath and ErrorPath:
+	// done, or failed with why. For a caller with conditions of its own (a
+	// service connector's "state != running"); never read from a spec.
+	Check func(node any, id string) (done bool, fail error) `json:"-"`
 }
 
 // Bounds.
@@ -219,14 +223,24 @@ func Run(ctx context.Context, s Spec, submitURL string, submitBody []byte, call 
 				return res, fmt.Errorf("the poll response for job %s was not JSON: %s", res.ID, clip(string(resp.Body), 200))
 			}
 		}
-		if s.ErrorPath != "" {
-			if v := Lookup(node, s.ErrorPath, res.ID); v != "" && matches(v, s.ErrorValues) {
-				detail := Lookup(node, s.ErrorDetailPath, res.ID)
-				return res, fmt.Errorf("job %s failed (%s): %s", res.ID, v, chooseStr(detail, "no reason given"))
+		if s.Check != nil {
+			done, fail := s.Check(node, res.ID)
+			if fail != nil {
+				return res, fail
 			}
-		}
-		if v := Lookup(node, s.ReadyPath, res.ID); v != "" && (len(s.ReadyValues) == 0 || matches(v, s.ReadyValues)) {
-			break
+			if done {
+				break
+			}
+		} else {
+			if s.ErrorPath != "" {
+				if v := Lookup(node, s.ErrorPath, res.ID); v != "" && matches(v, s.ErrorValues) {
+					detail := Lookup(node, s.ErrorDetailPath, res.ID)
+					return res, fmt.Errorf("job %s failed (%s): %s", res.ID, v, chooseStr(detail, "no reason given"))
+				}
+			}
+			if v := Lookup(node, s.ReadyPath, res.ID); v != "" && (len(s.ReadyValues) == 0 || matches(v, s.ReadyValues)) {
+				break
+			}
 		}
 		if time.Now().Add(s.Interval()).After(deadline) {
 			return res, fmt.Errorf("job %s was not done after %s (%d checks); it may still finish: ask %s later", res.ID, s.Deadline(), res.Polls, pollURL)
@@ -313,32 +327,128 @@ func matches(v string, want []string) bool {
 	return false
 }
 
-// walkPath follows a dot-path ({id} replaced) into decoded JSON.
+// walkPath follows a dot-path ({id} replaced) into decoded JSON. A part is a
+// field, a list index, or a field followed by a selector, list[field=value]:
+// the first element of the list whose field equals value. The selector is
+// what a fixed index cannot say, for a reply whose image is not always the
+// same element of its list.
 func walkPath(node any, p, id string) (any, bool) {
 	p = strings.TrimSpace(strings.ReplaceAll(p, "{id}", id))
 	if p == "" {
 		return node, true
 	}
 	cur := node
-	for _, part := range strings.Split(p, ".") {
-		switch t := cur.(type) {
-		case map[string]any:
-			v, ok := t[part]
+	for _, part := range splitPath(p) {
+		name, field, want, sel := parseSelector(part)
+		if name != "" {
+			switch t := cur.(type) {
+			case map[string]any:
+				v, ok := t[name]
+				if !ok {
+					return nil, false
+				}
+				cur = v
+			case []any:
+				i, err := strconv.Atoi(name)
+				if err != nil || i < 0 || i >= len(t) {
+					return nil, false
+				}
+				cur = t[i]
+			default:
+				return nil, false
+			}
+		}
+		if !sel {
+			continue
+		}
+		list, ok := cur.([]any)
+		if !ok {
+			return nil, false
+		}
+		found := false
+		for _, el := range list {
+			m, ok := el.(map[string]any)
 			if !ok {
-				return nil, false
+				continue
 			}
-			cur = v
-		case []any:
-			i, err := strconv.Atoi(part)
-			if err != nil || i < 0 || i >= len(t) {
-				return nil, false
+			if (want == nil && Present(m, field, "")) || (want != nil && Lookup(m, field, "") == *want) {
+				cur, found = el, true
+				break
 			}
-			cur = t[i]
-		default:
+		}
+		if !found {
 			return nil, false
 		}
 	}
 	return cur, true
+}
+
+// splitPath splits a path on the dots outside a selector's brackets, so a
+// selector's value may hold one ("files[name=take.mp3]").
+func splitPath(p string) []string {
+	var parts []string
+	depth, start := 0, 0
+	for i, r := range p {
+		switch r {
+		case '[':
+			depth++
+		case ']':
+			depth--
+		case '.':
+			if depth == 0 {
+				parts = append(parts, p[start:i])
+				start = i + 1
+			}
+		}
+	}
+	return append(parts, p[start:])
+}
+
+// parseSelector reads one part: its name and, for "name[field=value]", the
+// selector, or for "name[field]", the first element that has the field at
+// all (a list of parts where only one carries the picture). A bare
+// "[field=value]" selects from the current list.
+func parseSelector(part string) (name, field string, value *string, sel bool) {
+	i := strings.IndexByte(part, '[')
+	if i < 0 || !strings.HasSuffix(part, "]") {
+		return part, "", nil, false
+	}
+	inner := part[i+1 : len(part)-1]
+	f, v, ok := strings.Cut(inner, "=")
+	if !ok {
+		return part[:i], strings.TrimSpace(inner), nil, true
+	}
+	v = strings.TrimSpace(v)
+	return part[:i], strings.TrimSpace(f), &v, true
+}
+
+// ValidPath refuses a path outside the grammar: an empty part ("a..b"), a
+// bracket that is not a whole selector, a selector with no field.
+func ValidPath(p string) error {
+	p = strings.TrimSpace(p)
+	if p == "" {
+		return nil
+	}
+	for _, part := range splitPath(p) {
+		if part == "" {
+			return fmt.Errorf("path %q has an empty part", p)
+		}
+		if !strings.ContainsAny(part, "[]") {
+			continue
+		}
+		_, field, _, sel := parseSelector(part)
+		if !sel || field == "" || strings.Count(part, "[") != 1 || strings.Count(part, "]") != 1 {
+			return fmt.Errorf("path %q: %q is not a selector; write list[field=value], or list[field] for the first that has it", p, part)
+		}
+	}
+	return nil
+}
+
+// Present reports whether a dot-path leads to something in node, empty or
+// not: a field that holds "" is there; a misspelled one is not.
+func Present(node any, p, id string) bool {
+	_, ok := walkPath(node, p, id)
+	return ok
 }
 
 // Lookup reads a dot-path as text: a string as it is, a number or bool

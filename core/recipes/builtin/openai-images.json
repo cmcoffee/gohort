@@ -1,0 +1,117 @@
+{
+  "id": "openai-images",
+  "title": "OpenAI (image generation)",
+  "description": "OpenAI's image model as an image backend, declared as a service: its request, reply and price are data you can test and fix from Admin > Connectors.",
+  "category": "Images",
+  "setup_notes": "Create an API key at platform.openai.com/api-keys. The credential lands disabled: enable it under API Credentials. The connector lands unapproved: approve it in Admin > Extensions > Connectors, run Test on its row, then pick it as the image provider under Capabilities. The price per image is OpenAI's for a standard square image at the time this template was written; a wide image costs more, so edit the spec's cost if most of yours are wide or the price has changed.",
+  "questions": [
+    {
+      "name": "api_key",
+      "label": "OpenAI API key",
+      "help": "Stored in the credential's secret store, never in the connector.",
+      "required": true,
+      "secret": true,
+      "credential": "openai_images"
+    },
+    {
+      "name": "name",
+      "label": "Connector name",
+      "help": "Lowercase letters, digits, dashes and underscores; the image provider picker lists it by this name.",
+      "default": "openai-images"
+    },
+    {
+      "name": "model",
+      "label": "Model",
+      "help": "An OpenAI image model that takes a size and returns base64.",
+      "default": "dall-e-3"
+    }
+  ],
+  "bundle": {
+    "bundle": "gohort.bundle/v1",
+    "artifacts": [
+      {
+        "type": "credential",
+        "name": "openai_images",
+        "recipe": {
+          "name": "openai_images",
+          "type": "bearer",
+          "base_url": "https://api.openai.com",
+          "allowed_endpoints": [
+            "/v1/images/**",
+            "/v1/models"
+          ],
+          "description": "OpenAI API, for image generation."
+        }
+      },
+      {
+        "type": "connector",
+        "name": "{{name}}",
+        "recipe": {
+          "name": "{{name}}",
+          "kind": "service",
+          "template": "openai-images",
+          "desc": "OpenAI image generation ({{model}})",
+          "spec": {
+            "provider": {
+              "transport": "http",
+              "base_url": "https://api.openai.com",
+              "auth": {
+                "credential": "openai_images"
+              },
+              "operations": {
+                "generate": {
+                  "method": "POST",
+                  "path": "/v1/images/generations",
+                  "body": {
+                    "model": "{model}",
+                    "prompt": "{prompt}",
+                    "n": 1,
+                    "size": "{width}x{height}",
+                    "quality": "standard",
+                    "response_format": "b64_json"
+                  }
+                },
+                "models": {
+                  "path": "/v1/models"
+                }
+              },
+              "health": {
+                "call": "models",
+                "expect": "data",
+                "every_mins": 60
+              }
+            },
+            "provides": [
+              {
+                "capability": "image.generate",
+                "steps": [
+                  {
+                    "call": "generate"
+                  }
+                ],
+                "output": {
+                  "image": {
+                    "path": "data.0.b64_json",
+                    "as": "base64"
+                  }
+                },
+                "defaults": {
+                  "model": "{{model}}",
+                  "width": 1024,
+                  "height": 1024
+                },
+                "wide": {
+                  "width": 1792,
+                  "height": 1024
+                },
+                "cost": {
+                  "per_call": 0.04
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

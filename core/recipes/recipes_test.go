@@ -7,6 +7,7 @@ import (
 
 	"github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/messaging"
+	"github.com/cmcoffee/gohort/core/service"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -23,7 +24,9 @@ func testDB(t *testing.T) core.Database {
 // Every built-in template is valid, and the starters are all there.
 func TestTheBuiltInTemplatesAreValid(t *testing.T) {
 	want := map[string]bool{"github": false, "slack": false, "jira-cloud": false, "open-meteo": false, "system-info": false, "scout": false,
-		"a1111": false, "a1111-img2img": false, "rest-call": false, "openapi": false}
+		"a1111": false, "a1111-img2img": false, "rest-call": false, "openapi": false,
+		"gemini-images": false, "openai-images": false, "elevenlabs-speech": false, "openai-transcription": false,
+		"openai-embeddings": false}
 	for _, r := range builtins() {
 		if err := Validate(r); err != nil {
 			t.Errorf("%s: %v", r.ID, err)
@@ -306,5 +309,40 @@ func TestWebhookSecretQuestionsAreChecked(t *testing.T) {
 	bad.Questions[4].WebhookSecret, bad.Questions[4].Secret = "{{name}}", false
 	if Validate(bad) == nil {
 		t.Error("a plain answer cannot name a secret's destination")
+	}
+}
+
+// The image providers gohort ships as code are templates too, each a disabled
+// credential and an unapproved service connector whose spec is valid.
+func TestTheImageProviderTemplatesInstallServices(t *testing.T) {
+	for _, tc := range []struct{ id, cred, conn string }{
+		{"gemini-images", "gemini_images", "gemini-images"},
+		{"openai-images", "openai_images", "openai-images"},
+		{"elevenlabs-speech", "elevenlabs_speech", "elevenlabs-speech"},
+		{"openai-transcription", "openai_transcription", "openai-transcription"},
+		{"openai-embeddings", "openai_embeddings", "openai-embeddings"},
+	} {
+		db := testDB(t)
+		res, err := Install(db, tc.id, "admin", map[string]string{"api_key": "test-key-value"})
+		if err != nil {
+			t.Fatalf("%s: %v", tc.id, err)
+		}
+		if res.Imported != 2 {
+			t.Fatalf("%s: the credential and the connector land: %+v", tc.id, res)
+		}
+		if c, ok := core.Secure().Load(tc.cred); !ok || !c.Disabled {
+			t.Errorf("%s: the credential lands disabled: %+v", tc.id, c)
+		}
+		c, ok := core.GetConnector(db, tc.conn)
+		if !ok || c.Kind != service.Kind || c.Approved {
+			t.Fatalf("%s: the connector: %+v", tc.id, c)
+		}
+		s, err := service.Parse(c.Spec)
+		if err == nil {
+			err = s.Validate()
+		}
+		if err != nil {
+			t.Errorf("%s: its spec: %v", tc.id, err)
+		}
 	}
 }

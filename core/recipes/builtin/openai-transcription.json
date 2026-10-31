@@ -1,0 +1,106 @@
+{
+  "id": "openai-transcription",
+  "title": "OpenAI (transcription)",
+  "description": "OpenAI's transcription model as gohort's ears, declared as a service: the upload and the reply are data you can test and fix from Admin > Connectors.",
+  "category": "Speech",
+  "setup_notes": "Create an API key at platform.openai.com/api-keys. The credential lands disabled: enable it under API Credentials. The connector lands unapproved: approve it in Admin > Extensions > Connectors, run Test on its row (it sends one second of a tone), then pick it under Capabilities > Audio Transcription. OpenAI bills transcription by the minute, which gohort does not count, so no price is declared: the connector shows its calls as unpriced until you add a per_call cost to its spec.",
+  "questions": [
+    {
+      "name": "api_key",
+      "label": "OpenAI API key",
+      "help": "Stored in the credential's secret store, never in the connector.",
+      "required": true,
+      "secret": true,
+      "credential": "openai_transcription"
+    },
+    {
+      "name": "name",
+      "label": "Connector name",
+      "help": "Lowercase letters, digits, dashes and underscores; the transcription settings list it by this name.",
+      "default": "openai-transcription"
+    },
+    {
+      "name": "model",
+      "label": "Model",
+      "default": "whisper-1"
+    }
+  ],
+  "bundle": {
+    "bundle": "gohort.bundle/v1",
+    "artifacts": [
+      {
+        "type": "credential",
+        "name": "openai_transcription",
+        "recipe": {
+          "name": "openai_transcription",
+          "type": "bearer",
+          "base_url": "https://api.openai.com",
+          "allowed_endpoints": [
+            "/v1/audio/**",
+            "/v1/models"
+          ],
+          "description": "OpenAI API, for transcription."
+        }
+      },
+      {
+        "type": "connector",
+        "name": "{{name}}",
+        "recipe": {
+          "name": "{{name}}",
+          "kind": "service",
+          "template": "openai-transcription",
+          "desc": "OpenAI transcription ({{model}})",
+          "spec": {
+            "provider": {
+              "transport": "http",
+              "base_url": "https://api.openai.com",
+              "auth": {
+                "credential": "openai_transcription"
+              },
+              "operations": {
+                "transcribe": {
+                  "method": "POST",
+                  "path": "/v1/audio/transcriptions",
+                  "send": "multipart",
+                  "body": {
+                    "file": "{audio}",
+                    "model": "{model}",
+                    "prompt": "{prompt}",
+                    "language": "{language}"
+                  }
+                },
+                "models": {
+                  "path": "/v1/models"
+                }
+              },
+              "health": {
+                "call": "models",
+                "expect": "data",
+                "every_mins": 60
+              }
+            },
+            "provides": [
+              {
+                "capability": "speech.transcribe",
+                "steps": [
+                  {
+                    "call": "transcribe"
+                  }
+                ],
+                "output": {
+                  "text": {
+                    "path": "text",
+                    "as": "text"
+                  }
+                },
+                "defaults": {
+                  "model": "{{model}}"
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}
