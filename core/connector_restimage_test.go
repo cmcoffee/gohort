@@ -197,23 +197,58 @@ func TestResolveImageDims(t *testing.T) {
 }
 
 func TestImageBackendRegistryRouting(t *testing.T) {
-	// A backend registered by name is reachable through generateWithProvider's
-	// default case — the seam that lets a connector serve the native pipeline.
-	// The backend returns an error so the success/usage-record path is skipped.
+	// A backend registered by name is reachable through generateWithBackend:
+	// the seam that lets a connector serve the native pipeline. The backend
+	// returns an error so the success/usage-record path is skipped.
 	RegisterImageBackend("unit_test_backend", func(_ context.Context, prompt string, landscape bool) (*ImageGenResult, error) {
 		return nil, fmt.Errorf("routed:%s:%v", prompt, landscape)
 	})
+	t.Cleanup(func() { UnregisterImageBackend("unit_test_backend") })
 	if !ImageBackendRegistered("unit_test_backend") {
 		t.Fatal("backend not registered")
 	}
-	_, err := generateWithProvider(context.Background(), "unit_test_backend", "", "a cat", true)
+	_, err := generateWithBackend(context.Background(), "unit_test_backend", "a cat", true)
 	if err == nil || err.Error() != "routed:a cat:true" {
 		t.Errorf("routing failed, got %v", err)
 	}
-	// An unknown provider still errors clearly.
-	if _, err := generateWithProvider(context.Background(), "nope_no_backend", "", "x", false); err == nil ||
-		!strings.Contains(err.Error(), "unknown image provider") {
-		t.Errorf("expected unknown-provider error, got %v", err)
+	// A picture made is counted, for the process and for the request.
+	RegisterImageBackend("unit_test_ok", func(_ context.Context, prompt string, _ bool) (*ImageGenResult, error) {
+		return &ImageGenResult{URL: "https://img.example/x.png", Prompt: prompt}, nil
+	})
+	t.Cleanup(func() { UnregisterImageBackend("unit_test_ok") })
+	ctx, req := WithRequestUsage(context.Background())
+	before := ProcessUsage().Snapshot().ImageCalls
+	if _, err := generateWithBackend(ctx, "unit_test_ok", "a dog", false); err != nil {
+		t.Fatal(err)
+	}
+	if ProcessUsage().Snapshot().ImageCalls != before+1 || req.Snapshot().ImageCalls != 1 {
+		t.Errorf("the picture was not counted: process +%d, request %d", ProcessUsage().Snapshot().ImageCalls-before, req.Snapshot().ImageCalls)
+	}
+	// A name with no connector, the old built-in ones included, errors
+	// clearly, and so does no setting at all.
+	for name, want := range map[string]string{
+		"gemini": "no approved image connector named gemini",
+		"":       "choose an image connector under Admin > Capabilities > Image Generation",
+	} {
+		if _, err := generateWithBackend(context.Background(), name, "x", false); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: got %v, want %q", name, err, want)
+		}
+	}
+}
+
+// The default is the configured connector; none, or "none", is no default.
+func TestTheDefaultImageBackend(t *testing.T) {
+	saved := ImageProviderFunc
+	t.Cleanup(func() { ImageProviderFunc = saved })
+	for set, want := range map[string]string{" comfy ": "comfy", "none": "", "": ""} {
+		ImageProviderFunc = func() string { return set }
+		if got := defaultImageBackend(); got != want || ImageGenerationAvailable() != (want != "") {
+			t.Errorf("%q: default %q, available %v", set, got, ImageGenerationAvailable())
+		}
+	}
+	ImageProviderFunc = nil
+	if ImageGenerationAvailable() {
+		t.Error("available with nothing wired")
 	}
 }
 

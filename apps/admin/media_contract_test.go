@@ -81,20 +81,6 @@ func TestMediaRoutesContract(t *testing.T) {
 	mux := http.NewServeMux()
 	app.RegisterRoutes(mux, "")
 	do := func(user, method, path, body string) { ct.run(mux, adb, user, method, path, body) }
-	// keeps holds a save that sent the placeholder to the key it already had:
-	// the reply cannot show it (the key is masked there), and a test that
-	// would use it reaches a provider this test does not call.
-	keeps := func(table, key, want string) {
-		t.Helper()
-		var got string
-		switch table {
-		case ImageTable:
-			adb.Get(table, key, &got)
-		}
-		if got != want {
-			t.Errorf("a save sending the placeholder left %s's key as %q", table, got)
-		}
-	}
 
 	for _, p := range []string{"/api/embeddings", "/api/transcribe", "/api/speech", "/api/image-gen", "/api/speech/voices"} {
 		do("", "GET", p, "")
@@ -173,18 +159,19 @@ func TestMediaRoutesContract(t *testing.T) {
 	do("root", "POST", "/api/speech", `{"enabled":true,"provider":"peer:nope"}`)
 	do("root", "POST", "/api/speech", `{"enabled":true,"provider":"service:nope"}`)
 
-	do("alice", "POST", "/api/image-gen", `{"provider":"openai","api_key":"s3cr3t-img-x"}`)
-	do("root", "POST", "/api/image-gen", `{"provider":"openai","api_key":"s3cr3t-img"}`)
+	do("alice", "POST", "/api/image-gen", `{"provider":"none"}`)
 	do("root", "GET", "/api/image-gen", "")
-	do("root", "POST", "/api/image-gen", `{"provider":"gemini","api_key":"(unchanged)"}`)
-	keeps(ImageTable, "api_key", "s3cr3t-img")
+	do("root", "POST", "/api/image-gen", `{"provider":"openai","api_key":"s3cr3t-img"}`)
+	// Refused, it stores nothing: not the name, and never a key.
+	if adb.Get(ImageTable, "provider", new(string)) || adb.Get(ImageTable, "api_key", new(string)) {
+		t.Error("a refused image save stored something")
+	}
+	do("root", "POST", "/api/image-gen", `{"provider":"none"}`)
 	do("root", "GET", "/api/image-gen", "")
 	do("root", "POST", "/api/image-gen", `{"provider":`)
 	do("root", "POST", "/api/image-gen/test", `{"provider":""}`)
 	do("root", "POST", "/api/image-gen/test", `{"provider":"none"}`)
-	do("root", "POST", "/api/image-gen/test", `{"provider":"elsewhere","api_key":"(unchanged)"}`)
-	do("root", "POST", "/api/image-gen", `{"provider":"gemini","api_key":""}`)
-	do("root", "POST", "/api/image-gen/test", `{"provider":"gemini","api_key":"(unchanged)"}`)
+	do("root", "POST", "/api/image-gen/test", `{"provider":"gemini"}`)
 
 	ct.activity(mux, adb, "root")
 	ct.check(t, "testdata/media_contract.golden")

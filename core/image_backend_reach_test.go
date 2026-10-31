@@ -141,31 +141,23 @@ func TestBackendListIsSortedAndMemoized(t *testing.T) {
 	}
 }
 
-func TestBuiltInProviderOfferedOnlyWhenItIsTheDefault(t *testing.T) {
-	// A leftover Gemini key must not quietly re-open a provider the admin moved
-	// off of. The built-in joins the list only when it IS the configured default.
+func TestOnlyConnectorsAreOffered(t *testing.T) {
+	// The configured connector is marked the default. A setting naming the
+	// Gemini or OpenAI code that used to be built in names nothing now: it is
+	// not offered, and nothing is marked the default.
 	backendTestDB(t)
 	putImageConnector(t, "comfy_lan", "no_auth", true)
 
 	ImageProviderFunc = func() string { return "comfy_lan" }
 	got := ReachableImageBackends(&ToolSession{})
 	if len(got) != 1 || got[0].Name != "comfy_lan" || !got[0].Default {
-		t.Errorf("reachable = %+v, want comfy_lan marked default and no built-in", got)
+		t.Errorf("reachable = %+v, want comfy_lan marked default", got)
 	}
 
-	savedKey := GeminiKeyFunc
-	GeminiKeyFunc = func() string { return "key" }
 	ImageProviderFunc = func() string { return "gemini" }
-	t.Cleanup(func() { GeminiKeyFunc = savedKey })
 	got = ReachableImageBackends(&ToolSession{})
-	names := backendNames(got)
-	if len(names) != 2 || names[0] != "comfy_lan" || names[1] != "gemini" {
-		t.Fatalf("reachable = %v, want [comfy_lan gemini]", names)
-	}
-	for _, c := range got {
-		if c.Default != (c.Name == "gemini") {
-			t.Errorf("%s default = %v, want the configured provider marked", c.Name, c.Default)
-		}
+	if len(got) != 1 || got[0].Name != "comfy_lan" || got[0].Default {
+		t.Errorf("reachable = %+v, want comfy_lan alone and not the default", got)
 	}
 }
 

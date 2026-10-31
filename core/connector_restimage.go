@@ -44,7 +44,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -643,9 +642,8 @@ func (restImageHandler) Teardown(c Connector) error {
 // stored connectors: every approved, parseable rest_image connector is
 // registered, and every name we own that no longer has one is dropped.
 //
-// rest_image is the only registrar (RegisterImageBackend has one other caller,
-// itself), so a full sweep is safe — but it still only removes names it put
-// there, tracked in ownedImageBackends, so a future registrar isn't clobbered.
+// It only removes names it put there, tracked in ownedImageBackends, so the
+// service kind's backends (core/service) are not clobbered.
 //
 // keepLive names connectors to treat as approved regardless of what the store
 // currently says. Materialize runs BEFORE ApproveConnector writes Approved=true,
@@ -1309,9 +1307,7 @@ type ImageBackendChoice struct {
 // A rest_image connector is reachable when it is APPROVED (an admin enabled it),
 // MATERIALIZED (its backend closure is registered, so the spec parsed), and its
 // credential is not denied to this caller — the same per-agent deny surface that
-// gates every other dispatch (AgentRecord.DisabledCredentials). The built-in
-// providers are offered only when one of them is the CONFIGURED default: a
-// leftover Gemini key shouldn't quietly re-open a provider the admin moved off.
+// gates every other dispatch (AgentRecord.DisabledCredentials).
 //
 // This is the schema-time half of the gate and exists to keep the model from
 // naming a backend that would refuse. It is NOT the security boundary — a model
@@ -1384,14 +1380,6 @@ func reachableImageBackends(sess *ToolSession) []ImageBackendChoice {
 			CascadeMax:  cascadeCapacity(s.MaxImages()),
 			AcceptsMask: len(s.ComfyMap.MaskNodes) > 0,
 		})
-	}
-	// A built-in provider joins the list only when it IS the default.
-	switch defaultProvider {
-	case "gemini", "openai":
-		if ImageGenerationAvailable() {
-			out = append(out, ImageBackendChoice{Name: defaultProvider, Default: true})
-			sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-		}
 	}
 	return out
 }

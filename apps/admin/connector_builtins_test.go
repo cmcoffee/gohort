@@ -22,24 +22,18 @@ func TestGohortsOwnProvidersAreConnectors(t *testing.T) {
 	t.Cleanup(func() { RootDB = saved })
 	a := &AdminApp{}
 	a.db = &DBase{Store: kvlite.MemStore()}
-	a.db.Set(ImageTable, "provider", "openai")
 
 	got := map[string]builtinConnector{}
 	for _, b := range a.builtinConnectors() {
 		got[b.name] = b
 	}
-	// Embeddings, transcription and speech always come from a connector or a
-	// peer: there is no built-in embedder, transcriber or speaker to list.
-	for _, gone := range []string{"built-in:embeddings", "built-in:transcription", "built-in:speech"} {
+	// Embeddings, transcription, speech and images always come from a
+	// connector or a peer: there is no built-in embedder, transcriber,
+	// speaker or image code to list.
+	for _, gone := range []string{"built-in:embeddings", "built-in:transcription", "built-in:speech", "built-in:gemini-images", "built-in:openai-images"} {
 		if b, ok := got[gone]; ok {
 			t.Errorf("%s listed: %+v", gone, b)
 		}
-	}
-	if b := got["built-in:gemini-images"]; !strings.Contains(b.status, "set to the built-in OpenAI") {
-		t.Errorf("gemini while openai is chosen: %+v", b)
-	}
-	if b := got["built-in:openai-images"]; !strings.HasPrefix(b.status, "In use for Image Generation") || !strings.Contains(b.wrapper, "api.openai.com") {
-		t.Errorf("openai: %+v", b)
 	}
 	if b := got["built-in:web-search"]; b.wrapper != "Web search ⇐ duckduckgo ⇐ lite.duckduckgo.com" || !strings.HasPrefix(b.status, "In use for web search") || b.test == nil {
 		t.Errorf("web search, never set up: %+v", b)
@@ -102,10 +96,6 @@ func TestGohortsOwnProvidersAreConnectors(t *testing.T) {
 	if body, _ := res.(map[string]any); !strings.HasPrefix(body["message"].(string), "Not in use") || body["warnings"] == nil {
 		t.Errorf("testing a built-in not in use: %v", res)
 	}
-	res, _ = a.builtinTest(c, "built-in:openai-images")
-	if body, _ := res.(map[string]any); !strings.Contains(body["message"].(string), "set one under Admin > Capabilities > Image Generation") {
-		t.Errorf("an image key test from the Connectors page: %v", res)
-	}
 	if _, err := a.builtinTest(c, "built-in:nothing"); err == nil {
 		t.Error("an unknown built-in was tested")
 	}
@@ -123,7 +113,7 @@ func TestGohortsOwnProvidersAreConnectors(t *testing.T) {
 			}
 		}
 	}
-	if builtins != 7 {
-		t.Errorf("%d built-in rows, want 7", builtins)
+	if builtins != 5 {
+		t.Errorf("%d built-in rows, want 5", builtins)
 	}
 }

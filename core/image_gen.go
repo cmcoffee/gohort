@@ -1,36 +1,28 @@
 package core
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/cmcoffee/gohort/core/ollama"
-	"github.com/cmcoffee/snugforge/apiclient"
 )
 
 // --- pluggable image backends ------------------------------------------------
 //
-// The built-in providers (gemini, openai) are compiled in. A rest_image
-// connector registers itself here so the SAME native pipeline — the default
-// generate_image tool, writer-app illustrations (GenerateImageLandscape /
-// GenerateImageWithProfile), and the admin image-provider setting — can target
-// it by name, with no per-service code. This is the generic seam that makes a
-// ComfyUI / Automatic1111 / any spec-declared backend a first-class image
-// source everywhere the native providers are.
+// Every picture comes from a connector. A rest_image connector or a service
+// giving image.generate registers itself here so the SAME native pipeline —
+// the image tool, writer-app illustrations (GenerateImage), and the admin
+// image-provider setting — can target it by name, with no per-service code.
+// Gemini and OpenAI are templates of the service kind, not code here.
 
-// ImageBackendFunc produces an image for a named backend. landscape mirrors the
-// native providers' aspect switch (wide vs square).
+// ImageBackendFunc produces an image for a named backend. landscape asks for
+// a wide picture rather than a square one.
 type ImageBackendFunc func(ctx context.Context, prompt string, landscape bool) (*ImageGenResult, error)
 
 var (
@@ -157,34 +149,24 @@ func SetBrowserDir(dir string) {
 
 var browserDir string
 
-// GeminiKeyFunc is set by the main package to provide the Gemini API key.
-var GeminiKeyFunc func() string
-
-// OpenAIKeyFunc is set by the main package to provide the OpenAI API key.
-var OpenAIKeyFunc func() string
-
-// ImageProviderFunc returns the configured image provider ("gemini", "openai", "none").
+// ImageProviderFunc returns the configured image backend: a connector's
+// name, or "" or "none" for off. Set by the main package.
 var ImageProviderFunc func() string
 
-// ImageGenProfile holds provider and key for a named image generation slot.
-type ImageGenProfile struct {
-	Provider string // "gemini", "openai", or "none"
-	APIKey   string
+// ImageGenerationAvailable reports whether a default image backend is set.
+func ImageGenerationAvailable() bool {
+	return defaultImageBackend() != ""
 }
 
-// ImageGenProfileFunc looks up a named image generation profile by name.
-// Returns a zero-value ImageGenProfile when the profile is not configured.
-// Set by the main package at startup.
-var ImageGenProfileFunc func(name string) ImageGenProfile
-
-// ImageGenerationAvailable reports whether the default image generation provider
-// is configured. Returns false when no provider is set or it is "none".
-func ImageGenerationAvailable() bool {
+// defaultImageBackend is the configured backend, "" when none is.
+func defaultImageBackend() string {
 	if ImageProviderFunc == nil {
-		return false
+		return ""
 	}
-	p := ImageProviderFunc()
-	return p != "" && p != "none"
+	if p := strings.TrimSpace(ImageProviderFunc()); p != "none" {
+		return p
+	}
+	return ""
 }
 
 // generateImageChatTool is no longer registered — the canonical
@@ -276,7 +258,7 @@ func (t *generateImageChatTool) Run(args map[string]any) (string, error) {
 	if prompt == "" {
 		return "", fmt.Errorf("prompt is required")
 	}
-	result, err := GenerateImage(context.Background(), "", prompt)
+	result, err := GenerateImage(context.Background(), prompt)
 	if err != nil {
 		return "", err
 	}
@@ -316,11 +298,11 @@ func (t *generateImageChatTool) RunWithSession(args map[string]any, sess *ToolSe
 		sess.StatusCallback("Refining the image to better match your request…")
 	}
 
-	result, err := GenerateImage(context.Background(), "", prompt)
+	result, err := GenerateImage(context.Background(), prompt)
 	if err != nil {
 		return "", err
 	}
-	// For HTTP URLs (DALL-E), return the URL — no local bytes to show or verify.
+	// For HTTP URLs (a backend that answers with an address), return the URL — no local bytes to show or verify.
 	if strings.HasPrefix(result.URL, "http://") || strings.HasPrefix(result.URL, "https://") {
 		return "IMAGE:" + result.URL, nil
 	}
@@ -349,112 +331,37 @@ func (t *generateImageChatTool) RunWithSession(args map[string]any, sess *ToolSe
 
 func (t *generateImageChatTool) IsInternetTool() bool { return true }
 
-// ImageProfileAvailable reports whether a named image generation profile is
-// configured and usable. Falls back to ImageGenerationAvailable when the name
-// is "default" or the profile func is not set.
-func ImageProfileAvailable(name string) bool {
-	if name == "default" || name == "" {
-		return ImageGenerationAvailable()
-	}
-	if ImageGenProfileFunc == nil {
-		return false
-	}
-	p := ImageGenProfileFunc(name)
-	return p.Provider != "" && p.Provider != "none"
-}
-
 // ImageGenResult holds the output of an image generation call.
 type ImageGenResult struct {
 	URL    string // URL or local path to the generated image
 	Prompt string // the prompt that was used
 }
 
-// generateWithProvider dispatches to the appropriate backend.
-// Both provider and apiKey must already be resolved by the caller.
-// landscape=true produces a wide 16:9 image; false produces 1024x1024 square.
-func generateWithProvider(ctx context.Context, provider, apiKey, prompt string, landscape bool) (result *ImageGenResult, err error) {
-	defer func() {
-		if err == nil && result != nil {
-			ProcessUsage().AddImageCall()
-			if t := RequestUsage(ctx); t != nil {
-				t.AddImageCall()
-			}
-		}
-	}()
-
-	switch provider {
-	case "none":
-		return nil, fmt.Errorf("image generation disabled")
-	case "gemini":
-		if apiKey == "" {
-			return nil, fmt.Errorf("Gemini API key not configured for image generation")
-		}
-		return generateGeminiImage(ctx, apiKey, prompt, landscape)
-	case "openai":
-		if apiKey == "" {
-			return nil, fmt.Errorf("OpenAI API key not configured for image generation")
-		}
-		result, err = doOpenAIRequest(ctx, apiKey, prompt, landscape)
-		if err != nil && isServerError(err) {
-			Debug("[image_gen] DALL-E first attempt failed, retrying: %s", err)
-			time.Sleep(2 * time.Second)
-			result, err = doOpenAIRequest(ctx, apiKey, prompt, landscape)
-		}
-		return result, err
-	default:
-		// A spec-declared backend (rest_image connector) registered by name.
-		if fn, ok := lookupImageBackend(provider); ok {
-			return fn(ctx, prompt, landscape)
-		}
-		return nil, fmt.Errorf("unknown image provider: %s", provider)
+// generateWithBackend renders through a registered backend: a connector's,
+// by its name. Every image comes from one; none is written in Go.
+func generateWithBackend(ctx context.Context, backend, prompt string, landscape bool) (*ImageGenResult, error) {
+	if backend == "" {
+		return nil, fmt.Errorf("image generation is not set up: choose an image connector under Admin > Capabilities > Image Generation")
 	}
+	fn, ok := lookupImageBackend(backend)
+	if !ok {
+		return nil, fmt.Errorf("no approved image connector named %s", backend)
+	}
+	result, err := fn(ctx, prompt, landscape)
+	if err == nil && result != nil {
+		ProcessUsage().AddImageCall()
+		if t := RequestUsage(ctx); t != nil {
+			t.AddImageCall()
+		}
+	}
+	return result, err
 }
 
-func resolveDefaultProviderAndKey() (provider, apiKey string) {
-	provider = "gemini"
-	if ImageProviderFunc != nil {
-		if p := ImageProviderFunc(); p != "" {
-			provider = p
-		}
-	}
-	switch provider {
-	case "gemini":
-		if GeminiKeyFunc != nil {
-			apiKey = GeminiKeyFunc()
-		}
-	case "openai":
-		if OpenAIKeyFunc != nil {
-			apiKey = OpenAIKeyFunc()
-		}
-	}
-	return
+// GenerateImage generates a wide 16:9 image through the configured backend.
+func GenerateImage(ctx context.Context, prompt string) (*ImageGenResult, error) {
+	return GenerateImageWithBackend(ctx, "", prompt, true)
 }
 
-// GenerateImage generates a landscape 16:9 image.
-func GenerateImage(ctx context.Context, apiKey, prompt string) (*ImageGenResult, error) {
-	provider, defaultKey := resolveDefaultProviderAndKey()
-	if apiKey == "" {
-		apiKey = defaultKey
-	}
-	return generateWithProvider(ctx, provider, apiKey, prompt, true)
-}
-
-// GenerateImageLandscape generates a wide 16:9 image (blog/article use).
-func GenerateImageLandscape(ctx context.Context, apiKey, prompt string) (*ImageGenResult, error) {
-	provider, defaultKey := resolveDefaultProviderAndKey()
-	if apiKey == "" {
-		apiKey = defaultKey
-	}
-	return generateWithProvider(ctx, provider, apiKey, prompt, true)
-}
-
-// GenerateImageWithBackend generates through a NAMED backend — a registered
-// rest_image connector or a built-in provider. An empty name (or "default")
-// uses whatever the admin configured, which is the behavior every caller had
-// before the backend became selectable.
-//
-// The caller is responsible for checking the name is reachable first
-// (ImageBackendReachable); this routes, it doesn't authorize.
 // renderCallerKey labels a render for the queue, the way WithEmbedCaller does
 // for embeddings. A separate key because the two queues are separate and one
 // request can be in both.
@@ -552,6 +459,12 @@ func queueRender(ctx context.Context) func() {
 // here can see them or take turns fairly.
 const defaultImageParallel = 1
 
+// GenerateImageWithBackend generates through a NAMED backend: a connector
+// (rest_image, or a service giving image.generate). An empty name (or
+// "default") uses whatever the admin configured.
+//
+// The caller is responsible for checking the name is reachable first
+// (ImageBackendReachable); this routes, it doesn't authorize.
 func GenerateImageWithBackend(ctx context.Context, backend, prompt string, landscape bool) (*ImageGenResult, error) {
 	// Renders took no slot at all until now: the heaviest thing on the box, and
 	// the only one racing instead of queueing.
@@ -559,246 +472,7 @@ func GenerateImageWithBackend(ctx context.Context, backend, prompt string, lands
 
 	backend = strings.TrimSpace(backend)
 	if backend == "" || backend == "default" {
-		provider, key := resolveDefaultProviderAndKey()
-		return generateWithProvider(ctx, provider, key, prompt, landscape)
+		backend = defaultImageBackend()
 	}
-	// A built-in provider named explicitly still needs its key resolved; a
-	// connector backend carries its own credential and takes none.
-	var key string
-	switch backend {
-	case "gemini":
-		if GeminiKeyFunc != nil {
-			key = GeminiKeyFunc()
-		}
-	case "openai":
-		if OpenAIKeyFunc != nil {
-			key = OpenAIKeyFunc()
-		}
-	}
-	return generateWithProvider(ctx, backend, key, prompt, landscape)
-}
-
-// GenerateImageWithProfile generates an image using a named profile.
-// Falls back to the default provider when the named profile is not configured.
-func GenerateImageWithProfile(ctx context.Context, profile, prompt string) (*ImageGenResult, error) {
-	if profile != "" && profile != "default" && ImageGenProfileFunc != nil {
-		p := ImageGenProfileFunc(profile)
-		if p.Provider != "" && p.Provider != "none" {
-			key := p.APIKey
-			if key == "" {
-				switch p.Provider {
-				case "gemini":
-					if GeminiKeyFunc != nil {
-						key = GeminiKeyFunc()
-					}
-				case "openai":
-					if OpenAIKeyFunc != nil {
-						key = OpenAIKeyFunc()
-					}
-				}
-			}
-			return generateWithProvider(ctx, p.Provider, key, prompt, false)
-		}
-	}
-	return GenerateImage(ctx, "", prompt)
-}
-
-// generateGeminiImage uses Gemini's Imagen model to generate an image.
-// Returns a local file path since Imagen returns base64 data, not a URL.
-func generateGeminiImage(ctx context.Context, apiKey, prompt string, landscape bool) (*ImageGenResult, error) {
-	aspectRatio := "1:1"
-	if landscape {
-		aspectRatio = "16:9"
-	}
-	body := map[string]interface{}{
-		"contents": []map[string]interface{}{
-			{
-				"parts": []map[string]string{
-					{"text": prompt},
-				},
-			},
-		},
-		"generationConfig": map[string]interface{}{
-			"responseModalities": []string{"TEXT", "IMAGE"},
-			"imageConfig": map[string]interface{}{
-				"aspectRatio": aspectRatio,
-			},
-		},
-	}
-
-	payload, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-
-	client := &apiclient.APIClient{
-		Server:         "generativelanguage.googleapis.com",
-		RequestTimeout: 120 * time.Second,
-		VerifySSL:      true,
-		AuthFunc: func(req *http.Request) {
-			q := req.URL.Query()
-			q.Set("key", apiKey)
-			req.URL.RawQuery = q.Encode()
-		},
-	}
-
-	req, err := client.NewRequestWithContext(ctx, "POST", "/v1beta/models/gemini-2.5-flash-image:generateContent")
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Body = io.NopCloser(bytes.NewReader(payload))
-	req.ContentLength = int64(len(payload))
-
-	resp, err := client.SendRawRequest("", req)
-	if err != nil {
-		return nil, fmt.Errorf("Gemini image request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read Gemini response: %w", err)
-	}
-
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("Gemini image generation failed (HTTP %d): %s", resp.StatusCode, string(respBody))
-	}
-
-	var result struct {
-		Candidates []struct {
-			Content struct {
-				Parts []struct {
-					InlineData *struct {
-						MimeType string `json:"mimeType"`
-						Data     string `json:"data"`
-					} `json:"inlineData,omitempty"`
-				} `json:"parts"`
-			} `json:"content"`
-		} `json:"candidates"`
-	}
-	if err := json.Unmarshal(respBody, &result); err != nil {
-		return nil, fmt.Errorf("failed to parse Gemini response: %w", err)
-	}
-
-	// Find the first image part in the response.
-	var imgBase64 string
-	var mimeType string
-	for _, c := range result.Candidates {
-		for _, p := range c.Content.Parts {
-			if p.InlineData != nil && strings.HasPrefix(p.InlineData.MimeType, "image/") {
-				imgBase64 = p.InlineData.Data
-				mimeType = p.InlineData.MimeType
-				break
-			}
-		}
-		if imgBase64 != "" {
-			break
-		}
-	}
-	if imgBase64 == "" {
-		return nil, fmt.Errorf("Gemini returned no image data")
-	}
-
-	// Decode base64 and save to a temp file.
-	imgData, err := base64.StdEncoding.DecodeString(imgBase64)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode image: %w", err)
-	}
-
-	ext := ".png"
-	if strings.Contains(mimeType, "jpeg") || strings.Contains(mimeType, "jpg") {
-		ext = ".jpg"
-	}
-
-	imgDir := ImageDir()
-	os.MkdirAll(imgDir, 0755)
-	tmpFile := filepath.Join(imgDir, UUIDv4()+ext)
-	if err := os.WriteFile(tmpFile, imgData, 0644); err != nil {
-		return nil, fmt.Errorf("failed to write image: %w", err)
-	}
-
-	Debug("[image_gen] Gemini image saved: %s (%d bytes)", tmpFile, len(imgData))
-
-	return &ImageGenResult{
-		URL:    tmpFile,
-		Prompt: prompt,
-	}, nil
-}
-
-func isServerError(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := err.Error()
-	return strings.Contains(msg, "HTTP 500") || strings.Contains(msg, "HTTP 502") || strings.Contains(msg, "HTTP 503")
-}
-
-func doOpenAIRequest(ctx context.Context, apiKey, prompt string, landscape bool) (*ImageGenResult, error) {
-	size := "1024x1024"
-	if landscape {
-		size = "1792x1024"
-	}
-	body := map[string]interface{}{
-		"model":   "dall-e-3",
-		"prompt":  prompt,
-		"n":       1,
-		"size":    size,
-		"quality": "standard",
-	}
-
-	payload, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-
-	client := &apiclient.APIClient{
-		Server:         "api.openai.com",
-		RequestTimeout: 120 * time.Second,
-		VerifySSL:      true,
-		AuthFunc: func(req *http.Request) {
-			req.Header.Set("Authorization", "Bearer "+apiKey)
-		},
-	}
-
-	req, err := client.NewRequestWithContext(ctx, "POST", "/v1/images/generations")
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Body = io.NopCloser(bytes.NewReader(payload))
-	req.ContentLength = int64(len(payload))
-
-	resp, err := client.SendRawRequest("", req)
-	if err != nil {
-		return nil, fmt.Errorf("image generation request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read image response: %w", err)
-	}
-
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("image generation failed (HTTP %d): %s", resp.StatusCode, string(respBody))
-	}
-
-	var result struct {
-		Data []struct {
-			URL           string `json:"url"`
-			RevisedPrompt string `json:"revised_prompt"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(respBody, &result); err != nil {
-		return nil, fmt.Errorf("failed to parse image response: %w", err)
-	}
-	if len(result.Data) == 0 {
-		return nil, fmt.Errorf("image generation returned no results")
-	}
-
-	return &ImageGenResult{
-		URL:    result.Data[0].URL,
-		Prompt: result.Data[0].RevisedPrompt,
-	}, nil
+	return generateWithBackend(ctx, backend, prompt, landscape)
 }

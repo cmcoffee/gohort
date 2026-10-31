@@ -284,23 +284,23 @@ func (a *AdminApp) handleSpeechVoices(c *jsonapi.Call) (any, error) {
 
 // handleImageGen serves /api/image-gen; registerMediaRoutes says what it is for.
 func (a *AdminApp) handleImageGen(c *jsonapi.Call) (any, error) {
-	var provider, key string
-	if a.db != nil {
-		a.db.Get(ImageTable, "provider", &provider)
-		a.db.Get(ImageTable, "api_key", &key)
-	}
+	provider := a.storedString(ImageTable, "provider")
 	if provider == "" {
-		provider = "gemini"
+		provider = "none"
 	}
-	return map[string]any{"provider": provider, "api_key": maskSecret(key)}, nil
+	return map[string]any{"provider": provider}, nil
 }
 
-// handleImageGenSave persists the image-generation provider and key.
+// handleImageGenSave persists the image connector, refusing a name that is
+// not an approved one making pictures: saved, it would leave every picture
+// failing on a connector that is not there.
 func (a *AdminApp) handleImageGenSave(c *jsonapi.Call, req imageGenConfig) (any, error) {
-	req.APIKey = keepSecret(req.APIKey, a.storedString(ImageTable, "api_key"))
+	req.Provider = strings.TrimSpace(req.Provider)
+	if req.Provider != "" && req.Provider != "none" && !ImageBackendRegistered(req.Provider) {
+		return nil, jsonapi.BadRequest("no approved connector named " + req.Provider + " makes pictures: approve it under Admin > Extensions > Connectors first")
+	}
 	if a.db != nil {
 		a.db.Set(ImageTable, "provider", req.Provider)
-		a.db.Set(ImageTable, "api_key", req.APIKey)
 	}
 	adminChange(c.R, activity.Settings, "updated image-gen config (provider=%q)",
 		req.Provider)
@@ -347,81 +347,21 @@ func (a *AdminApp) handleTranscribeTest(c *jsonapi.Call, req TranscribeConfig) (
 }
 
 // handleImageGenTest serves /api/image-gen/test; registerMediaRoutes says what it is for.
+// It does not render: a picture can be billed. It says whether the chosen
+// connector is approved and live, and where its own Test renders one.
 func (a *AdminApp) handleImageGenTest(c *jsonapi.Call, req imageGenConfig) (any, error) {
-	r := c.R
 	if req.Provider == "" || req.Provider == "none" {
-		return testResultBody(false, "", "pick a provider first"), nil
+		return testResultBody(false, "", "pick a connector first"), nil
 	}
-	// Connector-backed provider (rest_image: ComfyUI / A1111 / custom): it
-	// carries its own SecureAPI credential, so there's no API key to probe
-	// here. Report that it's live rather than falling into the built-in
-	// gemini/openai key test (which would reject the name as "unknown").
-	if ImageBackendRegistered(req.Provider) {
-		return testResultBody(true, "Connector backend “"+req.Provider+"” is approved and active. It uses its own credential: generate an image to verify it end to end.", ""), nil
+	if !ImageBackendRegistered(req.Provider) {
+		return testResultBody(false, "", "no approved connector named "+req.Provider+" makes pictures: approve it under Admin > Extensions > Connectors"), nil
 	}
-	// Fall back to the key of an LLM that uses the SAME provider, worker
-	// first then lead: the rule the GenerateImage runtime uses
-	// (geminiAPIKey / openAIAPIKey). This used to take the worker's key
-	// whatever its provider, so a test could pass or fail on a key the
-	// real call would never use.
-	key := keepSecret(req.APIKey, a.storedString(ImageTable, "api_key"))
-	if key == "" && a.db != nil && (req.Provider == "gemini" || req.Provider == "openai") {
-		for _, table := range []string{LLMTable, LeadLLMTable} {
-			var provider, k string
-			a.db.Get(table, "provider", &provider)
-			a.db.Get(table, "api_key", &k)
-			if provider == req.Provider && k != "" {
-				key = k
-				break
-			}
-		}
-	}
-	if key == "" {
-		return testResultBody(false, "", "no API key: set one here, or set the matching LLM provider's key"), nil
-	}
-	var url string
-	var authHeader, authPrefix string
-	switch req.Provider {
-	case "openai":
-		url = "https://api.openai.com/v1/models"
-		authHeader, authPrefix = "Authorization", "Bearer "
-	case "gemini":
-		// Gemini takes the key as ?key= rather than a header.
-		url = "https://generativelanguage.googleapis.com/v1beta/models?key=" + key
-	default:
-		return testResultBody(false, "", "unknown provider: "+req.Provider), nil
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-	defer cancel()
-	httpReq, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return testResultBody(false, "", err.Error()), nil
-	}
-	if authHeader != "" {
-		httpReq.Header.Set(authHeader, authPrefix+key)
-	}
-	resp, err := (&http.Client{}).Do(httpReq)
-	if err != nil {
-		// Gemini's key rides in the URL, and a request that fails names its
-		// URL: said as it is, the stored key the form masks would come back
-		// in the error.
-		return testResultBody(false, "", "reach failed: "+strings.ReplaceAll(err.Error(), key, "<key>")), nil
-	}
-	defer resp.Body.Close()
-	switch {
-	case resp.StatusCode >= 200 && resp.StatusCode < 300:
-		return testResultBody(true, fmt.Sprintf("%s reachable + key accepted (HTTP %d)", req.Provider, resp.StatusCode), ""), nil
-	case resp.StatusCode == 401 || resp.StatusCode == 403:
-		return testResultBody(false, "", fmt.Sprintf("HTTP %d: %s rejected the API key", resp.StatusCode, req.Provider)), nil
-	default:
-		return testResultBody(false, "", fmt.Sprintf("HTTP %d from %s", resp.StatusCode, req.Provider)), nil
-	}
+	return testResultBody(true, "The connector "+req.Provider+" is approved and active. Its Test under Admin > Extensions > Connectors renders a picture end to end.", ""), nil
 }
 
-// imageGenConfig is the image-generation form: its provider and key.
+// imageGenConfig is the image-generation form: the connector chosen.
 type imageGenConfig struct {
 	Provider string `json:"provider"`
-	APIKey   string `json:"api_key"`
 }
 
 // storedEmbeddingConfig / storedTranscribeConfig read the saved config, so a

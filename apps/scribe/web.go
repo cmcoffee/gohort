@@ -336,7 +336,7 @@ func (T *Scribe) handleImage(c *jsonapi.Call) (any, error) {
 	return map[string]any{
 		"image_url":         g.ImageURL,
 		"can_edit":          canEdit,
-		"can_generate":      ImageProfileAvailable("blog") || ImageGenerationAvailable(),
+		"can_generate":      ImageGenerationAvailable(),
 		"logo_url":          g.HeaderLogo,
 		"from_url":          g.HeaderFrom,
 		"can_generate_from": headerEditor(1).Name != "",
@@ -415,7 +415,7 @@ func (T *Scribe) handleImageSet(c *jsonapi.Call, body *guideImageChange) (any, e
 	}
 	url := strings.TrimSpace(body.URL)
 	if body.Generate {
-		if !ImageProfileAvailable("blog") && !ImageGenerationAvailable() {
+		if !ImageGenerationAvailable() {
 			return nil, jsonapi.Status(http.StatusServiceUnavailable, "image generation is not configured on this deployment")
 		}
 		// The render is not the request's: a header that takes a minute lands

@@ -22,11 +22,11 @@ func TestEachMediaPathReachesItsOwnHandler(t *testing.T) {
 		{"GET", "/api/transcribe", `"enabled":false}`},
 		{"GET", "/api/speech", `"voice":""`},
 		{"GET", "/api/speech/voices", "[]"},
-		{"GET", "/api/image-gen", `"provider":"gemini"`},
+		{"GET", "/api/image-gen", `"provider":"none"`},
 		{"POST", "/api/embeddings/test", "embeddings are disabled"},
 		{"POST", "/api/transcribe/test", "transcription is disabled"},
 		{"POST", "/api/speech/test", "speech is disabled"},
-		{"POST", "/api/image-gen/test", "pick a provider first"},
+		{"POST", "/api/image-gen/test", "pick a connector first"},
 	} {
 		w := httptest.NewRecorder()
 		mux.ServeHTTP(w, httptest.NewRequest(tc.method, tc.path, strings.NewReader("{}")))

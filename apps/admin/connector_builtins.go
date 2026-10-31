@@ -1,9 +1,8 @@
 package admin
 
 // gohort's own providers, read as connectors (docs/design/connectors-and-
-// flows.md, stage 3). The Gemini and OpenAI image code, web search, the
-// browser, mail and the LLM tiers are wrappers written in Go rather than
-// specs: the same inside (a contract), an outside they reach, a test. Listing
+// flows.md, stage 3). Web search, the browser, mail and the LLM tiers are
+// wrappers written in Go rather than specs: the same inside (a contract), an outside they reach, a test. Listing
 // them with the other connectors means every capability's choice is among
 // connectors, built in or added.
 //
@@ -40,40 +39,8 @@ type builtinConnector struct {
 
 // builtinConnectors are gohort's own providers, read from their settings.
 func (a *AdminApp) builtinConnectors() []builtinConnector {
-	var out []builtinConnector
-
-	chosen := a.storedString(ImageTable, "provider")
-	if chosen == "" {
-		chosen = "gemini"
-	}
-	for _, img := range []struct{ id, label, host string }{
-		{"gemini", "Gemini", "generativelanguage.googleapis.com"},
-		{"openai", "OpenAI", "api.openai.com"},
-	} {
-		id := img.id
-		b := builtinConnector{name: builtinPrefix + id + "-images",
-			wrapper: "Image Generation ⇐ " + img.label + " image model ⇐ " + img.host + " (key: Image Generation's, or the " + img.label + " LLM's)"}
-		if chosen == id {
-			b.status = "In use for Image Generation. Set up under Admin > Capabilities > Image Generation."
-		} else {
-			b.status = "Not in use: Image Generation is set to " + imageChoiceName(chosen) + ". Choose it under Admin > Capabilities > Image Generation."
-		}
-		b.test = func(c *jsonapi.Call) (any, error) {
-			res, err := a.handleImageGenTest(c, imageGenConfig{Provider: id})
-			// Its words are for the Image Generation form ("set one here").
-			if body, ok := res.(map[string]any); ok {
-				if why, _ := body["error"].(string); why != "" {
-					body["error"] = strings.Replace(why, "set one here", "set one under Admin > Capabilities > Image Generation", 1)
-				}
-			}
-			return res, err
-		}
-		out = append(out, b)
-	}
-
-	out = append(out, a.builtinSearch(), builtinBrowse(), a.builtinMail())
-	out = append(out, a.builtinLLM(LLMTable, "worker-llm", "Worker LLM"), a.builtinLLM(LeadLLMTable, "lead-llm", "Lead LLM"))
-	return out
+	return []builtinConnector{a.builtinSearch(), builtinBrowse(), a.builtinMail(),
+		a.builtinLLM(LLMTable, "worker-llm", "Worker LLM"), a.builtinLLM(LeadLLMTable, "lead-llm", "Lead LLM")}
 }
 
 // llmHosts are where each hosted LLM provider is reached.
@@ -280,13 +247,8 @@ func providerName(provider string) string {
 
 // imageChoiceName says what Image Generation is set to.
 func imageChoiceName(chosen string) string {
-	switch chosen {
-	case "none":
+	if chosen == "" || chosen == "none" {
 		return "Disabled"
-	case "gemini":
-		return "the built-in Gemini"
-	case "openai":
-		return "the built-in OpenAI"
 	}
 	return "the connector " + chosen
 }

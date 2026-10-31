@@ -2,7 +2,6 @@ package admin
 
 import (
 	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/service"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -55,22 +54,15 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 		{
 			Title:    "Image Generation",
 			Subtitle: "Image generation for tools that produce illustrations or thumbnails.",
-			Detail:   "Choose a built-in provider, leaving the API key blank to reuse the matching LLM provider's key, or an approved rest_image connector: a local ComfyUI or Automatic1111, or any spec-declared backend.\n\nUse “Add image backend” to stand up a local ComfyUI or A1111 in one step.",
+			Detail:   "Every picture comes from an approved connector: Gemini or OpenAI added from their templates, a local ComfyUI or Automatic1111, a peer's renderer, or any backend declared as a spec. Its address and key are kept on it, under Admin > Extensions > Connectors.\n\nUse “Add image backend” to stand up a local ComfyUI or A1111 in one step.",
 			Body: ui.Stack{
 				Children: []ui.Component{
 					ui.FormPanel{
 						Assist:    true,
 						Source:    "api/image-gen",
 						TestURL:   "api/image-gen/test",
-						TestLabel: "Test API key",
-						Fields: []ui.FormField{
-							{Field: "provider", Label: "Provider", Type: "select",
-								Options: imageProviderOptions()},
-							{Field: "api_key", Label: "API Key", Type: "password",
-								Help:     "Provider API key. Leave it blank to reuse the matching LLM provider's key.",
-								Detail:   "Only Gemini and OpenAI read it. Connector backends carry their own credential.",
-								ShowWhen: "provider:gemini|openai"},
-						},
+						TestLabel: "Test",
+						Fields:    imageFormFields(),
 					},
 					ui.Toolbar{
 						Actions: imageBackendToolbarActions(),
@@ -188,22 +180,27 @@ func imageBackendToolbarActions() []ui.ToolbarAction {
 	return acts
 }
 
-// imageProviderOptions builds the image-generation provider dropdown: the two
-// built-in providers, every APPROVED rest_image connector (ComfyUI / A1111 /
-// custom backends materialize as native image providers named for the
-// connector), then Disabled. A new connector appears here with no edit.
-func imageProviderOptions() []ui.SelectOption {
-	opts := []ui.SelectOption{
-		{Value: "gemini", Label: "Gemini (Imagen)"},
-		{Value: "openai", Label: "OpenAI (DALL-E)"},
-	}
+// imageFormFields builds the Image Generation settings: the connector that
+// makes pictures, chosen from every approved one that does (a rest_image
+// backend that generates, or a service giving image.generate), or Disabled.
+// A new connector appears here with no edit.
+func imageFormFields() []ui.FormField {
+	var opts []ui.SelectOption
 	for _, c := range ListConnectors(RootDB) {
-		if c.Approved && (c.Kind == RestImageConnectorKind || service.Provides(c, "image.generate")) {
+		if c.Approved && ImageBackendRegistered(c.Name) {
 			opts = append(opts, ui.SelectOption{Value: c.Name, Label: "Connector: " + c.Name})
 		}
 	}
-	opts = append(opts, ui.SelectOption{Value: "none", Label: "Disabled"})
-	return opts
+	add := "add a connector that makes pictures from a template (Admin > Extensions > Templates: Gemini (image generation); OpenAI (image generation)), stand up a local ComfyUI or A1111 with Add image backend below, or connect a peer that lends image generation (Admin > Capabilities > Peers)"
+	f := ui.FormField{Field: "provider", Label: "Make pictures with", Type: "select",
+		Options: append(opts, ui.SelectOption{Value: "none", Label: "Disabled"})}
+	if len(opts) == 0 {
+		f.Help = "Nothing here makes pictures yet: " + add + "."
+	} else {
+		f.Help = "The connector that makes pictures. Its address and key are kept on it: open its row under Admin > Extensions > Connectors to see, test or fix them."
+		f.Detail = "To make pictures with something not listed, " + add + "."
+	}
+	return []ui.FormField{f}
 }
 
 // databaseBrowserCard is the read-only kvlite table/key/record browser.

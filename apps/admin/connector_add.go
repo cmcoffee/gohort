@@ -72,9 +72,6 @@ func (a *AdminApp) capabilitiesNow() []string {
 	}
 	emb, tr, sp := a.storedEmbeddingConfig(), a.storedTranscribeConfig(), a.storedSpeechConfig()
 	image := a.storedString(ImageTable, "provider")
-	if image == "" {
-		image = "gemini"
-	}
 	search, source := a.storedString(SearchTable, "provider"), a.storedString(SearchTable, "source")
 	if search == "" {
 		search = "duckduckgo"

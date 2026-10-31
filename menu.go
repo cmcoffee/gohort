@@ -87,11 +87,8 @@ func set_agent_db(agent Agent, DB Database) {
 }
 
 func init() {
-	// Wire key providers for image generation.
+	// The image connector Image Generation is set to.
 	ImageProviderFunc = dbcfg.imageProvider
-	GeminiKeyFunc = dbcfg.geminiAPIKey
-	OpenAIKeyFunc = dbcfg.openAIAPIKey
-	ImageGenProfileFunc = dbcfg.imageGenProfile
 }
 
 // set_agent_llm initializes the LLM client for a given agent from stored config.

@@ -409,9 +409,27 @@ in the same change. The migration code goes in a later release.
    name. The page is on/off, "Speak with" and Voice. New template: Kokoro /
    OpenAI-compatible (speech); ElevenLabs' gains its voice list. The
    `built-in:speech` row is gone.
+4. **Images.** Built 2026-10-31. The engine already had parity: the Gemini
+   and OpenAI templates make the same requests the Go code did (Gemini's
+   picture read from among its reply's parts, a wide picture 16:9; OpenAI's
+   1792x1024 or 1024x1024), with two differences. OpenAI's picture comes
+   back as pixels rather than an address (b64_json), so a peer can borrow
+   it, and each is priced per picture. The OpenAI code's one retry of a
+   5xx is not kept: whether to repeat a billed request is the spec's to
+   say, and no spec can yet. `MigrateImages` installs the template for the
+   provider the settings named (a blank one meant Gemini) as an approved
+   connector, its credential holding the key the settings used: Image
+   Generation's own, or else the key of an LLM tier on the same provider,
+   the worker's first. A setting naming one with no key anywhere made no
+   pictures, and is turned off. The setting names the connector and its key
+   row is removed. Image profiles (`<name>_provider`) were read and never
+   written, and are gone. The page is "Make pictures with" (every approved
+   connector that makes pictures: rest_image backends, peers' renderers,
+   services) or Disabled, and a save naming anything else is refused. The
+   `built-in:gemini-images` and `built-in:openai-images` rows are gone.
 
-   Next, in order: images, web search, page rendering, mail, the LLM tiers,
-   then the built-in transports and peers.
+   Next, in order: web search, page rendering, mail, the LLM tiers, then the
+   built-in transports and peers.
 
 ## Migrations
 

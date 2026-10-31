@@ -2,6 +2,7 @@ package admin
 
 import (
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -183,6 +184,76 @@ func TestCapabilityPagesPointToAnAlternative(t *testing.T) {
 	}
 	if _, choice := read(speechFormFields()); choice {
 		t.Error("a connector that embeds made speech a choice")
+	}
+}
+
+// Image Generation is set to an approved connector that makes pictures, or
+// Disabled. With none, the form points to the templates, Add image backend
+// and peers. A name that is not such a connector, the old built-in ones
+// included, is refused on save and by the Test, and the form keeps no key.
+func TestImageGenerationTakesAConnectorThatMakesPictures(t *testing.T) {
+	saved := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB = saved })
+	a := &AdminApp{db: &DBase{Store: kvlite.MemStore()}}
+	sub := http.NewServeMux()
+	a.registerMediaRoutes(sub)
+	call := func(method, path, body string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		sub.ServeHTTP(w, httptest.NewRequest(method, path, strings.NewReader(body)))
+		return w
+	}
+
+	// A connector that does something else is not offered.
+	embedSpec := `{"provider":{"transport":"http","base_url":"https://api.example.test","auth":{"none":true},
+		"operations":{"embed":{"method":"POST","path":"/v1/embeddings","body":{"input":"{texts}"}}}},
+		"provides":[{"capability":"embed.text","steps":[{"call":"embed"}],"output":{"vectors":{"path":"data","each":"embedding"}}}]}`
+	SaveConnector(RootDB, Connector{Name: "vectors", Kind: "service", Spec: json.RawMessage(embedSpec)})
+	ApproveConnector(RootDB, "vectors")
+	f := imageFormFields()
+	if len(f) != 1 || len(f[0].Options) != 1 || f[0].Options[0].Value != "none" ||
+		!strings.Contains(f[0].Help, "Admin > Extensions > Templates") || !strings.Contains(f[0].Help, "Add image backend") || !strings.Contains(f[0].Help, "Admin > Capabilities > Peers") {
+		t.Errorf("with nothing that makes pictures: %+v", f)
+	}
+	if w := call("GET", "/api/image-gen", ""); strings.TrimSpace(w.Body.String()) != `{"provider":"none"}` {
+		t.Errorf("never set: %s", w.Body.String())
+	}
+	for _, name := range []string{"gemini", "openai", "nothing"} {
+		if w := call("POST", "/api/image-gen", `{"provider":"`+name+`"}`); w.Code != http.StatusBadRequest {
+			t.Errorf("%s was saved: %d", name, w.Code)
+		}
+		if w := call("POST", "/api/image-gen/test", `{"provider":"`+name+`"}`); !strings.Contains(w.Body.String(), "no approved connector named "+name) {
+			t.Errorf("%s tested: %s", name, w.Body.String())
+		}
+	}
+
+	spec := `{"provider":{"transport":"http","base_url":"https://api.example.test","auth":{"none":true},
+		"operations":{"make":{"method":"POST","path":"/v1/images","body":{"prompt":"{prompt}"}}}},
+		"provides":[{"capability":"image.generate","steps":[{"call":"make"}],"output":{"image":{"path":"data.0.b64_json","as":"base64"}}}]}`
+	SaveConnector(RootDB, Connector{Name: "painter", Kind: "service", Spec: json.RawMessage(spec)})
+	if w := call("POST", "/api/image-gen", `{"provider":"painter"}`); w.Code != http.StatusBadRequest {
+		t.Errorf("an unapproved connector was saved: %d", w.Code)
+	}
+	ApproveConnector(RootDB, "painter")
+	t.Cleanup(func() { UnapproveConnector(RootDB, "painter") })
+	f = imageFormFields()
+	if len(f[0].Options) != 2 || f[0].Options[0].Value != "painter" || !strings.Contains(f[0].Detail, "Admin > Extensions > Templates") {
+		t.Errorf("with a connector to choose: %+v", f)
+	}
+	if w := call("POST", "/api/image-gen", `{"provider":"painter","api_key":"sk-stray"}`); w.Code >= 300 {
+		t.Fatalf("an approved connector was refused: %d %s", w.Code, w.Body.String())
+	}
+	if a.storedString(ImageTable, "provider") != "painter" || a.storedString(ImageTable, "api_key") != "" {
+		t.Errorf("stored: %q, key %q", a.storedString(ImageTable, "provider"), a.storedString(ImageTable, "api_key"))
+	}
+	if w := call("GET", "/api/image-gen", ""); strings.TrimSpace(w.Body.String()) != `{"provider":"painter"}` {
+		t.Errorf("set: %s", w.Body.String())
+	}
+	if w := call("POST", "/api/image-gen/test", `{"provider":"painter"}`); !strings.Contains(w.Body.String(), "approved and active") {
+		t.Errorf("tested: %s", w.Body.String())
+	}
+	if w := call("POST", "/api/image-gen", `{"provider":"none"}`); w.Code >= 300 || a.storedString(ImageTable, "provider") != "none" {
+		t.Errorf("turning it off: %d", w.Code)
 	}
 }
 

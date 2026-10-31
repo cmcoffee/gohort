@@ -305,51 +305,7 @@ func (d dbCFG) search() WebSearchConfig {
 func (d dbCFG) imageProvider() string {
 	var provider string
 	global.db.Get(ImageTable, "provider", &provider)
-	if provider == "" {
-		return "gemini"
-	}
 	return provider
-}
-
-func (d dbCFG) imageGenProfile(name string) ImageGenProfile {
-	var p ImageGenProfile
-	global.db.Get(ImageTable, name+"_provider", &p.Provider)
-	global.db.Get(ImageTable, name+"_api_key", &p.APIKey)
-	return p
-}
-
-func (d dbCFG) geminiAPIKey() string {
-	var imageKey string
-	global.db.Get(ImageTable, "api_key", &imageKey)
-	if imageKey != "" {
-		return imageKey
-	}
-	c := d.llm()
-	if c.Provider == "gemini" && c.APIKey != "" {
-		return c.APIKey
-	}
-	lead := d.leadLLM()
-	if lead.Provider == "gemini" && lead.APIKey != "" {
-		return lead.APIKey
-	}
-	return ""
-}
-
-func (d dbCFG) openAIAPIKey() string {
-	var imageKey string
-	global.db.Get(ImageTable, "api_key", &imageKey)
-	if imageKey != "" {
-		return imageKey
-	}
-	c := d.llm()
-	if c.Provider == "openai" && c.APIKey != "" {
-		return c.APIKey
-	}
-	lead := d.leadLLM()
-	if lead.Provider == "openai" && lead.APIKey != "" {
-		return lead.APIKey
-	}
-	return ""
 }
 
 // setup_fuzz runs the interactive configuration.

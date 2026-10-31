@@ -27,7 +27,7 @@ root PUT /api/speech "{}"
 alice GET /api/image-gen ""
   403 forbidden
 root GET /api/image-gen ""
-  200 {"api_key":"","provider":"gemini"}
+  200 {"provider":"none"}
 root PUT /api/image-gen "{}"
   405 method not allowed
 (signed out) GET /api/speech/voices ""
@@ -150,34 +150,28 @@ root POST /api/speech "{\"enabled\":true,\"provider\":\"peer:nope\"}"
   400 no peer named "nope" is registered: add it under Peers first
 root POST /api/speech "{\"enabled\":true,\"provider\":\"service:nope\"}"
   400 no connector named "nope"
-alice POST /api/image-gen "{\"provider\":\"openai\",\"api_key\":\"s3cr3t-img-x\"}"
+alice POST /api/image-gen "{\"provider\":\"none\"}"
   403 forbidden
+root GET /api/image-gen ""
+  200 {"provider":"none"}
 root POST /api/image-gen "{\"provider\":\"openai\",\"api_key\":\"s3cr3t-img\"}"
+  400 no approved connector named openai makes pictures: approve it under Admin > Extensions > Connectors first
+root POST /api/image-gen "{\"provider\":\"none\"}"
   204 
 root GET /api/image-gen ""
-  200 {"api_key":"(unchanged)","provider":"openai"}
-root POST /api/image-gen "{\"provider\":\"gemini\",\"api_key\":\"(unchanged)\"}"
-  204 
-root GET /api/image-gen ""
-  200 {"api_key":"(unchanged)","provider":"gemini"}
+  200 {"provider":"none"}
 root POST /api/image-gen "{\"provider\":"
   400 invalid JSON: unexpected EOF
 root POST /api/image-gen/test "{\"provider\":\"\"}"
-  200 {"error":"pick a provider first","ok":false}
+  200 {"error":"pick a connector first","ok":false}
 root POST /api/image-gen/test "{\"provider\":\"none\"}"
-  200 {"error":"pick a provider first","ok":false}
-root POST /api/image-gen/test "{\"provider\":\"elsewhere\",\"api_key\":\"(unchanged)\"}"
-  200 {"error":"unknown provider: elsewhere","ok":false}
-root POST /api/image-gen "{\"provider\":\"gemini\",\"api_key\":\"\"}"
-  204 
-root POST /api/image-gen/test "{\"provider\":\"gemini\",\"api_key\":\"(unchanged)\"}"
-  200 {"error":"no API key: set one here, or set the matching LLM provider's key","ok":false}
-activity log, 8 entries:
+  200 {"error":"pick a connector first","ok":false}
+root POST /api/image-gen/test "{\"provider\":\"gemini\"}"
+  200 {"error":"no approved connector named gemini makes pictures: approve it under Admin \u003e Extensions \u003e Connectors","ok":false}
+activity log, 6 entries:
   settings root: updated embeddings config (enabled=false provider="service:vectors" endpoint="service:vectors" model="nomic-embed-text")
   settings root: updated embeddings config (enabled=true provider="service:vectors" endpoint="service:vectors" model="nomic-embed-text")
-  settings root: updated image-gen config (provider="gemini")
-  settings root: updated image-gen config (provider="gemini")
-  settings root: updated image-gen config (provider="openai")
+  settings root: updated image-gen config (provider="none")
   settings root: updated speech config (enabled=true provider="service:voice" model="kokoro" voice="af_heart")
   settings root: updated transcribe config (enabled=false provider="service:ears" model="whisper-1")
   settings root: updated transcribe config (enabled=true provider="service:ears" model="whisper-1")

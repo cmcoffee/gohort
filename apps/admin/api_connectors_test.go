@@ -76,7 +76,7 @@ func TestAServiceConnectorRowAndThePicker(t *testing.T) {
 		t.Errorf("status %q, has health %v", status, hasHealth)
 	}
 	offered := func() bool {
-		for _, o := range imageProviderOptions() {
+		for _, o := range imageFormFields()[0].Options {
 			if o.Value == "acme-images" {
 				return true
 			}
