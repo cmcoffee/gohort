@@ -39,7 +39,10 @@ type Port struct {
 // the check the output passes before anything uses it, and the smallest real
 // call that proves a provider does it (Test). A spec can never redefine one.
 type Contract struct {
-	Name    string
+	Name string
+	// Gives is where the capability plugs into gohort, in the admin's words
+	// (the setting that uses it), for the inside of a service's line.
+	Gives   string
 	Inputs  []Port
 	Outputs []Port
 	// Units are what a cost may be counted in.
@@ -112,7 +115,8 @@ func Names() []string {
 
 func init() {
 	register(Contract{
-		Name: "image.generate",
+		Name:  "image.generate",
+		Gives: "Image Generation",
 		Inputs: []Port{
 			{Name: "prompt", Type: TypeText, Required: true},
 			{Name: "negative", Type: TypeText},
@@ -132,7 +136,8 @@ func init() {
 		units:   func(map[string]any, Result) float64 { return 1 },
 	})
 	register(Contract{
-		Name: "image.edit",
+		Name:  "image.edit",
+		Gives: "Image editing",
 		Inputs: []Port{
 			{Name: "prompt", Type: TypeText, Required: true},
 			{Name: "image", Type: TypeFile, Required: true},
@@ -151,7 +156,8 @@ func init() {
 		units:      func(map[string]any, Result) float64 { return 1 },
 	})
 	register(Contract{
-		Name: "speech.transcribe",
+		Name:  "speech.transcribe",
+		Gives: "Transcription",
 		Inputs: []Port{
 			{Name: "audio", Type: TypeFile, Required: true},
 			// prompt is words the speaker is likely to say (names), which
@@ -169,7 +175,8 @@ func init() {
 		Check: func(r Result) error { return nil },
 	})
 	register(Contract{
-		Name: "speech.synthesize",
+		Name:  "speech.synthesize",
+		Gives: "Speech",
 		Inputs: []Port{
 			{Name: "text", Type: TypeText, Required: true},
 			{Name: "voice", Type: TypeText},
@@ -199,8 +206,33 @@ func init() {
 		Check:   checkAudio("audio"),
 		units:   func(map[string]any, Result) float64 { return 1 },
 	})
+	// message.send is what lets a flow end by sending: a messaging API's
+	// connector gives it. to is whom to send to, when the service needs one
+	// and the connector does not set it; id is what the service calls the
+	// message, when it says.
 	register(Contract{
-		Name: "embed.text",
+		Name:  "message.send",
+		Gives: "Sending messages",
+		Inputs: []Port{
+			{Name: "text", Type: TypeText, Required: true},
+			{Name: "file", Type: TypeFile},
+			{Name: "to", Type: TypeText},
+		},
+		Outputs: []Port{{Name: "id", Type: TypeText}},
+		Units:   []string{"message"},
+		Test:    map[string]any{"text": "A test message from gohort."},
+		// A sample picture goes with the test: a service that sends files
+		// (a multipart send takes one every time) attaches it, and one that
+		// sends text leaves it out.
+		TestImages: []string{"file"},
+		// What comes back is the service's receipt, in whatever shape it
+		// has: a reply at all means the send was taken.
+		Check: func(Result) error { return nil },
+		units: func(map[string]any, Result) float64 { return 1 },
+	})
+	register(Contract{
+		Name:  "embed.text",
+		Gives: "Embeddings",
 		Inputs: []Port{
 			{Name: "texts", Type: TypeJSON, Required: true},
 			{Name: "model", Type: TypeText},

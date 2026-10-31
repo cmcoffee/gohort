@@ -5,6 +5,8 @@
 package orchestrate
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +15,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/service"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -153,5 +156,66 @@ func TestAWebhookWakeIsNotTheOwner(t *testing.T) {
 	i := strings.Index(s, "if m.Kind == EventKindWebhook {")
 	if i < 0 || !strings.Contains(s[i:i+200], "ctx = withNonOwnerRequester(ctx)") {
 		t.Error("a webhook wake no longer marks its run as a non-owner request")
+	}
+}
+
+// A flow an event starts is the delivery: it runs on the event's text and
+// sends through its own message.send step, and the waker returns before any
+// agent is woken. One that cannot run hands the event on with why in front,
+// so the monitor's own delivery still carries it.
+func TestAnEventFlowIsTheDelivery(t *testing.T) {
+	wakeFixture(t)
+	// A service's call goes through the credential store, kept in AuthDB.
+	savedAuth := AuthDB
+	auth := &DBase{Store: kvlite.MemStore()}
+	AuthDB = func() Database { return auth }
+	t.Cleanup(func() { AuthDB = savedAuth })
+	var sent []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]string
+		json.NewDecoder(r.Body).Decode(&body)
+		sent = append(sent, body["text"])
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+	spec, _ := json.Marshal(map[string]any{
+		"provider": map[string]any{"transport": "http", "base_url": srv.URL, "auth": map[string]any{"none": true},
+			"operations": map[string]any{"post": map[string]any{"method": "POST", "path": "/post", "body": map[string]any{"text": "{text}"}}}},
+		"provides": []any{map[string]any{"capability": "message.send", "steps": []any{map[string]any{"call": "post"}}, "output": map[string]any{}}},
+	})
+	if err := SaveConnector(RootDB, Connector{Name: "room", Kind: service.Kind, Spec: spec}); err != nil {
+		t.Fatal(err)
+	}
+	ApproveConnector(RootDB, "room")
+	SaveEventMonitor(RootDB, EventMonitor{Owner: "u1", Name: "news", Kind: EventKindWebhook, WakeAgent: "a1"})
+	SaveEventMonitor(RootDB, EventMonitor{Owner: "u1", Name: "quiet", Kind: EventKindWebhook, WakeAgent: "a1"})
+
+	if done, _, rest := runEventFlow(context.Background(), "u1", "quiet", "hello"); done || rest != "hello" {
+		t.Errorf("a monitor with no flow: %v %q", done, rest)
+	}
+	if err := service.SaveFlow(service.Flow{Name: "announce", Description: "Posts a headline to the room.",
+		Inputs: []service.FlowInput{{Name: "headline", Type: service.TypeText, Required: true}},
+		Steps:  []service.FlowStep{{ID: "post", Connector: "room", Capability: "message.send", With: map[string]string{"text": "New: {input.headline}"}}},
+		Starts: &service.FlowTrigger{Owner: "u1", Monitor: "news", Input: "headline"}, EventRuns: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if done, detail, _ := runEventFlow(context.Background(), "u1", "news", "Rates rose"); !done || detail != "the flow announce ran post" || len(sent) != 1 || sent[0] != "New: Rates rose" {
+		t.Errorf("the flow's run: %v %q %v", done, detail, sent)
+	}
+	done, _, rest := runEventFlow(context.Background(), "u1", "news", "Rates fell")
+	if done || !strings.HasPrefix(rest, "(The flow announce did not run: it has used its 1 event runs for today. The event as it arrived:)") || !strings.HasSuffix(rest, "Rates fell") || len(sent) != 1 {
+		t.Errorf("past its runs for the day: %v %q %v", done, rest, sent)
+	}
+
+	// The waker runs it before it reaches for an agent.
+	src, err := os.ReadFile("operator_wake.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(src)
+	call, wake := strings.Index(s, "runEventFlow(ctx, owner, monitorName, summary)"), strings.Index(s, "wakeAgent := strings.TrimSpace(m.WakeAgent)")
+	if call < 0 || wake < 0 || call > wake {
+		t.Error("the waker no longer runs an event's flow before it delivers")
 	}
 }

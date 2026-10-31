@@ -242,6 +242,7 @@ Full descriptions in the [reference](docs/REFERENCE.md#built-in-apps).
 ## Learn more
 
 - **[docs/REFERENCE.md](docs/REFERENCE.md)**: the full feature surface, SDK interfaces, CLI flags, and project layout
+- **[docs/integrations.md](docs/integrations.md)**: how gohort reaches things: connectors wrap what gohort does not own, flows wire connectors together, agents decide
 - **[core/ui/AUTHORING.md](core/ui/AUTHORING.md)**: how to write a new app from scratch
 - **[core/README.md](core/README.md)**: framework core types and internals
 - **[docs/bridges-connector-contract.md](docs/bridges-connector-contract.md)**: writing a connector that relays a messaging service into Bridges

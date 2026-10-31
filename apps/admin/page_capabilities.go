@@ -196,6 +196,18 @@ func imageProviderOptions() []ui.SelectOption {
 // would hide the endpoint, model and key on every deployment that has no peers
 // — the whole form, blank, for the overwhelmingly common case. So the clause is
 // added and removed together with the field that drives it.
+// elsewhere is the pointer a capability's page shows while this instance is
+// the only thing that can do it: where to get something else to choose. The
+// choice itself (Embed on, Transcribe on, Speak with) appears once there is
+// one, rather than as a dropdown with a single answer.
+func elsewhere(hasChoice bool, verb, does, what string) string {
+	if hasChoice {
+		return ""
+	}
+	return "Done by this instance's endpoint below. To " + verb + " somewhere else, add a connector that " + does +
+		" (Admin > Extensions > Templates) or a peer that lends " + what + " (Admin > Capabilities > Peers): once approved, it is offered here to choose."
+}
+
 func embeddingFormFields() []ui.FormField {
 	peers := append(EmbeddingProviderOptions(), serviceProviderOptions("embed.text", "Embed")...)
 	// One option means local only: nothing to choose between.
@@ -207,7 +219,7 @@ func embeddingFormFields() []ui.FormField {
 	}
 
 	fields := []ui.FormField{
-		{Field: "enabled", Label: "Enable embeddings", Type: "toggle"},
+		{Field: "enabled", Label: "Enable embeddings", Type: "toggle", Help: elsewhere(hasPeers, "embed", "embeds", "embeddings")},
 	}
 	if hasPeers {
 		// Where the embedding happens. "This instance" keeps the manual
@@ -284,7 +296,7 @@ func transcribeFormFields() []ui.FormField {
 	}
 
 	fields := []ui.FormField{
-		{Field: "enabled", Label: "Enable transcription", Type: "toggle"},
+		{Field: "enabled", Label: "Enable transcription", Type: "toggle", Help: elsewhere(hasPeers, "transcribe", "transcribes", "transcription")},
 	}
 	if hasPeers {
 		fields = append(fields, ui.FormField{
@@ -328,7 +340,7 @@ func speechFormFields() []ui.FormField {
 	}
 
 	fields := []ui.FormField{
-		{Field: "enabled", Label: "Enable speech", Type: "toggle"},
+		{Field: "enabled", Label: "Enable speech", Type: "toggle", Help: elsewhere(hasPeers, "speak", "speaks", "speech")},
 	}
 	if hasPeers {
 		fields = append(fields, ui.FormField{

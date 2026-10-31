@@ -113,3 +113,53 @@ func TestTheOpenAITemplateReadsItsReply(t *testing.T) {
 		t.Errorf("health: %+v %v", h, err)
 	}
 }
+
+// The send templates post what their APIs take and read the message's id
+// back: Slack to its channel (a refusal Slack answers with 200 is an error,
+// with Slack's reason), Discord to its channel's path, ntfy as JSON to its
+// topic, and ntfy with a file as the request's whole body.
+func TestTheSendTemplatesSend(t *testing.T) {
+	world(t)
+	var got []string
+	refuse := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		if len(b) > 4 && string(b[1:4]) == "PNG" {
+			b = []byte("<png>")
+		}
+		got = append(got, r.Method+" "+r.URL.RequestURI()+" "+string(b))
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case refuse:
+			w.Write([]byte(`{"ok":false,"error":"channel_not_found"}`))
+		case strings.HasPrefix(r.URL.Path, "/api/chat"):
+			w.Write([]byte(`{"ok":true,"ts":"1700.01"}`))
+		default:
+			w.Write([]byte(`{"id":"m-7"}`))
+		}
+	}))
+	defer srv.Close()
+	for _, id := range []string{"slack-send", "discord-send", "ntfy-send", "ntfy-send-file"} {
+		install(t, id, templateSpec(t, id, srv.URL))
+	}
+	pic, _ := samplePicture()
+	for _, c := range []struct {
+		id, want, out string
+		in            map[string]any
+	}{
+		{"slack-send", `POST /api/chat.postMessage {"channel":"C42","text":"Rates rose"}`, "1700.01", map[string]any{"text": "Rates rose", "to": "C42"}},
+		{"discord-send", `POST /api/v10/channels/9001/messages {"content":"Rates rose"}`, "m-7", map[string]any{"text": "Rates rose", "to": "9001"}},
+		{"ntfy-send", `POST / {"message":"Rates rose","topic":"news-x7"}`, "m-7", map[string]any{"text": "Rates rose", "to": "news-x7"}},
+		{"ntfy-send-file", `PUT /news-x7?message=Rates+rose+%26+fell <png>`, "m-7", map[string]any{"text": "Rates rose & fell", "to": "news-x7", "file": pic}},
+	} {
+		got = nil
+		res, err := Call(context.Background(), nil, c.id, "message.send", c.in)
+		if err != nil || len(got) != 1 || got[0] != c.want || res["id"].Text != c.out {
+			t.Errorf("%s: %v %q %v\nwant %q", c.id, err, got, res, c.want)
+		}
+	}
+	refuse = true
+	if _, err := Call(context.Background(), nil, "slack-send", "message.send", map[string]any{"text": "x", "to": "C0"}); err == nil || !strings.Contains(err.Error(), "channel_not_found") {
+		t.Errorf("a Slack refusal: %v", err)
+	}
+}

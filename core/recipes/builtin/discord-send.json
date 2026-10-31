@@ -1,0 +1,103 @@
+{
+  "id": "discord-send",
+  "title": "Discord (send messages)",
+  "description": "Sends a flow's message to a Discord channel through a bot: a message.send connector, the last step of a flow that runs on its own. Text only.",
+  "category": "Messaging",
+  "setup_notes": "Create an application at discord.com/developers/applications, add a Bot and copy its token. Invite the bot to your server with the Send Messages permission (OAuth2 > URL Generator, scope bot). Turn on Developer Mode in Discord's settings, then right-click the channel and Copy Channel ID. The credential lands disabled: enable it under API Credentials. The connector lands unapproved: approve it in Admin > Extensions > Connectors and run Test on its row, which posts a short test message. Then use it as a flow's message.send step.",
+  "questions": [
+    {
+      "name": "bot_token",
+      "label": "Bot token",
+      "help": "Write it as Bot followed by a space and the token: Bot MTA1... Stored in the credential's secret store, never in the connector.",
+      "required": true,
+      "secret": true,
+      "credential": "discord_send"
+    },
+    {
+      "name": "name",
+      "label": "Connector name",
+      "help": "Lowercase letters, digits, dashes and underscores; a flow's step names it.",
+      "default": "discord-send"
+    },
+    {
+      "name": "channel",
+      "label": "Channel id",
+      "help": "Where messages go unless a flow's step says otherwise (its to input): the long number Copy Channel ID gives.",
+      "required": true
+    }
+  ],
+  "bundle": {
+    "bundle": "gohort.bundle/v1",
+    "artifacts": [
+      {
+        "type": "credential",
+        "name": "discord_send",
+        "recipe": {
+          "name": "discord_send",
+          "type": "header",
+          "param_name": "Authorization",
+          "base_url": "https://discord.com",
+          "allowed_endpoints": [
+            "/api/v10/channels/*/messages",
+            "/api/v10/users/@me"
+          ],
+          "description": "Discord bot token, for sending messages."
+        }
+      },
+      {
+        "type": "connector",
+        "name": "{{name}}",
+        "recipe": {
+          "name": "{{name}}",
+          "kind": "service",
+          "template": "discord-send",
+          "desc": "Discord messages to {{channel}}",
+          "spec": {
+            "provider": {
+              "transport": "http",
+              "base_url": "https://discord.com",
+              "auth": {
+                "credential": "discord_send"
+              },
+              "operations": {
+                "post": {
+                  "method": "POST",
+                  "path": "/api/v10/channels/{to}/messages",
+                  "body": {
+                    "content": "{text}"
+                  }
+                },
+                "me": {
+                  "path": "/api/v10/users/@me"
+                }
+              },
+              "health": {
+                "call": "me",
+                "expect": "id",
+                "every_mins": 60
+              }
+            },
+            "provides": [
+              {
+                "capability": "message.send",
+                "steps": [
+                  {
+                    "call": "post"
+                  }
+                ],
+                "output": {
+                  "id": {
+                    "path": "id"
+                  }
+                },
+                "defaults": {
+                  "to": "{{channel}}"
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

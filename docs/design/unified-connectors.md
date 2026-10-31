@@ -1,6 +1,7 @@
 # Unified connectors: how it talks to a provider, what it gives gohort
 
-**Status:** stages 1 to 4 built, 2026-10-30 (`core/service`); the rest proposed. Related: `connector-templates.md`
+**Status:** stages 1 to 5 built, 2026-10-30 (`core/service`); streams, stages 6 and 7 proposed. The plain map of
+how this sits beside credentials, System Hooks and peers is `../integrations.md`. Related: `connector-templates.md`
 (the config surface a template puts over a connector), `templates.md` (recipes),
 `core/flows` (System Hooks), `core/apijob` (the job pattern on api tools).
 
@@ -163,7 +164,9 @@ Most services differ only in how values travel, so that is data too.
 **Output.** Each contract output names where it comes from and `as` what:
 `{"path": "...", "as": "base64"}` (decoded into a file), `"url"` (fetched into a
 file), `"text"`, `"json"`, or `{"from": "body"}` for the reply itself when the
-operation reads `file` or a stream.
+operation reads `file` or a stream. A `json` output may add `each`, the path
+within every element of the list at `path` to the piece kept: OpenAI's
+embeddings are `{"path": "data", "each": "embedding"}`.
 
 **Fetching a URL.** A result URL on the provider's own host goes through the
 provider half (its credential, the allowlist, the audit). A URL anywhere else (a
@@ -515,9 +518,21 @@ creates the connector. So:
    JSON or form body (it went out empty); multipart with a file read is
    refused until something needs it.
 
-   Deferred to part 2: embeddings (changing who embeds changes the vector
-   space, so every stored vector is re-made; that needs its own plan), stream
-   reads and sends, speech streaming and the stream proxy. The built-in
+   Built as, part 2 (same day): `embed.text` (texts in as one list,
+   `vectors` out, one per text, all one length; priced per character), and
+   `each` on json outputs to read a list piece by piece. Embeddings settings
+   name a service beside this instance and the peers; core reaches it
+   through a seam in `core/media` (core's export ceiling). Choosing one
+   stores the service as the endpoint and the model its spec declares, so
+   `EmbedVersion` and the chunk stamp change and vectors from another space
+   are skipped until Repair re-makes them; a service that declares no model
+   is stamped with its own name, since a blank stamp matches every row.
+   Template: `openai-embeddings.json`, unpriced (OpenAI bills by the token).
+
+   Streams stay unbuilt, for want of anything to consume one: read-aloud
+   already plays a service's speech within a second, by asking for it a
+   sentence at a time, and nothing plays a provider's video yet. They come
+   with the first capability that needs them. The built-in
    providers stay in Go beside their templates: retiring them moves keys from
    settings into credentials, which is a migration. Connectors stay
    deployment-wide and admin-approved; the open question below on personal

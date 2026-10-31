@@ -2,10 +2,14 @@ package admin
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
+	"github.com/cmcoffee/gohort/core/service"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -87,5 +91,22 @@ func TestAServiceConnectorRowAndThePicker(t *testing.T) {
 	}
 	if !offered() {
 		t.Error("an approved image service is not offered as the image provider")
+	}
+
+	// Its Endpoints: each one as it is sent and read, and what uses it.
+	a := &AdminApp{db: &DBase{Store: kvlite.MemStore()}}
+	mux := http.NewServeMux()
+	a.registerConnectorsRoutes(mux)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest("GET", "/api/connectors/endpoints?name=acme-images", nil))
+	var eps []service.Endpoint
+	json.Unmarshal(w.Body.Bytes(), &eps)
+	if len(eps) != 2 || eps[0].Address != "POST /v1/images" || eps[0].Sends != "json: prompt ← {prompt}" ||
+		eps[0].Reads != "data.0.b64_json → image (a file, from base64)" || eps[1].UsedBy != "health check" {
+		t.Errorf("endpoints: %d %s", w.Code, w.Body.String())
+	}
+	rows, _ := a.handleConnectors(&jsonapi.Call{R: httptest.NewRequest("GET", "/api/connectors", nil)})
+	if b, _ := json.Marshal(rows); !strings.Contains(string(b), `"name":"acme-images"`) || !strings.Contains(string(b), `"endpoints":true`) {
+		t.Errorf("a service row offers its Endpoints: %s", b)
 	}
 }

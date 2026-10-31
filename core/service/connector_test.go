@@ -458,3 +458,55 @@ func mustSample(t *testing.T) *File {
 	}
 	return f
 }
+
+// A service reads as the wrapper it is, inside to outside: what gohort asks
+// of each capability (in the admin's words), the mapping onto endpoints, and
+// what it reaches with which key. A music service's tool is named, since that
+// is where an admin finds it.
+func TestAServiceReadsAsItsWrapper(t *testing.T) {
+	m := imageSpec("https://api.example.test/v1")
+	provider(m)["auth"] = map[string]any{"credential": "img"}
+	s, err := specFrom(t, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := s.Describe("pics"), "Image Generation ⇐ submit, then wait on status ⇐ api.example.test (key img)"; got != want {
+		t.Errorf("got  %q\nwant %q", got, want)
+	}
+	s.Provides = append(s.Provides, Binding{Capability: "music.generate", Steps: []Step{{Call: "a"}, {Wait: "b"}}})
+	s.Provider.Auth = Auth{None: true}
+	if got := s.Describe("My Songs"); got != "Image Generation, agent tool generate_music_my_songs ⇐ api.example.test (no key), 3 endpoints" {
+		t.Errorf("two capabilities stay one line, naming them and counting endpoints: %q", got)
+	}
+}
+
+// Each endpoint reads as what it is sent and from where, what is read from
+// its reply, and what uses it: the capabilities' in step order, then the
+// health check, then any nothing uses.
+func TestAServiceListsItsEndpoints(t *testing.T) {
+	m := imageSpec("https://api.example.test")
+	ops := provider(m)["operations"].(map[string]any)
+	ops["speak"] = map[string]any{"method": "POST", "path": "/v1/speech", "body": map[string]any{"text": "{text}", "voice": "{voice}"}, "read": "file"}
+	ops["cleanup"] = map[string]any{"method": "DELETE", "path": "/v1/files/{id}"}
+	m["provides"] = append(m["provides"].([]any), map[string]any{"capability": "speech.synthesize",
+		"steps": []any{map[string]any{"call": "speak"}}, "defaults": map[string]any{"voice": "alloy"},
+		"output": map[string]any{"audio": map[string]any{"from": "body"}}})
+	s, err := specFrom(t, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, e := range s.Endpoints() {
+		got = append(got, strings.Join([]string{e.Name, e.Address, e.UsedBy, e.Sends, e.Reads}, " | "))
+	}
+	want := []string{
+		`submit | POST /v1/jobs | Image Generation, step 1 | json: prompt ← {prompt}; size ← "{width}x{height}"; w ← {width} (default 64) | job.id → id`,
+		`status | GET /v1/jobs/{id} | Image Generation, step 2 |  | until state == done, failing on state == failed; outputs[type=image].url → image (a file, fetched)`,
+		`speak | POST /v1/speech | Speech | json: text ← {text}; voice ← {voice} (default alloy) | the reply → audio (a file)`,
+		`models | GET /v1/models | health check |  | expects data`,
+		`cleanup | DELETE /v1/files/{id} | not used |  | `,
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("got\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}

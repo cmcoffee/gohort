@@ -42,6 +42,7 @@ func connectorFixAction() ui.RowAction {
 		PostURL:     "api/connectors/fix-save?name={name}",
 		SubmitLabel: "Save",
 		Fields: []ui.FormField{
+			{Field: "wrapper", Type: "readonly", Label: "What it is"},
 			{Field: "note", Type: "readonly", Label: "Saving"},
 			{Field: "spec", Type: "textarea", Label: "Spec", Rows: 24},
 		},
@@ -56,7 +57,7 @@ func connectorFixAction() ui.RowAction {
 			"What it suggests fills the spec: nothing is saved until you save. Turn on web lookups to let it read the provider's documentation.",
 		Placeholder: "Ask about it, or say what changed at the provider…",
 	})
-	act.OnlyIf, act.Compact = "fixable", true
+	act.OnlyIf = "fixable"
 	return act
 }
 
@@ -76,7 +77,7 @@ func (a *AdminApp) handleConnectorFixForm(c *jsonapi.Call) (any, error) {
 	if len(notes) > 0 {
 		note += " Not carried over: " + strings.Join(notes, "; ") + "."
 	}
-	return map[string]any{"spec": string(pretty), "note": note}, nil
+	return map[string]any{"spec": string(pretty), "note": note, "wrapper": s.Describe(name)}, nil
 }
 
 // handleConnectorFixSave saves the Fix form's spec on the ?name= connector.
@@ -123,7 +124,7 @@ func connectorFixAbout(r *http.Request) (string, error) {
 		return "", err
 	}
 	var b strings.Builder
-	b.WriteString("Connectors are how gohort reaches outside services. This one, " + name + ", is a service connector: how gohort reaches the service (provider) and what it gives gohort (provides).\n\n")
+	b.WriteString("Connectors are how gohort reaches outside services. This one, " + name + ", is a service connector: how gohort reaches the service (provider) and what it gives gohort (provides). Read inside to outside (what gohort asks of it ⇐ the endpoints that does it ⇐ what it reaches): " + s.Describe(name) + "\n\n")
 	b.WriteString(service.Grammar + "\n\n")
 	b.WriteString("What its capabilities must give:\n")
 	for _, bd := range s.Provides {

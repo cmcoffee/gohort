@@ -60,7 +60,7 @@ func TestALocalProgramServesACapability(t *testing.T) {
 		t.Errorf("health: %+v %v", h, err)
 	}
 	c, _ := GetConnector(RootDB, "local-edit")
-	if sum := ConnectorSummary(c); !strings.Contains(sum, "runs cp, printf") || !strings.Contains(sum, "no network") {
+	if sum := ConnectorSummary(c); sum != "Image editing ⇐ edit ⇐ cp, printf on this machine (no network)" {
 		t.Errorf("an admin approving it is not shown what runs: %q", sum)
 	}
 

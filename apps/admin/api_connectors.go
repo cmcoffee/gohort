@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
+	"sort"
 	"strings"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/flows"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/service"
 )
@@ -38,6 +41,10 @@ func (a *AdminApp) registerConnectorsRoutes(sub *http.ServeMux) {
 	sub.HandleFunc("/api/connectors/test", jsonapi.Post(a.db, a.handleConnectorTest, a.gate()))
 	sub.HandleFunc("/api/connectors/health", jsonapi.Post(a.db, a.handleConnectorHealth, a.gate()))
 
+	// A service's endpoints, each as it is sent and read and what uses it,
+	// read from its spec (the row's Endpoints).
+	sub.HandleFunc("/api/connectors/endpoints", jsonapi.Get(a.db, a.handleConnectorEndpoints, a.gate()))
+
 }
 
 // handleConnectors is every backend, with what each can do from its row.
@@ -60,11 +67,23 @@ func (a *AdminApp) handleConnectors(c *jsonapi.Call) (any, error) {
 		HasHealth   bool   `json:"has_health,omitempty"`
 		TestConfirm string `json:"test_confirm,omitempty"`
 		Fixable     bool   `json:"fixable,omitempty"`
+		// Stored is a connector kept in the store, which can be approved,
+		// edited, exported and deleted; a built-in provider's row is not.
+		// State is the badge: approved, pending or built in.
+		Stored bool   `json:"stored"`
+		State  string `json:"state"`
+		// Endpoints is a service with endpoints to list (Endpoints on its row).
+		Endpoints bool `json:"endpoints,omitempty"`
+		// Group is the band the row sits in (connectorGroups).
+		Group string `json:"group"`
 	}
 	var rows []connRow
 	for _, conn := range ListConnectors(RootDB) {
 		_, canConfig := TemplateForConnector(conn)
-		row := connRow{conn.Name, conn.Kind, ConnectorSummary(conn), conn.Owner, conn.Approved, conn.LastError, conn.Template, conn.Kind == RestImageConnectorKind, canConfig, connectorWebhook(conn), "", false, false, "", service.Fixable(conn)}
+		row := connRow{conn.Name, conn.Kind, ConnectorSummary(conn), conn.Owner, conn.Approved, conn.LastError, conn.Template, conn.Kind == RestImageConnectorKind, canConfig, connectorWebhook(conn), "", false, false, "", service.Fixable(conn), true, "pending", conn.Kind == service.Kind, connectorGroup(conn.Kind)}
+		if conn.Approved {
+			row.State = "approved"
+		}
 		if service.Testable(conn) {
 			row.Testable = true
 			row.TestConfirm = testConfirm(conn.Name)
@@ -72,7 +91,62 @@ func (a *AdminApp) handleConnectors(c *jsonapi.Call) (any, error) {
 		}
 		rows = append(rows, row)
 	}
+	// gohort's own providers, after the ones added: read from their settings
+	// (connector_builtins.go), tested by those settings' own tests.
+	for _, b := range a.builtinConnectors() {
+		rows = append(rows, connRow{Name: b.name, Kind: "built in", Summary: b.wrapper, Owner: "gohort",
+			Status: b.status, Testable: b.test != nil, State: "built-in", Group: groupBuiltIn})
+	}
+	// The peers this instance borrows from (connector_peers.go), read from the
+	// peers and the settings that name them, re-checked by Test.
+	for _, pc := range a.peerConnectors() {
+		rows = append(rows, connRow{Name: pc.name, Kind: "peer", Summary: pc.wrapper, Owner: "Peers",
+			Status: pc.status, Testable: true, State: "peer", Endpoints: true, Group: groupPeers})
+	}
+	// The programs System Hooks' jobs run (connector_programs.go), read from
+	// the jobs, set up and tested from System Hooks.
+	for _, pc := range programRows() {
+		rows = append(rows, connRow{Name: pc.name, Kind: "program", Summary: pc.wrapper, Owner: "System Hooks",
+			Status: pc.status, State: "program", Endpoints: true, Group: groupPrograms})
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		return slices.Index(connectorGroups, rows[i].Group) < slices.Index(connectorGroups, rows[j].Group)
+	})
 	return rows, nil
+}
+
+// The Connectors table's bands, in order: what a connector is, which is
+// what an admin looks for one by.
+const (
+	groupServices = "Services"
+	groupMessages = "Messaging"
+	groupWatches  = "Watches"
+	groupTools    = "Tools for agents (MCP and desktop)"
+	groupHooks    = "Adapted System Hooks"
+	groupBuiltIn  = "Built in"
+	groupPeers    = "Peers"
+	groupPrograms = "Programs"
+)
+
+var connectorGroups = []string{groupServices, groupMessages, groupWatches, groupTools, groupHooks, groupBuiltIn, groupPeers, groupPrograms}
+
+// connectorGroup is the band a stored connector of kind sits in.
+func connectorGroup(kind string) string {
+	switch kind {
+	case service.Kind, RestImageConnectorKind:
+		return groupServices
+	case RestMessagingConnectorKind, MessagingBridgeConnectorKind, BotFrameworkConnectorKind:
+		return groupMessages
+	case RestPollConnectorKind:
+		return groupWatches
+	case RemoteMCPConnectorKind, DesktopMCPConnectorKind, DesktopCommandConnectorKind:
+		return groupTools
+	case flows.ConnectorKind:
+		return groupHooks
+	case PeerRelayConnectorKind:
+		return groupPeers
+	}
+	return groupServices
 }
 
 // testConfirm is the question asked before a contract test: what it does and
@@ -159,6 +233,12 @@ func (a *AdminApp) handleConnectorTest(c *jsonapi.Call, _ struct{}) (any, error)
 	if name == "" {
 		return nil, jsonapi.BadRequest("missing name")
 	}
+	if strings.HasPrefix(name, builtinPrefix) {
+		return a.builtinTest(c, name)
+	}
+	if strings.HasPrefix(name, peerRowPrefix) {
+		return peerTest(c.R.Context(), name), nil
+	}
 	reps, err := service.Test(c.R.Context(), name)
 	if err != nil {
 		return map[string]any{"message": err.Error(), "warnings": []string{err.Error()}}, nil
@@ -175,6 +255,34 @@ func (a *AdminApp) handleConnectorTest(c *jsonapi.Call, _ struct{}) (any, error)
 		}
 	}
 	return map[string]any{"message": strings.Join(lines, "\n"), "warnings": warns}, nil
+}
+
+// handleConnectorEndpoints lists the ?name= service's endpoints.
+func (a *AdminApp) handleConnectorEndpoints(c *jsonapi.Call) (any, error) {
+	name := strings.TrimSpace(c.R.URL.Query().Get("name"))
+	if strings.HasPrefix(name, peerRowPrefix) {
+		pc, ok := a.peerByName(name)
+		if !ok {
+			return nil, jsonapi.Status(http.StatusNotFound, "no peer named "+strings.TrimPrefix(name, peerRowPrefix))
+		}
+		return peerEndpoints(pc), nil
+	}
+	if strings.HasPrefix(name, programPrefix) {
+		pc, ok := programByName(name)
+		if !ok {
+			return nil, jsonapi.Status(http.StatusNotFound, "no program "+strings.TrimPrefix(name, programPrefix)+" is used here")
+		}
+		return programEndpoints(pc), nil
+	}
+	conn, ok := GetConnector(RootDB, name)
+	if !ok || conn.Kind != service.Kind {
+		return nil, jsonapi.Status(http.StatusNotFound, "no service connector named "+name)
+	}
+	s, err := service.Parse(conn.Spec)
+	if err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	return s.Endpoints(), nil
 }
 
 // handleConnectorHealth runs the ?name= service's free health check now.

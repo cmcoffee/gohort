@@ -2321,6 +2321,12 @@ func fireWake(ctx context.Context, db Database, owner, name, summary, trigger st
 	if delivered {
 		rec.Status = RunOK
 		rec.Summary = "Woke the Operator: " + truncateEvent(summary, 200)
+		// A delivery that says how it went (a flow the event started, a
+		// wake that failed while another destination took the event) says
+		// so in place of the default.
+		if detail != "" {
+			rec.Summary = "Delivered (" + detail + "): " + truncateEvent(summary, 200)
+		}
 	} else {
 		// The fire happened; the delivery did not. Attention rather than failed:
 		// nothing errored, the event simply reached nobody, and the owner is the

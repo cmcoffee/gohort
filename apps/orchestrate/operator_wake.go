@@ -25,6 +25,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/pacing"
+	"github.com/cmcoffee/gohort/core/service"
 	"github.com/cmcoffee/gohort/tools/temptool"
 )
 
@@ -193,6 +194,12 @@ func registerOperatorWake(app *OrchestrateApp) {
 			Log("[operator.wake] %s/%s: monitor no longer exists, wake dropped", owner, monitorName)
 			return false, "the monitor no longer exists, so the event had nowhere to go"
 		}
+		// A flow this event starts is the delivery (runEventFlow).
+		done, detail, rest := runEventFlow(ctx, owner, monitorName, summary)
+		if done {
+			return true, detail
+		}
+		summary = rest
 		if strings.TrimSpace(m.WakeBrief) != "" {
 			brief = "\n\nWhat to do: " + m.WakeBrief
 		}
@@ -734,4 +741,24 @@ func (T *OrchestrateApp) handleOperatorEvent(w http.ResponseWriter, r *http.Requ
 	// Operator's full turn.
 	go FireEventMonitor(context.Background(), RootDB, m, summary)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// runEventFlow runs the flow this event starts, if one does (an admin's,
+// Admin > Extensions > Flows). The flow is the delivery: it runs with the
+// event's text and sends what it makes itself, with no agent in between, and
+// done says it ran. One that cannot run (past its runs for the day, or
+// failing) leaves the event to the monitor's own delivery: rest is the event
+// with why put before it, so the event is never dropped.
+func runEventFlow(ctx context.Context, owner, monitorName, summary string) (done bool, detail, rest string) {
+	f, ok := service.FlowForMonitor(owner, monitorName)
+	if !ok {
+		return false, "", summary
+	}
+	did, err := service.RunOnEvent(ctx, f, summary)
+	if err == nil {
+		Log("[operator.wake] %s/%s started the flow %s: %s", owner, monitorName, f.Name, did)
+		return true, "the flow " + f.Name + " " + did, ""
+	}
+	Log("[operator.wake] %s/%s: the flow %s did not run: %v", owner, monitorName, f.Name, err)
+	return false, "", fmt.Sprintf("(The flow %s did not run: %v. The event as it arrived:)\n\n%s", f.Name, err, summary)
 }

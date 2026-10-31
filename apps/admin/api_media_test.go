@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/ui"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -81,5 +82,39 @@ func TestEmbeddingSettingsTakeAServiceThatEmbeds(t *testing.T) {
 	}
 	if !found {
 		t.Error("the Embed on choices do not offer the service")
+	}
+}
+
+// While this instance is the only thing that can embed, transcribe or speak,
+// each page says where to get something else instead of offering a choice of
+// one; once a connector is approved, the choice replaces the pointer.
+func TestCapabilityPagesPointToAnAlternative(t *testing.T) {
+	saved := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB = saved })
+	read := func(fields []ui.FormField) (help string, choice bool) {
+		for _, f := range fields {
+			if f.Field == "enabled" {
+				help = f.Help
+			}
+			choice = choice || f.Field == "provider"
+		}
+		return
+	}
+	for name, fields := range map[string]func() []ui.FormField{"embeddings": embeddingFormFields, "transcription": transcribeFormFields, "speech": speechFormFields} {
+		if help, choice := read(fields()); choice || !strings.Contains(help, "Admin > Extensions > Templates") || !strings.Contains(help, "Admin > Capabilities > Peers") {
+			t.Errorf("%s with nothing else: %q, choice %v", name, help, choice)
+		}
+	}
+	spec := `{"provider":{"transport":"http","base_url":"https://api.example.test","auth":{"none":true},
+		"operations":{"embed":{"method":"POST","path":"/v1/embeddings","body":{"input":"{texts}"}}}},
+		"provides":[{"capability":"embed.text","steps":[{"call":"embed"}],"output":{"vectors":{"path":"data","each":"embedding"}}}]}`
+	SaveConnector(RootDB, Connector{Name: "vectors", Kind: "service", Spec: json.RawMessage(spec)})
+	ApproveConnector(RootDB, "vectors")
+	if help, choice := read(embeddingFormFields()); !choice || help != "" {
+		t.Errorf("embeddings with a connector to choose: %q, choice %v", help, choice)
+	}
+	if _, choice := read(speechFormFields()); choice {
+		t.Error("a connector that embeds made speech a choice")
 	}
 }

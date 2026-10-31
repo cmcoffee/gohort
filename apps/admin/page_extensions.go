@@ -21,7 +21,7 @@ func (a *AdminApp) importExportSections() []ui.Section {
 	}}
 }
 
-// extensionsSections is the extensions part of the admin page: MCP Servers, MCP Tools (exposed to external clients), Bridges, Connectors, Templates.
+// extensionsSections is the extensions part of the admin page: MCP Servers, MCP Tools (exposed to external clients), Bridges, Connectors, Flows, Templates.
 func (a *AdminApp) extensionsSections() []ui.Section {
 	return []ui.Section{
 		{
@@ -183,13 +183,14 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 		},
 		{
 			Title:    "Connectors",
-			Subtitle: "Bridge types the assistant drafted and left awaiting your approval.",
-			Detail:   "For example a calendar or CRM exposed through its MCP server. Approve to MATERIALIZE the capability: its tools register for agents, and a remote_mcp connector becomes an enabled MCP server, which also appears under MCP Servers above.\n\nThe assistant never handles a secret: auth is a referenced API credential or per-user OAuth. Nothing runs until you approve, and Delete tears the capability down.",
+			Subtitle: "Standing connections to what is outside gohort: services that give it a capability (images, speech, embeddings), feeds it watches, messaging relays. Approve, test, fix or remove each one here.",
+			Detail:   "Connectors are grouped by what they are: services that give gohort a capability, messaging, watches, tools for agents (MCP and desktop), adapted System Hooks, then the built-in providers, peers and programs.\n\nEndpoints on a service's row lists each endpoint it reaches: what it is sent and where each value comes from ({prompt} is what gohort asked; anything else is sent as written), what is read from the reply and into what, and what uses it. A service giving several things names them on its row and counts its endpoints.\n\nThe peers this instance borrows from are in the Peers group: what each lends, what here uses it, and when it was last checked. Test asks the peer again what it lends, which costs nothing. A peer is added, re-keyed and forgotten under Admin > Capabilities > Peers.\n\nThe programs System Hooks' jobs run (pandoc, ffmpeg, yt-dlp) are in the Programs group: what each does now, what it stands by for (another way is used first, or a program it works with is missing), and its command lines under Endpoints. A program is installed, adapted and tested under Admin > Capabilities > System Hooks; one not installed is listed only while a job it would do has no other way to run.\n\ngohort's own providers (the local embedder, transcriber and speaker, and the built-in Gemini and OpenAI image code) are in the Built in group: they are set up under Admin > Capabilities, and Test runs the same check as there.\n\nFor example a calendar or CRM exposed through its MCP server. Approve to MATERIALIZE the capability: its tools register for agents, and a remote_mcp connector becomes an enabled MCP server, which also appears under MCP Servers above.\n\nThe assistant never handles a secret: auth is a referenced API credential or per-user OAuth. Nothing runs until you approve, and Delete tears the capability down.",
 			Body: ui.Stack{
 				Children: []ui.Component{
 					ui.Table{
-						Source: "api/connectors",
-						RowKey: "name",
+						Source:  "api/connectors",
+						RowKey:  "name",
+						GroupBy: "group",
 						// A connector row carries a name, a type, who drafted it,
 						// its state, a summary (an address and an auth mode) and
 						// six controls. Across one line the summary and the
@@ -202,10 +203,13 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 							{Field: "kind", Label: "Type", Mute: true},
 							{Field: "owner", Label: "Drafted by", Mute: true},
 							{
-								Field: "approved", Type: "badge",
+								Field: "state", Type: "badge",
 								Badges: []ui.BadgeMapping{
-									{Value: true, Label: "Approved", Color: "success"},
-									{Value: false, Label: "Pending", Color: "warning"},
+									{Value: "approved", Label: "Approved", Color: "success"},
+									{Value: "pending", Label: "Pending", Color: "warning"},
+									{Value: "built-in", Label: "Built in", Color: "info"},
+									{Value: "peer", Label: "Peer", Color: "info"},
+									{Value: "program", Label: "Program", Color: "info"},
 								},
 							},
 							{Field: "summary", Label: "", Mute: true, Flex: 4, Line: 2},
@@ -215,27 +219,39 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 						RowActions: []ui.RowAction{
 							{Type: "button", Label: "Approve",
 								PostTo: "api/connectors?action=approve&name={name}",
-								Method: "POST", HideIf: "approved", Variant: "primary"},
+								Method: "POST", OnlyIf: "stored", HideIf: "approved", Variant: "primary"},
 							{Type: "button", Label: "Unapprove",
 								PostTo: "api/connectors?action=unapprove&name={name}",
 								Method: "POST", OnlyIf: "approved"},
+							ui.ExpandIf("Endpoints", "endpoints", "", ui.Table{
+								Source: "api/connectors/endpoints?name={name}",
+								RowKey: "name",
+								Columns: []ui.Col{
+									{Field: "address", Label: "Endpoint", Flex: 3},
+									{Field: "used_by", Label: "Used by", Mute: true, Flex: 2},
+									{Field: "sends", Label: "", Mute: true, Flex: 4, Line: 2},
+									{Field: "reads", Label: "", Mute: true, Flex: 4, Line: 2},
+								},
+								EmptyText: "This service has no endpoints.",
+							}),
 							{Type: "button", Label: "Configure", Method: "client",
 								PostTo: "configure_backend", OnlyIf: "configurable"},
 							{Type: "button", Label: "Webhook…", Method: "client",
-								PostTo: "connector_webhook", OnlyIf: "webhook", Compact: true},
+								PostTo: "connector_webhook", OnlyIf: "webhook"},
 							{Type: "button", Label: "Test", Method: "POST",
 								PostTo: "api/connectors/test?name={name}", OnlyIf: "testable",
-								ConfirmField: "test_confirm", Compact: true},
+								ConfirmField: "test_confirm"},
 							{Type: "button", Label: "Check health", Method: "POST",
-								PostTo: "api/connectors/health?name={name}", OnlyIf: "has_health", Compact: true},
+								PostTo: "api/connectors/health?name={name}", OnlyIf: "has_health"},
 							connectorFixAction(),
 							{Type: "button", Label: "Edit spec", Method: "client",
-								PostTo: "connector_edit_spec", Compact: true},
+								PostTo: "connector_edit_spec", OnlyIf: "stored"},
 							{Type: "button", Label: "Export", Method: "client",
-								PostTo: "connectors_export", Compact: true},
+								PostTo: "connectors_export", OnlyIf: "stored"},
 							{Type: "button", Label: "Delete",
 								PostTo:  "api/connectors?name={name}",
 								Method:  "DELETE",
+								OnlyIf:  "stored",
 								Confirm: "Delete this connector and tear down its capability (for remote_mcp, remove its MCP server)?",
 								Variant: "danger"},
 						},
@@ -265,6 +281,7 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 				},
 			},
 		},
+		a.flowsSection(),
 		a.templatesSection(),
 	}
 }

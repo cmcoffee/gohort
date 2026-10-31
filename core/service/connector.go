@@ -113,17 +113,43 @@ func (handler) Summary(c Connector) string {
 	if err != nil {
 		return "service (unreadable spec)"
 	}
-	var caps []string
+	return s.Describe(c.Name)
+}
+
+// Describe is the service as the wrapper it is, read inside to outside:
+// what gohort asks of it (each capability, in the admin's words), the
+// mapping that turns that into calls, and what it reaches, with what
+// reaching it takes (docs/integrations.md). A program on this machine is
+// reached like an API: what it runs, and whether it has the network, are the
+// first things an admin approving it needs to see.
+//
+// One line stays one line: a service giving several capabilities names them
+// and counts its endpoints, and Endpoints says how each is used.
+func (s Spec) Describe(name string) string {
+	var inside, gave []string
 	for _, b := range s.Provides {
-		caps = append(caps, b.Capability)
+		c, _ := Lookup(b.Capability)
+		gives := c.Gives
+		switch {
+		case b.Capability == "music.generate":
+			gives = "agent tool " + (&musicTool{connector: name}).Name()
+		case gives == "":
+			gives = b.Capability
+		}
+		inside = append(inside, gives+" ⇐ "+mappingText(b))
+		gave = append(gave, gives)
+	}
+	line, count := strings.Join(inside, "; "), ""
+	if len(s.Provides) > 1 {
+		line = strings.Join(gave, ", ")
+		count = fmt.Sprintf(", %d endpoints", len(s.Provider.Operations))
 	}
 	if s.Provider.Transport == "command" {
-		// What runs is the first thing an admin approving it needs to see.
 		progs := map[string]bool{}
 		var list []string
 		for _, op := range s.Provider.Operations {
-			for _, line := range op.Run {
-				if p := strings.Fields(line); len(p) > 0 && !progs[p[0]] {
+			for _, run := range op.Run {
+				if p := strings.Fields(run); len(p) > 0 && !progs[p[0]] {
 					progs[p[0]] = true
 					list = append(list, p[0])
 				}
@@ -134,7 +160,7 @@ func (handler) Summary(c Connector) string {
 		if s.Provider.Network {
 			net = "with network"
 		}
-		return fmt.Sprintf("%s by a local program (runs %s, %s)", strings.Join(caps, ", "), strings.Join(list, ", "), net)
+		return fmt.Sprintf("%s ⇐ %s on this machine (%s)%s", line, strings.Join(list, ", "), net, count)
 	}
 	host := s.Provider.BaseURL
 	if u, err := url.Parse(host); err == nil && u.Host != "" {
@@ -142,9 +168,23 @@ func (handler) Summary(c Connector) string {
 	}
 	auth := "no key"
 	if s.Provider.Auth.Credential != "" {
-		auth = "credential " + s.Provider.Auth.Credential
+		auth = "key " + s.Provider.Auth.Credential
 	}
-	return fmt.Sprintf("%s via %s (%s)", strings.Join(caps, ", "), host, auth)
+	return fmt.Sprintf("%s ⇐ %s (%s)%s", line, host, auth, count)
+}
+
+// mappingText is a capability's mapping onto the outside: the endpoints it
+// calls, and the ones it waits on, in order.
+func mappingText(b Binding) string {
+	var steps []string
+	for _, st := range b.Steps {
+		if st.Call != "" {
+			steps = append(steps, st.Call)
+		} else {
+			steps = append(steps, "wait on "+st.Wait)
+		}
+	}
+	return strings.Join(steps, ", then ")
 }
 
 // Provides reports whether connector c is a service giving capability.

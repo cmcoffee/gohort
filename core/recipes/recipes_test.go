@@ -26,7 +26,7 @@ func TestTheBuiltInTemplatesAreValid(t *testing.T) {
 	want := map[string]bool{"github": false, "slack": false, "jira-cloud": false, "open-meteo": false, "system-info": false, "scout": false,
 		"a1111": false, "a1111-img2img": false, "rest-call": false, "openapi": false,
 		"gemini-images": false, "openai-images": false, "elevenlabs-speech": false, "openai-transcription": false,
-		"openai-embeddings": false}
+		"openai-embeddings": false, "slack-send": false, "discord-send": false, "ntfy-send": false, "ntfy-send-file": false}
 	for _, r := range builtins() {
 		if err := Validate(r); err != nil {
 			t.Errorf("%s: %v", r.ID, err)

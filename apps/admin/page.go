@@ -43,7 +43,7 @@ var sectionGroup = map[string]string{
 
 	// Pluggable integrations you ADD — grouped under Extensions (vs Capabilities,
 	// which are configured features like Image Generation / STT).
-	"API Credentials": "Extensions", "MCP Servers": "Extensions", "Connectors": "Extensions",
+	"API Credentials": "Extensions", "MCP Servers": "Extensions", "Connectors": "Extensions", "Flows": "Extensions",
 	"Source Hooks": "Extensions", "Persistent Tools (Pending)": "Extensions",
 	"Global Tools": "Extensions", "Agent-Scoped Tools": "Extensions", "Orphaned Tools": "Extensions",
 	"Tool Groups": "Extensions",
@@ -374,7 +374,7 @@ func (a *AdminApp) serveAdminPage(w http.ResponseWriter, r *http.Request, tab st
 	wideSections := map[string]bool{
 		"System Status": true, "Users": true, "LLM Routing": true, "Activity Log": true,
 		"Cost History (Last 30 Days)": true, "Cost by source": true, "Scheduled Tasks": true,
-		"API Credentials": true, "MCP Servers": true, "Connectors": true, "Source Hooks": true,
+		"API Credentials": true, "MCP Servers": true, "Connectors": true, "Flows": true, "Source Hooks": true,
 		"Persistent Tools (Pending)": true, "Global Tools": true, "System Hooks": true,
 		"Agent-Scoped Tools": true, "Orphaned Tools": true,
 		"Tool Groups": true, "Skills": true, "Pipelines": true, "Teams": true,
