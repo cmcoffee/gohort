@@ -29,3 +29,12 @@ var orchestrateWebAssets string
 //
 //go:embed assets/report_cards.html
 var ReportCardHead string
+
+// IntakeFormHead is the intake form an agent opens a new session with (its
+// intake_form), for every page that shows an agent's chat: the console here
+// and the restricted chat on /agents/, which had a copy of its own that never
+// learned steps or live options, so Builder's form there could not be filled
+// in. The page names the active agent with window.uiAgentIntakeSetAgent.
+//
+//go:embed assets/intake_form.html
+var IntakeFormHead string

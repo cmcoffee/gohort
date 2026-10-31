@@ -8,6 +8,7 @@
 package orchestrate
 
 import (
+	"net/http"
 	"sort"
 	"strings"
 
@@ -45,6 +46,14 @@ func (T *OrchestrateApp) handleIntakeOptions(c *jsonapi.Call) (any, error) {
 		opts = []intakeOption{}
 	}
 	return opts, nil
+}
+
+// PublicHandleIntakeOptions serves the same options on the restricted chat
+// (/agents/<slug>/api/intake/options), whose intake form fetches them
+// relative to its own page. Scoped to the signed-in user as here: the lists
+// are the viewer's own things.
+func (T *OrchestrateApp) PublicHandleIntakeOptions(w http.ResponseWriter, r *http.Request) {
+	jsonapi.Get(T.DB, T.handleIntakeOptions)(w, r)
 }
 
 // authoringTargets lists what the user owns of one kind, for "Which one?".

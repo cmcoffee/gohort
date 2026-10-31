@@ -10,7 +10,7 @@ import (
 // have hidden is neither required nor sent, and a live select refetches when an
 // answer it names changes.
 func TestTheIntakeFormRunsAsSteps(t *testing.T) {
-	src := orchestrateWebAssets
+	src := IntakeFormHead
 	for _, want := range []string{
 		// Steps are recognised from the fields themselves.
 		"var stepped = fields.some(function(f) { return f.show_when || f.options_from; });",

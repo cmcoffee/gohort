@@ -9,11 +9,11 @@ import (
 // the bubble redraws as the form summary. Retried as plain text, the turn lost
 // the picks Builder's recipe gate and app mode read.
 func TestRetryingAnIntakeResendsItsPicks(t *testing.T) {
-	i := strings.Index(orchestrateWebAssets, "function registerIntakeRetry()")
+	i := strings.Index(IntakeFormHead, "function registerIntakeRetry()")
 	if i < 0 {
 		t.Fatal("orchestrate registers no retry for an intake bubble")
 	}
-	fn := orchestrateWebAssets[i:]
+	fn := IntakeFormHead[i:]
 	fn = fn[:strings.Index(fn, "registerIntakeRetry();")]
 	for _, want := range []string{
 		"window.uiRegisterMessageRetry(",

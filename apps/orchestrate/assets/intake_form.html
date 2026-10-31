@@ -1,0 +1,1118 @@
+<style>
+/* Intake form rendered in the conversation pane on the FIRST turn
+ * of a new session when the active agent has intake_form configured.
+ * Submitting packs values into a markdown user message and hands
+ * off to the normal chat send path. */
+.ui-orch-intake {
+  position: relative;
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 1.35rem 1.5rem 1.2rem;
+  margin: 1.75rem auto;
+  width: 100%;
+  max-width: 620px;
+  align-self: center;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+  counter-reset: intake-step;
+}
+/* A hairline of the accent along the top edge: the card reads as the start of
+ * something, not another settings box. */
+.ui-orch-intake::before {
+  content: '';
+  position: absolute; left: 1.5rem; right: 1.5rem; top: -1px; height: 2px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent), var(--accent-hi), transparent);
+  opacity: 0.85;
+}
+/* Decorated user bubble (intake submitted, now part of history):
+ * stretch the bubble across the pane and strip its right-aligned
+ * accent so the centered form inside doesn't read as a tiny card
+ * pushed off to the right. The form's own border + bg carry the
+ * visual identity. */
+.ui-agent-msg-user[data-ui-intake="1"] {
+  align-self: stretch;
+  max-width: 100%;
+}
+.ui-agent-msg-user[data-ui-intake="1"] .ui-agent-msg-body {
+  background: transparent;
+  border-right: none;
+  padding: 0;
+}
+.ui-orch-intake-header {
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--text-hi);
+  letter-spacing: -0.01em;
+  margin-bottom: 1.1rem;
+}
+/* Agency-side agent description block above intake form. Matches
+   the look of .ui-agent-empty (which is what the public agent app
+   uses for the same text via cfg.empty_text) so Agency and the
+   per-app surface render the description identically. */
+.ui-agency-agent-desc {
+  color: var(--text-mute);
+  font-style: italic;
+  text-align: center;
+  padding: 1.5rem 0;
+}
+/* Each question is a numbered step on a rail. The counter skips a hidden step
+ * (display:none does not count), so the numbers always read 1, 2, 3 in what is
+ * on screen. A step revealed by an earlier answer glides in. */
+.ui-orch-intake-row {
+  position: relative;
+  display: flex; flex-direction: column; gap: 0.45rem;
+  padding: 0 0 1.1rem 2.25rem;
+  counter-increment: intake-step;
+  animation: ui-orch-intake-in 0.22s ease-out;
+}
+.ui-orch-intake-row::before {
+  content: '';
+  position: absolute; left: 0.69rem; top: 1.55rem; bottom: 0.1rem; width: 1px;
+  background: var(--border);
+}
+.ui-orch-intake-row.is-last::before { display: none; }
+@keyframes ui-orch-intake-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ui-orch-intake-row { animation: none; }
+}
+.ui-orch-intake-label {
+  font-size: 0.86rem; font-weight: 600;
+  color: var(--text-hi);
+  line-height: 1.45rem;
+}
+.ui-orch-intake-label::before {
+  content: counter(intake-step);
+  position: absolute; left: 0; top: 0;
+  width: 1.45rem; height: 1.45rem; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.72rem; font-weight: 700;
+  color: var(--accent-hi);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.ui-orch-intake-input {
+  background: var(--bg-0); color: var(--text);
+  border: 1px solid var(--border); border-radius: 10px;
+  padding: 0.62rem 0.8rem; font: inherit; font-size: 0.92rem;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+  outline: none;
+}
+.ui-orch-intake-input:hover { border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); }
+.ui-orch-intake-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.ui-orch-intake-input::placeholder { color: var(--text-mute); opacity: 0.8; }
+select.ui-orch-intake-input {
+  appearance: none; -webkit-appearance: none;
+  padding-right: 2.2rem; cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%239ca3b8' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.85rem center;
+}
+.ui-orch-intake-textarea { resize: vertical; min-height: 5rem; line-height: 1.45; }
+.ui-orch-intake-help {
+  font-size: 0.78rem; color: var(--text-mute); line-height: 1.4;
+}
+.ui-orch-intake-actions {
+  display: flex; flex-wrap: wrap; justify-content: flex-end;
+  margin-top: 0.2rem; padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+.ui-orch-intake-actions .ui-row-btn.primary {
+  background: var(--accent); color: var(--text-on-accent, #fff);
+  border: 1px solid var(--accent); border-radius: 10px;
+  display: inline-flex; align-items: center; gap: 0.35rem;
+  padding: 0 1.25rem; line-height: 1.2; font-size: 0.9rem; font-weight: 600;
+  transition: background 0.12s ease, transform 0.12s ease;
+}
+.ui-orch-intake-actions .ui-row-btn.primary::after { content: ' \2192'; }
+.ui-orch-intake-actions .ui-row-btn.primary:hover:not(:disabled) {
+  background: var(--accent-hi); border-color: var(--accent-hi); transform: translateY(-1px);
+}
+/* Choices are chips: large enough to hit, lifting on hover, and filled with
+ * the accent once picked so the answer is visible at a glance. */
+.ui-orch-intake-button-row {
+  display: flex; flex-wrap: wrap; gap: 0.5rem;
+}
+.ui-orch-intake-button {
+  background: var(--bg-0); color: var(--text);
+  border: 1px solid var(--border); border-radius: 999px;
+  /* The base button keeps its touch-sized minimum height; centre the label
+   * in it rather than letting it ride at the top. */
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0 1.1rem; line-height: 1.2; font-size: 0.88rem; font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease, color 0.12s ease, transform 0.12s ease;
+}
+.ui-orch-intake-button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--border));
+  color: var(--text-hi);
+  transform: translateY(-1px);
+}
+.ui-orch-intake-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.ui-orch-intake-button.selected {
+  opacity: 1;
+  color: var(--text-hi);
+  background: color-mix(in srgb, var(--accent) 22%, var(--bg-0));
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent) inset;
+}
+.ui-orch-intake-button.selected:disabled {
+  opacity: 0.9;
+}
+/* A single row of starting points needs no numbering, rail or submit bar:
+ * it is one question, answered by a click. */
+.ui-orch-intake-button-only { text-align: center; }
+.ui-orch-intake-button-only .ui-orch-intake-row { padding-left: 0; animation: none; }
+.ui-orch-intake-button-only .ui-orch-intake-row::before,
+.ui-orch-intake-button-only .ui-orch-intake-label::before { display: none; }
+.ui-orch-intake-button-only .ui-orch-intake-button-row {
+  justify-content: center;
+}
+.ui-orch-intake-button-only .ui-orch-intake-header {
+  text-align: center;
+}
+.ui-orch-intake-button-only .ui-orch-intake-actions {
+  display: none;
+}
+
+/* Checklist (multi-select) — vertical stack of checkbox+label rows.
+ * Renders inside the same .ui-orch-intake-row as other inputs. */
+.ui-orch-intake-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.3rem 0;
+}
+.ui-orch-intake-checklist-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  color: var(--text);
+  cursor: pointer;
+}
+.ui-orch-intake-checklist-item input[type=checkbox] {
+  margin: 0;
+  cursor: pointer;
+}
+.ui-orch-intake-checklist-item input[type=checkbox]:disabled {
+  cursor: default;
+}
+/* A checklist's "decide for me" box, ticked: the list itself stays hidden. */
+.ui-orch-intake-exclusive-on > .ui-orch-intake-checklist-item:not([data-exclusive]),
+.ui-orch-intake-exclusive-on > .ui-orch-intake-help {
+  display: none;
+}
+.ui-orch-intake-checklist-other {
+  margin-top: 0.2rem;
+}
+.ui-orch-intake-checklist-other-text {
+  flex: 1;
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.88rem;
+  padding: 0.25rem 0.45rem;
+  outline: none;
+}
+.ui-orch-intake-checklist-other-text:focus {
+  border-color: var(--accent);
+}
+.ui-orch-intake-checklist-other-text:disabled {
+  background: transparent;
+  border-color: transparent;
+}
+
+/* Form-result mirror for the user bubble after intake-form submit.
+ * Replaces the raw markdown text with a read-only structured view
+ * of the filled fields so the intake's visual shape stays visible
+ * in the chat history. */
+.ui-orch-intake-result {
+  display: grid;
+  grid-template-columns: minmax(8rem, auto) 1fr;
+  gap: 0.35rem 0.85rem;
+  margin: 0.1rem 0;
+}
+.ui-orch-intake-result-row {
+  display: contents;
+}
+.ui-orch-intake-result-label {
+  color: var(--text-mute); font-size: 0.78rem;
+  font-weight: 600; padding-top: 0.05rem;
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+.ui-orch-intake-result-value {
+  color: var(--text-hi); font-size: 0.9rem;
+  white-space: pre-wrap; word-wrap: break-word;
+  border-left: 2px solid var(--border);
+  padding-left: 0.7rem;
+}
+/* Phone: inside a message bubble an 8rem label column left the answers a
+   narrow strip; each label sits over its answer instead. */
+@media (max-width: 700px) {
+  .ui-orch-intake-result { grid-template-columns: 1fr; gap: 0.15rem; }
+  .ui-orch-intake-result-value { margin-bottom: 0.4rem; }
+}
+
+</style>
+<script>
+// The intake form an agent can open each new session with (its intake_form),
+// shared by every page that shows an agent's chat: the console, and the
+// restricted chat a dashboard card opens on /agents/. One copy, so a form with
+// steps (show_when), live options (options_from), questions before a button
+// submits (detail) and "decide for me" boxes (exclusive_option) works on both.
+// The page says which agent is active with window.uiAgentIntakeSetAgent(agent),
+// agent being {id, intake_form} or null; everything else happens here.
+(function() {
+      var currentAgentForIntake = null;
+      // --- Intake form on new session ----------------------------------
+      // When the active agent has an intake_form defined AND we're at
+      // the start of a new conversation (no messages yet), render the
+      // form fields above the chat input. Submitting packs the values
+      // into a markdown user message and uses the framework's normal
+      // sendMessage path, after which the regular text input takes
+      // over for the rest of the session.
+      var intakeWrap = null;
+      var intakeSentAt = 0; // when the form was last submitted (the poll below)
+      // Answers handed in by the page address (?intake.<field>=value), so a
+      // button elsewhere can open an agent's starting form already pointed at
+      // something: Build from an agent's page lands on Builder with that agent
+      // picked. Read once and taken off the address, so a reload does not
+      // answer the form again. Held for the agent the address named, and
+      // dropped once a form is sent.
+      var intakePrefill = (function() {
+        var u, vals = {}, any = false;
+        try { u = new URL(window.location.href); } catch (_) { return null; }
+        var drop = [];
+        u.searchParams.forEach(function(v, k) {
+          if (k.indexOf('intake.') !== 0) return;
+          drop.push(k);
+          var name = k.slice(7);
+          if (name) { vals[name] = v; any = true; }
+        });
+        if (!drop.length) return null;
+        drop.forEach(function(k) { u.searchParams.delete(k); });
+        try { history.replaceState(history.state, '', u.toString()); } catch (_) {}
+        return any ? {agent: u.searchParams.get('agent') || '', values: vals} : null;
+      })();
+      function intakePrefillFor(agent) {
+        if (!intakePrefill || !agent) return {};
+        if (intakePrefill.agent && intakePrefill.agent !== agent.id) return {};
+        return intakePrefill.values;
+      }
+      function activeIntakeForm() {
+        var a = currentAgentForIntake;
+        if (!a || !Array.isArray(a.intake_form) || a.intake_form.length === 0) return null;
+        return a.intake_form;
+      }
+      function conversationIsEmpty() {
+        var log = document.querySelector('.ui-agent-convo-log');
+        if (!log) return true;
+        // Empty when only the placeholder "Start typing…" lives in
+        // there. Real bubbles get class ui-agent-msg.
+        return log.querySelector('.ui-agent-msg') == null;
+      }
+      function clearIntakeForm() {
+        if (intakeWrap && intakeWrap.parentNode) intakeWrap.parentNode.removeChild(intakeWrap);
+        intakeWrap = null;
+      }
+      // (setIntakeInputRowHidden removed: the chat input row stays
+      // visible alongside the intake form so the user can either fill
+      // the form or type a regular message — same agent reached either
+      // way.)
+      // buildIntakeFormDOM renders intake fields as a styled block.
+      // values is an optional prefill {name: value} map; disabled
+      // freezes inputs for the read-only bubble view. Returns the
+      // root element + an inputs map so the caller can collect
+      // values on submit.
+      function buildIntakeFormDOM(fields, values, disabled) {
+        values = values || {};
+        var wrap = document.createElement('div');
+        wrap.className = 'ui-orch-intake';
+        var inputs = {};
+        // safeText defends against the LLM authoring intake fields
+        // with objects where strings were expected — labels, help
+        // text, placeholders, option values. Without coercion, the
+        // browser renders "[object Object]" and the form is broken.
+        function safeText(v) {
+          if (v == null) return '';
+          if (typeof v === 'object') {
+            // Common shape: {value, label} from training priors that
+            // expect HTML-select semantics. Honor it.
+            if (v.label != null) return String(v.label);
+            if (v.value != null) return String(v.value);
+            try { return JSON.stringify(v); } catch (_) { return ''; }
+          }
+          return String(v);
+        }
+        // optionValue extracts the submittable value from an option
+        // entry. {value, label} → value; bare string → itself.
+        function optionValue(o) {
+          if (o != null && typeof o === 'object' && o.value != null) return String(o.value);
+          return safeText(o);
+        }
+        function optionLabel(o) {
+          if (o != null && typeof o === 'object' && o.label != null) return String(o.label);
+          return optionValue(o);
+        }
+        // A form with steps (a field that waits on an earlier answer, or a
+        // select that lists live options) is answered, then sent: its buttons
+        // pick instead of submitting, since later questions depend on them.
+        var stepped = fields.some(function(f) { return f.show_when || f.options_from; });
+        function changed() {
+          try { wrap.dispatchEvent(new Event('intake-change')); } catch (_) {}
+        }
+        fields.forEach(function(f) {
+          var row = document.createElement('div');
+          row.className = 'ui-orch-intake-row';
+          var lbl = document.createElement('label');
+          lbl.className = 'ui-orch-intake-label';
+          lbl.textContent = safeText(f.label || f.name) + (f.required ? ' *' : '');
+          row.appendChild(lbl);
+          var inp;
+          var t = f.type || 'text';
+          if (t === 'textarea') {
+            inp = document.createElement('textarea');
+            inp.rows = 3;
+            inp.className = 'ui-orch-intake-input ui-orch-intake-textarea';
+          } else if (t === 'select' && f.options_from) {
+            // Live options: filled by refresh() below. A replayed answer is
+            // shown as itself, since a disabled record is not refetched.
+            inp = document.createElement('select');
+            inp.className = 'ui-orch-intake-input';
+            var held = safeText(values[f.name] || '');
+            var first = document.createElement('option');
+            first.value = held;
+            first.textContent = held || 'Choose…';
+            inp.appendChild(first);
+            inp.addEventListener('change', changed);
+          } else if (t === 'select') {
+            inp = document.createElement('select');
+            inp.className = 'ui-orch-intake-input';
+            inp.addEventListener('change', changed);
+            (f.options || []).forEach(function(o) {
+              var opt = document.createElement('option');
+              opt.value = optionValue(o);
+              opt.textContent = optionLabel(o);
+              inp.appendChild(opt);
+            });
+          } else if (t === 'checklist') {
+            // Multi-select: vertical list of checkboxes. Selected
+            // values get joined comma-separated when packed into the
+            // intake markdown ("**Topics:** topic1, topic2"). Prefill
+            // accepts either a comma-separated string (round-tripped
+            // from a prior intake bubble) or an array.
+            //
+            // allow_other: when true, render an extra row with a
+            // checkbox + inline text input. When checked + non-empty,
+            // the text content is appended to the comma list (the
+            // option value is the typed text itself, NOT the literal
+            // "Other"). The text input is data-other so collect()
+            // can find it without coupling to position.
+            inp = document.createElement('div');
+            inp.className = 'ui-orch-intake-checklist';
+            var prefill = values[f.name];
+            var selected = {};
+            var prefillOther = '';
+            if (Array.isArray(prefill)) {
+              prefill.forEach(function(v){ selected[String(v)] = true; });
+            } else if (typeof prefill === 'string' && prefill) {
+              prefill.split(',').forEach(function(v){
+                v = v.trim();
+                if (v) selected[v] = true;
+              });
+            }
+            var knownVals = {};
+            // exclusive_option: a first box meaning "none of these, decide for
+            // me". While it is ticked (the default) the list stays out of the
+            // way; unticking it shows the list to pick from, and ticking it
+            // again clears the picks and hides the list.
+            var exclusiveBox = null;
+            if (f.exclusive_option) {
+              var exItem = document.createElement('label');
+              exItem.className = 'ui-orch-intake-checklist-item';
+              exItem.dataset.exclusive = '1';
+              exclusiveBox = document.createElement('input');
+              exclusiveBox.type = 'checkbox';
+              exclusiveBox.value = safeText(f.exclusive_option);
+              exclusiveBox.dataset.exclusive = '1';
+              knownVals[exclusiveBox.value] = true;
+              var anyPicked = Object.keys(selected).some(function(v) { return v !== exclusiveBox.value; });
+              exclusiveBox.checked = !anyPicked;
+              inp.classList.toggle('ui-orch-intake-exclusive-on', exclusiveBox.checked);
+              if (disabled) exclusiveBox.disabled = true;
+              var exTxt = document.createElement('span');
+              exTxt.textContent = safeText(f.exclusive_option);
+              exItem.appendChild(exclusiveBox);
+              exItem.appendChild(exTxt);
+              inp.appendChild(exItem);
+              (function(list, ex) {
+                list.addEventListener('change', function(ev) {
+                  if (ev.target !== ex) return;
+                  if (ex.checked) {
+                    list.querySelectorAll('input[type=checkbox]').forEach(function(b) { if (b !== ex) b.checked = false; });
+                  }
+                  list.classList.toggle('ui-orch-intake-exclusive-on', ex.checked);
+                });
+              })(inp, exclusiveBox);
+            }
+            // Live options (options_from) are filled by refresh(); until then,
+            // and on a replayed answer that is never refetched, the picks
+            // already made show as ticked boxes of their own.
+            var staticOpts = f.options || [];
+            if (f.options_from) {
+              staticOpts = Object.keys(selected).filter(function(v) { return !exclusiveBox || v !== exclusiveBox.value; });
+            }
+            staticOpts.forEach(function(o) {
+              var val = optionValue(o);
+              knownVals[val] = true;
+              var label = optionLabel(o);
+              var item = document.createElement('label');
+              item.className = 'ui-orch-intake-checklist-item';
+              var box = document.createElement('input');
+              box.type = 'checkbox';
+              box.value = val;
+              if (selected[val]) box.checked = true;
+              if (disabled) box.disabled = true;
+              var txt = document.createElement('span');
+              txt.textContent = label;
+              item.appendChild(box);
+              item.appendChild(txt);
+              inp.appendChild(item);
+            });
+            // Any prefill value not matching a known option must have
+            // come from a prior Other entry — restore it into the
+            // text field below.
+            if (f.allow_other) {
+              Object.keys(selected).forEach(function(v){
+                if (!knownVals[v]) {
+                  prefillOther = v;
+                }
+              });
+              var otherRow = document.createElement('label');
+              otherRow.className = 'ui-orch-intake-checklist-item ui-orch-intake-checklist-other';
+              var otherBox = document.createElement('input');
+              otherBox.type = 'checkbox';
+              otherBox.dataset.otherBox = '1';
+              if (prefillOther) otherBox.checked = true;
+              if (disabled) otherBox.disabled = true;
+              var otherLbl = document.createElement('span');
+              otherLbl.textContent = 'Other:';
+              var otherText = document.createElement('input');
+              otherText.type = 'text';
+              otherText.className = 'ui-orch-intake-checklist-other-text';
+              otherText.dataset.otherText = '1';
+              otherText.placeholder = 'type your own…';
+              if (prefillOther) otherText.value = prefillOther;
+              if (disabled) otherText.disabled = true;
+              // Typing in the text field auto-checks the Other box so
+              // the user doesn't have to click both. Symmetrical: un-
+              // checking the box doesn't clear the text (the user might
+              // re-tick it).
+              otherText.addEventListener('input', function() {
+                if (otherText.value.trim() && !otherBox.checked) {
+                  otherBox.checked = true;
+                }
+              });
+              otherRow.appendChild(otherBox);
+              otherRow.appendChild(otherLbl);
+              otherRow.appendChild(otherText);
+              inp.appendChild(otherRow);
+            }
+          } else if (t === 'number') {
+            inp = document.createElement('input');
+            inp.type = 'number';
+            inp.className = 'ui-orch-intake-input';
+          } else if (t === 'file') {
+            inp = document.createElement('input');
+            inp.type = 'file';
+            inp.className = 'ui-orch-intake-input';
+          } else if (t === 'button') {
+            inp = document.createElement('div');
+            inp.className = 'ui-orch-intake-button-row';
+            var opts = (f.options && f.options.length) ? f.options : [f.label || f.name];
+            var prevSelected = safeText(values[f.name] || '');
+            if (prevSelected) inp.dataset.value = prevSelected;
+            opts.forEach(function(o) {
+              var val = optionValue(o);
+              var label = optionLabel(o);
+              var btn = document.createElement('button');
+              btn.type = 'button';
+              btn.className = 'ui-row-btn ui-orch-intake-button';
+              if (prevSelected && val === prevSelected) {
+                btn.classList.add('selected');
+              }
+              btn.textContent = label;
+              if (disabled) btn.disabled = true;
+              btn.addEventListener('click', function() {
+                inp.dataset.value = val;
+                if (stepped) {
+                  inp.querySelectorAll('.ui-orch-intake-button').forEach(function(b) { b.classList.remove('selected'); });
+                  btn.classList.add('selected');
+                  changed();
+                  return;
+                }
+                // An option that is only a CATEGORY asks before it submits.
+                // "Fix something" used to send those two words and nothing
+                // else, so the agent opened with no target and swept every
+                // agent, monitor and run guessing what was meant — then asked
+                // anyway. One question here replaces all of that.
+                var ask = (f.detail || {})[val];
+                if (ask) {
+                  inp.innerHTML = '';
+                  var q = document.createElement('div');
+                  q.className = 'ui-orch-intake-label';
+                  q.textContent = ask;
+                  var box = document.createElement('input');
+                  box.type = 'text';
+                  box.className = 'ui-orch-intake-input';
+                  box.placeholder = 'Type it here, then press Enter';
+                  var go = function() {
+                    var extra = (box.value || '').trim();
+                    // Submitting empty is allowed — it lands exactly where the
+                    // old behavior did, so the question can be skipped rather
+                    // than becoming a wall.
+                    inp.dataset.value = extra ? val + ': ' + extra : val;
+                    var sb = document.querySelector('.ui-orch-intake-actions .ui-row-btn.primary');
+                    if (sb) sb.click();
+                  };
+                  box.addEventListener('keydown', function(ev) {
+                    if (ev.key === 'Enter') { ev.preventDefault(); go(); }
+                  });
+                  var send = document.createElement('button');
+                  send.type = 'button';
+                  send.className = 'ui-row-btn primary';
+                  send.textContent = 'Continue';
+                  send.addEventListener('click', go);
+                  inp.appendChild(q);
+                  inp.appendChild(box);
+                  inp.appendChild(send);
+                  box.focus();
+                  return;
+                }
+                var submitBtn = document.querySelector('.ui-orch-intake-actions .ui-row-btn.primary');
+                if (submitBtn) submitBtn.click();
+              });
+              inp.appendChild(btn);
+            });
+          } else {
+            inp = document.createElement('input');
+            inp.type = 'text';
+            inp.className = 'ui-orch-intake-input';
+          }
+          // Enter-to-submit on single-line text + number inputs. Skipped
+          // for textareas (Enter is newline there by convention), buttons
+          // (they self-submit on click), files (no text entry), selects
+          // (browser handles Enter natively).
+          if (inp.tagName === 'INPUT' && (inp.type === 'text' || inp.type === 'number')) {
+            inp.addEventListener('keydown', function(ev) {
+              if (ev.key !== 'Enter' || ev.shiftKey || ev.altKey || ev.ctrlKey || ev.metaKey) return;
+              ev.preventDefault();
+              var submitBtn = (wrap.parentNode && wrap.parentNode.querySelector('.ui-orch-intake-actions .ui-row-btn.primary'))
+                || document.querySelector('.ui-orch-intake-actions .ui-row-btn.primary');
+              if (submitBtn) submitBtn.click();
+            });
+          }
+          if (f.placeholder && t !== 'file' && t !== 'button' && t !== 'checklist') inp.placeholder = safeText(f.placeholder);
+          if (values[f.name] != null && t !== 'file' && t !== 'button' && t !== 'checklist') inp.value = safeText(values[f.name]);
+          if (disabled && t !== 'button' && t !== 'checklist') inp.disabled = true;
+          if (inp.tagName === 'INPUT' || inp.tagName === 'TEXTAREA') inp.addEventListener('input', changed);
+          inputs[f.name] = {field: f, input: inp, row: row};
+          row.appendChild(inp);
+          if (f.help) {
+            var help = document.createElement('div');
+            help.className = 'ui-orch-intake-help';
+            help.textContent = safeText(f.help);
+            row.appendChild(help);
+          }
+          wrap.appendChild(row);
+        });
+        // Steps: which fields show, and what the live selects list, follow the
+        // answers so far. Same ShowWhen grammar as the settings forms.
+        function answers() {
+          var m = {};
+          fields.forEach(function(f) {
+            var e = inputs[f.name];
+            if (!e) return;
+            if ((f.type || 'text') === 'button') m[f.name] = e.input.dataset.value || '';
+            else if (e.input.value !== undefined) m[f.name] = e.input.value;
+          });
+          return m;
+        }
+        function isShown(f) {
+          if (!f.show_when) return true;
+          if (!window.uiMatchesWhen) return true;
+          var m = answers();
+          // A field waits on its predecessors being shown, not just answered:
+          // an answer left behind by a step that has since hidden does not count.
+          fields.forEach(function(g) {
+            if (g !== f && g.show_when && window.uiMatchesWhen && !window.uiMatchesWhen(g.show_when, m)) m[g.name] = '';
+          });
+          return window.uiMatchesWhen(f.show_when, m);
+        }
+        var lastURL = {};
+        function refresh() {
+          var m = answers();
+          fields.forEach(function(f) {
+            var e = inputs[f.name];
+            if (!e) return;
+            var shown = isShown(f);
+            e.row.style.display = shown ? '' : 'none';
+            if (!f.options_from || disabled || !shown) return;
+            var missing = false;
+            var url = String(f.options_from).replace(/\{(\w+)\}/g, function(_, k) {
+              var v = m[k] || '';
+              if (!v) missing = true;
+              return encodeURIComponent(v);
+            });
+            if (missing || lastURL[f.name] === url) return;
+            lastURL[f.name] = url;
+            if ((f.type || 'text') === 'checklist') { fillChecklist(f, e.input, url); return; }
+            var sel = e.input, keep = sel.value;
+            sel.innerHTML = '';
+            var wait = document.createElement('option');
+            wait.value = ''; wait.textContent = 'Loading…';
+            sel.appendChild(wait);
+            fetch(url, {credentials: 'same-origin'}).then(function(r) { return r.ok ? r.json() : []; }).then(function(list) {
+              if (lastURL[f.name] !== url) return; // a newer answer asked since
+              sel.innerHTML = '';
+              var head = document.createElement('option');
+              head.value = '';
+              head.textContent = (list && list.length) ? 'Choose…' : 'Nothing of this kind yet';
+              sel.appendChild(head);
+              (list || []).forEach(function(o) {
+                var opt = document.createElement('option');
+                opt.value = optionValue(o);
+                opt.textContent = optionLabel(o);
+                // A value handed in may be an id where the option reads
+                // "Name (id: <id>)", which is how agents are listed.
+                if (keep && (opt.value === keep || opt.value.slice(-(keep.length + 6)) === '(id: ' + keep + ')')) opt.selected = true;
+                sel.appendChild(opt);
+              });
+            }).catch(function() {
+              if (lastURL[f.name] !== url) return;
+              sel.innerHTML = '';
+              var err = document.createElement('option');
+              err.value = ''; err.textContent = 'Could not load the list';
+              sel.appendChild(err);
+              delete lastURL[f.name];
+            });
+          });
+        }
+        // fillChecklist loads a live checklist's boxes, keeping what is ticked
+        // and the Other row, so changing an earlier answer re-lists without
+        // losing the picks that still apply.
+        function fillChecklist(f, box, url) {
+          var keep = {};
+          box.querySelectorAll('input[type=checkbox]').forEach(function(cb) {
+            if (!cb.dataset.otherBox && !cb.dataset.exclusive && cb.checked) keep[cb.value] = true;
+          });
+          var other = box.querySelector('.ui-orch-intake-checklist-other');
+          var exRow = box.querySelector('[data-exclusive="1"].ui-orch-intake-checklist-item');
+          Array.prototype.slice.call(box.children).forEach(function(c) { if (c !== other && c !== exRow) box.removeChild(c); });
+          var note = document.createElement('div');
+          note.className = 'ui-orch-intake-help';
+          note.textContent = 'Loading…';
+          box.insertBefore(note, other);
+          fetch(url, {credentials: 'same-origin'}).then(function(r) { return r.ok ? r.json() : []; }).then(function(list) {
+            if (lastURL[f.name] !== url) return;
+            box.removeChild(note);
+            if (!list || !list.length) {
+              note.textContent = 'Nothing to pick here yet.';
+              box.insertBefore(note, other);
+              return;
+            }
+            list.forEach(function(o) {
+              var item = document.createElement('label');
+              item.className = 'ui-orch-intake-checklist-item';
+              var cb = document.createElement('input');
+              cb.type = 'checkbox';
+              cb.value = optionValue(o);
+              if (keep[cb.value]) cb.checked = true;
+              cb.addEventListener('change', changed);
+              var txt = document.createElement('span');
+              txt.textContent = optionLabel(o);
+              item.appendChild(cb);
+              item.appendChild(txt);
+              box.insertBefore(item, other);
+            });
+          }).catch(function() {
+            if (lastURL[f.name] !== url) return;
+            note.textContent = 'Could not load the list.';
+            delete lastURL[f.name];
+          });
+        }
+        // The rail stops at the last step on screen, which moves as steps
+        // appear, so it is marked here rather than guessed by a selector.
+        function markLast() {
+          var last = null;
+          fields.forEach(function(f) {
+            var e = inputs[f.name];
+            if (!e) return;
+            e.row.classList.remove('is-last');
+            if (e.row.style.display !== 'none') last = e.row;
+          });
+          if (last) last.classList.add('is-last');
+        }
+        if (stepped) {
+          wrap.addEventListener('intake-change', function() { refresh(); markLast(); });
+          refresh();
+        }
+        markLast();
+        return {root: wrap, inputs: inputs, isShown: isShown};
+      }
+      function collectIntake(fields, inputs, isShown) {
+        // A step the answers have hidden is neither required nor sent.
+        fields = fields.filter(function(f) { return !isShown || isShown(f); });
+        var missing = [];
+        fields.forEach(function(f) {
+          var entry = inputs[f.name];
+          if (!entry) return;
+          if (!f.required) return;
+          var t = f.type || 'text';
+          if (t === 'file') {
+            if (!entry.input.files || entry.input.files.length === 0) {
+              missing.push(f.label || f.name);
+            }
+          } else if (t === 'button') {
+            if (!entry.input.dataset.value) missing.push(f.label || f.name);
+          } else if (t === 'checklist') {
+            // Required = at least one selection that actually carries
+            // a value. An Other box checked with empty text doesn't
+            // count — there's no value to submit.
+            var picked = 0;
+            entry.input.querySelectorAll('input[type=checkbox]:checked').forEach(function(b){
+              if (b.dataset.otherBox) {
+                var txt = entry.input.querySelector('input[data-other-text]');
+                if (txt && String(txt.value || '').trim()) picked++;
+              } else {
+                picked++;
+              }
+            });
+            if (picked === 0) missing.push(f.label || f.name);
+          } else if (!String(entry.input.value || '').trim()) {
+            missing.push(f.label || f.name);
+          }
+        });
+        if (missing.length > 0) { window.uiAlert('Please fill in: ' + missing.join(', ')); return null; }
+        var entries = [];
+        fields.forEach(function(f) {
+          var entry = inputs[f.name];
+          if (!entry) return;
+          var t = f.type || 'text';
+          if (t === 'file') {
+            var file = entry.input.files && entry.input.files[0];
+            if (file) {
+              entries.push({name: f.name, label: f.label || f.name, value: file.name, file: file});
+            }
+            return;
+          }
+          if (t === 'button') {
+            var bv = entry.input.dataset.value || '';
+            if (bv) entries.push({name: f.name, label: f.label || f.name, value: bv});
+            return;
+          }
+          if (t === 'checklist') {
+            var picks = [];
+            entry.input.querySelectorAll('input[type=checkbox]:checked').forEach(function(b){
+              if (b.dataset.otherBox) {
+                var txt = entry.input.querySelector('input[data-other-text]');
+                var v = txt ? String(txt.value || '').trim() : '';
+                if (v) picks.push(v);
+              } else {
+                picks.push(b.value);
+              }
+            });
+            if (picks.length === 0) return;
+            entries.push({name: f.name, label: f.label || f.name, value: picks.join(', ')});
+            return;
+          }
+          var v = String(entry.input.value || '').trim();
+          if (!v) return;
+          entries.push({name: f.name, label: f.label || f.name, value: v});
+        });
+        return entries;
+      }
+      function packIntakeMarkdown(entries) {
+        return entries.map(function(e) { return '**' + e.label + ':** ' + e.value; }).join('\n\n');
+      }
+      // stageIntakeFiles reads each file entry as a data URL and
+      // pushes it onto the framework's pendingAttachments via
+      // uiAddPendingAttachment. Returns a promise so the caller waits
+      // before firing the Send click (sendMessage reads pendingAttachments
+      // synchronously).
+      function stageIntakeFiles(entries) {
+        var pending = entries.filter(function(e){ return e.file; });
+        if (pending.length === 0) return Promise.resolve();
+        return Promise.all(pending.map(function(e){
+          return new Promise(function(resolve){
+            var reader = new FileReader();
+            reader.onload = function() {
+              if (window.uiAddPendingAttachment) {
+                window.uiAddPendingAttachment({
+                  name:    e.file.name,
+                  dataURL: reader.result,
+                  mime:    e.file.type || '',
+                });
+              }
+              resolve();
+            };
+            reader.onerror = resolve;
+            reader.readAsDataURL(e.file);
+          });
+        }));
+      }
+      function valuesByNameFromEntries(entries) {
+        var m = {};
+        entries.forEach(function(e) { m[e.name] = e.value; });
+        return m;
+      }
+      // decorateIntakeBubble swaps a sent user bubble's body for the
+      // intake form rendered with disabled inputs, then tags the
+      // bubble + stashes the values JSON so the registered editor
+      // can rehydrate them when the user clicks Edit.
+      function decorateIntakeBubble(bubble, fields, valuesByName) {
+        var body = bubble.querySelector(':scope > .ui-agent-msg-body');
+        if (!body) return;
+        body.innerHTML = '';
+        var built = buildIntakeFormDOM(fields, valuesByName, true);
+        body.appendChild(built.root);
+        bubble.classList.remove('ui-agent-msg-streaming');
+        bubble.dataset.uiIntake = '1';
+        bubble.dataset.uiIntakeValues = JSON.stringify(valuesByName);
+      }
+      function renderIntakeForm() {
+        clearIntakeForm();
+        var fields = activeIntakeForm();
+        if (!fields || !conversationIsEmpty()) return;
+        var log = document.querySelector('.ui-agent-convo-log');
+        if (!log) return;
+        var built = buildIntakeFormDOM(fields, intakePrefillFor(currentAgentForIntake), false);
+        intakeWrap = built.root;
+        var buttonOnly = fields.every(function(f){ return (f.type||'text') === 'button'; });
+        if (buttonOnly) intakeWrap.classList.add('ui-orch-intake-button-only');
+        var header = document.createElement('div');
+        header.className = 'ui-orch-intake-header';
+        header.textContent = buttonOnly
+          ? 'Pick a starting point.'
+          : 'Tell me about it: fill these in to get started.';
+        intakeWrap.insertBefore(header, intakeWrap.firstChild);
+        var actions = document.createElement('div');
+        actions.className = 'ui-orch-intake-actions';
+        var submitBtn = document.createElement('button');
+        submitBtn.type = 'button';
+        submitBtn.className = 'ui-row-btn primary';
+        submitBtn.textContent = 'Start session';
+        if (buttonOnly) submitBtn.style.display = 'none';
+        submitBtn.addEventListener('click', function() {
+          var entries = collectIntake(fields, built.inputs, built.isShown);
+          if (!entries) return;
+          if (entries.length === 0) { window.uiAlert('Fill in at least one field.'); return; }
+          var values = valuesByNameFromEntries(entries);
+          intakePrefill = null;
+          submitBtn.disabled = true;
+          intakeSentAt = Date.now();
+          stageIntakeFiles(entries).then(function() {
+            clearIntakeForm();
+            var ta = document.querySelector('.ui-agent-input');
+            if (!ta) { submitBtn.disabled = false; return; }
+            ta.value = packIntakeMarkdown(entries);
+            // Ride intake_values alongside the send so the server can
+            // persist them on the user message. Without this, re-edit
+            // after page reload would have nothing to rehydrate.
+            if (window.uiSetPendingMessageExtras) {
+              window.uiSetPendingMessageExtras({intake_values: values});
+            }
+            var send = document.querySelector('.ui-agent-input-row .ui-row-btn.primary');
+            if (send) send.click();
+            setTimeout(function() {
+              var bubbles = document.querySelectorAll('.ui-agent-msg.ui-agent-msg-user');
+              var latest = bubbles[bubbles.length - 1];
+              if (latest) decorateIntakeBubble(latest, fields, values);
+            }, 0);
+          });
+        });
+        actions.appendChild(submitBtn);
+        intakeWrap.appendChild(actions);
+        log.appendChild(intakeWrap);
+      }
+      // Per-bubble Edit override: when the framework's beginUserEdit
+      // sees an intake bubble (data-ui-intake='1'), this fires instead
+      // of the default textarea path. Inputs flip enabled, Save/Cancel
+      // appear below the form; Save resubmits via the framework's
+      // truncate + sendMessage pipeline (ctx.commit handles it).
+      function registerIntakeEditor() {
+        if (!window.uiRegisterMessageEditor) { setTimeout(registerIntakeEditor, 50); return; }
+        window.uiRegisterMessageEditor(
+          function(bubble) { return bubble && bubble.dataset && bubble.dataset.uiIntake === '1'; },
+          function(ctx) {
+            var fields = activeIntakeForm();
+            if (!fields) { ctx.cancel(); return; }
+            var values = {};
+            try { values = JSON.parse(ctx.bubble.dataset.uiIntakeValues || '{}') || {}; } catch (e) { values = {}; }
+            var body = ctx.body;
+            body.innerHTML = '';
+            var built = buildIntakeFormDOM(fields, values, false);
+            body.appendChild(built.root);
+            if (ctx.actions) ctx.actions.style.display = 'none';
+            var bar = document.createElement('div');
+            bar.className = 'ui-orch-intake-actions';
+            var save = document.createElement('button');
+            save.type = 'button';
+            save.className = 'ui-row-btn primary';
+            save.textContent = 'Save & resend';
+            var cancel = document.createElement('button');
+            cancel.type = 'button';
+            cancel.className = 'ui-row-btn';
+            cancel.textContent = 'Cancel';
+            save.addEventListener('click', function() {
+              var entries = collectIntake(fields, built.inputs, built.isShown);
+              if (!entries) return;
+              if (entries.length === 0) { window.uiAlert('Fill in at least one field.'); return; }
+              save.disabled = true; cancel.disabled = true;
+              var newValues = valuesByNameFromEntries(entries);
+              stageIntakeFiles(entries).then(function() {
+                // Same as fresh-submit: persist updated values on the
+                // re-sent message so a future reload + re-edit cycle
+                // sees the latest snapshot, not the original.
+                if (window.uiSetPendingMessageExtras) {
+                  window.uiSetPendingMessageExtras({intake_values: newValues});
+                }
+                return ctx.commit(packIntakeMarkdown(entries));
+              }).then(function() {
+                setTimeout(function() {
+                  var bubbles = document.querySelectorAll('.ui-agent-msg.ui-agent-msg-user');
+                  var latest = bubbles[bubbles.length - 1];
+                  if (latest) decorateIntakeBubble(latest, fields, newValues);
+                }, 0);
+              }).catch(function(err) {
+                save.disabled = false; cancel.disabled = false;
+                window.uiAlert('Edit failed: ' + (err && err.message || err));
+              });
+            });
+            cancel.addEventListener('click', function() {
+              body.innerHTML = '';
+              var rebuilt = buildIntakeFormDOM(fields, values, true);
+              body.appendChild(rebuilt.root);
+              bar.remove();
+              if (ctx.actions) ctx.actions.style.display = '';
+            });
+            bar.appendChild(save); bar.appendChild(cancel);
+            ctx.bubble.appendChild(bar);
+          }
+        );
+      }
+      registerIntakeEditor();
+
+      // Retry on an intake bubble resends it AS an intake: the same picks
+      // ride with the text, and the bubble comes back as the form summary.
+      // Through the default path a retried intake went out as plain text,
+      // drew as text, and the server lost the picks the turn reads (Builder's
+      // recipe gate and app mode among them).
+      function registerIntakeRetry() {
+        if (!window.uiRegisterMessageRetry) { setTimeout(registerIntakeRetry, 50); return; }
+        window.uiRegisterMessageRetry(
+          function(bubble) { return bubble && bubble.dataset && bubble.dataset.uiIntake === '1'; },
+          function(ctx) {
+            var values = {};
+            try { values = JSON.parse(ctx.bubble.dataset.uiIntakeValues || '{}') || {}; } catch (e) { values = {}; }
+            var fields = activeIntakeForm();
+            if (window.uiSetPendingMessageExtras) {
+              window.uiSetPendingMessageExtras({intake_values: values});
+            }
+            return ctx.commit(ctx.rawText).then(function() {
+              setTimeout(function() {
+                var bubbles = document.querySelectorAll('.ui-agent-msg.ui-agent-msg-user');
+                var latest = bubbles[bubbles.length - 1];
+                if (latest && fields) decorateIntakeBubble(latest, fields, values);
+              }, 0);
+            });
+          }
+        );
+      }
+      registerIntakeRetry();
+
+      // On session replay, re-decorate any user message that was
+      // submitted via intake form (server persists intake_values on
+      // those messages). Without this, the bubble re-renders as plain
+      // text after a page reload and Edit falls back to the textarea
+      // path — the form structure is lost. Idempotent: decorateIntakeBubble
+      // sets data-ui-intake/values, so a duplicate hook fire is a no-op
+      // beyond re-rendering the same disabled form.
+      function registerIntakeReplayHook() {
+        if (!window.uiRegisterMessageReplayHook) { setTimeout(registerIntakeReplayHook, 50); return; }
+        window.uiRegisterMessageReplayHook(function(bubble, msg) {
+          if (!bubble || !msg) return;
+          if ((msg.role || '') !== 'user') return;
+          var values = msg.intake_values;
+          if (!values || typeof values !== 'object') return;
+          var fields = activeIntakeForm();
+          if (!fields) {
+            // The agent's intake spec is fetched once the agent picker
+            // appears, so a reload can replay the thread first. Held and
+            // decorated when the spec lands (refreshIntakeAgent): dropped,
+            // the answer stayed plain text and Edit lost the form.
+            pendingIntakeBubbles.push({bubble: bubble, values: values});
+            return;
+          }
+          decorateIntakeBubble(bubble, fields, values);
+        });
+      }
+      var pendingIntakeBubbles = [];
+      function drainPendingIntakeBubbles() {
+        var pending = pendingIntakeBubbles;
+        pendingIntakeBubbles = [];
+        var fields = activeIntakeForm();
+        if (!fields) return;
+        pending.forEach(function(p) {
+          if (p.bubble.isConnected) decorateIntakeBubble(p.bubble, fields, p.values);
+        });
+      }
+      registerIntakeReplayHook();
+      window.uiAgentIntakeSetAgent = function(a) {
+        currentAgentForIntake = a && Array.isArray(a.intake_form) ? a : null;
+        if (!currentAgentForIntake) { pendingIntakeBubbles = []; clearIntakeForm(); return; }
+        drainPendingIntakeBubbles();
+        renderIntakeForm();
+      };
+
+      // Re-render the intake form on session changes (clicking "+ New
+      // conversation" clears the convo log; we then check if intake
+      // is configured for the current agent).
+      window.addEventListener('ui-agent-session', function() {
+        setTimeout(renderIntakeForm, 50);
+      });
+      // Also poll the convo-log: when it transitions to empty after
+      // a delete or back-button, render the intake form again. This
+      // is the cleanest hook without instrumenting framework events.
+      var lastEmptyState = null;
+      setInterval(function() {
+        var empty = conversationIsEmpty();
+        // Opening a session clears the log, the form with it, and an empty
+        // session leaves the log empty: no change for the check below to
+        // see, so the form was gone until the page was reloaded. Drawn again
+        // when the log is empty and the form is not in it, except just after
+        // a submit, while the sent message is on its way into the log.
+        if (empty && activeIntakeForm() && !(intakeWrap && intakeWrap.isConnected) && Date.now() - intakeSentAt > 3000) {
+          lastEmptyState = empty;
+          renderIntakeForm();
+          return;
+        }
+        if (empty === lastEmptyState) return;
+        lastEmptyState = empty;
+        if (empty) renderIntakeForm();
+        else clearIntakeForm();
+      }, 500);
+})();
+</script>
