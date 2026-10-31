@@ -8,7 +8,6 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/jsonapi"
-	"github.com/cmcoffee/gohort/core/media"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -23,22 +22,18 @@ func TestGohortsOwnProvidersAreConnectors(t *testing.T) {
 	t.Cleanup(func() { RootDB = saved })
 	a := &AdminApp{}
 	a.db = &DBase{Store: kvlite.MemStore()}
-	a.db.Set(media.SpeechTable, "current", media.SpeechConfig{Enabled: true, Provider: "service:voice", Endpoint: "http://localhost:8880/v1"})
 	a.db.Set(ImageTable, "provider", "openai")
 
 	got := map[string]builtinConnector{}
 	for _, b := range a.builtinConnectors() {
 		got[b.name] = b
 	}
-	// Embeddings and transcription always come from a connector or a peer:
-	// there is no built-in embedder or transcriber to list.
-	for _, gone := range []string{"built-in:embeddings", "built-in:transcription"} {
+	// Embeddings, transcription and speech always come from a connector or a
+	// peer: there is no built-in embedder, transcriber or speaker to list.
+	for _, gone := range []string{"built-in:embeddings", "built-in:transcription", "built-in:speech"} {
 		if b, ok := got[gone]; ok {
 			t.Errorf("%s listed: %+v", gone, b)
 		}
-	}
-	if b := got["built-in:speech"]; b.status != "Not in use: speech is made by the connector voice. Set up under Admin > Capabilities > Speech (TTS)." || b.test != nil {
-		t.Errorf("speech while a service speaks: %+v", b)
 	}
 	if b := got["built-in:gemini-images"]; !strings.Contains(b.status, "set to the built-in OpenAI") {
 		t.Errorf("gemini while openai is chosen: %+v", b)
@@ -103,7 +98,7 @@ func TestGohortsOwnProvidersAreConnectors(t *testing.T) {
 	}
 
 	c := &jsonapi.Call{R: httptest.NewRequest("POST", "/api/connectors/test", nil)}
-	res, _ := a.builtinTest(c, "built-in:speech")
+	res, _ := a.builtinTest(c, "built-in:page-rendering")
 	if body, _ := res.(map[string]any); !strings.HasPrefix(body["message"].(string), "Not in use") || body["warnings"] == nil {
 		t.Errorf("testing a built-in not in use: %v", res)
 	}
@@ -128,7 +123,7 @@ func TestGohortsOwnProvidersAreConnectors(t *testing.T) {
 			}
 		}
 	}
-	if builtins != 8 {
-		t.Errorf("%d built-in rows, want 8", builtins)
+	if builtins != 7 {
+		t.Errorf("%d built-in rows, want 7", builtins)
 	}
 }

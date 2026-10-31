@@ -430,10 +430,8 @@ func backgroundVoiceRun(t *testing.T, voice bool) (sends []voiceSend, card ChatM
 		w.Write(append([]byte("ID3\x04\x00\x00\x00\x00\x00\x00"), make([]byte, 32)...))
 	}))
 	t.Cleanup(tts.Close)
-	prevTTS := media.GetSpeechConfig()
 	transcribeAt(t, stt.URL)
-	media.SetSpeechConfig(media.SpeechConfig{Endpoint: tts.URL, Enabled: true})
-	t.Cleanup(func() { media.SetSpeechConfig(prevTTS) })
+	speakAt(t, tts.URL, "")
 
 	in := ChannelInbound{Owner: "u", AgentID: df.agent.ID, SessionID: room, ChatID: "chat-1", SenderName: "Alice", FromOwner: true}
 	if voice {
@@ -511,7 +509,7 @@ func TestTheSpokenMarkFollowsTheWork(t *testing.T) {
 		t.Error("a typed turn's work was marked spoken")
 	}
 	prevTTS := media.GetSpeechConfig()
-	media.SetSpeechConfig(media.SpeechConfig{Endpoint: "http://speech.invalid", Enabled: true})
+	media.SetSpeechConfig(media.SpeechConfig{Provider: "service:voice", Enabled: true})
 	t.Cleanup(func() { media.SetSpeechConfig(prevTTS) })
 	fr := &fireRun{app: app, p: orchUpdatePayload{SessionID: "room-1", Prompt: taskWakeMarker + " done",
 		SpokenReply: true, ChannelChatID: "chat-1", ChannelHandle: "+15550100"}}

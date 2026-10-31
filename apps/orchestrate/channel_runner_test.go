@@ -474,10 +474,8 @@ func voiceChannel(t *testing.T, reply string, status int) (df *dispatchFixture, 
 	}))
 	t.Cleanup(tts.Close)
 
-	prevTTS := media.GetSpeechConfig()
 	transcribeAt(t, stt.URL)
-	media.SetSpeechConfig(media.SpeechConfig{Endpoint: tts.URL, Enabled: true})
-	t.Cleanup(func() { media.SetSpeechConfig(prevTTS) })
+	speakAt(t, tts.URL, "")
 	return df, func() []string {
 		mu.Lock()
 		defer mu.Unlock()
@@ -590,12 +588,8 @@ func TestAnAgentSpeaksInItsOwnVoice(t *testing.T) {
 		w.Write(append([]byte("ID3\x04\x00\x00\x00\x00\x00\x00"), make([]byte, 32)...))
 	}))
 	defer tts.Close()
-	prevTTS := media.GetSpeechConfig()
 	transcribeAt(t, stt.URL)
-	media.SetSpeechConfig(media.SpeechConfig{Endpoint: tts.URL, Voice: "af_heart", Enabled: true})
-	t.Cleanup(func() {
-		media.SetSpeechConfig(prevTTS)
-	})
+	speakAt(t, tts.URL, "af_heart")
 	lastVoice := func(session string) string {
 		t.Helper()
 		if _, err := RunChannelAgent(t.Context(), ChannelInbound{Owner: "u", AgentID: df.agent.ID, SessionID: session,
@@ -749,4 +743,28 @@ func transcribeAt(t *testing.T, url string) {
 		return strings.TrimSpace(string(raw)), nil
 	}
 	SetTranscribeConfig(TranscribeConfig{Enabled: true, Provider: media.ServiceProviderPrefix + "ears"})
+}
+
+// speakAt points speech at a connector whose server is url, in voice,
+// standing in for core/service: the text and voice go up as JSON to
+// url/audio/speech, and the reply's body is the clip.
+func speakAt(t *testing.T, url, voice string) {
+	t.Helper()
+	prevSvc, prevCfg := media.SpeechService, media.GetSpeechConfig()
+	t.Cleanup(func() { media.SpeechService = prevSvc; media.SetSpeechConfig(prevCfg) })
+	media.SpeechService = func(ctx context.Context, _, text, v string) ([]byte, string, error) {
+		b, _ := json.Marshal(map[string]string{"input": text, "voice": v})
+		req, _ := http.NewRequestWithContext(ctx, "POST", url+"/audio/speech", bytes.NewReader(b))
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return nil, "", err
+		}
+		defer resp.Body.Close()
+		audio, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != http.StatusOK {
+			return nil, "", fmt.Errorf("speak: the provider answered HTTP %d: %s", resp.StatusCode, audio)
+		}
+		return audio, ".mp3", nil
+	}
+	media.SetSpeechConfig(media.SpeechConfig{Enabled: true, Provider: media.ServiceProviderPrefix + "voice", Voice: voice})
 }

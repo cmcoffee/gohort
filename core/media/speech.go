@@ -1,10 +1,13 @@
-// Speech (TTS): the reverse of transcribe.go. Turns text into audio through an
-// OpenAI-compatible /audio/speech endpoint, which the local speech servers
-// people run (Kokoro-FastAPI, openedai-speech) and the real OpenAI API all
-// serve, so a local deployment just needs the endpoint URL.
+// Speech (TTS): the reverse of transcribe.go. Turns text into audio through a
+// service connector (core/service, speech.synthesize) or a peer that lends
+// speech: this instance has no speaker of its own, so what speaks can be
+// read, tested, fixed and replaced like any other connector. A peer is
+// reached here, over the OpenAI-shaped /audio/speech (and the /audio/voices
+// list) its peer API serves.
 //
-// Disabled by default: until the admin UI configures an endpoint, every call
-// returns an error and callers send their text without a voice.
+// Disabled by default: until it is turned on and pointed at a connector or a
+// peer, every call returns an error and callers send their text without a
+// voice.
 
 package media
 
@@ -27,18 +30,22 @@ import (
 // namespace does not grow for a subsystem that lives in this package.
 const SpeechTable = "speech_config"
 
-// SpeechConfig holds the endpoint, model and voice for the OpenAI-compatible
-// speech API. Model and Voice name what the server offers: Kokoro-FastAPI
-// takes "kokoro" and a voice such as "af_heart", OpenAI "tts-1" and "alloy".
+// SpeechConfig is the speech settings: on or off, what speaks, and the voice
+// chosen from its list (Kokoro-FastAPI's "af_heart", OpenAI's "alloy"). For
+// a peer, Endpoint, Model and APIKey are filled from the peer's record and
+// kept current on every read; for a service connector, Model is the one it
+// declares (what a peer borrowing speech from here is told), and the rest
+// is the connector's own.
 type SpeechConfig struct {
-	Endpoint string `json:"endpoint"` // base URL, e.g. http://localhost:8880/v1
-	Model    string `json:"model"`    // optional for servers with one model
-	Voice    string `json:"voice"`    // optional for servers with a default voice
-	APIKey   string `json:"api_key"`  // optional bearer token (real OpenAI / authenticated proxies)
+	Endpoint string `json:"endpoint"` // a peer's /api/peer/v1
+	Model    string `json:"model"`    // the model it speaks with, when known
+	Voice    string `json:"voice"`    // blank: the connector's or server's own
+	APIKey   string `json:"api_key"`  // a peer's credential
 	Enabled  bool   `json:"enabled"`  // false → calls return an error and callers send text only
-	// Provider records where the config came from: "local" (typed in) or
-	// "peer:<name>" (filled from a peer instance that lends its speech
-	// server). Same field, same reason, as TranscribeConfig.Provider.
+	// Provider is what speaks: "service:<name>" (a connector) or
+	// "peer:<name>". "local", or blank, is the endpoint this instance once
+	// called itself, moved onto a connector at startup (core/service's
+	// migration): it no longer speaks.
 	Provider string `json:"provider,omitempty"`
 }
 
@@ -46,6 +53,18 @@ type SpeechConfig struct {
 // whose Provider is "service:<name>" (core/service installs it), returning
 // the audio and its extension. Nil, and such a config is refused.
 var SpeechService func(ctx context.Context, connector, text, voice string) ([]byte, string, error)
+
+// SpeechVoicesService, when set, lists the voices the service connector
+// named connector offers (core/service installs it): none when it declares
+// no list (speech.voices).
+var SpeechVoicesService func(ctx context.Context, connector string) ([]Voice, error)
+
+// Voice is one voice a speech server offers: ID is what a request names it
+// by, Name what a person reads (the ID when the server gives no other).
+type Voice struct {
+	ID   string `json:"id"`
+	Name string `json:"name,omitempty"`
+}
 
 // SpeechResolver, when set, rewrites the stored config on every read, so one
 // whose Provider names a peer picks up that peer's current endpoint and
@@ -143,6 +162,15 @@ func SpeakWith(ctx context.Context, cfg SpeechConfig, text string) ([]byte, stri
 		}
 		return SpeechService(ctx, name, text, cfg.Voice)
 	}
+	if !strings.HasPrefix(cfg.Provider, peerProviderPrefix) {
+		return nil, "", fmt.Errorf("speech is not set to a connector or a peer: choose one under Admin > Capabilities > Speech (TTS)")
+	}
+	return speakFromPeer(ctx, cfg, text)
+}
+
+// speakFromPeer asks a peer's /audio/speech, the OpenAI shape its peer API
+// serves, for text spoken, with the peer's current credential.
+func speakFromPeer(ctx context.Context, cfg SpeechConfig, text string) ([]byte, string, error) {
 	if strings.TrimSpace(cfg.Endpoint) == "" {
 		return nil, "", fmt.Errorf("speech endpoint not configured")
 	}
@@ -239,15 +267,26 @@ func SpeechMIME(ext string) string {
 	return "audio/mpeg"
 }
 
-// SpeechVoices lists the voices cfg's server offers, from its GET
-// /audio/voices (Kokoro-FastAPI has one; OpenAI does not). Empty for a server
-// without the list, or one that cannot be reached: the voice is then typed.
-func SpeechVoices(ctx context.Context, cfg SpeechConfig) []string {
-	if strings.TrimSpace(cfg.Endpoint) == "" {
-		return nil
-	}
+// SpeechVoices lists the voices cfg's connector or peer offers: a
+// connector's from its speech.voices, a peer's from its GET /audio/voices.
+// Empty for one without a list, or one that cannot be reached: the voice is
+// then typed.
+func SpeechVoices(ctx context.Context, cfg SpeechConfig) []Voice {
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
+	if name, ok := strings.CutPrefix(cfg.Provider, ServiceProviderPrefix); ok {
+		if SpeechVoicesService == nil {
+			return nil
+		}
+		voices, err := SpeechVoicesService(ctx, name)
+		if err != nil {
+			nfo.Debug("[speech] the voices of %s: %v", name, err)
+		}
+		return voices
+	}
+	if !strings.HasPrefix(cfg.Provider, peerProviderPrefix) || strings.TrimSpace(cfg.Endpoint) == "" {
+		return nil
+	}
 	req, err := http.NewRequestWithContext(ctx, "GET", strings.TrimRight(cfg.Endpoint, "/")+"/audio/voices", nil)
 	if err != nil {
 		return nil
@@ -266,37 +305,59 @@ func SpeechVoices(ctx context.Context, cfg SpeechConfig) []string {
 	if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&body) != nil {
 		return nil
 	}
-	var out []string
-	for _, v := range body.Voices {
-		if name := speechVoiceName(v); name != "" {
-			out = append(out, name)
+	return ReadVoices(body.Voices)
+}
+
+// ReadVoices reads a voice list: each entry a bare name, or an object naming
+// it under id, voice_id or name (and a person's name for it under name).
+// Entries that name nothing are left out.
+func ReadVoices(list []json.RawMessage) []Voice {
+	var out []Voice
+	for _, v := range list {
+		var name string
+		if json.Unmarshal(v, &name) == nil {
+			if name = strings.TrimSpace(name); name != "" {
+				out = append(out, Voice{ID: name})
+			}
+			continue
 		}
+		var obj struct {
+			ID      string `json:"id"`
+			VoiceID string `json:"voice_id"`
+			Name    string `json:"name"`
+		}
+		if json.Unmarshal(v, &obj) != nil {
+			continue
+		}
+		id := strings.TrimSpace(obj.ID)
+		if id == "" {
+			id = strings.TrimSpace(obj.VoiceID)
+		}
+		label := strings.TrimSpace(obj.Name)
+		if id == "" {
+			id, label = label, ""
+		}
+		if id == "" {
+			continue
+		}
+		if label == id {
+			label = ""
+		}
+		out = append(out, Voice{ID: id, Name: label})
 	}
 	return out
 }
 
-// speechVoiceName reads one entry of a voice list: a bare name, or an object
-// naming it under id or name.
-func speechVoiceName(v json.RawMessage) string {
-	var name string
-	if json.Unmarshal(v, &name) == nil {
-		return strings.TrimSpace(name)
-	}
-	var obj struct{ ID, Name string }
-	if json.Unmarshal(v, &obj) == nil {
-		if obj.ID != "" {
-			return strings.TrimSpace(obj.ID)
-		}
-		return strings.TrimSpace(obj.Name)
-	}
-	return ""
-}
-
-// VoiceChips is a voice list in the shape a form field's ChipsSource reads.
-func VoiceChips(voices []string) []map[string]string {
+// VoiceChips is a voice list in the shape a form field's ChipsSource reads:
+// a voice's name shown, its id the value.
+func VoiceChips(voices []Voice) []map[string]string {
 	out := make([]map[string]string, 0, len(voices))
 	for _, v := range voices {
-		out = append(out, map[string]string{"id": v, "name": v, "value": v})
+		name := v.Name
+		if name == "" {
+			name = v.ID
+		}
+		out = append(out, map[string]string{"id": v.ID, "name": name, "value": v.ID})
 	}
 	return out
 }

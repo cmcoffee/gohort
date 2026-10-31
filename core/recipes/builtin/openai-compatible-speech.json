@@ -1,0 +1,118 @@
+{
+  "id": "openai-compatible-speech",
+  "title": "Kokoro / OpenAI-compatible (speech)",
+  "description": "A text-to-speech model on any server that speaks OpenAI's speech API (Kokoro-FastAPI, openedai-speech, Speaches), on this machine or your network, as gohort's voice, with the server's voice list for the Voice field: the request and the reply are data you can test and fix from Admin > Connectors.",
+  "category": "Speech",
+  "setup_notes": "Start the server (Kokoro-FastAPI: docker run -p 8880:8880 ghcr.io/remsky/kokoro-fastapi-cpu). The connector takes no key and lands unapproved: approve it in Admin > Extensions > Connectors, run Test on its row (it speaks a short sentence and reads the voice list), then pick it under Capabilities > Speech (TTS), where its voices are offered to choose from. A server with no voice list (/audio/voices) fails that part of the Test: remove the speech.voices entry from its spec, and type the voice. A server that takes a key: add a bearer credential for its address under API Credentials and name it in the spec's auth in place of none.",
+  "questions": [
+    {
+      "name": "base_url",
+      "label": "Server address",
+      "help": "The address its /audio/speech is under, usually ending in /v1: http://localhost:8880/v1 for Kokoro-FastAPI.",
+      "kind": "http_url",
+      "required": true,
+      "default": "http://localhost:8880/v1"
+    },
+    {
+      "name": "name",
+      "label": "Connector name",
+      "help": "Lowercase letters, digits, dashes and underscores; the speech settings list it by this name.",
+      "default": "local-speech"
+    },
+    {
+      "name": "model",
+      "label": "Model",
+      "help": "The model the server speaks with: Kokoro-FastAPI takes kokoro.",
+      "required": true,
+      "default": "kokoro"
+    },
+    {
+      "name": "voice",
+      "label": "Default voice",
+      "help": "Used when the speech settings name none: Kokoro's af_heart, say. The speech settings' Voice overrides it.",
+      "required": true,
+      "default": "af_heart"
+    }
+  ],
+  "bundle": {
+    "bundle": "gohort.bundle/v1",
+    "artifacts": [
+      {
+        "type": "connector",
+        "name": "{{name}}",
+        "recipe": {
+          "name": "{{name}}",
+          "kind": "service",
+          "template": "openai-compatible-speech",
+          "desc": "Speech ({{model}}) at {{base_url}}",
+          "spec": {
+            "provider": {
+              "transport": "http",
+              "base_url": "{{base_url}}",
+              "auth": {
+                "none": true
+              },
+              "limits": {
+                "max_bytes": 33554432
+              },
+              "operations": {
+                "speak": {
+                  "method": "POST",
+                  "path": "/audio/speech",
+                  "body": {
+                    "input": "{text}",
+                    "model": "{model}",
+                    "voice": "{voice}",
+                    "response_format": "mp3"
+                  },
+                  "read": "file"
+                },
+                "voices": {
+                  "path": "/audio/voices"
+                }
+              },
+              "health": {
+                "call": "voices",
+                "expect": "voices",
+                "every_mins": 60
+              }
+            },
+            "provides": [
+              {
+                "capability": "speech.synthesize",
+                "steps": [
+                  {
+                    "call": "speak"
+                  }
+                ],
+                "output": {
+                  "audio": {
+                    "from": "body"
+                  }
+                },
+                "defaults": {
+                  "model": "{{model}}",
+                  "voice": "{{voice}}"
+                }
+              },
+              {
+                "capability": "speech.voices",
+                "steps": [
+                  {
+                    "call": "voices"
+                  }
+                ],
+                "output": {
+                  "voices": {
+                    "path": "voices",
+                    "as": "json"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

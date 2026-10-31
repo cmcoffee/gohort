@@ -22,7 +22,7 @@
     {
       "name": "voice",
       "label": "Voice id",
-      "help": "An ElevenLabs voice id; the speech settings' Voice overrides it when set.",
+      "help": "An ElevenLabs voice id; the speech settings' Voice overrides it when set, picked from the account's voices by name.",
       "default": "21m00Tcm4TlvDq8ikWAM"
     },
     {
@@ -100,6 +100,20 @@
                 "defaults": {
                   "voice": "{{voice}}",
                   "model": "{{model}}"
+                }
+              },
+              {
+                "capability": "speech.voices",
+                "steps": [
+                  {
+                    "call": "voices"
+                  }
+                ],
+                "output": {
+                  "voices": {
+                    "path": "voices",
+                    "as": "json"
+                  }
                 }
               }
             ]

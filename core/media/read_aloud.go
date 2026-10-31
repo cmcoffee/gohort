@@ -417,7 +417,7 @@ func servePreview(w http.ResponseWriter, r *http.Request) {
 // the agent form's Voice chips; the admin's own list needs an administrator.
 // Empty while speech is off.
 func serveVoices(w http.ResponseWriter, r *http.Request) {
-	var voices []string
+	var voices []Voice
 	if cfg := GetSpeechConfig(); cfg.Enabled {
 		voices = SpeechVoices(r.Context(), cfg)
 	}

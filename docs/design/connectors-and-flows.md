@@ -391,9 +391,27 @@ in the same change. The migration code goes in a later release.
    second of a tone through the configured path. New template: whisper.cpp /
    OpenAI-compatible (transcription). The `built-in:transcription` row is
    gone.
+3. **Speech.** Built 2026-10-31. Parity the engine gained, all generic: a
+   new contract, `speech.voices` (a list of ids, or objects naming one
+   under id or voice_id with a person's name under name), which fills the
+   Voice field's choices where the old speaker read GET /audio/voices; a
+   JSON body leaves out a field whose input was not given, as a multipart
+   send already did, rather than sending null (a voice nobody chose is the
+   server's own); and an ogg reply keeps its extension. `MigrateSpeech`
+   writes settings that name an endpoint as connector `speech` (`POST
+   {endpoint}/audio/speech` for mp3, the model and voice as defaults when
+   set) with the voice list unless the server answers that it has none
+   (404, 405, 501: OpenAI's), the key as credential `speech_key`. The
+   settings keep the voice (chosen on the page, from the connector's list;
+   an agent's own voice is still sent in its place) and the model (what a
+   peer is told). Serving speech to a peer asks whether a connector speaks
+   here; its voice list goes to the peer as bare ids, or objects with a
+   name. The page is on/off, "Speak with" and Voice. New template: Kokoro /
+   OpenAI-compatible (speech); ElevenLabs' gains its voice list. The
+   `built-in:speech` row is gone.
 
-   Next, in order: speech, images, web search, page rendering, mail, the LLM
-   tiers, then the built-in transports and peers.
+   Next, in order: images, web search, page rendering, mail, the LLM tiers,
+   then the built-in transports and peers.
 
 ## Migrations
 

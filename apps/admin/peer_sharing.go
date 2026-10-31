@@ -526,14 +526,10 @@ func TranscribeProviderOptions() []ui.SelectOption {
 	return out
 }
 
-// SpeechProviderOptions builds the "Speak with" dropdown for the Speech
-// settings: this instance, plus every peer that actually offers speech.
+// SpeechProviderOptions are the peers that lend speech, for the Speech
+// settings' "Speak with" beside the connectors.
 func SpeechProviderOptions() []ui.SelectOption {
-	out := []ui.SelectOption{{
-		Value: EmbeddingProviderLocal,
-		Label: "This instance",
-		Help:  "Speak with the endpoint and model below.",
-	}}
+	var out []ui.SelectOption
 	for _, p := range PeersOffering(PeerCapSpeech) {
 		label := "Peer: " + p.Name
 		if p.Instance != "" {

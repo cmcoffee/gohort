@@ -410,8 +410,9 @@ func renderRequest(op Operation, vars map[string]any) (string, string, error) {
 }
 
 // renderValue fills a body template: a string that is exactly one token
-// becomes the value itself, typed (a width stays a number); a token inside
-// a longer string is written into it.
+// becomes the value itself, typed (a width stays a number), and a field
+// whose token names an input not given is left out; a token inside a longer
+// string is written into it.
 func renderValue(v any, vars map[string]any) any {
 	switch t := v.(type) {
 	case string:
@@ -425,7 +426,11 @@ func renderValue(v any, vars map[string]any) any {
 	case map[string]any:
 		out := make(map[string]any, len(t))
 		for k, x := range t {
-			out[k] = renderValue(x, vars)
+			// An optional input left out is no field, as in a multipart
+			// send, rather than a null a server may refuse.
+			if rv := renderValue(x, vars); rv != nil {
+				out[k] = rv
+			}
 		}
 		return out
 	case []any:
@@ -551,6 +556,8 @@ func extFor(ctype string) string {
 		return ".mp3"
 	case strings.HasPrefix(ctype, "audio/wave"):
 		return ".wav"
+	case strings.HasPrefix(ctype, "application/ogg"):
+		return ".ogg"
 	case strings.HasPrefix(ctype, "video/mp4"):
 		return ".mp4"
 	case strings.HasPrefix(ctype, "application/pdf"):

@@ -1,5 +1,5 @@
-// Speech sharing: text in, spoken audio out, on this instance's speech server
-// for a peer.
+// Speech sharing: text in, spoken audio out, with this instance's speech
+// connector, for a peer.
 //
 // Wire shape is the OpenAI /audio/speech one, JSON in and audio out, plus the
 // GET /audio/voices list Kokoro-FastAPI serves, for the reason transcription
@@ -47,10 +47,16 @@ type peerSpeechOffer struct {
 // "speech disabled" to everything.
 func peerSpeechInfo(baseURL string) *peerSpeechOffer {
 	cfg := media.GetSpeechConfig()
-	if !cfg.Enabled || strings.TrimSpace(cfg.Endpoint) == "" {
+	if !speaksHere(cfg) {
 		return nil
 	}
 	return &peerSpeechOffer{Model: strings.TrimSpace(cfg.Model), Path: baseURL}
+}
+
+// speaksHere reports whether cfg speaks on this instance: it is on and set
+// to a connector. A peer's speech is that peer's to lend.
+func speaksHere(cfg media.SpeechConfig) bool {
+	return cfg.Enabled && strings.HasPrefix(strings.TrimSpace(cfg.Provider), media.ServiceProviderPrefix)
 }
 
 // peerSpeechConfig is this instance's speech config when it may be lent, or
@@ -64,7 +70,7 @@ func peerSpeechConfig(w http.ResponseWriter) (media.SpeechConfig, bool) {
 			"this instance borrows its own speech from another peer and will not relay it")
 		return cfg, false
 	}
-	if !cfg.Enabled || strings.TrimSpace(cfg.Endpoint) == "" {
+	if !speaksHere(cfg) {
 		peerDeny(w, http.StatusServiceUnavailable, "this instance has speech disabled")
 		return cfg, false
 	}
@@ -123,8 +129,9 @@ func handlePeerSpeech(w http.ResponseWriter, r *http.Request) {
 }
 
 // handlePeerSpeechVoices serves GET /api/peer/v1/audio/voices: the voices this
-// instance's speech server offers, in Kokoro-FastAPI's {"voices": [...]} shape,
-// so a peer's voice pickers list them. Empty for a server with no list.
+// instance's speech connector offers, in Kokoro-FastAPI's {"voices": [...]}
+// shape, so a peer's voice pickers list them. Empty for a connector with no
+// list.
 func handlePeerSpeechVoices(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		peerDeny(w, http.StatusMethodNotAllowed, "GET required")
@@ -138,9 +145,15 @@ func handlePeerSpeechVoices(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	voices := media.SpeechVoices(r.Context(), cfg)
-	if voices == nil {
-		voices = []string{}
+	// A voice with no name of its own goes as its bare id, Kokoro-FastAPI's
+	// shape; one with a name as an object holding both.
+	voices := []any{}
+	for _, v := range media.SpeechVoices(r.Context(), cfg) {
+		if v.Name == "" {
+			voices = append(voices, v.ID)
+		} else {
+			voices = append(voices, v)
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"voices": voices})
@@ -158,20 +171,37 @@ func (p RemotePeer) SpeechURL() string {
 // ResolveSpeechProvider validates a submitted speech config and fills in the
 // fields to store. When provider names a peer, the endpoint, model and
 // credential come from that peer's record, so the stored config is an
-// ordinary one SpeakWith uses with no peer awareness. The voice stays the
-// operator's. Mirrors ResolveTranscribeProvider, down to refusing an unknown
-// peer rather than quietly speaking locally, and to a blank provider keeping
-// a peer selection (blank means the picker was not rendered).
+// ordinary one SpeakWith uses with no peer awareness; a connector's address
+// and key are its own. The voice stays the operator's. Mirrors
+// ResolveTranscribeProvider, down to refusing an unknown peer, refusing this
+// instance (it has no speaker of its own), and a blank provider keeping the
+// one stored (blank means the picker was not rendered).
 func ResolveSpeechProvider(cfg media.SpeechConfig, provider string) (media.SpeechConfig, error) {
 	provider = strings.TrimSpace(provider)
+	if provider == "" {
+		for _, kept := range []string{cfg.Provider, media.GetSpeechConfig().Provider} {
+			kept = strings.TrimSpace(kept)
+			if strings.HasPrefix(kept, peerProviderPrefix) {
+				cfg.Provider = kept
+				return cfg, nil
+			}
+			if strings.HasPrefix(kept, media.ServiceProviderPrefix) {
+				provider = kept
+				break
+			}
+		}
+	}
 	// A service connector (core/service) is used as it is named; the admin
 	// handler checks that it provides this.
 	if strings.HasPrefix(provider, media.ServiceProviderPrefix) {
-		cfg.Provider = provider
+		cfg.Provider, cfg.Endpoint, cfg.APIKey = provider, "", ""
 		return cfg, nil
 	}
 	if provider == "" || provider == EmbeddingProviderLocal {
-		return cfg, nil
+		if !cfg.Enabled {
+			return cfg, nil
+		}
+		return cfg, fmt.Errorf("choose what speaks: a connector (Admin > Extensions > Connectors) or a peer that lends speech")
 	}
 	p, ok := PeerFromProvider(provider)
 	if !ok {

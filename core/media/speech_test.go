@@ -26,7 +26,7 @@ func TestSpeakSendsTheRequestAndReturnsTheClip(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	cfg := SpeechConfig{Endpoint: srv.URL + "/v1/", Model: "kokoro", Voice: "af_heart", APIKey: "k1", Enabled: true}
+	cfg := SpeechConfig{Provider: "peer:den", Endpoint: srv.URL + "/v1/", Model: "kokoro", Voice: "af_heart", APIKey: "k1", Enabled: true}
 	audio, ext, err := SpeakWith(context.Background(), cfg, "  Hello there.  ")
 	if err != nil {
 		t.Fatalf("speak: %v", err)
@@ -51,7 +51,7 @@ func TestSpeakLeavesBlankModelAndVoiceToTheServer(t *testing.T) {
 		w.Write(fakeMP3)
 	}))
 	defer srv.Close()
-	if _, _, err := SpeakWith(context.Background(), SpeechConfig{Endpoint: srv.URL, Enabled: true}, "hi"); err != nil {
+	if _, _, err := SpeakWith(context.Background(), SpeechConfig{Provider: "peer:den", Endpoint: srv.URL, Enabled: true}, "hi"); err != nil {
 		t.Fatalf("speak: %v", err)
 	}
 	if _, ok := got["model"]; ok {
@@ -71,7 +71,7 @@ func TestSpeakRefusesWhatIsNotAClip(t *testing.T) {
 		w.Write([]byte(body))
 	}))
 	defer srv.Close()
-	on := SpeechConfig{Endpoint: srv.URL, Enabled: true}
+	on := SpeechConfig{Provider: "peer:den", Endpoint: srv.URL, Enabled: true}
 
 	cases := []struct {
 		name   string
@@ -81,8 +81,10 @@ func TestSpeakRefusesWhatIsNotAClip(t *testing.T) {
 		body   string
 		want   string
 	}{
-		{"disabled", SpeechConfig{Endpoint: srv.URL}, "hi", 200, "", "disabled"},
-		{"no endpoint", SpeechConfig{Enabled: true}, "hi", 200, "", "not configured"},
+		{"disabled", SpeechConfig{Provider: "peer:den", Endpoint: srv.URL}, "hi", 200, "", "disabled"},
+		{"no connector or peer", SpeechConfig{Enabled: true, Endpoint: srv.URL}, "hi", 200, "", "not set to a connector or a peer"},
+		{"local", SpeechConfig{Enabled: true, Provider: "local", Endpoint: srv.URL}, "hi", 200, "", "not set to a connector or a peer"},
+		{"a peer with no endpoint", SpeechConfig{Enabled: true, Provider: "peer:den"}, "hi", 200, "", "not configured"},
 		{"no text", on, "   ", 200, "", "no text"},
 		{"server error", on, "hi", 500, `{"error":"voice not found"}`, "HTTP 500: {\"error\":\"voice not found\"}"},
 		{"a 200 with no audio", on, "hi", 200, `{"detail":"model loading"}`, "without audio"},
@@ -133,7 +135,7 @@ func TestSpeakInAVoice(t *testing.T) {
 	}))
 	defer srv.Close()
 	prev := GetSpeechConfig()
-	SetSpeechConfig(SpeechConfig{Endpoint: srv.URL, Voice: "af_heart", Enabled: true})
+	SetSpeechConfig(SpeechConfig{Provider: "peer:den", Endpoint: srv.URL, Voice: "af_heart", Enabled: true})
 	t.Cleanup(func() { SetSpeechConfig(prev) })
 	SpeakIn(context.Background(), "hi", "bm_george")
 	SpeakIn(context.Background(), "hi", "  ")
@@ -145,21 +147,58 @@ func TestSpeakInAVoice(t *testing.T) {
 	}
 }
 
-// The voice list reads a bare name or an object naming it, and is empty for a
-// server without one.
+// A peer's voice list reads a bare name or an object naming it (by id,
+// voice_id or name, with a person's name for it under name), and is empty
+// for a server without one.
 func TestSpeechVoices(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/audio/voices" {
 			http.NotFound(w, r)
 			return
 		}
-		w.Write([]byte(`{"voices":["af_heart",{"id":"bm_george"},{"name":"am_adam"},""]}`))
+		w.Write([]byte(`{"voices":["af_heart",{"id":"bm_george"},{"name":"am_adam"},{"voice_id":"21m00","name":"Rachel"},{"id":"am_echo","name":"am_echo"},""]}`))
 	}))
 	defer srv.Close()
-	if got := SpeechVoices(context.Background(), SpeechConfig{Endpoint: srv.URL + "/v1"}); strings.Join(got, ",") != "af_heart,bm_george,am_adam" {
-		t.Errorf("voices: %q", got)
+	got := SpeechVoices(context.Background(), SpeechConfig{Provider: "peer:den", Endpoint: srv.URL + "/v1"})
+	want := []Voice{{ID: "af_heart"}, {ID: "bm_george"}, {ID: "am_adam"}, {ID: "21m00", Name: "Rachel"}, {ID: "am_echo"}}
+	if len(got) != len(want) {
+		t.Fatalf("voices: %+v", got)
 	}
-	if got := SpeechVoices(context.Background(), SpeechConfig{Endpoint: srv.URL + "/none"}); len(got) != 0 {
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("voice %d: %+v, want %+v", i, got[i], want[i])
+		}
+	}
+	if chips := VoiceChips(got); chips[3]["name"] != "Rachel" || chips[3]["value"] != "21m00" || chips[0]["name"] != "af_heart" {
+		t.Errorf("chips: %v", chips)
+	}
+	if got := SpeechVoices(context.Background(), SpeechConfig{Provider: "peer:den", Endpoint: srv.URL + "/none"}); len(got) != 0 {
 		t.Errorf("a server without a list: %q", got)
+	}
+	// Settings naming neither a connector nor a peer list nothing, and ask
+	// nothing.
+	if got := SpeechVoices(context.Background(), SpeechConfig{Endpoint: srv.URL + "/v1"}); len(got) != 0 {
+		t.Errorf("the endpoint this instance once called itself: %+v", got)
+	}
+}
+
+// Speech set to a connector speaks, and lists voices, through it.
+func TestSpeechThroughAConnector(t *testing.T) {
+	prevSpeak, prevVoices := SpeechService, SpeechVoicesService
+	t.Cleanup(func() { SpeechService, SpeechVoicesService = prevSpeak, prevVoices })
+	var asked string
+	SpeechService = func(_ context.Context, connector, text, voice string) ([]byte, string, error) {
+		asked = connector + "/" + text + "/" + voice
+		return fakeMP3, ".mp3", nil
+	}
+	SpeechVoicesService = func(_ context.Context, connector string) ([]Voice, error) {
+		return []Voice{{ID: connector + "-voice"}}, nil
+	}
+	cfg := SpeechConfig{Enabled: true, Provider: ServiceProviderPrefix + "voice", Voice: "af_heart"}
+	if audio, ext, err := SpeakWith(context.Background(), cfg, " hello "); err != nil || ext != ".mp3" || len(audio) == 0 || asked != "voice/hello/af_heart" {
+		t.Errorf("spoke: %v %q %q", err, ext, asked)
+	}
+	if v := SpeechVoices(context.Background(), cfg); len(v) != 1 || v[0].ID != "voice-voice" {
+		t.Errorf("voices: %+v", v)
 	}
 }

@@ -59,8 +59,8 @@ func (a *AdminApp) registerMediaRoutes(sub *http.ServeMux) {
 	sub.HandleFunc("/api/image-gen/test", jsonapi.Post(a.db, a.handleImageGenTest, a.gate()))
 
 	// Speech (TTS): spoken replies to voice notes. Same GET/POST shape as
-	// transcription; the test speaks a sentence rather than probing /models,
-	// because a speech server that lists models can still refuse the voice.
+	// transcription; the test speaks a sentence, because a connector that
+	// answers can still refuse the voice.
 	sub.HandleFunc("/api/speech", jsonapi.Methods{
 		"GET":  jsonapi.Get(a.db, a.handleSpeech, a.gate()),
 		"POST": jsonapi.Post(a.db, a.handleSpeechSave, a.gate()),
@@ -198,19 +198,18 @@ func resolveTranscription(req TranscribeConfig) (TranscribeConfig, error) {
 // handleSpeech serves GET /api/speech; registerMediaRoutes says what it is for.
 func (a *AdminApp) handleSpeech(c *jsonapi.Call) (any, error) {
 	cfg := a.storedSpeechConfig()
-	cfg.APIKey = maskSecret(cfg.APIKey)
+	// What speaks is the connector or peer named: its key is its own, never
+	// shown here.
+	cfg.APIKey = ""
 	return cfg, nil
 }
 
 // handleSpeechSave persists the speech config and installs it live.
 func (a *AdminApp) handleSpeechSave(c *jsonapi.Call, req media.SpeechConfig) (any, error) {
-	req.APIKey = keepSecret(req.APIKey, a.storedSpeechConfig().APIKey)
-	// A peer selection carries no endpoint of its own: resolve it into an
-	// ordinary config, so everything that speaks stays peer-unaware.
-	if err := serviceProviderOK(req.Provider, "speech.synthesize"); err != nil {
-		return nil, jsonapi.BadRequest(err.Error())
-	}
-	resolved, err := ResolveSpeechProvider(req, req.Provider)
+	req.APIKey = ""
+	// The form names a connector or a peer and a voice: resolve it into a
+	// complete config, so everything that speaks reads one shape.
+	resolved, err := resolveSpeech(req)
 	if err != nil {
 		return nil, jsonapi.BadRequest(err.Error())
 	}
@@ -219,23 +218,41 @@ func (a *AdminApp) handleSpeechSave(c *jsonapi.Call, req media.SpeechConfig) (an
 		a.db.Set(media.SpeechTable, "current", req)
 	}
 	media.SetSpeechConfig(req)
-	adminChange(c.R, activity.Settings, "updated speech config (enabled=%v endpoint=%q model=%q voice=%q)",
-		req.Enabled, req.Endpoint, req.Model, req.Voice)
+	adminChange(c.R, activity.Settings, "updated speech config (enabled=%v provider=%q model=%q voice=%q)",
+		req.Enabled, req.Provider, req.Model, req.Voice)
 	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// resolveSpeech is ResolveSpeechProvider with a service checked once
+// resolved, and its model taken from the service's spec: the model a peer
+// borrowing speech from here is told it gets.
+func resolveSpeech(req media.SpeechConfig) (media.SpeechConfig, error) {
+	resolved, err := ResolveSpeechProvider(req, req.Provider)
+	if err != nil {
+		return req, err
+	}
+	if err := serviceProviderOK(resolved.Provider, "speech.synthesize"); err != nil {
+		return req, err
+	}
+	if name, ok := strings.CutPrefix(strings.TrimSpace(resolved.Provider), media.ServiceProviderPrefix); ok {
+		c, _ := GetConnector(RootDB, name)
+		resolved.Model = service.Default(c, "speech.synthesize", "model")
+	}
+	return resolved, nil
 }
 
 // handleSpeechTest speaks a sentence with the form as typed, saved or not,
 // and hands the clip back for the page to play: the only test that proves
-// the model and voice are ones the server takes, and the way to hear a voice
+// the voice is one the connector or peer takes, and the way to hear a voice
 // before choosing it.
 func (a *AdminApp) handleSpeechTest(c *jsonapi.Call, req media.SpeechConfig) (any, error) {
-	req.APIKey = keepSecret(req.APIKey, a.storedSpeechConfig().APIKey)
+	req.APIKey = ""
 	if !req.Enabled {
 		return testResultBody(false, "", "speech is disabled: flip the toggle on first"), nil
 	}
-	// A peer picked in the form is resolved as the save resolves it, so the
-	// preview is spoken by the peer: the whole link, proven by hearing it.
-	resolved, rerr := ResolveSpeechProvider(req, req.Provider)
+	// Resolved as the save resolves it, so a peer picked in the form speaks
+	// the preview: the whole link, proven by hearing it.
+	resolved, rerr := resolveSpeech(req)
 	if rerr != nil {
 		return testResultBody(false, "", rerr.Error()), nil
 	}
@@ -253,9 +270,9 @@ func (a *AdminApp) handleSpeechTest(c *jsonapi.Call, req media.SpeechConfig) (an
 	return body, nil
 }
 
-// handleSpeechVoices lists the voices the configured server offers, for the
-// Voice field's chips. A server without a voice list gets no chips, and the
-// field is typed by hand.
+// handleSpeechVoices lists the voices the configured connector or peer
+// offers, for the Voice field's chips. One without a voice list gets no
+// chips, and the voice is typed.
 func (a *AdminApp) handleSpeechVoices(c *jsonapi.Call) (any, error) {
 	cfg := a.storedSpeechConfig()
 	// A peer's voices come from the peer, with its current credential.

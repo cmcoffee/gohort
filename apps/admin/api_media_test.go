@@ -52,6 +52,30 @@ func transcribeConnector(t *testing.T, name, base, model string) {
 	}
 }
 
+// speakConnector saves and approves a keyless service connector named name
+// that speaks at base (base/audio/speech, OpenAI's shape), with model when
+// one is given, and lists its voices (base/audio/voices): the shape the
+// migration writes for a Kokoro-FastAPI. It needs RootDB and AuthDB set by
+// the caller.
+func speakConnector(t *testing.T, name, base, model string) {
+	t.Helper()
+	defaults := ""
+	if model != "" {
+		defaults = `,"defaults":{"model":"` + model + `"}`
+	}
+	spec := `{"provider":{"transport":"http","base_url":"` + base + `","auth":{"none":true},
+		"operations":{"speak":{"method":"POST","path":"/audio/speech","body":{"input":"{text}","model":"{model}","voice":"{voice}","response_format":"mp3"},"read":"file"},
+			"voices":{"path":"/audio/voices"}}},
+		"provides":[{"capability":"speech.synthesize","steps":[{"call":"speak"}],"output":{"audio":{"from":"body"}}` + defaults + `},
+			{"capability":"speech.voices","steps":[{"call":"voices"}],"output":{"voices":{"path":"voices","as":"json"}}}]}`
+	if err := SaveConnector(RootDB, Connector{Name: name, Kind: "service", Spec: json.RawMessage(spec)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ApproveConnector(RootDB, name); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // A speech or transcription setting may name a service connector, but only an
 // approved one that provides it; the settings offer exactly those.
 func TestSpeechSettingsTakeAServiceThatSpeaks(t *testing.T) {

@@ -1,8 +1,7 @@
 package admin
 
-// Speech settings when a PEER does the speaking. With a peer picked, the
-// endpoint, model and key are hidden and come from the peer; the voice stays,
-// chosen here from the peer's own list.
+// Speech settings when a PEER does the speaking. The endpoint, model and key
+// come from the peer; the voice is chosen here, from the peer's own list.
 
 import (
 	"net/http"
@@ -21,7 +20,8 @@ func speechPeer(t *testing.T, caps ...string) RemotePeer {
 	prevDB, prevCfg := RootDB, media.GetSpeechConfig()
 	t.Cleanup(func() { RootDB = prevDB; media.SetSpeechConfig(prevCfg) })
 	RootDB = &DBase{Store: kvlite.MemStore()}
-	media.SetSpeechConfig(media.SpeechConfig{Enabled: true, Endpoint: "http://127.0.0.1:1/v1", Model: "kokoro"})
+	// The serving instance speaks with a connector of its own.
+	media.SetSpeechConfig(media.SpeechConfig{Enabled: true, Provider: "service:voice", Model: "kokoro"})
 
 	pk, err := MintPeerKey("consumer", caps, 0)
 	if err != nil {
@@ -47,13 +47,15 @@ func TestSpeechFormShowsThePeerPicker(t *testing.T) {
 	if !ok {
 		t.Fatal("a peer offers speech but the provider dropdown is absent")
 	}
-	if len(provider.Options) < 2 {
-		t.Errorf("dropdown should offer local plus the peer, got %+v", provider.Options)
+	if len(provider.Options) != 1 || provider.Options[0].Value != PeerProviderValue("gpu-box") {
+		t.Errorf("dropdown should offer the peer alone, got %+v", provider.Options)
+	}
+	if f, ok := findField(fields, "enabled"); !ok || f.Help != "" {
+		t.Errorf("the toggle stays, with no pointer while there is a choice: %+v", f)
 	}
 	for _, name := range []string{"endpoint", "model", "api_key"} {
-		f, _ := findField(fields, name)
-		if !strings.Contains(f.ShowWhen, "provider:local") {
-			t.Errorf("field %q must hide while a peer is selected, got ShowWhen %q", name, f.ShowWhen)
+		if _, ok := findField(fields, name); ok {
+			t.Errorf("field %q is on the speech form: it is the connector's or the peer's", name)
 		}
 	}
 	if f, _ := findField(fields, "voice"); f.ShowWhen != "enabled" {

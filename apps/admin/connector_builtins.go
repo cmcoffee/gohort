@@ -1,10 +1,10 @@
 package admin
 
 // gohort's own providers, read as connectors (docs/design/connectors-and-
-// flows.md, stage 3). The local speaker and the Gemini and OpenAI image code
-// are wrappers written in Go rather than specs: the same inside (a
-// contract), an outside they reach, a test. Listing them
-// with the other connectors means every capability's choice is among
+// flows.md, stage 3). The Gemini and OpenAI image code, web search, the
+// browser, mail and the LLM tiers are wrappers written in Go rather than
+// specs: the same inside (a contract), an outside they reach, a test. Listing
+// them with the other connectors means every capability's choice is among
 // connectors, built in or added.
 //
 // Nothing here is stored as a connector. Each row is read from the settings
@@ -42,21 +42,6 @@ type builtinConnector struct {
 func (a *AdminApp) builtinConnectors() []builtinConnector {
 	var out []builtinConnector
 
-	sp := a.storedSpeechConfig()
-	b := builtinConnector{name: builtinPrefix + "speech",
-		wrapper: "Speech ⇐ " + withModel("audio/speech", sp.Model) + " ⇐ " + endpointHost(sp.Endpoint, sp.APIKey)}
-	switch {
-	case !isLocal(sp.Provider):
-		b.status = "Not in use: speech is made by " + providerName(sp.Provider) + ". Set up under Admin > Capabilities > Speech (TTS)."
-		b.wrapper = "Speech ⇐ audio/speech ⇐ an endpoint of your choosing"
-	case !sp.Enabled:
-		b.status = "Off. Turn it on under Admin > Capabilities > Speech (TTS)."
-	default:
-		b.status = "In use for speech. Set up under Admin > Capabilities > Speech (TTS)."
-		b.test = func(c *jsonapi.Call) (any, error) { return a.handleSpeechTest(c, sp) }
-	}
-	out = append(out, b)
-
 	chosen := a.storedString(ImageTable, "provider")
 	if chosen == "" {
 		chosen = "gemini"
@@ -66,7 +51,7 @@ func (a *AdminApp) builtinConnectors() []builtinConnector {
 		{"openai", "OpenAI", "api.openai.com"},
 	} {
 		id := img.id
-		b = builtinConnector{name: builtinPrefix + id + "-images",
+		b := builtinConnector{name: builtinPrefix + id + "-images",
 			wrapper: "Image Generation ⇐ " + img.label + " image model ⇐ " + img.host + " (key: Image Generation's, or the " + img.label + " LLM's)"}
 		if chosen == id {
 			b.status = "In use for Image Generation. Set up under Admin > Capabilities > Image Generation."

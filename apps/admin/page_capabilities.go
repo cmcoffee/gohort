@@ -42,8 +42,8 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 			Detail: "When someone sends a channel agent a voice note, the reply goes back as a voice note. On iMessage it goes as the voice note alone, " +
 				"an audio attachment rather than a voice-memo bubble, which only Messages itself can send; services that cannot deliver audio get the text. " +
 				"Needs Audio Transcription too, so the agent can hear the note. Code and web addresses are left out of what is read aloud, " +
-				"a reply over about 2,500 characters goes as text only, and if the speech server fails the text still goes. " +
-				"The endpoint is an OpenAI-compatible /audio/speech server, such as Kokoro-FastAPI; gohort appends /audio/speech.",
+				"a reply over about 2,500 characters goes as text only, and if speech fails the text still goes. " +
+				"Done by a connector or a peer that speaks.",
 			Body: ui.FormPanel{
 				Assist:    true,
 				Source:    "api/speech",
@@ -212,30 +212,6 @@ func imageProviderOptions() []ui.SelectOption {
 // inline script) and talks to the existing /api/db/{tables,keys,record}
 // endpoints. Self-contained: scoped CSS + DOM-built rows (textContent, no
 // innerHTML injection). No backticks inside this raw string per repo rule.
-// embeddingFormFields builds the Embeddings settings form.
-//
-// The "Embed on" dropdown appears only when a peer offering embeddings is
-// actually registered. With none, it is a select with one option — a control
-// that asks a question with a single possible answer, on a page that already
-// has plenty to read.
-//
-// Its absence has to be matched by the gating on the fields below it. Those
-// carry ShowWhen "enabled;provider:local" so they disappear while a peer is
-// selected; leaving that clause in place with no dropdown to set `provider`
-// would hide the endpoint, model and key on every deployment that has no peers
-// — the whole form, blank, for the overwhelmingly common case. So the clause is
-// added and removed together with the field that drives it.
-// elsewhere is the pointer a capability's page shows while this instance is
-// the only thing that can do it: where to get something else to choose. The
-// choice itself (Embed on, Transcribe on, Speak with) appears once there is
-// one, rather than as a dropdown with a single answer.
-func elsewhere(hasChoice bool, verb, does, what string) string {
-	if hasChoice {
-		return ""
-	}
-	return "Done by this instance's endpoint below. To " + verb + " somewhere else, add a connector that " + does +
-		" (Admin > Extensions > Templates) or a peer that lends " + what + " (Admin > Capabilities > Peers): once approved, it is offered here to choose."
-}
 
 // embeddingFormFields builds the Embeddings settings: on or off, the
 // connector or peer that embeds, and the prefixes its model wants. The
@@ -300,53 +276,30 @@ func transcribeFormFields() []ui.FormField {
 		Detail:   "To transcribe with something not listed, " + add + "."})
 }
 
-// speechFormFields builds the speech (TTS) settings, with the peer picker
-// added only when a peer offers speech, since the endpoint fields hide while
-// one is picked. The voice stays while a peer is picked: it is chosen here,
-// from the peer's own list.
+// speechFormFields builds the speech (TTS) settings: on or off, the
+// connector or peer that speaks, and the voice, chosen from its list. Its
+// address, model and key are its own, set up, tested and fixed under Admin >
+// Extensions > Connectors, as transcription's are.
 func speechFormFields() []ui.FormField {
-	peers := append(SpeechProviderOptions(), serviceProviderOptions("speech.synthesize", "Speak")...)
-	hasPeers := len(peers) > 1
-
-	local := "enabled"
-	if hasPeers {
-		local = "enabled;provider:local"
-	}
-
-	fields := []ui.FormField{
-		{Field: "enabled", Label: "Enable speech", Type: "toggle", Help: elsewhere(hasPeers, "speak", "speaks", "speech")},
-	}
-	if hasPeers {
-		fields = append(fields, ui.FormField{
-			Field: "provider", Label: "Speak with", Type: "select",
-			Options:  peers,
-			ShowWhen: "enabled",
-			Help:     "Use this instance's own speech server, a peer instance you've connected under Resource Sharing › Peers, or an approved service connector that speaks.",
-		})
+	choices := append(serviceProviderOptions("speech.synthesize", "Speak"), SpeechProviderOptions()...)
+	add := "add a connector that speaks from a template (Admin > Extensions > Templates: Kokoro / OpenAI-compatible (speech); ElevenLabs (speech)) or from its spec (Add, under Admin > Extensions > Connectors), or connect a peer that lends speech (Admin > Capabilities > Peers)"
+	fields := []ui.FormField{{Field: "enabled", Label: "Enable speech", Type: "toggle"}}
+	if len(choices) == 0 {
+		fields[0].Help = "Nothing here speaks yet: " + add + "."
+		return fields
 	}
 	return append(fields,
-		ui.FormField{Field: "endpoint", Label: "Endpoint", Type: "text",
-			Placeholder: "http://localhost:8880/v1",
-			Help:        "Base URL with the version prefix: gohort appends /audio/speech.",
-			ShowWhen:    local,
-			Presets: []ui.FieldPreset{
-				{Label: "Kokoro-FastAPI", Value: "http://localhost:8880/v1", Hint: "Kokoro-FastAPI's default port"},
-				{Label: "OpenAI", Value: "https://api.openai.com/v1", Hint: "OpenAI hosted speech"},
-			}},
-		ui.FormField{Field: "model", Label: "Model", Type: "text",
-			Placeholder: "kokoro",
-			Help:        "Optional. Kokoro-FastAPI takes 'kokoro'; OpenAI 'tts-1'.",
-			ShowWhen:    local},
+		ui.FormField{Field: "provider", Label: "Speak with", Type: "select",
+			Options:  choices,
+			ShowWhen: "enabled",
+			Help:     "The connector or peer that speaks. Its address, model and key are kept on it: open its row under Admin > Extensions > Connectors to see, test or fix them.",
+			Detail:   "To speak with something not listed, " + add + "."},
 		ui.FormField{Field: "voice", Label: "Voice", Type: "text",
 			Placeholder: "af_heart",
-			Help:        "Optional. A voice the server offers, such as Kokoro's 'af_heart' or OpenAI's 'alloy'. A service connector uses its own default when this is blank.",
-			Detail:      "Save the endpoint or peer first, then click a chip to pick from the server's own list, and Preview voice to hear it before you save. Servers without a voice list show no chips; type the name instead.",
+			Help:        "Optional. A voice it offers, such as Kokoro's 'af_heart' or OpenAI's 'alloy'. Blank uses the connector's own default.",
+			Detail:      "Save the connector or peer first, then click a chip to pick from its own list, and Preview voice to hear it before you save. One without a voice list shows no chips; type the voice instead.",
 			ShowWhen:    "enabled",
 			ChipsSource: "api/speech/voices"},
-		ui.FormField{Field: "api_key", Label: "API Key", Type: "password",
-			Help:     "Optional bearer token.",
-			Detail:   "Required for OpenAI hosted speech, or a server behind an authenticating proxy. Leave it blank for a local speech server.",
-			ShowWhen: local},
 	)
 }
 

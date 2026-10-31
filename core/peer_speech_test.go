@@ -5,7 +5,11 @@ package core
 // beside it so a consuming instance's voice pickers fill in.
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -22,11 +26,9 @@ var peerFakeMP3 = []byte("ID3\x04\x00\x00\x00\x00\x00\x00spoken-audio")
 var ttsCalls int
 
 // ttsServer stands up a fake OpenAI-compatible speech server, points this
-// instance at it, and returns what it was last asked.
+// instance at it through a connector, and returns what it was last asked.
 func ttsServer(t *testing.T) *map[string]string {
 	t.Helper()
-	prev := media.GetSpeechConfig()
-	t.Cleanup(func() { media.SetSpeechConfig(prev) })
 	asked := map[string]string{}
 	ttsCalls = 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -39,8 +41,48 @@ func ttsServer(t *testing.T) *map[string]string {
 		w.Write(peerFakeMP3)
 	}))
 	t.Cleanup(srv.Close)
-	media.SetSpeechConfig(media.SpeechConfig{Enabled: true, Endpoint: srv.URL, Model: "kokoro", Voice: "af_heart"})
+	useConnectorSpeaker(t, srv.URL, "kokoro", "af_heart")
 	return &asked
+}
+
+// useConnectorSpeaker points speech at a service connector at endpoint,
+// standing in for core/service (which imports this package): it posts the
+// text, model and voice as JSON to endpoint/audio/speech, as the connector
+// the migration writes does, and reads the voice list from
+// endpoint/audio/voices.
+func useConnectorSpeaker(t *testing.T, endpoint, model, voice string) {
+	t.Helper()
+	savedSpeak, savedVoices, savedCfg := media.SpeechService, media.SpeechVoicesService, media.GetSpeechConfig()
+	t.Cleanup(func() {
+		media.SpeechService, media.SpeechVoicesService = savedSpeak, savedVoices
+		media.SetSpeechConfig(savedCfg)
+	})
+	media.SpeechService = func(ctx context.Context, _, text, v string) ([]byte, string, error) {
+		b, _ := json.Marshal(map[string]string{"input": text, "model": model, "voice": v})
+		req, _ := http.NewRequestWithContext(ctx, "POST", endpoint+"/audio/speech", bytes.NewReader(b))
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return nil, "", err
+		}
+		defer resp.Body.Close()
+		audio, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != http.StatusOK {
+			return nil, "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, audio)
+		}
+		return audio, ".mp3", nil
+	}
+	media.SpeechVoicesService = func(ctx context.Context, _ string) ([]media.Voice, error) {
+		req, _ := http.NewRequestWithContext(ctx, "GET", endpoint+"/audio/voices", nil)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		defer resp.Body.Close()
+		var body struct{ Voices []json.RawMessage }
+		json.NewDecoder(resp.Body).Decode(&body)
+		return media.ReadVoices(body.Voices), nil
+	}
+	media.SetSpeechConfig(media.SpeechConfig{Enabled: true, Provider: media.ServiceProviderPrefix + "voice", Model: model, Voice: voice})
 }
 
 func speechRequest(key, body string) *http.Request {
@@ -168,9 +210,14 @@ func TestManifestOffersSpeechOnlyWhenConfigured(t *testing.T) {
 	if info := peerSpeechInfo("/api/peer/v1"); info != nil {
 		t.Errorf("speech advertised while disabled: %+v", info)
 	}
-	media.SetSpeechConfig(media.SpeechConfig{Enabled: true, Endpoint: "http://localhost:8880/v1", Model: "kokoro"})
+	media.SetSpeechConfig(media.SpeechConfig{Enabled: true, Provider: "service:voice", Model: "kokoro"})
 	if info := peerSpeechInfo("/api/peer/v1"); info == nil || info.Model != "kokoro" || info.Path != "/api/peer/v1" {
 		t.Errorf("manifest entry = %+v", info)
+	}
+	// Settings naming neither a connector nor a peer speak nothing.
+	media.SetSpeechConfig(media.SpeechConfig{Enabled: true, Endpoint: "http://localhost:8880/v1", Model: "kokoro"})
+	if info := peerSpeechInfo("/api/peer/v1"); info != nil {
+		t.Errorf("an endpoint no connector reaches is advertised: %+v", info)
 	}
 	if !PeerCapabilityServed(PeerCapSpeech) {
 		t.Error("speech is implemented and must report as served")
@@ -212,7 +259,7 @@ func TestSpeakThroughAConfiguredPeer(t *testing.T) {
 	if (*asked)["input"] != "Through the peer." || (*asked)["voice"] != "am_adam" {
 		t.Errorf("the far side's server was asked %v", *asked)
 	}
-	if v := media.SpeechVoices(t.Context(), cfg); len(v) != 2 || v[0] != "af_heart" {
+	if v := media.SpeechVoices(t.Context(), cfg); len(v) != 2 || v[0].ID != "af_heart" {
 		t.Errorf("the peer's voices: %v", v)
 	}
 	// A config read a while ago carries the credential live then. The request
@@ -235,10 +282,17 @@ func TestResolveSpeechProvider(t *testing.T) {
 	if _, err := ResolveSpeechProvider(media.SpeechConfig{}, PeerProviderValue("embed-only")); err == nil || !strings.Contains(err.Error(), "does not offer speech") {
 		t.Errorf("a peer without the grant should be refused by name, got %v", err)
 	}
+	// This instance has no speaker of its own: choosing it is refused while
+	// speech is on, and off stays off.
 	local := media.SpeechConfig{Enabled: true, Endpoint: "http://localhost:8880/v1", Voice: "af_heart"}
 	for _, provider := range []string{"", EmbeddingProviderLocal} {
-		if got, err := ResolveSpeechProvider(local, provider); err != nil || got != local {
-			t.Errorf("provider %q changed a local config: %+v %v", provider, got, err)
+		if _, err := ResolveSpeechProvider(local, provider); err == nil || !strings.Contains(err.Error(), "choose what speaks") {
+			t.Errorf("provider %q: this instance was taken: %v", provider, err)
+		}
+		off := local
+		off.Enabled = false
+		if got, err := ResolveSpeechProvider(off, provider); err != nil || got != off {
+			t.Errorf("provider %q changed an off config: %+v %v", provider, got, err)
 		}
 	}
 	// Blank means the picker was not drawn: a peer selection stays.

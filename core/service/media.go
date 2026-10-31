@@ -1,8 +1,8 @@
 package service
 
-// Where a service reaches what gohort does itself: transcription, speech and
-// embeddings, when their settings name a service connector
-// ("service:<name>"), go through it (core/media's seams); a music
+// Where a service reaches what gohort does itself: transcription, speech (and
+// its voice list) and embeddings, when their settings name a service
+// connector ("service:<name>"), go through it (core/media's seams); a music
 // service is a tool an agent can be given.
 
 import (
@@ -24,6 +24,7 @@ import (
 func init() {
 	media.TranscribeService = transcribeVia
 	media.SpeechService = speakVia
+	media.SpeechVoicesService = voicesVia
 	media.EmbedService = embedVia
 	media.ServiceAddress = serviceAddress
 	media.PageService = renderVia
@@ -249,6 +250,20 @@ func speakVia(ctx context.Context, name, text, voice string) ([]byte, string, er
 // media jobs extract from a video at most. The connector's own limit still
 // bounds what it sends.
 const audioMaxBytes = 100 << 20
+
+// voicesVia lists the voices the service connector named name offers, or
+// none when it declares no list.
+func voicesVia(ctx context.Context, name string) ([]media.Voice, error) {
+	c, ok := GetConnector(RootDB, name)
+	if !ok || !Provides(c, "speech.voices") {
+		return nil, nil
+	}
+	res, err := Call(ctx, nil, name, "speech.voices", map[string]any{})
+	if err != nil {
+		return nil, err
+	}
+	return Voices(res)
+}
 
 // fileNamed writes data, at most limit bytes of it, to a new file with ext as
 // its extension.

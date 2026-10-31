@@ -38,7 +38,7 @@ func TestMediaRoutesContract(t *testing.T) {
 
 	// One server stands in for every provider, by path: an embedder and a
 	// transcriber (each reached through a connector, as every one is), a
-	// transcriber that refuses, and a speech server.
+	// transcriber that refuses, and a speech server with a voice list.
 	stub := http.NewServeMux()
 	stub.HandleFunc("/embed/v1/embeddings", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"data":[{"embedding":[0.1,0.2,0.3]}]}`))
@@ -55,13 +55,9 @@ func TestMediaRoutesContract(t *testing.T) {
 	stub.HandleFunc("/stt-deny/v1/audio/transcriptions", func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no", http.StatusForbidden)
 	})
-	// A Kokoro-FastAPI: speaks with the key and a voice it has, lists its
-	// voices, and refuses a voice it does not have.
+	// A Kokoro-FastAPI: speaks with a voice it has, lists its voices, and
+	// refuses a voice it does not have.
 	stub.HandleFunc("/tts-ok/v1/audio/speech", func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer s3cr3t-tts" {
-			http.Error(w, `{"detail":"bad key"}`, http.StatusUnauthorized)
-			return
-		}
 		var body map[string]string
 		json.NewDecoder(r.Body).Decode(&body)
 		if body["voice"] != "af_heart" {
@@ -94,10 +90,6 @@ func TestMediaRoutesContract(t *testing.T) {
 		switch table {
 		case ImageTable:
 			adb.Get(table, key, &got)
-		case media.SpeechTable:
-			var cfg media.SpeechConfig
-			adb.Get(table, key, &cfg)
-			got = cfg.APIKey
 		}
 		if got != want {
 			t.Errorf("a save sending the placeholder left %s's key as %q", table, got)
@@ -159,25 +151,27 @@ func TestMediaRoutesContract(t *testing.T) {
 	do("root", "POST", "/api/transcribe/test", `{"enabled":true,"provider":"service:ears"}`)
 	do("root", "POST", "/api/transcribe/test", `{"enabled":true,"provider":"service:deaf"}`)
 
-	tts := `"endpoint":"` + srv.URL + `/tts-ok/v1","model":"kokoro"`
-	do("alice", "POST", "/api/speech", `{"enabled":true,`+tts+`,"voice":"af_heart","api_key":"s3cr3t-tts-x"}`)
-	do("root", "POST", "/api/speech", `{"enabled":true,`+tts+`,"voice":"af_heart","api_key":"s3cr3t-tts"}`)
+	// Speech too: one that speaks at the stub and lists its voices, one
+	// whose server is not there, and none on this instance itself.
+	speakConnector(t, "voice", srv.URL+"/tts-ok/v1", "kokoro")
+	speakConnector(t, "mute", "http://127.0.0.1:1/v1", "")
+	media.SetSpeechConfig(media.SpeechConfig{})
+	do("alice", "POST", "/api/speech", `{"enabled":true,"provider":"service:voice","voice":"af_heart"}`)
+	do("root", "POST", "/api/speech", `{"enabled":true,"provider":"local","endpoint":"`+srv.URL+`/tts-ok/v1","api_key":"s3cr3t-tts"}`)
+	do("root", "POST", "/api/speech", `{"enabled":true,"provider":"service:voice","endpoint":"http://127.0.0.1:1/v1","model":"typed-in","voice":"af_heart"}`)
+	if got := media.GetSpeechConfig(); !got.Enabled || got.Provider != "service:voice" || got.Model != "kokoro" || got.Voice != "af_heart" || got.Endpoint != "" || got.APIKey != "" {
+		t.Errorf("a save naming a connector stores it, the model its spec declares and the voice: %+v", got)
+	}
 	do("root", "GET", "/api/speech", "")
-	do("root", "POST", "/api/speech", `{"enabled":true,`+tts+`,"voice":"af_heart","api_key":"(unchanged)"}`)
-	keeps(media.SpeechTable, "current", "s3cr3t-tts")
 	do("root", "GET", "/api/speech/voices", "")
 	do("root", "POST", "/api/speech", `{"enabled":`)
-	do("root", "POST", "/api/speech/test", `{"enabled":false,`+tts+`}`)
-	do("root", "POST", "/api/speech/test", `{"enabled":true}`)
-	do("root", "POST", "/api/speech/test", `{"enabled":true,`+tts+`,"voice":"af_heart","api_key":"(unchanged)"}`)
-	do("root", "POST", "/api/speech/test", `{"enabled":true,`+tts+`,"voice":"nobody","api_key":"(unchanged)"}`)
-	do("root", "POST", "/api/speech/test", `{"enabled":true,`+tts+`,"voice":"af_heart","api_key":"wrong"}`)
-	do("root", "POST", "/api/speech/test", `{"enabled":true,"endpoint":"http://127.0.0.1:1/v1"}`)
+	do("root", "POST", "/api/speech/test", `{"enabled":false,"provider":"service:voice"}`)
+	do("root", "POST", "/api/speech/test", `{"enabled":true,"voice":"af_heart"}`)
+	do("root", "POST", "/api/speech/test", `{"enabled":true,"provider":"service:voice","voice":"nobody"}`)
+	do("root", "POST", "/api/speech/test", `{"enabled":true,"provider":"service:mute"}`)
 	do("root", "POST", "/api/speech/test", `{"enabled":true,"provider":"peer:nope"}`)
 	do("root", "POST", "/api/speech", `{"enabled":true,"provider":"peer:nope"}`)
-	if got := media.GetSpeechConfig(); !got.Enabled || got.Voice != "af_heart" || got.APIKey != "s3cr3t-tts" {
-		t.Errorf("a save should install the speech config live: %+v", got)
-	}
+	do("root", "POST", "/api/speech", `{"enabled":true,"provider":"service:nope"}`)
 
 	do("alice", "POST", "/api/image-gen", `{"provider":"openai","api_key":"s3cr3t-img-x"}`)
 	do("root", "POST", "/api/image-gen", `{"provider":"openai","api_key":"s3cr3t-img"}`)

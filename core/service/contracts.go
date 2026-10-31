@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/cmcoffee/gohort/core/apijob"
+	"github.com/cmcoffee/gohort/core/media"
 )
 
 // ValueType is the type of a contract input or output.
@@ -193,6 +194,17 @@ func init() {
 		units: func(in map[string]any, _ Result) float64 {
 			return float64(len([]rune(fmt.Sprint(in["text"]))))
 		},
+	})
+	// speech.voices is the list a speech service's voices are chosen from
+	// (the Voice field's chips): each a bare id, or an object naming it under
+	// id or voice_id, with a person's name for it under name. A service
+	// without a list leaves it out, and the voice is typed.
+	register(Contract{
+		Name:    "speech.voices",
+		Gives:   "Speech voices",
+		Outputs: []Port{{Name: "voices", Type: TypeJSON, Required: true}},
+		Test:    map[string]any{},
+		Check:   checkVoices("voices"),
 	})
 	register(Contract{
 		Name: "music.generate",
@@ -372,6 +384,30 @@ func SearchResults(r Result) ([]SearchResult, error) {
 		return nil, fmt.Errorf("the results are not a list of title, url and snippet: %v", err)
 	}
 	return out, nil
+}
+
+// Voices reads a speech.voices result.
+func Voices(r Result) ([]media.Voice, error) {
+	var list []json.RawMessage
+	if err := json.Unmarshal([]byte(r["voices"].Text), &list); err != nil {
+		return nil, fmt.Errorf("the voices are not a list: %v", err)
+	}
+	return media.ReadVoices(list), nil
+}
+
+// checkVoices passes a list in which every entry names a voice: an entry
+// naming none means the spec reads the wrong field for it.
+func checkVoices(output string) func(Result) error {
+	return func(r Result) error {
+		var list []json.RawMessage
+		if err := json.Unmarshal([]byte(r[output].Text), &list); err != nil {
+			return fmt.Errorf("the voices are not a list: %v", err)
+		}
+		if n := len(media.ReadVoices(list)); n != len(list) {
+			return fmt.Errorf("%d of the %d voices name no voice: each is an id, or an object with id, voice_id or name", len(list)-n, len(list))
+		}
+		return nil
+	}
 }
 
 // checkResults passes a list of results each with a web address: a result

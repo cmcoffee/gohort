@@ -39,7 +39,7 @@ func readAloudServer(t *testing.T) (asked func() []string) {
 	}))
 	t.Cleanup(srv.Close)
 	prev := GetSpeechConfig()
-	SetSpeechConfig(SpeechConfig{Endpoint: srv.URL, Enabled: true})
+	SetSpeechConfig(SpeechConfig{Provider: "peer:den", Endpoint: srv.URL, Enabled: true})
 	t.Cleanup(func() { SetSpeechConfig(prev) })
 	return func() []string {
 		mu.Lock()
@@ -123,7 +123,7 @@ func TestTheFirstSentenceIsSentBeforeTheRestIsMade(t *testing.T) {
 	}))
 	defer srv.Close()
 	prev := GetSpeechConfig()
-	SetSpeechConfig(SpeechConfig{Endpoint: srv.URL, Enabled: true})
+	SetSpeechConfig(SpeechConfig{Provider: "peer:den", Endpoint: srv.URL, Enabled: true})
 	t.Cleanup(func() { SetSpeechConfig(prev) })
 
 	var start struct{ URL string }
@@ -215,7 +215,7 @@ func TestReadAloudWithoutMP3IsOnePiece(t *testing.T) {
 	}))
 	defer srv.Close()
 	prev := GetSpeechConfig()
-	SetSpeechConfig(SpeechConfig{Endpoint: srv.URL, Enabled: true})
+	SetSpeechConfig(SpeechConfig{Provider: "peer:den", Endpoint: srv.URL, Enabled: true})
 	t.Cleanup(func() { SetSpeechConfig(prev) })
 
 	var start struct{ URL string }
@@ -306,11 +306,11 @@ func TestWithoutID3(t *testing.T) {
 func TestReadAloudScriptOnlyWhileSpeechIsOn(t *testing.T) {
 	prev := GetSpeechConfig()
 	t.Cleanup(func() { SetSpeechConfig(prev) })
-	SetSpeechConfig(SpeechConfig{Endpoint: "http://x", Enabled: false})
+	SetSpeechConfig(SpeechConfig{Provider: "peer:den", Endpoint: "http://x", Enabled: false})
 	if s := ReadAloudScript(); s != "" {
 		t.Errorf("speech off should add nothing: %q", s)
 	}
-	SetSpeechConfig(SpeechConfig{Endpoint: "http://x", Enabled: true})
+	SetSpeechConfig(SpeechConfig{Provider: "peer:den", Endpoint: "http://x", Enabled: true})
 	if s := ReadAloudScript(); !strings.HasPrefix(s, "<script>") || !strings.Contains(s, "'"+ReadAloudPath+"'") {
 		t.Errorf("speech on should add the script posting to %s: %.120s", ReadAloudPath, s)
 	}
@@ -459,7 +459,7 @@ func countingSpeech(t *testing.T) (counts func() map[string]int) {
 	}))
 	t.Cleanup(srv.Close)
 	prev := GetSpeechConfig()
-	SetSpeechConfig(SpeechConfig{Endpoint: srv.URL, Enabled: true})
+	SetSpeechConfig(SpeechConfig{Provider: "peer:den", Endpoint: srv.URL, Enabled: true})
 	t.Cleanup(func() { SetSpeechConfig(prev) })
 	return func() map[string]int {
 		mu.Lock()
@@ -635,7 +635,7 @@ func TestReadAloudSpeaksInTheAgentsVoice(t *testing.T) {
 	}))
 	defer srv.Close()
 	prev, prevHook := GetSpeechConfig(), ReadAloudVoice
-	SetSpeechConfig(SpeechConfig{Endpoint: srv.URL, Voice: "af_heart", Enabled: true})
+	SetSpeechConfig(SpeechConfig{Provider: "peer:den", Endpoint: srv.URL, Voice: "af_heart", Enabled: true})
 	var asked []string
 	ReadAloudVoice = func(user, agentID string) string {
 		asked = append(asked, user+"/"+agentID)
@@ -680,7 +680,7 @@ func TestVoicesForSignedInUsers(t *testing.T) {
 	}))
 	defer srv.Close()
 	prev := GetSpeechConfig()
-	SetSpeechConfig(SpeechConfig{Endpoint: srv.URL, Enabled: true})
+	SetSpeechConfig(SpeechConfig{Provider: "peer:den", Endpoint: srv.URL, Enabled: true})
 	t.Cleanup(func() { SetSpeechConfig(prev) })
 	if w := readAloudDo("GET", ReadAloudPath+"/voices", "", ""); w.Code != http.StatusForbidden {
 		t.Errorf("signed out: %d", w.Code)
@@ -689,7 +689,7 @@ func TestVoicesForSignedInUsers(t *testing.T) {
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"value":"bm_george"`) {
 		t.Errorf("a signed-in user's list: %d %s", w.Code, w.Body.String())
 	}
-	SetSpeechConfig(SpeechConfig{Endpoint: srv.URL, Enabled: false})
+	SetSpeechConfig(SpeechConfig{Provider: "peer:den", Endpoint: srv.URL, Enabled: false})
 	if w := readAloudDo("GET", ReadAloudPath+"/voices", "bob", ""); strings.TrimSpace(w.Body.String()) != "[]" {
 		t.Errorf("speech off, no voices: %s", w.Body.String())
 	}
@@ -711,7 +711,7 @@ func TestAnAgentsVoicePreview(t *testing.T) {
 	}))
 	defer srv.Close()
 	prev := GetSpeechConfig()
-	SetSpeechConfig(SpeechConfig{Endpoint: srv.URL, Voice: "af_heart", Enabled: true})
+	SetSpeechConfig(SpeechConfig{Provider: "peer:den", Endpoint: srv.URL, Voice: "af_heart", Enabled: true})
 	t.Cleanup(func() { SetSpeechConfig(prev) })
 
 	preview := func(user, body string) (int, map[string]any) {
@@ -739,7 +739,7 @@ func TestAnAgentsVoicePreview(t *testing.T) {
 	if code, _ := preview("alice", `{"voice":`); code != http.StatusBadRequest {
 		t.Errorf("broken body: %d", code)
 	}
-	SetSpeechConfig(SpeechConfig{Endpoint: srv.URL, Enabled: false})
+	SetSpeechConfig(SpeechConfig{Provider: "peer:den", Endpoint: srv.URL, Enabled: false})
 	if _, out := preview("alice", `{"voice":"bm_george"}`); out["ok"] != false || !strings.Contains(fmt.Sprint(out["error"]), "not set up") {
 		t.Errorf("speech off: %v", out)
 	}
@@ -816,7 +816,7 @@ func TestAJoinedStreamSaysNoLength(t *testing.T) {
 	}))
 	defer srv.Close()
 	prev := GetSpeechConfig()
-	SetSpeechConfig(SpeechConfig{Endpoint: srv.URL, Enabled: true})
+	SetSpeechConfig(SpeechConfig{Provider: "peer:den", Endpoint: srv.URL, Enabled: true})
 	t.Cleanup(func() { SetSpeechConfig(prev) })
 
 	var start struct{ URL string }

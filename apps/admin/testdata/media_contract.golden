@@ -124,34 +124,32 @@ root POST /api/transcribe/test "{\"enabled\":true,\"provider\":\"service:ears\"}
   200 {"message":"OK: the service ears transcribed a second of a tone and heard no words, as expected of a tone","ok":true}
 root POST /api/transcribe/test "{\"enabled\":true,\"provider\":\"service:deaf\"}"
   200 {"error":"transcribe: the provider answered HTTP 403: no","ok":false}
-alice POST /api/speech "{\"enabled\":true,\"endpoint\":\"<stub>/tts-ok/v1\",\"model\":\"kokoro\",\"voice\":\"af_heart\",\"api_key\":\"s3cr3t-tts-x\"}"
+alice POST /api/speech "{\"enabled\":true,\"provider\":\"service:voice\",\"voice\":\"af_heart\"}"
   403 forbidden
-root POST /api/speech "{\"enabled\":true,\"endpoint\":\"<stub>/tts-ok/v1\",\"model\":\"kokoro\",\"voice\":\"af_heart\",\"api_key\":\"s3cr3t-tts\"}"
+root POST /api/speech "{\"enabled\":true,\"provider\":\"local\",\"endpoint\":\"<stub>/tts-ok/v1\",\"api_key\":\"s3cr3t-tts\"}"
+  400 choose what speaks: a connector (Admin > Extensions > Connectors) or a peer that lends speech
+root POST /api/speech "{\"enabled\":true,\"provider\":\"service:voice\",\"endpoint\":\"http://127.0.0.1:1/v1\",\"model\":\"typed-in\",\"voice\":\"af_heart\"}"
   204 
 root GET /api/speech ""
-  200 {"endpoint":"<stub>/tts-ok/v1","model":"kokoro","voice":"af_heart","api_key":"(unchanged)","enabled":true}
-root POST /api/speech "{\"enabled\":true,\"endpoint\":\"<stub>/tts-ok/v1\",\"model\":\"kokoro\",\"voice\":\"af_heart\",\"api_key\":\"(unchanged)\"}"
-  204 
+  200 {"endpoint":"","model":"kokoro","voice":"af_heart","api_key":"","enabled":true,"provider":"service:voice"}
 root GET /api/speech/voices ""
   200 [{"id":"af_heart","name":"af_heart","value":"af_heart"},{"id":"bm_george","name":"bm_george","value":"bm_george"}]
 root POST /api/speech "{\"enabled\":"
   400 invalid JSON: unexpected EOF
-root POST /api/speech/test "{\"enabled\":false,\"endpoint\":\"<stub>/tts-ok/v1\",\"model\":\"kokoro\"}"
+root POST /api/speech/test "{\"enabled\":false,\"provider\":\"service:voice\"}"
   200 {"error":"speech is disabled: flip the toggle on first","ok":false}
-root POST /api/speech/test "{\"enabled\":true}"
-  200 {"error":"speech endpoint not configured","ok":false}
-root POST /api/speech/test "{\"enabled\":true,\"endpoint\":\"<stub>/tts-ok/v1\",\"model\":\"kokoro\",\"voice\":\"af_heart\",\"api_key\":\"(unchanged)\"}"
+root POST /api/speech/test "{\"enabled\":true,\"voice\":\"af_heart\"}"
   200 {"audio":"data:audio/mpeg;base64,SUQzBAAAAAAAAGNsaXA=","message":"Spoke a sample: 1 KB of mp3 audio.","ok":true}
-root POST /api/speech/test "{\"enabled\":true,\"endpoint\":\"<stub>/tts-ok/v1\",\"model\":\"kokoro\",\"voice\":\"nobody\",\"api_key\":\"(unchanged)\"}"
-  200 {"error":"speech: HTTP 400: {\"detail\":\"voice not found\"}","ok":false}
-root POST /api/speech/test "{\"enabled\":true,\"endpoint\":\"<stub>/tts-ok/v1\",\"model\":\"kokoro\",\"voice\":\"af_heart\",\"api_key\":\"wrong\"}"
-  200 {"error":"speech: HTTP 401: {\"detail\":\"bad key\"}","ok":false}
-root POST /api/speech/test "{\"enabled\":true,\"endpoint\":\"http://127.0.0.1:1/v1\"}"
-  200 {"error":"speech request failed (http://127.0.0.1:1/v1/audio/speech): Post \"http://127.0.0.1:1/v1/audio/speech\": dial tcp 127.0.0.1:1: connect: connection refused","ok":false}
+root POST /api/speech/test "{\"enabled\":true,\"provider\":\"service:voice\",\"voice\":\"nobody\"}"
+  200 {"error":"speak: the provider answered HTTP 400: {\"detail\":\"voice not found\"}","ok":false}
+root POST /api/speech/test "{\"enabled\":true,\"provider\":\"service:mute\"}"
+  200 {"error":"speak: Post \"http://127.0.0.1:1/v1/audio/speech\": dial tcp 127.0.0.1:1: connect: connection refused","ok":false}
 root POST /api/speech/test "{\"enabled\":true,\"provider\":\"peer:nope\"}"
   200 {"error":"no peer named \"nope\" is registered: add it under Peers first","ok":false}
 root POST /api/speech "{\"enabled\":true,\"provider\":\"peer:nope\"}"
   400 no peer named "nope" is registered: add it under Peers first
+root POST /api/speech "{\"enabled\":true,\"provider\":\"service:nope\"}"
+  400 no connector named "nope"
 alice POST /api/image-gen "{\"provider\":\"openai\",\"api_key\":\"s3cr3t-img-x\"}"
   403 forbidden
 root POST /api/image-gen "{\"provider\":\"openai\",\"api_key\":\"s3cr3t-img\"}"
@@ -174,13 +172,12 @@ root POST /api/image-gen "{\"provider\":\"gemini\",\"api_key\":\"\"}"
   204 
 root POST /api/image-gen/test "{\"provider\":\"gemini\",\"api_key\":\"(unchanged)\"}"
   200 {"error":"no API key: set one here, or set the matching LLM provider's key","ok":false}
-activity log, 9 entries:
+activity log, 8 entries:
   settings root: updated embeddings config (enabled=false provider="service:vectors" endpoint="service:vectors" model="nomic-embed-text")
   settings root: updated embeddings config (enabled=true provider="service:vectors" endpoint="service:vectors" model="nomic-embed-text")
   settings root: updated image-gen config (provider="gemini")
   settings root: updated image-gen config (provider="gemini")
   settings root: updated image-gen config (provider="openai")
-  settings root: updated speech config (enabled=true endpoint="<stub>/tts-ok/v1" model="kokoro" voice="af_heart")
-  settings root: updated speech config (enabled=true endpoint="<stub>/tts-ok/v1" model="kokoro" voice="af_heart")
+  settings root: updated speech config (enabled=true provider="service:voice" model="kokoro" voice="af_heart")
   settings root: updated transcribe config (enabled=false provider="service:ears" model="whisper-1")
   settings root: updated transcribe config (enabled=true provider="service:ears" model="whisper-1")
