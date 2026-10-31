@@ -90,7 +90,7 @@ func convertVia(ctx context.Context, name string, data []byte, from, to string) 
 	if from != "" {
 		ext = "." + from
 	}
-	f, err := fileNamed(data, ext)
+	f, err := fileNamed(data, ext, defaultMaxBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -205,7 +205,7 @@ func Search(ctx context.Context, name, query string) (string, error) {
 // file keeps the extension the caller gave it: a transcriber reads the format
 // from the name.
 func transcribeVia(ctx context.Context, name string, audio []byte, filename string) (string, error) {
-	f, err := fileNamed(audio, filepath.Ext(filename))
+	f, err := fileNamed(audio, filepath.Ext(filename), audioMaxBytes)
 	if err != nil {
 		return "", err
 	}
@@ -245,9 +245,15 @@ func speakVia(ctx context.Context, name, text, voice string) ([]byte, string, er
 	return data, ext, nil
 }
 
-// fileNamed writes data to a new file with ext as its extension.
-func fileNamed(data []byte, ext string) (*File, error) {
-	f, _, err := writeFile(bytes.NewReader(data), defaultMaxBytes)
+// audioMaxBytes is the most audio given to a transcriber: the 100 MB the
+// media jobs extract from a video at most. The connector's own limit still
+// bounds what it sends.
+const audioMaxBytes = 100 << 20
+
+// fileNamed writes data, at most limit bytes of it, to a new file with ext as
+// its extension.
+func fileNamed(data []byte, ext string, limit int64) (*File, error) {
+	f, _, err := writeFile(bytes.NewReader(data), limit)
 	if err != nil {
 		return nil, err
 	}

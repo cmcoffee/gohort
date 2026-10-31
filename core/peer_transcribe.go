@@ -50,10 +50,16 @@ type PeerTranscribeInfo struct {
 // that will answer "transcription disabled" to everything.
 func peerTranscribeInfo(baseURL string) *PeerTranscribeInfo {
 	cfg := GetTranscribeConfig()
-	if !cfg.Enabled || strings.TrimSpace(cfg.Endpoint) == "" {
+	if !transcribesHere(cfg) {
 		return nil
 	}
 	return &PeerTranscribeInfo{Model: strings.TrimSpace(cfg.Model), Path: baseURL}
+}
+
+// transcribesHere reports whether cfg transcribes on this instance: it is on
+// and set to a connector. A peer's transcription is that peer's to lend.
+func transcribesHere(cfg TranscribeConfig) bool {
+	return cfg.Enabled && strings.HasPrefix(strings.TrimSpace(cfg.Provider), media.ServiceProviderPrefix)
 }
 
 // HandlePeerTranscribe serves POST /api/peer/v1/audio/transcriptions.
@@ -80,7 +86,7 @@ func HandlePeerTranscribe(w http.ResponseWriter, r *http.Request) {
 			"this instance borrows its own transcription from another peer and will not relay it")
 		return
 	}
-	if !cfg.Enabled || strings.TrimSpace(cfg.Endpoint) == "" {
+	if !transcribesHere(cfg) {
 		peerDeny(w, http.StatusServiceUnavailable, "this instance has transcription disabled")
 		return
 	}
@@ -188,30 +194,40 @@ func (p RemotePeer) TranscribeURL() string {
 // better answer than a blank one.
 //
 // Mirrors ResolveEmbeddingProvider down to the failure modes, including
-// refusing an unknown peer rather than falling back to local: a silent fall
-// back would send audio somewhere the operator did not choose.
+// refusing an unknown peer: transcription is done by a connector or a peer,
+// and audio is never sent somewhere the operator did not choose.
 func ResolveTranscribeProvider(cfg TranscribeConfig, provider string) (TranscribeConfig, error) {
 	provider = strings.TrimSpace(provider)
-	// A service connector (core/service) is used as it is named; the admin
-	// handler checks that it provides this.
-	if strings.HasPrefix(provider, media.ServiceProviderPrefix) {
-		cfg.Provider = provider
-		return cfg, nil
-	}
 	if provider == "" {
-		// Same rule as ResolveEmbeddingProvider, and the same trap: the "local"
-		// option submits the string "local", so blank means the dropdown was
-		// not rendered — which happens whenever no peer currently offers
-		// transcription. Reading that as "go local" would reset the selection
-		// while leaving the peer's endpoint and credential in place, and the
-		// resulting config points at the peer with a credential nothing
-		// refreshes.
-		if p := strings.TrimSpace(cfg.Provider); strings.HasPrefix(p, peerProviderPrefix) || strings.HasPrefix(p, media.ServiceProviderPrefix) {
-			return cfg, nil
+		// A submission that says nothing about the provider (the form shows no
+		// choice while there is nothing to choose) cannot mean "stop using the
+		// connector or peer": keep the one it carries, or the one stored, and
+		// let the resolver overlay a peer on every read as usual.
+		for _, kept := range []string{cfg.Provider, GetTranscribeConfig().Provider} {
+			kept = strings.TrimSpace(kept)
+			if strings.HasPrefix(kept, peerProviderPrefix) {
+				cfg.Provider = kept
+				return cfg, nil
+			}
+			if strings.HasPrefix(kept, media.ServiceProviderPrefix) {
+				provider = kept
+				break
+			}
 		}
 	}
-	if provider == "" || provider == EmbeddingProviderLocal {
+	// A service connector (core/service) is used as it is named; the admin
+	// handler checks that it provides this. Its address and key are its own.
+	if strings.HasPrefix(provider, media.ServiceProviderPrefix) {
+		cfg.Provider, cfg.Endpoint, cfg.APIKey = provider, "", ""
 		return cfg, nil
+	}
+	if provider == "" || provider == EmbeddingProviderLocal {
+		// Transcription is done by a connector or a peer; this instance has
+		// no transcriber of its own. Off is still off.
+		if !cfg.Enabled {
+			return cfg, nil
+		}
+		return cfg, fmt.Errorf("choose what transcribes: a connector (Admin > Extensions > Connectors) or a peer that lends transcription")
 	}
 	p, ok := PeerFromProvider(provider)
 	if !ok {
@@ -222,6 +238,7 @@ func ResolveTranscribeProvider(cfg TranscribeConfig, provider string) (Transcrib
 		return cfg, fmt.Errorf("peer %q does not offer transcription (it offers: %s)",
 			p.Name, strings.Join(p.Caps, ", "))
 	}
+	cfg.Provider = provider
 	cfg.Endpoint = p.TranscribeURL()
 	cfg.Model = p.TranscribeModel
 	// PeerCredential, not the raw key. The key authenticates nothing since

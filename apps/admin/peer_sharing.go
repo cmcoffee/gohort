@@ -502,17 +502,13 @@ func EmbeddingProviderOptions() []ui.SelectOption {
 	return out
 }
 
-// TranscribeProviderOptions builds the provider dropdown for the Transcription
-// settings: this instance, plus every peer that actually offers STT.
+// TranscribeProviderOptions are the peers that lend transcription, for the
+// Transcription settings' "Transcribe with" beside the connectors.
 //
-// Same shape and same reasons as EmbeddingProviderOptions — the peer knowledge
-// stays in this file, the section that uses it lives in page.go.
+// Same shape and same reasons as EmbeddingProviderOptions: the peer knowledge
+// stays in this file, the section that uses it lives in page_capabilities.go.
 func TranscribeProviderOptions() []ui.SelectOption {
-	out := []ui.SelectOption{{
-		Value: EmbeddingProviderLocal,
-		Label: "This instance",
-		Help:  "Transcribe locally, using the endpoint and model below.",
-	}}
+	var out []ui.SelectOption
 	for _, p := range PeersOffering(PeerCapTranscribe) {
 		label := "Peer: " + p.Name
 		if p.Instance != "" {

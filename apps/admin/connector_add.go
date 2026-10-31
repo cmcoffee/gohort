@@ -108,7 +108,7 @@ func (a *AdminApp) capabilitiesNow() []string {
 	}
 	return []string{
 		"Embeddings: " + onOff(emb.Enabled, emb.Provider, "not set"),
-		"Transcription: " + onOff(tr.Enabled, tr.Provider, "the local endpoint (built in)"),
+		"Transcription: " + onOff(tr.Enabled, tr.Provider, "not set"),
 		"Speech: " + onOff(sp.Enabled, sp.Provider, "the local endpoint (built in)"),
 		"Image Generation: " + imageChoiceName(image),
 		"Web search: " + search,

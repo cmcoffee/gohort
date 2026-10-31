@@ -373,8 +373,27 @@ in the same change. The migration code goes in a later release.
    is on/off, "Embed with" (connectors and peers) and the prefixes, with a
    pointer to the templates (Ollama, llama.cpp / vLLM / OpenAI-compatible,
    OpenAI) while nothing embeds. The `built-in:embeddings` row is gone.
-   Next, in order: transcription, speech, images, web search, page
-   rendering, mail, the LLM tiers, then the built-in transports and peers.
+2. **Transcription.** Built 2026-10-30. The engine already had parity
+   (multipart uploads, a text output read from JSON); what moved was the
+   size and time the old transcriber allowed: audio handed to a connector
+   may be 100 MB (what the media jobs extract at most) and the migrated
+   operation waits five minutes. `MigrateTranscription` writes settings
+   that name an endpoint as connector `transcription` (`POST
+   {endpoint}/audio/transcriptions` as a multipart form: the audio, the
+   model when there is one, the prompt and language when given,
+   response_format json), the key as credential `transcription_key`.
+   Settings with no endpoint move nothing: there was no default, so
+   transcription stays off until a connector or peer is chosen. The
+   settings keep only the model, which a peer borrowing transcription is
+   told. Serving transcription to a peer now asks whether a connector
+   transcribes here, rather than whether an endpoint is stored. The page is
+   on/off and "Transcribe with" (connectors and peers); its Test sends a
+   second of a tone through the configured path. New template: whisper.cpp /
+   OpenAI-compatible (transcription). The `built-in:transcription` row is
+   gone.
+
+   Next, in order: speech, images, web search, page rendering, mail, the LLM
+   tiers, then the built-in transports and peers.
 
 ## Migrations
 

@@ -30,16 +30,15 @@ func TestGohortsOwnProvidersAreConnectors(t *testing.T) {
 	for _, b := range a.builtinConnectors() {
 		got[b.name] = b
 	}
-	// Embeddings always come from a connector or a peer: there is no
-	// built-in embedder to list.
-	if b, ok := got["built-in:embeddings"]; ok {
-		t.Errorf("embeddings listed as built in: %+v", b)
+	// Embeddings and transcription always come from a connector or a peer:
+	// there is no built-in embedder or transcriber to list.
+	for _, gone := range []string{"built-in:embeddings", "built-in:transcription"} {
+		if b, ok := got[gone]; ok {
+			t.Errorf("%s listed: %+v", gone, b)
+		}
 	}
 	if b := got["built-in:speech"]; b.status != "Not in use: speech is made by the connector voice. Set up under Admin > Capabilities > Speech (TTS)." || b.test != nil {
 		t.Errorf("speech while a service speaks: %+v", b)
-	}
-	if b := got["built-in:transcription"]; !strings.HasPrefix(b.status, "Off.") || b.test != nil {
-		t.Errorf("transcription, never set up: %+v", b)
 	}
 	if b := got["built-in:gemini-images"]; !strings.Contains(b.status, "set to the built-in OpenAI") {
 		t.Errorf("gemini while openai is chosen: %+v", b)
@@ -129,7 +128,7 @@ func TestGohortsOwnProvidersAreConnectors(t *testing.T) {
 			}
 		}
 	}
-	if builtins != 9 {
-		t.Errorf("%d built-in rows, want 9", builtins)
+	if builtins != 8 {
+		t.Errorf("%d built-in rows, want 8", builtins)
 	}
 }

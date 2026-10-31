@@ -13,7 +13,8 @@ import (
 
 // The search, mail, image, embedding and transcription GETs returned their
 // keys in the clear to the browser. They read as a placeholder now, and the
-// placeholder coming back on a save keeps the stored key.
+// placeholder coming back on a save keeps the stored key. Transcription
+// shows none: its key is the connector's or the peer's.
 func TestAdminSecretsAreMaskedAndKept(t *testing.T) {
 	a := &AdminApp{db: &DBase{Store: kvlite.MemStore()}}
 	sub := http.NewServeMux()
@@ -34,7 +35,7 @@ func TestAdminSecretsAreMaskedAndKept(t *testing.T) {
 		if strings.Contains(w.Body.String(), secret) {
 			t.Errorf("GET %s returned the stored secret: %s", path, w.Body.String())
 		}
-		if !strings.Contains(w.Body.String(), secretUnchanged) {
+		if path != "/api/transcribe" && !strings.Contains(w.Body.String(), secretUnchanged) {
 			t.Errorf("GET %s should show that a secret is set: %s", path, w.Body.String())
 		}
 	}

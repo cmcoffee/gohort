@@ -1,9 +1,9 @@
 package admin
 
 // gohort's own providers, read as connectors (docs/design/connectors-and-
-// flows.md, stage 3). The local embedder, transcriber and speaker and the
-// Gemini and OpenAI image code are wrappers written in Go rather than specs:
-// the same inside (a contract), an outside they reach, a test. Listing them
+// flows.md, stage 3). The local speaker and the Gemini and OpenAI image code
+// are wrappers written in Go rather than specs: the same inside (a
+// contract), an outside they reach, a test. Listing them
 // with the other connectors means every capability's choice is among
 // connectors, built in or added.
 //
@@ -42,23 +42,8 @@ type builtinConnector struct {
 func (a *AdminApp) builtinConnectors() []builtinConnector {
 	var out []builtinConnector
 
-	tr := a.storedTranscribeConfig()
-	b := builtinConnector{name: builtinPrefix + "transcription",
-		wrapper: "Transcription ⇐ " + withModel("audio/transcriptions", tr.Model) + " ⇐ " + endpointHost(tr.Endpoint, tr.APIKey)}
-	switch {
-	case !isLocal(tr.Provider):
-		b.status = "Not in use: transcription is done by " + providerName(tr.Provider) + ". Set up under Admin > Capabilities > Audio Transcription."
-		b.wrapper = "Transcription ⇐ audio/transcriptions ⇐ an endpoint of your choosing"
-	case !tr.Enabled:
-		b.status = "Off. Turn it on under Admin > Capabilities > Audio Transcription."
-	default:
-		b.status = "In use for transcription. Set up under Admin > Capabilities > Audio Transcription."
-		b.test = func(c *jsonapi.Call) (any, error) { return a.handleTranscribeTest(c, tr) }
-	}
-	out = append(out, b)
-
 	sp := a.storedSpeechConfig()
-	b = builtinConnector{name: builtinPrefix + "speech",
+	b := builtinConnector{name: builtinPrefix + "speech",
 		wrapper: "Speech ⇐ " + withModel("audio/speech", sp.Model) + " ⇐ " + endpointHost(sp.Endpoint, sp.APIKey)}
 	switch {
 	case !isLocal(sp.Provider):

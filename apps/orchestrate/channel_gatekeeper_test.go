@@ -27,9 +27,7 @@ func TestTheGateHearsAVoiceNote(t *testing.T) {
 		w.Write([]byte("what's the weather tomorrow"))
 	}))
 	defer stt.Close()
-	prevSTT := GetTranscribeConfig()
-	SetTranscribeConfig(TranscribeConfig{Endpoint: stt.URL, Enabled: true})
-	t.Cleanup(func() { SetTranscribeConfig(prevSTT) })
+	transcribeAt(t, stt.URL)
 
 	judged := func(in ChannelInbound) string {
 		t.Helper()

@@ -1,14 +1,15 @@
-// Audio transcription (STT) — mirrors the embeddings.go shape so the
-// rest of the framework can call Transcribe(ctx, audioBytes) the same
-// way it calls Embed(ctx, text). Targets the OpenAI-compatible
-// /audio/transcriptions endpoint (whisper.cpp server emulates this;
-// so does the real OpenAI API), so a typical local-Whisper deployment
-// just needs the endpoint URL.
+// Audio transcription (STT): Transcribe(ctx, audioBytes) is how the rest of
+// the framework hears speech, as Embed(ctx, text) is how it reads meaning.
+// The transcriber is a service connector (core/service, speech.transcribe)
+// or a peer that lends transcription: this instance has none of its own, so
+// what transcribes can be read, tested, fixed and replaced like any other
+// connector. A peer is reached here, over the OpenAI-shaped
+// /audio/transcriptions its peer API serves.
 //
-// Disabled by default — until --setup or the admin UI configures an
-// endpoint, every call returns an error and callers treat it as a
-// skip condition (videodl falls back to frames-only). Failures are
-// non-fatal at every layer.
+// Disabled by default: until it is turned on and pointed at a connector or a
+// peer, every call returns an error and callers treat it as a skip
+// condition (videodl falls back to frames-only). Failures are non-fatal at
+// every layer.
 
 package media
 
@@ -41,22 +42,27 @@ type ConfigStore interface {
 	Set(table, key string, value any)
 }
 
-// TranscribeConfig holds the endpoint + model for the OpenAI-compatible
-// audio-transcription API. Model is optional — many local Whisper
-// servers ignore it; OpenAI uses "whisper-1".
+// TranscribeConfig is the transcription settings: on or off, and what
+// transcribes. For a peer, Endpoint, Model and APIKey are filled from the
+// peer's record (ResolveTranscribeProvider), and kept current on every read;
+// for a service connector, Model is the one it declares (what a peer
+// borrowing transcription from here is told), and the rest is the
+// connector's own.
 type TranscribeConfig struct {
-	Endpoint string `json:"endpoint"` // base URL, e.g. http://localhost:8080/v1
-	Model    string `json:"model"`    // optional, e.g. "whisper-1"
-	APIKey   string `json:"api_key"`  // optional bearer token (real OpenAI / authenticated proxies)
+	Endpoint string `json:"endpoint"` // a peer's /api/peer/v1
+	Model    string `json:"model"`    // the model it transcribes with, when known
+	APIKey   string `json:"api_key"`  // a peer's credential
 	Enabled  bool   `json:"enabled"`  // false → calls return an error and callers skip
-	// Provider records WHERE this config came from: "local" (the fields above
-	// were typed in) or "peer:<name>" (they were filled from a peer instance —
-	// see ResolveTranscribeProvider). Mirrors EmbeddingConfig.Provider, and for
-	// the same reason: the resolved fields are indistinguishable from
-	// hand-entered ones, so without this the admin form cannot show the
-	// operator which choice is in force.
+	// Provider is what transcribes: "service:<name>" (a connector) or
+	// "peer:<name>". "local", or blank, is the endpoint this instance once
+	// called itself, moved onto a connector at startup (core/service's
+	// migration): it no longer transcribes.
 	Provider string `json:"provider,omitempty"`
 }
+
+// peerProviderPrefix marks a config whose Provider names a peer. core keeps
+// the peers; this package only needs to tell one from a connector.
+const peerProviderPrefix = "peer:"
 
 var (
 	transcribeCfgMu sync.RWMutex
@@ -268,7 +274,7 @@ type UploadRequest struct {
 	Provider string
 }
 
-// Transcribe sends audio bytes to the configured STT endpoint and
+// Transcribe sends audio bytes to the configured connector or peer and
 // returns the recognized text. Filename hints the server about the
 // container/codec (whisper.cpp inspects the extension); pass a
 // representative name like "audio.mp3" or "clip.wav".
@@ -277,8 +283,8 @@ type UploadRequest struct {
 // should treat this as a skip condition, not a fatal error.
 //
 // By the transcription job (TranscribeHook, core/flows) when it is loaded:
-// the service configured here is its native flow, and an admin can adapt it
-// to a command (a local whisper.cpp, say) where none is set up.
+// the connector or peer configured here is its native flow, and an admin can
+// adapt it to a command (a local whisper.cpp, say) where none is set up.
 func Transcribe(ctx context.Context, audio []byte, filename string) (string, error) {
 	if TranscribeHook != nil {
 		return TranscribeHook(ctx, audio, filename)
@@ -338,6 +344,15 @@ func TranscribeWith(ctx context.Context, cfg TranscribeConfig, audio []byte, fil
 		}
 		return TranscribeService(ctx, name, audio, filename)
 	}
+	if !strings.HasPrefix(cfg.Provider, peerProviderPrefix) {
+		return "", fmt.Errorf("transcription is not set to a connector or a peer: choose one under Admin > Capabilities > Audio Transcription (STT)")
+	}
+	return transcribeFromPeer(ctx, cfg, audio, filename)
+}
+
+// transcribeFromPeer sends audio to a peer's /audio/transcriptions, the
+// OpenAI shape its peer API serves, with the peer's current credential.
+func transcribeFromPeer(ctx context.Context, cfg TranscribeConfig, audio []byte, filename string) (string, error) {
 	if cfg.Endpoint == "" {
 		nfo.Debug("[transcribe] no endpoint configured")
 		return "", fmt.Errorf("transcription endpoint not configured")

@@ -297,7 +297,7 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 			txt, terr := transcribeVoice(media.WithTranscribePrompt(ctx, media.NamesPrompt(ownAgentName(in.Owner, in.AgentID))), data, nameHint)
 			if terr != nil {
 				Log("[channel] inbound audio transcription failed (%s, %d bytes): %v", nameHint, len(data), terr)
-				return "\n[Audio attachment received, but transcription failed (" + terr.Error() + "). STT is enabled; the endpoint or audio format is the problem.]"
+				return "\n[Audio attachment received, but transcription failed (" + terr.Error() + "). STT is enabled; the transcription connector or peer, or the audio format, is the problem.]"
 			}
 			if txt == "" {
 				return "\n[Audio attachment received, but transcription returned no text: the clip may have no speech, or whisper couldn't decode this format.]"

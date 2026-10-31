@@ -31,9 +31,9 @@ func (a *AdminApp) registerMediaRoutes(sub *http.ServeMux) {
 	// {ok, message|error} for inline display in the admin FormPanel.
 	sub.HandleFunc("/api/embeddings/test", jsonapi.Post(a.db, a.handleEmbeddingsTest, a.gate()))
 
-	// Audio transcription (STT) — GET/POST. POST persists + reinstalls
-	// the live TranscribeConfig so the next Transcribe() call picks up
-	// the new endpoint/model/key without a restart.
+	// Audio transcription (STT): GET/POST. POST persists + reinstalls
+	// the live TranscribeConfig so the next Transcribe() call uses the
+	// connector or peer chosen, without a restart.
 	sub.HandleFunc("/api/transcribe", jsonapi.Methods{
 		"GET":  jsonapi.Get(a.db, a.handleTranscribe, a.gate()),
 		"POST": jsonapi.Post(a.db, a.handleTranscribeSave, a.gate()),
@@ -47,11 +47,9 @@ func (a *AdminApp) registerMediaRoutes(sub *http.ServeMux) {
 		"POST": jsonapi.Post(a.db, a.handleImageGenSave, a.gate()),
 	}.Serve)
 
-	// STT connectivity test — GET {endpoint}/models with auth header so
-	// the operator can confirm reachability + credentials without needing
-	// a sample audio file. Both whisper.cpp and the real OpenAI API
-	// expose /models on the OpenAI-compatible base; a 2xx means the
-	// endpoint is reachable and (if a key was provided) accepts it.
+	// STT test: the form as it stands, saved or not. A connector
+	// transcribes a second of a tone; a peer is checked through its
+	// manifest.
 	sub.HandleFunc("/api/transcribe/test", jsonapi.Post(a.db, a.handleTranscribeTest, a.gate()))
 
 	// Image gen connectivity test — same shape as STT but per-provider
@@ -151,23 +149,21 @@ func (a *AdminApp) handleEmbeddingsTest(c *jsonapi.Call, req EmbeddingConfig) (a
 // handleTranscribe serves /api/transcribe; registerMediaRoutes says what it is for.
 func (a *AdminApp) handleTranscribe(c *jsonapi.Call) (any, error) {
 	cfg := a.storedTranscribeConfig()
-	cfg.APIKey = maskSecret(cfg.APIKey)
+	// What transcribes is the connector or peer named: its key is its own,
+	// never shown here.
+	cfg.APIKey = ""
 	return cfg, nil
 }
 
 // handleTranscribeSave persists the transcription config and reinstalls it
 // live.
 func (a *AdminApp) handleTranscribeSave(c *jsonapi.Call, req TranscribeConfig) (any, error) {
-	req.APIKey = keepSecret(req.APIKey, a.storedTranscribeConfig().APIKey)
-	// A peer selection carries no endpoint of its own — the manual
-	// fields are hidden while one is picked. Resolve it into a
-	// complete, ordinary config here so everything downstream
-	// (Transcribe, the transcribe tool, inbound voice notes) stays
-	// peer-unaware. Same shape as the embeddings save above.
-	if err := serviceProviderOK(req.Provider, "speech.transcribe"); err != nil {
-		return nil, jsonapi.BadRequest(err.Error())
-	}
-	resolved, err := ResolveTranscribeProvider(req, req.Provider)
+	req.APIKey = ""
+	// The form names a connector or a peer and nothing else: resolve it into
+	// a complete config here, so everything downstream (Transcribe, the
+	// transcribe tool, inbound voice notes) reads one shape. Same shape as
+	// the embeddings save above.
+	resolved, err := resolveTranscription(req)
 	if err != nil {
 		return nil, jsonapi.BadRequest(err.Error())
 	}
@@ -176,9 +172,27 @@ func (a *AdminApp) handleTranscribeSave(c *jsonapi.Call, req TranscribeConfig) (
 		a.db.Set(TranscribeTable, "current", req)
 	}
 	SetTranscribeConfig(req)
-	adminChange(c.R, activity.Settings, "updated transcribe config (enabled=%v endpoint=%q model=%q)",
-		req.Enabled, req.Endpoint, req.Model)
+	adminChange(c.R, activity.Settings, "updated transcribe config (enabled=%v provider=%q model=%q)",
+		req.Enabled, req.Provider, req.Model)
 	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// resolveTranscription is ResolveTranscribeProvider with a service checked
+// once resolved, and its model taken from the service's spec: the model a
+// peer borrowing transcription from here is told it gets.
+func resolveTranscription(req TranscribeConfig) (TranscribeConfig, error) {
+	resolved, err := ResolveTranscribeProvider(req, req.Provider)
+	if err != nil {
+		return req, err
+	}
+	if err := serviceProviderOK(resolved.Provider, "speech.transcribe"); err != nil {
+		return req, err
+	}
+	if name, ok := strings.CutPrefix(strings.TrimSpace(resolved.Provider), media.ServiceProviderPrefix); ok {
+		c, _ := GetConnector(RootDB, name)
+		resolved.Model = service.Default(c, "speech.transcribe", "model")
+	}
+	return resolved, nil
 }
 
 // handleSpeech serves GET /api/speech; registerMediaRoutes says what it is for.
@@ -278,87 +292,41 @@ func (a *AdminApp) handleImageGenSave(c *jsonapi.Call, req imageGenConfig) (any,
 
 // handleTranscribeTest serves /api/transcribe/test; registerMediaRoutes says what it is for.
 func (a *AdminApp) handleTranscribeTest(c *jsonapi.Call, req TranscribeConfig) (any, error) {
-	r := c.R
-	req.APIKey = keepSecret(req.APIKey, a.storedTranscribeConfig().APIKey)
+	req.APIKey = ""
 	if !req.Enabled {
 		return testResultBody(false, "", "transcription is disabled: flip the toggle on first"), nil
 	}
-	// Resolve a peer selection the same way the SAVE path does. Without
-	// this the test ran the form's literal fields — and with a peer picked
-	// those are hidden and empty, so testing a perfectly good peer failed
-	// with "endpoint is required" against a form showing no endpoint field
-	// to fill in. Exactly the bug the embeddings test button already had.
-	resolved, rerr := ResolveTranscribeProvider(req, req.Provider)
-	if rerr != nil {
-		return testResultBody(false, "", rerr.Error()), nil
+	// Resolved as the save resolves it, so the test runs what the form is
+	// set to, saved or not.
+	resolved, err := resolveTranscription(req)
+	if err != nil {
+		return testResultBody(false, "", err.Error()), nil
 	}
 	req = resolved
-	if req.Endpoint == "" {
-		return testResultBody(false, "", "endpoint is required"), nil
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(c.R.Context(), time.Minute)
 	defer cancel()
-	// A peer is probed through its MANIFEST rather than the GET probe
-	// below. The peer base serves exactly one path — /audio/transcriptions
-	// — so /models would 404 and the root fallback would land on the far
-	// side's web UI and report a cheerful success for a link that cannot
-	// transcribe. The manifest answers the questions that actually matter
-	// (is it reachable, is the key good, is transcribe granted, does that
-	// instance still have STT configured) and says which one failed.
+	// A peer is probed through its MANIFEST: is it reachable, is the key
+	// good, is transcribe granted, does that instance still transcribe. Each
+	// says which one failed, where sending audio would only say it failed.
 	if p, isPeer := PeerFromProvider(req.Provider); isPeer {
 		ok, msg, errMsg := peerTranscribeTestResult(ctx, p)
 		return testResultBody(ok, msg, errMsg), nil
 	}
-	// probeURL: GET with optional bearer header. Returns the response status
-	// or any transport error. Closing the body inline so callers don't have to.
-	probeURL := func(url string) (int, error) {
-		httpReq, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-		if err != nil {
-			return 0, err
-		}
-		if req.APIKey != "" {
-			httpReq.Header.Set("Authorization", "Bearer "+req.APIKey)
-		}
-		resp, err := (&http.Client{}).Do(httpReq)
-		if err != nil {
-			return 0, err
-		}
-		defer resp.Body.Close()
-		return resp.StatusCode, nil
-	}
-	// Try /models first (OpenAI-compatible servers expose this and a
-	// 200 also validates the bearer key). Fall back to the endpoint
-	// root for servers like whisper.cpp that only expose the
-	// transcription path and serve an HTML index at /.
-	base := strings.TrimRight(req.Endpoint, "/")
-	modelsURL := base + "/models"
-	status, err := probeURL(modelsURL)
+	// A connector transcribes a second of a tone, through the path every
+	// transcription takes. A tone has no words: any answer, none included,
+	// means it took the audio and replied in the shape its spec reads.
+	text, err := TranscribeWith(ctx, req, service.SampleTone(), "tone.wav")
 	if err != nil {
-		return testResultBody(false, "", "reach failed: "+err.Error()), nil
+		return testResultBody(false, "", err.Error()), nil
 	}
-	switch {
-	case status >= 200 && status < 300:
-		return testResultBody(true, fmt.Sprintf("Endpoint reachable + /models OK (HTTP %d)", status), ""), nil
-	case status == 401 || status == 403:
-		return testResultBody(false, "", fmt.Sprintf("HTTP %d: endpoint reached but rejected the API key", status)), nil
+	heard := "no words, as expected of a tone"
+	if r := []rune(text); len(r) > 80 {
+		heard = fmt.Sprintf("%q...", string(r[:80]))
+	} else if text != "" {
+		heard = fmt.Sprintf("%q", text)
 	}
-	// /models 404/405 → fall back to a plain GET on the endpoint root.
-	// Strip any trailing /v1 (or /api) so we hit the actual host root.
-	rootBase := base
-	for _, suffix := range []string{"/v1", "/api"} {
-		if strings.HasSuffix(rootBase, suffix) {
-			rootBase = rootBase[:len(rootBase)-len(suffix)]
-			break
-		}
-	}
-	rootStatus, err := probeURL(rootBase + "/")
-	if err != nil {
-		return testResultBody(false, "", fmt.Sprintf("HTTP %d at %s, and root probe failed: %s", status, modelsURL, err.Error())), nil
-	}
-	if rootStatus >= 200 && rootStatus < 500 {
-		return testResultBody(true, fmt.Sprintf("Endpoint reachable (HTTP %d at root; %d at /models: server doesn't expose /models, fine for whisper.cpp)", rootStatus, status), ""), nil
-	}
-	return testResultBody(false, "", fmt.Sprintf("HTTP %d at root, HTTP %d at /models", rootStatus, status)), nil
+	name := strings.TrimPrefix(req.Provider, media.ServiceProviderPrefix)
+	return testResultBody(true, "OK: the service "+name+" transcribed a second of a tone and heard "+heard, ""), nil
 }
 
 // handleImageGenTest serves /api/image-gen/test; registerMediaRoutes says what it is for.

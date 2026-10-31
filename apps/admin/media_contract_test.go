@@ -36,29 +36,24 @@ func TestMediaRoutesContract(t *testing.T) {
 		media.SetSpeechConfig(prevTTS)
 	})
 
-	// One server stands in for every provider, by path: an embedder (reached
-	// through a connector, as every embedder is), an STT server that takes the key, one that refuses it, and
-	// a whisper.cpp that has no /models but answers at its root.
+	// One server stands in for every provider, by path: an embedder and a
+	// transcriber (each reached through a connector, as every one is), a
+	// transcriber that refuses, and a speech server.
 	stub := http.NewServeMux()
 	stub.HandleFunc("/embed/v1/embeddings", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"data":[{"embedding":[0.1,0.2,0.3]}]}`))
 	})
-	stub.HandleFunc("/stt-ok/v1/models", func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer s3cr3t-stt" {
-			http.Error(w, "no", http.StatusUnauthorized)
+	stub.HandleFunc("/stt-ok/v1/audio/transcriptions", func(w http.ResponseWriter, r *http.Request) {
+		if f, h, err := r.FormFile("file"); err != nil || !strings.HasSuffix(h.Filename, ".wav") || r.FormValue("model") != "whisper-1" {
+			http.Error(w, "no audio", http.StatusBadRequest)
 			return
+		} else {
+			f.Close()
 		}
-		w.Write([]byte(`{"data":[]}`))
+		w.Write([]byte(`{"text":""}`)) // a tone has no words
 	})
-	stub.HandleFunc("/stt-deny/v1/models", func(w http.ResponseWriter, r *http.Request) {
+	stub.HandleFunc("/stt-deny/v1/audio/transcriptions", func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no", http.StatusForbidden)
-	})
-	stub.HandleFunc("/whisper/", func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/models") {
-			http.NotFound(w, r)
-			return
-		}
-		w.Write([]byte("<html>whisper.cpp</html>"))
 	})
 	// A Kokoro-FastAPI: speaks with the key and a voice it has, lists its
 	// voices, and refuses a voice it does not have.
@@ -99,10 +94,6 @@ func TestMediaRoutesContract(t *testing.T) {
 		switch table {
 		case ImageTable:
 			adb.Get(table, key, &got)
-		case TranscribeTable:
-			var cfg TranscribeConfig
-			adb.Get(table, key, &cfg)
-			got = cfg.APIKey
 		case media.SpeechTable:
 			var cfg media.SpeechConfig
 			adb.Get(table, key, &cfg)
@@ -146,22 +137,27 @@ func TestMediaRoutesContract(t *testing.T) {
 	do("root", "POST", "/api/embeddings/test", `{"enabled":true,"provider":"service:vectors"}`)
 	do("root", "POST", "/api/embeddings/test", `{"enabled":true,"provider":"service:gone"}`)
 
-	do("alice", "POST", "/api/transcribe", `{"enabled":true,"endpoint":"`+srv.URL+`/stt-ok/v1","api_key":"s3cr3t-stt-x"}`)
-	do("root", "POST", "/api/transcribe", `{"enabled":true,"endpoint":"`+srv.URL+`/stt-ok/v1","model":"whisper-1","api_key":"s3cr3t-stt"}`)
+	// Transcription is done by a connector or a peer too: one that hears at
+	// the stub, one the stub refuses, and none on this instance itself.
+	transcribeConnector(t, "ears", srv.URL+"/stt-ok/v1", "whisper-1")
+	transcribeConnector(t, "deaf", srv.URL+"/stt-deny/v1", "")
+	SetTranscribeConfig(TranscribeConfig{})
+	do("alice", "POST", "/api/transcribe", `{"enabled":true,"provider":"service:ears"}`)
+	do("root", "POST", "/api/transcribe", `{"enabled":true,"provider":"local","endpoint":"`+srv.URL+`/stt-ok/v1","api_key":"s3cr3t-stt"}`)
+	do("root", "POST", "/api/transcribe", `{"enabled":true,"provider":"service:ears","endpoint":"http://127.0.0.1:1/v1","model":"typed-in"}`)
+	if got := GetTranscribeConfig(); got.Provider != "service:ears" || got.Model != "whisper-1" || got.Endpoint != "" || got.APIKey != "" {
+		t.Errorf("a save naming a connector stores it and the model its spec declares: %+v", got)
+	}
 	do("root", "GET", "/api/transcribe", "")
-	do("root", "POST", "/api/transcribe", `{"enabled":true,"endpoint":"`+srv.URL+`/stt-ok/v1","model":"whisper-1","api_key":"(unchanged)"}`)
-	keeps(TranscribeTable, "current", "s3cr3t-stt")
+	do("root", "POST", "/api/transcribe", `{"enabled":true,"provider":"service:nope"}`)
 	do("root", "POST", "/api/transcribe", `{"enabled":true,"provider":"peer:nope"}`)
+	do("root", "POST", "/api/transcribe", `{"enabled":false,"provider":"service:ears"}`)
 	do("root", "POST", "/api/transcribe", `{"enabled":`)
-	do("root", "POST", "/api/transcribe/test", `{"enabled":false}`)
+	do("root", "POST", "/api/transcribe/test", `{"enabled":false,"provider":"service:ears"}`)
 	do("root", "POST", "/api/transcribe/test", `{"enabled":true}`)
 	do("root", "POST", "/api/transcribe/test", `{"enabled":true,"provider":"peer:nope"}`)
-	do("root", "POST", "/api/transcribe/test", `{"enabled":true,"endpoint":"`+srv.URL+`/stt-ok/v1","api_key":"(unchanged)"}`)
-	do("root", "POST", "/api/transcribe/test", `{"enabled":true,"endpoint":"`+srv.URL+`/stt-ok/v1","api_key":"wrong"}`)
-	do("root", "POST", "/api/transcribe/test", `{"enabled":true,"endpoint":"`+srv.URL+`/stt-deny/v1"}`)
-	do("root", "POST", "/api/transcribe/test", `{"enabled":true,"endpoint":"`+srv.URL+`/whisper/v1"}`)
-	do("root", "POST", "/api/transcribe/test", `{"enabled":true,"endpoint":"`+srv.URL+`/nothing/v1"}`)
-	do("root", "POST", "/api/transcribe/test", `{"enabled":true,"endpoint":"http://127.0.0.1:1/v1"}`)
+	do("root", "POST", "/api/transcribe/test", `{"enabled":true,"provider":"service:ears"}`)
+	do("root", "POST", "/api/transcribe/test", `{"enabled":true,"provider":"service:deaf"}`)
 
 	tts := `"endpoint":"` + srv.URL + `/tts-ok/v1","model":"kokoro"`
 	do("alice", "POST", "/api/speech", `{"enabled":true,`+tts+`,"voice":"af_heart","api_key":"s3cr3t-tts-x"}`)

@@ -64,8 +64,8 @@ What gohort asks of a connector, and where it plugs in:
 |---|---|
 | `image.generate`, `image.edit` | Admin > Capabilities > Image Generation, and agents' image tools |
 | `speech.synthesize` | Admin > Capabilities > Speech (TTS): "Speak with" |
-| `speech.transcribe` | Admin > Capabilities > Audio Transcription: "Transcribe on" |
-| `embed.text` | Admin > Capabilities > Embeddings: "Embed on" |
+| `speech.transcribe` | Admin > Capabilities > Audio Transcription: "Transcribe with" |
+| `embed.text` | Admin > Capabilities > Embeddings: "Embed with" |
 | `web.search` | Admin > Capabilities > Web Search: "Provider" |
 | `page.render` | Admin > Capabilities > Page Rendering (Browser): "Render pages on" |
 | `mail.send` | Admin > System > Mail (SMTP): "Send with" |
@@ -139,7 +139,7 @@ resource's whole schema.
 | A messaging relay | messages in and out | Telegram, Teams, others |
 | A poll (made by an agent's bridge tool) | "the answer changed" | HTTP and a key |
 | A Source Hook (Admin > Extensions > Source Hooks) | search results, or passages, for research and agents | HTTP and a key the hook keeps |
-| gohort's own providers (the built-in image code, web search, the browser, SMTP mail, the LLM tiers) | the same contracts | written in Go, each moving to a connector in turn (embeddings already has) |
+| gohort's own providers (the built-in image code, web search, the browser, SMTP mail, the LLM tiers) | the same contracts | written in Go, each moving to a connector in turn (embeddings and transcription already have) |
 
 Services, messaging relays, polls, MCP connections, gohort's own providers
 and the programs System Hooks run are listed under Admin > Extensions >

@@ -98,36 +98,32 @@ root POST /api/embeddings/test "{\"enabled\":true,\"provider\":\"service:vectors
   200 {"message":"OK: 3-dim embedding from nomic-embed-text via the service vectors","ok":true}
 root POST /api/embeddings/test "{\"enabled\":true,\"provider\":\"service:gone\"}"
   200 {"error":"embed through service gone: embed: request failed: Post \"http://127.0.0.1:1/v1/embeddings\": dial tcp 127.0.0.1:1: connect: connection refused","ok":false}
-alice POST /api/transcribe "{\"enabled\":true,\"endpoint\":\"<stub>/stt-ok/v1\",\"api_key\":\"s3cr3t-stt-x\"}"
+alice POST /api/transcribe "{\"enabled\":true,\"provider\":\"service:ears\"}"
   403 forbidden
-root POST /api/transcribe "{\"enabled\":true,\"endpoint\":\"<stub>/stt-ok/v1\",\"model\":\"whisper-1\",\"api_key\":\"s3cr3t-stt\"}"
+root POST /api/transcribe "{\"enabled\":true,\"provider\":\"local\",\"endpoint\":\"<stub>/stt-ok/v1\",\"api_key\":\"s3cr3t-stt\"}"
+  400 choose what transcribes: a connector (Admin > Extensions > Connectors) or a peer that lends transcription
+root POST /api/transcribe "{\"enabled\":true,\"provider\":\"service:ears\",\"endpoint\":\"http://127.0.0.1:1/v1\",\"model\":\"typed-in\"}"
   204 
 root GET /api/transcribe ""
-  200 {"endpoint":"<stub>/stt-ok/v1","model":"whisper-1","api_key":"(unchanged)","enabled":true}
-root POST /api/transcribe "{\"enabled\":true,\"endpoint\":\"<stub>/stt-ok/v1\",\"model\":\"whisper-1\",\"api_key\":\"(unchanged)\"}"
-  204 
+  200 {"endpoint":"","model":"whisper-1","api_key":"","enabled":true,"provider":"service:ears"}
+root POST /api/transcribe "{\"enabled\":true,\"provider\":\"service:nope\"}"
+  400 no connector named "nope"
 root POST /api/transcribe "{\"enabled\":true,\"provider\":\"peer:nope\"}"
   400 no peer named "nope" is registered: add it under Peers first
+root POST /api/transcribe "{\"enabled\":false,\"provider\":\"service:ears\"}"
+  204 
 root POST /api/transcribe "{\"enabled\":"
   400 invalid JSON: unexpected EOF
-root POST /api/transcribe/test "{\"enabled\":false}"
+root POST /api/transcribe/test "{\"enabled\":false,\"provider\":\"service:ears\"}"
   200 {"error":"transcription is disabled: flip the toggle on first","ok":false}
 root POST /api/transcribe/test "{\"enabled\":true}"
-  200 {"error":"endpoint is required","ok":false}
+  200 {"message":"OK: the service ears transcribed a second of a tone and heard no words, as expected of a tone","ok":true}
 root POST /api/transcribe/test "{\"enabled\":true,\"provider\":\"peer:nope\"}"
   200 {"error":"no peer named \"nope\" is registered: add it under Peers first","ok":false}
-root POST /api/transcribe/test "{\"enabled\":true,\"endpoint\":\"<stub>/stt-ok/v1\",\"api_key\":\"(unchanged)\"}"
-  200 {"message":"Endpoint reachable + /models OK (HTTP 200)","ok":true}
-root POST /api/transcribe/test "{\"enabled\":true,\"endpoint\":\"<stub>/stt-ok/v1\",\"api_key\":\"wrong\"}"
-  200 {"error":"HTTP 401: endpoint reached but rejected the API key","ok":false}
-root POST /api/transcribe/test "{\"enabled\":true,\"endpoint\":\"<stub>/stt-deny/v1\"}"
-  200 {"error":"HTTP 403: endpoint reached but rejected the API key","ok":false}
-root POST /api/transcribe/test "{\"enabled\":true,\"endpoint\":\"<stub>/whisper/v1\"}"
-  200 {"message":"Endpoint reachable (HTTP 200 at root; 404 at /models: server doesn't expose /models, fine for whisper.cpp)","ok":true}
-root POST /api/transcribe/test "{\"enabled\":true,\"endpoint\":\"<stub>/nothing/v1\"}"
-  200 {"message":"Endpoint reachable (HTTP 404 at root; 404 at /models: server doesn't expose /models, fine for whisper.cpp)","ok":true}
-root POST /api/transcribe/test "{\"enabled\":true,\"endpoint\":\"http://127.0.0.1:1/v1\"}"
-  200 {"error":"reach failed: Get \"http://127.0.0.1:1/v1/models\": dial tcp 127.0.0.1:1: connect: connection refused","ok":false}
+root POST /api/transcribe/test "{\"enabled\":true,\"provider\":\"service:ears\"}"
+  200 {"message":"OK: the service ears transcribed a second of a tone and heard no words, as expected of a tone","ok":true}
+root POST /api/transcribe/test "{\"enabled\":true,\"provider\":\"service:deaf\"}"
+  200 {"error":"transcribe: the provider answered HTTP 403: no","ok":false}
 alice POST /api/speech "{\"enabled\":true,\"endpoint\":\"<stub>/tts-ok/v1\",\"model\":\"kokoro\",\"voice\":\"af_heart\",\"api_key\":\"s3cr3t-tts-x\"}"
   403 forbidden
 root POST /api/speech "{\"enabled\":true,\"endpoint\":\"<stub>/tts-ok/v1\",\"model\":\"kokoro\",\"voice\":\"af_heart\",\"api_key\":\"s3cr3t-tts\"}"
@@ -186,5 +182,5 @@ activity log, 9 entries:
   settings root: updated image-gen config (provider="openai")
   settings root: updated speech config (enabled=true endpoint="<stub>/tts-ok/v1" model="kokoro" voice="af_heart")
   settings root: updated speech config (enabled=true endpoint="<stub>/tts-ok/v1" model="kokoro" voice="af_heart")
-  settings root: updated transcribe config (enabled=true endpoint="<stub>/stt-ok/v1" model="whisper-1")
-  settings root: updated transcribe config (enabled=true endpoint="<stub>/stt-ok/v1" model="whisper-1")
+  settings root: updated transcribe config (enabled=false provider="service:ears" model="whisper-1")
+  settings root: updated transcribe config (enabled=true provider="service:ears" model="whisper-1")

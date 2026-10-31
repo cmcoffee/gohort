@@ -430,13 +430,10 @@ func backgroundVoiceRun(t *testing.T, voice bool) (sends []voiceSend, card ChatM
 		w.Write(append([]byte("ID3\x04\x00\x00\x00\x00\x00\x00"), make([]byte, 32)...))
 	}))
 	t.Cleanup(tts.Close)
-	prevSTT, prevTTS := GetTranscribeConfig(), media.GetSpeechConfig()
-	SetTranscribeConfig(TranscribeConfig{Endpoint: stt.URL, Enabled: true})
+	prevTTS := media.GetSpeechConfig()
+	transcribeAt(t, stt.URL)
 	media.SetSpeechConfig(media.SpeechConfig{Endpoint: tts.URL, Enabled: true})
-	t.Cleanup(func() {
-		SetTranscribeConfig(prevSTT)
-		media.SetSpeechConfig(prevTTS)
-	})
+	t.Cleanup(func() { media.SetSpeechConfig(prevTTS) })
 
 	in := ChannelInbound{Owner: "u", AgentID: df.agent.ID, SessionID: room, ChatID: "chat-1", SenderName: "Alice", FromOwner: true}
 	if voice {

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -106,17 +105,25 @@ func TestFrameSamplingCanBeAdapted(t *testing.T) {
 	}
 }
 
-// Transcription: with no speech service, it says what to set up; adapted to
-// a command, that command transcribes; with a service, the service does.
+// Transcription: with no connector or peer, it says what to set up; adapted
+// to a command, that command transcribes; with a connector, the connector
+// does.
 func TestTranscriptionIsAServiceOrAnAdaptedCommand(t *testing.T) {
 	needSandbox(t)
 	was := media.GetTranscribeConfig()
 	defer media.SetTranscribeConfig(was)
 	media.SetTranscribeConfig(media.TranscribeConfig{})
 	audio := append([]byte("ID3\x04\x00\x00\x00\x00\x00\x00"), bytes.Repeat([]byte{0}, 64)...)
-	if _, err := media.Transcribe(context.Background(), audio, "memo.mp3"); err == nil || !strings.Contains(err.Error(), "speech-to-text") {
+	if _, err := media.Transcribe(context.Background(), audio, "memo.mp3"); err == nil || !strings.Contains(err.Error(), "a connector or a peer that transcribes") {
 		t.Fatalf("with no service, say what to set up: %v", err)
 	}
+	// On, but naming the endpoint this instance once called itself: nothing
+	// transcribes, and it says what to set up.
+	media.SetTranscribeConfig(media.TranscribeConfig{Enabled: true, Endpoint: "http://localhost:8089/v1"})
+	if _, err := media.Transcribe(context.Background(), audio, "memo.mp3"); err == nil || !strings.Contains(err.Error(), "a connector or a peer that transcribes") {
+		t.Fatalf("an endpoint no connector reaches, say what to set up: %v", err)
+	}
+	media.SetTranscribeConfig(media.TranscribeConfig{})
 	SetAdapted("whisper", Adapted{Job: "media.transcribe", Command: "sh -c 'echo hello from the command' {in}"})
 	defer RemoveAdapted("whisper")
 	if text, err := media.Transcribe(context.Background(), audio, "memo.mp3"); err != nil || strings.TrimSpace(text) != "hello from the command" {
@@ -125,16 +132,14 @@ func TestTranscriptionIsAServiceOrAnAdaptedCommand(t *testing.T) {
 	RemoveAdapted("whisper")
 
 	var gotName string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if f, h, err := r.FormFile("file"); err == nil {
-			io.Copy(io.Discard, f)
-			gotName = h.Filename
-		}
-		io.WriteString(w, "hello from the service")
-	}))
-	defer srv.Close()
-	media.SetTranscribeConfig(media.TranscribeConfig{Enabled: true, Endpoint: srv.URL})
-	if text, err := media.Transcribe(context.Background(), audio, "memo.mp3"); err != nil || strings.TrimSpace(text) != "hello from the service" || gotName != "memo.mp3" {
+	was2 := media.TranscribeService
+	defer func() { media.TranscribeService = was2 }()
+	media.TranscribeService = func(ctx context.Context, connector string, audio []byte, filename string) (string, error) {
+		gotName = connector + "/" + filename
+		return "hello from the service", nil
+	}
+	media.SetTranscribeConfig(media.TranscribeConfig{Enabled: true, Provider: media.ServiceProviderPrefix + "stt"})
+	if text, err := media.Transcribe(context.Background(), audio, "memo.mp3"); err != nil || strings.TrimSpace(text) != "hello from the service" || gotName != "stt/memo.mp3" {
 		t.Errorf("the service should transcribe it, under its name: %v %q %q", err, text, gotName)
 	}
 }

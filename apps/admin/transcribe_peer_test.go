@@ -2,11 +2,11 @@ package admin
 
 // Transcription settings when a PEER is doing the work.
 //
-// With a peer picked, the endpoint/model/key fields are hidden, so the form
-// submits them empty. Every consumer of a submitted config therefore has to
-// RESOLVE before it inspects those fields — the embeddings side learned this
-// when its Test button reported "endpoint is required" against a form that was
-// showing no endpoint field to fill in.
+// The form names a peer and nothing else, so it submits no endpoint, model or
+// key. Every consumer of a submitted config therefore has to RESOLVE before it
+// inspects those fields: the embeddings side learned this when its Test
+// button reported "endpoint is required" against a form that was showing no
+// endpoint field to fill in.
 
 import (
 	"net/http"
@@ -25,11 +25,8 @@ func transcribePeer(t *testing.T, caps ...string) RemotePeer {
 	t.Cleanup(func() { RootDB = prevDB; SetTranscribeConfig(prevCfg) })
 	RootDB = &DBase{Store: kvlite.MemStore()}
 
-	whisper := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("ok"))
-	}))
-	t.Cleanup(whisper.Close)
-	SetTranscribeConfig(TranscribeConfig{Enabled: true, Endpoint: whisper.URL, Model: "whisper-1"})
+	// The serving instance transcribes with a connector of its own.
+	SetTranscribeConfig(TranscribeConfig{Enabled: true, Provider: "service:stt", Model: "whisper-1"})
 
 	pk, err := MintPeerKey("consumer", caps, 0)
 	if err != nil {
@@ -51,9 +48,10 @@ func transcribePeer(t *testing.T, caps ...string) RemotePeer {
 	return p
 }
 
-// The picker appears only when a peer actually offers STT, and the manual
-// fields hide behind it — same conditional shape as embeddings, and testing
-// only the empty case would let a change that drops the clause pass.
+// The picker appears once a peer offers STT, offering that peer and not this
+// instance, and the form has no endpoint, model or key: those are the
+// connector's or the peer's. Testing only the empty case would let a change
+// that drops the picker pass.
 func TestTranscribeFormShowsThePeerPicker(t *testing.T) {
 	transcribePeer(t, PeerCapTranscribe)
 
@@ -62,13 +60,15 @@ func TestTranscribeFormShowsThePeerPicker(t *testing.T) {
 	if !ok {
 		t.Fatal("a peer offers transcription but the provider dropdown is absent")
 	}
-	if len(provider.Options) < 2 {
-		t.Errorf("dropdown should offer local plus the peer, got %+v", provider.Options)
+	if f, ok := findField(fields, "enabled"); !ok || f.Help != "" {
+		t.Errorf("the toggle stays, with no pointer while there is a choice: %+v", f)
+	}
+	if len(provider.Options) != 1 || provider.Options[0].Value != PeerProviderValue("gpu-box") {
+		t.Errorf("dropdown should offer the peer alone, got %+v", provider.Options)
 	}
 	for _, name := range []string{"endpoint", "model", "api_key"} {
-		f, _ := findField(fields, name)
-		if !strings.Contains(f.ShowWhen, "provider:local") {
-			t.Errorf("field %q must hide while a peer is selected, got ShowWhen %q", name, f.ShowWhen)
+		if _, ok := findField(fields, name); ok {
+			t.Errorf("field %q is on the transcription form: it is the connector's or the peer's", name)
 		}
 	}
 }
@@ -138,7 +138,7 @@ func TestPeerTranscribeTestResultNamesEachFailure(t *testing.T) {
 	if ok {
 		t.Fatal("a peer with no STT configured passed its test")
 	}
-	if !strings.Contains(errMsg, "no transcription endpoint") {
+	if !strings.Contains(errMsg, "no transcription of its own") {
 		t.Errorf("the failure should distinguish a missing endpoint from a missing grant: %q", errMsg)
 	}
 

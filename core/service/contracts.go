@@ -482,6 +482,14 @@ func looksLikeAudio(h []byte) bool {
 
 // sampleTone is one second of a 440 Hz tone, written as a WAV file.
 func sampleTone() (*File, error) {
+	f, _, err := writeFile(bytes.NewReader(SampleTone()), defaultMaxBytes)
+	return f, err
+}
+
+// SampleTone is one second of a 440 Hz tone as a WAV file's bytes: what a
+// transcriber is tested with. It has no words, so any text back, none
+// included, means the audio was taken.
+func SampleTone() []byte {
 	const rate = 16000
 	var pcm bytes.Buffer
 	for i := 0; i < rate; i++ {
@@ -496,8 +504,7 @@ func sampleTone() (*File, error) {
 	b.WriteString("data")
 	binary.Write(&b, binary.LittleEndian, uint32(pcm.Len()))
 	b.Write(pcm.Bytes())
-	f, _, err := writeFile(&b, defaultMaxBytes)
-	return f, err
+	return b.Bytes()
 }
 
 // testInputs are the inputs of a contract test, with a fresh sample picture

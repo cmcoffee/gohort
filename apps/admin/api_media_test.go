@@ -31,6 +31,27 @@ func embedConnector(t *testing.T, name, base, model string) {
 	SetEmbeddingConfig(EmbeddingConfig{Enabled: true, Provider: "service:" + name, Endpoint: "service:" + name, Model: model})
 }
 
+// transcribeConnector saves and approves a keyless service connector named
+// name that transcribes at base (base/audio/transcriptions, OpenAI's shape),
+// with model when one is given: the shape the migration writes. It needs
+// RootDB and AuthDB set by the caller.
+func transcribeConnector(t *testing.T, name, base, model string) {
+	t.Helper()
+	defaults := ""
+	if model != "" {
+		defaults = `,"defaults":{"model":"` + model + `"}`
+	}
+	spec := `{"provider":{"transport":"http","base_url":"` + base + `","auth":{"none":true},
+		"operations":{"transcribe":{"method":"POST","path":"/audio/transcriptions","send":"multipart","body":{"file":"{audio}","model":"{model}","prompt":"{prompt}"}}}},
+		"provides":[{"capability":"speech.transcribe","steps":[{"call":"transcribe"}],"output":{"text":{"path":"text","as":"text"}}` + defaults + `}]}`
+	if err := SaveConnector(RootDB, Connector{Name: name, Kind: "service", Spec: json.RawMessage(spec)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ApproveConnector(RootDB, name); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // A speech or transcription setting may name a service connector, but only an
 // approved one that provides it; the settings offer exactly those.
 func TestSpeechSettingsTakeAServiceThatSpeaks(t *testing.T) {

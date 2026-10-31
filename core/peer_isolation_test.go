@@ -136,7 +136,7 @@ func TestServingAnImageLeavesNothingInAnyGallery(t *testing.T) {
 // memory budget, so the cleanup is what stops a peer's recording staying here.
 func TestServingATranscriptionKeepsNoAudio(t *testing.T) {
 	pk, _ := isolationRig(t)
-	SetTranscribeConfig(TranscribeConfig{Enabled: true, Endpoint: "http://127.0.0.1:1/v1", Model: "whisper-1"})
+	useConnectorTranscriber(t, "http://127.0.0.1:1/v1", "whisper-1")
 
 	var buf strings.Builder
 	const boundary = "xxBOUNDARYxx"

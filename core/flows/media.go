@@ -27,10 +27,12 @@ var (
 	audioFormats = []string{"audio/mpeg", "audio/wave", "audio/mp4", "application/ogg", "audio/flac", "audio/aac"}
 )
 
-// transcribeReady reports whether a speech-to-text service is set up.
+// transcribeReady reports whether transcription is on and set to a
+// connector or a peer: one of those is all that transcribes.
 func transcribeReady() bool {
 	cfg := media.GetTranscribeConfig()
-	return cfg.Enabled && strings.TrimSpace(cfg.Endpoint) != ""
+	p := strings.TrimSpace(cfg.Provider)
+	return cfg.Enabled && (strings.HasPrefix(p, media.ServiceProviderPrefix) || strings.HasPrefix(p, "peer:"))
 }
 
 func init() {
@@ -82,7 +84,7 @@ func init() {
 			UsedFor: "voice memos, the sound of videos, and audio you attach",
 			Takes:   audioFormats, Becomes: KindText,
 			Builtin: true, ready: transcribeReady, timeout: 15 * time.Minute,
-			install: "set up a speech-to-text service under Audio Transcription (STT), or adapt it to a command such as whisper.cpp's whisper-cli",
+			install: "set up a connector or a peer that transcribes under Audio Transcription (STT), or adapt it to a command such as whisper.cpp's whisper-cli",
 			run: func(ctx context.Context, _ *Box, in Input) ([]byte, [][]byte, error) {
 				name := firstNonEmpty(in.Name, "audio"+extFor(in.From))
 				text, err := media.TranscribeWith(ctx, media.GetTranscribeConfig(), in.Data, name)

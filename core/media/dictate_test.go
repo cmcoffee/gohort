@@ -31,7 +31,7 @@ func TestServeDictation(t *testing.T) {
 	defer srv.Close()
 	prevCfg, prevHook, prevUpload := GetTranscribeConfig(), TranscribeHook, GovernedUploadFunc
 	TranscribeHook, GovernedUploadFunc = nil, nil
-	SetTranscribeConfig(TranscribeConfig{Endpoint: srv.URL, Enabled: true})
+	SetTranscribeConfig(TranscribeConfig{Endpoint: srv.URL, Enabled: true, Provider: "peer:den"})
 	t.Cleanup(func() { SetTranscribeConfig(prevCfg); TranscribeHook, GovernedUploadFunc = prevHook, prevUpload })
 
 	do := func(method, user, ctype string, body []byte) *httptest.ResponseRecorder {
@@ -70,7 +70,7 @@ func TestServeDictation(t *testing.T) {
 	if w := do("POST", "alice", "audio/webm", []byte("x")); w.Code != http.StatusBadGateway {
 		t.Errorf("the transcriber failing: %d", w.Code)
 	}
-	SetTranscribeConfig(TranscribeConfig{Endpoint: srv.URL, Enabled: false})
+	SetTranscribeConfig(TranscribeConfig{Endpoint: srv.URL, Enabled: false, Provider: "peer:den"})
 	if w := do("POST", "alice", "audio/webm", []byte("x")); w.Code != http.StatusServiceUnavailable {
 		t.Errorf("transcription off: %d", w.Code)
 	}
@@ -697,7 +697,7 @@ func TestASilentClipIsNotWrittenOut(t *testing.T) {
 	prevCfg, prevHook, prevUpload, prevWAV := GetTranscribeConfig(), TranscribeHook, GovernedUploadFunc, WAVHook
 	TranscribeHook, GovernedUploadFunc = nil, nil
 	WAVHook = func(b []byte) ([]byte, error) { return b, nil }
-	SetTranscribeConfig(TranscribeConfig{Endpoint: srv.URL, Enabled: true})
+	SetTranscribeConfig(TranscribeConfig{Endpoint: srv.URL, Enabled: true, Provider: "peer:den"})
 	t.Cleanup(func() {
 		SetTranscribeConfig(prevCfg)
 		TranscribeHook, GovernedUploadFunc, WAVHook = prevHook, prevUpload, prevWAV
@@ -749,7 +749,7 @@ func TestDictationNamesTheAgentToTheTranscriber(t *testing.T) {
 	dictationNames.fns = nil
 	dictationNames.mu.Unlock()
 	TranscribeHook, GovernedUploadFunc = nil, nil
-	SetTranscribeConfig(TranscribeConfig{Endpoint: srv.URL, Enabled: true})
+	SetTranscribeConfig(TranscribeConfig{Endpoint: srv.URL, Enabled: true, Provider: "peer:den"})
 	t.Cleanup(func() {
 		SetTranscribeConfig(prevCfg)
 		TranscribeHook, GovernedUploadFunc = prevHook, prevUpload

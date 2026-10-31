@@ -1,8 +1,13 @@
 package orchestrate
 
 import (
+	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -469,13 +474,10 @@ func voiceChannel(t *testing.T, reply string, status int) (df *dispatchFixture, 
 	}))
 	t.Cleanup(tts.Close)
 
-	prevSTT, prevTTS := GetTranscribeConfig(), media.GetSpeechConfig()
-	SetTranscribeConfig(TranscribeConfig{Endpoint: stt.URL, Enabled: true})
+	prevTTS := media.GetSpeechConfig()
+	transcribeAt(t, stt.URL)
 	media.SetSpeechConfig(media.SpeechConfig{Endpoint: tts.URL, Enabled: true})
-	t.Cleanup(func() {
-		SetTranscribeConfig(prevSTT)
-		media.SetSpeechConfig(prevTTS)
-	})
+	t.Cleanup(func() { media.SetSpeechConfig(prevTTS) })
 	return df, func() []string {
 		mu.Lock()
 		defer mu.Unlock()
@@ -588,11 +590,10 @@ func TestAnAgentSpeaksInItsOwnVoice(t *testing.T) {
 		w.Write(append([]byte("ID3\x04\x00\x00\x00\x00\x00\x00"), make([]byte, 32)...))
 	}))
 	defer tts.Close()
-	prevSTT, prevTTS := GetTranscribeConfig(), media.GetSpeechConfig()
-	SetTranscribeConfig(TranscribeConfig{Endpoint: stt.URL, Enabled: true})
+	prevTTS := media.GetSpeechConfig()
+	transcribeAt(t, stt.URL)
 	media.SetSpeechConfig(media.SpeechConfig{Endpoint: tts.URL, Voice: "af_heart", Enabled: true})
 	t.Cleanup(func() {
-		SetTranscribeConfig(prevSTT)
 		media.SetSpeechConfig(prevTTS)
 	})
 	lastVoice := func(session string) string {
@@ -719,4 +720,33 @@ func TestASpokenMessageIsReadForWhatWasMeant(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"message":"hi","dictated":true}`), &req); err != nil || !req.Dictated {
 		t.Errorf("dictated on the send body: %+v %v", req.Dictated, err)
 	}
+}
+
+// transcribeAt points transcription at a connector whose server is url,
+// standing in for core/service: the audio goes up as a multipart form, and
+// the reply's body is the text. A refusal is the connector's error.
+func transcribeAt(t *testing.T, url string) {
+	t.Helper()
+	prevSvc, prevCfg := media.TranscribeService, GetTranscribeConfig()
+	t.Cleanup(func() { media.TranscribeService = prevSvc; SetTranscribeConfig(prevCfg) })
+	media.TranscribeService = func(ctx context.Context, _ string, audio []byte, filename string) (string, error) {
+		var body bytes.Buffer
+		mw := multipart.NewWriter(&body)
+		fw, _ := mw.CreateFormFile("file", filename)
+		fw.Write(audio)
+		mw.Close()
+		req, _ := http.NewRequestWithContext(ctx, "POST", url+"/audio/transcriptions", &body)
+		req.Header.Set("Content-Type", mw.FormDataContentType())
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return "", err
+		}
+		defer resp.Body.Close()
+		raw, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != http.StatusOK {
+			return "", fmt.Errorf("transcribe: the provider answered HTTP %d: %s", resp.StatusCode, raw)
+		}
+		return strings.TrimSpace(string(raw)), nil
+	}
+	SetTranscribeConfig(TranscribeConfig{Enabled: true, Provider: media.ServiceProviderPrefix + "ears"})
 }

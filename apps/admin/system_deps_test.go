@@ -609,7 +609,7 @@ func TestTheMediaJobsAreRows(t *testing.T) {
 			t.Errorf("%s is a job's tool now and should not be listed apart", tool)
 		}
 	}
-	if r := byID["media.transcribe"]; r.State != "missing" || !strings.HasPrefix(r.Detail, "To use it, set up a speech-to-text service") {
+	if r := byID["media.transcribe"]; r.State != "missing" || !strings.HasPrefix(r.Detail, "To use it, set up a connector or a peer that transcribes") {
 		t.Errorf("with no speech service, transcription should say what to set up: %+v", r)
 	}
 }

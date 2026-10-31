@@ -795,16 +795,15 @@ func TestTranscribeThroughAConfiguredPeer(t *testing.T) {
 	// the secure-api store; peerServer swaps RootDB afterwards on purpose.
 	peerImageDB(t)
 	// The far side's real STT, behind the peer endpoint.
-	prevCfg := GetTranscribeConfig()
-	t.Cleanup(func() { SetTranscribeConfig(prevCfg) })
 	whisper := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("meeting starts at four"))
 	}))
 	t.Cleanup(whisper.Close)
 
 	base, key := peerServer(t, PeerCapTranscribe)
-	// peerServer swapped RootDB; install the STT config the served instance uses.
-	SetTranscribeConfig(TranscribeConfig{Enabled: true, Endpoint: whisper.URL, Model: "whisper-1"})
+	// peerServer swapped RootDB; install the STT connector the served
+	// instance uses.
+	useConnectorTranscriber(t, whisper.URL, "whisper-1")
 
 	p, err := SaveRemotePeer(t.Context(), "gpu-box", base, key)
 	if err != nil {

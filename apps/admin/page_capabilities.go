@@ -15,7 +15,7 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 		{
 			Title:    "Embeddings",
 			Subtitle: "Vector store ingestion and semantic search.",
-			Detail:   "The endpoint is an Ollama-compatible /api/embed server, typically the same host as the worker LLM. Disabling it makes ingestion and search no-ops.",
+			Detail:   "Made by a connector or a peer that embeds, often on the same host as the worker LLM. Disabling it makes ingestion and search no-ops.",
 			Body: ui.FormPanel{
 				Assist:    true,
 				Source:    "api/embeddings",
@@ -27,12 +27,12 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 		{
 			Title:    "Audio Transcription (STT)",
 			Subtitle: "Transcription for video and audio attachments.",
-			Detail:   "An OpenAI-compatible /audio/transcriptions endpoint. The endpoint you give includes the API version prefix; gohort appends /audio/transcriptions.",
+			Detail:   "Done by a connector or a peer that transcribes: voice notes, the sound of videos, and audio files you attach become text the agent reads. The Test sends a second of a tone.",
 			Body: ui.FormPanel{
 				Assist:    true,
 				Source:    "api/transcribe",
 				TestURL:   "api/transcribe/test",
-				TestLabel: "Test endpoint",
+				TestLabel: "Test transcription",
 				Fields:    transcribeFormFields(),
 			},
 		},
@@ -281,57 +281,29 @@ func embeddingFormFields() []ui.FormField {
 	)
 }
 
-// transcribeFormFields builds the STT settings, with the peer picker added only
-// when a peer actually offers transcription.
-//
-// Same conditional shape as embeddingFormFields, and for the same reason: the
-// endpoint/model/key carry ShowWhen "enabled;provider:local" so they disappear
-// while a peer is selected, and leaving that clause in with no dropdown to set
-// `provider` would hide the whole form on every deployment with no peers.
+// transcribeFormFields builds the STT settings: on or off, and the connector
+// or peer that transcribes. Its address, model and key are its own, set up,
+// tested and fixed under Admin > Extensions > Connectors, as embeddings'
+// are.
 func transcribeFormFields() []ui.FormField {
-	peers := append(TranscribeProviderOptions(), serviceProviderOptions("speech.transcribe", "Transcribe")...)
-	hasPeers := len(peers) > 1
-
-	local := "enabled"
-	if hasPeers {
-		local = "enabled;provider:local"
+	choices := append(serviceProviderOptions("speech.transcribe", "Transcribe"), TranscribeProviderOptions()...)
+	add := "add a connector that transcribes from a template (Admin > Extensions > Templates: whisper.cpp / OpenAI-compatible (transcription); OpenAI (transcription)) or from its spec (Add, under Admin > Extensions > Connectors), or connect a peer that lends transcription (Admin > Capabilities > Peers)"
+	fields := []ui.FormField{{Field: "enabled", Label: "Enable transcription", Type: "toggle"}}
+	if len(choices) == 0 {
+		fields[0].Help = "Nothing here transcribes yet: " + add + "."
+		return fields
 	}
-
-	fields := []ui.FormField{
-		{Field: "enabled", Label: "Enable transcription", Type: "toggle", Help: elsewhere(hasPeers, "transcribe", "transcribes", "transcription")},
-	}
-	if hasPeers {
-		fields = append(fields, ui.FormField{
-			Field: "provider", Label: "Transcribe on", Type: "select",
-			Options:  peers,
-			ShowWhen: "enabled",
-			Help:     "Use this instance's own STT endpoint, a peer instance you've connected under Resource Sharing › Peers, or an approved service connector that transcribes.",
-		})
-	}
-	return append(fields,
-		ui.FormField{Field: "endpoint", Label: "Endpoint", Type: "text",
-			Placeholder: "http://localhost:8089/v1",
-			Help:        "Base URL with the version prefix: gohort appends /audio/transcriptions.",
-			ShowWhen:    local,
-			Presets: []ui.FieldPreset{
-				{Label: "whisper.cpp", Value: "http://localhost:8089/v1", Hint: "Default whisper.cpp HTTP server port"},
-				{Label: "OpenAI", Value: "https://api.openai.com/v1", Hint: "OpenAI hosted Whisper"},
-			}},
-		ui.FormField{Field: "model", Label: "Model", Type: "text",
-			Placeholder: "whisper-1",
-			Help:        "Optional. whisper.cpp ignores this; OpenAI expects 'whisper-1'.",
-			ShowWhen:    local},
-		ui.FormField{Field: "api_key", Label: "API Key", Type: "password",
-			Help:     "Optional bearer token.",
-			Detail:   "Required for OpenAI hosted Whisper, or a whisper.cpp server behind an authenticating proxy. Leave it blank for a plain local whisper.cpp server.",
-			ShowWhen: local},
-	)
+	return append(fields, ui.FormField{Field: "provider", Label: "Transcribe with", Type: "select",
+		Options:  choices,
+		ShowWhen: "enabled",
+		Help:     "The connector or peer that transcribes. Its address, model and key are kept on it: open its row under Admin > Extensions > Connectors to see, test or fix them.",
+		Detail:   "To transcribe with something not listed, " + add + "."})
 }
 
 // speechFormFields builds the speech (TTS) settings, with the peer picker
-// added only when a peer offers speech: the same conditional shape as
-// transcribeFormFields, for the same reason. The voice stays while a peer is
-// picked: it is chosen here, from the peer's own list.
+// added only when a peer offers speech, since the endpoint fields hide while
+// one is picked. The voice stays while a peer is picked: it is chosen here,
+// from the peer's own list.
 func speechFormFields() []ui.FormField {
 	peers := append(SpeechProviderOptions(), serviceProviderOptions("speech.synthesize", "Speak")...)
 	hasPeers := len(peers) > 1

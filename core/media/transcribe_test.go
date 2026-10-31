@@ -9,8 +9,9 @@ import (
 	"testing"
 )
 
-// The names a speaker is likely to say reach the transcriber as its prompt,
-// on both roads a clip leaves by, and nothing goes when there are none.
+// The names a speaker is likely to say reach a peer's transcriber as its
+// prompt, on both roads a clip leaves by, and nothing goes when there are
+// none.
 func TestATranscriptionPromptReachesTheTranscriber(t *testing.T) {
 	var prompt string
 	var hadPrompt bool
@@ -24,7 +25,7 @@ func TestATranscriptionPromptReachesTheTranscriber(t *testing.T) {
 	prevUpload := GovernedUploadFunc
 	t.Cleanup(func() { GovernedUploadFunc = prevUpload })
 	GovernedUploadFunc = nil
-	cfg := TranscribeConfig{Endpoint: srv.URL, Enabled: true}
+	cfg := TranscribeConfig{Endpoint: srv.URL, Enabled: true, Provider: "peer:den"}
 
 	ctx := WithTranscribePrompt(context.Background(), "  Talking with Pemberly.  ")
 	if _, err := TranscribeWith(ctx, cfg, []byte("audio"), "a.wav"); err != nil || prompt != "Talking with Pemberly." {
@@ -52,5 +53,34 @@ func TestATranscriptionPromptReachesTheTranscriber(t *testing.T) {
 	}
 	if TranscribePrompt(WithTranscribePrompt(context.Background(), "   ")) != "" {
 		t.Error("a blank prompt is none")
+	}
+}
+
+// Transcription is done by a connector or a peer: settings naming neither,
+// as this instance's own endpoint once was, are refused without sending.
+func TestATranscriberThatIsNeitherConnectorNorPeerIsRefused(t *testing.T) {
+	sent := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sent = true
+		io.WriteString(w, "heard")
+	}))
+	defer srv.Close()
+	prevUpload, prevService := GovernedUploadFunc, TranscribeService
+	t.Cleanup(func() { GovernedUploadFunc, TranscribeService = prevUpload, prevService })
+	GovernedUploadFunc = nil
+	for _, p := range []string{"", "local"} {
+		_, err := TranscribeWith(context.Background(), TranscribeConfig{Enabled: true, Endpoint: srv.URL, Provider: p}, []byte("audio"), "a.wav")
+		if err == nil || !strings.Contains(err.Error(), "not set to a connector or a peer") || sent {
+			t.Errorf("provider %q: %v, sent %v", p, err, sent)
+		}
+	}
+	var got string
+	TranscribeService = func(ctx context.Context, connector string, audio []byte, filename string) (string, error) {
+		got = connector + "/" + filename + "/" + TranscribePrompt(ctx)
+		return "heard", nil
+	}
+	ctx := WithTranscribePrompt(context.Background(), "Pemberly")
+	if text, err := TranscribeWith(ctx, TranscribeConfig{Enabled: true, Provider: ServiceProviderPrefix + "stt"}, []byte("audio"), "a.wav"); err != nil || text != "heard" || got != "stt/a.wav/Pemberly" || sent {
+		t.Errorf("a connector: %q %v %q", text, err, got)
 	}
 }

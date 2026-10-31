@@ -1,0 +1,91 @@
+{
+  "id": "openai-compatible-transcription",
+  "title": "whisper.cpp / OpenAI-compatible (transcription)",
+  "description": "A speech-to-text model on any server that speaks OpenAI's transcription API (whisper.cpp, faster-whisper / Speaches, vLLM), on this machine or your network, as gohort's ears: the upload and the reply are data you can test and fix from Admin > Connectors.",
+  "category": "Speech",
+  "setup_notes": "Start the server with a speech model. whisper.cpp: whisper-server -m <model> --port 8089 --inference-path /v1/audio/transcriptions (its default path is /inference, which this connector does not call). Speaches and vLLM serve /v1/audio/transcriptions as they are. The connector takes no key and lands unapproved: approve it in Admin > Extensions > Connectors, run Test on its row (it sends one second of a tone, which has no words, so an empty answer passes), then pick it under Capabilities > Audio Transcription. A server that takes a key: add a bearer credential for its address under API Credentials and name it in the spec's auth in place of none.",
+  "questions": [
+    {
+      "name": "base_url",
+      "label": "Server address",
+      "help": "The address its /audio/transcriptions is under, usually ending in /v1: http://localhost:8089/v1 for whisper.cpp, http://localhost:8000/v1 for Speaches or vLLM.",
+      "kind": "http_url",
+      "required": true,
+      "default": "http://localhost:8089/v1"
+    },
+    {
+      "name": "name",
+      "label": "Connector name",
+      "help": "Lowercase letters, digits, dashes and underscores; the transcription settings list it by this name.",
+      "default": "local-transcription"
+    },
+    {
+      "name": "model",
+      "label": "Model",
+      "help": "The name the server loaded the model as (Speaches and vLLM check it, e.g. Systran/faster-whisper-small; whisper.cpp takes any).",
+      "required": true,
+      "default": "whisper-1"
+    }
+  ],
+  "bundle": {
+    "bundle": "gohort.bundle/v1",
+    "artifacts": [
+      {
+        "type": "connector",
+        "name": "{{name}}",
+        "recipe": {
+          "name": "{{name}}",
+          "kind": "service",
+          "template": "openai-compatible-transcription",
+          "desc": "Transcription ({{model}}) at {{base_url}}",
+          "spec": {
+            "provider": {
+              "transport": "http",
+              "base_url": "{{base_url}}",
+              "auth": {
+                "none": true
+              },
+              "limits": {
+                "max_bytes": 104857600
+              },
+              "operations": {
+                "transcribe": {
+                  "method": "POST",
+                  "path": "/audio/transcriptions",
+                  "send": "multipart",
+                  "timeout_secs": 300,
+                  "body": {
+                    "file": "{audio}",
+                    "model": "{model}",
+                    "prompt": "{prompt}",
+                    "language": "{language}",
+                    "response_format": "json"
+                  }
+                }
+              }
+            },
+            "provides": [
+              {
+                "capability": "speech.transcribe",
+                "steps": [
+                  {
+                    "call": "transcribe"
+                  }
+                ],
+                "output": {
+                  "text": {
+                    "path": "text",
+                    "as": "text"
+                  }
+                },
+                "defaults": {
+                  "model": "{{model}}"
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

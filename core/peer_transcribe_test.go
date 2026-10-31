@@ -8,20 +8,66 @@ package core
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/cmcoffee/gohort/core/media"
 )
 
+// useConnectorTranscriber points transcription at a service connector at
+// endpoint, standing in for core/service (which imports this package): it
+// posts the audio, the model and any prompt as a multipart form, as the
+// connector the migration writes does, and reads the text from the JSON
+// reply, or the whole reply.
+func useConnectorTranscriber(t *testing.T, endpoint, model string) {
+	t.Helper()
+	savedService, savedCfg := media.TranscribeService, GetTranscribeConfig()
+	t.Cleanup(func() {
+		media.TranscribeService = savedService
+		SetTranscribeConfig(savedCfg)
+	})
+	media.TranscribeService = func(ctx context.Context, _ string, audio []byte, filename string) (string, error) {
+		var body bytes.Buffer
+		mw := multipart.NewWriter(&body)
+		fw, _ := mw.CreateFormFile("file", filename)
+		fw.Write(audio)
+		mw.WriteField("model", model)
+		if p := media.TranscribePrompt(ctx); p != "" {
+			mw.WriteField("prompt", p)
+		}
+		mw.Close()
+		req, _ := http.NewRequestWithContext(ctx, "POST", strings.TrimRight(endpoint, "/")+"/audio/transcriptions", &body)
+		req.Header.Set("Content-Type", mw.FormDataContentType())
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return "", err
+		}
+		defer resp.Body.Close()
+		raw, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != 200 {
+			return "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, raw)
+		}
+		var out struct{ Text string }
+		if json.Unmarshal(raw, &out) == nil {
+			return strings.TrimSpace(out.Text), nil
+		}
+		return strings.TrimSpace(string(raw)), nil
+	}
+	SetTranscribeConfig(TranscribeConfig{Enabled: true, Provider: media.ServiceProviderPrefix + "stt", Model: model})
+}
+
 // sttServer stands up a fake OpenAI-compatible STT endpoint and points this
-// instance at it, returning the endpoint's recorded state.
+// instance at it through a connector, returning the endpoint's recorded
+// state.
 func sttServer(t *testing.T, reply string) (gotFile string, gotBytes *int) {
 	t.Helper()
-	prev := GetTranscribeConfig()
-	t.Cleanup(func() { SetTranscribeConfig(prev) })
 	n := 0
 	gotBytes = &n
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -36,7 +82,7 @@ func sttServer(t *testing.T, reply string) (gotFile string, gotBytes *int) {
 		w.Write([]byte(reply))
 	}))
 	t.Cleanup(srv.Close)
-	SetTranscribeConfig(TranscribeConfig{Enabled: true, Endpoint: srv.URL, Model: "whisper-1"})
+	useConnectorTranscriber(t, srv.URL, "whisper-1")
 	return gotFile, gotBytes
 }
 
@@ -123,7 +169,7 @@ func TestPeerTranscribeWillNotRelayAPeersOwnBorrowedSTT(t *testing.T) {
 	prev := GetTranscribeConfig()
 	t.Cleanup(func() { SetTranscribeConfig(prev) })
 	SetTranscribeConfig(TranscribeConfig{
-		Enabled: true, Endpoint: "https://other.example/api/peer/v1", Model: "whisper-1",
+		Enabled: true, Provider: PeerProviderValue("other"), Endpoint: "https://other.example/api/peer/v1", Model: "whisper-1",
 	})
 	pk, _ := MintPeerKey("mac", []string{PeerCapTranscribe}, 0)
 
@@ -147,13 +193,20 @@ func TestManifestOffersTranscriptionOnlyWhenConfigured(t *testing.T) {
 	if info := peerTranscribeInfo("/api/peer/v1"); info != nil {
 		t.Errorf("transcription advertised while disabled: %+v", info)
 	}
-	SetTranscribeConfig(TranscribeConfig{Enabled: true, Endpoint: "http://localhost:8089/v1", Model: "whisper-1"})
+	// Set to a connector: its address is the connector's, not the settings'.
+	SetTranscribeConfig(TranscribeConfig{Enabled: true, Provider: "service:stt", Model: "whisper-1"})
 	info := peerTranscribeInfo("/api/peer/v1")
 	if info == nil {
 		t.Fatal("a configured STT is not advertised")
 	}
 	if info.Model != "whisper-1" || info.Path != "/api/peer/v1" {
 		t.Errorf("manifest entry = %+v", info)
+	}
+	// Settings naming neither a connector nor a peer transcribe nothing, as
+	// the endpoint this instance once called itself does not.
+	SetTranscribeConfig(TranscribeConfig{Enabled: true, Endpoint: "http://localhost:8089/v1", Model: "whisper-1"})
+	if info := peerTranscribeInfo("/api/peer/v1"); info != nil {
+		t.Errorf("an endpoint no connector reaches is advertised: %+v", info)
 	}
 }
 
@@ -192,7 +245,7 @@ func TestPeerTranscribeCarriesThePrompt(t *testing.T) {
 		w.Write([]byte("hi"))
 	}))
 	t.Cleanup(srv.Close)
-	SetTranscribeConfig(TranscribeConfig{Enabled: true, Endpoint: srv.URL})
+	useConnectorTranscriber(t, srv.URL, "")
 	pk, _ := MintPeerKey("mac", []string{PeerCapTranscribe}, 0)
 
 	var body bytes.Buffer

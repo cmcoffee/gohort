@@ -2,12 +2,8 @@ package admin
 
 // Testing a PEERED transcription config.
 //
-// The peer base serves exactly one path — /audio/transcriptions — so the
-// /models-then-root GET probe the local test uses is wrong twice over here:
-// /models 404s, and the root fallback lands on the far side's web UI and
-// reports a cheerful success for a link that cannot transcribe a thing.
-//
-// The manifest answers the questions that actually matter in one call — is it
+// The peer base serves exactly one path, /audio/transcriptions, and sending
+// it audio only says whether that worked. The manifest answers the questions that actually matter in one call — is it
 // reachable, is the key still good, is transcribe granted, does that instance
 // still have STT of its own — and each failure names its own remedy, which a
 // status code from the wrong URL never could.
@@ -41,7 +37,7 @@ func peerTranscribeTestResult(ctx context.Context, p RemotePeer) (bool, string, 
 	}
 	if m.Transcribe == nil {
 		return false, "", "reached " + p.BaseURL +
-			" and the grant is in place, but that instance has no transcription endpoint configured of its own"
+			" and the grant is in place, but that instance has no transcription of its own: it needs a connector that transcribes, chosen under its Audio Transcription settings"
 	}
 	msg := "Peer " + p.Name + " reachable, transcribe granted"
 	if m.Transcribe.Model != "" {

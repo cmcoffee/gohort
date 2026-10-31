@@ -383,9 +383,11 @@ func main() {
 
 		// Wire auth database.
 		AuthDB = func() Database { return global.db }
-		// Embeddings this instance made itself become a connector, once: it
-		// needs the credential store just wired, for a key the settings held.
+		// Embeddings and transcription this instance did itself become
+		// connectors, once: they need the credential store just wired, for a
+		// key the settings held.
 		service.MigrateEmbeddings(global.db)
+		service.MigrateTranscription(global.db)
 
 		AuthEnabled = func() bool { return AuthHasUsers(global.db) }
 		AuthSignupAllowed = func() bool {
