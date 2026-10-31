@@ -247,6 +247,10 @@ func runTests(ctx context.Context, name string, s Spec) []TestReport {
 // saved (a model's key is read from its credential, never from a draft).
 func testModel(ctx context.Context, name string) TestReport {
 	rep := TestReport{Capability: "llm.chat"}
+	if c, ok := GetConnector(RootDB, name); !ok || !c.Approved {
+		rep.Detail = "a model is tested by a real chat once its connector is saved and approved (its key is read from its credential then)"
+		return rep
+	}
 	llm, err := NewLLMFromConfig(LLMProviderConfig{Provider: media.ServiceProviderPrefix + name})
 	if err != nil {
 		rep.Detail = err.Error()

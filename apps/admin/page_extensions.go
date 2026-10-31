@@ -273,6 +273,7 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 					// connector; these buttons grab whole sets as one secret-free
 					// gohort.bundle/v1. "Export everything" spans every artifact
 					// type (connectors + tools + future types).
+					connectorAddButton(),
 					ui.Toolbar{
 						Actions: []ui.ToolbarAction{
 							{Label: "Export all connectors", Method: "client", URL: "connectors_export_all"},
