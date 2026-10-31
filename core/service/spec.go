@@ -104,7 +104,28 @@ type Binding struct {
 	// a conversation, its tools and a streamed reply are what the client is
 	// for. It has no steps or outputs.
 	Dialect string `json:"dialect,omitempty"`
+	// Research and Tool are what a search (web.search) is offered for besides
+	// Web Search: research, on the topics it is for, and agents, as a tool
+	// of its own. A Source Hook's routing, on a connector.
+	Research *ResearchUse `json:"research,omitempty"`
+	Tool     *ToolUse     `json:"tool,omitempty"`
 }
+
+// ResearchUse is the research topics a search is asked on (legal, medical,
+// financial and the like), or Always for every research run.
+type ResearchUse struct {
+	Topics []string `json:"topics,omitempty"`
+	Always bool     `json:"always,omitempty"`
+}
+
+// ToolUse offers a search to agents as a tool: its name, and what tells an
+// agent when to choose it over web_search.
+type ToolUse struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+}
+
+var searchToolNameRE = regexp.MustCompile(`^[a-z][a-z0-9_]{2,40}$`)
 
 // Step is one call, or a wait on one.
 type Step struct {
@@ -323,6 +344,17 @@ func (b Binding) validate(p Provider) error {
 	}
 	if cost := b.Cost; cost != nil && (cost.PerMillionInput != 0 || cost.PerMillionOutput != 0) {
 		return fmt.Errorf("per_million_input and per_million_output price a model's tokens: llm.chat only")
+	}
+	if b.Research != nil || b.Tool != nil {
+		if b.Capability != "web.search" {
+			return fmt.Errorf("research and tool offer a search: web.search only")
+		}
+		if r := b.Research; r != nil && !r.Always && len(r.Topics) == 0 {
+			return fmt.Errorf("research needs topics (legal, medical, ...) or always: true")
+		}
+		if t := b.Tool; t != nil && !searchToolNameRE.MatchString(t.Name) {
+			return fmt.Errorf("tool name %q: lowercase letters, digits and _, 3 to 41 of them, starting with a letter", t.Name)
+		}
 	}
 	if len(b.Steps) == 0 {
 		return fmt.Errorf("no steps")

@@ -138,6 +138,7 @@ resource's whole schema.
 | A peer (Admin > Capabilities > Peers) | models, embeddings, speech, transcription | another gohort |
 | A messaging relay | messages in and out | Telegram, Teams, others |
 | A poll (made by an agent's bridge tool) | "the answer changed" | HTTP and a key |
+| A Source Hook (Admin > Extensions > Source Hooks) | search results, or passages, for research and agents | HTTP and a key the hook keeps |
 | gohort's own providers (the local embedder, the built-in image code, web search, the browser, SMTP mail, the LLM tiers) | the same contracts | written in Go |
 
 Services, messaging relays, polls, MCP connections, gohort's own providers

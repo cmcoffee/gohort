@@ -183,7 +183,7 @@ func Search(ctx context.Context, name, query string) (string, error) {
 			b.WriteString("\n   " + s)
 		}
 	}
-	return b.String(), nil
+	return MarkUnopenable(b.String()), nil
 }
 
 // transcribeVia transcribes audio with the service connector named name. The

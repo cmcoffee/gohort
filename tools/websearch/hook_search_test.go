@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/service"
 	"github.com/cmcoffee/gohort/core/sourcehooks"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
@@ -187,7 +188,10 @@ func TestGoogleRedirectLinksAreMarked(t *testing.T) {
 	if len(src) != 2 || src[0].URL != "https://example.org/one" || src[1].URL != "https://www.googleblog.com/goto" {
 		t.Errorf("research reads only the links that open: %+v", src)
 	}
-	if got := markUnopenable("No results found."); got != "No results found." {
+	if got := service.MarkUnopenable("No results found."); got != "No results found." {
 		t.Errorf("no results: %q", got)
 	}
 }
+
+// noUsableLink is what a marked result's link line says (service.MarkUnopenable).
+const noUsableLink = "(no usable link: Google gave a redirect that cannot be opened after the search)"

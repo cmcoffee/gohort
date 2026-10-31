@@ -986,7 +986,7 @@ func SearchWithProvider(req SearchRequest) (string, error) {
 	} else if result == "" || result == "No results found." {
 		Debug("[web_search] no results")
 	} else {
-		result = markUnopenable(result)
+		result = service.MarkUnopenable(result)
 	}
 	// Count every actual provider invocation — quota is consumed on
 	// the network call, not on whether useful results came back.
@@ -996,49 +996,6 @@ func SearchWithProvider(req SearchRequest) (string, error) {
 	// reach SearchWithProvider) skip the count.
 	ProcessUsage().AddSearchCall()
 	return result, err
-}
-
-// noUsableLink stands where a result's link would be when the provider gave a
-// link that cannot be opened. ParseSearchResults reads only a web address
-// there, so research passes over such a result; an agent still reads its
-// title and snippet, and is told why there is nothing to open.
-const noUsableLink = "(no usable link: Google gave a redirect that cannot be opened after the search)"
-
-// markUnopenable puts noUsableLink in place of every link that is a Google
-// redirect. Since 2026-10-30 Google lets only the first few result links of a
-// search be opened, and a search API serving Google results (Serper among
-// them) gives the rest as google.com/goto links that do not lead anywhere.
-// One place, so every provider and every search connector is covered.
-func markUnopenable(results string) string {
-	blocks := strings.Split(results, "\n\n")
-	changed := false
-	for i, block := range blocks {
-		lines := strings.Split(block, "\n")
-		if len(lines) < 2 || !googleRedirect(strings.TrimSpace(lines[1])) {
-			continue
-		}
-		lines[1] = "   " + noUsableLink
-		blocks[i] = strings.Join(lines, "\n")
-		changed = true
-	}
-	if !changed {
-		return results
-	}
-	return strings.Join(blocks, "\n\n")
-}
-
-// googleRedirect reports whether u is one of Google's result redirects
-// (google.<tld>/goto or /url) rather than the page itself.
-func googleRedirect(u string) bool {
-	parsed, err := url.Parse(u)
-	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-		return false
-	}
-	host := strings.TrimPrefix(strings.ToLower(parsed.Hostname()), "www.")
-	if !strings.HasPrefix(host, "google.") {
-		return false
-	}
-	return parsed.Path == "/goto" || strings.HasPrefix(parsed.Path, "/goto/") || parsed.Path == "/url"
 }
 
 // CrossProviderSearch runs a search query using the configured provider.

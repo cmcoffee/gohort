@@ -103,6 +103,12 @@ func (a *AdminApp) handleConnectors(c *jsonapi.Call) (any, error) {
 		rows = append(rows, connRow{Name: pc.name, Kind: "peer", Summary: pc.wrapper, Owner: "Peers",
 			Status: pc.status, Testable: true, State: "peer", Endpoints: true, Group: groupPeers})
 	}
+	// The API and RAG Source Hooks (connector_hooks.go), read from the hooks,
+	// set up under Source Hooks.
+	for _, hc := range hookConnectors() {
+		rows = append(rows, connRow{Name: hc.name, Kind: "source hook", Summary: hc.wrapper, Owner: "Source Hooks",
+			Status: hc.status, State: "hook", Endpoints: true, Group: groupSourceHooks})
+	}
 	// The programs System Hooks' jobs run (connector_programs.go), read from
 	// the jobs, set up and tested from System Hooks.
 	for _, pc := range programRows() {
@@ -118,17 +124,18 @@ func (a *AdminApp) handleConnectors(c *jsonapi.Call) (any, error) {
 // The Connectors table's bands, in order: what a connector is, which is
 // what an admin looks for one by.
 const (
-	groupServices = "Services"
-	groupMessages = "Messaging"
-	groupWatches  = "Watches"
-	groupTools    = "Tools for agents (MCP and desktop)"
-	groupHooks    = "Adapted System Hooks"
-	groupBuiltIn  = "Built in"
-	groupPeers    = "Peers"
-	groupPrograms = "Programs"
+	groupServices    = "Services"
+	groupMessages    = "Messaging"
+	groupWatches     = "Watches"
+	groupSourceHooks = "Source hooks"
+	groupTools       = "Tools for agents (MCP and desktop)"
+	groupHooks       = "Adapted System Hooks"
+	groupBuiltIn     = "Built in"
+	groupPeers       = "Peers"
+	groupPrograms    = "Programs"
 )
 
-var connectorGroups = []string{groupServices, groupMessages, groupWatches, groupTools, groupHooks, groupBuiltIn, groupPeers, groupPrograms}
+var connectorGroups = []string{groupServices, groupMessages, groupWatches, groupSourceHooks, groupTools, groupHooks, groupBuiltIn, groupPeers, groupPrograms}
 
 // connectorGroup is the band a stored connector of kind sits in.
 func connectorGroup(kind string) string {
@@ -266,6 +273,13 @@ func (a *AdminApp) handleConnectorEndpoints(c *jsonapi.Call) (any, error) {
 			return nil, jsonapi.Status(http.StatusNotFound, "no peer named "+strings.TrimPrefix(name, peerRowPrefix))
 		}
 		return peerEndpoints(pc), nil
+	}
+	if strings.HasPrefix(name, hookRowPrefix) {
+		hc, ok := hookByName(name)
+		if !ok {
+			return nil, jsonapi.Status(http.StatusNotFound, "no source hook named "+strings.TrimPrefix(name, hookRowPrefix))
+		}
+		return hookEndpoints(hc), nil
 	}
 	if strings.HasPrefix(name, programPrefix) {
 		pc, ok := programByName(name)

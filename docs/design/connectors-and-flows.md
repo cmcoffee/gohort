@@ -251,6 +251,22 @@ setting gains a `service:<name>` value.
    offers approved ones under Provider, and refuses to save one that is not
    approved. gohort's own search is the `built-in:web-search` row.
    Templates: Brave, Serper, Tavily.
+
+   Source Hooks, 2026-10-30. The API and RAG hooks are listed as
+   connectors, read from the hooks (`hook:<name>`, in a Source hooks
+   group): what each gives, its query, host and the key it keeps itself,
+   what it is used for, and its endpoint. A paywall hook is not listed: it
+   is a key sent when fetching certain sites, and belongs with API
+   Credentials. A search connector does what an API hook does: its
+   `web.search` binding's `research` (topics, or always) puts it among the
+   sources research asks on those topics, through core/sourcehooks' seams,
+   so the research app is unchanged; its `tool` (a name and a description)
+   offers it to agents as a tool of its own, gone from every catalog when
+   the connector stops offering it. Every search's results, a hook's,
+   a provider's or a connector's, have a Google redirect link marked
+   (`service.MarkUnopenable`). Not done: converting a stored hook into a
+   connector (one admin click per hook, when wanted), RAG hooks as a
+   contract of their own, paywall hooks under API Credentials.
 9. **Page rendering.** Built 2026-10-30. `page.render`: an address in,
    the page's readable `text` out (and its `title`, when the service gives
    one), checked for text. Page Rendering (Browser) offers approved

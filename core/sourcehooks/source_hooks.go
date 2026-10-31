@@ -186,6 +186,11 @@ type SourceHook struct {
 	AuthType SourceHookAuth `json:"auth_type"` // none, api_key, bearer
 	AuthKey  string         `json:"auth_key"`  // API key or bearer token (stored encrypted)
 
+	// Connector, set only on an entry ConnectorSources makes, is the search
+	// connector (core/service) the entry stands for: research asks it on its
+	// topics like a hook, through ConnectorSearch. Never stored.
+	Connector string `json:"connector,omitempty"`
+
 	// API/RAG hooks: how to call the endpoint.
 	QueryParam   string `json:"query_param"`   // Query parameter name (e.g., "q", "query", "term")
 	ResultsPath  string `json:"results_path"`  // JSON path to results array (e.g., "results", "data.items")
@@ -326,6 +331,14 @@ func DeleteSourceHook(db Store, name string) {
 	LoadSourceHooks(db)
 }
 
+// ConnectorSources, when set, are the search connectors offered to research
+// on topics (core/service installs it), as entries HooksForTopic matches
+// like hooks; ConnectorSearch asks one of them.
+var (
+	ConnectorSources func() []SourceHook
+	ConnectorSearch  func(connector, query string) (string, error)
+)
+
 // HooksForTopic returns hooks that should be queried for the given topic domains.
 func HooksForTopic(topic_domains []string) []SourceHook {
 	sourceHookRegistry.mu.RLock()
@@ -337,7 +350,11 @@ func HooksForTopic(topic_domains []string) []SourceHook {
 	}
 
 	var matched []SourceHook
-	for _, hook := range sourceHookRegistry.hooks {
+	candidates := sourceHookRegistry.hooks
+	if ConnectorSources != nil {
+		candidates = append(append([]SourceHook(nil), candidates...), ConnectorSources()...)
+	}
+	for _, hook := range candidates {
 		if hook.Disabled || IsSearchEngine(hook) {
 			continue
 		}
@@ -1063,6 +1080,14 @@ func authDomainCacheKey(question string) string {
 // is critical for rate-limited services like CourtListener and for
 // development workflows that repeatedly test the same topic.
 func QuerySourceHook(hook SourceHook, query string) (string, error) {
+	// A search connector is asked live, as Web Search asks it, and prices
+	// its own calls; it has no cache of a hook's to share a name with.
+	if hook.Connector != "" {
+		if ConnectorSearch == nil {
+			return "", fmt.Errorf("%s is a search connector, and this build has no connectors linked", hook.Connector)
+		}
+		return ConnectorSearch(hook.Connector, query)
+	}
 	// Tier 1: exact-key cache lookup. Covers identical normalized
 	// queries across runs. An empty cached result is a valid
 	// negative-cache hit.

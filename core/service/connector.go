@@ -67,6 +67,9 @@ func (handler) Materialize(c Connector) error {
 	if _, _, err := s.binding("music.generate"); err == nil {
 		registerMusicTool(name)
 	}
+	if b, _, err := s.binding("web.search"); err == nil {
+		registerSearchTool(name, b)
+	}
 	if s.Provider.Health != nil {
 		startHealth()
 	}

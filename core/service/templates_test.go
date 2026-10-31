@@ -14,6 +14,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/flows"
 	"github.com/cmcoffee/gohort/core/media"
+	"github.com/cmcoffee/gohort/core/sourcehooks"
 )
 
 // templateSpec is the service spec a built-in template installs, its
@@ -347,5 +348,68 @@ func TestTheConvertTemplateConverts(t *testing.T) {
 	}
 	if reps, err := Test(context.Background(), "convertapi"); err != nil || !reps[0].OK || got[1] != "/convert/png/to/jpg .png \x89PNG" {
 		t.Errorf("contract test: %+v %v %q", reps, err, got)
+	}
+}
+
+// A search connector is offered beyond Web Search as a Source Hook is: to
+// research on the topics it is for (research asks it as it asks a hook),
+// and to agents as a tool of its own, which leaves every catalog when the
+// connector stops offering it. Its results are marked like any search's.
+func TestASearchConnectorIsOfferedToResearchAndAgents(t *testing.T) {
+	world(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"hits":[{"name":"Smith v. Jones","href":"https://law.example/smith"},{"name":"Later","href":"https://www.google.com/goto?id=9"}]}`))
+	}))
+	defer srv.Close()
+	spec := map[string]any{
+		"provider": map[string]any{"transport": "http", "base_url": srv.URL, "auth": map[string]any{"none": true},
+			"operations": map[string]any{"find": map[string]any{"url": "/find?q={query}"}}},
+		"provides": []any{map[string]any{"capability": "web.search", "steps": []any{map[string]any{"call": "find"}},
+			"output":   map[string]any{"results": map[string]any{"path": "hits", "fields": map[string]any{"title": "name", "url": "href"}}},
+			"research": map[string]any{"topics": []any{"legal"}},
+			"tool":     map[string]any{"name": "caselaw_search", "description": "Search court opinions."}}},
+	}
+	install(t, "caselaw", spec)
+
+	if got := sourcehooks.HooksForTopic([]string{"medical"}); len(got) != 0 {
+		t.Errorf("asked on a topic it is not for: %+v", got)
+	}
+	hooks := sourcehooks.HooksForTopic([]string{"legal"})
+	if len(hooks) != 1 || hooks[0].Connector != "caselaw" {
+		t.Fatalf("research on its topic: %+v", hooks)
+	}
+	out, err := sourcehooks.QuerySourceHook(hooks[0], "negligence")
+	if err != nil || !strings.HasPrefix(out, "1. Smith v. Jones\n   https://law.example/smith") || !strings.Contains(out, "2. Later\n   (no usable link") {
+		t.Errorf("research's query: %q %v", out, err)
+	}
+
+	tool, ok := LookupChatTool("caselaw_search")
+	if !ok {
+		t.Fatal("the connector is not offered as a tool")
+	}
+	if desc, params := tool.(DynamicChatTool).SchemaWithSession(nil); desc != "Search court opinions." || params == nil {
+		t.Errorf("the tool's schema: %q %v", desc, params)
+	}
+	if out, err := tool.(SessionChatTool).RunWithSession(map[string]any{"query": "negligence"}, nil); err != nil || !strings.Contains(out, "Smith v. Jones") {
+		t.Errorf("the tool's search: %q %v", out, err)
+	}
+	UnapproveConnector(RootDB, "caselaw")
+	if _, params := tool.(DynamicChatTool).SchemaWithSession(nil); params != nil {
+		t.Error("a turned-off connector's tool is still offered")
+	}
+	if len(sourcehooks.HooksForTopic([]string{"legal"})) != 0 {
+		t.Error("a turned-off connector is still asked in research")
+	}
+
+	for want, b := range map[string]map[string]any{
+		"web.search only":   {"capability": "speech.synthesize", "steps": []any{map[string]any{"call": "find"}}, "output": map[string]any{"audio": map[string]any{"from": "body"}}, "tool": map[string]any{"name": "say_it"}},
+		"needs topics":      {"capability": "web.search", "steps": []any{map[string]any{"call": "find"}}, "output": map[string]any{"results": map[string]any{"path": "hits", "fields": map[string]any{"url": "href"}}}, "research": map[string]any{}},
+		"lowercase letters": {"capability": "web.search", "steps": []any{map[string]any{"call": "find"}}, "output": map[string]any{"results": map[string]any{"path": "hits", "fields": map[string]any{"url": "href"}}}, "tool": map[string]any{"name": "Case Law"}},
+	} {
+		_, err := specFrom(t, map[string]any{"provider": spec["provider"], "provides": []any{b}})
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("want %q, got %v", want, err)
+		}
 	}
 }
