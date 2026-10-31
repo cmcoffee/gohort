@@ -148,6 +148,13 @@ type ModelTarget struct {
 	// Priced whether the connector declares them.
 	InPerMillion, OutPerMillion float64
 	Priced                      bool
+	// For the bedrock dialect: which Bedrock API (converse, messages or
+	// invoke), the region, and how its client signs: Key is a bearer
+	// token, or AWSMachine signs as this machine under Profile, or the
+	// AWSAccessKey pair is the credential's.
+	BedrockAPI, Region, Profile string
+	AWSMachine                  bool
+	AWSAccessKey, AWSSecretKey  string
 }
 
 // ModelService, when set, reads the model connector named connector, for an

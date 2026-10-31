@@ -173,13 +173,13 @@ root GET /api/lead-llm ""
 root POST /api/lead-llm "{\"provider\":\"bedrock\",\"model\":\"anthropic.claude-3-5-sonnet\",\"aws_region\":\"us-east-1\",\"bedrock_api\":\"converse\",\"api_key\":\"s3cr3t-llm-l\",\"no_images\":true}"
   204 
 root GET /api/lead-llm ""
-  200 {"_live":"No lead model is loaded; escalations run on the worker.","api_key":"","aws_profile":"","aws_region":"us-east-1","bedrock_api":"converse","context_size":0,"default_effort":"","disable_thinkin… (494 bytes, sha1 8ec89959ee4499f4c34e48d6d5cfd204d6563d4a)
+  200 {"_live":"No lead model is loaded; escalations run on the worker.","api_key":"","aws_profile":"","aws_region":"","bedrock_api":"converse","context_size":0,"default_effort":"","disable_thinking":false,… (499 bytes, sha1 00cbe28c757818dd79fbc83e66f6a96d5e64266d)
 root GET /api/llm-privacy ""
-  200 {"advice":"Worker: ollama at <stub> - private (loopback endpoint)\nLead: bedrock - NOT private (a hosted provider: prompts leave this deployment)\n\nAt least one tier reaches a third party. Turning this on anyway would send private-stage data: including SSH credentials and log contents, to it.","all_private":false,"recommended":false}
+  200 {"advice":"Worker: ollama at <stub> - private (loopback endpoint)\nLead: service:bedrock-model - NOT private (a hosted provider through the connector bedrock-model: prompts leave this deployment)\n\nAt least one tier reaches a third party. Turning this on anyway would send private-stage data: including SSH credentials and log contents, to it.","all_private":false,"recommended":false}
 activity log, 6 entries:
   settings root: set all-LLMs-private=false: private stages may no longer escalate to the lead tier
   settings root: set all-LLMs-private=true: private stages MAY now escalate to the lead tier
-  settings root: updated lead_llm_config (provider="bedrock" model="anthropic.claude-3-5-sonnet")
+  settings root: updated lead_llm_config (provider="service:bedrock-model" model="anthropic.claude-3-5-sonnet")
   settings root: updated llm_config (provider=" ollama " model=" qwen3:8b ")
   settings root: updated llm_config (provider="ollama" model="qwen3:8b")
   settings root: updated llm_config (provider="ollama" model="qwen3:8b")

@@ -25,6 +25,8 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/media"
+	"github.com/cmcoffee/gohort/core/service"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -109,7 +111,7 @@ func (a *AdminApp) setupWizardPage() ui.Page {
 			{Field: "api_key", Label: "API key", Type: "password",
 				ShowWhen: "provider:anthropic|openai|gemini|bedrock|llama.cpp|vllm",
 				Help:     "For Anthropic, OpenAI or Gemini it goes into a credential, with a model connector made for it. Optional on AWS Bedrock, llama.cpp and vLLM.",
-				Detail:   "Anthropic, OpenAI or Gemini: the model then runs on that connector, which Admin > Extensions > Connectors lists with its calls and cost, and the key can be changed under API Credentials. On Bedrock, leave it blank to sign with your AWS credentials, including SSO, instead of a bearer token. On llama.cpp or vLLM, set it only if the server was started with --api-key; it is stored encrypted."},
+				Detail:   "Anthropic, OpenAI or Gemini: the model then runs on that connector, which Admin > Extensions > Connectors lists with its calls and cost, and the key can be changed under API Credentials. On Bedrock, leave it blank to sign as this machine, with your AWS credentials, SSO included, instead of a Bedrock API key; the model then runs on a connector made for its region, API and profile. On llama.cpp or vLLM, set it only if the server was started with --api-key; it is stored encrypted."},
 			{Field: "aws_region", Label: "AWS region", Type: "text", ShowWhen: "provider:bedrock",
 				Placeholder: "us-east-1",
 				Help:        "Blank uses $AWS_REGION, then us-east-1.",
@@ -246,6 +248,12 @@ func (a *AdminApp) testLLM(w http.ResponseWriter, r *http.Request, table string)
 	if strings.TrimSpace(req.Provider) == "" {
 		writeTestResult(w, false, "", "pick a provider first")
 		return
+	}
+	if req.Provider == "bedrock" {
+		if name, ok := a.keptBedrock(table, service.BedrockSettings{Region: req.AWSRegion, Profile: req.AWSProfile,
+			API: req.BedrockAPI, Endpoint: req.Endpoint, Key: req.APIKey}); ok {
+			req.Provider = media.ServiceProviderPrefix + name
+		}
 	}
 	req.Provider, req.APIKey = a.formTierTarget(table, req.Provider, req.APIKey)
 	// The model id, before anything tries to use it. A value carrying

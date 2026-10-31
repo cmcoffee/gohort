@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/service"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -181,5 +182,65 @@ func TestAHostedTierWithNoKeyUsesItsConnector(t *testing.T) {
 	a.db.Set(LLMTable, "provider", "llama.cpp")
 	if p, k := a.formTierTarget(LLMTable, "anthropic", ""); p != "anthropic" || k != "" {
 		t.Errorf("a tier on llama.cpp: %q %q", p, k)
+	}
+}
+
+// Saving a tier on AWS Bedrock makes a model connector at its address,
+// signing as the machine under its profile, and stores the tier on it with
+// no Bedrock rows of its own; saving it again finds that connector, other
+// settings find or make another, and a form showing the tier's settings
+// with no key tests and lists through it.
+func TestABedrockTierSavesAsAModelConnector(t *testing.T) {
+	saved, savedAuth := RootDB, AuthDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	auth := &DBase{Store: kvlite.MemStore()}
+	AuthDB = func() Database { return auth }
+	t.Cleanup(func() {
+		RootDB, AuthDB = saved, savedAuth
+		for _, n := range []string{"bedrock_model", "bedrock_model_2", "bedrock_token"} {
+			Secure().Delete(n)
+		}
+	})
+	a := &AdminApp{db: RootDB}
+	save := func(table, body string) {
+		t.Helper()
+		w := httptest.NewRecorder()
+		a.llmConfigRoutes(table, table == LLMTable)(w, httptest.NewRequest("POST", "/api/llm", strings.NewReader(body)))
+		if w.Code != 204 {
+			t.Fatalf("save: %d %s", w.Code, w.Body.String())
+		}
+	}
+	save(LLMTable, `{"provider":"bedrock","aws_region":"us-west-2","aws_profile":"prod","bedrock_api":"converse"}`)
+	var provider, model, region string
+	a.db.Get(LLMTable, "provider", &provider)
+	a.db.Get(LLMTable, "model", &model)
+	if provider != "service:bedrock-model" || model != "anthropic.claude-sonnet-5" || a.db.Get(LLMTable, "aws_region", &region) && region != "" {
+		t.Fatalf("the worker: %q %q region %q", provider, model, region)
+	}
+	if cred, _ := Secure().Load("bedrock_model"); !cred.AWSMachine || cred.AWSProfile != "prod" {
+		t.Errorf("the credential: %+v", cred)
+	}
+	save(LeadLLMTable, `{"provider":"bedrock","aws_region":"us-west-2","aws_profile":"prod","bedrock_api":"converse","model":"us.anthropic.claude-opus-5"}`)
+	save(LLMTable, `{"provider":"bedrock","aws_region":"us-west-2","aws_profile":"prod","bedrock_api":"converse"}`)
+	if n := len(ListConnectors(RootDB)); n != 1 {
+		t.Errorf("%d connectors for one set of settings", n)
+	}
+	s := service.BedrockSettings{Region: "us-west-2", Profile: "prod", API: "converse"}
+	if name, ok := a.keptBedrock(LLMTable, s); !ok || name != "bedrock-model" {
+		t.Errorf("Test and List models with the tier's settings: %q %v", name, ok)
+	}
+	for _, other := range []service.BedrockSettings{{Region: "us-east-1", Profile: "prod", API: "converse"}, {Region: "us-west-2", API: "converse", Profile: "prod", Key: "typed"}} {
+		if _, ok := a.keptBedrock(LLMTable, other); ok {
+			t.Errorf("%+v tests through the tier's connector", other)
+		}
+	}
+	save(LLMTable, `{"provider":"bedrock","aws_region":"us-west-2","bedrock_api":"invoke","api_key":"bedrock-key"}`)
+	a.db.Get(LLMTable, "provider", &provider)
+	if provider == "service:bedrock-model" || len(ListConnectors(RootDB)) != 2 {
+		t.Errorf("other settings: %q, %d connectors", provider, len(ListConnectors(RootDB)))
+	}
+	var key string
+	if a.db.Get(LLMTable, "api_key", &key) {
+		t.Errorf("the tier keeps a key: %q", key)
 	}
 }

@@ -98,7 +98,9 @@ an agent, and later a flow.
 
 A **credential** is not a connector. It is the key a connector's outside
 uses, stored encrypted and attached on the server at call time, so no model
-ever sees it.
+ever sees it. An AWS credential signs each request instead (Signature
+Version 4), with a stored key pair or, made by an administrator, as this
+machine's own AWS identity.
 
 ## Reading a connector
 
@@ -146,7 +148,7 @@ resource's whole schema.
 | A messaging relay | messages in and out | Telegram, Teams, others |
 | A poll (made by an agent's bridge tool) | "the answer changed" | HTTP and a key |
 | A Source Hook (Admin > Extensions > Source Hooks) | search results, or passages, for research and agents | HTTP and a key the hook keeps |
-| gohort's own providers (DuckDuckGo search, the browser, SMTP mail, Bedrock and the local model servers) | the same contracts | written in Go where Go is the protocol or the server is on this machine; every hosted provider moved to a connector (embeddings, transcription, speech, images, the other search engines and the hosted LLMs) |
+| gohort's own providers (DuckDuckGo search, the browser, SMTP mail and the local model servers) | the same contracts | written in Go where Go is the protocol or the server is on this machine; every hosted provider moved to a connector (embeddings, transcription, speech, images, the other search engines, the hosted LLMs and Bedrock) |
 
 Services, messaging relays, polls, MCP connections, gohort's own providers
 and the programs System Hooks run are listed under Admin > Extensions >

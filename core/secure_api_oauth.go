@@ -461,13 +461,18 @@ func (s *SecureAPI) SaveAPIDraft(c SecureCredential) error {
 		return err
 	}
 	switch c.Type {
-	case SecureCredBearer, SecureCredBasicAuth:
+	case SecureCredBearer, SecureCredBasicAuth, SecureCredAWS:
 	case SecureCredHeader, SecureCredQuery:
 		if strings.TrimSpace(c.ParamName) == "" {
 			return fmt.Errorf("type %q draft needs a param_name (the header or query-param name)", c.Type)
 		}
 	default:
-		return fmt.Errorf("api draft type must be bearer, header, query, or basic_auth (oauth2 uses the oauth draft)")
+		return fmt.Errorf("api draft type must be bearer, header, query, basic_auth or aws_sigv4 (oauth2 uses the oauth draft)")
+	}
+	if c.Type == SecureCredAWS {
+		if err := checkAWSCredential(c, ""); err != nil {
+			return err
+		}
 	}
 	if strings.TrimSpace(c.BaseURL) == "" && strings.TrimSpace(c.AllowedURLPattern) == "" {
 		return fmt.Errorf("draft needs a base_url (e.g. https://192.168.0.1) or an allowed_url_pattern")

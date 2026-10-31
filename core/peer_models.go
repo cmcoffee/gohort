@@ -756,6 +756,14 @@ func resolveModelService(cfg LLMProviderConfig, name string) (LLMProviderConfig,
 		return cfg, err
 	}
 	cfg.Provider, cfg.Endpoint, cfg.APIKey = t.Dialect, t.Endpoint, t.Key
+	if t.Dialect == "bedrock" {
+		// Bedrock's API, region and signing are the connector's: its
+		// address is the host the client calls, and its credential signs.
+		cfg.BedrockAPI, cfg.Region, cfg.Profile, cfg.awsKeys = t.BedrockAPI, t.Region, t.Profile, nil
+		if t.AWSAccessKey != "" {
+			cfg.awsKeys = &awsCreds{AccessKey: t.AWSAccessKey, SecretKey: t.AWSSecretKey, Source: "the connector's credential"}
+		}
+	}
 	if strings.TrimSpace(cfg.Model) == "" {
 		cfg.Model = t.Model
 	}

@@ -2,6 +2,8 @@ package core
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -348,8 +350,7 @@ func TestBedrockRuntimeWireFormat(t *testing.T) {
 
 	host := strings.TrimPrefix(srv.URL, "http://")
 	api := &apiclient.APIClient{URLScheme: "http", VerifySSL: false}
-	llm, err := newBedrockRuntimeLLM("", "anthropic.claude-3-5-sonnet-20241022-v2:0",
-		"us-west-2", "", host, api)
+	llm, err := newBedrockRuntimeLLM(bedrockAuth{}, "anthropic.claude-3-5-sonnet-20241022-v2:0", "us-west-2", host, api)
 	if err != nil {
 		t.Fatalf("construct: %v", err)
 	}
@@ -412,8 +413,7 @@ func TestBedrockRuntimeAgainstRealInvokeModelExchange(t *testing.T) {
 	defer srv.Close()
 
 	api := &apiclient.APIClient{URLScheme: "http", VerifySSL: false}
-	llm, err := newBedrockRuntimeLLM("", "us.anthropic.claude-opus-4-8", "us-west-2", "",
-		strings.TrimPrefix(srv.URL, "http://"), api)
+	llm, err := newBedrockRuntimeLLM(bedrockAuth{}, "us.anthropic.claude-opus-4-8", "us-west-2", strings.TrimPrefix(srv.URL, "http://"), api)
 	if err != nil {
 		t.Fatalf("construct: %v", err)
 	}
@@ -462,8 +462,7 @@ func TestBedrockRuntimeCarriesToolArguments(t *testing.T) {
 	defer srv.Close()
 
 	api := &apiclient.APIClient{URLScheme: "http", VerifySSL: false}
-	llm, err := newBedrockRuntimeLLM("", "us.anthropic.claude-opus-5", "us-west-2", "",
-		strings.TrimPrefix(srv.URL, "http://"), api)
+	llm, err := newBedrockRuntimeLLM(bedrockAuth{}, "us.anthropic.claude-opus-5", "us-west-2", strings.TrimPrefix(srv.URL, "http://"), api)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1000,5 +999,186 @@ func TestAModelIDWithInvisibleRubbishIsRefused(t *testing.T) {
 	}
 	if ValidateModelID("ollama", "qwen3\t8b") == nil {
 		t.Error("a control character was accepted for a non-Bedrock provider")
+	}
+}
+
+// The signer gives what AWS's own worked examples give: a GET with no body,
+// signed over host, x-amz-content-sha256 and x-amz-date, with a bare query
+// name and with two query values to put in order.
+func TestSignAWSV4MatchesAWSExamples(t *testing.T) {
+	// The access key ID is not part of what is signed: only the secret key is.
+	creds := awsCreds{AccessKey: "AKIDEXAMPLE", SecretKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"}
+	when := time.Date(2013, 5, 24, 0, 0, 0, 0, time.UTC)
+	for u, want := range map[string]string{
+		"https://examplebucket.s3.amazonaws.com/?lifecycle":           "fea454ca298b7da1c68078a5d1bdbfbbe0d65c699e0f91ac7a200a0136783543",
+		"https://examplebucket.s3.amazonaws.com/?prefix=J&max-keys=2": "34b48302e7b5fa45bde8084f4b7868a86f0a534bc59db6670ed5711ef69dc6f7",
+	} {
+		req, _ := http.NewRequest("GET", u, nil)
+		if err := signAWSV4(req, nil, creds, "us-east-1", "s3", when); err != nil {
+			t.Fatal(err)
+		}
+		if a := req.Header.Get("Authorization"); !strings.HasSuffix(a, "SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature="+want) {
+			t.Errorf("%s: %s", u, a)
+		}
+	}
+}
+
+// An aws_sigv4 credential signs what the governed dispatch sends, for the
+// service and region it names, over the body as sent; its key pair does not
+// come back in what the call returns.
+func TestAnAWSCredentialSignsTheRequest(t *testing.T) {
+	secureAPITestStore(t)
+	const secretKey = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"
+	var got *http.Request
+	var body []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r
+		body, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"echo":"` + secretKey + `","id":"AKIDEXAMPLE"}`))
+	}))
+	defer srv.Close()
+	c := SecureCredential{Name: "polly", Type: SecureCredAWS, AWSService: "polly", AWSRegion: "eu-west-1", BaseURL: srv.URL}
+	if err := Secure().Save(c, "AKIDEXAMPLE:"+secretKey); err != nil {
+		t.Fatal(err)
+	}
+	out, err := Secure().DispatchToolCall(&ToolSession{Username: "root"}, "polly", srv.URL+"/v1/speech?b=2&a=1", "POST", `{"Text":"hello"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	day := time.Now().UTC().Format("20060102")
+	auth := got.Header.Get("Authorization")
+	if !strings.HasPrefix(auth, "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/"+day+"/eu-west-1/polly/aws4_request, SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date, Signature=") {
+		t.Errorf("Authorization: %s", auth)
+	}
+	sum := sha256.Sum256(body)
+	if got.Header.Get("X-Amz-Content-Sha256") != hex.EncodeToString(sum[:]) || string(body) != `{"Text":"hello"}` {
+		t.Errorf("the body hash: %s over %q", got.Header.Get("X-Amz-Content-Sha256"), body)
+	}
+	if strings.Contains(out, secretKey) || strings.Contains(out, "AKIDEXAMPLE") {
+		t.Errorf("the key pair came back:\n%s", out)
+	}
+}
+
+// The machine's identity signs only on a global credential, and is read from
+// the machine at each call, never stored; a key pair is two parts.
+func TestTheMachinesAWSIdentityIsTheDeployments(t *testing.T) {
+	secureAPITestStore(t)
+	if err := Secure().Save(SecureCredential{Name: "mine", Type: SecureCredAWS, AWSMachine: true, Owner: "alex", BaseURL: "https://polly.us-east-1.amazonaws.com"}, ""); err == nil || !strings.Contains(err.Error(), "only a global credential") {
+		t.Errorf("a person's credential signed as the machine: %v", err)
+	}
+	if err := Secure().Save(SecureCredential{Name: "shared", Type: SecureCredAWS, AWSMachine: true, CredScope: "per_user", BaseURL: "https://polly.us-east-1.amazonaws.com"}, ""); err == nil {
+		t.Error("a per-user credential signed as the machine")
+	}
+	if err := Secure().SaveAPIDraft(SecureCredential{Name: "drafted", Type: SecureCredAWS, AWSMachine: true, Owner: "alex", BaseURL: "https://polly.us-east-1.amazonaws.com"}); err == nil {
+		t.Error("a person's draft signed as the machine")
+	}
+	if _, err := awsCredsOf(SecureCredential{Type: SecureCredAWS, AWSMachine: true, Owner: "alex"}, ""); err == nil {
+		t.Error("a person's record that got past the saves signed as the machine")
+	}
+	for _, bad := range []string{"AKIDONLY", "AKID:", ":secret", "a:b:c"} {
+		if err := Secure().Save(SecureCredential{Name: "pair", Type: SecureCredAWS, BaseURL: "https://polly.us-east-1.amazonaws.com"}, bad); err == nil {
+			t.Errorf("key pair %q was taken", bad)
+		}
+	}
+
+	t.Setenv("AWS_ACCESS_KEY_ID", "AKIDMACHINE")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "machine-secret")
+	t.Setenv("AWS_SESSION_TOKEN", "")
+	t.Setenv("AWS_PROFILE", "")
+	machineAWS.Lock()
+	machineAWS.by = map[string]*bedrockCreds{}
+	machineAWS.Unlock()
+	var got *http.Request
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { got = r; w.Write([]byte("{}")) }))
+	defer srv.Close()
+	if err := Secure().Save(SecureCredential{Name: "box", Type: SecureCredAWS, AWSMachine: true, AWSService: "polly", AWSRegion: "us-east-1", BaseURL: srv.URL}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if sec, _ := Secure().loadSecret("box"); sec != awsMachineSecret {
+		t.Errorf("stored for the machine: %q", sec)
+	}
+	if _, err := Secure().DispatchToolCall(&ToolSession{Username: "root"}, "box", srv.URL+"/v1/voices", "GET", ""); err != nil {
+		t.Fatal(err)
+	}
+	if a := got.Header.Get("Authorization"); !strings.Contains(a, "Credential=AKIDMACHINE/") || !strings.Contains(a, "SignedHeaders=host;x-amz-content-sha256;x-amz-date,") {
+		t.Errorf("signed as: %s", a)
+	}
+	// Turned to a key pair, it needs one: the placeholder is not a key.
+	c, _ := Secure().Load("box")
+	c.AWSMachine = false
+	if err := Secure().Save(c, ""); err == nil || !strings.Contains(err.Error(), "no key pair to keep") {
+		t.Errorf("off the machine with no key pair: %v", err)
+	}
+	if err := Secure().Save(c, "AKIDNEW:new-secret"); err != nil {
+		t.Errorf("off the machine with a key pair: %v", err)
+	}
+}
+
+// What an address signs for, when the credential does not say.
+func TestAnAWSAddressNamesItsServiceAndRegion(t *testing.T) {
+	for host, want := range map[string]string{
+		"bedrock-runtime.us-west-2.amazonaws.com": "us-west-2 bedrock",
+		"polly.eu-west-1.amazonaws.com":           "eu-west-1 polly",
+		"bedrock-mantle.us-east-1.api.aws":        "us-east-1 bedrock-mantle",
+		"polly.eu-west-1.amazonaws.com:443":       "eu-west-1 polly",
+	} {
+		r, s, err := awsScope(SecureCredential{Name: "x"}, host)
+		if err != nil || r+" "+s != want {
+			t.Errorf("%s: %q %q %v", host, r, s, err)
+		}
+	}
+	if r, s, _ := awsScope(SecureCredential{AWSRegion: "ap-south-1"}, "bedrock-runtime.us-west-2.amazonaws.com"); r != "ap-south-1" || s != "bedrock" {
+		t.Errorf("the credential's region: %q %q", r, s)
+	}
+	if _, _, err := awsScope(SecureCredential{Name: "x"}, "vpce-0abc.example.internal"); err == nil {
+		t.Error("an address that names no service was signed for")
+	}
+}
+
+// A model client is given an AWS credential's signing only as ModelKey gives
+// a key: a global credential, enabled, of the AWS kind, for an address it
+// allows.
+func TestAModelIsGivenAnAWSCredentialsSigning(t *testing.T) {
+	secureAPITestStore(t)
+	base := "https://bedrock-runtime.us-west-2.amazonaws.com"
+	Secure().Save(SecureCredential{Name: "bedrock_keys", Type: SecureCredAWS, BaseURL: base}, "AKID:sekrit")
+	Secure().Save(SecureCredential{Name: "bedrock_box", Type: SecureCredAWS, AWSMachine: true, AWSProfile: "prod", BaseURL: base}, "")
+	// A bearer token shaped like a key pair is still not one to sign with.
+	Secure().Save(SecureCredential{Name: "plain", Type: SecureCredBearer, BaseURL: base}, "AKIDLIKE:secret")
+	if a, err := Secure().ModelAWS("bedrock_keys", base+"/"); err != nil || a.AccessKey != "AKID" || a.SecretKey != "sekrit" || a.Region != "us-west-2" || a.Machine {
+		t.Errorf("the key pair: %+v %v", a, err)
+	}
+	if a, err := Secure().ModelAWS("bedrock_box", base+"/"); err != nil || !a.Machine || a.Profile != "prod" || a.SecretKey != "" {
+		t.Errorf("the machine: %+v %v", a, err)
+	}
+	if _, err := Secure().ModelAWS("plain", base+"/"); err == nil {
+		t.Error("a bearer credential was taken as AWS signing")
+	}
+	if _, err := Secure().ModelAWS("bedrock_keys", "https://elsewhere.example/"); err == nil {
+		t.Error("an address the credential does not allow")
+	}
+	// Each person's own key, under one global name.
+	Secure().Save(SecureCredential{Name: "theirs", Type: SecureCredAWS, CredScope: "per_user", BaseURL: base}, "AKIDTHEIRS:theirs")
+	if _, err := Secure().ModelAWS("theirs", base+"/"); err == nil {
+		t.Error("a person's credential signed for a model")
+	}
+	Secure().SetDisabled("bedrock_keys", true)
+	if _, err := Secure().ModelAWS("bedrock_keys", base+"/"); err == nil {
+		t.Error("a disabled credential")
+	}
+}
+
+// A signature covers the body, so one streamed as it is read is refused
+// rather than signed as if it were empty.
+func TestAStreamedBodyIsNotSigned(t *testing.T) {
+	req, _ := http.NewRequest("POST", "https://polly.us-east-1.amazonaws.com/v1/speech", nil)
+	req.Body = io.NopCloser(strings.NewReader("streamed"))
+	if _, err := requestPayload(req); err == nil {
+		t.Error("a streamed body was signed")
+	}
+	req, _ = http.NewRequest("POST", "https://polly.us-east-1.amazonaws.com/v1/speech", strings.NewReader("whole"))
+	if b, err := requestPayload(req); err != nil || string(b) != "whole" {
+		t.Errorf("a whole body: %q %v", b, err)
 	}
 }

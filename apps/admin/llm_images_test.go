@@ -24,7 +24,7 @@ func TestEachTierSaysWhetherItReadsImages(t *testing.T) {
 		want   bool
 	}{
 		{LLMTable, true, `{"provider":"llama.cpp","no_images":false}`, false},
-		{LeadLLMTable, false, `{"provider":"bedrock","no_images":true}`, true},
+		{LeadLLMTable, false, `{"provider":"vllm","no_images":true}`, true},
 	} {
 		w := httptest.NewRecorder()
 		a.llmConfigRoutes(c.table, c.worker)(w, httptest.NewRequest("POST", "/api/llm", strings.NewReader(c.body)))

@@ -41,6 +41,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/user"
@@ -300,6 +301,31 @@ func awsCLITooOld(ver string) bool {
 		return major < exportCredsMinCLI[0]
 	}
 	return minor < exportCredsMinCLI[1]
+}
+
+// bedrockAuth is how a Bedrock client signs: with a bearer token, or with AWS
+// credentials, a key pair it is given (keys, from a model connector's
+// credential) or else the machine's, under profile.
+type bedrockAuth struct {
+	bearer, profile string
+	keys            *awsCreds
+}
+
+// creds are the AWS credentials a, without a bearer token, signs with,
+// resolved now so a misconfigured box fails at build with a clear message
+// rather than on the first chat turn; nil with a bearer token.
+func (a bedrockAuth) creds() (*bedrockCreds, error) {
+	if a.bearer != "" {
+		return nil, nil
+	}
+	if a.keys != nil {
+		return &bedrockCreds{cur: *a.keys}, nil
+	}
+	c := &bedrockCreds{profile: bedrockProfile(a.profile), explicit: a.profile != ""}
+	if _, err := c.get(); err != nil {
+		return nil, err
+	}
+	return c, nil
 }
 
 // bedrockCreds caches resolved credentials and re-resolves them when they are
@@ -600,7 +626,8 @@ func ansiResidueAt(s string) int {
 // a Bedrock bearer token and may be empty, in which case AWS credentials are
 // resolved and requests are SigV4-signed. endpoint overrides the derived host
 // for a private link or a VPC endpoint; it is a host, not a URL.
-func newBedrockLLM(bearer, model, region, profile, endpoint string, api *apiclient.APIClient) (LLM, error) {
+func newBedrockLLM(auth bedrockAuth, model, region, endpoint string, api *apiclient.APIClient) (LLM, error) {
+	bearer := auth.bearer
 	configured := region
 	region = bedrockRegion(region)
 
@@ -624,16 +651,13 @@ func newBedrockLLM(bearer, model, region, profile, endpoint string, api *apiclie
 	}
 	api.Server = host
 
-	var provider *bedrockCreds
-	if bearer == "" {
-		provider = &bedrockCreds{profile: bedrockProfile(profile), explicit: profile != ""}
-		// Resolve once up front so a misconfigured box fails at startup with a
-		// clear message instead of on the first chat turn. The result is
-		// cached; later calls only re-resolve near expiry.
-		if _, err := provider.get(); err != nil {
-			return nil, err
-		}
-	} else {
+	// Resolved once up front (see bedrockAuth.creds); later calls only
+	// re-resolve near expiry.
+	provider, err := auth.creds()
+	if err != nil {
+		return nil, err
+	}
+	if bearer != "" {
 		Debug("[bedrock]: using bearer-token auth (region=%s)", region)
 	}
 
@@ -706,7 +730,12 @@ func signAWSV4(req *http.Request, payload []byte, creds awsCreds, region, servic
 	// Sign the small fixed set rather than every header present. Anything not
 	// listed here is excluded from the signature, so a proxy that adds a
 	// header in flight cannot invalidate it.
-	signed := []string{"content-type", "host", "x-amz-content-sha256", "x-amz-date"}
+	signed := []string{"host", "x-amz-content-sha256", "x-amz-date"}
+	// Content-Type is signed when there is one: a GET has none, and a
+	// signed header with no value is not what AWS computes.
+	if req.Header.Get("Content-Type") != "" {
+		signed = append(signed, "content-type")
+	}
 	if creds.Session != "" {
 		signed = append(signed, "x-amz-security-token")
 	}
@@ -729,7 +758,7 @@ func signAWSV4(req *http.Request, payload []byte, creds awsCreds, region, servic
 	canonicalRequest := strings.Join([]string{
 		req.Method,
 		path,
-		req.URL.RawQuery,
+		sigv4CanonicalQuery(req.URL.Query()),
 		canonHeaders.String(),
 		signedHeaders,
 		payloadHash,
@@ -844,6 +873,28 @@ func bedrockHint(model, msg string) string {
 		return "That is the Messages-API permission. If your role grants bedrock:InvokeModel instead, set Bedrock API to \"Converse\" (or \"InvokeModel\") under Admin -> LLMs."
 	}
 	return ""
+}
+
+// sigv4CanonicalQuery is the query as SigV4 wants it: each name and value
+// encoded as sigv4EncodeSegment does, sorted by name and then value.
+func sigv4CanonicalQuery(q url.Values) string {
+	var pairs [][2]string
+	for k, vs := range q {
+		for _, v := range vs {
+			pairs = append(pairs, [2]string{sigv4EncodeSegment(k), sigv4EncodeSegment(v)})
+		}
+	}
+	sort.Slice(pairs, func(i, j int) bool {
+		if pairs[i][0] != pairs[j][0] {
+			return pairs[i][0] < pairs[j][0]
+		}
+		return pairs[i][1] < pairs[j][1]
+	})
+	out := make([]string, len(pairs))
+	for i, p := range pairs {
+		out[i] = p[0] + "=" + p[1]
+	}
+	return strings.Join(out, "&")
 }
 
 // sigv4CanonicalPath is the path as SigV4 wants it in the canonical request:
@@ -999,4 +1050,217 @@ func chFirstRegion(configured, resolved string) string {
 		return configured
 	}
 	return resolved
+}
+
+// ---- the aws_sigv4 credential --------------------------------------------
+//
+// An aws_sigv4 credential: each request it carries is signed with AWS
+// Signature Version 4 as the governed dispatch sends it, so a service
+// connector or an agent's tool reaches an AWS API (Bedrock, Polly, Titan)
+// through the same allow list, audit and Private mode as any other key.
+//
+// The key is a stored access key pair, or this machine's own AWS identity
+// (its profile, SSO session or environment, resolved and refreshed as the
+// Bedrock tier always did). The machine's identity is the deployment's, so
+// only a global credential, which an administrator makes, may sign with it:
+// a person's own credential signing as the machine would borrow whatever the
+// machine's AWS role may do.
+
+// awsMachineSecret is what stands in the store for a credential that signs
+// with the machine's identity, which is never stored.
+const awsMachineSecret = "(machine)"
+
+// checkAWSCredential refuses an aws_sigv4 credential that cannot sign: the
+// machine's identity on a person's credential, or a key pair that is not
+// one.
+func checkAWSCredential(c SecureCredential, secret string) error {
+	if c.AWSMachine {
+		if c.Owner != "" || c.IsPerUser() {
+			return fmt.Errorf("the machine's AWS identity is the deployment's: only a global credential, made by an administrator, may sign with it. Give this one an access key pair instead")
+		}
+		return nil
+	}
+	if s := strings.TrimSpace(secret); s != "" {
+		if _, err := awsKeyPair(s); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// awsKeyPair reads a stored key pair, "ACCESS_KEY_ID:SECRET_ACCESS_KEY".
+func awsKeyPair(secret string) (awsCreds, error) {
+	id, key, ok := strings.Cut(strings.TrimSpace(secret), ":")
+	id, key = strings.TrimSpace(id), strings.TrimSpace(key)
+	if !ok || id == "" || key == "" || strings.Contains(key, ":") {
+		return awsCreds{}, fmt.Errorf("an AWS key is ACCESS_KEY_ID:SECRET_ACCESS_KEY, the two joined by a colon")
+	}
+	return awsCreds{AccessKey: id, SecretKey: key, Source: "the credential's key pair"}, nil
+}
+
+// machineAWS keeps the machine's resolved AWS credentials per profile, each
+// refreshed shortly before it expires.
+var machineAWS = struct {
+	sync.Mutex
+	by map[string]*bedrockCreds
+}{by: map[string]*bedrockCreds{}}
+
+// machineAWSCreds is the machine's AWS identity under profile ("" is the
+// usual chain: environment, the CLI, the credentials file).
+func machineAWSCreds(profile string) (awsCreds, error) {
+	machineAWS.Lock()
+	c, ok := machineAWS.by[profile]
+	if !ok {
+		c = &bedrockCreds{profile: bedrockProfile(profile), explicit: profile != ""}
+		machineAWS.by[profile] = c
+	}
+	machineAWS.Unlock()
+	return c.get()
+}
+
+// awsCredsOf is the AWS credentials credential c signs with, from the
+// machine or its stored key pair.
+func awsCredsOf(c SecureCredential, secret string) (awsCreds, error) {
+	if c.AWSMachine {
+		// Refused here too, whatever path wrote the record: a person's
+		// credential never signs as the machine.
+		if c.Owner != "" || c.IsPerUser() {
+			return awsCreds{}, fmt.Errorf("a person's credential does not sign as the machine")
+		}
+		return machineAWSCreds(strings.TrimSpace(c.AWSProfile))
+	}
+	return awsKeyPair(secret)
+}
+
+// awsScope is the region and service credential c signs for at host: its
+// own, or read from an AWS address (service.region.amazonaws.com, or
+// service.region.api.aws). A runtime host signs as its service
+// (bedrock-runtime as bedrock).
+func awsScope(c SecureCredential, host string) (region, service string, err error) {
+	region, service = strings.TrimSpace(c.AWSRegion), strings.TrimSpace(c.AWSService)
+	if region != "" && service != "" {
+		return region, service, nil
+	}
+	h := strings.ToLower(host)
+	if i := strings.LastIndex(h, ":"); i > 0 {
+		h = h[:i]
+	}
+	var labels []string
+	switch {
+	case strings.HasSuffix(h, ".amazonaws.com"):
+		labels = strings.Split(strings.TrimSuffix(h, ".amazonaws.com"), ".")
+	case strings.HasSuffix(h, ".api.aws"):
+		labels = strings.Split(strings.TrimSuffix(h, ".api.aws"), ".")
+	}
+	if len(labels) >= 2 {
+		svc, reg := labels[len(labels)-2], labels[len(labels)-1]
+		if alias, ok := awsSigningNames[svc]; ok {
+			svc = alias
+		}
+		if region == "" {
+			region = reg
+		}
+		if service == "" {
+			service = svc
+		}
+	}
+	if region == "" || service == "" {
+		return "", "", fmt.Errorf("credential %q signs for AWS, and %s does not say which service and region: set them on the credential", c.Name, host)
+	}
+	return region, service, nil
+}
+
+// awsSigningNames are the hosts that sign as another service's name.
+var awsSigningNames = map[string]string{"bedrock-runtime": "bedrock", "bedrock-agent-runtime": "bedrock"}
+
+// signAWS signs the request with the credential, over the exact body it
+// sends. A body streamed as it is read (an upload) cannot be hashed first,
+// and is refused.
+func (ac *apiCall) signAWS() bool {
+	creds, err := awsCredsOf(ac.c, ac.secret)
+	if err != nil {
+		return ac.exit("", fmt.Errorf("credential %q: %w", ac.c.Name, err))
+	}
+	region, service, err := awsScope(ac.c, ac.req.URL.Host)
+	if err != nil {
+		return ac.exit("", err)
+	}
+	payload, err := requestPayload(ac.req)
+	if err != nil {
+		return ac.exit("", fmt.Errorf("credential %q signs for AWS: %w", ac.c.Name, err))
+	}
+	ac.awsSecrets = []string{creds.AccessKey, creds.SecretKey, creds.Session}
+	if err := signAWSV4(ac.req, payload, creds, region, service, time.Now().UTC()); err != nil {
+		return ac.exit("", fmt.Errorf("credential %q: %w", ac.c.Name, err))
+	}
+	return true
+}
+
+// requestPayload is the body req will send, read without spending it.
+func requestPayload(req *http.Request) ([]byte, error) {
+	if req.Body == nil || req.Body == http.NoBody {
+		return nil, nil
+	}
+	if req.GetBody == nil {
+		return nil, fmt.Errorf("an AWS signature covers the whole body, and this one is streamed as it is read")
+	}
+	rc, err := req.GetBody()
+	if err != nil {
+		return nil, err
+	}
+	defer rc.Close()
+	return io.ReadAll(rc)
+}
+
+// AWSModelAuth is how a model connector's client signs its own requests to
+// Bedrock: as the machine (under Profile) or with a stored key pair, in
+// Region.
+type AWSModelAuth struct {
+	Region, Profile      string
+	Machine              bool
+	AccessKey, SecretKey string
+}
+
+// ModelAWS gives a model client the AWS signing of credential name, for
+// rawURL: only a global credential's, enabled, of the aws_sigv4 kind, for an
+// address it allows. A model client streams its own requests, so it signs
+// them itself, as ModelKey hands a bearer key over.
+func (s *SecureAPI) ModelAWS(name, rawURL string) (AWSModelAuth, error) {
+	var out AWSModelAuth
+	c, ok := s.Load(name)
+	switch {
+	case !ok:
+		return out, fmt.Errorf("no credential named %q", name)
+	case c.Owner != "" || c.IsPerUser():
+		return out, fmt.Errorf("credential %q is a person's: a model connector's key is the deployment's", name)
+	case c.Disabled || c.AdminDisabled:
+		return out, s.disabledError(c)
+	case c.Type != SecureCredAWS:
+		return out, fmt.Errorf("credential %q is %s, not an AWS signing credential", name, c.Type)
+	case !urlAllowedByCredential(c, rawURL):
+		return out, fmt.Errorf("credential %q does not allow %s", name, rawURL)
+	}
+	host := rawURL
+	if i := strings.Index(host, "://"); i >= 0 {
+		host = host[i+3:]
+	}
+	host, _, _ = strings.Cut(host, "/")
+	region, _, err := awsScope(c, host)
+	if err != nil {
+		return out, err
+	}
+	out.Region, out.Profile, out.Machine = region, strings.TrimSpace(c.AWSProfile), c.AWSMachine
+	if !c.AWSMachine {
+		sec, ok := s.loadSecret(name)
+		if !ok {
+			return out, s.disabledError(c)
+		}
+		kp, err := awsKeyPair(sec)
+		if err != nil {
+			return out, fmt.Errorf("credential %q: %w", name, err)
+		}
+		out.AccessKey, out.SecretKey = kp.AccessKey, kp.SecretKey
+	}
+	s.touch(name)
+	return out, nil
 }

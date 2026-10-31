@@ -300,6 +300,11 @@ type credentialSave struct {
 	JWTSubject   string `json:"jwt_subject"`
 	JWTAudience  string `json:"jwt_audience"`
 	JWTKeyID     string `json:"jwt_key_id"`
+	// AWS (type == "aws_sigv4").
+	AWSService string `json:"aws_service"`
+	AWSRegion  string `json:"aws_region"`
+	AWSProfile string `json:"aws_profile"`
+	AWSMachine bool   `json:"aws_machine"`
 }
 
 // saveCredential answers a POST of the whole record: create or edit.
@@ -331,6 +336,10 @@ func (a *AdminApp) saveCredential(c *jsonapi.Call, req credentialSave) (any, err
 		JWTSubject:        strings.TrimSpace(req.JWTSubject),
 		JWTAudience:       strings.TrimSpace(req.JWTAudience),
 		JWTKeyID:          strings.TrimSpace(req.JWTKeyID),
+		AWSService:        strings.TrimSpace(req.AWSService),
+		AWSRegion:         strings.TrimSpace(req.AWSRegion),
+		AWSProfile:        strings.TrimSpace(req.AWSProfile),
+		AWSMachine:        req.AWSMachine,
 	}
 	keepOAuthConfig(&cred)
 	if req.AlsoCovers != nil {

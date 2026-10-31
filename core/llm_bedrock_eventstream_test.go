@@ -165,8 +165,7 @@ func TestBedrockRuntimeStreamingEndToEnd(t *testing.T) {
 	defer srv.Close()
 
 	api := &apiclient.APIClient{URLScheme: "http", VerifySSL: false}
-	llm, err := newBedrockRuntimeLLM("", "us.anthropic.claude-opus-4-8", "us-west-2", "",
-		strings.TrimPrefix(srv.URL, "http://"), api)
+	llm, err := newBedrockRuntimeLLM(bedrockAuth{}, "us.anthropic.claude-opus-4-8", "us-west-2", strings.TrimPrefix(srv.URL, "http://"), api)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,8 +217,7 @@ func runBedrockStream(t *testing.T, events []string) *Response {
 	defer srv.Close()
 
 	api := &apiclient.APIClient{URLScheme: "http", VerifySSL: false}
-	llm, err := newBedrockRuntimeLLM("", "us.anthropic.claude-opus-4-8", "us-west-2", "",
-		strings.TrimPrefix(srv.URL, "http://"), api)
+	llm, err := newBedrockRuntimeLLM(bedrockAuth{}, "us.anthropic.claude-opus-4-8", "us-west-2", strings.TrimPrefix(srv.URL, "http://"), api)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -300,8 +298,7 @@ func TestBedrockRuntimeStreamTruncationKeepsPartial(t *testing.T) {
 	defer srv.Close()
 
 	api := &apiclient.APIClient{URLScheme: "http", VerifySSL: false}
-	llm, _ := newBedrockRuntimeLLM("", "us.anthropic.claude-opus-4-8", "us-west-2", "",
-		strings.TrimPrefix(srv.URL, "http://"), api)
+	llm, _ := newBedrockRuntimeLLM(bedrockAuth{}, "us.anthropic.claude-opus-4-8", "us-west-2", strings.TrimPrefix(srv.URL, "http://"), api)
 
 	resp, err := llm.ChatStream(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil)
 	if err != nil {
@@ -359,8 +356,7 @@ func TestBedrockRuntimeEmptyStreamIsAnError(t *testing.T) {
 	}))
 	defer srv.Close()
 	api := &apiclient.APIClient{URLScheme: "http", VerifySSL: false}
-	llm, _ := newBedrockRuntimeLLM("", "us.anthropic.claude-opus-4-8", "us-west-2", "",
-		strings.TrimPrefix(srv.URL, "http://"), api)
+	llm, _ := newBedrockRuntimeLLM(bedrockAuth{}, "us.anthropic.claude-opus-4-8", "us-west-2", strings.TrimPrefix(srv.URL, "http://"), api)
 	if _, err := llm.ChatStream(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil); err == nil {
 		t.Fatal("an empty stream must be an error")
 	}

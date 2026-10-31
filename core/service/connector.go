@@ -177,8 +177,15 @@ func (s Spec) Describe(name string) string {
 		host = u.Host
 	}
 	auth := "no key"
-	if s.Provider.Auth.Credential != "" {
-		auth = "key " + s.Provider.Auth.Credential
+	if name := s.Provider.Auth.Credential; name != "" {
+		auth = "key " + name
+		// An AWS credential holds no key it sends: it signs.
+		if c, ok := Secure().Load(name); ok && c.Type == SecureCredAWS {
+			auth = "signed by " + name
+			if c.AWSMachine {
+				auth = "signed as this machine by " + name
+			}
+		}
 	}
 	return fmt.Sprintf("%s ⇐ %s (%s)%s", line, host, auth, count)
 }

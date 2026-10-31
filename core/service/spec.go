@@ -535,8 +535,13 @@ func (o Output) validate(name string, spec Port, last Operation) error {
 }
 
 // dialects are the APIs gohort's own model clients speak, and the one host
-// each is fixed to ("" for an OpenAI-shaped API anywhere).
-var dialects = map[string]string{"openai": "", "anthropic": "api.anthropic.com", "gemini": "generativelanguage.googleapis.com"}
+// each is fixed to ("" for an OpenAI-shaped API anywhere, and for Bedrock,
+// at a regional host or a private endpoint).
+var dialects = map[string]string{"openai": "", "anthropic": "api.anthropic.com", "gemini": "generativelanguage.googleapis.com", "bedrock": ""}
+
+// bedrockAPIs are the Bedrock APIs its client speaks: Converse (any model),
+// the Messages API (Claude, at a bedrock-mantle host) and InvokeModel.
+var bedrockAPIs = map[string]bool{"converse": true, "messages": true, "invoke": true}
 
 // validateModel checks a model binding: llm.chat, in a dialect gohort
 // speaks, at that dialect's host when it is fixed to one, with no steps or
@@ -547,7 +552,7 @@ func (b Binding) validateModel(p Provider) error {
 	case b.Capability != "llm.chat":
 		return fmt.Errorf("a dialect is for llm.chat, a model: %s maps its steps", b.Capability)
 	case !ok:
-		return fmt.Errorf("dialect %q: gohort speaks openai, anthropic and gemini", b.Dialect)
+		return fmt.Errorf("dialect %q: gohort speaks openai, anthropic, gemini and bedrock", b.Dialect)
 	case len(b.Steps) > 0 || len(b.Output) > 0 || len(b.Wide) > 0:
 		return fmt.Errorf("a model has no steps or outputs: its dialect's client speaks to it")
 	case p.Transport != "http":
@@ -558,10 +563,21 @@ func (b Binding) validateModel(p Provider) error {
 			return fmt.Errorf("the %s dialect is spoken only at %s: an address of its own takes the openai dialect", b.Dialect, host)
 		}
 	}
-	for k := range b.Defaults {
-		if k != "model" && k != "context" {
+	for k, v := range b.Defaults {
+		switch {
+		case k == "model" || k == "context":
+		case k == "api" && b.Dialect == "bedrock":
+			if !bedrockAPIs[fmt.Sprint(v)] {
+				return fmt.Errorf("default api %q: Bedrock's are converse, messages and invoke", v)
+			}
+		case b.Dialect == "bedrock":
+			return fmt.Errorf("default %q: a Bedrock model's defaults are model, context and api", k)
+		default:
 			return fmt.Errorf("default %q: a model's defaults are model and context", k)
 		}
+	}
+	if b.Dialect == "bedrock" && p.Auth.None {
+		return fmt.Errorf("Bedrock signs every request: name an AWS signing credential, or a bearer one for a Bedrock API key")
 	}
 	if c := b.Cost; c != nil {
 		switch {

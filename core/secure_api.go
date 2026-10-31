@@ -80,6 +80,11 @@ const (
 	// HTTPS endpoints as api-mode tools without writing a Python
 	// urllib client around them.
 	SecureCredNone = "none"
+	// SecureCredAWS signs each request with AWS Signature Version 4, from a
+	// stored access key pair ("ACCESS_KEY_ID:SECRET_ACCESS_KEY") or, on a
+	// global credential only, this machine's own AWS identity (AWSMachine):
+	// its profile, SSO session or environment (llm_bedrock.go).
+	SecureCredAWS = "aws_sigv4"
 )
 
 // SecureCredential is the public-facing record. Secret is held in a
@@ -162,6 +167,15 @@ type SecureCredential struct {
 	// approves it. Said apart from an admin's hold so the owner and the
 	// admin both read "waiting for approval", not "switched off".
 	AwaitingApproval bool `json:"awaiting_approval,omitempty"`
+	// AWSService and AWSRegion are what an aws_sigv4 credential signs for,
+	// read from the address when blank (bedrock-runtime.us-east-1.amazonaws.com
+	// signs as bedrock in us-east-1). AWSMachine signs with this machine's
+	// AWS identity in place of a stored key pair, under AWSProfile when one
+	// is named; only a global credential may (llm_bedrock.go).
+	AWSService string `json:"aws_service,omitempty"`
+	AWSRegion  string `json:"aws_region,omitempty"`
+	AWSProfile string `json:"aws_profile,omitempty"`
+	AWSMachine bool   `json:"aws_machine,omitempty"`
 	// Secured locks the credential to the tools that DECLARE it
 	// (hook_capabilities fetch_via:<name> / secret:<name>). A secured
 	// credential has no access-scope of its own — access is whatever the
@@ -619,6 +633,10 @@ func (s *SecureAPI) Save(c SecureCredential, secret string) error {
 	}
 	switch c.Type {
 	case SecureCredBearer, SecureCredHeader, SecureCredQuery, SecureCredBasicAuth, SecureCredNone:
+	case SecureCredAWS:
+		if err := checkAWSCredential(c, secret); err != nil {
+			return err
+		}
 	case SecureCredOAuth2:
 		switch c.Grant {
 		case OAuthGrantClientCredentials, OAuthGrantJWTBearer, OAuthGrantRefreshToken, OAuthGrantPassword:
@@ -760,6 +778,20 @@ func (s *SecureAPI) Save(c SecureCredential, secret string) error {
 		s.db.Set(secureAPITable, key, c)
 		s.db.CryptSet(secureAPITable, secretKey, "(none)")
 		return nil
+	}
+	// The machine's AWS identity is resolved at each call, never stored: a
+	// placeholder stands where a key pair would, as for "none".
+	if c.Type == SecureCredAWS && c.AWSMachine {
+		s.db.Set(secureAPITable, key, c)
+		s.db.CryptSet(secureAPITable, secretKey, awsMachineSecret)
+		return nil
+	}
+	// Turned from the machine to a key pair, it has none to keep.
+	if c.Type == SecureCredAWS && strings.TrimSpace(secret) == "" {
+		var prev string
+		if s.db.Get(secureAPITable, secretKey, &prev) && prev == awsMachineSecret {
+			return fmt.Errorf("credential %q signed as the machine and has no key pair to keep: give one, ACCESS_KEY_ID:SECRET_ACCESS_KEY", c.Name)
+		}
 	}
 	// Secret is required on first save, optional on update — empty
 	// secret on update means "leave the existing encrypted value in
@@ -2675,7 +2707,8 @@ type apiCall struct {
 	// The request, its auth, and what the reply must not show (build,
 	// authorize, redactions, client).
 	req         *http.Request
-	oauthBearer string // captured for redaction
+	oauthBearer string   // captured for redaction
+	awsSecrets  []string // an AWS signing's secret key and session token, for redaction
 	redactList  []string
 	httpClient  *http.Client
 
@@ -2886,6 +2919,11 @@ func (ac *apiCall) loadSecret() bool {
 	ac.callUser = ""
 	if sess != nil {
 		ac.callUser = sess.Username
+	}
+	if c.Type == SecureCredAWS && c.AWSMachine {
+		// Signed with this machine's AWS identity, resolved as it signs: no
+		// stored secret to read.
+		return true
 	}
 	if c.Type != SecureCredNone && c.inlineSecret != "" {
 		// A synthesized credential brings its own secret; there is nothing in
@@ -3102,6 +3140,10 @@ func (ac *apiCall) authorize() bool {
 		ac.oauthBearer = tok
 	case SecureCredNone:
 		// Public unauthenticated endpoint — no auth header injected.
+	case SecureCredAWS:
+		// Last, over the request as it will be sent: the signature covers
+		// its headers and the hash of its body.
+		return ac.signAWS()
 	default:
 		return ac.exit("", fmt.Errorf("unknown credential type %q", c.Type))
 	}
@@ -3135,6 +3177,7 @@ func (ac *apiCall) redactions() {
 	if ac.oauthBearer != "" {
 		ac.redactList = append(ac.redactList, ac.oauthBearer)
 	}
+	ac.redactList = append(ac.redactList, ac.awsSecrets...)
 	// And each one as it appears once encoded: a query-param key sits in the
 	// request URL percent-encoded, and Go's transport errors quote that URL
 	// whole; a JSON body escapes "/" and "+". A key with any of those

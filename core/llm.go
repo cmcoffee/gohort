@@ -1308,6 +1308,15 @@ type LLMProviderConfig struct {
 	// that should not be shown pictures. Stored as the negative so every
 	// existing configuration reads images as before.
 	NoImages bool
+	// awsKeys is the key pair a Bedrock model connector's credential holds,
+	// when it signs with one rather than the machine's identity: filled when
+	// the connector is resolved, never stored.
+	awsKeys *awsCreds
+}
+
+// bedrockAuth is how this config's Bedrock client signs.
+func (cfg LLMProviderConfig) bedrockAuth() bedrockAuth {
+	return bedrockAuth{bearer: cfg.APIKey, profile: cfg.Profile, keys: cfg.awsKeys}
 }
 
 // newLLMAPIClient builds an apiclient.APIClient configured for LLM provider
@@ -1956,11 +1965,11 @@ func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 		// better integration (real SSE streaming) as the norm.
 		switch cfg.BedrockAPI {
 		case "converse":
-			inner, err = newBedrockConverseLLM(cfg.APIKey, cfg.Model, cfg.Region, cfg.Profile, cfg.Endpoint, api)
+			inner, err = newBedrockConverseLLM(cfg.bedrockAuth(), cfg.Model, cfg.Region, cfg.Endpoint, api)
 		case "invoke":
-			inner, err = newBedrockRuntimeLLM(cfg.APIKey, cfg.Model, cfg.Region, cfg.Profile, cfg.Endpoint, api)
+			inner, err = newBedrockRuntimeLLM(cfg.bedrockAuth(), cfg.Model, cfg.Region, cfg.Endpoint, api)
 		default:
-			inner, err = newBedrockLLM(cfg.APIKey, cfg.Model, cfg.Region, cfg.Profile, cfg.Endpoint, api)
+			inner, err = newBedrockLLM(cfg.bedrockAuth(), cfg.Model, cfg.Region, cfg.Endpoint, api)
 		}
 		if err != nil {
 			return nil, err

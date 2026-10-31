@@ -99,7 +99,8 @@ func (c *bedrockRuntimeClient) ContextSize() int {
 // newBedrockRuntimeLLM builds a client for the legacy InvokeModel endpoint.
 // Credentials resolve exactly as they do for the Messages-API mode, including
 // the explicit-profile rules — the difference is the endpoint, not the auth.
-func newBedrockRuntimeLLM(bearer, model, region, profile, endpoint string, api *apiclient.APIClient) (LLM, error) {
+func newBedrockRuntimeLLM(auth bedrockAuth, model, region, endpoint string, api *apiclient.APIClient) (LLM, error) {
+	bearer := auth.bearer
 	configured := region
 	region = bedrockRegion(region)
 
@@ -129,12 +130,11 @@ func newBedrockRuntimeLLM(bearer, model, region, profile, endpoint string, api *
 		region: region,
 		api:    api,
 	}
-	if bearer == "" {
-		c.creds = &bedrockCreds{profile: bedrockProfile(profile), explicit: profile != ""}
-		if _, err := c.creds.get(); err != nil {
-			return nil, err
-		}
+	creds, err := auth.creds()
+	if err != nil {
+		return nil, err
 	}
+	c.creds = creds
 
 	api.AuthFunc = func(req *http.Request) {
 		if bearer != "" {
@@ -499,12 +499,9 @@ const bedrockMetricsKey = "amazon-bedrock-invocationMetrics"
 func bedrockModelList(ctx context.Context, cfg LLMProviderConfig) ([]string, error) {
 	region := bedrockRegion(cfg.Region)
 	host := fmt.Sprintf("https://bedrock.%s.amazonaws.com", region)
-	var creds *bedrockCreds
-	if cfg.APIKey == "" {
-		creds = &bedrockCreds{profile: bedrockProfile(cfg.Profile), explicit: cfg.Profile != ""}
-		if _, err := creds.get(); err != nil {
-			return nil, err
-		}
+	creds, err := cfg.bedrockAuth().creds()
+	if err != nil {
+		return nil, err
 	}
 	auth := func(req *http.Request) {
 		if cfg.APIKey != "" {
@@ -622,8 +619,8 @@ type bedrockConverseClient struct {
 // newBedrockConverseLLM builds a Converse client. Host, credentials and
 // signing are InvokeModel's; only the model id rule differs (see
 // converseModelID).
-func newBedrockConverseLLM(bearer, model, region, profile, endpoint string, api *apiclient.APIClient) (LLM, error) {
-	inner, err := newBedrockRuntimeLLM(bearer, model, region, profile, endpoint, api)
+func newBedrockConverseLLM(auth bedrockAuth, model, region, endpoint string, api *apiclient.APIClient) (LLM, error) {
+	inner, err := newBedrockRuntimeLLM(auth, model, region, endpoint, api)
 	if err != nil {
 		return nil, err
 	}

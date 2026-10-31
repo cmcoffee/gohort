@@ -114,14 +114,14 @@ func claudeBodyFor(t *testing.T, path, model, tierDefault string, opts ...ChatOp
 		c.effort = tier
 		llm = c
 	case "bedrock-messages":
-		l, err := newBedrockLLM("test-token", model, "us-west-2", "", host, api)
+		l, err := newBedrockLLM(bedrockAuth{bearer: "test-token"}, model, "us-west-2", host, api)
 		if err != nil {
 			t.Fatal(err)
 		}
 		l.(*anthropicClient).effort = tier
 		llm = l
 	case "bedrock-invoke":
-		l, err := newBedrockRuntimeLLM("test-token", model, "us-west-2", "", host, api)
+		l, err := newBedrockRuntimeLLM(bedrockAuth{bearer: "test-token"}, model, "us-west-2", host, api)
 		if err != nil {
 			t.Fatal(err)
 		}

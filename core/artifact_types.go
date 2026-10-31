@@ -1154,6 +1154,15 @@ func (credentialArtifact) ImportArtifact(_ Database, recipe json.RawMessage, _ s
 		err = api.SaveOAuthDraft(c)
 	case SecureCredNone:
 		err = api.Save(c, "")
+	case SecureCredAWS:
+		// Signing as the machine has no secret to wait for: it lands
+		// switched off like the rest, and enabling it is the admin's choice
+		// to let it sign as this machine. A key pair waits as a draft.
+		if c.AWSMachine {
+			err = api.Save(c, "")
+		} else {
+			err = api.SaveAPIDraft(c)
+		}
 	default:
 		err = api.SaveAPIDraft(c)
 	}

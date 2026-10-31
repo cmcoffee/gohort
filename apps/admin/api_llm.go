@@ -456,6 +456,23 @@ func (a *AdminApp) handleLLMConfigSave(table string, worker bool) func(c *jsonap
 			}
 			req.Provider, req.APIKey, req.Endpoint = media.ServiceProviderPrefix+name, "", ""
 		}
+		// AWS Bedrock runs on a model connector at its address, signing as
+		// the machine or with its API key: the tier names it.
+		if strings.TrimSpace(req.Provider) == "bedrock" {
+			current, _ := a.tierConnectorOf(table, bedrockTemplate)
+			s := service.BedrockSettings{Region: req.AWSRegion, Profile: req.AWSProfile, API: req.BedrockAPI,
+				Endpoint: req.Endpoint, Model: req.Model, Key: req.APIKey}
+			name, _, err := service.BedrockConnectorFor(RootDB, s, current, a.otherTierRunsOn(table, current), tierTitles[table])
+			if err != nil {
+				return nil, jsonapi.BadRequest(err.Error())
+			}
+			if strings.TrimSpace(req.Model) == "" {
+				req.Model = service.ModelDefault("bedrock")
+			}
+			req.Provider, req.APIKey, req.Endpoint = media.ServiceProviderPrefix+name, "", ""
+			req.AWSRegion, req.AWSProfile, req.BedrockAPI = "", "", ""
+			hosted = true
+		}
 		// A model connector must be one, and approved.
 		if err := serviceProviderOK(req.Provider, "llm.chat"); err != nil {
 			return nil, jsonapi.BadRequest(err.Error())
@@ -608,6 +625,12 @@ func (a *AdminApp) handleLLMModels(table string) func(c *jsonapi.Call, req llmMo
 		if strings.TrimSpace(req.Provider) == "" {
 			return map[string]any{"error": "Pick a provider first."}, nil
 		}
+		if req.Provider == "bedrock" {
+			if name, ok := a.keptBedrock(table, service.BedrockSettings{Region: req.AWSRegion, Profile: req.AWSProfile,
+				API: req.BedrockAPI, Endpoint: req.Endpoint, Key: req.APIKey}); ok {
+				req.Provider = media.ServiceProviderPrefix + name
+			}
+		}
 		req.Provider, req.APIKey = a.formTierTarget(table, req.Provider, req.APIKey)
 		ids, err := ListModels(c.R.Context(), LLMProviderConfig{
 			Provider:   req.Provider,
@@ -720,12 +743,34 @@ func (a *AdminApp) hostedTierConnector(table, provider, model, key string) (stri
 // tierConnectorFrom is the connector the tier runs on, when it was made from
 // provider's template.
 func (a *AdminApp) tierConnectorFrom(table, provider string) (string, bool) {
-	id := service.ModelTemplate(provider)
+	return a.tierConnectorOf(table, service.ModelTemplate(provider))
+}
+
+// bedrockTemplate is the template a Bedrock tier's connector is made from.
+const bedrockTemplate = "bedrock-model"
+
+// tierConnectorOf is the connector the tier runs on, when it was made from
+// template id.
+func (a *AdminApp) tierConnectorOf(table, id string) (string, bool) {
 	if id == "" || a.db == nil {
 		return "", false
 	}
 	name, ok := strings.CutPrefix(a.storedString(table, "provider"), media.ServiceProviderPrefix)
 	if !ok || service.ModelTemplateOf(RootDB, name) != id {
+		return "", false
+	}
+	return name, true
+}
+
+// keptBedrock is the Bedrock connector the tier runs on, when the form shows
+// its settings and no key: what Test and List models then ask, since its
+// key, when it has one, is in its credential.
+func (a *AdminApp) keptBedrock(table string, s service.BedrockSettings) (string, bool) {
+	if strings.TrimSpace(s.Key) != "" {
+		return "", false
+	}
+	name, ok := a.tierConnectorOf(table, bedrockTemplate)
+	if !ok || !service.BedrockAt(RootDB, name, s) {
 		return "", false
 	}
 	return name, true

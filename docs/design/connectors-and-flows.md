@@ -484,8 +484,8 @@ no step of their own.
    one; on a connector both tiers share, the tier gets one of its own, so
    the other tier's key does not change unseen. The
    clients stay Go: they are the dialects, and the SDK builds them
-   directly. What stays: Bedrock (its SigV4 signing would first have to
-   become a kind of auth), the local servers (Ollama, llama.cpp, vLLM),
+   directly. What stays: Bedrock (moved in item 8, once its signing was a
+   kind of credential), the local servers (Ollama, llama.cpp, vLLM),
    whose thinking switches and queue are Go, and peers.
 
 7. **Contracts reference.** Built 2026-10-31. Each contract in the registry
@@ -504,8 +504,33 @@ no step of their own.
    the server probe and the queue key on the tier being "ollama". With
    that, every hosted provider whose requests and readings were Go is a
    connector; what stays is the protocols (SMTP, Chromium, DuckDuckGo's
-   page), the local model servers, Bedrock (until its signing is a kind of
-   auth) and peers.
+   page), the local model servers and peers.
+8. **Bedrock signing.** Built 2026-10-31, the owner choosing both the
+   machine's identity (admin only) and the tier's move. A credential kind,
+   `aws_sigv4`, signs each request the governed dispatch sends with AWS
+   Signature Version 4, last, over the exact body (a body streamed as it is
+   read is refused): from a stored key pair, ACCESS_KEY_ID:SECRET_ACCESS_KEY,
+   or, on a global credential only, this machine's own AWS identity (its
+   profile, SSO session or environment, resolved through the AWS CLI and
+   refreshed before it expires, as the Bedrock tier always did). Service and
+   region are the credential's, or read from the address
+   (bedrock-runtime signs as bedrock); the query is put in SigV4's order, and
+   Content-Type is signed only when there is one. The signer matches AWS's
+   published examples. A person's credential never signs as the machine:
+   refused at save, at draft and at signing. Any spec connector or agent
+   tool can now reach an AWS API through it. Bedrock is a model connector:
+   dialect `bedrock`, defaults model, context and api (converse, messages
+   or invoke), its address the host the client calls (a private endpoint
+   included), its credential signing as the machine, or a bearer one for a
+   Bedrock API key; `SecureAPI.ModelAWS` hands the client the signing as
+   `ModelKey` hands a key. `MigrateBedrockTiers` moves every Bedrock tier
+   (none lacks what it needs: with no key it signed as the machine), tiers
+   alike sharing one connector; a tier set up before the API choice speaks
+   the Messages API at its bedrock-mantle host. The LLM form and first-run
+   setup still offer AWS Bedrock, and saving makes or finds the connector
+   (`BedrockConnectorFor`), a new API key rotating the tier's own unshared
+   one. Template: AWS Bedrock (LLM). What stays: the protocols, the local
+   model servers and peers.
 
 ## Migrations
 

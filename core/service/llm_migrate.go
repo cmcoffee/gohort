@@ -25,7 +25,7 @@ var modelTemplates = map[string]string{"anthropic": "anthropic-model", "openai":
 
 // modelDefaults are the models each client ran when a tier named none: the
 // connector's default, so a tier that names none runs what it did.
-var modelDefaults = map[string]string{"anthropic": "claude-sonnet-5", "openai": "gpt-4o", "gemini": "gemini-2.5-flash"}
+var modelDefaults = map[string]string{"anthropic": "claude-sonnet-5", "openai": "gpt-4o", "gemini": "gemini-2.5-flash", "bedrock": bedrockDefaultModel}
 
 // ModelTemplate is the template a tier on provider runs through, as a model
 // connector made from it: anthropic, openai and gemini have one; anything

@@ -64,7 +64,23 @@ func modelTarget(name string, withKey bool) (media.ModelTarget, error) {
 	if cost := b.Cost; cost != nil && (cost.PerMillionInput > 0 || cost.PerMillionOutput > 0) {
 		t.InPerMillion, t.OutPerMillion, t.Priced = cost.PerMillionInput, cost.PerMillionOutput, true
 	}
+	if b.Dialect == "bedrock" {
+		t.BedrockAPI = "converse"
+		if a := strings.TrimSpace(fmt.Sprint(b.Defaults["api"])); bedrockAPIs[a] {
+			t.BedrockAPI = a
+		}
+	}
 	if withKey && s.Provider.Auth.Credential != "" {
+		// Bedrock signs with an AWS credential, or sends a bearer token
+		// (a Bedrock API key); every other dialect sends a key.
+		if c, ok := Secure().Load(s.Provider.Auth.Credential); ok && b.Dialect == "bedrock" && c.Type == SecureCredAWS {
+			a, err := Secure().ModelAWS(c.Name, t.Endpoint+"/")
+			if err != nil {
+				return t, err
+			}
+			t.Region, t.Profile, t.AWSMachine, t.AWSAccessKey, t.AWSSecretKey = a.Region, a.Profile, a.Machine, a.AccessKey, a.SecretKey
+			return t, nil
+		}
 		key, err := Secure().ModelKey(s.Provider.Auth.Credential, t.Endpoint+"/")
 		if err != nil {
 			return t, err

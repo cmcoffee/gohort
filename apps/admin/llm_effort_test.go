@@ -36,7 +36,7 @@ func TestLLMEffortSettingsSaveAndLoadPerTier(t *testing.T) {
 		return out
 	}
 	post(LLMTable, true, `{"provider":"llama.cpp","default_effort":"medium","max_effort":"High"}`)
-	post(LeadLLMTable, false, `{"provider":"bedrock","default_effort":"off","max_effort":"bogus"}`)
+	post(LeadLLMTable, false, `{"provider":"vllm","default_effort":"off","max_effort":"bogus"}`)
 
 	w := get(LLMTable, true)
 	if w["default_effort"] != "medium" || w["max_effort"] != "high" {

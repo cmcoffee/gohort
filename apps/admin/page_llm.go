@@ -428,5 +428,5 @@ func appRoutingSources() []string {
 // provider.
 const tierKeyDetail = "Anthropic, OpenAI or Gemini: the tier then runs on that connector (Service: <name>) and stores no key itself. " +
 	"A connector already holding the same key is used rather than a second one. A new key replaces the one in this tier's connector, unless the other tier runs on it too: then this tier gets a connector of its own, so the other tier's key does not change. Blank on save keeps the connector the tier runs on. " +
-	"Bedrock: a bearer token, or blank to sign with the machine's AWS credentials. " +
+	"AWS Bedrock: a Bedrock API key, kept in a bearer credential, or blank to sign as this machine; either way the tier runs on a model connector made for its region, API and profile. " +
 	"llama.cpp and vLLM: stored encrypted, and sent only when the server was started with --api-key; Ollama ignores it. Blank on save keeps the current key."
