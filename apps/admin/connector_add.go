@@ -81,8 +81,12 @@ func (a *AdminApp) capabilitiesNow() []string {
 		search = providerName(source)
 	case strings.HasPrefix(search, media.ServiceProviderPrefix):
 		search = providerName(search)
-	default:
+	case search == "hook":
+		search = "the Source Hook " + a.storedString(SearchTable, "hook")
+	case search == "duckduckgo":
 		search += " (built in)"
+	default:
+		search += " (not an engine here: choose one)"
 	}
 	mail := a.storedString(MailTable, "provider")
 	switch {
@@ -247,7 +251,7 @@ func connectorAddButton() ui.ModalButton {
 					Placeholder: connectorAddExample,
 					Help:        "provider is how the service is reached, provides what it gives gohort. Test the draft runs each capability's smallest real call through its contract's check, without saving.",
 					Detail: "A key never goes in the spec: auth names an API credential, set up under API Credentials (a template makes both). " +
-						"What a capability takes and gives is fixed by its contract (image.generate, speech.synthesize, speech.voices, embed.text, web.search, page.render, mail.send, file.convert, message.send, music.generate, llm.chat); the spec says how this service's endpoints do it. " +
+						"What a capability takes and gives is fixed by its contract (image.generate, speech.synthesize, speech.voices, embed.text, web.search, image.search, page.render, mail.send, file.convert, message.send, music.generate, llm.chat); the spec says how this service's endpoints do it. " +
 						"Saved, it is off until you approve it on its row, and ✨ Fix there helps when the service changes."},
 			},
 		},

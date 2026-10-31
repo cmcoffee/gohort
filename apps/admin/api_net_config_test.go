@@ -12,9 +12,10 @@ import (
 )
 
 // The search, mail, embedding and transcription GETs returned their keys in
-// the clear to the browser. They read as a placeholder now, and the
-// placeholder coming back on a save keeps the stored key. Transcription and
-// image generation show none: the key is the connector's or the peer's.
+// the clear to the browser. Mail's reads as a placeholder now, and the
+// placeholder coming back on a save keeps the stored key. Web search,
+// transcription and image generation show none: the key is the connector's
+// or the peer's.
 func TestAdminSecretsAreMaskedAndKept(t *testing.T) {
 	a := &AdminApp{db: &DBase{Store: kvlite.MemStore()}}
 	sub := http.NewServeMux()
@@ -30,7 +31,7 @@ func TestAdminSecretsAreMaskedAndKept(t *testing.T) {
 	a.db.Set(TranscribeTable, "current", TranscribeConfig{Endpoint: "http://127.0.0.1:1", APIKey: secret})
 
 	for _, path := range []string{"/api/web-search", "/api/mail", "/api/image-gen", "/api/transcribe"} {
-		keyless := path == "/api/transcribe" || path == "/api/image-gen"
+		keyless := path != "/api/mail"
 		w := httptest.NewRecorder()
 		sub.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
 		if strings.Contains(w.Body.String(), secret) {
@@ -50,11 +51,8 @@ func TestAdminSecretsAreMaskedAndKept(t *testing.T) {
 			t.Fatalf("POST %s: %d %s", path, w.Code, w.Body.String())
 		}
 	}
-	post("/api/web-search", map[string]any{"provider": "brave", "api_key": secretUnchanged})
 	post("/api/mail", map[string]any{"server": "smtp.example.com:587", "password": secretUnchanged})
-	for _, row := range [][2]string{{SearchTable, "api_key"}, {MailTable, "password"}} {
-		if got := a.storedString(row[0], row[1]); got != secret {
-			t.Errorf("%s/%s: the placeholder overwrote the key with %q", row[0], row[1], got)
-		}
+	if got := a.storedString(MailTable, "password"); got != secret {
+		t.Errorf("the placeholder overwrote the mail password with %q", got)
 	}
 }

@@ -383,13 +383,14 @@ func main() {
 
 		// Wire auth database.
 		AuthDB = func() Database { return global.db }
-		// Embeddings, transcription, speech and images this instance did itself
+		// Embeddings, transcription, speech, images and web search this instance did itself
 		// become connectors, once: they need the credential store just
 		// wired, for a key the settings held.
 		service.MigrateEmbeddings(global.db)
 		service.MigrateTranscription(global.db)
 		service.MigrateSpeech(global.db)
 		service.MigrateImages(global.db)
+		service.MigrateWebSearch(global.db)
 
 		AuthEnabled = func() bool { return AuthHasUsers(global.db) }
 		AuthSignupAllowed = func() bool {

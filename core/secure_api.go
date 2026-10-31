@@ -3895,6 +3895,11 @@ func urlReadingAllowed(c SecureCredential, rawURL string) bool {
 			}
 			return urlMatchesPattern(rawURL, base+"/**")
 		}
+		// An endpoint is a path: the query a request carries does not change
+		// which one it asks, so "/v1/search" allows "/v1/search?q=x". Matched
+		// whole, a search API's every request was refused by the endpoint the
+		// credential was made for.
+		path, _, _ := strings.Cut(rawURL, "?")
 		for _, ep := range eps {
 			ep = strings.TrimSpace(ep)
 			if ep == "" {
@@ -3910,7 +3915,7 @@ func urlReadingAllowed(c SecureCredential, rawURL string) bool {
 			if strings.HasSuffix(ep, "/*") {
 				ep += "*"
 			}
-			if urlMatchesPattern(rawURL, base+ep) {
+			if urlMatchesPattern(rawURL, base+ep) || urlMatchesPattern(path, base+ep) {
 				return true
 			}
 		}

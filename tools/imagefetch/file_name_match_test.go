@@ -1,6 +1,10 @@
 package imagefetch
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/cmcoffee/gohort/core/service"
+)
 
 // An image's file name counts as text about it, and a name that says nothing
 // changes nothing. For a named person it counts when it carries their whole
@@ -44,7 +48,7 @@ func TestTheImageFileNameHelpsFindTheRightImage(t *testing.T) {
 // with a file name that says who it is: those go first, in the search's own
 // order, so they fall inside the candidates that get screened.
 func TestFileNamesNamingTheSubjectAreTriedFirst(t *testing.T) {
-	in := []SerperImageResult{
+	in := []service.ImageResult{
 		{ImageURL: "https://a.example/IMG_0001.jpg"},
 		{ImageURL: "https://b.example/crowd-at-concert.jpg"},
 		{ImageURL: "https://c.example/jane-doe-portrait.jpg"},

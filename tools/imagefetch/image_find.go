@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/service"
 	"github.com/cmcoffee/gohort/tools/browser"
 	_ "golang.org/x/image/webp" // register the WebP decoder for image.Decode
 )
@@ -79,11 +80,11 @@ func (t *FindImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 	if query == "" {
 		return "", fmt.Errorf("query is required")
 	}
-	cfg := LoadWebSearchConfig()
-	if cfg.Provider != "serper" || cfg.APIKey == "" {
-		return "", fmt.Errorf("find_image requires the serper search provider with an API key configured")
+	conn, ok := imageSearchConnector()
+	if !ok {
+		return "", fmt.Errorf("find_image needs Web Search set to a connector that also finds pictures (Serper's template does)")
 	}
-	results, err := SerperImageSearch(query, cfg.APIKey)
+	results, err := searchImages(sess.Context(), conn, query)
 	if err != nil {
 		return "", fmt.Errorf("image search failed: %w", err)
 	}
@@ -94,7 +95,7 @@ func (t *FindImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 	// Save the chosen image to the session workspace and return its path with
 	// the standard delivery hint. No auto-attach; the LLM ships it via
 	// workspace(action="attach", path=..., cleanup=true).
-	saveAndReturn := func(data []byte, meta SerperImageResult) (string, error) {
+	saveAndReturn := func(data []byte, meta service.ImageResult) (string, error) {
 		wsDir, err := EnsureSessionWorkspace(sess)
 		if err != nil {
 			return "", fmt.Errorf("session workspace unavailable: %w", err)
@@ -143,7 +144,7 @@ func (t *FindImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 	// on top of it rather than a prerequisite.
 	identityRequired := len(namedSubjectTokens(query)) > 0
 	var bestData []byte
-	var bestMeta SerperImageResult
+	var bestMeta service.ImageResult
 	bestScore := -1
 	bestTextMatch := false
 	usable := 0
@@ -165,7 +166,7 @@ func (t *FindImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 	// preferring one whose page text matched, since that is the only signal
 	// left at that point.
 	var fallbackData []byte
-	var fallbackMeta SerperImageResult
+	var fallbackMeta service.ImageResult
 	fallbackTextMatch := false
 	// Candidates whose file name names the subject go first: only the first
 	// few are fetched and screened, and a search for a person often has the
@@ -399,8 +400,8 @@ func imageFileWords(raw string) string {
 
 // fileNameMatchesFirst moves the results whose image file name names the
 // subject ahead of the rest, keeping each group in the search's own order.
-func fileNameMatchesFirst(results []SerperImageResult, query string) []SerperImageResult {
-	var named, rest []SerperImageResult
+func fileNameMatchesFirst(results []service.ImageResult, query string) []service.ImageResult {
+	var named, rest []service.ImageResult
 	for _, r := range results {
 		if words := imageFileWords(r.ImageURL); words != "" && pageMentionsSubject(words, query) {
 			named = append(named, r)

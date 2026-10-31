@@ -51,7 +51,7 @@ func TestAConnectorIsAddedFromItsSpec(t *testing.T) {
 
 	if w := call("GET", "/api/connectors/add", ""); w.Code != 200 || !strings.Contains(w.Body.String(), `"spec":""`) ||
 		!strings.Contains(w.Body.String(), "Embeddings: off") || !strings.Contains(w.Body.String(), "Web search: duckduckgo (built in)") ||
-		!strings.Contains(w.Body.String(), "Search: Brave, Serper, Tavily") || !strings.Contains(w.Body.String(), "ntfy (send files), ntfy (send notifications)") {
+		!strings.Contains(w.Body.String(), "Search: Brave, Google Programmable Search, SearXNG, Serper, Tavily") || !strings.Contains(w.Body.String(), "ntfy (send files), ntfy (send notifications)") {
 		t.Errorf("the blank form, with what exists: %d %s", w.Code, w.Body.String())
 	}
 	if w := call("POST", "/api/connectors/add", form("voice", `{"provider":{}}`)); w.Code != 400 {

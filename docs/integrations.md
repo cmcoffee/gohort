@@ -67,7 +67,8 @@ What gohort asks of a connector, and where it plugs in:
 | `speech.voices` | the Speech (TTS) Voice field's choices, from the connector that speaks |
 | `speech.transcribe` | Admin > Capabilities > Audio Transcription: "Transcribe with" |
 | `embed.text` | Admin > Capabilities > Embeddings: "Embed with" |
-| `web.search` | Admin > Capabilities > Web Search: "Provider" |
+| `web.search` | Admin > Capabilities > Web Search: "Search with" |
+| `image.search` | agents' find_image, through the connector Web Search is set to |
 | `page.render` | Admin > Capabilities > Page Rendering (Browser): "Render pages on" |
 | `mail.send` | Admin > System > Mail (SMTP): "Send with" |
 | `file.convert` | Admin > Capabilities > System Hooks: a job's Adapt, "Done by" |
@@ -140,7 +141,7 @@ resource's whole schema.
 | A messaging relay | messages in and out | Telegram, Teams, others |
 | A poll (made by an agent's bridge tool) | "the answer changed" | HTTP and a key |
 | A Source Hook (Admin > Extensions > Source Hooks) | search results, or passages, for research and agents | HTTP and a key the hook keeps |
-| gohort's own providers (web search, the browser, SMTP mail, the LLM tiers) | the same contracts | written in Go, each moving to a connector in turn (embeddings, transcription, speech and images already have) |
+| gohort's own providers (DuckDuckGo search, the browser, SMTP mail, the LLM tiers) | the same contracts | written in Go, each moving to a connector in turn (embeddings, transcription, speech, images and the other search engines already have) |
 
 Services, messaging relays, polls, MCP connections, gohort's own providers
 and the programs System Hooks run are listed under Admin > Extensions >

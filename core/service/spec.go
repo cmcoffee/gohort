@@ -152,8 +152,10 @@ type Output struct {
 	Each string `json:"each,omitempty"`
 	// Fields reads a json output's list into objects of the contract's own
 	// field names: each name, the path within every element it is read from
-	// (a search's results: {"title": "title", "url": "link"}). A list the
-	// reply does not have reads as empty, as a search with no results does.
+	// (a search's results: {"title": "title", "url": "link"}). A path may
+	// name others to try when it has nothing, after a | ("page_age|age"). A
+	// list the reply does not have reads as empty, as a search with no
+	// results does.
 	Fields map[string]string `json:"fields,omitempty"`
 	// Single reads the value at a json output's path as one item, given as
 	// a list holding it (a server that answers one embedding, not a list).
@@ -521,9 +523,11 @@ func (o Output) validate(name string, spec Port, last Operation) error {
 		if spec.Type != TypeJSON || o.Each != "" {
 			return fmt.Errorf("output %q: fields reads a list into objects, for a json output, without each", name)
 		}
-		for f, path := range o.Fields {
-			if err := apijob.ValidPath(path); err != nil || strings.TrimSpace(path) == "" {
-				return fmt.Errorf("output %q field %s: say the path within each element it is read from", name, f)
+		for f, paths := range o.Fields {
+			for _, path := range strings.Split(paths, "|") {
+				if err := apijob.ValidPath(path); err != nil || strings.TrimSpace(path) == "" {
+					return fmt.Errorf("output %q field %s: say the path within each element it is read from", name, f)
+				}
 			}
 		}
 	}

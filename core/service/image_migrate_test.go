@@ -35,6 +35,35 @@ func forgetCredentials(t *testing.T, names ...string) {
 	})
 }
 
+// pointAt points the moved connector conn, and the credential it names, at
+// base: a test server standing in for the provider.
+func pointAt(t *testing.T, conn, base string) {
+	t.Helper()
+	c, _ := GetConnector(RootDB, conn)
+	var spec map[string]any
+	json.Unmarshal(c.Spec, &spec)
+	p := spec["provider"].(map[string]any)
+	p["base_url"] = base + "/"
+	c.Spec, _ = json.Marshal(spec)
+	if err := SaveConnector(RootDB, c); err != nil {
+		t.Fatal(err)
+	}
+	ApproveConnector(RootDB, conn)
+	auth, _ := p["auth"].(map[string]any)
+	credName, _ := auth["credential"].(string)
+	if credName == "" {
+		return
+	}
+	cred, ok := Secure().Load(credName)
+	if !ok {
+		t.Fatalf("no credential %q", credName)
+	}
+	cred.BaseURL = base
+	if err := Secure().Save(cred, ""); err != nil { // a blank secret keeps the stored one
+		t.Fatal(err)
+	}
+}
+
 // imageAPI is Gemini's or OpenAI's image API, keeping the key each request
 // came with, and the moved connector and credential pointed at it: the key
 // the migration stored is the one that arrives.
@@ -52,27 +81,7 @@ func imageAPI(t *testing.T, conn, header string) *[]string {
 		w.Write([]byte(`{"data":[{"b64_json":"` + b64(img) + `"}]}`))
 	}))
 	t.Cleanup(srv.Close)
-	c, _ := GetConnector(RootDB, conn)
-	var spec map[string]any
-	json.Unmarshal(c.Spec, &spec)
-	spec["provider"].(map[string]any)["base_url"] = srv.URL
-	c.Spec, _ = json.Marshal(spec)
-	if err := SaveConnector(RootDB, c); err != nil {
-		t.Fatal(err)
-	}
-	ApproveConnector(RootDB, conn)
-	var credName string
-	if p, ok := spec["provider"].(map[string]any)["auth"].(map[string]any); ok {
-		credName, _ = p["credential"].(string)
-	}
-	cred, ok := Secure().Load(credName)
-	if !ok {
-		t.Fatalf("no credential %q", credName)
-	}
-	cred.BaseURL = srv.URL
-	if err := Secure().Save(cred, ""); err != nil { // a blank secret keeps the stored one
-		t.Fatal(err)
-	}
+	pointAt(t, conn, srv.URL)
 	return &keys
 }
 

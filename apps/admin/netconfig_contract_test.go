@@ -76,17 +76,19 @@ func TestNetConfigRoutesContract(t *testing.T) {
 		do("root", "POST", p, ``)
 	}
 
-	do("alice", "POST", "/api/web-search", `{"provider":"brave","api_key":"s3cr3t-search-x"}`)
-	do("root", "POST", "/api/web-search", `{"provider":"brave","api_key":"s3cr3t-search","endpoint":"","hook":"left over"}`)
+	do("alice", "POST", "/api/web-search", `{"provider":"duckduckgo"}`)
+	do("root", "POST", "/api/web-search", `{"provider":"brave","api_key":"s3cr3t-search"}`)
+	do("root", "POST", "/api/web-search", `{"provider":"duckduckgo","api_key":"s3cr3t-search","endpoint":"https://searx.example.test","hook":"left over"}`)
 	do("root", "GET", "/api/web-search", "")
-	do("root", "POST", "/api/web-search", `{"provider":"brave","api_key":"(unchanged)"}`)
-	keeps(SearchTable, "api_key", "s3cr3t-search")
+	// A local engine keeps no key or address here: they are the connector's.
+	keeps(SearchTable, "api_key", "")
+	keeps(SearchTable, "endpoint", "")
 	do("root", "POST", "/api/web-search", `{"provider":"hook","hook":"zz_nope","api_key":"(unchanged)"}`)
 	do("root", "POST", "/api/web-search", `{"source":"peer:nope"}`)
 	do("root", "POST", "/api/web-search", `{"provider":`)
 	do("root", "POST", "/api/web-search/test", `{"provider":""}`)
 	do("root", "POST", "/api/web-search/test", `{"source":"peer:nope"}`)
-	do("root", "POST", "/api/web-search/test", `{"provider":"brave","api_key":"(unchanged)"}`)
+	do("root", "POST", "/api/web-search/test", `{"provider":"brave"}`)
 
 	do("alice", "POST", "/api/browse", `{"source":"local"}`)
 	do("root", "POST", "/api/browse", `{"source":"peer:nope"}`)

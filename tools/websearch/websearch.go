@@ -952,34 +952,24 @@ func isBinaryMime(mime string) bool {
 // SearchWithProvider runs a search query using a specific provider.
 // This is exported so callers can run cross-provider searches.
 func SearchWithProvider(req SearchRequest) (string, error) {
-	query, provider, apiKey := req.Query, req.Provider, req.APIKey
+	query, provider := req.Query, req.Provider
 	Debug("[web_search] provider=%s query=%q", provider, query)
 	var result string
 	var err error
-	switch provider {
-	case "duckduckgo":
+	switch {
+	case provider == "duckduckgo":
 		result, err = searchDuckDuckGo(query)
-	case "brave":
-		result, err = searchBrave(query, apiKey)
-	case "google":
-		result, err = searchGoogle(query, apiKey)
-	case "searxng":
-		// The one provider a PEER can be behind, so the only one that takes the
-		// whole request: it needs Source to know whether to authenticate
-		// through the peer transport.
-		result, err = searchSearXNG(req)
-	case "serper":
-		result, err = searchSerper(query, apiKey)
-	case "hook":
+	case provider == "hook":
 		result, err = searchHook(req.Hook, query)
-	default:
+	case strings.HasPrefix(provider, media.ServiceProviderPrefix):
 		// A service connector that searches (core/service, web.search),
 		// chosen under Web Search: it counts and prices its own calls.
-		name, ok := strings.CutPrefix(provider, media.ServiceProviderPrefix)
-		if !ok {
-			return "", fmt.Errorf("unknown search provider: %s", provider)
-		}
-		result, err = service.Search(context.Background(), name, query)
+		result, err = service.Search(context.Background(), strings.TrimPrefix(provider, media.ServiceProviderPrefix), query)
+	case provider == "searxng" && strings.HasPrefix(req.Source, "peer:"):
+		// A peer lends its search in SearXNG's shape (ResolveSearchProvider).
+		result, err = searchPeer(req)
+	default:
+		return "", fmt.Errorf("web search is set to %q, which is not an engine here: choose one under Admin > Capabilities > Web Search, or add a connector that searches from a template (Brave, Serper, Tavily, Google Programmable Search, SearXNG)", provider)
 	}
 	if err != nil {
 		Debug("[web_search] error: %s", err)
@@ -1149,197 +1139,7 @@ func stripTags(s string) string {
 }
 
 // Brave Search API types.
-type braveResponse struct {
-	Web struct {
-		Results []struct {
-			Title       string `json:"title"`
-			URL         string `json:"url"`
-			Description string `json:"description"`
-			PageAge     string `json:"page_age"` // ISO stamp
-			Age         string `json:"age"`      // "September 28, 2026" or "3 days ago"
-		} `json:"results"`
-	} `json:"web"`
-}
-
-// searchBrave uses the Brave Search API.
-func searchBrave(query string, apiKey string) (string, error) {
-	if apiKey == "" {
-		return "", fmt.Errorf("brave search requires an API key (configure it in the admin dashboard, under Web Search)")
-	}
-
-	client := &apiclient.APIClient{
-		Server:         "api.search.brave.com",
-		ConnectTimeout: 5 * time.Second,
-		RequestTimeout: 15 * time.Second,
-	}
-
-	req, err := client.NewRequest("GET", "/res/v1/web/search?q="+url.QueryEscape(query)+"&count=20")
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("X-Subscription-Token", apiKey)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := client.SendRawRequest("", req)
-	if err != nil {
-		return "", fmt.Errorf("brave request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("brave api error (%d): %s", resp.StatusCode, string(body))
-	}
-
-	var result braveResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("parsing brave response: %w", err)
-	}
-
-	var results []string
-	for i, r := range result.Web.Results {
-		date := r.PageAge
-		if date == "" {
-			date = r.Age
-		}
-		results = append(results, fmt.Sprintf("%d. %s\n   %s\n   %s%s", i+1, r.Title, r.URL, publishedTag(date), r.Description))
-	}
-
-	if len(results) == 0 {
-		return "No results found.", nil
-	}
-	return strings.Join(results, "\n\n"), nil
-}
-
-// Serper.dev API types.
-type serperResponse struct {
-	Organic []struct {
-		Title   string `json:"title"`
-		Link    string `json:"link"`
-		Snippet string `json:"snippet"`
-		Date    string `json:"date"` // "Sep 28, 2026" or "3 days ago"
-	} `json:"organic"`
-}
-
-// searchSerper uses the Serper.dev Google Search API.
-func searchSerper(query string, apiKey string) (string, error) {
-	if apiKey == "" {
-		return "", fmt.Errorf("serper search requires an API key (configure it in the admin dashboard, under Web Search)")
-	}
-
-	// Ten, not twenty: since 2026-10-30 only Google's first few results come
-	// with links that open (markUnopenable), so more results add little.
-	payload, _ := json.Marshal(map[string]any{
-		"q":   query,
-		"num": 10,
-	})
-
-	client := &apiclient.APIClient{
-		Server:         "google.serper.dev",
-		ConnectTimeout: 5 * time.Second,
-		RequestTimeout: 15 * time.Second,
-	}
-
-	req, err := client.NewRequest("POST", "/search")
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("X-API-KEY", apiKey)
-	req.Header.Set("Content-Type", "application/json")
-	req.Body = io.NopCloser(bytes.NewReader(payload))
-	req.ContentLength = int64(len(payload))
-
-	resp, err := client.SendRawRequest("", req)
-	if err != nil {
-		return "", fmt.Errorf("serper request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("serper api error (%d): %s", resp.StatusCode, string(body))
-	}
-
-	var result serperResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("parsing serper response: %w", err)
-	}
-
-	var results []string
-	for i, r := range result.Organic {
-		results = append(results, fmt.Sprintf("%d. %s\n   %s\n   %s%s", i+1, r.Title, r.Link, publishedTag(r.Date), r.Snippet))
-	}
-
-	if len(results) == 0 {
-		return "No results found.", nil
-	}
-	return strings.Join(results, "\n\n"), nil
-}
-
-// Google Custom Search API types.
-type googleResponse struct {
-	Items []struct {
-		Title   string `json:"title"`
-		Link    string `json:"link"`
-		Snippet string `json:"snippet"`
-	} `json:"items"`
-}
-
-// searchGoogle uses the Google Custom Search JSON API.
-// API key format should be "key:cx" (API key and custom search engine ID separated by colon).
-func searchGoogle(query string, apiKey string) (string, error) {
-	if apiKey == "" {
-		return "", fmt.Errorf("google search requires an API key in 'key:cx' format (configure it in the admin dashboard, under Web Search)")
-	}
-
-	parts := strings.SplitN(apiKey, ":", 2)
-	if len(parts) != 2 {
-		return "", fmt.Errorf("google API key must be in 'key:cx' format (API key and search engine ID separated by ':')")
-	}
-	key, cx := parts[0], parts[1]
-
-	client := &apiclient.APIClient{
-		Server:         "www.googleapis.com",
-		ConnectTimeout: 5 * time.Second,
-		RequestTimeout: 15 * time.Second,
-	}
-
-	path := fmt.Sprintf("/customsearch/v1?key=%s&cx=%s&q=%s&num=10",
-		url.QueryEscape(key), url.QueryEscape(cx), url.QueryEscape(query))
-
-	req, err := client.NewRequest("GET", path)
-	if err != nil {
-		return "", fmt.Errorf("google request failed: %w", err)
-	}
-
-	resp, err := client.SendRawRequest("", req)
-	if err != nil {
-		return "", fmt.Errorf("google request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("google api error (%d): %s", resp.StatusCode, string(body))
-	}
-
-	var result googleResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("parsing google response: %w", err)
-	}
-
-	var results []string
-	for i, r := range result.Items {
-		results = append(results, fmt.Sprintf("%d. %s\n   %s\n   %s", i+1, r.Title, r.Link, r.Snippet))
-	}
-
-	if len(results) == 0 {
-		return "No results found.", nil
-	}
-	return strings.Join(results, "\n\n"), nil
-}
-
-// SearXNG response types.
+// searxngResponse is a peer's search reply: SearXNG's shape.
 type searxngResponse struct {
 	Results []struct {
 		Title         string `json:"title"`
@@ -1349,33 +1149,26 @@ type searxngResponse struct {
 	} `json:"results"`
 }
 
-// query returns the search text. A one-line helper so the URL build above
-// reads as a URL rather than as field access.
-func query(sr SearchRequest) string { return sr.Query }
-
-// searchSearXNG uses a SearXNG instance's JSON API.
-//
-// apiKey is optional and sent as a bearer. A public SearXNG needs none, but an
-// instance behind an authenticating proxy does — and so does a gohort PEER,
-// which serves this exact shape at /api/peer/v1/search precisely so that
-// borrowing another instance's search needs no client of its own.
-func searchSearXNG(sr SearchRequest) (string, error) {
+// searchPeer searches through a peer, which serves SearXNG's JSON at
+// /api/peer/v1/search precisely so that borrowing another instance's search
+// needs no client of its own. The peer's credential is sent as a bearer.
+func searchPeer(sr SearchRequest) (string, error) {
 	endpoint := strings.TrimSuffix(strings.TrimSpace(sr.Endpoint), "/")
 	if endpoint == "" {
-		return "", fmt.Errorf("searxng requires an endpoint URL (configure it in the admin dashboard, under Web Search)")
+		return "", fmt.Errorf("the peer web search goes through has no address: pick it again under Web Search")
 	}
 
 	parsed, err := url.Parse(endpoint)
 	if err != nil {
-		return "", fmt.Errorf("invalid searxng endpoint: %w", err)
+		return "", fmt.Errorf("invalid peer search address: %w", err)
 	}
 
 	target := fmt.Sprintf("%s://%s%s/search?q=%s&format=json&categories=general",
-		parsed.Scheme, parsed.Host, parsed.Path, url.QueryEscape(query(sr)))
+		parsed.Scheme, parsed.Host, parsed.Path, url.QueryEscape(sr.Query))
 
 	req, err := http.NewRequest("GET", target, nil)
 	if err != nil {
-		return "", fmt.Errorf("searxng request failed: %w", err)
+		return "", fmt.Errorf("peer search request failed: %w", err)
 	}
 	if key := strings.TrimSpace(sr.APIKey); key != "" {
 		req.Header.Set("Authorization", "Bearer "+key)
@@ -1384,27 +1177,26 @@ func searchSearXNG(sr SearchRequest) (string, error) {
 	// PeerClientForProvider, on net/http rather than snugforge's APIClient,
 	// which has no transport hook to plug this into.
 	//
-	// When Source names a peer this is the peer transport: the Authorization
+	// This is the peer transport: the Authorization
 	// set just above is replaced with a credential resolved NOW, and a refused
 	// one is re-exchanged and the request replayed. A peer's search key rotates
 	// like every other peer credential, and a stale one here fails as an EMPTY
 	// RESULT SET rather than an error — every search quietly returns nothing
-	// and the agent above reports it found no sources. When Source is local or
-	// empty this is an ordinary client and nothing about the request changes.
+	// and the agent above reports it found no sources.
 	resp, err := PeerClientForProvider(sr.Source, 15*time.Second).Do(req)
 	if err != nil {
-		return "", fmt.Errorf("searxng request failed: %w", err)
+		return "", fmt.Errorf("peer search request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("searxng error (%d): %s", resp.StatusCode, string(body))
+		return "", fmt.Errorf("peer search error (%d): %s", resp.StatusCode, string(body))
 	}
 
 	var result searxngResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("parsing searxng response: %w", err)
+		return "", fmt.Errorf("parsing the peer's search response: %w", err)
 	}
 
 	var results []string
@@ -1413,7 +1205,7 @@ func searchSearXNG(sr SearchRequest) (string, error) {
 			break
 		}
 		date, _ := r.PublishedDate.(string)
-		results = append(results, fmt.Sprintf("%d. %s\n   %s\n   %s%s", i+1, r.Title, r.URL, publishedTag(date), r.Content))
+		results = append(results, fmt.Sprintf("%d. %s\n   %s\n   %s%s", i+1, r.Title, r.URL, service.PublishedTag(date), r.Content))
 	}
 
 	if len(results) == 0 {

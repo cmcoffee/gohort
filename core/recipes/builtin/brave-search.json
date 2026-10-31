@@ -73,7 +73,8 @@
                     "fields": {
                       "title": "title",
                       "url": "url",
-                      "snippet": "description"
+                      "snippet": "description",
+                      "published": "page_age|age"
                     }
                   }
                 },

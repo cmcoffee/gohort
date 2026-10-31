@@ -251,8 +251,9 @@ func jsonOutput(node any, o Output) (Value, error) {
 }
 
 // fieldsOutput reads the list raw holds into objects named by o.Fields, each
-// field the text at its path in the element ("" where it has none). No list
-// at all reads as an empty one: a search with no results leaves it out.
+// field the text at the first of its paths the element has something at (""
+// where it has none). No list at all reads as an empty one: a search with no
+// results leaves it out.
 func fieldsOutput(raw string, o Output) (Value, error) {
 	var list []any
 	if strings.TrimSpace(raw) != "" {
@@ -263,8 +264,12 @@ func fieldsOutput(raw string, o Output) (Value, error) {
 	out := make([]map[string]string, len(list))
 	for i, el := range list {
 		row := map[string]string{}
-		for name, path := range o.Fields {
-			row[name] = apijob.Lookup(el, path, "")
+		for name, paths := range o.Fields {
+			for _, path := range strings.Split(paths, "|") {
+				if row[name] = apijob.Lookup(el, path, ""); row[name] != "" {
+					break
+				}
+			}
 		}
 		out[i] = row
 	}

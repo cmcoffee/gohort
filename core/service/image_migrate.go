@@ -10,12 +10,10 @@ package service
 // turned off rather than moved.
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/recipes"
 )
 
 // MigrateImages moves Image Generation's built-in Gemini or OpenAI provider
@@ -63,39 +61,14 @@ func migrateImages(db Database) (int, error) {
 		Log("[migration] image generation named %s with no key, so it made no pictures: it is off until a connector is chosen", provider)
 		return 1, nil
 	}
-	cred, conn, err := imageTemplate(db, provider+"-images", key)
+	name, changed, err := installMoved(db, provider+"-images", map[string]string{"api_key": key}, key, "Image Generation")
 	if err != nil {
-		return 0, err
-	}
-	changed := 0
-	cred.Name, cred.Disabled = freeCredentialName(cred.Name), false
-	if err := Secure().Save(cred, key); err != nil {
-		return changed, fmt.Errorf("saving the key as credential %s: %w", cred.Name, err)
-	}
-	changed++
-	var spec map[string]any
-	if err := json.Unmarshal(conn.Spec, &spec); err != nil {
 		return changed, err
 	}
-	if p, ok := spec["provider"].(map[string]any); ok {
-		p["auth"] = map[string]any{"credential": cred.Name}
-	}
-	if conn.Spec, err = json.Marshal(spec); err != nil {
-		return changed, err
-	}
-	conn.Name, conn.Kind = freeConnectorName(db, conn.Name), Kind
-	conn.Desc += ", moved here from the Image Generation settings"
-	if err := SaveConnector(db, conn); err != nil {
-		return changed, fmt.Errorf("saving connector %s: %w", conn.Name, err)
-	}
-	if err := ApproveConnector(db, conn.Name); err != nil {
-		return changed, fmt.Errorf("approving connector %s: %w", conn.Name, err)
-	}
-	changed++
-	db.Set(ImageTable, "provider", conn.Name)
+	db.Set(ImageTable, "provider", name)
 	db.Unset(ImageTable, "api_key")
 	changed++
-	Log("[migration] image generation now comes from connector %s (the %s template, with the key the settings used)", conn.Name, provider)
+	Log("[migration] image generation now comes from connector %s (the %s template, with the key the settings used)", name, provider)
 	return changed, nil
 }
 
@@ -111,34 +84,4 @@ func llmKeyFor(db Database, provider string) string {
 		}
 	}
 	return ""
-}
-
-// imageTemplate is a built-in image template filled in with its defaults:
-// its credential and its connector, as Add would install them.
-func imageTemplate(db Database, id, key string) (SecureCredential, Connector, error) {
-	var cred SecureCredential
-	var conn Connector
-	r, _, ok := recipes.Get(db, id)
-	if !ok {
-		return cred, conn, fmt.Errorf("the template %s is not on this gohort", id)
-	}
-	bundle, _, _, err := recipes.Fill(r, map[string]string{"api_key": key})
-	if err != nil {
-		return cred, conn, err
-	}
-	for _, a := range bundle.Artifacts {
-		switch a.Type {
-		case "credential":
-			err = json.Unmarshal(a.Recipe, &cred)
-		case "connector":
-			err = json.Unmarshal(a.Recipe, &conn)
-		}
-		if err != nil {
-			return cred, conn, fmt.Errorf("the template %s: %w", id, err)
-		}
-	}
-	if cred.Name == "" || conn.Name == "" {
-		return cred, conn, fmt.Errorf("the template %s has no credential or connector", id)
-	}
-	return cred, conn, nil
 }

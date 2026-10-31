@@ -1,8 +1,7 @@
 package imagefetch
 
 import (
-	"bytes"
-	"encoding/json"
+	"context"
 	"fmt"
 	"html"
 	_ "image/gif"
@@ -17,69 +16,31 @@ import (
 	"unicode"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/media"
+	"github.com/cmcoffee/gohort/core/service"
 	_ "golang.org/x/image/webp" // register the WebP decoder for image.Decode
 )
 
-// --- Serper image search ---
+// --- image search ---
 
-type SerperImageResult struct {
-	ImageURL string
-	Title    string
-	Source   string
-	Link     string
+// imageSearchConnector is the connector find_image searches pictures with:
+// the one Web Search is set to, when it also finds pictures (image.search).
+func imageSearchConnector() (string, bool) {
+	name, ok := strings.CutPrefix(LoadWebSearchConfig().Provider, media.ServiceProviderPrefix)
+	if !ok || RootDB == nil {
+		return "", false
+	}
+	c, found := GetConnector(RootDB, name)
+	return name, found && c.Approved && service.Provides(c, "image.search")
 }
 
-type serperImageResponse struct {
-	Images []struct {
-		ImageURL string `json:"imageUrl"`
-		Title    string `json:"title"`
-		Source   string `json:"source"`
-		Link     string `json:"link"`
-	} `json:"images"`
-}
-
-func SerperImageSearch(query, apiKey string) ([]SerperImageResult, error) {
-	payload, _ := json.Marshal(map[string]any{"q": query, "num": 10})
-	req, err := http.NewRequest("POST", "https://google.serper.dev/images", bytes.NewReader(payload))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("X-API-KEY", apiKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return nil, fmt.Errorf("serper images API error (%d): %s", resp.StatusCode, string(body))
-	}
-
-	var result serperImageResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("parsing serper images response: %w", err)
-	}
-
-	var out []SerperImageResult
-	for _, img := range result.Images {
-		if img.ImageURL != "" {
-			out = append(out, SerperImageResult{
-				ImageURL: img.ImageURL,
-				Title:    img.Title,
-				Source:   img.Source,
-				Link:     img.Link,
-			})
-		}
-	}
-	// Count every provider call — Serper bills per request regardless
-	// of how many images come back. Symmetric with web_search's
-	// "count on call, not on result-content" semantics.
+// searchImages finds pictures through the connector (its contract refuses a
+// result with no picture address). Counted as a search, as a web search is:
+// the call is billed however many pictures come back.
+func searchImages(ctx context.Context, name, query string) ([]service.ImageResult, error) {
+	results, err := service.ImageSearch(ctx, name, query)
 	ProcessUsage().AddSearchCall()
-	return out, nil
+	return results, err
 }
 
 // --- HTTP helpers ---

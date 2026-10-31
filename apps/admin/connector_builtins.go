@@ -159,45 +159,30 @@ func builtinBrowse() builtinConnector {
 	return b
 }
 
-// searchHosts are where each built-in search provider is reached.
-var searchHosts = map[string]string{
-	"duckduckgo": "lite.duckduckgo.com", "brave": "api.search.brave.com",
-	"google": "www.googleapis.com", "serper": "google.serper.dev",
-}
-
-// builtinSearch is gohort's own web search: the providers written into
-// tools/websearch, a SearXNG instance, or a Source Hook.
+// builtinSearch is gohort's own web search engine, DuckDuckGo, read from the
+// page tools/websearch scrapes. Every other engine is a connector, a Source
+// Hook or a peer's.
 func (a *AdminApp) builtinSearch() builtinConnector {
 	provider := a.storedString(SearchTable, "provider")
 	if provider == "" {
 		provider = "duckduckgo"
 	}
-	source, key := a.storedString(SearchTable, "source"), a.storedString(SearchTable, "api_key")
-	b := builtinConnector{name: builtinPrefix + "web-search"}
-	switch {
-	case provider == "hook":
-		b.wrapper = "Web search ⇐ the Source Hook " + a.storedString(SearchTable, "hook")
-	case provider == "searxng":
-		b.wrapper = "Web search ⇐ SearXNG ⇐ " + endpointHost(a.storedString(SearchTable, "endpoint"), key)
-	case searchHosts[provider] != "":
-		b.wrapper = "Web search ⇐ " + provider + " ⇐ " + searchHosts[provider]
-		if provider != "duckduckgo" {
-			b.wrapper = "Web search ⇐ " + provider + " ⇐ " + endpointHost("https://"+searchHosts[provider], key)
-		}
-	default:
-		b.wrapper = "Web search ⇐ a search provider of your choosing"
-	}
+	source := a.storedString(SearchTable, "source")
+	b := builtinConnector{name: builtinPrefix + "web-search", wrapper: "Web search ⇐ duckduckgo ⇐ lite.duckduckgo.com"}
 	set := " Set up under Admin > Capabilities > Web Search."
 	switch {
-	case strings.HasPrefix(provider, media.ServiceProviderPrefix):
-		b.status = "Not in use: web search is done by " + providerName(provider) + "." + set
 	case !isLocal(source):
 		b.status = "Not in use: web search is done by " + providerName(source) + "." + set
+	case provider == "hook":
+		b.status = "Not in use: web search is done by the Source Hook " + a.storedString(SearchTable, "hook") + "." + set
+	case strings.HasPrefix(provider, media.ServiceProviderPrefix):
+		b.status = "Not in use: web search is done by " + providerName(provider) + "." + set
+	case provider != "duckduckgo":
+		b.status = "Not in use: web search is set to " + provider + ", which is not an engine here: choose one." + set
 	default:
 		b.status = "In use for web search." + set
 		b.test = func(c *jsonapi.Call) (any, error) {
-			return a.handleWebSearchTest(c, WebSearchConfig{Provider: provider, APIKey: key,
-				Endpoint: a.storedString(SearchTable, "endpoint"), Source: source, Hook: a.storedString(SearchTable, "hook")})
+			return a.handleWebSearchTest(c, WebSearchConfig{Provider: provider, Source: source})
 		}
 	}
 	return b

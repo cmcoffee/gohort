@@ -257,6 +257,29 @@ func TestImageGenerationTakesAConnectorThatMakesPictures(t *testing.T) {
 	}
 }
 
+// A local Web Search engine is DuckDuckGo, a Source Hook or an approved
+// connector that searches; SearXNG's shape is a peer's, and the engines
+// that were written in Go are refused by name.
+func TestWebSearchTakesOnlyAnEngine(t *testing.T) {
+	saved := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB = saved })
+	for cfg, ok := range map[WebSearchConfig]bool{
+		{}:                            true,
+		{Provider: "duckduckgo"}:      true,
+		{Provider: "hook", Hook: "h"}: true,
+		{Provider: "searxng", Source: "peer:den"}: true,
+		{Provider: "searxng"}:                     false,
+		{Provider: "searxng", Source: "local"}:    false,
+		{Provider: "brave"}:                       false,
+		{Provider: "service:nothing"}:             false,
+	} {
+		if err := searchEngineOK(cfg); (err == nil) != ok {
+			t.Errorf("%+v: %v", cfg, err)
+		}
+	}
+}
+
 // Web Search offers an approved connector that searches as a provider, and
 // refuses to save one that is not approved.
 func TestWebSearchTakesAConnectorThatSearches(t *testing.T) {

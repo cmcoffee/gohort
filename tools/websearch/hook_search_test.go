@@ -140,7 +140,7 @@ func TestAConnectorIsTheSearchEngine(t *testing.T) {
 	if err != nil || len(src) != 1 || src[0].Title != "Panels compared" || src[0].URL != "https://example.org/panels" || src[0].Snippet != "What each one costs." {
 		t.Fatalf("want the result as a search result: %q %v -> %+v", out, err, src)
 	}
-	if _, err := SearchWithProvider(SearchRequest{Query: "x", Provider: "elsewhere"}); err == nil || !strings.Contains(err.Error(), "unknown search provider") {
+	if _, err := SearchWithProvider(SearchRequest{Query: "x", Provider: "elsewhere"}); err == nil || !strings.Contains(err.Error(), "not an engine here") {
 		t.Errorf("an unknown provider: %v", err)
 	}
 }
@@ -195,3 +195,23 @@ func TestGoogleRedirectLinksAreMarked(t *testing.T) {
 
 // noUsableLink is what a marked result's link line says (service.MarkUnopenable).
 const noUsableLink = "(no usable link: Google gave a redirect that cannot be opened after the search)"
+
+// The engines that were written in Go are refused by name, saying what to
+// choose; SearXNG's shape is taken only from a peer.
+func TestOldEnginesAreRefused(t *testing.T) {
+	for _, req := range []SearchRequest{
+		{Query: "x", Provider: "brave", APIKey: "k"},
+		{Query: "x", Provider: "serper", APIKey: "k"},
+		{Query: "x", Provider: "google", APIKey: "k:cx"},
+		{Query: "x", Provider: "searxng", Endpoint: "http://127.0.0.1:1"},
+		{Query: "x", Provider: "searxng", Endpoint: "http://127.0.0.1:1", Source: "local"},
+	} {
+		if _, err := SearchWithProvider(req); err == nil || !strings.Contains(err.Error(), "not an engine here") {
+			t.Errorf("%+v: %v", req, err)
+		}
+	}
+	// From a peer it is searched (here, an address nothing answers at).
+	if _, err := SearchWithProvider(SearchRequest{Query: "x", Provider: "searxng", Endpoint: "http://127.0.0.1:1", Source: "peer:den"}); err == nil || strings.Contains(err.Error(), "not an engine here") {
+		t.Errorf("a peer's search: %v", err)
+	}
+}

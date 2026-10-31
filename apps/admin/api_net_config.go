@@ -97,27 +97,43 @@ func (a *AdminApp) registerNetConfigRoutes(sub *http.ServeMux) {
 	}.Serve)
 }
 
-// handleWebSearch is the web search config, its key masked.
+// handleWebSearch is the web search config: the engine, and where it
+// searches. A key and an address are the connector's or the peer's.
 func (a *AdminApp) handleWebSearch(c *jsonapi.Call) (any, error) {
-	var provider, key, endpoint, source, hook string
+	var provider, source, hook string
 	if a.db != nil {
 		a.db.Get(SearchTable, "provider", &provider)
-		a.db.Get(SearchTable, "api_key", &key)
-		a.db.Get(SearchTable, "endpoint", &endpoint)
 		a.db.Get(SearchTable, "source", &source)
 		a.db.Get(SearchTable, "hook", &hook)
 	}
 	if source == "" {
 		source = EmbeddingProviderLocal
 	}
-	return map[string]any{
-		"provider": provider, "api_key": maskSecret(key), "endpoint": endpoint, "source": source, "hook": hook,
-	}, nil
+	return map[string]any{"provider": provider, "source": source, "hook": hook}, nil
+}
+
+// searchEngineOK refuses an engine a local search cannot use: one that is
+// not DuckDuckGo, a Source Hook or an approved connector that searches (the
+// Brave, Google, Serper and SearXNG code is templates now).
+func searchEngineOK(cfg WebSearchConfig) error {
+	if strings.HasPrefix(cfg.Source, "peer:") {
+		return nil
+	}
+	switch p := strings.TrimSpace(cfg.Provider); {
+	case p == "", p == "duckduckgo", p == "hook":
+		return nil
+	case strings.HasPrefix(p, media.ServiceProviderPrefix):
+		return serviceProviderOK(p, "web.search")
+	default:
+		return fmt.Errorf("%s is not an engine here: add a connector that searches from a template (Brave, Serper, Tavily, Google Programmable Search, SearXNG) and choose it", p)
+	}
 }
 
 // handleWebSearchSave saves the web search config.
 func (a *AdminApp) handleWebSearchSave(c *jsonapi.Call, req WebSearchConfig) (any, error) {
-	req.APIKey = keepSecret(req.APIKey, a.storedString(SearchTable, "api_key"))
+	// A local engine keeps no key or address here: they are the
+	// connector's or the hook's.
+	req.APIKey, req.Endpoint = "", ""
 	// A peer selection carries no provider/key/endpoint of its own —
 	// those fields are hidden while one is picked. Resolve here, the
 	// same way the embeddings and transcription saves do, so what gets
@@ -129,7 +145,7 @@ func (a *AdminApp) handleWebSearchSave(c *jsonapi.Call, req WebSearchConfig) (an
 	}
 	req = resolved
 	// A connector as the engine must be one that searches, and approved.
-	if err := serviceProviderOK(req.Provider, "web.search"); err != nil {
+	if err := searchEngineOK(req); err != nil {
 		return nil, jsonapi.BadRequest(err.Error())
 	}
 	// A Source Hook as the engine must be one that can be: refused
@@ -209,7 +225,7 @@ func (a *AdminApp) handleBrowseSave(c *jsonapi.Call, req BrowseConfig) (any, err
 
 // handleWebSearchTest runs one search with the form's working config.
 func (a *AdminApp) handleWebSearchTest(c *jsonapi.Call, req WebSearchConfig) (any, error) {
-	req.APIKey = keepSecret(req.APIKey, a.storedString(SearchTable, "api_key"))
+	req.APIKey, req.Endpoint = "", ""
 	// Resolve before inspecting the fields — with a peer picked they are
 	// hidden and empty, and testing a valid peer would otherwise fail on
 	// the provider being blank. Same lesson as the embeddings and
@@ -221,6 +237,9 @@ func (a *AdminApp) handleWebSearchTest(c *jsonapi.Call, req WebSearchConfig) (an
 	req = resolved
 	if req.Provider == "" {
 		return testResultBody(false, "", "provider is required"), nil
+	}
+	if err := searchEngineOK(req); err != nil {
+		return testResultBody(false, "", err.Error()), nil
 	}
 	orig := LoadWebSearchConfigFunc
 	LoadWebSearchConfigFunc = func() WebSearchConfig { return req }
@@ -235,7 +254,7 @@ func (a *AdminApp) handleWebSearchTest(c *jsonapi.Call, req WebSearchConfig) (an
 		return testResultBody(false, "", serr.Error()), nil
 	}
 	if strings.TrimSpace(out) == "" {
-		return testResultBody(false, "", "no results returned: check provider/key/endpoint"), nil
+		return testResultBody(false, "", "no results returned: check the engine (a connector's row under Admin > Extensions > Connectors shows its request and key)"), nil
 	}
 	return testResultBody(true, fmt.Sprintf("OK via %s: %d chars returned", req.Provider, len(out)), ""), nil
 }

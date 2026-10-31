@@ -1,13 +1,11 @@
 package websearch
 
 import (
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
-	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/service"
 )
 
 // A published date reaches the agent as its day, its weekday and how long
@@ -33,7 +31,7 @@ func TestAPublishedDateSaysHowLongAgo(t *testing.T) {
 		{"2026-11-02", "Mon, Nov 2, 2026"},
 	}
 	for _, c := range cases {
-		tm, dateOnly, ok := parsePublished(c.raw, now)
+		tm, dateOnly, ok := service.ParsePublished(c.raw, now)
 		if !ok {
 			t.Errorf("%q did not parse", c.raw)
 			continue
@@ -43,7 +41,7 @@ func TestAPublishedDateSaysHowLongAgo(t *testing.T) {
 		}
 	}
 	for _, raw := range []string{"", "recently", "2 months ago"} {
-		if _, _, ok := parsePublished(raw, now); ok {
+		if _, _, ok := service.ParsePublished(raw, now); ok {
 			t.Errorf("%q should not read as a date", raw)
 		}
 	}
@@ -57,11 +55,11 @@ func TestASearchResultIsDatedForTheReader(t *testing.T) {
 		t.Skip("no zone data")
 	}
 	now := time.Date(2026, 10, 29, 11, 0, 0, 0, la)
-	if publishedTag("whenever") != "" || publishedTag("") != "" {
+	if service.PublishedTag("whenever") != "" || service.PublishedTag("") != "" {
 		t.Error("an unreadable date tags nothing")
 	}
-	results := "1. Advisory lifted\n   https://example.com/a\n   " + publishedTag("2026-09-27") + "Two days after...\n\n" +
-		"2. Fix shipped\n   https://example.com/b\n   " + publishedTag("2026-09-28T16:00:00Z") + "On Monday..."
+	results := "1. Advisory lifted\n   https://example.com/a\n   " + service.PublishedTag("2026-09-27") + "Two days after...\n\n" +
+		"2. Fix shipped\n   https://example.com/b\n   " + service.PublishedTag("2026-09-28T16:00:00Z") + "On Monday..."
 	got := renderPublished(results, la, now)
 	for _, want := range []string{"[Published Sun, Sep 27, 2026, 32 days ago] Two days after", "[Published Mon, Sep 28, 2026, 31 days ago] On Monday"} {
 		if !strings.Contains(got, want) {
@@ -91,21 +89,5 @@ func TestAFetchedPageSaysWhenItWasPublished(t *testing.T) {
 	}
 	if publishedLine("", time.UTC, now) != "" {
 		t.Error("a page with no date says nothing about one")
-	}
-}
-
-// A backend that returns a date tags its result with it; one that returns
-// none (null, as SearXNG sends) leaves the snippet bare.
-func TestASearchBackendTagsTheDateItIsGiven(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"results":[{"title":"Advisory","url":"https://example.com/a","content":"Two days after","publishedDate":"2026-09-27T00:00:00"},{"title":"Other","url":"https://example.com/b","content":"Undated","publishedDate":null}]}`))
-	}))
-	defer srv.Close()
-	got, err := searchSearXNG(SearchRequest{Query: "advisory", Endpoint: srv.URL})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(got, "[Published 2026-09-27] Two days after") || !strings.Contains(got, "\n   Undated") {
-		t.Errorf("results:\n%s", got)
 	}
 }

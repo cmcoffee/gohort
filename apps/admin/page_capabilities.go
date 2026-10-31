@@ -73,7 +73,7 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 		{
 			Title:    "Web Search",
 			Subtitle: "Provider for the web_search tool.",
-			Detail:   "DuckDuckGo and a SearXNG instance require no key; Brave, Google and Serper need one. Any other search API can be the engine too: add a connector that searches (Admin > Extensions > Templates has Brave, Serper and Tavily), approve it, and pick it here as Service: <name>; or set the API up as a Source Hook and pick that.",
+			Detail:   "DuckDuckGo is built in and needs no key. Any other engine is a connector that searches: add one from a template (Admin > Extensions > Templates has Brave, Serper, Tavily, Google Programmable Search and SearXNG), approve it, and pick it here as Service: <name>, its key kept on it. Or set a search API up as a Source Hook and pick that.",
 			Body: ui.FormPanel{
 				Assist:    true,
 				Source:    "api/web-search",
@@ -301,13 +301,14 @@ func speechFormFields() []ui.FormField {
 }
 
 // webSearchFormFields builds the Web Search settings, with the peer picker
-// added only when a peer actually offers search.
+// added only when a peer actually offers search: the engine (DuckDuckGo, a
+// Source Hook, or an approved connector that searches), and where to search
+// from. A connector's key and address are kept on it.
 //
-// Same conditional shape as embeddings and transcription: the provider/key/
-// endpoint fields carry ShowWhen "source:local" so they disappear while a peer
-// is selected, and the clause is added and removed together with the dropdown
-// that drives it — leaving it in with no dropdown would blank the whole form on
-// every deployment with no peers.
+// The engine's fields carry ShowWhen "source:local" so they disappear while
+// a peer is selected, and the clause is added and removed together with the
+// dropdown that drives it: leaving it in with no dropdown would blank the
+// whole form on every deployment with no peers.
 func webSearchFormFields() []ui.FormField {
 	peers := SearchProviderOptions()
 	hasPeers := len(peers) > 1
@@ -315,8 +316,6 @@ func webSearchFormFields() []ui.FormField {
 	if hasPeers {
 		local = "source:local"
 	}
-	// The key and endpoint also depend on the provider, so their rule adds a
-	// provider clause to the source one when there is a source to check.
 	withLocal := func(clause string) string {
 		if local == "" {
 			return clause
@@ -333,30 +332,21 @@ func webSearchFormFields() []ui.FormField {
 			Detail:  "Peers live under Resource Sharing, then Peers. Borrowing a peer means this machine never holds the search API key.",
 		})
 	}
+	add := "add a connector that searches from a template (Admin > Extensions > Templates: Brave, Serper, Tavily, Google Programmable Search, SearXNG) or from its spec (Add, under Admin > Extensions > Connectors)"
 	return append(fields,
-		ui.FormField{Field: "provider", Label: "Provider", Type: "select",
+		ui.FormField{Field: "provider", Label: "Search with", Type: "select",
 			ShowWhen: local,
 			Options: append([]ui.SelectOption{
-				{Value: "duckduckgo", Label: "DuckDuckGo (no key)"},
-				{Value: "brave", Label: "Brave"},
-				{Value: "google", Label: "Google"},
-				{Value: "serper", Label: "Serper"},
-				{Value: "searxng", Label: "SearXNG (self-hosted)"},
+				{Value: "duckduckgo", Label: "DuckDuckGo (built in, no key)"},
 				{Value: "hook", Label: "A Source Hook (your own search API)"},
-			}, serviceProviderOptions("web.search", "Search")...)},
+			}, serviceProviderOptions("web.search", "Search")...),
+			Help:   "The engine every search goes to. A connector's address and key are kept on it: open its row under Admin > Extensions > Connectors to see, test or fix them.",
+			Detail: "To search with an engine not listed, " + add + ". Once approved it is offered here. Serper's also finds pictures, for agents' find_image."},
 		ui.FormField{Field: "hook", Label: "Source Hook", Type: "select",
 			OptionsSource: "api/web-search/hooks",
 			ShowWhen:      withLocal("provider:hook"),
 			Help:          "The API hook that answers searches: any search API, set up under Source Hooks with its endpoint, key and where its results are.",
 			Detail:        "Picking one makes it the search engine: it stops being a source hook of its own, so research no longer routes to it by topic and it is no longer a tool of its own; web_search is how it is reached. Its results are read as the hook reads them (the results path, and the title, link and snippet fields), and every search asks its API live, never the hook's cache. Only API hooks that are switched on are listed; add one under Source Hooks first. Its key is the hook's own, so none is set here."},
-		ui.FormField{Field: "api_key", Label: "API Key", Type: "password",
-			ShowWhen: withLocal("provider:brave|google|serper|searxng"),
-			Help:     "Required for Brave, Google and Serper. Google takes it as key:cx (the API key, a colon, then the search engine ID).",
-			Detail:   "SearXNG needs no key; one set here is sent only as an optional bearer token, for an instance behind an authenticating proxy."},
-		ui.FormField{Field: "endpoint", Label: "Endpoint", Type: "text",
-			Placeholder: "https://searx.example.com",
-			ShowWhen:    withLocal("provider:searxng"),
-			Help:        "Required for SearXNG. The base URL of your instance."},
 	)
 }
 

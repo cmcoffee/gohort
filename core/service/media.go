@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -189,17 +190,43 @@ func Search(ctx context.Context, name, query string) (string, error) {
 	if len(rs) == 0 {
 		return "No results found.", nil
 	}
+	// No more than the spec asks for: an engine that takes no count (SearXNG)
+	// answers with every result it has.
+	if c, ok := GetConnector(RootDB, name); ok {
+		if n, _ := strconv.Atoi(Default(c, "web.search", "count")); n > 0 && len(rs) > n {
+			rs = rs[:n]
+		}
+	}
 	var b strings.Builder
 	for i, x := range rs {
 		if i > 0 {
 			b.WriteString("\n\n")
 		}
 		fmt.Fprintf(&b, "%d. %s\n   %s", i+1, strings.TrimSpace(x.Title), x.URL)
-		if s := strings.TrimSpace(x.Snippet); s != "" {
+		if s := PublishedTag(x.Published) + strings.TrimSpace(x.Snippet); s != "" {
 			b.WriteString("\n   " + s)
 		}
 	}
 	return MarkUnopenable(b.String()), nil
+}
+
+// ImageSearch finds pictures with the service connector named name, no more
+// than the spec's count.
+func ImageSearch(ctx context.Context, name, query string) ([]ImageResult, error) {
+	res, err := Call(ctx, nil, name, "image.search", map[string]any{"query": query})
+	if err != nil {
+		return nil, err
+	}
+	rs, err := ImageResults(res)
+	if err != nil {
+		return nil, err
+	}
+	if c, ok := GetConnector(RootDB, name); ok {
+		if n, _ := strconv.Atoi(Default(c, "image.search", "count")); n > 0 && len(rs) > n {
+			rs = rs[:n]
+		}
+	}
+	return rs, nil
 }
 
 // transcribeVia transcribes audio with the service connector named name. The

@@ -3,7 +3,7 @@
 alice GET /api/web-search ""
   403 forbidden
 root GET /api/web-search ""
-  200 {"api_key":"","endpoint":"","hook":"","provider":"","source":"local"}
+  200 {"hook":"","provider":"","source":"local"}
 root PUT /api/web-search "{}"
   405 method not allowed
 (signed out) GET /api/browse ""
@@ -62,14 +62,14 @@ root POST /api/mail/test "{\"provider\":"
   400 invalid JSON: unexpected EOF
 root POST /api/mail/test ""
   400 invalid JSON: EOF
-alice POST /api/web-search "{\"provider\":\"brave\",\"api_key\":\"s3cr3t-search-x\"}"
+alice POST /api/web-search "{\"provider\":\"duckduckgo\"}"
   403 forbidden
-root POST /api/web-search "{\"provider\":\"brave\",\"api_key\":\"s3cr3t-search\",\"endpoint\":\"\",\"hook\":\"left over\"}"
+root POST /api/web-search "{\"provider\":\"brave\",\"api_key\":\"s3cr3t-search\"}"
+  400 brave is not an engine here: add a connector that searches from a template (Brave, Serper, Tavily, Google Programmable Search, SearXNG) and choose it
+root POST /api/web-search "{\"provider\":\"duckduckgo\",\"api_key\":\"s3cr3t-search\",\"endpoint\":\"https://searx.example.test\",\"hook\":\"left over\"}"
   204 
 root GET /api/web-search ""
-  200 {"api_key":"(unchanged)","endpoint":"","hook":"","provider":"brave","source":"local"}
-root POST /api/web-search "{\"provider\":\"brave\",\"api_key\":\"(unchanged)\"}"
-  204 
+  200 {"hook":"","provider":"duckduckgo","source":"local"}
 root POST /api/web-search "{\"provider\":\"hook\",\"hook\":\"zz_nope\",\"api_key\":\"(unchanged)\"}"
   400 pick a Source Hook to search with: an API hook that is switched on
 root POST /api/web-search "{\"source\":\"peer:nope\"}"
@@ -80,8 +80,8 @@ root POST /api/web-search/test "{\"provider\":\"\"}"
   200 {"error":"provider is required","ok":false}
 root POST /api/web-search/test "{\"source\":\"peer:nope\"}"
   200 {"error":"no peer named \"nope\" is registered: add it under Peers first","ok":false}
-root POST /api/web-search/test "{\"provider\":\"brave\",\"api_key\":\"(unchanged)\"}"
-  200 {"error":"no web_search tool is registered: enable a search provider first","ok":false}
+root POST /api/web-search/test "{\"provider\":\"brave\"}"
+  200 {"error":"brave is not an engine here: add a connector that searches from a template (Brave, Serper, Tavily, Google Programmable Search, SearXNG) and choose it","ok":false}
 alice POST /api/browse "{\"source\":\"local\"}"
   403 forbidden
 root POST /api/browse "{\"source\":\"peer:nope\"}"
@@ -132,7 +132,7 @@ root GET /api/agent-loop-tuning ""
   200 {"history_budget_percent":90}
 root POST /api/agent-loop-tuning "{\"history_budget_percent\":"
   400 invalid JSON: unexpected EOF
-activity log, 10 entries:
+activity log, 9 entries:
   settings root: set page rendering to ""
   settings root: set page rendering to "local"
   settings root: updated agent-loop tuning (history_budget_percent=50)
@@ -141,5 +141,4 @@ activity log, 10 entries:
   settings root: updated mail config (provider="" server="127.0.0.1:1" from="ops@example.test")
   settings root: updated network timeouts (connect=-1s request=30s)
   settings root: updated network timeouts (connect=5s request=0s)
-  settings root: updated web-search config (provider="brave")
-  settings root: updated web-search config (provider="brave")
+  settings root: updated web-search config (provider="duckduckgo")

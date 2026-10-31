@@ -428,8 +428,35 @@ in the same change. The migration code goes in a later release.
    services) or Disabled, and a save naming anything else is refused. The
    `built-in:gemini-images` and `built-in:openai-images` rows are gone.
 
-   Next, in order: web search, page rendering, mail, the LLM tiers, then the
-   built-in transports and peers.
+5. **Web search.** Built 2026-10-31. Parity the engine gained, all generic:
+   a search result carries when it was published (`published`, tagged
+   ahead of its snippet and said against the reader's own day, as the Go
+   engines' dates were); an output field may name other paths to try after
+   a `|` (Brave gives `page_age`, or only `age`); a search keeps no more
+   results than its spec's count (SearXNG takes no count, and was cut to
+   eight); and a new contract, `image.search` (pictures already on the web:
+   image_url, title, source, link), which agents' find_image now asks of the
+   connector Web Search is set to, where it read the Serper key. A
+   credential's allowed endpoint is a path, so a request to it with a query
+   is allowed: matched against the whole address, every search the Brave
+   template's credential was made for had been refused. `MigrateWebSearch`
+   installs the template for the engine the settings named, as an approved
+   connector holding the key: Brave, Serper (now also giving image.search),
+   Google Programmable Search (new; the key kept as key:cx is split, the key
+   sent as ?key=, the engine's id into the request) or SearXNG (new; its
+   address with any path it is under, a key it was sent becoming a bearer
+   credential). One missing what it needs never made a search and is left as
+   it is, since search has no off and moving it would send searches to an
+   engine nobody chose; searches then fail saying to choose one. What stays
+   in Go: DuckDuckGo, which needs Go to read its page, until the built-in
+   transports; a peer's search (SearXNG's shape at the peer), until the
+   peers; a Source Hook as the engine is a connector already. The page is
+   "Search with" DuckDuckGo, a Source Hook or a connector; key and endpoint
+   are gone from it, and a save naming an engine that is not one of those is
+   refused. The `built-in:web-search` row is DuckDuckGo's alone.
+
+   Next, in order: page rendering, mail, the LLM tiers, then the built-in
+   transports and peers.
 
 ## Migrations
 

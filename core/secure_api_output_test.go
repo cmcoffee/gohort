@@ -254,3 +254,20 @@ func TestAGitLabEncodedPathIsSentWithItsCredential(t *testing.T) {
 		t.Errorf("readings = %v", got)
 	}
 }
+
+// An allowed endpoint is a path: a request to it with a query is allowed,
+// and the query cannot reach a path the list does not name.
+func TestAnEndpointAllowsItsQueries(t *testing.T) {
+	c := SecureCredential{Name: "search", BaseURL: "https://api.search.example", AllowedEndpoints: []string{"/res/v1/web/search"}}
+	for u, want := range map[string]bool{
+		"https://api.search.example/res/v1/web/search":                    true,
+		"https://api.search.example/res/v1/web/search?q=rust+go&count=10": true,
+		"https://api.search.example/res/v1/admin?x=/res/v1/web/search":    false,
+		"https://api.search.example/res/v1/web/searchx?q=1":               false,
+		"https://other.example/res/v1/web/search?q=1":                     false,
+	} {
+		if got := urlAllowedByCredential(c, u); got != want {
+			t.Errorf("%s: allowed %v, want %v", u, got, want)
+		}
+	}
+}

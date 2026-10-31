@@ -42,7 +42,7 @@ type imageActions struct {
 // memoized on the session (ReachableImageBackends), so the DynamicChatTool
 // cheapness contract holds across repeated catalog builds.
 func liveImageActions(sess *ToolSession) imageActions {
-	cfg := LoadWebSearchConfig()
+	_, canFind := imageSearchConnector()
 	var generators, editors []ImageBackendChoice
 	for _, b := range ReachableImageBackends(sess) {
 		if b.Edits {
@@ -54,7 +54,7 @@ func liveImageActions(sess *ToolSession) imageActions {
 	return imageActions{
 		kept:         keptRefsFor(sess),
 		inboundMedia: sess.InboundMediaCount(),
-		find:         cfg.Provider == "serper" && cfg.APIKey != "",
+		find:         canFind,
 		fetch:        true,
 		// Not ImageGenerationAvailable(): that only asks whether a provider is
 		// SET, and the provider can be an editing backend. reachableImageBackends

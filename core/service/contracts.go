@@ -325,7 +325,7 @@ func init() {
 		units: func(map[string]any, Result) float64 { return 1 },
 	})
 	// web.search is a search engine: results are a list of objects with a
-	// title, a url and a snippet. A search can find nothing; its test, of a
+	// title, a url and a snippet, and when the engine says, published. A search can find nothing; its test, of a
 	// phrase every engine knows, must find something, which is what proves
 	// a spec reads the results from the right place.
 	register(Contract{
@@ -342,6 +342,28 @@ func init() {
 		testCheck: func(r Result) error {
 			if rs, _ := SearchResults(r); len(rs) == 0 {
 				return fmt.Errorf("a search for a common phrase found nothing: check where the results are read from")
+			}
+			return nil
+		},
+		units: func(map[string]any, Result) float64 { return 1 },
+	})
+	// image.search finds pictures already on the web: results are a list of
+	// objects with an image_url (the picture itself), and its title, the
+	// site it is on (source) and the page it is on (link).
+	register(Contract{
+		Name:  "image.search",
+		Gives: "Image search",
+		Inputs: []Port{
+			{Name: "query", Type: TypeText, Required: true},
+			{Name: "count", Type: TypeNumber},
+		},
+		Outputs: []Port{{Name: "results", Type: TypeJSON, Required: true}},
+		Units:   []string{"search"},
+		Test:    map[string]any{"query": "lighthouse", "count": 3},
+		Check:   checkImageResults("results"),
+		testCheck: func(r Result) error {
+			if rs, _ := ImageResults(r); len(rs) == 0 {
+				return fmt.Errorf("a search for a common subject found no pictures: check where the results are read from")
 			}
 			return nil
 		},
@@ -370,11 +392,14 @@ func init() {
 	})
 }
 
-// SearchResult is one result of a web.search.
+// SearchResult is one result of a web.search. Published is when the page
+// was published, as the engine gives it (a stamp, a day, "3 days ago"), ""
+// when it gives none.
 type SearchResult struct {
-	Title   string `json:"title"`
-	URL     string `json:"url"`
-	Snippet string `json:"snippet"`
+	Title     string `json:"title"`
+	URL       string `json:"url"`
+	Snippet   string `json:"snippet"`
+	Published string `json:"published,omitempty"`
 }
 
 // SearchResults reads a web.search result.
@@ -382,6 +407,23 @@ func SearchResults(r Result) ([]SearchResult, error) {
 	var out []SearchResult
 	if err := json.Unmarshal([]byte(r["results"].Text), &out); err != nil {
 		return nil, fmt.Errorf("the results are not a list of title, url and snippet: %v", err)
+	}
+	return out, nil
+}
+
+// ImageResult is one result of an image.search.
+type ImageResult struct {
+	ImageURL string `json:"image_url"`
+	Title    string `json:"title"`
+	Source   string `json:"source"`
+	Link     string `json:"link"`
+}
+
+// ImageResults reads an image.search result.
+func ImageResults(r Result) ([]ImageResult, error) {
+	var out []ImageResult
+	if err := json.Unmarshal([]byte(r["results"].Text), &out); err != nil {
+		return nil, fmt.Errorf("the results are not a list of image_url, title, source and link: %v", err)
 	}
 	return out, nil
 }
@@ -422,6 +464,24 @@ func checkResults(output string) func(Result) error {
 		for i, x := range rs {
 			if !strings.HasPrefix(x.URL, "https://") && !strings.HasPrefix(x.URL, "http://") {
 				return fmt.Errorf("result %d has no web address (%q): check which field url is read from", i+1, x.URL)
+			}
+		}
+		return nil
+	}
+}
+
+// checkImageResults passes a list of pictures each with a web address: one
+// with none is no picture, and a spec that gives one has read the wrong
+// field for image_url.
+func checkImageResults(output string) func(Result) error {
+	return func(r Result) error {
+		rs, err := ImageResults(Result{"results": r[output]})
+		if err != nil {
+			return err
+		}
+		for i, x := range rs {
+			if !strings.HasPrefix(x.ImageURL, "https://") && !strings.HasPrefix(x.ImageURL, "http://") {
+				return fmt.Errorf("picture %d has no web address (%q): check which field image_url is read from", i+1, x.ImageURL)
 			}
 		}
 		return nil
