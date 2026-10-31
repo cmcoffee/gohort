@@ -45,6 +45,13 @@ func (a *AdminApp) registerConnectorsRoutes(sub *http.ServeMux) {
 	// read from its spec (the row's Endpoints).
 	sub.HandleFunc("/api/connectors/endpoints", jsonapi.Get(a.db, a.handleConnectorEndpoints, a.gate()))
 
+	// The contracts explained, from the registry (the Contracts section).
+	sub.HandleFunc("/api/contracts", jsonapi.Get(a.db, a.handleContracts, a.gate()))
+}
+
+// handleContracts is every contract explained, for the Contracts section.
+func (a *AdminApp) handleContracts(c *jsonapi.Call) (any, error) {
+	return map[string]any{"contracts": service.ContractInfos()}, nil
 }
 
 // handleConnectors is every backend, with what each can do from its row.

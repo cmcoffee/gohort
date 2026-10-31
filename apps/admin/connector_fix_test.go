@@ -54,7 +54,7 @@ func TestFixingAnOlderImageBackendConvertsIt(t *testing.T) {
 
 	r := httptest.NewRequest("POST", "/api/connectors/fix?name=sd", nil)
 	about, err := connectorFixAbout(r)
-	if err != nil || !strings.Contains(about, "list[field=value]") || !strings.Contains(about, "image.generate takes prompt") || !strings.Contains(about, "keeps what the connector provides") {
+	if err != nil || !strings.Contains(about, "list[field=value]") || !strings.Contains(about, "image.generate: A picture made from a prompt. It takes prompt (text, required)") || !strings.Contains(about, "keeps what the connector provides") {
 		t.Errorf("what the assistant is told: %v\n%s", err, about)
 	}
 	tools := map[string]AgentToolDef{}

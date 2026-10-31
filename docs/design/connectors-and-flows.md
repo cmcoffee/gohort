@@ -488,9 +488,24 @@ no step of their own.
    become a kind of auth), the local servers (Ollama, llama.cpp, vLLM),
    whose thinking switches and queue are Go, and peers.
 
-   Next: a contracts reference generated from the registry (what each takes,
-   gives and is checked for), then Ollama as the openai dialect if its
-   switches allow.
+7. **Contracts reference.** Built 2026-10-31. Each contract in the registry
+   says what it is (with the shape of any JSON it gives), what its check
+   requires in words, and where gohort uses it (`About`, `Checks`,
+   `Where`). From those and its ports come Admin > Extensions > Contracts,
+   the table in docs/integrations.md (a test fails when they differ;
+   `UPDATE_DOCS=1` rewrites it), and what ✨ Fix and Add tell the
+   assistant, which until now said every contract's check was an image's.
+
+   Ollama, looked at 2026-10-31, stays built in with llama.cpp and vLLM:
+   its client speaks Ollama's own /api/chat because the OpenAI-shaped /v1
+   drops think and options (num_ctx), so the openai dialect would lose
+   thinking control and the context window; and a dialect of its own would
+   move only a local address with no key, while the proxy, peer lending,
+   the server probe and the queue key on the tier being "ollama". With
+   that, every hosted provider whose requests and readings were Go is a
+   connector; what stays is the protocols (SMTP, Chromium, DuckDuckGo's
+   page), the local model servers, Bedrock (until its signing is a kind of
+   auth) and peers.
 
 ## Migrations
 

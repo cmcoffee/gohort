@@ -77,7 +77,7 @@ func TestAConnectorIsAddedFromItsSpec(t *testing.T) {
 
 	r := httptest.NewRequest("POST", "/api/connectors/add/assist", nil)
 	about, err := a.connectorAddAbout(r)
-	if err != nil || !strings.Contains(about, "list[field=value]") || !strings.Contains(about, "web.search takes") || !strings.Contains(about, "dialect") ||
+	if err != nil || !strings.Contains(about, "list[field=value]") || !strings.Contains(about, "web.search: A search of the web.") || !strings.Contains(about, "dialect") ||
 		!strings.Contains(about, "template:brave-search") || !strings.Contains(about, "What each capability runs on here now: Embeddings:") {
 		t.Errorf("what the assistant is told: %v\n%s", err, about)
 	}

@@ -10,6 +10,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/service"
+	"github.com/cmcoffee/gohort/core/ui"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -108,5 +109,43 @@ func TestAServiceConnectorRowAndThePicker(t *testing.T) {
 	rows, _ := a.handleConnectors(&jsonapi.Call{R: httptest.NewRequest("GET", "/api/connectors", nil)})
 	if b, _ := json.Marshal(rows); !strings.Contains(string(b), `"name":"acme-images"`) || !strings.Contains(string(b), `"endpoints":true`) {
 		t.Errorf("a service row offers its Endpoints: %s", b)
+	}
+}
+
+// The Contracts section lists every contract from the registry, in full:
+// what it is, what it takes, gives and is checked for, and where it is used.
+func TestTheContractsSectionExplainsEachContract(t *testing.T) {
+	a := &AdminApp{db: &DBase{Store: kvlite.MemStore()}}
+	out, err := a.handleContracts(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	list := out.(map[string]any)["contracts"].([]service.ContractInfo)
+	if len(list) != len(service.Names()) {
+		t.Fatalf("%d entries for %d contracts", len(list), len(service.Names()))
+	}
+	var search service.ContractInfo
+	for _, c := range list {
+		if c.Name == "web.search" {
+			search = c
+		}
+	}
+	if search.Where != `Admin > Capabilities > Web Search: "Search with"` || search.Takes != "query (text, required), count (number)" ||
+		search.Gives != "results (json)" || !strings.HasPrefix(search.Checks, "results is a list") || !strings.Contains(search.About, "snippet") {
+		t.Errorf("web.search: %+v", search)
+	}
+	s := contractsSection()
+	panel, ok := s.Body.(ui.DisplayPanel)
+	if !ok || panel.Source != "api/contracts" || s.Title != "Contracts" || len(panel.Pairs) != 1 || panel.Pairs[0].Field != "contracts" {
+		t.Fatalf("the section: %+v", s)
+	}
+	shown := map[string]bool{}
+	for _, it := range panel.Pairs[0].Items {
+		shown[it.Field] = true
+	}
+	for _, f := range []string{"name", "about", "takes", "gives", "checks", "where"} {
+		if !shown[f] {
+			t.Errorf("the section does not show %s", f)
+		}
 	}
 }

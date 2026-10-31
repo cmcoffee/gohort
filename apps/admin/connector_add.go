@@ -251,7 +251,7 @@ func connectorAddButton() ui.ModalButton {
 					Placeholder: connectorAddExample,
 					Help:        "provider is how the service is reached, provides what it gives gohort. Test the draft runs each capability's smallest real call through its contract's check, without saving.",
 					Detail: "A key never goes in the spec: auth names an API credential, set up under API Credentials (a template makes both). " +
-						"What a capability takes and gives is fixed by its contract (image.generate, speech.synthesize, speech.voices, embed.text, web.search, image.search, page.render, mail.send, file.convert, message.send, music.generate, llm.chat); the spec says how this service's endpoints do it. " +
+						"What a capability takes and gives is fixed by its contract (" + strings.Join(service.Names(), ", ") + "; Extensions > Contracts says what each takes, gives and is checked for); the spec says how this service's endpoints do it. " +
 						"Saved, it is off until you approve it on its row, and ✨ Fix there helps when the service changes."},
 			},
 		},
@@ -324,7 +324,7 @@ func (a *AdminApp) connectorAddAbout(r *http.Request) (string, error) {
 	var b strings.Builder
 	b.WriteString("Connectors are how gohort reaches outside services. The person is adding a new service connector: how gohort reaches the service (provider) and what it gives gohort (provides), as one JSON spec. The form beside this conversation has its name and its spec; you draft the spec there, the admin saves it, and it stays off until they approve it.\n\n")
 	b.WriteString(service.Grammar + "\n\n")
-	b.WriteString("The contracts a service can give, and what each takes and gives:\n")
+	b.WriteString("The contracts a service can give: what each is, takes and gives, and what its check requires:\n")
 	for _, name := range service.Names() {
 		b.WriteString("  " + service.ContractText(name) + "\n")
 	}

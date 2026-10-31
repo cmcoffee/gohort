@@ -290,8 +290,34 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 				},
 			},
 		},
+		contractsSection(),
 		a.flowsSection(),
 		a.templatesSection(),
+	}
+}
+
+// contractsSection explains the contracts a connector can give: what each
+// is, what it takes and gives, what its check requires and where gohort
+// uses it, read from the registry the checks are (core/service).
+func contractsSection() ui.Section {
+	return ui.Section{
+		Title:    "Contracts",
+		Subtitle: "What gohort asks of a connector: each capability's inputs, outputs, check and where it is used.",
+		Detail: "A contract is fixed by gohort; a connector's spec says how one service does it. Its provides names the contract, its steps make the requests, and its output reads the reply into the contract's outputs, by these names.\n\n" +
+			"Every call's answer passes the contract's check before anything uses it, so a spec reading the wrong field fails with a reason rather than handing on something empty. Test on a connector's row makes the smallest real call and runs the same check; ✨ Fix is given this text when it proposes a corrected spec.",
+		// A reference is read in full: each contract a list entry with its
+		// parts labelled, where a table row would clip them.
+		Body: ui.DisplayPanel{
+			Source: "api/contracts",
+			Pairs: []ui.DisplayPair{{Field: "contracts", Items: []ui.DisplayPair{
+				{Field: "name", Mono: true},
+				{Field: "about"},
+				{Label: "Takes", Field: "takes"},
+				{Label: "Gives", Field: "gives"},
+				{Label: "Checked for", Field: "checks"},
+				{Label: "Used by", Field: "where"},
+			}}},
+		},
 	}
 }
 

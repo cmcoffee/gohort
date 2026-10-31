@@ -58,23 +58,28 @@ is a setting.
 
 ## The inside: contracts
 
-What gohort asks of a connector, and where it plugs in:
+What gohort asks of a connector: what each contract is, what it takes and
+gives, what its check requires of an answer, and where gohort uses it. Admin >
+Extensions > Contracts shows the same.
 
-| Contract | Where it plugs in |
-|---|---|
-| `image.generate`, `image.edit` | Admin > Capabilities > Image Generation, and agents' image tools |
-| `speech.synthesize` | Admin > Capabilities > Speech (TTS): "Speak with" |
-| `speech.voices` | the Speech (TTS) Voice field's choices, from the connector that speaks |
-| `speech.transcribe` | Admin > Capabilities > Audio Transcription: "Transcribe with" |
-| `embed.text` | Admin > Capabilities > Embeddings: "Embed with" |
-| `web.search` | Admin > Capabilities > Web Search: "Search with" |
-| `image.search` | agents' find_image, through the connector Web Search is set to |
-| `page.render` | Admin > Capabilities > Page Rendering (Browser): "Render pages on" |
-| `mail.send` | Admin > System > Mail (SMTP): "Send with" |
-| `file.convert` | Admin > Capabilities > System Hooks: a job's Adapt, "Done by" |
-| `llm.chat` | Admin > LLMs > Worker LLM and Lead LLM: "Provider" |
-| `music.generate` | an agent tool, `generate_music_<connector>` |
-| `message.send` | a flow's last step: send what it made through a messaging API |
+<!-- contracts: made from core/service's registry; UPDATE_DOCS=1 go test ./core/service -run TestTheDocsListTheContracts rewrites it -->
+| Contract | What it is | Takes | Gives | Checked for | Where it plugs in |
+|---|---|---|---|---|---|
+| `embed.text` | Vectors for texts, for semantic search: texts is a list of strings, and vectors a list of lists of numbers, one for each text. | texts (json, required), model (text) | vectors (json) | At least one vector came back, none of them empty, all the same length. The test embeds two texts. | Admin > Capabilities > Embeddings: "Embed with" |
+| `file.convert` | A file turned into another format: from is its format and to the one wanted, each as an extension (docx, pdf, png). | file (file, required), to (text, required), from (text) | file (file) | A file that is not empty came back; the job that asked checks it is the format it wanted. | Admin > Capabilities > System Hooks: a job's Adapt, "Done by" |
+| `image.edit` | A picture changed as a prompt asks. | prompt (text, required), image (file, required), negative (text), width (number), height (number), seed (number), steps (number), model (text) | image (file) | image is a picture gohort can show: PNG, JPEG, GIF or WebP, with a size. | Admin > Capabilities > Image Generation, and agents' image tools |
+| `image.generate` | A picture made from a prompt. | prompt (text, required), negative (text), width (number), height (number), seed (number), steps (number), model (text), aspect (text) | image (file) | image is a picture gohort can show: PNG, JPEG, GIF or WebP, with a size. | Admin > Capabilities > Image Generation, and agents' image tools |
+| `image.search` | Pictures already on the web. results is a list of objects: image_url (the picture itself), title, source (the site it is on) and link (the page it is on). | query (text, required), count (number) | results (json) | results is a list, and every image_url in it is an http or https address. The test, a search for a common subject, must find at least one. | agents' find_image, through the connector Web Search is set to |
+| `llm.chat` | A model the LLM tiers run on. It is not mapped step by step: its binding names the dialect gohort's own client speaks to it (openai, anthropic or gemini), with a default model and context. | model (text), context (number) | nothing | Nothing call by call: its Test is a short real chat through the dialect's client. | Admin > LLMs > Worker LLM and Lead LLM: "Provider" |
+| `mail.send` | An email: to, subject and body, from the connector's own sender unless one is given, with a file when one is given; id is the service's name for the message. | to (text, required), subject (text, required), body (text, required), from (text), file (file) | id (text) | Any answer: a reply at all means the service took the message. | Admin > System > Mail (SMTP): "Send with" |
+| `message.send` | A message sent through a messaging API, with a file when one is given; to is whom to send to, when the service needs one and the connector does not set it, and id is the service's name for the message. | text (text, required), file (file), to (text) | id (text) | Any answer: a reply at all means the service took the message. | a flow's last step: send what it made through a messaging API |
+| `music.generate` | A piece of music made from a prompt, with lyrics, a style, a title and a length when given. | prompt (text, required), lyrics (text), style (text), title (text), duration (number), model (text) | audio (file) | audio is sound gohort can play: MP3, WAV, OGG, FLAC, AAC or MP4 audio, judged by its first bytes. | an agent tool of its own, named generate_music_ and the connector's name |
+| `page.render` | A page read the way a browser shows it: the readable text of the page at url, and its title when the service gives one. | url (text, required) | text (text), title (text) | text is not empty. | Admin > Capabilities > Page Rendering (Browser): "Render pages on" |
+| `speech.synthesize` | A text spoken aloud, in a voice when one is given. | text (text, required), voice (text), model (text) | audio (file) | audio is sound gohort can play: MP3, WAV, OGG, FLAC, AAC or MP4 audio, judged by its first bytes. | Admin > Capabilities > Speech (TTS): "Speak with" |
+| `speech.transcribe` | The words spoken in a sound file. | audio (file, required), prompt (text), language (text), model (text) | text (text) | Any answer the spec can read, empty text included: the test's sound is a tone with no words. | Admin > Capabilities > Audio Transcription: "Transcribe with" |
+| `speech.voices` | The voices a speech service offers. voices is a list, each a bare id or an object naming the voice under id, voice_id or name (name is what people read, when there is an id too). | nothing | voices (json) | voices is a list, and each one names a voice. | the Speech (TTS) Voice field's choices, from the connector that speaks |
+| `web.search` | A search of the web. results is a list of objects: title, url and snippet, and published when the engine says when a page was published. | query (text, required), count (number) | results (json) | results is a list, and every url in it is an http or https address. The test, a search for a common phrase, must find at least one. | Admin > Capabilities > Web Search: "Search with" |
+<!-- end contracts -->
 
 The inside faces both ways. gohort asks things of a connector (make, convert,
 send), and a connector tells gohort things (a message arrived, a watched API

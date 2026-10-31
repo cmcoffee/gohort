@@ -43,7 +43,14 @@ type Contract struct {
 	Name string
 	// Gives is where the capability plugs into gohort, in the admin's words
 	// (the setting that uses it), for the inside of a service's line.
-	Gives   string
+	Gives string
+	// About says what the capability is, with the shape of any JSON it
+	// gives; Checks what its check requires of an answer, in words; Where
+	// where in gohort it is used. The Contracts reference, the docs' table
+	// and what Fix and Add tell the assistant are made from them.
+	About   string
+	Checks  string
+	Where   string
 	Inputs  []Port
 	Outputs []Port
 	// Units are what a cost may be counted in.
@@ -120,8 +127,11 @@ func Names() []string {
 
 func init() {
 	register(Contract{
-		Name:  "image.generate",
-		Gives: "Image Generation",
+		Name:   "image.generate",
+		About:  "A picture made from a prompt.",
+		Checks: "image is a picture gohort can show: PNG, JPEG, GIF or WebP, with a size.",
+		Where:  "Admin > Capabilities > Image Generation, and agents' image tools",
+		Gives:  "Image Generation",
 		Inputs: []Port{
 			{Name: "prompt", Type: TypeText, Required: true},
 			{Name: "negative", Type: TypeText},
@@ -141,8 +151,11 @@ func init() {
 		units:   func(map[string]any, Result) float64 { return 1 },
 	})
 	register(Contract{
-		Name:  "image.edit",
-		Gives: "Image editing",
+		Name:   "image.edit",
+		About:  "A picture changed as a prompt asks.",
+		Checks: "image is a picture gohort can show: PNG, JPEG, GIF or WebP, with a size.",
+		Where:  "Admin > Capabilities > Image Generation, and agents' image tools",
+		Gives:  "Image editing",
 		Inputs: []Port{
 			{Name: "prompt", Type: TypeText, Required: true},
 			{Name: "image", Type: TypeFile, Required: true},
@@ -161,8 +174,11 @@ func init() {
 		units:      func(map[string]any, Result) float64 { return 1 },
 	})
 	register(Contract{
-		Name:  "speech.transcribe",
-		Gives: "Transcription",
+		Name:   "speech.transcribe",
+		About:  "The words spoken in a sound file.",
+		Checks: "Any answer the spec can read, empty text included: the test's sound is a tone with no words.",
+		Where:  "Admin > Capabilities > Audio Transcription: \"Transcribe with\"",
+		Gives:  "Transcription",
 		Inputs: []Port{
 			{Name: "audio", Type: TypeFile, Required: true},
 			// prompt is words the speaker is likely to say (names), which
@@ -180,8 +196,11 @@ func init() {
 		Check: func(r Result) error { return nil },
 	})
 	register(Contract{
-		Name:  "speech.synthesize",
-		Gives: "Speech",
+		Name:   "speech.synthesize",
+		About:  "A text spoken aloud, in a voice when one is given.",
+		Checks: "audio is sound gohort can play: MP3, WAV, OGG, FLAC, AAC or MP4 audio, judged by its first bytes.",
+		Where:  "Admin > Capabilities > Speech (TTS): \"Speak with\"",
+		Gives:  "Speech",
 		Inputs: []Port{
 			{Name: "text", Type: TypeText, Required: true},
 			{Name: "voice", Type: TypeText},
@@ -201,13 +220,19 @@ func init() {
 	// without a list leaves it out, and the voice is typed.
 	register(Contract{
 		Name:    "speech.voices",
+		About:   "The voices a speech service offers. voices is a list, each a bare id or an object naming the voice under id, voice_id or name (name is what people read, when there is an id too).",
+		Checks:  "voices is a list, and each one names a voice.",
+		Where:   "the Speech (TTS) Voice field's choices, from the connector that speaks",
 		Gives:   "Speech voices",
 		Outputs: []Port{{Name: "voices", Type: TypeJSON, Required: true}},
 		Test:    map[string]any{},
 		Check:   checkVoices("voices"),
 	})
 	register(Contract{
-		Name: "music.generate",
+		Name:   "music.generate",
+		About:  "A piece of music made from a prompt, with lyrics, a style, a title and a length when given.",
+		Checks: "audio is sound gohort can play: MP3, WAV, OGG, FLAC, AAC or MP4 audio, judged by its first bytes.",
+		Where:  "an agent tool of its own, named generate_music_ and the connector's name",
 		Inputs: []Port{
 			{Name: "prompt", Type: TypeText, Required: true},
 			{Name: "lyrics", Type: TypeText},
@@ -227,8 +252,11 @@ func init() {
 	// and the connector does not set it; id is what the service calls the
 	// message, when it says.
 	register(Contract{
-		Name:  "message.send",
-		Gives: "Sending messages",
+		Name:   "message.send",
+		About:  "A message sent through a messaging API, with a file when one is given; to is whom to send to, when the service needs one and the connector does not set it, and id is the service's name for the message.",
+		Checks: "Any answer: a reply at all means the service took the message.",
+		Where:  "a flow's last step: send what it made through a messaging API",
+		Gives:  "Sending messages",
 		Inputs: []Port{
 			{Name: "text", Type: TypeText, Required: true},
 			{Name: "file", Type: TypeFile},
@@ -250,8 +278,11 @@ func init() {
 	// by step like the others: its binding names the dialect gohort's own
 	// client speaks to it, and its test is a short real chat.
 	register(Contract{
-		Name:  "llm.chat",
-		Gives: "LLM",
+		Name:   "llm.chat",
+		About:  "A model the LLM tiers run on. It is not mapped step by step: its binding names the dialect gohort's own client speaks to it (openai, anthropic or gemini), with a default model and context.",
+		Checks: "Nothing call by call: its Test is a short real chat through the dialect's client.",
+		Where:  "Admin > LLMs > Worker LLM and Lead LLM: \"Provider\"",
+		Gives:  "LLM",
 		Inputs: []Port{
 			{Name: "model", Type: TypeText},
 			{Name: "context", Type: TypeNumber},
@@ -264,8 +295,11 @@ func init() {
 	// is checked here only for being there; the job that asked checks it is
 	// the format it wanted.
 	register(Contract{
-		Name:  "file.convert",
-		Gives: "File conversion",
+		Name:   "file.convert",
+		About:  "A file turned into another format: from is its format and to the one wanted, each as an extension (docx, pdf, png).",
+		Checks: "A file that is not empty came back; the job that asked checks it is the format it wanted.",
+		Where:  "Admin > Capabilities > System Hooks: a job's Adapt, \"Done by\"",
+		Gives:  "File conversion",
 		Inputs: []Port{
 			{Name: "file", Type: TypeFile, Required: true},
 			{Name: "to", Type: TypeText, Required: true},
@@ -286,8 +320,11 @@ func init() {
 	// mail.send is an email: to, subject and body, from the connector's
 	// own sender unless one is given; id is the service's for the message.
 	register(Contract{
-		Name:  "mail.send",
-		Gives: "Mail",
+		Name:   "mail.send",
+		About:  "An email: to, subject and body, from the connector's own sender unless one is given, with a file when one is given; id is the service's name for the message.",
+		Checks: "Any answer: a reply at all means the service took the message.",
+		Where:  "Admin > System > Mail (SMTP): \"Send with\"",
+		Gives:  "Mail",
 		Inputs: []Port{
 			{Name: "to", Type: TypeText, Required: true},
 			{Name: "subject", Type: TypeText, Required: true},
@@ -305,8 +342,11 @@ func init() {
 	// page.render is a page read the way a browser shows it: the readable
 	// text of the page at url (and its title, when the service gives one).
 	register(Contract{
-		Name:  "page.render",
-		Gives: "Page rendering",
+		Name:   "page.render",
+		About:  "A page read the way a browser shows it: the readable text of the page at url, and its title when the service gives one.",
+		Checks: "text is not empty.",
+		Where:  "Admin > Capabilities > Page Rendering (Browser): \"Render pages on\"",
+		Gives:  "Page rendering",
 		Inputs: []Port{
 			{Name: "url", Type: TypeText, Required: true},
 		},
@@ -329,8 +369,11 @@ func init() {
 	// phrase every engine knows, must find something, which is what proves
 	// a spec reads the results from the right place.
 	register(Contract{
-		Name:  "web.search",
-		Gives: "Web search",
+		Name:   "web.search",
+		About:  "A search of the web. results is a list of objects: title, url and snippet, and published when the engine says when a page was published.",
+		Checks: "results is a list, and every url in it is an http or https address. The test, a search for a common phrase, must find at least one.",
+		Where:  "Admin > Capabilities > Web Search: \"Search with\"",
+		Gives:  "Web search",
 		Inputs: []Port{
 			{Name: "query", Type: TypeText, Required: true},
 			{Name: "count", Type: TypeNumber},
@@ -351,8 +394,11 @@ func init() {
 	// objects with an image_url (the picture itself), and its title, the
 	// site it is on (source) and the page it is on (link).
 	register(Contract{
-		Name:  "image.search",
-		Gives: "Image search",
+		Name:   "image.search",
+		About:  "Pictures already on the web. results is a list of objects: image_url (the picture itself), title, source (the site it is on) and link (the page it is on).",
+		Checks: "results is a list, and every image_url in it is an http or https address. The test, a search for a common subject, must find at least one.",
+		Where:  "agents' find_image, through the connector Web Search is set to",
+		Gives:  "Image search",
 		Inputs: []Port{
 			{Name: "query", Type: TypeText, Required: true},
 			{Name: "count", Type: TypeNumber},
@@ -370,8 +416,11 @@ func init() {
 		units: func(map[string]any, Result) float64 { return 1 },
 	})
 	register(Contract{
-		Name:  "embed.text",
-		Gives: "Embeddings",
+		Name:   "embed.text",
+		About:  "Vectors for texts, for semantic search: texts is a list of strings, and vectors a list of lists of numbers, one for each text.",
+		Checks: "At least one vector came back, none of them empty, all the same length. The test embeds two texts.",
+		Where:  "Admin > Capabilities > Embeddings: \"Embed with\"",
+		Gives:  "Embeddings",
 		Inputs: []Port{
 			{Name: "texts", Type: TypeJSON, Required: true},
 			{Name: "model", Type: TypeText},
