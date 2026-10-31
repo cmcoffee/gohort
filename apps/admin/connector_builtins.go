@@ -43,16 +43,18 @@ func (a *AdminApp) builtinConnectors() []builtinConnector {
 		a.builtinLLM(LLMTable, "worker-llm", "Worker LLM"), a.builtinLLM(LeadLLMTable, "lead-llm", "Lead LLM")}
 }
 
-// llmHosts are where each hosted LLM provider is reached.
+// llmHosts are where each hosted LLM provider is reached: a tier still naming
+// one has no key (one with a key runs on a model connector), and the row says
+// so.
 var llmHosts = map[string]string{
 	"anthropic": "api.anthropic.com", "openai": "api.openai.com", "gemini": "generativelanguage.googleapis.com",
 }
 
 // builtinLLM is one of gohort's model tiers, the client for it written in Go
-// (core/llm_*.go): what it runs, where, and with what key. A model is not
-// yet something a connector can be (docs/design/connectors-and-flows.md,
-// stage 12): the row shows the tier with the others, and Test is the tier's
-// own live check.
+// (core/llm_*.go): what it runs, where, and with what key. A tier on
+// Anthropic, OpenAI or Gemini runs on a model connector, which has its own
+// row; this one shows the tier with the others, and Test is the tier's own
+// live check.
 func (a *AdminApp) builtinLLM(table, id, title string) builtinConnector {
 	provider, model, endpoint := a.storedString(table, "provider"), a.storedString(table, "model"), a.storedString(table, "endpoint")
 	key := a.storedString(table, "api_key")

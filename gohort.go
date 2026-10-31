@@ -383,14 +383,17 @@ func main() {
 
 		// Wire auth database.
 		AuthDB = func() Database { return global.db }
-		// Embeddings, transcription, speech, images and web search this instance did itself
-		// become connectors, once: they need the credential store just
-		// wired, for a key the settings held.
+		// Embeddings, transcription, speech, images, web search and the
+		// hosted LLM tiers this instance did itself become connectors, once:
+		// they need the credential store just wired, for a key the settings
+		// held. Images first: it reads a tier's key, which the tiers' move
+		// takes away.
 		service.MigrateEmbeddings(global.db)
 		service.MigrateTranscription(global.db)
 		service.MigrateSpeech(global.db)
 		service.MigrateImages(global.db)
 		service.MigrateWebSearch(global.db)
+		service.MigrateLLMTiers(global.db)
 
 		AuthEnabled = func() bool { return AuthHasUsers(global.db) }
 		AuthSignupAllowed = func() bool {

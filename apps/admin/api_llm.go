@@ -8,6 +8,8 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/activity"
 	"github.com/cmcoffee/gohort/core/jsonapi"
+	"github.com/cmcoffee/gohort/core/media"
+	"github.com/cmcoffee/gohort/core/service"
 )
 
 // registerLLMRoutes wires the llm API under the admin sub-mux.
@@ -438,6 +440,22 @@ func (a *AdminApp) handleLLMConfigSave(table string, worker bool) func(c *jsonap
 		if err := ValidateModelID(strings.TrimSpace(req.Provider), req.Model); err != nil {
 			return nil, jsonapi.BadRequest(err.Error())
 		}
+		// Anthropic, OpenAI or Gemini runs on a model connector made from
+		// that provider's template, its key in the connector's credential:
+		// the tier names the connector and stores no key.
+		hosted := service.ModelTemplate(req.Provider) != ""
+		if hosted {
+			name, err := a.hostedTierConnector(table, req.Provider, req.Model, req.APIKey)
+			if err != nil {
+				return nil, jsonapi.BadRequest(err.Error())
+			}
+			// Blank is the provider's default, as the field says, not
+			// whatever the connector, perhaps the other tier's, defaults to.
+			if strings.TrimSpace(req.Model) == "" {
+				req.Model = service.ModelDefault(req.Provider)
+			}
+			req.Provider, req.APIKey, req.Endpoint = media.ServiceProviderPrefix+name, "", ""
+		}
 		// A model connector must be one, and approved.
 		if err := serviceProviderOK(req.Provider, "llm.chat"); err != nil {
 			return nil, jsonapi.BadRequest(err.Error())
@@ -470,7 +488,9 @@ func (a *AdminApp) handleLLMConfigSave(table string, worker bool) func(c *jsonap
 		if worker {
 			a.db.Set(table, "request_timeout_seconds", req.RequestTimeout)
 		}
-		if req.APIKey != "" {
+		if hosted {
+			a.db.Unset(table, "api_key")
+		} else if req.APIKey != "" {
 			a.db.CryptSet(table, "api_key", req.APIKey)
 		}
 		// Apply live — rebuild the shared LLMs from the new config so the change
@@ -585,12 +605,10 @@ func effortLevel(v string) string {
 // the picker shows in its place.
 func (a *AdminApp) handleLLMModels(table string) func(c *jsonapi.Call, req llmModelsQuery) (any, error) {
 	return func(c *jsonapi.Call, req llmModelsQuery) (any, error) {
-		if req.APIKey == "" && a.db != nil {
-			a.db.Get(table, "api_key", &req.APIKey)
-		}
 		if strings.TrimSpace(req.Provider) == "" {
 			return map[string]any{"error": "Pick a provider first."}, nil
 		}
+		req.Provider, req.APIKey = a.formTierTarget(table, req.Provider, req.APIKey)
 		ids, err := ListModels(c.R.Context(), LLMProviderConfig{
 			Provider:   req.Provider,
 			APIKey:     req.APIKey,
@@ -666,4 +684,84 @@ func bedrockAPIShown(provider, stored string) string {
 // bedrock-runtime and is checked before a test.
 func bedrockUsesMantle(api string) bool {
 	return api == "" || api == "messages"
+}
+
+// tierTitles name each tier's settings, for a connector's description.
+var tierTitles = map[string]string{LLMTable: "Worker LLM", LeadLLMTable: "Lead LLM"}
+
+// hostedTierConnector is the model connector a tier on provider (Anthropic,
+// OpenAI or Gemini) runs on. With no key, the one it runs on already, when it
+// was made from the provider's template. With a key: the connector holding
+// it; else the tier's own, given the new key, when no other tier runs on it;
+// else one made from the template with it. So a key typed on the form
+// replaces the tier's key, and a connector both tiers share keeps the
+// other's.
+func (a *AdminApp) hostedTierConnector(table, provider, model, key string) (string, error) {
+	current, own := a.tierConnectorFrom(table, provider)
+	if strings.TrimSpace(key) == "" {
+		if own {
+			return current, nil
+		}
+		return "", fmt.Errorf("%s needs its API key: it goes into a credential, with a model connector made from the %s template that this tier then runs on. To use a key already set up, choose its connector (Service: <name>) instead", provider, service.ModelTemplate(provider))
+	}
+	if own && !a.otherTierRunsOn(table, current) {
+		rekeyed, err := service.RekeyModelConnector(RootDB, provider, current, key)
+		if err != nil {
+			return "", err
+		}
+		if rekeyed {
+			return current, nil
+		}
+	}
+	name, _, err := service.ModelConnectorFor(RootDB, provider, "", model, key, tierTitles[table])
+	return name, err
+}
+
+// tierConnectorFrom is the connector the tier runs on, when it was made from
+// provider's template.
+func (a *AdminApp) tierConnectorFrom(table, provider string) (string, bool) {
+	id := service.ModelTemplate(provider)
+	if id == "" || a.db == nil {
+		return "", false
+	}
+	name, ok := strings.CutPrefix(a.storedString(table, "provider"), media.ServiceProviderPrefix)
+	if !ok || service.ModelTemplateOf(RootDB, name) != id {
+		return "", false
+	}
+	return name, true
+}
+
+// otherTierRunsOn reports whether the tier that is not table runs on the
+// connector named name.
+func (a *AdminApp) otherTierRunsOn(table, name string) bool {
+	other := LeadLLMTable
+	if table == LeadLLMTable {
+		other = LLMTable
+	}
+	return a.storedString(other, "provider") == media.ServiceProviderPrefix+name
+}
+
+// formTierTarget is the provider and key a tier's form values are tried with
+// (Test, List models). With no key typed, a hosted provider is the connector
+// the tier runs on, when it is that provider's, and any other takes the
+// tier's stored key. A hosted provider never takes the stored key, which is
+// another provider's.
+func (a *AdminApp) formTierTarget(table, provider, key string) (string, string) {
+	if name, ok := a.keptTierConnector(table, provider, key); ok {
+		return media.ServiceProviderPrefix + name, key
+	}
+	if key == "" && a.db != nil && service.ModelTemplate(provider) == "" {
+		a.db.Get(table, "api_key", &key)
+	}
+	return provider, key
+}
+
+// keptTierConnector is the connector the tier runs on, when no key is given
+// and that connector was made from provider's template: a form showing the
+// provider's name, and no key, means the one already set up.
+func (a *AdminApp) keptTierConnector(table, provider, key string) (string, bool) {
+	if strings.TrimSpace(key) != "" {
+		return "", false
+	}
+	return a.tierConnectorFrom(table, provider)
 }

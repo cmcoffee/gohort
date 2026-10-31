@@ -108,8 +108,8 @@ func (a *AdminApp) setupWizardPage() ui.Page {
 					{Label: "vLLM", Value: "http://localhost:8000/v1"}}},
 			{Field: "api_key", Label: "API key", Type: "password",
 				ShowWhen: "provider:anthropic|openai|gemini|bedrock|llama.cpp|vllm",
-				Help:     "Stored encrypted. Optional on AWS Bedrock, and on llama.cpp or vLLM needed only when the server requires a key.",
-				Detail:   "On Bedrock, leave it blank to sign with your AWS credentials, including SSO, instead of a bearer token. On llama.cpp or vLLM, set it only if the server was started with --api-key."},
+				Help:     "For Anthropic, OpenAI or Gemini it goes into a credential, with a model connector made for it. Optional on AWS Bedrock, llama.cpp and vLLM.",
+				Detail:   "Anthropic, OpenAI or Gemini: the model then runs on that connector, which Admin > Extensions > Connectors lists with its calls and cost, and the key can be changed under API Credentials. On Bedrock, leave it blank to sign with your AWS credentials, including SSO, instead of a bearer token. On llama.cpp or vLLM, set it only if the server was started with --api-key; it is stored encrypted."},
 			{Field: "aws_region", Label: "AWS region", Type: "text", ShowWhen: "provider:bedrock",
 				Placeholder: "us-east-1",
 				Help:        "Blank uses $AWS_REGION, then us-east-1.",
@@ -247,9 +247,7 @@ func (a *AdminApp) testLLM(w http.ResponseWriter, r *http.Request, table string)
 		writeTestResult(w, false, "", "pick a provider first")
 		return
 	}
-	if req.APIKey == "" && a.db != nil {
-		a.db.Get(table, "api_key", &req.APIKey)
-	}
+	req.Provider, req.APIKey = a.formTierTarget(table, req.Provider, req.APIKey)
 	// The model id, before anything tries to use it. A value carrying
 	// invisible rubbish comes back from AWS as "the provided model identifier
 	// is invalid" or "your account is not authorized", neither of which is

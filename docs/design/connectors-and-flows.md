@@ -354,6 +354,15 @@ connector once at startup (marker-guarded, shown under Admin > Migrations,
 the same for a fresh install from the defaults), and delete the Go provider
 in the same change. The migration code goes in a later release.
 
+Narrowed by the owner, 2026-10-31: a provider becomes a spec where the spec
+would hold what breaks, its addresses, requests and how its replies are read.
+Where the Go is the protocol (SMTP, Chromium, DuckDuckGo's HTML page) a
+connector naming a built-in transport would say only "use the Go", with
+nothing for ✨ Fix to fix, so those stay built in: listed on the Connectors
+page with their Test, and replaceable by any connector giving the same
+contract. Page rendering and mail have no HTTP provider in Go, so they had
+no step of their own.
+
 1. **Embeddings.** Built 2026-10-30. Parity the engine gained, all generic:
    an output's `or` (other places it may be, tried in turn: data[].embedding,
    embeddings, embedding) and `single` (one item read as a list of one); a
@@ -455,8 +464,33 @@ in the same change. The migration code goes in a later release.
    are gone from it, and a save naming an engine that is not one of those is
    refused. The `built-in:web-search` row is DuckDuckGo's alone.
 
-   Next, in order: page rendering, mail, the LLM tiers, then the built-in
-   transports and peers.
+6. **LLM tiers.** Built 2026-10-31. `MigrateLLMTiers` moves a worker or
+   lead tier on Anthropic, OpenAI or Gemini, with a key, onto a model
+   connector from that provider's template (Anthropic's, and new OpenAI and
+   Gemini ones), the key in its credential; an OpenAI tier sent to an
+   address of its own takes the OpenAI-compatible template at that address,
+   which is where its requests went. Tiers on one key share one connector
+   (`ModelConnectorFor` finds a connector from the template whose
+   credential holds the key), so a tier that named no model now names its
+   client's default, rather than taking the other tier's from the shared
+   connector. The tier keeps its model, context and thinking settings; its
+   key and address rows are gone. A tier with no key never ran and is left
+   as it is. The form and first-run setup still offer Anthropic, OpenAI and
+   Gemini with a key, and saving one makes or finds that connector and
+   stores the tier as `service:<name>` with no key; no key keeps the
+   connector the tier runs on, and the model list and Test use it too. A
+   new key typed there replaces the key in the tier's own connector
+   (`RekeyModelConnector`) rather than leaving it behind beside a second
+   one; on a connector both tiers share, the tier gets one of its own, so
+   the other tier's key does not change unseen. The
+   clients stay Go: they are the dialects, and the SDK builds them
+   directly. What stays: Bedrock (its SigV4 signing would first have to
+   become a kind of auth), the local servers (Ollama, llama.cpp, vLLM),
+   whose thinking switches and queue are Go, and peers.
+
+   Next: a contracts reference generated from the registry (what each takes,
+   gives and is checked for), then Ollama as the openai dialect if its
+   switches allow.
 
 ## Migrations
 

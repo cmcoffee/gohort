@@ -1,0 +1,84 @@
+{
+  "id": "gemini-model",
+  "title": "Gemini (LLM)",
+  "description": "Google's Gemini models as an LLM tier, through gohort's Gemini client, with the key kept in a credential rather than in the LLM settings.",
+  "category": "LLMs",
+  "setup_notes": "Create a key at aistudio.google.com/apikey. The credential lands disabled: enable it under API Credentials. The connector lands unapproved: approve it in Admin > Extensions > Connectors and run Test on its row, which makes one short real chat. Then pick it under Admin > LLMs > Worker LLM (or Lead LLM) as Service: <name>: the tier's turns run on it through gohort's own Gemini client, streaming and tool calls as usual, and the key stays in the credential. Choosing Gemini with a key on the LLM form, or in first-run setup, installs this template for you. Its calls and their cost show on the connector's row; add per_million_input and per_million_output to its spec's cost to price its tokens, which then replace the tier's rates under Costs.",
+  "questions": [
+    {
+      "name": "api_key",
+      "label": "Gemini API key",
+      "help": "Stored in the credential's secret store, never in the connector or the LLM settings.",
+      "required": true,
+      "secret": true,
+      "credential": "gemini_model"
+    },
+    {
+      "name": "name",
+      "label": "Connector name",
+      "help": "Lowercase letters, digits, dashes and underscores; the LLM settings list it by this name.",
+      "default": "gemini-model"
+    },
+    {
+      "name": "model",
+      "label": "Model",
+      "help": "The model a tier on it runs unless the tier names another.",
+      "default": "gemini-2.5-flash",
+      "required": false
+    }
+  ],
+  "bundle": {
+    "bundle": "gohort.bundle/v1",
+    "artifacts": [
+      {
+        "type": "credential",
+        "name": "gemini_model",
+        "recipe": {
+          "name": "gemini_model",
+          "type": "header",
+          "param_name": "x-goog-api-key",
+          "base_url": "https://generativelanguage.googleapis.com",
+          "description": "Google Gemini API, for an LLM."
+        }
+      },
+      {
+        "type": "connector",
+        "name": "{{name}}",
+        "recipe": {
+          "name": "{{name}}",
+          "kind": "service",
+          "template": "gemini-model",
+          "desc": "Gemini model ({{model}})",
+          "spec": {
+            "provider": {
+              "transport": "http",
+              "base_url": "https://generativelanguage.googleapis.com",
+              "auth": {
+                "credential": "gemini_model"
+              },
+              "operations": {
+                "models": {
+                  "path": "/v1beta/models"
+                }
+              },
+              "health": {
+                "call": "models",
+                "expect": "models",
+                "every_mins": 60
+              }
+            },
+            "provides": [
+              {
+                "capability": "llm.chat",
+                "dialect": "gemini",
+                "defaults": {
+                  "model": "{{model}}"
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

@@ -141,7 +141,7 @@ resource's whole schema.
 | A messaging relay | messages in and out | Telegram, Teams, others |
 | A poll (made by an agent's bridge tool) | "the answer changed" | HTTP and a key |
 | A Source Hook (Admin > Extensions > Source Hooks) | search results, or passages, for research and agents | HTTP and a key the hook keeps |
-| gohort's own providers (DuckDuckGo search, the browser, SMTP mail, the LLM tiers) | the same contracts | written in Go, each moving to a connector in turn (embeddings, transcription, speech, images and the other search engines already have) |
+| gohort's own providers (DuckDuckGo search, the browser, SMTP mail, Bedrock and the local model servers) | the same contracts | written in Go where Go is the protocol or the server is on this machine; every hosted provider moved to a connector (embeddings, transcription, speech, images, the other search engines and the hosted LLMs) |
 
 Services, messaging relays, polls, MCP connections, gohort's own providers
 and the programs System Hooks run are listed under Admin > Extensions >

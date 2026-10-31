@@ -30,7 +30,8 @@ func (a *AdminApp) llmSections() []ui.Section {
 						Detail: "On AWS Bedrock, many accounts require a region-prefixed inference profile (us.anthropic.claude-opus-4-8) and deny the bare id."},
 					{Field: "api_key", Label: "API key", Type: "password", Placeholder: "(leave blank to keep current)", SaveOnBlur: true,
 						ShowWhen: "provider:anthropic|openai|gemini|bedrock|llama.cpp|vllm",
-						Help:     "Stored encrypted. Ollama ignores it; llama.cpp and vLLM send it only when the server requires one (started with --api-key)."},
+						Help:     "For Anthropic, OpenAI or Gemini it goes into a credential, with a model connector made for it.",
+						Detail:   tierKeyDetail},
 					{Field: "endpoint", Label: "Endpoint", Type: "text", Placeholder: "http://localhost:8080/v1", SaveOnBlur: true,
 						ShowWhen: "provider:ollama|llama.cpp|vllm|bedrock",
 						Help:     "For local / self-hosted providers; blank = provider default.",
@@ -113,8 +114,8 @@ func (a *AdminApp) llmSections() []ui.Section {
 						Help: "List models asks the provider what it offers."},
 					{Field: "api_key", Label: "API key", Type: "password", Placeholder: "(leave blank to keep current)", SaveOnBlur: true,
 						ShowWhen: "provider:anthropic|openai|gemini|bedrock|llama.cpp|vllm",
-						Help:     "Stored encrypted. The lead has its own key and never falls back to the worker's.",
-						Detail:   "Ollama ignores it, and llama.cpp and vLLM send it only when the server requires one (started with --api-key). Leaving it blank on save keeps the current key."},
+						Help:     "For Anthropic, OpenAI or Gemini it goes into a credential, with a model connector made for it. The lead never takes the worker's key.",
+						Detail:   tierKeyDetail},
 					{Field: "endpoint", Label: "Endpoint", Type: "text", Placeholder: "(provider default)", SaveOnBlur: true,
 						ShowWhen: "provider:ollama|llama.cpp|vllm|bedrock",
 						Help:     "For local / self-hosted lead providers. On Bedrock this OVERRIDES the AWS region below.",
@@ -422,3 +423,10 @@ func appRoutingSources() []string {
 	}
 	return out
 }
+
+// tierKeyDetail is what each tier's API key field does with the key, by
+// provider.
+const tierKeyDetail = "Anthropic, OpenAI or Gemini: the tier then runs on that connector (Service: <name>) and stores no key itself. " +
+	"A connector already holding the same key is used rather than a second one. A new key replaces the one in this tier's connector, unless the other tier runs on it too: then this tier gets a connector of its own, so the other tier's key does not change. Blank on save keeps the connector the tier runs on. " +
+	"Bedrock: a bearer token, or blank to sign with the machine's AWS credentials. " +
+	"llama.cpp and vLLM: stored encrypted, and sent only when the server was started with --api-key; Ollama ignores it. Blank on save keeps the current key."
