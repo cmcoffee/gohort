@@ -143,6 +143,7 @@ func SetLiveLLMs(worker, lead string) {
 		leadStatsMu.Lock()
 		leadHours = [24]leadHour{}
 		leadLastFailure = time.Time{}
+		leadOKStreak, leadLastSuccess, leadAckAt = 0, time.Time{}, time.Time{}
 		leadStatsMu.Unlock()
 	}
 }
@@ -519,6 +520,12 @@ type LeadCallStats struct {
 	TopError                  string
 	TopErrorCount             int
 	LastFailure               time.Time
+	// OKStreak is how many calls in a row have worked since the last
+	// failure, LastSuccess when one last did, and Acknowledged when an admin
+	// last dismissed the failures.
+	OKStreak     int
+	LastSuccess  time.Time
+	Acknowledged time.Time
 }
 
 // leadHour is one clock hour of lead calls, in a ring of 24.
@@ -533,7 +540,23 @@ var (
 	leadHours       [24]leadHour
 	leadLastFailure time.Time
 	leadStatsNow    = time.Now
+	// leadOKStreak counts lead calls that worked since the last that failed,
+	// and leadLastSuccess is when one last did: a lead that has recovered
+	// says so, rather than its old failures reading as current for two hours.
+	leadOKStreak    int
+	leadLastSuccess time.Time
+	// leadAckAt is when an admin dismissed the failures: they stay counted,
+	// and only a failure after it brings the notice back.
+	leadAckAt time.Time
 )
+
+// AcknowledgeLeadFailures dismisses the lead's failures so far. The counts
+// are kept; a failure after this brings the notice back.
+func AcknowledgeLeadFailures() {
+	leadStatsMu.Lock()
+	leadAckAt = leadStatsNow()
+	leadStatsMu.Unlock()
+}
 
 // noteLeadCall counts one lead call, a failure when err is set.
 func noteLeadCall(err error) {
@@ -547,8 +570,11 @@ func noteLeadCall(err error) {
 	}
 	b.calls++
 	if err == nil {
+		leadOKStreak++
+		leadLastSuccess = now
 		return
 	}
+	leadOKStreak = 0
 	b.failed++
 	if b.errs == nil {
 		b.errs = map[string]int{}
@@ -596,6 +622,7 @@ func LeadCalls() LeadCallStats {
 			out.TopError, out.TopErrorCount = k, n
 		}
 	}
+	out.OKStreak, out.LastSuccess, out.Acknowledged = leadOKStreak, leadLastSuccess, leadAckAt
 	if out.Failed > 0 {
 		out.LastFailure = leadLastFailure
 	}

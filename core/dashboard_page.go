@@ -410,11 +410,14 @@ func dashboardNotices(notices []DashboardNotice) string {
 		if strings.TrimSpace(n.Text) == "" {
 			continue
 		}
-		noticeB.WriteString(`<div class="notice"><span>` + template.HTMLEscapeString(n.Text) + `</span>`)
+		noticeB.WriteString(`<div class="notice"><span>` + template.HTMLEscapeString(n.Text) + `</span><div class="notice-acts">`)
 		if strings.TrimSpace(n.URL) != "" && strings.TrimSpace(n.Action) != "" {
 			fmt.Fprintf(&noticeB, `<a class="notice-act" href="%s">%s</a>`, template.HTMLEscapeString(n.URL), template.HTMLEscapeString(n.Action))
 		}
-		noticeB.WriteString(`</div>`)
+		if strings.TrimSpace(n.Dismiss) != "" {
+			fmt.Fprintf(&noticeB, `<button type="button" class="notice-dismiss" data-dismiss="%s">Dismiss</button>`, template.HTMLEscapeString(n.Dismiss))
+		}
+		noticeB.WriteString(`</div></div>`)
 	}
 	return noticeB.String()
 }

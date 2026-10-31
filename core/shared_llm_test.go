@@ -537,3 +537,42 @@ func TestTheYieldSettingDecidesWhetherBackgroundWaits(t *testing.T) {
 		}
 	}
 }
+
+// A lead that recovers says so: each call that works adds to a streak a
+// failure resets, with when one last worked. Acknowledging the failures
+// keeps them counted and records when.
+func TestALeadThatRecoversSaysSo(t *testing.T) {
+	prevNow := leadStatsNow
+	leadStatsMu.Lock()
+	prev := [4]any{leadHours, leadOKStreak, leadLastSuccess, leadAckAt}
+	leadHours, leadOKStreak, leadLastSuccess, leadAckAt = [24]leadHour{}, 0, time.Time{}, time.Time{}
+	leadStatsMu.Unlock()
+	t.Cleanup(func() {
+		leadStatsNow = prevNow
+		leadStatsMu.Lock()
+		leadHours, leadOKStreak = prev[0].([24]leadHour), prev[1].(int)
+		leadLastSuccess, leadAckAt = prev[2].(time.Time), prev[3].(time.Time)
+		leadStatsMu.Unlock()
+	})
+	at := time.Date(2026, 10, 30, 9, 0, 0, 0, time.UTC)
+	leadStatsNow = func() time.Time { return at }
+	for i := 0; i < 4; i++ {
+		noteLeadCall(errors.New("messages.0: use the top-level 'system' parameter"))
+	}
+	at = at.Add(time.Minute)
+	noteLeadCall(nil)
+	noteLeadCall(nil)
+	got := LeadCalls()
+	if got.OKStreak != 2 || !got.LastSuccess.Equal(at) || got.Failed != 4 {
+		t.Fatalf("after recovering: %+v", got)
+	}
+	AcknowledgeLeadFailures()
+	if got := LeadCalls(); !got.Acknowledged.Equal(at) || got.Failed != 4 || got.LastFailure.After(got.Acknowledged) {
+		t.Errorf("acknowledged: %+v", got)
+	}
+	at = at.Add(time.Minute)
+	noteLeadCall(errors.New("timeout"))
+	if got := LeadCalls(); got.OKStreak != 0 || !got.LastFailure.After(got.Acknowledged) {
+		t.Errorf("a failure after the acknowledgement: %+v", got)
+	}
+}

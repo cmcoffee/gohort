@@ -64,7 +64,7 @@ func TestTheDashboardDrawsEachPartWhereItBelongs(t *testing.T) {
 		`<a class="card" href="/loose/"`,
 		`data-band="Tools" title="Show Tools again"`,
 		`<span class="auth-user">viewer</span>`,
-		`<div class="notice"><span>Fix &lt;it&gt;</span><a class="notice-act" href="/fix">Go</a></div>`,
+		`<div class="notice"><span>Fix &lt;it&gt;</span><div class="notice-acts"><a class="notice-act" href="/fix">Go</a></div></div>`,
 	} {
 		if !strings.Contains(page, want) {
 			t.Errorf("the page is missing %q", want)

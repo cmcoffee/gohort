@@ -22,6 +22,12 @@ func (a *AdminApp) registerLLMRoutes(sub *http.ServeMux) {
 	// Same form values and same key fallback as the test above.
 	sub.HandleFunc("/api/worker-llm/models", jsonapi.Post(a.db, a.handleLLMModels(LLMTable), a.gate()))
 	sub.HandleFunc("/api/lead-llm/models", jsonapi.Post(a.db, a.handleLLMModels(LeadLLMTable), a.gate()))
+	// Dismiss on the dashboard's lead notice: the failures so far are
+	// acknowledged (still counted), and only a newer one brings it back.
+	sub.HandleFunc("/api/lead-llm/dismiss", jsonapi.Post(a.db, func(c *jsonapi.Call, _ struct{}) (any, error) {
+		AcknowledgeLeadFailures()
+		return map[string]any{"ok": true}, nil
+	}, a.gate()))
 
 	// LLM routing: GET returns all stages + current values, POST updates one.
 	sub.HandleFunc("/api/routing", jsonapi.Methods{
@@ -547,6 +553,10 @@ func leadCallsLine(st LeadCallStats) string {
 	line := fmt.Sprintf("Last 24 hours: %d lead calls, %d failed (%d%%), and a failed lead call runs on the worker.", st.Calls, st.Failed, st.Failed*100/st.Calls)
 	if st.TopError != "" {
 		line += fmt.Sprintf(" Most often: %s (%d times, last at %s).", st.TopError, st.TopErrorCount, st.LastFailure.Format("Jan 2 15:04"))
+	}
+	// A recovered lead says so: the failures above read as current otherwise.
+	if !st.LastSuccess.IsZero() && st.LastSuccess.After(st.LastFailure) {
+		line += fmt.Sprintf(" It has worked since: last succeeded at %s, %d in a row.", st.LastSuccess.Format("Jan 2 15:04"), st.OKStreak)
 	}
 	return line
 }

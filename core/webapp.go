@@ -130,6 +130,9 @@ type DashboardNotice struct {
 	Text   string // what is wrong, in the viewer's terms
 	Action string // the button's label
 	URL    string // where the button goes
+	// Dismiss, when set, is a URL a Dismiss button POSTs to: the notice goes
+	// until whatever it reports happens again.
+	Dismiss string
 }
 
 // DashboardNoticeSource is implemented by a WebApp that has something to tell

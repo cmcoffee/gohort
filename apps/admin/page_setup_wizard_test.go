@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/ui"
@@ -182,6 +183,24 @@ func TestANoticeSentenceEndsOnce(t *testing.T) {
 	} {
 		if got := sentence(in); got != want {
 			t.Errorf("sentence(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// The lead notice says when the lead last failed and last worked, so it
+// reads as failing now or recovering.
+func TestTheLeadNoticeSaysWhenItLastFailedAndWorked(t *testing.T) {
+	at := time.Date(2026, 10, 30, 9, 0, 0, 0, time.Local)
+	for _, c := range []struct {
+		st   LeadCallStats
+		want string
+	}{
+		{LeadCallStats{LastFailure: at}, "Last failed at 09:00; no call has worked yet."},
+		{LeadCallStats{LastFailure: at, LastSuccess: at.Add(5 * time.Minute), OKStreak: 2}, "Last failed at 09:00; last worked at 09:05 (2 in a row since)."},
+		{LeadCallStats{LastFailure: at, LastSuccess: at.Add(-time.Hour)}, "Last failed at 09:00; last worked at 08:00, before that."},
+	} {
+		if got := leadLatest(c.st); got != c.want {
+			t.Errorf("got %q, want %q", got, c.want)
 		}
 	}
 }

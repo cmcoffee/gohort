@@ -435,22 +435,52 @@ func (a *AdminApp) leadNotice() (DashboardNotice, bool) {
 	if e := strings.TrimSpace(LeadInitError()); e != "" {
 		says = append(says, sentence(strings.ToUpper(e[:1])+e[1:]))
 	}
-	if st := LeadCalls(); st.RecentCalls >= 5 && st.RecentFailed*4 >= st.RecentCalls {
+	// The failures stop being news once the lead has worked several times
+	// in a row since, or an admin dismissed them; a newer failure brings it
+	// back. They stay counted on the Lead LLM settings either way.
+	failing := false
+	if st := LeadCalls(); st.RecentCalls >= 5 && st.RecentFailed*4 >= st.RecentCalls &&
+		st.OKStreak < leadRecoveredAfter && st.LastFailure.After(st.Acknowledged) {
 		text := fmt.Sprintf("The lead model failed %d of its last %d calls, so that work ran on the worker.", st.RecentFailed, st.RecentCalls)
 		if st.TopError != "" {
-			text += " Most often: " + st.TopError
+			text += " Most often: " + sentence(st.TopError)
 		}
+		text += " " + leadLatest(st)
 		says = append(says, text)
+		failing = true
 	}
 	if len(says) == 0 {
 		return DashboardNotice{}, false
 	}
-	return DashboardNotice{
+	n := DashboardNotice{
 		Text:   strings.Join(says, " "),
 		Action: "Open LLM settings",
 		URL:    a.WebPath() + "/" + ui.SectionOnTab("LLMs", "Lead LLM"),
-	}, true
+	}
+	// Dismiss is for the failures. A lead that cannot start is not dismissed:
+	// it is fixed in its settings.
+	if failing && strings.TrimSpace(LeadInitError()) == "" {
+		n.Dismiss = a.WebPath() + "/api/lead-llm/dismiss"
+	}
+	return n, true
 }
+
+// leadLatest says when the lead last failed and last worked, so the notice
+// shows whether it is failing now or recovering.
+func leadLatest(st LeadCallStats) string {
+	out := "Last failed at " + st.LastFailure.Format("15:04")
+	switch {
+	case st.LastSuccess.IsZero():
+		return out + "; no call has worked yet."
+	case st.LastSuccess.After(st.LastFailure):
+		return out + fmt.Sprintf("; last worked at %s (%d in a row since).", st.LastSuccess.Format("15:04"), st.OKStreak)
+	}
+	return out + "; last worked at " + st.LastSuccess.Format("15:04") + ", before that."
+}
+
+// leadRecoveredAfter is how many lead calls in a row must work, after a
+// failure, for the failures to stop showing on the dashboard.
+const leadRecoveredAfter = 3
 
 // firstRunNotices is the decision itself, separated from the request so it can
 // be exercised without minting a session.

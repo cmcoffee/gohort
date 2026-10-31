@@ -84,6 +84,12 @@
     background: var(--accent, #6366f1); color: var(--text-on-accent, #fff);
   }
   .notice-act:hover { filter: brightness(1.1); }
+  .notice-acts { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+  .notice-dismiss {
+    font: inherit; font-size: var(--fs-md, 0.9rem); padding: 0.45rem 0.9rem; border-radius: 6px; cursor: pointer;
+    background: transparent; color: var(--text, #c9d1d9); border: 1px solid rgba(99,102,241,0.35);
+  }
+  .notice-dismiss:hover { border-color: var(--accent, #6366f1); }
   /* Column width for the PHONE layout, where one centred column is the right
      answer. Desktop stops being that shape entirely: see the wide layout
      below, so this is not a cap that grows, it is the narrow case's width. */
@@ -385,6 +391,15 @@
   <div class="grid">%CARDS%</div>
   <div id="live-panel"><h3><a href="/monitor" style="color:inherit;text-decoration:none">Live Sessions &rarr;</a></h3><div id="live-list"></div></div>
 <script>
+// A notice's Dismiss posts to the URL the notice named, and the notice goes.
+document.addEventListener('click', function(e) {
+  var b = e.target && e.target.closest && e.target.closest('[data-dismiss]');
+  if (!b) return;
+  b.disabled = true;
+  fetch(b.getAttribute('data-dismiss'), {method: 'POST', credentials: 'same-origin', headers: {'X-Requested-With': 'fetch'}})
+    .then(function(r) { if (r.ok) { var n = b.closest('.notice'); if (n) n.remove(); } else { b.disabled = false; } })
+    .catch(function() { b.disabled = false; });
+});
 var liveHidden = false;
 // Every field below is user content (a topic someone typed, an app name) and
 // lands in innerHTML. Escaped here so a "<" renders as a "<" instead of
