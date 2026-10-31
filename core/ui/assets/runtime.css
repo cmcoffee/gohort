@@ -1419,8 +1419,10 @@ select:-webkit-autofill {
 /* Compact: trim padding so an emoji or 1-3 letter label sits in a
  * ~36x36 box. Used for secondary row buttons on narrow screens where
  * the standard 44px-min target would push the auto-reply switch and
- * row name off the visible width. */
-.ui-row-btn.compact { padding-left: 0.4rem; padding-right: 0.4rem; font-size: var(--fs-lg); }
+ * row name off the visible width. It keeps the row buttons' text size:
+ * a compact button with a word in it sits beside plain ones, and a larger
+ * size made it the loudest button on the row. */
+.ui-row-btn.compact { padding-left: 0.4rem; padding-right: 0.4rem; }
 /* A row button's icon sits before its label, on the text's line. */
 .ui-row-btn .ui-action-glyph { flex: none; vertical-align: -0.08em; margin-right: 0.35em; }
 @media (pointer: coarse) { .ui-row-btn.compact { min-width: var(--btn-h-sm); min-height: var(--btn-h-sm); } }
