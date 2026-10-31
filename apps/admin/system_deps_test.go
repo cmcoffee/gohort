@@ -680,36 +680,21 @@ func TestSystemHooksIsFirstOnCapabilities(t *testing.T) {
 	}
 }
 
-// The Agents switch is on the formats an admin added, and nowhere else:
-// gohort's own jobs reach agents through gohort's own tools.
-func TestTheAgentsSwitchIsOnAddedFormatsOnly(t *testing.T) {
+// A format an admin added reaches every agent once it is on, with
+// convert_file: there is no Agents switch per format any more.
+func TestAnAddedFormatReachesAgentsOnceItIsOn(t *testing.T) {
 	needDepsSandbox(t)
 	f := newDepsFixture(t)
 	f.do(t, "POST", "/api/system-deps", ddCustom)
-	_, byID := f.rows(t)
-	for _, id := range []string{"media.frames", "export.pdf", "read.heic"} {
-		if byID[id].Offerable {
-			t.Errorf("%s is gohort's own: no Agents switch", id)
-		}
+	if systemhook.Available(false) {
+		t.Fatal("a format that is off is offered")
 	}
-	if r := f.customRows(t)["strip8"]; !r.Offerable || r.Agents {
-		t.Fatalf("an added format should have the switch, off: %+v", r)
+	f.do(t, "POST", "/api/connectors?action=approve&name=strip8", "")
+	if !systemhook.Available(false) {
+		t.Error("a format that is on is not offered to agents")
 	}
-	if w := f.do(t, "POST", "/api/system-deps/agents?id=strip8", `{"agents":true}`); w.Code != 200 || !strings.Contains(w.Body.String(), `"agents":true`) {
-		t.Fatalf("turn on: %d %s", w.Code, w.Body.String())
-	}
-	if !systemhook.Offered("strip8") || !f.customRows(t)["strip8"].Agents {
-		t.Error("the added format should be offered to agents now")
-	}
-	if w := f.do(t, "POST", "/api/system-deps/agents?id=media.frames", `{"agents":true}`); w.Code != http.StatusBadRequest {
-		t.Errorf("one of gohort's own jobs should be refused, got %d", w.Code)
-	}
-	if w := f.do(t, "POST", "/api/system-deps/agents?id=nothing", `{"agents":true}`); w.Code != http.StatusNotFound {
-		t.Errorf("an unknown row should be refused, got %d", w.Code)
-	}
-	tok := AuthCreateSession(f.db, "someone")
-	if w := f.req(t, tok, "POST", "/api/system-deps/agents?id=strip8", `{"agents":false}`, ""); w.Code != http.StatusForbidden {
-		t.Errorf("a non-admin should be refused, got %d", w.Code)
+	if w := f.do(t, "POST", "/api/system-deps/agents?id=strip8", `{"agents":true}`); w.Code == http.StatusOK {
+		t.Error("the per-format Agents switch is still there")
 	}
 }
 

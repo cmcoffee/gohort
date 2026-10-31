@@ -12,6 +12,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/mcppersonal"
 	"github.com/cmcoffee/gohort/core/textutil"
+	"github.com/cmcoffee/gohort/tools/systemhook"
 	"github.com/cmcoffee/gohort/tools/temptool"
 )
 
@@ -168,6 +169,15 @@ func (wc *workerCatalog) chooseNames() {
 	// side-effect-free helpers and this is not one.
 	if !isNoToolsSentinel(t.agent.AllowedTools) && !slices.Contains(wc.toolNames, "background_work") {
 		wc.toolNames = append(wc.toolNames, "background_work")
+	}
+	// convert_file is the framework's door to the formats an admin added to
+	// System Hooks and turned on: every agent may run them, with no switch per
+	// agent, as it may run gohort's own jobs through its own tools. In the
+	// catalog only while one can run for this turn (one that needs the
+	// network, only online), so no agent is handed a tool with nothing in it.
+	if !isNoToolsSentinel(t.agent.AllowedTools) && !slices.Contains(wc.toolNames, "convert_file") &&
+		systemhook.Available(!t.privateMode) {
+		wc.toolNames = append(wc.toolNames, "convert_file")
 	}
 	// Framework utility tools — pure CapRead helpers (calculate, date_math,
 	// time_in_zone) kept always-on so an agent never fails basic math /

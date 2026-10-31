@@ -3,13 +3,11 @@
 // machine's System Hooks (core/flows) on a file in its workspace, and gets
 // what it gives back as files there.
 //
-// It offers the formats an admin ADDED (System Hooks > Custom), one by one
-// as they turn Agents on for it: nothing is offered until one is, and the
-// tool is in no catalog until then. Once it is, it is an ordinary tool:
-// listed in agents' tool pickers, curated like the rest, and its schema
-// names only the hooks that are on and can run here. gohort's own jobs are
-// not offered here: agents already reach them through gohort's own tools
-// (video, export, attachments), which run as those jobs.
+// It offers the formats an admin ADDED (System Hooks > Custom) and turned on,
+// to every agent: a framework tool, in each agent's catalog while one is on
+// and can run here, with no switch per agent. Its schema names only those.
+// gohort's own jobs are not offered here: agents already reach them through
+// gohort's own tools (video, export, attachments), which run as those jobs.
 //
 // A hook reads one file and writes new ones in a sandboxed folder of its own
 // with no network, so running one changes nothing outside the agent's
@@ -34,31 +32,6 @@ import (
 
 func init() { RegisterChatTool(&HookTool{}) }
 
-// offeredTable holds which hooks agents may run: a job's id, or a custom
-// flow's name, set to true.
-const offeredTable = "system_hook_agents"
-
-// Offered reports whether agents may run the hook called id.
-func Offered(id string) bool {
-	if RootDB == nil {
-		return false
-	}
-	var on bool
-	return RootDB.Get(offeredTable, id, &on) && on
-}
-
-// SetOffered lets agents run the hook called id, or stops them.
-func SetOffered(id string, on bool) {
-	if RootDB == nil {
-		return
-	}
-	if on {
-		RootDB.Set(offeredTable, id, true)
-		return
-	}
-	RootDB.Unset(offeredTable, id)
-}
-
 // hook is one added format an agent may run now: its flow and contract.
 type hook struct {
 	ID  string
@@ -66,14 +39,14 @@ type hook struct {
 	a   flows.Adapted
 }
 
-// available are the hooks agents may run now: added formats that are on
-// and offered. online is whether the session may use the network: a hook
-// that needs it is left out of one that may not.
+// available are the hooks agents may run now: added formats that are on.
+// online is whether the session may use the network: a hook that needs it
+// is left out of one that may not.
 func available(online bool) []hook {
 	var out []hook
 	if RootDB != nil {
 		for _, c := range ListConnectors(RootDB) {
-			if c.Kind != flows.ConnectorKind || !c.Approved || !Offered(c.Name) {
+			if c.Kind != flows.ConnectorKind || !c.Approved {
 				continue
 			}
 			if a, j, ok := flows.Live(c.Name); ok && a.Job == "" && (online || !j.Network) {
@@ -85,8 +58,16 @@ func available(online bool) []hook {
 	return out
 }
 
+// Available reports whether any added format can run for a session, online
+// or not: whether convert_file belongs in its catalog.
+func Available(online bool) bool { return len(available(online)) > 0 }
+
 // HookTool is convert_file.
 type HookTool struct{}
+
+// IsFrameworkTool: every agent has it while a format is on, so it is in no
+// picker for an admin to grant or withhold.
+func (t *HookTool) IsFrameworkTool() bool { return true }
 
 func (t *HookTool) Name() string { return "convert_file" }
 

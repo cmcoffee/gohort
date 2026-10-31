@@ -28,7 +28,6 @@ import (
 	"github.com/cmcoffee/gohort/core/sandbox"
 	"github.com/cmcoffee/gohort/core/textutil"
 	"github.com/cmcoffee/gohort/core/ui"
-	"github.com/cmcoffee/gohort/tools/systemhook"
 )
 
 func init() { RegisterConnectorKind(flows.ConnectorKind, adaptedFlowHandler{}) }
@@ -102,12 +101,6 @@ type depRow struct {
 	CanOff   bool   `json:"can_off"`
 	Testable bool   `json:"testable"`
 	Output   bool   `json:"output"`
-	// Offerable rows (the formats an admin added) have an Agents switch:
-	// Agents is whether agents may run it with the convert_file tool
-	// (tools/systemhook). gohort's own jobs have none: agents reach them
-	// through gohort's own tools (video, export, attachments).
-	Offerable bool `json:"offerable"`
-	Agents    bool `json:"agents"`
 	// Link rows take a link rather than a file: Test asks for one.
 	Link bool `json:"link"`
 	// A row that cannot run here, or whose last test failed, has a ✨ Fix in
@@ -286,9 +279,6 @@ func adaptedRow(c Connector, a flows.Adapted, refusing bool) depRow {
 	row := depRow{ID: c.Name, Name: c.Name, Group: j.Group, Enables: j.Title, By: strings.Join(a.Flow(), "  then  "),
 		Adapted: true, Fills: a.Job != "", Custom: a.Job == "", CanOn: !c.Approved, CanOff: c.Approved,
 		Testable: true, Output: j.IsExport(), Link: takesLink(j)}
-	if row.Custom {
-		row.Offerable, row.Agents = true, systemhook.Offered(c.Name)
-	}
 	if row.Fills {
 		row.Enables = "↳ " + c.Name
 		row.Detail = "Adapted, for " + j.Title + "."
@@ -606,12 +596,6 @@ func (a *AdminApp) registerSystemDepsRoutes(sub *http.ServeMux) {
 		"POST": jsonapi.Post(a.db, a.handleSystemDepsSave, a.gate(), jsonapi.MaxBody(1<<16)),
 	}.Serve)
 
-	// Agents on a row: POST ?id= {agents: bool} lets agents run that hook
-	// with the convert_file tool, or stops them.
-	sub.HandleFunc("/api/system-deps/agents", jsonapi.Methods{
-		"POST": jsonapi.Post(a.db, a.handleSystemDepsAgents, a.gate(), jsonapi.MaxBody(1<<10)),
-	}.Serve)
-
 	// Becomes's choices for a custom input, as the form renders.
 	sub.HandleFunc("/api/system-deps/becomes", jsonapi.Get(a.db, func(c *jsonapi.Call) (any, error) {
 		return becomesOptions(), nil
@@ -738,30 +722,6 @@ func (a *AdminApp) handleSystemDepsSave(c *jsonapi.Call, ff flowForm) (any, erro
 	return map[string]any{"ok": true, "message": "Saved, off. Test it, then turn it on."}, nil
 }
 
-// handleSystemDepsAgents lets agents run the ?id= hook with the convert_file
-// tool, or stops them.
-func (a *AdminApp) handleSystemDepsAgents(c *jsonapi.Call, body struct {
-	Agents bool `json:"agents"`
-}) (any, error) {
-	id := strings.TrimSpace(c.R.URL.Query().Get("id"))
-	if _, isJob := flows.JobByID(id); isJob {
-		return nil, jsonapi.BadRequest("gohort's own jobs reach agents through gohort's own tools (video, export, attachments): there is no switch for them")
-	}
-	conn, isConn := GetConnector(RootDB, id)
-	if !isConn || conn.Kind != flows.ConnectorKind {
-		return nil, jsonapi.NotFound("no such flow")
-	}
-	if ad, _ := (adaptedFlowHandler{}).adapted(conn); ad.Job != "" {
-		return nil, jsonapi.BadRequest("this flow fills one of gohort's own jobs, which agents reach through gohort's own tools")
-	}
-	systemhook.SetOffered(id, body.Agents)
-	msg := "Agents can no longer run it."
-	if body.Agents {
-		msg = "Agents can run it now, with the convert_file tool."
-	}
-	return map[string]any{"agents": body.Agents, "message": msg}, nil
-}
-
 // handleSystemDepsOne is the ?name= adapted flow as its edit form fills from.
 func (a *AdminApp) handleSystemDepsOne(c *jsonapi.Call) (any, error) {
 	conn, ok := GetConnector(RootDB, strings.TrimSpace(c.R.URL.Query().Get("name")))
@@ -883,8 +843,6 @@ func depsRowActions() []ui.RowAction {
 	fixCustom := ui.AssistAction("Fix", fixPanel(editForm(true)))
 	fixCustom.OnlyIf, fixCustom.Variant = "fix_custom", "primary"
 	return []ui.RowAction{
-		// Whether agents may run it, with the convert_file tool.
-		{Type: "toggle", Field: "agents", Label: "Agents", PostTo: "api/system-deps/agents?id={id}", Method: "POST", OnlyIf: "offerable"},
 		{Type: "button", Label: "Test", Method: "client", PostTo: "system_deps_test", OnlyIf: "testable"},
 		fixJob, fixFill, fixCustom,
 		adapt,
@@ -924,7 +882,7 @@ func systemDepsSection() ui.Section {
 	return ui.Section{
 		Title:    "System Hooks",
 		Subtitle: "The jobs gohort hands to tools on this machine (reading what arrives, writing documents, media), how each is done here, and where to plug in another tool when one is missing.",
-		Detail: "Each job gohort needs done, reading what arrives or writing documents, has a native flow: Go itself, the app, or the best tool for it when installed. Where that tool is missing, or you want another, adapt the job: give a flow of commands you have, test it, and turn it on. A row that cannot run here, or whose test failed, has ✨ Fix: its form, with an assistant beside it that knows the row, reads a program's help, tries steps on a file you attach, and fills the form for you to save. Fix what cannot run here goes through every such job in turn. Under Custom, add a format gohort does not support at all. Agents already reach every job here through gohort's own tools (video, export, attachments); turn on Agents on a custom row to let them run that one too, with the convert_file tool, on files in their workspace. The tools listed without Adapt are not jobs yet: install them.\n\n" +
+		Detail: "Each job gohort needs done, reading what arrives or writing documents, has a native flow: Go itself, the app, or the best tool for it when installed. Where that tool is missing, or you want another, adapt the job: give a flow of commands you have, test it, and turn it on. A row that cannot run here, or whose test failed, has ✨ Fix: its form, with an assistant beside it that knows the row, reads a program's help, tries steps on a file you attach, and fills the form for you to save. Fix what cannot run here goes through every such job in turn. Under Custom, add a format gohort does not support at all. Agents already reach every job here through gohort's own tools (video, export, attachments), and every custom format that is on, with the convert_file tool, on files in their workspace. The tools listed without Adapt are not jobs yet: install them.\n\n" +
 			"A flow's commands run as written, with no shell reading them. They run in the sandbox, which sees the system folders read-only and nothing else on this machine except the folders a flow says it reads, with no network unless the job needs it, and they are stopped at the time limit. What a flow gives is checked before gohort uses it: an image has to be one the model can read, text has to be text, a Word file has to be a Word file, or it is thrown away. On a machine whose sandbox cannot confine commands, none of them run.",
 		Body: ui.Stack{Children: []ui.Component{
 			fixWalkButton(),

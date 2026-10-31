@@ -44,7 +44,7 @@ func needSandbox(t *testing.T) {
 	}
 }
 
-// added saves and turns on a format an admin added, and offers it.
+// added saves and turns on a format an admin added.
 func added(t *testing.T, name string, a flows.Adapted) {
 	t.Helper()
 	spec, _ := json.Marshal(a)
@@ -53,33 +53,36 @@ func added(t *testing.T, name string, a flows.Adapted) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { flows.RemoveAdapted(name) })
-	SetOffered(name, true)
 }
 
 // shout is an added format: text in, the same text in capitals out.
 var shout = flows.Adapted{Takes: []string{flows.Any}, Becomes: flows.KindText, Command: `sh -c 'tr a-z A-Z < "$0"' {in}`}
 
-// Only the formats an admin added are offered, and only once they are: the
-// tool is in no catalog until then. gohort's own jobs are not offered, even
-// with a switch stored from before: agents reach those through gohort's own
-// tools.
+// Only the formats an admin added are offered, every one that is on, to every
+// agent: there is no switch per format or agent. The tool is in no catalog
+// until one is on, and gohort's own jobs are not offered: agents reach those
+// through gohort's own tools.
 func TestOnlyAddedFormatsAreOffered(t *testing.T) {
 	sess, _ := setup(t)
-	SetOffered("read.image", true)
-	SetOffered("media.download", true)
-	if _, params := (&HookTool{}).SchemaWithSession(sess); params != nil || ChatToolAvailable(&HookTool{}, sess) {
+	if _, params := (&HookTool{}).SchemaWithSession(sess); params != nil || ChatToolAvailable(&HookTool{}, sess) || Available(true) {
 		t.Fatal("gohort's own jobs should not be offered")
 	}
 	added(t, "shout", shout)
 	desc, params := (&HookTool{}).SchemaWithSession(sess)
-	if params == nil || !strings.Contains(desc, "shout") || len(params["action"].Enum) != 1 || !ChatToolAvailable(&HookTool{}, sess) {
+	if params == nil || !strings.Contains(desc, "shout") || len(params["action"].Enum) != 1 || !ChatToolAvailable(&HookTool{}, sess) || !Available(false) {
 		t.Fatalf("the added format should be the one offered: %q %+v", desc, params["action"])
 	}
 	if caps := (&HookTool{}).ActionCaps(); hasCap(caps["shout"], CapNetwork) {
 		t.Error("an added format does not go online")
 	}
-	SetOffered("shout", false)
-	if _, params := (&HookTool{}).SchemaWithSession(sess); params != nil {
+	if !IsFrameworkTool(&HookTool{}) {
+		t.Error("convert_file is every agent's: it belongs in no picker")
+	}
+	var c Connector
+	RootDB.Get("connectors", "shout", &c)
+	c.Approved = false
+	RootDB.Set("connectors", "shout", c)
+	if _, params := (&HookTool{}).SchemaWithSession(sess); params != nil || Available(true) {
 		t.Error("turned off, the tool should be gone")
 	}
 }
