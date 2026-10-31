@@ -155,6 +155,13 @@ type Output struct {
 	// (a search's results: {"title": "title", "url": "link"}). A list the
 	// reply does not have reads as empty, as a search with no results does.
 	Fields map[string]string `json:"fields,omitempty"`
+	// Single reads the value at a json output's path as one item, given as
+	// a list holding it (a server that answers one embedding, not a list).
+	Single bool `json:"single,omitempty"`
+	// Or are other places the output may be, tried in turn when nothing is
+	// at this one: for a server whose reply comes in more than one shape
+	// (embeddings as data[].embedding, embeddings, or embedding).
+	Or []Output `json:"or,omitempty"`
 }
 
 // Cost is what one call costs: flat, per unit the contract counts, or what
@@ -467,8 +474,16 @@ func (b Binding) validate(p Provider) error {
 }
 
 func (o Output) validate(name string, spec Port, last Operation) error {
+	for i, alt := range o.Or {
+		if len(alt.Or) > 0 {
+			return fmt.Errorf("output %q: or %d has an or of its own: list every place in the one or", name, i+1)
+		}
+		if err := alt.validate(name, spec, last); err != nil {
+			return fmt.Errorf("or %d: %w", i+1, err)
+		}
+	}
 	if o.From != "" {
-		if o.From != "body" || o.Path != "" || o.As != "" || o.Each != "" || len(o.Fields) > 0 {
+		if o.From != "body" || o.Path != "" || o.As != "" || o.Each != "" || len(o.Fields) > 0 || o.Single {
 			return fmt.Errorf("output %q: from must be \"body\", alone", name)
 		}
 		if spec.Type != TypeFile || last.Read != "file" {
@@ -498,6 +513,9 @@ func (o Output) validate(name string, spec Port, last Operation) error {
 		if err := apijob.ValidPath(o.Each); err != nil {
 			return fmt.Errorf("output %q each: %w", name, err)
 		}
+	}
+	if o.Single && (spec.Type != TypeJSON || o.Each != "" || len(o.Fields) > 0) {
+		return fmt.Errorf("output %q: single reads one item as a list, for a json output, without each or fields", name)
 	}
 	if len(o.Fields) > 0 {
 		if spec.Type != TypeJSON || o.Each != "" {

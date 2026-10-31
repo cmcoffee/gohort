@@ -22,14 +22,6 @@ root GET /api/tool-templates ""
   200 [{"name":"github_issue","label":"GitHub: create issue","category":"Tools","description":"Open an issue on a GitHub repo. Needs a SecureAPI credential holding a GitHub token."},{"name":"openapi_tool","… (605 bytes, sha1 d68e30672557f075353278906cd877938cbda5cc)
 root PUT /api/tool-templates "{}"
   405 method not allowed
-(signed out) GET /api/embeddings/models ""
-  403 forbidden
-alice GET /api/embeddings/models ""
-  403 forbidden
-root GET /api/embeddings/models ""
-  200 []
-root PUT /api/embeddings/models "{}"
-  405 method not allowed
 (signed out) GET /api/connector-templates ""
   403 forbidden
 alice GET /api/connector-templates ""

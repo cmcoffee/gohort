@@ -3365,6 +3365,14 @@ func (ac *apiCall) read() bool {
 func (ac *apiCall) reply() bool {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "HTTP %d %s\n", ac.resp.StatusCode, http.StatusText(ac.resp.StatusCode))
+	// When to come back, on a refusal that says: a caller reading the reply
+	// (a service connector, a model told it is rate limited) waits that out
+	// instead of sending into the refusal again.
+	if s := ac.resp.StatusCode; s == http.StatusTooManyRequests || s == http.StatusServiceUnavailable {
+		if ra := strings.TrimSpace(ac.resp.Header.Get("Retry-After")); ra != "" {
+			fmt.Fprintf(&sb, "Retry-After: %s\n", ra)
+		}
+	}
 	// An HTML body on an error status is a web PAGE, not an API
 	// response — the URL path missed the API entirely (wrong prefix,
 	// SPA catch-all route). Dumping kilobytes of <script> tags buries

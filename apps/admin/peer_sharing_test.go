@@ -296,15 +296,14 @@ func TestPeersTableColumnsMatchTheRowShape(t *testing.T) {
 	}
 }
 
-// With no peers registered, the provider dropdown still offers local — a
-// select whose only option is missing would strand the whole Embeddings form.
-func TestEmbeddingProviderOptionsAlwaysOfferLocal(t *testing.T) {
-	opts := EmbeddingProviderOptions()
-	if len(opts) == 0 || opts[0].Value != EmbeddingProviderLocal {
-		t.Fatalf("local must be the first provider option, got %+v", opts)
-	}
-	if opts[0].Label == "" || opts[0].Help == "" {
-		t.Errorf("the local option needs a label and help: %+v", opts[0])
+// The peers in the Embeddings choice are the peers that lend embeddings, and
+// nothing else: this instance has no embedder of its own to offer beside them.
+func TestEmbeddingProviderOptionsAreThePeers(t *testing.T) {
+	prev := RootDB
+	t.Cleanup(func() { RootDB = prev })
+	RootDB = nil // no peer store → no peers
+	if opts := EmbeddingProviderOptions(); len(opts) != 0 {
+		t.Fatalf("with no peers, offered %+v", opts)
 	}
 }
 
@@ -318,58 +317,45 @@ func findField(fields []ui.FormField, name string) (ui.FormField, bool) {
 	return ui.FormField{}, false
 }
 
-// With no peers registered, "Embed on" is a select with one option — a question
-// with a single possible answer. It should not appear at all.
-//
-// The trap is what goes with it. The endpoint, model and key fields are gated
-// on "provider:local" so they vanish while a peer is selected. Leave that
-// clause in place with no dropdown to set `provider`, and they are hidden on
-// every deployment that has no peers — the entire form, blank, for the
-// overwhelmingly common case. The field and the clause have to appear and
-// disappear together.
-func TestEmbeddingFormHidesTheProviderPickerWithNoPeers(t *testing.T) {
+// With nothing that embeds, "Embed with" would be a choice with no answers:
+// it does not appear, and the toggle says how to get something that embeds.
+// The endpoint, model and key are the connector's, never fields here.
+func TestEmbeddingFormHidesTheProviderPickerWithNothingToPick(t *testing.T) {
 	prev := RootDB
 	t.Cleanup(func() { RootDB = prev })
-	RootDB = nil // no peer store → no peers
+	RootDB = nil // no peer or connector store
 
 	fields := embeddingFormFields()
 	if _, ok := findField(fields, "provider"); ok {
-		t.Error("the provider dropdown is shown with no peers registered")
+		t.Error("the provider dropdown is shown with nothing to pick")
 	}
 	for _, name := range []string{"endpoint", "model", "api_key"} {
-		f, ok := findField(fields, name)
-		if !ok {
-			t.Errorf("field %q is missing from the embeddings form entirely", name)
-			continue
-		}
-		if strings.Contains(f.ShowWhen, "provider") {
-			t.Errorf("field %q is gated on %q but nothing can set provider — it would never render: %q",
-				name, "provider:local", f.ShowWhen)
-		}
-		if f.ShowWhen != "enabled" {
-			t.Errorf("field %q should show whenever embeddings are enabled, got %q", name, f.ShowWhen)
+		if _, ok := findField(fields, name); ok {
+			t.Errorf("field %q is on the embeddings form: it is the connector's", name)
 		}
 	}
 	// The toggle is unconditional either way.
-	if f, ok := findField(fields, "enabled"); !ok || f.ShowWhen != "" {
-		t.Errorf("the enable toggle must always render: %+v", f)
+	if f, ok := findField(fields, "enabled"); !ok || f.ShowWhen != "" || !strings.Contains(f.Help, "Nothing here embeds yet") {
+		t.Errorf("the enable toggle must always render, saying how to get an embedder: %+v", f)
 	}
 }
 
-// The paired case: register a peer and both the dropdown AND the gating on the
-// fields it controls must come back. Testing only the empty case would let a
-// change that drops the clause pass while breaking peer selection.
+// The paired case: register a peer and the dropdown comes back, offering the
+// connector that embeds here and the peer. Testing only the empty case would
+// let a change that drops the dropdown pass while breaking peer selection.
 func TestEmbeddingFormShowsTheProviderPickerWithAPeer(t *testing.T) {
-	prevDB, prevCfg := RootDB, GetEmbeddingConfig()
-	t.Cleanup(func() { RootDB = prevDB; SetEmbeddingConfig(prevCfg) })
+	prevDB, prevAuth, prevCfg := RootDB, AuthDB, GetEmbeddingConfig()
+	t.Cleanup(func() { RootDB, AuthDB = prevDB, prevAuth; SetEmbeddingConfig(prevCfg) })
 	RootDB = &DBase{Store: kvlite.MemStore()}
+	auth := &DBase{Store: kvlite.MemStore()}
+	AuthDB = func() Database { return auth }
 
-	// A local embedder for the manifest's dimension probe.
+	// This instance's embedder, for the manifest's dimension probe.
 	embedder := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"data":[{"embedding":[0.1,0.2]}]}`))
 	}))
 	defer embedder.Close()
-	SetEmbeddingConfig(EmbeddingConfig{Enabled: true, Endpoint: embedder.URL, Model: "nomic-embed-text"})
+	embedConnector(t, "embeddings", embedder.URL, "nomic-embed-text")
 
 	pk, err := MintPeerKey("consumer", []string{PeerCapEmbeddings}, 0)
 	if err != nil {
@@ -392,14 +378,12 @@ func TestEmbeddingFormShowsTheProviderPickerWithAPeer(t *testing.T) {
 	if !ok {
 		t.Fatal("a peer is registered but the provider dropdown is absent")
 	}
-	if len(provider.Options) < 2 {
-		t.Errorf("provider dropdown should offer local plus the peer, got %+v", provider.Options)
+	var values []string
+	for _, o := range provider.Options {
+		values = append(values, o.Value)
 	}
-	for _, name := range []string{"endpoint", "model", "api_key"} {
-		f, _ := findField(fields, name)
-		if !strings.Contains(f.ShowWhen, "provider:local") {
-			t.Errorf("field %q must hide while a peer is selected, got ShowWhen %q", name, f.ShowWhen)
-		}
+	if strings.Join(values, ",") != "service:embeddings,peer:gpu-box" {
+		t.Errorf("provider dropdown should offer the connector and the peer, got %v", values)
 	}
 }
 

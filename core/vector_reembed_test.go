@@ -43,10 +43,7 @@ func stubEmbedServerOf(t *testing.T, model string, reply func(n int32, inputs []
 		_ = json.NewEncoder(w).Encode(map[string]any{"embeddings": vecs})
 	}))
 	t.Cleanup(srv.Close)
-
-	prev := GetEmbeddingConfig()
-	SetEmbeddingConfig(EmbeddingConfig{Endpoint: srv.URL, Model: model, Enabled: true})
-	t.Cleanup(func() { SetEmbeddingConfig(prev) })
+	useConnectorEmbedder(t, srv.URL, model)
 	return srv, &calls
 }
 

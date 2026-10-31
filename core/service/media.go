@@ -25,6 +25,7 @@ func init() {
 	media.TranscribeService = transcribeVia
 	media.SpeechService = speakVia
 	media.EmbedService = embedVia
+	media.ServiceAddress = serviceAddress
 	media.PageService = renderVia
 	media.MailService = mailVia
 	flows.ConvertService = convertVia
@@ -156,6 +157,20 @@ func embedVia(ctx context.Context, name, model string, texts []string) ([][]floa
 		return nil, err
 	}
 	return Vectors(res)
+}
+
+// serviceAddress is the base URL of the approved service connector named
+// name, or "".
+func serviceAddress(name string) string {
+	c, ok := GetConnector(RootDB, name)
+	if !ok || c.Kind != Kind || !c.Approved {
+		return ""
+	}
+	s, err := specOf(c)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(s.Provider.BaseURL)
 }
 
 // Search searches with the service connector named name and gives the

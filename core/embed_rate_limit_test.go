@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -37,9 +36,7 @@ func rateLimitedEmbedder(t *testing.T, refuse int32, retryAfter string) (*httpte
 		_ = json.NewEncoder(w).Encode(map[string]any{"embeddings": vecs})
 	}))
 	t.Cleanup(srv.Close)
-	prev := GetEmbeddingConfig()
-	SetEmbeddingConfig(EmbeddingConfig{Endpoint: srv.URL, Model: "m", Enabled: true})
-	t.Cleanup(func() { SetEmbeddingConfig(prev) })
+	useConnectorEmbedder(t, srv.URL, "m")
 	return srv, &calls
 }
 
@@ -78,9 +75,7 @@ func TestABackendThatEmbedsOneAtATimeStillRepairsEverything(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"embeddings": [][]float32{{0.3, 0.4}}})
 	}))
 	t.Cleanup(srv.Close)
-	prev := GetEmbeddingConfig()
-	SetEmbeddingConfig(EmbeddingConfig{Endpoint: srv.URL, Model: "m", Enabled: true})
-	t.Cleanup(func() { SetEmbeddingConfig(prev) })
+	useConnectorEmbedder(t, srv.URL, "m")
 	db := &DBase{Store: kvlite.MemStore()}
 	for _, id := range []string{"a", "b", "c", "d"} {
 		db.Set(EmbeddedChunks, id, EmbeddedChunk{ID: id, Source: "kb", Text: "unembedded " + id})
@@ -113,26 +108,6 @@ func TestAPassSendsChunksInBatches(t *testing.T) {
 	if *calls != 3 || sizes[0] != reembedBatchSize || sizes[2] != 3 {
 		t.Errorf("%d requests of %v, want two full batches and the rest", *calls, sizes)
 	}
-}
-
-// An embed with a deadline shorter than the pause fails at once without
-// sending: a turn's query embed does not add to the refusals.
-func TestAnEmbedThatCannotWaitDoesNotSend(t *testing.T) {
-	srv, calls := rateLimitedEmbedder(t, 1, "30")
-	cfg := GetEmbeddingConfig()
-	if _, err := EmbedWith(context.Background(), cfg, "first"); err == nil {
-		t.Fatal("the refused call reported success")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-	_, err := EmbedWith(ctx, cfg, "second")
-	if err == nil || !strings.Contains(err.Error(), "rate limited") || atomic.LoadInt32(calls) != 1 {
-		t.Fatalf("err %v after %d call(s)", err, *calls)
-	}
-	if d := embedPausedFor(embedEndpointURL(cfg)); d < 25*time.Second || d > 30*time.Second {
-		t.Errorf("paused for %s, want the 30s Retry-After", d)
-	}
-	_ = srv
 }
 
 // A refused peer is told when the key's minute frees up, not a flat minute.

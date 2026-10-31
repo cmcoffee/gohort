@@ -19,11 +19,13 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/flows"
+	"github.com/cmcoffee/gohort/core/media"
 	"github.com/cmcoffee/gohort/core/sourcehooks"
 )
 
@@ -63,11 +65,16 @@ func (t transport) maxBytes() int64 {
 	return defaultMaxBytes
 }
 
-// do makes the named operation with vars filling its tokens.
+// do makes the named operation with vars filling its tokens. A host that
+// said "too many requests" is left alone until it said to come back
+// (core/media's pause), within the call's own deadline.
 func (t transport) do(ctx context.Context, name string, vars map[string]any) (reply, error) {
 	op := t.p.Operations[name]
 	if t.p.Transport == "command" {
 		return t.command(ctx, name, op, vars)
+	}
+	if err := media.WaitPause(ctx, t.p.BaseURL); err != nil {
+		return reply{}, fmt.Errorf("%s: %w", name, err)
 	}
 	addr, err := t.address(op, vars)
 	if err != nil {
@@ -139,6 +146,13 @@ func (t transport) do(ctx context.Context, name string, vars map[string]any) (re
 	}
 	status, text := splitReply(raw)
 	r := reply{status: status, text: text}
+	if status == http.StatusTooManyRequests {
+		ra := ""
+		if m := retryAfterRE.FindStringSubmatch(text); m != nil {
+			ra = m[1]
+		}
+		media.NotePause(t.p.BaseURL, ra)
+	}
 	if status < 200 || status >= 300 {
 		return r, fmt.Errorf("%s: the provider answered HTTP %d: %s", name, status, clip(text, 400))
 	}
@@ -290,6 +304,9 @@ func (t transport) readResponse(name string, op Operation, resp *http.Response, 
 		}
 	}()
 	r := reply{status: resp.StatusCode}
+	if resp.StatusCode == http.StatusTooManyRequests && resp.Request != nil && t.sameHost(resp.Request.URL.String()) {
+		media.NotePause(t.p.BaseURL, resp.Header.Get("Retry-After"))
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 		n, r.text = int64(len(b)), string(b)
@@ -315,6 +332,10 @@ func (t transport) readResponse(name string, op Operation, resp *http.Response, 
 	}
 	return r, nil
 }
+
+// retryAfterRE reads the Retry-After line the dispatch adds under a 429's
+// status line.
+var retryAfterRE = regexp.MustCompile(`(?m)^Retry-After: (.+)$`)
 
 // splitReply reads the dispatch's "HTTP <status> ..." line off its reply.
 func splitReply(s string) (int, string) {

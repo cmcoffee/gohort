@@ -42,23 +42,8 @@ type builtinConnector struct {
 func (a *AdminApp) builtinConnectors() []builtinConnector {
 	var out []builtinConnector
 
-	emb := a.storedEmbeddingConfig()
-	b := builtinConnector{name: builtinPrefix + "embeddings",
-		wrapper: "Embeddings ⇐ " + withModel("embeddings", emb.Model) + " ⇐ " + endpointHost(emb.Endpoint, emb.APIKey)}
-	switch {
-	case !isLocal(emb.Provider):
-		b.status = "Not in use: Embeddings are made by " + providerName(emb.Provider) + ". Set up under Admin > Capabilities > Embeddings."
-		b.wrapper = "Embeddings ⇐ embeddings ⇐ an endpoint of your choosing"
-	case !emb.Enabled:
-		b.status = "Off. Turn it on under Admin > Capabilities > Embeddings."
-	default:
-		b.status = "In use for Embeddings. Set up under Admin > Capabilities > Embeddings."
-		b.test = func(c *jsonapi.Call) (any, error) { return a.handleEmbeddingsTest(c, emb) }
-	}
-	out = append(out, b)
-
 	tr := a.storedTranscribeConfig()
-	b = builtinConnector{name: builtinPrefix + "transcription",
+	b := builtinConnector{name: builtinPrefix + "transcription",
 		wrapper: "Transcription ⇐ " + withModel("audio/transcriptions", tr.Model) + " ⇐ " + endpointHost(tr.Endpoint, tr.APIKey)}
 	switch {
 	case !isLocal(tr.Provider):

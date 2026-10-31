@@ -413,3 +413,45 @@ func TestASearchConnectorIsOfferedToResearchAndAgents(t *testing.T) {
 		}
 	}
 }
+
+// The embedding templates post the texts where their servers take them and
+// read the vectors from each server's own reply: Ollama's /api/embed with the
+// model it pulled, and an OpenAI-compatible server's /embeddings.
+func TestTheEmbeddingTemplatesEmbed(t *testing.T) {
+	world(t)
+	var paths, bodies []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/tags":
+			w.Write([]byte(`{"models":[{"name":"nomic-embed-text"}]}`))
+			return
+		case "/v1/models":
+			w.Write([]byte(`{"data":[{"id":"embedding"}]}`))
+			return
+		}
+		b, _ := io.ReadAll(r.Body)
+		paths, bodies = append(paths, r.URL.Path), append(bodies, string(b))
+		if r.URL.Path == "/api/embed" {
+			w.Write([]byte(`{"embeddings":[[0.1,0.2],[0.3,0.4]]}`))
+			return
+		}
+		w.Write([]byte(`{"data":[{"index":0,"embedding":[0.1,0.2]},{"index":1,"embedding":[0.3,0.4]}]}`))
+	}))
+	defer srv.Close()
+	install(t, "ollama-embeddings", templateSpec(t, "ollama-embeddings", srv.URL))
+	install(t, "local-embeddings", templateSpec(t, "openai-compatible-embeddings", srv.URL+"/v1"))
+	for _, name := range []string{"ollama-embeddings", "local-embeddings"} {
+		vecs, err := embedVia(context.Background(), name, "", []string{"a", "b"})
+		if err != nil || len(vecs) != 2 || vecs[1][1] != 0.4 {
+			t.Errorf("%s: %v %v", name, vecs, err)
+		}
+		if h, err := CheckHealth(context.Background(), name); err != nil || !h.OK {
+			t.Errorf("%s health: %+v %v", name, h, err)
+		}
+	}
+	if len(paths) != 2 || paths[0] != "/api/embed" || paths[1] != "/v1/embeddings" ||
+		!strings.Contains(bodies[0], `"model":"nomic-embed-text"`) || !strings.Contains(bodies[1], `"model":"embedding"`) || !strings.Contains(bodies[1], `"input":["a","b"]`) {
+		t.Errorf("requests: %v %v", paths, bodies)
+	}
+}

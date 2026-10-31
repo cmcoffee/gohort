@@ -495,13 +495,9 @@ func TestABlankProviderKeepsAPeerSelection(t *testing.T) {
 		t.Error("a submission that says nothing about the provider was read as choosing local — that silently unpairs the peer")
 	}
 
-	// An EXPLICIT local is still honoured: that one is a choice somebody made.
-	got, err = ResolveEmbeddingProvider(EmbeddingConfig{Provider: EmbeddingProviderLocal, Enabled: true})
-	if err != nil {
-		t.Fatalf("resolve local: %v", err)
-	}
-	if got.Provider != EmbeddingProviderLocal {
-		t.Errorf("an explicit local must be kept, got %q", got.Provider)
+	// An EXPLICIT local is refused: this instance has no embedder of its own.
+	if _, err := ResolveEmbeddingProvider(EmbeddingConfig{Provider: EmbeddingProviderLocal, Enabled: true}); err == nil {
+		t.Error("an explicit local was accepted")
 	}
 }
 

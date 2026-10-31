@@ -112,6 +112,12 @@ const ServiceProviderPrefix = "service:"
 // seams here although embedding lives in core, which keeps its exports few.
 var EmbedService func(ctx context.Context, connector, model string, texts []string) ([][]float32, error)
 
+// ServiceAddress, when set, is the address the approved service connector
+// named connector reaches (its base URL), or "" when there is none (core/service
+// installs it). Embedding reads it to queue a connector on this machine or its
+// network behind the local model, and to wait out the pause its host asked for.
+var ServiceAddress func(connector string) string
+
 // PageService, when set, renders a page through a service connector, for a
 // page rendering source of "service:<name>" (core/service installs it): the
 // page's readable text, at most maxChars of it. It sits with the other

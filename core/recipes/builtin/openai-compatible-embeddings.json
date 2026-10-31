@@ -1,0 +1,92 @@
+{
+  "id": "openai-compatible-embeddings",
+  "title": "llama.cpp / vLLM / OpenAI-compatible (embeddings)",
+  "description": "An embedding model on any server that speaks OpenAI's embeddings API (llama.cpp, vLLM, Text Embeddings Inference, LM Studio), on this machine or your network, as gohort's semantic search: the request and the reply are data you can test and fix from Admin > Connectors.",
+  "category": "Embeddings",
+  "setup_notes": "Start the server with an embedding model (llama.cpp: llama-server --embeddings; vLLM: vllm serve <model> --task embed). The connector takes no key and lands unapproved: approve it in Admin > Extensions > Connectors, run Test on its row (it embeds two short sentences), then pick it under Capabilities > Embeddings. An embedder on this machine or its network waits its turn behind the worker model, as chat does. Many retrieval models want their texts marked (e5: \"query: \" and \"passage: \"): set the prefixes under Capabilities > Embeddings. A server that takes a key: add a bearer credential for its address under API Credentials and name it in the spec's auth in place of none. Switching embedders changes the embedding space: run Repair in the Vector Index panel to make stored documents searchable again, which embeds every one of them.",
+  "questions": [
+    {
+      "name": "base_url",
+      "label": "Server address",
+      "help": "The address its /embeddings is under, usually ending in /v1: http://localhost:8080/v1 for llama.cpp, http://localhost:8000/v1 for vLLM.",
+      "kind": "http_url",
+      "required": true,
+      "default": "http://localhost:8080/v1"
+    },
+    {
+      "name": "name",
+      "label": "Connector name",
+      "help": "Lowercase letters, digits, dashes and underscores; the embeddings settings list it by this name.",
+      "default": "local-embeddings"
+    },
+    {
+      "name": "model",
+      "label": "Model",
+      "help": "The name the server loaded the model as (vLLM checks it; llama.cpp takes any). The model names the embedding space: changing it later means re-embedding every stored document.",
+      "required": true,
+      "default": "embedding"
+    }
+  ],
+  "bundle": {
+    "bundle": "gohort.bundle/v1",
+    "artifacts": [
+      {
+        "type": "connector",
+        "name": "{{name}}",
+        "recipe": {
+          "name": "{{name}}",
+          "kind": "service",
+          "template": "openai-compatible-embeddings",
+          "desc": "Embeddings ({{model}}) at {{base_url}}",
+          "spec": {
+            "provider": {
+              "transport": "http",
+              "base_url": "{{base_url}}",
+              "auth": {
+                "none": true
+              },
+              "operations": {
+                "embed": {
+                  "method": "POST",
+                  "path": "/embeddings",
+                  "body": {
+                    "model": "{model}",
+                    "input": "{texts}"
+                  }
+                },
+                "models": {
+                  "path": "/models"
+                }
+              },
+              "health": {
+                "call": "models",
+                "expect": "data",
+                "every_mins": 60
+              }
+            },
+            "provides": [
+              {
+                "capability": "embed.text",
+                "steps": [
+                  {
+                    "call": "embed"
+                  }
+                ],
+                "output": {
+                  "vectors": {
+                    "path": "data",
+                    "each": "embedding",
+                    "as": "json"
+                  }
+                },
+                "defaults": {
+                  "model": "{{model}}"
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

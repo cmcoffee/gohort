@@ -237,55 +237,28 @@ func elsewhere(hasChoice bool, verb, does, what string) string {
 		" (Admin > Extensions > Templates) or a peer that lends " + what + " (Admin > Capabilities > Peers): once approved, it is offered here to choose."
 }
 
+// embeddingFormFields builds the Embeddings settings: on or off, the
+// connector or peer that embeds, and the prefixes its model wants. The
+// endpoint, model and key are the connector's own, set up, tested and fixed
+// under Admin > Extensions > Connectors, so there is one place each is kept.
 func embeddingFormFields() []ui.FormField {
-	peers := append(EmbeddingProviderOptions(), serviceProviderOptions("embed.text", "Embed")...)
-	// One option means local only: nothing to choose between.
-	hasPeers := len(peers) > 1
-
-	local := "enabled"
-	if hasPeers {
-		local = "enabled;provider:local"
-	}
-
-	fields := []ui.FormField{
-		{Field: "enabled", Label: "Enable embeddings", Type: "toggle", Help: elsewhere(hasPeers, "embed", "embeds", "embeddings")},
-	}
-	if hasPeers {
-		// Where the embedding happens. "This instance" keeps the manual
-		// endpoint/model below; picking a peer fills those from its manifest at
-		// save time, so everything downstream sees an ordinary config.
-		fields = append(fields, ui.FormField{
-			Field: "provider", Label: "Embed on", Type: "select",
-			Options:  peers,
+	choices := append(serviceProviderOptions("embed.text", "Embed"), EmbeddingProviderOptions()...)
+	add := "add a connector that embeds from a template (Admin > Extensions > Templates: Ollama (embeddings); llama.cpp / vLLM / OpenAI-compatible (embeddings); OpenAI (embeddings)) or from its spec (Add, under Admin > Extensions > Connectors), or connect a peer that lends embeddings (Admin > Capabilities > Peers)"
+	fields := []ui.FormField{{Field: "enabled", Label: "Enable embeddings", Type: "toggle"}}
+	if len(choices) == 0 {
+		// Nothing to choose: say how to get something, rather than a choice
+		// with no answers.
+		fields[0].Help = "Nothing here embeds yet: " + add + "."
+	} else {
+		fields = append(fields, ui.FormField{Field: "provider", Label: "Embed with", Type: "select",
+			Options:  choices,
 			ShowWhen: "enabled",
-			Help:     "Use this instance's own embedder, a peer instance you've connected under Resource Sharing › Peers, or an approved service connector.",
-			Detail:   "Changing where embeddings are made changes the embedding space: search skips stored documents from the old space until Repair in the Vector Index panel makes them again, and through a paid service that is billed.",
-		})
+			Help:     "The connector or peer that makes embeddings. Its address, model and key are kept on it: open its row under Admin > Extensions > Connectors to see, test or fix them.",
+			Detail:   "To embed with something not listed, " + add + ". Changing what embeds changes the embedding space: search skips stored documents from the old space until Repair in the Vector Index panel makes them again, and through a paid service that is billed."})
 	}
 	return append(fields,
-		ui.FormField{Field: "endpoint", Label: "Endpoint", Type: "text",
-			Placeholder: "http://localhost:11434/api",
-			Help:        "Base URL including the API version prefix. gohort appends /embeddings.",
-			Detail:      "Pick a preset below for the canonical path on common platforms.",
-			ShowWhen:    local,
-			Presets: []ui.FieldPreset{
-				{Label: "Ollama", Value: "http://localhost:11434/api", Hint: "Ollama native API (→ /api/embeddings)"},
-				{Label: "llama.cpp", Value: "http://localhost:8080/v1", Hint: "llama.cpp OpenAI-compatible (→ /v1/embeddings)"},
-				{Label: "vLLM", Value: "http://localhost:8000/v1", Hint: "vLLM OpenAI-compatible (→ /v1/embeddings)"},
-				{Label: "OpenAI", Value: "https://api.openai.com/v1", Hint: "OpenAI hosted (→ /v1/embeddings, requires API key support)"},
-			}},
-		ui.FormField{Field: "model", Label: "Model", Type: "text",
-			Placeholder: "nomic-embed-text",
-			Help:        "Leave it blank for single-model backends. Required for Ollama.",
-			Detail:      "llama.cpp, vLLM and hf-tei ignore this field. Click a chip below to fill it from the endpoint's model list.",
-			ShowWhen:    local,
-			ChipsSource: "api/embeddings/models"},
-		ui.FormField{Field: "api_key", Label: "API Key", Type: "password",
-			Help:     "Optional bearer token.",
-			Detail:   "Set it for OpenAI hosted or authenticated proxies. Leave it blank for local Ollama, llama.cpp, or vLLM.",
-			ShowWhen: local},
 		// The prefixes belong to the MODEL, not to where it runs, so they stay
-		// visible when a peer is doing the embedding.
+		// beside whichever connector or peer does the embedding.
 		ui.FormField{Field: "query_prefix", Label: "Query prefix", Type: "text",
 			Placeholder: "search_query: ",
 			Help:        "Prepended to every search query before embedding. Asymmetric retrieval models need it.",

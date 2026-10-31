@@ -2,7 +2,6 @@ package admin
 
 import (
 	"encoding/json"
-	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -22,14 +21,8 @@ func TestGohortsOwnProvidersAreConnectors(t *testing.T) {
 	saved := RootDB
 	RootDB = &DBase{Store: kvlite.MemStore()}
 	t.Cleanup(func() { RootDB = saved })
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"data":[{"index":0,"embedding":[0.1,0.2,0.3]}]}`))
-	}))
-	defer srv.Close()
 	a := &AdminApp{}
 	a.db = &DBase{Store: kvlite.MemStore()}
-	a.db.Set(EmbeddingTable, "current", EmbeddingConfig{Enabled: true, Provider: "local", Endpoint: srv.URL + "/v1", Model: "nomic-embed-text"})
 	a.db.Set(media.SpeechTable, "current", media.SpeechConfig{Enabled: true, Provider: "service:voice", Endpoint: "http://localhost:8880/v1"})
 	a.db.Set(ImageTable, "provider", "openai")
 
@@ -37,10 +30,10 @@ func TestGohortsOwnProvidersAreConnectors(t *testing.T) {
 	for _, b := range a.builtinConnectors() {
 		got[b.name] = b
 	}
-	host := strings.TrimPrefix(srv.URL, "http://")
-	if b := got["built-in:embeddings"]; b.wrapper != "Embeddings ⇐ embeddings (model nomic-embed-text) ⇐ "+host+" (no key)" ||
-		!strings.HasPrefix(b.status, "In use for Embeddings") || b.test == nil {
-		t.Errorf("embeddings: %+v", b)
+	// Embeddings always come from a connector or a peer: there is no
+	// built-in embedder to list.
+	if b, ok := got["built-in:embeddings"]; ok {
+		t.Errorf("embeddings listed as built in: %+v", b)
 	}
 	if b := got["built-in:speech"]; b.status != "Not in use: speech is made by the connector voice. Set up under Admin > Capabilities > Speech (TTS)." || b.test != nil {
 		t.Errorf("speech while a service speaks: %+v", b)
@@ -111,11 +104,7 @@ func TestGohortsOwnProvidersAreConnectors(t *testing.T) {
 	}
 
 	c := &jsonapi.Call{R: httptest.NewRequest("POST", "/api/connectors/test", nil)}
-	res, err := a.builtinTest(c, "built-in:embeddings")
-	if body, _ := res.(map[string]any); err != nil || !strings.Contains(body["message"].(string), "3-dim embedding") || body["warnings"] != nil {
-		t.Errorf("testing the embedder in use: %v %v", res, err)
-	}
-	res, _ = a.builtinTest(c, "built-in:speech")
+	res, _ := a.builtinTest(c, "built-in:speech")
 	if body, _ := res.(map[string]any); !strings.HasPrefix(body["message"].(string), "Not in use") || body["warnings"] == nil {
 		t.Errorf("testing a built-in not in use: %v", res)
 	}
@@ -140,7 +129,7 @@ func TestGohortsOwnProvidersAreConnectors(t *testing.T) {
 			}
 		}
 	}
-	if builtins != 10 {
-		t.Errorf("%d built-in rows, want 10", builtins)
+	if builtins != 9 {
+		t.Errorf("%d built-in rows, want 9", builtins)
 	}
 }

@@ -477,17 +477,14 @@ func (a *AdminApp) handlePeerKeyUpdate(c *jsonapi.Call, body struct {
 	}, nil
 }
 
-// EmbeddingProviderOptions builds the provider dropdown for the Embeddings
-// settings: this instance, plus every peer that actually offers embeddings.
+// EmbeddingProviderOptions are the peers in the Embeddings settings' "Embed
+// with" choice: every peer that actually offers embeddings. The connectors
+// that embed are offered beside them.
 //
 // Exported because the Embeddings section lives in page.go with the rest of the
 // capability settings; the peer knowledge stays here.
 func EmbeddingProviderOptions() []ui.SelectOption {
-	out := []ui.SelectOption{{
-		Value: EmbeddingProviderLocal,
-		Label: "This instance",
-		Help:  "Embed locally, using the endpoint and model below.",
-	}}
+	var out []ui.SelectOption
 	for _, p := range PeersOffering(PeerCapEmbeddings) {
 		label := "Peer: " + p.Name
 		if p.Instance != "" {

@@ -1,0 +1,91 @@
+{
+  "id": "ollama-embeddings",
+  "title": "Ollama (embeddings)",
+  "description": "An embedding model served by Ollama, on this machine or your network, as gohort's semantic search: the request and the reply are data you can test and fix from Admin > Connectors.",
+  "category": "Embeddings",
+  "setup_notes": "Pull the model first (ollama pull nomic-embed-text). The connector takes no key and lands unapproved: approve it in Admin > Extensions > Connectors, run Test on its row (it embeds two short sentences), then pick it under Capabilities > Embeddings. An embedder on this machine or its network waits its turn behind the worker model, as chat does. nomic-embed-text wants its texts marked: set the query prefix to \"search_query: \" and the document prefix to \"search_document: \" under Capabilities > Embeddings. Switching embedders changes the embedding space: run Repair in the Vector Index panel to make stored documents searchable again, which embeds every one of them.",
+  "questions": [
+    {
+      "name": "base_url",
+      "label": "Ollama address",
+      "help": "The address gohort reaches Ollama at, without /api: http://localhost:11434 on this machine.",
+      "kind": "http_url",
+      "required": true,
+      "default": "http://localhost:11434"
+    },
+    {
+      "name": "name",
+      "label": "Connector name",
+      "help": "Lowercase letters, digits, dashes and underscores; the embeddings settings list it by this name.",
+      "default": "ollama-embeddings"
+    },
+    {
+      "name": "model",
+      "label": "Model",
+      "help": "An embedding model Ollama has pulled. The model names the embedding space: changing it later means re-embedding every stored document.",
+      "required": true,
+      "default": "nomic-embed-text"
+    }
+  ],
+  "bundle": {
+    "bundle": "gohort.bundle/v1",
+    "artifacts": [
+      {
+        "type": "connector",
+        "name": "{{name}}",
+        "recipe": {
+          "name": "{{name}}",
+          "kind": "service",
+          "template": "ollama-embeddings",
+          "desc": "Ollama embeddings ({{model}}) at {{base_url}}",
+          "spec": {
+            "provider": {
+              "transport": "http",
+              "base_url": "{{base_url}}",
+              "auth": {
+                "none": true
+              },
+              "operations": {
+                "embed": {
+                  "method": "POST",
+                  "path": "/api/embed",
+                  "body": {
+                    "model": "{model}",
+                    "input": "{texts}"
+                  }
+                },
+                "models": {
+                  "path": "/api/tags"
+                }
+              },
+              "health": {
+                "call": "models",
+                "expect": "models",
+                "every_mins": 60
+              }
+            },
+            "provides": [
+              {
+                "capability": "embed.text",
+                "steps": [
+                  {
+                    "call": "embed"
+                  }
+                ],
+                "output": {
+                  "vectors": {
+                    "path": "embeddings",
+                    "as": "json"
+                  }
+                },
+                "defaults": {
+                  "model": "{{model}}"
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

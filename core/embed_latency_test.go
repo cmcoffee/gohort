@@ -16,23 +16,27 @@ import (
 // work out what could even live in that window.
 func TestEmbedIsTimedAndWarnsWhenSlow(t *testing.T) {
 	src := mustCoreFile(t, "embeddings.go")
-	// Anchored on the client construction, whatever builds it. It is
-	// PeerClientForProvider now — a peer-backed embedder authenticates through
-	// the peer transport rather than the config's snapshotted key — and the
-	// timing this guards has to survive that kind of change.
-	at := strings.Index(src, "client := PeerClientForProvider(")
-	if at < 0 {
-		t.Fatal("the embed call no longer builds a client where this guard can find it; re-anchor it rather than deleting it")
+	// Both ways an embed is made are timed: through a connector, anchored on
+	// the call through its seam, and from a peer, anchored on the client
+	// construction (PeerClientForProvider, so the peer key is the one live
+	// when the request is sent).
+	for _, anchor := range []string{"media.EmbedService(ctx, name,", "client := PeerClientForProvider("} {
+		at := strings.Index(src, anchor)
+		if at < 0 {
+			t.Fatalf("the embed call (%s) is no longer where this guard can find it; re-anchor it rather than deleting it", anchor)
+		}
+		call := src[at:]
+		if !strings.Contains(call[:900], "time.Since(started)") {
+			t.Fatalf("the embed call at %s is untimed again; a blocking call on the critical path must report its duration", anchor)
+		}
+		if !strings.Contains(call[:900], "SLOW") {
+			t.Errorf("a slow embed (%s) must be visible WITHOUT debug logging: that is the case an operator needs", anchor)
+		}
 	}
-	call := src[at:]
-	if !strings.Contains(call[:900], "time.Since(started)") {
-		t.Fatal("the embed call is untimed again; a blocking call on the critical path must report its duration")
-	}
-	if !strings.Contains(call[:900], "SLOW") {
-		t.Error("a slow embed must be visible WITHOUT debug logging — that is the case an operator needs")
-	}
-	if !strings.Contains(call[:900], "shares a server with the worker model") {
-		t.Error("the warning should name the likeliest cause; a bare duration sends the reader back to guessing")
+	// A connector on this machine names the likeliest cause; a bare duration
+	// sends the reader back to guessing.
+	if !strings.Contains(src, "shares a server with the worker model") {
+		t.Error("the warning should name the likeliest cause")
 	}
 	// Well under the hint budget, so a hint about to be abandoned still leaves
 	// a trace saying why.
@@ -57,7 +61,7 @@ func TestEmbedHonorsTheCallersDeadline(t *testing.T) {
 	defer cancel()
 
 	started := time.Now()
-	_, err := EmbedWith(ctx, EmbeddingConfig{Enabled: true, Endpoint: slow.URL}, "some text")
+	_, err := EmbedWith(ctx, useConnectorEmbedder(t, slow.URL, ""), "some text")
 	elapsed := time.Since(started)
 
 	if err == nil {

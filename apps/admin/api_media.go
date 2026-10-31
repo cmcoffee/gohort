@@ -3,7 +3,6 @@ package admin
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -31,15 +30,6 @@ func (a *AdminApp) registerMediaRoutes(sub *http.ServeMux) {
 	// saved DB record), runs a one-shot Embed() against them, returns
 	// {ok, message|error} for inline display in the admin FormPanel.
 	sub.HandleFunc("/api/embeddings/test", jsonapi.Post(a.db, a.handleEmbeddingsTest, a.gate()))
-
-	// /api/embeddings/models — probe the saved embedding endpoint for
-	// available models. Returns chip-shaped JSON (id/name/value) so
-	// FormField.ChipsSource can render a click-to-fill row above the
-	// model input. Tries OpenAI-style /models first (works for OpenAI,
-	// vLLM, llama.cpp, hf-tei), falls back to Ollama's /api/tags by
-	// transforming the endpoint base. Empty array on either reach
-	// failure — the field stays manually editable, no UI error.
-	sub.HandleFunc("/api/embeddings/models", jsonapi.Get(a.db, a.handleEmbeddingModels, a.gate()))
 
 	// Audio transcription (STT) — GET/POST. POST persists + reinstalls
 	// the live TranscribeConfig so the next Transcribe() call picks up
@@ -83,27 +73,19 @@ func (a *AdminApp) registerMediaRoutes(sub *http.ServeMux) {
 
 // handleEmbeddings serves /api/embeddings; registerMediaRoutes says what it is for.
 func (a *AdminApp) handleEmbeddings(c *jsonapi.Call) (any, error) {
-	var cfg EmbeddingConfig
-	if a.db != nil {
-		a.db.Get(EmbeddingTable, "current", &cfg)
-	}
-	// Every config stored before peers existed has a blank Provider. Report
-	// it as "local" so the dropdown preselects the right option instead of
-	// opening on nothing, and so a ShowWhen testing provider:local matches.
-	if strings.TrimSpace(cfg.Provider) == "" {
-		cfg.Provider = EmbeddingProviderLocal
-	}
-	cfg.APIKey = maskSecret(cfg.APIKey)
+	cfg := a.storedEmbeddingConfig()
+	// Where embeddings are made is the connector or peer named: its key is
+	// its own, never shown here.
+	cfg.APIKey = ""
 	return cfg, nil
 }
 
 // handleEmbeddingsSave persists the embeddings config and reinstalls it live.
 func (a *AdminApp) handleEmbeddingsSave(c *jsonapi.Call, req EmbeddingConfig) (any, error) {
-	req.APIKey = keepSecret(req.APIKey, a.storedEmbeddingConfig().APIKey)
-	// A peer selection carries no endpoint of its own — the manual
-	// fields are hidden while one is picked. Resolve it into a complete,
-	// ordinary config here so everything downstream (Embed,
-	// EmbedVersion, the vector store) stays peer-unaware.
+	req.APIKey = ""
+	// The form names a connector or a peer and nothing else: resolve it into
+	// a complete config here, its endpoint and model filled in, so everything
+	// downstream (Embed, EmbedVersion, the vector store) reads one shape.
 	resolved, err := resolveEmbedding(req)
 	if err != nil {
 		return nil, jsonapi.BadRequest(err.Error())
@@ -121,7 +103,7 @@ func (a *AdminApp) handleEmbeddingsSave(c *jsonapi.Call, req EmbeddingConfig) (a
 // handleEmbeddingsTest serves /api/embeddings/test; registerMediaRoutes says what it is for.
 func (a *AdminApp) handleEmbeddingsTest(c *jsonapi.Call, req EmbeddingConfig) (any, error) {
 	r := c.R
-	req.APIKey = keepSecret(req.APIKey, a.storedEmbeddingConfig().APIKey)
+	req.APIKey = ""
 	if !req.Enabled {
 		return testResultBody(false, "", "embeddings are disabled: flip the toggle on first"), nil
 	}
@@ -136,9 +118,6 @@ func (a *AdminApp) handleEmbeddingsTest(c *jsonapi.Call, req EmbeddingConfig) (a
 		return testResultBody(false, "", err.Error()), nil
 	}
 	req = resolved
-	if req.Endpoint == "" {
-		return testResultBody(false, "", "endpoint is required"), nil
-	}
 	// Temporarily swap in the form's working config for this one call
 	// without persisting. Restore on exit so a failed test doesn't
 	// poison live state.
@@ -155,10 +134,9 @@ func (a *AdminApp) handleEmbeddingsTest(c *jsonapi.Call, req EmbeddingConfig) (a
 	if modelLabel == "" {
 		modelLabel = "server default"
 	}
-	// Name WHERE it embedded. The test now has two possible meanings, and a
-	// bare "OK" would not distinguish a working peer from a local embedder
-	// that answered because the peer selection never took effect.
-	where := "this instance"
+	// Name WHERE it embedded, so a working connector is not mistaken for a
+	// peer that answered because the selection never took effect.
+	where := req.Provider
 	if p, ok := PeerFromProvider(req.Provider); ok {
 		where = "peer " + p.Name
 		if p.Instance != "" {
@@ -168,37 +146,6 @@ func (a *AdminApp) handleEmbeddingsTest(c *jsonapi.Call, req EmbeddingConfig) (a
 		where = "the service " + name
 	}
 	return testResultBody(true, fmt.Sprintf("OK: %d-dim embedding from %s via %s", len(vec), modelLabel, where), ""), nil
-}
-
-// handleEmbeddingModels serves /api/embeddings/models; registerMediaRoutes says what it is for.
-func (a *AdminApp) handleEmbeddingModels(c *jsonapi.Call) (any, error) {
-	r := c.R
-	var cfg EmbeddingConfig
-	if a.db != nil {
-		a.db.Get(EmbeddingTable, "current", &cfg)
-	}
-	// A service's model is the one its spec declares: nothing to list.
-	if cfg.Endpoint == "" || strings.HasPrefix(cfg.Provider, media.ServiceProviderPrefix) {
-		return []map[string]string{}, nil
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
-	defer cancel()
-	// Try OpenAI-compat /models first.
-	base := strings.TrimRight(cfg.Endpoint, "/")
-	names := probeEmbeddingModels(ctx, base+"/models", cfg.APIKey, "openai")
-	if len(names) == 0 {
-		// Fall back to Ollama /tags. Strip /v1 if present so we
-		// don't end up with /v1/tags (Ollama only serves
-		// /api/tags, never under /v1). The base already includes
-		// /api for canonical Ollama configs.
-		tagsBase := strings.TrimSuffix(base, "/v1")
-		names = probeEmbeddingModels(ctx, tagsBase+"/tags", cfg.APIKey, "ollama")
-	}
-	out := make([]map[string]string, 0, len(names))
-	for _, n := range names {
-		out = append(out, map[string]string{"id": n, "name": n, "value": n})
-	}
-	return out, nil
 }
 
 // handleTranscribe serves /api/transcribe; registerMediaRoutes says what it is for.
@@ -492,67 +439,6 @@ type imageGenConfig struct {
 	APIKey   string `json:"api_key"`
 }
 
-// probeEmbeddingModels fetches and parses a model list from an
-// embedding endpoint's discovery URL. shape controls how to interpret
-// the response body:
-//   - "openai":  {"data": [{"id": "..."}, ...]}  (OpenAI, vLLM, llama.cpp /v1/models, hf-tei /models)
-//   - "ollama":  {"models": [{"name": "..."}, ...]}  (Ollama /api/tags)
-//
-// Returns an empty slice on any error so the caller can quietly fall
-// back to the next probe form without surfacing an error to the UI.
-func probeEmbeddingModels(ctx context.Context, url, apiKey, shape string) []string {
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil
-	}
-	if apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+apiKey)
-	}
-	resp, err := (&http.Client{}).Do(req)
-	if err != nil {
-		return nil
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil
-	}
-	switch shape {
-	case "openai":
-		var body struct {
-			Data []struct {
-				ID string `json:"id"`
-			} `json:"data"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-			return nil
-		}
-		out := make([]string, 0, len(body.Data))
-		for _, m := range body.Data {
-			if m.ID != "" {
-				out = append(out, m.ID)
-			}
-		}
-		return out
-	case "ollama":
-		var body struct {
-			Models []struct {
-				Name string `json:"name"`
-			} `json:"models"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-			return nil
-		}
-		out := make([]string, 0, len(body.Models))
-		for _, m := range body.Models {
-			if m.Name != "" {
-				out = append(out, m.Name)
-			}
-		}
-		return out
-	}
-	return nil
-}
-
 // storedEmbeddingConfig / storedTranscribeConfig read the saved config, so a
 // posted secretUnchanged can be swapped back for the stored key.
 func (a *AdminApp) storedEmbeddingConfig() EmbeddingConfig {
@@ -583,14 +469,16 @@ func (a *AdminApp) storedTranscribeConfig() TranscribeConfig {
 // and its model taken from the service's spec: the stored model names the
 // space the vectors are in, and the service is asked for that model by name.
 func resolveEmbedding(req EmbeddingConfig) (EmbeddingConfig, error) {
-	if err := serviceProviderOK(req.Provider, "embed.text"); err != nil {
-		return req, err
-	}
 	resolved, err := ResolveEmbeddingProvider(req)
 	if err != nil {
 		return req, err
 	}
-	if name, ok := strings.CutPrefix(strings.TrimSpace(req.Provider), media.ServiceProviderPrefix); ok {
+	// Checked once resolved: a form that sent no provider keeps the stored
+	// one, which has to be as usable as one picked.
+	if err := serviceProviderOK(resolved.Provider, "embed.text"); err != nil {
+		return req, err
+	}
+	if name, ok := strings.CutPrefix(strings.TrimSpace(resolved.Provider), media.ServiceProviderPrefix); ok {
 		c, _ := GetConnector(RootDB, name)
 		resolved.Model = service.Default(c, "embed.text", "model")
 	}

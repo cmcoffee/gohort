@@ -36,13 +36,10 @@ func TestMediaRoutesContract(t *testing.T) {
 		media.SetSpeechConfig(prevTTS)
 	})
 
-	// One server stands in for every provider, by path: an embedder with a
-	// model list, an STT server that takes the key, one that refuses it, and
+	// One server stands in for every provider, by path: an embedder (reached
+	// through a connector, as every embedder is), an STT server that takes the key, one that refuses it, and
 	// a whisper.cpp that has no /models but answers at its root.
 	stub := http.NewServeMux()
-	stub.HandleFunc("/embed/v1/models", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"data":[{"id":"nomic-embed-text"},{"id":"bge-m3"}]}`))
-	})
 	stub.HandleFunc("/embed/v1/embeddings", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"data":[{"embedding":[0.1,0.2,0.3]}]}`))
 	})
@@ -102,10 +99,6 @@ func TestMediaRoutesContract(t *testing.T) {
 		switch table {
 		case ImageTable:
 			adb.Get(table, key, &got)
-		case EmbeddingTable:
-			var cfg EmbeddingConfig
-			adb.Get(table, key, &cfg)
-			got = cfg.APIKey
 		case TranscribeTable:
 			var cfg TranscribeConfig
 			adb.Get(table, key, &cfg)
@@ -120,7 +113,7 @@ func TestMediaRoutesContract(t *testing.T) {
 		}
 	}
 
-	for _, p := range []string{"/api/embeddings", "/api/transcribe", "/api/speech", "/api/image-gen", "/api/embeddings/models", "/api/speech/voices"} {
+	for _, p := range []string{"/api/embeddings", "/api/transcribe", "/api/speech", "/api/image-gen", "/api/speech/voices"} {
 		do("", "GET", p, "")
 		do("alice", "GET", p, "")
 		do("root", "GET", p, "")
@@ -133,22 +126,25 @@ func TestMediaRoutesContract(t *testing.T) {
 		do("root", "POST", p, ``)
 	}
 
-	embed := `"endpoint":"` + srv.URL + `/embed/v1","model":"nomic-embed-text"`
-	do("alice", "POST", "/api/embeddings", `{"enabled":true,`+embed+`,"api_key":"s3cr3t-embed-x"}`)
-	do("root", "POST", "/api/embeddings", `{"enabled":true,"provider":"local",`+embed+`,"api_key":"s3cr3t-embed-1"}`)
+	// Embeddings are made by a connector or a peer: one that embeds at the
+	// stub, one whose server is not there, and none on this instance itself.
+	embedConnector(t, "vectors", srv.URL+"/embed/v1", "nomic-embed-text")
+	embedConnector(t, "gone", "http://127.0.0.1:1/v1", "m")
+	SetEmbeddingConfig(EmbeddingConfig{})
+	do("alice", "POST", "/api/embeddings", `{"enabled":true,"provider":"service:vectors"}`)
+	do("root", "POST", "/api/embeddings", `{"enabled":true,"provider":"local","endpoint":"`+srv.URL+`/embed/v1","api_key":"s3cr3t-embed-1"}`)
+	do("root", "POST", "/api/embeddings", `{"enabled":true,"provider":"service:vectors","model":"typed-in"}`)
 	do("root", "GET", "/api/embeddings", "")
-	do("root", "POST", "/api/embeddings", `{"enabled":true,"provider":"local",`+embed+`,"api_key":"(unchanged)"}`)
-	keeps(EmbeddingTable, "current", "s3cr3t-embed-1")
-	do("root", "GET", "/api/embeddings/models", "")
+	do("root", "POST", "/api/embeddings", `{"enabled":true,"provider":"service:nope"}`)
 	do("root", "POST", "/api/embeddings", `{"enabled":true,"provider":"peer:nope"}`)
+	do("root", "POST", "/api/embeddings", `{"enabled":false,"provider":"service:vectors"}`)
 	do("root", "POST", "/api/embeddings", `{"enabled":`)
 	do("root", "POST", "/api/embeddings", ``)
-	do("root", "POST", "/api/embeddings/test", `{"enabled":false,`+embed+`}`)
+	do("root", "POST", "/api/embeddings/test", `{"enabled":false,"provider":"service:vectors"}`)
 	do("root", "POST", "/api/embeddings/test", `{"enabled":true,"model":"m"}`)
 	do("root", "POST", "/api/embeddings/test", `{"enabled":true,"provider":"peer:nope"}`)
-	do("root", "POST", "/api/embeddings/test", `{"enabled":true,`+embed+`,"api_key":"(unchanged)"}`)
-	do("root", "POST", "/api/embeddings/test", `{"enabled":true,"endpoint":"`+srv.URL+`/embed/v1"}`)
-	do("root", "POST", "/api/embeddings/test", `{"enabled":true,"endpoint":"http://127.0.0.1:1/v1"}`)
+	do("root", "POST", "/api/embeddings/test", `{"enabled":true,"provider":"service:vectors"}`)
+	do("root", "POST", "/api/embeddings/test", `{"enabled":true,"provider":"service:gone"}`)
 
 	do("alice", "POST", "/api/transcribe", `{"enabled":true,"endpoint":"`+srv.URL+`/stt-ok/v1","api_key":"s3cr3t-stt-x"}`)
 	do("root", "POST", "/api/transcribe", `{"enabled":true,"endpoint":"`+srv.URL+`/stt-ok/v1","model":"whisper-1","api_key":"s3cr3t-stt"}`)

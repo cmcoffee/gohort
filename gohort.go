@@ -21,6 +21,7 @@ import (
 	"github.com/cmcoffee/gohort/apps/ollama_proxy"
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/netgate"
+	"github.com/cmcoffee/gohort/core/service"
 	"github.com/cmcoffee/gohort/core/tlsconf"
 
 	"github.com/cmcoffee/snugforge/eflag"
@@ -382,6 +383,9 @@ func main() {
 
 		// Wire auth database.
 		AuthDB = func() Database { return global.db }
+		// Embeddings this instance made itself become a connector, once: it
+		// needs the credential store just wired, for a key the settings held.
+		service.MigrateEmbeddings(global.db)
 
 		AuthEnabled = func() bool { return AuthHasUsers(global.db) }
 		AuthSignupAllowed = func() bool {

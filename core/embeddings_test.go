@@ -1,7 +1,11 @@
 package core
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,6 +16,71 @@ import (
 
 	"github.com/cmcoffee/gohort/core/media"
 )
+
+// useConnectorEmbedder points embeddings at a service connector at endpoint,
+// standing in for core/service (which imports this package): it posts the
+// texts to endpoint/embeddings as the connector the migration writes does,
+// the model named when there is one, reads the vectors from data[].embedding,
+// embeddings or embedding, and pauses the host on a 429. Its address is
+// endpoint, so one on this machine queues behind the local model.
+func useConnectorEmbedder(t *testing.T, endpoint, model string) EmbeddingConfig {
+	t.Helper()
+	savedEmbed, savedAddr, savedCfg := media.EmbedService, media.ServiceAddress, GetEmbeddingConfig()
+	t.Cleanup(func() {
+		media.EmbedService, media.ServiceAddress = savedEmbed, savedAddr
+		SetEmbeddingConfig(savedCfg)
+	})
+	media.ServiceAddress = func(string) string { return endpoint }
+	media.EmbedService = func(ctx context.Context, _, model string, texts []string) ([][]float32, error) {
+		if err := media.WaitPause(ctx, endpoint); err != nil {
+			return nil, err
+		}
+		body := map[string]any{"input": texts}
+		if model != "" {
+			body["model"] = model
+		}
+		b, _ := json.Marshal(body)
+		req, _ := http.NewRequestWithContext(ctx, "POST", strings.TrimRight(endpoint, "/")+"/embeddings", bytes.NewReader(b))
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		defer resp.Body.Close()
+		raw, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode == http.StatusTooManyRequests {
+			media.NotePause(endpoint, resp.Header.Get("Retry-After"))
+		}
+		if resp.StatusCode != 200 {
+			return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, raw)
+		}
+		var out struct {
+			Data       []struct{ Embedding []float32 } `json:"data"`
+			Embeddings [][]float32                     `json:"embeddings"`
+			Embedding  []float32                       `json:"embedding"`
+		}
+		if err := json.Unmarshal(raw, &out); err != nil {
+			return nil, err
+		}
+		switch {
+		case len(out.Data) > 0:
+			var vecs [][]float32
+			for _, d := range out.Data {
+				vecs = append(vecs, d.Embedding)
+			}
+			return vecs, nil
+		case len(out.Embeddings) > 0:
+			return out.Embeddings, nil
+		case len(out.Embedding) > 0:
+			return [][]float32{out.Embedding}, nil
+		}
+		return nil, nil
+	}
+	// The endpoint stored is the connector's name, as picking one in the
+	// settings stores it: its address is only the connector's.
+	cfg := EmbeddingConfig{Enabled: true, Provider: media.ServiceProviderPrefix + "test", Endpoint: media.ServiceProviderPrefix + "test", Model: model}
+	SetEmbeddingConfig(cfg)
+	return cfg
+}
 
 // embedServer counts concurrent in-flight requests and reports the peak.
 func embedServer(t *testing.T, hold time.Duration) (url string, peak *int32) {
@@ -39,13 +108,14 @@ func embedServer(t *testing.T, hold time.Duration) (url string, peak *int32) {
 // is single-threaded, an embed arriving mid-generation causes 503s rather than
 // merely being unfair.
 //
-// With the llama.cpp scheduler capped at 1, concurrent embeds must serialize.
+// With the llama.cpp scheduler capped at 1, concurrent embeds through a
+// connector on this machine must serialize.
 func TestEmbedsRespectTheLocalModelQueue(t *testing.T) {
 	url, peak := embedServer(t, 40*time.Millisecond)
 	StartLlamacppScheduler(1)
 	t.Cleanup(func() { StartLlamacppScheduler(0) })
 
-	cfg := EmbeddingConfig{Enabled: true, Endpoint: url, Model: "m"}
+	cfg := useConnectorEmbedder(t, url, "m")
 	var wg sync.WaitGroup
 	for i := 0; i < 4; i++ {
 		wg.Add(1)
@@ -63,31 +133,53 @@ func TestEmbedsRespectTheLocalModelQueue(t *testing.T) {
 	}
 }
 
-// An embed bound for a PEER must NOT take a local slot. The work happens on
-// another instance, which queues it against its own load; holding a local slot
-// would stall it behind a model that is not doing the work.
-func TestPeerBoundEmbedsDoNotTakeALocalSlot(t *testing.T) {
+// An embed bound for a PEER or a hosted service must NOT take a local slot.
+// The work happens elsewhere, which queues it against its own load; holding a
+// local slot would stall it behind a model that is not doing the work.
+func TestRemoteEmbedsDoNotTakeALocalSlot(t *testing.T) {
 	url, peak := embedServer(t, 40*time.Millisecond)
 	StartLlamacppScheduler(1)
 	t.Cleanup(func() { StartLlamacppScheduler(0) })
 
-	// The marker the exclusion keys on is the peer path.
-	cfg := EmbeddingConfig{Enabled: true, Endpoint: url + "/api/peer/v1", Model: "m"}
-	var wg sync.WaitGroup
-	for i := 0; i < 4; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if _, err := EmbedWith(t.Context(), cfg, "text"); err != nil {
-				t.Errorf("embed: %v", err)
-			}
-		}()
+	hosted := useConnectorEmbedder(t, url, "m")
+	media.ServiceAddress = func(string) string { return "https://embeddings.example.com/v1" }
+	peer := EmbeddingConfig{Enabled: true, Provider: "peer:elsewhere", Endpoint: url + "/api/peer/v1", Model: "m"}
+	for _, cfg := range []EmbeddingConfig{hosted, peer} {
+		atomic.StoreInt32(peak, 0)
+		var wg sync.WaitGroup
+		for i := 0; i < 4; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if _, err := EmbedWith(t.Context(), cfg, "text"); err != nil {
+					t.Errorf("embed: %v", err)
+				}
+			}()
+		}
+		wg.Wait()
+		if got := atomic.LoadInt32(peak); got < 2 {
+			t.Errorf("%s: peak concurrent embeds = %d: they are being queued locally, "+
+				"which stalls remote work behind a local model that is not doing it", cfg.Provider, got)
+		}
 	}
-	wg.Wait()
+}
 
-	if got := atomic.LoadInt32(peak); got < 2 {
-		t.Errorf("peak concurrent peer-bound embeds = %d — they are being queued locally, "+
-			"which stalls remote work behind a local model that is not doing it", got)
+// Embeddings are made by a connector or a peer, and nothing else: a config
+// naming neither (one stored before the migration ran) is refused, not sent
+// to its endpoint.
+func TestAnEmbedderThatIsNeitherConnectorNorPeerIsRefused(t *testing.T) {
+	url, _ := embedServer(t, 0)
+	for _, p := range []string{"", EmbeddingProviderLocal} {
+		_, err := EmbedWith(t.Context(), EmbeddingConfig{Enabled: true, Provider: p, Endpoint: url, Model: "m"}, "text")
+		if err == nil || !strings.Contains(err.Error(), "not set to a connector or a peer") {
+			t.Errorf("provider %q: %v", p, err)
+		}
+	}
+	if _, err := ResolveEmbeddingProvider(EmbeddingConfig{Enabled: true, Provider: EmbeddingProviderLocal}); err == nil {
+		t.Error("saving embeddings on this instance's own endpoint was accepted")
+	}
+	if _, err := ResolveEmbeddingProvider(EmbeddingConfig{Provider: EmbeddingProviderLocal}); err != nil {
+		t.Errorf("turning embeddings off was refused: %v", err)
 	}
 }
 
@@ -97,7 +189,7 @@ func TestPeerBoundEmbedsDoNotTakeALocalSlot(t *testing.T) {
 func TestEmbedsPassThroughWithNoSchedulerConfigured(t *testing.T) {
 	url, peak := embedServer(t, 40*time.Millisecond)
 
-	cfg := EmbeddingConfig{Enabled: true, Endpoint: url, Model: "m"}
+	cfg := useConnectorEmbedder(t, url, "m")
 	var wg sync.WaitGroup
 	for i := 0; i < 4; i++ {
 		wg.Add(1)
@@ -190,11 +282,22 @@ func TestAServiceEmbedderIsItsOwnSpace(t *testing.T) {
 	if got := (EmbeddingConfig{Provider: "local"}).spaceStamp(); got != "" {
 		t.Errorf("a model-less local embedder stays unstamped, got %q", got)
 	}
+	// The connector the migration made keeps the endpoint embeddings were
+	// made at before, and with it their space: saved again it keeps it, and
+	// with no model it stays unstamped, as the rows it made are.
+	SetEmbeddingConfig(EmbeddingConfig{Enabled: true, Provider: "service:embeddings", Endpoint: "http://localhost:8080/v1"})
+	again, err := ResolveEmbeddingProvider(EmbeddingConfig{Enabled: true, Provider: "service:embeddings"})
+	if err != nil || again.Endpoint != "http://localhost:8080/v1" {
+		t.Errorf("the migrated connector saved again: %+v %v", again, err)
+	}
+	if got := again.spaceStamp(); got != "" {
+		t.Errorf("the migrated model-less connector is stamped %q", got)
+	}
 	// A form that did not render the picker (the service went away) keeps
 	// the stored selection rather than falling back to local.
 	SetEmbeddingConfig(EmbeddingConfig{Enabled: true, Provider: "service:vec", Endpoint: "service:vec"})
 	kept, err := ResolveEmbeddingProvider(EmbeddingConfig{Enabled: true, Endpoint: "service:vec"})
-	if err != nil || kept.Provider != "" || kept.Endpoint != "service:vec" {
+	if err != nil || kept.Provider != "service:vec" || kept.Endpoint != "service:vec" {
 		t.Errorf("a blank provider over a stored service: %+v %v", kept, err)
 	}
 }

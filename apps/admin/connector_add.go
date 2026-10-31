@@ -65,7 +65,7 @@ func (a *AdminApp) capabilitiesNow() []string {
 		return providerName(p)
 	}
 	onOff := func(enabled bool, p, builtin string) string {
-		if isLocal(p) && !enabled {
+		if !enabled {
 			return "off"
 		}
 		return own(p, builtin)
@@ -107,7 +107,7 @@ func (a *AdminApp) capabilitiesNow() []string {
 		return p + " (built-in client)"
 	}
 	return []string{
-		"Embeddings: " + onOff(emb.Enabled, emb.Provider, "the local embedder (built in)"),
+		"Embeddings: " + onOff(emb.Enabled, emb.Provider, "not set"),
 		"Transcription: " + onOff(tr.Enabled, tr.Provider, "the local endpoint (built in)"),
 		"Speech: " + onOff(sp.Enabled, sp.Provider, "the local endpoint (built in)"),
 		"Image Generation: " + imageChoiceName(image),

@@ -339,6 +339,43 @@ setting gains a `service:<name>` value.
     API, and Anthropic with its key in a credential. A dialect gohort does
     not speak still needs Go.
 
+## Nothing locked in Go
+
+The owner's direction, 2026-10-30, past "extendable": every provider is a
+connector, shipped as a default that can be read, tested, fixed (✨ Fix) and
+replaced. Go keeps the contracts and the transports; the providers become
+specs. An HTTP provider becomes a spec outright; one that needs Go (SMTP,
+the browser, DuckDuckGo's page, Bedrock, Ollama's native client, the LLM
+dialects) becomes a connector naming a built-in transport. Two ways to make
+one thing are not kept side by side, since then nobody can tell when the
+other one breaks: the owner chose a forced migration. One capability at a
+time: reach parity in the connector engine, move the stored settings onto a
+connector once at startup (marker-guarded, shown under Admin > Migrations,
+the same for a fresh install from the defaults), and delete the Go provider
+in the same change. The migration code goes in a later release.
+
+1. **Embeddings.** Built 2026-10-30. Parity the engine gained, all generic:
+   an output's `or` (other places it may be, tried in turn: data[].embedding,
+   embeddings, embedding) and `single` (one item read as a list of one); a
+   host that answers 429 is paused until its Retry-After for every call
+   (`core/media`'s pause, which the governed dispatch now feeds by keeping
+   Retry-After on a 429's reply); and a connector at a loopback or private
+   address queues behind the local model, as the built-in embedder did.
+   `MigrateEmbeddings` (core/service, run where the credential store comes
+   up) writes the settings as connector `embeddings` (`POST
+   {endpoint}/embeddings`, the model when there is one), the key as bearer
+   credential `embeddings_key`, approves it, and names it in the settings.
+   The settings keep their endpoint and model, which name the space the
+   vectors are in (EmbedVersion, the chunk stamp), so nothing is
+   re-embedded; saving the same connector again keeps them. The HTTP code is
+   now the peer transport only, and a config naming neither a connector nor
+   a peer is refused. The Embeddings page lost endpoint, model and key: it
+   is on/off, "Embed with" (connectors and peers) and the prefixes, with a
+   pointer to the templates (Ollama, llama.cpp / vLLM / OpenAI-compatible,
+   OpenAI) while nothing embeds. The `built-in:embeddings` row is gone.
+   Next, in order: transcription, speech, images, web search, page
+   rendering, mail, the LLM tiers, then the built-in transports and peers.
+
 ## Migrations
 
 - Stages 1 to 3 and 6 need none: they show what is stored, differently.

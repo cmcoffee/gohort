@@ -12,6 +12,25 @@ import (
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
+// embedConnector saves and approves a keyless service connector named name
+// that embeds at base (base/embeddings, OpenAI's shape), in model, and points
+// embeddings at it: the shape every instance embeds in. It needs RootDB and
+// AuthDB (the dispatch reads the credential store) set by the caller.
+func embedConnector(t *testing.T, name, base, model string) {
+	t.Helper()
+	spec := `{"provider":{"transport":"http","base_url":"` + base + `","auth":{"none":true},
+		"operations":{"embed":{"method":"POST","path":"/embeddings","body":{"model":"{model}","input":"{texts}"}}}},
+		"provides":[{"capability":"embed.text","steps":[{"call":"embed"}],"output":{"vectors":{"path":"data","each":"embedding","as":"json"}},
+		"defaults":{"model":"` + model + `"}}]}`
+	if err := SaveConnector(RootDB, Connector{Name: name, Kind: "service", Spec: json.RawMessage(spec)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ApproveConnector(RootDB, name); err != nil {
+		t.Fatal(err)
+	}
+	SetEmbeddingConfig(EmbeddingConfig{Enabled: true, Provider: "service:" + name, Endpoint: "service:" + name, Model: model})
+}
+
 // A speech or transcription setting may name a service connector, but only an
 // approved one that provides it; the settings offer exactly those.
 func TestSpeechSettingsTakeAServiceThatSpeaks(t *testing.T) {
@@ -87,9 +106,10 @@ func TestEmbeddingSettingsTakeAServiceThatEmbeds(t *testing.T) {
 	}
 }
 
-// While this instance is the only thing that can embed, transcribe or speak,
-// each page says where to get something else instead of offering a choice of
-// one; once a connector is approved, the choice replaces the pointer.
+// While nothing else can embed, transcribe or speak, each page says where to
+// get something instead of offering a choice of none (or, for transcription
+// and speech, of this instance alone); once a connector is approved, the
+// choice replaces the pointer.
 func TestCapabilityPagesPointToAnAlternative(t *testing.T) {
 	saved := RootDB
 	RootDB = &DBase{Store: kvlite.MemStore()}

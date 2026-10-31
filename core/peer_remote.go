@@ -770,24 +770,41 @@ func PeerFromProvider(provider string) (RemotePeer, bool) {
 func ResolveEmbeddingProvider(cfg EmbeddingConfig) (EmbeddingConfig, error) {
 	provider := strings.TrimSpace(cfg.Provider)
 	if provider == "" {
-		if stored := strings.TrimSpace(GetEmbeddingConfig().Provider); strings.HasPrefix(stored, peerProviderPrefix) || strings.HasPrefix(stored, media.ServiceProviderPrefix) {
+		current := GetEmbeddingConfig()
+		if stored := strings.TrimSpace(current.Provider); strings.HasPrefix(stored, peerProviderPrefix) || strings.HasPrefix(stored, media.ServiceProviderPrefix) {
 			// A submission that says nothing about the provider cannot mean
-			// "stop using the peer" (or the service). Keep the selection and
-			// let the resolver overlay it as usual.
+			// "stop using the peer" (or the service). Keep the selection, so
+			// what is saved still names what embeds, and let the resolver
+			// overlay a peer as usual; a service keeps the space it names.
+			cfg.Provider = stored
+			if strings.HasPrefix(stored, media.ServiceProviderPrefix) {
+				cfg.Endpoint, cfg.APIKey = current.Endpoint, ""
+			}
 			return cfg, nil
 		}
 	}
 	// A service connector (core/service) is used as it is named; the admin
 	// handler checks that it provides embeddings. Its name is the endpoint,
 	// so EmbedVersion changes with it: vectors made elsewhere are a different
-	// space and are re-made, never compared.
+	// space and are re-made, never compared. The same connector saved again
+	// keeps the endpoint it was stored with: the one made from the settings
+	// this instance embedded with before connectors (core/service's
+	// migration) keeps that endpoint, and with it the vectors' space.
 	if strings.HasPrefix(provider, media.ServiceProviderPrefix) {
-		cfg.Provider, cfg.Endpoint, cfg.APIKey = provider, provider, ""
+		endpoint := provider
+		if stored := GetEmbeddingConfig(); strings.TrimSpace(stored.Provider) == provider && strings.TrimSpace(stored.Endpoint) != "" {
+			endpoint = stored.Endpoint
+		}
+		cfg.Provider, cfg.Endpoint, cfg.APIKey = provider, endpoint, ""
 		return cfg, nil
 	}
 	if provider == "" || provider == EmbeddingProviderLocal {
-		cfg.Provider = EmbeddingProviderLocal
-		return cfg, nil
+		// Embedding is done by a connector or a peer; this instance has no
+		// embedder of its own. Off is still off.
+		if !cfg.Enabled {
+			return cfg, nil
+		}
+		return cfg, fmt.Errorf("choose where embeddings are made: a connector (Admin > Extensions > Connectors) or a peer that lends them")
 	}
 	p, ok := PeerFromProvider(provider)
 	if !ok {

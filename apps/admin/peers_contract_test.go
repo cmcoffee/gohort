@@ -37,7 +37,7 @@ func TestPeersRoutesContract(t *testing.T) {
 		w.Write([]byte(`{"data":[{"embedding":[0.1,0.2]}]}`))
 	}))
 	defer embedder.Close()
-	SetEmbeddingConfig(EmbeddingConfig{Enabled: true, Endpoint: embedder.URL, Model: "nomic-embed-text"})
+	embedConnector(t, "embeddings", embedder.URL, "nomic-embed-text")
 	peerMux := http.NewServeMux()
 	peerMux.HandleFunc("/api/peer/manifest", HandlePeerManifest)
 	peerMux.HandleFunc("/api/peer/v1/token", HandlePeerToken)

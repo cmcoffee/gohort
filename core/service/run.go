@@ -148,8 +148,32 @@ func (s Spec) wait(ctx context.Context, t transport, st Step, vars map[string]an
 	return last, err
 }
 
-// output fills one contract output from the last reply.
+// output fills one contract output from the last reply: from the first of
+// its places (the output, then each of its or) that has something there.
 func (t transport) output(ctx context.Context, last reply, o Output, vars map[string]any) (Value, error) {
+	v, err := t.outputAt(ctx, last, o, vars)
+	for _, alt := range o.Or {
+		if err == nil && !noValue(v) {
+			break
+		}
+		if av, aerr := t.outputAt(ctx, last, alt, vars); aerr == nil && !noValue(av) {
+			v, err = av, nil
+		}
+	}
+	return v, err
+}
+
+// noValue is a json or text output that found nothing at its path.
+func noValue(v Value) bool {
+	if v.File != nil {
+		return false
+	}
+	t := strings.TrimSpace(v.Text)
+	return t == "" || t == "null"
+}
+
+// outputAt fills one contract output from one place in the last reply.
+func (t transport) outputAt(ctx context.Context, last reply, o Output, vars map[string]any) (Value, error) {
 	o.Path = fillPath(o.Path, vars)
 	if o.From == "body" {
 		if last.file == nil {
@@ -179,7 +203,7 @@ func (t transport) output(ctx context.Context, last reply, o Output, vars map[st
 	case "json":
 		return jsonOutput(last.node, o)
 	}
-	if o.Each != "" || len(o.Fields) > 0 {
+	if o.Each != "" || len(o.Fields) > 0 || o.Single {
 		return jsonOutput(last.node, o)
 	}
 	if last.node == nil {
@@ -194,6 +218,14 @@ func jsonOutput(node any, o Output) (Value, error) {
 	raw := apijob.LookupJSON(node, o.Path, "")
 	if len(o.Fields) > 0 {
 		return fieldsOutput(raw, o)
+	}
+	if o.Single && raw != "" {
+		item := json.RawMessage(raw)
+		if !json.Valid(item) {
+			item, _ = json.Marshal(raw) // a string: LookupJSON gives it bare
+		}
+		b, err := json.Marshal([]json.RawMessage{item})
+		return Value{Text: string(b)}, err
 	}
 	if o.Each == "" {
 		return Value{Text: raw}, nil

@@ -26,10 +26,9 @@ func TestAdminSecretsAreMaskedAndKept(t *testing.T) {
 	a.db.Set(MailTable, "password", secret)
 	a.db.Set(ImageTable, "provider", "openai")
 	a.db.Set(ImageTable, "api_key", secret)
-	a.db.Set(EmbeddingTable, "current", EmbeddingConfig{Endpoint: "http://127.0.0.1:1", APIKey: secret})
 	a.db.Set(TranscribeTable, "current", TranscribeConfig{Endpoint: "http://127.0.0.1:1", APIKey: secret})
 
-	for _, path := range []string{"/api/web-search", "/api/mail", "/api/image-gen", "/api/embeddings", "/api/transcribe"} {
+	for _, path := range []string{"/api/web-search", "/api/mail", "/api/image-gen", "/api/transcribe"} {
 		w := httptest.NewRecorder()
 		sub.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
 		if strings.Contains(w.Body.String(), secret) {

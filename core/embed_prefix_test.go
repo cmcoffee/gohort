@@ -23,9 +23,8 @@ func TestEmbedPrefixesMarkEachSide(t *testing.T) {
 		_, _ = w.Write([]byte(`{"data":[{"embedding":[0.1,0.2]}]}`))
 	}))
 	defer srv.Close()
-	cfg := EmbeddingConfig{Enabled: true, Endpoint: srv.URL, Model: "e5", QueryPrefix: "query: ", DocPrefix: "passage: "}
-	prev := GetEmbeddingConfig()
-	defer SetEmbeddingConfig(prev)
+	cfg := useConnectorEmbedder(t, srv.URL, "e5")
+	cfg.QueryPrefix, cfg.DocPrefix = "query: ", "passage: "
 	SetEmbeddingConfig(cfg)
 
 	ctx := context.Background()

@@ -16,6 +16,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/cmcoffee/gohort/core/media"
 )
 
 // reembedFailStreak is how many consecutive embed failures end the pass.
@@ -117,18 +119,18 @@ func reembedChunks(ctx context.Context, db Database, what string, want func(c Em
 	ReportMaintenanceProgress(ctx, fmt.Sprintf("starting: %d chunk(s) to check", len(keys)))
 	lastReport := time.Now()
 
-	url := embedEndpointURL(cfg)
+	url := embedPauseAddress(cfg)
 	// waitOut waits out a pause the embedder asked for (a peer key's per
 	// minute ceiling), with no chunk's deadline running and the wait on the
 	// progress line. False means the pass was cancelled.
 	waitOut := func() bool {
-		d := embedPausedFor(url)
+		d := media.PausedFor(url)
 		if d <= 0 {
 			return true
 		}
 		ReportMaintenanceProgress(ctx, fmt.Sprintf("%d of %d chunk(s) checked - %d re-embedded - the embedder is rate limiting, waiting %s",
 			scanned, len(keys), fixed, d.Round(time.Second)))
-		if waitEmbedRateLimit(ctx, url) != nil {
+		if media.WaitPause(ctx, url) != nil {
 			return false
 		}
 		lastReport = time.Now()
@@ -159,7 +161,7 @@ func reembedChunks(ctx context.Context, db Database, what string, want func(c Em
 				if ctx.Err() != nil {
 					return true
 				}
-				if embedPausedFor(url) > 0 {
+				if media.PausedFor(url) > 0 {
 					continue
 				}
 				failed++
@@ -232,7 +234,7 @@ func reembedChunks(ctx context.Context, db Database, what string, want func(c Em
 			if ctx.Err() != nil {
 				return true
 			}
-			if embedPausedFor(url) > 0 {
+			if media.PausedFor(url) > 0 {
 				continue // the same batch again once the pause is over
 			}
 			batching = false

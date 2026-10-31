@@ -3,7 +3,7 @@
 alice GET /api/embeddings ""
   403 forbidden
 root GET /api/embeddings ""
-  200 {"endpoint":"","model":"","api_key":"","enabled":false,"provider":"local"}
+  200 {"endpoint":"","model":"","api_key":"","enabled":false}
 root PUT /api/embeddings "{}"
   405 method not allowed
 (signed out) GET /api/transcribe ""
@@ -29,14 +29,6 @@ alice GET /api/image-gen ""
 root GET /api/image-gen ""
   200 {"api_key":"","provider":"gemini"}
 root PUT /api/image-gen "{}"
-  405 method not allowed
-(signed out) GET /api/embeddings/models ""
-  403 forbidden
-alice GET /api/embeddings/models ""
-  403 forbidden
-root GET /api/embeddings/models ""
-  200 []
-root PUT /api/embeddings/models "{}"
   405 method not allowed
 (signed out) GET /api/speech/voices ""
   403 forbidden
@@ -78,34 +70,34 @@ root POST /api/image-gen/test "{\"enabled\":"
   400 invalid JSON: unexpected EOF
 root POST /api/image-gen/test ""
   400 invalid JSON: EOF
-alice POST /api/embeddings "{\"enabled\":true,\"endpoint\":\"<stub>/embed/v1\",\"model\":\"nomic-embed-text\",\"api_key\":\"s3cr3t-embed-x\"}"
+alice POST /api/embeddings "{\"enabled\":true,\"provider\":\"service:vectors\"}"
   403 forbidden
-root POST /api/embeddings "{\"enabled\":true,\"provider\":\"local\",\"endpoint\":\"<stub>/embed/v1\",\"model\":\"nomic-embed-text\",\"api_key\":\"s3cr3t-embed-1\"}"
+root POST /api/embeddings "{\"enabled\":true,\"provider\":\"local\",\"endpoint\":\"<stub>/embed/v1\",\"api_key\":\"s3cr3t-embed-1\"}"
+  400 choose where embeddings are made: a connector (Admin > Extensions > Connectors) or a peer that lends them
+root POST /api/embeddings "{\"enabled\":true,\"provider\":\"service:vectors\",\"model\":\"typed-in\"}"
   204 
 root GET /api/embeddings ""
-  200 {"endpoint":"<stub>/embed/v1","model":"nomic-embed-text","api_key":"(unchanged)","enabled":true,"provider":"local"}
-root POST /api/embeddings "{\"enabled\":true,\"provider\":\"local\",\"endpoint\":\"<stub>/embed/v1\",\"model\":\"nomic-embed-text\",\"api_key\":\"(unchanged)\"}"
-  204 
-root GET /api/embeddings/models ""
-  200 [{"id":"bge-m3","name":"bge-m3","value":"bge-m3"},{"id":"nomic-embed-text","name":"nomic-embed-text","value":"nomic-embed-text"}]
+  200 {"endpoint":"service:vectors","model":"nomic-embed-text","api_key":"","enabled":true,"provider":"service:vectors"}
+root POST /api/embeddings "{\"enabled\":true,\"provider\":\"service:nope\"}"
+  400 no connector named "nope"
 root POST /api/embeddings "{\"enabled\":true,\"provider\":\"peer:nope\"}"
   400 no peer named "nope" is registered: add it under Peers first
+root POST /api/embeddings "{\"enabled\":false,\"provider\":\"service:vectors\"}"
+  204 
 root POST /api/embeddings "{\"enabled\":"
   400 invalid JSON: unexpected EOF
 root POST /api/embeddings ""
   400 invalid JSON: EOF
-root POST /api/embeddings/test "{\"enabled\":false,\"endpoint\":\"<stub>/embed/v1\",\"model\":\"nomic-embed-text\"}"
+root POST /api/embeddings/test "{\"enabled\":false,\"provider\":\"service:vectors\"}"
   200 {"error":"embeddings are disabled: flip the toggle on first","ok":false}
 root POST /api/embeddings/test "{\"enabled\":true,\"model\":\"m\"}"
-  200 {"error":"endpoint is required","ok":false}
+  200 {"message":"OK: 3-dim embedding from nomic-embed-text via the service vectors","ok":true}
 root POST /api/embeddings/test "{\"enabled\":true,\"provider\":\"peer:nope\"}"
   200 {"error":"no peer named \"nope\" is registered: add it under Peers first","ok":false}
-root POST /api/embeddings/test "{\"enabled\":true,\"endpoint\":\"<stub>/embed/v1\",\"model\":\"nomic-embed-text\",\"api_key\":\"(unchanged)\"}"
-  200 {"message":"OK: 3-dim embedding from nomic-embed-text via this instance","ok":true}
-root POST /api/embeddings/test "{\"enabled\":true,\"endpoint\":\"<stub>/embed/v1\"}"
-  200 {"message":"OK: 3-dim embedding from server default via this instance","ok":true}
-root POST /api/embeddings/test "{\"enabled\":true,\"endpoint\":\"http://127.0.0.1:1/v1\"}"
-  200 {"error":"embed request failed (http://127.0.0.1:1/v1/embeddings): Post \"http://127.0.0.1:1/v1/embeddings\": dial tcp 127.0.0.1:1: connect: connection refused","ok":false}
+root POST /api/embeddings/test "{\"enabled\":true,\"provider\":\"service:vectors\"}"
+  200 {"message":"OK: 3-dim embedding from nomic-embed-text via the service vectors","ok":true}
+root POST /api/embeddings/test "{\"enabled\":true,\"provider\":\"service:gone\"}"
+  200 {"error":"embed through service gone: embed: request failed: Post \"http://127.0.0.1:1/v1/embeddings\": dial tcp 127.0.0.1:1: connect: connection refused","ok":false}
 alice POST /api/transcribe "{\"enabled\":true,\"endpoint\":\"<stub>/stt-ok/v1\",\"api_key\":\"s3cr3t-stt-x\"}"
   403 forbidden
 root POST /api/transcribe "{\"enabled\":true,\"endpoint\":\"<stub>/stt-ok/v1\",\"model\":\"whisper-1\",\"api_key\":\"s3cr3t-stt\"}"
@@ -187,8 +179,8 @@ root POST /api/image-gen "{\"provider\":\"gemini\",\"api_key\":\"\"}"
 root POST /api/image-gen/test "{\"provider\":\"gemini\",\"api_key\":\"(unchanged)\"}"
   200 {"error":"no API key: set one here, or set the matching LLM provider's key","ok":false}
 activity log, 9 entries:
-  settings root: updated embeddings config (enabled=true provider="local" endpoint="<stub>/embed/v1" model="nomic-embed-text")
-  settings root: updated embeddings config (enabled=true provider="local" endpoint="<stub>/embed/v1" model="nomic-embed-text")
+  settings root: updated embeddings config (enabled=false provider="service:vectors" endpoint="service:vectors" model="nomic-embed-text")
+  settings root: updated embeddings config (enabled=true provider="service:vectors" endpoint="service:vectors" model="nomic-embed-text")
   settings root: updated image-gen config (provider="gemini")
   settings root: updated image-gen config (provider="gemini")
   settings root: updated image-gen config (provider="openai")

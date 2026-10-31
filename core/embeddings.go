@@ -8,7 +8,6 @@ import (
 	"io"
 	"math"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -17,26 +16,27 @@ import (
 	"github.com/cmcoffee/gohort/core/textutil"
 )
 
-// EmbeddingConfig holds the endpoint + model for the ollama-compatible
-// embeddings API used by the semantic-search pipeline. Defaults pull
-// from the worker LLM's endpoint and nomic-embed-text so a typical
-// ollama deployment needs no extra configuration beyond `ollama pull
-// nomic-embed-text`. Set via --setup or the admin WebUI.
+// EmbeddingConfig says where embeddings are made for the semantic-search
+// pipeline: a service connector ("service:<name>", core/service) or a peer
+// that lends them ("peer:<name>"). The connector keeps its own address, model
+// and key; Endpoint and Model here name the SPACE the stored vectors are in
+// (EmbedVersion), and Model is the one each embed asks the connector for. Set
+// under Admin > Capabilities > Embeddings.
 type EmbeddingConfig struct {
-	Endpoint string `json:"endpoint"` // base URL, e.g. http://localhost:11434/api
-	Model    string `json:"model"`    // optional — required for Ollama, ignored by single-model backends (llama.cpp, vLLM, hf-tei)
-	APIKey   string `json:"api_key"`  // optional bearer token (OpenAI hosted, authenticated proxies)
+	Endpoint string `json:"endpoint"` // names the space: the connector ("service:<name>"), the peer's endpoint, or the endpoint embeddings were made at before connectors
+	Model    string `json:"model"`    // the model asked for; blank for a single-model server
+	APIKey   string `json:"api_key"`  // a peer's credential, as last resolved; a connector's key is its credential's
 	Enabled  bool   `json:"enabled"`  // false → ingestion and search become no-ops
-	// Provider records WHERE this config came from: "local" (the fields above
-	// were typed in) or "peer:<name>" (they were resolved from a registered
-	// peer instance — see ResolveEmbeddingProvider).
+	// Provider is what makes the embeddings: "service:<name>" or
+	// "peer:<name>". Blank or "local" is a config stored before every
+	// embedder was a connector, which core/service's migration moves onto one
+	// at startup.
 	//
-	// It is NOT bookkeeping only: GetEmbeddingConfig reads it and overlays the
-	// named peer's current endpoint, model and key, so the fields above are a
-	// last-known cache rather than the operative values. That indirection is
-	// what makes rotating a peer key take effect without editing this record.
-	// Blank means local, which is what every config stored before peers existed
-	// says.
+	// For a peer it is NOT bookkeeping only: GetEmbeddingConfig reads it and
+	// overlays the named peer's current endpoint, model and key, so the fields
+	// above are a last-known cache rather than the operative values. That
+	// indirection is what makes rotating a peer key take effect without
+	// editing this record.
 	Provider string `json:"provider,omitempty"`
 	// QueryPrefix and DocPrefix are prepended to the text on the query side
 	// and the document side respectively. Many retrieval embedders are
@@ -65,11 +65,13 @@ type EmbeddingConfig struct {
 // prefix keep the bare model name, so their existing rows still match.
 //
 // A service that names no model is stamped with its own name rather than
-// nothing: a blank stamp is compared with every row, and a hosted model is
-// never the one a local row was made with.
+// nothing: a blank stamp is compared with every row, and a service chosen
+// later is never the one an older row was made with. Not the connector made
+// from the settings this instance embedded with before connectors: it keeps
+// their endpoint (ResolveEmbeddingProvider), and their space with it.
 func (cfg EmbeddingConfig) spaceStamp() string {
 	model := cfg.Model
-	if model == "" && strings.HasPrefix(cfg.Provider, media.ServiceProviderPrefix) {
+	if model == "" && strings.HasPrefix(cfg.Provider, media.ServiceProviderPrefix) && !strings.Contains(cfg.Endpoint, "://") {
 		model = cfg.Provider
 	}
 	if p := cfg.DocPrefix; p != "" {
@@ -90,7 +92,7 @@ var (
 // supersession band, chunk search) with no visible failure. Consumers treat
 // a version mismatch as "no cached vector" and re-embed on touch.
 // Limitation: single-model backends (llama.cpp) ignore Model, so a model
-// swapped behind the SAME endpoint is undetectable — change the endpoint
+// swapped behind the SAME connector is undetectable: choose a new connector
 // (or set Model informationally) when swapping embedders there.
 func EmbedVersion() string {
 	cfg := GetEmbeddingConfig()
@@ -147,16 +149,6 @@ func SaveEmbeddingConfigToDB(db Database, cfg EmbeddingConfig) error {
 	return nil
 }
 
-// Embed returns the embedding vector for the given text under the
-// currently configured endpoint/model. Appends `/embeddings` to the
-// configured endpoint, so the configured base URL must already include
-// the API-version prefix (Ollama: http://host:port/api, llama.cpp /
-// vLLM / OpenAI: http://host:port/v1). Response parser accepts all
-// three response shapes — Ollama native ({embeddings:[[...]]}), older
-// Ollama ({embedding:[...]}), and OpenAI ({data:[{embedding:[...]}]}).
-// Returns an error when embeddings are disabled or the endpoint is
-// unreachable — caller should treat this as a skip condition, not a
-// fatal error.
 // embedSlowWarn is when an embed stops being a detail and becomes the reason a
 // message felt slow. Well under the recall-hint budget, so a hint that is about
 // to be abandoned still leaves a trace explaining why.
@@ -263,13 +255,22 @@ func embedTexts(ctx context.Context, cfg EmbeddingConfig, texts []string) ([][]f
 	if name, ok := strings.CutPrefix(cfg.Provider, media.ServiceProviderPrefix); ok {
 		return embedThroughService(ctx, cfg, name, texts, chars)
 	}
-	if cfg.Endpoint == "" {
-		return nil, fmt.Errorf("embedding endpoint not configured")
+	if strings.HasPrefix(strings.TrimSpace(cfg.Provider), peerProviderPrefix) {
+		return embedFromPeer(ctx, cfg, texts, chars)
 	}
-	// Model is optional — single-model backends (llama.cpp,
-	// vLLM, hf-tei) load one model at startup and ignore the field.
-	// Omit it from the payload when blank so those servers don't 4xx
-	// on an unknown model name; Ollama still requires it.
+	return nil, fmt.Errorf("embeddings are not set to a connector or a peer: choose one under Admin > Capabilities > Embeddings")
+}
+
+// embedFromPeer embeds through a peer instance that lends embeddings: its
+// OpenAI-shaped endpoint (/api/peer/v1/embeddings), with the peer key resolved
+// as it is sent. Not queued behind the local model: the peer does the work,
+// and schedules it against its own load.
+func embedFromPeer(ctx context.Context, cfg EmbeddingConfig, texts []string, chars int) ([][]float32, error) {
+	if cfg.Endpoint == "" {
+		return nil, fmt.Errorf("the peer's embedding endpoint is not known yet")
+	}
+	// Model is optional: a peer serving a single-model backend names none,
+	// and is not sent one it would refuse.
 	var payload []byte
 	if cfg.Model != "" {
 		payload, _ = json.Marshal(struct {
@@ -284,26 +285,10 @@ func embedTexts(ctx context.Context, cfg EmbeddingConfig, texts []string) ([][]f
 
 	url := embedEndpointURL(cfg)
 
-	// Queue behind the local model scheduler, the same one chat completions
-	// use. An embed is usually served by the SAME process as the worker model,
-	// so an unscheduled one competes with chat for exactly the resource the
-	// queue exists to protect.
-	//
-	// Not when the embedder is a PEER: that work happens on another instance,
-	// which schedules it against its own load. Queueing it here would stall it
-	// behind a local model that is not doing it.
-	if !strings.Contains(cfg.Endpoint, "/api/peer/") {
-		release, err := AcquireEmbedSlot(ctx, embedCaller(ctx))
-		if err != nil {
-			return nil, fmt.Errorf("embed queue: %w", err)
-		}
-		defer release()
-	}
-
-	// An endpoint that said "too many" is left alone until it said to come
-	// back, within this call's own deadline.
-	if err := waitEmbedRateLimit(ctx, url); err != nil {
-		return nil, err
+	// A peer that said "too many" (its key's per-minute ceiling) is left
+	// alone until it said to come back, within this call's own deadline.
+	if err := media.WaitPause(ctx, url); err != nil {
+		return nil, fmt.Errorf("embed %w", err)
 	}
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(payload))
 	if err != nil {
@@ -318,11 +303,11 @@ func embedTexts(ctx context.Context, cfg EmbeddingConfig, texts []string) ([][]f
 	// Latency-sensitive callers pass a ctx with their own budget — the request
 	// is context-aware, so the shorter of the two wins.
 	//
-	// Through PeerClientForProvider, so a peer-backed embedder authenticates
-	// itself: the Authorization set above carries whatever key was live when
-	// this config was READ, and reads happen far from sends. When the provider
-	// names a peer the transport replaces it with a credential resolved now and
-	// re-exchanges if the peer refuses it; otherwise this is a plain client.
+	// Through PeerClientForProvider, so the peer key is the one live when the
+	// request is SENT: the Authorization set above carries whatever key was
+	// live when this config was read, and reads happen far from sends. The
+	// transport replaces it with a credential resolved now and re-exchanges if
+	// the peer refuses it.
 	client := PeerClientForProvider(cfg.Provider, 60*time.Second)
 	started := time.Now()
 	resp, err := client.Do(req)
@@ -333,7 +318,7 @@ func embedTexts(ctx context.Context, cfg EmbeddingConfig, texts []string) ([][]f
 	// source to work out what could even live there. Slow embeds warn without
 	// DEBUG on, because that is the case an operator needs to see.
 	if elapsed > embedSlowWarn {
-		Log("[embed] SLOW %s in %s (endpoint=%s, %d chars): an embed on a turn's critical path delays the whole message; check whether this endpoint shares a server with the worker model",
+		Log("[embed] SLOW %s in %s (peer endpoint=%s, %d chars): an embed on a turn's critical path delays the whole message",
 			embedOutcome(err, resp), elapsed.Round(time.Millisecond), url, chars)
 	} else {
 		Debug("[embed] %s in %s (endpoint=%s, %d input(s), %d chars)", embedOutcome(err, resp), elapsed.Round(time.Millisecond), url, len(texts), chars)
@@ -344,7 +329,7 @@ func embedTexts(ctx context.Context, cfg EmbeddingConfig, texts []string) ([][]f
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode == http.StatusTooManyRequests {
-		noteEmbedRateLimit(url, resp.Header.Get("Retry-After"))
+		media.NotePause(url, resp.Header.Get("Retry-After"))
 	}
 	if resp.StatusCode != 200 {
 		// Include the URL and response body in the error so the
@@ -402,18 +387,37 @@ func embedTexts(ctx context.Context, cfg EmbeddingConfig, texts []string) ([][]f
 	return vecs, nil
 }
 
-// embedThroughService is embedTexts for a service connector. Not queued
-// behind the local model: the service does the work, and its own limits and
-// health are the service's. Logged the same way, slow or not.
+// embedThroughService is embedTexts for a service connector, logged the same
+// way, slow or not. A service's limits and health are the service's: its
+// transport waits out a "too many requests" itself.
 func embedThroughService(ctx context.Context, cfg EmbeddingConfig, name string, texts []string, chars int) ([][]float32, error) {
 	if media.EmbedService == nil {
 		return nil, fmt.Errorf("embeddings are set to the service %q, and services are not available here", name)
 	}
+	// A connector on this machine or its network is usually served by the
+	// SAME process as the worker model (Ollama, llama.cpp), so it queues
+	// behind the local model scheduler, the one chat completions use: an
+	// unscheduled embed competes with chat for exactly the resource the queue
+	// exists to protect. A hosted service does its own work and is not queued.
+	local := embedderIsLocal(name)
+	if local {
+		release, err := AcquireEmbedSlot(ctx, embedCaller(ctx))
+		if err != nil {
+			return nil, fmt.Errorf("embed queue: %w", err)
+		}
+		defer release()
+	}
 	started := time.Now()
 	vecs, err := media.EmbedService(ctx, name, cfg.Model, texts)
 	if elapsed := time.Since(started); elapsed > embedSlowWarn {
-		Log("[embed] SLOW through service %s in %s (%d chars): an embed on a turn's critical path delays the whole message",
-			name, elapsed.Round(time.Millisecond), chars)
+		// The likeliest cause, named: a bare duration sends the reader back to
+		// guessing.
+		cause := "the service is slow to answer"
+		if local {
+			cause = "check whether this connector's server shares a server with the worker model"
+		}
+		Log("[embed] SLOW through service %s in %s (%d chars): an embed on a turn's critical path delays the whole message; %s",
+			name, elapsed.Round(time.Millisecond), chars, cause)
 	} else {
 		Debug("[embed] through service %s in %s (%d input(s), %d chars)", name, elapsed.Round(time.Millisecond), len(texts), chars)
 	}
@@ -431,72 +435,37 @@ func embedThroughService(ctx context.Context, cfg EmbeddingConfig, name string, 
 	return vecs, nil
 }
 
-// An embedder that answers 429 (a peer's per-key limit, a hosted API's quota)
-// is paused until the time its Retry-After names, per endpoint. Every embed to
-// it waits that out instead of sending into the refusal: a repair pass that
-// re-embeds one chunk after another hit a peer key's 600 a minute, counted
-// each refusal as a failure, and five in a row ended the pass as though the
-// endpoint were down.
-var (
-	embedPauseMu sync.Mutex
-	embedPause   = map[string]time.Time{}
-)
-
-// embedRateLimitDefault is the pause when a 429 names no Retry-After.
-const embedRateLimitDefault = 10 * time.Second
-
-// noteEmbedRateLimit records a 429 from url: paused for retryAfter (seconds,
-// or an HTTP date), capped at a minute.
-func noteEmbedRateLimit(url, retryAfter string) {
-	wait := embedRateLimitDefault
-	if s, err := strconv.Atoi(strings.TrimSpace(retryAfter)); err == nil && s > 0 {
-		wait = time.Duration(s) * time.Second
-	} else if t, err := http.ParseTime(retryAfter); err == nil {
-		wait = time.Until(t)
+// embedServiceAddress is the address of the service connector named name,
+// or "" when it cannot be read.
+func embedServiceAddress(name string) string {
+	if media.ServiceAddress == nil {
+		return ""
 	}
-	wait = min(max(wait, time.Second), time.Minute)
-	until := time.Now().Add(wait)
-	embedPauseMu.Lock()
-	if until.After(embedPause[url]) {
-		embedPause[url] = until
-	}
-	embedPauseMu.Unlock()
-	Log("[embed] %s is rate limiting: pausing embeds to it for %s", url, wait.Round(time.Second))
+	return media.ServiceAddress(name)
 }
 
-// embedPausedFor is how long embeds to url still wait, or 0.
-func embedPausedFor(url string) time.Duration {
-	embedPauseMu.Lock()
-	defer embedPauseMu.Unlock()
-	if d := time.Until(embedPause[url]); d > 0 {
-		return d
+// embedderIsLocal reports whether the service connector named name reaches
+// this machine or its network: judged by its address, as a model connector's
+// privacy is, and not local when it cannot be read.
+func embedderIsLocal(name string) bool {
+	addr := embedServiceAddress(name)
+	if addr == "" {
+		return false
 	}
-	delete(embedPause, url)
-	return 0
+	local, _ := ProviderLooksPrivate("llama.cpp", addr)
+	return local
 }
 
-// waitEmbedRateLimit waits out url's pause. A deadline that ends first is the
-// error, without sending: a call that cannot wait (a turn's query embed)
-// fails fast instead of adding to the refusals.
-func waitEmbedRateLimit(ctx context.Context, url string) error {
-	d := embedPausedFor(url)
-	if d <= 0 {
-		return nil
+// embedPauseAddress is where cfg's embeds go, as its pause is kept
+// (core/media): the service connector's address, or the peer's endpoint.
+func embedPauseAddress(cfg EmbeddingConfig) string {
+	if name, ok := strings.CutPrefix(cfg.Provider, media.ServiceProviderPrefix); ok {
+		return embedServiceAddress(name)
 	}
-	if dl, ok := ctx.Deadline(); ok && time.Until(dl) < d {
-		return fmt.Errorf("embed rate limited by %s for another %s", url, d.Round(time.Second))
-	}
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-t.C:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	return embedEndpointURL(cfg)
 }
 
-// embedEndpointURL is the URL embedRaw posts to for cfg.
+// embedEndpointURL is the URL a peer's embeds are posted to.
 func embedEndpointURL(cfg EmbeddingConfig) string {
 	return strings.TrimRight(cfg.Endpoint, "/") + "/embeddings"
 }

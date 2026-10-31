@@ -31,7 +31,7 @@ func peerServer(t *testing.T, caps ...string) (base, key string) {
 		w.Write([]byte(`{"data":[{"embedding":[0.1,0.2,0.3,0.4]}]}`))
 	}))
 	t.Cleanup(embedder.Close)
-	SetEmbeddingConfig(EmbeddingConfig{Enabled: true, Endpoint: embedder.URL, Model: "nomic-embed-text"})
+	useConnectorEmbedder(t, embedder.URL, "nomic-embed-text")
 
 	pk, err := MintPeerKey("consumer", caps, 0)
 	if err != nil {
@@ -251,21 +251,21 @@ func TestResolveEmbeddingProviderRefusesAnUnknownPeer(t *testing.T) {
 	}
 }
 
-// Local and blank both mean "this instance", and neither may disturb the typed
-// fields. Blank is what every config written before peers existed says.
-func TestResolveEmbeddingProviderLeavesLocalAlone(t *testing.T) {
+// This instance has no embedder of its own: local and blank (what every
+// config written before peers existed says) are refused while embeddings are
+// on, so a save cannot point them at an endpoint nothing reads, and kept as
+// they are while embeddings are off.
+func TestResolveEmbeddingProviderRefusesLocal(t *testing.T) {
 	for _, provider := range []string{"", EmbeddingProviderLocal} {
 		cfg := EmbeddingConfig{Enabled: true, Provider: provider,
 			Endpoint: "http://localhost:11434/api", Model: "nomic-embed-text", APIKey: "k"}
+		if got, err := ResolveEmbeddingProvider(cfg); err == nil {
+			t.Errorf("provider %q was accepted: %+v", provider, got)
+		}
+		cfg.Enabled = false
 		got, err := ResolveEmbeddingProvider(cfg)
-		if err != nil {
-			t.Fatalf("provider %q: %v", provider, err)
-		}
-		if got.Endpoint != cfg.Endpoint || got.Model != cfg.Model || got.APIKey != cfg.APIKey {
-			t.Errorf("provider %q disturbed the local config: %+v", provider, got)
-		}
-		if got.Provider != EmbeddingProviderLocal {
-			t.Errorf("provider %q should normalize to %q, got %q", provider, EmbeddingProviderLocal, got.Provider)
+		if err != nil || got != cfg {
+			t.Errorf("provider %q, off: %+v %v", provider, got, err)
 		}
 	}
 }
