@@ -143,3 +143,51 @@ func TestAConnectorIsTheSearchEngine(t *testing.T) {
 		t.Errorf("an unknown provider: %v", err)
 	}
 }
+
+// Since 2026-10-30 Google lets only the first few result links of a search be
+// opened, and search APIs serving its results give the rest as
+// google.com/goto links. Every provider's results are marked where that
+// happens: the title and snippet stay for an agent to read, the link says why
+// it is missing, and research, which reads only a web address there, passes
+// over the result.
+func TestGoogleRedirectLinksAreMarked(t *testing.T) {
+	savedRoot, savedAuth := RootDB, AuthDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	auth := &DBase{Store: kvlite.MemStore()}
+	AuthDB = func() Database { return auth }
+	t.Cleanup(func() { RootDB, AuthDB = savedRoot, savedAuth })
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"organic":[
+			{"title":"First","link":"https://example.org/one","snippet":"Opens."},
+			{"title":"Fourth","link":"https://www.google.com/goto?id=abc123","snippet":"Was a goto."},
+			{"title":"Fifth","link":"https://google.co.uk/url?q=https://example.org/five","snippet":"Was a url redirect."},
+			{"title":"Sixth","link":"https://www.googleblog.com/goto","snippet":"Not Google's redirect."}]}`))
+	}))
+	defer srv.Close()
+	spec := `{"provider":{"transport":"http","base_url":"` + srv.URL + `","auth":{"none":true},
+		"operations":{"search":{"method":"POST","path":"/search","body":{"q":"{query}"}}}},
+		"provides":[{"capability":"web.search","steps":[{"call":"search"}],
+		"output":{"results":{"path":"organic","fields":{"title":"title","url":"link","snippet":"snippet"}}}}]}`
+	if err := SaveConnector(RootDB, Connector{Name: "serpish", Kind: "service", Spec: []byte(spec)}); err != nil {
+		t.Fatal(err)
+	}
+	ApproveConnector(RootDB, "serpish")
+	out, err := SearchWithProvider(SearchRequest{Query: "x", Provider: "service:serpish"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "google.com/goto") || strings.Contains(out, "google.co.uk/url") {
+		t.Errorf("a redirect link was handed on:\n%s", out)
+	}
+	if !strings.Contains(out, "2. Fourth\n   "+noUsableLink+"\n   Was a goto.") || !strings.Contains(out, "3. Fifth\n   "+noUsableLink) {
+		t.Errorf("the redirected results lost their place, title or snippet:\n%s", out)
+	}
+	src := ParseSearchResults(out)
+	if len(src) != 2 || src[0].URL != "https://example.org/one" || src[1].URL != "https://www.googleblog.com/goto" {
+		t.Errorf("research reads only the links that open: %+v", src)
+	}
+	if got := markUnopenable("No results found."); got != "No results found." {
+		t.Errorf("no results: %q", got)
+	}
+}

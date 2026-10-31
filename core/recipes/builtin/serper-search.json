@@ -3,7 +3,7 @@
   "title": "Serper (web search)",
   "description": "Google results through Serper as gohort's web search, declared as a service: the request and how its results are read are data you can test and fix from Admin > Connectors.",
   "category": "Search",
-  "setup_notes": "Get an API key at serper.dev (new accounts come with free searches). The credential lands disabled: enable it under API Credentials. The connector lands unapproved: approve it in Admin > Extensions > Connectors and run Test on its row, which makes one real search for a common phrase. Then pick it under Admin > Capabilities > Web Search as Service: <name>. No price is declared, as it depends on your plan: add a per_call cost to the connector's spec to see what searches cost.",
+  "setup_notes": "Get an API key at serper.dev (new accounts come with free searches). Since 30 October 2026 Google lets only the first few results of a search be opened: Serper gives the links after its top 3 as google.com/goto links, which gohort shows as having no usable link (title and snippet kept). The credential lands disabled: enable it under API Credentials. The connector lands unapproved: approve it in Admin > Extensions > Connectors and run Test on its row, which makes one real search for a common phrase. Then pick it under Admin > Capabilities > Web Search as Service: <name>. No price is declared, as it depends on your plan: add a per_call cost to the connector's spec to see what searches cost.",
   "questions": [
     {
       "name": "api_key",
