@@ -1,7 +1,8 @@
 # Integrations: connectors, webhooks, channels and one key store
 
 **Status:** design, for the owner's review. Nothing here is built. Written
-2026-11-01 from a conversation with the owner. It follows
+2026-11-01 from a conversation with the owner; the owner's answers to its
+questions are under Decisions. It follows
 `connectors-and-flows.md` (one way to think about every integration),
 narrows what a connector is, and plans a rework that reaches this design
 without migrations. `channels-and-agents.md` is where the word channel comes
@@ -230,11 +231,17 @@ channel's transport comes from:**
   address (a cloud address is not private), failing closed, and cost rates
   stay per provider.
 - **MCP servers** (remote and desktop): their own page.
-- **Desktop programs** (`desktop_command`): with the desktop's own page.
+- **Desktop programs** (`desktop_command`, and desktop MCP): a per-user
+  Desktop page, since each person sets up what runs on their own machine.
 - **Peers:** their own page. A peer's lent renderer becomes a connector.
 - **System Hooks programs** (`file_conversion`): already their own page.
 
-## DLP
+## DLP (later)
+
+**Decided 2026-11-01: DLP is revisited after everything else** (see
+Decisions). What follows are notes for then, not part of the plan. One rule
+holds until then: the rework adds no new way for data to leave gohort outside
+the control points below, so a DLP still has only these to hook.
 
 The model makes data loss prevention a matter of a few control points, not a
 scan of everything.
@@ -242,17 +249,11 @@ scan of everything.
 **The rule a DLP enforces:** sensitive data only flows to destinations
 trusted for it.
 
-**A trust level on every connection** (connector, webhook, channel, LLM
-provider, MCP server). Proposed values:
-
-- `internal`: this machine or the LAN;
-- `vendor`: a service under an agreement (a DPA, an enterprise contract);
-- `public`: anyone else.
-
-A new connection starts `public`, so nothing sensitive goes to it until
-someone says it may. That is fail-closed, as gohort's other safety defaults
-are. Trust is a stored field, so it is decided in this document, not later
-while building.
+**Whether connections carry a trust level is open (Q2).** The owner does not
+want trust drawn from internal versus external: an address on the LAN can
+forward to the cloud. Either a trust level is set by hand, with names that
+are not about network location, or there is none and the check judges what
+is sent rather than where it goes.
 
 **One egress check interface, called at every control point.** The DLP
 itself (pattern rules, a classifier, a vendor's engine) plugs in behind it
@@ -282,9 +283,35 @@ not carry a customer's name"), not a scan of opaque bytes.
 | Remote MCP tool calls | the MCP client | gap: hook the client |
 | Inbound (webhooks, tool results) | the webhook's one path; the existing tool-result scan | inbound counterpart, for injection and for logging |
 
-Building a DLP is not part of this plan. Two things are: the trust field and
-the egress check interface with its hooks, so that a DLP can plug in later
-without reopening the four concepts.
+**Where data leaks, and how:**
+
+| Path | What can leak | How it typically happens |
+|---|---|---|
+| The lead model (and any cloud tier) | the most, by volume: the conversation, tool results, files, gathered facts | every escalation sends the context |
+| web_search | little, but pointed: what is in the query | an agent searches a customer's name, an internal hostname, an error with an address in it; the query sits in the provider's logs |
+| fetch_url, the browser | what is in a URL, or typed into a page's form | an identifier in a query string; the browser filling a form |
+| Message sends (mail, Slack, Discord) | what the message carries | a report to the wrong channel, or one that says too much |
+| Connector calls (transcription, image APIs) | the file or text processed | a recording or document sent to a cloud service |
+
+**The first case is the lead model:** what is gohort willing to send to it?
+For each escalation, a DLP would choose one of:
+
+- send as is (today's behaviour);
+- redact, then send: strip what a policy matches (keys and tokens, customer
+  identifiers, facts gathered from the owner's systems), so the lead sees the
+  problem without the specifics;
+- do not escalate: keep a sensitive turn on the local worker, even if the
+  answer is weaker.
+
+**Search and fetch come next.** They carry less, but an agent chooses on its
+own what goes into a query or a URL, to a third party.
+
+**This leans Q2 toward a policy per destination, set by hand:** what am I
+willing to send to this model, this search provider, this cloud API. It is
+never inferred from where the destination sits on the network.
+
+When DLP is taken up: the egress check interface and its hooks first (the
+LLM request path, then search and fetch), the DLP itself behind it.
 
 ## The rework: reaching this design without migrations
 
@@ -367,8 +394,9 @@ No startup migration is added, and the six that exist are deleted.
 
 ### Helping the owner reconfigure
 
-- **A read-only report:** `gohort --config-report` prints what the old
-  settings were, and only that they had a key, never the key:
+- **A read-only report:** `gohort --config-report` prints the old settings as
+  the exact values to type into the new forms, tier by tier, and only that a
+  key was kept, never the key (decided, Q6):
   - each LLM tier's provider, address and model;
   - the web search provider, the Research Sources;
   - the image backend (ComfyUI's address; its workflow and node map,
@@ -377,7 +405,10 @@ No startup migration is added, and the six that exist are deleted.
   - per-user access and agent scopes;
   - agents naming anything that no longer exists.
 
-  It reads the database and changes nothing. It refuses while gohort runs,
+  The owner gathers the keys beforehand (Anthropic, OpenAI, Gemini, Serper,
+  ...), runs the report on the old build, deploys, and fills in the LLM tiers
+  first, so the window without a model is minutes. It reads the database and
+  changes nothing. It refuses while gohort runs,
   as the dry run did, and reads only the tables it names, never an app's
   data. It is deleted a release later.
 - **A cleanup button:** Admin > Maintenance > "Clear old connection records",
@@ -411,8 +442,8 @@ connector), but nothing is gained by it.
 | `service` | Connector | kept as is |
 | `rest_image` | Connector (ComfyUI is already; A1111 and peers' renderers in the rework) | reconfigure A1111; peers re-offer theirs |
 | provided LLM connections | built-in LLM providers | reconfigure each tier |
-| `remote_mcp`, `desktop_mcp` | MCP Servers page | later step; until then, as is |
-| `desktop_command` | the desktop's page | later step |
+| `remote_mcp` | MCP Servers page | later step; until then, as is |
+| `desktop_mcp`, `desktop_command` | the per-user Desktop page | later step |
 | `rest_poll` | a watch over a connector's `fetch` | later step |
 | `rest_messaging` | a connector (`message.send` + `message.fetch`) + a channel, + a webhook if it pushed | later step |
 | `bot_framework` | a channel type + a webhook with the `botframework` verifier | later step |
@@ -431,7 +462,7 @@ here, per the rule that names are agreed first.
 | Thing | Proposed name |
 |---|---|
 | the four concepts, in the UI | Connectors, Webhooks, Channels, Keys |
-| a page's choice of connector | **open (Q7):** plain names (`serper-search`), or per-job prefixes (`search:serper-search`) |
+| a page's choice of connector | plain names (`serper-search`); built-in names (`duckduckgo`, `smtp`, ...) reserved so no connector can take one; `peer:<name>` kept (decided, Q7) |
 | the compatible LLM providers | `openai_compatible`, `anthropic_compatible` (shown as "OpenAI-compatible endpoint", "Anthropic-compatible endpoint") |
 | their switches | `max_tokens_field`, `reasoning_field`, `stream_usage`, plus any the client already special-cases |
 | the reconfigure report | `gohort --config-report` |
@@ -442,8 +473,8 @@ here, per the rule that names are agreed first.
 | a webhook's consumer | `feeds`: `channel:<name>`, `watch:<agent>`, `flow:<name>` |
 | a webhook's reach | `reach`: `direct`, `peer:<name>` |
 | fetching messages | contract `message.fetch` |
-| trust | field `trust`: `internal`, `vendor`, `public` (default `public`) |
-| the egress check | `EgressCheck`, `Egress`, `Decision` |
+| trust | open (Q2), with DLP |
+| the egress check | `EgressCheck`, `Egress`, `Decision` (with DLP) |
 | one-provider Go in a connector | `builtin` (exists) |
 
 ## Order of work
@@ -465,37 +496,43 @@ once:
 
 **After the rework,** each its own branch, with no migration:
 
-9. The trust field and `EgressCheck`, hooked into the dispatch, then the LLM
-   request path, web reach, the sandbox relay and MCP. First after the rework,
-   so few connections exist unclassified.
-10. Webhooks: the record, `/hook/<name>`, the verifiers, the consumers;
-    `rest_messaging`'s webhook side, Bot Framework's inbound and `peer_relay`
-    move onto them.
-11. Channels on connectors: `message.fetch`; Slack, Discord and Teams
-    templates.
-12. Watches on connectors: `rest_poll` becomes a watch over a connector.
-13. MCP servers, desktop programs and peers on their own pages with the key
+9. Webhooks, first version: the record, `/hook/<name>`, the verifiers, and
+   two consumers, watches and flows (decided, Q4). `peer_relay` becomes a
+   webhook's reach. `rest_messaging`'s push side and Bot Framework's inbound
+   stay as they are until channels.
+10. Channels on connectors: `message.fetch`; Slack, Discord and Teams
+    templates; the channel consumer for webhooks; `rest_messaging` and Bot
+    Framework move, once.
+11. Watches on connectors: `rest_poll` becomes a watch over a connector.
+12. Desktop programs (`desktop_command`, `desktop_mcp`) on a per-user Desktop
+    page (decided, Q5); MCP servers and peers on their own pages with the key
     store's rules.
-14. The vault and the key store (Q3).
+13. The vault and the key store (Q3).
+14. DLP: the egress check and its hooks, then the DLP behind it; trust (Q2).
 
-## Open questions for the owner
+## Decisions (2026-11-01)
 
-1. **Approve for connectors.** Removing it means a connector a non-admin
-   drafts (Builder) is held only by the page that names it. Today that page's
-   save is the approval (`MarkChanged`), so nothing is lost, but confirm.
-2. **Trust defaults.** Should a connection on a LAN address start `internal`,
-   or should every connection start `public` until raised by hand?
-3. **The key store's shape.** Do connection spaces absorb the vault, or does
-   the vault take on the rules? The second keeps API Credentials as the page
-   people know. The first keeps one record per connection. Not needed for the
-   rework.
-4. **Webhooks without a channel.** Is "wake an agent" (a watch) or "start a
-   flow" enough of a consumer for the first version, or does the first
-   version need channels too?
-5. **Desktop programs.** Their own page, or System Hooks (programs on this
-   machine and on a desktop, together)?
-6. **The deploy sitting.** Is a window where gohort has no LLM until it is
-   reconfigured acceptable, or should the report also print the exact values
-   to paste, tier by tier, to keep the window to minutes?
-7. **Choice values.** Plain names, or per-job prefixes? Prefixes only earn
-   their place if one value can mean different things on one page.
+1. **Approve is dropped for connectors.** A connector is in use while a page
+   or an agent names it. A non-admin's or Builder's draft is held as Changed
+   until an admin saves a page naming it, so the gate moves to the page.
+2. **Trust: not drawn from internal versus external.** DLP as a whole is
+   revisited after everything else, and Q2 with it.
+3. (Q4) **Webhooks' first version feeds watches and flows.** Messaging's push
+   side and Bot Framework move once, with channels.
+4. (Q5) **Desktop programs get their own per-user page,** desktop MCP with
+   them.
+5. (Q6) **The report prints the exact values to type back in,** tier by tier,
+   and the owner has the keys ready, so the window without an LLM is minutes.
+   No "restore from old settings" button: that would be migration code under
+   another name.
+6. (Q7) **Pages store plain names.** Built-in names are reserved, and
+   `peer:<name>` stays.
+
+## Still open
+
+- **Q2. Trust,** with DLP: leaning toward a policy per destination, set by
+  hand (what is gohort willing to send to this model, this search provider),
+  never inferred from the address.
+- **Q3. The key store's shape:** the vault absorbs connection keys, connection
+  spaces absorb the vault, or two stores with the same rules. Not needed for
+  the rework.
