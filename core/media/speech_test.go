@@ -194,7 +194,7 @@ func TestSpeechThroughAConnector(t *testing.T) {
 	SpeechVoicesService = func(_ context.Context, connector string) ([]Voice, error) {
 		return []Voice{{ID: connector + "-voice"}}, nil
 	}
-	cfg := SpeechConfig{Enabled: true, Provider: ServiceProviderPrefix + "voice", Voice: "af_heart"}
+	cfg := SpeechConfig{Enabled: true, Provider: Choice(JobSpeak, "voice"), Voice: "af_heart"}
 	if audio, ext, err := SpeakWith(context.Background(), cfg, " hello "); err != nil || ext != ".mp3" || len(audio) == 0 || asked != "voice/hello/af_heart" {
 		t.Errorf("spoke: %v %q %q", err, ext, asked)
 	}

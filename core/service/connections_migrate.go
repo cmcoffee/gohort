@@ -42,6 +42,68 @@ func MigrateConnections(db Database) {
 	NewMigrationRunner("core", "").Once("connections:v2", func() int {
 		return migrateConnections(db)
 	})
+	NewMigrationRunner("core", "").Once("connections:v3", func() int {
+		return nameChoicesForJobs(db)
+	})
+}
+
+// providerPages are the settings that choose a connection by a single value,
+// and the job each has it do.
+var providerPages = []struct{ table, field, job string }{
+	{LLMTable, "provider", media.JobLLM}, {LeadLLMTable, "provider", media.JobLLM},
+	{SearchTable, "provider", media.JobSearch}, {MailTable, "provider", media.JobMail}, {BrowseTable, "source", media.JobRender},
+}
+
+// nameChoicesForJobs rewrites each setting that names a connection
+// "service:<name>" to name it for the job it has the connection do
+// (llm:anthropic, transcribe:local-transcription). An embedding config keeps
+// its endpoint, which names the space its vectors are in: only the provider
+// it names changes.
+func nameChoicesForJobs(db Database) int {
+	changed := 0
+	for _, p := range providerPages {
+		var v string
+		if db.Get(p.table, p.field, &v) {
+			if next := media.AsJob(p.job, v); next != v {
+				db.Set(p.table, p.field, next)
+				changed++
+			}
+		}
+	}
+	var emb EmbeddingConfig
+	if db.Get(EmbeddingTable, "current", &emb) {
+		if next := media.AsJob(media.JobEmbed, emb.Provider); next != emb.Provider {
+			emb.Provider = next
+			db.Set(EmbeddingTable, "current", emb)
+			SetEmbeddingConfig(emb)
+			changed++
+		}
+	}
+	var tr media.TranscribeConfig
+	if db.Get(TranscribeTable, "current", &tr) {
+		if next := media.AsJob(media.JobTranscribe, tr.Provider); next != tr.Provider {
+			tr.Provider = next
+			db.Set(TranscribeTable, "current", tr)
+			SetTranscribeConfig(tr)
+			changed++
+		}
+	}
+	var sp media.SpeechConfig
+	if db.Get(media.SpeechTable, "current", &sp) {
+		if next := media.AsJob(media.JobSpeak, sp.Provider); next != sp.Provider {
+			sp.Provider = next
+			db.Set(media.SpeechTable, "current", sp)
+			media.SetSpeechConfig(sp)
+			changed++
+		}
+	}
+	if changed > 0 {
+		Log("[migration] %d setting(s) now name their connection for the job they give it", changed)
+		if err := ReloadLLMs(); err != nil {
+			Log("[migration] the LLM tiers did not reload: %v", err)
+		}
+	}
+	return changed
 }
 
 // tierProvided is the connection gohort provides for a provider a tier
@@ -262,14 +324,13 @@ func credentialSend(name string) string {
 
 // repoint makes every page naming connector from name connector to.
 func (m *connMove) repoint(from, to string) {
-	sf, st := media.ServiceProviderPrefix+from, media.ServiceProviderPrefix+to
-	for _, page := range [][2]string{{LLMTable, "provider"}, {LeadLLMTable, "provider"}, {SearchTable, "provider"},
-		{MailTable, "provider"}, {BrowseTable, "source"}} {
+	names := func(v string) bool { n, ok := media.ChosenConnection(v); return ok && n == from }
+	for _, p := range providerPages {
 		var v string
-		if m.db.Get(page[0], page[1], &v) && strings.TrimSpace(v) == sf {
-			m.db.Set(page[0], page[1], st)
+		if m.db.Get(p.table, p.field, &v) && names(v) {
+			m.db.Set(p.table, p.field, media.Choice(p.job, to))
 			m.changed++
-			if page[0] == LLMTable || page[0] == LeadLLMTable {
+			if p.table == LLMTable || p.table == LeadLLMTable {
 				m.tiers = true
 			}
 		}
@@ -277,22 +338,22 @@ func (m *connMove) repoint(from, to string) {
 	// The records keep their endpoint and model: an embedding's space is
 	// named by them, so the vectors stay comparable.
 	var emb EmbeddingConfig
-	if m.db.Get(EmbeddingTable, "current", &emb) && strings.TrimSpace(emb.Provider) == sf {
-		emb.Provider = st
+	if m.db.Get(EmbeddingTable, "current", &emb) && names(emb.Provider) {
+		emb.Provider = media.Choice(media.JobEmbed, to)
 		m.db.Set(EmbeddingTable, "current", emb)
 		SetEmbeddingConfig(emb)
 		m.changed++
 	}
 	var tr media.TranscribeConfig
-	if m.db.Get(TranscribeTable, "current", &tr) && strings.TrimSpace(tr.Provider) == sf {
-		tr.Provider = st
+	if m.db.Get(TranscribeTable, "current", &tr) && names(tr.Provider) {
+		tr.Provider = media.Choice(media.JobTranscribe, to)
 		m.db.Set(TranscribeTable, "current", tr)
 		SetTranscribeConfig(tr)
 		m.changed++
 	}
 	var sp media.SpeechConfig
-	if m.db.Get(media.SpeechTable, "current", &sp) && strings.TrimSpace(sp.Provider) == sf {
-		sp.Provider = st
+	if m.db.Get(media.SpeechTable, "current", &sp) && names(sp.Provider) {
+		sp.Provider = media.Choice(media.JobSpeak, to)
 		m.db.Set(media.SpeechTable, "current", sp)
 		media.SetSpeechConfig(sp)
 		m.changed++
@@ -364,7 +425,7 @@ func (m *connMove) tier(table string) {
 		Log("[migration] the %s tier could not move onto %s: %v", table, c.Name, err)
 		return
 	}
-	m.db.Set(table, "provider", media.ServiceProviderPrefix+c.Name)
+	m.db.Set(table, "provider", media.Choice(media.JobLLM, c.Name))
 	for _, k := range []string{"endpoint", "api_key", "aws_region", "aws_profile", "bedrock_api"} {
 		m.db.Unset(table, k)
 	}
@@ -437,7 +498,7 @@ func (m *connMove) ownServers() {
 		}
 		base = strings.TrimSuffix(base, "/embeddings")
 		if m.ownServer(name, base, emb.Model, emb.APIKey, "embed.text") {
-			emb.Provider, emb.APIKey = media.ServiceProviderPrefix+name, ""
+			emb.Provider, emb.APIKey = media.Choice(media.JobEmbed, name), ""
 			m.db.Set(EmbeddingTable, "current", emb)
 			SetEmbeddingConfig(emb)
 		}
@@ -446,7 +507,7 @@ func (m *connMove) ownServers() {
 	if m.db.Get(TranscribeTable, "current", &tr) && own(tr.Provider) && strings.TrimSpace(tr.Endpoint) != "" {
 		base := strings.TrimSuffix(strings.TrimRight(strings.TrimSpace(tr.Endpoint), "/"), "/audio/transcriptions")
 		if m.ownServer("local-transcription", base, tr.Model, tr.APIKey, "speech.transcribe") {
-			tr.Provider, tr.APIKey = media.ServiceProviderPrefix+"local-transcription", ""
+			tr.Provider, tr.APIKey = media.Choice(media.JobTranscribe, "local-transcription"), ""
 			m.db.Set(TranscribeTable, "current", tr)
 			SetTranscribeConfig(tr)
 		}
@@ -455,7 +516,7 @@ func (m *connMove) ownServers() {
 	if m.db.Get(media.SpeechTable, "current", &sp) && own(sp.Provider) && strings.TrimSpace(sp.Endpoint) != "" {
 		base := strings.TrimSuffix(strings.TrimRight(strings.TrimSpace(sp.Endpoint), "/"), "/audio/speech")
 		if m.ownServer("local-speech", base, sp.Model, sp.APIKey, "speech.synthesize") {
-			sp.Provider, sp.APIKey = media.ServiceProviderPrefix+"local-speech", ""
+			sp.Provider, sp.APIKey = media.Choice(media.JobSpeak, "local-speech"), ""
 			m.db.Set(media.SpeechTable, "current", sp)
 			media.SetSpeechConfig(sp)
 		}

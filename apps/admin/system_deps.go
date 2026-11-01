@@ -337,7 +337,7 @@ type flowForm struct {
 	Reads       string   `json:"reads,omitempty"`
 	TimeoutSecs int      `json:"timeout_secs"`
 	Prefer      bool     `json:"prefer"`
-	// By is what does it: "commands" (the steps), or "service:<name>", a
+	// By is what does it: "commands" (the steps), or "convert:<name>", a
 	// connector that converts files.
 	By string `json:"by,omitempty"`
 }
@@ -399,7 +399,7 @@ func splitLines(s string, commas bool) []string {
 func (ff flowForm) adapted(job string) flows.Adapted {
 	a := flows.Adapted{Job: job, Steps: ff.Steps.commands(), Reads: splitLines(ff.Reads, true),
 		TimeoutSecs: ff.TimeoutSecs, Prefer: ff.Prefer}
-	if svc, ok := strings.CutPrefix(strings.TrimSpace(ff.By), media.ServiceProviderPrefix); ok {
+	if svc, ok := media.ChosenConnection(strings.TrimSpace(ff.By)); ok {
 		a.Service, a.Steps, a.Reads = svc, nil, nil
 	}
 	if job != "" {
@@ -431,7 +431,7 @@ func (ff flowForm) adapted(job string) flows.Adapted {
 func formOf(name string, a flows.Adapted) flowForm {
 	ff := flowForm{Name: name, Steps: stepsOf(a.Flow()), Reads: strings.Join(a.Reads, ", "), TimeoutSecs: a.TimeoutSecs, Prefer: a.Prefer, By: "commands"}
 	if a.Service != "" {
-		ff.By = media.ServiceProviderPrefix + a.Service
+		ff.By = media.Choice(media.JobConvert, a.Service)
 	}
 	switch {
 	case a.Job != "":

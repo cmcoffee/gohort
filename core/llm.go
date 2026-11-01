@@ -1309,7 +1309,7 @@ type LLMProviderConfig struct {
 	// existing configuration reads images as before.
 	NoImages bool
 	// Form, for a Test before a save, is what the tier's form holds for its
-	// model connection (provider "service:<name>"); nil uses what the
+	// model connection (provider "llm:<name>"); nil uses what the
 	// connection keeps.
 	Form *media.ModelForm
 	// awsKeys is the key pair a Bedrock model connector's credential holds,
@@ -1902,7 +1902,7 @@ func ProviderHasNativeTools(provider string) bool {
 	}
 	// A model connection is judged by the dialect gohort speaks to it: an
 	// Ollama server's tool calling depends on its model, as Ollama's does.
-	if strings.HasPrefix(strings.TrimSpace(provider), media.ServiceProviderPrefix) {
+	if media.IsConnection(strings.TrimSpace(provider)) {
 		return modelDialect(provider) != "ollama"
 	}
 	switch strings.ToLower(strings.TrimSpace(provider)) {
@@ -1929,7 +1929,7 @@ func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 	// suggest which of the two records was stale.
 	// Captured BEFORE resolution, which rewrites Provider to the concrete one.
 	peerName := peerNameFromProvider(cfg.Provider)
-	serviceName, _ := strings.CutPrefix(strings.TrimSpace(cfg.Provider), media.ServiceProviderPrefix)
+	serviceName, _ := media.ChosenConnection(strings.TrimSpace(cfg.Provider))
 	resolved, err := ResolveModelProvider(cfg, cfg.Provider)
 	if err != nil {
 		return nil, Error(err.Error())

@@ -56,7 +56,7 @@ func peerSpeechInfo(baseURL string) *peerSpeechOffer {
 // speaksHere reports whether cfg speaks on this instance: it is on and set
 // to a connector. A peer's speech is that peer's to lend.
 func speaksHere(cfg media.SpeechConfig) bool {
-	return cfg.Enabled && strings.HasPrefix(strings.TrimSpace(cfg.Provider), media.ServiceProviderPrefix)
+	return cfg.Enabled && media.IsConnection(strings.TrimSpace(cfg.Provider))
 }
 
 // peerSpeechConfig is this instance's speech config when it may be lent, or
@@ -185,7 +185,7 @@ func ResolveSpeechProvider(cfg media.SpeechConfig, provider string) (media.Speec
 				cfg.Provider = kept
 				return cfg, nil
 			}
-			if strings.HasPrefix(kept, media.ServiceProviderPrefix) {
+			if media.IsConnection(kept) {
 				provider = kept
 				break
 			}
@@ -193,7 +193,7 @@ func ResolveSpeechProvider(cfg media.SpeechConfig, provider string) (media.Speec
 	}
 	// A service connector (core/service) is used as it is named; the admin
 	// handler checks that it provides this.
-	if strings.HasPrefix(provider, media.ServiceProviderPrefix) {
+	if media.IsConnection(provider) {
 		cfg.Provider, cfg.Endpoint, cfg.APIKey = provider, "", ""
 		return cfg, nil
 	}

@@ -47,7 +47,7 @@ func TestTranscriptionGoesThroughAService(t *testing.T) {
 	}))
 	defer srv.Close()
 	install(t, "openai-transcription", templateSpec(t, "openai-transcription", srv.URL))
-	cfg := media.TranscribeConfig{Enabled: true, Provider: media.ServiceProviderPrefix + "openai-transcription"}
+	cfg := media.TranscribeConfig{Enabled: true, Provider: media.Choice(media.JobTranscribe, "openai-transcription")}
 	text, err := media.TranscribeWith(context.Background(), cfg, []byte("RIFF....WAVEfake"), "note.wav")
 	if err != nil || text != "hello there" {
 		t.Fatalf("transcribe: %q %v", text, err)
@@ -92,7 +92,7 @@ func TestSpeechGoesThroughAService(t *testing.T) {
 	spec := templateSpec(t, "elevenlabs-speech", srv.URL)
 	binding(spec)["cost"] = map[string]any{"per_unit": 0.001, "unit": "character"}
 	install(t, "elevenlabs-speech", spec)
-	cfg := media.SpeechConfig{Enabled: true, Provider: media.ServiceProviderPrefix + "elevenlabs-speech"}
+	cfg := media.SpeechConfig{Enabled: true, Provider: media.Choice(media.JobSpeak, "elevenlabs-speech")}
 	data, ext, err := media.SpeakWith(context.Background(), cfg, "Hello there.")
 	if err != nil || ext != ".mp3" || string(data[:3]) != "ID3" {
 		t.Fatalf("speak: %q %v", ext, err)
@@ -196,7 +196,7 @@ func TestEmbeddingsGoThroughAService(t *testing.T) {
 	}))
 	defer srv.Close()
 	install(t, "openai-embeddings", templateSpec(t, "openai-embeddings", srv.URL))
-	cfg := EmbeddingConfig{Enabled: true, Provider: media.ServiceProviderPrefix + "openai-embeddings", Model: "text-embedding-3-small", QueryPrefix: "query: "}
+	cfg := EmbeddingConfig{Enabled: true, Provider: media.Choice(media.JobEmbed, "openai-embeddings"), Model: "text-embedding-3-small", QueryPrefix: "query: "}
 	vec, err := EmbedWith(context.Background(), cfg, "where is the cat")
 	if err != nil || len(vec) != 3 || vec[0] != 0.5 {
 		t.Fatalf("embed: %v %v", vec, err)

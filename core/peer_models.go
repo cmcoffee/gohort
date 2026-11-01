@@ -131,7 +131,7 @@ func peerTierConfig(tier, table string) (peerServableTier, bool) {
 	db.Get(table, "context_size", &t.Context)
 	// A model connection lends as the server it reaches: its dialect, its
 	// address, its key.
-	if strings.HasPrefix(strings.TrimSpace(t.Provider), media.ServiceProviderPrefix) {
+	if media.IsConnection(strings.TrimSpace(t.Provider)) {
 		r := ResolvedTier(LLMProviderConfig{Provider: t.Provider, Model: t.Model, ContextSize: t.Context})
 		t.Provider, t.Endpoint, t.APIKey = r.Provider, r.Endpoint, r.APIKey
 	}
@@ -715,7 +715,7 @@ func peerNameFromProvider(provider string) string {
 
 func ResolveModelProvider(cfg LLMProviderConfig, provider string) (LLMProviderConfig, error) {
 	provider = strings.TrimSpace(provider)
-	if name, ok := strings.CutPrefix(provider, media.ServiceProviderPrefix); ok {
+	if name, ok := media.ChosenConnection(provider); ok {
 		return resolveModelService(cfg, name)
 	}
 	if provider == "" || !strings.HasPrefix(provider, peerProviderPrefix) {

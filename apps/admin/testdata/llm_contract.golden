@@ -61,9 +61,9 @@ root GET /api/worker-llm/models ""
 root POST /api/worker-llm/models "{}"
   200 {"error":"Pick a provider first."}
 root POST /api/worker-llm/models "{\"provider\":\"ollama\",\"endpoint\":\"<stub>\",\"model\":\"qwen3:8b\"}"
-  200 {"note":"What ollama offers. Pick one, or type any id in the field.","suggestions":["llama3.2","qwen3:8b"]}
+  200 {"note":"What Ollama offers. Pick one, or type any id in the field.","suggestions":["llama3.2","qwen3:8b"]}
 root POST /api/worker-llm/models "{\"provider\":\"ollama\",\"endpoint\":\"<stub>\",\"model\":\"mistral\"}"
-  200 {"note":"What ollama offers. Pick one, or type any id in the field. The current value, mistral, is not in this list.","suggestions":["llama3.2","qwen3:8b"]}
+  200 {"note":"What Ollama offers. Pick one, or type any id in the field. The current value, mistral, is not in this list.","suggestions":["llama3.2","qwen3:8b"]}
 root POST /api/worker-llm/models "{\"provider\":\"ollama\",\"endpoint\":\"http://127.0.0.1:1\"}"
   200 {"error":"Could not list the models: could not reach 127.0.0.1:1: Get \"http://127.0.0.1:1/api/tags\": dial tcp 127.0.0.1:1: connect: connection refused"}
 root POST /api/worker-llm/models "{\"provider\":"
@@ -75,9 +75,9 @@ root GET /api/lead-llm/models ""
 root POST /api/lead-llm/models "{}"
   200 {"error":"Pick a provider first."}
 root POST /api/lead-llm/models "{\"provider\":\"ollama\",\"endpoint\":\"<stub>\",\"model\":\"qwen3:8b\"}"
-  200 {"note":"What ollama offers. Pick one, or type any id in the field.","suggestions":["llama3.2","qwen3:8b"]}
+  200 {"note":"What Ollama offers. Pick one, or type any id in the field.","suggestions":["llama3.2","qwen3:8b"]}
 root POST /api/lead-llm/models "{\"provider\":\"ollama\",\"endpoint\":\"<stub>\",\"model\":\"mistral\"}"
-  200 {"note":"What ollama offers. Pick one, or type any id in the field. The current value, mistral, is not in this list.","suggestions":["llama3.2","qwen3:8b"]}
+  200 {"note":"What Ollama offers. Pick one, or type any id in the field. The current value, mistral, is not in this list.","suggestions":["llama3.2","qwen3:8b"]}
 root POST /api/lead-llm/models "{\"provider\":\"ollama\",\"endpoint\":\"http://127.0.0.1:1\"}"
   200 {"error":"Could not list the models: could not reach 127.0.0.1:1: Get \"http://127.0.0.1:1/api/tags\": dial tcp 127.0.0.1:1: connect: connection refused"}
 root POST /api/lead-llm/models "{\"provider\":"
@@ -151,9 +151,9 @@ alice POST /api/worker-llm "{\"provider\":\"ollama\",\"model\":\"qwen3:8b\"}"
 root POST /api/worker-llm "{\"provider\":\" ollama \",\"model\":\" qwen3:8b \",\"endpoint\":\" <stub> \",\"api_key\":\"s3cr3t-llm-w\",\"context_size\":8192,\"request_timeout_seconds\":120,\"default_effort\":\" HIGH \",\"max_effort\":\"extreme\",\"thinking_budget\":2048}"
   204 
 root GET /api/worker-llm ""
-  200 {"_live":"","api_key":"","config/ollama/base_url":"<stub>","context_size":8192,"default_effort":"high","disable_thinking":false,"endpoint":"","max_effort":"","model":"qwen3:8b","native_tools":false,"n… (435 bytes, sha1 51f4fa79634d7149d199fd990ae5e97b5fa675a1)
+  200 {"_live":"","api_key":"","config/ollama/base_url":"<stub>","context_size":8192,"default_effort":"high","disable_thinking":false,"endpoint":"","max_effort":"","model":"qwen3:8b","native_tools":false,"n… (431 bytes, sha1 5838c2e924b70d4ce422908c64dbcd6a115d38f5)
 root POST /api/worker-llm/models "{\"provider\":\"ollama\",\"endpoint\":\"<stub>\"}"
-  200 {"note":"What ollama offers. Pick one, or type any id in the field.","suggestions":["llama3.2","qwen3:8b"]}
+  200 {"note":"What Ollama offers. Pick one, or type any id in the field.","suggestions":["llama3.2","qwen3:8b"]}
 root POST /api/worker-llm "{\"provider\":\"ollama\",\"model\":\"qwen3:8b\",\"endpoint\":\"<stub>\"}"
   204 
 root POST /api/worker-llm "{\"provider\":\"bedrock\",\"model\":\"anthropic.claude\u200b-v2\",\"aws_region\":\"us-east-1\"}"
@@ -165,7 +165,7 @@ root POST /api/worker-llm "{\"provider\":"
 root POST /api/worker-llm ""
   400 invalid JSON: EOF
 root GET /api/worker-llm ""
-  200 {"_live":"","api_key":"","config/ollama/base_url":"<stub>","context_size":0,"default_effort":"","disable_thinking":false,"endpoint":"","max_effort":"","model":"breaks","native_tools":false,"no_images"… (421 bytes, sha1 59d64318abc4c36bf5246076c059cb29ce4a1058)
+  200 {"_live":"","api_key":"","config/ollama/base_url":"<stub>","context_size":0,"default_effort":"","disable_thinking":false,"endpoint":"","max_effort":"","model":"breaks","native_tools":false,"no_images"… (417 bytes, sha1 31c20fb16a6520bb17829c2bb032cc3b62522ea2)
 root POST /api/worker-llm "{\"provider\":\"ollama\",\"model\":\"qwen3:8b\",\"endpoint\":\"<stub>\"}"
   204 
 root GET /api/lead-llm ""
@@ -175,14 +175,14 @@ root POST /api/lead-llm "{\"provider\":\"bedrock\",\"model\":\"anthropic.claude-
 root POST /api/lead-llm "{\"provider\":\"vllm\",\"model\":\"qwen3:8b\",\"endpoint\":\"<stub>\",\"api_key\":\"s3cr3t-llm-l\",\"no_images\":true}"
   204 
 root GET /api/lead-llm ""
-  200 {"_live":"No lead model is loaded; escalations run on the worker.","api_key":"","config/vllm/api_key":"(unchanged)","config/vllm/base_url":"<stub>","context_size":0,"default_effort":"","disable_thinki… (481 bytes, sha1 96f2d201cbe86deb2705240955cfed3fa1a5e55e)
+  200 {"_live":"No lead model is loaded; escalations run on the worker.","api_key":"","config/vllm/api_key":"(unchanged)","config/vllm/base_url":"<stub>","context_size":0,"default_effort":"","disable_thinki… (477 bytes, sha1 a7c89a83628ca51426eb513e63c0e2913372c7e6)
 root GET /api/llm-privacy ""
   200 {"advice":"Worker: Ollama - private (loopback endpoint (the connector ollama))\nLead: vLLM - private (loopback endpoint (the connector vllm))\n\nBoth tiers look local, so turning this on is consistent with how the deployment is configured.","all_private":false,"recommended":true}
 activity log, 7 entries:
   settings root: set all-LLMs-private=false: private stages may no longer escalate to the lead tier
   settings root: set all-LLMs-private=true: private stages MAY now escalate to the lead tier
-  settings root: updated lead_llm_config (provider="service:bedrock" model="anthropic.claude-3-5-sonnet")
-  settings root: updated lead_llm_config (provider="service:vllm" model="qwen3:8b")
-  settings root: updated llm_config (provider="service:ollama" model=" qwen3:8b ")
-  settings root: updated llm_config (provider="service:ollama" model="qwen3:8b")
-  settings root: updated llm_config (provider="service:ollama" model="qwen3:8b")
+  settings root: updated lead_llm_config (provider="llm:bedrock" model="anthropic.claude-3-5-sonnet")
+  settings root: updated lead_llm_config (provider="llm:vllm" model="qwen3:8b")
+  settings root: updated llm_config (provider="llm:ollama" model=" qwen3:8b ")
+  settings root: updated llm_config (provider="llm:ollama" model="qwen3:8b")
+  settings root: updated llm_config (provider="llm:ollama" model="qwen3:8b")

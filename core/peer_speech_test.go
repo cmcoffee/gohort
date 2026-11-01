@@ -83,7 +83,7 @@ func useConnectorSpeaker(t *testing.T, endpoint, model, voice string) {
 		json.NewDecoder(resp.Body).Decode(&body)
 		return media.ReadVoices(body.Voices), nil
 	}
-	media.SetSpeechConfig(media.SpeechConfig{Enabled: true, Provider: media.ServiceProviderPrefix + "voice", Model: model, Voice: voice})
+	media.SetSpeechConfig(media.SpeechConfig{Enabled: true, Provider: media.Choice(media.JobSpeak, "voice"), Model: model, Voice: voice})
 }
 
 func speechRequest(key, body string) *http.Request {

@@ -146,7 +146,7 @@ func TestEveryKindOfHookMoves(t *testing.T) {
 	}
 	var provider, hook string
 	RootDB.Get(SearchTable, "provider", &provider)
-	if provider != "service:engine" || RootDB.Get(SearchTable, "hook", &hook) {
+	if provider != "search:engine" || RootDB.Get(SearchTable, "hook", &hook) {
 		t.Errorf("web search: %q, hook %q", provider, hook)
 	}
 	if _, ok := GetResearchSource(RootDB, "engine"); ok {

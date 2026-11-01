@@ -283,7 +283,7 @@ func migrateSourceHooks(db Database) (int, error) {
 			} else {
 				Log("[migration] the Source Hook %s is now the search connector %s", h.Name, name)
 				if engine == "hook" && strings.EqualFold(strings.TrimSpace(engineHook), strings.TrimSpace(h.Name)) {
-					db.Set(SearchTable, "provider", media.ServiceProviderPrefix+name)
+					db.Set(SearchTable, "provider", media.Choice(media.JobSearch, name))
 					db.Unset(SearchTable, "hook")
 					total++
 					Log("[migration] web search now comes from connector %s", name)

@@ -812,3 +812,26 @@ func TestAProvidedConnectionTakesTheSpecGohortShips(t *testing.T) {
 		t.Errorf("one with nothing recorded: %s", got.Spec)
 	}
 }
+
+// A connection provided before it was given the name it is shown as is
+// named at the next start, and every way a setting writes a provider reads
+// as its proper name: the lead read "anthropic" where it meant Anthropic.
+func TestAProvidedConnectionIsShownByItsName(t *testing.T) {
+	world(t)
+	ProvideConnectors(RootDB)
+	c, _ := GetConnector(RootDB, "anthropic")
+	c.DisplayName = ""
+	RootDB.Set("connectors", c.Name, c)
+	if again, _ := GetConnector(RootDB, "anthropic"); again.Title() != "anthropic" {
+		t.Fatalf("the blank name did not take: %q", again.Title())
+	}
+	ProvideConnectors(RootDB)
+	for in, want := range map[string]string{
+		"service:anthropic": "Anthropic", "anthropic": "Anthropic", "openai": "OpenAI", "llama.cpp": "llama.cpp",
+		"vllm": "vLLM", "bedrock": "AWS Bedrock", "peer:den": "Peer den", "local-speech": "Local speech server", "something-else": "something-else",
+	} {
+		if got := ProviderTitle(in); got != want {
+			t.Errorf("ProviderTitle(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

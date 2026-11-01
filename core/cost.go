@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -123,7 +122,7 @@ func (r CostRates) withConnectorRates() CostRates {
 		in, out *float64
 	}{{LLMTable, &r.WorkerInputPer1K, &r.WorkerOutputPer1K}, {LeadLLMTable, &r.LeadInputPer1K, &r.LeadOutputPer1K}} {
 		provider, _ := tierProviderEndpoint(t.table)
-		name, ok := strings.CutPrefix(provider, media.ServiceProviderPrefix)
+		name, ok := media.ChosenConnection(provider)
 		if !ok {
 			continue
 		}

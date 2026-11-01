@@ -29,7 +29,7 @@ import (
 // the browser is either linked into the build or it is not — so this is one
 // choice, not a form.
 type BrowseConfig struct {
-	Source string `json:"source,omitempty"` // "local" (default), "peer:<name>" or "service:<name>"
+	Source string `json:"source,omitempty"` // "local" (default), "peer:<name>" or "render:<name>"
 }
 
 var (
@@ -105,7 +105,7 @@ func installBrowseRouting() {
 		if err := RefuseNonPublicHost(url); err != nil {
 			return "", err
 		}
-		if name, ok := strings.CutPrefix(strings.TrimSpace(LoadBrowseConfig().Source), media.ServiceProviderPrefix); ok {
+		if name, ok := media.ChosenConnection(strings.TrimSpace(LoadBrowseConfig().Source)); ok {
 			if media.PageService == nil {
 				return "", fmt.Errorf("page rendering is set to the connector %s, and this build has no connectors linked", name)
 			}

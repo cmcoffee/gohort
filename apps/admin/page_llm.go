@@ -262,7 +262,7 @@ func choiceDialect(value string) string {
 	if strings.HasPrefix(value, PeerProviderValue("")) {
 		return "llama.cpp"
 	}
-	c, _ := GetConnector(RootDB, chosenService(value))
+	c, _ := GetConnector(RootDB, chosenConnection(value))
 	return service.Dialect(c)
 }
 
@@ -421,7 +421,7 @@ func tierFields(fields []ui.FormField) []ui.FormField {
 			continue
 		}
 		out := append([]ui.FormField{}, fields[:i+1]...)
-		for _, s := range connectorSettingsFields("llm.chat", "", "provider", asService) {
+		for _, s := range connectorSettingsFields("llm.chat", "", "provider", choiceFor("llm.chat")) {
 			s.SaveOnBlur = true
 			out = append(out, s)
 		}

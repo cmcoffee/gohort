@@ -80,7 +80,35 @@ func TestATranscriberThatIsNeitherConnectorNorPeerIsRefused(t *testing.T) {
 		return "heard", nil
 	}
 	ctx := WithTranscribePrompt(context.Background(), "Pemberly")
-	if text, err := TranscribeWith(ctx, TranscribeConfig{Enabled: true, Provider: ServiceProviderPrefix + "stt"}, []byte("audio"), "a.wav"); err != nil || text != "heard" || got != "stt/a.wav/Pemberly" || sent {
+	if text, err := TranscribeWith(ctx, TranscribeConfig{Enabled: true, Provider: Choice(JobTranscribe, "stt")}, []byte("audio"), "a.wav"); err != nil || text != "heard" || got != "stt/a.wav/Pemberly" || sent {
 		t.Errorf("a connector: %q %v %q", text, err, got)
+	}
+}
+
+// A setting names a connection for the job it gives it, and reads the old
+// service: spelling the same until the migration that rewrote it goes. A
+// peer, something built in and nothing are not connections.
+func TestASettingNamesItsConnectionForItsJob(t *testing.T) {
+	if got := ChoiceFor("llm.chat", "anthropic"); got != "llm:anthropic" {
+		t.Errorf("an LLM tier's choice = %q", got)
+	}
+	if got := ChoiceFor("speech.transcribe", "local-transcription"); got != "transcribe:local-transcription" {
+		t.Errorf("transcription's choice = %q", got)
+	}
+	for _, v := range []string{"llm:anthropic", "service:anthropic", " embed:anthropic "} {
+		if name, ok := ChosenConnection(v); !ok || name != "anthropic" {
+			t.Errorf("ChosenConnection(%q) = %q %v", v, name, ok)
+		}
+	}
+	for _, v := range []string{"peer:den", "duckduckgo", "llama.cpp", "", "llm:", "http://x.example:8080"} {
+		if IsConnection(v) {
+			t.Errorf("%q read as a connection", v)
+		}
+	}
+	if got := AsJob(JobSpeak, "service:local-speech"); got != "speak:local-speech" {
+		t.Errorf("AsJob = %q", got)
+	}
+	if got := AsJob(JobSpeak, "peer:den"); got != "peer:den" {
+		t.Errorf("a peer was renamed: %q", got)
 	}
 }

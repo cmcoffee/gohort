@@ -186,7 +186,7 @@ func describeLLMConfig(c LLMProviderConfig) string {
 	}
 	// A connection by the name it is shown as, its model its own where the
 	// tier names none, and a local server's address.
-	if strings.HasPrefix(c.Provider, "service:") {
+	if media.IsConnection(c.Provider) {
 		r := ResolvedTier(c)
 		out := ProviderTitle(c.Provider) + "/" + r.Model
 		if LocalDialect(r.Provider) && r.Endpoint != "" {
@@ -194,7 +194,7 @@ func describeLLMConfig(c LLMProviderConfig) string {
 		}
 		return out
 	}
-	out := c.Provider + "/" + c.Model
+	out := ProviderTitle(c.Provider) + "/" + c.Model
 	switch c.Provider {
 	case "bedrock":
 		if c.Endpoint != "" {

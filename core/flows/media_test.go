@@ -138,7 +138,7 @@ func TestTranscriptionIsAServiceOrAnAdaptedCommand(t *testing.T) {
 		gotName = connector + "/" + filename
 		return "hello from the service", nil
 	}
-	media.SetTranscribeConfig(media.TranscribeConfig{Enabled: true, Provider: media.ServiceProviderPrefix + "stt"})
+	media.SetTranscribeConfig(media.TranscribeConfig{Enabled: true, Provider: media.Choice(media.JobTranscribe, "stt")})
 	if text, err := media.Transcribe(context.Background(), audio, "memo.mp3"); err != nil || strings.TrimSpace(text) != "hello from the service" || gotName != "stt/memo.mp3" {
 		t.Errorf("the service should transcribe it, under its name: %v %q %q", err, text, gotName)
 	}

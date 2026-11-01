@@ -2,7 +2,6 @@ package service
 
 import (
 	"encoding/json"
-	"strings"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -78,18 +77,18 @@ func TestWhatPredatesConnectionsMovesOntoThem(t *testing.T) {
 	RootDB.Get(LeadLLMTable, "provider", &lead)
 	RootDB.Get(LLMTable, "provider", &worker)
 	RootDB.Get(SearchTable, "provider", &search)
-	if _, there := GetConnector(RootDB, "anthropic-model"); lead != "service:anthropic" || keptKey(t, "anthropic", "api_key") != "sk-ant" || there {
+	if _, there := GetConnector(RootDB, "anthropic-model"); lead != "llm:anthropic" || keptKey(t, "anthropic", "api_key") != "sk-ant" || there {
 		t.Errorf("the lead: %q, Anthropic's key %q, the old one kept %v", lead, keptKey(t, "anthropic", "api_key"), there)
 	}
 	var emb EmbeddingConfig
 	RootDB.Get(EmbeddingTable, "current", &emb)
 	le, _ := GetConnector(RootDB, "local-embeddings")
-	if emb.Provider != "service:local-embeddings" || emb.Endpoint != "http://gpu.example:8080/v1" || emb.Model != "e5-large" ||
+	if emb.Provider != "embed:local-embeddings" || emb.Endpoint != "http://gpu.example:8080/v1" || emb.Model != "e5-large" ||
 		ConnectionConfig(RootDB, le)["base_url"] != "http://gpu.example:8080/v1" || ConnectionConfig(RootDB, le)["model"] != "e5-large" {
 		t.Errorf("embeddings: %+v, on %v", emb, ConnectionConfig(RootDB, le))
 	}
 	sc, _ := GetConnector(RootDB, "serper-search")
-	if s, _ := Parse(sc.Spec); search != "service:serper-search" || s.Provider.Auth.Secret == "" || sc.ID != "c_old3" || keptKey(t, "serper-search", s.Provider.Auth.Secret) != "serp-1" {
+	if s, _ := Parse(sc.Spec); search != "search:serper-search" || s.Provider.Auth.Secret == "" || sc.ID != "c_old3" || keptKey(t, "serper-search", s.Provider.Auth.Secret) != "serp-1" {
 		t.Errorf("serper: on %q, %s, id %s", search, sc.Spec, sc.ID)
 	}
 	ac, _ := GetConnector(RootDB, "acme-images")
@@ -98,13 +97,13 @@ func TestWhatPredatesConnectionsMovesOntoThem(t *testing.T) {
 	}
 	var key string
 	lc, _ := GetConnector(RootDB, "llamacpp")
-	if worker != "service:llamacpp" || ConnectionConfig(RootDB, lc)["base_url"] != "http://box.example:8080/v1" || keptKey(t, "llamacpp", "api_key") != "vk" || RootDB.Get(LLMTable, "api_key", &key) {
+	if worker != "llm:llamacpp" || ConnectionConfig(RootDB, lc)["base_url"] != "http://box.example:8080/v1" || keptKey(t, "llamacpp", "api_key") != "vk" || RootDB.Get(LLMTable, "api_key", &key) {
 		t.Errorf("the worker: %q on %v, its own key %q", worker, ConnectionConfig(RootDB, lc), key)
 	}
 	var tr media.TranscribeConfig
 	RootDB.Get(TranscribeTable, "current", &tr)
 	lt, _ := GetConnector(RootDB, "local-transcription")
-	if tr.Provider != "service:local-transcription" || ConnectionConfig(RootDB, lt)["base_url"] != "http://stt.example:8089/v1" || ConnectionConfig(RootDB, lt)["model"] != "whisper-1" {
+	if tr.Provider != "transcribe:local-transcription" || ConnectionConfig(RootDB, lt)["base_url"] != "http://stt.example:8089/v1" || ConnectionConfig(RootDB, lt)["model"] != "whisper-1" {
 		t.Errorf("transcription: %+v on %v", tr, ConnectionConfig(RootDB, lt))
 	}
 	for cred, gone := range map[string]bool{"anthropic_model": true, "serper_search": true, "acme_key": false} {
@@ -136,8 +135,10 @@ func TestTwoTiersOnOneProviderKeepTheirOwn(t *testing.T) {
 	var w, l string
 	RootDB.Get(LLMTable, "provider", &w)
 	RootDB.Get(LeadLLMTable, "provider", &l)
-	wc, _ := GetConnector(RootDB, strings.TrimPrefix(w, "service:"))
-	lc, _ := GetConnector(RootDB, strings.TrimPrefix(l, "service:"))
+	wn, _ := media.ChosenConnection(w)
+	wc, _ := GetConnector(RootDB, wn)
+	ln, _ := media.ChosenConnection(l)
+	lc, _ := GetConnector(RootDB, ln)
 	if w == l || ConnectionConfig(RootDB, wc)["base_url"] != "http://a.example:8000/v1" || ConnectionConfig(RootDB, lc)["base_url"] != "http://b.example:8000/v1" {
 		t.Errorf("worker %s %v, lead %s %v", w, ConnectionConfig(RootDB, wc), l, ConnectionConfig(RootDB, lc))
 	}
@@ -166,14 +167,14 @@ func TestASettingsConnectorMovesOntoTheLocalServer(t *testing.T) {
 	var emb EmbeddingConfig
 	RootDB.Get(EmbeddingTable, "current", &emb)
 	oe, _ := GetConnector(RootDB, "ollama-embeddings")
-	if _, there := GetConnector(RootDB, "embeddings"); emb.Provider != "service:ollama-embeddings" || emb.Endpoint != "http://gpu.example:11434/api" ||
+	if _, there := GetConnector(RootDB, "embeddings"); emb.Provider != "embed:ollama-embeddings" || emb.Endpoint != "http://gpu.example:11434/api" ||
 		ConnectionConfig(RootDB, oe)["base_url"] != "http://gpu.example:11434" || ConnectionConfig(RootDB, oe)["model"] != "nomic-embed-text" || there {
 		t.Errorf("embeddings: %+v on %v, the old one kept %v", emb, ConnectionConfig(RootDB, oe), there)
 	}
 	var tr media.TranscribeConfig
 	RootDB.Get(TranscribeTable, "current", &tr)
 	tc, _ := GetConnector(RootDB, "transcription")
-	if s, _ := Parse(tc.Spec); tr.Provider != "service:transcription" || s.Provider.Auth.Secret == "" || keptKey(t, "transcription", s.Provider.Auth.Secret) != "stt-1" {
+	if s, _ := Parse(tc.Spec); tr.Provider != "transcribe:transcription" || s.Provider.Auth.Secret == "" || keptKey(t, "transcription", s.Provider.Auth.Secret) != "stt-1" {
 		t.Errorf("transcription: on %q, %s", tr.Provider, tc.Spec)
 	}
 }
@@ -194,7 +195,7 @@ func TestABedrockConnectorMovesItsRegionAndProfile(t *testing.T) {
 	got := ConnectionConfig(RootDB, b)
 	var lead string
 	RootDB.Get(LeadLLMTable, "provider", &lead)
-	if lead != "service:bedrock" || got["region"] != "us-west-2" || got["api"] != "converse" || got["profile"] != "ops" || HasSecret(b, "aws_keys") {
+	if lead != "llm:bedrock" || got["region"] != "us-west-2" || got["api"] != "converse" || got["profile"] != "ops" || HasSecret(b, "aws_keys") {
 		t.Errorf("the lead on %q, Bedrock's settings %v, a key %v", lead, got, HasSecret(b, "aws_keys"))
 	}
 	if tg, err := modelTarget("bedrock", true, nil); err != nil || !tg.AWSMachine || tg.Profile != "ops" || tg.Region != "us-west-2" {
@@ -232,5 +233,66 @@ func TestACarriedAddressReplacesOnlyADefault(t *testing.T) {
 		if _, there := GetConnector(RootDB, n); there {
 			t.Errorf("%s was kept though nothing names it", n)
 		}
+	}
+}
+
+// The settings saved as service:<name> are named for their jobs, once. An
+// embedding config keeps the endpoint that names its vectors' space, and the
+// stamp on its stored vectors reads the same, so nothing is re-embedded.
+func TestSettingsAreNamedForTheirJobs(t *testing.T) {
+	world(t)
+	RootDB.Set(LLMTable, "provider", "service:vllm")
+	RootDB.Set(LeadLLMTable, "provider", "peer:den")
+	RootDB.Set(SearchTable, "provider", "service:serper-search")
+	RootDB.Set(MailTable, "provider", "smtp")
+	RootDB.Set(BrowseTable, "source", "service:reader")
+	before := EmbeddingConfig{Enabled: true, Provider: "service:vec", Endpoint: "service:vec"}
+	RootDB.Set(EmbeddingTable, "current", before)
+	SetEmbeddingConfig(before)
+	version := EmbedVersion()
+	RootDB.Set(TranscribeTable, "current", media.TranscribeConfig{Enabled: true, Provider: "service:local-transcription"})
+	RootDB.Set(media.SpeechTable, "current", media.SpeechConfig{Enabled: true, Provider: "service:local-speech"})
+
+	if n := nameChoicesForJobs(RootDB); n != 6 {
+		t.Errorf("%d settings renamed, want 6", n)
+	}
+	for _, c := range []struct{ table, field, want string }{
+		{LLMTable, "provider", "llm:vllm"}, {LeadLLMTable, "provider", "peer:den"}, {SearchTable, "provider", "search:serper-search"},
+		{MailTable, "provider", "smtp"}, {BrowseTable, "source", "render:reader"},
+	} {
+		var v string
+		if RootDB.Get(c.table, c.field, &v); v != c.want {
+			t.Errorf("%s %s = %q, want %q", c.table, c.field, v, c.want)
+		}
+	}
+	var emb EmbeddingConfig
+	RootDB.Get(EmbeddingTable, "current", &emb)
+	if emb.Provider != "embed:vec" || emb.Endpoint != "service:vec" {
+		t.Errorf("embeddings: %+v", emb)
+	}
+	if EmbedVersion() != version {
+		t.Errorf("the vectors' space moved: %q, was %q", EmbedVersion(), version)
+	}
+	var tr media.TranscribeConfig
+	var sp media.SpeechConfig
+	if RootDB.Get(TranscribeTable, "current", &tr); tr.Provider != "transcribe:local-transcription" {
+		t.Errorf("transcription: %q", tr.Provider)
+	}
+	if RootDB.Get(media.SpeechTable, "current", &sp); sp.Provider != "speak:local-speech" {
+		t.Errorf("speech: %q", sp.Provider)
+	}
+	if n := nameChoicesForJobs(RootDB); n != 0 {
+		t.Errorf("a second run renamed %d", n)
+	}
+}
+
+// The renaming runs with the startup migration.
+func TestTheStartupMigrationNamesSettingsForTheirJobs(t *testing.T) {
+	world(t)
+	RootDB.Set(BrowseTable, "source", "service:reader")
+	MigrateConnections(RootDB)
+	var v string
+	if RootDB.Get(BrowseTable, "source", &v); v != "render:reader" {
+		t.Errorf("page rendering after the startup migration: %q", v)
 	}
 }

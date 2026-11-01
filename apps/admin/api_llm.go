@@ -396,9 +396,9 @@ func (a *AdminApp) handleLLMConfig(table string, worker bool) func(c *jsonapi.Ca
 				carry = map[string]string{"base_url": endpoint}
 			}
 			prefill(out, p, carry)
-			out["provider"], provider = asService(p), asService(p)
+			out["provider"], provider = llmChoice(p), llmChoice(p)
 		}
-		for k, v := range settingsValues(chosenService(provider), "llm.chat") {
+		for k, v := range settingsValues(chosenConnection(provider), "llm.chat") {
 			if _, prefilled := out[k]; !prefilled {
 				out[k] = v
 			}
@@ -454,12 +454,12 @@ func (a *AdminApp) handleLLMConfigSave(table string, worker bool) func(c *jsonap
 		if pm, bare := providedModels[strings.ToLower(strings.TrimSpace(req.Provider))]; bare {
 			p := providedFor(req.Provider)
 			if p == "" {
-				return nil, jsonapi.BadRequest(fmt.Sprintf("%s runs on a model connection: add the %s template under Admin > Extensions > Templates, then choose it here", req.Provider, pm.template))
+				return nil, jsonapi.BadRequest(fmt.Sprintf("%s runs on a model connection: add the %s template under Admin > Extensions > Templates, then choose it here", ProviderTitle(req.Provider), pm.template))
 			}
 			form.Settings = form.Settings.carry(p, map[string]string{"base_url": req.Endpoint, "api_key": req.APIKey})
-			req.Provider = asService(p)
+			req.Provider = llmChoice(p)
 		} else if p := providedFor(req.Provider); p != "" {
-			req.Provider = asService(p)
+			req.Provider = llmChoice(p)
 		}
 		// A model connector must be one, and approved.
 		if err := serviceProviderOK(req.Provider, "llm.chat"); err != nil {
@@ -467,7 +467,7 @@ func (a *AdminApp) handleLLMConfigSave(table string, worker bool) func(c *jsonap
 		}
 		// Its address, settings and key are the connection's own, kept in
 		// its space.
-		chosen := chosenService(req.Provider)
+		chosen := chosenConnection(req.Provider)
 		if chosen != "" {
 			req.APIKey, req.Endpoint = "", ""
 			if err := form.Settings.save(chosen, "llm.chat"); err != nil {
@@ -635,12 +635,12 @@ func (a *AdminApp) handleLLMModels(table string) func(c *jsonapi.Call, form with
 			Provider: req.Provider,
 			APIKey:   req.APIKey,
 			Endpoint: req.Endpoint,
-			Form:     form.Settings.modelForm(chosenService(req.Provider)),
+			Form:     form.Settings.modelForm(chosenConnection(req.Provider)),
 		})
 		if err != nil {
 			return map[string]any{"error": "Could not list the models: " + err.Error()}, nil
 		}
-		note := fmt.Sprintf("What %s offers. Pick one, or type any id in the field.", modelListSource(req.Provider))
+		note := fmt.Sprintf("What %s offers. Pick one, or type any id in the field.", ProviderTitle(req.Provider))
 		if req.Model != "" && !containsString(ids, req.Model) {
 			note += fmt.Sprintf(" The current value, %s, is not in this list.", req.Model)
 		}
@@ -655,14 +655,6 @@ type llmModelsQuery struct {
 	Model    string `json:"model"`
 	APIKey   string `json:"api_key"`
 	Endpoint string `json:"endpoint"`
-}
-
-// modelListSource names where a model list came from, for the picker's note.
-func modelListSource(provider string) string {
-	if strings.HasPrefix(provider, "peer:") {
-		return "peer " + strings.TrimPrefix(provider, "peer:")
-	}
-	return provider
 }
 
 func containsString(list []string, s string) bool {

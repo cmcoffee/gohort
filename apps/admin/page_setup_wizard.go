@@ -227,7 +227,7 @@ func (a *AdminApp) testLLM(w http.ResponseWriter, r *http.Request, table string)
 		Model:    req.Model,
 		APIKey:   req.APIKey,
 		Endpoint: req.Endpoint,
-		Form:     form.Settings.modelForm(chosenService(req.Provider)),
+		Form:     form.Settings.modelForm(chosenConnection(req.Provider)),
 		// Short deadlines: this is an interactive check, and a provider that
 		// needs more than this to answer "ok" is not going to make a usable
 		// chat surface anyway.
@@ -248,7 +248,7 @@ func (a *AdminApp) testLLM(w http.ResponseWriter, r *http.Request, table string)
 	// from a server that turns out to be a different kind is half-diagnosed.
 	serverNote := ""
 	if r := ResolvedTier(LLMProviderConfig{Provider: req.Provider, Model: req.Model, Endpoint: req.Endpoint, APIKey: req.APIKey,
-		Form: form.Settings.modelForm(chosenService(req.Provider))}); LocalDialect(r.Provider) {
+		Form: form.Settings.modelForm(chosenConnection(req.Provider))}); LocalDialect(r.Provider) {
 		serverNote = probeModelServer(ctx, r.Provider, r.Endpoint, r.APIKey).describe(r.Provider, req.ContextSize)
 	}
 

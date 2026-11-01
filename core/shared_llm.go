@@ -828,7 +828,7 @@ func ProviderIsLocal(provider string) bool {
 		return true
 	case strings.HasPrefix(p, peerProviderPrefix):
 		return true
-	case strings.HasPrefix(p, media.ServiceProviderPrefix):
+	case media.IsConnection(p):
 		return LocalDialect(modelDialect(provider))
 	}
 	return false

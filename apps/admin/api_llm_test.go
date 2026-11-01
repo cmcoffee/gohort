@@ -80,12 +80,12 @@ func TestATierSetsUpItsModelConnector(t *testing.T) {
 			t.Errorf("%s saves while typing", f.Field)
 		}
 	}
-	if fields["config/chat/base_url"] != "provider:service:chat" || fields["config/chat/api_key"] != "provider:service:chat" {
+	if fields["config/chat/base_url"] != "provider:llm:chat" || fields["config/chat/api_key"] != "provider:llm:chat" {
 		t.Errorf("the settings shown: %v", fields)
 	}
 
 	a.db.CryptSet(LLMTable, "api_key", "a local server's key")
-	if code, body := tierSave(a, LLMTable, `{"provider":"service:chat","model":"","config/chat/base_url":"`+srv.URL+`","config/chat/api_key":"sk-new"}`); code != 204 {
+	if code, body := tierSave(a, LLMTable, `{"provider":"llm:chat","model":"","config/chat/base_url":"`+srv.URL+`","config/chat/api_key":"sk-new"}`); code != 204 {
 		t.Fatalf("save: %d %s", code, body)
 	}
 	c, _ := GetConnector(RootDB, "chat")
@@ -113,18 +113,18 @@ func TestATierSetsUpItsModelConnector(t *testing.T) {
 
 	// Its model: the connection's address and key, its default model
 	// where the tier names none.
-	cfg, err := ResolveModelProvider(LLMProviderConfig{Provider: "service:chat"}, "service:chat")
+	cfg, err := ResolveModelProvider(LLMProviderConfig{Provider: "llm:chat"}, "llm:chat")
 	if err != nil || cfg.Provider != "openai" || cfg.Endpoint != srv.URL || cfg.APIKey != "sk-new" || cfg.Model != "chat-small" {
 		t.Errorf("the worker's model: %+v %v", cfg, err)
 	}
 	// A Test at another address: refused rather than the key sent there,
 	// unless a key is typed with it.
 	other := &media.ModelForm{Config: map[string]string{"base_url": "http://elsewhere.example"}}
-	if _, err := ResolveModelProvider(LLMProviderConfig{Provider: "service:chat", Form: other}, "service:chat"); err == nil || !strings.Contains(err.Error(), "give the API key again") {
+	if _, err := ResolveModelProvider(LLMProviderConfig{Provider: "llm:chat", Form: other}, "llm:chat"); err == nil || !strings.Contains(err.Error(), "give the API key again") {
 		t.Errorf("the key went to another address: %v", err)
 	}
 	other.Secrets = map[string]string{"api_key": "sk-there"}
-	if cfg, err := ResolveModelProvider(LLMProviderConfig{Provider: "service:chat", Form: other}, "service:chat"); err != nil || cfg.APIKey != "sk-there" || cfg.Endpoint != "http://elsewhere.example" {
+	if cfg, err := ResolveModelProvider(LLMProviderConfig{Provider: "llm:chat", Form: other}, "llm:chat"); err != nil || cfg.APIKey != "sk-there" || cfg.Endpoint != "http://elsewhere.example" {
 		t.Errorf("a Test with its key: %+v %v", cfg, err)
 	}
 }
@@ -162,8 +162,8 @@ func TestATierNamesAModelConnector(t *testing.T) {
 		}
 		seen[v] = true
 	}
-	if len(order) < 7 || order[0] != "service:ollama" || order[1] != "service:llamacpp" || order[3] != "service:anthropic" ||
-		labels["service:llamacpp"] != "llama.cpp" || labels["service:bedrock"] != "AWS Bedrock" {
+	if len(order) < 7 || order[0] != "llm:ollama" || order[1] != "llm:llamacpp" || order[3] != "llm:anthropic" ||
+		labels["llm:llamacpp"] != "llama.cpp" || labels["llm:bedrock"] != "AWS Bedrock" {
 		t.Errorf("the choices: %v %v", order, labels)
 	}
 	if code, body := tierSave(a, LLMTable, `{"provider":"vllm","model":"qwen","endpoint":"http://gpu.example:8000/v1","api_key":"vk"}`); code != 204 {
@@ -172,14 +172,14 @@ func TestATierNamesAModelConnector(t *testing.T) {
 	var worker, key string
 	vllm, _ := GetConnector(RootDB, "vllm")
 	sec, _ := GetConnectionSecret(RootDB, vllm, "api_key")
-	if a.db.Get(LLMTable, "provider", &worker); worker != "service:vllm" || ConnectionConfig(RootDB, vllm)["base_url"] != "http://gpu.example:8000/v1" ||
+	if a.db.Get(LLMTable, "provider", &worker); worker != "llm:vllm" || ConnectionConfig(RootDB, vllm)["base_url"] != "http://gpu.example:8000/v1" ||
 		sec.Value != "vk" || a.db.Get(LLMTable, "api_key", &key) {
 		t.Errorf("the worker: %q, its connection %v %+v, a key of its own %q", worker, ConnectionConfig(RootDB, vllm), sec, key)
 	}
 	if cfg := ResolvedTier(LLMProviderConfig{Provider: worker, Model: "qwen"}); cfg.Provider != "vllm" || cfg.Endpoint != "http://gpu.example:8000/v1" || cfg.APIKey != "vk" {
 		t.Errorf("the worker resolves to %+v", cfg)
 	}
-	if !ProviderIsLocal(worker) || ProviderHasNativeTools("service:ollama") || !ProviderHasNativeTools(worker) {
+	if !ProviderIsLocal(worker) || ProviderHasNativeTools("llm:ollama") || !ProviderHasNativeTools(worker) {
 		t.Error("a local server's connection is judged as another provider")
 	}
 
@@ -188,27 +188,27 @@ func TestATierNamesAModelConnector(t *testing.T) {
 	a.db.Set(LeadLLMTable, "provider", "llama.cpp")
 	a.db.Set(LeadLLMTable, "endpoint", "http://box.example:8080/v1")
 	out, _ := a.handleLLMConfig(LeadLLMTable, false)(&jsonapi.Call{R: httptest.NewRequest("GET", "/api/lead-llm", nil)})
-	if read := out.(map[string]any); read["provider"] != "service:llamacpp" || read["config/llamacpp/base_url"] != "http://box.example:8080/v1" {
+	if read := out.(map[string]any); read["provider"] != "llm:llamacpp" || read["config/llamacpp/base_url"] != "http://box.example:8080/v1" {
 		t.Errorf("a lead on llama.cpp reads as %v", read)
 	}
 	old := Connector{Name: "anthropic-model", Kind: service.Kind, Template: "anthropic-model",
 		Spec: json.RawMessage(`{"provider":{"transport":"http","base_url":"https://api.anthropic.com","auth":{"credential":"anthropic_model"},"operations":{"models":{"path":"/v1/models"}}},"provides":[{"capability":"llm.chat","dialect":"anthropic"}]}`)}
 	RootDB.Set("connectors", old.Name, old)
-	a.db.Set(LeadLLMTable, "provider", "service:anthropic-model")
+	a.db.Set(LeadLLMTable, "provider", "llm:anthropic-model")
 	out, _ = a.handleLLMConfig(LeadLLMTable, false)(&jsonapi.Call{R: httptest.NewRequest("GET", "/api/lead-llm", nil)})
-	if read := out.(map[string]any); read["provider"] != "service:anthropic" {
+	if read := out.(map[string]any); read["provider"] != "llm:anthropic" {
 		t.Errorf("a lead on an outdated connection reads as %v", read["provider"])
 	}
 	for _, o := range LLMProviderOptions(true) {
-		if o.Value == "service:anthropic-model" {
+		if o.Value == "llm:anthropic-model" {
 			t.Errorf("the outdated connection is offered beside the one in its place: %v", o)
 		}
 	}
-	if code, body := tierSave(a, LeadLLMTable, `{"provider":"service:anthropic-model","model":"claude-opus-5"}`); code != 204 {
+	if code, body := tierSave(a, LeadLLMTable, `{"provider":"llm:anthropic-model","model":"claude-opus-5"}`); code != 204 {
 		t.Fatalf("saving the outdated one: %d %s", code, body)
 	}
 	var lead string
-	if a.db.Get(LeadLLMTable, "provider", &lead); lead != "service:anthropic" {
+	if a.db.Get(LeadLLMTable, "provider", &lead); lead != "llm:anthropic" {
 		t.Errorf("the lead runs on %q", lead)
 	}
 
@@ -246,7 +246,7 @@ func TestATierNamesAModelConnector(t *testing.T) {
 func TestATiersModelListRunsOnItsForm(t *testing.T) {
 	a, srv, got := modelWorld(t)
 	a.db.CryptSet(LLMTable, "api_key", "a local server's key")
-	form := postedForm[llmModelsQuery](t, `{"provider":"service:chat","config/chat/base_url":"`+srv.URL+`"}`)
+	form := postedForm[llmModelsQuery](t, `{"provider":"llm:chat","config/chat/base_url":"`+srv.URL+`"}`)
 	out, _ := a.handleLLMModels(LLMTable)(&jsonapi.Call{R: httptest.NewRequest("POST", "/api/worker-llm/models", nil)}, form)
 	if body, _ := out.(map[string]any); body["error"] != nil || len(*got) != 1 || !strings.HasSuffix((*got)[0], "/models Bearer sk-old") {
 		t.Errorf("the list: %v, asked %v", out, *got)

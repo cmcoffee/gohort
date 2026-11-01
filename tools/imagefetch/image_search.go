@@ -26,7 +26,7 @@ import (
 // imageSearchConnector is the connector find_image searches pictures with:
 // the one Web Search is set to, when it also finds pictures (image.search).
 func imageSearchConnector() (string, bool) {
-	name, ok := strings.CutPrefix(LoadWebSearchConfig().Provider, media.ServiceProviderPrefix)
+	name, ok := media.ChosenConnection(LoadWebSearchConfig().Provider)
 	if !ok || RootDB == nil {
 		return "", false
 	}

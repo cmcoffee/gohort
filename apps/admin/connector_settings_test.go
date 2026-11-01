@@ -83,14 +83,14 @@ func TestAPageSetsUpItsConnector(t *testing.T) {
 	for _, f := range embeddingFormFields() {
 		fields[f.Field] = f.Type + " " + f.ShowWhen + " " + f.Default
 	}
-	if fields["config/vec/endpoint"] != "text enabled;provider:service:vec " || fields["config/vec/model"] != "text enabled;provider:service:vec small-embed" ||
-		fields["config/vec/api_key"] != "password enabled;provider:service:vec " {
+	if fields["config/vec/endpoint"] != "text enabled;provider:embed:vec " || fields["config/vec/model"] != "text enabled;provider:embed:vec small-embed" ||
+		fields["config/vec/api_key"] != "password enabled;provider:embed:vec " {
 		t.Errorf("the settings shown: %v", fields)
 	}
 
 	a := &AdminApp{db: RootDB}
 	call := &jsonapi.Call{R: httptest.NewRequest("POST", "/api/embeddings", nil)}
-	form := postedForm[EmbeddingConfig](t, `{"enabled":true,"provider":"service:vec","config/vec/endpoint":"`+srv.URL+`","config/vec/model":"big-embed","config/vec/api_key":"sk-new","config/other/endpoint":"x"}`)
+	form := postedForm[EmbeddingConfig](t, `{"enabled":true,"provider":"embed:vec","config/vec/endpoint":"`+srv.URL+`","config/vec/model":"big-embed","config/vec/api_key":"sk-new","config/other/endpoint":"x"}`)
 	if _, err := a.handleEmbeddingsSave(call, form); err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +117,7 @@ func TestAPageSetsUpItsConnector(t *testing.T) {
 
 	// Saved again with the key as the page showed it, the key is kept; a
 	// model cleared takes its default.
-	form = postedForm[EmbeddingConfig](t, `{"enabled":true,"provider":"service:vec","config/vec/endpoint":"`+srv.URL+`","config/vec/model":"","config/vec/api_key":"`+secretUnchanged+`"}`)
+	form = postedForm[EmbeddingConfig](t, `{"enabled":true,"provider":"embed:vec","config/vec/endpoint":"`+srv.URL+`","config/vec/model":"","config/vec/api_key":"`+secretUnchanged+`"}`)
 	if _, err := a.handleEmbeddingsSave(call, form); err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +133,7 @@ func TestAPagesTestRunsOnItsForm(t *testing.T) {
 	vecConnector(t, srv.URL)
 	a := &AdminApp{db: RootDB}
 	call := &jsonapi.Call{R: httptest.NewRequest("POST", "/api/embeddings/test", nil)}
-	form := postedForm[EmbeddingConfig](t, `{"enabled":true,"provider":"service:vec","config/vec/endpoint":"`+srv.URL+`","config/vec/model":"tried-embed"}`)
+	form := postedForm[EmbeddingConfig](t, `{"enabled":true,"provider":"embed:vec","config/vec/endpoint":"`+srv.URL+`","config/vec/model":"tried-embed"}`)
 	out, _ := a.handleEmbeddingsTest(call, form)
 	if body, _ := out.(map[string]any); body["ok"] != true || len(*got) != 1 || !strings.HasSuffix((*got)[0], " tried-embed") {
 		t.Errorf("the Test: %v, sent %v", out, *got)
@@ -150,7 +150,7 @@ func TestAConnectorInUseCannotBeDeleted(t *testing.T) {
 	srv, _ := settingsWorld(t)
 	vecConnector(t, srv.URL)
 	a := &AdminApp{db: RootDB}
-	RootDB.Set(EmbeddingTable, "current", EmbeddingConfig{Enabled: true, Provider: "service:vec"})
+	RootDB.Set(EmbeddingTable, "current", EmbeddingConfig{Enabled: true, Provider: "embed:vec"})
 	service.Settle(RootDB)
 	deletable := func() bool {
 		out, _ := a.handleConnectors(&jsonapi.Call{R: httptest.NewRequest("GET", "/api/connectors", nil)})
@@ -204,7 +204,7 @@ func TestAPageKeepsTheOtherCapabilitysSettings(t *testing.T) {
 	}
 	c, _ := GetConnector(RootDB, "duo")
 	SetConnectionConfig(RootDB, c, map[string]string{"endpoint": "http://a.example", "speech.synthesize/voice": "alto", "gone": "x"})
-	form := postedForm[EmbeddingConfig](t, `{"provider":"service:duo","config/duo/endpoint":"http://b.example","config/duo/embed.text/model":"big"}`)
+	form := postedForm[EmbeddingConfig](t, `{"provider":"embed:duo","config/duo/endpoint":"http://b.example","config/duo/embed.text/model":"big"}`)
 	if err := form.Settings.save("duo", "embed.text"); err != nil {
 		t.Fatal(err)
 	}
@@ -224,11 +224,11 @@ func TestAPageShowsTheProvidedConnectionInPlaceOfAnOutdatedOne(t *testing.T) {
 			"operations":{"embed":{"method":"POST","path":"/embeddings","body":{"model":"{model}","input":"{texts}"}}}},
 			"provides":[{"capability":"embed.text","steps":[{"call":"embed"}],"output":{"vectors":{"path":"data","each":"embedding","as":"json"}},"defaults":{"model":"e5-large"}}]}`)}
 	RootDB.Set("connectors", old.Name, old)
-	RootDB.Set(EmbeddingTable, "current", EmbeddingConfig{Enabled: true, Provider: "service:embeddings"})
+	RootDB.Set(EmbeddingTable, "current", EmbeddingConfig{Enabled: true, Provider: "embed:embeddings"})
 	a := &AdminApp{db: RootDB}
 	out, _ := a.handleEmbeddings(&jsonapi.Call{R: httptest.NewRequest("GET", "/api/embeddings", nil)})
 	read := out.(map[string]any)
-	if read["provider"] != "service:local-embeddings" || read["config/local-embeddings/base_url"] != "http://gpu.example:8080/v1" ||
+	if read["provider"] != "embed:local-embeddings" || read["config/local-embeddings/base_url"] != "http://gpu.example:8080/v1" ||
 		read["config/local-embeddings/model"] != "e5-large" {
 		t.Errorf("read: %v", read)
 	}

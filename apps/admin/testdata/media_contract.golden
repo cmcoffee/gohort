@@ -117,11 +117,11 @@ root POST /api/transcribe "{\"enabled\":"
 root POST /api/transcribe/test "{\"enabled\":false,\"provider\":\"service:ears\"}"
   200 {"error":"transcription is disabled: flip the toggle on first","ok":false}
 root POST /api/transcribe/test "{\"enabled\":true}"
-  200 {"message":"OK: the service ears transcribed a second of a tone and heard no words, as expected of a tone","ok":true}
+  200 {"message":"OK: ears transcribed a second of a tone and heard no words, as expected of a tone","ok":true}
 root POST /api/transcribe/test "{\"enabled\":true,\"provider\":\"peer:nope\"}"
   200 {"error":"no peer named \"nope\" is registered: add it under Peers first","ok":false}
 root POST /api/transcribe/test "{\"enabled\":true,\"provider\":\"service:ears\"}"
-  200 {"message":"OK: the service ears transcribed a second of a tone and heard no words, as expected of a tone","ok":true}
+  200 {"message":"OK: ears transcribed a second of a tone and heard no words, as expected of a tone","ok":true}
 root POST /api/transcribe/test "{\"enabled\":true,\"provider\":\"service:deaf\"}"
   200 {"error":"transcribe: the provider answered HTTP 403: no","ok":false}
 alice POST /api/speech "{\"enabled\":true,\"provider\":\"service:voice\",\"voice\":\"af_heart\"}"

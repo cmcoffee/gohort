@@ -30,7 +30,7 @@ func embedConnector(t *testing.T, name, base, model string) {
 	if err := ApproveConnector(RootDB, name); err != nil {
 		t.Fatal(err)
 	}
-	SetEmbeddingConfig(EmbeddingConfig{Enabled: true, Provider: "service:" + name, Endpoint: "service:" + name, Model: model})
+	SetEmbeddingConfig(EmbeddingConfig{Enabled: true, Provider: "embed:" + name, Endpoint: "embed:" + name, Model: model})
 }
 
 // transcribeConnector saves and approves a keyless service connector named
@@ -88,20 +88,20 @@ func TestSpeechSettingsTakeAServiceThatSpeaks(t *testing.T) {
 		"operations":{"speak":{"method":"POST","path":"/v1/speak","body":{"text":"{text}"},"read":"file"}}},
 		"provides":[{"capability":"speech.synthesize","steps":[{"call":"speak"}],"output":{"audio":{"from":"body"}}}]}`
 	SaveConnector(RootDB, Connector{Name: "voice", Kind: "service", Spec: json.RawMessage(spec)})
-	if err := serviceProviderOK("service:voice", "speech.synthesize"); err != nil {
+	if err := serviceProviderOK("speak:voice", "speech.synthesize"); err != nil {
 		t.Errorf("a service that speaks, in use nowhere yet: %v", err)
 	}
-	if err := serviceProviderOK("service:voice", "speech.transcribe"); err == nil {
+	if err := serviceProviderOK("speak:voice", "speech.transcribe"); err == nil {
 		t.Error("a service that only speaks was taken for transcription")
 	}
-	if err := serviceProviderOK("service:nothing", "speech.synthesize"); err == nil {
+	if err := serviceProviderOK("speak:nothing", "speech.synthesize"); err == nil {
 		t.Error("a missing connector was taken")
 	}
 	if err := serviceProviderOK("local", "speech.synthesize"); err != nil {
 		t.Errorf("this instance: %v", err)
 	}
 	opts := serviceProviderOptions("speech.synthesize", "Speak")
-	if len(opts) != 1 || opts[0].Value != "service:voice" {
+	if len(opts) != 1 || opts[0].Value != "speak:voice" {
 		t.Errorf("speech choices: %+v", opts)
 	}
 	if len(serviceProviderOptions("speech.transcribe", "Transcribe")) != 0 {
@@ -123,12 +123,12 @@ func TestEmbeddingSettingsTakeAServiceThatEmbeds(t *testing.T) {
 		"provides":[{"capability":"embed.text","steps":[{"call":"embed"}],"output":{"vectors":{"path":"data","each":"embedding"}},
 		"defaults":{"model":"embed-small"}}]}`
 	SaveConnector(RootDB, Connector{Name: "vec", Kind: "service", Spec: json.RawMessage(spec)})
-	req := EmbeddingConfig{Enabled: true, Provider: "service:vec", Endpoint: "http://localhost:11434/api", Model: "nomic-embed-text", APIKey: "x"}
+	req := EmbeddingConfig{Enabled: true, Provider: "embed:vec", Endpoint: "http://localhost:11434/api", Model: "nomic-embed-text", APIKey: "x"}
 	got, err := resolveEmbedding(req, nil)
-	if err != nil || got.Endpoint != "service:vec" || got.Model != "embed-small" || got.APIKey != "" {
+	if err != nil || got.Endpoint != "embed:vec" || got.Model != "embed-small" || got.APIKey != "" {
 		t.Errorf("resolved: %+v %v", got, err)
 	}
-	if _, err := resolveEmbedding(EmbeddingConfig{Enabled: true, Provider: "service:nothing"}, nil); err == nil {
+	if _, err := resolveEmbedding(EmbeddingConfig{Enabled: true, Provider: "embed:nothing"}, nil); err == nil {
 		t.Error("a missing connector was taken")
 	}
 	found := false
@@ -137,7 +137,7 @@ func TestEmbeddingSettingsTakeAServiceThatEmbeds(t *testing.T) {
 			continue
 		}
 		for _, o := range f.Options {
-			found = found || o.Value == "service:vec"
+			found = found || o.Value == "embed:vec"
 		}
 	}
 	if !found {
@@ -282,7 +282,7 @@ func TestWebSearchTakesOnlyAnEngine(t *testing.T) {
 		{WebSearchConfig{Provider: "searxng"}, false},
 		{WebSearchConfig{Provider: "searxng", Source: "local"}, false},
 		{WebSearchConfig{Provider: "brave"}, false},
-		{WebSearchConfig{Provider: "service:nothing"}, false},
+		{WebSearchConfig{Provider: "search:nothing"}, false},
 	} {
 		if err := searchEngineOK(c.cfg); (err == nil) != c.ok {
 			t.Errorf("%+v: %v", c.cfg, err)
@@ -303,7 +303,7 @@ func TestWebSearchTakesAConnectorThatSearches(t *testing.T) {
 	offered := func() bool {
 		for _, f := range webSearchFormFields() {
 			for _, o := range f.Options {
-				if f.Field == "provider" && o.Value == "service:finder" {
+				if f.Field == "provider" && o.Value == "search:finder" {
 					return true
 				}
 			}
@@ -314,16 +314,16 @@ func TestWebSearchTakesAConnectorThatSearches(t *testing.T) {
 	if !offered() {
 		t.Error("a connector no page uses yet is not offered: choosing it is what puts it to use")
 	}
-	if _, err := a.handleWebSearchSave(&jsonapi.Call{R: httptest.NewRequest("POST", "/api/web-search", nil)}, withSettings[WebSearchConfig]{Form: WebSearchConfig{Provider: "service:finder"}}); err != nil {
+	if _, err := a.handleWebSearchSave(&jsonapi.Call{R: httptest.NewRequest("POST", "/api/web-search", nil)}, withSettings[WebSearchConfig]{Form: WebSearchConfig{Provider: "search:finder"}}); err != nil {
 		t.Errorf("choosing it: %v", err)
 	}
 	if c, _ := GetConnector(RootDB, "finder"); !c.Approved {
 		t.Error("choosing it did not put it to use")
 	}
-	if _, err := a.handleWebSearchSave(&jsonapi.Call{R: httptest.NewRequest("POST", "/api/web-search", nil)}, withSettings[WebSearchConfig]{Form: WebSearchConfig{Provider: "service:finder"}}); err != nil {
+	if _, err := a.handleWebSearchSave(&jsonapi.Call{R: httptest.NewRequest("POST", "/api/web-search", nil)}, withSettings[WebSearchConfig]{Form: WebSearchConfig{Provider: "search:finder"}}); err != nil {
 		t.Errorf("saving it: %v", err)
 	}
-	if got := a.storedString(SearchTable, "provider"); got != "service:finder" {
+	if got := a.storedString(SearchTable, "provider"); got != "search:finder" {
 		t.Errorf("stored provider %q", got)
 	}
 }
@@ -340,7 +340,7 @@ func TestPageRenderingTakesAConnectorThatRenders(t *testing.T) {
 	SaveConnector(RootDB, Connector{Name: "reader", Kind: "service", Spec: json.RawMessage(spec)})
 	offered := func() bool {
 		for _, o := range browseFormFields()[0].Options {
-			if o.Value == "service:reader" {
+			if o.Value == "render:reader" {
 				return true
 			}
 		}
@@ -351,13 +351,13 @@ func TestPageRenderingTakesAConnectorThatRenders(t *testing.T) {
 	if !offered() {
 		t.Error("a connector no page uses yet is not offered: choosing it is what puts it to use")
 	}
-	if _, err := a.handleBrowseSave(call, withSettings[BrowseConfig]{Form: BrowseConfig{Source: "service:reader"}}); err != nil {
+	if _, err := a.handleBrowseSave(call, withSettings[BrowseConfig]{Form: BrowseConfig{Source: "render:reader"}}); err != nil {
 		t.Errorf("choosing it: %v", err)
 	}
 	if c, _ := GetConnector(RootDB, "reader"); !c.Approved {
 		t.Error("choosing it did not put it to use")
 	}
-	if _, err := a.handleBrowseSave(call, withSettings[BrowseConfig]{Form: BrowseConfig{Source: "service:reader"}}); err != nil || LoadBrowseConfig().Source != "service:reader" {
+	if _, err := a.handleBrowseSave(call, withSettings[BrowseConfig]{Form: BrowseConfig{Source: "render:reader"}}); err != nil || LoadBrowseConfig().Source != "render:reader" {
 		t.Errorf("saving it: %v %+v", err, LoadBrowseConfig())
 	}
 }
@@ -389,7 +389,7 @@ func TestMailTakesAConnectorThatSends(t *testing.T) {
 	SaveConnector(RootDB, Connector{Name: "postbox", Kind: "service", Spec: json.RawMessage(spec)})
 	a := &AdminApp{db: RootDB}
 	call := &jsonapi.Call{R: httptest.NewRequest("POST", "/api/mail", nil)}
-	if f, ok := field("provider"); !ok || len(f.Options) != 2 || f.Options[1].Value != "service:postbox" {
+	if f, ok := field("provider"); !ok || len(f.Options) != 2 || f.Options[1].Value != "mail:postbox" {
 		t.Errorf("the choice: %+v", f)
 	}
 	if f, _ := field("server"); f.ShowWhen != "provider:smtp" || f.Help != "" {
@@ -402,10 +402,10 @@ func TestMailTakesAConnectorThatSends(t *testing.T) {
 	if got.(map[string]any)["provider"] != "smtp" {
 		t.Errorf("nothing saved reads as SMTP: %+v", got)
 	}
-	if _, err := a.handleMailSave(call, withSettings[MailConfig]{Form: MailConfig{Provider: "service:postbox", From: "alerts@mail.example"}}); err != nil {
+	if _, err := a.handleMailSave(call, withSettings[MailConfig]{Form: MailConfig{Provider: "mail:postbox", From: "alerts@mail.example"}}); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := a.handleMail(call); got.(map[string]any)["provider"] != "service:postbox" {
+	if got, _ := a.handleMail(call); got.(map[string]any)["provider"] != "mail:postbox" {
 		t.Errorf("saved: %+v", got)
 	}
 	if c, _ := GetConnector(RootDB, "postbox"); !c.Approved {
@@ -425,7 +425,7 @@ func TestLLMTiersTakeAModelConnector(t *testing.T) {
 	SaveConnector(RootDB, Connector{Name: "hosted", Kind: "service", Spec: json.RawMessage(spec)})
 	offered := func() bool {
 		for _, o := range LLMProviderOptions(false) {
-			if o.Value == "service:hosted" {
+			if o.Value == "llm:hosted" {
 				return true
 			}
 		}
@@ -436,7 +436,7 @@ func TestLLMTiersTakeAModelConnector(t *testing.T) {
 	if !offered() {
 		t.Error("a connector no page uses yet is not offered: choosing it is what puts it to use")
 	}
-	if _, err := a.handleLLMConfigSave(LLMTable, true)(call, withSettings[llmConfigSave]{Form: llmConfigSave{Provider: "service:hosted"}}); err != nil {
+	if _, err := a.handleLLMConfigSave(LLMTable, true)(call, withSettings[llmConfigSave]{Form: llmConfigSave{Provider: "llm:hosted"}}); err != nil {
 		t.Errorf("choosing it: %v", err)
 	}
 	if c, _ := GetConnector(RootDB, "hosted"); !c.Approved {
@@ -465,14 +465,14 @@ func TestATestTriesTheChoiceBeforeItIsSaved(t *testing.T) {
 	SetEmbeddingConfig(EmbeddingConfig{})
 	a := &AdminApp{db: RootDB}
 	out, _ := a.handleEmbeddingsTest(&jsonapi.Call{R: httptest.NewRequest("POST", "/api/embeddings/test", nil)},
-		withSettings[EmbeddingConfig]{Form: EmbeddingConfig{Enabled: true, Provider: "service:vec"}})
+		withSettings[EmbeddingConfig]{Form: EmbeddingConfig{Enabled: true, Provider: "embed:vec"}})
 	if body, _ := out.(map[string]any); body["ok"] != true {
 		t.Fatalf("the test of a choice not yet saved: %+v", out)
 	}
 	if c, _ := GetConnector(RootDB, "vec"); c.Approved {
 		t.Error("testing it put it to use")
 	}
-	SetEmbeddingConfig(EmbeddingConfig{Enabled: true, Provider: "service:vec", Endpoint: "service:vec", Model: "m"})
+	SetEmbeddingConfig(EmbeddingConfig{Enabled: true, Provider: "embed:vec", Endpoint: "embed:vec", Model: "m"})
 	if _, err := Embed(context.Background(), "outside the test"); err == nil {
 		t.Error("an embedding outside the test reached a connector no page has put to use")
 	}

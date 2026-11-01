@@ -60,7 +60,7 @@ func useConnectorTranscriber(t *testing.T, endpoint, model string) {
 		}
 		return strings.TrimSpace(string(raw)), nil
 	}
-	SetTranscribeConfig(TranscribeConfig{Enabled: true, Provider: media.ServiceProviderPrefix + "stt", Model: model})
+	SetTranscribeConfig(TranscribeConfig{Enabled: true, Provider: media.Choice(media.JobTranscribe, "stt"), Model: model})
 }
 
 // sttServer stands up a fake OpenAI-compatible STT endpoint and points this

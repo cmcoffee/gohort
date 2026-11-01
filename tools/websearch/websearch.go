@@ -958,10 +958,11 @@ func SearchWithProvider(req SearchRequest) (string, error) {
 	switch {
 	case provider == "duckduckgo":
 		result, err = searchDuckDuckGo(query)
-	case strings.HasPrefix(provider, media.ServiceProviderPrefix):
+	case media.IsConnection(provider):
 		// A service connector that searches (core/service, web.search),
 		// chosen under Web Search: it counts and prices its own calls.
-		result, err = service.Search(context.Background(), strings.TrimPrefix(provider, media.ServiceProviderPrefix), query)
+		name, _ := media.ChosenConnection(provider)
+		result, err = service.Search(context.Background(), name, query)
 	case provider == "searxng" && strings.HasPrefix(req.Source, "peer:"):
 		// A peer lends its search in SearXNG's shape (ResolveSearchProvider).
 		result, err = searchPeer(req)
@@ -1007,10 +1008,10 @@ func CrossProviderSearch(query string) (string, error) {
 // number can be right: what a provider charges is on their invoice, not in any
 // response.
 func recordSearchCost(cfg WebSearchConfig, provider string) {
-	if strings.HasPrefix(provider, media.ServiceProviderPrefix) {
+	if media.IsConnection(provider) {
 		return // the connector prices its own calls
 	}
-	RecordExternalCost("search:"+provider, "Web search ("+provider+")", cfg.CostPerCall)
+	RecordExternalCost("search:"+provider, "Web search ("+ProviderTitle(provider)+")", cfg.CostPerCall)
 }
 
 // searchDuckDuckGo scrapes DuckDuckGo's lite HTML interface (no API key needed).

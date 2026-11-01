@@ -53,7 +53,7 @@ type TranscribeConfig struct {
 	Model    string `json:"model"`    // the model it transcribes with, when known
 	APIKey   string `json:"api_key"`  // a peer's credential
 	Enabled  bool   `json:"enabled"`  // false → calls return an error and callers skip
-	// Provider is what transcribes: "service:<name>" (a connector) or
+	// Provider is what transcribes: "transcribe:<name>" (a connector) or
 	// "peer:<name>". "local", or blank, is the endpoint this instance once
 	// called itself, moved onto a connector at startup (core/service's
 	// migration): it no longer transcribes.
@@ -107,12 +107,76 @@ var TranscribeResolver func(TranscribeConfig) TranscribeConfig
 // sends, and a peer credential rotates between them.
 var HTTPClientForProvider func(provider string, timeout time.Duration) *http.Client
 
-// ServiceProviderPrefix marks a config whose Provider is a service connector
-// ("service:<name>", core/service) rather than this instance or a peer.
-const ServiceProviderPrefix = "service:"
+// A setting names the connection that does its job as "<job>:<name>":
+// llm:anthropic for an LLM tier, transcribe:local-transcription for
+// transcription. The job is what the setting has the connection do, so the
+// value says what it is for wherever it is read, beside "peer:<name>" for a
+// peer and a bare name for what is built in.
+const (
+	JobLLM        = "llm"
+	JobEmbed      = "embed"
+	JobTranscribe = "transcribe"
+	JobSpeak      = "speak"
+	JobSearch     = "search"
+	JobRender     = "render"
+	JobMail       = "mail"
+	JobConvert    = "convert"
+)
+
+// legacyChoice is the prefix every job's setting was written with before it
+// was named for its job. Read like any job's until the connections:v3
+// migration, which rewrote the saved ones, is deleted.
+const legacyChoice = "service"
+
+// choiceJobs are the prefixes a setting's value names a connection by.
+var choiceJobs = map[string]bool{JobLLM: true, JobEmbed: true, JobTranscribe: true, JobSpeak: true,
+	JobSearch: true, JobRender: true, JobMail: true, JobConvert: true, legacyChoice: true}
+
+// capabilityJobs is the job a setting chooses a connection for, by the
+// capability it is chosen for.
+var capabilityJobs = map[string]string{"llm.chat": JobLLM, "embed.text": JobEmbed, "speech.transcribe": JobTranscribe,
+	"speech.synthesize": JobSpeak, "web.search": JobSearch, "page.render": JobRender, "mail.send": JobMail, "file.convert": JobConvert}
+
+// Choice is the setting value that has connection name do job.
+func Choice(job, name string) string { return job + ":" + name }
+
+// ChoiceFor is the setting value that has connection name do what a setting
+// choosing it for capability asks of it.
+func ChoiceFor(capability, name string) string {
+	if job, ok := capabilityJobs[capability]; ok {
+		return Choice(job, name)
+	}
+	return Choice(legacyChoice, name)
+}
+
+// ChosenConnection is the connection a setting's value names, by its job or
+// the old service: spelling; false for a peer, something built in, or
+// nothing.
+func ChosenConnection(value string) (string, bool) {
+	job, name, ok := strings.Cut(strings.TrimSpace(value), ":")
+	if !ok || !choiceJobs[job] || strings.TrimSpace(name) == "" {
+		return "", false
+	}
+	return name, true
+}
+
+// IsConnection reports whether a setting's value names a connection.
+func IsConnection(value string) bool {
+	_, ok := ChosenConnection(value)
+	return ok
+}
+
+// AsJob is value written for job: a connection named the way job names one,
+// anything else (a peer, something built in) as it is.
+func AsJob(job, value string) string {
+	if name, ok := ChosenConnection(value); ok {
+		return Choice(job, name)
+	}
+	return value
+}
 
 // EmbedService, when set, embeds through a service connector, for an
-// embedding config whose Provider is "service:<name>" (core/service installs
+// embedding config whose Provider is "embed:<name>" (core/service installs
 // it): one vector per text, in order, made with model (blank: the service's
 // own). Nil, and such a config is refused. It sits with the other service
 // seams here although embedding lives in core, which keeps its exports few.
@@ -125,14 +189,14 @@ var EmbedService func(ctx context.Context, connector, model string, texts []stri
 var ServiceAddress func(connector string) string
 
 // PageService, when set, renders a page through a service connector, for a
-// page rendering source of "service:<name>" (core/service installs it): the
+// page rendering source of "render:<name>" (core/service installs it): the
 // page's readable text, at most maxChars of it. It sits with the other
 // service seams although page rendering is routed in core, for the same
 // reason as EmbedService.
 var PageService func(ctx context.Context, connector, url string, maxChars int) (string, error)
 
 // MailService, when set, sends mail through a service connector, for a mail
-// provider of "service:<name>" (core/service installs it). from may be blank:
+// provider of "mail:<name>" (core/service installs it). from may be blank:
 // the connector's own sender then. Kept here for the same reason as
 // EmbedService.
 var MailService func(ctx context.Context, connector, from, to, subject, body string) error
@@ -158,7 +222,7 @@ type ModelTarget struct {
 }
 
 // ModelService, when set, reads the model connector named connector, for an
-// LLM tier whose provider is "service:<name>" (core/service installs it).
+// LLM tier whose provider is "llm:<name>" (core/service installs it).
 // withKey reads its secret too: only the client is given it. form, for a
 // Test before a save, is what the form holds; nil reads what the
 // connection keeps.
@@ -354,7 +418,7 @@ func TranscribeWith(ctx context.Context, cfg TranscribeConfig, audio []byte, fil
 		nfo.Debug("[transcribe] disabled (cfg.Enabled=false)")
 		return "", fmt.Errorf("transcription disabled")
 	}
-	if name, ok := strings.CutPrefix(cfg.Provider, ServiceProviderPrefix); ok {
+	if name, ok := ChosenConnection(cfg.Provider); ok {
 		if TranscribeService == nil {
 			return "", fmt.Errorf("transcription is set to the service %q, and services are not available here", name)
 		}

@@ -1022,13 +1022,13 @@ func LLMProviderOptions(usePrimary bool) []ui.SelectOption {
 	services := serviceProviderOptions("llm.chat", "Run this tier's turns")
 	rank := map[string]int{}
 	for i, n := range []string{"ollama", "llamacpp", "vllm", "anthropic", "openai", "gemini", "bedrock"} {
-		rank[asService(n)] = i + 1
+		rank[llmChoice(n)] = i + 1
 	}
 	var rest []ui.SelectOption
 	provided := make([]ui.SelectOption, len(rank))
 	for _, o := range services {
 		if r := rank[o.Value]; r > 0 {
-			if c, ok := GetConnector(RootDB, chosenService(o.Value)); ok && c.Provided {
+			if c, ok := GetConnector(RootDB, chosenConnection(o.Value)); ok && c.Provided {
 				provided[r-1] = o
 				continue
 			}

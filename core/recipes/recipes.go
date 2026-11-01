@@ -892,6 +892,13 @@ func installProvided(db core.Database) {
 				continue
 			}
 			refreshProvided(db, c, shipped)
+			// One provided before it was given the name it is shown as
+			// showed its bare name (anthropic) everywhere a tier is named.
+			if strings.TrimSpace(c.DisplayName) == "" && strings.TrimSpace(p.Label) != "" {
+				if err := core.SetConnectorDisplayName(db, c.Name, p.Label); err != nil {
+					core.Log("[recipes] naming %s %q: %v", c.Name, p.Label, err)
+				}
+			}
 			continue
 		}
 		res, err := Install(db, r.ID, "", map[string]string{"name": p.Name})

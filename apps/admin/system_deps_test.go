@@ -841,17 +841,17 @@ func TestAJobCanBeDoneByAConnector(t *testing.T) {
 		"operations":{"convert":{"method":"POST","path":"/convert/{from}/to/{to}","send":"multipart","body":{"File":"{file}"}}}},
 		"provides":[{"capability":"file.convert","steps":[{"call":"convert"}],"output":{"file":{"path":"Files.0.FileData","as":"base64"}}}]}`
 	SaveConnector(RootDB, Connector{Name: "converter", Kind: "service", Spec: json.RawMessage(spec)})
-	if f, ok := field("by"); !ok || len(f.Options) != 2 || f.Options[1].Value != "service:converter" {
+	if f, ok := field("by"); !ok || len(f.Options) != 2 || f.Options[1].Value != "convert:converter" {
 		t.Errorf("Done by: %+v", f)
 	}
 	if f, _ := field("steps"); f.ShowWhen != "by:commands" {
 		t.Errorf("steps shown for a connector: %+v", f)
 	}
-	a := flowForm{By: "service:converter", Steps: stepsOf([]string{"cat {in}"})}.adapted("read.pdf")
+	a := flowForm{By: "convert:converter", Steps: stepsOf([]string{"cat {in}"})}.adapted("read.pdf")
 	if a.Service != "converter" || len(a.Steps) != 0 || a.Validate() != nil {
 		t.Errorf("saved as: %+v %v", a, a.Validate())
 	}
-	if ff := formOf("pdf-by-api", a); ff.By != "service:converter" {
+	if ff := formOf("pdf-by-api", a); ff.By != "convert:converter" {
 		t.Errorf("read back: %+v", ff)
 	}
 	if ff := formOf("pdf", flows.Adapted{Job: "read.pdf", Steps: []string{"pdftotext {in} {out}"}}); ff.By != "commands" {

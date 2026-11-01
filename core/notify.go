@@ -31,7 +31,7 @@ func SendNotification(to, subject, body string) error {
 // so a test against a host that accepts and then says nothing could only be
 // ended by the server's timeout. Returns nil when mail is not configured.
 func (cfg MailConfig) SendNotification(ctx context.Context, to, subject, body string) error {
-	if name, ok := strings.CutPrefix(strings.TrimSpace(cfg.Provider), media.ServiceProviderPrefix); ok {
+	if name, ok := media.ChosenConnection(strings.TrimSpace(cfg.Provider)); ok {
 		return cfg.sendThrough(ctx, name, to, subject, body)
 	}
 	if cfg.Server == "" && cfg.From == "" {

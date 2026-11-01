@@ -17,17 +17,17 @@ import (
 )
 
 // EmbeddingConfig says where embeddings are made for the semantic-search
-// pipeline: a service connector ("service:<name>", core/service) or a peer
+// pipeline: a service connector ("embed:<name>", core/service) or a peer
 // that lends them ("peer:<name>"). The connector keeps its own address, model
 // and key; Endpoint and Model here name the SPACE the stored vectors are in
 // (EmbedVersion), and Model is the one each embed asks the connector for. Set
 // under Admin > Capabilities > Embeddings.
 type EmbeddingConfig struct {
-	Endpoint string `json:"endpoint"` // names the space: the connector ("service:<name>"), the peer's endpoint, or the endpoint embeddings were made at before connectors
+	Endpoint string `json:"endpoint"` // names the space: the connector ("embed:<name>", or "service:<name>" for one chosen before settings were named for their jobs), the peer's endpoint, or the endpoint embeddings were made at before connectors
 	Model    string `json:"model"`    // the model asked for; blank for a single-model server
 	APIKey   string `json:"api_key"`  // a peer's credential, as last resolved; a connector's key is its credential's
 	Enabled  bool   `json:"enabled"`  // false → ingestion and search become no-ops
-	// Provider is what makes the embeddings: "service:<name>" or
+	// Provider is what makes the embeddings: "embed:<name>" or
 	// "peer:<name>". Blank or "local" is a config stored before every
 	// embedder was a connector, which core/service's migration moves onto one
 	// at startup.
@@ -71,8 +71,11 @@ type EmbeddingConfig struct {
 // their endpoint (ResolveEmbeddingProvider), and their space with it.
 func (cfg EmbeddingConfig) spaceStamp() string {
 	model := cfg.Model
-	if model == "" && strings.HasPrefix(cfg.Provider, media.ServiceProviderPrefix) && !strings.Contains(cfg.Endpoint, "://") {
-		model = cfg.Provider
+	// Stamped "service:<name>", however the setting names it now: the
+	// spelling the rows were made under, so renaming the setting for its job
+	// (llm:, embed:) does not make every stored vector a stranger.
+	if name, ok := media.ChosenConnection(cfg.Provider); ok && model == "" && !strings.Contains(cfg.Endpoint, "://") {
+		model = "service:" + name
 	}
 	if p := cfg.DocPrefix; p != "" {
 		return model + "+doc:" + p
@@ -252,7 +255,7 @@ func embedTexts(ctx context.Context, cfg EmbeddingConfig, texts []string) ([][]f
 	if !cfg.Enabled {
 		return nil, fmt.Errorf("embeddings disabled")
 	}
-	if name, ok := strings.CutPrefix(cfg.Provider, media.ServiceProviderPrefix); ok {
+	if name, ok := media.ChosenConnection(cfg.Provider); ok {
 		return embedThroughService(ctx, cfg, name, texts, chars)
 	}
 	if strings.HasPrefix(strings.TrimSpace(cfg.Provider), peerProviderPrefix) {
@@ -459,7 +462,7 @@ func embedderIsLocal(name string) bool {
 // embedPauseAddress is where cfg's embeds go, as its pause is kept
 // (core/media): the service connector's address, or the peer's endpoint.
 func embedPauseAddress(cfg EmbeddingConfig) string {
-	if name, ok := strings.CutPrefix(cfg.Provider, media.ServiceProviderPrefix); ok {
+	if name, ok := media.ChosenConnection(cfg.Provider); ok {
 		return embedServiceAddress(name)
 	}
 	return embedEndpointURL(cfg)

@@ -192,7 +192,7 @@ func HandlePeerSearch(w http.ResponseWriter, r *http.Request) {
 	// call, not for the quality of the result, and recording only successes
 	// would under-report exactly the runs that went wrong.
 	RecordExternalCostFor(WithCostAttribution(r.Context(), "peer:"+k.Label),
-		"search:"+cfg.Provider, "Web search ("+cfg.Provider+")", cfg.CostPerCall)
+		"search:"+cfg.Provider, "Web search ("+ProviderTitle(cfg.Provider)+")", cfg.CostPerCall)
 	if err != nil {
 		peerDeny(w, http.StatusBadGateway, "search failed: "+err.Error())
 		return

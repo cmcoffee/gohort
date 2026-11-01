@@ -103,7 +103,7 @@ func (a *AdminApp) handleWebSearch(c *jsonapi.Call) (any, error) {
 	if source == "" {
 		source = EmbeddingProviderLocal
 	}
-	conn := chosenService(provider)
+	conn := chosenConnection(provider)
 	out := map[string]any{"provider": provider, "source": source}
 	for k, v := range settingsValues(conn, "web.search") {
 		out[k] = v
@@ -121,7 +121,7 @@ func searchEngineOK(cfg WebSearchConfig) error {
 	switch p := strings.TrimSpace(cfg.Provider); {
 	case p == "", p == "duckduckgo":
 		return nil
-	case strings.HasPrefix(p, media.ServiceProviderPrefix):
+	case media.IsConnection(p):
 		return serviceProviderOK(p, "web.search")
 	default:
 		return fmt.Errorf("%s is not an engine here: add a connector that searches from a template (Brave, Serper, Tavily, Google Programmable Search, SearXNG) and choose it", p)
@@ -130,7 +130,7 @@ func searchEngineOK(cfg WebSearchConfig) error {
 
 // handleWebSearchSave saves the web search config.
 func (a *AdminApp) handleWebSearchSave(c *jsonapi.Call, form withSettings[WebSearchConfig]) (any, error) {
-	req, conn := form.Form, chosenService(form.Form.Provider)
+	req, conn := form.Form, chosenConnection(form.Form.Provider)
 	// A local engine keeps no key or address here: they are the
 	// connector's.
 	req.APIKey, req.Endpoint = "", ""
@@ -169,7 +169,7 @@ func (a *AdminApp) handleBrowse(c *jsonapi.Call) (any, error) {
 	if cfg.Source == "" {
 		cfg.Source = EmbeddingProviderLocal
 	}
-	return withValues(cfg, chosenService(cfg.Source), "page.render"), nil
+	return withValues(cfg, chosenConnection(cfg.Source), "page.render"), nil
 }
 
 // handleBrowseSave sets where pages are rendered.
@@ -179,7 +179,7 @@ func (a *AdminApp) handleBrowseSave(c *jsonapi.Call, form withSettings[BrowseCon
 	// Validate the selection rather than storing a name that silently
 	// renders nothing: a peer that was forgotten, or had its browse
 	// grant pulled, must be refused here where the operator can see it.
-	if strings.HasPrefix(src, media.ServiceProviderPrefix) {
+	if media.IsConnection(src) {
 		if err := serviceProviderOK(src, "page.render"); err != nil {
 			return nil, jsonapi.BadRequest(err.Error())
 		}
@@ -192,7 +192,7 @@ func (a *AdminApp) handleBrowseSave(c *jsonapi.Call, form withSettings[BrowseCon
 			return nil, jsonapi.BadRequest("peer " + p.Name + " does not offer page rendering (it offers: " + strings.Join(p.Caps, ", ") + ")")
 		}
 	}
-	if err := form.Settings.save(chosenService(src), "page.render"); err != nil {
+	if err := form.Settings.save(chosenConnection(src), "page.render"); err != nil {
 		return nil, jsonapi.BadRequest(err.Error())
 	}
 	if a.db != nil {
@@ -206,7 +206,7 @@ func (a *AdminApp) handleBrowseSave(c *jsonapi.Call, form withSettings[BrowseCon
 
 // handleWebSearchTest runs one search with the form's working config.
 func (a *AdminApp) handleWebSearchTest(c *jsonapi.Call, form withSettings[WebSearchConfig]) (any, error) {
-	req, conn := form.Form, chosenService(form.Form.Provider)
+	req, conn := form.Form, chosenConnection(form.Form.Provider)
 	req.APIKey, req.Endpoint = "", ""
 	// Resolve before inspecting the fields — with a peer picked they are
 	// hidden and empty, and testing a valid peer would otherwise fail on
@@ -234,7 +234,7 @@ func (a *AdminApp) handleWebSearchTest(c *jsonapi.Call, form withSettings[WebSea
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	search := webSearchCtx
-	if name, ok := strings.CutPrefix(req.Provider, media.ServiceProviderPrefix); ok {
+	if name, ok := media.ChosenConnection(req.Provider); ok {
 		// The connector's own search, which the tool dispatches to, under
 		// this request's context: the preview reaches it, and Cancel stops it.
 		search = func(ctx context.Context, q string) (string, error) {
@@ -252,7 +252,7 @@ func (a *AdminApp) handleWebSearchTest(c *jsonapi.Call, form withSettings[WebSea
 	if strings.TrimSpace(out) == "" {
 		return testResultBody(false, "", "no results returned: check the engine (a connector's row under Admin > Extensions > Connectors shows its request and key)"), nil
 	}
-	return testResultBody(true, fmt.Sprintf("OK via %s: %d chars returned", req.Provider, len(out)), ""), nil
+	return testResultBody(true, fmt.Sprintf("OK via %s: %d chars returned", ProviderTitle(req.Provider), len(out)), ""), nil
 }
 
 // handleMail is the mail config, its password masked.
@@ -270,12 +270,12 @@ func (a *AdminApp) handleMail(c *jsonapi.Call) (any, error) {
 		cfg.Provider = "smtp"
 	}
 	cfg.Password = maskSecret(cfg.Password)
-	return withValues(cfg, chosenService(cfg.Provider), "mail.send"), nil
+	return withValues(cfg, chosenConnection(cfg.Provider), "mail.send"), nil
 }
 
 // handleMailSave saves the mail config.
 func (a *AdminApp) handleMailSave(c *jsonapi.Call, form withSettings[MailConfig]) (any, error) {
-	req, conn := form.Form, chosenService(form.Form.Provider)
+	req, conn := form.Form, chosenConnection(form.Form.Provider)
 	req.Password = keepSecret(req.Password, a.storedString(MailTable, "password"))
 	if err := serviceProviderOK(req.Provider, "mail.send"); err != nil {
 		return nil, jsonapi.BadRequest(err.Error())
@@ -299,7 +299,7 @@ func (a *AdminApp) handleMailSave(c *jsonapi.Call, form withSettings[MailConfig]
 
 // handleMailTest sends a test email with the form's working config.
 func (a *AdminApp) handleMailTest(c *jsonapi.Call, form withSettings[MailConfig]) (any, error) {
-	req, conn := form.Form, chosenService(form.Form.Provider)
+	req, conn := form.Form, chosenConnection(form.Form.Provider)
 	req.Password = keepSecret(req.Password, a.storedString(MailTable, "password"))
 	to := req.Recipient
 	if to == "" {

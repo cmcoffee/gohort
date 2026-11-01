@@ -32,7 +32,7 @@ var (
 func transcribeReady() bool {
 	cfg := media.GetTranscribeConfig()
 	p := strings.TrimSpace(cfg.Provider)
-	return cfg.Enabled && (strings.HasPrefix(p, media.ServiceProviderPrefix) || strings.HasPrefix(p, "peer:"))
+	return cfg.Enabled && (media.IsConnection(p) || strings.HasPrefix(p, "peer:"))
 }
 
 func init() {

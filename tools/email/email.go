@@ -55,7 +55,7 @@ func (t *EmailTool) Run(args map[string]any) (string, error) {
 
 	// A connector that sends mail (Admin > System > Mail) sends it instead
 	// of SMTP.
-	if name, ok := strings.CutPrefix(strings.TrimSpace(cfg.Provider), media.ServiceProviderPrefix); ok {
+	if name, ok := media.ChosenConnection(strings.TrimSpace(cfg.Provider)); ok {
 		if media.MailService == nil {
 			return "", fmt.Errorf("mail is set to the connector %s, and this build has no connectors linked", name)
 		}

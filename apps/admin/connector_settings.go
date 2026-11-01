@@ -322,17 +322,20 @@ func withValues(v any, name, capability string) map[string]any {
 	return out
 }
 
-// chosenService is the connector a provider setting names ("service:<name>").
-func chosenService(provider string) string {
-	name, _ := strings.CutPrefix(strings.TrimSpace(provider), "service:")
-	if name == strings.TrimSpace(provider) {
-		return ""
-	}
+// chosenConnection is the connection a provider setting names
+// ("llm:<name>", "transcribe:<name>"), or "".
+func chosenConnection(provider string) string {
+	name, _ := media.ChosenConnection(provider)
 	return name
 }
 
-// asService is the provider setting that names connector name.
-func asService(name string) string { return "service:" + name }
+// llmChoice is the LLM tier setting that runs on connection name.
+func llmChoice(name string) string { return media.Choice(media.JobLLM, name) }
+
+// choiceFor is how a page choosing a connection for capability names one.
+func choiceFor(capability string) func(string) string {
+	return func(name string) string { return media.ChoiceFor(capability, name) }
+}
 
 // connectionNameField is the hidden field the row's Settings form names its
 // connection by, so each connection's fields show for it alone.
@@ -401,10 +404,10 @@ func (a *AdminApp) handleConnectionOptions(c *jsonapi.Call, form withSettings[st
 }
 
 // successorOf is the connection gohort provides in place of the outdated
-// connector a page's provider names ("service:<name>" or a name), and what
+// connector a page's provider names ("<job>:<name>" or a name), and what
 // to carry over from it (service.Successor); "" when there is none.
 func successorOf(provider string) (string, map[string]string) {
-	name := chosenService(provider)
+	name := chosenConnection(provider)
 	if name == "" {
 		name = strings.TrimSpace(provider)
 	}
@@ -440,8 +443,8 @@ func withSuccessor(out map[string]any, field, capability string) map[string]any 
 	if next == "" {
 		return out
 	}
-	if strings.HasPrefix(provider, "service:") {
-		out[field] = asService(next)
+	if media.IsConnection(provider) {
+		out[field] = media.ChoiceFor(capability, next)
 	} else {
 		out[field] = next
 	}

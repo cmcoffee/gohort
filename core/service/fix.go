@@ -262,7 +262,7 @@ func testModel(ctx context.Context, name string) TestReport {
 	}
 	ctx, end := Preview(ctx, name)
 	defer end()
-	llm, err := NewLLMFromConfig(LLMProviderConfig{Provider: media.ServiceProviderPrefix + name})
+	llm, err := NewLLMFromConfig(LLMProviderConfig{Provider: media.Choice(media.JobLLM, name)})
 	if err != nil {
 		rep.Detail = err.Error()
 		return rep

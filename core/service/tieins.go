@@ -62,9 +62,9 @@ func PendingChange(db Database, name string) (ConnectorChange, bool) {
 	return c, db.Get(connectorReviewTable, name, &c)
 }
 
-// serviceName is the connector a provider setting names: "service:<name>".
+// serviceName is the connector a provider setting names: "<job>:<name>".
 func serviceName(provider string) string {
-	name, ok := strings.CutPrefix(strings.TrimSpace(provider), media.ServiceProviderPrefix)
+	name, ok := media.ChosenConnection(strings.TrimSpace(provider))
 	if !ok {
 		return ""
 	}

@@ -382,7 +382,7 @@ func TestEmbeddingFormShowsTheProviderPickerWithAPeer(t *testing.T) {
 	for _, o := range provider.Options {
 		values = append(values, o.Value)
 	}
-	if strings.Join(values, ",") != "service:embeddings,peer:gpu-box" {
+	if strings.Join(values, ",") != "embed:embeddings,peer:gpu-box" {
 		t.Errorf("provider dropdown should offer the connector and the peer, got %v", values)
 	}
 }

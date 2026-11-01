@@ -19,7 +19,7 @@ import (
 // keep out of every other use (sourcehooks.IsSearchEngine).
 func init() {
 	sourcehooks.EngineHook = func() string {
-		name, _ := strings.CutPrefix(strings.TrimSpace(LoadWebSearchConfig().Provider), media.ServiceProviderPrefix)
+		name, _ := media.ChosenConnection(strings.TrimSpace(LoadWebSearchConfig().Provider))
 		return name
 	}
 }

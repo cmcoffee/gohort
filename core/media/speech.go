@@ -42,7 +42,7 @@ type SpeechConfig struct {
 	Voice    string `json:"voice"`    // blank: the connector's or server's own
 	APIKey   string `json:"api_key"`  // a peer's credential
 	Enabled  bool   `json:"enabled"`  // false → calls return an error and callers send text only
-	// Provider is what speaks: "service:<name>" (a connector) or
+	// Provider is what speaks: "speak:<name>" (a connector) or
 	// "peer:<name>". "local", or blank, is the endpoint this instance once
 	// called itself, moved onto a connector at startup (core/service's
 	// migration): it no longer speaks.
@@ -50,7 +50,7 @@ type SpeechConfig struct {
 }
 
 // SpeechService, when set, speaks through a service connector, for a config
-// whose Provider is "service:<name>" (core/service installs it), returning
+// whose Provider is "speak:<name>" (core/service installs it), returning
 // the audio and its extension. Nil, and such a config is refused.
 var SpeechService func(ctx context.Context, connector, text, voice string) ([]byte, string, error)
 
@@ -153,7 +153,7 @@ func SpeakWith(ctx context.Context, cfg SpeechConfig, text string) ([]byte, stri
 	if !cfg.Enabled {
 		return nil, "", fmt.Errorf("speech disabled")
 	}
-	if name, ok := strings.CutPrefix(cfg.Provider, ServiceProviderPrefix); ok {
+	if name, ok := ChosenConnection(cfg.Provider); ok {
 		if SpeechService == nil {
 			return nil, "", fmt.Errorf("speech is set to the service %q, and services are not available here", name)
 		}
@@ -274,7 +274,7 @@ func SpeechMIME(ext string) string {
 func SpeechVoices(ctx context.Context, cfg SpeechConfig) []Voice {
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
-	if name, ok := strings.CutPrefix(cfg.Provider, ServiceProviderPrefix); ok {
+	if name, ok := ChosenConnection(cfg.Provider); ok {
 		if SpeechVoicesService == nil {
 			return nil
 		}

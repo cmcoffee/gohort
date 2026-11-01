@@ -771,13 +771,13 @@ func ResolveEmbeddingProvider(cfg EmbeddingConfig) (EmbeddingConfig, error) {
 	provider := strings.TrimSpace(cfg.Provider)
 	if provider == "" {
 		current := GetEmbeddingConfig()
-		if stored := strings.TrimSpace(current.Provider); strings.HasPrefix(stored, peerProviderPrefix) || strings.HasPrefix(stored, media.ServiceProviderPrefix) {
+		if stored := strings.TrimSpace(current.Provider); strings.HasPrefix(stored, peerProviderPrefix) || media.IsConnection(stored) {
 			// A submission that says nothing about the provider cannot mean
 			// "stop using the peer" (or the service). Keep the selection, so
 			// what is saved still names what embeds, and let the resolver
 			// overlay a peer as usual; a service keeps the space it names.
 			cfg.Provider = stored
-			if strings.HasPrefix(stored, media.ServiceProviderPrefix) {
+			if media.IsConnection(stored) {
 				cfg.Endpoint, cfg.APIKey = current.Endpoint, ""
 			}
 			return cfg, nil
@@ -790,7 +790,7 @@ func ResolveEmbeddingProvider(cfg EmbeddingConfig) (EmbeddingConfig, error) {
 	// keeps the endpoint it was stored with: the one made from the settings
 	// this instance embedded with before connectors (core/service's
 	// migration) keeps that endpoint, and with it the vectors' space.
-	if strings.HasPrefix(provider, media.ServiceProviderPrefix) {
+	if media.IsConnection(provider) {
 		endpoint := provider
 		if stored := GetEmbeddingConfig(); strings.TrimSpace(stored.Provider) == provider && strings.TrimSpace(stored.Endpoint) != "" {
 			endpoint = stored.Endpoint

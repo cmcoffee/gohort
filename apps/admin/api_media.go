@@ -81,12 +81,12 @@ func (a *AdminApp) handleEmbeddings(c *jsonapi.Call) (any, error) {
 	// Where embeddings are made is the connector or peer named: its key is
 	// its own, never shown here.
 	cfg.APIKey = ""
-	return withSuccessor(withValues(cfg, chosenService(cfg.Provider), "embed.text"), "provider", "embed.text"), nil
+	return withSuccessor(withValues(cfg, chosenConnection(cfg.Provider), "embed.text"), "provider", "embed.text"), nil
 }
 
 // handleEmbeddingsSave persists the embeddings config and reinstalls it live.
 func (a *AdminApp) handleEmbeddingsSave(c *jsonapi.Call, form withSettings[EmbeddingConfig]) (any, error) {
-	req, conn := form.Form, chosenService(form.Form.Provider)
+	req, conn := form.Form, chosenConnection(form.Form.Provider)
 	req.APIKey = ""
 	// The form names a connector or a peer and nothing else: resolve it into
 	// a complete config here, its endpoint and model filled in, so everything
@@ -112,7 +112,7 @@ func (a *AdminApp) handleEmbeddingsSave(c *jsonapi.Call, form withSettings[Embed
 // handleEmbeddingsTest serves /api/embeddings/test; registerMediaRoutes says what it is for.
 func (a *AdminApp) handleEmbeddingsTest(c *jsonapi.Call, form withSettings[EmbeddingConfig]) (any, error) {
 	r := c.R
-	req, conn := form.Form, chosenService(form.Form.Provider)
+	req, conn := form.Form, chosenConnection(form.Form.Provider)
 	req.APIKey = ""
 	if !req.Enabled {
 		return testResultBody(false, "", "embeddings are disabled: flip the toggle on first"), nil
@@ -154,7 +154,7 @@ func (a *AdminApp) handleEmbeddingsTest(c *jsonapi.Call, form withSettings[Embed
 		if p.Instance != "" {
 			where += " (" + p.Instance + ")"
 		}
-	} else if name, ok := strings.CutPrefix(req.Provider, media.ServiceProviderPrefix); ok {
+	} else if name, ok := media.ChosenConnection(req.Provider); ok {
 		where = "the service " + name
 	}
 	return testResultBody(true, fmt.Sprintf("OK: %d-dim embedding from %s via %s", len(vec), modelLabel, where), ""), nil
@@ -166,13 +166,13 @@ func (a *AdminApp) handleTranscribe(c *jsonapi.Call) (any, error) {
 	// What transcribes is the connector or peer named: its key is its own,
 	// never shown here.
 	cfg.APIKey = ""
-	return withSuccessor(withValues(cfg, chosenService(cfg.Provider), "speech.transcribe"), "provider", "speech.transcribe"), nil
+	return withSuccessor(withValues(cfg, chosenConnection(cfg.Provider), "speech.transcribe"), "provider", "speech.transcribe"), nil
 }
 
 // handleTranscribeSave persists the transcription config and reinstalls it
 // live.
 func (a *AdminApp) handleTranscribeSave(c *jsonapi.Call, form withSettings[TranscribeConfig]) (any, error) {
-	req, conn := form.Form, chosenService(form.Form.Provider)
+	req, conn := form.Form, chosenConnection(form.Form.Provider)
 	req.APIKey = ""
 	// The form names a connector or a peer and nothing else: resolve it into
 	// a complete config here, so everything downstream (Transcribe, the
@@ -207,7 +207,7 @@ func resolveTranscription(req TranscribeConfig, values map[string]string) (Trans
 	if err := serviceProviderOK(resolved.Provider, "speech.transcribe"); err != nil {
 		return req, err
 	}
-	if name, ok := strings.CutPrefix(strings.TrimSpace(resolved.Provider), media.ServiceProviderPrefix); ok {
+	if name, ok := media.ChosenConnection(strings.TrimSpace(resolved.Provider)); ok {
 		c, _ := GetConnector(RootDB, name)
 		resolved.Model = service.DefaultWith(c, "speech.transcribe", "model", values)
 	}
@@ -220,12 +220,12 @@ func (a *AdminApp) handleSpeech(c *jsonapi.Call) (any, error) {
 	// What speaks is the connector or peer named: its key is its own, never
 	// shown here.
 	cfg.APIKey = ""
-	return withSuccessor(withValues(cfg, chosenService(cfg.Provider), "speech.synthesize"), "provider", "speech.synthesize"), nil
+	return withSuccessor(withValues(cfg, chosenConnection(cfg.Provider), "speech.synthesize"), "provider", "speech.synthesize"), nil
 }
 
 // handleSpeechSave persists the speech config and installs it live.
 func (a *AdminApp) handleSpeechSave(c *jsonapi.Call, form withSettings[media.SpeechConfig]) (any, error) {
-	req, conn := form.Form, chosenService(form.Form.Provider)
+	req, conn := form.Form, chosenConnection(form.Form.Provider)
 	req.APIKey = ""
 	// The form names a connector or a peer and a voice: resolve it into a
 	// complete config, so everything that speaks reads one shape.
@@ -258,7 +258,7 @@ func resolveSpeech(req media.SpeechConfig, values map[string]string) (media.Spee
 	if err := serviceProviderOK(resolved.Provider, "speech.synthesize"); err != nil {
 		return req, err
 	}
-	if name, ok := strings.CutPrefix(strings.TrimSpace(resolved.Provider), media.ServiceProviderPrefix); ok {
+	if name, ok := media.ChosenConnection(strings.TrimSpace(resolved.Provider)); ok {
 		c, _ := GetConnector(RootDB, name)
 		resolved.Model = service.DefaultWith(c, "speech.synthesize", "model", values)
 	}
@@ -270,7 +270,7 @@ func resolveSpeech(req media.SpeechConfig, values map[string]string) (media.Spee
 // the voice is one the connector or peer takes, and the way to hear a voice
 // before choosing it.
 func (a *AdminApp) handleSpeechTest(c *jsonapi.Call, form withSettings[media.SpeechConfig]) (any, error) {
-	req, conn := form.Form, chosenService(form.Form.Provider)
+	req, conn := form.Form, chosenConnection(form.Form.Provider)
 	req.APIKey = ""
 	if !req.Enabled {
 		return testResultBody(false, "", "speech is disabled: flip the toggle on first"), nil
@@ -381,7 +381,7 @@ func imageConnector(name string) bool {
 
 // handleTranscribeTest serves /api/transcribe/test; registerMediaRoutes says what it is for.
 func (a *AdminApp) handleTranscribeTest(c *jsonapi.Call, form withSettings[TranscribeConfig]) (any, error) {
-	req, conn := form.Form, chosenService(form.Form.Provider)
+	req, conn := form.Form, chosenConnection(form.Form.Provider)
 	req.APIKey = ""
 	if !req.Enabled {
 		return testResultBody(false, "", "transcription is disabled: flip the toggle on first"), nil
@@ -417,8 +417,7 @@ func (a *AdminApp) handleTranscribeTest(c *jsonapi.Call, form withSettings[Trans
 	} else if text != "" {
 		heard = fmt.Sprintf("%q", text)
 	}
-	name := strings.TrimPrefix(req.Provider, media.ServiceProviderPrefix)
-	return testResultBody(true, "OK: the service "+name+" transcribed a second of a tone and heard "+heard, ""), nil
+	return testResultBody(true, "OK: "+ProviderTitle(req.Provider)+" transcribed a second of a tone and heard "+heard, ""), nil
 }
 
 // handleImageGenTest serves /api/image-gen/test; registerMediaRoutes says what it is for.
@@ -432,9 +431,9 @@ func (a *AdminApp) handleImageGenTest(c *jsonapi.Call, req imageGenConfig) (any,
 		return testResultBody(false, "", "no connector named "+req.Provider+" makes pictures"), nil
 	}
 	if !ImageBackendRegistered(req.Provider) {
-		return testResultBody(false, "", req.Provider+" makes pictures but is not in use yet: save here with it chosen to put it to use"), nil
+		return testResultBody(false, "", ProviderTitle(req.Provider)+" makes pictures but is not in use yet: save here with it chosen to put it to use"), nil
 	}
-	return testResultBody(true, "The connector "+req.Provider+" is in use. Its Test under Admin > Extensions > Connectors renders a picture end to end.", ""), nil
+	return testResultBody(true, "The connector "+ProviderTitle(req.Provider)+" is in use. Its Test under Admin > Extensions > Connectors renders a picture end to end.", ""), nil
 }
 
 // imageGenConfig is the image-generation form: the connector chosen.
@@ -482,7 +481,7 @@ func resolveEmbedding(req EmbeddingConfig, values map[string]string) (EmbeddingC
 	if err := serviceProviderOK(resolved.Provider, "embed.text"); err != nil {
 		return req, err
 	}
-	if name, ok := strings.CutPrefix(strings.TrimSpace(resolved.Provider), media.ServiceProviderPrefix); ok {
+	if name, ok := media.ChosenConnection(strings.TrimSpace(resolved.Provider)); ok {
 		c, _ := GetConnector(RootDB, name)
 		resolved.Model = service.DefaultWith(c, "embed.text", "model", values)
 	}
@@ -494,7 +493,7 @@ func resolveEmbedding(req EmbeddingConfig, values map[string]string) (EmbeddingC
 // peer) is left to its own resolution. Naming one here is what puts it to
 // use: the page's save settles it (settleTieIn).
 func serviceProviderOK(provider, capability string) error {
-	name, ok := strings.CutPrefix(strings.TrimSpace(provider), media.ServiceProviderPrefix)
+	name, ok := media.ChosenConnection(strings.TrimSpace(provider))
 	if !ok {
 		return nil
 	}
@@ -537,7 +536,7 @@ func serviceProviderOptions(capability, verb string) []ui.SelectOption {
 				label += " (changed, waiting to be accepted)"
 				help += " " + changedNote(ch)
 			}
-			opt := ui.SelectOption{Value: media.ServiceProviderPrefix + c.Name, Label: label, Help: help}
+			opt := ui.SelectOption{Value: media.ChoiceFor(capability, c.Name), Label: label, Help: help}
 			if c.Provided {
 				provided = append(provided, opt)
 			} else {
@@ -558,13 +557,13 @@ func changedNote(ch service.ConnectorChange) string {
 }
 
 // settleTieIn settles what is in use after a page names connectors, given
-// as provider settings ("service:<name>") or names: the administrator saving
+// as provider settings ("<job>:<name>") or names: the administrator saving
 // the page accepts them as they are.
 func settleTieIn(named ...string) {
 	var names []string
 	for _, n := range named {
 		n = strings.TrimSpace(n)
-		if rest, ok := strings.CutPrefix(n, media.ServiceProviderPrefix); ok {
+		if rest, ok := media.ChosenConnection(n); ok {
 			n = rest
 		}
 		if n != "" && !strings.Contains(n, ":") {
@@ -623,10 +622,10 @@ func musicOptions() []ui.SelectOption {
 }
 
 // previewTieIn lets the settings page's own test reach the connector its
-// form names (a provider setting, "service:<name>") before a save puts it
+// form names (a provider setting, "<job>:<name>") before a save puts it
 // to use: under the returned context; end ends it.
 func previewTieIn(ctx context.Context, provider string) (context.Context, func()) {
-	name, ok := strings.CutPrefix(strings.TrimSpace(provider), media.ServiceProviderPrefix)
+	name, ok := media.ChosenConnection(strings.TrimSpace(provider))
 	if !ok {
 		return ctx, func() {}
 	}

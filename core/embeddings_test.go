@@ -77,7 +77,7 @@ func useConnectorEmbedder(t *testing.T, endpoint, model string) EmbeddingConfig 
 	}
 	// The endpoint stored is the connector's name, as picking one in the
 	// settings stores it: its address is only the connector's.
-	cfg := EmbeddingConfig{Enabled: true, Provider: media.ServiceProviderPrefix + "test", Endpoint: media.ServiceProviderPrefix + "test", Model: model}
+	cfg := EmbeddingConfig{Enabled: true, Provider: media.Choice(media.JobEmbed, "test"), Endpoint: media.Choice(media.JobEmbed, "test"), Model: model}
 	SetEmbeddingConfig(cfg)
 	return cfg
 }
@@ -299,5 +299,19 @@ func TestAServiceEmbedderIsItsOwnSpace(t *testing.T) {
 	kept, err := ResolveEmbeddingProvider(EmbeddingConfig{Enabled: true, Endpoint: "service:vec"})
 	if err != nil || kept.Provider != "service:vec" || kept.Endpoint != "service:vec" {
 		t.Errorf("a blank provider over a stored service: %+v %v", kept, err)
+	}
+}
+
+// A connection that names no model stamps its vectors "service:<name>"
+// whichever way the setting spells it, so naming the setting for its job
+// leaves every stored vector comparable.
+func TestTheStampOutlastsTheSettingsSpelling(t *testing.T) {
+	old := EmbeddingConfig{Provider: "service:vec", Endpoint: "service:vec"}.spaceStamp()
+	now := EmbeddingConfig{Provider: "embed:vec", Endpoint: "service:vec"}.spaceStamp()
+	if old != "service:vec" || now != old {
+		t.Errorf("stamps: before %q, after %q", old, now)
+	}
+	if got := (EmbeddingConfig{Provider: "embed:vec", Model: "e5"}).spaceStamp(); got != "e5" {
+		t.Errorf("a named model's stamp = %q", got)
 	}
 }

@@ -156,7 +156,7 @@ func mailFormFields() []ui.FormField {
 	if hasChoice {
 		fields = append(fields, ui.FormField{Field: "provider", Label: "Send with", Type: "select", Options: choices,
 			Help: "This instance's SMTP server, or a connector that sends mail through an API, set up below it."})
-		fields = append(fields, connectorSettingsFields("mail.send", "", "provider", asService)...)
+		fields = append(fields, connectorSettingsFields("mail.send", "", "provider", choiceFor("mail.send"))...)
 	}
 	return append(fields,
 		ui.FormField{Field: "server", Label: "SMTP Server", Type: "text",
@@ -250,7 +250,7 @@ func embeddingFormFields() []ui.FormField {
 			ShowWhen: "enabled",
 			Help:     "The connector or peer that makes embeddings. A connector's settings (its address, its model, a key) are set here below it.",
 			Detail:   "To embed with something not listed, " + add + ". Changing what embeds, or its model, changes the embedding space: search skips stored documents from the old space until Repair in the Vector Index panel makes them again, and through a paid service that is billed."})
-		fields = append(fields, connectorSettingsFields("embed.text", "enabled", "provider", asService)...)
+		fields = append(fields, connectorSettingsFields("embed.text", "enabled", "provider", choiceFor("embed.text"))...)
 	}
 	return append(fields,
 		// The prefixes belong to the MODEL, not to where it runs, so they stay
@@ -294,7 +294,7 @@ func transcribeFormFields() []ui.FormField {
 		ShowWhen: "enabled",
 		Help:     "The connector or peer that transcribes. A connector's settings (its address, its model, a key) are set here below it.",
 		Detail:   "To transcribe with something not listed, " + add + "."})
-	return append(fields, connectorSettingsFields("speech.transcribe", "enabled", "provider", asService)...)
+	return append(fields, connectorSettingsFields("speech.transcribe", "enabled", "provider", choiceFor("speech.transcribe"))...)
 }
 
 // speechFormFields builds the speech (TTS) settings: on or off, the
@@ -314,7 +314,7 @@ func speechFormFields() []ui.FormField {
 		ShowWhen: "enabled",
 		Help:     "The connector or peer that speaks. A connector's settings (its address, its model, a key) are set here below it.",
 		Detail:   "To speak with something not listed, " + add + "."})
-	fields = append(fields, connectorSettingsFields("speech.synthesize", "enabled", "provider", asService)...)
+	fields = append(fields, connectorSettingsFields("speech.synthesize", "enabled", "provider", choiceFor("speech.synthesize"))...)
 	return append(fields,
 		ui.FormField{Field: "voice", Label: "Voice", Type: "text",
 			Placeholder: "af_heart",
@@ -360,7 +360,7 @@ func webSearchFormFields() []ui.FormField {
 			Help:   "The engine every search goes to. A connector's settings (its key, an address) are set here below it.",
 			Detail: "To search with an engine not listed, " + add + ". Once added it is offered here, and choosing it puts it to use. Serper's also finds pictures, for agents' find_image. The connector picked here is not also asked as a research source: it already answers web_search."},
 	)
-	return append(fields, connectorSettingsFields("web.search", local, "provider", asService)...)
+	return append(fields, connectorSettingsFields("web.search", local, "provider", choiceFor("web.search"))...)
 }
 
 // browseFormFields is the page-rendering picker. Unlike search or STT there is
@@ -375,5 +375,5 @@ func browseFormFields() []ui.FormField {
 	}
 	return append([]ui.FormField{
 		{Field: "source", Label: "Render pages on", Type: "select", Options: opts, Help: help},
-	}, connectorSettingsFields("page.render", "", "source", asService)...)
+	}, connectorSettingsFields("page.render", "", "source", choiceFor("page.render"))...)
 }

@@ -80,7 +80,7 @@ func ProviderLooksPrivate(provider, endpoint string) (bool, string) {
 	// A model connector keeps its address on the connector, not the tier: a
 	// tier's blank endpoint must not read as a local default. Judged by the
 	// connector's own address, and not private when it cannot be read.
-	if name, ok := strings.CutPrefix(strings.TrimSpace(provider), media.ServiceProviderPrefix); ok {
+	if name, ok := media.ChosenConnection(strings.TrimSpace(provider)); ok {
 		if media.ModelService == nil {
 			return false, "a model connector, which this build cannot read, so it cannot be judged private"
 		}
@@ -214,7 +214,7 @@ func LocalDialect(dialect string) bool {
 // connection's, else the provider named (a peer's is llama.cpp's), or "".
 func modelDialect(provider string) string {
 	provider = strings.TrimSpace(provider)
-	if name, ok := strings.CutPrefix(provider, media.ServiceProviderPrefix); ok {
+	if name, ok := media.ChosenConnection(provider); ok {
 		if media.ModelDialect == nil {
 			return ""
 		}
@@ -230,7 +230,7 @@ func modelDialect(provider string) string {
 // as its provider, the connection's address and key. Anything else, or a
 // connection that cannot be read, is the config as it was.
 func ResolvedTier(cfg LLMProviderConfig) LLMProviderConfig {
-	if !strings.HasPrefix(strings.TrimSpace(cfg.Provider), media.ServiceProviderPrefix) {
+	if !media.IsConnection(strings.TrimSpace(cfg.Provider)) {
 		return cfg
 	}
 	if r, err := ResolveModelProvider(cfg, cfg.Provider); err == nil {
@@ -240,11 +240,11 @@ func ResolvedTier(cfg LLMProviderConfig) LLMProviderConfig {
 }
 
 // ProviderTitle is how a tier's provider is shown to people: a connection by
-// the name it is shown as (Anthropic, not service:anthropic), a peer as
-// Peer <name>, anything else as it is.
+// the name it is shown as (Anthropic, not service:anthropic or anthropic), a
+// peer as Peer <name>, anything else as it is.
 func ProviderTitle(provider string) string {
 	p := strings.TrimSpace(provider)
-	if name, ok := strings.CutPrefix(p, media.ServiceProviderPrefix); ok {
+	if name, ok := media.ChosenConnection(p); ok {
 		if c, ok := GetConnector(RootDB, name); ok {
 			return c.Title()
 		}
@@ -252,6 +252,12 @@ func ProviderTitle(provider string) string {
 	}
 	if name, ok := strings.CutPrefix(p, peerProviderPrefix); ok {
 		return "Peer " + name
+	}
+	// A connection named bare: a provider a tier named before connections
+	// (anthropic, the connection gohort provides for it), or a picture
+	// setting's connector.
+	if c, ok := GetConnector(RootDB, p); ok && p != "" {
+		return c.Title()
 	}
 	return p
 }
