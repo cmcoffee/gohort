@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/sourcehooks"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -28,18 +27,7 @@ func TestConnectorsRoutesContract(t *testing.T) {
 	prevAuth, prevRoot := AuthDB, RootDB
 	AuthDB = func() Database { return adb }
 	RootDB = adb
-	// The source hooks are the process's registry: none of this test's
-	// before, and none after.
-	clearHooks := func() {
-		for _, h := range sourcehooks.RegisteredSourceHooks() {
-			if strings.HasPrefix(h.Name, "ct-") {
-				sourcehooks.DeleteSourceHook(adb, h.Name)
-			}
-		}
-	}
-	clearHooks()
 	t.Cleanup(func() {
-		clearHooks()
 		AuthDB, RootDB = prevAuth, prevRoot
 	})
 	tmpl, ok := GetConnectorTemplate("a1111")
@@ -76,7 +64,7 @@ func TestConnectorsRoutesContract(t *testing.T) {
 	}
 	const bundle = `{"bundle":"gohort.bundle/v1","artifacts":[{"type":"tool","name":"ct_imported","recipe":{"name":"ct_imported","description":"Came in a bundle.","command_template":"echo hi","mode":"shell"}}]}`
 
-	for _, p := range []string{"/api/connectors", "/api/connectors/spec?name=ct-art", "/api/source-hooks", "/api/source-hooks?name=ct-pubmed"} {
+	for _, p := range []string{"/api/connectors", "/api/connectors/spec?name=ct-art", "/api/research-sources"} {
 		do("", "GET", p, "")
 		do("alice", "GET", p, "")
 		do("root", "GET", p, "")
@@ -100,33 +88,24 @@ func TestConnectorsRoutesContract(t *testing.T) {
 	do("root", "GET", "/api/connectors", "")
 	do("root", "GET", "/api/connectors/spec?name=ct-nope", "")
 
-	do("alice", "POST", "/api/source-hooks", `{"name":"ct-mine","type":"api","endpoint":"https://example.test"}`)
-	do("root", "POST", "/api/source-hooks", `{"name":" ct-pubmed ","type":"api","endpoint":" https://pubmed.example.test/search ","auth_type":"bearer","auth_key":"s3cr3t-hook","query_param":"q","domains":["pubmed.gov"]}`)
-	do("root", "POST", "/api/source-hooks", `{"name":" "}`)
-	do("root", "POST", "/api/source-hooks", `{"name":`)
-	do("root", "POST", "/api/source-hooks", ``)
-	do("root", "GET", "/api/source-hooks?name=CT-PUBMED", "")
-	do("root", "GET", "/api/source-hooks?name=ct-nope", "")
-	do("root", "POST", "/api/source-hooks", `{"name":"ct-pubmed","type":"api","endpoint":"https://pubmed.example.test/v2","auth_type":"bearer","auth_key":"(configured)"}`)
-	// The placeholder keeps the key it stands for: has_auth would read true
-	// for the placeholder stored as the key too, so the store is asked.
-	if h, ok := findSourceHook("ct-pubmed"); !ok || h.AuthKey != "s3cr3t-hook" {
-		t.Errorf("a save sending the placeholder left the key as %q", h.AuthKey)
+	// Research Sources: a search connector put to use for research.
+	if err := SaveConnector(adb, Connector{Name: "ct-find", Kind: "service", Spec: json.RawMessage(`{"provider":{"transport":"http","base_url":"https://find.example.test","auth":{"none":true},"operations":{"find":{"path":"/s?q={query}"}}},"provides":[{"capability":"web.search","steps":[{"call":"find"}],"output":{"results":{"path":"hits","fields":{"title":"t","url":"u"}}}}]}`)}); err != nil {
+		t.Fatal(err)
 	}
-	do("root", "POST", "/api/source-hooks?action=expose&name=ct-pubmed", "")
-	do("root", "POST", "/api/source-hooks?action=disable&name=ct-pubmed", "")
-	do("root", "POST", "/api/source-hooks", `{"name":"ct-pubmed","type":"api","endpoint":"https://pubmed.example.test/v3"}`)
-	do("root", "GET", "/api/source-hooks", "")
-	do("root", "POST", "/api/source-hooks?action=enable&name=ct-pubmed", "")
-	do("root", "POST", "/api/source-hooks?action=hide&name=ct-pubmed", "")
-	do("root", "POST", "/api/source-hooks?action=expose", "")
-	do("root", "POST", "/api/source-hooks?action=expose&name=ct-nope", "")
-	do("root", "POST", "/api/source-hooks?action=sideways&name=ct-pubmed", "")
-	do("root", "GET", "/api/source-hooks", "")
-	do("alice", "DELETE", "/api/source-hooks?name=ct-pubmed", "")
-	do("root", "DELETE", "/api/source-hooks", "")
-	do("root", "DELETE", "/api/source-hooks?name=ct-pubmed", "")
-	do("root", "GET", "/api/source-hooks", "")
+	do("alice", "POST", "/api/research-sources", `{"connector":"ct-find","topics":["legal"]}`)
+	do("root", "POST", "/api/research-sources", `{"connector":"ct-art","always":true}`)
+	do("root", "POST", "/api/research-sources", `{"connector":"ct-find"}`)
+	do("root", "POST", "/api/research-sources", `{"connector":`)
+	do("root", "POST", "/api/research-sources", `{"connector":"ct-find","topics":[" Legal "],"offer":true,"tool_description":"Court cases."}`)
+	do("root", "GET", "/api/research-sources", "")
+	do("root", "GET", "/api/research-sources?name=ct-find", "")
+	do("root", "GET", "/api/research-sources?name=ct-nope", "")
+	do("root", "POST", "/api/research-sources?action=off&name=ct-find", "")
+	do("root", "POST", "/api/research-sources?action=on&name=ct-nope", "")
+	do("root", "GET", "/api/research-sources", "")
+	do("alice", "DELETE", "/api/research-sources?name=ct-find", "")
+	do("root", "DELETE", "/api/research-sources?name=ct-find", "")
+	do("root", "GET", "/api/research-sources", "")
 
 	do("root", "POST", "/api/artifacts/preview", bundle)
 	do("root", "POST", "/api/artifacts/preview", `{"pack":`+jsonString(bundle)+`}`)

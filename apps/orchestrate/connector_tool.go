@@ -601,6 +601,11 @@ func connectorCreate(args map[string]any, sess *ToolSession) (string, error) {
 	if saved.Approved {
 		return fmt.Sprintf("Connector %q (kind=%s) created and LIVE. %s\nManage it in Admin > Connectors.", name, kind, ConnectorSummary(saved)), nil
 	}
+	if service.TieInConnector(saved.Kind) {
+		return fmt.Sprintf(
+			"Drafted connector %q (kind=%s), NOT IN USE. %s\nTo put it to use: an admin reviews it under Admin > Extensions > Connectors (Test there), then chooses it on the page that uses it (Web Search, Image Generation, Research Sources, a flow, ...). Nothing runs until then.",
+			name, kind, ConnectorSummary(saved)), nil
+	}
 	return fmt.Sprintf(
 		"Drafted connector %q (kind=%s), created UNAPPROVED. %s\nTo go live: an admin opens Admin > Connectors, reviews it, and clicks Approve, then its tools register for agents. Nothing runs until then.",
 		name, kind, ConnectorSummary(saved)), nil
@@ -819,6 +824,11 @@ func connectorUpdate(args map[string]any, sess *ToolSession) (string, error) {
 	// Admin approval covered the connector as it was. A non-admin edit to a
 	// live connector takes it down first so the changed version never goes
 	// live unreviewed; auto-approving kinds re-approve as they do on create.
+	// A services connector is held out of use until an administrator accepts
+	// the change, by saving a page that uses it.
+	if service.TieInConnector(prev.Kind) && !UserIsAdmin(owner) {
+		service.MarkChanged(RootDB, name, owner)
+	}
 	if prev.Approved && !UserIsAdmin(owner) {
 		if err := UnapproveConnector(RootDB, name); err != nil {
 			return "", err
@@ -838,6 +848,9 @@ func connectorUpdate(args map[string]any, sess *ToolSession) (string, error) {
 	state := "draft updated (still UNAPPROVED)"
 	if prev.Approved && !saved.Approved {
 		state = "updated and taken OFFLINE until an admin re-approves it in Admin > Connectors"
+		if service.TieInConnector(saved.Kind) {
+			state = "updated and taken OUT OF USE until an admin accepts the change, by saving the page that uses it"
+		}
 	}
 	if saved.Approved {
 		state = "updated and RE-MATERIALIZED (live now)"

@@ -35,12 +35,21 @@ type builtinConnector struct {
 	// test runs the provider's own settings test on what is stored; nil
 	// when there is nothing of its own to test (another provider is set).
 	test func(c *jsonapi.Call) (any, error)
+	// group is the Connectors band it sits in, with the connectors that do
+	// the same job.
+	group string
 }
 
 // builtinConnectors are gohort's own providers, read from their settings.
 func (a *AdminApp) builtinConnectors() []builtinConnector {
-	return []builtinConnector{a.builtinSearch(), builtinBrowse(), a.builtinMail(),
-		a.builtinLLM(LLMTable, "worker-llm", "Worker LLM"), a.builtinLLM(LeadLLMTable, "lead-llm", "Lead LLM")}
+	return []builtinConnector{a.builtinSearch().in(groupSearch), builtinBrowse().in(groupPages), a.builtinMail().in(groupMail),
+		a.builtinLLM(LLMTable, "worker-llm", "Worker LLM").in(groupLLMs), a.builtinLLM(LeadLLMTable, "lead-llm", "Lead LLM").in(groupLLMs)}
+}
+
+// in is b in the Connectors band group.
+func (b builtinConnector) in(group string) builtinConnector {
+	b.group = group
+	return b
 }
 
 // llmHosts are where each hosted LLM provider is reached: a tier still naming
@@ -175,8 +184,6 @@ func (a *AdminApp) builtinSearch() builtinConnector {
 	switch {
 	case !isLocal(source):
 		b.status = "Not in use: web search is done by " + providerName(source) + "." + set
-	case provider == "hook":
-		b.status = "Not in use: web search is done by the Source Hook " + a.storedString(SearchTable, "hook") + "." + set
 	case strings.HasPrefix(provider, media.ServiceProviderPrefix):
 		b.status = "Not in use: web search is done by " + providerName(provider) + "." + set
 	case provider != "duckduckgo":

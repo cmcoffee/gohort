@@ -41,8 +41,11 @@ The same four jobs, whatever it wraps:
 1. **Translate.** Its mapping turns what gohort asks into calls on the
    resource's endpoints, and reads the answer back into the contract.
 2. **Govern.** The key and the endpoints it may reach, the sandbox a
-   program runs in, whether it has the network, and the admin's approval.
-   What gohort can reach, and who allowed it, all sits on connectors.
+   program runs in, whether it has the network, and whether it is in use: a
+   services connector while a page that uses it names it (Web Search, an
+   LLM tier, a Research Source, a flow, ...), the others by an admin's
+   approval. What gohort can reach, and who allowed it, all sits on
+   connectors.
 3. **Measure.** A free health check on a timer where the resource offers
    one; a test, one small real call checked against the contract (tests can
    cost money, so they run only on a click, during a Fix, or on first
@@ -147,7 +150,7 @@ resource's whole schema.
 | A peer (Admin > Capabilities > Peers) | models, embeddings, speech, transcription | another gohort |
 | A messaging relay | messages in and out | Telegram, Teams, others |
 | A poll (made by an agent's bridge tool) | "the answer changed" | HTTP and a key |
-| A Source Hook (Admin > Extensions > Source Hooks) | search results, or passages, for research and agents | HTTP and a key the hook keeps |
+| A research source (Admin > Extensions > Research Sources) | a search connector put to use for research and agents | the connector's |
 | gohort's own providers (DuckDuckGo search, the browser, SMTP mail and the local model servers) | the same contracts | written in Go where Go is the protocol or the server is on this machine; every hosted provider moved to a connector (embeddings, transcription, speech, images, the other search engines, the hosted LLMs and Bedrock) |
 
 Services, messaging relays, polls, MCP connections, gohort's own providers
@@ -232,13 +235,13 @@ its key.
 
 1. **Admin > Extensions > Templates > Add a template…**, pick *OpenAI
    (embeddings)*, answer its questions (the key, a name, the model). This
-   creates a credential, disabled, and a connector, unapproved.
+   creates a credential, disabled, and a connector, out of use.
 2. **Admin > Extensions > API Credentials:** enable the credential.
-3. **Admin > Extensions > Connectors:** approve the connector, then press
-   Test on its row. It embeds two sentences and checks for two vectors of
-   the same length.
+3. **Admin > Extensions > Connectors:** press Test on its row. It embeds
+   two sentences and checks for two vectors of the same length.
 4. **Admin > Capabilities > Embeddings:** set "Embed on" to *Service:
-   openai-embeddings* and save.
+   openai-embeddings* and save. Choosing it there is what puts it to use;
+   its row then says *Used by Embeddings*.
 5. **Admin > Maintenance > Vector Index:** run *Repair the vector index*.
    Vectors made by the old embedder are in a different space, so search
    skips them until they are made again, one embed call per stored piece.

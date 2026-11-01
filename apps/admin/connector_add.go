@@ -81,8 +81,6 @@ func (a *AdminApp) capabilitiesNow() []string {
 		search = providerName(source)
 	case strings.HasPrefix(search, media.ServiceProviderPrefix):
 		search = providerName(search)
-	case search == "hook":
-		search = "the Source Hook " + a.storedString(SearchTable, "hook")
 	case search == "duckduckgo":
 		search += " (built in)"
 	default:
@@ -228,7 +226,7 @@ func (f connectorAddForm) draft() (service.Spec, error) {
 func connectorAddButton() ui.ModalButton {
 	return ui.ModalButton{
 		Label: "Add a connector…", Title: "Add a connector", Align: "left", Width: "860px",
-		Subtitle: "For a service no template knows: write its spec, or let the assistant draft it from the service's documentation. It is saved unapproved.",
+		Subtitle: "For a service no template knows: write its spec, or let the assistant draft it from the service's documentation. It is saved out of use, until a page that uses it chooses it.",
 		Body: ui.FormPanel{
 			Source:      "api/connectors/add",
 			PostURL:     "api/connectors/add",
@@ -241,7 +239,7 @@ func connectorAddButton() ui.ModalButton {
 			Invalidate:  []string{"api/connectors"},
 			Fields: []ui.FormField{
 				{Field: "now", Label: "What each capability runs on now", Type: "readonly",
-					Help: "An approved connector is offered beside these where each is set up; choosing it there is what puts it in use."},
+					Help: "A connector is offered beside these where each is set up; choosing it there is what puts it to use."},
 				{Field: "starts", Label: "Starting from one", Type: "readonly"},
 				{Field: "name", Label: "Name", Required: true, Placeholder: "acme-images",
 					Help: "Lowercase letters, digits, dashes and underscores. The settings that use it list it by this name."},
@@ -252,7 +250,7 @@ func connectorAddButton() ui.ModalButton {
 					Help:        "provider is how the service is reached, provides what it gives gohort. Test the draft runs each capability's smallest real call through its contract's check, without saving.",
 					Detail: "A key never goes in the spec: auth names an API credential, set up under API Credentials (a template makes both). " +
 						"What a capability takes and gives is fixed by its contract (" + strings.Join(service.Names(), ", ") + "; Extensions > Contracts says what each takes, gives and is checked for); the spec says how this service's endpoints do it. " +
-						"Saved, it is off until you approve it on its row, and ✨ Fix there helps when the service changes."},
+						"Saved, it is out of use until it is chosen on the page that uses it (Web Search, Image Generation, Research Sources, a flow, ...), and ✨ Fix on its row helps when the service changes."},
 			},
 		},
 	}
@@ -288,7 +286,7 @@ func (a *AdminApp) handleConnectorAdd(c *jsonapi.Call, f connectorAddForm) (any,
 	if err := SaveConnector(RootDB, Connector{Name: name, Kind: service.Kind, Owner: c.User, Spec: raw}); err != nil {
 		return nil, jsonapi.BadRequest(err.Error())
 	}
-	return map[string]any{"ok": true, "message": "Added " + name + ". It is off: approve it on its row under Connectors to put it live."}, nil
+	return map[string]any{"ok": true, "message": "Added " + name + ". It is out of use until you choose it on the page that uses it."}, nil
 }
 
 // handleConnectorAddTest runs the form's draft contract test without saving
@@ -322,7 +320,7 @@ func (a *AdminApp) handleConnectorAddTest(c *jsonapi.Call, f connectorAddForm) (
 // every contract it can give, and how to work.
 func (a *AdminApp) connectorAddAbout(r *http.Request) (string, error) {
 	var b strings.Builder
-	b.WriteString("Connectors are how gohort reaches outside services. The person is adding a new service connector: how gohort reaches the service (provider) and what it gives gohort (provides), as one JSON spec. The form beside this conversation has its name and its spec; you draft the spec there, the admin saves it, and it stays off until they approve it.\n\n")
+	b.WriteString("Connectors are how gohort reaches outside services. The person is adding a new service connector: how gohort reaches the service (provider) and what it gives gohort (provides), as one JSON spec. The form beside this conversation has its name and its spec; you draft the spec there, the admin saves it, and it stays out of use until they choose it on the page that uses it.\n\n")
 	b.WriteString(service.Grammar + "\n\n")
 	b.WriteString("The contracts a service can give: what each is, takes and gives, and what its check requires:\n")
 	for _, name := range service.Names() {

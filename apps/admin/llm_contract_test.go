@@ -29,7 +29,7 @@ func TestLLMRoutesContract(t *testing.T) {
 	prevAuth, prevRoot := AuthDB, RootDB
 	prevW, prevL := SharedWorkerLLM(), SharedLeadLLM()
 	AuthDB = func() Database { return adb }
-	RootDB = &DBase{Store: kvlite.MemStore()}
+	RootDB = adb
 	SetSharedLLMs(nil, nil)
 	// A rebuild that fails, for the model named "breaks": what a save the
 	// process could not apply answers.

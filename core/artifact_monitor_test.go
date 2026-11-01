@@ -151,19 +151,16 @@ func TestMonitorArtifact_ImportLandsPausedFreshToken(t *testing.T) {
 	}
 }
 
-func TestMonitorClosure_CarriesHookAndAgents(t *testing.T) {
-	// The bridge story: a watch monitor over a hook-backed tool exports as
-	// [monitor, source_hook], and its checker/wake agents are declared so a
-	// missing one warns at import. Runs against the REAL registry.
-	db := sourceHookTestDB(t) // pins RootDB + empties the hook registry
+func TestMonitorClosure_CarriesSourceAndAgents(t *testing.T) {
+	// The bridge story: a watch monitor over a research source's tool
+	// depends on that source's search connector, and its checker/wake
+	// agents are declared so a missing one warns at import.
+	db := researchSourceTestDB(t, SourceHook{Name: "statuspage", Type: HookTypeAPI, Connector: "statuspage",
+		ExposeToLLM: true, ToolName: "status_search"})
 	savedResolve := ResolveAgentNameForExport
 	ResolveAgentNameForExport = func(owner, key string) (string, bool) { return "", false }
 	t.Cleanup(func() { ResolveAgentNameForExport = savedResolve })
 
-	SaveSourceHook(db, SourceHook{
-		Name: "StatusPage", Type: HookTypeAPI,
-		Endpoint: "https://status.example.com/api", ToolName: "status_search",
-	})
 	SaveEventMonitor(db, EventMonitor{
 		Name: "status-watch", Owner: "alice", Kind: EventKindWatch,
 		ToolName: "status_search", IntervalSeconds: 600,
@@ -172,22 +169,12 @@ func TestMonitorClosure_CarriesHookAndAgents(t *testing.T) {
 
 	deps := monitorArtifact{}.Dependencies(db, "status-watch", "alice")
 	if len(deps) != 2 {
-		t.Fatalf("expected [source_hook, agent], got %+v", deps)
+		t.Fatalf("expected [connector, agent], got %+v", deps)
 	}
-	if deps[0].Type != "source_hook" || deps[0].Name != "StatusPage" {
-		t.Fatalf("hook-backed watch tool must fold in the hook: %+v", deps[0])
+	if deps[0].Type != "connector" || deps[0].Name != "statuspage" {
+		t.Fatalf("a source-backed watch tool must fold in its connector: %+v", deps[0])
 	}
 	if deps[1].Type != "agent" || deps[1].Name != "Notifier" || deps[1].Owner != "alice" {
 		t.Fatalf("wake agent must be declared: %+v", deps[1])
-	}
-
-	b, err := ExportArtifactBundle(db, []ArtifactSel{{Type: "monitor", Name: "status-watch", Owner: "alice"}})
-	if err != nil {
-		t.Fatalf("export: %v", err)
-	}
-	// The agent dep can't resolve on this install (no agent type store in
-	// core tests) and is dropped best-effort; the hook rides along.
-	if len(b.Artifacts) != 2 || b.Artifacts[0].Type != "monitor" || b.Artifacts[1].Type != "source_hook" {
-		t.Fatalf("expected [monitor, source_hook], got %v", bundleNames(b))
 	}
 }

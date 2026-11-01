@@ -241,7 +241,7 @@ func TestEveryAdminSectionSourceIsRoutable(t *testing.T) {
 	secs = append(secs, a.governanceSections()...)
 	secs = append(secs, a.costSections()...)
 	secs = append(secs, a.credentialsSections()...)
-	secs = append(secs, a.sourceHooksSections()...)
+	secs = append(secs, a.researchSourcesSections()...)
 	secs = append(secs, peerSharingSections()...)
 	secs = append(secs, buildTunableSections()...)
 	if len(secs) == 0 {

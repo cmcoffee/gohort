@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -54,5 +55,66 @@ func TestAdminSecretsAreMaskedAndKept(t *testing.T) {
 	post("/api/mail", map[string]any{"server": "smtp.example.com:587", "password": secretUnchanged})
 	if got := a.storedString(MailTable, "password"); got != secret {
 		t.Errorf("the placeholder overwrote the mail password with %q", got)
+	}
+}
+
+// Web Search's Test searches with the connector chosen in the form before a
+// save puts it to use, and leaves it out of use.
+func TestWebSearchTestTriesTheChoiceBeforeItIsSaved(t *testing.T) {
+	saved, savedAuth := RootDB, AuthDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	adb := &DBase{Store: kvlite.MemStore()}
+	AuthDB = func() Database { return adb }
+	t.Cleanup(func() { RootDB, AuthDB = saved, savedAuth })
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"hits":[{"title":"A result","url":"https://example.org/a"}]}`))
+	}))
+	defer srv.Close()
+	spec := `{"provider":{"transport":"http","base_url":"` + srv.URL + `","auth":{"none":true},"operations":{"find":{"path":"/s?q={query}"}}},
+		"provides":[{"capability":"web.search","steps":[{"call":"find"}],"output":{"results":{"path":"hits","fields":{"title":"title","url":"url"}}}}]}`
+	if err := SaveConnector(RootDB, Connector{Name: "finder", Kind: "service", Spec: json.RawMessage(spec)}); err != nil {
+		t.Fatal(err)
+	}
+	a := &AdminApp{db: RootDB}
+	out, _ := a.handleWebSearchTest(&jsonapi.Call{R: httptest.NewRequest("POST", "/api/web-search/test", nil)},
+		WebSearchConfig{Source: "local", Provider: "service:finder"})
+	if body, _ := out.(map[string]any); body["ok"] != true {
+		t.Errorf("the test of a choice not yet saved: %+v", out)
+	}
+	if c, _ := GetConnector(RootDB, "finder"); c.Approved {
+		t.Error("testing it put it to use")
+	}
+}
+
+// Mail's Test sends with the connector chosen in the form before a save puts
+// it to use, and leaves it out of use.
+func TestMailTestTriesTheChoiceBeforeItIsSaved(t *testing.T) {
+	saved, savedAuth := RootDB, AuthDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	adb := &DBase{Store: kvlite.MemStore()}
+	AuthDB = func() Database { return adb }
+	t.Cleanup(func() { RootDB, AuthDB = saved, savedAuth })
+	sent := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sent++
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"id":"m-1"}`))
+	}))
+	defer srv.Close()
+	spec := `{"provider":{"transport":"http","base_url":"` + srv.URL + `","auth":{"none":true},
+		"operations":{"send":{"method":"POST","path":"/emails","body":{"to":"{to}","subject":"{subject}","text":"{body}"}}}},
+		"provides":[{"capability":"mail.send","steps":[{"call":"send"}],"output":{"id":{"path":"id"}}}]}`
+	if err := SaveConnector(RootDB, Connector{Name: "postbox", Kind: "service", Spec: json.RawMessage(spec)}); err != nil {
+		t.Fatal(err)
+	}
+	a := &AdminApp{db: RootDB}
+	out, _ := a.handleMailTest(&jsonapi.Call{R: httptest.NewRequest("POST", "/api/mail/test", nil)},
+		MailConfig{Provider: "service:postbox", From: "gohort@example.test", Recipient: "admin@example.test"})
+	if body, _ := out.(map[string]any); body["ok"] != true || sent != 1 {
+		t.Errorf("the test of a choice not yet saved: %+v, %d sent", out, sent)
+	}
+	if c, _ := GetConnector(RootDB, "postbox"); c.Approved {
+		t.Error("testing it put it to use")
 	}
 }

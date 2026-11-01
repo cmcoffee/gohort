@@ -191,9 +191,9 @@ func (m *machineArtifact) machineRecipeDeps(db Database, d MachineDef, owner str
 			if IsExportableTool(db, tn, owner) || (inBundle != nil && inBundle("tool", tn)) {
 				add("tool", tn)
 			} else if h, ok := FindSourceHookByToolName(tn); ok {
-				if !seen["source_hook\x00"+h.Name] {
-					seen["source_hook\x00"+h.Name] = true
-					out = append(out, ArtifactSel{Type: "source_hook", Name: h.Name})
+				if !seen["connector\x00"+h.Connector] {
+					seen["connector\x00"+h.Connector] = true
+					out = append(out, ArtifactSel{Type: "connector", Name: h.Connector})
 				}
 			}
 		}

@@ -8,6 +8,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/activity"
 	"github.com/cmcoffee/gohort/core/jsonapi"
+	"github.com/cmcoffee/gohort/core/service"
 )
 
 // registerTemplatesRoutes wires the templates API under the admin sub-mux.
@@ -176,11 +177,17 @@ func (a *AdminApp) handleConnectorConfigSave(c *jsonapi.Call, req struct {
 	if err := SaveConnector(RootDB, conn); err != nil {
 		return nil, jsonapi.BadRequest(err.Error())
 	}
-	if err := ApproveConnector(RootDB, name); err != nil {
-		return nil, jsonapi.BadRequest("created but approve failed: " + err.Error())
+	// A services connector is put to use by the page that names it: as the
+	// default here when asked, else under Image Generation. Any other kind
+	// is live once added, as before.
+	if !service.TieInConnector(t.Kind) {
+		if err := ApproveConnector(RootDB, name); err != nil {
+			return nil, jsonapi.BadRequest("created but approve failed: " + err.Error())
+		}
 	}
 	if req.SetDefault && a.db != nil && t.Category == "Image generation" {
 		a.db.Set(ImageTable, "provider", name)
+		settleTieIn(name)
 	}
 	adminChange(c.R, activity.Settings, "added backend %q via template %q", name, req.Template)
 	return jsonapi.Empty(http.StatusNoContent), nil

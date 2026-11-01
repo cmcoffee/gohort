@@ -67,9 +67,6 @@ func (handler) Materialize(c Connector) error {
 	if _, _, err := s.binding("music.generate"); err == nil {
 		registerMusicTool(name)
 	}
-	if b, _, err := s.binding("web.search"); err == nil {
-		registerSearchTool(name, b)
-	}
 	if s.Provider.Health != nil {
 		startHealth()
 	}
@@ -242,8 +239,8 @@ func Call(ctx context.Context, sess *ToolSession, name, capability string, input
 	if !ok || c.Kind != Kind {
 		return nil, fmt.Errorf("no service connector named %q", name)
 	}
-	if !c.Approved {
-		return nil, fmt.Errorf("service %q is not approved yet: an admin approves it in Admin > Connectors", name)
+	if !callable(ctx, c) {
+		return nil, fmt.Errorf("service %q is not in use: an admin puts it to use by choosing it on the page that uses it (Web Search, Image Generation, Research Sources, a flow, ...)", name)
 	}
 	s, err := specOf(c)
 	if err != nil {

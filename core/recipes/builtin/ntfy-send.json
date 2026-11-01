@@ -3,7 +3,7 @@
   "title": "ntfy (send notifications)",
   "description": "Sends a flow's message as a push notification through ntfy (ntfy.sh or your own server) to every phone subscribed to a topic: a message.send connector, the last step of a flow that runs on its own. Text only; ntfy (send files) sends what a flow made.",
   "category": "Messaging",
-  "setup_notes": "Install the ntfy app on your phone and subscribe to a topic. Anyone who knows a topic's name on ntfy.sh can read it, so pick one nobody would guess. The credential has no secret: it lands disabled, so enable it under API Credentials. The connector lands unapproved: approve it in Admin > Extensions > Connectors and run Test on its row, which sends a short test notification. Then use it as a flow's message.send step. A server that requires sign-in needs an access token: change the credential to Bearer and set it under API Credentials.",
+  "setup_notes": "Install the ntfy app on your phone and subscribe to a topic. Anyone who knows a topic's name on ntfy.sh can read it, so pick one nobody would guess. The credential has no secret: it lands disabled, so enable it under API Credentials. Run Test on its row under Admin > Extensions > Connectors, which sends a short test notification. Then put it to use as a flow's message.send step. A server that requires sign-in needs an access token: change the credential to Bearer and set it under API Credentials.",
   "questions": [
     {
       "name": "server",

@@ -143,6 +143,14 @@ func TestAMusicServiceIsATool(t *testing.T) {
 	if tool == nil {
 		t.Fatal("the music service is not a tool")
 	}
+	// Offered only while the Music page offers it.
+	if _, params := tool.(DynamicChatTool).SchemaWithSession(nil); params != nil {
+		t.Error("a music connector the Music page does not offer is offered")
+	}
+	RootDB.Set(MusicTable, "agents", []string{"tunes"})
+	if _, params := tool.(DynamicChatTool).SchemaWithSession(nil); params == nil {
+		t.Error("a music connector the Music page offers is not")
+	}
 	ws := t.TempDir()
 	sess := &ToolSession{WorkspaceDir: ws}
 	out, err := tool.(SessionChatTool).RunWithSession(map[string]any{"prompt": "a calm song", "title": "Money in the Cloud", "lyrics": "la la"}, sess)
@@ -278,6 +286,15 @@ func TestAModelConnectorIsAnLLMTier(t *testing.T) {
 	if reps, err := Test(context.Background(), "hosted"); err != nil || !reps[0].OK || !strings.Contains(reps[0].Detail, `"OK"`) {
 		t.Errorf("the model's test: %+v %v", reps, err)
 	}
+	// Its row's Test works before a tier is put on it, and leaves it out of use.
+	UnapproveConnector(RootDB, "hosted")
+	if reps, err := Test(context.Background(), "hosted"); err != nil || !reps[0].OK {
+		t.Errorf("the test of a model no tier uses yet: %+v %v", reps, err)
+	}
+	if _, err := NewLLMFromConfig(LLMProviderConfig{Provider: "service:hosted"}); err == nil {
+		t.Error("after its test, a model no tier uses was read for a tier")
+	}
+	ApproveConnector(RootDB, "hosted")
 	if !ProviderHasNativeTools("service:hosted") {
 		t.Error("a model connector's tier would parse tool calls out of text")
 	}

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -13,7 +12,7 @@ import (
 	"github.com/cmcoffee/gohort/core/activity"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/media"
-	"github.com/cmcoffee/gohort/core/sourcehooks"
+	"github.com/cmcoffee/gohort/core/service"
 )
 
 // secretUnchanged is what a stored secret reads as on a GET. The admin forms
@@ -51,10 +50,6 @@ func (a *AdminApp) registerNetConfigRoutes(sub *http.ServeMux) {
 		"GET":  jsonapi.Get(a.db, a.handleWebSearch, a.gate()),
 		"POST": jsonapi.Post(a.db, a.handleWebSearchSave, a.gate()),
 	}.Serve)
-
-	// The Source Hooks that can be the search engine: API hooks that are on,
-	// for the Web Search form's picker.
-	sub.HandleFunc("/api/web-search/hooks", jsonapi.Get(a.db, a.handleWebSearchHooks, a.gate()))
 
 	// Page rendering — where browse_page and the render escalations happen.
 	sub.HandleFunc("/api/browse", jsonapi.Methods{
@@ -100,27 +95,26 @@ func (a *AdminApp) registerNetConfigRoutes(sub *http.ServeMux) {
 // handleWebSearch is the web search config: the engine, and where it
 // searches. A key and an address are the connector's or the peer's.
 func (a *AdminApp) handleWebSearch(c *jsonapi.Call) (any, error) {
-	var provider, source, hook string
+	var provider, source string
 	if a.db != nil {
 		a.db.Get(SearchTable, "provider", &provider)
 		a.db.Get(SearchTable, "source", &source)
-		a.db.Get(SearchTable, "hook", &hook)
 	}
 	if source == "" {
 		source = EmbeddingProviderLocal
 	}
-	return map[string]any{"provider": provider, "source": source, "hook": hook}, nil
+	return map[string]any{"provider": provider, "source": source}, nil
 }
 
 // searchEngineOK refuses an engine a local search cannot use: one that is
-// not DuckDuckGo, a Source Hook or an approved connector that searches (the
-// Brave, Google, Serper and SearXNG code is templates now).
+// not DuckDuckGo or a connector that searches (the Brave, Google,
+// Serper and SearXNG code is templates now, and Source Hooks connectors).
 func searchEngineOK(cfg WebSearchConfig) error {
 	if strings.HasPrefix(cfg.Source, "peer:") {
 		return nil
 	}
 	switch p := strings.TrimSpace(cfg.Provider); {
-	case p == "", p == "duckduckgo", p == "hook":
+	case p == "", p == "duckduckgo":
 		return nil
 	case strings.HasPrefix(p, media.ServiceProviderPrefix):
 		return serviceProviderOK(p, "web.search")
@@ -132,7 +126,7 @@ func searchEngineOK(cfg WebSearchConfig) error {
 // handleWebSearchSave saves the web search config.
 func (a *AdminApp) handleWebSearchSave(c *jsonapi.Call, req WebSearchConfig) (any, error) {
 	// A local engine keeps no key or address here: they are the
-	// connector's or the hook's.
+	// connector's.
 	req.APIKey, req.Endpoint = "", ""
 	// A peer selection carries no provider/key/endpoint of its own —
 	// those fields are hidden while one is picked. Resolve here, the
@@ -148,43 +142,16 @@ func (a *AdminApp) handleWebSearchSave(c *jsonapi.Call, req WebSearchConfig) (an
 	if err := searchEngineOK(req); err != nil {
 		return nil, jsonapi.BadRequest(err.Error())
 	}
-	// A Source Hook as the engine must be one that can be: refused
-	// here, where the admin sees it, rather than every search failing.
-	if req.Provider == "hook" {
-		if _, ok := sourcehooks.SearchHook(req.Hook); !ok {
-			return nil, jsonapi.BadRequest("pick a Source Hook to search with: an API hook that is switched on")
-		}
-	} else {
-		req.Hook = ""
-	}
 	if a.db != nil {
 		a.db.Set(SearchTable, "provider", req.Provider)
 		a.db.Set(SearchTable, "api_key", req.APIKey)
 		a.db.Set(SearchTable, "endpoint", req.Endpoint)
 		a.db.Set(SearchTable, "source", req.Source)
-		a.db.Set(SearchTable, "hook", req.Hook)
 	}
+	settleTieIn(req.Provider)
 	adminChange(c.R, activity.Settings, "updated web-search config (provider=%q)",
 		req.Provider)
 	return jsonapi.Empty(http.StatusNoContent), nil
-}
-
-// handleWebSearchHooks is the hooks the search engine may be.
-func (a *AdminApp) handleWebSearchHooks(c *jsonapi.Call) (any, error) {
-	opts := []map[string]string{}
-	// Every hook that can be the engine, the engine itself among them:
-	// it is out of the source hooks' own uses, not out of this list.
-	for _, h := range sourcehooks.RegisteredSourceHooks() {
-		if _, ok := sourcehooks.SearchHook(h.Name); !ok {
-			continue
-		}
-		label := h.Name
-		if u, err := url.Parse(h.Endpoint); err == nil && u.Host != "" {
-			label += " (" + u.Host + ")"
-		}
-		opts = append(opts, map[string]string{"value": h.Name, "label": label})
-	}
-	return opts, nil
 }
 
 // handleBrowse is where pages are rendered.
@@ -219,6 +186,7 @@ func (a *AdminApp) handleBrowseSave(c *jsonapi.Call, req BrowseConfig) (any, err
 		a.db.Set(BrowseTable, "source", src)
 	}
 	SetBrowseConfig(BrowseConfig{Source: src})
+	settleTieIn(src)
 	adminChange(c.R, activity.Settings, "set page rendering to %q", src)
 	return jsonapi.Empty(http.StatusNoContent), nil
 }
@@ -247,9 +215,23 @@ func (a *AdminApp) handleWebSearchTest(c *jsonapi.Call, req WebSearchConfig) (an
 	// Under the request's context: the form's Cancel closes the request,
 	// and the search tool's handler takes a context, so the provider call
 	// is dropped with it rather than running out its own timeout.
-	ctx, cancel := context.WithTimeout(c.R.Context(), 20*time.Second)
+	ctx, end := previewTieIn(c.R.Context(), req.Provider)
+	defer end()
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	out, serr := webSearchCtx(ctx, "gohort connectivity test")
+	search := webSearchCtx
+	if name, ok := strings.CutPrefix(req.Provider, media.ServiceProviderPrefix); ok {
+		// The connector's own search, which the tool dispatches to, under
+		// this request's context: the preview reaches it, and Cancel stops it.
+		search = func(ctx context.Context, q string) (string, error) {
+			out, err := service.Search(ctx, name, q)
+			if out == "No results found." {
+				out = ""
+			}
+			return out, err
+		}
+	}
+	out, serr := search(ctx, "gohort connectivity test")
 	if serr != nil {
 		return testResultBody(false, "", serr.Error()), nil
 	}
@@ -291,6 +273,7 @@ func (a *AdminApp) handleMailSave(c *jsonapi.Call, req MailConfig) (any, error) 
 		a.db.Set(MailTable, "username", req.Username)
 		a.db.Set(MailTable, "password", req.Password)
 	}
+	settleTieIn(req.Provider)
 	adminChange(c.R, activity.Settings, "updated mail config (provider=%q server=%q from=%q)",
 		req.Provider, req.Server, req.From)
 	return jsonapi.Empty(http.StatusNoContent), nil
@@ -306,7 +289,9 @@ func (a *AdminApp) handleMailTest(c *jsonapi.Call, req MailConfig) (any, error) 
 	// The posted (unsaved) config sends directly, under the request's
 	// context, so Cancel ends the SMTP conversation wherever it is
 	// blocked instead of leaving it to the server's timeout.
-	ctx, cancel := context.WithTimeout(c.R.Context(), 30*time.Second)
+	ctx, end := previewTieIn(c.R.Context(), req.Provider)
+	defer end()
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	if err := req.SendNotification(ctx, to, "Gohort Admin Test Email",
 		"This is a test from the gohort admin UI.\n\nIf you received this, mail is configured correctly.\n"); err != nil {

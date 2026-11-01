@@ -3,7 +3,7 @@
   "title": "Gemini (image generation)",
   "description": "Google's Gemini image model as an image backend, declared as a service: its request, reply and price are data you can test and fix from Admin > Connectors.",
   "category": "Images",
-  "setup_notes": "Get an API key at aistudio.google.com/apikey. The credential lands disabled: enable it under API Credentials. The connector lands unapproved: approve it in Admin > Extensions > Connectors, run Test on its row, then pick it as the image provider under Capabilities. The price per image is set to Google's at the time this template was written: edit the spec's cost if it has changed.",
+  "setup_notes": "Get an API key at aistudio.google.com/apikey. The credential lands disabled: enable it under API Credentials. Run Test on its row under Admin > Extensions > Connectors, then put it to use by choosing it as the image provider under Capabilities. The price per image is set to Google's at the time this template was written: edit the spec's cost if it has changed.",
   "questions": [
     {
       "name": "api_key",

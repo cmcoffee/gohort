@@ -1,0 +1,69 @@
+{
+  "id": "edgar-search",
+  "title": "SEC EDGAR (research)",
+  "description": "SEC filings (10-K, 10-Q, 8-K) from EDGAR's full-text search as a research source on financial topics, through gohort's built-in EDGAR search, which takes out the field tags EDGAR cannot read. Free, no key.",
+  "category": "Research Sources",
+  "setup_notes": "No key needed. The SEC asks callers to name themselves: the deployment's mail From address goes in the User-Agent. It searches filings from the start of two years ago to today. Run Test on its row under Admin > Extensions > Connectors, which makes one real search for a common phrase. Then add it under Admin > Extensions > Research Sources, which puts it to use: research asks it on the topics set there (suggested: financial, economic, corporate, investment), and a tool name there offers it to agents through query_source. Or pick it under Admin > Capabilities > Web Search as the engine.",
+  "questions": [
+    {
+      "name": "name",
+      "label": "Connector name",
+      "help": "Lowercase letters, digits, dashes and underscores; research and Web Search list it by this name.",
+      "default": "edgar-search"
+    }
+  ],
+  "bundle": {
+    "bundle": "gohort.bundle/v1",
+    "artifacts": [
+      {
+        "type": "connector",
+        "name": "{{name}}",
+        "recipe": {
+          "name": "{{name}}",
+          "kind": "service",
+          "template": "edgar-search",
+          "desc": "SEC EDGAR (research)",
+          "spec": {
+            "provider": {
+              "transport": "http",
+              "base_url": "https://efts.sec.gov",
+              "auth": {
+                "none": true
+              },
+              "operations": {
+                "search": {
+                  "builtin": "edgar"
+                }
+              }
+            },
+            "provides": [
+              {
+                "capability": "web.search",
+                "plain": true,
+                "steps": [
+                  {
+                    "call": "search"
+                  }
+                ],
+                "output": {
+                  "results": {
+                    "path": "results",
+                    "fields": {
+                      "title": "title",
+                      "url": "url",
+                      "snippet": "snippet",
+                      "published": "published"
+                    }
+                  }
+                },
+                "defaults": {
+                  "count": 10
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

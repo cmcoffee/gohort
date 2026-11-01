@@ -27,6 +27,7 @@ import (
 	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/media"
 	"github.com/cmcoffee/gohort/core/sandbox"
+	"github.com/cmcoffee/gohort/core/service"
 	"github.com/cmcoffee/gohort/core/textutil"
 	"github.com/cmcoffee/gohort/core/ui"
 )
@@ -478,7 +479,13 @@ func saveAdapted(owner, name string, a flows.Adapted, edit bool, desc string) (t
 	if existed {
 		c.Owner, c.Desc = prev.Owner, prev.Desc
 	}
-	return turnedOff, SaveConnector(RootDB, c)
+	if err := SaveConnector(RootDB, c); err != nil {
+		return turnedOff, err
+	}
+	if turnedOff {
+		settleTieIn() // the connector it named may be named by nothing now
+	}
+	return turnedOff, nil
 }
 
 // runRow runs the row id names (a job, or an adapted flow, on or off) on in:
@@ -512,6 +519,10 @@ func runRow(r *http.Request, id string, in []byte) (flows.Result, string, bool, 
 // runFlowOn runs an adapted flow, saved or not, as gohort would: an output
 // on gohort's sample document, anything else on in (or the link).
 func runFlowOn(ctx context.Context, name string, a flows.Adapted, in []byte, link string) (flows.Result, string, bool, error) {
+	// An administrator's test: the connector doing its conversion is tried
+	// before the hook is turned on and puts it to use.
+	ctx, end := service.Preview(ctx, a.Service)
+	defer end()
 	if a.IsOutput() {
 		doc := flows.SampleDocument()
 		res, err := flows.RunAdapted(ctx, name, a, flows.Input{Doc: &doc})

@@ -1,0 +1,83 @@
+{
+  "id": "westlaw-search",
+  "title": "Westlaw (research)",
+  "description": "Case law from Thomson Reuters' Westlaw as a research source on legal topics, declared as a service: its request and how its results are read are data you can test and fix from Admin > Connectors.",
+  "category": "Research Sources",
+  "setup_notes": "The credential lands disabled: enable it under API Credentials. Needs Thomson Reuters API access. Run Test on its row under Admin > Extensions > Connectors, which makes one real search for a common phrase. Then add it under Admin > Extensions > Research Sources, which puts it to use: research asks it on the topics set there (suggested: legal, criminal_justice), and a tool name there offers it to agents through query_source. Or pick it under Admin > Capabilities > Web Search as the engine.",
+  "questions": [
+    {
+      "name": "api_key",
+      "label": "Westlaw API token",
+      "help": "Stored in the credential's secret store, never in the connector.",
+      "required": true,
+      "secret": true,
+      "credential": "westlaw_search"
+    },
+    {
+      "name": "name",
+      "label": "Connector name",
+      "help": "Lowercase letters, digits, dashes and underscores; research and Web Search list it by this name.",
+      "default": "westlaw-search"
+    }
+  ],
+  "bundle": {
+    "bundle": "gohort.bundle/v1",
+    "artifacts": [
+      {
+        "type": "credential",
+        "name": "westlaw_search",
+        "recipe": {
+          "name": "westlaw_search",
+          "type": "bearer",
+          "base_url": "https://api.thomsonreuters.com",
+          "description": "Westlaw (research), for research."
+        }
+      },
+      {
+        "type": "connector",
+        "name": "{{name}}",
+        "recipe": {
+          "name": "{{name}}",
+          "kind": "service",
+          "template": "westlaw-search",
+          "desc": "Westlaw (research)",
+          "spec": {
+            "provider": {
+              "transport": "http",
+              "base_url": "https://api.thomsonreuters.com",
+              "auth": {
+                "credential": "westlaw_search"
+              },
+              "operations": {
+                "search": {
+                  "path": "/westlaw/v2/search?query={query}"
+                }
+              }
+            },
+            "provides": [
+              {
+                "capability": "web.search",
+                "plain": true,
+                "steps": [
+                  {
+                    "call": "search"
+                  }
+                ],
+                "output": {
+                  "results": {
+                    "path": "results",
+                    "fields": {
+                      "title": "title",
+                      "url": "link",
+                      "snippet": "snippet"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

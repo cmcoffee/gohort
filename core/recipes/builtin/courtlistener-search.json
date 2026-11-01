@@ -1,0 +1,88 @@
+{
+  "id": "courtlistener-search",
+  "title": "CourtListener (research)",
+  "description": "Free case-law search from CourtListener as a research source on legal topics, declared as a service.",
+  "category": "Research Sources",
+  "setup_notes": "The credential lands disabled: enable it under API Credentials. Get a token with a free account at courtlistener.com, and give it as Token followed by the token. Debate reads a cited opinion's full text through the same credential. Case law only, not policy. Its result links are relative to the site and are made whole from its address. Run Test on its row under Admin > Extensions > Connectors, which makes one real search for a common phrase. Then add it under Admin > Extensions > Research Sources, which puts it to use: research asks it on the topics set there (suggested: legal, criminal_justice), and a tool name there offers it to agents through query_source. Or pick it under Admin > Capabilities > Web Search as the engine.",
+  "questions": [
+    {
+      "name": "api_key",
+      "label": "CourtListener API token",
+      "help": "Written as Token, a space, then your token (Token 0123abcd...): CourtListener reads it that way. Stored in the credential's secret store, never in the connector.",
+      "required": true,
+      "secret": true,
+      "credential": "courtlistener_search"
+    },
+    {
+      "name": "name",
+      "label": "Connector name",
+      "help": "Lowercase letters, digits, dashes and underscores; research and Web Search list it by this name.",
+      "default": "courtlistener-search"
+    }
+  ],
+  "bundle": {
+    "bundle": "gohort.bundle/v1",
+    "artifacts": [
+      {
+        "type": "credential",
+        "name": "courtlistener_search",
+        "recipe": {
+          "name": "courtlistener_search",
+          "type": "header",
+          "base_url": "https://www.courtlistener.com",
+          "description": "CourtListener (research), for research.",
+          "param_name": "Authorization",
+          "allowed_endpoints": [
+            "/api/rest/v4/search/",
+            "/api/rest/v4/opinions/**"
+          ]
+        }
+      },
+      {
+        "type": "connector",
+        "name": "{{name}}",
+        "recipe": {
+          "name": "{{name}}",
+          "kind": "service",
+          "template": "courtlistener-search",
+          "desc": "CourtListener (research)",
+          "spec": {
+            "provider": {
+              "transport": "http",
+              "base_url": "https://www.courtlistener.com",
+              "auth": {
+                "credential": "courtlistener_search"
+              },
+              "operations": {
+                "search": {
+                  "path": "/api/rest/v4/search/?type=o&order_by=score+desc&q={query}"
+                }
+              }
+            },
+            "provides": [
+              {
+                "capability": "web.search",
+                "plain": true,
+                "steps": [
+                  {
+                    "call": "search"
+                  }
+                ],
+                "output": {
+                  "results": {
+                    "path": "results",
+                    "fields": {
+                      "title": "caseName",
+                      "url": "absolute_url",
+                      "snippet": "snippet"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

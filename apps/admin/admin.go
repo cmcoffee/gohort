@@ -192,7 +192,7 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	a.registerSystemDepsFixRoutes(sub)
 	a.registerArtifactsRoutes(sub)
 	a.registerRecipeRoutes(sub)
-	a.registerSourceHooksRoutes(sub)
+	a.registerResearchSourcesRoutes(sub)
 	a.registerToolsRoutes(sub)
 	a.registerSkillsRoutes(sub)
 	a.registerGroupsRoutes(sub)

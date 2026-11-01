@@ -73,6 +73,9 @@ func (t transport) do(ctx context.Context, name string, vars map[string]any) (re
 	if t.p.Transport == "command" {
 		return t.command(ctx, name, op, vars)
 	}
+	if op.Builtin != "" {
+		return t.builtin(ctx, name, op, vars)
+	}
 	if err := media.WaitPause(ctx, t.p.BaseURL); err != nil {
 		return reply{}, fmt.Errorf("%s: %w", name, err)
 	}

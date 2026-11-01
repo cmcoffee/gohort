@@ -310,7 +310,7 @@ func vectorKindLabel(kind string) string {
 	case "skill", "skills":
 		return "Skills"
 	case "hook", "source-hook", "sourcehook":
-		return "Source hooks"
+		return "Research sources"
 	case "(unspecified)":
 		return "Unspecified"
 	}

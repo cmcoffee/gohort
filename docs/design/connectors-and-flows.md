@@ -531,6 +531,62 @@ no step of their own.
    (`BedrockConnectorFor`), a new API key rotating the tier's own unshared
    one. Template: AWS Bedrock (LLM). What stays: the protocols, the local
    model servers and peers.
+9. **Research Sources.** Built 2026-10-31, the owner's direction: connectors
+   stay low level (how a service is reached and read, which is what breaks
+   and what Fix repairs), and how gohort uses one is its tie-in, a
+   configuration page. Source Hooks, a second store doing what a search
+   connector does, are retired. A search gains what hooks did: a result's
+   link made whole (relative to the service, a bare DOI at doi.org), tags
+   out of titles and snippets, a result with no link dropped when others
+   have one (`tidy`, on the web.search contract, before its check);
+   `plain` takes site: filters out of a query; an output reading a list
+   may read the whole reply; and research and agents ask a source through
+   the hooks' two caches (`sourcehooks.CachedSearch`), under the
+   connector's name. PubMed, OpenAlex and EDGAR, whose transforms need Go,
+   are connectors on built-in searches (`{"builtin": "pubmed"}`): Go makes
+   their requests through the connector's own governed path and gives
+   results the spec reads; their address, key, topics and price are data.
+   The research tie-in is Admin > Extensions > Research Sources
+   (`research_sources`): a search connector, its topics or always, and,
+   offered to agents, the tool name and description query_source shows;
+   saving one that is on puts its connector to use, and the spec no longer
+   takes research or tool (`MigrateResearchSettings` moved them out).
+   `MigrateSourceHooks` moves every stored hook: an API or RAG hook to the
+   connector it described plus its source entry (a switched-off hook, an
+   off source and an unapproved connector), the built-ins to their
+   templates' shapes, CourtListener's token as `Token <key>` (for its
+   search and the opinions debate reads through `service.SourceGet`), the
+   engine hook's place under Web Search to its connector, a paywall hook
+   (never applied by any code) to a switched-off credential for its sites;
+   a bundle's hook imports the same way, unapproved, its credential a
+   draft. query_source and a skill's grant read the sources; the
+   per-connector search tools are gone. The hooks' rate limit was never
+   enforced and is dropped. Templates: Westlaw, CourtListener, Semantic
+   Scholar, CORE, Europe PMC, PubMed, OpenAlex, SEC EDGAR.
+
+10. **Approval in every tie-in.** Built 2026-10-31. A services connector
+   (a spec, or an image backend) is in use exactly while a page names it:
+   Web Search's engine, Image Generation's default or its new "also
+   offered to agents" list, a new Music section's list, Embeddings,
+   Transcription, Speech, Page Rendering, Mail, a Worker or Lead LLM, a
+   Research Source that is on, a flow's step, an adapted System Hook that
+   is on (`service.TieIns`). Choosing one on its page and saving puts it to
+   use; taking it off every page takes it out (`service.Settle`, after each
+   page's save and at every start). Its Connectors row says which pages use
+   it, or none, and has no Approve. A change by someone not an
+   administrator (the Builder on their behalf) holds it out of use, said
+   on its row and in its page's choice, until an administrator saves a page
+   with it chosen, which accepts the change; Fix, an administrator's, goes
+   live at once. A page's Test, and Speech's voice list, try the connector
+   chosen in the form before a save (`service.Preview`, on that request's
+   context only). `MigrateTieIns` offers, once, the image and music
+   connectors that were approved to agents, so they keep what they had,
+   then settles; an approved connector no page names goes out of use. The
+   Connectors page bands each connector by what it does (LLMs, Web Search,
+   Research Sources, Images, Speech and Music, Embeddings, Pages and Files,
+   Mail, Messaging, ...), gohort's own providers beside the connectors
+   doing the same job; the templates split Search into Web Search and
+   Research Sources the same way.
 
 ## Migrations
 

@@ -52,10 +52,36 @@ func putImageConnector(t *testing.T, name, credential string, approved bool) {
 	}
 	c := Connector{Name: name, Kind: RestImageConnectorKind, Approved: approved, Spec: spec}
 	RootDB.Set(connectorsTable, name, &c)
+	offerImageBackend(name)
 	if approved {
 		RegisterImageBackend(name, func(_ context.Context, _ string, _ bool) (*ImageGenResult, error) {
 			return &ImageGenResult{}, nil
 		})
+	}
+}
+
+// offerImageBackend puts name on Image Generation's "also offered to
+// agents" list, as the page does: only those (and the default) reach agents.
+func offerImageBackend(name string) {
+	var agents []string
+	RootDB.Get(ImageTable, "agents", &agents)
+	RootDB.Set(ImageTable, "agents", append(agents, name))
+}
+
+// A backend approved but neither the default nor offered does not reach
+// agents: Image Generation is where image connectors are offered.
+func TestAnImageBackendReachesAgentsOnlyWhenOffered(t *testing.T) {
+	backendTestDB(t)
+	putImageConnector(t, "comfy_lan", "no_auth", true)
+	RootDB.Set(ImageTable, "agents", []string{})
+	if got := ReachableImageBackends(&ToolSession{}); len(got) != 0 {
+		t.Errorf("reachable = %v, want none: it is not offered", backendNames(got))
+	}
+	saved := ImageProviderFunc
+	ImageProviderFunc = func() string { return "comfy_lan" }
+	t.Cleanup(func() { ImageProviderFunc = saved })
+	if got := ReachableImageBackends(&ToolSession{}); len(got) != 1 || !got[0].Default {
+		t.Errorf("reachable = %v, want the default", backendNames(got))
 	}
 }
 

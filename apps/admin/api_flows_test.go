@@ -35,7 +35,6 @@ func TestFlowsAreEditedAsRowsAndChecked(t *testing.T) {
 	if err := SaveConnector(RootDB, Connector{Name: "voice", Kind: service.Kind, Spec: spec}); err != nil {
 		t.Fatal(err)
 	}
-	ApproveConnector(RootDB, "voice")
 
 	a := &AdminApp{db: &DBase{Store: kvlite.MemStore()}}
 	mux := http.NewServeMux()
@@ -54,8 +53,21 @@ func TestFlowsAreEditedAsRowsAndChecked(t *testing.T) {
 	if w := call("POST", "/api/flows", broken); w.Code != 400 || !strings.Contains(w.Body.String(), "the flow has no input whom") {
 		t.Errorf("a flow that does not fit: %d %s", w.Code, w.Body.String())
 	}
+	// Tested before it is saved, its step's connector is tried though no
+	// page has put it to use yet; saving the flow puts it to use.
+	var tried map[string]any
+	json.Unmarshal(call("POST", "/api/flows/test", form).Body.Bytes(), &tried)
+	if tried["ok"] != true {
+		t.Errorf("testing the unsaved form: %v", tried)
+	}
+	if c, _ := GetConnector(RootDB, "voice"); c.Approved {
+		t.Error("testing the form put its connector to use")
+	}
 	if w := call("POST", "/api/flows", form); w.Code != 200 {
 		t.Fatalf("save: %d %s", w.Code, w.Body.String())
+	}
+	if c, _ := GetConnector(RootDB, "voice"); !c.Approved {
+		t.Error("saving the flow did not put its connector to use")
 	}
 	var rows []flowRow
 	json.Unmarshal(call("GET", "/api/flows", "").Body.Bytes(), &rows)

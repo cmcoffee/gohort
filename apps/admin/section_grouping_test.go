@@ -25,7 +25,7 @@ func everyAdminSection(t *testing.T) []ui.Section {
 	for _, build := range []func() []ui.Section{
 		a.systemSections, a.llmSections, a.costSections, a.capabilitiesSections,
 		a.maintenanceSections, a.credentialsSections, a.governanceSections,
-		a.extensionsSections, a.sourceHooksSections, a.toolsSections, a.skillsSections,
+		a.extensionsSections, a.researchSourcesSections, a.toolsSections, a.skillsSections,
 	} {
 		func() {
 			defer func() { recover() }() // a builder needing a live store is not what this tests

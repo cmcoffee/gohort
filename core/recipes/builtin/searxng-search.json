@@ -2,8 +2,8 @@
   "id": "searxng-search",
   "title": "SearXNG (web search)",
   "description": "A SearXNG instance, yours or one you may use, as gohort's web search, declared as a service: the request and how its results are read are data you can test and fix from Admin > Connectors.",
-  "category": "Search",
-  "setup_notes": "The instance must answer JSON: in its settings.yml, search: formats must list json. The connector takes no key and lands unapproved: approve it in Admin > Extensions > Connectors and run Test on its row, which makes one real search for a common phrase. Then pick it under Admin > Capabilities > Web Search as Service: <name>. An instance behind a proxy that wants a key: add a bearer credential for its address under API Credentials and name it in the spec's auth in place of none.",
+  "category": "Web Search",
+  "setup_notes": "The instance must answer JSON: in its settings.yml, search: formats must list json. The connector takes no key. Run Test on its row under Admin > Extensions > Connectors, which makes one real search for a common phrase. Then put it to use by choosing it under Admin > Capabilities > Web Search as Service: <name>. An instance behind a proxy that wants a key: add a bearer credential for its address under API Credentials and name it in the spec's auth in place of none.",
   "questions": [
     {
       "name": "base_url",

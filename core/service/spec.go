@@ -73,6 +73,11 @@ type Operation struct {
 	// file), {in} the line before's result, {out} or {out.png} the file a
 	// line writes; with no {out}, what it prints is its result.
 	Run []string `json:"run,omitempty"`
+	// Builtin, in place of a request, names a built-in search
+	// (builtin_search.go: pubmed, openalex, edgar): Go makes its requests,
+	// to the provider's address through its credential, and gives back
+	// {"results": [{title, url, snippet, published}]} for the spec to read.
+	Builtin string `json:"builtin,omitempty"`
 }
 
 // Limits bound every transfer.
@@ -104,11 +109,15 @@ type Binding struct {
 	// a conversation, its tools and a streamed reply are what the client is
 	// for. It has no steps or outputs.
 	Dialect string `json:"dialect,omitempty"`
-	// Research and Tool are what a search (web.search) is offered for besides
-	// Web Search: research, on the topics it is for, and agents, as a tool
-	// of its own. A Source Hook's routing, on a connector.
+	// Research and Tool were how a search was offered to research and to
+	// agents, before that moved to its tie-in, Admin > Research Sources. A
+	// spec saved with them is read, so the move can take them out
+	// (MigrateResearchSettings); a spec saving them is refused.
 	Research *ResearchUse `json:"research,omitempty"`
 	Tool     *ToolUse     `json:"tool,omitempty"`
+	// Plain, for a search, takes a query's site: filters out before it is
+	// sent: an API searching its own collection reads them as words.
+	Plain bool `json:"plain,omitempty"`
 }
 
 // ResearchUse is the research topics a search is asked on (legal, medical,
@@ -291,6 +300,15 @@ func (s Spec) validateProvides() error {
 }
 
 func (op Operation) validate(name string) error {
+	if b := strings.TrimSpace(op.Builtin); b != "" {
+		if _, ok := builtinSearches[b]; !ok {
+			return fmt.Errorf("operation %q: %q is not a built-in search (there are %s)", name, b, strings.Join(builtinSearchNames(), ", "))
+		}
+		if op.Method != "" || op.Path != "" || op.URL != "" || op.Send != "" || op.Body != nil || op.Read != "" || len(op.Run) > 0 {
+			return fmt.Errorf("operation %q names a built-in search, which makes its own requests: it has no method, path, url, send, body, read or run", name)
+		}
+		return nil
+	}
 	if len(op.Run) > 0 {
 		return fmt.Errorf("operation %q has run lines, which are for the command transport", name)
 	}
@@ -354,16 +372,11 @@ func (b Binding) validate(p Provider) error {
 	if cost := b.Cost; cost != nil && (cost.PerMillionInput != 0 || cost.PerMillionOutput != 0) {
 		return fmt.Errorf("per_million_input and per_million_output price a model's tokens: llm.chat only")
 	}
+	if b.Plain && b.Capability != "web.search" && b.Capability != "image.search" {
+		return fmt.Errorf("plain takes site: filters out of a search's query: web.search and image.search only")
+	}
 	if b.Research != nil || b.Tool != nil {
-		if b.Capability != "web.search" {
-			return fmt.Errorf("research and tool offer a search: web.search only")
-		}
-		if r := b.Research; r != nil && !r.Always && len(r.Topics) == 0 {
-			return fmt.Errorf("research needs topics (legal, medical, ...) or always: true")
-		}
-		if t := b.Tool; t != nil && !searchToolNameRE.MatchString(t.Name) {
-			return fmt.Errorf("tool name %q: lowercase letters, digits and _, 3 to 41 of them, starting with a letter", t.Name)
-		}
+		return fmt.Errorf("research and tool are set where a search is put to use, under Admin > Research Sources, not in its spec")
 	}
 	if len(b.Steps) == 0 {
 		return fmt.Errorf("no steps")
@@ -386,6 +399,9 @@ func (b Binding) validate(p Provider) error {
 		op, ok := p.Operations[name]
 		if !ok {
 			return fmt.Errorf("step %d names %q, which is not an operation", i+1, name)
+		}
+		if op.Builtin != "" && b.Capability != "web.search" {
+			return fmt.Errorf("step %d calls %q, a built-in search: it gives web.search's results", i+1, name)
 		}
 		for _, tok := range opTokens(op) {
 			if !have[tok] {
@@ -493,11 +509,16 @@ func (o Output) validate(name string, spec Port, last Operation) error {
 		}
 		return nil
 	}
-	if strings.TrimSpace(o.Path) == "" {
+	// A list read into a json output may be the whole reply (an API that
+	// answers with a bare list): its path is then empty.
+	readsList := o.Each != "" || len(o.Fields) > 0 || o.Single
+	if strings.TrimSpace(o.Path) == "" && !readsList {
 		return fmt.Errorf("output %q needs a path, or from: body", name)
 	}
-	if err := apijob.ValidPath(o.Path); err != nil {
-		return fmt.Errorf("output %q: %w", name, err)
+	if strings.TrimSpace(o.Path) != "" {
+		if err := apijob.ValidPath(o.Path); err != nil {
+			return fmt.Errorf("output %q: %w", name, err)
+		}
 	}
 	allowed := map[ValueType][]string{
 		TypeFile:   {"base64", "url"},

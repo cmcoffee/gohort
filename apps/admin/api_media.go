@@ -47,6 +47,12 @@ func (a *AdminApp) registerMediaRoutes(sub *http.ServeMux) {
 		"POST": jsonapi.Post(a.db, a.handleImageGenSave, a.gate()),
 	}.Serve)
 
+	// Music: the music connectors offered to agents as tools.
+	sub.HandleFunc("/api/music", jsonapi.Methods{
+		"GET":  jsonapi.Get(a.db, a.handleMusic, a.gate()),
+		"POST": jsonapi.Post(a.db, a.handleMusicSave, a.gate()),
+	}.Serve)
+
 	// STT test: the form as it stands, saved or not. A connector
 	// transcribes a second of a tone; a peer is checked through its
 	// manifest.
@@ -93,6 +99,7 @@ func (a *AdminApp) handleEmbeddingsSave(c *jsonapi.Call, req EmbeddingConfig) (a
 		a.db.Set(EmbeddingTable, "current", req)
 	}
 	SetEmbeddingConfig(req)
+	settleTieIn(req.Provider)
 	adminChange(c.R, activity.Settings, "updated embeddings config (enabled=%v provider=%q endpoint=%q model=%q)",
 		req.Enabled, req.Provider, req.Endpoint, req.Model)
 	return jsonapi.Empty(http.StatusNoContent), nil
@@ -122,7 +129,9 @@ func (a *AdminApp) handleEmbeddingsTest(c *jsonapi.Call, req EmbeddingConfig) (a
 	prev := GetEmbeddingConfig()
 	SetEmbeddingConfig(req)
 	defer SetEmbeddingConfig(prev)
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	ctx, end := previewTieIn(r.Context(), req.Provider)
+	defer end()
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	vec, err := Embed(ctx, "hello from gohort admin connectivity test")
 	if err != nil {
@@ -172,6 +181,7 @@ func (a *AdminApp) handleTranscribeSave(c *jsonapi.Call, req TranscribeConfig) (
 		a.db.Set(TranscribeTable, "current", req)
 	}
 	SetTranscribeConfig(req)
+	settleTieIn(req.Provider)
 	adminChange(c.R, activity.Settings, "updated transcribe config (enabled=%v provider=%q model=%q)",
 		req.Enabled, req.Provider, req.Model)
 	return jsonapi.Empty(http.StatusNoContent), nil
@@ -218,6 +228,7 @@ func (a *AdminApp) handleSpeechSave(c *jsonapi.Call, req media.SpeechConfig) (an
 		a.db.Set(media.SpeechTable, "current", req)
 	}
 	media.SetSpeechConfig(req)
+	settleTieIn(req.Provider)
 	adminChange(c.R, activity.Settings, "updated speech config (enabled=%v provider=%q model=%q voice=%q)",
 		req.Enabled, req.Provider, req.Model, req.Voice)
 	return jsonapi.Empty(http.StatusNoContent), nil
@@ -257,8 +268,10 @@ func (a *AdminApp) handleSpeechTest(c *jsonapi.Call, req media.SpeechConfig) (an
 		return testResultBody(false, "", rerr.Error()), nil
 	}
 	req = resolved
+	ctx, end := previewTieIn(c.R.Context(), req.Provider)
+	defer end()
 	// A minute: a CPU-only server loads its model on the first request.
-	ctx, cancel := context.WithTimeout(c.R.Context(), time.Minute)
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
 	audio, ext, err := media.SpeakWith(ctx, req, media.PreviewSentence)
 	if err != nil {
@@ -279,7 +292,9 @@ func (a *AdminApp) handleSpeechVoices(c *jsonapi.Call) (any, error) {
 	if resolved, err := ResolveSpeechProvider(cfg, cfg.Provider); err == nil {
 		cfg = resolved
 	}
-	return media.VoiceChips(media.SpeechVoices(c.R.Context(), cfg)), nil
+	ctx, end := previewTieIn(c.R.Context(), cfg.Provider)
+	defer end()
+	return media.VoiceChips(media.SpeechVoices(ctx, cfg)), nil
 }
 
 // handleImageGen serves /api/image-gen; registerMediaRoutes says what it is for.
@@ -288,23 +303,56 @@ func (a *AdminApp) handleImageGen(c *jsonapi.Call) (any, error) {
 	if provider == "" {
 		provider = "none"
 	}
-	return map[string]any{"provider": provider}, nil
+	agents := []string{}
+	if a.db != nil {
+		a.db.Get(ImageTable, "agents", &agents)
+	}
+	return map[string]any{"provider": provider, "agents": agents}, nil
 }
 
-// handleImageGenSave persists the image connector, refusing a name that is
-// not an approved one making pictures: saved, it would leave every picture
-// failing on a connector that is not there.
+// handleImageGenSave persists the image connector and the others offered to
+// agents, refusing a name that is not a connector making pictures: saved, it
+// would leave every picture failing on a connector that is not there. Naming
+// one puts it to use.
 func (a *AdminApp) handleImageGenSave(c *jsonapi.Call, req imageGenConfig) (any, error) {
 	req.Provider = strings.TrimSpace(req.Provider)
-	if req.Provider != "" && req.Provider != "none" && !ImageBackendRegistered(req.Provider) {
-		return nil, jsonapi.BadRequest("no approved connector named " + req.Provider + " makes pictures: approve it under Admin > Extensions > Connectors first")
+	names := []string{}
+	if req.Provider != "" && req.Provider != "none" {
+		names = append(names, req.Provider)
+	}
+	var agents []string
+	for _, n := range req.Agents {
+		if n = strings.TrimSpace(n); n != "" && n != req.Provider {
+			agents = append(agents, n)
+		}
+	}
+	for _, n := range append(names, agents...) {
+		if !imageConnector(n) {
+			return nil, jsonapi.BadRequest("no connector named " + n + " makes pictures: add one under Admin > Extensions > Connectors or Templates first")
+		}
 	}
 	if a.db != nil {
 		a.db.Set(ImageTable, "provider", req.Provider)
+		a.db.Set(ImageTable, "agents", agents)
 	}
-	adminChange(c.R, activity.Settings, "updated image-gen config (provider=%q)",
-		req.Provider)
+	settleTieIn(append(names, agents...)...)
+	offered := ""
+	if len(agents) > 0 {
+		offered = ", also offered to agents: " + strings.Join(agents, ", ")
+	}
+	adminChange(c.R, activity.Settings, "updated image-gen config (provider=%q%s)", req.Provider, offered)
 	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// imageConnector reports whether name is a connector that makes or edits
+// pictures: an image backend, or a service giving image.generate or
+// image.edit.
+func imageConnector(name string) bool {
+	c, ok := GetConnector(RootDB, name)
+	if !ok {
+		return false
+	}
+	return c.Kind == RestImageConnectorKind || (c.Kind == service.Kind && (service.Provides(c, "image.generate") || service.Provides(c, "image.edit")))
 }
 
 // handleTranscribeTest serves /api/transcribe/test; registerMediaRoutes says what it is for.
@@ -320,7 +368,9 @@ func (a *AdminApp) handleTranscribeTest(c *jsonapi.Call, req TranscribeConfig) (
 		return testResultBody(false, "", err.Error()), nil
 	}
 	req = resolved
-	ctx, cancel := context.WithTimeout(c.R.Context(), time.Minute)
+	ctx, end := previewTieIn(c.R.Context(), req.Provider)
+	defer end()
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
 	// A peer is probed through its MANIFEST: is it reachable, is the key
 	// good, is transcribe granted, does that instance still transcribe. Each
@@ -348,20 +398,24 @@ func (a *AdminApp) handleTranscribeTest(c *jsonapi.Call, req TranscribeConfig) (
 
 // handleImageGenTest serves /api/image-gen/test; registerMediaRoutes says what it is for.
 // It does not render: a picture can be billed. It says whether the chosen
-// connector is approved and live, and where its own Test renders one.
+// connector makes pictures and is in use, and where its own Test renders one.
 func (a *AdminApp) handleImageGenTest(c *jsonapi.Call, req imageGenConfig) (any, error) {
 	if req.Provider == "" || req.Provider == "none" {
 		return testResultBody(false, "", "pick a connector first"), nil
 	}
-	if !ImageBackendRegistered(req.Provider) {
-		return testResultBody(false, "", "no approved connector named "+req.Provider+" makes pictures: approve it under Admin > Extensions > Connectors"), nil
+	if !imageConnector(req.Provider) && !ImageBackendRegistered(req.Provider) {
+		return testResultBody(false, "", "no connector named "+req.Provider+" makes pictures"), nil
 	}
-	return testResultBody(true, "The connector "+req.Provider+" is approved and active. Its Test under Admin > Extensions > Connectors renders a picture end to end.", ""), nil
+	if !ImageBackendRegistered(req.Provider) {
+		return testResultBody(false, "", req.Provider+" makes pictures but is not in use yet: save here with it chosen to put it to use"), nil
+	}
+	return testResultBody(true, "The connector "+req.Provider+" is in use. Its Test under Admin > Extensions > Connectors renders a picture end to end.", ""), nil
 }
 
 // imageGenConfig is the image-generation form: the connector chosen.
 type imageGenConfig struct {
-	Provider string `json:"provider"`
+	Provider string   `json:"provider"`
+	Agents   []string `json:"agents"`
 }
 
 // storedEmbeddingConfig / storedTranscribeConfig read the saved config, so a
@@ -411,8 +465,9 @@ func resolveEmbedding(req EmbeddingConfig) (EmbeddingConfig, error) {
 }
 
 // serviceProviderOK refuses a provider that names a service connector which
-// is missing, not approved, or does not provide capability. Anything else
-// (this instance, a peer) is left to its own resolution.
+// is missing or does not provide capability. Anything else (this instance, a
+// peer) is left to its own resolution. Naming one here is what puts it to
+// use: the page's save settles it (settleTieIn).
 func serviceProviderOK(provider, capability string) error {
 	name, ok := strings.CutPrefix(strings.TrimSpace(provider), media.ServiceProviderPrefix)
 	if !ok {
@@ -424,21 +479,110 @@ func serviceProviderOK(provider, capability string) error {
 		return fmt.Errorf("no connector named %q", name)
 	case !service.Provides(c, capability):
 		return fmt.Errorf("connector %q does not provide %s", name, capability)
-	case !c.Approved:
-		return fmt.Errorf("connector %q is not approved yet: approve it in Admin > Extensions > Connectors first", name)
 	}
 	return nil
 }
 
-// serviceProviderOptions are the approved service connectors providing
-// capability, as choices beside this instance and the peers.
+// serviceProviderOptions are the service connectors providing capability,
+// as choices beside this instance and the peers: every one, since choosing
+// it here is what puts it to use. One changed since it was put to use says
+// so: saving the page with it chosen accepts the change.
 func serviceProviderOptions(capability, verb string) []ui.SelectOption {
 	var out []ui.SelectOption
 	for _, c := range ListConnectors(RootDB) {
-		if c.Approved && service.Provides(c, capability) {
-			out = append(out, ui.SelectOption{Value: media.ServiceProviderPrefix + c.Name, Label: "Service: " + c.Name,
-				Help: verb + " with the " + c.Name + " connector: " + ConnectorSummary(c) + "."})
+		if c.Kind == service.Kind && service.Provides(c, capability) {
+			label, help := "Service: "+c.Name, verb+" with the "+c.Name+" connector: "+ConnectorSummary(c)+"."
+			if ch, ok := service.PendingChange(RootDB, c.Name); ok {
+				label += " (changed, waiting to be accepted)"
+				help += " " + changedNote(ch)
+			}
+			out = append(out, ui.SelectOption{Value: media.ServiceProviderPrefix + c.Name, Label: label, Help: help})
 		}
 	}
 	return out
+}
+
+// changedNote says who changed a connector and how to accept it.
+func changedNote(ch service.ConnectorChange) string {
+	by := ch.By
+	if by == "" {
+		by = "someone who is not an administrator"
+	}
+	return "Changed by " + by + " on " + ch.At.Format("2006-01-02 15:04") + " since it was put to use, so it is out of use: read its spec under Connectors, then save this page with it chosen to accept the change."
+}
+
+// settleTieIn settles what is in use after a page names connectors, given
+// as provider settings ("service:<name>") or names: the administrator saving
+// the page accepts them as they are.
+func settleTieIn(named ...string) {
+	var names []string
+	for _, n := range named {
+		n = strings.TrimSpace(n)
+		if rest, ok := strings.CutPrefix(n, media.ServiceProviderPrefix); ok {
+			n = rest
+		}
+		if n != "" && !strings.Contains(n, ":") {
+			names = append(names, n)
+		}
+	}
+	service.Settle(RootDB, names...)
+}
+
+// musicConfig is the Music tie-in: the music connectors offered to agents.
+type musicConfig struct {
+	Agents []string `json:"agents"`
+}
+
+func (a *AdminApp) handleMusic(c *jsonapi.Call) (any, error) {
+	cfg := musicConfig{Agents: []string{}}
+	if a.db != nil {
+		a.db.Get(service.MusicTable, "agents", &cfg.Agents)
+	}
+	return cfg, nil
+}
+
+// handleMusicSave offers the music connectors chosen to agents, as tools of
+// their own (generate_music_<connector>), which puts them to use.
+func (a *AdminApp) handleMusicSave(c *jsonapi.Call, req musicConfig) (any, error) {
+	var agents []string
+	for _, n := range req.Agents {
+		n = strings.TrimSpace(n)
+		conn, ok := GetConnector(RootDB, n)
+		if !ok || !service.Provides(conn, "music.generate") {
+			return nil, jsonapi.BadRequest("no connector named " + n + " makes music")
+		}
+		agents = append(agents, n)
+	}
+	if a.db != nil {
+		a.db.Set(service.MusicTable, "agents", agents)
+	}
+	settleTieIn(agents...)
+	adminChange(c.R, activity.Settings, "music offered to agents: %s", strings.Join(agents, ", "))
+	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// musicOptions are the connectors that make music.
+func musicOptions() []ui.SelectOption {
+	var out []ui.SelectOption
+	for _, c := range ListConnectors(RootDB) {
+		if c.Kind == service.Kind && service.Provides(c, "music.generate") {
+			label := c.Name
+			if _, waiting := service.PendingChange(RootDB, c.Name); waiting {
+				label += " (changed, waiting to be accepted)"
+			}
+			out = append(out, ui.SelectOption{Value: c.Name, Label: label, Help: ConnectorSummary(c)})
+		}
+	}
+	return out
+}
+
+// previewTieIn lets the settings page's own test reach the connector its
+// form names (a provider setting, "service:<name>") before a save puts it
+// to use: under the returned context; end ends it.
+func previewTieIn(ctx context.Context, provider string) (context.Context, func()) {
+	name, ok := strings.CutPrefix(strings.TrimSpace(provider), media.ServiceProviderPrefix)
+	if !ok {
+		return ctx, func() {}
+	}
+	return service.Preview(ctx, name)
 }

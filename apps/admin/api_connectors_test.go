@@ -84,14 +84,11 @@ func TestAServiceConnectorRowAndThePicker(t *testing.T) {
 		}
 		return false
 	}
-	if offered() {
-		t.Error("an unapproved service is offered as the image provider")
+	if !offered() {
+		t.Error("an image service no page uses yet is not offered: choosing it is what puts it to use")
 	}
 	if err := ApproveConnector(RootDB, "acme-images"); err != nil {
 		t.Fatal(err)
-	}
-	if !offered() {
-		t.Error("an approved image service is not offered as the image provider")
 	}
 
 	// Its Endpoints: each one as it is sent and read, and what uses it.
@@ -147,5 +144,155 @@ func TestTheContractsSectionExplainsEachContract(t *testing.T) {
 		if !shown[f] {
 			t.Errorf("the section does not show %s", f)
 		}
+	}
+}
+
+// The Research Sources form offers every search connector, in use or not
+// (adding one is what puts it to use), and nothing that does not search.
+func TestResearchSourcesOfferOnlySearchConnectors(t *testing.T) {
+	saved := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB = saved })
+	search := `{"provider":{"transport":"http","base_url":"https://find.example.test","auth":{"none":true},"operations":{"find":{"path":"/s?q={query}"}}},"provides":[{"capability":"web.search","steps":[{"call":"find"}],"output":{"results":{"path":"hits","fields":{"title":"t","url":"u"}}}}]}`
+	speech := `{"provider":{"transport":"http","base_url":"https://say.example.test","auth":{"none":true},"operations":{"say":{"method":"POST","path":"/say","body":{"text":"{text}"},"read":"file"}}},"provides":[{"capability":"speech.synthesize","steps":[{"call":"say"}],"output":{"audio":{"from":"body"}}}]}`
+	for name, spec := range map[string]string{"finder": search, "voice": speech} {
+		if err := SaveConnector(RootDB, Connector{Name: name, Kind: service.Kind, Spec: json.RawMessage(spec)}); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
+	opts := researchSourceOptions()
+	if len(opts) != 1 || opts[0].Value != "finder" {
+		t.Errorf("offered: %+v", opts)
+	}
+}
+
+// The Connectors table bands each connector by what it does: every contract
+// has a band, a search a research source names (or one from a research
+// source's template) is a research source unless Web Search uses it, and
+// gohort's own providers sit with the connectors that do the same job.
+func TestConnectorsAreBandedByWhatTheyDo(t *testing.T) {
+	for _, name := range service.Names() {
+		if capabilityGroups[name] == "" {
+			t.Errorf("the contract %s has no band on the Connectors page", name)
+		}
+	}
+	saved := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB = saved })
+	search := `{"provider":{"transport":"http","base_url":"https://find.example.test","auth":{"none":true},"operations":{"find":{"path":"/s?q={query}"}}},"provides":[{"capability":"web.search","steps":[{"call":"find"}],"output":{"results":{"path":"hits","fields":{"title":"t","url":"u"}}}}]}`
+	model := `{"provider":{"transport":"http","base_url":"https://chat.example.test","auth":{"none":true},"operations":{"models":{"path":"/models"}}},"provides":[{"capability":"llm.chat","dialect":"openai"}]}`
+	for _, c := range []Connector{
+		{Name: "engine", Kind: service.Kind, Spec: json.RawMessage(search)},
+		{Name: "papers", Kind: service.Kind, Spec: json.RawMessage(search)},
+		{Name: "filings", Kind: service.Kind, Template: "edgar-search", Spec: json.RawMessage(search)},
+		{Name: "court", Kind: service.Kind, Template: "edgar-search", Spec: json.RawMessage(search)},
+		{Name: "chat", Kind: service.Kind, Spec: json.RawMessage(model)},
+	} {
+		if err := SaveConnector(RootDB, c); err != nil {
+			t.Fatalf("%s: %v", c.Name, err)
+		}
+	}
+	RootDB.Set(SearchTable, "provider", "service:court")
+	if err := service.SaveResearchSource(RootDB, service.ResearchSource{Connector: "papers", Always: true, Off: true}); err != nil {
+		t.Fatal(err)
+	}
+	a := &AdminApp{db: RootDB}
+	out, err := a.handleConnectors(&jsonapi.Call{R: httptest.NewRequest("GET", "/api/connectors", nil)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(out)
+	var rows []map[string]any
+	json.Unmarshal(b, &rows)
+	got := map[string]string{}
+	for _, r := range rows {
+		got[r["name"].(string)] = r["group"].(string)
+	}
+	for name, want := range map[string]string{
+		"engine": groupSearch, "papers": groupResearch, "filings": groupResearch, "court": groupSearch, "chat": groupLLMs,
+		builtinPrefix + "worker-llm": groupLLMs, builtinPrefix + "mail": groupMail,
+	} {
+		if got[name] != want {
+			t.Errorf("%s sits under %q, want %q", name, got[name], want)
+		}
+	}
+}
+
+// A services connector is put to use on the page that uses it, never by an
+// Approve on its row; its row says which pages use it, none, or a change
+// waiting; and saving the page with it chosen accepts a waiting change.
+func TestAServicesConnectorIsPutToUseOnItsPage(t *testing.T) {
+	saved := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB = saved })
+	spec := `{"provider":{"transport":"http","base_url":"https://song.example.test","auth":{"none":true},
+		"operations":{"song":{"method":"POST","path":"/song","body":{"prompt":"{prompt}"},"read":"file"}}},
+		"provides":[{"capability":"music.generate","steps":[{"call":"song"}],"output":{"audio":{"from":"body"}}}]}`
+	if err := SaveConnector(RootDB, Connector{Name: "tunes", Kind: service.Kind, Spec: json.RawMessage(spec)}); err != nil {
+		t.Fatal(err)
+	}
+	a := &AdminApp{db: RootDB}
+	call := func(method, target string) *jsonapi.Call {
+		return &jsonapi.Call{R: httptest.NewRequest(method, target, nil)}
+	}
+	row := func() map[string]any {
+		out, _ := a.handleConnectors(call("GET", "/api/connectors"))
+		b, _ := json.Marshal(out)
+		var rows []map[string]any
+		json.Unmarshal(b, &rows)
+		for _, r := range rows {
+			if r["name"] == "tunes" {
+				return r
+			}
+		}
+		t.Fatal("no row for tunes")
+		return nil
+	}
+	inUse := func() bool { c, _ := GetConnector(RootDB, "tunes"); return c.Approved }
+
+	if _, err := a.handleConnectorAction(call("POST", "/api/connectors?name=tunes&action=approve"), nil); err == nil ||
+		!strings.Contains(err.Error(), "is put to use where it is used") || inUse() {
+		t.Errorf("Approve on its row: %v, in use %v", err, inUse())
+	}
+	if r := row(); r["state"] != "unused" || r["can_approve"] == true || !strings.HasPrefix(r["status"].(string), "Not in use") {
+		t.Errorf("an unused row: %v", r)
+	}
+	finder := `{"provider":{"transport":"http","base_url":"https://find.example.test","auth":{"none":true},"operations":{"find":{"path":"/s?q={query}"}}},"provides":[{"capability":"web.search","steps":[{"call":"find"}],"output":{"results":{"path":"hits","fields":{"title":"t","url":"u"}}}}]}`
+	if err := SaveConnector(RootDB, Connector{Name: "finder", Kind: service.Kind, Spec: json.RawMessage(finder)}); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []string{"nothing", "finder"} {
+		if _, err := a.handleMusicSave(call("POST", "/api/music"), musicConfig{Agents: []string{n}}); err == nil {
+			t.Errorf("Music took %s, which does not make music", n)
+		}
+	}
+	if _, err := a.handleMusicSave(call("POST", "/api/music"), musicConfig{Agents: []string{"tunes"}}); err != nil || !inUse() {
+		t.Fatalf("offering it on Music: %v, in use %v", err, inUse())
+	}
+	if r := row(); r["state"] != "in-use" || !strings.HasPrefix(r["status"].(string), "Used by Music (offered to agents).") {
+		t.Errorf("a row in use: %v", r)
+	}
+
+	// Changed by someone not an administrator: held, and said so on its row
+	// and in the page's choice, until the page is saved with it chosen.
+	service.MarkChanged(RootDB, "tunes", "someone")
+	service.Settle(RootDB)
+	if inUse() {
+		t.Fatal("a change waiting left it in use")
+	}
+	if r := row(); r["state"] != "changed" || !strings.HasPrefix(r["status"].(string), "Changed by someone on ") {
+		t.Errorf("a changed row: %v", r)
+	}
+	if opts := musicOptions(); len(opts) != 1 || opts[0].Label != "tunes (changed, waiting to be accepted)" {
+		t.Errorf("the page's choice: %+v", opts)
+	}
+	if _, err := a.handleMusicSave(call("POST", "/api/music"), musicConfig{Agents: []string{"tunes"}}); err != nil || !inUse() {
+		t.Errorf("saving the page with it chosen did not accept it: %v, in use %v", err, inUse())
+	}
+	if _, waiting := service.PendingChange(RootDB, "tunes"); waiting {
+		t.Error("accepted, still waiting")
+	}
+	if _, err := a.handleMusicSave(call("POST", "/api/music"), musicConfig{}); err != nil || inUse() {
+		t.Errorf("taken off Music: %v, in use %v", err, inUse())
 	}
 }

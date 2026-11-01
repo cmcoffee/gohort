@@ -933,10 +933,9 @@ const (
 // --- sourcehooks (per-domain fetch/index/search engine + its cache) ---------
 
 type (
-	SourceHook         = sourcehooks.SourceHook
-	SourceHookAuth     = sourcehooks.SourceHookAuth
-	SourceHookType     = sourcehooks.SourceHookType
-	SourceHookTemplate = sourcehooks.SourceHookTemplate
+	SourceHook     = sourcehooks.SourceHook
+	SourceHookAuth = sourcehooks.SourceHookAuth
+	SourceHookType = sourcehooks.SourceHookType
 )
 
 const (
@@ -950,16 +949,9 @@ const (
 )
 
 var (
-	LoadSourceHooks       = sourcehooks.LoadSourceHooks
-	SaveSourceHook        = sourcehooks.SaveSourceHook
-	DeleteSourceHook      = sourcehooks.DeleteSourceHook
-	RegisteredSourceHooks = sourcehooks.RegisteredSourceHooks
-	ActiveSourceHooks     = sourcehooks.ActiveSourceHooks
-	HookForDomain         = sourcehooks.HookForDomain
 	HooksForTopic         = sourcehooks.HooksForTopic
-	SourceHookTemplates   = sourcehooks.SourceHookTemplates
+	ActiveSourceHooks     = sourcehooks.Sources
 	QuerySourceHook       = sourcehooks.QuerySourceHook
-	ApplyPaywallAuth      = sourcehooks.ApplyPaywallAuth
 	ApplyHTTPTimeouts     = sourcehooks.ApplyHTTPTimeouts
 	NewBoundedHTTPClient  = sourcehooks.NewBoundedHTTPClient
 	NewPublicHTTPClient   = sourcehooks.NewPublicHTTPClient

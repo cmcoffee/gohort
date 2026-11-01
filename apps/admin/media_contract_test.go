@@ -28,7 +28,7 @@ func TestMediaRoutesContract(t *testing.T) {
 	adb.Set(AuthTable, "user:root", AuthUser{Username: "root", Admin: true})
 	prevAuth, prevRoot, prevEmbed, prevSTT, prevTTS := AuthDB, RootDB, GetEmbeddingConfig(), GetTranscribeConfig(), media.GetSpeechConfig()
 	AuthDB = func() Database { return adb }
-	RootDB = &DBase{Store: kvlite.MemStore()}
+	RootDB = adb
 	t.Cleanup(func() {
 		AuthDB, RootDB = prevAuth, prevRoot
 		SetEmbeddingConfig(prevEmbed)

@@ -3,7 +3,7 @@
   "title": "OpenAI (image generation)",
   "description": "OpenAI's image model as an image backend, declared as a service: its request, reply and price are data you can test and fix from Admin > Connectors.",
   "category": "Images",
-  "setup_notes": "Create an API key at platform.openai.com/api-keys. The credential lands disabled: enable it under API Credentials. The connector lands unapproved: approve it in Admin > Extensions > Connectors, run Test on its row, then pick it as the image provider under Capabilities. The price per image is OpenAI's for a standard square image at the time this template was written; a wide image costs more, so edit the spec's cost if most of yours are wide or the price has changed.",
+  "setup_notes": "Create an API key at platform.openai.com/api-keys. The credential lands disabled: enable it under API Credentials. Run Test on its row under Admin > Extensions > Connectors, then put it to use by choosing it as the image provider under Capabilities. The price per image is OpenAI's for a standard square image at the time this template was written; a wide image costs more, so edit the spec's cost if most of yours are wide or the price has changed.",
   "questions": [
     {
       "name": "api_key",

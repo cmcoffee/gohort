@@ -2,8 +2,8 @@
   "id": "brave-search",
   "title": "Brave (web search)",
   "description": "Brave Search as gohort's web search, declared as a service: the request and how its results are read are data you can test and fix from Admin > Connectors.",
-  "category": "Search",
-  "setup_notes": "Get an API key at api-dashboard.search.brave.com (a free plan is available). The credential lands disabled: enable it under API Credentials. The connector lands unapproved: approve it in Admin > Extensions > Connectors and run Test on its row, which makes one real search for a common phrase. Then pick it under Admin > Capabilities > Web Search as Service: <name>. No price is declared, as it depends on your plan: add a per_call cost to the connector's spec to see what searches cost.",
+  "category": "Web Search",
+  "setup_notes": "Get an API key at api-dashboard.search.brave.com (a free plan is available). The credential lands disabled: enable it under API Credentials. Run Test on its row under Admin > Extensions > Connectors, which makes one real search for a common phrase. Then put it to use by choosing it under Admin > Capabilities > Web Search as Service: <name>. No price is declared, as it depends on your plan: add a per_call cost to the connector's spec to see what searches cost.",
   "questions": [
     {
       "name": "api_key",

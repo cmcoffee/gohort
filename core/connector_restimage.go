@@ -1341,9 +1341,22 @@ func reachableImageBackends(sess *ToolSession) []ImageBackendChoice {
 	if ImageProviderFunc != nil {
 		defaultProvider = strings.TrimSpace(ImageProviderFunc())
 	}
+	// Offered to agents: the default, and those Image Generation's "also
+	// offered to agents" names.
+	offered := map[string]bool{defaultProvider: defaultProvider != ""}
+	var agents []string
+	if RootDB != nil {
+		RootDB.Get(ImageTable, "agents", &agents)
+	}
+	for _, a := range agents {
+		offered[strings.TrimSpace(a)] = true
+	}
 	var out []ImageBackendChoice
 	// ListConnectors already sorts by name, so the enum order is stable.
 	for _, c := range ListConnectors(RootDB) {
+		if !offered[c.Name] {
+			continue
+		}
 		// Registered means Materialize ran: the spec parsed and the backend
 		// closure exists. An approved-but-unmaterialized connector would
 		// advertise a name that can't dispatch.

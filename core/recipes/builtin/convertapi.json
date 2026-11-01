@@ -3,7 +3,7 @@
   "title": "ConvertAPI (file conversion)",
   "description": "ConvertAPI as a way for System Hooks to convert files: Word, PDF, images and hundreds of other formats, converted by an API instead of a program on this machine. Declared as a service you can test and fix from Admin > Connectors.",
   "category": "File conversion",
-  "setup_notes": "Get an API token at convertapi.com (Authentication; new accounts come with free conversions). The credential lands disabled: enable it under API Credentials. The connector lands unapproved: approve it in Admin > Extensions > Connectors and run Test on its row, which converts a small picture from PNG to JPG. Then, under Admin > Capabilities > System Hooks, Adapt a job (or add a format of your own) and set Done by to this connector: the file is sent to ConvertAPI and what comes back is checked like any converter's result. Files leave this machine for ConvertAPI's servers; keep that in mind for what agents read. ConvertAPI counts conversions in seconds of its time, so no price is declared.",
+  "setup_notes": "Get an API token at convertapi.com (Authentication; new accounts come with free conversions). The credential lands disabled: enable it under API Credentials. Run Test on its row under Admin > Extensions > Connectors, which converts a small picture from PNG to JPG. Then, under Admin > Capabilities > System Hooks, Adapt a job (or add a format of your own) and set Done by to this connector: the file is sent to ConvertAPI and what comes back is checked like any converter's result. Files leave this machine for ConvertAPI's servers; keep that in mind for what agents read. ConvertAPI counts conversions in seconds of its time, so no price is declared.",
   "questions": [
     {
       "name": "api_key",

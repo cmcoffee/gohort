@@ -231,11 +231,11 @@ func agentExportDeps(db Database, exp agentExport, owner string, inBundle func(t
 			if IsExportableTool(db, tn, owner) || (inBundle != nil && inBundle("tool", tn)) {
 				out = append(out, ArtifactSel{Type: "tool", Name: tn, Owner: owner})
 			} else if h, ok := FindSourceHookByToolName(tn); ok {
-				// A hook-backed tool name (pubmed_search) references the
-				// source hook itself — carry the hook, not a tool.
-				if !seen["source_hook\x00"+h.Name] {
-					seen["source_hook\x00"+h.Name] = true
-					out = append(out, ArtifactSel{Type: "source_hook", Name: h.Name})
+				// A research source's tool name (pubmed_search) references
+				// its search connector: carry the connector, not a tool.
+				if !seen["connector\x00"+h.Connector] {
+					seen["connector\x00"+h.Connector] = true
+					out = append(out, ArtifactSel{Type: "connector", Name: h.Connector})
 				}
 			}
 		}

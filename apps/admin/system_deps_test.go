@@ -818,9 +818,10 @@ func TestAddHandsOnToAReaderThatIsHere(t *testing.T) {
 }
 
 // A job can be adapted to a connector that converts files: the form offers
-// Done by once one is approved (the steps then only for commands), saves it
-// as the flow's service with no steps, reads back the same, and the row says
-// which connector does it.
+// Done by once one exists (the steps then only for commands), saves it as
+// the flow's service with no steps, reads back the same, the row says which
+// connector does it, and testing it tries the connector before the hook,
+// turned on, puts it to use.
 func TestAJobCanBeDoneByAConnector(t *testing.T) {
 	saved := RootDB
 	RootDB = &DBase{Store: kvlite.MemStore()}
@@ -840,7 +841,6 @@ func TestAJobCanBeDoneByAConnector(t *testing.T) {
 		"operations":{"convert":{"method":"POST","path":"/convert/{from}/to/{to}","send":"multipart","body":{"File":"{file}"}}}},
 		"provides":[{"capability":"file.convert","steps":[{"call":"convert"}],"output":{"file":{"path":"Files.0.FileData","as":"base64"}}}]}`
 	SaveConnector(RootDB, Connector{Name: "converter", Kind: "service", Spec: json.RawMessage(spec)})
-	ApproveConnector(RootDB, "converter")
 	if f, ok := field("by"); !ok || len(f.Options) != 2 || f.Options[1].Value != "service:converter" {
 		t.Errorf("Done by: %+v", f)
 	}
@@ -860,5 +860,11 @@ func TestAJobCanBeDoneByAConnector(t *testing.T) {
 	spec2, _ := json.Marshal(a)
 	if row := adaptedRow(Connector{Name: "pdf-by-api", Kind: flows.ConnectorKind, Spec: spec2, Approved: true}, a, false); row.By != "the connector converter" || row.State != "on" {
 		t.Errorf("row: %+v", row)
+	}
+	if _, _, _, err := runFlowOn(context.Background(), "pdf-by-api", a, []byte("%PDF-1.4"), ""); err != nil && strings.Contains(err.Error(), "not in use") {
+		t.Errorf("testing the hook did not try its connector: %v", err)
+	}
+	if c, _ := GetConnector(RootDB, "converter"); c.Approved {
+		t.Error("testing the hook put its connector to use")
 	}
 }

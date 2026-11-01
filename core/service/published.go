@@ -29,6 +29,7 @@ var publishedLayouts = []struct {
 	{"January 2, 2006", true},
 	{"2 Jan 2006", true},
 	{"2 January 2006", true},
+	{"2006 Jan 2", true},
 }
 
 // publishedAgoRE reads the relative ages search engines show ("3 days ago").

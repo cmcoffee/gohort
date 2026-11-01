@@ -100,6 +100,9 @@ func (s Spec) address(op Operation) string {
 	if s.Provider.Transport == "command" {
 		return strings.Join(op.Run, "  ⇒  ")
 	}
+	if op.Builtin != "" {
+		return "the built-in " + op.Builtin + " search"
+	}
 	method := op.Method
 	if method == "" {
 		method = "GET"

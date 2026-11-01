@@ -200,6 +200,12 @@ func (a *AdminApp) handleFlowSave(c *jsonapi.Call, form wiringForm) (any, error)
 	if old != "" && old != f.Name {
 		service.DeleteFlow(old)
 	}
+	// A flow's steps put their connectors to use.
+	var named []string
+	for _, st := range f.Steps {
+		named = append(named, st.Connector)
+	}
+	settleTieIn(named...)
 	return map[string]any{"ok": true, "name": f.Name}, nil
 }
 
@@ -209,6 +215,7 @@ func (a *AdminApp) handleFlowDelete(c *jsonapi.Call, _ struct{}) (any, error) {
 		return nil, jsonapi.BadRequest("missing name")
 	}
 	service.DeleteFlow(name)
+	settleTieIn()
 	return map[string]any{"ok": true}, nil
 }
 
@@ -231,7 +238,14 @@ func (a *AdminApp) handleFlowTest(c *jsonapi.Call, body json.RawMessage) (any, e
 		}
 		f = form.flow()
 	}
-	res, steps, err := service.TestFlow(c.R.Context(), f)
+	// Its steps' connectors are tried before a save puts them to use.
+	ctx := c.R.Context()
+	for _, st := range f.Steps {
+		var end func()
+		ctx, end = service.Preview(ctx, st.Connector)
+		defer end()
+	}
+	res, steps, err := service.TestFlow(ctx, f)
 	for _, v := range res {
 		if v.File != nil {
 			os.Remove(v.File.Path)

@@ -3,7 +3,7 @@
   "title": "Automatic1111 (edit a photo)",
   "description": "An Automatic1111 server wired for img2img: it takes a source photo and a prompt and returns a changed version. Add the plain Automatic1111 template as well if you also want text-to-image.",
   "category": "Images",
-  "setup_notes": "Automatic1111 (stable-diffusion-webui) must be started with --api and be reachable from the gohort server; the default port is 7860. It installs unapproved: approve it in Admin > Extensions > Connectors. Configure on its row edits the defaults (size, steps, timeouts) afterwards.",
+  "setup_notes": "Automatic1111 (stable-diffusion-webui) must be started with --api and be reachable from the gohort server; the default port is 7860. It installs out of use: choose it under Admin > Capabilities > Image Generation, as the default or offered to agents, to put it to use. Configure on its row edits the defaults (size, steps, timeouts) afterwards.",
   "questions": [
     {
       "name": "base_url",

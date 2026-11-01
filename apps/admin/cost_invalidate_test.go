@@ -3,7 +3,7 @@ package admin
 // Editing a per-call cost has to move the chart without a page reload.
 //
 // The plumbing was already there and unused: a chart refetches when something
-// invalidates its exact source string, and none of the four forms that can
+// invalidates its exact source string, and none of the forms that can
 // change a cost said anything. So the number changed, the graph did not, and
 // the only way to see the truth was a full refresh.
 
@@ -26,19 +26,17 @@ func TestCostSurfacesAreNamedOnce(t *testing.T) {
 }
 
 // Every form that can set a per-call cost must refresh the surfaces that count
-// it. Both the create and the edit form, for hooks and for credentials: a cost
-// typed while creating a source hook is as invisible as one typed while editing
-// it.
+// it: the create and the edit form for credentials. (A search connector's
+// price is in its spec now, as Source Hooks became connectors.)
 func TestEveryCostEditingFormInvalidates(t *testing.T) {
 	src := adminPageSource(t)
 
-	// The four forms are the ones whose fields carry cost_per_call.
-	// Matched up to the open paren: the credential form takes whether it is
-	// the edit form.
-	forms := strings.Count(src, "credentialFormFields(") + strings.Count(src, "sourceHookFormFields(")
-	forms -= 2 // the two func declarations themselves
-	if forms != 4 {
-		t.Fatalf("expected 4 cost-editing forms, found %d; the invalidation count below is calibrated to that", forms)
+	// The forms are the ones whose fields carry cost_per_call. Matched up to
+	// the open paren: the credential form takes whether it is the edit form.
+	forms := strings.Count(src, "credentialFormFields(")
+	forms-- // the func declaration itself
+	if forms != 2 {
+		t.Fatalf("expected 2 cost-editing forms, found %d; the invalidation count below is calibrated to that", forms)
 	}
 	if got := strings.Count(src, "costSources"); got < forms {
 		t.Errorf("costSources named %d time(s) for %d forms that can change a cost: one of them updates the number and not the chart", got, forms)

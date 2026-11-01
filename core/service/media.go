@@ -45,8 +45,8 @@ func modelTarget(name string, withKey bool) (media.ModelTarget, error) {
 	if !ok || c.Kind != Kind {
 		return t, fmt.Errorf("no model connector named %q", name)
 	}
-	if !c.Approved {
-		return t, fmt.Errorf("the model connector %s is not approved: approve it under Admin > Extensions > Connectors", name)
+	if !readable(c) {
+		return t, fmt.Errorf("the model connector %s is not in use: choose it under Admin > LLMs, and save, to put it to use", name)
 	}
 	s, err := specOf(c)
 	if err != nil {
@@ -374,11 +374,39 @@ func (t *musicTool) Caps() []Capability {
 	return []Capability{CapNetwork}
 }
 
+// offered reports whether the Music page offers this connector to agents,
+// and it is in use.
+func (t *musicTool) offered() bool {
+	c, ok := GetConnector(RootDB, t.connector)
+	if !ok || !c.Approved {
+		return false
+	}
+	var agents []string
+	RootDB.Get(MusicTable, "agents", &agents)
+	for _, a := range agents {
+		if a == t.connector {
+			return true
+		}
+	}
+	return false
+}
+
+// SchemaWithSession offers the tool only while the Music page does.
+func (t *musicTool) SchemaWithSession(*ToolSession) (string, map[string]ToolParam) {
+	if !t.offered() {
+		return "", nil
+	}
+	return t.Desc(), t.Params()
+}
+
 func (t *musicTool) Run(args map[string]any) (string, error) {
 	return "", fmt.Errorf("%s needs a session to save the song in", t.Name())
 }
 
 func (t *musicTool) RunWithSession(args map[string]any, sess *ToolSession) (string, error) {
+	if !t.offered() {
+		return "", fmt.Errorf("%s is not offered: the Music settings no longer offer the connector %s to agents", t.Name(), t.connector)
+	}
 	in := map[string]any{}
 	for _, k := range []string{"prompt", "lyrics", "style", "title"} {
 		if v, ok := args[k].(string); ok && strings.TrimSpace(v) != "" {

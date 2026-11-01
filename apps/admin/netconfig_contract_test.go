@@ -64,10 +64,6 @@ func TestNetConfigRoutesContract(t *testing.T) {
 		}
 		return out
 	}
-	do("", "GET", "/api/web-search/hooks", "")
-	do("alice", "GET", "/api/web-search/hooks", "")
-	do("root", "GET", "/api/web-search/hooks", "")
-	do("root", "POST", "/api/web-search/hooks", "{}")
 	ct.shape = nil
 	for _, p := range []string{"/api/web-search/test", "/api/mail/test"} {
 		do("alice", "POST", p, `{}`)

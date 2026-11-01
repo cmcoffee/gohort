@@ -24,7 +24,6 @@ func init() {
 	RegisterArtifactType(skillArtifact{})
 	RegisterArtifactType(collectionArtifact{})
 	RegisterArtifactType(customAppArtifact{})
-	RegisterArtifactType(sourceHookArtifact{})
 	RegisterArtifactType(monitorArtifact{})
 	RegisterArtifactType(scheduleArtifact{})
 	// Not materializable, registered anyway: declaring it is what lets the
@@ -45,7 +44,7 @@ type connectorArtifact struct{}
 func (connectorArtifact) ArtifactType() string { return "connector" }
 
 func (connectorArtifact) ImportFollowUp() string {
-	return "Waiting for an administrator to approve it in Admin > Connectors."
+	return "Not in use yet: a service connector is put to use by choosing it on the page that uses it; any other kind waits for an administrator to approve it in Admin > Connectors."
 }
 
 func (connectorArtifact) ListArtifacts(db Database) []ArtifactSel {
@@ -458,8 +457,8 @@ func (skillArtifact) ExportArtifact(db Database, name, owner string) (json.RawMe
 }
 
 // Dependencies folds in what the skill references by name: registered temp
-// tools from its AllowedTools allowlist, source hooks behind hook-backed
-// tool names in that same allowlist (built-ins fail every probe and are
+// tools from its AllowedTools allowlist, the search connectors behind
+// source tool names in that same allowlist (built-ins fail every probe and are
 // skipped), the SecureAPI credentials its bundled tools dispatch through,
 // and its attached collections. The well-known deployment-knowledge
 // collection exists on every install, so it is never a dependency (same
@@ -487,8 +486,8 @@ func (skillArtifact) RecipeDependencies(db Database, recipe json.RawMessage, own
 // skillRecipeDeps is the one walk behind both dependency interfaces. An
 // allowlisted name is a tool reference when it resolves to an exportable temp
 // tool on this install or (recipe path) travels in the bundle under preview;
-// a name backed by a source hook (pubmed_search) is a source_hook reference,
-// so the hook the skill was built to search travels too. Built-in names fail
+// a research source's tool name (pubmed_search) is a reference to its search
+// connector, so the source the skill was built to search travels too. Built-in names fail
 // every probe and are skipped.
 func skillRecipeDeps(db Database, s SkillRecord, owner string, inBundle func(typ, name string) bool) []ArtifactSel {
 	seen := map[string]bool{}
@@ -506,7 +505,7 @@ func skillRecipeDeps(db Database, s SkillRecord, owner string, inBundle func(typ
 		if IsExportableTool(db, tn, owner) || (inBundle != nil && inBundle("tool", tn)) {
 			add("tool", tn, owner)
 		} else if h, ok := FindSourceHookByToolName(tn); ok {
-			add("source_hook", h.Name, "")
+			add("connector", h.Connector, "")
 		}
 	}
 	for _, bt := range s.Tools {
@@ -1461,90 +1460,6 @@ func (customAppArtifact) ImportArtifact(_ Database, recipe json.RawMessage, owne
 	return slug, "", nil
 }
 
-// ---- source hook -------------------------------------------------------
-
-// sourceHookArtifact makes a SourceHook portable: endpoint, response-shape
-// mapping, trigger routing, and LLM-tool exposure travel as one recipe.
-// Global (admin) scope, like connectors — Owner is ignored. The hook store
-// is core-side (RootDB sourceHookTable, mirrored into the in-memory
-// registry), so this registers from init().
-//
-// SECRETS NEVER TRAVEL: AuthKey is cleared on export (it's stored encrypted
-// and separately anyway), and export REFUSES a hook whose Endpoint looks
-// like it hardcodes a key in the URL instead — the same rule BuildTemplate
-// applies to tools. Import lands DISABLED (an active hook receives live
-// search queries at its endpoint — topic routing, paywall matching, LLM
-// tools all consult it); the admin reviews, supplies the auth key if any,
-// and enables it from Admin > Source Hooks.
-type sourceHookArtifact struct{}
-
-func (sourceHookArtifact) ArtifactType() string { return "source_hook" }
-
-func (sourceHookArtifact) ImportFollowUp() string {
-	return "Switched off. Check where it points, then enable it in Admin."
-}
-
-func (sourceHookArtifact) ListArtifacts(_ Database) []ArtifactSel {
-	var out []ArtifactSel
-	for _, h := range RegisteredSourceHooks() {
-		out = append(out, ArtifactSel{Type: "source_hook", Name: h.Name})
-	}
-	return out
-}
-
-// findSourceHookForExport resolves a hook by case-insensitive display name —
-// hooks are keyed by name, there is no separate ID.
-func findSourceHookForExport(name string) (SourceHook, bool) {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return SourceHook{}, false
-	}
-	for _, h := range RegisteredSourceHooks() {
-		if strings.EqualFold(strings.TrimSpace(h.Name), name) {
-			return h, true
-		}
-	}
-	return SourceHook{}, false
-}
-
-func (sourceHookArtifact) ExportArtifact(_ Database, name, _ string) (json.RawMessage, error) {
-	h, ok := findSourceHookForExport(name)
-	if !ok {
-		return nil, fmt.Errorf("no source hook named %q", name)
-	}
-	if scanForEmbeddedSecret(h.Endpoint) {
-		return nil, fmt.Errorf("source hook %q looks like it hardcodes a key in its endpoint URL; move it into the hook's auth key before exporting", h.Name)
-	}
-	// AuthKey is the secret — it never travels. Disabled is a local mute.
-	h.AuthKey = ""
-	h.Disabled = false
-	return json.Marshal(h)
-}
-
-// ImportArtifact reconstitutes a hook DISABLED and secret-free: whatever a
-// recipe claims as AuthKey is dropped (a traveled secret is either a leak or
-// a lie), and the hook receives no traffic until the admin enables it. A
-// same-named hook already configured skips, never clobbered — SaveSourceHook
-// overwrites by name, so the collision check here is what keeps import
-// non-destructive.
-func (sourceHookArtifact) ImportArtifact(db Database, recipe json.RawMessage, _ string) (string, string, error) {
-	var h SourceHook
-	if err := json.Unmarshal(recipe, &h); err != nil {
-		return "", "", fmt.Errorf("invalid source-hook recipe: %w", err)
-	}
-	name := strings.TrimSpace(h.Name)
-	if name == "" {
-		return "", "", Error("missing source hook name")
-	}
-	if _, exists := findSourceHookForExport(name); exists {
-		return name, "a source hook with this name already exists", nil
-	}
-	h.AuthKey = ""
-	h.Disabled = true
-	SaveSourceHook(db, h)
-	return name, "", nil
-}
-
 // ---- monitor (event monitor) --------------------------------------------
 
 // monitorArtifact makes an EventMonitor portable — the standing trigger that
@@ -1681,7 +1596,7 @@ func (monitorArtifact) ExportArtifact(db Database, name, owner string) (json.Raw
 }
 
 // Dependencies folds in what the monitor references: the watch tool it
-// invokes (or the source hook behind a hook-backed tool name) and the
+// invokes (or the search connector behind a source's tool name) and the
 // checker/wake agents — so exporting a monitor carries the whole bridge
 // (monitor → tool → credential) it was built from.
 func (monitorArtifact) Dependencies(db Database, name, owner string) []ArtifactSel {
@@ -1707,8 +1622,8 @@ func (monitorArtifact) RecipeDependencies(db Database, recipe json.RawMessage, o
 }
 
 // monitorRecipeDeps is the one walk behind both dependency interfaces: the
-// watch tool (an exportable temp tool, or the source hook behind a
-// hook-backed name — built-ins fail every probe and are skipped) plus the
+// watch tool (an exportable temp tool, or the search connector behind a
+// source's tool name — built-ins fail every probe and are skipped) plus the
 // checker and wake agents, emitted unconditionally so a missing agent warns
 // at import instead of vanishing.
 func monitorRecipeDeps(db Database, m EventMonitor, owner string, inBundle func(typ, name string) bool) []ArtifactSel {
@@ -1729,7 +1644,7 @@ func monitorRecipeDeps(db Database, m EventMonitor, owner string, inBundle func(
 		if IsExportableTool(db, tn, owner) || (inBundle != nil && inBundle("tool", tn)) {
 			add("tool", tn, owner)
 		} else if h, ok := FindSourceHookByToolName(tn); ok {
-			add("source_hook", h.Name, "")
+			add("connector", h.Connector, "")
 		}
 	}
 	if a := strings.TrimSpace(m.CheckAgent); a != "" {

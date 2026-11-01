@@ -45,7 +45,7 @@ func (skillDefImpl) Params() map[string]ToolParam {
 		},
 		"allowed_tools": {
 			Type:        "array",
-			Description: "(create / update) Optional tool names tied to the skill. A name that matches a tool you authored this session (or the user's persistent pool) is SNAPSHOTTED into the skill: it ships with the skill and becomes callable whenever the skill is consulted (the skill's own executable code, e.g. a calculator or screener). A name that matches a source hook is used by skill_knowledge_search to query that source. Author the script first with tool_def(mode=\"shell\"), then list its name here to bundle it.",
+			Description: "(create / update) Optional tool names tied to the skill. A name that matches a tool you authored this session (or the user's persistent pool) is SNAPSHOTTED into the skill: it ships with the skill and becomes callable whenever the skill is consulted (the skill's own executable code, e.g. a calculator or screener). A name that is a research source's tool name is used by skill_knowledge_search to query that source. Author the script first with tool_def(mode=\"shell\"), then list its name here to bundle it.",
 			Items:       &ToolParam{Type: "string"},
 		},
 		"attached_collections": {

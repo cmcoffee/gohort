@@ -240,13 +240,15 @@ func TestContractTestsDrawOnADailyBudget(t *testing.T) {
 	}
 }
 
-// An approved service image backend is among an agent's image backends by
-// name, unless the agent's session was denied the credential it spends.
+// A service image backend Image Generation offers to agents is among an
+// agent's image backends by name, unless the agent's session was denied the
+// credential it spends.
 func TestAgentsSeeAServiceBackendUnlessDeniedItsKey(t *testing.T) {
 	world(t)
 	m := imageSpec("https://api.example.test")
 	provider(m)["auth"] = map[string]any{"credential": "acme_key"}
 	install(t, "acme-images", m)
+	RootDB.Set(ImageTable, "agents", []string{"acme-images"})
 	has := func(sess *ToolSession) bool {
 		for _, b := range ReachableImageBackends(sess) {
 			if b.Name == "acme-images" {
@@ -367,6 +369,7 @@ func TestAnAgentEditsAPictureThroughAService(t *testing.T) {
 		"provides": []any{map[string]any{"capability": "image.edit", "steps": []any{map[string]any{"call": "edit"}},
 			"output": map[string]any{"image": map[string]any{"from": "body"}}}},
 	})
+	RootDB.Set(ImageTable, "agents", []string{"raw-edit"})
 	ws := t.TempDir()
 	os.WriteFile(ws+"/photo.png", pngBytes(t), 0o644)
 	sess := &ToolSession{WorkspaceDir: ws}

@@ -510,6 +510,7 @@ func (a *AdminApp) handleLLMConfigSave(table string, worker bool) func(c *jsonap
 		} else if req.APIKey != "" {
 			a.db.CryptSet(table, "api_key", req.APIKey)
 		}
+		settleTieIn(req.Provider)
 		// Apply live — rebuild the shared LLMs from the new config so the change
 		// takes effect without a restart. Best-effort: on a bad config the prior
 		// LLMs stay active and we log it (the config is still saved).

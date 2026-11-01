@@ -3,7 +3,7 @@
   "title": "Resend (mail)",
   "description": "Resend as gohort's mail, in place of an SMTP server: an API that sends from a domain you verify. Declared as a service you can test and fix from Admin > Connectors.",
   "category": "Mail",
-  "setup_notes": "Create an API key at resend.com/api-keys and verify your sending domain under Domains. The credential lands disabled: enable it under API Credentials. The connector lands unapproved: approve it in Admin > Extensions > Connectors and run Test on its row, which sends a short test email to the test recipient. Then pick it under Admin > System > Mail (SMTP) as Send with: signup approvals, reports, alerts and the send_email tool go through it. A From Address set there is used in place of the one given here. No price is declared, as it depends on your plan: add a per_call cost to the connector's spec to see what mail costs.",
+  "setup_notes": "Create an API key at resend.com/api-keys and verify your sending domain under Domains. The credential lands disabled: enable it under API Credentials. Run Test on its row under Admin > Extensions > Connectors, which sends a short test email to the test recipient. Then put it to use by choosing it under Admin > System > Mail (SMTP) as Send with: signup approvals, reports, alerts and the send_email tool go through it. A From Address set there is used in place of the one given here. No price is declared, as it depends on your plan: add a per_call cost to the connector's spec to see what mail costs.",
   "questions": [
     {
       "name": "api_key",

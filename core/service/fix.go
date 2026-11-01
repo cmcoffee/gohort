@@ -244,13 +244,16 @@ func runTests(ctx context.Context, name string, s Spec) []TestReport {
 
 // testModel is a model connector's test: a short real chat through the
 // client its dialect names, as a tier on it would make, on the connector as
-// saved (a model's key is read from its credential, never from a draft).
+// saved (a model's key is read from its credential, never from a draft),
+// in use or not: an administrator tests one before a tier is put on it.
 func testModel(ctx context.Context, name string) TestReport {
 	rep := TestReport{Capability: "llm.chat"}
-	if c, ok := GetConnector(RootDB, name); !ok || !c.Approved {
-		rep.Detail = "a model is tested by a real chat once its connector is saved and approved (its key is read from its credential then)"
+	if _, ok := GetConnector(RootDB, name); !ok {
+		rep.Detail = "a model is tested by a real chat once its connector is saved (its key is read from its credential then)"
 		return rep
 	}
+	ctx, end := Preview(ctx, name)
+	defer end()
 	llm, err := NewLLMFromConfig(LLMProviderConfig{Provider: media.ServiceProviderPrefix + name})
 	if err != nil {
 		rep.Detail = err.Error()

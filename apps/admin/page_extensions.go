@@ -183,8 +183,8 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 		},
 		{
 			Title:    "Connectors",
-			Subtitle: "Standing connections to what is outside gohort: services that give it a capability (images, speech, embeddings), feeds it watches, messaging relays. Approve, test, fix or remove each one here.",
-			Detail:   "Connectors are grouped by what they are: services that give gohort a capability, messaging, watches, tools for agents (MCP and desktop), adapted System Hooks, then the built-in providers, peers and programs.\n\nEndpoints on a service's row lists each endpoint it reaches: what it is sent and where each value comes from ({prompt} is what gohort asked; anything else is sent as written), what is read from the reply and into what, and what uses it. A service giving several things names them on its row and counts its endpoints.\n\nThe API and RAG Source Hooks are in the Source hooks group: what each is asked for (research on its topics, an agent's tool, the web search engine), and that its key is kept in the hook. They are set up under Admin > Extensions > Source Hooks. A search connector can do what an API hook does: its spec's research and tool say which topics research asks it on and the tool it is offered to agents as.\n\nThe peers this instance borrows from are in the Peers group: what each lends, what here uses it, and when it was last checked. Test asks the peer again what it lends, which costs nothing. A peer is added, re-keyed and forgotten under Admin > Capabilities > Peers.\n\nThe programs System Hooks' jobs run (pandoc, ffmpeg, yt-dlp) are in the Programs group: what each does now, what it stands by for (another way is used first, or a program it works with is missing), and its command lines under Endpoints. A program is installed, adapted and tested under Admin > Capabilities > System Hooks; one not installed is listed only while a job it would do has no other way to run.\n\ngohort's own providers (web search, the browser, mail and the LLM tiers) are in the Built in group: they are set up under Admin > Capabilities and Admin > LLMs, and Test runs the same check as there.\n\nFor example a calendar or CRM exposed through its MCP server. Approve to MATERIALIZE the capability: its tools register for agents, and a remote_mcp connector becomes an enabled MCP server, which also appears under MCP Servers above.\n\nThe assistant never handles a secret: auth is a referenced API credential or per-user OAuth. Nothing runs until you approve, and Delete tears the capability down.",
+			Subtitle: "Standing connections to what is outside gohort: services that give it a capability (images, speech, embeddings), feeds it watches, messaging relays, grouped by what each does. Test, fix or remove each one here. A service is put to use where it is used: choosing it on that page (Web Search, an LLM tier, Research Sources, ...); the others are approved here.",
+			Detail:   "Connectors are grouped by what they are: services that give gohort a capability, messaging, watches, tools for agents (MCP and desktop), adapted System Hooks, then the built-in providers, peers and programs.\n\nEndpoints on a service's row lists each endpoint it reaches: what it is sent and where each value comes from ({prompt} is what gohort asked; anything else is sent as written), what is read from the reply and into what, and what uses it. A service giving several things names them on its row and counts its endpoints.\n\nA search connector is put to use for research and agents under Admin > Extensions > Research Sources, and as the engine under Web Search; its row here is how it is reached and read, tested and fixed.\n\nThe peers this instance borrows from are in the Peers group: what each lends, what here uses it, and when it was last checked. Test asks the peer again what it lends, which costs nothing. A peer is added, re-keyed and forgotten under Admin > Capabilities > Peers.\n\nThe programs System Hooks' jobs run (pandoc, ffmpeg, yt-dlp) are in the Programs group: what each does now, what it stands by for (another way is used first, or a program it works with is missing), and its command lines under Endpoints. A program is installed, adapted and tested under Admin > Capabilities > System Hooks; one not installed is listed only while a job it would do has no other way to run.\n\ngohort's own providers (web search, the browser, mail and the LLM tiers) are in the Built in group: they are set up under Admin > Capabilities and Admin > LLMs, and Test runs the same check as there.\n\nFor example a calendar or CRM exposed through its MCP server. Approve to MATERIALIZE the capability: its tools register for agents, and a remote_mcp connector becomes an enabled MCP server, which also appears under MCP Servers above.\n\nThe assistant never handles a secret: auth is a referenced API credential or per-user OAuth. Nothing runs until you approve, and Delete tears the capability down.",
 			Body: ui.Stack{
 				Children: []ui.Component{
 					ui.Table{
@@ -194,7 +194,7 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 						// Many connectors in many groups: each band folds to
 						// its heading and summary. What an admin added starts
 						// open; gohort's own and what is read from elsewhere
-						// (built-ins, peers, Source Hooks, programs) closed.
+						// (built-ins, peers, programs) closed.
 						GroupFold:         true,
 						GroupOpenField:    "group_open",
 						GroupSummaryField: "group_summary",
@@ -214,9 +214,11 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 								Badges: []ui.BadgeMapping{
 									{Value: "approved", Label: "Approved", Color: "success"},
 									{Value: "pending", Label: "Pending", Color: "warning"},
+									{Value: "in-use", Label: "In use", Color: "success"},
+									{Value: "unused", Label: "Not in use", Color: "mute"},
+									{Value: "changed", Label: "Changed", Color: "warning"},
 									{Value: "built-in", Label: "Built in", Color: "info"},
 									{Value: "peer", Label: "Peer", Color: "info"},
-									{Value: "hook", Label: "Source hook", Color: "info"},
 									{Value: "program", Label: "Program", Color: "info"},
 								},
 							},
@@ -227,10 +229,10 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 						RowActions: []ui.RowAction{
 							{Type: "button", Label: "Approve",
 								PostTo: "api/connectors?action=approve&name={name}",
-								Method: "POST", OnlyIf: "stored", HideIf: "approved", Variant: "primary"},
+								Method: "POST", OnlyIf: "can_approve", Variant: "primary"},
 							{Type: "button", Label: "Unapprove",
 								PostTo: "api/connectors?action=unapprove&name={name}",
-								Method: "POST", OnlyIf: "approved"},
+								Method: "POST", OnlyIf: "can_unapprove"},
 							ui.ExpandIf("Endpoints", "endpoints", "", ui.Table{
 								Source: "api/connectors/endpoints?name={name}",
 								RowKey: "name",

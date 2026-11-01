@@ -94,6 +94,7 @@ func TestImageRenderRefusesSourcePhotosOnATextOnlyBackend(t *testing.T) {
 	if err := ApproveConnector(RootDB, "comfyui"); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
+	offerImageBackend("comfyui")
 
 	r := httptest.NewRequest(http.MethodPost, "/api/peer/v1/images/render",
 		strings.NewReader(`{"prompt":"make it sunny","backend":"comfyui","init_images":["aGVsbG8="]}`))
@@ -219,6 +220,7 @@ func TestPeerEditReachesTheBackend(t *testing.T) {
 	if err := ApproveConnector(RootDB, "editor"); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
+	offerImageBackend("editor")
 
 	pk, _ := MintPeerKey("mac", []string{PeerCapImages}, 0)
 	body := fmt.Sprintf(`{"prompt":"put the number on one pillar","backend":"editor","init_images":[%q]}`, tinyPNG)

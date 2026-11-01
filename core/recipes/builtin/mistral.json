@@ -3,7 +3,7 @@
   "title": "Mistral (LLM)",
   "description": "Mistral's models as an LLM tier, through gohort's OpenAI-style client.",
   "category": "LLMs",
-  "setup_notes": "Create a key at console.mistral.ai (API keys). The credential lands disabled: enable it under API Credentials. The connector lands unapproved: approve it in Admin > Extensions > Connectors and run Test on its row, which makes one short real chat. Then pick it under Admin > LLMs > Worker LLM (or Lead LLM) as Service: <name>: the tier's turns run on it through gohort's own OpenAI-style client, streaming and tool calls as usual, and the key stays in the credential. Its calls and their cost show on the connector's row; add per_million_input and per_million_output to its spec's cost to price its tokens, which then replace the tier's rates under Costs.",
+  "setup_notes": "Create a key at console.mistral.ai (API keys). The credential lands disabled: enable it under API Credentials. Run Test on its row under Admin > Extensions > Connectors, which makes one short real chat. Then put it to use by choosing it under Admin > LLMs > Worker LLM (or Lead LLM) as Service: <name>: the tier's turns run on it through gohort's own OpenAI-style client, streaming and tool calls as usual, and the key stays in the credential. Its calls and their cost show on the connector's row; add per_million_input and per_million_output to its spec's cost to price its tokens, which then replace the tier's rates under Costs.",
   "questions": [
     {
       "name": "api_key",

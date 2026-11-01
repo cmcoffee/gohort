@@ -2,6 +2,7 @@ package admin
 
 import (
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/service"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -54,7 +55,7 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 		{
 			Title:    "Image Generation",
 			Subtitle: "Image generation for tools that produce illustrations or thumbnails.",
-			Detail:   "Every picture comes from an approved connector: Gemini or OpenAI added from their templates, a local ComfyUI or Automatic1111, a peer's renderer, or any backend declared as a spec. Its address and key are kept on it, under Admin > Extensions > Connectors.\n\nUse “Add image backend” to stand up a local ComfyUI or A1111 in one step.",
+			Detail:   "Every picture comes from a connector chosen here: Gemini or OpenAI added from their templates, a local ComfyUI or Automatic1111, a peer's renderer, or any backend declared as a spec. Its address and key are kept on it, under Admin > Extensions > Connectors.\n\nUse “Add image backend” to stand up a local ComfyUI or A1111 in one step.",
 			Body: ui.Stack{
 				Children: []ui.Component{
 					ui.FormPanel{
@@ -71,9 +72,19 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 			},
 		},
 		{
+			Title:    "Music",
+			Subtitle: "Music connectors agents may make songs with.",
+			Detail:   "Each one ticked is offered to agents as a tool of its own, generate_music_<connector>, and put to use. Add a music connector under Admin > Extensions > Connectors, from its spec; it is tested and fixed there. A flow may use one as a step without it being offered here.",
+			Body: ui.FormPanel{
+				Source: "api/music",
+				Fields: []ui.FormField{{Field: "agents", Label: "Offered to agents", Type: "checklist", Options: musicOptions(),
+					Help: "None listed means no connector here makes music yet."}},
+			},
+		},
+		{
 			Title:    "Web Search",
 			Subtitle: "Provider for the web_search tool.",
-			Detail:   "DuckDuckGo is built in and needs no key. Any other engine is a connector that searches: add one from a template (Admin > Extensions > Templates has Brave, Serper, Tavily, Google Programmable Search and SearXNG), approve it, and pick it here as Service: <name>, its key kept on it. Or set a search API up as a Source Hook and pick that.",
+			Detail:   "DuckDuckGo is built in and needs no key. Any other engine is a connector that searches: add one from a template (Admin > Extensions > Templates has Brave, Serper, Tavily, Google Programmable Search and SearXNG) and pick it here as Service: <name>, which puts it to use, its key kept on it.",
 			Body: ui.FormPanel{
 				Assist:    true,
 				Source:    "api/web-search",
@@ -94,7 +105,7 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 		{
 			Title:    "Mail (SMTP)",
 			Subtitle: "Outbound SMTP for notification emails.",
-			Detail:   "Signup approvals, scheduled deliveries, watcher alerts and the send_email tool. Leave Server blank for localhost:25. A mail API (Resend, Postmark and others) can send instead: add a connector that sends mail from Admin > Extensions > Templates, approve it, and pick it under Send with.",
+			Detail:   "Signup approvals, scheduled deliveries, watcher alerts and the send_email tool. Leave Server blank for localhost:25. A mail API (Resend, Postmark and others) can send instead: add a connector that sends mail from Admin > Extensions > Templates and pick it under Send with, which puts it to use.",
 			Body: ui.FormPanel{
 				Assist:    true,
 				Source:    "api/mail",
@@ -105,7 +116,7 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 		},
 		{
 			Title:    "Network Timeouts",
-			Subtitle: "Outbound HTTP timeouts for source hooks and search APIs.",
+			Subtitle: "Outbound HTTP timeouts for research sources and search APIs.",
 			Detail:   "Raise them when working against slow upstreams; lower them to fail fast in a tight loop.",
 			Body: ui.FormPanel{
 				Source: "api/network",
@@ -144,7 +155,7 @@ func mailFormFields() []ui.FormField {
 	var fields []ui.FormField
 	if hasChoice {
 		fields = append(fields, ui.FormField{Field: "provider", Label: "Send with", Type: "select", Options: choices,
-			Help: "This instance's SMTP server, or an approved connector that sends mail through an API."})
+			Help: "This instance's SMTP server, or a connector that sends mail through an API."})
 	}
 	return append(fields,
 		ui.FormField{Field: "server", Label: "SMTP Server", Type: "text",
@@ -187,20 +198,29 @@ func imageBackendToolbarActions() []ui.ToolbarAction {
 func imageFormFields() []ui.FormField {
 	var opts []ui.SelectOption
 	for _, c := range ListConnectors(RootDB) {
-		if c.Approved && ImageBackendRegistered(c.Name) {
-			opts = append(opts, ui.SelectOption{Value: c.Name, Label: "Connector: " + c.Name})
+		// Every image connector (choosing it here puts it to use), and any
+		// other backend already registered, a peer's renderer among them.
+		if imageConnector(c.Name) || (c.Approved && ImageBackendRegistered(c.Name)) {
+			label := "Connector: " + c.Name
+			if _, waiting := service.PendingChange(RootDB, c.Name); waiting {
+				label += " (changed, waiting to be accepted)"
+			}
+			opts = append(opts, ui.SelectOption{Value: c.Name, Label: label, Help: ConnectorSummary(c)})
 		}
 	}
 	add := "add a connector that makes pictures from a template (Admin > Extensions > Templates: Gemini (image generation); OpenAI (image generation)), stand up a local ComfyUI or A1111 with Add image backend below, or connect a peer that lends image generation (Admin > Capabilities > Peers)"
 	f := ui.FormField{Field: "provider", Label: "Make pictures with", Type: "select",
-		Options: append(opts, ui.SelectOption{Value: "none", Label: "Disabled"})}
+		Options: append(append([]ui.SelectOption(nil), opts...), ui.SelectOption{Value: "none", Label: "Disabled"})}
 	if len(opts) == 0 {
 		f.Help = "Nothing here makes pictures yet: " + add + "."
-	} else {
-		f.Help = "The connector that makes pictures. Its address and key are kept on it: open its row under Admin > Extensions > Connectors to see, test or fix them."
-		f.Detail = "To make pictures with something not listed, " + add + "."
+		return []ui.FormField{f}
 	}
-	return []ui.FormField{f}
+	f.Help = "The connector that makes pictures. Choosing it puts it to use; its address and key are kept on it, under Admin > Extensions > Connectors, where it is tested and fixed."
+	f.Detail = "To make pictures with something not listed, " + add + ". A connector changed by someone who is not an administrator since it was put to use waits out of use: read the change on its row, then save here with it chosen to accept it."
+	agents := ui.FormField{Field: "agents", Label: "Also offered to agents", Type: "checklist", Options: opts,
+		Help:   "Other image connectors agents may choose by name, and peers borrowing image generation. The one above is always offered.",
+		Detail: "Each one ticked is put to use. Agents' image tools offer the connector above as the default and these by name; a peer that borrows image generation from this machine may name them too."}
+	return []ui.FormField{f, agents}
 }
 
 // databaseBrowserCard is the read-only kvlite table/key/record browser.
@@ -301,9 +321,9 @@ func speechFormFields() []ui.FormField {
 }
 
 // webSearchFormFields builds the Web Search settings, with the peer picker
-// added only when a peer actually offers search: the engine (DuckDuckGo, a
-// Source Hook, or an approved connector that searches), and where to search
-// from. A connector's key and address are kept on it.
+// added only when a peer actually offers search: the engine (DuckDuckGo, or
+// a connector that searches), and where to search from. A
+// connector's key and address are kept on it.
 //
 // The engine's fields carry ShowWhen "source:local" so they disappear while
 // a peer is selected, and the clause is added and removed together with the
@@ -316,13 +336,6 @@ func webSearchFormFields() []ui.FormField {
 	if hasPeers {
 		local = "source:local"
 	}
-	withLocal := func(clause string) string {
-		if local == "" {
-			return clause
-		}
-		return local + ";" + clause
-	}
-
 	var fields []ui.FormField
 	if hasPeers {
 		fields = append(fields, ui.FormField{
@@ -338,15 +351,9 @@ func webSearchFormFields() []ui.FormField {
 			ShowWhen: local,
 			Options: append([]ui.SelectOption{
 				{Value: "duckduckgo", Label: "DuckDuckGo (built in, no key)"},
-				{Value: "hook", Label: "A Source Hook (your own search API)"},
 			}, serviceProviderOptions("web.search", "Search")...),
 			Help:   "The engine every search goes to. A connector's address and key are kept on it: open its row under Admin > Extensions > Connectors to see, test or fix them.",
-			Detail: "To search with an engine not listed, " + add + ". Once approved it is offered here. Serper's also finds pictures, for agents' find_image."},
-		ui.FormField{Field: "hook", Label: "Source Hook", Type: "select",
-			OptionsSource: "api/web-search/hooks",
-			ShowWhen:      withLocal("provider:hook"),
-			Help:          "The API hook that answers searches: any search API, set up under Source Hooks with its endpoint, key and where its results are.",
-			Detail:        "Picking one makes it the search engine: it stops being a source hook of its own, so research no longer routes to it by topic and it is no longer a tool of its own; web_search is how it is reached. Its results are read as the hook reads them (the results path, and the title, link and snippet fields), and every search asks its API live, never the hook's cache. Only API hooks that are switched on are listed; add one under Source Hooks first. Its key is the hook's own, so none is set here."},
+			Detail: "To search with an engine not listed, " + add + ". Once added it is offered here, and choosing it puts it to use. Serper's also finds pictures, for agents' find_image. The connector picked here is not also asked as a research source: it already answers web_search."},
 	)
 }
 

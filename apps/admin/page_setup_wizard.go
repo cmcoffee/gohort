@@ -292,6 +292,9 @@ func (a *AdminApp) testLLM(w http.ResponseWriter, r *http.Request, table string)
 		}
 	}
 
+	// Read before a save puts the connector to use, as the form names it.
+	_, end := previewTieIn(r.Context(), req.Provider)
+	defer end()
 	llm, err := NewLLMFromConfig(LLMProviderConfig{
 		Provider:   req.Provider,
 		Model:      req.Model,

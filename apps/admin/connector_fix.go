@@ -70,9 +70,9 @@ func (a *AdminApp) handleConnectorFixForm(c *jsonapi.Call) (any, error) {
 		return nil, jsonapi.BadRequest(err.Error())
 	}
 	pretty, _ := json.MarshalIndent(s, "", "  ")
-	note := "Saving re-checks the spec and, if the connector is approved, puts the change live at once."
+	note := "Saving re-checks the spec and, if the connector is in use, puts the change live at once."
 	if conn.Kind != service.Kind {
-		note = "This " + conn.Kind + " connector is shown as a service spec. Saving converts it into a service connector, off until you approve it again."
+		note = "This " + conn.Kind + " connector is shown as a service spec. Saving converts it into a service connector, in use again once a page that uses it is saved."
 	}
 	if len(notes) > 0 {
 		note += " Not carried over: " + strings.Join(notes, "; ") + "."
@@ -106,11 +106,17 @@ func (a *AdminApp) handleConnectorFixSave(c *jsonapi.Call, body struct {
 		}
 		conn, _ = GetConnector(RootDB, name)
 		conn.Kind = service.Kind
-		msg = "Saved as a service connector. It is off: approve it to put it live."
+		msg = "Saved as a service connector."
 	}
 	conn.Spec = raw
 	if err := SaveConnector(RootDB, conn); err != nil {
 		return nil, jsonapi.BadRequest(err.Error())
+	}
+	// An administrator saving the fix accepts it: in use again wherever a
+	// page names it.
+	settleTieIn(name)
+	if now, _ := GetConnector(RootDB, name); !now.Approved {
+		msg += " It is out of use until a page that uses it chooses it."
 	}
 	return map[string]any{"message": msg}, nil
 }

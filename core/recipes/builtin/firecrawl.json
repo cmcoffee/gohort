@@ -3,7 +3,7 @@
   "title": "Firecrawl (page rendering)",
   "description": "Firecrawl as gohort's page renderer: it opens a page in its own browser and gives back the page as Markdown, so this machine needs no Chromium. Declared as a service you can test and fix from Admin > Connectors.",
   "category": "Page rendering",
-  "setup_notes": "Get an API key at firecrawl.dev (it starts fc-; a free plan is available). The credential lands disabled: enable it under API Credentials. The connector lands unapproved: approve it in Admin > Extensions > Connectors and run Test on its row, which reads example.com. Then pick it under Admin > Capabilities > Page Rendering (Browser) as Service: <name>: browse_page, and every fallback to a browser when a plain fetch fails, go through it. Only public web addresses are sent. No price is declared, as it depends on your plan: add a per_call cost to the connector's spec to see what pages cost.",
+  "setup_notes": "Get an API key at firecrawl.dev (it starts fc-; a free plan is available). The credential lands disabled: enable it under API Credentials. Run Test on its row under Admin > Extensions > Connectors, which reads example.com. Then put it to use by choosing it under Admin > Capabilities > Page Rendering (Browser) as Service: <name>: browse_page, and every fallback to a browser when a plain fetch fails, go through it. Only public web addresses are sent. No price is declared, as it depends on your plan: add a per_call cost to the connector's spec to see what pages cost.",
   "questions": [
     {
       "name": "api_key",

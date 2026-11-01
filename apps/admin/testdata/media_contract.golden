@@ -27,7 +27,7 @@ root PUT /api/speech "{}"
 alice GET /api/image-gen ""
   403 forbidden
 root GET /api/image-gen ""
-  200 {"provider":"none"}
+  200 {"agents":[],"provider":"none"}
 root PUT /api/image-gen "{}"
   405 method not allowed
 (signed out) GET /api/speech/voices ""
@@ -153,13 +153,13 @@ root POST /api/speech "{\"enabled\":true,\"provider\":\"service:nope\"}"
 alice POST /api/image-gen "{\"provider\":\"none\"}"
   403 forbidden
 root GET /api/image-gen ""
-  200 {"provider":"none"}
+  200 {"agents":[],"provider":"none"}
 root POST /api/image-gen "{\"provider\":\"openai\",\"api_key\":\"s3cr3t-img\"}"
-  400 no approved connector named openai makes pictures: approve it under Admin > Extensions > Connectors first
+  400 no connector named openai makes pictures: add one under Admin > Extensions > Connectors or Templates first
 root POST /api/image-gen "{\"provider\":\"none\"}"
   204 
 root GET /api/image-gen ""
-  200 {"provider":"none"}
+  200 {"agents":[],"provider":"none"}
 root POST /api/image-gen "{\"provider\":"
   400 invalid JSON: unexpected EOF
 root POST /api/image-gen/test "{\"provider\":\"\"}"
@@ -167,7 +167,7 @@ root POST /api/image-gen/test "{\"provider\":\"\"}"
 root POST /api/image-gen/test "{\"provider\":\"none\"}"
   200 {"error":"pick a connector first","ok":false}
 root POST /api/image-gen/test "{\"provider\":\"gemini\"}"
-  200 {"error":"no approved connector named gemini makes pictures: approve it under Admin \u003e Extensions \u003e Connectors","ok":false}
+  200 {"error":"no connector named gemini makes pictures","ok":false}
 activity log, 6 entries:
   settings root: updated embeddings config (enabled=false provider="service:vectors" endpoint="service:vectors" model="nomic-embed-text")
   settings root: updated embeddings config (enabled=true provider="service:vectors" endpoint="service:vectors" model="nomic-embed-text")

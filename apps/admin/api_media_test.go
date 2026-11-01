@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -77,8 +78,8 @@ func speakConnector(t *testing.T, name, base, model string) {
 	}
 }
 
-// A speech or transcription setting may name a service connector, but only an
-// approved one that provides it; the settings offer exactly those.
+// A speech or transcription setting may name any service connector that
+// provides it (naming it puts it to use); the settings offer exactly those.
 func TestSpeechSettingsTakeAServiceThatSpeaks(t *testing.T) {
 	saved := RootDB
 	RootDB = &DBase{Store: kvlite.MemStore()}
@@ -87,12 +88,8 @@ func TestSpeechSettingsTakeAServiceThatSpeaks(t *testing.T) {
 		"operations":{"speak":{"method":"POST","path":"/v1/speak","body":{"text":"{text}"},"read":"file"}}},
 		"provides":[{"capability":"speech.synthesize","steps":[{"call":"speak"}],"output":{"audio":{"from":"body"}}}]}`
 	SaveConnector(RootDB, Connector{Name: "voice", Kind: "service", Spec: json.RawMessage(spec)})
-	if err := serviceProviderOK("service:voice", "speech.synthesize"); err == nil || !strings.Contains(err.Error(), "not approved") {
-		t.Errorf("an unapproved service: %v", err)
-	}
-	ApproveConnector(RootDB, "voice")
 	if err := serviceProviderOK("service:voice", "speech.synthesize"); err != nil {
-		t.Errorf("an approved service that speaks: %v", err)
+		t.Errorf("a service that speaks, in use nowhere yet: %v", err)
 	}
 	if err := serviceProviderOK("service:voice", "speech.transcribe"); err == nil {
 		t.Error("a service that only speaks was taken for transcription")
@@ -112,7 +109,7 @@ func TestSpeechSettingsTakeAServiceThatSpeaks(t *testing.T) {
 	}
 }
 
-// Embeddings may be made by an approved service that provides them. Picking
+// Embeddings may be made by any service that provides them. Picking
 // one stores the service as the endpoint and the model its spec declares,
 // whatever model the hidden local field still held, so the stored config
 // names the space its vectors are in.
@@ -127,10 +124,6 @@ func TestEmbeddingSettingsTakeAServiceThatEmbeds(t *testing.T) {
 		"defaults":{"model":"embed-small"}}]}`
 	SaveConnector(RootDB, Connector{Name: "vec", Kind: "service", Spec: json.RawMessage(spec)})
 	req := EmbeddingConfig{Enabled: true, Provider: "service:vec", Endpoint: "http://localhost:11434/api", Model: "nomic-embed-text", APIKey: "x"}
-	if _, err := resolveEmbedding(req); err == nil || !strings.Contains(err.Error(), "not approved") {
-		t.Errorf("an unapproved service: %v", err)
-	}
-	ApproveConnector(RootDB, "vec")
 	got, err := resolveEmbedding(req)
 	if err != nil || got.Endpoint != "service:vec" || got.Model != "embed-small" || got.APIKey != "" {
 		t.Errorf("resolved: %+v %v", got, err)
@@ -195,7 +188,7 @@ func TestImageGenerationTakesAConnectorThatMakesPictures(t *testing.T) {
 	saved := RootDB
 	RootDB = &DBase{Store: kvlite.MemStore()}
 	t.Cleanup(func() { RootDB = saved })
-	a := &AdminApp{db: &DBase{Store: kvlite.MemStore()}}
+	a := &AdminApp{db: RootDB}
 	sub := http.NewServeMux()
 	a.registerMediaRoutes(sub)
 	call := func(method, path, body string) *httptest.ResponseRecorder {
@@ -215,14 +208,14 @@ func TestImageGenerationTakesAConnectorThatMakesPictures(t *testing.T) {
 		!strings.Contains(f[0].Help, "Admin > Extensions > Templates") || !strings.Contains(f[0].Help, "Add image backend") || !strings.Contains(f[0].Help, "Admin > Capabilities > Peers") {
 		t.Errorf("with nothing that makes pictures: %+v", f)
 	}
-	if w := call("GET", "/api/image-gen", ""); strings.TrimSpace(w.Body.String()) != `{"provider":"none"}` {
+	if w := call("GET", "/api/image-gen", ""); strings.TrimSpace(w.Body.String()) != `{"agents":[],"provider":"none"}` {
 		t.Errorf("never set: %s", w.Body.String())
 	}
 	for _, name := range []string{"gemini", "openai", "nothing"} {
 		if w := call("POST", "/api/image-gen", `{"provider":"`+name+`"}`); w.Code != http.StatusBadRequest {
 			t.Errorf("%s was saved: %d", name, w.Code)
 		}
-		if w := call("POST", "/api/image-gen/test", `{"provider":"`+name+`"}`); !strings.Contains(w.Body.String(), "no approved connector named "+name) {
+		if w := call("POST", "/api/image-gen/test", `{"provider":"`+name+`"}`); !strings.Contains(w.Body.String(), "no connector named "+name+" makes pictures") {
 			t.Errorf("%s tested: %s", name, w.Body.String())
 		}
 	}
@@ -231,29 +224,43 @@ func TestImageGenerationTakesAConnectorThatMakesPictures(t *testing.T) {
 		"operations":{"make":{"method":"POST","path":"/v1/images","body":{"prompt":"{prompt}"}}}},
 		"provides":[{"capability":"image.generate","steps":[{"call":"make"}],"output":{"image":{"path":"data.0.b64_json","as":"base64"}}}]}`
 	SaveConnector(RootDB, Connector{Name: "painter", Kind: "service", Spec: json.RawMessage(spec)})
-	if w := call("POST", "/api/image-gen", `{"provider":"painter"}`); w.Code != http.StatusBadRequest {
-		t.Errorf("an unapproved connector was saved: %d", w.Code)
-	}
-	ApproveConnector(RootDB, "painter")
-	t.Cleanup(func() { UnapproveConnector(RootDB, "painter") })
+	t.Cleanup(func() { UnapproveConnector(RootDB, "painter"); UnapproveConnector(RootDB, "sketcher") })
+	SaveConnector(RootDB, Connector{Name: "sketcher", Kind: "service", Spec: json.RawMessage(strings.Replace(spec, "/v1/images", "/v2/images", 1))})
 	f = imageFormFields()
-	if len(f[0].Options) != 2 || f[0].Options[0].Value != "painter" || !strings.Contains(f[0].Detail, "Admin > Extensions > Templates") {
+	if len(f) != 2 || len(f[0].Options) != 3 || f[0].Options[0].Value != "painter" || !strings.Contains(f[0].Detail, "Admin > Extensions > Templates") || f[1].Field != "agents" || len(f[1].Options) != 2 {
 		t.Errorf("with a connector to choose: %+v", f)
 	}
-	if w := call("POST", "/api/image-gen", `{"provider":"painter","api_key":"sk-stray"}`); w.Code >= 300 {
-		t.Fatalf("an approved connector was refused: %d %s", w.Code, w.Body.String())
+	if w := call("POST", "/api/image-gen", `{"provider":"painter","agents":["sketcher","vectors"]}`); w.Code != http.StatusBadRequest {
+		t.Errorf("a connector that does not make pictures offered to agents: %d", w.Code)
+	}
+	if w := call("POST", "/api/image-gen", `{"provider":"painter","agents":["sketcher","painter"],"api_key":"sk-stray"}`); w.Code >= 300 {
+		t.Fatalf("a connector that makes pictures was refused: %d %s", w.Code, w.Body.String())
+	}
+	for _, n := range []string{"painter", "sketcher"} {
+		if c, _ := GetConnector(RootDB, n); !c.Approved {
+			t.Errorf("%s is not in use", n)
+		}
+	}
+	savedProvider := ImageProviderFunc
+	ImageProviderFunc = func() string { return a.storedString(ImageTable, "provider") }
+	t.Cleanup(func() { ImageProviderFunc = savedProvider })
+	if got := ReachableImageBackends(&ToolSession{}); len(got) != 2 {
+		t.Errorf("agents are offered %+v, want the default and the one also offered", got)
 	}
 	if a.storedString(ImageTable, "provider") != "painter" || a.storedString(ImageTable, "api_key") != "" {
 		t.Errorf("stored: %q, key %q", a.storedString(ImageTable, "provider"), a.storedString(ImageTable, "api_key"))
 	}
-	if w := call("GET", "/api/image-gen", ""); strings.TrimSpace(w.Body.String()) != `{"provider":"painter"}` {
+	if w := call("GET", "/api/image-gen", ""); strings.TrimSpace(w.Body.String()) != `{"agents":["sketcher"],"provider":"painter"}` {
 		t.Errorf("set: %s", w.Body.String())
 	}
-	if w := call("POST", "/api/image-gen/test", `{"provider":"painter"}`); !strings.Contains(w.Body.String(), "approved and active") {
+	if w := call("POST", "/api/image-gen/test", `{"provider":"painter"}`); !strings.Contains(w.Body.String(), "is in use") {
 		t.Errorf("tested: %s", w.Body.String())
 	}
 	if w := call("POST", "/api/image-gen", `{"provider":"none"}`); w.Code >= 300 || a.storedString(ImageTable, "provider") != "none" {
 		t.Errorf("turning it off: %d", w.Code)
+	}
+	if c, _ := GetConnector(RootDB, "painter"); c.Approved {
+		t.Error("a connector no page names any more is still in use")
 	}
 }
 
@@ -265,9 +272,9 @@ func TestWebSearchTakesOnlyAnEngine(t *testing.T) {
 	RootDB = &DBase{Store: kvlite.MemStore()}
 	t.Cleanup(func() { RootDB = saved })
 	for cfg, ok := range map[WebSearchConfig]bool{
-		{}:                            true,
-		{Provider: "duckduckgo"}:      true,
-		{Provider: "hook", Hook: "h"}: true,
+		{}:                       true,
+		{Provider: "duckduckgo"}: true,
+		{Provider: "hook"}:       false,
 		{Provider: "searxng", Source: "peer:den"}: true,
 		{Provider: "searxng"}:                     false,
 		{Provider: "searxng", Source: "local"}:    false,
@@ -280,8 +287,8 @@ func TestWebSearchTakesOnlyAnEngine(t *testing.T) {
 	}
 }
 
-// Web Search offers an approved connector that searches as a provider, and
-// refuses to save one that is not approved.
+// Web Search offers every connector that searches as a provider; choosing
+// one puts it to use.
 func TestWebSearchTakesAConnectorThatSearches(t *testing.T) {
 	saved := RootDB
 	RootDB = &DBase{Store: kvlite.MemStore()}
@@ -300,16 +307,15 @@ func TestWebSearchTakesAConnectorThatSearches(t *testing.T) {
 		}
 		return false
 	}
-	a := &AdminApp{db: &DBase{Store: kvlite.MemStore()}}
-	if offered() {
-		t.Error("an unapproved connector is offered")
-	}
-	if _, err := a.handleWebSearchSave(&jsonapi.Call{R: httptest.NewRequest("POST", "/api/web-search", nil)}, WebSearchConfig{Provider: "service:finder"}); err == nil || !strings.Contains(err.Error(), "not approved") {
-		t.Errorf("saving an unapproved connector: %v", err)
-	}
-	ApproveConnector(RootDB, "finder")
+	a := &AdminApp{db: RootDB}
 	if !offered() {
-		t.Error("an approved connector that searches is not offered")
+		t.Error("a connector no page uses yet is not offered: choosing it is what puts it to use")
+	}
+	if _, err := a.handleWebSearchSave(&jsonapi.Call{R: httptest.NewRequest("POST", "/api/web-search", nil)}, WebSearchConfig{Provider: "service:finder"}); err != nil {
+		t.Errorf("choosing it: %v", err)
+	}
+	if c, _ := GetConnector(RootDB, "finder"); !c.Approved {
+		t.Error("choosing it did not put it to use")
 	}
 	if _, err := a.handleWebSearchSave(&jsonapi.Call{R: httptest.NewRequest("POST", "/api/web-search", nil)}, WebSearchConfig{Provider: "service:finder"}); err != nil {
 		t.Errorf("saving it: %v", err)
@@ -319,8 +325,8 @@ func TestWebSearchTakesAConnectorThatSearches(t *testing.T) {
 	}
 }
 
-// Page Rendering offers an approved connector that renders pages, refuses to
-// save one that is not approved, and routes browsing to the one saved.
+// Page Rendering offers every connector that renders pages, puts the one
+// chosen to use, and routes browsing to it.
 func TestPageRenderingTakesAConnectorThatRenders(t *testing.T) {
 	saved, prevCfg := RootDB, LoadBrowseConfig()
 	RootDB = &DBase{Store: kvlite.MemStore()}
@@ -337,26 +343,25 @@ func TestPageRenderingTakesAConnectorThatRenders(t *testing.T) {
 		}
 		return false
 	}
-	a := &AdminApp{db: &DBase{Store: kvlite.MemStore()}}
+	a := &AdminApp{db: RootDB}
 	call := &jsonapi.Call{R: httptest.NewRequest("POST", "/api/browse", nil)}
-	if offered() {
-		t.Error("an unapproved connector is offered")
-	}
-	if _, err := a.handleBrowseSave(call, BrowseConfig{Source: "service:reader"}); err == nil || !strings.Contains(err.Error(), "not approved") {
-		t.Errorf("saving an unapproved connector: %v", err)
-	}
-	ApproveConnector(RootDB, "reader")
 	if !offered() {
-		t.Error("an approved connector that renders is not offered")
+		t.Error("a connector no page uses yet is not offered: choosing it is what puts it to use")
+	}
+	if _, err := a.handleBrowseSave(call, BrowseConfig{Source: "service:reader"}); err != nil {
+		t.Errorf("choosing it: %v", err)
+	}
+	if c, _ := GetConnector(RootDB, "reader"); !c.Approved {
+		t.Error("choosing it did not put it to use")
 	}
 	if _, err := a.handleBrowseSave(call, BrowseConfig{Source: "service:reader"}); err != nil || LoadBrowseConfig().Source != "service:reader" {
 		t.Errorf("saving it: %v %+v", err, LoadBrowseConfig())
 	}
 }
 
-// Mail offers an approved connector that sends mail beside SMTP, keeping the
-// SMTP fields to SMTP, and points to Templates while SMTP is all there is.
-// An unapproved connector is refused; the one saved is what sends.
+// Mail offers every connector that sends mail beside SMTP, keeping the SMTP
+// fields to SMTP, and points to Templates while SMTP is all there is; the one
+// saved is what sends, and saving it puts it to use.
 func TestMailTakesAConnectorThatSends(t *testing.T) {
 	saved := RootDB
 	RootDB = &DBase{Store: kvlite.MemStore()}
@@ -379,12 +384,8 @@ func TestMailTakesAConnectorThatSends(t *testing.T) {
 		"operations":{"send":{"method":"POST","path":"/emails","body":{"to":"{to}","subject":"{subject}","text":"{body}"}}}},
 		"provides":[{"capability":"mail.send","steps":[{"call":"send"}],"output":{"id":{"path":"id"}}}]}`
 	SaveConnector(RootDB, Connector{Name: "postbox", Kind: "service", Spec: json.RawMessage(spec)})
-	a := &AdminApp{db: &DBase{Store: kvlite.MemStore()}}
+	a := &AdminApp{db: RootDB}
 	call := &jsonapi.Call{R: httptest.NewRequest("POST", "/api/mail", nil)}
-	if _, err := a.handleMailSave(call, MailConfig{Provider: "service:postbox"}); err == nil || !strings.Contains(err.Error(), "not approved") {
-		t.Errorf("saving an unapproved connector: %v", err)
-	}
-	ApproveConnector(RootDB, "postbox")
 	if f, ok := field("provider"); !ok || len(f.Options) != 2 || f.Options[1].Value != "service:postbox" {
 		t.Errorf("the choice: %+v", f)
 	}
@@ -404,10 +405,13 @@ func TestMailTakesAConnectorThatSends(t *testing.T) {
 	if got, _ := a.handleMail(call); got.(MailConfig).Provider != "service:postbox" {
 		t.Errorf("saved: %+v", got)
 	}
+	if c, _ := GetConnector(RootDB, "postbox"); !c.Approved {
+		t.Error("choosing it did not put it to use")
+	}
 }
 
-// The LLM tiers offer an approved model connector as a provider, and refuse
-// to save one that is not approved.
+// The LLM tiers offer every model connector as a provider; choosing one puts
+// it to use.
 func TestLLMTiersTakeAModelConnector(t *testing.T) {
 	saved := RootDB
 	RootDB = &DBase{Store: kvlite.MemStore()}
@@ -424,16 +428,49 @@ func TestLLMTiersTakeAModelConnector(t *testing.T) {
 		}
 		return false
 	}
-	a := &AdminApp{db: &DBase{Store: kvlite.MemStore()}}
+	a := &AdminApp{db: RootDB}
 	call := &jsonapi.Call{R: httptest.NewRequest("POST", "/api/worker-llm", nil)}
-	if offered() {
-		t.Error("an unapproved model connector is offered")
-	}
-	if _, err := a.handleLLMConfigSave(LLMTable, true)(call, llmConfigSave{Provider: "service:hosted"}); err == nil || !strings.Contains(err.Error(), "not approved") {
-		t.Errorf("saving an unapproved one: %v", err)
-	}
-	ApproveConnector(RootDB, "hosted")
 	if !offered() {
-		t.Error("an approved model connector is not offered")
+		t.Error("a connector no page uses yet is not offered: choosing it is what puts it to use")
+	}
+	if _, err := a.handleLLMConfigSave(LLMTable, true)(call, llmConfigSave{Provider: "service:hosted"}); err != nil {
+		t.Errorf("choosing it: %v", err)
+	}
+	if c, _ := GetConnector(RootDB, "hosted"); !c.Approved {
+		t.Error("choosing it did not put it to use")
+	}
+}
+
+// A capability page's Test tries the connector chosen in its form before a
+// save puts it to use, as testing before saving needs; the test leaves it
+// out of use, and nothing outside the test reaches it.
+func TestATestTriesTheChoiceBeforeItIsSaved(t *testing.T) {
+	saved, savedAuth, savedCfg := RootDB, AuthDB, GetEmbeddingConfig()
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	adb := &DBase{Store: kvlite.MemStore()}
+	AuthDB = func() Database { return adb }
+	t.Cleanup(func() { RootDB, AuthDB = saved, savedAuth; SetEmbeddingConfig(savedCfg) })
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"data":[{"embedding":[0.1,0.2,0.3]}]}`))
+	}))
+	defer srv.Close()
+	embedConnector(t, "vec", srv.URL, "m")
+	if err := UnapproveConnector(RootDB, "vec"); err != nil {
+		t.Fatal(err)
+	}
+	SetEmbeddingConfig(EmbeddingConfig{})
+	a := &AdminApp{db: RootDB}
+	out, _ := a.handleEmbeddingsTest(&jsonapi.Call{R: httptest.NewRequest("POST", "/api/embeddings/test", nil)},
+		EmbeddingConfig{Enabled: true, Provider: "service:vec"})
+	if body, _ := out.(map[string]any); body["ok"] != true {
+		t.Fatalf("the test of a choice not yet saved: %+v", out)
+	}
+	if c, _ := GetConnector(RootDB, "vec"); c.Approved {
+		t.Error("testing it put it to use")
+	}
+	SetEmbeddingConfig(EmbeddingConfig{Enabled: true, Provider: "service:vec", Endpoint: "service:vec", Model: "m"})
+	if _, err := Embed(context.Background(), "outside the test"); err == nil {
+		t.Error("an embedding outside the test reached a connector no page has put to use")
 	}
 }

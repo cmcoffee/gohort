@@ -1,18 +1,8 @@
-// Auto-generated LLM tools backed by configured source hooks.
-//
-// When admin sets ExposeToLLM=true on a SourceHook, the framework
-// exposes that hook as an AgentToolDef to any agent whose catalog
-// includes it. Per-hook tool name + description (admin-authored)
-// gives the LLM focused intent ("pubmed_search" with a description
-// like "Search PubMed for peer-reviewed medical literature; prefer
-// this over web_search for clinical questions") rather than a
-// generic one-tool-many-hooks dispatcher the LLM has to disambiguate.
-//
-// Paywall hooks are excluded — they augment fetch_url with auth
-// headers transparently, not stand-alone search.
-//
-// Wired via Apps' DynamicTools callback in agent loop config so the
-// set updates as admin adds/removes hooks without process restart.
+// Research sources offered to agents: the search connectors whose spec
+// offers a tool (core/service, Binding.Tool), through the one query_source
+// dispatcher and the "Available sources" block it is read with, or, granted
+// by a skill, as a tool of their own. They were Source Hooks; Source Hooks
+// became search connectors, and the names and shapes here stayed.
 
 package core
 
@@ -21,43 +11,16 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/cmcoffee/gohort/core/media"
 	"github.com/cmcoffee/gohort/core/sourcehooks"
 )
 
-// BuildSourceHookAgentToolDefs walks the configured source hooks and
-// returns one AgentToolDef per hook whose ExposeToLLM is true and
-// whose Type is API or RAG. Returns empty when no exposable hooks
-// are configured.
-func BuildSourceHookAgentToolDefs(db Database) []AgentToolDef {
-	hooks := RegisteredSourceHooks()
-	if len(hooks) == 0 {
-		return nil
-	}
-	out := make([]AgentToolDef, 0, len(hooks))
-	for _, h := range hooks {
-		if !h.ExposeToLLM || h.Disabled || sourcehooks.IsSearchEngine(h) {
-			continue
-		}
-		// Paywall hooks aren't search surfaces — skip.
-		if h.Type == HookTypePaywall {
-			continue
-		}
-		if def, ok := sourceHookToAgentToolDef(h); ok {
-			out = append(out, def)
-		}
-	}
-	return out
-}
-
-// The hook that is the web search engine, for sourcehooks to keep out of
-// every other use (sourcehooks.IsSearchEngine).
+// The search connector that is the web search engine, for sourcehooks to
+// keep out of every other use (sourcehooks.IsSearchEngine).
 func init() {
 	sourcehooks.EngineHook = func() string {
-		c := LoadWebSearchConfig()
-		if c.Provider != "hook" {
-			return ""
-		}
-		return c.Hook
+		name, _ := strings.CutPrefix(strings.TrimSpace(LoadWebSearchConfig().Provider), media.ServiceProviderPrefix)
+		return name
 	}
 }
 
@@ -93,10 +56,7 @@ func SourceHookToolDefByName(name string) (AgentToolDef, bool) {
 	if name == "" {
 		return AgentToolDef{}, false
 	}
-	for _, h := range RegisteredSourceHooks() {
-		if h.Type == HookTypePaywall || h.Disabled || sourcehooks.IsSearchEngine(h) {
-			continue
-		}
+	for _, h := range sourcehooks.Sources() {
 		if sourceHookToolName(h) == name {
 			return sourceHookToAgentToolDef(h)
 		}
@@ -104,21 +64,17 @@ func SourceHookToolDefByName(name string) (AgentToolDef, bool) {
 	return AgentToolDef{}, false
 }
 
-// FindSourceHookByToolName resolves an LLM tool name to the (non-paywall)
-// source hook behind it, INCLUDING disabled hooks — it serves the artifact
-// dependency walks, where "does this reference exist" is the question, not
-// "may it fire". A skill or agent that allowlists a hook-backed tool name
-// (pubmed_search) references the hook itself; the bundle closure uses this to
-// carry the hook along instead of silently dropping the name.
+// FindSourceHookByToolName resolves an LLM tool name to the research source
+// behind it: a search connector offering that tool. It serves the artifact
+// dependency walks: a skill or agent that allowlists a source's tool name
+// (pubmed_search) references its connector, which the bundle closure carries
+// along instead of silently dropping the name.
 func FindSourceHookByToolName(name string) (SourceHook, bool) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return SourceHook{}, false
 	}
-	for _, h := range RegisteredSourceHooks() {
-		if h.Type == HookTypePaywall {
-			continue
-		}
+	for _, h := range sourcehooks.Sources() {
 		if sourceHookToolName(h) == name {
 			return h, true
 		}
@@ -170,7 +126,7 @@ func sourceHookToAgentToolDef(h SourceHook) (AgentToolDef, bool) {
 			}
 			result, err := QuerySourceHook(captured, query)
 			if err != nil {
-				return "", fmt.Errorf("source hook %q failed: %w", captured.Name, err)
+				return "", fmt.Errorf("source %q failed: %w", captured.Name, err)
 			}
 			result = strings.TrimSpace(result)
 			if result == "" {
@@ -204,16 +160,14 @@ func sourceHookToAgentToolDef(h SourceHook) (AgentToolDef, bool) {
 // SourceHookToolDefByName — that scoping is correct for a skill's domain
 // and is intentionally unaffected by this collapse.
 
-// exposedQueryableHooks returns the hooks eligible for the query_source
-// dispatcher + catalog block: ExposeToLLM and non-paywall (paywall hooks
-// augment fetch_url, not stand-alone search).
+// exposedQueryableHooks returns the sources eligible for the query_source
+// dispatcher + catalog block: search connectors whose spec offers a tool.
 func exposedQueryableHooks() []SourceHook {
 	var out []SourceHook
-	for _, h := range RegisteredSourceHooks() {
-		if !h.ExposeToLLM || h.Type == HookTypePaywall || h.Disabled || sourcehooks.IsSearchEngine(h) {
-			continue
+	for _, h := range sourcehooks.Sources() {
+		if h.ExposeToLLM {
+			out = append(out, h)
 		}
-		out = append(out, h)
 	}
 	return out
 }

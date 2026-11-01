@@ -10,7 +10,7 @@ func (a *AdminApp) skillsSections() []ui.Section {
 		{
 			Title:    "Skills",
 			Subtitle: "Domain packs the assistant draws on: instructions plus optional knowledge sources.",
-			Detail:   "The sources are attached collections and source-hooks. The LLM reaches a skill via read_skill (pull its approach), skill_knowledge_search (search its sources, collections and source-hooks merged) and skill_knowledge_fetch_doc.\n\nA skill with Triggers also auto-injects its instructions when they match the turn, for example *.pdf. No activation and no sub-agents: stateless calls.\n\nBuilder is the canonical authoring path; this surface manages what is authored. Disabled skills are hidden from the LLM. Export a skill, or all of them, as a portable bundle: instructions and bundled tool scripts travel inline, secrets never do, and imports land disabled for review.",
+			Detail:   "The sources are attached collections and research sources (named by their tool names). The LLM reaches a skill via read_skill (pull its approach), skill_knowledge_search (search its sources, collections and research sources merged) and skill_knowledge_fetch_doc.\n\nA skill with Triggers also auto-injects its instructions when they match the turn, for example *.pdf. No activation and no sub-agents: stateless calls.\n\nBuilder is the canonical authoring path; this surface manages what is authored. Disabled skills are hidden from the LLM. Export a skill, or all of them, as a portable bundle: instructions and bundled tool scripts travel inline, secrets never do, and imports land disabled for review.",
 			Body: ui.Stack{Children: []ui.Component{ui.Table{
 				Source: "api/skills",
 				RowKey: "id",

@@ -1,16 +1,18 @@
 package service
 
-// A search connector (web.search) is offered beyond Web Search the way a
-// Source Hook is: to research, on the topics it is for, and to agents, as a
-// tool of its own (Binding.Research, Binding.Tool). Research reaches it
-// through core/sourcehooks' seams, so it asks a connector as it asks a hook.
+// A search connector (web.search) is put to use beyond Web Search as a
+// research source: research asks it on its topics, and agents through
+// query_source, as Source Hooks were asked. Which connectors, on what, is
+// the Research Sources tie-in, kept here; the connector stays how a service
+// is reached and read. Research reaches a source through core/sourcehooks'
+// seams.
 
 import (
 	"context"
 	"fmt"
 	"net/url"
+	"sort"
 	"strings"
-	"sync"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/sourcehooks"
@@ -23,118 +25,111 @@ func init() {
 	}
 }
 
-// searchBinding is the approved connector named name's web.search binding.
-func searchBinding(name string) (Binding, bool) {
-	c, ok := GetConnector(RootDB, name)
-	if !ok || c.Kind != Kind || !c.Approved {
-		return Binding{}, false
-	}
-	s, err := Parse(c.Spec)
-	if err != nil {
-		return Binding{}, false
-	}
-	b, _, err := s.binding("web.search")
-	return b, err == nil
+// ResearchSourcesTable holds the Research Sources tie-in: which search
+// connectors research asks, on which topics, and which are offered to
+// agents through query_source. The connector itself stays how a service is
+// reached and read; how gohort uses it for research is set here.
+const ResearchSourcesTable = "research_sources"
+
+// ResearchSource is one search connector put to use as a research source.
+type ResearchSource struct {
+	Connector string `json:"connector"`
+	// Topics are the research topics (legal, medical, ...) it is asked on;
+	// Always asks it on every research run.
+	Topics []string `json:"topics,omitempty"`
+	Always bool     `json:"always,omitempty"`
+	// ToolName, when set, offers it to agents through query_source under
+	// that name, with ToolDescription saying when to choose it over
+	// web_search; a skill may grant it as a tool of its own by that name.
+	ToolName        string `json:"tool_name,omitempty"`
+	ToolDescription string `json:"tool_description,omitempty"`
+	// Off keeps the entry and asks nothing of the connector.
+	Off bool `json:"off,omitempty"`
 }
 
-// searchSources are the approved search connectors offered to research, as
-// the entries research matches by topic.
-func searchSources() []sourcehooks.SourceHook {
-	var out []sourcehooks.SourceHook
-	for _, c := range ListConnectors(RootDB) {
-		if c.Kind != Kind || !c.Approved {
-			continue
+// ListResearchSources is every research source, by connector name.
+func ListResearchSources(db Database) []ResearchSource {
+	var out []ResearchSource
+	if db == nil {
+		return out
+	}
+	keys := db.Keys(ResearchSourcesTable)
+	sort.Strings(keys)
+	for _, k := range keys {
+		var rs ResearchSource
+		if db.Get(ResearchSourcesTable, k, &rs) {
+			out = append(out, rs)
 		}
-		b, ok := searchBinding(c.Name)
-		if !ok || b.Research == nil {
-			continue
-		}
-		out = append(out, sourcehooks.SourceHook{Name: c.Name, Type: sourcehooks.HookTypeAPI, Connector: c.Name,
-			TriggerDomains: b.Research.Topics, AlwaysActive: b.Research.Always})
 	}
 	return out
 }
 
-var (
-	searchToolsMu sync.Mutex
-	searchTools   = map[string]bool{}
-)
-
-// registerSearchTool offers the search connector named connector to agents
-// as the tool its spec names. The registry keeps a tool once registered; one
-// whose connector no longer offers it under that name leaves every catalog.
-func registerSearchTool(connector string, b Binding) {
-	if b.Tool == nil {
-		return
+// GetResearchSource is the research source on connector name.
+func GetResearchSource(db Database, name string) (ResearchSource, bool) {
+	var rs ResearchSource
+	if db == nil {
+		return rs, false
 	}
-	key := b.Tool.Name + "\x00" + connector
-	searchToolsMu.Lock()
-	defer searchToolsMu.Unlock()
-	if searchTools[key] {
-		return
-	}
-	searchTools[key] = true
-	RegisterChatTool(&searchTool{name: b.Tool.Name, connector: connector})
+	ok := db.Get(ResearchSourcesTable, strings.TrimSpace(name), &rs)
+	return rs, ok
 }
 
-// searchTool is a search connector as an agent tool.
-type searchTool struct{ name, connector string }
-
-func (t *searchTool) Name() string { return t.name }
-
-func (t *searchTool) Category() string { return "Search" }
-
-// offered is the connector's tool setting, when it still offers this tool.
-func (t *searchTool) offered() (*ToolUse, bool) {
-	b, ok := searchBinding(t.connector)
-	if !ok || b.Tool == nil || b.Tool.Name != t.name {
-		return nil, false
+// SaveResearchSource puts the search connector rs names to use as a
+// research source: it must give web.search, research needs its topics or
+// Always unless it is only offered to agents, and a tool name is one an
+// agent can call. Saving it is an administrator's acceptance of the
+// connector as it is now (Settle).
+func SaveResearchSource(db Database, rs ResearchSource) error {
+	rs.Connector = strings.TrimSpace(rs.Connector)
+	c, ok := GetConnector(db, rs.Connector)
+	if !ok || c.Kind != Kind || !Provides(c, "web.search") {
+		return fmt.Errorf("no search connector named %q: a research source is a connector that gives web.search", rs.Connector)
 	}
-	return b.Tool, true
+	var topics []string
+	for _, t := range rs.Topics {
+		if t = strings.ToLower(strings.TrimSpace(t)); t != "" {
+			topics = append(topics, t)
+		}
+	}
+	rs.Topics = topics
+	rs.ToolName, rs.ToolDescription = strings.TrimSpace(rs.ToolName), strings.TrimSpace(rs.ToolDescription)
+	switch {
+	case rs.ToolName != "" && !searchToolNameRE.MatchString(rs.ToolName):
+		return fmt.Errorf("tool name %q: lowercase letters, digits and _, 3 to 41 of them, starting with a letter", rs.ToolName)
+	case !rs.Always && len(rs.Topics) == 0 && rs.ToolName == "":
+		return fmt.Errorf("say when %s is asked: on topics, always, or offered to agents by a tool name", rs.Connector)
+	}
+	db.Set(ResearchSourcesTable, rs.Connector, rs)
+	// Saving it here puts its connector to use, or out of use when it is
+	// off and nothing else names it.
+	Settle(db, rs.Connector)
+	return nil
 }
 
-func (t *searchTool) Desc() string {
-	if u, ok := t.offered(); ok && strings.TrimSpace(u.Description) != "" {
-		return strings.TrimSpace(u.Description)
+// DeleteResearchSource stops asking connector name as a research source;
+// the connector stays, out of use unless another page names it.
+func DeleteResearchSource(db Database, name string) {
+	if db != nil {
+		db.Unset(ResearchSourcesTable, strings.TrimSpace(name))
+		Settle(db)
 	}
-	return "Search " + t.connector + ": results with titles, links and snippets. Use it where it knows more than web_search does."
 }
 
-func (t *searchTool) Params() map[string]ToolParam {
-	return map[string]ToolParam{"query": {Type: "string", Description: "What to search for."}}
-}
-
-func (t *searchTool) SchemaWithSession(*ToolSession) (string, map[string]ToolParam) {
-	if _, ok := t.offered(); !ok {
-		return "", nil
+// searchSources are the research sources that are on and whose connector
+// is approved, as the entries research matches by topic and agents ask
+// through query_source.
+func searchSources() []sourcehooks.SourceHook {
+	var out []sourcehooks.SourceHook
+	for _, rs := range ListResearchSources(RootDB) {
+		c, ok := GetConnector(RootDB, rs.Connector)
+		if rs.Off || !ok || c.Kind != Kind || !c.Approved || !Provides(c, "web.search") {
+			continue
+		}
+		out = append(out, sourcehooks.SourceHook{Name: c.Name, Type: sourcehooks.HookTypeAPI, Connector: c.Name,
+			TriggerDomains: rs.Topics, AlwaysActive: rs.Always,
+			ExposeToLLM: rs.ToolName != "", ToolName: rs.ToolName, ToolDescription: rs.ToolDescription})
 	}
-	return t.Desc(), t.Params()
-}
-
-func (t *searchTool) Caps() []Capability { return []Capability{CapNetwork, CapRead} }
-
-func (t *searchTool) IsInternetTool() bool { return true }
-
-func (t *searchTool) Run(args map[string]any) (string, error) {
-	return t.RunWithSession(args, nil)
-}
-
-func (t *searchTool) RunWithSession(args map[string]any, sess *ToolSession) (string, error) {
-	if _, ok := t.offered(); !ok {
-		return "", fmt.Errorf("%s is no longer offered: its connector %s was changed, turned off or removed", t.name, t.connector)
-	}
-	if sess != nil && !sess.NetworkAllowed() {
-		return "", fmt.Errorf("%s refused: network is blocked for this turn (private mode is on)", t.name)
-	}
-	query, _ := args["query"].(string)
-	if strings.TrimSpace(query) == "" {
-		return "", fmt.Errorf("say what to search for in query")
-	}
-	ctx := context.Background()
-	if sess != nil {
-		ctx = sess.Context()
-	}
-	return Search(ctx, t.connector, strings.TrimSpace(query))
+	return out
 }
 
 // noUsableLink stands where a result's link would be when the search gave a

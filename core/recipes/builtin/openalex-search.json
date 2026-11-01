@@ -1,0 +1,69 @@
+{
+  "id": "openalex-search",
+  "title": "OpenAlex (research)",
+  "description": "Academic papers across every discipline from OpenAlex as a research source, through gohort's built-in OpenAlex search, which rebuilds each paper's abstract. Free, no key.",
+  "category": "Research Sources",
+  "setup_notes": "No key needed. The deployment's mail From address goes with each search, which OpenAlex asks of callers that want its faster pool. Run Test on its row under Admin > Extensions > Connectors, which makes one real search for a common phrase. Then add it under Admin > Extensions > Research Sources, which puts it to use: research asks it on the topics set there (suggested: scientific, technology, education), and a tool name there offers it to agents through query_source. Or pick it under Admin > Capabilities > Web Search as the engine.",
+  "questions": [
+    {
+      "name": "name",
+      "label": "Connector name",
+      "help": "Lowercase letters, digits, dashes and underscores; research and Web Search list it by this name.",
+      "default": "openalex-search"
+    }
+  ],
+  "bundle": {
+    "bundle": "gohort.bundle/v1",
+    "artifacts": [
+      {
+        "type": "connector",
+        "name": "{{name}}",
+        "recipe": {
+          "name": "{{name}}",
+          "kind": "service",
+          "template": "openalex-search",
+          "desc": "OpenAlex (research)",
+          "spec": {
+            "provider": {
+              "transport": "http",
+              "base_url": "https://api.openalex.org",
+              "auth": {
+                "none": true
+              },
+              "operations": {
+                "search": {
+                  "builtin": "openalex"
+                }
+              }
+            },
+            "provides": [
+              {
+                "capability": "web.search",
+                "plain": true,
+                "steps": [
+                  {
+                    "call": "search"
+                  }
+                ],
+                "output": {
+                  "results": {
+                    "path": "results",
+                    "fields": {
+                      "title": "title",
+                      "url": "url",
+                      "snippet": "snippet",
+                      "published": "published"
+                    }
+                  }
+                },
+                "defaults": {
+                  "count": 10
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

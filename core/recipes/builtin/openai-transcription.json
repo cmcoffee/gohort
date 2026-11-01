@@ -3,7 +3,7 @@
   "title": "OpenAI (transcription)",
   "description": "OpenAI's transcription model as gohort's ears, declared as a service: the upload and the reply are data you can test and fix from Admin > Connectors.",
   "category": "Speech",
-  "setup_notes": "Create an API key at platform.openai.com/api-keys. The credential lands disabled: enable it under API Credentials. The connector lands unapproved: approve it in Admin > Extensions > Connectors, run Test on its row (it sends one second of a tone), then pick it under Capabilities > Audio Transcription. OpenAI bills transcription by the minute, which gohort does not count, so no price is declared: the connector shows its calls as unpriced until you add a per_call cost to its spec.",
+  "setup_notes": "Create an API key at platform.openai.com/api-keys. The credential lands disabled: enable it under API Credentials. Run Test on its row under Admin > Extensions > Connectors (it sends one second of a tone), then put it to use by choosing it under Capabilities > Audio Transcription. OpenAI bills transcription by the minute, which gohort does not count, so no price is declared: the connector shows its calls as unpriced until you add a per_call cost to its spec.",
   "questions": [
     {
       "name": "api_key",

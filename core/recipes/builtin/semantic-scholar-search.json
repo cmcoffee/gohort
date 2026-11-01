@@ -1,0 +1,84 @@
+{
+  "id": "semantic-scholar-search",
+  "title": "Semantic Scholar (research)",
+  "description": "Academic papers from Semantic Scholar as a research source on scientific and technical topics, declared as a service.",
+  "category": "Research Sources",
+  "setup_notes": "The credential lands disabled: enable it under API Credentials. Get a free API key at semanticscholar.org/product/api. Run Test on its row under Admin > Extensions > Connectors, which makes one real search for a common phrase. Then add it under Admin > Extensions > Research Sources, which puts it to use: research asks it on the topics set there (suggested: scientific, medical, technology, environmental, economic, education), and a tool name there offers it to agents through query_source. Or pick it under Admin > Capabilities > Web Search as the engine.",
+  "questions": [
+    {
+      "name": "api_key",
+      "label": "Semantic Scholar API key",
+      "help": "Stored in the credential's secret store, never in the connector.",
+      "required": true,
+      "secret": true,
+      "credential": "semantic_scholar_search"
+    },
+    {
+      "name": "name",
+      "label": "Connector name",
+      "help": "Lowercase letters, digits, dashes and underscores; research and Web Search list it by this name.",
+      "default": "semantic-scholar-search"
+    }
+  ],
+  "bundle": {
+    "bundle": "gohort.bundle/v1",
+    "artifacts": [
+      {
+        "type": "credential",
+        "name": "semantic_scholar_search",
+        "recipe": {
+          "name": "semantic_scholar_search",
+          "type": "header",
+          "base_url": "https://api.semanticscholar.org",
+          "description": "Semantic Scholar (research), for research.",
+          "param_name": "x-api-key"
+        }
+      },
+      {
+        "type": "connector",
+        "name": "{{name}}",
+        "recipe": {
+          "name": "{{name}}",
+          "kind": "service",
+          "template": "semantic-scholar-search",
+          "desc": "Semantic Scholar (research)",
+          "spec": {
+            "provider": {
+              "transport": "http",
+              "base_url": "https://api.semanticscholar.org",
+              "auth": {
+                "credential": "semantic_scholar_search"
+              },
+              "operations": {
+                "search": {
+                  "path": "/graph/v1/paper/search?fields=title,url,abstract&query={query}"
+                }
+              }
+            },
+            "provides": [
+              {
+                "capability": "web.search",
+                "plain": true,
+                "steps": [
+                  {
+                    "call": "search"
+                  }
+                ],
+                "output": {
+                  "results": {
+                    "path": "data",
+                    "fields": {
+                      "title": "title",
+                      "url": "url",
+                      "snippet": "abstract"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

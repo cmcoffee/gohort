@@ -1,0 +1,68 @@
+{
+  "id": "europe-pmc-search",
+  "title": "Europe PMC (research)",
+  "description": "Biomedical and life-science literature from Europe PMC as a research source, declared as a service. Free, no key.",
+  "category": "Research Sources",
+  "setup_notes": "No key needed. Its results link by DOI, which is made into a doi.org address. Run Test on its row under Admin > Extensions > Connectors, which makes one real search for a common phrase. Then add it under Admin > Extensions > Research Sources, which puts it to use: research asks it on the topics set there (suggested: medical, scientific), and a tool name there offers it to agents through query_source. Or pick it under Admin > Capabilities > Web Search as the engine.",
+  "questions": [
+    {
+      "name": "name",
+      "label": "Connector name",
+      "help": "Lowercase letters, digits, dashes and underscores; research and Web Search list it by this name.",
+      "default": "europe-pmc-search"
+    }
+  ],
+  "bundle": {
+    "bundle": "gohort.bundle/v1",
+    "artifacts": [
+      {
+        "type": "connector",
+        "name": "{{name}}",
+        "recipe": {
+          "name": "{{name}}",
+          "kind": "service",
+          "template": "europe-pmc-search",
+          "desc": "Europe PMC (research)",
+          "spec": {
+            "provider": {
+              "transport": "http",
+              "base_url": "https://www.ebi.ac.uk",
+              "auth": {
+                "none": true
+              },
+              "operations": {
+                "search": {
+                  "path": "/europepmc/webservices/rest/search?format=json&pageSize={count}&sort=RELEVANCE&query={query}"
+                }
+              }
+            },
+            "provides": [
+              {
+                "capability": "web.search",
+                "plain": true,
+                "steps": [
+                  {
+                    "call": "search"
+                  }
+                ],
+                "output": {
+                  "results": {
+                    "path": "resultList.result",
+                    "fields": {
+                      "title": "title",
+                      "url": "doi",
+                      "snippet": "abstractText"
+                    }
+                  }
+                },
+                "defaults": {
+                  "count": 5
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

@@ -34,7 +34,7 @@ var sectionGroup = map[string]string{
 	"Local Model Scheduler": "LLMs",
 
 	"Embeddings":                "Capabilities",
-	"Audio Transcription (STT)": "Capabilities", "Speech (TTS)": "Capabilities", "Image Generation": "Capabilities",
+	"Audio Transcription (STT)": "Capabilities", "Speech (TTS)": "Capabilities", "Image Generation": "Capabilities", "Music": "Capabilities",
 	"Resource Sharing": "Capabilities", "Peers": "Capabilities", "Shared With": "Capabilities",
 	"Web Search": "Capabilities", "Mail (SMTP)": "System",
 	"Network Timeouts": "Tuning",
@@ -44,7 +44,7 @@ var sectionGroup = map[string]string{
 	// Pluggable integrations you ADD — grouped under Extensions (vs Capabilities,
 	// which are configured features like Image Generation / STT).
 	"API Credentials": "Extensions", "MCP Servers": "Extensions", "Connectors": "Extensions", "Contracts": "Extensions", "Flows": "Extensions",
-	"Source Hooks": "Extensions", "Persistent Tools (Pending)": "Extensions",
+	"Research Sources": "Extensions", "Persistent Tools (Pending)": "Extensions",
 	"Global Tools": "Extensions", "Agent-Scoped Tools": "Extensions", "Orphaned Tools": "Extensions",
 	"Tool Groups": "Extensions",
 	"Skills":      "Extensions", "Pipelines": "Extensions",
@@ -238,14 +238,6 @@ func appTuningForm(app string) *ui.FormPanel {
 	}
 }
 
-// sourceHookFormTemplates turns the built-in SourceHookTemplates into
-// FormPanel presets for the "Start from template" dropdown — so an
-// operator can pick PubMed / OpenAlex / Westlaw / etc. and have the
-// endpoint + field mappings filled in, then just add the API key.
-// sourceHookFormFields is the editable field set for a source hook, shared
-// by the "Add source" modal (empty create form) and the per-row "Edit"
-// expand (pre-filled from api/source-hooks?name={name}). Field names match
-// the SourceHook json tags so the GET-one response pre-fills directly.
 // The cost surfaces, named once because two things have to agree about them: a
 // chart's Source and the Invalidate list of every form that changes what the
 // chart counts. Invalidation matches on the EXACT source string, so a days=30
@@ -361,7 +353,7 @@ func (a *AdminApp) serveAdminPage(w http.ResponseWriter, r *http.Request, tab st
 		{"credentials", a.credentialsSections},
 		{"governance", a.governanceSections},
 		{"extensions", a.extensionsSections},
-		{"source-hooks", a.sourceHooksSections},
+		{"research-sources", a.researchSourcesSections},
 		{"tools", a.toolsSections},
 		{"skills", a.skillsSections},
 	} {
@@ -374,7 +366,7 @@ func (a *AdminApp) serveAdminPage(w http.ResponseWriter, r *http.Request, tab st
 	wideSections := map[string]bool{
 		"System Status": true, "Users": true, "LLM Routing": true, "Activity Log": true,
 		"Cost History (Last 30 Days)": true, "Cost by source": true, "Scheduled Tasks": true,
-		"API Credentials": true, "MCP Servers": true, "Connectors": true, "Contracts": true, "Flows": true, "Source Hooks": true,
+		"API Credentials": true, "MCP Servers": true, "Connectors": true, "Contracts": true, "Flows": true, "Research Sources": true,
 		"Persistent Tools (Pending)": true, "Global Tools": true, "System Hooks": true,
 		"Agent-Scoped Tools": true, "Orphaned Tools": true,
 		"Tool Groups": true, "Skills": true, "Pipelines": true, "Teams": true,

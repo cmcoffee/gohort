@@ -3,7 +3,7 @@
   "title": "ElevenLabs (speech)",
   "description": "ElevenLabs text-to-speech as gohort's voice, declared as a service: the request, the voice and the reply are data you can test and fix from Admin > Connectors.",
   "category": "Speech",
-  "setup_notes": "Get an API key at elevenlabs.io (Profile > API keys). The credential lands disabled: enable it under API Credentials. The connector lands unapproved: approve it in Admin > Extensions > Connectors, run Test on its row, then pick it under Capabilities > Speech (TTS). ElevenLabs bills in credits by the character, so no price is declared: the connector shows its calls as unpriced until you add a cost to its spec (per_unit with unit character).",
+  "setup_notes": "Get an API key at elevenlabs.io (Profile > API keys). The credential lands disabled: enable it under API Credentials. Run Test on its row under Admin > Extensions > Connectors, then put it to use by choosing it under Capabilities > Speech (TTS). ElevenLabs bills in credits by the character, so no price is declared: the connector shows its calls as unpriced until you add a cost to its spec (per_unit with unit character).",
   "questions": [
     {
       "name": "api_key",

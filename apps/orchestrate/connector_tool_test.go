@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/service"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -112,5 +113,24 @@ func TestBuilderDraftsAServiceConnector(t *testing.T) {
 	}
 	if _, ok := GetConnector(RootDB, "acme-two"); ok {
 		t.Error("a refused spec was saved")
+	}
+
+	// Put to use by a page, then changed by alice's Builder: held out of
+	// use, by her name, until an administrator accepts it.
+	RootDB.Set(ImageTable, "provider", "acme-images")
+	service.Settle(RootDB)
+	if c, _ := GetConnector(RootDB, "acme-images"); !c.Approved {
+		t.Fatal("named by Image Generation, not in use")
+	}
+	bad["provides"].([]any)[0].(map[string]any)["capability"] = "image.generate"
+	if _, err := connectorUpdate(map[string]any{"name": "acme-images", "service_spec": spec}, sess); err != nil {
+		t.Fatal(err)
+	}
+	service.Settle(RootDB)
+	if c, _ := GetConnector(RootDB, "acme-images"); c.Approved {
+		t.Error("a change by someone not an administrator went live")
+	}
+	if ch, ok := service.PendingChange(RootDB, "acme-images"); !ok || ch.By != "alice" {
+		t.Errorf("the change waiting: %+v %v", ch, ok)
 	}
 }

@@ -49,12 +49,12 @@ func (a *AdminApp) costSections() []ui.Section {
 		},
 		{
 			Title:    "Cost by source",
-			Subtitle: "Metered source-hook and credential spend over the last 30 days.",
-			Detail:   "One \"cost hook\" per source. Set a per-call cost on a source hook or API credential to track it here; it also folds into the chart total above.",
+			Subtitle: "Metered connector and credential spend over the last 30 days.",
+			Detail:   "One row per source. Set a per-call cost on an API credential, or a cost in a connector's spec, to track it here; it also folds into the chart total above.",
 			Body: ui.Table{
 				Source:    costBySourceSource,
 				RowKey:    "source_id",
-				EmptyText: "No metered external calls recorded yet. Set a \"Cost per call\" on a source hook or API credential to track its spend here.",
+				EmptyText: "No metered external calls recorded yet. Set a \"Cost per call\" on an API credential, or a cost in a connector's spec, to track its spend here.",
 				Columns: []ui.Col{
 					{Field: "label", Label: "Source", Flex: 2},
 					{Field: "calls", Label: "Calls", Format: "thousands", Flex: 1},

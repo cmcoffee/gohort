@@ -380,6 +380,7 @@ func TestApprovingAnImageConnectorLeavesItRegistered(t *testing.T) {
 	if err := ApproveConnector(RootDB, c.Name); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
+	offerImageBackend(c.Name)
 	if !ImageBackendRegistered(c.Name) {
 		t.Error("the backend is not registered right after approval — it will not appear until a restart")
 	}

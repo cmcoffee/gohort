@@ -13,6 +13,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/flows"
 	"github.com/cmcoffee/gohort/core/jsonapi"
+	"github.com/cmcoffee/gohort/core/recipes"
 	"github.com/cmcoffee/gohort/core/service"
 )
 
@@ -87,11 +88,17 @@ func (a *AdminApp) handleConnectors(c *jsonapi.Call) (any, error) {
 		Group        string `json:"group"`
 		GroupSummary string `json:"group_summary,omitempty"`
 		GroupOpen    bool   `json:"group_open,omitempty"`
+		// CanApprove and CanUnapprove are a connector approved or not here:
+		// a services connector is put to use by the pages that name it
+		// instead, and its State says whether one does.
+		CanApprove   bool `json:"can_approve,omitempty"`
+		CanUnapprove bool `json:"can_unapprove,omitempty"`
 	}
 	var rows []connRow
+	uses, research := service.TieIns(RootDB), researchNamed()
 	for _, conn := range ListConnectors(RootDB) {
 		_, canConfig := TemplateForConnector(conn)
-		row := connRow{conn.Name, conn.Kind, ConnectorSummary(conn), conn.Owner, conn.Approved, conn.LastError, conn.Template, conn.Kind == RestImageConnectorKind, canConfig, connectorWebhook(conn), "", false, false, "", service.Fixable(conn), true, "pending", conn.Kind == service.Kind, connectorGroup(conn.Kind), "", false}
+		row := connRow{conn.Name, conn.Kind, ConnectorSummary(conn), conn.Owner, conn.Approved, conn.LastError, conn.Template, conn.Kind == RestImageConnectorKind, canConfig, connectorWebhook(conn), "", false, false, "", service.Fixable(conn), true, "pending", conn.Kind == service.Kind, connectorGroup(conn, research, uses), "", false, false, false}
 		if conn.Approved {
 			row.State = "approved"
 		}
@@ -100,25 +107,24 @@ func (a *AdminApp) handleConnectors(c *jsonapi.Call) (any, error) {
 			row.TestConfirm = testConfirm(conn.Name)
 			row.Status, row.HasHealth = connectorStatus(conn)
 		}
+		if service.TieInConnector(conn.Kind) {
+			row.State, row.Status = tieInState(conn, uses[conn.Name], row.Status)
+		} else {
+			row.CanApprove, row.CanUnapprove = !conn.Approved, conn.Approved
+		}
 		rows = append(rows, row)
 	}
 	// gohort's own providers, after the ones added: read from their settings
 	// (connector_builtins.go), tested by those settings' own tests.
 	for _, b := range a.builtinConnectors() {
 		rows = append(rows, connRow{Name: b.name, Kind: "built in", Summary: b.wrapper, Owner: "gohort",
-			Status: b.status, Testable: b.test != nil, State: "built-in", Group: groupBuiltIn})
+			Status: b.status, Testable: b.test != nil, State: "built-in", Group: b.group})
 	}
 	// The peers this instance borrows from (connector_peers.go), read from the
 	// peers and the settings that name them, re-checked by Test.
 	for _, pc := range a.peerConnectors() {
 		rows = append(rows, connRow{Name: pc.name, Kind: "peer", Summary: pc.wrapper, Owner: "Peers",
 			Status: pc.status, Testable: true, State: "peer", Endpoints: true, Group: groupPeers})
-	}
-	// The API and RAG Source Hooks (connector_hooks.go), read from the hooks,
-	// set up under Source Hooks.
-	for _, hc := range hookConnectors() {
-		rows = append(rows, connRow{Name: hc.name, Kind: "source hook", Summary: hc.wrapper, Owner: "Source Hooks",
-			Status: hc.status, State: "hook", Endpoints: true, Group: groupSourceHooks})
 	}
 	// The programs System Hooks' jobs run (connector_programs.go), read from
 	// the jobs, set up and tested from System Hooks.
@@ -168,27 +174,51 @@ func (a *AdminApp) handleConnectors(c *jsonapi.Call) (any, error) {
 	return rows, nil
 }
 
-// The Connectors table's bands, in order: what a connector is, which is
-// what an admin looks for one by.
+// The Connectors table's bands, in order: what a connector does, which is
+// what an admin looks for one by. gohort's own providers sit with the
+// connectors that do the same job.
 const (
-	groupServices    = "Services"
-	groupMessages    = "Messaging"
-	groupWatches     = "Watches"
-	groupSourceHooks = "Source hooks"
-	groupTools       = "Tools for agents (MCP and desktop)"
-	groupHooks       = "Adapted System Hooks"
-	groupBuiltIn     = "Built in"
-	groupPeers       = "Peers"
-	groupPrograms    = "Programs"
+	groupLLMs     = "LLMs"
+	groupSearch   = "Web Search"
+	groupResearch = "Research Sources"
+	groupImages   = "Images"
+	groupAudio    = "Speech and Music"
+	groupEmbed    = "Embeddings"
+	groupPages    = "Pages and Files"
+	groupMail     = "Mail"
+	groupMessages = "Messaging"
+	groupOther    = "Other Services"
+	groupWatches  = "Watches"
+	groupTools    = "Tools for agents (MCP and desktop)"
+	groupHooks    = "Adapted System Hooks"
+	groupPeers    = "Peers"
+	groupPrograms = "Programs"
 )
 
-var connectorGroups = []string{groupServices, groupMessages, groupWatches, groupSourceHooks, groupTools, groupHooks, groupBuiltIn, groupPeers, groupPrograms}
+var connectorGroups = []string{groupLLMs, groupSearch, groupResearch, groupImages, groupAudio, groupEmbed, groupPages,
+	groupMail, groupMessages, groupOther, groupWatches, groupTools, groupHooks, groupPeers, groupPrograms}
 
-// connectorGroup is the band a stored connector of kind sits in.
-func connectorGroup(kind string) string {
-	switch kind {
-	case service.Kind, RestImageConnectorKind:
-		return groupServices
+// capabilityGroups is the band a services connector sits in, by the first
+// capability it gives.
+var capabilityGroups = map[string]string{
+	"llm.chat": groupLLMs, "web.search": groupSearch, "image.search": groupSearch,
+	"image.generate": groupImages, "image.edit": groupImages,
+	"speech.transcribe": groupAudio, "speech.synthesize": groupAudio, "speech.voices": groupAudio, "music.generate": groupAudio,
+	"embed.text": groupEmbed, "page.render": groupPages, "file.convert": groupPages,
+	"mail.send": groupMail, "message.send": groupMessages,
+}
+
+// researchTemplates is the template category of a research source's.
+const researchTemplates = "Research Sources"
+
+// connectorGroup is the band a stored connector sits in. A search a
+// research source names, or one made from a research source's template and
+// not Web Search's engine, is a research source; uses are the pages naming
+// each connector (service.TieIns).
+func connectorGroup(conn Connector, research map[string]bool, uses map[string][]string) string {
+	switch conn.Kind {
+	case RestImageConnectorKind:
+		return groupImages
 	case RestMessagingConnectorKind, MessagingBridgeConnectorKind, BotFrameworkConnectorKind:
 		return groupMessages
 	case RestPollConnectorKind:
@@ -199,8 +229,36 @@ func connectorGroup(kind string) string {
 		return groupHooks
 	case PeerRelayConnectorKind:
 		return groupPeers
+	case service.Kind:
+	default:
+		return groupOther
 	}
-	return groupServices
+	s, err := service.Parse(conn.Spec)
+	if err != nil || len(s.Provides) == 0 {
+		return groupOther
+	}
+	g, ok := capabilityGroups[s.Provides[0].Capability]
+	if !ok {
+		return groupOther
+	}
+	if g == groupSearch && !slices.Contains(uses[conn.Name], "Web Search") {
+		if research[conn.Name] {
+			return groupResearch
+		}
+		if r, _, ok := recipes.Get(RootDB, conn.Template); ok && conn.Template != "" && r.Category == researchTemplates {
+			return groupResearch
+		}
+	}
+	return g
+}
+
+// researchNamed are the connectors a research source names, on or off.
+func researchNamed() map[string]bool {
+	out := map[string]bool{}
+	for _, rs := range service.ListResearchSources(RootDB) {
+		out[rs.Connector] = true
+	}
+	return out
 }
 
 // testConfirm is the question asked before a contract test: what it does and
@@ -321,13 +379,6 @@ func (a *AdminApp) handleConnectorEndpoints(c *jsonapi.Call) (any, error) {
 		}
 		return peerEndpoints(pc), nil
 	}
-	if strings.HasPrefix(name, hookRowPrefix) {
-		hc, ok := hookByName(name)
-		if !ok {
-			return nil, jsonapi.Status(http.StatusNotFound, "no source hook named "+strings.TrimPrefix(name, hookRowPrefix))
-		}
-		return hookEndpoints(hc), nil
-	}
 	if strings.HasPrefix(name, programPrefix) {
 		pc, ok := programByName(name)
 		if !ok {
@@ -372,7 +423,11 @@ func (a *AdminApp) handleConnectorAction(c *jsonapi.Call, body json.RawMessage) 
 		return nil, jsonapi.BadRequest("missing name")
 	}
 	var err error
-	switch q.Get("action") {
+	action := q.Get("action")
+	if conn, ok := GetConnector(RootDB, name); ok && service.TieInConnector(conn.Kind) && (action == "approve" || action == "unapprove") {
+		return nil, jsonapi.BadRequest(name + " is put to use where it is used, not here: choose it on the page that uses it (Web Search, Image Generation, Research Sources, a flow, ...), or take it off there")
+	}
+	switch action {
 	case "approve":
 		err = ApproveConnector(RootDB, name)
 	case "unapprove":
@@ -397,6 +452,17 @@ func (a *AdminApp) handleConnectorAction(c *jsonapi.Call, body json.RawMessage) 
 	}
 	if err != nil {
 		return nil, jsonapi.BadRequest(err.Error())
+	}
+	// An adapted System Hook turned on names the connector that does its
+	// conversion, which puts that connector to use; turned off, it may not.
+	if conn, ok := GetConnector(RootDB, name); ok && conn.Kind == flows.ConnectorKind {
+		var ad flows.Adapted
+		json.Unmarshal(conn.Spec, &ad)
+		if action == "approve" {
+			settleTieIn(ad.Service)
+		} else {
+			settleTieIn()
+		}
 	}
 	return jsonapi.Empty(http.StatusNoContent), nil
 }
@@ -507,4 +573,22 @@ func connectorWebhook(c Connector) string {
 		return ""
 	}
 	return s.WebhookProvider
+}
+
+// tieInState is a services connector's badge and the start of its status:
+// the pages that put it to use, none, or a change waiting to be accepted.
+func tieInState(c Connector, pages []string, status string) (string, string) {
+	join := func(lead string) string {
+		if status == "" {
+			return lead
+		}
+		return lead + " " + status
+	}
+	if ch, ok := service.PendingChange(RootDB, c.Name); ok {
+		return "changed", join(changedNote(ch))
+	}
+	if len(pages) == 0 {
+		return "unused", join("Not in use: no page names it. Choose it where it is to be used (Web Search, Image Generation, Research Sources, a flow, ...).")
+	}
+	return "in-use", join("Used by " + strings.Join(pages, ", ") + ".")
 }

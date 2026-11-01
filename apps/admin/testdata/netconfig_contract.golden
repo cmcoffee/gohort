@@ -3,7 +3,7 @@
 alice GET /api/web-search ""
   403 forbidden
 root GET /api/web-search ""
-  200 {"hook":"","provider":"","source":"local"}
+  200 {"provider":"","source":"local"}
 root PUT /api/web-search "{}"
   405 method not allowed
 (signed out) GET /api/browse ""
@@ -38,14 +38,6 @@ root GET /api/agent-loop-tuning ""
   200 {"history_budget_percent":50}
 root PUT /api/agent-loop-tuning "{}"
   405 method not allowed
-(signed out) GET /api/web-search/hooks ""
-  403 forbidden
-alice GET /api/web-search/hooks ""
-  403 forbidden
-root GET /api/web-search/hooks ""
-  200 a list
-root POST /api/web-search/hooks "{}"
-  405 method not allowed
 alice POST /api/web-search/test "{}"
   403 forbidden
 root GET /api/web-search/test ""
@@ -69,9 +61,9 @@ root POST /api/web-search "{\"provider\":\"brave\",\"api_key\":\"s3cr3t-search\"
 root POST /api/web-search "{\"provider\":\"duckduckgo\",\"api_key\":\"s3cr3t-search\",\"endpoint\":\"https://searx.example.test\",\"hook\":\"left over\"}"
   204 
 root GET /api/web-search ""
-  200 {"hook":"","provider":"duckduckgo","source":"local"}
+  200 {"provider":"duckduckgo","source":"local"}
 root POST /api/web-search "{\"provider\":\"hook\",\"hook\":\"zz_nope\",\"api_key\":\"(unchanged)\"}"
-  400 pick a Source Hook to search with: an API hook that is switched on
+  400 hook is not an engine here: add a connector that searches from a template (Brave, Serper, Tavily, Google Programmable Search, SearXNG) and choose it
 root POST /api/web-search "{\"source\":\"peer:nope\"}"
   400 no peer named "nope" is registered: add it under Peers first
 root POST /api/web-search "{\"provider\":"

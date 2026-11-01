@@ -73,7 +73,7 @@ func TestFixingAnOlderImageBackendConvertsIt(t *testing.T) {
 	}
 
 	body, _ := json.Marshal(map[string]string{"spec": form.Spec})
-	if w := call("POST", "/api/connectors/fix-save?name=sd", string(body)); w.Code != 200 || !strings.Contains(w.Body.String(), "approve it") {
+	if w := call("POST", "/api/connectors/fix-save?name=sd", string(body)); w.Code != 200 || !strings.Contains(w.Body.String(), "out of use until a page that uses it chooses it") {
 		t.Fatalf("save: %d %s", w.Code, w.Body.String())
 	}
 	conn, _ = GetConnector(RootDB, "sd")

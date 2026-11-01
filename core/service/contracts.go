@@ -5,12 +5,14 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"html"
 	"image"
 	"image/color"
 	_ "image/gif"
 	_ "image/jpeg"
 	"image/png"
 	"math"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -65,6 +67,10 @@ type Contract struct {
 	units func(in map[string]any, r Result) float64
 	// TestAudio names file inputs that take a short sample of sound.
 	TestAudio []string
+	// tidy, when set, settles an answer before its check: what every
+	// provider of the capability needs done the same way (a search's
+	// relative links made whole), given the service's address.
+	tidy func(r Result, base string) Result
 	// testCheck is a check only a contract test makes, beyond Check: what a
 	// sample call must give that a real one need not (a search for a common
 	// phrase finds something; a real search may find nothing).
@@ -382,6 +388,7 @@ func init() {
 		Units:   []string{"search"},
 		Test:    map[string]any{"query": "open source software", "count": 3},
 		Check:   checkResults("results"),
+		tidy:    tidyResults,
 		testCheck: func(r Result) error {
 			if rs, _ := SearchResults(r); len(rs) == 0 {
 				return fmt.Errorf("a search for a common phrase found nothing: check where the results are read from")
@@ -517,6 +524,90 @@ func checkResults(output string) func(Result) error {
 		}
 		return nil
 	}
+}
+
+// tidyResults settles a search's results as every engine's are: tags out of
+// titles and snippets (an engine marks the words it matched), a link given
+// relative to the service, or as a bare DOI, made whole, and a result with
+// neither title nor link left out. A result with no link is left out too
+// when others have one, since the spec reads the right field and that
+// result has none to give; when none has one, the check says the spec reads
+// the wrong field.
+func tidyResults(r Result, base string) Result {
+	rs, err := SearchResults(r)
+	if err != nil || len(rs) == 0 {
+		return r
+	}
+	origin := ""
+	if u, err := url.Parse(strings.TrimSpace(base)); err == nil && u.Host != "" {
+		origin = u.Scheme + "://" + u.Host
+	}
+	out := make([]SearchResult, 0, len(rs))
+	linked := 0
+	for _, x := range rs {
+		x.Title, x.Snippet = plainText(x.Title), plainText(x.Snippet)
+		x.URL = wholeLink(strings.TrimSpace(x.URL), origin)
+		if x.Title == "" && x.URL == "" {
+			continue
+		}
+		if x.Title == "" {
+			x.Title = x.URL
+		}
+		if webLink(x.URL) {
+			linked++
+		}
+		out = append(out, x)
+	}
+	if linked > 0 {
+		kept := out[:0]
+		for _, x := range out {
+			if webLink(x.URL) {
+				kept = append(kept, x)
+			}
+		}
+		out = kept
+	}
+	b, _ := json.Marshal(out)
+	r["results"] = Value{Text: string(b)}
+	return r
+}
+
+// wholeLink is a result's link made whole: a bare DOI at doi.org, a path
+// on the service's own origin.
+func wholeLink(link, origin string) string {
+	switch {
+	case link == "" || webLink(link):
+		return link
+	case strings.HasPrefix(link, "10.") && strings.Contains(link, "/"):
+		return "https://doi.org/" + link
+	case strings.HasPrefix(link, "//"):
+		return "https:" + link
+	case strings.HasPrefix(link, "/") && origin != "":
+		return origin + link
+	}
+	return link
+}
+
+func webLink(s string) bool {
+	return strings.HasPrefix(s, "https://") || strings.HasPrefix(s, "http://")
+}
+
+// plainText is s without HTML tags or entities, its spaces folded.
+func plainText(s string) string {
+	var b strings.Builder
+	in := false
+	for _, r := range s {
+		switch {
+		case r == '<':
+			in = true
+		case r == '>' && in:
+			in = false
+			b.WriteByte(' ')
+		case !in:
+			b.WriteRune(r)
+		}
+	}
+	return strings.Join(strings.Fields(html.UnescapeString(b.String())), " ")
 }
 
 // checkImageResults passes a list of pictures each with a web address: one

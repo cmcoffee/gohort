@@ -54,6 +54,9 @@ func (s Spec) run(ctx context.Context, sess *ToolSession, capability string, inp
 			vars[k] = v
 		}
 	}
+	if q, ok := vars["query"].(string); ok && b.Plain {
+		vars["query"] = withoutSiteFilters(q)
+	}
 	for _, in := range c.Inputs {
 		if in.Required && (vars[in.Name] == nil || vars[in.Name] == "") {
 			return out, fmt.Errorf("%s needs %s", c.Name, in.Name)
@@ -88,6 +91,9 @@ func (s Spec) run(ctx context.Context, sess *ToolSession, capability string, inp
 			return out, fmt.Errorf("output %s: %w", name, err)
 		}
 		res[name] = v
+	}
+	if c.tidy != nil {
+		res = c.tidy(res, s.Provider.BaseURL)
 	}
 	// Priced before the check: the provider did the work and billed for it
 	// even when what came back fails the check.
@@ -301,4 +307,16 @@ func (b Binding) estimate() (float64, bool) {
 		return 0, false
 	}
 	return b.Cost.PerCall + b.Cost.PerUnit, true
+}
+
+// withoutSiteFilters is a query with its site: filters taken out, for an
+// engine that reads them as words: an API searching its own collection.
+func withoutSiteFilters(q string) string {
+	var kept []string
+	for _, w := range strings.Fields(q) {
+		if !strings.HasPrefix(strings.ToLower(w), "site:") {
+			kept = append(kept, w)
+		}
+	}
+	return strings.Join(kept, " ")
 }

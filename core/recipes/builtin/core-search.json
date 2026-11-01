@@ -1,0 +1,83 @@
+{
+  "id": "core-search",
+  "title": "CORE (research)",
+  "description": "Open-access academic papers from CORE as a research source, declared as a service.",
+  "category": "Research Sources",
+  "setup_notes": "The credential lands disabled: enable it under API Credentials. Get a free API key at core.ac.uk/services/api. Run Test on its row under Admin > Extensions > Connectors, which makes one real search for a common phrase. Then add it under Admin > Extensions > Research Sources, which puts it to use: research asks it on the topics set there (suggested: scientific, medical, technology, environmental), and a tool name there offers it to agents through query_source. Or pick it under Admin > Capabilities > Web Search as the engine.",
+  "questions": [
+    {
+      "name": "api_key",
+      "label": "CORE API key",
+      "help": "Stored in the credential's secret store, never in the connector.",
+      "required": true,
+      "secret": true,
+      "credential": "core_search"
+    },
+    {
+      "name": "name",
+      "label": "Connector name",
+      "help": "Lowercase letters, digits, dashes and underscores; research and Web Search list it by this name.",
+      "default": "core-search"
+    }
+  ],
+  "bundle": {
+    "bundle": "gohort.bundle/v1",
+    "artifacts": [
+      {
+        "type": "credential",
+        "name": "core_search",
+        "recipe": {
+          "name": "core_search",
+          "type": "bearer",
+          "base_url": "https://api.core.ac.uk",
+          "description": "CORE (research), for research."
+        }
+      },
+      {
+        "type": "connector",
+        "name": "{{name}}",
+        "recipe": {
+          "name": "{{name}}",
+          "kind": "service",
+          "template": "core-search",
+          "desc": "CORE (research)",
+          "spec": {
+            "provider": {
+              "transport": "http",
+              "base_url": "https://api.core.ac.uk",
+              "auth": {
+                "credential": "core_search"
+              },
+              "operations": {
+                "search": {
+                  "path": "/v3/search/works?q={query}"
+                }
+              }
+            },
+            "provides": [
+              {
+                "capability": "web.search",
+                "plain": true,
+                "steps": [
+                  {
+                    "call": "search"
+                  }
+                ],
+                "output": {
+                  "results": {
+                    "path": "results",
+                    "fields": {
+                      "title": "title",
+                      "url": "downloadUrl",
+                      "snippet": "abstract"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}
