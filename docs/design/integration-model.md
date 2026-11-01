@@ -120,8 +120,28 @@ second programming language:
 - **one provider needs it:** write a builtin in Go;
 - **several providers share the shape:** extend the engine.
 
-**In use** has one meaning: a page or an agent names the connector. Approve
-and Unapprove go away for connectors.
+**References, not "in use"** (decided 2026-11-01). A connector has no on/off
+state. What it has are references: the pages that name it (Web Search, Image
+Generation and its list offered to agents, Research Sources, a flow's step,
+...), each named as the list it is in. References do two things:
+
+- **guard deletion:** a referenced connector cannot be deleted, and says what
+  references it, so the reference is changed first;
+- **show what depends on it:** its row reads "Referenced by Web Search,
+  Research Sources", or "Not referenced", muted.
+
+The call gate goes: today a connector no page names cannot be called, but a
+call only ever reaches a connector through something referencing it, so the
+gate adds little. With it go Approve and Unapprove, the `Approved` meaning for
+connectors, the Settle machinery that sets it, and the in use badge. Before
+the gate is removed, every path that calls a connector by name is checked
+(the Builder's own test action, flows, agents' tools): each counts as a
+reference or goes through the admin's Test preview, and one that does neither
+is a gap to close.
+
+**The Changed hold stays.** An edit the Builder or a non-admin makes waits
+until an admin accepts it, by saving a page that references the connector.
+That is a gate on edits, not on references, and its marker stays on the row.
 
 **One editor per connector:**
 
@@ -353,7 +373,8 @@ No startup migration is added, and the six that exist are deleted.
   Gemini, ComfyUI as a builtin), mail, transcription, speech, embeddings,
   conversions, message sends.
 - Templates as data, contracts, Fix and Test without a rebuild.
-- "In use" as a page or an agent naming it (tie-ins).
+- Tie-ins, as references: which pages name a connector (see References, not
+  "in use").
 - The key rules: address-bound keys, per-user and per-agent scope, the
   saved-key line, the self-check (including other kinds).
 - Settings travelling with exports; display names.
@@ -493,9 +514,11 @@ once:
 4. Provided connections, the legacy reads, the migrations, the dry run and
    `core/bbolt` taken out.
 5. A1111 and peers' renderers as connectors; `rest_image` deleted.
-6. The Connectors page shows connectors: one editor per row, Approve gone for
-   connectors, the other kinds listed on their own pages; the Contracts page
-   goes, its text shown in the connector editor.
+6. The Connectors page shows connectors: one editor per row, each reading
+   what references it; the in-use gate, Approve and the Settle machinery go
+   for connectors, after the call paths are checked; the Changed hold stays;
+   the other kinds are listed on their own pages; the Contracts page goes, its
+   text shown in the connector editor.
 7. The cleanup button.
 8. The embeddings check against a copy of the live database, the security
    acceptance tests, and the private repo's branch.
@@ -518,9 +541,9 @@ once:
 
 ## Decisions (2026-11-01)
 
-1. **Approve is dropped for connectors.** A connector is in use while a page
-   or an agent names it. A non-admin's or Builder's draft is held as Changed
-   until an admin saves a page naming it, so the gate moves to the page.
+1. **Approve is dropped for connectors.** A non-admin's or Builder's draft is
+   held as Changed until an admin saves a page naming it, so the gate moves to
+   the page (see decision 7 for what replaces "in use").
 2. **Trust: not drawn from internal versus external.** DLP as a whole is
    revisited after everything else, and Q2 with it.
 3. (Q4) **Webhooks' first version feeds watches and flows.** Messaging's push
@@ -533,6 +556,9 @@ once:
    another name.
 6. (Q7) **Pages store plain names.** Built-in names are reserved, and
    `peer:<name>` stays.
+7. **References replace "in use".** A connector has no on/off state: its
+   references guard its deletion and show on its row. The call gate goes once
+   every call path is checked; the Changed hold on edits stays.
 
 ## Still open
 
