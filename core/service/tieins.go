@@ -145,6 +145,51 @@ func TieIns(db Database) map[string][]string {
 	return out
 }
 
+// AgentConnections are the connections an agent's tools reach, by name:
+// the image connectors (the one Image Generation uses and those offered to
+// agents), the music connectors offered to agents, the Research Sources
+// offered through query_source, and those a flow's steps call. An agent's
+// credential scope and a connection's Access decide who reaches these; a
+// connection a page has serve the whole instance is not among them.
+func AgentConnections(db Database) []string {
+	if db == nil {
+		return nil
+	}
+	var names []string
+	var s string
+	db.Get(ImageTable, "provider", &s)
+	names = append(names, strings.TrimSpace(s))
+	for _, table := range []string{ImageTable, MusicTable} {
+		var agents []string
+		db.Get(table, "agents", &agents)
+		names = append(names, agents...)
+	}
+	for _, rs := range ListResearchSources(db) {
+		if !rs.Off && strings.TrimSpace(rs.ToolName) != "" {
+			names = append(names, rs.Connector)
+		}
+	}
+	for _, f := range flowsIn(db) {
+		for _, st := range f.Steps {
+			names = append(names, st.Connector)
+		}
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, n := range names {
+		n = strings.TrimSpace(n)
+		if n == "" || seen[n] {
+			continue
+		}
+		seen[n] = true
+		if c, ok := GetConnector(db, n); ok && c.Kind == Kind {
+			out = append(out, n)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // flowsIn are the saved flows in db.
 func flowsIn(db Database) []Flow {
 	var out []Flow

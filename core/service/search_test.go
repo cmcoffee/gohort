@@ -55,18 +55,33 @@ func TestAResearchSourceIsAskedOnItsTopicsAndByAgents(t *testing.T) {
 		t.Errorf("research's query: %q %v", out, err)
 	}
 
-	qs, ok := QuerySourceToolDef(RootDB)
+	qs, ok := QuerySourceToolDef(RootDB, nil)
 	if !ok || len(qs.Tool.Parameters["source"].Enum) != 1 || qs.Tool.Parameters["source"].Enum[0] != "caselaw" {
 		t.Fatalf("query_source: %+v %v", qs.Tool.Parameters["source"], ok)
 	}
 	if out, err := qs.Handler(context.Background(), map[string]any{"source": "caselaw_search", "query": "negligence"}); err != nil || !strings.Contains(out, "Smith v. Jones") || !strings.Contains(out, "[Grounding:") {
 		t.Errorf("query_source's search: %q %v", out, err)
 	}
-	if !strings.Contains(RenderAvailableSourcesBlock(RootDB), "**caselaw** Search court opinions.") {
-		t.Errorf("Available sources: %s", RenderAvailableSourcesBlock(RootDB))
+	if !strings.Contains(RenderAvailableSourcesBlock(RootDB, nil), "**caselaw** Search court opinions.") {
+		t.Errorf("Available sources: %s", RenderAvailableSourcesBlock(RootDB, nil))
 	}
 	if def, ok := SourceHookToolDefByName("caselaw_search"); !ok || def.Tool.Description != "Search court opinions." {
 		t.Errorf("a skill's grant: %+v %v", def.Tool, ok)
+	}
+	// An agent switched off the connection neither sees the source nor
+	// reaches it, through query_source or a skill's grant of it.
+	off := &ToolSession{Username: "u", DeniedCredentials: map[string]bool{"connection:caselaw": true}}
+	if _, ok := QuerySourceToolDef(RootDB, off); ok || strings.Contains(RenderAvailableSourcesBlock(RootDB, off), "caselaw") {
+		t.Error("a barred agent is offered the source")
+	}
+	ctx := off.ContextWithSession(context.Background())
+	if _, err := qs.Handler(ctx, map[string]any{"source": "caselaw", "query": "negligence"}); err == nil {
+		t.Error("query_source served a barred agent")
+	}
+	if def, ok := SourceHookToolDefByName("caselaw_search"); !ok {
+		t.Error("the skill's grant is gone")
+	} else if _, err := def.Handler(ctx, map[string]any{"query": "negligence"}); err == nil {
+		t.Error("a skill's grant of the source served a barred agent")
 	}
 
 	// The Web Search engine is asked as web_search only.
@@ -87,7 +102,7 @@ func TestAResearchSourceIsAskedOnItsTopicsAndByAgents(t *testing.T) {
 	rs, _ := GetResearchSource(RootDB, "caselaw")
 	rs.Off = true
 	SaveResearchSource(RootDB, rs)
-	if _, ok := QuerySourceToolDef(RootDB); ok || len(sourcehooks.HooksForTopic([]string{"legal"})) != 0 {
+	if _, ok := QuerySourceToolDef(RootDB, nil); ok || len(sourcehooks.HooksForTopic([]string{"legal"})) != 0 {
 		t.Error("an off source is still asked")
 	}
 	rs.Off = false

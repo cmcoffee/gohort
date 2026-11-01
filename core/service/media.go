@@ -404,9 +404,10 @@ func (t *musicTool) offered() bool {
 	return false
 }
 
-// SchemaWithSession offers the tool only while the Music page does.
-func (t *musicTool) SchemaWithSession(*ToolSession) (string, map[string]ToolParam) {
-	if !t.offered() {
+// SchemaWithSession offers the tool only while the Music page does, to an
+// agent that may reach its connection.
+func (t *musicTool) SchemaWithSession(sess *ToolSession) (string, map[string]ToolParam) {
+	if !t.offered() || sess.ConnectionBarred(t.connector) != nil {
 		return "", nil
 	}
 	return t.Desc(), t.Params()

@@ -243,3 +243,36 @@ func TestAModelConnectorIsReadOnlyUnderPreview(t *testing.T) {
 		t.Error("read after every preview ended")
 	}
 }
+
+// The connections an agent's tools reach: the image connectors, the music
+// ones offered to agents, a Research Source offered through query_source and
+// what a flow's steps call. Not one a page has serve the whole instance, nor
+// a source research asks without offering it to agents.
+func TestAgentConnectionsAreWhatAgentsToolsReach(t *testing.T) {
+	world(t)
+	for _, n := range []string{"pics", "more-pics", "tunes", "chat", "voice", "ears"} {
+		install(t, n, embedSpec("m"))
+	}
+	search := map[string]any{
+		"provider": map[string]any{"transport": "http", "base_url": "https://law.example", "auth": map[string]any{"none": true},
+			"operations": map[string]any{"find": map[string]any{"url": "/find?q={query}"}}},
+		"provides": []any{map[string]any{"capability": "web.search", "steps": []any{map[string]any{"call": "find"}},
+			"output": map[string]any{"results": map[string]any{"path": "hits", "fields": map[string]any{"title": "name", "url": "href"}}}}},
+	}
+	install(t, "law", search)
+	install(t, "quiet-law", search)
+	RootDB.Set(ImageTable, "provider", "pics")
+	RootDB.Set(ImageTable, "agents", []string{"more-pics"})
+	RootDB.Set(MusicTable, "agents", []string{"tunes", "gone"})
+	RootDB.Set(LLMTable, "provider", "llm:chat")
+	RootDB.Set(FlowTable, "f", Flow{Name: "f", Steps: []FlowStep{{Connector: "voice"}, {Connector: "ears"}}})
+	for _, rs := range []ResearchSource{{Connector: "law", Always: true, ToolName: "law_search", ToolDescription: "Law."}, {Connector: "quiet-law", Always: true}} {
+		if err := SaveResearchSource(RootDB, rs); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := strings.Join(AgentConnections(RootDB), ",")
+	if got != "ears,law,more-pics,pics,tunes,voice" {
+		t.Errorf("agent connections: %s", got)
+	}
+}

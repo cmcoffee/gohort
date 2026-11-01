@@ -2502,7 +2502,10 @@ func (s *SecureAPI) internalReachRefusal(c SecureCredential) error {
 // reaches only open credentials. A credential synthesized in-process for one
 // call (inlineSecret: a media upload's configured key) has no record to ask.
 func (s *SecureAPI) callerMayDispatch(c SecureCredential, sess *ToolSession) error {
-	if c.inlineSecret != "" || c.connection != "" {
+	if c.connection != "" {
+		return sess.ConnectionBarred(c.connection)
+	}
+	if c.inlineSecret != "" {
 		return nil
 	}
 	user := sessUsername(sess)

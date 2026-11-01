@@ -40,10 +40,17 @@ func (t *flowTool) Params() map[string]ToolParam {
 	return flowParams(f)
 }
 
-func (t *flowTool) SchemaWithSession(*ToolSession) (string, map[string]ToolParam) {
+// SchemaWithSession offers the flow while it is saved, to an agent that may
+// reach every connection its steps call.
+func (t *flowTool) SchemaWithSession(sess *ToolSession) (string, map[string]ToolParam) {
 	f, ok := liveFlow(t.flow)
 	if !ok {
 		return "", nil
+	}
+	for _, st := range f.Steps {
+		if sess.ConnectionBarred(st.Connector) != nil {
+			return "", nil
+		}
 	}
 	return flowDesc(f), flowParams(f)
 }

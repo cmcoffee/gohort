@@ -101,4 +101,4 @@ root DELETE /api/connectors ""
 root DELETE /api/connectors?name=ct-art ""
   204 
 root GET /api/connectors ""
-  200 [{"name":"ct-find","title":"ct-find","kind":"service","summary":"Web search ⇐ find ⇐ find.example.test (no key)","owner":"","approved":false,"last_error":"","is_image":false,"configurable":false,"… (796 bytes, sha1 a823a06a5725217a04406ebb7343b38d78c1802f)
+  200 [{"name":"ct-find","title":"ct-find","kind":"service","summary":"Web search ⇐ find ⇐ find.example.test (no key)","owner":"","approved":false,"last_error":"","is_image":false,"configurable":false,"… (814 bytes, sha1 53ad95b975a19147279b043c4c2e6dab542ee5f4)

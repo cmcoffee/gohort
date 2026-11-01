@@ -1365,9 +1365,9 @@ func reachableImageBackends(sess *ToolSession) []ImageBackendChoice {
 			continue
 		}
 		// Another kind's image backend (a service, core/service) is offered
-		// by name, unless it spends a credential this session was denied.
+		// by name, unless this session's agent or user is barred from it.
 		if c.Kind != RestImageConnectorKind {
-			if sess != nil && connectorSpends(c, sess.DeniedCredentials) {
+			if sess.ConnectionBarred(c.Name) != nil {
 				continue
 			}
 			choice := ImageBackendChoice{Name: c.Name, Default: c.Name == defaultProvider, Edits: edits}

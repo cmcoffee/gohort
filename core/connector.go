@@ -29,6 +29,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -93,31 +94,6 @@ type ConnectorAutoApprover interface {
 	AutoApprove() bool
 }
 
-// ConnectorCredentialUser is an optional ConnectorHandler capability: the
-// credentials a connector spends. A session denied one of them is not offered
-// what spends it (an image backend among an agent's choices).
-type ConnectorCredentialUser interface {
-	Credentials(c Connector) []string
-}
-
-// connectorSpends reports whether c spends a credential the session was
-// denied. A kind that does not say spends none.
-func connectorSpends(c Connector, denied map[string]bool) bool {
-	h, ok := ConnectorHandlerFor(c.Kind)
-	if !ok || len(denied) == 0 {
-		return false
-	}
-	u, ok := h.(ConnectorCredentialUser)
-	if !ok {
-		return false
-	}
-	for _, cred := range u.Credentials(c) {
-		if denied[strings.TrimSpace(cred)] {
-			return true
-		}
-	}
-	return false
-}
 
 // connectorAutoApproves reports whether a kind materializes on create.
 func connectorAutoApproves(h ConnectorHandler) bool {
@@ -532,7 +508,73 @@ func ConnectorsUsingCredential(db Database, cred string) []string {
 const (
 	connectionConfigTable = "config"
 	connectionSecretTable = "secret"
+	connectionAccessTable = "access"
 )
+
+// connectionScopeName is how an agent's credential scope names connection
+// name: the name its secret goes by when a call is made through it, so an
+// agent switched off it is refused at the call as well as in its tools.
+func connectionScopeName(name string) string { return "connection:" + strings.TrimSpace(name) }
+
+// Access is who may reach connection c through an agent's tools (an image
+// or music connector offered to agents, a Research Source, a flow): empty is
+// everyone. A page that has it serve the whole instance (an LLM tier, Web
+// Search, Embeddings) serves every user whatever it says.
+func (c Connector) Access(db Database) []string {
+	sp := connectionSpace(db, c)
+	if sp == nil {
+		return nil
+	}
+	var users []string
+	sp.Get(connectionAccessTable, "users", &users)
+	return users
+}
+
+// SetAccess limits who may reach connection c through an agent's tools to
+// users; none is everyone.
+func (c Connector) SetAccess(db Database, users []string) error {
+	sp := connectionSpace(db, c)
+	if sp == nil {
+		return fmt.Errorf("%s is not a connection: it has no space to keep who may reach it", c.Name)
+	}
+	var keep []string
+	seen := map[string]bool{}
+	for _, u := range users {
+		if u = strings.TrimSpace(u); u != "" && !seen[u] {
+			seen[u] = true
+			keep = append(keep, u)
+		}
+	}
+	if len(keep) == 0 {
+		sp.Unset(connectionAccessTable, "users")
+		return nil
+	}
+	sort.Strings(keep)
+	sp.Set(connectionAccessTable, "users", keep)
+	return nil
+}
+
+// ConnectionBarred says why the agent running in s may not reach the
+// connection named name through its tools, or nil: the agent has it switched
+// off (its credential scope), or the connection is limited to users s's
+// user is not one of. A session with no user is not one of them. No session
+// at all is a capability the instance chose for everyone, and is not barred.
+func (s *ToolSession) ConnectionBarred(name string) error {
+	if s == nil {
+		return nil
+	}
+	c, ok := GetConnector(RootDB, strings.TrimSpace(name))
+	if !ok {
+		return nil
+	}
+	if s.CredentialDenied(connectionScopeName(c.Name)) {
+		return fmt.Errorf("the connection %s is switched off for this agent (its credential scope on the agent editor)", c.Title())
+	}
+	if users := c.Access(RootDB); len(users) > 0 && !slices.Contains(users, strings.TrimSpace(s.Username)) {
+		return fmt.Errorf("the connection %s is limited to named users, and this run's user is not one of them: an admin grants it under Access on its row in Admin > Extensions > Connectors", c.Title())
+	}
+	return nil
+}
 
 // newConnectionID is a fresh connection id.
 func newConnectionID() string {
@@ -637,7 +679,7 @@ func ConnectionCredential(name, send, secret, profile string, addresses []string
 	if len(addresses) == 0 {
 		return SecureCredential{}, fmt.Errorf("the connection %s's secret was given for no address", name)
 	}
-	c := SecureCredential{Name: "connection:" + name, BaseURL: addresses[0], connection: name,
+	c := SecureCredential{Name: connectionScopeName(name), BaseURL: addresses[0], connection: name,
 		Description: "The secret connection " + name + " keeps, for one call."}
 	for _, a := range addresses[1:] {
 		if u, err := url.Parse(a); err == nil && u.Host != "" {

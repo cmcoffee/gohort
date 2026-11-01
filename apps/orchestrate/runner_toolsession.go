@@ -474,6 +474,13 @@ func (t *chatTurn) onMessaging() bool {
 	return t.dispatchSess.Unattended()
 }
 
+// scopeSession carries only this turn's credential scope (who it runs as,
+// what its agent has switched off), for a list written before the turn's
+// own session exists: the prompt's Available sources.
+func (t *chatTurn) scopeSession() *ToolSession {
+	return &ToolSession{Username: t.user, DeniedCredentials: credentialDenySet(t.agent, t.user)}
+}
+
 func (t *chatTurn) newToolSession() *ToolSession {
 	sess := &ToolSession{
 		LLM:      t.app.LLM,
@@ -1080,7 +1087,7 @@ func (t *chatTurn) dynamicNewTempTools(sess *ToolSession) func() []AgentToolDef 
 		// admin add/remove/toggle takes effect without a restart; cheap
 		// (reads the in-memory sourceHookRegistry). Skills still grant a
 		// SPECIFIC hook as a focused per-hook tool via the skill path.
-		if qs, ok := QuerySourceToolDef(t.app.DB); ok {
+		if qs, ok := QuerySourceToolDef(t.app.DB, sess); ok {
 			out = append(out, qs)
 		}
 		// (No skill-granted tools here anymore. Experts run as dispatched

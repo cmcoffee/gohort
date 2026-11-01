@@ -151,6 +151,14 @@ func TestAMusicServiceIsATool(t *testing.T) {
 	if _, params := tool.(DynamicChatTool).SchemaWithSession(nil); params == nil {
 		t.Error("a music connector the Music page offers is not")
 	}
+	// Not to an agent switched off it, which cannot call it either.
+	off := &ToolSession{Username: "u", WorkspaceDir: t.TempDir(), DeniedCredentials: map[string]bool{"connection:tunes": true}}
+	if _, params := tool.(DynamicChatTool).SchemaWithSession(off); params != nil {
+		t.Error("an agent with the music connection switched off is offered it")
+	}
+	if _, err := tool.(SessionChatTool).RunWithSession(map[string]any{"prompt": "a calm song", "title": "x", "lyrics": "la"}, off); err == nil || got != "" {
+		t.Errorf("a barred agent's song: %v, sent %q", err, got)
+	}
 	ws := t.TempDir()
 	sess := &ToolSession{WorkspaceDir: ws}
 	out, err := tool.(SessionChatTool).RunWithSession(map[string]any{"prompt": "a calm song", "title": "Money in the Cloud", "lyrics": "la la"}, sess)

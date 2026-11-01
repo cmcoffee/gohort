@@ -240,3 +240,44 @@ func TestAPageShowsTheProvidedConnectionInPlaceOfAnOutdatedOne(t *testing.T) {
 		t.Errorf("the choices: %v", labels)
 	}
 }
+
+// A connection's row offers Access, which reads and keeps who may reach it
+// through agents' tools; none is everyone.
+func TestAConnectionsAccessIsSetOnItsRow(t *testing.T) {
+	srv, _ := settingsWorld(t)
+	vecConnector(t, srv.URL)
+	a := &AdminApp{db: RootDB}
+	out, _ := a.handleConnectors(&jsonapi.Call{R: httptest.NewRequest("GET", "/api/connectors", nil)})
+	b, _ := json.Marshal(out)
+	if !strings.Contains(string(b), `"has_access":true`) {
+		t.Errorf("the row offers no Access: %s", b)
+	}
+	call := func(method string) *jsonapi.Call {
+		return &jsonapi.Call{R: httptest.NewRequest(method, "/api/connectors/access?name=vec", nil)}
+	}
+	read := func() string {
+		got, err := a.handleConnectionAccess(call("GET"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		j, _ := json.Marshal(got)
+		return string(j)
+	}
+	if got := read(); got != `{"allowed_users":[],"name":"vec"}` {
+		t.Errorf("open: %s", got)
+	}
+	if _, err := a.handleConnectionAccessSave(call("POST"), struct {
+		AllowedUsers []string `json:"allowed_users"`
+	}{AllowedUsers: []string{"bob", " alice "}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(); got != `{"allowed_users":["alice","bob"],"name":"vec"}` {
+		t.Errorf("limited: %s", got)
+	}
+	if (&ToolSession{Username: "carol"}).ConnectionBarred("vec") == nil {
+		t.Error("carol reaches a connection limited to alice and bob")
+	}
+	if _, err := a.handleConnectionAccess(&jsonapi.Call{R: httptest.NewRequest("GET", "/api/connectors/access?name=nope", nil)}); err == nil {
+		t.Error("access read for no connector")
+	}
+}

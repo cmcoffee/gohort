@@ -239,6 +239,12 @@ func Call(ctx context.Context, sess *ToolSession, name, capability string, input
 	if !ok || c.Kind != Kind {
 		return nil, fmt.Errorf("no service connector named %q", name)
 	}
+	// An agent's tool reaching it, keyed or not: its scope and the users the
+	// connection is limited to decide. A call with no session is a capability
+	// the instance chose for everyone.
+	if err := sess.ConnectionBarred(name); err != nil {
+		return nil, err
+	}
 	if !callable(ctx, c) {
 		return nil, fmt.Errorf("service %q is not in use: an admin puts it to use by choosing it on the page that uses it (Web Search, Image Generation, Research Sources, a flow, ...)", name)
 	}

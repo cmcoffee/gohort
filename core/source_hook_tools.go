@@ -124,6 +124,9 @@ func sourceHookToAgentToolDef(h SourceHook) (AgentToolDef, bool) {
 			if query == "" {
 				return "", fmt.Errorf("query is required")
 			}
+			if err := sourceBarred(ctx, captured); err != nil {
+				return "", err
+			}
 			result, err := QuerySourceHook(captured, query)
 			if err != nil {
 				return "", fmt.Errorf("source %q failed: %w", captured.Name, err)
@@ -161,23 +164,34 @@ func sourceHookToAgentToolDef(h SourceHook) (AgentToolDef, bool) {
 // and is intentionally unaffected by this collapse.
 
 // exposedQueryableHooks returns the sources eligible for the query_source
-// dispatcher + catalog block: search connectors whose spec offers a tool.
-func exposedQueryableHooks() []SourceHook {
+// dispatcher + catalog block: search connectors whose spec offers a tool,
+// and that sess's agent and user may reach.
+func exposedQueryableHooks(sess *ToolSession) []SourceHook {
 	var out []SourceHook
 	for _, h := range sourcehooks.Sources() {
-		if h.ExposeToLLM {
+		if h.ExposeToLLM && (h.Connector == "" || sess.ConnectionBarred(h.Connector) == nil) {
 			out = append(out, h)
 		}
 	}
 	return out
 }
 
+// sourceBarred is why the run calling a source's tool may not reach the
+// connection the source stands for, or nil: re-checked at the call, since a
+// skill grants a source as a tool of its own outside the list above.
+func sourceBarred(ctx context.Context, h SourceHook) error {
+	if h.Connector == "" {
+		return nil
+	}
+	return ToolSessionFromContext(ctx).ConnectionBarred(h.Connector)
+}
+
 // QuerySourceToolDef builds the single query_source dispatcher over all
 // exposed source hooks. Returns ok=false when none are exposed (caller
 // skips it). `source` is constrained to an enum of the available source
 // names; RenderAvailableSourcesBlock supplies the "use when" detail.
-func QuerySourceToolDef(db Database) (AgentToolDef, bool) {
-	hooks := exposedQueryableHooks()
+func QuerySourceToolDef(db Database, sess *ToolSession) (AgentToolDef, bool) {
+	hooks := exposedQueryableHooks(sess)
 	if len(hooks) == 0 {
 		return AgentToolDef{}, false
 	}
@@ -220,6 +234,9 @@ func QuerySourceToolDef(db Database) (AgentToolDef, bool) {
 			if !ok {
 				return fmt.Sprintf("Unknown source %q. Available: %s.", source, strings.Join(names, ", ")), nil
 			}
+			if err := sourceBarred(ctx, h); err != nil {
+				return "", err
+			}
 			result, err := QuerySourceHook(h, query)
 			if err != nil {
 				return "", fmt.Errorf("source %q failed: %w", h.Name, err)
@@ -240,8 +257,8 @@ func QuerySourceToolDef(db Database) (AgentToolDef, bool) {
 // system-prompt catalog (name — "use when…"), mirroring the available-
 // agents block. It's the menu the model reads to pick a `source` for
 // query_source. Empty when no hooks are exposed.
-func RenderAvailableSourcesBlock(db Database) string {
-	hooks := exposedQueryableHooks()
+func RenderAvailableSourcesBlock(db Database, sess *ToolSession) string {
+	hooks := exposedQueryableHooks(sess)
 	if len(hooks) == 0 {
 		return ""
 	}

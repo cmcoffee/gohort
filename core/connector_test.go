@@ -159,3 +159,51 @@ func (noProbeHandler) Validate(Connector) error    { return nil }
 func (noProbeHandler) Materialize(Connector) error { return nil }
 func (noProbeHandler) Teardown(Connector) error    { return nil }
 func (noProbeHandler) Summary(Connector) string    { return "" }
+
+// A connection reached through an agent's tools is barred to an agent with
+// it switched off, and to a user not among those it is limited to; a call
+// with no session is the instance's own and is not. The keyed-call check
+// answers the same.
+func TestAConnectionBarsAnAgentOrAUser(t *testing.T) {
+	saved := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	defer func() { RootDB = saved }()
+	RootDB.Set(connectorsTable, "pics", Connector{Name: "pics", Kind: "service", ID: "c_pics", DisplayName: "Pictures"})
+	c, _ := GetConnector(RootDB, "pics")
+	alice, bob, nobody := &ToolSession{Username: "alice"}, &ToolSession{Username: "bob"}, &ToolSession{}
+	var none *ToolSession
+	key := SecureCredential{Name: connectionScopeName("pics"), connection: "pics"}
+	check := func(who string, s *ToolSession, barred bool) {
+		t.Helper()
+		if err := s.ConnectionBarred("pics"); (err != nil) != barred {
+			t.Errorf("%s: barred=%v, want %v (%v)", who, err != nil, barred, err)
+		}
+		if err := (&SecureAPI{}).callerMayDispatch(key, s); (err != nil) != barred {
+			t.Errorf("%s at the call: barred=%v, want %v (%v)", who, err != nil, barred, err)
+		}
+	}
+	check("alice, open to all", alice, false)
+	if err := c.SetAccess(RootDB, []string{" bob ", "bob", ""}); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Access(RootDB); len(got) != 1 || got[0] != "bob" {
+		t.Errorf("access kept: %v", got)
+	}
+	check("alice, not listed", alice, true)
+	check("bob, listed", bob, false)
+	check("a run with no user", nobody, true)
+	check("no session (the instance's own call)", none, false)
+	bob.DeniedCredentials = map[string]bool{"connection:pics": true}
+	check("bob, switched off for his agent", bob, true)
+	if err := bob.ConnectionBarred("pics"); err == nil || !strings.Contains(err.Error(), "Pictures") {
+		t.Errorf("the refusal names it as shown: %v", err)
+	}
+	c.SetAccess(RootDB, nil)
+	check("alice, open again", alice, false)
+	if (&ToolSession{Username: "x"}).ConnectionBarred("no-such") != nil {
+		t.Error("a name that is no connection is barred")
+	}
+	if err := (Connector{Name: "old"}).SetAccess(RootDB, []string{"bob"}); err == nil {
+		t.Error("access kept for a connector with no space")
+	}
+}

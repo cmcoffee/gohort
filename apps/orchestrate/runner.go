@@ -415,7 +415,7 @@ func (pr *planRun) assemblePrompt() {
 	// dispatcher + this menu instead of N per-hook tools (the agents
 	// pattern). No-op when no hooks are exposed.
 	if t.app != nil {
-		pr.sys += RenderAvailableSourcesBlock(t.app.DB)
+		pr.sys += RenderAvailableSourcesBlock(t.app.DB, t.scopeSession())
 	}
 	// Builder-only: list the user's existing persistent custom tools
 	// as READ-ONLY awareness. They're hidden from Builder's executable

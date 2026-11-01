@@ -68,3 +68,41 @@ func TestUserScopableCredentials(t *testing.T) {
 		t.Fatal("bob must not see alice's own credential")
 	}
 }
+
+// A connection an agent's tools reach is a per-agent scope target under the
+// name its key goes by at a call, for a user it is not limited away from;
+// an agent's opt-out of it is carried into the run's deny set.
+func TestAgentReachableConnectionsAreScopable(t *testing.T) {
+	secStore := &DBase{Store: kvlite.MemStore()}
+	prevAuth, prevRoot := AuthDB, RootDB
+	AuthDB = func() Database { return secStore }
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	defer func() { AuthDB, RootDB = prevAuth, prevRoot }()
+	RootDB.Set("connectors", "pics", Connector{Name: "pics", Kind: "service", ID: "c_pics", DisplayName: "Pictures"})
+	RootDB.Set("connectors", "chat", Connector{Name: "chat", Kind: "service", ID: "c_chat"})
+	RootDB.Set(ImageTable, "agents", []string{"pics"})
+	RootDB.Set(LLMTable, "provider", "llm:chat")
+
+	has := func(user, name string) bool {
+		for _, c := range userScopableCredentials(user) {
+			if c.Name == name {
+				return true
+			}
+		}
+		return false
+	}
+	if !has("alice", "connection:pics") {
+		t.Fatal("an image connection offered to agents is not scopable")
+	}
+	if has("alice", "connection:chat") {
+		t.Error("a connection serving the whole instance is offered as a per-agent scope")
+	}
+	c, _ := GetConnector(RootDB, "pics")
+	c.SetAccess(RootDB, []string{"bob"})
+	if has("alice", "connection:pics") || !has("bob", "connection:pics") {
+		t.Error("a connection limited to bob is scopable by alice, or not by bob")
+	}
+	if deny := credentialDenySet(AgentRecord{ID: "a1", DisabledCredentials: []string{"connection:pics"}}, "bob"); !deny["connection:pics"] {
+		t.Errorf("the agent's opt-out is not in its deny set: %v", deny)
+	}
+}

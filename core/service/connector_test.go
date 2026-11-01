@@ -508,3 +508,48 @@ func TestAServiceListsItsEndpoints(t *testing.T) {
 		t.Errorf("got\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 }
+
+// An agent switched off a connection, or run for a user the connection is
+// not limited to, is not offered it among its image backends, and a call it
+// makes through it is refused before anything is sent. The instance's own
+// call, with no session, is not barred.
+func TestAnAgentBarredFromAConnectionIsNeitherOfferedNorServed(t *testing.T) {
+	world(t)
+	p := newProvider(t)
+	install(t, "acme-images", imageSpec(p.srv.URL))
+	RootDB.Set(ImageTable, "agents", []string{"acme-images"})
+	has := func(sess *ToolSession) bool {
+		for _, b := range ReachableImageBackends(sess) {
+			if b.Name == "acme-images" {
+				return true
+			}
+		}
+		return false
+	}
+	if !has(&ToolSession{Username: "alice"}) {
+		t.Fatal("an offered connection open to all is not offered")
+	}
+	if has(&ToolSession{Username: "alice", DeniedCredentials: map[string]bool{"connection:acme-images": true}}) {
+		t.Error("an agent with it switched off is offered it")
+	}
+	c, _ := GetConnector(RootDB, "acme-images")
+	if err := c.SetAccess(RootDB, []string{"bob"}); err != nil {
+		t.Fatal(err)
+	}
+	if has(&ToolSession{Username: "alice"}) || !has(&ToolSession{Username: "bob"}) {
+		t.Error("access limited to bob: offered to alice, or not to bob")
+	}
+	in := map[string]any{"prompt": "a red circle", "width": 8, "height": 8}
+	if _, err := Call(context.Background(), &ToolSession{Username: "alice"}, "acme-images", "image.generate", in); err == nil || !strings.Contains(err.Error(), "limited to named users") {
+		t.Errorf("alice's call: %v", err)
+	}
+	p.mu.Lock()
+	sent := len(p.bodies)
+	p.mu.Unlock()
+	if sent != 0 {
+		t.Errorf("a barred call reached the provider %d time(s)", sent)
+	}
+	if _, err := Call(context.Background(), nil, "acme-images", "image.generate", in); err != nil {
+		t.Errorf("the instance's own call: %v", err)
+	}
+}

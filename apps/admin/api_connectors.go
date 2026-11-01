@@ -53,6 +53,11 @@ func (a *AdminApp) registerConnectorsRoutes(sub *http.ServeMux) {
 		"POST": jsonapi.Post(a.db, a.handleConnectionSettingsSave, a.gate(), jsonapi.MaxBody(1<<20)),
 	}.Serve)
 	sub.HandleFunc("/api/connectors/options", jsonapi.Post(a.db, a.handleConnectionOptions, a.gate(), jsonapi.MaxBody(1<<20)))
+	// Who may reach a connection through agents' tools (its row's Access).
+	sub.HandleFunc("/api/connectors/access", jsonapi.Methods{
+		"GET":  jsonapi.Get(a.db, a.handleConnectionAccess, a.gate()),
+		"POST": jsonapi.Post(a.db, a.handleConnectionAccessSave, a.gate()),
+	}.Serve)
 
 	// The contracts explained, from the registry (the Contracts section).
 	sub.HandleFunc("/api/contracts", jsonapi.Get(a.db, a.handleContracts, a.gate()))
@@ -107,6 +112,9 @@ func (a *AdminApp) handleConnectors(c *jsonapi.Call) (any, error) {
 		// HasSettings is a services connection: its display name, and the
 		// settings and secrets it declares, are set under its row's Settings.
 		HasSettings bool `json:"has_settings,omitempty"`
+		// HasAccess is a connection: who may reach it through agents' tools
+		// is set under its row's Access.
+		HasAccess bool `json:"has_access,omitempty"`
 		// Revertable is a connection gohort provides whose spec was changed
 		// from the one it ships (its row's Revert).
 		Revertable bool `json:"revertable,omitempty"`
@@ -119,7 +127,8 @@ func (a *AdminApp) handleConnectors(c *jsonapi.Call) (any, error) {
 			Approved: conn.Approved, LastError: conn.LastError, Template: conn.Template, IsImage: conn.Kind == RestImageConnectorKind,
 			Configurable: canConfig, Webhook: connectorWebhook(conn), Fixable: service.Fixable(conn), State: "pending",
 			Endpoints: conn.Kind == service.Kind, Group: connectorGroup(conn, research, uses), GroupOpen: true,
-			Deletable: len(uses[conn.Name]) == 0 && !conn.Provided, HasSettings: conn.Kind == service.Kind}
+			Deletable: len(uses[conn.Name]) == 0 && !conn.Provided, HasSettings: conn.Kind == service.Kind,
+			HasAccess: conn.Kind == service.Kind && conn.ID != ""}
 		if conn.Provided {
 			row.Owner, row.Revertable = "gohort", service.Modified(conn)
 		}

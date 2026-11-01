@@ -248,6 +248,18 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 								Invalidate:  []string{"api/connectors"},
 								Fields:      connectionSettingsFields(),
 							}),
+							ui.ModalActionIf("Access", "has_access", "", ui.ACLPicker(ui.ACLPickerConfig{
+								OptionsSource: "api/user-candidates",
+								RecordSource:  "api/connectors/access?name={name}",
+								Field:         "allowed_users",
+								PostTo:        "api/connectors/access?name={name}",
+								Method:        "POST",
+								Noun:          "user",
+								Intro: "Which users' agents may use this connection through their tools: an image or music tool, a Research Source, a flow. Empty = all users. " +
+									"Each user can then switch it off for any of their agents on the agent editor, under External credentials. " +
+									"A page that has it serve the whole instance (an LLM tier, Web Search, Embeddings) serves every user whatever this says.",
+								EmptyText: "No other users to grant yet.",
+							})),
 							{Type: "button", Label: "Configure", Method: "client",
 								PostTo: "configure_backend", OnlyIf: "configurable"},
 							{Type: "button", Label: "Webhook…", Method: "client",

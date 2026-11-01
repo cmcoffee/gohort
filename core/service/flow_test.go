@@ -95,6 +95,10 @@ func TestAFlowWiresConnectorsTogether(t *testing.T) {
 	if params["word"].Description != "The word to say. Required." || !strings.Contains(desc, "Says a word and listens to it. Runs the same steps every time: (word)") {
 		t.Errorf("schema: %q %+v", desc, params)
 	}
+	// Not to an agent barred from a connection one of its steps calls.
+	if _, params := tool.(DynamicChatTool).SchemaWithSession(&ToolSession{Username: "u", DeniedCredentials: map[string]bool{"connection:ears": true}}); params != nil {
+		t.Error("an agent switched off a step's connection is offered the flow")
+	}
 	out, err := tool.(SessionChatTool).RunWithSession(map[string]any{"word": "lighthouse"}, &ToolSession{WorkspaceDir: t.TempDir()})
 	if err != nil || out != "text: heard ID3" {
 		t.Fatalf("run: %q %v", out, err)

@@ -21,6 +21,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/jsonapi"
+	"github.com/cmcoffee/gohort/core/service"
 )
 
 // userScopableCredentials returns the credentials `user` may use and that make
@@ -55,6 +56,19 @@ func userScopableCredentials(user string) []SecureCredential {
 			emit(c)
 		}
 	}
+	// The connections an agent's tools reach that this user may: each keeps
+	// its own key, outside the vault, and is switched off for an agent by
+	// the name its key goes by at a call, connection:<name>.
+	for _, name := range service.AgentConnections(RootDB) {
+		c, ok := GetConnector(RootDB, name)
+		if !ok {
+			continue
+		}
+		if users := c.Access(RootDB); len(users) > 0 && !containsString(users, user) {
+			continue
+		}
+		out = append(out, SecureCredential{Name: "connection:" + name, Description: c.Title() + ": a connection the admin set up, reached through agents' tools."})
+	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }
@@ -78,7 +92,13 @@ func (T *OrchestrateApp) agentCredentialsGet(c *jsonapi.Call) (any, error) {
 	opts := []opt{}
 	enabled := []string{}
 	for _, c := range candidates {
-		opts = append(opts, opt{Value: c.Name, Label: c.Name, Desc: c.Description})
+		label := c.Name
+		if name, ok := strings.CutPrefix(c.Name, "connection:"); ok {
+			if conn, found := GetConnector(RootDB, name); found {
+				label = conn.Title()
+			}
+		}
+		opts = append(opts, opt{Value: c.Name, Label: label, Desc: c.Description})
 		if !disabled[c.Name] {
 			enabled = append(enabled, c.Name)
 		}

@@ -371,6 +371,40 @@ func (a *AdminApp) handleConnectionSettings(c *jsonapi.Call) (any, error) {
 	return out, nil
 }
 
+// handleConnectionAccess is who may reach connection ?name= through agents'
+// tools, for its row's Access.
+func (a *AdminApp) handleConnectionAccess(c *jsonapi.Call) (any, error) {
+	conn, ok := GetConnector(RootDB, strings.TrimSpace(c.R.URL.Query().Get("name")))
+	if !ok {
+		return nil, jsonapi.NotFound("no connector named " + c.R.URL.Query().Get("name"))
+	}
+	users := conn.Access(RootDB)
+	if users == nil {
+		users = []string{}
+	}
+	return map[string]any{"name": conn.Name, "allowed_users": users}, nil
+}
+
+// handleConnectionAccessSave limits connection ?name= to the users posted;
+// none is everyone.
+func (a *AdminApp) handleConnectionAccessSave(c *jsonapi.Call, body struct {
+	AllowedUsers []string `json:"allowed_users"`
+}) (any, error) {
+	conn, ok := GetConnector(RootDB, strings.TrimSpace(c.R.URL.Query().Get("name")))
+	if !ok {
+		return nil, jsonapi.NotFound("no connector named " + c.R.URL.Query().Get("name"))
+	}
+	if err := conn.SetAccess(RootDB, body.AllowedUsers); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	who := "all users"
+	if users := conn.Access(RootDB); len(users) > 0 {
+		who = strings.Join(users, ", ")
+	}
+	adminChange(c.R, activity.Settings, "connection %s reachable through agents' tools by %s", conn.Name, who)
+	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
 // handleConnectionSettingsSave keeps what the row's Settings form posted for
 // connection name.
 func (a *AdminApp) handleConnectionSettingsSave(c *jsonapi.Call, form withSettings[struct {
