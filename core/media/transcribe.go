@@ -159,8 +159,16 @@ type ModelTarget struct {
 
 // ModelService, when set, reads the model connector named connector, for an
 // LLM tier whose provider is "service:<name>" (core/service installs it).
-// withKey reads its credential's key too: only the client is given it.
-var ModelService func(connector string, withKey bool) (ModelTarget, error)
+// withKey reads its secret too: only the client is given it. form, for a
+// Test before a save, is what the form holds; nil reads what the
+// connection keeps.
+var ModelService func(connector string, withKey bool, form *ModelForm) (ModelTarget, error)
+
+// ModelForm is what a tier's form holds for its model connection, tried
+// before it is saved: its settings by key, and secrets typed there by name.
+type ModelForm struct {
+	Config, Secrets map[string]string
+}
 
 // ModelCallNote, when set, records one model call made through the
 // connector: its tokens, and whether it failed.

@@ -147,3 +147,45 @@ func TestConditions(t *testing.T) {
 		}
 	}
 }
+
+func mustJSON(t *testing.T, v any) string {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+// validateSpec parses and checks a spec as saving it does.
+func validateSpec(t *testing.T, spec map[string]any) error {
+	s, err := Parse([]byte(mustJSON(t, spec)))
+	if err != nil {
+		return err
+	}
+	return s.Validate()
+}
+
+// A bedrock binding says which API; a Bedrock model with no secret cannot
+// sign, and another dialect takes no api.
+func TestTheBedrockDialectIsChecked(t *testing.T) {
+	spec := templateSpec(t, "bedrock-model", "https://bedrock-runtime.us-east-1.amazonaws.com")
+	if err := validateSpec(t, spec); err == nil || !strings.Contains(err.Error(), "Bedrock signs every request") {
+		t.Errorf("no credential: %v", err)
+	}
+	spec["provider"].(map[string]any)["auth"] = map[string]any{"secret": "aws_keys"}
+	if err := validateSpec(t, spec); err != nil {
+		t.Errorf("the template: %v", err)
+	}
+	b := spec["provides"].([]any)[0].(map[string]any)
+	b["defaults"].(map[string]any)["api"] = "chat"
+	if err := validateSpec(t, spec); err == nil || !strings.Contains(err.Error(), "converse, messages and invoke") {
+		t.Errorf("an api Bedrock lacks: %v", err)
+	}
+	b["defaults"].(map[string]any)["api"] = "converse"
+	b["dialect"] = "openai"
+	spec["provider"].(map[string]any)["base_url"] = "https://api.example.com/v1"
+	if err := validateSpec(t, spec); err == nil || !strings.Contains(err.Error(), "model and context") {
+		t.Errorf("api on another dialect: %v", err)
+	}
+}

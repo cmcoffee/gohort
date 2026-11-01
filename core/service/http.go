@@ -32,6 +32,38 @@ import (
 type transport struct {
 	p    Provider
 	sess *ToolSession
+	// auth is the connection's secret, when the spec's calls carry one.
+	auth *connectionAuth
+}
+
+// transport is how a settled spec's calls are made, as sess.
+func (s Spec) transport(sess *ToolSession) transport {
+	return transport{p: s.Provider, sess: sess, auth: s.auth}
+}
+
+// send makes req through the governed path: with the connection's secret,
+// or with none, scoped to the service's host.
+func (t transport) send(req ToolCallRequest) (string, error) {
+	cred, err := t.connection()
+	switch {
+	case err != nil:
+		return "", err
+	case cred != nil:
+		return Secure().DispatchConnection(t.sess, *cred, req)
+	}
+	return Secure().DispatchHostScoped(t.sess, t.p.BaseURL, req)
+}
+
+// connection is the credential the connection's calls go through, when they
+// carry its secret.
+func (t transport) connection() (*SecureCredential, error) {
+	if t.auth == nil {
+		return nil, nil
+	}
+	if t.auth.err != nil {
+		return nil, t.auth.err
+	}
+	return &t.auth.cred, nil
 }
 
 // reply is one operation's answer: its status and, by what the operation
@@ -42,8 +74,6 @@ type reply struct {
 	text   string
 	file   *File
 }
-
-func (t transport) credential() string { return strings.TrimSpace(t.p.Auth.Credential) }
 
 func (t transport) timeout(op Operation) int {
 	limit := 0
@@ -124,7 +154,7 @@ func (t transport) do(ctx context.Context, name string, vars map[string]any) (re
 		}
 		return t.readResponse(name, op, resp, done)
 	}
-	req := ToolCallRequest{Credential: t.credential(), URL: addr, Method: method,
+	req := ToolCallRequest{URL: addr, Method: method,
 		Headers: t.p.Headers, PipeFollowing: true, TimeoutSecs: t.timeout(op)}
 	if op.Send == "multipart" {
 		up, closer, err := multipartUpload(op, vars, t.maxBytes())
@@ -138,12 +168,7 @@ func (t transport) do(ctx context.Context, name string, vars map[string]any) (re
 	} else if req.Body, req.ContentType, err = renderRequest(op, vars); err != nil {
 		return reply{}, err
 	}
-	var raw string
-	if req.Credential != "" {
-		raw, err = Secure().DispatchToolCallRequest(t.sess, req)
-	} else {
-		raw, err = Secure().DispatchHostScoped(t.sess, t.p.BaseURL, req)
-	}
+	raw, err := t.send(req)
 	if err != nil {
 		return reply{}, fmt.Errorf("%s: %w", name, err)
 	}
@@ -280,9 +305,13 @@ func (t transport) raw(ctx context.Context, rawURL, method string, body io.Reade
 	if ctype != "" {
 		headers["Content-Type"] = ctype
 	}
+	cred, err := t.connection()
+	if err != nil {
+		return nil, nil, err
+	}
 	switch {
-	case t.sameHost(rawURL) && t.credential() != "":
-		return Secure().OpenStream(t.sess, t.credential(), StreamRequest{URL: rawURL, Method: method, Headers: headers, Body: body, Timeout: timeout})
+	case t.sameHost(rawURL) && cred != nil:
+		return Secure().OpenConnectionStream(t.sess, *cred, StreamRequest{URL: rawURL, Method: method, Headers: headers, Body: body, Timeout: timeout})
 	case t.sameHost(rawURL):
 		resp, err := doPlain(ctx, sourcehooks.NewBoundedHTTPClient(), rawURL, method, headers, body, timeout)
 		return resp, nil, err

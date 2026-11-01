@@ -37,6 +37,9 @@ func checkDue() {
 			continue
 		}
 		s, err := specOf(c)
+		if err == nil {
+			s, err = settledFor(context.Background(), c.Name, s)
+		}
 		if err != nil || s.Provider.Health == nil {
 			continue
 		}
@@ -60,6 +63,9 @@ func CheckHealth(ctx context.Context, name string) (HealthCheck, error) {
 		return HealthCheck{}, fmt.Errorf("no service connector named %q", name)
 	}
 	s, err := specOf(c)
+	if err == nil {
+		s, err = settledFor(ctx, name, s)
+	}
 	if err != nil {
 		return HealthCheck{}, err
 	}
@@ -71,7 +77,7 @@ func CheckHealth(ctx context.Context, name string) (HealthCheck, error) {
 
 func checkHealth(ctx context.Context, name string, s Spec) HealthCheck {
 	h := s.Provider.Health
-	t := transport{p: s.Provider}
+	t := s.transport(nil)
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	r, err := t.do(ctx, h.Call, map[string]any{})

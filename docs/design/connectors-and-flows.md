@@ -487,6 +487,8 @@ no step of their own.
    directly. What stays: Bedrock (moved in item 8, once its signing was a
    kind of credential), the local servers (Ollama, llama.cpp, vLLM),
    whose thinking switches and queue are Go, and peers.
+   Reversed in part by item 12: the migration and the form's shortcuts that
+   made or rekeyed connectors are gone; a tier chooses a model connector.
 
 7. **Contracts reference.** Built 2026-10-31. Each contract in the registry
    says what it is (with the shape of any JSON it gives), what its check
@@ -530,7 +532,8 @@ no step of their own.
    setup still offer AWS Bedrock, and saving makes or finds the connector
    (`BedrockConnectorFor`), a new API key rotating the tier's own unshared
    one. Template: AWS Bedrock (LLM). What stays: the protocols, the local
-   model servers and peers.
+   model servers and peers. Reversed in part by item 12: the migration and
+   the form's Bedrock fields are gone; a tier chooses a Bedrock connector.
 9. **Research Sources.** Built 2026-10-31, the owner's direction: connectors
    stay low level (how a service is reached and read, which is what breaks
    and what Fix repairs), and how gohort uses one is its tie-in, a
@@ -587,6 +590,100 @@ no step of their own.
    Mail, Messaging, ...), gohort's own providers beside the connectors
    doing the same job; the templates split Search into Web Search and
    Research Sources the same way.
+
+11. **Connectors are what has a spec.** 2026-10-31, the owner's direction:
+   the Connectors page lists only what can be edited and fixed there. The
+   derived rows of stages 3, 5 and 6 (gohort's built-in providers, the
+   programs System Hooks run, and the peers borrowed from) are gone: each is
+   set up and tested on its own page (Admin > Capabilities, Admin > LLMs,
+   Mail, Peers, System Hooks). SMTP is the protocol and stays there; the
+   mail connectors are for HTTP mail APIs.
+
+12. **Settings live on the page.** 2026-10-31, the owner's direction,
+   reversing what plan B moved: a page's settings never end up inside a
+   connector. The chain is config -> connector -> credential -> endpoint.
+   A connector declares the settings it takes (`spec.config`: name, label,
+   type, default, required) and uses them as `{config.x}` anywhere in its
+   spec; the page that names it (Embeddings, Transcription, Speech, Web
+   Search, Image Generation, Page Rendering, Mail, the LLM tiers) shows
+   them under the choice, with an API Key field when the connector sends
+   one, and keeps the values. A call settles the spec with them; a Test
+   settles it with what the form holds, before a save. A key typed on a
+   page goes into the connector's credential in the vault. The line: an
+   address a key or signature is bound to stays with the connector and its
+   credential (a credential's Base URL is a plain address, by design), so a
+   hosted API's address, and Bedrock's region and API, are the connector's;
+   a keyless server's address, a model, an engine id are the page's. The
+   LLM tiers keep their own model, context and thinking fields, and each
+   tier's settings reach its model (`LLMProviderConfig.Settings`), so two
+   tiers can name one connector differently. The tiers list the local
+   servers, peers and model connectors: Anthropic, OpenAI, Gemini and
+   Bedrock are added from their templates, and a tier naming one directly
+   is refused, saying which. The templates no longer bake a model in.
+   Plan B's migrations into connectors are deleted with the code that made
+   connectors from a page; connectors they made keep working. A connector
+   a page names cannot be deleted until it is taken off that page.
+
+13. **A connection owns its spaces.** Built 2026-10-31, the owner's
+   direction; supersedes the settings-on-the-page storage of item 12 and the
+   credential renaming of the template install. A template creates a
+   connection; creating one gives it an id (made at creation, never taken
+   from a save or an import) and a space under it: `connection:<id>`, with a
+   `config` half and an encrypted `secret` half. The name stays the handle
+   (`service:<name>`); `display_name` is what people see (a page's choices,
+   its row), the template's title by default, the second made from one told
+   apart by its name. Nothing a connection keeps shares a namespace, and
+   deleting it deletes its space.
+
+   ```
+   template --creates--> connection  name lan-chat, id c_7f3a..., shown as "Office proxy"
+                           spec     how it is reached, and what it needs (config)
+                           config   its settings: address, model, engine id
+                           secret   its key(s), with the addresses each was given for
+   page --names--> a connection; the form under the choice edits its spaces
+   ```
+
+   - What it needs is the spec's: `config` declares each setting and its
+     kind of value, which decides the control a page draws and what a save
+     accepts: text, longtext, url, number (min, max, decimals), toggle,
+     choice and choices (options, each a value or a value and label),
+     secret (masked, never read back, `send` bearer, header:<name>,
+     query:<name>, basic:<username> or aws_sigv4), with label, help (one
+     line), detail (behind the info icon), placeholder, default, required,
+     pattern, rows and options_from (an operation whose reply lists values,
+     for a picker). A setting may sit under one capability in provides (its
+     model), apart from the provider's (an address). `{config.x}` anywhere in
+     the spec is the value; a secret is never written into a request: auth
+     names it.
+   - Config is the connection's: two pages naming one connection share it,
+     a page saving only its own capability's settings. Different values are
+     a second connection. A Test, and a model's list, run on what the form
+     holds, a key typed there included.
+   - A secret is kept with the addresses it was given for (the base URL and
+     its `also`), and sent only there: change the address and the key is
+     asked for again. That keeps the vault's guarantee, and lets an address
+     be an ordinary setting, a hosted API's and Bedrock's region included
+     (the Messages API's bedrock-mantle host is its `also`). An AWS secret
+     left blank signs as this machine, only for a connection an
+     administrator made. The governed dispatch still makes every call:
+     address limits, Private mode, the audit.
+   - Keys typed for connections are not API Credentials: that page keeps
+     what has no menu of its own (agents' tools, polls, MCP servers,
+     fetch_url). A spec naming a vault credential is refused, and one stored
+     that way says to make it again from its template.
+   - gohort provides connections: a template marked `provided` is installed
+     at startup when its name is free (Anthropic, OpenAI, Gemini and AWS
+     Bedrock, as anthropic, openai, gemini and bedrock), offered first in the
+     choices by its label, and cannot be deleted. Another to the same
+     service, with its own key, is added from the template.
+   - Connections come from templates or imports. The raw Add a connector
+     form is gone: a spec alone lacks what the template gives (its title, its
+     settings' words, its notes). Edit spec and Fix stay, for repair. The
+     row's Settings sets the display name, the settings and the key, for a
+     connection used where there is no page of its own (a research source, a
+     flow, an agent's image list).
+   - No migration code: the connectors on the one live instance are made
+     again from templates on the new build.
 
 ## Migrations
 

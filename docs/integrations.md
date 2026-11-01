@@ -105,13 +105,21 @@ ever sees it. An AWS credential signs each request instead (Signature
 Version 4), with a stored key pair or, made by an administrator, as this
 machine's own AWS identity.
 
+A connection keeps its own **settings** and **key**, in a space of its own.
+Its spec declares what it needs, and what kind of value each is (an
+address, a model, a choice, a number, a key), and uses each as
+`{config.name}`; the page that uses it shows them under the choice, and its
+row's Settings shows them all. A key is sent only to the address it was
+given for: move the connection and it asks for the key again. These keys
+are not API Credentials, which keep what has no page of its own.
+
 ## Reading a connector
 
 A connector's row reads inside to outside:
 
 ```
-Speech ⇐ speak ⇐ api.elevenlabs.io (key elevenlabs_speech)
-Image Generation ⇐ submit, then wait on status ⇐ api.example.com (key acme)
+Speech ⇐ speak ⇐ api.elevenlabs.io (its ElevenLabs API key)
+Image Generation ⇐ submit, then wait on status ⇐ api.example.com (its API key)
 Image editing ⇐ edit ⇐ magick on this machine (no network)
 ```
 
@@ -120,7 +128,7 @@ The same line heads its ✨ Fix form. A connector giving several things keeps
 to one line by naming them and counting its endpoints:
 
 ```
-Speech, Transcription, Image Generation ⇐ api.example.com (key acme), 7 endpoints
+Speech, Transcription, Image Generation ⇐ api.example.com (its API key), 7 endpoints
 ```
 
 **Endpoints** on the row lists each endpoint once, with what it is sent and
@@ -153,15 +161,13 @@ resource's whole schema.
 | A research source (Admin > Extensions > Research Sources) | a search connector put to use for research and agents | the connector's |
 | gohort's own providers (DuckDuckGo search, the browser, SMTP mail and the local model servers) | the same contracts | written in Go where Go is the protocol or the server is on this machine; every hosted provider moved to a connector (embeddings, transcription, speech, images, the other search engines, the hosted LLMs and Bedrock) |
 
-Services, messaging relays, polls, MCP connections, gohort's own providers
-and the programs System Hooks run are listed under Admin > Extensions >
-Connectors, in groups by what they are. The built-in ones are marked *Built in*: they are set up under
-Admin > Capabilities, and Test there runs the same check as their settings
-do. The programs are marked *Program*: each says what it does now, and its
-command lines are under Endpoints; they are installed, adapted and tested
-from System Hooks. Peers are marked *Peer*: each says what it lends, what
-here uses it and what nothing uses, and Test asks it again what it lends;
-they are added and re-keyed under Admin > Capabilities > Peers.
+Admin > Extensions > Connectors lists what has a spec, the part that can be
+edited and fixed without a new build: services, messaging relays, polls, MCP
+connections, adapted System Hooks and peer relays, grouped by what each does.
+What gohort does in Go has no spec and is not listed there: DuckDuckGo and
+the browser are set up under Admin > Capabilities, SMTP under Admin > System >
+Mail, a local model server under Admin > LLMs, peers under Admin >
+Capabilities > Peers, and the programs System Hooks run under System Hooks.
 
 ## Where to find things
 
@@ -234,15 +240,14 @@ The connector: inside `embed.text`, mapping one request, outside OpenAI with
 its key.
 
 1. **Admin > Extensions > Templates > Add a template…**, pick *OpenAI
-   (embeddings)*, answer its questions (the key, a name, the model). This
-   creates a credential, disabled, and a connector, out of use.
-2. **Admin > Extensions > API Credentials:** enable the credential.
-3. **Admin > Extensions > Connectors:** press Test on its row. It embeds
-   two sentences and checks for two vectors of the same length.
-4. **Admin > Capabilities > Embeddings:** set "Embed on" to *Service:
-   openai-embeddings* and save. Choosing it there is what puts it to use;
+   (embeddings)* and give it a name. This creates the connection, out of
+   use, shown as *OpenAI (embeddings)*.
+2. **Admin > Capabilities > Embeddings:** set "Embed with" to it. Its model
+   and its API key show under the choice. Test embeds two sentences and
+   checks for two vectors of the same length. Save: choosing it there is
+   what puts it to use, and keeps the model and key with the connection;
    its row then says *Used by Embeddings*.
-5. **Admin > Maintenance > Vector Index:** run *Repair the vector index*.
+3. **Admin > Maintenance > Vector Index:** run *Repair the vector index*.
    Vectors made by the old embedder are in a different space, so search
    skips them until they are made again, one embed call per stored piece.
 

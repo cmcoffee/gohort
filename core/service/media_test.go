@@ -262,15 +262,17 @@ func TestAModelConnectorIsAnLLMTier(t *testing.T) {
 		w.Write([]byte(`{"id":"c1","object":"chat.completion","model":"` + fmt.Sprint(body["model"]) + `","choices":[{"index":0,"message":{"role":"assistant","content":"OK"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1000,"completion_tokens":200}}`))
 	}))
 	defer srv.Close()
-	if err := Secure().Save(SecureCredential{Name: "hosted_llm", Type: SecureCredBearer, BaseURL: srv.URL + "/v1"}, "sk-test"); err != nil {
-		t.Fatal(err)
-	}
 	install(t, "hosted", map[string]any{
-		"provider": map[string]any{"transport": "http", "base_url": srv.URL + "/v1", "auth": map[string]any{"credential": "hosted_llm"},
+		"config": []any{map[string]any{"name": "api_key", "type": "secret", "send": "bearer"}},
+		"provider": map[string]any{"transport": "http", "base_url": srv.URL + "/v1", "auth": map[string]any{"secret": "api_key"},
 			"operations": map[string]any{"models": map[string]any{"path": "/models"}}},
 		"provides": []any{map[string]any{"capability": "llm.chat", "dialect": "openai", "defaults": map[string]any{"model": "fast-model"},
 			"cost": map[string]any{"per_million_input": 2.0, "per_million_output": 10.0}}},
 	})
+	hosted, _ := GetConnector(RootDB, "hosted")
+	if err := SetConnectionSecret(RootDB, hosted, "api_key", "sk-test", []string{srv.URL + "/v1"}); err != nil {
+		t.Fatal(err)
+	}
 	llm, err := NewLLMFromConfig(LLMProviderConfig{Provider: "service:hosted"})
 	if err != nil {
 		t.Fatal(err)
@@ -305,10 +307,6 @@ func TestAModelConnectorIsAnLLMTier(t *testing.T) {
 		t.Error("a model connector that cannot be read was judged private")
 	}
 
-	// The key, only for an address the credential allows.
-	if _, err := Secure().ModelKey("hosted_llm", "https://elsewhere.example/v1/"); err == nil {
-		t.Error("the key was given for an address the credential does not allow")
-	}
 	for want, b := range map[string]map[string]any{
 		"spoken only at api.anthropic.com": {"capability": "llm.chat", "dialect": "anthropic"},
 		"gohort speaks openai":             {"capability": "llm.chat", "dialect": "cobol"},
@@ -323,5 +321,29 @@ func TestAModelConnectorIsAnLLMTier(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("want %q, got %v", want, err)
 		}
+	}
+}
+
+// A speech server that answers in ogg keeps its extension, so the clip is
+// sent and played as what it is.
+func TestAnOggClipKeepsItsExtension(t *testing.T) {
+	world(t)
+	ogg := append([]byte("OggS\x00\x02"), make([]byte, 64)...)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(ogg) }))
+	defer srv.Close()
+	install(t, "oggy", speakSpec(srv.URL))
+	if _, ext, err := speakVia(context.Background(), "oggy", "Hi.", ""); err != nil || ext != ".ogg" {
+		t.Errorf("an ogg clip: %q %v", ext, err)
+	}
+}
+
+// speakSpec is a keyless speech connector at base, OpenAI's /audio/speech.
+func speakSpec(base string) map[string]any {
+	return map[string]any{
+		"provider": map[string]any{"transport": "http", "base_url": base, "auth": map[string]any{"none": true},
+			"operations": map[string]any{"speak": map[string]any{"method": "POST", "path": "/audio/speech",
+				"body": map[string]any{"input": "{text}", "voice": "{voice}"}, "read": "file"}}},
+		"provides": []any{map[string]any{"capability": "speech.synthesize", "steps": []any{map[string]any{"call": "speak"}},
+			"output": map[string]any{"audio": map[string]any{"from": "body"}}}},
 	}
 }

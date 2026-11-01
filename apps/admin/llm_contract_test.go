@@ -135,7 +135,8 @@ func TestLLMRoutesContract(t *testing.T) {
 	do("root", "GET", "/api/worker-llm", "")
 	do("root", "POST", "/api/worker-llm", `{"provider":"ollama","model":"qwen3:8b","endpoint":"`+stub.URL+`"}`)
 	do("root", "GET", "/api/lead-llm", "")
-	do("root", "POST", "/api/lead-llm", `{"provider":"bedrock","model":"anthropic.claude-3-5-sonnet","aws_region":"us-east-1","bedrock_api":"converse","api_key":"s3cr3t-llm-l","no_images":true}`)
+	do("root", "POST", "/api/lead-llm", `{"provider":"bedrock","model":"anthropic.claude-3-5-sonnet","api_key":"s3cr3t-llm-l"}`)
+	do("root", "POST", "/api/lead-llm", `{"provider":"vllm","model":"qwen3:8b","endpoint":"`+stub.URL+`","api_key":"s3cr3t-llm-l","no_images":true}`)
 	do("root", "GET", "/api/lead-llm", "")
 	do("root", "GET", "/api/llm-privacy", "")
 

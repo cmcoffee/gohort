@@ -9,7 +9,6 @@ import (
 	"github.com/cmcoffee/gohort/core/activity"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/media"
-	"github.com/cmcoffee/gohort/core/service"
 )
 
 // registerLLMRoutes wires the llm API under the admin sub-mux.
@@ -338,7 +337,7 @@ func (a *AdminApp) handleLLMConfig(table string, worker bool) func(c *jsonapi.Ca
 			return nil, jsonapi.Status(http.StatusInternalServerError, "no database")
 		}
 		// GET — current values; api_key is masked (never returned).
-		var provider, model, endpoint, awsRegion, awsProfile, bedrockAPI string
+		var provider, model, endpoint string
 		var contextSize, reqTimeout, noThinkBudget int
 		var nativeTools, disableThinking, noImages, ntPrependSys, ntPrependUser bool
 		ntKwarg, ntBudget := true, true // defaults when no-think was never configured
@@ -346,10 +345,6 @@ func (a *AdminApp) handleLLMConfig(table string, worker bool) func(c *jsonapi.Ca
 		a.db.Get(table, "provider", &provider)
 		a.db.Get(table, "model", &model)
 		a.db.Get(table, "endpoint", &endpoint)
-		a.db.Get(table, "aws_region", &awsRegion)
-		a.db.Get(table, "aws_profile", &awsProfile)
-		a.db.Get(table, "bedrock_api", &bedrockAPI)
-		bedrockAPI = bedrockAPIShown(provider, bedrockAPI)
 		a.db.Get(table, "native_tools", &nativeTools)
 		a.db.Get(table, "disable_thinking", &disableThinking)
 		a.db.Get(table, "no_images", &noImages)
@@ -373,10 +368,7 @@ func (a *AdminApp) handleLLMConfig(table string, worker bool) func(c *jsonapi.Ca
 			"provider":                provider,
 			"model":                   model,
 			"endpoint":                endpoint,
-			"aws_region":              awsRegion,
 			"_live":                   liveTierDescription(table),
-			"aws_profile":             awsProfile,
-			"bedrock_api":             bedrockAPI,
 			"native_tools":            nativeTools,
 			"disable_thinking":        disableThinking,
 			"no_images":               noImages,
@@ -396,6 +388,9 @@ func (a *AdminApp) handleLLMConfig(table string, worker bool) func(c *jsonapi.Ca
 			a.db.Get(table, "request_timeout_seconds", &reqTimeout)
 			out["request_timeout_seconds"] = reqTimeout
 		}
+		for k, v := range settingsValues(chosenService(provider), "llm.chat") {
+			out[k] = v
+		}
 		return out, nil
 	}
 }
@@ -406,9 +401,6 @@ type llmConfigSave struct {
 	Model                string `json:"model"`
 	APIKey               string `json:"api_key"`
 	Endpoint             string `json:"endpoint"`
-	AWSRegion            string `json:"aws_region"`
-	AWSProfile           string `json:"aws_profile"`
-	BedrockAPI           string `json:"bedrock_api"`
 	ContextSize          int    `json:"context_size"`
 	RequestTimeout       int    `json:"request_timeout_seconds"`
 	NativeTools          bool   `json:"native_tools"`
@@ -424,11 +416,13 @@ type llmConfigSave struct {
 	NoThinkPrependUser   bool   `json:"no_think_prepend_user"`
 }
 
-// handleLLMConfigSave saves a tier's config and rebuilds the LLMs from it. The
-// API key is CryptSet only when a new value is supplied (blank on the form =
-// keep the existing key).
-func (a *AdminApp) handleLLMConfigSave(table string, worker bool) func(c *jsonapi.Call, req llmConfigSave) (any, error) {
-	return func(c *jsonapi.Call, req llmConfigSave) (any, error) {
+// handleLLMConfigSave saves a tier's config and rebuilds the LLMs from it. A
+// local server's API key is CryptSet only when a new value is supplied (blank
+// on the form = keep the existing key); a model connector's goes into its
+// credential, and the settings it takes are kept with the tier.
+func (a *AdminApp) handleLLMConfigSave(table string, worker bool) func(c *jsonapi.Call, form withSettings[llmConfigSave]) (any, error) {
+	return func(c *jsonapi.Call, form withSettings[llmConfigSave]) (any, error) {
+		req := form.Form
 		if a.db == nil {
 			return nil, jsonapi.Status(http.StatusInternalServerError, "no database")
 		}
@@ -440,42 +434,26 @@ func (a *AdminApp) handleLLMConfigSave(table string, worker bool) func(c *jsonap
 		if err := ValidateModelID(strings.TrimSpace(req.Provider), req.Model); err != nil {
 			return nil, jsonapi.BadRequest(err.Error())
 		}
-		// Anthropic, OpenAI or Gemini runs on a model connector made from
-		// that provider's template, its key in the connector's credential:
-		// the tier names the connector and stores no key.
-		hosted := service.ModelTemplate(req.Provider) != ""
-		if hosted {
-			name, err := a.hostedTierConnector(table, req.Provider, req.Model, req.APIKey)
-			if err != nil {
-				return nil, jsonapi.BadRequest(err.Error())
+		// Anthropic, OpenAI, Gemini and Bedrock are model connections gohort
+		// provides by those names: a tier naming one directly runs on it.
+		if bare := strings.ToLower(strings.TrimSpace(req.Provider)); hostedTemplates[bare] != "" {
+			if c, ok := GetConnector(RootDB, bare); !ok || !c.Provided {
+				return nil, jsonapi.BadRequest(fmt.Sprintf("%s runs on a model connection: add the %s template under Admin > Extensions > Templates, then choose it here", req.Provider, hostedTemplates[bare]))
 			}
-			// Blank is the provider's default, as the field says, not
-			// whatever the connector, perhaps the other tier's, defaults to.
-			if strings.TrimSpace(req.Model) == "" {
-				req.Model = service.ModelDefault(req.Provider)
-			}
-			req.Provider, req.APIKey, req.Endpoint = media.ServiceProviderPrefix+name, "", ""
-		}
-		// AWS Bedrock runs on a model connector at its address, signing as
-		// the machine or with its API key: the tier names it.
-		if strings.TrimSpace(req.Provider) == "bedrock" {
-			current, _ := a.tierConnectorOf(table, bedrockTemplate)
-			s := service.BedrockSettings{Region: req.AWSRegion, Profile: req.AWSProfile, API: req.BedrockAPI,
-				Endpoint: req.Endpoint, Model: req.Model, Key: req.APIKey}
-			name, _, err := service.BedrockConnectorFor(RootDB, s, current, a.otherTierRunsOn(table, current), tierTitles[table])
-			if err != nil {
-				return nil, jsonapi.BadRequest(err.Error())
-			}
-			if strings.TrimSpace(req.Model) == "" {
-				req.Model = service.ModelDefault("bedrock")
-			}
-			req.Provider, req.APIKey, req.Endpoint = media.ServiceProviderPrefix+name, "", ""
-			req.AWSRegion, req.AWSProfile, req.BedrockAPI = "", "", ""
-			hosted = true
+			req.Provider = media.ServiceProviderPrefix + bare
 		}
 		// A model connector must be one, and approved.
 		if err := serviceProviderOK(req.Provider, "llm.chat"); err != nil {
 			return nil, jsonapi.BadRequest(err.Error())
+		}
+		// Its address, settings and key are the connection's own, kept in
+		// its space.
+		chosen := chosenService(req.Provider)
+		if chosen != "" {
+			req.APIKey, req.Endpoint = "", ""
+			if err := form.Settings.save(chosen, "llm.chat"); err != nil {
+				return nil, jsonapi.BadRequest(err.Error())
+			}
 		}
 		// Trimmed on the way in, so the STORED value is clean and the form
 		// stops displaying a leading space nobody can see. The providers trim
@@ -484,9 +462,12 @@ func (a *AdminApp) handleLLMConfigSave(table string, worker bool) func(c *jsonap
 		a.db.Set(table, "provider", strings.TrimSpace(req.Provider))
 		a.db.Set(table, "model", strings.TrimSpace(req.Model))
 		a.db.Set(table, "endpoint", strings.TrimSpace(req.Endpoint))
-		a.db.Set(table, "aws_region", strings.TrimSpace(req.AWSRegion))
-		a.db.Set(table, "aws_profile", strings.TrimSpace(req.AWSProfile))
-		a.db.Set(table, "bedrock_api", req.BedrockAPI)
+		// What a tier on AWS Bedrock named directly; a Bedrock connection
+		// holds its region, API and signing. Settings the tier kept for its
+		// connection before the connection kept its own go too.
+		for _, k := range []string{"aws_region", "aws_profile", "bedrock_api", "config"} {
+			a.db.Unset(table, k)
+		}
 		a.db.Set(table, "native_tools", req.NativeTools)
 		a.db.Set(table, "disable_thinking", req.DisableThinking)
 		a.db.Set(table, "no_images", req.NoImages)
@@ -505,7 +486,7 @@ func (a *AdminApp) handleLLMConfigSave(table string, worker bool) func(c *jsonap
 		if worker {
 			a.db.Set(table, "request_timeout_seconds", req.RequestTimeout)
 		}
-		if hosted {
+		if chosen != "" {
 			a.db.Unset(table, "api_key")
 		} else if req.APIKey != "" {
 			a.db.CryptSet(table, "api_key", req.APIKey)
@@ -621,25 +602,21 @@ func effortLevel(v string) string {
 // tier's own stored one, never the other tier's. A refusal is answered as
 // {error} with status 200, because the reason the list cannot be had is what
 // the picker shows in its place.
-func (a *AdminApp) handleLLMModels(table string) func(c *jsonapi.Call, req llmModelsQuery) (any, error) {
-	return func(c *jsonapi.Call, req llmModelsQuery) (any, error) {
+func (a *AdminApp) handleLLMModels(table string) func(c *jsonapi.Call, form withSettings[llmModelsQuery]) (any, error) {
+	return func(c *jsonapi.Call, form withSettings[llmModelsQuery]) (any, error) {
+		req := form.Form
 		if strings.TrimSpace(req.Provider) == "" {
 			return map[string]any{"error": "Pick a provider first."}, nil
 		}
-		if req.Provider == "bedrock" {
-			if name, ok := a.keptBedrock(table, service.BedrockSettings{Region: req.AWSRegion, Profile: req.AWSProfile,
-				API: req.BedrockAPI, Endpoint: req.Endpoint, Key: req.APIKey}); ok {
-				req.Provider = media.ServiceProviderPrefix + name
-			}
-		}
-		req.Provider, req.APIKey = a.formTierTarget(table, req.Provider, req.APIKey)
+		req.APIKey = a.formTierKey(table, req.APIKey)
+		// Read before a save puts the connector to use, as the form names it.
+		_, end := previewTieIn(c.R.Context(), req.Provider)
+		defer end()
 		ids, err := ListModels(c.R.Context(), LLMProviderConfig{
-			Provider:   req.Provider,
-			APIKey:     req.APIKey,
-			Endpoint:   req.Endpoint,
-			Region:     req.AWSRegion,
-			Profile:    req.AWSProfile,
-			BedrockAPI: req.BedrockAPI,
+			Provider: req.Provider,
+			APIKey:   req.APIKey,
+			Endpoint: req.Endpoint,
+			Form:     form.Settings.modelForm(chosenService(req.Provider)),
 		})
 		if err != nil {
 			return map[string]any{"error": "Could not list the models: " + err.Error()}, nil
@@ -655,22 +632,16 @@ func (a *AdminApp) handleLLMModels(table string) func(c *jsonapi.Call, req llmMo
 // llmModelsQuery is the LLM form's current values a model list is asked
 // with.
 type llmModelsQuery struct {
-	Provider   string `json:"provider"`
-	Model      string `json:"model"`
-	APIKey     string `json:"api_key"`
-	Endpoint   string `json:"endpoint"`
-	AWSRegion  string `json:"aws_region"`
-	AWSProfile string `json:"aws_profile"`
-	BedrockAPI string `json:"bedrock_api"`
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
+	APIKey   string `json:"api_key"`
+	Endpoint string `json:"endpoint"`
 }
 
 // modelListSource names where a model list came from, for the picker's note.
 func modelListSource(provider string) string {
 	if strings.HasPrefix(provider, "peer:") {
 		return "peer " + strings.TrimPrefix(provider, "peer:")
-	}
-	if provider == "bedrock" {
-		return "your AWS account (Claude models only)"
 	}
 	return provider
 }
@@ -684,130 +655,17 @@ func containsString(list []string, s string) bool {
 	return false
 }
 
-// bedrockAPIDetail explains the Bedrock API choice, on the settings page and
-// in the setup wizard.
-const bedrockAPIDetail = "Converse is AWS's one format for every model Bedrock hosts (Claude, Llama, Mistral, Nova and the rest) and needs bedrock:InvokeModel. The other two speak Claude's own format and serve Claude only: the Messages API needs bedrock-mantle:CreateInference, and InvokeModel needs bedrock:InvokeModel. A 403 on CreateInference means switch to Converse or InvokeModel."
+// hostedTemplates are the hosted APIs a tier once named directly, and the
+// template each is added from: gohort provides a connection from each, by
+// the API's name.
+var hostedTemplates = map[string]string{"anthropic": "anthropic-model", "openai": "openai-model", "gemini": "gemini-model", "bedrock": "bedrock-model"}
 
-// bedrockAPIShown is the Bedrock API the form shows. A blank stored value on a
-// tier already set to Bedrock is the Messages API, which is what blank has
-// always meant there, so a working setup is not moved to an API its role may
-// not be allowed to call. Anywhere else blank is a setup not yet made, and a
-// new one starts on Converse.
-func bedrockAPIShown(provider, stored string) string {
-	if stored != "" {
-		return stored
-	}
-	if strings.TrimSpace(provider) == "bedrock" {
-		return "messages"
-	}
-	return "converse"
-}
-
-// bedrockUsesMantle reports whether a Bedrock API setting calls the
-// bedrock-mantle host (the Messages API), which exists in fewer regions than
-// bedrock-runtime and is checked before a test.
-func bedrockUsesMantle(api string) bool {
-	return api == "" || api == "messages"
-}
-
-// tierTitles name each tier's settings, for a connector's description.
-var tierTitles = map[string]string{LLMTable: "Worker LLM", LeadLLMTable: "Lead LLM"}
-
-// hostedTierConnector is the model connector a tier on provider (Anthropic,
-// OpenAI or Gemini) runs on. With no key, the one it runs on already, when it
-// was made from the provider's template. With a key: the connector holding
-// it; else the tier's own, given the new key, when no other tier runs on it;
-// else one made from the template with it. So a key typed on the form
-// replaces the tier's key, and a connector both tiers share keeps the
-// other's.
-func (a *AdminApp) hostedTierConnector(table, provider, model, key string) (string, error) {
-	current, own := a.tierConnectorFrom(table, provider)
-	if strings.TrimSpace(key) == "" {
-		if own {
-			return current, nil
-		}
-		return "", fmt.Errorf("%s needs its API key: it goes into a credential, with a model connector made from the %s template that this tier then runs on. To use a key already set up, choose its connector (Service: <name>) instead", provider, service.ModelTemplate(provider))
-	}
-	if own && !a.otherTierRunsOn(table, current) {
-		rekeyed, err := service.RekeyModelConnector(RootDB, provider, current, key)
-		if err != nil {
-			return "", err
-		}
-		if rekeyed {
-			return current, nil
-		}
-	}
-	name, _, err := service.ModelConnectorFor(RootDB, provider, "", model, key, tierTitles[table])
-	return name, err
-}
-
-// tierConnectorFrom is the connector the tier runs on, when it was made from
-// provider's template.
-func (a *AdminApp) tierConnectorFrom(table, provider string) (string, bool) {
-	return a.tierConnectorOf(table, service.ModelTemplate(provider))
-}
-
-// bedrockTemplate is the template a Bedrock tier's connector is made from.
-const bedrockTemplate = "bedrock-model"
-
-// tierConnectorOf is the connector the tier runs on, when it was made from
-// template id.
-func (a *AdminApp) tierConnectorOf(table, id string) (string, bool) {
-	if id == "" || a.db == nil {
-		return "", false
-	}
-	name, ok := strings.CutPrefix(a.storedString(table, "provider"), media.ServiceProviderPrefix)
-	if !ok || service.ModelTemplateOf(RootDB, name) != id {
-		return "", false
-	}
-	return name, true
-}
-
-// keptBedrock is the Bedrock connector the tier runs on, when the form shows
-// its settings and no key: what Test and List models then ask, since its
-// key, when it has one, is in its credential.
-func (a *AdminApp) keptBedrock(table string, s service.BedrockSettings) (string, bool) {
-	if strings.TrimSpace(s.Key) != "" {
-		return "", false
-	}
-	name, ok := a.tierConnectorOf(table, bedrockTemplate)
-	if !ok || !service.BedrockAt(RootDB, name, s) {
-		return "", false
-	}
-	return name, true
-}
-
-// otherTierRunsOn reports whether the tier that is not table runs on the
-// connector named name.
-func (a *AdminApp) otherTierRunsOn(table, name string) bool {
-	other := LeadLLMTable
-	if table == LeadLLMTable {
-		other = LLMTable
-	}
-	return a.storedString(other, "provider") == media.ServiceProviderPrefix+name
-}
-
-// formTierTarget is the provider and key a tier's form values are tried with
-// (Test, List models). With no key typed, a hosted provider is the connector
-// the tier runs on, when it is that provider's, and any other takes the
-// tier's stored key. A hosted provider never takes the stored key, which is
-// another provider's.
-func (a *AdminApp) formTierTarget(table, provider, key string) (string, string) {
-	if name, ok := a.keptTierConnector(table, provider, key); ok {
-		return media.ServiceProviderPrefix + name, key
-	}
-	if key == "" && a.db != nil && service.ModelTemplate(provider) == "" {
+// formTierKey is the key a tier's form values are tried with (Test, List
+// models): as typed, else the tier's own stored one, never the other tier's.
+// A model connector sends its credential's key in its place.
+func (a *AdminApp) formTierKey(table, key string) string {
+	if key == "" && a.db != nil {
 		a.db.Get(table, "api_key", &key)
 	}
-	return provider, key
-}
-
-// keptTierConnector is the connector the tier runs on, when no key is given
-// and that connector was made from provider's template: a form showing the
-// provider's name, and no key, means the one already set up.
-func (a *AdminApp) keptTierConnector(table, provider, key string) (string, bool) {
-	if strings.TrimSpace(key) != "" {
-		return "", false
-	}
-	return a.tierConnectorFrom(table, provider)
+	return key
 }

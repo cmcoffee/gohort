@@ -488,7 +488,7 @@ func TestATierOnAModelConnectorIsPricedByIt(t *testing.T) {
 	auth := &DBase{Store: kvlite.MemStore()}
 	AuthDB = func() Database { return auth }
 	t.Cleanup(func() { AuthDB, media.ModelService = savedAuth, savedSvc })
-	media.ModelService = func(connector string, withKey bool) (media.ModelTarget, error) {
+	media.ModelService = func(connector string, withKey bool, _ *media.ModelForm) (media.ModelTarget, error) {
 		if withKey {
 			t.Error("pricing read a key")
 		}

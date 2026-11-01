@@ -39,11 +39,12 @@ const ConnectorPackBundle = "gohort.connectors/v1"
 // a particular install of it. This is what a pack carries and what import
 // reconstitutes a live Connector from.
 type PortableConnector struct {
-	Name     string          `json:"name"`
-	Kind     string          `json:"kind"`
-	Desc     string          `json:"desc,omitempty"`
-	Template string          `json:"template,omitempty"` // authoring template — travels so import can offer Configure
-	Spec     json.RawMessage `json:"spec,omitempty"`
+	Name        string          `json:"name"`
+	Kind        string          `json:"kind"`
+	DisplayName string          `json:"display_name,omitempty"`
+	Desc        string          `json:"desc,omitempty"`
+	Template    string          `json:"template,omitempty"` // authoring template — travels so import can offer Configure
+	Spec        json.RawMessage `json:"spec,omitempty"`
 }
 
 // ConnectorPack is a portable bundle of one or more connectors.
@@ -55,7 +56,7 @@ type ConnectorPack struct {
 
 // toPortable strips a stored Connector down to its portable recipe.
 func toPortable(c Connector) PortableConnector {
-	return PortableConnector{Name: c.Name, Kind: c.Kind, Desc: c.Desc, Template: c.Template, Spec: c.Spec}
+	return PortableConnector{Name: c.Name, Kind: c.Kind, DisplayName: c.DisplayName, Desc: c.Desc, Template: c.Template, Spec: c.Spec}
 }
 
 // ExportConnectorPack builds a pack from stored connectors. With no names it
@@ -164,12 +165,13 @@ func ImportConnectorPack(db Database, data []byte, owner string) (ConnectorImpor
 			continue
 		}
 		c := Connector{
-			Name:     name,
-			Kind:     strings.TrimSpace(pc.Kind),
-			Desc:     pc.Desc,
-			Template: strings.TrimSpace(pc.Template),
-			Spec:     pc.Spec,
-			Owner:    owner,
+			Name:        name,
+			Kind:        strings.TrimSpace(pc.Kind),
+			Desc:        pc.Desc,
+			DisplayName: pc.DisplayName,
+			Template:    strings.TrimSpace(pc.Template),
+			Spec:        pc.Spec,
+			Owner:       owner,
 		}
 		if err := saveConnectorDraft(db, c); err != nil {
 			res.Skipped = append(res.Skipped, ConnectorImportSkip{Name: name, Reason: err.Error()})

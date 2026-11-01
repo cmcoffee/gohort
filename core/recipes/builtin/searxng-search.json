@@ -3,15 +3,8 @@
   "title": "SearXNG (web search)",
   "description": "A SearXNG instance, yours or one you may use, as gohort's web search, declared as a service: the request and how its results are read are data you can test and fix from Admin > Connectors.",
   "category": "Web Search",
-  "setup_notes": "The instance must answer JSON: in its settings.yml, search: formats must list json. The connector takes no key. Run Test on its row under Admin > Extensions > Connectors, which makes one real search for a common phrase. Then put it to use by choosing it under Admin > Capabilities > Web Search as Service: <name>. An instance behind a proxy that wants a key: add a bearer credential for its address under API Credentials and name it in the spec's auth in place of none.",
+  "setup_notes": "The instance must answer JSON: in its settings.yml, search: formats must list json. The connector takes no key. Choose it under Capabilities > Web Search and give the instance's address there; Test there makes one real search for a common phrase. An instance behind a proxy that wants a key: declare a secret setting sent as bearer in its spec's config, name it in auth in place of none, and give the key under the choice.",
   "questions": [
-    {
-      "name": "base_url",
-      "label": "Instance address",
-      "help": "Where the instance is, with the path it is under if it has one: https://searx.example.com, or http://localhost:8888 for one on this machine.",
-      "kind": "http_url",
-      "required": true
-    },
     {
       "name": "name",
       "label": "Connector name",
@@ -29,11 +22,20 @@
           "name": "{{name}}",
           "kind": "service",
           "template": "searxng-search",
-          "desc": "SearXNG web search at {{base_url}}",
+          "desc": "SearXNG web search",
           "spec": {
+            "config": [
+              {
+                "name": "base_url",
+                "label": "Instance address",
+                "help": "Where the instance is, with the path it is under if it has one: https://searx.example.com, or http://localhost:8888 for one on this machine.",
+                "type": "url",
+                "required": true
+              }
+            ],
             "provider": {
               "transport": "http",
-              "base_url": "{{base_url}}/",
+              "base_url": "{config.base_url}/",
               "auth": {
                 "none": true
               },

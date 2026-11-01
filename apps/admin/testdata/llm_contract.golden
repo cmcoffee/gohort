@@ -35,7 +35,7 @@ root PUT /api/worker-thinking "{}"
 alice GET /api/worker-llm ""
   403 forbidden
 root GET /api/worker-llm ""
-  200 {"_live":"","api_key":"","aws_profile":"","aws_region":"","bedrock_api":"converse","context_size":0,"default_effort":"","disable_thinking":false,"endpoint":"","max_effort":"","model":"","native_tools"… (426 bytes, sha1 8e521e8af2279910f0fb711eff84aaed33a0da2b)
+  200 {"_live":"","api_key":"","context_size":0,"default_effort":"","disable_thinking":false,"endpoint":"","max_effort":"","model":"","native_tools":false,"no_images":false,"no_think_budget":0,"no_think_prepend_system":false,"no_think_prepend_user":false,"no_think_send_budget":true,"no_think_use_kwarg":true,"provider":"","request_timeout_seconds":0,"thinking_budget":4096}
 root PUT /api/worker-llm "{}"
   405 method not allowed
 (signed out) GET /api/lead-llm ""
@@ -43,7 +43,7 @@ root PUT /api/worker-llm "{}"
 alice GET /api/lead-llm ""
   403 forbidden
 root GET /api/lead-llm ""
-  200 {"_live":"No lead model is loaded; escalations run on the worker.","api_key":"","aws_profile":"","aws_region":"","bedrock_api":"converse","context_size":0,"default_effort":"","disable_thinking":false,… (453 bytes, sha1 d222e445dbebc603c66a265094c128e0cb6a2a0a)
+  200 {"_live":"No lead model is loaded; escalations run on the worker.","api_key":"","context_size":0,"default_effort":"","disable_thinking":false,"endpoint":"","max_effort":"","model":"","native_tools":false,"no_images":false,"no_think_budget":0,"no_think_prepend_system":false,"no_think_prepend_user":false,"no_think_send_budget":true,"no_think_use_kwarg":true,"provider":"","thinking_budget":4096}
 root PUT /api/lead-llm "{}"
   405 method not allowed
 (signed out) GET /api/local-scheduler ""
@@ -151,7 +151,7 @@ alice POST /api/worker-llm "{\"provider\":\"ollama\",\"model\":\"qwen3:8b\"}"
 root POST /api/worker-llm "{\"provider\":\" ollama \",\"model\":\" qwen3:8b \",\"endpoint\":\" <stub> \",\"api_key\":\"s3cr3t-llm-w\",\"context_size\":8192,\"request_timeout_seconds\":120,\"default_effort\":\" HIGH \",\"max_effort\":\"extreme\",\"thinking_budget\":2048}"
   204 
 root GET /api/worker-llm ""
-  200 {"_live":"","api_key":"","aws_profile":"","aws_region":"","bedrock_api":"converse","context_size":8192,"default_effort":"high","disable_thinking":false,"endpoint":"<stub>","max_effort":"","model":"qwe… (457 bytes, sha1 eacf84cac3ec3628913e7500184c6acf2272bf68)
+  200 {"_live":"","api_key":"","context_size":8192,"default_effort":"high","disable_thinking":false,"endpoint":"<stub>","max_effort":"","model":"qwen3:8b","native_tools":false,"no_images":false,"no_think_budget":0,"no_think_prepend_system":false,"no_think_prepend_user":false,"no_think_send_budget":false,"no_think_use_kwarg":false,"provider":"ollama","request_timeout_seconds":120,"thinking_budget":2048}
 root POST /api/worker-llm/models "{\"provider\":\"ollama\",\"endpoint\":\"<stub>\"}"
   200 {"note":"What ollama offers. Pick one, or type any id in the field.","suggestions":["llama3.2","qwen3:8b"]}
 root POST /api/worker-llm "{\"provider\":\"ollama\",\"model\":\"qwen3:8b\",\"endpoint\":\"<stub>\"}"
@@ -165,21 +165,23 @@ root POST /api/worker-llm "{\"provider\":"
 root POST /api/worker-llm ""
   400 invalid JSON: EOF
 root GET /api/worker-llm ""
-  200 {"_live":"","api_key":"","aws_profile":"","aws_region":"","bedrock_api":"converse","context_size":0,"default_effort":"","disable_thinking":false,"endpoint":"<stub>","max_effort":"","model":"breaks","n… (443 bytes, sha1 9f1f25f7757167584ab45fb4a63ae2caeb6b745f)
+  200 {"_live":"","api_key":"","context_size":0,"default_effort":"","disable_thinking":false,"endpoint":"<stub>","max_effort":"","model":"breaks","native_tools":false,"no_images":false,"no_think_budget":0,"no_think_prepend_system":false,"no_think_prepend_user":false,"no_think_send_budget":false,"no_think_use_kwarg":false,"provider":"ollama","request_timeout_seconds":0,"thinking_budget":0}
 root POST /api/worker-llm "{\"provider\":\"ollama\",\"model\":\"qwen3:8b\",\"endpoint\":\"<stub>\"}"
   204 
 root GET /api/lead-llm ""
-  200 {"_live":"No lead model is loaded; escalations run on the worker.","api_key":"","aws_profile":"","aws_region":"","bedrock_api":"converse","context_size":0,"default_effort":"","disable_thinking":false,… (452 bytes, sha1 35563fcc0a0554e0c1af1666268c65f72b939b16)
-root POST /api/lead-llm "{\"provider\":\"bedrock\",\"model\":\"anthropic.claude-3-5-sonnet\",\"aws_region\":\"us-east-1\",\"bedrock_api\":\"converse\",\"api_key\":\"s3cr3t-llm-l\",\"no_images\":true}"
+  200 {"_live":"No lead model is loaded; escalations run on the worker.","api_key":"","context_size":0,"default_effort":"","disable_thinking":false,"endpoint":"","max_effort":"","model":"","native_tools":false,"no_images":true,"no_think_budget":0,"no_think_prepend_system":false,"no_think_prepend_user":false,"no_think_send_budget":true,"no_think_use_kwarg":true,"provider":"","thinking_budget":4096}
+root POST /api/lead-llm "{\"provider\":\"bedrock\",\"model\":\"anthropic.claude-3-5-sonnet\",\"api_key\":\"s3cr3t-llm-l\"}"
+  400 bedrock runs on a model connection: add the bedrock-model template under Admin > Extensions > Templates, then choose it here
+root POST /api/lead-llm "{\"provider\":\"vllm\",\"model\":\"qwen3:8b\",\"endpoint\":\"<stub>\",\"api_key\":\"s3cr3t-llm-l\",\"no_images\":true}"
   204 
 root GET /api/lead-llm ""
-  200 {"_live":"No lead model is loaded; escalations run on the worker.","api_key":"","aws_profile":"","aws_region":"","bedrock_api":"converse","context_size":0,"default_effort":"","disable_thinking":false,… (499 bytes, sha1 00cbe28c757818dd79fbc83e66f6a96d5e64266d)
+  200 {"_live":"No lead model is loaded; escalations run on the worker.","api_key":"","context_size":0,"default_effort":"","disable_thinking":false,"endpoint":"<stub>","max_effort":"","model":"qwen3:8b","na… (411 bytes, sha1 255dcc4b7808bdf7d9a4d5b6a43a8bf7fa4d8f5b)
 root GET /api/llm-privacy ""
-  200 {"advice":"Worker: ollama at <stub> - private (loopback endpoint)\nLead: service:bedrock-model - NOT private (a hosted provider through the connector bedrock-model: prompts leave this deployment)\n\nAt least one tier reaches a third party. Turning this on anyway would send private-stage data: including SSH credentials and log contents, to it.","all_private":false,"recommended":false}
+  200 {"advice":"Worker: ollama at <stub> - private (loopback endpoint)\nLead: vllm at <stub> - private (loopback endpoint)\n\nBoth tiers look local, so turning this on is consistent with how the deployment is configured.","all_private":false,"recommended":true}
 activity log, 6 entries:
   settings root: set all-LLMs-private=false: private stages may no longer escalate to the lead tier
   settings root: set all-LLMs-private=true: private stages MAY now escalate to the lead tier
-  settings root: updated lead_llm_config (provider="service:bedrock-model" model="anthropic.claude-3-5-sonnet")
+  settings root: updated lead_llm_config (provider="vllm" model="qwen3:8b")
   settings root: updated llm_config (provider=" ollama " model=" qwen3:8b ")
   settings root: updated llm_config (provider="ollama" model="qwen3:8b")
   settings root: updated llm_config (provider="ollama" model="qwen3:8b")

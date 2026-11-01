@@ -138,7 +138,7 @@ func researchSourceOptions() []ui.SelectOption {
 	var out []ui.SelectOption
 	for _, c := range ListConnectors(RootDB) {
 		if c.Kind == service.Kind && service.Provides(c, "web.search") {
-			out = append(out, ui.SelectOption{Value: c.Name, Label: c.Name, Help: ConnectorSummary(c)})
+			out = append(out, ui.SelectOption{Value: c.Name, Label: c.Title(), Help: ConnectorSummary(c)})
 		}
 	}
 	return out

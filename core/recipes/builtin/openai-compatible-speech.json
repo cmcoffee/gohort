@@ -3,35 +3,13 @@
   "title": "Kokoro / OpenAI-compatible (speech)",
   "description": "A text-to-speech model on any server that speaks OpenAI's speech API (Kokoro-FastAPI, openedai-speech, Speaches), on this machine or your network, as gohort's voice, with the server's voice list for the Voice field: the request and the reply are data you can test and fix from Admin > Connectors.",
   "category": "Speech",
-  "setup_notes": "Start the server (Kokoro-FastAPI: docker run -p 8880:8880 ghcr.io/remsky/kokoro-fastapi-cpu). The connector takes no key. Run Test on its row under Admin > Extensions > Connectors (it speaks a short sentence and reads the voice list), then put it to use by choosing it under Capabilities > Speech (TTS), where its voices are offered to choose from. A server with no voice list (/audio/voices) fails that part of the Test: remove the speech.voices entry from its spec, and type the voice. A server that takes a key: add a bearer credential for its address under API Credentials and name it in the spec's auth in place of none.",
+  "setup_notes": "Start the server (Kokoro-FastAPI: docker run -p 8880:8880 ghcr.io/remsky/kokoro-fastapi-cpu). The connector takes no key. Choose it under Capabilities > Speech (TTS) and give the server's address and the model there; Test there speaks a short sentence, and its voices are offered to choose from. A server with no voice list (/audio/voices) fails that part of the Test: remove the speech.voices entry from its spec, and type the voice. A server that takes a key: declare a secret setting sent as bearer in its spec's config, name it in auth in place of none, and give the key under the choice.",
   "questions": [
-    {
-      "name": "base_url",
-      "label": "Server address",
-      "help": "The address its /audio/speech is under, usually ending in /v1: http://localhost:8880/v1 for Kokoro-FastAPI.",
-      "kind": "http_url",
-      "required": true,
-      "default": "http://localhost:8880/v1"
-    },
     {
       "name": "name",
       "label": "Connector name",
       "help": "Lowercase letters, digits, dashes and underscores; the speech settings list it by this name.",
       "default": "local-speech"
-    },
-    {
-      "name": "model",
-      "label": "Model",
-      "help": "The model the server speaks with: Kokoro-FastAPI takes kokoro.",
-      "required": true,
-      "default": "kokoro"
-    },
-    {
-      "name": "voice",
-      "label": "Default voice",
-      "help": "Used when the speech settings name none: Kokoro's af_heart, say. The speech settings' Voice overrides it.",
-      "required": true,
-      "default": "af_heart"
     }
   ],
   "bundle": {
@@ -44,11 +22,33 @@
           "name": "{{name}}",
           "kind": "service",
           "template": "openai-compatible-speech",
-          "desc": "Speech ({{model}}) at {{base_url}}",
+          "desc": "Speech on an OpenAI-compatible server",
           "spec": {
+            "config": [
+              {
+                "name": "base_url",
+                "label": "Server address",
+                "help": "The address its /audio/speech is under, usually ending in /v1: http://localhost:8880/v1 for Kokoro-FastAPI.",
+                "type": "url",
+                "default": "http://localhost:8880/v1",
+                "required": true
+              },
+              {
+                "name": "model",
+                "label": "Model",
+                "help": "The model the server speaks with: Kokoro-FastAPI takes kokoro.",
+                "default": "kokoro"
+              },
+              {
+                "name": "voice",
+                "label": "Default voice",
+                "help": "Used when the speech settings name none: Kokoro's af_heart, say. The speech settings' Voice overrides it.",
+                "default": "af_heart"
+              }
+            ],
             "provider": {
               "transport": "http",
-              "base_url": "{{base_url}}",
+              "base_url": "{config.base_url}",
               "auth": {
                 "none": true
               },
@@ -91,8 +91,8 @@
                   }
                 },
                 "defaults": {
-                  "model": "{{model}}",
-                  "voice": "{{voice}}"
+                  "model": "{config.model}",
+                  "voice": "{config.voice}"
                 }
               },
               {

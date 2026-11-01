@@ -241,13 +241,10 @@ func TestContractTestsDrawOnADailyBudget(t *testing.T) {
 }
 
 // A service image backend Image Generation offers to agents is among an
-// agent's image backends by name, unless the agent's session was denied the
-// credential it spends.
-func TestAgentsSeeAServiceBackendUnlessDeniedItsKey(t *testing.T) {
+// agent's image backends by name.
+func TestAgentsSeeAServiceBackend(t *testing.T) {
 	world(t)
-	m := imageSpec("https://api.example.test")
-	provider(m)["auth"] = map[string]any{"credential": "acme_key"}
-	install(t, "acme-images", m)
+	install(t, "acme-images", imageSpec("https://api.example.test"))
 	RootDB.Set(ImageTable, "agents", []string{"acme-images"})
 	has := func(sess *ToolSession) bool {
 		for _, b := range ReachableImageBackends(sess) {
@@ -259,9 +256,6 @@ func TestAgentsSeeAServiceBackendUnlessDeniedItsKey(t *testing.T) {
 	}
 	if !has(&ToolSession{}) {
 		t.Error("an approved service image backend is not offered to agents")
-	}
-	if has(&ToolSession{DeniedCredentials: map[string]bool{"acme_key": true}}) {
-		t.Error("a session denied the service's key is still offered it")
 	}
 }
 
@@ -468,12 +462,13 @@ func mustSample(t *testing.T) *File {
 // is where an admin finds it.
 func TestAServiceReadsAsItsWrapper(t *testing.T) {
 	m := imageSpec("https://api.example.test/v1")
-	provider(m)["auth"] = map[string]any{"credential": "img"}
+	m["config"] = []any{map[string]any{"name": "api_key", "label": "API key", "type": "secret", "send": "bearer"}}
+	provider(m)["auth"] = map[string]any{"secret": "api_key"}
 	s, err := specFrom(t, m)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := s.Describe("pics"), "Image Generation ⇐ submit, then wait on status ⇐ api.example.test (key img)"; got != want {
+	if got, want := s.Describe("pics"), "Image Generation ⇐ submit, then wait on status ⇐ api.example.test (its API key)"; got != want {
 		t.Errorf("got  %q\nwant %q", got, want)
 	}
 	s.Provides = append(s.Provides, Binding{Capability: "music.generate", Steps: []Step{{Call: "a"}, {Wait: "b"}}})

@@ -3,43 +3,18 @@
   "title": "Together (LLM)",
   "description": "Together AI's open models as an LLM tier, through gohort's OpenAI-style client.",
   "category": "LLMs",
-  "setup_notes": "Create a key at api.together.ai (Settings, API keys). The credential lands disabled: enable it under API Credentials. Run Test on its row under Admin > Extensions > Connectors, which makes one short real chat. Then put it to use by choosing it under Admin > LLMs > Worker LLM (or Lead LLM) as Service: <name>: the tier's turns run on it through gohort's own OpenAI-style client, streaming and tool calls as usual, and the key stays in the credential. Its calls and their cost show on the connector's row; add per_million_input and per_million_output to its spec's cost to price its tokens, which then replace the tier's rates under Costs.",
+  "setup_notes": "Create a key at api.together.ai (Settings, API keys). Choose it under Admin > LLMs > Worker LLM (or Lead LLM) as Service: <name>, where the tier names its model and the key can be changed; Test connection there makes one short real chat. The tier's turns run on it through gohort's own OpenAI-style client, streaming and tool calls as usual, and the key stays with the connection. Its calls and their cost show on the connector's row; add per_million_input and per_million_output to its spec's cost to price its tokens, which then replace the tier's rates under Costs.",
   "questions": [
-    {
-      "name": "api_key",
-      "label": "API key",
-      "help": "Stored in the credential's secret store, never in the connector or the LLM settings.",
-      "required": true,
-      "secret": true,
-      "credential": "together"
-    },
     {
       "name": "name",
       "label": "Connector name",
       "help": "Lowercase letters, digits, dashes and underscores; the LLM settings list it by this name.",
       "default": "together"
-    },
-    {
-      "name": "model",
-      "label": "Model",
-      "help": "The model a tier on it runs unless the tier names another.",
-      "default": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
-      "required": false
     }
   ],
   "bundle": {
     "bundle": "gohort.bundle/v1",
     "artifacts": [
-      {
-        "type": "credential",
-        "name": "together",
-        "recipe": {
-          "name": "together",
-          "type": "bearer",
-          "base_url": "https://api.together.xyz/v1",
-          "description": "Together API, for an LLM."
-        }
-      },
       {
         "type": "connector",
         "name": "{{name}}",
@@ -47,13 +22,23 @@
           "name": "{{name}}",
           "kind": "service",
           "template": "together",
-          "desc": "Together model ({{model}})",
+          "desc": "Together models",
           "spec": {
+            "config": [
+              {
+                "name": "api_key",
+                "label": "API key",
+                "type": "secret",
+                "send": "bearer",
+                "help": "Kept with this connection, and sent only to the address it is given for.",
+                "required": true
+              }
+            ],
             "provider": {
               "transport": "http",
               "base_url": "https://api.together.xyz/v1",
               "auth": {
-                "credential": "together"
+                "secret": "api_key"
               },
               "operations": {
                 "models": {
@@ -71,7 +56,7 @@
                 "capability": "llm.chat",
                 "dialect": "openai",
                 "defaults": {
-                  "model": "{{model}}"
+                  "model": "meta-llama/Llama-3.3-70B-Instruct-Turbo"
                 }
               }
             ]

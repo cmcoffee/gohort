@@ -3,52 +3,18 @@
   "title": "ElevenLabs (speech)",
   "description": "ElevenLabs text-to-speech as gohort's voice, declared as a service: the request, the voice and the reply are data you can test and fix from Admin > Connectors.",
   "category": "Speech",
-  "setup_notes": "Get an API key at elevenlabs.io (Profile > API keys). The credential lands disabled: enable it under API Credentials. Run Test on its row under Admin > Extensions > Connectors, then put it to use by choosing it under Capabilities > Speech (TTS). ElevenLabs bills in credits by the character, so no price is declared: the connector shows its calls as unpriced until you add a cost to its spec (per_unit with unit character).",
+  "setup_notes": "Get an API key at elevenlabs.io (Profile > API keys). Choose it under Capabilities > Speech (TTS), where its model is set and its key can be changed; Test there speaks a short sentence. ElevenLabs bills in credits by the character, so no price is declared: the connector shows its calls as unpriced until you add a cost to its spec (per_unit with unit character).",
   "questions": [
-    {
-      "name": "api_key",
-      "label": "ElevenLabs API key",
-      "help": "Stored in the credential's secret store, never in the connector.",
-      "required": true,
-      "secret": true,
-      "credential": "elevenlabs_speech"
-    },
     {
       "name": "name",
       "label": "Connector name",
       "help": "Lowercase letters, digits, dashes and underscores; the speech settings list it by this name.",
       "default": "elevenlabs-speech"
-    },
-    {
-      "name": "voice",
-      "label": "Voice id",
-      "help": "An ElevenLabs voice id; the speech settings' Voice overrides it when set, picked from the account's voices by name.",
-      "default": "21m00Tcm4TlvDq8ikWAM"
-    },
-    {
-      "name": "model",
-      "label": "Model",
-      "default": "eleven_multilingual_v2"
     }
   ],
   "bundle": {
     "bundle": "gohort.bundle/v1",
     "artifacts": [
-      {
-        "type": "credential",
-        "name": "elevenlabs_speech",
-        "recipe": {
-          "name": "elevenlabs_speech",
-          "type": "header",
-          "param_name": "xi-api-key",
-          "base_url": "https://api.elevenlabs.io",
-          "allowed_endpoints": [
-            "/v1/text-to-speech/**",
-            "/v1/voices"
-          ],
-          "description": "ElevenLabs API, for speech."
-        }
-      },
       {
         "type": "connector",
         "name": "{{name}}",
@@ -56,13 +22,34 @@
           "name": "{{name}}",
           "kind": "service",
           "template": "elevenlabs-speech",
-          "desc": "ElevenLabs speech ({{model}})",
+          "desc": "ElevenLabs speech",
           "spec": {
+            "config": [
+              {
+                "name": "model",
+                "label": "Model",
+                "default": "eleven_multilingual_v2"
+              },
+              {
+                "name": "voice",
+                "label": "Voice id",
+                "help": "An ElevenLabs voice id; the speech settings' Voice overrides it when set, picked from the account's voices by name.",
+                "default": "21m00Tcm4TlvDq8ikWAM"
+              },
+              {
+                "name": "api_key",
+                "label": "ElevenLabs API key",
+                "type": "secret",
+                "send": "header:xi-api-key",
+                "help": "Kept with this connection, and sent only to the address it is given for.",
+                "required": true
+              }
+            ],
             "provider": {
               "transport": "http",
               "base_url": "https://api.elevenlabs.io",
               "auth": {
-                "credential": "elevenlabs_speech"
+                "secret": "api_key"
               },
               "operations": {
                 "speak": {
@@ -98,8 +85,8 @@
                   }
                 },
                 "defaults": {
-                  "voice": "{{voice}}",
-                  "model": "{{model}}"
+                  "voice": "{config.voice}",
+                  "model": "{config.model}"
                 }
               },
               {

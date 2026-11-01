@@ -15,6 +15,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -306,4 +307,13 @@ func readable(c Connector) bool {
 	previews.Lock()
 	defer previews.Unlock()
 	return previews.n[c.Name] > 0
+}
+
+// RemoveConnector deletes connector name unless a page still names it: that
+// page would be left naming nothing, so what uses it is cleared first.
+func RemoveConnector(db Database, name string) error {
+	if pages := TieIns(db)[strings.TrimSpace(name)]; len(pages) > 0 {
+		return fmt.Errorf("%s is in use by %s: take it off there first, then delete it", name, strings.Join(pages, ", "))
+	}
+	return DeleteConnector(db, name)
 }

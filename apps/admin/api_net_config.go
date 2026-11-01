@@ -103,7 +103,12 @@ func (a *AdminApp) handleWebSearch(c *jsonapi.Call) (any, error) {
 	if source == "" {
 		source = EmbeddingProviderLocal
 	}
-	return map[string]any{"provider": provider, "source": source}, nil
+	conn := chosenService(provider)
+	out := map[string]any{"provider": provider, "source": source}
+	for k, v := range settingsValues(conn, "web.search") {
+		out[k] = v
+	}
+	return out, nil
 }
 
 // searchEngineOK refuses an engine a local search cannot use: one that is
@@ -124,7 +129,8 @@ func searchEngineOK(cfg WebSearchConfig) error {
 }
 
 // handleWebSearchSave saves the web search config.
-func (a *AdminApp) handleWebSearchSave(c *jsonapi.Call, req WebSearchConfig) (any, error) {
+func (a *AdminApp) handleWebSearchSave(c *jsonapi.Call, form withSettings[WebSearchConfig]) (any, error) {
+	req, conn := form.Form, chosenService(form.Form.Provider)
 	// A local engine keeps no key or address here: they are the
 	// connector's.
 	req.APIKey, req.Endpoint = "", ""
@@ -140,6 +146,9 @@ func (a *AdminApp) handleWebSearchSave(c *jsonapi.Call, req WebSearchConfig) (an
 	req = resolved
 	// A connector as the engine must be one that searches, and approved.
 	if err := searchEngineOK(req); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	if err := form.Settings.save(conn, "web.search"); err != nil {
 		return nil, jsonapi.BadRequest(err.Error())
 	}
 	if a.db != nil {
@@ -160,11 +169,12 @@ func (a *AdminApp) handleBrowse(c *jsonapi.Call) (any, error) {
 	if cfg.Source == "" {
 		cfg.Source = EmbeddingProviderLocal
 	}
-	return cfg, nil
+	return withValues(cfg, chosenService(cfg.Source), "page.render"), nil
 }
 
 // handleBrowseSave sets where pages are rendered.
-func (a *AdminApp) handleBrowseSave(c *jsonapi.Call, req BrowseConfig) (any, error) {
+func (a *AdminApp) handleBrowseSave(c *jsonapi.Call, form withSettings[BrowseConfig]) (any, error) {
+	req := form.Form
 	src := strings.TrimSpace(req.Source)
 	// Validate the selection rather than storing a name that silently
 	// renders nothing: a peer that was forgotten, or had its browse
@@ -182,6 +192,9 @@ func (a *AdminApp) handleBrowseSave(c *jsonapi.Call, req BrowseConfig) (any, err
 			return nil, jsonapi.BadRequest("peer " + p.Name + " does not offer page rendering (it offers: " + strings.Join(p.Caps, ", ") + ")")
 		}
 	}
+	if err := form.Settings.save(chosenService(src), "page.render"); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
 	if a.db != nil {
 		a.db.Set(BrowseTable, "source", src)
 	}
@@ -192,7 +205,8 @@ func (a *AdminApp) handleBrowseSave(c *jsonapi.Call, req BrowseConfig) (any, err
 }
 
 // handleWebSearchTest runs one search with the form's working config.
-func (a *AdminApp) handleWebSearchTest(c *jsonapi.Call, req WebSearchConfig) (any, error) {
+func (a *AdminApp) handleWebSearchTest(c *jsonapi.Call, form withSettings[WebSearchConfig]) (any, error) {
+	req, conn := form.Form, chosenService(form.Form.Provider)
 	req.APIKey, req.Endpoint = "", ""
 	// Resolve before inspecting the fields — with a peer picked they are
 	// hidden and empty, and testing a valid peer would otherwise fail on
@@ -215,7 +229,7 @@ func (a *AdminApp) handleWebSearchTest(c *jsonapi.Call, req WebSearchConfig) (an
 	// Under the request's context: the form's Cancel closes the request,
 	// and the search tool's handler takes a context, so the provider call
 	// is dropped with it rather than running out its own timeout.
-	ctx, end := previewTieIn(c.R.Context(), req.Provider)
+	ctx, end := previewTieIn(form.Settings.testContext(c.R.Context(), conn, "web.search"), req.Provider)
 	defer end()
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
@@ -256,13 +270,17 @@ func (a *AdminApp) handleMail(c *jsonapi.Call) (any, error) {
 		cfg.Provider = "smtp"
 	}
 	cfg.Password = maskSecret(cfg.Password)
-	return cfg, nil
+	return withValues(cfg, chosenService(cfg.Provider), "mail.send"), nil
 }
 
 // handleMailSave saves the mail config.
-func (a *AdminApp) handleMailSave(c *jsonapi.Call, req MailConfig) (any, error) {
+func (a *AdminApp) handleMailSave(c *jsonapi.Call, form withSettings[MailConfig]) (any, error) {
+	req, conn := form.Form, chosenService(form.Form.Provider)
 	req.Password = keepSecret(req.Password, a.storedString(MailTable, "password"))
 	if err := serviceProviderOK(req.Provider, "mail.send"); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	if err := form.Settings.save(conn, "mail.send"); err != nil {
 		return nil, jsonapi.BadRequest(err.Error())
 	}
 	if a.db != nil {
@@ -280,7 +298,8 @@ func (a *AdminApp) handleMailSave(c *jsonapi.Call, req MailConfig) (any, error) 
 }
 
 // handleMailTest sends a test email with the form's working config.
-func (a *AdminApp) handleMailTest(c *jsonapi.Call, req MailConfig) (any, error) {
+func (a *AdminApp) handleMailTest(c *jsonapi.Call, form withSettings[MailConfig]) (any, error) {
+	req, conn := form.Form, chosenService(form.Form.Provider)
 	req.Password = keepSecret(req.Password, a.storedString(MailTable, "password"))
 	to := req.Recipient
 	if to == "" {
@@ -289,7 +308,7 @@ func (a *AdminApp) handleMailTest(c *jsonapi.Call, req MailConfig) (any, error) 
 	// The posted (unsaved) config sends directly, under the request's
 	// context, so Cancel ends the SMTP conversation wherever it is
 	// blocked instead of leaving it to the server's timeout.
-	ctx, end := previewTieIn(c.R.Context(), req.Provider)
+	ctx, end := previewTieIn(form.Settings.testContext(c.R.Context(), conn, "mail.send"), req.Provider)
 	defer end()
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()

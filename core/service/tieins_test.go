@@ -226,20 +226,20 @@ func TestAModelConnectorIsReadOnlyUnderPreview(t *testing.T) {
 	if err := SaveConnector(RootDB, Connector{Name: "chat", Kind: Kind, Spec: raw}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := modelTarget("chat", false); err == nil {
+	if _, err := modelTarget("chat", false, nil); err == nil {
 		t.Fatal("an unused model connector was read")
 	}
 	_, end := Preview(context.Background(), "chat")
 	_, end2 := Preview(context.Background(), "chat")
-	if _, err := modelTarget("chat", false); err != nil {
+	if _, err := modelTarget("chat", false, nil); err != nil {
 		t.Errorf("under preview: %v", err)
 	}
 	end()
-	if _, err := modelTarget("chat", false); err != nil {
+	if _, err := modelTarget("chat", false, nil); err != nil {
 		t.Errorf("one of two previews ended, and the other lost it: %v", err)
 	}
 	end2()
-	if _, err := modelTarget("chat", false); err == nil {
+	if _, err := modelTarget("chat", false, nil); err == nil {
 		t.Error("read after every preview ended")
 	}
 }

@@ -84,7 +84,7 @@ func ProviderLooksPrivate(provider, endpoint string) (bool, string) {
 		if media.ModelService == nil {
 			return false, "a model connector, which this build cannot read, so it cannot be judged private"
 		}
-		t, err := media.ModelService(name, false)
+		t, err := media.ModelService(name, false, nil)
 		if err != nil {
 			return false, "the model connector " + name + " cannot be read (" + err.Error() + "), so it cannot be judged private"
 		}

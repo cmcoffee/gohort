@@ -184,7 +184,7 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 		{
 			Title:    "Connectors",
 			Subtitle: "Standing connections to what is outside gohort: services that give it a capability (images, speech, embeddings), feeds it watches, messaging relays, grouped by what each does. Test, fix or remove each one here. A service is put to use where it is used: choosing it on that page (Web Search, an LLM tier, Research Sources, ...); the others are approved here.",
-			Detail:   "Connectors are grouped by what they are: services that give gohort a capability, messaging, watches, tools for agents (MCP and desktop), adapted System Hooks, then the built-in providers, peers and programs.\n\nEndpoints on a service's row lists each endpoint it reaches: what it is sent and where each value comes from ({prompt} is what gohort asked; anything else is sent as written), what is read from the reply and into what, and what uses it. A service giving several things names them on its row and counts its endpoints.\n\nA search connector is put to use for research and agents under Admin > Extensions > Research Sources, and as the engine under Web Search; its row here is how it is reached and read, tested and fixed.\n\nThe peers this instance borrows from are in the Peers group: what each lends, what here uses it, and when it was last checked. Test asks the peer again what it lends, which costs nothing. A peer is added, re-keyed and forgotten under Admin > Capabilities > Peers.\n\nThe programs System Hooks' jobs run (pandoc, ffmpeg, yt-dlp) are in the Programs group: what each does now, what it stands by for (another way is used first, or a program it works with is missing), and its command lines under Endpoints. A program is installed, adapted and tested under Admin > Capabilities > System Hooks; one not installed is listed only while a job it would do has no other way to run.\n\ngohort's own providers (web search, the browser, mail and the LLM tiers) are in the Built in group: they are set up under Admin > Capabilities and Admin > LLMs, and Test runs the same check as there.\n\nFor example a calendar or CRM exposed through its MCP server. Approve to MATERIALIZE the capability: its tools register for agents, and a remote_mcp connector becomes an enabled MCP server, which also appears under MCP Servers above.\n\nThe assistant never handles a secret: auth is a referenced API credential or per-user OAuth. Nothing runs until you approve, and Delete tears the capability down.",
+			Detail:   "A connector comes from a template (Admin > Extensions > Templates) or from an imported bundle. gohort provides some itself (Anthropic, OpenAI, Gemini and AWS Bedrock among the LLMs), which cannot be deleted. Each keeps its own settings and key: set them where it is used, under the choice, or under Settings on its row, which also gives it the name people see.\n\nConnectors are grouped by what they do: LLMs, web search, research sources, images, speech and music, embeddings, pages and files, mail, messaging, then watches, tools for agents (MCP and desktop), adapted System Hooks and peer relays. Only connectors with a spec are listed, since that is what can be edited and fixed here: what gohort does in Go (SMTP, the browser, DuckDuckGo, a local model server) is set up on its own page, peers under Admin > Capabilities > Peers, and the programs System Hooks run under System Hooks.\n\nA service is put to use where it is used: choosing it on the page that uses it (Web Search, an LLM tier, Image Generation, Research Sources, a flow, ...) and saving. Its row says which pages use it, or that none does. One in use cannot be deleted: take it off those pages first, so nothing is left naming a connector that is gone. A change made by someone who is not an administrator holds it out of use until an administrator saves a page with it chosen.\n\nEndpoints on a service's row lists each endpoint it reaches: what it is sent and where each value comes from ({prompt} is what gohort asked; anything else is sent as written), what is read from the reply and into what, and what uses it. A service giving several things names them on its row and counts its endpoints.\n\nA search connector is put to use for research and agents under Admin > Extensions > Research Sources, and as the engine under Web Search; its row here is how it is reached and read, tested and fixed.\n\nFor example a calendar or CRM exposed through its MCP server. Approve to MATERIALIZE the capability: its tools register for agents, and a remote_mcp connector becomes an enabled MCP server, which also appears under MCP Servers above.\n\nThe assistant never handles a secret: auth is a referenced API credential or per-user OAuth. Nothing runs until you approve, and Delete tears the capability down.",
 			Body: ui.Stack{
 				Children: []ui.Component{
 					ui.Table{
@@ -192,9 +192,7 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 						RowKey:  "name",
 						GroupBy: "group",
 						// Many connectors in many groups: each band folds to
-						// its heading and summary. What an admin added starts
-						// open; gohort's own and what is read from elsewhere
-						// (built-ins, peers, programs) closed.
+						// its heading and summary, and starts open.
 						GroupFold:         true,
 						GroupOpenField:    "group_open",
 						GroupSummaryField: "group_summary",
@@ -206,7 +204,8 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 						// The summary and the last error take the second line
 						// at full width.
 						Columns: []ui.Col{
-							{Field: "name", Flex: 2},
+							{Field: "title", Label: "Name", Flex: 2},
+							{Field: "name", Label: "Id", Mute: true},
 							{Field: "kind", Label: "Type", Mute: true},
 							{Field: "owner", Label: "Drafted by", Mute: true},
 							{
@@ -217,9 +216,6 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 									{Value: "in-use", Label: "In use", Color: "success"},
 									{Value: "unused", Label: "Not in use", Color: "mute"},
 									{Value: "changed", Label: "Changed", Color: "warning"},
-									{Value: "built-in", Label: "Built in", Color: "info"},
-									{Value: "peer", Label: "Peer", Color: "info"},
-									{Value: "program", Label: "Program", Color: "info"},
 								},
 							},
 							{Field: "summary", Label: "", Mute: true, Flex: 4, Line: 2},
@@ -244,6 +240,14 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 								},
 								EmptyText: "This service has no endpoints.",
 							}),
+							ui.ModalActionIf("Settings", "has_settings", "", ui.FormPanel{
+								Source:      "api/connectors/settings?name={name}",
+								PostURL:     "api/connectors/settings?name={name}",
+								Method:      "POST",
+								SubmitLabel: "Save",
+								Invalidate:  []string{"api/connectors"},
+								Fields:      connectionSettingsFields(),
+							}),
 							{Type: "button", Label: "Configure", Method: "client",
 								PostTo: "configure_backend", OnlyIf: "configurable"},
 							{Type: "button", Label: "Webhook…", Method: "client",
@@ -255,13 +259,13 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 								PostTo: "api/connectors/health?name={name}", OnlyIf: "has_health"},
 							connectorFixAction(),
 							{Type: "button", Label: "Edit spec", Method: "client",
-								PostTo: "connector_edit_spec", OnlyIf: "stored"},
+								PostTo: "connector_edit_spec"},
 							{Type: "button", Label: "Export", Method: "client",
-								PostTo: "connectors_export", OnlyIf: "stored"},
+								PostTo: "connectors_export"},
 							{Type: "button", Label: "Delete",
 								PostTo:  "api/connectors?name={name}",
 								Method:  "DELETE",
-								OnlyIf:  "stored",
+								OnlyIf:  "deletable",
 								Confirm: "Delete this connector and tear down its capability (for remote_mcp, remove its MCP server)?",
 								Variant: "danger"},
 						},
@@ -283,7 +287,6 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 					// connector; these buttons grab whole sets as one secret-free
 					// gohort.bundle/v1. "Export everything" spans every artifact
 					// type (connectors + tools + future types).
-					connectorAddButton(),
 					ui.Toolbar{
 						Actions: []ui.ToolbarAction{
 							{Label: "Export all connectors", Method: "client", URL: "connectors_export_all"},

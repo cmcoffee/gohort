@@ -155,7 +155,8 @@ func mailFormFields() []ui.FormField {
 	var fields []ui.FormField
 	if hasChoice {
 		fields = append(fields, ui.FormField{Field: "provider", Label: "Send with", Type: "select", Options: choices,
-			Help: "This instance's SMTP server, or a connector that sends mail through an API."})
+			Help: "This instance's SMTP server, or a connector that sends mail through an API, set up below it."})
+		fields = append(fields, connectorSettingsFields("mail.send", "", "provider", asService)...)
 	}
 	return append(fields,
 		ui.FormField{Field: "server", Label: "SMTP Server", Type: "text",
@@ -201,7 +202,7 @@ func imageFormFields() []ui.FormField {
 		// Every image connector (choosing it here puts it to use), and any
 		// other backend already registered, a peer's renderer among them.
 		if imageConnector(c.Name) || (c.Approved && ImageBackendRegistered(c.Name)) {
-			label := "Connector: " + c.Name
+			label := connectorLabel(c)
 			if _, waiting := service.PendingChange(RootDB, c.Name); waiting {
 				label += " (changed, waiting to be accepted)"
 			}
@@ -215,12 +216,13 @@ func imageFormFields() []ui.FormField {
 		f.Help = "Nothing here makes pictures yet: " + add + "."
 		return []ui.FormField{f}
 	}
-	f.Help = "The connector that makes pictures. Choosing it puts it to use; its address and key are kept on it, under Admin > Extensions > Connectors, where it is tested and fixed."
+	f.Help = "The connector that makes pictures. Choosing it puts it to use; its settings (an address, a model, a key) are set here below it."
 	f.Detail = "To make pictures with something not listed, " + add + ". A connector changed by someone who is not an administrator since it was put to use waits out of use: read the change on its row, then save here with it chosen to accept it."
 	agents := ui.FormField{Field: "agents", Label: "Also offered to agents", Type: "checklist", Options: opts,
 		Help:   "Other image connectors agents may choose by name, and peers borrowing image generation. The one above is always offered.",
 		Detail: "Each one ticked is put to use. Agents' image tools offer the connector above as the default and these by name; a peer that borrows image generation from this machine may name them too."}
-	return []ui.FormField{f, agents}
+	fields := append([]ui.FormField{f}, connectorSettingsFields("image.generate", "", "provider", func(n string) string { return n })...)
+	return append(fields, agents)
 }
 
 // databaseBrowserCard is the read-only kvlite table/key/record browser.
@@ -246,8 +248,9 @@ func embeddingFormFields() []ui.FormField {
 		fields = append(fields, ui.FormField{Field: "provider", Label: "Embed with", Type: "select",
 			Options:  choices,
 			ShowWhen: "enabled",
-			Help:     "The connector or peer that makes embeddings. Its address, model and key are kept on it: open its row under Admin > Extensions > Connectors to see, test or fix them.",
-			Detail:   "To embed with something not listed, " + add + ". Changing what embeds changes the embedding space: search skips stored documents from the old space until Repair in the Vector Index panel makes them again, and through a paid service that is billed."})
+			Help:     "The connector or peer that makes embeddings. A connector's settings (its address, its model, a key) are set here below it.",
+			Detail:   "To embed with something not listed, " + add + ". Changing what embeds, or its model, changes the embedding space: search skips stored documents from the old space until Repair in the Vector Index panel makes them again, and through a paid service that is billed."})
+		fields = append(fields, connectorSettingsFields("embed.text", "enabled", "provider", asService)...)
 	}
 	return append(fields,
 		// The prefixes belong to the MODEL, not to where it runs, so they stay
@@ -286,11 +289,12 @@ func transcribeFormFields() []ui.FormField {
 		fields[0].Help = "Nothing here transcribes yet: " + add + "."
 		return fields
 	}
-	return append(fields, ui.FormField{Field: "provider", Label: "Transcribe with", Type: "select",
+	fields = append(fields, ui.FormField{Field: "provider", Label: "Transcribe with", Type: "select",
 		Options:  choices,
 		ShowWhen: "enabled",
-		Help:     "The connector or peer that transcribes. Its address, model and key are kept on it: open its row under Admin > Extensions > Connectors to see, test or fix them.",
+		Help:     "The connector or peer that transcribes. A connector's settings (its address, its model, a key) are set here below it.",
 		Detail:   "To transcribe with something not listed, " + add + "."})
+	return append(fields, connectorSettingsFields("speech.transcribe", "enabled", "provider", asService)...)
 }
 
 // speechFormFields builds the speech (TTS) settings: on or off, the
@@ -305,12 +309,13 @@ func speechFormFields() []ui.FormField {
 		fields[0].Help = "Nothing here speaks yet: " + add + "."
 		return fields
 	}
+	fields = append(fields, ui.FormField{Field: "provider", Label: "Speak with", Type: "select",
+		Options:  choices,
+		ShowWhen: "enabled",
+		Help:     "The connector or peer that speaks. A connector's settings (its address, its model, a key) are set here below it.",
+		Detail:   "To speak with something not listed, " + add + "."})
+	fields = append(fields, connectorSettingsFields("speech.synthesize", "enabled", "provider", asService)...)
 	return append(fields,
-		ui.FormField{Field: "provider", Label: "Speak with", Type: "select",
-			Options:  choices,
-			ShowWhen: "enabled",
-			Help:     "The connector or peer that speaks. Its address, model and key are kept on it: open its row under Admin > Extensions > Connectors to see, test or fix them.",
-			Detail:   "To speak with something not listed, " + add + "."},
 		ui.FormField{Field: "voice", Label: "Voice", Type: "text",
 			Placeholder: "af_heart",
 			Help:        "Optional. A voice it offers, such as Kokoro's 'af_heart' or OpenAI's 'alloy'. Blank uses the connector's own default.",
@@ -346,15 +351,16 @@ func webSearchFormFields() []ui.FormField {
 		})
 	}
 	add := "add a connector that searches from a template (Admin > Extensions > Templates: Brave, Serper, Tavily, Google Programmable Search, SearXNG) or from its spec (Add, under Admin > Extensions > Connectors)"
-	return append(fields,
+	fields = append(fields,
 		ui.FormField{Field: "provider", Label: "Search with", Type: "select",
 			ShowWhen: local,
 			Options: append([]ui.SelectOption{
 				{Value: "duckduckgo", Label: "DuckDuckGo (built in, no key)"},
 			}, serviceProviderOptions("web.search", "Search")...),
-			Help:   "The engine every search goes to. A connector's address and key are kept on it: open its row under Admin > Extensions > Connectors to see, test or fix them.",
+			Help:   "The engine every search goes to. A connector's settings (its key, an address) are set here below it.",
 			Detail: "To search with an engine not listed, " + add + ". Once added it is offered here, and choosing it puts it to use. Serper's also finds pictures, for agents' find_image. The connector picked here is not also asked as a research source: it already answers web_search."},
 	)
+	return append(fields, connectorSettingsFields("web.search", local, "provider", asService)...)
 }
 
 // browseFormFields is the page-rendering picker. Unlike search or STT there is
@@ -367,7 +373,7 @@ func browseFormFields() []ui.FormField {
 	if len(opts) > 1 {
 		help = "Render locally, on a peer, or through a connector. Borrowing means this machine never downloads or runs Chromium. Public web only, whichever renders."
 	}
-	return []ui.FormField{
+	return append([]ui.FormField{
 		{Field: "source", Label: "Render pages on", Type: "select", Options: opts, Help: help},
-	}
+	}, connectorSettingsFields("page.render", "", "source", asService)...)
 }

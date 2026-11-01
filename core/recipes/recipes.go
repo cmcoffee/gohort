@@ -85,6 +85,10 @@ type Recipe struct {
 	SetupNotes  string         `json:"setup_notes,omitempty"`
 	Questions   []Question     `json:"questions,omitempty"`
 	Bundle      core.ArtifactBundle `json:"bundle"`
+	// Provided, on a built-in, installs the connection it makes at startup
+	// under Name, shown as Label, locked against deletion: a choice a page
+	// offers by default.
+	Provided *Provided `json:"provided,omitempty"`
 	// Set on the stored copy of an imported or saved template.
 	By    string    `json:"by,omitempty"`
 	Added time.Time `json:"added,omitempty"`
@@ -526,6 +530,11 @@ func Install(db core.Database, id, owner string, answers map[string]string) (cor
 	if err != nil {
 		return core.ArtifactImportResult{}, err
 	}
+	renamed, err := ownCredentials(db, owner, &bundle, secrets)
+	if err != nil {
+		return core.ArtifactImportResult{}, err
+	}
+	warnings = append(warnings, renamed...)
 	data, err := json.Marshal(bundle)
 	if err != nil {
 		return core.ArtifactImportResult{}, err
@@ -565,8 +574,153 @@ func Install(db core.Database, id, owner string, answers map[string]string) (cor
 			res.Warnings = append(res.Warnings, fmt.Sprintf("the secret for %q could not be stored: %v", cred, err))
 		}
 	}
+	// A connector it made is shown as the template is, told apart from
+	// another made from it by its name.
+	for _, o := range res.Outcomes {
+		if o.Type != "connector" || o.Status != "imported" {
+			continue
+		}
+		if c, ok := core.GetConnector(db, o.Name); ok && strings.TrimSpace(c.DisplayName) == "" {
+			core.SetConnectorDisplayName(db, o.Name, core.FreeDisplayName(db, o.Name, r.Title))
+		}
+	}
 	core.Log("[recipes] %s added template %q: %d imported, %d skipped", owner, id, res.Imported, res.Skipped)
 	return res, nil
+}
+
+// ownCredentials gives a credential the bundle brings a name of its own when
+// one by that name is here already and something new in the bundle names it:
+// a connector added under another name, say. Skipped on import, the
+// existing one would be shared, made for another address and keeping its
+// own secret, so the key given for this one would go nowhere and its calls
+// would be refused or sent with the other's key. The new pieces are pointed
+// at the new name; a bundle whose pieces are all here already (the template
+// added again) is left as it is, and imports nothing. It says what it
+// renamed.
+func ownCredentials(db core.Database, owner string, bundle *core.ArtifactBundle, secrets Secrets) ([]string, error) {
+	data, err := json.Marshal(bundle)
+	if err != nil {
+		return nil, err
+	}
+	preview, err := core.PreviewArtifactBundle(db, data, owner)
+	if err != nil {
+		return nil, err
+	}
+	importing := map[int]bool{}
+	for i, item := range preview.Items {
+		importing[i] = item.Action == "import"
+	}
+	taken := map[string]bool{}
+	for _, a := range bundle.Artifacts {
+		if a.Type == "credential" {
+			taken[credentialName(a)] = true
+		}
+	}
+	var notes []string
+	for i, a := range bundle.Artifacts {
+		name := credentialName(a)
+		if a.Type != "credential" || name == "" {
+			continue
+		}
+		if _, exists := core.Secure().Load(name); !exists {
+			continue
+		}
+		var users []int
+		for j, b := range bundle.Artifacts {
+			if j != i && importing[j] && namesCredential(b.Recipe, name) {
+				users = append(users, j)
+			}
+		}
+		if len(users) == 0 {
+			continue
+		}
+		fresh := name
+		for n := 2; ; n++ {
+			fresh = fmt.Sprintf("%s_%d", name, n)
+			if _, exists := core.Secure().Load(fresh); !exists && !taken[fresh] {
+				break
+			}
+		}
+		taken[fresh] = true
+		for _, j := range append(users, i) {
+			rec, err := renameCredential(bundle.Artifacts[j].Recipe, name, fresh, j == i)
+			if err != nil {
+				return nil, err
+			}
+			bundle.Artifacts[j].Recipe = rec
+		}
+		bundle.Artifacts[i].Name = fresh
+		if secret, ok := secrets.Credentials[name]; ok {
+			delete(secrets.Credentials, name)
+			secrets.Credentials[fresh] = secret
+		}
+		notes = append(notes, fmt.Sprintf("a credential named %q is here already, so this one is %q", name, fresh))
+	}
+	return notes, nil
+}
+
+// credentialName is the name a credential artifact's recipe gives it.
+func credentialName(a core.PortableArtifact) string {
+	var probe struct {
+		Name string `json:"name"`
+	}
+	json.Unmarshal(a.Recipe, &probe)
+	return strings.TrimSpace(probe.Name)
+}
+
+// credentialKeys are the fields a piece names a credential by.
+var credentialKeys = map[string]bool{"credential": true, "secure_cred": true}
+
+// namesCredential reports whether a piece's recipe names credential name.
+func namesCredential(recipe json.RawMessage, name string) bool {
+	var v any
+	if json.Unmarshal(recipe, &v) != nil {
+		return false
+	}
+	found := false
+	walkCredentialRefs(v, func(ref string) string {
+		found = found || ref == name
+		return ref
+	})
+	return found
+}
+
+// renameCredential points a recipe's references to credential from at to,
+// and, for the credential's own recipe (self), its name.
+func renameCredential(recipe json.RawMessage, from, to string, self bool) (json.RawMessage, error) {
+	var v any
+	if err := json.Unmarshal(recipe, &v); err != nil {
+		return nil, err
+	}
+	walkCredentialRefs(v, func(ref string) string {
+		if ref == from {
+			return to
+		}
+		return ref
+	})
+	if m, ok := v.(map[string]any); ok && self {
+		m["name"] = to
+	}
+	return json.Marshal(v)
+}
+
+// walkCredentialRefs calls fix on every string a credential is named by in
+// v, at any depth, and puts back what it gives.
+func walkCredentialRefs(v any, fix func(string) string) {
+	switch x := v.(type) {
+	case map[string]any:
+		for k, val := range x {
+			if s, ok := val.(string); ok && credentialKeys[k] {
+				x[k] = fix(strings.TrimSpace(s))
+				continue
+			}
+			walkCredentialRefs(val, fix)
+		}
+	case []any:
+		for _, val := range x {
+			walkCredentialRefs(val, fix)
+		}
+	}
 }
 
 // Import stores a template from a file. A built-in's id is refused; an
@@ -654,4 +808,39 @@ func Save(db core.Database, meta Recipe, sels []core.ArtifactSel, questions []Sa
 	meta.By, meta.Added = by, time.Now()
 	db.Set(storeTable, meta.ID, meta)
 	return meta, nil
+}
+
+// Provided is how a built-in template's connection is provided: its name,
+// and what a page's choices call it.
+type Provided struct {
+	Name  string `json:"name"`
+	Label string `json:"label"`
+}
+
+func init() { core.ProvideConnectors = installProvided }
+
+// installProvided installs each provided connection that is not here yet,
+// as the deployment's, and marks it provided. A connector of that name made
+// by someone else is left as it is.
+func installProvided(db core.Database) {
+	for _, r := range builtins() {
+		p := r.Provided
+		if p == nil || strings.TrimSpace(p.Name) == "" {
+			continue
+		}
+		if c, ok := core.GetConnector(db, p.Name); ok {
+			if !c.Provided {
+				core.Log("[recipes] %s is gohort's %s, but a connector by that name is here already: it is left as it is", p.Name, p.Label)
+			}
+			continue
+		}
+		res, err := Install(db, r.ID, "", map[string]string{"name": p.Name})
+		if err != nil || res.Imported == 0 {
+			core.Log("[recipes] providing %s: %v %v", p.Name, err, res.Warnings)
+			continue
+		}
+		if err := core.MarkConnectorProvided(db, p.Name, p.Label); err != nil {
+			core.Log("[recipes] providing %s: %v", p.Name, err)
+		}
+	}
 }

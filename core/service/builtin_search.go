@@ -59,10 +59,13 @@ func SourceGet(ctx context.Context, name, path string) ([]byte, error) {
 		return nil, fmt.Errorf("no search connector in use named %q", name)
 	}
 	s, err := specOf(c)
+	if err == nil {
+		s, err = settledFor(ctx, name, s)
+	}
 	if err != nil {
 		return nil, err
 	}
-	t := transport{p: s.Provider}
+	t := s.transport(nil)
 	return t.getter(ctx, Operation{})(path, nil)
 }
 
@@ -106,14 +109,8 @@ func (t transport) getter(ctx context.Context, op Operation) fetchFunc {
 		for k, v := range headers {
 			h[k] = v
 		}
-		req := ToolCallRequest{Credential: t.credential(), URL: addr, Method: "GET", Headers: h, PipeFollowing: true, TimeoutSecs: t.timeout(op)}
-		var raw string
-		var err error
-		if req.Credential != "" {
-			raw, err = Secure().DispatchToolCallRequest(t.sess, req)
-		} else {
-			raw, err = Secure().DispatchHostScoped(t.sess, t.p.BaseURL, req)
-		}
+		req := ToolCallRequest{URL: addr, Method: "GET", Headers: h, PipeFollowing: true, TimeoutSecs: t.timeout(op)}
+		raw, err := t.send(req)
 		if err != nil {
 			return nil, err
 		}

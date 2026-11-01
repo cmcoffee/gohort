@@ -1006,7 +1006,8 @@ func peerKeyScopeValues(k PeerKey) []string {
 }
 
 // LLMProviderOptions builds the provider dropdown for a model tier: the local
-// and hosted providers, plus every peer that will actually run inference.
+// servers, every peer that will actually run inference, and the model
+// connectors (a hosted model is one, added from its template).
 //
 // Shared by both tiers so a peer appears in each. usePrimary adds the Lead
 // tier's "(use primary)" entry, which the Worker tier has no meaning for.
@@ -1020,10 +1021,6 @@ func LLMProviderOptions(usePrimary bool) []ui.SelectOption {
 		{Value: "ollama", Label: "Ollama"},
 		{Value: "llama.cpp", Label: "llama.cpp"},
 		{Value: "vllm", Label: "vLLM"},
-		{Value: "anthropic", Label: "Anthropic"},
-		{Value: "openai", Label: "OpenAI"},
-		{Value: "gemini", Label: "Gemini"},
-		{Value: "bedrock", Label: "AWS Bedrock"},
 	} {
 		out = append(out, o)
 	}
@@ -1042,8 +1039,9 @@ func LLMProviderOptions(usePrimary bool) []ui.SelectOption {
 		}
 		out = append(out, ui.SelectOption{Value: PeerProviderValue(p.Name), Label: label, Help: help})
 	}
-	// A model connector (core/service, llm.chat): an OpenAI-shaped API
-	// elsewhere, or Anthropic or Gemini through a credential.
+	// A model connector (core/service, llm.chat): Anthropic, OpenAI,
+	// Gemini, Bedrock or an OpenAI-shaped API elsewhere, through a
+	// credential.
 	out = append(out, serviceProviderOptions("llm.chat", "Run this tier's turns")...)
 	return out
 }

@@ -3,43 +3,22 @@
   "title": "OpenAI (LLM)",
   "description": "OpenAI's models as an LLM tier, through gohort's OpenAI client, with the key kept in a credential rather than in the LLM settings.",
   "category": "LLMs",
-  "setup_notes": "Create a key at platform.openai.com/api-keys. The credential lands disabled: enable it under API Credentials. Run Test on its row under Admin > Extensions > Connectors, which makes one short real chat. Then put it to use by choosing it under Admin > LLMs > Worker LLM (or Lead LLM) as Service: <name>: the tier's turns run on it through gohort's own OpenAI client, streaming and tool calls as usual, and the key stays in the credential. Choosing OpenAI with a key on the LLM form, or in first-run setup, installs this template for you. Its calls and their cost show on the connector's row; add per_million_input and per_million_output to its spec's cost to price its tokens, which then replace the tier's rates under Costs.",
+  "setup_notes": "Create a key at platform.openai.com/api-keys. gohort provides one, named openai and listed as OpenAI; another, with its own key, is added from here. Choose it under Admin > LLMs > Worker LLM (or Lead LLM) as Service: <name>, where the tier names its model and the key can be changed; Test connection there makes one short real chat. The tier's turns run on it through gohort's own OpenAI client, streaming and tool calls as usual, and the key stays with the connection. Its calls and their cost show on the connector's row; add per_million_input and per_million_output to its spec's cost to price its tokens, which then replace the tier's rates under Costs.",
+  "provided": {
+    "name": "openai",
+    "label": "OpenAI"
+  },
   "questions": [
-    {
-      "name": "api_key",
-      "label": "OpenAI API key",
-      "help": "Stored in the credential's secret store, never in the connector or the LLM settings.",
-      "required": true,
-      "secret": true,
-      "credential": "openai_model"
-    },
     {
       "name": "name",
       "label": "Connector name",
       "help": "Lowercase letters, digits, dashes and underscores; the LLM settings list it by this name.",
       "default": "openai-model"
-    },
-    {
-      "name": "model",
-      "label": "Model",
-      "help": "The model a tier on it runs unless the tier names another.",
-      "default": "gpt-4o",
-      "required": false
     }
   ],
   "bundle": {
     "bundle": "gohort.bundle/v1",
     "artifacts": [
-      {
-        "type": "credential",
-        "name": "openai_model",
-        "recipe": {
-          "name": "openai_model",
-          "type": "bearer",
-          "base_url": "https://api.openai.com",
-          "description": "OpenAI API, for an LLM."
-        }
-      },
       {
         "type": "connector",
         "name": "{{name}}",
@@ -47,13 +26,23 @@
           "name": "{{name}}",
           "kind": "service",
           "template": "openai-model",
-          "desc": "OpenAI model ({{model}})",
+          "desc": "OpenAI models",
           "spec": {
+            "config": [
+              {
+                "name": "api_key",
+                "label": "OpenAI API key",
+                "type": "secret",
+                "send": "bearer",
+                "help": "Kept with this connection, and sent only to the address it is given for.",
+                "required": true
+              }
+            ],
             "provider": {
               "transport": "http",
               "base_url": "https://api.openai.com/v1",
               "auth": {
-                "credential": "openai_model"
+                "secret": "api_key"
               },
               "operations": {
                 "models": {
@@ -71,7 +60,7 @@
                 "capability": "llm.chat",
                 "dialect": "openai",
                 "defaults": {
-                  "model": "{{model}}"
+                  "model": "gpt-4o"
                 }
               }
             ]

@@ -37,9 +37,10 @@ func init() {
 
 // modelTarget reads the approved model connector named name for an LLM tier:
 // its dialect, address, default model and context, its token prices, and with
-// withKey its credential's key, which the store gives only for an address the
-// credential allows (SecureAPI.ModelKey).
-func modelTarget(name string, withKey bool) (media.ModelTarget, error) {
+// withKey its secret, given only for an address it was given for. form is
+// what a tier's form holds, for a Test before a save; nil reads what the
+// connection keeps.
+func modelTarget(name string, withKey bool, form *media.ModelForm) (media.ModelTarget, error) {
 	var t media.ModelTarget
 	c, ok := GetConnector(RootDB, name)
 	if !ok || c.Kind != Kind {
@@ -48,7 +49,14 @@ func modelTarget(name string, withKey bool) (media.ModelTarget, error) {
 	if !readable(c) {
 		return t, fmt.Errorf("the model connector %s is not in use: choose it under Admin > LLMs, and save, to put it to use", name)
 	}
+	ctx := context.Background()
+	if form != nil {
+		ctx = WithSecrets(WithConfig(ctx, form.Config), form.Secrets)
+	}
 	s, err := specOf(c)
+	if err == nil {
+		s, err = settledFor(ctx, name, s)
+	}
 	if err != nil {
 		return t, err
 	}
@@ -69,23 +77,21 @@ func modelTarget(name string, withKey bool) (media.ModelTarget, error) {
 		if a := strings.TrimSpace(fmt.Sprint(b.Defaults["api"])); bedrockAPIs[a] {
 			t.BedrockAPI = a
 		}
+		t.Endpoint = bedrockHost(t.Endpoint, t.BedrockAPI)
 	}
-	if withKey && s.Provider.Auth.Credential != "" {
-		// Bedrock signs with an AWS credential, or sends a bearer token
-		// (a Bedrock API key); every other dialect sends a key.
-		if c, ok := Secure().Load(s.Provider.Auth.Credential); ok && b.Dialect == "bedrock" && c.Type == SecureCredAWS {
-			a, err := Secure().ModelAWS(c.Name, t.Endpoint+"/")
-			if err != nil {
-				return t, err
-			}
-			t.Region, t.Profile, t.AWSMachine, t.AWSAccessKey, t.AWSSecretKey = a.Region, a.Profile, a.Machine, a.AccessKey, a.SecretKey
-			return t, nil
+	if withKey && s.auth != nil {
+		if s.auth.err != nil {
+			return t, s.auth.err
 		}
-		key, err := Secure().ModelKey(s.Provider.Auth.Credential, t.Endpoint+"/")
+		key, aws, err := s.auth.cred.ModelAuth(t.Endpoint + "/")
 		if err != nil {
 			return t, err
 		}
 		t.Key = key
+		if b.Dialect == "bedrock" && key == "" {
+			t.Region, t.Profile, t.AWSMachine, t.AWSAccessKey, t.AWSSecretKey = aws.Region, aws.Profile, aws.Machine, aws.AccessKey, aws.SecretKey
+		}
+		return t, nil
 	}
 	return t, nil
 }
@@ -93,7 +99,7 @@ func modelTarget(name string, withKey bool) (media.ModelTarget, error) {
 // noteModelCall records one model call on the connector's row: whether it
 // failed, and what its tokens cost at the connector's prices.
 func noteModelCall(name string, in, out int, err error) {
-	t, terr := modelTarget(name, false)
+	t, terr := modelTarget(name, false, nil)
 	var o outcome
 	if terr == nil && t.Priced {
 		o.cost, o.priced = float64(in)/1e6*t.InPerMillion+float64(out)/1e6*t.OutPerMillion, true
@@ -185,6 +191,9 @@ func serviceAddress(name string) string {
 		return ""
 	}
 	s, err := specOf(c)
+	if err == nil {
+		s, err = settledFor(context.Background(), name, s)
+	}
 	if err != nil {
 		return ""
 	}
@@ -461,4 +470,20 @@ func (t *musicTool) RunWithSession(args map[string]any, sess *ToolSession) (stri
 	sess.AddStagedFiles([]string{rel})
 	sess.AppendVideo(base64.StdEncoding.EncodeToString(data))
 	return fmt.Sprintf("Made the song, saved as %s in your workspace (%d KB). It is attached to your reply.", rel, len(data)>>10), nil
+}
+
+// bedrockRuntimeRE is a region's Bedrock runtime host.
+var bedrockRuntimeRE = regexp.MustCompile(`^https://bedrock-runtime\.([a-z0-9-]+)\.amazonaws\.com$`)
+
+// bedrockHost is where a Bedrock model at a region's runtime host is asked
+// over api: the Messages API answers on that region's bedrock-mantle host
+// instead. Any other address (a private endpoint) is asked as it is.
+func bedrockHost(base, api string) string {
+	if api != "messages" {
+		return base
+	}
+	if m := bedrockRuntimeRE.FindStringSubmatch(base); m != nil {
+		return "https://bedrock-mantle." + m[1] + ".api.aws"
+	}
+	return base
 }

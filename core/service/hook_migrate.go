@@ -57,7 +57,7 @@ func hookSlug(name string) string {
 }
 
 // HookConnector makes the search connector Source Hook h described, its key
-// (when it has one) in a credential of its own, and the Research Sources
+// (when it has one) kept in the connection's own space, and the Research Sources
 // entry for how research and agents asked it, on when approve (which puts
 // the connector to use). from names where the hook came from, for the
 // connector's description. It returns the connector's name and how many
@@ -122,42 +122,25 @@ func HookConnector(db Database, h sourcehooks.SourceHook, approve bool, from str
 
 	changed := 0
 	auth := map[string]any{"none": true}
+	var config []any
+	key := strings.TrimSpace(h.AuthKey)
 	if h.AuthType == sourcehooks.HookAuthAPIKey || h.AuthType == sourcehooks.HookAuthBearer {
-		key := strings.TrimSpace(h.AuthKey)
-		cred := SecureCredential{Name: freeCredentialName(strings.ReplaceAll(slug, "-", "_") + "_source"), BaseURL: base,
-			Description: "The key the Source Hook " + h.Name + " was sent with."}
+		send := "header:X-API-Key"
 		switch {
 		case template == "pubmed-search":
-			cred.Type, cred.ParamName = SecureCredQuery, "api_key"
+			send = "query:api_key"
 		case strings.EqualFold(u2host(base), "www.courtlistener.com"):
 			// CourtListener takes its token as "Token <key>", for its search
 			// and for the opinions debate reads in full (SourceGet).
-			cred.Type, cred.ParamName = SecureCredHeader, "Authorization"
-			key = "Token " + key
+			send = "header:Authorization"
+			if key != "" {
+				key = "Token " + key
+			}
 		case h.AuthType == sourcehooks.HookAuthBearer:
-			cred.Type = SecureCredBearer
-		default:
-			cred.Type, cred.ParamName = SecureCredHeader, "X-API-Key"
+			send = "bearer"
 		}
-		if path != "" {
-			p, _, _ := strings.Cut(path, "?")
-			cred.AllowedEndpoints = []string{p}
-			if cred.ParamName == "Authorization" {
-				cred.AllowedEndpoints = append(cred.AllowedEndpoints, "/api/rest/v4/opinions/**")
-			}
-		}
-		if key != "" {
-			err := Secure().Save(cred, key)
-			if err != nil {
-				return "", changed, fmt.Errorf("saving the key of %s as credential %s: %w", h.Name, cred.Name, err)
-			}
-		} else if err := Secure().SaveAPIDraft(cred); err != nil {
-			// A hook that came with no key (from a bundle, where secrets
-			// never travel) waits for it as a draft credential.
-			return "", changed, fmt.Errorf("saving the credential of %s: %w", h.Name, err)
-		}
-		changed++
-		auth = map[string]any{"credential": cred.Name}
+		config = []any{map[string]any{"name": "api_key", "label": "API key", "type": "secret", "send": send, "required": true}}
+		auth = map[string]any{"secret": "api_key"}
 	}
 
 	binding := map[string]any{"capability": "web.search", "plain": true, "steps": []any{map[string]any{"call": "search"}},
@@ -172,6 +155,9 @@ func HookConnector(db Database, h sourcehooks.SourceHook, approve bool, from str
 		"provider": map[string]any{"transport": "http", "base_url": base, "auth": auth, "operations": map[string]any{"search": op}},
 		"provides": []any{binding},
 	}
+	if len(config) > 0 {
+		spec["config"] = config
+	}
 	raw, err := json.Marshal(spec)
 	if err != nil {
 		return "", changed, err
@@ -182,6 +168,16 @@ func HookConnector(db Database, h sourcehooks.SourceHook, approve bool, from str
 		return "", changed, fmt.Errorf("saving connector %s for %s: %w", c.Name, h.Name, err)
 	}
 	changed++
+	// The key is the connection's own, for its address. A hook that came
+	// with none (from a bundle, where secrets never travel) waits for it,
+	// given under Settings on its row.
+	if key != "" && len(config) > 0 {
+		c, _ = GetConnector(db, c.Name)
+		if err := SetConnectionSecret(db, c, "api_key", key, []string{base}); err != nil {
+			return c.Name, changed, fmt.Errorf("keeping the key of %s: %w", h.Name, err)
+		}
+		changed++
+	}
 	// How research and agents asked the hook is its Research Sources entry,
 	// which puts the connector to use when the hook was on.
 	rs := ResearchSource{Connector: c.Name, Always: h.AlwaysActive, Off: !approve}

@@ -26,11 +26,21 @@ func storeHook(h sourcehooks.SourceHook) {
 }
 
 func forgetHookCredentials(t *testing.T) {
-	forgetCredentials(t, "case_api_source", "pubmed_source", "courtlistener_source", "news_wall_paywall", "rag_docs_source")
+	forgetCredentials(t, "news_wall_paywall")
 }
 
-// An API hook becomes the search connector it described, its key in a
-// credential, and a Research Sources entry with its topics and agent tool;
+// hookKey is the key connection name keeps, and how its spec sends it.
+func hookKey(t *testing.T, name string) (ConnectionSecret, string) {
+	t.Helper()
+	c, _ := GetConnector(RootDB, name)
+	sec, _ := GetConnectionSecret(RootDB, c, "api_key")
+	s, _ := specOf(c)
+	f, _ := s.secretField()
+	return sec, f.Send
+}
+
+// An API hook becomes the search connector it described, its key kept by
+// the connection, and a Research Sources entry with its topics and agent tool;
 // the hook is gone. Its searches read as the hook read them, the key sent as
 // the hook sent it. Run again, it changes nothing.
 func TestAnAPIHookBecomesASearchConnectorAndASource(t *testing.T) {
@@ -60,8 +70,8 @@ func TestAnAPIHookBecomesASearchConnectorAndASource(t *testing.T) {
 	if !ok || rs.Off || len(rs.Topics) != 1 || rs.Topics[0] != "legal" || rs.ToolName != "case_api_search" || rs.ToolDescription != "Court cases." {
 		t.Errorf("the source: %+v %v", rs, ok)
 	}
-	if cred, _ := Secure().Load("case_api_source"); cred.Type != SecureCredHeader || cred.ParamName != "X-API-Key" || cred.Disabled {
-		t.Errorf("the credential: %+v", cred)
+	if sec, send := hookKey(t, "case-api"); sec.Value != "case-key" || send != "header:X-API-Key" || len(sec.Addresses) != 1 || sec.Addresses[0] != srv.URL {
+		t.Errorf("the key: %+v %q", sec, send)
 	}
 	out, err := Search(context.Background(), "case-api", "negligence site:courts.example.gov")
 	if err != nil || out != "1. Smith v. Jones\n   "+srv.URL+"/case/1\n   Negligence found." {
@@ -114,22 +124,18 @@ func TestEveryKindOfHookMoves(t *testing.T) {
 	}
 
 	pubmed, _ := GetConnector(RootDB, "pubmed")
-	if s, _ := specOf(pubmed); s.Provider.Operations["search"].Builtin != "pubmed" || pubmed.Template != "pubmed-search" || s.Provider.Auth.Credential != "pubmed_source" {
+	if s, _ := specOf(pubmed); s.Provider.Operations["search"].Builtin != "pubmed" || pubmed.Template != "pubmed-search" || s.Provider.Auth.Secret != "api_key" {
 		t.Errorf("PubMed: %s", pubmed.Spec)
 	}
-	if cred, _ := Secure().Load("pubmed_source"); cred.Type != SecureCredQuery || cred.ParamName != "api_key" {
-		t.Errorf("PubMed's credential: %+v", cred)
+	if sec, send := hookKey(t, "pubmed"); sec.Value != "ncbi-key" || send != "query:api_key" {
+		t.Errorf("PubMed's key: %+v %q", sec, send)
 	}
 	edgar, _ := GetConnector(RootDB, "sec-edgar")
 	if rs, _ := GetResearchSource(RootDB, "sec-edgar"); edgar.Approved || !rs.Off {
 		t.Errorf("a switched-off hook: approved %v, source %+v", edgar.Approved, rs)
 	}
-	cred, _ := Secure().Load("courtlistener_source")
-	if cred.Type != SecureCredHeader || cred.ParamName != "Authorization" || len(cred.AllowedEndpoints) != 2 || cred.AllowedEndpoints[1] != "/api/rest/v4/opinions/**" {
-		t.Errorf("CourtListener's credential: %+v", cred)
-	}
-	if k, _ := Secure().ModelKey("courtlistener_source", "https://www.courtlistener.com/api/rest/v4/search/"); k != "Token cl-token" {
-		t.Errorf("CourtListener's token: %q", k)
+	if sec, send := hookKey(t, "courtlistener"); sec.Value != "Token cl-token" || send != "header:Authorization" {
+		t.Errorf("CourtListener's token: %+v %q", sec, send)
 	}
 	rag, _ := GetConnector(RootDB, "rag-docs")
 	if !strings.Contains(string(rag.Spec), `"snippet":"snippet|content"`) {
@@ -185,9 +191,9 @@ func TestResearchSettingsLeaveTheSpec(t *testing.T) {
 	}
 }
 
-// A Source Hook in a bundle imports as its search connector, unapproved,
-// an off source, and a draft credential waiting for its key, which never
-// travels; nothing exports as one.
+// A Source Hook in a bundle imports as its search connector, unapproved, and
+// an off source, the connection waiting for its key, which never travels;
+// nothing exports as one.
 func TestABundledHookImportsAsAConnector(t *testing.T) {
 	world(t)
 	forgetHookCredentials(t)
@@ -199,12 +205,11 @@ func TestABundledHookImportsAsAConnector(t *testing.T) {
 	}
 	c, _ := GetConnector(RootDB, "case-api")
 	rs, _ := GetResearchSource(RootDB, "case-api")
-	cred, _ := Secure().Load("case_api_source")
-	if c.Approved || !rs.Off || !cred.Disabled {
-		t.Errorf("landed: connector approved %v, source %+v, credential %+v", c.Approved, rs, cred)
+	if s, _ := specOf(c); c.Approved || !rs.Off || s.Provider.Auth.Secret != "api_key" {
+		t.Errorf("landed: connector approved %v, source %+v, spec %s", c.Approved, rs, c.Spec)
 	}
-	if _, err := Secure().ModelKey("case_api_source", "https://cases.example/search"); err == nil {
-		t.Error("the bundle's credential has a key to send")
+	if HasSecret(c, "api_key") {
+		t.Error("the bundle's connection has a key to send")
 	}
 	if _, err := (sourceHookArtifact{}).ExportArtifact(RootDB, "case-api", ""); err == nil {
 		t.Error("a hook exported")

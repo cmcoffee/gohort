@@ -46,6 +46,14 @@ func (a *AdminApp) registerConnectorsRoutes(sub *http.ServeMux) {
 	// read from its spec (the row's Endpoints).
 	sub.HandleFunc("/api/connectors/endpoints", jsonapi.Get(a.db, a.handleConnectorEndpoints, a.gate()))
 
+	// A connection's settings and secrets, kept in its own space (its row's
+	// Settings), and the values a setting may pick from (options_from).
+	sub.HandleFunc("/api/connectors/settings", jsonapi.Methods{
+		"GET":  jsonapi.Get(a.db, a.handleConnectionSettings, a.gate()),
+		"POST": jsonapi.Post(a.db, a.handleConnectionSettingsSave, a.gate(), jsonapi.MaxBody(1<<20)),
+	}.Serve)
+	sub.HandleFunc("/api/connectors/options", jsonapi.Post(a.db, a.handleConnectionOptions, a.gate(), jsonapi.MaxBody(1<<20)))
+
 	// The contracts explained, from the registry (the Contracts section).
 	sub.HandleFunc("/api/contracts", jsonapi.Get(a.db, a.handleContracts, a.gate()))
 }
@@ -58,7 +66,9 @@ func (a *AdminApp) handleContracts(c *jsonapi.Call) (any, error) {
 // handleConnectors is every backend, with what each can do from its row.
 func (a *AdminApp) handleConnectors(c *jsonapi.Call) (any, error) {
 	type connRow struct {
-		Name         string `json:"name"`
+		Name string `json:"name"`
+		// Title is what it is shown as: its display name, or its name.
+		Title        string `json:"title"`
 		Kind         string `json:"kind"`
 		Summary      string `json:"summary"`
 		Owner        string `json:"owner"`
@@ -75,16 +85,14 @@ func (a *AdminApp) handleConnectors(c *jsonapi.Call) (any, error) {
 		HasHealth   bool   `json:"has_health,omitempty"`
 		TestConfirm string `json:"test_confirm,omitempty"`
 		Fixable     bool   `json:"fixable,omitempty"`
-		// Stored is a connector kept in the store, which can be approved,
-		// edited, exported and deleted; a built-in provider's row is not.
-		// State is the badge: approved, pending or built in.
-		Stored bool   `json:"stored"`
-		State  string `json:"state"`
+		// State is the badge: approved or pending, or for a services
+		// connector in use, not in use or changed.
+		State string `json:"state"`
 		// Endpoints is a service with endpoints to list (Endpoints on its row).
 		Endpoints bool `json:"endpoints,omitempty"`
 		// Group is the band the row sits in (connectorGroups); GroupSummary
 		// what its heading says the band holds, and GroupOpen whether the
-		// band starts open (what an admin added and acts on).
+		// band starts open.
 		Group        string `json:"group"`
 		GroupSummary string `json:"group_summary,omitempty"`
 		GroupOpen    bool   `json:"group_open,omitempty"`
@@ -93,12 +101,25 @@ func (a *AdminApp) handleConnectors(c *jsonapi.Call) (any, error) {
 		// instead, and its State says whether one does.
 		CanApprove   bool `json:"can_approve,omitempty"`
 		CanUnapprove bool `json:"can_unapprove,omitempty"`
+		// Deletable is a connector no page names: one in use is taken off
+		// its pages first.
+		Deletable bool `json:"deletable,omitempty"`
+		// HasSettings is a services connection: its display name, and the
+		// settings and secrets it declares, are set under its row's Settings.
+		HasSettings bool `json:"has_settings,omitempty"`
 	}
 	var rows []connRow
 	uses, research := service.TieIns(RootDB), researchNamed()
 	for _, conn := range ListConnectors(RootDB) {
 		_, canConfig := TemplateForConnector(conn)
-		row := connRow{conn.Name, conn.Kind, ConnectorSummary(conn), conn.Owner, conn.Approved, conn.LastError, conn.Template, conn.Kind == RestImageConnectorKind, canConfig, connectorWebhook(conn), "", false, false, "", service.Fixable(conn), true, "pending", conn.Kind == service.Kind, connectorGroup(conn, research, uses), "", false, false, false}
+		row := connRow{Name: conn.Name, Title: conn.Title(), Kind: conn.Kind, Summary: ConnectorSummary(conn), Owner: conn.Owner,
+			Approved: conn.Approved, LastError: conn.LastError, Template: conn.Template, IsImage: conn.Kind == RestImageConnectorKind,
+			Configurable: canConfig, Webhook: connectorWebhook(conn), Fixable: service.Fixable(conn), State: "pending",
+			Endpoints: conn.Kind == service.Kind, Group: connectorGroup(conn, research, uses), GroupOpen: true,
+			Deletable: len(uses[conn.Name]) == 0 && !conn.Provided, HasSettings: conn.Kind == service.Kind}
+		if conn.Provided {
+			row.Owner = "gohort"
+		}
 		if conn.Approved {
 			row.State = "approved"
 		}
@@ -114,29 +135,11 @@ func (a *AdminApp) handleConnectors(c *jsonapi.Call) (any, error) {
 		}
 		rows = append(rows, row)
 	}
-	// gohort's own providers, after the ones added: read from their settings
-	// (connector_builtins.go), tested by those settings' own tests.
-	for _, b := range a.builtinConnectors() {
-		rows = append(rows, connRow{Name: b.name, Kind: "built in", Summary: b.wrapper, Owner: "gohort",
-			Status: b.status, Testable: b.test != nil, State: "built-in", Group: b.group})
-	}
-	// The peers this instance borrows from (connector_peers.go), read from the
-	// peers and the settings that name them, re-checked by Test.
-	for _, pc := range a.peerConnectors() {
-		rows = append(rows, connRow{Name: pc.name, Kind: "peer", Summary: pc.wrapper, Owner: "Peers",
-			Status: pc.status, Testable: true, State: "peer", Endpoints: true, Group: groupPeers})
-	}
-	// The programs System Hooks' jobs run (connector_programs.go), read from
-	// the jobs, set up and tested from System Hooks.
-	for _, pc := range programRows() {
-		rows = append(rows, connRow{Name: pc.name, Kind: "program", Summary: pc.wrapper, Owner: "System Hooks",
-			Status: pc.status, State: "program", Endpoints: true, Group: groupPrograms})
-	}
 	sort.SliceStable(rows, func(i, j int) bool {
 		return slices.Index(connectorGroups, rows[i].Group) < slices.Index(connectorGroups, rows[j].Group)
 	})
 	// Each band's heading says what it holds, so a folded band still does.
-	type tally struct{ n, pending, failing, inUse, missing int }
+	type tally struct{ n, pending, failing, inUse int }
 	t := map[string]*tally{}
 	for _, r := range rows {
 		g := t[r.Group]
@@ -148,10 +151,8 @@ func (a *AdminApp) handleConnectors(c *jsonapi.Call) (any, error) {
 		switch {
 		case r.State == "pending":
 			g.pending++
-		case strings.HasPrefix(r.Status, "In use"):
+		case r.State == "in-use":
 			g.inUse++
-		case strings.HasPrefix(r.Status, "Not installed"):
-			g.missing++
 		}
 		if r.LastError != "" {
 			g.failing++
@@ -163,20 +164,20 @@ func (a *AdminApp) handleConnectors(c *jsonapi.Call) (any, error) {
 		for _, x := range []struct {
 			n    int
 			what string
-		}{{g.pending, "pending"}, {g.failing, "with an error"}, {g.inUse, "in use"}, {g.missing, "not installed"}} {
+		}{{g.pending, "pending"}, {g.failing, "with an error"}, {g.inUse, "in use"}} {
 			if x.n > 0 {
 				parts = append(parts, fmt.Sprintf("%d %s", x.n, x.what))
 			}
 		}
 		rows[i].GroupSummary = strings.Join(parts, " · ")
-		rows[i].GroupOpen = rows[i].Stored
 	}
 	return rows, nil
 }
 
 // The Connectors table's bands, in order: what a connector does, which is
-// what an admin looks for one by. gohort's own providers sit with the
-// connectors that do the same job.
+// what an admin looks for one by. Only connectors with a spec are listed:
+// what gohort does in Go (SMTP, the browser, DuckDuckGo, local models) is set
+// up on its own page, peers under Peers, programs under System Hooks.
 const (
 	groupLLMs     = "LLMs"
 	groupSearch   = "Web Search"
@@ -191,12 +192,11 @@ const (
 	groupWatches  = "Watches"
 	groupTools    = "Tools for agents (MCP and desktop)"
 	groupHooks    = "Adapted System Hooks"
-	groupPeers    = "Peers"
-	groupPrograms = "Programs"
+	groupPeers    = "Peer relays"
 )
 
 var connectorGroups = []string{groupLLMs, groupSearch, groupResearch, groupImages, groupAudio, groupEmbed, groupPages,
-	groupMail, groupMessages, groupOther, groupWatches, groupTools, groupHooks, groupPeers, groupPrograms}
+	groupMail, groupMessages, groupOther, groupWatches, groupTools, groupHooks, groupPeers}
 
 // capabilityGroups is the band a services connector sits in, by the first
 // capability it gives.
@@ -345,12 +345,6 @@ func (a *AdminApp) handleConnectorTest(c *jsonapi.Call, _ struct{}) (any, error)
 	if name == "" {
 		return nil, jsonapi.BadRequest("missing name")
 	}
-	if strings.HasPrefix(name, builtinPrefix) {
-		return a.builtinTest(c, name)
-	}
-	if strings.HasPrefix(name, peerRowPrefix) {
-		return peerTest(c.R.Context(), name), nil
-	}
 	reps, err := service.Test(c.R.Context(), name)
 	if err != nil {
 		return map[string]any{"message": err.Error(), "warnings": []string{err.Error()}}, nil
@@ -372,20 +366,6 @@ func (a *AdminApp) handleConnectorTest(c *jsonapi.Call, _ struct{}) (any, error)
 // handleConnectorEndpoints lists the ?name= service's endpoints.
 func (a *AdminApp) handleConnectorEndpoints(c *jsonapi.Call) (any, error) {
 	name := strings.TrimSpace(c.R.URL.Query().Get("name"))
-	if strings.HasPrefix(name, peerRowPrefix) {
-		pc, ok := a.peerByName(name)
-		if !ok {
-			return nil, jsonapi.Status(http.StatusNotFound, "no peer named "+strings.TrimPrefix(name, peerRowPrefix))
-		}
-		return peerEndpoints(pc), nil
-	}
-	if strings.HasPrefix(name, programPrefix) {
-		pc, ok := programByName(name)
-		if !ok {
-			return nil, jsonapi.Status(http.StatusNotFound, "no program "+strings.TrimPrefix(name, programPrefix)+" is used here")
-		}
-		return programEndpoints(pc), nil
-	}
 	conn, ok := GetConnector(RootDB, name)
 	if !ok || conn.Kind != service.Kind {
 		return nil, jsonapi.Status(http.StatusNotFound, "no service connector named "+name)
@@ -473,7 +453,7 @@ func (a *AdminApp) handleConnectorDelete(c *jsonapi.Call, _ struct{}) (any, erro
 	if name == "" {
 		return nil, jsonapi.BadRequest("missing name")
 	}
-	if err := DeleteConnector(RootDB, name); err != nil {
+	if err := service.RemoveConnector(RootDB, name); err != nil {
 		return nil, jsonapi.BadRequest(err.Error())
 	}
 	return jsonapi.Empty(http.StatusNoContent), nil

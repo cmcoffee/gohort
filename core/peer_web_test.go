@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -348,7 +349,7 @@ func TestALocalSearchConfigIsUntouched(t *testing.T) {
 		in := WebSearchConfig{Provider: "brave", Source: source,
 			Endpoint: "", APIKey: "brave-key", CostPerCall: 0.005}
 		searchConfigForTest(t, in)
-		if got := LoadWebSearchConfig(); got != in {
+		if got := LoadWebSearchConfig(); !reflect.DeepEqual(got, in) {
 			t.Errorf("source %q: a local config was altered: %+v", source, got)
 		}
 	}
@@ -363,7 +364,7 @@ func TestAMissingSearchPeerKeepsTheLastKnownEndpoint(t *testing.T) {
 	in := WebSearchConfig{Provider: "searxng", Source: PeerProviderValue("gone"),
 		Endpoint: "https://gone.example/api/peer/v1", APIKey: "k"}
 	searchConfigForTest(t, in)
-	if got := LoadWebSearchConfig(); got != in {
+	if got := LoadWebSearchConfig(); !reflect.DeepEqual(got, in) {
 		t.Errorf("a deleted peer altered the config: %+v", got)
 	}
 }

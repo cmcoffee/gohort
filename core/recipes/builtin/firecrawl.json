@@ -3,16 +3,8 @@
   "title": "Firecrawl (page rendering)",
   "description": "Firecrawl as gohort's page renderer: it opens a page in its own browser and gives back the page as Markdown, so this machine needs no Chromium. Declared as a service you can test and fix from Admin > Connectors.",
   "category": "Page rendering",
-  "setup_notes": "Get an API key at firecrawl.dev (it starts fc-; a free plan is available). The credential lands disabled: enable it under API Credentials. Run Test on its row under Admin > Extensions > Connectors, which reads example.com. Then put it to use by choosing it under Admin > Capabilities > Page Rendering (Browser) as Service: <name>: browse_page, and every fallback to a browser when a plain fetch fails, go through it. Only public web addresses are sent. No price is declared, as it depends on your plan: add a per_call cost to the connector's spec to see what pages cost.",
+  "setup_notes": "Get an API key at firecrawl.dev (it starts fc-; a free plan is available). Run Test on its row under Admin > Extensions > Connectors, which reads example.com. Then put it to use by choosing it under Admin > Capabilities > Page Rendering (Browser) as Service: <name>: browse_page, and every fallback to a browser when a plain fetch fails, go through it. Only public web addresses are sent. No price is declared, as it depends on your plan: add a per_call cost to the connector's spec to see what pages cost. Its key is given where it is used, under the choice, or under Settings on its row in Admin > Extensions > Connectors.",
   "questions": [
-    {
-      "name": "api_key",
-      "label": "Firecrawl API key",
-      "help": "Starts fc-. Stored in the credential's secret store, never in the connector.",
-      "required": true,
-      "secret": true,
-      "credential": "firecrawl"
-    },
     {
       "name": "name",
       "label": "Connector name",
@@ -24,19 +16,6 @@
     "bundle": "gohort.bundle/v1",
     "artifacts": [
       {
-        "type": "credential",
-        "name": "firecrawl",
-        "recipe": {
-          "name": "firecrawl",
-          "type": "bearer",
-          "base_url": "https://api.firecrawl.dev",
-          "allowed_endpoints": [
-            "/v1/scrape"
-          ],
-          "description": "Firecrawl API, for page rendering."
-        }
-      },
-      {
         "type": "connector",
         "name": "{{name}}",
         "recipe": {
@@ -45,11 +24,21 @@
           "template": "firecrawl",
           "desc": "Firecrawl page rendering",
           "spec": {
+            "config": [
+              {
+                "name": "api_key",
+                "label": "Firecrawl API key",
+                "type": "secret",
+                "send": "bearer",
+                "help": "Kept with this connection, and sent only to the address it is given for.",
+                "required": true
+              }
+            ],
             "provider": {
               "transport": "http",
               "base_url": "https://api.firecrawl.dev",
               "auth": {
-                "credential": "firecrawl"
+                "secret": "api_key"
               },
               "operations": {
                 "read": {

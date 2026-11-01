@@ -4,6 +4,7 @@ import (
 	"github.com/cmcoffee/snugforge/kvlite"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -264,7 +265,7 @@ func TestResolveEmbeddingProviderRefusesLocal(t *testing.T) {
 		}
 		cfg.Enabled = false
 		got, err := ResolveEmbeddingProvider(cfg)
-		if err != nil || got != cfg {
+		if err != nil || !reflect.DeepEqual(got, cfg) {
 			t.Errorf("provider %q, off: %+v %v", provider, got, err)
 		}
 	}
@@ -406,7 +407,7 @@ func TestALocalEmbeddingConfigIsUntouched(t *testing.T) {
 		in := EmbeddingConfig{Enabled: true, Provider: provider,
 			Endpoint: "http://localhost:11434/api", Model: "nomic-embed-text", APIKey: "k"}
 		SetEmbeddingConfig(in)
-		if got := GetEmbeddingConfig(); got != in {
+		if got := GetEmbeddingConfig(); !reflect.DeepEqual(got, in) {
 			t.Errorf("provider %q: a local config was altered: %+v", provider, got)
 		}
 	}
@@ -913,7 +914,7 @@ func TestALocalTranscribeConfigIsUntouched(t *testing.T) {
 		in := TranscribeConfig{Enabled: true, Provider: provider,
 			Endpoint: "http://localhost:8080/v1", Model: "whisper-1", APIKey: "k"}
 		SetTranscribeConfig(in)
-		if got := GetTranscribeConfig(); got != in {
+		if got := GetTranscribeConfig(); !reflect.DeepEqual(got, in) {
 			t.Errorf("provider %q: a local config was altered: %+v", provider, got)
 		}
 	}
@@ -930,7 +931,7 @@ func TestAMissingPeerKeepsTheLastKnownTranscribeEndpoint(t *testing.T) {
 	in := TranscribeConfig{Enabled: true, Provider: PeerProviderValue("gone"),
 		Endpoint: "https://gone.example/api/peer/v1", Model: "whisper-1", APIKey: "k"}
 	SetTranscribeConfig(in)
-	if got := GetTranscribeConfig(); got != in {
+	if got := GetTranscribeConfig(); !reflect.DeepEqual(got, in) {
 		t.Errorf("a deleted peer altered the config: %+v", got)
 	}
 }

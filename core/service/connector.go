@@ -73,16 +73,6 @@ func (handler) Materialize(c Connector) error {
 	return nil
 }
 
-// Credentials are what the service spends, so a session denied its key is
-// not offered it.
-func (handler) Credentials(c Connector) []string {
-	s, err := Parse(c.Spec)
-	if err != nil || s.Provider.Auth.Credential == "" {
-		return nil
-	}
-	return []string{s.Provider.Auth.Credential}
-}
-
 func (handler) Teardown(c Connector) error {
 	name := strings.TrimSpace(c.Name)
 	ownedMu.Lock()
@@ -112,6 +102,20 @@ func (handler) Summary(c Connector) string {
 	s, err := Parse(c.Spec)
 	if err != nil {
 		return "service (unreadable spec)"
+	}
+	// Read with what the connection keeps, a stand-in for what it does not
+	// yet, so its row names its address rather than a token.
+	values := s.placeholders()
+	for _, st := range s.settings() {
+		if st.Field.Kind() == "url" && st.Field.Default == "" {
+			values[st.Key] = "https://not-set-yet"
+		}
+	}
+	for k, v := range ConnectionConfig(RootDB, c) {
+		values[k] = v
+	}
+	if settled, err := s.settle(values); err == nil {
+		s = settled
 	}
 	return s.Describe(c.Name)
 }
@@ -174,14 +178,10 @@ func (s Spec) Describe(name string) string {
 		host = u.Host
 	}
 	auth := "no key"
-	if name := s.Provider.Auth.Credential; name != "" {
-		auth = "key " + name
-		// An AWS credential holds no key it sends: it signs.
-		if c, ok := Secure().Load(name); ok && c.Type == SecureCredAWS {
-			auth = "signed by " + name
-			if c.AWSMachine {
-				auth = "signed as this machine by " + name
-			}
+	if f, ok := s.secretField(); ok {
+		auth = "its " + f.Title()
+		if strings.HasPrefix(f.Send, "aws_sigv4") {
+			auth = "signed by its " + f.Title() + ", or as this machine"
 		}
 	}
 	return fmt.Sprintf("%s ⇐ %s (%s)%s", line, host, auth, count)
@@ -243,6 +243,9 @@ func Call(ctx context.Context, sess *ToolSession, name, capability string, input
 		return nil, fmt.Errorf("service %q is not in use: an admin puts it to use by choosing it on the page that uses it (Web Search, Image Generation, Research Sources, a flow, ...)", name)
 	}
 	s, err := specOf(c)
+	if err == nil {
+		s, err = settledFor(ctx, name, s)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -258,6 +261,9 @@ func generateImage(ctx context.Context, name, prompt string, landscape bool) (*I
 		return nil, fmt.Errorf("no service connector named %q", name)
 	}
 	s, err := specOf(c)
+	if err == nil {
+		s, err = settledFor(ctx, name, s)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -316,4 +322,30 @@ func number(v any, def int) int {
 		}
 	}
 	return def
+}
+
+// freeConnectorName is name, or name-2, name-3 ... when it is taken.
+func freeConnectorName(db Database, name string) string {
+	for i := 1; ; i++ {
+		n := name
+		if i > 1 {
+			n = fmt.Sprintf("%s-%d", name, i)
+		}
+		if _, taken := GetConnector(db, n); !taken {
+			return n
+		}
+	}
+}
+
+// freeCredentialName is name, or name_2, name_3 ... when it is taken.
+func freeCredentialName(name string) string {
+	for i := 1; ; i++ {
+		n := name
+		if i > 1 {
+			n = fmt.Sprintf("%s_%d", name, i)
+		}
+		if _, taken := Secure().Resolve(n, ""); !taken {
+			return n
+		}
+	}
 }

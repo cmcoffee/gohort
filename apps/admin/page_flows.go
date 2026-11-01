@@ -73,7 +73,7 @@ func flowFormFields() []ui.FormField {
 	var services []ui.SelectOption
 	for _, c := range ListConnectors(RootDB) {
 		if c.Kind == service.Kind {
-			services = append(services, ui.SelectOption{Value: c.Name, Label: c.Name})
+			services = append(services, ui.SelectOption{Value: c.Name, Label: c.Title()})
 		}
 	}
 	return []ui.FormField{

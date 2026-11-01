@@ -282,7 +282,7 @@ func TestABedrockConnectorSignsWithItsKeyPair(t *testing.T) {
 	t.Cleanup(srv.Close)
 	saved := media.ModelService
 	t.Cleanup(func() { media.ModelService = saved })
-	media.ModelService = func(name string, withKey bool) (media.ModelTarget, error) {
+	media.ModelService = func(name string, withKey bool, _ *media.ModelForm) (media.ModelTarget, error) {
 		return media.ModelTarget{Dialect: "bedrock", Endpoint: srv.URL, Model: "us.anthropic.claude-opus-5", BedrockAPI: "converse",
 			Region: "eu-west-1", AWSAccessKey: "AKIDCONN", AWSSecretKey: "conn-secret"}, nil
 	}

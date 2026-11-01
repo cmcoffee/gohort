@@ -751,7 +751,7 @@ func resolveModelService(cfg LLMProviderConfig, name string) (LLMProviderConfig,
 	if media.ModelService == nil {
 		return cfg, fmt.Errorf("this tier runs on the connector %s, and this build has no connectors linked", name)
 	}
-	t, err := media.ModelService(name, true)
+	t, err := media.ModelService(name, true, cfg.Form)
 	if err != nil {
 		return cfg, err
 	}

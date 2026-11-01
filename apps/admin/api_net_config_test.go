@@ -78,7 +78,7 @@ func TestWebSearchTestTriesTheChoiceBeforeItIsSaved(t *testing.T) {
 	}
 	a := &AdminApp{db: RootDB}
 	out, _ := a.handleWebSearchTest(&jsonapi.Call{R: httptest.NewRequest("POST", "/api/web-search/test", nil)},
-		WebSearchConfig{Source: "local", Provider: "service:finder"})
+		withSettings[WebSearchConfig]{Form: WebSearchConfig{Source: "local", Provider: "service:finder"}})
 	if body, _ := out.(map[string]any); body["ok"] != true {
 		t.Errorf("the test of a choice not yet saved: %+v", out)
 	}
@@ -110,7 +110,7 @@ func TestMailTestTriesTheChoiceBeforeItIsSaved(t *testing.T) {
 	}
 	a := &AdminApp{db: RootDB}
 	out, _ := a.handleMailTest(&jsonapi.Call{R: httptest.NewRequest("POST", "/api/mail/test", nil)},
-		MailConfig{Provider: "service:postbox", From: "gohort@example.test", Recipient: "admin@example.test"})
+		withSettings[MailConfig]{Form: MailConfig{Provider: "service:postbox", From: "gohort@example.test", Recipient: "admin@example.test"}})
 	if body, _ := out.(map[string]any); body["ok"] != true || sent != 1 {
 		t.Errorf("the test of a choice not yet saved: %+v, %d sent", out, sent)
 	}

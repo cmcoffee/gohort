@@ -39,11 +39,26 @@ func FromRestImage(c Connector) (Spec, []string, error) {
 	base := sub.Scheme + "://" + sub.Host
 	var notes []string
 	p := Provider{Transport: "http", BaseURL: base, Operations: map[string]Operation{}}
+	var config []ConfigField
 	switch cred := strings.TrimSpace(r.Credential); cred {
 	case "", "no_auth", "none":
 		p.Auth.None = true
 	default:
-		p.Auth.Credential = cred
+		// The key stays in the credential the backend sent it with; a
+		// connection keeps its own, given under Settings on its row.
+		send := "bearer"
+		if c, ok := Secure().Load(cred); ok {
+			switch c.Type {
+			case SecureCredHeader:
+				send = "header:" + c.ParamName
+			case SecureCredQuery:
+				send = "query:" + c.ParamName
+			case SecureCredBasicAuth:
+				send = "basic:" + c.Username
+			}
+		}
+		config = append(config, ConfigField{Name: "api_key", Label: "API key", Type: "secret", Send: send, Required: true})
+		p.Auth.Secret = "api_key"
 	}
 	body, err := templateBody(r.SubmitBody, r.PromptSuffix)
 	if err != nil {
@@ -108,7 +123,10 @@ func FromRestImage(c Connector) (Spec, []string, error) {
 	if strings.TrimSpace(r.PromptGuidance) != "" {
 		notes = append(notes, "its prompt guidance for agents is not carried: a service has no field for it yet")
 	}
-	s := Spec{Provider: p, Provides: []Binding{b}}
+	s := Spec{Config: config, Provider: p, Provides: []Binding{b}}
+	if len(config) > 0 {
+		notes = append(notes, "its key stays in the credential "+strings.TrimSpace(r.Credential)+": a connection keeps its own, so give it under Settings on its row once saved")
+	}
 	if err := s.Validate(); err != nil {
 		return Spec{}, notes, fmt.Errorf("translated, it would not be valid: %w", err)
 	}

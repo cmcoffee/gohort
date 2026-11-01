@@ -3,28 +3,13 @@
   "title": "whisper.cpp / OpenAI-compatible (transcription)",
   "description": "A speech-to-text model on any server that speaks OpenAI's transcription API (whisper.cpp, faster-whisper / Speaches, vLLM), on this machine or your network, as gohort's ears: the upload and the reply are data you can test and fix from Admin > Connectors.",
   "category": "Speech",
-  "setup_notes": "Start the server with a speech model. whisper.cpp: whisper-server -m <model> --port 8089 --inference-path /v1/audio/transcriptions (its default path is /inference, which this connector does not call). Speaches and vLLM serve /v1/audio/transcriptions as they are. The connector takes no key. Run Test on its row under Admin > Extensions > Connectors (it sends one second of a tone, which has no words, so an empty answer passes), then put it to use by choosing it under Capabilities > Audio Transcription. A server that takes a key: add a bearer credential for its address under API Credentials and name it in the spec's auth in place of none.",
+  "setup_notes": "Start the server with a speech model. whisper.cpp: whisper-server -m <model> --port 8089 --inference-path /v1/audio/transcriptions (its default path is /inference, which this connector does not call). Speaches and vLLM serve /v1/audio/transcriptions as they are. The connector takes no key. Choose it under Capabilities > Audio Transcription and give the server's address and the model there; Test there sends one second of a tone, which has no words, so an empty answer passes. A server that takes a key: declare a secret setting sent as bearer in its spec's config, name it in auth in place of none, and give the key under the choice.",
   "questions": [
-    {
-      "name": "base_url",
-      "label": "Server address",
-      "help": "The address its /audio/transcriptions is under, usually ending in /v1: http://localhost:8089/v1 for whisper.cpp, http://localhost:8000/v1 for Speaches or vLLM.",
-      "kind": "http_url",
-      "required": true,
-      "default": "http://localhost:8089/v1"
-    },
     {
       "name": "name",
       "label": "Connector name",
       "help": "Lowercase letters, digits, dashes and underscores; the transcription settings list it by this name.",
       "default": "local-transcription"
-    },
-    {
-      "name": "model",
-      "label": "Model",
-      "help": "The name the server loaded the model as (Speaches and vLLM check it, e.g. Systran/faster-whisper-small; whisper.cpp takes any).",
-      "required": true,
-      "default": "whisper-1"
     }
   ],
   "bundle": {
@@ -37,11 +22,27 @@
           "name": "{{name}}",
           "kind": "service",
           "template": "openai-compatible-transcription",
-          "desc": "Transcription ({{model}}) at {{base_url}}",
+          "desc": "Transcription on an OpenAI-compatible server",
           "spec": {
+            "config": [
+              {
+                "name": "base_url",
+                "label": "Server address",
+                "help": "The address its /audio/transcriptions is under, usually ending in /v1: http://localhost:8089/v1 for whisper.cpp, http://localhost:8000/v1 for Speaches or vLLM.",
+                "type": "url",
+                "default": "http://localhost:8089/v1",
+                "required": true
+              },
+              {
+                "name": "model",
+                "label": "Model",
+                "help": "The name the server loaded the model as (Speaches and vLLM check it, e.g. Systran/faster-whisper-small; whisper.cpp takes any).",
+                "default": "whisper-1"
+              }
+            ],
             "provider": {
               "transport": "http",
-              "base_url": "{{base_url}}",
+              "base_url": "{config.base_url}",
               "auth": {
                 "none": true
               },
@@ -79,7 +80,7 @@
                   }
                 },
                 "defaults": {
-                  "model": "{{model}}"
+                  "model": "{config.model}"
                 }
               }
             ]

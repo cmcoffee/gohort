@@ -1308,6 +1308,10 @@ type LLMProviderConfig struct {
 	// that should not be shown pictures. Stored as the negative so every
 	// existing configuration reads images as before.
 	NoImages bool
+	// Form, for a Test before a save, is what the tier's form holds for its
+	// model connection (provider "service:<name>"); nil uses what the
+	// connection keeps.
+	Form *media.ModelForm
 	// awsKeys is the key pair a Bedrock model connector's credential holds,
 	// when it signs with one rather than the machine's identity: filled when
 	// the connector is resolved, never stored.

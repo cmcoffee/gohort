@@ -64,8 +64,12 @@
               "text": "text"
             },
             "skip": [
-              {"path": "bot_id"},
-              {"path": "subtype"}
+              {
+                "path": "bot_id"
+              },
+              {
+                "path": "subtype"
+              }
             ],
             "cursor_path": "messages.0.ts",
             "cursor_param": "oldest",

@@ -182,7 +182,11 @@ func RequestDraft(ctx context.Context, name string, draft Spec, operation string
 			}
 		}
 	}
-	r, err := transport{p: draft.Provider}.do(ctx, operation, vars)
+	draft, err := settledFor(ctx, name, draft)
+	if err != nil {
+		return "", err
+	}
+	r, err := draft.transport(nil).do(ctx, operation, vars)
 	var b strings.Builder
 	fmt.Fprintf(&b, "HTTP %d", r.status)
 	switch {
@@ -206,6 +210,10 @@ func RequestDraft(ctx context.Context, name string, draft Spec, operation string
 // runTests runs each capability's contract test of s, recorded as tests.
 func runTests(ctx context.Context, name string, s Spec) []TestReport {
 	var reports []TestReport
+	s, err := settledFor(ctx, name, s)
+	if err != nil {
+		return []TestReport{{Capability: "config", Detail: err.Error()}}
+	}
 	for _, b := range s.Provides {
 		ct, _ := Lookup(b.Capability)
 		rep := TestReport{Capability: b.Capability}
@@ -244,12 +252,12 @@ func runTests(ctx context.Context, name string, s Spec) []TestReport {
 
 // testModel is a model connector's test: a short real chat through the
 // client its dialect names, as a tier on it would make, on the connector as
-// saved (a model's key is read from its credential, never from a draft),
+// saved (a model's key is read from what the connection keeps, never from a draft),
 // in use or not: an administrator tests one before a tier is put on it.
 func testModel(ctx context.Context, name string) TestReport {
 	rep := TestReport{Capability: "llm.chat"}
 	if _, ok := GetConnector(RootDB, name); !ok {
-		rep.Detail = "a model is tested by a real chat once its connector is saved (its key is read from its credential then)"
+		rep.Detail = "a model is tested by a real chat once its connector is saved (its key is read from what it keeps then)"
 		return rep
 	}
 	ctx, end := Preview(ctx, name)
@@ -274,8 +282,9 @@ func testModel(ctx context.Context, name string) TestReport {
 }
 
 // Grammar is the spec's shape as an assistant is told it.
-const Grammar = `A service spec is JSON in two halves.
-provider: {transport: "http", base_url, auth: {credential: "<name>"} or {none: true}, headers?: {name: value} (never auth: the credential adds it), operations: {<name>: {method, path (under base_url) or url, send?: json|form|multipart|file|none, body?, read?: json|text|file, timeout_secs?}}, limits?: {timeout_secs, max_bytes}, health?: {call: <a free operation>, expect?: <condition>, every_mins?}}.
+const Grammar = `A service spec is JSON in two halves, with the settings the connection takes.
+config?: [{name, label, help?, detail?, placeholder?, type?: text|longtext|url|number|toggle|choice|choices|secret, default?, required?, options?: [value or {value, label}], options_from?: <operation listing values>, pattern?, rows?, min?, max?, decimals?, send?: bearer|header:<name>|query:<name>|basic:<username>|aws_sigv4}]: what the connection needs, each value set where it is used (or under Settings on its row) and kept by the connection, never in the spec. {config.<name>} anywhere in the spec is that value; a secret's never is: a key is a secret setting, sent as its send says, by naming it in auth. An entry of provides may have its own config, for what that capability alone takes (its model).
+provider: {transport: "http", base_url, auth: {secret: "<a secret setting's name>"} or {none: true}, headers?: {name: value} (never auth: the secret adds it), operations: {<name>: {method, path (under base_url) or url, send?: json|form|multipart|file|none, body?, read?: json|text|file, timeout_secs?}}, limits?: {timeout_secs, max_bytes}, health?: {call: <a free operation>, expect?: <condition>, every_mins?}}.
 provides: [{capability, steps: [{call: <operation>, save?: {var: path}} or {wait: <operation>, until: <condition>, fail?: <condition>, reason?: path, every_secs?, max_secs?, save?}], output: {<name>: {path, as: base64|url|text|json, each?: path, single?: true, or?: [other places]} or {from: "body"}}, defaults?: {input: value}, cost?: {per_call?, per_unit?, unit?, from_reply?: path}}].
 A local program instead: provider: {transport: "command", network?: true, operations: {<name>: {run: ["<command line>", ...], read?: json|text|file, timeout_secs?}}, health?} with no base_url, auth or headers; in a run line {token} is an input or saved value (a file input is a file), {in} the line before's result, {out} or {out.png} the file it writes (with no {out}, what it prints), every word quoted so no shell reads it, in a sandbox with no network unless network is true.
 Bodies are templates: a string that is exactly "{token}" becomes the value with its type; a token inside a longer string is written in. Tokens are the capability's inputs and what earlier steps saved. send multipart: body is its parts, one may be a file input ("{image}"); send file: body is one file input's token, sent as the whole body.

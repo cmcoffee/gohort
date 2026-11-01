@@ -61,7 +61,7 @@ func TestAServiceConnectorRowAndThePicker(t *testing.T) {
 	saved := RootDB
 	RootDB = &DBase{Store: kvlite.MemStore()}
 	t.Cleanup(func() { RootDB = saved })
-	spec := `{"provider":{"transport":"http","base_url":"https://api.example.test","auth":{"credential":"acme_key"},
+	spec := `{"provider":{"transport":"http","base_url":"https://api.example.test","auth":{"none":true},
 		"operations":{"submit":{"method":"POST","path":"/v1/images","body":{"prompt":"{prompt}"}},"models":{"path":"/v1/models"}},
 		"health":{"call":"models","expect":"data"}},
 		"provides":[{"capability":"image.generate","steps":[{"call":"submit"}],
@@ -169,7 +169,8 @@ func TestResearchSourcesOfferOnlySearchConnectors(t *testing.T) {
 // The Connectors table bands each connector by what it does: every contract
 // has a band, a search a research source names (or one from a research
 // source's template) is a research source unless Web Search uses it, and
-// gohort's own providers sit with the connectors that do the same job.
+// only connectors with a spec are listed: nothing gohort does in Go, no
+// peer and no program.
 func TestConnectorsAreBandedByWhatTheyDo(t *testing.T) {
 	for _, name := range service.Names() {
 		if capabilityGroups[name] == "" {
@@ -208,9 +209,13 @@ func TestConnectorsAreBandedByWhatTheyDo(t *testing.T) {
 	for _, r := range rows {
 		got[r["name"].(string)] = r["group"].(string)
 	}
+	for name := range got {
+		if strings.Contains(name, ":") {
+			t.Errorf("a row with no spec to edit is listed: %s", name)
+		}
+	}
 	for name, want := range map[string]string{
 		"engine": groupSearch, "papers": groupResearch, "filings": groupResearch, "court": groupSearch, "chat": groupLLMs,
-		builtinPrefix + "worker-llm": groupLLMs, builtinPrefix + "mail": groupMail,
 	} {
 		if got[name] != want {
 			t.Errorf("%s sits under %q, want %q", name, got[name], want)

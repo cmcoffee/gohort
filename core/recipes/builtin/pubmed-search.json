@@ -3,16 +3,8 @@
   "title": "PubMed (research)",
   "description": "Biomedical literature from PubMed as a research source, through gohort's built-in PubMed search: it finds the most relevant articles, then reads their titles, journals and dates.",
   "category": "Research Sources",
-  "setup_notes": "The credential lands disabled: enable it under API Credentials. Get a free API key at ncbi.nlm.nih.gov/account (it raises PubMed's rate limit); the credential sends it as api_key. Run Test on its row under Admin > Extensions > Connectors, which makes one real search for a common phrase. Then add it under Admin > Extensions > Research Sources, which puts it to use: research asks it on the topics set there (suggested: medical, scientific), and a tool name there offers it to agents through query_source. Or pick it under Admin > Capabilities > Web Search as the engine.",
+  "setup_notes": "Get a free API key at ncbi.nlm.nih.gov/account (it raises PubMed's rate limit); it is sent as api_key. Run Test on its row under Admin > Extensions > Connectors, which makes one real search for a common phrase. Then add it under Admin > Extensions > Research Sources, which puts it to use: research asks it on the topics set there (suggested: medical, scientific), and a tool name there offers it to agents through query_source. Or pick it under Admin > Capabilities > Web Search as the engine. Its key is given where it is used, under the choice, or under Settings on its row in Admin > Extensions > Connectors.",
   "questions": [
-    {
-      "name": "api_key",
-      "label": "NCBI API key",
-      "help": "Stored in the credential's secret store, never in the connector.",
-      "required": true,
-      "secret": true,
-      "credential": "pubmed_search"
-    },
     {
       "name": "name",
       "label": "Connector name",
@@ -24,17 +16,6 @@
     "bundle": "gohort.bundle/v1",
     "artifacts": [
       {
-        "type": "credential",
-        "name": "pubmed_search",
-        "recipe": {
-          "name": "pubmed_search",
-          "type": "query",
-          "base_url": "https://eutils.ncbi.nlm.nih.gov",
-          "description": "PubMed (research), for research.",
-          "param_name": "api_key"
-        }
-      },
-      {
         "type": "connector",
         "name": "{{name}}",
         "recipe": {
@@ -43,11 +24,21 @@
           "template": "pubmed-search",
           "desc": "PubMed (research)",
           "spec": {
+            "config": [
+              {
+                "name": "api_key",
+                "label": "NCBI API key",
+                "type": "secret",
+                "send": "query:api_key",
+                "help": "Kept with this connection, and sent only to the address it is given for.",
+                "required": true
+              }
+            ],
             "provider": {
               "transport": "http",
               "base_url": "https://eutils.ncbi.nlm.nih.gov",
               "auth": {
-                "credential": "pubmed_search"
+                "secret": "api_key"
               },
               "operations": {
                 "search": {

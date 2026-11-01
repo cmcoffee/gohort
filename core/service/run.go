@@ -15,6 +15,9 @@ import (
 func (s Spec) binding(capability string) (Binding, Contract, error) {
 	for _, b := range s.Provides {
 		if b.Capability == capability {
+			if m := s.missing[capability]; len(m) > 0 {
+				return b, Contract{}, fmt.Errorf("set %s for this connection: on the page that uses it, or on its row under Admin > Extensions > Connectors", strings.Join(m, ", "))
+			}
 			c, ok := Lookup(capability)
 			if !ok {
 				return b, c, fmt.Errorf("unknown capability %q", capability)
@@ -62,7 +65,7 @@ func (s Spec) run(ctx context.Context, sess *ToolSession, capability string, inp
 			return out, fmt.Errorf("%s needs %s", c.Name, in.Name)
 		}
 	}
-	t := transport{p: s.Provider, sess: sess}
+	t := s.transport(sess)
 	var last reply
 	for i, st := range b.Steps {
 		var r reply

@@ -133,6 +133,11 @@ func ServeDashboard(addr string) error {
 	// their target subsystems (MCP) are up. Idempotent; a remote_mcp connector
 	// already persists an enabled MCP server, so this mainly refreshes state and
 	// re-surfaces any last materialize error.
+	// The connections gohort provides, installed when they are not here yet
+	// (each waits for its settings, and is put to use where it is chosen).
+	if ProvideConnectors != nil {
+		ProvideConnectors(RootDB)
+	}
 	ReloadApprovedConnectors(RootDB)
 
 	// Sort by WebOrder (if implemented), then alphabetically.

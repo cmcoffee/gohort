@@ -83,7 +83,12 @@
               "text": "text"
             },
             "skip": [
-              {"path": "user_name", "values": ["{{bot_username}}"]}
+              {
+                "path": "user_name",
+                "values": [
+                  "{{bot_username}}"
+                ]
+              }
             ],
             "send_url": "{{site}}/api/v4/posts",
             "send_method": "POST",

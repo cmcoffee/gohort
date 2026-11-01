@@ -210,7 +210,7 @@ Typical flow for a calendar:
 			"skip":                 {Type: "array", Description: "(rest_messaging, optional) messages to drop, each {\"path\": element dot-path, \"values\": [...]}: dropped when the path has a value, or one of the listed values. Use it to skip the bridge's own replies (e.g. {\"path\":\"bot_id\"}) and system events, or the agent answers itself."},
 			"display_name":         {Type: "string", Description: "(rest_messaging, optional) how a service gohort does not know is named to people (e.g. \"Mattermost\"). A known service keeps its own name."},
 			"markdown":             {Type: "boolean", Description: "(rest_messaging, optional) the service renders markdown, so replies keep their formatting. Only for a service gohort does not know."},
-			"service_spec":         {Type: "object", Description: "(service) {provider:{transport:\"http\",base_url,auth:{credential}|{none:true},operations:{name:{method,path,body}}},provides:[{capability:\"image.generate\",steps:[{call,save}|{wait,until}],output:{image:{path,as}}}]}; a refused save says what is wrong."},
+			"service_spec":         {Type: "object", Description: "(service) {config:[{name,type,send}],provider:{transport:\"http\",base_url,auth:{secret}|{none:true},operations:{name:{method,path,body}}},provides:[{capability:\"image.generate\",steps:[{call,save}|{wait,until}],output:{image:{path,as}}}]}. A key is a config entry of type secret, never in the spec; a refused save says what is wrong."},
 			"image_spec":           {Type: "object", Description: "(rest_image, optional) explicit backend fields overriding/extending the preset: submit_url, submit_method, submit_body (a JSON template with {prompt}/{negative}/{width}/{height}/{steps}/{seed} tokens), image_b64_path or image_url_path (synchronous result), or the poll set submit_id_path/poll_url/poll_ready_path/poll_b64_path/poll_url_path/poll_url_template/poll_fields (async). Omit when a preset + vars is enough. For rest_image, `credential` names the SecureAPI credential (or \"no_auth\" for a local endpoint) and `vars` fills preset tokens like {\"base_url\":\"http://localhost:7860\"}."},
 			"description":          {Type: "string", Description: "(optional) What this connector is for. For desktop_command it is also the tool's description shown to callers."},
 		},
@@ -983,7 +983,7 @@ func connectorDelete(args map[string]any, sess *ToolSession) (string, error) {
 	if msg := sessionApprove(sess, "connector", name, "Delete it, which tears down what it provides.", ChangeDelete); msg != "" {
 		return msg, nil
 	}
-	if err := DeleteConnector(RootDB, name); err != nil {
+	if err := service.RemoveConnector(RootDB, name); err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("Deleted connector %q and tore down its capability.", name), nil

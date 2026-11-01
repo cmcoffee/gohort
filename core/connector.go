@@ -21,8 +21,12 @@ package core
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/url"
 	"regexp"
 	"sort"
 	"strings"
@@ -41,6 +45,10 @@ var connectorNameRE = regexp.MustCompile(`^[a-z0-9_-]+$`)
 // secret lives in the subsystem the handler materializes into, never here.
 type Connector struct {
 	Name      string          `json:"name"`
+	ID        string          `json:"id,omitempty"`       // keys its own space (below): made on create, never taken from a save or import
+	// DisplayName is what people see it called (a page's choices, its row);
+	// Name is its handle. Title gives one or the other.
+	DisplayName string `json:"display_name,omitempty"`
 	Kind      string          `json:"kind"`               // selects the ConnectorHandler
 	Desc      string          `json:"desc,omitempty"`     // what it's for (human)
 	Template  string          `json:"template,omitempty"` // ConnectorTemplate that authored it (drives Configure); portable
@@ -50,6 +58,7 @@ type Connector struct {
 	Created   time.Time       `json:"created"`
 	Updated   time.Time       `json:"updated"`
 	LastError string          `json:"last_error,omitempty"` // last materialize failure
+	Provided  bool            `json:"provided,omitempty"`   // gohort provides it (ProvideConnectors): installed at startup, never deleted; set only by MarkConnectorProvided
 }
 
 // --- kind registry -----------------------------------------------------------
@@ -267,9 +276,14 @@ func saveConnector(db Database, c Connector, autoApprove bool) error {
 	if existed {
 		c.Created = prev.Created
 		c.Approved = prev.Approved // approval only changes via Approve/Unapprove
+		c.ID, c.Provided = prev.ID, prev.Provided
 	} else {
 		c.Created = now
 		c.Approved = false
+		c.ID, c.Provided = "", false
+	}
+	if c.ID == "" {
+		c.ID = newConnectionID()
 	}
 	c.Updated = now
 	c.LastError = ""
@@ -339,10 +353,78 @@ func DeleteConnector(db Database, name string) error {
 	if !ok {
 		return nil
 	}
+	if c.Provided {
+		return fmt.Errorf("%s is provided with gohort, so it stays: set it up, or leave it unused", name)
+	}
 	if h, ok := ConnectorHandlerFor(c.Kind); ok {
 		_ = h.Teardown(c)
 	}
 	db.Unset(connectorsTable, name)
+	dropConnectionSpace(db, c)
+	return nil
+}
+
+// Title is what a connector is shown as: its display name, or its name.
+func (c Connector) Title() string {
+	if t := strings.TrimSpace(c.DisplayName); t != "" {
+		return t
+	}
+	return c.Name
+}
+
+// SetConnectorDisplayName names connector name for people as display (blank
+// shows its name), refusing one another connector is shown as.
+func SetConnectorDisplayName(db Database, name, display string) error {
+	c, ok := GetConnector(db, name)
+	if !ok {
+		return fmt.Errorf("no connector named %q", name)
+	}
+	display = strings.TrimSpace(display)
+	if len(display) > 80 {
+		return fmt.Errorf("a display name is at most 80 characters")
+	}
+	if display != "" {
+		for _, o := range ListConnectors(db) {
+			if o.Name != name && strings.EqualFold(o.Title(), display) {
+				return fmt.Errorf("%s is shown as %q already: give this one another display name", o.Name, display)
+			}
+		}
+	}
+	c.DisplayName, c.Updated = display, time.Now()
+	db.Set(connectorsTable, c.Name, c)
+	return nil
+}
+
+// FreeDisplayName is display, or it with the connector's name after it when
+// another connector is shown as display already.
+func FreeDisplayName(db Database, name, display string) string {
+	display = strings.TrimSpace(display)
+	for _, o := range ListConnectors(db) {
+		if o.Name != name && strings.EqualFold(o.Title(), display) {
+			return display + " (" + name + ")"
+		}
+	}
+	return display
+}
+
+// ProvideConnectors, when set, installs the connections gohort provides
+// that are not here yet (core/recipes): the choices a page offers by
+// default. Called once at startup.
+var ProvideConnectors func(db Database)
+
+// MarkConnectorProvided marks connector name as one gohort provides, shown
+// as label: kept at startup, and never deleted.
+func MarkConnectorProvided(db Database, name, label string) error {
+	c, ok := GetConnector(db, name)
+	if !ok {
+		return fmt.Errorf("no connector named %q", name)
+	}
+	c.Provided = true
+	if label = strings.TrimSpace(label); label != "" {
+		c.DisplayName = label
+	}
+	c.Updated = time.Now()
+	db.Set(connectorsTable, c.Name, c)
 	return nil
 }
 
@@ -416,4 +498,250 @@ func ConnectorsUsingCredential(db Database, cred string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// --- a connection's own space ---------------------------------------------
+//
+// A connection owns its space. Creating a connector gives it an id, made
+// here and never taken from a recipe, and under that id a store of its own:
+// its settings (config) and its secrets, encrypted. The name stays the
+// handle people and pages use; the id keys the space, so nothing one
+// connection keeps can collide with another's, and deleting a connection
+// deletes what it kept.
+//
+// A secret is kept with the addresses it was given for, and a call is made
+// through it only there: the vault's guarantee that a key goes nowhere it was
+// not given for, held by the connection rather than by a named credential.
+
+const (
+	connectionConfigTable = "config"
+	connectionSecretTable = "secret"
+)
+
+// newConnectionID is a fresh connection id.
+func newConnectionID() string {
+	b := make([]byte, 12)
+	rand.Read(b)
+	return "c_" + hex.EncodeToString(b)
+}
+
+// connectionSpace is connection c's own store, or nil before it has an id.
+func connectionSpace(db Database, c Connector) Database {
+	if db == nil || strings.TrimSpace(c.ID) == "" {
+		return nil
+	}
+	return db.Sub("connection:" + c.ID)
+}
+
+// ConnectionConfig is the settings connection c keeps: the values given for
+// what its spec declares, by name.
+func ConnectionConfig(db Database, c Connector) map[string]string {
+	sp := connectionSpace(db, c)
+	if sp == nil {
+		return nil
+	}
+	out := map[string]string{}
+	for _, k := range sp.Keys(connectionConfigTable) {
+		var v string
+		if sp.Get(connectionConfigTable, k, &v) {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// SetConnectionConfig replaces the settings connection c keeps with values;
+// a blank value is left out, so the spec's default applies.
+func SetConnectionConfig(db Database, c Connector, values map[string]string) error {
+	sp := connectionSpace(db, c)
+	if sp == nil {
+		return fmt.Errorf("connection %s has no space yet: save it once to give it one", c.Name)
+	}
+	sp.Drop(connectionConfigTable)
+	for k, v := range values {
+		if v = strings.TrimSpace(v); v != "" {
+			if err := sp.TrySet(connectionConfigTable, k, v); err != nil {
+				return fmt.Errorf("saving %s's setting %s: %w", c.Name, k, err)
+			}
+		}
+	}
+	return nil
+}
+
+// ConnectionSecret is one secret a connection keeps: its value, and the
+// addresses it was given for, the only ones a call may take it to.
+type ConnectionSecret struct {
+	Value     string    `json:"value"`
+	Addresses []string  `json:"addresses"`
+	Set       time.Time `json:"set"`
+}
+
+// GetConnectionSecret is connection c's secret name.
+func GetConnectionSecret(db Database, c Connector, name string) (ConnectionSecret, bool) {
+	var s ConnectionSecret
+	sp := connectionSpace(db, c)
+	if sp == nil || !sp.Get(connectionSecretTable, name, &s) {
+		return s, false
+	}
+	return s, true
+}
+
+// SetConnectionSecret keeps secret value as connection c's secret name, for
+// addresses: the address its calls go to, and any other it also reaches.
+func SetConnectionSecret(db Database, c Connector, name, value string, addresses []string) error {
+	sp := connectionSpace(db, c)
+	if sp == nil {
+		return fmt.Errorf("connection %s has no space yet: save it once to give it one", c.Name)
+	}
+	var clean []string
+	for _, a := range addresses {
+		if a = strings.TrimRight(strings.TrimSpace(a), "/"); a != "" {
+			clean = append(clean, a)
+		}
+	}
+	sp.CryptSet(connectionSecretTable, name, ConnectionSecret{Value: strings.TrimSpace(value), Addresses: clean, Set: time.Now()})
+	return nil
+}
+
+// dropConnectionSpace removes everything connection c kept.
+func dropConnectionSpace(db Database, c Connector) {
+	if sp := connectionSpace(db, c); sp != nil {
+		sp.Drop(connectionConfigTable)
+		sp.Drop(connectionSecretTable)
+	}
+}
+
+// ConnectionCredential is the credential one call of connection name is made
+// through: never stored, carrying the connection's secret (or, for an AWS
+// signature with no key pair, the machine's identity under profile), and
+// allowed only the addresses the secret was given for. send is how the
+// secret goes: bearer, header:<name>, query:<name>, basic:<username> (or
+// basic, the secret being user:password) or aws_sigv4.
+func ConnectionCredential(name, send, secret, profile string, addresses []string) (SecureCredential, error) {
+	if len(addresses) == 0 {
+		return SecureCredential{}, fmt.Errorf("the connection %s's secret was given for no address", name)
+	}
+	c := SecureCredential{Name: "connection:" + name, BaseURL: addresses[0], connection: name,
+		Description: "The secret connection " + name + " keeps, for one call."}
+	for _, a := range addresses[1:] {
+		if u, err := url.Parse(a); err == nil && u.Host != "" {
+			c.AlsoCovers = append(c.AlsoCovers, strings.ToLower(u.Scheme+"://"+u.Host))
+		}
+	}
+	how, param, _ := strings.Cut(strings.TrimSpace(send), ":")
+	secret = strings.TrimSpace(secret)
+	switch how {
+	case "bearer":
+		c.Type = SecureCredBearer
+	case "header", "query":
+		if param = strings.TrimSpace(param); param == "" {
+			return c, fmt.Errorf("send %q names no %s", send, how)
+		}
+		c.Type, c.ParamName = SecureCredHeader, param
+		if how == "query" {
+			c.Type = SecureCredQuery
+		}
+	case "basic":
+		c.Type, c.Username = SecureCredBasicAuth, strings.TrimSpace(param)
+		if c.Username == "" && secret != "" && !strings.Contains(secret, ":") {
+			return c, fmt.Errorf("send basic with no username takes user:password")
+		}
+	case "aws_sigv4":
+		c.Type = SecureCredAWS
+		if secret == "" {
+			c.AWSMachine, c.AWSProfile = true, strings.TrimSpace(profile)
+			return c, nil
+		}
+		if _, err := awsKeyPair(secret); err != nil {
+			return c, err
+		}
+	default:
+		return c, fmt.Errorf("send %q: a secret is sent as bearer, header:<name>, query:<name>, basic:<username> or aws_sigv4", send)
+	}
+	if secret == "" {
+		return c, fmt.Errorf("the connection %s has no key yet: give it on the page that uses it, or on its row under Admin > Extensions > Connectors", name)
+	}
+	c.inlineSecret = secret
+	return c, nil
+}
+
+// connectionOnly refuses a credential that ConnectionCredential did not
+// make: the calls below skip the lookup by name, so a stored credential goes
+// through its own, with its shares and limits.
+func connectionOnly(c SecureCredential) error {
+	if c.connection == "" {
+		return fmt.Errorf("credential %q is not a connection's: call it by name", c.Name)
+	}
+	return nil
+}
+
+// DispatchConnection makes r through a connection's credential: the same
+// governed path as a stored credential's call (the address limits, Private
+// mode, the audit, the response limits). r.Credential is ignored.
+func (s *SecureAPI) DispatchConnection(sess *ToolSession, c SecureCredential, r ToolCallRequest) (string, error) {
+	if err := connectionOnly(c); err != nil {
+		return "", err
+	}
+	args := map[string]any{"url": r.URL, "method": firstNonEmpty(r.Method, "GET")}
+	if r.Body != "" {
+		args["body"] = r.Body
+	}
+	if r.ContentType != "" {
+		args["__content_type"] = r.ContentType
+	}
+	if r.PipeFollowing {
+		args["__pipe_following"] = true
+	}
+	if h := toolCallHeaderArgs(r.Headers); h != nil {
+		args["request_headers"] = h
+	}
+	if r.Upload != nil {
+		args[secureUploadArg] = r.Upload
+	}
+	if r.TimeoutSecs > 0 {
+		args[secureTimeoutArg] = r.TimeoutSecs
+	}
+	return s.dispatch(c, args, sess)
+}
+
+// OpenConnectionStream is OpenStream through a connection's credential.
+func (s *SecureAPI) OpenConnectionStream(sess *ToolSession, c SecureCredential, r StreamRequest) (*http.Response, func(n int64), error) {
+	if err := connectionOnly(c); err != nil {
+		return nil, nil, err
+	}
+	return s.openStream(sess, c, r)
+}
+
+// ModelAuth is what a model client, which makes its own requests, is given
+// from a connection's credential for rawURL: the key, or the AWS signing.
+// Only for an address the credential allows.
+func (c SecureCredential) ModelAuth(rawURL string) (string, AWSModelAuth, error) {
+	var aws AWSModelAuth
+	if err := connectionOnly(c); err != nil {
+		return "", aws, err
+	}
+	if !urlAllowedByCredential(c, rawURL) {
+		return "", aws, fmt.Errorf("the connection %s's secret was not given for %s", c.connection, rawURL)
+	}
+	if c.Type != SecureCredAWS {
+		return c.inlineSecret, aws, nil
+	}
+	host := rawURL
+	if i := strings.Index(host, "://"); i >= 0 {
+		host = host[i+3:]
+	}
+	host, _, _ = strings.Cut(host, "/")
+	region, _, err := awsScope(c, host)
+	if err != nil {
+		return "", aws, err
+	}
+	aws.Region, aws.Profile, aws.Machine = region, c.AWSProfile, c.AWSMachine
+	if !c.AWSMachine {
+		kp, err := awsKeyPair(c.inlineSecret)
+		if err != nil {
+			return "", aws, err
+		}
+		aws.AccessKey, aws.SecretKey = kp.AccessKey, kp.SecretKey
+	}
+	return "", aws, nil
 }

@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/cmcoffee/gohort/core/media"
 )
 
 // A search's results are settled the same way for every engine before its
@@ -67,5 +69,42 @@ func TestAPlainSearchDropsSiteFilters(t *testing.T) {
 	bad["provides"].([]any)[0].(map[string]any)["plain"] = true
 	if err := validateSpec(t, bad); err == nil || !strings.Contains(err.Error(), "plain") {
 		t.Errorf("a plain image maker: %v", err)
+	}
+}
+
+// The voice list contract reads a list of names or objects, and its check
+// refuses entries that name no voice.
+func TestTheVoiceListIsChecked(t *testing.T) {
+	ct, _ := Lookup("speech.voices")
+	for list, ok := range map[string]bool{
+		`["af_heart",{"voice_id":"21m00","name":"Rachel"}]`: true,
+		`[]`:                       true,
+		`[{"category":"premade"}]`: false,
+		`{"voices":[]}`:            false,
+	} {
+		if err := ct.Check(Result{"voices": Value{Text: list}}); (err == nil) != ok {
+			t.Errorf("%s: %v", list, err)
+		}
+	}
+	vs, _ := Voices(Result{"voices": Value{Text: `["af_heart",{"voice_id":"21m00","name":"Rachel"}]`}})
+	if len(vs) != 2 || vs[1] != (media.Voice{ID: "21m00", Name: "Rachel"}) {
+		t.Errorf("voices: %+v", vs)
+	}
+}
+
+// The image search contract reads a list of pictures, and its check
+// refuses one with no picture address: the spec reads the wrong field.
+func TestImageSearchIsChecked(t *testing.T) {
+	ct, _ := Lookup("image.search")
+	for list, ok := range map[string]bool{
+		`[{"image_url":"https://img.example/1.jpg","title":"A"}]`: true,
+		`[]`:                             true,
+		`[{"image_url":"","title":"A"}]`: false,
+		`[{"image_url":"/local.jpg","title":"A"}]`: false,
+		`{"images":[]}`: false,
+	} {
+		if err := ct.Check(Result{"results": Value{Text: list}}); (err == nil) != ok {
+			t.Errorf("%s: %v", list, err)
+		}
 	}
 }

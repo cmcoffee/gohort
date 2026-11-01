@@ -97,6 +97,53 @@ func TestAddingATemplateInstallsDrafts(t *testing.T) {
 	if again.Imported != 0 || len(again.Warnings) == 0 {
 		t.Errorf("added again, nothing is overwritten and it says so: %+v", again)
 	}
+	if _, ok := core.Secure().Load("github_2"); ok {
+		t.Error("added again, it left a credential nothing uses")
+	}
+}
+
+// A template whose new pieces name a credential already here gets one of its
+// own: the github tools, named after an answer, added a second time under
+// another name, name a credential of their own and carry the key given for
+// them.
+func TestASecondInstallGetsItsOwnCredential(t *testing.T) {
+	db := testDB(t)
+	r, _, _ := Get(db, "github")
+	raw, _ := json.Marshal(r.Bundle)
+	text := strings.ReplaceAll(string(raw), `"github_`, `"{{name}}_`)
+	json.Unmarshal([]byte(text), &r.Bundle)
+	r.ID, r.Questions = "github-named", append(r.Questions, Question{Name: "name", Label: "Name", Default: "gh"})
+	data, _ := json.Marshal(r)
+	if _, err := Import(db, data, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	credOf := func(res core.ArtifactImportResult) string {
+		for _, o := range res.Outcomes {
+			if o.Type == "credential" {
+				return o.Name
+			}
+		}
+		return ""
+	}
+	first, err := Install(db, "github-named", "admin", map[string]string{"name": "first", "token": "tok-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := Install(db, "github-named", "admin", map[string]string{"name": "second", "token": "tok-2"})
+	c1, c2 := credOf(first), credOf(second)
+	if err != nil || c1 == "" || c2 == "" || c1 == c2 || second.Imported != 5 || !strings.Contains(strings.Join(second.Warnings, " "), `"`+c2+`"`) {
+		t.Fatalf("the second: %+v %v", second, err)
+	}
+	for _, cred := range []string{c1, c2} {
+		if _, _, hasSecret := core.Secure().CredentialStatus(cred); !hasSecret {
+			t.Errorf("%s holds no key", cred)
+		}
+	}
+	b, err := core.ExportArtifactBundle(db, []core.ArtifactSel{{Type: "tool", Name: "second_list_issues", Owner: "admin"}})
+	data, _ = json.Marshal(b)
+	if err != nil || !strings.Contains(string(data), `"`+c2+`"`) || strings.Contains(string(data), `"`+c1+`"`) {
+		t.Errorf("the second's tool names: %s %v", data, err)
+	}
 }
 
 // A template file round-trips: exported, it imports under another id; a

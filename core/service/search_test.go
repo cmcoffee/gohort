@@ -123,35 +123,29 @@ func TestAResearchSourceIsChecked(t *testing.T) {
 	}
 }
 
-// SourceGet reads a path under a search connector's address through its own
-// credential, within what that credential allows, and only of a connector in
-// use.
-func TestSourceGetReadsThroughTheConnectorsCredential(t *testing.T) {
+// SourceGet reads a path under a search connector's address with its own
+// key, and only of a connector in use.
+func TestSourceGetReadsWithTheConnectionsKey(t *testing.T) {
 	world(t)
-	forgetCredentials(t, "opinions_key")
 	var auth string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		auth = r.Header.Get("Authorization")
 		w.Write([]byte(`{"plain_text":"The court held."}`))
 	}))
 	defer srv.Close()
-	if err := Secure().Save(SecureCredential{Name: "opinions_key", Type: SecureCredHeader, ParamName: "Authorization",
-		BaseURL: srv.URL, AllowedEndpoints: []string{"/s", "/opinions/**"}}, "Token t0k"); err != nil {
-		t.Fatal(err)
-	}
 	spec := map[string]any{
-		"provider": map[string]any{"transport": "http", "base_url": srv.URL, "auth": map[string]any{"credential": "opinions_key"},
+		"config": []any{map[string]any{"name": "token", "type": "secret", "send": "header:Authorization"}},
+		"provider": map[string]any{"transport": "http", "base_url": srv.URL, "auth": map[string]any{"secret": "token"},
 			"operations": map[string]any{"find": map[string]any{"path": "/s?q={query}"}}},
 		"provides": []any{map[string]any{"capability": "web.search", "steps": []any{map[string]any{"call": "find"}},
 			"output": map[string]any{"results": map[string]any{"path": "hits", "fields": map[string]any{"title": "t", "url": "u"}}}}},
 	}
 	install(t, "opinions", spec)
+	c, _ := GetConnector(RootDB, "opinions")
+	SetConnectionSecret(RootDB, c, "token", "Token t0k", []string{srv.URL})
 	body, err := SourceGet(context.Background(), "opinions", "/opinions/42/")
 	if err != nil || string(body) != `{"plain_text":"The court held."}` || auth != "Token t0k" {
 		t.Errorf("read: %q %v, auth %q", body, err, auth)
-	}
-	if _, err := SourceGet(context.Background(), "opinions", "/admin/users"); err == nil {
-		t.Error("a path the credential does not allow was read")
 	}
 	UnapproveConnector(RootDB, "opinions")
 	if _, err := SourceGet(context.Background(), "opinions", "/opinions/42/"); err == nil {

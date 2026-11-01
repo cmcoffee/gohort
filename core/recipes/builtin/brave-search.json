@@ -3,16 +3,8 @@
   "title": "Brave (web search)",
   "description": "Brave Search as gohort's web search, declared as a service: the request and how its results are read are data you can test and fix from Admin > Connectors.",
   "category": "Web Search",
-  "setup_notes": "Get an API key at api-dashboard.search.brave.com (a free plan is available). The credential lands disabled: enable it under API Credentials. Run Test on its row under Admin > Extensions > Connectors, which makes one real search for a common phrase. Then put it to use by choosing it under Admin > Capabilities > Web Search as Service: <name>. No price is declared, as it depends on your plan: add a per_call cost to the connector's spec to see what searches cost.",
+  "setup_notes": "Get an API key at api-dashboard.search.brave.com (a free plan is available). Choose it under Admin > Capabilities > Web Search as Service and save; Test there makes one real search for a common phrase: <name>. No price is declared, as it depends on your plan: add a per_call cost to the connector's spec to see what searches cost. Its key is given where it is used, under the choice, or under Settings on its row in Admin > Extensions > Connectors.",
   "questions": [
-    {
-      "name": "api_key",
-      "label": "Brave Search API key",
-      "help": "Stored in the credential's secret store, never in the connector.",
-      "required": true,
-      "secret": true,
-      "credential": "brave_search"
-    },
     {
       "name": "name",
       "label": "Connector name",
@@ -24,20 +16,6 @@
     "bundle": "gohort.bundle/v1",
     "artifacts": [
       {
-        "type": "credential",
-        "name": "brave_search",
-        "recipe": {
-          "name": "brave_search",
-          "type": "header",
-          "base_url": "https://api.search.brave.com",
-          "allowed_endpoints": [
-            "/res/v1/web/search"
-          ],
-          "description": "Brave API, for web search.",
-          "param_name": "X-Subscription-Token"
-        }
-      },
-      {
         "type": "connector",
         "name": "{{name}}",
         "recipe": {
@@ -46,11 +24,21 @@
           "template": "brave-search",
           "desc": "Brave web search",
           "spec": {
+            "config": [
+              {
+                "name": "api_key",
+                "label": "Brave Search API key",
+                "type": "secret",
+                "send": "header:X-Subscription-Token",
+                "help": "Kept with this connection, and sent only to the address it is given for.",
+                "required": true
+              }
+            ],
             "provider": {
               "transport": "http",
               "base_url": "https://api.search.brave.com",
               "auth": {
-                "credential": "brave_search"
+                "secret": "api_key"
               },
               "operations": {
                 "search": {

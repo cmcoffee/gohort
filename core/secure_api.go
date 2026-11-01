@@ -107,6 +107,10 @@ type SecureCredential struct {
 	// publicOnly marks a credential synthesized for one call that must keep
 	// to public addresses (the legacy no_auth path). Unexported: never stored.
 	publicOnly bool
+	// connection names the connection a credential was made from for one
+	// call (ConnectionCredential): its secret is the connection's, kept in
+	// its own space, so there is no stored record to ask who may use it.
+	connection string
 
 	Name              string `json:"name"`
 	Type              string `json:"type"`
@@ -2498,7 +2502,7 @@ func (s *SecureAPI) internalReachRefusal(c SecureCredential) error {
 // reaches only open credentials. A credential synthesized in-process for one
 // call (inlineSecret: a media upload's configured key) has no record to ask.
 func (s *SecureAPI) callerMayDispatch(c SecureCredential, sess *ToolSession) error {
-	if c.inlineSecret != "" {
+	if c.inlineSecret != "" || c.connection != "" {
 		return nil
 	}
 	user := sessUsername(sess)
@@ -2629,6 +2633,11 @@ func (s *SecureAPI) OpenStream(sess *ToolSession, credName string, r StreamReque
 	if !ok {
 		return nil, nil, fmt.Errorf("credential %q not registered", credName)
 	}
+	return s.openStream(sess, c, r)
+}
+
+// openStream is OpenStream through credential c, resolved.
+func (s *SecureAPI) openStream(sess *ToolSession, c SecureCredential, r StreamRequest) (*http.Response, func(n int64), error) {
 	args := map[string]any{"url": r.URL, "method": r.Method}
 	if h := toolCallHeaderArgs(r.Headers); h != nil {
 		args["request_headers"] = h

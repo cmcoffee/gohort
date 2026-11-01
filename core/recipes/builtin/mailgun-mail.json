@@ -3,58 +3,18 @@
   "title": "Mailgun (mail)",
   "description": "Mailgun as gohort's mail, in place of an SMTP server: an API that sends from a domain you verify. Declared as a service you can test and fix from Admin > Connectors.",
   "category": "Mail",
-  "setup_notes": "Create an API key under Mailgun's API Security settings and add your sending domain. A domain in Mailgun's EU region is reached at api.eu.mailgun.net: change the credential's and the connector's address to it. The credential lands disabled: enable it under API Credentials. Run Test on its row under Admin > Extensions > Connectors, which sends a short test email to the test recipient. Then put it to use by choosing it under Admin > System > Mail (SMTP) as Send with: signup approvals, reports, alerts and the send_email tool go through it. A From Address set there is used in place of the one given here. No price is declared, as it depends on your plan: add a per_call cost to the connector's spec to see what mail costs.",
+  "setup_notes": "Create an API key under Mailgun's API Security settings and add your sending domain. A domain in Mailgun's EU region is reached at api.eu.mailgun.net: change the connector's address in its spec to it. Choose it under Admin > System > Mail (SMTP) as Send with and save; Test there sends a short test email to the test recipient: signup approvals, reports, alerts and the send_email tool go through it. A From Address set there is used in place of the one given here. No price is declared, as it depends on your plan: add a per_call cost to the connector's spec to see what mail costs. Its key is given where it is used, under the choice, or under Settings on its row in Admin > Extensions > Connectors.",
   "questions": [
-    {
-      "name": "api_key",
-      "label": "Mailgun API key",
-      "help": "Stored in the credential's secret store, never in the connector.",
-      "required": true,
-      "secret": true,
-      "credential": "mailgun_mail"
-    },
     {
       "name": "name",
       "label": "Connector name",
       "help": "Lowercase letters, digits, dashes and underscores; the mail settings list it by this name.",
       "default": "mailgun-mail"
-    },
-    {
-      "name": "domain",
-      "label": "Sending domain",
-      "help": "The domain as Mailgun lists it, e.g. mg.yourdomain.example.",
-      "required": true
-    },
-    {
-      "name": "from",
-      "label": "Send from",
-      "help": "An address on a domain you have verified with the service, e.g. gohort@yourdomain.example.",
-      "required": true
-    },
-    {
-      "name": "to",
-      "label": "Test recipient",
-      "help": "Where the connector's Test sends its test email.",
-      "required": true
     }
   ],
   "bundle": {
     "bundle": "gohort.bundle/v1",
     "artifacts": [
-      {
-        "type": "credential",
-        "name": "mailgun_mail",
-        "recipe": {
-          "name": "mailgun_mail",
-          "type": "basic_auth",
-          "username": "api",
-          "base_url": "https://api.mailgun.net",
-          "allowed_endpoints": [
-            "/v3/{{domain}}/messages"
-          ],
-          "description": "Mailgun API, for sending mail from {{domain}}."
-        }
-      },
       {
         "type": "connector",
         "name": "{{name}}",
@@ -62,18 +22,44 @@
           "name": "{{name}}",
           "kind": "service",
           "template": "mailgun-mail",
-          "desc": "Mailgun mail from {{from}}",
+          "desc": "Mailgun mail",
           "spec": {
+            "config": [
+              {
+                "name": "domain",
+                "label": "Sending domain",
+                "help": "The domain as Mailgun lists it, e.g. mg.yourdomain.example.",
+                "required": true
+              },
+              {
+                "name": "from",
+                "label": "Send from",
+                "help": "An address on a domain you have verified with the service, e.g. gohort@yourdomain.example."
+              },
+              {
+                "name": "to",
+                "label": "Test recipient",
+                "help": "Where the connector's Test sends its test email."
+              },
+              {
+                "name": "api_key",
+                "label": "Mailgun API key",
+                "type": "secret",
+                "send": "basic:api",
+                "help": "Kept with this connection, and sent only to the address it is given for.",
+                "required": true
+              }
+            ],
             "provider": {
               "transport": "http",
               "base_url": "https://api.mailgun.net",
               "auth": {
-                "credential": "mailgun_mail"
+                "secret": "api_key"
               },
               "operations": {
                 "send": {
                   "method": "POST",
-                  "path": "/v3/{{domain}}/messages",
+                  "path": "/v3/{config.domain}/messages",
                   "send": "form",
                   "body": {
                     "from": "{from}",
@@ -98,8 +84,8 @@
                   }
                 },
                 "defaults": {
-                  "from": "{{from}}",
-                  "to": "{{to}}"
+                  "from": "{config.from}",
+                  "to": "{config.to}"
                 }
               }
             ]

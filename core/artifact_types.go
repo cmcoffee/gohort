@@ -137,12 +137,13 @@ func (connectorArtifact) ImportArtifact(db Database, recipe json.RawMessage, own
 		return name, "a connector with this name already exists", nil
 	}
 	c := Connector{
-		Name:     name,
-		Kind:     strings.TrimSpace(pc.Kind),
-		Desc:     pc.Desc,
-		Template: strings.TrimSpace(pc.Template),
-		Spec:     pc.Spec,
-		Owner:    owner,
+		Name:        name,
+		Kind:        strings.TrimSpace(pc.Kind),
+		Desc:        pc.Desc,
+		DisplayName: strings.TrimSpace(pc.DisplayName),
+		Template:    strings.TrimSpace(pc.Template),
+		Spec:        pc.Spec,
+		Owner:       owner,
 	}
 	if err := saveConnectorDraft(db, c); err != nil {
 		return name, "", err

@@ -92,8 +92,9 @@ func TestBuilderDraftsAServiceConnector(t *testing.T) {
 	connectorOwnerFixture(t)
 	sess := &ToolSession{Username: "alice"}
 	spec := map[string]any{
+		"config": []any{map[string]any{"name": "api_key", "type": "secret", "send": "bearer"}},
 		"provider": map[string]any{"transport": "http", "base_url": "https://api.example.test",
-			"auth":       map[string]any{"credential": "acme_key"},
+			"auth":       map[string]any{"secret": "api_key"},
 			"operations": map[string]any{"submit": map[string]any{"method": "POST", "path": "/v1/images", "body": map[string]any{"prompt": "{prompt}"}}}},
 		"provides": []any{map[string]any{"capability": "image.generate", "steps": []any{map[string]any{"call": "submit"}},
 			"output": map[string]any{"image": map[string]any{"path": "data.0.b64_json", "as": "base64"}}}},
@@ -132,5 +133,12 @@ func TestBuilderDraftsAServiceConnector(t *testing.T) {
 	}
 	if ch, ok := service.PendingChange(RootDB, "acme-images"); !ok || ch.By != "alice" {
 		t.Errorf("the change waiting: %+v %v", ch, ok)
+	}
+	// Image Generation still names it, so her Builder cannot delete it.
+	if _, err := connectorDelete(map[string]any{"name": "acme-images"}, sess); err == nil || !strings.Contains(err.Error(), "in use by Image Generation") {
+		t.Errorf("deleting one a page names: %v", err)
+	}
+	if _, ok := GetConnector(RootDB, "acme-images"); !ok {
+		t.Error("deleted while a page names it")
 	}
 }

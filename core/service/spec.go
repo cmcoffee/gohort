@@ -26,11 +26,20 @@ const Kind = "service"
 
 // Spec is a service connector's payload.
 type Spec struct {
-	Provider Provider  `json:"provider"`
-	Provides []Binding `json:"provides"`
+	// Config are the settings the page using the connector holds and the
+	// spec reads as {config.<name>} (config.go).
+	Config   []ConfigField `json:"config,omitempty"`
+	Provider Provider      `json:"provider"`
+	Provides []Binding     `json:"provides"`
 	// TestBudget is how many contract tests may run a day (default 5): a
 	// test is a real call, and a real call can cost money.
 	TestBudget int `json:"test_budget,omitempty"`
+
+	// Set when the spec is settled for a call (config.go): the required
+	// settings of each capability left unset, refused when that capability
+	// is asked for; and how its calls carry the connection's secret.
+	missing map[string][]string
+	auth    *connectionAuth
 }
 
 // Provider is how gohort talks to the service.
@@ -47,9 +56,12 @@ type Provider struct {
 	Network bool `json:"network,omitempty"`
 }
 
-// Auth names the credential that carries the key, or says there is none (a
-// service on the LAN). A secret never appears in a spec.
+// Auth names the secret setting the connection's calls carry (config.go),
+// or says there is none (a service on the LAN). Credential, a credential in
+// the vault, is how connectors carried a key before a connection kept its
+// own. A secret's value never appears in a spec.
 type Auth struct {
+	Secret     string `json:"secret,omitempty"`
 	Credential string `json:"credential,omitempty"`
 	None       bool   `json:"none,omitempty"`
 }
@@ -96,10 +108,13 @@ type Health struct {
 
 // Binding is one capability the service gives gohort.
 type Binding struct {
-	Capability string            `json:"capability"`
-	Steps      []Step            `json:"steps"`
-	Output     map[string]Output `json:"output"`
-	Defaults   map[string]any    `json:"defaults,omitempty"`
+	Capability string `json:"capability"`
+	// Config are the settings this capability takes of its own (its
+	// model), beside the provider's (config.go).
+	Config   []ConfigField     `json:"config,omitempty"`
+	Steps    []Step            `json:"steps"`
+	Output   map[string]Output `json:"output"`
+	Defaults map[string]any    `json:"defaults,omitempty"`
 	// Wide are inputs used over the defaults when gohort asks for a wide
 	// picture (an article's header image): a size, or an aspect.
 	Wide map[string]any `json:"wide,omitempty"`
@@ -221,6 +236,18 @@ var later = map[string]string{
 // Validate refuses a spec that cannot run, or that names something it does
 // not mean: an unknown capability, transport, mode, field or path.
 func (s Spec) Validate() error {
+	if err := s.validateConfig(); err != nil {
+		return err
+	}
+	settled, err := s.settle(s.placeholders())
+	if err != nil {
+		return err
+	}
+	return settled.validateSettled()
+}
+
+// validateSettled checks a spec whose settings are filled in.
+func (s Spec) validateSettled() error {
 	p := s.Provider
 	switch strings.TrimSpace(p.Transport) {
 	case "http":
@@ -236,12 +263,19 @@ func (s Spec) Validate() error {
 	if err != nil || base.Host == "" || (base.Scheme != "http" && base.Scheme != "https") {
 		return fmt.Errorf("base_url must be an http(s) address, got %q", p.BaseURL)
 	}
-	cred := strings.TrimSpace(p.Auth.Credential)
+	ways := 0
+	for _, set := range []bool{strings.TrimSpace(p.Auth.Secret) != "", strings.TrimSpace(p.Auth.Credential) != "", p.Auth.None} {
+		if set {
+			ways++
+		}
+	}
 	switch {
-	case cred != "" && p.Auth.None:
-		return fmt.Errorf("auth names a credential and says none: give one")
-	case cred == "" && !p.Auth.None:
-		return fmt.Errorf("auth needs a credential name, or none: true for a service that takes no key")
+	case strings.TrimSpace(p.Auth.Credential) != "":
+		return fmt.Errorf("auth names the credential %q, as connectors did before a connection kept its own key: add it again from its template, or declare a secret setting in config (type secret, send bearer, header:<name> or query:<name>) and name it in auth.secret", p.Auth.Credential)
+	case ways > 1:
+		return fmt.Errorf("auth gives more than one of secret and none: give one")
+	case ways == 0:
+		return fmt.Errorf("auth needs the secret its calls carry (a secret setting in config), or none: true for a service that takes no key")
 	}
 	for k := range p.Headers {
 		switch strings.ToLower(strings.TrimSpace(k)) {
@@ -618,7 +652,7 @@ func (s Spec) validateCommand() error {
 	switch {
 	case strings.TrimSpace(p.BaseURL) != "":
 		return fmt.Errorf("a command service has no base_url: its operations are run lines")
-	case p.Auth.Credential != "" || p.Auth.None:
+	case p.Auth.Secret != "" || p.Auth.Credential != "" || p.Auth.None:
 		return fmt.Errorf("a command service takes no auth: a local program is given no key")
 	case len(p.Headers) > 0:
 		return fmt.Errorf("a command service has no headers")

@@ -3,7 +3,7 @@
 alice GET /api/connectors ""
   403 forbidden
 root GET /api/connectors ""
-  200 [{"name":"ct-art","kind":"rest_image","summary":"generate images via http://127.0.0.1:1/sdapi/v1/txt2img (synchronous, credential no_auth) → tool generate_image_ct_art","owner":"root","approved":fal… (513 bytes, sha1 2217303faf2b36d205ce54a882a74d6d356c7ce1)
+  200 [{"name":"ct-art","title":"ct-art","kind":"rest_image","summary":"generate images via http://127.0.0.1:1/sdapi/v1/txt2img (synchronous, credential no_auth) → tool generate_image_ct_art","owner":"roo… (533 bytes, sha1 62e1360f42b52c7333c79d389288be9ee5ab43fa)
 root PUT /api/connectors "{}"
   405 method not allowed
 (signed out) GET /api/connectors/spec?name=ct-art ""
@@ -51,7 +51,7 @@ root POST /api/connectors?action=update_spec&name=ct-nope "{}"
 root POST /api/connectors?action=update_spec&name=ct-art "{\"credential\":\"no_auth\",\"submit_url\":\"http://127.0.0.1:2/sdapi/v1/txt2img\",\"submit_method\":\"POST\",\"submit_body\":\"{\\\"prompt\\\":\\\"{prompt}\\\",\\\"negative_prompt\\\":\\\"{negative}\\\",\\\"width\\\":{width},\\\"height\\\":{height},\\\"steps\\\":{steps},\\\"seed\\\":{seed}}\",\"image_b64_path\":\"images.0\",\"default_width\":512,\"default_height\":512,\"default_steps\":20,\"comfy_map\":{}}"
   204 
 root GET /api/connectors ""
-  200 [{"name":"ct-art","kind":"rest_image","summary":"generate images via http://127.0.0.1:2/sdapi/v1/txt2img (synchronous, credential no_auth) → tool generate_image_ct_art","owner":"root","approved":fal… (513 bytes, sha1 58af120b469fed537fb37488526c2efaf337cc6a)
+  200 [{"name":"ct-art","title":"ct-art","kind":"rest_image","summary":"generate images via http://127.0.0.1:2/sdapi/v1/txt2img (synchronous, credential no_auth) → tool generate_image_ct_art","owner":"roo… (533 bytes, sha1 30a53c5001bee1ad62e63cdab35e138d5a762bb5)
 root GET /api/connectors/spec?name=ct-nope ""
   404 no connector named ct-nope
 alice POST /api/research-sources "{\"connector\":\"ct-find\",\"topics\":[\"legal\"]}"
@@ -101,4 +101,4 @@ root DELETE /api/connectors ""
 root DELETE /api/connectors?name=ct-art ""
   204 
 root GET /api/connectors ""
-  200 [{"name":"ct-find","kind":"service","summary":"Web search ⇐ find ⇐ find.example.test (no key)","owner":"","approved":false,"last_error":"","is_image":false,"configurable":false,"status":"Not in us… (767 bytes, sha1 e87edc07cc8a4101c3b78b77938b8f8e754cf89d)
+  200 [{"name":"ct-find","title":"ct-find","kind":"service","summary":"Web search ⇐ find ⇐ find.example.test (no key)","owner":"","approved":false,"last_error":"","is_image":false,"configurable":false,"… (796 bytes, sha1 a823a06a5725217a04406ebb7343b38d78c1802f)

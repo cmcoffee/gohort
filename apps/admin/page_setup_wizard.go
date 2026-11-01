@@ -25,8 +25,6 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/media"
-	"github.com/cmcoffee/gohort/core/service"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -89,18 +87,9 @@ func (a *AdminApp) renderSetupWizard(w http.ResponseWriter, r *http.Request) {
 func (a *AdminApp) setupWizardPage() ui.Page {
 	providerStep := ui.FormStep{
 		Title: "Provider",
-		Intro: "Pick where the model runs. A local provider (Ollama, llama.cpp or vLLM) needs an endpoint and no key; a hosted one needs an API key. You can add a second, higher-precision model later: this sets the one most work runs on.",
-		Fields: []ui.FormField{
-			{Field: "provider", Label: "Provider", Type: "select", Required: true,
-				Options: []ui.SelectOption{
-					{Value: "ollama", Label: "Ollama (local)"},
-					{Value: "llama.cpp", Label: "llama.cpp (local)"},
-					{Value: "vllm", Label: "vLLM (local)"},
-					{Value: "anthropic", Label: "Anthropic"},
-					{Value: "openai", Label: "OpenAI"},
-					{Value: "gemini", Label: "Gemini"},
-					{Value: "bedrock", Label: "AWS Bedrock"},
-				}},
+		Intro: "Pick where the model runs. A local server (Ollama, llama.cpp or vLLM) needs its address and no key. Anthropic, OpenAI, Gemini and AWS Bedrock are listed too: choose one and give its key under the choice. Another hosted model (OpenRouter, Groq and others) is added from its template under Admin > Extensions > Templates (Skip for now gets you there). You can add a second, higher-precision model later: this sets the one most work runs on.",
+		Fields: tierFields([]ui.FormField{
+			{Field: "provider", Label: "Provider", Type: "select", Required: true, Options: LLMProviderOptions(false)},
 			{Field: "endpoint", Label: "Endpoint", Type: "text", ShowWhen: "provider:ollama|llama.cpp|vllm",
 				Placeholder: "http://localhost:11434",
 				Help:        "Where the local server is listening.",
@@ -108,27 +97,9 @@ func (a *AdminApp) setupWizardPage() ui.Page {
 					{Label: "Ollama", Value: "http://localhost:11434"},
 					{Label: "llama.cpp", Value: "http://localhost:8080/v1"},
 					{Label: "vLLM", Value: "http://localhost:8000/v1"}}},
-			{Field: "api_key", Label: "API key", Type: "password",
-				ShowWhen: "provider:anthropic|openai|gemini|bedrock|llama.cpp|vllm",
-				Help:     "For Anthropic, OpenAI or Gemini it goes into a credential, with a model connector made for it. Optional on AWS Bedrock, llama.cpp and vLLM.",
-				Detail:   "Anthropic, OpenAI or Gemini: the model then runs on that connector, which Admin > Extensions > Connectors lists with its calls and cost, and the key can be changed under API Credentials. On Bedrock, leave it blank to sign as this machine, with your AWS credentials, SSO included, instead of a Bedrock API key; the model then runs on a connector made for its region, API and profile. On llama.cpp or vLLM, set it only if the server was started with --api-key; it is stored encrypted."},
-			{Field: "aws_region", Label: "AWS region", Type: "text", ShowWhen: "provider:bedrock",
-				Placeholder: "us-east-1",
-				Help:        "Blank uses $AWS_REGION, then us-east-1.",
-				Detail:      "Not every region AWS lists for Bedrock has a Messages-API endpoint. us-west-1 notably does not; use us-west-2.",
-				Presets:     bedrockRegionPresets()},
-			{Field: "bedrock_api", Label: "Bedrock API", Type: "select", ShowWhen: "provider:bedrock",
-				Options: []ui.SelectOption{
-					{Value: "converse", Label: "Converse API (any Bedrock model)"},
-					{Value: "messages", Label: "Messages API (bedrock-mantle, Claude only)"},
-					{Value: "invoke", Label: "InvokeModel (bedrock-runtime, Claude only)"}},
-				Help:   "Which Bedrock API your AWS role is allowed to call. All three stream.",
-				Detail: bedrockAPIDetail},
-			{Field: "aws_profile", Label: "AWS profile", Type: "text", ShowWhen: "provider:bedrock",
-				Placeholder: "(default)",
-				Help:        "Which set of AWS credentials to use. Blank uses $AWS_PROFILE.",
-				Detail:      "Credentials are never stored here: they come from your environment or ~/.aws, so for SSO run `aws sso login` on this machine first."},
-		},
+			{Field: "api_key", Label: "API key", Type: "password", ShowWhen: "provider:llama.cpp|vllm",
+				Help: tierKeyHelp},
+		}),
 	}
 
 	modelStep := ui.FormStep{
@@ -230,32 +201,24 @@ func (a *AdminApp) testLLM(w http.ResponseWriter, r *http.Request, table string)
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	var req struct {
+	var form withSettings[struct {
 		Provider    string `json:"provider"`
 		Model       string `json:"model"`
 		APIKey      string `json:"api_key"`
 		Endpoint    string `json:"endpoint"`
-		AWSRegion   string `json:"aws_region"`
-		AWSProfile  string `json:"aws_profile"`
-		BedrockAPI  string `json:"bedrock_api"`
 		ContextSize int    `json:"context_size"`
 		NativeTools bool   `json:"native_tools"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	}]
+	if err := json.NewDecoder(r.Body).Decode(&form); err != nil {
 		writeTestResult(w, false, "", "invalid request body")
 		return
 	}
+	req := form.Form
 	if strings.TrimSpace(req.Provider) == "" {
 		writeTestResult(w, false, "", "pick a provider first")
 		return
 	}
-	if req.Provider == "bedrock" {
-		if name, ok := a.keptBedrock(table, service.BedrockSettings{Region: req.AWSRegion, Profile: req.AWSProfile,
-			API: req.BedrockAPI, Endpoint: req.Endpoint, Key: req.APIKey}); ok {
-			req.Provider = media.ServiceProviderPrefix + name
-		}
-	}
-	req.Provider, req.APIKey = a.formTierTarget(table, req.Provider, req.APIKey)
+	req.APIKey = a.formTierKey(table, req.APIKey)
 	// The model id, before anything tries to use it. A value carrying
 	// invisible rubbish comes back from AWS as "the provided model identifier
 	// is invalid" or "your account is not authorized", neither of which is
@@ -265,44 +228,15 @@ func (a *AdminApp) testLLM(w http.ResponseWriter, r *http.Request, table string)
 		writeTestResult(w, false, "", err.Error())
 		return
 	}
-	// Bedrock: check the endpoint exists before trying to talk to it. Several
-	// regions AWS documents for Bedrock have no Messages-API host, and without
-	// this the operator gets a bare DNS error that reads like a network fault.
-	credNote := ""
-	if req.Provider == "bedrock" {
-		if bedrockUsesMantle(req.BedrockAPI) {
-			if err := CheckBedrockEndpoint(req.AWSRegion); err != nil {
-				writeTestResult(w, false, "", err.Error())
-				return
-			}
-		}
-		// Resolve the identity up front and report it either way. A bare
-		// "denied" is unactionable: the expensive question in a Bedrock setup
-		// is always WHICH credential got denied, and the AWS error names a
-		// role that may appear nowhere in gohort's configuration.
-		if req.APIKey == "" {
-			src, err := DescribeBedrockCredentials(req.AWSProfile)
-			if err != nil {
-				writeTestResult(w, false, "", err.Error())
-				return
-			}
-			credNote = " (signed with credentials from " + src + ")"
-		} else {
-			credNote = " (bearer token)"
-		}
-	}
-
 	// Read before a save puts the connector to use, as the form names it.
 	_, end := previewTieIn(r.Context(), req.Provider)
 	defer end()
 	llm, err := NewLLMFromConfig(LLMProviderConfig{
-		Provider:   req.Provider,
-		Model:      req.Model,
-		APIKey:     req.APIKey,
-		Endpoint:   req.Endpoint,
-		Region:     req.AWSRegion,
-		Profile:    req.AWSProfile,
-		BedrockAPI: req.BedrockAPI,
+		Provider: req.Provider,
+		Model:    req.Model,
+		APIKey:   req.APIKey,
+		Endpoint: req.Endpoint,
+		Form:     form.Settings.modelForm(chosenService(req.Provider)),
 		// Short deadlines: this is an interactive check, and a provider that
 		// needs more than this to answer "ok" is not going to make a usable
 		// chat surface anyway.
@@ -345,7 +279,7 @@ func (a *AdminApp) testLLM(w http.ResponseWriter, r *http.Request, table string)
 		[]Message{{Role: "user", Content: "Reply with the single word: ok"}},
 		WithMaxTokens(16), WithThink(false))
 	if err != nil {
-		writeTestResult(w, false, "", err.Error()+credNote+serverNote)
+		writeTestResult(w, false, "", err.Error()+serverNote)
 		return
 	}
 	took := time.Since(started).Round(time.Millisecond)
@@ -357,7 +291,7 @@ func (a *AdminApp) testLLM(w http.ResponseWriter, r *http.Request, table string)
 	if model == "" {
 		model = "the provider default"
 	}
-	connected := "Connected: " + model + " answered in " + took.String() + "." + credNote + serverNote
+	connected := "Connected: " + model + " answered in " + took.String() + "." + serverNote
 
 	// Then the handoff check: the hello cannot see a model that refuses its
 	// own tool call sent back, or one the other tier made.
@@ -374,24 +308,6 @@ func (a *AdminApp) testLLM(w http.ResponseWriter, r *http.Request, table string)
 		return
 	}
 	writeTestResult(w, true, connected+" Handoff check:"+h.lines(), "")
-}
-
-// bedrockRegionPresets lists regions that actually have a Messages-API
-// endpoint, verified by resolving each host. AWS's published Bedrock region
-// table is broader than this: it describes where the service is reachable via
-// routing, and several of those regions have no endpoint to point a client at.
-// Offered as presets rather than a closed select so a region AWS adds later
-// can still be typed in.
-func bedrockRegionPresets() []ui.FieldPreset {
-	return []ui.FieldPreset{
-		{Label: "us-east-1", Value: "us-east-1", Hint: "N. Virginia"},
-		{Label: "us-east-2", Value: "us-east-2", Hint: "Ohio"},
-		{Label: "us-west-2", Value: "us-west-2", Hint: "Oregon: use this one, not us-west-1"},
-		{Label: "eu-west-1", Value: "eu-west-1", Hint: "Ireland"},
-		{Label: "eu-central-1", Value: "eu-central-1", Hint: "Frankfurt"},
-		{Label: "ap-northeast-1", Value: "ap-northeast-1", Hint: "Tokyo"},
-		{Label: "ap-southeast-2", Value: "ap-southeast-2", Hint: "Sydney"},
-	}
 }
 
 // DashboardNotices tells a fresh admin, on the page they actually land on,

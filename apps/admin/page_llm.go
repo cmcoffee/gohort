@@ -11,7 +11,7 @@ func (a *AdminApp) llmSections() []ui.Section {
 		{
 			Title:    "Worker LLM",
 			Subtitle: "The primary, local model most work runs on.",
-			Detail:   "Applies immediately on save, because the live LLM is rebuilt and nothing restarts. The API key is stored encrypted; leave it blank to keep the current one.",
+			Detail:   "Applies immediately on save, because the live LLM is rebuilt and nothing restarts. A key is kept encrypted (a model connector's in its credential); blank keeps the current one.",
 			Body: ui.FormPanel{
 				Assist: true,
 				Source: "api/worker-llm",
@@ -20,42 +20,24 @@ func (a *AdminApp) llmSections() []ui.Section {
 				// and what in this form does not match it.
 				TestURL:   "api/worker-llm/test",
 				TestLabel: "Test connection",
-				Fields: []ui.FormField{
+				Fields: tierFields([]ui.FormField{
 					{Field: "provider", Label: "Provider", Type: "select", Options: LLMProviderOptions(false),
 						Help:   "Local providers, ollama, llama.cpp or vLLM, are the usual worker.",
-						Detail: "A peer offering inference appears here too, and its GPU runs the turns. So does an approved model connector (Admin > Extensions > Templates has OpenRouter, Groq and others), as Service: <name>: its address and key come from the connector, and its token prices from its spec, in place of the worker's rates under Costs."},
+						Detail: tierProviderDetail + " Its token prices come from its spec, in place of the worker's rates under Costs."},
 					{Field: "model", Label: "Model", Type: "text", Placeholder: "e.g. qwen3.6-27b", SaveOnBlur: true,
 						SuggestionsSource: "api/worker-llm/models", SuggestionsLabel: "List models",
 						Help:   "Blank uses the provider default. List models asks the provider what it offers.",
 						Detail: "On AWS Bedrock, many accounts require a region-prefixed inference profile (us.anthropic.claude-opus-4-8) and deny the bare id."},
 					{Field: "api_key", Label: "API key", Type: "password", Placeholder: "(leave blank to keep current)", SaveOnBlur: true,
-						ShowWhen: "provider:anthropic|openai|gemini|bedrock|llama.cpp|vllm",
-						Help:     "For Anthropic, OpenAI or Gemini it goes into a credential, with a model connector made for it.",
-						Detail:   tierKeyDetail},
+						ShowWhen: "provider:llama.cpp|vllm",
+						Help:     tierKeyHelp},
 					{Field: "endpoint", Label: "Endpoint", Type: "text", Placeholder: "http://localhost:8080/v1", SaveOnBlur: true,
-						ShowWhen: "provider:ollama|llama.cpp|vllm|bedrock",
-						Help:     "For local / self-hosted providers; blank = provider default.",
+						ShowWhen: "provider:ollama|llama.cpp|vllm",
+						Help:     "Where the local server listens; blank = provider default.",
 						Presets: []ui.FieldPreset{
 							{Label: "Ollama", Value: "http://localhost:11434"},
 							{Label: "llama.cpp", Value: "http://localhost:8080/v1"},
 							{Label: "vLLM", Value: "http://localhost:8000/v1"}}},
-					{Field: "aws_region", Label: "AWS region", Type: "text", Placeholder: "us-east-1", SaveOnBlur: true,
-						ShowWhen: "provider:bedrock",
-						Help:     "AWS Bedrock only. Blank uses $AWS_REGION, then us-east-1.",
-						Detail: "This tier has its OWN region. Setting it on the Worker does not set it on the Lead, and a blank one here falls through to $AWS_REGION on the gohort host and then to us-east-1 - which is why a tier can keep using us-east-1 while another tier's box reads us-west-2. The debug log names the region and where it came from as each client is built.\n\n" +
-							"Not every region AWS lists for Bedrock has a Messages-API endpoint. us-west-1 does not; use us-west-2.",
-						Presets: bedrockRegionPresets()},
-					{Field: "bedrock_api", Label: "Bedrock API", Type: "select", ShowWhen: "provider:bedrock",
-						Options: []ui.SelectOption{
-							{Value: "converse", Label: "Converse API (any Bedrock model)"},
-							{Value: "messages", Label: "Messages API (bedrock-mantle, Claude only)"},
-							{Value: "invoke", Label: "InvokeModel (bedrock-runtime, Claude only)"}},
-						Help:   "Which Bedrock API your AWS role may call. All three stream.",
-						Detail: bedrockAPIDetail},
-					{Field: "aws_profile", Label: "AWS profile", Type: "text", Placeholder: "(default)", SaveOnBlur: true,
-						ShowWhen: "provider:bedrock",
-						Help:     "AWS Bedrock only. Blank uses $AWS_PROFILE.",
-						Detail:   "Credentials are never stored here. For SSO, run `aws sso login` on the gohort host. The API key field above is optional, and means a Bedrock bearer token instead."},
 					{Field: "context_size", Label: "Context size (tokens)", Type: "number", Min: 0, Max: 1000000,
 						ShowWhen: "provider:!openai|gemini",
 						Help:     "0 uses the default: 65K for ollama, llama.cpp and vLLM, 200K for Anthropic and Bedrock.",
@@ -87,56 +69,38 @@ func (a *AdminApp) llmSections() []ui.Section {
 						ShowWhen: workerNoThink},
 					{Field: "no_think_prepend_user", Label: "No-think: prepend /no_think to last user message", Type: "toggle",
 						ShowWhen: workerNoThink},
-				},
+				}),
 			},
 		},
 		{
 			Title:    "Lead LLM",
 			Subtitle: "The precision, remote model for high-stakes stages.",
-			Detail:   "Routing sends \"lead\" stages here. Provider \"(use primary)\" reuses the worker. Applies immediately on save with no restart; the key is stored encrypted, and blank keeps the current one.",
+			Detail:   "Routing sends \"lead\" stages here. Provider \"(use primary)\" reuses the worker. Applies immediately on save with no restart; a key is kept encrypted (a model connector's in its credential), and blank keeps the current one.",
 			Body: ui.FormPanel{
 				Assist:       true,
 				Source:       "api/lead-llm",
 				TestURL:      "api/lead-llm/test",
 				TestLabel:    "Test connection",
 				TestShowWhen: "provider", // "(use primary)" has nothing of its own to test
-				Fields: []ui.FormField{
+				Fields: tierFields([]ui.FormField{
 					// What is RUNNING, above what is stored. A save writes the
 					// config and then rebuilds, and a rebuild that fails leaves
 					// the previous client serving every call - so the fields
 					// below can read back perfectly while nothing uses them.
 					{Field: "_live", Type: "readonly", Label: "In use"},
 					{Field: "provider", Label: "Provider", Type: "select", Options: LLMProviderOptions(true),
-						Help: "(use primary) routes lead stages to the worker model. A peer offering inference appears here too."},
+						Help:   "(use primary) routes lead stages to the worker model. A peer offering inference appears here too.",
+						Detail: tierProviderDetail},
 					{Field: "model", Label: "Model", Type: "text", Placeholder: "e.g. claude-sonnet-5", SaveOnBlur: true,
 						ShowWhen:          "provider",
 						SuggestionsSource: "api/lead-llm/models", SuggestionsLabel: "List models",
 						Help: "List models asks the provider what it offers."},
 					{Field: "api_key", Label: "API key", Type: "password", Placeholder: "(leave blank to keep current)", SaveOnBlur: true,
-						ShowWhen: "provider:anthropic|openai|gemini|bedrock|llama.cpp|vllm",
-						Help:     "For Anthropic, OpenAI or Gemini it goes into a credential, with a model connector made for it. The lead never takes the worker's key.",
-						Detail:   tierKeyDetail},
+						ShowWhen: "provider:llama.cpp|vllm",
+						Help:     tierKeyHelp + " The lead never takes the worker's key."},
 					{Field: "endpoint", Label: "Endpoint", Type: "text", Placeholder: "(provider default)", SaveOnBlur: true,
-						ShowWhen: "provider:ollama|llama.cpp|vllm|bedrock",
-						Help:     "For local / self-hosted lead providers. On Bedrock this OVERRIDES the AWS region below.",
-						Detail:   "Anything here is used as the host verbatim, so on Bedrock the region box stops deciding where calls go while going on displaying whatever it was set to. Leave it blank unless you are pointing at a private link or a VPC endpoint."},
-					{Field: "aws_region", Label: "AWS region", Type: "text", Placeholder: "us-east-1", SaveOnBlur: true,
-						ShowWhen: "provider:bedrock",
-						Help:     "AWS Bedrock only. Blank uses $AWS_REGION, then us-east-1.",
-						Detail: "This tier has its OWN region. Setting it on the Worker does not set it on the Lead, and a blank one here falls through to $AWS_REGION on the gohort host and then to us-east-1 - which is why a tier can keep using us-east-1 while another tier's box reads us-west-2. The debug log names the region and where it came from as each client is built.\n\n" +
-							"Not every region AWS lists for Bedrock has a Messages-API endpoint. us-west-1 does not; use us-west-2.",
-						Presets: bedrockRegionPresets()},
-					{Field: "bedrock_api", Label: "Bedrock API", Type: "select", ShowWhen: "provider:bedrock",
-						Options: []ui.SelectOption{
-							{Value: "converse", Label: "Converse API (any Bedrock model)"},
-							{Value: "messages", Label: "Messages API (bedrock-mantle, Claude only)"},
-							{Value: "invoke", Label: "InvokeModel (bedrock-runtime, Claude only)"}},
-						Help:   "Which Bedrock API your AWS role may call. All three stream.",
-						Detail: bedrockAPIDetail},
-					{Field: "aws_profile", Label: "AWS profile", Type: "text", Placeholder: "(default)", SaveOnBlur: true,
-						ShowWhen: "provider:bedrock",
-						Help:     "AWS Bedrock only. Blank uses $AWS_PROFILE.",
-						Detail:   "Credentials are never stored here. For SSO, run `aws sso login` on the gohort host. The API key field above is optional, and means a Bedrock bearer token instead."},
+						ShowWhen: "provider:ollama|llama.cpp|vllm",
+						Help:     "Where the local server listens; blank = provider default."},
 					{Field: "context_size", Label: "Context size (tokens)", Type: "number", Min: 0, Max: 1000000,
 						ShowWhen: "provider;provider:!openai|gemini",
 						Help:     "0 uses the default: 200K for Anthropic and Bedrock, 65K for local providers.",
@@ -163,7 +127,7 @@ func (a *AdminApp) llmSections() []ui.Section {
 						ShowWhen: leadNoThink},
 					{Field: "no_think_prepend_user", Label: "No-think: prepend /no_think to last user message", Type: "toggle",
 						ShowWhen: leadNoThink},
-				},
+				}),
 			},
 		},
 		{
@@ -424,9 +388,30 @@ func appRoutingSources() []string {
 	return out
 }
 
-// tierKeyDetail is what each tier's API key field does with the key, by
-// provider.
-const tierKeyDetail = "Anthropic, OpenAI or Gemini: the tier then runs on that connector (Service: <name>) and stores no key itself. " +
-	"A connector already holding the same key is used rather than a second one. A new key replaces the one in this tier's connector, unless the other tier runs on it too: then this tier gets a connector of its own, so the other tier's key does not change. Blank on save keeps the connector the tier runs on. " +
-	"AWS Bedrock: a Bedrock API key, kept in a bearer credential, or blank to sign as this machine; either way the tier runs on a model connector made for its region, API and profile. " +
-	"llama.cpp and vLLM: stored encrypted, and sent only when the server was started with --api-key; Ollama ignores it. Blank on save keeps the current key."
+// tierProviderDetail is where a tier's model can come from, beyond the local
+// servers the list starts with.
+const tierProviderDetail = "Anthropic, OpenAI, Gemini and AWS Bedrock are provided with gohort: choose one and give its key under the choice. Any other hosted model (OpenRouter, Groq and others) is added from its template under Admin > Extensions > Templates and appears here as Service: <name>, as does a second connection to a provided one, with a key of its own. A connection's key, and any settings it takes, are set here, under the choice."
+
+// tierKeyHelp is what a tier's own API key field is for: a local server
+// started with a key. A model connector's key is its credential's, set in the
+// field under the choice.
+const tierKeyHelp = "Only for a server started with --api-key; stored encrypted, and blank on save keeps the current key."
+
+// tierFields are a tier's form fields, with the settings and key of the
+// model connector chosen as its provider right under the choice. They save
+// when left, as the tier's other connection fields do: each save rebuilds
+// the live model.
+func tierFields(fields []ui.FormField) []ui.FormField {
+	for i, f := range fields {
+		if f.Field != "provider" {
+			continue
+		}
+		out := append([]ui.FormField{}, fields[:i+1]...)
+		for _, s := range connectorSettingsFields("llm.chat", "", "provider", asService) {
+			s.SaveOnBlur = true
+			out = append(out, s)
+		}
+		return append(out, fields[i+1:]...)
+	}
+	return fields
+}

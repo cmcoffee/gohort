@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -291,13 +292,13 @@ func TestResolveSpeechProvider(t *testing.T) {
 		}
 		off := local
 		off.Enabled = false
-		if got, err := ResolveSpeechProvider(off, provider); err != nil || got != off {
+		if got, err := ResolveSpeechProvider(off, provider); err != nil || !reflect.DeepEqual(got, off) {
 			t.Errorf("provider %q changed an off config: %+v %v", provider, got, err)
 		}
 	}
 	// Blank means the picker was not drawn: a peer selection stays.
 	held := media.SpeechConfig{Enabled: true, Provider: PeerProviderValue("den"), Endpoint: "https://den.example/api/peer/v1"}
-	if got, err := ResolveSpeechProvider(held, ""); err != nil || got != held {
+	if got, err := ResolveSpeechProvider(held, ""); err != nil || !reflect.DeepEqual(got, held) {
 		t.Errorf("a blank provider dropped the peer selection: %+v %v", got, err)
 	}
 }
@@ -330,18 +331,18 @@ func TestSpeechConfigResolvesThePeerOnEveryRead(t *testing.T) {
 	RootDB.Set(remotePeersTable, "den", RemotePeer{Name: "den", BaseURL: "https://den3.example", Key: "third-key",
 		Caps: []string{PeerCapEmbeddings}})
 	InvalidatePeerResolution()
-	if got := media.GetSpeechConfig(); got != stored {
+	if got := media.GetSpeechConfig(); !reflect.DeepEqual(got, stored) {
 		t.Errorf("a peer that dropped speech repointed the config: %+v", got)
 	}
 	RootDB.Unset(remotePeersTable, "den")
 	InvalidatePeerResolution()
-	if got := media.GetSpeechConfig(); got != stored {
+	if got := media.GetSpeechConfig(); !reflect.DeepEqual(got, stored) {
 		t.Errorf("a deleted peer altered the config: %+v", got)
 	}
 
 	local := media.SpeechConfig{Enabled: true, Endpoint: "http://localhost:8880/v1", APIKey: "k"}
 	media.SetSpeechConfig(local)
-	if got := media.GetSpeechConfig(); got != local {
+	if got := media.GetSpeechConfig(); !reflect.DeepEqual(got, local) {
 		t.Errorf("a local config was altered: %+v", got)
 	}
 }

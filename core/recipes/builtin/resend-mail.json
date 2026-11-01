@@ -3,51 +3,18 @@
   "title": "Resend (mail)",
   "description": "Resend as gohort's mail, in place of an SMTP server: an API that sends from a domain you verify. Declared as a service you can test and fix from Admin > Connectors.",
   "category": "Mail",
-  "setup_notes": "Create an API key at resend.com/api-keys and verify your sending domain under Domains. The credential lands disabled: enable it under API Credentials. Run Test on its row under Admin > Extensions > Connectors, which sends a short test email to the test recipient. Then put it to use by choosing it under Admin > System > Mail (SMTP) as Send with: signup approvals, reports, alerts and the send_email tool go through it. A From Address set there is used in place of the one given here. No price is declared, as it depends on your plan: add a per_call cost to the connector's spec to see what mail costs.",
+  "setup_notes": "Create an API key at resend.com/api-keys and verify your sending domain under Domains. Choose it under Admin > System > Mail (SMTP) as Send with and save; Test there sends a short test email to the test recipient: signup approvals, reports, alerts and the send_email tool go through it. A From Address set there is used in place of the one given here. No price is declared, as it depends on your plan: add a per_call cost to the connector's spec to see what mail costs. Its key is given where it is used, under the choice, or under Settings on its row in Admin > Extensions > Connectors.",
   "questions": [
-    {
-      "name": "api_key",
-      "label": "Resend API key",
-      "help": "Starts re_. Stored in the credential's secret store, never in the connector.",
-      "required": true,
-      "secret": true,
-      "credential": "resend_mail"
-    },
     {
       "name": "name",
       "label": "Connector name",
       "help": "Lowercase letters, digits, dashes and underscores; the mail settings list it by this name.",
       "default": "resend-mail"
-    },
-    {
-      "name": "from",
-      "label": "Send from",
-      "help": "An address on a domain you have verified with the service, e.g. gohort@yourdomain.example.",
-      "required": true
-    },
-    {
-      "name": "to",
-      "label": "Test recipient",
-      "help": "Where the connector's Test sends its test email.",
-      "required": true
     }
   ],
   "bundle": {
     "bundle": "gohort.bundle/v1",
     "artifacts": [
-      {
-        "type": "credential",
-        "name": "resend_mail",
-        "recipe": {
-          "name": "resend_mail",
-          "type": "bearer",
-          "base_url": "https://api.resend.com",
-          "allowed_endpoints": [
-            "/emails"
-          ],
-          "description": "Resend API, for sending mail."
-        }
-      },
       {
         "type": "connector",
         "name": "{{name}}",
@@ -55,13 +22,33 @@
           "name": "{{name}}",
           "kind": "service",
           "template": "resend-mail",
-          "desc": "Resend mail from {{from}}",
+          "desc": "Resend mail",
           "spec": {
+            "config": [
+              {
+                "name": "from",
+                "label": "Send from",
+                "help": "An address on a domain you have verified with the service, e.g. gohort@yourdomain.example."
+              },
+              {
+                "name": "to",
+                "label": "Test recipient",
+                "help": "Where the connector's Test sends its test email."
+              },
+              {
+                "name": "api_key",
+                "label": "Resend API key",
+                "type": "secret",
+                "send": "bearer",
+                "help": "Kept with this connection, and sent only to the address it is given for.",
+                "required": true
+              }
+            ],
             "provider": {
               "transport": "http",
               "base_url": "https://api.resend.com",
               "auth": {
-                "credential": "resend_mail"
+                "secret": "api_key"
               },
               "operations": {
                 "send": {
@@ -90,8 +77,8 @@
                   }
                 },
                 "defaults": {
-                  "from": "{{from}}",
-                  "to": "{{to}}"
+                  "from": "{config.from}",
+                  "to": "{config.to}"
                 }
               }
             ]

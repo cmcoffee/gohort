@@ -127,7 +127,7 @@ func (r CostRates) withConnectorRates() CostRates {
 		if !ok {
 			continue
 		}
-		if m, err := media.ModelService(name, false); err == nil && m.Priced {
+		if m, err := media.ModelService(name, false, nil); err == nil && m.Priced {
 			*t.in, *t.out = m.InPerMillion/1000, m.OutPerMillion/1000
 		}
 	}

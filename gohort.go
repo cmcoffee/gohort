@@ -383,20 +383,10 @@ func main() {
 
 		// Wire auth database.
 		AuthDB = func() Database { return global.db }
-		// Embeddings, transcription, speech, images, web search, the hosted
-		// and Bedrock LLM tiers and the Source Hooks this instance did itself
-		// become connectors, once: they need the credential store just
-		// wired, for a key the settings held. Images first: it reads a
-		// tier's key, which the tiers' move takes away. A search
-		// connector's research settings move to Research Sources before the
-		// hooks arrive there.
-		service.MigrateEmbeddings(global.db)
-		service.MigrateTranscription(global.db)
-		service.MigrateSpeech(global.db)
-		service.MigrateImages(global.db)
-		service.MigrateWebSearch(global.db)
-		service.MigrateLLMTiers(global.db)
-		service.MigrateBedrockTiers(global.db)
+		// The Source Hooks this instance kept become search connectors,
+		// once: they need the credential store just wired, for a key a hook
+		// held. A search connector's research settings move to Research
+		// Sources before the hooks arrive there.
 		service.MigrateResearchSettings(global.db)
 		service.MigrateSourceHooks(global.db)
 		// A services connector is in use exactly while a page names it.

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -461,7 +462,7 @@ func TestAPeerNotOfferingInferenceIsRefused(t *testing.T) {
 	}
 	in := LLMProviderConfig{Provider: "llama.cpp", Endpoint: "http://127.0.0.1:8080/v1", APIKey: "x"}
 	out, err := ResolveModelProvider(in, in.Provider)
-	if err != nil || out != in {
+	if err != nil || !reflect.DeepEqual(out, in) {
 		t.Errorf("an ordinary provider was altered: %+v (err %v)", out, err)
 	}
 }
