@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -282,14 +281,6 @@ func seedTieIns(db Database) int {
 	return changed
 }
 
-// previews are the model connectors an administrator's LLM test is trying
-// before a page has put them to use, each counted while it runs. A tier
-// reads its connector with no request to carry the mark, so it is by name.
-var previews = struct {
-	sync.Mutex
-	n map[string]int
-}{n: map[string]int{}}
-
 type previewKey struct{}
 
 // previewMark is one preview, carried on its context: the connector,
@@ -304,29 +295,15 @@ type previewMark struct {
 // Preview lets an administrator's test on a settings page (its Test, the
 // voices offered) reach connector name before any page has put it to use,
 // as choosing it there and testing before saving needs. Calls under the
-// returned context reach it, and a model connector can be read for a tier;
-// end ends it. Nothing else reaches a connector not in use.
+// returned context reach it; end ends it. Nothing else reaches a connector not in use.
 func Preview(ctx context.Context, name string) (context.Context, func()) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return ctx, func() {}
 	}
-	previews.Lock()
-	previews.n[name]++
-	previews.Unlock()
 	parent, _ := ctx.Value(previewKey{}).(*previewMark)
 	mark := &previewMark{name: name, parent: parent}
-	var once sync.Once
-	return context.WithValue(ctx, previewKey{}, mark), func() {
-		once.Do(func() {
-			mark.ended.Store(true)
-			previews.Lock()
-			if previews.n[name]--; previews.n[name] <= 0 {
-				delete(previews.n, name)
-			}
-			previews.Unlock()
-		})
-	}
+	return context.WithValue(ctx, previewKey{}, mark), func() { mark.ended.Store(true) }
 }
 
 // callable reports whether a call under ctx may reach connector c: in use,
@@ -341,17 +318,6 @@ func callable(ctx context.Context, c Connector) bool {
 		}
 	}
 	return false
-}
-
-// readable reports whether model connector c may be read for a tier: in
-// use, or under an administrator's preview of it.
-func readable(c Connector) bool {
-	if c.Approved {
-		return true
-	}
-	previews.Lock()
-	defer previews.Unlock()
-	return previews.n[c.Name] > 0
 }
 
 // RemoveConnector deletes connector name unless a page still names it: that

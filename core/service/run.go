@@ -45,9 +45,6 @@ func (s Spec) run(ctx context.Context, sess *ToolSession, capability string, inp
 	if err != nil {
 		return out, err
 	}
-	if b.Dialect != "" {
-		return out, fmt.Errorf("a model is run as an LLM tier (Admin > LLMs), by its dialect's client, not called step by step")
-	}
 	vars := map[string]any{}
 	for k, v := range b.Defaults {
 		vars[k] = v

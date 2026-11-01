@@ -75,18 +75,17 @@ func TestSetupWizardWiring(t *testing.T) {
 func TestSetupWizardFieldsMatchHandler(t *testing.T) {
 	handled := map[string]bool{
 		"provider": true, "model": true, "api_key": true,
-		"endpoint": true,
+		"endpoint": true, "aws_region": true, "aws_profile": true, "bedrock_api": true,
 	}
 	panel := wizardPanel(t)
 	seen := map[string]bool{}
 	for _, step := range panel.Steps {
 		for _, f := range step.Fields {
-			if f.Type == "header" {
+			// A header, and a line the form shows and never sends.
+			if f.Type == "header" || f.Type == "readonly" {
 				continue
 			}
-			// A model connector's settings and key are decoded beside the
-			// form (withSettings).
-			if !handled[f.Field] && !strings.HasPrefix(f.Field, settingsPrefix) {
+			if !handled[f.Field] {
 				t.Errorf("step %q field %q is not decoded by handleLLMConfig", step.Title, f.Field)
 			}
 			seen[f.Field] = true

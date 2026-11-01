@@ -22,8 +22,8 @@ func TestLeadInitErrorIsReportedAheadOfNoneConfigured(t *testing.T) {
 	// provider so somebody knows where to look.
 	SetLeadInitError("bedrock", "claude-sonnet-5", errors.New("no resolvable AWS credentials"))
 	got := leadUnavailableReason(&AppCore{})
-	for _, want := range []string{"bedrock", "claude-sonnet-5", "could not be initialized", "AWS credentials"} {
-		if !strings.Contains(got, want) {
+	for _, want := range []string{"bedrock", "claude-sonnet-5", "could not be initialized", "aws credentials"} {
+		if !strings.Contains(strings.ToLower(got), want) {
 			t.Errorf("the reason must carry %q so it is actionable; got %q", want, got)
 		}
 	}

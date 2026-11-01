@@ -152,7 +152,7 @@ func main() {
 	// Wire up Ollama proxy backend. Returns the base URL and model for the
 	// configured worker LLM when it is Ollama; empty strings otherwise.
 	OllamaBackendFunc = func() (string, string, int) {
-		cfg := ResolvedTier(dbcfg.llm())
+		cfg := dbcfg.llm()
 		if cfg.Provider != "ollama" {
 			return "", "", 0
 		}
@@ -163,7 +163,7 @@ func main() {
 		return ep, cfg.Model, cfg.ContextSize
 	}
 	LlamaCppBackendFunc = func() (string, string) {
-		cfg := ResolvedTier(dbcfg.llm())
+		cfg := dbcfg.llm()
 		// vLLM serves the same OpenAI-compatible API, so the proxy fronts it
 		// the same way.
 		if cfg.Provider != "llama.cpp" && cfg.Provider != "vllm" {

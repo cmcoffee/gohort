@@ -13,10 +13,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"time"
 
 	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/media"
 )
 
 // ForFix is connector name as the two halves: a service's own spec, or an
@@ -217,10 +215,6 @@ func runTests(ctx context.Context, name string, s Spec) []TestReport {
 	for _, b := range s.Provides {
 		ct, _ := Lookup(b.Capability)
 		rep := TestReport{Capability: b.Capability}
-		if b.Dialect != "" {
-			reports = append(reports, testModel(ctx, name))
-			continue
-		}
 		in, err := ct.testInputs()
 		if err != nil {
 			rep.Detail = err.Error()
@@ -248,37 +242,6 @@ func runTests(ctx context.Context, name string, s Spec) []TestReport {
 		reports = append(reports, rep)
 	}
 	return reports
-}
-
-// testModel is a model connector's test: a short real chat through the
-// client its dialect names, as a tier on it would make, on the connector as
-// saved (a model's key is read from what the connection keeps, never from a draft),
-// in use or not: an administrator tests one before a tier is put on it.
-func testModel(ctx context.Context, name string) TestReport {
-	rep := TestReport{Capability: "llm.chat"}
-	if _, ok := GetConnector(RootDB, name); !ok {
-		rep.Detail = "a model is tested by a real chat once its connector is saved (its key is read from what it keeps then)"
-		return rep
-	}
-	ctx, end := Preview(ctx, name)
-	defer end()
-	llm, err := NewLLMFromConfig(LLMProviderConfig{Provider: media.Choice(media.JobLLM, name)})
-	if err != nil {
-		rep.Detail = err.Error()
-		return rep
-	}
-	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
-	defer cancel()
-	resp, err := llm.Chat(ctx, []Message{{Role: "user", Content: "Reply with the single word OK."}})
-	switch {
-	case err != nil:
-		rep.Detail = err.Error()
-	case strings.TrimSpace(resp.Content) == "":
-		rep.Detail = "the model answered with nothing"
-	default:
-		rep.OK, rep.Detail = true, fmt.Sprintf("passed: the model answered %q (%d tokens in, %d out)", clip(strings.TrimSpace(resp.Content), 40), resp.InputTokens, resp.OutputTokens)
-	}
-	return rep
 }
 
 // Grammar is the spec's shape as an assistant is told it.

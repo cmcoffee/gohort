@@ -122,11 +122,6 @@ type Binding struct {
 	// picture (an article's header image): a size, or an aspect.
 	Wide map[string]any `json:"wide,omitempty"`
 	Cost *Cost          `json:"cost,omitempty"`
-	// Dialect, for a model (llm.chat), is the API gohort's own client speaks
-	// to it: openai, anthropic or gemini. A model is not mapped step by step:
-	// a conversation, its tools and a streamed reply are what the client is
-	// for. It has no steps or outputs.
-	Dialect string `json:"dialect,omitempty"`
 	// Research and Tool were how a search was offered to research and to
 	// agents, before that moved to its tie-in, Admin > Research Sources. A
 	// spec saved with them is read, so the move can take them out
@@ -200,10 +195,6 @@ type Cost struct {
 	PerUnit   float64 `json:"per_unit,omitempty"`
 	Unit      string  `json:"unit,omitempty"`
 	FromReply string  `json:"from_reply,omitempty"`
-	// PerMillionInput and PerMillionOutput price a model's tokens, in
-	// dollars per million as providers publish them (llm.chat only).
-	PerMillionInput  float64 `json:"per_million_input,omitempty"`
-	PerMillionOutput float64 `json:"per_million_output,omitempty"`
 }
 
 const (
@@ -413,12 +404,6 @@ func (b Binding) validate(p Provider) error {
 	if !ok {
 		return fmt.Errorf("unknown capability %q (known: %s)", b.Capability, strings.Join(Names(), ", "))
 	}
-	if b.Capability == "llm.chat" || b.Dialect != "" {
-		return b.validateModel(p)
-	}
-	if cost := b.Cost; cost != nil && (cost.PerMillionInput != 0 || cost.PerMillionOutput != 0) {
-		return fmt.Errorf("per_million_input and per_million_output price a model's tokens: llm.chat only")
-	}
 	if b.Plain && b.Capability != "web.search" && b.Capability != "image.search" {
 		return fmt.Errorf("plain takes site: filters out of a search's query: web.search and image.search only")
 	}
@@ -600,65 +585,6 @@ func (o Output) validate(name string, spec Port, last Operation) error {
 					return fmt.Errorf("output %q field %s: say the path within each element it is read from", name, f)
 				}
 			}
-		}
-	}
-	return nil
-}
-
-// dialects are the APIs gohort's own model clients speak, and the one host
-// each is fixed to ("" for an OpenAI-shaped API anywhere, for Bedrock at a
-// regional host or a private endpoint, and for the model servers gohort runs
-// beside: Ollama's own API, llama.cpp's and vLLM's, with their thinking
-// switches and their queue).
-var dialects = map[string]string{"openai": "", "anthropic": "api.anthropic.com", "gemini": "generativelanguage.googleapis.com", "bedrock": "",
-	"ollama": "", "llama.cpp": "", "vllm": ""}
-
-// bedrockAPIs are the Bedrock APIs its client speaks: Converse (any model),
-// the Messages API (Claude, at a bedrock-mantle host) and InvokeModel.
-var bedrockAPIs = map[string]bool{"converse": true, "messages": true, "invoke": true}
-
-// validateModel checks a model binding: llm.chat, in a dialect gohort
-// speaks, at that dialect's host when it is fixed to one, with no steps or
-// outputs, and priced only by its tokens.
-func (b Binding) validateModel(p Provider) error {
-	host, ok := dialects[b.Dialect]
-	switch {
-	case b.Capability != "llm.chat":
-		return fmt.Errorf("a dialect is for llm.chat, a model: %s maps its steps", b.Capability)
-	case !ok:
-		return fmt.Errorf("dialect %q: gohort speaks openai, anthropic, gemini, bedrock, ollama, llama.cpp and vllm", b.Dialect)
-	case len(b.Steps) > 0 || len(b.Output) > 0 || len(b.Wide) > 0:
-		return fmt.Errorf("a model has no steps or outputs: its dialect's client speaks to it")
-	case p.Transport != "http":
-		return fmt.Errorf("a model is reached over http")
-	}
-	if host != "" {
-		if u, err := url.Parse(p.BaseURL); err != nil || !strings.EqualFold(u.Host, host) {
-			return fmt.Errorf("the %s dialect is spoken only at %s: an address of its own takes the openai dialect", b.Dialect, host)
-		}
-	}
-	for k, v := range b.Defaults {
-		switch {
-		case k == "model" || k == "context":
-		case k == "api" && b.Dialect == "bedrock":
-			if !bedrockAPIs[fmt.Sprint(v)] {
-				return fmt.Errorf("default api %q: Bedrock's are converse, messages and invoke", v)
-			}
-		case b.Dialect == "bedrock":
-			return fmt.Errorf("default %q: a Bedrock model's defaults are model, context and api", k)
-		default:
-			return fmt.Errorf("default %q: a model's defaults are model and context", k)
-		}
-	}
-	if b.Dialect == "bedrock" && p.Auth.None {
-		return fmt.Errorf("Bedrock signs every request: name an AWS signing credential, or a bearer one for a Bedrock API key")
-	}
-	if c := b.Cost; c != nil {
-		switch {
-		case c.PerCall != 0 || c.PerUnit != 0 || c.FromReply != "":
-			return fmt.Errorf("a model is priced by its tokens: per_million_input and per_million_output")
-		case c.PerMillionInput < 0 || c.PerMillionOutput < 0:
-			return fmt.Errorf("cost must not be negative")
 		}
 	}
 	return nil

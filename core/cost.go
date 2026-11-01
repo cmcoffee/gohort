@@ -6,8 +6,6 @@ import (
 	"sort"
 	"sync"
 	"time"
-
-	"github.com/cmcoffee/gohort/core/media"
 )
 
 // CostRates holds the dollar prices used to convert UsageDiff into
@@ -92,7 +90,6 @@ func (r CostRates) cacheWriteMultiplier() float64 {
 // both rates and usage are empty (the only ambiguous case for a
 // reader, resolved downstream by labeling the cost as "est.").
 func (r CostRates) Estimate(d UsageDiff) float64 {
-	r = r.withConnectorRates()
 	cost := 0.0
 	cost += float64(d.WorkerInput) / 1000.0 * r.WorkerInputPer1K
 	cost += float64(d.WorkerOutput) / 1000.0 * r.WorkerOutputPer1K
@@ -106,31 +103,6 @@ func (r CostRates) Estimate(d UsageDiff) float64 {
 	cost += float64(d.SearchCalls) * r.SearchPerCall
 	cost += float64(d.ImageCalls) * r.ImagePerCall
 	return cost
-}
-
-// withConnectorRates is r with a tier that runs on a model connector priced
-// by that connector (its declared dollars per million tokens), in place of
-// the rates set here: the connector owns its price, and the same tokens are
-// never priced twice. A connector that declares no price leaves the tier's
-// rates as they are.
-func (r CostRates) withConnectorRates() CostRates {
-	if media.ModelService == nil {
-		return r
-	}
-	for _, t := range []struct {
-		table   string
-		in, out *float64
-	}{{LLMTable, &r.WorkerInputPer1K, &r.WorkerOutputPer1K}, {LeadLLMTable, &r.LeadInputPer1K, &r.LeadOutputPer1K}} {
-		provider, _ := tierProviderEndpoint(t.table)
-		name, ok := media.ChosenConnection(provider)
-		if !ok {
-			continue
-		}
-		if m, err := media.ModelService(name, false, nil); err == nil && m.Priced {
-			*t.in, *t.out = m.InPerMillion/1000, m.OutPerMillion/1000
-		}
-	}
-	return r
 }
 
 // Process-wide rates. The application sets these at startup (from

@@ -201,47 +201,6 @@ var PageService func(ctx context.Context, connector, url string, maxChars int) (
 // EmbedService.
 var MailService func(ctx context.Context, connector, from, to, subject, body string) error
 
-// ModelTarget is what a model connector (core/service, llm.chat) says about
-// reaching its model: the dialect gohort's own client speaks to it (openai,
-// anthropic or gemini), its address, the model and context it defaults to,
-// what its tokens cost, and, when asked for, its key.
-type ModelTarget struct {
-	Dialect, Endpoint, Model, Key string
-	Context                       int
-	// InPerMillion and OutPerMillion are dollars per million tokens, and
-	// Priced whether the connector declares them.
-	InPerMillion, OutPerMillion float64
-	Priced                      bool
-	// For the bedrock dialect: which Bedrock API (converse, messages or
-	// invoke), the region, and how its client signs: Key is a bearer
-	// token, or AWSMachine signs as this machine under Profile, or the
-	// AWSAccessKey pair is the credential's.
-	BedrockAPI, Region, Profile string
-	AWSMachine                  bool
-	AWSAccessKey, AWSSecretKey  string
-}
-
-// ModelService, when set, reads the model connector named connector, for an
-// LLM tier whose provider is "llm:<name>" (core/service installs it).
-// withKey reads its secret too: only the client is given it. form, for a
-// Test before a save, is what the form holds; nil reads what the
-// connection keeps.
-var ModelService func(connector string, withKey bool, form *ModelForm) (ModelTarget, error)
-
-// ModelDialect, when set, is the dialect the model connector named connector
-// is spoken in, read from its spec whether or not it is in use, or "".
-var ModelDialect func(connector string) string
-
-// ModelForm is what a tier's form holds for its model connection, tried
-// before it is saved: its settings by key, and secrets typed there by name.
-type ModelForm struct {
-	Config, Secrets map[string]string
-}
-
-// ModelCallNote, when set, records one model call made through the
-// connector: its tokens, and whether it failed.
-var ModelCallNote func(connector string, inTokens, outTokens int, err error)
-
 // TranscribeService, when set, transcribes through a service connector, for a
 // config whose Provider names one. core/service installs it; this package
 // knows nothing about connectors. Nil, and such a config is refused.

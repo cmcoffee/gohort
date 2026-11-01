@@ -13,9 +13,6 @@ package service
 //   - one with no provided connection in its place is made again where it
 //     is, from its template's spec now (or with its credential made a secret
 //     setting, when no template made it), keeping its name and use;
-//   - an LLM tier naming a provider directly (anthropic, llama.cpp, ...)
-//     names the connection gohort provides for it, with the key and address
-//     the tier kept; a second tier with other settings gets one of its own;
 //   - Embeddings, Transcription and Speech still set to this instance's own
 //     server (before connectors) name the local server connection gohort
 //     provides, at the address and with the model they had: embeddings keep
@@ -109,7 +106,6 @@ func comfyToService(db Database) int {
 // providerPages are the settings that choose a connection by a single value,
 // and the job each has it do.
 var providerPages = []struct{ table, field, job string }{
-	{LLMTable, "provider", media.JobLLM}, {LeadLLMTable, "provider", media.JobLLM},
 	{SearchTable, "provider", media.JobSearch}, {MailTable, "provider", media.JobMail}, {BrowseTable, "source", media.JobRender},
 }
 
@@ -158,24 +154,15 @@ func nameChoicesForJobs(db Database) int {
 	}
 	if changed > 0 {
 		Log("[migration] %d setting(s) now name their connection for the job they give it", changed)
-		if err := ReloadLLMs(); err != nil {
-			Log("[migration] the LLM tiers did not reload: %v", err)
-		}
 	}
 	return changed
 }
-
-// tierProvided is the connection gohort provides for a provider a tier
-// named directly.
-var tierProvided = map[string]string{"anthropic": "anthropic", "openai": "openai", "gemini": "gemini", "bedrock": "bedrock",
-	"ollama": "ollama", "llama.cpp": "llamacpp", "vllm": "vllm"}
 
 // connMove is one run of the move: the credentials the moved connectors
 // sent their keys with, and how many records it changed.
 type connMove struct {
 	db      Database
 	creds   map[string]bool
-	tiers   bool
 	changed int
 }
 
@@ -189,17 +176,9 @@ func migrateConnections(db Database) int {
 			m.outdated(c)
 		}
 	}
-	for _, table := range []string{LLMTable, LeadLLMTable} {
-		m.tier(table)
-	}
 	m.ownServers()
 	m.dropCredentials()
 	Settle(db)
-	if m.tiers {
-		if err := ReloadLLMs(); err != nil {
-			Log("[migration] the LLM tiers did not rebuild after moving onto connections: %v", err)
-		}
-	}
 	return m.changed
 }
 
@@ -329,9 +308,6 @@ func carryOver(old, next Spec) map[string]string {
 		if v, ok := b.Defaults["model"].(string); ok && v != "" && !strings.Contains(v, "{") {
 			carry["model"], carry[settingKey(b.Capability, "model")] = v, v
 		}
-		if v, ok := b.Defaults["api"].(string); ok && bedrockAPIs[v] {
-			carry["api"] = v
-		}
 	}
 	out := map[string]string{}
 	for _, st := range next.settings() {
@@ -389,9 +365,6 @@ func (m *connMove) repoint(from, to string) {
 		if m.db.Get(p.table, p.field, &v) && names(v) {
 			m.db.Set(p.table, p.field, media.Choice(p.job, to))
 			m.changed++
-			if p.table == LLMTable || p.table == LeadLLMTable {
-				m.tiers = true
-			}
 		}
 	}
 	// The records keep their endpoint and model: an embedding's space is
@@ -435,62 +408,6 @@ func (m *connMove) repoint(from, to string) {
 		m.db.Set(ImageTable, "provider", to)
 		m.changed++
 	}
-}
-
-// tier moves an LLM tier naming a provider directly onto the connection
-// gohort provides for it, with the key and address it kept.
-func (m *connMove) tier(table string) {
-	var provider string
-	m.db.Get(table, "provider", &provider)
-	name, ok := tierProvided[strings.ToLower(strings.TrimSpace(provider))]
-	if !ok {
-		return
-	}
-	c, ok := GetConnector(m.db, name)
-	if !ok || !c.Provided {
-		return
-	}
-	var endpoint, key, region, profile, api string
-	m.db.Get(table, "endpoint", &endpoint)
-	m.db.Get(table, "api_key", &key)
-	m.db.Get(table, "aws_region", &region)
-	m.db.Get(table, "aws_profile", &profile)
-	m.db.Get(table, "bedrock_api", &api)
-	values, secrets := map[string]string{}, map[string]string{}
-	if name == "bedrock" {
-		if api == "" {
-			api = "messages" // what a Bedrock tier set up before the choice spoke
-		}
-		values["region"], values["api"], values["profile"] = region, api, profile
-		if strings.TrimSpace(key) != "" {
-			Log("[migration] the %s tier's Bedrock API key is not moved: the Bedrock connection signs as this machine or with a key pair", table)
-		}
-	} else {
-		values["base_url"], secrets["api_key"] = strings.TrimRight(strings.TrimSpace(endpoint), "/"), strings.TrimSpace(key)
-	}
-	values, secrets = declaredOnly(c, values), declaredOnly(c, secrets)
-	// The other tier on the same connection with other settings: this one
-	// gets a connection of its own.
-	if kept := ConnectionConfig(m.db, c); differs(kept, values) || m.otherKey(c, secrets["api_key"]) {
-		if c, ok = m.another(name); !ok {
-			return
-		}
-	}
-	merged := ConnectionConfig(m.db, c)
-	for k, v := range values {
-		merged[k] = v
-	}
-	if err := SaveSettings(c, "llm.chat", merged, secrets); err != nil {
-		Log("[migration] the %s tier could not move onto %s: %v", table, c.Name, err)
-		return
-	}
-	m.db.Set(table, "provider", media.Choice(media.JobLLM, c.Name))
-	for _, k := range []string{"endpoint", "api_key", "aws_region", "aws_profile", "bedrock_api"} {
-		m.db.Unset(table, k)
-	}
-	m.changed++
-	m.tiers = true
-	Log("[migration] the %s tier now runs on the connection %s", table, c.Name)
 }
 
 // declaredOnly is values without what connection c does not take, or blank.

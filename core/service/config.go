@@ -911,23 +911,6 @@ func optionValues(node any) []string {
 	return out
 }
 
-// Dialect is the dialect a model connection's client speaks, or "".
-func Dialect(c Connector) string {
-	if c.Kind != Kind {
-		return ""
-	}
-	s, err := Parse(c.Spec)
-	if err != nil {
-		return ""
-	}
-	for _, b := range s.Provides {
-		if b.Capability == "llm.chat" {
-			return b.Dialect
-		}
-	}
-	return ""
-}
-
 // Outdated reports whether connector c was made before a connection kept
 // its own settings and key: it sends its key with a vault credential, or its
 // template now takes as settings what its spec has written in (an address, a

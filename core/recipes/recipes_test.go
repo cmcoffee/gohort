@@ -28,8 +28,7 @@ func TestTheBuiltInTemplatesAreValid(t *testing.T) {
 		"openai-embeddings": false, "slack-send": false, "discord-send": false, "ntfy-send": false, "ntfy-send-file": false,
 		"brave-search": false, "serper-search": false, "tavily-search": false,
 		"jina-reader": false, "firecrawl": false, "resend-mail": false, "postmark-mail": false, "mailgun-mail": false,
-		"convertapi": false, "openrouter": false, "groq": false, "together": false, "mistral": false, "deepseek": false,
-		"openai-compatible": false, "anthropic-model": false}
+		"convertapi": false}
 	for _, r := range builtins() {
 		if err := Validate(r); err != nil {
 			t.Errorf("%s: %v", r.ID, err)

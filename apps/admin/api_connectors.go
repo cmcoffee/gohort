@@ -212,10 +212,9 @@ func keptSecretsLine(c Connector) string {
 
 // The Connectors table's bands, in order: what a connector does, which is
 // what an admin looks for one by. Only connectors with a spec are listed:
-// what gohort does in Go (SMTP, the browser, DuckDuckGo, local models) is set
-// up on its own page, peers under Peers, programs under System Hooks.
+// what gohort does in Go (SMTP, the browser, DuckDuckGo, the LLM providers) is
+// set up on its own page, peers under Peers, programs under System Hooks.
 const (
-	groupLLMs     = "LLMs"
 	groupSearch   = "Web Search"
 	groupResearch = "Research Sources"
 	groupImages   = "Images"
@@ -231,13 +230,13 @@ const (
 	groupPeers    = "Peer relays"
 )
 
-var connectorGroups = []string{groupLLMs, groupSearch, groupResearch, groupImages, groupAudio, groupEmbed, groupPages,
+var connectorGroups = []string{groupSearch, groupResearch, groupImages, groupAudio, groupEmbed, groupPages,
 	groupMail, groupMessages, groupOther, groupWatches, groupTools, groupHooks, groupPeers}
 
 // capabilityGroups is the band a services connector sits in, by the first
 // capability it gives.
 var capabilityGroups = map[string]string{
-	"llm.chat": groupLLMs, "web.search": groupSearch, "image.search": groupSearch,
+	"web.search": groupSearch, "image.search": groupSearch,
 	"image.generate": groupImages, "image.edit": groupImages,
 	"speech.transcribe": groupAudio, "speech.synthesize": groupAudio, "speech.voices": groupAudio, "music.generate": groupAudio,
 	"embed.text": groupEmbed, "page.render": groupPages, "file.convert": groupPages,

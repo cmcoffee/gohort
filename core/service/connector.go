@@ -185,12 +185,6 @@ func (s Spec) Describe(name string) string {
 			gives = b.Capability
 		}
 		mapping := mappingText(b)
-		if b.Dialect != "" {
-			mapping = b.Dialect + " dialect"
-			if m := b.Defaults["model"]; m != nil {
-				mapping += fmt.Sprintf(" (model %v)", m)
-			}
-		}
 		inside = append(inside, gives+" ⇐ "+mapping)
 		gave = append(gave, gives)
 	}

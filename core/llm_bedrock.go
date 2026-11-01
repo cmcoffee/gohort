@@ -304,8 +304,8 @@ func awsCLITooOld(ver string) bool {
 }
 
 // bedrockAuth is how a Bedrock client signs: with a bearer token, or with AWS
-// credentials, a key pair it is given (keys, from a model connector's
-// credential) or else the machine's, under profile.
+// credentials, a key pair it is given (keys, the tier's key when it is one)
+// or else the machine's, under profile.
 type bedrockAuth struct {
 	bearer, profile string
 	keys            *awsCreds
@@ -1210,57 +1210,4 @@ func requestPayload(req *http.Request) ([]byte, error) {
 	}
 	defer rc.Close()
 	return io.ReadAll(rc)
-}
-
-// AWSModelAuth is how a model connector's client signs its own requests to
-// Bedrock: as the machine (under Profile) or with a stored key pair, in
-// Region.
-type AWSModelAuth struct {
-	Region, Profile      string
-	Machine              bool
-	AccessKey, SecretKey string
-}
-
-// ModelAWS gives a model client the AWS signing of credential name, for
-// rawURL: only a global credential's, enabled, of the aws_sigv4 kind, for an
-// address it allows. A model client streams its own requests, so it signs
-// them itself, as ModelKey hands a bearer key over.
-func (s *SecureAPI) ModelAWS(name, rawURL string) (AWSModelAuth, error) {
-	var out AWSModelAuth
-	c, ok := s.Load(name)
-	switch {
-	case !ok:
-		return out, fmt.Errorf("no credential named %q", name)
-	case c.Owner != "" || c.IsPerUser():
-		return out, fmt.Errorf("credential %q is a person's: a model connector's key is the deployment's", name)
-	case c.Disabled || c.AdminDisabled:
-		return out, s.disabledError(c)
-	case c.Type != SecureCredAWS:
-		return out, fmt.Errorf("credential %q is %s, not an AWS signing credential", name, c.Type)
-	case !urlAllowedByCredential(c, rawURL):
-		return out, fmt.Errorf("credential %q does not allow %s", name, rawURL)
-	}
-	host := rawURL
-	if i := strings.Index(host, "://"); i >= 0 {
-		host = host[i+3:]
-	}
-	host, _, _ = strings.Cut(host, "/")
-	region, _, err := awsScope(c, host)
-	if err != nil {
-		return out, err
-	}
-	out.Region, out.Profile, out.Machine = region, strings.TrimSpace(c.AWSProfile), c.AWSMachine
-	if !c.AWSMachine {
-		sec, ok := s.loadSecret(name)
-		if !ok {
-			return out, s.disabledError(c)
-		}
-		kp, err := awsKeyPair(sec)
-		if err != nil {
-			return out, fmt.Errorf("credential %q: %w", name, err)
-		}
-		out.AccessKey, out.SecretKey = kp.AccessKey, kp.SecretKey
-	}
-	s.touch(name)
-	return out, nil
 }

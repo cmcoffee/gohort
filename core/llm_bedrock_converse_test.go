@@ -1,7 +1,6 @@
 package core
 
 import (
-	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -10,7 +9,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/cmcoffee/gohort/core/media"
 	"github.com/cmcoffee/snugforge/apiclient"
 )
 
@@ -266,46 +264,5 @@ func TestNewLLMFromConfigBuildsConverse(t *testing.T) {
 	}
 	if c.ContextSize() != 64000 {
 		t.Errorf("context size = %d", c.ContextSize())
-	}
-}
-
-// A Bedrock model connector is resolved into its client's settings: its
-// API, region and host, and the key pair its credential holds, which the
-// client signs with, never looking for the machine's identity.
-func TestABedrockConnectorSignsWithItsKeyPair(t *testing.T) {
-	var auth string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		auth = r.Header.Get("Authorization")
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"output":{"message":{"role":"assistant","content":[{"text":"ok"}]}},"stopReason":"end_turn","usage":{"inputTokens":3,"outputTokens":1}}`))
-	}))
-	t.Cleanup(srv.Close)
-	saved := media.ModelService
-	t.Cleanup(func() { media.ModelService = saved })
-	media.ModelService = func(name string, withKey bool, _ *media.ModelForm) (media.ModelTarget, error) {
-		return media.ModelTarget{Dialect: "bedrock", Endpoint: srv.URL, Model: "us.anthropic.claude-opus-5", BedrockAPI: "converse",
-			Region: "eu-west-1", AWSAccessKey: "AKIDCONN", AWSSecretKey: "conn-secret"}, nil
-	}
-	// No machine identity to find: were the client to look, it would fail.
-	t.Setenv("AWS_ACCESS_KEY_ID", "")
-	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
-	t.Setenv("AWS_PROFILE", "nobody-has-this-profile")
-	cfg, err := ResolveModelProvider(LLMProviderConfig{Provider: "service:bedrock-model"}, "service:bedrock-model")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.Provider != "bedrock" || cfg.BedrockAPI != "converse" || cfg.Region != "eu-west-1" || cfg.Model != "us.anthropic.claude-opus-5" || cfg.awsKeys == nil || cfg.awsKeys.AccessKey != "AKIDCONN" {
-		t.Fatalf("resolved: %+v", cfg)
-	}
-	api := &apiclient.APIClient{URLScheme: "http", VerifySSL: false}
-	llm, err := newBedrockConverseLLM(cfg.bedrockAuth(), cfg.Model, cfg.Region, strings.TrimPrefix(cfg.Endpoint, "http://"), api)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := llm.Chat(context.Background(), []Message{{Role: "user", Content: "hi"}}); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(auth, "Credential=AKIDCONN/") || !strings.Contains(auth, "/eu-west-1/bedrock/aws4_request") {
-		t.Errorf("signed as: %s", auth)
 	}
 }

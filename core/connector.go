@@ -789,40 +789,6 @@ func (s *SecureAPI) OpenConnectionStream(sess *ToolSession, c SecureCredential, 
 	return s.openStream(sess, c, r)
 }
 
-// ModelAuth is what a model client, which makes its own requests, is given
-// from a connection's credential for rawURL: the key, or the AWS signing.
-// Only for an address the credential allows.
-func (c SecureCredential) ModelAuth(rawURL string) (string, AWSModelAuth, error) {
-	var aws AWSModelAuth
-	if err := connectionOnly(c); err != nil {
-		return "", aws, err
-	}
-	if !urlAllowedByCredential(c, rawURL) {
-		return "", aws, fmt.Errorf("the connection %s's secret was not given for %s", c.connection, rawURL)
-	}
-	if c.Type != SecureCredAWS {
-		return c.inlineSecret, aws, nil
-	}
-	host := rawURL
-	if i := strings.Index(host, "://"); i >= 0 {
-		host = host[i+3:]
-	}
-	host, _, _ = strings.Cut(host, "/")
-	region, _, err := awsScope(c, host)
-	if err != nil {
-		return "", aws, err
-	}
-	aws.Region, aws.Profile, aws.Machine = region, c.AWSProfile, c.AWSMachine
-	if !c.AWSMachine {
-		kp, err := awsKeyPair(c.inlineSecret)
-		if err != nil {
-			return "", aws, err
-		}
-		aws.AccessKey, aws.SecretKey = kp.AccessKey, kp.SecretKey
-	}
-	return "", aws, nil
-}
-
 // MoveCredentialToConnection keeps the secret of the global credential name
 // as connection c's secret setting, for addresses: how a connector made
 // before connections kept their own keys has its key moved, the value never

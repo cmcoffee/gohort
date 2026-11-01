@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -250,85 +249,6 @@ func TestEachReadsAListAndVectorsAgree(t *testing.T) {
 	piece, err := jsonOutput(map[string]any{"data": []any{map[string]any{"v": "abc"}, map[string]any{"v": []any{1.0}}}}, Output{Path: "data", Each: "v"})
 	if err != nil || piece.Text != `["abc",[1]]` {
 		t.Errorf("string and list pieces: %q %v", piece.Text, err)
-	}
-}
-
-// A model connector is an LLM tier: its dialect's client, built from the
-// connector's address and its credential's key, talks to the model as a
-// tier's own would; each call is counted and priced on the connector's row;
-// its test is a short real chat. The key is given only for an address the
-// credential allows, and a spec naming a host its dialect is not spoken at
-// is refused.
-func TestAModelConnectorIsAnLLMTier(t *testing.T) {
-	world(t)
-	var auths, paths []string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		auths, paths = append(auths, r.Header.Get("Authorization")), append(paths, r.URL.Path)
-		var body map[string]any
-		json.NewDecoder(r.Body).Decode(&body)
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"id":"c1","object":"chat.completion","model":"` + fmt.Sprint(body["model"]) + `","choices":[{"index":0,"message":{"role":"assistant","content":"OK"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1000,"completion_tokens":200}}`))
-	}))
-	defer srv.Close()
-	install(t, "hosted", map[string]any{
-		"config": []any{map[string]any{"name": "api_key", "type": "secret", "send": "bearer"}},
-		"provider": map[string]any{"transport": "http", "base_url": srv.URL + "/v1", "auth": map[string]any{"secret": "api_key"},
-			"operations": map[string]any{"models": map[string]any{"path": "/models"}}},
-		"provides": []any{map[string]any{"capability": "llm.chat", "dialect": "openai", "defaults": map[string]any{"model": "fast-model"},
-			"cost": map[string]any{"per_million_input": 2.0, "per_million_output": 10.0}}},
-	})
-	hosted, _ := GetConnector(RootDB, "hosted")
-	if err := SetConnectionSecret(RootDB, hosted, "api_key", "sk-test", []string{srv.URL + "/v1"}); err != nil {
-		t.Fatal(err)
-	}
-	llm, err := NewLLMFromConfig(LLMProviderConfig{Provider: "service:hosted"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp, err := llm.Chat(context.Background(), []Message{{Role: "user", Content: "hi"}})
-	if err != nil || resp.Content != "OK" || len(paths) != 1 || paths[0] != "/v1/chat/completions" || auths[0] != "Bearer sk-test" {
-		t.Fatalf("chat: %+v %v %v %v", resp, err, paths, auths)
-	}
-	rec := RecordOf("hosted").Capabilities["llm.chat"]
-	if rec == nil || rec.Hours[0].Calls+rec.Hours[1].Calls != 1 || rec.Spend < 0.0039 || rec.Spend > 0.0041 {
-		t.Errorf("the call on the connector's row (1000 in at $2/M and 200 out at $10/M is $0.004): %+v", rec)
-	}
-	if reps, err := Test(context.Background(), "hosted"); err != nil || !reps[0].OK || !strings.Contains(reps[0].Detail, `"OK"`) {
-		t.Errorf("the model's test: %+v %v", reps, err)
-	}
-	// Its row's Test works before a tier is put on it, and leaves it out of use.
-	UnapproveConnector(RootDB, "hosted")
-	if reps, err := Test(context.Background(), "hosted"); err != nil || !reps[0].OK {
-		t.Errorf("the test of a model no tier uses yet: %+v %v", reps, err)
-	}
-	if _, err := NewLLMFromConfig(LLMProviderConfig{Provider: "service:hosted"}); err == nil {
-		t.Error("after its test, a model no tier uses was read for a tier")
-	}
-	ApproveConnector(RootDB, "hosted")
-	if !ProviderHasNativeTools("service:hosted") {
-		t.Error("a model connector's tier would parse tool calls out of text")
-	}
-	if private, why := ProviderLooksPrivate("service:hosted", ""); !private || !strings.Contains(why, "loopback") {
-		t.Errorf("judged by the connector's own address (a loopback test server): %v %q", private, why)
-	}
-	if private, _ := ProviderLooksPrivate("service:missing", ""); private {
-		t.Error("a model connector that cannot be read was judged private")
-	}
-
-	for want, b := range map[string]map[string]any{
-		"spoken only at api.anthropic.com": {"capability": "llm.chat", "dialect": "anthropic"},
-		"gohort speaks openai":             {"capability": "llm.chat", "dialect": "cobol"},
-		"no steps or outputs":              {"capability": "llm.chat", "dialect": "openai", "steps": []any{map[string]any{"call": "models"}}},
-		"priced by its tokens":             {"capability": "llm.chat", "dialect": "openai", "cost": map[string]any{"per_call": 0.01}},
-		"llm.chat only":                    {"capability": "speech.synthesize", "steps": []any{map[string]any{"call": "models"}}, "output": map[string]any{"audio": map[string]any{"from": "body"}}, "cost": map[string]any{"per_million_input": 1.0}},
-	} {
-		_, err := specFrom(t, map[string]any{
-			"provider": map[string]any{"transport": "http", "base_url": srv.URL + "/v1", "auth": map[string]any{"none": true},
-				"operations": map[string]any{"models": map[string]any{"path": "/models", "read": "file"}}},
-			"provides": []any{b}})
-		if err == nil || !strings.Contains(err.Error(), want) {
-			t.Errorf("want %q, got %v", want, err)
-		}
 	}
 }
 

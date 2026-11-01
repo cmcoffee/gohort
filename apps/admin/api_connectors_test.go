@@ -181,13 +181,11 @@ func TestConnectorsAreBandedByWhatTheyDo(t *testing.T) {
 	RootDB = &DBase{Store: kvlite.MemStore()}
 	t.Cleanup(func() { RootDB = saved })
 	search := `{"provider":{"transport":"http","base_url":"https://find.example.test","auth":{"none":true},"operations":{"find":{"path":"/s?q={query}"}}},"provides":[{"capability":"web.search","steps":[{"call":"find"}],"output":{"results":{"path":"hits","fields":{"title":"t","url":"u"}}}}]}`
-	model := `{"provider":{"transport":"http","base_url":"https://chat.example.test","auth":{"none":true},"operations":{"models":{"path":"/models"}}},"provides":[{"capability":"llm.chat","dialect":"openai"}]}`
 	for _, c := range []Connector{
 		{Name: "engine", Kind: service.Kind, Spec: json.RawMessage(search)},
 		{Name: "papers", Kind: service.Kind, Spec: json.RawMessage(search)},
 		{Name: "filings", Kind: service.Kind, Template: "edgar-search", Spec: json.RawMessage(search)},
 		{Name: "court", Kind: service.Kind, Template: "edgar-search", Spec: json.RawMessage(search)},
-		{Name: "chat", Kind: service.Kind, Spec: json.RawMessage(model)},
 	} {
 		if err := SaveConnector(RootDB, c); err != nil {
 			t.Fatalf("%s: %v", c.Name, err)
@@ -215,7 +213,7 @@ func TestConnectorsAreBandedByWhatTheyDo(t *testing.T) {
 		}
 	}
 	for name, want := range map[string]string{
-		"engine": groupSearch, "papers": groupResearch, "filings": groupResearch, "court": groupSearch, "chat": groupLLMs,
+		"engine": groupSearch, "papers": groupResearch, "filings": groupResearch, "court": groupSearch,
 	} {
 		if got[name] != want {
 			t.Errorf("%s sits under %q, want %q", name, got[name], want)

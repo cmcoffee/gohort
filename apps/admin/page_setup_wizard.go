@@ -87,8 +87,8 @@ func (a *AdminApp) renderSetupWizard(w http.ResponseWriter, r *http.Request) {
 func (a *AdminApp) setupWizardPage() ui.Page {
 	providerStep := ui.FormStep{
 		Title: "Provider",
-		Intro: "Pick where the model runs. A local server (Ollama, llama.cpp or vLLM) needs its address, set under the choice; Anthropic, OpenAI, Gemini and AWS Bedrock need their key there. Another hosted model (OpenRouter, Groq and others) is added from its template under Admin > Extensions > Templates (Skip for now gets you there). You can add a second, higher-precision model later: this sets the one most work runs on.",
-		Fields: tierFields([]ui.FormField{
+		Intro: "Pick where the model runs. A local server (Ollama, llama.cpp or vLLM) needs its address; Anthropic, OpenAI, Gemini and AWS Bedrock need their key. Another hosted model (OpenRouter, Groq and others) is OpenAI with its address: the address field offers them. You can add a second, higher-precision model later: this sets the one most work runs on.",
+		Fields: tierReach([]ui.FormField{
 			{Field: "provider", Label: "Provider", Type: "select", Required: true, Options: LLMProviderOptions(false)},
 		}),
 	}
@@ -192,24 +192,42 @@ func (a *AdminApp) testLLM(w http.ResponseWriter, r *http.Request, table string)
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	var form withSettings[struct {
+	var req struct {
 		Provider    string `json:"provider"`
 		Model       string `json:"model"`
 		APIKey      string `json:"api_key"`
 		Endpoint    string `json:"endpoint"`
+		AWSRegion   string `json:"aws_region"`
+		AWSProfile  string `json:"aws_profile"`
+		BedrockAPI  string `json:"bedrock_api"`
 		ContextSize int    `json:"context_size"`
 		NativeTools bool   `json:"native_tools"`
-	}]
-	if err := json.NewDecoder(r.Body).Decode(&form); err != nil {
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeTestResult(w, false, "", "invalid request body")
 		return
 	}
-	req := form.Form
 	if strings.TrimSpace(req.Provider) == "" {
 		writeTestResult(w, false, "", "pick a provider first")
 		return
 	}
-	req.APIKey = a.formTierKey(table, req.APIKey)
+	cfg := LLMProviderConfig{
+		Provider:   strings.TrimSpace(req.Provider),
+		Model:      req.Model,
+		Endpoint:   req.Endpoint,
+		Region:     req.AWSRegion,
+		Profile:    req.AWSProfile,
+		BedrockAPI: req.BedrockAPI,
+		// Short deadlines: this is an interactive check, and a provider that
+		// needs more than this to answer "ok" is not going to make a usable
+		// chat surface anyway.
+		ConnectTimeout: 10 * time.Second,
+		RequestTimeout: 30 * time.Second,
+	}
+	if err := a.formTierKey(table, req.APIKey, &cfg); err != nil {
+		writeTestResult(w, false, "", err.Error())
+		return
+	}
 	// The model id, before anything tries to use it. A value carrying
 	// invisible rubbish comes back from AWS as "the provided model identifier
 	// is invalid" or "your account is not authorized", neither of which is
@@ -219,21 +237,7 @@ func (a *AdminApp) testLLM(w http.ResponseWriter, r *http.Request, table string)
 		writeTestResult(w, false, "", err.Error())
 		return
 	}
-	// Read before a save puts the connector to use, as the form names it.
-	_, end := previewTieIn(r.Context(), req.Provider)
-	defer end()
-	llm, err := NewLLMFromConfig(LLMProviderConfig{
-		Provider: req.Provider,
-		Model:    req.Model,
-		APIKey:   req.APIKey,
-		Endpoint: req.Endpoint,
-		Form:     form.Settings.modelForm(chosenConnection(req.Provider)),
-		// Short deadlines: this is an interactive check, and a provider that
-		// needs more than this to answer "ok" is not going to make a usable
-		// chat surface anyway.
-		ConnectTimeout: 10 * time.Second,
-		RequestTimeout: 30 * time.Second,
-	})
+	llm, err := NewLLMFromConfig(cfg)
 	if err != nil {
 		writeTestResult(w, false, "", err.Error())
 		return
@@ -247,9 +251,8 @@ func (a *AdminApp) testLLM(w http.ResponseWriter, r *http.Request, table string)
 	// What is at the endpoint, said on success AND failure: a refused chat
 	// from a server that turns out to be a different kind is half-diagnosed.
 	serverNote := ""
-	if r := ResolvedTier(LLMProviderConfig{Provider: req.Provider, Model: req.Model, Endpoint: req.Endpoint, APIKey: req.APIKey,
-		Form: form.Settings.modelForm(chosenConnection(req.Provider))}); LocalDialect(r.Provider) {
-		serverNote = probeModelServer(ctx, r.Provider, r.Endpoint, r.APIKey).describe(r.Provider, req.ContextSize)
+	if LocalDialect(cfg.Provider) {
+		serverNote = probeModelServer(ctx, cfg.Provider, cfg.Endpoint, cfg.APIKey).describe(cfg.Provider, req.ContextSize)
 	}
 
 	// From here the test takes several calls, so it says which one it is on:

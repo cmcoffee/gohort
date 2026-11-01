@@ -1006,8 +1006,9 @@ func peerKeyScopeValues(k PeerKey) []string {
 }
 
 // LLMProviderOptions builds the provider dropdown for a model tier: the local
-// servers, every peer that will actually run inference, and the model
-// connectors (a hosted model is one, added from its template).
+// servers, the hosted providers (OpenAI and Anthropic also any API that
+// speaks theirs, at an address of its own), and every peer that will actually
+// run inference.
 //
 // Shared by both tiers so a peer appears in each. usePrimary adds the Lead
 // tier's "(use primary)" entry, which the Worker tier has no meaning for.
@@ -1017,29 +1018,17 @@ func LLMProviderOptions(usePrimary bool) []ui.SelectOption {
 		out = append(out, ui.SelectOption{Value: "", Label: "(use primary)",
 			Help: "Routes lead stages to the worker model."})
 	}
-	// The model connections gohort provides lead, local servers first;
-	// the peers and any other connection follow.
-	services := serviceProviderOptions("llm.chat", "Run this tier's turns")
-	rank := map[string]int{}
-	for i, n := range []string{"ollama", "llamacpp", "vllm", "anthropic", "openai", "gemini", "bedrock"} {
-		rank[llmChoice(n)] = i + 1
-	}
-	var rest []ui.SelectOption
-	provided := make([]ui.SelectOption, len(rank))
-	for _, o := range services {
-		if r := rank[o.Value]; r > 0 {
-			if c, ok := GetConnector(RootDB, chosenConnection(o.Value)); ok && c.Provided {
-				provided[r-1] = o
-				continue
-			}
-		}
-		rest = append(rest, o)
-	}
-	for _, o := range provided {
-		if o.Value != "" {
-			out = append(out, o)
-		}
-	}
+	out = append(out,
+		ui.SelectOption{Value: "ollama", Label: "Ollama"},
+		ui.SelectOption{Value: "llama.cpp", Label: "llama.cpp"},
+		ui.SelectOption{Value: "vllm", Label: "vLLM"},
+		ui.SelectOption{Value: "anthropic", Label: "Anthropic (or compatible)",
+			Help: "Anthropic's API, or any gateway that speaks it: give its address below."},
+		ui.SelectOption{Value: "openai", Label: "OpenAI (or compatible)",
+			Help: "OpenAI's API, or any provider that speaks it (Groq, OpenRouter, Together, Mistral, DeepSeek, ...): give its address below."},
+		ui.SelectOption{Value: "gemini", Label: "Gemini"},
+		ui.SelectOption{Value: "bedrock", Label: "AWS Bedrock"},
+	)
 	for _, p := range PeersOffering(PeerCapModels) {
 		label := "Peer: " + p.Name
 		if p.Instance != "" {
@@ -1055,7 +1044,7 @@ func LLMProviderOptions(usePrimary bool) []ui.SelectOption {
 		}
 		out = append(out, ui.SelectOption{Value: PeerProviderValue(p.Name), Label: label, Help: help})
 	}
-	return append(out, rest...)
+	return out
 }
 
 // --- show-once secret --------------------------------------------------------

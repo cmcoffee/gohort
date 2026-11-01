@@ -448,8 +448,8 @@ func embedServiceAddress(name string) string {
 }
 
 // embedderIsLocal reports whether the service connector named name reaches
-// this machine or its network: judged by its address, as a model connector's
-// privacy is, and not local when it cannot be read.
+// this machine or its network: judged by its address, as a local model
+// server's privacy is, and not local when it cannot be read.
 func embedderIsLocal(name string) bool {
 	addr := embedServiceAddress(name)
 	if addr == "" {

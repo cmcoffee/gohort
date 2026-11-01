@@ -213,37 +213,6 @@ func TestAnAdministratorsPreviewReachesOnlyItsConnector(t *testing.T) {
 	endTrial()
 }
 
-// A model connector is read for a tier while an administrator's LLM test
-// previews it, and not before or after.
-func TestAModelConnectorIsReadOnlyUnderPreview(t *testing.T) {
-	world(t)
-	spec := map[string]any{
-		"provider": map[string]any{"transport": "http", "base_url": "https://chat.example.test", "auth": map[string]any{"none": true},
-			"operations": map[string]any{"models": map[string]any{"path": "/models"}}},
-		"provides": []any{map[string]any{"capability": "llm.chat", "dialect": "openai"}},
-	}
-	raw, _ := json.Marshal(spec)
-	if err := SaveConnector(RootDB, Connector{Name: "chat", Kind: Kind, Spec: raw}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := modelTarget("chat", false, nil); err == nil {
-		t.Fatal("an unused model connector was read")
-	}
-	_, end := Preview(context.Background(), "chat")
-	_, end2 := Preview(context.Background(), "chat")
-	if _, err := modelTarget("chat", false, nil); err != nil {
-		t.Errorf("under preview: %v", err)
-	}
-	end()
-	if _, err := modelTarget("chat", false, nil); err != nil {
-		t.Errorf("one of two previews ended, and the other lost it: %v", err)
-	}
-	end2()
-	if _, err := modelTarget("chat", false, nil); err == nil {
-		t.Error("read after every preview ended")
-	}
-}
-
 // The connections an agent's tools reach: the image connectors, the music
 // ones offered to agents, a Research Source offered through query_source and
 // what a flow's steps call. Not one a page has serve the whole instance, nor

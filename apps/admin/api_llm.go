@@ -336,7 +336,7 @@ func (a *AdminApp) handleLLMConfig(table string, worker bool) func(c *jsonapi.Ca
 			return nil, jsonapi.Status(http.StatusInternalServerError, "no database")
 		}
 		// GET — current values; api_key is masked (never returned).
-		var provider, model, endpoint string
+		var provider, model, endpoint, awsRegion, awsProfile, bedrockAPI string
 		var contextSize, reqTimeout, noThinkBudget int
 		var nativeTools, disableThinking, noImages, ntPrependSys, ntPrependUser bool
 		ntKwarg, ntBudget := true, true // defaults when no-think was never configured
@@ -344,6 +344,9 @@ func (a *AdminApp) handleLLMConfig(table string, worker bool) func(c *jsonapi.Ca
 		a.db.Get(table, "provider", &provider)
 		a.db.Get(table, "model", &model)
 		a.db.Get(table, "endpoint", &endpoint)
+		a.db.Get(table, "aws_region", &awsRegion)
+		a.db.Get(table, "aws_profile", &awsProfile)
+		a.db.Get(table, "bedrock_api", &bedrockAPI)
 		a.db.Get(table, "native_tools", &nativeTools)
 		a.db.Get(table, "disable_thinking", &disableThinking)
 		a.db.Get(table, "no_images", &noImages)
@@ -367,7 +370,11 @@ func (a *AdminApp) handleLLMConfig(table string, worker bool) func(c *jsonapi.Ca
 			"provider":                provider,
 			"model":                   model,
 			"endpoint":                endpoint,
+			"aws_region":              awsRegion,
+			"aws_profile":             awsProfile,
+			"bedrock_api":             bedrockAPI,
 			"_live":                   liveTierDescription(table),
+			"_kept_key":               LLMProviderConfig{Provider: provider, Endpoint: endpoint}.KeptKey(a.db, table),
 			"native_tools":            nativeTools,
 			"disable_thinking":        disableThinking,
 			"no_images":               noImages,
@@ -387,21 +394,11 @@ func (a *AdminApp) handleLLMConfig(table string, worker bool) func(c *jsonapi.Ca
 			a.db.Get(table, "request_timeout_seconds", &reqTimeout)
 			out["request_timeout_seconds"] = reqTimeout
 		}
-		// A tier still naming a provider directly, or an outdated
-		// connection, shows the connection it runs on when saved; a local
-		// server's address it kept comes with it.
-		if p := providedFor(provider); p != "" {
-			_, carry := successorOf(provider)
-			if carry == nil && endpoint != "" {
-				carry = map[string]string{"base_url": endpoint}
-			}
-			prefill(out, p, carry)
-			out["provider"], provider = llmChoice(p), llmChoice(p)
-		}
-		for k, v := range settingsValues(chosenConnection(provider), "llm.chat") {
-			if _, prefilled := out[k]; !prefilled {
-				out[k] = v
-			}
+		// A tier still naming a connection, which tiers no longer use, reads
+		// as not set, and says so: never as some other provider.
+		if name := chosenConnection(provider); name != "" {
+			out["provider"] = ""
+			out["_stale"] = "This tier named the connection " + name + ", which tiers no longer use. Choose its provider again below: gohort --config-report lists what it had."
 		}
 		return out, nil
 	}
@@ -413,6 +410,9 @@ type llmConfigSave struct {
 	Model                string `json:"model"`
 	APIKey               string `json:"api_key"`
 	Endpoint             string `json:"endpoint"`
+	AWSRegion            string `json:"aws_region"`
+	AWSProfile           string `json:"aws_profile"`
+	BedrockAPI           string `json:"bedrock_api"`
 	ContextSize          int    `json:"context_size"`
 	RequestTimeout       int    `json:"request_timeout_seconds"`
 	NativeTools          bool   `json:"native_tools"`
@@ -428,13 +428,12 @@ type llmConfigSave struct {
 	NoThinkPrependUser   bool   `json:"no_think_prepend_user"`
 }
 
-// handleLLMConfigSave saves a tier's config and rebuilds the LLMs from it. A
-// local server's API key is CryptSet only when a new value is supplied (blank
-// on the form = keep the existing key); a model connector's goes into its
-// credential, and the settings it takes are kept with the tier.
-func (a *AdminApp) handleLLMConfigSave(table string, worker bool) func(c *jsonapi.Call, form withSettings[llmConfigSave]) (any, error) {
-	return func(c *jsonapi.Call, form withSettings[llmConfigSave]) (any, error) {
-		req := form.Form
+// handleLLMConfigSave saves a tier's config and rebuilds the LLMs from it.
+// The key is kept only when a new value is typed (blank on the form keeps the
+// existing one), with the address it is now given for: a key goes only where
+// it was given.
+func (a *AdminApp) handleLLMConfigSave(table string, worker bool) func(c *jsonapi.Call, req llmConfigSave) (any, error) {
+	return func(c *jsonapi.Call, req llmConfigSave) (any, error) {
 		if a.db == nil {
 			return nil, jsonapi.Status(http.StatusInternalServerError, "no database")
 		}
@@ -446,33 +445,8 @@ func (a *AdminApp) handleLLMConfigSave(table string, worker bool) func(c *jsonap
 		if err := ValidateModelID(strings.TrimSpace(req.Provider), req.Model); err != nil {
 			return nil, jsonapi.BadRequest(err.Error())
 		}
-		// The models gohort provides are connections: a tier naming one
-		// directly (anthropic, ollama, ...), or a connection made before
-		// connections kept their own keys, runs on the one provided. A bare
-		// local server's address and key, given with it, are its
-		// connection's.
-		if pm, bare := providedModels[strings.ToLower(strings.TrimSpace(req.Provider))]; bare {
-			p := providedFor(req.Provider)
-			if p == "" {
-				return nil, jsonapi.BadRequest(fmt.Sprintf("%s runs on a model connection: add the %s template under Admin > Extensions > Templates, then choose it here", ProviderTitle(req.Provider), pm.template))
-			}
-			form.Settings = form.Settings.carry(p, map[string]string{"base_url": req.Endpoint, "api_key": req.APIKey})
-			req.Provider = llmChoice(p)
-		} else if p := providedFor(req.Provider); p != "" {
-			req.Provider = llmChoice(p)
-		}
-		// A model connector must be one, and approved.
-		if err := serviceProviderOK(req.Provider, "llm.chat"); err != nil {
+		if err := tierProviderOK(req.Provider); err != nil {
 			return nil, jsonapi.BadRequest(err.Error())
-		}
-		// Its address, settings and key are the connection's own, kept in
-		// its space.
-		chosen := chosenConnection(req.Provider)
-		if chosen != "" {
-			req.APIKey, req.Endpoint = "", ""
-			if err := form.Settings.save(chosen, "llm.chat"); err != nil {
-				return nil, jsonapi.BadRequest(err.Error())
-			}
 		}
 		// Trimmed on the way in, so the STORED value is clean and the form
 		// stops displaying a leading space nobody can see. The providers trim
@@ -481,12 +455,10 @@ func (a *AdminApp) handleLLMConfigSave(table string, worker bool) func(c *jsonap
 		a.db.Set(table, "provider", strings.TrimSpace(req.Provider))
 		a.db.Set(table, "model", strings.TrimSpace(req.Model))
 		a.db.Set(table, "endpoint", strings.TrimSpace(req.Endpoint))
-		// What a tier on AWS Bedrock named directly; a Bedrock connection
-		// holds its region, API and signing. Settings the tier kept for its
-		// connection before the connection kept its own go too.
-		for _, k := range []string{"aws_region", "aws_profile", "bedrock_api", "config"} {
-			a.db.Unset(table, k)
-		}
+		a.db.Set(table, "aws_region", strings.TrimSpace(req.AWSRegion))
+		a.db.Set(table, "aws_profile", strings.TrimSpace(req.AWSProfile))
+		a.db.Set(table, "bedrock_api", req.BedrockAPI)
+		a.db.Unset(table, "config")
 		a.db.Set(table, "native_tools", req.NativeTools)
 		a.db.Set(table, "disable_thinking", req.DisableThinking)
 		a.db.Set(table, "no_images", req.NoImages)
@@ -505,12 +477,9 @@ func (a *AdminApp) handleLLMConfigSave(table string, worker bool) func(c *jsonap
 		if worker {
 			a.db.Set(table, "request_timeout_seconds", req.RequestTimeout)
 		}
-		if chosen != "" {
-			a.db.Unset(table, "api_key")
-		} else if req.APIKey != "" {
-			a.db.CryptSet(table, "api_key", req.APIKey)
+		if k := strings.TrimSpace(req.APIKey); k != "" && k != secretUnchanged {
+			LLMProviderConfig{Provider: strings.TrimSpace(req.Provider), Endpoint: req.Endpoint}.SaveKey(a.db, table, k)
 		}
-		settleTieIn(req.Provider)
 		// Apply live — rebuild the shared LLMs from the new config so the change
 		// takes effect without a restart. Best-effort: on a bad config the prior
 		// LLMs stay active and we log it (the config is still saved).
@@ -621,22 +590,16 @@ func effortLevel(v string) string {
 // tier's own stored one, never the other tier's. A refusal is answered as
 // {error} with status 200, because the reason the list cannot be had is what
 // the picker shows in its place.
-func (a *AdminApp) handleLLMModels(table string) func(c *jsonapi.Call, form withSettings[llmModelsQuery]) (any, error) {
-	return func(c *jsonapi.Call, form withSettings[llmModelsQuery]) (any, error) {
-		req := form.Form
+func (a *AdminApp) handleLLMModels(table string) func(c *jsonapi.Call, req llmModelsQuery) (any, error) {
+	return func(c *jsonapi.Call, req llmModelsQuery) (any, error) {
 		if strings.TrimSpace(req.Provider) == "" {
 			return map[string]any{"error": "Pick a provider first."}, nil
 		}
-		req.APIKey = a.formTierKey(table, req.APIKey)
-		// Read before a save puts the connector to use, as the form names it.
-		_, end := previewTieIn(c.R.Context(), req.Provider)
-		defer end()
-		ids, err := ListModels(c.R.Context(), LLMProviderConfig{
-			Provider: req.Provider,
-			APIKey:   req.APIKey,
-			Endpoint: req.Endpoint,
-			Form:     form.Settings.modelForm(chosenConnection(req.Provider)),
-		})
+		cfg := LLMProviderConfig{Provider: strings.TrimSpace(req.Provider), Endpoint: req.Endpoint}
+		if err := a.formTierKey(table, req.APIKey, &cfg); err != nil {
+			return map[string]any{"error": err.Error()}, nil
+		}
+		ids, err := ListModels(c.R.Context(), cfg)
 		if err != nil {
 			return map[string]any{"error": "Could not list the models: " + err.Error()}, nil
 		}
@@ -666,35 +629,31 @@ func containsString(list []string, s string) bool {
 	return false
 }
 
-// providedModels are the providers a tier once named directly, the
-// connection gohort provides for each, and the template it is made from.
-var providedModels = map[string]struct{ name, template string }{
-	"anthropic": {"anthropic", "anthropic-model"}, "openai": {"openai", "openai-model"},
-	"gemini": {"gemini", "gemini-model"}, "bedrock": {"bedrock", "bedrock-model"},
-	"ollama": {"ollama", "ollama-model"}, "llama.cpp": {"llamacpp", "llamacpp-model"}, "vllm": {"vllm", "vllm-model"},
+// formTierKey fills cfg's key for a Test or a model list: the one typed, else
+// the tier's own stored one, never the other tier's, and only while it was
+// given for the address cfg goes to.
+func (a *AdminApp) formTierKey(table, typed string, cfg *LLMProviderConfig) error {
+	if k := strings.TrimSpace(typed); k != "" && k != secretUnchanged {
+		cfg.UseKey(k)
+		return nil
+	}
+	return cfg.LoadKey(a.db, table)
 }
 
-// providedFor is the provided connection a tier naming provider runs on:
-// for a provider named directly, and for a connection made before
-// connections kept their own keys whose template gohort provides; else "".
-func providedFor(provider string) string {
-	provider = strings.TrimSpace(provider)
-	if pm, ok := providedModels[strings.ToLower(provider)]; ok {
-		if c, ok := GetConnector(RootDB, pm.name); ok && c.Provided {
-			return pm.name
-		}
-		return ""
-	}
-	next, _ := successorOf(provider)
-	return next
-}
+// tierProviders are the providers a tier runs on, by the name its
+// provider setting stores; a peer offering models is peer:<name>.
+var tierProviders = map[string]bool{"anthropic": true, "openai": true, "gemini": true, "bedrock": true,
+	"ollama": true, "llama.cpp": true, "vllm": true}
 
-// formTierKey is the key a tier's form values are tried with (Test, List
-// models): as typed, else the tier's own stored one, never the other tier's.
-// A model connector sends its credential's key in its place.
-func (a *AdminApp) formTierKey(table, key string) string {
-	if key == "" && a.db != nil {
-		a.db.Get(table, "api_key", &key)
+// tierProviderOK refuses a provider a tier cannot run on: anything but a
+// built-in provider, a peer, or none (the lead's "use primary").
+func tierProviderOK(provider string) error {
+	p := strings.TrimSpace(provider)
+	switch {
+	case p == "", tierProviders[p], strings.HasPrefix(p, PeerProviderValue("")):
+		return nil
+	case chosenConnection(p) != "":
+		return fmt.Errorf("a tier no longer runs on a connection (%s): choose its provider, and give an address for an OpenAI- or Anthropic-compatible one", chosenConnection(p))
 	}
-	return key
+	return fmt.Errorf("%q is not a provider a tier runs on", p)
 }

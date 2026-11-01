@@ -532,25 +532,6 @@ func ttsServer(t *testing.T, noVoices bool) (*httptest.Server, *[]string, *[]map
 // ttsClip is enough of an mp3 for the audio check.
 var ttsClip = append([]byte("ID3\x04\x00\x00\x00\x00\x00\x00"), make([]byte, 32)...)
 
-// The model templates each speak their provider's dialect at its host, and
-// name a model a tier on them runs when the tier names none.
-func TestTheModelTemplatesSpeakTheirDialects(t *testing.T) {
-	for _, m := range []struct{ id, dialect, host, model string }{
-		{"anthropic-model", "anthropic", "https://api.anthropic.com", "claude-sonnet-5"},
-		{"openai-model", "openai", "https://api.openai.com/v1", "gpt-4o"},
-		{"gemini-model", "gemini", "https://generativelanguage.googleapis.com", "gemini-2.5-flash"},
-	} {
-		spec := templateSpec(t, m.id, m.host)
-		if err := validateSpec(t, spec); err != nil {
-			t.Errorf("%s: %v", m.id, err)
-		}
-		b := spec["provides"].([]any)[0].(map[string]any)
-		if b["dialect"] != m.dialect || !strings.Contains(mustJSON(t, b["defaults"]), m.model) {
-			t.Errorf("%s: %v", m.id, b)
-		}
-	}
-}
-
 // forgetCredentials removes the named credentials a test saved.
 func forgetCredentials(t *testing.T, names ...string) {
 	t.Cleanup(func() {
@@ -566,7 +547,7 @@ func forgetCredentials(t *testing.T, names ...string) {
 // address and key, so no install clashes with another.
 func TestATemplateInstallsAConnection(t *testing.T) {
 	for _, id := range []string{"gemini-images", "openai-images", "elevenlabs-speech", "openai-transcription",
-		"openai-embeddings", "anthropic-model", "openai-model", "gemini-model", "bedrock-model", "brave-search", "mailgun-mail"} {
+		"openai-embeddings", "brave-search", "mailgun-mail"} {
 		world(t)
 		res, err := recipes.Install(RootDB, id, "admin", map[string]string{"domain": "mg.example"})
 		if err != nil || res.Imported != 1 || len(res.Outcomes) != 1 || res.Outcomes[0].Type != "connector" {
@@ -585,90 +566,54 @@ func TestATemplateInstallsAConnection(t *testing.T) {
 		}
 	}
 	world(t)
-	for _, name := range []string{"chat-a", "chat-b"} {
-		if _, err := recipes.Install(RootDB, "openai-compatible", "admin", map[string]string{"name": name}); err != nil {
+	const title = "llama.cpp / vLLM / OpenAI-compatible (embeddings)"
+	for _, name := range []string{"embed-a", "embed-b"} {
+		if _, err := recipes.Install(RootDB, "openai-compatible-embeddings", "admin", map[string]string{"name": name}); err != nil {
 			t.Fatal(err)
 		}
 		c, _ := GetConnector(RootDB, name)
-		base := "https://" + name + ".example.com/v1"
-		if err := SaveSettings(c, "llm.chat", map[string]string{"base_url": base}, map[string]string{"api_key": "key-" + name}); err != nil {
+		if err := SaveSettings(c, "embed.text", map[string]string{"base_url": "http://" + name + ".example:8080/v1"}, nil); err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
 	}
 	// Each is shown as its template is, the second told apart by its name;
-	// two cannot be shown alike.
-	a, _ := GetConnector(RootDB, "chat-a")
-	b, _ := GetConnector(RootDB, "chat-b")
-	if a.Title() != "Any OpenAI-compatible API (LLM)" || b.Title() != "Any OpenAI-compatible API (LLM) (chat-b)" {
+	// two cannot be shown alike. Each keeps its own address.
+	a, _ := GetConnector(RootDB, "embed-a")
+	b, _ := GetConnector(RootDB, "embed-b")
+	if a.Title() != title || b.Title() != title+" (embed-b)" {
 		t.Errorf("shown as %q and %q", a.Title(), b.Title())
 	}
-	if err := SetConnectorDisplayName(RootDB, "chat-b", "any openai-compatible api (LLM)"); err == nil {
+	if err := SetConnectorDisplayName(RootDB, "embed-b", strings.ToLower(title)); err == nil {
 		t.Error("two connectors shown alike")
 	}
-	if err := SetConnectorDisplayName(RootDB, "chat-b", "Office proxy"); err != nil {
+	if err := SetConnectorDisplayName(RootDB, "embed-b", "Office embedder"); err != nil {
 		t.Error(err)
 	}
-	for _, name := range []string{"chat-a", "chat-b"} {
+	for _, name := range []string{"embed-a", "embed-b"} {
 		c, _ := GetConnector(RootDB, name)
-		sec, _ := GetConnectionSecret(RootDB, c, "api_key")
-		if sec.Value != "key-"+name || len(sec.Addresses) != 1 || sec.Addresses[0] != "https://"+name+".example.com/v1" {
-			t.Errorf("%s keeps %+v", name, sec)
+		if got := ConnectionConfig(RootDB, c)["base_url"]; got != "http://"+name+".example:8080/v1" {
+			t.Errorf("%s keeps %q", name, got)
 		}
 	}
 }
 
-// The Bedrock connection asks its region, API and profile as settings, and
-// signs as this machine when it is given no key pair: at the region's
-// runtime host, or for the Messages API its bedrock-mantle host. One drafted
-// by someone who is not an administrator does not sign as the machine.
-func TestTheBedrockConnectionSigns(t *testing.T) {
-	world(t)
-	// Added by the deployment (no drafter): the machine's identity is its own.
-	if _, err := recipes.Install(RootDB, "bedrock-model", "", nil); err != nil {
-		t.Fatal(err)
-	}
-	c, _ := GetConnector(RootDB, "bedrock-model")
-	if err := ApproveConnector(RootDB, c.Name); err != nil {
-		t.Fatal(err)
-	}
-	if err := SaveSettings(c, "llm.chat", map[string]string{"region": "eu-west-1", "api": "messages", "profile": "ops"}, nil); err != nil {
-		t.Fatal(err)
-	}
-	if err := SaveSettings(c, "llm.chat", map[string]string{"region": "Europe"}, nil); err == nil {
-		t.Error("a region that is not one was kept")
-	}
-	tg, err := modelTarget(c.Name, true, nil)
-	if err != nil || tg.Endpoint != "https://bedrock-mantle.eu-west-1.api.aws" || tg.BedrockAPI != "messages" || !tg.AWSMachine || tg.Profile != "ops" || tg.Region != "eu-west-1" {
-		t.Errorf("the target: %+v %v", tg, err)
-	}
-	SaveSettings(c, "llm.chat", map[string]string{"region": "eu-west-1", "api": "converse"}, nil)
-	if tg, err := modelTarget(c.Name, true, nil); err != nil || tg.Endpoint != "https://bedrock-runtime.eu-west-1.amazonaws.com" {
-		t.Errorf("on Converse: %+v %v", tg, err)
-	}
-	c.Owner = "pat"
-	SaveConnector(RootDB, c)
-	if _, err := modelTarget(c.Name, true, nil); err == nil || !strings.Contains(err.Error(), "does not sign as this machine") {
-		t.Errorf("a drafted connection signing as the machine: %v", err)
-	}
-}
-
-// gohort provides its model connections: installed at startup when they are
+// gohort provides its local servers' connections: installed at startup when they are
 // not here, by name and with their labels, out of use until a page puts
 // them to use. A save or an import cannot mark one provided, none can be
 // deleted, and a connector of the same name someone made is left alone.
 func TestGohortProvidesItsConnections(t *testing.T) {
 	world(t)
-	SaveConnector(RootDB, Connector{Name: "gemini", Kind: Kind, Spec: json.RawMessage(mustJSON(t, embedSpec("m"))), Provided: true})
+	SaveConnector(RootDB, Connector{Name: "local-speech", Kind: Kind, Spec: json.RawMessage(mustJSON(t, embedSpec("m"))), Provided: true})
 	ProvideConnectors(RootDB)
 	first := len(ListConnectors(RootDB))
 	ProvideConnectors(RootDB)
-	for name, label := range map[string]string{"anthropic": "Anthropic", "openai": "OpenAI", "bedrock": "AWS Bedrock"} {
+	for name, label := range map[string]string{"local-embeddings": "Local embeddings server", "ollama-embeddings": "Ollama embeddings", "local-transcription": "Local transcription server"} {
 		c, ok := GetConnector(RootDB, name)
 		if !ok || !c.Provided || c.Title() != label || c.Approved || c.ID == "" {
 			t.Errorf("%s: %+v", name, c)
 			continue
 		}
-		if s, err := Parse(c.Spec); err != nil || s.Validate() != nil || !Provides(c, "llm.chat") {
+		if s, err := Parse(c.Spec); err != nil || s.Validate() != nil || len(s.Provides) == 0 {
 			t.Errorf("%s's spec: %v", name, err)
 		}
 		if err := RemoveConnector(RootDB, name); err == nil || !strings.Contains(err.Error(), "provided with gohort") {
@@ -680,14 +625,14 @@ func TestGohortProvidesItsConnections(t *testing.T) {
 			t.Errorf("%s lost its mark on a save", name)
 		}
 	}
-	if c, _ := GetConnector(RootDB, "gemini"); c.Provided || Provides(c, "llm.chat") {
-		t.Errorf("someone's own gemini: %+v", c)
+	if c, _ := GetConnector(RootDB, "local-speech"); c.Provided || !Provides(c, "embed.text") {
+		t.Errorf("someone's own local-speech: %+v", c)
 	}
 	if n := len(ListConnectors(RootDB)); n != first {
 		t.Errorf("%d connectors after providing again, %d before", n, first)
 	}
 	for _, c := range ListConnectors(RootDB) {
-		if !c.Provided && c.Name != "gemini" {
+		if !c.Provided && c.Name != "local-speech" {
 			t.Errorf("%s was installed but not provided", c.Name)
 		}
 	}
@@ -740,26 +685,26 @@ func TestAnOutdatedConnectorHasASuccessor(t *testing.T) {
 func TestAProvidedConnectionReverts(t *testing.T) {
 	world(t)
 	ProvideConnectors(RootDB)
-	c, _ := GetConnector(RootDB, "ollama")
+	c, _ := GetConnector(RootDB, "ollama-embeddings")
 	if Modified(c) {
 		t.Fatal("a connection as shipped reads as modified")
 	}
 	SaveSettings(c, "", map[string]string{"base_url": "http://gpu.example:11434"}, nil)
-	SetConnectorDisplayName(RootDB, "ollama", "GPU box")
-	c, _ = GetConnector(RootDB, "ollama")
+	SetConnectorDisplayName(RootDB, "ollama-embeddings", "GPU box")
+	c, _ = GetConnector(RootDB, "ollama-embeddings")
 	c.Spec = json.RawMessage(strings.Replace(string(c.Spec), "/api/tags", "/api/tags2", 1))
 	if err := SaveConnector(RootDB, c); err != nil {
 		t.Fatal(err)
 	}
-	MarkChanged(RootDB, "ollama", "pat")
-	if c, _ = GetConnector(RootDB, "ollama"); !Modified(c) {
+	MarkChanged(RootDB, "ollama-embeddings", "pat")
+	if c, _ = GetConnector(RootDB, "ollama-embeddings"); !Modified(c) {
 		t.Fatal("an edited spec reads as shipped")
 	}
-	if err := Revert(RootDB, "ollama"); err != nil {
+	if err := Revert(RootDB, "ollama-embeddings"); err != nil {
 		t.Fatal(err)
 	}
-	c, _ = GetConnector(RootDB, "ollama")
-	if _, held := PendingChange(RootDB, "ollama"); Modified(c) || held || c.Title() != "GPU box" || ConnectionConfig(RootDB, c)["base_url"] != "http://gpu.example:11434" {
+	c, _ = GetConnector(RootDB, "ollama-embeddings")
+	if _, held := PendingChange(RootDB, "ollama-embeddings"); Modified(c) || held || c.Title() != "GPU box" || ConnectionConfig(RootDB, c)["base_url"] != "http://gpu.example:11434" {
 		t.Errorf("after Revert: modified %v, held %v, shown as %q, settings %v", Modified(c), held, c.Title(), ConnectionConfig(RootDB, c))
 	}
 	install(t, "mine", embedSpec("m"))
@@ -775,7 +720,7 @@ func TestAProvidedConnectionReverts(t *testing.T) {
 func TestAProvidedConnectionTakesTheSpecGohortShips(t *testing.T) {
 	world(t)
 	ProvideConnectors(RootDB)
-	c, _ := GetConnector(RootDB, "ollama")
+	c, _ := GetConnector(RootDB, "ollama-embeddings")
 	shipped := c.Spec
 	if c.Shipped == "" || c.Shipped != SpecHash(shipped) {
 		t.Fatalf("installed, it records what was shipped: %q", c.Shipped)
@@ -783,11 +728,11 @@ func TestAProvidedConnectionTakesTheSpecGohortShips(t *testing.T) {
 	SaveSettings(c, "", map[string]string{"base_url": "http://gpu.example:11434"}, nil)
 	older := json.RawMessage(strings.Replace(string(shipped), "/api/tags", "/api/tags-old", 1))
 	put := func(spec json.RawMessage, recorded string) {
-		c, _ := GetConnector(RootDB, "ollama")
+		c, _ := GetConnector(RootDB, "ollama-embeddings")
 		c.Spec, c.Shipped = spec, recorded
-		RootDB.Set("connectors", "ollama", c)
+		RootDB.Set("connectors", "ollama-embeddings", c)
 	}
-	spec := func() Connector { c, _ := GetConnector(RootDB, "ollama"); return c }
+	spec := func() Connector { c, _ := GetConnector(RootDB, "ollama-embeddings"); return c }
 
 	put(older, SpecHash(older)) // as an older gohort shipped it, unedited
 	ProvideConnectors(RootDB)
@@ -800,7 +745,7 @@ func TestAProvidedConnectionTakesTheSpecGohortShips(t *testing.T) {
 	if got := spec(); SpecHash(got.Spec) != SpecHash(edited) || !Modified(got) {
 		t.Errorf("an edited one was replaced: %s", got.Spec)
 	}
-	if err := Revert(RootDB, "ollama"); err != nil {
+	if err := Revert(RootDB, "ollama-embeddings"); err != nil {
 		t.Fatal(err)
 	}
 	if got := spec(); got.Shipped != SpecHash(shipped) || Modified(got) {
@@ -815,19 +760,19 @@ func TestAProvidedConnectionTakesTheSpecGohortShips(t *testing.T) {
 
 // A connection provided before it was given the name it is shown as is
 // named at the next start, and every way a setting writes a provider reads
-// as its proper name: the lead read "anthropic" where it meant Anthropic.
+// as its proper name.
 func TestAProvidedConnectionIsShownByItsName(t *testing.T) {
 	world(t)
 	ProvideConnectors(RootDB)
-	c, _ := GetConnector(RootDB, "anthropic")
+	c, _ := GetConnector(RootDB, "local-speech")
 	c.DisplayName = ""
 	RootDB.Set("connectors", c.Name, c)
-	if again, _ := GetConnector(RootDB, "anthropic"); again.Title() != "anthropic" {
+	if again, _ := GetConnector(RootDB, "local-speech"); again.Title() != "local-speech" {
 		t.Fatalf("the blank name did not take: %q", again.Title())
 	}
 	ProvideConnectors(RootDB)
 	for in, want := range map[string]string{
-		"service:anthropic": "Anthropic", "anthropic": "Anthropic", "openai": "OpenAI", "llama.cpp": "llama.cpp",
+		"speak:local-speech": "Local speech server", "anthropic": "Anthropic", "openai": "OpenAI", "llama.cpp": "llama.cpp",
 		"vllm": "vLLM", "bedrock": "AWS Bedrock", "peer:den": "Peer den", "local-speech": "Local speech server", "something-else": "something-else",
 	} {
 		if got := ProviderTitle(in); got != want {

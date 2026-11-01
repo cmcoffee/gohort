@@ -240,41 +240,6 @@ func (s pageSettings) testContext(ctx context.Context, name, capability string) 
 	return service.WithSecrets(service.WithConfig(ctx, values), secrets)
 }
 
-// carry is s with values given apart from the form (a tier's old address
-// and key) as connection name's settings, where the form gave none of its
-// own and the connection takes them.
-func (s pageSettings) carry(name string, values map[string]string) pageSettings {
-	c, ok := GetConnector(RootDB, name)
-	if !ok {
-		return s
-	}
-	if s == nil {
-		s = pageSettings{}
-	}
-	if s[name] == nil {
-		s[name] = map[string]string{}
-	}
-	for _, st := range service.SettingsFor(c, "llm.chat") {
-		v := strings.TrimSpace(values[st.Key])
-		if _, given := s[name][st.Key]; given || v == "" {
-			continue
-		}
-		s[name][st.Key] = v
-	}
-	return s
-}
-
-// modelForm is what the form holds for model connection name, for a Test
-// or a model list before a save, or nil with none chosen.
-func (s pageSettings) modelForm(name string) *media.ModelForm {
-	c, ok := GetConnector(RootDB, name)
-	if !ok {
-		return nil
-	}
-	values, secrets := s.split(c, "llm.chat")
-	return &media.ModelForm{Config: values, Secrets: secrets}
-}
-
 // values is what the form holds for connection name's settings for
 // capability, over what it keeps, or nil with none chosen.
 func (s pageSettings) values(name, capability string) map[string]string {
@@ -343,7 +308,7 @@ func withValues(v any, name, capability string) map[string]any {
 }
 
 // chosenConnection is the connection a provider setting names
-// ("llm:<name>", "transcribe:<name>"), or "".
+// ("transcribe:<name>", "search:<name>"), or "".
 func chosenConnection(provider string) string {
 	name, _ := media.ChosenConnection(provider)
 	return name

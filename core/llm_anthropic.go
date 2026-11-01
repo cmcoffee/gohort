@@ -124,6 +124,18 @@ func NewAnthropicLLM(apiKey string, model string) LLM {
 }
 
 // newAnthropicLLM creates an LLM client with optional APIClient.
+// at points c at endpoint, an Anthropic-compatible API's address in place of
+// Anthropic's own: its scheme and host, and any path in front of /v1.
+func (c *anthropicClient) at(endpoint string) error {
+	u, err := url.Parse(strings.TrimRight(strings.TrimSpace(endpoint), "/"))
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return fmt.Errorf("the Anthropic address %q is not an http(s) address", endpoint)
+	}
+	c.api.Server, c.api.URLScheme = u.Host, u.Scheme
+	c.pathPrefix = strings.TrimSuffix(u.Path, "/v1")
+	return nil
+}
+
 func newAnthropicLLM(apiKey string, model string, api *apiclient.APIClient) LLM {
 	if api == nil {
 		api = &apiclient.APIClient{
@@ -1195,7 +1207,7 @@ func noteIfAdaptiveThinking(model string, err error) error {
 }
 
 // anthropicModelList reads Anthropic's /v1/models, following its pages.
-func anthropicModelList(ctx context.Context, apiKey string) ([]string, error) {
+func anthropicModelList(ctx context.Context, apiKey, endpoint string) ([]string, error) {
 	if apiKey == "" {
 		return nil, Error("enter the Anthropic API key first")
 	}
@@ -1217,7 +1229,7 @@ func anthropicModelList(ctx context.Context, apiKey string) ([]string, error) {
 			req.Header.Set("x-api-key", apiKey)
 			req.Header.Set("anthropic-version", anthropicAPIVersion)
 		}
-		if err := getModelList(ctx, "anthropic", anthropicEndpoint+"/models?"+q.Encode(), auth, &result); err != nil {
+		if err := getModelList(ctx, "anthropic", chooseStr(strings.TrimRight(strings.TrimSpace(endpoint), "/"), anthropicEndpoint)+"/models?"+q.Encode(), auth, &result); err != nil {
 			return nil, err
 		}
 		for _, m := range result.Data {

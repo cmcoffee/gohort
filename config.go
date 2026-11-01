@@ -43,8 +43,10 @@ func (d dbCFG) llm() LLMProviderConfig {
 	var c LLMProviderConfig
 	global.db.Get(LLMTable, "provider", &c.Provider)
 	global.db.Get(LLMTable, "model", &c.Model)
-	global.db.Get(LLMTable, "api_key", &c.APIKey)
 	global.db.Get(LLMTable, "endpoint", &c.Endpoint)
+	if err := c.LoadKey(global.db, LLMTable); err != nil {
+		Warn("[llm] the worker tier: %v", err)
+	}
 	global.db.Get(LLMTable, "aws_region", &c.Region)
 	global.db.Get(LLMTable, "aws_profile", &c.Profile)
 	global.db.Get(LLMTable, "bedrock_api", &c.BedrockAPI)
@@ -71,8 +73,10 @@ func (d dbCFG) leadLLM() LLMProviderConfig {
 	var c LLMProviderConfig
 	global.db.Get(LeadLLMTable, "provider", &c.Provider)
 	global.db.Get(LeadLLMTable, "model", &c.Model)
-	global.db.Get(LeadLLMTable, "api_key", &c.APIKey)
 	global.db.Get(LeadLLMTable, "endpoint", &c.Endpoint)
+	if err := c.LoadKey(global.db, LeadLLMTable); err != nil {
+		Warn("[llm] the lead tier: %v", err)
+	}
 	global.db.Get(LeadLLMTable, "aws_region", &c.Region)
 	global.db.Get(LeadLLMTable, "aws_profile", &c.Profile)
 	global.db.Get(LeadLLMTable, "bedrock_api", &c.BedrockAPI)
@@ -183,16 +187,6 @@ func start_lead_llm_retry() {
 func describeLLMConfig(c LLMProviderConfig) string {
 	if c.Provider == "" {
 		return ""
-	}
-	// A connection by the name it is shown as, its model its own where the
-	// tier names none, and a local server's address.
-	if media.IsConnection(c.Provider) {
-		r := ResolvedTier(c)
-		out := ProviderTitle(c.Provider) + "/" + r.Model
-		if LocalDialect(r.Provider) && r.Endpoint != "" {
-			out += " at " + r.Endpoint
-		}
-		return out
 	}
 	out := ProviderTitle(c.Provider) + "/" + c.Model
 	switch c.Provider {

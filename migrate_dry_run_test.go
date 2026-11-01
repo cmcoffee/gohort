@@ -13,7 +13,7 @@ import (
 )
 
 // A dry run copies the database, runs the startup migrations on the copy,
-// and reports what they changed there: a tier saved as service:<name> is
+// and reports what they changed there: a search saved as service:<name> is
 // shown renamed, and the database itself is not touched.
 func TestADryRunReportsWithoutChanging(t *testing.T) {
 	dir := t.TempDir()
@@ -22,7 +22,7 @@ func TestADryRunReportsWithoutChanging(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	db.Set(LLMTable, "provider", "service:hosted")
+	db.Set(SearchTable, "provider", "service:hosted")
 	db.Close()
 	sum := func() [32]byte {
 		b, err := os.ReadFile(src)
@@ -38,7 +38,7 @@ func TestADryRunReportsWithoutChanging(t *testing.T) {
 		t.Fatal(err)
 	}
 	report := out.String()
-	for _, want := range []string{"Nothing in it was changed", "\n  llm_config\n", `~ provider: "service:hosted" -> "llm:hosted"`, "+ core:connections:v3: runs, changing 1 record(s)"} {
+	for _, want := range []string{"Nothing in it was changed", "\n  search_config\n", `~ provider: "service:hosted" -> "search:hosted"`, "+ core:connections:v3: runs, changing 1 record(s)"} {
 		if !strings.Contains(report, want) {
 			t.Errorf("the report lacks %q:\n%s", want, report)
 		}

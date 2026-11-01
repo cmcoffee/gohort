@@ -280,22 +280,6 @@ func init() {
 		Check: func(Result) error { return nil },
 		units: func(map[string]any, Result) float64 { return 1 },
 	})
-	// llm.chat is a model: what gohort's tiers run on. It is not mapped step
-	// by step like the others: its binding names the dialect gohort's own
-	// client speaks to it, and its test is a short real chat.
-	register(Contract{
-		Name:   "llm.chat",
-		About:  "A model the LLM tiers run on. It is not mapped step by step: its binding names the dialect gohort's own client speaks to it (openai, anthropic or gemini), with a default model and context.",
-		Checks: "Nothing call by call: its Test is a short real chat through the dialect's client.",
-		Where:  "Admin > LLMs > Worker LLM and Lead LLM: \"Provider\"",
-		Gives:  "LLM",
-		Inputs: []Port{
-			{Name: "model", Type: TypeText},
-			{Name: "context", Type: TypeNumber},
-		},
-		Units: []string{"token"},
-		Check: func(Result) error { return nil },
-	})
 	// file.convert turns a file into another format: from is its format as
 	// an extension (docx), to the one wanted (pdf, txt, png). What comes back
 	// is checked here only for being there; the job that asked checks it is

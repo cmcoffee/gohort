@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/cmcoffee/gohort/core/textutil"
+	"github.com/cmcoffee/snugforge/kvlite"
 	"github.com/cmcoffee/snugforge/nfo"
 )
 
@@ -1093,5 +1094,84 @@ func TestALateToolLeavesTheToolsBlockOnVLLM(t *testing.T) {
 		} else if strings.Contains(lastText, "recall_about") {
 			t.Errorf("%s: a note was added where the template already places late tools", c.provider)
 		}
+	}
+}
+
+// A tier's key goes only to the address it was given for: pointed at another
+// address it is not sent, and says so, and a key kept before keys were bound
+// to an address is not sent either. The form is told the key's last four
+// characters and where it was given, never the key. A Bedrock key that is a
+// key pair signs instead of being sent.
+func TestATiersKeyGoesOnlyWhereItWasGiven(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	official := LLMProviderConfig{Provider: "openai"}
+	official.SaveKey(db, LLMTable, "sk-0123456789abcdWXYZ")
+
+	got := official
+	if err := got.LoadKey(db, LLMTable); err != nil || got.APIKey != "sk-0123456789abcdWXYZ" {
+		t.Fatalf("at the address it was given for: %q %v", got.APIKey, err)
+	}
+	if hint := official.KeptKey(db, LLMTable); !strings.HasPrefix(hint, "ends in …WXYZ, given ") || strings.Contains(hint, "0123") {
+		t.Errorf("the saved key: %q", hint)
+	}
+
+	moved := LLMProviderConfig{Provider: "openai", Endpoint: "https://api.groq.example/openai/v1"}
+	if err := moved.LoadKey(db, LLMTable); err == nil || moved.APIKey != "" || !strings.Contains(err.Error(), "https://api.openai.com/v1") {
+		t.Errorf("pointed elsewhere: %q %v", moved.APIKey, err)
+	}
+	if hint := moved.KeptKey(db, LLMTable); !strings.Contains(hint, "not sent while the tier goes elsewhere") {
+		t.Errorf("the saved key, pointed elsewhere: %q", hint)
+	}
+
+	db.CryptSet(LeadLLMTable, "api_key", "an-old-key-kept-before")
+	old := LLMProviderConfig{Provider: "anthropic"}
+	if err := old.LoadKey(db, LeadLLMTable); err == nil || old.APIKey != "" || !strings.Contains(err.Error(), "before keys were bound") {
+		t.Errorf("a key kept before keys were bound: %q %v", old.APIKey, err)
+	}
+	if hint := old.KeptKey(db, LeadLLMTable); !strings.Contains(hint, "not sent until given again") {
+		t.Errorf("the saved old key: %q", hint)
+	}
+
+	bedrock := LLMProviderConfig{Provider: "bedrock", Region: "us-west-2"}
+	bedrock.SaveKey(db, LeadLLMTable, "AKIDEXAMPLE:secretEXAMPLEkey")
+	if err := bedrock.LoadKey(db, LeadLLMTable); err != nil || bedrock.APIKey != "" || bedrock.awsKeys == nil || bedrock.awsKeys.AccessKey != "AKIDEXAMPLE" {
+		t.Errorf("a Bedrock key pair: %q %+v %v", bedrock.APIKey, bedrock.awsKeys, err)
+	}
+}
+
+// A tier still naming a connection, which tiers no longer use, cannot run
+// and is never judged private: its blank address must not read as local.
+func TestATierStillNamingAConnectionFailsClosed(t *testing.T) {
+	if private, why := ProviderLooksPrivate("llm:anthropic", ""); private || !strings.Contains(why, "no longer use") {
+		t.Errorf("judged private: %v %q", private, why)
+	}
+	if _, err := ResolveModelProvider(LLMProviderConfig{Provider: "llm:anthropic"}, "llm:anthropic"); err == nil || !strings.Contains(err.Error(), "Admin > LLMs") {
+		t.Errorf("resolved: %v", err)
+	}
+	if private, _ := ProviderLooksPrivate("openai", "http://192.168.1.20:8000/v1"); private {
+		t.Error("OpenAI at a LAN address judged private: it may relay to the cloud")
+	}
+}
+
+// An Anthropic tier given an address speaks to that gateway, under any path
+// it has in front of /v1.
+func TestAnAnthropicTierSpeaksToItsAddress(t *testing.T) {
+	var path, key string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path, key = r.URL.Path, r.Header.Get("x-api-key")
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"id":"m1","type":"message","role":"assistant","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":3,"output_tokens":1}}`))
+	}))
+	defer srv.Close()
+	llm, err := NewLLMFromConfig(LLMProviderConfig{Provider: "anthropic", Model: "claude-x", APIKey: "gw-key", Endpoint: srv.URL + "/gateway/v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := llm.Chat(context.Background(), []Message{{Role: "user", Content: "hi"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != "/gateway/v1/messages" || key != "gw-key" || strings.TrimSpace(resp.Content) != "ok" {
+		t.Errorf("sent to %q with key %q, got %q", path, key, resp.Content)
 	}
 }

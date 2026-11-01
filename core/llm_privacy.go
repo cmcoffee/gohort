@@ -77,22 +77,11 @@ type LLMPrivacyVerdict struct {
 // one at localhost has built a proxy to a third party rather than a local
 // model. Everything else is judged by where the endpoint points.
 func ProviderLooksPrivate(provider, endpoint string) (bool, string) {
-	// A model connector keeps its address on the connector, not the tier: a
-	// tier's blank endpoint must not read as a local default. Judged by the
-	// connector's own address, and not private when it cannot be read.
+	// A tier still naming a connection (llm:<name>), which tiers no longer
+	// use, has no address here to judge: its blank endpoint must not read as
+	// a local default.
 	if name, ok := media.ChosenConnection(strings.TrimSpace(provider)); ok {
-		if media.ModelService == nil {
-			return false, "a model connector, which this build cannot read, so it cannot be judged private"
-		}
-		t, err := media.ModelService(name, false, nil)
-		if err != nil {
-			return false, "the model connector " + name + " cannot be read (" + err.Error() + "), so it cannot be judged private"
-		}
-		if !openDialects[t.Dialect] {
-			return false, "a hosted provider through the connector " + name + ": prompts leave this deployment"
-		}
-		private, why := ProviderLooksPrivate("llama.cpp", t.Endpoint)
-		return private, why + " (the connector " + name + ")"
+		return false, "the tier still names the connection " + name + ", which tiers no longer use, so it cannot be judged private: set its provider again under Admin > LLMs"
 	}
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "anthropic", "openai", "gemini", "bedrock":
@@ -196,10 +185,6 @@ func tierProviderEndpoint(table string) (provider, endpoint string) {
 	return strings.TrimSpace(provider), strings.TrimSpace(endpoint)
 }
 
-// openDialects are the model dialects spoken at any address: judged by where
-// it points, where the others are a third party's API whatever the address.
-var openDialects = map[string]bool{"openai": true, "ollama": true, "llama.cpp": true, "vllm": true}
-
 // LocalDialect reports whether a model dialect is one of the servers gohort
 // runs beside (Ollama, llama.cpp, vLLM): their queue, proxy and lending.
 func LocalDialect(dialect string) bool {
@@ -210,38 +195,23 @@ func LocalDialect(dialect string) bool {
 	return false
 }
 
-// modelDialect is the dialect gohort speaks to a tier's provider: a
-// connection's, else the provider named (a peer's is llama.cpp's), or "".
+// modelDialect is the dialect gohort speaks to a tier's provider: the
+// provider named (a peer's is llama.cpp's), or "".
 func modelDialect(provider string) string {
 	provider = strings.TrimSpace(provider)
-	if name, ok := media.ChosenConnection(provider); ok {
-		if media.ModelDialect == nil {
-			return ""
-		}
-		return media.ModelDialect(name)
-	}
 	if strings.HasPrefix(provider, peerProviderPrefix) {
 		return "llama.cpp"
 	}
 	return strings.ToLower(provider)
 }
 
-// ResolvedTier is a tier's config with its connection resolved: the dialect
-// as its provider, the connection's address and key. Anything else, or a
-// connection that cannot be read, is the config as it was.
-func ResolvedTier(cfg LLMProviderConfig) LLMProviderConfig {
-	if !media.IsConnection(strings.TrimSpace(cfg.Provider)) {
-		return cfg
-	}
-	if r, err := ResolveModelProvider(cfg, cfg.Provider); err == nil {
-		return r
-	}
-	return cfg
-}
+// providerTitles are the built-in LLM providers as people see them named.
+var providerTitles = map[string]string{"anthropic": "Anthropic", "openai": "OpenAI", "gemini": "Gemini",
+	"bedrock": "AWS Bedrock", "ollama": "Ollama", "llama.cpp": "llama.cpp", "vllm": "vLLM"}
 
-// ProviderTitle is how a tier's provider is shown to people: a connection by
-// the name it is shown as (Anthropic, not service:anthropic or anthropic), a
-// peer as Peer <name>, anything else as it is.
+// ProviderTitle is how a tier's provider is shown to people: a built-in one
+// by its name (Anthropic, not anthropic), a connection by the name it is
+// shown as, a peer as Peer <name>, anything else as it is.
 func ProviderTitle(provider string) string {
 	p := strings.TrimSpace(provider)
 	if name, ok := media.ChosenConnection(p); ok {
@@ -253,9 +223,11 @@ func ProviderTitle(provider string) string {
 	if name, ok := strings.CutPrefix(p, peerProviderPrefix); ok {
 		return "Peer " + name
 	}
-	// A connection named bare: a provider a tier named before connections
-	// (anthropic, the connection gohort provides for it), or a picture
-	// setting's connector.
+	// A tier's built-in provider by its name.
+	if t, ok := providerTitles[strings.ToLower(p)]; ok {
+		return t
+	}
+	// A connection named bare: a picture setting's connector.
 	if c, ok := GetConnector(RootDB, p); ok && p != "" {
 		return c.Title()
 	}

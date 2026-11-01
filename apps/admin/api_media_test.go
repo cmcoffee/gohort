@@ -413,37 +413,6 @@ func TestMailTakesAConnectorThatSends(t *testing.T) {
 	}
 }
 
-// The LLM tiers offer every model connector as a provider; choosing one puts
-// it to use.
-func TestLLMTiersTakeAModelConnector(t *testing.T) {
-	saved := RootDB
-	RootDB = &DBase{Store: kvlite.MemStore()}
-	t.Cleanup(func() { RootDB = saved })
-	spec := `{"provider":{"transport":"http","base_url":"https://llm.example.test/v1","auth":{"none":true},
-		"operations":{"models":{"path":"/models"}}},
-		"provides":[{"capability":"llm.chat","dialect":"openai","defaults":{"model":"fast-model"}}]}`
-	SaveConnector(RootDB, Connector{Name: "hosted", Kind: "service", Spec: json.RawMessage(spec)})
-	offered := func() bool {
-		for _, o := range LLMProviderOptions(false) {
-			if o.Value == "llm:hosted" {
-				return true
-			}
-		}
-		return false
-	}
-	a := &AdminApp{db: RootDB}
-	call := &jsonapi.Call{R: httptest.NewRequest("POST", "/api/worker-llm", nil)}
-	if !offered() {
-		t.Error("a connector no page uses yet is not offered: choosing it is what puts it to use")
-	}
-	if _, err := a.handleLLMConfigSave(LLMTable, true)(call, withSettings[llmConfigSave]{Form: llmConfigSave{Provider: "llm:hosted"}}); err != nil {
-		t.Errorf("choosing it: %v", err)
-	}
-	if c, _ := GetConnector(RootDB, "hosted"); !c.Approved {
-		t.Error("choosing it did not put it to use")
-	}
-}
-
 // A capability page's Test tries the connector chosen in its form before a
 // save puts it to use, as testing before saving needs; the test leaves it
 // out of use, and nothing outside the test reaches it.

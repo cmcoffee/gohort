@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -18,7 +19,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cmcoffee/gohort/core/media"
 	"github.com/cmcoffee/gohort/core/textutil"
 	"github.com/cmcoffee/snugforge/apiclient"
 )
@@ -1308,19 +1308,106 @@ type LLMProviderConfig struct {
 	// that should not be shown pictures. Stored as the negative so every
 	// existing configuration reads images as before.
 	NoImages bool
-	// Form, for a Test before a save, is what the tier's form holds for its
-	// model connection (provider "llm:<name>"); nil uses what the
-	// connection keeps.
-	Form *media.ModelForm
-	// awsKeys is the key pair a Bedrock model connector's credential holds,
-	// when it signs with one rather than the machine's identity: filled when
-	// the connector is resolved, never stored.
+	// awsKeys is the key pair a Bedrock tier signs with, when its key is
+	// one (ACCESS_KEY_ID:SECRET_ACCESS_KEY) rather than a bearer token:
+	// filled when the key is loaded, never stored.
 	awsKeys *awsCreds
 }
 
 // bedrockAuth is how this config's Bedrock client signs.
 func (cfg LLMProviderConfig) bedrockAuth() bedrockAuth {
 	return bedrockAuth{bearer: cfg.APIKey, profile: cfg.Profile, keys: cfg.awsKeys}
+}
+
+// --- a tier's key ---------------------------------------------------------
+//
+// A tier keeps its key in its own table, encrypted (api_key), and beside it
+// the address it was given for and when (api_key_for), as a connection keeps
+// its own: it is sent only while the tier still goes to that address, so
+// pointing a tier at another server does not carry the key there. A key kept
+// before keys were bound to an address has no api_key_for, and is not sent.
+
+// tierKeyAddress is where a provider's key goes when the tier gives no
+// address of its own.
+var tierKeyAddress = map[string]string{"anthropic": anthropicEndpoint, "openai": openAIEndpoint,
+	"gemini": geminiEndpoint, "bedrock": "bedrock"}
+
+// KeyAddress is the address the tier's key goes to: its endpoint, or its
+// provider's own.
+func (cfg LLMProviderConfig) KeyAddress() string {
+	if e := strings.TrimRight(strings.TrimSpace(cfg.Endpoint), "/"); e != "" {
+		return e
+	}
+	return tierKeyAddress[strings.ToLower(strings.TrimSpace(cfg.Provider))]
+}
+
+// SaveKey keeps key as the tier's in table, for the address it now goes to.
+func (cfg LLMProviderConfig) SaveKey(db Database, table, key string) {
+	db.CryptSet(table, "api_key", strings.TrimSpace(key))
+	db.Set(table, "api_key_for", ConnectionSecret{Addresses: []string{cfg.KeyAddress()}, Set: time.Now()})
+}
+
+// keptKey is the tier's key in table and where it was given for; given is
+// zero for a key kept before keys were bound to an address.
+func keptKey(db Database, table string) (key string, given ConnectionSecret) {
+	if db == nil || !db.Get(table, "api_key", &key) || strings.TrimSpace(key) == "" {
+		return "", given
+	}
+	db.Get(table, "api_key_for", &given)
+	return key, given
+}
+
+// LoadKey puts the tier's key from table into cfg while it was given for the
+// address the tier now goes to. A key given for another address, or kept
+// before keys were bound to one, is not sent, and the error says to give it
+// again.
+func (cfg *LLMProviderConfig) LoadKey(db Database, table string) error {
+	key, given := keptKey(db, table)
+	switch {
+	case key == "":
+		return nil
+	case len(given.Addresses) == 0:
+		return fmt.Errorf("its key was kept before keys were bound to an address: give the key again")
+	case !slices.Contains(given.Addresses, cfg.KeyAddress()):
+		return fmt.Errorf("its key was given for %s, and it now goes to %s: give the key again", strings.Join(given.Addresses, ", "), cfg.KeyAddress())
+	}
+	cfg.UseKey(key)
+	return nil
+}
+
+// KeptKey is what the tier's form says of its saved key, never the key: the
+// last four characters of a long one, the day it was given, and whether it
+// goes where the tier does. "" when none is saved.
+func (cfg LLMProviderConfig) KeptKey(db Database, table string) string {
+	key, given := keptKey(db, table)
+	if key == "" {
+		return ""
+	}
+	hint, v := "set", []rune(key)
+	if len(v) >= 16 {
+		hint = "ends in …" + string(v[len(v)-4:])
+	}
+	switch {
+	case len(given.Addresses) == 0:
+		return hint + ", kept before keys were bound to an address: not sent until given again"
+	case !given.Set.IsZero():
+		hint += ", given " + given.Set.Format("2 Jan 2006")
+	}
+	if !slices.Contains(given.Addresses, cfg.KeyAddress()) {
+		hint += ", for " + strings.Join(given.Addresses, ", ") + ": not sent while the tier goes elsewhere"
+	}
+	return hint
+}
+
+// UseKey makes key the tier's: its API key, or for Bedrock a key pair
+// (ACCESS_KEY_ID:SECRET_ACCESS_KEY) it signs with.
+func (cfg *LLMProviderConfig) UseKey(key string) {
+	cfg.APIKey, cfg.awsKeys = strings.TrimSpace(key), nil
+	if strings.EqualFold(strings.TrimSpace(cfg.Provider), "bedrock") {
+		if pair, err := awsKeyPair(key); err == nil {
+			cfg.APIKey, cfg.awsKeys = "", &pair
+		}
+	}
 }
 
 // newLLMAPIClient builds an apiclient.APIClient configured for LLM provider
@@ -1359,9 +1446,6 @@ type retryLLM struct {
 	// credential that peer REFUSES can be dropped and re-exchanged. Empty for
 	// every other provider. See peerRefused.
 	peer string
-	// service names the model connector this tier runs on (core/service,
-	// llm.chat), so each call is counted on its row. Empty otherwise.
-	service string
 	// noImages: this model is not shown images; they are described in their
 	// place (LLMProviderConfig.NoImages, the image gate in llm.go).
 	noImages bool
@@ -1538,21 +1622,7 @@ func isTransientError(err error) bool {
 }
 
 func (r *retryLLM) Chat(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error) {
-	resp, err := r.chat(ctx, messages, opts...)
-	r.noteService(resp, err)
-	return resp, err
-}
-
-// noteService records a call on the model connector the tier runs on.
-func (r *retryLLM) noteService(resp *Response, err error) {
-	if r.service == "" || media.ModelCallNote == nil {
-		return
-	}
-	in, out := 0, 0
-	if resp != nil {
-		in, out = resp.InputTokens+resp.CacheReadTokens+resp.CacheWriteTokens, resp.OutputTokens
-	}
-	media.ModelCallNote(r.service, in, out, err)
+	return r.chat(ctx, messages, opts...)
 }
 
 func (r *retryLLM) chat(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error) {
@@ -1605,9 +1675,7 @@ func (r *retryLLM) chat(ctx context.Context, messages []Message, opts ...ChatOpt
 }
 
 func (r *retryLLM) ChatStream(ctx context.Context, messages []Message, handler StreamHandler, opts ...ChatOption) (*Response, error) {
-	resp, err := r.chatStream(ctx, messages, handler, opts...)
-	r.noteService(resp, err)
-	return resp, err
+	return r.chatStream(ctx, messages, handler, opts...)
 }
 
 func (r *retryLLM) chatStream(ctx context.Context, messages []Message, handler StreamHandler, opts ...ChatOption) (*Response, error) {
@@ -1900,11 +1968,6 @@ func ProviderHasNativeTools(provider string) bool {
 	if strings.HasPrefix(strings.TrimSpace(provider), peerProviderPrefix) {
 		return true
 	}
-	// A model connection is judged by the dialect gohort speaks to it: an
-	// Ollama server's tool calling depends on its model, as Ollama's does.
-	if media.IsConnection(strings.TrimSpace(provider)) {
-		return modelDialect(provider) != "ollama"
-	}
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "anthropic", "bedrock", "openai", "gemini", "llama.cpp", "vllm":
 		return true
@@ -1929,7 +1992,6 @@ func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 	// suggest which of the two records was stale.
 	// Captured BEFORE resolution, which rewrites Provider to the concrete one.
 	peerName := peerNameFromProvider(cfg.Provider)
-	serviceName, _ := media.ChosenConnection(strings.TrimSpace(cfg.Provider))
 	resolved, err := ResolveModelProvider(cfg, cfg.Provider)
 	if err != nil {
 		return nil, Error(err.Error())
@@ -1948,14 +2010,22 @@ func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 
 	switch cfg.Provider {
 	case "anthropic":
-		if cfg.APIKey == "" {
-			return nil, Error("anthropic API key is not configured: set it in the web UI under Admin → LLMs → Worker LLM")
+		// The official API needs a key; a compatible server at an address of
+		// its own may take none.
+		if cfg.APIKey == "" && strings.TrimSpace(cfg.Endpoint) == "" {
+			return nil, Error("anthropic API key is not configured: set it in the web UI under Admin → LLMs")
 		}
 		model := cfg.Model
 		if model == "" {
 			model = "claude-sonnet-5"
 		}
 		ac := newAnthropicLLM(cfg.APIKey, model, api).(*anthropicClient)
+		// An address of its own is an Anthropic-compatible gateway's.
+		if strings.TrimSpace(cfg.Endpoint) != "" {
+			if err := ac.at(cfg.Endpoint); err != nil {
+				return nil, err
+			}
+		}
 		ac.contextSize = cfg.ContextSize
 		inner = ac
 	case "bedrock":
@@ -1989,15 +2059,17 @@ func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 			c.rt.contextSize = cfg.ContextSize
 		}
 	case "openai":
-		if cfg.APIKey == "" {
-			return nil, Error("openai API key is not configured: set it in the web UI under Admin → LLMs → Worker LLM")
+		// The official API needs a key; a compatible server at an address of
+		// its own may take none.
+		if cfg.APIKey == "" && strings.TrimSpace(cfg.Endpoint) == "" {
+			return nil, Error("openai API key is not configured: set it in the web UI under Admin → LLMs")
 		}
 		model := cfg.Model
 		if model == "" {
 			model = "gpt-4o"
 		}
-		// An address of its own is a model connector's (an OpenAI-shaped
-		// API elsewhere); the tier's own settings have none.
+		// An address of its own is an OpenAI-compatible API's (Groq,
+		// OpenRouter, a local server speaking OpenAI's API).
 		inner = newOpenAILLM(cfg.APIKey, model, chooseStr(cfg.Endpoint, openAIEndpoint), api)
 		inner.(*openAIClient).streamIdleTimeout = cfg.StreamIdleTimeout
 	case "gemini":
@@ -2100,7 +2172,7 @@ func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 		c.effort = tier
 	}
 
-	return &retryLLM{inner: inner, maxRetries: 5, peer: peerName, service: serviceName, noImages: cfg.NoImages}, nil
+	return &retryLLM{inner: inner, maxRetries: 5, peer: peerName, noImages: cfg.NoImages}, nil
 }
 
 // ListModels asks a provider which models it offers, from the same settings a
@@ -2121,7 +2193,7 @@ func ListModels(ctx context.Context, cfg LLMProviderConfig) ([]string, error) {
 	var ids []string
 	switch cfg.Provider {
 	case "anthropic":
-		ids, err = anthropicModelList(ctx, cfg.APIKey)
+		ids, err = anthropicModelList(ctx, cfg.APIKey, cfg.Endpoint)
 	case "bedrock":
 		ids, err = bedrockModelList(ctx, cfg)
 	case "gemini":

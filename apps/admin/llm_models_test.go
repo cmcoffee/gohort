@@ -49,8 +49,9 @@ func TestLLMModelsListsWithStoredKey(t *testing.T) {
 	}))
 	defer srv.Close()
 	a, call := modelsAdmin(t)
-	a.db.Set(LeadLLMTable, "api_key", "stored-lead-key")
-	a.db.Set(LLMTable, "api_key", "worker-key")
+	at := LLMProviderConfig{Provider: "vllm", Endpoint: srv.URL + "/v1"}
+	at.SaveKey(a.db, LeadLLMTable, "stored-lead-key")
+	at.SaveKey(a.db, LLMTable, "worker-key")
 
 	out := call(`{"provider":"vllm","endpoint":"` + srv.URL + `/v1","model":"something-else"}`)
 	if out["error"] != nil {

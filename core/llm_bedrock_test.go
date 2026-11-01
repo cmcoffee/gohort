@@ -1136,39 +1136,6 @@ func TestAnAWSAddressNamesItsServiceAndRegion(t *testing.T) {
 	}
 }
 
-// A model client is given an AWS credential's signing only as ModelKey gives
-// a key: a global credential, enabled, of the AWS kind, for an address it
-// allows.
-func TestAModelIsGivenAnAWSCredentialsSigning(t *testing.T) {
-	secureAPITestStore(t)
-	base := "https://bedrock-runtime.us-west-2.amazonaws.com"
-	Secure().Save(SecureCredential{Name: "bedrock_keys", Type: SecureCredAWS, BaseURL: base}, "AKID:sekrit")
-	Secure().Save(SecureCredential{Name: "bedrock_box", Type: SecureCredAWS, AWSMachine: true, AWSProfile: "prod", BaseURL: base}, "")
-	// A bearer token shaped like a key pair is still not one to sign with.
-	Secure().Save(SecureCredential{Name: "plain", Type: SecureCredBearer, BaseURL: base}, "AKIDLIKE:secret")
-	if a, err := Secure().ModelAWS("bedrock_keys", base+"/"); err != nil || a.AccessKey != "AKID" || a.SecretKey != "sekrit" || a.Region != "us-west-2" || a.Machine {
-		t.Errorf("the key pair: %+v %v", a, err)
-	}
-	if a, err := Secure().ModelAWS("bedrock_box", base+"/"); err != nil || !a.Machine || a.Profile != "prod" || a.SecretKey != "" {
-		t.Errorf("the machine: %+v %v", a, err)
-	}
-	if _, err := Secure().ModelAWS("plain", base+"/"); err == nil {
-		t.Error("a bearer credential was taken as AWS signing")
-	}
-	if _, err := Secure().ModelAWS("bedrock_keys", "https://elsewhere.example/"); err == nil {
-		t.Error("an address the credential does not allow")
-	}
-	// Each person's own key, under one global name.
-	Secure().Save(SecureCredential{Name: "theirs", Type: SecureCredAWS, CredScope: "per_user", BaseURL: base}, "AKIDTHEIRS:theirs")
-	if _, err := Secure().ModelAWS("theirs", base+"/"); err == nil {
-		t.Error("a person's credential signed for a model")
-	}
-	Secure().SetDisabled("bedrock_keys", true)
-	if _, err := Secure().ModelAWS("bedrock_keys", base+"/"); err == nil {
-		t.Error("a disabled credential")
-	}
-}
-
 // A signature covers the body, so one streamed as it is read is refused
 // rather than signed as if it were empty.
 func TestAStreamedBodyIsNotSigned(t *testing.T) {

@@ -127,13 +127,11 @@ func peerTierConfig(tier, table string) (peerServableTier, bool) {
 	db.Get(table, "provider", &t.Provider)
 	db.Get(table, "model", &t.Model)
 	db.Get(table, "endpoint", &t.Endpoint)
-	db.Get(table, "api_key", &t.APIKey)
 	db.Get(table, "context_size", &t.Context)
-	// A model connection lends as the server it reaches: its dialect, its
-	// address, its key.
-	if media.IsConnection(strings.TrimSpace(t.Provider)) {
-		r := ResolvedTier(LLMProviderConfig{Provider: t.Provider, Model: t.Model, ContextSize: t.Context})
-		t.Provider, t.Endpoint, t.APIKey = r.Provider, r.Endpoint, r.APIKey
+	// The key, only while it was given for the address the tier goes to.
+	cfg := LLMProviderConfig{Provider: t.Provider, Endpoint: t.Endpoint}
+	if cfg.LoadKey(db, table) == nil {
+		t.APIKey = cfg.APIKey
 	}
 	t.Provider = strings.ToLower(strings.TrimSpace(t.Provider))
 	if !peerLendableProviders[t.Provider] {
@@ -716,7 +714,7 @@ func peerNameFromProvider(provider string) string {
 func ResolveModelProvider(cfg LLMProviderConfig, provider string) (LLMProviderConfig, error) {
 	provider = strings.TrimSpace(provider)
 	if name, ok := media.ChosenConnection(provider); ok {
-		return resolveModelService(cfg, name)
+		return cfg, fmt.Errorf("this tier still names the connection %s, which tiers no longer use: choose its provider again under Admin > LLMs (gohort --config-report lists what it had)", name)
 	}
 	if provider == "" || !strings.HasPrefix(provider, peerProviderPrefix) {
 		return cfg, nil
@@ -745,36 +743,6 @@ func ResolveModelProvider(cfg LLMProviderConfig, provider string) (LLMProviderCo
 	// stands, and 0 (the default) takes the peer's.
 	if peerCtx := p.ModelContext(cfg.Model); peerCtx > 0 && (cfg.ContextSize <= 0 || cfg.ContextSize > peerCtx) {
 		cfg.ContextSize = peerCtx
-	}
-	return cfg, nil
-}
-
-// resolveModelService fills a tier's config from the model connector named
-// name, read fresh on every build as a peer is: the dialect's own provider,
-// the connector's address and key, and its model and context where the tier
-// sets none.
-func resolveModelService(cfg LLMProviderConfig, name string) (LLMProviderConfig, error) {
-	if media.ModelService == nil {
-		return cfg, fmt.Errorf("this tier runs on the connector %s, and this build has no connectors linked", name)
-	}
-	t, err := media.ModelService(name, true, cfg.Form)
-	if err != nil {
-		return cfg, err
-	}
-	cfg.Provider, cfg.Endpoint, cfg.APIKey = t.Dialect, t.Endpoint, t.Key
-	if t.Dialect == "bedrock" {
-		// Bedrock's API, region and signing are the connector's: its
-		// address is the host the client calls, and its credential signs.
-		cfg.BedrockAPI, cfg.Region, cfg.Profile, cfg.awsKeys = t.BedrockAPI, t.Region, t.Profile, nil
-		if t.AWSAccessKey != "" {
-			cfg.awsKeys = &awsCreds{AccessKey: t.AWSAccessKey, SecretKey: t.AWSSecretKey, Source: "the connector's credential"}
-		}
-	}
-	if strings.TrimSpace(cfg.Model) == "" {
-		cfg.Model = t.Model
-	}
-	if cfg.ContextSize <= 0 {
-		cfg.ContextSize = t.Context
 	}
 	return cfg, nil
 }
