@@ -333,13 +333,29 @@ never inferred from where the destination sits on the network.
 When DLP is taken up: the egress check interface and its hooks first (the
 LLM request path, then search and fetch), the DLP itself behind it.
 
-## The rework: reaching this design without migrations
+## The rework: reaching this design, with one migration written last
 
 **Approach.** History stays as it is (the owner declined rewriting it). On
 one branch, the code is reshaped into what would have been built the first
-time. Settings the new code does not recognise are not converted: they read
-as not set, and the owner reconfigures them by hand once, after deploying.
-No startup migration is added, and the six that exist are deleted.
+time. The six startup migrations that exist are deleted.
+
+**One migration, written last** (decided 2026-11-01). Once the design and the
+code are final, one migration is written that takes an older install into the
+final shape, from either starting point:
+
+- **before plan B** (before 30 October 2026): providers built into gohort,
+  settings on each page, keys in the tier tables and the vault;
+- **plan B** (what the owner's install runs now): provided connections,
+  `llm:` and `search:` style names, connection spaces.
+
+It covers the LLM tiers, the pages' choices, and the local servers'
+connections (`local-embeddings`, `local-transcription`, `local-speech`,
+`ollama-embeddings`), which become ordinary connections under the same names,
+so the embeddings space is kept by construction. It is tested from each
+starting point and run against a copy of the live database before deploying,
+and it is deleted a release later. Until it exists, and for anything it does
+not cover, a setting that no longer reads fails visibly and is reconfigured
+by hand, as below.
 
 ### What is taken out
 
@@ -385,9 +401,9 @@ No startup migration is added, and the six that exist are deleted.
 
 1. **The embeddings space is not lost.** If the embeddings setting no longer
    resolves to the same vector space, gohort re-embeds every collection, slow
-   and paid. The embeddings record keeps its shape and its space identity: it
-   is the one setting not reconfigured by hand. This is checked against a copy
-   of the live database before deploying.
+   and paid. The embeddings record keeps its shape and its space identity,
+   and the migration keeps its connection's name. This is checked against a
+   copy of the live database before deploying.
 2. **Stale settings fail visibly.** A value the new code does not recognise
    (`llm:anthropic`, `search:serper-search`) reads as not set, with a notice
    on its page. It never falls back to another provider. For the LLM tiers
@@ -395,8 +411,8 @@ No startup migration is added, and the six that exist are deleted.
    and the reconfiguring happen in one sitting.
 3. **Names agents use do not change:** granted tools (`generate_image_<name>`,
    search tools, `flow_<name>`), `query_source` sources, and credential
-   scopes (`connection:<name>`). Anything an agent names that no longer exists
-   is listed in the report.
+   scopes (`connection:<name>`). An agent naming something that no longer
+   exists is listed in the admin notice, as a setting needing it is.
 4. **Every security property since plan B survives,** as acceptance tests the
    branch passes before merging:
    - a key goes only to its addresses;
@@ -418,25 +434,34 @@ No startup migration is added, and the six that exist are deleted.
 - **One deploy.** The rework lands as one merge and one deploy. Intermediate
   states would make the owner reconfigure twice.
 
-### Helping the owner reconfigure
+### Reconfiguring, highlighted by gohort
 
-- **A read-only report:** `gohort --config-report` prints the old settings as
-  the exact values to type into the new forms, tier by tier, and only that a
-  key was kept, never the key (decided, Q6):
-  - each LLM tier's provider, address and model;
-  - the web search provider, the Research Sources;
-  - the image backend (ComfyUI's address; its workflow and node map,
-    exportable to paste back), the default, the agents list;
-  - transcription, speech, mail;
-  - per-user access and agent scopes;
-  - agents naming anything that no longer exists.
+Decided 2026-11-01: a reconfigure is fine where one is needed, and gohort says
+where. No report: the highlight sits where the fix is made.
 
-  The owner gathers the keys beforehand (Anthropic, OpenAI, Gemini, Serper,
-  ...), runs the report on the old build, deploys, and fills in the LLM tiers
-  first, so the window without a model is minutes. It reads the database and
-  changes nothing. It refuses while gohort runs,
-  as the dry run did, and reads only the tables it names, never an app's
-  data. It is deleted a release later.
+- **On each page:** a setting that no longer reads shows "Needs setting
+  again" and reads as not set (the LLM tiers do already, step 3). Every page
+  whose choice can go stale does the same.
+- **Across admin:** one notice listing every setting that needs it ("3
+  settings need setting again: Worker LLM, Web Search, Image Generation"),
+  each a link to its page. It goes once they are set.
+- **In the log:** the same list at start, once.
+
+**Before deploying, a checklist** (no code):
+
+1. Export all connectors (Admin > Extensions > Connectors > Export all): their
+   specs and settings, never keys, to import back if anything is lost.
+2. Note each LLM tier's provider, address and model, and have the keys ready
+   (Anthropic, OpenAI, Gemini, Serper, ...): no key is ever shown again.
+3. Keep the embeddings connection's name exactly (`local-embeddings` or the
+   one in use): it names the vector space, and another name embeds every
+   collection again. (Moot once the migration has run.)
+4. Look over agents granted image or search tools, and the credential
+   opt-outs naming a connection.
+
+Deploy, then set the LLM tiers first, so the window without a model is
+minutes, then whatever the admin notice lists.
+
 - **A cleanup button:** Admin > Maintenance > "Clear old connection records",
   pressed after reconfiguring. It removes provided connections, orphaned
   connection spaces and their keys, and finished migration markers. It is
@@ -491,7 +516,7 @@ here, per the rule that names are agreed first.
 | a page's choice of connector | plain names (`serper-search`); built-in names (`duckduckgo`, `smtp`, ...) reserved so no connector can take one; `peer:<name>` kept (decided, Q7) |
 | the compatible LLM providers | `openai_compatible`, `anthropic_compatible` (shown as "OpenAI-compatible endpoint", "Anthropic-compatible endpoint") |
 | their switches | `max_tokens_field`, `reasoning_field`, `stream_usage`, plus any the client already special-cases |
-| the reconfigure report | `gohort --config-report` |
+| the highlight | "Needs setting again" on a page; the admin notice "N settings need setting again" |
 | the cleanup | Admin > Maintenance > "Clear old connection records" |
 | a webhook's address | `/hook/<name>` |
 | a webhook's check | `verify`: `none`, `token`, `hmac`, `slack`, `graph`, `botframework` |
@@ -509,7 +534,8 @@ here, per the rule that names are agreed first.
 once:
 
 1. This document, agreed. No code.
-2. The reconfigure report, written first, against today's shapes.
+2. (Dropped: a reconfigure report, built in 29bc896c and taken out; gohort
+   highlights what needs setting again instead, built with each step.)
 3. LLM providers as built-ins, including the compatible endpoints.
 4. Provided connections, the legacy reads, the migrations, the dry run and
    `core/bbolt` taken out.
@@ -520,24 +546,26 @@ once:
    the other kinds are listed on their own pages; the Contracts page goes, its
    text shown in the connector editor.
 7. The cleanup button.
-8. The embeddings check against a copy of the live database, the security
-   acceptance tests, and the private repo's branch.
+8. The security acceptance tests and the private repo's branch.
+9. The one migration, from both starting points, written now that the rest is
+   final, and its check against a copy of the live database (the embeddings
+   space above all).
 
 **After the rework,** each its own branch, with no migration:
 
-9. Webhooks, first version: the record, `/hook/<name>`, the verifiers, and
+10. Webhooks, first version: the record, `/hook/<name>`, the verifiers, and
    two consumers, watches and flows (decided, Q4). `peer_relay` becomes a
    webhook's reach. `rest_messaging`'s push side and Bot Framework's inbound
    stay as they are until channels.
-10. Channels on connectors: `message.fetch`; Slack, Discord and Teams
+11. Channels on connectors: `message.fetch`; Slack, Discord and Teams
     templates; the channel consumer for webhooks; `rest_messaging` and Bot
     Framework move, once.
-11. Watches on connectors: `rest_poll` becomes a watch over a connector.
-12. Desktop programs (`desktop_command`, `desktop_mcp`) on a per-user Desktop
+12. Watches on connectors: `rest_poll` becomes a watch over a connector.
+13. Desktop programs (`desktop_command`, `desktop_mcp`) on a per-user Desktop
     page (decided, Q5); MCP servers and peers on their own pages with the key
     store's rules.
-13. The vault and the key store (Q3).
-14. DLP: the egress check and its hooks, then the DLP behind it; trust (Q2).
+14. The vault and the key store (Q3).
+15. DLP: the egress check and its hooks, then the DLP behind it; trust (Q2).
 
 ## Decisions (2026-11-01)
 
@@ -550,15 +578,19 @@ once:
    side and Bot Framework move once, with channels.
 4. (Q5) **Desktop programs get their own per-user page,** desktop MCP with
    them.
-5. (Q6) **The report prints the exact values to type back in,** tier by tier,
-   and the owner has the keys ready, so the window without an LLM is minutes.
-   No "restore from old settings" button: that would be migration code under
-   another name.
+5. (Q6) **Reconfiguring is highlighted where it is needed,** on each page and
+   in one admin notice, with a checklist before deploying; the owner has the
+   keys ready and sets the LLM tiers first. No report (built, then dropped),
+   and no "restore from old settings" button: that would be migration code
+   under another name.
 6. (Q7) **Pages store plain names.** Built-in names are reserved, and
    `peer:<name>` stays.
 7. **References replace "in use".** A connector has no on/off state: its
    references guard its deletion and show on its row. The call gate goes once
    every call path is checked; the Changed hold on edits stays.
+8. **One migration, written last,** from both starting points (before plan B,
+   and plan B) into the final shape, once the design and code are final.
+   Reconfiguring, highlighted, is the fallback for anything it does not cover.
 
 ## Still open
 

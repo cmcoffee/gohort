@@ -714,7 +714,7 @@ func peerNameFromProvider(provider string) string {
 func ResolveModelProvider(cfg LLMProviderConfig, provider string) (LLMProviderConfig, error) {
 	provider = strings.TrimSpace(provider)
 	if name, ok := media.ChosenConnection(provider); ok {
-		return cfg, fmt.Errorf("this tier still names the connection %s, which tiers no longer use: choose its provider again under Admin > LLMs (gohort --config-report lists what it had)", name)
+		return cfg, fmt.Errorf("this tier still names the connection %s, which tiers no longer use: choose its provider again under Admin > LLMs", name)
 	}
 	if provider == "" || !strings.HasPrefix(provider, peerProviderPrefix) {
 		return cfg, nil

@@ -115,7 +115,6 @@ func main() {
 	setup := flags.Bool("setup", "First-run setup and server settings: listen address, TLS, admin account, mail.")
 	doctor := flags.Bool("sandbox-doctor", "Report what is confining shell commands, and how to fix it.")
 	dryRun := flags.Bool("migrate-dry-run", "Run the startup data migrations on a copy of the database and report what they would change. Stop gohort first.")
-	cfgReport := flags.Bool("config-report", "Print this instance's integration settings as the values to type back in after the connector rework. Never shows a key. Stop gohort first.")
 
 	flags.Footer = " "
 
@@ -279,14 +278,6 @@ func main() {
 	// Diagnose confinement without starting the daemon. Exits non-zero when
 	// shell tools would be refused, so a provisioning run can gate on it
 	// rather than parse the report.
-	if *cfgReport {
-		if err := configReport(os.Stdout); err != nil {
-			Stderr("config-report: %s\n", err)
-			Exit(1)
-		}
-		Exit(0)
-	}
-
 	if *dryRun {
 		if err := migrationDryRun(os.Stdout); err != nil {
 			Stderr("migrate-dry-run: %s\n", err)

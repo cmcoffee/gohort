@@ -398,7 +398,7 @@ func (a *AdminApp) handleLLMConfig(table string, worker bool) func(c *jsonapi.Ca
 		// as not set, and says so: never as some other provider.
 		if name := chosenConnection(provider); name != "" {
 			out["provider"] = ""
-			out["_stale"] = "This tier named the connection " + name + ", which tiers no longer use. Choose its provider again below: gohort --config-report lists what it had."
+			out["_stale"] = "This tier named the connection " + name + ", which tiers no longer use. Choose its provider again below."
 		}
 		return out, nil
 	}
