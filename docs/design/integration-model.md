@@ -334,6 +334,11 @@ No startup migration is added, and the six that exist are deleted.
 - `--migrate-dry-run`, which existed for those migrations, and `core/bbolt`,
   which existed for the dry run.
 - The `rest_image` kind, once A1111 and peers' renderers are connectors.
+- The Contracts page (Admin > Extensions > Contracts) and `/api/contracts`
+  (decided 2026-11-01). Contracts stay as the idea under connectors, and
+  their text stays where it is read: the connector editor shows what the job
+  it fills takes and gives, Fix and Add tell the assistant, and the table in
+  `docs/integrations.md` stays.
 
 ### What is brought back or built
 
@@ -489,7 +494,8 @@ once:
    `core/bbolt` taken out.
 5. A1111 and peers' renderers as connectors; `rest_image` deleted.
 6. The Connectors page shows connectors: one editor per row, Approve gone for
-   connectors, the other kinds listed on their own pages.
+   connectors, the other kinds listed on their own pages; the Contracts page
+   goes, its text shown in the connector editor.
 7. The cleanup button.
 8. The embeddings check against a copy of the live database, the security
    acceptance tests, and the private repo's branch.
