@@ -238,3 +238,23 @@ func fromComfy(r RestImageSpec) (Spec, []string, error) {
 	}
 	return s, notes, nil
 }
+
+// credentialSend is how a vault credential sent its key, as a secret
+// setting's send.
+func credentialSend(name string) string {
+	c, ok := Secure().Load(name)
+	if !ok {
+		return "bearer"
+	}
+	switch c.Type {
+	case SecureCredHeader:
+		return "header:" + c.ParamName
+	case SecureCredQuery:
+		return "query:" + c.ParamName
+	case SecureCredBasicAuth:
+		return "basic:" + c.Username
+	case SecureCredAWS:
+		return "aws_sigv4"
+	}
+	return "bearer"
+}

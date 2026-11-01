@@ -237,50 +237,6 @@ func adaptedOf(c Connector) (flows.Adapted, error) {
 	return a, err
 }
 
-// MigrateTieIns seeds, once, the two tie-ins that had no page before every
-// approved connector was offered to agents: Image Generation's "also
-// offered to agents", with every approved image connector but the default,
-// and Music's, with every approved music connector, so agents keep what
-// they had. Then, at every start, it settles what is in use.
-func MigrateTieIns(db Database) {
-	NewMigrationRunner("core", "").Once("connectors_in_use:v1", func() int {
-		return seedTieIns(db)
-	})
-	Settle(db)
-}
-
-func seedTieIns(db Database) int {
-	if db == nil {
-		return 0
-	}
-	var def string
-	db.Get(ImageTable, "provider", &def)
-	var images, music []string
-	for _, c := range ListConnectors(db) {
-		if !c.Approved || !TieInConnector(c.Kind) {
-			continue
-		}
-		if (c.Kind == RestImageConnectorKind || Provides(c, "image.generate") || Provides(c, "image.edit")) && c.Name != strings.TrimSpace(def) {
-			images = append(images, c.Name)
-		}
-		if Provides(c, "music.generate") {
-			music = append(music, c.Name)
-		}
-	}
-	changed := 0
-	if len(images) > 0 {
-		db.Set(ImageTable, "agents", images)
-		changed++
-		Log("[migration] Image Generation offers %s to agents, as being approved did", strings.Join(images, ", "))
-	}
-	if len(music) > 0 {
-		db.Set(MusicTable, "agents", music)
-		changed++
-		Log("[migration] Music offers %s to agents, as being approved did", strings.Join(music, ", "))
-	}
-	return changed
-}
-
 type previewKey struct{}
 
 // previewMark is one preview, carried on its context: the connector,

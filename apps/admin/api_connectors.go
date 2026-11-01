@@ -121,9 +121,6 @@ func (a *AdminApp) handleConnectors(c *jsonapi.Call) (any, error) {
 		// Check is what is wrong with a connection as it is saved
 		// (service.SelfCheck), read each time the list is: fixing it clears it.
 		Check string `json:"check,omitempty"`
-		// Revertable is a connection gohort provides whose spec was changed
-		// from the one it ships (its row's Revert).
-		Revertable bool `json:"revertable,omitempty"`
 	}
 	var rows []connRow
 	uses, research := service.TieIns(RootDB), researchNamed()
@@ -133,14 +130,11 @@ func (a *AdminApp) handleConnectors(c *jsonapi.Call) (any, error) {
 			Approved: conn.Approved, LastError: conn.LastError, Template: conn.Template, IsImage: configurableImage(conn),
 			Configurable: canConfig, Webhook: connectorWebhook(conn), Fixable: service.Fixable(conn), State: "pending",
 			Endpoints: conn.Kind == service.Kind, Group: connectorGroup(conn, research, uses), GroupOpen: true,
-			Deletable: len(uses[conn.Name]) == 0 && !conn.Provided, HasSettings: conn.Kind == service.Kind,
+			Deletable: len(uses[conn.Name]) == 0, HasSettings: conn.Kind == service.Kind,
 			HasAccess: conn.Kind == service.Kind && conn.ID != ""}
 		row.Key = keptSecretsLine(conn)
 		if problems := service.SelfCheck(RootDB, conn); len(problems) > 0 {
 			row.Check = "Needs attention: " + strings.Join(problems, "; ") + "."
-		}
-		if conn.Provided {
-			row.Owner, row.Revertable = "gohort", service.Modified(conn)
 		}
 		if conn.Approved {
 			row.State = "approved"
@@ -447,8 +441,6 @@ func (a *AdminApp) handleConnectorAction(c *jsonapi.Call, body json.RawMessage) 
 		err = ApproveConnector(RootDB, name)
 	case "unapprove":
 		err = UnapproveConnector(RootDB, name)
-	case "revert":
-		err = service.Revert(RootDB, name)
 	case "update_spec":
 		// SaveConnector re-validates against the kind and, if the connector
 		// is approved, re-materializes so an edit (e.g. a rest_image

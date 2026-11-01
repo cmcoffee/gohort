@@ -2,13 +2,10 @@ package service
 
 // Source Hooks were research sources described as data in a store of their
 // own, with their own key storage and their own search code: the same thing
-// a search connector is, with a weaker engine. This moves every stored hook
-// once, at startup: an API or RAG hook becomes the search connector it
-// described (its key in a credential, its price on the binding) and a
-// Research Sources entry (its topics and agent tool), PubMed, OpenAlex and EDGAR become connectors on their built-in
-// searches, the hook that was the web search engine hands the engine to its
-// connector, and a paywall hook, which no code ever applied, becomes a
-// credential for its sites, switched off. Then the hook is gone.
+// a search connector is, with a weaker engine. A bundle exported before they
+// went still carries them: importing one makes the search connector it
+// described (HookConnector), with PubMed, OpenAlex and EDGAR on their built-in
+// searches.
 
 import (
 	"encoding/json"
@@ -17,7 +14,6 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/media"
 	"github.com/cmcoffee/gohort/core/sourcehooks"
 )
 
@@ -234,139 +230,6 @@ func paywallCredential(h sourcehooks.SourceHook) (int, error) {
 		return 0, fmt.Errorf("saving the paywall key of %s: %w", h.Name, err)
 	}
 	return 1, nil
-}
-
-// MigrateSourceHooks moves every stored Source Hook onto a connector or a
-// credential, once (Admin > Migrations shows it ran).
-func MigrateSourceHooks(db Database) {
-	NewMigrationRunner("core", "").Once("source_hooks_to_connectors:v1", func() int {
-		changed, err := migrateSourceHooks(db)
-		if err != nil {
-			// Recorded on the marker, where Admin > Migrations shows it.
-			panic(fmt.Sprintf("Source Hooks were not all moved to connectors: %v", err))
-		}
-		return changed
-	})
-}
-
-// migrateSourceHooks is MigrateSourceHooks' work. A hook that cannot move
-// (an API hook with no endpoint) is logged and removed: it never answered.
-// It reports how many records it changed.
-func migrateSourceHooks(db Database) (int, error) {
-	if db == nil {
-		return 0, nil
-	}
-	var engine, engineHook string
-	db.Get(SearchTable, "provider", &engine)
-	db.Get(SearchTable, "hook", &engineHook)
-	total := 0
-	for _, key := range db.Keys(sourceHookTable) {
-		if strings.HasSuffix(key, "_auth") {
-			continue
-		}
-		var h sourcehooks.SourceHook
-		if !db.Get(sourceHookTable, key, &h) {
-			continue
-		}
-		db.Get(sourceHookTable, key+"_auth", &h.AuthKey)
-		if h.Type == sourcehooks.HookTypePaywall {
-			n, err := paywallCredential(h)
-			total += n
-			if err != nil {
-				return total, err
-			}
-		} else {
-			name, n, err := HookConnector(db, h, !h.Disabled, "Source Hook "+h.Name)
-			total += n
-			if err != nil {
-				Log("[migration] the Source Hook %s was not moved, and is removed: %v", h.Name, err)
-			} else {
-				Log("[migration] the Source Hook %s is now the search connector %s", h.Name, name)
-				if engine == "hook" && strings.EqualFold(strings.TrimSpace(engineHook), strings.TrimSpace(h.Name)) {
-					db.Set(SearchTable, "provider", media.Choice(media.JobSearch, name))
-					db.Unset(SearchTable, "hook")
-					total++
-					Log("[migration] web search now comes from connector %s", name)
-				}
-			}
-		}
-		db.Unset(sourceHookTable, key)
-		db.Unset(sourceHookTable, key+"_auth")
-		total++
-	}
-	return total, nil
-}
-
-// MigrateResearchSettings moves a search connector's research topics and
-// agent tool, which its spec held before they became the Research Sources
-// tie-in, into a Research Sources entry, once, and takes them out of the
-// spec. The entry is on when the connector was approved.
-func MigrateResearchSettings(db Database) {
-	NewMigrationRunner("core", "").Once("search_research_to_sources:v1", func() int {
-		changed, err := migrateResearchSettings(db)
-		if err != nil {
-			// Recorded on the marker, where Admin > Migrations shows it.
-			panic(fmt.Sprintf("research settings were not all moved to Research Sources: %v", err))
-		}
-		return changed
-	})
-}
-
-func migrateResearchSettings(db Database) (int, error) {
-	total := 0
-	for _, c := range ListConnectors(db) {
-		if c.Kind != Kind {
-			continue
-		}
-		var spec map[string]any
-		if json.Unmarshal(c.Spec, &spec) != nil {
-			continue
-		}
-		provides, _ := spec["provides"].([]any)
-		rs := ResearchSource{Connector: c.Name, Off: !c.Approved}
-		found := false
-		for _, p := range provides {
-			b, ok := p.(map[string]any)
-			if !ok {
-				continue
-			}
-			if r, ok := b["research"].(map[string]any); ok {
-				found = true
-				rs.Always, _ = r["always"].(bool)
-				if ts, ok := r["topics"].([]any); ok {
-					for _, t := range ts {
-						rs.Topics = append(rs.Topics, fmt.Sprint(t))
-					}
-				}
-			}
-			if t, ok := b["tool"].(map[string]any); ok {
-				found = true
-				rs.ToolName, _ = t["name"].(string)
-				rs.ToolDescription, _ = t["description"].(string)
-			}
-			delete(b, "research")
-			delete(b, "tool")
-		}
-		if !found {
-			continue
-		}
-		raw, err := json.Marshal(spec)
-		if err != nil {
-			return total, err
-		}
-		c.Spec = raw
-		if err := SaveConnector(db, c); err != nil {
-			return total, fmt.Errorf("connector %s: %w", c.Name, err)
-		}
-		total++
-		if err := SaveResearchSource(db, rs); err != nil {
-			Log("[migration] connector %s's research settings were not kept: %v", c.Name, err)
-			continue
-		}
-		total++
-		Log("[migration] connector %s is now a research source (its topics and tool moved out of its spec)", c.Name)
-	}
-	return total, nil
 }
 
 // u2host is the host of an address.

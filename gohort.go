@@ -21,6 +21,7 @@ import (
 	"github.com/cmcoffee/gohort/apps/ollama_proxy"
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/netgate"
+	"github.com/cmcoffee/gohort/core/service"
 	"github.com/cmcoffee/gohort/core/tlsconf"
 
 	"github.com/cmcoffee/snugforge/eflag"
@@ -114,7 +115,6 @@ func main() {
 	version := flags.Bool("version", "")
 	setup := flags.Bool("setup", "First-run setup and server settings: listen address, TLS, admin account, mail.")
 	doctor := flags.Bool("sandbox-doctor", "Report what is confining shell commands, and how to fix it.")
-	dryRun := flags.Bool("migrate-dry-run", "Run the startup data migrations on a copy of the database and report what they would change. Stop gohort first.")
 
 	flags.Footer = " "
 
@@ -278,14 +278,6 @@ func main() {
 	// Diagnose confinement without starting the daemon. Exits non-zero when
 	// shell tools would be refused, so a provisioning run can gate on it
 	// rather than parse the report.
-	if *dryRun {
-		if err := migrationDryRun(os.Stdout); err != nil {
-			Stderr("migrate-dry-run: %s\n", err)
-			Exit(1)
-		}
-		Exit(0)
-	}
-
 	if *doctor {
 		report, ok := SandboxDoctor()
 		Stdout("%s", report)
@@ -391,8 +383,10 @@ func main() {
 
 		// Wire auth database.
 		AuthDB = func() Database { return global.db }
-		// They need the credential store just wired, for a key a hook held.
-		runStartupMigrations(global.db)
+		// Which connections pages reference, and what is wrong with a saved
+		// one, in the log now rather than when a call first meets it.
+		service.Settle(global.db)
+		service.LogSelfCheck(global.db)
 
 		AuthEnabled = func() bool { return AuthHasUsers(global.db) }
 		AuthSignupAllowed = func() bool {

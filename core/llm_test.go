@@ -1151,6 +1151,20 @@ func TestATierStillNamingAConnectionFailsClosed(t *testing.T) {
 	if private, _ := ProviderLooksPrivate("openai", "http://192.168.1.20:8000/v1"); private {
 		t.Error("OpenAI at a LAN address judged private: it may relay to the cloud")
 	}
+	// A setting still in the oldest spelling fails closed too.
+	if private, _ := ProviderLooksPrivate("service:anthropic", ""); private {
+		t.Error("a service: setting judged private")
+	}
+	// No address is local only for a local server, whose default is.
+	if private, _ := ProviderLooksPrivate("something-else", ""); private {
+		t.Error("an unknown provider with no address judged private")
+	}
+	if private, _ := ProviderLooksPrivate("ollama", ""); !private {
+		t.Error("Ollama on its default address judged not private")
+	}
+	if private, _ := ProviderLooksPrivate("", ""); !private {
+		t.Error("a tier with nothing set judged as reaching a third party")
+	}
 }
 
 // An Anthropic tier given an address speaks to that gateway, under any path

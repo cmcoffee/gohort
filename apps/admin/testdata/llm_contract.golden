@@ -19,7 +19,7 @@ root PUT /api/routing?app=/zz_contract "{}"
 alice GET /api/llm-privacy ""
   403 forbidden
 root GET /api/llm-privacy ""
-  200 {"advice":"Worker: (unset) - private (local by default (no endpoint configured))\nLead: (unset) - private (not configured: lead stages run on the worker model)\n\nBoth tiers look local, so turning this on is consistent with how the deployment is configured.","all_private":false,"recommended":true}
+  200 {"advice":"Worker: (unset) - private (not configured: nothing is sent anywhere)\nLead: (unset) - private (not configured: lead stages run on the worker model)\n\nBoth tiers look local, so turning this on is consistent with how the deployment is configured.","all_private":false,"recommended":true}
 root PUT /api/llm-privacy "{}"
   405 method not allowed
 (signed out) GET /api/worker-thinking ""
@@ -111,7 +111,7 @@ alice POST /api/llm-privacy "{\"all_private\":true}"
 root POST /api/llm-privacy "{\"all_private\":true}"
   204 
 root GET /api/llm-privacy ""
-  200 {"advice":"Worker: (unset) - private (local by default (no endpoint configured))\nLead: (unset) - private (not configured: lead stages run on the worker model)\n\nBoth tiers look local, so turning this on is consistent with how the deployment is configured.","all_private":true,"recommended":true}
+  200 {"advice":"Worker: (unset) - private (not configured: nothing is sent anywhere)\nLead: (unset) - private (not configured: lead stages run on the worker model)\n\nBoth tiers look local, so turning this on is consistent with how the deployment is configured.","all_private":true,"recommended":true}
 root POST /api/routing "{\"key\":\"zz_contract.private\",\"value\":\"lead\"}"
   204 
 root GET /api/routing?app=/zz_contract ""

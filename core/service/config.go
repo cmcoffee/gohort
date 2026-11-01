@@ -23,7 +23,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
-	"reflect"
 	"regexp"
 	"slices"
 	"sort"
@@ -31,7 +30,6 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/recipes"
 )
 
 // ConfigField is one setting a connection takes.
@@ -909,160 +907,4 @@ func optionValues(node any) []string {
 		}
 	}
 	return out
-}
-
-// Outdated reports whether connector c was made before a connection kept
-// its own settings and key: it sends its key with a vault credential, or its
-// template now takes as settings what its spec has written in (an address, a
-// model). It is added again from its template, or replaced by the one gohort
-// provides (Successor).
-func Outdated(c Connector) bool {
-	if c.Kind != Kind {
-		return false
-	}
-	s, err := Parse(c.Spec)
-	if err != nil {
-		return false
-	}
-	if strings.TrimSpace(s.Provider.Auth.Credential) != "" {
-		return true
-	}
-	if movedFromSettings(c) && len(s.settings()) == 0 {
-		return true
-	}
-	if c.Provided || c.Template == "" || len(s.settings()) > 0 {
-		return false
-	}
-	t, ok := builtinSpec(c.Template)
-	return ok && len(t.settings()) > 0
-}
-
-// movedFromSettings reports whether connector c is one this instance's own
-// embedder, transcriber or speaker had its settings moved onto, before
-// connections kept their own: made by no template or person, and saying so.
-func movedFromSettings(c Connector) bool {
-	return c.Kind == Kind && c.Template == "" && c.Owner == "" && strings.Contains(c.Desc, "moved here from the ")
-}
-
-// ownServerFor is the local server connection gohort provides for what a
-// connector moved from the settings did: Ollama's own embeddings API (an
-// address under /api), or an OpenAI-shaped server's.
-func ownServerFor(s Spec) string {
-	for _, b := range s.Provides {
-		switch b.Capability {
-		case "embed.text":
-			if strings.HasSuffix(strings.TrimRight(s.Provider.BaseURL, "/"), "/api") {
-				return "ollama-embeddings"
-			}
-			return "local-embeddings"
-		case "speech.transcribe":
-			return "local-transcription"
-		case "speech.synthesize":
-			return "local-speech"
-		}
-	}
-	return ""
-}
-
-// builtinSpec is the spec built-in template id makes, parsed.
-func builtinSpec(id string) (Spec, bool) {
-	raw, ok := recipes.TemplateConnectorSpec(id)
-	if !ok {
-		return Spec{}, false
-	}
-	s, err := Parse(raw)
-	return s, err == nil
-}
-
-// Successor is the connection gohort provides in place of c, an outdated
-// connector made from the same template, and what to carry over from c as
-// its settings: the address and model c has written in, where the provided
-// one takes them. "" when c is current, or nothing provided stands in.
-func Successor(c Connector) (string, map[string]string) {
-	if !Outdated(c) {
-		return "", nil
-	}
-	old, err := Parse(c.Spec)
-	if err != nil {
-		return "", nil
-	}
-	var next Connector
-	switch {
-	case c.Template != "":
-		for _, p := range ListConnectors(RootDB) {
-			if p.Provided && p.Template == c.Template && p.Name != c.Name {
-				next = p
-				break
-			}
-		}
-	case movedFromSettings(c):
-		if p, ok := GetConnector(RootDB, ownServerFor(old)); ok && p.Provided {
-			next = p
-		}
-	}
-	if next.Name == "" {
-		return "", nil
-	}
-	ns, err := Parse(next.Spec)
-	if err != nil {
-		return "", nil
-	}
-	// A key it sends that the provided one cannot: it is made again where it
-	// is instead, so its calls keep their key.
-	if _, keyed := ns.secretField(); strings.TrimSpace(old.Provider.Auth.Credential) != "" && !keyed {
-		return "", nil
-	}
-	carry := carryOver(old, ns)
-	if next.Name == "ollama-embeddings" {
-		carry["base_url"] = strings.TrimSuffix(strings.TrimRight(carry["base_url"], "/"), "/api")
-	}
-	return next.Name, carry
-}
-
-// KeyInVault reports whether connector c sends its key with a vault
-// credential, which no connection does: it no longer runs.
-func KeyInVault(c Connector) bool {
-	if c.Kind != Kind {
-		return false
-	}
-	s, err := Parse(c.Spec)
-	return err == nil && strings.TrimSpace(s.Provider.Auth.Credential) != ""
-}
-
-// Modified reports whether a connection gohort provides has a spec other
-// than the one it ships (an Edit spec, a Fix): what Revert puts back.
-func Modified(c Connector) bool {
-	if !c.Provided {
-		return false
-	}
-	shipped, ok := recipes.ProvidedSpec(c.Name)
-	if !ok {
-		return false
-	}
-	var a, b any
-	if json.Unmarshal(shipped, &a) != nil || json.Unmarshal(c.Spec, &b) != nil {
-		return false
-	}
-	return !reflect.DeepEqual(a, b)
-}
-
-// Revert puts back the spec gohort ships for the connection it provides as
-// name, and ends any hold a change put on it: its settings, its key and the
-// name it is shown as stay.
-func Revert(db Database, name string) error {
-	c, ok := GetConnector(db, name)
-	if !ok || !c.Provided {
-		return fmt.Errorf("%s is not a connection gohort provides: it has no spec of gohort's to go back to", name)
-	}
-	shipped, ok := recipes.ProvidedSpec(name)
-	if !ok {
-		return fmt.Errorf("gohort no longer ships a spec for %s", name)
-	}
-	c.Spec = shipped
-	if err := SaveConnector(db, c); err != nil {
-		return fmt.Errorf("reverting %s: %w", name, err)
-	}
-	MarkConnectorProvided(db, name, "", SpecHash(shipped))
-	db.Unset(connectorReviewTable, name)
-	return nil
 }

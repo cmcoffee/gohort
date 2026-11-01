@@ -115,55 +115,6 @@ func TestAChangeIsHeldUntilAnAdministratorAccepts(t *testing.T) {
 	}
 }
 
-// Once, the image and music connectors that were approved are offered to
-// agents, so they keep what being approved gave them: every image one but
-// the default, which agents already reach.
-func TestTheFirstStartOffersWhatWasApproved(t *testing.T) {
-	world(t)
-	music := map[string]any{
-		"provider": map[string]any{"transport": "http", "base_url": "https://song.example.test", "auth": map[string]any{"none": true},
-			"operations": map[string]any{"song": map[string]any{"method": "POST", "path": "/song", "body": map[string]any{"prompt": "{prompt}"}, "read": "file"}}},
-		"provides": []any{map[string]any{"capability": "music.generate", "steps": []any{map[string]any{"call": "song"}},
-			"output": map[string]any{"audio": map[string]any{"from": "body"}}}},
-	}
-	install(t, "tunes", music)
-	img := map[string]any{
-		"provider": map[string]any{"transport": "http", "base_url": "https://img.example.test", "auth": map[string]any{"none": true},
-			"operations": map[string]any{"draw": map[string]any{"method": "POST", "path": "/draw", "body": map[string]any{"prompt": "{prompt}"}}}},
-		"provides": []any{map[string]any{"capability": "image.generate", "steps": []any{map[string]any{"call": "draw"}},
-			"output": map[string]any{"image": map[string]any{"path": "b64", "as": "base64"}}}},
-	}
-	install(t, "sketcher", img)
-	install(t, "painter", img)
-	raw, _ := json.Marshal(img)
-	if err := SaveConnector(RootDB, Connector{Name: "unused-art", Kind: Kind, Spec: raw}); err != nil {
-		t.Fatal(err)
-	}
-	RootDB.Set(ImageTable, "provider", "painter")
-	MigrateTieIns(RootDB)
-	var images, songs []string
-	RootDB.Get(ImageTable, "agents", &images)
-	RootDB.Get(MusicTable, "agents", &songs)
-	if !slices.Equal(images, []string{"sketcher"}) || !slices.Equal(songs, []string{"tunes"}) {
-		t.Errorf("offered to agents: images %v, music %v", images, songs)
-	}
-	for _, n := range []string{"tunes", "sketcher", "painter"} {
-		if !inUse(n) {
-			t.Errorf("%s was approved and is offered or the default, but out of use", n)
-		}
-	}
-	if inUse("unused-art") {
-		t.Error("an unapproved connector came into use")
-	}
-	// Once: taken off the list afterwards, it is not put back.
-	RootDB.Set(ImageTable, "agents", []string{})
-	MigrateTieIns(RootDB)
-	RootDB.Get(ImageTable, "agents", &images)
-	if len(images) != 0 || inUse("sketcher") {
-		t.Errorf("the seed ran twice: %v, in use %v", images, inUse("sketcher"))
-	}
-}
-
 // An administrator's test on a settings page reaches the connector its form
 // names before a save puts it to use, and only that test does: a call
 // without its context, or of another connector, is still refused.

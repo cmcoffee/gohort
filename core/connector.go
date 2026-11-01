@@ -22,7 +22,6 @@ package core
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -60,8 +59,6 @@ type Connector struct {
 	Created   time.Time       `json:"created"`
 	Updated   time.Time       `json:"updated"`
 	LastError string          `json:"last_error,omitempty"` // last materialize failure
-	Provided  bool            `json:"provided,omitempty"`   // gohort provides it (ProvideConnectors): installed at startup, never deleted; set only by MarkConnectorProvided
-	Shipped   string          `json:"shipped,omitempty"`    // a provided one's SpecHash as gohort last shipped it: what tells an unedited spec from an edited one; set only by code
 }
 
 // --- kind registry -----------------------------------------------------------
@@ -254,11 +251,11 @@ func saveConnector(db Database, c Connector, autoApprove bool) error {
 	if existed {
 		c.Created = prev.Created
 		c.Approved = prev.Approved // approval only changes via Approve/Unapprove
-		c.ID, c.Provided, c.Shipped = prev.ID, prev.Provided, prev.Shipped
+		c.ID = prev.ID
 	} else {
 		c.Created = now
 		c.Approved = false
-		c.ID, c.Provided, c.Shipped = "", false, ""
+		c.ID = ""
 	}
 	if c.ID == "" {
 		c.ID = newConnectionID()
@@ -331,9 +328,6 @@ func DeleteConnector(db Database, name string) error {
 	if !ok {
 		return nil
 	}
-	if c.Provided {
-		return fmt.Errorf("%s is provided with gohort, so it stays: set it up, or leave it unused", name)
-	}
 	if h, ok := ConnectorHandlerFor(c.Kind); ok {
 		_ = h.Teardown(c)
 	}
@@ -383,41 +377,6 @@ func FreeDisplayName(db Database, name, display string) string {
 		}
 	}
 	return display
-}
-
-// ProvideConnectors, when set, installs the connections gohort provides
-// that are not here yet (core/recipes): the choices a page offers by
-// default. Called once at startup.
-var ProvideConnectors func(db Database)
-
-// MarkConnectorProvided marks connector name as one gohort provides, shown
-// as label (blank keeps the name it is shown as), its spec as gohort
-// shipped it hashing to shipped: kept at startup, and never deleted.
-func MarkConnectorProvided(db Database, name, label, shipped string) error {
-	c, ok := GetConnector(db, name)
-	if !ok {
-		return fmt.Errorf("no connector named %q", name)
-	}
-	c.Provided, c.Shipped = true, shipped
-	if label = strings.TrimSpace(label); label != "" {
-		c.DisplayName = label
-	}
-	c.Updated = time.Now()
-	db.Set(connectorsTable, c.Name, c)
-	return nil
-}
-
-// SpecHash is a spec's fingerprint, the same however its JSON is spaced or
-// ordered: what tells whether a provided connection's spec is the one gohort
-// shipped.
-func SpecHash(spec json.RawMessage) string {
-	var v any
-	if json.Unmarshal(spec, &v) != nil {
-		return ""
-	}
-	canon, _ := json.Marshal(v)
-	sum := sha256.Sum256(canon)
-	return hex.EncodeToString(sum[:12])
 }
 
 // ReloadApprovedConnectors re-materializes every approved connector

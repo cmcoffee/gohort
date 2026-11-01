@@ -85,10 +85,6 @@ type Recipe struct {
 	SetupNotes  string         `json:"setup_notes,omitempty"`
 	Questions   []Question     `json:"questions,omitempty"`
 	Bundle      core.ArtifactBundle `json:"bundle"`
-	// Provided, on a built-in, installs the connection it makes at startup
-	// under Name, shown as Label, locked against deletion: a choice a page
-	// offers by default.
-	Provided *Provided `json:"provided,omitempty"`
 	// Set on the stored copy of an imported or saved template.
 	By    string    `json:"by,omitempty"`
 	Added time.Time `json:"added,omitempty"`
@@ -810,37 +806,6 @@ func Save(db core.Database, meta Recipe, sels []core.ArtifactSel, questions []Sa
 	return meta, nil
 }
 
-// Provided is how a built-in template's connection is provided: its name,
-// and what a page's choices call it.
-type Provided struct {
-	Name  string `json:"name"`
-	Label string `json:"label"`
-}
-
-func init() { core.ProvideConnectors = installProvided }
-
-// ProvidedTemplate is the built-in template gohort provides its connection
-// name from, or "".
-func ProvidedTemplate(name string) string {
-	for _, r := range builtins() {
-		if r.Provided != nil && r.Provided.Name == name {
-			return r.ID
-		}
-	}
-	return ""
-}
-
-// ProvidedSpec is the spec gohort ships for the connection it provides as
-// name, as installing it made it.
-func ProvidedSpec(name string) (json.RawMessage, bool) {
-	for _, r := range builtins() {
-		if r.Provided != nil && r.Provided.Name == name {
-			return connectorSpec(r, map[string]string{"name": name})
-		}
-	}
-	return nil, false
-}
-
 // TemplateConnectorSpec is the spec of the connector built-in template id
 // makes, its install questions answered with their defaults: what a
 // connection made from it now declares.
@@ -873,70 +838,3 @@ func connectorSpec(r Recipe, answers map[string]string) (json.RawMessage, bool) 
 	return nil, false
 }
 
-// installProvided installs each provided connection that is not here yet,
-// as the deployment's, and marks it provided. A connector of that name made
-// by someone else is left as it is.
-func installProvided(db core.Database) {
-	for _, r := range builtins() {
-		p := r.Provided
-		if p == nil || strings.TrimSpace(p.Name) == "" {
-			continue
-		}
-		shipped, ok := connectorSpec(r, map[string]string{"name": p.Name})
-		if !ok {
-			continue
-		}
-		if c, ok := core.GetConnector(db, p.Name); ok {
-			if !c.Provided {
-				core.Log("[recipes] %s is gohort's %s, but a connector by that name is here already: it is left as it is", p.Name, p.Label)
-				continue
-			}
-			refreshProvided(db, c, shipped)
-			// One provided before it was given the name it is shown as
-			// showed its bare name (anthropic) everywhere a tier is named.
-			if strings.TrimSpace(c.DisplayName) == "" && strings.TrimSpace(p.Label) != "" {
-				if err := core.SetConnectorDisplayName(db, c.Name, p.Label); err != nil {
-					core.Log("[recipes] naming %s %q: %v", c.Name, p.Label, err)
-				}
-			}
-			continue
-		}
-		res, err := Install(db, r.ID, "", map[string]string{"name": p.Name})
-		if err != nil || res.Imported == 0 {
-			core.Log("[recipes] providing %s: %v %v", p.Name, err, res.Warnings)
-			continue
-		}
-		if err := core.MarkConnectorProvided(db, p.Name, p.Label, core.SpecHash(shipped)); err != nil {
-			core.Log("[recipes] providing %s: %v", p.Name, err)
-		}
-	}
-}
-
-// refreshProvided brings provided connection c to the spec gohort ships now
-// (shipped), when nobody has edited it since gohort last shipped it: a fix
-// in a template reaches the connections made from it. One edited keeps its
-// spec; Revert on its row takes the one shipped. Its settings, key and the
-// name it is shown as are its own either way. One provided before gohort
-// recorded what it shipped counts as unedited.
-func refreshProvided(db core.Database, c core.Connector, shipped json.RawMessage) {
-	now := core.SpecHash(shipped)
-	if now == "" || c.Shipped == now {
-		return
-	}
-	current := core.SpecHash(c.Spec)
-	if current == now {
-		core.MarkConnectorProvided(db, c.Name, "", now)
-		return
-	}
-	if c.Shipped != "" && current != c.Shipped {
-		core.Log("[recipes] gohort ships a newer spec for %s, which was edited here: it keeps its own; Revert on its row takes the new one", c.Name)
-		return
-	}
-	c.Spec = shipped
-	if err := core.SaveConnector(db, c); err != nil {
-		core.Log("[recipes] %s could not take the spec gohort ships now: %v", c.Name, err)
-		return
-	}
-	core.MarkConnectorProvided(db, c.Name, "", now)
-	core.Log("[recipes] %s now has the spec gohort ships", c.Name)
-}

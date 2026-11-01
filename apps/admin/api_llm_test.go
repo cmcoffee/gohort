@@ -12,8 +12,7 @@ import (
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
-// providedWorld is a store holding the connections gohort provides, as
-// startup installs them.
+// providedWorld is an empty store, as a fresh install starts.
 func providedWorld(t *testing.T) {
 	t.Helper()
 	saved, savedAuth := RootDB, AuthDB
@@ -21,7 +20,6 @@ func providedWorld(t *testing.T) {
 	adb := &DBase{Store: kvlite.MemStore()}
 	AuthDB = func() Database { return adb }
 	t.Cleanup(func() { RootDB, AuthDB = saved, savedAuth })
-	ProvideConnectors(RootDB)
 }
 
 // tierSave posts a tier's form as the page does.

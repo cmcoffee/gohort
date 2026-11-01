@@ -124,8 +124,8 @@ type Binding struct {
 	Cost *Cost          `json:"cost,omitempty"`
 	// Research and Tool were how a search was offered to research and to
 	// agents, before that moved to its tie-in, Admin > Research Sources. A
-	// spec saved with them is read, so the move can take them out
-	// (MigrateResearchSettings); a spec saving them is refused.
+	// spec saved with them is read, so the migration can take them out; a
+	// spec saving them is refused.
 	Research *ResearchUse `json:"research,omitempty"`
 	Tool     *ToolUse     `json:"tool,omitempty"`
 	// Plain, for a search, takes a query's site: filters out before it is

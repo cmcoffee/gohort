@@ -95,6 +95,11 @@ func TestASettingNamesItsConnectionForItsJob(t *testing.T) {
 	if got := ChoiceFor("speech.transcribe", "local-transcription"); got != "transcribe:local-transcription" {
 		t.Errorf("transcription's choice = %q", got)
 	}
+	// Chosen for something with no job of its own, it is its plain name:
+	// never the service: spelling, which is only read.
+	if got := ChoiceFor("image.generate", "studio"); got != "studio" {
+		t.Errorf("an image backend's choice = %q", got)
+	}
 	for _, v := range []string{"llm:anthropic", "service:anthropic", " embed:anthropic "} {
 		if name, ok := ChosenConnection(v); !ok || name != "anthropic" {
 			t.Errorf("ChosenConnection(%q) = %q %v", v, name, ok)

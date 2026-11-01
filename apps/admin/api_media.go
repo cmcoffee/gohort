@@ -81,7 +81,7 @@ func (a *AdminApp) handleEmbeddings(c *jsonapi.Call) (any, error) {
 	// Where embeddings are made is the connector or peer named: its key is
 	// its own, never shown here.
 	cfg.APIKey = ""
-	return withSuccessor(withValues(cfg, chosenConnection(cfg.Provider), "embed.text"), "provider", "embed.text"), nil
+	return withValues(cfg, chosenConnection(cfg.Provider), "embed.text"), nil
 }
 
 // handleEmbeddingsSave persists the embeddings config and reinstalls it live.
@@ -166,7 +166,7 @@ func (a *AdminApp) handleTranscribe(c *jsonapi.Call) (any, error) {
 	// What transcribes is the connector or peer named: its key is its own,
 	// never shown here.
 	cfg.APIKey = ""
-	return withSuccessor(withValues(cfg, chosenConnection(cfg.Provider), "speech.transcribe"), "provider", "speech.transcribe"), nil
+	return withValues(cfg, chosenConnection(cfg.Provider), "speech.transcribe"), nil
 }
 
 // handleTranscribeSave persists the transcription config and reinstalls it
@@ -220,7 +220,7 @@ func (a *AdminApp) handleSpeech(c *jsonapi.Call) (any, error) {
 	// What speaks is the connector or peer named: its key is its own, never
 	// shown here.
 	cfg.APIKey = ""
-	return withSuccessor(withValues(cfg, chosenConnection(cfg.Provider), "speech.synthesize"), "provider", "speech.synthesize"), nil
+	return withValues(cfg, chosenConnection(cfg.Provider), "speech.synthesize"), nil
 }
 
 // handleSpeechSave persists the speech config and installs it live.
@@ -512,39 +512,19 @@ func serviceProviderOK(provider, capability string) error {
 // it here is what puts it to use. One changed since it was put to use says
 // so: saving the page with it chosen accepts the change.
 func serviceProviderOptions(capability, verb string) []ui.SelectOption {
-	var provided, others []ui.SelectOption
+	var out []ui.SelectOption
 	for _, c := range ListConnectors(RootDB) {
-		if c.Kind == service.Kind && service.Provides(c, capability) {
-			// One gohort provides a connection in place of is not offered:
-			// the page shows that one instead (withSuccessor).
-			if next, _ := service.Successor(c); next != "" {
-				continue
-			}
-			label, help := connectorLabel(c), verb+" with "+c.Title()+": "+ConnectorSummary(c)+"."
-			if c.Provided {
-				help = verb + " with " + c.Title() + ", provided with gohort: give its key and settings below, then save."
-			}
-			switch {
-			case service.KeyInVault(c):
-				label += " (no longer runs: add it again)"
-				help = c.Name + " sends its key with a vault credential, as connectors did before a connection kept its own: it no longer runs. Add it again from its template, or choose the one gohort provides."
-			case service.Outdated(c):
-				label += " (older: its address is written into its spec)"
-				help = c.Name + " was made before a connection kept its own settings: its address and model are written into its spec, so they are not set here. It still runs; choose the one gohort provides to set them here."
-			}
-			if ch, ok := service.PendingChange(RootDB, c.Name); ok {
-				label += " (changed, waiting to be accepted)"
-				help += " " + changedNote(ch)
-			}
-			opt := ui.SelectOption{Value: media.ChoiceFor(capability, c.Name), Label: label, Help: help}
-			if c.Provided {
-				provided = append(provided, opt)
-			} else {
-				others = append(others, opt)
-			}
+		if c.Kind != service.Kind || !service.Provides(c, capability) {
+			continue
 		}
+		label, help := connectorLabel(c), verb+" with "+c.Title()+": "+ConnectorSummary(c)+"."
+		if ch, ok := service.PendingChange(RootDB, c.Name); ok {
+			label += " (changed, waiting to be accepted)"
+			help += " " + changedNote(ch)
+		}
+		out = append(out, ui.SelectOption{Value: media.ChoiceFor(capability, c.Name), Label: label, Help: help})
 	}
-	return append(provided, others...)
+	return out
 }
 
 // changedNote says who changed a connector and how to accept it.

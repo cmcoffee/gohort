@@ -207,65 +207,6 @@ func TestAComfyUIConnectionBlends(t *testing.T) {
 	}
 }
 
-// A ComfyUI backend kept as a rest_image connector moves onto a connection:
-// its name, use and template stay, its key moves from its credential into
-// the connection and goes the way it did, and the credential, named by
-// nothing else, goes. Another rest_image backend stays. Run again, it
-// changes nothing.
-func TestAComfyUIBackendMovesOntoAConnection(t *testing.T) {
-	world(t)
-	stub := &comfyStub{}
-	srv := stub.serve(t)
-	if err := Secure().Save(SecureCredential{Name: "comfy_key", Type: SecureCredHeader, ParamName: "X-Api-Key", BaseURL: srv.URL}, "k-old"); err != nil {
-		t.Fatal(err)
-	}
-	r, _, err := NewComfyImageSpec(srv.URL, "comfy_key", "", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	stub.output = r.ComfyMap.OutputNode
-	raw, _ := json.Marshal(r)
-	if err := SaveConnector(RootDB, Connector{Name: "studio", Kind: RestImageConnectorKind, Spec: raw}); err != nil {
-		t.Fatal(err)
-	}
-	ApproveConnector(RootDB, "studio")
-	RootDB.Set(ImageTable, "provider", "studio")
-	a, err := ApplyRestImagePreset("a1111", RestImageSpec{Credential: "no_auth"}, map[string]string{"base_url": srv.URL})
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw, _ = json.Marshal(a)
-	if err := SaveConnector(RootDB, Connector{Name: "webui", Kind: RestImageConnectorKind, Spec: raw}); err != nil {
-		t.Fatal(err)
-	}
-
-	if n := comfyToService(RootDB); n == 0 {
-		t.Fatal("nothing moved")
-	}
-	c, _ := GetConnector(RootDB, "studio")
-	if c.Kind != Kind || c.Template != "comfyui" || !c.Approved {
-		t.Errorf("moved as: kind %s, template %q, in use %v", c.Kind, c.Template, c.Approved)
-	}
-	if kept, ok := GetConnectionSecret(RootDB, c, "api_key"); !ok || kept.Value != "k-old" {
-		t.Errorf("its key: %+v %v", kept, ok)
-	}
-	if _, ok := Secure().Load("comfy_key"); ok {
-		t.Errorf("the credential only it named is still there")
-	}
-	if w, _ := GetConnector(RootDB, "webui"); w.Kind != RestImageConnectorKind {
-		t.Errorf("the Automatic1111 backend moved too: %s", w.Kind)
-	}
-	if _, err := GenerateImageWithBackend(context.Background(), "studio", "a red fox", false); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(strings.Join(stub.seen, "\n"), "/prompt  k-old") {
-		t.Errorf("its key did not go as its credential sent it: %v", stub.seen)
-	}
-	if n := comfyToService(RootDB); n != 0 {
-		t.Errorf("a second run changed %d", n)
-	}
-}
-
 // The ComfyUI template makes a connection, and reads one back into its form
 // as it was made.
 func TestTheComfyUITemplateMakesAConnection(t *testing.T) {

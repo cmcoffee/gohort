@@ -89,8 +89,15 @@ func ProviderLooksPrivate(provider, endpoint string) (bool, string) {
 	}
 	ep := strings.TrimSpace(endpoint)
 	if ep == "" {
-		// llama.cpp and ollama default to a loopback endpoint when unset.
-		return true, "local by default (no endpoint configured)"
+		// Ollama, llama.cpp and vLLM default to a loopback endpoint when
+		// unset; anything else with no address cannot be judged.
+		switch strings.ToLower(strings.TrimSpace(provider)) {
+		case "":
+			return true, "not configured: nothing is sent anywhere"
+		case "ollama", "llama.cpp", "vllm":
+			return true, "local by default (no endpoint configured)"
+		}
+		return false, "no address, and not a local server's default, so it cannot be judged private"
 	}
 	host := endpointHost(ep)
 	if host == "" {

@@ -124,8 +124,9 @@ const (
 )
 
 // legacyChoice is the prefix every job's setting was written with before it
-// was named for its job. Read like any job's until the connections:v3
-// migration, which rewrote the saved ones, is deleted.
+// was named for its job. It is never written now, only recognised, so a
+// setting still saved that way reads as naming a connection (and fails
+// closed where that matters) until the migration rewrites it.
 const legacyChoice = "service"
 
 // choiceJobs are the prefixes a setting's value names a connection by.
@@ -146,7 +147,7 @@ func ChoiceFor(capability, name string) string {
 	if job, ok := capabilityJobs[capability]; ok {
 		return Choice(job, name)
 	}
-	return Choice(legacyChoice, name)
+	return name
 }
 
 // ChosenConnection is the connection a setting's value names, by its job or
