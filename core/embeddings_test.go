@@ -315,3 +315,20 @@ func TestTheStampOutlastsTheSettingsSpelling(t *testing.T) {
 		t.Errorf("a named model's stamp = %q", got)
 	}
 }
+
+// A connection saved as service:<name> and chosen again under its job's
+// name is the same connection: the save keeps the endpoint naming its
+// vectors' space, so nothing is re-embedded. Another connection is another
+// space.
+func TestReSavingEmbeddingsUnderTheJobsNameKeepsTheSpace(t *testing.T) {
+	before := EmbeddingConfig{Enabled: true, Provider: "service:vec", Endpoint: "service:vec"}
+	SetEmbeddingConfig(before)
+	defer SetEmbeddingConfig(EmbeddingConfig{})
+	got, err := ResolveEmbeddingProvider(EmbeddingConfig{Enabled: true, Provider: "embed:vec"})
+	if err != nil || got.Endpoint != "service:vec" || got.Provider != "embed:vec" {
+		t.Errorf("re-saved: %+v %v", got, err)
+	}
+	if other, _ := ResolveEmbeddingProvider(EmbeddingConfig{Enabled: true, Provider: "embed:other"}); other.Endpoint != "embed:other" {
+		t.Errorf("another connection kept the old space: %+v", other)
+	}
+}

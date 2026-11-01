@@ -789,10 +789,13 @@ func ResolveEmbeddingProvider(cfg EmbeddingConfig) (EmbeddingConfig, error) {
 	// space and are re-made, never compared. The same connector saved again
 	// keeps the endpoint it was stored with: the one made from the settings
 	// this instance embedded with before connectors (core/service's
-	// migration) keeps that endpoint, and with it the vectors' space.
-	if media.IsConnection(provider) {
+	// migration) keeps that endpoint, and with it the vectors' space. The
+	// same connection, that is, however each spells it: one saved as
+	// service:<name> and chosen again as embed:<name> is not another space.
+	if name, ok := media.ChosenConnection(provider); ok {
 		endpoint := provider
-		if stored := GetEmbeddingConfig(); strings.TrimSpace(stored.Provider) == provider && strings.TrimSpace(stored.Endpoint) != "" {
+		stored := GetEmbeddingConfig()
+		if was, _ := media.ChosenConnection(stored.Provider); was == name && strings.TrimSpace(stored.Endpoint) != "" {
 			endpoint = stored.Endpoint
 		}
 		cfg.Provider, cfg.Endpoint, cfg.APIKey = provider, endpoint, ""
