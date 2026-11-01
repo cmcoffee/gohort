@@ -6,10 +6,12 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/service"
+	"github.com/cmcoffee/gohort/core/ui"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -313,5 +315,58 @@ func TestAConnectionsRowSaysWhatNeedsAttention(t *testing.T) {
 	SetConnectionConfig(RootDB, c, map[string]string{"endpoint": srv.URL})
 	if got := row(); got != "" {
 		t.Errorf("put right, still: %s", got)
+	}
+}
+
+// Which key a connection keeps shows beside its key field, on the pages that
+// choose it and its row's Settings, and on its row: its last four
+// characters and the day it was given, never the key.
+func TestAKeptKeyShowsItsEnd(t *testing.T) {
+	srv, _ := settingsWorld(t)
+	vecConnector(t, srv.URL)
+	c, _ := GetConnector(RootDB, "vec")
+	const key = "sk-live-0123456789abWXYZ"
+	SetConnectionSecret(RootDB, c, "api_key", key, []string{srv.URL})
+	want := "ends in …WXYZ, given " + time.Now().Format("2 Jan 2006")
+
+	for name, fields := range map[string][]ui.FormField{"the page": embeddingFormFields(), "its Settings": connectionSettingsFields()} {
+		var shown *ui.FormField
+		for i, f := range fields {
+			if f.Field == "kept/vec/api_key" {
+				shown = &fields[i]
+				if i == 0 || fields[i-1].Field != "config/vec/api_key" {
+					t.Errorf("%s: not beside the key's field", name)
+				}
+			}
+		}
+		if shown == nil || shown.Type != "readonly" || shown.Label != "Saved API key" || !strings.HasSuffix(shown.ShowWhen, ";kept/vec/api_key") {
+			t.Errorf("%s: the saved key's line: %+v", name, shown)
+		}
+	}
+
+	a := &AdminApp{db: RootDB}
+	call := &jsonapi.Call{R: httptest.NewRequest("GET", "/api/connectors/settings?name=vec", nil)}
+	chosen := postedForm[EmbeddingConfig](t, `{"enabled":true,"provider":"embed:vec","config/vec/endpoint":"`+srv.URL+`","config/vec/api_key":"`+secretUnchanged+`"}`)
+	if _, err := a.handleEmbeddingsSave(call, chosen); err != nil {
+		t.Fatal(err)
+	}
+	page, _ := a.handleEmbeddings(call)
+	settings, _ := a.handleConnectionSettings(call)
+	rows, _ := a.handleConnectors(call)
+	for name, out := range map[string]any{"the page": page, "its Settings": settings, "its row": rows} {
+		b, _ := json.Marshal(out)
+		if strings.Contains(string(b), "0123456789") {
+			t.Errorf("%s shows the key: %s", name, b)
+		}
+		if !strings.Contains(string(b), want) {
+			t.Errorf("%s does not say which key is kept: %s", name, b)
+		}
+	}
+	if s := settings.(map[string]any); s["kept/vec/api_key"] != want {
+		t.Errorf("its Settings: %v", s)
+	}
+	b, _ := json.Marshal(rows)
+	if !strings.Contains(string(b), `"key":"API key `+want+`"`) {
+		t.Errorf("its row: %s", b)
 	}
 }

@@ -385,3 +385,42 @@ func TestAnOptionalKeyIsSentOnlyWhenGiven(t *testing.T) {
 		t.Errorf("sent: %v", *got)
 	}
 }
+
+// A kept key is told from another by its last four characters and the day
+// it was given, and nothing more: a short key and a password show none of
+// themselves, one never given says nothing, and one kept but unreadable
+// says so.
+func TestAKeptKeyShowsOnlyItsEnd(t *testing.T) {
+	world(t)
+	spec := keyedSearch()
+	spec["config"] = append(spec["config"].([]any),
+		map[string]any{"name": "password", "label": "Password", "type": "secret", "send": "basic:api"})
+	raw, _ := json.Marshal(spec)
+	if err := SaveConnector(RootDB, Connector{Name: "finder", Kind: Kind, Spec: raw}); err != nil {
+		t.Fatal(err)
+	}
+	c, _ := GetConnector(RootDB, "finder")
+	if got := KeptSecrets(RootDB, c); len(got) != 0 {
+		t.Errorf("none given: %v", got)
+	}
+	SetConnectionSecret(RootDB, c, "api_key", "sk-live-0123456789abWXYZ", []string{"https://find.example"})
+	SetConnectionSecret(RootDB, c, "password", "a-long-password-of-many-letters", []string{"https://find.example"})
+	got := KeptSecrets(RootDB, c)
+	if !strings.HasPrefix(got["api_key"], "ends in …WXYZ, given ") {
+		t.Errorf("a long key: %q", got["api_key"])
+	}
+	if strings.Contains(got["api_key"], "0123") {
+		t.Errorf("more than its end shows: %q", got["api_key"])
+	}
+	if !strings.HasPrefix(got["password"], "set, given ") || strings.Contains(got["password"], "ters") {
+		t.Errorf("a password shows none of itself: %q", got["password"])
+	}
+	SetConnectionSecret(RootDB, c, "api_key", "short-key-12", []string{"https://find.example"})
+	if got := KeptSecrets(RootDB, c)["api_key"]; !strings.HasPrefix(got, "set, given ") {
+		t.Errorf("a short key shows none of itself: %q", got)
+	}
+	RootDB.Sub("connection:"+c.ID).Set("secret", "api_key", "not a secret record")
+	if got := KeptSecrets(RootDB, c)["api_key"]; got != "kept but cannot be read: give it again" {
+		t.Errorf("an unreadable key: %q", got)
+	}
+}

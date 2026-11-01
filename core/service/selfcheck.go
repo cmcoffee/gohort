@@ -18,11 +18,13 @@ import (
 // given for an address its calls no longer go to. A connection gohort
 // provides and nothing uses yet has no key, and that is not wrong.
 //
+// A connection of another kind is held to its own type's check (otherCheck).
+//
 // Without it, a bad value or a lost key surfaced only as some tool's call
 // failing, on whichever turn reached it first.
 func SelfCheck(db Database, c Connector) []string {
 	if c.Kind != Kind {
-		return nil
+		return otherCheck(c)
 	}
 	s, err := specOf(c)
 	if err != nil {
@@ -76,6 +78,37 @@ func SelfCheck(db Database, c Connector) []string {
 	case has && !sameAddresses(kept.Addresses, settled.secretAddresses(f)):
 		out = append(out, fmt.Sprintf("its %s was given for %s, and its calls now go to %s, so they are sent without it: give it again under Settings",
 			f.Title(), strings.Join(kept.Addresses, ", "), strings.Join(settled.secretAddresses(f), ", ")))
+	}
+	return out
+}
+
+// otherCheck is SelfCheck for a connection of another kind (an MCP server,
+// a poll, a messaging bridge, an adapted flow): its type's own check of its
+// spec, the one a save runs, which looks up what it names (a credential, a
+// peer) as it stands now; and, while it is in use, a credential it names
+// switched off. Each was checked when it was saved, so what fails now is
+// what changed since.
+func otherCheck(c Connector) []string {
+	if _, ok := ConnectorHandlerFor(c.Kind); !ok {
+		return []string{fmt.Sprintf("its type %q is not one this build knows, so it is not brought up", c.Kind)}
+	}
+	var out []string
+	if err := ValidateConnector(c); err != nil {
+		out = append(out, "it no longer passes its own check: "+err.Error())
+	}
+	if !c.Approved {
+		return out
+	}
+	for _, name := range ConnectorCredentialRefs(c.Spec) {
+		cred, ok := Secure().Resolve(name, c.Owner)
+		switch {
+		case !ok:
+			// One it names and no longer finds is its check's to say.
+		case cred.AwaitingApproval:
+			out = append(out, "it is in use and its credential "+name+" waits for an administrator's approval, so its calls are refused")
+		case cred.Disabled || cred.AdminDisabled:
+			out = append(out, "it is in use and its credential "+name+" is switched off, so its calls are refused: enable it under Admin > APIs")
+		}
 	}
 	return out
 }

@@ -25,6 +25,7 @@ import (
 	"net/url"
 	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -746,6 +747,49 @@ func (s Spec) secretNamed(name string) (ConfigField, bool) {
 func HasSecret(c Connector, name string) bool {
 	s, ok := GetConnectionSecret(RootDB, c, name)
 	return ok && s.Value != ""
+}
+
+// hintLength is how long a key must be before its last four characters are
+// shown: four of a short one give too much of it away.
+const hintLength = 16
+
+// KeptSecrets are what a page says of each secret connection c keeps, by
+// its setting's key, so one key can be told from another without showing
+// it: the last four characters of a key long enough that four give little
+// away, none of a password, and the day it was given. One kept but
+// unreadable says so.
+func KeptSecrets(db Database, c Connector) map[string]string {
+	if c.Kind != Kind {
+		return nil
+	}
+	s, err := specOf(c)
+	if err != nil {
+		return nil
+	}
+	unreadable := c.UnreadableSecrets(db)
+	out := map[string]string{}
+	for _, f := range s.Config {
+		if !f.IsSecret() {
+			continue
+		}
+		if slices.Contains(unreadable, f.Name) {
+			out[f.Name] = "kept but cannot be read: give it again"
+			continue
+		}
+		kept, ok := GetConnectionSecret(db, c, f.Name)
+		if !ok || kept.Value == "" {
+			continue
+		}
+		hint, v := "set", []rune(kept.Value)
+		if !strings.HasPrefix(f.Send, "basic") && len(v) >= hintLength {
+			hint = "ends in …" + string(v[len(v)-4:])
+		}
+		if !kept.Set.IsZero() {
+			hint += ", given " + kept.Set.Format("2 Jan 2006")
+		}
+		out[f.Name] = hint
+	}
+	return out
 }
 
 // DefaultWith is what connection c runs capability's input with when the

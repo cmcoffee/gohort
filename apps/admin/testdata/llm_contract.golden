@@ -175,7 +175,7 @@ root POST /api/lead-llm "{\"provider\":\"bedrock\",\"model\":\"anthropic.claude-
 root POST /api/lead-llm "{\"provider\":\"vllm\",\"model\":\"qwen3:8b\",\"endpoint\":\"<stub>\",\"api_key\":\"s3cr3t-llm-l\",\"no_images\":true}"
   204 
 root GET /api/lead-llm ""
-  200 {"_live":"No lead model is loaded; escalations run on the worker.","api_key":"","config/vllm/api_key":"(unchanged)","config/vllm/base_url":"<stub>","context_size":0,"default_effort":"","disable_thinki… (477 bytes, sha1 a7c89a83628ca51426eb513e63c0e2913372c7e6)
+  200 {"_live":"No lead model is loaded; escalations run on the worker.","api_key":"","config/vllm/api_key":"(unchanged)","config/vllm/base_url":"<stub>","context_size":0,"default_effort":"","disable_thinki… (518 bytes, sha1 8b9114629db7b2a78317825edf5738490b1b0b49)
 root GET /api/llm-privacy ""
   200 {"advice":"Worker: Ollama - private (loopback endpoint (the connector ollama))\nLead: vLLM - private (loopback endpoint (the connector vllm))\n\nBoth tiers look local, so turning this on is consistent with how the deployment is configured.","all_private":false,"recommended":true}
 activity log, 7 entries:

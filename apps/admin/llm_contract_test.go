@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/snugforge/kvlite"
@@ -61,7 +62,9 @@ func TestLLMRoutesContract(t *testing.T) {
 	ct := &contract{
 		t:       t,
 		secrets: []string{"s3cr3t-llm-w", "s3cr3t-llm-l"},
-		rewrite: strings.NewReplacer(stub.URL, "<stub>"),
+		// The day a key was given (its saved-key line) is today's, not the
+		// golden's.
+		rewrite: strings.NewReplacer(stub.URL, "<stub>", time.Now().Format("2 Jan 2006"), "<today>"),
 		keep: func(row string) bool {
 			return !strings.Contains(row, `"key":`) || strings.Contains(row, `"key":"zz_contract.`)
 		},

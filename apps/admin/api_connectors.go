@@ -115,6 +115,9 @@ func (a *AdminApp) handleConnectors(c *jsonapi.Call) (any, error) {
 		// HasAccess is a connection: who may reach it through agents' tools
 		// is set under its row's Access.
 		HasAccess bool `json:"has_access,omitempty"`
+		// Key is which secret a connection keeps (service.KeptSecrets), so
+		// one key can be told from another without opening its Settings.
+		Key string `json:"key,omitempty"`
 		// Check is what is wrong with a connection as it is saved
 		// (service.SelfCheck), read each time the list is: fixing it clears it.
 		Check string `json:"check,omitempty"`
@@ -132,6 +135,7 @@ func (a *AdminApp) handleConnectors(c *jsonapi.Call) (any, error) {
 			Endpoints: conn.Kind == service.Kind, Group: connectorGroup(conn, research, uses), GroupOpen: true,
 			Deletable: len(uses[conn.Name]) == 0 && !conn.Provided, HasSettings: conn.Kind == service.Kind,
 			HasAccess: conn.Kind == service.Kind && conn.ID != ""}
+		row.Key = keptSecretsLine(conn)
 		if problems := service.SelfCheck(RootDB, conn); len(problems) > 0 {
 			row.Check = "Needs attention: " + strings.Join(problems, "; ") + "."
 		}
@@ -190,6 +194,20 @@ func (a *AdminApp) handleConnectors(c *jsonapi.Call) (any, error) {
 		rows[i].GroupSummary = strings.Join(parts, " · ")
 	}
 	return rows, nil
+}
+
+// keptSecretsLine is connection c's row's word on the secrets it keeps:
+// "API key ends in …ab12, given 1 Nov 2026", in the order its spec declares
+// them.
+func keptSecretsLine(c Connector) string {
+	kept := service.KeptSecrets(RootDB, c)
+	var parts []string
+	for _, st := range service.SettingsFor(c, "") {
+		if hint, ok := kept[st.Key]; ok {
+			parts = append(parts, st.Field.Title()+" "+hint)
+		}
+	}
+	return strings.Join(parts, "; ")
 }
 
 // The Connectors table's bands, in order: what a connector does, which is

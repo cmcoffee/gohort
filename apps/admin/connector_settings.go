@@ -48,10 +48,27 @@ func connectorSettingsFields(capability, also, choice string, choose func(string
 			when = also + ";" + when
 		}
 		for _, st := range service.SettingsFor(c, capability) {
-			out = append(out, settingFormField(c.Name, st, when))
+			out = append(out, settingFormFields(c.Name, st, when)...)
 		}
 	}
 	return out
+}
+
+// keptField is the form field saying which secret connection keeps for its
+// setting key (service.KeptSecrets), read-only beside the secret's own.
+func keptField(connection, key string) string {
+	return "kept/" + connection + "/" + key
+}
+
+// settingFormFields are the controls a setting's kind of value draws: its
+// own, and for a secret, a line saying which one is kept while one is.
+func settingFormFields(connection string, st service.Setting, when string) []ui.FormField {
+	ff := settingFormField(connection, st, when)
+	if !st.Field.IsSecret() {
+		return []ui.FormField{ff}
+	}
+	kept := keptField(connection, st.Key)
+	return []ui.FormField{ff, {Field: kept, Type: "readonly", Label: "Saved " + st.Field.Title(), ShowWhen: when + ";" + kept}}
 }
 
 // settingFormField is the control a setting's kind of value draws.
@@ -278,13 +295,16 @@ func settingsValues(name, capability string) map[string]any {
 	if !ok {
 		return out
 	}
-	kept := ConnectionConfig(RootDB, c)
+	kept, secrets := ConnectionConfig(RootDB, c), service.KeptSecrets(RootDB, c)
 	for _, st := range service.SettingsFor(c, capability) {
 		field := settingField(name, st.Key)
 		switch {
 		case st.Field.IsSecret():
 			if service.HasSecret(c, st.Key) {
 				out[field] = secretUnchanged
+			}
+			if hint, ok := secrets[st.Key]; ok {
+				out[keptField(name, st.Key)] = hint
 			}
 		case st.Field.Kind() == "choices":
 			if v, ok := kept[st.Key]; ok {
@@ -352,7 +372,7 @@ func connectionSettingsFields() []ui.FormField {
 			continue
 		}
 		for _, st := range service.SettingsFor(c, "") {
-			out = append(out, settingFormField(c.Name, st, connectionNameField+":"+c.Name))
+			out = append(out, settingFormFields(c.Name, st, connectionNameField+":"+c.Name)...)
 		}
 	}
 	return out
