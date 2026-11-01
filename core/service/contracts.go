@@ -736,7 +736,12 @@ func SampleTone() []byte {
 	b.WriteString("RIFF")
 	binary.Write(&b, binary.LittleEndian, uint32(36+pcm.Len()))
 	b.WriteString("WAVEfmt ")
-	binary.Write(&b, binary.LittleEndian, []any{uint32(16), uint16(1), uint16(1), uint32(rate), uint32(rate * 2), uint16(2), uint16(16)})
+	// One field at a time: binary.Write takes no []any, and given one it
+	// wrote nothing and said so in an error nobody read. The tone went out
+	// with no format chunk, and whisper.cpp answered the Test with a 400.
+	for _, v := range []any{uint32(16), uint16(1), uint16(1), uint32(rate), uint32(rate * 2), uint16(2), uint16(16)} {
+		binary.Write(&b, binary.LittleEndian, v)
+	}
 	b.WriteString("data")
 	binary.Write(&b, binary.LittleEndian, uint32(pcm.Len()))
 	b.Write(pcm.Bytes())

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/binary"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -106,5 +107,22 @@ func TestImageSearchIsChecked(t *testing.T) {
 		if err := ct.Check(Result{"results": Value{Text: list}}); (err == nil) != ok {
 			t.Errorf("%s: %v", list, err)
 		}
+	}
+}
+
+// The Test's tone is a WAV a strict reader takes: a 16-byte PCM format chunk
+// before the data. It went out without one, and whisper.cpp refused it with
+// a 400 while a real recording transcribed.
+func TestTheSampleToneIsAWholeWAV(t *testing.T) {
+	w := SampleTone()
+	if len(w) < 44 || string(w[0:4]) != "RIFF" || string(w[8:16]) != "WAVEfmt " || string(w[36:40]) != "data" {
+		t.Fatalf("not a canonical WAV header: % x", w[:min(len(w), 44)])
+	}
+	le := binary.LittleEndian
+	if size, format, chans, rate, bits := le.Uint32(w[16:]), le.Uint16(w[20:]), le.Uint16(w[22:]), le.Uint32(w[24:]), le.Uint16(w[34:]); size != 16 || format != 1 || chans != 1 || rate != 16000 || bits != 16 {
+		t.Errorf("format chunk: size=%d format=%d channels=%d rate=%d bits=%d", size, format, chans, rate, bits)
+	}
+	if riff, data := le.Uint32(w[4:]), le.Uint32(w[40:]); int(riff) != len(w)-8 || int(data) != len(w)-44 {
+		t.Errorf("sizes disagree with the file: riff=%d data=%d len=%d", riff, data, len(w))
 	}
 }
