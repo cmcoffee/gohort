@@ -60,7 +60,7 @@ func (connectorArtifact) ExportArtifact(db Database, name, _ string) (json.RawMe
 	if !ok {
 		return nil, fmt.Errorf("no connector named %q", name)
 	}
-	return json.Marshal(toPortable(c))
+	return json.Marshal(toPortable(db, c))
 }
 
 // Dependencies folds in the SecureAPI credential a connector reaches out
@@ -136,19 +136,21 @@ func (connectorArtifact) ImportArtifact(db Database, recipe json.RawMessage, own
 	if _, exists := GetConnector(db, name); exists {
 		return name, "a connector with this name already exists", nil
 	}
-	c := Connector{
-		Name:        name,
-		Kind:        strings.TrimSpace(pc.Kind),
-		Desc:        pc.Desc,
-		DisplayName: strings.TrimSpace(pc.DisplayName),
-		Template:    strings.TrimSpace(pc.Template),
-		Spec:        pc.Spec,
-		Owner:       owner,
-	}
-	if err := saveConnectorDraft(db, c); err != nil {
+	if err := importConnector(db, pc, owner); err != nil {
 		return name, "", err
 	}
 	return name, "", nil
+}
+
+// ImportWarnings say what an imported connector left out of the settings
+// it brought, and why: asked of the same check its import made.
+func (connectorArtifact) ImportWarnings(db Database, recipe json.RawMessage) []string {
+	var pc PortableConnector
+	if json.Unmarshal(recipe, &pc) != nil {
+		return nil
+	}
+	_, dropped := importedSettings(db, pc)
+	return dropped
 }
 
 // ---- tool ------------------------------------------------------------------

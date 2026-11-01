@@ -208,7 +208,7 @@ Typical flow for a calendar:
 			"webhook_provider":     {Type: "string", Enum: []string{"slack", "graph", "generic"}, Description: "(rest_messaging, optional) switch inbound from POLL to real-time PUSH. \"slack\" (Slack Events API, turnkey: paste the webhook URL into the Slack app, admin sets the signing secret), \"graph\", or \"generic\" (any service pushing JSON: describe the check in webhook and the fields in map). The poll fields become unused; send_url/credential still deliver replies."},
 			"webhook":              {Type: "object", Description: "(rest_messaging, with webhook_provider=\"generic\") how each push is checked: {\"verify\":\"hmac_sha256\" or \"token\", \"header\": the header carrying the signature or token, \"token_path\": a body dot-path instead of a header (token), \"prefix\": stripped first (e.g. \"sha256=\"), \"encoding\": \"hex\" or \"base64\" (hmac), \"challenge_path\": a body dot-path echoed back for a URL-verification handshake}. The secret itself is set by the admin, never here."},
 			"skip":                 {Type: "array", Description: "(rest_messaging, optional) messages to drop, each {\"path\": element dot-path, \"values\": [...]}: dropped when the path has a value, or one of the listed values. Use it to skip the bridge's own replies (e.g. {\"path\":\"bot_id\"}) and system events, or the agent answers itself."},
-			"display_name":         {Type: "string", Description: "(rest_messaging, optional) how a service gohort does not know is named to people (e.g. \"Mattermost\"). A known service keeps its own name."},
+			"display_name":         {Type: "string", Description: "(service, required; rest_messaging, optional) the name people see it by, e.g. \"Serper\". A messaging service gohort knows keeps its own."},
 			"markdown":             {Type: "boolean", Description: "(rest_messaging, optional) the service renders markdown, so replies keep their formatting. Only for a service gohort does not know."},
 			"service_spec":         {Type: "object", Description: "(service) {config:[{name,type,send}],provider:{transport:\"http\",base_url,auth:{secret}|{none:true},operations:{name:{method,path,body}}},provides:[{capability:\"image.generate\",steps:[{call,save}|{wait,until}],output:{image:{path,as}}}]}. A key is a config entry of type secret, never in the spec; a refused save says what is wrong."},
 			"image_spec":           {Type: "object", Description: "(rest_image, optional) explicit backend fields overriding/extending the preset: submit_url, submit_method, submit_body (a JSON template with {prompt}/{negative}/{width}/{height}/{steps}/{seed} tokens), image_b64_path or image_url_path (synchronous result), or the poll set submit_id_path/poll_url/poll_ready_path/poll_b64_path/poll_url_path/poll_url_template/poll_fields (async). Omit when a preset + vars is enough. For rest_image, `credential` names the SecureAPI credential (or \"no_auth\" for a local endpoint) and `vars` fills preset tokens like {\"base_url\":\"http://localhost:7860\"}."},
@@ -251,7 +251,7 @@ Typical flow for a calendar:
 			"webhook_provider":     {Type: "string", Enum: []string{"slack", "graph", "generic"}, Description: "(rest_messaging) switch inbound to a real-time webhook provider."},
 			"webhook":              {Type: "object", Description: "(rest_messaging, generic webhook) new push check (replaces the whole block)."},
 			"skip":                 {Type: "array", Description: "(rest_messaging) new skip rules (replaces the whole list)."},
-			"display_name":         {Type: "string", Description: "(rest_messaging) new display name for a service gohort does not know."},
+			"display_name":         {Type: "string", Description: "(service, rest_messaging) a new name people see it by."},
 			"markdown":             {Type: "boolean", Description: "(rest_messaging) the service renders markdown."},
 			"app_id":               {Type: "string", Description: "(bot_framework) new Entra application (client) id."},
 			"tenant_id":            {Type: "string", Description: "(bot_framework) new tenant to pin a single-tenant bot to."},
@@ -577,6 +577,13 @@ func connectorCreate(args map[string]any, sess *ToolSession) (string, error) {
 			return "", err
 		}
 		c.Spec = raw
+		// Shown by this wherever it is offered: its name is an id, and a
+		// connection shown by one read as "serper-search" on every page.
+		display := strings.TrimSpace(stringArg(args, "display_name"))
+		if display == "" {
+			return "", fmt.Errorf("display_name is required for a service connection: how people see it named wherever it is offered, e.g. \"Serper\"")
+		}
+		c.DisplayName = FreeDisplayName(RootDB, name, display)
 	case RestImageConnectorKind:
 		over := imageSpecArg(args, "image_spec")
 		if cred := strings.TrimSpace(stringArg(args, "credential")); cred != "" {
@@ -803,6 +810,9 @@ func connectorUpdate(args map[string]any, sess *ToolSession) (string, error) {
 			return "", err
 		}
 		c.Spec = raw
+		if display := strings.TrimSpace(stringArg(args, "display_name")); display != "" {
+			c.DisplayName = FreeDisplayName(RootDB, name, display)
+		}
 	case RestImageConnectorKind:
 		var existing RestImageSpec
 		_ = json.Unmarshal(prev.Spec, &existing)

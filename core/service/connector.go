@@ -32,6 +32,39 @@ func (handler) Validate(c Connector) error {
 	return err
 }
 
+// ImportSettings is what an imported connection keeps of the settings it
+// brought: each its spec declares and takes, by the check a page's save
+// makes. Any other is left out with the reason, never kept to fail a call.
+func (handler) ImportSettings(c Connector, values map[string]string) (map[string]string, []string) {
+	s, err := Parse(c.Spec)
+	if err != nil {
+		return nil, []string{"its settings were left out: its spec does not read"}
+	}
+	declared := map[string]Setting{}
+	for _, st := range s.settings() {
+		declared[st.Key] = st
+	}
+	keys := make([]string, 0, len(values))
+	for k := range values {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	keep := map[string]string{}
+	var dropped []string
+	for _, k := range keys {
+		st, ok := declared[k]
+		switch {
+		case !ok || st.Field.IsSecret():
+			dropped = append(dropped, fmt.Sprintf("its setting %q was left out: its spec takes no such setting", k))
+		case checkValue(st.Field, values[k]) != nil:
+			dropped = append(dropped, fmt.Sprintf("its %s was left out: %v", st.Field.Title(), checkValue(st.Field, values[k])))
+		default:
+			keep[k] = values[k]
+		}
+	}
+	return keep, dropped
+}
+
 var (
 	ownedMu sync.Mutex
 	owned   = map[string]bool{} // image backends this kind registered

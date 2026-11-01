@@ -138,7 +138,7 @@ func TestTemplateForConnector(t *testing.T) {
 func TestConnectorProvenanceTravels(t *testing.T) {
 	// toPortable carries the template; the portable form round-trips through JSON,
 	// so export→import preserves which template can Configure the connector.
-	pc := toPortable(Connector{Name: "cx", Kind: RestImageConnectorKind, Template: "comfyui", Spec: json.RawMessage(`{}`)})
+	pc := toPortable(nil, Connector{Name: "cx", Kind: RestImageConnectorKind, Template: "comfyui", Spec: json.RawMessage(`{}`)})
 	if pc.Template != "comfyui" {
 		t.Errorf("toPortable dropped template: %q", pc.Template)
 	}

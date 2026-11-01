@@ -99,17 +99,31 @@ func TestBuilderDraftsAServiceConnector(t *testing.T) {
 		"provides": []any{map[string]any{"capability": "image.generate", "steps": []any{map[string]any{"call": "submit"}},
 			"output": map[string]any{"image": map[string]any{"path": "data.0.b64_json", "as": "base64"}}}},
 	}
-	out, err := connectorCreate(map[string]any{"kind": "service", "name": "acme-images", "service_spec": spec}, sess)
+	// Named to people, or not drafted: an id shown on every page is what a
+	// connection with no display name read as.
+	if _, err := connectorCreate(map[string]any{"kind": "service", "name": "acme-images", "service_spec": spec}, sess); err == nil || !strings.Contains(err.Error(), "display_name is required") {
+		t.Errorf("drafted with no display name: %v", err)
+	}
+	if _, ok := GetConnector(RootDB, "acme-images"); ok {
+		t.Fatal("a refused draft was saved")
+	}
+	out, err := connectorCreate(map[string]any{"kind": "service", "name": "acme-images", "display_name": "Acme Images", "service_spec": spec}, sess)
 	if err != nil {
 		t.Fatal(err)
 	}
 	c, ok := GetConnector(RootDB, "acme-images")
-	if !ok || c.Approved || !strings.Contains(out, "acme-images") {
-		t.Fatalf("saved %v, approved %v: %s", ok, c.Approved, out)
+	if !ok || c.Approved || !strings.Contains(out, "acme-images") || c.Title() != "Acme Images" {
+		t.Fatalf("saved %v, approved %v, shown as %q: %s", ok, c.Approved, c.Title(), out)
+	}
+	if _, err := connectorCreate(map[string]any{"kind": "service", "name": "acme-three", "display_name": "acme images", "service_spec": spec}, sess); err != nil {
+		t.Fatal(err)
+	}
+	if c3, _ := GetConnector(RootDB, "acme-three"); c3.Title() != "acme images (acme-three)" {
+		t.Errorf("a second one shown as the first is: %q", c3.Title())
 	}
 	bad := spec
 	bad["provides"].([]any)[0].(map[string]any)["capability"] = "image.paint"
-	if _, err := connectorCreate(map[string]any{"kind": "service", "name": "acme-two", "service_spec": bad}, sess); err == nil || !strings.Contains(err.Error(), "unknown capability") {
+	if _, err := connectorCreate(map[string]any{"kind": "service", "name": "acme-two", "display_name": "Acme Two", "service_spec": bad}, sess); err == nil || !strings.Contains(err.Error(), "unknown capability") {
 		t.Errorf("an unknown capability: %v", err)
 	}
 	if _, ok := GetConnector(RootDB, "acme-two"); ok {

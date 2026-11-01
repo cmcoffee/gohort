@@ -102,6 +102,14 @@ type ArtifactType interface {
 	ImportArtifact(db Database, recipe json.RawMessage, owner string) (string, string, error)
 }
 
+// artifactImportWarner is an OPTIONAL interface an ArtifactType implements
+// when an import can bring something it does not keep (a connector's
+// setting its spec does not take): what was left out, and why, shown on the
+// outcome.
+type artifactImportWarner interface {
+	ImportWarnings(db Database, recipe json.RawMessage) []string
+}
+
 // ArtifactDependencies is an OPTIONAL interface an ArtifactType implements when
 // its artifacts reference OTHER artifacts by name — a tool referencing its API
 // credential, a connector referencing the SecureAPI credential it polls
@@ -1029,8 +1037,12 @@ func importArtifactBundle(db Database, data []byte, owner string, userOnly bool)
 				Type: typ, Name: name, Status: "skipped", Detail: skip})
 			res.Skipped++
 		default:
-			res.Outcomes = append(res.Outcomes, ArtifactImportOutcome{
-				Type: typ, Name: name, Status: "imported"})
+			out := ArtifactImportOutcome{Type: typ, Name: name, Status: "imported"}
+			if w, ok := at.(artifactImportWarner); ok {
+				out.Warnings = w.ImportWarnings(db, a.Recipe)
+				res.Warnings = append(res.Warnings, out.Warnings...)
+			}
+			res.Outcomes = append(res.Outcomes, out)
 			res.Imported++
 			imported = append(imported, ArtifactSel{Type: typ, Name: name, Owner: owner})
 		}

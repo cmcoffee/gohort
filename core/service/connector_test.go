@@ -553,3 +553,81 @@ func TestAnAgentBarredFromAConnectionIsNeitherOfferedNorServed(t *testing.T) {
 		t.Errorf("the instance's own call: %v", err)
 	}
 }
+
+// An exported connection carries its settings and never its key; imported,
+// it keeps those its spec takes and the import says why it left any other
+// out, and it is shown by its display name unless another already is.
+func TestAConnectionTravelsWithItsSettings(t *testing.T) {
+	world(t)
+	raw, _ := json.Marshal(keyedSearch())
+	if err := SaveConnector(RootDB, Connector{Name: "finder", Kind: Kind, Spec: raw, DisplayName: "Finder"}); err != nil {
+		t.Fatal(err)
+	}
+	c, _ := GetConnector(RootDB, "finder")
+	SetConnectionConfig(RootDB, c, map[string]string{"base_url": "https://find.example", "size": "10"})
+	SetConnectionSecret(RootDB, c, "api_key", "sk-finder-secret", []string{"https://find.example"})
+	b, err := ExportArtifactBundle(RootDB, []ArtifactSel{{Type: "connector", Name: "finder"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := json.Marshal(b)
+	if !strings.Contains(string(data), `"base_url":"https://find.example"`) || !strings.Contains(string(data), `"size":"10"`) {
+		t.Errorf("the settings did not travel: %s", data)
+	}
+	if strings.Contains(string(data), "sk-finder-secret") {
+		t.Fatal("the key travelled")
+	}
+
+	// Elsewhere: a value its spec does not take, and one it never declared,
+	// are left out and said; one shown as Finder already is there.
+	world(t)
+	RootDB.Set("connectors", "other", Connector{Name: "other", Kind: Kind, DisplayName: "Finder"})
+	tampered := strings.Replace(string(data), `"size":"10"`, `"size":"ten","ghost":"x"`, 1)
+	res, err := ImportArtifactBundle(RootDB, []byte(tampered), "admin")
+	if err != nil || res.Imported != 1 {
+		t.Fatalf("import: %+v %v", res, err)
+	}
+	warn := strings.Join(res.Outcomes[0].Warnings, " | ")
+	if !strings.Contains(warn, `its Results was left out: "ten" is not a number`) || !strings.Contains(warn, `its setting "ghost" was left out`) {
+		t.Errorf("the import does not say what it left out: %q", warn)
+	}
+	got, _ := GetConnector(RootDB, "finder")
+	kept := ConnectionConfig(RootDB, got)
+	if kept["base_url"] != "https://find.example" || kept["size"] != "" || kept["ghost"] != "" {
+		t.Errorf("kept settings: %v", kept)
+	}
+	if _, has := GetConnectionSecret(RootDB, got, "api_key"); has {
+		t.Error("a key arrived with the import")
+	}
+	if got.Title() != "Finder (finder)" {
+		t.Errorf("shown as %q beside another shown as Finder", got.Title())
+	}
+}
+
+// A connector pack, the Builder's import, keeps the same settings and says
+// the same of what it left out.
+func TestAConnectorPackKeepsTheSameSettings(t *testing.T) {
+	world(t)
+	raw, _ := json.Marshal(keyedSearch())
+	SaveConnector(RootDB, Connector{Name: "finder", Kind: Kind, Spec: raw})
+	c, _ := GetConnector(RootDB, "finder")
+	SetConnectionConfig(RootDB, c, map[string]string{"base_url": "https://find.example", "size": "10"})
+	pack, err := ExportConnectorPack(RootDB, "finder")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pack.Connectors[0].Settings["size"] = "ten"
+	data, _ := json.Marshal(pack)
+	world(t)
+	res, err := ImportConnectorPack(RootDB, data, "alice")
+	if err != nil || len(res.Imported) != 1 {
+		t.Fatalf("import: %+v %v", res, err)
+	}
+	if len(res.Notes) != 1 || !strings.Contains(res.Notes[0], "finder: its Results was left out") {
+		t.Errorf("notes: %v", res.Notes)
+	}
+	got, _ := GetConnector(RootDB, "finder")
+	if kept := ConnectionConfig(RootDB, got); kept["base_url"] != "https://find.example" || kept["size"] != "" {
+		t.Errorf("kept: %v", kept)
+	}
+}
