@@ -14,7 +14,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/migrate"
 	"github.com/cmcoffee/gohort/core/service"
-	bolt "go.etcd.io/bbolt"
+	bolt "github.com/cmcoffee/gohort/core/bbolt"
 )
 
 // runStartupMigrations moves what an older gohort saved into the shape this
