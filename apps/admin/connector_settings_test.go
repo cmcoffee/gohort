@@ -212,3 +212,31 @@ func TestAPageKeepsTheOtherCapabilitysSettings(t *testing.T) {
 		t.Errorf("kept: %v", got)
 	}
 }
+
+// A page still naming an outdated connector shows the one gohort provides
+// in its place, with the old one's address and model filled in: saving the
+// page moves onto it.
+func TestAPageShowsTheProvidedConnectionInPlaceOfAnOutdatedOne(t *testing.T) {
+	settingsWorld(t)
+	ProvideConnectors(RootDB)
+	old := Connector{Name: "embeddings", Kind: service.Kind, Template: "openai-compatible-embeddings", Approved: true,
+		Spec: json.RawMessage(`{"provider":{"transport":"http","base_url":"http://gpu.example:8080/v1","auth":{"none":true},
+			"operations":{"embed":{"method":"POST","path":"/embeddings","body":{"model":"{model}","input":"{texts}"}}}},
+			"provides":[{"capability":"embed.text","steps":[{"call":"embed"}],"output":{"vectors":{"path":"data","each":"embedding","as":"json"}},"defaults":{"model":"e5-large"}}]}`)}
+	RootDB.Set("connectors", old.Name, old)
+	RootDB.Set(EmbeddingTable, "current", EmbeddingConfig{Enabled: true, Provider: "service:embeddings"})
+	a := &AdminApp{db: RootDB}
+	out, _ := a.handleEmbeddings(&jsonapi.Call{R: httptest.NewRequest("GET", "/api/embeddings", nil)})
+	read := out.(map[string]any)
+	if read["provider"] != "service:local-embeddings" || read["config/local-embeddings/base_url"] != "http://gpu.example:8080/v1" ||
+		read["config/local-embeddings/model"] != "e5-large" {
+		t.Errorf("read: %v", read)
+	}
+	var labels []string
+	for _, o := range serviceProviderOptions("embed.text", "Embed") {
+		labels = append(labels, o.Label)
+	}
+	if len(labels) != 2 || strings.Contains(strings.Join(labels, "|"), "embeddings (") {
+		t.Errorf("the choices: %v", labels)
+	}
+}

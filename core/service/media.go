@@ -32,6 +32,10 @@ func init() {
 	media.MailService = mailVia
 	flows.ConvertService = convertVia
 	media.ModelService = modelTarget
+	media.ModelDialect = func(name string) string {
+		c, _ := GetConnector(RootDB, name)
+		return Dialect(c)
+	}
 	media.ModelCallNote = noteModelCall
 }
 

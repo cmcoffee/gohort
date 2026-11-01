@@ -19,7 +19,7 @@ func embedSpec(defaultModel string) map[string]any {
 		"config": []any{
 			map[string]any{"name": "endpoint", "label": "Endpoint", "type": "url", "required": true},
 			map[string]any{"name": "dims", "label": "Dimensions", "type": "number", "default": "4", "min": 1, "max": 8},
-			map[string]any{"name": "api_key", "label": "API key", "type": "secret", "send": "bearer"},
+			map[string]any{"name": "api_key", "label": "API key", "type": "secret", "send": "bearer", "required": true},
 		},
 		"provider": map[string]any{"transport": "http", "base_url": "{config.endpoint}", "auth": map[string]any{"secret": "api_key"},
 			"operations": map[string]any{"embed": map[string]any{"method": "POST", "path": "/embeddings",
@@ -360,5 +360,28 @@ func TestASettingListsItsOptions(t *testing.T) {
 		if got := strings.Join(optionValues(node), ","); got != want {
 			t.Errorf("%s: %q, want %q", in, got, want)
 		}
+	}
+}
+
+// A key a connection may go without (a local server started with no
+// --api-key), not given, sends none; given, it is sent.
+func TestAnOptionalKeyIsSentOnlyWhenGiven(t *testing.T) {
+	world(t)
+	srv, got := keyServer(t)
+	m := embedSpec("m1")
+	delete(m["config"].([]any)[2].(map[string]any), "required")
+	raw, _ := json.Marshal(m)
+	SaveConnector(RootDB, Connector{Name: "vec", Kind: Kind, Spec: raw})
+	ApproveConnector(RootDB, "vec")
+	c, _ := GetConnector(RootDB, "vec")
+	SaveSettings(c, "", map[string]string{"endpoint": srv.URL}, nil)
+	in := map[string]any{"texts": []string{"hi"}}
+	if _, err := Call(context.Background(), nil, "vec", "embed.text", in); err != nil {
+		t.Fatalf("with no key: %v", err)
+	}
+	SaveSettings(c, "", map[string]string{"endpoint": srv.URL}, map[string]string{"api_key": "sk-9"})
+	Call(context.Background(), nil, "vec", "embed.text", in)
+	if len(*got) != 2 || strings.Contains((*got)[0], "Bearer") || !strings.Contains((*got)[1], " Bearer sk-9 ") {
+		t.Errorf("sent: %v", *got)
 	}
 }

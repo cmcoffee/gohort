@@ -16,6 +16,7 @@ import (
 )
 
 func TestEachTierSaysWhetherItReadsImages(t *testing.T) {
+	providedWorld(t)
 	a := &AdminApp{db: &DBase{Store: kvlite.MemStore()}}
 	for _, c := range []struct {
 		table  string

@@ -1900,10 +1900,10 @@ func ProviderHasNativeTools(provider string) bool {
 	if strings.HasPrefix(strings.TrimSpace(provider), peerProviderPrefix) {
 		return true
 	}
-	// A model connector speaks one of the openai, anthropic and gemini
-	// dialects through gohort's own clients, and each calls tools natively.
+	// A model connection is judged by the dialect gohort speaks to it: an
+	// Ollama server's tool calling depends on its model, as Ollama's does.
 	if strings.HasPrefix(strings.TrimSpace(provider), media.ServiceProviderPrefix) {
-		return true
+		return modelDialect(provider) != "ollama"
 	}
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "anthropic", "bedrock", "openai", "gemini", "llama.cpp", "vllm":

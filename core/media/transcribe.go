@@ -164,6 +164,10 @@ type ModelTarget struct {
 // connection keeps.
 var ModelService func(connector string, withKey bool, form *ModelForm) (ModelTarget, error)
 
+// ModelDialect, when set, is the dialect the model connector named connector
+// is spoken in, read from its spec whether or not it is in use, or "".
+var ModelDialect func(connector string) string
+
 // ModelForm is what a tier's form holds for its model connection, tried
 // before it is saved: its settings by key, and secrets typed there by name.
 type ModelForm struct {

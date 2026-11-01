@@ -660,6 +660,7 @@ func TestGohortProvidesItsConnections(t *testing.T) {
 	world(t)
 	SaveConnector(RootDB, Connector{Name: "gemini", Kind: Kind, Spec: json.RawMessage(mustJSON(t, embedSpec("m"))), Provided: true})
 	ProvideConnectors(RootDB)
+	first := len(ListConnectors(RootDB))
 	ProvideConnectors(RootDB)
 	for name, label := range map[string]string{"anthropic": "Anthropic", "openai": "OpenAI", "bedrock": "AWS Bedrock"} {
 		c, ok := GetConnector(RootDB, name)
@@ -682,7 +683,132 @@ func TestGohortProvidesItsConnections(t *testing.T) {
 	if c, _ := GetConnector(RootDB, "gemini"); c.Provided || Provides(c, "llm.chat") {
 		t.Errorf("someone's own gemini: %+v", c)
 	}
-	if n := len(ListConnectors(RootDB)); n != 4 {
-		t.Errorf("%d connectors after providing twice", n)
+	if n := len(ListConnectors(RootDB)); n != first {
+		t.Errorf("%d connectors after providing again, %d before", n, first)
+	}
+	for _, c := range ListConnectors(RootDB) {
+		if !c.Provided && c.Name != "gemini" {
+			t.Errorf("%s was installed but not provided", c.Name)
+		}
+	}
+}
+
+// A connector made before connections kept their own settings (its address
+// and model written into its spec, or its key in a vault credential) is
+// outdated; the one gohort provides from the same template stands in for
+// it, taking the address and model it had. A connection made from the
+// template now is current.
+func TestAnOutdatedConnectorHasASuccessor(t *testing.T) {
+	world(t)
+	ProvideConnectors(RootDB)
+	old := Connector{Name: "embeddings", Kind: Kind, Template: "openai-compatible-embeddings", Approved: true,
+		Spec: json.RawMessage(`{"provider":{"transport":"http","base_url":"http://gpu.example:8080/v1","auth":{"none":true},
+			"operations":{"embed":{"method":"POST","path":"/embeddings","body":{"model":"{model}","input":"{texts}"}}}},
+			"provides":[{"capability":"embed.text","steps":[{"call":"embed"}],"output":{"vectors":{"path":"data","each":"embedding","as":"json"}},"defaults":{"model":"e5-large"}}]}`)}
+	RootDB.Set("connectors", old.Name, old)
+	if !Outdated(old) {
+		t.Fatal("a connector with its address written in is current")
+	}
+	next, carry := Successor(old)
+	if next != "local-embeddings" || carry["base_url"] != "http://gpu.example:8080/v1" || carry["model"] != "e5-large" {
+		t.Errorf("its successor: %q %v", next, carry)
+	}
+	keyed := old
+	keyed.Name, keyed.Template = "openai-embed", "openai-embeddings"
+	keyed.Spec = json.RawMessage(`{"provider":{"transport":"http","base_url":"https://api.openai.com","auth":{"credential":"openai_embeddings"},"operations":{"embed":{"method":"POST","path":"/v1/embeddings"}}},"provides":[{"capability":"embed.text","steps":[{"call":"embed"}],"output":{"vectors":{"path":"data","each":"embedding","as":"json"}}}]}`)
+	if !Outdated(keyed) {
+		t.Error("a connector sending its key with a vault credential is current")
+	}
+	if next, _ := Successor(keyed); next != "" {
+		t.Errorf("a successor where gohort provides none: %q", next)
+	}
+	if _, err := recipes.Install(RootDB, "openai-compatible-embeddings", "", map[string]string{"name": "lab-embed"}); err != nil {
+		t.Fatal(err)
+	}
+	if now, _ := GetConnector(RootDB, "lab-embed"); Outdated(now) {
+		t.Error("a connection made from the template now is outdated")
+	}
+	if p, _ := GetConnector(RootDB, "local-embeddings"); Outdated(p) {
+		t.Error("the provided connection is outdated")
+	}
+}
+
+// A connection gohort provides, its spec changed, reads as modified, and
+// Revert puts back the spec it ships, ending a hold the change put on it;
+// its settings and the name it is shown as stay. Only a provided connection
+// reverts.
+func TestAProvidedConnectionReverts(t *testing.T) {
+	world(t)
+	ProvideConnectors(RootDB)
+	c, _ := GetConnector(RootDB, "ollama")
+	if Modified(c) {
+		t.Fatal("a connection as shipped reads as modified")
+	}
+	SaveSettings(c, "", map[string]string{"base_url": "http://gpu.example:11434"}, nil)
+	SetConnectorDisplayName(RootDB, "ollama", "GPU box")
+	c, _ = GetConnector(RootDB, "ollama")
+	c.Spec = json.RawMessage(strings.Replace(string(c.Spec), "/api/tags", "/api/tags2", 1))
+	if err := SaveConnector(RootDB, c); err != nil {
+		t.Fatal(err)
+	}
+	MarkChanged(RootDB, "ollama", "pat")
+	if c, _ = GetConnector(RootDB, "ollama"); !Modified(c) {
+		t.Fatal("an edited spec reads as shipped")
+	}
+	if err := Revert(RootDB, "ollama"); err != nil {
+		t.Fatal(err)
+	}
+	c, _ = GetConnector(RootDB, "ollama")
+	if _, held := PendingChange(RootDB, "ollama"); Modified(c) || held || c.Title() != "GPU box" || ConnectionConfig(RootDB, c)["base_url"] != "http://gpu.example:11434" {
+		t.Errorf("after Revert: modified %v, held %v, shown as %q, settings %v", Modified(c), held, c.Title(), ConnectionConfig(RootDB, c))
+	}
+	install(t, "mine", embedSpec("m"))
+	if err := Revert(RootDB, "mine"); err == nil {
+		t.Error("a connection gohort does not provide reverted")
+	}
+}
+
+// A provided connection takes the spec gohort ships now at startup when
+// nobody has edited it since gohort last shipped it (or it predates gohort
+// recording that), keeping its settings; one edited keeps its own until
+// Revert, which takes the new one.
+func TestAProvidedConnectionTakesTheSpecGohortShips(t *testing.T) {
+	world(t)
+	ProvideConnectors(RootDB)
+	c, _ := GetConnector(RootDB, "ollama")
+	shipped := c.Spec
+	if c.Shipped == "" || c.Shipped != SpecHash(shipped) {
+		t.Fatalf("installed, it records what was shipped: %q", c.Shipped)
+	}
+	SaveSettings(c, "", map[string]string{"base_url": "http://gpu.example:11434"}, nil)
+	older := json.RawMessage(strings.Replace(string(shipped), "/api/tags", "/api/tags-old", 1))
+	put := func(spec json.RawMessage, recorded string) {
+		c, _ := GetConnector(RootDB, "ollama")
+		c.Spec, c.Shipped = spec, recorded
+		RootDB.Set("connectors", "ollama", c)
+	}
+	spec := func() Connector { c, _ := GetConnector(RootDB, "ollama"); return c }
+
+	put(older, SpecHash(older)) // as an older gohort shipped it, unedited
+	ProvideConnectors(RootDB)
+	if got := spec(); SpecHash(got.Spec) != SpecHash(shipped) || got.Shipped != SpecHash(shipped) || ConnectionConfig(RootDB, got)["base_url"] != "http://gpu.example:11434" {
+		t.Errorf("an unedited one: %s, recorded %q, settings %v", got.Spec, got.Shipped, ConnectionConfig(RootDB, got))
+	}
+	edited := json.RawMessage(strings.Replace(string(shipped), "/api/tags", "/api/tags-mine", 1))
+	put(edited, SpecHash(older)) // shipped older, then edited here
+	ProvideConnectors(RootDB)
+	if got := spec(); SpecHash(got.Spec) != SpecHash(edited) || !Modified(got) {
+		t.Errorf("an edited one was replaced: %s", got.Spec)
+	}
+	if err := Revert(RootDB, "ollama"); err != nil {
+		t.Fatal(err)
+	}
+	if got := spec(); got.Shipped != SpecHash(shipped) || Modified(got) {
+		t.Errorf("after Revert: recorded %q, modified %v", got.Shipped, Modified(got))
+	}
+	put(older, "") // provided before gohort recorded what it shipped
+	ProvideConnectors(RootDB)
+	if got := spec(); SpecHash(got.Spec) != SpecHash(shipped) {
+		t.Errorf("one with nothing recorded: %s", got.Spec)
 	}
 }

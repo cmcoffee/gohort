@@ -685,6 +685,38 @@ no step of their own.
    - No migration code: the connectors on the one live instance are made
      again from templates on the new build.
 
+14. **Everything a page offers is a connection.** Built 2026-10-31, the
+   owner's direction: the built-in providers are connections gohort
+   provides, added automatically, never removable, editable, and reverted
+   to what gohort ships with Revert on their row; more are added from their
+   templates. They work as before with connections as the backend. Provided:
+   the LLM servers Ollama, llama.cpp and vLLM (new dialects for gohort's own
+   clients: their thinking switches, queue, the Ollama Proxy, peer lending
+   and the server probe read the connection's dialect and address), the
+   hosted Anthropic, OpenAI, Gemini and AWS Bedrock, and the local
+   embeddings (OpenAI-shaped and Ollama), transcription and speech servers.
+   A server you run takes its address as a setting; a hosted service has
+   its address in the spec and takes a key. A key a server may go without
+   (llama.cpp's --api-key) sends none when not given. A connection shows by
+   its display name. A page naming an outdated connector, or a provider by
+   name, shows the provided one with the old address and model filled in;
+   outdated ones are not offered.
+
+   Migration `connections:v2` (Admin > Migrations; v1 ran on the owner's
+   instance before it knew the settings connectors and Bedrock's region, and
+   every step is safe to repeat), once at startup after
+   the provided connections are installed: an outdated connector with a
+   provided one in its place hands it its address, model, key (moved inside
+   core, never read out) and pages, and goes; Bedrock's region, API and
+   profile carry and it keeps signing as the machine; one sending a key the
+   provided one cannot take, or with none in its place, is made again where
+   it is (from its template's spec now, else with its credential made a
+   secret setting); a tier naming a provider directly, and Embeddings,
+   Transcription and Speech on this instance's own server, move onto the
+   provided connection (embeddings keep their endpoint and model, so their
+   space); a credential only those connectors used is deleted. Delete it
+   once the deployments that predate connections have run it.
+
 ## Migrations
 
 - Stages 1 to 3 and 6 need none: they show what is stored, differently.

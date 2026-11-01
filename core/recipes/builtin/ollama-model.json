@@ -1,0 +1,70 @@
+{
+  "id": "ollama-model",
+  "title": "Ollama (LLM)",
+  "description": "A model served by Ollama, on this machine or your network, through gohort's Ollama client: its own API, which keeps thinking control and the context window.",
+  "category": "LLMs",
+  "setup_notes": "Run ollama serve and pull the model (ollama pull <model>). gohort provides one, named ollama and listed as Ollama; another, at another address, is added from here. Choose it under Admin > LLMs > Worker LLM (or Lead LLM), where its address is set and the tier names its model; Test connection there says what is at the address and makes one short real chat. Its parallel requests are capped under Local Model Scheduler. Native tool calling is a toggle on the tier, for a model that supports it.",
+  "provided": {
+    "name": "ollama",
+    "label": "Ollama"
+  },
+  "questions": [
+    {
+      "name": "name",
+      "label": "Connector name",
+      "help": "Lowercase letters, digits, dashes and underscores; the LLM settings list it by this name.",
+      "default": "ollama-2"
+    }
+  ],
+  "bundle": {
+    "bundle": "gohort.bundle/v1",
+    "artifacts": [
+      {
+        "type": "connector",
+        "name": "{{name}}",
+        "recipe": {
+          "name": "{{name}}",
+          "kind": "service",
+          "template": "ollama-model",
+          "desc": "Ollama models",
+          "spec": {
+            "config": [
+              {
+                "name": "base_url",
+                "label": "Server address",
+                "type": "url",
+                "default": "http://localhost:11434",
+                "required": true,
+                "help": "Where the server listens.",
+                "detail": "On this machine or its network. Its default is the server's own; a server elsewhere needs its address."
+              }
+            ],
+            "provider": {
+              "transport": "http",
+              "base_url": "{config.base_url}",
+              "auth": {
+                "none": true
+              },
+              "operations": {
+                "models": {
+                  "path": "/api/tags"
+                }
+              },
+              "health": {
+                "call": "models",
+                "expect": "models",
+                "every_mins": 60
+              }
+            },
+            "provides": [
+              {
+                "capability": "llm.chat",
+                "dialect": "ollama"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

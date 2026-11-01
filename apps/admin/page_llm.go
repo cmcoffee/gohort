@@ -1,7 +1,10 @@
 package admin
 
 import (
+	"strings"
+
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/service"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -28,18 +31,8 @@ func (a *AdminApp) llmSections() []ui.Section {
 						SuggestionsSource: "api/worker-llm/models", SuggestionsLabel: "List models",
 						Help:   "Blank uses the provider default. List models asks the provider what it offers.",
 						Detail: "On AWS Bedrock, many accounts require a region-prefixed inference profile (us.anthropic.claude-opus-4-8) and deny the bare id."},
-					{Field: "api_key", Label: "API key", Type: "password", Placeholder: "(leave blank to keep current)", SaveOnBlur: true,
-						ShowWhen: "provider:llama.cpp|vllm",
-						Help:     tierKeyHelp},
-					{Field: "endpoint", Label: "Endpoint", Type: "text", Placeholder: "http://localhost:8080/v1", SaveOnBlur: true,
-						ShowWhen: "provider:ollama|llama.cpp|vllm",
-						Help:     "Where the local server listens; blank = provider default.",
-						Presets: []ui.FieldPreset{
-							{Label: "Ollama", Value: "http://localhost:11434"},
-							{Label: "llama.cpp", Value: "http://localhost:8080/v1"},
-							{Label: "vLLM", Value: "http://localhost:8000/v1"}}},
 					{Field: "context_size", Label: "Context size (tokens)", Type: "number", Min: 0, Max: 1000000,
-						ShowWhen: "provider:!openai|gemini",
+						ShowWhen: providerWhen(false, "openai", "gemini"),
 						Help:     "0 uses the default: 65K for ollama, llama.cpp and vLLM, 200K for Anthropic and Bedrock.",
 						Detail:   "Local providers send this as num_ctx. For Anthropic and Bedrock it is the working cap history compaction keys on. The API accepts up to 1M, but every input token bills per turn, so keep it modest. A model borrowed from a peer uses the size the peer set for it: 0 takes it, and a larger number here is lowered to it, so a conversation is trimmed before the peer's server would refuse it."},
 					{Field: "request_timeout_seconds", Label: "Request timeout (sec)", Type: "number", Min: 0, Max: 3600,
@@ -47,28 +40,28 @@ func (a *AdminApp) llmSections() []ui.Section {
 					{Field: "native_tools", Label: "Native tool calling", Type: "toggle",
 						// Only ollama reads it: every hosted API and llama.cpp, and so
 						// every peer, calls tools natively (ProviderHasNativeTools).
-						ShowWhen: "provider:ollama",
+						ShowWhen: providerWhen(true, "ollama"),
 						Help:     "Disable for models without tool-calling support (ollama)."},
 					{Type: "header", Label: "Capabilities"},
 					readsImagesField(""),
 					{Type: "header", Label: "Thinking"},
 					{Field: "disable_thinking", Label: "Disable thinking (force think=false)", Type: "toggle",
-						ShowWhen: "provider:!anthropic|openai|bedrock"},
+						ShowWhen: providerWhen(false, "anthropic", "openai", "bedrock")},
 					{Field: "thinking_budget", Label: "Thinking budget (tokens)", Type: "number", Min: 0, Max: 131072,
-						ShowWhen: "provider:!anthropic|openai|bedrock|ollama|vllm",
+						ShowWhen: providerWhen(false, "anthropic", "openai", "bedrock", "ollama", "vllm"),
 						Help:     thinkingBudgetHelp},
 					effortDefaultField(), effortMaxField(),
 					{Field: "no_think_use_kwarg", Label: "No-think: send enable_thinking=false", Type: "toggle",
-						ShowWhen: workerNoThink},
+						ShowWhen: workerNoThink()},
 					{Field: "no_think_send_budget", Label: "No-think: send thinking_budget cap", Type: "toggle",
-						ShowWhen: workerNoThinkBudget},
+						ShowWhen: workerNoThinkBudget()},
 					{Field: "no_think_budget", Label: "No-think: budget value (tokens)", Type: "number", Min: 0, Max: 8192,
-						ShowWhen: workerNoThinkBudget + ";no_think_send_budget",
+						ShowWhen: workerNoThinkBudget() + ";no_think_send_budget",
 						Help:     "0 = built-in default (512)."},
 					{Field: "no_think_prepend_system", Label: "No-think: prepend /no_think to system prompt", Type: "toggle",
-						ShowWhen: workerNoThink},
+						ShowWhen: workerNoThink()},
 					{Field: "no_think_prepend_user", Label: "No-think: prepend /no_think to last user message", Type: "toggle",
-						ShowWhen: workerNoThink},
+						ShowWhen: workerNoThink()},
 				}),
 			},
 		},
@@ -95,38 +88,32 @@ func (a *AdminApp) llmSections() []ui.Section {
 						ShowWhen:          "provider",
 						SuggestionsSource: "api/lead-llm/models", SuggestionsLabel: "List models",
 						Help: "List models asks the provider what it offers."},
-					{Field: "api_key", Label: "API key", Type: "password", Placeholder: "(leave blank to keep current)", SaveOnBlur: true,
-						ShowWhen: "provider:llama.cpp|vllm",
-						Help:     tierKeyHelp + " The lead never takes the worker's key."},
-					{Field: "endpoint", Label: "Endpoint", Type: "text", Placeholder: "(provider default)", SaveOnBlur: true,
-						ShowWhen: "provider:ollama|llama.cpp|vllm",
-						Help:     "Where the local server listens; blank = provider default."},
 					{Field: "context_size", Label: "Context size (tokens)", Type: "number", Min: 0, Max: 1000000,
-						ShowWhen: "provider;provider:!openai|gemini",
+						ShowWhen: providerWhen(false, "openai", "gemini"),
 						Help:     "0 uses the default: 200K for Anthropic and Bedrock, 65K for local providers.",
 						Detail:   "For Anthropic and Bedrock this is the working cap the lead agent-loop history compaction keys on, not a hard API limit. The API accepts up to 1M, but input tokens bill on every turn, so raise it only for genuine long-context work. A model borrowed from a peer uses the size the peer set for it: 0 takes it, and a larger number here is lowered to it, so a conversation is trimmed before the peer's server would refuse it."},
 					{Field: "native_tools", Label: "Native tool calling", Type: "toggle",
-						ShowWhen: "provider:ollama",
+						ShowWhen: providerWhen(true, "ollama"),
 						Help:     "Disable for models without tool-calling support (ollama)."},
 					{Type: "header", Label: "Capabilities", ShowWhen: "provider"},
 					leadReadsImagesField(),
 					{Type: "header", Label: "Thinking"},
 					{Field: "disable_thinking", Label: "Disable thinking (force think=false)", Type: "toggle",
-						ShowWhen: "provider;provider:!anthropic|openai|bedrock"},
+						ShowWhen: providerWhen(false, "anthropic", "openai", "bedrock")},
 					{Field: "thinking_budget", Label: "Thinking budget (tokens)", Type: "number", Min: 0, Max: 131072,
-						ShowWhen: "provider;provider:!anthropic|openai|bedrock|ollama|vllm",
+						ShowWhen: providerWhen(false, "anthropic", "openai", "bedrock", "ollama", "vllm"),
 						Help:     thinkingBudgetHelp},
 					leadOnly(effortDefaultField()), leadOnly(effortMaxField()),
 					{Field: "no_think_use_kwarg", Label: "No-think: send enable_thinking=false", Type: "toggle",
-						ShowWhen: leadNoThink},
+						ShowWhen: leadNoThink()},
 					{Field: "no_think_send_budget", Label: "No-think: send thinking_budget cap", Type: "toggle",
-						ShowWhen: leadNoThinkBudget},
+						ShowWhen: leadNoThinkBudget()},
 					{Field: "no_think_budget", Label: "No-think: budget value (tokens)", Type: "number", Min: 0, Max: 8192,
-						ShowWhen: leadNoThinkBudget + ";no_think_send_budget"},
+						ShowWhen: leadNoThinkBudget() + ";no_think_send_budget"},
 					{Field: "no_think_prepend_system", Label: "No-think: prepend /no_think to system prompt", Type: "toggle",
-						ShowWhen: leadNoThink},
+						ShowWhen: leadNoThink()},
 					{Field: "no_think_prepend_user", Label: "No-think: prepend /no_think to last user message", Type: "toggle",
-						ShowWhen: leadNoThink},
+						ShowWhen: leadNoThink()},
 				}),
 			},
 		},
@@ -240,12 +227,44 @@ const thinkingBudgetHelp = "Default 4096. On llama.cpp and peers, 0 = unlimited 
 // matches an empty provider, so the Lead form first requires one to be picked,
 // which excludes "(use primary)". The budget pair also leaves out vLLM, which
 // ignores thinking_budget_tokens: a control there would do nothing.
-const (
-	workerNoThink       = "provider:!ollama|anthropic|openai|gemini|bedrock"
-	leadNoThink         = "provider;" + workerNoThink
-	workerNoThinkBudget = "provider:!ollama|anthropic|openai|gemini|bedrock|vllm"
-	leadNoThinkBudget   = "provider;" + workerNoThinkBudget
-)
+func workerNoThink() string {
+	return providerWhen(false, "ollama", "anthropic", "openai", "gemini", "bedrock")
+}
+func leadNoThink() string { return workerNoThink() }
+func workerNoThinkBudget() string {
+	return providerWhen(false, "ollama", "anthropic", "openai", "gemini", "bedrock", "vllm")
+}
+func leadNoThinkBudget() string { return workerNoThinkBudget() }
+
+// providerWhen is a show_when for the tier's choices whose dialect is among
+// dialects (include), or is not: each choice by the client gohort speaks to
+// it (a connection's dialect, a peer's llama.cpp), so a second Ollama
+// server shows what the provided one does.
+func providerWhen(include bool, dialects ...string) string {
+	set := map[string]bool{}
+	for _, d := range dialects {
+		set[d] = true
+	}
+	var values []string
+	for _, o := range LLMProviderOptions(false) {
+		if o.Value != "" && set[choiceDialect(o.Value)] == include {
+			values = append(values, o.Value)
+		}
+	}
+	if len(values) == 0 {
+		values = []string{"-"}
+	}
+	return "provider:" + strings.Join(values, "|")
+}
+
+// choiceDialect is the dialect gohort speaks to a tier's choice.
+func choiceDialect(value string) string {
+	if strings.HasPrefix(value, PeerProviderValue("")) {
+		return "llama.cpp"
+	}
+	c, _ := GetConnector(RootDB, chosenService(value))
+	return service.Dialect(c)
+}
 
 // leadOnly gates a shared tier field on the Lead form, where a blank provider
 // means "(use primary)" and the worker's own settings apply instead.
@@ -390,12 +409,7 @@ func appRoutingSources() []string {
 
 // tierProviderDetail is where a tier's model can come from, beyond the local
 // servers the list starts with.
-const tierProviderDetail = "Anthropic, OpenAI, Gemini and AWS Bedrock are provided with gohort: choose one and give its key under the choice. Any other hosted model (OpenRouter, Groq and others) is added from its template under Admin > Extensions > Templates and appears here as Service: <name>, as does a second connection to a provided one, with a key of its own. A connection's key, and any settings it takes, are set here, under the choice."
-
-// tierKeyHelp is what a tier's own API key field is for: a local server
-// started with a key. A model connector's key is its credential's, set in the
-// field under the choice.
-const tierKeyHelp = "Only for a server started with --api-key; stored encrypted, and blank on save keeps the current key."
+const tierProviderDetail = "Ollama, llama.cpp and vLLM (servers on this machine or its network) and Anthropic, OpenAI, Gemini and AWS Bedrock are provided with gohort: choose one and set its address or key under the choice. Any other hosted model (OpenRouter, Groq and others) is added from its template under Admin > Extensions > Templates and appears here too, as does a second connection to a provided one (another server, or a key of its own). A connection's address, key and any settings it takes are set here, under the choice."
 
 // tierFields are a tier's form fields, with the settings and key of the
 // model connector chosen as its provider right under the choice. They save

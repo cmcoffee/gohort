@@ -590,9 +590,12 @@ func (o Output) validate(name string, spec Port, last Operation) error {
 }
 
 // dialects are the APIs gohort's own model clients speak, and the one host
-// each is fixed to ("" for an OpenAI-shaped API anywhere, and for Bedrock,
-// at a regional host or a private endpoint).
-var dialects = map[string]string{"openai": "", "anthropic": "api.anthropic.com", "gemini": "generativelanguage.googleapis.com", "bedrock": ""}
+// each is fixed to ("" for an OpenAI-shaped API anywhere, for Bedrock at a
+// regional host or a private endpoint, and for the model servers gohort runs
+// beside: Ollama's own API, llama.cpp's and vLLM's, with their thinking
+// switches and their queue).
+var dialects = map[string]string{"openai": "", "anthropic": "api.anthropic.com", "gemini": "generativelanguage.googleapis.com", "bedrock": "",
+	"ollama": "", "llama.cpp": "", "vllm": ""}
 
 // bedrockAPIs are the Bedrock APIs its client speaks: Converse (any model),
 // the Messages API (Claude, at a bedrock-mantle host) and InvokeModel.
@@ -607,7 +610,7 @@ func (b Binding) validateModel(p Provider) error {
 	case b.Capability != "llm.chat":
 		return fmt.Errorf("a dialect is for llm.chat, a model: %s maps its steps", b.Capability)
 	case !ok:
-		return fmt.Errorf("dialect %q: gohort speaks openai, anthropic, gemini and bedrock", b.Dialect)
+		return fmt.Errorf("dialect %q: gohort speaks openai, anthropic, gemini, bedrock, ollama, llama.cpp and vllm", b.Dialect)
 	case len(b.Steps) > 0 || len(b.Output) > 0 || len(b.Wide) > 0:
 		return fmt.Errorf("a model has no steps or outputs: its dialect's client speaks to it")
 	case p.Transport != "http":

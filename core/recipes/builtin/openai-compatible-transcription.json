@@ -3,13 +3,17 @@
   "title": "whisper.cpp / OpenAI-compatible (transcription)",
   "description": "A speech-to-text model on any server that speaks OpenAI's transcription API (whisper.cpp, faster-whisper / Speaches, vLLM), on this machine or your network, as gohort's ears: the upload and the reply are data you can test and fix from Admin > Connectors.",
   "category": "Speech",
-  "setup_notes": "Start the server with a speech model. whisper.cpp: whisper-server -m <model> --port 8089 --inference-path /v1/audio/transcriptions (its default path is /inference, which this connector does not call). Speaches and vLLM serve /v1/audio/transcriptions as they are. The connector takes no key. Choose it under Capabilities > Audio Transcription and give the server's address and the model there; Test there sends one second of a tone, which has no words, so an empty answer passes. A server that takes a key: declare a secret setting sent as bearer in its spec's config, name it in auth in place of none, and give the key under the choice.",
+  "setup_notes": "Start the server with a speech model. whisper.cpp: whisper-server -m <model> --port 8089 --inference-path /v1/audio/transcriptions (its default path is /inference, which this connector does not call). Speaches and vLLM serve /v1/audio/transcriptions as they are. The connector takes no key. gohort provides one, named local-transcription and listed as Local transcription server; another, for a second server, is added from here. Choose it under Capabilities > Audio Transcription and give the server's address and the model there; Test there sends one second of a tone, which has no words, so an empty answer passes. A server that takes a key: declare a secret setting sent as bearer in its spec's config, name it in auth in place of none, and give the key under the choice.",
+  "provided": {
+    "name": "local-transcription",
+    "label": "Local transcription server"
+  },
   "questions": [
     {
       "name": "name",
       "label": "Connector name",
       "help": "Lowercase letters, digits, dashes and underscores; the transcription settings list it by this name.",
-      "default": "local-transcription"
+      "default": "local-transcription-2"
     }
   ],
   "bundle": {

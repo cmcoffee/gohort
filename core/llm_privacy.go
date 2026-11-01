@@ -88,7 +88,7 @@ func ProviderLooksPrivate(provider, endpoint string) (bool, string) {
 		if err != nil {
 			return false, "the model connector " + name + " cannot be read (" + err.Error() + "), so it cannot be judged private"
 		}
-		if t.Dialect != "openai" {
+		if !openDialects[t.Dialect] {
 			return false, "a hosted provider through the connector " + name + ": prompts leave this deployment"
 		}
 		private, why := ProviderLooksPrivate("llama.cpp", t.Endpoint)
@@ -194,4 +194,64 @@ func tierProviderEndpoint(table string) (provider, endpoint string) {
 	db.Get(table, "provider", &provider)
 	db.Get(table, "endpoint", &endpoint)
 	return strings.TrimSpace(provider), strings.TrimSpace(endpoint)
+}
+
+// openDialects are the model dialects spoken at any address: judged by where
+// it points, where the others are a third party's API whatever the address.
+var openDialects = map[string]bool{"openai": true, "ollama": true, "llama.cpp": true, "vllm": true}
+
+// LocalDialect reports whether a model dialect is one of the servers gohort
+// runs beside (Ollama, llama.cpp, vLLM): their queue, proxy and lending.
+func LocalDialect(dialect string) bool {
+	switch strings.ToLower(strings.TrimSpace(dialect)) {
+	case "ollama", "llama.cpp", "vllm":
+		return true
+	}
+	return false
+}
+
+// modelDialect is the dialect gohort speaks to a tier's provider: a
+// connection's, else the provider named (a peer's is llama.cpp's), or "".
+func modelDialect(provider string) string {
+	provider = strings.TrimSpace(provider)
+	if name, ok := strings.CutPrefix(provider, media.ServiceProviderPrefix); ok {
+		if media.ModelDialect == nil {
+			return ""
+		}
+		return media.ModelDialect(name)
+	}
+	if strings.HasPrefix(provider, peerProviderPrefix) {
+		return "llama.cpp"
+	}
+	return strings.ToLower(provider)
+}
+
+// ResolvedTier is a tier's config with its connection resolved: the dialect
+// as its provider, the connection's address and key. Anything else, or a
+// connection that cannot be read, is the config as it was.
+func ResolvedTier(cfg LLMProviderConfig) LLMProviderConfig {
+	if !strings.HasPrefix(strings.TrimSpace(cfg.Provider), media.ServiceProviderPrefix) {
+		return cfg
+	}
+	if r, err := ResolveModelProvider(cfg, cfg.Provider); err == nil {
+		return r
+	}
+	return cfg
+}
+
+// ProviderTitle is how a tier's provider is shown to people: a connection by
+// the name it is shown as (Anthropic, not service:anthropic), a peer as
+// Peer <name>, anything else as it is.
+func ProviderTitle(provider string) string {
+	p := strings.TrimSpace(provider)
+	if name, ok := strings.CutPrefix(p, media.ServiceProviderPrefix); ok {
+		if c, ok := GetConnector(RootDB, name); ok {
+			return c.Title()
+		}
+		return name
+	}
+	if name, ok := strings.CutPrefix(p, peerProviderPrefix); ok {
+		return "Peer " + name
+	}
+	return p
 }

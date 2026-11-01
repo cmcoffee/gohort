@@ -3,13 +3,17 @@
   "title": "Kokoro / OpenAI-compatible (speech)",
   "description": "A text-to-speech model on any server that speaks OpenAI's speech API (Kokoro-FastAPI, openedai-speech, Speaches), on this machine or your network, as gohort's voice, with the server's voice list for the Voice field: the request and the reply are data you can test and fix from Admin > Connectors.",
   "category": "Speech",
-  "setup_notes": "Start the server (Kokoro-FastAPI: docker run -p 8880:8880 ghcr.io/remsky/kokoro-fastapi-cpu). The connector takes no key. Choose it under Capabilities > Speech (TTS) and give the server's address and the model there; Test there speaks a short sentence, and its voices are offered to choose from. A server with no voice list (/audio/voices) fails that part of the Test: remove the speech.voices entry from its spec, and type the voice. A server that takes a key: declare a secret setting sent as bearer in its spec's config, name it in auth in place of none, and give the key under the choice.",
+  "setup_notes": "Start the server (Kokoro-FastAPI: docker run -p 8880:8880 ghcr.io/remsky/kokoro-fastapi-cpu). The connector takes no key. gohort provides one, named local-speech and listed as Local speech server; another, for a second server, is added from here. Choose it under Capabilities > Speech (TTS) and give the server's address and the model there; Test there speaks a short sentence, and its voices are offered to choose from. A server with no voice list (/audio/voices) fails that part of the Test: remove the speech.voices entry from its spec, and type the voice. A server that takes a key: declare a secret setting sent as bearer in its spec's config, name it in auth in place of none, and give the key under the choice.",
+  "provided": {
+    "name": "local-speech",
+    "label": "Local speech server"
+  },
   "questions": [
     {
       "name": "name",
       "label": "Connector name",
       "help": "Lowercase letters, digits, dashes and underscores; the speech settings list it by this name.",
-      "default": "local-speech"
+      "default": "local-speech-2"
     }
   ],
   "bundle": {

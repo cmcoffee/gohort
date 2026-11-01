@@ -81,7 +81,7 @@ func (a *AdminApp) handleEmbeddings(c *jsonapi.Call) (any, error) {
 	// Where embeddings are made is the connector or peer named: its key is
 	// its own, never shown here.
 	cfg.APIKey = ""
-	return withValues(cfg, chosenService(cfg.Provider), "embed.text"), nil
+	return withSuccessor(withValues(cfg, chosenService(cfg.Provider), "embed.text"), "provider", "embed.text"), nil
 }
 
 // handleEmbeddingsSave persists the embeddings config and reinstalls it live.
@@ -166,7 +166,7 @@ func (a *AdminApp) handleTranscribe(c *jsonapi.Call) (any, error) {
 	// What transcribes is the connector or peer named: its key is its own,
 	// never shown here.
 	cfg.APIKey = ""
-	return withValues(cfg, chosenService(cfg.Provider), "speech.transcribe"), nil
+	return withSuccessor(withValues(cfg, chosenService(cfg.Provider), "speech.transcribe"), "provider", "speech.transcribe"), nil
 }
 
 // handleTranscribeSave persists the transcription config and reinstalls it
@@ -220,7 +220,7 @@ func (a *AdminApp) handleSpeech(c *jsonapi.Call) (any, error) {
 	// What speaks is the connector or peer named: its key is its own, never
 	// shown here.
 	cfg.APIKey = ""
-	return withValues(cfg, chosenService(cfg.Provider), "speech.synthesize"), nil
+	return withSuccessor(withValues(cfg, chosenService(cfg.Provider), "speech.synthesize"), "provider", "speech.synthesize"), nil
 }
 
 // handleSpeechSave persists the speech config and installs it live.
@@ -516,9 +516,22 @@ func serviceProviderOptions(capability, verb string) []ui.SelectOption {
 	var provided, others []ui.SelectOption
 	for _, c := range ListConnectors(RootDB) {
 		if c.Kind == service.Kind && service.Provides(c, capability) {
+			// One gohort provides a connection in place of is not offered:
+			// the page shows that one instead (withSuccessor).
+			if next, _ := service.Successor(c); next != "" {
+				continue
+			}
 			label, help := connectorLabel(c), verb+" with "+c.Title()+": "+ConnectorSummary(c)+"."
 			if c.Provided {
 				help = verb + " with " + c.Title() + ", provided with gohort: give its key and settings below, then save."
+			}
+			switch {
+			case service.KeyInVault(c):
+				label += " (no longer runs: add it again)"
+				help = c.Name + " sends its key with a vault credential, as connectors did before a connection kept its own: it no longer runs. Add it again from its template, or choose the one gohort provides."
+			case service.Outdated(c):
+				label += " (older: its address is written into its spec)"
+				help = c.Name + " was made before a connection kept its own settings: its address and model are written into its spec, so they are not set here. It still runs; choose the one gohort provides to set them here."
 			}
 			if ch, ok := service.PendingChange(RootDB, c.Name); ok {
 				label += " (changed, waiting to be accepted)"
@@ -620,11 +633,6 @@ func previewTieIn(ctx context.Context, provider string) (context.Context, func()
 	return service.Preview(ctx, name)
 }
 
-// connectorLabel is how a page's choices show connector c: its display name,
-// or, with none, its name marked as a connector.
-func connectorLabel(c Connector) string {
-	if strings.TrimSpace(c.DisplayName) != "" {
-		return c.Title()
-	}
-	return "Service: " + c.Name
-}
+// connectorLabel is how a page's choices show connector c: the name it is
+// shown as (Title).
+func connectorLabel(c Connector) string { return c.Title() }

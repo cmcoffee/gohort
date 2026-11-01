@@ -11,8 +11,32 @@ import (
 )
 
 // recordsTable keeps each service connector's record: how its calls have
-// gone, its last health check, and today's spend.
+// gone, its last health check, and today's spend. A record is the
+// connection's, by its id: one made again under the same name starts with
+// none of the one before's.
 const recordsTable = "service_records"
+
+// recordKey is where connector name's record is kept: under its id, or,
+// for one saved before connections had ids (or a draft), its name.
+func recordKey(name string) string {
+	if c, ok := GetConnector(RootDB, name); ok && c.ID != "" {
+		return "id:" + c.ID
+	}
+	return name
+}
+
+// forgetRecord drops connector c's record, as it is deleted.
+func forgetRecord(c Connector) {
+	recordMu.Lock()
+	defer recordMu.Unlock()
+	if RootDB == nil {
+		return
+	}
+	RootDB.Unset(recordsTable, c.Name)
+	if c.ID != "" {
+		RootDB.Unset(recordsTable, "id:"+c.ID)
+	}
+}
 
 // Record is one connector's record.
 type Record struct {
@@ -63,7 +87,7 @@ func RecordOf(name string) Record {
 func loadRecord(name string) Record {
 	var r Record
 	if RootDB != nil {
-		RootDB.Get(recordsTable, name, &r)
+		RootDB.Get(recordsTable, recordKey(name), &r)
 	}
 	if r.Capabilities == nil {
 		r.Capabilities = map[string]*CapabilityRecord{}
@@ -83,7 +107,7 @@ func updateRecord(name string, fn func(*Record)) {
 	r := loadRecord(name)
 	fn(&r)
 	if RootDB != nil {
-		RootDB.Set(recordsTable, name, r)
+		RootDB.Set(recordsTable, recordKey(name), r)
 	}
 }
 

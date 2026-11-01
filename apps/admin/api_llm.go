@@ -8,7 +8,6 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/activity"
 	"github.com/cmcoffee/gohort/core/jsonapi"
-	"github.com/cmcoffee/gohort/core/media"
 )
 
 // registerLLMRoutes wires the llm API under the admin sub-mux.
@@ -185,7 +184,7 @@ func (a *AdminApp) handleLLMPrivacy(c *jsonapi.Call) (any, error) {
 		if v.Private {
 			p = "private"
 		}
-		where := v.Provider
+		where := ProviderTitle(v.Provider)
 		if where == "" {
 			where = "(unset)"
 		}
@@ -388,8 +387,21 @@ func (a *AdminApp) handleLLMConfig(table string, worker bool) func(c *jsonapi.Ca
 			a.db.Get(table, "request_timeout_seconds", &reqTimeout)
 			out["request_timeout_seconds"] = reqTimeout
 		}
+		// A tier still naming a provider directly, or an outdated
+		// connection, shows the connection it runs on when saved; a local
+		// server's address it kept comes with it.
+		if p := providedFor(provider); p != "" {
+			_, carry := successorOf(provider)
+			if carry == nil && endpoint != "" {
+				carry = map[string]string{"base_url": endpoint}
+			}
+			prefill(out, p, carry)
+			out["provider"], provider = asService(p), asService(p)
+		}
 		for k, v := range settingsValues(chosenService(provider), "llm.chat") {
-			out[k] = v
+			if _, prefilled := out[k]; !prefilled {
+				out[k] = v
+			}
 		}
 		return out, nil
 	}
@@ -434,13 +446,20 @@ func (a *AdminApp) handleLLMConfigSave(table string, worker bool) func(c *jsonap
 		if err := ValidateModelID(strings.TrimSpace(req.Provider), req.Model); err != nil {
 			return nil, jsonapi.BadRequest(err.Error())
 		}
-		// Anthropic, OpenAI, Gemini and Bedrock are model connections gohort
-		// provides by those names: a tier naming one directly runs on it.
-		if bare := strings.ToLower(strings.TrimSpace(req.Provider)); hostedTemplates[bare] != "" {
-			if c, ok := GetConnector(RootDB, bare); !ok || !c.Provided {
-				return nil, jsonapi.BadRequest(fmt.Sprintf("%s runs on a model connection: add the %s template under Admin > Extensions > Templates, then choose it here", req.Provider, hostedTemplates[bare]))
+		// The models gohort provides are connections: a tier naming one
+		// directly (anthropic, ollama, ...), or a connection made before
+		// connections kept their own keys, runs on the one provided. A bare
+		// local server's address and key, given with it, are its
+		// connection's.
+		if pm, bare := providedModels[strings.ToLower(strings.TrimSpace(req.Provider))]; bare {
+			p := providedFor(req.Provider)
+			if p == "" {
+				return nil, jsonapi.BadRequest(fmt.Sprintf("%s runs on a model connection: add the %s template under Admin > Extensions > Templates, then choose it here", req.Provider, pm.template))
 			}
-			req.Provider = media.ServiceProviderPrefix + bare
+			form.Settings = form.Settings.carry(p, map[string]string{"base_url": req.Endpoint, "api_key": req.APIKey})
+			req.Provider = asService(p)
+		} else if p := providedFor(req.Provider); p != "" {
+			req.Provider = asService(p)
 		}
 		// A model connector must be one, and approved.
 		if err := serviceProviderOK(req.Provider, "llm.chat"); err != nil {
@@ -655,10 +674,28 @@ func containsString(list []string, s string) bool {
 	return false
 }
 
-// hostedTemplates are the hosted APIs a tier once named directly, and the
-// template each is added from: gohort provides a connection from each, by
-// the API's name.
-var hostedTemplates = map[string]string{"anthropic": "anthropic-model", "openai": "openai-model", "gemini": "gemini-model", "bedrock": "bedrock-model"}
+// providedModels are the providers a tier once named directly, the
+// connection gohort provides for each, and the template it is made from.
+var providedModels = map[string]struct{ name, template string }{
+	"anthropic": {"anthropic", "anthropic-model"}, "openai": {"openai", "openai-model"},
+	"gemini": {"gemini", "gemini-model"}, "bedrock": {"bedrock", "bedrock-model"},
+	"ollama": {"ollama", "ollama-model"}, "llama.cpp": {"llamacpp", "llamacpp-model"}, "vllm": {"vllm", "vllm-model"},
+}
+
+// providedFor is the provided connection a tier naming provider runs on:
+// for a provider named directly, and for a connection made before
+// connections kept their own keys whose template gohort provides; else "".
+func providedFor(provider string) string {
+	provider = strings.TrimSpace(provider)
+	if pm, ok := providedModels[strings.ToLower(provider)]; ok {
+		if c, ok := GetConnector(RootDB, pm.name); ok && c.Provided {
+			return pm.name
+		}
+		return ""
+	}
+	next, _ := successorOf(provider)
+	return next
+}
 
 // formTierKey is the key a tier's form values are tried with (Test, List
 // models): as typed, else the tier's own stored one, never the other tier's.

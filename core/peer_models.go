@@ -129,6 +129,12 @@ func peerTierConfig(tier, table string) (peerServableTier, bool) {
 	db.Get(table, "endpoint", &t.Endpoint)
 	db.Get(table, "api_key", &t.APIKey)
 	db.Get(table, "context_size", &t.Context)
+	// A model connection lends as the server it reaches: its dialect, its
+	// address, its key.
+	if strings.HasPrefix(strings.TrimSpace(t.Provider), media.ServiceProviderPrefix) {
+		r := ResolvedTier(LLMProviderConfig{Provider: t.Provider, Model: t.Model, ContextSize: t.Context})
+		t.Provider, t.Endpoint, t.APIKey = r.Provider, r.Endpoint, r.APIKey
+	}
 	t.Provider = strings.ToLower(strings.TrimSpace(t.Provider))
 	if !peerLendableProviders[t.Provider] {
 		return peerServableTier{}, false

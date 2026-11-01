@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cmcoffee/gohort/core/media"
 	"github.com/cmcoffee/gohort/core/prompts"
 )
 
@@ -107,7 +108,7 @@ func SetLeadInitError(provider, model string, err error) {
 		leadInitErr = ""
 		return
 	}
-	leadInitErr = "the configured lead model (" + provider + "/" + model + ") could not be initialized: " + err.Error()
+	leadInitErr = "the configured lead model (" + ProviderTitle(provider) + "/" + model + ") could not be initialized: " + err.Error()
 	// The lead that IS running is whatever was installed before this attempt,
 	// and saying so is the whole point: "saved but not applied" is invisible
 	// otherwise.
@@ -827,6 +828,8 @@ func ProviderIsLocal(provider string) bool {
 		return true
 	case strings.HasPrefix(p, peerProviderPrefix):
 		return true
+	case strings.HasPrefix(p, media.ServiceProviderPrefix):
+		return LocalDialect(modelDialect(provider))
 	}
 	return false
 }

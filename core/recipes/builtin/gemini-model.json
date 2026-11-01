@@ -3,7 +3,7 @@
   "title": "Gemini (LLM)",
   "description": "Google's Gemini models as an LLM tier, through gohort's Gemini client, with the key kept in a credential rather than in the LLM settings.",
   "category": "LLMs",
-  "setup_notes": "Create a key at aistudio.google.com/apikey. gohort provides one, named gemini and listed as Gemini; another, with its own key, is added from here. Choose it under Admin > LLMs > Worker LLM (or Lead LLM) as Service: <name>, where the tier names its model and the key can be changed; Test connection there makes one short real chat. The tier's turns run on it through gohort's own Gemini client, streaming and tool calls as usual, and the key stays with the connection. Its calls and their cost show on the connector's row; add per_million_input and per_million_output to its spec's cost to price its tokens, which then replace the tier's rates under Costs.",
+  "setup_notes": "Create a key at aistudio.google.com/apikey. gohort provides one, named gemini and listed as Gemini; another, with its own key, is added from here. Choose it under Admin > LLMs > Worker LLM (or Lead LLM), where the tier names its model and the key can be changed; Test connection there makes one short real chat. The tier's turns run on it through gohort's own Gemini client, streaming and tool calls as usual, and the key stays with the connection. Its calls and their cost show on the connector's row; add per_million_input and per_million_output to its spec's cost to price its tokens, which then replace the tier's rates under Costs.",
   "provided": {
     "name": "gemini",
     "label": "Gemini"

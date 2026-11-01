@@ -107,6 +107,9 @@ func (a *AdminApp) handleConnectors(c *jsonapi.Call) (any, error) {
 		// HasSettings is a services connection: its display name, and the
 		// settings and secrets it declares, are set under its row's Settings.
 		HasSettings bool `json:"has_settings,omitempty"`
+		// Revertable is a connection gohort provides whose spec was changed
+		// from the one it ships (its row's Revert).
+		Revertable bool `json:"revertable,omitempty"`
 	}
 	var rows []connRow
 	uses, research := service.TieIns(RootDB), researchNamed()
@@ -118,7 +121,7 @@ func (a *AdminApp) handleConnectors(c *jsonapi.Call) (any, error) {
 			Endpoints: conn.Kind == service.Kind, Group: connectorGroup(conn, research, uses), GroupOpen: true,
 			Deletable: len(uses[conn.Name]) == 0 && !conn.Provided, HasSettings: conn.Kind == service.Kind}
 		if conn.Provided {
-			row.Owner = "gohort"
+			row.Owner, row.Revertable = "gohort", service.Modified(conn)
 		}
 		if conn.Approved {
 			row.State = "approved"
@@ -412,6 +415,8 @@ func (a *AdminApp) handleConnectorAction(c *jsonapi.Call, body json.RawMessage) 
 		err = ApproveConnector(RootDB, name)
 	case "unapprove":
 		err = UnapproveConnector(RootDB, name)
+	case "revert":
+		err = service.Revert(RootDB, name)
 	case "update_spec":
 		// SaveConnector re-validates against the kind and, if the connector
 		// is approved, re-materializes so an edit (e.g. a rest_image
@@ -428,7 +433,7 @@ func (a *AdminApp) handleConnectorAction(c *jsonapi.Call, body json.RawMessage) 
 		conn.Spec = json.RawMessage(stringifyComfyWorkflow(body))
 		err = SaveConnector(RootDB, conn)
 	default:
-		return nil, jsonapi.BadRequest("action must be approve|unapprove|update_spec")
+		return nil, jsonapi.BadRequest("action must be approve|unapprove|update_spec|revert")
 	}
 	if err != nil {
 		return nil, jsonapi.BadRequest(err.Error())

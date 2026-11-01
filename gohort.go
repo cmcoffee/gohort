@@ -151,7 +151,7 @@ func main() {
 	// Wire up Ollama proxy backend. Returns the base URL and model for the
 	// configured worker LLM when it is Ollama; empty strings otherwise.
 	OllamaBackendFunc = func() (string, string, int) {
-		cfg := dbcfg.llm()
+		cfg := ResolvedTier(dbcfg.llm())
 		if cfg.Provider != "ollama" {
 			return "", "", 0
 		}
@@ -162,7 +162,7 @@ func main() {
 		return ep, cfg.Model, cfg.ContextSize
 	}
 	LlamaCppBackendFunc = func() (string, string) {
-		cfg := dbcfg.llm()
+		cfg := ResolvedTier(dbcfg.llm())
 		// vLLM serves the same OpenAI-compatible API, so the proxy fronts it
 		// the same way.
 		if cfg.Provider != "llama.cpp" && cfg.Provider != "vllm" {
@@ -391,6 +391,12 @@ func main() {
 		service.MigrateSourceHooks(global.db)
 		// A services connector is in use exactly while a page names it.
 		service.MigrateTieIns(global.db)
+		// The connections gohort provides, then what predates connections
+		// moved onto them, once.
+		if ProvideConnectors != nil {
+			ProvideConnectors(global.db)
+		}
+		service.MigrateConnections(global.db)
 
 		AuthEnabled = func() bool { return AuthHasUsers(global.db) }
 		AuthSignupAllowed = func() bool {

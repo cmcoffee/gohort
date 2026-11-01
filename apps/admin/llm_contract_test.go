@@ -30,6 +30,7 @@ func TestLLMRoutesContract(t *testing.T) {
 	prevW, prevL := SharedWorkerLLM(), SharedLeadLLM()
 	AuthDB = func() Database { return adb }
 	RootDB = adb
+	ProvideConnectors(adb)
 	SetSharedLLMs(nil, nil)
 	// A rebuild that fails, for the model named "breaks": what a save the
 	// process could not apply answers.

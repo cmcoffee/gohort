@@ -87,18 +87,9 @@ func (a *AdminApp) renderSetupWizard(w http.ResponseWriter, r *http.Request) {
 func (a *AdminApp) setupWizardPage() ui.Page {
 	providerStep := ui.FormStep{
 		Title: "Provider",
-		Intro: "Pick where the model runs. A local server (Ollama, llama.cpp or vLLM) needs its address and no key. Anthropic, OpenAI, Gemini and AWS Bedrock are listed too: choose one and give its key under the choice. Another hosted model (OpenRouter, Groq and others) is added from its template under Admin > Extensions > Templates (Skip for now gets you there). You can add a second, higher-precision model later: this sets the one most work runs on.",
+		Intro: "Pick where the model runs. A local server (Ollama, llama.cpp or vLLM) needs its address, set under the choice; Anthropic, OpenAI, Gemini and AWS Bedrock need their key there. Another hosted model (OpenRouter, Groq and others) is added from its template under Admin > Extensions > Templates (Skip for now gets you there). You can add a second, higher-precision model later: this sets the one most work runs on.",
 		Fields: tierFields([]ui.FormField{
 			{Field: "provider", Label: "Provider", Type: "select", Required: true, Options: LLMProviderOptions(false)},
-			{Field: "endpoint", Label: "Endpoint", Type: "text", ShowWhen: "provider:ollama|llama.cpp|vllm",
-				Placeholder: "http://localhost:11434",
-				Help:        "Where the local server is listening.",
-				Presets: []ui.FieldPreset{
-					{Label: "Ollama", Value: "http://localhost:11434"},
-					{Label: "llama.cpp", Value: "http://localhost:8080/v1"},
-					{Label: "vLLM", Value: "http://localhost:8000/v1"}}},
-			{Field: "api_key", Label: "API key", Type: "password", ShowWhen: "provider:llama.cpp|vllm",
-				Help: tierKeyHelp},
 		}),
 	}
 
@@ -256,9 +247,9 @@ func (a *AdminApp) testLLM(w http.ResponseWriter, r *http.Request, table string)
 	// What is at the endpoint, said on success AND failure: a refused chat
 	// from a server that turns out to be a different kind is half-diagnosed.
 	serverNote := ""
-	switch req.Provider {
-	case "llama.cpp", "vllm", "ollama":
-		serverNote = probeModelServer(ctx, req.Provider, req.Endpoint, req.APIKey).describe(req.Provider, req.ContextSize)
+	if r := ResolvedTier(LLMProviderConfig{Provider: req.Provider, Model: req.Model, Endpoint: req.Endpoint, APIKey: req.APIKey,
+		Form: form.Settings.modelForm(chosenService(req.Provider))}); LocalDialect(r.Provider) {
+		serverNote = probeModelServer(ctx, r.Provider, r.Endpoint, r.APIKey).describe(r.Provider, req.ContextSize)
 	}
 
 	// From here the test takes several calls, so it says which one it is on:

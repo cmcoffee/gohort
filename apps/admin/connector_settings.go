@@ -223,6 +223,30 @@ func (s pageSettings) testContext(ctx context.Context, name, capability string) 
 	return service.WithSecrets(service.WithConfig(ctx, values), secrets)
 }
 
+// carry is s with values given apart from the form (a tier's old address
+// and key) as connection name's settings, where the form gave none of its
+// own and the connection takes them.
+func (s pageSettings) carry(name string, values map[string]string) pageSettings {
+	c, ok := GetConnector(RootDB, name)
+	if !ok {
+		return s
+	}
+	if s == nil {
+		s = pageSettings{}
+	}
+	if s[name] == nil {
+		s[name] = map[string]string{}
+	}
+	for _, st := range service.SettingsFor(c, "llm.chat") {
+		v := strings.TrimSpace(values[st.Key])
+		if _, given := s[name][st.Key]; given || v == "" {
+			continue
+		}
+		s[name][st.Key] = v
+	}
+	return s
+}
+
 // modelForm is what the form holds for model connection name, for a Test
 // or a model list before a save, or nil with none chosen.
 func (s pageSettings) modelForm(name string) *media.ModelForm {
@@ -374,4 +398,56 @@ func (a *AdminApp) handleConnectionOptions(c *jsonapi.Call, form withSettings[st
 		return map[string]any{"error": "Could not list them: " + err.Error()}, nil
 	}
 	return map[string]any{"suggestions": opts, "note": "What " + name + " offers. Pick one, or type any value."}, nil
+}
+
+// successorOf is the connection gohort provides in place of the outdated
+// connector a page's provider names ("service:<name>" or a name), and what
+// to carry over from it (service.Successor); "" when there is none.
+func successorOf(provider string) (string, map[string]string) {
+	name := chosenService(provider)
+	if name == "" {
+		name = strings.TrimSpace(provider)
+	}
+	c, ok := GetConnector(RootDB, name)
+	if !ok {
+		return "", nil
+	}
+	return service.Successor(c)
+}
+
+// prefill puts values carried over from an outdated connector into a form's
+// read of connection name, where it keeps none of its own: what saving the
+// page moves onto it.
+func prefill(out map[string]any, name string, values map[string]string) {
+	c, ok := GetConnector(RootDB, name)
+	if !ok {
+		return
+	}
+	kept := ConnectionConfig(RootDB, c)
+	for k, v := range values {
+		if kept[k] == "" && v != "" {
+			out[settingField(name, k)] = v
+		}
+	}
+}
+
+// withSuccessor is a page's read with its provider field moved off an
+// outdated connector onto the one gohort provides in its place, the old
+// one's address and model carried into its settings.
+func withSuccessor(out map[string]any, field, capability string) map[string]any {
+	provider, _ := out[field].(string)
+	next, carry := successorOf(provider)
+	if next == "" {
+		return out
+	}
+	if strings.HasPrefix(provider, "service:") {
+		out[field] = asService(next)
+	} else {
+		out[field] = next
+	}
+	for k, v := range settingsValues(next, capability) {
+		out[k] = v
+	}
+	prefill(out, next, carry)
+	return out
 }

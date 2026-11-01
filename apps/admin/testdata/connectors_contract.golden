@@ -41,7 +41,7 @@ root POST /api/connectors?action=approve&name=ct-nope ""
 root POST /api/connectors?action=unapprove&name=ct-art ""
   400 ct-art is put to use where it is used, not here: choose it on the page that uses it (Web Search, Image Generation, Research Sources, a flow, ...), or take it off there
 root POST /api/connectors?action=sideways&name=ct-art ""
-  400 action must be approve|unapprove|update_spec
+  400 action must be approve|unapprove|update_spec|revert
 root POST /api/connectors?action=update_spec&name=ct-art "not json"
   400 invalid JSON: invalid character 'o' in literal null (expecting 'u')
 root POST /api/connectors?action=update_spec&name=ct-art ""

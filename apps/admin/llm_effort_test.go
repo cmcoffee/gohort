@@ -16,6 +16,7 @@ import (
 )
 
 func TestLLMEffortSettingsSaveAndLoadPerTier(t *testing.T) {
+	providedWorld(t)
 	a := &AdminApp{db: &DBase{Store: kvlite.MemStore()}}
 	post := func(table string, worker bool, body string) {
 		t.Helper()

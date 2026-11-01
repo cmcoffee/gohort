@@ -315,5 +315,10 @@ func RemoveConnector(db Database, name string) error {
 	if pages := TieIns(db)[strings.TrimSpace(name)]; len(pages) > 0 {
 		return fmt.Errorf("%s is in use by %s: take it off there first, then delete it", name, strings.Join(pages, ", "))
 	}
-	return DeleteConnector(db, name)
+	c, _ := GetConnector(db, strings.TrimSpace(name))
+	if err := DeleteConnector(db, name); err != nil {
+		return err
+	}
+	forgetRecord(c)
+	return nil
 }

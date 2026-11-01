@@ -1017,12 +1017,28 @@ func LLMProviderOptions(usePrimary bool) []ui.SelectOption {
 		out = append(out, ui.SelectOption{Value: "", Label: "(use primary)",
 			Help: "Routes lead stages to the worker model."})
 	}
-	for _, o := range []ui.SelectOption{
-		{Value: "ollama", Label: "Ollama"},
-		{Value: "llama.cpp", Label: "llama.cpp"},
-		{Value: "vllm", Label: "vLLM"},
-	} {
-		out = append(out, o)
+	// The model connections gohort provides lead, local servers first;
+	// the peers and any other connection follow.
+	services := serviceProviderOptions("llm.chat", "Run this tier's turns")
+	rank := map[string]int{}
+	for i, n := range []string{"ollama", "llamacpp", "vllm", "anthropic", "openai", "gemini", "bedrock"} {
+		rank[asService(n)] = i + 1
+	}
+	var rest []ui.SelectOption
+	provided := make([]ui.SelectOption, len(rank))
+	for _, o := range services {
+		if r := rank[o.Value]; r > 0 {
+			if c, ok := GetConnector(RootDB, chosenService(o.Value)); ok && c.Provided {
+				provided[r-1] = o
+				continue
+			}
+		}
+		rest = append(rest, o)
+	}
+	for _, o := range provided {
+		if o.Value != "" {
+			out = append(out, o)
+		}
 	}
 	for _, p := range PeersOffering(PeerCapModels) {
 		label := "Peer: " + p.Name
@@ -1039,11 +1055,7 @@ func LLMProviderOptions(usePrimary bool) []ui.SelectOption {
 		}
 		out = append(out, ui.SelectOption{Value: PeerProviderValue(p.Name), Label: label, Help: help})
 	}
-	// A model connector (core/service, llm.chat): Anthropic, OpenAI,
-	// Gemini, Bedrock or an OpenAI-shaped API elsewhere, through a
-	// credential.
-	out = append(out, serviceProviderOptions("llm.chat", "Run this tier's turns")...)
-	return out
+	return append(out, rest...)
 }
 
 // --- show-once secret --------------------------------------------------------

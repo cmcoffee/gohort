@@ -84,7 +84,7 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 		{
 			Title:    "Web Search",
 			Subtitle: "Provider for the web_search tool.",
-			Detail:   "DuckDuckGo is built in and needs no key. Any other engine is a connector that searches: add one from a template (Admin > Extensions > Templates has Brave, Serper, Tavily, Google Programmable Search and SearXNG) and pick it here as Service: <name>, which puts it to use, its key kept on it.",
+			Detail:   "DuckDuckGo is built in and needs no key. Any other engine is a connector that searches: add one from a template (Admin > Extensions > Templates has Brave, Serper, Tavily, Google Programmable Search and SearXNG) and pick it here, which puts it to use, its key kept on it.",
 			Body: ui.FormPanel{
 				Assist:    true,
 				Source:    "api/web-search",

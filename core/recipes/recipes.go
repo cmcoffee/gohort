@@ -819,6 +819,60 @@ type Provided struct {
 
 func init() { core.ProvideConnectors = installProvided }
 
+// ProvidedTemplate is the built-in template gohort provides its connection
+// name from, or "".
+func ProvidedTemplate(name string) string {
+	for _, r := range builtins() {
+		if r.Provided != nil && r.Provided.Name == name {
+			return r.ID
+		}
+	}
+	return ""
+}
+
+// ProvidedSpec is the spec gohort ships for the connection it provides as
+// name, as installing it made it.
+func ProvidedSpec(name string) (json.RawMessage, bool) {
+	for _, r := range builtins() {
+		if r.Provided != nil && r.Provided.Name == name {
+			return connectorSpec(r, map[string]string{"name": name})
+		}
+	}
+	return nil, false
+}
+
+// TemplateConnectorSpec is the spec of the connector built-in template id
+// makes, its install questions answered with their defaults: what a
+// connection made from it now declares.
+func TemplateConnectorSpec(id string) (json.RawMessage, bool) {
+	for _, r := range builtins() {
+		if r.ID == id {
+			return connectorSpec(r, nil)
+		}
+	}
+	return nil, false
+}
+
+// connectorSpec is the spec of the connector template r makes, answered.
+func connectorSpec(r Recipe, answers map[string]string) (json.RawMessage, bool) {
+	bundle, _, _, err := Fill(r, answers)
+	if err != nil {
+		return nil, false
+	}
+	for _, a := range bundle.Artifacts {
+		if a.Type != "connector" {
+			continue
+		}
+		var rec struct {
+			Spec json.RawMessage `json:"spec"`
+		}
+		if json.Unmarshal(a.Recipe, &rec) == nil && len(rec.Spec) > 0 {
+			return rec.Spec, true
+		}
+	}
+	return nil, false
+}
+
 // installProvided installs each provided connection that is not here yet,
 // as the deployment's, and marks it provided. A connector of that name made
 // by someone else is left as it is.
@@ -828,10 +882,16 @@ func installProvided(db core.Database) {
 		if p == nil || strings.TrimSpace(p.Name) == "" {
 			continue
 		}
+		shipped, ok := connectorSpec(r, map[string]string{"name": p.Name})
+		if !ok {
+			continue
+		}
 		if c, ok := core.GetConnector(db, p.Name); ok {
 			if !c.Provided {
 				core.Log("[recipes] %s is gohort's %s, but a connector by that name is here already: it is left as it is", p.Name, p.Label)
+				continue
 			}
+			refreshProvided(db, c, shipped)
 			continue
 		}
 		res, err := Install(db, r.ID, "", map[string]string{"name": p.Name})
@@ -839,8 +899,37 @@ func installProvided(db core.Database) {
 			core.Log("[recipes] providing %s: %v %v", p.Name, err, res.Warnings)
 			continue
 		}
-		if err := core.MarkConnectorProvided(db, p.Name, p.Label); err != nil {
+		if err := core.MarkConnectorProvided(db, p.Name, p.Label, core.SpecHash(shipped)); err != nil {
 			core.Log("[recipes] providing %s: %v", p.Name, err)
 		}
 	}
+}
+
+// refreshProvided brings provided connection c to the spec gohort ships now
+// (shipped), when nobody has edited it since gohort last shipped it: a fix
+// in a template reaches the connections made from it. One edited keeps its
+// spec; Revert on its row takes the one shipped. Its settings, key and the
+// name it is shown as are its own either way. One provided before gohort
+// recorded what it shipped counts as unedited.
+func refreshProvided(db core.Database, c core.Connector, shipped json.RawMessage) {
+	now := core.SpecHash(shipped)
+	if now == "" || c.Shipped == now {
+		return
+	}
+	current := core.SpecHash(c.Spec)
+	if current == now {
+		core.MarkConnectorProvided(db, c.Name, "", now)
+		return
+	}
+	if c.Shipped != "" && current != c.Shipped {
+		core.Log("[recipes] gohort ships a newer spec for %s, which was edited here: it keeps its own; Revert on its row takes the new one", c.Name)
+		return
+	}
+	c.Spec = shipped
+	if err := core.SaveConnector(db, c); err != nil {
+		core.Log("[recipes] %s could not take the spec gohort ships now: %v", c.Name, err)
+		return
+	}
+	core.MarkConnectorProvided(db, c.Name, "", now)
+	core.Log("[recipes] %s now has the spec gohort ships", c.Name)
 }

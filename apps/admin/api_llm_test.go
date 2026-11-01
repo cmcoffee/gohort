@@ -48,6 +48,18 @@ func modelWorld(t *testing.T) (*AdminApp, *httptest.Server, *[]string) {
 	return &AdminApp{db: RootDB}, srv, &got
 }
 
+// providedWorld is a store holding the model connections gohort provides, as
+// startup installs them.
+func providedWorld(t *testing.T) {
+	t.Helper()
+	saved, savedAuth := RootDB, AuthDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	adb := &DBase{Store: kvlite.MemStore()}
+	AuthDB = func() Database { return adb }
+	t.Cleanup(func() { RootDB, AuthDB = saved, savedAuth })
+	ProvideConnectors(RootDB)
+}
+
 // tierSave posts a tier's form as the page does.
 func tierSave(a *AdminApp, table, body string) (int, string) {
 	w := httptest.NewRecorder()
@@ -117,61 +129,113 @@ func TestATierSetsUpItsModelConnector(t *testing.T) {
 	}
 }
 
-// Anthropic, OpenAI, Gemini and Bedrock are model connectors: a tier naming
-// one directly is refused, saying which template to add. A local server
-// keeps its own key and takes no connector settings.
+// The models gohort provides are connections, local servers among them: a
+// tier naming one directly is refused before it is provided, and runs on it
+// after, a local server's address and key going to its connection. A tier
+// on an outdated connection shows the one provided, with the address it
+// kept, and saves onto it. Each is offered by its name first, and cannot be
+// deleted.
 func TestATierNamesAModelConnector(t *testing.T) {
 	a, _, _ := modelWorld(t)
-	for provider, tmpl := range hostedTemplates {
+	for provider, pm := range providedModels {
 		code, body := tierSave(a, LLMTable, `{"provider":"`+provider+`","api_key":"sk"}`)
-		if code != 400 || !strings.Contains(body, tmpl+" template") {
+		if code != 400 || !strings.Contains(body, pm.template+" template") {
 			t.Errorf("%s: %d %s", provider, code, body)
 		}
 	}
-	if code, body := tierSave(a, LLMTable, `{"provider":"vllm","api_key":"vk","config/chat/base_url":"http://x"}`); code != 204 {
-		t.Fatalf("vllm save: %d %s", code, body)
-	}
-	var key string
-	var config map[string]string
-	if a.db.Get(LLMTable, "api_key", &key); key != "vk" {
-		t.Errorf("vLLM's key: %q", key)
-	}
-	if a.db.Get(LLMTable, "config", &config) {
-		t.Errorf("a local server kept connector settings: %v", config)
-	}
 	for _, o := range LLMProviderOptions(false) {
-		if _, hosted := hostedTemplates[o.Value]; hosted {
+		if _, bare := providedModels[o.Value]; bare {
 			t.Errorf("the provider list offers %s directly", o.Value)
 		}
 	}
 
-	// Provided, each is offered by its name, cannot be deleted, and a tier
-	// naming one directly runs on it.
 	ProvideConnectors(RootDB)
+	var order []string
 	labels := map[string]string{}
 	for _, o := range LLMProviderOptions(false) {
-		labels[o.Value] = o.Label
+		order, labels[o.Value] = append(order, o.Value), o.Label
 	}
-	if labels["service:anthropic"] != "Anthropic" || labels["service:bedrock"] != "AWS Bedrock" {
-		t.Errorf("the provided choices: %v", labels)
+	seen := map[string]bool{}
+	for _, v := range order {
+		if seen[v] {
+			t.Errorf("%s is offered twice", v)
+		}
+		seen[v] = true
 	}
-	if code, body := tierSave(a, LeadLLMTable, `{"provider":"anthropic","model":"claude-opus-5"}`); code != 204 {
-		t.Fatalf("a bare provider: %d %s", code, body)
+	if len(order) < 7 || order[0] != "service:ollama" || order[1] != "service:llamacpp" || order[3] != "service:anthropic" ||
+		labels["service:llamacpp"] != "llama.cpp" || labels["service:bedrock"] != "AWS Bedrock" {
+		t.Errorf("the choices: %v %v", order, labels)
+	}
+	if code, body := tierSave(a, LLMTable, `{"provider":"vllm","model":"qwen","endpoint":"http://gpu.example:8000/v1","api_key":"vk"}`); code != 204 {
+		t.Fatalf("a bare local server: %d %s", code, body)
+	}
+	var worker, key string
+	vllm, _ := GetConnector(RootDB, "vllm")
+	sec, _ := GetConnectionSecret(RootDB, vllm, "api_key")
+	if a.db.Get(LLMTable, "provider", &worker); worker != "service:vllm" || ConnectionConfig(RootDB, vllm)["base_url"] != "http://gpu.example:8000/v1" ||
+		sec.Value != "vk" || a.db.Get(LLMTable, "api_key", &key) {
+		t.Errorf("the worker: %q, its connection %v %+v, a key of its own %q", worker, ConnectionConfig(RootDB, vllm), sec, key)
+	}
+	if cfg := ResolvedTier(LLMProviderConfig{Provider: worker, Model: "qwen"}); cfg.Provider != "vllm" || cfg.Endpoint != "http://gpu.example:8000/v1" || cfg.APIKey != "vk" {
+		t.Errorf("the worker resolves to %+v", cfg)
+	}
+	if !ProviderIsLocal(worker) || ProviderHasNativeTools("service:ollama") || !ProviderHasNativeTools(worker) {
+		t.Error("a local server's connection is judged as another provider")
+	}
+
+	// A lead still naming a local server directly, with the address it
+	// kept, and one on an outdated connection.
+	a.db.Set(LeadLLMTable, "provider", "llama.cpp")
+	a.db.Set(LeadLLMTable, "endpoint", "http://box.example:8080/v1")
+	out, _ := a.handleLLMConfig(LeadLLMTable, false)(&jsonapi.Call{R: httptest.NewRequest("GET", "/api/lead-llm", nil)})
+	if read := out.(map[string]any); read["provider"] != "service:llamacpp" || read["config/llamacpp/base_url"] != "http://box.example:8080/v1" {
+		t.Errorf("a lead on llama.cpp reads as %v", read)
+	}
+	old := Connector{Name: "anthropic-model", Kind: service.Kind, Template: "anthropic-model",
+		Spec: json.RawMessage(`{"provider":{"transport":"http","base_url":"https://api.anthropic.com","auth":{"credential":"anthropic_model"},"operations":{"models":{"path":"/v1/models"}}},"provides":[{"capability":"llm.chat","dialect":"anthropic"}]}`)}
+	RootDB.Set("connectors", old.Name, old)
+	a.db.Set(LeadLLMTable, "provider", "service:anthropic-model")
+	out, _ = a.handleLLMConfig(LeadLLMTable, false)(&jsonapi.Call{R: httptest.NewRequest("GET", "/api/lead-llm", nil)})
+	if read := out.(map[string]any); read["provider"] != "service:anthropic" {
+		t.Errorf("a lead on an outdated connection reads as %v", read["provider"])
+	}
+	for _, o := range LLMProviderOptions(true) {
+		if o.Value == "service:anthropic-model" {
+			t.Errorf("the outdated connection is offered beside the one in its place: %v", o)
+		}
+	}
+	if code, body := tierSave(a, LeadLLMTable, `{"provider":"service:anthropic-model","model":"claude-opus-5"}`); code != 204 {
+		t.Fatalf("saving the outdated one: %d %s", code, body)
 	}
 	var lead string
 	if a.db.Get(LeadLLMTable, "provider", &lead); lead != "service:anthropic" {
 		t.Errorf("the lead runs on %q", lead)
 	}
-	out, _ := a.handleConnectors(&jsonapi.Call{R: httptest.NewRequest("GET", "/api/connectors", nil)})
-	b, _ := json.Marshal(out)
-	var rows []map[string]any
-	json.Unmarshal(b, &rows)
-	for _, r := range rows {
-		if r["name"] == "openai" && (r["deletable"] == true || r["owner"] != "gohort") {
+
+	rows, _ := a.handleConnectors(&jsonapi.Call{R: httptest.NewRequest("GET", "/api/connectors", nil)})
+	b, _ := json.Marshal(rows)
+	var list []map[string]any
+	json.Unmarshal(b, &list)
+	for _, r := range list {
+		if r["name"] == "openai" && (r["deletable"] == true || r["owner"] != "gohort" || r["revertable"] == true) {
 			t.Errorf("a provided row: %v", r)
 		}
 	}
-	if _, err := a.handleConnectorDelete(&jsonapi.Call{R: httptest.NewRequest("DELETE", "/api/connectors?name=openai", nil)}, struct{}{}); err == nil {
+	openai, _ := GetConnector(RootDB, "openai")
+	openai.Spec = json.RawMessage(strings.Replace(string(openai.Spec), `"every_mins":60`, `"every_mins":30`, 1))
+	if err := SaveConnector(RootDB, openai); err != nil {
+		t.Fatal(err)
+	}
+	if openai, _ = GetConnector(RootDB, "openai"); !service.Modified(openai) {
+		t.Fatalf("the edit did not take: %s", openai.Spec)
+	}
+	if _, err := a.handleConnectorAction(&jsonapi.Call{R: httptest.NewRequest("POST", "/api/connectors?action=revert&name=openai", nil)}, nil); err != nil {
+		t.Errorf("revert: %v", err)
+	}
+	if openai, _ = GetConnector(RootDB, "openai"); service.Modified(openai) {
+		t.Error("the row's Revert left the edit")
+	}
+	if _, err := a.handleConnectorDelete(&jsonapi.Call{R: httptest.NewRequest("DELETE", "/api/connectors?name=vllm", nil)}, struct{}{}); err == nil {
 		t.Error("a provided connection was deleted")
 	}
 }
