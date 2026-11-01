@@ -220,6 +220,7 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 							},
 							{Field: "summary", Label: "", Mute: true, Flex: 4, Line: 2},
 							{Field: "last_error", Label: "", Mute: true, Flex: 3, Line: 2},
+							{Field: "check", Label: "", Flex: 4, Line: 2},
 							{Field: "status", Label: "", Mute: true, Flex: 4, Line: 2},
 						},
 						RowActions: []ui.RowAction{

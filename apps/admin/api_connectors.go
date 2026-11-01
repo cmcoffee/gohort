@@ -115,6 +115,9 @@ func (a *AdminApp) handleConnectors(c *jsonapi.Call) (any, error) {
 		// HasAccess is a connection: who may reach it through agents' tools
 		// is set under its row's Access.
 		HasAccess bool `json:"has_access,omitempty"`
+		// Check is what is wrong with a connection as it is saved
+		// (service.SelfCheck), read each time the list is: fixing it clears it.
+		Check string `json:"check,omitempty"`
 		// Revertable is a connection gohort provides whose spec was changed
 		// from the one it ships (its row's Revert).
 		Revertable bool `json:"revertable,omitempty"`
@@ -129,6 +132,9 @@ func (a *AdminApp) handleConnectors(c *jsonapi.Call) (any, error) {
 			Endpoints: conn.Kind == service.Kind, Group: connectorGroup(conn, research, uses), GroupOpen: true,
 			Deletable: len(uses[conn.Name]) == 0 && !conn.Provided, HasSettings: conn.Kind == service.Kind,
 			HasAccess: conn.Kind == service.Kind && conn.ID != ""}
+		if problems := service.SelfCheck(RootDB, conn); len(problems) > 0 {
+			row.Check = "Needs attention: " + strings.Join(problems, "; ") + "."
+		}
 		if conn.Provided {
 			row.Owner, row.Revertable = "gohort", service.Modified(conn)
 		}

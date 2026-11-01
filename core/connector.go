@@ -644,6 +644,25 @@ func GetConnectionSecret(db Database, c Connector, name string) (ConnectionSecre
 	return s, true
 }
 
+// UnreadableSecrets are the secrets connection c keeps that cannot be read
+// back (a store moved to another machine, a record damaged): there, so a
+// call is not refused for a key never given, and unreadable, so it is
+// refused anyway.
+func (c Connector) UnreadableSecrets(db Database) []string {
+	sp := connectionSpace(db, c)
+	if sp == nil {
+		return nil
+	}
+	var out []string
+	for _, name := range sp.Keys(connectionSecretTable) {
+		if _, ok := GetConnectionSecret(db, c, name); !ok {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // SetConnectionSecret keeps secret value as connection c's secret name, for
 // addresses: the address its calls go to, and any other it also reaches.
 func SetConnectionSecret(db Database, c Connector, name, value string, addresses []string) error {

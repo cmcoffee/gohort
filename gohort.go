@@ -397,6 +397,9 @@ func main() {
 			ProvideConnectors(global.db)
 		}
 		service.MigrateConnections(global.db)
+		// What is wrong with a saved connection is in the log now, not when
+		// a call first meets it.
+		service.LogSelfCheck(global.db)
 
 		AuthEnabled = func() bool { return AuthHasUsers(global.db) }
 		AuthSignupAllowed = func() bool {

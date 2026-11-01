@@ -281,3 +281,37 @@ func TestAConnectionsAccessIsSetOnItsRow(t *testing.T) {
 		t.Error("access read for no connector")
 	}
 }
+
+// What is wrong with a saved connection shows on its row as the list is
+// read, and is gone once it is put right.
+func TestAConnectionsRowSaysWhatNeedsAttention(t *testing.T) {
+	srv, _ := settingsWorld(t)
+	vecConnector(t, srv.URL)
+	a := &AdminApp{db: RootDB}
+	row := func() string {
+		out, _ := a.handleConnectors(&jsonapi.Call{R: httptest.NewRequest("GET", "/api/connectors", nil)})
+		b, _ := json.Marshal(out)
+		var rows []map[string]any
+		json.Unmarshal(b, &rows)
+		for _, r := range rows {
+			if r["name"] == "vec" {
+				s, _ := r["check"].(string)
+				return s
+			}
+		}
+		t.Fatal("no row for vec")
+		return ""
+	}
+	if got := row(); got != "" {
+		t.Errorf("a sound connection needs attention: %s", got)
+	}
+	c, _ := GetConnector(RootDB, "vec")
+	SetConnectionConfig(RootDB, c, map[string]string{"endpoint": "not an address"})
+	if got := row(); !strings.HasPrefix(got, "Needs attention: its Server address setting is wrong") {
+		t.Errorf("a bad address: %q", got)
+	}
+	SetConnectionConfig(RootDB, c, map[string]string{"endpoint": srv.URL})
+	if got := row(); got != "" {
+		t.Errorf("put right, still: %s", got)
+	}
+}
