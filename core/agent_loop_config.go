@@ -746,6 +746,11 @@ type AgentLoopConfig struct {
 	// turn's behalf; the loop's own accounting begins when the loop does.
 	// Nil, and the empty result, both read as "nothing ran before this".
 	PriorWork func() []string
+	// BackgroundWork supplies TurnClaimEvidence.RunningHere and Delivering:
+	// the background work still running in this conversation (started by an
+	// earlier turn or this one), and the work whose finished result this turn
+	// delivers, if it is that work's wake.
+	BackgroundWork func() (running []string, delivering string)
 	// PriorReports supplies TurnClaimEvidence.PriorReports: the automated
 	// reports this agent's own scheduled runs already filed into the thread,
 	// which a reply may be recapping. Nil = none.
@@ -992,6 +997,13 @@ func (c AgentLoopConfig) priorTurnWork() []string {
 		return nil
 	}
 	return c.PriorTurnWork()
+}
+
+func (c AgentLoopConfig) backgroundWork() ([]string, string) {
+	if c.BackgroundWork == nil {
+		return nil, ""
+	}
+	return c.BackgroundWork()
 }
 
 func (c AgentLoopConfig) backgrounded() bool {

@@ -58,3 +58,53 @@ func TestAWakeTurnShowsOnItsThread(t *testing.T) {
 		}
 	}
 }
+
+// Every loop the claim judge reads also tells it what the conversation has
+// running and what a wake delivers. The channel run went without, and its
+// judge convicted "it'll land here" on the turn carrying the finished song.
+func TestEveryJudgedLoopKnowsItsBackgroundWork(t *testing.T) {
+	for _, f := range []string{"runner.go", "runner_worker.go", "agent_dispatch.go", "scheduled_updates.go", "agents_grouped_tool.go"} {
+		src, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := string(src)
+		judged := strings.Count(s, "TurnClaimJudge:") + strings.Count(s, "loopCfg.TurnClaimJudge =")
+		told := strings.Count(s, "BackgroundWork:") + strings.Count(s, "loopCfg.BackgroundWork =")
+		if judged == 0 || told != judged {
+			t.Errorf("%s: %d judged loop(s), %d told of background work", f, judged, told)
+		}
+	}
+	// And a delegation into a busy thread waits its turn there.
+	src, err := os.ReadFile("agents_grouped_tool.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(src)
+	hold := strings.Index(s, "release, werr := holdDispatchThread(runCtx, thread)")
+	run := strings.Index(s, "SubSessionID: thread,")
+	if hold < 0 || run < 0 || hold > run {
+		t.Error("the detached delegation no longer waits for its thread before running in it")
+	}
+	// Both delegation paths, inline and detached, key the thread the same way,
+	// so a follow-up re-threads whichever path the first one took.
+	for _, want := range []string{"ar.subSessID = t.dispatchThreadID(ar.target.ID)", "thread := t.dispatchThreadID(target.ID)"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("a delegation path no longer keys its thread on its conversation: %s", want)
+		}
+	}
+	// The detached delegation counts as under way from the moment it starts
+	// waiting, so a repeat asked meanwhile is refused rather than queued.
+	begin := strings.Index(s, "defer beginDelegation(thread, request)()")
+	if begin < 0 || begin > hold {
+		t.Error("the detached delegation is not under way while it waits for its thread")
+	}
+	// A hand-off to Builder is deliberate, and queues instead of being refused.
+	hb, err := os.ReadFile("hand_to_builder.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(hb), `"queue": true,`) {
+		t.Error("a second hand-off to Builder is refused as a repeat")
+	}
+}

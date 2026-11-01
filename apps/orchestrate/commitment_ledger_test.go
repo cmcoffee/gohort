@@ -154,3 +154,24 @@ func TestNotesComposeInActingOrder(t *testing.T) {
 		t.Errorf("a turn with nothing to say must add nothing: %q", n)
 	}
 }
+
+// A turn is told what its conversation still has running, so it neither
+// starts it again nor says it was never started.
+func TestATurnIsToldWhatIsStillRunning(t *testing.T) {
+	sess := &ToolSession{ChatSessionID: "dispatch:conv-bg:music", DeliverySessionID: "conv-bg"}
+	if n := backgroundTurnNote(sess); n != "" {
+		t.Fatalf("nothing running, yet: %q", n)
+	}
+	RegisterBackgroundJob("conv-bg", TaskRun{ID: "job1", Label: "agents run: Lyric & Music Generator"}, func() {})
+	defer CompleteBackgroundJob("conv-bg", "job1")
+	got := turnNotes(sess, commitDB(t), "", "generate it Wiwee")
+	for _, want := range []string{"STILL RUNNING IN THIS CONVERSATION", "Lyric & Music Generator (job1, started just now)", "Do not start it again"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the note lacks %q:\n%s", want, got)
+		}
+	}
+	// Keyed on the conversation the work delivers into: another one hears nothing.
+	if n := backgroundTurnNote(&ToolSession{ChatSessionID: "conv-other"}); n != "" {
+		t.Errorf("another conversation is told of this one's work: %q", n)
+	}
+}

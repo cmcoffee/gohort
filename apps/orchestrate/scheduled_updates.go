@@ -1024,7 +1024,9 @@ func (fr *fireRun) runLoop() {
 		// keeps failing at 09:00 is still failing at 09:00 tomorrow.
 		FailureMemoryKey:    failureMemoryKey(p.AgentID, p.SessionID),
 		StampLocation:       UserLocation(p.Username), // stamp the turn in the owning user's zone
-		TurnNotes:           func(string) string { return dependencyTurnNote(fr.subSess) },
+		TurnNotes: func(string) string {
+			return oneFrameworkNote(nonEmpty(dependencyTurnNote(fr.subSess), backgroundTurnNote(fr.subSess)))
+		},
 		ThinkBudget:         fr.agent.ThinkBudget,
 		Effort:              fr.agent.Effort,
 		ActionQuotas:        fr.agent.ActionQuotas,
@@ -1083,6 +1085,9 @@ func (fr *fireRun) runLoop() {
 		// and was convicted of presenting an image the turn did not deliver,
 		// and the rewrite replaced the caption.
 		DeliveredCount: func() int { return len(fr.subSess.Images) + len(fr.subSess.Videos) + len(fr.subSess.Files) },
+		// What is still running in the conversation, and, on a task's wake,
+		// the finished work this fire delivers.
+		BackgroundWork: backgroundWorkOf(fr.subSess, func() string { return fr.p.Prompt }),
 		PriorTurnWork:  func() []string { return priorTurnWorkFrom(fr.sess.Messages) },
 		// And the reports this thread already holds, which on a recurring
 		// schedule are this fire's own earlier cycles: their replies are stored

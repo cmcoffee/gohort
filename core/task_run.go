@@ -193,9 +193,10 @@ type InputImagesTool interface {
 
 // TaskRun is a detached call the framework is tracking.
 type TaskRun struct {
-	ID     string // handle the model can name to ask about or cancel it
-	Label  string // human/model-readable summary, e.g. "editing image#1"
-	Detach time.Duration
+	ID      string // handle the model can name to ask about or cancel it
+	Label   string // human/model-readable summary, e.g. "editing image#1"
+	Detach  time.Duration
+	Started time.Time // when it began running in the background (ListBackgroundJobs)
 }
 
 // TaskProduct is everything a detached call produced: the text the model reads,

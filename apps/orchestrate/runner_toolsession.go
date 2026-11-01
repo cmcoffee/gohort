@@ -436,6 +436,22 @@ func (t *chatTurn) chatSessionID() string {
 	return t.session.ID
 }
 
+// dispatchThreadID is the thread a delegation to target keeps for this
+// conversation, so a follow-up re-threads with what it was asked before.
+//
+// A channel or dispatch run has no chat session of its own, and keyed on that
+// alone every such conversation shared ONE thread per target
+// ("dispatch::<target>"): a group chat's requests leaked into each other's
+// history, and two of them running at once cancelled each other. Those runs
+// key on the conversation they deliver into instead.
+func (t *chatTurn) dispatchThreadID(target string) string {
+	conv := t.chatSessionID()
+	if conv == "" && t != nil {
+		conv = t.dispatchSess.DeliverySession()
+	}
+	return "dispatch:" + conv + ":" + target
+}
+
 // detachSession is the session work this turn hands to the background is
 // started from, and so where its result is delivered: the run's own when that
 // run answers a real conversation (a messaging chat, or one it was told to

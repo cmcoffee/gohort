@@ -28,6 +28,7 @@
 package orchestrate
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -183,10 +184,52 @@ func turnNotes(sess *ToolSession, db Database, sessionID, userMessage string) st
 	if n := imageSpaceNote(sess, userMessage); n != "" {
 		parts = append(parts, n)
 	}
+	if n := backgroundTurnNote(sess); n != "" {
+		parts = append(parts, n)
+	}
 	if n := commitmentTurnNote(db, sessionID); n != "" {
 		parts = append(parts, n)
 	}
 	return oneFrameworkNote(parts)
+}
+
+// backgroundTurnNote tells a turn what is still running in its
+// conversation. The agent cannot see a job an earlier turn started, and a
+// later turn (a new message, a wake) that does not know a song is being made
+// says it was never started and starts it again: observed, three songs for
+// one request. Said on every turn while the work runs, because a turn that
+// is not told cannot ask.
+func backgroundTurnNote(sess *ToolSession) string {
+	if sess == nil {
+		return ""
+	}
+	jobs := ListBackgroundJobs(sess.DeliverySession())
+	if len(jobs) == 0 {
+		return ""
+	}
+	var lines []string
+	for _, j := range jobs {
+		line := "- " + j.Label + " (" + j.ID
+		if !j.Started.IsZero() {
+			line += ", started " + agoWords(time.Since(j.Started))
+		}
+		lines = append(lines, line+")")
+	}
+	return frameworkNoteTag + "STILL RUNNING IN THIS CONVERSATION, started earlier and not finished:\n" + strings.Join(lines, "\n") +
+		"\nIt is under way, and its result comes back here by itself when it finishes. Do not start it again, and do not say it has not started. background_work lists it, or stops it if the user wants it stopped."
+}
+
+// agoWords is how long ago something began, as a person says it.
+func agoWords(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < 2*time.Minute:
+		return "a minute ago"
+	case d < time.Hour:
+		return fmt.Sprintf("%d minutes ago", int(d/time.Minute))
+	}
+	return fmt.Sprintf("%d hour(s) ago", int(d/time.Hour))
 }
 
 // oneFrameworkNote joins notes that each open with frameworkNoteTag under one
@@ -201,4 +244,15 @@ func oneFrameworkNote(parts []string) string {
 		bodies = append(bodies, strings.TrimPrefix(p, frameworkNoteTag))
 	}
 	return frameworkNoteTag + strings.Join(bodies, "\n\n")
+}
+
+// nonEmpty is the notes among parts that say something.
+func nonEmpty(parts ...string) []string {
+	var out []string
+	for _, p := range parts {
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

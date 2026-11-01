@@ -153,6 +153,15 @@ type TurnClaimEvidence struct {
 	LastToolError string
 	// Delivered is how many attachments actually go out with this reply.
 	Delivered int
+	// RunningHere is the background work still running in this conversation,
+	// whichever turn started it: a reply saying it is under way is true about
+	// it, though this turn started none. Delivering is the work whose
+	// finished result this turn delivers (its wake): a reply saying it is
+	// done, attached or on its way is about that work. Read only by the
+	// judge: unset, a wake's "it'll land here" was convicted as a promise
+	// about nothing, and the correction had the agent start the work over.
+	RunningHere []string
+	Delivering  string
 	// Backgrounded is set when the turn started a detached job. It makes "I'll
 	// report back when it's done" TRUE, and that reply is one the framework
 	// explicitly asks for — see detachedNotice.

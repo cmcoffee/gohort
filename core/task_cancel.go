@@ -77,7 +77,9 @@ func ListBackgroundJobs(sessionID string) []TaskRun {
 	defer bgJobsMu.Unlock()
 	var out []TaskRun
 	for _, j := range bgJobs[strings.TrimSpace(sessionID)] {
-		out = append(out, j.run)
+		run := j.run
+		run.Started = j.at
+		out = append(out, run)
 	}
 	return out
 }

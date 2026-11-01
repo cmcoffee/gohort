@@ -3167,7 +3167,10 @@ func (lr *loopRun) finalRoundJudges() loopAction {
 	// Placed before the guardrail gate on purpose: a reply that claims work
 	// it never did should be fixed before a warden spends a call judging
 	// its content, and the correction below re-prompts anyway.
+	running, delivering := lr.cfg.backgroundWork()
 	ev := TurnClaimEvidence{
+		RunningHere:   running,
+		Delivering:    delivering,
 		Request:       LatestUserContent(lr.messages),
 		Reply:         lr.rs.resp.Content,
 		ToolCalls:     lr.turnToolCalls,

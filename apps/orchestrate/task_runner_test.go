@@ -595,3 +595,18 @@ func TestABackgroundTasksFileInTheSameFolderIsNotCopied(t *testing.T) {
 		t.Errorf("nothing is copied within one folder: %d files", len(entries))
 	}
 }
+
+// A wake's label is what it delivers; a failed one delivers nothing.
+func TestWakeLabelNamesWhatAWakeDelivers(t *testing.T) {
+	ok := buildWakeNote("s-wl", "agents run: Lyric & Music Generator", TaskProduct{Text: "The song."}, nil)
+	if got := wakeLabel(ok.prompt); got != "agents run: Lyric & Music Generator" {
+		t.Errorf("wakeLabel = %q", got)
+	}
+	failed := buildWakeNote("s-wl", "agents run: Lyric & Music Generator", TaskProduct{}, errors.New("context canceled"))
+	if got := wakeLabel(failed.prompt); got != "" {
+		t.Errorf("a failed wake is read as delivering: %q", got)
+	}
+	if got := wakeLabel("make me a song"); got != "" {
+		t.Errorf("a person's message is read as a wake: %q", got)
+	}
+}

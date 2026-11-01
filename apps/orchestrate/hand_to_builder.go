@@ -122,6 +122,9 @@ func (t *chatTurn) handToBuilder(card toolCard, caller *ToolSession, args map[st
 	res, err := t.agentsRunActionFor(card, caller, map[string]any{
 		"agent":   "Builder",
 		"message": b.String(),
+		// A hand-off is deliberate: a second one while Builder works on the
+		// first waits its turn rather than being refused as a repeat.
+		"queue": true,
 	})
 	if err != nil {
 		return "", err

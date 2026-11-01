@@ -219,7 +219,7 @@ func listChatSessions(db Database, agentID string) []ChatSession {
 			continue
 		}
 		// Ephemeral agents(run) dispatch continuity is stored as a session
-		// keyed "dispatch:<parentSessID>:<target.ID>" so follow-ups re-thread,
+		// keyed "dispatch:<conversation>:<target.ID>" so follow-ups re-thread,
 		// and a machine step's delegate keeps one per (conversation, step) as
 		// "machine:<thread>:<step>". Both are internal plumbing, not threads
 		// anybody opened; the request reaches the target's cortex instead

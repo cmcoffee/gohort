@@ -1,9 +1,11 @@
 package orchestrate
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/snugforge/kvlite"
@@ -182,5 +184,65 @@ func TestAHandedOffRunIsRecordedInTheTargetsCortex(t *testing.T) {
 	}
 	if got := cortexLines(t, df.udb, scout.ID); !strings.Contains(got, df.agent.Name+": make the song") {
 		t.Errorf("the request should be in Scout's cortex, from the agent that asked: %q", got)
+	}
+}
+
+// A delegation keeps one thread per conversation and target. A channel run has
+// no chat session, and keyed on that alone every channel conversation shared
+// "dispatch::<target>", where two requests cancelled each other.
+func TestADelegateThreadBelongsToItsConversation(t *testing.T) {
+	chat := &chatTurn{session: &ChatSession{ID: "s1"}}
+	if got := chat.dispatchThreadID("music"); got != "dispatch:s1:music" {
+		t.Errorf("a chat turn's thread = %q", got)
+	}
+	room := func(id string) *chatTurn { return &chatTurn{dispatchSess: &ToolSession{ChatSessionID: id}} }
+	a, b := room("chan:room-a").dispatchThreadID("music"), room("chan:room-b").dispatchThreadID("music")
+	if a != "dispatch:chan:room-a:music" || a == b {
+		t.Errorf("two channel conversations share a thread: %q and %q", a, b)
+	}
+}
+
+// A second delegation into a thread waits for the first instead of
+// replacing it, and gives up only when its own run ends.
+func TestADelegationWaitsForTheOneAheadOfIt(t *testing.T) {
+	release, err := holdDispatchThread(context.Background(), "dispatch:wait-test:music")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make(chan error, 1)
+	go func() {
+		r, err := holdDispatchThread(context.Background(), "dispatch:wait-test:music")
+		if err == nil {
+			r()
+		}
+		got <- err
+	}()
+	select {
+	case <-got:
+		t.Fatal("the second delegation started while the first was still running")
+	case <-time.After(50 * time.Millisecond):
+	}
+	// Another thread is not held up by this one.
+	if r, err := holdDispatchThread(context.Background(), "dispatch:wait-test:other"); err != nil {
+		t.Fatal(err)
+	} else {
+		r()
+	}
+	release()
+	select {
+	case err := <-got:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the second delegation never started after the first finished")
+	}
+	// A wait whose run is stopped ends with it.
+	release, _ = holdDispatchThread(context.Background(), "dispatch:wait-test:music")
+	defer release()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := holdDispatchThread(ctx, "dispatch:wait-test:music"); err == nil {
+		t.Error("a stopped run kept waiting for the thread")
 	}
 }

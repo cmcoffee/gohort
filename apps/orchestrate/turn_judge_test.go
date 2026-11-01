@@ -737,3 +737,26 @@ func TestNoReturnsBlockWhenNothingRan(t *testing.T) {
 		t.Error("no tools ran, so there is nothing to render")
 	}
 }
+
+// Work still running here, and the work a wake delivers, are stated to the
+// judge as true, with nothing said when there is neither.
+func TestJudgeIsToldOfWorkAlreadyUnderWay(t *testing.T) {
+	msg := turnJudgeEvidenceMessage(TurnClaimEvidence{
+		Request: "generate it Wiwee", Reply: "The song is generating, it'll land here when it's done.",
+		RunningHere: []string{"agents run: Lyric & Music Generator"},
+	})
+	if !strings.Contains(msg, "STILL RUNNING IN THIS CONVERSATION") || !strings.Contains(msg, "Lyric & Music Generator") {
+		t.Errorf("the running work is not in the evidence:\n%s", msg)
+	}
+	msg = turnJudgeEvidenceMessage(TurnClaimEvidence{
+		Request: "[BACKGROUND TASK FINISHED]", Reply: "Here's the care package song.",
+		Delivering: "agents run: Lyric & Music Generator",
+	})
+	if !strings.Contains(msg, "THIS TURN DELIVERS THE FINISHED RESULT") || !strings.Contains(msg, "never read it as work that was not started") {
+		t.Errorf("the delivered work is not in the evidence:\n%s", msg)
+	}
+	msg = turnJudgeEvidenceMessage(TurnClaimEvidence{Request: "hi", Reply: "hello"})
+	if strings.Contains(msg, "STILL RUNNING") || strings.Contains(msg, "THIS TURN DELIVERS") {
+		t.Errorf("work nobody started is described:\n%s", msg)
+	}
+}

@@ -1009,3 +1009,54 @@ func TestAnAgentsVoiceIsSettable(t *testing.T) {
 		t.Errorf("voice not saved: %q", got.Voice)
 	}
 }
+
+// A delegation to an agent already working on one from this conversation is
+// refused, before a hand-off detaches and on the awaited path alike, and says
+// what is under way. queue true, another conversation, another agent and a
+// finished delegation all pass.
+func TestASecondDelegationOfTheSameWorkIsRefused(t *testing.T) {
+	turn, target := newRunGateTurn(t, dispatchAll)
+	turn.dispatchSess = &ToolSession{ChannelChatID: "chat-1", ChatSessionID: "chan:room-a"}
+	thread := turn.dispatchThreadID(target.ID)
+	end := beginDelegation(thread, "a song about the care package")
+	ask := map[string]any{"action": "run", "agent": "Comedian", "message": "a song about the care package"}
+
+	err := turn.agentsDispatchPolicy(true).Preflight(ask, turn.dispatchSess)
+	if err == nil || !strings.Contains(err.Error(), "already working on a request from this conversation") || !strings.Contains(err.Error(), "care package") {
+		t.Fatalf("a hand-off of work under way was let through: %v", err)
+	}
+	if _, err := turn.agentsRunAction(ask); err == nil || !strings.Contains(err.Error(), "already working") {
+		t.Fatalf("an awaited repeat was let through: %v", err)
+	}
+	if err := turn.alreadyDelegated(target, map[string]any{"queue": true}); err != nil {
+		t.Errorf("queue true is refused: %v", err)
+	}
+	other := &chatTurn{dispatchSess: &ToolSession{ChatSessionID: "chan:room-b"}}
+	if err := other.alreadyDelegated(target, ask); err != nil {
+		t.Errorf("another conversation is refused: %v", err)
+	}
+	if err := turn.alreadyDelegated(AgentRecord{ID: "someone-else", Name: "Someone"}, ask); err != nil {
+		t.Errorf("another agent is refused: %v", err)
+	}
+	end()
+	if err := turn.alreadyDelegated(target, ask); err != nil {
+		t.Errorf("refused after the first finished: %v", err)
+	}
+	delegationsMu.Lock()
+	_, left := delegations[thread]
+	delegationsMu.Unlock()
+	if left {
+		t.Error("a finished thread is kept")
+	}
+}
+
+// Ending one delegation ends that one, not another waiting in its thread.
+func TestEndingADelegationEndsOnlyItself(t *testing.T) {
+	first := beginDelegation("dispatch:end-test:x", "first")
+	second := beginDelegation("dispatch:end-test:x", "second")
+	defer second()
+	first()
+	if d, ok := delegationUnderWay("dispatch:end-test:x"); !ok || d.request != "second" {
+		t.Errorf("under way after the first ended: %+v %v", d, ok)
+	}
+}

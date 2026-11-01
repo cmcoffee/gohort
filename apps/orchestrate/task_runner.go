@@ -803,3 +803,35 @@ func sentToConversation(trace []PersistedToolCall, chatID, handle string) bool {
 	}
 	return false
 }
+
+// backgroundWorkOf is what a turn in sess's conversation knows of its
+// background work, for the turn judge: what is still running there, and,
+// when prompt is a task's wake, the work it delivers.
+func backgroundWorkOf(sess *ToolSession, prompt func() string) func() ([]string, string) {
+	return func() ([]string, string) {
+		if sess == nil {
+			return nil, ""
+		}
+		var running []string
+		for _, j := range ListBackgroundJobs(sess.DeliverySession()) {
+			running = append(running, j.Label)
+		}
+		return running, wakeLabel(prompt())
+	}
+}
+
+// wakeLabel is the work a task's wake delivers, read from its prompt, or ""
+// when prompt is not a wake, or is one reporting that the work failed: then
+// nothing is delivered, and "here it is" would be false.
+func wakeLabel(prompt string) string {
+	const done = " The work you started earlier is done: "
+	i := strings.Index(prompt, taskWakeMarker+done)
+	if i < 0 || strings.Contains(prompt, "\nIt FAILED: ") {
+		return ""
+	}
+	rest := prompt[i+len(taskWakeMarker+done):]
+	if j := strings.Index(rest, ".\n"); j >= 0 {
+		rest = rest[:j]
+	}
+	return strings.TrimSpace(rest)
+}

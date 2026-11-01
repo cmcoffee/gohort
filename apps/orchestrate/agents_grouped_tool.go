@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -142,6 +143,7 @@ func (t *chatTurn) agentsGroupedToolDef(allowRun bool) AgentToolDef {
 				"Leave it out for \"go do X and let me know\"; pass true for a quick \"find out X so I can use it\"."
 		}
 		params["await"] = ToolParam{Type: "boolean", Description: awaitDesc}
+		params["queue"] = ToolParam{Type: "boolean", Description: "(run, agent) TRUE only for a second, DIFFERENT piece of work the user asked of an agent already working on one from this conversation: it runs after that one. Leave it out otherwise; the same request asked again is refused."}
 		// CapNetwork is tagged here even though the bare tool itself
 		// doesn't make HTTP calls: the `run` action dispatches into a
 		// sub-agent whose tools may. Without this cap, Private mode
@@ -1144,7 +1146,16 @@ func (t *chatTurn) agentsRunActionFor(card toolCard, caller *ToolSession, args m
 	if !ar.admit() {
 		return ar.ret, ar.retErr
 	}
+	if err := t.alreadyDelegated(ar.target, ar.args); err != nil {
+		return "", err
+	}
 	ar.buildSession()
+	defer beginDelegation(ar.subSessID, ar.msg)()
+	release, err := holdDispatchThread(t.ctx, ar.subSessID)
+	if err != nil {
+		return "", err
+	}
+	defer release()
 	defer clearAuthoringInProgress(t.udb, ar.subSessID)
 	defer DeleteSessionTempTools(t.udb, ar.subSessID)
 	ar.buildToolkit()
@@ -1302,7 +1313,7 @@ func (ar *agentsRun) buildSession() {
 	// see below) and scopes the sub-agent's workspace + session temp tools.
 	// Not registered in the SubSession lifecycle index; that index drives
 	// async promotion, which orchestrate doesn't do (dispatch is sync).
-	ar.subSessID = "dispatch:" + ar.parentSessID + ":" + ar.target.ID
+	ar.subSessID = t.dispatchThreadID(ar.target.ID)
 	ar.subSess = &ToolSession{
 		LLM:           t.app.LLM,
 		LeadLLM:       t.app.LeadLLM,
@@ -1556,7 +1567,7 @@ func (ar *agentsRun) buildMessages() bool {
 	// Ephemeral dispatch continuity: a follow-up to the SAME agent in the
 	// SAME parent session re-threads the prior exchange, so the parent can
 	// ask "now tell me more about their B2B presence" without re-briefing.
-	// Scoped to dispatch:<parentSessID>:<target.ID> in the parent's OWN db
+	// Scoped to dispatch:<conversation>:<target.ID> in the parent's OWN db
 	// (t.udb) and capped to recent turns, so it's:
 	//   - ephemeral: bounded to this parent session, not a permanent ledger;
 	//   - visible/controllable: lives in the parent's namespace, not a hidden
@@ -1740,6 +1751,7 @@ func (ar *agentsRun) configureLoop() {
 		// sync-dispatch paths already ask; this inline path did not, so a
 		// dispatched Builder's claims went to the caller unread.
 		TurnClaimJudge: ar.subTurn.claimJudge(ar.ctx),
+		BackgroundWork: backgroundWorkOf(ar.subSess, func() string { return "" }),
 		// What the machine's steps did before the loop ran, as on the web turn,
 		// so a reply relaying a step's findings is not convicted as unsupported.
 		PriorWork: ar.subTurn.priorWorkForJudge,
@@ -1912,6 +1924,9 @@ func (t *chatTurn) agentsDispatchPolicy(allowRun bool) DetachPolicy {
 			if err != nil {
 				return err
 			}
+			if err := t.alreadyDelegated(target, args); err != nil {
+				return err
+			}
 			// Nobody here to ask: what needs the owner waits for them instead
 			// of starting (holdForOwner). Reported as the reason it did not
 			// detach, which is what it is.
@@ -1977,9 +1992,16 @@ func (t *chatTurn) agentsDispatchPolicy(allowRun bool) DetachPolicy {
 			runCtx = withHandedMedia(runCtx, handed)
 			request := msg
 			msg += handedNote
+			thread := t.dispatchThreadID(target.ID)
+			defer beginDelegation(thread, request)()
+			release, werr := holdDispatchThread(runCtx, thread)
+			if werr != nil {
+				return "", werr
+			}
+			defer release()
 			res, rerr := t.app.RunAgentSyncContinuingRich(runCtx, AgentSyncRun{
 				AgentOwner: t.user, RuntimeUser: t.user, AgentKey: target.ID,
-				SubSessionID: "dispatch:" + t.chatSessionID() + ":" + target.ID,
+				SubSessionID: thread,
 				// Where a picture the sub-agent makes has to come home to.
 				DeliverySessionID: d.DeliverySession(),
 				Message:           msg,
@@ -2029,6 +2051,92 @@ func (t *chatTurn) agentsDispatchPolicy(allowRun bool) DetachPolicy {
 			return "agents run: " + truncateObs(stringArg(args, "agent"), 40)
 		},
 	}
+}
+
+// dispatchThreads holds one slot per delegate thread (chan of capacity 1).
+//
+// A run started in a thread replaces the one already running there
+// (RunRegistry.Create), which is right for a person typing into a thread and
+// wrong for two delegations into it: the second cancelled the first mid-work,
+// the first's caller was told it FAILED with "context canceled", and it asked
+// again. A delegation now waits for the one ahead of it instead.
+var dispatchThreads sync.Map
+
+// holdDispatchThread waits for thread to be free, or ctx to end, and returns
+// what frees it again.
+func holdDispatchThread(ctx context.Context, thread string) (release func(), err error) {
+	v, _ := dispatchThreads.LoadOrStore(thread, make(chan struct{}, 1))
+	slot := v.(chan struct{})
+	select {
+	case slot <- struct{}{}:
+		return func() { <-slot }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// delegations is what each delegate thread has under way, running or waiting
+// for the one ahead of it, oldest first.
+var (
+	delegationsMu sync.Mutex
+	delegations   = map[string][]*delegation{}
+)
+
+type delegation struct {
+	request string
+	since   time.Time
+}
+
+// beginDelegation records a delegation as under way in thread, and returns
+// what ends it.
+func beginDelegation(thread, request string) (end func()) {
+	d := &delegation{request: request, since: time.Now()}
+	delegationsMu.Lock()
+	delegations[thread] = append(delegations[thread], d)
+	delegationsMu.Unlock()
+	return func() {
+		delegationsMu.Lock()
+		defer delegationsMu.Unlock()
+		keep := delegations[thread][:0]
+		for _, o := range delegations[thread] {
+			if o != d {
+				keep = append(keep, o)
+			}
+		}
+		if len(keep) == 0 {
+			delete(delegations, thread)
+			return
+		}
+		delegations[thread] = keep
+	}
+}
+
+// delegationUnderWay is the oldest delegation under way in thread.
+func delegationUnderWay(thread string) (delegation, bool) {
+	delegationsMu.Lock()
+	defer delegationsMu.Unlock()
+	if ds := delegations[thread]; len(ds) > 0 {
+		return *ds[0], true
+	}
+	return delegation{}, false
+}
+
+// alreadyDelegated refuses a delegation to target while this conversation
+// already has one under way with it. A later turn that did not know the
+// first was running asked for the same song again, and got a second song.
+// queue true is the way past it, for a second and different piece of work.
+func (t *chatTurn) alreadyDelegated(target AgentRecord, args map[string]any) error {
+	if boolArgDefault(args, "queue", false) {
+		return nil
+	}
+	d, ok := delegationUnderWay(t.dispatchThreadID(target.ID))
+	if !ok {
+		return nil
+	}
+	return fmt.Errorf("agents(run): %s is already working on a request from this conversation, started %s: %q. It was not asked again. "+
+		"Its answer comes back here by itself when it is done, so do not ask for the same thing again and do not say it has not started. "+
+		"Only if the user asked for a second, different piece of work, call again with queue true: it runs after this one",
+		target.Name, agoWords(time.Since(d.since)), truncateObs(d.request, 160))
 }
 
 // boolArgDefault reads a boolean argument, falling back when the model omitted

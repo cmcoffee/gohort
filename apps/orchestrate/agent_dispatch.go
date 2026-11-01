@@ -1182,6 +1182,7 @@ func (sd *syncDispatch) configureLoop() {
 		UncheckedClaims:     UncheckedFactNotes(sd.subFacts),
 		DeliveredCount:      func() int { return len(sd.subSess.Images) + len(sd.subSess.Videos) + len(sd.subSess.Files) },
 		Backgrounded:        func() bool { return sd.subSess.Detach.Any() },
+		BackgroundWork:      backgroundWorkOf(sd.subSess, func() string { return "" }),
 		BackgroundEstimate:  func() string { return sd.subSess.Detach.EstimateText() },
 		Confirm:             confirm,
 		AskFirst:            sd.subTurn.asksFirst, // its marks and its delegators' (ask_first.go)
@@ -2386,6 +2387,7 @@ func (cr *continuingRun) wireJudges() {
 	}
 	// Last look before the reply reaches the channel. See turn_judge.go.
 	cr.loopCfg.TurnClaimJudge = cr.subTurn.claimJudge(cr.ctx)
+	cr.loopCfg.BackgroundWork = backgroundWorkOf(cr.subSess, func() string { return cr.message })
 	// What the machine's steps did before the loop ran, as on the web turn.
 	cr.loopCfg.PriorWork = cr.subTurn.priorWorkForJudge
 	cr.loopCfg.PriorReports = func() []string {

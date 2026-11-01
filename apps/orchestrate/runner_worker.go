@@ -516,6 +516,7 @@ func (ws *workerStep) runLoop() bool {
 		UncheckedClaims:    t.uncheckedClaims(t.facts()),
 		DeliveredCount:     func() int { return len(ws.sess.Images) + len(ws.sess.Videos) + len(ws.sess.Files) },
 		Backgrounded:       func() bool { return ws.sess.Detach.Any() },
+		BackgroundWork:     backgroundWorkOf(ws.sess, func() string { return "" }),
 		BackgroundEstimate: func() string { return ws.sess.Detach.EstimateText() },
 		// Worker-step corrections breadcrumb into the same session trail as
 		// the orchestrator loop — a silent re-prompt during a plan step is

@@ -343,6 +343,19 @@ func turnJudgeEvidenceMessage(ev TurnClaimEvidence) string {
 	} else {
 		b.WriteString("A BACKGROUND JOB WAS STARTED BY THIS TURN: no.\n")
 	}
+	// Work an EARLIER turn started is still under way, and this turn may be
+	// the one delivering what finished: neither is in the action list, and
+	// a judge shown only that list convicted "it'll land here" on the very
+	// turn carrying the song, whose correction then had the agent start the
+	// song over.
+	if len(ev.RunningHere) > 0 {
+		fmt.Fprintf(&b, "STILL RUNNING IN THIS CONVERSATION, STARTED BY THIS OR AN EARLIER TURN: %s\n", strings.Join(ev.RunningHere, "; "))
+		b.WriteString("A reply saying that work is under way, or that its result will come later, IS TRUE and must be answered KEPT.\n")
+	}
+	if d := strings.TrimSpace(ev.Delivering); d != "" {
+		fmt.Fprintf(&b, "THIS TURN DELIVERS THE FINISHED RESULT OF BACKGROUND WORK STARTED EARLIER: %s\n", d)
+		b.WriteString("That work WAS started and IS done. A reply saying it is done, here, attached, coming or on its way is about that work and IS TRUE: answer KEPT, and never read it as work that was not started.\n")
+	}
 	// The machinery rule already excused "a duration the assistant was given"
 	// — but nothing ever told the judge one HAD been given, so the exception
 	// was dead text and every quoted estimate was convicted as invented. The

@@ -721,3 +721,31 @@ func TestGlobalAndStyleRulesLeadThePrompt(t *testing.T) {
 		t.Errorf("want global rules, then style, then the agent's prompt; got positions %d, %d, %d", g, st, persona)
 	}
 }
+
+// What is running in the conversation, and what a wake delivers, reach the
+// judge. Without them "it'll land here" on the turn carrying the finished song
+// was convicted as a job never started, and the correction started it again.
+func TestTheJudgeSeesTheConversationsBackgroundWork(t *testing.T) {
+	var got TurnClaimEvidence
+	stub := &FakeLLM{Turns: []FakeTurn{{Content: "I emailed the summary to the team.", Repeat: true}}}
+	app := &AppCore{LLM: stub, LeadLLM: stub}
+	_, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "send me the report"}}, AgentLoopConfig{
+		MaxRounds: 3,
+		BackgroundWork: func() ([]string, string) {
+			return []string{"agents run: Lyric & Music Generator"}, "agents run: Lyric & Music Generator"
+		},
+		TurnClaimJudge: func(ev TurnClaimEvidence) (TurnClaimVerdict, bool) {
+			got = ev
+			return TurnClaimVerdict{}, true
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.RunningHere) != 1 || got.RunningHere[0] != "agents run: Lyric & Music Generator" {
+		t.Errorf("the judge was not told what is still running: %+v", got.RunningHere)
+	}
+	if got.Delivering != "agents run: Lyric & Music Generator" {
+		t.Errorf("the judge was not told what this turn delivers: %q", got.Delivering)
+	}
+}
