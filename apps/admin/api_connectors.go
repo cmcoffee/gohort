@@ -80,7 +80,7 @@ func (a *AdminApp) handleConnectors(c *jsonapi.Call) (any, error) {
 		Approved     bool   `json:"approved"`
 		LastError    string `json:"last_error"`
 		Template     string `json:"template,omitempty"` // provenance (which template authored it)
-		IsImage      bool   `json:"is_image"`           // rest_image → image-section toolbar pick
+		IsImage      bool   `json:"is_image"`           // configurableImage → image-section toolbar pick
 		Configurable bool   `json:"configurable"`       // resolves to a template → gets "Configure" (incl. imports)
 		Webhook      string `json:"webhook,omitempty"`  // a push bridge's provider → gets "Webhook…"
 		// A connector with a contract test and a health check (core/service):
@@ -130,7 +130,7 @@ func (a *AdminApp) handleConnectors(c *jsonapi.Call) (any, error) {
 	for _, conn := range ListConnectors(RootDB) {
 		_, canConfig := TemplateForConnector(conn)
 		row := connRow{Name: conn.Name, Title: conn.Title(), Kind: conn.Kind, Summary: ConnectorSummary(conn), Owner: conn.Owner,
-			Approved: conn.Approved, LastError: conn.LastError, Template: conn.Template, IsImage: conn.Kind == RestImageConnectorKind,
+			Approved: conn.Approved, LastError: conn.LastError, Template: conn.Template, IsImage: configurableImage(conn),
 			Configurable: canConfig, Webhook: connectorWebhook(conn), Fixable: service.Fixable(conn), State: "pending",
 			Endpoints: conn.Kind == service.Kind, Group: connectorGroup(conn, research, uses), GroupOpen: true,
 			Deletable: len(uses[conn.Name]) == 0 && !conn.Provided, HasSettings: conn.Kind == service.Kind,

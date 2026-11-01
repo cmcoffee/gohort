@@ -184,12 +184,23 @@ func mailFormFields() []ui.FormField {
 func imageBackendToolbarActions() []ui.ToolbarAction {
 	acts := []ui.ToolbarAction{{Label: "Add image backend…", Method: "client", URL: "add_image_backend"}}
 	for _, c := range ListConnectors(RootDB) {
-		if c.Kind == RestImageConnectorKind {
+		if configurableImage(c) {
 			acts = append(acts, ui.ToolbarAction{Label: "Configure backend…", Method: "client", URL: "configure_backend_pick"})
 			break
 		}
 	}
 	return acts
+}
+
+// configurableImage is an image backend Configure backend… opens: a
+// rest_image connector, or a connection an image template made (a ComfyUI
+// backend kept as a service), whose form is that template's.
+func configurableImage(c Connector) bool {
+	if c.Kind == RestImageConnectorKind {
+		return true
+	}
+	t, ok := TemplateForConnector(c)
+	return ok && t.Category == "Image generation"
 }
 
 // imageFormFields builds the Image Generation settings: the connector that

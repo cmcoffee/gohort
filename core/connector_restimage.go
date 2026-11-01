@@ -157,6 +157,17 @@ type RestImageSpec struct {
 	// json.Marshal compacts a RawMessage and would strip the indentation back out.
 	ComfyWorkflow string       `json:"comfy_workflow,omitempty"`
 	ComfyMap      ComfyNodeMap `json:"comfy_map,omitempty"`
+
+	// via is the connection credential the calls go through in place of
+	// Credential, for a ComfyUI backend kept as a service connection
+	// (core/service): its own key, for its own address. Never stored.
+	via *SecureCredential
+}
+
+// Via is s with its calls made through connection credential c.
+func (s RestImageSpec) Via(c SecureCredential) RestImageSpec {
+	s.via = &c
+	return s
 }
 
 // ComfyNodeMap names the ComfyUI graph nodes that hold each generation parameter
@@ -589,7 +600,22 @@ func (h restImageHandler) Materialize(c Connector) error {
 	if _, err := h.parse(c); err != nil {
 		return err
 	}
-	name := strings.TrimSpace(c.Name)
+	serveImageBackend(c.Name)
+	return nil
+}
+
+// ServeImageBackend puts c, a ComfyUI backend kept as another kind of
+// connection (core/service), where a rest_image connector goes: an image
+// provider by its name, and its generate_image_<name> tool, so an agent
+// granted that tool before it moved keeps it.
+func (c Connector) ServeImageBackend() { serveImageBackend(c.Name) }
+
+// StopImageBackend takes c's image backend away again.
+func (c Connector) StopImageBackend() { stopImageBackend(c.Name) }
+
+// serveImageBackend registers connector name's backend and tool.
+func serveImageBackend(name string) {
+	name = strings.TrimSpace(name)
 	// Native backend: makes this connector usable as an image PROVIDER across the
 	// whole app (the default generate_image tool, writer-app illustrations via
 	// GenerateImage*, the admin image-provider setting) — not only as the
@@ -620,7 +646,6 @@ func (h restImageHandler) Materialize(c Connector) error {
 	// reads Approved=false, and the sweep would drop the registration made four
 	// lines up.
 	reconcileImageBackends(RootDB, name)
-	return nil
 }
 
 // Teardown drops this connector's backend. The chat tool stays registered (the
@@ -629,13 +654,18 @@ func (h restImageHandler) Materialize(c Connector) error {
 // and a stale yes kept an unapproved or deleted connector on offer as an image
 // provider for the rest of the process.
 func (restImageHandler) Teardown(c Connector) error {
-	name := strings.TrimSpace(c.Name)
+	stopImageBackend(c.Name)
+	return nil
+}
+
+// stopImageBackend drops connector name's backend.
+func stopImageBackend(name string) {
+	name = strings.TrimSpace(name)
 	UnregisterImageBackend(name)
 	restImageMu.Lock()
 	delete(ownedImageBackends, name)
 	restImageMu.Unlock()
 	reconcileImageBackends(RootDB)
-	return nil
 }
 
 // reconcileImageBackends makes the process-level backend registry match the
@@ -664,10 +694,10 @@ func reconcileImageBackends(db Database, keepLive ...string) {
 		}
 	}
 	for _, c := range ListConnectors(db) {
-		if c.Kind != RestImageConnectorKind || !c.Approved {
+		if !c.Approved {
 			continue
 		}
-		if _, err := (restImageHandler{}).parse(c); err != nil {
+		if _, graph, err := imageSpecOf(c); !graph || err != nil {
 			continue
 		}
 		live[strings.TrimSpace(c.Name)] = true
@@ -774,7 +804,7 @@ func (t *restImageTool) Desc() string {
 	// so an edit shows up on the next turn. Kept OUT of the fixed string so it can
 	// carry backend-specific prompting tips, e.g. quoting text you want rendered.
 	if c, ok := GetConnector(RootDB, t.connector); ok {
-		if s, err := (restImageHandler{}).parse(c); err == nil {
+		if s, graph, err := imageSpecOf(c); graph && err == nil {
 			if g := strings.TrimSpace(s.PromptGuidance); g != "" {
 				base += " Prompt guidance for this backend: " + g
 			}
@@ -826,7 +856,13 @@ func (t *restImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 	if !c.Approved {
 		return "", fmt.Errorf("image backend %q is not approved: an admin enables it in Admin > Connectors", t.connector)
 	}
-	s, err := restImageHandler{}.parse(c)
+	if err := sess.ConnectionBarred(t.connector); c.Kind != RestImageConnectorKind && err != nil {
+		return "", err
+	}
+	s, graph, err := imageSpecOf(c)
+	if err == nil && !graph {
+		err = fmt.Errorf("image backend %q is no longer a ComfyUI or REST image backend", t.connector)
+	}
 	if err != nil {
 		return "", err
 	}
@@ -1067,7 +1103,7 @@ func (s RestImageSpec) generate(sess *ToolSession, p restImageParams) (restImage
 
 	// Synchronous backend: the image is already in the submit response.
 	if s.PollURL == "" {
-		return extractOutcome(submitNode, s.ImageB64Path, s.ImageURLPath, "", nil)
+		return s.extract(sess, submitNode, s.ImageB64Path, s.ImageURLPath, "", nil)
 	}
 
 	// Async backend: poll until ready, then extract from the poll response.
@@ -1144,9 +1180,9 @@ func (s RestImageSpec) generate(sess *ToolSession, p restImageParams) (restImage
 			"subfolder": imgPath("subfolder"),
 			"type":      imgPath("type"),
 		}, pollNode, idTok)
-		return extractOutcome(pollNode, "", "", s.PollURLTemplate, fields)
+		return s.extract(sess, pollNode, "", "", s.PollURLTemplate, fields)
 	}
-	return extractOutcome(pollNode,
+	return s.extract(sess, pollNode,
 		substituteTokens(s.PollB64Path, idTok),
 		substituteTokens(s.PollURLPath, idTok),
 		s.PollURLTemplate, resolvePollFields(s.PollFields, pollNode, idTok))
@@ -1168,6 +1204,9 @@ func (s RestImageSpec) dispatchImage(sess *ToolSession, rawURL, method, body str
 // dispatch the JSON calls use, so an upload is covered by the credential's
 // allow-list, audit entry, and Private-mode gate rather than bypassing them.
 func (s RestImageSpec) dispatchImageUpload(sess *ToolSession, rawURL string, up FileUpload) (string, error) {
+	if s.via != nil {
+		return Secure().DispatchConnection(sess, *s.via, ToolCallRequest{URL: rawURL, Method: "POST", Upload: &up, PipeFollowing: true})
+	}
 	cred := strings.TrimSpace(s.Credential)
 	if cred != "" && cred != "no_auth" && cred != "none" {
 		return Secure().DispatchUpload(sess, cred, rawURL, "POST", up)
@@ -1186,6 +1225,10 @@ func (s RestImageSpec) dispatchImageUpload(sess *ToolSession, rawURL string, up 
 // dispatchImageCT is dispatchImage with an explicit request Content-Type, for
 // a non-JSON body (empty keeps the JSON default).
 func (s RestImageSpec) dispatchImageCT(sess *ToolSession, rawURL, method, body, contentType string) (string, error) {
+	if s.via != nil {
+		return Secure().DispatchConnection(sess, *s.via, ToolCallRequest{URL: rawURL, Method: method, Body: body,
+			ContentType: contentType, PipeFollowing: true, TimeoutSecs: s.submitTimeoutSecs()})
+	}
 	cred := strings.TrimSpace(s.Credential)
 	if cred != "" && cred != "no_auth" && cred != "none" {
 		return Secure().DispatchToolCallRequest(sess, ToolCallRequest{
@@ -1364,12 +1407,18 @@ func reachableImageBackends(sess *ToolSession) []ImageBackendChoice {
 		if !c.Approved || !(ImageBackendRegistered(c.Name) || edits) {
 			continue
 		}
-		// Another kind's image backend (a service, core/service) is offered
-		// by name, unless this session's agent or user is barred from it.
-		if c.Kind != RestImageConnectorKind {
-			if sess.ConnectionBarred(c.Name) != nil {
-				continue
-			}
+		s, graph, err := imageSpecOf(c)
+		if err != nil {
+			continue
+		}
+		// A connection (a service, core/service) is offered unless this
+		// session's agent or user is barred from it; a rest_image backend
+		// unless its credential is.
+		if c.Kind != RestImageConnectorKind && sess.ConnectionBarred(c.Name) != nil {
+			continue
+		}
+		// Another kind's image backend that is no ComfyUI is offered by name.
+		if !graph {
 			choice := ImageBackendChoice{Name: c.Name, Default: c.Name == defaultProvider, Edits: edits}
 			if edits {
 				choice.MaxImages, choice.CascadeMax = 1, 1
@@ -1377,11 +1426,7 @@ func reachableImageBackends(sess *ToolSession) []ImageBackendChoice {
 			out = append(out, choice)
 			continue
 		}
-		s, err := restImageHandler{}.parse(c)
-		if err != nil {
-			continue
-		}
-		if sess != nil && sess.DeniedCredentials[strings.TrimSpace(s.Credential)] {
+		if c.Kind == RestImageConnectorKind && sess != nil && sess.DeniedCredentials[strings.TrimSpace(s.Credential)] {
 			continue
 		}
 		out = append(out, ImageBackendChoice{
@@ -1436,6 +1481,34 @@ func generateRestImageNative(connector, prompt string, landscape bool) (*ImageGe
 			seed:     -1,
 		})
 	})
+	if err != nil {
+		return nil, err
+	}
+	return restImageResult(out, prompt)
+}
+
+// Render runs s once, as a call through the connection keeping it does
+// (core/service: its Test, its contract test): inputs are the call's prompt,
+// negative, width, height, steps and seed, any left out taking s's default,
+// and images its source pictures. The picture comes back as a local file.
+func (s RestImageSpec) Render(sess *ToolSession, inputs map[string]any, images [][]byte) (*ImageGenResult, error) {
+	prompt := strings.TrimSpace(stringFromArg(inputs["prompt"]))
+	p := restImageParams{
+		prompt:   prompt,
+		negative: firstNonEmpty(stringFromArg(inputs["negative"]), s.DefaultNegative),
+		width:    intArgOr(inputs["width"], s.DefaultWidth),
+		height:   intArgOr(inputs["height"], s.DefaultHeight),
+		steps:    intArgOr(inputs["steps"], s.DefaultSteps),
+		seed:     intArgOr(inputs["seed"], -1),
+	}
+	for i, data := range images {
+		img, err := verifyInputImage(fmt.Sprintf("image %d", i+1), data)
+		if err != nil {
+			return nil, err
+		}
+		p.images = append(p.images, img)
+	}
+	out, err := s.generate(sess, p)
 	if err != nil {
 		return nil, err
 	}
@@ -1716,7 +1789,58 @@ func resolveImageConnector(connector string) (RestImageSpec, error) {
 	if !ok || !c.Approved {
 		return RestImageSpec{}, fmt.Errorf("image backend %q is unavailable", connector)
 	}
-	return restImageHandler{}.parse(c)
+	s, graph, err := imageSpecOf(c)
+	if err == nil && !graph {
+		err = fmt.Errorf("image backend %q is not a ComfyUI or REST image backend", connector)
+	}
+	return s, err
+}
+
+// serviceConnectorKind is the kind ComfyUI backends are kept as (core/service).
+const serviceConnectorKind = "service"
+
+// comfyHost is a connector kind that keeps ComfyUI backends (core/service):
+// it gives one back as the spec the machinery here runs, its calls going
+// through the connection's own key, and makes one from such a spec.
+type comfyHost interface {
+	// ComfySpec is c's ComfyUI backend, and false when c is not one.
+	ComfySpec(c Connector) (RestImageSpec, bool, error)
+	// ComfyConnector is the spec of a connection keeping ComfyUI backend s.
+	ComfyConnector(s RestImageSpec) (json.RawMessage, error)
+}
+
+// imageSpecOf is connector c as the image machinery here runs it: a
+// rest_image connector's own spec, or a ComfyUI backend another kind keeps.
+// graph is false for any other connector.
+func imageSpecOf(c Connector) (s RestImageSpec, graph bool, err error) {
+	if c.Kind == RestImageConnectorKind {
+		s, err = restImageHandler{}.parse(c)
+		return s, true, err
+	}
+	h, ok := ConnectorHandlerFor(c.Kind)
+	if !ok {
+		return s, false, nil
+	}
+	host, ok := h.(comfyHost)
+	if !ok {
+		return s, false, nil
+	}
+	return host.ComfySpec(c)
+}
+
+// AsService is s, a ComfyUI backend, as the connection that keeps it: its
+// kind and spec.
+func (s RestImageSpec) AsService() (string, json.RawMessage, error) {
+	h, ok := ConnectorHandlerFor(serviceConnectorKind)
+	if !ok {
+		return "", nil, fmt.Errorf("no connector kind keeps ComfyUI backends in this build")
+	}
+	host, ok := h.(comfyHost)
+	if !ok {
+		return "", nil, fmt.Errorf("the %s kind does not keep ComfyUI backends", serviceConnectorKind)
+	}
+	raw, err := host.ComfyConnector(s)
+	return serviceConnectorKind, raw, err
 }
 
 // restImageResult converts a backend outcome into the ImageGenResult shape the
@@ -2110,6 +2234,35 @@ func stripDataURIPrefix(s string) string {
 // direct image link), capped at the SecureAPI save-byte limit and the SecureAPI
 // request timeout. Used only for the poll_url_template path, where the finished
 // image is a separate binary endpoint the governed poll already located.
+// extract is extractOutcome, with a picture built into a URL fetched
+// through the connection's key when s goes through one: a ComfyUI that takes
+// a key wants it on /view as on every other call.
+func (s RestImageSpec) extract(sess *ToolSession, node any, b64Path, urlPath, urlTemplate string, vars map[string]string) (restImageOutcome, error) {
+	u := substituteTokens(urlTemplate, vars)
+	if s.via == nil || b64Path != "" || urlPath != "" || urlTemplate == "" || strings.Contains(u, "{") {
+		return extractOutcome(node, b64Path, urlPath, urlTemplate, vars)
+	}
+	resp, done, err := Secure().OpenConnectionStream(sess, *s.via, StreamRequest{URL: u, Method: "GET", Timeout: secureAPIRequestTimeout()})
+	if err != nil {
+		return restImageOutcome{}, fmt.Errorf("fetching generated image %s: %w", u, err)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, secureAPIMaxSaveBytes()))
+	if done != nil {
+		done(int64(len(data)))
+	} else {
+		resp.Body.Close()
+	}
+	switch {
+	case err != nil:
+		return restImageOutcome{}, fmt.Errorf("fetching generated image %s: %w", u, err)
+	case resp.StatusCode < 200 || resp.StatusCode >= 300:
+		return restImageOutcome{}, fmt.Errorf("fetching generated image %s: HTTP %d", u, resp.StatusCode)
+	case len(data) == 0:
+		return restImageOutcome{}, fmt.Errorf("fetching generated image %s: empty image body", u)
+	}
+	return restImageOutcome{b64: base64.StdEncoding.EncodeToString(data)}, nil
+}
+
 func httpGetImageBytes(url string) ([]byte, error) {
 	client := &http.Client{Timeout: secureAPIRequestTimeout()}
 	resp, err := client.Get(url)

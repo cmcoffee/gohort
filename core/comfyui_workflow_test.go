@@ -625,7 +625,7 @@ func buildComfy(t *testing.T, vals map[string]any) RestImageSpec {
 	if vals["base_url"] == nil {
 		vals["base_url"] = "http://localhost:8188"
 	}
-	raw, _, err := comfyBuildSpec(tpl, vals)
+	raw, _, err := comfyBuiltSpec(tpl, vals)
 	if err != nil {
 		t.Fatalf("comfyBuildSpec: %v", err)
 	}
@@ -737,7 +737,7 @@ func TestEditedImageNodeOrderSurvivesResave(t *testing.T) {
 
 	// The admin swaps subject and background.
 	vals["image_nodes"] = "2,1"
-	resaved, _, err := comfyBuildSpec(tpl, vals)
+	resaved, _, err := comfyBuiltSpec(tpl, vals)
 	if err != nil {
 		t.Fatalf("re-save: %v", err)
 	}

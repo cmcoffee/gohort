@@ -45,6 +45,65 @@ func MigrateConnections(db Database) {
 	NewMigrationRunner("core", "").Once("connections:v3", func() int {
 		return nameChoicesForJobs(db)
 	})
+	NewMigrationRunner("core", "").Once("images:v1", func() int {
+		return comfyToService(db)
+	})
+}
+
+// comfyToService moves each ComfyUI backend kept as a rest_image connector
+// onto a service connection running its workflow (comfyui.go): the same
+// name, so the pages and agents naming it still do, the same use and
+// template, and its key moved from the credential it was sent with into the
+// connection, that credential deleted when nothing else names it. One whose
+// spec does not translate stays as it is, and the log says why. Other
+// rest_image connectors (Automatic1111, a peer's renderer) stay too.
+func comfyToService(db Database) int {
+	if db == nil {
+		return 0
+	}
+	m := &connMove{db: db, creds: map[string]bool{}}
+	for _, c := range ListConnectors(db) {
+		if c.Kind != RestImageConnectorKind {
+			continue
+		}
+		var r RestImageSpec
+		if json.Unmarshal(c.Spec, &r) != nil || strings.TrimSpace(r.ComfyWorkflow) == "" {
+			continue
+		}
+		s, _, err := fromComfy(r)
+		if err != nil {
+			Log("[migration] the ComfyUI backend %s stays a rest_image connector: %v", c.Name, err)
+			continue
+		}
+		raw, err := json.Marshal(s)
+		if err != nil {
+			continue
+		}
+		cred := strings.TrimSpace(r.Credential)
+		if cred == "no_auth" || cred == "none" {
+			cred = ""
+		}
+		c.Kind, c.Spec = Kind, raw
+		if c.Template == "" {
+			c.Template = "comfyui"
+		}
+		if err := SaveConnector(db, c); err != nil {
+			Log("[migration] the ComfyUI backend %s could not move onto a connection: %v", c.Name, err)
+			continue
+		}
+		m.changed++
+		if cred != "" {
+			m.creds[cred] = true
+			c, _ = GetConnector(db, c.Name)
+			m.keep(c, nil, cred)
+		}
+		Log("[migration] the ComfyUI backend %s is now a connection, keeping its workflow, its use and its key", c.Name)
+	}
+	m.dropCredentials()
+	if m.changed > 0 {
+		Settle(db)
+	}
+	return m.changed
 }
 
 // providerPages are the settings that choose a connection by a single value,

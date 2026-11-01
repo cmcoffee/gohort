@@ -273,33 +273,6 @@ func TestAHelperFillsItsOutputsIn(t *testing.T) {
 	}
 }
 
-// The ComfyUI starter wires the default graph into an image connector that
-// lands unapproved, pointed at the address given.
-func TestTheComfyUITemplateAddsAWiredConnector(t *testing.T) {
-	db := testDB(t)
-	res, err := Install(db, "comfyui", "admin", map[string]string{"base_url": "http://192.168.1.20:8188/"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Imported != 1 {
-		t.Fatalf("one connector lands: %+v", res)
-	}
-	c, ok := core.GetConnector(db, "comfyui")
-	if !ok || c.Kind != core.RestImageConnectorKind || c.Template != "comfyui" {
-		t.Fatalf("a comfyui image connector: %+v", c)
-	}
-	var spec core.RestImageSpec
-	if err := json.Unmarshal(c.Spec, &spec); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.HasPrefix(spec.PollURLTemplate, "http://192.168.1.20:8188/view?") || spec.ComfyMap.OutputNode != "9" || len(spec.ComfyMap.PromptNodes) == 0 {
-		t.Errorf("the spec is wired to the server: %+v", spec)
-	}
-	if _, err := Install(db, "comfyui", "admin", map[string]string{"base_url": "http://box:8188", "name": "comfy2", "workflow": "{not json"}); err == nil {
-		t.Error("a workflow that cannot be read is refused before anything lands")
-	}
-}
-
 // A bridge is a template too: the Slack bridge adds its credential and a
 // polling connector for the channel; the Mattermost bridge adds a generic
 // webhook connector and hands its token to the webhook secret store.

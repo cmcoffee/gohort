@@ -37,7 +37,7 @@
         "name": "{{name}}",
         "recipe": {
           "name": "{{name}}",
-          "kind": "rest_image",
+          "kind": "service",
           "template": "comfyui",
           "desc": "ComfyUI image generation at {{base_url}}",
           "spec": "{{workflow.spec}}"

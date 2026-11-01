@@ -427,7 +427,7 @@ func comfyConnector(t *testing.T, name, baseURL string) Connector {
 	if !ok {
 		t.Fatal("comfyui template not registered")
 	}
-	raw, _, err := comfyBuildSpec(tpl, map[string]any{
+	raw, _, err := comfyBuiltSpec(tpl, map[string]any{
 		"base_url": baseURL, "workflow_type": ComfyTypeGenerate, "credential": "no_auth",
 	})
 	if err != nil {

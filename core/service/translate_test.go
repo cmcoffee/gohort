@@ -106,15 +106,23 @@ func TestAComfyUIBackendTranslatesAndRuns(t *testing.T) {
 	}
 }
 
-// What a Go helper does stays its own kind, and says why.
+// What a Go helper does for another backend stays its own kind, and says
+// why. A pasted ComfyUI workflow becomes a service running it.
 func TestWhatOnlyAHelperDoesStaysItsOwnKind(t *testing.T) {
 	c := restImageConnector(t, "a1111_img2img", "http://lan.test:7860")
 	if _, _, err := FromRestImage(c); err == nil || !strings.Contains(err.Error(), "inline") {
 		t.Errorf("an inline-image backend: %v", err)
 	}
-	spec := RestImageSpec{Credential: "no_auth", SubmitURL: "http://lan.test/prompt", ComfyWorkflow: `{"1":{}}`, ImageB64Path: "x"}
+	spec, _, err := NewComfyImageSpec("http://lan.test:8188", "no_auth", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	raw, _ := json.Marshal(spec)
-	if _, _, err := FromRestImage(Connector{Kind: RestImageConnectorKind, Spec: raw}); err == nil || !strings.Contains(err.Error(), "ComfyUI workflow") {
-		t.Errorf("a pasted workflow: %v", err)
+	s, _, err := FromRestImage(Connector{Kind: RestImageConnectorKind, Spec: raw})
+	if err != nil {
+		t.Fatalf("a pasted workflow: %v", err)
+	}
+	if _, ok := comfyOperation(s); !ok || s.Provider.BaseURL != "http://lan.test:8188" {
+		t.Errorf("a pasted workflow becomes: %+v", s.Provider)
 	}
 }

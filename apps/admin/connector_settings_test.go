@@ -370,3 +370,64 @@ func TestAKeptKeyShowsItsEnd(t *testing.T) {
 		t.Errorf("its row: %s", b)
 	}
 }
+
+// A ComfyUI backend kept as a connection is still configured from its
+// template: Configure backend… is offered for it, and its row picks it.
+func TestAComfyUIConnectionIsConfiguredFromItsTemplate(t *testing.T) {
+	settingsWorld(t)
+	if len(imageBackendToolbarActions()) != 1 {
+		t.Fatalf("Configure offered with no image backend")
+	}
+	r, _, err := NewComfyImageSpec("http://comfy.example:8188", "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	kind, raw, err := r.AsService()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveConnector(RootDB, Connector{Name: "studio", Kind: kind, Template: "comfyui", Spec: raw}); err != nil {
+		t.Fatal(err)
+	}
+	if acts := imageBackendToolbarActions(); len(acts) != 2 || acts[1].URL != "configure_backend_pick" {
+		t.Errorf("toolbar: %+v", acts)
+	}
+	a := &AdminApp{db: RootDB}
+	out, _ := a.handleConnectors(&jsonapi.Call{R: httptest.NewRequest("GET", "/api/connectors", nil)})
+	b, _ := json.Marshal(out)
+	if !strings.Contains(string(b), `"name":"studio"`) || !strings.Contains(string(b), `"is_image":true`) {
+		t.Errorf("its row: %s", b)
+	}
+}
+
+// Configuring a ComfyUI backend still kept as a rest_image connector saves
+// it as the connection the template now makes, not the two specs merged.
+func TestConfiguringAnOldComfyUIBackendMovesIt(t *testing.T) {
+	settingsWorld(t)
+	r, _, err := NewComfyImageSpec("http://comfy.example:8188", "no_auth", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(r)
+	if err := SaveConnector(RootDB, Connector{Name: "studio", Kind: RestImageConnectorKind, Template: "comfyui", Spec: raw}); err != nil {
+		t.Fatal(err)
+	}
+	tpl, _ := GetConnectorTemplate("comfyui")
+	vals := tpl.ReadValues(raw)
+	vals["prompt_suffix"] = "crisp"
+	a := &AdminApp{db: RootDB}
+	call := &jsonapi.Call{R: httptest.NewRequest("POST", "/api/connectors/config", nil)}
+	if _, err := a.handleConnectorConfigSave(call, struct {
+		Template   string         `json:"template"`
+		Connector  string         `json:"connector"`
+		Name       string         `json:"name"`
+		Values     map[string]any `json:"values"`
+		SetDefault bool           `json:"set_default"`
+	}{Template: "comfyui", Connector: "studio", Values: vals}); err != nil {
+		t.Fatal(err)
+	}
+	c, _ := GetConnector(RootDB, "studio")
+	if c.Kind != service.Kind || strings.Contains(string(c.Spec), "submit_url") || !strings.Contains(string(c.Spec), "crisp") {
+		t.Errorf("saved as %s: %s", c.Kind, c.Spec)
+	}
+}

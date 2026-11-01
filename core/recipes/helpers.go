@@ -84,17 +84,21 @@ func asJSONValue(v any) (any, error) {
 
 func init() {
 	RegisterHelper("comfyui_workflow", Helper{
-		Desc:    "Wires a ComfyUI workflow (API format) into an image connector's spec: the prompt, negative, seed and output nodes are found and mapped. A blank answer uses a basic SD1.5 graph. With: base_url (required), credential, output_node.",
+		Desc:    "Wires a ComfyUI workflow (API format) into an image connector's spec: the prompt, negative, seed and output nodes are found and mapped. A blank answer uses a basic SD1.5 graph. With: base_url (required), output_node.",
 		Outputs: []string{"spec"},
 		Run: func(answer string, with map[string]string) (map[string]any, []string, error) {
 			if with["base_url"] == "" {
 				return nil, nil, fmt.Errorf("the ComfyUI address is needed to wire the workflow")
 			}
-			spec, warns, err := core.NewComfyImageSpec(with["base_url"], with["credential"], answer, with["output_node"])
+			spec, warns, err := core.NewComfyImageSpec(with["base_url"], "", answer, with["output_node"])
 			if err != nil {
 				return nil, nil, fmt.Errorf("the workflow could not be wired: %v", err)
 			}
-			v, err := asJSONValue(spec)
+			_, kept, err := spec.AsService()
+			if err != nil {
+				return nil, nil, err
+			}
+			v, err := asJSONValue(kept)
 			if err != nil {
 				return nil, nil, err
 			}

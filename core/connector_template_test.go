@@ -32,7 +32,7 @@ func TestComfyTemplateBuildAndRead(t *testing.T) {
 		t.Fatal("comfyui template not registered")
 	}
 	// Create-style: a workflow with no node map → auto-wired.
-	spec, _, err := tpl.BuildSpec(map[string]any{
+	spec, _, err := comfyBuiltSpec(tpl, map[string]any{
 		"base_url":      "http://localhost:8188",
 		"workflow":      comfyGraphSD15,
 		"prompt_suffix": "crisp",
@@ -61,7 +61,7 @@ func TestComfyTemplateBuildAndRead(t *testing.T) {
 	if vals["output_node"] != "9" {
 		t.Errorf("output_node not read back: %v", vals["output_node"])
 	}
-	spec2, _, err := tpl.BuildSpec(vals)
+	spec2, _, err := comfyBuiltSpec(tpl, vals)
 	if err != nil {
 		t.Fatalf("rebuild: %v", err)
 	}
@@ -204,4 +204,16 @@ func TestConnectorTemplatesListed(t *testing.T) {
 	if got := TemplateCSV(map[string]any{"x": " 6 , 7 ,,8 "}, "x"); strings.Join(got, ",") != "6,7,8" {
 		t.Errorf("TemplateCSV: %v", got)
 	}
+}
+
+// comfyBuiltSpec is the ComfyUI backend the template builds from vals, as
+// the spec the image machinery runs, before the connection keeping it wraps
+// it (core/service, where the whole build is tested).
+func comfyBuiltSpec(tpl ConnectorTemplate, vals map[string]any) (json.RawMessage, []string, error) {
+	spec, warns, err := comfyBuild(tpl, vals)
+	if err != nil {
+		return nil, warns, err
+	}
+	raw, err := json.Marshal(spec)
+	return raw, warns, err
 }

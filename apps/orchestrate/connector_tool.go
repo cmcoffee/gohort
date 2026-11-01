@@ -169,7 +169,7 @@ Typical flow for a calendar:
 	gt.AddAction("create", &GroupedToolAction{
 		Description: "Declare a new connector (bridge type). remote_mcp is created UNAPPROVED (admin approves in Admin > Connectors); rest_poll goes live immediately (it uses an already-approved credential).",
 		Params: map[string]ToolParam{
-			"kind":                 {Type: "string", Enum: []string{RemoteMCPConnectorKind, RestPollConnectorKind, DesktopMCPConnectorKind, DesktopCommandConnectorKind, MessagingBridgeConnectorKind, RestMessagingConnectorKind, BotFrameworkConnectorKind, RestImageConnectorKind, PeerRelayConnectorKind, service.Kind}, Description: "The bridge type. remote_mcp = a remote MCP server whose tools register as <name>.<tool>. rest_poll = poll one authenticated URL every N minutes and wake an agent when it changes. desktop_mcp = run a LOCAL MCP server (subprocess) on the user's OWN machine. desktop_command = run a fixed local command (with {placeholder} args) as one tool on the user's machine: the lightweight option. messaging_bridge = enable a built-in messaging relay (iMessage) on the user's device so their chats route to agents. rest_messaging = a server-side two-sided messaging bridge for a REST-pollable service (Teams/Slack/Discord) via a SecureAPI credential: use preset=\"teams\" for the canned Graph mapping. bot_framework = gohort as a real Microsoft Teams BOT (Azure Bot registration): answers DMs, group chats and channel @mentions and replies under its own identity, the one that works when Graph app-only sending does not. rest_image = an image-GENERATION backend (ComfyUI / Automatic1111 / hosted diffusion) declared from a spec, use preset=\"a1111\" (turnkey) or preset=\"comfyui\" with vars={\"base_url\":\"http://localhost:7860\"}; materializes a generate_image_<name> tool. peer_relay = inbound webhooks via a peer's public address. Created UNAPPROVED."},
+			"kind":                 {Type: "string", Enum: []string{RemoteMCPConnectorKind, RestPollConnectorKind, DesktopMCPConnectorKind, DesktopCommandConnectorKind, MessagingBridgeConnectorKind, RestMessagingConnectorKind, BotFrameworkConnectorKind, RestImageConnectorKind, PeerRelayConnectorKind, service.Kind}, Description: "The bridge type. remote_mcp = a remote MCP server whose tools register as <name>.<tool>. rest_poll = poll one authenticated URL every N minutes and wake an agent when it changes. desktop_mcp = run a LOCAL MCP server (subprocess) on the user's OWN machine. desktop_command = run a fixed local command (with {placeholder} args) as one tool on the user's machine: the lightweight option. messaging_bridge = enable a built-in messaging relay (iMessage) on the user's device so their chats route to agents. rest_messaging = a server-side two-sided messaging bridge for a REST-pollable service (Teams/Slack/Discord) via a SecureAPI credential: use preset=\"teams\" for the canned Graph mapping. bot_framework = gohort as a real Microsoft Teams BOT (Azure Bot registration): answers DMs, group chats and channel @mentions and replies under its own identity, the one that works when Graph app-only sending does not. rest_image = an image-GENERATION backend (ComfyUI / Automatic1111 / hosted diffusion) declared from a spec, use preset=\"a1111\" with vars={\"base_url\":\"http://localhost:7860\"} (ComfyUI: action=import_comfyui); materializes a generate_image_<name> tool. peer_relay = inbound webhooks via a peer's public address. Created UNAPPROVED."},
 			"name":                 {Type: "string", Description: "Short unique id (letters/digits/underscore/dash), e.g. \"gcal\". Namespaces the capability's tools."},
 			"url":                  {Type: "string", Description: "(remote_mcp) the MCP server's https endpoint. (rest_poll) the full URL to poll each interval."},
 			"auth_mode":            {Type: "string", Enum: []string{"none", "secure_api", "oauth"}, Description: "(remote_mcp) How the server authenticates. none = public; secure_api = mint a bearer from a registered SecureAPI credential (set secure_cred); oauth = per-user hosted login. NEVER pass a static token."},
@@ -299,13 +299,12 @@ Typical flow for a calendar:
 		Handler:     connectorImport,
 	})
 	gt.AddAction("import_comfyui", &GroupedToolAction{
-		Description: "Set up a ComfyUI image backend from a workflow the user pastes: the easy path for “make my ComfyUI the image generator.” Give the ComfyUI base URL and (optionally) the user's exported workflow JSON (ComfyUI “Save (API Format)”, needs Dev Mode). The framework AUTO-WIRES the graph (detects the prompt node and the SaveImage output node and injects the {prompt}/{negative}/{seed} tokens), so you paste the workflow VERBATIM; do NOT hand-edit or tokenize it yourself. Omit workflow for a built-in default SD1.5 graph. Drafts a rest_image connector UNAPPROVED; tell the user to approve it in Admin > Connectors (or that Admin > Image Generation > “Add image backend” does create+approve in one step). For Automatic1111, use action=create with kind=rest_image, preset=a1111.",
+		Description: "Set up a ComfyUI image backend from a workflow the user pastes: the easy path for “make my ComfyUI the image generator.” Give the ComfyUI base URL and (optionally) the user's exported workflow JSON (ComfyUI “Save (API Format)”, needs Dev Mode). The framework AUTO-WIRES the graph (detects the prompt node and the SaveImage output node and injects the {prompt}/{negative}/{seed} tokens), so you paste the workflow VERBATIM; do NOT hand-edit or tokenize it yourself. Omit workflow for a built-in default SD1.5 graph. Drafts it out of use: tell the user to choose it under Admin > Capabilities > Image Generation, and to give its key under Settings on its row if their ComfyUI takes one. For Automatic1111, use action=create with kind=rest_image, preset=a1111.",
 		Params: map[string]ToolParam{
 			"name":        {Type: "string", Description: "Connector id (letters/digits/underscore/dash), e.g. \"comfyui\". Becomes the image-provider name and the generate_image_<name> tool."},
 			"base_url":    {Type: "string", Description: "The ComfyUI server URL, e.g. http://localhost:8188."},
 			"workflow":    {Type: "string", Description: "(optional) The user's ComfyUI workflow in API format (from ComfyUI's “Save (API Format)”). Paste it verbatim: the framework auto-detects and tokenizes the prompt + output nodes. Omit for a default SD1.5 graph."},
 			"node_id":     {Type: "string", Description: "(optional) Override the auto-detected SaveImage output node id: only if detection picks the wrong node."},
-			"credential":  {Type: "string", Description: "(optional) SecureAPI credential name for an authenticated/hosted ComfyUI. Omit or \"no_auth\" for a local LAN server."},
 			"description": {Type: "string", Description: "(optional) What this backend is for."},
 		},
 		Required: []string{"name", "base_url"},
@@ -585,6 +584,9 @@ func connectorCreate(args map[string]any, sess *ToolSession) (string, error) {
 		}
 		c.DisplayName = FreeDisplayName(RootDB, name, display)
 	case RestImageConnectorKind:
+		if strings.TrimSpace(stringArg(args, "preset")) == "comfyui" {
+			return "", fmt.Errorf("a ComfyUI backend is set up with action=import_comfyui")
+		}
 		over := imageSpecArg(args, "image_spec")
 		if cred := strings.TrimSpace(stringArg(args, "credential")); cred != "" {
 			over.Credential = cred
@@ -868,9 +870,10 @@ func connectorUpdate(args map[string]any, sess *ToolSession) (string, error) {
 	return fmt.Sprintf("Connector %q %s. %s", name, state, ConnectorSummary(saved)), nil
 }
 
-// connectorImportComfyUI drafts a ComfyUI rest_image connector, auto-wiring a
-// pasted workflow (via core.ApplyComfyWorkflow) so the LLM never hand-edits the
-// graph. Leaves it UNAPPROVED (rest_image is admin-gated).
+// connectorImportComfyUI drafts a ComfyUI backend as a service connection,
+// auto-wiring a pasted workflow (via core.ApplyComfyWorkflow) so the LLM never
+// hand-edits the graph. It is out of use until an admin chooses it under Image
+// Generation, and takes any key under Settings on its row: never from here.
 func connectorImportComfyUI(args map[string]any, sess *ToolSession) (string, error) {
 	name := strings.TrimSpace(stringArg(args, "name"))
 	base := strings.TrimSpace(stringArg(args, "base_url"))
@@ -880,21 +883,23 @@ func connectorImportComfyUI(args map[string]any, sess *ToolSession) (string, err
 	if _, exists := GetConnector(RootDB, name); exists {
 		return "", fmt.Errorf("a connector named %q already exists: pick another name or delete it first", name)
 	}
-	cred := strings.TrimSpace(stringArg(args, "credential"))
-	spec, warns, err := NewComfyImageSpec(base, cred, stringArg(args, "workflow"), strings.TrimSpace(stringArg(args, "node_id")))
+	spec, warns, err := NewComfyImageSpec(base, "", stringArg(args, "workflow"), strings.TrimSpace(stringArg(args, "node_id")))
 	if err != nil {
 		return "", fmt.Errorf("setting up the ComfyUI backend failed: %w", err)
+	}
+	kind, raw, err := spec.AsService()
+	if err != nil {
+		return "", err
 	}
 	desc := strings.TrimSpace(stringArg(args, "description"))
 	if desc == "" {
 		desc = "ComfyUI image backend"
 	}
-	raw, _ := json.Marshal(spec)
-	c := Connector{Name: name, Kind: RestImageConnectorKind, Owner: bridgeOwner(sess), Desc: desc, Spec: raw}
+	c := Connector{Name: name, Kind: kind, Template: "comfyui", Owner: bridgeOwner(sess), Desc: desc, Spec: raw}
 	if err := SaveConnector(RootDB, c); err != nil {
 		return "", err
 	}
-	msg := fmt.Sprintf("Drafted ComfyUI backend %q (kind=rest_image), UNAPPROVED. An admin approves it in Admin > Connectors; then it's selectable in Admin > Image Generation and available as the generate_image_%s tool. (Admin > Image Generation > “Add image backend” creates + approves in one step.)",
+	msg := fmt.Sprintf("Drafted ComfyUI backend %q, out of use. An admin puts it to use by choosing it under Admin > Capabilities > Image Generation; it is then also the generate_image_%s tool. If the ComfyUI takes a key, it is given under Settings on its row in Admin > Connectors.",
 		name, strings.ReplaceAll(name, "-", "_"))
 	if len(warns) > 0 {
 		msg += "\nAuto-wire notes: " + strings.Join(warns, "; ")

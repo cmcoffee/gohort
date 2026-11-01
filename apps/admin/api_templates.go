@@ -159,7 +159,13 @@ func (a *AdminApp) handleConnectorConfigSave(c *jsonapi.Call, req struct {
 		if !ok {
 			return nil, jsonapi.NotFound("no such connector")
 		}
-		conn.Spec = MergeSpec(conn.Spec, raw)
+		if conn.Kind == t.Kind {
+			conn.Spec = MergeSpec(conn.Spec, raw)
+		} else {
+			// The template keeps it as another kind now (a ComfyUI backend
+			// as a service): its old spec has nothing to merge into.
+			conn.Kind, conn.Spec = t.Kind, raw
+		}
 		if err := SaveConnector(RootDB, conn); err != nil {
 			return nil, jsonapi.BadRequest(err.Error())
 		}

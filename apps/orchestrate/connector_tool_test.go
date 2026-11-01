@@ -156,3 +156,27 @@ func TestBuilderDraftsAServiceConnector(t *testing.T) {
 		t.Error("deleted while a page names it")
 	}
 }
+
+// Builder sets a ComfyUI backend up as a connection that lands out of use,
+// its key given under Settings rather than through Builder; a rest_image
+// draft of one is pointed there.
+func TestBuilderSetsUpAComfyUIConnection(t *testing.T) {
+	connectorOwnerFixture(t)
+	sess := &ToolSession{Username: "alice"}
+	msg, err := connectorImportComfyUI(map[string]any{"name": "studio", "base_url": "http://comfy.example:8188"}, sess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, ok := GetConnector(RootDB, "studio")
+	if !ok || c.Kind != service.Kind || c.Template != "comfyui" || c.Approved || c.Owner != "alice" {
+		t.Fatalf("set up as: %+v", c)
+	}
+	if !strings.Contains(msg, "Image Generation") || !strings.Contains(msg, "Settings") {
+		t.Errorf("what Builder is told: %s", msg)
+	}
+	_, err = connectorCreate(map[string]any{"name": "old", "kind": RestImageConnectorKind, "preset": "comfyui",
+		"vars": map[string]any{"base_url": "http://comfy.example:8188"}}, sess)
+	if err == nil || !strings.Contains(err.Error(), "import_comfyui") {
+		t.Errorf("a rest_image ComfyUI draft: %v", err)
+	}
+}

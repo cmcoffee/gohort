@@ -82,17 +82,26 @@ func restImagePresetBaseURL(preset, submitURL string) string {
 // --- comfyui strategy (the new shape: workflow + node map + Detect) -----------
 
 func comfyBuildSpec(t ConnectorTemplate, vals map[string]any) (json.RawMessage, []string, error) {
+	spec, warns, err := comfyBuild(t, vals)
+	if err != nil {
+		return nil, warns, err
+	}
+	_, raw, err := spec.AsService()
+	return raw, warns, err
+}
+
+// comfyBuild is the ComfyUI backend the form's values describe, before the
+// connection keeping it wraps it.
+func comfyBuild(t ConnectorTemplate, vals map[string]any) (RestImageSpec, []string, error) {
 	preset := t.Params["preset"]
 	if preset == "" {
 		preset = "comfyui"
 	}
-	cred := TemplateStr(vals, "credential")
-	if cred == "" {
-		cred = "no_auth"
-	}
-	spec, err := ApplyRestImagePreset(preset, RestImageSpec{Credential: cred}, map[string]string{"base_url": TemplateStr(vals, "base_url")})
+	// No credential: the connection keeping it takes its key, if it has one,
+	// under Settings on its row.
+	spec, err := ApplyRestImagePreset(preset, RestImageSpec{}, map[string]string{"base_url": TemplateStr(vals, "base_url")})
 	if err != nil {
-		return nil, nil, err
+		return spec, nil, err
 	}
 	// The workflow box wins when it has anything in it; the type picker only
 	// chooses which built-in graph a BLANK box starts from. That ordering keeps
@@ -119,7 +128,7 @@ func comfyBuildSpec(t ConnectorTemplate, vals map[string]any) (json.RawMessage, 
 	} else {
 		warns, err = ApplyComfyWorkflow(&spec, wf, TemplateStr(vals, "output_node"))
 		if err != nil {
-			return nil, warns, err
+			return spec, warns, err
 		}
 	}
 	if w := TemplateInt(vals, "default_width"); w > 0 {
@@ -152,8 +161,20 @@ func comfyBuildSpec(t ConnectorTemplate, vals map[string]any) (json.RawMessage, 
 	// backend that's slower than the rest.
 	spec.PollMaxSecs = TemplateInt(vals, "poll_max_secs")
 	spec.PollIntervalSecs = TemplateInt(vals, "poll_interval_secs")
-	raw, err := json.Marshal(spec)
-	return raw, warns, err
+	return spec, warns, nil
+}
+
+// comfyStored is the ComfyUI backend a stored spec keeps: the service
+// connection's (comfyHost), or a rest_image connector's from before it moved.
+func comfyStored(raw json.RawMessage) RestImageSpec {
+	var s RestImageSpec
+	if json.Unmarshal(raw, &s) == nil && s.ComfyWorkflow != "" {
+		return s
+	}
+	if kept, graph, err := imageSpecOf(Connector{Kind: serviceConnectorKind, Spec: raw}); graph && err == nil {
+		return kept
+	}
+	return s
 }
 
 // comfyNodeChoicesKey is the values-map key carrying the pasted graph's nodes
@@ -196,13 +217,11 @@ func isDerivedUploadURL(raw string) bool {
 }
 
 func comfyReadValues(_ ConnectorTemplate, spec json.RawMessage) map[string]any {
-	var s RestImageSpec
-	_ = json.Unmarshal(spec, &s)
+	s := comfyStored(spec)
 	vals := map[string]any{
 		"base_url":           strings.TrimSuffix(s.SubmitURL, "/prompt"),
 		"workflow_type":      ComfyWorkflowTypeOf(s.ComfyMap),
 		"workflow":           s.ComfyWorkflow,
-		"credential":         s.Credential,
 		"default_width":      s.DefaultWidth,
 		"default_height":     s.DefaultHeight,
 		"default_steps":      s.DefaultSteps,
@@ -360,7 +379,7 @@ func comfyuiTemplate() ConnectorTemplate {
 		Label:       "ComfyUI",
 		Category:    "Image generation",
 		Description: "A local or self-hosted ComfyUI server. Paste your workflow; the node map is auto-detected and editable.",
-		Kind:        RestImageConnectorKind,
+		Kind:        serviceConnectorKind,
 		Strategy:    "comfyui",
 		Params:      map[string]string{"preset": "comfyui"},
 		Fields: []TemplateField{
@@ -371,7 +390,6 @@ func comfyuiTemplate() ConnectorTemplate {
 				Detail: "It is read here in your browser and dropped into the box below for review. Nothing is sent until you Save."},
 			{Key: "workflow", Label: "Workflow (ComfyUI “Save (API Format)” JSON)", Type: "textarea", Group: "Connection", Help: "Leave it blank to start from the graph the type above selects.",
 				Detail: "Enable Dev Mode in ComfyUI to get the API-format export. After saving, this shows the graph actually in use."},
-			{Key: "credential", Label: "Credential", Type: "credential", Group: "Connection", Advanced: true, Help: "no_auth for a local LAN box; a SecureAPI credential name for a hosted/authenticated server."},
 			{Key: "prompt_nodes", Label: "Prompt node(s)", Type: "text", Group: "Node mapping", SuggestFrom: comfyNodeChoicesKey, Help: "node id(s) the prompt is written into"},
 			{Key: "negative_nodes", Label: "Negative node(s)", Type: "text", Group: "Node mapping", SuggestFrom: comfyNodeChoicesKey},
 			{Key: "text_keys", Label: "Text input key(s)", Type: "text", Group: "Node mapping", Help: "usually \"text\"; SDXL \"text_g, text_l\""},

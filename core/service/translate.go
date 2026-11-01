@@ -4,9 +4,10 @@ package service
 // fixed (and, once saved, become a service) with nothing stored rewritten
 // until a person saves. The shapes data can carry translate: a synchronous
 // submit, a poll whose result is at a path, and a result built into a URL
-// and fetched. The ones a Go helper does (a ComfyUI workflow's graph wiring,
-// an upload before the graph runs, the {images} token's inline base64) stay
-// their own kind, and say so.
+// and fetched. A ComfyUI workflow becomes a service running it with the comfyui
+// builtin (comfyui.go). The ones a Go helper does for any other backend (an
+// upload before it runs, the {images} token's inline base64) stay their own
+// kind, and say so.
 
 import (
 	"encoding/json"
@@ -26,7 +27,7 @@ func FromRestImage(c Connector) (Spec, []string, error) {
 	}
 	switch {
 	case strings.TrimSpace(r.ComfyWorkflow) != "":
-		return Spec{}, nil, fmt.Errorf("it runs a pasted ComfyUI workflow, whose graph wiring is a helper in Go: it stays a rest_image connector")
+		return fromComfy(r)
 	case strings.TrimSpace(r.UploadURL) != "" && r.SupportsImageInput():
 		return Spec{}, nil, fmt.Errorf("it uploads a picture before it runs, which stays with the rest_image kind for now")
 	case strings.Contains(r.SubmitBody, "{images}") || strings.Contains(r.SubmitBody, "{image}"):
@@ -214,4 +215,26 @@ func firstNon(a, b string) string {
 		return a
 	}
 	return b
+}
+
+// fromComfy is rest_image ComfyUI backend r as the service keeping it
+// (comfyui.go): the workflow runs as it did, and a key it sent with a
+// credential goes the same way, given again under Settings.
+func fromComfy(r RestImageSpec) (Spec, []string, error) {
+	var notes []string
+	send := ""
+	switch cred := strings.TrimSpace(r.Credential); cred {
+	case "", "no_auth", "none":
+	default:
+		send = credentialSend(cred)
+		notes = append(notes, "its key stays in the credential "+cred+": a connection keeps its own, so give it under Settings on its row once saved")
+	}
+	s, err := comfyService(r, send)
+	if err != nil {
+		return Spec{}, notes, err
+	}
+	if err := s.Validate(); err != nil {
+		return Spec{}, notes, fmt.Errorf("translated, it would not be valid: %w", err)
+	}
+	return s, notes, nil
 }
