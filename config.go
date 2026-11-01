@@ -850,6 +850,11 @@ repo_dir =
 `
 
 // init_database initializes the application database.
+// mainDBFile is this instance's database in data_dir.
+func mainDBFile(data_dir string) string {
+	return FormatPath(fmt.Sprintf("%s/%s.db", data_dir, APPNAME))
+}
+
 func init_database() {
 	var err error
 
@@ -874,8 +879,7 @@ func init_database() {
 	// Files a record keeps (a song's rendered takes), one folder per record.
 	appassets.SetRecordFilesDir(data_dir + "/app_record_files")
 
-	db_filename := FormatPath(fmt.Sprintf("%s/%s.db", data_dir, APPNAME))
-	global.db, err = SecureDatabase(db_filename)
+	global.db, err = SecureDatabase(mainDBFile(data_dir))
 	Critical(err)
 	// RootDB is set HERE, not by the caller. It used to be assigned on one
 	// line after init_database() in the serve path, and init_database has

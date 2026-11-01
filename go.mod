@@ -9,6 +9,7 @@ require (
 	github.com/go-shiori/go-readability v0.0.0-20251205110129-5db1dc9836f0
 	github.com/gorilla/websocket v1.5.3
 	github.com/rwcarlsen/goexif v0.0.0-20190401172101-9e8deecbddbd
+	go.etcd.io/bbolt v1.5.0
 	golang.org/x/crypto v0.33.0
 	golang.org/x/image v0.15.0
 	golang.org/x/net v0.35.0
@@ -45,7 +46,6 @@ require (
 	github.com/ysmood/got v0.40.0 // indirect
 	github.com/ysmood/gson v0.7.3 // indirect
 	github.com/ysmood/leakless v0.9.0 // indirect
-	go.etcd.io/bbolt v1.5.0 // indirect
 	golang.org/x/term v0.29.0 // indirect
 	golang.org/x/text v0.22.0 // indirect
 )

@@ -21,7 +21,6 @@ import (
 	"github.com/cmcoffee/gohort/apps/ollama_proxy"
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/netgate"
-	"github.com/cmcoffee/gohort/core/service"
 	"github.com/cmcoffee/gohort/core/tlsconf"
 
 	"github.com/cmcoffee/snugforge/eflag"
@@ -115,6 +114,7 @@ func main() {
 	version := flags.Bool("version", "")
 	setup := flags.Bool("setup", "First-run setup and server settings: listen address, TLS, admin account, mail.")
 	doctor := flags.Bool("sandbox-doctor", "Report what is confining shell commands, and how to fix it.")
+	dryRun := flags.Bool("migrate-dry-run", "Run the startup data migrations on a copy of the database and report what they would change. Stop gohort first.")
 
 	flags.Footer = " "
 
@@ -278,6 +278,14 @@ func main() {
 	// Diagnose confinement without starting the daemon. Exits non-zero when
 	// shell tools would be refused, so a provisioning run can gate on it
 	// rather than parse the report.
+	if *dryRun {
+		if err := migrationDryRun(os.Stdout); err != nil {
+			Stderr("migrate-dry-run: %s\n", err)
+			Exit(1)
+		}
+		Exit(0)
+	}
+
 	if *doctor {
 		report, ok := SandboxDoctor()
 		Stdout("%s", report)
@@ -383,23 +391,8 @@ func main() {
 
 		// Wire auth database.
 		AuthDB = func() Database { return global.db }
-		// The Source Hooks this instance kept become search connectors,
-		// once: they need the credential store just wired, for a key a hook
-		// held. A search connector's research settings move to Research
-		// Sources before the hooks arrive there.
-		service.MigrateResearchSettings(global.db)
-		service.MigrateSourceHooks(global.db)
-		// A services connector is in use exactly while a page names it.
-		service.MigrateTieIns(global.db)
-		// The connections gohort provides, then what predates connections
-		// moved onto them, once.
-		if ProvideConnectors != nil {
-			ProvideConnectors(global.db)
-		}
-		service.MigrateConnections(global.db)
-		// What is wrong with a saved connection is in the log now, not when
-		// a call first meets it.
-		service.LogSelfCheck(global.db)
+		// They need the credential store just wired, for a key a hook held.
+		runStartupMigrations(global.db)
 
 		AuthEnabled = func() bool { return AuthHasUsers(global.db) }
 		AuthSignupAllowed = func() bool {
