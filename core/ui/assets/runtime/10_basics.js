@@ -2184,6 +2184,18 @@
     // shows it only while cfg.test_show_when holds.
     var testRowEl = null;
 
+    // selectActionKey is the value an action option is drawn with: one no
+    // real option has, so it can never be saved as the field's value.
+    function selectActionKey(o) { return '\u0001' + o.action + '\u0001' + o.value; }
+
+    // selectAction runs an action option's client action, with the option's
+    // value and the field it sits in. An action not registered says so.
+    function selectAction(o, f) {
+      var fn = window.UIClientActions && window.UIClientActions[o.action];
+      if (typeof fn !== 'function') { showToast('Nothing handles "' + o.action + '" on this page'); return; }
+      fn({value: o.value, field: f.field, label: o.label});
+    }
+
     // hideIfEmpty marks an output field (readonly, link) with nothing in it,
     // and hides it: shown, it would be an empty box nobody can fill in.
     // applyVisibility keeps it hidden whatever its show_when says.
@@ -2461,11 +2473,20 @@
         if (multi && Array.isArray(initial)) {
           initial.forEach(function(v){ selectedSet[String(v)] = true; });
         }
+        // An option with an action (o.action) is a command, not a choice:
+        // it carries a value no real option has, and picking it runs the
+        // action and puts the select back (selectAction below).
+        var actionOpts = {};
         var mkOpt = function(o) {
           // An indented option (o.indent) sits under the one before it: a
           // native option takes no styling, so the nesting is drawn in its
           // text, in spaces that are not collapsed and a mark.
           var lead = o.indent > 0 ? new Array(o.indent * 3 + 1).join('\u00a0') + '\u21b3 ' : '';
+          if (o.action && !multi) {
+            var key = selectActionKey(o);
+            actionOpts[key] = o;
+            return el('option', {value: key}, [lead + (o.label || o.value)]);
+          }
           var opt = el('option', {value: o.value}, [lead + (o.label || o.value)]);
           if (multi ? selectedSet[String(o.value)] : String(initial) === String(o.value)) opt.selected = true;
           return opt;
@@ -2515,14 +2536,21 @@
         // current with the first option's value so a form that
         // accepts the default still ships a value on submit.
         if (!multi && (initial === undefined || initial === null || initial === '') &&
-            f.options && f.options.length > 0) {
+            f.options && f.options.length > 0 && !f.options[0].action) {
           current[f.field] = f.options[0].value;
         }
+        var heldValue = input.value;
         // A multi-select saves the list of chosen values. NOT input.value,
         // which on a multiple select is just the first selection — the shape
         // that silently drops everything the user picked after the first.
         input.addEventListener('change', function() {
-          if (!multi) { save(f.field, input.value); return; }
+          if (!multi && actionOpts[input.value]) {
+            var o = actionOpts[input.value];
+            input.value = heldValue;
+            selectAction(o, f);
+            return;
+          }
+          if (!multi) { heldValue = input.value; save(f.field, input.value); return; }
           var vals = [];
           for (var mi = 0; mi < input.options.length; mi++) {
             if (input.options[mi].selected) vals.push(input.options[mi].value);

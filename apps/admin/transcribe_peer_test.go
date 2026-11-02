@@ -63,8 +63,8 @@ func TestTranscribeFormShowsThePeerPicker(t *testing.T) {
 	if f, ok := findField(fields, "enabled"); !ok || f.Help != "" {
 		t.Errorf("the toggle stays, with no pointer while there is a choice: %+v", f)
 	}
-	if len(provider.Options) != 1 || provider.Options[0].Value != PeerProviderValue("gpu-box") {
-		t.Errorf("dropdown should offer the peer alone, got %+v", provider.Options)
+	if got := choicesOf(t, provider, "speech.transcribe"); len(got) != 1 || got[0].Value != PeerProviderValue("gpu-box") {
+		t.Errorf("dropdown should offer the peer alone, got %+v", got)
 	}
 	for _, name := range []string{"endpoint", "model", "api_key"} {
 		if _, ok := findField(fields, name); ok {
@@ -76,7 +76,7 @@ func TestTranscribeFormShowsThePeerPicker(t *testing.T) {
 // A peer that offers only embeddings must not appear in the STT picker at all.
 func TestTranscribeFormHidesAPeerWithoutTheGrant(t *testing.T) {
 	transcribePeer(t, PeerCapEmbeddings)
-	if _, ok := findField(transcribeFormFields(), "provider"); ok {
+	if f, _ := findField(transcribeFormFields(), "provider"); len(choicesOf(t, f, "speech.transcribe")) != 0 {
 		t.Error("a peer that does not offer transcription is being offered as an STT provider")
 	}
 }

@@ -834,14 +834,14 @@ func TestAJobCanBeDoneByAConnector(t *testing.T) {
 		}
 		return ui.FormField{}, false
 	}
-	if _, ok := field("by"); ok {
-		t.Error("Done by offered with only commands to choose")
+	if f, ok := field("by"); !ok || len(choicesOf(t, f, "file.convert")) != 1 {
+		t.Errorf("Done by with only commands: %+v", f)
 	}
 	spec := `{"provider":{"transport":"http","base_url":"https://convert.example.test","auth":{"none":true},
 		"operations":{"convert":{"method":"POST","path":"/convert/{from}/to/{to}","send":"multipart","body":{"File":"{file}"}}}},
 		"provides":[{"capability":"file.convert","steps":[{"call":"convert"}],"output":{"file":{"path":"Files.0.FileData","as":"base64"}}}]}`
 	SaveConnector(RootDB, Connector{Name: "converter", Kind: "service", Spec: json.RawMessage(spec)})
-	if f, ok := field("by"); !ok || len(f.Options) != 2 || f.Options[1].Value != "converter" {
+	if f, ok := field("by"); !ok || len(choicesOf(t, f, "file.convert")) != 2 || f.Options[1].Value != "converter" {
 		t.Errorf("Done by: %+v", f)
 	}
 	if f, _ := field("steps"); f.ShowWhen != "by:commands" {

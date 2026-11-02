@@ -305,6 +305,7 @@ func (a *AdminApp) serveAdminPage(w http.ResponseWriter, r *http.Request, tab st
 			ClientAction("add_tool_from_template", addToolFromTemplateAction).
 			ClientAction("add_extension", addExtensionAction).
 			ClientAction("template_install", templateInstallAction).
+			ClientAction("connector_add_another", connectorAddAnotherAction).
 			ClientAction("template_export", templateExportAction).
 			ClientAction("template_import", templateImportAction).
 			ClientAction("configure_tool", configureToolAction).

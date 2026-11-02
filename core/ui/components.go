@@ -144,6 +144,12 @@ type SelectOption struct {
 	// choice — a lockdown level that drops access, an irreversible tier — so
 	// picking it isn't a silent one-tap. Empty options apply immediately.
 	Confirm string `json:"confirm,omitempty"`
+	// Action, when set, makes this option a command rather than a choice:
+	// picking it in a form's single select runs the client action of that
+	// name (uiRegisterClientAction) with ctx.value set to Value, and the
+	// select goes back to what it held, so it is never saved. For an
+	// "+ Add another…" at the end of a list: what it opens adds to the list.
+	Action string `json:"action,omitempty"`
 }
 
 // ToolbarAction is one entry in a declarative toolbar. Rendered as a

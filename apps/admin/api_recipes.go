@@ -9,11 +9,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
+	"sort"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/recipes"
+	"github.com/cmcoffee/gohort/core/ui"
 )
 
 // templateRow is one line of the Templates table.
@@ -27,25 +30,15 @@ type templateRow struct {
 	Source      string `json:"source"`
 	Recipe      bool   `json:"_recipe,omitempty"`
 	Owned       bool   `json:"_imported,omitempty"`
-	// Picked is a built-in the admin added to their list, which Remove
-	// takes off it again.
-	Picked bool `json:"_picked,omitempty"`
 }
 
-// pickedTable holds the built-in templates an admin added to the Templates
-// list. The list starts empty: the built-ins are offered under Add, not
-// listed until someone picks one.
-const pickedTable = "admin_templates_picked"
-
 func (a *AdminApp) registerRecipeRoutes(sub *http.ServeMux) {
-	// GET: the templates on this deployment's list: imported, saved, and the
-	// built-ins someone added.
+	// GET: every template: those that ship with gohort, and those imported
+	// or saved here, by category.
 	sub.HandleFunc("/api/templates", jsonapi.Get(a.db, a.handleTemplates, a.gate()))
-	// The built-ins not on the list yet, for Add; pick puts one on it, and
-	// unpick takes it off.
-	sub.HandleFunc("/api/templates/builtins", jsonapi.Get(a.db, a.handleTemplateBuiltins, a.gate()))
-	sub.HandleFunc("/api/templates/pick", jsonapi.Post(a.db, a.handleTemplatePick(true), a.gate()))
-	sub.HandleFunc("/api/templates/unpick", jsonapi.Post(a.db, a.handleTemplatePick(false), a.gate()))
+	// GET ?need=: the templates "+ Add another…" offers at the end of a
+	// page's list of connectors (templateNeeds).
+	sub.HandleFunc("/api/templates/for", jsonapi.Get(a.db, a.handleTemplatesFor, a.gate()))
 
 	// GET ?id=: a template's questions and setup notes, for its Add form.
 	sub.HandleFunc("/api/templates/recipe", jsonapi.Get(a.db, a.handleTemplateRecipe, a.gate()))
@@ -93,58 +86,98 @@ func (a *AdminApp) registerRecipeRoutes(sub *http.ServeMux) {
 	}.Serve)
 }
 
-// handleTemplates is the deployment's list: the templates imported or saved
-// here, and the built-ins an admin added.
+// handleTemplates is every template, each set up from its row: those that
+// ship with gohort and those imported or saved here.
 func (a *AdminApp) handleTemplates(c *jsonapi.Call) (any, error) {
 	rows := []templateRow{}
 	for _, s := range recipes.List(RootDB) {
-		picked := s.Source == recipes.BuiltIn && templatePicked(s.ID)
-		if s.Source == recipes.BuiltIn && !picked {
+		rows = append(rows, templateRow{ID: s.ID, Kind: "template", Title: s.Title, Category: s.Category,
+			Description: s.Description, Contains: s.Contains, Source: s.Source,
+			Recipe: true, Owned: s.Source == recipes.Imported})
+	}
+	sort.SliceStable(rows, func(i, j int) bool { return rows[i].Category < rows[j].Category })
+	return rows, nil
+}
+
+// templateNeed is what one page's list of connectors takes: the template
+// category its templates are filed under, and the job their connector must
+// do ("" for any).
+type templateNeed struct{ category, capability string }
+
+// templateNeeds are the lists "+ Add another…" ends, by the need its option
+// names: what each offers to add.
+var templateNeeds = map[string]templateNeed{
+	"web.search":        {"Web Search", "web.search"},
+	"research":          {"Research Sources", "web.search"},
+	"image.generate":    {"Images", ""},
+	"embed.text":        {"Embeddings", "embed.text"},
+	"speech.transcribe": {"Speech", "speech.transcribe"},
+	"speech.synthesize": {"Speech", "speech.synthesize"},
+	"page.render":       {"Page rendering", "page.render"},
+	"mail.send":         {"Mail", "mail.send"},
+	"file.convert":      {"File conversion", "file.convert"},
+}
+
+// handleTemplatesFor is the templates for the ?need= list: those filed
+// under its category whose connector does its job. A connector whose spec
+// is made from the answers (a ComfyUI workflow) says nothing of its job
+// until then, and is offered on its category.
+func (a *AdminApp) handleTemplatesFor(c *jsonapi.Call) (any, error) {
+	need, ok := templateNeeds[strings.TrimSpace(c.R.URL.Query().Get("need"))]
+	if !ok {
+		return nil, jsonapi.BadRequest("no list of connectors by that need")
+	}
+	rows := []templateRow{}
+	for _, s := range recipes.List(RootDB) {
+		if s.Category != need.category {
+			continue
+		}
+		if gives, known := templateGives(s.ID); need.capability != "" && known && !slices.Contains(gives, need.capability) {
 			continue
 		}
 		rows = append(rows, templateRow{ID: s.ID, Kind: "template", Title: s.Title, Category: s.Category,
-			Description: s.Description, Contains: s.Contains, Source: s.Source,
-			Recipe: true, Owned: s.Source == recipes.Imported, Picked: picked})
-	}
-	// The built-in forms are not listed: each is a template now (the
-	// image presets as data, REST call and OpenAPI through the form
-	// helper), and a form stays only as the editor Configure opens on
-	// what it made, and what agents build tools from.
-	return rows, nil
-}
-
-func templatePicked(id string) bool {
-	var on bool
-	return RootDB != nil && RootDB.Get(pickedTable, id, &on) && on
-}
-
-// handleTemplateBuiltins is the built-in templates not on the list yet.
-func (a *AdminApp) handleTemplateBuiltins(c *jsonapi.Call) (any, error) {
-	rows := []templateRow{}
-	for _, s := range recipes.List(RootDB) {
-		if s.Source == recipes.BuiltIn && !templatePicked(s.ID) {
-			rows = append(rows, templateRow{ID: s.ID, Kind: "template", Title: s.Title, Category: s.Category,
-				Description: s.Description, Contains: s.Contains, Source: s.Source})
-		}
+			Description: s.Description, Source: s.Source, Recipe: true})
 	}
 	return rows, nil
 }
 
-// handleTemplatePick puts the ?id= built-in on the list, or takes it off.
-// What was already set up from it stays.
-func (a *AdminApp) handleTemplatePick(on bool) func(c *jsonapi.Call, _ struct{}) (any, error) {
-	return func(c *jsonapi.Call, _ struct{}) (any, error) {
-		id := strings.TrimSpace(c.R.URL.Query().Get("id"))
-		if _, src, ok := recipes.Get(RootDB, id); !ok || src != recipes.BuiltIn {
-			return nil, jsonapi.NotFound("no built-in template " + id)
-		}
-		if on {
-			RootDB.Set(pickedTable, id, true)
-			return map[string]any{"message": "Added to your templates. Set it up from its row when you are ready."}, nil
-		}
-		RootDB.Unset(pickedTable, id)
-		return map[string]any{"message": "Removed from your templates. It is still offered under Add."}, nil
+// addAnother is the "+ Add another…" option that ends a page's list of
+// connectors: it opens the templates for need (templateNeeds), and what is
+// added from one joins the list (connector_add_another).
+func addAnother(need string) ui.SelectOption {
+	return ui.SelectOption{Value: need, Label: "+ Add another…", Action: "connector_add_another"}
+}
+
+// templateGives are the jobs the connectors template id makes do, and
+// whether its specs say: one made from the answers does not until then.
+func templateGives(id string) ([]string, bool) {
+	rec, _, ok := recipes.Get(RootDB, id)
+	if !ok {
+		return nil, false
 	}
+	var gives []string
+	known := false
+	for _, art := range rec.Bundle.Artifacts {
+		if art.Type != "connector" {
+			continue
+		}
+		var r struct {
+			Spec json.RawMessage `json:"spec"`
+		}
+		var spec struct {
+			Provides []struct {
+				Capability string `json:"capability"`
+			} `json:"provides"`
+		}
+		if json.Unmarshal(art.Recipe, &r) != nil || json.Unmarshal(r.Spec, &spec) != nil {
+			continue
+		}
+		known = true
+		for _, b := range spec.Provides {
+			gives = append(gives, b.Capability)
+		}
+	}
+	return gives, known
 }
 
 // handleTemplateRecipe is one template's questions, setup notes, pieces, and

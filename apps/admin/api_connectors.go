@@ -140,7 +140,7 @@ func connectorRows(connectors bool) any {
 		row := connRow{Name: conn.Name, Title: conn.Title(), Kind: conn.Kind, Summary: ConnectorSummary(conn), Owner: conn.Owner,
 			Approved: conn.Approved, LastError: conn.LastError, Template: conn.Template, IsImage: configurableImage(conn),
 			Webhook: connectorWebhook(conn), State: "pending",
-			Endpoints: conn.Kind == service.Kind, Group: connectorGroup(conn, research, uses), GroupOpen: true,
+			Endpoints: conn.Kind == service.Kind, Group: connectorGroup(conn, research, uses),
 			Deletable: len(uses[conn.Name]) == 0, HasSettings: conn.Kind == service.Kind,
 			HasAccess: conn.Kind == service.Kind && conn.ID != ""}
 		if service.Fixable(conn) {

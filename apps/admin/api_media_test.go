@@ -137,36 +137,48 @@ func TestEmbeddingSettingsTakeAServiceThatEmbeds(t *testing.T) {
 	}
 }
 
-// While nothing else can embed, transcribe or speak, each page says where to
-// get something instead of offering a choice of none (or, for transcription
-// and speech, of this instance alone); once a connector is approved, the
-// choice replaces the pointer.
-func TestCapabilityPagesPointToAnAlternative(t *testing.T) {
+// choicesOf are select f's options that are choices: its list ends with
+// "+ Add another…" for need, a command that opens need's templates, which is
+// checked here and left out.
+func choicesOf(t *testing.T, f ui.FormField, need string) []ui.SelectOption {
+	t.Helper()
+	n := len(f.Options)
+	if n == 0 || f.Options[n-1].Action != "connector_add_another" || f.Options[n-1].Value != need || f.Options[n-1].Label != "+ Add another…" {
+		t.Errorf("%s does not end with + Add another… for %s: %+v", f.Field, need, f.Options)
+		return f.Options
+	}
+	return f.Options[:n-1]
+}
+
+// Each page that chooses a connector always shows its list, ending with
+// "+ Add another…" for its own kind: with nothing to choose yet, that is the
+// list. A connector that embeds is offered on Embeddings, not on Speech.
+func TestCapabilityPagesEndWithAddAnother(t *testing.T) {
 	saved := RootDB
 	RootDB = &DBase{Store: kvlite.MemStore()}
 	t.Cleanup(func() { RootDB = saved })
-	read := func(fields []ui.FormField) (help string, choice bool) {
-		for _, f := range fields {
-			if f.Field == "enabled" {
-				help = f.Help
-			}
-			choice = choice || f.Field == "provider"
+	pages := []struct {
+		name, need string
+		fields     func() []ui.FormField
+	}{{"embeddings", "embed.text", embeddingFormFields}, {"transcription", "speech.transcribe", transcribeFormFields}, {"speech", "speech.synthesize", speechFormFields}}
+	for _, p := range pages {
+		f, ok := findField(p.fields(), "provider")
+		if !ok {
+			t.Errorf("%s: no list", p.name)
+			continue
 		}
-		return
-	}
-	for name, fields := range map[string]func() []ui.FormField{"embeddings": embeddingFormFields, "transcription": transcribeFormFields, "speech": speechFormFields} {
-		if help, choice := read(fields()); choice || !strings.Contains(help, "Admin > Extensions > Templates") || !strings.Contains(help, "Admin > Capabilities > Peers") {
-			t.Errorf("%s with nothing else: %q, choice %v", name, help, choice)
+		if got := choicesOf(t, f, p.need); len(got) != 0 {
+			t.Errorf("%s with nothing else: %+v", p.name, got)
 		}
 	}
 	spec := `{"provider":{"transport":"http","base_url":"https://api.example.test","auth":{"none":true},
 		"operations":{"embed":{"method":"POST","path":"/v1/embeddings","body":{"input":"{texts}"}}}},
 		"provides":[{"capability":"embed.text","steps":[{"call":"embed"}],"output":{"vectors":{"path":"data","each":"embedding"}}}]}`
 	SaveConnector(RootDB, Connector{Name: "vectors", Kind: "service", Spec: json.RawMessage(spec)})
-	if help, choice := read(embeddingFormFields()); !choice || help != "" {
-		t.Errorf("embeddings with a connector to choose: %q, choice %v", help, choice)
+	if f, _ := findField(embeddingFormFields(), "provider"); len(choicesOf(t, f, "embed.text")) != 1 {
+		t.Errorf("embeddings with a connector to choose: %+v", f.Options)
 	}
-	if _, choice := read(speechFormFields()); choice {
+	if f, _ := findField(speechFormFields(), "provider"); len(choicesOf(t, f, "speech.synthesize")) != 0 {
 		t.Error("a connector that embeds made speech a choice")
 	}
 }
@@ -194,9 +206,11 @@ func TestImageGenerationTakesAConnectorThatMakesPictures(t *testing.T) {
 		"provides":[{"capability":"embed.text","steps":[{"call":"embed"}],"output":{"vectors":{"path":"data","each":"embedding"}}}]}`
 	SaveConnector(RootDB, Connector{Name: "vectors", Kind: "service", Spec: json.RawMessage(embedSpec)})
 	f := imageFormFields()
-	if len(f) != 2 || f[0].Field != "_stale" || len(f[1].Options) != 1 || f[1].Options[0].Value != "none" ||
-		!strings.Contains(f[1].Help, "Admin > Extensions > Templates") || !strings.Contains(f[1].Help, "Add image backend") || !strings.Contains(f[1].Help, "Admin > Capabilities > Peers") {
+	if len(f) != 2 || f[0].Field != "_stale" || !strings.Contains(f[1].Help, "+ Add another…") || !strings.Contains(f[1].Help, "Admin > Capabilities > Peers") {
 		t.Errorf("with nothing that makes pictures: %+v", f)
+	}
+	if got := choicesOf(t, f[1], "image.generate"); len(got) != 1 || got[0].Value != "none" {
+		t.Errorf("with nothing that makes pictures, the choices: %+v", got)
 	}
 	if w := call("GET", "/api/image-gen", ""); strings.TrimSpace(w.Body.String()) != `{"agents":[],"provider":"none"}` {
 		t.Errorf("never set: %s", w.Body.String())
@@ -217,8 +231,11 @@ func TestImageGenerationTakesAConnectorThatMakesPictures(t *testing.T) {
 	t.Cleanup(func() { UnapproveConnector(RootDB, "painter"); UnapproveConnector(RootDB, "sketcher") })
 	SaveConnector(RootDB, Connector{Name: "sketcher", Kind: "service", Spec: json.RawMessage(strings.Replace(spec, "/v1/images", "/v2/images", 1))})
 	f = imageFormFields()
-	if len(f) != 3 || len(f[1].Options) != 3 || f[1].Options[0].Value != "painter" || !strings.Contains(f[1].Detail, "Admin > Extensions > Templates") || f[2].Field != "agents" || len(f[2].Options) != 2 {
+	if len(f) != 3 || !strings.Contains(f[1].Detail, "Admin > Capabilities > Peers") || f[2].Field != "agents" || len(f[2].Options) != 2 {
 		t.Errorf("with a connector to choose: %+v", f)
+	}
+	if got := choicesOf(t, f[1], "image.generate"); len(got) != 3 || got[0].Value != "painter" || got[2].Value != "none" {
+		t.Errorf("with a connector to choose, the choices: %+v", got)
 	}
 	if w := call("POST", "/api/image-gen", `{"provider":"painter","agents":["sketcher","vectors"]}`); w.Code != http.StatusBadRequest {
 		t.Errorf("a connector that does not make pictures offered to agents: %d", w.Code)
@@ -367,11 +384,11 @@ func TestMailTakesAConnectorThatSends(t *testing.T) {
 		}
 		return ui.FormField{}, false
 	}
-	if _, ok := field("provider"); ok {
-		t.Error("a choice of one: SMTP alone")
-	}
-	if f, _ := field("server"); f.ShowWhen != "" || !strings.Contains(f.Help, "Admin > Extensions > Templates") {
+	if f, ok := field("provider"); !ok || len(choicesOf(t, f, "mail.send")) != 1 || !strings.Contains(f.Help, "+ Add another…") {
 		t.Errorf("SMTP alone: %+v", f)
+	}
+	if f, _ := field("server"); f.ShowWhen != "provider:smtp" {
+		t.Errorf("SMTP's server: %+v", f)
 	}
 	spec := `{"provider":{"transport":"http","base_url":"https://mail.example.test","auth":{"none":true},
 		"operations":{"send":{"method":"POST","path":"/emails","body":{"to":"{to}","subject":"{subject}","text":"{body}"}}}},
@@ -379,7 +396,7 @@ func TestMailTakesAConnectorThatSends(t *testing.T) {
 	SaveConnector(RootDB, Connector{Name: "postbox", Kind: "service", Spec: json.RawMessage(spec)})
 	a := &AdminApp{db: RootDB}
 	call := &jsonapi.Call{R: httptest.NewRequest("POST", "/api/mail", nil)}
-	if f, ok := field("provider"); !ok || len(f.Options) != 2 || f.Options[1].Value != "postbox" {
+	if f, ok := field("provider"); !ok || len(choicesOf(t, f, "mail.send")) != 2 || f.Options[1].Value != "postbox" {
 		t.Errorf("the choice: %+v", f)
 	}
 	if f, _ := field("server"); f.ShowWhen != "provider:smtp" || f.Help != "" {

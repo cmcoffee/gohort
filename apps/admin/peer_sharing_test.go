@@ -317,17 +317,17 @@ func findField(fields []ui.FormField, name string) (ui.FormField, bool) {
 	return ui.FormField{}, false
 }
 
-// With nothing that embeds, "Embed with" would be a choice with no answers:
-// it does not appear, and the toggle says how to get something that embeds.
-// The endpoint, model and key are the connector's, never fields here.
-func TestEmbeddingFormHidesTheProviderPickerWithNothingToPick(t *testing.T) {
+// With nothing that embeds, "Embed with" holds only "+ Add another…", which
+// opens the templates for embedding. The endpoint, model and key are the
+// connector's, never fields here.
+func TestEmbeddingFormOffersOnlyAddAnotherWithNothingToPick(t *testing.T) {
 	prev := RootDB
 	t.Cleanup(func() { RootDB = prev })
 	RootDB = nil // no peer or connector store
 
 	fields := embeddingFormFields()
-	if _, ok := findField(fields, "provider"); ok {
-		t.Error("the provider dropdown is shown with nothing to pick")
+	if f, ok := findField(fields, "provider"); !ok || len(choicesOf(t, f, "embed.text")) != 0 {
+		t.Errorf("with nothing to pick: %+v", f)
 	}
 	for _, name := range []string{"endpoint", "model", "api_key"} {
 		if _, ok := findField(fields, name); ok {
@@ -335,8 +335,8 @@ func TestEmbeddingFormHidesTheProviderPickerWithNothingToPick(t *testing.T) {
 		}
 	}
 	// The toggle is unconditional either way.
-	if f, ok := findField(fields, "enabled"); !ok || f.ShowWhen != "" || !strings.Contains(f.Help, "Nothing here embeds yet") {
-		t.Errorf("the enable toggle must always render, saying how to get an embedder: %+v", f)
+	if f, ok := findField(fields, "enabled"); !ok || f.ShowWhen != "" {
+		t.Errorf("the enable toggle must always render: %+v", f)
 	}
 }
 
@@ -379,7 +379,7 @@ func TestEmbeddingFormShowsTheProviderPickerWithAPeer(t *testing.T) {
 		t.Fatal("a peer is registered but the provider dropdown is absent")
 	}
 	var values []string
-	for _, o := range provider.Options {
+	for _, o := range choicesOf(t, provider, "embed.text") {
 		values = append(values, o.Value)
 	}
 	if strings.Join(values, ",") != "embeddings,peer:gpu-box" {

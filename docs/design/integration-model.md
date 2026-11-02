@@ -164,6 +164,16 @@ That is a gate on edits, not on references, and its marker stays on the row.
 Fix becomes how Edit opens on a spec that does not validate. Configure
 becomes the Go form's Edit. Revert goes with provided connections.
 
+**Adding one** (2026-11-01). A template is a recipe, never installed: Add…
+on it asks its questions and makes the connector, and the template stays
+for next time. Admin > Extensions > Templates lists them all by category.
+Every page's list of connectors ends with **+ Add another…**, which opens
+the templates for that kind (those filed under its category whose
+connector does its job) and, once one is added, reloads the page with it
+in the list. The list of templates "added to the system" before they
+could be set up is gone. Connector groups start folded, each heading
+saying how many it holds and how many have an error.
+
 ### Adapters
 
 Decided 2026-11-01 (decision 10). **An adapter is a small Go primitive for

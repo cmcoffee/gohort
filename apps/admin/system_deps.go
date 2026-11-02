@@ -832,16 +832,13 @@ func flowFields(withName, custom bool) []ui.FormField {
 				{Value: "html", Label: "HTML"},
 			}})
 	}
-	// A connector that converts files can do it in place of commands; the
-	// choice appears once one is approved.
-	by := append([]ui.SelectOption{{Value: "commands", Label: "Commands on this machine (the steps below)"}}, serviceProviderOptions("file.convert", "Convert")...)
-	cmds := ""
-	if len(by) > 1 {
-		cmds = "by:commands"
-		out = append(out, ui.FormField{Field: "by", Label: "Done by", Type: "select", Default: "commands", Options: by,
-			Help:   "Programs on this machine, or a connector that converts files through an API.",
-			Detail: "A connector is sent the file and asked for the format this gives; what comes back is checked the same way a command's result is. It cannot do a job that starts from a link, or one that gives several files."})
-	}
+	// A connector that converts files can do it in place of commands; + Add
+	// another… adds one from a template.
+	by := append(append([]ui.SelectOption{{Value: "commands", Label: "Commands on this machine (the steps below)"}}, serviceProviderOptions("file.convert", "Convert")...), addAnother("file.convert"))
+	cmds := "by:commands"
+	out = append(out, ui.FormField{Field: "by", Label: "Done by", Type: "select", Default: "commands", Options: by,
+		Help:   "Programs on this machine, or a connector that converts files through an API; + Add another… adds one from a template (ConvertAPI).",
+		Detail: "A connector is sent the file and asked for the format this gives; what comes back is checked the same way a command's result is. It cannot do a job that starts from a link, or one that gives several files."})
 	return append(out, []ui.FormField{
 		{Field: "steps", Label: "Steps", Type: "rows", AddLabel: "+ Add step", ShowWhen: cmds,
 			// A two-line box that grows with it: a command line with a few

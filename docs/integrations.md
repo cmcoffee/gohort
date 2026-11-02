@@ -208,14 +208,16 @@ which a connector never holds, so they have no template.
 The connector: inside `embed.text`, mapping one request, outside OpenAI with
 its key.
 
-1. **Admin > Extensions > Templates > Add a template…**, pick *OpenAI
-   (embeddings)* and give it a name. This creates the connection, shown as
-   *OpenAI (embeddings)*; it makes no calls until a page chooses it.
-2. **Admin > Capabilities > Embeddings:** set "Embed with" to it. Its model
-   and its API key show under the choice. Test embeds two sentences and
-   checks for two vectors of the same length. Save: choosing it there is
-   what puts it to use, and keeps the model and key with the connection;
-   its row then says *Used by Embeddings*.
+1. **Admin > Capabilities > Embeddings:** in "Embed with", choose
+   **+ Add another…**, then **Add…** on *OpenAI (embeddings)* and give it a
+   name. This creates the connection, shown as *OpenAI (embeddings)*, and
+   the page reloads with it in the list. (The same templates are under
+   Admin > Extensions > Templates, by category.)
+2. **Still on Embeddings:** set "Embed with" to it. Its model and its API
+   key show under the choice. Test embeds two sentences and checks for two
+   vectors of the same length. Save: the page now references it, and keeps
+   the model and key with the connection; its row then says *Referenced by
+   Embeddings*.
 3. **Admin > Maintenance > Vector Index:** run *Repair the vector index*.
    Vectors made by the old embedder are in a different space, so search
    skips them until they are made again, one embed call per stored piece.

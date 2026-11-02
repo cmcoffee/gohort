@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"testing"
 
@@ -87,52 +88,58 @@ func TestFixingAnImageConnection(t *testing.T) {
 	}
 }
 
-// The Templates list starts empty: the built-ins are offered under Add, a
-// picked one joins the list, and Remove takes it off again, back under Add.
-func TestTheTemplatesListHoldsWhatWasAdded(t *testing.T) {
+// Templates are browsed, not installed: the list holds every template, by
+// category, each added from its row; there is no list to put one on first.
+// A page's "+ Add another…" lists the templates for its kind: those filed
+// under its category whose connector does its job.
+func TestTemplatesAreBrowsedByCategory(t *testing.T) {
 	saved := RootDB
 	RootDB = &DBase{Store: kvlite.MemStore()}
 	t.Cleanup(func() { RootDB = saved })
 	a := &AdminApp{db: &DBase{Store: kvlite.MemStore()}}
 	mux := http.NewServeMux()
 	a.registerRecipeRoutes(mux)
-	list := func(path string) []map[string]any {
+	get := func(path string) (int, []map[string]any) {
 		w := httptest.NewRecorder()
 		mux.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
 		var rows []map[string]any
 		json.Unmarshal(w.Body.Bytes(), &rows)
-		return rows
+		return w.Code, rows
 	}
-	has := func(rows []map[string]any, id string) bool {
+	ids := func(rows []map[string]any) string {
+		var out []string
 		for _, r := range rows {
-			if r["id"] == id {
-				return true
-			}
+			out = append(out, r["id"].(string))
 		}
-		return false
+		sort.Strings(out)
+		return strings.Join(out, ",")
 	}
-	if rows := list("/api/templates"); len(rows) != 0 {
-		t.Fatalf("the list starts with %d templates", len(rows))
+	_, all := get("/api/templates")
+	if len(all) < 40 || all[0]["_recipe"] != true {
+		t.Fatalf("every template, each added from its row: %d", len(all))
 	}
-	if !has(list("/api/templates/builtins"), "gemini-images") {
-		t.Fatal("the Gemini template is not offered under Add")
+	for i := 1; i < len(all); i++ {
+		if all[i-1]["category"].(string) > all[i]["category"].(string) {
+			t.Fatalf("not in category order at %v", all[i]["id"])
+		}
 	}
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/templates/pick?id=gemini-images", strings.NewReader("{}")))
-	if w.Code != 200 {
-		t.Fatalf("pick: %d %s", w.Code, w.Body.String())
+	for need, want := range map[string]string{
+		"web.search":        "brave-search,google-search,searxng-search,serper-search,tavily-search",
+		"speech.synthesize": "elevenlabs-speech,openai-compatible-speech",
+		"speech.transcribe": "openai-compatible-transcription,openai-transcription",
+		"mail.send":         "mailgun-mail,postmark-mail,resend-mail",
+	} {
+		if code, rows := get("/api/templates/for?need=" + need); code != 200 || ids(rows) != want {
+			t.Errorf("%s: %d %s", need, code, ids(rows))
+		}
 	}
-	rows := list("/api/templates")
-	if !has(rows, "gemini-images") || rows[0]["_picked"] != true || has(list("/api/templates/builtins"), "gemini-images") {
-		t.Errorf("after picking: list %v", rows)
+	if _, rows := get("/api/templates/for?need=image.generate"); !strings.Contains(ids(rows), "comfyui") || !strings.Contains(ids(rows), "a1111") {
+		t.Errorf("images, a ComfyUI one among them though its job is known only once added: %s", ids(rows))
 	}
-	mux.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("POST", "/api/templates/unpick?id=gemini-images", strings.NewReader("{}")))
-	if has(list("/api/templates"), "gemini-images") || !has(list("/api/templates/builtins"), "gemini-images") {
-		t.Error("after removing, it is not back under Add")
+	if code, _ := get("/api/templates/for?need=nothing"); code != http.StatusBadRequest {
+		t.Errorf("an unknown need: %d", code)
 	}
-	w = httptest.NewRecorder()
-	mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/templates/pick?id=nope", strings.NewReader("{}")))
-	if w.Code != 404 {
-		t.Errorf("picking a template that is not built in: %d", w.Code)
+	if code, _ := get("/api/templates/builtins"); code != http.StatusNotFound {
+		t.Errorf("the list to add templates to is still there: %d", code)
 	}
 }

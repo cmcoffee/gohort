@@ -195,7 +195,8 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 						RowKey:  "name",
 						GroupBy: "group",
 						// Many connectors in many groups: each band folds to
-						// its heading and summary, and starts open.
+						// its heading and summary, and starts folded: the heading says
+						// how many it holds and how many have an error.
 						GroupFold:         true,
 						GroupOpenField:    "group_open",
 						GroupSummaryField: "group_summary",
@@ -368,55 +369,34 @@ func mcpServerFormFields() []ui.FormField {
 func (a *AdminApp) templatesSection() ui.Section {
 	return ui.Section{
 		Title:    "Templates",
-		Subtitle: "Recipes for integrating a service with gohort: answer a few questions, and its credential, tools and the rest are set up as drafts for review.",
-		Detail: "A template asks what it needs (a site address, your email, an API token), fills the answers in, and adds its pieces through the same importer as a bundle file: credentials disabled until you test them, tools pending approval. " +
-			"A secret you give goes straight into its credential's secret store and never into a tool or a file.\n\n" +
-			"The list holds the templates you have added. Add offers the ones that ship with gohort, a template file someone shared, or a new one made from things you have built: pick them, and turn the values that differ between deployments (an address, an account) into questions. Export any template to share it.\n\n" +
+		Subtitle: "Ready-made ways to add a service to gohort, by what it does. Add… on one asks a few questions and adds the connector (and anything else it needs) as a draft for review.",
+		Detail: "A template is a recipe, not something installed: adding from it makes the connector, and the template itself stays here for the next time. It asks what it needs (a site address, your email, an API token), fills the answers in, and adds its pieces through the same importer as a bundle file: credentials disabled until you test them, tools pending approval. " +
+			"A secret you give goes straight into its secret store and never into a tool or a file.\n\n" +
+			"The pages that use a connector offer the same templates at the end of their list, under \"+ Add another…\": what is added there joins that list. Import a template file someone shared, or save one from things you have built, turning the values that differ between deployments (an address, an account) into questions. Export any template to share it.\n\n" +
 			"Builder can do both halves for you: ask it to integrate a service, then to make that a template. It only saves a template when an administrator asks, and stops to show you the title, pieces and questions before it does.",
 		Body: ui.Stack{Children: []ui.Component{
-			ui.ModalButton{
-				Label: "Add a template…", Title: "Add a template", Align: "left", Width: "760px",
-				Subtitle: "Use one that ships with gohort, bring in a file someone shared, or make a new one from what you have built.",
-				Body: ui.Stack{Children: []ui.Component{
-					ui.Toolbar{Actions: []ui.ToolbarAction{
-						{Label: "Import a template file…", Method: "client", URL: "template_import"},
-					}},
-					templateSaveButton(),
-					ui.Table{
-						Source: "api/templates/builtins",
-						RowKey: "id",
-						Columns: []ui.Col{
-							{Field: "title", Flex: 2},
-							{Field: "category", Mute: true},
-							{Field: "description", Mute: true, Flex: 4, Line: 2},
-						},
-						RowActions: []ui.RowAction{
-							{Type: "button", Label: "Add", Variant: "primary", PostTo: "api/templates/pick?id={id}",
-								Invalidate: []string{"api/templates"}},
-						},
-						EmptyText: "Every built-in template is on your list.",
-					},
-				}},
-			},
+			ui.Toolbar{Actions: []ui.ToolbarAction{
+				{Label: "Import a template file…", Method: "client", URL: "template_import"},
+			}},
+			templateSaveButton(),
 			ui.Table{
-				Source: "api/templates",
-				RowKey: "id",
+				Source:    "api/templates",
+				RowKey:    "id",
+				GroupBy:   "category",
+				GroupFold: true,
 				Columns: []ui.Col{
 					{Field: "title", Flex: 2},
 					{Field: "source", Label: "", Mute: true},
-					{Field: "category", Mute: true},
 					{Field: "description", Mute: true, Flex: 4, Line: 2},
 					{Field: "contains", Label: "", Mute: true, Flex: 4, Line: 2},
 				},
 				RowActions: []ui.RowAction{
-					{Type: "button", Label: "Set up…", Method: "client", PostTo: "template_install", Variant: "primary", OnlyIf: "_recipe"},
+					{Type: "button", Label: "Add…", Method: "client", PostTo: "template_install", Variant: "primary", OnlyIf: "_recipe"},
 					{Type: "button", Label: "Export", Method: "client", PostTo: "template_export", Compact: true, OnlyIf: "_recipe"},
 					{Type: "button", Label: "Delete", Variant: "danger", Compact: true, OnlyIf: "_imported",
 						PostTo: "api/templates/delete?id={id}", Confirm: "Delete this template? What was already added from it stays."},
-					{Type: "button", Label: "Remove", Compact: true, OnlyIf: "_picked",
-						PostTo: "api/templates/unpick?id={id}", Invalidate: []string{"api/templates/builtins"}},
 				},
-				EmptyText: "No templates yet. Add one: a built-in, a file someone shared, or one you make from what you have built.",
+				EmptyText: "No templates.",
 			},
 		}},
 	}

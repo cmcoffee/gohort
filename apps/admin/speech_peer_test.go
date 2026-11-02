@@ -47,8 +47,8 @@ func TestSpeechFormShowsThePeerPicker(t *testing.T) {
 	if !ok {
 		t.Fatal("a peer offers speech but the provider dropdown is absent")
 	}
-	if len(provider.Options) != 1 || provider.Options[0].Value != PeerProviderValue("gpu-box") {
-		t.Errorf("dropdown should offer the peer alone, got %+v", provider.Options)
+	if got := choicesOf(t, provider, "speech.synthesize"); len(got) != 1 || got[0].Value != PeerProviderValue("gpu-box") {
+		t.Errorf("dropdown should offer the peer alone, got %+v", got)
 	}
 	if f, ok := findField(fields, "enabled"); !ok || f.Help != "" {
 		t.Errorf("the toggle stays, with no pointer while there is a choice: %+v", f)
@@ -65,7 +65,7 @@ func TestSpeechFormShowsThePeerPicker(t *testing.T) {
 
 func TestSpeechFormHidesAPeerWithoutTheGrant(t *testing.T) {
 	speechPeer(t, PeerCapTranscribe)
-	if _, ok := findField(speechFormFields(), "provider"); ok {
+	if f, _ := findField(speechFormFields(), "provider"); len(choicesOf(t, f, "speech.synthesize")) != 0 {
 		t.Error("a peer that does not offer speech is being offered as a speech provider")
 	}
 	for _, f := range speechFormFields() {
