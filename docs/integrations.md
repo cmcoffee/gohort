@@ -62,8 +62,9 @@ is a setting.
 ## The inside: contracts
 
 What gohort asks of a connector: what each contract is, what it takes and
-gives, what its check requires of an answer, and where gohort uses it. Admin >
-Extensions > Contracts shows the same.
+gives, what its check requires of an answer, and where gohort uses it. A
+connector's editor (Edit on its row under Admin > Extensions > Connectors)
+shows the same for each job it does.
 
 <!-- contracts: made from core/service's registry; UPDATE_DOCS=1 go test ./core/service -run TestTheDocsListTheContracts rewrites it -->
 | Contract | What it is | Takes | Gives | Checked for | Where it plugs in |

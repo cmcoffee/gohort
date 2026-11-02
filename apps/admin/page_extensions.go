@@ -183,8 +183,11 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 		},
 		{
 			Title:    "Connectors",
-			Subtitle: "Standing connections to what is outside gohort: services that give it a capability (images, speech, embeddings), feeds it watches, messaging relays, grouped by what each does. Test, fix or remove each one here. A service is reached through the pages that reference it: choosing it on that page (Web Search, Image Generation, Research Sources, ...); the others are approved here.",
-			Detail:   "A connector comes from a template (Admin > Extensions > Templates) or from an imported bundle. Each keeps its own settings and key: set them where it is used, under the choice, or under Settings on its row, which also gives it the name people see.\n\nConnectors are grouped by what they do: web search, research sources, images, speech and music, embeddings, pages and files, mail, messaging, then watches, tools for agents (MCP and desktop), adapted System Hooks and peer relays. Only connectors with a spec are listed, since that is what can be edited and fixed here: what gohort does in Go (the LLM providers, SMTP, the browser, DuckDuckGo) is set up on its own page, peers under Admin > Capabilities > Peers, and the programs System Hooks run under System Hooks.\n\nA service is reached through the pages that reference it: choosing it on the page that uses it (Web Search, Image Generation, Research Sources, a flow, ...) and saving. Its row says which pages reference it, or that none does; one no page references makes no calls. One referenced cannot be deleted: take it off those pages first, so nothing is left naming a connector that is gone. A change made by someone who is not an administrator holds it, so no call reaches it, until an administrator saves a page with it chosen.\n\nEndpoints on a service's row lists each endpoint it reaches: what it is sent and where each value comes from ({prompt} is what gohort asked; anything else is sent as written), what is read from the reply and into what, and what uses it. A service giving several things names them on its row and counts its endpoints.\n\nA search connector is referenced for research and agents under Admin > Extensions > Research Sources, and as the engine under Web Search; its row here is how it is reached and read, tested and fixed.\n\nFor example a calendar or CRM exposed through its MCP server. Approve to MATERIALIZE the capability: its tools register for agents, and a remote_mcp connector becomes an enabled MCP server, which also appears under MCP Servers above.\n\nThe assistant never handles a secret: auth is a referenced API credential or per-user OAuth. Nothing runs until you approve, and Delete tears the capability down.",
+			Subtitle: "The REST services gohort reaches for a job: search, pictures, speech, embeddings, page rendering, mail, conversions, message sends. Each is reached through the pages that reference it; edit, test or remove it here.",
+			Detail: "A connector is how gohort calls one outside service: its address and key, the requests it makes, how each reply is read, and the job it does for gohort (its contract). It comes from a template (Admin > Extensions > Templates), from an imported bundle, or from the assistant.\n\n" +
+				"It is reached through the pages that reference it: choosing it on the page that uses it (Web Search, Image Generation, Research Sources, a flow, ...) and saving. Its row says which pages reference it, or that none does; one no page references makes no calls. One referenced cannot be deleted: take it off those pages first. A change made by someone who is not an administrator holds it, so no call reaches it, until an administrator saves a page with it chosen.\n\n" +
+				"Settings on its row are its values and its key, the same form the page that chooses it shows. Edit opens how it runs: its spec beside an assistant, with the job it must do; a connector a setup form made (ComfyUI, A1111) opens that form. When its spec does not validate, Edit is Fix. Endpoints lists each request it makes, what it is sent and what is read back. Test makes the smallest real call and runs its contract's check.\n\n" +
+				"What gohort does in Go (the LLM providers, SMTP, the browser, DuckDuckGo) is set up on its own page, peers under Admin > Capabilities > Peers, and the integrations of other kinds are listed below.",
 			Body: ui.Stack{
 				Children: []ui.Component{
 					ui.Table{
@@ -196,41 +199,10 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 						GroupFold:         true,
 						GroupOpenField:    "group_open",
 						GroupSummaryField: "group_summary",
-						// A connector row carries a name, a type, who drafted it,
-						// its state, a summary (an address and an auth mode) and
-						// six controls. Across one line the summary and the
-						// drafter were the first things ellipsized, and the
-						// summary is the part that says what the thing reaches.
-						// The summary and the last error take the second line
-						// at full width.
-						Columns: []ui.Col{
-							{Field: "title", Label: "Name", Flex: 2},
-							{Field: "name", Label: "Id", Mute: true},
-							{Field: "kind", Label: "Type", Mute: true},
-							{Field: "owner", Label: "Drafted by", Mute: true},
-							{
-								Field: "state", Type: "badge",
-								Badges: []ui.BadgeMapping{
-									{Value: "approved", Label: "Approved", Color: "success"},
-									{Value: "pending", Label: "Pending", Color: "warning"},
-									{Value: "referenced", Label: "Referenced", Color: "success"},
-									{Value: "unreferenced", Label: "Not referenced", Color: "mute"},
-									{Value: "changed", Label: "Changed", Color: "warning"},
-								},
-							},
-							{Field: "summary", Label: "", Mute: true, Flex: 4, Line: 2},
-							{Field: "key", Label: "", Mute: true, Flex: 3, Line: 2},
-							{Field: "last_error", Label: "", Mute: true, Flex: 3, Line: 2},
-							{Field: "check", Label: "", Flex: 4, Line: 2},
-							{Field: "status", Label: "", Mute: true, Flex: 4, Line: 2},
-						},
+						// The summary says what the connector reaches; it and
+						// what is wrong take the second line at full width.
+						Columns: connectorColumns(),
 						RowActions: []ui.RowAction{
-							{Type: "button", Label: "Approve",
-								PostTo: "api/connectors?action=approve&name={name}",
-								Method: "POST", OnlyIf: "can_approve", Variant: "primary"},
-							{Type: "button", Label: "Unapprove",
-								PostTo: "api/connectors?action=unapprove&name={name}",
-								Method: "POST", OnlyIf: "can_unapprove"},
 							ui.ExpandIf("Endpoints", "endpoints", "", ui.Table{
 								Source: "api/connectors/endpoints?name={name}",
 								RowKey: "name",
@@ -262,45 +234,36 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 									"A page that has it serve the whole instance (an LLM tier, Web Search, Embeddings) serves every user whatever this says.",
 								EmptyText: "No other users to grant yet.",
 							})),
-							{Type: "button", Label: "Configure", Method: "client",
-								PostTo: "configure_backend", OnlyIf: "configurable"},
-							{Type: "button", Label: "Webhook…", Method: "client",
-								PostTo: "connector_webhook", OnlyIf: "webhook"},
+							{Type: "button", Label: "Edit", Method: "client",
+								PostTo: "configure_backend", OnlyIf: "edit_form"},
+							connectorEditAction("Edit", "edit_spec", "What should change in how this service is called, and why?"),
+							connectorEditAction("Fix", "needs_fix", "Why is this service failing, and what would fix it?"),
 							{Type: "button", Label: "Test", Method: "POST",
 								PostTo: "api/connectors/test?name={name}", OnlyIf: "testable",
 								ConfirmField: "test_confirm"},
 							{Type: "button", Label: "Check health", Method: "POST",
 								PostTo: "api/connectors/health?name={name}", OnlyIf: "has_health"},
-							connectorFixAction(),
-							{Type: "button", Label: "Edit spec", Method: "client",
-								PostTo: "connector_edit_spec"},
 							{Type: "button", Label: "Export", Method: "client",
 								PostTo: "connectors_export"},
 							{Type: "button", Label: "Delete",
 								PostTo:  "api/connectors?name={name}",
 								Method:  "DELETE",
 								OnlyIf:  "deletable",
-								Confirm: "Delete this connector and tear down its capability (for remote_mcp, remove its MCP server)?",
+								Confirm: "Delete this connector?",
 								Variant: "danger"},
 						},
-						EmptyText: "No connectors yet. The assistant drafts these with the connector tool; approve them here to make their tools available to agents.",
+						EmptyText: "No connectors yet. Add one from Admin > Extensions > Templates, or import a bundle.",
 					},
-					// Import — "Import bundle…" opens a file picker, then a
+					// Import: "Import bundle…" opens a file picker, then a
 					// PREVIEW modal (dry-run via /api/artifacts/preview): what
 					// the bundle carries, what would import vs skip, and any
-					// unmet references — nothing lands until the admin confirms.
-					// The unified importer accepts ANY artifact bundle, a legacy
-					// connector pack, or a single artifact; everything
-					// reconstitutes as a DRAFT (connectors unapproved, tools
-					// pending, credentials inert, skills disabled; collections
-					// land user-scoped and re-embed their corpus in the
-					// background). A name that already exists is skipped, and no
-					// secret ever travels.
+					// unmet references; nothing lands until the admin confirms.
+					// Everything reconstitutes as a draft, a name that already
+					// exists is skipped, and no secret ever travels.
 					//
-					// Export — per-row Export (in the table above) grabs one
-					// connector; these buttons grab whole sets as one secret-free
-					// gohort.bundle/v1. "Export everything" spans every artifact
-					// type (connectors + tools + future types).
+					// Export: per-row Export grabs one connector; this grabs
+					// every connector, of every kind, as one secret-free
+					// gohort.bundle/v1.
 					ui.Toolbar{
 						Actions: []ui.ToolbarAction{
 							{Label: "Export all connectors", Method: "client", URL: "connectors_export_all"},
@@ -309,34 +272,47 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 				},
 			},
 		},
-		contractsSection(),
+		{
+			Title:    "Other integrations",
+			Subtitle: "MCP servers, desktop programs, watches, messaging relays, bots and peer relays: each moves to a page of its own later, and until then is approved here.",
+			Detail: "These are not connectors (a connector is a REST service gohort calls for a job): an MCP server's tools, a program on someone's machine, a poll that wakes an agent, a messaging relay or bot, an adapted System Hook, a peer's relay. Each keeps working as it did and moves to a page of its own in a later step.\n\n" +
+				"Approve to MATERIALIZE one: its tools register for agents, and a remote_mcp connector becomes an enabled MCP server, which also appears under MCP Servers above. The assistant drafts them and never handles a secret: auth is a referenced API credential or per-user OAuth. Nothing runs until you approve, and Delete tears it down.",
+			Body: ui.Table{
+				Source:            "api/connectors/other",
+				RowKey:            "name",
+				GroupBy:           "group",
+				GroupFold:         true,
+				GroupOpenField:    "group_open",
+				GroupSummaryField: "group_summary",
+				Columns:           connectorColumns(),
+				RowActions: []ui.RowAction{
+					{Type: "button", Label: "Approve",
+						PostTo: "api/connectors?action=approve&name={name}",
+						Method: "POST", OnlyIf: "can_approve", Variant: "primary",
+						Invalidate: []string{"api/connectors/other"}},
+					{Type: "button", Label: "Unapprove",
+						PostTo: "api/connectors?action=unapprove&name={name}",
+						Method: "POST", OnlyIf: "can_unapprove",
+						Invalidate: []string{"api/connectors/other"}},
+					{Type: "button", Label: "Webhook…", Method: "client",
+						PostTo: "connector_webhook", OnlyIf: "webhook"},
+					{Type: "button", Label: "Edit spec", Method: "client",
+						PostTo: "connector_edit_spec"},
+					{Type: "button", Label: "Export", Method: "client",
+						PostTo: "connectors_export"},
+					{Type: "button", Label: "Delete",
+						PostTo:     "api/connectors?name={name}",
+						Method:     "DELETE",
+						OnlyIf:     "deletable",
+						Confirm:    "Delete this and tear down what it brought up (for remote_mcp, remove its MCP server)?",
+						Variant:    "danger",
+						Invalidate: []string{"api/connectors/other"}},
+				},
+				EmptyText: "None. The assistant drafts these with the connector tool; approve them here to make their tools available to agents.",
+			},
+		},
 		a.flowsSection(),
 		a.templatesSection(),
-	}
-}
-
-// contractsSection explains the contracts a connector can give: what each
-// is, what it takes and gives, what its check requires and where gohort
-// uses it, read from the registry the checks are (core/service).
-func contractsSection() ui.Section {
-	return ui.Section{
-		Title:    "Contracts",
-		Subtitle: "What gohort asks of a connector: each capability's inputs, outputs, check and where it is used.",
-		Detail: "A contract is fixed by gohort; a connector's spec says how one service does it. Its provides names the contract, its steps make the requests, and its output reads the reply into the contract's outputs, by these names.\n\n" +
-			"Every call's answer passes the contract's check before anything uses it, so a spec reading the wrong field fails with a reason rather than handing on something empty. Test on a connector's row makes the smallest real call and runs the same check; ✨ Fix is given this text when it proposes a corrected spec.",
-		// A reference is read in full: each contract a list entry with its
-		// parts labelled, where a table row would clip them.
-		Body: ui.DisplayPanel{
-			Source: "api/contracts",
-			Pairs: []ui.DisplayPair{{Field: "contracts", Items: []ui.DisplayPair{
-				{Field: "name", Mono: true},
-				{Field: "about"},
-				{Label: "Takes", Field: "takes"},
-				{Label: "Gives", Field: "gives"},
-				{Label: "Checked for", Field: "checks"},
-				{Label: "Used by", Field: "where"},
-			}}},
-		},
 	}
 }
 
@@ -490,5 +466,30 @@ func templateSaveButton() ui.ModalButton {
 					}},
 			},
 		},
+	}
+}
+
+// connectorColumns are a connector row's columns, in both lists.
+func connectorColumns() []ui.Col {
+	return []ui.Col{
+		{Field: "title", Label: "Name", Flex: 2},
+		{Field: "name", Label: "Id", Mute: true},
+		{Field: "kind", Label: "Type", Mute: true},
+		{Field: "owner", Label: "Drafted by", Mute: true},
+		{
+			Field: "state", Type: "badge",
+			Badges: []ui.BadgeMapping{
+				{Value: "approved", Label: "Approved", Color: "success"},
+				{Value: "pending", Label: "Pending", Color: "warning"},
+				{Value: "referenced", Label: "Referenced", Color: "success"},
+				{Value: "unreferenced", Label: "Not referenced", Color: "mute"},
+				{Value: "changed", Label: "Changed", Color: "warning"},
+			},
+		},
+		{Field: "summary", Label: "", Mute: true, Flex: 4, Line: 2},
+		{Field: "key", Label: "", Mute: true, Flex: 3, Line: 2},
+		{Field: "last_error", Label: "", Mute: true, Flex: 3, Line: 2},
+		{Field: "check", Label: "", Flex: 4, Line: 2},
+		{Field: "status", Label: "", Mute: true, Flex: 4, Line: 2},
 	}
 }

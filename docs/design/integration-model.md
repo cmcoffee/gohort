@@ -580,6 +580,11 @@ once:
    text shown in the connector editor; and pages store their choices as plain
    names (Q7), the stale highlight catching the prefixed ones until the
    migration rewrites them.
+   Built in 6c (2026-11-01): connector rows open one editor, Edit (the spec
+   beside the assistant with each capability's contract, or the setup form
+   a template made it with), shown as Fix when the spec does not validate;
+   Settings, Access, Endpoints, Test and Delete stay. The other kinds sit in
+   "Other integrations" below, still approved there, until their own steps.
 7. The cleanup button.
 8. The security acceptance tests and the private repo's branch.
 9. The one migration, from both starting points, written now that the rest is

@@ -3,8 +3,16 @@
 alice GET /api/connectors ""
   403 forbidden
 root GET /api/connectors ""
-  200 [{"name":"ct-art","title":"ct-art","kind":"service","summary":"Image Generation ⇐ render ⇐ 127.0.0.1:1 (its API login)","owner":"root","approved":false,"last_error":"","template":"a1111","is_image… (869 bytes, sha1 75e6cb83d1d21fbef2c015df5fb05dc33eb2c0a0)
+  200 [{"name":"ct-art","title":"ct-art","kind":"service","summary":"Image Generation ⇐ render ⇐ 127.0.0.1:1 (its API login)","owner":"root","approved":false,"last_error":"","template":"a1111","is_image… (851 bytes, sha1 5eda1a6c81e0ab7e909c963d5ed9b2c52b13defa)
 root PUT /api/connectors "{}"
+  405 method not allowed
+(signed out) GET /api/connectors/other ""
+  403 forbidden
+alice GET /api/connectors/other ""
+  403 forbidden
+root GET /api/connectors/other ""
+  200 []
+root PUT /api/connectors/other "{}"
   405 method not allowed
 (signed out) GET /api/connectors/spec?name=ct-art ""
   403 forbidden
@@ -51,7 +59,7 @@ root POST /api/connectors?action=update_spec&name=ct-nope "{}"
 root POST /api/connectors?action=update_spec&name=ct-art "{\"config\":[{\"name\":\"api_key\",\"label\":\"API login\",\"help\":\"Only for a server started with --api-auth: its user:password. A local one takes none.\",\"type\":\"secret\",\"send\":\"basic\"}],\"provider\":{\"transport\":\"http\",\"base_url\":\"http://127.0.0.1:2\",\"auth\":{\"secret\":\"api_key\"},\"operations\":{\"render\":{\"builtin\":\"a1111\",\"options\":{\"mode\":\"txt2img\"}}}},\"provides\":[{\"capability\":\"image.generate\",\"steps\":[{\"call\":\"render\"}],\"output\":{\"image\":{\"from\":\"body\"}}}]}"
   204 
 root GET /api/connectors ""
-  200 [{"name":"ct-art","title":"ct-art","kind":"service","summary":"Image Generation ⇐ render ⇐ 127.0.0.1:2 (its API login)","owner":"root","approved":false,"last_error":"","template":"a1111","is_image… (869 bytes, sha1 ab8b10af7501024b22ff2cc8ca8cea9043e6fda8)
+  200 [{"name":"ct-art","title":"ct-art","kind":"service","summary":"Image Generation ⇐ render ⇐ 127.0.0.1:2 (its API login)","owner":"root","approved":false,"last_error":"","template":"a1111","is_image… (851 bytes, sha1 43d4ec749db8381d11a8efe96db52578059ca56c)
 root GET /api/connectors/spec?name=ct-nope ""
   404 no connector named ct-nope
 alice POST /api/research-sources "{\"connector\":\"ct-find\",\"topics\":[\"legal\"]}"
@@ -101,4 +109,4 @@ root DELETE /api/connectors ""
 root DELETE /api/connectors?name=ct-art ""
   204 
 root GET /api/connectors ""
-  200 [{"name":"ct-find","title":"ct-find","kind":"service","summary":"Web search ⇐ find ⇐ find.example.test (no key)","owner":"","approved":false,"last_error":"","is_image":false,"configurable":false,"… (846 bytes, sha1 799c94ab0d6b78c1aa77bc2e20429de48219f691)
+  200 [{"name":"ct-find","title":"ct-find","kind":"service","summary":"Web search ⇐ find ⇐ find.example.test (no key)","owner":"","approved":false,"last_error":"","is_image":false,"edit_spec":true,"stat… (827 bytes, sha1 b0e811e26f0aeeeca408cb58ff5c32af4750c18d)

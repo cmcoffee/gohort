@@ -1,15 +1,15 @@
 package admin
 
-// Fixing a connector: a service connector (or an older image backend read as
-// one, core/service) has a ✨ Fix on its row, the same assist System Hooks
-// rows have. On the left, the connector's spec; on the right, the worker,
-// told the connector, why it is failing and what its capabilities must give.
-// Its tools check a draft, make one request of it and show the raw reply,
-// and run a draft's contract test: the last two are real calls, on the
-// connector's daily test budget. It proposes; the admin saves.
-//
-// Saving an older image backend converts it into a service connector, off
-// until the admin approves it again, since what it reaches may have changed.
+// Editing a connector: its row's Edit (or Fix, when its spec does not
+// validate) opens its spec beside an assistant, the same assist System Hooks
+// rows have. On the left, the connector's spec and the job each capability
+// it gives must do (its contract: what it takes, gives, and is checked for);
+// on the right, the worker, told the connector, how it has been failing and
+// what its capabilities must give. Its tools check a draft, make one request
+// of it and show the raw reply, and run a draft's contract test: the last two
+// are real calls, on the connector's daily test budget. It proposes; the
+// admin saves. A connector a Go setup form made (ComfyUI, A1111) is edited
+// in that form instead.
 
 import (
 	"context"
@@ -35,29 +35,32 @@ func (a *AdminApp) registerConnectorFixRoutes(sub *http.ServeMux) {
 	sub.HandleFunc("/api/connectors/fix-save", jsonapi.Post(a.db, a.handleConnectorFixSave, a.gate(), jsonapi.MaxBody(1<<20)))
 }
 
-// connectorFixAction is the row's ✨ Fix: the spec form beside its assistant.
-func connectorFixAction() ui.RowAction {
+// connectorEditAction is the row's editor, labelled label and shown when
+// the row's onlyIf holds: the spec form beside its assistant, first asked
+// ask.
+func connectorEditAction(label, onlyIf, ask string) ui.RowAction {
 	form := ui.FormPanel{
 		Source:      "api/connectors/fix-form?name={name}",
 		PostURL:     "api/connectors/fix-save?name={name}",
 		SubmitLabel: "Save",
 		Fields: []ui.FormField{
 			{Field: "wrapper", Type: "readonly", Label: "What it is"},
+			{Field: "contract", Type: "readonly", Label: "Its job"},
 			{Field: "note", Type: "readonly", Label: "Saving"},
 			{Field: "spec", Type: "textarea", Label: "Spec", Rows: 24},
 		},
 		Invalidate: []string{"api/connectors"},
 		Assist:     true, AssistURL: "api/connectors/fix?name={name}",
 	}
-	act := ui.AssistAction("Fix", ui.AssistPanel{
+	act := ui.AssistAction(label, ui.AssistPanel{
 		Work: form, URL: "api/connectors/fix?name={name}",
-		Ask: "Why is this service failing, and what would fix it?", Web: true,
+		Ask: ask, Web: true,
 		Intro: "It knows this connector, how it has been failing, and what its capabilities must give back. " +
 			"It can ask the service and try a corrected spec, which are real calls on the connector's daily test budget. " +
 			"What it suggests fills the spec: nothing is saved until you save. Turn on web lookups to let it read the provider's documentation.",
 		Placeholder: "Ask about it, or say what changed at the provider…",
 	})
-	act.OnlyIf = "fixable"
+	act.OnlyIf = onlyIf
 	return act
 }
 
@@ -74,7 +77,12 @@ func (a *AdminApp) handleConnectorFixForm(c *jsonapi.Call) (any, error) {
 	if len(notes) > 0 {
 		note += " Not carried over: " + strings.Join(notes, "; ") + "."
 	}
-	return map[string]any{"spec": string(pretty), "note": note, "wrapper": s.Describe(name)}, nil
+	var jobs []string
+	for _, b := range s.Provides {
+		jobs = append(jobs, service.ContractText(b.Capability))
+	}
+	return map[string]any{"spec": string(pretty), "note": note, "wrapper": s.Describe(name),
+		"contract": strings.Join(jobs, "\n\n")}, nil
 }
 
 // handleConnectorFixSave saves the Fix form's spec on the ?name= connector.

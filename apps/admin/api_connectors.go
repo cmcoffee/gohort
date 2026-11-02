@@ -19,18 +19,19 @@ import (
 
 // registerConnectorsRoutes wires the connectors API under the admin sub-mux.
 func (a *AdminApp) registerConnectorsRoutes(sub *http.ServeMux) {
-	// Connectors — "bridge types" drafted by an authoring agent (the connector
-	// tool) and awaiting admin approval, e.g. a calendar/CRM exposed through its
-	// MCP server. GET lists; POST?action=approve|unapprove&name toggles; DELETE
-	// removes + tears down. Approve MATERIALIZES the underlying capability (for
-	// remote_mcp: an enabled MCP server), so its tools go live for agents. The
-	// LLM never handles a secret — auth is a referenced credential or per-user
-	// oauth; approval is the human gate.
+	// Connectors: GET lists the connectors (the service kind); POST
+	// ?action=approve|unapprove|update_spec&name acts on one of any kind;
+	// DELETE removes one and tears it down. A connector has no approval: the
+	// pages that reference it reach it. The other kinds (MCP servers, desktop
+	// programs, watches, messaging, peer relays), each moving to a page of its
+	// own later, are listed apart and still approved here: Approve
+	// MATERIALIZES the capability (for remote_mcp, an enabled MCP server).
 	sub.HandleFunc("/api/connectors", jsonapi.Methods{
 		"GET":    jsonapi.Get(a.db, a.handleConnectors, a.gate()),
 		"POST":   jsonapi.Post(a.db, a.handleConnectorAction, a.gate(), jsonapi.MaxBody(1<<20)),
 		"DELETE": jsonapi.Delete(a.db, a.handleConnectorDelete, a.gate()),
 	}.Serve)
+	sub.HandleFunc("/api/connectors/other", jsonapi.Get(a.db, a.handleOtherConnectors, a.gate()))
 
 	// Connector spec — GET the current kind-specific Spec as pretty JSON for the
 	// admin's inline spec editor (the "Edit spec" row action). Paired with the
@@ -58,38 +59,46 @@ func (a *AdminApp) registerConnectorsRoutes(sub *http.ServeMux) {
 		"GET":  jsonapi.Get(a.db, a.handleConnectionAccess, a.gate()),
 		"POST": jsonapi.Post(a.db, a.handleConnectionAccessSave, a.gate()),
 	}.Serve)
-
-	// The contracts explained, from the registry (the Contracts section).
-	sub.HandleFunc("/api/contracts", jsonapi.Get(a.db, a.handleContracts, a.gate()))
 }
 
-// handleContracts is every contract explained, for the Contracts section.
-func (a *AdminApp) handleContracts(c *jsonapi.Call) (any, error) {
-	return map[string]any{"contracts": service.ContractInfos()}, nil
-}
-
-// handleConnectors is every backend, with what each can do from its row.
+// handleConnectors is every connector, with what each can do from its row.
 func (a *AdminApp) handleConnectors(c *jsonapi.Call) (any, error) {
+	return connectorRows(true), nil
+}
+
+// handleOtherConnectors is every integration of another kind, listed apart
+// until each moves to a page of its own.
+func (a *AdminApp) handleOtherConnectors(c *jsonapi.Call) (any, error) {
+	return connectorRows(false), nil
+}
+
+// connectorRows are the rows of the connectors (the service kind) or of the
+// other kinds.
+func connectorRows(connectors bool) any {
 	type connRow struct {
 		Name string `json:"name"`
 		// Title is what it is shown as: its display name, or its name.
-		Title        string `json:"title"`
-		Kind         string `json:"kind"`
-		Summary      string `json:"summary"`
-		Owner        string `json:"owner"`
-		Approved     bool   `json:"approved"`
-		LastError    string `json:"last_error"`
-		Template     string `json:"template,omitempty"` // provenance (which template authored it)
-		IsImage      bool   `json:"is_image"`           // configurableImage → image-section toolbar pick
-		Configurable bool   `json:"configurable"`       // resolves to a template → gets "Configure" (incl. imports)
-		Webhook      string `json:"webhook,omitempty"`  // a push bridge's provider → gets "Webhook…"
+		Title     string `json:"title"`
+		Kind      string `json:"kind"`
+		Summary   string `json:"summary"`
+		Owner     string `json:"owner"`
+		Approved  bool   `json:"approved"`
+		LastError string `json:"last_error"`
+		Template  string `json:"template,omitempty"` // provenance (which template authored it)
+		IsImage   bool   `json:"is_image"`           // configurableImage → image-section toolbar pick
+		Webhook   string `json:"webhook,omitempty"`  // a push bridge's provider → gets "Webhook…"
+		// Its one editor: EditForm, the Go setup form a template made it with
+		// (ComfyUI, A1111); EditSpec, its spec beside the assistant; NeedsFix,
+		// the same, as Fix, when its spec does not validate.
+		EditForm bool `json:"edit_form,omitempty"`
+		EditSpec bool `json:"edit_spec,omitempty"`
+		NeedsFix bool `json:"needs_fix,omitempty"`
 		// A connector with a contract test and a health check (core/service):
 		// how it has been doing, and the question asked before a test.
 		Status      string `json:"status,omitempty"`
 		Testable    bool   `json:"testable,omitempty"`
 		HasHealth   bool   `json:"has_health,omitempty"`
 		TestConfirm string `json:"test_confirm,omitempty"`
-		Fixable     bool   `json:"fixable,omitempty"`
 		// State is the badge: approved or pending, or for a services
 		// connector referenced, not referenced, or changed.
 		State string `json:"state"`
@@ -125,13 +134,20 @@ func (a *AdminApp) handleConnectors(c *jsonapi.Call) (any, error) {
 	var rows []connRow
 	uses, research := service.TieIns(RootDB), researchNamed()
 	for _, conn := range ListConnectors(RootDB) {
-		_, canConfig := TemplateForConnector(conn)
+		if (conn.Kind == service.Kind) != connectors {
+			continue
+		}
 		row := connRow{Name: conn.Name, Title: conn.Title(), Kind: conn.Kind, Summary: ConnectorSummary(conn), Owner: conn.Owner,
 			Approved: conn.Approved, LastError: conn.LastError, Template: conn.Template, IsImage: configurableImage(conn),
-			Configurable: canConfig, Webhook: connectorWebhook(conn), Fixable: service.Fixable(conn), State: "pending",
+			Webhook: connectorWebhook(conn), State: "pending",
 			Endpoints: conn.Kind == service.Kind, Group: connectorGroup(conn, research, uses), GroupOpen: true,
 			Deletable: len(uses[conn.Name]) == 0, HasSettings: conn.Kind == service.Kind,
 			HasAccess: conn.Kind == service.Kind && conn.ID != ""}
+		if service.Fixable(conn) {
+			_, form := TemplateForConnector(conn)
+			valid := ValidateConnector(conn) == nil
+			row.EditForm, row.EditSpec, row.NeedsFix = form && valid, !form && valid, !valid
+		}
 		row.Key = keptSecretsLine(conn)
 		if problems := service.SelfCheck(RootDB, conn); len(problems) > 0 {
 			row.Check = "Needs attention: " + strings.Join(problems, "; ") + "."
@@ -187,7 +203,10 @@ func (a *AdminApp) handleConnectors(c *jsonapi.Call) (any, error) {
 		}
 		rows[i].GroupSummary = strings.Join(parts, " · ")
 	}
-	return rows, nil
+	if rows == nil {
+		return []connRow{}
+	}
+	return rows
 }
 
 // keptSecretsLine is connection c's row's word on the secrets it keeps:

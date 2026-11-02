@@ -10,7 +10,6 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/service"
-	"github.com/cmcoffee/gohort/core/ui"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -109,41 +108,65 @@ func TestAServiceConnectorRowAndThePicker(t *testing.T) {
 	}
 }
 
-// The Contracts section lists every contract from the registry, in full:
-// what it is, what it takes, gives and is checked for, and where it is used.
-func TestTheContractsSectionExplainsEachContract(t *testing.T) {
-	a := &AdminApp{db: &DBase{Store: kvlite.MemStore()}}
-	out, err := a.handleContracts(nil)
+// The Contracts page is gone. A connector's editor shows the job each
+// capability it gives must do (what it takes, gives and is checked for),
+// and opens as Fix when its spec does not validate. The connectors and the
+// integrations of other kinds are two lists, each section its own.
+func TestAConnectorsEditorShowsItsJob(t *testing.T) {
+	saved := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB = saved })
+	finder := `{"provider":{"transport":"http","base_url":"https://find.example.test","auth":{"none":true},"operations":{"find":{"path":"/s?q={query}"}}},"provides":[{"capability":"web.search","steps":[{"call":"find"}],"output":{"results":{"path":"hits","fields":{"title":"t","url":"u"}}}}]}`
+	if err := SaveConnector(RootDB, Connector{Name: "finder", Kind: service.Kind, Spec: json.RawMessage(finder)}); err != nil {
+		t.Fatal(err)
+	}
+	RootDB.Set("connectors", "broken", Connector{Name: "broken", Kind: service.Kind, ID: "c_broken", Spec: json.RawMessage(`{"provider":{}}`)})
+	tpl, _ := GetConnectorTemplate("a1111")
+	art, _, err := tpl.BuildSpec(map[string]any{"base_url": "http://sd.example:7860"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	list := out.(map[string]any)["contracts"].([]service.ContractInfo)
-	if len(list) != len(service.Names()) {
-		t.Fatalf("%d entries for %d contracts", len(list), len(service.Names()))
+	if err := SaveConnector(RootDB, Connector{Name: "art", Kind: service.Kind, Template: "a1111", Spec: art}); err != nil {
+		t.Fatal(err)
 	}
-	var search service.ContractInfo
-	for _, c := range list {
-		if c.Name == "web.search" {
-			search = c
+	RootDB.Set("connectors", "relay", Connector{Name: "relay", Kind: PeerRelayConnectorKind, ID: "c_relay", Spec: json.RawMessage(`{}`)})
+	a := &AdminApp{db: RootDB}
+	out, err := a.handleConnectorFixForm(&jsonapi.Call{R: httptest.NewRequest("GET", "/api/connectors/fix-form?name=finder", nil)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job := out.(map[string]any)["contract"].(string); !strings.HasPrefix(job, "web.search: ") ||
+		!strings.Contains(job, "It takes query (text, required), count (number) and gives results (json)") {
+		t.Errorf("its job: %q", job)
+	}
+
+	rows := func(h func(*jsonapi.Call) (any, error)) map[string]map[string]any {
+		out, _ := h(&jsonapi.Call{R: httptest.NewRequest("GET", "/", nil)})
+		b, _ := json.Marshal(out)
+		var list []map[string]any
+		json.Unmarshal(b, &list)
+		got := map[string]map[string]any{}
+		for _, r := range list {
+			got[r["name"].(string)] = r
 		}
+		return got
 	}
-	if search.Where != `Admin > Capabilities > Web Search: "Search with"` || search.Takes != "query (text, required), count (number)" ||
-		search.Gives != "results (json)" || !strings.HasPrefix(search.Checks, "results is a list") || !strings.Contains(search.About, "snippet") {
-		t.Errorf("web.search: %+v", search)
+	connectors, others := rows(a.handleConnectors), rows(a.handleOtherConnectors)
+	if len(connectors) != 3 || connectors["art"]["edit_form"] != true || connectors["art"]["edit_spec"] == true ||
+		connectors["finder"]["edit_spec"] != true || connectors["finder"]["edit_form"] == true || connectors["finder"]["needs_fix"] == true ||
+		connectors["broken"]["needs_fix"] != true || connectors["broken"]["edit_spec"] == true {
+		t.Errorf("the connectors: %v", connectors)
 	}
-	s := contractsSection()
-	panel, ok := s.Body.(ui.DisplayPanel)
-	if !ok || panel.Source != "api/contracts" || s.Title != "Contracts" || len(panel.Pairs) != 1 || panel.Pairs[0].Field != "contracts" {
-		t.Fatalf("the section: %+v", s)
+	if len(others) != 1 || others["relay"]["can_approve"] != true || others["relay"]["edit_spec"] == true {
+		t.Errorf("the other integrations: %v", others)
 	}
-	shown := map[string]bool{}
-	for _, it := range panel.Pairs[0].Items {
-		shown[it.Field] = true
+	var titles []string
+	for _, s := range a.extensionsSections() {
+		titles = append(titles, s.Title)
 	}
-	for _, f := range []string{"name", "about", "takes", "gives", "checks", "where"} {
-		if !shown[f] {
-			t.Errorf("the section does not show %s", f)
-		}
+	got := strings.Join(titles, ", ")
+	if strings.Contains(got, "Contracts") || !strings.Contains(got, "Connectors, Other integrations") {
+		t.Errorf("the sections: %s", got)
 	}
 }
 

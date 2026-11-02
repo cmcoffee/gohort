@@ -64,7 +64,7 @@ func TestConnectorsRoutesContract(t *testing.T) {
 	}
 	const bundle = `{"bundle":"gohort.bundle/v1","artifacts":[{"type":"tool","name":"ct_imported","recipe":{"name":"ct_imported","description":"Came in a bundle.","command_template":"echo hi","mode":"shell"}}]}`
 
-	for _, p := range []string{"/api/connectors", "/api/connectors/spec?name=ct-art", "/api/research-sources"} {
+	for _, p := range []string{"/api/connectors", "/api/connectors/other", "/api/connectors/spec?name=ct-art", "/api/research-sources"} {
 		do("", "GET", p, "")
 		do("alice", "GET", p, "")
 		do("root", "GET", p, "")
