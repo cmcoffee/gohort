@@ -59,7 +59,7 @@ type machineHost struct {
 	// own session exists) and narrows per step.
 	catalog func(ph MachinePhase) []AgentToolDef
 	// confirm is the approval gate. nil means there is nobody to ask, which is
-	// the unattended case — see PhaseWorkerConfirm, which reads nil the same way.
+	// the unattended case: stepConfirm decides what stands in for one.
 	confirm func(name, args string) bool
 	// status narrates the step about to run; activity carries progress OUT of a
 	// sub-run (a delegate, a pipeline's stages). Both nil-safe.
@@ -120,6 +120,22 @@ func (h *machineHost) machineTurn(input string) MachineTurn {
 	}
 }
 
+// stepConfirm is who approves one step's tool calls. A conversation's host
+// asks its person. A host with nobody to ask approves them when a person
+// started the run (the Run panel), which is what nil does, and holds them to
+// the owner's gate when the run is unattended: a scheduled machine, or one a
+// fire started. That used to be nil too, so a credential's "confirm writes"
+// and a tool's own ask-first meant nothing to a machine at 3am.
+//
+// A gate per step, because steps can run side by side and a gate keeps what
+// it refused.
+func (h *machineHost) stepConfirm(ctx context.Context) func(name, args string) bool {
+	if h.confirm != nil || !isUnattended(ctx) {
+		return h.confirm
+	}
+	return h.app.newAutonomousGate(h.user, h.agentID, nil).confirm
+}
+
 // phaseRunner returns the runner the machine drives: the ordinary inline
 // worker, wrapped so a step naming a tool, an agent, a pipeline, or a child
 // machine is handed to that instead.
@@ -129,7 +145,7 @@ func (h *machineHost) phaseRunner() PhaseRunner {
 		// nothing, and one that names some gets exactly those (PhaseWorker
 		// narrows by ph.Tools). A delegate brings its own, so it is handed
 		// none of this.
-		base := h.app.PhaseWorkerConfirm(h.catalog(ph), h.confirm)
+		base := h.app.PhaseWorkerConfirm(h.catalog(ph), h.stepConfirm(ctx))
 		// Say what is happening BEFORE it happens. In a conversation these
 		// calls run at the head of the turn, before the persona is even
 		// assembled, so until the first one returns the person is looking at
@@ -233,8 +249,8 @@ func (h *machineHost) runToolPhase(ctx context.Context, ph MachinePhase, tool, p
 	if ctx.Err() != nil {
 		return "", ctx.Err()
 	}
-	if h.confirm != nil && needsConfirm {
-		if !h.confirm(tool, formatToolCall(tool, args)) {
+	if confirm := h.stepConfirm(ctx); confirm != nil && needsConfirm {
+		if !confirm(tool, formatToolCall(tool, args)) {
 			return "", Error("step " + ph.Name + ": " + tool + " was not approved")
 		}
 	}

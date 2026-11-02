@@ -371,8 +371,9 @@ func (t *chatTurn) agentsRunMachineActionFor(card toolCard, args map[string]any)
 func (t *chatTurn) runDetachedMachine(d *ToolSession, def MachineDef, msg string) (string, error) {
 	// The detached session's context, NOT the turn's: t.ctx was cancelled when
 	// the turn that handed this off ended, and a warden call on a dead context
-	// fails the check instead of running it.
-	ctx := d.Context()
+	// fails the check instead of running it. What the turn's context carried
+	// that binds the work is put back on it (carryHandOff).
+	ctx := carryHandOff(t.ctx, d.Context())
 	if err := t.guardMachineInput(ctx, def, msg); err != nil {
 		return "", err
 	}

@@ -422,7 +422,7 @@ func (o scheduledOutcome) resolve() (RunStatus, string) {
 // parked by exit for this function to return. The defers stay here, registered
 // in the order they always were.
 func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool) error {
-	fr := &fireRun{ctx: ctx, p: p, reArm: reArm}
+	fr := &fireRun{ctx: withUnattended(ctx), p: p, reArm: reArm}
 	if !fr.admit() {
 		return fr.ret
 	}
@@ -941,6 +941,7 @@ func (fr *fireRun) prepareLoop() {
 func (fr *fireRun) startLiveRun() {
 	p := fr.p
 	fr.gate = fr.app.newAutonomousGate(p.Username, fr.agent.ID, fr.subSess)
+	fr.subTurn.neverUnattended = fr.gate.neverUnattended
 	// Live-activity registration: a recurring fire runs with no HTTP client
 	// attached, so without this it was invisible while running — the "Active
 	// now" surface only knew about interactive turns. No SSE ring is tailed;
@@ -1034,6 +1035,7 @@ func (fr *fireRun) runLoop() {
 		DailySpendUSD:       fr.agent.DailySpendUSD,
 		SharedBudgets:       familyBudgets(fr.agent),
 		Confirm:             fr.gate.confirm,
+		AskFirst:            fr.subTurn.asksFirst, // the owner's ask marks, and never-unattended ones
 		GuardrailCheck:      fr.subTurn.guardrailEnforcer().Check,
 		GuardrailActionGate: fr.subTurn.guardrailEnforcer().ActionGate,
 		GuardrailHalted:     fr.subTurn.guardrailEnforcer().Halted,

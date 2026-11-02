@@ -30,8 +30,9 @@ type privilegeGrant struct {
 	Name   string `json:"name"`
 	Detail string `json:"detail"`
 	// Policy is what happens on an UNATTENDED run:
-	//   auto  — runs without asking (read-only, or vouched by a parent)
-	//   allow — consequential, but pre-authorized (in AutoApproveTools)
+	//   auto  — runs without asking (nothing configured to ask)
+	//   allow — consequential, but pre-authorized (in AutoApproveTools, its
+	//           own or an agent's above it)
 	//   ask   — consequential and NOT pre-authorized: refused and queued
 	// Only allow/ask are editable; auto has nothing to decide.
 	Policy string `json:"policy"`
@@ -63,11 +64,15 @@ func privilegeToolRows(sess *ToolSession, rec AgentRecord, bundled []TempTool) [
 	for _, t := range rec.AutoApproveTools {
 		approved[strings.TrimSpace(t)] = true
 	}
-	// A sub-agent inherits its parent's authority wholesale: the parent vouched
-	// for it by building it with this toolset, so its consequential tools do NOT
-	// stop and ask on an unattended fire (autonomousGate). Reflect that instead
-	// of drawing per-tool controls that would never fire.
-	subAgent := strings.TrimSpace(rec.OwnedBy) != ""
+	// A sub-agent holds what was granted above it, as the gate reads it
+	// (autonomousApprovedSet), and nothing more: its parent's grants, not
+	// its parent's whole toolset. The card used to show every consequential
+	// tool of a sub-agent as running freely "via parent", which the gate no
+	// longer does.
+	inherited := map[string]bool{}
+	if parent := strings.TrimSpace(rec.OwnedBy); parent != "" && sess != nil && sess.DB != nil {
+		inherited = autonomousApprovedSet(sess.DB, parent)
+	}
 
 	byName := map[string]*TempTool{}
 	// The user's stored tools first, then the ones this call just committed on
@@ -111,11 +116,11 @@ func privilegeToolRows(sess *ToolSession, rec AgentRecord, bundled []TempTool) [
 		switch {
 		case !consequential:
 			row.Policy = "auto"
-		case subAgent:
-			row.Policy = "auto"
-			row.Detail = detail + " - via parent"
 		case approved[name]:
 			row.Policy = "allow"
+		case inherited[name]:
+			row.Policy = "allow"
+			row.Detail = detail + " - granted to its parent"
 		default:
 			row.Policy = "ask"
 		}
@@ -128,7 +133,7 @@ func privilegeToolRows(sess *ToolSession, rec AgentRecord, bundled []TempTool) [
 // is consequential — which the Policy field defines as "would stop for approval
 // on an unattended run", so the answer is the gate's, not a second opinion:
 // toolAlwaysConfirms is the clause autonomousToolAllowed decides on once the
-// sub-agent and pre-authorized bypasses (handled by the caller) are out.
+// pre-authorized bypass (handled by the caller) is out.
 //
 // It used to answer with temptool.NeedsConfirm, describing itself as "the same
 // predicate autonomousGate honors". That stopped being true when the gate moved

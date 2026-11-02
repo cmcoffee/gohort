@@ -12,15 +12,15 @@ import (
 // composes it, with the credential lookup stubbed by name. Tests that went
 // through a hand-rolled equivalent are how the pre-flight drifted from the gate
 // in the first place.
-func allowsWith(subAgent bool, approved, alwaysConfirm map[string]bool) func(string) bool {
-	return allowsWithMarks(subAgent, approved, nil, alwaysConfirm)
+func allowsWith(approved, alwaysConfirm map[string]bool) func(string) bool {
+	return allowsWithMarks(approved, nil, alwaysConfirm)
 }
 
 // allowsWithMarks is the same composition with the owner's never-unattended
 // marks in play, for the tests that care about the clause that beats the rest.
-func allowsWithMarks(subAgent bool, approved, noUnattended, alwaysConfirm map[string]bool) func(string) bool {
+func allowsWithMarks(approved, noUnattended, alwaysConfirm map[string]bool) func(string) bool {
 	return func(name string) bool {
-		return autonomousToolAllowed(subAgent, approved, noUnattended, name, func(n string) bool { return alwaysConfirm[n] })
+		return autonomousToolAllowed(approved, noUnattended, name, func(n string) bool { return alwaysConfirm[n] })
 	}
 }
 
@@ -36,7 +36,7 @@ func neverWith(noUnattended map[string]bool) func(string) bool {
 // runs the gate's own rule early so the gap is visible while it can be fixed.
 func TestConfirmingToolWithoutPreauthIsFlagged(t *testing.T) {
 	agent := AgentRecord{ID: "a", Owner: "u", Name: "A", AllowedTools: []string{"message_contact", "web_search"}}
-	allows := allowsWith(false, nil, map[string]bool{"message_contact": true})
+	allows := allowsWith(nil, map[string]bool{"message_contact": true})
 	got := preflightToolFindings(agent, allows, neverWith(nil))
 	if len(got) != 1 {
 		t.Fatalf("expected exactly the confirming tool to be flagged, got %+v", got)
@@ -57,7 +57,7 @@ func TestConfirmingToolWithoutPreauthIsFlagged(t *testing.T) {
 // finding stops being distinguishable from the noise.
 func TestEnabledToolWithNothingConfiguredIsNotFlagged(t *testing.T) {
 	agent := AgentRecord{ID: "a", Owner: "u", Name: "A", AllowedTools: []string{"get_weather", "post_update"}}
-	if got := preflightToolFindings(agent, allowsWith(false, nil, nil), neverWith(nil)); len(got) != 0 {
+	if got := preflightToolFindings(agent, allowsWith(nil, nil), neverWith(nil)); len(got) != 0 {
 		t.Errorf("a tool the gate would run must not be flagged, got %+v", got)
 	}
 }
@@ -66,20 +66,21 @@ func TestEnabledToolWithNothingConfiguredIsNotFlagged(t *testing.T) {
 // warning — otherwise the report cries wolf on every correctly-configured task.
 func TestPreauthorizedToolIsNotFlagged(t *testing.T) {
 	agent := AgentRecord{ID: "a", Owner: "u", Name: "A", AllowedTools: []string{"message_contact"}}
-	allows := allowsWith(false, map[string]bool{"message_contact": true}, map[string]bool{"message_contact": true})
+	allows := allowsWith(map[string]bool{"message_contact": true}, map[string]bool{"message_contact": true})
 	if got := preflightToolFindings(agent, allows, neverWith(nil)); len(got) != 0 {
 		t.Errorf("a pre-authorized tool must not be flagged, got %+v", got)
 	}
 }
 
-// A sub-agent runs under its parent's authority — autonomousGate.confirm returns
-// true for everything it calls. The pre-flight has to mirror that or it reports
-// refusals that will never happen.
-func TestSubAgentIsNotFlagged(t *testing.T) {
+// A sub-agent is held to the gate like any agent: what its parent was granted
+// it may run (TestInheritedApprovalClearsTheWarning), and a credential that
+// asks every time asks for it too. It used to pass on its parent's authority
+// alone, and a model can make a sub-agent.
+func TestSubAgentIsFlaggedLikeAnyOther(t *testing.T) {
 	sub := AgentRecord{ID: "s", Owner: "u", Name: "S", OwnedBy: "parent", AllowedTools: []string{"message_contact"}}
-	allows := allowsWith(true, nil, map[string]bool{"message_contact": true})
-	if got := preflightToolFindings(sub, allows, neverWith(nil)); len(got) != 0 {
-		t.Errorf("a sub-agent runs under its parent's authority and must not be flagged, got %+v", got)
+	allows := allowsWith(nil, map[string]bool{"message_contact": true})
+	if got := preflightToolFindings(sub, allows, neverWith(nil)); len(got) != 1 || got[0].Name != "message_contact" {
+		t.Errorf("a sub-agent's ungranted tool on a credential that asks was not flagged, got %+v", got)
 	}
 }
 
@@ -87,7 +88,7 @@ func TestSubAgentIsNotFlagged(t *testing.T) {
 // name something the user cannot go and pre-authorize.
 func TestSentinelIsNotFlagged(t *testing.T) {
 	agent := AgentRecord{ID: "a", Owner: "u", Name: "A", AllowedTools: []string{noToolsSentinel}}
-	allows := allowsWith(false, nil, map[string]bool{noToolsSentinel: true})
+	allows := allowsWith(nil, map[string]bool{noToolsSentinel: true})
 	if got := preflightToolFindings(agent, allows, neverWith(nil)); len(got) != 0 {
 		t.Errorf("the sentinel is not a tool, got %+v", got)
 	}
@@ -106,11 +107,10 @@ func TestInheritedApprovalClearsTheWarning(t *testing.T) {
 	mk("parent", "", []string{"message_contact"})
 	mk("child", "parent", nil)
 
-	// Read through the same helper the gate uses, then apply the rule as if the
-	// child were top-level (isolating inheritance from the sub-agent bypass).
+	// Read through the same helper the gate uses, then apply the rule.
 	inherited := autonomousApprovedSet(db, "child")
 	topLevel := AgentRecord{ID: "child", Owner: "u", Name: "child", AllowedTools: []string{"message_contact"}}
-	allows := allowsWith(false, inherited, map[string]bool{"message_contact": true})
+	allows := allowsWith(inherited, map[string]bool{"message_contact": true})
 	if got := preflightToolFindings(topLevel, allows, neverWith(nil)); len(got) != 0 {
 		t.Errorf("an ancestor's grant must clear the warning, got %+v", got)
 	}
@@ -119,7 +119,7 @@ func TestInheritedApprovalClearsTheWarning(t *testing.T) {
 // Findings are ordered so the same configuration always reports the same way.
 func TestFindingsAreStablyOrdered(t *testing.T) {
 	agent := AgentRecord{ID: "a", Owner: "u", Name: "A", AllowedTools: []string{"zeta", "alpha"}}
-	allows := allowsWith(false, nil, map[string]bool{"zeta": true, "alpha": true})
+	allows := allowsWith(nil, map[string]bool{"zeta": true, "alpha": true})
 	got := preflightToolFindings(agent, allows, neverWith(nil))
 	if len(got) != 2 || got[0].Name != "alpha" || got[1].Name != "zeta" {
 		t.Errorf("findings should be name-sorted, got %+v", got)

@@ -17,10 +17,34 @@
 package orchestrate
 
 import (
+	"context"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
 )
+
+// unattendedKey marks a context as a run nobody is watching: a standing or
+// recurring fire, a channel turn or monitor wake, a poll check. Everything
+// started under it inherits the mark, which is the point. A pipeline or a
+// machine step dispatched from inside a 3am fire is as unwatched as the fire,
+// and used to approve every tool call because the dispatch it went through
+// was written for a person clicking Run.
+type unattendedKey struct{}
+
+// withUnattended marks ctx as unattended.
+func withUnattended(ctx context.Context) context.Context {
+	return context.WithValue(ctx, unattendedKey{}, true)
+}
+
+// isUnattended reports whether ctx is, or was started by, a run nobody is
+// watching.
+func isUnattended(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	on, _ := ctx.Value(unattendedKey{}).(bool)
+	return on
+}
 
 // channelSenderAuthorized reports whether agentID may deliver to a channel WITHOUT
 // the proactive-send approval queue because of an explicit grant it holds or
@@ -63,11 +87,10 @@ func channelSenderAuthorized(udb Database, owner, chatID, handle, agentID string
 // which NeedsConfirm tools it refused (queued) so the caller can flag the run as
 // needing attention.
 type autonomousGate struct {
-	app      *OrchestrateApp
-	owner    string
-	agentID  string
-	subAgent bool // OwnedBy set → runs under the parent's authority
-	auto     map[string]bool
+	app     *OrchestrateApp
+	owner   string
+	agentID string
+	auto    map[string]bool
 	// noUnattended is the owner's explicit "not without somebody watching",
 	// inherited DOWN the ownership chain (the mirror of auto, which inherits up
 	// as trust: a restriction has to travel the other way or it is optional).
@@ -80,8 +103,7 @@ type autonomousGate struct {
 }
 
 // newAutonomousGate builds the gate for an agent's autonomous run, snapshotting
-// its pre-authorized tool set INHERITED down the ownership chain, and whether it's
-// a sub-agent (which runs under its parent's authority).
+// its pre-authorized tool set INHERITED down the ownership chain.
 //
 // sess is the run's tool session, used to resolve a tool call to the credential
 // it dispatches through. It may be nil (a standing fire creates its session
@@ -89,10 +111,6 @@ type autonomousGate struct {
 // owner's stored kit instead, so both unattended surfaces apply one policy.
 func (app *OrchestrateApp) newAutonomousGate(owner, agentID string, sess *ToolSession) *autonomousGate {
 	udb := UserDB(app.DB, owner)
-	sub := false
-	if rec, ok := loadAgent(udb, agentID); ok {
-		sub = strings.TrimSpace(rec.OwnedBy) != ""
-	}
 	noUnattended := autonomousNoUnattendedSet(udb, agentID)
 	// An agent someone SHARED with this runner lives in its owner's store, not
 	// the runner's, so its "never unattended" marks were read from a store that
@@ -114,7 +132,7 @@ func (app *OrchestrateApp) newAutonomousGate(owner, agentID string, sess *ToolSe
 		}
 	}
 	return &autonomousGate{
-		app: app, owner: owner, agentID: agentID, subAgent: sub,
+		app: app, owner: owner, agentID: agentID,
 		auto:         autonomousApprovedSet(udb, agentID),
 		noUnattended: noUnattended,
 		sess:         sess,
@@ -134,8 +152,7 @@ func (app *OrchestrateApp) newAutonomousGate(owner, agentID string, sess *ToolSe
 // documents this split for the credential case ("tools enabled on the agent but
 // the scheduler can't call them"); this closes it for the rest.
 //
-// Attaching a tool to an agent IS the authorization — the same reasoning the
-// sub-agent bypass below already uses for a parent's toolset. What stays gated
+// Attaching a tool to an agent IS the authorization. What stays gated
 // is what the owner explicitly marked as gated, and outward-facing actions that
 // carry their own approval queue (a proactive send is still queued at the
 // channel layer, whatever this returns).
@@ -197,10 +214,16 @@ func credentialAlwaysConfirms(owner, cred string) bool {
 // worse, the reverse).
 //
 // The clauses, in the order they stop mattering: a tool the owner marked NEVER
-// UNATTENDED is refused outright; a SUB-AGENT runs under its parent's authority;
-// a PRE-AUTHORIZED tool was granted by the owner; and everything else runs
+// UNATTENDED is refused outright; a PRE-AUTHORIZED tool was granted by the
+// owner, on this agent or on any agent above it; and everything else runs
 // unless the credential it dispatches through is configured to ask before each
 // call. Attaching a tool to an agent IS the authorization.
+//
+// A sub-agent has no clause of its own. It used to pass every check below the
+// mark on the grounds that it ran under its parent's authority, but a model
+// can create a sub-agent, so that was a way to run a credential that asks
+// before every call with nobody asked. Its parent's authority is what the
+// approved set already carries: a grant on the parent covers the child.
 //
 // The default direction is what makes the first clause worth having. When a
 // rule allows almost everything, the useful thing to write down is the
@@ -209,15 +232,15 @@ func credentialAlwaysConfirms(owner, cred string) bool {
 // set Require-confirm on the CREDENTIAL: wrong scope (every agent and every user
 // of that credential), and unavailable at all to a tool that dispatches through
 // no credential, which is most of the ones worth worrying about.
-func autonomousToolAllowed(subAgent bool, approved, noUnattended map[string]bool, name string, alwaysConfirms func(string) bool) bool {
-	// The owner's own word, and it beats everything below it including the
-	// sub-agent bypass. A restriction a parent carries has to reach its
-	// children, or building a sub-agent is how you launder it: the same
-	// direction guardrails already inherit.
+func autonomousToolAllowed(approved, noUnattended map[string]bool, name string, alwaysConfirms func(string) bool) bool {
+	// The owner's own word, and it beats everything below it including a
+	// grant. A restriction a parent carries has to reach its children, or
+	// building a sub-agent is how you launder it: the same direction
+	// guardrails already inherit.
 	if noUnattended[name] {
 		return false
 	}
-	if subAgent || approved[name] {
+	if approved[name] {
 		return true
 	}
 	return !alwaysConfirms(name)
@@ -226,7 +249,7 @@ func autonomousToolAllowed(subAgent bool, approved, noUnattended map[string]bool
 // allows applies the rule to this gate's agent, with no side effects — the
 // predicting surfaces need the verdict without queueing anything.
 func (g *autonomousGate) allows(name string) bool {
-	return autonomousToolAllowed(g.subAgent, g.auto, g.noUnattended, name, g.alwaysConfirms)
+	return autonomousToolAllowed(g.auto, g.noUnattended, name, g.alwaysConfirms)
 }
 
 // autonomousApprovedSet is the union of an agent's AutoApproveTools and every
@@ -281,19 +304,14 @@ func autonomousNoUnattendedSet(udb Database, agentID string) map[string]bool {
 	return set
 }
 
-// confirm is the ConfirmFunc the agent loop calls for a NeedsConfirm tool. Returns
-// true when the tool may run unattended, else queues an approval and denies this
-// call.
+// confirm is the ConfirmFunc the agent loop calls for a NeedsConfirm tool, or
+// one the turn asks first about. Returns true when the tool may run unattended,
+// else queues an approval and denies this call.
 //
-// A SUB-AGENT runs under its PARENT's authority: the parent built it for a task and
-// chose its toolset, so its tools need no separate per-sub-agent approval — the
-// parent's act of creating it IS the authorization. Reaching BEYOND the parent (a
-// channel / recipient the parent isn't authorized for) is still flagged, but at the
-// send/channel layer (channelSenderAuthorized queues it), not here. A TOP-LEVEL
-// agent has no parent to vouch for it, so the owner is its direct authority — but
-// attaching the tool is how that authority is exercised, so what stays gated is
-// what the owner explicitly marked as gated. The rule itself is
-// autonomousToolAllowed; this is the half that has a queue to write to.
+// Attaching a tool is how the owner's authority is exercised, so what stays
+// gated is what the owner explicitly marked as gated, for a sub-agent as for
+// any other: what its parent was granted, it is granted too. The rule itself
+// is autonomousToolAllowed; this is the half that has a queue to write to.
 func (g *autonomousGate) confirm(name, args string) bool {
 	// Approved on a kept card and made by the turn the answer woke, which is
 	// a background run (approval_resume.go).
@@ -316,6 +334,15 @@ func (g *autonomousGate) confirm(name, args string) bool {
 		g.app.notifyToolWithheld(g.owner, g.agentID, name)
 		return false
 	}
+	// No agent behind the run (a scheduled machine, a pipeline stage): an
+	// approval would be a grant on nothing, and approving it would change
+	// nothing, so the call is refused: the step or the model is told it was
+	// not approved, and the log says why.
+	if strings.TrimSpace(g.agentID) == "" {
+		g.withheld = append(g.withheld, name)
+		Log("[orchestrate/autonomous] owner=%s withheld %q: it asks first, and an unattended run with no agent behind it has nobody to ask", g.owner, name)
+		return false
+	}
 	g.queue(name, args)
 	return false
 }
@@ -323,10 +350,10 @@ func (g *autonomousGate) confirm(name, args string) bool {
 // ownerAsksFirst reports whether the owner asked to be consulted before every
 // call of this tool (the tool's own ConfirmInChat, or the owner's ask mark for
 // this agent). With nobody watching, that is a queued approval, not a pass;
-// a sub-agent under its parent's authority, or a tool the owner approved for
-// unattended runs, is already answered.
+// a tool the owner approved for unattended runs, here or on an agent above
+// this one, is already answered.
 func (g *autonomousGate) ownerAsksFirst(name string) bool {
-	if g.subAgent || g.auto[name] {
+	if g.auto[name] {
 		return false
 	}
 	if tt, _ := toolForCall(g.sess, name); tt != nil && tt.ConfirmInChat {
@@ -342,12 +369,11 @@ func (g *autonomousGate) ownerAsksFirst(name string) bool {
 
 // writeWaitsForOwner reports whether this call changes something through a
 // credential that asks before writes, with nothing standing in for the
-// owner's answer: a sub-agent runs under its parent's, and a tool the owner
-// approved for unattended runs is already answered, as for a credential that
-// asks every time. Otherwise the call is queued for the owner, whoever sent
-// the message that started the run.
+// owner's answer: a tool the owner approved for unattended runs is already
+// answered, as for a credential that asks every time. Otherwise the call is
+// queued for the owner, whoever sent the message that started the run.
 func (g *autonomousGate) writeWaitsForOwner(name, args string) bool {
-	if g.subAgent || g.auto[name] {
+	if g.auto[name] {
 		return false
 	}
 	tt, action := toolForCall(g.sess, name)

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/snugforge/kvlite"
 )
 
 func privilegeRowByName(rows []privilegeGrant, name string) (privilegeGrant, bool) {
@@ -73,20 +74,29 @@ func TestRawNetworkToolRunsAndSaysSo(t *testing.T) {
 	}
 }
 
-// TestPrivilegeToolRowsSubAgent — a sub-agent carries its parent's authority,
-// so the card must not draw per-tool controls that would never fire.
+// TestPrivilegeToolRowsSubAgent: a sub-agent holds what was granted above it
+// and nothing more, as the gate reads it. Without a grant a tool whose
+// credential asks is an "ask" row, as for any agent; granted to the parent it
+// is "allow", and says where the grant lives.
 func TestPrivilegeToolRowsSubAgent(t *testing.T) {
-	sess := &ToolSession{Username: "u"}
+	db := &DBase{Store: kvlite.MemStore()}
+	sess := &ToolSession{Username: "u", DB: db}
+	if _, err := saveAgent(db, AgentRecord{ID: "parent-1", Owner: "u", Name: "Parent", OrchestratorPrompt: "p"}); err != nil {
+		t.Fatal(err)
+	}
 	bundled := []TempTool{{Name: "post_update", CommandTemplate: "curl x", Credential: "loud_api"}}
 	rec := AgentRecord{ID: "a2", Name: "Helper", OwnedBy: "parent-1", AllowedTools: []string{"post_update"}}
-	rows := privilegeToolRows(sess, rec, bundled)
-	if len(rows) != 1 || rows[0].Policy != "auto" {
-		t.Fatalf("sub-agent rows = %+v, want one auto row", rows)
+	if rows := privilegeToolRows(sess, rec, bundled); len(rows) != 1 || rows[0].Policy != "ask" {
+		t.Fatalf("an ungranted sub-agent tool = %+v, want one ask row", rows)
 	}
-	// The annotation is the REASON it doesn't stop, so it belongs only where the
-	// parent's authority is what's carrying it — a tool nothing was withholding
-	// isn't running "via parent", it's just running.
-	if want := "credential: loud_api - via parent"; rows[0].Detail != want {
+	if _, err := saveAgent(db, AgentRecord{ID: "parent-1", Owner: "u", Name: "Parent", OrchestratorPrompt: "p", AutoApproveTools: []string{"post_update"}}); err != nil {
+		t.Fatal(err)
+	}
+	rows := privilegeToolRows(sess, rec, bundled)
+	if len(rows) != 1 || rows[0].Policy != "allow" {
+		t.Fatalf("a tool granted to the parent = %+v, want one allow row", rows)
+	}
+	if want := "credential: loud_api - granted to its parent"; rows[0].Detail != want {
 		t.Errorf("detail = %q, want %q", rows[0].Detail, want)
 	}
 }

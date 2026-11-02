@@ -600,6 +600,9 @@ func registerOperatorWake(app *OrchestrateApp) {
 	// nickname rather than a real agent), fall back to the default channel
 	// agent so the monitor still works instead of erroring every interval.
 	RegisterEventPoller(func(ctx context.Context, owner, agentID, check string) (string, error) {
+		// A poll runs every interval with nobody there: its checker is held
+		// to its owner's gate, as a scheduled fire is.
+		ctx = withUnattended(ctx)
 		out, err := app.RunAgentSync(ctx, owner, owner, agentID, check)
 		if err != nil && strings.Contains(err.Error(), "not found") && agentID != defaultConsoleAgent {
 			Log("[operator.poll] checker %q not found: falling back to %s", agentID, defaultConsoleAgent)

@@ -70,3 +70,42 @@ func TestEveryHandOffKeepsTheChainsLimits(t *testing.T) {
 		t.Errorf("the lineage did not carry: %v", moved)
 	}
 }
+
+// Work handed to the background starts in a context of its own, and must
+// still be what it was: a stranger's request, run under the chain that handed
+// it on, with nobody watching if nobody was. A guardrail on the agent at the
+// top of that chain binds the agent at the bottom. The backgrounded
+// agents(run) carried only the requester, and a backgrounded pipeline or
+// machine carried nothing.
+func TestAHandOffToTheBackgroundKeepsWhatBindsIt(t *testing.T) {
+	udb := &DBase{Store: kvlite.MemStore()}
+	for _, a := range []AgentRecord{
+		{ID: "top", Owner: "u", Name: "Top", OrchestratorPrompt: "p", Guardrails: "Never name a customer."},
+		{ID: "mid", Owner: "u", Name: "Mid", OrchestratorPrompt: "p"},
+		{ID: "low", Owner: "u", Name: "Low", OrchestratorPrompt: "p"},
+	} {
+		if _, err := saveAgent(udb, a); err != nil {
+			t.Fatal(err)
+		}
+	}
+	from := withDispatchLineage(withUnattended(withNonOwnerRequester(context.Background(), "chan-1")), []string{"top", "mid"}, nil)
+	to := carryHandOff(from, context.Background())
+	if !nonOwnerRequester(to) || !isUnattended(to) {
+		t.Errorf("the hand-off lost who asked (%v) or that nobody is watching (%v)", nonOwnerRequester(to), isUnattended(to))
+	}
+	low, _ := loadAgent(udb, "low")
+	chain, _, err := handOffLineage(to, udb, low, "mid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chain) != 2 || chain[0] != "top" {
+		t.Fatalf("the chain above the hand-off was lost: %v", chain)
+	}
+	if bound := inheritChainGuardrails(udb, chain, low); !strings.Contains(bound.Guardrails, "Never name a customer.") {
+		t.Errorf("the top agent's guardrail does not bind the agent it reached through the background: %q", bound.Guardrails)
+	}
+	// A hand-off from a person's turn is not made unattended by carrying.
+	if isUnattended(carryHandOff(context.Background(), context.Background())) {
+		t.Error("carrying marked an attended hand-off unattended")
+	}
+}

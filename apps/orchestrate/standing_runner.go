@@ -45,6 +45,9 @@ func registerStandingRunner(app *OrchestrateApp) {
 // runStanding runs one fire of a standing agent; registerStandingRunner says
 // what it is for.
 func (T *OrchestrateApp) runStanding(ctx context.Context, sa StandingAgent) StandingRunResult {
+	// Nobody is watching a fire, and so nobody is watching what it starts:
+	// a pipeline's stages, a machine's steps, a run the agent hands on.
+	ctx = withUnattended(ctx)
 	// A pipeline target runs the pipeline, not an agent. Branch first:
 	// everything below this reads sa.AgentID, and for a pipeline
 	// schedule that is empty.
@@ -518,10 +521,12 @@ func runStandingPipeline(ctx context.Context, app *OrchestrateApp, sa StandingAg
 		stageTrace []PersistedToolCall
 	)
 	dispatch := func(c context.Context, agentID, stageInput string) (string, error) {
-		// Same auto-approving confirm RunAgentSync uses — this is the identical
-		// dispatch, just one that keeps the trace instead of discarding it.
-		stage, err := app.runAgentSyncConfirm(c, sa.Owner, sa.Owner, agentID, stageInput,
-			func(string, string) bool { return true })
+		// RunAgentSync's dispatch, keeping the trace instead of discarding it.
+		// No confirm of its own: the fire marked the context unattended, so
+		// each stage is held to its own agent's gate. These used to approve
+		// every call, so a schedule pointed at a pipeline ran what the same
+		// agent scheduled directly would have queued.
+		stage, err := app.runAgentSyncConfirm(c, sa.Owner, sa.Owner, agentID, stageInput, nil)
 		if len(stage.Trace) > 0 {
 			traceMu.Lock()
 			stageTrace = append(stageTrace, stage.Trace...)

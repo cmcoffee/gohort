@@ -453,8 +453,9 @@ func (t *chatTurn) runDetachedPipeline(d *ToolSession, def PipelineDef, msg stri
 	// The detached session's context, NOT the turn's: t.ctx was cancelled when
 	// the turn that handed this off ended, and a warden call on a dead context
 	// fails the check instead of running it. Everything here that touches a
-	// model gets d.Context() for the same reason.
-	ctx := d.Context()
+	// model gets d.Context() for the same reason. What the turn's context
+	// carried that binds the work is put back on it (carryHandOff).
+	ctx := carryHandOff(t.ctx, d.Context())
 	if err := t.guardPipelineInput(ctx, def, msg); err != nil {
 		return "", err
 	}

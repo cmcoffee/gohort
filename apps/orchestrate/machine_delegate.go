@@ -93,8 +93,8 @@ type unattendedRun struct {
 //
 //   - No approval gate. There is nobody to ask, so a step reaching a tool that
 //     needs confirmation is governed by the autonomous pre-authorization the run
-//     door applies, not by a prompt nobody would see. PhaseWorkerConfirm reads a
-//     nil gate the same way.
+//     door applies, not by a prompt nobody would see: the owner's gate when the
+//     run is unattended, approval when a person started it (stepConfirm).
 //   - No prior-work ledger. That feeds the end-of-turn judge, which is a
 //     property of a reply to a person.
 //   - Narration is the run's, not the turn's: a streaming run panel gets status

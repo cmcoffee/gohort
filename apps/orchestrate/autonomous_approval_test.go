@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"strings"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -49,17 +50,117 @@ func TestRemoveAutoApproveTool(t *testing.T) {
 	removeAutoApproveTool(db, "missing", "a")
 }
 
-func TestAutonomousGateSubAgentAuthority(t *testing.T) {
-	// A sub-agent runs under the parent's authority — its NeedsConfirm tools
-	// auto-approve without a per-sub-agent grant.
-	sub := &autonomousGate{subAgent: true}
-	if !sub.confirm("fetch_url_x", "") {
-		t.Error("sub-agent should auto-approve a tool under the parent's authority")
+// unattendedGateFixture is an owner with a credential that asks before every call, a
+// parent agent and its sub-agent, and the stores a refusal is queued in.
+func unattendedGateFixture(t *testing.T) (*OrchestrateApp, Database, *ToolSession) {
+	t.Helper()
+	store := &DBase{Store: kvlite.MemStore()}
+	prevAuth, prevRoot := AuthDB, RootDB
+	AuthDB = func() Database { return store }
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { AuthDB, RootDB = prevAuth, prevRoot })
+	if err := Secure().Save(SecureCredential{Name: "bank", Type: SecureCredBearer, BaseURL: "https://bank.example", RequiresConfirm: true}, "k"); err != nil {
+		t.Fatal(err)
 	}
-	// A top-level agent keeps the explicit gate: only a pre-authorized tool runs.
-	top := &autonomousGate{subAgent: false, auto: map[string]bool{"granted_tool": true}}
-	if !top.confirm("granted_tool", "") {
-		t.Error("top-level should allow a pre-authorized tool")
+	app := &OrchestrateApp{AppCore: AppCore{DB: &DBase{Store: kvlite.MemStore()}}}
+	udb := UserDB(app.DB, "alice")
+	for _, a := range []AgentRecord{
+		{ID: "p", Owner: "alice", Name: "Parent", OrchestratorPrompt: "p"},
+		{ID: "c", Owner: "alice", Name: "Child", OrchestratorPrompt: "c", OwnedBy: "p"},
+	} {
+		if _, err := saveAgent(udb, a); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sess := &ToolSession{Username: "alice"}
+	sess.TempTools = []*TempTool{{Name: "asks", Mode: TempToolModeShell, ConfirmInChat: true}, {Name: "plain", Mode: TempToolModeShell}}
+	return app, udb, sess
+}
+
+// autonomousQueuedFor is the autonomous-tool approvals waiting on alice for agentID.
+func autonomousQueuedFor(agentID string) []string {
+	var out []string
+	for _, a := range ListAuthorizations(RootDB, "alice") {
+		if a.Action == "autonomous_tool" && a.Agent == agentID {
+			out = append(out, a.Brief)
+		}
+	}
+	return out
+}
+
+// A sub-agent is held to the gate as its parent is. It used to pass every
+// check but the never-unattended mark on its parent's authority, and a model
+// can create a sub-agent, so that was how to run a credential that asks
+// before every call, or a tool the owner asked to be asked about, with nobody
+// asked. What the parent was granted, the child may do.
+func TestASubAgentIsHeldToTheGate(t *testing.T) {
+	app, udb, sess := unattendedGateFixture(t)
+	g := app.newAutonomousGate("alice", "c", sess)
+	if g.confirm("fetch_url_bank", "url: https://bank.example/pay") {
+		t.Error("a sub-agent ran a call its credential asks about, with nobody asked")
+	}
+	if g.confirm("asks", "") {
+		t.Error("a sub-agent ran a tool that asks first, with nobody asked")
+	}
+	if !g.confirm("plain", "") {
+		t.Error("an ordinary tool was stopped: the default is still allow")
+	}
+	if q := autonomousQueuedFor("c"); len(q) != 2 {
+		t.Errorf("the refusals were not queued for the owner: %v", q)
+	}
+
+	// Granted to the parent, they run for the child.
+	parent, _ := loadAgent(udb, "p")
+	parent.AutoApproveTools = []string{"fetch_url_bank", "asks"}
+	if _, err := saveAgent(udb, parent); err != nil {
+		t.Fatal(err)
+	}
+	g = app.newAutonomousGate("alice", "c", sess)
+	if !g.confirm("fetch_url_bank", "url: https://bank.example/pay") || !g.confirm("asks", "") {
+		t.Error("a grant on the parent did not reach its sub-agent")
+	}
+}
+
+// A run with no agent behind it (a scheduled machine) refuses what asks
+// first and queues nothing: an approval would be a grant on no agent, which
+// approving could not turn into anything.
+func TestARunWithNoAgentRefusesWithoutQueueing(t *testing.T) {
+	app, _, sess := unattendedGateFixture(t)
+	g := app.newAutonomousGate("alice", "", sess)
+	if g.confirm("fetch_url_bank", "url: https://bank.example/pay") {
+		t.Error("an agentless run ran a call its credential asks about")
+	}
+	if q := autonomousQueuedFor(""); len(q) != 0 {
+		t.Errorf("an approval nothing could grant was queued: %v", q)
+	}
+	if g.blocked() != "fetch_url_bank" {
+		t.Errorf("the refusal left no trace for the run's record: %q", g.blocked())
+	}
+}
+
+// On an unattended run the turn sends a never-unattended tool to the gate,
+// whether or not the tool asks on its own; with a person there it does not.
+func TestTheNeverUnattendedMarkReachesTheGate(t *testing.T) {
+	app, udb, _ := unattendedGateFixture(t)
+	rec, _ := loadAgent(udb, "p")
+	rec.NoUnattendedTools = []string{"web_search"}
+	if _, err := saveAgent(udb, rec); err != nil {
+		t.Fatal(err)
+	}
+	g := app.newAutonomousGate("alice", "c", nil)
+	turn := &chatTurn{user: "alice", agent: AgentRecord{ID: "c"}}
+	if turn.asksFirst("web_search") {
+		t.Fatal("a turn with a person there asked about an unmarked-for-chat tool")
+	}
+	turn.neverUnattended = g.neverUnattended
+	if !turn.asksFirst("web_search") {
+		t.Error("an unattended turn let a never-unattended tool past the gate")
+	}
+	if turn.asksFirst("fetch_url") {
+		t.Error("an unmarked tool was sent to the gate")
+	}
+	if g.confirm("web_search", "") {
+		t.Error("the gate ran a tool marked never unattended")
 	}
 }
 
@@ -269,5 +370,32 @@ func TestExistingBypassesStillHold(t *testing.T) {
 	}
 	if !gateFor(app, "u", "s").confirm("anything", "{}") {
 		t.Error("a sub-agent must still run under its parent's authority")
+	}
+}
+
+// Every door a run nobody is watching comes in by marks its context, so what
+// it starts (a pipeline's stages, a machine's steps, a hand-off) is held to
+// the owner's gate. Each of these is otherwise a run under which RunAgentSync
+// approves every call.
+func TestEveryUnattendedDoorMarksItsContext(t *testing.T) {
+	for _, c := range []struct{ file, header string }{
+		{"standing_runner.go", "func (T *OrchestrateApp) runStanding("},
+		{"scheduled_updates.go", "func fireOrchestrateUpdate("},
+		{"agent_dispatch.go", "func (T *OrchestrateApp) RunAgentSyncContinuingRich("},
+	} {
+		if !strings.Contains(funcBody(t, readFile(t, c.file), c.header), "withUnattended(") {
+			t.Errorf("%s: %s does not mark its run unattended", c.file, c.header)
+		}
+	}
+	poll := readFile(t, "operator_wake.go")
+	i := strings.Index(poll, "RegisterEventPoller(func(")
+	if i < 0 || !strings.Contains(poll[i:i+600], "withUnattended(") {
+		t.Error("the poll checker does not mark its run unattended")
+	}
+	// And the recurring fire's loop consults the owner's ask marks, which it
+	// did not, so an ask mark on a tool that asks nothing of its own meant
+	// nothing on a schedule.
+	if !strings.Contains(funcBody(t, readFile(t, "scheduled_updates.go"), "func (fr *fireRun) runLoop("), "AskFirst:") {
+		t.Error("the recurring fire's loop has no AskFirst")
 	}
 }

@@ -27,7 +27,17 @@ import (
 // this agent's mark, the fleet-wide one, or the mark of any agent that handed
 // this run over (askChain).
 func (t *chatTurn) asksFirst(name string) bool {
-	if t == nil || AuthDB == nil || strings.TrimSpace(name) == "" {
+	if t == nil || strings.TrimSpace(name) == "" {
+		return false
+	}
+	// On an unattended run a tool marked never unattended goes to the gate
+	// too. The loop asks the gate only about the calls this says yes to and
+	// the NeedsConfirm ones, so a mark on a tool that asks nothing on its own
+	// (web_search) was refused by a gate that was never consulted.
+	if t.neverUnattended != nil && t.neverUnattended(name) {
+		return true
+	}
+	if AuthDB == nil {
 		return false
 	}
 	db := AuthDB()

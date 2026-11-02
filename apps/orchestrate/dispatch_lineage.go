@@ -63,6 +63,21 @@ func carryDispatchLineage(from, to context.Context) context.Context {
 	return withDispatchLineage(to, chain, origin)
 }
 
+// carryHandOff puts on to everything a hand-off owes the run it starts in a
+// context of its own (a detached session's): whether a non-owner asked, the
+// chain it runs under, with that chain's dispatch limits and guardrails, and
+// whether anybody is watching. A backgrounded agents(run), pipeline or machine
+// carried only the first, or nothing, so handing work to the background was
+// the way out from under the agent above it.
+func carryHandOff(from, to context.Context) context.Context {
+	to = carryNonOwnerRequester(from, to)
+	to = carryDispatchLineage(from, to)
+	if isUnattended(from) {
+		to = withUnattended(to)
+	}
+	return to
+}
+
 // agentAuthority is what an agent's own dispatch policy allows, as the root
 // of a chain.
 func agentAuthority(a AgentRecord) *dispatchAuthority {

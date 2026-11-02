@@ -563,13 +563,13 @@ func (t *chatTurn) dispatchContextBlocks() string {
 // this run and whoever dispatched that one — so the target can reach the
 // channels its dispatcher reaches. Omit it for a run with no dispatching parent
 // (a schedule, a monitor wake): the target then keeps its own scope.
+//
+// Who approves its tool calls depends on who is watching, which ctx says: a
+// run a person started approves them as before, and a run under an unattended
+// one (a pipeline stage of a 3am fire, a poll check) is held to its owner's
+// gate (holdUnattended).
 func (T *OrchestrateApp) RunAgentSync(ctx context.Context, agentOwner, runtimeUser, agentKey, message string, via ...string) (string, error) {
-	// Dispatch sub-agents auto-approve tool calls — a parent agent (with a
-	// human behind it) initiated the dispatch. Standing/autonomous runs must
-	// NOT auto-approve; they call runAgentSyncConfirm with a deny-by-default
-	// confirm so high-consequence tools route through approval instead.
-	res, err := T.runAgentSyncConfirm(ctx, agentOwner, runtimeUser, agentKey, message,
-		func(string, string) bool { return true }, via...)
+	res, err := T.runAgentSyncConfirm(ctx, agentOwner, runtimeUser, agentKey, message, nil, via...)
 	return res.Text, err
 }
 
@@ -652,6 +652,7 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 	defer bankScopedSpend(sd.ctx, spendOwner(sd.target, sd.agentOwner), sd.target) // the same tracker, banked per agent (agent_spend.go)
 	sd.buildToolkit()
 	sd.buildTurn()
+	sd.holdUnattended()
 	sd.buildPrompt()
 	sd.enterMachine()
 	sd.prepareInput()
@@ -1043,6 +1044,24 @@ func (sd *syncDispatch) buildTurn() {
 	// reached the LLM and removes the network-capable subset in one
 	// pass. No-op when ForcePrivate is false.
 	sd.ctx, sd.tools = applyForcePrivateToDispatch(sd.ctx, sd.subSess, sd.tools, sd.target)
+}
+
+// holdUnattended settles who approves this run's tool calls. A caller that
+// passed a confirm keeps it. One that passed none gets the owner's gate when
+// the run is unattended, and approval of every call when a person started it,
+// which is what RunAgentSync always did. Either way an unattended run's
+// never-unattended marks reach the gate through the turn's ask-first check.
+func (sd *syncDispatch) holdUnattended() {
+	if isUnattended(sd.ctx) {
+		gate := sd.T.newAutonomousGate(sd.agentOwner, sd.target.ID, sd.subSess)
+		sd.subTurn.neverUnattended = gate.neverUnattended
+		if sd.confirm == nil {
+			sd.confirm = gate.confirm
+		}
+	}
+	if sd.confirm == nil {
+		sd.confirm = func(string, string) bool { return true }
+	}
 }
 
 func (sd *syncDispatch) buildPrompt() {
@@ -1602,7 +1621,9 @@ func (T *OrchestrateApp) RunAgentSyncContinuing(ctx context.Context, agentOwner,
 // back is parked by exit for this method to return. The defers stay here,
 // registered in the order they always were.
 func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run AgentSyncRun) (AgentSyncResult, error) {
-	cr := &continuingRun{T: T, ctx: ctx, run: run}
+	// Nobody is watching a continuing run (see its gate below), so what it
+	// starts in turn is held the same way.
+	cr := &continuingRun{T: T, ctx: withUnattended(ctx), run: run}
 	if !cr.admit() {
 		return cr.ret, cr.retErr
 	}
@@ -2294,6 +2315,8 @@ func (cr *continuingRun) configureLoop() {
 	think = chainThink(cr.ctx, think)       // ...unless a caller is waiting on the line
 	cr.subTurn.noteMountedTools(cr.tools)
 	dispatchPin, dispatchRoute := dispatchRouting(cr.ctx, cr.subTurn)
+	gate := T.newAutonomousGate(cr.agentOwner, cr.target.ID, cr.subSess)
+	cr.subTurn.neverUnattended = gate.neverUnattended
 	cr.loopCfg = AgentLoopConfig{
 		TierOverride:  dispatchPin,
 		SendGuardKey:  sendGuardKey,
@@ -2315,7 +2338,10 @@ func (cr *continuingRun) configureLoop() {
 		// writes" asks about is queued for the owner rather than let through.
 		// This used to approve everything, which left every one of those
 		// settings without effect on exactly the runs a stranger can start.
-		Confirm:             T.newAutonomousGate(cr.agentOwner, cr.target.ID, cr.subSess).confirm,
+		Confirm: gate.confirm,
+		// And what the owner asked to be asked about first, which this loop
+		// never consulted, so an ask mark meant nothing on a channel turn.
+		AskFirst:            cr.subTurn.asksFirst,
 		GuardrailCheck:      cr.subTurn.guardrailEnforcer().Check,
 		GuardrailActionGate: cr.subTurn.guardrailEnforcer().ActionGate,
 		GuardrailHalted:     cr.subTurn.guardrailEnforcer().Halted,

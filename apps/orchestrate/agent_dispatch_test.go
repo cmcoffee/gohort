@@ -929,3 +929,56 @@ func TestTheCaptionCacheStaysBounded(t *testing.T) {
 		t.Error("an expired caption should not be served")
 	}
 }
+
+// markNeverUnattended marks the fixture agent's lookup tool never to run with
+// nobody watching. lookup_order asks nothing on its own, so the mark reaching
+// it is also the proof that the gate is consulted for a tool that does not.
+func (df *dispatchFixture) markNeverUnattended() {
+	df.t.Helper()
+	df.agent.NoUnattendedTools = []string{"lookup_order"}
+	a, err := saveAgent(df.udb, df.agent)
+	if err != nil {
+		df.t.Fatal(err)
+	}
+	df.agent = a
+}
+
+// A hand-off made under an unattended run (a pipeline stage of a scheduled
+// fire, a poll check) is held to its owner's gate; the same hand-off made by
+// a person approves as it always did. RunAgentSync used to approve every
+// call whoever was watching.
+func TestAnUnattendedHandOffIsHeldToTheOwnersGate(t *testing.T) {
+	for _, c := range []struct {
+		name       string
+		unattended bool
+		ran        bool
+	}{{"a person started it", false, true}, {"nobody is watching", true, false}} {
+		t.Run(c.name, func(t *testing.T) {
+			df := newDispatchFixture(t, lookupCall("A17"), FakeTurn{Content: "Order A17 shipped.", Repeat: true})
+			df.markNeverUnattended()
+			ctx := t.Context()
+			if c.unattended {
+				ctx = withUnattended(ctx)
+			}
+			if _, err := df.app.runAgentSyncAppTools(ctx, "u", "u", df.agent.ID, "Where is A17?", nil, []AgentToolDef{df.lookupTool()}, nil); err != nil {
+				t.Fatal(err)
+			}
+			if ran := len(df.looked) == 1; ran != c.ran {
+				t.Errorf("the marked tool ran=%v, want %v", ran, c.ran)
+			}
+		})
+	}
+}
+
+// A channel turn or a monitor wake is unattended: what the owner marked never
+// unattended does not run there, though the tool asks nothing on its own.
+// This loop had the gate as its confirm and no ask-first at all, so the gate
+// was only ever asked about tools that declare NeedsConfirm.
+func TestAContinuingRunHonoursTheOwnersMarks(t *testing.T) {
+	df := newDispatchFixture(t, lookupCall("A17"), FakeTurn{Content: "Order A17 shipped.", Repeat: true})
+	df.markNeverUnattended()
+	df.run(AgentSyncRun{SubSessionID: "thread-1", Message: "Where is A17?"})
+	if len(df.looked) != 0 {
+		t.Errorf("a tool marked never unattended ran on a channel turn: %v", df.looked)
+	}
+}

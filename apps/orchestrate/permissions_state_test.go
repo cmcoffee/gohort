@@ -93,9 +93,9 @@ func TestBlockingAToolReachesTheRunner(t *testing.T) {
 		t.Error("the gate's own set does not carry the mark")
 	}
 	// And it refuses, ahead of every other clause.
-	if autonomousToolAllowed(true, map[string]bool{"send_email": true},
+	if autonomousToolAllowed(map[string]bool{"send_email": true},
 		autonomousNoUnattendedSet(udb, "a"), "send_email", func(string) bool { return false }) {
-		t.Error("a marked tool ran anyway; the mark has to beat both the sub-agent bypass and a standing grant")
+		t.Error("a marked tool ran anyway; the mark has to beat a standing grant")
 	}
 
 	// Moving off block clears the mark, or the two lists disagree and the
@@ -193,16 +193,15 @@ func TestARestrictionInheritsDownTheChain(t *testing.T) {
 			t.Errorf("%s does not carry the mark its parent was given", id)
 		}
 	}
-	// And the sub-agent bypass does not launder it. That bypass exists because
-	// the parent chose the child's toolset, which is precisely why a limit the
-	// parent carries has to come with it.
+	// And a grant does not launder it: a limit the parent carries comes with
+	// the child, granted or not.
 	marks := autonomousNoUnattendedSet(udb, "grandchild")
-	if autonomousToolAllowed(true, nil, marks, "send_email", func(string) bool { return false }) {
+	if autonomousToolAllowed(map[string]bool{"send_email": true}, marks, "send_email", func(string) bool { return false }) {
 		t.Error("a sub-agent ran a tool its ancestor was marked never to run unattended")
 	}
 	// A tool nobody marked is unaffected: this is an exception list, not an
 	// allow-list wearing a different name.
-	if !autonomousToolAllowed(false, nil, marks, "web_search", func(string) bool { return false }) {
+	if !autonomousToolAllowed(nil, marks, "web_search", func(string) bool { return false }) {
 		t.Error("an unmarked tool was refused; the default is still allow")
 	}
 }
@@ -227,7 +226,7 @@ func TestAnInertGrantIsNotAPermission(t *testing.T) {
 		t.Fatal("a framework tool with no credential is being treated as confirming")
 	}
 	rec, _ := loadAgent(udb, "a")
-	if !autonomousToolAllowed(false, nil, nil, "recall", func(n string) bool { return toolAlwaysConfirms(udb, "alice", nil, n) }) {
+	if !autonomousToolAllowed(nil, nil, "recall", func(n string) bool { return toolAlwaysConfirms(udb, "alice", nil, n) }) {
 		t.Error("recall is refused unattended, which would make its grant load-bearing after all")
 	}
 	if len(rec.AutoApproveTools) != 2 {

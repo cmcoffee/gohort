@@ -104,3 +104,30 @@ func TestAnUnattendedRunHonoursReachNone(t *testing.T) {
 		t.Errorf("a transient step that named nothing was handed %d tools", len(got))
 	}
 }
+
+// A machine with nobody to ask approves its steps' calls when a person
+// started it, and holds them to the owner's gate when nobody is watching (a
+// scheduled machine). It used to approve them either way.
+func TestAnUnattendedMachineStepIsHeldToTheGate(t *testing.T) {
+	app, _, _ := unattendedGateFixture(t)
+	h := app.unattendedHost(unattendedRun{User: "alice"})
+	if h.stepConfirm(context.Background()) != nil {
+		t.Error("a run a person started got a gate in place of approval")
+	}
+	confirm := h.stepConfirm(withUnattended(context.Background()))
+	if confirm == nil {
+		t.Fatal("an unattended machine step approves everything")
+	}
+	if confirm("fetch_url_bank", "url: https://bank.example/pay") {
+		t.Error("an unattended step ran a call its credential asks about")
+	}
+	if !confirm("plain", "") {
+		t.Error("an ordinary call was stopped")
+	}
+	// A step has no session; a stored tool's own ask-first still reaches the
+	// gate, through the owner's marks (UserToolAsksInChat reads the flag).
+	RootDB.Set("persistent_temp_tools", "alice", []PersistentTempTool{{Tool: TempTool{Name: "stored_asks", Mode: TempToolModeShell, ConfirmInChat: true}}})
+	if confirm("stored_asks", "") {
+		t.Error("an unattended step ran a stored tool that asks first")
+	}
+}

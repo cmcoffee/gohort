@@ -1980,10 +1980,10 @@ func (t *chatTurn) agentsDispatchPolicy(allowRun bool) DetachPolicy {
 			// be mutated from a goroutine racing the turn that owns them. This
 			// path is the one channels and scheduled fires already use, and it
 			// builds its own session, run and catalog with no parent turn.
-			// The detached session's context is its own, so the requester is
-			// carried across by hand: a handoff must not launder a non-owner's
-			// request into one the owner made (authoring_requester.go).
-			runCtx := carryNonOwnerRequester(t.ctx, d.Context())
+			// The detached session's context is its own, so what the hand-off
+			// owes is carried across by hand: a non-owner's request stays one
+			// (authoring_requester.go), and the chain above still binds it.
+			runCtx := carryHandOff(t.ctx, d.Context())
 			// What it was handed, resolved against what the turn held.
 			handed, handedNote, herr := handOut(d, t.agent.Name, stringSliceFromArgs(args, "attach"))
 			if herr != nil {

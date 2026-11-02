@@ -122,6 +122,10 @@ type chatTurn struct {
 	// askChain is the agents that handed this run over, nearest last: their
 	// ask-before-every-call marks bind this run too (ask_first.go).
 	askChain []string
+	// neverUnattended is the owner's never-unattended marks, set only on a
+	// run nobody is watching: asksFirst sends such a call to the run's gate,
+	// which refuses it. nil on a turn with a person present.
+	neverUnattended func(string) bool
 	// askConversation is the conversation a handed-over run answers to, for
 	// a run with no session of its own: an "Allow for this session" given
 	// there covers it too (ask_first.go).
