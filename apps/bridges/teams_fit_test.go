@@ -11,7 +11,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/teamsbots"
 	"github.com/cmcoffee/snugforge/jwcrypt"
 )
 
@@ -28,7 +28,7 @@ func TestABotTokenMustFitItsActivity(t *testing.T) {
 			b64(k.N.Bytes()), b64(big.NewInt(int64(k.E)).Bytes()))
 	}))
 	defer keys.Close()
-	v := BotFrameworkVerifier()
+	v := teamsbots.Verifier()
 	prev := v.JWKSURL
 	v.JWKSURL = keys.URL
 	t.Cleanup(func() { v.JWKSURL = prev })
@@ -37,19 +37,18 @@ func TestABotTokenMustFitItsActivity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	T := &Bridges{}
 	ctx := context.Background()
 	act := botActivity{ServiceURL: "https://smba.trafficmanager.net/amer/", ChannelID: "msteams"}
 
-	if err := T.botTokenFitsActivity(ctx, tok, jwcrypt.Claims{"serviceurl": "https://smba.trafficmanager.net/amer"}, act); err != nil {
+	if err := botTokenFitsActivity(ctx, tok, jwcrypt.Claims{"serviceurl": "https://smba.trafficmanager.net/amer"}, act); err != nil {
 		t.Errorf("a fitting token was refused: %v", err)
 	}
-	if err := T.botTokenFitsActivity(ctx, tok, jwcrypt.Claims{"serviceurl": "https://elsewhere.example/"}, act); err == nil {
+	if err := botTokenFitsActivity(ctx, tok, jwcrypt.Claims{"serviceurl": "https://elsewhere.example/"}, act); err == nil {
 		t.Error("a token for another serviceUrl carried this activity")
 	}
 	other := act
 	other.ChannelID = "webchat"
-	if err := T.botTokenFitsActivity(ctx, tok, jwcrypt.Claims{}, other); err == nil {
+	if err := botTokenFitsActivity(ctx, tok, jwcrypt.Claims{}, other); err == nil {
 		t.Error("a key endorsed for msteams signed a webchat activity")
 	}
 }

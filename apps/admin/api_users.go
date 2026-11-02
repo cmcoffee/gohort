@@ -52,6 +52,11 @@ func (a *AdminApp) registerUsersRoutes(sub *http.ServeMux) {
 		"PUT":   jsonapi.Put(a.db, a.handlePersonalIntegrationsSave, a.gate(), jsonapi.MaxBody(1<<16)),
 		"PATCH": jsonapi.Patch(a.db, a.handlePersonalIntegrationsSave, a.gate(), jsonapi.MaxBody(1<<16)),
 	}.Serve)
+	sub.HandleFunc("/api/personal-teams-bots", jsonapi.Methods{
+		"GET":    jsonapi.Get(a.db, a.handlePersonalTeamsBots, a.gate()),
+		"POST":   jsonapi.Post(a.db, a.handlePersonalTeamsBotAction, a.gate()),
+		"DELETE": jsonapi.Delete(a.db, a.handlePersonalTeamsBotDelete, a.gate()),
+	}.Serve)
 	sub.HandleFunc("/api/personal-mcp-servers", jsonapi.Methods{
 		"GET":    jsonapi.Get(a.db, a.handlePersonalMCPServers, a.gate()),
 		"POST":   jsonapi.Post(a.db, a.handlePersonalMCPServerAction, a.gate()),

@@ -134,7 +134,7 @@ const (
 	// and the peer_relay connector kind in one file, for the same reason: the
 	// serving half needs peerAuthorize and peerHold, the consuming half the
 	// connector registry, isPublicRequest and the dashboard handler.
-	coreFileCeiling = 200
+	coreFileCeiling = 199
 
 	// coreExportCeiling is the number of exported top-level symbols — funcs,
 	// types, vars, consts. Methods are excluded because they are not what

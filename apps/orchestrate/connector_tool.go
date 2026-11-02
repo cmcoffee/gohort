@@ -104,42 +104,10 @@ lives in one governed surface (Admin > Connectors). These kinds ship:
   does not know. Templates (Admin > Extensions > Templates) can install whole
   bridges like this as data.
 
-  bot_framework: gohort as a real Microsoft Teams BOT rather than a reader of
-  one channel. It answers 1:1 DMs, group chats and channel @mentions, and
-  replies under the bot's own identity. Reach for this when rest_messaging's
-  teams preset cannot deliver: Microsoft Graph's application permissions can
-  read channel messages (behind a protected-API gate) but cannot SEND them, so
-  an app-only Graph bridge receives and then fails to answer.
-
-  Needs, on the Microsoft side: an Entra app registration, an Azure Bot resource
-  whose Messaging endpoint points at /bridges/api/bot/<connector-name> on this
-  deployment's PUBLIC https URL (or, for an instance that can only dial out, on
-  a peer_relay connector's relay address), its Teams channel enabled, and a Teams app
-  manifest naming the same app id installed in the tenant. The Azure resources
-are a registration, not hosting (gohort still runs where it runs), and the
-  free tier covers Teams.
-
-  Needs, here: app_id (the registration's application id; public, it is the
-  token audience) and credential: a SecureAPI oauth2 credential using the
-  client_credentials grant, token url
-  https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token, scope
-  https://api.botframework.com/.default, and a BASE URL of
-  https://smba.trafficmanager.net with an EMPTY endpoint list. That base is
-  load-bearing: replies go to a per-conversation serviceUrl whose region is a
-  path segment under that host, so a narrower allow-list makes every reply fail
-  on our side rather than Microsoft's. Approval checks it and refuses with the
-  fix.
-
-  Optional: accept_channel_types to limit which surfaces route, reply_in_thread
-  to thread channel replies, tenant_id to pin a single-tenant bot. Inbound is
-  authenticated per request against Microsoft's published signing keys; there is
-  no shared secret to set and no subscription to renew, unlike webhook_provider
-  ="graph". Created UNAPPROVED: an admin approves it in Admin > Connectors.
-
   peer_relay: inbound webhooks for an instance with NO public address. It
   holds a connection OUT to a registered peer (Admin > Capabilities > Peers)
   whose key grants Inbound relay, and what providers send to the peer's relay
-  address is answered here. Use it when a bot_framework or webhook bridge needs
+  address is answered here. Use it when a webhook bridge needs
   an address this instance cannot offer. Needs: peer (the registered peer's
   name). Only routes that authenticate their provider themselves are reachable
   through it (the Bridges bot and webhook doors); nothing else here is. Once
@@ -169,7 +137,7 @@ Typical flow for a calendar:
 	gt.AddAction("create", &GroupedToolAction{
 		Description: "Declare a new connector (bridge type). remote_mcp is created UNAPPROVED (admin approves in Admin > Connectors); rest_poll goes live immediately (it uses an already-approved credential).",
 		Params: map[string]ToolParam{
-			"kind":                 {Type: "string", Enum: []string{RemoteMCPConnectorKind, RestPollConnectorKind, DesktopMCPConnectorKind, DesktopCommandConnectorKind, MessagingBridgeConnectorKind, RestMessagingConnectorKind, BotFrameworkConnectorKind, PeerRelayConnectorKind, service.Kind}, Description: "The bridge type. remote_mcp = a remote MCP server whose tools register as <name>.<tool>. rest_poll = poll one authenticated URL every N minutes and wake an agent when it changes. desktop_mcp = run a LOCAL MCP server (subprocess) on the user's OWN machine. desktop_command = run a fixed local command (with {placeholder} args) as one tool on the user's machine: the lightweight option. messaging_bridge = enable a built-in messaging relay (iMessage) on the user's device so their chats route to agents. rest_messaging = a server-side two-sided messaging bridge for a REST-pollable service (Teams/Slack/Discord) via a SecureAPI credential: use preset=\"teams\" for the canned Graph mapping. bot_framework = gohort as a real Microsoft Teams BOT (Azure Bot registration): answers DMs, group chats and channel @mentions and replies under its own identity, the one that works when Graph app-only sending does not. service = a REST service kept as a connection, from service_spec: an image backend among them (Automatic1111: the a1111 builtin, see service_spec; ComfyUI: action=import_comfyui). peer_relay = inbound webhooks via a peer's public address. Created UNAPPROVED."},
+			"kind":                 {Type: "string", Enum: []string{RemoteMCPConnectorKind, RestPollConnectorKind, DesktopMCPConnectorKind, DesktopCommandConnectorKind, MessagingBridgeConnectorKind, RestMessagingConnectorKind, PeerRelayConnectorKind, service.Kind}, Description: "The bridge type. remote_mcp = a remote MCP server whose tools register as <name>.<tool>. rest_poll = poll one authenticated URL every N minutes and wake an agent when it changes. desktop_mcp = run a LOCAL MCP server (subprocess) on the user's OWN machine. desktop_command = run a fixed local command (with {placeholder} args) as one tool on the user's machine: the lightweight option. messaging_bridge = enable a built-in messaging relay (iMessage) on the user's device so their chats route to agents. rest_messaging = a server-side two-sided messaging bridge for a REST-pollable service (Teams/Slack/Discord) via a SecureAPI credential: use preset=\"teams\" for the canned Graph mapping. peer_relay = inbound webhooks via a peer's public address. Created UNAPPROVED."},
 			"name":                 {Type: "string", Description: "Short unique id (letters/digits/underscore/dash), e.g. \"gcal\". Namespaces the capability's tools."},
 			"url":                  {Type: "string", Description: "(remote_mcp) the MCP server's https endpoint. (rest_poll) the full URL to poll each interval."},
 			"auth_mode":            {Type: "string", Enum: []string{"none", "secure_api", "oauth"}, Description: "(remote_mcp) How the server authenticates. none = public; secure_api = mint a bearer from a registered SecureAPI credential (set secure_cred); oauth = per-user hosted login. NEVER pass a static token."},
@@ -199,12 +167,7 @@ Typical flow for a calendar:
 			"send_body":            {Type: "string", Description: "(rest_messaging) JSON body template for a reply; {text} and {chat_id} are substituted and JSON-escaped."},
 			"chat_id_const":        {Type: "string", Description: "(rest_messaging, optional) a FIXED chat id for every message, for services whose messages omit their conversation id (Slack). Takes precedence over map.chat_id."},
 			"more_url_path":        {Type: "string", Description: "(rest_messaging, optional) response dot-path to a complete next-page URL followed within a tick until absent (Graph \"@odata.nextLink\")."},
-			"app_id":               {Type: "string", Description: "(bot_framework) the Entra application (client) id of the Azure Bot registration. Public, not a secret: it is the audience every inbound activity token must carry, which is what separates this deployment's traffic from every other bot the same issuer signs for."},
-			"tenant_id":            {Type: "string", Description: "(bot_framework, optional) pin a single-tenant bot to one tenant. Omit for a multi-tenant bot."},
-			"service_host":         {Type: "string", Description: "(bot_framework, optional) the host replies are sent to (default https://smba.trafficmanager.net, which covers every public-cloud region, the region is a path segment). Set only for a sovereign cloud. The connector's credential must be allowed to reach it, which is checked at approval."},
-			"reply_in_thread":      {Type: "boolean", Description: "(bot_framework, optional) thread a channel reply under the message that triggered it instead of posting at the conversation root."},
 			"peer":                 {Type: "string", Description: "(peer_relay) registered peer whose key grants relay."},
-			"accept_channel_types": {Type: "array", Description: "(bot_framework, optional) limit which Teams surfaces route inbound: any of \"personal\" (1:1 DM), \"channel\", \"groupChat\". Omit to accept all three. The Teams app manifest is the real gate; this is a second one an admin can tighten without a manifest re-upload."},
 			"webhook_provider":     {Type: "string", Enum: []string{"slack", "graph", "generic"}, Description: "(rest_messaging, optional) switch inbound from POLL to real-time PUSH. \"slack\" (Slack Events API, turnkey: paste the webhook URL into the Slack app, admin sets the signing secret), \"graph\", or \"generic\" (any service pushing JSON: describe the check in webhook and the fields in map). The poll fields become unused; send_url/credential still deliver replies."},
 			"webhook":              {Type: "object", Description: "(rest_messaging, with webhook_provider=\"generic\") how each push is checked: {\"verify\":\"hmac_sha256\" or \"token\", \"header\": the header carrying the signature or token, \"token_path\": a body dot-path instead of a header (token), \"prefix\": stripped first (e.g. \"sha256=\"), \"encoding\": \"hex\" or \"base64\" (hmac), \"challenge_path\": a body dot-path echoed back for a URL-verification handshake}. The secret itself is set by the admin, never here."},
 			"skip":                 {Type: "array", Description: "(rest_messaging, optional) messages to drop, each {\"path\": element dot-path, \"values\": [...]}: dropped when the path has a value, or one of the listed values. Use it to skip the bridge's own replies (e.g. {\"path\":\"bot_id\"}) and system events, or the agent answers itself."},
@@ -252,11 +215,6 @@ Typical flow for a calendar:
 			"skip":                 {Type: "array", Description: "(rest_messaging) new skip rules (replaces the whole list)."},
 			"display_name":         {Type: "string", Description: "(service, rest_messaging) a new name people see it by."},
 			"markdown":             {Type: "boolean", Description: "(rest_messaging) the service renders markdown."},
-			"app_id":               {Type: "string", Description: "(bot_framework) new Entra application (client) id."},
-			"tenant_id":            {Type: "string", Description: "(bot_framework) new tenant to pin a single-tenant bot to."},
-			"service_host":         {Type: "string", Description: "(bot_framework) new host replies are sent to."},
-			"reply_in_thread":      {Type: "boolean", Description: "(bot_framework) thread a channel reply under the message that triggered it."},
-			"accept_channel_types": {Type: "array", Description: "(bot_framework) new list of Teams surfaces that route inbound: any of \"personal\", \"channel\", \"groupChat\" (replaces the whole list).", Items: &ToolParam{Type: "string"}},
 			"service_spec":         {Type: "object", Description: "(service) the whole new spec."},
 		},
 		Required: []string{"name"},
@@ -532,21 +490,6 @@ func connectorCreate(args map[string]any, sess *ToolSession) (string, error) {
 		}
 		raw, _ := json.Marshal(spec)
 		c.Spec = raw
-	case BotFrameworkConnectorKind:
-		if owner == "" {
-			return "", fmt.Errorf("bot_framework requires an authenticated session (its channel agents run as you)")
-		}
-		spec := BotFrameworkSpec{
-			Service:            strings.TrimSpace(stringArg(args, "service")),
-			AppID:              strings.TrimSpace(stringArg(args, "app_id")),
-			TenantID:           strings.TrimSpace(stringArg(args, "tenant_id")),
-			Credential:         strings.TrimSpace(stringArg(args, "credential")),
-			ServiceHost:        strings.TrimSpace(stringArg(args, "service_host")),
-			ReplyInThread:      boolArg(args, "reply_in_thread"),
-			AcceptChannelTypes: stringSliceArg(args, "accept_channel_types"),
-		}
-		raw, _ := json.Marshal(spec)
-		c.Spec = raw
 	case PeerRelayConnectorKind:
 		spec := PeerRelaySpec{Peer: strings.TrimSpace(stringArg(args, "peer"))}
 		raw, _ := json.Marshal(spec)
@@ -753,26 +696,6 @@ func connectorUpdate(args map[string]any, sess *ToolSession) (string, error) {
 			return "", err
 		}
 		c.Spec, _ = json.Marshal(MergeRestMessagingSpec(existing, over))
-	case BotFrameworkConnectorKind:
-		var s BotFrameworkSpec
-		_ = json.Unmarshal(prev.Spec, &s)
-		// Per-field patch: only what the caller actually passed is touched, so an
-		// update changing one field cannot silently blank the others.
-		for key, dst := range map[string]*string{
-			"service": &s.Service, "app_id": &s.AppID, "tenant_id": &s.TenantID,
-			"credential": &s.Credential, "service_host": &s.ServiceHost,
-		} {
-			if argSet(args, key) {
-				*dst = strings.TrimSpace(stringArg(args, key))
-			}
-		}
-		if argSet(args, "reply_in_thread") {
-			s.ReplyInThread = boolArg(args, "reply_in_thread")
-		}
-		if argSet(args, "accept_channel_types") {
-			s.AcceptChannelTypes = stringSliceArg(args, "accept_channel_types")
-		}
-		c.Spec, _ = json.Marshal(s)
 	case service.Kind:
 		raw, err := serviceSpecArg(args)
 		if err != nil {

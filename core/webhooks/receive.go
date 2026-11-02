@@ -88,6 +88,18 @@ func Handle(w http.ResponseWriter, r *http.Request) {
 		refuse(http.StatusRequestEntityTooLarge, "too large")
 		return
 	}
+	// A channel type of its own checks and reads its posts itself.
+	if check, ok := channelChecks[h.Verify]; ok {
+		status, outcome, refused := check(r, h, body)
+		if refused != nil {
+			note(h.Name, Call{At: time.Now(), Outcome: "refused: " + refused.Error()})
+			refuse(http.StatusUnauthorized, "not verified")
+			return
+		}
+		note(h.Name, Call{At: time.Now(), Outcome: outcome, OK: status < 300})
+		w.WriteHeader(status)
+		return
+	}
 	if err := h.verify(r.Header, body); err != nil {
 		note(h.Name, Call{At: time.Now(), Outcome: "refused: " + err.Error()})
 		refuse(http.StatusUnauthorized, "not verified")

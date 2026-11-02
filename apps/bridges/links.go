@@ -36,6 +36,7 @@ import (
 	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/messaging"
 	"github.com/cmcoffee/gohort/core/service"
+	"github.com/cmcoffee/gohort/core/teamsbots"
 	"github.com/cmcoffee/gohort/core/webhooks"
 )
 
@@ -155,8 +156,11 @@ func linkable(owner, name string) error {
 }
 
 // servedElsewhere is what already carries service svc for owner, or "": a
-// bridge key, or a connector of another kind.
+// bridge key, a Teams bot, or a connector of another kind.
 func (T *Bridges) servedElsewhere(owner, svc string) string {
+	if b, ok := teamsbots.Load(owner, svc); ok {
+		return "the Teams bot " + b.Name
+	}
 	for _, k := range T.listBridgeKeys(owner) {
 		if k.Service == svc {
 			return "the bridge " + k.Name
@@ -167,7 +171,7 @@ func (T *Bridges) servedElsewhere(owner, svc string) string {
 			continue
 		}
 		switch c.Kind {
-		case RestMessagingConnectorKind, BotFrameworkConnectorKind, MessagingBridgeConnectorKind:
+		case RestMessagingConnectorKind, MessagingBridgeConnectorKind:
 			if connectorService(c) == svc {
 				return "the connector " + c.Title()
 			}
@@ -185,11 +189,7 @@ func connectorService(c Connector) string {
 	if json.Unmarshal(c.Spec, &spec) != nil {
 		return ""
 	}
-	svc := strings.ToLower(strings.TrimSpace(spec.Service))
-	if svc == "" && c.Kind == BotFrameworkConnectorKind {
-		svc = "teams"
-	}
-	return svc
+	return strings.ToLower(strings.TrimSpace(spec.Service))
 }
 
 // saveLink adds or replaces owner's link, and starts it.
@@ -329,8 +329,12 @@ func (T *Bridges) wireWebhooks() {
 		for _, l := range T.linksOf(owner) {
 			out = append(out, l.Service)
 		}
+		for _, b := range teamsbots.List(owner) {
+			out = append(out, b.Service)
+		}
 		return out
 	}
+	webhooks.RegisterChannelCheck(teamsbots.VerifyName, T.botframeworkCheck)
 	webhooks.ToChannel = func(owner, svc string, m webhooks.ChannelMessage) {
 		T.ingestInbound(BridgeKey{Owner: owner, Service: svc, Enabled: true, Name: "webhook"},
 			hookRequest{ChatID: m.Chat, Handle: m.From, Text: m.Text, MsgID: m.ID})

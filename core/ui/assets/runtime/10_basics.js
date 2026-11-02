@@ -2286,7 +2286,21 @@
         ro.style.cssText = 'white-space:pre-wrap;font-size:var(--fs-sm, 0.8rem);line-height:1.5;'
           + 'color:var(--text-mute);background:var(--bg-sunk,rgba(127,127,127,0.06));'
           + 'border:1px solid var(--border);border-radius:0.4rem;padding:0.5rem 0.6rem';
-        fieldWrap.appendChild(ro);
+        if (f.copy && roVal !== '') {
+          var copyRo = el('button', {type: 'button', class: 'ui-row-btn compact'}, ['Copy']);
+          copyRo.addEventListener('click', function() {
+            navigator.clipboard.writeText(roVal).then(function() {
+              copyRo.textContent = 'Copied';
+              setTimeout(function() { copyRo.textContent = 'Copy'; }, 1500);
+            });
+          });
+          ro.style.flex = '1';
+          ro.style.minWidth = '0';
+          ro.style.wordBreak = 'break-all';
+          fieldWrap.appendChild(el('div', {style: 'display:flex;gap:0.5rem;align-items:flex-start'}, [ro, copyRo]));
+        } else {
+          fieldWrap.appendChild(ro);
+        }
         if (f.help) fieldWrap.appendChild(el('div', {class: 'ui-form-help'}, [f.help]));
         // Not written back: a readonly field is output, and echoing it into
         // the payload would let a stale render overwrite a computed value.

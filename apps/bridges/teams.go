@@ -1,15 +1,15 @@
-// The bridges half of the bot_framework connector kind (core/connector_botframework.go).
+// Teams bots (core/teamsbots): a person's own Microsoft Teams bot, which
+// answers in Teams with their agents.
 //
 // Bot Framework is push-only and has no poll API, so there is no tick to hang
-// anything on: Microsoft POSTs one Activity per request to a public per-connector
-// route, and replies go out on a short timer that drains the shared outbox.
+// anything on: Microsoft POSTs one Activity per request to the bot's webhook
+// (core/webhooks, checked "botframework"), and replies go out on a short timer
+// that drains the shared outbox.
 //
-// Two things make it different from the rest_messaging providers next door, and
-// both are why it is a kind of its own rather than a third webhook_provider:
+// Two things make it a channel type of its own rather than a connector:
 //
 //  1. AUTH IS A TOKEN, NOT A SECRET. Each request carries a bearer JWT signed by
-//     Microsoft's rotating keys. There is nothing to paste into an admin form —
-//     the connector's app id is the audience, and core/jwks does the rest.
+//     Microsoft's rotating keys, whose audience is the bot's app id.
 //  2. THE REPLY ADDRESS IS LEARNED. An activity carries the serviceUrl its
 //     conversation lives behind, which is regional and per-conversation. So the
 //     bridge remembers a conversation the first time it hears from it, and that
@@ -24,23 +24,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
-	"net/url"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/teamsbots"
+	"github.com/cmcoffee/gohort/core/webhooks"
 	"github.com/cmcoffee/snugforge/jwcrypt"
 )
 
 const botConvTable = "bridges_bot_conversations" // conversation id → botConv
-
-// maxActivityBody caps an inbound activity. Teams messages are small; a cap
-// keeps a malformed or hostile POST from being read into memory whole.
-const maxActivityBody = 1 << 20
 
 // botOutboundTick is how often a bound agent's reply is looked for. Inbound is
 // instant; this is the only latency on the way back.
@@ -56,7 +52,7 @@ type botConv struct {
 	ConvType     string `json:"conv_type,omitempty"`     // personal | channel | groupChat
 	LastActivity string `json:"last_activity,omitempty"` // replyToId for threaded replies
 	UserAadID    string `json:"user_aad_id,omitempty"`   // what a future proactive open needs
-	Connector    string `json:"connector,omitempty"`
+	Connector    string `json:"connector,omitempty"`     // the bot that heard it: owner \x00 service
 	Updated      string `json:"updated,omitempty"`
 }
 
@@ -137,21 +133,21 @@ func collapseSpaces(s string) string {
 // or reports why it should be ignored. A nil request with a nil error means
 // "not an error, just nothing to route" — the same convention the graph
 // provider's extract uses for events it does not care about.
-func activityToInbound(a botActivity, spec BotFrameworkSpec) (*hookRequest, error) {
+func activityToInbound(a botActivity, bot teamsbots.Bot) (*hookRequest, error) {
 	// Only messages are conversation. conversationUpdate fires when the app is
 	// installed or someone joins, typing is noise, invoke is a card action this
 	// bridge does not implement yet.
 	if !strings.EqualFold(strings.TrimSpace(a.Type), "message") {
 		return nil, nil
 	}
-	if !spec.Accepts(a.Conversation.ConversationType) {
+	if !bot.Accepts(a.Conversation.ConversationType) {
 		return nil, nil
 	}
 	// A single-tenant bot must not act on another tenant's traffic even if the
 	// token verified: the signature proves Microsoft sent it, not that it came
-	// from the tenant this connector was approved for.
-	if spec.TenantID != "" && !strings.EqualFold(a.tenant(), spec.TenantID) {
-		return nil, fmt.Errorf("activity from tenant %q, connector is pinned to %q", a.tenant(), spec.TenantID)
+	// from the bot's own tenant.
+	if bot.TenantID != "" && !strings.EqualFold(a.tenant(), bot.TenantID) {
+		return nil, fmt.Errorf("an activity from tenant %q, and the bot belongs to %q", a.tenant(), bot.TenantID)
 	}
 
 	chatID := strings.TrimSpace(a.Conversation.ID)
@@ -177,97 +173,61 @@ func activityToInbound(a botActivity, spec BotFrameworkSpec) (*hookRequest, erro
 	}, nil
 }
 
-// handleBotActivity is the public inbound route for every bot_framework
-// connector: /bridges/api/bot/<connector-name>.
+// botframeworkCheck is the "botframework" check of a Teams bot's webhook:
+// the bearer token Microsoft signed, for the bot's app id and this very
+// activity, then the activity read into a message for the bot's service.
 //
-// The gate order matches handleWebhook next door, and the 202s are deliberate:
-// an unapproved or switched-off bridge acknowledges rather than erroring, so
-// Microsoft does not retry a message nobody is going to act on.
-func (T *Bridges) handleBotActivity(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
+// The 2xx answers are deliberate: a bot waiting for approval, or bridges
+// switched off, acknowledges rather than erroring, so Microsoft does not
+// retry a message nobody is going to act on.
+func (T *Bridges) botframeworkCheck(r *http.Request, h webhooks.Webhook, body []byte) (int, string, error) {
+	bot, ok := teamsbots.Load(h.Owner, h.Channel())
+	if !ok {
+		return http.StatusAccepted, "not passed on: there is no Teams bot for " + h.Channel(), nil
 	}
-	name := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/bot/"), "/")
-	if name == "" {
-		http.Error(w, "connector name required in path", http.StatusNotFound)
-		return
-	}
-	c, ok := GetConnector(RootDB, name)
-	if !ok || c.Kind != BotFrameworkConnectorKind {
-		http.Error(w, "no such bot connector", http.StatusNotFound)
-		return
-	}
-	var spec BotFrameworkSpec
-	if err := json.Unmarshal(c.Spec, &spec); err != nil {
-		http.Error(w, "bad connector", http.StatusInternalServerError)
-		return
-	}
-	if !c.Approved {
-		w.WriteHeader(http.StatusAccepted)
-		return
-	}
-
 	token := bearerToken(r.Header.Get("Authorization"))
 	if token == "" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
+		return 0, "", fmt.Errorf("it came with no Bot Framework token")
 	}
 	// The audience check is the load-bearing half: Bot Framework signs for every
-	// bot in the world, and what makes a token OURS is that it names our app id.
-	claims, err := BotFrameworkVerifier().Verify(r.Context(), token, spec.AppID)
+	// bot in the world, and what makes a token this bot's is its app id.
+	claims, err := teamsbots.Verifier().Verify(r.Context(), token, bot.AppID)
 	if err != nil {
-		Warn("[bridges] bot %q rejected an activity: %v", name, err)
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
+		return 0, "", fmt.Errorf("its token is not this bot's: %v", err)
 	}
-
-	// Master panic switch: recorded-only when transport is off.
-	if !T.config().Enabled {
-		w.WriteHeader(http.StatusAccepted)
-		return
-	}
-
-	body, _ := io.ReadAll(io.LimitReader(r.Body, maxActivityBody))
 	var a botActivity
 	if err := json.Unmarshal(body, &a); err != nil {
-		Warn("[bridges] bot %q got an unparseable activity: %v", name, err)
-		w.WriteHeader(http.StatusAccepted) // ack; a retry would not parse either
-		return
+		return http.StatusAccepted, "passed over: an activity that does not read", nil // a retry would not parse either
 	}
-
 	// The token must be FOR this activity, not only for this bot: Microsoft
 	// signs the serviceUrl it means replies to go to, and a key it publishes
 	// says which channels it may sign for.
-	if err := T.botTokenFitsActivity(r.Context(), token, claims, a); err != nil {
-		Warn("[bridges] bot %q rejected an activity: %v", name, err)
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
+	if err := botTokenFitsActivity(r.Context(), token, claims, a); err != nil {
+		return 0, "", err
 	}
-
-	req, err := activityToInbound(a, spec)
+	switch {
+	case bot.AwaitingApproval:
+		return http.StatusAccepted, "not passed on: the bot waits for an administrator's approval", nil
+	case bot.AdminDisabled:
+		return http.StatusAccepted, "not passed on: an administrator switched the bot off", nil
+	case !T.config().Enabled:
+		return http.StatusAccepted, "not passed on: bridges are switched off", nil
+	}
+	req, err := activityToInbound(a, bot)
 	if err != nil {
-		Warn("[bridges] bot %q dropped an activity: %v", name, err)
-		w.WriteHeader(http.StatusAccepted)
-		return
+		return http.StatusAccepted, "passed over: " + err.Error(), nil
 	}
 	if req == nil {
-		w.WriteHeader(http.StatusOK) // nothing to route, and nothing wrong
-		return
+		return http.StatusOK, "passed over: not a message for the bot", nil
 	}
-
 	// Remember how to answer BEFORE routing: the agent's reply may be enqueued
-	// while this request is still in flight, and without the record the outbound
+	// while this request is still in flight, and without the record the reply
 	// loop has nowhere to send it.
-	if err := T.rememberBotConv(c.Name, spec, a); err != nil {
-		Warn("[bridges] bot %q will not be able to reply in %s: %v", name, a.Conversation.ID, err)
-		w.WriteHeader(http.StatusAccepted)
-		return
+	if err := T.rememberBotConv(bot, a); err != nil {
+		return http.StatusAccepted, "not passed on: " + err.Error(), nil
 	}
-
-	key := BridgeKey{Owner: c.Owner, Service: spec.Service, Enabled: true, Name: c.Name}
-	T.ingestInbound(key, *req)
-	w.WriteHeader(http.StatusOK)
+	T.ingestInbound(BridgeKey{Owner: bot.Owner, Service: bot.Service, Enabled: true, Name: bot.Name}, *req)
+	return http.StatusOK, "passed to " + bot.Service, nil
 }
 
 // botTokenFitsActivity holds a verified token to the activity it came with,
@@ -276,7 +236,7 @@ func (T *Bridges) handleBotActivity(w http.ResponseWriter, r *http.Request) {
 // include the activity's channel. Without the first, a token minted for one
 // conversation's reply address carried an activity pointing replies (and the
 // bot's credential) somewhere else.
-func (T *Bridges) botTokenFitsActivity(ctx context.Context, token string, claims jwcrypt.Claims, a botActivity) error {
+func botTokenFitsActivity(ctx context.Context, token string, claims jwcrypt.Claims, a botActivity) error {
 	if want, ok := claims["serviceurl"].(string); ok && strings.TrimSpace(want) != "" {
 		if !strings.EqualFold(strings.TrimRight(strings.TrimSpace(want), "/"), strings.TrimRight(strings.TrimSpace(a.ServiceURL), "/")) {
 			return fmt.Errorf("the token is for serviceUrl %q, the activity names %q", want, a.ServiceURL)
@@ -286,7 +246,7 @@ func (T *Bridges) botTokenFitsActivity(ctx context.Context, token string, claims
 	if err != nil || hdr.KeyID == "" {
 		return nil
 	}
-	key, ok := BotFrameworkVerifier().KeyByID(ctx, hdr.KeyID)
+	key, ok := teamsbots.Verifier().KeyByID(ctx, hdr.KeyID)
 	if !ok || key == nil {
 		return nil
 	}
@@ -308,19 +268,14 @@ func (T *Bridges) botTokenFitsActivity(ctx context.Context, token string, claims
 }
 
 // rememberBotConv records where and how to answer this conversation, refusing a
-// serviceUrl outside the connector's approved host.
-//
-// The refusal is defence in depth rather than the only guard — the credential's
-// own allow-list would block the send too — but it fails here, once, with a log
-// naming the host, instead of once per queued reply inside a dispatch error.
-func (T *Bridges) rememberBotConv(connector string, spec BotFrameworkSpec, a botActivity) error {
+// serviceUrl outside the bot's service host: its reply token goes only there.
+func (T *Bridges) rememberBotConv(bot teamsbots.Bot, a botActivity) error {
 	svcURL := strings.TrimRight(strings.TrimSpace(a.ServiceURL), "/")
 	if svcURL == "" {
-		return fmt.Errorf("activity carries no serviceUrl")
+		return fmt.Errorf("the activity carries no serviceUrl")
 	}
-	host := strings.TrimRight(strings.TrimSpace(spec.ServiceHost), "/")
-	if host != "" && !strings.HasPrefix(svcURL+"/", host+"/") {
-		return fmt.Errorf("serviceUrl %q is outside the connector's service_host %q", svcURL, host)
+	if !bot.Within(svcURL) {
+		return fmt.Errorf("serviceUrl %q is outside the bot's service host %q", svcURL, bot.ServiceHost)
 	}
 	T.setBotConv(a.Conversation.ID, botConv{
 		ServiceURL:   svcURL,
@@ -328,7 +283,7 @@ func (T *Bridges) rememberBotConv(connector string, spec BotFrameworkSpec, a bot
 		ConvType:     strings.TrimSpace(a.Conversation.ConversationType),
 		LastActivity: strings.TrimSpace(a.ID),
 		UserAadID:    strings.TrimSpace(a.From.AadObjectID),
-		Connector:    connector,
+		Connector:    bot.Key(),
 		Updated:      now(),
 	})
 	return nil
@@ -346,58 +301,29 @@ func bearerToken(header string) string {
 
 // --- outbound ----------------------------------------------------------------
 
-// botBridgeCancel tracks the running outbound loops so a re-materialize (admin
-// re-approve, startup reload) or a teardown can stop the prior one.
-var (
-	botBridgeMu     sync.Mutex
-	botBridgeCancel = map[string]context.CancelFunc{}
-)
+var teamsOnce sync.Once
 
-// startBotBridge launches (or restarts) a connector's outbound loop. Idempotent.
-func (T *Bridges) startBotBridge(c Connector) error {
-	var spec BotFrameworkSpec
-	if err := json.Unmarshal(c.Spec, &spec); err != nil {
-		return fmt.Errorf("bad bot_framework spec for %q: %w", c.Name, err)
-	}
-	if strings.TrimSpace(spec.Service) == "" {
-		spec.Service = "teams"
-	}
-
-	botBridgeMu.Lock()
-	if cancel, ok := botBridgeCancel[c.Name]; ok {
-		cancel()
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	botBridgeCancel[c.Name] = cancel
-	botBridgeMu.Unlock()
-
-	go T.botOutboundLoop(ctx, c, spec)
-	Log("[bridges] bot %q live at /bridges/api/bot/%s (svc=%s, app=%s)", c.Name, c.Name, spec.Service, spec.AppID)
-	return nil
+// startTeams starts the one reply loop every Teams bot shares: each tick, each
+// bot an administrator lets answer sends what its owner's agents wrote back.
+// Read from the store every tick, so an approval or a switch-off from Admin
+// takes effect without a restart.
+func (T *Bridges) startTeams() {
+	teamsOnce.Do(func() {
+		go func() {
+			for {
+				T.deliverTeams(context.Background())
+				time.Sleep(botOutboundTick)
+			}
+		}()
+	})
 }
 
-func (T *Bridges) stopBotBridge(name string) {
-	botBridgeMu.Lock()
-	if cancel, ok := botBridgeCancel[name]; ok {
-		cancel()
-		delete(botBridgeCancel, name)
-	}
-	botBridgeMu.Unlock()
-}
-
-// botOutboundLoop drains this service's outbox on a short timer. Inbound is
-// push, so this is the only clock in the bridge.
-func (T *Bridges) botOutboundLoop(ctx context.Context, c Connector, spec BotFrameworkSpec) {
-	Log("[bridges] bot %q outbound loop started (svc=%s)", c.Name, spec.Service)
-	tick := time.NewTicker(botOutboundTick)
-	defer tick.Stop()
-	for {
-		T.deliverBotOutbound(ctx, spec, T.ownerOr(c.Owner))
-		select {
-		case <-ctx.Done():
-			Log("[bridges] bot %q outbound loop stopped", c.Name)
-			return
-		case <-tick.C:
+// deliverTeams is one pass of the reply loop: every bot an administrator
+// lets answer sends what its owner's agents wrote back.
+func (T *Bridges) deliverTeams(ctx context.Context) {
+	for _, bot := range teamsbots.All() {
+		if bot.Usable() {
+			T.deliverBotOutbound(ctx, bot)
 		}
 	}
 }
@@ -405,12 +331,11 @@ func (T *Bridges) botOutboundLoop(ctx context.Context, c Connector, spec BotFram
 // deliverBotOutbound posts each queued reply back into its conversation.
 //
 // A send failure re-queues the failed item and everything behind it, so nothing
-// is lost and order is kept — the same discipline as deliverOutbound. An item
-// whose conversation is UNKNOWN is different: there is no address for it and no
-// tick will ever produce one, so it is dropped loudly rather than re-queued
-// forever into a warning every three seconds.
-func (T *Bridges) deliverBotOutbound(ctx context.Context, spec BotFrameworkSpec, owner string) {
-	items := T.drainOutbox(spec.Service, owner)
+// is lost and order is kept. An item whose conversation is UNKNOWN to this bot
+// is different: there is no address for it and no tick will ever produce one,
+// so it is dropped loudly rather than re-queued forever.
+func (T *Bridges) deliverBotOutbound(ctx context.Context, bot teamsbots.Bot) {
+	items := T.drainOutbox(bot.Service, bot.Owner)
 	for i, it := range items {
 		if ctx.Err() != nil {
 			for _, r := range items[i:] {
@@ -422,21 +347,12 @@ func (T *Bridges) deliverBotOutbound(ctx context.Context, spec BotFrameworkSpec,
 			continue
 		}
 		conv, ok := T.getBotConv(it.ChatID)
-		if !ok || conv.ServiceURL == "" {
-			Warn("[bridges] bot reply for %s dropped: no conversation on record, so there is no serviceUrl to send to (the bot must receive a message in a conversation before it can post there)", it.ChatID)
+		if !ok || conv.ServiceURL == "" || conv.Connector != bot.Key() {
+			Warn("[bridges] Teams reply for %s dropped: the bot %q has not heard from that conversation, so there is nowhere to send it", it.ChatID, bot.Name)
 			continue
 		}
-
-		body, err := json.Marshal(botReplyActivity(it.Text, spec, conv))
-		if err != nil {
-			Warn("[bridges] bot reply for %s could not be encoded: %v", it.ChatID, err)
-			continue
-		}
-		sendURL := conv.ServiceURL + "/v3/conversations/" + url.PathEscape(it.ChatID) + "/activities"
-		_, status, err := authedRequest(owner, spec.Credential, "POST", sendURL, string(body))
-		if err != nil || status >= 300 {
-			Warn("[bridges] bot send failed (svc=%s chat=%s): err=%v status=%d, re-queued %d item(s)",
-				spec.Service, it.ChatID, err, status, len(items)-i)
+		if err := teamsbots.Send(ctx, bot, conv.ServiceURL, it.ChatID, botReplyActivity(it.Text, bot, conv)); err != nil {
+			Warn("[bridges] Teams reply failed (bot=%s chat=%s): %v, re-queued %d item(s)", bot.Name, it.ChatID, err, len(items)-i)
 			for _, r := range items[i:] {
 				T.enqueueOutbox(r)
 			}
@@ -449,16 +365,15 @@ func (T *Bridges) deliverBotOutbound(ctx context.Context, spec BotFrameworkSpec,
 //
 // textFormat is "plain" to match what the outbound chokepoint already did to the
 // text: enqueueOutbox flattens markdown for any service the transport registry
-// says does not render it, and teams is registered that way because its other
-// transport posts HTML. Saying "markdown" here would only promise formatting
-// that was stripped upstream.
-func botReplyActivity(text string, spec BotFrameworkSpec, conv botConv) map[string]any {
+// says does not render it, and teams is registered that way. Saying "markdown"
+// here would only promise formatting that was stripped upstream.
+func botReplyActivity(text string, bot teamsbots.Bot, conv botConv) map[string]any {
 	act := map[string]any{
 		"type":       "message",
 		"text":       text,
 		"textFormat": "plain",
 	}
-	if spec.ReplyInThread && conv.LastActivity != "" {
+	if bot.ReplyInThread && conv.LastActivity != "" {
 		act["replyToId"] = conv.LastActivity
 	}
 	return act

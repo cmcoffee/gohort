@@ -1,7 +1,7 @@
 package admin
 
 // Personal integrations: the administrator's say over whether people add
-// their own API credentials and MCP servers (core/governance).
+// their own API credentials, MCP servers and Teams bots (core/governance).
 
 import (
 	"context"
@@ -14,7 +14,9 @@ import (
 	"github.com/cmcoffee/gohort/core/governance"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/mcppersonal"
+	"github.com/cmcoffee/gohort/core/teamsbots"
 	"github.com/cmcoffee/gohort/core/ui"
+	"github.com/cmcoffee/gohort/core/webhooks"
 )
 
 // handlePersonalIntegrations is GET / POST /api/personal-integrations: the
@@ -57,7 +59,7 @@ func policyOptions(noun string) []ui.SelectOption {
 func personalIntegrationsSection() ui.Section {
 	return ui.Section{
 		Title:    "Personal integrations",
-		Subtitle: "Whether people add their own API credentials and MCP servers, or the administrator sets them up.",
+		Subtitle: "Whether people add their own API credentials, MCP servers and Teams bots, or the administrator sets them up.",
 		Detail: "A policy governs adding a new one. What someone already has keeps working; turn any of it off below, in User-owned credentials and Personal MCP servers.\n\n" +
 			"Needs approval holds each new one off until you enable it below. An administrator is never held by either policy.\n\n" +
 			"A personal MCP server's tools reach only its owner's agents, and it may not point at this network's private addresses unless its owner is an administrator.",
@@ -70,6 +72,9 @@ func personalIntegrationsSection() ui.Section {
 				{Field: string(governance.MCPServers), Label: "Personal MCP servers", Type: "select",
 					Options: policyOptions("MCP servers"),
 					Help:    "People add these on their Extensions page. Their tools reach only the owner's agents."},
+				{Field: string(governance.TeamsBots), Label: "Personal Teams bots", Type: "select",
+					Options: policyOptions("Teams bots"),
+					Help:    "People add these under Bridges, from a bot they registered in Azure. Each answers in Teams with its owner's agents."},
 			},
 		},
 	}
@@ -144,6 +149,109 @@ func (a *AdminApp) handlePersonalMCPServerDelete(c *jsonapi.Call, _ struct{}) (a
 	}
 	adminChange(c.R, activity.Settings, "deleted personal MCP server %s/%s", owner, name)
 	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// personalTeamsBotRow is one person's Teams bot as the administrator sees it.
+type personalTeamsBotRow struct {
+	ID       string `json:"id"` // owner/service
+	Owner    string `json:"owner"`
+	Service  string `json:"service"`
+	Name     string `json:"name"`
+	AppID    string `json:"app_id"`
+	Tenant   string `json:"tenant"`
+	Answers  string `json:"answers"`
+	Awaiting bool   `json:"awaiting"`
+	Disabled bool   `json:"disabled"`
+}
+
+// handlePersonalTeamsBots is every person's own Teams bots:
+//
+//	GET                                          the list
+//	POST ?action=enable|disable&owner=&service=  enable approves one that waits
+//	DELETE ?owner=&service=
+func (a *AdminApp) handlePersonalTeamsBots(c *jsonapi.Call) (any, error) {
+	rows := []personalTeamsBotRow{}
+	for _, b := range teamsbots.All() {
+		tenant, answers := b.TenantID, strings.Join(b.Accept, ", ")
+		if tenant == "" {
+			tenant = "any (multi-tenant)"
+		}
+		if answers == "" {
+			answers = strings.Join(teamsbots.ConversationTypes, ", ")
+		}
+		rows = append(rows, personalTeamsBotRow{ID: b.Owner + "/" + b.Service, Owner: b.Owner, Service: b.Service, Name: b.Name,
+			AppID: b.AppID, Tenant: tenant, Answers: answers, Awaiting: b.AwaitingApproval, Disabled: !b.Usable()})
+	}
+	return rows, nil
+}
+
+// handlePersonalTeamsBotAction approves, enables or switches off one.
+func (a *AdminApp) handlePersonalTeamsBotAction(c *jsonapi.Call, _ struct{}) (any, error) {
+	q := c.R.URL.Query()
+	owner, svc := strings.TrimSpace(q.Get("owner")), strings.TrimSpace(q.Get("service"))
+	action := q.Get("action")
+	if action != "enable" && action != "disable" {
+		return nil, jsonapi.BadRequest("action must be enable or disable")
+	}
+	if err := teamsbots.AdminSetDisabled(owner, svc, action == "disable"); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	adminChange(c.R, activity.Settings, "%s personal Teams bot %s/%s", action, owner, svc)
+	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// handlePersonalTeamsBotDelete removes one, with the webhook it is reached
+// through.
+func (a *AdminApp) handlePersonalTeamsBotDelete(c *jsonapi.Call, _ struct{}) (any, error) {
+	q := c.R.URL.Query()
+	owner, svc := strings.TrimSpace(q.Get("owner")), strings.TrimSpace(q.Get("service"))
+	b, ok := teamsbots.Load(owner, svc)
+	if !ok {
+		return nil, jsonapi.BadRequest(owner + " has no bot for " + svc)
+	}
+	teamsbots.Remove(owner, svc)
+	if b.Webhook != "" {
+		webhooks.Remove(owner, b.Webhook)
+	}
+	adminChange(c.R, activity.Settings, "deleted personal Teams bot %s/%s", owner, svc)
+	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// personalTeamsBotsSection is the Governance list of them.
+func personalTeamsBotsSection() ui.Section {
+	return ui.Section{
+		Title:    "Personal Teams bots",
+		Subtitle: "Microsoft Teams bots people add for themselves, under Bridges.",
+		Detail: "Each is a bot its owner registered in Azure. It answers in Teams with its owner's agents, in the conversations they let it, and replies under the bot's own name. " +
+			"Approve enables one that is waiting; Disable holds one off, and the owner cannot switch it back on. Check the app id is one your organisation knows before approving it.",
+		Body: ui.Table{
+			Source: "api/personal-teams-bots",
+			RowKey: "id",
+			Columns: []ui.Col{
+				{Field: "owner", Label: "Owner"},
+				{Field: "name", Flex: 1},
+				{Field: "service", Label: "Service", Mute: true},
+				{Field: "app_id", Label: "App id", Mute: true, Flex: 2},
+				{Field: "tenant", Label: "Tenant", Mute: true, Flex: 1},
+				{Field: "answers", Label: "Answers in", Mute: true},
+				{Field: "awaiting", Type: "badge", Badges: []ui.BadgeMapping{
+					{Value: true, Label: "Awaiting approval", Color: "warning"},
+				}},
+				{Field: "disabled", Type: "badge", Badges: []ui.BadgeMapping{
+					{Value: true, Label: "Off", Color: "danger"},
+					{Value: false, Label: "Enabled", Color: "success"},
+				}},
+			},
+			RowActions: []ui.RowAction{
+				{Type: "button", Label: "Approve", Method: "POST", PostTo: "api/personal-teams-bots?action=enable&owner={owner}&service={service}", OnlyIf: "awaiting"},
+				{Type: "button", Label: "Enable", Method: "POST", PostTo: "api/personal-teams-bots?action=enable&owner={owner}&service={service}", OnlyIf: "disabled", HideIf: "awaiting"},
+				{Type: "button", Label: "Disable", Method: "POST", PostTo: "api/personal-teams-bots?action=disable&owner={owner}&service={service}", HideIf: "disabled"},
+				{Type: "button", Label: "Delete", Method: "DELETE", PostTo: "api/personal-teams-bots?owner={owner}&service={service}", Variant: "danger",
+					Confirm: "Delete this person's Teams bot? It stops answering, and its secret and webhook are removed."},
+			},
+			EmptyText: "No personal Teams bots. When someone adds one under Bridges, it appears here.",
+		},
+	}
 }
 
 // personalMCPServersSection is the Governance list of them.

@@ -349,7 +349,9 @@ func dropEmptyHeadings(fields []FormField) []FormField {
 //     computed — a derived status, a summary of what the
 //     current settings amount to — alongside the inputs that
 //     change it, without pretending it is editable. Line
-//     breaks in the value are preserved.
+//     breaks in the value are preserved. With Copy, a Copy
+//     button beside it puts the value on the clipboard (an
+//     address to paste somewhere else).
 //   - "link"     — a button that goes somewhere, rendering nothing into the
 //     save payload. The destination is the field's value on the
 //     loaded record (so the server decides it), or Default when
@@ -500,6 +502,9 @@ type FormField struct {
 	SingleLine bool `json:"single_line,omitempty"`
 	Min        int  `json:"min,omitempty"`
 	Max        int  `json:"max,omitempty"`
+	// Copy, on a "readonly" field, adds a Copy button that puts its value
+	// on the clipboard.
+	Copy bool `json:"copy,omitempty"`
 	// Decimals enables float input on a "number" field. 0 = integer
 	// only (default). >0 = parseFloat with that many decimal places
 	// in the saved value (use 4 for per-1K-token rates like 0.0003).

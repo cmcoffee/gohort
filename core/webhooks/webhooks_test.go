@@ -504,11 +504,21 @@ func TestFeedingAChannelNeedsALinkAndAChat(t *testing.T) {
 			t.Errorf("want %q, got %v", c.want, err)
 		}
 	}
+	RegisterChannelCheck("test-channel", func(*http.Request, Webhook, []byte) (int, string, error) { return 200, "", nil })
+	own := Webhook{Label: "Own", Owner: "alice", Verify: "test-channel", Feeds: "channel:slack"}
+	if _, err := Create(own, ""); err != nil {
+		t.Errorf("a channel type's own check, with no chat path and no secret: %v", err)
+	}
+	watch("alice", "w")
+	own.Feeds = "watch:w"
+	if _, err := Create(own, ""); err == nil || !strings.Contains(err.Error(), "reads posts for a channel") {
+		t.Errorf("a channel type's check feeding a watch: %v", err)
+	}
 	LinkedServices = nil
 	if _, err := Create(ok, ""); err == nil {
 		t.Error("with no linked services kept here, a channel was fed")
 	}
-	if got := FeedsChannel("alice", "slack"); len(got) != 1 || got[0].Watch() != "" || got[0].Channel() != "slack" {
+	if got := FeedsChannel("alice", "slack"); len(got) != 2 || got[0].Watch() != "" || got[0].Channel() != "slack" {
 		t.Errorf("feeding slack: %+v", got)
 	}
 	if got := FeedsChannel("alice", "discord"); len(got) != 0 {

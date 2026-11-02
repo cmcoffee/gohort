@@ -6,13 +6,12 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/teamsbots"
 )
 
-func bfSpec() BotFrameworkSpec {
-	return BotFrameworkSpec{
-		Service: "teams", AppID: "app-1",
-		Credential: "bf", ServiceHost: "https://smba.trafficmanager.net",
-	}
+func bfSpec() teamsbots.Bot {
+	return teamsbots.Bot{Owner: "alice", Service: "teams", Name: "Wren", AppID: "app-1",
+		ServiceHost: "https://smba.trafficmanager.net"}
 }
 
 // A channel message that @mentions the bot, in the shape Teams actually sends.
@@ -22,7 +21,7 @@ const channelActivityJSON = `{
   "timestamp": "2026-08-28T10:00:00.000Z",
   "serviceUrl": "https://smba.trafficmanager.net/amer/",
   "text": "<at>gohort</at> what is the deploy status?",
-  "from": {"id": "29:abc", "name": "Craig Coffee", "aadObjectId": "aad-craig"},
+  "from": {"id": "29:abc", "name": "Ada Lovelace", "aadObjectId": "aad-ada"},
   "recipient": {"id": "28:app-1", "name": "gohort"},
   "conversation": {"id": "19:thread@thread.tacv2", "conversationType": "channel", "tenantId": "tenant-9"},
   "channelData": {"tenant": {"id": "tenant-9"}, "team": {"id": "T", "name": "Platform"}, "channel": {"id": "C", "name": "deploys"}}
@@ -52,10 +51,10 @@ func TestActivityToInboundChannelMessage(t *testing.T) {
 		t.Errorf("chat id = %q", req.ChatID)
 	}
 	// The Entra object id is stable where the channel-scoped "29:…" id is not.
-	if req.Handle != "aad-craig" {
+	if req.Handle != "aad-ada" {
 		t.Errorf("handle = %q, want the aad object id", req.Handle)
 	}
-	if req.DisplayName != "Craig Coffee" {
+	if req.DisplayName != "Ada Lovelace" {
 		t.Errorf("display name = %q", req.DisplayName)
 	}
 	if req.ConversationName != "Platform / deploys" {
@@ -71,7 +70,7 @@ func TestActivityToInboundChannelMessage(t *testing.T) {
 
 func TestActivityToInboundPersonalMessage(t *testing.T) {
 	raw := `{"type":"message","id":"m1","serviceUrl":"https://smba.trafficmanager.net/amer/",
-	  "text":"hello","from":{"id":"29:x","name":"Craig","aadObjectId":"aad-craig"},
+	  "text":"hello","from":{"id":"29:x","name":"Craig","aadObjectId":"aad-ada"},
 	  "conversation":{"id":"a:1abc","conversationType":"personal","tenantId":"tenant-9"}}`
 	req, err := activityToInbound(parseActivity(t, raw), bfSpec())
 	if err != nil || req == nil {
@@ -122,7 +121,7 @@ func TestActivityToInboundRequiresConversationID(t *testing.T) {
 
 func TestActivityToInboundHonoursChannelTypeGate(t *testing.T) {
 	spec := bfSpec()
-	spec.AcceptChannelTypes = []string{"personal"}
+	spec.Accept = []string{"personal"}
 	req, err := activityToInbound(parseActivity(t, channelActivityJSON), spec)
 	if err != nil {
 		t.Fatal(err)
@@ -233,7 +232,7 @@ func TestRememberBotConv(t *testing.T) {
 	spec := bfSpec()
 	a := parseActivity(t, channelActivityJSON)
 
-	if err := T.rememberBotConv("teams-bot", spec, a); err != nil {
+	if err := T.rememberBotConv(spec, a); err != nil {
 		t.Fatalf("remember: %v", err)
 	}
 	conv, ok := T.getBotConv("19:thread@thread.tacv2")
@@ -247,10 +246,10 @@ func TestRememberBotConv(t *testing.T) {
 	if conv.LastActivity != "1700000000001" {
 		t.Errorf("last activity = %q, want the id to thread under", conv.LastActivity)
 	}
-	if conv.UserAadID != "aad-craig" {
+	if conv.UserAadID != "aad-ada" {
 		t.Errorf("user aad id = %q — a proactive open would have nobody to address", conv.UserAadID)
 	}
-	if conv.TenantID != "tenant-9" || conv.ConvType != "channel" || conv.Connector != "teams-bot" {
+	if conv.TenantID != "tenant-9" || conv.ConvType != "channel" || conv.Connector != spec.Key() {
 		t.Errorf("record = %+v", conv)
 	}
 }
@@ -263,9 +262,9 @@ func TestRememberBotConvRejectsForeignServiceURL(t *testing.T) {
 	a := parseActivity(t, channelActivityJSON)
 	a.ServiceURL = "https://attacker.example/amer/"
 
-	err := T.rememberBotConv("teams-bot", bfSpec(), a)
-	if err == nil || !strings.Contains(err.Error(), "service_host") {
-		t.Fatalf("err = %v, want a service_host refusal", err)
+	err := T.rememberBotConv(bfSpec(), a)
+	if err == nil || !strings.Contains(err.Error(), "service host") {
+		t.Fatalf("err = %v, want a service host refusal", err)
 	}
 	if _, ok := T.getBotConv("19:thread@thread.tacv2"); ok {
 		t.Error("a refused conversation was recorded anyway")
@@ -278,7 +277,7 @@ func TestRememberBotConvRejectsHostPrefixTrick(t *testing.T) {
 	a := parseActivity(t, channelActivityJSON)
 	a.ServiceURL = "https://smba.trafficmanager.net.attacker.example/amer/"
 
-	if err := T.rememberBotConv("teams-bot", bfSpec(), a); err == nil {
+	if err := T.rememberBotConv(bfSpec(), a); err == nil {
 		t.Fatal("a look-alike host was accepted")
 	}
 }
@@ -288,7 +287,7 @@ func TestRememberBotConvRequiresServiceURL(t *testing.T) {
 	a := parseActivity(t, channelActivityJSON)
 	a.ServiceURL = ""
 
-	if err := T.rememberBotConv("teams-bot", bfSpec(), a); err == nil {
+	if err := T.rememberBotConv(bfSpec(), a); err == nil {
 		t.Fatal("an activity with no serviceUrl was accepted")
 	}
 }
@@ -298,12 +297,12 @@ func TestRememberBotConvRequiresServiceURL(t *testing.T) {
 func TestRememberBotConvUpdatesOnEveryInbound(t *testing.T) {
 	T := &Bridges{AppCore{DB: OpenCache()}}
 	a := parseActivity(t, channelActivityJSON)
-	if err := T.rememberBotConv("teams-bot", bfSpec(), a); err != nil {
+	if err := T.rememberBotConv(bfSpec(), a); err != nil {
 		t.Fatal(err)
 	}
 	a.ID = "1700000000002"
 	a.ServiceURL = "https://smba.trafficmanager.net/emea/"
-	if err := T.rememberBotConv("teams-bot", bfSpec(), a); err != nil {
+	if err := T.rememberBotConv(bfSpec(), a); err != nil {
 		t.Fatal(err)
 	}
 	conv, _ := T.getBotConv("19:thread@thread.tacv2")

@@ -1,5 +1,5 @@
 // Package governance holds the administrator's say over what people may add
-// for themselves: their own API credentials and their own MCP servers.
+// for themselves: their own API credentials, MCP servers and Teams bots.
 //
 // Each is one of three policies. Allowed: a person adds their own and it works
 // at once. Needs approval: they add it and it waits, off, until an
@@ -37,20 +37,23 @@ type Kind string
 const (
 	Credentials Kind = "credentials" // a person's own API credentials
 	MCPServers  Kind = "mcp_servers" // a person's own MCP servers
+	TeamsBots   Kind = "teams_bots"  // a person's own Microsoft Teams bots
 )
 
 // Kinds are the kinds a policy governs, in the order the admin page shows.
-var Kinds = []Kind{Credentials, MCPServers}
+var Kinds = []Kind{Credentials, MCPServers, TeamsBots}
 
 var defaults = map[Kind]Policy{
 	Credentials: Allowed,
 	MCPServers:  NeedsApproval,
+	TeamsBots:   NeedsApproval,
 }
 
 // nouns are each kind as a refusal names it.
 var nouns = map[Kind]string{
 	Credentials: "API credentials",
 	MCPServers:  "MCP servers",
+	TeamsBots:   "Teams bots",
 }
 
 func key(k Kind) string { return "personal_" + string(k) + "_policy" }

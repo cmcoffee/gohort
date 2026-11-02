@@ -11,7 +11,8 @@ import (
 // the master enable toggle, the bridge registry (connectors + status), and key
 // management. Channel/agent behavior lives in Agents — this is transport only.
 func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
 		return
 	}
 	page := ui.Page{
@@ -91,6 +92,7 @@ func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
 					EmptyText: "No message bridges yet. The gohort-desktop daemon registers itself automatically the first time it connects to /bridges/api/hook.",
 				},
 			},
+			T.teamsBotsSection(user),
 			{
 				Title:    "Linked services",
 				Subtitle: "A messaging service reached through a connector that fetches and sends messages, such as Slack or Discord.",

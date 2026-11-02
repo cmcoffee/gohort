@@ -21,6 +21,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"net/http"
 	"regexp"
 	"sort"
 	"strings"
@@ -142,13 +143,13 @@ func Create(h Webhook, secret string) (Webhook, error) {
 		return h, err
 	}
 	secret = strings.TrimSpace(secret)
-	if h.Verify != VerifyNone && secret == "" {
+	if h.Verify != VerifyNone && !IsChannelCheck(h.Verify) && secret == "" {
 		return h, fmt.Errorf("give it the secret the service sends with")
 	}
 	h.Name = freeName(slug(h.Label), h.Verify == VerifyNone)
 	h.Created = time.Now()
 	db().Set(table, h.Name, h)
-	if h.Verify != VerifyNone {
+	if secret != "" {
 		db().CryptSet(secretTable, h.Name, secret)
 	}
 	return h, nil
@@ -261,14 +262,20 @@ func (h *Webhook) check() error {
 			return fmt.Errorf("the signature is sha256 or sha1")
 		}
 	default:
-		return fmt.Errorf("it checks a token, a signature, or nothing")
+		if !IsChannelCheck(h.Verify) {
+			return fmt.Errorf("it checks a token, a signature, or nothing")
+		}
+		h.Header, h.Algorithm, h.Prefix = "", "", ""
+		if h.Channel() == "" {
+			return fmt.Errorf("a %s check reads posts for a channel: pass it to one", h.Verify)
+		}
 	}
 	if svc, ok := strings.CutPrefix(h.Feeds, FeedChannel); ok {
 		svc = strings.TrimSpace(svc)
 		if !h.linked(svc) {
 			return fmt.Errorf("%s is not one of your linked services", svc)
 		}
-		if strings.TrimSpace(h.Map.Chat) == "" {
+		if strings.TrimSpace(h.Map.Chat) == "" && !IsChannelCheck(h.Verify) {
 			return fmt.Errorf("to feed a channel, say where a message's chat is read")
 		}
 	} else {
@@ -332,6 +339,24 @@ var LinkedServices func(owner string) []string
 // ToChannel, set with LinkedServices, passes a message on to owner's
 // linked service svc, as the service's own fetch would have.
 var ToChannel func(owner, svc string, m ChannelMessage)
+
+// ChannelCheck checks and reads a post for a channel type of its own, one
+// whose protocol no map describes (a Teams bot's activities): it answers
+// with the status to give, the outcome for the webhook's row, and refused
+// when the post is not the service's. A webhook checked by one passes only
+// to a channel, which the check reads the post for.
+type ChannelCheck func(r *http.Request, h Webhook, body []byte) (status int, outcome string, refused error)
+
+var channelChecks = map[string]ChannelCheck{}
+
+// RegisterChannelCheck makes name a check webhooks may use. Call at start.
+func RegisterChannelCheck(name string, fn ChannelCheck) { channelChecks[name] = fn }
+
+// IsChannelCheck reports whether verify names a channel type's own check.
+func IsChannelCheck(verify string) bool {
+	_, ok := channelChecks[verify]
+	return ok
+}
 
 // ChannelMessage is a message a webhook passes to a channel.
 type ChannelMessage struct {
@@ -428,4 +453,20 @@ func randomHex(n int) string {
 	b := make([]byte, n)
 	rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+// SiteAddress is this instance's own address, as a service is given it: the
+// one the administrator set, else the one this page was reached at.
+func SiteAddress(r *http.Request) string {
+	if db := AuthDB(); db != nil {
+		var ext string
+		if db.Get(WebTable, "external_url", &ext) && strings.TrimSpace(ext) != "" {
+			return strings.TrimRight(strings.TrimSpace(ext), "/")
+		}
+	}
+	scheme := "https"
+	if r.TLS == nil && !strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+		scheme = "http"
+	}
+	return scheme + "://" + r.Host
 }

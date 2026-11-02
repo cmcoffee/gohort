@@ -12,6 +12,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/messaging"
+	"github.com/cmcoffee/gohort/core/teamsbots"
 	"github.com/cmcoffee/gohort/core/textutil"
 )
 
@@ -61,17 +62,11 @@ func (T *Bridges) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	// (trailing "/" = prefix match). It authenticates each request itself via the
 	// provider's signature scheme against the connector's stored signing secret.
 	RegisterPublicPath(prefix + "/api/webhook/")
-	// Bot Framework activity receiver. Public for the same reason, but it
-	// authenticates differently: every request carries a bearer JWT signed by
-	// Microsoft's rotating keys, checked against the connector's app id. There is
-	// no secret to configure on this one.
-	RegisterPublicPath(prefix + "/api/bot/")
 	// Both inbound doors may also be reached through a peer relay (a
 	// peer_relay connector), for an instance that can only dial out. Only
 	// these two: they authenticate the provider themselves, which is what
 	// makes them safe to hand a borrowed public address to.
 	RegisterRelayablePath(prefix + "/api/webhook/")
-	RegisterRelayablePath(prefix + "/api/bot/")
 
 	sub := NewWebUI(T, prefix, AppUIAssets{})
 	sub.HandleFunc("/", T.handleDashboard)
@@ -80,7 +75,6 @@ func (T *Bridges) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	sub.HandleFunc("/api/relay-log", T.handleRelayLogPost)
 	sub.HandleFunc("/api/relay-tail", jsonapi.Get(T.DB, T.handleRelayLogView))
 	sub.HandleFunc("/api/webhook/", T.handleWebhook)
-	sub.HandleFunc("/api/bot/", T.handleBotActivity)
 	sub.HandleFunc("/api/webhook-secret", jsonapi.Post(T.DB, T.handleWebhookSecret))
 	sub.HandleFunc("/api/keys", jsonapi.Methods{
 		"GET":  jsonapi.Get(T.DB, T.handleKeys),
@@ -92,6 +86,12 @@ func (T *Bridges) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		"DELETE": jsonapi.Delete(T.DB, T.handleKeyRevoke),
 	}.Serve)
 	sub.HandleFunc("/api/bridges", jsonapi.Get(T.DB, T.handleBridgeList))
+	sub.HandleFunc("/api/teams-bots", jsonapi.Methods{
+		"GET":    jsonapi.Get(T.DB, T.handleTeamsBots),
+		"POST":   jsonapi.Post(T.DB, T.handleTeamsBotSave, jsonapi.MaxBody(1<<14)),
+		"DELETE": jsonapi.Delete(T.DB, T.handleTeamsBotDelete),
+	}.Serve)
+	sub.HandleFunc("/api/teams-bots/package", T.handleTeamsBotPackage)
 	sub.HandleFunc("/api/links", jsonapi.Methods{
 		"GET":    jsonapi.Get(T.DB, T.handleLinks),
 		"POST":   jsonapi.Post(T.DB, T.handleLinkSave, jsonapi.MaxBody(1<<14)),
@@ -126,6 +126,7 @@ func (T *Bridges) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	// once their connectors are materialized.
 	T.wireWebhooks()
 	T.startLinks()
+	T.startTeams()
 
 	// Expose Bridges' stored threads + outbound to orchestrate's channel-scoped
 	// chat tools (list_chats / read_chat / send_message) without a cycle.
@@ -179,18 +180,6 @@ func (T *Bridges) RegisterRoutes(mux *http.ServeMux, prefix string) {
 			return fmt.Errorf("the secret is blank")
 		}
 		T.setWebhookSecret(connector, strings.TrimSpace(secret))
-		return nil
-	})
-
-	// Bridges half of the bot_framework connector kind. Unlike the graph webhook
-	// there is no subscription to create or renew — Bot Framework routing is
-	// configured once in Azure — so starting one is just its outbound loop; the
-	// inbound route above is always mounted and gates on the connector record.
-	RegisterBotBridge(func(c Connector, start bool) error {
-		if start {
-			return T.startBotBridge(c)
-		}
-		T.stopBotBridge(c.Name)
 		return nil
 	})
 
@@ -778,8 +767,12 @@ var fileNameSafe = strings.NewReplacer("/", "-", "\\", "-", ":", "-", "\x00", ""
 // WITH send_url — is assumed to have a drainer. Used to decide whether an agent's
 // reply is enqueued for delivery or overflowed to the agent's cortex/session.
 func (T *Bridges) serviceHasOutput(owner, svc string) bool {
-	// A linked service sends through its connector's message.send.
+	// A linked service sends through its connector's message.send, a Teams
+	// bot through its own reply loop.
 	if _, ok := T.linkFor(owner, svc); ok {
+		return true
+	}
+	if _, ok := teamsbots.Load(owner, svc); ok {
 		return true
 	}
 	found := false

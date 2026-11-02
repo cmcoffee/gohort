@@ -1,0 +1,289 @@
+package bridges
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"io"
+	"math/big"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/teamsbots"
+	"github.com/cmcoffee/gohort/core/webhooks"
+	"github.com/cmcoffee/snugforge/jwcrypt"
+)
+
+const botApp = "11111111-2222-3333-4444-555555555555"
+
+// microsoftStandIn signs activity tokens as Bot Framework does, mints reply
+// tokens, and takes replies as the Teams service would.
+type microsoftStandIn struct {
+	key     *rsa.PrivateKey
+	srv     *httptest.Server
+	mu      sync.Mutex
+	replies []string
+}
+
+func newMicrosoftStandIn(t *testing.T) *microsoftStandIn {
+	t.Helper()
+	k, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := &microsoftStandIn{key: k}
+	b64 := func(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
+	// The key set is fetched by the verifier's own client, over plain HTTP here.
+	keys := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"keys":[{"kty":"RSA","use":"sig","alg":"RS256","kid":"k1","n":%q,"e":%q,"endorsements":["msteams"]}]}`,
+			b64(k.N.Bytes()), b64(big.NewInt(int64(k.E)).Bytes()))
+	}))
+	t.Cleanup(keys.Close)
+	m.srv = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/oauth2/v2.0/token"):
+			w.Write([]byte(`{"access_token":"reply-token","expires_in":3600}`))
+		default:
+			b, _ := io.ReadAll(r.Body)
+			m.mu.Lock()
+			m.replies = append(m.replies, r.URL.Path+" "+r.Header.Get("Authorization")+" "+string(b))
+			m.mu.Unlock()
+			w.Write([]byte(`{"id":"r1"}`))
+		}
+	}))
+	v := teamsbots.Verifier()
+	prevKeys, prevURL, prevClient := v.JWKSURL, teamsbots.TokenURL, teamsbots.HTTPClient
+	v.JWKSURL = keys.URL
+	teamsbots.TokenURL = func(tenant string) string { return m.srv.URL + "/" + tenant + "/oauth2/v2.0/token" }
+	teamsbots.HTTPClient = m.srv.Client()
+	t.Cleanup(func() {
+		m.srv.Close()
+		v.JWKSURL, teamsbots.TokenURL, teamsbots.HTTPClient = prevKeys, prevURL, prevClient
+	})
+	return m
+}
+
+// token is an activity token for audience, naming serviceURL.
+func (m *microsoftStandIn) token(t *testing.T, audience, serviceURL string) string {
+	t.Helper()
+	now := time.Now().Unix()
+	tok, err := jwcrypt.SignRS256(m.key, map[string]interface{}{"aud": audience, "iss": "https://api.botframework.com",
+		"serviceurl": serviceURL, "exp": now + 600, "nbf": now - 60, "iat": now}, map[string]string{"kid": "k1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tok
+}
+
+// activity is a one-to-one message from Ada in tenant, replies to serviceURL.
+func activity(serviceURL, tenant, id, text string) string {
+	b, _ := json.Marshal(map[string]any{"type": "message", "id": id, "serviceUrl": serviceURL, "channelId": "msteams", "text": text,
+		"from":         map[string]string{"id": "29:ada", "name": "Ada Lovelace", "aadObjectId": "aad-ada"},
+		"conversation": map[string]string{"id": "a:conv-1", "conversationType": "personal", "tenantId": tenant}})
+	return string(b)
+}
+
+// A Teams bot end to end: Microsoft's signed activity at the bot's webhook
+// reaches the agent bound to teams, and the agent's answer goes back into
+// the conversation signed with the bot's own reply token. A token for
+// another bot is refused; a bot waiting for approval, or one an activity
+// from another tenant reaches, passes nothing on.
+func TestATeamsBotAnswersInTeams(t *testing.T) {
+	T := linkWorld(t)
+	m := newMicrosoftStandIn(t)
+	const tenant = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+	bot, err := teamsbots.Save(teamsbots.Bot{Owner: "alice", Name: "Wren", AppID: botApp, TenantID: tenant, ServiceHost: m.srv.URL}, "sekret", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	T.wireWebhooks()
+	t.Cleanup(func() { webhooks.LinkedServices, webhooks.ToChannel = nil, nil })
+	hook, err := webhooks.Create(webhooks.Webhook{Label: "Wren (Teams bot)", Owner: "alice", Verify: teamsbots.VerifyName, Feeds: "channel:teams"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	teamsbots.SetWebhook("alice", "teams", hook.Name)
+	SaveChannel(RootDB, Channel{ID: "ch-teams", Owner: "alice", Name: "Teams", Service: "teams", AgentID: "agent-1", AutoReply: true})
+	asked := make(chan string, 4)
+	RegisterChannelAgentRunner(func(_ context.Context, in ChannelInbound) (ChannelReply, error) {
+		asked <- in.Text
+		return ChannelReply{Text: "deploy is green"}, nil
+	})
+	t.Cleanup(func() { RegisterChannelAgentRunner(nil) })
+
+	svcURL := m.srv.URL + "/amer/"
+	post := func(token, body string) int {
+		r := httptest.NewRequest(http.MethodPost, webhooks.Prefix+hook.Name, strings.NewReader(body))
+		if token != "" {
+			r.Header.Set("Authorization", "Bearer "+token)
+		}
+		w := httptest.NewRecorder()
+		webhooks.Handle(w, r)
+		return w.Code
+	}
+	if code := post(m.token(t, botApp, svcURL), activity(svcURL, tenant, "m1", "status?")); code != http.StatusAccepted ||
+		!strings.Contains(webhooks.Calls(hook.Name)[0].Outcome, "waits for an administrator's approval") {
+		t.Errorf("held: %d %+v", code, webhooks.Calls(hook.Name)[0])
+	}
+	teamsbots.AdminSetDisabled("alice", "teams", false)
+	bot, _ = teamsbots.Load("alice", "teams")
+
+	for _, c := range []struct {
+		why, token string
+	}{
+		{"another bot's token", m.token(t, "99999999-2222-3333-4444-555555555555", svcURL)},
+		{"a token for another reply address", m.token(t, botApp, "https://elsewhere.example/amer/")},
+		{"no token", ""},
+	} {
+		if code := post(c.token, activity(svcURL, tenant, "m2", "status?")); code != http.StatusUnauthorized {
+			t.Errorf("%s: %d", c.why, code)
+		}
+	}
+	if code := post(m.token(t, botApp, svcURL), activity(svcURL, "ffffffff-bbbb-cccc-dddd-eeeeeeeeeeee", "m3", "status?")); code != http.StatusAccepted {
+		t.Errorf("another tenant: %d", code)
+	}
+	select {
+	case got := <-asked:
+		t.Fatalf("passed on what it should not have: %q", got)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	if code := post(m.token(t, botApp, svcURL), activity(svcURL, tenant, "m4", "<at>Wren</at> is the deploy done?")); code != http.StatusOK {
+		t.Fatalf("a signed message: %d %+v", code, webhooks.Calls(hook.Name)[0])
+	}
+	select {
+	case got := <-asked:
+		if got != "is the deploy done?" {
+			t.Errorf("the agent was asked %q", got)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the message never reached the agent")
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) && T.pendingOutboxCount("teams", "alice") == 0 {
+		time.Sleep(20 * time.Millisecond)
+	}
+	// The shared reply loop may be running too (another test registered the
+	// routes): whichever sends it, it is sent once.
+	T.deliverBotOutbound(context.Background(), bot)
+	for time.Now().Before(deadline) {
+		m.mu.Lock()
+		n := len(m.replies)
+		m.mu.Unlock()
+		if n > 0 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	time.Sleep(50 * time.Millisecond)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.replies) != 1 || !strings.HasPrefix(m.replies[0], "/amer/v3/conversations/a:conv-1/activities Bearer reply-token ") ||
+		!strings.Contains(m.replies[0], `"text":"deploy is green"`) {
+		t.Errorf("replies: %q", m.replies)
+	}
+}
+
+// A reply for a conversation another bot heard, or none has, is not sent
+// with this bot's token.
+func TestAReplyGoesOnlyWhereTheBotHeard(t *testing.T) {
+	T := linkWorld(t)
+	m := newMicrosoftStandIn(t)
+	bot, _ := teamsbots.Save(teamsbots.Bot{Owner: "alice", Name: "Wren", AppID: botApp, ServiceHost: m.srv.URL}, "s", false)
+	T.setBotConv("a:theirs", botConv{ServiceURL: m.srv.URL + "/amer", Connector: "bob\x00teams"})
+	T.enqueueOutbox(OutboxItem{Service: "teams", Owner: "alice", ChatID: "a:theirs", Text: "x"})
+	T.enqueueOutbox(OutboxItem{Service: "teams", Owner: "alice", ChatID: "a:nobody", Text: "y"})
+	T.deliverBotOutbound(context.Background(), bot)
+	if len(m.replies) != 0 {
+		t.Errorf("sent: %q", m.replies)
+	}
+}
+
+// The Bridges page's Teams bot: added, it waits for approval under the
+// default policy (an administrator's does not), and its webhook is made,
+// passing to the channel teams; one bot a service, and none where a linked
+// service carries it; saved again it keeps its secret; its app package
+// comes for the address its webhook has; deleted, its webhook goes too.
+func TestTheTeamsBotOnTheBridgesPage(t *testing.T) {
+	f := newOwnershipFixture(t)
+	f.adb.Set(WebTable, "external_url", "https://gohort.example.test")
+	T := f.T
+	T.wireWebhooks()
+	t.Cleanup(func() { webhooks.LinkedServices, webhooks.ToChannel = nil, nil })
+	do := func(user, method, path, body string) (int, string) {
+		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		r.AddCookie(&http.Cookie{Name: "gohort_session", Value: AuthCreateSession(f.adb, user)})
+		w := httptest.NewRecorder()
+		f.routes()(w, r)
+		return w.Code, w.Body.String()
+	}
+	form := `{"name":"Wren","app_id":"` + botApp + `","tenant_id":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","secret":"sekret","accept":["personal"]}`
+	code, body := do("alice", "POST", "/api/teams-bots", form)
+	if code >= 300 || !strings.Contains(body, "https://gohort.example.test/hook/wren-teams-bot") || !strings.Contains(body, "approval") {
+		t.Fatalf("add: %d %s", code, body)
+	}
+	b, _ := teamsbots.Load("alice", "teams")
+	h, ok := webhooks.Owned("alice", b.Webhook)
+	if !b.AwaitingApproval || !ok || h.Verify != teamsbots.VerifyName || h.Feeds != "channel:teams" {
+		t.Errorf("bot %+v, webhook %+v", b, h)
+	}
+	if code, body := do("alice", "POST", "/api/teams-bots", form); code != 400 || !strings.Contains(body, "edit it") {
+		t.Errorf("a second bot for teams: %d %s", code, body)
+	}
+	if code, _ := do("root", "POST", "/api/teams-bots", strings.Replace(form, `"accept"`, `"service":"teams-ops","accept"`, 1)); code >= 300 {
+		t.Errorf("an administrator's: %d", code)
+	}
+	if rb, _ := teamsbots.Load("root", "teams-ops"); rb.AwaitingApproval {
+		t.Error("an administrator's bot was held")
+	}
+	if code, body := do("alice", "POST", "/api/teams-bots?service=teams", `{"name":"Wren Two","app_id":"`+botApp+`","secret":""}`); code >= 300 {
+		t.Errorf("edit: %d %s", code, body)
+	}
+	if teamsbots.Secret("alice", "teams") != "sekret" {
+		t.Error("an edit with no secret lost the one it had")
+	}
+	_, list := do("alice", "GET", "/api/teams-bots", "")
+	if strings.Contains(list, "sekret") || !strings.Contains(list, "Wren Two") || !strings.Contains(list, "waiting for an administrator") {
+		t.Errorf("the list: %s", list)
+	}
+	code, zipBody := do("alice", "GET", "/api/teams-bots/package?service=teams", "")
+	if code != 200 || !strings.HasPrefix(zipBody, "PK") {
+		t.Errorf("the package: %d", code)
+	}
+	if code, _ := do("bob", "GET", "/api/teams-bots/package?service=teams", ""); code != 404 {
+		t.Errorf("someone else's package: %d", code)
+	}
+	if code, _ := do("alice", "DELETE", "/api/teams-bots?service=teams", ""); code >= 300 {
+		t.Errorf("delete: %d", code)
+	}
+	if _, ok := webhooks.Get(b.Webhook); ok {
+		t.Error("the bot's webhook outlived it")
+	}
+}
+
+// The reply loop sends for a bot an administrator lets answer, and holds
+// what a bot waiting for approval would send.
+func TestOnlyAnApprovedBotReplies(t *testing.T) {
+	T := linkWorld(t)
+	m := newMicrosoftStandIn(t)
+	bot, _ := teamsbots.Save(teamsbots.Bot{Owner: "alice", Name: "Wren", AppID: botApp, ServiceHost: m.srv.URL}, "s", true)
+	T.setBotConv("a:c1", botConv{ServiceURL: m.srv.URL + "/amer", Connector: bot.Key()})
+	T.enqueueOutbox(OutboxItem{Service: "teams", Owner: "alice", ChatID: "a:c1", Text: "x"})
+	T.deliverTeams(context.Background())
+	if len(m.replies) != 0 || T.pendingOutboxCount("teams", "alice") != 1 {
+		t.Errorf("a held bot replied: %q", m.replies)
+	}
+	teamsbots.AdminSetDisabled("alice", "teams", false)
+	T.deliverTeams(context.Background())
+	if len(m.replies) != 1 {
+		t.Errorf("an approved bot did not: %q", m.replies)
+	}
+}

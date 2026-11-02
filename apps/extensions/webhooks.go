@@ -26,23 +26,8 @@ type webhookRow struct {
 	LastCall string `json:"last_call"`
 	Problem  string `json:"problem,omitempty"`
 	Open     bool   `json:"open"`
+	Managed  bool   `json:"managed"` // made and kept by what it feeds (a Teams bot)
 	Signed   bool   `json:"signed"`
-}
-
-// siteAddress is this instance's own address, as a service is given it: the
-// one the administrator set, else the one this page was reached at.
-func siteAddress(r *http.Request) string {
-	if db := AuthDB(); db != nil {
-		var ext string
-		if db.Get(WebTable, "external_url", &ext) && strings.TrimSpace(ext) != "" {
-			return strings.TrimRight(strings.TrimSpace(ext), "/")
-		}
-	}
-	scheme := "https"
-	if r.TLS == nil && !strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
-		scheme = "http"
-	}
-	return scheme + "://" + r.Host
 }
 
 // checksText is how webhook h checks its caller, in words.
@@ -55,13 +40,17 @@ func checksText(h webhooks.Webhook) string {
 	case webhooks.VerifySlack:
 		return "Slack's request signing"
 	}
+	if webhooks.IsChannelCheck(h.Verify) {
+		return "the " + h.Verify + " check of what it feeds"
+	}
 	return "nothing: its address is the secret"
 }
 
 func webhookRowOf(r *http.Request, h webhooks.Webhook) webhookRow {
 	row := webhookRow{Name: h.Name, Label: h.Label, Checks: checksText(h), Feeds: "the watch " + h.Watch(),
-		Open: h.Verify == webhooks.VerifyNone, Signed: h.Verify != webhooks.VerifyNone, LastCall: "none yet"}
-	if addr, ok := h.Address(siteAddress(r)); ok {
+		Open: h.Verify == webhooks.VerifyNone, Signed: h.Verify != webhooks.VerifyNone && !webhooks.IsChannelCheck(h.Verify),
+		Managed: webhooks.IsChannelCheck(h.Verify), LastCall: "none yet"}
+	if addr, ok := h.Address(webhooks.SiteAddress(r)); ok {
 		row.Address = addr
 	} else {
 		row.Address = "waiting for its peer relay to connect"
@@ -111,6 +100,7 @@ type webhookForm struct {
 	Kinds     string `json:"kinds"`
 	Feeds     string `json:"feeds"`
 	Reach     string `json:"reach"`
+	Address   string `json:"address,omitempty"` // shown, never saved
 }
 
 func (f webhookForm) webhook(owner string) webhooks.Webhook {
@@ -175,7 +165,11 @@ func (T *Extensions) handleWebhooks(c *jsonapi.Call) (any, error) {
 		if !ok {
 			return nil, jsonapi.NotFound("you have no webhook " + name)
 		}
-		return webhookForm{Label: h.Label, Verify: h.Verify, Header: h.Header, Algorithm: h.Algorithm, Prefix: h.Prefix,
+		addr, ok := h.Address(webhooks.SiteAddress(c.R))
+		if !ok {
+			addr = "Shown once its peer relay connects."
+		}
+		return webhookForm{Address: addr, Label: h.Label, Verify: h.Verify, Header: h.Header, Algorithm: h.Algorithm, Prefix: h.Prefix,
 			Text: h.Map.Text, Kind: h.Map.Kind, ID: h.Map.ID, From: h.Map.From, Chat: h.Map.Chat, Kinds: strings.Join(h.Kinds, ", "),
 			Feeds: h.Feeds, Reach: h.Reach}, nil
 	}
@@ -209,7 +203,7 @@ func (T *Extensions) handleWebhookSave(c *jsonapi.Call, f webhookForm) (any, err
 	if err != nil {
 		return nil, jsonapi.BadRequest(err.Error())
 	}
-	addr, ok := h.Address(siteAddress(c.R))
+	addr, ok := h.Address(webhooks.SiteAddress(c.R))
 	if !ok {
 		addr = "shown on its row once its peer relay connects"
 	}
@@ -228,10 +222,13 @@ func (T *Extensions) handleWebhookDelete(c *jsonapi.Call, _ struct{}) (any, erro
 // Editing, the record it loads carries how it checks, which the header
 // fields show by.
 func webhookFields(adding bool) []ui.FormField {
-	fields := []ui.FormField{
-		{Field: "label", Label: "Name", Required: true, Placeholder: "e.g. GitHub pushes",
-			Help: "What you call it. Its address is made from it."},
+	fields := []ui.FormField{}
+	if !adding {
+		fields = append(fields, ui.FormField{Field: "address", Label: "Address to give the service", Type: "readonly", Copy: true,
+			Help: "Paste it where the service asks for its webhook URL (a payload URL, an endpoint, a request URL)."})
 	}
+	fields = append(fields, ui.FormField{Field: "label", Label: "Name", Required: true, Placeholder: "e.g. GitHub pushes",
+		Help: "What you call it. Its address is made from it."})
 	if adding {
 		fields = append(fields,
 			ui.FormField{Field: "verify", Label: "Checks the caller by", Type: "select", Options: []ui.SelectOption{
@@ -294,7 +291,7 @@ func (T *Extensions) webhooksSection(user string) ui.Section {
 			{Field: "problem", Label: "", Mute: true, Flex: 2},
 		},
 		RowActions: []ui.RowAction{
-			ui.ModalAction("Edit", ui.FormPanel{Source: "api/webhooks?name={name}", PostURL: "api/webhooks?name={name}",
+			ui.ModalActionIf("Edit", "", "managed", ui.FormPanel{Source: "api/webhooks?name={name}", PostURL: "api/webhooks?name={name}",
 				SubmitLabel: "Save", Fields: webhookFields(false)}),
 			ui.Expand("Calls", ui.Table{Source: "api/webhooks?calls={name}", Columns: []ui.Col{
 				{Field: "at", Label: "When", Mute: true}, {Field: "kind", Label: "Kind", Mute: true},

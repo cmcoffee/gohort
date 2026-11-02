@@ -265,7 +265,7 @@ const researchTemplates = "Research Sources"
 // each connector (service.TieIns).
 func connectorGroup(conn Connector, research map[string]bool, uses map[string][]string) string {
 	switch conn.Kind {
-	case RestMessagingConnectorKind, MessagingBridgeConnectorKind, BotFrameworkConnectorKind:
+	case RestMessagingConnectorKind, MessagingBridgeConnectorKind:
 		return groupMessages
 	case RestPollConnectorKind:
 		return groupWatches

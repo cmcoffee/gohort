@@ -155,9 +155,9 @@ root PUT /api/personal-mcp-servers "{}"
 alice GET /api/personal-integrations ""
   403 forbidden
 root GET /api/personal-integrations ""
-  200 {"credentials":"allowed","mcp_servers":"approval"}
+  200 {"credentials":"allowed","mcp_servers":"approval","teams_bots":"approval"}
 root PUT /api/personal-integrations "{}"
-  200 {"credentials":"allowed","mcp_servers":"approval"}
+  200 {"credentials":"allowed","mcp_servers":"approval","teams_bots":"approval"}
 (signed out) GET /api/user-candidates ""
   403 forbidden
 alice GET /api/user-candidates ""
@@ -213,9 +213,9 @@ root DELETE /api/personal-mcp-servers?owner=bob&name=s ""
 alice POST /api/personal-mcp-servers?owner=bob&name=s&action=enable ""
   403 forbidden
 root POST /api/personal-integrations "{}"
-  200 {"credentials":"allowed","mcp_servers":"approval"}
+  200 {"credentials":"allowed","mcp_servers":"approval","teams_bots":"approval"}
 root PATCH /api/personal-integrations "{\"mcp\":\"nonsense\"}"
-  200 {"credentials":"allowed","mcp_servers":"approval"}
+  200 {"credentials":"allowed","mcp_servers":"approval","teams_bots":"approval"}
 root POST /api/personal-integrations "{\"mcp\":"
   400 invalid JSON: unexpected EOF
 root POST /api/personal-integrations ""
@@ -229,7 +229,7 @@ alice POST /api/personal-integrations "{}"
 (signed out) GET /api/user-candidates ""
   200 []
 (signed out) GET /api/personal-integrations ""
-  200 {"credentials":"allowed","mcp_servers":"approval"}
+  200 {"credentials":"allowed","mcp_servers":"approval","teams_bots":"approval"}
 (signed out) GET /api/user-agents ""
   200 []
 (signed out) POST /api/user-agents?owner=bob&id=x&action=revoke_share ""

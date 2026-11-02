@@ -68,6 +68,7 @@ func (a *AdminApp) governanceSections() []ui.Section {
 			},
 		},
 		personalMCPServersSection(),
+		personalTeamsBotsSection(),
 		{
 			Title:    "Global tools",
 			Subtitle: "What this deployment publishes, and who may take it.",

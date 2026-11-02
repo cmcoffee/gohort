@@ -986,6 +986,27 @@ once:
     its agents' replies every three seconds. The Extensions page's Webhooks
     section says how to set Slack up; Graph and Bot Framework stay with
     11c and 11d.
+
+    11d built (2026-11-02, branch `channels`), as personal bots: a person
+    adds a Teams bot they registered in Azure under Bridges (`core/teamsbots`
+    keeps it: app id, tenant, the client secret encrypted with the bot,
+    reply host, conversation types, reply in thread). Adding one is the
+    administrator's policy (`governance.TeamsBots`, needs approval by
+    default; Admin > Governance lists every bot to approve, switch off or
+    delete). The bot is reached through a webhook made and removed with it,
+    checked `botframework`: webhooks gain channel types' own checks
+    (`RegisterChannelCheck`), which check and read their posts themselves.
+    The token's audience is the bot's app id and it must fit the activity
+    (its serviceurl, the key's endorsement); a bot waiting for approval, or
+    an activity from another tenant, passes nothing on. Replies are signed
+    with a token minted from the bot's own id and secret (its tenant, or
+    botframework.com for a multi-tenant bot), kept until near expiry, and
+    go only under its reply host, to a conversation it heard. One reply
+    loop serves every approved bot. Under Edit, its messaging endpoint
+    (with Copy) and its Teams app package (manifest and both icons, made
+    for that address; never the owner's name). The `bot_framework`
+    connector kind is deleted, with Builder's create and update for it.
+    A shared bot with Teams users mapped to gohort users is not built.
 12. Watches on connectors: `rest_poll` becomes a watch over a connector.
 13. Desktop programs (`desktop_command`, `desktop_mcp`) on a per-user Desktop
     page (decided, Q5); MCP servers and peers on their own pages with the key
