@@ -244,6 +244,15 @@ func embedRaw(ctx context.Context, cfg EmbeddingConfig, text string) ([]float32,
 // answers with fewer vectors than it was sent is an error, so a caller can
 // fall back to one at a time.
 func embedTexts(ctx context.Context, cfg EmbeddingConfig, texts []string) ([][]float32, error) {
+	vecs, err := embedTextsVia(ctx, cfg, texts)
+	if err == nil {
+		vectorEmbedderAnswered() // chunks an outage left without vectors can be repaired now
+	}
+	return vecs, err
+}
+
+// embedTextsVia sends texts to whichever backend cfg names; see embedTexts.
+func embedTextsVia(ctx context.Context, cfg EmbeddingConfig, texts []string) ([][]float32, error) {
 	if len(texts) == 0 {
 		return nil, fmt.Errorf("nothing to embed")
 	}

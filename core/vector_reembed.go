@@ -15,6 +15,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cmcoffee/gohort/core/media"
@@ -392,4 +393,122 @@ func init() {
 			return RemoveUnusableChunks(ctx, vectorRepairDB())
 		},
 	)
+}
+
+// --- upkeep: the vector repairs, run without anybody pressing them -----------
+//
+// Two passes keep the index whole: the cleanup (a chunk with no text, which no
+// repair can fix) and the repair (a chunk search cannot see, stored while the
+// embedder was down or embedded in another space). Both were buttons, so a
+// chunk stored while the embedder was down stayed out of semantic search until
+// somebody noticed and pressed Repair. They now run on their own, through the
+// same runner as the buttons, so a run shows its progress, can be stopped, and
+// a press while it runs joins it:
+//
+//   - nightly, once in the chosen hour of the deployment's day (3am unless
+//     set), when the store is quiet. With nothing to fix each is a scan of the cached chunk
+//     list.
+//   - soon after the embedder answers again, when a write since the last run
+//     stored a chunk with text and no vector: the chunks an outage left behind
+//     are back in search in minutes, not by the next night.
+
+// TunableVectorUpkeep switches the automatic runs off; the buttons stay.
+// TunableVectorUpkeepHour is the hour of the deployment's day the nightly run
+// starts.
+const (
+	TunableVectorUpkeep     = "tune_vector_upkeep"
+	TunableVectorUpkeepHour = "tune_vector_upkeep_hour"
+)
+
+// vectorRepairDelay is how long after the embedder answers again the repair
+// starts: long enough for a backend that just came back to settle, and for an
+// ingest in flight to finish its own embeds first.
+var vectorRepairDelay = 2 * time.Minute
+
+var vectorUpkeep struct {
+	mu      sync.Mutex
+	lastDay string // the deployment day of the last nightly run
+	pending bool   // a write stored a chunk with text and no vector
+}
+
+func init() {
+	RegisterTunable(TunableSpec{Key: TunableVectorUpkeep, Category: "Retrieval", Label: "Repair the vector index on its own",
+		Help: "Each night, and a few minutes after the embedder comes back from an outage, remove chunks with no text and re-embed the chunks search cannot see.",
+		Kind: KindBool, Default: 1, Min: 0, Max: 1})
+	RegisterTunable(TunableSpec{Key: TunableVectorUpkeepHour, Category: "Retrieval", Label: "Hour the vector index is repaired",
+		Help: "The hour of the night (0-23, in the deployment's time zone) the nightly repair runs. Pick one when the box is quiet.",
+		Kind: KindInt, Default: 3, Min: 0, Max: 23})
+	// The reconciler ticker is where the framework already runs periodic
+	// upkeep (image_reap, managed_workspace_cleanup); the work is the check.
+	RegisterReconciler("vector_upkeep", func(ctx context.Context) error {
+		if TuneBool(TunableVectorUpkeep) && dueNightlyVectorUpkeep(time.Now()) {
+			go runVectorUpkeep("nightly")
+		}
+		return nil
+	})
+}
+
+// dueNightlyVectorUpkeep reports whether now is in the upkeep hour of a
+// deployment day the nightly run has not yet had, and claims the day when it
+// is, so two reconciler passes in the hour cannot both run it.
+func dueNightlyVectorUpkeep(now time.Time) bool {
+	local := now.In(time.Local)
+	if local.Hour() != TuneInt(TunableVectorUpkeepHour) {
+		return false
+	}
+	day := local.Format("2006-01-02")
+	vectorUpkeep.mu.Lock()
+	defer vectorUpkeep.mu.Unlock()
+	if vectorUpkeep.lastDay == day {
+		return false
+	}
+	vectorUpkeep.lastDay = day
+	return true
+}
+
+// noteChunksWithoutVectors marks a repair as wanted when rows hold text the
+// embedder did not turn into a vector, with an embedder set up to repair them.
+func noteChunksWithoutVectors(rows []EmbeddedChunk) {
+	for _, r := range rows {
+		if len(r.Vector) == 0 && strings.TrimSpace(r.Text) != "" {
+			if !GetEmbeddingConfig().Enabled {
+				return
+			}
+			vectorUpkeep.mu.Lock()
+			vectorUpkeep.pending = true
+			vectorUpkeep.mu.Unlock()
+			return
+		}
+	}
+}
+
+// vectorEmbedderAnswered is told of every embed that succeeded. When a repair
+// is wanted it sets one to start vectorRepairDelay later, and the want is
+// spent; a run already going when it starts is joined, not doubled
+// (RunMaintenanceFunc).
+func vectorEmbedderAnswered() {
+	vectorUpkeep.mu.Lock()
+	if !vectorUpkeep.pending || !TuneBool(TunableVectorUpkeep) {
+		vectorUpkeep.mu.Unlock()
+		return
+	}
+	vectorUpkeep.pending = false
+	vectorUpkeep.mu.Unlock()
+	time.AfterFunc(vectorRepairDelay, func() {
+		runVectorUpkeep("the embedder answered again after chunks were stored without vectors")
+	})
+}
+
+// runVectorUpkeep runs the cleanup, then the repair, through the maintenance
+// runner, on a context of its own (it outlives whatever noticed it was due),
+// and says what they did.
+func runVectorUpkeep(why string) {
+	ctx := context.WithoutCancel(AppContext())
+	removed := RunMaintenanceFunc(ctx, "vector_database_cleanup")
+	repaired := RunMaintenanceFunc(ctx, "reembed_stale_chunks")
+	if removed <= 0 && repaired <= 0 {
+		Log("[vector-upkeep] %s: the index is whole, nothing to do", why)
+		return
+	}
+	Log("[vector-upkeep] %s: removed %d unusable chunk(s), re-embedded %d", why, max(removed, 0), max(repaired, 0))
 }

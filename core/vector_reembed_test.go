@@ -6,8 +6,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/cmcoffee/snugforge/kvlite"
 )
@@ -379,5 +381,135 @@ func TestReembedSplitsAnOversizedChunk(t *testing.T) {
 	SortChunksForAssembly(parts)
 	if !strings.Contains(parts[0].Section, "part 1/2") {
 		t.Fatalf("split parts must order by part number: %q then %q", parts[0].Section, parts[1].Section)
+	}
+}
+
+// upkeepWorld stands in for the two repair passes, counting their runs, and
+// resets the upkeep state around the test.
+func upkeepWorld(t *testing.T) (runs func() (cleanups, repairs int)) {
+	t.Helper()
+	var mu sync.Mutex
+	cleanups, repairs := 0, 0
+	saved := maintenanceFuncs
+	maintenanceFuncs = append([]MaintenanceFunc{
+		{Key: "vector_database_cleanup", Run: func(context.Context) int { mu.Lock(); cleanups++; mu.Unlock(); return 0 }},
+		{Key: "reembed_stale_chunks", Run: func(context.Context) int { mu.Lock(); repairs++; mu.Unlock(); return 2 }},
+	}, saved...)
+	prevDelay := vectorRepairDelay
+	vectorRepairDelay = 10 * time.Millisecond
+	reset := func() {
+		vectorUpkeep.mu.Lock()
+		vectorUpkeep.lastDay, vectorUpkeep.pending = "", false
+		vectorUpkeep.mu.Unlock()
+	}
+	reset()
+	t.Cleanup(func() { maintenanceFuncs, vectorRepairDelay = saved, prevDelay; reset() })
+	return func() (int, int) { mu.Lock(); defer mu.Unlock(); return cleanups, repairs }
+}
+
+// The nightly run is due once per deployment day, in its hour: 3am unless
+// another is set.
+func TestTheVectorUpkeepRunsOnceANight(t *testing.T) {
+	upkeepWorld(t)
+	day := time.Date(2026, 11, 3, 3, 10, 0, 0, time.Local)
+	if dueNightlyVectorUpkeep(day.Add(-2 * time.Hour)) {
+		t.Error("due outside its hour")
+	}
+	if !dueNightlyVectorUpkeep(day) {
+		t.Fatal("not due in its hour")
+	}
+	if dueNightlyVectorUpkeep(day.Add(30 * time.Minute)) {
+		t.Error("due twice in one night")
+	}
+	if !dueNightlyVectorUpkeep(day.Add(24 * time.Hour)) {
+		t.Error("not due the next night")
+	}
+	tdb := &DBase{Store: kvlite.MemStore()}
+	SetTunablesDB(tdb)
+	t.Cleanup(func() { SetTunablesDB(nil) })
+	tdb.Set(WebTable, TunableVectorUpkeepHour, float64(22))
+	InvalidateTunables()
+	if dueNightlyVectorUpkeep(day.Add(48 * time.Hour)) {
+		t.Error("due at 3am with 22:00 chosen")
+	}
+	if !dueNightlyVectorUpkeep(day.Add(48*time.Hour + 19*time.Hour)) {
+		t.Error("not due in the chosen hour")
+	}
+}
+
+// A chunk stored with text and no vector wants a repair, and the next embed
+// that succeeds sets one off, once, a little later: the cleanup then the
+// repair, through the maintenance runner. Without an embedder set up, or with
+// the upkeep switched off, nothing is set off.
+func TestTheEmbedderComingBackRepairsWhatItMissed(t *testing.T) {
+	runs := upkeepWorld(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"data":[{"embedding":[0.1,0.2]}]}`))
+	}))
+	defer srv.Close()
+	cfg := useConnectorEmbedder(t, srv.URL, "e5")
+	ctx := context.Background()
+	db := &DBase{Store: kvlite.MemStore()}
+
+	// Every row has its vector, or no text to make one from: nothing wanted.
+	putChunks(db, []EmbeddedChunk{{ID: "v1", Text: "fine", Vector: []float32{1}}, {ID: "v2", Text: "  "}})
+	embedRaw(ctx, cfg, "x")
+	time.Sleep(50 * time.Millisecond)
+	if c, r := runs(); c+r != 0 {
+		t.Fatalf("a repair ran with nothing to repair: %d %d", c, r)
+	}
+	// One without: the next good embed sets the repair off once.
+	putChunks(db, []EmbeddedChunk{{ID: "e1", Text: "the embedder was down"}})
+	embedRaw(ctx, cfg, "x")
+	embedRaw(ctx, cfg, "y")
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if c, r := runs(); c == 1 && r == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			c, r := runs()
+			t.Fatalf("after the embedder answered: %d cleanup(s), %d repair(s), want 1 and 1", c, r)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	time.Sleep(50 * time.Millisecond)
+	embedRaw(ctx, cfg, "z")
+	time.Sleep(50 * time.Millisecond)
+	if c, r := runs(); c != 1 || r != 1 {
+		t.Errorf("the repair ran again with nothing new wanting it: %d %d", c, r)
+	}
+
+	// Switched off: a row without a vector sets nothing off.
+	tdb := &DBase{Store: kvlite.MemStore()}
+	SetTunablesDB(tdb)
+	t.Cleanup(func() { SetTunablesDB(nil) })
+	tdb.Set(WebTable, TunableVectorUpkeep, float64(0))
+	InvalidateTunables()
+	if TuneBool(TunableVectorUpkeep) {
+		t.Fatal("the switch did not take")
+	}
+	putChunks(db, []EmbeddedChunk{{ID: "e2", Text: "again"}})
+	embedRaw(ctx, cfg, "x")
+	time.Sleep(50 * time.Millisecond)
+	if c, r := runs(); c != 1 || r != 1 {
+		t.Errorf("switched off, a repair still ran: %d %d", c, r)
+	}
+	SetTunablesDB(nil)
+
+	// No embedder set up: nothing to repair with, so nothing is wanted.
+	vectorUpkeep.mu.Lock()
+	vectorUpkeep.pending = false
+	vectorUpkeep.mu.Unlock()
+	off := cfg
+	off.Enabled = false
+	SetEmbeddingConfig(off)
+	putChunks(db, []EmbeddedChunk{{ID: "e3", Text: "no embedder"}})
+	vectorUpkeep.mu.Lock()
+	wanted := vectorUpkeep.pending
+	vectorUpkeep.mu.Unlock()
+	if wanted {
+		t.Error("a repair was wanted with no embedder to make it")
 	}
 }

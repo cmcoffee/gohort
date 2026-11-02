@@ -451,14 +451,22 @@ func backgroundVoiceRun(t *testing.T, voice bool) (sends []voiceSend, card ChatM
 		}
 		return ChatMessage{}, false
 	}
+	// The result is stored in the thread and then sent to the chat, so both
+	// are waited for: a send that lands after the thread check was counted by
+	// the next run instead, under load.
+	sent := func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(got) > 0
+	}
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		if c, ok := result(); ok {
+		if c, ok := result(); ok && sent() {
 			card = c
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("the background result never came back to the conversation")
+			t.Fatal("the background result never came back to the conversation and its chat")
 		}
 		time.Sleep(50 * time.Millisecond)
 	}

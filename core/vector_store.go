@@ -156,6 +156,7 @@ func putChunks(db Database, rows []EmbeddedChunk) {
 		}
 		return nil
 	})
+	noteChunksWithoutVectors(rows) // a repair once the embedder is back
 }
 
 // unsetChunks deletes the rows with these IDs in one commit (5,000: 6.8s one
