@@ -132,7 +132,7 @@ func createEventMonitorToolDef(sess *ToolSession, owner, agentID string) AgentTo
 			if kind == EventKindWebhook {
 				m.Token = NewEventToken()
 				SaveEventMonitor(RootDB, m)
-				return fmt.Sprintf("Webhook monitor %q created. Have the external system POST JSON {\"summary\":\"...\"} to:\n  <your gohort base URL>/orchestrate/api/operator/event/%s\nEach POST wakes me in this thread.%s", name, m.Token, fireLimitSentence(m)), nil
+				return fmt.Sprintf("Webhook monitor %q created. Have the external system POST JSON {\"summary\":\"...\"} to:\n  <your gohort base URL>/orchestrate/api/operator/event/%s\nEach POST wakes me in this thread. A service that posts its own events and signs them (GitHub, Stripe) is given a webhook for this watch instead, added under Extensions > Webhooks.%s", name, m.Token, fireLimitSentence(m)), nil
 			}
 			if kind == EventKindHTTP {
 				m.URL = strings.TrimSpace(oArgStr(args, "url"))

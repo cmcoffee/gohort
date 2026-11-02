@@ -88,6 +88,11 @@ func (T *Extensions) Routes() {
 		"POST":   T.mcpServerPost(),
 		"DELETE": jsonapi.Delete(T.DB, T.handleMCPServerDelete),
 	}.Serve)
+	T.HandleFunc("/api/webhooks", jsonapi.Methods{
+		"GET":    jsonapi.Get(T.DB, T.handleWebhooks),
+		"POST":   jsonapi.Post(T.DB, T.handleWebhookSave, jsonapi.MaxBody(1<<16)),
+		"DELETE": jsonapi.Delete(T.DB, T.handleWebhookDelete),
+	}.Serve)
 	T.HandleFunc("/api/tools", jsonapi.Methods{
 		"GET":    jsonapi.Get(T.DB, T.listUserTools),
 		"POST":   T.userToolPost(),
@@ -1879,6 +1884,8 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 	pt.mark("MCP servers")
 	sections = append(sections, T.connectedAccountsSection())
 	pt.mark("connected accounts")
+	sections = append(sections, T.webhooksSection(user))
+	pt.mark("webhooks")
 	sections = append(sections, T.toolsSection(user))
 	pt.mark("tools")
 	sections = append(sections, T.skillsSection())

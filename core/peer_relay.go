@@ -700,6 +700,20 @@ func stopPeerRelayClient(name string) {
 	}
 }
 
+// PeerRelayAddress is the public address relay connection name gives
+// providers, a route's path to follow it, while it is connected.
+func PeerRelayAddress(name string) (string, bool) {
+	peerRelayClients.mu.Lock()
+	rc := peerRelayClients.by[name]
+	peerRelayClients.mu.Unlock()
+	if rc == nil {
+		return "", false
+	}
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+	return rc.public, rc.state == "connected" && rc.public != ""
+}
+
 // peerRelayClientStatus words a connector's state for the admin table.
 func peerRelayClientStatus(name string, approved bool) string {
 	peerRelayClients.mu.Lock()

@@ -923,6 +923,31 @@ once:
    were retired, decision 9). `peer_relay` becomes a
    webhook's reach. `rest_messaging`'s push side and Bot Framework's inbound
    stay as they are until channels.
+
+    Built (2026-11-01, branch `webhooks`): `core/webhooks`, with the section
+    under Extensions > Webhooks. A webhook is its owner's, as a watch is,
+    and wakes only one of their watches woken by a post (`feeds`
+    `watch:<monitor>`). Its address, `/hook/<name>`, is unique on the
+    instance and made from its label; one that checks nothing gets a long
+    random name, since the address is then its only secret. Checks:
+    `none`, `token` (a named header, or a bearer in Authorization) and
+    `hmac` (sha256 or sha1, an optional prefix, hex in either case or
+    base64); the named verifiers (`slack`, `graph`, `botframework`) move
+    with channels. The secret is kept encrypted and never read back: the
+    Add form opens with a fresh one to copy to the service, or the
+    service's own is pasted over it; New secret replaces it the same way.
+    How it checks is fixed when it is added. `map` reads `text`, `kind`,
+    `id` and `from` by dotted path or `header:<Name>`; `kinds` limits
+    which pass on; an `id` seen lately is passed over, claimed in one
+    step so two retries together are not both passed on, and released
+    when the watch's budget refuses it so the retry is. `reach` is
+    `direct` or `peer:<relay connection>`, whose public address the row
+    shows while it is connected (`PeerRelayAddress`). Bounds: 1 MB a
+    post, 120 posts a minute a webhook, 20 refusals a minute an address,
+    and the watch's own 12 wakes a minute, now kept in core
+    (`EventMonitorFires`) and spent by both doors. Every call is kept on
+    its row (the last 20), refusals saying why. A watch's own token URL is
+    unchanged.
 11. Channels on connectors: `message.fetch`; Slack, Discord and Teams
     templates; the channel consumer for webhooks; `rest_messaging` and Bot
     Framework move, once.

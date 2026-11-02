@@ -325,6 +325,16 @@ var (
 	eventStarted bool
 )
 
+// EventMonitorFiresPerMinute is how often one monitor may be woken from
+// outside (its token URL, a webhook feeding it), together: generous for an
+// integration reporting real events, tight against anything systematic.
+const EventMonitorFiresPerMinute = 12
+
+// EventMonitorFires is the one budget every outside door into a monitor
+// spends, keyed by owner + ":" + name: the monitor carries it, so two doors
+// into it do not double what one leaked secret could spend.
+var EventMonitorFires = NewRateLimiter(EventMonitorFiresPerMinute, time.Minute)
+
 // RegisterEventWaker installs the Operator-wake closure. Call once at startup.
 func RegisterEventWaker(fn WakeFunc) {
 	eventMu.Lock()
@@ -2127,6 +2137,10 @@ func fetchExtractURLFor(ctx context.Context, url, jsonPath, regex string, allowI
 	}
 	return strings.TrimSpace(string(body)), nil
 }
+
+// ExtractJSONPath is the value at a dotted path into the JSON document body,
+// as a monitor reads one (extractJSONPath).
+func ExtractJSONPath(body []byte, path string) (string, error) { return extractJSONPath(body, path) }
 
 // extractJSONPath walks a dotted path into a parsed JSON document. Map keys and
 // array indices both use a path segment (e.g. "quoteResponse.result.0.price").

@@ -632,9 +632,10 @@ func registerOperatorWake(app *OrchestrateApp) {
 
 // Ceilings for the public webhook. Generous for an integration reporting real
 // events, tight against anything systematic — the point is to bound what one
-// token can spend, not to police a busy monitor.
+// token can spend, not to police a busy monitor. The per-monitor one is
+// core's, shared with a webhook feeding the monitor (core/webhooks).
 const (
-	operatorEventPerMinute = 12
+	operatorEventPerMinute = EventMonitorFiresPerMinute
 	// maxOperatorEventBody caps the POST. A summary and a detail paragraph;
 	// anything larger is not an event report.
 	maxOperatorEventBody = 64 << 10
@@ -644,7 +645,7 @@ const (
 )
 
 var (
-	operatorEventFires    = NewRateLimiter(operatorEventPerMinute, time.Minute)
+	operatorEventFires    = EventMonitorFires
 	operatorEventFailures = NewRateLimiter(operatorEventFailMax, time.Minute)
 )
 
