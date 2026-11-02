@@ -4,8 +4,8 @@ package orchestrate
 // fields that survive a save are the ones applyBuilderDeploymentState
 // names. A toggle the editor RENDERS but that list omits saves happily
 // and reads back false — it looks like a control that refuses to stay
-// on, and migrateBuilderShadows then writes the rebuilt record back over
-// the shadow at boot, making the loss permanent at the next restart.
+// on. (A boot pass used to write the rebuilt record back over the shadow,
+// making the loss permanent at the next restart; it is gone.)
 //
 // This has now happened twice (LeadModel, then MCPExposed), so it gets a
 // test rather than a third comment.

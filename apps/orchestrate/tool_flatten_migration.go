@@ -19,12 +19,14 @@
 // toolFlattenBackupTable, keyed "<owner>:<agentID>" — never read by code,
 // pure insurance.
 //
-// Runs from three triggers, all idempotent (a folded agent has empty Tools):
-//   1. migrateAllAgentToolsToStore — startup sweep over every auth user.
-//   2. loadAgentTempTools — lazy re-check when a turn loads an agent whose
+// Runs from two triggers, both idempotent (a folded agent has empty Tools):
+//   1. loadAgentTempTools — lazy re-check when a turn loads an agent whose
 //      record still carries embedded tools (e.g. written by an old binary).
-//   3. importAgentRecipe — recipes exported before the flatten carry tools
+//   2. importAgentRecipe — recipes exported before the flatten carry tools
 //      inline; import folds them through the same path.
+//
+// A startup sweep over every user was a third, and never ran: it looked for
+// the users in the app's own store, where there are none.
 
 package orchestrate
 
@@ -98,22 +100,4 @@ func migrateAgentToolsToStore(udb Database, owner string, rec *AgentRecord) {
 		Log("[tool_flatten] %s/%s: save after fold failed: %v", owner, rec.Name, err)
 	}
 	Log("[tool_flatten] agent %q: %d moved, %d merged, %d orphaned", rec.Name, moved, merged, orphaned)
-}
-
-// migrateAllAgentToolsToStore sweeps every user's agents once at startup.
-// Cheap when already migrated: one record walk per user, zero writes.
-func migrateAllAgentToolsToStore(db Database) {
-	for _, u := range AuthListUsers(db) {
-		udb := agentUserDB(db, u.Username)
-		if udb == nil {
-			continue
-		}
-		for _, rec := range listAgents(udb, u.Username) {
-			if len(rec.Tools) == 0 {
-				continue
-			}
-			r := rec
-			migrateAgentToolsToStore(udb, u.Username, &r)
-		}
-	}
 }

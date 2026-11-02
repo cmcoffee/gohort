@@ -546,53 +546,38 @@ func (T *OrchestrateApp) wireWakeAndConsole() {
 	T.registerConsoleRoutes()
 }
 
-// runMigrations runs the one-shot migrations of stored agents and tools.
+// runMigrations runs the one-shot migrations of stored agents and tools. Each
+// runs once per deployment through the migration runner, which leaves a
+// marker (Admin > Maintenance > Migrations) and logs only a run that changed
+// something. They stay until 1.0, so an install that has not seen them yet
+// upgrades in one start; then they are deleted together.
+//
+// Builder needs none: loadAgent rebuilds it from code and the owner's saved
+// settings on every read (applyBuilderDeploymentState).
 func (T *OrchestrateApp) runMigrations() {
-	// One-shot Builder shadow migration. Walks every user's store,
-	// finds existing seed-builder shadows, re-writes them with the
-	// current in-code seed (preserving only the shadow's Rules).
-	// Lazy loadAgent already does this overlay at read time; this
-	// just eagerly persists the result so the DB state matches what
-	// callers see. Idempotent — running it twice produces the same
-	// record.
-	T.migrateBuilderShadows()
+	once := NewMigrationRunner("orchestrate", "")
 
-	// One-shot reset of seed-chat shadows whose AllowedTools were frozen by
-	// the old enableApprovedToolOnSeedChat expansion path. Restores the
-	// default-pool sentinel so toolbox-mode tools and other non-standard
-	// approvals are no longer silently blocked.
-	T.migrateSeedChatFrozenAllowedTools()
-	T.migrateSeedShadowOverlays()
+	// Chat shadows whose AllowedTools were frozen by the old
+	// enableApprovedToolOnSeedChat expansion path go back to the default
+	// pool, so toolbox-mode tools and other approvals stop being blocked.
+	once.Once("seed_chat_frozen_tools:v1", T.migrateSeedChatFrozenAllowedTools)
+	// Seed shadows from before overlays are stamped with what they decided.
+	once.Once("seed_shadow_overlays:v1", T.migrateSeedShadowOverlays)
 
-	// One-shot removal of the retired Operator seed. It folded into Chat
-	// (seed-chat) and is gone from seedAgents(); this deletes any stale
-	// per-user shadow (record + old operator-thread + side data) so it
-	// stops appearing in the agent menu. Idempotent.
-	T.dropLegacyOperator()
+	// The retired Operator seed folded into Chat; any per-user shadow of it
+	// (record, old operator-thread, side data) goes, so it stops appearing in
+	// the agent menu.
+	once.Once("drop_legacy_operator:v1", T.dropLegacyOperator)
 
-	// One-shot persistent-tool snapshot migration. Walks every user's
-	// agents and, for any AllowedTools name that resolves only to the
-	// persistent pool (not already in agent.Tools[]), snapshots it
-	// into the agent record. Closes the door on the old reference-by-
-	// name model where admin pool cleanup silently broke agents.
-	T.migrateAgentPersistentTools()
-
-	// One-shot: rewrite legacy Mode=="orchestrator" agents into the split
-	// Cortex + Fleet flags + clear the marker, so a legacy cortex agent's
-	// Fleet flag can actually be turned off (and the agent published).
+	// Legacy Mode=="orchestrator" agents become the split Cortex + Fleet
+	// flags, so a legacy cortex agent's Fleet flag can be turned off (and the
+	// agent published).
 	T.migrateLegacyOrchestratorMode()
 
-	// One-shot: the Author flag is retired. Each agent that held it may hand
-	// building to Builder instead (migrateRetiredAuthorFlag).
+	// The Author flag is retired. Each agent that held it may hand building
+	// to Builder instead (migrateRetiredAuthorFlag).
 	T.migrateRetiredAuthorFlag()
 	T.migrateOwnAgentCardPaths()
-
-	// Namespace flatten: fold every agent record's embedded Tools into the
-	// unified per-user store (ScopeAgents rows). Idempotent — folded agents
-	// carry no embedded tools, so re-runs are one read per agent. Lazy
-	// re-checks in loadAgentTempTools + import cover records written by old
-	// binaries after this sweep. See tool_flatten_migration.go.
-	migrateAllAgentToolsToStore(T.DB)
 }
 
 // startBackgroundPasses starts the passes that run off the boot path.
@@ -617,10 +602,14 @@ func (T *OrchestrateApp) startBackgroundPasses() {
 // runLateMigrations runs the migrations that follow the background passes.
 func (T *OrchestrateApp) runLateMigrations() {
 	// Channels bound to a sub-agent before that was refused move to its
-	// parent, and so do board posting rights granted to one (agent_family.go).
-	moveSubAgentChannels()
-	moveSubAgentSchedules()
-	moveSubAgentPosters()
+	// parent, and so do schedules and board posting rights made for one
+	// (agent_family.go). Once each, as runMigrations' are; since then a
+	// binding lands on the parent as it is saved, and moving an agent under a
+	// parent folds all three.
+	once := NewMigrationRunner("orchestrate", "")
+	once.Once("sub_agent_channels:v1", moveSubAgentChannels)
+	once.Once("sub_agent_schedules:v1", moveSubAgentSchedules)
+	once.Once("sub_agent_posters:v1", moveSubAgentPosters)
 
 	// One-shot deploy-time grandfather for the global-tool OPT-IN model. Shared
 	// tools used to auto-load for everyone; now they load only after a user

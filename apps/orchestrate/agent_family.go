@@ -337,22 +337,23 @@ func scheduleHandoffs(owner, parentID, name string) int {
 	return n
 }
 
-// moveSubAgentSchedules is foldSubAgentSchedules for everyone, once at
-// start-up.
-func moveSubAgentSchedules() {
+// moveSubAgentSchedules is foldSubAgentSchedules for everyone, once
+// (runLateMigrations), for schedules made before that was the rule. It says
+// how many it moved.
+func moveSubAgentSchedules() int {
 	moved := 0
 	for _, u := range deploymentUsers() {
 		moved += foldSubAgentSchedules(u, "")
 	}
-	if moved > 0 {
-		Log("[orchestrate.schedules] %d schedule(s) made for sub-agents now wake their parents", moved)
-	}
+	return moved
 }
 
 // moveSubAgentChannels moves every channel bound to a sub-agent onto its
-// top-level parent, once at start-up, for bindings made before a sub-agent
-// could not hold one.
-func moveSubAgentChannels() {
+// top-level parent, once (runLateMigrations), for bindings made before a
+// sub-agent could not hold one. It says how many it moved. A binding made
+// since lands on the parent as it is saved (SaveChannel applies
+// channelAgentFor), and moving an agent under a parent rebinds its channels.
+func moveSubAgentChannels() int {
 	moved := 0
 	for _, u := range deploymentUsers() {
 		for _, ch := range ListChannels(RootDB, u) {
@@ -364,42 +365,49 @@ func moveSubAgentChannels() {
 			}
 		}
 	}
-	if moved > 0 {
-		Log("[orchestrate.channels] moved %d channel(s) from sub-agents to their parents", moved)
-	}
+	return moved
 }
 
-// moveSubAgentPosters moves every sub-agent named as a bulletin board's
-// poster onto its top-level parent, once at start-up. Grants made before
-// rights lived on the parent named the sub-agent itself, which the Posters
-// picker (visible agents only) can neither show nor untick, and which left
-// the parent unable to post.
-func moveSubAgentPosters() {
+// moveSubAgentPosters is foldSubAgentPosters for everyone, once
+// (runLateMigrations), for grants made before posting rights lived on the
+// parent. It says how many it moved.
+func moveSubAgentPosters() int {
 	moved := 0
 	for _, u := range deploymentUsers() {
-		udb := agentStore(u)
-		for _, b := range listBulletins(udb) {
-			var posters []string
-			changed := false
-			for _, id := range b.Posters {
+		moved += foldSubAgentPosters(agentStore(u), u, "")
+	}
+	return moved
+}
+
+// foldSubAgentPosters moves every bulletin board poster that names a
+// sub-agent onto its top-level parent: once for grants made before posting
+// rights lived on the parent, and when an agent is moved under a parent
+// (only, then names that agent). A grant naming a sub-agent can be neither
+// shown nor unticked by the Posters picker (visible agents only), and leaves
+// the parent unable to post.
+func foldSubAgentPosters(udb Database, user, only string) int {
+	moved := 0
+	for _, b := range listBulletins(udb) {
+		var posters []string
+		changed := false
+		for _, id := range b.Posters {
+			if only == "" || id == only {
 				if top := topAgentOf(udb, id); top != id {
-					Log("[orchestrate.bulletins] %s: board %q poster moved from sub-agent %s to its parent %s", u, b.Name, id, top)
+					Log("[orchestrate.bulletins] %s: board %q poster moved from sub-agent %s to its parent %s", user, b.Name, id, top)
 					id, changed = top, true
 					moved++
 				}
-				if !containsString(posters, id) {
-					posters = append(posters, id)
-				}
 			}
-			if changed {
-				b.Posters = posters
-				_ = saveBulletin(udb, b)
+			if !containsString(posters, id) {
+				posters = append(posters, id)
 			}
 		}
+		if changed {
+			b.Posters = posters
+			_ = saveBulletin(udb, b)
+		}
 	}
-	if moved > 0 {
-		Log("[orchestrate.bulletins] moved %d board poster(s) from sub-agents to their parents", moved)
-	}
+	return moved
 }
 
 // familyBudgets is the spend ceilings and action limits of a sub-agent's

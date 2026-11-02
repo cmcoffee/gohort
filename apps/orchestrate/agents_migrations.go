@@ -36,18 +36,6 @@ func enableApprovedToolOnSeedChat(db Database, username, toolName string) {
 	// all-on, minus DisabledPersistentTools). Nothing to write.
 }
 
-// migrateBuilderShadows is the one-shot startup migration that
-// eagerly applies the loadAgent("seed-builder") overlay to every
-// user's persisted shadow. Without it, shadows from before the
-// Builder lockdown carry stale fields (old prompt, missing
-// DisableExplicit/DisableInferred/IngestAttachments flags, old AllowedTools) — the
-// lazy read path returns the right thing, but the DB rows still
-// hold dead values for anyone inspecting them directly.
-//
-// Walks AuthDB for the user list, opens each user's per-user
-// sub-store via UserDB, and for any user with a seed-builder
-// shadow re-writes it with the current in-code seed (preserving
-// Rules). Idempotent — running again produces the same record.
 // applyBuilderDeploymentState carries the fields a rebase onto the in-code
 // Builder seed must NOT discard, from the user's persisted shadow onto the
 // seed. Everything absent from this list (prompt, AllowedTools, the authoring
@@ -60,11 +48,10 @@ func enableApprovedToolOnSeedChat(db Database, username, toolName string) {
 // to questions the seed doesn't get a vote on — and each one that fell off this
 // list showed up as a control that silently refused to stick.
 //
-// One list, used by BOTH the read path and the startup migration. They had
-// drifted: the migration preserved only Rules, so every restart wrote the
-// seed's empty scope fields over the shadow that loadAgent then read back
-// from — the read path was carefully preserving state the boot path had
-// already destroyed.
+// loadAgent applies it on every read of Builder, so the stored shadow keeps
+// only what the owner saved and nothing rewrites it. A startup pass used to
+// write the rebuilt record back over every shadow at each boot; any field
+// missing from this list was then erased for good at the next restart.
 func applyBuilderDeploymentState(seed *AgentRecord, shadow AgentRecord) {
 	if seed == nil {
 		return
@@ -98,8 +85,8 @@ func applyBuilderDeploymentState(seed *AgentRecord, shadow AgentRecord) {
 	//
 	// Left off this list they saved and read back empty, silently: the
 	// guardrails endpoint wrote them to the shadow, loadAgent rebuilt Builder
-	// from the seed without them, and migrateBuilderShadows then wrote that
-	// stripped copy BACK over the shadow at boot, so a restart erased them for
+	// from the seed without them, and a boot pass (since removed) then wrote
+	// that stripped copy BACK over the shadow, so a restart erased them for
 	// good. The visible symptom was "exceptions won't save"; the real one was
 	// that guardrails never applied to Builder AT ALL — no rules, no hooks, no
 	// declines — which is the agent with authoring access and therefore the one
@@ -114,8 +101,7 @@ func applyBuilderDeploymentState(seed *AgentRecord, shadow AgentRecord) {
 	seed.AuthorizedIdentities = shadow.AuthorizedIdentities
 	// Scan scope belongs on this list for the exact reason the comment above
 	// describes: the guardrails endpoint writes it to the shadow, so a seed
-	// rebuilt without it reads back empty and the boot-time shadow rewrite then
-	// erases it for good. Builder is both the agent most likely to fetch
+	// rebuilt without it reads back empty. Builder is both the agent most likely to fetch
 	// something and the one an owner most wants watched.
 	seed.ScanToolResults = shadow.ScanToolResults
 	seed.ScanToolsAdd = shadow.ScanToolsAdd
@@ -128,45 +114,8 @@ func applyBuilderDeploymentState(seed *AgentRecord, shadow AgentRecord) {
 	// Reachability over the inbound MCP server. Deployment state by the same
 	// argument as LeadModel above: the editor RENDERS this toggle on Builder,
 	// so leaving it off this list made it save and read back false every
-	// time — the toggle looked like it refused to stay on. Worse than the
-	// LeadModel case, because migrateBuilderShadows writes the rebuilt record
-	// back over the shadow at boot, so a restart made the loss permanent.
+	// time — the toggle looked like it refused to stay on.
 	seed.MCPExposed = shadow.MCPExposed
-}
-
-func (T *OrchestrateApp) migrateBuilderShadows() {
-	if T == nil || T.DB == nil || AuthDB == nil {
-		return
-	}
-	authDB := AuthDB()
-	if authDB == nil {
-		return
-	}
-	seed, ok := seedAgentByID("seed-builder")
-	if !ok {
-		return
-	}
-	migrated := 0
-	for _, u := range AuthListUsers(authDB) {
-		udb := UserDB(T.DB, u.Username)
-		if udb == nil {
-			continue
-		}
-		var shadow AgentRecord
-		if !udb.Get(agentsTable, "seed-builder", &shadow) {
-			continue
-		}
-		merged := seed
-		applyBuilderDeploymentState(&merged, shadow)
-		merged.Updated = time.Now()
-		udb.Set(agentsTable, "seed-builder", merged)
-		migrated++
-		Log("[orchestrate.migrate] re-applied seed-builder defaults for user=%q (rules=%v lead_model=%v scoped_tools=%d)",
-			u.Username, merged.Rules != "", merged.LeadModel, len(merged.Tools))
-	}
-	if migrated > 0 {
-		Log("[orchestrate.migrate] migrateBuilderShadows: refreshed %d user shadow(s)", migrated)
-	}
 }
 
 // dropLegacyOperator is a one-shot migration that deletes the retired
@@ -181,14 +130,14 @@ func (T *OrchestrateApp) migrateBuilderShadows() {
 // and the per-(user, agent) memory + knowledge. Done directly rather
 // than via deleteAgent so a legacy record with a non-matching Owner
 // field can't trip the ownership guard — we're already inside each
-// user's own store. Idempotent: users without the shadow are skipped.
-func (T *OrchestrateApp) dropLegacyOperator() {
+// user's own store. Runs once (runMigrations) and says how many it dropped.
+func (T *OrchestrateApp) dropLegacyOperator() int {
 	if T == nil || T.DB == nil || AuthDB == nil {
-		return
+		return 0
 	}
 	authDB := AuthDB()
 	if authDB == nil {
-		return
+		return 0
 	}
 	dropped := 0
 	for _, u := range AuthListUsers(authDB) {
@@ -205,9 +154,7 @@ func (T *OrchestrateApp) dropLegacyOperator() {
 		dropped++
 		Log("[orchestrate.migrate] dropLegacyOperator: removed retired Operator for user=%q", u.Username)
 	}
-	if dropped > 0 {
-		Log("[orchestrate.migrate] dropLegacyOperator: removed %d Operator shadow(s)", dropped)
-	}
+	return dropped
 }
 
 // deployMigrationsTable holds deployment-wide (not per-user) one-shot migration
@@ -259,15 +206,16 @@ func (T *OrchestrateApp) migrateGlobalToolAdoption() {
 // explicit snapshot on first tool-approval; tools enabled via non-standard
 // paths (toolbox enables, agency menu) were absent from the snapshot and
 // filtered at runtime. Resetting to empty restores the default-pool
-// sentinel so all approved persistent tools auto-load. Idempotent —
-// shadows already at empty (or no shadow at all) are skipped.
-func (T *OrchestrateApp) migrateSeedChatFrozenAllowedTools() {
+// sentinel so all approved persistent tools auto-load. Shadows already at
+// empty (or no shadow at all) are skipped. Runs once (runMigrations) and says
+// how many it reset.
+func (T *OrchestrateApp) migrateSeedChatFrozenAllowedTools() int {
 	if T == nil || T.DB == nil || AuthDB == nil {
-		return
+		return 0
 	}
 	authDB := AuthDB()
 	if authDB == nil {
-		return
+		return 0
 	}
 	cleared := 0
 	for _, u := range AuthListUsers(authDB) {
@@ -298,27 +246,7 @@ func (T *OrchestrateApp) migrateSeedChatFrozenAllowedTools() {
 		cleared++
 		Log("[orchestrate.migrate] migrateSeedChatFrozenAllowedTools: reset seed-chat for user=%q", u.Username)
 	}
-	if cleared > 0 {
-		Log("[orchestrate.migrate] migrateSeedChatFrozenAllowedTools: cleared %d frozen AllowedTools snapshot(s)", cleared)
-	}
-}
-
-// migrateAgentPersistentTools snapshots persistent-pool tools into
-// every existing agent's Tools[] when the agent's AllowedTools names
-// them. One-shot eager version of the auto-snapshot now baked into
-// autoCopySessionToolsForAgent — closes the gap for agents created
-// before the copy-always change went in.
-//
-// Walks AuthDB for users, opens each user's per-user store via
-// UserDB, iterates agent records. Idempotent: snapshotted names are
-// detected and skipped on re-run. Builder is skipped — its Tools[]
-// is managed by the overlay path, not user state.
-func (T *OrchestrateApp) migrateAgentPersistentTools() {
-	// NEUTERED by the namespace flatten: this pre-flatten migration COPIED
-	// pool tools into AgentRecord.Tools — under the unified store that would
-	// recreate the exact duplicate-homes problem the flatten removes (the
-	// lazy fold would then merge them back out, churning every record).
-	// Kept as a stub so the call site and history stay legible.
+	return cleared
 }
 
 // migrateLegacyOrchestratorMode rewrites every remaining Mode=="orchestrator"
@@ -458,13 +386,17 @@ func retireAuthorFlag(a AgentRecord) AgentRecord {
 // is preserved as an override, so their agents look exactly as they did
 // before; what changes is that every field they never touched starts tracking
 // the framework again.
-func (T *OrchestrateApp) migrateSeedShadowOverlays() {
+//
+// Runs once (runMigrations) and says how many it stamped. A pre-overlay shadow
+// that arrives later (a restored backup) is resolved by inference at read time
+// until it is next saved, which stamps it.
+func (T *OrchestrateApp) migrateSeedShadowOverlays() int {
 	if T == nil || T.DB == nil || AuthDB == nil {
-		return
+		return 0
 	}
 	authDB := AuthDB()
 	if authDB == nil {
-		return
+		return 0
 	}
 	stamped := 0
 	for _, u := range AuthListUsers(authDB) {
@@ -491,7 +423,5 @@ func (T *OrchestrateApp) migrateSeedShadowOverlays() {
 				seed.ID, u.Username, len(shadow.OverriddenFields))
 		}
 	}
-	if stamped > 0 {
-		Log("[orchestrate.migrate] migrateSeedShadowOverlays: stamped %d shadow(s)", stamped)
-	}
+	return stamped
 }

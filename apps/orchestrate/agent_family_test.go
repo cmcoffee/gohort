@@ -134,9 +134,9 @@ func TestTheFleetSchedulerSaysWhoseEachScheduleIs(t *testing.T) {
 	}
 }
 
-// Moving an agent under a parent hands its schedules and channels to the
-// parent at once, the schedules saying whose work they are; moving it back out
-// leaves them with the parent and says so.
+// Moving an agent under a parent hands its schedules, channels and board
+// posting rights to the parent at once, the schedules saying whose work they
+// are; moving it back out leaves them with the parent and says so.
 func TestMovingAnAgentSaysWhereItsSchedulesAndChannelsGo(t *testing.T) {
 	app, udb := familyFixture(t)
 	if _, err := saveAgent(udb, AgentRecord{ID: "a-scout", Name: "Scout", Owner: "alice", OrchestratorPrompt: "p"}); err != nil {
@@ -144,6 +144,9 @@ func TestMovingAnAgentSaysWhereItsSchedulesAndChannelsGo(t *testing.T) {
 	}
 	SaveStandingAgent(RootDB, StandingAgent{Owner: "alice", Name: "Hourly sweep", AgentID: "a-scout", Mission: "m", IntervalSeconds: 3600})
 	SaveChannel(RootDB, Channel{ID: "c-scout", Owner: "alice", Name: "Pager", AgentID: "a-scout"})
+	saveBulletin(udb, bulletinBoard{Name: "radar", Posters: []string{"a-scout"}})
+	saveBulletin(udb, bulletinBoard{Name: "news", Posters: []string{"a-writer", "a-scout"}})
+	saveBulletin(udb, bulletinBoard{Name: "other", Posters: []string{"a-critic"}})
 
 	w := moveAgentReq(t, app, udb, "a-scout", `{"owned_by":"a-writer"}`)
 	if w.Code != http.StatusOK {
@@ -157,6 +160,14 @@ func TestMovingAnAgentSaysWhereItsSchedulesAndChannelsGo(t *testing.T) {
 	}
 	if ch, _ := GetChannel(RootDB, "alice", "c-scout"); ch.AgentID != "a-writer" {
 		t.Errorf("the channel is bound to %q, want the new parent at once", ch.AgentID)
+	}
+	if !strings.Contains(w.Body.String(), "post to 2 bulletin boards is now Writer") {
+		t.Errorf("the move did not say where its posting rights went: %s", w.Body.String())
+	}
+	for name, want := range map[string]string{"radar": "a-writer", "news": "a-writer", "other": "a-critic"} {
+		if b, _ := loadBulletin(udb, name); strings.Join(b.Posters, ",") != want {
+			t.Errorf("board %s posters = %v, want %s", name, b.Posters, want)
+		}
 	}
 
 	w = moveAgentReq(t, app, udb, "a-scout", `{"owned_by":""}`)

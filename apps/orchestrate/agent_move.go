@@ -179,6 +179,11 @@ func (m *agentMove) under() (AgentRecord, string, error) {
 		notes = append(notes, fmt.Sprintf("Its channel%s (%s) %s now answered by %s, which can hand the work to it.",
 			plural(len(moved)), strings.Join(moved, ", "), chIf(len(moved) == 1, "is", "are"), m.parent.Name))
 	}
+	// Posting rights live on the parent and cover the agents it owns, so a
+	// board that named this agent names the parent now.
+	if n := foldSubAgentPosters(m.db, m.owner, saved.ID); n > 0 {
+		notes = append(notes, fmt.Sprintf("Its right to post to %d bulletin board%s is now %s's, which covers it.", n, plural(n), m.parent.Name))
+	}
 	return saved, strings.Join(notes, " "), nil
 }
 
