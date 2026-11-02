@@ -572,3 +572,51 @@ func TestAnImageConnectionIsServedWithoutApproval(t *testing.T) {
 	}
 	os.Remove(res.URL)
 }
+
+// The rules every connection keeps, held on an image backend's own paths: a
+// key goes only to the address it was given for (moved, the call is refused
+// and nothing reaches the backend, and its self-check says so), and a
+// backend's own
+// generate_image_<name> tool is refused to an agent switched off the
+// connection and to a user it is not limited to.
+func TestAnImageConnectionKeepsItsKeyAndItsScope(t *testing.T) {
+	world(t)
+	stub := &a1111Stub{}
+	srv := stub.serve(t)
+	c := a1111Connection(t, "a1111", "sd", map[string]any{"base_url": srv.URL})
+	SetConnectionSecret(RootDB, c, "api_key", "me:pw", []string{"https://elsewhere.example"})
+	RootDB.Set(ImageTable, "agents", []string{"sd"})
+	if _, err := GenerateImageWithBackend(context.Background(), "sd", "a fox", false); err == nil || !strings.Contains(err.Error(), "again for the new address") {
+		t.Errorf("a key given for another address: %v", err)
+	}
+	if len(stub.seen) != 0 {
+		t.Errorf("a call reached the backend with its key bound elsewhere: %q", stub.seen)
+	}
+	if got := strings.Join(SelfCheck(RootDB, c), " | "); !strings.Contains(got, "so they are refused") {
+		t.Errorf("the self-check: %s", got)
+	}
+	SetConnectionSecret(RootDB, c, "api_key", "me:pw", []string{srv.URL})
+
+	tool, _ := LookupChatTool("generate_image_sd")
+	run := tool.(interface {
+		RunWithSession(map[string]any, *ToolSession) (string, error)
+	})
+	in := map[string]any{"prompt": "a fox"}
+	stub.seen = nil
+	if _, err := run.RunWithSession(in, &ToolSession{Username: "alice", DeniedCredentials: map[string]bool{"connection:sd": true}}); err == nil || !strings.Contains(err.Error(), "switched off") {
+		t.Errorf("an agent switched off it: %v", err)
+	}
+	c.SetAccess(RootDB, []string{"bob"})
+	if _, err := run.RunWithSession(in, &ToolSession{Username: "alice"}); err == nil || !strings.Contains(err.Error(), "limited to named users") {
+		t.Errorf("a user it is not limited to: %v", err)
+	}
+	if len(stub.seen) != 0 {
+		t.Errorf("a refused call reached the backend: %q", stub.seen)
+	}
+	if out, err := run.RunWithSession(in, &ToolSession{Username: "bob"}); err != nil || !strings.Contains(out, "generated") {
+		t.Errorf("bob: %q %v", out, err)
+	}
+	if len(stub.seen) != 1 || !strings.Contains(stub.seen[0], "Basic") {
+		t.Errorf("bob's call, with the key given for its address: %q", stub.seen)
+	}
+}

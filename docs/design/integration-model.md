@@ -436,6 +436,32 @@ by hand, as below.
    - agent and user scope on keys, at the call and in tool lists;
    - the privacy check judges a tier by its address, failing closed;
    - the self-check.
+   Checked in step 8 (2026-11-01). The tests that prove each, on the
+   branch:
+   - a key goes only to its addresses: a connection's
+     (TestAConnectionCarriesItsSecret), an image connection's
+     (TestAnImageConnectionKeepsItsKeyAndItsScope), a tier's
+     (TestATiersKeyGoesOnlyWhereItWasGiven), a peer renderer's
+     (TestPeerKeyNeverLandsInTheConnectorSpec, TestRotationReachesTheRenderersKey);
+     a key given for another address refuses the call, nothing sent;
+   - agent and user scope, at the call and in tool lists: images
+     (TestAnAgentBarredFromAConnectionIsNeitherOfferedNorServed,
+     TestADeniedConnectionHidesTheBackend, and a backend's own tool in
+     TestAnImageConnectionKeepsItsKeyAndItsScope), music, query_source and
+     flows (their tool-list tests in core/service), the connection's own
+     check (TestAConnectionBarsAnAgentOrAUser);
+   - the privacy check judges a tier by its address, failing closed:
+     TestATierStillNamingAConnectionFailsClosed (an old `llm:` value, an
+     unknown name, a hosted provider at a private address),
+     TestHostedProvidersAreNeverJudgedPrivate;
+   - the self-check: core/service/selfcheck_test.go, including a key given
+     for another address and a reserved name.
+   The rework's own: a held connection is reached by no path
+   (TestAChangeIsHeldUntilAnAdministratorAccepts and each path's test), and
+   a backend's tool needs Image Generation to offer it
+   (TestAComfyUIConnectionDraws). The private apps' tests pass on the
+   branch (`go test ./...` does not follow the private symlink: run
+   `go test ./private/...` too).
 5. **The vault is not touched** (see Key store).
 6. **The peer protocol between instances does not change.** Instances that
    lend to each other upgrade at different times.
