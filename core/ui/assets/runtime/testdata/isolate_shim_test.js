@@ -79,8 +79,8 @@ w.fetch('https://example.com/x').catch(function() { refused = true; }).then(func
   // The parent rebuilds FormData and leaves its Content-Type to the browser.
   check('the parent rebuilds FormData and sets no Content-Type for it',
     /if \(d\.body\.__uiForm\) \{[\s\S]*?new FormData\(\)[\s\S]*?opts\.body = fd;\s*\}/.test(misc));
-  check('the frame gets the storage polyfill ahead of the relay',
-    /f\.setAttribute\('srcdoc', STORAGE_SHIM \+ ISOLATE_SHIM \+/.test(misc));
+  check('the frame gets the page\'s colour scheme, then the storage polyfill, ahead of the relay',
+    /f\.setAttribute\('srcdoc', schemeHead\(\) \+ STORAGE_SHIM \+ ISOLATE_SHIM \+/.test(misc));
   check('the host prelude goes in after the relay and before the page',
     /ISOLATE_SHIM \+ \(cfg\.isolate_prelude \|\| ''\) \+ \(html/.test(misc));
   check('audio and video sources are relayed like images',

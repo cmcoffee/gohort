@@ -1408,6 +1408,28 @@
       'if(window.ResizeObserver)new ResizeObserver(height).observe(document.documentElement);height();});' +
     '})();<\/script>';
 
+  // A frame's document is drawn by the browser on a canvas of ITS colour
+  // scheme, and when that differs from the page around it the canvas is made
+  // opaque: a document that says nothing of its scheme is light, so on a dark
+  // page an app's card was a white box, or a white flash until its own
+  // background painted. Each app frame takes the page's scheme (the theme's
+  // first-paint meta), on the frame and in its document, so the canvas stays
+  // see-through and the page shows behind it. A document that sets its own
+  // scheme or background still has the last word.
+  function pageScheme() {
+    var m = document.querySelector('meta[name="color-scheme"]');
+    var c = ((m && m.getAttribute('content')) || '').trim();
+    return /^[a-z]+(?: [a-z]+)*$/.test(c) ? c : 'normal';
+  }
+  function schemeHead() { return '<meta name="color-scheme" content="' + pageScheme() + '">'; }
+  // withScheme puts it after the document's doctype when it has one, so a
+  // standards-mode document stays one.
+  function withScheme(html) {
+    html = html || '';
+    var m = /^\s*<!doctype[^>]*>/i.exec(html);
+    return m ? m[0] + schemeHead() + html.slice(m[0].length) : schemeHead() + html;
+  }
+
   function isolatedFrame(cfg, autoHeight) {
     var f = document.createElement('iframe');
     f.setAttribute('sandbox', 'allow-scripts allow-forms allow-popups allow-modals allow-pointer-lock');
@@ -1501,7 +1523,7 @@
     // isolate_prelude is the host's own markup for the top of every frame it
     // isolates: a page's helpers, written once by the host rather than by
     // each page.
-    f.__uiSet = function(html) { f.setAttribute('srcdoc', STORAGE_SHIM + ISOLATE_SHIM + (cfg.isolate_prelude || '') + (html || '')); };
+    f.__uiSet = function(html) { f.setAttribute('srcdoc', schemeHead() + STORAGE_SHIM + ISOLATE_SHIM + (cfg.isolate_prelude || '') + (html || '')); };
     return f;
   }
 
@@ -1509,7 +1531,7 @@
     var wrap = el('div', {class: 'ui-card'});
     if (cfg.isolate) {
       var iso = isolatedFrame(cfg, true);
-      iso.style.cssText = 'display:block;width:100%;border:0;background:transparent;height:40px';
+      iso.style.cssText = 'display:block;width:100%;border:0;background:transparent;height:40px;color-scheme:' + pageScheme();
       iso.__uiSet(cfg.html);
       wrap.appendChild(iso);
       if (cfg.source) {
@@ -1602,7 +1624,7 @@
     var f = document.createElement('iframe');
     // Fill (Frame.Fill): the window below the page chrome to begin with, then
     // the room actually left below the frame, measured by fitFillFrames.
-    f.style.cssText = 'display:block;width:100%;border:0;background:#fff;border-radius:8px;' +
+    f.style.cssText = 'display:block;width:100%;border:0;background:transparent;border-radius:8px;color-scheme:' + pageScheme() + ';' +
       (cfg.fill ? 'height:calc(var(--ui-vh, 100dvh) - var(--ui-chrome-h, 90px));min-height:320px'
                 : 'height:' + (cfg.height || 'min(80vh, 860px)'));
     f.setAttribute('allow', 'autoplay; fullscreen');
@@ -1613,7 +1635,7 @@
       iso.__uiSet(cfg.html);
       f = iso;
     } else {
-      f.setAttribute('srcdoc', cfg.html || '');
+      f.setAttribute('srcdoc', withScheme(cfg.html));
     }
     // Keyboard-driven documents (games, editors) are inert until the frame
     // holds focus. Take it on load unless the user is typing somewhere.

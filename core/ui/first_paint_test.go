@@ -2,6 +2,9 @@ package ui
 
 import (
 	"bytes"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -93,5 +96,57 @@ func TestPagesCanBeAddedToTheHomeScreen(t *testing.T) {
 	}
 	if strings.Contains(AppHead("no-such-theme"), "theme-color") {
 		t.Error("an unknown theme names no colour rather than a wrong one")
+	}
+}
+
+// An app's frames take the page's colour scheme. A frame's document is drawn
+// on a canvas of its own scheme, made opaque when that differs from the page
+// around it, so a document that said nothing of its scheme was a white box
+// on a dark page, or a white flash until its own background painted. Driven:
+// the helpers run against a page whose first-paint meta says dark.
+func TestAppFramesTakeThePagesColourScheme(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node not installed")
+	}
+	src := readRuntimeFile(t, "70_misc.js")
+	from := strings.Index(src, "  function pageScheme() {")
+	to := strings.Index(src, "  function isolatedFrame(")
+	if from < 0 || to < from {
+		t.Fatal("the frame scheme helpers moved")
+	}
+	script := `
+var scheme = 'dark';
+global.document = {querySelector: function(q) { return q === 'meta[name="color-scheme"]' ? {getAttribute: function() { return scheme; }} : null; }};
+` + src[from:to] + `
+var head = '<meta name="color-scheme" content="dark">';
+if (schemeHead() !== head) throw new Error('the page scheme was not carried: ' + schemeHead());
+var doc = withScheme('<!DOCTYPE html><html><body>x</body></html>');
+if (doc.indexOf('<!DOCTYPE html>' + head) !== 0) throw new Error('the doctype must stay first: ' + doc);
+if (withScheme('<div>x</div>') !== head + '<div>x</div>') throw new Error('a fragment gets it in front');
+scheme = 'dark"><script>x';
+if (pageScheme() !== 'normal') throw new Error('a scheme that is not one passed into the frame: ' + pageScheme());
+document.querySelector = function() { return null; };
+if (pageScheme() !== 'normal') throw new Error('a page with no scheme is normal');
+console.log('OK');
+`
+	tmp := filepath.Join(t.TempDir(), "scheme.js")
+	if err := os.WriteFile(tmp, []byte(script), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("node", tmp).CombinedOutput(); err != nil || !strings.Contains(string(out), "OK") {
+		t.Fatalf("frame colour scheme:\n%s", out)
+	}
+	// Both kinds of app frame use them, and neither paints white itself.
+	for _, want := range []string{
+		"f.setAttribute('srcdoc', schemeHead() + STORAGE_SHIM",
+		"background:transparent;height:40px;color-scheme:' + pageScheme()",
+		"f.setAttribute('srcdoc', withScheme(cfg.html));",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("the frames lost %q", want)
+		}
+	}
+	if strings.Contains(src, "background:#fff;border-radius:8px") {
+		t.Error("a frame paints itself white again")
 	}
 }
