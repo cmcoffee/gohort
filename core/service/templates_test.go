@@ -615,3 +615,63 @@ func TestAProviderIsShownByItsName(t *testing.T) {
 		}
 	}
 }
+
+// A template's connector is named by gohort, not asked: added with no name,
+// it takes the question's default, and added again it takes that numbered,
+// shown numbered too, never with its name; a name answered is kept, and
+// what it is shown as can be answered instead of the template's title.
+func TestATemplateNamesItsConnector(t *testing.T) {
+	world(t)
+	db := RootDB
+	r, _, _ := recipes.Get(db, "serper-search")
+	if q := recipes.ConnectorNameQuestion(r); q != "name" {
+		t.Fatalf("the naming question: %q", q)
+	}
+	connectorOf := func(res ArtifactImportResult) Connector {
+		for _, o := range res.Outcomes {
+			if o.Type == "connector" && o.Status == "imported" {
+				c, _ := GetConnector(db, o.Name)
+				return c
+			}
+		}
+		t.Fatalf("no connector landed: %+v", res)
+		return Connector{}
+	}
+	var got []string
+	for _, answers := range []map[string]string{
+		{},
+		{"name": " "},
+		{"name": "mine", recipes.ShownAs: "Team search"},
+		{recipes.ShownAs: "Team search"},
+	} {
+		res, err := recipes.Install(db, "serper-search", "admin", answers)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c := connectorOf(res)
+		got = append(got, c.Name+"="+c.Title())
+	}
+	want := "serper-search=Serper (web search) serper-search-2=Serper (web search) 2 mine=Team search serper-search-3=Team search 2"
+	if strings.Join(got, " ") != want {
+		t.Errorf("got  %s\nwant %s", strings.Join(got, " "), want)
+	}
+	if recipes.ConnectorNameQuestion(recipes.Recipe{}) != "" {
+		t.Error("a template with no connector has no naming question")
+	}
+	two := recipes.Recipe{Bundle: ArtifactBundle{Artifacts: []PortableArtifact{{Type: "connector", Name: "{{site}}-{{name}}"}}}}
+	if q := recipes.ConnectorNameQuestion(two); q != "" {
+		t.Errorf("a name made of two answers is no one question's: %q", q)
+	}
+	// The question's default names it, not the template's id.
+	var names []string
+	for i := 0; i < 2; i++ {
+		res, err := recipes.Install(db, "openai-compatible-embeddings", "admin", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		names = append(names, connectorOf(res).Name)
+	}
+	if strings.Join(names, " ") != "local-embeddings local-embeddings-2" {
+		t.Errorf("named %v", names)
+	}
+}

@@ -19,14 +19,22 @@ type planBConnector struct {
 	Provided bool            `json:"provided"`
 }
 
+// migrated marks the connection migration as run, which clearing waits for.
+func migrated(t *testing.T) {
+	t.Helper()
+	m := migrate.MigrationMarker{App: "core", Name: IntegrationMigration, Done: true}
+	RootDB.Set(migrate.MigrationsTable, m.Key(), m)
+}
+
 // Clearing removes a connection gohort once provided only when its spec no
-// longer validates and no page uses it, with its space and key; a space no
-// connection owns; the markers of migrations that are gone; and saved
-// flows, retired. A provided
-// one that still works, one a page uses, one never provided, an owned space
-// and any other marker stay. The dry run's walk is the delete's.
+// longer validates and no page uses it, and a model connection no page
+// uses, each with its space and key; a space no connection owns; the
+// markers of migrations that are gone; and saved flows, retired. A provided
+// one that still works, one a page uses, an ordinary one never provided, an
+// owned space and any other marker stay. The dry run's walk is the delete's.
 func TestClearingRemovesOnlyOldConnectionRecords(t *testing.T) {
 	world(t)
+	migrated(t)
 	llm := json.RawMessage(`{"provider":{"transport":"http","base_url":"https://api.example.test","auth":{"none":true},"operations":{"chat":{"method":"POST","path":"/v1/chat"}}},"provides":[{"capability":"llm.chat","steps":[{"call":"chat"}]}]}`)
 	searchConnector(t, "local-search", "")
 	works, _ := GetConnector(RootDB, "local-search")
@@ -34,7 +42,8 @@ func TestClearingRemovesOnlyOldConnectionRecords(t *testing.T) {
 		{Name: "llm-anthropic", ID: "c_llm", Kind: Kind, Spec: llm, Provided: true},
 		{Name: "llm-offered", ID: "c_offered", Kind: Kind, Spec: llm, Provided: true},
 		{Name: "local-search", ID: works.ID, Kind: Kind, Spec: works.Spec, Provided: true},
-		{Name: "hand-made", ID: "c_hand", Kind: Kind, Spec: llm},
+		{Name: "hand-made", ID: "c_hand", Kind: Kind, Spec: works.Spec},
+		{Name: "anthropic-model", ID: "c_model", Kind: Kind, Spec: llm},
 	} {
 		RootDB.Set("connectors", c.Name, c)
 	}
@@ -53,7 +62,7 @@ func TestClearingRemovesOnlyOldConnectionRecords(t *testing.T) {
 	if got := strings.Join(old.flows, ","); got != "announce" {
 		t.Errorf("flows: %s", got)
 	}
-	if got := strings.Join(old.connections, ","); got != "llm-anthropic" {
+	if got := strings.Join(old.connections, ","); got != "anthropic-model,llm-anthropic" {
 		t.Errorf("connections: %s", got)
 	}
 	if got := strings.Join(old.spaces, ","); got != "c_gone" {
@@ -67,8 +76,10 @@ func TestClearingRemovesOnlyOldConnectionRecords(t *testing.T) {
 	if err != nil || n != old.count() {
 		t.Fatalf("cleared %d of %d: %v", n, old.count(), err)
 	}
-	if _, ok := GetConnector(RootDB, "llm-anthropic"); ok {
-		t.Error("the old provided connection is still there")
+	for _, gone := range []string{"llm-anthropic", "anthropic-model"} {
+		if _, ok := GetConnector(RootDB, gone); ok {
+			t.Errorf("%s is still there", gone)
+		}
 	}
 	if _, ok := GetConnectionSecret(RootDB, llmConn, "api_key"); ok {
 		t.Error("its key outlived it")
@@ -101,6 +112,10 @@ func TestClearingWaitsForSettingsToBeSetAgain(t *testing.T) {
 	world(t)
 	RootDB.Set(LLMTable, "provider", "llm:anthropic")
 	RootDB.Sub("connection:c_gone").Set("secret", "api_key", "sk-orphan")
+	if n, err := clearOldRecords(RootDB); err == nil || n != 0 || !strings.Contains(err.Error(), IntegrationMigration) {
+		t.Errorf("before the migration ran, cleared %d: %v", n, err)
+	}
+	migrated(t)
 	n, err := clearOldRecords(RootDB)
 	if err == nil || n != 0 || !strings.Contains(err.Error(), "Worker LLM") {
 		t.Errorf("cleared %d: %v", n, err)

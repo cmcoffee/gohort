@@ -607,8 +607,11 @@ the endpoint it was stored with.
 4. Look over agents granted image or search tools, and the credential
    opt-outs naming a connection.
 
-Deploy, then set the LLM tiers first, so the window without a model is
-minutes, then whatever the admin notice lists.
+5. Run the migration's check against a copy of the database (step 9, under
+   Order of work) and read its list.
+
+Deploy: the migration runs at start, so the tiers keep a model. Then set
+whatever the admin notice still lists.
 
 - **A cleanup button:** Admin > Maintenance > "Clear old connection records",
   pressed after reconfiguring. It removes provided connections, orphaned
@@ -624,7 +627,9 @@ minutes, then whatever the admin notice lists.
   the seven migrations the rework removed, and saved flows (decision 9). It leaves `rest_image` records
   (the migration's) and the vault (rule 5). The delete refuses while any
   setting needs setting again, since setting it replaces the keys those
-  records hold; step 9 also makes it wait for the migration to have run.
+  records hold; and until the migration (step 9) has run. Since step 9 it
+  also removes a model connection (one providing `llm.chat`) no page uses:
+  the migration moved what its tier needed onto the tier.
   Found while building it: a peer's token rotation was still rewriting the
   vault credential its renderers sent before step 5; it now rewrites the
   key each renderer connection keeps.
@@ -852,6 +857,64 @@ once:
    translation, `FromRestImage`, taken out in step 5 with the Fix that used
    it: `git show 0a7e63ec:core/service/translate.go`. Peers' renderers need
    nothing: the next sync rewrites them.
+
+   Built (2026-11-01): `core/service/integration_migrate.go`, run once at
+   start under the marker `integration_model:v1`, after the credential store
+   is wired. Finding is read only and applying writes, so `gohort
+   --migrate-dry-run` lists exactly what it does. In order:
+
+   - a connector keyed by a vault credential keeps its key itself (made
+     again from its template's spec, or with the credential made a secret
+     setting sent as the credential sent it); a credential nothing else
+     names is then deleted;
+   - a `rest_image` backend becomes a `comfyui` or `a1111` connection under
+     its name, its key moved; a peer's renderer is left to its sync; a shape
+     no builtin runs is left (`a1111Service` now refuses a backend read any
+     other way than A1111's `images.0`, so it is never turned into one that
+     cannot work), and the page naming it needs setting again;
+   - research topics and a tool written into a spec become its Research
+     Sources entry; a Source Hook becomes its search connector
+     (`HookConnector`), on when the hook was, and Web Search's engine when it
+     was; a paywall hook is left;
+   - an LLM tier on a plan B connection (provided or a model connector) runs
+     on that connection's dialect directly, with its address (blank when it
+     is the provider's own), model and key; the key moves only when it was
+     given for the address the tier now sends to. A Bedrock key is not moved.
+     A tier from before plan B has its key bound to the address it was sent
+     to;
+   - a page naming a connection `<job>:<name>` or `service:<name>` names it
+     plainly; embeddings, transcription and speech records keep their
+     endpoint and model, so the embeddings' space (`EmbedVersion`) is the
+     same;
+   - Brave or Serper as Web Search's own engine, and OpenAI or Gemini as
+     Image Generation's own, become connectors from their templates with the
+     keys they had; Google, or an engine with no key, is left;
+   - embeddings, transcription and speech at this instance's own server
+     become connectors from the local templates at that address (Ollama when
+     the address is Ollama's), the embeddings' space kept. A key they had is
+     not carried, since those templates take none; the log says so.
+
+   `query_source` was never stored in a grant (it was added to every turn
+   unseen), so nothing rewrites it. The model connections a tier ran on are
+   cleared by Clear old connection records, which now also waits for the
+   marker. What it leaves is listed as needing setting again: a tier key
+   with no address, a record set up before its kind was a connector, an
+   image provider gohort no longer runs itself, and a `rest_image` backend.
+
+   **Checking it against a copy of the live database** (by the owner: the
+   database holds sysprobe data, which these sessions do not open):
+
+   1. Stop gohort and copy the data directory somewhere else, with the
+      `gohort.ini` pointed at the copy.
+   2. With this branch's build, run `gohort --migrate-dry-run` against the
+      copy. It lists each change; nothing it covers is written.
+   3. Check that the tiers name the providers and addresses expected, that
+      Embeddings keeps its connection's name, and that nothing listed is a
+      surprise.
+   4. Start this build on the copy (not the live directory) and look at
+      Admin: no "needs setting again" card for anything the list covered,
+      the Embeddings page naming the same connection, and a test chat on
+      each tier.
 
 **After the rework,** each its own branch, with no migration:
 

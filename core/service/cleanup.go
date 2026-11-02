@@ -12,17 +12,22 @@ package service
 //     and any key in it. One that validates (a local server's) is an
 //     ordinary connection now and stays: the embeddings one names the space
 //     the stored vectors are in.
+//   - a model connection (one providing llm.chat, which nothing runs since
+//     the LLM tiers were built in again) that no page references: the
+//     migration moved its address, model and key onto the tier.
 //   - a connection space no connector owns: settings and keys left behind.
 //   - the marker of a migration that no longer exists.
 //   - a saved flow: flows (connector chains) were retired, and nothing reads
 //     them.
 //
-// The delete refuses while any setting needs setting again (StaleSettings):
-// the keys plan B kept in its provided connections are what setting the LLM
-// tiers again replaces, and until then they are the only copy.
+// The delete refuses until the migration has run (IntegrationMigration), and
+// while any setting needs setting again (StaleSettings): the keys plan B
+// kept in its provided connections are what moving or setting the LLM tiers
+// again replaces, and until then they are the only copy.
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -35,7 +40,7 @@ func init() {
 	RegisterMaintenanceFunc("Reclaim space",
 		"survey_old_connection_records",
 		"Survey old connection records (dry run)",
-		"Read-only. Lists the connections gohort once provided that no longer work and no page uses, "+
+		"Read-only. Lists the connections gohort once provided that no longer work and no page uses, model connections no page uses, "+
 			"connection settings and keys no connection owns, the markers of migrations that are gone, and saved flows (retired). Deletes nothing.",
 		func(ctx context.Context) int {
 			old := findOldRecords(RootDB)
@@ -53,7 +58,7 @@ func init() {
 	RegisterMaintenanceFunc("Reclaim space",
 		"clear_old_connection_records",
 		"Clear old connection records (DELETES)",
-		"Removes exactly what the dry run above lists. Refused while any setting needs setting again, "+
+		"Removes exactly what the dry run above lists. Refused until the connection migration has run, and while any setting needs setting again, "+
 			"since the keys these records hold are replaced by setting it.",
 		func(ctx context.Context) int {
 			n, err := clearOldRecords(RootDB)
@@ -87,7 +92,7 @@ func (o oldRecords) count() int {
 func (o oldRecords) lines() []string {
 	var out []string
 	for _, n := range o.connections {
-		out = append(out, "connection "+n+" (once provided; its spec no longer validates and no page uses it), with its settings and key")
+		out = append(out, "connection "+n+" (once provided, or a model connection; nothing runs it and no page uses it), with its settings and key")
 	}
 	for _, id := range o.spaces {
 		out = append(out, "settings and keys of "+id+", which no connection owns")
@@ -117,11 +122,12 @@ func findOldRecords(db Database) oldRecords {
 	owned := map[string]bool{}
 	for _, c := range ListConnectors(db) {
 		owned[c.ID] = true
-		var mark providedMark
-		if !db.Get("connectors", c.Name, &mark) || !mark.Provided {
+		if len(uses[c.Name]) > 0 {
 			continue
 		}
-		if ValidateConnector(c) != nil && len(uses[c.Name]) == 0 {
+		var mark providedMark
+		provided := db.Get("connectors", c.Name, &mark) && mark.Provided && ValidateConnector(c) != nil
+		if provided || modelConnection(c) {
 			o.connections = append(o.connections, c.Name)
 		}
 	}
@@ -152,6 +158,9 @@ func findOldRecords(db Database) oldRecords {
 // clearOldRecords removes what findOldRecords finds, saying each in the log,
 // and how many it removed; it refuses while any setting needs setting again.
 func clearOldRecords(db Database) (int, error) {
+	if !IntegrationMigrated(db) {
+		return 0, fmt.Errorf("refused: the connection migration (%s) has not run yet; it runs when gohort starts", IntegrationMigration)
+	}
 	if stale := StaleSettings(db); len(stale) > 0 {
 		return 0, fmt.Errorf("refused: these need setting again first, since setting them replaces the keys these records hold: %s", stalePages(stale))
 	}
@@ -179,6 +188,28 @@ func clearOldRecords(db Database) (int, error) {
 		Log("[connections] removed:\n%s", strings.Join(o.lines(), "\n"))
 	}
 	return o.count(), nil
+}
+
+// modelConnection reports whether c provides llm.chat: a model connection
+// an LLM tier ran on in plan B.
+func modelConnection(c Connector) bool {
+	if c.Kind != Kind {
+		return false
+	}
+	var spec struct {
+		Provides []struct {
+			Capability string `json:"capability"`
+		} `json:"provides"`
+	}
+	if json.Unmarshal(c.Spec, &spec) != nil {
+		return false
+	}
+	for _, b := range spec.Provides {
+		if b.Capability == "llm.chat" {
+			return true
+		}
+	}
+	return false
 }
 
 // stalePages are the pages of stale, each once, as a list.

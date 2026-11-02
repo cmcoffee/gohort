@@ -324,6 +324,11 @@ func a1111Service(r RestImageSpec, send string) (Spec, error) {
 		mode = "img2img"
 	}
 	preset, _ := ApplyRestImagePreset(a1111Presets[mode], RestImageSpec{}, map[string]string{"base_url": ""})
+	// The builtin reads the picture where an A1111 server answers with it;
+	// a backend that is polled for it, or answers elsewhere, is not one.
+	if r.SubmitIDPath != "" || r.PollURL != "" || r.ImageURLPath != "" || r.ImageB64Path != preset.ImageB64Path {
+		return Spec{}, fmt.Errorf("it reads its picture otherwise than an A1111 server does, which no builtin runs")
+	}
 	base := u.Scheme + "://" + u.Host
 	o := a1111Options{Mode: mode, DefaultNegative: r.DefaultNegative, PromptSuffix: r.PromptSuffix,
 		PromptGuidance: r.PromptGuidance, MaxInputImages: r.MaxInputImages, PollMaxSecs: r.PollMaxSecs}

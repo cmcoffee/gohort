@@ -165,22 +165,45 @@ func StaleSettings(db Database) []StaleSetting {
 		return s
 	}
 	for table, page := range map[string]string{LLMTable: "Worker LLM", LeadLLMTable: "Lead LLM"} {
+		var given ConnectionSecret
 		if name, ok := media.LegacyConnection(str(table, "provider")); ok {
 			add(page, "it names the connection "+name+", which LLM tiers no longer use")
+		} else if strings.TrimSpace(str(table, "api_key")) != "" && !db.Get(table, "api_key_for", &given) {
+			add(page, "its key was kept before keys were bound to an address, and is not sent: give it again")
 		}
 	}
 	add("Web Search", StaleWhy(db, str(SearchTable, "provider")))
-	add("Image Generation", StaleWhy(db, str(ImageTable, "provider")))
+	switch image := strings.TrimSpace(str(ImageTable, "provider")); image {
+	case "openai", "gemini":
+		add("Image Generation", "it names "+image+", which gohort no longer runs itself: add it from its template under + Add another…")
+	default:
+		add("Image Generation", StaleWhy(db, image))
+	}
+	// A record from before every one was a connector names none: blank or
+	// local, with the address of the server it used.
+	before := func(provider string) bool {
+		p := strings.TrimSpace(provider)
+		return p == "" || p == EmbeddingProviderLocal
+	}
 	var emb EmbeddingConfig
 	if db.Get(EmbeddingTable, "current", &emb) && emb.Enabled {
+		if before(emb.Provider) {
+			add("Embeddings", "it was set up before every embedder was a connector: choose its connector")
+		}
 		add("Embeddings", StaleWhy(db, emb.Provider))
 	}
 	var tr media.TranscribeConfig
 	if db.Get(TranscribeTable, "current", &tr) && tr.Enabled {
+		if before(tr.Provider) {
+			add("Audio Transcription (STT)", "it was set up before every transcriber was a connector: choose its connector")
+		}
 		add("Audio Transcription (STT)", StaleWhy(db, tr.Provider))
 	}
 	var sp media.SpeechConfig
 	if db.Get(media.SpeechTable, "current", &sp) && sp.Enabled {
+		if before(sp.Provider) {
+			add("Speech (TTS)", "it was set up before every speech server was a connector: choose its connector")
+		}
 		add("Speech (TTS)", StaleWhy(db, sp.Provider))
 	}
 	add("Page Rendering (Browser)", StaleWhy(db, str(BrowseTable, "source")))
@@ -199,14 +222,19 @@ func StaleSettings(db Database) []StaleSetting {
 }
 
 // StaleWhy is what is wrong with a setting's value v, or "" when it reads:
-// a connection named the old way, or one that is not here.
+// a connection named the old way, one that is not here, or an image backend
+// still kept in the shape before it was a connection.
 func StaleWhy(db Database, v string) string {
 	if name, ok := media.LegacyConnection(v); ok {
 		return "it names the connection " + name + " the old way"
 	}
 	if name, ok := media.ChosenConnection(v); ok {
-		if _, found := GetConnector(db, name); !found {
+		c, found := GetConnector(db, name)
+		if !found {
 			return "it names " + name + ", which is not a connection here"
+		}
+		if c.Kind == restImageKind {
+			return "it names " + name + ", an image backend in a shape gohort no longer runs: add it again from a template"
 		}
 	}
 	return ""

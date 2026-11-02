@@ -224,6 +224,17 @@ func peerOwnsConnector(c Connector, peer string) bool {
 	return c.Kind == "rest_image" && json.Unmarshal(c.Spec, &spec) == nil && spec.Credential == peerCredentialName(peer)
 }
 
+// IsPeerRenderer reports whether connection c is a renderer a peer's
+// provisioning wrote, which that peer's next sync rewrites.
+func IsPeerRenderer(c Connector) bool {
+	for _, p := range ListRemotePeers() {
+		if peerOwnsConnector(c, p.Name) {
+			return true
+		}
+	}
+	return false
+}
+
 // teardownPeerImages removes what provisionPeerImages created.
 //
 // Driven by the stored name list rather than by pattern-matching connector

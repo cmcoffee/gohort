@@ -115,6 +115,7 @@ func main() {
 	version := flags.Bool("version", "")
 	setup := flags.Bool("setup", "First-run setup and server settings: listen address, TLS, admin account, mail.")
 	doctor := flags.Bool("sandbox-doctor", "Report what is confining shell commands, and how to fix it.")
+	dryRun := flags.Bool("migrate-dry-run", "List what the one-time connection migration would change, changing nothing it covers. Run it on a copy of the data directory, with gohort stopped.")
 
 	flags.Footer = " "
 
@@ -275,6 +276,24 @@ func main() {
 		Exit(0)
 	}
 
+	// What the connection migration would do, on a copy of the database,
+	// before the build that runs it is started on the real one.
+	if *dryRun {
+		init_database()
+		AuthDB = func() Database { return global.db }
+		if service.IntegrationMigrated(global.db) {
+			Stdout("The connection migration (%s) has already run on this database.\n", service.IntegrationMigration)
+		}
+		plan := service.IntegrationPlan(global.db)
+		if len(plan) == 0 {
+			Stdout("The connection migration has nothing to change here.\n")
+		}
+		for _, line := range plan {
+			Stdout("- %s\n", line)
+		}
+		Exit(0)
+	}
+
 	// Diagnose confinement without starting the daemon. Exits non-zero when
 	// shell tools would be refused, so a provisioning run can gate on it
 	// rather than parse the report.
@@ -383,6 +402,9 @@ func main() {
 
 		// Wire auth database.
 		AuthDB = func() Database { return global.db }
+		// The one connection migration, once: it needs the credential store
+		// just wired, for the keys it moves.
+		service.MigrateIntegration(global.db)
 		// What is wrong with a saved connection, in the log now rather than
 		// when a call first meets it.
 		service.LogSelfCheck(global.db)
